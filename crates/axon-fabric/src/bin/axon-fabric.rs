@@ -87,7 +87,8 @@
 use std::io::Read;
 use std::path::PathBuf;
 
-use axon_fabric::backend::{LinuxProfileConfig, QualificationTrust, DEFAULT_EVIDENCE_MAX_AGE_S};
+#[cfg(feature = "test-trust-root")]
+use axon_fabric::backend::QualificationTrust;
 use axon_fabric::submit::{scope, EpochSource, SubmitConfig};
 use axon_fabric::{Journal, ResourceVector};
 use axon_loop_contracts::{AuthorityEpoch, OperationId};
@@ -153,6 +154,28 @@ fn signer(registry: &std::path::Path) -> Option<(axon_loop_contracts::OpaqueRef,
     let text = std::fs::read_to_string(registry).unwrap_or_else(|e| bad(e.to_string()));
     let v: serde_json::Value = serde_json::from_str(&text).unwrap_or_else(|e| bad(e.to_string()));
     let sg = v.get("signer")?;
+    Some(signer_from(sg, registry, "registry signer"))
+}
+
+/// The protected host's signer: named by the OPERATOR's host config, never by
+/// a registry file (O1).
+fn host_signer(
+    h: &axon_fabric::protected_host::ProtectedHost,
+) -> (axon_loop_contracts::OpaqueRef, Vec<u8>) {
+    let sg = serde_json::json!({
+        "issuer_ref": h.signer.issuer_ref,
+        "key_path": h.signer.key_path,
+        "public_key": h.signer.public_key,
+    });
+    signer_from(&sg, std::path::Path::new("/"), "protected-host signer")
+}
+
+fn signer_from(
+    sg: &serde_json::Value,
+    registry: &std::path::Path,
+    what: &str,
+) -> (axon_loop_contracts::OpaqueRef, Vec<u8>) {
+    let bad = |why: String| -> ! { refuse("unregistered", &format!("{what}: {why}"), 4) };
     let obj = sg
         .as_object()
         .unwrap_or_else(|| bad("not an object".into()));
@@ -203,7 +226,7 @@ fn signer(registry: &std::path::Path) -> Option<(axon_loop_contracts::OpaqueRef,
             path.display()
         ));
     }
-    Some((id, key))
+    (id, key)
 }
 
 fn verify_evidence(a: &Args) {
@@ -222,6 +245,37 @@ fn verify_evidence(a: &Args) {
         ),
         Err(e) => refuse("unregistered", &e, 4),
     }
+}
+
+/// The protected host's configuration: the operator's file, or — in a
+/// test-trust build ONLY — `--protected-host-config FILE`, whose qualification
+/// trust is `--protected-host-issuers DIR` (ownership unchecked). A production
+/// build refuses both flags: nothing the caller passes configures protection.
+fn protected_host(a: &Args) -> Option<axon_fabric::protected_host::ProtectedHost> {
+    use axon_fabric::protected_host::ProtectedHost;
+    let test_cfg = a.opt("--protected-host-config");
+    if test_cfg.is_some() || a.opt("--protected-host-issuers").is_some() {
+        if !axon_fabric::backend::TEST_TRUST_BUILD {
+            refuse(
+                "usage",
+                "--protected-host-config is a test-trust-build flag; a production build reads only \
+                 /etc/axon/protected-host.json",
+                2,
+            );
+        }
+        #[cfg(feature = "test-trust-root")]
+        {
+            let cfg = PathBuf::from(test_cfg.unwrap_or_else(|| a.req("--protected-host-config")));
+            let mut trust = QualificationTrust::for_manifest(&cfg);
+            trust.issuers_dir = PathBuf::from(a.req("--protected-host-issuers"));
+            return Some(
+                ProtectedHost::for_test(&cfg, None, trust)
+                    .unwrap_or_else(|e| refuse("unregistered", &format!("protected host: {e}"), 4)),
+            );
+        }
+    }
+    ProtectedHost::operator()
+        .unwrap_or_else(|e| refuse("unregistered", &format!("protected host: {e}"), 4))
 }
 
 fn authority_flag(a: &Args) -> axon_fabric::backend::TrustAuthority {
@@ -338,11 +392,25 @@ fn submit(a: &Args) {
     // The protected profile's trust root is the OPERATOR's (/etc/axon/trust),
     // never the caller's and never a repository directory: whoever submits
     // cannot choose which issuers qualify it. Refused before anything else.
-    if a.opt("--linux-trusted-issuers").is_some() {
+    for flag in axon_fabric::protected_host::REFUSED_CALLER_FLAGS {
+        if a.opt(flag).is_some() {
+            refuse(
+                "usage",
+                &format!(
+                    "{flag} is not accepted: the protected profile is configured only by the \
+                     operator, in {} (issuers in /etc/axon/trust/qualification/)",
+                    axon_fabric::protected_host::PROTECTED_HOST_CONFIG
+                ),
+                2,
+            );
+        }
+    }
+    let host = protected_host(a);
+    if host.is_some() && a.opt("--check-registry").is_some() {
         refuse(
             "usage",
-            "--linux-trusted-issuers is not accepted: the protected profile's issuers are the \
-             operator's, in /etc/axon/trust/qualification/",
+            "--check-registry is not accepted on a protected host: suites come from the \
+             operator's registry in the protected-host config; a request names a suite by id",
             2,
         );
     }
@@ -356,31 +424,23 @@ fn submit(a: &Args) {
     } else {
         std::fs::read_to_string(&req_src).unwrap_or_else(|e| refuse("io", &e.to_string(), 2))
     };
-    let registry_path = PathBuf::from(a.req("--check-registry"));
+    let registry_path = match &host {
+        Some(h) => h.suite_registry.clone(),
+        None => PathBuf::from(a.req("--check-registry")),
+    };
     let registry = axon_cortex::runner::CheckRegistry::load(&registry_path)
         .unwrap_or_else(|e| refuse("unregistered", &e, 4));
-    let issuer = signer(&registry_path);
+    let issuer = match &host {
+        Some(h) => Some(host_signer(h)),
+        None => signer(&registry_path),
+    };
     let grants = axon_fabric::GrantRegistry::load(&PathBuf::from(a.req("--grant-registry")))
         .unwrap_or_else(|e| refuse("unauthorized", &e, 7));
     let sc =
         scope(&a.req("--tenant"), &a.req("--family")).unwrap_or_else(|e| refuse("usage", &e, 2));
     let expected = AuthorityEpoch::new(a.num("--expected-epoch", u64::MAX))
         .unwrap_or_else(|e| refuse("usage", &format!("--expected-epoch: {e}"), 2));
-    let linux = a.opt("--linux-launcher").map(|l| {
-        let manifest = PathBuf::from(a.req("--linux-manifest"));
-        let mut trust = QualificationTrust::operator();
-        trust.max_age_s = a.num("--linux-evidence-max-age-s", DEFAULT_EVIDENCE_MAX_AGE_S);
-        LinuxProfileConfig {
-            launcher: PathBuf::from(l),
-            manifest,
-            artifacts_dir: a.opt("--linux-artifacts").map(PathBuf::from),
-            evidence: PathBuf::from(a.req("--linux-evidence")),
-            evidence_signature: a.opt("--linux-evidence-sig").map(PathBuf::from),
-            waivers: a.opt("--linux-waivers").map(PathBuf::from),
-            trust,
-            out_root: PathBuf::from(a.req("--linux-out-root")),
-        }
-    });
+    let linux = host.map(|h| h.linux);
     let cfg = SubmitConfig {
         journal: PathBuf::from(a.req("--journal")),
         registry,

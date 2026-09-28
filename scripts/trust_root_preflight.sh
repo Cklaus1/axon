@@ -10,6 +10,9 @@
 #   verifier   cannot create, rename or open-for-write anything, or chmod
 #   custodian  cannot either
 #   agent(s)   (MiCode, Claude — every UID an agent runs as) cannot either
+#   fabric     cannot either; it alone can READ the attestation signing key,
+#              which verifier, custodian and every agent must fail to open (A20)
+#   …and all of this also over every path the protected-host config pins (O1)
 #   guest      cannot even ADDRESS the root (--guest-cmd runs
 #              trust_root_guest_probe.sh inside the candidate guest)
 #
@@ -25,8 +28,9 @@
 #              Proves the mechanism, certifies nothing.
 #
 # Usage (as root, which is needed to switch UID — never as the actors):
-#   trust_root_preflight.sh --verifier UID[:GID] --custodian UID[:GID] \
-#       --agent UID[:GID] [--agent …] --guest-cmd 'CMD' [--root DIR] [--out FILE]
+#   trust_root_preflight.sh --verifier UID[:GID] --custodian UID[:GID] --fabric UID[:GID] \
+#       --agent UID[:GID] [--agent …] --guest-cmd 'CMD' \
+#       [--root DIR --host-config FILE] [--out FILE]
 #
 # Exit 0 = PASS, 1 = FAIL (a refusal did not happen), 2 = cannot run (usage,
 # not root, root missing) — never a pass.
@@ -34,7 +38,8 @@ set -uo pipefail
 
 OPERATOR_TRUST_ROOT=/etc/axon/trust
 SCHEMA=axon-trust-preflight/1
-ROOT="" OUT="" GUEST="" VERIFIER="" CUSTODIAN=""
+ROOT="" OUT="" GUEST="" VERIFIER="" CUSTODIAN="" FABRIC="" HOST_CONFIG="" SIGNING_KEY=""
+O1=()
 AGENTS=()
 die() { printf '{"schema":"%s","verdict":"NOT_RUN","reason":"%s"}\n' "$SCHEMA" "$1"; exit 2; }
 while [ $# -gt 0 ]; do
@@ -44,15 +49,39 @@ while [ $# -gt 0 ]; do
     --guest-cmd) GUEST="$2"; shift 2 ;;
     --verifier) VERIFIER="$2"; shift 2 ;;
     --custodian) CUSTODIAN="$2"; shift 2 ;;
+    --fabric) FABRIC="$2"; shift 2 ;;
+    --host-config) HOST_CONFIG="$2"; shift 2 ;;
     --agent) AGENTS+=("$2"); shift 2 ;;
     *) die "unknown argument $1" ;;
   esac
 done
 [ "$(id -u)" = 0 ] || die "must run as root to act as each service UID"
 command -v setpriv >/dev/null || die "setpriv is required"
-[ -n "$VERIFIER" ] && [ -n "$CUSTODIAN" ] && [ ${#AGENTS[@]} -gt 0 ] && [ -n "$GUEST" ] \
-  || die "--verifier, --custodian, at least one --agent and --guest-cmd are required"
+[ -n "$VERIFIER" ] && [ -n "$CUSTODIAN" ] && [ -n "$FABRIC" ] && [ ${#AGENTS[@]} -gt 0 ] && [ -n "$GUEST" ] \
+  || die "--verifier, --custodian, --fabric, at least one --agent and --guest-cmd are required"
 if [ -n "$ROOT" ]; then MODE=dev; else MODE=protected; ROOT=$OPERATOR_TRUST_ROOT; fi
+# O1 (v022-psv-protocol.md §2): the protected-host config and every path it
+# pins are operator authority too, and its signing key is the Fabric UID's
+# alone. Protected mode reads the fixed file; dev mode needs --host-config.
+if [ "$MODE" = protected ]; then
+  [ -z "$HOST_CONFIG" ] || die "--host-config is dev-only: protected mode reads /etc/axon/protected-host.json"
+  HOST_CONFIG=/etc/axon/protected-host.json
+fi
+[ -n "$HOST_CONFIG" ] && [ -f "$HOST_CONFIG" ] || die "protected-host config ${HOST_CONFIG:-(none)} does not exist"
+mapfile -t HC < <(python3 - "$HOST_CONFIG" <<'PY'
+import json, sys
+c = json.load(open(sys.argv[1]))
+print(c["signer"]["key_path"])
+for p in (sys.argv[1], c["launcher"]["path"], c["profile_manifest"]["path"],
+          c["suite_registry"]["path"], c["qualification"]["record"]):
+    print(p)
+for k in ("signature", "waivers"):
+    if c["qualification"].get(k):
+        print(c["qualification"][k])
+PY
+) || die "protected-host config is not readable as axon-protected-host/1"
+SIGNING_KEY=${HC[0]}
+O1=("${HC[@]:1}")
 case "$ROOT" in /*) ;; *) die "--root must be absolute" ;; esac
 [ -d "$ROOT/qualification" ] || die "$ROOT/qualification does not exist"
 
@@ -88,6 +117,15 @@ if [ "$MODE" = protected ]; then
   while [ "$p" != / ]; do p=$(dirname "$p"); DIRS=("$p" "${DIRS[@]}"); done
 fi
 mapfile -t FILES < <(find "$ROOT" -xdev -type f | sort)
+# The O1 files, and the directories holding them and the signing key.
+FILES+=("${O1[@]}")
+for f in "${O1[@]}" "$SIGNING_KEY"; do
+  d=$(dirname "$f"); DIRS+=("$d")
+  if [ "$MODE" = protected ]; then
+    while [ "$d" != / ]; do d=$(dirname "$d"); DIRS+=("$d"); done
+  fi
+done
+mapfile -t DIRS < <(printf '%s\n' "${DIRS[@]}" | sort -u)
 mapfile -t QFILES < <(find "$ROOT/qualification" -xdev -type f | sort)
 
 cannot_modify() { # actor uid:gid
@@ -121,9 +159,21 @@ if as "$V" ls "$ROOT/qualification"; then record verifier "$V" list "$ROOT/quali
 else record verifier "$V" list "$ROOT/qualification" read refused; fi
 cannot_modify verifier "$V"
 cannot_modify custodian "$C"
+F=$(resolve "$FABRIC") || die "fabric: not a non-root user: $FABRIC"
+cannot_modify fabric "$F"
+# A20: the signing key is readable by the Fabric UID and by NO ONE else.
+reads() { as "$1" sh -c 'exec 3<"$1"' _ "$SIGNING_KEY"; }
+if reads "$F"; then record fabric "$F" read-key "$SIGNING_KEY" read read
+else record fabric "$F" read-key "$SIGNING_KEY" read refused; fi
+for who in "verifier:$V" "custodian:$C"; do
+  if reads "${who#*:}"; then record "${who%%:*}" "${who#*:}" read-key "$SIGNING_KEY" refused SUCCEEDED
+  else record "${who%%:*}" "${who#*:}" read-key "$SIGNING_KEY" refused refused; fi
+done
 for a in "${AGENTS[@]}"; do
   A=$(resolve "$a") || die "agent: not a non-root user: $a"
   cannot_modify "agent:$a" "$A"
+  if reads "$A"; then record "agent:$a" "$A" read-key "$SIGNING_KEY" refused SUCCEEDED
+  else record "agent:$a" "$A" read-key "$SIGNING_KEY" refused refused; fi
 done
 
 # The candidate guest: the probe runs INSIDE it and must find nothing to address.

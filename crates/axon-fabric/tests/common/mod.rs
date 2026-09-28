@@ -452,8 +452,13 @@ pub fn qualified_linux_cfg(dir: &Path, issuer: &Issuer, evidence: &Value) -> Lin
     let manifest = dir.join("manifest.json");
     let mut trust = QualificationTrust::for_manifest(&manifest);
     trust.clock = Clock::FixedUnix(axon_fabric::backend::parse_utc(TEST_NOW).unwrap());
+    // A launcher that exists and is pinned (RULE:launcher-pinned) but is never
+    // meant to run here; tests that launch swap in a stand-in with set_launcher.
+    let launcher = dir.join("no-launcher.sh");
+    std::fs::write(&launcher, "#!/bin/sh\nexit 99\n").unwrap();
     LinuxProfileConfig {
-        launcher: dir.join("no-launcher.sh"),
+        launcher_sha256: sha256_file(&launcher),
+        launcher,
         manifest,
         artifacts_dir: None,
         evidence: dir.join("evidence.json"),
@@ -503,4 +508,11 @@ exit {exit}
     use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
     p
+}
+
+/// Point `lx` at `launcher` AND pin it: the two always move together, as the
+/// operator's host config pins them (O1).
+pub fn set_launcher(lx: &mut LinuxProfileConfig, launcher: PathBuf) {
+    lx.launcher_sha256 = sha256_file(&launcher);
+    lx.launcher = launcher;
 }

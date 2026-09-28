@@ -153,3 +153,16 @@ reason, not just the refusal. "Today" is the state at `b590f536`.
 - Rows ALREADY_PROVEN at the dev layer: PSV-7's backend-class gate, plus A4, A5 and A10.
 - Everything else needs M1–M4 and O1–O2.
 - Nothing here moves readiness.
+
+## Progress
+
+This section is appended as mechanisms land; the rows above stay as they were at `b590f536`.
+
+| Step | State | Closes | Evidence |
+|---|---|---|---|
+| 0 schemas + O1 contract | frozen | — | `v022-psv-protocol.md` (`f784baa5`) |
+| O1 | landed (dev) | F2, F5, F13; A16, A17, A20, A21 | `crates/axon-fabric/src/protected_host.rs`; `tests/protected_host.rs` (9); `tests/submit.rs::a_launcher_replaced_after_eligibility_never_runs`; trust preflight O1/A20 controls. 12/12 O1 mutants killed against a green baseline |
+
+The O1 host-config path makes the pins sound. What it cannot show on the dev host is PROTECTED_ONLY:
+the operator installing `/etc/axon/protected-host.json`, and the protected-mode preflight passing
+against it.

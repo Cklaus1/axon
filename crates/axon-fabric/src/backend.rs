@@ -124,6 +124,13 @@ pub const ALL: &[Profile] = &[
 pub struct LinuxProfileConfig {
     /// `scripts/fc_linux_profile.sh` (must run as root).
     pub launcher: PathBuf,
+    /// The launcher's pinned sha256 (O1, `v022-psv-protocol.md` §2). The
+    /// launcher writes the result and the guest digests a receipt rests on, so
+    /// it is an authority, not a helper: any other bytes make the profile
+    /// ineligible (RULE:launcher-pinned). Eligibility is re-decided at
+    /// dispatch, immediately before the launch record; the window after that
+    /// is closed by the launcher being operator-owned (O1), not by a re-hash.
+    pub launcher_sha256: String,
     /// `profiles/linux-microvm/manifest.json`.
     pub manifest: PathBuf,
     /// The built artifacts (`dist/guest-linux`), if not the launcher default.
@@ -299,6 +306,15 @@ pub(crate) fn check_owned_from_pub(base: &Path, dir: &Path) -> Result<(), String
 
 #[cfg(unix)]
 fn check_owned_from(base: &Path, dir: &Path) -> Result<(), String> {
+    check_owned_chain(base, dir, true)
+}
+
+/// The operator-ownership walk from `base` down to `path`, every component
+/// root-owned, not group/other-writable, not a symlink; with `entries`, a
+/// directory's entries too. A FILE (a pinned launcher, a registry) is checked
+/// with its whole chain and nothing listed.
+#[cfg(unix)]
+pub(crate) fn check_owned_chain(base: &Path, dir: &Path, entries: bool) -> Result<(), String> {
     use std::os::unix::fs::MetadataExt;
     if !dir.is_absolute() {
         return Err(format!(
@@ -339,8 +355,10 @@ fn check_owned_from(base: &Path, dir: &Path) -> Result<(), String> {
         p.push(c);
         check(&p)?;
     }
-    for e in std::fs::read_dir(dir).map_err(|e| format!("{}: {e}", dir.display()))? {
-        check(&e.map_err(|e| e.to_string())?.path())?;
+    if entries && std::fs::symlink_metadata(dir).is_ok_and(|m| m.is_dir()) {
+        for e in std::fs::read_dir(dir).map_err(|e| format!("{}: {e}", dir.display()))? {
+            check(&e.map_err(|e| e.to_string())?.path())?;
+        }
     }
     Ok(())
 }
@@ -356,6 +374,8 @@ pub fn check_operator_owned(dir: &Path) -> Result<(), String> {
 /// The facts eligibility is decided from — and that a receipt carries.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LinuxQualification {
+    /// The launcher that will run it, at its pin.
+    pub launcher_sha256: String,
     pub manifest_sha256: String,
     pub evidence_manifest_sha256: String,
     pub guest_axon_sha256: String,
@@ -381,13 +401,13 @@ pub struct LinuxQualification {
 /// The B263 assertion that qualifies the guest policy channel (ACF-G25).
 pub const X1_GUEST_POLICY_CHANNEL: &str = "x1_guest_policy_channel";
 
-fn sha256_file(p: &Path) -> Result<String, String> {
+pub(crate) fn sha256_file(p: &Path) -> Result<String, String> {
     use sha2::{Digest, Sha256};
     let b = std::fs::read(p).map_err(|e| format!("{}: {e}", p.display()))?;
     Ok(format!("{:x}", Sha256::digest(&b)))
 }
 
-fn sha256_hex(b: &[u8]) -> String {
+pub(crate) fn sha256_hex(b: &[u8]) -> String {
     use sha2::{Digest, Sha256};
     format!("{:x}", Sha256::digest(b))
 }
@@ -587,6 +607,20 @@ struct Waiver {
 }
 
 impl LinuxProfileConfig {
+    /// RULE:launcher-pinned: the launcher's bytes are the pinned ones.
+    pub fn launcher_pinned(&self) -> Result<String, String> {
+        let got = sha256_file(&self.launcher)?;
+        if got != self.launcher_sha256 {
+            return Err(format!(
+                "launcher {} has sha256 {got}, not its pin {}: a replaced launcher could report \
+                 any digest and any exit (RULE:launcher-pinned)",
+                self.launcher.display(),
+                self.launcher_sha256
+            ));
+        }
+        Ok(got)
+    }
+
     /// Eligible only if EVERY one of these holds (fail closed on each):
     ///
     /// * the evidence bytes carry a detached Ed25519 signature that verifies
@@ -604,6 +638,7 @@ impl LinuxProfileConfig {
     ///
     /// A changed manifest is ineligible — never "probably fine".
     pub fn qualification(&self) -> Result<LinuxQualification, String> {
+        let launcher_sha256 = self.launcher_pinned()?;
         let manifest_sha256 = sha256_file(&self.manifest)?;
         let ev_bytes = std::fs::read(&self.evidence)
             .map_err(|e| format!("evidence {}: {e}", self.evidence.display()))?;
@@ -821,6 +856,7 @@ impl LinuxProfileConfig {
             .ok_or("manifest has no artifacts.axon.sha256")?
             .to_string();
         Ok(LinuxQualification {
+            launcher_sha256,
             manifest_sha256,
             evidence_manifest_sha256,
             guest_axon_sha256,

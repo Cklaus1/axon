@@ -100,7 +100,7 @@ impl World {
     }
     fn cfg(&self, evidence: &Value) -> LinuxProfileConfig {
         let mut lx = qualified_linux_cfg(self.dir(), &self.issuer, evidence);
-        lx.launcher = stand_in_launcher(&self.env, 0, true, true, 0);
+        set_launcher(&mut lx, stand_in_launcher(&self.env, 0, true, true, 0));
         std::fs::create_dir_all(&lx.out_root).unwrap();
         lx
     }

@@ -64,7 +64,7 @@ impl World {
     /// `evidence` signed by the trusted issuer.
     fn cfg(&self, evidence: &Value) -> LinuxProfileConfig {
         let mut lx = qualified_linux_cfg(self.dir(), &self.issuer, evidence);
-        lx.launcher = stand_in_launcher(&self.env, 0, true, true, 0);
+        set_launcher(&mut lx, stand_in_launcher(&self.env, 0, true, true, 0));
         std::fs::create_dir_all(&lx.out_root).unwrap();
         lx
     }
@@ -487,6 +487,7 @@ fn the_real_b263_record_is_refused() {
     // Judged at a time it would still be fresh, so freshness is not the reason.
     trust.clock = backend::Clock::FixedUnix(backend::parse_utc("2026-09-24T09:00:00Z").unwrap());
     let lx = LinuxProfileConfig {
+        launcher_sha256: sha256_file(&stand_in_launcher(&env, 0, true, true, 0)),
         launcher: stand_in_launcher(&env, 0, true, true, 0),
         manifest,
         artifacts_dir: None,
@@ -542,6 +543,7 @@ fn the_stage3_requalification_record_is_refused_until_signed_and_waived() {
     trust.issuers_dir = d.join("trusted_issuers");
     trust.clock = backend::Clock::FixedUnix(backend::parse_utc("2026-09-26T01:00:00Z").unwrap());
     let lx = LinuxProfileConfig {
+        launcher_sha256: sha256_file(&stand_in_launcher(&env, 0, true, true, 0)),
         launcher: stand_in_launcher(&env, 0, true, true, 0),
         manifest,
         artifacts_dir: None,
@@ -594,6 +596,7 @@ fn the_committed_profile_has_no_trusted_issuer_so_protected_dispatch_is_refused(
     );
     let env = Env::new();
     let lx = LinuxProfileConfig {
+        launcher_sha256: sha256_file(&stand_in_launcher(&env, 0, true, true, 0)),
         launcher: stand_in_launcher(&env, 0, true, true, 0),
         manifest,
         artifacts_dir: None,

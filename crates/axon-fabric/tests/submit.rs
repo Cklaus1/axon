@@ -628,7 +628,7 @@ fn linux_submit(env: &Env, op: &str, launcher: std::path::PathBuf) -> axon_fabri
     let guest = "cd".repeat(32);
     let manifest = lx_manifest(&guest);
     let mut lx = linux_cfg(env, &manifest, "");
-    lx.launcher = launcher;
+    set_launcher(&mut lx, launcher);
     std::fs::create_dir_all(&lx.out_root).unwrap();
     let mut cfg = env.cfg(0);
     cfg.linux = Some(lx);
@@ -698,7 +698,7 @@ fn a_changed_manifest_makes_the_linux_profile_ineligible_with_no_launch() {
     let guest = "cd".repeat(32);
     let manifest = lx_manifest(&guest);
     let mut lx = linux_cfg(&env, &manifest, &"0".repeat(64)); // evidence ≠ manifest
-    lx.launcher = stand_in_launcher(&env, 0, true, true, 0);
+    set_launcher(&mut lx, stand_in_launcher(&env, 0, true, true, 0));
     std::fs::create_dir_all(&lx.out_root).unwrap();
     let mut cfg = env.cfg(0);
     cfg.linux = Some(lx.clone());
@@ -983,4 +983,37 @@ fn one_failed_check_fails_the_whole_suite_whatever_the_rest_score() {
         ReceiptStatus::Completed,
         "the process ran to completion; the verdict is what failed"
     );
+}
+
+/// A16 at the launch itself: eligibility passed, then the launcher's bytes
+/// changed before dispatch. The dispatch-time recheck refuses it before any
+/// launch record, and the replaced launcher never runs.
+#[test]
+fn a_launcher_replaced_after_eligibility_never_runs() {
+    fn swap(cfg: &axon_fabric::SubmitConfig) {
+        let l = &cfg.linux.as_ref().unwrap().launcher;
+        std::fs::write(l, "#!/bin/sh\necho REPLACED >> /dev/null\nexit 0\n").unwrap();
+    }
+    let env = Env::new();
+    let guest = "cd".repeat(32);
+    let mut lx = linux_cfg(&env, &lx_manifest(&guest), "");
+    // A private copy, so swapping it cannot disturb other tests' launchers.
+    let own = env.dir.path().join("own-launcher.sh");
+    std::fs::copy(stand_in_launcher(&env, 0, true, true, 0), &own).unwrap();
+    std::fs::set_permissions(&own, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    set_launcher(&mut lx, own);
+    std::fs::create_dir_all(&lx.out_root).unwrap();
+    let launches = lx.out_root.join("launches");
+    let mut cfg = env.cfg(0);
+    cfg.linux = Some(lx);
+    cfg.pre_launch_hook = Some(swap);
+    // Refused by the dispatch-time recheck, before any launch record.
+    let e = submit(
+        &linux_run_request(&env, "op-lx-swap", &guest).to_string(),
+        &cfg,
+    )
+    .unwrap_err();
+    assert!(e.to_string().contains("RULE:launcher-pinned"), "{e}");
+    assert!(!launches.exists(), "the replaced launcher ran");
+    assert_eq!(env.launch_records(), 0, "no launch record");
 }

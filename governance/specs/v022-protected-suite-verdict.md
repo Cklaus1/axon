@@ -270,6 +270,8 @@ no supplementary groups) and requires the kernel's answer:
 | same | NOT open any file for writing | `open(O_RDWR)`, no byte written |
 | same | NOT change any file's mode | `chmod(2)` re-applying its own mode |
 | candidate guest | NOT address the root at all | `trust_root_guest_probe.sh` INSIDE the guest (`--guest-cmd`) |
+| fabric | NOT modify any of the above; alone READ the attestation signing key | `open(O_RDONLY)` of the key by every actor (A20) |
+| all actors | the same refusals over every path the protected-host config pins (O1) | as above, over the config, launcher, manifest, registry, record and the key's directory |
 
 `chmod(1)` is deliberately not used: GNU chmod skips the syscall on an unchanged mode and reports
 success, so it attempts nothing (measured). Root is never accepted as an actor, and a non-root
