@@ -3,7 +3,8 @@
 Status: **development evidence for `PSV_PROTOCOL_PROVEN`. It earns no readiness credit.** The
 three protected components stay NOT_RUN until the operator-controlled environment certifies them.
 
-Rows are the gap map's A1–A19 plus the protocol spec's A20–A21. Every cited test asserts its row's
+Rows are the gap map's A1–A19, the protocol spec's A20–A21, and A22–A24 from the candidate-2
+independent review (wf_d725935a-7ed, B1–B3). Every cited test asserts its row's
 SPECIFIC refusal (the reason, not only a non-pass), and runs in the fabric/psv/loop suites or in
 `gate.sh`. `scripts/psv_matrix_check.py` fails when a row is missing, cites no test, or cites a
 test that does not exist (`file::function`), so this table cannot silently rot.
@@ -34,6 +35,9 @@ depth, and each has its own test.
 | A19 | completion key reachable by the candidate | runner custody: K on stdin then EOF, cleared env, uid drop, secret 0400 | `STDIN-SAW:[]`; `Permission denied` | `crates/axon-psv/tests/runner.rs::neither_the_secret_nor_the_key_reaches_candidate_code_or_the_output`, `scripts/psv_guest_boot_test.sh` |
 | A20 | Fabric signing key readable by an agent | trust preflight (real read attempts under each UID) | `read-key` refused for agents; readable by fabric only | `scripts/test_trust_root_preflight.sh`, `crates/axon-fabric/tests/protected_host.rs::the_host_signer_key_must_be_private_and_match_its_pin` |
 | A21 | caller `--linux-*` / registry flags in protected mode | `submit` refuses, by flag name | `… is not accepted` | `crates/axon-fabric/tests/protected_host.rs::every_caller_protected_flag_is_refused_by_name`, `crates/axon-fabric/tests/trust_root.rs::a_caller_cannot_choose_the_protected_trust_root` |
+| A22 | candidate supplies (or sinks) the acceptance test | interpreter: a sealed module's `@[test]` is never collected; runner: `--exact` selects only the registered test; Fabric and PCI paths | `t_cand_probe` never runs; no verdict (`Unknown`), never `Passed`; a failing suite sibling never runs | `crates/axon-core/tests/psv_test_selection.rs::a_sealed_candidates_own_test_is_never_collected`, `crates/axon-core/tests/psv_test_selection.rs::exact_selects_only_the_named_test`, `crates/axon-psv/tests/runner.rs::a_candidate_cannot_supply_the_registered_test`, `crates/axon-psv/tests/runner.rs::a_suite_sibling_does_not_run_beside_the_registered_test`, `crates/axon-fabric/tests/psv_dispatch.rs::a_candidate_cannot_supply_the_acceptance_test_through_fabric`, `crates/axon-fabric/tests/check_effects.rs::a_candidate_test_named_like_the_suites_cannot_pass_for_it` |
+| A23 | caller swaps the run dir under its `--state` before launch | Fabric: inputs re-materialized from the store into a private 0700 dir; `prepare` requires tree == version; manifest verify (tree_digest == version); guest input refuses symlinks and omitted entries | the swap changes nothing; `tree_digest … is not its`; `symlink`; `which the digest omits` | `crates/axon-fabric/tests/psv_dispatch.rs::a_run_dir_swapped_under_the_callers_state_changes_nothing`, `crates/axon-psv/tests/protocol.rs::a_tree_digest_must_be_the_version_it_names`, `crates/axon-psv/tests/protocol.rs::inputs_with_links_or_omitted_entries_are_refused` |
+| A24 | protected claim whose digests do not join the documents | intake: `axon-psv-evidence/1` bundle required and joined (manifest and observation bytes, observer signature under the operator root, observation↔manifest, manifest↔request/receipt, suite, argv); a bundle for a non-protected receipt is refused | `carries no axon-psv-evidence bundle`; `the launch manifest is`; `not a trusted evidence issuer`; `does not claim` | `crates/axon-loop/tests/intake.rs::each_protected_join_is_verified_over_the_documents`, `crates/axon-fabric/tests/psv_dispatch.rs::a_verified_observation_makes_the_guest_verdict_protected` |
 
 ## What these rows do NOT prove (PROTECTED_ONLY)
 

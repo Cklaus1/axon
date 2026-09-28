@@ -330,3 +330,60 @@ These are recorded here rather than edited into the frozen text above.
    issued before the manifest is built, and consumed only after every other check holds. A refused
    observation refuses the launch.
 
+
+The next six come from the independent review of candidate 2 (wf_d725935a-7ed, verdict
+DO_NOT_REGISTER): blockers B1–B3 and the majors. They are the negative-matrix rows A22–A24.
+
+5. **Only the operator's test is collected (B1).** §4 said the runner runs "the named test". Two
+   gaps remained. A `--filter` substring also ran suite siblings, and a candidate's own `@[test]`
+   could be collected under the registered name. Now, under `--seal`, `axon test` never collects a
+   `@[test]` whose span lies in a sealed module (the candidate), and `--exact` selects the one
+   registered name and nothing else. The runner always passes both. `AXON_PATH` is `suite:candidate`,
+   so the suite's modules win name resolution.
+6. **Inputs come from the store, never from the run dir (B3).** §4's inputs were read from the run
+   dir under the caller-supplied `--state`, which the caller owns and could swap before launch.
+   Fabric now re-materializes the candidate (the request's WorkspaceVersion) and the suite (its
+   registered version) from the content-addressed store, re-verifying every blob. They go into a
+   new 0700 dir `<out_root>/<jail>.psv-inputs/{candidate,check}`, which is removed on every path.
+   `prepare` requires each tree to BE its version. `LaunchManifest::verify` requires
+   `tree_digest == workspace_version` for the candidate and `tree_digest == version` for the suite.
+   The guest's `check_inputs` refuses a symlink, and any entry the digest omits (`.git`, `.micode`),
+   so the bytes that run are exactly the bytes digested.
+7. **`verifier_sha256` is in the manifest and the observation (major).** Both schemas gain it, taken
+   from `readiness::verifier_identity()`. The observation joins it like every other field (13 join
+   pairs). The observation is read ONCE and verified as bytes, so the document checked is the
+   document joined.
+8. **The secret dies with the launch; verify inherits nothing (majors).** The job drive's source,
+   including `completion-secret`, is scrubbed the moment the launcher returns, before any further
+   child runs. The `--verify-result` step runs with `env_clear()` and a fixed `PATH`, like the launch
+   itself.
+9. **A protected claim carries its documents: `axon-psv-evidence/1` (B2).** §9's joins were checked
+   over DIGESTS the receipt names, and nothing held the documents those digests name. Fabric now
+   returns a bundle `{schema, launch_manifest, observation, observation_signature}`: the manifest's
+   canonical bytes and the observation's exact bytes, with its detached observer-domain signature.
+   Intake requires the bundle for every protected claim, and refuses one offered for a receipt that
+   does not claim protection. `protected_evidence::check_bundle` then verifies, in order:
+   - `check`;
+   - the manifest bytes against the receipt's `launch-manifest-sha256`, and
+     `LaunchManifest::verify`;
+   - the observation bytes against `preflight-observation-sha256`;
+   - the observation signature under the OPERATOR's observer root (O2), and that it names that key;
+   - the observation's join to the manifest;
+   - the manifest's join to the request and receipt: operation, task, trial and attempt; the
+     candidate (both the request's and the receipt's); the test (argv[1]); the guest kernel, rootfs,
+     axon and init; and the qualification;
+   - the receipt's `check-suite:` equals `{id}@{version}#{entry}`, and argv[0] equals
+     `check:{id}`.
+
+   The bundle is stored in CAS beside the intake record (`verification_psv_evidence_ref`). MiCode
+   keeps it beside the receipt (`psv_evidence_ref`).
+10. **A verdict names its one matched check (major).** For Passed or Failed, the PSV receipt sets
+    `matched_checks = 1`, which the receipt contract requires for a pass.
+
+Recorded follow-ups, not fixed in candidate 3:
+- Safety-monitor keys and `protected_scopes` are still held in the store.
+- Admission does not re-run `protected_evidence::check`.
+- Candidate output can splice result lines (MINOR).
+- A launch with no observer proceeds as `guest-unobserved` (MINOR).
+- The ownership checks on `nonce_store` and `out_root` are missing (MINOR).
+- Custodian UID separation is protected-only.

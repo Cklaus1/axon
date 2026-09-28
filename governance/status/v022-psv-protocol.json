@@ -60,6 +60,25 @@
         "admission re-derivation does not re-run protected_evidence::check"
       ]
     },
-    "readiness_credit": "none"
+    "readiness_credit": "none",
+    "candidate_3": {
+      "state": "fixes landed in dev; not yet frozen",
+      "axon_dev_head_at_fixes": "c99b9ed1",
+      "micode_dev_head": "63fe711b",
+      "fixed": [
+        "B1",
+        "B2",
+        "B3",
+        "all five majors_to_fix"
+      ],
+      "spec": "v022-psv-protocol.md amendments 5-10",
+      "matrix": "A22-A24 added (24 rows)",
+      "mutations": "M219-M238 20/20 killed against passing baselines; M176 retired as equivalent under --exact",
+      "pending": [
+        "guest image rebuild (axon + axon-psv-runner changed) and real-guest boot",
+        "frozen run with fresh target dirs",
+        "ONE independent review"
+      ]
+    }
   }
 }

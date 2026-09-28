@@ -2,7 +2,7 @@
 """Check governance/specs/v022-psv-negative-matrix.md against the tree.
 
 FAILS when:
-* any row A1..A21 is missing;
+* any row A1..A24 is missing;
 * a row cites no test;
 * a cited `path::function` names a file that does not exist, or a function
   that file does not define as a `fn`;
@@ -27,7 +27,7 @@ def main():
         if m:
             rows[m.group(1)] = line
     bad = []
-    for n in range(1, 22):
+    for n in range(1, 25):
         k = f"A{n}"
         if k not in rows:
             bad.append(f"{k}: row missing")
@@ -52,7 +52,7 @@ def main():
             print("  " + b)
         return 1
     n = sum(len(re.findall(r"`[^`]+`", rows[k].split("|")[-2])) for k in rows)
-    print(f"psv_matrix_check: PASS — 21 rows, {n} test citations, all resolve")
+    print(f"psv_matrix_check: PASS — 24 rows, {n} test citations, all resolve")
     return 0
 
 
