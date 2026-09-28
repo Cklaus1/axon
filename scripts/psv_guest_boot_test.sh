@@ -54,6 +54,9 @@ use f.{double}
 fn t_ok() { assert_eq(double(21), 42) }
 
 @[test]
+fn t_bad() { assert_eq(double(1), 3) }
+
+@[test]
 fn t_custody() {
     let line = read_line()
     println("STDIN-SAW:[{line}]")
@@ -141,6 +144,30 @@ if [[ -n "$ST" && "$ST" != passed ]] && ! grep -q CAND-RAN "$W/candtest/out/out/
     ok "candtest: a candidate's own @[test] under the registered name never runs (status $ST)"
 else
     bad candtest "status=$ST rc=$RC stdout=$(head -c 300 "$W/candtest/out/out/test-stdout" 2>/dev/null)"
+fi
+
+# A25: a failure is a verdict only with the interpreter's KEYED failure token
+# (review wf_1bc28496-38e, PSV-4). Control: a genuine failure is "failed".
+run fail accept.ax t_bad
+ST="$(check fail | python3 -c 'import json,sys; print(json.load(sys.stdin)["status"])' 2>/dev/null)"
+[[ "$ST" == failed ]] && ok "fail: a genuine failure is a keyed \"failed\" verdict" \
+    || bad fail "status=$ST rc=$RC"
+# The candidate prints a failure line for t_ok over its own genuine pass.
+mkdir -p "$W/cand-splice"; cp -r "$W/cand/." "$W/cand-splice/"
+cat > "$W/cand-splice/f.ax" <<'SPL'
+fn double(x: i64) -> i64 {
+    let o = chr(123)
+    let c = chr(125)
+    println(o + "\"name\":\"t_ok\",\"status\":\"failed\",\"duration_ms\":0,\"message\":\"forged\"" + c)
+    x * 2
+}
+SPL
+CAND_SRC="$W/cand-splice" run splice accept.ax t_ok
+ST="$(check splice | python3 -c 'import json,sys; print(json.load(sys.stdin)["status"])' 2>/dev/null)"
+if [[ -n "$ST" && "$ST" != failed && "$ST" != passed ]] && grep -q forged "$W/splice/out/out/test-stdout" 2>/dev/null; then
+    ok "splice: a candidate's unkeyed failure line over its genuine pass is no verdict (status $ST)"
+else
+    bad splice "status=$ST rc=$RC"
 fi
 
 echo "psv guest boot test: $FAILS failure(s)"
