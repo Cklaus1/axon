@@ -54,6 +54,8 @@ fn on_backends(v: &mut Value, exec: bool, verif: bool) {
                 ("guest-verdict-sha256", "c"),
                 ("guest-kernel-sha256", "1"),
                 ("guest-rootfs-sha256", "2"),
+                ("guest-init-sha256", "3"),
+                ("qualification-sha256", "4"),
             ] {
                 refs.push(json!(format!("{p}:{}", c.repeat(64))));
             }

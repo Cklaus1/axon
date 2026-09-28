@@ -236,6 +236,8 @@ fn exec_axon_test(
         .arg("--json")
         .arg("--filter")
         .arg(&m.suite.test)
+        // Exactly the registered test: no suite sibling runs beside it.
+        .arg("--exact")
         .arg("--completion-key-stdin")
         .arg("--seal")
         .arg(&cfg.candidate)

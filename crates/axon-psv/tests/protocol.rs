@@ -15,6 +15,7 @@ fn manifest() -> LaunchManifest {
         attempt_id: "attempt-1".into(),
         backend_profile: PROTECTED_PROFILE.into(),
         fabric_revision: "f".repeat(40),
+        verifier_sha256: "d".repeat(64),
         qualification_sha256: "1".repeat(64),
         host_config_sha256: "2".repeat(64),
         launcher_sha256: "3".repeat(64),
@@ -32,12 +33,13 @@ fn manifest() -> LaunchManifest {
             version: format!("acf1:{}", "b".repeat(64)),
             entry: "accept.ax".into(),
             test: "t_ok".into(),
-            tree_digest: String::new(),
+            // B3: a manifest's tree digest IS its version.
+            tree_digest: format!("acf1:{}", "b".repeat(64)),
             registry_sha256: "c".repeat(64),
         },
         candidate: CandidateRef {
             workspace_version: format!("acf1:{}", "d".repeat(64)),
-            tree_digest: String::new(),
+            tree_digest: format!("acf1:{}", "d".repeat(64)),
         },
         completion: Completion {
             scheme: COMPLETION_SCHEME.into(),
@@ -251,4 +253,46 @@ fn the_completion_binding_names_every_identity_explicitly() {
             "launch_manifest_digest": "MD",
         })
     );
+}
+
+/// B3: a manifest whose tree digest is not the version it names is refused by
+/// the guest, whatever else is right.
+#[test]
+fn a_tree_digest_must_be_the_version_it_names() {
+    for edit in [
+        |m: &mut LaunchManifest| m.candidate.tree_digest = format!("acf1:{}", "9".repeat(64)),
+        |m: &mut LaunchManifest| m.suite.tree_digest = format!("acf1:{}", "9".repeat(64)),
+    ] {
+        let mut m = manifest();
+        edit(&mut m);
+        let e = LaunchManifest::verify(&m.bytes(), &m.digest()).unwrap_err();
+        assert!(e.contains("tree_digest") && e.contains("is not its"), "{e}");
+    }
+}
+
+/// Review wf_d725935a-7ed: a guest input holds no symlink and nothing the
+/// digest omits (.git/.micode), so the bytes that run are the bytes digested.
+#[test]
+fn inputs_with_links_or_omitted_entries_are_refused() {
+    let d = tempfile::tempdir().unwrap();
+    let (cand, suite) = (d.path().join("cand"), d.path().join("suite"));
+    tree(&cand, &[("f.ax", "fn main() {}\n")]);
+    tree(&suite, &[("accept.ax", "@[test] fn t_ok() {}\n")]);
+    let q = Quota::default();
+    let mut m = manifest();
+    m.candidate.tree_digest = axon_workspace_recipe::tree_version_ref(&cand, &q).unwrap();
+    m.suite.tree_digest = axon_workspace_recipe::tree_version_ref(&suite, &q).unwrap();
+    assert!(check_inputs(&m, &cand, &suite, &q).is_ok());
+
+    std::os::unix::fs::symlink("f.ax", cand.join("g.ax")).unwrap();
+    let (_, e) = check_inputs(&m, &cand, &suite, &q).unwrap_err();
+    assert!(e.contains("symlink"), "{e}");
+    std::fs::remove_file(cand.join("g.ax")).unwrap();
+
+    tree(
+        &suite,
+        &[(".git/accept.ax", "@[test] fn t_ok() { assert(true) }\n")],
+    );
+    let (_, e) = check_inputs(&m, &cand, &suite, &q).unwrap_err();
+    assert!(e.contains(".git") && e.contains("omits"), "{e}");
 }

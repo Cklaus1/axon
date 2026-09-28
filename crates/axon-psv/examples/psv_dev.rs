@@ -60,6 +60,7 @@ fn make_job(args: &[String]) {
         attempt_id: arg(args, "--attempt").unwrap_or_else(|| "attempt-1".into()),
         backend_profile: PROTECTED_PROFILE.into(),
         fabric_revision: "0".repeat(40),
+        verifier_sha256: "d".repeat(64),
         qualification_sha256: z('0'),
         host_config_sha256: z('0'),
         launcher_sha256: z('0'),

@@ -111,6 +111,47 @@ pub struct PrepareInputs<'a> {
     pub observation_nonce: &'a str,
 }
 
+/// Where [`private_inputs`] puts this operation's inputs.
+pub fn private_inputs_dir(
+    lx: &crate::backend::LinuxProfileConfig,
+    req: &ComputeRequest,
+) -> PathBuf {
+    lx.out_root.join(format!(
+        "{}.psv-inputs",
+        crate::backend::jail_id(req.operation_id.as_str())
+    ))
+}
+
+/// B3: materialize the candidate (the request's WorkspaceVersion) and the
+/// suite (its registered version) from the content-addressed store — every
+/// blob re-verified against its hash — into a NEW, Fabric-private (0700) dir
+/// `<out_root>/<op>.psv-inputs/{candidate,check}`. Nothing is read from the
+/// run dir under the caller's `--state`.
+pub fn private_inputs(
+    lx: &crate::backend::LinuxProfileConfig,
+    state_dir: &Path,
+    tenant: &axon_loop_contracts::TenantId,
+    req: &ComputeRequest,
+    suite_version: &axon_loop_contracts::Acf1Ref,
+) -> Result<PathBuf, String> {
+    use std::os::unix::fs::DirBuilderExt;
+    let dir = private_inputs_dir(lx, req);
+    std::fs::create_dir_all(&lx.out_root).map_err(|e| format!("out_root: {e}"))?;
+    std::fs::DirBuilder::new()
+        .mode(0o700)
+        .create(&dir)
+        .map_err(|e| format!("private inputs dir {}: {e}", dir.display()))?;
+    let store = crate::workspace::WorkspaceStore::open(state_dir, tenant)
+        .map_err(|e| format!("workspace store: {e}"))?;
+    store
+        .materialize(&req.workspace_version_ref, &dir.join("candidate"), true)
+        .map_err(|e| format!("candidate {}: {e}", req.workspace_version_ref))?;
+    store
+        .materialize(suite_version, &dir.join("check"), true)
+        .map_err(|e| format!("suite {suite_version}: {e}"))?;
+    Ok(dir)
+}
+
 /// Build this attempt's launch manifest and secret, and write the job drive's
 /// two files (`launch-manifest.json`, `completion-secret` 0400).
 pub fn prepare(req: &ComputeRequest, i: &PrepareInputs<'_>) -> Result<Launch, String> {
@@ -124,6 +165,24 @@ pub fn prepare(req: &ComputeRequest, i: &PrepareInputs<'_>) -> Result<Launch, St
         axon_workspace_recipe::tree_version_ref(d, &quota).map_err(|e| format!("{what} tree: {e}"))
     };
     let absent = || "0".repeat(64);
+    // B3: each tree IS the version the receipt will name — never merely a
+    // digest of whatever bytes sit in a directory.
+    let (cand_tree, suite_tree) = (
+        tree("candidate", i.candidate_dir)?,
+        tree("suite", i.suite_dir)?,
+    );
+    if cand_tree != req.workspace_version_ref.as_str() {
+        return Err(format!(
+            "candidate tree is {cand_tree}, not the requested {}",
+            req.workspace_version_ref
+        ));
+    }
+    if suite_tree != i.suite_version {
+        return Err(format!(
+            "suite tree is {suite_tree}, not the registered {}",
+            i.suite_version
+        ));
+    }
     let manifest = LaunchManifest {
         schema: LAUNCH_MANIFEST_SCHEMA.into(),
         operation_id: req.operation_id.as_str().into(),
@@ -132,6 +191,10 @@ pub fn prepare(req: &ComputeRequest, i: &PrepareInputs<'_>) -> Result<Launch, St
         attempt_id: req.attempt_id.as_str().into(),
         backend_profile: PROTECTED_PROFILE.into(),
         fabric_revision: env!("AXON_FABRIC_GIT_SHA").into(),
+        verifier_sha256: crate::readiness::verifier_identity()["sha256"]
+            .as_str()
+            .unwrap_or("unknown")
+            .to_string(),
         qualification_sha256: q.evidence_sha256.clone(),
         host_config_sha256: i
             .host
@@ -152,7 +215,7 @@ pub fn prepare(req: &ComputeRequest, i: &PrepareInputs<'_>) -> Result<Launch, St
             version: i.suite_version.into(),
             entry: i.entry.into(),
             test: i.test.into(),
-            tree_digest: tree("suite", i.suite_dir)?,
+            tree_digest: suite_tree,
             registry_sha256: i
                 .host
                 .map(|h| h.suite_registry_sha256.clone())
@@ -160,7 +223,7 @@ pub fn prepare(req: &ComputeRequest, i: &PrepareInputs<'_>) -> Result<Launch, St
         },
         candidate: CandidateRef {
             workspace_version: req.workspace_version_ref.as_str().into(),
-            tree_digest: tree("candidate", i.candidate_dir)?,
+            tree_digest: cand_tree,
         },
         completion: Completion {
             scheme: COMPLETION_SCHEME.into(),
@@ -211,6 +274,13 @@ impl Launch {
     pub fn scrub(&self) {
         let _ = std::fs::remove_dir_all(&self.job_dir);
     }
+    /// Remove the whole private inputs dir (candidate, suite, job,
+    /// observation) once the verdict is derived.
+    pub fn discard(&self) {
+        if let Some(d) = self.job_dir.parent() {
+            let _ = crate::workspace::remove_tree(d);
+        }
+    }
 }
 
 /// Fabric's verdict for one guest run.
@@ -246,6 +316,8 @@ pub fn derive(
         format!("guest-kernel-sha256:{}", m.guest.kernel_sha256),
         format!("guest-rootfs-sha256:{}", m.guest.rootfs_sha256),
         format!("guest-axon-sha256:{}", m.guest.axon_sha256),
+        format!("guest-init-sha256:{}", m.guest.init_sha256),
+        format!("qualification-sha256:{}", m.qualification_sha256),
         // The CANONICAL suite reference, exactly as the local path records it:
         // operator pins and task acceptance compare it byte for byte
         // (`axon_loop::intake::check_pins`); the test is the request's argv.

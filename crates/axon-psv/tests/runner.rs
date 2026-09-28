@@ -34,7 +34,9 @@ fn axon() -> PathBuf {
     p
 }
 
-const CANDIDATE: &str = "fn double(x: i64) -> i64 { x * 2 }\n";
+/// It also defines its OWN `@[test]` — which the guest must never collect (B1).
+const CANDIDATE: &str =
+    "fn double(x: i64) -> i64 { x * 2 }\n\n@[test]\nfn t_cand_probe() { assert(true) }\n";
 /// A candidate module that SHADOWS the operator suite's helper if the module
 /// path ever puts the candidate first.
 const PLANTED_HELPER: &str = "fn want() -> i64 { 0 }\n";
@@ -144,6 +146,7 @@ fn fixture_at(entry: &str, test: &str, drop: bool) -> Fx {
         attempt_id: "attempt-1".into(),
         backend_profile: PROTECTED_PROFILE.into(),
         fabric_revision: "f".repeat(40),
+        verifier_sha256: "d".repeat(64),
         qualification_sha256: "1".repeat(64),
         host_config_sha256: "2".repeat(64),
         launcher_sha256: "3".repeat(64),
@@ -158,14 +161,14 @@ fn fixture_at(entry: &str, test: &str, drop: bool) -> Fx {
         policy_sha256: "a".repeat(64),
         suite: SuiteRef {
             id: "acceptance".into(),
-            version: "acf1:v".into(),
+            version: axon_workspace_recipe::tree_version_ref(&suite, &q).unwrap(),
             entry: entry.into(),
             test: test.into(),
             tree_digest: axon_workspace_recipe::tree_version_ref(&suite, &q).unwrap(),
             registry_sha256: "c".repeat(64),
         },
         candidate: CandidateRef {
-            workspace_version: "acf1:c".into(),
+            workspace_version: axon_workspace_recipe::tree_version_ref(&cand, &q).unwrap(),
             tree_digest: axon_workspace_recipe::tree_version_ref(&cand, &q).unwrap(),
         },
         completion: Completion {
@@ -374,18 +377,29 @@ fn a_forged_or_duplicated_result_line_is_not_a_pass() {
     assert_eq!(report_for(ok, "t_o").0, GuestStatus::Unknown, "substring");
 }
 
-/// Passed requires exit 0 (as on the host): the named test passing while a
-/// sibling the substring filter also ran fails is Unknown, never a pass.
+/// With `--exact`, only the registered test runs: a substring sibling that
+/// FAILS (`t_pair_breaks` for `t_pair`) never runs beside it, so it can neither
+/// sink an honest candidate nor stand in for the named test.
 #[test]
-fn a_pass_with_a_failing_run_is_unknown() {
+fn a_suite_sibling_does_not_run_beside_the_registered_test() {
     let fx = fixture("t_pair", false);
     let v = run(&fx.cfg);
-    assert_ne!(v.exit_code, Some(0), "{v:?}");
-    assert_eq!(
-        v.report.as_ref().unwrap().passed,
-        vec!["t_pair".to_string()]
-    );
+    assert_eq!(v.status, GuestStatus::Passed, "{v:?}");
+    assert_eq!(v.exit_code, Some(0));
+    let r = v.report.unwrap();
+    assert_eq!(r.passed, vec!["t_pair".to_string()]);
+    assert!(r.failed.is_empty(), "{r:?}");
+}
+
+/// B1: a candidate's own `@[test]` is never collected — even under the very
+/// name the manifest registers (the suite defines no such test). It yields no
+/// verdict, never a Passed with a genuine token.
+#[test]
+fn a_candidate_cannot_supply_the_registered_test() {
+    let fx = fixture("t_cand_probe", false);
+    let v = run(&fx.cfg);
     assert_eq!(v.status, GuestStatus::Unknown, "{v:?}");
+    assert!(v.report.unwrap().passed.is_empty());
 }
 
 /// The operator suite's own modules come first on the module path: a

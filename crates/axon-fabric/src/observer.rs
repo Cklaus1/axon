@@ -167,14 +167,17 @@ pub fn observe(
     if cfg.trust.operator_owned {
         crate::backend::check_operator_owned(&cfg.trust.dir)?;
     }
+    // ONE read: the bytes whose signature is verified are the bytes parsed,
+    // joined and digested (review wf_d725935a-7ed).
+    let bytes = std::fs::read(&rec).map_err(|e| format!("observation: {e}"))?;
     // The OBSERVER domain, under the OBSERVER root (RULE:authority-domain).
-    let signer = crate::backend::verify_operator_evidence(
-        &rec,
+    let signer = crate::backend::verify_operator_evidence_bytes(
+        "observation",
+        &bytes,
         &work.join("observation.json.sig"),
         &cfg.trust.dir,
         TrustAuthority::Observer,
     )?;
-    let bytes = std::fs::read(&rec).map_err(|e| format!("observation: {e}"))?;
     let o: PreflightObservation =
         serde_json::from_slice(&bytes).map_err(|e| format!("observation is malformed: {e}"))?;
     if o.observer_key_id != signer {

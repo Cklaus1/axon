@@ -150,6 +150,12 @@ fn an_operator_suite_passes_through_the_guest_path_as_guest_unobserved() {
         "{:?}",
         s.reason
     );
+    // The receipt is a valid acf-execution-receipt: intake parses it
+    // (matched_checks >= 1 for a pass; review wf_d725935a-7ed).
+    let rt = serde_json::to_string(&s.receipt).unwrap();
+    let back: axon_loop_contracts::ExecutionReceipt =
+        axon_loop_contracts::parse(&rt).expect("the guest-path receipt parses as a contract");
+    assert_eq!(back.matched_checks, Some(1));
     // Never protected without an observation (A14).
     assert_eq!(class(&s), "guest-unobserved");
     assert_eq!(
@@ -340,15 +346,51 @@ fn a_candidate_changed_under_the_guest_is_refused_there() {
     assert!(r.contains("the guest refused: candidate tree is"), "{r}");
 }
 
-/// Passed needs exit 0: the named test passing (with a VALID token) while a
-/// sibling the substring filter also ran fails is Unknown.
+/// Passed needs exit 0: a genuine pass (VALID token) whose run is reported
+/// as exiting non-zero is Unknown.
 #[test]
 fn a_valid_token_with_a_failing_run_is_not_a_pass() {
     let w = World::new();
-    let s = w.submit_with(w.lx("", ""), "op-psv-pair", "t_psv_pair");
+    let s = w.submit_with(w.lx("exit", ""), "op-psv-exit", "t_psv_ok");
     assert_eq!(s.receipt.verification, ReceiptVerification::Unknown);
     let r = s.reason.unwrap();
     assert!(r.contains("passed but the run exited"), "{r}");
+}
+
+/// B1 through the Fabric: the candidate fixture defines its own `@[test]
+/// fn t_ok`; naming it as the acceptance test yields NO verdict (the guest
+/// never collects a candidate's test), never a Passed.
+#[test]
+fn a_candidate_cannot_supply_the_acceptance_test_through_fabric() {
+    let w = World::new();
+    let s = w.submit_with(w.lx("", ""), "op-psv-candtest", "t_ok");
+    assert_eq!(
+        s.receipt.verification,
+        ReceiptVerification::Unknown,
+        "{:?}",
+        s.reason
+    );
+    assert!(s.reason.unwrap().contains("produced no verdict"));
+}
+
+/// The launcher's `--verify-result` runs with a CLEARED environment: nothing
+/// of the caller's (PATH, …) reaches the pinned launcher (review
+/// wf_d725935a-7ed).
+#[test]
+fn the_verify_step_inherits_nothing_from_the_caller() {
+    std::env::set_var("AXON_PSV_ENV_PROBE", "leak");
+    let w = World::new();
+    let lx = w.lx("", "");
+    let out_root = lx.out_root.clone();
+    let s = w.submit_with(lx, "op-psv-env", "t_psv_ok");
+    assert_eq!(
+        s.receipt.verification,
+        ReceiptVerification::Passed,
+        "{:?}",
+        s.reason
+    );
+    let seen = std::fs::read_to_string(out_root.join("op-psv-env/verify-env-leaked")).unwrap();
+    assert_eq!(seen, "no");
 }
 
 /// A GENUINE, valid verdict from a launch the launcher could not bind (exit
@@ -423,6 +465,7 @@ o = {{"schema": "axon-preflight-observation/1", "observer_key_id": kid,
      "host_profile": m["backend_profile"], "fabric_revision": m["fabric_revision"],
      "firecracker_sha256": m["firecracker_sha256"], "launcher_sha256": m["launcher_sha256"],
      "host_config_sha256": m["host_config_sha256"], "guest": m["guest"],
+     "verifier_sha256": m["verifier_sha256"],
      "suite_registry_sha256": m["suite"]["registry_sha256"], "policy_sha256": m["policy_sha256"],
      "intended_launch_manifest_sha256": hashlib.sha256(raw).hexdigest()}}
 if mode == "stale": o["observed_at"] = "2020-01-01T00:00:00Z"
@@ -431,6 +474,7 @@ if mode == "kernel": o["guest"] = dict(o["guest"], kernel_sha256="9" * 64)
 if mode == "epoch": o["epoch"] = 7
 if mode == "nonce-forged": o["nonce"] = "ab" * 16
 if mode == "claims-other-key": o["observer_key_id"] = "ed25519:0000000000000000"
+if mode == "verifier": o["verifier_sha256"] = "7" * 64
 json.dump(o, open(out, "w"))
 PY
 {fabric} sign-evidence --record "$O/observation.json" --key {key} --authority {authority} >/dev/null || exit 1
@@ -538,6 +582,8 @@ fn every_defective_observation_refuses_the_launch() {
             "but is signed by",
         ),
         ("exit", "observer", "observer", "observer exited"),
+        // §7: the observer measures the INSTALLED verifier; another one refuses.
+        ("verifier", "observer", "observer", "verifier_sha256"),
     ] {
         let w = World::new();
         let d = w.env.dir.path().to_path_buf();
@@ -649,4 +695,50 @@ fn a_test_the_suite_does_not_define_has_no_verdict() {
     assert_eq!(s.receipt.verification, ReceiptVerification::Unknown);
     let r = s.reason.unwrap();
     assert!(r.contains("produced no verdict"), "{r}");
+}
+
+/// B3 (review wf_d725935a-7ed, the reviewer's own attack): between
+/// materialization and launch, the RUN DIR under the caller's --state is
+/// rewritten so the failing test passes. The launch never reads it — the
+/// inputs are re-materialized from the verified store into a private dir —
+/// so the verdict is still Failed.
+#[test]
+fn a_run_dir_swapped_under_the_callers_state_changes_nothing() {
+    fn swap(cfg: &axon_fabric::SubmitConfig) {
+        let runs = cfg.state_dir.join("runs");
+        for e in std::fs::read_dir(&runs).unwrap().flatten() {
+            let p = e.path().join("check/accept.ax");
+            if p.exists() {
+                let _ = std::fs::set_permissions(
+                    &p,
+                    std::os::unix::fs::PermissionsExt::from_mode(0o644),
+                );
+                let _ = std::fs::set_permissions(
+                    p.parent().unwrap(),
+                    std::os::unix::fs::PermissionsExt::from_mode(0o755),
+                );
+                std::fs::write(
+                    &p,
+                    "mod f\nuse f.{double}\n\n@[test]\nfn t_psv_fail() { assert(true) }\n",
+                )
+                .unwrap();
+            }
+        }
+    }
+    let w = World::new();
+    let mut cfg = w.env.cfg(0);
+    cfg.linux = Some(w.lx("", ""));
+    cfg.pre_launch_hook = Some(swap);
+    let s = submit(
+        &w.request("op-psv-b3", "check:acc", "t_psv_fail")
+            .to_string(),
+        &cfg,
+    )
+    .unwrap();
+    assert_eq!(
+        s.receipt.verification,
+        ReceiptVerification::Failed,
+        "{:?}",
+        s.reason
+    );
 }

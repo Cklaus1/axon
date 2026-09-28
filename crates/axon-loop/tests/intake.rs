@@ -1815,6 +1815,8 @@ fn protected_receipt(mut rc: Value) -> Value {
         ("guest-verdict-sha256", "c"),
         ("guest-kernel-sha256", "1"),
         ("guest-rootfs-sha256", "2"),
+        ("guest-init-sha256", "3"),
+        ("qualification-sha256", "4"),
     ] {
         refs.push(serde_json::json!(format!("{p}:{}", c.repeat(64))));
     }

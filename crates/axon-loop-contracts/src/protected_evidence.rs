@@ -23,13 +23,15 @@ use crate::{ComputeRequest, ExecutionReceipt};
 pub const PROTECTED_CLASS_REF: &str = "evidence-class:protected";
 
 /// The references a protected receipt must carry exactly once, each a sha256.
-pub const REQUIRED_DIGEST_REFS: [&str; 6] = [
+pub const REQUIRED_DIGEST_REFS: [&str; 8] = [
     "launch-manifest-sha256:",
     "preflight-observation-sha256:",
     "guest-verdict-sha256:",
     "guest-kernel-sha256:",
     "guest-rootfs-sha256:",
     "guest-axon-sha256:",
+    "guest-init-sha256:",
+    "qualification-sha256:",
 ];
 
 /// The request's `executable_digest` for executable `id` whose bytes hash to

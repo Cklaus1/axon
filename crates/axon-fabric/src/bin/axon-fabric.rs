@@ -330,7 +330,16 @@ fn sign_evidence(a: &Args) {
 fn psv_host_guest() {
     use axon_psv::runner::{run, RunnerConfig};
     let args: Vec<String> = std::env::args().skip(2).collect();
-    if args.iter().any(|a| a == "--verify-result") {
+    if let Some(i) = args.iter().position(|a| a == "--verify-result") {
+        // Record what environment the verify step was given (the Fabric
+        // must clear it: review wf_d725935a-7ed).
+        if let Some(dir) = args.get(i + 1) {
+            let leaked = std::env::var_os("AXON_PSV_ENV_PROBE").is_some();
+            let _ = std::fs::write(
+                PathBuf::from(dir).join("verify-env-leaked"),
+                if leaked { "yes" } else { "no" },
+            );
+        }
         std::process::exit(0);
     }
     let get = |n: &str| {
@@ -436,6 +445,8 @@ fn psv_host_guest() {
             v["status"] = serde_json::json!("passed");
             v["exit_code"] = serde_json::json!(0);
         }
+        // The run's exit, reported non-zero after a genuine pass.
+        "exit" => v["exit_code"] = serde_json::json!(3),
         "candidate-changed" | "suite-changed" | "unbound" => {}
         other => panic!("__psv-host-guest: unknown tamper {other}"),
     }

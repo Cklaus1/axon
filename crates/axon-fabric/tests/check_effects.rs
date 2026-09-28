@@ -614,11 +614,11 @@ fn a_candidate_test_named_like_the_suites_cannot_pass_for_it() {
     );
     let rep = sub.check_report.unwrap();
     assert_eq!(rep["failed"], json!(["hidden_completion"]));
-    assert_eq!(
-        rep["passed"],
-        json!(["hidden_completion_ok"]),
-        "the candidate's test ran"
-    );
+    // Since PSV review wf_d725935a-7ed (B1) a sealed candidate's own @[test]
+    // is never collected: it neither stands in for the named check nor runs
+    // beside it. (It used to run; the exact-name rule already kept it from
+    // counting.)
+    assert_eq!(rep["passed"], json!([]), "the candidate's test did NOT run");
     assert_eq!(
         sub.receipt.matched_checks,
         Some(1),
@@ -630,12 +630,18 @@ fn a_candidate_test_named_like_the_suites_cannot_pass_for_it() {
 /// check passes, but another test the substring filter also runs fails, so
 /// the run exits nonzero: that is not evidence of a pass, and the receipt
 /// says Unknown. Mutation: disable the exit-0 rule in `local_receipt` → red.
+///
+/// The failing sibling is the SUITE's own (`hidden_completion_z`): since PSV
+/// review wf_d725935a-7ed a sealed candidate's @[test] is never collected, so
+/// it can no longer serve as the vehicle this test used before.
 #[test]
 fn a_named_pass_in_a_run_that_exits_nonzero_is_not_a_pass() {
-    let (s, r) = suite_with_helper(&[(
-        "f.ax",
-        "fn double(n: i64) -> i64 { n * 2 }\n@[test]\nfn hidden_completion_z() { assert(false) }\n",
-    )]);
+    let s = with_suite(
+        "mod f\nuse f.{double}\n\n@[test]\nfn hidden_completion() { assert_eq(double(21), 42) }\n\n\
+         @[test]\nfn hidden_completion_z() { assert(false) }\n",
+        "hidden",
+    );
+    let r = suite_request(&s, "op-exit0");
     let sub = submit(&r.to_string(), &s.env.cfg(0)).unwrap();
     let rep = sub.check_report.clone().unwrap();
     assert_eq!(

@@ -1381,35 +1381,49 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
                 .expect("built when the profile was selected");
             let q = qualified.as_ref().expect("qualified at dispatch");
             let suite = target.suite.as_ref().expect("checked above");
-            let Bound::Version { dir, .. } = &target.bound else {
-                unreachable!("a suite target is always a stored version")
-            };
             let epoch = cfg.expected_epoch.get();
+            // B3 (review wf_d725935a-7ed): the launch inputs are NEVER read
+            // from the run dir under the caller-supplied --state (the caller
+            // owns its parent and could swap the trees before this point).
+            // They are re-materialized from the content-addressed store, which
+            // re-verifies every blob against its hash, into a Fabric-private
+            // 0700 dir under the operator-owned out_root; `prepare` then
+            // requires each tree to BE the registered/requested version.
+            let inputs = crate::psv::private_inputs(
+                lx,
+                &cfg.state_dir,
+                &cfg.epoch.scope().tenant_id,
+                &req,
+                &suite.version,
+            );
             // M3: the custodian's nonce goes INTO the manifest the observer
             // then observes.
             let nonce = match &cfg.observer {
                 Some(o) => o.nonces.issue(epoch, &o.clock),
                 None => Ok("none".to_string()),
             };
-            let prepared = nonce.and_then(|nonce| {
-                crate::psv::prepare(
-                    &req,
-                    &crate::psv::PrepareInputs {
-                        qualification: q,
-                        profile_manifest: &lx.manifest,
-                        host: cfg.protected_host.as_ref(),
-                        policy_json: policy.json(),
-                        suite_id: &suite.id,
-                        suite_version: suite.version.as_str(),
-                        entry: &file,
-                        test: filter.as_deref().expect("checked above"),
-                        candidate_dir: &dir.0.join("candidate"),
-                        suite_dir: &dir.0.join("check"),
-                        job_dir: &dir.0.join("job"),
-                        observation_nonce: &nonce,
-                    },
-                )
-            });
+            let prepared =
+                inputs
+                    .and_then(|dir| nonce.map(|n| (dir, n)))
+                    .and_then(|(dir, nonce)| {
+                        crate::psv::prepare(
+                            &req,
+                            &crate::psv::PrepareInputs {
+                                qualification: q,
+                                profile_manifest: &lx.manifest,
+                                host: cfg.protected_host.as_ref(),
+                                policy_json: policy.json(),
+                                suite_id: &suite.id,
+                                suite_version: suite.version.as_str(),
+                                entry: &file,
+                                test: filter.as_deref().expect("checked above"),
+                                candidate_dir: &dir.join("candidate"),
+                                suite_dir: &dir.join("check"),
+                                job_dir: &dir.join("job"),
+                                observation_nonce: &nonce,
+                            },
+                        )
+                    });
             // The observation, verified BEFORE anything is launched; a
             // refusal launches nothing.
             let observed = prepared.and_then(|launch| match &cfg.observer {
@@ -1420,7 +1434,7 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
                     &launch.digest,
                     &launch.job_dir.join("launch-manifest.json"),
                     epoch,
-                    &dir.0.join("observation"),
+                    &launch.job_dir.with_file_name("observation"),
                 )
                 .map(|v| (launch, Some(v)))
                 .map_err(|e| format!("preflight observation refused: {e}")),
@@ -1436,9 +1450,14 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
                     );
                     launch.scrub();
                     let hv = crate::psv::derive(&launch, &res.out_dir, observation.as_ref());
+                    launch.discard();
                     psv_receipt(&req, &journal, res, q, hv, liability)?
                 }
                 Err(why) => {
+                    // Nothing launched: the private inputs (and any secret
+                    // already written) go now.
+                    let _ =
+                        crate::workspace::remove_tree(&crate::psv::private_inputs_dir(lx, &req));
                     let why = if why.starts_with("preflight observation refused") {
                         why
                     } else {
@@ -1786,6 +1805,14 @@ fn psv_receipt(
         (r.verification, reason)
     };
     r.verification = verification;
+    // The exact named check had a verdict: one matched check (the receipt
+    // contract requires it for a pass; review wf_d725935a-7ed).
+    if matches!(
+        verification,
+        ReceiptVerification::Passed | ReceiptVerification::Failed
+    ) {
+        r.matched_checks = Some(1);
+    }
     r.evidence_refs.extend(hv.evidence.into_iter().map(opaque));
     if !launched_ok {
         // Whatever derive saw, an inadmissible launch is never protected.

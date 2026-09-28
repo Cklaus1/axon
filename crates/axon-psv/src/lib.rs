@@ -75,6 +75,9 @@ pub struct LaunchManifest {
     pub attempt_id: String,
     pub backend_profile: String,
     pub fabric_revision: String,
+    /// sha256 of the Fabric (verifier) binary that built this manifest; the
+    /// observer measures the INSTALLED one and must agree (§7).
+    pub verifier_sha256: String,
     pub qualification_sha256: String,
     pub host_config_sha256: String,
     pub launcher_sha256: String,
@@ -173,6 +176,19 @@ impl LaunchManifest {
         if m.bytes() != bytes {
             return Err("launch manifest bytes are not canonical".into());
         }
+        // B3: each tree digest IS the version the receipt names.
+        if m.candidate.tree_digest != m.candidate.workspace_version {
+            return Err(format!(
+                "candidate tree_digest {} is not its workspace_version {}",
+                m.candidate.tree_digest, m.candidate.workspace_version
+            ));
+        }
+        if m.suite.tree_digest != m.suite.version {
+            return Err(format!(
+                "suite tree_digest {} is not its version {}",
+                m.suite.tree_digest, m.suite.version
+            ));
+        }
         Ok(m)
     }
 }
@@ -198,9 +214,32 @@ pub fn check_inputs(
     suite_root: &Path,
     quota: &Quota,
 ) -> Result<InputCheck, (InputCheck, String)> {
+    // Stricter than the store's importer, on purpose (review wf_d725935a-7ed):
+    // a guest input holds NO symlink and nothing the digest omits (.git,
+    // .micode), so the bytes that execute are exactly the bytes digested.
     let digest = |what: &str, root: &Path| {
-        axon_workspace_recipe::tree_version_ref(root, quota)
-            .map_err(|e| format!("{what} input at {}: {e}", root.display()))
+        let (entries, omitted) = axon_workspace_recipe::walk_tree(root, quota)
+            .map_err(|e| format!("{what} input at {}: {e}", root.display()))?;
+        if let Some(o) = omitted.first() {
+            return Err(format!(
+                "{what} input holds {}, which the digest omits: refused",
+                o.path
+            ));
+        }
+        if let Some(l) = entries
+            .iter()
+            .find(|e| e.kind == axon_workspace_recipe::EntryKind::Symlink)
+        {
+            return Err(format!(
+                "{what} input holds a symlink ({}): refused",
+                l.path
+            ));
+        }
+        Ok(axon_workspace_recipe::workspace_version_ref(
+            &axon_workspace_recipe::workspace_manifest_bytes(
+                &axon_workspace_recipe::manifest_entries(&entries),
+            ),
+        ))
     };
     let (c, s) = (
         digest("candidate", candidate_root),
@@ -356,6 +395,7 @@ pub struct PreflightObservation {
     pub launcher_sha256: String,
     pub host_config_sha256: String,
     pub guest: GuestDigests,
+    pub verifier_sha256: String,
     pub suite_registry_sha256: String,
     pub policy_sha256: String,
     pub intended_launch_manifest_sha256: String,
@@ -370,7 +410,8 @@ impl PreflightObservation {
                 "observation schema is not {PREFLIGHT_OBSERVATION_SCHEMA}"
             ));
         }
-        let pairs: [(&str, &str, &str); 12] = [
+        let pairs: [(&str, &str, &str); 13] = [
+            ("verifier_sha256", &self.verifier_sha256, &m.verifier_sha256),
             (
                 "intended_launch_manifest_sha256",
                 &self.intended_launch_manifest_sha256,

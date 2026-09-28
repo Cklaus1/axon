@@ -512,6 +512,19 @@ pub fn verify_operator_evidence(
     verify_detached("evidence", &bytes, sig, &trusted, authority)
 }
 
+/// [`verify_operator_evidence`] over bytes the caller has ALREADY read, so the
+/// bytes verified are exactly the bytes it goes on to use.
+pub fn verify_operator_evidence_bytes(
+    what: &str,
+    bytes: &[u8],
+    sig: &Path,
+    issuers_dir: &Path,
+    authority: TrustAuthority,
+) -> Result<String, String> {
+    let trusted = trusted_issuers(issuers_dir)?;
+    verify_detached(what, bytes, sig, &trusted, authority)
+}
+
 fn sidecar_sig(p: &Path) -> PathBuf {
     let mut s = p.as_os_str().to_owned();
     s.push(".sig");
@@ -1223,12 +1236,21 @@ pub fn run_linux_profile(
             };
         }
     };
+    // The job drive's source (the per-attempt secret) leaves the host the
+    // moment the launcher returns — before any further child runs.
+    if let Some(l) = psv {
+        l.scrub();
+    }
     let launcher = lx.launcher.clone();
     let out2 = out.clone();
     let mut verify = move || {
         std::process::Command::new(&launcher)
             .arg("--verify-result")
             .arg(&out2)
+            // Like the launch itself: nothing of the caller's environment
+            // (PATH, …) steers the pinned launcher (review wf_d725935a-7ed).
+            .env_clear()
+            .env("PATH", "/usr/sbin:/usr/bin:/sbin:/bin:/usr/local/bin")
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())

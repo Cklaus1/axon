@@ -337,6 +337,13 @@ enum Command {
         )]
         completion_key_stdin: bool,
 
+        /// With `--filter`, select only the test named EXACTLY that — not every
+        /// name containing it. The protected guest runner uses it so a suite
+        /// sibling (`t_ok_edge` for `t_ok`) never runs beside the registered
+        /// acceptance test (PSV review wf_d725935a-7ed).
+        #[arg(long, help = "--filter selects the exact test name, not a substring")]
+        exact: bool,
+
         /// Seal every module under DIR (repeatable): code from it may use
         /// builtins and its own sealed names, never a name the rest of the
         /// program defines (E0004). Fabric seals the candidate under test so
@@ -921,10 +928,11 @@ fn dispatch(command: Command) {
             jobs,
             json,
             completion_key_stdin,
+            exact,
             seal,
         } => {
             axon_core::resolver::set_sealed_module_dirs(&seal);
-            cmd_test(files, filter, jobs, json, completion_key_stdin)
+            cmd_test(files, filter, jobs, json, completion_key_stdin, exact)
         }
         Command::Replay {
             journal,
@@ -6058,6 +6066,7 @@ fn cmd_test(
     jobs: usize,
     json: bool,
     completion_key_stdin: bool,
+    exact: bool,
 ) {
     // Read the completion secret FIRST — before any program code runs — so
     // nothing the program does can read stdin for it.
@@ -6145,12 +6154,20 @@ fn cmd_test(
     // A `@[test] @[forall(n=N)]` fn with typed params is a PROPERTY test (R8):
     // its params are randomized over N cases (default 100) and a failure is
     // shrunk to a minimal counterexample. A plain `@[test]` fn must be 0-arg.
+    // A test is the OPERATOR's to define. Under `--seal`, a `@[test]` in a
+    // sealed module (the candidate under test) is not collected: candidate
+    // bytes never add a check to the rubric, nor sink one (PSV review
+    // wf_d725935a-7ed, B1). The same provenance rule the resolver applies.
+    let sealed = axon_core::resolver::sealed_module_dirs();
     let test_meta: Vec<(String, bool, Option<u32>)> = program
         .items
         .iter()
         .filter_map(|item| {
             if let axon_core::ast::Item::FnDef(f) = item {
                 let test_attr = f.attrs.iter().find(|a| a.name == "test")?;
+                if !sealed.is_empty() && axon_core::resolver::span_in_sealed(f.span, &sealed) {
+                    return None;
+                }
                 let forall_attr = f.attrs.iter().find(|a| a.name == "forall");
                 let forall_cases = forall_attr.map(|a| {
                     // `@[forall(n: 250)]` → 250; bare `@[forall]` → default 100.
@@ -6173,7 +6190,12 @@ fn cmd_test(
                 }
                 let should_fail = test_attr.args.iter().any(|a| a == "should_fail");
                 if let Some(ref pat) = filter {
-                    if !f.name.contains(pat.as_str()) {
+                    let selected = if exact {
+                        f.name == *pat
+                    } else {
+                        f.name.contains(pat.as_str())
+                    };
+                    if !selected {
                         return None;
                     }
                 }
