@@ -9,14 +9,15 @@
 //!                    [--linux-launcher SH --linux-manifest JSON
 //!                     --linux-evidence JSON [--linux-artifacts DIR]
 //!                     [--linux-evidence-sig SIG] [--linux-waivers JSON]
-//!                     [--linux-trusted-issuers DIR]
 //!                     [--linux-evidence-max-age-s N]
 //!                     --linux-out-root DIR]
 //!
 //! The Linux profile is eligible only for an issuer-signed evidence record
 //! (`<evidence>.sig` unless `--linux-evidence-sig`), verified against the
-//! Ed25519 public keys in `--linux-trusted-issuers` (default: the manifest's
-//! sibling `trusted_issuers/`), no older than the max age (default 30 days).
+//! Ed25519 public keys in the OPERATOR's trust root,
+//! `/etc/axon/trust/qualification_issuers` (root-owned, not group/other
+//! writable, no symlinks; a caller cannot choose it), no older than the max
+//! age (default 30 days).
 //! axon-fabric workspace-import --state DIR --tenant T --root DIR
 //! axon-fabric verify-evidence --record FILE --issuers DIR [--signature FILE (default <record>.sig)]
 //!
@@ -239,6 +240,17 @@ fn keygen(a: &Args) {
 }
 
 fn submit(a: &Args) {
+    // The protected profile's trust root is the OPERATOR's (/etc/axon/trust),
+    // never the caller's and never a repository directory: whoever submits
+    // cannot choose which issuers qualify it. Refused before anything else.
+    if a.opt("--linux-trusted-issuers").is_some() {
+        refuse(
+            "usage",
+            "--linux-trusted-issuers is not accepted: the protected profile's issuers are the \
+             operator's, in /etc/axon/trust/qualification_issuers",
+            2,
+        );
+    }
     let req_src = a.req("--request");
     let text = if req_src == "-" {
         let mut s = String::new();
@@ -261,10 +273,7 @@ fn submit(a: &Args) {
         .unwrap_or_else(|e| refuse("usage", &format!("--expected-epoch: {e}"), 2));
     let linux = a.opt("--linux-launcher").map(|l| {
         let manifest = PathBuf::from(a.req("--linux-manifest"));
-        let mut trust = QualificationTrust::for_manifest(&manifest);
-        if let Some(d) = a.opt("--linux-trusted-issuers") {
-            trust.issuers_dir = PathBuf::from(d);
-        }
+        let mut trust = QualificationTrust::operator();
         trust.max_age_s = a.num("--linux-evidence-max-age-s", DEFAULT_EVIDENCE_MAX_AGE_S);
         LinuxProfileConfig {
             launcher: PathBuf::from(l),

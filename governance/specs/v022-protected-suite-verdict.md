@@ -12,19 +12,56 @@ anything.
 The development host (this WSL machine, ADR-001 D1) builds the protocol and tests it
 adversarially. Only the PROTECTED host certifies it.
 
-The rule is enforced by `scripts/protected_verifier_ready.py`, not by convention:
-- `protected_backend`, `g01_on_protected_backend` and `pci_on_protected_backend` are each PASS
-  only with a **protected-host certification record**: a JSON document with a detached
-  `axon-evidence-signature/1` that verifies under an operator key in
-  `profiles/linux-microvm/trusted_issuers/`.
-- Verification is by `axon-fabric verify-evidence`, the same code Fabric uses for the B263
-  qualification record. The script passes the committed issuer directory itself; no environment
-  variable or flag can redirect it.
-- That directory holds no key until the operator installs one (ADR-001 D5/D6). Agents never hold
-  or create the key, and never commit a `.pub` there. So no record produced on the development
-  host can verify, and the three components stay NOT_RUN however many dev tests pass.
-- A gate registration row or an unsigned proof document is necessary but NOT sufficient for these
+The rule is enforced by `scripts/protected_verifier_ready.py`, not by convention.
+
+### The trust root is the operator's, outside any repository
+
+Neither WHICH keys are trusted nor WHAT verifies a signature may come from this repository.
+Otherwise an agent could generate a keypair, add the public key, sign a fake qualification, and
+have a repo-built verifier accept it.
+
+```
+operator root trust
+      │
+      └── /etc/axon/trust/                root/custodian-owned, never agent-writable
+             ├── qualification_issuers/   *.pub: B263 records and protected-host certifications
+             ├── observer_issuers/        ADR-002 preflight observer keys
+             ├── verifier_issuers/        Fabric verifier keys
+             └── verifier.json            {"path", "sha256"}: the operator-installed verifier binary
+
+repository
+      └── governance/status/trust-expectations.json   may NARROW the accepted key ids, never add one
+```
+
+- **Fabric (runtime).**
+  - The protected profile's B263 evidence is trusted only under
+    `/etc/axon/trust/qualification_issuers` (`QualificationTrust::operator()`). The directory and
+    every key must be root-owned, not group- or other-writable, and not symlinks.
+  - `axon-fabric submit` refuses `--linux-trusted-issuers`: a caller cannot choose the root.
+  - The repository directory `profiles/linux-microvm/trusted_issuers/` is a development and test
+    fixture only.
+- **Readiness.**
+  - `protected_backend`, `g01_on_protected_backend` and `pci_on_protected_backend` are each PASS
+    only with a protected-host certification record that the **operator-installed verifier**
+    verifies under `/etc/axon/trust/qualification_issuers`.
+  - The verifier's path and sha256 are pinned in `/etc/axon/trust/verifier.json`.
+  - The root, the issuer directory, the pin and the verifier binary must each be root-owned, not
+    group- or other-writable, and **not writable by the process running the check**. On a host
+    where the check runs as root (this development host), nothing qualifies, even a root-created
+    `/etc/axon/trust`.
+  - The repository-built verifier is never used for this decision.
+- Gate registration rows and unsigned proof documents are necessary but NOT sufficient for these
   three components.
+
+### Two layers, never merged
+
+| Layer | Made of | Readiness credit |
+|---|---|---|
+| `PSV_PROTOCOL_PROVEN` | dev-host tests, Firecracker/KVM dev execution, the negative matrix, mutations | **none** |
+| `PROTECTED_BACKEND_CERTIFIED` | operator-trusted issuer, a qualified protected host, the observer deployed, signed evidence over exact revisions and digests | the three components |
+
+Even when every PSV dev test passes, the three components stay NOT_RUN until the protected-host
+certification exists.
 
 Operator qualification steps are separate from coding, and are never reported as protected
 success by the implementation:
@@ -144,25 +181,35 @@ still need their own frozen documents.
 ## The certification record the readiness script checks
 
 `governance/proofs/v022-protected/<component>.json`, plus
-`governance/proofs/v022-protected/<component>.json.sig`:
+`governance/proofs/v022-protected/<component>.json.sig`: an `axon-evidence-signature/1` over the
+exact bytes, from an operator key in `/etc/axon/trust/qualification_issuers`.
 
 ```json
 {
-  "schema": "axon-v022-protected-certification/1",
+  "schema": "axon-v022-protected-certification/2",
   "component": "protected_backend | g01_on_protected_backend | pci_on_protected_backend",
   "host_profile": "linux-microvm-protected",
-  "axon_sha": "<40 hex>",
-  "micode_sha": "<40 hex>",
-  "b263_qualification_sha256": "<the signed B263 evidence the run used>",
-  "evidence": ["<proof files in governance/proofs/ this certifies>"],
+  "qualification_profile": "linux-microvm-protected",
+  "psv_spec_sha256": "<sha256 of THIS document>",
+  "axon_sha": "<40 hex>", "micode_sha": "<40 hex>", "fabric_revision": "<40 hex>",
+  "guest_image_sha256": "<64 hex>", "guest_kernel_sha256": "<64 hex>", "guest_runtime_sha256": "<64 hex>",
+  "suite": {"id": "…", "version": "…", "entry": "…", "test": "…", "digest": "…"},
+  "candidate_tree_ref": "acf1:…",
+  "observer_key_id": "ed25519:…", "observation_sha256": "<64 hex>",
+  "verifier_key_id": "ed25519:…",
+  "b263_qualification_sha256": "<64 hex>",
+  "evidence": ["<proof files in governance/proofs/>"],
+  "evidence_bundle_sha256": "<sha256 over the concatenated sha256 of each evidence file, in order>",
   "certified_at": "YYYY-MM-DDTHH:MM:SSZ"
 }
 ```
 
-The `.sig` is an `axon-evidence-signature/1` over the record's exact bytes, from an operator key
-in `profiles/linux-microvm/trusted_issuers/`. The readiness script requires, beyond the gate rows
-and proof documents the component already needs:
-- a valid signature;
-- a `component` equal to the component;
-- `host_profile` equal to `linux-microvm-protected`;
-- every listed evidence file to exist.
+The readiness script requires every field, with well-formed digests and commit ids, and:
+- `psv_spec_sha256` equal to this document's current hash;
+- `axon_sha` an ancestor of the judged tree, with **no file outside `governance/` changed since**;
+- every evidence file present, and the recomputed bundle digest equal;
+- the operator-installed verifier to verify the signature under the operator root;
+- if `trust-expectations.json` lists expected issuers, the signer to be among them.
+
+Any later change to the spec, the code or the evidence therefore invalidates the certification
+rather than inheriting it.

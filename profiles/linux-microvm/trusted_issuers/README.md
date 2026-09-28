@@ -1,4 +1,14 @@
-# Trusted evidence issuers for `linux-microvm-protected`
+# Trusted evidence issuers for `linux-microvm-protected` — DEVELOPMENT/TEST FIXTURE ONLY
+
+> **Not a production trust root** (2026-09-27). A repository directory is agent-mutable, so it
+> can never decide which keys are trusted. Production Fabric reads the operator's root,
+> `/etc/axon/trust/qualification_issuers` (root-owned, not group/other-writable, no symlinks; see
+> `governance/specs/v022-protected-suite-verdict.md`), and `axon-fabric submit` refuses a
+> caller-chosen root. `QualificationTrust::for_manifest` (this directory) remains for tests.
+> Never commit a key here.
+
+---
+
 
 `axon-fabric` treats a B263 qualification record as evidence only when a
 detached `axon-evidence-signature/1` over its exact bytes verifies under an

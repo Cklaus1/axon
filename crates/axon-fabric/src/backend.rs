@@ -169,6 +169,13 @@ impl Clock {
     }
 }
 
+/// The operator's trust root, OUTSIDE any repository: root/custodian-owned,
+/// never writable by an agent. The repository may declare the key ids it
+/// expects, but it can never add authority (operator direction 2026-09-27:
+/// "the repo should never be able to redefine both what counts as a valid
+/// signature and which keys are trusted").
+pub const OPERATOR_TRUST_ROOT: &str = "/etc/axon/trust";
+
 /// The trust root for qualification evidence. Only PUBLIC keys live here; the
 /// signing key is held by the operator (decision D6) and never by this tree.
 #[derive(Debug, Clone)]
@@ -179,11 +186,26 @@ pub struct QualificationTrust {
     /// An evidence record whose `end` is older than this is stale.
     pub max_age_s: u64,
     pub clock: Clock,
+    /// The directory and every key in it must be operator-owned (see
+    /// [`check_operator_owned`]). True for [`QualificationTrust::operator`], the
+    /// only constructor the `axon-fabric` CLI uses.
+    pub operator_owned: bool,
 }
 
 impl QualificationTrust {
-    /// `<manifest dir>/trusted_issuers`, i.e.
-    /// `profiles/linux-microvm/trusted_issuers/` for the committed manifest.
+    /// PRODUCTION: `/etc/axon/trust/qualification_issuers`, operator-owned.
+    pub fn operator() -> QualificationTrust {
+        QualificationTrust {
+            issuers_dir: Path::new(OPERATOR_TRUST_ROOT).join("qualification_issuers"),
+            max_age_s: DEFAULT_EVIDENCE_MAX_AGE_S,
+            clock: Clock::System,
+            operator_owned: true,
+        }
+    }
+
+    /// DEVELOPMENT AND TESTS ONLY: `<manifest dir>/trusted_issuers`, with no
+    /// ownership requirement. A repository directory is agent-mutable, so it
+    /// is never a production trust root; the CLI does not use this.
     pub fn for_manifest(manifest: &Path) -> QualificationTrust {
         QualificationTrust {
             issuers_dir: manifest
@@ -192,8 +214,54 @@ impl QualificationTrust {
                 .join("trusted_issuers"),
             max_age_s: DEFAULT_EVIDENCE_MAX_AGE_S,
             clock: Clock::System,
+            operator_owned: false,
         }
     }
+}
+
+/// An operator-owned trust directory: the directory and every entry in it are
+/// real files or directories (not symlinks), owned by root, and writable by
+/// neither group nor other. Anything else authorizes nothing.
+#[cfg(unix)]
+pub fn check_operator_owned(dir: &Path) -> Result<(), String> {
+    use std::os::unix::fs::MetadataExt;
+    let check = |p: &Path| -> Result<(), String> {
+        let m = std::fs::symlink_metadata(p).map_err(|e| format!("{}: {e}", p.display()))?;
+        if m.file_type().is_symlink() {
+            return Err(format!(
+                "{} is a symlink: a trust root is never redirected",
+                p.display()
+            ));
+        }
+        if m.uid() != 0 {
+            return Err(format!(
+                "{} is owned by uid {}, not root: an agent-writable trust root authorizes nothing",
+                p.display(),
+                m.uid()
+            ));
+        }
+        if m.mode() & 0o022 != 0 {
+            return Err(format!(
+                "{} is group- or other-writable (mode {:o}): it authorizes nothing",
+                p.display(),
+                m.mode() & 0o7777
+            ));
+        }
+        Ok(())
+    };
+    check(dir)?;
+    for e in std::fs::read_dir(dir).map_err(|e| format!("{}: {e}", dir.display()))? {
+        check(&e.map_err(|e| e.to_string())?.path())?;
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+pub fn check_operator_owned(dir: &Path) -> Result<(), String> {
+    Err(format!(
+        "{}: operator ownership cannot be checked on this platform",
+        dir.display()
+    ))
 }
 
 /// The facts eligibility is decided from — and that a receipt carries.
@@ -442,6 +510,9 @@ impl LinuxProfileConfig {
         let evidence_sha256 = sha256_hex(&ev_bytes);
         // Authenticity first: nothing in an unauthenticated record is read
         // as a claim.
+        if self.trust.operator_owned {
+            check_operator_owned(&self.trust.issuers_dir)?;
+        }
         let trusted = trusted_issuers(&self.trust.issuers_dir)?;
         let sig_path = self
             .evidence_signature
