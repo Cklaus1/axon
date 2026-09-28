@@ -309,7 +309,15 @@
           "matrix": "A37-A40 (40 rows)",
           "mutations": "M266-M270 killed"
         }
-      }
+      },
+      "round_4": {
+        "run": "wf_c1171526-077",
+        "tree": "axon-s3-veto 609901ab",
+        "agents": 16,
+        "blockers": [],
+        "result": "CLEAN \u2014 16/16 REGISTER, no blocker (findings: one MINOR symlink-attribution defence-in-depth, not reachable on the guest path since check_inputs refuses symlink trees; one FUTURE candidate random_* draw, cannot seed or predict)"
+      },
+      "status": "round 4 clean; the dev loop's stop condition (a round with no blocker) is met. Proceed to ONE freeze + certifying review; rounds 1-3 found 5+4+5 blockers"
     }
   }
 }
