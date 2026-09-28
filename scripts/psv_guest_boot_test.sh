@@ -34,7 +34,8 @@ DEV="${PSV_DEV:-${CARGO_TARGET_DIR:-$REPO/target}/debug/examples/psv_dev}"
 [[ -x "$DEV" ]] || { echo "FAIL: $DEV missing (cargo build -p axon-psv --example psv_dev)"; exit 1; }
 
 W="$(mktemp -d /var/tmp/psv-boot.XXXXXX)"; chmod 0755 "$W"
-trap 'rm -rf "$W"' EXIT
+# Kept on failure (or with PSV_KEEP=1) so a FAIL can be diagnosed.
+trap '[[ ${FAILS:-0} == 0 && -z "${PSV_KEEP:-}" ]] && rm -rf "$W" || echo "work dir kept: $W"' EXIT
 FAILS=0
 ok() { echo "PASS $1"; }
 bad() { echo "FAIL $1: $2"; FAILS=$((FAILS + 1)); }
