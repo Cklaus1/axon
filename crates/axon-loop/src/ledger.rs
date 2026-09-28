@@ -191,6 +191,12 @@ pub enum Event {
         /// Absent on violations and on older entries (bytes unchanged).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         key_id: Option<String>,
+        /// A clearance: its detached monitor signature, kept in
+        /// `clearance-signatures/`, so a protected re-derivation RE-VERIFIES it
+        /// rather than trusting `key_id` (dev review round wf_7cb5856d-806,
+        /// PSV-7: forged unsigned events cleared a protected evaluation).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        signature_ref: Option<Ref>,
     },
     /// A trusted admitter registered the eligible candidate LIST behind a
     /// `candidate_set_ref` (bytes in `candidate-sets/`; see `crate::candidates`).

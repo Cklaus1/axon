@@ -832,6 +832,7 @@ MUTATIONS = [
     ('M261', 'PSV-7 (r2): protected counters are the re-verified trials, over the plan population', 'crates/axon-loop/src/admission.rs', '        check_arm_grounding(tx, frozen, eval)?;', '        let _ = (frozen, eval);', 'axon-loop', '--test protected_class', 'a_protected_decision_counts_only_its_re_verified_trials'),
     ('M262', "PSV-7 (r2): the evaluation class is the frozen plan's", 'crates/axon-loop/src/admission.rs', '    if eval.evaluation_class != frozen.evaluation_class {', '    if false && eval.evaluation_class != frozen.evaluation_class {', 'axon-loop', '--test protected_class', 'an_evaluation_class_other_than_the_frozen_plans_is_refused'),
     ('M263', 'PSV-7 (r2): a counted trial re-verifies against its own episode', 'crates/axon-loop/src/admission.rs', '    if ep.identity.trial_id != t.trial_id || ep.identity.task_id != t.task_id {', '    if false && ep.identity.trial_id != t.trial_id {', 'axon-loop', '--test protected_class', 'a_counted_trial_cannot_borrow_another_trials_verdict'),
+    ('M264', 'PSV-7 (r2): a protected clearance re-verifies its stored monitor signature', 'crates/axon-loop/src/admission.rs', '                                    && clearance_verifies(tx, &config, report, signature_ref.as_ref()))', '                                    && signature_ref.is_some() | true)', 'axon-loop', '--test protected_class', 'a_forged_unsigned_clearance_clears_nothing'),
 ]
 
 
@@ -856,7 +857,7 @@ PCI_IDS = {"M04", "M44", "M49", "M52", "M53", "M57", "M59", "M60", "M61", "M62",
 # (Fabric's own exit-0 check) remains killed.
 RETIRED = {"M58", "M176"}
 BINDING_IDS = {f"M{n}" for n in range(101, 137)}
-PSV_IDS = {f"M{n}" for n in range(137, 264)}
+PSV_IDS = {f"M{n}" for n in range(137, 265)}
 
 
 def in_scope(mid, scope):

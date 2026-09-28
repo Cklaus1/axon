@@ -1138,6 +1138,44 @@ fn a_counted_trial_cannot_borrow_another_trials_verdict() {
     refused_or_not_accepted(&w, "bw", &fe, "another trial's");
 }
 
+/// PSV-7 (dev review round wf_7cb5856d-806, executed there to ACCEPT):
+/// clearances forged into the ledger WITHOUT a monitor signature (the
+/// monitor's public key id copied in) clear nothing in a protected decision.
+/// Control: `protected_accepted`, whose clearances are genuinely signed.
+#[test]
+fn a_forged_unsigned_clearance_clears_nothing() {
+    let w = world();
+    protect(&w.s);
+    pin_protected_backend(&w.s);
+    trust_monitor(&w.s);
+    freeze_plan(&w.s, "fc", &w.inc_ref, &w.cand_ref, |_| {}).unwrap();
+    assign_specs(&w.s, "fc", &specs_for(&w));
+    let mut v = evl_request("fc", &w.inc, &w.cand, &specs_for(&w), &EvlOpts::default());
+    on_protected_backend(&mut v);
+    assert!(intake_all(&w.s, &v).is_empty(), "the bundle intakes");
+    let kid = axon_loop_contracts::attestation::key_id_of_hex(&monitor_key().1);
+    for t in v["trials"].as_array().unwrap() {
+        let report: axon_loop::safety::SafetyReport =
+            serde_json::from_value(safety_report(t, "clear", None, MONITOR)).unwrap();
+        forged_append(
+            w.s.root(),
+            axon_loop::ledger::Event::SafetyReport {
+                scope: scope(),
+                report: Box::new(report),
+                key_id: kid.clone(),
+                signature_ref: None,
+            },
+        );
+    }
+    let (_, e) = evaluate(&w.s, &v).unwrap();
+    match admit(&w.s, "fc", &e, ADMITTER, false) {
+        Err(e) => assert!(e.to_string().contains("no longer cleared"), "{e}"),
+        Ok((adm, _)) => assert_ne!(adm.decision, Decision::Accept, "{:?}", adm.reasons),
+    }
+    // Control: protected_accepted's genuinely signed clearances ACCEPT.
+    let _ = protected_accepted("fc-ok");
+}
+
 /// PSV-7: the evaluation's class is the frozen plan's. A DEVELOPMENT plan's
 /// evaluation (here even with genuinely protected documents) relabelled
 /// protected after the scope was protected is refused.

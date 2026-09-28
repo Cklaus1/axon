@@ -130,6 +130,7 @@ pub fn report(store: &Store, text: &str, signature: Option<&str>) -> Result<(Saf
     let is_monitor = config.trusted_monitors.contains(&r.issuer_ref);
     let is_subject = subjects.contains(&r.issuer_ref);
     let mut key_id = None;
+    let mut signature_ref = None;
     match r.finding {
         Finding::Violation => {
             if !is_monitor && !is_subject {
@@ -185,6 +186,7 @@ pub fn report(store: &Store, text: &str, signature: Option<&str>) -> Result<(Saf
             )
             .map_err(|e| refused(format!("clearance signature refused: {e}")))?;
             key_id = axon_loop_contracts::attestation::key_id_of_hex(key);
+            signature_ref = Some(store.put_cas("clearance-signatures", &sig)?);
         }
     }
     for e in tx.entries() {
@@ -198,6 +200,7 @@ pub fn report(store: &Store, text: &str, signature: Option<&str>) -> Result<(Saf
         scope: r.scope.clone(),
         report: Box::new(r.clone()),
         key_id,
+        signature_ref,
     })?;
     Ok((r, seq))
 }

@@ -213,6 +213,47 @@ pub(crate) struct Inputs<'a> {
     pub mechanism_test: bool,
 }
 
+/// A clearance counts in a protected decision only if its STORED monitor
+/// signature verifies over the report, under the key the operator's monitor
+/// root holds for its issuer. The ledger's `key_id` is only a string a store
+/// writer can copy (dev review round wf_7cb5856d-806, PSV-7).
+fn clearance_verifies(
+    tx: &Tx,
+    config: &crate::store::Config,
+    report: &crate::safety::SafetyReport,
+    signature_ref: Option<&Ref>,
+) -> bool {
+    let Some(r) = signature_ref else {
+        return false;
+    };
+    let Ok(pk) = crate::store::Config::rooted_key(
+        &config.monitor_keys,
+        &report.issuer_ref,
+        axon_loop_contracts::operator_trust::TrustAuthority::Monitor,
+    ) else {
+        return false;
+    };
+    let Some(sig) = tx
+        .store
+        .get_cas_text("clearance-signatures", r)
+        .ok()
+        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+    else {
+        return false;
+    };
+    let Ok(doc) = serde_json::to_value(report) else {
+        return false;
+    };
+    axon_loop_contracts::attestation::verify_document(
+        &sig,
+        crate::safety::CLEARANCE_DOMAIN,
+        &report.issuer_ref,
+        &doc,
+        pk,
+    )
+    .is_ok()
+}
+
 /// Every arm's counters are exactly its trials' outcomes, and the trials are
 /// exactly the frozen plan's population (tasks × repetitions per arm).
 fn check_arm_grounding(
@@ -552,7 +593,7 @@ pub(crate) fn derive(
                 if t.safety == crate::safety::SafetyState::Clear
                     && !tx.entries().iter().any(|e| {
                         e.seq <= eval_seq
-                            && matches!(&e.event, Event::SafetyReport { scope, report, key_id }
+                            && matches!(&e.event, Event::SafetyReport { scope, report, key_id, signature_ref }
                                 if scope == &eval.scope
                                     && report.finding == crate::safety::Finding::Clear
                                     && report.identity.task_id == t.task_id
@@ -567,7 +608,8 @@ pub(crate) fn derive(
                                     )
                                     .ok()
                                     .and_then(|pk| axon_loop_contracts::attestation::key_id_of_hex(pk))
-                                        == *key_id)
+                                        == *key_id
+                                    && clearance_verifies(tx, &config, report, signature_ref.as_ref()))
                     })
                 {
                     return Err(refused(format!(
