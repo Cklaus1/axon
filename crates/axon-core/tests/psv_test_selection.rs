@@ -471,3 +471,83 @@ fn a_sealed_module_never_supplies_an_operator_modules_name() {
     assert!(!out.contains("\"status\":\"ok\""), "{out}\n{err}");
     assert!(err.contains("may not supply it"), "{err}");
 }
+
+/// Dev review round wf_bf757240-925 (PSV-1): a sealed candidate cannot reseed
+/// the process RNG the operator's test draws from. The candidate reseeds to a
+/// fixed seed at load and returns the draw it can then PREDICT; with srand
+/// refused it cannot, so it guesses wrong. Control: an honest candidate that
+/// echoes the value it is given passes.
+#[test]
+fn a_sealed_candidate_cannot_reseed_the_rng() {
+    use std::io::Write;
+    // The first `random_i64(0, 1000000)` after `srand(7)` (computed from the
+    // interpreter's xorshift): a predicted value only a reseed makes knowable.
+    const PREDICTED: i64 = 888327;
+    let run = |cand: &str| -> String {
+        let d = fresh(&format!("rng-{}", cand.len()));
+        std::fs::create_dir_all(d.join("cand")).unwrap();
+        std::fs::create_dir_all(d.join("suite")).unwrap();
+        std::fs::write(
+            d.join("suite/accept.ax"),
+            "mod f
+use f.{guess}
+
+@[test]
+fn t_ok() {
+    let x = random_i64(0, 1000000)
+    assert_eq(guess(x), x)
+}
+",
+        )
+        .unwrap();
+        std::fs::write(d.join("cand/f.ax"), cand).unwrap();
+        let mut c = Command::new(env!("CARGO_BIN_EXE_axon"))
+            .current_dir(d.join("suite"))
+            .arg("test")
+            .arg(d.join("suite/accept.ax"))
+            .args([
+                "--json",
+                "--filter",
+                "t_ok",
+                "--exact",
+                "--completion-key-stdin",
+            ])
+            .arg("--seal")
+            .arg(d.join("cand"))
+            .env_clear()
+            .env("PATH", "/usr/bin:/bin")
+            .env("AXON_ALLOWED_EFFECTS", "IO,Random")
+            .env(
+                "AXON_PATH",
+                format!("{}:{}", d.join("suite").display(), d.join("cand").display()),
+            )
+            .env("AXON_PATH_EXCLUSIVE", "1")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        writeln!(c.stdin.take().unwrap(), "{}", "0b".repeat(32)).unwrap();
+        let out = c.wait_with_output().unwrap();
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    };
+    // The attack: reseed at load, then return the value the operator's draw
+    // will now take. A genuine pass only if the reseed steered the RNG.
+    let attack = format!(
+        "let _S = srand(7)
+fn guess(x: i64) -> i64 {{ {PREDICTED} }}
+"
+    );
+    let a = run(&attack);
+    assert!(
+        !a.contains("\"status\":\"ok\""),
+        "the reseed must not pass: {a}"
+    );
+    // Control: an honest candidate that returns what it is given passes.
+    let honest = "fn guess(x: i64) -> i64 { x }
+";
+    assert!(
+        run(honest).contains("\"status\":\"ok\""),
+        "control: honest candidate passes"
+    );
+}

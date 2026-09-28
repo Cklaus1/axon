@@ -2867,6 +2867,17 @@ impl<'p> Interp<'p> {
                 // Same seed → identical random_*/goal_run_random sequence.
                 // (The AXON_SEED env var does the same without code changes.)
                 want(1)?;
+                // A SEALED (candidate) frame may not reseed the process RNG:
+                // it shares the stream the operator's acceptance test draws
+                // from, so a reseed would let the candidate choose the test's
+                // random inputs (dev review round wf_bf757240-925, PSV-1).
+                if self.seal.active && self.frame_sealed.get() {
+                    return Err(crate::interp::Flow::SandboxViolation(
+                        "srand is refused in a sealed module: candidate code may not reseed the \
+                         RNG the operator's test draws from"
+                            .to_string(),
+                    ));
+                }
                 set_rand_seed(as_int(&args[0])?);
                 ok!(Value::Unit);
             }
