@@ -1,87 +1,12 @@
 {
   "schema": "axon-v022-paired-disable/1",
-  "commit": "2ddc7ae2d289a37a15b2a7f750a11837984d2408",
-  "all_hold": false,
+  "commit": "46c06261ab2f78a336a8468e153fd9e44f437d5d",
+  "all_hold": true,
   "records": [
-    {
-      "mutation": "M103",
-      "status": "EQUIVALENT_DID",
-      "property": "the counted verdict is still operator-pinned (profile/rev/suite/acceptance)",
-      "original_guard": {
-        "file": "crates/axon-loop/src/admission.rs"
-      },
-      "subsumed_by": [
-        "M26"
-      ],
-      "live_killing_mutant": "M26",
-      "matrix": {
-        "baseline": "ATTACK_REFUSED",
-        "original_guard_disabled": "ATTACK_REFUSED",
-        "subsuming_guard_disabled": "ATTACK_SUCCEEDS",
-        "both_disabled": "ATTACK_SUCCEEDS"
-      },
-      "holds": false
-    },
-    {
-      "mutation": "M104",
-      "status": "EQUIVALENT_DID",
-      "property": "the counted verdict's context is observer-authenticated",
-      "original_guard": {
-        "file": "crates/axon-loop/src/admission.rs"
-      },
-      "subsumed_by": [
-        "M99"
-      ],
-      "live_killing_mutant": "M99",
-      "matrix": {
-        "baseline": "ATTACK_REFUSED",
-        "original_guard_disabled": "ATTACK_REFUSED",
-        "subsuming_guard_disabled": "ATTACK_REFUSED",
-        "both_disabled": "ATTACK_REFUSED"
-      },
-      "holds": false
-    },
-    {
-      "mutation": "M209",
-      "status": "EQUIVALENT_DID",
-      "property": "a protected verdict is authenticated under an operator-rooted verifier key",
-      "original_guard": {
-        "file": "crates/axon-loop/src/admission.rs"
-      },
-      "subsumed_by": [
-        "M205"
-      ],
-      "live_killing_mutant": "M205",
-      "matrix": {
-        "baseline": "ATTACK_REFUSED",
-        "original_guard_disabled": "ATTACK_REFUSED",
-        "subsuming_guard_disabled": "ATTACK_SUCCEEDS",
-        "both_disabled": "ATTACK_SUCCEEDS"
-      },
-      "holds": false
-    },
-    {
-      "mutation": "M210",
-      "status": "EQUIVALENT_DID",
-      "property": "a protected context is authenticated under an operator-rooted observer key",
-      "original_guard": {
-        "file": "crates/axon-loop/src/admission.rs"
-      },
-      "subsumed_by": [
-        "M208"
-      ],
-      "live_killing_mutant": "M208",
-      "matrix": {
-        "baseline": "ATTACK_REFUSED",
-        "original_guard_disabled": "ATTACK_REFUSED",
-        "subsuming_guard_disabled": "ATTACK_REFUSED",
-        "both_disabled": "ATTACK_REFUSED"
-      },
-      "holds": false
-    },
     {
       "mutation": "M245",
       "status": "EQUIVALENT_DID",
+      "kind": "pair",
       "property": "a protected clearance is a real monitor signature under the operator monitor root",
       "original_guard": {
         "file": "crates/axon-loop/src/admission.rs"
@@ -92,49 +17,176 @@
       "live_killing_mutant": "M264",
       "matrix": {
         "baseline": "ATTACK_REFUSED",
-        "original_guard_disabled": "ATTACK_REFUSED",
-        "subsuming_guard_disabled": "ATTACK_REFUSED",
-        "both_disabled": "ATTACK_SUCCEEDS"
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M245",
+          "M264"
+        ]
       },
       "holds": true
     },
     {
       "mutation": "M254",
       "status": "EQUIVALENT_DID",
-      "property": "a protected decision re-verifies its counted verdicts (not the stored counters)",
+      "kind": "set",
+      "property": "a protected decision re-verifies its counted verdicts",
       "original_guard": {
         "file": "crates/axon-loop/src/admission.rs"
       },
       "subsumed_by": [
-        "M261"
+        "M261",
+        "M262"
       ],
       "live_killing_mutant": "M261",
       "matrix": {
         "baseline": "ATTACK_REFUSED",
-        "original_guard_disabled": "ATTACK_REFUSED",
-        "subsuming_guard_disabled": "ATTACK_REFUSED",
-        "both_disabled": "ATTACK_REFUSED"
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M254",
+          "M261",
+          "M262"
+        ]
       },
-      "holds": false
+      "holds": true
+    },
+    {
+      "mutation": "M104",
+      "status": "EQUIVALENT_DID",
+      "kind": "set",
+      "property": "the counted verdict's context is observer-authenticated",
+      "original_guard": {
+        "file": "crates/axon-loop/src/admission.rs"
+      },
+      "subsumed_by": [
+        "M99",
+        "M208",
+        "M269",
+        "M207"
+      ],
+      "live_killing_mutant": "M99",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M104",
+          "M99",
+          "M208",
+          "M269",
+          "M207"
+        ]
+      },
+      "holds": true
+    },
+    {
+      "mutation": "M210",
+      "status": "EQUIVALENT_DID",
+      "kind": "set",
+      "property": "a protected context is authenticated under an operator-rooted observer key",
+      "original_guard": {
+        "file": "crates/axon-loop/src/admission.rs"
+      },
+      "subsumed_by": [
+        "M207",
+        "M208",
+        "M99",
+        "M269"
+      ],
+      "live_killing_mutant": "M208",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M210",
+          "M207",
+          "M208",
+          "M99",
+          "M269"
+        ]
+      },
+      "holds": true
     },
     {
       "mutation": "M255",
       "status": "EQUIVALENT_DID",
+      "kind": "set",
       "property": "only a protected-class receipt counts in a protected decision",
       "original_guard": {
         "file": "crates/axon-loop/src/admission.rs"
       },
       "subsumed_by": [
-        "M212"
+        "M254",
+        "M212",
+        "M213",
+        "M261",
+        "M262"
       ],
       "live_killing_mutant": "M212",
       "matrix": {
         "baseline": "ATTACK_REFUSED",
-        "original_guard_disabled": "ATTACK_REFUSED",
-        "subsuming_guard_disabled": "ATTACK_REFUSED",
-        "both_disabled": "ATTACK_REFUSED"
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M255",
+          "M254",
+          "M212",
+          "M213",
+          "M261",
+          "M262"
+        ]
       },
-      "holds": false
+      "holds": true
+    },
+    {
+      "mutation": "M103",
+      "status": "EQUIVALENT_DID",
+      "kind": "asymmetric",
+      "property": "the counted verdict is still operator-pinned",
+      "original_guard": {
+        "file": "crates/axon-loop/src/admission.rs"
+      },
+      "subsumed_by": [
+        "M26"
+      ],
+      "live_killing_mutant": "M26",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M103",
+          "M26"
+        ],
+        "dominating_sibling_disabled": "ATTACK_SUCCEEDS"
+      },
+      "holds": true
+    },
+    {
+      "mutation": "M209",
+      "status": "EQUIVALENT_DID",
+      "kind": "asymmetric",
+      "property": "a protected verdict is authenticated under an operator-rooted verifier key",
+      "original_guard": {
+        "file": "crates/axon-loop/src/admission.rs"
+      },
+      "subsumed_by": [
+        "M205"
+      ],
+      "live_killing_mutant": "M205",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M209",
+          "M205"
+        ],
+        "dominating_sibling_disabled": "ATTACK_SUCCEEDS"
+      },
+      "holds": true
     },
     {
       "mutation": "M204",

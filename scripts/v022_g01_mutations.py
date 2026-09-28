@@ -871,7 +871,28 @@ PCI_IDS = {"M04", "M44", "M49", "M52", "M53", "M57", "M59", "M60", "M61", "M62",
 #   M254: the reverify_protected CALL — killed by round-2 M261 (grounding)
 #         and round-3 M267-M269 (the joins).
 #   M255: reverify claims_protected — killed by M211/M212/M213.
-EQUIVALENT_DID = {"M204", "M103", "M104", "M209", "M210", "M245", "M254", "M255"}
+# EQUIVALENT_DID: rows a rounds-1-3 fix turned into an additional independent
+# check of a property. Each APPLIES to a real historical guard; with it
+# mutated the attack is still refused (the property is enforced elsewhere), and
+# scripts/v022_paired_disable.py demonstrates that removing the retired guard
+# TOGETHER WITH its subsuming siblings reopens the SAME attack (for M103/M209 a
+# single dominating sibling alone reopens). An equivalent mutant does NOT count
+# as killed. `killer` is a live ACTIVE row that turns the property's
+# discriminator red.
+EQUIV_RECORD = {
+    "M103": {"property": "the counted verdict is still operator-pinned", "subsumed_by": ["M26"], "killer": "M26"},
+    "M104": {"property": "the counted verdict's context is observer-authenticated", "subsumed_by": ["M99", "M208", "M269", "M207"], "killer": "M99"},
+    "M209": {"property": "a protected verdict is authenticated under an operator-rooted verifier key", "subsumed_by": ["M205"], "killer": "M205"},
+    "M210": {"property": "a protected context is authenticated under an operator-rooted observer key", "subsumed_by": ["M207", "M208", "M99", "M269"], "killer": "M208"},
+    "M245": {"property": "a protected clearance is a real monitor signature under the operator monitor root", "subsumed_by": ["M264"], "killer": "M264"},
+    "M254": {"property": "a protected decision re-verifies its counted verdicts", "subsumed_by": ["M261", "M262"], "killer": "M261"},
+    "M255": {"property": "only a protected-class receipt counts in a protected decision", "subsumed_by": ["M254", "M212", "M213", "M261", "M262"], "killer": "M212"},
+}
+EQUIVALENT_DID = set(EQUIV_RECORD)
+# M204's historical guard (the submit observe seam) was REFACTORED away by
+# amendment 16; it no longer applies. Its property is enforced by M192-M195
+# (observe returns Err on a defect) and M253 (epoch recheck), all live killers.
+STALE_REFACTORED = {"M204": {"property": "a defective/replayed observation must not launch", "subsumed_by": ["M192", "M253"], "killer": "M253"}}
 
 # M176 (the runner's exit-0 guard) is equivalent since `--exact` (PSV review
 # wf_d725935a-7ed, B1): the runner now executes exactly the one registered
@@ -879,7 +900,8 @@ EQUIVALENT_DID = {"M204", "M103", "M104", "M209", "M210", "M245", "M254", "M255"
 # Its killing test (a failing SIBLING beside a passing named test) described
 # the very behaviour B1 removed. The guard stays as defence in depth; M184
 # (Fabric's own exit-0 check) remains killed.
-RETIRED = {"M58", "M176"} | EQUIVALENT_DID
+LEGACY_EQUIV = {"M58", "M176"}
+RETIRED = LEGACY_EQUIV | EQUIVALENT_DID | set(STALE_REFACTORED)
 BINDING_IDS = {f"M{n}" for n in range(101, 137)}
 PSV_IDS = {f"M{n}" for n in range(137, 271)}
 
@@ -979,12 +1001,29 @@ def merge(out, parts):
     with open(out, "w") as f:
         json.dump(doc, f, indent=2)
         f.write("\n")
-    killed = sum(r["result"] == "killed" for r in rows)
-    base_ok = all(r["baseline"] == "passed" for r in rows)
-    print(f"{killed}/{len(rows)} killed; baselines {'all pass' if base_ok else 'NOT all pass'} "
-          f"(merged from {len(docs)} shards)"
-          + ("" if ok else "; a SHARD reported a failure (see its own BAD lines)"))
+    print_evidence_model(rows, base["scope"],
+                         extra=f"  (merged from {len(docs)} shards)"
+                         + ("" if ok else "; a SHARD reported a failure — see its BAD lines"))
     sys.exit(0 if ok else 1)
+
+
+def print_evidence_model(rows, scope, extra=""):
+    """Operator model (2026-09-28): active-killed, retired equivalents,
+    survivors and stale reported SEPARATELY; an equivalent mutant is never
+    folded into the killed denominator."""
+    active = len(rows)
+    killed = sum(r["result"] == "killed" for r in rows)
+    survivors = [r["id"] for r in rows if r["result"].startswith("survived")]
+    stale = [r["id"] for r in rows if "not_applicable" in r["result"]]
+    base_ok = all(r["baseline"] == "passed" for r in rows)
+    print(f"Mutation registry: {len(MUTATIONS)} total")
+    print(f"Active mutants: {killed}/{active} killed"
+          f"{'' if base_ok else ' (baselines NOT all pass)'}{extra}")
+    print(f"Retired equivalent/subsumed: {len(EQUIVALENT_DID)} defence-in-depth "
+          f"(paired-disable) + {len(STALE_REFACTORED)} refactored + "
+          f"{len(LEGACY_EQUIV)} legacy = {len(RETIRED)}")
+    print(f"Unexpected survivors: {len(survivors)}{(' '+str(survivors)) if survivors else ''}")
+    print(f"Stale/unapplied: {len(stale)}{(' '+str(stale)) if stale else ''}")
 
 
 def main():
@@ -1085,8 +1124,7 @@ def main():
     with open(sys.argv[1], "w") as f:
         json.dump(doc, f, indent=2)
         f.write("\n")
-    print(f"{sum(r['result'] == 'killed' for r in results)}/{len(results)} killed; baselines "
-          f"{'all pass' if all(v == 'passed' for v in baselines.values()) else 'NOT all pass'}")
+    print_evidence_model(results, scope)
     sys.exit(0 if ok else 1)
 
 

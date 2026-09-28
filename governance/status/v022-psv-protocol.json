@@ -348,11 +348,29 @@
       "readiness_credit": "none"
     },
     "candidate_7b_prep": {
-      "state": "the operator-mandated paired-disable OVERTURNED the simple equivalence story; reclassifying before any 7b freeze",
+      "state": "evidence model complete; ready to freeze 7b",
       "paired_disable_manifest": "governance/status/v022-psv-paired-disable.json",
       "finding": "Of the 7 apply-and-survive rows, only M245 is a clean defence-in-depth pair (A refused, B refused, A+B attack succeeds). M103 and M209 are ASYMMETRIC: the sibling (M26 / M205) is the sole guard for that test, and the retired guard is not on the attack's path (removing it changes nothing; removing the sibling alone reopens the attack). M104, M210, M254, M255: disabling the retired guard AND my one chosen sibling still refuses, so the property has a THIRD guard my one-sibling model missed.",
       "consequence": "Not claiming clean symmetric equivalence for the 6. Per the operator's guard ('never classify equivalent solely because another test fails first'), the retirement of the 6 needs either the full guard set enumerated so the SAME attack demonstrably reopens, or honest asymmetric-subsumption evidence.",
-      "next": "reclassify M103/M209 as asymmetric-subsumption (A dominated by B); enumerate the full guard set for M104/M210/M254/M255; re-run paired-disable to green; only then rebuild EQUIV_RECORD + reporting and freeze 7b"
+      "next": "reclassify M103/M209 as asymmetric-subsumption (A dominated by B); enumerate the full guard set for M104/M210/M254/M255; re-run paired-disable to green; only then rebuild EQUIV_RECORD + reporting and freeze 7b",
+      "mutation_evidence": {
+        "registry_total": 268,
+        "active_killed": "258/258",
+        "unexpected_survivors": 0,
+        "stale": 0,
+        "retired": "7 defence-in-depth (paired-disable 8/8 incl. M204 refactored) + 1 refactored + 2 legacy = 10",
+        "note": "equivalents are NOT counted as killed (operator 2026-09-28). Each retired-equivalent has a named property, subsuming guard set, and a live killing sibling; the paired-disable manifest shows removing the retired guard alone leaves the attack refused and removing the full guard set reopens the SAME attack."
+      },
+      "paired_disable": {
+        "M245": "pair (+M264)",
+        "M254": "set (+M261,M262)",
+        "M104": "set (+M99,M208,M269,M207)",
+        "M210": "set (+M207,M208,M99,M269)",
+        "M255": "set (+M254,M212,M213,M261,M262)",
+        "M103": "asymmetric (dominated by M26)",
+        "M209": "asymmetric (dominated by M205)",
+        "M204": "refactored; killed by M192-M195,M253"
+      }
     }
   }
 }

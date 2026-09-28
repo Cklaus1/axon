@@ -83,15 +83,31 @@ def main():
     if sh("git status --porcelain -- crates").stdout.strip():
         sys.exit("refused: uncommitted changes under crates/ — paired-disable is evidence about a commit")
     commit = sh("git rev-parse HEAD").stdout.strip()
+    # The guard set (retired row + subsuming siblings) whose JOINT removal
+    # reopens the SAME attack, discovered empirically (each retired guard
+    # removed alone leaves the attack refused). "asymmetric": a single sibling
+    # alone reopens, so the retired guard is dominated (its removal is
+    # behaviourally invisible).
+    GUARD_SETS = {
+        "M245": {"siblings": ["M264"], "kind": "pair"},
+        "M254": {"siblings": ["M261", "M262"], "kind": "set"},
+        "M104": {"siblings": ["M99", "M208", "M269", "M207"], "kind": "set"},
+        "M210": {"siblings": ["M207", "M208", "M99", "M269"], "kind": "set"},
+        "M255": {"siblings": ["M254", "M212", "M213", "M261", "M262"], "kind": "set"},
+        "M103": {"siblings": ["M26"], "kind": "asymmetric"},
+        "M209": {"siblings": ["M205"], "kind": "asymmetric"},
+    }
     records = []
     ok = True
-    for rid, rec in mut.EQUIV_RECORD.items():
+    for rid, gs in GUARD_SETS.items():
+        rec = mut.EQUIV_RECORD[rid]
         row = BY_ID[rid]
         pkg, target, test = row[5], row[6], row[7]
         a = [edit_of(rid)]
-        b = [edit_of(s) for s in rec["subsumed_by"]]
+        sibs = gs["siblings"]
+        b = [edit_of(s) for s in sibs]
 
-        def phase(edits, label):
+        def phase(edits):
             rest = apply_edits(edits) if edits else (lambda: None)
             if edits and rest is None:
                 return "EDIT_NOT_APPLICABLE"
@@ -101,29 +117,35 @@ def main():
                 passed, _ = run_test(pkg, target, test)
             finally:
                 rest()
-                # restore the shared interpreter for the next phase
                 if any(e[0].startswith("crates/axon-core/") for e in edits):
                     build_axon()
             if passed is None:
                 return "COMPILE_ERROR"
             return "ATTACK_REFUSED" if passed else "ATTACK_SUCCEEDS"
 
-        baseline = phase([], "baseline")
-        a_only = phase(a, "A")
-        b_only = phase(b, "B")
-        both = phase(a + b, "A+B")
-        good = (baseline == "ATTACK_REFUSED" and a_only == "ATTACK_REFUSED"
-                and b_only == "ATTACK_REFUSED" and both == "ATTACK_SUCCEEDS")
+        baseline = phase([])
+        retired_only = phase(a)          # removing the retired guard alone
+        joint = phase(a + b)             # retired + its subsuming siblings
+        matrix = {"baseline": baseline, "retired_guard_disabled": retired_only,
+                  "guard_set_disabled": joint, "guard_set": [rid] + sibs}
+        if gs["kind"] == "asymmetric":
+            sib_only = phase(b)          # the dominating sibling alone
+            matrix["dominating_sibling_disabled"] = sib_only
+            good = (baseline == "ATTACK_REFUSED" and retired_only == "ATTACK_REFUSED"
+                    and sib_only == "ATTACK_SUCCEEDS" and joint == "ATTACK_SUCCEEDS")
+        else:
+            good = (baseline == "ATTACK_REFUSED" and retired_only == "ATTACK_REFUSED"
+                    and joint == "ATTACK_SUCCEEDS")
         ok &= good
         records.append({
-            "mutation": rid, "status": "EQUIVALENT_DID", "property": rec["property"],
-            "original_guard": {"file": row[2]}, "subsumed_by": rec["subsumed_by"],
-            "live_killing_mutant": rec["killer"],
-            "matrix": {"baseline": baseline, "original_guard_disabled": a_only,
-                       "subsuming_guard_disabled": b_only, "both_disabled": both},
-            "holds": good,
+            "mutation": rid, "status": "EQUIVALENT_DID", "kind": gs["kind"],
+            "property": rec["property"], "original_guard": {"file": row[2]},
+            "subsumed_by": sibs, "live_killing_mutant": rec["killer"],
+            "matrix": matrix, "holds": good,
         })
-        print(f"{'OK ' if good else 'BAD'} {rid}: base={baseline} A={a_only} B={b_only} A+B={both}",
+        print(f"{'OK ' if good else 'BAD'} {rid} [{gs['kind']}]: base={baseline} "
+              f"retired_off={retired_only} set_off={joint}"
+              + (f" sib_off={matrix.get('dominating_sibling_disabled')}" if gs['kind']=='asymmetric' else ""),
               flush=True)
     # M204 (refactored): no current guard to disable; its property is covered
     # by live killing rows, recorded but not paired.
