@@ -346,6 +346,13 @@
       },
       "decision_needed": "How to treat the 7 subsumed rows: (a) document as equivalent mutants (name the subsuming check each), like M58/M176 \u2014 keeps defence in depth, expands the equivalent set from 2 to 9; (b) remove the now-redundant derive() guards so each row retargets to the single authoritative point (weakens defence in depth, risky late change); (c) leave the belt-and-braces and accept the rows as equivalent. Recommend (a). This expands the equivalent set 4.5x right before certification, so it is put to the operator rather than self-cleared.",
       "readiness_credit": "none"
+    },
+    "candidate_7b_prep": {
+      "state": "the operator-mandated paired-disable OVERTURNED the simple equivalence story; reclassifying before any 7b freeze",
+      "paired_disable_manifest": "governance/status/v022-psv-paired-disable.json",
+      "finding": "Of the 7 apply-and-survive rows, only M245 is a clean defence-in-depth pair (A refused, B refused, A+B attack succeeds). M103 and M209 are ASYMMETRIC: the sibling (M26 / M205) is the sole guard for that test, and the retired guard is not on the attack's path (removing it changes nothing; removing the sibling alone reopens the attack). M104, M210, M254, M255: disabling the retired guard AND my one chosen sibling still refuses, so the property has a THIRD guard my one-sibling model missed.",
+      "consequence": "Not claiming clean symmetric equivalence for the 6. Per the operator's guard ('never classify equivalent solely because another test fails first'), the retirement of the 6 needs either the full guard set enumerated so the SAME attack demonstrably reopens, or honest asymmetric-subsumption evidence.",
+      "next": "reclassify M103/M209 as asymmetric-subsumption (A dominated by B); enumerate the full guard set for M104/M210/M254/M255; re-run paired-disable to green; only then rebuild EQUIV_RECORD + reporting and freeze 7b"
     }
   }
 }
