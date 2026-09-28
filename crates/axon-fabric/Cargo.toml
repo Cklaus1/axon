@@ -15,6 +15,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = "0.10"
 axon-workspace-recipe = { path = "../axon-workspace-recipe" }
+axon-psv = { path = "../axon-psv" }
 # Ed25519 verification of qualification evidence (decision D6). Already in
 # the workspace lockfile via rustls; no new crate.
 ring = "0.17"

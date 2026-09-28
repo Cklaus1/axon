@@ -217,6 +217,7 @@ dependencies = [
  "axon-loop",
  "axon-loop-contracts",
  "axon-os",
+ "axon-psv",
  "axon-vm",
  "axon-workspace-recipe",
  "icu_normalizer",

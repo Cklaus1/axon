@@ -228,6 +228,7 @@ impl Env {
             },
             grants: axon_fabric::GrantRegistry::load(&self.grant_registry).unwrap(),
             linux: None,
+            protected_host: None,
             pre_launch_hook: None,
             fault_hook: None,
         }

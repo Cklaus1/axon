@@ -139,6 +139,8 @@ fn main() {
         "verify-readiness" => verify_readiness(&a),
         "sign-evidence" => sign_evidence(&a),
         "verifier-manifest" => verifier_manifest(),
+        #[cfg(feature = "test-trust-root")]
+        "__psv-host-guest" => psv_host_guest(),
         _ => refuse(
             "usage",
             "usage: axon-fabric submit|status|cancel … (see --help in the source header)",
@@ -317,6 +319,126 @@ fn sign_evidence(a: &Args) {
     );
 }
 
+/// TEST-TRUST BUILDS ONLY: a stand-in for `fc_linux_profile.sh`'s PSV mode that
+/// runs the REAL trusted runner (`axon_psv::runner`) and the real interpreter
+/// on the host, then returns the launcher's result shape. It lets the Fabric's
+/// PSV dispatch be tested end to end without KVM, and `--tamper MODE` applies
+/// ONE forgery to what comes back, so each test shows which check refuses
+/// it. A production build does not contain it (it is a guest emulator, never
+/// an authority).
+#[cfg(feature = "test-trust-root")]
+fn psv_host_guest() {
+    use axon_psv::runner::{run, RunnerConfig};
+    let args: Vec<String> = std::env::args().skip(2).collect();
+    if args.iter().any(|a| a == "--verify-result") {
+        std::process::exit(0);
+    }
+    let get = |n: &str| {
+        args.iter()
+            .position(|a| a == n)
+            .and_then(|i| args.get(i + 1).cloned())
+    };
+    let need = |n: &str| get(n).unwrap_or_else(|| panic!("__psv-host-guest: {n} required"));
+    let out = PathBuf::from(need("--out"));
+    let job = PathBuf::from(need("--psv-job"));
+    let sha = need("--psv-manifest-sha");
+    let tamper = get("--tamper").unwrap_or_default();
+    let od = out.join("out");
+    std::fs::create_dir_all(&od).unwrap();
+    let write_result = |status: &str, code: i32| {
+        let stdout = od.join("stdout");
+        if !stdout.exists() {
+            std::fs::write(&stdout, "PSV-VERDICT sha256=stand-in\n").unwrap();
+        }
+        let s = axon_psv::sha256_hex(&std::fs::read(&stdout).unwrap());
+        let r = serde_json::json!({
+            "schema": "axon-linux-microvm-result/1", "status": status,
+            "admissible": code == 0, "output_bound": true,
+            // The RUNNER's exit (a verdict was written); the test's own exit is
+            // inside the verdict.
+            "workload_exit": if code == 0 { Some(0) } else { None },
+            "outputs": {"stdout": {"sha256": s}},
+            "cleanup": {"complete": true, "left_behind": []},
+            "psv": {"launch_manifest_sha256": sha, "bound": code == 0},
+        });
+        std::fs::write(out.join("result.json"), r.to_string()).unwrap();
+        std::process::exit(code);
+    };
+    if tamper == "vmm-died" {
+        write_result("vmm-died", 21);
+    }
+    if tamper == "candidate-changed" {
+        // The candidate changes under the guest: the runner must refuse.
+        std::fs::write(
+            PathBuf::from(need("--psv-candidate")).join("f.ax"),
+            "fn double(n: i64) -> i64 { 42 }\n",
+        )
+        .unwrap();
+    }
+    let v = run(&RunnerConfig {
+        manifest: job.join("launch-manifest.json"),
+        secret: job.join("completion-secret"),
+        candidate: PathBuf::from(need("--psv-candidate")),
+        suite: PathBuf::from(need("--psv-suite")),
+        out: od.clone(),
+        axon: PathBuf::from(need("--axon")),
+        runner_exe: PathBuf::from(need("--axon")),
+        expected_manifest_sha256: sha.clone(),
+        drop: None,
+        effect_ceiling: None,
+    });
+    let mut v = serde_json::to_value(&v).unwrap();
+    let rehash = |od: &std::path::Path, v: &mut serde_json::Value| {
+        let b = std::fs::read(od.join("test-stdout")).unwrap_or_default();
+        v["stdout_sha256"] = serde_json::json!(axon_psv::sha256_hex(&b));
+    };
+    match tamper.as_str() {
+        "" => {}
+        // The guest CLAIMS a pass for a run whose output says otherwise.
+        "claim-pass" => v["status"] = serde_json::json!("passed"),
+        // Output changed after the verdict named it.
+        "stdout" => {
+            let mut b = std::fs::read(od.join("test-stdout")).unwrap();
+            b.extend_from_slice(b"{\"name\":\"x\",\"status\":\"ok\"}\n");
+            std::fs::write(od.join("test-stdout"), b).unwrap();
+        }
+        // A CONSISTENT forgery (output + verdict agree) by someone without K.
+        "forge" => {
+            let t = v["test"].as_str().unwrap().to_string();
+            std::fs::write(
+                od.join("test-stdout"),
+                format!(
+                    "{{\"name\":\"{t}\",\"status\":\"ok\",\"duration_ms\":0,\"completion\":\"{}\"}}\n\
+                     {{\"type\":\"summary\",\"total\":1,\"passed\":1,\"failed\":0,\"skipped\":0,\"duration_ms\":0}}\n",
+                    "ab".repeat(32)
+                ),
+            )
+            .unwrap();
+            rehash(&od, &mut v);
+            v["status"] = serde_json::json!("passed");
+            v["exit_code"] = serde_json::json!(0);
+        }
+        "other-manifest" => v["launch_manifest_sha256"] = serde_json::json!("0".repeat(64)),
+        "inputs" => v["inputs"]["match"] = serde_json::json!(false),
+        // A previous attempt's genuine output, re-labelled for this launch.
+        "replay" => {
+            let from = PathBuf::from(need("--replay-from"));
+            std::fs::copy(from.join("out/test-stdout"), od.join("test-stdout")).unwrap();
+            rehash(&od, &mut v);
+            v["status"] = serde_json::json!("passed");
+            v["exit_code"] = serde_json::json!(0);
+        }
+        "candidate-changed" | "unbound" => {}
+        other => panic!("__psv-host-guest: unknown tamper {other}"),
+    }
+    std::fs::write(od.join("verdict.json"), axon_psv::canonical_json(&v)).unwrap();
+    if tamper == "unbound" {
+        // A GENUINE verdict, from a launch the launcher did not bind (27).
+        write_result("verdict-unbound", 27);
+    }
+    write_result("ok", 0);
+}
+
 /// OPERATOR tool: print the `axon-verifier-manifest/1` describing THIS binary
 /// (its absolute path, sha256 and build provenance, and the trust roots it
 /// decides over). Run the INSTALLED binary; the operator reviews the output and
@@ -440,6 +562,10 @@ fn submit(a: &Args) {
         scope(&a.req("--tenant"), &a.req("--family")).unwrap_or_else(|e| refuse("usage", &e, 2));
     let expected = AuthorityEpoch::new(a.num("--expected-epoch", u64::MAX))
         .unwrap_or_else(|e| refuse("usage", &format!("--expected-epoch: {e}"), 2));
+    let protected_host = host.as_ref().map(|h| axon_fabric::psv::HostIdentity {
+        config_sha256: h.config_sha256.clone(),
+        suite_registry_sha256: h.suite_registry_sha256.clone(),
+    });
     let linux = host.map(|h| h.linux);
     let cfg = SubmitConfig {
         journal: PathBuf::from(a.req("--journal")),
@@ -459,6 +585,7 @@ fn submit(a: &Args) {
         },
         grants,
         linux,
+        protected_host,
         pre_launch_hook: None,
         fault_hook: None,
     };

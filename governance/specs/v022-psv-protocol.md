@@ -307,3 +307,21 @@ Anything less is Unverifiable in the protected class (PSV-7). It is never silent
 These cases are written before the mechanisms. The gap map holds A1–A19; §2 adds A20 and A21. Each
 mechanism's slice names the rows it must turn from "missing" to "refused for the stated reason",
 and its tests assert the reason.
+
+## Amendments made during implementation
+
+These are recorded here rather than edited into the frozen text above.
+
+1. **A third evidence class, `guest-unobserved` (M2).** §6 names two classes. The implementation
+   has a third: a verdict produced on the guest path and fully checked by Fabric (§5), but without a
+   verified preflight observation. It is signed as `guest-unobserved`, and is never protected; only
+   M3's verified observation makes a verdict `protected`. The class is inside the signed receipt
+   (`evidence-class:` ref), and the attestation rule signs each class only where its backend derives
+   it (`signing::WRONG_CLASS`).
+2. **The child's output is `/out/test-stdout` and `/out/test-stderr` (M1).** §5 said `stdout`.
+   The first real boot showed that `/init` already redirects the runner's own stdout to
+   `/out/stdout`, and sharing it corrupted the child's output.
+3. **Launcher exit 27, `verdict-unbound` (M1).** It was not in §4. It means the verdict on the
+   returned drive is not the one `/init` hashed on the serial console, or the guest named another
+   launch manifest. It is not admissible.
+

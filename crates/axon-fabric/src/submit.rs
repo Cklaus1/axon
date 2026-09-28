@@ -125,6 +125,9 @@ pub struct SubmitConfig {
     pub grants: GrantRegistry,
     /// Where the Linux microVM profile's launcher and evidence live.
     pub linux: Option<crate::backend::LinuxProfileConfig>,
+    /// O1: the protected host config's identity, bound into every launch
+    /// manifest. `None` off a protected host.
+    pub protected_host: Option<crate::psv::HostIdentity>,
     /// Test seam: called after the submit-time checks and the reservation,
     /// immediately before the dispatch-time epoch recheck. `None` in
     /// production (the CLI never sets it).
@@ -183,6 +186,9 @@ pub struct Submission {
 pub struct RanUnder {
     pub backend: String,
     pub effect_ceiling: String,
+    /// The receipt's evidence class (`psv::EvidenceClass`), which the
+    /// attestation rule decides on (v022-psv-protocol.md §6).
+    pub evidence_class: String,
 }
 
 fn ran_under_of(intent: &crate::journal::Intent) -> Option<RanUnder> {
@@ -191,6 +197,9 @@ fn ran_under_of(intent: &crate::journal::Intent) -> Option<RanUnder> {
         effect_ceiling: intent.config["grant"]["effect_ceiling"]
             .as_str()?
             .to_string(),
+        // A replay is never signed (signing::REPLAYED); its class is not
+        // re-derived from the journal.
+        evidence_class: "unknown".into(),
     })
 }
 
@@ -1141,6 +1150,18 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
         resolve_executable(&req, &cfg.registry)?
     };
     let target = check_target(&req, cfg)?;
+    // The protected profile judges ONLY an operator suite, through the trusted
+    // guest runner (PSV). A candidate-named file is never a protected check.
+    if profile.id == backend::LINUX_MICROVM_PROTECTED.id
+        && req.job_kind == axon_loop_contracts::JobKind::RegisteredCheck
+        && (target.suite.is_none() || target.filter.is_none())
+    {
+        return Err(SubmitError::Unregistered(format!(
+            "{} runs a registered_check only as an operator suite (`check:<id>`) with a named \
+             test",
+            profile.id
+        )));
+    }
 
     // 6. Supervisor admission (axon-os).
     let program = target.dir(cfg).join(&target.file);
@@ -1330,7 +1351,7 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
                 .suite
                 .as_ref()
                 .map(|s| format!("check-suite:{}@{}#{}", s.id, s.version, target.file));
-            local_receipt(
+            let (mut r, report, reason) = local_receipt(
                 &req,
                 &journal,
                 res,
@@ -1339,14 +1360,88 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
                 seen,
                 suite,
                 Some(&completion_key),
-            )?
+            )?;
+            // A local run is DEVELOPMENT evidence, whatever it verified
+            // (v022-psv-protocol.md §6): never protected.
+            r.evidence_refs.insert(
+                0,
+                opaque(crate::psv::EvidenceClass::Development.evidence_ref()),
+            );
+            (r, report, reason)
+        }
+        id if id == backend::LINUX_MICROVM_PROTECTED.id
+            && req.job_kind == axon_loop_contracts::JobKind::RegisteredCheck =>
+        {
+            let lx = cfg.linux.as_ref().expect("selected only when configured");
+            let policy = guest_policy
+                .as_ref()
+                .expect("built when the profile was selected");
+            let q = qualified.as_ref().expect("qualified at dispatch");
+            let suite = target.suite.as_ref().expect("checked above");
+            let Bound::Version { dir, .. } = &target.bound else {
+                unreachable!("a suite target is always a stored version")
+            };
+            let prepared = crate::psv::prepare(
+                &req,
+                &crate::psv::PrepareInputs {
+                    qualification: q,
+                    profile_manifest: &lx.manifest,
+                    host: cfg.protected_host.as_ref(),
+                    policy_json: policy.json(),
+                    suite_id: &suite.id,
+                    suite_version: suite.version.as_str(),
+                    entry: &file,
+                    test: filter.as_deref().expect("checked above"),
+                    candidate_dir: &dir.0.join("candidate"),
+                    suite_dir: &dir.0.join("check"),
+                    job_dir: &dir.0.join("job"),
+                    // M3 supplies the custodian's nonce and verifies the
+                    // observation; until then no verdict is protected.
+                    observation_nonce: "none",
+                },
+            );
+            match prepared {
+                Ok(launch) => {
+                    let res = backend::run_linux_profile(
+                        lx,
+                        &run_dir.join(&file),
+                        &req,
+                        policy,
+                        Some(&launch),
+                    );
+                    launch.scrub();
+                    let hv = crate::psv::derive(&launch, &res.out_dir, None);
+                    psv_receipt(&req, &journal, res, q, hv, liability)?
+                }
+                Err(why) => {
+                    let why = format!("launch manifest not built: {why}");
+                    journal.fail(&req.operation_id, &why, Billing::Unknown)?;
+                    (
+                        receipt(
+                            &req,
+                            id,
+                            Obs {
+                                status: ReceiptStatus::Failed,
+                                exit: None,
+                                verification: ReceiptVerification::NotRun,
+                                matched: None,
+                                evidence: vec![],
+                                liability_micro: liability,
+                                output: None,
+                            },
+                        ),
+                        None,
+                        Some(why),
+                    )
+                }
+            }
         }
         id if id == backend::LINUX_MICROVM_PROTECTED.id => {
             let lx = cfg.linux.as_ref().expect("selected only when configured");
             let policy = guest_policy
                 .as_ref()
                 .expect("built when the profile was selected");
-            let res = backend::run_linux_profile(lx, &run_dir.join(&file), &req, policy);
+            let res = backend::run_linux_profile(lx, &run_dir.join(&file), &req, policy, None);
             let q = qualified.as_ref().expect("qualified at dispatch");
             linux_receipt(&req, &journal, res, q, liability)?
         }
@@ -1376,6 +1471,12 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
     };
     fault(cfg, Boundary::AfterTerminal);
     record_receipt(&journal, &req, &r, report.as_ref(), reason.as_deref())?;
+    let evidence_class = r
+        .evidence_refs
+        .iter()
+        .find_map(|e| e.as_str().strip_prefix(crate::psv::EVIDENCE_CLASS_PREFIX))
+        .unwrap_or("none")
+        .to_string();
     Ok(Submission {
         receipt: r,
         check_report: report,
@@ -1385,6 +1486,7 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
         ran_under: Some(RanUnder {
             backend: profile.id.to_string(),
             effect_ceiling: ceiling.clone(),
+            evidence_class,
         }),
     })
 }
@@ -1634,6 +1736,42 @@ fn linux_receipt(
         None,
         Some(res.reason),
     ))
+}
+
+/// The receipt of a protected-profile CHECK: the launcher's outcome, then
+/// Fabric's own verdict (`psv::derive`), never the guest's claim.
+fn psv_receipt(
+    req: &ComputeRequest,
+    journal: &Journal,
+    res: backend::LinuxRun,
+    q: &backend::LinuxQualification,
+    hv: crate::psv::HostVerdict,
+    liability: u64,
+) -> Result<Outcome, SubmitError> {
+    let (mut r, _, reason) = linux_receipt(req, journal, res.clone(), q, liability)?;
+    // A launch that did not complete admissibly has no verdict at all.
+    let launched_ok = matches!(res.outcome, backend::LinuxOutcome::Ok { .. });
+    let (verification, reason) = if launched_ok {
+        (hv.verification, hv.reason.or(reason))
+    } else {
+        (r.verification, reason)
+    };
+    r.verification = verification;
+    r.evidence_refs.extend(hv.evidence.into_iter().map(opaque));
+    if !launched_ok {
+        // Whatever derive saw, an inadmissible launch is never protected.
+        r.evidence_refs
+            .retain(|e| !e.as_str().starts_with(crate::psv::EVIDENCE_CLASS_PREFIX));
+        r.evidence_refs.insert(
+            0,
+            opaque(crate::psv::EvidenceClass::GuestUnobserved.evidence_ref()),
+        );
+    }
+    let report = hv.report.map(|mut j| {
+        j["verification"] = serde_json::json!(verification);
+        j
+    });
+    Ok((r, report, reason))
 }
 
 /// Journal a request that was refused BEFORE launch: intent, then a failed

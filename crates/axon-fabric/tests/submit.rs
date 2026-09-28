@@ -336,12 +336,19 @@ fn linux_profile_eligibility_is_bound_to_the_qualified_manifest() {
     ] {
         assert!(backend::select(&req, Some(&ok), needs).is_err());
     }
-    // A registered_check is not something this profile can adjudicate.
-    let chk = axon_loop_contracts::parse::<axon_loop_contracts::ComputeRequest>(
-        &linux_request(&env, "op-c").to_string(),
-    )
-    .unwrap();
-    assert!(backend::select(&chk, Some(&ok), Default::default()).is_err());
+    // A registered_check IS offered (PSV) — but only an OPERATOR suite with a
+    // named test is ever run: submit refuses a check that is a file of the
+    // candidate's tree before anything is reserved or launched.
+    let chk_json = linux_request(&env, "op-c");
+    let chk =
+        axon_loop_contracts::parse::<axon_loop_contracts::ComputeRequest>(&chk_json.to_string())
+            .unwrap();
+    assert!(
+        !chk.argv[0].starts_with("check:"),
+        "precondition: a candidate file"
+    );
+    assert!(backend::select(&chk, Some(&ok), Default::default()).is_ok());
+    // (submit's suite-only refusal: tests/psv_dispatch.rs)
     // And the process-scoped backend is never chosen for it.
     assert!(backend::select(&req, None, Default::default()).is_err());
 }

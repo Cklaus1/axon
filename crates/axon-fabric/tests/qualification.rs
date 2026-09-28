@@ -523,7 +523,10 @@ fn the_stage3_requalification_record_is_refused_until_signed_and_waived() {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/b263-20260926T002631Z.json");
     let env = Env::new();
     let d = env.dir.path();
-    let manifest = repo().join("profiles/linux-microvm/manifest.json");
+    // The manifest AS IT WAS when this record was made (the committed one has
+    // since moved on to the PSV image, 06ec49e3): the record names its bytes.
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/manifest-at-b263-20260926T002631Z.json");
     let ev: Value = serde_json::from_slice(&std::fs::read(&fixture).unwrap()).unwrap();
     assert_eq!(ev["counts"]["BLOCKED"], 2);
     assert_eq!(ev["counts"]["FAIL"], 0);

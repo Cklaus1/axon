@@ -102,7 +102,10 @@ pub const LINUX_MICROVM_PROTECTED: Profile = Profile {
     os: Os::Linux,
     hardware_isolation: true,
     isolation: Isolation::LinuxMicroVmProtected,
-    job_kinds: &[JobKind::InterpreterRun],
+    // `registered_check` only for an OPERATOR suite (`check:<id>`), run by the
+    // trusted guest runner (PSV, v022-psv-protocol.md §4); `submit` refuses
+    // any other target on this profile.
+    job_kinds: &[JobKind::InterpreterRun, JobKind::RegisteredCheck],
     // The pinned guest is x86_64 (`profiles/linux-microvm/manifest.json`:
     // `x86_64-unknown-linux-musl` interpreter, x86_64 kernel config).
     architectures: &[Architecture::X86_64],
@@ -1226,6 +1229,7 @@ pub fn run_linux_profile(
     program: &Path,
     req: &ComputeRequest,
     policy: &GuestPolicy,
+    psv: Option<&crate::psv::Launch>,
 ) -> LinuxRun {
     let out = lx.out_root.join(req.operation_id.as_str());
     // Beside `--out`, never in it: the launcher requires a new/empty out dir.
@@ -1259,11 +1263,22 @@ pub fn run_linux_profile(
     );
     let timeout_s = req.limits.wall_time_ms.div_ceil(1000).max(1);
     let mut cmd = std::process::Command::new(&lx.launcher);
-    cmd.arg("--policy")
-        .arg(&policy_file)
-        .arg("--program")
-        .arg(program)
-        .arg("--out")
+    cmd.arg("--policy").arg(&policy_file);
+    match psv {
+        // PSV: the candidate, the suite and the job are three separate
+        // read-only drives; the manifest digest is Fabric's.
+        Some(l) => cmd
+            .arg("--psv-candidate")
+            .arg(&l.candidate_dir)
+            .arg("--psv-suite")
+            .arg(&l.suite_dir)
+            .arg("--psv-job")
+            .arg(&l.job_dir)
+            .arg("--psv-manifest-sha")
+            .arg(&l.digest),
+        None => cmd.arg("--program").arg(program),
+    };
+    cmd.arg("--out")
         .arg(&out)
         .arg("--manifest")
         .arg(&lx.manifest)
@@ -1352,7 +1367,10 @@ mod tests {
         assert!(FIRECRACKER_AXON_KERNEL.job_kinds.is_empty());
         const { assert!(!axon_vm::BACKEND_PROFILE.linux_guest) };
         assert_eq!(LINUX_MICROVM_PROTECTED.os, Os::Linux);
-        assert!(!LINUX_MICROVM_PROTECTED
+        // PSV (v022-psv-protocol.md §4): the profile runs registered checks,
+        // but `submit` admits only an OPERATOR suite with a named test, judged
+        // by the trusted guest runner (tests/psv_dispatch.rs).
+        assert!(LINUX_MICROVM_PROTECTED
             .job_kinds
             .contains(&JobKind::RegisteredCheck));
     }

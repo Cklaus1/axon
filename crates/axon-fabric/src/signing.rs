@@ -16,6 +16,9 @@ pub const CANDIDATE_RUBRIC: &str = "the check is a file of the candidate's tree,
 pub const REPLAYED: &str = "a replayed receipt is read back from the journal the caller named, \
      which this process did not write and cannot vouch for: the verifier signs only a verdict it \
      just produced";
+pub const WRONG_CLASS: &str = "the receipt's evidence class does not match the backend that \
+     produced it (a guest verdict is protected or guest-unobserved; a local one is development): \
+     the verifier signs a class only where it was derived";
 pub const KEY_REACHABLE: &str = "the admitted grant gives the check workload file, network or \
      exec effects on a backend that cannot path-scope them, so the workload could have read the \
      signing key: no attestation";
@@ -28,7 +31,11 @@ pub const KEY_REACHABLE: &str = "the admitted grant gives the check workload fil
 ///   journal holds — and the journal path is the caller's — so signing a
 ///   replay would sign a receipt the caller wrote (a signing oracle);
 /// * only if the workload could not have read the key: it ran in the
-///   protected microVM, or its grant gave it no effect at all.
+///   protected microVM, or its grant gave it no effect at all;
+/// * only a receipt whose EVIDENCE CLASS is the one its backend derives
+///   (v022-psv-protocol.md §6). The class is inside the signed receipt, so a
+///   signature never upgrades it: `protected` needs the guest path, and a
+///   local, effect-free check is `development` and nothing else.
 pub fn attestation_decision(
     req: &ComputeRequest,
     replayed: bool,
@@ -43,9 +50,21 @@ pub fn attestation_decision(
     if replayed {
         return Err(REPLAYED);
     }
-    match ran_under {
-        Some(r) if r.backend == LINUX_MICROVM_PROTECTED.id || r.effect_ceiling.is_empty() => Ok(()),
-        _ => Err(KEY_REACHABLE),
+    let Some(r) = ran_under else {
+        return Err(KEY_REACHABLE);
+    };
+    if r.backend == LINUX_MICROVM_PROTECTED.id {
+        match r.evidence_class.as_str() {
+            "protected" | "guest-unobserved" => Ok(()),
+            _ => Err(WRONG_CLASS),
+        }
+    } else if r.effect_ceiling.is_empty() {
+        match r.evidence_class.as_str() {
+            "development" => Ok(()),
+            _ => Err(WRONG_CLASS),
+        }
+    } else {
+        Err(KEY_REACHABLE)
     }
 }
 
@@ -66,9 +85,59 @@ mod tests {
     }
 
     fn ran(backend: &str, ceiling: &str) -> RanUnder {
+        let class = if backend == LINUX_MICROVM_PROTECTED.id {
+            "guest-unobserved"
+        } else {
+            "development"
+        };
+        ran_as(backend, ceiling, class)
+    }
+
+    fn ran_as(backend: &str, ceiling: &str, class: &str) -> RanUnder {
         RanUnder {
             backend: backend.into(),
             effect_ceiling: ceiling.into(),
+            evidence_class: class.into(),
+        }
+    }
+
+    /// §6: a class is signed only where its backend derives it. A local run
+    /// labelled protected (or guest-unobserved), a guest receipt labelled
+    /// development, and a classless receipt are all refused.
+    #[test]
+    fn a_class_is_signed_only_where_its_backend_derives_it() {
+        let r = req("registered_check", "check:acc@1");
+        for (backend, ceiling, class, want) in [
+            (LINUX_MICROVM_PROTECTED.id, "", "protected", Ok(())),
+            (LINUX_MICROVM_PROTECTED.id, "", "guest-unobserved", Ok(())),
+            (
+                LINUX_MICROVM_PROTECTED.id,
+                "",
+                "development",
+                Err(WRONG_CLASS),
+            ),
+            (LINUX_MICROVM_PROTECTED.id, "", "none", Err(WRONG_CLASS)),
+            (LOCAL_INTERPRETER.id, "", "development", Ok(())),
+            (LOCAL_INTERPRETER.id, "", "protected", Err(WRONG_CLASS)),
+            (
+                LOCAL_INTERPRETER.id,
+                "",
+                "guest-unobserved",
+                Err(WRONG_CLASS),
+            ),
+            (LOCAL_INTERPRETER.id, "", "none", Err(WRONG_CLASS)),
+            (
+                LOCAL_INTERPRETER.id,
+                "IO",
+                "development",
+                Err(KEY_REACHABLE),
+            ),
+        ] {
+            assert_eq!(
+                attestation_decision(&r, false, Some(&ran_as(backend, ceiling, class))),
+                want,
+                "{backend} {ceiling:?} {class}"
+            );
         }
     }
 
