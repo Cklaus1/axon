@@ -296,6 +296,8 @@ echo "── gate: v0.22 Protected Check Isolation surfaces ──"
 # only entry points call the shared preflight FIRST, refusing otherwise.
 echo "── gate: v0.22 protected readiness (derived; certified artifacts pinned) ──"
 python3 -B scripts/protected_verifier_ready.py --check || fail "v0.22 protected readiness"
+python3 -B scripts/test_protected_verifier_ready.py || fail "v0.22 readiness relay (pinned verifier identity)"
+bash scripts/test_trust_root_preflight.sh || fail "v0.22 trust-root preflight mechanism (dev mode)"
 for ep in scripts/v022_stage7_pilot.sh scripts/v022_cx21_experiment.sh; do
   grep -q "protected_verifier_ready.py --require" "$ep" \
     || fail "$ep does not call the protected readiness preflight"

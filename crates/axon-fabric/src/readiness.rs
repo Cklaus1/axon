@@ -15,7 +15,7 @@
 //!   binds every required field, certifies THIS spec, a revision this tree
 //!   descends from with nothing outside `governance/` changed since, and an
 //!   evidence bundle that still hashes to what was certified;
-//! * that record's detached `axon-evidence-signature/1` verifies under a key in
+//! * that record's detached QUALIFICATION-domain `axon-evidence-signature/2` verifies under a key in
 //!   the operator's qualification root — owned by root along its whole path,
 //!   no symlinks, no group/other write, and not writable by this process;
 //! * the signer is among the repository's expected issuers, if it lists any
@@ -34,7 +34,7 @@ const CERT_DIR: &str = "governance/proofs/v022-protected";
 const TRUST_EXPECTATIONS: &str = "governance/status/trust-expectations.json";
 
 /// The fields a certification must bind, so any later change invalidates it.
-pub const CERT_FIELDS: [&str; 20] = [
+pub const CERT_FIELDS: [&str; 22] = [
     "schema",
     "component",
     "host_profile",
@@ -54,6 +54,8 @@ pub const CERT_FIELDS: [&str; 20] = [
     "b263_qualification_sha256",
     "evidence",
     "evidence_bundle_sha256",
+    "readiness_verifier_sha256",
+    "trust_preflight_sha256",
     "certified_at",
 ];
 
@@ -217,6 +219,8 @@ fn certification(repo: &Path, component: &str, trust: &ReadinessTrust) -> Result
         "observation_sha256",
         "b263_qualification_sha256",
         "evidence_bundle_sha256",
+        "readiness_verifier_sha256",
+        "trust_preflight_sha256",
     ] {
         if !is_hex(&doc[k], 64) {
             return Err(format!("{component}: {k} is not a sha256"));
@@ -289,11 +293,35 @@ fn certification(repo: &Path, component: &str, trust: &ReadinessTrust) -> Result
         .filter(|a| !a.is_empty())
         .ok_or(format!("{component}: no evidence listed"))?;
     let mut concat = String::new();
+    let mut preflight = None;
     for e in ev {
         let p = e
             .as_str()
             .ok_or(format!("{component}: evidence entries are paths"))?;
-        concat.push_str(&sha256_file(&repo.join(p))?);
+        let h = sha256_file(&repo.join(p))?;
+        if doc["trust_preflight_sha256"].as_str() == Some(h.as_str()) {
+            preflight = Some(repo.join(p));
+        }
+        concat.push_str(&h);
+    }
+    // The executable trust-root preflight (real write attempts under the
+    // service UIDs, scripts/trust_root_preflight.sh) is part of the certified
+    // evidence, and must be a PROTECTED-mode run that passed. A dev-mode run
+    // proves the mechanism and certifies nothing.
+    let pf = preflight.ok_or(format!(
+        "{component}: trust_preflight_sha256 names no certified evidence file"
+    ))?;
+    let pf: Value = serde_json::from_slice(&std::fs::read(&pf).map_err(|e| e.to_string())?)
+        .map_err(|e| format!("{component}: trust preflight report: {e}"))?;
+    if pf["schema"] != TRUST_PREFLIGHT_SCHEMA
+        || pf["mode"] != "protected"
+        || pf["verdict"] != "PASS"
+    {
+        return Err(format!(
+            "{component}: the trust preflight is not a passing protected-mode {TRUST_PREFLIGHT_SCHEMA} \
+             run (mode {}, verdict {})",
+            pf["mode"], pf["verdict"]
+        ));
     }
     use sha2::{Digest, Sha256};
     if doc["evidence_bundle_sha256"].as_str()
@@ -303,12 +331,31 @@ fn certification(repo: &Path, component: &str, trust: &ReadinessTrust) -> Result
             "{component}: the evidence bundle changed since it was certified"
         ));
     }
+    // The verifier deciding NOW is the one the certification was made with:
+    // replacing the installed verifier invalidates it. A production verifier
+    // is built from a clean tree.
+    let me = verifier_identity();
+    if doc["readiness_verifier_sha256"] != me["sha256"] {
+        return Err(format!(
+            "{component}: certified with readiness verifier {}, but this verifier is {}",
+            doc["readiness_verifier_sha256"], me["sha256"]
+        ));
+    }
+    if !TEST_TRUST_BUILD && me["source_dirty"] == true {
+        return Err(format!(
+            "{component}: this verifier was built from a dirty tree"
+        ));
+    }
     // Authority: the operator's root, never the repository.
     trust.check()?;
     let mut sig = rec.as_os_str().to_owned();
     sig.push(".sig");
-    let issuer =
-        crate::backend::verify_operator_evidence(&rec, Path::new(&sig), &trust.issuers_dir)?;
+    let issuer = crate::backend::verify_operator_evidence(
+        &rec,
+        Path::new(&sig),
+        &trust.issuers_dir,
+        TrustAuthority::Qualification,
+    )?;
     let exp = repo.join(TRUST_EXPECTATIONS);
     if exp.exists() {
         let v: Value = serde_json::from_slice(&std::fs::read(&exp).map_err(|e| e.to_string())?)
@@ -323,6 +370,29 @@ fn certification(repo: &Path, component: &str, trust: &ReadinessTrust) -> Result
         }
     }
     Ok(issuer)
+}
+
+/// Schema of `scripts/trust_root_preflight.sh`'s report.
+pub const TRUST_PREFLIGHT_SCHEMA: &str = "axon-trust-preflight/1";
+
+/// WHAT is deciding: this binary's own digest and build provenance (build.rs).
+/// Recorded in every verdict, and bound by a certification
+/// (`readiness_verifier_sha256`), so replacing the installed verifier is a
+/// visible change of authority, never a silent one.
+pub fn verifier_identity() -> Value {
+    let sha = std::env::current_exe()
+        .ok()
+        .and_then(|p| sha256_file(&p).ok())
+        .unwrap_or_else(|| "unknown".into());
+    json!({
+        "sha256": sha,
+        "build": if TEST_TRUST_BUILD { "test-trust" } else { "production" },
+        "fabric_revision": env!("AXON_FABRIC_GIT_SHA"),
+        "source_dirty": env!("AXON_FABRIC_GIT_DIRTY") == "true",
+        "rustc": env!("AXON_FABRIC_RUSTC"),
+        "profile": env!("AXON_FABRIC_PROFILE"),
+        "target": env!("AXON_FABRIC_TARGET"),
+    })
 }
 
 /// The three protected components' verdicts for `repo`.
@@ -370,6 +440,7 @@ pub fn protected_components(repo: &Path, trust: &ReadinessTrust) -> Value {
         // A build carrying the test trust constructors never earns readiness.
         "build": if TEST_TRUST_BUILD { "test-trust" } else { "production" },
         "trust_root": trust.issuers_dir,
+        "verifier": verifier_identity(),
         "components": out,
     })
 }

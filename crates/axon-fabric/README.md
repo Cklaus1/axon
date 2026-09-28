@@ -77,7 +77,7 @@ linking this crate, because this crate depends on `axon-cortex`.
     `interpreter_run` only, and only while `qualification()` accepts its
     evidence (FG-042, fixed in code in Stage 3): a detached Ed25519
     signature over the exact record bytes (`<evidence>.sig`,
-    `axon-evidence-signature/1`) that verifies under a public key in
+    `axon-evidence-signature/2` (authority-domain separated)) that verifies under a public key in
     `profiles/linux-microvm/trusted_issuers/`; `result` `PASS` with no
     BLOCKED assertion, or `PASS_WITH_BLOCKED` with every BLOCKED assertion
     covered by an unexpired, reasoned, issuer-signed waiver

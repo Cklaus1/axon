@@ -11,7 +11,7 @@
 
 
 `axon-fabric` treats a B263 qualification record as evidence only when a
-detached `axon-evidence-signature/1` over its exact bytes verifies under an
+detached `axon-evidence-signature/2` (authority-domain separated) over its exact bytes verifies under an
 Ed25519 **public** key in this directory (one `<name>.pub` file per issuer,
 64 hex characters). Waivers for BLOCKED assertions (`axon-b263-waiver/1`) are
 verified the same way.

@@ -369,11 +369,21 @@ impl Issuer {
         let h = Sha256::digest(self.0.public_key().as_ref());
         format!("ed25519:{}", &hex(&h)[..16])
     }
-    /// An `axon-evidence-signature/1` over exactly `bytes`.
+    /// A QUALIFICATION-domain `axon-evidence-signature/2` over `bytes`.
     pub fn sign(&self, bytes: &[u8]) -> String {
-        json!({"schema":"axon-evidence-signature/1","alg":"ed25519",
+        self.sign_for(axon_fabric::backend::TrustAuthority::Qualification, bytes)
+    }
+    /// An `axon-evidence-signature/2` for `authority` over `bytes`.
+    pub fn sign_for(
+        &self,
+        authority: axon_fabric::backend::TrustAuthority,
+        bytes: &[u8],
+    ) -> String {
+        let msg = axon_fabric::backend::evidence_signing_message(authority, bytes);
+        json!({"schema":"axon-evidence-signature/2","alg":"ed25519",
+               "domain": authority.dir_name(),
                "public_key": self.public_hex(),
-               "signature": hex(self.0.sign(bytes).as_ref())})
+               "signature": hex(self.0.sign(&msg).as_ref())})
         .to_string()
     }
     /// Write `v` to `path` and its detached signature to `path.sig`.

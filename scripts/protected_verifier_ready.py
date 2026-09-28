@@ -120,10 +120,32 @@ def operator_owned(p):
     return None
 
 
+VERIFIER_MANIFEST = os.path.join(OPERATOR_TRUST_ROOT, "verifier.json")
+VERIFIER_MANIFEST_SCHEMA = "axon-verifier-manifest/1"
+# What the installed verifier must report about ITSELF, and the manifest must
+# pin, field for field (`axon-fabric verifier-manifest` prints it).
+VERIFIER_IDENTITY = ("sha256", "build", "fabric_revision", "source_dirty", "rustc", "profile", "target")
+
+
+def verifier_mismatch(manifest, out):
+    """Why the running verifier's self-report is not the manifest's binary, or
+    None. The manifest describes the binary; the binary describes itself; they
+    must agree before its verdict is relayed."""
+    me = out.get("verifier") or {}
+    for k in VERIFIER_IDENTITY:
+        if me.get(k) != manifest.get(k):
+            return f"verifier reports {k}={me.get(k)!r}, manifest pins {manifest.get(k)!r}"
+    if me.get("build") != "production" or me.get("source_dirty") is not False or me.get("profile") != "release":
+        return "operator verifier is not a clean production release build"
+    if out.get("trust_root") != QUALIFICATION_ROOT or manifest["trust_roots"].get("qualification") != QUALIFICATION_ROOT:
+        return f"operator verifier is not deciding over {QUALIFICATION_ROOT}"
+    return None
+
+
 def operator_verifier():
-    """(argv0, None) for the operator-installed verifier pinned in the trust
-    root (verifier.json: {"path", "sha256"}), or (None, why)."""
-    pin = os.path.join(OPERATOR_TRUST_ROOT, "verifier.json")
+    """(manifest, None) for the operator-installed verifier pinned in the trust
+    root (verifier.json, VERIFIER_MANIFEST_SCHEMA), or (None, why)."""
+    pin = VERIFIER_MANIFEST
     for p in (QUALIFICATION_ROOT, pin):
         bad = operator_owned(p)
         if bad:
@@ -131,6 +153,10 @@ def operator_verifier():
     try:
         v = json.load(open(pin))
         binpath, want = v["path"], v["sha256"]
+        if v["schema"] != VERIFIER_MANIFEST_SCHEMA or not os.path.isabs(binpath):
+            raise ValueError(f"not an {VERIFIER_MANIFEST_SCHEMA} naming an absolute path")
+        for k in VERIFIER_IDENTITY + ("trust_roots",):
+            v[k]
     except (OSError, ValueError, KeyError) as e:
         return None, f"{pin}: {e}"
     bad = operator_owned(binpath)
@@ -140,7 +166,7 @@ def operator_verifier():
         got = hashlib.sha256(f.read()).hexdigest()
     if got != want:
         return None, f"verifier {binpath} sha256 {got} is not the pinned {want}"
-    return binpath, None
+    return v, None
 
 
 def protected_verdicts():
@@ -148,20 +174,20 @@ def protected_verdicts():
     decides them. Never PASS unless it says so, from a production build, under
     the operator's qualification root."""
     import subprocess
-    verifier, why = operator_verifier()
-    if verifier:
-        r = subprocess.run([verifier, "verify-readiness", "--repo", ROOT], capture_output=True, text=True)
+    manifest, why = operator_verifier()
+    if manifest:
+        r = subprocess.run([manifest["path"], "verify-readiness", "--repo", ROOT], capture_output=True, text=True)
         try:
             out = json.loads(r.stdout)
         except ValueError:
             out, why = None, f"operator verifier gave no verdict (exit {r.returncode})"
         if out is not None:
-            if out.get("build") != "production" or out.get("trust_root") != QUALIFICATION_ROOT:
-                why = f"operator verifier is not a production build over {QUALIFICATION_ROOT}"
-            else:
+            why = verifier_mismatch(manifest, out)
+            if not why:
                 comps = out.get("components", {})
                 return {k: dict(comps.get(k, {"status": "NOT_RUN", "missing": ["no verdict"]}),
-                                decided_by="operator-installed axon-fabric verify-readiness")
+                                decided_by="operator-installed axon-fabric verify-readiness",
+                                verifier=out["verifier"], verifier_manifest=VERIFIER_MANIFEST)
                         for k in PROTECTED}
     return {k: {"status": "NOT_RUN", "decided_by": "operator-installed axon-fabric verify-readiness",
                 "missing": [f"earned only on the protected host: {why}"]} for k in PROTECTED}

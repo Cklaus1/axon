@@ -28,13 +28,18 @@ operator root trust
              ├── observer/              ADR-002 preflight observer keys
              ├── verifier/              Fabric verifier keys
              ├── admission/             admission / transition authority
-             └── verifier.json          {"path", "sha256"}: the operator-installed axon-fabric
+             └── verifier.json          axon-verifier-manifest/1: pins the installed axon-fabric
 
 repository  →  evidence only (records, proofs, gate rows)
             →  governance/status/trust-expectations.json may NARROW accepted key ids, never add one
 ```
 
-One trust source per authority. A key trusted for one purpose never becomes valid for another.
+One trust source per authority. A key trusted for one purpose never becomes valid for another,
+and this is enforced in the SIGNATURE, not only by the directory the key sits in:
+`axon-evidence-signature/2` signs `"axon-evidence-signature/2\n<authority>\n" + bytes` and names
+its `domain`. A verifier expecting one authority refuses a signature for another
+(`RULE:authority-domain`), and relabelling the domain breaks the signature. `/1` (bytes alone) is
+refused; nothing operator-signed under it exists.
 
 **Protected runtime (Fabric).** The protected profile's B263 evidence is trusted only under
 `/etc/axon/trust/qualification/` (`QualificationTrust::operator()`, `TrustAuthority`):
@@ -58,7 +63,14 @@ dev-dependencies) does not contain them.
   **operator-installed** binary pinned in `/etc/axon/trust/verifier.json`.
 - That binary reads the repository as evidence only, and takes authority solely from
   `/etc/axon/trust/qualification/`, which must also be unwritable by the process running it.
-- It reports its `build`; only `production` counts.
+- It reports its own identity with every verdict (`verifier`): the sha256 of its executable,
+  `build` (`production` | `test-trust`), `fabric_revision`, `source_dirty`, `rustc`, `profile`
+  and `target` (build.rs provenance).
+- A certification binds the verifier that made it (`readiness_verifier_sha256`); a different
+  binary deciding later refuses it. A production verifier built from a dirty tree refuses every
+  certification.
+- The relay requires the self-report to equal `verifier.json` field for field, and a clean
+  `production` `release` build over `/etc/axon/trust/qualification` (see the runbook).
 - `scripts/protected_verifier_ready.py` merely relays that verdict. Editing it, or any repository
   file, cannot turn the operator verifier's verdict to PASS.
 - On a protected host, the custodian's launcher (operator-owned, ADR-001 D6) runs the pinned
@@ -206,8 +218,10 @@ still need their own frozen documents.
 ## The certification record the readiness script checks
 
 `governance/proofs/v022-protected/<component>.json`, plus
-`governance/proofs/v022-protected/<component>.json.sig`: an `axon-evidence-signature/1` over the
-exact bytes, from an operator key in `/etc/axon/trust/qualification/`.
+`governance/proofs/v022-protected/<component>.json.sig`: a QUALIFICATION-domain
+`axon-evidence-signature/2` over the exact bytes, from an operator key in
+`/etc/axon/trust/qualification/` (`axon-fabric sign-evidence --authority qualification`, run by
+the operator where the key lives).
 
 ```json
 {
@@ -225,6 +239,8 @@ exact bytes, from an operator key in `/etc/axon/trust/qualification/`.
   "b263_qualification_sha256": "<64 hex>",
   "evidence": ["<proof files in governance/proofs/>"],
   "evidence_bundle_sha256": "<sha256 over the concatenated sha256 of each evidence file, in order>",
+  "readiness_verifier_sha256": "<sha256 of the installed axon-fabric that decides readiness>",
+  "trust_preflight_sha256": "<sha256 of the protected-mode trust_root_preflight.sh report, one of evidence>",
   "certified_at": "YYYY-MM-DDTHH:MM:SSZ"
 }
 ```
@@ -233,8 +249,84 @@ The readiness script requires every field, with well-formed digests and commit i
 - `psv_spec_sha256` equal to this document's current hash;
 - `axon_sha` an ancestor of the judged tree, with **no file outside `governance/` changed since**;
 - every evidence file present, and the recomputed bundle digest equal;
+- `trust_preflight_sha256` naming one of those evidence files, which is an
+  `axon-trust-preflight/1` report with `mode: protected` and `verdict: PASS`;
+- `readiness_verifier_sha256` equal to the sha256 of the verifier deciding now;
 - the operator-installed `verify-readiness` to verify the signature under the operator root;
 - if `trust-expectations.json` lists expected issuers, the signer to be among them.
 
 Any later change to the spec, the code or the evidence therefore invalidates the certification
 rather than inheriting it.
+
+## The trust-root preflight (executable, not mode bits)
+
+`scripts/trust_root_preflight.sh` makes REAL attempts under each intended service UID (`setpriv`,
+no supplementary groups) and requires the kernel's answer:
+
+| Actor | Must | Attempted as |
+|---|---|---|
+| verifier | read every file in `qualification/` and `verifier.json` | `cat`, `ls` |
+| verifier, custodian, every agent UID (MiCode, Claude) | NOT create/rename in any directory, from `/` down | `mkdir` of a probe (removed if it ever succeeds) |
+| same | NOT open any file for writing | `open(O_RDWR)`, no byte written |
+| same | NOT change any file's mode | `chmod(2)` re-applying its own mode |
+| candidate guest | NOT address the root at all | `trust_root_guest_probe.sh` INSIDE the guest (`--guest-cmd`) |
+
+`chmod(1)` is deliberately not used: GNU chmod skips the syscall on an unchanged mode and reports
+success, so it attempts nothing (measured). Root is never accepted as an actor, and a non-root
+invocation is NOT_RUN (exit 2), never a pass.
+
+Without `--root` the mode is `protected` (the fixed `/etc/axon/trust`, every ancestor probed). With
+`--root` it is `dev` and certifies nothing. `scripts/test_trust_root_preflight.sh` proves the
+mechanism on a fixture: a clean root passes, and each of these FAILs on its own check:
+- a world-writable key;
+- an agent-owned directory;
+- a group-writable manifest;
+- a custodian-owned key;
+- a verifier that cannot read;
+- a guest that can see the root;
+- a POSIX ACL write grant.
+
+## Operator runbook — installing the verifier
+
+Five distinct things. Keep them apart; each has one source.
+
+| Item | Where it lives | Who sets it | How it is checked |
+|---|---|---|---|
+| Installed verifier **binary** | an operator-chosen absolute path, e.g. `/usr/local/libexec/axon/axon-fabric`, root-owned, not group/other-writable | operator, from a clean `cargo build --release -p axon-fabric` at a reviewed revision | every path component operator-owned; its sha256 recomputed on every use |
+| Binary **sha256** | `verifier.json` → `sha256` | printed by the installed binary itself | relay recomputes the file's digest; the binary self-reports the same; the certification's `readiness_verifier_sha256` must equal it |
+| **Build / profile metadata** | `verifier.json` → `build`, `profile`, `fabric_revision`, `source_dirty`, `rustc`, `target` | printed by the installed binary itself (build.rs) | must equal the running binary's self-report; must be `production`, `release`, `source_dirty: false` |
+| **Trust-root paths** | fixed in code: `/etc/axon/trust/{qualification,observer,verifier,admission}/`; echoed in `verifier.json` → `trust_roots` | not configurable (no CLI, env, repo or workspace override) | must equal the compiled-in paths; the qualification root must equal the one the verifier reports deciding over |
+| **Verifier manifest** | `/etc/axon/trust/verifier.json` (fixed path), root-owned | operator | operator-owned walk; schema `axon-verifier-manifest/1`; every field present |
+
+The manifest DESCRIBES and PINS the binary. It is not the binary, and the binary is not configured
+by it. To install:
+
+1. Build `axon-fabric` in release mode from a clean checkout of the reviewed revision.
+2. Copy it to the chosen path as root, with mode 0755.
+3. Run THAT installed path: `/usr/local/libexec/axon/axon-fabric verifier-manifest`. Never run the
+   build tree's copy for this step: the manifest names the executable that produced it, so running
+   another copy would pin the wrong executable.
+4. Review the output. Its `path` must be the installed path, `fabric_revision` the reviewed
+   revision, `source_dirty` false, `profile` release, and `build` production. A binary produced
+   by `cargo test` reads `test-trust`, because the dev-dependency feature unifies into it
+   (observed); only a plain `cargo build --release` yields production.
+5. Write the output to `/etc/axon/trust/verifier.json` as root, with mode 0644.
+6. Run the trust-root preflight in protected mode with the real service UIDs and the real guest
+   command. Commit its report as certification evidence.
+7. Only then sign certification records (`sign-evidence --authority qualification`). Each record
+   names `readiness_verifier_sha256` = the manifest's `sha256`.
+
+Replacing the binary without re-certifying fails closed at two independent points:
+- the relay refuses, because the digest differs from the manifest;
+- the new binary refuses every existing certification, because `readiness_verifier_sha256` differs.
+
+## Mutation record for the readiness authority
+
+Mutants of `readiness.rs` and `backend.rs` are killed by `tests/readiness.rs`, `tests/trust_root.rs`
+and `tests/qualification.rs`, with ONE exception. That exception is classified **equivalent** and is
+**not counted as killed**:
+
+- `no-diff-fail` — the git-diff failure path does not fail closed. It is unreachable: the ancestor
+  check before it has already established that `axon_sha` is an ancestor of HEAD, and for such a
+  pair the diff cannot fail. The code still fails closed there (defence in depth), but no test can
+  distinguish the mutant.

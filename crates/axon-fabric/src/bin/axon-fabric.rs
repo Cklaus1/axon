@@ -19,7 +19,13 @@
 //! writable, no symlinks; a caller cannot choose it), no older than the max
 //! age (default 30 days).
 //! axon-fabric workspace-import --state DIR --tenant T --root DIR
-//! axon-fabric verify-evidence --record FILE --issuers DIR [--signature FILE (default <record>.sig)]
+//! axon-fabric verify-evidence --record FILE --issuers DIR --authority A [--signature FILE]
+//! axon-fabric sign-evidence --record FILE --key PKCS8 --authority A   (OPERATOR, with the operator's key)
+//! axon-fabric verifier-manifest   (OPERATOR: the installed binary describes itself → verifier.json)
+//!
+//! Evidence signatures are `axon-evidence-signature/2`: domain-separated by
+//! AUTHORITY (qualification | observer | verifier | admission). A signature
+//! for one authority never verifies as another.
 //! axon-fabric verify-readiness --repo DIR
 //!
 //! `verify-readiness` is the AUTHORITATIVE verdict for the three protected
@@ -32,7 +38,7 @@
 //! `verify-evidence` checks an operator-signed evidence document (the v0.22
 //! protected-host certification record) with the SAME rules as the B263
 //! qualification record: exit 0 and `{"verified":true,"issuer":…}` only when
-//! a detached `axon-evidence-signature/1` over the record's exact bytes
+//! a detached `axon-evidence-signature/2` (authority-domain separated) over the record's exact bytes
 //! verifies under a key in `--issuers`; otherwise a refusal (exit 4).
 //! axon-fabric status --journal FILE --op ID --grant-registry FILE --principal P --grant-ref G
 //! axon-fabric cancel --journal FILE --op ID --reason TEXT --grant-registry FILE --principal P --grant-ref G
@@ -130,6 +136,8 @@ fn main() {
         "keygen" => keygen(&a),
         "verify-evidence" => verify_evidence(&a),
         "verify-readiness" => verify_readiness(&a),
+        "sign-evidence" => sign_evidence(&a),
+        "verifier-manifest" => verifier_manifest(),
         _ => refuse(
             "usage",
             "usage: axon-fabric submit|status|cancel … (see --help in the source header)",
@@ -201,18 +209,84 @@ fn signer(registry: &std::path::Path) -> Option<(axon_loop_contracts::OpaqueRef,
 fn verify_evidence(a: &Args) {
     let record = PathBuf::from(a.req("--record"));
     let issuers = PathBuf::from(a.req("--issuers"));
+    let authority = authority_flag(a);
     let sig = a.opt("--signature").map(PathBuf::from).unwrap_or_else(|| {
         let mut s = record.as_os_str().to_owned();
         s.push(".sig");
         PathBuf::from(s)
     });
-    match axon_fabric::backend::verify_operator_evidence(&record, &sig, &issuers) {
+    match axon_fabric::backend::verify_operator_evidence(&record, &sig, &issuers, authority) {
         Ok(issuer) => println!(
             "{}",
             serde_json::json!({"schema":"axon-fabric-verify-evidence/1","verified":true,"issuer":issuer})
         ),
         Err(e) => refuse("unregistered", &e, 4),
     }
+}
+
+fn authority_flag(a: &Args) -> axon_fabric::backend::TrustAuthority {
+    let v = a.req("--authority");
+    axon_fabric::backend::TrustAuthority::parse(&v).unwrap_or_else(|| {
+        refuse(
+            "usage",
+            "--authority must be qualification, observer, verifier or admission",
+            2,
+        )
+    })
+}
+
+/// OPERATOR tool: sign a record for ONE authority with the operator's own key
+/// (PKCS#8 from `axon-fabric keygen`), writing `<record>.sig`. Run where the
+/// key lives; no agent or protected service ever holds it (ADR-001 D5/D6).
+fn sign_evidence(a: &Args) {
+    use ring::signature::{Ed25519KeyPair, KeyPair};
+    let record = PathBuf::from(a.req("--record"));
+    let authority = authority_flag(a);
+    let key = std::fs::read(a.req("--key")).unwrap_or_else(|e| refuse("io", &e.to_string(), 2));
+    let kp = Ed25519KeyPair::from_pkcs8(&key)
+        .unwrap_or_else(|_| refuse("usage", "--key is not an Ed25519 PKCS#8 key", 2));
+    let bytes = std::fs::read(&record).unwrap_or_else(|e| refuse("io", &e.to_string(), 2));
+    let msg = axon_fabric::backend::evidence_signing_message(authority, &bytes);
+    let hex = |b: &[u8]| b.iter().map(|x| format!("{x:02x}")).collect::<String>();
+    let sig = serde_json::json!({
+        "schema": axon_fabric::backend::EVIDENCE_SIGNATURE_SCHEMA, "alg": "ed25519",
+        "domain": authority.dir_name(), "public_key": hex(kp.public_key().as_ref()),
+        "signature": hex(kp.sign(&msg).as_ref()),
+    });
+    let mut out = record.as_os_str().to_owned();
+    out.push(".sig");
+    std::fs::write(&out, sig.to_string()).unwrap_or_else(|e| refuse("io", &e.to_string(), 2));
+    println!(
+        "{}",
+        serde_json::json!({"schema":"axon-fabric-sign-evidence/1","signature":PathBuf::from(out),
+                           "authority":authority.dir_name()})
+    );
+}
+
+/// OPERATOR tool: print the `axon-verifier-manifest/1` describing THIS binary
+/// (its absolute path, sha256 and build provenance, and the trust roots it
+/// decides over). Run the INSTALLED binary; the operator reviews the output and
+/// installs it as `/etc/axon/trust/verifier.json`. The binary describes itself,
+/// so there is no hand-copied digest to get wrong.
+fn verifier_manifest() {
+    let mut m = axon_fabric::readiness::verifier_identity();
+    let exe = std::env::current_exe()
+        .and_then(|p| p.canonicalize())
+        .unwrap_or_else(|e| refuse("io", &e.to_string(), 2));
+    let roots: serde_json::Map<String, serde_json::Value> =
+        axon_fabric::backend::TrustAuthority::ALL
+            .iter()
+            .map(|a| {
+                (
+                    a.dir_name().to_string(),
+                    serde_json::json!(a.operator_dir()),
+                )
+            })
+            .collect();
+    m["schema"] = serde_json::json!("axon-verifier-manifest/1");
+    m["path"] = serde_json::json!(exe);
+    m["trust_roots"] = serde_json::Value::Object(roots);
+    println!("{}", serde_json::to_string_pretty(&m).unwrap());
 }
 
 /// The AUTHORITATIVE protected-readiness verdict for `--repo` (see

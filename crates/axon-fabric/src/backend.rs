@@ -131,7 +131,7 @@ pub struct LinuxProfileConfig {
     /// The qualification evidence record (`axon-b263-evidence/1`).
     pub evidence: PathBuf,
     /// Detached issuer signature over the EXACT evidence bytes
-    /// (`axon-evidence-signature/1`). `None` ⇒ `<evidence>.sig`.
+    /// (`axon-evidence-signature/2`). `None` ⇒ `<evidence>.sig`.
     pub evidence_signature: Option<PathBuf>,
     /// Issuer-signed waivers (`axon-b263-waiver/1`) for BLOCKED assertions,
     /// signed the same way at `<waivers>.sig`. `None` ⇒ no waivers, so any
@@ -145,7 +145,19 @@ pub struct LinuxProfileConfig {
 
 /// Default ceiling on the age of a qualification record: 30 days.
 pub const DEFAULT_EVIDENCE_MAX_AGE_S: u64 = 30 * 24 * 3600;
-pub const EVIDENCE_SIGNATURE_SCHEMA: &str = "axon-evidence-signature/1";
+/// `/2`: DOMAIN-SEPARATED. The signed message is
+/// `axon-evidence-signature/2\n<authority>\n<exact bytes>`, and the signature
+/// names its authority, so a key trusted for one purpose never validates a
+/// statement of another, whatever directory it sits in. `/1` (bytes alone,
+/// no domain) is refused: nothing operator-signed under it exists.
+pub const EVIDENCE_SIGNATURE_SCHEMA: &str = "axon-evidence-signature/2";
+
+/// The exact message an `axon-evidence-signature/2` for `authority` signs.
+pub fn evidence_signing_message(authority: TrustAuthority, bytes: &[u8]) -> Vec<u8> {
+    let mut m = format!("{EVIDENCE_SIGNATURE_SCHEMA}\n{}\n", authority.dir_name()).into_bytes();
+    m.extend_from_slice(bytes);
+    m
+}
 pub const WAIVER_SCHEMA: &str = "axon-b263-waiver/1";
 
 /// The time source freshness and waiver expiry are judged against. Injectable
@@ -191,6 +203,15 @@ pub enum TrustAuthority {
 }
 
 impl TrustAuthority {
+    pub const ALL: [TrustAuthority; 4] = [
+        TrustAuthority::Qualification,
+        TrustAuthority::Observer,
+        TrustAuthority::Verifier,
+        TrustAuthority::Admission,
+    ];
+    pub fn parse(s: &str) -> Option<TrustAuthority> {
+        TrustAuthority::ALL.into_iter().find(|a| a.dir_name() == s)
+    }
     pub fn dir_name(self) -> &'static str {
         match self {
             TrustAuthority::Qualification => "qualification",
@@ -468,13 +489,14 @@ fn fingerprint(pk: &[u8]) -> String {
     format!("ed25519:{}", &sha256_hex(pk)[..16])
 }
 
-/// Verify a detached `axon-evidence-signature/1` over `bytes`. Returns the
+/// Verify a detached `axon-evidence-signature/2` over `bytes`. Returns the
 /// issuer fingerprint. Each refusal is its own rule.
 fn verify_detached(
     what: &str,
     bytes: &[u8],
     sig_path: &Path,
     trusted: &[Vec<u8>],
+    authority: TrustAuthority,
 ) -> Result<String, String> {
     use ring::signature::{UnparsedPublicKey, ED25519};
     let sig_file = match std::fs::read_to_string(sig_path) {
@@ -498,6 +520,15 @@ fn verify_detached(
                 "{what} signature is not {EVIDENCE_SIGNATURE_SCHEMA} with alg ed25519"
             ));
         }
+        // RULE:authority-domain
+        if sv["domain"] != authority.dir_name() {
+            return Err(format!(
+                "{what} signature is for authority {}, not {}: a key trusted for one purpose \
+                 never validates another",
+                sv["domain"],
+                authority.dir_name()
+            ));
+        }
         let pk = sv["public_key"]
             .as_str()
             .and_then(hex_decode)
@@ -517,7 +548,7 @@ fn verify_detached(
         }
         // RULE:signature-verifies
         if UnparsedPublicKey::new(&ED25519, &pk)
-            .verify(bytes, &sig)
+            .verify(&evidence_signing_message(authority, bytes), &sig)
             .is_err()
         {
             return Err(format!("{what} signature does not verify under {}: the bytes are not the ones the issuer signed", fingerprint(&pk)));
@@ -528,7 +559,7 @@ fn verify_detached(
 }
 
 /// Verify an operator-signed evidence document (e.g. a protected-host
-/// certification record): its detached `axon-evidence-signature/1` (`sig`)
+/// certification record): its detached `axon-evidence-signature/2` (`sig`)
 /// over the EXACT bytes of `record`, under a key in `issuers_dir`. The same
 /// rules as the B263 qualification record: unsigned, untrusted, malformed or
 /// non-verifying all refuse, and no configured issuer at all refuses. Returns
@@ -537,10 +568,11 @@ pub fn verify_operator_evidence(
     record: &Path,
     sig: &Path,
     issuers_dir: &Path,
+    authority: TrustAuthority,
 ) -> Result<String, String> {
     let bytes = std::fs::read(record).map_err(|e| format!("evidence {}: {e}", record.display()))?;
     let trusted = trusted_issuers(issuers_dir)?;
-    verify_detached("evidence", &bytes, sig, &trusted)
+    verify_detached("evidence", &bytes, sig, &trusted, authority)
 }
 
 fn sidecar_sig(p: &Path) -> PathBuf {
@@ -586,7 +618,13 @@ impl LinuxProfileConfig {
             .evidence_signature
             .clone()
             .unwrap_or_else(|| sidecar_sig(&self.evidence));
-        let issuer = verify_detached("evidence record", &ev_bytes, &sig_path, &trusted)?;
+        let issuer = verify_detached(
+            "evidence record",
+            &ev_bytes,
+            &sig_path,
+            &trusted,
+            TrustAuthority::Qualification,
+        )?;
 
         let ev: serde_json::Value =
             serde_json::from_slice(&ev_bytes).map_err(|e| format!("evidence is not JSON: {e}"))?;
@@ -653,7 +691,13 @@ impl LinuxProfileConfig {
         let mut waivers = std::collections::BTreeMap::<String, Waiver>::new();
         if let (false, Some(wp)) = (blocked.is_empty(), &self.waivers) {
             let wb = std::fs::read(wp).map_err(|e| format!("waivers {}: {e}", wp.display()))?;
-            verify_detached("waiver file", &wb, &sidecar_sig(wp), &trusted)?;
+            verify_detached(
+                "waiver file",
+                &wb,
+                &sidecar_sig(wp),
+                &trusted,
+                TrustAuthority::Qualification,
+            )?;
             let w: serde_json::Value =
                 serde_json::from_slice(&wb).map_err(|e| format!("waivers are not JSON: {e}"))?;
             if w["schema"] != WAIVER_SCHEMA {

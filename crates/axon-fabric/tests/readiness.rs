@@ -15,11 +15,16 @@
 mod common;
 use common::*;
 
-use axon_fabric::readiness::{protected_components, ReadinessTrust, CERT_SCHEMA};
+use axon_fabric::backend::TrustAuthority;
+use axon_fabric::readiness::{
+    protected_components, verifier_identity, ReadinessTrust, CERT_SCHEMA, TRUST_PREFLIGHT_SCHEMA,
+};
 use serde_json::{json, Value};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+
+const PREFLIGHT: &str = "governance/proofs/v022-protected/trust-preflight.json";
 
 const GATES: [&str; 3] = [
     "G13-r22-profile-qualification",
@@ -116,6 +121,11 @@ fn certified() -> Option<Certified> {
         &repo.join("governance/proofs/v022-protected/run-evidence.md"),
         "protected run\n",
     );
+    write(
+        &repo.join(PREFLIGHT),
+        &json!({"schema": TRUST_PREFLIGHT_SCHEMA, "mode": "protected", "verdict": "PASS"})
+            .to_string(),
+    );
     git(&repo, &["add", "-A"]);
     git(&repo, &["commit", "-q", "-m", "certified tree"]);
 
@@ -141,7 +151,11 @@ fn certified() -> Option<Certified> {
     };
     let ev = "governance/proofs/v022-protected/run-evidence.md";
     use sha2::{Digest, Sha256};
-    let bundle = format!("{:x}", Sha256::digest(sha(&c.repo.join(ev)).as_bytes()));
+    let pf = sha(&c.repo.join(PREFLIGHT));
+    let bundle = format!(
+        "{:x}",
+        Sha256::digest(format!("{}{pf}", sha(&c.repo.join(ev))).as_bytes())
+    );
     let h = head(&c.repo);
     let rec = json!({
         "schema": CERT_SCHEMA, "component": "protected_backend",
@@ -154,7 +168,10 @@ fn certified() -> Option<Certified> {
         "candidate_tree_ref": format!("acf1:{}", "5".repeat(64)),
         "observer_key_id": "ed25519:0000000000000000", "observation_sha256": "6".repeat(64),
         "verifier_key_id": "ed25519:1111111111111111", "b263_qualification_sha256": "7".repeat(64),
-        "evidence": [ev], "evidence_bundle_sha256": bundle, "certified_at": "2026-09-28T00:00:00Z",
+        "evidence": [ev, PREFLIGHT], "evidence_bundle_sha256": bundle,
+        "readiness_verifier_sha256": verifier_identity()["sha256"],
+        "trust_preflight_sha256": pf,
+        "certified_at": "2026-09-28T00:00:00Z",
     });
     c.operator.write_signed(&c.record(), &rec);
     c.commit("certification (governance only)");
@@ -320,4 +337,68 @@ fn a_trust_root_that_is_not_operator_owned_authorizes_nothing() {
 
     std::os::unix::fs::symlink(root.join("operator.pub"), root.join("alias.pub")).unwrap();
     c.refused("symlink");
+}
+
+/// Replacing the installed verifier is a change of authority: a certification
+/// made with one verifier binary does not transfer to another.
+#[test]
+fn another_verifier_binary_does_not_inherit_the_certification() {
+    let Some(c) = certified() else { return };
+    resign(&c, &c.operator, |r| {
+        r["readiness_verifier_sha256"] = json!("9".repeat(64))
+    });
+    c.refused("certified with readiness verifier");
+}
+
+/// The trust preflight must be a certified, PROTECTED-mode, passing run: a
+/// development run of the same script, or a report outside the bundle, is not.
+#[test]
+fn a_dev_mode_or_uncertified_trust_preflight_is_refused() {
+    let Some(c) = certified() else { return };
+    resign(&c, &c.operator, |r| {
+        r["trust_preflight_sha256"] = json!("8".repeat(64))
+    });
+    c.refused("names no certified evidence file");
+
+    let Some(c) = certified() else { return };
+    write(
+        &c.repo.join(PREFLIGHT),
+        &json!({"schema": TRUST_PREFLIGHT_SCHEMA, "mode": "dev", "verdict": "PASS"}).to_string(),
+    );
+    let pf = sha(&c.repo.join(PREFLIGHT));
+    use sha2::{Digest, Sha256};
+    let ev = sha(&c
+        .repo
+        .join("governance/proofs/v022-protected/run-evidence.md"));
+    let bundle = format!("{:x}", Sha256::digest(format!("{ev}{pf}").as_bytes()));
+    resign(&c, &c.operator, |r| {
+        r["trust_preflight_sha256"] = json!(pf);
+        r["evidence_bundle_sha256"] = json!(bundle);
+    });
+    c.commit("dev-mode preflight");
+    c.refused("not a passing protected-mode");
+}
+
+/// The authority domain is part of the signed message: the operator's own
+/// key, signing the exact record bytes for ANOTHER authority, does not count
+/// as a qualification signature.
+#[test]
+fn a_signature_for_another_authority_is_not_a_qualification_signature() {
+    let Some(c) = certified() else { return };
+    let bytes = std::fs::read(c.record()).unwrap();
+    for a in [
+        TrustAuthority::Observer,
+        TrustAuthority::Verifier,
+        TrustAuthority::Admission,
+    ] {
+        let mut sig = c.record().into_os_string();
+        sig.push(".sig");
+        std::fs::write(&sig, c.operator.sign_for(a, &bytes)).unwrap();
+        c.refused("is for authority");
+        // Relabelling the domain field without re-signing breaks the signature.
+        let mut v: Value = serde_json::from_str(&c.operator.sign_for(a, &bytes)).unwrap();
+        v["domain"] = json!("qualification");
+        std::fs::write(&sig, v.to_string()).unwrap();
+        c.refused("does not verify");
+    }
 }
