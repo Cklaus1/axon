@@ -8,55 +8,10 @@
 //! theirs.
 mod common;
 use axon_loop::admission::Decision;
-use axon_loop::ledger::{Entry, Event, Head};
+use axon_loop::ledger::Event;
 use axon_loop::pointer;
-use axon_loop_contracts::*;
 use common::*;
 use serde_json::json;
-use std::path::Path;
-
-fn read_ledger(root: &Path) -> Vec<Entry> {
-    std::fs::read_to_string(root.join("ledger.jsonl"))
-        .unwrap()
-        .lines()
-        .map(|l| serde_json::from_str(l).unwrap())
-        .collect()
-}
-fn write_ledger(root: &Path, l: &[Entry]) {
-    let mut s = String::new();
-    for e in l {
-        s.push_str(&serde_json::to_string(e).unwrap());
-        s.push('\n');
-    }
-    std::fs::write(root.join("ledger.jsonl"), s).unwrap();
-}
-fn forge_head(root: &Path, l: &[Entry]) {
-    let h = Head {
-        schema: Default::default(),
-        seq: l.len() as u64,
-        entry_ref: digest(l.last().unwrap()).unwrap(),
-        mac: None,
-    };
-    std::fs::write(
-        root.join("ledger.head"),
-        serde_json::to_vec_pretty(&h).unwrap(),
-    )
-    .unwrap();
-}
-fn forged_append(root: &Path, event: Event) {
-    let mut l = read_ledger(root);
-    let last = l.last().unwrap().clone();
-    l.push(Entry {
-        schema: Default::default(),
-        seq: last.seq + 1,
-        prev: digest(&last).unwrap(),
-        recorded_ms: last.recorded_ms + 1,
-        event,
-        mac: None,
-    });
-    write_ledger(root, &l);
-    forge_head(root, &l);
-}
 
 #[test]
 fn development_verdicts_relabelled_protected_are_refused() {

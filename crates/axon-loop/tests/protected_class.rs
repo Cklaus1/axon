@@ -39,6 +39,11 @@ fn on_backends(v: &mut Value, exec: bool, verif: bool) {
             t["acf_receipt"]["backend_profile_ref"] = json!(PROTECTED);
         }
         t["episode"]["acf_receipt_ref"] = json!(digest_value(&t["acf_receipt"]).unwrap());
+        if exec {
+            // A GENUINE protected execution: Fabric's execution attestation
+            // (PSV-7), not merely the receipt's backend name.
+            t["acf_attestation"] = attest_execution(VERIFIER, &t["acf_request"], &t["acf_receipt"]);
+        }
         if t["verification_receipt"].is_object() && verif {
             t["verification_receipt"]["backend_profile_ref"] = json!(PROTECTED);
             // A GENUINE protected verdict (M4 + B2): its class and digest refs
@@ -926,6 +931,123 @@ fn a_monitor_key_planted_in_the_store_never_clears_a_protected_trial() {
     let ok = axon_loop::safety::report(&w.s, &r.to_string(), Some(&sig.to_string()));
     std::fs::remove_file(&rooted).unwrap();
     ok.unwrap();
+}
+
+/// PSV-7 (dev review round wf_336353cb-a2b, executed there to ACCEPT and
+/// activation): an execution receipt RELABELLED to the protected backend,
+/// with no Fabric execution attestation, counts nothing; nor does one
+/// attested under a key the operator's verifier root does not hold. Control:
+/// the genuinely attested execution counts.
+#[test]
+fn a_relabelled_execution_leg_counts_nothing_in_a_protected_evaluation() {
+    // "unrooted": a verifier the STORE trusts and keys, but whose key the
+    // operator's verifier root does not hold, attests the execution.
+    const PLANTED: &str = "agent:planted-verifier";
+    let (planted, planted_pk) = axon_loop_contracts::attestation::generate().unwrap();
+    for case in ["genuine", "unattested", "unrooted"] {
+        let w = world();
+        protect(&w.s);
+        pin_protected_backend(&w.s);
+        trust_monitor(&w.s);
+        if case == "unrooted" {
+            let mut cfg = w.s.config().unwrap();
+            let p = OpaqueRef::new(PLANTED).unwrap();
+            cfg.trusted_verifiers.push(p.clone());
+            cfg.verifier_keys.insert(p, planted_pk.clone());
+            w.s.write_config(&cfg).unwrap();
+        }
+        freeze_plan(&w.s, "exp", &w.inc_ref, &w.cand_ref, |_| {}).unwrap();
+        assign_specs(&w.s, "exp", &specs_for(&w));
+        let mut v = evl_request("exp", &w.inc, &w.cand, &specs_for(&w), &EvlOpts::default());
+        on_protected_backend(&mut v);
+        for t in v["trials"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .filter(|t| t["episode"]["identity"]["arm_id"] == "challenger-1")
+        {
+            match case {
+                "unattested" => {
+                    t.as_object_mut().unwrap().remove("acf_attestation");
+                }
+                "unrooted" => {
+                    t["acf_attestation"] = attest_execution_with(
+                        &planted,
+                        PLANTED,
+                        &t["acf_request"],
+                        &t["acf_receipt"],
+                    )
+                }
+                _ => {}
+            }
+        }
+        let (rec, _) = evaluate(&w.s, &v).unwrap();
+        let arm = rec.arm_for_policy(&w.cand_ref).unwrap().clone();
+        if case == "genuine" {
+            assert_eq!(arm.verified_pass, 2, "control: {:?}", arm.trials);
+        } else {
+            assert_eq!(arm.verified_pass, 0, "{case}: {:?}", arm.trials);
+            assert!(
+                arm.trials
+                    .iter()
+                    .all(|t| t.reason.contains("not attested as a protected execution")),
+                "{case}: {:?}",
+                arm.trials
+            );
+        }
+    }
+}
+
+/// PSV-7: a protected ADMISSION re-verifies the execution leg from its own
+/// stored documents. A store writer who repoints a counted trial's execution
+/// attestation at junk, or drops it, gets no ACCEPT.
+#[test]
+fn a_protected_admission_re_verifies_the_execution_leg_from_its_documents() {
+    for case in ["junk-attestation", "no-attestation-ref"] {
+        let w = world();
+        protect(&w.s);
+        pin_protected_backend(&w.s);
+        freeze_plan(&w.s, "rx", &w.inc_ref, &w.cand_ref, |_| {}).unwrap();
+        assign_specs(&w.s, "rx", &specs_for(&w));
+        let mut v = evl_request("rx", &w.inc, &w.cand, &specs_for(&w), &EvlOpts::default());
+        on_protected_backend(&mut v);
+        clear_all(&w.s, &v);
+        let (rec, _) = evaluate(&w.s, &v).unwrap();
+        let junk =
+            w.s.put_cas("acf-attestations", &json!({"schema": "not-an-attestation"}))
+                .unwrap();
+        let mut j = serde_json::to_value(&rec).unwrap();
+        for arm in j["arms"].as_array_mut().unwrap() {
+            for t in arm["trials"].as_array_mut().unwrap() {
+                if t["verification"].is_object() {
+                    if case == "junk-attestation" {
+                        t["verification"]["execution_attestation_ref"] = json!(junk);
+                    } else {
+                        t["verification"]
+                            .as_object_mut()
+                            .unwrap()
+                            .remove("execution_attestation_ref");
+                    }
+                }
+            }
+        }
+        let forged: axon_loop::evl::EvaluationRecord = serde_json::from_value(j).unwrap();
+        let fe = w.s.put_cas("evaluations", &forged).unwrap();
+        forged_append(
+            w.s.root(),
+            axon_loop::ledger::Event::Evaluation {
+                scope: scope(),
+                experiment_id: "rx".into(),
+                evaluation_ref: fe.clone(),
+                freeze_seq: forged.freeze_seq,
+                authority_epoch: forged.authority_epoch,
+            },
+        );
+        match admit(&w.s, "rx", &fe, ADMITTER, false) {
+            Err(e) => assert!(e.to_string().contains("execution"), "{case}: {e}"),
+            Ok((adm, _)) => assert_ne!(adm.decision, Decision::Accept, "{case}: {:?}", adm.reasons),
+        }
+    }
 }
 
 /// M4 / A13 / A14: in a protected evaluation a verdict counts ONLY as

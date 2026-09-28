@@ -68,6 +68,34 @@ pub fn attestation_decision(
     }
 }
 
+pub const NOT_AN_EXECUTION: &str =
+    "a registered check is attested as a verdict, not as an execution";
+pub const NOT_PROTECTED_EXECUTION: &str =
+    "only an execution on the protected profile is attested: elsewhere the backend is a claim";
+
+/// Whether Fabric attests that this EXECUTION ran on the protected profile
+/// (`attestation::EXECUTION_DOMAIN`). Only a non-replayed execution job that
+/// Fabric itself dispatched to the protected Linux profile qualifies: the
+/// workload ran in the guest, away from the host key (dev review round
+/// wf_336353cb-a2b, PSV-7).
+pub fn execution_attestation_decision(
+    req: &ComputeRequest,
+    replayed: bool,
+    ran_under: Option<&RanUnder>,
+) -> Result<(), &'static str> {
+    if req.job_kind == JobKind::RegisteredCheck {
+        return Err(NOT_AN_EXECUTION);
+    }
+    if replayed {
+        return Err(REPLAYED);
+    }
+    match ran_under {
+        Some(r) if r.backend == LINUX_MICROVM_PROTECTED.id => Ok(()),
+        Some(_) => Err(NOT_PROTECTED_EXECUTION),
+        None => Err(KEY_REACHABLE),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -187,6 +215,39 @@ mod tests {
         assert_eq!(
             attestation_decision(&req("registered_check", "checks/acc.ax"), false, Some(&vm)),
             Err(CANDIDATE_RUBRIC)
+        );
+    }
+
+    /// PSV-7 (dev round wf_336353cb-a2b): Fabric attests an EXECUTION only
+    /// when it dispatched it to the protected profile itself, and not replayed.
+    #[test]
+    fn only_a_protected_profile_execution_is_attested() {
+        let exec = req("interpreter_run", "prog.ax");
+        let vm = ran_as(LINUX_MICROVM_PROTECTED.id, "IO", "protected");
+        assert_eq!(
+            execution_attestation_decision(&exec, false, Some(&vm)),
+            Ok(())
+        );
+        let local = ran_as(LOCAL_INTERPRETER.id, "", "development");
+        assert_eq!(
+            execution_attestation_decision(&exec, false, Some(&local)),
+            Err(NOT_PROTECTED_EXECUTION)
+        );
+        assert_eq!(
+            execution_attestation_decision(&exec, true, Some(&vm)),
+            Err(REPLAYED)
+        );
+        assert_eq!(
+            execution_attestation_decision(&exec, false, None),
+            Err(KEY_REACHABLE)
+        );
+        assert_eq!(
+            execution_attestation_decision(
+                &req("registered_check", "check:acc@1"),
+                false,
+                Some(&vm)
+            ),
+            Err(NOT_AN_EXECUTION)
         );
     }
 }

@@ -824,6 +824,10 @@ MUTATIONS = [
     ('M253', 'PSV-6 (r1): an epoch that moved during observation refuses the launch', 'crates/axon-fabric/src/submit.rs', 'Ok(now) if now == cfg.expected_epoch => Ok((launch, Some(v))),', '_ => Ok((launch, Some(v))),', 'axon-fabric', '--test psv_dispatch', 'an_epoch_that_moves_while_the_observer_runs_refuses_the_launch'),
     ('M254', 'PSV-7 (r1): a protected decision re-verifies every counted verdict', 'crates/axon-loop/src/admission.rs', 'reverify_protected(tx, &config, eval, t, v, &rc)?;', 'let _ = (eval, &rc);', 'axon-loop', '--test psv7_relabel', 'development_verdicts_relabelled_protected_are_refused'),
     ('M255', 'PSV-7 (r1): a counted protected verdict claims protected evidence', 'crates/axon-loop/src/admission.rs', '    if !axon_loop_contracts::protected_evidence::claims_protected(rc) {', '    if false && !axon_loop_contracts::protected_evidence::claims_protected(rc) {', 'axon-loop', '--test psv7_relabel', 'development_verdicts_relabelled_protected_are_refused'),
+    ('M256', "PSV-7 (r1): a protected execution leg needs Fabric's execution attestation", 'crates/axon-loop/src/evl.rs', 'if let Err(e) = verify_execution(&d.acf_att, areq, rcpt, config) {', 'if let Err(e) = Ok::<(), String>(()).map(|_| (areq, rcpt)) {', 'axon-loop', '--test protected_class', 'a_relabelled_execution_leg_counts_nothing_in_a_protected_evaluation'),
+    ('M257', 'PSV-7 (r1): the execution attestation key is operator-rooted', 'crates/axon-loop/src/evl.rs', '    let key = crate::store::Config::rooted_key(\n        &config.verifier_keys,\n        &issuer,\n        axon_loop_contracts::operator_trust::TrustAuthority::Verifier,\n    )?;', '    let key = config\n        .verifier_keys\n        .get(&issuer)\n        .ok_or_else(|| "no key".to_string())?;', 'axon-loop', '--test protected_class', 'a_relabelled_execution_leg_counts_nothing_in_a_protected_evaluation'),
+    ('M258', 'PSV-7 (r1): admission re-verifies the execution leg', 'crates/axon-loop/src/admission.rs', 'crate::evl::verify_execution(&att, &areq, &arc, config).map_err(fail)?;', 'let _ = (&att, &areq, &arc);', 'axon-loop', '--test protected_class', 'a_protected_admission_re_verifies_the_execution_leg_from_its_documents'),
+    ('M259', 'PSV-7 (r1): a protected admission cites an execution attestation', 'crates/axon-loop/src/admission.rs', '    let att_ref = v\n        .execution_attestation_ref\n        .as_ref()\n        .ok_or_else(|| fail("it cites no execution attestation".into()))?;', '    let Some(att_ref) = v.execution_attestation_ref.as_ref() else {\n        return Ok(());\n    };', 'axon-loop', '--test protected_class', 'a_protected_admission_re_verifies_the_execution_leg_from_its_documents'),
 ]
 
 
@@ -848,7 +852,7 @@ PCI_IDS = {"M04", "M44", "M49", "M52", "M53", "M57", "M59", "M60", "M61", "M62",
 # (Fabric's own exit-0 check) remains killed.
 RETIRED = {"M58", "M176"}
 BINDING_IDS = {f"M{n}" for n in range(101, 137)}
-PSV_IDS = {f"M{n}" for n in range(137, 256)}
+PSV_IDS = {f"M{n}" for n in range(137, 260)}
 
 
 def in_scope(mid, scope):

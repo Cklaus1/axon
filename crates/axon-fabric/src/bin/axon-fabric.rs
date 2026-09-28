@@ -652,6 +652,29 @@ fn submit(a: &Args) {
         Ok(s) => {
             // The receipt is final here. Sign it only if the workload that
             // produced it could not have read the signing key.
+            // PSV-7: an EXECUTION on the protected profile is attested too, in
+            // its own domain, so the loop need not take its backend on trust.
+            let execution_attestation = issuer.as_ref().and_then(|(id, key)| {
+                let req: axon_loop_contracts::ComputeRequest =
+                    axon_loop_contracts::parse(&text).ok()?;
+                axon_fabric::signing::execution_attestation_decision(
+                    &req,
+                    s.replayed,
+                    s.ran_under.as_ref(),
+                )
+                .ok()?;
+                let doc = axon_loop_contracts::attestation::execution_document(&req, &s.receipt)
+                    .unwrap_or_else(|e| refuse("io", &e.to_string(), 2));
+                Some(
+                    axon_loop_contracts::attestation::sign_document(
+                        key,
+                        axon_loop_contracts::attestation::EXECUTION_DOMAIN,
+                        id,
+                        &doc,
+                    )
+                    .unwrap_or_else(|e| refuse("io", &e, 2)),
+                )
+            });
             let (attestation, withheld) = match issuer {
                 None => (None, None),
                 Some((id, key)) => {
@@ -697,6 +720,9 @@ fn submit(a: &Args) {
             // bundle; every other output keeps its bytes.
             if let Some(b) = s.psv_evidence {
                 out["psv_evidence"] = b;
+            }
+            if let Some(a) = execution_attestation {
+                out["execution_attestation"] = a;
             }
             println!("{out}")
         }

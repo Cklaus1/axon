@@ -264,6 +264,20 @@ fn reverify_protected(
         psv.as_deref(),
     )
     .map_err(|e| fail(e.to_string()))?;
+    // …and its execution leg, from its own documents (PSV-7).
+    let att_ref = v
+        .execution_attestation_ref
+        .as_ref()
+        .ok_or_else(|| fail("it cites no execution attestation".into()))?;
+    let areq: axon_loop_contracts::ComputeRequest =
+        serde_json::from_str(&text("acf-requests", &ep.acf_request_ref)?)
+            .map_err(|e| fail(format!("execution request: {e}")))?;
+    let arc: axon_loop_contracts::ExecutionReceipt =
+        serde_json::from_str(&text("acf-receipts", &ep.acf_receipt_ref)?)
+            .map_err(|e| fail(format!("execution receipt: {e}")))?;
+    let att: serde_json::Value = serde_json::from_str(&text("acf-attestations", att_ref)?)
+        .map_err(|e| fail(format!("execution attestation: {e}")))?;
+    crate::evl::verify_execution(&att, &areq, &arc, config).map_err(fail)?;
     Ok(())
 }
 

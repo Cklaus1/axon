@@ -391,6 +391,28 @@ pub fn verification_check(
 }
 
 /// The verifier's attestation of `(req, rc)` as `issuer`, under the fixture key.
+/// Fabric's execution attestation (PSV-7) over an execution's request and
+/// receipt, signed with `pkcs8` as `issuer`.
+pub fn attest_execution_with(pkcs8: &[u8], issuer: &str, req: &Value, rc: &Value) -> Value {
+    let req: axon_loop_contracts::ComputeRequest =
+        axon_loop_contracts::parse(&req.to_string()).unwrap();
+    let rc: axon_loop_contracts::ExecutionReceipt =
+        axon_loop_contracts::parse(&rc.to_string()).unwrap();
+    let doc = axon_loop_contracts::attestation::execution_document(&req, &rc).unwrap();
+    axon_loop_contracts::attestation::sign_document(
+        pkcs8,
+        axon_loop_contracts::attestation::EXECUTION_DOMAIN,
+        &OpaqueRef::new(issuer).unwrap(),
+        &doc,
+    )
+    .unwrap()
+}
+
+/// …signed by the fixture verifier's (operator-rooted) key.
+pub fn attest_execution(issuer: &str, req: &Value, rc: &Value) -> Value {
+    attest_execution_with(&verifier_key().0, issuer, req, rc)
+}
+
 pub fn attest(issuer: &str, req: &Value, rc: &Value) -> Value {
     axon_loop_contracts::attestation::sign(
         &verifier_key().0,
@@ -1168,4 +1190,49 @@ pub fn make_protected(
         "observation_signature": observer_sign(&o_bytes),
     })
     .to_string()
+}
+
+/// A STORE WRITER's forged ledger append (unkeyed ledger), for attack tests
+/// (after the dev-round reviewer's reproduction).
+pub fn read_ledger(root: &std::path::Path) -> Vec<axon_loop::ledger::Entry> {
+    std::fs::read_to_string(root.join("ledger.jsonl"))
+        .unwrap()
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect()
+}
+pub fn write_ledger(root: &std::path::Path, l: &[axon_loop::ledger::Entry]) {
+    let mut s = String::new();
+    for e in l {
+        s.push_str(&serde_json::to_string(e).unwrap());
+        s.push('\n');
+    }
+    std::fs::write(root.join("ledger.jsonl"), s).unwrap();
+}
+pub fn forge_head(root: &std::path::Path, l: &[axon_loop::ledger::Entry]) {
+    let h = axon_loop::ledger::Head {
+        schema: Default::default(),
+        seq: l.len() as u64,
+        entry_ref: digest(l.last().unwrap()).unwrap(),
+        mac: None,
+    };
+    std::fs::write(
+        root.join("ledger.head"),
+        serde_json::to_vec_pretty(&h).unwrap(),
+    )
+    .unwrap();
+}
+pub fn forged_append(root: &std::path::Path, event: axon_loop::ledger::Event) {
+    let mut l = read_ledger(root);
+    let last = l.last().unwrap().clone();
+    l.push(axon_loop::ledger::Entry {
+        schema: Default::default(),
+        seq: last.seq + 1,
+        prev: digest(&last).unwrap(),
+        recorded_ms: last.recorded_ms + 1,
+        event,
+        mac: None,
+    });
+    write_ledger(root, &l);
+    forge_head(root, &l);
 }

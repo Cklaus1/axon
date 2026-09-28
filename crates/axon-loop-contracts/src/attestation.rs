@@ -222,6 +222,25 @@ fn document_binding(
     }))
 }
 
+/// The signature domain of Fabric's attestation that an EXECUTION (a trial's
+/// agent run, not its check) ran on the protected profile. Without it a
+/// receipt's `backend_profile_ref` is only the producer's claim (dev review
+/// round wf_336353cb-a2b, PSV-7).
+pub const EXECUTION_DOMAIN: &str = "axon.fabric-execution/1";
+
+/// The document an execution attestation signs: that execution's request and
+/// receipt, by digest.
+pub fn execution_document(
+    req: &crate::ComputeRequest,
+    rc: &crate::ExecutionReceipt,
+) -> Result<Value, Refusal> {
+    Ok(json!({
+        "schema": "axon.fabric-execution-attestation/1",
+        "request_ref": crate::digest(req)?.to_string(),
+        "receipt_ref": crate::digest(rc)?.to_string(),
+    }))
+}
+
 /// Sign `doc` as `issuer_ref` for `domain`. For issuers (monitors) and tests.
 pub fn sign_document(
     pkcs8: &[u8],

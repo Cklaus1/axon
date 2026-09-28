@@ -83,12 +83,61 @@ pub struct DeliveredTrial {
     /// that never carried it keeps its canonical bytes.
     #[serde(default, skip_serializing_if = "Value::is_null")]
     pub verification_psv_evidence: Value,
+    /// PROTECTED class: Fabric's execution attestation
+    /// (`attestation::EXECUTION_DOMAIN`) over `acf_request` and `acf_receipt`.
+    /// Without it the execution's backend is only the producer's claim.
+    /// Omitted when absent.
+    #[serde(default, skip_serializing_if = "Value::is_null")]
+    pub acf_attestation: Value,
     /// G32-r22-sidecar-bindings: the preflight observer's detached signature
     /// (`axon-document-signature/1`, domain [`CONTEXT_DOMAIN`]) over `context`.
     /// Required in a PROTECTED-class evaluation. Omitted when absent, so a
     /// request that never carried it keeps its canonical bytes.
     #[serde(default, skip_serializing_if = "Value::is_null")]
     pub context_signature: Value,
+}
+
+/// Verify Fabric's execution attestation (`attestation::EXECUTION_DOMAIN`)
+/// over an execution's request and receipt: by a TRUSTED verifier, under the
+/// key the OPERATOR's verifier root holds for it. Returns who signed, and the
+/// key. Used by EVL for a protected execution leg, and by admission.
+pub fn verify_execution(
+    att: &Value,
+    req: &ComputeRequest,
+    rc: &ExecutionReceipt,
+    config: &crate::store::Config,
+) -> std::result::Result<SignedBy, String> {
+    if att.is_null() {
+        return Err("no Fabric execution attestation was delivered".into());
+    }
+    let issuer = OpaqueRef::new(
+        att["issuer_ref"]
+            .as_str()
+            .ok_or("the execution attestation names no issuer")?,
+    )
+    .map_err(|e| e.to_string())?;
+    if !config.verifiers().contains(&issuer) {
+        return Err(format!("{issuer} is not a trusted verifier"));
+    }
+    let key = crate::store::Config::rooted_key(
+        &config.verifier_keys,
+        &issuer,
+        axon_loop_contracts::operator_trust::TrustAuthority::Verifier,
+    )?;
+    let doc =
+        axon_loop_contracts::attestation::execution_document(req, rc).map_err(|e| e.to_string())?;
+    let key_id = axon_loop_contracts::attestation::verify_document(
+        att,
+        axon_loop_contracts::attestation::EXECUTION_DOMAIN,
+        &issuer,
+        &doc,
+        key,
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(SignedBy {
+        issuer_ref: issuer,
+        key_id,
+    })
 }
 
 /// The signature domain of a preflight context receipt.
@@ -212,6 +261,10 @@ pub struct VerificationEvidence {
     /// wf_336353cb-a2b, PSV-7).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub psv_evidence_ref: Option<Ref>,
+    /// PROTECTED class: Fabric's execution attestation for the trial's
+    /// execution leg (`acf-attestations/`), re-verified at admission.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_attestation_ref: Option<Ref>,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
@@ -308,6 +361,8 @@ struct Delivered {
     ctx_sig: Value,
     /// B2: the `axon-psv-evidence/1` bundle a protected verdict is joined through.
     psv: Value,
+    /// PSV-7: Fabric's execution attestation, for a protected execution leg.
+    acf_att: Value,
 }
 
 /// ADR-001 D12: only the acceptance CHECK goes through Fabric; the agent's own
@@ -570,6 +625,7 @@ pub fn evaluate(store: &Store, r: &EvlRequest) -> Result<(EvaluationRecord, Ref)
                     ],
                     ctx_sig: t.context_signature.clone(),
                     psv: t.verification_psv_evidence.clone(),
+                    acf_att: t.acf_attestation.clone(),
                 },
             )
             .is_some()
@@ -789,10 +845,17 @@ pub fn evaluate(store: &Store, r: &EvlRequest) -> Result<(EvaluationRecord, Ref)
     for p in policies.values() {
         store.put_cas("policies", p)?;
     }
-    // The PSV bundles a counted protected verdict cites (psv_evidence_ref).
+    // What a counted protected trial cites, so admission can re-verify it
+    // from the documents: the PSV bundle, and the execution leg's request,
+    // receipt and Fabric attestation.
     for t in &r.trials {
         if !t.verification_psv_evidence.is_null() {
             store.put_cas("fabric-psv-evidence", &t.verification_psv_evidence)?;
+        }
+        if !t.acf_attestation.is_null() {
+            store.put_cas("acf-requests", &t.acf_request)?;
+            store.put_cas("acf-receipts", &t.acf_receipt)?;
+            store.put_cas("acf-attestations", &t.acf_attestation)?;
         }
     }
     let eref = store.put_cas("evaluations", &rec)?;
@@ -903,7 +966,7 @@ fn judge(
     // An absent verification receipt is skipped here and refused below as
     // unauthenticated whenever the episode cites a verdict.
     if class == crate::plan::EvaluationClass::Protected {
-        let Some((_, rcpt, _)) = &d.acf else {
+        let Some((areq, rcpt, _)) = &d.acf else {
             return unknown(
                 UnknownKind::Unverifiable,
                 "D12 local execution (no Fabric execution receipt) is ineligible for a protected \
@@ -927,6 +990,17 @@ fn judge(
                     ),
                 );
             }
+        }
+        // …and the execution leg's protected backend must be ATTESTED by
+        // Fabric under the operator's verifier root, not merely named in the
+        // receipt (dev review round wf_336353cb-a2b, PSV-7).
+        if let Err(e) = verify_execution(&d.acf_att, areq, rcpt, config) {
+            return unknown(
+                UnknownKind::Unverifiable,
+                format!(
+                    "the execution leg is not attested as a protected execution: {e} (ADR-001 D3)"
+                ),
+            );
         }
         // M4: a verdict counts in a protected evaluation only as PROTECTED
         // evidence — its receipt's class, its joins, its guest interpreter
@@ -996,6 +1070,11 @@ fn judge(
                             None
                         } else {
                             Some(digest_value(&d.psv)?)
+                        },
+                        execution_attestation_ref: if d.acf_att.is_null() {
+                            None
+                        } else {
+                            Some(digest_value(&d.acf_att)?)
                         },
                     },
                     issued,
