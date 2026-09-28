@@ -559,7 +559,7 @@ fn check_request() -> Value {
         "operation_id": "op-1", "task_id": "task-1", "trial_id": "trial-1", "attempt_id": "attempt-1",
         "principal_ref": "principal:micode-check", "grant_ref": "grant:check", "approval_ref": null,
         "job_kind": "registered_check", "registered_executable_ref": "axon-test-local",
-        "executable_digest": format!("acf1:{}", "e".repeat(64)),
+        "executable_digest": common::check_executable_digest(),
         "workspace_version_ref": OUT_TREE, "semantic_state_ref": null,
         "policy_digest": format!("acf1:{}", "c".repeat(64)),
         "required": {"engine": "axon_interpreter", "hardware_isolation": false, "os": "none",
@@ -1764,14 +1764,7 @@ fn an_episode_is_bound_to_the_input_workspace_its_observer_saw() {
 /// the protected receipt.
 #[test]
 fn a_verifier_key_planted_in_the_store_never_authenticates_protected_evidence() {
-    let protected_rc = || {
-        let mut rc = check_receipt("passed", 2);
-        rc["evidence_refs"]
-            .as_array_mut()
-            .unwrap()
-            .push(serde_json::json!("evidence-class:protected"));
-        rc
-    };
+    let protected_rc = || protected_receipt(check_receipt("passed", 2));
     let req = check_request();
     let (planted_sk, planted_pk) = axon_loop_contracts::attestation::generate().unwrap();
     let plant = |c: &Case| {
@@ -1785,6 +1778,7 @@ fn a_verifier_key_planted_in_the_store_never_authenticates_protected_evidence() 
 
     // Planted key, protected claim: refused, for the operator-root reason.
     let c = case(Some(500));
+    pin_protected(&c);
     plant(&c);
     let rc = protected_rc();
     let ep = verified(&c.ep, &req, &rc, "passed");
@@ -1802,7 +1796,120 @@ fn a_verifier_key_planted_in_the_store_never_authenticates_protected_evidence() 
 
     // Control: the operator-rooted fixture key authenticates the protected claim.
     let c = case(Some(500));
+    pin_protected(&c);
     let rc = protected_rc();
     let ep = verified(&c.ep, &req, &rc, "passed");
     run_v(&c, &ep, Some(&req), Some(&rc)).expect("an operator-rooted key");
+}
+
+/// A GENUINE protected verification receipt (what the Fabric emits for an
+/// observed guest verdict, M2/M3): protected backend, the class, every digest
+/// join, and the guest interpreter that is the request's pinned executable.
+fn protected_receipt(mut rc: Value) -> Value {
+    rc["backend_profile_ref"] = serde_json::json!("linux-microvm-protected");
+    let refs = rc["evidence_refs"].as_array_mut().unwrap();
+    refs.push(serde_json::json!("evidence-class:protected"));
+    for (p, c) in [
+        ("launch-manifest-sha256", "a"),
+        ("preflight-observation-sha256", "b"),
+        ("guest-verdict-sha256", "c"),
+        ("guest-kernel-sha256", "1"),
+        ("guest-rootfs-sha256", "2"),
+    ] {
+        refs.push(serde_json::json!(format!("{p}:{}", c.repeat(64))));
+    }
+    refs.push(serde_json::json!(format!(
+        "guest-axon-sha256:{}",
+        common::check_executable_sha256()
+    )));
+    rc
+}
+
+/// The operator pins the protected profile for the fixture verifier.
+fn pin_protected(c: &Case) {
+    let mut cfg = c.s.config().unwrap();
+    for p in cfg.verifier_pins.values_mut() {
+        p.backend_profiles.push("linux-microvm-protected".into());
+    }
+    c.s.write_config(&cfg).unwrap();
+}
+
+/// M4: a receipt that CLAIMS protected evidence must carry every join — the
+/// one class, a protected backend, each digest exactly once, and the guest
+/// interpreter that IS the request's pinned executable. Each defect is refused
+/// for its own reason, genuinely signed by the operator-rooted verifier.
+#[test]
+fn a_protected_claim_without_every_join_is_refused() {
+    let req = check_request();
+    type Edit = fn(&mut Value);
+    let cases: [(&str, Edit, &str); 6] = [
+        (
+            "no observation",
+            |rc| {
+                rc["evidence_refs"]
+                    .as_array_mut()
+                    .unwrap()
+                    .retain(|e| !e.as_str().unwrap().starts_with("preflight-observation"))
+            },
+            "names no preflight-observation-sha256",
+        ),
+        (
+            "two classes",
+            |rc| {
+                rc["evidence_refs"]
+                    .as_array_mut()
+                    .unwrap()
+                    .push(serde_json::json!("evidence-class:guest-unobserved"))
+            },
+            "2 evidence classes",
+        ),
+        (
+            "development backend",
+            |rc| rc["backend_profile_ref"] = serde_json::json!("fabric:local-interpreter"),
+            "not a protected profile",
+        ),
+        (
+            "another interpreter",
+            |rc| {
+                let refs = rc["evidence_refs"].as_array_mut().unwrap();
+                refs.retain(|e| !e.as_str().unwrap().starts_with("guest-axon-sha256"));
+                refs.push(serde_json::json!(format!(
+                    "guest-axon-sha256:{}",
+                    "f".repeat(64)
+                )));
+            },
+            "is not the one the request pinned",
+        ),
+        (
+            "duplicated verdict",
+            |rc| {
+                rc["evidence_refs"]
+                    .as_array_mut()
+                    .unwrap()
+                    .push(serde_json::json!(format!(
+                        "guest-verdict-sha256:{}",
+                        "d".repeat(64)
+                    )))
+            },
+            "more than once",
+        ),
+        (
+            "malformed digest",
+            |rc| {
+                let refs = rc["evidence_refs"].as_array_mut().unwrap();
+                refs.retain(|e| !e.as_str().unwrap().starts_with("launch-manifest-sha256"));
+                refs.push(serde_json::json!("launch-manifest-sha256:xyz"));
+            },
+            "is not a sha256",
+        ),
+    ];
+    for (name, edit, why) in cases {
+        let c = case(Some(500));
+        pin_protected(&c);
+        let mut rc = protected_receipt(check_receipt("passed", 2));
+        edit(&mut rc);
+        let ep = verified(&c.ep, &req, &rc, "passed");
+        let e = run_v(&c, &ep, Some(&req), Some(&rc)).unwrap_err();
+        assert!(e.to_string().contains(why), "{name}: {e}");
+    }
 }

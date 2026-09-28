@@ -246,9 +246,12 @@ pub fn derive(
         format!("guest-kernel-sha256:{}", m.guest.kernel_sha256),
         format!("guest-rootfs-sha256:{}", m.guest.rootfs_sha256),
         format!("guest-axon-sha256:{}", m.guest.axon_sha256),
+        // The CANONICAL suite reference, exactly as the local path records it:
+        // operator pins and task acceptance compare it byte for byte
+        // (`axon_loop::intake::check_pins`); the test is the request's argv.
         format!(
-            "suite:{}@{}#{}/{}",
-            m.suite.id, m.suite.version, m.suite.entry, m.suite.test
+            "check-suite:{}@{}#{}",
+            m.suite.id, m.suite.version, m.suite.entry
         ),
     ];
     let unknown = |why: String, evidence: Vec<String>, report| HostVerdict {

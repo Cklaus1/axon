@@ -163,17 +163,17 @@ fn an_operator_suite_passes_through_the_guest_path_as_guest_unobserved() {
         &format!("guest-axon-sha256:{GUEST}"),
         &format!("guest-kernel-sha256:{}", "1".repeat(64)),
         &format!("guest-rootfs-sha256:{}", "2".repeat(64)),
-        "suite:acc@acf1:",
+        "check-suite:acc@acf1:",
     ] {
         assert!(
             r.iter().any(|e| e.starts_with(want)),
             "missing {want}: {r:?}"
         );
     }
-    assert!(
-        r.iter().any(|e| e.ends_with("#accept.ax/t_psv_ok")),
-        "{r:?}"
-    );
+    // The canonical suite reference, exactly once (the test is the argv).
+    let suites: Vec<&String> = r.iter().filter(|e| e.starts_with("check-suite:")).collect();
+    assert_eq!(suites.len(), 1, "{r:?}");
+    assert!(suites[0].ends_with("#accept.ax"), "{r:?}");
     assert!(
         !r.iter().any(|e| e.starts_with("preflight-observation")),
         "{r:?}"

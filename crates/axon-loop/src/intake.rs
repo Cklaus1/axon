@@ -685,11 +685,13 @@ pub fn verify_check_evidence(
     // O2: a receipt that claims PROTECTED evidence is authenticated only under
     // a verifier key the OPERATOR root holds; the store may name it, never
     // supply it.
-    if rc
-        .evidence_refs
-        .iter()
-        .any(|e| e.as_str() == "evidence-class:protected")
-    {
+    if axon_loop_contracts::protected_evidence::claims_protected(&rc) {
+        // M4: a protected CLAIM carries every join, or it is refused.
+        axon_loop_contracts::protected_evidence::check(&req, &rc).map_err(|e| {
+            refused(format!(
+                "protected evidence from verifier {issuer} does not join: {e}"
+            ))
+        })?;
         crate::store::Config::rooted_key(
             verifier_keys,
             issuer,

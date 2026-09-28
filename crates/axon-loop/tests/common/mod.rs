@@ -302,8 +302,17 @@ pub fn clear_all(s: &Store, v: &Value) {
 /// The operator's pin for [`VERIFIER`]: the revision, profile and suite a
 /// fixture verification check runs.
 pub const CHECK_EXECUTABLE: &str = "axon-test-local";
+/// The fixture check executable's bytes' sha256; its `executable_digest` is
+/// the genuine acf1 identity over it, so a protected receipt's
+/// `guest-axon-sha256` can be JOINED to the request (M4).
+pub fn check_executable_sha256() -> String {
+    "e".repeat(64)
+}
 pub fn check_executable_digest() -> String {
-    format!("acf1:{}", "e".repeat(64))
+    axon_loop_contracts::protected_evidence::executable_digest(
+        CHECK_EXECUTABLE,
+        &check_executable_sha256(),
+    )
 }
 pub const CHECK_PROFILE: &str = "fabric:local-interpreter";
 pub fn check_suite() -> String {

@@ -908,6 +908,29 @@ fn judge(
                 );
             }
         }
+        // M4: a verdict counts in a protected evaluation only as PROTECTED
+        // evidence — its receipt's class, its joins, its guest interpreter
+        // (v022-psv-protocol.md §9). A backend name alone is not enough, and
+        // anything less is Unverifiable here, never silently development.
+        if matches!(
+            d.ep.verification.result,
+            VerificationResult::Passed | VerificationResult::Failed
+        ) {
+            let joined = serde_json::from_value::<ComputeRequest>(d.verification[0].clone())
+                .map_err(|e| e.to_string())
+                .and_then(|q| {
+                    serde_json::from_value::<ExecutionReceipt>(d.verification[1].clone())
+                        .map_err(|e| e.to_string())
+                        .map(|r| (q, r))
+                })
+                .and_then(|(q, r)| axon_loop_contracts::protected_evidence::check(&q, &r));
+            if let Err(e) = joined {
+                return unknown(
+                    UnknownKind::Unverifiable,
+                    format!("not protected evidence: {e}"),
+                );
+            }
+        }
     }
     let v = &d.ep.verification;
     // A verdict is evidence only if its VERIFICATION evidence joins and is

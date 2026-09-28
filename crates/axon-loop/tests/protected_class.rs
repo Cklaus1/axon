@@ -41,6 +41,26 @@ fn on_backends(v: &mut Value, exec: bool, verif: bool) {
         t["episode"]["acf_receipt_ref"] = json!(digest_value(&t["acf_receipt"]).unwrap());
         if t["verification_receipt"].is_object() && verif {
             t["verification_receipt"]["backend_profile_ref"] = json!(PROTECTED);
+            // What a GENUINE protected verdict carries (M4): its class, the
+            // digests the Fabric verified, and the guest interpreter that is
+            // the request's pinned executable.
+            let refs = t["verification_receipt"]["evidence_refs"]
+                .as_array_mut()
+                .unwrap();
+            refs.push(json!("evidence-class:protected"));
+            for (p, c) in [
+                ("launch-manifest-sha256", "a"),
+                ("preflight-observation-sha256", "b"),
+                ("guest-verdict-sha256", "c"),
+                ("guest-kernel-sha256", "1"),
+                ("guest-rootfs-sha256", "2"),
+            ] {
+                refs.push(json!(format!("{p}:{}", c.repeat(64))));
+            }
+            refs.push(json!(format!(
+                "guest-axon-sha256:{}",
+                check_executable_sha256()
+            )));
             t["episode"]["verification"]["verifier_ref"] =
                 json!(digest_value(&t["verification_receipt"]).unwrap());
             t["verification_attestation"] = attest(
@@ -872,5 +892,55 @@ fn a_key_revoked_at_the_operator_root_no_longer_counts() {
             "{auth}: a refusal wrote something"
         );
         std::fs::write(&key, saved).unwrap();
+    }
+}
+
+/// M4 / A13 / A14: in a protected evaluation a verdict counts ONLY as
+/// protected evidence. The same guest-path verdict WITHOUT a verified
+/// observation (`guest-unobserved`), or a `development` one — each genuinely
+/// signed on a protected backend — counts nothing, as Unverifiable.
+#[test]
+fn only_protected_class_evidence_counts_in_a_protected_evaluation() {
+    for class in ["guest-unobserved", "development"] {
+        let w = world();
+        protect(&w.s);
+        pin_protected_backend(&w.s);
+        trust_monitor(&w.s);
+        freeze_plan(&w.s, "exp", &w.inc_ref, &w.cand_ref, |_| {}).unwrap();
+        assign_specs(&w.s, "exp", &specs_for(&w));
+        let mut v = evl_request("exp", &w.inc, &w.cand, &specs_for(&w), &EvlOpts::default());
+        on_protected_backend(&mut v);
+        for t in v["trials"].as_array_mut().unwrap() {
+            if !t["verification_receipt"].is_object() {
+                continue;
+            }
+            for e in t["verification_receipt"]["evidence_refs"]
+                .as_array_mut()
+                .unwrap()
+                .iter_mut()
+            {
+                if e == "evidence-class:protected" {
+                    *e = json!(format!("evidence-class:{class}"));
+                }
+            }
+            t["episode"]["verification"]["verifier_ref"] =
+                json!(digest_value(&t["verification_receipt"]).unwrap());
+            t["verification_attestation"] = attest(
+                VERIFIER,
+                &t["verification_request"],
+                &t["verification_receipt"],
+            );
+        }
+        clear_all(&w.s, &v);
+        let (rec, _) = evaluate(&w.s, &v).unwrap();
+        let arm = rec.arm_for_policy(&w.cand_ref).unwrap();
+        assert_eq!(arm.verified_pass, 0, "{class}: {:?}", arm.trials);
+        assert!(
+            arm.trials
+                .iter()
+                .all(|t| t.reason.contains(&format!("evidence class is {class}"))),
+            "{class}: {:?}",
+            arm.trials
+        );
     }
 }

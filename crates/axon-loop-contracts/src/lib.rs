@@ -34,6 +34,7 @@ pub mod ids;
 pub mod operator_trust;
 pub mod policy;
 pub mod profile;
+pub mod protected_evidence;
 pub mod receipt;
 pub mod schema;
 
