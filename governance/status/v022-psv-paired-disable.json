@@ -1,6 +1,6 @@
 {
   "schema": "axon-v022-paired-disable/2",
-  "commit": "e1e2a22f3535c0db9d3853f79d8e9ac5201d0392",
+  "commit": "992276cf71afac8c18a3abf63e73d11195afca73",
   "all_hold": true,
   "records": [
     {
@@ -369,6 +369,62 @@
       },
       "holds": true,
       "commit": "e1e2a22f3535c0db9d3853f79d8e9ac5201d0392"
+    },
+    {
+      "mutation": "M152",
+      "status": "EQUIVALENT_DID",
+      "kind": "pair",
+      "property": "a signature made for one authority never verifies for another",
+      "original_guard": {
+        "file": "crates/axon-loop-contracts/src/operator_trust.rs"
+      },
+      "subsumed_by": [
+        "M153"
+      ],
+      "live_killing_mutant": "joint:M152+M153",
+      "all_paths": "verify_evidence_signature is the ONLY reader of the signature's domain field (Fabric backend, readiness, loop protected_evidence all call it); after the field check it always verifies over evidence_signing_message(authority, bytes) for the CALLER's authority, not the field's, so a signature made for another authority verifies only if the message is not domain-bound (M153). The relabelled case is M153's own (active) attack",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M152",
+          "M153"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "992276cf71afac8c18a3abf63e73d11195afca73"
+    },
+    {
+      "mutation": "M418",
+      "status": "EQUIVALENT_DID",
+      "kind": "set",
+      "property": "the observation a certification cites was made by a key in the operator observer root",
+      "original_guard": {
+        "file": "crates/axon-fabric/src/readiness.rs"
+      },
+      "subsumed_by": [
+        "M339",
+        "M340"
+      ],
+      "live_killing_mutant": "joint:M418+M339+M340",
+      "all_paths": "attribution() has one caller (the component verdict) and no early Ok; after the membership loop it always verifies the observation's signature under keys(observer_dir) (M340, which returns the signer's fingerprint) and requires signer == observer_key_id (M339). key_ids and keys read the same operator root, so signer in root and signer == observer_key_id put observer_key_id in the root",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M418",
+          "M339",
+          "M340"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "992276cf71afac8c18a3abf63e73d11195afca73"
     }
   ]
 }
