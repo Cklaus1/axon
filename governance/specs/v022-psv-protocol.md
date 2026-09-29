@@ -75,7 +75,6 @@ operator-owned file:
   "artifacts_dir":  "/usr/local/share/axon/linux-microvm/dist",
   "qualification":  {"record": "/var/lib/axon/b263/record.json", "signature": "….sig", "waivers": null},
   "suite_registry": {"path": "/usr/local/share/axon/suites/registry.json", "sha256": "…"},
-  "suite_store":    "/var/lib/axon/suites",
   "signer":         {"issuer_ref": "…", "public_key": "…", "key_path": "/var/lib/axon/fabric/attest.pk8"},
   "out_root":       "/var/lib/axon/fabric/runs",
   "observer":       {"nonce_store": "/var/lib/axon/custodian/nonces", "max_age_s": 300}
@@ -159,7 +158,7 @@ read-only by the launcher. The guest mounts it `ro,nodev,nosuid,noexec`.
 |---|---|---|
 | `input-0` | candidate tree (the exact WorkspaceVersion from Fabric's store) | `/in/candidate` |
 | `input-1` | operator suite tree (from the registry) | `/in/suite` |
-| `job` | `launch-manifest.json`, `completion-secret` (mode 0400, root), guest policy | `/in/job` (read-only) |
+| `job` | `launch-manifest.json`, `completion-secret` (mode 0400, root) | `/in/job` (read-only) |
 | `out` | the verdict and the run's output | `/out` (the only writable device) |
 
 **Before executing anything**, the guest runner:
@@ -180,15 +179,19 @@ B = canonical JSON {
       suite_id, suite_version, entry, test,
       candidate_tree_digest, suite_tree_digest,
       launch_manifest_digest }
-K = HMAC-SHA256(S, "axon-guest-completion/1\n" || sha256(B))
+K = HMAC-SHA256(S, "axon-guest-completion/1\n" || hex(sha256(B)))   -- the lowercase HEX digest, as axon_psv::completion_key
 token(test) = completion_token(K, test)    -- the existing PCI interpreter derivation
 ```
 
 - The runner derives `K` from the manifest it VERIFIED. It hands `K` to
   `axon test --completion-key-stdin --seal /in/candidate` over stdin, and never exposes `S` or `K`
   to candidate code.
-- Candidate code runs unprivileged in the guest (`AXON_PATH` = `/in/candidate`, exclusive). The
-  secret file is readable only by root.
+- Candidate code runs unprivileged in the guest (`AXON_PATH` = `/in/suite:/in/candidate`, i.e. the
+  suite's directory then the candidate's, with `AXON_PATH_EXCLUSIVE=1`). The secret file is readable
+  only by root.
+- The guest POLICY is not on the job device: the launcher delivers it with `--policy FILE` on the
+  kernel command line (`axon.policy=<base64>`), and its sha256 is bound in the launch manifest
+  (`policy_sha256`).
 - The host recomputes `K` from `S` and its OWN `B`, never from anything the guest reports.
 
 A proof from another attempt, candidate, suite, test or manifest therefore does not verify (A11).
@@ -592,3 +595,36 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
     - The runner refuses to read the completion secret if it cannot make itself non-dumpable (A52).
     - The guest input check refuses trees holding what the digest cannot see. The digest is a
       cross-peer contract with MiCode, so it is unchanged (A53).
+36. **One read per authority decision; readiness attribution joined; build provenance hardened
+    (PSV-7, FIELD-ORIGIN, C9 round 1).**
+    - Readiness checked one read of the certification record and verified the operator signature
+      over a second read, and hashed the trust preflight on one read and parsed another. A FIFO or a
+      rename served different bytes to each, so one genuine signature certified any tree or any
+      component (reproduced). Every file readiness decides on is now read once
+      (`backend::read_regular`: `O_NOFOLLOW`, non-blocking, regular files only, size-capped), and
+      the signature is verified over the buffer the fields are checked on. The same class was
+      fixed in the B263 qualification (profile manifest hashed and parsed from one buffer, and
+      `psv::prepare` joins its read to the qualified digest), the observer (the `.sig` is read once
+      and that text goes into the bundle), `interpret_linux_result` (the recorded `result.json`
+      digest is of the bytes interpreted), and the signer key (one `O_NOFOLLOW` open; the fd is
+      checked and read) (A58, A61).
+    - The record's attribution is joined, not only shape-checked: `observer_key_id` and
+      `verifier_key_id` must be keys in the operator's observer and verifier roots at decision time;
+      `observation_sha256` and `b263_qualification_sha256` must name certified evidence files; the
+      observation must verify under the observer root, signed by `observer_key_id`, and match the
+      record's profile, `fabric_revision` and guest; the B263 record must verify under the
+      qualification root, be `axon-b263-evidence/1` of the protected profile, and qualify the
+      certified guest (`vmlinux` = kernel, `rootfs.sqfs` = image, `axon` = runtime) (A59). The
+      observation and B263 signatures are read from `<file>.sig` beside each evidence file.
+    - `build.rs` derives `fabric_revision`/`source_dirty` from `/usr/bin/git` with the environment
+      dropped and replace objects off. Skip-worktree/assume-unchanged entries, replace refs, grafts,
+      any change, any untracked non-ignored file, and any file ignored by a rule outside a tracked
+      `.gitignore` make the build dirty. It re-derives whenever the working tree changes, not only
+      this crate's `src/` (A60). This is stricter than readiness's own untracked-file check
+      (amendment 32's open item stays open there). A digest of the compiled sources is not
+      recorded: a build script cannot see the compiled file set, and on a clean tree
+      `fabric_revision` already names it.
+    - The signing key must be mode 0400 (§2 rule 1); 0600 is refused and `keygen` writes 0400.
+      `verify-evidence` names its trust root, the operator root and the build, and is
+      `authoritative: false` unless the root is the operator's, passes the ownership walk, and the
+      build is production (A61).
