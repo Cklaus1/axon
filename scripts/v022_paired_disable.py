@@ -210,6 +210,8 @@ def main():
         # C9 round 1b (core workstream): EQUIV_RECORD[...]["all_paths"].
         # C9 round 1b, integration: M04 vs the first-match rule M436.
         "M04": {"siblings": ["M436"], "kind": "pair"},
+        # C9 round 2: provenance skip-worktree tag vs the byte comparison.
+        "M346": {"siblings": ["M451"], "kind": "pair"},
         "M60": {"siblings": ["M69"], "kind": "pair"},
         "M89": {"siblings": ["M86", "M96"], "kind": "set"},
     }

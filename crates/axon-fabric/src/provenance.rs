@@ -328,10 +328,20 @@ mod tests {
         let (_d, r) = repo();
         std::fs::write(r.join("src/lib.rs"), "// the agent's code\n").unwrap();
         git(&r, &["update-index", "--skip-worktree", "src/lib.rs"]);
-        assert_dirty(
-            &r,
-            "a skip-worktree entry hid a modified source file",
-            "skip-worktree",
+        // The skip-worktree refusal (M346) and the byte comparison (M451)
+        // each refuse this alone (M346's four-cell record): either reason.
+        let p = provenance(&r);
+        assert!(
+            !p.dirty.is_empty(),
+            "ATTACK: a skip-worktree entry hid a modified source file, and the build provenance \
+             still says source_dirty: false"
+        );
+        assert!(
+            p.dirty
+                .iter()
+                .any(|w| w.contains("skip-worktree") || w.contains("not HEAD's committed bytes")),
+            "{:?}",
+            p.dirty
         );
 
         let (_d, r) = repo();

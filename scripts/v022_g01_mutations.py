@@ -1346,6 +1346,15 @@ EQUIV_RECORD["M04"] = {
                  "load_module_recursive's first-match rule (M436) refuses exactly that (E0901), for every "
                  "importer; with M436 off, suite-first order finds the suite's copy first. Only with both "
                  "off does the candidate's copy define the suite's module"}
+EQUIV_RECORD["M346"] = {
+    "property": "build provenance never reads a tree with an edited tracked file as clean",
+    "subsumed_by": ["M451"], "killer": "joint:M346+M451",
+    "all_paths": "provenance() runs head_bytes_differ (M451) on every call, before the ls-files "
+                 "tag check: it hashes every blob of HEAD's tree against the working-tree bytes, so "
+                 "an edited, deleted or replaced tracked file is dirty whatever the index says. A "
+                 "skip-worktree bit hides only worktree-vs-index differences from git status; an "
+                 "index that differs from HEAD still shows in status (staged), and a worktree equal "
+                 "to HEAD is the committed source. So M346's refusal never stands alone"}
 EQUIV_RECORD["M152"] = {
     "property": "a signature made for one authority never verifies for another",
     "subsumed_by": ["M153"], "killer": "joint:M152+M153",
