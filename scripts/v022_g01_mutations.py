@@ -38,6 +38,20 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
 from v022_attack_markers import ATTACK_MARKERS  # noqa: E402  (per-row attack markers)
 
+# Every cargo run this harness (and v022_paired_disable.py, which imports it)
+# starts gets a per-run TMPDIR on DISK. The host's /tmp is a 12 GB tmpfs, and
+# the full axon-core suite's native-parity harnesses link hundreds of binaries
+# there concurrently: they failed on "No space left on device" in every full
+# suite cell (M58/M60/M89 read SUITE_BROKEN, C9 round 1b; both pass alone).
+# An environment failure must not read as evidence about a guard.
+if not os.environ.get("V022_KEEP_TMPDIR"):
+    import atexit
+    import shutil
+    import tempfile
+    _tmp = tempfile.mkdtemp(prefix=f"v022-harness-{os.getpid()}-", dir="/var/tmp")
+    os.environ["TMPDIR"] = _tmp
+    atexit.register(shutil.rmtree, _tmp, True)
+
 # (id, guard, file, old, new, package, target, test)
 # target: "--lib" or "--test <name>"; test: the exact test path.
 MUTATIONS = [
