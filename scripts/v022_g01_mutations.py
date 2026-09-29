@@ -838,7 +838,9 @@ MUTATIONS = [
     ('M267', "PSV-7 (r3): a counted trial's episode ran its arm's policy", 'crates/axon-loop/src/admission.rs', '    if ep.policy_ref != arm.policy_ref {', '    if false && ep.policy_ref != arm.policy_ref {', 'axon-loop', '--test protected_class', 'a_protected_record_must_agree_with_its_re_verified_documents'),
     ('M268', "PSV-7 (r3): a counted trial's outcome is its signed verdict", 'crates/axon-loop/src/admission.rs', '        (crate::evl::Outcome::VerifiedPass, RV::Passed)\n        | (crate::evl::Outcome::Fail, RV::Failed) => {}', '        (_, _) if true => {}', 'axon-loop', '--test protected_class', 'a_protected_record_must_agree_with_its_re_verified_documents'),
     ('M269', "PSV-7 (r3): a counted trial's context signature re-verifies", 'crates/axon-loop/src/admission.rs', '    )\n    .map_err(|e| fail(format!("context signature: {e}")))?;', '    )\n    .ok();', 'axon-loop', '--test protected_class', 'a_protected_record_must_agree_with_its_re_verified_documents'),
-    ('M270', 'PSV-1 (r3): a sealed frame may not reseed the process RNG', 'crates/axon-core/src/interp/builtins.rs', '                if self.seal.active && self.frame_sealed.get() {\n                    return Err(crate::interp::Flow::SandboxViolation(', '                if false && self.frame_sealed.get() {\n                    return Err(crate::interp::Flow::SandboxViolation(', 'axon-core', '--no-default-features --test psv_test_selection', 'a_sealed_candidate_cannot_reseed_the_rng'),
+    ('M270', 'PSV-1 (r3): a sealed frame may not reseed the process RNG', 'crates/axon-core/src/interp/builtins.rs', '                if self.seal.active && self.frame_sealed.get() {\n                    return Err(crate::interp::Flow::SandboxViolation(\n                        "srand is refused in a sealed module', '                if false && self.frame_sealed.get() {\n                    return Err(crate::interp::Flow::SandboxViolation(\n                        "srand is refused in a sealed module', 'axon-core', '--no-default-features --test psv_test_selection', 'a_sealed_candidate_cannot_reseed_the_rng'),
+    ('M271', 'PSV-1 (certifying r wf_afca02ad-f81): a sealed frame may not DRAW from the RNG via random_f64', 'crates/axon-core/src/interp/builtins.rs', '                if self.seal.active && self.frame_sealed.get() {\n                    return Err(crate::interp::Flow::SandboxViolation(\n                        "random_f64 is refused in a sealed module', '                if false && self.frame_sealed.get() {\n                    return Err(crate::interp::Flow::SandboxViolation(\n                        "random_f64 is refused in a sealed module', 'axon-core', '--no-default-features --test psv_test_selection', 'a_sealed_candidate_cannot_draw_from_the_rng'),
+    ('M272', 'PSV-1 (certifying r wf_afca02ad-f81): a sealed frame may not DRAW from the RNG via random_i64', 'crates/axon-core/src/interp/builtins.rs', '                if self.seal.active && self.frame_sealed.get() {\n                    return Err(crate::interp::Flow::SandboxViolation(\n                        "random_i64 is refused in a sealed module', '                if false && self.frame_sealed.get() {\n                    return Err(crate::interp::Flow::SandboxViolation(\n                        "random_i64 is refused in a sealed module', 'axon-core', '--no-default-features --test psv_test_selection', 'a_sealed_candidate_cannot_draw_from_the_rng'),
 ]
 
 
@@ -903,7 +905,7 @@ STALE_REFACTORED = {"M204": {"property": "a defective/replayed observation must 
 LEGACY_EQUIV = {"M58", "M176"}
 RETIRED = LEGACY_EQUIV | EQUIVALENT_DID | set(STALE_REFACTORED)
 BINDING_IDS = {f"M{n}" for n in range(101, 137)}
-PSV_IDS = {f"M{n}" for n in range(137, 271)}
+PSV_IDS = {f"M{n}" for n in range(137, 273)}
 
 
 def in_scope(mid, scope):

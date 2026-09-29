@@ -2883,6 +2883,19 @@ impl<'p> Interp<'p> {
             }
             "random_f64" => {
                 want(0)?;
+                // A SEALED (candidate) frame may not DRAW from the process RNG
+                // either: every draw advances the shared stream the operator's
+                // acceptance test (@[forall]) then draws from, so candidate code
+                // could SHIFT the test's random inputs even without reseeding.
+                // srand is already refused (reseed); this closes the draw side
+                // (certifying review wf_afca02ad-f81, PSV-1 MAJOR-ADJACENT).
+                if self.seal.active && self.frame_sealed.get() {
+                    return Err(crate::interp::Flow::SandboxViolation(
+                        "random_f64 is refused in a sealed module: candidate code may not draw \
+                         from the RNG the operator's test shares"
+                            .to_string(),
+                    ));
+                }
                 // 53-bit mantissa → uniform [0.0, 1.0)
                 ok!(Value::Float(
                     (next_rand_u64() >> 11) as f64 / 9_007_199_254_740_992.0
@@ -2890,6 +2903,15 @@ impl<'p> Interp<'p> {
             }
             "random_i64" => {
                 want(2)?;
+                // Same sealed-frame refusal as random_f64: a draw advances the
+                // shared stream the operator's test draws from.
+                if self.seal.active && self.frame_sealed.get() {
+                    return Err(crate::interp::Flow::SandboxViolation(
+                        "random_i64 is refused in a sealed module: candidate code may not draw \
+                         from the RNG the operator's test shares"
+                            .to_string(),
+                    ));
+                }
                 let (lo, hi) = (as_int(&args[0])?, as_int(&args[1])?);
                 // Inverted bounds are a caller error: fail loudly instead of
                 // silently returning `lo`, which masquerades as success

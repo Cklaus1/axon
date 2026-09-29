@@ -551,3 +551,90 @@ fn guess(x: i64) -> i64 {{ {PREDICTED} }}
         "control: honest candidate passes"
     );
 }
+
+/// Certifying review wf_afca02ad-f81 (PSV-1, MAJOR-ADJACENT): a sealed candidate
+/// cannot DRAW from the process RNG either — not only reseed it. Every draw
+/// advances the shared stream the operator's `@[forall]` test then draws from, so
+/// a draw at candidate load SHIFTS the test's random input even without a reseed
+/// (the candidate cannot predict the shifted value, but it can perturb the test).
+/// With random_* refused in a sealed frame the draw is a SandboxViolation and the
+/// run fails; the honest control that draws nothing still passes (the suite's own
+/// draw is in an unsealed frame and is allowed).
+#[test]
+fn a_sealed_candidate_cannot_draw_from_the_rng() {
+    use std::io::Write;
+    let run = |cand: &str| -> String {
+        let d = fresh(&format!("rngdraw-{}", cand.len()));
+        std::fs::create_dir_all(d.join("cand")).unwrap();
+        std::fs::create_dir_all(d.join("suite")).unwrap();
+        std::fs::write(
+            d.join("suite/accept.ax"),
+            "mod f
+use f.{guess}
+
+@[test]
+fn t_ok() {
+    let x = random_i64(0, 1000000)
+    assert_eq(guess(x), x)
+}
+",
+        )
+        .unwrap();
+        std::fs::write(d.join("cand/f.ax"), cand).unwrap();
+        let mut c = Command::new(env!("CARGO_BIN_EXE_axon"))
+            .current_dir(d.join("suite"))
+            .arg("test")
+            .arg(d.join("suite/accept.ax"))
+            .args([
+                "--json",
+                "--filter",
+                "t_ok",
+                "--exact",
+                "--completion-key-stdin",
+            ])
+            .arg("--seal")
+            .arg(d.join("cand"))
+            .env_clear()
+            .env("PATH", "/usr/bin:/bin")
+            .env("AXON_ALLOWED_EFFECTS", "IO,Random")
+            .env(
+                "AXON_PATH",
+                format!("{}:{}", d.join("suite").display(), d.join("cand").display()),
+            )
+            .env("AXON_PATH_EXCLUSIVE", "1")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        writeln!(c.stdin.take().unwrap(), "{}", "0b".repeat(32)).unwrap();
+        let out = c.wait_with_output().unwrap();
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    };
+    // Attack A: draw an i64 at load to shift the operator's stream.
+    let attack_i = "let _shift = random_i64(0, 100)
+fn guess(x: i64) -> i64 { x }
+";
+    let a = run(attack_i);
+    assert!(
+        !a.contains("\"status\":\"ok\""),
+        "a sealed random_i64 draw must be refused: {a}"
+    );
+    // Attack B: same via random_f64.
+    let attack_f = "let _shift = random_f64()
+fn guess(x: i64) -> i64 { x }
+";
+    let b = run(attack_f);
+    assert!(
+        !b.contains("\"status\":\"ok\""),
+        "a sealed random_f64 draw must be refused: {b}"
+    );
+    // Control: a candidate that draws nothing passes (the suite's own
+    // random_i64 draw is unsealed and allowed).
+    let honest = "fn guess(x: i64) -> i64 { x }
+";
+    assert!(
+        run(honest).contains("\"status\":\"ok\""),
+        "control: honest candidate passes"
+    );
+}
