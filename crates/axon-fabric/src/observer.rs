@@ -95,23 +95,92 @@ impl NonceStore {
 pub struct ObserverTrust {
     pub dir: PathBuf,
     pub operator_owned: bool,
+    /// ADR-002 key-role separation: the OTHER operator authority roots. A key
+    /// in the observer root that is also in one of these is refused.
+    pub separate_from: Vec<(TrustAuthority, PathBuf)>,
+    /// The protected host's attestation signer (`signer.public_key`, hex).
+    /// Fabric holds its private half, so the observer root must not hold it.
+    pub host_signer_public_key: Option<String>,
 }
 
+/// Every operator authority but the observer.
+const OTHER_AUTHORITIES: [TrustAuthority; 4] = [
+    TrustAuthority::Qualification,
+    TrustAuthority::Verifier,
+    TrustAuthority::Admission,
+    TrustAuthority::Monitor,
+];
+
 impl ObserverTrust {
-    /// Production: `/etc/axon/trust/observer`, operator-owned.
+    /// Production: `/etc/axon/trust/observer`, operator-owned, kept separate
+    /// from every other root under `/etc/axon/trust`.
     pub fn operator() -> ObserverTrust {
         ObserverTrust {
             dir: TrustAuthority::Observer.operator_dir(),
             operator_owned: true,
+            separate_from: OTHER_AUTHORITIES
+                .into_iter()
+                .map(|a| (a, a.operator_dir()))
+                .collect(),
+            host_signer_public_key: None,
         }
     }
-    /// TESTS ONLY.
+    /// TESTS ONLY. The other roots are `dir`'s siblings, named by authority.
     #[cfg(any(test, feature = "test-trust-root"))]
     pub fn for_test(dir: &Path) -> ObserverTrust {
+        let up = dir.parent().unwrap_or(Path::new("/nonexistent"));
         ObserverTrust {
             dir: dir.to_path_buf(),
             operator_owned: false,
+            separate_from: OTHER_AUTHORITIES
+                .into_iter()
+                .map(|a| (a, up.join(a.dir_name())))
+                .collect(),
+            host_signer_public_key: None,
         }
+    }
+
+    /// ADR-002 key-role separation, over the roots THEMSELVES (not a store's
+    /// copy of them): no key in the observer root is the host signer's public
+    /// key or a key of another operator authority. Fabric holds the signer's
+    /// private key and signs any domain (`sign-evidence --authority
+    /// observer`), and a key in two roots is valid for both; either way Fabric
+    /// could mint an observation that verifies (PSV-6, C9 dev review round 1;
+    /// A57). Checked when the host config loads AND at every observation.
+    pub fn check_separation(&self) -> Result<(), String> {
+        use axon_loop_contracts::operator_trust::keys_in;
+        let observers = keys_in(&self.dir)?;
+        let fp = |k: &str| {
+            crate::backend::hex_decode(k)
+                .map(|b| axon_loop_contracts::attestation::key_fingerprint(&b))
+                .unwrap_or_else(|| k.to_string())
+        };
+        if let Some(signer) = &self.host_signer_public_key {
+            let signer = signer.trim().to_ascii_lowercase();
+            if observers.contains(&signer) {
+                return Err(format!(
+                    "the observer root {} holds the host signer's public key {}: Fabric holds \
+                     that key's private half, so it could mint an observation (ADR-002 key-role \
+                     separation)",
+                    self.dir.display(),
+                    fp(&signer)
+                ));
+            }
+        }
+        for (a, dir) in &self.separate_from {
+            let theirs = keys_in(dir)?;
+            if let Some(k) = observers.iter().find(|k| theirs.contains(k)) {
+                return Err(format!(
+                    "key {} is in the observer root {} AND the {} root {}: a key serves one \
+                     authority (ADR-002 key-role separation)",
+                    fp(k),
+                    self.dir.display(),
+                    a.dir_name(),
+                    dir.display()
+                ));
+            }
+        }
+        Ok(())
     }
 }
 
@@ -167,14 +236,29 @@ pub fn observe(
     if cfg.trust.operator_owned {
         crate::backend::check_operator_owned(&cfg.trust.dir)?;
     }
-    // ONE read: the bytes whose signature is verified are the bytes parsed,
-    // joined and digested (review wf_d725935a-7ed).
+    // The roots as they are NOW, not as they were when the host config
+    // loaded: a key added to another root since then is refused here.
+    cfg.trust.check_separation()?;
+    // ONE read of each: the bytes whose signature is verified are the bytes
+    // parsed, joined and digested (review wf_d725935a-7ed), and the signature
+    // verified is the signature the bundle carries (C9 dev review round 1).
     let bytes = std::fs::read(&rec).map_err(|e| format!("observation: {e}"))?;
+    let sig_path = work.join("observation.json.sig");
+    let signature = match std::fs::read_to_string(&sig_path) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Err(format!(
+                "observation is unsigned: no detached signature at {}",
+                sig_path.display()
+            ))
+        }
+        Err(e) => return Err(format!("observation signature: {e}")),
+    };
     // The OBSERVER domain, under the OBSERVER root (RULE:authority-domain).
-    let signer = crate::backend::verify_operator_evidence_bytes(
+    let signer = crate::backend::verify_operator_evidence_sig(
         "observation",
         &bytes,
-        &work.join("observation.json.sig"),
+        &signature,
         &cfg.trust.dir,
         TrustAuthority::Observer,
     )?;
@@ -203,8 +287,6 @@ pub fn observe(
     // its nonce, and it can be spent once.
     cfg.nonces
         .consume(&o.nonce, epoch, &cfg.clock, cfg.max_age_s)?;
-    let signature = std::fs::read_to_string(work.join("observation.json.sig"))
-        .map_err(|e| format!("observation signature: {e}"))?;
     Ok(VerifiedObservation {
         sha256: axon_psv::sha256_hex(&bytes),
         bytes,

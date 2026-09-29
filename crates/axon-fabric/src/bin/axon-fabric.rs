@@ -22,6 +22,13 @@
 //! axon-fabric verify-evidence --record FILE --issuers DIR --authority A [--signature FILE]
 //! axon-fabric sign-evidence --record FILE --key PKCS8 --authority A   (OPERATOR, with the operator's key)
 //! axon-fabric verifier-manifest   (OPERATOR: the installed binary describes itself → verifier.json)
+//! axon-fabric protected-host-paths [--config FILE]   (the trust preflight's probe list)
+//!
+//! `protected-host-paths` prints every path a protected-host config pins, one
+//! `KIND<TAB>PATH` line each (`operator-file`, `operator-dir`, `signing-key`,
+//! `service-dir`): the list `ProtectedHost::load` ownership-walks, so the
+//! trust preflight probes exactly those. It verifies no pin and authorizes
+//! nothing; `--config` defaults to /etc/axon/protected-host.json.
 //!
 //! Evidence signatures are `axon-evidence-signature/2`: domain-separated by
 //! AUTHORITY (qualification | observer | verifier | admission). A signature
@@ -153,6 +160,7 @@ fn main() {
         "verify-readiness" => verify_readiness(&a),
         "sign-evidence" => sign_evidence(&a),
         "verifier-manifest" => verifier_manifest(),
+        "protected-host-paths" => protected_host_paths(&a),
         #[cfg(feature = "test-trust-root")]
         "__psv-host-guest" => psv_host_guest(),
         _ => refuse(
@@ -492,7 +500,12 @@ fn psv_host_guest() {
         }
         // A failure, reported with a clean exit.
         "exit0" => v["exit_code"] = serde_json::json!(0),
-        "candidate-changed" | "suite-changed" | "unbound" | "swap-after" => {}
+        "candidate-changed"
+        | "suite-changed"
+        | "unbound"
+        | "swap-after"
+        | "cleanup-incomplete"
+        | "runner-died-after-verdict" => {}
         other => panic!("__psv-host-guest: unknown tamper {other}"),
     }
     std::fs::write(od.join("verdict.json"), axon_psv::canonical_json(&v)).unwrap();
@@ -506,6 +519,34 @@ fn psv_host_guest() {
     if tamper == "unbound" {
         // A GENUINE verdict, from a launch the launcher did not bind (27).
         write_result("verdict-unbound", 27);
+    }
+    // A GENUINE, bound verdict from a launch that did not end admissibly: the
+    // jail could not be cleaned up (24), or the runner died after writing the
+    // verdict (10, workload exit 101: e.g. a println to a full /out). Either
+    // way there is no verdict, whatever `derive` sees (PSV-4/PSV-5, C9 dev
+    // review round 1).
+    let inadmissible = match tamper.as_str() {
+        "cleanup-incomplete" => Some(("cleanup-incomplete", 24, false, 0)),
+        "runner-died-after-verdict" => Some(("workload-failed", 10, true, 101)),
+        _ => None,
+    };
+    if let Some((status, code, cleaned, workload_exit)) = inadmissible {
+        let stdout = od.join("stdout");
+        if !stdout.exists() {
+            std::fs::write(&stdout, "PSV-VERDICT sha256=stand-in\n").unwrap();
+        }
+        let s = axon_psv::sha256_hex(&std::fs::read(&stdout).unwrap());
+        let verdict = axon_psv::sha256_hex(&std::fs::read(od.join("verdict.json")).unwrap());
+        let r = serde_json::json!({
+            "schema": "axon-linux-microvm-result/1", "status": status,
+            "admissible": false, "output_bound": true, "workload_exit": workload_exit,
+            "outputs": {"stdout": {"sha256": s}},
+            "cleanup": {"complete": cleaned,
+                        "left_behind": if cleaned { vec![] } else { vec!["tap0"] }},
+            "psv": {"launch_manifest_sha256": sha, "bound": true, "verdict_sha256": verdict},
+        });
+        std::fs::write(out.join("result.json"), r.to_string()).unwrap();
+        std::process::exit(code);
     }
     write_result("ok", 0);
 }
@@ -534,6 +575,27 @@ fn verifier_manifest() {
     m["path"] = serde_json::json!(exe);
     m["trust_roots"] = serde_json::Value::Object(roots);
     println!("{}", serde_json::to_string_pretty(&m).unwrap());
+}
+
+/// Every path the protected-host config pins, for the trust preflight.
+fn protected_host_paths(a: &Args) {
+    let cfg = a
+        .opt("--config")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(axon_fabric::protected_host::PROTECTED_HOST_CONFIG));
+    let paths = axon_fabric::protected_host::pinned_paths(&cfg)
+        .unwrap_or_else(|e| refuse("unregistered", &e, 4));
+    for (kind, p) in paths {
+        let s = p.to_string_lossy();
+        if s.contains(['\t', '\n']) || s != p.as_os_str().to_str().unwrap_or_default() {
+            refuse(
+                "unregistered",
+                &format!("pinned path {s:?} is not a plain UTF-8 path without tabs or newlines"),
+                4,
+            );
+        }
+        println!("{}\t{s}", kind.as_str());
+    }
 }
 
 /// The AUTHORITATIVE protected-readiness verdict for `--repo` (see
@@ -711,6 +773,7 @@ fn submit(a: &Args) {
                     axon_loop_contracts::parse(&text).ok()?;
                 axon_fabric::signing::execution_attestation_decision(
                     &req,
+                    &s.receipt,
                     s.replayed,
                     s.ran_under.as_ref(),
                 )

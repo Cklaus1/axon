@@ -6,8 +6,9 @@
 //! `attestation_withheld`.
 
 use crate::backend::LINUX_MICROVM_PROTECTED;
+use crate::psv::EvidenceClass;
 use crate::submit::RanUnder;
-use axon_loop_contracts::{ComputeRequest, JobKind};
+use axon_loop_contracts::{ComputeRequest, ExecutionReceipt, JobKind};
 
 pub const NOT_A_CHECK: &str = "not a registered_check: the verifier signs verdicts, not execution";
 pub const CANDIDATE_RUBRIC: &str = "the check is a file of the candidate's tree, not an \
@@ -73,13 +74,22 @@ pub const NOT_AN_EXECUTION: &str =
 pub const NOT_PROTECTED_EXECUTION: &str =
     "only an execution on the protected profile is attested: elsewhere the backend is a claim";
 
+pub const UNOBSERVED_EXECUTION: &str = "the receipt carries no protected class, launch-manifest \
+     digest and preflight-observation digest: a launch on the protected profile that was not \
+     observed is not a protected execution, and is never attested as one";
+
 /// Whether Fabric attests that this EXECUTION ran on the protected profile
 /// (`attestation::EXECUTION_DOMAIN`). Only a non-replayed execution job that
 /// Fabric itself dispatched to the protected Linux profile qualifies: the
 /// workload ran in the guest, away from the host key (dev review round
-/// wf_336353cb-a2b, PSV-7).
+/// wf_336353cb-a2b, PSV-7) — and only when its RECEIPT carries the observed
+/// launch: the protected class, the launch-manifest digest and the preflight
+/// observation digest. A protected-profile run is an observed run or nothing;
+/// the backend name alone attested an `interpreter_run` launched with no
+/// manifest, nonce or observation (PSV-6, C9 dev review round 1; A54).
 pub fn execution_attestation_decision(
     req: &ComputeRequest,
+    receipt: &ExecutionReceipt,
     replayed: bool,
     ran_under: Option<&RanUnder>,
 ) -> Result<(), &'static str> {
@@ -90,10 +100,29 @@ pub fn execution_attestation_decision(
         return Err(REPLAYED);
     }
     match ran_under {
-        Some(r) if r.backend == LINUX_MICROVM_PROTECTED.id => Ok(()),
-        Some(_) => Err(NOT_PROTECTED_EXECUTION),
-        None => Err(KEY_REACHABLE),
+        Some(r) if r.backend == LINUX_MICROVM_PROTECTED.id => {}
+        Some(_) => return Err(NOT_PROTECTED_EXECUTION),
+        None => return Err(KEY_REACHABLE),
     }
+    if !observed_launch(receipt) {
+        return Err(UNOBSERVED_EXECUTION);
+    }
+    Ok(())
+}
+
+/// The receipt states an observed protected launch: its one class is
+/// `protected`, and it names the launch manifest and the preflight observation.
+fn observed_launch(r: &ExecutionReceipt) -> bool {
+    let names = |prefix: &str| {
+        r.evidence_refs.iter().any(|e| {
+            e.as_str()
+                .strip_prefix(prefix)
+                .is_some_and(|h| !h.is_empty())
+        })
+    };
+    EvidenceClass::of_receipt(r) == Some(EvidenceClass::Protected)
+        && names("launch-manifest-sha256:")
+        && names("preflight-observation-sha256:")
 }
 
 #[cfg(test)]
@@ -218,36 +247,107 @@ mod tests {
         );
     }
 
+    fn receipt(refs: &[&str]) -> ExecutionReceipt {
+        let mut v: serde_json::Value = serde_json::from_str(include_str!(
+            "../../axon-loop-contracts/tests/fixtures/acf/receipt_exit_zero_unverified.json"
+        ))
+        .unwrap();
+        v["backend_profile_ref"] = json!(LINUX_MICROVM_PROTECTED.id);
+        v["evidence_refs"] = json!(refs);
+        serde_json::from_value(v).unwrap()
+    }
+
+    /// The refs an OBSERVED protected launch leaves in its receipt.
+    const OBSERVED: [&str; 3] = [
+        "evidence-class:protected",
+        "launch-manifest-sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "preflight-observation-sha256:2222222222222222222222222222222222222222222222222222222222222222",
+    ];
+
     /// PSV-7 (dev round wf_336353cb-a2b): Fabric attests an EXECUTION only
     /// when it dispatched it to the protected profile itself, and not replayed.
     #[test]
     fn only_a_protected_profile_execution_is_attested() {
         let exec = req("interpreter_run", "prog.ax");
+        let observed = receipt(&OBSERVED);
         let vm = ran_as(LINUX_MICROVM_PROTECTED.id, "IO", "protected");
         assert_eq!(
-            execution_attestation_decision(&exec, false, Some(&vm)),
+            execution_attestation_decision(&exec, &observed, false, Some(&vm)),
             Ok(())
         );
         let local = ran_as(LOCAL_INTERPRETER.id, "", "development");
         assert_eq!(
-            execution_attestation_decision(&exec, false, Some(&local)),
+            execution_attestation_decision(&exec, &observed, false, Some(&local)),
             Err(NOT_PROTECTED_EXECUTION)
         );
         assert_eq!(
-            execution_attestation_decision(&exec, true, Some(&vm)),
+            execution_attestation_decision(&exec, &observed, true, Some(&vm)),
             Err(REPLAYED)
         );
         assert_eq!(
-            execution_attestation_decision(&exec, false, None),
+            execution_attestation_decision(&exec, &observed, false, None),
             Err(KEY_REACHABLE)
         );
         assert_eq!(
             execution_attestation_decision(
                 &req("registered_check", "check:acc@1"),
+                &observed,
                 false,
                 Some(&vm)
             ),
             Err(NOT_AN_EXECUTION)
+        );
+    }
+
+    /// PSV-6 (C9 dev review round 1; A54): an execution on the protected
+    /// profile is attested only when its receipt carries the OBSERVED launch:
+    /// the protected class, the launch-manifest digest and the preflight
+    /// observation digest. Before this, the backend name alone was enough, so
+    /// an `interpreter_run` launched with no manifest, nonce or observation
+    /// got an `axon.fabric-execution/1` attestation that EVL counts. Control:
+    /// the fully observed receipt is attested (above and at the end here).
+    #[test]
+    fn an_unobserved_protected_profile_execution_is_never_attested() {
+        let exec = req("interpreter_run", "prog.ax");
+        let vm = ran_as(LINUX_MICROVM_PROTECTED.id, "", "protected");
+        let [class, manifest, observation] = OBSERVED;
+        for (what, refs) in [
+            (
+                "no evidence at all (the pre-fix interpreter_run receipt)",
+                vec![],
+            ),
+            (
+                "guest-unobserved class",
+                vec!["evidence-class:guest-unobserved", manifest, observation],
+            ),
+            ("no launch manifest", vec![class, observation]),
+            ("no preflight observation", vec![class, manifest]),
+            (
+                "an empty observation digest",
+                vec![class, manifest, "preflight-observation-sha256:"],
+            ),
+            (
+                "two classes",
+                vec![
+                    class,
+                    "evidence-class:guest-unobserved",
+                    manifest,
+                    observation,
+                ],
+            ),
+        ] {
+            let got = execution_attestation_decision(&exec, &receipt(&refs), false, Some(&vm));
+            assert_eq!(
+                got,
+                Err(UNOBSERVED_EXECUTION),
+                "ATTACK: an unobserved protected-profile execution ({what}) was attested as a \
+                 protected execution"
+            );
+        }
+        assert_eq!(
+            execution_attestation_decision(&exec, &receipt(&OBSERVED), false, Some(&vm)),
+            Ok(()),
+            "control: the observed launch is attested"
         );
     }
 }

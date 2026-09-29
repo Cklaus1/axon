@@ -93,17 +93,22 @@ fn forged_registry(env: &Env, principal: &str, grant_ref: &str, body: &str) -> P
 struct Host {
     env: Env,
     root: PathBuf,
+    candidate: axon_loop_contracts::Acf1Ref,
 }
 
 impl Host {
     fn new() -> Host {
         let env = Env::new();
         let root = env.dir.path().join("host");
-        for d in ["dist", "keys", "grants", "runs"] {
+        for d in ["dist", "keys", "grants", "runs", "nonces"] {
             std::fs::create_dir_all(root.join(d)).unwrap();
         }
+        // The service's own private leaves (A56).
+        for d in ["runs", "nonces"] {
+            std::fs::set_permissions(root.join(d), std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
         let issuer = Issuer::generate();
-        std::fs::write(root.join("manifest.json"), lx_manifest(GUEST)).unwrap();
+        std::fs::write(root.join("manifest.json"), full_lx_manifest(GUEST)).unwrap();
         let mut ev = good_evidence(&sha256_file(&root.join("manifest.json")));
         ev["assertions"]
             .as_array_mut()
@@ -115,7 +120,30 @@ impl Host {
         qualified_linux_cfg(&root, &issuer, &ev);
         let launcher = stand_in_launcher(&env, 0, true, true, 0);
         std::fs::copy(&launcher, root.join("launcher.sh")).unwrap();
-        write_registry(&root.join("registry.json"), &env.exe, None);
+        // The operator suite `acc` (the protected profile runs only an
+        // operator-suite check, PSV-6 / A54) and the candidate, in the store
+        // the CLI reads (`<journal>.state`).
+        let candidate = psv_suite(&env);
+        std::fs::copy(&env.registry, root.join("registry.json")).unwrap();
+        let mut state = env.journal.clone().into_os_string();
+        state.push(".state");
+        axon_fabric::workspace::WorkspaceStore::open(Path::new(&state), &scope().tenant_id)
+            .unwrap()
+            .import_dir(&env.ws, &axon_fabric::workspace::Quota::default())
+            .unwrap();
+        // The preflight observer: a protected host launches nothing without
+        // one. Its key is in the observer root beside the issuers.
+        let key = observer_key(&root, "obs", &[&root.join("observer")]);
+        std::fs::copy(
+            observer_script(&root, "", &key, "observer"),
+            root.join("observer.sh"),
+        )
+        .unwrap();
+        std::fs::set_permissions(
+            root.join("observer.sh"),
+            std::fs::Permissions::from_mode(0o755),
+        )
+        .unwrap();
         let rng = ring::rand::SystemRandom::new();
         let pk8 = ring::signature::Ed25519KeyPair::generate_pkcs8(&rng).unwrap();
         std::fs::write(root.join("keys/attest.pk8"), pk8.as_ref()).unwrap();
@@ -132,7 +160,11 @@ impl Host {
                 ("grant:x", PRINCIPAL, GRANT_DENY),
             ],
         );
-        let h = Host { env, root };
+        let h = Host {
+            env,
+            root,
+            candidate,
+        };
         h.write_config();
         h
     }
@@ -161,6 +193,8 @@ impl Host {
                            &std::fs::read(self.p("keys/attest.pk8")).unwrap()).unwrap(),
                        "key_path": self.p("keys/attest.pk8")},
             "out_root": self.p("runs"),
+            "observer": {"command": pin("observer.sh"), "nonce_store": self.p("nonces"),
+                         "max_age_s": 300},
         });
         if grant_registry {
             v["grant_registry"] = pin("grants/grants.json");
@@ -173,18 +207,12 @@ impl Host {
             .arg("--protected-host-issuers")
             .arg(self.p("trusted_issuers"))
     }
+    /// An operator-suite check: the only job the protected profile runs
+    /// (PSV-6, A54).
     fn linux_request(&self, op: &str, grant: &str) -> Value {
-        let mut r = request(&self.env, op, "t_ok");
-        r["required"]["hardware_isolation"] = json!(true);
-        r["required"]["os"] = json!("linux");
-        r["job_kind"] = json!("interpreter_run");
-        r["argv"] = json!(["f.ax"]);
-        r["registered_executable_ref"] = json!(axon_fabric::backend::LINUX_GUEST_AXON_ID);
+        let mut r = request(&self.env, op, "t_psv_ok");
+        as_protected_check(&mut r, &self.candidate, GUEST);
         r["grant_ref"] = json!(grant);
-        r["executable_digest"] = json!(axon_cortex::runner::fabric_executable_digest(
-            axon_fabric::backend::LINUX_GUEST_AXON_ID,
-            GUEST
-        ));
         r
     }
     fn submit(&self, req: &Value, grant_registry: Option<&Path>) -> (i32, String) {
@@ -542,6 +570,7 @@ fn submit_refuses_any_registry_but_the_protected_hosts_pin() {
     let pin = ph.grant_registry.as_ref().unwrap().1.clone();
     let mut cfg = h.env.cfg(0);
     cfg.linux = Some(ph.linux.clone());
+    cfg.observer = ph.observer.clone();
     cfg.grants = axon_fabric::GrantRegistry::load(&forged).unwrap();
     let identity = |pin: Option<String>| axon_fabric::psv::HostIdentity {
         config_sha256: ph.config_sha256.clone(),

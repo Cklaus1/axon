@@ -104,8 +104,12 @@ pub const LINUX_MICROVM_PROTECTED: Profile = Profile {
     isolation: Isolation::LinuxMicroVmProtected,
     // `registered_check` only for an OPERATOR suite (`check:<id>`), run by the
     // trusted guest runner (PSV, v022-psv-protocol.md §4); `submit` refuses
-    // any other target on this profile.
-    job_kinds: &[JobKind::InterpreterRun, JobKind::RegisteredCheck],
+    // any other target on this profile. NOTHING ELSE: every launch here goes
+    // through the launch manifest, the custodian nonce and the preflight
+    // observation, and an `interpreter_run` has no such path. It used to be
+    // offered, and launched with no observation at all (PSV-6, C9 dev review
+    // round 1; A54).
+    job_kinds: &[JobKind::RegisteredCheck],
     // The pinned guest is x86_64 (`profiles/linux-microvm/manifest.json`:
     // `x86_64-unknown-linux-musl` interpreter, x86_64 kernel config).
     architectures: &[Architecture::X86_64],
@@ -325,7 +329,7 @@ pub(crate) fn sha256_hex(b: &[u8]) -> String {
     format!("{:x}", Sha256::digest(b))
 }
 
-fn hex_decode(s: &str) -> Option<Vec<u8>> {
+pub(crate) fn hex_decode(s: &str) -> Option<Vec<u8>> {
     let s = s.trim();
     if !s.len().is_multiple_of(2) || !s.bytes().all(|c| c.is_ascii_hexdigit()) {
         return None;
@@ -477,6 +481,22 @@ pub fn verify_operator_evidence_bytes(
 ) -> Result<String, String> {
     let trusted = trusted_issuers(issuers_dir)?;
     verify_detached(what, bytes, sig, &trusted, authority)
+}
+
+/// [`verify_operator_evidence_bytes`] with the detached signature ALSO
+/// already read: the signature verified is exactly the text the caller goes
+/// on to use (one read of each file).
+pub fn verify_operator_evidence_sig(
+    what: &str,
+    bytes: &[u8],
+    sig_text: &str,
+    issuers_dir: &Path,
+    authority: TrustAuthority,
+) -> Result<String, String> {
+    let trusted = trusted_issuers(issuers_dir)?;
+    axon_loop_contracts::operator_trust::verify_evidence_signature(
+        what, bytes, sig_text, &trusted, authority,
+    )
 }
 
 fn sidecar_sig(p: &Path) -> PathBuf {
@@ -837,8 +857,8 @@ pub fn select(
             .map_err(|why| Unsupported(format!("{} ineligible: {why}", p.id)))?;
         if !p.job_kinds.contains(&req.job_kind) {
             return Err(Unsupported(format!(
-                "{}: job_kind {:?} unsupported — the profile runs one program with `axon run` and \
-                 reports its exit; it does not run registered checks or produce a verdict",
+                "{}: job_kind {:?} unsupported — the protected profile runs only an operator \
+                 suite check, through the observed launch path; it runs no unobserved execution",
                 p.id, req.job_kind
             )));
         }
@@ -1103,14 +1123,19 @@ impl GuestPolicy {
     }
 }
 
-/// Run one `interpreter_run` through the Linux profile launcher, delivering
+/// Launch one PSV check through the Linux profile launcher, delivering
 /// `policy` to the guest with `--policy FILE`.
+///
+/// `psv` is REQUIRED: it is the launch manifest (with the custodian nonce the
+/// observer observed) and the three drives. There is no program-only launch:
+/// the launcher's `--program` mode ran an `interpreter_run` on the protected
+/// profile with no manifest, no nonce and no observation (PSV-6, C9 dev review
+/// round 1; A54), so nothing here can build one.
 pub fn run_linux_profile(
     lx: &LinuxProfileConfig,
-    program: &Path,
     req: &ComputeRequest,
     policy: &GuestPolicy,
-    psv: Option<&crate::psv::Launch>,
+    psv: &crate::psv::Launch,
 ) -> LinuxRun {
     let out = lx.out_root.join(req.operation_id.as_str());
     // Beside `--out`, never in it: the launcher requires a new/empty out dir.
@@ -1145,20 +1170,16 @@ pub fn run_linux_profile(
     let timeout_s = req.limits.wall_time_ms.div_ceil(1000).max(1);
     let mut cmd = std::process::Command::new(&lx.launcher);
     cmd.arg("--policy").arg(&policy_file);
-    match psv {
-        // PSV: the candidate, the suite and the job are three separate
-        // read-only drives; the manifest digest is Fabric's.
-        Some(l) => cmd
-            .arg("--psv-candidate")
-            .arg(&l.candidate_dir)
-            .arg("--psv-suite")
-            .arg(&l.suite_dir)
-            .arg("--psv-job")
-            .arg(&l.job_dir)
-            .arg("--psv-manifest-sha")
-            .arg(&l.digest),
-        None => cmd.arg("--program").arg(program),
-    };
+    // PSV: the candidate, the suite and the job are three separate read-only
+    // drives; the manifest digest is Fabric's.
+    cmd.arg("--psv-candidate")
+        .arg(&psv.candidate_dir)
+        .arg("--psv-suite")
+        .arg(&psv.suite_dir)
+        .arg("--psv-job")
+        .arg(&psv.job_dir)
+        .arg("--psv-manifest-sha")
+        .arg(&psv.digest);
     cmd.arg("--out")
         .arg(&out)
         .arg("--manifest")
@@ -1192,9 +1213,7 @@ pub fn run_linux_profile(
     };
     // The job drive's source (the per-attempt secret) leaves the host the
     // moment the launcher returns — before any further child runs.
-    if let Some(l) = psv {
-        l.scrub();
-    }
+    psv.scrub();
     let launcher = lx.launcher.clone();
     let out2 = out.clone();
     let mut verify = move || {

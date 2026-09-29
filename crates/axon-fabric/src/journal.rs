@@ -869,13 +869,16 @@ impl Journal {
 
     /// Open an EXISTING journal under its exclusive lock and replay it,
     /// writing NOTHING: no header, no torn-tail truncation, no reconcile.
-    /// `Ok(None)` when there is no journal at `path`. For a route that must
-    /// authorize the caller against the recorded ops BEFORE any write
-    /// (`status`/`cancel`): it then calls [`Journal::reconcile_scope`] for the
-    /// one scope it was authorized for.
+    /// `Ok(None)` when there is no journal at `path` (NotFound only: any
+    /// other failure to stat it is an error, never "no ops recorded"). For a
+    /// route that must authorize the caller against the recorded ops BEFORE
+    /// any write (`status`/`cancel`): it then calls
+    /// [`Journal::reconcile_scope`] for the one scope it was authorized for.
     pub fn open_unreconciled(path: impl AsRef<Path>) -> Result<Option<Journal>, JournalError> {
-        if std::fs::symlink_metadata(path.as_ref()).is_err() {
-            return Ok(None);
+        match std::fs::symlink_metadata(path.as_ref()) {
+            Ok(_) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(JournalError::Io(e)),
         }
         Self::open_inner(path.as_ref(), false).map(|(j, _)| Some(j))
     }

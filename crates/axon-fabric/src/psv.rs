@@ -56,6 +56,25 @@ impl EvidenceClass {
     pub fn evidence_ref(self) -> String {
         format!("{EVIDENCE_CLASS_PREFIX}{}", self.as_str())
     }
+    /// The class a receipt states: its ONE evidence-class ref. `None` when it
+    /// states none, several, or one this build does not know.
+    pub fn of_receipt(r: &axon_loop_contracts::ExecutionReceipt) -> Option<EvidenceClass> {
+        let mut named = r
+            .evidence_refs
+            .iter()
+            .filter_map(|e| e.as_str().strip_prefix(EVIDENCE_CLASS_PREFIX));
+        let one = named.next()?;
+        if named.next().is_some() {
+            return None;
+        }
+        [
+            EvidenceClass::Protected,
+            EvidenceClass::GuestUnobserved,
+            EvidenceClass::Development,
+        ]
+        .into_iter()
+        .find(|c| c.as_str() == one)
+    }
 }
 
 /// What O1 contributes to the manifest: the operator host config and the

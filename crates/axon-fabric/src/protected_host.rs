@@ -102,11 +102,13 @@ const KEYS: [&str; 8] = [
 impl ProtectedHost {
     /// The production configuration: [`PROTECTED_HOST_CONFIG`], every pinned
     /// path operator-owned. `Ok(None)` when the file does not exist — this is
-    /// not a protected host, and the profile is simply not configured.
+    /// not a protected host, and the profile is simply not configured. Any
+    /// OTHER failure to tell (EACCES, ENOTDIR, ELOOP, …) is refused: it is not
+    /// evidence that this is a development host.
     #[cfg(unix)]
     pub fn operator() -> Result<Option<Self>, String> {
         let p = Path::new(PROTECTED_HOST_CONFIG);
-        if std::fs::symlink_metadata(p).is_err() {
+        if !is_configured(p)? {
             return Ok(None);
         }
         Self::load(
@@ -128,8 +130,14 @@ impl ProtectedHost {
         owned_below: Option<&Path>,
         trust: QualificationTrust,
     ) -> Result<Self, String> {
-        let observers =
+        let mut observers =
             crate::observer::ObserverTrust::for_test(&trust.issuers_dir.join("../observer"));
+        // The test's qualification root is the issuers dir itself.
+        for (a, dir) in &mut observers.separate_from {
+            if *a == crate::backend::TrustAuthority::Qualification {
+                *dir = trust.issuers_dir.clone();
+            }
+        }
         Self::load(config, owned_below, trust, observers)
     }
 
@@ -138,7 +146,7 @@ impl ProtectedHost {
         config: &Path,
         owned_below: Option<&Path>,
         mut trust: QualificationTrust,
-        observer_trust: crate::observer::ObserverTrust,
+        mut observer_trust: crate::observer::ObserverTrust,
     ) -> Result<Self, String> {
         use crate::backend::check_owned_chain;
         let owned = |p: &Path, entries: bool| -> Result<(), String> {
@@ -247,21 +255,35 @@ impl ProtectedHost {
         // operator's, but WHERE it sits is, exactly as for the signing key. An
         // agent-writable ancestor could swap either for a directory it
         // controls (pre-planted run outputs; erased nonce records, so an
-        // observation replays).
+        // observation replays). The LEAF is the service's own, and private:
+        // an agent-owned or group/other-accessible leaf allows the same swap
+        // one level down (C9 dev review round 1; A56).
         let parent_owned = |p: &Path| -> Result<(), String> {
             let dir = p
                 .parent()
                 .ok_or_else(|| bad(format!("{} has no parent directory", p.display())))?;
             owned(dir, false).map_err(bad)
         };
+        let leaf_owned = |p: &Path| -> Result<(), String> {
+            match owned_below {
+                Some(_) => service_leaf(p).map_err(bad),
+                None => Ok(()),
+            }
+        };
         let out_root = path_at("/out_root")?;
         parent_owned(&out_root)?;
+        leaf_owned(&out_root)?;
         let observer = match v.get("observer") {
             None | Some(Value::Null) => None,
             Some(ob) => {
                 let (command, command_sha256) = pinned("observer/command")?;
                 let nonces = path_at("/observer/nonce_store")?;
                 parent_owned(&nonces)?;
+                leaf_owned(&nonces)?;
+                // ADR-002: the observer root shares no key with the host
+                // signer or another authority root (A57).
+                observer_trust.host_signer_public_key = Some(signer.public_key.clone());
+                observer_trust.check_separation().map_err(bad)?;
                 Some(crate::observer::ObserverConfig {
                     command,
                     command_sha256,
@@ -311,5 +333,176 @@ impl ProtectedHost {
             observer,
             grant_registry,
         })
+    }
+}
+
+/// What a path the host config pins IS, for the trust preflight
+/// (`scripts/trust_root_preflight.sh`), which probes each one with real
+/// attempts under every actor UID.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PinnedKind {
+    /// Operator-owned: nobody but the operator may create, write or chmod it
+    /// (the host config itself, every pinned file, every grant file).
+    OperatorFile,
+    /// An operator-owned directory whose direct entries are operator-owned
+    /// too (`artifacts_dir`).
+    OperatorDir,
+    /// The attestation signing key: readable by the Fabric UID alone (A20);
+    /// the directory above it is operator-owned.
+    SigningKey,
+    /// A directory the Fabric SERVICE owns, private (`out_root`,
+    /// `observer.nonce_store`); the directory above it is operator-owned.
+    ServiceDir,
+}
+
+impl PinnedKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            PinnedKind::OperatorFile => "operator-file",
+            PinnedKind::OperatorDir => "operator-dir",
+            PinnedKind::SigningKey => "signing-key",
+            PinnedKind::ServiceDir => "service-dir",
+        }
+    }
+}
+
+/// EVERY path an `axon-protected-host/1` config at `config` pins, with what
+/// it is — the list `ProtectedHost::load` ownership-walks, printed by
+/// `axon-fabric protected-host-paths` so the trust preflight probes exactly
+/// these (C9 dev review round 1: the preflight kept its own list and missed
+/// the grant registry and its grant files, the observer command,
+/// `artifacts_dir` and the out_root / nonce_store directories). It reads the
+/// config and the grant registry it names; it verifies NO pin and authorizes
+/// nothing. `tests/protected_host.rs` holds it to `load` in both directions.
+pub fn pinned_paths(config: &Path) -> Result<Vec<(PinnedKind, PathBuf)>, String> {
+    let bad = |why: String| format!("{}: {why}", config.display());
+    let bytes = std::fs::read(config).map_err(|e| bad(e.to_string()))?;
+    let v: Value = serde_json::from_slice(&bytes).map_err(|e| bad(e.to_string()))?;
+    if v["schema"] != PROTECTED_HOST_SCHEMA {
+        return Err(bad(format!("schema is not {PROTECTED_HOST_SCHEMA}")));
+    }
+    let path_at = |ptr: &str| -> Result<PathBuf, String> {
+        let p = v
+            .pointer(ptr)
+            .and_then(Value::as_str)
+            .map(PathBuf::from)
+            .ok_or_else(|| bad(format!("{ptr} is not a string")))?;
+        if !p.is_absolute() {
+            return Err(bad(format!("{ptr} is not absolute")));
+        }
+        Ok(p)
+    };
+    let present = |ptr: &str| !matches!(v.pointer(ptr), None | Some(Value::Null));
+    use PinnedKind::*;
+    let mut out = vec![(OperatorFile, config.to_path_buf())];
+    for ptr in [
+        "/launcher/path",
+        "/profile_manifest/path",
+        "/suite_registry/path",
+        "/qualification/record",
+    ] {
+        out.push((OperatorFile, path_at(ptr)?));
+    }
+    for ptr in ["/qualification/signature", "/qualification/waivers"] {
+        if present(ptr) {
+            out.push((OperatorFile, path_at(ptr)?));
+        }
+    }
+    out.push((OperatorDir, path_at("/artifacts_dir")?));
+    out.push((SigningKey, path_at("/signer/key_path")?));
+    out.push((ServiceDir, path_at("/out_root")?));
+    if present("/observer") {
+        out.push((OperatorFile, path_at("/observer/command/path")?));
+        out.push((ServiceDir, path_at("/observer/nonce_store")?));
+    }
+    if present("/grant_registry") {
+        let reg = path_at("/grant_registry/path")?;
+        let grants = crate::grants::GrantRegistry::load(&reg).map_err(bad)?;
+        out.extend(
+            grants
+                .grant_files()
+                .map(|g| (OperatorFile, g.to_path_buf())),
+        );
+        out.push((OperatorFile, reg));
+    }
+    Ok(out)
+}
+
+/// Whether the operator's host config exists. Only NotFound means "not a
+/// protected host"; any other error is refused rather than read as one (C9
+/// dev review round 1).
+#[cfg(unix)]
+fn is_configured(p: &Path) -> Result<bool, String> {
+    match std::fs::symlink_metadata(p) {
+        Ok(_) => Ok(true),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(e) => Err(format!(
+            "{}: {e}: cannot tell whether this is a protected host, so nothing runs",
+            p.display()
+        )),
+    }
+}
+
+/// A leaf the Fabric SERVICE owns (`out_root`, `nonce_store`): it exists, is a
+/// real directory (not a symlink), belongs to this process's euid, and no
+/// group or other has any access (0700).
+#[cfg(unix)]
+fn service_leaf(p: &Path) -> Result<(), String> {
+    use std::os::unix::fs::MetadataExt;
+    let m = std::fs::symlink_metadata(p)
+        .map_err(|e| format!("{}: {e} (the service's directory must exist)", p.display()))?;
+    if m.file_type().is_symlink() {
+        return Err(format!("{} is a symlink: never redirected", p.display()));
+    }
+    if !m.is_dir() {
+        return Err(format!("{} is not a directory", p.display()));
+    }
+    // SAFETY: geteuid has no preconditions and cannot fail.
+    let euid = unsafe { libc::geteuid() };
+    if m.uid() != euid {
+        return Err(format!(
+            "{} is owned by uid {}, not the service uid {euid}: another uid could swap what is \
+             in it",
+            p.display(),
+            m.uid()
+        ));
+    }
+    if m.mode() & 0o077 != 0 {
+        return Err(format!(
+            "{} is accessible to group or other (mode {:o}); it must be 0700",
+            p.display(),
+            m.mode() & 0o7777
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    /// C9 dev review round 1: `operator()` read ANY stat error as "not a
+    /// protected host" and ran in development mode (caller registries and
+    /// signer). Only NotFound means that.
+    #[test]
+    fn only_a_missing_host_config_means_not_a_protected_host() {
+        let d = tempfile::tempdir().unwrap();
+        let file = d.path().join("file");
+        std::fs::write(&file, "x").unwrap();
+        let lp = d.path().join("loop");
+        std::os::unix::fs::symlink(&lp, &lp).unwrap();
+        for (what, p) in [
+            ("ENOTDIR", file.join("protected-host.json")),
+            ("ELOOP", lp.join("protected-host.json")),
+        ] {
+            let got = is_configured(&p);
+            assert!(
+                got.is_err(),
+                "ATTACK: a host config that cannot be stat'ed ({what}) was read as \
+                 'not a protected host': {got:?}"
+            );
+        }
+        assert_eq!(is_configured(&d.path().join("absent.json")), Ok(false));
+        assert_eq!(is_configured(&file), Ok(true));
     }
 }
