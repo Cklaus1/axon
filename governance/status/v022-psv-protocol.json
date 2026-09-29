@@ -48,7 +48,7 @@
     }
   },
   "psv_protocol_proven": {
-    "state": "NOT_PROVEN \u2014 candidate 7 dev loop reached a clean round (4), but its frozen run is not green: mutation registry drifted against rounds 1-3; 7 rows are now equivalent (defence-in-depth), pending an operator decision",
+    "state": "PROVEN (development evidence only) \u2014 candidate 7b (c525552d) frozen run fully green and its independent certifying review REGISTERED all 9 claims incl. EQUIVALENCE",
     "frozen_run": "candidate 2 (8102d404, micode fc6221a5): the proof run was fully green (640 + 1573 axon tests, 5311 micode, 215/215 mutants killed, real-guest boot 6/6, interop 287, micode gates 22, trees clean)",
     "review": {
       "run": "wf_d725935a-7ed",
@@ -371,6 +371,34 @@
         "M209": "asymmetric (dominated by M205)",
         "M204": "refactored; killed by M192-M195,M253"
       }
-    }
+    },
+    "proven": {
+      "candidate": "7b",
+      "axon": "c525552d",
+      "micode": "63fe711b",
+      "freeze_manifest": {
+        "registry_digest": "2a2219d8e244e11e654821e17e7508c4dc739fc57e2e0818ae7c30b61dd53732",
+        "equivalence_digest": "76b9213c35accdff56b7cd432be5cd0b6fea2fd6804518b92ab2c96e53d3eb81",
+        "paired_disable_digest": "5fa47f3e460959c43a8d280c0f0ba964a492a2d4d7d18c65778a1d41ca0cbc1f",
+        "guest_image_profile_manifest": "de908df28ed415f5d6808a5cdcca6780a753ed8b36728e861f83d0a6a1a8d8ec"
+      },
+      "frozen_run": "fully green (nonzero RC 0): 647-class + 1582 axon-core + 5312 micode; active mutations 258/258 killed (0 survivors, 0 stale); retired 7 defence-in-depth + 1 refactored + 2 legacy; paired-disable 8/8; PCI 18, stage5, readiness (NOT_READY), matrix A1-A40, trust preflight; real-guest boot 11/11; interop 287; micode gates 22; trees clean",
+      "dev_review_loop": "rounds 1-4 on identical protocol code: 5+4+5 blockers found and fixed (amendments 15-25), round 4 clean 16/16",
+      "certifying_review": {
+        "run": "wf_afca02ad-f81",
+        "reviewers": 9,
+        "verdict": "REGISTER 9/9",
+        "claims": [
+          "PSV-1..7",
+          "FIELD-ORIGIN",
+          "EQUIVALENCE"
+        ]
+      },
+      "means": "the PSV protocol holds as DEVELOPMENT evidence. It earns NO protected-readiness credit: protected_backend, g01_on_protected_backend and pci_on_protected_backend stay NOT_RUN, and PROTECTED_VERIFIER_READY stays NOT_READY until the operator-controlled environment certifies them. Stage 7 / CX-21 remain PREREGISTERED."
+    },
+    "open_followups": [
+      "MAJOR-ADJACENT (certifying review wf_afca02ad-f81, PSV-1): a sealed candidate may call random_i64/random_f64 and advance the shared process RNG the operator's @[forall] test draws from. srand is refused in sealed frames but random_* is not; it cannot choose or predict inputs (seed unreadable, srand refused), only shift them, and cannot change the rubric. Fix: give random_* the sealed-frame refusal, or a per-frame RNG stream.",
+      "ENV HYGIENE: an earlier review agent (running as root) created /etc/axon/trust/qualification, which made the readiness deriver's reason string drift and failed a frozen run's 1f. Removed. Review-agent briefs now forbid writing /etc. Consider making the readiness check robust to ambient /etc leftovers."
+    ]
   }
 }
