@@ -30,8 +30,17 @@ python3 - "$REPO/dist/guest-linux/manifest.json" <<'PY' || skip "the built image
 import json, sys
 sys.exit(0 if "axon-psv-runner" in json.load(open(sys.argv[1]))["artifacts"] else 1)
 PY
+# The host-side judge is BUILT here from this tree, never taken as found: a
+# psv_dev left over from an earlier tree judged every verdict against an old
+# schema and failed 6/11 cases while the guest was right (C9 round 1b). An
+# explicit PSV_DEV is still honoured, and named in the output.
+if [[ -z "${PSV_DEV:-}" ]]; then
+    (cd "$REPO" && cargo build -q -p axon-psv --example psv_dev) \
+        || { echo "FAIL: cargo build -p axon-psv --example psv_dev"; exit 1; }
+fi
 DEV="${PSV_DEV:-${CARGO_TARGET_DIR:-$REPO/target}/debug/examples/psv_dev}"
 [[ -x "$DEV" ]] || { echo "FAIL: $DEV missing (cargo build -p axon-psv --example psv_dev)"; exit 1; }
+echo "judge: $DEV"
 
 W="$(mktemp -d /var/tmp/psv-boot.XXXXXX)"; chmod 0755 "$W"
 # Kept on failure (or with PSV_KEEP=1) so a FAIL can be diagnosed.
