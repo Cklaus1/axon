@@ -828,9 +828,11 @@ fn a_nonce_authorizes_exactly_one_launch() {
         dir: d.path().join("n"),
     };
     let c = Clock::FixedUnix(1_000_000);
+    let n = st.issue(3, &c).unwrap();
     // A path-shaped nonce names a record OUTSIDE the store. One is planted
-    // there that passes every other check (this epoch, fresh, unused), so the
-    // format check is the only guard on this route (C9 round 1b, M199).
+    // there that passes every other check (this epoch, fresh, unused; the
+    // store dir exists, so the path resolves), so the format check is the
+    // only guard on this route (C9 round 1b, M199).
     let outside = d.path().join("x.issued");
     std::fs::write(&outside, r#"{"epoch":3,"issued_unix":1000000}"#).unwrap();
     let got = st.consume("../x", 3, &c, 60);
@@ -839,7 +841,6 @@ fn a_nonce_authorizes_exactly_one_launch() {
         "ATTACK: a path-shaped nonce was consumed from outside the custodian's store: {got:?}"
     );
     assert!(got.unwrap_err().contains("not one"));
-    let n = st.issue(3, &c).unwrap();
     assert!(st.consume(&n, 4, &c, 60).unwrap_err().contains("epoch"));
     assert!(st
         .consume(&n, 3, &Clock::FixedUnix(1_000_061), 60)
