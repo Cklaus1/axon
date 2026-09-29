@@ -1,6 +1,6 @@
 {
   "schema": "axon-v022-paired-disable/1",
-  "commit": "cb9fa2ea41a0fbbeaa5060c0627d0391fb6e196c",
+  "commit": "4d835f0bec043fe165e0ec808f6be809c7cfb713",
   "all_hold": true,
   "records": [
     {
@@ -23,149 +23,33 @@
           "M245",
           "M264"
         ],
-        "retired_guard_full_suite": "SUITE_OK"
+        "retired_guard_full_suite": "SUITE_OK",
+        "sibling_set_disabled": "ATTACK_REFUSED"
       },
       "holds": true
     },
     {
-      "mutation": "M104",
+      "mutation": "M58",
       "status": "EQUIVALENT_DID",
-      "kind": "set",
-      "property": "the counted verdict's context is observer-authenticated",
+      "kind": "pair",
+      "property": "a break/continue raised in a FUNCTION BODY does not escape into the caller's loop",
       "original_guard": {
-        "file": "crates/axon-loop/src/admission.rs"
+        "file": "crates/axon-core/src/interp.rs"
       },
       "subsumed_by": [
-        "M99",
-        "M208",
-        "M269",
-        "M207"
+        "M59"
       ],
-      "live_killing_mutant": "M99",
+      "live_killing_mutant": "M59",
       "matrix": {
         "baseline": "ATTACK_REFUSED",
         "retired_guard_disabled": "ATTACK_REFUSED",
         "guard_set_disabled": "ATTACK_SUCCEEDS",
         "guard_set": [
-          "M104",
-          "M99",
-          "M208",
-          "M269",
-          "M207"
-        ],
-        "retired_guard_full_suite": "SUITE_OK"
-      },
-      "holds": true
-    },
-    {
-      "mutation": "M210",
-      "status": "EQUIVALENT_DID",
-      "kind": "set",
-      "property": "a protected context is authenticated under an operator-rooted observer key",
-      "original_guard": {
-        "file": "crates/axon-loop/src/admission.rs"
-      },
-      "subsumed_by": [
-        "M207",
-        "M208",
-        "M99",
-        "M269"
-      ],
-      "live_killing_mutant": "M208",
-      "matrix": {
-        "baseline": "ATTACK_REFUSED",
-        "retired_guard_disabled": "ATTACK_REFUSED",
-        "guard_set_disabled": "ATTACK_SUCCEEDS",
-        "guard_set": [
-          "M210",
-          "M207",
-          "M208",
-          "M99",
-          "M269"
-        ],
-        "retired_guard_full_suite": "SUITE_OK"
-      },
-      "holds": true
-    },
-    {
-      "mutation": "M255",
-      "status": "EQUIVALENT_DID",
-      "kind": "set",
-      "property": "only a protected-class receipt counts in a protected decision",
-      "original_guard": {
-        "file": "crates/axon-loop/src/admission.rs"
-      },
-      "subsumed_by": [
-        "M254",
-        "M212",
-        "M213",
-        "M261",
-        "M262"
-      ],
-      "live_killing_mutant": "M212",
-      "matrix": {
-        "baseline": "ATTACK_REFUSED",
-        "retired_guard_disabled": "ATTACK_REFUSED",
-        "guard_set_disabled": "ATTACK_SUCCEEDS",
-        "guard_set": [
-          "M255",
-          "M254",
-          "M212",
-          "M213",
-          "M261",
-          "M262"
-        ],
-        "retired_guard_full_suite": "SUITE_OK"
-      },
-      "holds": true
-    },
-    {
-      "mutation": "M103",
-      "status": "EQUIVALENT_DID",
-      "kind": "asymmetric",
-      "property": "the counted verdict is still operator-pinned",
-      "original_guard": {
-        "file": "crates/axon-loop/src/admission.rs"
-      },
-      "subsumed_by": [
-        "M26"
-      ],
-      "live_killing_mutant": "M26",
-      "matrix": {
-        "baseline": "ATTACK_REFUSED",
-        "retired_guard_disabled": "ATTACK_REFUSED",
-        "guard_set_disabled": "ATTACK_SUCCEEDS",
-        "guard_set": [
-          "M103",
-          "M26"
+          "M58",
+          "M59"
         ],
         "retired_guard_full_suite": "SUITE_OK",
-        "dominating_sibling_disabled": "ATTACK_SUCCEEDS"
-      },
-      "holds": true
-    },
-    {
-      "mutation": "M209",
-      "status": "EQUIVALENT_DID",
-      "kind": "asymmetric",
-      "property": "a protected verdict is authenticated under an operator-rooted verifier key",
-      "original_guard": {
-        "file": "crates/axon-loop/src/admission.rs"
-      },
-      "subsumed_by": [
-        "M205"
-      ],
-      "live_killing_mutant": "M205",
-      "matrix": {
-        "baseline": "ATTACK_REFUSED",
-        "retired_guard_disabled": "ATTACK_REFUSED",
-        "guard_set_disabled": "ATTACK_SUCCEEDS",
-        "guard_set": [
-          "M209",
-          "M205"
-        ],
-        "retired_guard_full_suite": "SUITE_OK",
-        "dominating_sibling_disabled": "ATTACK_SUCCEEDS"
+        "sibling_set_disabled": "ATTACK_REFUSED"
       },
       "holds": true
     },
@@ -173,12 +57,26 @@
       "mutation": "M204",
       "status": "STALE_REFACTORED",
       "property": "a defective/replayed observation must not launch",
-      "original_guard": "refactored away (amendment 16)",
+      "original_guard": "the submit observe seam was restructured by amendment 16 (epoch re-read after the observer)",
+      "old_string_present": false,
       "subsumed_by": [
         "M192",
         "M253"
       ],
       "live_killing_mutant": "M253",
+      "matrix": null,
+      "holds": true
+    },
+    {
+      "mutation": "M176",
+      "status": "STALE_REFACTORED",
+      "property": "a pass needs exit 0",
+      "original_guard": "the exit-0 guard became the Some(0) of the Passed arm in runner.rs (C9 re-audit)",
+      "old_string_present": false,
+      "subsumed_by": [
+        "M293"
+      ],
+      "live_killing_mutant": "M293",
       "matrix": null,
       "holds": true
     }
