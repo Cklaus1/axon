@@ -209,9 +209,8 @@ def main():
         "M273": {"siblings": ["M401"], "kind": "pair"},
         "M401": {"siblings": ["M273"], "kind": "pair"},
         # C9 round 1b (core workstream): EQUIV_RECORD[...]["all_paths"].
-        # C9 round 1b, integration: M04 / M260 vs the first-match rule M436.
+        # C9 round 1b, integration: M04 vs the first-match rule M436.
         "M04": {"siblings": ["M436"], "kind": "pair"},
-        "M260": {"siblings": ["M436"], "kind": "pair"},
         "M60": {"siblings": ["M69"], "kind": "pair"},
         "M89": {"siblings": ["M86", "M96"], "kind": "set"},
     }

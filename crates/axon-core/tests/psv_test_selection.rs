@@ -417,7 +417,10 @@ fn a_sealed_modules_use_never_reaches_an_unimported_suite_module() {
         "control: an honest candidate passes: {ok}"
     );
     let (out, err) = run("mod reference\nuse reference\n");
-    assert!(!out.contains("\"status\":\"ok\""), "{out}\n{err}");
+    assert!(
+        !out.contains("\"status\":\"ok\""),
+        "ATTACK: a sealed module's use pulled the suite's unimported reference module into the program: {out}\n{err}"
+    );
 }
 
 /// Dev review round wf_7cb5856d-806 (a regression of the round-1 fix,
@@ -522,9 +525,15 @@ fn a_sealed_module_never_supplies_an_operator_modules_name() {
     // No reason check on this route: the nested use judged as sealed (M260)
     // and the first-match rule (M436) each refuse it alone (M260's four-cell
     // record), with different diagnostics.
+    // Suite-first, exclusive: here the candidate's nested `use rubric` first
+    // finds the SUITE's rubric. M260 refuses that use; without M260 the
+    // candidate simply gets the operator's own rubric (readable under an IO
+    // grant, accepted), which is no substitution. The attack is the pass.
     let (out, err) = run(&attack, false);
-    assert!(!out.contains("\"status\":\"ok\""), "{out}\n{err}");
-    assert!(err.contains("may not supply it"), "{err}");
+    assert!(
+        !out.contains("\"status\":\"ok\""),
+        "ATTACK: a sealed module's copy of the suite's `rubric` defined the rubric: {out}\n{err}"
+    );
 }
 
 /// C9 round 1b (PSV-1, class b: the sealed-`use` rule covered one importer

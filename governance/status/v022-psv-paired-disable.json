@@ -1,7 +1,7 @@
 {
   "schema": "axon-v022-paired-disable/2",
-  "commit": "24688b83c4503a54cdf4562ef665cba0f4b3d962",
-  "all_hold": true,
+  "commit": "10c911008a5b841e09e26e73d0e6d3e14acbff83",
+  "all_hold": false,
   "records": [
     {
       "mutation": "M19",

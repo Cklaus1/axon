@@ -209,6 +209,9 @@ fn a_visible_suite_is_listed_for_the_subject_and_a_hidden_one_is_not() {
     assert!(CheckRegistry::load(&f).unwrap_err().contains("visibility"));
 }
 
+// Each program finds its target directory by NAME, not by its position in
+// AXON_PATH: the search order is M04's own guard (four-cell vs M436), and
+// this test pins the moved-tree property, not the order.
 const WRITES_INTO_CANDIDATE: &str = "\
 mod f
 use f.{double}
@@ -218,7 +221,7 @@ fn hidden_completion() {
     match env_var(\"AXON_PATH\") {
         Ok(p) => {
             let dirs = str_split(p, \":\")
-            let c = dirs[1]
+            let c = if str_ends_with(dirs[0], \"/candidate\") { dirs[0] } else { dirs[1] }
             let _ = write_file(\"{c}/planted.txt\", \"moved\")
             assert_eq(double(21), 42)
         }
@@ -236,7 +239,7 @@ fn hidden_completion() {
     match env_var(\"AXON_PATH\") {
         Ok(p) => {
             let dirs = str_split(p, \":\")
-            let c = dirs[0]
+            let c = if str_ends_with(dirs[0], \"/check\") { dirs[0] } else { dirs[1] }
             let _ = write_file(\"{c}/planted.txt\", \"moved\")
             assert_eq(double(21), 42)
         }

@@ -835,7 +835,7 @@ MUTATIONS = [
     ('M257', 'PSV-7 (r1): the execution attestation key is operator-rooted', 'crates/axon-loop/src/evl.rs', '    let key = crate::store::Config::rooted_key(\n        &config.verifier_keys,\n        &issuer,\n        axon_loop_contracts::operator_trust::TrustAuthority::Verifier,\n    )?;', '    let key = config\n        .verifier_keys\n        .get(&issuer)\n        .ok_or_else(|| "no key".to_string())?;', 'axon-loop', '--test protected_class', 'a_relabelled_execution_leg_counts_nothing_in_a_protected_evaluation'),
     ('M258', 'PSV-7 (r1): admission re-verifies the execution leg', 'crates/axon-loop/src/admission.rs', 'crate::evl::verify_execution(&att, &areq, &arc, config).map_err(fail)?;', 'let _ = (&att, &areq, &arc);', 'axon-loop', '--test protected_class', 'a_protected_admission_re_verifies_the_execution_leg_from_its_documents'),
     ('M259', 'PSV-7 (r1): a protected admission cites an execution attestation', 'crates/axon-loop/src/admission.rs', '    let att_ref = v\n        .execution_attestation_ref\n        .as_ref()\n        .ok_or_else(|| fail("it cites no execution attestation".into()))?;', '    let Some(att_ref) = v.execution_attestation_ref.as_ref() else {\n        return Ok(crate::evl::SignedBy {\n            issuer_ref: who,\n            key_id: ctx_key,\n        });\n    };', 'axon-loop', '--test protected_class', 'a_protected_admission_re_verifies_the_execution_leg_from_its_documents'),
-    ('M260', "PSV-1 (r2): a sealed module's nested use is judged as sealed", 'crates/axon-core/src/lib.rs', '                            in_sealed(&candidate),\n', '                            false,\n', 'axon-core', '--no-default-features --test psv_test_selection', 'a_sealed_module_never_supplies_an_operator_modules_name'),
+    ('M260', "PSV-1 (r2): a sealed module's nested use is judged as sealed", 'crates/axon-core/src/lib.rs', '                            in_sealed(&candidate),\n', '                            false,\n', 'axon-core', '--no-default-features --test psv_test_selection', 'a_sealed_modules_use_never_reaches_an_unimported_suite_module'),
     ('M261', 'PSV-7 (r2): protected counters are the re-verified trials, over the plan population', 'crates/axon-loop/src/admission.rs', '        check_arm_grounding(tx, frozen, eval)?;', '        let _ = (frozen, eval);', 'axon-loop', '--test protected_class', 'a_protected_decision_counts_only_its_re_verified_trials'),
     ('M262', "PSV-7 (r2): the evaluation class is the frozen plan's", 'crates/axon-loop/src/admission.rs', '    if eval.evaluation_class != frozen.evaluation_class {', '    if false && eval.evaluation_class != frozen.evaluation_class {', 'axon-loop', '--test protected_class', 'an_evaluation_class_other_than_the_frozen_plans_is_refused'),
     ('M263', 'PSV-7 (r2): a counted trial re-verifies against its own episode', 'crates/axon-loop/src/admission.rs', '    if ep.identity.trial_id != t.trial_id || ep.identity.task_id != t.task_id {', '    if false && ep.identity.trial_id != t.trial_id {', 'axon-loop', '--test protected_class', 'a_counted_trial_cannot_borrow_another_trials_verdict'),
@@ -1191,7 +1191,9 @@ EQUIV_RECORD = {
 }
 # ── C9 round 1b (psv workstream) ──
 # ── C9 round 1b, integration: the first-match rule (M436) dominates the
-# search order (M04) and the nested-use-is-sealed flag (M260) on every route.
+# search order (M04) on every route. (M260 was proposed too and is NOT
+# retired: without it a sealed module's use pulls in a suite module the entry
+# never imports, a keyed PASS; its full-suite four-cell cell caught that.)
 EQUIV_RECORD["M04"] = {
     "property": "a candidate module never shadows a suite module's name",
     "subsumed_by": ["M436"], "killer": "joint:M04+M436",
@@ -1201,15 +1203,6 @@ EQUIV_RECORD["M04"] = {
                  "load_module_recursive's first-match rule (M436) refuses exactly that (E0901), for every "
                  "importer; with M436 off, suite-first order finds the suite's copy first. Only with both "
                  "off does the candidate's copy define the suite's module"}
-EQUIV_RECORD["M260"] = {
-    "property": "a sealed module's nested use never supplies an operator module's name",
-    "subsumed_by": ["M436"], "killer": "joint:M260+M436",
-    "all_paths": "M260 marks a sealed module's nested use as from_sealed. The attack it stops is the "
-                 "sealed copy of a name an operator dir holds being loaded; that copy is loaded only if it "
-                 "is the name's FIRST match, which M436 refuses whoever imports. When the first match is an "
-                 "operator file, loading it gives the candidate the operator's own module (already readable "
-                 "under an IO grant, accepted), not a substitution. So the refusal M260 adds never stands "
-                 "alone"}
 EQUIV_RECORD["M152"] = {
     "property": "a signature made for one authority never verifies for another",
     "subsumed_by": ["M153"], "killer": "joint:M152+M153",

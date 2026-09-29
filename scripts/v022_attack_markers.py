@@ -326,7 +326,7 @@ ATTACK_MARKERS = {
     'M259': '\\n\\s*left: Accept\\n\\s*right: Accept',
     # WEAK@a3db33bd: Same shape as M251: empty stderr reason mismatch, stdout never ok.
     # core r1b: same only-guard route as M251 (the candidate module's NESTED use).
-    'M260': r'ATTACK: a sealed module\'s copy of the operator library\'s `rubric` defined the rubric: [^\n]*"status":"ok"',
+    'M260': r"ATTACK: a sealed module's use pulled the suite's unimported reference module into the program",
     'M261': 'counts are not its trials: admitted',
     # WEAK@a3db33bd: Refused by reverify_protected ('does not re-verify from its stored documents'), reason mismatch (reviewer log M262.log).
     'M262': r'ATTACK: a protected plan admitted an evaluation relabelled development',
