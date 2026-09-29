@@ -668,7 +668,16 @@ fn an_epoch_that_moves_while_the_observer_runs_refuses_the_launch() {
 fn a_verified_observation_makes_the_guest_verdict_protected() {
     let w = World::new();
     let key = observer_key(w.env.dir.path(), "obs", &[&w.observer_roots()]);
-    let s = w.submit_observed(w.observer("", &key, "observer"), "op-obs-ok");
+    // On a protected HOST (its O1 identity set): a hostless library launch
+    // writes all-zero host and registry digests, which the loop refuses (A67).
+    let mut cfg = w.protected_cfg();
+    cfg.linux = Some(w.lx("", ""));
+    cfg.observer = Some(w.observer("", &key, "observer"));
+    let s = submit(
+        &w.request("op-obs-ok", "check:acc", "t_psv_ok").to_string(),
+        &cfg,
+    )
+    .unwrap();
     assert_eq!(
         s.receipt.verification,
         ReceiptVerification::Passed,
@@ -715,6 +724,22 @@ fn a_verified_observation_makes_the_guest_verdict_protected() {
     )
     .unwrap_err();
     assert!(e.contains("authority epoch"), "{e}");
+    // A67: the same launch with no operator host config (a library caller)
+    // names no host, and the loop does not take it as protected evidence.
+    let hostless = w.submit_observed(w.observer("", &key, "observer"), "op-obs-nohost");
+    let hreq = axon_loop_contracts::parse(
+        &w.request("op-obs-nohost", "check:acc", "t_psv_ok")
+            .to_string(),
+    )
+    .unwrap();
+    let e = axon_loop_contracts::protected_evidence::check_bundle(
+        &hreq,
+        &hostless.receipt,
+        &hostless.psv_evidence.clone().expect("a bundle").to_string(),
+        epoch,
+    )
+    .unwrap_err();
+    assert!(e.contains("host_config_sha256 is all zeros"), "{e}");
     // …and a single byte of the manifest changed breaks it.
     let mut bad = bundle.clone();
     bad["launch_manifest"] =
@@ -726,13 +751,13 @@ fn a_verified_observation_makes_the_guest_verdict_protected() {
         epoch
     )
     .is_err());
-    // The nonce was spent.
+    // Each launch spent its own nonce (the host launch and the hostless one).
     let used = std::fs::read_dir(w.env.dir.path().join("custodian-nonces"))
         .unwrap()
         .flatten()
         .filter(|e| e.path().extension().is_some_and(|x| x == "used"))
         .count();
-    assert_eq!(used, 1);
+    assert_eq!(used, 2);
 }
 
 /// Each defect refuses the LAUNCH (nothing runs), for its own reason, and is

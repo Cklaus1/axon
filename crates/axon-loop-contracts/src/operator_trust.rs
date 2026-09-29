@@ -161,9 +161,9 @@ pub fn authority_root(a: TrustAuthority) -> (PathBuf, bool) {
     (a.operator_dir(), true)
 }
 
-/// `Ok` iff the operator's root for `a` holds `key_hex`. The store (or any
-/// other mutable config) may NAME a key; only this root makes it authority.
-pub fn rooted(a: TrustAuthority, key_hex: &str) -> Result<(), String> {
+/// The keys held by `a`'s operator root, after the ownership walk (always,
+/// except under a test root), lowercase hex.
+fn root_keys_hex(a: TrustAuthority) -> Result<Vec<String>, String> {
     let (dir, owned) = authority_root(a);
     #[cfg(unix)]
     if owned {
@@ -173,16 +173,53 @@ pub fn rooted(a: TrustAuthority, key_hex: &str) -> Result<(), String> {
     if owned {
         return Err("operator ownership cannot be checked on this platform".into());
     }
+    keys_in(&dir)
+}
+
+/// ADR-002 at the ROOTS, not at the store (C9 round 1, PSV-6): a key is
+/// authority for `a` only if no OTHER operator root holds it too. Otherwise
+/// whoever holds that key for one purpose (Fabric's verifier signer, say) can
+/// mint statements of another (an observation). An absent root holds nothing;
+/// a present root that fails the ownership walk refuses, since what it holds
+/// cannot be known.
+pub fn exclusive(a: TrustAuthority, key_hex: &str) -> Result<(), String> {
     let want = key_hex.trim().to_ascii_lowercase();
-    if keys_in(&dir)?.contains(&want) {
-        Ok(())
+    for b in TrustAuthority::ALL {
+        if b == a {
+            continue;
+        }
+        let (dir, _) = authority_root(b);
+        if matches!(std::fs::symlink_metadata(&dir), Err(e) if e.kind() == std::io::ErrorKind::NotFound)
+        {
+            continue;
+        }
+        if root_keys_hex(b)?.contains(&want) {
+            return Err(format!(
+                "key {}… is in the operator's {} root AND its {} root: one key never holds two \
+                 authorities (ADR-002), so it is authority for neither",
+                want.get(..16).unwrap_or(&want),
+                a.dir_name(),
+                b.dir_name()
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// `Ok` iff the operator's root for `a` holds `key_hex`, and no other
+/// operator root does ([`exclusive`]). The store (or any other mutable
+/// config) may NAME a key; only this root makes it authority.
+pub fn rooted(a: TrustAuthority, key_hex: &str) -> Result<(), String> {
+    let want = key_hex.trim().to_ascii_lowercase();
+    if root_keys_hex(a)?.contains(&want) {
+        exclusive(a, &want)
     } else {
         Err(format!(
             "key {}… is not in the operator's {} root ({}): a store may name a key, only the \
              operator root makes it authority",
             want.get(..16).unwrap_or(&want),
             a.dir_name(),
-            dir.display()
+            authority_root(a).0.display()
         ))
     }
 }
@@ -282,16 +319,12 @@ pub fn verify_evidence_signature(
 }
 
 /// The keys `a`'s operator root trusts in THIS process, as raw bytes, after
-/// the ownership walk (always, except under a test root).
+/// the ownership walk (always, except under a test root). A root holding a
+/// key that another operator root also holds is refused whole ([`exclusive`]).
 pub fn rooted_keys(a: TrustAuthority) -> Result<Vec<Vec<u8>>, String> {
-    let (dir, owned) = authority_root(a);
-    #[cfg(unix)]
-    if owned {
-        check_owned_chain(Path::new("/"), &dir, true)?;
+    let keys = root_keys_hex(a)?;
+    for k in &keys {
+        exclusive(a, k)?;
     }
-    #[cfg(not(unix))]
-    if owned {
-        return Err("operator ownership cannot be checked on this platform".into());
-    }
-    Ok(keys_in(&dir)?.iter().filter_map(|h| hex_bytes(h)).collect())
+    Ok(keys.iter().filter_map(|h| hex_bytes(h)).collect())
 }

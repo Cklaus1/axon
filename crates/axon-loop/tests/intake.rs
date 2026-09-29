@@ -2356,3 +2356,122 @@ fn the_guest_verdict_is_joined_to_the_receipt_and_the_manifest() {
         assert!(e.to_string().contains(why), "{name}: {e}");
     }
 }
+
+/// A67 (C9 round 1, PSV-7): a protected bundle whose launch manifest names
+/// no operator host — the all-zero `host_config_sha256` or
+/// `suite.registry_sha256` Fabric's `psv::prepare` writes when it has no host
+/// config — is not protected evidence. The observation joins the manifest
+/// field for field, so no other join refuses it.
+#[test]
+fn a_protected_manifest_naming_no_operator_host_is_refused() {
+    use axon_psv::LaunchManifest as M;
+    let req = check_request();
+    type EditM = fn(&mut M);
+    let cases: [(&str, EditM, &str); 2] = [
+        (
+            "no host config",
+            |m| m.host_config_sha256 = "0".repeat(64),
+            "host_config_sha256 is all zeros",
+        ),
+        (
+            "no suite registry",
+            |m| m.suite.registry_sha256 = "0".repeat(64),
+            "suite.registry_sha256 is all zeros",
+        ),
+    ];
+    for (name, em, why) in cases {
+        let c = case(Some(500));
+        pin_protected(&c);
+        let mut rc = check_receipt("passed", 2);
+        let b = common::make_protected(&req, &mut rc, em, |_| {});
+        let ep = verified(&c.ep, &req, &rc, "passed");
+        let att = attest(&verifier_key().0, common::VERIFIER, &req, &rc);
+        let e = match run_vb(&c, &ep, &req, &rc, &att, Some(&b)) {
+            Err(e) => e,
+            Ok(_) => panic!("ATTACK: {name}: a manifest naming no operator host was ACCEPTED"),
+        };
+        assert!(e.to_string().contains(why), "{name}: {e}");
+    }
+    // Control: the same path, every digest named, is accepted.
+    let c = case(Some(500));
+    pin_protected(&c);
+    let (rc, b) = genuine(&req);
+    let ep = verified(&c.ep, &req, &rc, "passed");
+    let att = attest(&verifier_key().0, common::VERIFIER, &req, &rc);
+    run_vb(&c, &ep, &req, &rc, &att, Some(&b)).expect("the genuine bundle joins");
+}
+
+/// Plant `key` as `planted.pub` in the test operator root for `authority`,
+/// run `f`, and remove it again.
+fn with_planted<T>(authority: &str, key: &str, f: impl FnOnce() -> T) -> T {
+    let dir = common::operator_root().join(authority);
+    std::fs::create_dir_all(&dir).unwrap();
+    let p = dir.join("planted.pub");
+    std::fs::write(&p, format!("{key}\n")).unwrap();
+    let out = f();
+    std::fs::remove_file(&p).unwrap();
+    out
+}
+
+/// A66 (C9 round 1, PSV-6, class a): ADR-002 was enforced on the store's key
+/// maps, never on the operator ROOTS that authorize. The observer's key,
+/// planted in ANY other operator root (so, e.g., Fabric's verifier signer
+/// could mint observations), authenticates no observation: `check_bundle`
+/// verifies against `rooted_keys(Observer)`, which refuses a root sharing a
+/// key with another.
+#[test]
+fn an_observer_key_held_by_another_operator_root_authenticates_no_observation() {
+    let req = check_request();
+    for other in ["verifier", "qualification", "admission", "monitor"] {
+        let c = case(Some(500));
+        pin_protected(&c);
+        let (rc, b) = genuine(&req);
+        let ep = verified(&c.ep, &req, &rc, "passed");
+        let att = attest(&verifier_key().0, common::VERIFIER, &req, &rc);
+        let r = with_planted(other, &common::observer_key().1, || {
+            run_vb(&c, &ep, &req, &rc, &att, Some(&b))
+        });
+        let e = match r {
+            Err(e) => e,
+            Ok(_) => panic!(
+                "ATTACK: an observation signed by a key the operator's {other} root also holds \
+                 was ACCEPTED"
+            ),
+        };
+        assert!(
+            e.to_string()
+                .contains("one key never holds two authorities"),
+            "{other}: {e}"
+        );
+        // Control: with the planted key gone, the same verification joins.
+        run_vb(&c, &ep, &req, &rc, &att, Some(&b)).expect("the genuine bundle joins");
+    }
+}
+
+/// A66: the same separation for every key the loop looks up one at a time
+/// (`operator_trust::rooted`): the verifier's key, also held by the operator's
+/// monitor root, authenticates no verdict.
+#[test]
+fn a_verifier_key_held_by_another_operator_root_authenticates_no_verdict() {
+    let req = check_request();
+    let c = case(Some(500));
+    pin_protected(&c);
+    let (rc, b) = genuine(&req);
+    let ep = verified(&c.ep, &req, &rc, "passed");
+    let att = attest(&verifier_key().0, common::VERIFIER, &req, &rc);
+    let r = with_planted("monitor", &verifier_key().1, || {
+        run_vb(&c, &ep, &req, &rc, &att, Some(&b))
+    });
+    let e = match r {
+        Err(e) => e,
+        Ok(_) => panic!(
+            "ATTACK: a verdict signed by a key the operator's monitor root also holds was ACCEPTED"
+        ),
+    };
+    assert!(
+        e.to_string()
+            .contains("one key never holds two authorities"),
+        "{e}"
+    );
+    run_vb(&c, &ep, &req, &rc, &att, Some(&b)).expect("the genuine bundle joins");
+}

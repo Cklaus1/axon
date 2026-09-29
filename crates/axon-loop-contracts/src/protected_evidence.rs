@@ -130,6 +130,45 @@ pub struct PsvEvidence {
     pub guest_verdict: String,
 }
 
+/// A protected manifest names every digest it carries (C9 round 1, PSV-7).
+/// Fabric's `psv::prepare` writes an all-zero sha256 where it has nothing to
+/// name (a library launch with no operator host config: `host_config_sha256`
+/// and `suite.registry_sha256`), and the observation joins it field for field,
+/// so the joins alone accept "no operator host" as a value. Every `*sha256`
+/// field of the manifest, found by walking its own serialization (a field
+/// added later is covered too), must not be that placeholder.
+fn names_every_digest(m: &axon_psv::LaunchManifest) -> Result<(), String> {
+    fn walk(path: &str, v: &serde_json::Value) -> Result<(), String> {
+        match v {
+            serde_json::Value::Object(o) => {
+                for (k, x) in o {
+                    let p = if path.is_empty() {
+                        k.clone()
+                    } else {
+                        format!("{path}.{k}")
+                    };
+                    if k.ends_with("sha256")
+                        && x.as_str()
+                            .is_some_and(|d| !d.is_empty() && d.bytes().all(|b| b == b'0'))
+                    {
+                        return Err(format!(
+                            "the launch manifest's {p} is all zeros: a protected launch names no \
+                             such digest (no operator host), so it is not protected evidence"
+                        ));
+                    }
+                    walk(&p, x)?;
+                }
+                Ok(())
+            }
+            _ => Ok(()),
+        }
+    }
+    walk(
+        "",
+        &serde_json::to_value(m).map_err(|e| format!("the launch manifest: {e}"))?,
+    )
+}
+
 fn one_ref<'a>(rc: &'a ExecutionReceipt, prefix: &str) -> Option<&'a str> {
     let mut it = rc
         .evidence_refs
@@ -180,6 +219,7 @@ pub fn check_bundle(
         return Err(format!("the launch manifest is {m_sha}, not the receipt's"));
     }
     let m = axon_psv::LaunchManifest::verify(b.launch_manifest.as_bytes(), &m_sha)?;
+    names_every_digest(&m)?;
     // 2. the observation, authenticated under the OPERATOR's observer root
     let o_sha = axon_psv::sha256_hex(b.observation.as_bytes());
     if o_sha != want("preflight-observation-sha256:")? {
