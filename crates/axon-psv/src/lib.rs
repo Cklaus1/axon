@@ -539,10 +539,19 @@ pub struct GuestReport {
     pub completion: Vec<(String, String)>,
 }
 
+/// What the guest runner says about ITSELF: sha256 of its own executable
+/// (`/proc/self/exe`, i.e. `axon-psv-runner` — NOT `axon-guest-init`, which
+/// is what the manifest's `guest.init_sha256` pins) and of the interpreter it
+/// ran. INFORMATIONAL ONLY, never attribution: it is self-reported, and no
+/// derivation compares it with anything (`psv::derive`, `check_bundle`). The
+/// runner and interpreter are bound TRANSITIVELY, by the pinned
+/// `rootfs_sha256` the launcher re-checks on the copy the VMM opens. (C9 dev
+/// review: the field was named `init_sha256`, which read as the manifest's
+/// init pin while naming a different binary.)
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Runner {
-    pub init_sha256: String,
+    pub runner_sha256: String,
     pub axon_sha256: String,
 }
 

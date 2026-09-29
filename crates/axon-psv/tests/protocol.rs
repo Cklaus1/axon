@@ -219,7 +219,7 @@ fn a_guest_verdict_round_trips_and_refuses_unknown_fields() {
             completion: vec![("t_ok".into(), "tok".into())],
         }),
         runner: Runner {
-            init_sha256: "1".repeat(64),
+            runner_sha256: "1".repeat(64),
             axon_sha256: "2".repeat(64),
         },
         stdout_sha256: None,
