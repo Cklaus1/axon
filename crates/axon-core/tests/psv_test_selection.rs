@@ -637,7 +637,10 @@ fn guess(x: i64) -> i64 { x }
     for (name, draw) in [
         ("gaussian_sample", "let _s = gaussian_sample(0.0, 1.0)"),
         ("beta_sample", "let _s = beta_sample(2.0, 5.0)"),
-        ("categorical_sample", "let _s = categorical_sample([0.5, 0.5])"),
+        (
+            "categorical_sample",
+            "let _s = categorical_sample([0.5, 0.5])",
+        ),
     ] {
         let cand = format!("{draw}\nfn guess(x: i64) -> i64 {{ x }}\n");
         let out = run(&cand);
