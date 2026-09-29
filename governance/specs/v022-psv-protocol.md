@@ -753,6 +753,7 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       boolean `false`.
     - The build script's PCI lineage check (`merge-base --is-ancestor 31413ca7`) used PATH git
       too. It now asks the helper (`--descends`), which uses the same git and refuses
-      `info/grafts`.
+      `info/grafts`. History does not depend on which clone asks, so the lineage check accepts a
+      linked worktree; the provenance of a linked worktree is always dirty.
     - Rows A65 and A66, mutations M450-M459. M346 (the skip-worktree refusal in provenance) is now
       dominated by the byte comparison (M451). It is a four-cell candidate, not retired here.

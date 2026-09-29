@@ -398,29 +398,49 @@ pub fn worktree_differs(top: &Path, tree: &Entries) -> Option<String> {
         .map(|(path, _)| String::from_utf8_lossy(path).to_string())
 }
 
-/// The working tree containing `dir`: the nearest ancestor holding `.git`,
-/// which must be a real directory. A `.git` FILE (a linked worktree or a
-/// submodule) or symlink points git at a repository chosen elsewhere, and is
-/// refused: build what is certified from a plain clone.
-pub fn discover(dir: &Path) -> Result<PathBuf, String> {
+/// The nearest ancestor of `dir` holding a `.git` of any kind, and what it is.
+fn find_dotgit(dir: &Path) -> Result<(PathBuf, std::fs::Metadata), String> {
     let start = std::fs::canonicalize(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     let mut d = start.as_path();
     loop {
-        let g = d.join(".git");
-        match std::fs::symlink_metadata(&g) {
-            Ok(m) if m.is_dir() => return Ok(d.to_path_buf()),
-            Ok(_) => {
-                return Err(format!(
-                    "{} is not a directory (a gitfile or symlink names a repository elsewhere): \
-                     refused, build from a plain clone",
-                    g.display()
-                ))
-            }
-            Err(_) => {}
+        if let Ok(m) = std::fs::symlink_metadata(d.join(".git")) {
+            return Ok((d.to_path_buf(), m));
         }
         d = d
             .parent()
             .ok_or_else(|| format!("{} is not in a git working tree", start.display()))?;
+    }
+}
+
+/// The working tree containing `dir`, for a claim that it IS a clean commit
+/// (build provenance): the nearest ancestor holding `.git`, which must be a
+/// real directory. A `.git` FILE (a linked worktree or a submodule) or
+/// symlink points git at a repository chosen elsewhere, and is refused: a
+/// verifier or guest image is built from a plain clone.
+pub fn discover(dir: &Path) -> Result<PathBuf, String> {
+    let (top, m) = find_dotgit(dir)?;
+    match m {
+        m if m.is_dir() => Ok(top),
+        _ => Err(format!(
+            "{} is not a directory (a gitfile or symlink names a repository elsewhere): \
+             refused, build from a plain clone",
+            top.join(".git").display()
+        )),
+    }
+}
+
+/// [`discover`], also accepting a linked worktree's gitfile (never a
+/// symlink): for a question about history only (the guest build's lineage
+/// check), where it does not matter which clone asks.
+pub fn discover_linked(dir: &Path) -> Result<PathBuf, String> {
+    let (top, m) = find_dotgit(dir)?;
+    if m.is_dir() || m.is_file() {
+        Ok(top)
+    } else {
+        Err(format!(
+            "{} is a symlink: refused",
+            top.join(".git").display()
+        ))
     }
 }
 

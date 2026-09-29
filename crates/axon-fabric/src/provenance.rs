@@ -105,7 +105,7 @@ pub fn descends_from(dir: &Path, rev: &str) -> Result<(), String> {
     if rev.is_empty() || rev.starts_with('-') {
         return Err(format!("{rev:?} is not a revision"));
     }
-    let top = toplevel(dir)?;
+    let top = git_data::discover_linked(dir)?;
     git_data::refuse_config(&top)?;
     let g = text(&top, &["rev-parse", "--git-path", "info/grafts"])?;
     if std::fs::symlink_metadata(top.join(&g)).is_ok() {

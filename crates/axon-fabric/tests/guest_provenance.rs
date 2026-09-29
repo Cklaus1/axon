@@ -368,3 +368,31 @@ fn a_git_on_the_callers_path_does_not_answer_the_lineage_check() {
         "ATTACK: a git on the caller's PATH answered the guest build's PCI lineage check"
     );
 }
+
+/// A linked worktree (a `.git` FILE): its lineage is still answered (history
+/// does not depend on which clone asks), but it is never described as a
+/// clean build tree — a verifier or guest image is built from a plain clone.
+#[test]
+fn a_linked_worktree_passes_the_lineage_check_but_is_never_clean() {
+    let f = fixture(true);
+    let head = f.rev("HEAD");
+    let wt = f.d.path().join("wt");
+    git(&f.repo, &["worktree", "add", "-q", wt.to_str().unwrap()]);
+    let linked = Fx {
+        d: tempfile::tempdir().unwrap(),
+        repo: wt.clone(),
+    };
+    assert!(
+        linked.descends(&head, &[]),
+        "control: lineage from a worktree"
+    );
+    let snap = f.d.path().join("wt-pre.json");
+    linked.script(&["--snapshot", snap.to_str().unwrap()], &[]);
+    let p: Value = serde_json::from_slice(&std::fs::read(&snap).unwrap()).unwrap();
+    assert!(
+        p["dirty"].as_array().is_some_and(|d| d
+            .iter()
+            .any(|r| r.as_str().is_some_and(|r| r.contains("gitfile")))),
+        "ATTACK: a gitfile naming a repository elsewhere was accepted as the build's tree: {p}"
+    );
+}
