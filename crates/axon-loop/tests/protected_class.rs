@@ -1544,7 +1544,8 @@ fn drop_ref(rc: &mut Value, prefix: &str) {
 /// the genuine observed leg counts.
 #[test]
 fn an_unobserved_execution_leg_counts_nothing_in_a_protected_evaluation() {
-    let cases: [(&str, fn(&mut Value)); 5] = [
+    type Edit = fn(&mut Value);
+    let cases: [(&str, Edit); 5] = [
         ("genuine", |_| {}),
         ("no evidence class", |rc| drop_ref(rc, "evidence-class:")),
         ("guest-unobserved class", |rc| {

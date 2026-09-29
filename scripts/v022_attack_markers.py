@@ -143,7 +143,7 @@ ATTACK_MARKERS = {
     'M106': 'stated without its execution: Some\\(Known',
     'M107': 'independently verified[^\\n]*\\n\\s*left: \\(VerifiedPass',
     # C9 round 1b (LOOP): index panic made a structured refusal; only-guard route = the post-hoc trial requested but undelivered.
-    'M108': r'ATTACK: a population chosen after outcomes was evaluated \(issued c0 dropped\): Ok\(',
+    'M108': r'ATTACK: a population chosen after outcomes was evaluated \(issued c0 dropped\): \(EvaluationRecord',
     'M109': 'preflighted before its issue was evaluated: Ok\\(',
     'M110': 'issued a population over a recorded outcome: Ok\\(',
     'M111': 'issued the population: Ok\\(',
