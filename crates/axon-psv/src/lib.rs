@@ -306,12 +306,21 @@ fn mode_is_normalised(dir: bool, exec: bool, mode: u32) -> bool {
 ///   file or directory below the root — the digest records only the exec
 ///   bit, yet the unprivileged test child sees the rest.
 ///
-/// The root itself is the input's mount point (its mode is the image's, not
-/// the tree's), and an empty `lost+found` at the root is the one entry mkfs
+/// * ANY extended attribute on ANY entry, the input root included (PSV-2,
+///   C9 dev review). A POSIX ACL (`system.posix_acl_access`) keeps `st_mode`
+///   a normalised 0644 while a named entry denies the test uid the file, so
+///   it is invisible to the mode check as well as to the digest; the runner
+///   (root) digests the bytes it can read while the child cannot. This is
+///   refused at the source — the child's effective view — not by naming ACLs:
+///   every attribute is refused, whatever its namespace.
+///
+/// The root's MODE is the input's mount point (the image's, not the
+/// tree's), and an empty `lost+found` at the root is the one entry mkfs
 /// adds. `Err` describes the first offender, in path order.
 #[cfg(unix)]
 fn undigested_shape(root: &Path) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
+    no_xattr(root, ".")?;
     // The number of digested entries at or below `dir`.
     fn walk(dir: &Path, prefix: &str) -> Result<usize, String> {
         let io = |e: std::io::Error| format!("an unreadable directory ({}): {e}", dir.display());
@@ -329,6 +338,7 @@ fn undigested_shape(root: &Path) -> Result<(), String> {
                 format!("{prefix}/{name}")
             };
             let meta = std::fs::symlink_metadata(d.path()).map_err(io)?;
+            no_xattr(&d.path(), &path)?;
             let mode = meta.permissions().mode() & 0o7777;
             if meta.is_dir() {
                 let below = walk(&d.path(), &path)?;
@@ -361,6 +371,59 @@ fn undigested_shape(root: &Path) -> Result<(), String> {
         Ok(digested)
     }
     walk(root, "").map(|_| ())
+}
+
+/// `Err` names `shown` and its first extended attribute, if it carries any.
+/// The link itself is inspected (`llistxattr`), never a target.
+#[cfg(target_os = "linux")]
+fn no_xattr(p: &Path, shown: &str) -> Result<(), String> {
+    use std::os::unix::ffi::OsStrExt;
+    let unreadable =
+        |e: std::io::Error| format!("{shown} whose extended attributes cannot be listed ({e})");
+    let c = std::ffi::CString::new(p.as_os_str().as_bytes())
+        .map_err(|_| format!("{shown} whose path holds a NUL"))?;
+    let mut buf: Vec<u8> = Vec::new();
+    loop {
+        // SAFETY: `c` is NUL-terminated; `buf` is valid for `buf.len()` bytes.
+        let n = unsafe {
+            libc::llistxattr(c.as_ptr(), buf.as_mut_ptr() as *mut libc::c_char, buf.len())
+        };
+        if n < 0 {
+            let e = std::io::Error::last_os_error();
+            match e.raw_os_error() {
+                // Grew between the size query and the read: ask again.
+                Some(libc::ERANGE) => {
+                    buf.clear();
+                    continue;
+                }
+                // The filesystem holds no attributes at all.
+                Some(libc::ENOTSUP) => return Ok(()),
+                _ => return Err(unreadable(e)),
+            }
+        }
+        let n = n as usize;
+        if buf.is_empty() && n > 0 {
+            buf = vec![0; n];
+            continue;
+        }
+        let names = &buf[..n.min(buf.len())];
+        return match names.split(|b| *b == 0).find(|s| !s.is_empty()) {
+            None => Ok(()),
+            Some(first) => Err(format!(
+                "{shown} carrying extended attribute {}, which the digest cannot see",
+                String::from_utf8_lossy(first)
+            )),
+        };
+    }
+}
+
+/// Fail closed: where extended attributes cannot be listed, an input is
+/// never accepted (the guest is Linux; nothing else runs the check).
+#[cfg(all(unix, not(target_os = "linux")))]
+fn no_xattr(_p: &Path, shown: &str) -> Result<(), String> {
+    Err(format!(
+        "{shown}, whose extended attributes this platform cannot list"
+    ))
 }
 
 #[cfg(not(unix))]
@@ -476,10 +539,19 @@ pub struct GuestReport {
     pub completion: Vec<(String, String)>,
 }
 
+/// What the guest runner says about ITSELF: sha256 of its own executable
+/// (`/proc/self/exe`, i.e. `axon-psv-runner` — NOT `axon-guest-init`, which
+/// is what the manifest's `guest.init_sha256` pins) and of the interpreter it
+/// ran. INFORMATIONAL ONLY, never attribution: it is self-reported, and no
+/// derivation compares it with anything (`psv::derive`, `check_bundle`). The
+/// runner and interpreter are bound TRANSITIVELY, by the pinned
+/// `rootfs_sha256` the launcher re-checks on the copy the VMM opens. (C9 dev
+/// review: the field was named `init_sha256`, which read as the manifest's
+/// init pin while naming a different binary.)
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Runner {
-    pub init_sha256: String,
+    pub runner_sha256: String,
     pub axon_sha256: String,
 }
 

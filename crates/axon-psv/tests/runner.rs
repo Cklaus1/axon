@@ -46,7 +46,8 @@ const CHEAT: &str = "fn double2(x: i64) -> i64 { expected() }\n";
 const SUITE_HELPER: &str = "fn want() -> i64 { 42 }\n";
 const SEAL_SUITE: &str = "mod g\nuse g.{double2}\n\nfn expected() -> i64 { 42 }\n\n@[test]\nfn t_seal() { assert_eq(double2(21), expected()) }\n";
 
-/// `{secret}` is replaced with the secret file's path.
+/// `{secret}` is replaced with the secret file's path, `{suite}` with the
+/// suite root's.
 const SUITE: &str = r#"mod f
 mod helper
 use f.{double}
@@ -71,6 +72,14 @@ fn t_pair_breaks() { assert_eq(double(1), 5) }
 fn t_helper() { assert_eq(helper_want(), 42) }
 
 fn helper_want() -> i64 { want() }
+
+@[test]
+fn t_fixture() {
+    match read_file("{suite}/expected.txt") {
+        Ok(_) => assert_eq(double(21), 42)
+        Err(_) => assert(false)
+    }
+}
 
 @[test]
 fn t_custody() {
@@ -130,9 +139,12 @@ fn fixture_with(entry: &str, test: &str, drop: bool, candidate: &str) -> Fx {
     let secret_path = job.join("completion-secret");
     std::fs::write(
         suite.join("accept.ax"),
-        SUITE.replace("{secret}", secret_path.to_str().unwrap()),
+        SUITE
+            .replace("{secret}", secret_path.to_str().unwrap())
+            .replace("{suite}", suite.to_str().unwrap()),
     )
     .unwrap();
+    std::fs::write(suite.join("expected.txt"), "42\n").unwrap();
     for f in [
         cand.join("f.ax"),
         cand.join("helper.ax"),
@@ -140,6 +152,7 @@ fn fixture_with(entry: &str, test: &str, drop: bool, candidate: &str) -> Fx {
         suite.join("helper.ax"),
         suite.join("seal.ax"),
         suite.join("accept.ax"),
+        suite.join("expected.txt"),
     ] {
         std::fs::set_permissions(f, std::fs::Permissions::from_mode(0o644)).unwrap();
     }
@@ -532,5 +545,80 @@ fn a_genuine_keyed_pass_from_a_run_that_exits_non_zero_is_not_a_pass() {
         GuestStatus::Unknown,
         "a genuine keyed pass from a run that exited non-zero was reported {:?}",
         v.status
+    );
+}
+
+/// PSV-2 (C9 dev review), the reviewer's reproduction through the REAL
+/// runner: a named POSIX ACL entry `user:65534:---` on a suite fixture leaves
+/// its mode 0644 and the tree digest unchanged, but denies the dropped test
+/// child the file, so a CORRECT candidate produced a genuine KEYED Failed.
+/// The runner must refuse the input before anything executes. Control: the
+/// same job without the ACL is a keyed pass.
+#[test]
+fn an_input_carrying_an_acl_is_refused_not_run() {
+    let root = unsafe { libc::geteuid() } == 0;
+    let fx = fixture("t_fixture", root);
+    let v = run(&fx.cfg);
+    assert_eq!(v.status, GuestStatus::Passed, "control: {v:?}");
+
+    let fx = fixture("t_fixture", root);
+    let f = fx.cfg.suite.join("expected.txt");
+    let q = Quota::default();
+    let before = axon_workspace_recipe::tree_version_ref(&fx.cfg.suite, &q).unwrap();
+    let mut acl = 2u32.to_le_bytes().to_vec();
+    for (tag, perm, id) in [
+        (0x01u16, 6u16, u32::MAX),
+        (0x02, 0, 65534),
+        (0x04, 4, u32::MAX),
+        (0x10, 4, u32::MAX),
+        (0x20, 4, u32::MAX),
+    ] {
+        acl.extend(tag.to_le_bytes());
+        acl.extend(perm.to_le_bytes());
+        acl.extend(id.to_le_bytes());
+    }
+    let c = |s: &str| std::ffi::CString::new(s).unwrap();
+    let (cp, cn) = (c(f.to_str().unwrap()), c("system.posix_acl_access"));
+    let r = unsafe {
+        libc::lsetxattr(
+            cp.as_ptr(),
+            cn.as_ptr(),
+            acl.as_ptr() as *const libc::c_void,
+            acl.len(),
+            0,
+        )
+    };
+    assert_eq!(
+        r,
+        0,
+        "cannot set a POSIX ACL under TMPDIR ({}): this is a FAILURE, not a skip",
+        std::io::Error::last_os_error()
+    );
+    assert_eq!(
+        std::fs::metadata(&f).unwrap().permissions().mode() & 0o7777,
+        0o644
+    );
+    assert_eq!(
+        axon_workspace_recipe::tree_version_ref(&fx.cfg.suite, &q).unwrap(),
+        before,
+        "the digest sees the ACL: not the case it is blind to"
+    );
+    let v = run(&fx.cfg);
+    assert!(
+        v.status == GuestStatus::Refused && !ran(&fx),
+        "ATTACK: an input carrying a POSIX ACL was not refused and the job ran \
+         (status {:?}{}): the child's view of the input is not what was checked: {v:?}",
+        v.status,
+        if root {
+            ""
+        } else {
+            "; not root, so the uid drop is not exercised"
+        }
+    );
+    assert!(!v.inputs.matches);
+    let why = v.refusal.unwrap_or_default();
+    assert!(
+        why.contains("expected.txt carrying extended attribute system.posix_acl_access"),
+        "refused for another reason: {why}"
     );
 }

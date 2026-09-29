@@ -1194,7 +1194,7 @@ pub fn make_protected_v(
         exit_code: Some(0),
         report: None,
         runner: Runner {
-            init_sha256: h("3"),
+            runner_sha256: h("3"),
             axon_sha256: m.guest.axon_sha256.clone(),
         },
         stdout_sha256: None,

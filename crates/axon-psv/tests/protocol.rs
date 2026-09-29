@@ -219,7 +219,7 @@ fn a_guest_verdict_round_trips_and_refuses_unknown_fields() {
             completion: vec![("t_ok".into(), "tok".into())],
         }),
         runner: Runner {
-            init_sha256: "1".repeat(64),
+            runner_sha256: "1".repeat(64),
             axon_sha256: "2".repeat(64),
         },
         stdout_sha256: None,
@@ -415,4 +415,183 @@ fn inputs_holding_what_the_digest_cannot_see_are_refused() {
     assert!(check_inputs(&m, &cand, &suite, &q).is_ok());
     chmod(&cand, 0o755);
     chmod(&cand.join("lib"), 0o755);
+}
+
+/// Set extended attribute `name` on `p` (not following a link). A filesystem
+/// that cannot hold it makes this test FAIL, never pass: a skipped plant
+/// would leave the refusal it guards untested.
+#[cfg(target_os = "linux")]
+fn plant_xattr(p: &Path, name: &str, value: &[u8]) {
+    let c = |s: &str| std::ffi::CString::new(s).unwrap();
+    let (cp, cn) = (c(p.to_str().unwrap()), c(name));
+    let r = unsafe {
+        libc::lsetxattr(
+            cp.as_ptr(),
+            cn.as_ptr(),
+            value.as_ptr() as *const libc::c_void,
+            value.len(),
+            0,
+        )
+    };
+    assert_eq!(
+        r,
+        0,
+        "cannot set {name} on {} ({}): the filesystem under TMPDIR must hold \
+         user xattrs and POSIX ACLs; this is a FAILURE, not a skip",
+        p.display(),
+        std::io::Error::last_os_error()
+    );
+}
+
+#[cfg(target_os = "linux")]
+fn remove_xattr(p: &Path, name: &str) {
+    let c = |s: &str| std::ffi::CString::new(s).unwrap();
+    let (cp, cn) = (c(p.to_str().unwrap()), c(name));
+    assert_eq!(unsafe { libc::lremovexattr(cp.as_ptr(), cn.as_ptr()) }, 0);
+}
+
+/// A POSIX access ACL (`system.posix_acl_access`, version 2) that leaves the
+/// mode bits a normalised 0644/0755 while denying uid 65534 — the test
+/// child's uid — everything: a named `user:65534:---` entry.
+fn acl_denying_nobody(owner_perm: u16, rest_perm: u16) -> Vec<u8> {
+    let mut a = 2u32.to_le_bytes().to_vec();
+    for (tag, perm, id) in [
+        (0x01u16, owner_perm, u32::MAX), // USER_OBJ
+        (0x02, 0, 65534),                // USER nobody: ---
+        (0x04, rest_perm, u32::MAX),     // GROUP_OBJ
+        (0x10, rest_perm, u32::MAX),     // MASK
+        (0x20, rest_perm, u32::MAX),     // OTHER
+    ] {
+        a.extend(tag.to_le_bytes());
+        a.extend(perm.to_le_bytes());
+        a.extend(id.to_le_bytes());
+    }
+    a
+}
+
+/// PSV-2 (C9 dev review): an extended attribute is what the tree digest
+/// cannot see AND what the mode check cannot see. A POSIX ACL entry
+/// `user:65534:---` on a 0644 file leaves `st_mode` 0644, so the input was
+/// accepted with the digest unchanged, while the unprivileged test child was
+/// denied the file (a correct candidate driven to a genuine KEYED Failed).
+/// The guest now refuses ANY entry carrying ANY extended attribute —
+/// including the input root — and names it. Each case first shows the
+/// digest (and the mode) are unchanged by the plant.
+#[cfg(target_os = "linux")]
+#[test]
+fn inputs_carrying_an_extended_attribute_are_refused() {
+    use std::os::unix::fs::PermissionsExt;
+    let chmod =
+        |p: &Path, m: u32| std::fs::set_permissions(p, std::fs::Permissions::from_mode(m)).unwrap();
+    let d = tempfile::tempdir().unwrap();
+    let (cand, suite) = (d.path().join("cand"), d.path().join("suite"));
+    tree(
+        &cand,
+        &[("f.ax", "fn main() {}\n"), ("lib/h.ax", "fn h() {}\n")],
+    );
+    tree(
+        &suite,
+        &[
+            ("accept.ax", "@[test] fn t_ok() {}\n"),
+            ("expected.txt", "42\n"),
+        ],
+    );
+    for (p, m) in [
+        (cand.join("f.ax"), 0o644),
+        (cand.join("lib"), 0o755),
+        (cand.join("lib/h.ax"), 0o644),
+        (suite.join("accept.ax"), 0o644),
+        (suite.join("expected.txt"), 0o644),
+    ] {
+        chmod(&p, m);
+    }
+    let q = Quota::default();
+    let mut m = manifest();
+    m.candidate.tree_digest = axon_workspace_recipe::tree_version_ref(&cand, &q).unwrap();
+    m.suite.tree_digest = axon_workspace_recipe::tree_version_ref(&suite, &q).unwrap();
+    assert!(check_inputs(&m, &cand, &suite, &q).is_ok(), "control");
+    let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o7777;
+
+    let acl_file = acl_denying_nobody(6, 4);
+    let acl_dir = acl_denying_nobody(7, 5);
+    for (root, rel, name, value, what) in [
+        // The reviewer's reproduction: an ACL on a suite fixture.
+        (
+            &suite,
+            "expected.txt",
+            "system.posix_acl_access",
+            &acl_file,
+            "suite",
+        ),
+        (
+            &cand,
+            "f.ax",
+            "system.posix_acl_access",
+            &acl_file,
+            "candidate",
+        ),
+        (
+            &cand,
+            "lib",
+            "system.posix_acl_access",
+            &acl_dir,
+            "candidate",
+        ),
+        (
+            &cand,
+            "lib",
+            "system.posix_acl_default",
+            &acl_dir,
+            "candidate",
+        ),
+        (
+            &cand,
+            "lib/h.ax",
+            "user.planted",
+            &b"x".to_vec(),
+            "candidate",
+        ),
+        // The input ROOT itself.
+        (&cand, "", "system.posix_acl_access", &acl_dir, "candidate"),
+        (&suite, "", "user.planted", &b"x".to_vec(), "suite"),
+    ] {
+        let p = if rel.is_empty() {
+            root.to_path_buf()
+        } else {
+            root.join(rel)
+        };
+        let before = mode(&p);
+        plant_xattr(&p, name, value);
+        assert_eq!(mode(&p), before, "the plant changed the mode bits");
+        let want_digest = if what == "suite" {
+            &m.suite.tree_digest
+        } else {
+            &m.candidate.tree_digest
+        };
+        assert_eq!(
+            &axon_workspace_recipe::tree_version_ref(root, &q).unwrap(),
+            want_digest,
+            "the digest sees {name}: it is not a case it is blind to"
+        );
+        let shown = if rel.is_empty() { "." } else { rel };
+        let want = format!(
+            "{what} input holds {shown} carrying extended attribute {name}, \
+             which the digest cannot see: refused"
+        );
+        match check_inputs(&m, &cand, &suite, &q) {
+            Ok(v) => panic!(
+                "ATTACK: an input carrying {name} on {shown:?} was ACCEPTED with an unchanged \
+                 digest, so the child's view differs from what was checked: {v:?}"
+            ),
+            Err((found, e)) => {
+                assert!(!found.matches);
+                assert_eq!(e, want);
+            }
+        }
+        remove_xattr(&p, name);
+        assert!(
+            check_inputs(&m, &cand, &suite, &q).is_ok(),
+            "control after removing {name}"
+        );
+    }
 }

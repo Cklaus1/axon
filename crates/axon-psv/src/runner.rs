@@ -72,7 +72,7 @@ fn refused(
 fn runner_identity(cfg: &RunnerConfig) -> Runner {
     let sha = |p: &Path| std::fs::read(p).map(|b| sha256_hex(&b)).unwrap_or_default();
     Runner {
-        init_sha256: sha(&cfg.runner_exe),
+        runner_sha256: sha(&cfg.runner_exe),
         axon_sha256: sha(&cfg.axon),
     }
 }

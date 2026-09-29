@@ -153,7 +153,7 @@ It carries NO secret. The completion secret travels separately (§4).
 ## 4. Input transport and the completion proof (M1)
 
 **Structurally distinct, read-only inputs.** Each is a separate virtio block device, attached
-read-only by the launcher. The guest mounts it `ro,nodev,nosuid,noexec`.
+read-only by the launcher. The guest mounts it `ro,nodev,nosuid,noexec,noacl` (amendment 37).
 
 | Device | Content | Mounted at |
 |---|---|---|
@@ -208,7 +208,7 @@ Written by the runner to `/out/verdict.json`. Its sha256 is also emitted on the 
   "refusal": null,
   "exit_code": 0,
   "report": {"passed": ["…"], "failed": [], "completion": [["…", "<token>"]]},
-  "runner": {"init_sha256": "…", "axon_sha256": "…"},
+  "runner": {"runner_sha256": "…", "axon_sha256": "…"},
   "stdout_sha256": "…"
 }
 ```
@@ -592,6 +592,24 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
     - The runner refuses to read the completion secret if it cannot make itself non-dumpable (A52).
     - The guest input check refuses trees holding what the digest cannot see. The digest is a
       cross-peer contract with MiCode, so it is unchanged (A53).
+37. **An input's extended attributes are refused at every layer (PSV-2, C9 round-1).** A POSIX ACL
+    entry `user:65534:---` on a 0644 file leaves the mode normalised and the tree digest unchanged,
+    yet denies the test uid the file: a correct candidate was driven to a genuine keyed Failed.
+    The rule is now about the child's effective view, not a list of shapes:
+    - the guest input check refuses ANY entry, the input root included, that carries ANY extended
+      attribute, and names it;
+    - the launcher stages inputs with a plain `cp -R` (no ACL, no xattr; the exec bit kept) and
+      builds each image with `mkfs.ext4 -E no_copy_xattrs`;
+    - the guest mounts all three input drives `noacl` (§4 now reads `ro,nodev,nosuid,noexec,noacl`).
+
+    The guest verdict's self-reported `runner.init_sha256` is renamed `runner.runner_sha256`: it is
+    the digest of `axon-psv-runner` (`/proc/self/exe`), not the `axon-guest-init` that the
+    manifest's `guest.init_sha256` pins. It is informational and never attribution: nothing compares
+    it, and the runner is bound through the pinned rootfs. The verdict schema stays
+    `axon-guest-verdict/1` (no verdict under the old field was ever certified; a host refuses the
+    old field under `deny_unknown_fields`, which fails closed). Changing `guest-init.sh` and the
+    runner makes the profile manifest's `guest_init`, `rootfs.sqfs` and `axon-psv-runner` pins stale
+    until the image is rebuilt and re-pinned at freeze. Negative-matrix A53.
 38. **Attribution is joined to the signer; one key, one authority root; a protected manifest
     names its host (C9 round 1, loop workstream).**
     - The recorded attribution of a counted protected trial must BE the signer that re-verified it:
