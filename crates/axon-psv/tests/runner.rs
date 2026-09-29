@@ -638,3 +638,67 @@ fn an_input_carrying_an_acl_is_refused_not_run() {
         "refused for another reason: {why}"
     );
 }
+
+/// C9 round 1b: the guest kernel's ext4 has no `noacl` mount option (measured:
+/// the boot test's guest rebooted on "ext4: Unknown parameter 'noacl'"), so the
+/// runner itself refuses job files that carry any extended attribute. An ACL on
+/// the job drive could GRANT the unprivileged test uid the 0400 secret.
+#[test]
+fn a_job_file_carrying_an_acl_is_refused_not_run() {
+    let root = unsafe { libc::geteuid() } == 0;
+    let c = |s: &str| std::ffi::CString::new(s).unwrap();
+    // user:65534:r-- on a 0400 file: a GRANT, not a restriction.
+    let mut grant = 2u32.to_le_bytes().to_vec();
+    for (tag, perm, id) in [
+        (0x01u16, 4u16, u32::MAX),
+        (0x02, 4, 65534),
+        (0x04, 0, u32::MAX),
+        (0x10, 4, u32::MAX),
+        (0x20, 0, u32::MAX),
+    ] {
+        grant.extend(tag.to_le_bytes());
+        grant.extend(perm.to_le_bytes());
+        grant.extend(id.to_le_bytes());
+    }
+    for (which, name, value) in [
+        ("secret", "system.posix_acl_access", grant.clone()),
+        ("manifest", "user.axon", b"x".to_vec()),
+        ("job dir", "user.axon", b"x".to_vec()),
+    ] {
+        let fx = fixture("t_fixture", root);
+        let target = match which {
+            "secret" => fx.cfg.secret.clone(),
+            "manifest" => fx.cfg.manifest.clone(),
+            _ => fx.cfg.secret.parent().unwrap().to_path_buf(),
+        };
+        let (cp, cn) = (c(target.to_str().unwrap()), c(name));
+        let r = unsafe {
+            libc::lsetxattr(
+                cp.as_ptr(),
+                cn.as_ptr(),
+                value.as_ptr() as *const libc::c_void,
+                value.len(),
+                0,
+            )
+        };
+        assert_eq!(
+            r,
+            0,
+            "cannot set {name} under TMPDIR ({}): this is a FAILURE, not a skip",
+            std::io::Error::last_os_error()
+        );
+        let v = run(&fx.cfg);
+        assert!(
+            v.status == GuestStatus::Refused && !ran(&fx),
+            "ATTACK: a job file ({which}) carrying {name} was not refused and the job ran: {v:?}"
+        );
+        let why = v.refusal.unwrap_or_default();
+        assert!(
+            why.contains("carrying extended attribute"),
+            "{which}: {why}"
+        );
+    }
+    let fx = fixture("t_fixture", root);
+    let v = run(&fx.cfg);
+    assert_eq!(v.status, GuestStatus::Passed, "control: {v:?}");
+}

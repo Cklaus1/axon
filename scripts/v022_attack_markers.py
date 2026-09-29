@@ -443,12 +443,6 @@ ATTACK_MARKERS = {
     'M354': "ATTACK: psv_image's copy carried extended attributes of the input into the\\s+staging tree",
     # C9 r1b psv: LAYER row (decision in its MUTATIONS comment): ACTIVE, killed by its own layer's output
     'M355': 'ATTACK: an extended attribute on the staging tree reached the guest input image',
-    # C9 r1b psv: LAYER row (decision in its MUTATIONS comment): ACTIVE, killed by its own layer's output
-    'M356': 'ATTACK: a PSV input is mounted with POSIX ACLs honoured.*/dev/vdc\\b',
-    # C9 r1b psv: LAYER row (decision in its MUTATIONS comment): ACTIVE, killed by its own layer's output
-    'M357': 'ATTACK: a PSV input is mounted with POSIX ACLs honoured.*/dev/vdd\\b',
-    # C9 r1b psv: LAYER row (decision in its MUTATIONS comment): ACTIVE, killed by its own layer's output
-    'M358': 'ATTACK: a PSV input is mounted with POSIX ACLs honoured.*/dev/vde\\b',
     'M369': 'ATTACK: a narrowing list that cannot be read was read as absent',
     # ── C9 round 1b, workstream PSV (M410-M418) ──
     'M410': r'ATTACK: prepare pinned guest kernel \w+ from a profile manifest the qualification never hashed',
@@ -486,4 +480,5 @@ ATTACK_MARKERS = {
     # ── C9 round 1b, integration ──
     'M436': r"ATTACK: the operator's own `use rubric` loaded the candidate's copy, which defined the rubric: [^\n]*\"status\":\"ok\"",
     'M402': r'ATTACK: a replayed execution claiming an observed protected launch was attested',
+    'M403': r'ATTACK: a job file \((secret|manifest|job dir)\) carrying \S+ was not refused and the job ran',
 }

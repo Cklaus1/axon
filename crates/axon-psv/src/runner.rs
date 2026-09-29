@@ -140,6 +140,20 @@ pub fn run(cfg: &RunnerConfig) -> GuestVerdict {
         suite_tree_digest: String::new(),
         matches: false,
     };
+    // 0. The job files carry no extended attribute. An ACL there could GRANT
+    // the unprivileged test uid the 0400 secret. The launcher images the job
+    // drive without xattrs; this is the in-guest check of the same property
+    // (the guest kernel's ext4 has no `noacl` mount option: measured, C9 r1b).
+    let job_dir = cfg.secret.parent().unwrap_or(std::path::Path::new("."));
+    for (p, what) in [
+        (job_dir, "job directory"),
+        (cfg.secret.as_path(), "completion secret"),
+        (cfg.manifest.as_path(), "launch manifest"),
+    ] {
+        if let Err(e) = crate::no_xattr(p, what) {
+            return refused(cfg, "", none, "", format!("{e}: refused"));
+        }
+    }
     // 1. The secret: exactly 32 bytes, kept in this process. The length
     // guard is the ONLY check: the copy below is total (it cannot panic), so
     // a verifier never crashes on a hostile secret, and nothing after this

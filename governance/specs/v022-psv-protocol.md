@@ -152,7 +152,8 @@ It carries NO secret. The completion secret travels separately (§4).
 ## 4. Input transport and the completion proof (M1)
 
 **Structurally distinct, read-only inputs.** Each is a separate virtio block device, attached
-read-only by the launcher. The guest mounts it `ro,nodev,nosuid,noexec,noacl` (amendment 37).
+read-only by the launcher. The guest mounts it `ro,nodev,nosuid,noexec` (amendment 37: this guest
+kernel's ext4 has no `noacl`).
 
 | Device | Content | Mounted at |
 |---|---|---|
@@ -655,7 +656,12 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       attribute, and names it;
     - the launcher stages inputs with a plain `cp -R` (no ACL, no xattr; the exec bit kept) and
       builds each image with `mkfs.ext4 -E no_copy_xattrs`;
-    - the guest mounts all three input drives `noacl` (§4 now reads `ro,nodev,nosuid,noexec,noacl`).
+    - ~~the guest mounts all three input drives `noacl`~~ **Withdrawn in C9 round 1b.** The guest
+      kernel's ext4 has no `noacl` option: with it, the input mount failed and the guest rebooted
+      ("ext4: Unknown parameter 'noacl'"), measured by `psv_guest_boot_test.sh` after the image was
+      rebuilt. The textual test of guest-init.sh had passed. In its place the runner refuses any job
+      file (the job directory, the secret, the manifest) that carries an extended attribute, since an
+      ACL on the job drive could GRANT the test uid the 0400 secret. The launcher layers are unchanged.
 
     The guest verdict's self-reported `runner.init_sha256` is renamed `runner.runner_sha256`: it is
     the digest of `axon-psv-runner` (`/proc/self/exe`), not the `axon-guest-init` that the

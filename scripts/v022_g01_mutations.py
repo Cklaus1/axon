@@ -929,30 +929,18 @@ MUTATIONS = [
     ('M351', 'PSV-2 (c9r1): an input entry carrying an extended attribute is refused', 'crates/axon-psv/src/lib.rs', '            no_xattr(&d.path(), &path)?;\n', '            let _ = no_xattr(&d.path(), &path);\n', 'axon-psv', '--test protocol', 'inputs_carrying_an_extended_attribute_are_refused'),
     ('M352', 'PSV-2 (c9r1): EVERY xattr namespace is refused, not a list (a user.*-only check misses an ACL)', 'crates/axon-psv/src/lib.rs', '.find(|s| !s.is_empty())', '.find(|s| s.starts_with(b"user."))', 'axon-psv', '--test protocol', 'inputs_carrying_an_extended_attribute_are_refused'),
     ('M353', 'PSV-2 (c9r1): the real runner refuses an ACL-carrying input instead of running it to a keyed Failed', 'crates/axon-psv/src/lib.rs', '            no_xattr(&d.path(), &path)?;\n', '            let _ = no_xattr(&d.path(), &path);\n', 'axon-psv', '--test runner', 'an_input_carrying_an_acl_is_refused_not_run'),
-    # C9 round 1b (psv workstream), DECISION for the LAYERED rows M354-M358:
-    # each row's property is its OWN LAYER'S OUTPUT, so they stay ACTIVE and are
-    # KILLED by the test of that output (image carries no xattr; the mount is
-    # noacl). Not four-cell, because:
-    # (1) amendment 37 states each layer as its own requirement ("refused at
-    #     every layer"): the image psv_image hands the VMM, and guest-init.sh's
-    #     mount options (spec §4 text, pinned into the rootfs by digest), are
-    #     the specified outputs, not an internal detail of one end-to-end check;
-    # (2) the layers are NOT dominated on every path: the in-guest input check
-    #     (M350-M353) walks only /in/candidate and /in/suite. The JOB drive
-    #     (vde: launch manifest + 0400 completion secret) is built by the same
-    #     psv_image and has no in-guest xattr check, so for it cp -R (M354),
-    #     no_copy_xattrs (M355) and noacl (M358) are the only guards (e.g. an
-    #     ACL granting uid 65534 read on the secret). For vdc/vdd noacl does not
-    #     "also refuse": it makes an ACL ineffective and unlisted, a different
-    #     property from the runner's refusal;
-    # (3) the end-to-end property is observable only in a booted microVM, which
-    #     no test here reaches, so no joint cell could be EXECUTED; a row
-    #     without all four executed cells stays ACTIVE (operator rule).
+    # C9 round 1b, DECISION for the LAYERED rows M354/M355 (+ M403): each
+    # row's property is its OWN LAYER'S OUTPUT, so they stay ACTIVE and are
+    # KILLED by the test of that output. The launcher images every input and
+    # the job drive without xattrs (M354, M355); in the guest, the runner
+    # refuses candidate/suite entries (M350-M353) and job files (M403) that
+    # carry one. The former guest `noacl` mount rows M356-M358 are GONE: the
+    # guest kernel's ext4 has no `noacl` option (the boot test's guest rebooted
+    # on "ext4: Unknown parameter 'noacl'"); their textual test passed while the
+    # guest could not boot. The end-to-end property is observable only in a
+    # booted microVM, so no joint cell is executed and nothing is retired.
     ('M354', "PSV-2 (c9r1): the launcher's input copy preserves no ACL/xattr", 'scripts/fc_linux_profile.sh', '    cp -R "$2/." "$st/" || return 1\n', '    cp -a "$2/." "$st/" || return 1\n', 'axon-fabric', '--test launcher_isolation', 'the_launchers_input_image_carries_no_extended_attribute'),
     ('M355', "PSV-2 (c9r1): the launcher's mkfs copies no xattr into an input image", 'scripts/fc_linux_profile.sh', '-E root_owner=0:0,no_copy_xattrs -d "$st"', '-E root_owner=0:0 -d "$st"', 'axon-fabric', '--test launcher_isolation', 'the_launchers_input_image_carries_no_extended_attribute'),
-    ('M356', 'PSV-2 (c9r1): the guest mounts the candidate input noacl', 'profiles/linux-microvm/guest-init.sh', 'ro,nodev,nosuid,noexec,noacl /dev/vdc', 'ro,nodev,nosuid,noexec /dev/vdc', 'axon-guest-init', '--test b263_profile_wiring', 'guest_init_sh_mounts_every_psv_input_noacl'),
-    ('M357', 'PSV-2 (c9r1): the guest mounts the suite input noacl', 'profiles/linux-microvm/guest-init.sh', 'ro,nodev,nosuid,noexec,noacl /dev/vdd', 'ro,nodev,nosuid,noexec /dev/vdd', 'axon-guest-init', '--test b263_profile_wiring', 'guest_init_sh_mounts_every_psv_input_noacl'),
-    ('M358', 'PSV-2 (c9r1): the guest mounts the job input noacl', 'profiles/linux-microvm/guest-init.sh', 'ro,nodev,nosuid,noexec,noacl /dev/vde', 'ro,nodev,nosuid,noexec /dev/vde', 'axon-guest-init', '--test b263_profile_wiring', 'guest_init_sh_mounts_every_psv_input_noacl'),
     # ── C9 round 1, integration: a stat error on the narrowing list is not "absent".
     ('M369', 'FIELD-ORIGIN (A61): a narrowing list that is present but unreadable is not read as absent', 'crates/axon-fabric/src/readiness.rs', '    let narrowed = match std::fs::symlink_metadata(&exp) {', '    let narrowed = match std::fs::metadata(&exp) {', 'axon-fabric', '--test readiness', 'a_narrowing_list_that_cannot_be_read_is_not_read_as_absent'),
     # ── C9 round 1, workstream LOOP (M360-M374): attribution joined to the
@@ -982,6 +970,8 @@ MUTATIONS = [
     ('M426', 'C9r1b class-b join: an attested execution counts only if its receipt names its launch manifest', 'crates/axon-loop/src/evl.rs', '    names_one_sha256(rc, "launch-manifest-sha256:")?;\n', '    let _ = names_one_sha256(rc, "launch-manifest-sha256:");\n', 'axon-loop', '--test protected_class', 'an_unobserved_execution_leg_counts_nothing_in_a_protected_evaluation'),
     ('M427', 'C9r1b class-b join: an attested execution counts only if its receipt names its preflight observation', 'crates/axon-loop/src/evl.rs', '    names_one_sha256(rc, "preflight-observation-sha256:")?;\n', '    let _ = names_one_sha256(rc, "preflight-observation-sha256:");\n', 'axon-loop', '--test protected_class', 'an_unobserved_execution_leg_counts_nothing_in_a_protected_evaluation'),
     ('M428', "C9r1b: the protected execution leg's backend is re-checked where admission re-derives (EVL's D3 filter M19 never runs there)", 'crates/axon-loop/src/evl.rs', '    if !axon_loop_contracts::PROTECTED_PROFILES.contains(&rc.backend_profile_ref.as_str()) {', '    if false && !axon_loop_contracts::PROTECTED_PROFILES.contains(&rc.backend_profile_ref.as_str()) {', 'axon-loop', '--test protected_class', 'a_protected_admission_re_checks_the_execution_legs_backend'),
+    # ── C9 round 1b, integration: the runner refuses job files carrying an xattr.
+    ('M403', 'PSV-2/custody: the runner refuses a job file (dir, secret, manifest) carrying any extended attribute', 'crates/axon-psv/src/runner.rs', '        if let Err(e) = crate::no_xattr(p, what) {', '        if let Err(e) = {\n            let _ = crate::no_xattr(p, what);\n            Ok::<(), String>(())\n        } {', 'axon-psv', '--test runner', 'a_job_file_carrying_an_acl_is_refused_not_run'),
     # ── C9 round 1b, integration: the execution attestation refuses a replay.
     ('M402', 'PSV-6: a replayed execution is never attested, whatever its journal and receipt claim', 'crates/axon-fabric/src/signing.rs', '    if replayed {\n        return Err(REPLAYED);\n    }\n    match ran_under {', '    match ran_under {', 'axon-fabric', '--lib', 'signing::tests::a_replayed_execution_is_never_attested_whatever_its_journal_claims'),
     # ── C9 round 1b, integration: the sealed-module rule holds whoever imports.

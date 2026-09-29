@@ -376,7 +376,7 @@ fn undigested_shape(root: &Path) -> Result<(), String> {
 /// `Err` names `shown` and its first extended attribute, if it carries any.
 /// The link itself is inspected (`llistxattr`), never a target.
 #[cfg(target_os = "linux")]
-fn no_xattr(p: &Path, shown: &str) -> Result<(), String> {
+pub(crate) fn no_xattr(p: &Path, shown: &str) -> Result<(), String> {
     use std::os::unix::ffi::OsStrExt;
     let unreadable =
         |e: std::io::Error| format!("{shown} whose extended attributes cannot be listed ({e})");
@@ -420,7 +420,7 @@ fn no_xattr(p: &Path, shown: &str) -> Result<(), String> {
 /// Fail closed: where extended attributes cannot be listed, an input is
 /// never accepted (the guest is Linux; nothing else runs the check).
 #[cfg(all(unix, not(target_os = "linux")))]
-fn no_xattr(_p: &Path, shown: &str) -> Result<(), String> {
+pub(crate) fn no_xattr(_p: &Path, shown: &str) -> Result<(), String> {
     Err(format!(
         "{shown}, whose extended attributes this platform cannot list"
     ))

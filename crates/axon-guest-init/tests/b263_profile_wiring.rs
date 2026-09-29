@@ -177,13 +177,13 @@ fn the_profile_manifest_pins_axon_guest_init() {
     }
 }
 
-/// PSV-2 (C9 dev review): the three PSV input drives are mounted `noacl`, so
-/// the test uid's access to an input is its mode bits alone. A POSIX ACL the
-/// tree digest cannot see (a named `user:65534:---` entry behind a normalised
-/// 0644) otherwise denies the child a file the runner digested. Read from the
-/// shipped script: every mount of an `/in/` drive, read-only and noacl.
+/// PSV-2: the three PSV input drives are mounted read-only, nodev, nosuid,
+/// noexec, and with no option this guest kernel's ext4 refuses. `noacl` was
+/// added in C9 round 1 and passed this textual test, yet the real guest
+/// rebooted on "ext4: Unknown parameter 'noacl'" (boot test, C9 round 1b).
+/// ACLs are kept out by the launcher and refused by the runner instead.
 #[test]
-fn guest_init_sh_mounts_every_psv_input_noacl() {
+fn guest_init_sh_mounts_every_psv_input_read_only() {
     let sh = read("profiles/linux-microvm/guest-init.sh");
     let mounts: Vec<String> = logical_lines(&sh)
         .into_iter()
@@ -205,9 +205,9 @@ fn guest_init_sh_mounts_every_psv_input_noacl() {
             assert!(opts.contains(&want), "{want} missing: {l}");
         }
         assert!(
-            opts.contains(&"noacl") && !opts.contains(&"acl"),
-            "ATTACK: a PSV input is mounted with POSIX ACLs honoured, so an ACL the \
-             digest cannot see changes what the test uid can read: {l}"
+            !opts.contains(&"noacl"),
+            "this guest kernel's ext4 refuses `noacl`: the mount fails and the guest \
+             reboots: {l}"
         );
     }
 }
