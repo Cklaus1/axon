@@ -48,7 +48,17 @@
 //! (as for `submit`) and be the principal|grant the journal recorded for the
 //! op. Holding a journal path or an operation id confers nothing
 //! (G03-r22-authority-intersection); anything else is `unauthorized` (exit 7)
-//! and nothing is written.
+//! and nothing is written — the journal is replayed without any write, and
+//! only the authorized op's scope is reconciled, after authorization.
+//!
+//! GRANT REGISTRY (D1). On a PROTECTED host the grant registry is the one the
+//! operator's host config pins (`grant_registry`, path + sha256, every grant
+//! file operator-owned) and nothing else: `--grant-registry` is REFUSED on
+//! every route (exit 2) before anything is read or written, and a host config
+//! that pins none authorizes nothing. In development (no protected host) the
+//! caller names it; its sha256 is recorded in each op's intent
+//! (`config.grant.registry_sha256`), and `status`/`cancel` accept only the
+//! registry bytes that authorized the op.
 //! ```
 //!
 //! Output on success: `{"schema":"axon-fabric-submit/1", "receipt": <acf-execution-receipt/1>,
@@ -110,6 +120,10 @@ impl Args {
             .iter()
             .position(|a| a == flag)
             .and_then(|i| self.0.get(i + 1).cloned())
+    }
+    /// The flag is present at all (with or without a value).
+    fn has(&self, flag: &str) -> bool {
+        self.0.iter().any(|a| a == flag)
     }
     fn req(&self, flag: &str) -> String {
         self.opt(flag)
@@ -567,6 +581,39 @@ fn keygen(a: &Args) {
     );
 }
 
+/// D1: the grant registry for this call. On a protected host it is the
+/// operator's pinned one and ONLY that: a caller `--grant-registry` is refused
+/// (never silently ignored) before anything is read or written. Off a
+/// protected host (development) the caller names it.
+fn grant_registry(
+    a: &Args,
+    host: Option<&axon_fabric::protected_host::ProtectedHost>,
+) -> axon_fabric::GrantRegistry {
+    match host {
+        Some(h) => {
+            if a.has("--grant-registry") {
+                refuse_caller_grant_registry();
+            }
+            h.grants()
+                .unwrap_or_else(|e| refuse("unauthorized", &format!("protected host: {e}"), 7))
+        }
+        None => axon_fabric::GrantRegistry::load(&PathBuf::from(a.req("--grant-registry")))
+            .unwrap_or_else(|e| refuse("unauthorized", &e, 7)),
+    }
+}
+
+fn refuse_caller_grant_registry() -> ! {
+    refuse(
+        "usage",
+        &format!(
+            "--grant-registry is not accepted on a protected host: grants come only from the \
+             operator's grant_registry pinned in {}",
+            axon_fabric::protected_host::PROTECTED_HOST_CONFIG
+        ),
+        2,
+    )
+}
+
 fn submit(a: &Args) {
     // The protected profile's trust root is the OPERATOR's (/etc/axon/trust),
     // never the caller's and never a repository directory: whoever submits
@@ -593,6 +640,11 @@ fn submit(a: &Args) {
             2,
         );
     }
+    // D1: a caller grant registry is refused on a protected host before the
+    // request is even read ([`grant_registry`] refuses it again at load).
+    if host.is_some() && a.has("--grant-registry") {
+        refuse_caller_grant_registry();
+    }
     let req_src = a.req("--request");
     let text = if req_src == "-" {
         let mut s = String::new();
@@ -613,8 +665,7 @@ fn submit(a: &Args) {
         Some(h) => Some(host_signer(h)),
         None => signer(&registry_path),
     };
-    let grants = axon_fabric::GrantRegistry::load(&PathBuf::from(a.req("--grant-registry")))
-        .unwrap_or_else(|e| refuse("unauthorized", &e, 7));
+    let grants = grant_registry(a, host.as_ref());
     let sc =
         scope(&a.req("--tenant"), &a.req("--family")).unwrap_or_else(|e| refuse("usage", &e, 2));
     let expected = AuthorityEpoch::new(a.num("--expected-epoch", u64::MAX))
@@ -622,6 +673,7 @@ fn submit(a: &Args) {
     let protected_host = host.as_ref().map(|h| axon_fabric::psv::HostIdentity {
         config_sha256: h.config_sha256.clone(),
         suite_registry_sha256: h.suite_registry_sha256.clone(),
+        grant_registry_sha256: h.grant_registry.as_ref().map(|(_, pin)| pin.clone()),
     });
     let observer = host.as_ref().and_then(|h| h.observer.clone());
     let linux = host.map(|h| h.linux);
@@ -762,25 +814,26 @@ fn workspace_import(a: &Args) {
     );
 }
 
-fn open(a: &Args) -> (Journal, OperationId) {
-    let op = OperationId::new(a.req("--op")).unwrap_or_else(|e| refuse("usage", &e.to_string(), 2));
-    let (j, _) = Journal::open(PathBuf::from(a.req("--journal")))
-        .unwrap_or_else(|e| refuse("journal", &e.to_string(), 2));
-    (j, op)
-}
-
-/// G03-r22-authority-intersection: the caller must present the authority that
-/// submitted `op` — a grant the operator's registry resolves for the principal,
-/// equal to the op's recorded `principal|grant`. Refused before anything is
-/// written or disclosed beyond the op's existence.
-fn authorize(a: &Args, j: &Journal, op: &OperationId) {
-    let grants = axon_fabric::GrantRegistry::load(&PathBuf::from(a.req("--grant-registry")))
-        .unwrap_or_else(|e| refuse("unauthorized", &e, 7));
+/// G03-r22-authority-intersection + D1: the caller must present the authority
+/// that submitted `op` — a grant the registry resolves for the principal,
+/// equal to the op's recorded `principal|grant`. The registry is the
+/// operator's on a protected host ([`grant_registry`]); in development it must
+/// be the very registry (by sha256) that authorized the op. Every check runs
+/// BEFORE any write: the grant is resolved before the journal is touched, the
+/// op is looked up in a replay that writes nothing, and only then is the
+/// authorized op's scope — and no other — reconciled.
+fn authorized(a: &Args) -> (Journal, OperationId) {
+    let host = protected_host(a);
+    let grants = grant_registry(a, host.as_ref());
     let (principal, grant) = (a.req("--principal"), a.req("--grant-ref"));
     grants
         .resolve(&grant, &principal)
         .unwrap_or_else(|e| refuse("unauthorized", &e, 7));
-    let Some(v) = j.view(op) else {
+    let op = OperationId::new(a.req("--op")).unwrap_or_else(|e| refuse("usage", &e.to_string(), 2));
+    let j = Journal::open_unreconciled(PathBuf::from(a.req("--journal")))
+        .unwrap_or_else(|e| refuse("journal", &e.to_string(), 2))
+        .unwrap_or_else(|| refuse("unknown_op", &format!("no operation {op}"), 5));
+    let Some(v) = j.view(&op) else {
         refuse("unknown_op", &format!("no operation {op}"), 5)
     };
     if v.intent.authority_ref != format!("{principal}|{grant}") {
@@ -790,11 +843,28 @@ fn authorize(a: &Args, j: &Journal, op: &OperationId) {
             7,
         )
     }
+    if host.is_none() {
+        let recorded = v.intent.config["grant"]["registry_sha256"].as_str();
+        if recorded != Some(grants.sha256()) {
+            refuse(
+                "unauthorized",
+                &format!(
+                    "operation {op} was authorized under grant registry sha256 {}; this one is \
+                     sha256 {}",
+                    recorded.unwrap_or("(none recorded)"),
+                    grants.sha256()
+                ),
+                7,
+            )
+        }
+    }
+    j.reconcile_scope(&v.intent.scope)
+        .unwrap_or_else(|e| refuse("journal", &e.to_string(), 2));
+    (j, op)
 }
 
 fn status(a: &Args) {
-    let (j, op) = open(a);
-    authorize(a, &j, &op);
+    let (j, op) = authorized(a);
     print_status(&j, &op);
 }
 
@@ -824,8 +894,7 @@ fn print_status(j: &Journal, op: &OperationId) {
 /// reservation as unresolved liability (cancel acknowledgement is not
 /// cleanup, and no cost evidence exists).
 fn cancel(a: &Args) {
-    let (j, op) = open(a);
-    authorize(a, &j, &op);
+    let (j, op) = authorized(a);
     let reason = a.req("--reason");
     let Some(v) = j.view(&op) else {
         refuse("unknown_op", &format!("no operation {op}"), 5)

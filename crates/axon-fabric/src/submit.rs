@@ -985,6 +985,27 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
     }
 
     // 4a (first, so a refusal touches nothing — not even the journal file).
+    // D1: on a PROTECTED host the registry is the operator's pinned one and
+    // nothing else — whatever put `cfg.grants` there, a registry whose bytes
+    // are not the pin (or a host that pins none) authorizes nothing. This
+    // also fixes the guest effect policy, which is derived from the grant.
+    if let Some(h) = &cfg.protected_host {
+        match &h.grant_registry_sha256 {
+            None => {
+                return Err(SubmitError::Unauthorized(
+                    crate::protected_host::NO_GRANT_REGISTRY.to_string(),
+                ))
+            }
+            Some(pin) if !pin.eq_ignore_ascii_case(cfg.grants.sha256()) => {
+                return Err(SubmitError::Unauthorized(format!(
+                    "on a protected host the grant registry is the operator's (sha256 {pin}); \
+                     this one is sha256 {}",
+                    cfg.grants.sha256()
+                )))
+            }
+            Some(_) => {}
+        }
+    }
     // The request's grant, from the operator's registry. Unknown ref, a
     // principal it is not bound to, or a changed grant file: refused.
     let grant = cfg
@@ -1225,6 +1246,9 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
             "grant": {
                 "grant_ref": grant.grant_ref,
                 "sha256": grant.sha256,
+                // D1: WHICH registry authorized this op (the caller's, in
+                // development; the operator's pin, on a protected host).
+                "registry_sha256": cfg.grants.sha256(),
                 "effect_ceiling": ceiling,
                 "reproducible": grant.grant().reproducible,
                 "approval": approval,
@@ -1882,7 +1906,9 @@ fn record_unlaunched(
         trial_id: req.trial_id.clone(),
         attempt_id: req.attempt_id.clone(),
         input_digest: input_digest.clone(),
-        config: json!({"backend": null}),
+        config: json!({"backend": null, "grant": {
+            "grant_ref": req.grant_ref, "registry_sha256": cfg.grants.sha256(),
+        }}),
         authority_ref: format!("{}|{}", req.principal_ref, req.grant_ref),
         authority_epoch: cfg.expected_epoch,
         scope: scope.clone(),
