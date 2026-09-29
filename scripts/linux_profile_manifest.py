@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Write dist/guest-linux/manifest.json for the protected Linux microVM profile.
 
-Usage: linux_profile_manifest.py <dist-dir> <profile-dir>
+Usage: linux_profile_manifest.py --snapshot <out.json>
+       linux_profile_manifest.py [--pre <snapshot.json>] <dist-dir> <profile-dir>
 
 Every artifact the launcher consumes is recorded by sha256. The launcher
 (scripts/fc_linux_profile.sh) re-hashes each artifact against THIS manifest
@@ -13,12 +14,27 @@ exact field names axon-fabric's qualification() compares an evidence record's
 sat at /usr/local/bin, so a swapped VMM ran with the same qualification as the
 one that was measured. FC_BIN / JAILER_BIN override the paths pinned (the
 launcher's defaults are the same two paths).
+
+`source.axon_git_rev_at_build` / `axon_tree_dirty_at_build` gate Fabric's
+qualification (RULE:manifest-clean). They come from the SAME Rust code that
+stamps the readiness verifier's `source_dirty` (crates/axon-fabric/src/
+provenance.rs over git_data.rs, compiled here as the `axon-provenance`
+helper): never PATH git under the caller's environment, untracked files
+count, and the repository's own git config is refused unless it is inert
+(review FIELD-ORIGIN, C9 round 2). "Cannot tell" is DIRTY, never clean.
+build-guest-image.sh takes a `--snapshot` BEFORE it builds; the manifest is
+clean only if that snapshot and the tree now are both clean and name the same
+revision, so the artifacts' source is the tree described.
 """
 import hashlib
 import json
 import os
 import subprocess
 import sys
+import tempfile
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+HELPER = os.path.join(ROOT, "crates", "axon-fabric", "src", "bin", "axon-provenance.rs")
 
 
 def sha(path):
@@ -37,17 +53,73 @@ def first_line(cmd):
         return "unknown"
 
 
+def cannot_tell(why):
+    return {"revision": "unknown", "dirty": [f"cannot tell: {why}"]}
+
+
+def provenance():
+    """The axon-provenance/1 answer for ROOT's tree, or a DIRTY "cannot tell"."""
+    try:
+        with tempfile.TemporaryDirectory(prefix="axon-provenance-") as t:
+            exe = os.path.join(t, "axon-provenance")
+            rustc = os.environ.get("RUSTC", "rustc")
+            b = subprocess.run([rustc, "--edition", "2021", "-C", "opt-level=1", "-o", exe, HELPER],
+                               capture_output=True, text=True, cwd=ROOT, check=False)
+            if b.returncode != 0:
+                return cannot_tell(f"the provenance helper did not build: {b.stderr.strip()[-400:]}")
+            r = subprocess.run([exe, ROOT], capture_output=True, text=True, check=False,
+                               env={"PATH": "/usr/bin:/bin", "LC_ALL": "C"})
+            d = json.loads(r.stdout)
+    except (OSError, ValueError) as e:
+        return cannot_tell(f"the provenance helper failed: {e}")
+    if (r.returncode != 0 or not isinstance(d, dict) or d.get("schema") != "axon-provenance/1"
+            or not isinstance(d.get("revision"), str) or not isinstance(d.get("dirty"), list)
+            or not all(isinstance(x, str) for x in d["dirty"])):
+        return cannot_tell("the provenance helper gave no axon-provenance/1 answer")
+    return d
+
+
+def source_state(pre_path):
+    """(revision, reasons): the tree now, joined with the pre-build snapshot."""
+    now = provenance()
+    reasons = list(now["dirty"])
+    pre = None
+    if pre_path:
+        try:
+            with open(pre_path) as f:
+                pre = json.load(f)
+        except (OSError, ValueError):
+            pre = None
+    if not isinstance(pre, dict) or not isinstance(pre.get("dirty"), list):
+        reasons.append("no pre-build provenance snapshot: the tree the artifacts were built from is unknown")
+    else:
+        reasons.extend(f"before the build: {r}" for r in pre["dirty"])
+        if pre.get("revision") != now["revision"]:
+            reasons.append(f"the tree moved during the build: {pre.get('revision')} -> {now['revision']}")
+    if now["revision"] == "unknown" and not reasons:
+        reasons.append("cannot tell: no revision")
+    return now["revision"], reasons
+
+
 def main():
-    dist, prof = sys.argv[1], sys.argv[2]
+    args = sys.argv[1:]
+    if args[:1] == ["--snapshot"]:
+        with open(args[1], "w") as f:
+            json.dump(provenance(), f)
+            f.write("\n")
+        return
+    pre_path = None
+    if args[:1] == ["--pre"]:
+        pre_path, args = args[1], args[2:]
+    dist, prof = args[0], args[1]
     pin = {}
     for line in open(os.path.join(prof, "kernel.pin")):
         line = line.strip()
         if line and not line.startswith("#") and "=" in line:
             k, v = line.split("=", 1)
             pin[k] = v
-    rev = first_line(["git", "rev-parse", "HEAD"])
-    dirty = bool(first_line(["git", "status", "--porcelain", "--untracked-files=no"]).strip()
-                 not in ("", "unknown"))
+    rev, reasons = source_state(pre_path)
+    dirty = bool(reasons)
     manifest = {
         "schema": "axon-linux-microvm-profile/1",
         "profile": "linux-microvm-protected",
@@ -55,6 +127,7 @@ def main():
         "source": {
             "axon_git_rev_at_build": rev,
             "axon_tree_dirty_at_build": dirty,
+            "axon_tree_dirty_reasons": reasons,
             "axon_build": "RUSTFLAGS='-C target-feature=+crt-static' cargo build --locked "
                           "-p axon-core --no-default-features --bin axon --release "
                           "--target x86_64-unknown-linux-musl",

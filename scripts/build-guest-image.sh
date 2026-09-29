@@ -149,6 +149,11 @@ build_rootfs_linux() {
         exit 1
     }
     require_sha "$BUSYBOX_SRC" "$BUSYBOX_SHA256" "busybox"
+    # The tree the binaries are built FROM, before any build step (the same
+    # Rust provenance that stamps the readiness verifier). The manifest is
+    # clean only if this and the tree at manifest time are clean and agree.
+    mkdir -p "$LDIST"
+    python3 scripts/linux_profile_manifest.py --snapshot "$LDIST/provenance.pre.json"
 
     echo "[build-guest-image] Building axon interpreter (static musl, --locked)..."
     RUSTFLAGS="-C target-feature=+crt-static" \
@@ -234,7 +239,7 @@ build_rootfs_linux() {
 }
 
 write_manifest_linux() {
-    python3 scripts/linux_profile_manifest.py "$LDIST" "$PROFILE_DIR"
+    python3 scripts/linux_profile_manifest.py --pre "$LDIST/provenance.pre.json" "$LDIST" "$PROFILE_DIR"
     cp "$LDIST/manifest.json" "$PROFILE_DIR/manifest.json"
     echo "[build-guest-image] manifest → $LDIST/manifest.json (+ $PROFILE_DIR/manifest.json)"
 }
