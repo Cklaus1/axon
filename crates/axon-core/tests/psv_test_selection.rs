@@ -11,7 +11,25 @@ use std::path::Path;
 use std::process::Command;
 
 /// A fresh directory for one test (no tempfile dev-dependency here).
+/// Directories left by EARLIER test processes (whose pid is gone) are swept:
+/// each run left up to a dozen, one holding a copy of the axon binary, and the
+/// accumulation filled a 12 GB /tmp mid-suite (C9 round 1b: native linker
+/// "No space left on device" in unrelated harnesses).
 fn fresh(name: &str) -> std::path::PathBuf {
+    if let Ok(rd) = std::fs::read_dir(std::env::temp_dir()) {
+        for e in rd.flatten() {
+            let n = e.file_name().to_string_lossy().into_owned();
+            let pid = n
+                .strip_prefix("psv-sel-")
+                .and_then(|r| r.split('-').next())
+                .and_then(|p| p.parse::<u32>().ok());
+            if let Some(pid) = pid {
+                if !Path::new(&format!("/proc/{pid}")).exists() {
+                    let _ = std::fs::remove_dir_all(e.path());
+                }
+            }
+        }
+    }
     let d = std::env::temp_dir().join(format!("psv-sel-{}-{name}", std::process::id()));
     let _ = std::fs::remove_dir_all(&d);
     std::fs::create_dir_all(&d).unwrap();
