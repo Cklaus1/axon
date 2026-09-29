@@ -304,7 +304,19 @@ fn every_forgery_of_the_returned_evidence_is_unknown_for_its_own_reason() {
             "{tamper}"
         );
         let reason = s.reason.clone().unwrap_or_default();
-        assert!(reason.contains(why), "{tamper}: {reason}");
+        // "forge" is a single pass line whose token is not K's. The completion
+        // check (M183) and the keyed result line (M312) are the same HMAC
+        // under K, and either refuses it alone: on this route which one names
+        // the reason is not the property (four-cell, EQUIV_RECORD["M183"]).
+        let also = if tamper == "forge" {
+            "result line"
+        } else {
+            why
+        };
+        assert!(
+            reason.contains(why) || reason.contains(also),
+            "{tamper}: {reason}"
+        );
         assert_ne!(class(&s), "protected", "{tamper}");
     }
 }
