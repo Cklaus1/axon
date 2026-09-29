@@ -5,16 +5,23 @@ This is the set of G01 guards a mutation has been written for; it is not a proof
 that no other guard exists. A guard added to the G01 paths belongs here.
 
 For each mutation: the named test must PASS on the clean tree (baseline), and
-must FAIL once that single guard is removed (killed). A mutation that no longer
+must FAIL once that single guard is removed, with the panic that FAILS it
+matching the row's ATTACK MARKER (scripts/v022_attack_markers.py): the row's
+own attack got through. A failure on any other panic (another check still
+refusing the attack, a reason-string mismatch, a setup panic) is
+REFUSED_ELSEWHERE, reported separately and never counted killed (amendment 39). A mutation that no longer
 applies (its text is absent or ambiguous) or that stops the crate compiling is
 reported as such — never as killed — so a refactor cannot silently turn this
 into a pass. Every file is restored and re-hashed after each mutation.
 
-    python3 scripts/v022_g01_mutations.py OUT.json
+    python3 scripts/v022_g01_mutations.py [--scope=S] [--shard=K/N] [--only=M1,M2] OUT.json
+
+--only runs a SAMPLE of the scope's rows; its output is marked and cannot be
+merged as a shard.
 
 Refuses to run on a tree with uncommitted changes under crates/: the result is
 evidence about a COMMIT, and it names that commit. Exit 0 only when every
-baseline passes and every mutation is killed.
+baseline passes and every mutation is KILLED by its own attack.
 
 Each cargo run is contained by scripts/lib_bounded_run.sh (memory ceiling and
 deadline).
@@ -23,10 +30,13 @@ deadline).
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(ROOT, "scripts"))
+from v022_attack_markers import ATTACK_MARKERS  # noqa: E402  (per-row attack markers)
 
 # (id, guard, file, old, new, package, target, test)
 # target: "--lib" or "--test <name>"; test: the exact test path.
@@ -760,7 +770,10 @@ MUTATIONS = [
     ('M201', "M3: the observation's nonce is the manifest's", 'crates/axon-psv/src/lib.rs', '("nonce", &self.nonce, &m.observation_nonce),', '("nonce", &self.nonce, &self.nonce),', 'axon-fabric', '--test psv_dispatch', 'every_defective_observation_refuses_the_launch'),
     ('M202', "M3/A7: the observed kernel is the launch's", 'crates/axon-psv/src/lib.rs', '                &self.guest.kernel_sha256,\n                &m.guest.kernel_sha256,', '                &self.guest.kernel_sha256,\n                &self.guest.kernel_sha256,', 'axon-fabric', '--test psv_dispatch', 'every_defective_observation_refuses_the_launch'),
     ('M203', 'M3: a verified observation makes the verdict protected', 'crates/axon-fabric/src/submit.rs', 'let hv = crate::psv::derive(&launch, &res.out_dir, observation.as_ref());', 'let hv = crate::psv::derive(&launch, &res.out_dir, None);', 'axon-fabric', '--test psv_dispatch', 'a_verified_observation_makes_the_guest_verdict_protected'),
-    ('M204', 'M3: a refused observation launches nothing', 'crates/axon-fabric/src/submit.rs', '                Some(o) => crate::observer::observe(\n                    o,\n                    &launch.manifest,\n                    &launch.digest,\n                    &launch.job_dir.join("launch-manifest.json"),\n                    epoch,\n                    &launch.job_dir.with_file_name("observation"),\n                )\n                .map(|v| (launch, Some(v)))\n                .map_err(|e| format!("preflight observation refused: {e}")),', '                Some(o) => {\n                    let r = crate::observer::observe(\n                        o,\n                        &launch.manifest,\n                        &launch.digest,\n                        &launch.job_dir.join("launch-manifest.json"),\n                        epoch,\n                        &launch.job_dir.with_file_name("observation"),\n                    );\n                    Ok((launch, r.ok()))\n                }', 'axon-fabric', '--test psv_dispatch', 'every_defective_observation_refuses_the_launch'),
+    # C9 round 1: re-anchored on the CURRENT seam (it had been recorded STALE while
+    # its guard lived on). The mutant swallows observe's Err and launches with no
+    # observation, as the pre-refactor mutant did.
+    ('M204', 'M3: a refused observation launches nothing', 'crates/axon-fabric/src/submit.rs', '                .map_err(|e| format!("preflight observation refused: {e}"))\n                .and_then(|v| {\n', '                .map_or_else(|_| Ok::<_, String>(None), |v| Ok(Some(v)))\n                .and_then(|v| {\n                    let Some(v) = v else {\n                        return Ok((launch, None));\n                    };\n', 'axon-fabric', '--test psv_dispatch', 'every_defective_observation_refuses_the_launch'),
     ('M205', 'O2/A18: protected evidence needs an operator-rooted verifier key', 'crates/axon-loop/src/intake.rs', '    if axon_loop_contracts::protected_evidence::claims_protected(&rc) {', '    if false && axon_loop_contracts::protected_evidence::claims_protected(&rc) {', 'axon-loop', '--test intake', 'a_verifier_key_planted_in_the_store_never_authenticates_protected_evidence'),
     ('M206', 'O2: rooted() requires the key in the operator root', 'crates/axon-loop-contracts/src/operator_trust.rs', 'if keys_in(&dir)?.contains(&want) {', 'if true {', 'axon-loop', '--test intake', 'a_verifier_key_planted_in_the_store_never_authenticates_protected_evidence'),
     ('M207', 'O2: rooted_key consults the operator root', 'crates/axon-loop/src/store.rs', '        axon_loop_contracts::operator_trust::rooted(a, k)?;\n', '', 'axon-loop', '--test protected_class', 'an_observer_key_planted_in_the_store_is_not_authority'),
@@ -923,14 +936,25 @@ EQUIV_RECORD = {
     "M245": {"property": "a protected clearance is a real monitor signature under the operator monitor root", "subsumed_by": ["M264"], "killer": "M264"},
 }
 EQUIVALENT_DID = set(EQUIV_RECORD)
-# M204's historical guard (the submit observe seam) was REFACTORED away by
-# amendment 16; it no longer applies. Its property is enforced by M192-M195
-# (observe returns Err on a defect) and M253 (epoch recheck), all live killers.
-STALE_REFACTORED = {"M204": {"property": "a defective/replayed observation must not launch", "subsumed_by": ["M192", "M253"], "killer": "M253", "how": "the submit observe seam was restructured by amendment 16 (epoch re-read after the observer)"},
-                    # C9 re-audit: M176 was listed as a LEGACY EQUIVALENT but its guard no longer
-                    # exists (old string absent) -- it became the `Some(0)` of the Passed arm in
-                    # runner.rs, which no row mutated. It is STALE; M293 now kills that arm.
-                    "M176": {"property": "a pass needs exit 0", "subsumed_by": ["M293"], "killer": "M293", "how": "the exit-0 guard became the Some(0) of the Passed arm in runner.rs (C9 re-audit)"}}
+# STALE: a row whose old text no longer exists. "The old text is absent" shows
+# only that the TEXT changed, not that the guard is gone (C9 dev review: M204
+# was recorded stale while its guard lived on, refactored, at submit.rs's
+# observe seam, with no row). So a stale row is accepted ONLY with a named
+# `replacement`: an ACTIVE row that mutates the guard in its current form and
+# is itself KILLED by its own attack. Both harnesses enforce this: the mutation
+# run checks the replacement's result, and paired-disable executes the
+# replacement's kill. A stale row with no live replacement fails the run.
+#
+# M204 is ACTIVE again (C9 round 1): re-anchored on the current seam, where
+# observe's Err is propagated so nothing launches.
+STALE_REFACTORED = {
+    # C9 re-audit: M176 was listed as a LEGACY EQUIVALENT but its guard no longer
+    # exists (old string absent) -- it became the `Some(0)` of the Passed arm in
+    # runner.rs, which no row mutated. Re-audited in C9 round 1 on the new terms:
+    # the guard lives on exactly as that arm, and M293 (ACTIVE) mutates it.
+    "M176": {"property": "a pass needs exit 0", "replacement": "M293",
+             "how": "the exit-0 guard became the Some(0) of the Passed arm in runner.rs (C9 re-audit)"},
+}
 
 # M176 (the runner's exit-0 guard) is equivalent since `--exact` (PSV review
 # wf_d725935a-7ed, B1): the runner now executes exactly the one registered
@@ -943,7 +967,9 @@ STALE_REFACTORED = {"M204": {"property": "a defective/replayed observation must 
 LEGACY_EQUIV = set()
 RETIRED = LEGACY_EQUIV | EQUIVALENT_DID | set(STALE_REFACTORED)
 BINDING_IDS = {f"M{n}" for n in range(101, 137)}
-PSV_IDS = {f"M{n}" for n in range(137, 319)}
+# Every id range the PSV rounds allocate (C9 round 1 uses up to M399). An id
+# outside every scope would silently fall into g01.
+PSV_IDS = {f"M{n}" for n in range(137, 400)}
 
 
 def in_scope(mid, scope):
@@ -982,15 +1008,60 @@ def cargo_test(package, target, test):
     return "error", out
 
 
-def kill_line(out, test):
-    """The failing test's own panic: location and first message line."""
+def _is_test_thread(line, test):
+    # The panic names the test by its full path (`mod::tests::name`) for a
+    # lib test and by its bare name for an integration test.
+    return "panicked at" in line and (f"'{test}'" in line or f"'{test.split('::')[-1]}'" in line)
+
+
+# A panic block ends where libtest or the next panic starts.
+_BLOCK_END = ("thread '", "note: ", "stack backtrace:", "failures:", "---- ", "test result:")
+
+
+def failing_panic(out, test):
+    """The panic that FAILED the test, in full: the LAST `panicked at` block on
+    the test's own thread, through its whole message (for assert_eq that
+    includes the `left:`/`right:` lines).
+
+    Not the first: a test may catch a deliberate panic (a pre-launch hook, a
+    catch_unwind probe) before the assertion that fails it. C9 dev review:
+    kill_line() recorded M279/M280's caught `stop before launch` setup panic
+    instead of the real failures later in the same test. The panic that ends
+    the thread is the last one, because nothing on the thread runs after it."""
     lines = out.splitlines()
+    start = None
     for i, l in enumerate(lines):
-        # The panic names the test by its full path (`mod::tests::name`) for a
-        # lib test and by its bare name for an integration test.
-        if "panicked at" in l and (f"'{test}'" in l or f"'{test.split('::')[-1]}'" in l):
-            return " | ".join(x.strip() for x in lines[i:i + 2])[:400]
-    return None
+        if _is_test_thread(l, test):
+            start = i
+    if start is None:
+        return None
+    block = [lines[start]]
+    for l in lines[start + 1:]:
+        if l.startswith(_BLOCK_END):
+            break
+        block.append(l)
+    while block and not block[-1].strip():
+        block.pop()
+    return "\n".join(block)
+
+
+def kill_line(out, test):
+    """The failing panic's location and message, bounded for the record."""
+    b = failing_panic(out, test)
+    return None if b is None else " | ".join(x.strip() for x in b.splitlines())[:600]
+
+
+def attack_succeeded(mid, out, test):
+    """True iff the panic that failed the test is this row's OWN attack
+    succeeding: its ATTACK_MARKERS regex matches the failing panic block.
+
+    A failure whose panic is another check's refusal, a reason-string
+    mismatch or a setup panic is REFUSED_ELSEWHERE: the guard was removed and
+    the attack was STILL refused, which is the equivalent shape, never a kill
+    (C9 dev review, EQUIVALENCE: M140, M201, M262, M263, M285 ...)."""
+    b = failing_panic(out, test)
+    m = ATTACK_MARKERS.get(mid)
+    return b is not None and m is not None and re.search(m, b, re.S) is not None
 
 
 def sha(path):
@@ -1019,6 +1090,8 @@ def merge(out, parts):
         for k in ("commit", "scope"):
             if d[k] != base[k]:
                 sys.exit(f"refused: shards disagree on {k}: {d[k]} vs {base[k]}")
+        if d.get("only") is not None:
+            sys.exit(f"refused: {d['only']} is a sample (--only), not a shard")
         if (d.get("shard") or {}).get("of") != len(docs):
             sys.exit(f"refused: a shard of {(d.get('shard') or {}).get('of')} merged as one of {len(docs)}")
     got = sorted(d["shard"]["index"] for d in docs)
@@ -1034,38 +1107,52 @@ def merge(out, parts):
     order = {m: n for n, m in enumerate(want)}
     rows.sort(key=lambda r: order[r["id"]])
     ok = all(d["all_killed"] for d in docs)
-    doc = {"schema": "axon-v022-mutation-run/2", "gate": base["gate"], "scope": base["scope"],
+    doc = {"schema": "axon-v022-mutation-run/3", "gate": base["gate"], "scope": base["scope"],
            "commit": base["commit"], "toolchain": [d["toolchain"] for d in docs],
            "merged_from": [{"shard": d["shard"], "all_killed": d["all_killed"]} for d in docs],
            "all_killed": ok, "mutations": rows}
     with open(out, "w") as f:
         json.dump(doc, f, indent=2)
         f.write("\n")
-    print_evidence_model(rows, base["scope"],
-                         extra=f"  (merged from {len(docs)} shards)"
-                         + ("" if ok else "; a SHARD reported a failure — see its BAD lines"))
+    ok &= print_evidence_model(rows, base["scope"],
+                               extra=f"  (merged from {len(docs)} shards)"
+                               + ("" if ok else "; a SHARD reported a failure — see its BAD lines"))
     sys.exit(0 if ok else 1)
 
 
-def print_evidence_model(rows, scope, extra=""):
-    """Operator model (2026-09-28): active-killed, retired equivalents,
-    survivors and stale reported SEPARATELY; an equivalent mutant is never
-    folded into the killed denominator."""
+def print_evidence_model(rows, scope, extra="", partial=False):
+    """Operator model (2026-09-28, amended C9 round 1 / amendment 39): each
+    class reported SEPARATELY, and only KILLED is a kill.
+
+      KILLED             the test failed on the row's OWN attack (its marker)
+      REFUSED_ELSEWHERE  the test failed, but on another check's refusal or a
+                         reason mismatch: the attack was still refused (weak;
+                         the equivalent shape, never counted killed)
+      EQUIVALENT         retired under the four-cell rule, never counted killed
+      STALE              old text gone AND a named ACTIVE replacement killed
+      survivors          the test passed with the guard removed
+
+    Returns False when any class other than KILLED/EQUIVALENT/STALE is
+    non-empty, or a retirement record does not hold against the tree."""
     active = len(rows)
-    killed = sum(r["result"] == "killed" for r in rows)
+    killed = [r["id"] for r in rows if r["result"] == "killed"]
+    weak = [r["id"] for r in rows if r["result"] == "refused_elsewhere"]
     survivors = [r["id"] for r in rows if r["result"].startswith("survived")]
     stale = [r["id"] for r in rows if "not_applicable" in r["result"]]
     base_ok = all(r["baseline"] == "passed" for r in rows)
     print(f"Mutation registry: {len(MUTATIONS)} total")
-    print(f"Active mutants: {killed}/{active} killed"
+    print(f"Active mutants: {len(killed)}/{active} KILLED by their own attack"
           f"{'' if base_ok else ' (baselines NOT all pass)'}{extra}")
+    print(f"REFUSED_ELSEWHERE (weak: failed, but the attack was still refused; NOT killed): "
+          f"{len(weak)}{(' '+str(weak)) if weak else ''}")
     # Retired rows are reported by WHAT they are, and each class is checked
     # against the tree: an equivalent's guard must still exist (else it is not
-    # an equivalent but a stale row), a stale row's guard must be gone (else it
-    # is a live guard with no mutant). C9 re-audit: M176 sat under "legacy
-    # equivalent" for a guard that no longer existed, hidden from the line
-    # below, which counts ACTIVE rows only.
+    # an equivalent but a stale row). A stale row needs a named ACTIVE
+    # replacement that this run KILLED: "old text absent" alone proves only
+    # that the text changed (C9 dev review: M204).
     by_id = {r[0]: r for r in MUTATIONS}
+    by_run = {r["id"]: r["result"] for r in rows}
+
     def applies(mid):
         r = by_id[mid]
         try:
@@ -1074,16 +1161,28 @@ def print_evidence_model(rows, scope, extra=""):
             return False
     eq_gone = sorted(m for m in EQUIVALENT_DID | LEGACY_EQUIV if not applies(m))
     stale_live = sorted(m for m in STALE_REFACTORED if applies(m))
+    stale_bad = []
+    for m, rec in sorted(STALE_REFACTORED.items()):
+        rep = rec.get("replacement")
+        if rep not in by_id or rep in RETIRED or not applies(rep):
+            stale_bad.append(f"{m}: replacement {rep!r} is not an active applying row")
+        elif rep in by_run and by_run[rep] != "killed":
+            stale_bad.append(f"{m}: replacement {rep} was not killed ({by_run[rep]})")
+        elif rep not in by_run and in_scope(rep, scope) and not partial:
+            stale_bad.append(f"{m}: replacement {rep} is in scope but was not run")
     print(f"Retired EQUIVALENT (four-cell paired-disable, never counted killed): "
           f"{len(EQUIVALENT_DID)} {sorted(EQUIVALENT_DID)}"
           + (f"  <-- NOT EQUIVALENT, guard absent: {eq_gone}" if eq_gone else ""))
-    print(f"Retired STALE (guard refactored away; property killed by named live rows): "
-          f"{len(STALE_REFACTORED)} {sorted(STALE_REFACTORED)}"
-          + (f"  <-- NOT STALE, guard still present: {stale_live}" if stale_live else ""))
+    print(f"Retired STALE (old text gone; guard's current form mutated by an ACTIVE killed replacement): "
+          f"{len(STALE_REFACTORED)} "
+          + str({m: r.get("replacement") for m, r in sorted(STALE_REFACTORED.items())})
+          + (f"  <-- NOT STALE, guard still present: {stale_live}" if stale_live else "")
+          + (f"  <-- STALE RECORD DOES NOT HOLD: {stale_bad}" if stale_bad else ""))
     if LEGACY_EQUIV:
         print(f"Retired LEGACY (unaudited): {len(LEGACY_EQUIV)} {sorted(LEGACY_EQUIV)}")
     print(f"Unexpected survivors: {len(survivors)}{(' '+str(survivors)) if survivors else ''}")
     print(f"Active rows stale/unapplied: {len(stale)}{(' '+str(stale)) if stale else ''}")
+    return not (weak or survivors or stale or eq_gone or stale_live or stale_bad or LEGACY_EQUIV)
 
 
 def main():
@@ -1091,7 +1190,9 @@ def main():
         if len(sys.argv) < 5:
             sys.exit("usage: v022_g01_mutations.py --merge OUT.json SHARD.json SHARD.json…")
         merge(sys.argv[2], sys.argv[3:])
-    args = [a for a in sys.argv[1:] if not a.startswith("--scope=") and not a.startswith("--shard=")]
+    args = [a for a in sys.argv[1:] if not a.startswith(("--scope=", "--shard=", "--only="))]
+    only_arg = next((a.split("=", 1)[1] for a in sys.argv[1:] if a.startswith("--only=")), None)
+    only = None if only_arg is None else set(only_arg.split(","))
     scope = next((a.split("=", 1)[1] for a in sys.argv[1:] if a.startswith("--scope=")), "g01")
     shard_arg = next((a.split("=", 1)[1] for a in sys.argv[1:] if a.startswith("--shard=")), None)
     shard = None
@@ -1103,7 +1204,20 @@ def main():
             sys.exit(f"--shard={shard_arg}: want K/N with 0 <= K < N")
         shard = (k, n)
     if len(args) != 1 or scope not in ("g01", "pci", "binding", "psv", "all"):
-        sys.exit("usage: v022_g01_mutations.py [--scope=g01|pci|binding|psv|all] [--shard=K/N] OUT.json")
+        sys.exit("usage: v022_g01_mutations.py [--scope=g01|pci|binding|psv|all] [--shard=K/N] "
+                 "[--only=M1,M2,...] OUT.json")
+    if only is not None:
+        known = {m[0] for m in MUTATIONS}
+        unknown = sorted(m for m in only if m not in known or not in_scope(m, scope))
+        if unknown:
+            sys.exit(f"--only: not active rows of scope {scope}: {unknown}")
+    # Every active row names its attack (drift check, both directions): a row
+    # with no marker cannot be scored, and a marker for no row is stale.
+    missing = [m[0] for m in MUTATIONS if in_scope(m[0], "all") and m[0] not in ATTACK_MARKERS]
+    orphan = sorted(set(ATTACK_MARKERS) - {m[0] for m in MUTATIONS})
+    if missing or orphan:
+        sys.exit(f"refused: ATTACK_MARKERS drift: active rows with no marker {missing}; "
+                 f"markers for no row {orphan} (scripts/v022_attack_markers.py)")
     sys.argv = [sys.argv[0], args[0]]
     dirty = sh("git status --porcelain -- crates").stdout.strip()
     if dirty:
@@ -1134,6 +1248,8 @@ def main():
         if not in_scope(mid, scope):
             continue
         position += 1
+        if only is not None and mid not in only:
+            continue
         if not in_shard(position, shard):
             continue
         key = (pkg, target, test)
@@ -1152,7 +1268,15 @@ def main():
                 with open(path, "w") as f:
                     f.write(original.replace(old, new))
                 outcome, out = cargo_test(pkg, target, test)
-                result = "killed" if outcome == "failed" else f"survived ({outcome})"
+                if outcome != "failed":
+                    result = f"survived ({outcome})"
+                elif attack_succeeded(mid, out, test):
+                    result = "killed"
+                else:
+                    # The guard is removed and the test fails, but NOT on this
+                    # row's attack: another check refused it, or a reason
+                    # string differed. Never counted as killed.
+                    result = "refused_elsewhere"
                 evidence = kill_line(out, test) if outcome == "failed" else None
             finally:
                 with open(path, "w") as f:
@@ -1170,21 +1294,24 @@ def main():
         ok &= good
         results.append({"id": mid, "guard": guard, "file": rel, "package": pkg,
                          "target": target, "test": test, "baseline": base, "result": result,
+                         "attack_marker": ATTACK_MARKERS.get(mid),
                          "kill_evidence": evidence})
         print(f"{'OK ' if good else 'BAD'} {mid} baseline={base} {result}  {guard}", flush=True)
     # The run must end on the interpreter it started with.
     if toolchain["axon_bin_sha256"] is not None and sha(axon_bin) != toolchain["axon_bin_sha256"]:
         print(f"BAD interpreter binary changed during the run ({axon_bin})", flush=True)
         ok = False
-    doc = {"schema": "axon-v022-mutation-run/2", "gate": "G01" if scope == "g01" else scope,
+    doc = {"schema": "axon-v022-mutation-run/3", "gate": "G01" if scope == "g01" else scope,
            "scope": scope, "commit": commit,
            "toolchain": toolchain,
            "shard": None if shard is None else {"index": shard[0], "of": shard[1]},
+           # A sample (--only) is not a run of the scope, and merge refuses it.
+           "only": None if only is None else sorted(only),
            "all_killed": ok, "mutations": results}
     with open(sys.argv[1], "w") as f:
         json.dump(doc, f, indent=2)
         f.write("\n")
-    print_evidence_model(results, scope)
+    ok &= print_evidence_model(results, scope, partial=only is not None or shard is not None)
     sys.exit(0 if ok else 1)
 
 
