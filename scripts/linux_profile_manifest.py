@@ -96,8 +96,6 @@ def source_state(pre_path):
         reasons.extend(f"before the build: {r}" for r in pre["dirty"])
         if pre.get("revision") != now["revision"]:
             reasons.append(f"the tree moved during the build: {pre.get('revision')} -> {now['revision']}")
-    if now["revision"] == "unknown" and not reasons:
-        reasons.append("cannot tell: no revision")
     return now["revision"], reasons
 
 

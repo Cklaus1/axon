@@ -267,3 +267,17 @@ fn a_tree_dirty_when_the_build_started_is_dirty() {
         "the tree was dirty when the build started and clean again by manifest time",
     );
 }
+
+#[test]
+fn an_edit_during_the_build_is_dirty() {
+    let f = fixture(true);
+    f.snapshot(&[]);
+    write(
+        &f.repo.join("crates/axon-guest-init/build.rs"),
+        "fn main() {}\n",
+    );
+    assert_dirty(
+        &f.manifest(true, &[]),
+        "an untracked build.rs appeared after the snapshot, before the manifest",
+    );
+}

@@ -592,6 +592,9 @@ pub(crate) mod tests {
             format!("gitdir: {}\n", r.join(".git").display()),
         )
         .unwrap();
-        assert!(discover(&w).unwrap_err().contains("gitfile"));
+        let e = discover(&w).expect_err(
+            "ATTACK: a gitfile naming a repository elsewhere was accepted as the build's tree",
+        );
+        assert!(e.contains("gitfile"), "{e}");
     }
 }
