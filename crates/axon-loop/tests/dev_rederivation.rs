@@ -37,7 +37,11 @@ fn admitted_then(withdraw: impl FnOnce(&mut axon_loop::store::Config)) -> (World
     freeze_plan(&w.s, "dev", &w.inc_ref, &w.cand_ref, |_| {}).unwrap();
     let specs = pair(&w.inc, &w.cand, 2, 2, 2, Some(100), Some(50));
     assign_specs(&w.s, "dev", &specs);
-    let (_, e) = evaluate(&w.s, &evl_request("dev", &w.inc, &w.cand, &specs, &EvlOpts::default())).unwrap();
+    let (_, e) = evaluate(
+        &w.s,
+        &evl_request("dev", &w.inc, &w.cand, &specs, &EvlOpts::default()),
+    )
+    .unwrap();
     let (rec, adm) = admit(&w.s, "dev", &e, ADMITTER, false).unwrap();
     assert_eq!(rec.decision, Decision::Accept, "setup: {:?}", rec.reasons);
     let mut cfg = w.s.config().unwrap();
@@ -49,7 +53,15 @@ fn admitted_then(withdraw: impl FnOnce(&mut axon_loop::store::Config)) -> (World
 fn activate(w: &World, adm: &Ref) -> Result<impl std::fmt::Debug, LoopError> {
     pointer::transition(
         &w.s,
-        &tparse(&transition("a1", "activate", &w.inc_ref, Some(&w.cand_ref), 1, Some(adm), false)),
+        &tparse(&transition(
+            "a1",
+            "activate",
+            &w.inc_ref,
+            Some(&w.cand_ref),
+            1,
+            Some(adm),
+            false,
+        )),
     )
     .map(|p| p.active_policy_ref)
 }
@@ -60,14 +72,23 @@ fn verifier() -> OpaqueRef {
 
 #[test]
 fn a_development_activation_after_the_profile_is_withdrawn_is_refused() {
-    let (w, adm) = admitted_then(|c| c.verifier_pins.get_mut(&verifier()).unwrap().backend_profiles.clear());
+    let (w, adm) = admitted_then(|c| {
+        c.verifier_pins
+            .get_mut(&verifier())
+            .unwrap()
+            .backend_profiles
+            .clear()
+    });
     assert_unpinned("profile withdrawn", activate(&w, &adm));
 }
 
 #[test]
 fn a_development_activation_after_the_revision_pin_changes_is_refused() {
     let (w, adm) = admitted_then(|c| {
-        c.verifier_pins.get_mut(&verifier()).unwrap().executable_digest = format!("acf1:{}", "f".repeat(64))
+        c.verifier_pins
+            .get_mut(&verifier())
+            .unwrap()
+            .executable_digest = format!("acf1:{}", "f".repeat(64))
     });
     assert_unpinned("revision changed", activate(&w, &adm));
 }
@@ -101,9 +122,17 @@ fn a_development_rollback_onto_a_withdrawn_profile_is_refused() {
         tparse(&transition(id, k, from, Some(to), ep, Some(a), false))
     };
     pointer::transition(&w.s, &t("a1", "activate", &w.inc_ref, &w.cand_ref, 1, &adm)).unwrap();
-    pointer::transition(&w.s, &t("r1", "rollback", &w.cand_ref, &w.inc_ref, 2, &w.baseline)).unwrap();
+    pointer::transition(
+        &w.s,
+        &t("r1", "rollback", &w.cand_ref, &w.inc_ref, 2, &w.baseline),
+    )
+    .unwrap();
     let mut cfg = w.s.config().unwrap();
-    cfg.verifier_pins.get_mut(&verifier()).unwrap().backend_profiles.clear();
+    cfg.verifier_pins
+        .get_mut(&verifier())
+        .unwrap()
+        .backend_profiles
+        .clear();
     w.s.write_config(&cfg).unwrap();
     let r = pointer::transition(&w.s, &t("r2", "rollback", &w.inc_ref, &w.cand_ref, 3, &adm))
         .map(|p| p.active_policy_ref);

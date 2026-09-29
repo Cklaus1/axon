@@ -657,7 +657,11 @@ impl Kernel {
         let mut x = self.rng.get();
         if x == 0 {
             let s = rng_seed();
-            x = if self.rng_sealed { sealed_rng_seed(s) } else { s };
+            x = if self.rng_sealed {
+                sealed_rng_seed(s)
+            } else {
+                s
+            };
         }
         x ^= x << 13;
         x ^= x >> 7;
@@ -4070,7 +4074,6 @@ pub use provenance::{
     ProvRecord, RunStartRecord,
 };
 
-
 /// Parse the ambient run-level token cap from `AXON_BUDGET_TOKENS`.
 ///
 /// Unset means no cap. A malformed value FAILS CLOSED to `Some(0)` — no AI at
@@ -4170,7 +4173,6 @@ fn rng_seed() -> u64 {
     }
     (now_ms() as u64) | 1
 }
-
 
 /// Render `n` in `base` (2–36), '-'-prefixed when negative.
 fn i64_to_radix(n: i64, base: u32) -> String {

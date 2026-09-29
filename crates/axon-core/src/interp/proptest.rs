@@ -68,7 +68,10 @@ pub(super) fn run_property_test_inner(
 
     // Try `cases` random inputs; on the first failing one, shrink it.
     for _ in 0..cases {
-        let args: Vec<Value> = gens.iter().map(|g| g.random(&|| interp.rng_next())).collect();
+        let args: Vec<Value> = gens
+            .iter()
+            .map(|g| g.random(&|| interp.rng_next()))
+            .collect();
         if let Err(msg) = run_once(&interp, f, &args) {
             // Found a failing case — shrink toward minimal.
             let (shrunk_args, shrunk_msg) = shrink(&interp, f, &gens, args, msg);

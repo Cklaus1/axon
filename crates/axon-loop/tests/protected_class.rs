@@ -1332,7 +1332,10 @@ fn a_genuinely_signed_verdict_of_class(class: &str) {
     on_protected_backend(&mut v);
     clear_all(&w.s, &v);
     let (rec, genuine) = evaluate(&w.s, &v).unwrap();
-    assert_eq!(rec.evaluation_class, axon_loop::plan::EvaluationClass::Protected);
+    assert_eq!(
+        rec.evaluation_class,
+        axon_loop::plan::EvaluationClass::Protected
+    );
 
     // Each delivered trial: the SAME verification request, with a receipt of
     // `class` that Fabric genuinely signs, stored where intake would put it.
@@ -1365,8 +1368,13 @@ fn a_genuinely_signed_verdict_of_class(class: &str) {
         let rc_ref = w.s.put_cas("fabric-receipts", &rc).unwrap();
         let att_ref = w.s.put_cas("fabric-attestations", &att).unwrap();
         let ep_ref = w.s.put_cas("episodes", &ep).unwrap();
-        let _ = w.s.put_cas("fabric-requests", &t["verification_request"]).unwrap();
-        let tid = t["episode"]["identity"]["trial_id"].as_str().unwrap().to_string();
+        let _ =
+            w.s.put_cas("fabric-requests", &t["verification_request"])
+                .unwrap();
+        let tid = t["episode"]["identity"]["trial_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
         subst.insert(tid, (ep_ref, rc_ref, att_ref));
     }
     assert!(!subst.is_empty(), "setup: no delivered trial to substitute");
@@ -1380,7 +1388,10 @@ fn a_genuinely_signed_verdict_of_class(class: &str) {
                 t["episode_ref"] = json!(ep);
                 t["verification"]["receipt_ref"] = json!(rc);
                 t["verification"]["attestation_ref"] = json!(att);
-                t["verification"].as_object_mut().unwrap().remove("psv_evidence_ref");
+                t["verification"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("psv_evidence_ref");
                 n += 1;
             }
         }

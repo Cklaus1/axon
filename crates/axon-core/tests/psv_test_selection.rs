@@ -564,7 +564,13 @@ fn run_sealed(tag: &str, suite: &str, cand: &str, test: &str, env: &[(&str, &str
     cmd.current_dir(d.join("suite"))
         .arg("test")
         .arg(d.join("suite/accept.ax"))
-        .args(["--json", "--filter", test, "--exact", "--completion-key-stdin"])
+        .args([
+            "--json",
+            "--filter",
+            test,
+            "--exact",
+            "--completion-key-stdin",
+        ])
         .arg("--seal")
         .arg(d.join("cand"))
         .env_clear()
@@ -610,9 +616,18 @@ fn sealed_rng_activity_never_moves_the_operators_stream() {
         ("beta_sample", "beta_sample(2.0, 5.0)"),
         ("categorical_sample", "categorical_sample([0.5, 0.5])"),
         // Not Random-row, yet they draw (the route the review executed).
-        ("goal_run_random", "goal_run_random(\"probe\", 1000000.0, 5, 0, 1000000)"),
-        ("goal_run_multistart", "goal_run_multistart(\"probe\", 1000000.0, 2, 3, 0, 1000000)"),
-        ("goal_run_categorical", "goal_run_categorical(\"cprobe\", 4, 100.0, 5)"),
+        (
+            "goal_run_random",
+            "goal_run_random(\"probe\", 1000000.0, 5, 0, 1000000)",
+        ),
+        (
+            "goal_run_multistart",
+            "goal_run_multistart(\"probe\", 1000000.0, 2, 3, 0, 1000000)",
+        ),
+        (
+            "goal_run_categorical",
+            "goal_run_categorical(\"cprobe\", 4, 100.0, 5)",
+        ),
     ];
     let covered: Vec<&str> = calls.iter().map(|(n, _)| *n).collect();
     let random_row: Vec<&str> = BUILTINS
@@ -620,7 +635,10 @@ fn sealed_rng_activity_never_moves_the_operators_stream() {
         .map(|b| b.name)
         .filter(|n| builtin_effect_row(n).contains(&"Random"))
         .collect();
-    assert!(!random_row.is_empty(), "drift test found no Random builtins at all");
+    assert!(
+        !random_row.is_empty(),
+        "drift test found no Random builtins at all"
+    );
     for n in &random_row {
         assert!(
             covered.contains(n),
