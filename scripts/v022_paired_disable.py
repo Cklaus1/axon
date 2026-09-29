@@ -168,6 +168,21 @@ def main():
         # the same panic. The attack is M58's OWN (function-body escapes only);
         # the older test also attacked a closure, a route M58 never guarded.
         "M58": {"siblings": ["M59"], "kind": "pair"},
+        # C9 round 1 (harness workstream): kills that were another check's
+        # refusal. The attack is each row's own test, which accepts ANY
+        # refusal (the layers are independent) and panics "ATTACK: …" on
+        # acceptance; the all-paths argument is EQUIV_RECORD[...]["all_paths"].
+        "M27": {"siblings": ["M30"], "kind": "pair"},
+        "M29": {"siblings": ["M30"], "kind": "pair"},
+        "M214": {"siblings": ["M233"], "kind": "pair"},
+        "M216": {"siblings": ["M299"], "kind": "pair"},
+        "M377": {"siblings": ["M378"], "kind": "pair"},
+        "M378": {"siblings": ["M377"], "kind": "pair"},
+        "M384": {"siblings": ["M29", "M30"], "kind": "set"},
+        "M285": {"siblings": ["M385", "M289"], "kind": "set"},
+        "M385": {"siblings": ["M285", "M289"], "kind": "set"},
+        "M287": {"siblings": ["M290"], "kind": "pair"},
+        "M288": {"siblings": ["M290"], "kind": "pair"},
     }
     # Every retired row has a matrix and no active row has one.
     if set(GUARD_SETS) != set(mut.EQUIVALENT_DID):
@@ -231,7 +246,12 @@ def main():
             try:
                 if any(e[0].startswith("crates/axon-core/") for e in edits) and not build_axon():
                     return "BUILD_FAILED", []
-                fok, fails = full_suite_ok(pkg, row_flags(target))
+                # The row's package AND the crate that owns the guard: a
+                # loop-contracts guard tested through axon-loop must leave
+                # loop-contracts' own suite green too.
+                owner = row[2].split("/")[1] if row[2].startswith("crates/") else pkg
+                pkgs = pkg if owner == pkg else f"{pkg} -p {owner}"
+                fok, fails = full_suite_ok(pkgs, row_flags(target))
             finally:
                 rest()
                 if any(e[0].startswith("crates/axon-core/") for e in edits):
@@ -256,6 +276,7 @@ def main():
             "mutation": rid, "status": "EQUIVALENT_DID", "kind": gs["kind"],
             "property": rec["property"], "original_guard": {"file": row[2]},
             "subsumed_by": sibs, "live_killing_mutant": rec["killer"],
+            "all_paths": rec.get("all_paths"),
             "matrix": matrix, "holds": good, "commit": commit,
         })
         print(f"{'OK ' if good else 'BAD'} {rid} [{gs['kind']}]: base={baseline} "

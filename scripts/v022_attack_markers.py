@@ -51,15 +51,15 @@ ATTACK_MARKERS = {
     'M22': 'worker_reported: IntakeOutcome',
     'M23': 'two suite versions: IntakeOutcome',
     # WEAK@a3db33bd: refused by 'matched_checks differs from the check receipt's' where the test wants 'verifier_ref': reason mismatch
-    'M24': ATTACK,
+    'M24': r"ATTACK: intake verified a receipt other than the one the sidecar's verifier_ref cites",
     'M25': 'extra evidence ref: IntakeOutcome',
-    'M26': 'unwrap_err\\(\\)` on an `Ok` value: IntakeOutcome',
+    'M26': r'ATTACK: another compute profile: the verdict was ACCEPTED',
     # WEAK@a3db33bd: reason mismatch: refused by 'rubric: the receipt does not record exactly one check suite version' (M23's guard); reviewer: subsumed by intake.rs:916 argv[0]==check:{suite}
-    'M27': ATTACK,
+    'M27': r'ATTACK: a bare candidate file defined the acceptance rubric',
     # WEAK@a3db33bd: reason mismatch: refused by the acceptance argv join ('not task task-1's registered acceptance check'), not the pin
-    'M28': ATTACK,
+    'M28': r'ATTACK: a verdict on a suite not pinned for its verifier was ACCEPTED',
     # WEAK@a3db33bd: reason mismatch: refused by the acceptance join; implied by recorded == acc.check_suite
-    'M29': ATTACK,
+    'M29': r'ATTACK: a verdict recorded for a suite the request did not name',
     'M30': 'requester-chosen test: IntakeOutcome',
     'M31': 'not a registered check: IntakeOutcome',
     'M32': 'receipt for another operation: IntakeOutcome',
@@ -77,7 +77,7 @@ ATTACK_MARKERS = {
     'M44': 'left: String\\(\\"(unknown|failed)\\"\\)',
     'M45': "execution refs are the check's own documents: IntakeOutcome",
     'M46': 'check ran as the subject: IntakeOutcome',
-    'M47': 'unwrap_err\\(\\)` on an `Ok` value: IntakeOutcome',
+    'M47': r'ATTACK: another verifier revision: the verdict was ACCEPTED',
     'M48': 'left: None\\s+right: Some\\(',
     'M49': 'left: Passed\\s+right: Unknown',
     'M50': 'unwrap_err\\(\\)` on an `Ok` value: PointerRecord',
@@ -178,7 +178,7 @@ ATTACK_MARKERS = {
     # WEAK@a3db33bd: refused by io error: /tmp/mine.json does not exist in the fixture
     'M139': ATTACK,
     # WEAK@a3db33bd: refused by the D1 grant check 'pins no grant_registry' (protected_host.rs), signer never reached
-    'M140': ATTACK,
+    'M140': r'ATTACK: a (group-readable host signer key|host signer key that does not derive its pin) was not refused',
     # WEAK@a3db33bd: usage '--check-registry is required': the mutated host asks for a caller registry but none can be supplied
     'M141': ATTACK,
     'M142': 'unwrap_err\\(\\)` on an `Ok` value: ProtectedHost',
@@ -188,9 +188,9 @@ ATTACK_MARKERS = {
     'M146': 'unwrap_err\\(\\)` on an `Ok` value: ProtectedHost',
     'M147': 'unwrap_err\\(\\)` on an `Ok` value: ProtectedHost',
     'M148': 'unwrap_err\\(\\)` on an `Ok` value: ProtectedHost',
-    'M149': 'assertion `left != right` failed: \\{[^\\n]*"status":"PASS"',
-    'M150': 'assertion `left != right` failed: \\{[^\\n]*"status":"PASS"',
-    'M151': 'assertion `left != right` failed: \\{[^\\n]*"status":"PASS"',
+    'M149': r'assertion `left != right` failed: (ATTACK: certified PASS despite the attack: )?\{[^\n]*"status":"PASS"',
+    'M150': r'assertion `left != right` failed: (ATTACK: certified PASS despite the attack: )?\{[^\n]*"status":"PASS"',
+    'M151': r'assertion `left != right` failed: (ATTACK: certified PASS despite the attack: )?\{[^\n]*"status":"PASS"',
     # WEAK@a3db33bd: refused 'does not verify ... not the ones the issuer signed' (M153's check), reason mismatch vs 'is for authority'
     'M152': ATTACK,
     'M153': 'relabelled as [^\\n]*"verified":true',
@@ -249,14 +249,14 @@ ATTACK_MARKERS = {
     'M199': ATTACK,
     'M200': 'failed: op-obs-other-manifest-observer-observer\\s*\\n\\s*left: (?!NotRun)',
     # WEAK@a3db33bd: refused by the custodian 'nonce ... was never issued', not the join
-    'M201': ATTACK,
+    'M201': r'failed: op-obs-nonce-issued-elsewhere-observer-observer\s*\n\s*left: (?!NotRun)',
     'M202': 'failed: op-obs-kernel-observer-observer\\s*\\n\\s*left: (?!NotRun)',
     'M203': 'left: "guest-unobserved"\\s*\\n\\s*right: "protected"',
     # WEAK@a3db33bd: refused 'bundle presented for a receipt that does not claim protected evidence' (another check)
     # C9 round 1: M204 re-anchored ACTIVE on the current observe seam. A defective
     # observation launched and yielded a Passed verification (reviewer M204re.log).
     'M204': r'left: Passed\s+right: NotRun',
-    'M205': ATTACK,
+    'M205': r'ATTACK: a protected claim was authenticated by a store-planted verifier key',
     'M206': 'unwrap_err\\(\\)` on an `Ok` value: IntakeOutcome',
     'M207': 'outcome: VerifiedPass.*left: [1-9]\\d*\\s*\\n\\s*right: 0',
     'M208': 'outcome: VerifiedPass.*left: [1-9]\\d*\\s*\\n\\s*right: 0',
@@ -264,16 +264,16 @@ ATTACK_MARKERS = {
     'M210': 'a forged attribution was admitted',
     'M211': 'TrialResult.*\\n\\s*left: [1-9]\\d*\\n\\s*right: 0',
     'M212': 'TrialResult.*\\n\\s*left: [1-9]\\d*\\n\\s*right: 0',
-    'M213': 'unwrap_err\\(\\)` on an `Ok` value: IntakeOutcome',
+    'M213': r'ATTACK: development backend: ACCEPTED',
     # WEAK@a3db33bd: Failing panic is the reason assert ('no observation: refused: ... does not join: <other join>'); the claim was still refused.
-    'M214': ATTACK,
+    'M214': r'ATTACK: no observation: ACCEPTED',
     # WEAK@a3db33bd: Failing panic is the reason assert ('another interpreter: refused: ... does not join: <other join>'); the claim was still refused.
-    'M215': ATTACK,
+    'M215': r'a guest that ran an unpinned interpreter, every document consistent: ACCEPTED',
     # WEAK@a3db33bd: Failing panic is the reason assert ('duplicated verdict: refused: ... does not join: <other join>'); the claim was still refused.
-    'M216': ATTACK,
+    'M216': r'ATTACK: duplicated verdict: ACCEPTED',
     # WEAK@a3db33bd: Failing panic is the reason assert ('malformed digest: refused: ... does not join: <other join>'); the claim was still refused.
-    'M217': ATTACK,
-    'M218': 'unwrap_err\\(\\)` on an `Ok` value: IntakeOutcome',
+    'M217': r'a malformed kernel digest every document agrees on: ACCEPTED',
+    'M218': r'ATTACK: [^\n]*: ACCEPTED',
     'M219': '\\n\\[[^\\n]*\\"t_cand_probe\\"[^\\n]*\\]',
     'M220': 'failed: GuestVerdict \\{.*\\n\\s*left: (?!Passed)\\w+\\n\\s*right: Passed',
     # WEAK@a3db33bd: Failure is NotRun with 'launch manifest not built: suite tree is X, not the registered Y' - the swap was refused by prepare, not by private_inputs.
@@ -321,9 +321,9 @@ ATTACK_MARKERS = {
     'M260': '\\"status\\":\\"ok\\"',
     'M261': 'counts are not its trials: admitted',
     # WEAK@a3db33bd: Refused by reverify_protected ('does not re-verify from its stored documents'), reason mismatch (reviewer log M262.log).
-    'M262': '(?m)^[^\\n]*: admitted \\w+ \\[',
+    'M262': r'ATTACK: a protected plan admitted an evaluation relabelled development',
     # WEAK@a3db33bd: Refused by reverify_protected (context signature doc_ref mismatch), reason mismatch (reviewer log M263.log).
-    'M263': '(?m)^[^\\n]*: admitted \\w+ \\[',
+    'M263': r"ATTACK: a trial counted another trial's whole verified evidence",
     'M264': '\\n\\s*left: Accept\\n\\s*right: Accept',
     'M265': 'failed: None\\n\\s*left: (?!Unsupported)\\w+\\n\\s*right: Unsupported',
     'M266': "the launcher imported a module from the caller's working directory",
@@ -348,14 +348,14 @@ ATTACK_MARKERS = {
     # UNCLEAR@a3db33bd: Combined assert prints both verdicts; 2-line evidence does not show whether either was PASS or a different refusal.
     'M284': '(fake git on PATH|GIT_DIR/GIT_WORK_TREE): \\{[^\\n]*\\"status\\":\\"PASS\\"',
     # WEAK@a3db33bd: PARTIAL via worktree_differs (M290); reason mismatch only.
-    'M285': 'assertion `left != right` failed: \\{.*\\"status\\":\\"PASS\\"',
-    'M286': 'assertion `left != right` failed: \\{.*\\"status\\":\\"PASS\\"',
+    'M285': r'assertion `left != right` failed: (ATTACK: certified PASS despite the attack: )?\{[^\n]*"status":"PASS"',
+    'M286': r'assertion `left != right` failed: (ATTACK: certified PASS despite the attack: )?\{[^\n]*"status":"PASS"',
     # WEAK@a3db33bd: PARTIAL via worktree_differs ('1 file(s) ... changed'); reason mismatch only.
-    'M287': 'assertion `left != right` failed: \\{.*\\"status\\":\\"PASS\\"',
+    'M287': r'assertion `left != right` failed: (ATTACK: certified PASS despite the attack: )?\{[^\n]*"status":"PASS"',
     # WEAK@a3db33bd: PARTIAL via worktree_differs; reason mismatch only.
-    'M288': 'assertion `left != right` failed: \\{.*\\"status\\":\\"PASS\\"',
-    'M289': 'assertion `left != right` failed: \\{.*\\"status\\":\\"PASS\\"',
-    'M290': 'assertion `left != right` failed: \\{.*\\"status\\":\\"PASS\\"',
+    'M288': r'assertion `left != right` failed: (ATTACK: certified PASS despite the attack: )?\{[^\n]*"status":"PASS"',
+    'M289': r'assertion `left != right` failed: (ATTACK: certified PASS despite the attack: )?\{[^\n]*"status":"PASS"',
+    'M290': r'assertion `left != right` failed: (ATTACK: certified PASS despite the attack: )?\{[^\n]*"status":"PASS"',
     'M291': 'unwrap_err\\(\\)` on an `Ok` value: ProtectedHost',
     'M292': 'unwrap_err\\(\\)` on an `Ok` value: ProtectedHost',
     'M293': 'a genuine keyed pass from a run that exited non-zero was reported Passed',
@@ -380,4 +380,17 @@ ATTACK_MARKERS = {
     'M316': 'accepted, but must refuse with \\"candidate input holds an empty directory \\(lib/lost\\+found\\)',
     'M317': 'accepted, but must refuse with \\"candidate input holds lib with mode 0700',
     'M318': 'accepted, but must refuse with \\"candidate input holds f\\.ax with mode 0000',
+    # ── C9 round 1, HARNESS workstream rows (M375-M385) ──
+    'M375': r'manifest for another trial: ACCEPTED',
+    'M376': r'manifest for another attempt: ACCEPTED',
+    # M377/M378 alone are EQUIVALENT (four-cell); M379 removes both joins.
+    'M377': r'manifest for another candidate: ACCEPTED',
+    'M378': r'manifest for another candidate: ACCEPTED',
+    'M379': r'manifest for another candidate: ACCEPTED',
+    'M380': r'manifest for another test: ACCEPTED',
+    'M381': r"receipt kernel ref not the manifest's \(the reviewer's repro\): ACCEPTED",
+    'M382': r"receipt qualification ref not the manifest's: ACCEPTED",
+    'M383': r'a bundle of another schema version: ACCEPTED',
+    'M384': r'ATTACK: a protected verdict for a request that named another suite: ACCEPTED',
+    'M385': r'ATTACK: certified PASS despite the attack: \{[^\n]*"status":"PASS"',
 }

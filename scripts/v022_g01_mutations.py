@@ -177,7 +177,7 @@ MUTATIONS = [
      'crates/axon-loop/src/intake.rs',
      '    let Some(suite_id) = entry.strip_prefix("check:") else {',
      '    let Some(suite_id) = entry.strip_prefix("check:").or(Some(entry)) else {',
-     'axon-loop', '--test intake', 'a_verdict_counts_only_for_what_the_operator_pinned'),
+     'axon-loop', '--test intake', 'a_bare_candidate_file_named_like_the_suite_never_defines_the_rubric'),
     ('M28', 'intake: the recorded suite is pinned for this verifier',
      'crates/axon-loop/src/intake.rs',
      '        || !pin.check_suites.iter().any(|p| p == recorded)\n',
@@ -187,7 +187,7 @@ MUTATIONS = [
      'crates/axon-loop/src/intake.rs',
      '    if !recorded.starts_with(&format!("check-suite:{suite_id}@"))\n        ||',
      '    if false\n        ||',
-     'axon-loop', '--test intake', 'a_verdict_counts_only_for_what_the_operator_pinned'),
+     'axon-loop', '--test intake', 'a_verdict_recorded_for_a_suite_the_request_did_not_name_is_refused'),
     ('M30', "intake: argv is the task's registered acceptance check",
      'crates/axon-loop/src/intake.rs',
      '    if req.argv != [format!("check:{acc_suite}"), acc.check.clone()] || recorded != acc.check_suite',
@@ -784,9 +784,9 @@ MUTATIONS = [
     ('M212', 'M4: the one class must be protected', 'crates/axon-loop-contracts/src/protected_evidence.rs', '["protected"] => {}', '[_] => {}', 'axon-loop', '--test protected_class', 'only_protected_class_evidence_counts_in_a_protected_evaluation'),
     ('M213', 'M4/A13: a protected claim needs a protected backend', 'crates/axon-loop-contracts/src/protected_evidence.rs', 'if !crate::PROTECTED_PROFILES.contains(&rc.backend_profile_ref.as_str()) {', 'if false {', 'axon-loop', '--test intake', 'a_protected_claim_without_every_join_is_refused'),
     ('M214', 'M4/A14: a protected claim names its observation', 'crates/axon-loop-contracts/src/protected_evidence.rs', '    "preflight-observation-sha256:",\n', '    "launch-manifest-sha256:",\n', 'axon-loop', '--test intake', 'a_protected_claim_without_every_join_is_refused'),
-    ('M215', "M4/A6: the guest interpreter is the request's pinned executable", 'crates/axon-loop-contracts/src/protected_evidence.rs', 'if req.executable_digest.as_str() != want {', 'if false && req.executable_digest.as_str() != want {', 'axon-loop', '--test intake', 'a_protected_claim_without_every_join_is_refused'),
+    ('M215', "M4/A6: the guest interpreter is the request's pinned executable", 'crates/axon-loop-contracts/src/protected_evidence.rs', 'if req.executable_digest.as_str() != want {', 'if false && req.executable_digest.as_str() != want {', 'axon-loop', '--test intake', 'each_protected_join_is_verified_over_the_documents'),
     ('M216', 'M4: each join exactly once', 'crates/axon-loop-contracts/src/protected_evidence.rs', '            [d] if d.len() == 64 && d.bytes().all(|b| b.is_ascii_hexdigit()) => {', '            [d, ..] if d.len() == 64 && d.bytes().all(|b| b.is_ascii_hexdigit()) => {', 'axon-loop', '--test intake', 'a_protected_claim_without_every_join_is_refused'),
-    ('M217', 'M4: each join is a sha256', 'crates/axon-loop-contracts/src/protected_evidence.rs', '[d] if d.len() == 64 && d.bytes().all(|b| b.is_ascii_hexdigit()) =>', '[d] =>', 'axon-loop', '--test intake', 'a_protected_claim_without_every_join_is_refused'),
+    ('M217', 'M4: each join is a sha256', 'crates/axon-loop-contracts/src/protected_evidence.rs', '[d] if d.len() == 64 && d.bytes().all(|b| b.is_ascii_hexdigit()) =>', '[d] =>', 'axon-loop', '--test intake', 'each_protected_join_is_verified_over_the_documents'),
     ('M218', 'M4: intake holds a protected claim to every join', 'crates/axon-loop/src/intake.rs', '        axon_loop_contracts::protected_evidence::check_bundle(\n            &req,\n            &rc,\n            bundle,\n            ep.authority_epoch.get(),\n        )\n        .map_err(|e| {', '        Ok::<&str, String>(bundle).map(|_| ()).map_err(|e: String| {', 'axon-loop', '--test intake', 'a_protected_claim_without_every_join_is_refused'),
     ('M219', 'B1: a sealed candidate @[test] is never collected', 'crates/axon-core/src/main.rs', 'if !sealed.is_empty() && axon_core::resolver::span_in_sealed(f.span, &sealed) {', 'if false && axon_core::resolver::span_in_sealed(f.span, &sealed) {', 'axon-core', '--no-default-features --test psv_test_selection', 'a_sealed_candidates_own_test_is_never_collected'),
     ('M220', 'B1: the runner selects exactly the registered test', 'crates/axon-psv/src/runner.rs', '        .arg("--exact")\n', '', 'axon-psv', '--test runner', 'a_suite_sibling_does_not_run_beside_the_registered_test'),
@@ -884,6 +884,20 @@ MUTATIONS = [
     ('M316', 'PSV-2: only an EMPTY ROOT lost+found is exempt', 'crates/axon-psv/src/lib.rs', 'if prefix.is_empty() && name == MKFS_LOST_FOUND {', 'if name == MKFS_LOST_FOUND {', 'axon-psv', '--test protocol', 'inputs_holding_what_the_digest_cannot_see_are_refused'),
     ('M317', 'PSV-2: a directory mode the digest does not record is refused', 'crates/axon-psv/src/lib.rs', 'if !mode_is_normalised(true, false, mode) {', 'if false && !mode_is_normalised(true, false, mode) {', 'axon-psv', '--test protocol', 'inputs_holding_what_the_digest_cannot_see_are_refused'),
     ('M318', 'PSV-2: a file mode the digest does not record is refused', 'crates/axon-psv/src/lib.rs', 'if meta.is_file() && !mode_is_normalised(false, exec, mode) {', 'if false && meta.is_file() && !mode_is_normalised(false, exec, mode) {', 'axon-psv', '--test protocol', 'inputs_holding_what_the_digest_cannot_see_are_refused'),
+    # ── C9 round 1, HARNESS workstream (M375-M399) ──────────────────────────
+    # check_bundle guards that had no row (C9 dev review, EQUIVALENCE). Each is
+    # scored on its OWN attack (scripts/v022_attack_markers.py).
+    ('M375', 'PSV-5: the manifest trial_id joins the request', 'crates/axon-loop-contracts/src/protected_evidence.rs', '("trial_id", &m.trial_id, req.trial_id.as_str()),', '("trial_id", req.trial_id.as_str(), req.trial_id.as_str()),', 'axon-loop', '--test intake', 'each_protected_join_is_verified_over_the_documents'),
+    ('M376', 'PSV-5: the manifest attempt_id joins the request', 'crates/axon-loop-contracts/src/protected_evidence.rs', '("attempt_id", &m.attempt_id, req.attempt_id.as_str()),', '("attempt_id", req.attempt_id.as_str(), req.attempt_id.as_str()),', 'axon-loop', '--test intake', 'each_protected_join_is_verified_over_the_documents'),
+    ('M377', 'PSV-5: the manifest candidate joins the request (alone: EQUIVALENT with M378, see EQUIV_RECORD)', 'crates/axon-loop-contracts/src/protected_evidence.rs', '            &m.candidate.workspace_version,\n            req.workspace_version_ref.as_str(),', '            req.workspace_version_ref.as_str(),\n            req.workspace_version_ref.as_str(),', 'axon-loop', '--test intake', 'each_protected_join_is_verified_over_the_documents'),
+    ('M378', 'PSV-5: the manifest candidate joins the receipt (alone: EQUIVALENT with M377, see EQUIV_RECORD)', 'crates/axon-loop-contracts/src/protected_evidence.rs', '            &m.candidate.workspace_version,\n            rc.input_workspace_ref.as_str(),', '            rc.input_workspace_ref.as_str(),\n            rc.input_workspace_ref.as_str(),', 'axon-loop', '--test intake', 'each_protected_join_is_verified_over_the_documents'),
+    ('M379', "PSV-5: the manifest candidate joins the request AND the receipt (both joins; the property's live killer for M377/M378)", 'crates/axon-loop-contracts/src/protected_evidence.rs', '        (\n            "candidate",\n            &m.candidate.workspace_version,\n            req.workspace_version_ref.as_str(),\n        ),\n        (\n            "candidate (receipt)",\n            &m.candidate.workspace_version,\n            rc.input_workspace_ref.as_str(),\n        ),\n', '        (\n            "candidate",\n            req.workspace_version_ref.as_str(),\n            req.workspace_version_ref.as_str(),\n        ),\n        (\n            "candidate (receipt)",\n            rc.input_workspace_ref.as_str(),\n            rc.input_workspace_ref.as_str(),\n        ),\n', 'axon-loop', '--test intake', 'each_protected_join_is_verified_over_the_documents'),
+    ('M380', "PSV-5: the manifest test joins the request's argv", 'crates/axon-loop-contracts/src/protected_evidence.rs', '            &m.suite.test,\n            req.argv.get(1).map(String::as_str).unwrap_or(""),', '            req.argv.get(1).map(String::as_str).unwrap_or(""),\n            req.argv.get(1).map(String::as_str).unwrap_or(""),', 'axon-loop', '--test intake', 'each_protected_join_is_verified_over_the_documents'),
+    ('M381', 'PSV-5: the manifest guest kernel joins the receipt ref', 'crates/axon-loop-contracts/src/protected_evidence.rs', '            &m.guest.kernel_sha256,\n            want("guest-kernel-sha256:")?,', '            want("guest-kernel-sha256:")?,\n            want("guest-kernel-sha256:")?,', 'axon-loop', '--test intake', 'each_protected_join_is_verified_over_the_documents'),
+    ('M382', 'PSV-5: the manifest qualification joins the receipt ref', 'crates/axon-loop-contracts/src/protected_evidence.rs', '            &m.qualification_sha256,\n            want("qualification-sha256:")?,', '            want("qualification-sha256:")?,\n            want("qualification-sha256:")?,', 'axon-loop', '--test intake', 'each_protected_join_is_verified_over_the_documents'),
+    ('M383', 'B2: the bundle is axon-psv-evidence/2', 'crates/axon-loop-contracts/src/protected_evidence.rs', '    if b.schema != PSV_EVIDENCE_SCHEMA {', '    if false && b.schema != PSV_EVIDENCE_SCHEMA {', 'axon-loop', '--test intake', 'each_protected_join_is_verified_over_the_documents'),
+    ('M384', "B2: the request's suite (argv[0]) is the manifest's (EQUIVALENT: dominated by intake's argv/suite joins M29+M30)", 'crates/axon-loop-contracts/src/protected_evidence.rs', '    if req.argv.first().map(String::as_str) != Some(&format!("check:{}", m.suite.id)) {', '    if false && req.argv.first().map(String::as_str) != Some(&format!("check:{}", m.suite.id)) {', 'axon-loop', '--test intake', 'a_protected_verdict_for_a_request_that_named_another_suite_is_refused'),
+    ('M385', 'readiness: git reads no replacement objects (GIT_NO_REPLACE_OBJECTS and --no-replace-objects)', 'crates/axon-fabric/src/readiness.rs', '        .env("GIT_NO_REPLACE_OBJECTS", "1")\n        .env("GIT_CONFIG_NOSYSTEM", "1")\n        .env("GIT_CONFIG_GLOBAL", "/dev/null")\n        .env("GIT_OPTIONAL_LOCKS", "0")\n        .env("GIT_TERMINAL_PROMPT", "0")\n        .arg("--no-replace-objects")\n', '        .env("GIT_CONFIG_NOSYSTEM", "1")\n        .env("GIT_CONFIG_GLOBAL", "/dev/null")\n        .env("GIT_OPTIONAL_LOCKS", "0")\n        .env("GIT_TERMINAL_PROMPT", "0")\n', 'axon-fabric', '--test readiness', 'a_replaced_head_commit_is_not_certified'),
 ]
 
 
@@ -906,8 +920,9 @@ PCI_IDS = {"M04", "M44", "M49", "M52", "M53", "M57", "M59", "M60", "M61", "M62",
 # mutated the attack is STILL refused (all verified: the mutant test passes),
 # and the property is killed by a LIVE sibling row. So each is an equivalent
 # mutant, excluded from the kill requirement — the code keeps both checks.
-#   M204: submit's observe seam — observer-refusal is killed by M192-M195
-#         (observer.rs) and the epoch arm by M253.
+#   M204: submit's observe seam. NOT equivalent and NOT stale: re-anchored
+#         ACTIVE in C9 round 1 (its guard lived on at the current seam; a
+#         swallowed observe Err launched a defective observation as Passed).
 #   M103: derive check_pins — killed by intake pins M26/M28/M47.
 #   M104: derive context_signed_by — killed by M99 and round-3 M269.
 #   M209: derive rooted verifier — killed by O2 M205/M206.
@@ -934,6 +949,45 @@ PCI_IDS = {"M04", "M44", "M49", "M52", "M53", "M57", "M59", "M60", "M61", "M62",
 EQUIV_RECORD = {
     "M58": {"property": "a break/continue raised in a FUNCTION BODY does not escape into the caller's loop", "subsumed_by": ["M59"], "killer": "M59"},
     "M245": {"property": "a protected clearance is a real monitor signature under the operator monitor root", "subsumed_by": ["M264"], "killer": "M264"},
+    # ── C9 round 1 (harness workstream): rows whose recorded kill was ANOTHER
+    # check refusing the attack. Each has an all-paths argument (`all_paths`)
+    # and a four-cell record in scripts/v022_paired_disable.py. `killer` names
+    # the live ACTIVE row(s) for the property, or "joint:" when no single row
+    # can reopen it (mutually dominating guards): the four-cell's joint cell is
+    # then the executed mutation that removes the property.
+    "M27": {"property": "a verdict runs an operator suite (check:<id>), never a candidate file",
+            "subsumed_by": ["M30"], "killer": "joint:M27+M30",
+            "all_paths": "check_pins is one function with two callers (intake, admission re-derivation) and no early Ok; its acceptance join (M30's clause) requires argv == [check:{acc_suite}, test] exactly, so argv[0] always has the check: prefix M27 tests"},
+    "M29": {"property": "the recorded suite is the one the request named",
+            "subsumed_by": ["M30"], "killer": "joint:M29+M30",
+            "all_paths": "same function: M30's clause requires argv[0] == check:{acc_suite} and recorded == acc.check_suite, and acc_suite is acc.check_suite's own id, so the recorded suite is argv's suite whenever M30 passes"},
+    "M214": {"property": "a protected claim names its preflight observation",
+             "subsumed_by": ["M233"], "killer": "joint:M214+M233",
+             "all_paths": "check() runs only from check_bundle (intake, admission re-verify) and from EVL, where a claim that passes check() goes on to verify_check_evidence -> check_bundle; check_bundle want()s preflight-observation-sha256 (exactly once) unconditionally"},
+    "M216": {"property": "each protected join is named exactly once",
+             "subsumed_by": ["M299"], "killer": "joint:M216+M299",
+             "all_paths": "as M214: every one of the 8 REQUIRED_DIGEST_REFS is want()ed in check_bundle, and one_ref() refuses a prefix named more than once"},
+    "M377": {"property": "the launch manifest is for the request's and receipt's candidate",
+             "subsumed_by": ["M378"], "killer": "M379",
+             "all_paths": "check_bundle is reached only through verify_check_evidence, which joins the receipt's input tree to the request's (M33); with that join, manifest==receipt implies manifest==request"},
+    "M378": {"property": "the launch manifest is for the request's and receipt's candidate",
+             "subsumed_by": ["M377"], "killer": "M379",
+             "all_paths": "as M377, symmetrically: manifest==request and request==receipt (M33) imply manifest==receipt"},
+    "M384": {"property": "a protected verdict's request named the manifest's suite",
+             "subsumed_by": ["M29", "M30"], "killer": "joint:M384+M29+M30",
+             "all_paths": "check_bundle runs inside verify_check_evidence after check_pins, which requires argv[0] == check:{acc_suite}; check_bundle's own check-suite join (M237) makes the manifest suite the receipt's, which check_pins makes acc's"},
+    "M285": {"property": "git never reports a replacement object's content under a certified name",
+             "subsumed_by": ["M385", "M289"], "killer": "joint:M285+M385+M289",
+             "all_paths": "every git call goes through git_cmd, which clears the environment (no GIT_REPLACE_REF_BASE) and disables replacement objects (M385); every object read is re-hashed to its name (M289)"},
+    "M385": {"property": "git never reports a replacement object's content under a certified name",
+             "subsumed_by": ["M285", "M289"], "killer": "joint:M285+M385+M289",
+             "all_paths": "replacements exist only as refs under refs/replace/ (the environment is cleared, so the ref base is the default); refuse_git_spoofing refuses any such ref (M285) before a verdict; objects are re-hashed (M289)"},
+    "M287": {"property": "an uncommitted change hidden by skip-worktree is not certified",
+             "subsumed_by": ["M290"], "killer": "joint:M287+M290",
+             "all_paths": "the flag only hides worktree-vs-index; worktree_differs hashes every certified path's bytes directly (never the index), a missing file differs, and a path outside the certified tree already differs in the tree diff"},
+    "M288": {"property": "an uncommitted change hidden by assume-unchanged is not certified",
+             "subsumed_by": ["M290"], "killer": "joint:M288+M290",
+             "all_paths": "as M287 (assume-unchanged, the other index flag)"},
 }
 EQUIVALENT_DID = set(EQUIV_RECORD)
 # STALE: a row whose old text no longer exists. "The old text is absent" shows

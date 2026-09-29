@@ -389,6 +389,16 @@ fn a_protected_host_loads_the_operators_registry_not_the_callers() {
 #[test]
 fn the_host_signer_key_must_be_private_and_match_its_pin() {
     let h = Host::new();
+    // The host pins a (valid, empty) grant registry, so the D1 grant check
+    // PASSES on this route and the signer checks are the only guard left
+    // before the run goes on to read its arguments. Without a pinned registry
+    // the D1 refusal would stop the call first, and removing the signer pin
+    // would be refused elsewhere, not caught (C9 dev review, M140).
+    std::fs::create_dir_all(h.p("grants")).unwrap();
+    write_grant_registry(&h.p("grants/grants.json"), &[]);
+    let grants = json!({"path": h.p("grants/grants.json"),
+                        "sha256": sha256_file(&h.p("grants/grants.json"))});
+    h.write_config(|v| v["grant_registry"] = grants.clone());
     let req = h.p("request.json");
     std::fs::write(&req, "{}").unwrap();
     let run = || {
@@ -408,11 +418,25 @@ fn the_host_signer_key_must_be_private_and_match_its_pin() {
     std::fs::set_permissions(&key, std::fs::Permissions::from_mode(0o640)).unwrap();
     let t = run();
     assert!(
+        !t.contains("grant_registry"),
+        "setup: the D1 grant check refused first: {t}"
+    );
+    assert!(
         t.contains("protected-host signer") && t.contains("readable by no one else"),
-        "{t}"
+        "ATTACK: a group-readable host signer key was not refused: {t}"
     );
     std::fs::set_permissions(&key, std::fs::Permissions::from_mode(0o600)).unwrap();
-    h.write_config(|v| v["signer"]["public_key"] = json!("ab".repeat(32)));
+    h.write_config(|v| {
+        v["signer"]["public_key"] = json!("ab".repeat(32));
+        v["grant_registry"] = grants.clone();
+    });
     let t = run();
-    assert!(t.contains("does not derive the pinned public_key"), "{t}");
+    assert!(
+        !t.contains("grant_registry"),
+        "setup: the D1 grant check refused first: {t}"
+    );
+    assert!(
+        t.contains("does not derive the pinned public_key"),
+        "ATTACK: a host signer key that does not derive its pin was not refused: {t}"
+    );
 }
