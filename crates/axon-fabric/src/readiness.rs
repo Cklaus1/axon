@@ -748,7 +748,16 @@ fn certification(repo: &Path, component: &str, trust: &ReadinessTrust) -> Result
         TrustAuthority::Qualification,
     )?;
     let exp = repo.join(TRUST_EXPECTATIONS);
-    if exp.exists() {
+    // Only a MISSING list means "no narrowing". `exists()` also answers false
+    // for a dangling symlink or any stat error, which would silently drop the
+    // narrowing; anything else that is present is read (and a non-regular
+    // file refused) by `read_once`.
+    let narrowed = match std::fs::symlink_metadata(&exp) {
+        Ok(_) => true,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
+        Err(e) => return Err(format!("{TRUST_EXPECTATIONS}: {e}")),
+    };
+    if narrowed {
         let v: Value = serde_json::from_slice(&read_once(&exp)?)
             .map_err(|e| format!("{TRUST_EXPECTATIONS}: {e}"))?;
         if let Some(list) = v["qualification_issuers"].as_array() {

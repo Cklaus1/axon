@@ -915,6 +915,8 @@ MUTATIONS = [
     ('M356', 'PSV-2 (c9r1): the guest mounts the candidate input noacl', 'profiles/linux-microvm/guest-init.sh', 'ro,nodev,nosuid,noexec,noacl /dev/vdc', 'ro,nodev,nosuid,noexec /dev/vdc', 'axon-guest-init', '--test b263_profile_wiring', 'guest_init_sh_mounts_every_psv_input_noacl'),
     ('M357', 'PSV-2 (c9r1): the guest mounts the suite input noacl', 'profiles/linux-microvm/guest-init.sh', 'ro,nodev,nosuid,noexec,noacl /dev/vdd', 'ro,nodev,nosuid,noexec /dev/vdd', 'axon-guest-init', '--test b263_profile_wiring', 'guest_init_sh_mounts_every_psv_input_noacl'),
     ('M358', 'PSV-2 (c9r1): the guest mounts the job input noacl', 'profiles/linux-microvm/guest-init.sh', 'ro,nodev,nosuid,noexec,noacl /dev/vde', 'ro,nodev,nosuid,noexec /dev/vde', 'axon-guest-init', '--test b263_profile_wiring', 'guest_init_sh_mounts_every_psv_input_noacl'),
+    # ── C9 round 1, integration: a stat error on the narrowing list is not "absent".
+    ('M369', 'FIELD-ORIGIN (A61): a narrowing list that is present but unreadable is not read as absent', 'crates/axon-fabric/src/readiness.rs', '    let narrowed = match std::fs::symlink_metadata(&exp) {', '    let narrowed = match std::fs::metadata(&exp) {', 'axon-fabric', '--test readiness', 'a_narrowing_list_that_cannot_be_read_is_not_read_as_absent'),
     # ── C9 round 1, workstream LOOP (M360-M374): attribution joined to the
     # re-verified signer (A62), key-role separation at the operator roots (A63),
     # a protected manifest names its host (A64).

@@ -49,6 +49,23 @@ fn the_repository_may_narrow_the_issuers_never_add() {
     c.refused("not one this repository expects");
 }
 
+/// C9 round 1 (class: a stat error read as "absent"): a narrowing list that is
+/// present but unreadable, here a dangling symlink, must not silently vanish.
+#[test]
+fn a_narrowing_list_that_cannot_be_read_is_not_read_as_absent() {
+    let Some(c) = certified() else { return };
+    let exp = c.repo.join("governance/status/trust-expectations.json");
+    std::fs::create_dir_all(exp.parent().unwrap()).unwrap();
+    let _ = std::fs::remove_file(&exp);
+    std::os::unix::fs::symlink("nowhere.json", &exp).unwrap();
+    c.commit("the narrowing list now points nowhere");
+    let v = c.verdict();
+    assert_ne!(
+        v["status"], "PASS",
+        "ATTACK: a narrowing list that cannot be read was read as absent: {v}"
+    );
+}
+
 #[test]
 fn any_change_to_source_scripts_or_manifests_invalidates_it() {
     for (file, label) in [
