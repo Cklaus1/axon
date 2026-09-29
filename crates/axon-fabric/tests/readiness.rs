@@ -432,3 +432,46 @@ fn moving_code_into_governance_is_a_change() {
     c.commit("move code under governance/");
     c.refused("changed since the certified revision");
 }
+
+/// PSV-7 (C9 round 2): the repository's own .git/config makes it a partial
+/// clone whose promisor remote is reached through its own core.sshCommand.
+/// Any object missing during the walk used to be lazily fetched, running
+/// that command as the verifier.
+#[test]
+fn a_promisor_remote_in_the_repository_config_runs_nothing_as_the_verifier() {
+    let Some(c) = certified() else { return };
+    let marker = c._d.path().join("ssh-command-ran");
+    for (k, v) in [
+        ("core.repositoryformatversion", "1".to_string()),
+        ("extensions.partialClone", "origin".to_string()),
+        (
+            "remote.origin.url",
+            "ssh://attacker.invalid/r.git".to_string(),
+        ),
+        ("remote.origin.promisor", "true".to_string()),
+        (
+            "core.sshCommand",
+            format!("touch {}; false", marker.display()),
+        ),
+    ] {
+        git(&c.repo, &["config", k, &v]);
+    }
+    // The certified revision's root tree goes missing from the object store.
+    let cert_tree = git_out(
+        &c.repo,
+        &["rev-parse", &format!("{}^{{tree}}", c.certified_sha())],
+    );
+    let loose = c
+        .repo
+        .join(".git/objects")
+        .join(&cert_tree[..2])
+        .join(&cert_tree[2..]);
+    std::fs::remove_file(&loose).unwrap();
+    let v = c.verdict();
+    assert!(
+        !marker.exists(),
+        "ATTACK: readiness lazily fetched a missing object and ran the repository's \
+         core.sshCommand as the verifier"
+    );
+    assert_ne!(v["status"], "PASS", "{v}");
+}

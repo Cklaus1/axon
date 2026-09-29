@@ -144,11 +144,16 @@ build_rootfs_linux() {
     # The guest axon must carry the certified PCI interpreter (the survey found
     # the pinned one predated it): refuse a revision that does not descend from
     # the PCI certification (governance/proofs/v022-pci/CERTIFICATION.md).
-    git merge-base --is-ancestor 31413ca7 HEAD || {
+    python3 scripts/linux_profile_manifest.py --descends 31413ca7 || {
         echo "[build-guest-image] ERROR: HEAD does not descend from PCI-certified 31413ca7" >&2
         exit 1
     }
     require_sha "$BUSYBOX_SRC" "$BUSYBOX_SHA256" "busybox"
+    # The tree the binaries are built FROM, before any build step (the same
+    # Rust provenance that stamps the readiness verifier). The manifest is
+    # clean only if this and the tree at manifest time are clean and agree.
+    mkdir -p "$LDIST"
+    python3 scripts/linux_profile_manifest.py --snapshot "$LDIST/provenance.pre.json"
 
     echo "[build-guest-image] Building axon interpreter (static musl, --locked)..."
     RUSTFLAGS="-C target-feature=+crt-static" \
@@ -234,7 +239,7 @@ build_rootfs_linux() {
 }
 
 write_manifest_linux() {
-    python3 scripts/linux_profile_manifest.py "$LDIST" "$PROFILE_DIR"
+    python3 scripts/linux_profile_manifest.py --pre "$LDIST/provenance.pre.json" "$LDIST" "$PROFILE_DIR"
     cp "$LDIST/manifest.json" "$PROFILE_DIR/manifest.json"
     echo "[build-guest-image] manifest → $LDIST/manifest.json (+ $PROFILE_DIR/manifest.json)"
 }

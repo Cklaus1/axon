@@ -608,6 +608,9 @@ def run(c):
     except OSError: return None
 def sha(p): return hashlib.sha256(open(p, "rb").read()).hexdigest()
 man = json.load(open(man_p))
+sys.path.insert(0, os.path.join(repo, "scripts"))
+import linux_profile_manifest as lpm  # noqa: E402  (the one provenance implementation)
+prov = lpm.provenance()
 counts = {s: sum(1 for r in rows if r["status"] == s) for s in ("PASS", "FAIL", "BLOCKED")}
 cgc = open("/sys/fs/cgroup/cgroup.controllers").read().split()
 ev = {
@@ -626,8 +629,12 @@ ev = {
   },
   "invoker": {"uid": os.getuid(), "user": run(["id", "-un"]), "authenticated": "local root shell only (no authenticated invoker identity)"},
   "command": cmd.strip(),
-  "source": {"axon_git_rev": run(["git", "rev-parse", "HEAD"]),
-             "tree_dirty": bool(run(["git", "status", "--porcelain", "--untracked-files=no"])),
+  "source": {"axon_git_rev": prov["revision"],
+             # The Rust provenance (git_data.rs), never PATH git: untracked
+             # files count, repository git config is refused, and "cannot
+             # tell" is DIRTY (FIELD-ORIGIN, C9 round 2; Fabric requires false).
+             "tree_dirty": bool(prov["dirty"]) or prov["revision"] == "unknown",
+             "tree_dirty_reasons": prov["dirty"],
              "harness_sha256": sha(os.path.join(repo, "scripts/b263_qualify.sh")),
              "launcher_sha256": sha(os.path.join(repo, "scripts/fc_linux_profile.sh")),
              "guest_init_sha256": sha(os.path.join(repo, "profiles/linux-microvm/guest-init.sh"))},

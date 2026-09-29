@@ -18,6 +18,7 @@
 
 pub mod backend;
 pub mod branches;
+pub mod git_data;
 pub mod grants;
 pub mod journal;
 pub mod observer;

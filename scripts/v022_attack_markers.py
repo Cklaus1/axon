@@ -505,4 +505,15 @@ ATTACK_MARKERS = {
     'M476': r'ATTACK: a config pinning a suite reference with a second reading was READ',
     'M477': r'ATTACK: check suite id "acceptance@x" holding a reference separator was REGISTERED',
     'M478': r'ATTACK: an observation whose key two trusted observers share was ACCEPTED',
+    # ── C9 round 2, workstream PROVENANCE (M450-M459) ──
+    'M450': r"ATTACK: build provenance ran the repository's filter driver as the builder",
+    'M451': r"ATTACK: an index entry forged to match the modified file's stat data hid the edit, and the build provenance still says source_dirty: false",
+    'M452': r"ATTACK: git run as the verifier lazily fetched a missing object and ran the\s+repository's core\.sshCommand",
+    'M453': r"ATTACK: a gitfile naming a repository elsewhere was accepted as the build's tree",
+    'M454': r"ATTACK: an untracked build\.rs appeared after the snapshot, before the manifest, and the guest manifest says axon_tree_dirty_at_build: false",
+    'M455': r'ATTACK: the provenance helper could not be built \("cannot tell"\), and the guest manifest says axon_tree_dirty_at_build: false',
+    'M456': r"ATTACK: no snapshot of the tree the artifacts were built from, and the guest manifest says axon_tree_dirty_at_build: false",
+    'M457': r"ATTACK: the tree moved to another commit between the snapshot and the manifest, and the guest manifest says axon_tree_dirty_at_build: false",
+    'M458': r"ATTACK: the tree was dirty when the build started and clean again by manifest time, and the guest manifest says axon_tree_dirty_at_build: false",
+    'M459': r"ATTACK: grafted ancestry passed the guest build's PCI lineage check",
 }
