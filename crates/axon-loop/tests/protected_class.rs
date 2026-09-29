@@ -887,7 +887,7 @@ fn a_key_revoked_at_the_operator_root_no_longer_counts() {
         );
         match apply(&w, t) {
             Err(LoopError::Refused(_)) => {}
-            o => panic!("{auth}: activated on a revoked key: {o:?}"),
+            o => panic!("ATTACK: {auth}: activated on a revoked key: {o:?}"),
         }
         assert_eq!(
             snapshot(w.dir.path()),

@@ -481,4 +481,9 @@ ATTACK_MARKERS = {
     'M436': r"ATTACK: the operator's own `use rubric` loaded the candidate's copy, which defined the rubric: [^\n]*\"status\":\"ok\"",
     'M402': r'ATTACK: a replayed execution claiming an observed protected launch was attested',
     'M403': r'ATTACK: a job file \((secret|manifest|job dir)\) carrying \S+ was not refused and the job ran',
+    # ── Retired EQUIVALENT rows: the JOINT cell's attack (paired-disable
+    # matches it; the mutation run never scores a retired row). Carried from
+    # C8 without markers, which made their joint cell unmatchable (C9 r1b).
+    'M58': r"ATTACK: `[^`]*` passed: a break/continue escaped a function body",
+    'M245': r'ATTACK: monitor: activated on a revoked key',
 }

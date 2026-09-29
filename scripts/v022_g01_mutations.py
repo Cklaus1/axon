@@ -1499,6 +1499,10 @@ def main():
     # Every active row names its attack (drift check, both directions): a row
     # with no marker cannot be scored, and a marker for no row is stale.
     missing = [m[0] for m in MUTATIONS if in_scope(m[0], "all") and m[0] not in ATTACK_MARKERS]
+    # A retired EQUIVALENT row needs its joint cell's marker too: without one
+    # paired-disable can never see its attack succeed (M58/M245 carried from C8
+    # with none, C9 round 1b).
+    missing += sorted(r for r in EQUIVALENT_DID if r not in ATTACK_MARKERS)
     orphan = sorted(set(ATTACK_MARKERS) - {m[0] for m in MUTATIONS})
     if missing or orphan:
         sys.exit(f"refused: ATTACK_MARKERS drift: active rows with no marker {missing}; "

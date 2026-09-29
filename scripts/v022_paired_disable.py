@@ -222,6 +222,11 @@ def main():
         if unknown:
             sys.exit(f"--only: no retirement record for {unknown}")
     records = []
+    # A row with no marker can never show its attack succeeding, so its joint
+    # cell would read OTHER_FAILURE by construction (M58/M245, C9 round 1b).
+    unmarked = sorted(r for r in GUARD_SETS if r not in mut.ATTACK_MARKERS)
+    if unmarked:
+        sys.exit(f"refused: GUARD_SETS rows with no attack marker {unmarked}")
     ok = True
     for rid, gs in GUARD_SETS.items():
         if only is not None and rid not in only:
