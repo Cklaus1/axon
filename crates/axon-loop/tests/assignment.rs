@@ -66,7 +66,9 @@ fn a_later_attempt_is_never_swapped_in_for_the_issued_one() {
 }
 
 /// G33 attack: the population was issued with c0; the evaluator requests a
-/// post-hoc c0b instead. Refused whole, writing nothing.
+/// post-hoc c0b instead. Refused whole, writing nothing: with c0b undelivered
+/// (the only-guard route) and delivered (where the evaluator's lookup of the
+/// issued attempt is also a structured refusal, never an index panic).
 #[test]
 fn a_trial_is_never_assigned_after_outcomes_exist() {
     let w = world();
@@ -76,8 +78,36 @@ fn a_trial_is_never_assigned_after_outcomes_exist() {
     assert!(intake_all(&w.s, &v).is_empty());
     let mut picked = specs.clone();
     picked.iter_mut().find(|s| s.3 == "c0").unwrap().3 = "c0b".into();
-    let v2 = evl_request("g33", &w.inc, &w.cand, &picked, &EvlOpts::default());
+    // Only-guard route first (C9 round 1b, M108): c0b is requested but NOT
+    // delivered, so it is merely "missing" and no later lookup of its issued
+    // attempt ever runs. The request has exactly the manifest's shape, so
+    // only the population-equality check stands between it and an evaluation
+    // with the issued c0 dropped after its outcome existed.
+    let v3 = evl_request(
+        "g33",
+        &w.inc,
+        &w.cand,
+        &picked,
+        &EvlOpts {
+            deliver: Box::new(|t| t != "c0b"),
+            ..EvlOpts::default()
+        },
+    );
     let before = snapshot(w.dir.path());
+    match axon_loop::evl::evaluate(
+        &w.s,
+        &axon_loop::evl::parse_request(&v3.to_string()).unwrap(),
+    ) {
+        Err(LoopError::Refused(m)) => {
+            assert!(m.contains("not the one journalled before execution"), "{m}")
+        }
+        Ok(o) => panic!(
+            "ATTACK: a population chosen after outcomes was evaluated (issued c0 dropped): {o:?}"
+        ),
+        Err(e) => panic!("{e}"),
+    }
+    assert_eq!(snapshot(w.dir.path()), before);
+    let v2 = evl_request("g33", &w.inc, &w.cand, &picked, &EvlOpts::default());
     match axon_loop::evl::evaluate(
         &w.s,
         &axon_loop::evl::parse_request(&v2.to_string()).unwrap(),

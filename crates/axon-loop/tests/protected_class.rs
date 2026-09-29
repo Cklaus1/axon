@@ -36,13 +36,10 @@ fn on_protected_backend(v: &mut Value) {
 fn on_backends(v: &mut Value, exec: bool, verif: bool) {
     for t in v["trials"].as_array_mut().unwrap() {
         if exec {
-            t["acf_receipt"]["backend_profile_ref"] = json!(PROTECTED);
-        }
-        t["episode"]["acf_receipt_ref"] = json!(digest_value(&t["acf_receipt"]).unwrap());
-        if exec {
-            // A GENUINE protected execution: Fabric's execution attestation
-            // (PSV-7), not merely the receipt's backend name.
-            t["acf_attestation"] = attest_execution(VERIFIER, &t["acf_request"], &t["acf_receipt"]);
+            // A GENUINE protected execution: an OBSERVED launch on the
+            // protected profile, attested by Fabric (PSV-7), not merely the
+            // receipt's backend name.
+            observed_protected_execution(t);
         }
         if t["verification_receipt"].is_object() && verif {
             t["verification_receipt"]["backend_profile_ref"] = json!(PROTECTED);
@@ -358,10 +355,18 @@ fn each_d3_leg_on_a_development_backend_counts_nothing() {
         match leg {
             Some(leg) => {
                 assert_eq!(c.verified_pass, 0, "{leg}: {:?}", c.trials);
+                // The execution leg on a development backend is refused by
+                // EVL's D3 filter AND by `verify_execution` (no attestation
+                // here; the backend join when attested: see
+                // an_attested_development_execution_leg_counts_nothing), each
+                // alone, so either reason is correct for it. The verification
+                // leg's reason stays exact.
                 assert!(
-                    c.trials
-                        .iter()
-                        .all(|t| t.reason.contains(&format!("development {leg} backend"))),
+                    c.trials.iter().all(|t| t
+                        .reason
+                        .contains(&format!("development {leg} backend"))
+                        || (leg == "execution"
+                            && t.reason.contains("not attested as a protected execution"))),
                     "{leg}: {:?}",
                     c.trials
                 );
@@ -1509,4 +1514,253 @@ fn a_genuinely_signed_unobserved_verdict_cannot_count_in_a_protected_record() {
 #[test]
 fn a_genuinely_signed_development_verdict_cannot_count_in_a_protected_record() {
     a_genuinely_signed_verdict_of_class("development")
+}
+
+/// The candidate arm's delivered trials.
+fn challenger_trials(v: &mut Value) -> impl Iterator<Item = &mut Value> {
+    v["trials"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .filter(|t| t["episode"]["identity"]["arm_id"] == "challenger-1")
+}
+
+/// Drop every evidence ref of the receipt that starts with `prefix`.
+fn drop_ref(rc: &mut Value, prefix: &str) {
+    rc["evidence_refs"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|e| !e.as_str().unwrap().starts_with(prefix));
+}
+
+/// C9 round 1b (consumer-side join, class b; M425-M427): an execution leg
+/// Fabric ATTESTED, on the protected backend, whose receipt does not itself
+/// state an OBSERVED protected launch counts nothing. Fabric no longer
+/// attests such a receipt (A54), but an attestation it issued before that fix
+/// still verifies under the same operator-rooted key; the consumer does not
+/// rest on the producer's discipline. Each attack is the genuine leg with ONE
+/// observed-launch ref missing or wrong, genuinely attested over the edited
+/// bytes, so the class join is the only thing that can refuse it. Control:
+/// the genuine observed leg counts.
+#[test]
+fn an_unobserved_execution_leg_counts_nothing_in_a_protected_evaluation() {
+    let cases: [(&str, fn(&mut Value)); 5] = [
+        ("genuine", |_| {}),
+        ("no evidence class", |rc| drop_ref(rc, "evidence-class:")),
+        ("guest-unobserved class", |rc| {
+            drop_ref(rc, "evidence-class:");
+            rc["evidence_refs"]
+                .as_array_mut()
+                .unwrap()
+                .push(json!("evidence-class:guest-unobserved"));
+        }),
+        ("no launch manifest", |rc| {
+            drop_ref(rc, "launch-manifest-sha256:")
+        }),
+        ("no preflight observation", |rc| {
+            drop_ref(rc, "preflight-observation-sha256:")
+        }),
+    ];
+    for (case, edit) in cases {
+        let w = world();
+        protect(&w.s);
+        pin_protected_backend(&w.s);
+        freeze_plan(&w.s, "obs", &w.inc_ref, &w.cand_ref, |_| {}).unwrap();
+        assign_specs(&w.s, "obs", &specs_for(&w));
+        let mut v = evl_request("obs", &w.inc, &w.cand, &specs_for(&w), &EvlOpts::default());
+        on_protected_backend(&mut v);
+        for t in challenger_trials(&mut v) {
+            observed_protected_execution_with(t, edit);
+        }
+        let (rec, _) = evaluate(&w.s, &v).unwrap();
+        let arm = rec.arm_for_policy(&w.cand_ref).unwrap();
+        if case == "genuine" {
+            assert_eq!(arm.verified_pass, 2, "control: {:?}", arm.trials);
+            continue;
+        }
+        if arm.verified_pass != 0 {
+            panic!(
+                "ATTACK: {case}: an unobserved execution leg was counted as protected: {:?}",
+                arm.trials
+            );
+        }
+        assert!(
+            arm.trials
+                .iter()
+                .all(|t| t.reason.contains("not attested as a protected execution")),
+            "{case}: {:?}",
+            arm.trials
+        );
+    }
+}
+
+/// ADR-001 D3 (M19; with M428 its four-cell pair): an execution leg on a
+/// DEVELOPMENT backend counts nothing in a protected evaluation even when its
+/// receipt carries every observed-launch ref and Fabric's attestation over it
+/// verifies. Two independent layers refuse it on this route: EVL's D3 leg
+/// filter and `verify_execution`'s backend join, which runs unconditionally
+/// right after it on the same receipt. Which of them refuses is not the
+/// property, so any Unverifiable refusal is accepted; only a COUNTED trial is
+/// the attack.
+#[test]
+fn an_attested_development_execution_leg_counts_nothing() {
+    let w = world();
+    protect(&w.s);
+    pin_protected_backend(&w.s);
+    freeze_plan(&w.s, "devx", &w.inc_ref, &w.cand_ref, |_| {}).unwrap();
+    assign_specs(&w.s, "devx", &specs_for(&w));
+    let mut v = evl_request("devx", &w.inc, &w.cand, &specs_for(&w), &EvlOpts::default());
+    on_protected_backend(&mut v);
+    for t in challenger_trials(&mut v) {
+        observed_protected_execution_with(t, |rc| {
+            rc["backend_profile_ref"] = json!(CHECK_PROFILE);
+        });
+    }
+    let (rec, _) = evaluate(&w.s, &v).unwrap();
+    let arm = rec.arm_for_policy(&w.cand_ref).unwrap();
+    if arm.verified_pass != 0 {
+        panic!(
+            "ATTACK: an attested execution on a development backend was counted as protected: {:?}",
+            arm.trials
+        );
+    }
+    assert!(
+        arm.trials.iter().all(|t| t.outcome == Outcome::Unknown
+            && t.unknown_kind == Some(axon_loop::evl::UnknownKind::Unverifiable)),
+        "{:?}",
+        arm.trials
+    );
+}
+
+/// C9 round 1b (M428): a protected ADMISSION re-checks the execution leg's
+/// BACKEND from its own stored documents, as EVL does. A store writer points
+/// each counted trial at an episode whose execution receipt names a
+/// development backend (every observed-launch ref present, Fabric's
+/// attestation over it genuine), with its attestation stored beside it. Every
+/// other document re-verifies; admission's re-derivation never runs EVL's D3
+/// leg filter, so the join in `verify_execution` is the only refusal.
+/// Control: the unforged record ACCEPTs.
+#[test]
+fn a_protected_admission_re_checks_the_execution_legs_backend() {
+    let w = world();
+    protect(&w.s);
+    pin_protected_backend(&w.s);
+    freeze_plan(&w.s, "xb", &w.inc_ref, &w.cand_ref, |_| {}).unwrap();
+    assign_specs(&w.s, "xb", &specs_for(&w));
+    let mut v = evl_request("xb", &w.inc, &w.cand, &specs_for(&w), &EvlOpts::default());
+    on_protected_backend(&mut v);
+    clear_all(&w.s, &v);
+    let (rec, e) = evaluate(&w.s, &v).unwrap();
+    let (adm, _) = admit(&w.s, "xb", &e, ADMITTER, false).unwrap();
+    assert_eq!(adm.decision, Decision::Accept, "control: {:?}", adm.reasons);
+    // The store writer's documents: per counted episode, a twin whose
+    // execution receipt is on the development backend, and its attestation.
+    let mut twins = std::collections::BTreeMap::new();
+    for t in rec.arms.iter().flat_map(|a| &a.trials) {
+        if t.verification.is_none() {
+            continue;
+        }
+        let ep_ref = t.episode_ref.clone().unwrap();
+        let mut ep: Value =
+            serde_json::from_str(&w.s.get_cas_text("episodes", &ep_ref).unwrap()).unwrap();
+        let areq: Value = serde_json::from_str(
+            &w.s.get_cas_text(
+                "acf-requests",
+                &Ref::new(ep["acf_request_ref"].as_str().unwrap()).unwrap(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let mut arc: Value = serde_json::from_str(
+            &w.s.get_cas_text(
+                "acf-receipts",
+                &Ref::new(ep["acf_receipt_ref"].as_str().unwrap()).unwrap(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        arc["backend_profile_ref"] = json!(CHECK_PROFILE);
+        let att = attest_execution(VERIFIER, &areq, &arc);
+        ep["acf_receipt_ref"] = json!(w.s.put_cas("acf-receipts", &arc).unwrap());
+        let ep: LoopEpisode = serde_json::from_value(ep).unwrap();
+        let twin = w.s.put_cas("episodes", &ep).unwrap();
+        let att_ref = w.s.put_cas("acf-attestations", &att).unwrap();
+        twins.insert(ep_ref.to_string(), (twin, att_ref));
+    }
+    assert!(!twins.is_empty());
+    let fe = forge_eval(&w, "xb", &rec, |j| {
+        for arm in j["arms"].as_array_mut().unwrap() {
+            for t in arm["trials"].as_array_mut().unwrap() {
+                if let Some((twin, att)) = t["episode_ref"].as_str().and_then(|r| twins.get(r)) {
+                    t["episode_ref"] = json!(twin);
+                    t["verification"]["execution_attestation_ref"] = json!(att);
+                }
+            }
+        }
+    });
+    match admit(&w.s, "xb", &fe, ADMITTER, false) {
+        Err(e) => assert!(e.to_string().contains("not a protected profile"), "{e}"),
+        Ok((adm, _)) => panic!(
+            "ATTACK: a development-backend execution leg was admitted as protected: {:?} {:?}",
+            adm.decision, adm.reasons
+        ),
+    }
+}
+
+/// ADR-001 D3 (M20): a protected evaluation takes NOTHING from a
+/// development-backend verification, not even the kind of an unknown. A
+/// CITED unknown (the check timed out, as the verifier signed) whose
+/// verification ran on the development backend is Unverifiable, never the
+/// receipt's TimedOut: `UnknownKind::Unverifiable` is the kind the loop
+/// reports for "a backend ineligible for this evaluation class". A verdict
+/// (passed/failed) from that backend is also refused by the protected-evidence
+/// check (M213), but that check never runs for a cited unknown, so here the
+/// leg filter is the only refusal.
+#[test]
+fn a_cited_unknown_from_a_development_verification_is_unverifiable() {
+    let w = world();
+    protect(&w.s);
+    pin_protected_backend(&w.s);
+    freeze_plan(&w.s, "cu", &w.inc_ref, &w.cand_ref, |_| {}).unwrap();
+    assign_specs(&w.s, "cu", &specs_for(&w));
+    let mut v = evl_request("cu", &w.inc, &w.cand, &specs_for(&w), &EvlOpts::default());
+    // Protected, observed execution legs; development verification legs.
+    on_backends(&mut v, true, false);
+    let t = challenger_trials(&mut v).next().unwrap();
+    let trial_id = t["episode"]["identity"]["trial_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let rc = &mut t["verification_receipt"];
+    rc["status"] = json!("timed_out");
+    rc["verification"] = json!("unknown");
+    rc["process_exit_code"] = Value::Null;
+    rc["matched_checks"] = json!(0);
+    t["episode"]["verification"]["result"] = json!("unknown");
+    t["episode"]["verification"]["matched_checks"] = json!(0);
+    t["episode"]["verification"]["verifier_ref"] =
+        json!(digest_value(&t["verification_receipt"]).unwrap());
+    t["verification_attestation"] = attest(
+        VERIFIER,
+        &t["verification_request"],
+        &t["verification_receipt"],
+    );
+    let (rec, _) = evaluate(&w.s, &v).unwrap();
+    let arm = rec.arm_for_policy(&w.cand_ref).unwrap();
+    let r = arm
+        .trials
+        .iter()
+        .find(|x| x.trial_id.as_str() == trial_id)
+        .unwrap();
+    assert_eq!(r.outcome, Outcome::Unknown, "{r:?}");
+    if r.unknown_kind != Some(axon_loop::evl::UnknownKind::Unverifiable) {
+        panic!(
+            "ATTACK: a development-backend verification decided a protected trial's unknown \
+             kind: {r:?}"
+        );
+    }
+    assert!(
+        r.reason.contains("development verification backend"),
+        "{r:?}"
+    );
 }

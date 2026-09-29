@@ -13,7 +13,13 @@
 //! with an in-world positive control: the unforged record ACCEPTs.
 //!
 //! C9 equivalence re-audit: these are the killing tests for M104, M209 and
-//! M210, which had been retired as equivalent to `reverify_protected`.
+//! M210, which had been retired as equivalent to `reverify_protected`. Since
+//! C9 round 1 M360/M361 join the record to the re-verified signer, and every
+//! path through derive's rooted-identity checks (admission and every
+//! re-derivation, protected class only) runs `reverify_protected` for the
+//! same trial: M209 and M210 are retired again (C9 round 1b), each four-cell
+//! against M360 / M361, with these tests as the named attacks. M104
+//! (presence) stays sole.
 
 mod common;
 use axon_loop::admission::Decision;
@@ -43,9 +49,7 @@ fn pin_protected_backend(s: &axon_loop::store::Store) {
 /// execution leg and a protected verdict with its PSV bundle.
 fn on_protected_backend(v: &mut Value) {
     for t in v["trials"].as_array_mut().unwrap() {
-        t["acf_receipt"]["backend_profile_ref"] = json!(PROTECTED);
-        t["episode"]["acf_receipt_ref"] = json!(digest_value(&t["acf_receipt"]).unwrap());
-        t["acf_attestation"] = attest_execution(VERIFIER, &t["acf_request"], &t["acf_receipt"]);
+        observed_protected_execution(t);
         if t["verification_receipt"].is_object() {
             t["verification_receipt"]["backend_profile_ref"] = json!(PROTECTED);
             let req = t["verification_request"].clone();
@@ -131,6 +135,19 @@ fn refused(w: &World, exp: &str, fe: &Ref, why: &str) {
     }
 }
 
+/// As [`refused`], for a route where two independent guards each refuse the
+/// forgery alone (the M209/M360 and M210/M361 four-cell pairs): the refusal
+/// may carry either reason, and only an admission is the attack.
+fn refused_by_either(w: &World, exp: &str, fe: &Ref, why: [&str; 2]) {
+    match admit(&w.s, exp, fe, ADMITTER, false) {
+        Err(e) => assert!(why.iter().any(|y| e.to_string().contains(y)), "{e}"),
+        Ok((adm, _)) => panic!(
+            "ATTACK: a forged attribution was admitted: {:?} {:?}",
+            adm.decision, adm.reasons
+        ),
+    }
+}
+
 fn key_id(pk: &str) -> String {
     axon_loop_contracts::attestation::key_id_of_hex(pk).unwrap()
 }
@@ -168,11 +185,17 @@ fn a_context_attributed_to_an_observer_the_operator_root_never_held_does_not_cou
     let fe = forge_counted(&w, "attr-observer", &rec, |t| {
         t["context_signed_by"] = json!({"issuer_ref": PLANTED, "key_id": key_id(&pk)});
     });
-    refused(
+    // Refused alone by derive's rooted-observer check (M210) and alone by the
+    // join to the observer that re-verified the context (M361): the planted
+    // identity is not the signer. Four-cell pair; either reason is correct.
+    refused_by_either(
         &w,
         "attr-observer",
         &fe,
-        "protected context is not authenticated",
+        [
+            "protected context is not authenticated",
+            "re-verifies as signed by",
+        ],
     );
 }
 
@@ -196,7 +219,15 @@ fn a_verdict_attributed_to_a_verifier_the_operator_root_never_held_does_not_coun
         t["verification"]["issuer_ref"] = json!(PLANTED);
         t["verification"]["key_id"] = json!(key_id(&pk));
     });
-    refused(&w, "attr-verifier", &fe, "no longer trusts with that key");
+    // Refused alone by derive's rooted-verifier check (M209) and alone by the
+    // join to the verifier that re-verified the verdict (M360). Four-cell
+    // pair; either reason is correct.
+    refused_by_either(
+        &w,
+        "attr-verifier",
+        &fe,
+        ["no longer trusts with that key", "re-verifies as signed by"],
+    );
 }
 
 /// Install `pk` in the test operator root for `authority` (the operator

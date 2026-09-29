@@ -162,6 +162,7 @@ def main():
         # which calls rooted_key with the identical arguments. M104, M209, M210
         # (store-writer misattribution), M103 (development class), M254 and
         # M255 (store-writer route) were all load-bearing and are ACTIVE.
+        # (M209/M210 again EQUIVALENT since M360/M361: C9 round 1b, below.)
         "M245": {"siblings": ["M264"], "kind": "pair"},
         # M58 (call_fn_frame's break/continue arm) vs M59 (contain_frame). ALL
         # PATHS: call_fn_frame has exactly ONE caller (interp.rs, in call_fn),
@@ -184,6 +185,14 @@ def main():
         "M385": {"siblings": ["M285", "M289"], "kind": "set"},
         "M287": {"siblings": ["M290"], "kind": "pair"},
         "M288": {"siblings": ["M290"], "kind": "pair"},
+        # C9 round 1b (LOOP). M19: EVL's D3 execution-leg filter vs the backend
+        # join in verify_execution (M428), which runs right after it on the
+        # same receipt. M209/M210: derive's rooted-identity checks vs the join
+        # to the re-verified signer (M360/M361), which reverify_protected runs
+        # for the same trial on every path (EQUIV_RECORD "all_paths").
+        "M19": {"siblings": ["M428"], "kind": "pair"},
+        "M209": {"siblings": ["M360"], "kind": "pair"},
+        "M210": {"siblings": ["M361"], "kind": "pair"},
     }
     # Every retired row has a matrix and no active row has one.
     if set(GUARD_SETS) != set(mut.EQUIVALENT_DID):

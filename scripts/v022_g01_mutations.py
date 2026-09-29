@@ -137,12 +137,12 @@ MUTATIONS = [
     ("M19", "D3: the execution leg is checked",
      "crates/axon-loop/src/evl.rs",
      '("execution", Some(rcpt.backend_profile_ref.as_str())),', '("execution", None),',
-     "axon-loop", "--test protected_class", "each_d3_leg_on_a_development_backend_counts_nothing"),
+     "axon-loop", "--test protected_class", "an_attested_development_execution_leg_counts_nothing"),
     ("M20", "D3: the verification leg is checked",
      "crates/axon-loop/src/evl.rs",
      '                "verification",\n                d.verification[1]["backend_profile_ref"].as_str(),',
      '                "verification",\n                None,',
-     "axon-loop", "--test protected_class", "each_d3_leg_on_a_development_backend_counts_nothing"),
+     "axon-loop", "--test protected_class", "a_cited_unknown_from_a_development_verification_is_unverifiable"),
     ("M21", "intake: a verdict's checked tree is the episode's output (failed too)",
      "crates/axon-loop/src/intake.rs",
      "        || ep.output_workspace_ref.as_ref() != checked\n",
@@ -590,7 +590,7 @@ MUTATIONS = [
      'crates/axon-loop/src/admission.rs',
      '    if &proposer == admitter {',
      '    if false && &proposer == admitter {',
-     'axon-loop', '--test evl_admission', 'an_admitter_holds_no_other_loop_role'),
+     'axon-loop', '--test evl_admission', 'the_proposer_cannot_admit_its_own_candidate_whatever_the_record_lists'),
     ('M115', 'config: one key per role, checked on read as well as write (ADR-002)',
      'crates/axon-loop/src/store.rs',
      ')?;\n                c.check_separation().map_err(crate::error::refused)?;\n                Ok(c)',
@@ -778,8 +778,8 @@ MUTATIONS = [
     ('M206', 'O2: rooted() requires the key in the operator root', 'crates/axon-loop-contracts/src/operator_trust.rs', 'if keys_in(&dir)?.contains(&want) {', 'if true {', 'axon-loop', '--test intake', 'a_verifier_key_planted_in_the_store_never_authenticates_protected_evidence'),
     ('M207', 'O2: rooted_key consults the operator root', 'crates/axon-loop/src/store.rs', '        axon_loop_contracts::operator_trust::rooted(a, k)?;\n', '', 'axon-loop', '--test protected_class', 'an_observer_key_planted_in_the_store_is_not_authority'),
     ('M208', "O2/A18: EVL's protected context uses an operator-rooted observer key", 'crates/axon-loop/src/evl.rs', 'crate::store::Config::rooted_key(\n        &config.observer_keys,\n        who,\n        axon_loop_contracts::operator_trust::TrustAuthority::Observer,\n    )', 'config.observer_keys.get(who).ok_or_else(String::new)', 'axon-loop', '--test protected_class', 'an_observer_key_planted_in_the_store_is_not_authority'),
-    ('M209', 'a counted verdict attributed to a verifier must name one the operator verifier ROOT holds (LOAD-BEARING on the misattribution route; C9 re-audit reinstated it)', 'crates/axon-loop/src/admission.rs', 'crate::store::Config::rooted_key(\n                    &config.verifier_keys,\n                    &v.issuer_ref,\n                    axon_loop_contracts::operator_trust::TrustAuthority::Verifier,\n                )', 'config.verifier_keys.get(&v.issuer_ref).ok_or_else(String::new)', 'axon-loop', '--test protected_attribution', 'a_verdict_attributed_to_a_verifier_the_operator_root_never_held_does_not_count'),
-    ('M210', 'a context attributed to an observer must name one the operator observer ROOT holds (LOAD-BEARING on the misattribution route; C9 re-audit reinstated it)', 'crates/axon-loop/src/admission.rs', 'crate::store::Config::rooted_key(\n                            &config.observer_keys,\n                            &c.issuer_ref,\n                            axon_loop_contracts::operator_trust::TrustAuthority::Observer,\n                        )', 'config.observer_keys.get(&c.issuer_ref).ok_or_else(String::new)', 'axon-loop', '--test protected_attribution', 'a_context_attributed_to_an_observer_the_operator_root_never_held_does_not_count'),
+    ('M209', 'a counted verdict attributed to a verifier must name one the operator verifier ROOT holds (EQUIVALENT since C9 round 1b: four-cell vs M360, see EQUIV_RECORD)', 'crates/axon-loop/src/admission.rs', 'crate::store::Config::rooted_key(\n                    &config.verifier_keys,\n                    &v.issuer_ref,\n                    axon_loop_contracts::operator_trust::TrustAuthority::Verifier,\n                )', 'config.verifier_keys.get(&v.issuer_ref).ok_or_else(String::new)', 'axon-loop', '--test protected_attribution', 'a_verdict_attributed_to_a_verifier_the_operator_root_never_held_does_not_count'),
+    ('M210', 'a context attributed to an observer must name one the operator observer ROOT holds (EQUIVALENT since C9 round 1b: four-cell vs M361, see EQUIV_RECORD)', 'crates/axon-loop/src/admission.rs', 'crate::store::Config::rooted_key(\n                            &config.observer_keys,\n                            &c.issuer_ref,\n                            axon_loop_contracts::operator_trust::TrustAuthority::Observer,\n                        )', 'config.observer_keys.get(&c.issuer_ref).ok_or_else(String::new)', 'axon-loop', '--test protected_attribution', 'a_context_attributed_to_an_observer_the_operator_root_never_held_does_not_count'),
     ('M211', 'M4/A13/A14: a protected evaluation counts only protected-class evidence', 'crates/axon-loop/src/evl.rs', '        // M4: a verdict counts in a protected evaluation only as PROTECTED\n', '        // M4 (mutated)\n        #[cfg(any())]\n', 'axon-loop', '--test protected_class', 'only_protected_class_evidence_counts_in_a_protected_evaluation'),
     ('M212', 'M4: the one class must be protected', 'crates/axon-loop-contracts/src/protected_evidence.rs', '["protected"] => {}', '[_] => {}', 'axon-loop', '--test protected_class', 'only_protected_class_evidence_counts_in_a_protected_evaluation'),
     ('M213', 'M4/A13: a protected claim needs a protected backend', 'crates/axon-loop-contracts/src/protected_evidence.rs', 'if !crate::PROTECTED_PROFILES.contains(&rc.backend_profile_ref.as_str()) {', 'if false {', 'axon-loop', '--test intake', 'a_protected_claim_without_every_join_is_refused'),
@@ -933,11 +933,10 @@ MUTATIONS = [
     # ── C9 round 1, workstream LOOP (M360-M374): attribution joined to the
     # re-verified signer (A62), key-role separation at the operator roots (A63),
     # a protected manifest names its host (A64).
-    # NOTE (not retired here): with M360/M361 in place, M209 and M210 are
-    # equivalent-shaped. Their attacks (an identity the operator root never
-    # held) are now also refused by the join to the re-verified signer, so
-    # each mutant's test fails on the join's reason, not its ATTACK assertion.
-    # Candidates for four-cell retirement; M104 (presence) stays sole.
+    # C9 round 1b (LOOP): with M360/M361 in place M209 and M210 are retired
+    # EQUIVALENT (four-cell vs M360 / M361; all-paths in EQUIV_RECORD). Their
+    # attack (an identity the operator root never held) is refused by the join
+    # to the re-verified signer on every path. M104 (presence) stays sole.
     ('M360', 'PSV-5 (A62): a protected verdict\'s recorded verifier and key ARE the signer that re-verified', 'crates/axon-loop/src/admission.rs', '    if ep.verification.issuer_ref.as_ref() != Some(&v.issuer_ref) || signed_key != v.key_id {', '    if false && ep.verification.issuer_ref.as_ref() != Some(&v.issuer_ref) || signed_key != v.key_id && false {', 'axon-loop', '--test protected_attribution', 'a_verdict_attributed_to_another_rooted_verifier_does_not_count'),
     ('M361', 'PSV-5 (A62): a protected context\'s context_signed_by IS the observer and key that re-verified it', 'crates/axon-loop/src/admission.rs', '                    if c != signer {', '                    if false && c != signer {', 'axon-loop', '--test protected_attribution', 'a_context_attributed_to_another_rooted_observer_does_not_count'),
     ('M362', 'PSV-5 (A62): a protected context\'s context_observer_ref IS the observer that signed it', 'crates/axon-loop/src/admission.rs', '    if t.context_observer_ref.as_ref() != Some(&who) {', '    if false && t.context_observer_ref.as_ref() != Some(&who) {', 'axon-loop', '--test protected_attribution', 'a_context_admitted_under_another_trusted_observer_does_not_count'),
@@ -947,6 +946,17 @@ MUTATIONS = [
     ('M366', 'PSV-7 (A64): check_bundle refuses a manifest with an all-zero digest', 'crates/axon-loop-contracts/src/protected_evidence.rs', '    names_every_digest(&m)?;\n', '    let _ = names_every_digest(&m);\n', 'axon-loop', '--test intake', 'a_protected_manifest_naming_no_operator_host_is_refused'),
     ('M367', 'PSV-7 (A64): an all-zero sha256 is the refused placeholder', 'crates/axon-loop-contracts/src/protected_evidence.rs', '.is_some_and(|d| !d.is_empty() && d.bytes().all(|b| b == b\'0\'))', '.is_some_and(|d| d.is_empty())', 'axon-loop', '--test intake', 'a_protected_manifest_naming_no_operator_host_is_refused'),
     ('M368', 'PSV-7 (A64): nested manifest digests (suite.registry_sha256) are walked too', 'crates/axon-loop-contracts/src/protected_evidence.rs', '                    walk(&p, x)?;\n', '                    let _ = (&p, x);\n', 'axon-loop', '--test intake', 'a_protected_manifest_naming_no_operator_host_is_refused'),
+    # ── C9 round 1b, workstream LOOP (M425-M434): the consumer-side join on
+    # the protected EXECUTION leg (class b). verify_execution (EVL's protected
+    # leg AND admission's re-derivation) requires the attested receipt itself
+    # to state an observed protected launch: a protected backend, the one class
+    # `protected`, and the launch-manifest and preflight-observation digests.
+    # An attestation a pre-A54 Fabric issued over an unobserved launch still
+    # verifies under the same operator-rooted key.
+    ('M425', 'C9r1b class-b join: an attested execution counts only if its receipt states the ONE evidence class protected', 'crates/axon-loop/src/evl.rs', '    if classes != ["protected"] {', '    if false && classes != ["protected"] {', 'axon-loop', '--test protected_class', 'an_unobserved_execution_leg_counts_nothing_in_a_protected_evaluation'),
+    ('M426', 'C9r1b class-b join: an attested execution counts only if its receipt names its launch manifest', 'crates/axon-loop/src/evl.rs', '    names_one_sha256(rc, "launch-manifest-sha256:")?;\n', '    let _ = names_one_sha256(rc, "launch-manifest-sha256:");\n', 'axon-loop', '--test protected_class', 'an_unobserved_execution_leg_counts_nothing_in_a_protected_evaluation'),
+    ('M427', 'C9r1b class-b join: an attested execution counts only if its receipt names its preflight observation', 'crates/axon-loop/src/evl.rs', '    names_one_sha256(rc, "preflight-observation-sha256:")?;\n', '    let _ = names_one_sha256(rc, "preflight-observation-sha256:");\n', 'axon-loop', '--test protected_class', 'an_unobserved_execution_leg_counts_nothing_in_a_protected_evaluation'),
+    ('M428', "C9r1b: the protected execution leg's backend is re-checked where admission re-derives (EVL's D3 filter M19 never runs there)", 'crates/axon-loop/src/evl.rs', '    if !axon_loop_contracts::PROTECTED_PROFILES.contains(&rc.backend_profile_ref.as_str()) {', '    if false && !axon_loop_contracts::PROTECTED_PROFILES.contains(&rc.backend_profile_ref.as_str()) {', 'axon-loop', '--test protected_class', 'a_protected_admission_re_checks_the_execution_legs_backend'),
     # ── C9 round 1, HARNESS workstream (M375-M399) ──────────────────────────
     # check_bundle guards that had no row (C9 dev review, EQUIVALENCE). Each is
     # scored on its OWN attack (scripts/v022_attack_markers.py).
@@ -988,8 +998,10 @@ PCI_IDS = {"M04", "M44", "M49", "M52", "M53", "M57", "M59", "M60", "M61", "M62",
 #         swallowed observe Err launched a defective observation as Passed).
 #   M103: derive check_pins — killed by intake pins M26/M28/M47.
 #   M104: derive context_signed_by — killed by M99 and round-3 M269.
-#   M209: derive rooted verifier — killed by O2 M205/M206.
-#   M210: derive rooted observer — killed by O2 M207/M208.
+#   M209: derive rooted verifier — killed by O2 M205/M206. C9 re-audit
+#         reinstated it; C9 round 1b retires it again vs M360 (EQUIV_RECORD).
+#   M210: derive rooted observer — killed by O2 M207/M208. C9 re-audit
+#         reinstated it; C9 round 1b retires it again vs M361 (EQUIV_RECORD).
 #   M245: derive monitor key_id scan — killed by M105 and round-2 M264.
 #   M254: NOT equivalent — REINSTATED ACTIVE (C8 certifying review
 #         wf_bff9835f-4a0). It was listed here as "killed by M261 + M267-M269",
@@ -1051,6 +1063,16 @@ EQUIV_RECORD = {
     "M288": {"property": "an uncommitted change hidden by assume-unchanged is not certified",
              "subsumed_by": ["M290"], "killer": "joint:M288+M290",
              "all_paths": "as M287 (assume-unchanged, the other index flag)"},
+    # ── C9 round 1b, workstream LOOP.
+    "M19": {"property": "a protected evaluation counts no execution leg that ran on a development backend",
+            "subsumed_by": ["M428"], "killer": "M428",
+            "all_paths": "M19's filter runs only in judge()'s protected branch, on d.acf's receipt; that branch then calls verify_execution on the SAME (request, receipt) unconditionally (the only exit between them is the verification-leg filter, itself a refusal), and verify_execution refuses a receipt whose backend is not a PROTECTED_PROFILES entry (M428). Admission never runs M19; there M428 is sole and killed on its own route"},
+    "M209": {"property": "a counted protected verdict's recorded verifier is one the operator verifier root holds, under the recorded key",
+             "subsumed_by": ["M360"], "killer": "joint:M209+M360",
+             "all_paths": "derive's rooted-verifier check applies only to a PROTECTED evaluation's counted trials, reached from admit and every rederive (activation, rollback); for each such trial the same loop iteration then runs reverify_protected, which authenticates the verdict under the EPISODE's issuer via verify_check_evidence (a protected claim is required, so rooted_key(issuer) must hold) and requires the record's issuer and key_id to BE that signer (M360). So the record's issuer is rooted with that key whenever M360 passes. The development class never uses the rooted lookup"},
+    "M210": {"property": "a counted protected trial's context attribution is an observer the operator observer root holds, under the recorded key",
+             "subsumed_by": ["M361"], "killer": "joint:M210+M361",
+             "all_paths": "derive's rooted-observer check runs only for a PROTECTED evaluation's counted trials, after the verifier loop, where reverify_protected has returned the context's signer for EVERY such trial (trusted observer, rooted_key held, signature verified under it); M361 then requires context_signed_by to equal that signer. So the attribution is rooted with that key whenever M361 passes. No other reader of context_signed_by exists"},
 }
 EQUIVALENT_DID = set(EQUIV_RECORD)
 # STALE: a row whose old text no longer exists. "The old text is absent" shows
@@ -1084,9 +1106,10 @@ STALE_REFACTORED = {
 LEGACY_EQUIV = set()
 RETIRED = LEGACY_EQUIV | EQUIVALENT_DID | set(STALE_REFACTORED)
 BINDING_IDS = {f"M{n}" for n in range(101, 137)}
-# Every id range the PSV rounds allocate (C9 round 1 uses up to M399). An id
-# outside every scope would silently fall into g01.
-PSV_IDS = {f"M{n}" for n in range(137, 400)}
+# Every id range the PSV rounds allocate (C9 round 1 uses up to M399; round
+# 1b allocates M400-M499). An id outside every scope would silently fall into
+# g01.
+PSV_IDS = {f"M{n}" for n in range(137, 500)}
 
 
 def in_scope(mid, scope):

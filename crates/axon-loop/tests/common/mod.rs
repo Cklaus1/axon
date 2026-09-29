@@ -413,6 +413,35 @@ pub fn attest_execution(issuer: &str, req: &Value, rc: &Value) -> Value {
     attest_execution_with(&verifier_key().0, issuer, req, rc)
 }
 
+/// What Fabric writes into the execution receipt of an OBSERVED launch on the
+/// protected profile (and the only receipt it attests as a protected
+/// execution, A54): the one class `protected`, the launch-manifest digest and
+/// the preflight-observation digest.
+pub fn observed_launch_refs() -> Vec<String> {
+    vec![
+        "evidence-class:protected".into(),
+        format!("launch-manifest-sha256:{}", "a".repeat(64)),
+        format!("preflight-observation-sha256:{}", "b".repeat(64)),
+    ]
+}
+
+/// A GENUINE protected execution leg for delivered trial `t` (PSV-7 and the
+/// C9 round-1b consumer join): the execution receipt stamped as Fabric writes
+/// an observed protected launch, the episode's `acf_receipt_ref` re-derived,
+/// and Fabric's execution attestation over the result. `edit` changes the
+/// receipt first (an attack), and the attestation is over the edited bytes.
+pub fn observed_protected_execution_with(t: &mut Value, edit: impl FnOnce(&mut Value)) {
+    t["acf_receipt"]["backend_profile_ref"] = json!("linux-microvm-protected");
+    t["acf_receipt"]["evidence_refs"] = json!(observed_launch_refs());
+    edit(&mut t["acf_receipt"]);
+    t["episode"]["acf_receipt_ref"] = json!(digest_value(&t["acf_receipt"]).unwrap());
+    t["acf_attestation"] = attest_execution(VERIFIER, &t["acf_request"], &t["acf_receipt"]);
+}
+
+pub fn observed_protected_execution(t: &mut Value) {
+    observed_protected_execution_with(t, |_| {})
+}
+
 pub fn attest(issuer: &str, req: &Value, rc: &Value) -> Value {
     axon_loop_contracts::attestation::sign(
         &verifier_key().0,

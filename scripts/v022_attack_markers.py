@@ -43,10 +43,12 @@ ATTACK_MARKERS = {
     'M16': 'TrialResult .*left: [1-9]\\d*\\s+right: 0',
     'M17': 'unwrap_err\\(\\)` on an `Ok` value',
     'M18': 'unwrap_err\\(\\)` on an `Ok` value',
-    # WEAK@a3db33bd: verified_pass stayed 0 (line 360 passed); trials refused by 'no Fabric execution attestation was delivered', not the development-execution-backend check
-    'M19': ATTACK,
-    # WEAK@a3db33bd: verified_pass stayed 0; refused by 'receipt states no evidence class: not protected evidence', not the development-verification-backend check
-    'M20': ATTACK,
+    # C9 round 1b (LOOP): EQUIVALENT with M428 (verify_execution's backend
+    # join); this is the four-cell attack's own marker.
+    'M19': r'ATTACK: an attested execution on a development backend was counted as protected',
+    # C9 round 1b (LOOP): only-guard route = a CITED unknown from a development
+    # verification backend (M213's protected-evidence check never runs for it).
+    'M20': r"ATTACK: a development-backend verification decided a protected trial's unknown\s+kind",
     'M21': 'a failed verdict on another tree: IntakeOutcome',
     'M22': 'worker_reported: IntakeOutcome',
     'M23': 'two suite versions: IntakeOutcome',
@@ -140,19 +142,19 @@ ATTACK_MARKERS = {
     'M105': 'activated on withdrawn authority: Ok\\(',
     'M106': 'stated without its execution: Some\\(Known',
     'M107': 'independently verified[^\\n]*\\n\\s*left: \\(VerifiedPass',
-    # WEAK@a3db33bd: with the check removed evl.rs panics 'no entry found for key' (production index crash), the trial is never counted
-    'M108': ATTACK,
+    # C9 round 1b (LOOP): index panic made a structured refusal; only-guard route = the post-hoc trial requested but undelivered.
+    'M108': r'ATTACK: a population chosen after outcomes was evaluated \(issued c0 dropped\): Ok\(',
     'M109': 'preflighted before its issue was evaluated: Ok\\(',
     'M110': 'issued a population over a recorded outcome: Ok\\(',
     'M111': 'issued the population: Ok\\(',
     'M112': 'must refuse: Ref\\(',
     'M113': 'admitted: Ok\\(',
-    # WEAK@a3db33bd: proposer still refused by the subject-issuer check ('it is a subject issuer'); reason mismatch only
-    'M114': ATTACK,
+    # C9 round 1b (LOOP): only-guard route = a store-written record that does not list the proposer as a subject.
+    'M114': r'ATTACK: the proposer admitted its own candidate: Accept',
     'M115': 'a shared-key config was read back: Ok\\(',
     'M116': 'left: 0\\s*\\n\\s*right: 900000',
-    # WEAK@a3db33bd: decision stays Inconclusive via the liability-tolerance rule; only the reason string ('span 2 currencies') is missing
-    'M117': ATTACK,
+    # C9 round 1b (LOOP): only-guard case = two FINAL currencies, no liability, report-only economics.
+    'M117': r'ATTACK: a two-currency arm was decided as known: Accept',
     'M118': 'panicked at [^\\n]*\\nindependently verified \\(\\d+ checks\\)(\\n|$)',
     'M119': 'rolled back to a baseline whose issuer is now Fabric: Ok\\(',
     'M120': 'activated a baseline whose issuer is now Fabric: Ok\\(',
@@ -260,8 +262,9 @@ ATTACK_MARKERS = {
     'M206': 'unwrap_err\\(\\)` on an `Ok` value: IntakeOutcome',
     'M207': 'outcome: VerifiedPass.*left: [1-9]\\d*\\s*\\n\\s*right: 0',
     'M208': 'outcome: VerifiedPass.*left: [1-9]\\d*\\s*\\n\\s*right: 0',
-    'M209': 'a forged attribution was admitted',
-    'M210': 'a forged attribution was admitted',
+    # C9 round 1b (LOOP): EQUIVALENT, four-cell vs M360 / M361 (joint cell = this marker).
+    'M209': r'ATTACK: a forged attribution was admitted: Accept',
+    'M210': r'ATTACK: a forged attribution was admitted: Accept',
     'M211': 'TrialResult.*\\n\\s*left: [1-9]\\d*\\n\\s*right: 0',
     'M212': 'TrialResult.*\\n\\s*left: [1-9]\\d*\\n\\s*right: 0',
     'M213': r'ATTACK: development backend: ACCEPTED',
@@ -435,13 +438,21 @@ ATTACK_MARKERS = {
     'M357': ATTACK,
     'M358': ATTACK,
     'M369': ATTACK,
-    'M360': ATTACK,
-    'M361': ATTACK,
-    'M362': ATTACK,
-    'M363': ATTACK,
-    'M364': ATTACK,
-    'M365': ATTACK,
-    'M366': ATTACK,
-    'M367': ATTACK,
-    'M368': ATTACK,
+    # ── C9 round 1b, workstream LOOP: M360-M368 tightened from the
+    # b3f32ee2 `--only` run's failing panics.
+    'M360': r'ATTACK: a forged attribution was admitted: Accept',
+    'M361': r'ATTACK: a forged attribution was admitted: Accept',
+    'M362': r'ATTACK: a forged attribution was admitted: Accept',
+    'M363': r"ATTACK: an observation signed by a key the operator's verifier root also holds was ACCEPTED",
+    'M364': r"ATTACK: a verdict signed by a key the operator's monitor root also holds was ACCEPTED",
+    'M365': r"ATTACK: an observation signed by a key the operator's verifier root also holds was ACCEPTED",
+    'M366': r'ATTACK: no host config: a manifest naming no operator host was ACCEPTED',
+    'M367': r'ATTACK: no host config: a manifest naming no operator host was ACCEPTED',
+    'M368': r'ATTACK: no suite registry: a manifest naming no operator host was ACCEPTED',
+    # ── C9 round 1b, workstream LOOP (M425-M434): the consumer-side join on
+    # the protected execution leg (verify_execution, class b).
+    'M425': r'ATTACK: (no evidence class|guest-unobserved class): an unobserved execution leg was counted as protected',
+    'M426': r'ATTACK: no launch manifest: an unobserved execution leg was counted as protected',
+    'M427': r'ATTACK: no preflight observation: an unobserved execution leg was counted as protected',
+    'M428': r'ATTACK: a development-backend execution leg was admitted as protected: Accept',
 }

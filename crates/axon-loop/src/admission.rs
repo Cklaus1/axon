@@ -1128,6 +1128,28 @@ mod decide_tests {
             }))
             .unwrap()
         };
+        // Only-guard case first (C9 round 1b, M117): two currencies, both
+        // FINAL, no liability, economics report-only. No liability tolerance
+        // and no economics rule can make this arm inconclusive; only the
+        // currency-span rule stops it being decided as if its costs had one
+        // unit.
+        let mut both_final = arm("c", 2, 50);
+        let fin = [
+            usage("USD", "final", Some(50), 0, 996),
+            usage("EUR", "final", Some(50), 0, 997),
+        ];
+        both_final.economics = crate::tel::summarize_with_missing(
+            fin.iter()
+                .map(|u| (u, Some(axon_loop_contracts::EpisodeStatus::Completed))),
+            0,
+        )
+        .unwrap();
+        assert_eq!(both_final.economics.by_currency.len(), 2);
+        let (d, r) = decide(&rules(None), 1, &both_final, &arm("i", 2, 100), dev);
+        if d != Decision::Inconclusive {
+            panic!("ATTACK: a two-currency arm was decided as known: {d:?} {r:?}");
+        }
+        assert!(r.iter().any(|x| x.contains("span 2 currencies")), "{r:?}");
         let us = [
             usage("USD", "final", Some(50), 0, 998),
             usage("EUR", "unknown", None, 900_000, 999),

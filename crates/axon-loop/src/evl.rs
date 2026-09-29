@@ -134,10 +134,64 @@ pub fn verify_execution(
         key,
     )
     .map_err(|e| e.to_string())?;
+    observed_protected_execution(rc)?;
     Ok(SignedBy {
         issuer_ref: issuer,
         key_id,
     })
+}
+
+/// C9 round 1b (consumer-side join, class b): an attested execution counts as
+/// a PROTECTED execution only if its own receipt says so — a protected
+/// backend, the ONE evidence class `protected`, and the launch-manifest and
+/// preflight-observation digests of the observed launch. Fabric now refuses to
+/// attest anything else (`execution_attestation_decision`, A54), but the
+/// consumer does not rest on the producer's discipline: an attestation issued
+/// before that fix (the backend name alone attested an unobserved launch)
+/// still verifies under the same operator-rooted key. Shared by EVL and by
+/// admission's re-derivation, so both doors apply the same leg.
+fn observed_protected_execution(rc: &ExecutionReceipt) -> std::result::Result<(), String> {
+    if !axon_loop_contracts::PROTECTED_PROFILES.contains(&rc.backend_profile_ref.as_str()) {
+        return Err(format!(
+            "the attested execution ran on backend {}, which is not a protected profile",
+            rc.backend_profile_ref
+        ));
+    }
+    let classes: Vec<&str> = rc
+        .evidence_refs
+        .iter()
+        .filter_map(|e| e.as_str().strip_prefix("evidence-class:"))
+        .collect();
+    if classes != ["protected"] {
+        return Err(format!(
+            "the execution receipt states evidence class(es) {classes:?}, not exactly \
+             [\"protected\"]: an unobserved launch is not a protected execution"
+        ));
+    }
+    names_one_sha256(rc, "launch-manifest-sha256:")?;
+    names_one_sha256(rc, "preflight-observation-sha256:")?;
+    Ok(())
+}
+
+/// The receipt names `prefix` exactly once, followed by a sha256.
+fn names_one_sha256(rc: &ExecutionReceipt, prefix: &str) -> std::result::Result<(), String> {
+    let found: Vec<&str> = rc
+        .evidence_refs
+        .iter()
+        .filter_map(|e| e.as_str().strip_prefix(prefix))
+        .collect();
+    match found.as_slice() {
+        [d] if d.len() == 64 && d.bytes().all(|b| b.is_ascii_hexdigit()) => Ok(()),
+        [] => Err(format!(
+            "the execution receipt names no {prefix}…: the launch was not observed"
+        )),
+        [d] => Err(format!(
+            "the execution receipt's {prefix}{d} is not a sha256"
+        )),
+        _ => Err(format!(
+            "the execution receipt names {prefix}… more than once"
+        )),
+    }
 }
 
 /// The signature domain of a preflight context receipt.
@@ -714,7 +768,17 @@ pub fn evaluate(store: &Store, r: &EvlRequest) -> Result<(EvaluationRecord, Ref)
                     check_paired_trial_context(&d.ctx, now, epoch, &observers)
                         .map_err(|e| e.to_string())
                 };
-                let issued_attempt = &issued[&key].0;
+                // A structured refusal, never an index panic: a verifier that
+                // crashes on an unissued trial has refused nothing (C9 round
+                // 1b, M108). Unreachable while the population-equality check
+                // above holds; it keeps the evaluator total without it.
+                let (issued_attempt, _) = issued.get(&key).ok_or_else(|| {
+                    refused(format!(
+                        "trial {} was delivered and requested but never issued in \
+                         {assignment_ref}: the population is never chosen after outcomes exist",
+                        a.trial_id
+                    ))
+                })?;
                 let (o, why, kind) = if &d.ep.identity.attempt_id != issued_attempt {
                     // Only the issued attempt counts: another attempt of the
                     // same trial is never swapped in for it (best-of-k).

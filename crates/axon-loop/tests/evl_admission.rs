@@ -399,6 +399,60 @@ fn an_admitter_holds_no_other_loop_role() {
     assert_eq!(rec.decision, Decision::Accept, "{:?}", rec.reasons);
 }
 
+/// G11-r22-independent-admission (C9 round 1b, M114): the candidate's
+/// PROPOSER (the ranker) cannot admit it, even when the evaluation record does
+/// not list it as a subject. EVL always adds the arm proposers to the
+/// record's `subject_issuers`, so on an honest record the subject-issuer check
+/// refuses the proposer too; but the record is a store writer's to write, and
+/// admission re-derives from it. Here a store writer drops the proposer from
+/// `subject_issuers` of a genuine evaluation, so the proposer==admitter check
+/// is the only refusal. Control: the same forged record is admissible by the
+/// independent admitter (the forgery changes nothing else).
+#[test]
+fn the_proposer_cannot_admit_its_own_candidate_whatever_the_record_lists() {
+    let w = world();
+    trust_monitor(&w.s);
+    freeze_plan(&w.s, "exp", &w.inc_ref, &w.cand_ref, |_| {}).unwrap();
+    let specs = pair(&w.inc, &w.cand, 2, 2, 2, Some(100), Some(50));
+    let (rec, _) = evaluate(
+        &w.s,
+        &evl_request("exp", &w.inc, &w.cand, &specs, &EvlOpts::default()),
+    )
+    .unwrap();
+    assert!(
+        rec.subject_issuers.iter().any(|s| s.as_str() == PROPOSER),
+        "EVL lists the proposer as a subject: {:?}",
+        rec.subject_issuers
+    );
+    let mut forged = rec.clone();
+    forged.subject_issuers.retain(|s| s.as_str() != PROPOSER);
+    let fe = w.s.put_cas("evaluations", &forged).unwrap();
+    forged_append(
+        w.s.root(),
+        axon_loop::ledger::Event::Evaluation {
+            scope: scope(),
+            experiment_id: "exp".into(),
+            evaluation_ref: fe.clone(),
+            freeze_seq: forged.freeze_seq,
+            authority_epoch: forged.authority_epoch,
+        },
+    );
+    let mut cfg = w.s.config().unwrap();
+    cfg.trusted_admitters
+        .push(OpaqueRef::new(PROPOSER).unwrap());
+    w.s.write_config(&cfg).unwrap();
+    match admit(&w.s, "exp", &fe, PROPOSER, false) {
+        Err(LoopError::Refused(m)) => assert!(m.contains("the proposer (ranker)"), "{m}"),
+        Ok((adm, _)) => panic!(
+            "ATTACK: the proposer admitted its own candidate: {:?} {:?}",
+            adm.decision, adm.reasons
+        ),
+        Err(e) => panic!("{e}"),
+    }
+    let (adm, _) = admit(&w.s, "exp", &fe, ADMITTER, false).unwrap();
+    assert_eq!(adm.decision, Decision::Accept, "control: {:?}", adm.reasons);
+}
+
 /// G11-r22-independent-admission: complete experiment bindings. An evaluation
 /// cannot be admitted under another experiment's frozen plan because a
 /// candidate can be frozen in ONE experiment only (no plan shopping): the
