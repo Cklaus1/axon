@@ -1397,6 +1397,24 @@ EQUIV_RECORD["M346"] = {
                  "skip-worktree bit hides only worktree-vs-index differences from git status; an "
                  "index that differs from HEAD still shows in status (staged), and a worktree equal "
                  "to HEAD is the committed source. So M346's refusal never stands alone"}
+# C9 round 2 (decision C): the filesystem walk (M500) reports every object
+# outside the tree, however git treats it, so git's own untracked views no
+# longer stand alone.
+EQUIV_RECORD["M347"] = {
+    "property": "build provenance never reads an untracked input as clean",
+    "subsumed_by": ["M500"], "killer": "joint:M347+M500",
+    "all_paths": "provenance() always runs head_bytes_differ -> tree_differs, whose untracked_objects "
+                 "walk (M500) reports every filesystem object not in HEAD's tree and not on the "
+                 "operator allowlist, without consulting git. `status --untracked-files=all` (M347) "
+                 "only ever ADDS reasons; an untracked non-ignored file is exactly one the walk "
+                 "reports. So M347's refusal never stands alone"}
+EQUIV_RECORD["M414"] = {
+    "property": "build provenance never reads a file hidden by a non-tracked ignore rule as clean",
+    "subsumed_by": ["M500"], "killer": "joint:M414+M500",
+    "all_paths": "a file ignored by info/exclude, an untracked .gitignore or a config excludesFile is "
+                 "an object not in HEAD's tree; the walk (M500) reports it unless the operator "
+                 "allowlist names it, and git-ignore plays no part in the walk (decision C). The "
+                 "check-ignore source test (M414) only ADDS a reason. So it never stands alone"}
 EQUIV_RECORD["M152"] = {
     "property": "a signature made for one authority never verifies for another",
     "subsumed_by": ["M153"], "killer": "joint:M152+M153",

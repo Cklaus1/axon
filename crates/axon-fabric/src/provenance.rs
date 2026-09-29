@@ -337,6 +337,22 @@ mod tests {
         );
     }
 
+    /// Either guard's reason: the status/ignore check (M347/M414) and the
+    /// filesystem walk (M500) each refuse an untracked input alone (their
+    /// four-cell records, C9 round 2).
+    fn assert_dirty_either(r: &Path, attack: &str, why: &str, or: &str) {
+        let p = provenance(r);
+        assert!(
+            !p.dirty.is_empty(),
+            "ATTACK: {attack}, and the build provenance still says source_dirty: false"
+        );
+        assert!(
+            p.dirty.iter().any(|w| w.contains(why) || w.contains(or)),
+            "expected {why:?} or {or:?}: {:?}",
+            p.dirty
+        );
+    }
+
     #[test]
     fn a_clean_tree_is_clean_and_names_its_head() {
         let (_d, r) = repo();
@@ -383,10 +399,11 @@ mod tests {
         let (_d, r) = repo();
         std::fs::create_dir_all(r.join(".cargo")).unwrap();
         std::fs::write(r.join(".cargo/config.toml"), "[build]\nrustflags = []\n").unwrap();
-        assert_dirty(
+        assert_dirty_either(
             &r,
             "an untracked .cargo/config.toml changes the build",
             "untracked file",
+            "not in the tree",
         );
     }
 
@@ -399,10 +416,11 @@ mod tests {
         let ex = r.join(".git/info/exclude");
         std::fs::create_dir_all(ex.parent().unwrap()).unwrap();
         std::fs::write(&ex, ".cargo/\n").unwrap();
-        assert_dirty(
+        assert_dirty_either(
             &r,
             "info/exclude hid an untracked .cargo/config.toml",
             "outside the tracked tree",
+            "not in the tree",
         );
 
         // An untracked .gitignore that ignores itself and its directory.
