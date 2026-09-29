@@ -296,14 +296,8 @@ impl ProtectedHost {
             if *a == TrustAuthority::Verifier || (*a == TrustAuthority::Observer && observed) {
                 continue;
             }
-            crate::backend::exclusive_root_keys(
-                *a,
-                dir,
-                &roots,
-                None,
-                Some(&signer.public_key),
-            )
-            .map_err(bad)?;
+            crate::backend::exclusive_root_keys(*a, dir, &roots, None, Some(&signer.public_key))
+                .map_err(bad)?;
         }
         let observer = match v.get("observer") {
             None | Some(Value::Null) => None,
