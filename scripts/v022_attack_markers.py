@@ -481,6 +481,14 @@ ATTACK_MARKERS = {
     'M436': r"ATTACK: the operator's own `use rubric` loaded the candidate's copy, which defined the rubric: [^\n]*\"status\":\"ok\"",
     'M402': r'ATTACK: a replayed execution claiming an observed protected launch was attested',
     'M403': r'ATTACK: a job file \((secret|manifest|job dir)\) carrying \S+ was not refused and the job ran',
+    # ── C9 round 2, KEYS workstream (M460-M469; A67) ──
+    'M460': r'ATTACK: an observer key shared with an UNREADABLE verifier root passed key-role separation',
+    'M461': r"ATTACK: a [a-z]+ root holding the host signer's public key loaded",
+    'M462': r"ATTACK: a B263 record minted with the host signer's key qualified the protected",
+    'M463': r"ATTACK: a B263 record minted with the host signer's key qualified the protected",
+    'M464': r'ATTACK: a qualification key also held by the verifier root qualified the protected',
+    'M465': r"ATTACK: the host signer's key, planted in the qualification root, signed the certification and readiness still said PASS",
+    'M466': r'ATTACK: an agent-owned monitor root was read as holding no shared key and readiness still said PASS',
     # ── Retired EQUIVALENT rows: the JOINT cell's attack (paired-disable
     # matches it; the mutation run never scores a retired row). Carried from
     # C8 without markers, which made their joint cell unmatchable (C9 r1b).

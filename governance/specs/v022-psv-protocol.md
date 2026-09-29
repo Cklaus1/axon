@@ -726,3 +726,30 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
     Status: the evidence model and harness are implemented. Rows the round-1 audit found weak and
     that are not fixed yet are listed in the round's report. They show as REFUSED_ELSEWHERE, so a
     run cannot pass while they remain.
+41. **One key, one authority root, at Fabric and readiness too (C9 round 2, keys workstream;
+    PSV-6 + FIELD-ORIGIN).** Amendment 38 put key-role separation at the loop's roots. Fabric
+    checked it only on the observer route, and read another root with `keys_in`, which answered
+    an empty list on ANY `read_dir` error.
+    - `operator_trust::keys_in` treats only NotFound as an absent root. Any other failure to list
+      a root (EACCES for the non-root Fabric UID, ENOTDIR, ELOOP) refuses. Measured before the fix:
+      as uid 65534, an observer key shared with a mode-000 verifier root passed separation.
+    - Every Fabric and readiness trust-root read goes through one function,
+      `backend::exclusive_root_keys`: the qualification trust (`qualification()`), the
+      `verify_operator_evidence*` routes, the observer's `check_separation`, and readiness's key
+      ids, observer keys, B263 keys and certification signature. A key another authority root
+      also holds refuses. A present peer root is walked for operator ownership where the root is
+      the operator's, as the loop's `exclusive` walks it. The peers are the root's siblings under
+      the trust directory, derived from `TrustAuthority::ALL`, which for an operator root are
+      exactly the roots the loop reads.
+    - The host signer's public key is refused in every authority root but the verifier's: at
+      `ProtectedHost::load` for the qualification, admission and monitor roots (and the observer
+      root when no observer is configured; a configured observer's root stays
+      `check_separation`'s), and at every `qualification()`, because the loaded qualification
+      trust carries the signer's key. Readiness has no host config; there the signer's key is the
+      verifier root's, so exclusivity refuses it in the qualification root.
+    - Measured before the fix: Fabric signed a B263 record with its host key planted in the
+      qualification root and `qualification()` accepted it; the same key signed a readiness
+      certification and readiness said PASS.
+    - Operational consequence: every authority root under `/etc/axon/trust` must be readable by
+      the Fabric service UID, or protected launches and qualification refuse.
+    Negative-matrix A67. Mutation rows M460-M466.
