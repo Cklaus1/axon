@@ -82,17 +82,43 @@ fn revoking_the_verifier_key_revokes_the_certification() {
     );
 }
 
+/// The observer_key_id membership check, on the attack it is written for: a
+/// key the operator never trusted is named as the observer AND made the
+/// observation (so the signer join agrees with the record). Two independent
+/// checks refuse it: the membership check, and the observation's signature,
+/// which must verify under the operator's observer root (M340) and be the
+/// named key's (M339). ALL PATHS (the four-cell record for this row):
+/// `attribution` has one caller and no early `Ok`, and always runs both after
+/// the membership check; a signer in the root that equals observer_key_id puts
+/// observer_key_id in the root. Which layer refuses is not the property, so
+/// any refusal is accepted; only PASS is the attack.
 #[test]
 fn an_observer_key_id_outside_the_observer_root_is_refused() {
     let Some(c) = certified() else { return };
     let stranger = Issuer::generate();
+    let obs = observation(&stranger, &"f".repeat(40));
+    rebind(
+        &c,
+        OBSERVATION,
+        "observation_sha256",
+        &obs,
+        &stranger,
+        TrustAuthority::Observer,
+    );
     resign(&c, &c.operator, |r| {
         r["observer_key_id"] = json!(stranger.key_id())
     });
-    attack(
-        &c,
-        "the record names an observer key the operator never trusted",
-        "is not a key in the operator's observer root",
+    let v = c.verdict();
+    assert_ne!(
+        v["status"], "PASS",
+        "ATTACK: the record names an observer key the operator never trusted, that key made \
+         the observation, and readiness still said PASS: {v}"
+    );
+    let v = v.to_string();
+    assert!(
+        v.contains("is not a key in the operator's observer root")
+            || v.contains("not a trusted evidence issuer"),
+        "{v}"
     );
 }
 

@@ -438,6 +438,33 @@ fn a_candidate_changed_under_the_guest_is_refused_there() {
     assert!(r.contains("the guest refused: candidate tree is"), "{r}");
 }
 
+/// M180 on the route where it is the only guard: the guest's verdict says
+/// REFUSED, but every other field is a genuine pass (this launch's manifest,
+/// inputs and test; the keyed output and its digest; exit 0). Nothing after the
+/// refusal check reads the status, so without it the Fabric would decide the
+/// outcome from the output and override the guest's refusal.
+#[test]
+fn a_guest_refusal_stands_even_over_a_genuine_passing_run() {
+    let w = World::new();
+    let s = w.submit_with(
+        w.lx("refused-after-pass", ""),
+        "op-psv-refused-pass",
+        "t_psv_ok",
+    );
+    assert_ne!(
+        s.receipt.verification,
+        ReceiptVerification::Passed,
+        "ATTACK: the guest refused, and the Fabric counted its run as Passed: {:?}",
+        s.reason
+    );
+    assert_eq!(s.receipt.verification, ReceiptVerification::Unknown);
+    let r = s.reason.unwrap();
+    assert!(
+        r.contains("the guest refused: the runner refused after the run"),
+        "{r}"
+    );
+}
+
 /// Passed needs exit 0: a genuine pass (VALID token) whose run is reported
 /// as exiting non-zero is Unknown.
 #[test]
@@ -690,8 +717,15 @@ fn a_verified_observation_makes_the_guest_verdict_protected() {
 #[test]
 fn every_defective_observation_refuses_the_launch() {
     for (mode, authority, key_in, why) in [
-        // A9: another authority domain (the key IS a trusted observer).
-        ("", "qualification", "observer", "is for authority"),
+        // A9: another authority domain (the key IS a trusted observer). The
+        // domain field (M152) and the domain-separated message (M153) each
+        // refuse it alone (M152's four-cell record), so either reason.
+        (
+            "",
+            "qualification",
+            "observer",
+            "is for authority|does not verify",
+        ),
         // A key the observer root does not hold (only the qualification root).
         (
             "",

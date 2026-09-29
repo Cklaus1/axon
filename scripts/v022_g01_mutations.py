@@ -718,7 +718,7 @@ MUTATIONS = [
     ('M149', 'readiness: a certification binds the verifier that made it', 'crates/axon-fabric/src/readiness.rs', 'if doc["readiness_verifier_sha256"] != me["sha256"] {', 'if false && doc["readiness_verifier_sha256"] != me["sha256"] {', 'axon-fabric', '--test readiness', 'another_verifier_binary_does_not_inherit_the_certification'),
     ('M150', 'readiness: the trust preflight must be protected-mode', 'crates/axon-fabric/src/readiness.rs', '|| pf["mode"] != "protected"', '|| false', 'axon-fabric', '--test readiness', 'a_dev_mode_or_uncertified_trust_preflight_is_refused'),
     ('M151', 'readiness: the trust preflight is a certified evidence file', 'crates/axon-fabric/src/readiness.rs', 'let pf = preflight.ok_or(format!(', 'let pf = preflight.or(Some(repo.join("governance/proofs/v022-protected/trust-preflight.json"))).ok_or(format!(', 'axon-fabric', '--test readiness', 'a_dev_mode_or_uncertified_trust_preflight_is_refused'),
-    ('M152', "RULE:authority-domain: the signature's domain field", 'crates/axon-loop-contracts/src/operator_trust.rs', 'if sv["domain"] != authority.dir_name() {', 'if false && sv["domain"] != authority.dir_name() {', 'axon-fabric', '--test verify_evidence', 'each_authority_verifies_only_its_own_domain_message'),
+    ('M152', "RULE:authority-domain: the signature's domain field (EQUIVALENT: dominated by the domain-bound message, M153)", 'crates/axon-loop-contracts/src/operator_trust.rs', 'if sv["domain"] != authority.dir_name() {', 'if false && sv["domain"] != authority.dir_name() {', 'axon-fabric', '--test verify_evidence', 'an_unrelabelled_signature_for_another_authority_verifies_nowhere_else'),
     ('M153', 'RULE:authority-domain: the domain is in the signed message', 'crates/axon-loop-contracts/src/operator_trust.rs', '.verify(&evidence_signing_message(authority, bytes), &sig)', '.verify(&evidence_signing_message(TrustAuthority::Qualification, bytes), &sig)', 'axon-fabric', '--test verify_evidence', 'each_authority_verifies_only_its_own_domain_message'),
     ('M154', 'PSV §3: the manifest verifies only under the digest Fabric named', 'crates/axon-psv/src/lib.rs', 'if got != expected_sha256 {', 'if false && got != expected_sha256 {', 'axon-psv', '--test protocol', 'manifest_bytes_are_canonical_and_verify_only_under_their_own_digest'),
     ('M155', 'PSV §3: manifest bytes are canonical', 'crates/axon-psv/src/lib.rs', 'if m.bytes() != bytes {', 'if false && m.bytes() != bytes {', 'axon-psv', '--test protocol', 'manifest_bytes_are_canonical_and_verify_only_under_their_own_digest'),
@@ -746,7 +746,7 @@ MUTATIONS = [
     ('M177', "runner: the suite's own modules come first", 'crates/axon-psv/src/runner.rs', 'format!("{}:{}", cfg.suite.display(), cfg.candidate.display()),', 'format!("{}:{}", cfg.candidate.display(), cfg.suite.display()),', 'axon-psv', '--test runner', 'a_candidate_cannot_shadow_the_suites_own_modules'),
     ('M178', 'runner: the candidate runs sealed (PCI E0004)', 'crates/axon-psv/src/runner.rs', '.arg("--seal")\n        .arg(&cfg.candidate)', '', 'axon-psv', '--test runner', 'a_sealed_candidate_cannot_read_the_suites_answer'),
     ('M179', 'M2: the verdict names THIS launch manifest', 'crates/axon-fabric/src/psv.rs', 'if v.launch_manifest_sha256 != launch.digest {', 'if false && v.launch_manifest_sha256 != launch.digest {', 'axon-fabric', '--test psv_dispatch', 'every_forgery_of_the_returned_evidence_is_unknown_for_its_own_reason'),
-    ('M180', 'M2/A1: a guest refusal is reported as such', 'crates/axon-fabric/src/psv.rs', 'if v.status == GuestStatus::Refused {', 'if false && v.status == GuestStatus::Refused {', 'axon-fabric', '--test psv_dispatch', 'a_candidate_changed_under_the_guest_is_refused_there'),
+    ('M180', 'M2/A1: a guest refusal is reported as such', 'crates/axon-fabric/src/psv.rs', 'if v.status == GuestStatus::Refused {', 'if false && v.status == GuestStatus::Refused {', 'axon-fabric', '--test psv_dispatch', 'a_guest_refusal_stands_even_over_a_genuine_passing_run'),
     ('M181', "M2: the verdict's inputs and test are this launch's", 'crates/axon-fabric/src/psv.rs', 'if !v.inputs.matches\n', 'if false && !v.inputs.matches\n', 'axon-fabric', '--test psv_dispatch', 'every_forgery_of_the_returned_evidence_is_unknown_for_its_own_reason'),
     ('M182', 'M2: the output hashes to what the verdict names', 'crates/axon-fabric/src/psv.rs', 'if v.stdout_sha256.as_deref() != Some(axon_psv::sha256_hex(&out).as_str()) {', 'if false && v.stdout_sha256.as_deref() != Some(axon_psv::sha256_hex(&out).as_str()) {', 'axon-fabric', '--test psv_dispatch', 'every_forgery_of_the_returned_evidence_is_unknown_for_its_own_reason'),
     ('M183', "M2/A11/A12: the token verifies under Fabric's own key", 'crates/axon-fabric/src/psv.rs', '.any(|(n, t)| n == test && *t == want)', '.any(|(n, _t)| n == test)', 'axon-fabric', '--test psv_dispatch', 'a_previous_attempts_genuine_pass_does_not_replay'),
@@ -923,6 +923,25 @@ MUTATIONS = [
     ('M351', 'PSV-2 (c9r1): an input entry carrying an extended attribute is refused', 'crates/axon-psv/src/lib.rs', '            no_xattr(&d.path(), &path)?;\n', '            let _ = no_xattr(&d.path(), &path);\n', 'axon-psv', '--test protocol', 'inputs_carrying_an_extended_attribute_are_refused'),
     ('M352', 'PSV-2 (c9r1): EVERY xattr namespace is refused, not a list (a user.*-only check misses an ACL)', 'crates/axon-psv/src/lib.rs', '.find(|s| !s.is_empty())', '.find(|s| s.starts_with(b"user."))', 'axon-psv', '--test protocol', 'inputs_carrying_an_extended_attribute_are_refused'),
     ('M353', 'PSV-2 (c9r1): the real runner refuses an ACL-carrying input instead of running it to a keyed Failed', 'crates/axon-psv/src/lib.rs', '            no_xattr(&d.path(), &path)?;\n', '            let _ = no_xattr(&d.path(), &path);\n', 'axon-psv', '--test runner', 'an_input_carrying_an_acl_is_refused_not_run'),
+    # C9 round 1b (psv workstream), DECISION for the LAYERED rows M354-M358:
+    # each row's property is its OWN LAYER'S OUTPUT, so they stay ACTIVE and are
+    # KILLED by the test of that output (image carries no xattr; the mount is
+    # noacl). Not four-cell, because:
+    # (1) amendment 37 states each layer as its own requirement ("refused at
+    #     every layer"): the image psv_image hands the VMM, and guest-init.sh's
+    #     mount options (spec §4 text, pinned into the rootfs by digest), are
+    #     the specified outputs, not an internal detail of one end-to-end check;
+    # (2) the layers are NOT dominated on every path: the in-guest input check
+    #     (M350-M353) walks only /in/candidate and /in/suite. The JOB drive
+    #     (vde: launch manifest + 0400 completion secret) is built by the same
+    #     psv_image and has no in-guest xattr check, so for it cp -R (M354),
+    #     no_copy_xattrs (M355) and noacl (M358) are the only guards (e.g. an
+    #     ACL granting uid 65534 read on the secret). For vdc/vdd noacl does not
+    #     "also refuse": it makes an ACL ineffective and unlisted, a different
+    #     property from the runner's refusal;
+    # (3) the end-to-end property is observable only in a booted microVM, which
+    #     no test here reaches, so no joint cell could be EXECUTED; a row
+    #     without all four executed cells stays ACTIVE (operator rule).
     ('M354', "PSV-2 (c9r1): the launcher's input copy preserves no ACL/xattr", 'scripts/fc_linux_profile.sh', '    cp -R "$2/." "$st/" || return 1\n', '    cp -a "$2/." "$st/" || return 1\n', 'axon-fabric', '--test launcher_isolation', 'the_launchers_input_image_carries_no_extended_attribute'),
     ('M355', "PSV-2 (c9r1): the launcher's mkfs copies no xattr into an input image", 'scripts/fc_linux_profile.sh', '-E root_owner=0:0,no_copy_xattrs -d "$st"', '-E root_owner=0:0 -d "$st"', 'axon-fabric', '--test launcher_isolation', 'the_launchers_input_image_carries_no_extended_attribute'),
     ('M356', 'PSV-2 (c9r1): the guest mounts the candidate input noacl', 'profiles/linux-microvm/guest-init.sh', 'ro,nodev,nosuid,noexec,noacl /dev/vdc', 'ro,nodev,nosuid,noexec /dev/vdc', 'axon-guest-init', '--test b263_profile_wiring', 'guest_init_sh_mounts_every_psv_input_noacl'),
@@ -961,6 +980,54 @@ MUTATIONS = [
     ('M383', 'B2: the bundle is axon-psv-evidence/2', 'crates/axon-loop-contracts/src/protected_evidence.rs', '    if b.schema != PSV_EVIDENCE_SCHEMA {', '    if false && b.schema != PSV_EVIDENCE_SCHEMA {', 'axon-loop', '--test intake', 'each_protected_join_is_verified_over_the_documents'),
     ('M384', "B2: the request's suite (argv[0]) is the manifest's (EQUIVALENT: dominated by intake's argv/suite joins M29+M30)", 'crates/axon-loop-contracts/src/protected_evidence.rs', '    if req.argv.first().map(String::as_str) != Some(&format!("check:{}", m.suite.id)) {', '    if false && req.argv.first().map(String::as_str) != Some(&format!("check:{}", m.suite.id)) {', 'axon-loop', '--test intake', 'a_protected_verdict_for_a_request_that_named_another_suite_is_refused'),
     ('M385', 'readiness: git reads no replacement objects (GIT_NO_REPLACE_OBJECTS and --no-replace-objects)', 'crates/axon-fabric/src/readiness.rs', '        .env("GIT_NO_REPLACE_OBJECTS", "1")\n        .env("GIT_CONFIG_NOSYSTEM", "1")\n        .env("GIT_CONFIG_GLOBAL", "/dev/null")\n        .env("GIT_OPTIONAL_LOCKS", "0")\n        .env("GIT_TERMINAL_PROMPT", "0")\n        .arg("--no-replace-objects")\n', '        .env("GIT_CONFIG_NOSYSTEM", "1")\n        .env("GIT_CONFIG_GLOBAL", "/dev/null")\n        .env("GIT_OPTIONAL_LOCKS", "0")\n        .env("GIT_TERMINAL_PROMPT", "0")\n', 'axon-fabric', '--test readiness', 'a_replaced_head_commit_is_not_certified'),
+    # ── C9 round 1b, workstream PSV (M410-M424): round-1 fixes that had a test
+    # but no row, each killed by its own ATTACK where it is the only guard,
+    # and the observer_key_id membership check (retired, four-cell).
+    ("M410", "PSV-7 class: psv::prepare pins the guest only from the profile manifest bytes the qualification hashed",
+     "crates/axon-fabric/src/psv.rs",
+     "    if crate::backend::sha256_hex(&pm_bytes) != q.manifest_sha256 {",
+     "    if false && crate::backend::sha256_hex(&pm_bytes) != q.manifest_sha256 {",
+     "axon-fabric", "--test one_read", "prepare_pins_the_guest_only_from_the_manifest_the_qualification_hashed"),
+    ("M411", "PSV-7 class: interpret_linux_result decides from the ONE read of result.json it hashed as evidence",
+     "crates/axon-fabric/src/backend.rs",
+     "    let r: Option<serde_json::Value> = bytes.and_then(|b| serde_json::from_slice(&b).ok());",
+     "    let r: Option<serde_json::Value> = bytes\n        .and(read_regular(&rj).ok())\n        .and_then(|b| serde_json::from_slice(&b).ok());",
+     "axon-fabric", "--test one_read", "the_result_json_hashed_as_evidence_is_the_one_interpreted"),
+    ("M412", "FIELD-ORIGIN: build provenance counts a refs/replace/ ref as dirty",
+     "crates/axon-fabric/src/provenance.rs",
+     '                .map(|r| format!("replace ref {r} rewrites what an object id names"))',
+     '                .filter(|_| false)\n                .map(|r| format!("replace ref {r} rewrites what an object id names"))',
+     "axon-fabric", "--lib", "provenance::tests::a_replace_ref_or_graft_is_dirty"),
+    ("M413", "FIELD-ORIGIN: build provenance counts an info/grafts file as dirty",
+     "crates/axon-fabric/src/provenance.rs",
+     '                .is_ok()\n                .then(|| format!("{g} rewrites ancestry"))',
+     '                .is_ok_and(|_| false)\n                .then(|| format!("{g} rewrites ancestry"))',
+     "axon-fabric", "--lib", "provenance::tests::a_replace_ref_or_graft_is_dirty"),
+    ("M414", "FIELD-ORIGIN: build provenance counts an untracked file ignored by a non-tracked rule as dirty",
+     "crates/axon-fabric/src/provenance.rs",
+     "        if source.is_empty() || !tracked.contains(&source) {",
+     "        if false && (source.is_empty() || !tracked.contains(&source)) {",
+     "axon-fabric", "--lib", "provenance::tests::a_file_ignored_by_an_untracked_rule_is_dirty"),
+    ("M415", "FIELD-ORIGIN: verify-evidence is never authoritative in a test-trust build",
+     "crates/axon-fabric/src/backend.rs",
+     "    if test_trust_build {",
+     "    if false && test_trust_build {",
+     "axon-fabric", "--lib", "backend::tests::verify_evidence_is_authoritative_only_for_the_operators_owned_root_in_production"),
+    ("M416", "FIELD-ORIGIN: verify-evidence is authoritative only for the operator's own root, not a caller's --issuers",
+     "crates/axon-fabric/src/backend.rs",
+     "    if issuers != operator_root {",
+     "    if false && issuers != operator_root {",
+     "axon-fabric", "--lib", "backend::tests::verify_evidence_is_authoritative_only_for_the_operators_owned_root_in_production"),
+    ("M417", "FIELD-ORIGIN: verify-evidence is authoritative only when the operator root passes the ownership walk",
+     "crates/axon-fabric/src/backend.rs",
+     '    owned.map_err(|e| format!("the operator root fails the ownership walk: {e}"))',
+     '    owned\n        .map_err(|e| format!("the operator root fails the ownership walk: {e}"))\n        .or(Ok(()))',
+     "axon-fabric", "--lib", "backend::tests::verify_evidence_is_authoritative_only_for_the_operators_owned_root_in_production"),
+    ("M418", "FIELD-ORIGIN: the record's observer_key_id is a key in the operator observer root (EQUIVALENT: dominated by M339+M340)",
+     "crates/axon-fabric/src/readiness.rs",
+     '        ("observer_key_id", &trust.observer_dir, "observer"),\n',
+     "",
+     "axon-fabric", "--test readiness_attribution", "an_observer_key_id_outside_the_observer_root_is_refused"),
 ]
 
 
@@ -1052,6 +1119,23 @@ EQUIV_RECORD = {
              "subsumed_by": ["M290"], "killer": "joint:M288+M290",
              "all_paths": "as M287 (assume-unchanged, the other index flag)"},
 }
+# ── C9 round 1b (psv workstream) ──
+EQUIV_RECORD["M152"] = {
+    "property": "a signature made for one authority never verifies for another",
+    "subsumed_by": ["M153"], "killer": "joint:M152+M153",
+    "all_paths": "verify_evidence_signature is the ONLY reader of the signature's domain field (Fabric "
+                 "backend, readiness, loop protected_evidence all call it); after the field check it always "
+                 "verifies over evidence_signing_message(authority, bytes) for the CALLER's authority, not the "
+                 "field's, so a signature made for another authority verifies only if the message is not "
+                 "domain-bound (M153). The relabelled case is M153's own (active) attack"}
+EQUIV_RECORD["M418"] = {
+    "property": "the observation a certification cites was made by a key in the operator observer root",
+    "subsumed_by": ["M339", "M340"], "killer": "joint:M418+M339+M340",
+    "all_paths": "attribution() has one caller (the component verdict) and no early Ok; after the membership "
+                 "loop it always verifies the observation's signature under keys(observer_dir) (M340, which "
+                 "returns the signer's fingerprint) and requires signer == observer_key_id (M339). key_ids and "
+                 "keys read the same operator root, so signer in root and signer == observer_key_id put "
+                 "observer_key_id in the root"}
 EQUIVALENT_DID = set(EQUIV_RECORD)
 # STALE: a row whose old text no longer exists. "The old text is absent" shows
 # only that the TEXT changed, not that the guard is gone (C9 dev review: M204
@@ -1087,6 +1171,8 @@ BINDING_IDS = {f"M{n}" for n in range(101, 137)}
 # Every id range the PSV rounds allocate (C9 round 1 uses up to M399). An id
 # outside every scope would silently fall into g01.
 PSV_IDS = {f"M{n}" for n in range(137, 400)}
+# C9 round 1b, workstream PSV.
+PSV_IDS |= {f"M{n}" for n in range(410, 425)}
 
 
 def in_scope(mid, scope):

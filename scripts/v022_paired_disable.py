@@ -184,6 +184,12 @@ def main():
         "M385": {"siblings": ["M285", "M289"], "kind": "set"},
         "M287": {"siblings": ["M290"], "kind": "pair"},
         "M288": {"siblings": ["M290"], "kind": "pair"},
+        # C9 round 1b (psv workstream). M152: the attack is an UNRELABELLED
+        # signature made for another authority (the relabelled one is M153's
+        # own attack). M418: a stranger key named as observer_key_id AND
+        # signing the observation.
+        "M152": {"siblings": ["M153"], "kind": "pair"},
+        "M418": {"siblings": ["M339", "M340"], "kind": "set"},
     }
     # Every retired row has a matrix and no active row has one.
     if set(GUARD_SETS) != set(mut.EQUIVALENT_DID):
