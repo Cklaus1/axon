@@ -1,6 +1,6 @@
 {
   "schema": "axon-v022-paired-disable/1",
-  "commit": "46c06261ab2f78a336a8468e153fd9e44f437d5d",
+  "commit": "cb9fa2ea41a0fbbeaa5060c0627d0391fb6e196c",
   "all_hold": true,
   "records": [
     {
@@ -22,32 +22,8 @@
         "guard_set": [
           "M245",
           "M264"
-        ]
-      },
-      "holds": true
-    },
-    {
-      "mutation": "M254",
-      "status": "EQUIVALENT_DID",
-      "kind": "set",
-      "property": "a protected decision re-verifies its counted verdicts",
-      "original_guard": {
-        "file": "crates/axon-loop/src/admission.rs"
-      },
-      "subsumed_by": [
-        "M261",
-        "M262"
-      ],
-      "live_killing_mutant": "M261",
-      "matrix": {
-        "baseline": "ATTACK_REFUSED",
-        "retired_guard_disabled": "ATTACK_REFUSED",
-        "guard_set_disabled": "ATTACK_SUCCEEDS",
-        "guard_set": [
-          "M254",
-          "M261",
-          "M262"
-        ]
+        ],
+        "retired_guard_full_suite": "SUITE_OK"
       },
       "holds": true
     },
@@ -76,7 +52,8 @@
           "M208",
           "M269",
           "M207"
-        ]
+        ],
+        "retired_guard_full_suite": "SUITE_OK"
       },
       "holds": true
     },
@@ -105,7 +82,8 @@
           "M208",
           "M99",
           "M269"
-        ]
+        ],
+        "retired_guard_full_suite": "SUITE_OK"
       },
       "holds": true
     },
@@ -136,7 +114,8 @@
           "M213",
           "M261",
           "M262"
-        ]
+        ],
+        "retired_guard_full_suite": "SUITE_OK"
       },
       "holds": true
     },
@@ -160,6 +139,7 @@
           "M103",
           "M26"
         ],
+        "retired_guard_full_suite": "SUITE_OK",
         "dominating_sibling_disabled": "ATTACK_SUCCEEDS"
       },
       "holds": true
@@ -184,6 +164,7 @@
           "M209",
           "M205"
         ],
+        "retired_guard_full_suite": "SUITE_OK",
         "dominating_sibling_disabled": "ATTACK_SUCCEEDS"
       },
       "holds": true

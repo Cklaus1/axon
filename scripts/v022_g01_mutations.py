@@ -870,16 +870,23 @@ PCI_IDS = {"M04", "M44", "M49", "M52", "M53", "M57", "M59", "M60", "M61", "M62",
 #   M209: derive rooted verifier — killed by O2 M205/M206.
 #   M210: derive rooted observer — killed by O2 M207/M208.
 #   M245: derive monitor key_id scan — killed by M105 and round-2 M264.
-#   M254: the reverify_protected CALL — killed by round-2 M261 (grounding)
-#         and round-3 M267-M269 (the joins).
+#   M254: NOT equivalent — REINSTATED ACTIVE (C8 certifying review
+#         wf_bff9835f-4a0). It was listed here as "killed by M261 + M267-M269",
+#         but removing the reverify_protected call ALONE breaks three
+#         protected-class tests: that call is the sole enforcement site for the
+#         properties M258/M259/M267/M268/M269 test, so it is load-bearing. It
+#         passed the old matrix only because its assigned test (a relabel
+#         attack) is independently refused by M261/M262.
 #   M255: reverify claims_protected — killed by M211/M212/M213.
 # EQUIVALENT_DID: rows a rounds-1-3 fix turned into an additional independent
 # check of a property. Each APPLIES to a real historical guard; with it
 # mutated the attack is still refused (the property is enforced elsewhere), and
 # scripts/v022_paired_disable.py demonstrates that removing the retired guard
 # TOGETHER WITH its subsuming siblings reopens the SAME attack (for M103/M209 a
-# single dominating sibling alone reopens). An equivalent mutant does NOT count
-# as killed. `killer` is a live ACTIVE row that turns the property's
+# single dominating sibling alone reopens). The retired guard removed ALONE
+# must also leave the WHOLE package suite green (not only its assigned --exact
+# test) — the full-suite condition that exposed M254. An equivalent mutant does
+# NOT count as killed. `killer` is a live ACTIVE row that turns the property's
 # discriminator red.
 EQUIV_RECORD = {
     "M103": {"property": "the counted verdict is still operator-pinned", "subsumed_by": ["M26"], "killer": "M26"},

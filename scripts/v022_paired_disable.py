@@ -13,6 +13,13 @@ subsuming sibling's registry mutation. The attack is R's own killing test:
 normally it asserts the attack is refused, so "attack succeeds" == that test
 FAILS. This demonstrates the SAME property reopening, not an unrelated red.
 
+FULL-SUITE CONDITION (C8 certifying review wf_bff9835f-4a0): with A removed
+alone, the WHOLE package suite must stay green (`retired_guard_full_suite` =
+SUITE_OK), not just R's assigned test. A guard that enforces several
+properties can pass the matrix above when its assigned test exercises only a
+property that is independently covered; M254 did exactly that and was in fact
+load-bearing. A row failing this condition is a false retirement.
+
 Refuses to run against a dirty tree, and restores every file it edits.
 Writes an evidence manifest (schema axon-v022-paired-disable/1) and exits
 non-zero unless every row's matrix holds.

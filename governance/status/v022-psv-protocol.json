@@ -394,7 +394,8 @@
           "EQUIVALENCE"
         ]
       },
-      "means": "the PSV protocol holds as DEVELOPMENT evidence. It earns NO protected-readiness credit: protected_backend, g01_on_protected_backend and pci_on_protected_backend stay NOT_RUN, and PROTECTED_VERIFIER_READY stays NOT_READY until the operator-controlled environment certifies them. Stage 7 / CX-21 remain PREREGISTERED."
+      "means": "the PSV protocol holds as DEVELOPMENT evidence. It earns NO protected-readiness credit: protected_backend, g01_on_protected_backend and pci_on_protected_backend stay NOT_RUN, and PROTECTED_VERIFIER_READY stays NOT_READY until the operator-controlled environment certifies them. Stage 7 / CX-21 remain PREREGISTERED.",
+      "later_correction": "C8 certifying review wf_bff9835f-4a0 (2026-09-29) showed M254 \u2014 retired here as EQUIVALENT_DID \u2014 was a FALSE retirement at this candidate too: removing the reverify_protected call alone breaks three protected-class tests, so the guard is load-bearing. 7b's EQUIVALENCE registration was therefore wrong for M254 (the paired-disable matrix ran its assigned relabel test, which M261/M262 refuse independently). No protocol property was left unverified \u2014 M254's guard was present and its properties were killed by active mutants \u2014 but the claim '8 retired rows are genuinely equivalent' was false. Corrected from Candidate 8 onward (M254 active; full-suite condition added to paired-disable)."
     },
     "open_followups": [],
     "resolved_followups": [
@@ -441,7 +442,7 @@
         "equivalence": "M254 reclassified ACTIVE with a named-property discriminator (a_protected_admission_re_verifies_the_execution_leg_from_its_documents), verified KILLED; removed from EQUIV_RECORD. Active 260->261, retired-equivalent 7->6. The six remaining (M103/M104/M209/M210/M245/M255) re-confirmed genuinely redundant by a full-suite check.",
         "methodology": "v022_paired_disable.py now runs a full-suite check per retired row (a guard removed alone must not break ANY test in the package) \u2014 the check that flags M254."
       },
-      "corrected_freeze": "in progress at bce231ad (guest image rebuilt for the builtins.rs change); re-proof + one fresh certifying review to follow.",
+      "corrected_freeze": "cb9fa2ea proof GREEN, NZ=0 (bind-c8d): 0b 261/261 apply, gate PASS, boot 11/11, active 261/261 killed (M254 by its named-property test), 0 survivors, 0 stale, paired-disable 7/7 with full_suite=SUITE_OK on every row. Intermediate candidates 2568963f (gate: cargo fmt) and 7b9736b9 (M254 row pointed at the wrong file -> stale 260/261; M255 joint cell not applicable) were superseded. Freeze re-cut to commit the regenerated paired-disable manifest (the committed one still listed M254 as equivalent).",
       "readiness_credit": "none"
     }
   },
