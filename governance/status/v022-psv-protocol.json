@@ -477,24 +477,63 @@
       }
     },
     "candidate_9": {
-      "state": "DEV HARDENING WAVE in progress (operator decision 2026-09-29: class-level fixes, then a dev adversarial review to zero blockers, THEN one freeze + proof + one certifying review)",
+      "state": "DEV REVIEW LOOP: round 1 found 6 blockers; the round-1 fix wave (1 + 1b) is merged and evidenced; dev review round 2 next. No freeze until a round has zero blockers.",
       "naming": "C7b = proof WITHDRAWN; C8 = FAILED certification attempts (01e22d50, 2568963f, 7b9736b9, cb9fa2ea, 4943489f); C9 = this candidate",
       "objectives": {
         "1_rng": "DONE 8a7962fb: RNG moved into the per-provenance Kernel; process-global stream deleted; sealed stream one-way seeded; drift test derives Random builtins from BUILTINS; runner-level steering regression; M270-M272 killed",
         "2_equivalence": "DONE 8a7962fb: M254/M103/M255/M104/M209/M210 ACTIVE with named-property killing tests; M176 STALE (M293 replaces it); M58 + M245 EQUIVALENT on executed four-cell matrices with own-attack markers; paired-disable requires all four cells, attack-message markers, row-flag full suite",
         "3_field_origin": "DONE b3902ed5 (c9/field-origin): all reviewer git spoofs + 2 new reproduced and refused; object-store re-hash; out_root/nonce_store ownership; M284-M292 killed",
-        "4_major_adjacent": "IN PROGRESS: loop-side joins (PSV-5 five untested joins, guest-verdict-sha256, PSV-6 age/nonce vs matrix claim) and fabric-side identity (PSV-6 observer-absent launch, PSV-4 bundle emission, PSV-3 keyed pass-side row + prctl fail-closed, PSV-2 tree digest)",
+        "4_major_adjacent": "DONE (wave C9 initial, 20a181dc) and extended by the round-1 fix wave below",
         "5_lane_a_d1": "DONE 782d9b4f (c9/authority): forged --grant-registry reproduced on dev + protected host; operator-pinned registry; authorize before any journal write; M273-M283 killed"
       },
-      "registry": "291 rows at 70ad8da7: 287 active; retired 2 equivalent (M58, M245) + 2 stale (M176, M204); 0 legacy",
-      "negative_matrix": "46 rows (A42-A46 added), 107 citations resolve (0359839f)",
+      "registry": "387 rows at 89d5efd8: 358 active; retired 28 equivalent + 1 stale (M176); 0 legacy",
+      "negative_matrix": "64 rows (A47-A64 in C9), 163 citations resolve",
       "open_operator_decisions": [
-        "readiness: untracked files hidden by .git/info/exclude or a self-ignoring .gitignore are invisible to the certification check; refusing them changes what counts as READY (amendment 32)"
+        "readiness: untracked files hidden by .git/info/exclude or a self-ignoring .gitignore (amendment 32); and whether build provenance's stricter counting of them is acceptable",
+        "deployment model: fc_linux_profile.sh requires uid 0 and Fabric runs it directly, while the trust preflight refuses a root Fabric actor (A20). Option A: non-root Fabric + a narrow privileged launcher helper; option B: root Fabric, restated preflight, O_NOFOLLOW/ownership-walked caller paths",
+        "protected class: amendment 18 requires a Fabric-attested protected EXECUTION leg; Fabric now attests no unobserved execution, so no protected evaluation can count a trial (fails closed). Option A: an observed execution path (new manifest shape, cross-peer with MiCode); option B: amend 18 so the class rests on the verification leg",
+        "hash-then-exec of the pinned launcher / observer command (fexecve or a copy)"
       ],
       "lane_b_prep_followups": [
         "D1 now refuses a caller --grant-registry on a protected host: Cortex FabricSubmitExecutor (crates/axon-cortex/src/runner.rs ~2632) and MiCode always pass one, so their protected-host path must stop doing so before a protected host is deployed; protected-host.json must add grant_registry {path, sha256}"
       ],
-      "readiness_credit": "none; readiness NOT_READY"
+      "readiness_credit": "none; readiness NOT_READY",
+      "dev_review_round_1": {
+        "run": "wf_2a57e9a7-e4a",
+        "tree": "a3db33bd",
+        "verdicts": "5 REGISTER (PSV-1, PSV-3, PSV-4, PSV-5, FIELD-ORIGIN), 4 DO_NOT_REGISTER (PSV-2, PSV-6, PSV-7, EQUIVALENCE)",
+        "blockers": [
+          "PSV-6: a protected-profile interpreter_run launched unobserved and was attested/counted protected",
+          "PSV-2: POSIX ACLs / xattrs invisible to check_inputs and the digest (keyed Failed for a correct candidate)",
+          "PSV-7: readiness verified the operator signature over a second read of the record (FIFO/rename)",
+          "EQUIVALENCE: M204's guard live without a row",
+          "EQUIVALENCE: weak kills (any test failure counted as a kill)",
+          "EQUIVALENCE: check_bundle guards without rows (four survived every suite)"
+        ]
+      },
+      "round_1_fix_wave": {
+        "dev_head": "89d5efd8",
+        "fixed": [
+          "PSV-6 A54: only an observed registered check launches on the protected profile; no unobserved execution attested; EVL/admission require the observed-launch refs (M320/M321/M425-M428)",
+          "PSV-4/5 A55: bundle decided from the FINAL receipt class; downgrade guard rowed (M322/M323)",
+          "A56-A57/A63: out_root/nonce_store leaves the service's own 0700; only NotFound is absent; one key one authority root (Fabric and loop)",
+          "PSV-7 A58-A61: one read per authority decision (O_NOFOLLOW, regular files); readiness attribution joined to roots, observation and B263 record; hardened build provenance; 0400 signer key",
+          "PSV-5 A62/A64: recorded attribution joined to the re-verified signers; no all-zero host digests",
+          "PSV-2 A53: any xattr on inputs or job files refused in the guest; launcher images without xattrs. Guest noacl mount WITHDRAWN (the guest kernel refuses it; the guest failed to boot)",
+          "PSV-1 A33: the first-match rule: no import resolves first to a sealed copy of a name an operator dir holds (M436)",
+          "EQUIVALENCE: kill = the row's own ATTACK marker in the failing panic (amendment 39); M204 ACTIVE; stale rows need a killed replacement; retired rows need markers; kill evidence is the last panic; harness TMPDIR on disk"
+        ],
+        "guest": "rebuilt and re-pinned at 3f81dc67 (bffaaaae); psv_guest_boot_test.sh 11/11 PASS",
+        "mutation": "full two-shard run at a49f6a3f: registry 387; ACTIVE 358/358 KILLED by their own attack; REFUSED_ELSEWHERE 0; survivors 0; unapplied 0; 28 EQUIVALENT_DID never counted killed; 1 STALE (M176 -> M293). a49f6a3f..89d5efd8 changes only harness scripts, markers for retired rows, and one test panic message (M245's attack)",
+        "paired_disable": "29/29 records hold (25 at a49f6a3f in a separate worktree; M245 at 16a32769, M58/M60/M89 at 89d5efd8 after the harness TMPDIR fixes)",
+        "refuted_retirements": [
+          "M260: proposed equivalent vs M436; its full-suite cell reached a keyed PASS; stays ACTIVE"
+        ],
+        "integration": "bffaaaae: fmt, clippy (5 PSV pkgs + axon-core), PSV package tests, trust preflight fixtures, matrix PASS; axon-core 669/671 with the two native-parity harnesses failing on /tmp space (pass alone; harness TMPDIR fixed since)",
+        "known_limits": [
+          "the codegen/native parity tests exec a prebuilt target/debug/axon that a mutation never rebuilds, so a full-suite cell does not exercise a mutated guard through native codegen"
+        ]
+      }
     }
   },
   "closure_gate": {

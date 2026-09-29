@@ -1,76 +1,8 @@
 {
   "schema": "axon-v022-paired-disable/2",
-  "commit": "a49f6a3f47542314d22645a5fc2f5a38965e4c9b",
-  "all_hold": false,
+  "commit": "89d5efd808600ffc44606cfc8c30c929c542495a",
+  "all_hold": true,
   "records": [
-    {
-      "mutation": "M245",
-      "status": "EQUIVALENT_DID",
-      "kind": "pair",
-      "property": "a protected clearance is a real monitor signature under the operator monitor root",
-      "original_guard": {
-        "file": "crates/axon-loop/src/admission.rs"
-      },
-      "subsumed_by": [
-        "M264"
-      ],
-      "live_killing_mutant": "M264",
-      "all_paths": null,
-      "matrix": {
-        "baseline": "ATTACK_REFUSED",
-        "retired_guard_disabled": "ATTACK_REFUSED",
-        "guard_set_disabled": "OTHER_FAILURE",
-        "guard_set": [
-          "M245",
-          "M264"
-        ],
-        "retired_guard_full_suite": "SUITE_OK",
-        "sibling_set_disabled": "ATTACK_REFUSED"
-      },
-      "holds": false,
-      "commit": "a49f6a3f47542314d22645a5fc2f5a38965e4c9b"
-    },
-    {
-      "mutation": "M58",
-      "status": "EQUIVALENT_DID",
-      "kind": "pair",
-      "property": "a break/continue raised in a FUNCTION BODY does not escape into the caller's loop",
-      "original_guard": {
-        "file": "crates/axon-core/src/interp.rs"
-      },
-      "subsumed_by": [
-        "M59"
-      ],
-      "live_killing_mutant": "M59",
-      "all_paths": null,
-      "matrix": {
-        "baseline": "ATTACK_REFUSED",
-        "retired_guard_disabled": "ATTACK_REFUSED",
-        "guard_set_disabled": "OTHER_FAILURE",
-        "guard_set": [
-          "M58",
-          "M59"
-        ],
-        "retired_guard_full_suite": "SUITE_BROKEN",
-        "retired_guard_full_suite_failures": [
-          "all_examples_native_match_interp_under_mock",
-          "codegen_adaptive_provenance_carries_input_f11",
-          "codegen_agent_action_log_matches_interp",
-          "codegen_arr_panic_messages_match_interp",
-          "codegen_arr_sum_and_contains_match_interp",
-          "codegen_assert_failure_messages_match_interp",
-          "codegen_dict_core_matches_interp",
-          "codegen_exec_matches_interp",
-          "codegen_fuzz_parity_finds_no_divergence",
-          "codegen_goal_run_unknown_name_matches_interp",
-          "codegen_handler_tail_resume_lowers_via_parity_harness",
-          "codegen_i64_to_str_radix_bad_base_panics_like_interp"
-        ],
-        "sibling_set_disabled": "ATTACK_REFUSED"
-      },
-      "holds": false,
-      "commit": "a49f6a3f47542314d22645a5fc2f5a38965e4c9b"
-    },
     {
       "mutation": "M27",
       "status": "EQUIVALENT_DID",
@@ -728,6 +660,72 @@
       "commit": "a49f6a3f47542314d22645a5fc2f5a38965e4c9b"
     },
     {
+      "mutation": "M176",
+      "status": "STALE_REFACTORED",
+      "property": "a pass needs exit 0",
+      "original_guard": "the exit-0 guard became the Some(0) of the Passed arm in runner.rs (C9 re-audit)",
+      "old_string_present": false,
+      "replacement": "M293",
+      "replacement_state": "REPLACEMENT_KILLED",
+      "matrix": null,
+      "holds": true,
+      "commit": "a49f6a3f47542314d22645a5fc2f5a38965e4c9b"
+    },
+    {
+      "mutation": "M245",
+      "status": "EQUIVALENT_DID",
+      "kind": "pair",
+      "property": "a protected clearance is a real monitor signature under the operator monitor root",
+      "original_guard": {
+        "file": "crates/axon-loop/src/admission.rs"
+      },
+      "subsumed_by": [
+        "M264"
+      ],
+      "live_killing_mutant": "M264",
+      "all_paths": null,
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M245",
+          "M264"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "16a32769fb1c26d96e01ed061484d3a0656e5557"
+    },
+    {
+      "mutation": "M58",
+      "status": "EQUIVALENT_DID",
+      "kind": "pair",
+      "property": "a break/continue raised in a FUNCTION BODY does not escape into the caller's loop",
+      "original_guard": {
+        "file": "crates/axon-core/src/interp.rs"
+      },
+      "subsumed_by": [
+        "M59"
+      ],
+      "live_killing_mutant": "M59",
+      "all_paths": null,
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M58",
+          "M59"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "89d5efd808600ffc44606cfc8c30c929c542495a"
+    },
+    {
       "mutation": "M60",
       "status": "EQUIVALENT_DID",
       "kind": "pair",
@@ -748,25 +746,11 @@
           "M60",
           "M69"
         ],
-        "retired_guard_full_suite": "SUITE_BROKEN",
-        "retired_guard_full_suite_failures": [
-          "all_examples_native_match_interp_under_mock",
-          "codegen_adaptive_provenance_carries_input_f11",
-          "codegen_agent_action_log_matches_interp",
-          "codegen_arr_panic_messages_match_interp",
-          "codegen_arr_sum_and_contains_match_interp",
-          "codegen_assert_failure_messages_match_interp",
-          "codegen_dict_core_matches_interp",
-          "codegen_exec_matches_interp",
-          "codegen_fuzz_parity_finds_no_divergence",
-          "codegen_goal_run_unknown_name_matches_interp",
-          "codegen_handler_tail_resume_lowers_via_parity_harness",
-          "codegen_i64_to_str_radix_bad_base_panics_like_interp"
-        ],
+        "retired_guard_full_suite": "SUITE_OK",
         "sibling_set_disabled": "ATTACK_REFUSED"
       },
-      "holds": false,
-      "commit": "a49f6a3f47542314d22645a5fc2f5a38965e4c9b"
+      "holds": true,
+      "commit": "89d5efd808600ffc44606cfc8c30c929c542495a"
     },
     {
       "mutation": "M89",
@@ -791,37 +775,11 @@
           "M86",
           "M96"
         ],
-        "retired_guard_full_suite": "SUITE_BROKEN",
-        "retired_guard_full_suite_failures": [
-          "all_examples_native_match_interp_under_mock",
-          "codegen_adaptive_provenance_carries_input_f11",
-          "codegen_agent_action_log_matches_interp",
-          "codegen_arr_panic_messages_match_interp",
-          "codegen_arr_sum_and_contains_match_interp",
-          "codegen_assert_failure_messages_match_interp",
-          "codegen_dict_core_matches_interp",
-          "codegen_exec_matches_interp",
-          "codegen_fuzz_parity_finds_no_divergence",
-          "codegen_goal_run_unknown_name_matches_interp",
-          "codegen_handler_tail_resume_lowers_via_parity_harness",
-          "codegen_i64_to_str_radix_bad_base_panics_like_interp"
-        ],
+        "retired_guard_full_suite": "SUITE_OK",
         "sibling_set_disabled": "ATTACK_REFUSED"
       },
-      "holds": false,
-      "commit": "a49f6a3f47542314d22645a5fc2f5a38965e4c9b"
-    },
-    {
-      "mutation": "M176",
-      "status": "STALE_REFACTORED",
-      "property": "a pass needs exit 0",
-      "original_guard": "the exit-0 guard became the Some(0) of the Passed arm in runner.rs (C9 re-audit)",
-      "old_string_present": false,
-      "replacement": "M293",
-      "replacement_state": "REPLACEMENT_KILLED",
-      "matrix": null,
       "holds": true,
-      "commit": "a49f6a3f47542314d22645a5fc2f5a38965e4c9b"
+      "commit": "89d5efd808600ffc44606cfc8c30c929c542495a"
     }
   ]
 }
