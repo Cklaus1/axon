@@ -42,21 +42,21 @@
       "status": "NOT_RUN",
       "decided_by": "operator-installed axon-fabric verify-readiness",
       "missing": [
-        "earned only on the protected host: operator trust root not usable: /etc/axon/trust/qualification: [Errno 2] No such file or directory: '/etc/axon/trust/qualification'"
+        "earned only on the protected host: operator verifier is not installed on this host (no valid trust root + pinned verifier); expected on the development host \u2014 the protected legs are earned only on the operator-controlled protected host"
       ]
     },
     "g01_on_protected_backend": {
       "status": "NOT_RUN",
       "decided_by": "operator-installed axon-fabric verify-readiness",
       "missing": [
-        "earned only on the protected host: operator trust root not usable: /etc/axon/trust/qualification: [Errno 2] No such file or directory: '/etc/axon/trust/qualification'"
+        "earned only on the protected host: operator verifier is not installed on this host (no valid trust root + pinned verifier); expected on the development host \u2014 the protected legs are earned only on the operator-controlled protected host"
       ]
     },
     "pci_on_protected_backend": {
       "status": "NOT_RUN",
       "decided_by": "operator-installed axon-fabric verify-readiness",
       "missing": [
-        "earned only on the protected host: operator trust root not usable: /etc/axon/trust/qualification: [Errno 2] No such file or directory: '/etc/axon/trust/qualification'"
+        "earned only on the protected host: operator verifier is not installed on this host (no valid trust root + pinned verifier); expected on the development host \u2014 the protected legs are earned only on the operator-controlled protected host"
       ]
     },
     "no_open_blocking_false_greens": {

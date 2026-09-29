@@ -86,6 +86,43 @@ class Relay(unittest.TestCase):
             self.assertEqual(v["status"], "NOT_RUN", c)
             self.assertIn("earned only on the protected host", v["missing"][0])
 
+    def test_an_ambient_etc_leftover_does_not_change_readiness(self):
+        # Reason drift between "trust root absent" and "trust root present-but-
+        # incomplete" (a stray root-owned empty qualification dir) once broke the
+        # committed readiness file's byte-match under --check. Whatever the
+        # filesystem shape, an incomplete install must yield ONE stable NOT_RUN
+        # reason for all three protected legs. Simulated through operator_owned so
+        # no /etc write (and no root) is needed (ENV HYGIENE follow-up).
+        Q, PIN = pvr.QUALIFICATION_ROOT, pvr.VERIFIER_MANIFEST
+        shapes = {
+            "root absent": lambda p: f"{p}: [Errno 2] No such file or directory",
+            "empty leftover dir, verifier.json absent":
+                lambda p: None if p == Q else f"{PIN}: [Errno 2] No such file or directory",
+            "symlinked root": lambda p: f"{p} is a symlink",
+            "group/other-writable root": lambda p: f"{p} is group/other-writable",
+            "agent-writable root": lambda p: f"{p} is writable by the process running this check",
+        }
+        real = pvr.operator_owned
+        seen = []
+        try:
+            for name, fn in shapes.items():
+                pvr.operator_owned = fn
+                v = pvr.protected_verdicts()
+                for c in pvr.PROTECTED:
+                    self.assertEqual(v[c]["status"], "NOT_RUN", name)
+                seen.append((name, {c: v[c]["missing"][0] for c in pvr.PROTECTED}))
+        finally:
+            pvr.operator_owned = real
+        baseline = seen[0][1]
+        for name, miss in seen:
+            self.assertEqual(miss, baseline, f"readiness reason drifted for shape: {name}")
+        for c in pvr.PROTECTED:
+            r = baseline[c]
+            self.assertIn("earned only on the protected host", r)
+            self.assertIn("not installed on this host", r)
+            self.assertNotIn("/etc/axon", r)   # no volatile filesystem detail
+            self.assertNotIn("Errno", r)
+
 
 if __name__ == "__main__":
     unittest.main()

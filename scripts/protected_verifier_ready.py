@@ -142,14 +142,32 @@ def verifier_mismatch(manifest, out):
     return None
 
 
+# A host with no complete operator install reports ONE stable reason,
+# whatever the exact filesystem shape (root absent, an empty leftover dir, a
+# missing or malformed verifier.json, a symlink, a permission bit). The status
+# is NOT_RUN either way; only the human reason differed, and that drift once
+# flipped the committed readiness file's byte-match under `--check` when a stray
+# root-owned /etc/axon/trust/qualification dir was left behind (ENV HYGIENE
+# follow-up). The genuine present-but-wrong-binary reasons (sha/identity
+# mismatch) stay specific — those need a real pinned verifier and are a review
+# signal, not ambient cruft. The stability of THIS reason is pinned by
+# test_protected_verifier_ready.py::an_ambient_etc_leftover_does_not_change_readiness.
+NOT_INSTALLED_HERE = (
+    "operator verifier is not installed on this host (no valid trust root + pinned "
+    "verifier); expected on the development host — the protected legs are earned "
+    "only on the operator-controlled protected host"
+)
+
+
 def operator_verifier():
     """(manifest, None) for the operator-installed verifier pinned in the trust
-    root (verifier.json, VERIFIER_MANIFEST_SCHEMA), or (None, why)."""
+    root (verifier.json, VERIFIER_MANIFEST_SCHEMA), or (None, why). Install-shape
+    failures collapse to the stable NOT_INSTALLED_HERE; only a present-but-wrong
+    binary yields a specific reason."""
     pin = VERIFIER_MANIFEST
     for p in (QUALIFICATION_ROOT, pin):
-        bad = operator_owned(p)
-        if bad:
-            return None, f"operator trust root not usable: {bad}"
+        if operator_owned(p):
+            return None, NOT_INSTALLED_HERE
     try:
         v = json.load(open(pin))
         binpath, want = v["path"], v["sha256"]
@@ -157,8 +175,8 @@ def operator_verifier():
             raise ValueError(f"not an {VERIFIER_MANIFEST_SCHEMA} naming an absolute path")
         for k in VERIFIER_IDENTITY + ("trust_roots",):
             v[k]
-    except (OSError, ValueError, KeyError) as e:
-        return None, f"{pin}: {e}"
+    except (OSError, ValueError, KeyError):
+        return None, NOT_INSTALLED_HERE
     bad = operator_owned(binpath)
     if bad:
         return None, f"verifier: {bad}"
