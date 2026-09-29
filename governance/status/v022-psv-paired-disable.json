@@ -1,6 +1,6 @@
 {
   "schema": "axon-v022-paired-disable/2",
-  "commit": "e1e2a22f3535c0db9d3853f79d8e9ac5201d0392",
+  "commit": "df1aea0b1b94d99bcf1eadbc2236b648be9d4ebb",
   "all_hold": true,
   "records": [
     {
@@ -369,6 +369,195 @@
       },
       "holds": true,
       "commit": "e1e2a22f3535c0db9d3853f79d8e9ac5201d0392"
+    },
+    {
+      "mutation": "M139",
+      "status": "EQUIVALENT_DID",
+      "kind": "pair",
+      "property": "on a protected host the caller's --check-registry never becomes the suite registry",
+      "original_guard": {
+        "file": "crates/axon-fabric/src/bin/axon-fabric.rs"
+      },
+      "subsumed_by": [
+        "M141"
+      ],
+      "live_killing_mutant": "joint:M139+M141",
+      "all_paths": "the binary reads --check-registry in exactly two places, both in submit(): M139's refusal and the registry_path match; on a protected host (host is Some) that match's arm is h.suite_registry (M141), which never reads the flag, so with M139 removed the flag is read by nothing",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M139",
+          "M141"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "df1aea0b1b94d99bcf1eadbc2236b648be9d4ebb"
+    },
+    {
+      "mutation": "M141",
+      "status": "EQUIVALENT_DID",
+      "kind": "pair",
+      "property": "on a protected host the caller's --check-registry never becomes the suite registry",
+      "original_guard": {
+        "file": "crates/axon-fabric/src/bin/axon-fabric.rs"
+      },
+      "subsumed_by": [
+        "M139"
+      ],
+      "live_killing_mutant": "joint:M139+M141",
+      "all_paths": "M139's refusal runs before the registry_path match on the same host (Some) and tests a.opt(--check-registry), the same lookup the override would use; nothing between them can succeed without passing it, so the override is reached only with the flag absent",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M141",
+          "M139"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "df1aea0b1b94d99bcf1eadbc2236b648be9d4ebb"
+    },
+    {
+      "mutation": "M183",
+      "status": "EQUIVALENT_DID",
+      "kind": "pair",
+      "property": "a pass rests on this launch's keyed completion evidence",
+      "original_guard": {
+        "file": "crates/axon-fabric/src/psv.rs"
+      },
+      "subsumed_by": [
+        "M312"
+      ],
+      "live_killing_mutant": "joint:M183+M312",
+      "all_paths": "both checks sit in derive()'s Passed arm; M312 requires exactly one result line naming the test, status ok, whose completion equals outcome_token(K, test, true), which is the same HMAC as completion_token(K, test); parse_axon_test_json records that line's token in report.completion, so M312 passing implies M183's predicate",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M183",
+          "M312"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "df1aea0b1b94d99bcf1eadbc2236b648be9d4ebb"
+    },
+    {
+      "mutation": "M187",
+      "status": "EQUIVALENT_DID",
+      "kind": "pair",
+      "property": "the protected profile launches only an operator suite with a named test",
+      "original_guard": {
+        "file": "crates/axon-fabric/src/submit.rs"
+      },
+      "subsumed_by": [
+        "M400"
+      ],
+      "live_killing_mutant": "joint:M187+M400",
+      "all_paths": "the protected arm of the dispatch match is the only launch path for the protected profile, and every request reaching it passes M400's spec match, which yields a launch spec only for (Some(suite), Some(test)); M187 is the same predicate before reservation",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M187",
+          "M400"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "df1aea0b1b94d99bcf1eadbc2236b648be9d4ebb"
+    },
+    {
+      "mutation": "M400",
+      "status": "EQUIVALENT_DID",
+      "kind": "pair",
+      "property": "the protected profile launches only an operator suite with a named test",
+      "original_guard": {
+        "file": "crates/axon-fabric/src/submit.rs"
+      },
+      "subsumed_by": [
+        "M187"
+      ],
+      "live_killing_mutant": "joint:M187+M400",
+      "all_paths": "M187 runs for every request whose selected profile is the protected one, before reservation, and returns Err unless target.suite and target.filter are both Some; the protected arm is reached only with that profile",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M400",
+          "M187"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "df1aea0b1b94d99bcf1eadbc2236b648be9d4ebb"
+    },
+    {
+      "mutation": "M273",
+      "status": "EQUIVALENT_DID",
+      "kind": "pair",
+      "property": "on a protected host a caller grant registry never authorizes status or cancel",
+      "original_guard": {
+        "file": "crates/axon-fabric/src/bin/axon-fabric.rs"
+      },
+      "subsumed_by": [
+        "M401"
+      ],
+      "live_killing_mutant": "joint:M273+M401",
+      "all_paths": "grant_registry() is the one reader of --grant-registry for status/cancel (and submit, where M274 refuses first); on a protected host its arm resolves h.grants(), the operator's pinned registry (M401), which never reads the flag",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M273",
+          "M401"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "df1aea0b1b94d99bcf1eadbc2236b648be9d4ebb"
+    },
+    {
+      "mutation": "M401",
+      "status": "EQUIVALENT_DID",
+      "kind": "pair",
+      "property": "on a protected host a caller grant registry never authorizes status or cancel",
+      "original_guard": {
+        "file": "crates/axon-fabric/src/bin/axon-fabric.rs"
+      },
+      "subsumed_by": [
+        "M273"
+      ],
+      "live_killing_mutant": "joint:M273+M401",
+      "all_paths": "within the same arm, M273's by-name refusal of --grant-registry runs first and tests the flag's presence (has), which any value the override could read implies",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M401",
+          "M273"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "df1aea0b1b94d99bcf1eadbc2236b648be9d4ebb"
     }
   ]
 }
