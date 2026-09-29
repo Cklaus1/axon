@@ -1,6 +1,6 @@
 {
   "schema": "axon-v022-paired-disable/2",
-  "commit": "merged: see each record",
+  "commit": "24688b83c4503a54cdf4562ef665cba0f4b3d962",
   "all_hold": true,
   "records": [
     {
@@ -614,6 +614,87 @@
       },
       "holds": true,
       "commit": "992276cf71afac8c18a3abf63e73d11195afca73"
+    },
+    {
+      "mutation": "M19",
+      "status": "EQUIVALENT_DID",
+      "kind": "pair",
+      "property": "a protected evaluation counts no execution leg that ran on a development backend",
+      "original_guard": {
+        "file": "crates/axon-loop/src/evl.rs"
+      },
+      "subsumed_by": [
+        "M428"
+      ],
+      "live_killing_mutant": "M428",
+      "all_paths": "M19's filter runs only in judge()'s protected branch, on d.acf's receipt; that branch then calls verify_execution on the SAME (request, receipt) unconditionally (the only exit between them is the verification-leg filter, itself a refusal), and verify_execution refuses a receipt whose backend is not a PROTECTED_PROFILES entry (M428). Admission never runs M19; there M428 is sole and killed on its own route",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M19",
+          "M428"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "24688b83c4503a54cdf4562ef665cba0f4b3d962"
+    },
+    {
+      "mutation": "M209",
+      "status": "EQUIVALENT_DID",
+      "kind": "pair",
+      "property": "a counted protected verdict's recorded verifier is one the operator verifier root holds, under the recorded key",
+      "original_guard": {
+        "file": "crates/axon-loop/src/admission.rs"
+      },
+      "subsumed_by": [
+        "M360"
+      ],
+      "live_killing_mutant": "joint:M209+M360",
+      "all_paths": "derive's rooted-verifier check applies only to a PROTECTED evaluation's counted trials, reached from admit and every rederive (activation, rollback); for each such trial the same loop iteration then runs reverify_protected, which authenticates the verdict under the EPISODE's issuer via verify_check_evidence (a protected claim is required, so rooted_key(issuer) must hold) and requires the record's issuer and key_id to BE that signer (M360). So the record's issuer is rooted with that key whenever M360 passes. The development class never uses the rooted lookup",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M209",
+          "M360"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "24688b83c4503a54cdf4562ef665cba0f4b3d962"
+    },
+    {
+      "mutation": "M210",
+      "status": "EQUIVALENT_DID",
+      "kind": "pair",
+      "property": "a counted protected trial's context attribution is an observer the operator observer root holds, under the recorded key",
+      "original_guard": {
+        "file": "crates/axon-loop/src/admission.rs"
+      },
+      "subsumed_by": [
+        "M361"
+      ],
+      "live_killing_mutant": "joint:M210+M361",
+      "all_paths": "derive's rooted-observer check runs only for a PROTECTED evaluation's counted trials, after the verifier loop, where reverify_protected has returned the context's signer for EVERY such trial (trusted observer, rooted_key held, signature verified under it); M361 then requires context_signed_by to equal that signer. So the attribution is rooted with that key whenever M361 passes. No other reader of context_signed_by exists",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M210",
+          "M361"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "24688b83c4503a54cdf4562ef665cba0f4b3d962"
     }
   ]
 }
