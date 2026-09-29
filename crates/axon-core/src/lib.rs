@@ -813,7 +813,16 @@ fn load_module_recursive(
         let c = canon(p);
         sealed.iter().any(|d| c.starts_with(d))
     };
-    if from_sealed {
+    // …and whoever asks means the OPERATOR too: an unsealed module's `use`
+    // whose first match in search order is a sealed module's file is the
+    // same substitution when an operator directory also holds the name (a
+    // non-exclusive run searches `~/.axon/lib` after the candidate; C9 round
+    // 1b, PSV-1).
+    let first_hit_sealed = search_dirs
+        .iter()
+        .find(|d| !matches!(d.join(&rel).try_exists(), Ok(false)))
+        .is_some_and(|d| in_sealed(d));
+    if from_sealed || first_hit_sealed {
         for d in search_dirs.iter().filter(|d| !in_sealed(d)) {
             let op = d.join(&rel);
             if !matches!(op.try_exists(), Ok(false)) {

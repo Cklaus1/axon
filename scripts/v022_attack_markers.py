@@ -483,4 +483,7 @@ ATTACK_MARKERS = {
     'M332': r"ATTACK: a host config that cannot be stat'ed \(ENOTDIR\) was read as 'not a protected host'",
     'M333': r"ATTACK: a journal that cannot be stat'ed \(ENOTDIR\) was read as no journal",
     'M334': r'ATTACK: the trust preflight never probes .*, which load pins',
+    # ── C9 round 1b, integration ──
+    'M436': r"ATTACK: the operator's own `use rubric` loaded the candidate's copy, which defined the rubric: [^\n]*\"status\":\"ok\"",
+    'M402': r'ATTACK: a replayed execution claiming an observed protected launch was attested',
 }

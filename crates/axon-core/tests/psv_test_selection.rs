@@ -507,6 +507,83 @@ fn a_sealed_module_never_supplies_an_operator_modules_name() {
     assert!(err.contains("may not supply it"), "{err}");
 }
 
+/// C9 round 1b (PSV-1, class b: the sealed-`use` rule covered one importer
+/// only). One file per module name, suite first, WHOEVER asks: the operator
+/// suite's OWN `use rubric`, resolved before the candidate's module loads,
+/// must never land on the candidate's `rubric.ax` while the operator's library
+/// holds the name. A non-exclusive `--seal` run searches `~/.axon/lib` after
+/// every `AXON_PATH` entry, so the candidate directory came first and the
+/// candidate defined the rubric (keyed pass, executed on the unmutated tree).
+#[test]
+fn an_operator_import_never_resolves_to_a_sealed_modules_copy() {
+    use std::io::Write;
+    let run = |cand: &[(&str, &str)]| -> (String, String) {
+        let d = fresh(&format!("opimport-{}", cand.len()));
+        std::fs::create_dir_all(d.join("cand")).unwrap();
+        std::fs::create_dir_all(d.join("suite")).unwrap();
+        std::fs::create_dir_all(d.join("home/.axon/lib")).unwrap();
+        // The operator imports its rubric FIRST, before the candidate's module.
+        std::fs::write(
+            d.join("suite/accept.ax"),
+            "mod rubric\nuse rubric.{expected}\nmod f\nuse f.{double}\n\n@[test]\nfn t_ok() { assert_eq(double(21), expected()) }\n",
+        )
+        .unwrap();
+        std::fs::write(
+            d.join("home/.axon/lib/rubric.ax"),
+            "fn expected() -> i64 { 42 }\n",
+        )
+        .unwrap();
+        for (n, src) in cand {
+            std::fs::write(d.join("cand").join(n), src).unwrap();
+        }
+        let mut c = Command::new(env!("CARGO_BIN_EXE_axon"))
+            .env_clear()
+            .current_dir(d.join("suite"))
+            .arg("test")
+            .arg(d.join("suite/accept.ax"))
+            .args([
+                "--json",
+                "--filter",
+                "t_ok",
+                "--exact",
+                "--completion-key-stdin",
+            ])
+            .arg("--seal")
+            .arg(d.join("cand"))
+            .env("PATH", "/usr/bin:/bin")
+            .env("HOME", d.join("home"))
+            .env(
+                "AXON_PATH",
+                format!("{}:{}", d.join("suite").display(), d.join("cand").display()),
+            )
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        writeln!(c.stdin.take().unwrap(), "{}", "0b".repeat(32)).unwrap();
+        let out = c.wait_with_output().unwrap();
+        (
+            String::from_utf8_lossy(&out.stdout).into_owned(),
+            String::from_utf8_lossy(&out.stderr).into_owned(),
+        )
+    };
+    let (ok, err) = run(&[("f.ax", "fn double(x: i64) -> i64 { x * 2 }\n")]);
+    assert!(
+        ok.contains("\"status\":\"ok\""),
+        "control: an honest candidate passes: {ok}\n{err}"
+    );
+    let (out, err) = run(&[
+        ("f.ax", "fn double(x: i64) -> i64 { 999 }\n"),
+        ("rubric.ax", "fn expected() -> i64 { 999 }\n"),
+    ]);
+    assert!(
+        !out.contains("\"status\":\"ok\""),
+        "ATTACK: the operator's own `use rubric` loaded the candidate's copy, which defined the rubric: {out}\n{err}"
+    );
+    assert!(err.contains("may not supply it"), "{err}");
+}
+
 /// Dev review round wf_bf757240-925 (PSV-1): a sealed candidate cannot reseed
 /// the process RNG the operator's test draws from. The candidate reseeds to a
 /// fixed seed at load and returns the draw it can then PREDICT. Its srand

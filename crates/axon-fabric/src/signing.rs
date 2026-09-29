@@ -315,6 +315,25 @@ mod tests {
     /// got an `axon.fabric-execution/1` attestation that EVL counts. Control:
     /// the fully observed receipt is attested (above and at the end here).
     #[test]
+    fn a_replayed_execution_is_never_attested_whatever_its_journal_claims() {
+        // C9 round 1b: the replay check is the ONLY refusal for a replay whose
+        // journal claims the protected backend AND whose receipt carries the
+        // observed-launch refs; everything else about it looks attestable.
+        let exec = req("interpreter_run", "prog.ax");
+        let vm = ran_as(LINUX_MICROVM_PROTECTED.id, "", "protected");
+        assert_eq!(
+            execution_attestation_decision(&exec, &receipt(&OBSERVED), true, Some(&vm)),
+            Err(REPLAYED),
+            "ATTACK: a replayed execution claiming an observed protected launch was attested"
+        );
+        assert_eq!(
+            execution_attestation_decision(&exec, &receipt(&OBSERVED), false, Some(&vm)),
+            Ok(()),
+            "control: the same execution, not replayed, is attested"
+        );
+    }
+
+    #[test]
     fn an_unobserved_protected_profile_execution_is_never_attested() {
         let exec = req("interpreter_run", "prog.ax");
         let vm = ran_as(LINUX_MICROVM_PROTECTED.id, "", "protected");
