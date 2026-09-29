@@ -360,7 +360,20 @@ mod tests {
     fn a_replace_ref_or_graft_is_dirty() {
         let (_d, r) = repo();
         let head = text(&r, &["rev-parse", "HEAD"]).unwrap();
-        git(&r, &["update-ref", &format!("refs/replace/{head}"), &head]);
+        // HEAD replaced by another commit (same tree, other history), as a
+        // real replacement would be. (A self-replacement is a cycle that git
+        // refuses to resolve when replace objects are honoured, which tested
+        // git's cycle check rather than this refusal.)
+        let fake = Command::new(GIT_BIN)
+            .arg("-C")
+            .arg(&r)
+            .args(["-c", "user.name=t", "-c", "user.email=t@example"])
+            .args(["commit-tree", "HEAD^{tree}", "-p", "HEAD", "-m", "fake"])
+            .output()
+            .unwrap();
+        let fake = String::from_utf8(fake.stdout).unwrap();
+        let fake = fake.trim();
+        git(&r, &["update-ref", &format!("refs/replace/{head}"), fake]);
         assert_dirty(&r, "a replace ref rewrote what HEAD names", "replace ref");
 
         let (_d, r) = repo();
