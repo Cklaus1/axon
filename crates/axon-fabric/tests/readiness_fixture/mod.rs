@@ -135,9 +135,20 @@ impl Certified {
     }
     /// The component is NOT PASS, and the reason names `why`.
     pub fn refused(&self, why: &str) {
-        let v = self.verdict();
-        assert_ne!(v["status"], "PASS", "{v}");
+        let v = self.refused_any();
         assert!(v.to_string().contains(why), "expected {why:?}: {v}");
+    }
+    /// The component is NOT PASS, for any reason: for an attack that several
+    /// independent layers refuse, each alone (a four-cell record), so no
+    /// assertion may depend on WHICH layer refused it (C9 round 1).
+    #[allow(dead_code)]
+    pub fn refused_any(&self) -> Value {
+        let v = self.verdict();
+        assert_ne!(
+            v["status"], "PASS",
+            "ATTACK: certified PASS despite the attack: {v}"
+        );
+        v
     }
 }
 

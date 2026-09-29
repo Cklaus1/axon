@@ -708,10 +708,20 @@ fn every_defective_observation_refuses_the_launch() {
             "intended_launch_manifest_sha256",
         ),
         ("kernel", "observer", "observer", "guest.kernel_sha256"),
-        // A nonce the manifest does not name fails the join before the store
-        // (the store's own "never issued" is `a_nonce_authorizes_exactly_one_launch`).
+        // A nonce the manifest does not name, never issued: the manifest join
+        // and the store's "never issued" each refuse it alone, so either
+        // reason is correct here (C9 round 1).
         (
             "nonce-forged",
+            "observer",
+            "observer",
+            "observation nonce is|never issued",
+        ),
+        // C9 round 1 (M201): a nonce the custodian really issued (same epoch,
+        // same age) for ANOTHER launch. The store would consume it, so the
+        // manifest-nonce join is the only guard.
+        (
+            "nonce-issued-elsewhere",
             "observer",
             "observer",
             "observation nonce is",
@@ -744,7 +754,7 @@ fn every_defective_observation_refuses_the_launch() {
         assert_eq!(s.receipt.verification, ReceiptVerification::NotRun, "{op}");
         let r = s.reason.clone().unwrap_or_default();
         assert!(
-            r.contains("preflight observation refused") && r.contains(why),
+            r.contains("preflight observation refused") && why.split('|').any(|w| r.contains(w)),
             "{op}: {r}"
         );
         assert!(!launched(&w, &op), "{op}: launched");

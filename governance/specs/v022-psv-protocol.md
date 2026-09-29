@@ -560,7 +560,7 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
     four cells hold for ONE named attack, with the attack's own failure message; the full package
     suite (in the row's feature configuration) stays green without it; and an all-paths dominance
     argument is recorded. Only M58 and M245 meet this. M176 was stale, not equivalent (M293 now
-    kills its refactored guard).
+    kills its refactored guard). Amended by 39: a kill must be the row's own attack.
 29. **A counted receipt must claim protected evidence, on every writer route (PSV-7).** A store
     writer repointed a genuine protected record at genuinely signed guest-unobserved or
     development verdicts. That is refused at admission (`does not claim protected evidence`).
@@ -690,3 +690,33 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       then says development. This is ADR-001's accepted limitation (`v022-G01-claim.md`, "Accepted
       limitations"), recorded as a follow-up after amendments 10 and 12. Review rounds should treat
       it as accepted, not as a new finding. The negative matrix lists it under "Accepted, open".
+39. **A kill is the row's own attack succeeding (mutation evidence; amends 28).** The mutation run
+    counted any test failure as a kill. When a guard was removed and a DIFFERENT check still
+    refused the attack, a reason-asserting test failed on the reason, and that was scored killed.
+    That is the equivalent shape, not a kill. The C9 dev review measured it on M140, M201, M262,
+    M263 and M285, and by evidence shape on M24, M27-M29, M205 and M214-M217, inside a reported
+    "308/308 killed". The audit of all 308 recorded kills found 45 such rows.
+    - Every active row has an attack marker (`scripts/v022_attack_markers.py`), checked both ways:
+      no active row without one, no marker without a row. The marker states the attack getting
+      through (accepted, counted, signed, launched, passed), never a refusal reason.
+    - A row is KILLED only when the panic that FAILS its test matches its marker. That panic is the
+      last one on the test's thread, whole message. It is not the first: M279 and M280 recorded a
+      caught setup panic.
+    - A failure on any other panic is REFUSED_ELSEWHERE. It is reported on its own line, is never
+      counted killed, and fails the run. The report separates KILLED, REFUSED_ELSEWHERE,
+      EQUIVALENT, STALE, survivors and unapplied rows.
+    - A weak row is fixed in one of two ways. Either a test attacks the route where the row's guard
+      is the only guard, and panics `ATTACK: ...` if it gets through (M24, M28, M140, M201, M205,
+      M215, M217, M262, M263). Or the guard is dominated on every path and is retired under the
+      four-cell rule with its all-paths argument recorded (M27, M29, M214, M216, M285, M287, M288,
+      and the new M377, M378, M384, M385). Tests on those routes accept any refusal, because
+      which independent layer refuses is not the property.
+    - STALE ("the old text is absent") no longer shows that a guard is gone. M204's guard lived on,
+      refactored, with no row. A stale row must name an ACTIVE replacement row, and both harnesses
+      check that the replacement is killed by its own attack. M204 is ACTIVE again, re-anchored on
+      the current observe seam. M176 is stale, with replacement M293.
+    - The check_bundle joins that had no row now have one (M375-M384), and the bundle schema check
+      has an only-guard attack (M383).
+    Status: the evidence model and harness are implemented. Rows the round-1 audit found weak and
+    that are not fixed yet are listed in the round's report. They show as REFUSED_ELSEWHERE, so a
+    run cannot pass while they remain.

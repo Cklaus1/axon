@@ -285,7 +285,9 @@ fn a_replaced_head_with_a_skip_worktree_index_is_not_certified() {
     git(&c.repo, &["read-tree", "HEAD"]);
     git(&c.repo, &["update-index", "--skip-worktree", CODE]);
     assert_eq!(c.worktree_code(), "// the agent's code\n");
-    c.refused("refs/replace/ object replacements");
+    // Refused by the replace refusal (M285), the skip-worktree refusal (M287)
+    // and the object-store checks, each alone: any refusal is correct (C9 round 1).
+    c.refused_any();
 }
 
 /// `git replace` alone: the working tree is reset to the certified bytes, but
@@ -310,7 +312,11 @@ fn a_replaced_head_commit_is_not_certified() {
     git(&c.repo, &["read-tree", "-u", "--reset", "HEAD"]);
     assert_eq!(c.worktree_code(), "// code\n");
     assert_eq!(head(&c.repo), agent, "HEAD really is the agent's commit");
-    c.refused("refs/replace/ object replacements");
+    // Three independent layers refuse this, each alone: the refs/replace/
+    // refusal (M285), git run with replacement objects disabled (M385), and
+    // every object re-hashed to its name (M289). Any refusal is correct; only
+    // all three removed certifies it (four-cell record, C9 round 1).
+    c.refused_any();
 }
 
 /// info/grafts rewrites ancestry: a history that does not descend from the
@@ -335,7 +341,10 @@ fn a_skip_worktree_entry_is_not_certified() {
     let Some(c) = certified() else { return };
     write(&c.repo.join(CODE), "// the agent's code\n");
     git(&c.repo, &["update-index", "--skip-worktree", CODE]);
-    c.refused("is marked skip-worktree");
+    // Refused by the skip-worktree refusal (M287) AND by the working tree's
+    // own bytes re-hashed against the certified tree (M290), each alone
+    // (four-cell record, C9 round 1): any refusal is correct.
+    c.refused_any();
 }
 
 /// assume-unchanged alone: the same, through the other index flag.
@@ -344,7 +353,9 @@ fn an_assume_unchanged_entry_is_not_certified() {
     let Some(c) = certified() else { return };
     write(&c.repo.join(CODE), "// the agent's code\n");
     git(&c.repo, &["update-index", "--assume-unchanged", CODE]);
-    c.refused("is marked assume-unchanged");
+    // Refused by the assume-unchanged refusal (M288) AND by the working
+    // tree's bytes re-hashed (M290), each alone (four-cell record, C9 round 1).
+    c.refused_any();
 }
 
 /// A zlib stream of `data` in one stored (uncompressed) deflate block.

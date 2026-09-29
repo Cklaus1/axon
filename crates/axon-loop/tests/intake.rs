@@ -851,6 +851,19 @@ fn verification_that_does_not_join_is_refused_with_the_store_unchanged() {
 
     // Documents that are not the ones the sidecar names.
     let before = snapshot(c.s.root());
+    // C9 round 1 (M24): a genuinely attested receipt that differs from the
+    // cited one ONLY where no other join looks (its unresolved liability), so
+    // the verifier_ref join is the only guard. The matched_checks case below is
+    // also refused by the matched_checks join, and could not show it.
+    let mut other_rc = rc.clone();
+    other_rc["unresolved_liability_micro"] = json!(101);
+    let e = run_v(&c, &good, Some(&req), Some(&other_rc)).expect_err(
+        "ATTACK: intake verified a receipt other than the one the sidecar's verifier_ref cites",
+    );
+    assert!(
+        matches!(&e, LoopError::Refused(m) if m.contains("verifier_ref")),
+        "{e}"
+    );
     let other_rc = check_receipt("passed", 3);
     let e = run_v(&c, &good, Some(&req), Some(&other_rc)).unwrap_err();
     assert!(
@@ -1302,22 +1315,58 @@ fn verification_evidence_is_authenticated_not_named() {
 #[test]
 fn a_verdict_counts_only_for_what_the_operator_pinned() {
     let c = case(Some(500));
+    // C9 round 1 (M28): the task's acceptance suite, recorded genuinely, but
+    // NOT a suite the operator pinned for THIS verifier. Every other join
+    // holds (it is the task's registered acceptance check), so the per-verifier
+    // pin is the only guard. The unpinned-VERSION cases below are also
+    // refused by the acceptance join and could not show it. First, so a
+    // mutant is scored on this attack and not on a later reason.
+    {
+        let mut config = c.s.config().unwrap();
+        let saved = config.clone();
+        for p in config.verifier_pins.values_mut() {
+            p.check_suites = vec![format!("check-suite:acceptance@acf1:{}", "7".repeat(64))];
+        }
+        c.s.write_config(&config).unwrap();
+        let before = snapshot(c.s.root());
+        let (req, rc) = (check_request(), check_receipt("passed", 1));
+        let ep = verified(&c.ep, &req, &rc, "passed");
+        let e = match run_v(&c, &ep, Some(&req), Some(&rc)) {
+            Ok(_) => {
+                panic!("ATTACK: a verdict on a suite not pinned for its verifier was ACCEPTED")
+            }
+            Err(e) => e,
+        };
+        assert!(
+            matches!(e, LoopError::Refused(ref m) if m.contains("not a version pinned")),
+            "{e}"
+        );
+        assert_eq!(snapshot(c.s.root()), before);
+        c.s.write_config(&saved).unwrap();
+    }
     let before = snapshot(c.s.root());
     type Alter = Box<dyn Fn(&mut Value, &mut Value)>;
-    let cases: Vec<(&str, &str, Alter)> = vec![
+    // A case lists every reason that may refuse it. Two list more than one:
+    // their guard is defence in depth, dominated on every path by the
+    // acceptance argv join (C9 round 1, four-cell records M27/M29 vs M30).
+    let cases: Vec<(&str, &[&str], Alter)> = vec![
         (
             "another verifier revision",
-            "verifier revision",
+            &["verifier revision"],
             Box::new(|req, _| req["executable_digest"] = json!(format!("acf1:{}", "f".repeat(64)))),
         ),
         (
             "another compute profile",
-            "compute profile",
+            &["compute profile"],
             Box::new(|_, rc| rc["backend_profile_ref"] = json!("fabric:someone-elses-laptop")),
         ),
         (
             "a check file from the candidate's own tree",
-            "candidate bytes cannot define the acceptance rubric",
+            &[
+                "candidate bytes cannot define the acceptance rubric",
+                "exactly one check suite version",
+                "acceptance: the check ran",
+            ],
             Box::new(|req, rc| {
                 req["argv"] = json!(["checks/accept.ax", "t_"]);
                 rc["evidence_refs"] = json!(["check-report:fixture"]);
@@ -1325,7 +1374,7 @@ fn a_verdict_counts_only_for_what_the_operator_pinned() {
         ),
         (
             "an unpinned suite version",
-            "not a version pinned",
+            &["not a version pinned"],
             Box::new(|_, rc| {
                 rc["evidence_refs"] = json!([
                     "check-report:fixture",
@@ -1338,7 +1387,7 @@ fn a_verdict_counts_only_for_what_the_operator_pinned() {
             // entry in the recorded identity it could run ANOTHER file of the
             // pinned suite tree under the same id@version.
             "another entry file of the pinned suite version",
-            "not a version pinned",
+            &["not a version pinned"],
             Box::new(|_, rc| {
                 rc["evidence_refs"] = json!([
                     "check-report:fixture",
@@ -1348,19 +1397,22 @@ fn a_verdict_counts_only_for_what_the_operator_pinned() {
         ),
         (
             "a suite other than the one requested",
-            "not a version pinned",
+            &["not a version pinned", "acceptance: the check ran"],
             Box::new(|req, _| req["argv"] = json!(["check:lenient", "t_"])),
         ),
     ];
-    for (why, reason, alter) in cases {
+    for (why, reasons, alter) in cases {
         let (mut req, mut rc) = (check_request(), check_receipt("passed", 1));
         alter(&mut req, &mut rc);
         let ep = verified(&c.ep, &req, &rc, "passed");
         let att = attest(&verifier_key().0, common::VERIFIER, &req, &rc);
-        let e = run_va(&c, &ep, Some(&req), Some(&rc), Some(&att)).unwrap_err();
+        let e = match run_va(&c, &ep, Some(&req), Some(&rc), Some(&att)) {
+            Ok(_) => panic!("ATTACK: {why}: the verdict was ACCEPTED"),
+            Err(e) => e,
+        };
         assert!(
-            matches!(e, LoopError::Refused(ref m) if m.contains(reason)),
-            "{why}: expected `{reason}`: {e}"
+            matches!(e, LoopError::Refused(ref m) if reasons.iter().any(|r| m.contains(r))),
+            "{why}: expected one of {reasons:?}: {e}"
         );
         assert_eq!(snapshot(c.s.root()), before, "{why} wrote to the store");
     }
@@ -1377,6 +1429,69 @@ fn a_verdict_counts_only_for_what_the_operator_pinned() {
         matches!(e, LoopError::Refused(ref m) if m.contains("no operator pin")),
         "{e}"
     );
+    assert_eq!(snapshot(c.s.root()), before);
+}
+
+/// C9 round 1, four-cell attack for M27 (paired with M30): the request runs a
+/// bare file named like the suite (`acceptance`, no `check:` prefix), while the
+/// receipt genuinely records the pinned acceptance suite. Refused by the
+/// rubric's `check:` prefix rule AND by the acceptance argv join, each alone;
+/// any refusal is correct here. Accepted only when both are gone.
+#[test]
+fn a_bare_candidate_file_named_like_the_suite_never_defines_the_rubric() {
+    let c = case(Some(500));
+    let before = snapshot(c.s.root());
+    let (mut req, rc) = (check_request(), check_receipt("passed", 1));
+    req["argv"] = json!(["acceptance", "t_"]);
+    let ep = verified(&c.ep, &req, &rc, "passed");
+    match run_v(&c, &ep, Some(&req), Some(&rc)) {
+        Ok(_) => panic!("ATTACK: a bare candidate file defined the acceptance rubric: ACCEPTED"),
+        Err(e) => assert!(matches!(e, LoopError::Refused(_)), "{e}"),
+    }
+    assert_eq!(snapshot(c.s.root()), before);
+}
+
+/// C9 round 1, four-cell attack for M29 (paired with M30): the request names
+/// suite `lenient` while the receipt records the pinned acceptance suite.
+/// Refused by the "recorded suite is the one argv named" rule AND by the
+/// acceptance argv join, each alone; accepted only when both are gone.
+#[test]
+fn a_verdict_recorded_for_a_suite_the_request_did_not_name_is_refused() {
+    let c = case(Some(500));
+    let before = snapshot(c.s.root());
+    let (mut req, rc) = (check_request(), check_receipt("passed", 1));
+    req["argv"] = json!(["check:lenient", "t_"]);
+    let ep = verified(&c.ep, &req, &rc, "passed");
+    match run_v(&c, &ep, Some(&req), Some(&rc)) {
+        Ok(_) => {
+            panic!("ATTACK: a verdict recorded for a suite the request did not name: ACCEPTED")
+        }
+        Err(e) => assert!(matches!(e, LoopError::Refused(_)), "{e}"),
+    }
+    assert_eq!(snapshot(c.s.root()), before);
+}
+
+/// C9 round 1, four-cell attack for the check_bundle argv-suite join (paired
+/// with M29 + M30): a PROTECTED verdict whose request named `check:lenient`
+/// while its launch manifest (and the receipt's check-suite) is the pinned
+/// acceptance suite. Refused by the bundle's argv join AND by intake's
+/// argv/suite joins, each alone; accepted only when all are gone.
+#[test]
+fn a_protected_verdict_for_a_request_that_named_another_suite_is_refused() {
+    let c = case(Some(500));
+    pin_protected(&c);
+    let before = snapshot(c.s.root());
+    let mut req = check_request();
+    req["argv"] = json!(["check:lenient", "t_"]);
+    let (rc, b) = genuine(&req);
+    let ep = verified(&c.ep, &req, &rc, "passed");
+    let att = attest(&verifier_key().0, common::VERIFIER, &req, &rc);
+    match run_vb(&c, &ep, &req, &rc, &att, Some(&b)) {
+        Ok(_) => {
+            panic!("ATTACK: a protected verdict for a request that named another suite: ACCEPTED")
+        }
+        Err(e) => assert!(matches!(e, LoopError::Refused(_)), "{e}"),
+    }
     assert_eq!(snapshot(c.s.root()), before);
 }
 
@@ -1834,6 +1949,28 @@ fn a_verifier_key_planted_in_the_store_never_authenticates_protected_evidence() 
     let ep = verified(&c.ep, &req, &rc, "passed");
     let att = attest(&planted_sk, common::VERIFIER, &req, &rc);
     let e = run_vb(&c, &ep, &req, &rc, &att, Some(&b)).unwrap_err();
+    // With the protected-claim gate removed this is ALSO refused (a bundle
+    // beside a receipt the development route treats as claiming nothing), so
+    // either reason is correct here (C9 round 1).
+    assert!(
+        e.to_string().contains("operator's verifier root")
+            || e.to_string().contains("does not claim protected evidence"),
+        "{e}"
+    );
+
+    // C9 round 1 (M205): planted key, protected claim, NO bundle. Without the
+    // protected-claim gate the receipt falls to the development route, where
+    // the store's (planted) key suffices and no bundle is needed: the gate is
+    // the only guard. With a bundle (above) the "bundle for a receipt that
+    // claims nothing" refusal also stops it, so that case cannot show it.
+    let c = case(Some(500));
+    pin_protected(&c);
+    plant(&c);
+    let (rc, _) = genuine(&req);
+    let ep = verified(&c.ep, &req, &rc, "passed");
+    let att = attest(&planted_sk, common::VERIFIER, &req, &rc);
+    let e = run_vb(&c, &ep, &req, &rc, &att, None)
+        .expect_err("ATTACK: a protected claim was authenticated by a store-planted verifier key");
     assert!(e.to_string().contains("operator's verifier root"), "{e}");
 
     // Planted key, NO protected claim: development evidence, store keys suffice.
@@ -1864,7 +2001,13 @@ fn a_verifier_key_planted_in_the_store_never_authenticates_protected_evidence() 
 fn a_protected_claim_without_every_join_is_refused() {
     let req = check_request();
     type Edit = fn(&mut Value);
-    let cases: [(&str, Edit, &str); 6] = [
+    // A case lists every reason that may refuse it. Three list more than one:
+    // their structural rule in `check` is defence in depth, dominated on every
+    // path by `check_bundle`'s join over the same ref (C9 round 1, four-cell
+    // records M214 vs M233, M216 vs M299; M217's malformed MANIFEST ref is also
+    // refused by the manifest join, and M217 is killed on its own route in
+    // each_protected_join_is_verified_over_the_documents).
+    let cases: [(&str, Edit, &[&str]); 6] = [
         (
             "no observation",
             |rc| {
@@ -1873,7 +2016,10 @@ fn a_protected_claim_without_every_join_is_refused() {
                     .unwrap()
                     .retain(|e| !e.as_str().unwrap().starts_with("preflight-observation"))
             },
-            "names no preflight-observation-sha256",
+            &[
+                "names no preflight-observation-sha256",
+                "no single preflight-observation-sha256",
+            ],
         ),
         (
             "two classes",
@@ -1883,12 +2029,12 @@ fn a_protected_claim_without_every_join_is_refused() {
                     .unwrap()
                     .push(serde_json::json!("evidence-class:guest-unobserved"))
             },
-            "2 evidence classes",
+            &["2 evidence classes"],
         ),
         (
             "development backend",
             |rc| rc["backend_profile_ref"] = serde_json::json!("fabric:local-interpreter"),
-            "not a protected profile",
+            &["not a protected profile"],
         ),
         (
             "another interpreter",
@@ -1900,7 +2046,7 @@ fn a_protected_claim_without_every_join_is_refused() {
                     "f".repeat(64)
                 )));
             },
-            "is not the one the request pinned",
+            &["is not the one the request pinned", "guest axon"],
         ),
         (
             "duplicated verdict",
@@ -1913,7 +2059,7 @@ fn a_protected_claim_without_every_join_is_refused() {
                         "d".repeat(64)
                     )))
             },
-            "more than once",
+            &["more than once", "no single guest-verdict-sha256"],
         ),
         (
             "malformed digest",
@@ -1922,7 +2068,7 @@ fn a_protected_claim_without_every_join_is_refused() {
                 refs.retain(|e| !e.as_str().unwrap().starts_with("launch-manifest-sha256"));
                 refs.push(serde_json::json!("launch-manifest-sha256:xyz"));
             },
-            "is not a sha256",
+            &["is not a sha256", "the launch manifest is"],
         ),
     ];
     for (name, edit, why) in cases {
@@ -1932,8 +2078,14 @@ fn a_protected_claim_without_every_join_is_refused() {
         edit(&mut rc);
         let ep = verified(&c.ep, &req, &rc, "passed");
         let att = attest(&verifier_key().0, common::VERIFIER, &req, &rc);
-        let e = run_vb(&c, &ep, &req, &rc, &att, Some(&b)).unwrap_err();
-        assert!(e.to_string().contains(why), "{name}: {e}");
+        let e = match run_vb(&c, &ep, &req, &rc, &att, Some(&b)) {
+            Ok(_) => panic!("ATTACK: {name}: ACCEPTED"),
+            Err(e) => e,
+        };
+        assert!(
+            why.iter().any(|w| e.to_string().contains(w)),
+            "{name}: expected one of {why:?}: {e}"
+        );
     }
 }
 
@@ -2105,6 +2257,40 @@ fn each_protected_join_is_verified_over_the_documents() {
             "the launch manifest is",
         ),
         (
+            // C9 round 1 (M215): the guest ran ANOTHER interpreter and every
+            // document says so consistently (manifest, signed observation,
+            // receipt refs). Only the rule that the guest interpreter is the
+            // request's PINNED executable refuses it.
+            "a guest that ran an unpinned interpreter, every document consistent",
+            |m| m.guest.axon_sha256 = "f".repeat(64),
+            |_| {},
+            |_| {},
+            None,
+            "is not the one the request pinned",
+        ),
+        (
+            // C9 round 1 (M217): a guest kernel digest that is not a sha256,
+            // named consistently by the manifest, the signed observation and
+            // the receipt, so every equality join holds. Only the rule that
+            // each join is a sha256 refuses it.
+            "a malformed kernel digest every document agrees on",
+            |m| m.guest.kernel_sha256 = "not-a-sha256".into(),
+            |_| {},
+            |_| {},
+            None,
+            "is not a sha256",
+        ),
+        (
+            // C9 round 1: a bundle of another schema version, every document
+            // otherwise genuine. Only the bundle schema check refuses it.
+            "a bundle of another schema version",
+            |_| {},
+            |_| {},
+            |_| {},
+            Some("SCHEMA_V1"),
+            "is not axon-psv-evidence/2",
+        ),
+        (
             "receipt qualification ref not the manifest's",
             |_| {},
             |_| {},
@@ -2128,8 +2314,15 @@ fn each_protected_join_is_verified_over_the_documents() {
         erc(&mut rc);
         let ep = verified(&c.ep, &req, &rc, "passed");
         let att = attest(&verifier_key().0, common::VERIFIER, &req, &rc);
+        let old_schema;
         let bundle = match bundle_override {
             Some("NONE") => None,
+            Some("SCHEMA_V1") => {
+                let mut bv: Value = serde_json::from_str(&b).unwrap();
+                bv["schema"] = json!("axon-psv-evidence/1");
+                old_schema = bv.to_string();
+                Some(old_schema.as_str())
+            }
             _ => Some(b.as_str()),
         };
         let e = match run_vb(&c, &ep, &req, &rc, &att, bundle) {

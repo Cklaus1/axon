@@ -664,6 +664,13 @@ if mode == "other-manifest": o["intended_launch_manifest_sha256"] = "0" * 64
 if mode == "kernel": o["guest"] = dict(o["guest"], kernel_sha256="9" * 64)
 if mode == "epoch": o["epoch"] = 7
 if mode == "nonce-forged": o["nonce"] = "ab" * 16
+if mode == "nonce-issued-elsewhere":
+    # A nonce the custodian DID issue, for this epoch and just as fresh, but
+    # not the one this manifest names (another launch's).
+    nd = "{d}/custodian-nonces"
+    other = "cd" * 16
+    open(f"{{nd}}/{{other}}.issued", "w").write(open(f"{{nd}}/{{o['nonce']}}.issued").read())
+    o["nonce"] = other
 if mode == "claims-other-key": o["observer_key_id"] = "ed25519:0000000000000000"
 if mode == "verifier": o["verifier_sha256"] = "7" * 64
 json.dump(o, open(out, "w"))

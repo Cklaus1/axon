@@ -1125,6 +1125,34 @@ fn a_counted_trial_cannot_borrow_another_trials_verdict() {
     clear_all(&w.s, &v);
     let (rec, _) = evaluate(&w.s, &v).unwrap();
     let cand = w.cand_ref.to_string();
+    // The WHOLE borrow (C9 round 1): c1 cites every document of c0's trial,
+    // context signature and execution leg included, so each re-verifies from
+    // its own stored documents. Only the episode-identity join is left to see
+    // that the documents are another trial's. It runs first, so a mutant is
+    // scored on it. Borrowing the episode and verdict alone (below) is also
+    // refused by the context-signature check, which could not show this guard
+    // is load-bearing (C9 dev review, M263).
+    let fe = forge_eval(&w, "bw", &rec, |j| {
+        for arm in j["arms"].as_array_mut().unwrap() {
+            if arm["policy_ref"] == cand {
+                let ts = arm["trials"].as_array_mut().unwrap();
+                let src = ts[0].as_object().unwrap().clone();
+                let dst = ts[1].as_object_mut().unwrap();
+                for (k, val) in src {
+                    if k != "trial_id" && k != "task_id" && k != "safety" {
+                        dst.insert(k, val);
+                    }
+                }
+            }
+        }
+    });
+    match admit(&w.s, "bw", &fe, ADMITTER, false) {
+        Err(e) => assert!(e.to_string().contains("another trial's"), "{e}"),
+        Ok((adm, _)) => panic!(
+            "ATTACK: a trial counted another trial's whole verified evidence: {:?} {:?}",
+            adm.decision, adm.reasons
+        ),
+    }
     let fe = forge_eval(&w, "bw", &rec, |j| {
         for arm in j["arms"].as_array_mut().unwrap() {
             if arm["policy_ref"] == cand {
@@ -1135,7 +1163,20 @@ fn a_counted_trial_cannot_borrow_another_trials_verdict() {
             }
         }
     });
-    refused_or_not_accepted(&w, "bw", &fe, "another trial's");
+    // Borrowing only the episode and verdict: the identity join refuses it,
+    // and so does the context-signature check (c1's signature vouches for
+    // c1's context), each alone. Any refusal is correct here.
+    match admit(&w.s, "bw", &fe, ADMITTER, false) {
+        Err(e) => assert!(
+            e.to_string().contains("another trial's")
+                || e.to_string().contains("context signature"),
+            "{e}"
+        ),
+        Ok((adm, _)) => panic!(
+            "ATTACK: a trial counted another trial's verdict: {:?}",
+            adm.decision
+        ),
+    }
 }
 
 /// PSV-7 (dev review round wf_7cb5856d-806, executed there to ACCEPT):
@@ -1181,6 +1222,42 @@ fn a_forged_unsigned_clearance_clears_nothing() {
 /// protected after the scope was protected is refused.
 #[test]
 fn an_evaluation_class_other_than_the_frozen_plans_is_refused() {
+    // The DOWNGRADE route first (C9 round 1): a PROTECTED plan's genuine
+    // protected evaluation relabelled development. Nothing downstream
+    // re-verifies a development-class record (reverify_protected, the grounding
+    // and clearance checks are all keyed on the evaluation's OWN class), so the
+    // class join is the only guard on this route. The relabel-to-protected
+    // route below is also refused by reverify_protected, so it cannot show that
+    // this guard is load-bearing (C9 dev review, M262).
+    {
+        let w = world();
+        protect(&w.s);
+        pin_protected_backend(&w.s);
+        trust_monitor(&w.s);
+        freeze_plan(&w.s, "cd", &w.inc_ref, &w.cand_ref, |_| {}).unwrap();
+        assign_specs(&w.s, "cd", &specs_for(&w));
+        let mut v = evl_request("cd", &w.inc, &w.cand, &specs_for(&w), &EvlOpts::default());
+        on_protected_backend(&mut v);
+        clear_all(&w.s, &v);
+        let (rec, _) = evaluate(&w.s, &v).unwrap();
+        assert_eq!(
+            rec.evaluation_class,
+            axon_loop::plan::EvaluationClass::Protected
+        );
+        let fe = forge_eval(&w, "cd", &rec, |j| {
+            j["evaluation_class"] = json!("development")
+        });
+        match admit(&w.s, "cd", &fe, ADMITTER, false) {
+            Err(e) => assert!(
+                e.to_string().contains("class is not the frozen plan's"),
+                "{e}"
+            ),
+            Ok((adm, _)) => panic!(
+                "ATTACK: a protected plan admitted an evaluation relabelled development: {:?} {:?}",
+                adm.decision, adm.reasons
+            ),
+        }
+    }
     let w = world();
     pin_protected_backend(&w.s);
     trust_monitor(&w.s);

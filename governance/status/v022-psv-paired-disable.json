@@ -1,6 +1,6 @@
 {
-  "schema": "axon-v022-paired-disable/1",
-  "commit": "4d835f0bec043fe165e0ec808f6be809c7cfb713",
+  "schema": "axon-v022-paired-disable/2",
+  "commit": "e1e2a22f3535c0db9d3853f79d8e9ac5201d0392",
   "all_hold": true,
   "records": [
     {
@@ -26,7 +26,8 @@
         "retired_guard_full_suite": "SUITE_OK",
         "sibling_set_disabled": "ATTACK_REFUSED"
       },
-      "holds": true
+      "holds": true,
+      "commit": "4d835f0bec043fe165e0ec808f6be809c7cfb713"
     },
     {
       "mutation": "M58",
@@ -51,21 +52,282 @@
         "retired_guard_full_suite": "SUITE_OK",
         "sibling_set_disabled": "ATTACK_REFUSED"
       },
-      "holds": true
+      "holds": true,
+      "commit": "4d835f0bec043fe165e0ec808f6be809c7cfb713"
     },
     {
-      "mutation": "M204",
-      "status": "STALE_REFACTORED",
-      "property": "a defective/replayed observation must not launch",
-      "original_guard": "the submit observe seam was restructured by amendment 16 (epoch re-read after the observer)",
-      "old_string_present": false,
+      "mutation": "M27",
+      "status": "EQUIVALENT_DID",
+      "kind": "pair",
+      "property": "a verdict runs an operator suite (check:<id>), never a candidate file",
+      "original_guard": {
+        "file": "crates/axon-loop/src/intake.rs"
+      },
       "subsumed_by": [
-        "M192",
-        "M253"
+        "M30"
       ],
-      "live_killing_mutant": "M253",
-      "matrix": null,
-      "holds": true
+      "live_killing_mutant": "joint:M27+M30",
+      "all_paths": "check_pins is one function with two callers (intake, admission re-derivation) and no early Ok; its acceptance join (M30's clause) requires argv == [check:{acc_suite}, test] exactly, so argv[0] always has the check: prefix M27 tests",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M27",
+          "M30"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "ea4f82dcb399c3b5f91a38f9d552a3d7cf021ac9"
+    },
+    {
+      "mutation": "M29",
+      "status": "EQUIVALENT_DID",
+      "kind": "pair",
+      "property": "the recorded suite is the one the request named",
+      "original_guard": {
+        "file": "crates/axon-loop/src/intake.rs"
+      },
+      "subsumed_by": [
+        "M30"
+      ],
+      "live_killing_mutant": "joint:M29+M30",
+      "all_paths": "same function: M30's clause requires argv[0] == check:{acc_suite} and recorded == acc.check_suite, and acc_suite is acc.check_suite's own id, so the recorded suite is argv's suite whenever M30 passes",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M29",
+          "M30"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "ea4f82dcb399c3b5f91a38f9d552a3d7cf021ac9"
+    },
+    {
+      "mutation": "M214",
+      "status": "EQUIVALENT_DID",
+      "kind": "pair",
+      "property": "a protected claim names its preflight observation",
+      "original_guard": {
+        "file": "crates/axon-loop-contracts/src/protected_evidence.rs"
+      },
+      "subsumed_by": [
+        "M233"
+      ],
+      "live_killing_mutant": "joint:M214+M233",
+      "all_paths": "check() runs only from check_bundle (intake, admission re-verify) and from EVL, where a claim that passes check() goes on to verify_check_evidence -> check_bundle; check_bundle want()s preflight-observation-sha256 (exactly once) unconditionally",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M214",
+          "M233"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "ea4f82dcb399c3b5f91a38f9d552a3d7cf021ac9"
+    },
+    {
+      "mutation": "M216",
+      "status": "EQUIVALENT_DID",
+      "kind": "pair",
+      "property": "each protected join is named exactly once",
+      "original_guard": {
+        "file": "crates/axon-loop-contracts/src/protected_evidence.rs"
+      },
+      "subsumed_by": [
+        "M299"
+      ],
+      "live_killing_mutant": "joint:M216+M299",
+      "all_paths": "as M214: every one of the 8 REQUIRED_DIGEST_REFS is want()ed in check_bundle, and one_ref() refuses a prefix named more than once",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M216",
+          "M299"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "ea4f82dcb399c3b5f91a38f9d552a3d7cf021ac9"
+    },
+    {
+      "mutation": "M377",
+      "status": "EQUIVALENT_DID",
+      "kind": "pair",
+      "property": "the launch manifest is for the request's and receipt's candidate",
+      "original_guard": {
+        "file": "crates/axon-loop-contracts/src/protected_evidence.rs"
+      },
+      "subsumed_by": [
+        "M378"
+      ],
+      "live_killing_mutant": "M379",
+      "all_paths": "check_bundle is reached only through verify_check_evidence, which joins the receipt's input tree to the request's (M33); with that join, manifest==receipt implies manifest==request",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M377",
+          "M378"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "ea4f82dcb399c3b5f91a38f9d552a3d7cf021ac9"
+    },
+    {
+      "mutation": "M378",
+      "status": "EQUIVALENT_DID",
+      "kind": "pair",
+      "property": "the launch manifest is for the request's and receipt's candidate",
+      "original_guard": {
+        "file": "crates/axon-loop-contracts/src/protected_evidence.rs"
+      },
+      "subsumed_by": [
+        "M377"
+      ],
+      "live_killing_mutant": "M379",
+      "all_paths": "as M377, symmetrically: manifest==request and request==receipt (M33) imply manifest==receipt",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M378",
+          "M377"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "ea4f82dcb399c3b5f91a38f9d552a3d7cf021ac9"
+    },
+    {
+      "mutation": "M384",
+      "status": "EQUIVALENT_DID",
+      "kind": "set",
+      "property": "a protected verdict's request named the manifest's suite",
+      "original_guard": {
+        "file": "crates/axon-loop-contracts/src/protected_evidence.rs"
+      },
+      "subsumed_by": [
+        "M29",
+        "M30"
+      ],
+      "live_killing_mutant": "joint:M384+M29+M30",
+      "all_paths": "check_bundle runs inside verify_check_evidence after check_pins, which requires argv[0] == check:{acc_suite}; check_bundle's own check-suite join (M237) makes the manifest suite the receipt's, which check_pins makes acc's",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M384",
+          "M29",
+          "M30"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "ea4f82dcb399c3b5f91a38f9d552a3d7cf021ac9"
+    },
+    {
+      "mutation": "M385",
+      "status": "EQUIVALENT_DID",
+      "kind": "set",
+      "property": "git never reports a replacement object's content under a certified name",
+      "original_guard": {
+        "file": "crates/axon-fabric/src/readiness.rs"
+      },
+      "subsumed_by": [
+        "M285",
+        "M289"
+      ],
+      "live_killing_mutant": "joint:M285+M385+M289",
+      "all_paths": "replacements exist only as refs under refs/replace/ (the environment is cleared, so the ref base is the default); refuse_git_spoofing refuses any such ref (M285) before a verdict; objects are re-hashed (M289)",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M385",
+          "M285",
+          "M289"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "ea4f82dcb399c3b5f91a38f9d552a3d7cf021ac9"
+    },
+    {
+      "mutation": "M287",
+      "status": "EQUIVALENT_DID",
+      "kind": "pair",
+      "property": "an uncommitted change hidden by skip-worktree is not certified",
+      "original_guard": {
+        "file": "crates/axon-fabric/src/readiness.rs"
+      },
+      "subsumed_by": [
+        "M290"
+      ],
+      "live_killing_mutant": "joint:M287+M290",
+      "all_paths": "the flag only hides worktree-vs-index; worktree_differs hashes every certified path's bytes directly (never the index), a missing file differs, and a path outside the certified tree already differs in the tree diff",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M287",
+          "M290"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "ea4f82dcb399c3b5f91a38f9d552a3d7cf021ac9"
+    },
+    {
+      "mutation": "M288",
+      "status": "EQUIVALENT_DID",
+      "kind": "pair",
+      "property": "an uncommitted change hidden by assume-unchanged is not certified",
+      "original_guard": {
+        "file": "crates/axon-fabric/src/readiness.rs"
+      },
+      "subsumed_by": [
+        "M290"
+      ],
+      "live_killing_mutant": "joint:M288+M290",
+      "all_paths": "as M287 (assume-unchanged, the other index flag)",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M288",
+          "M290"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "ea4f82dcb399c3b5f91a38f9d552a3d7cf021ac9"
     },
     {
       "mutation": "M176",
@@ -73,12 +335,40 @@
       "property": "a pass needs exit 0",
       "original_guard": "the exit-0 guard became the Some(0) of the Passed arm in runner.rs (C9 re-audit)",
       "old_string_present": false,
-      "subsumed_by": [
-        "M293"
-      ],
-      "live_killing_mutant": "M293",
+      "replacement": "M293",
+      "replacement_state": "REPLACEMENT_KILLED",
       "matrix": null,
-      "holds": true
+      "holds": true,
+      "commit": "ea4f82dcb399c3b5f91a38f9d552a3d7cf021ac9"
+    },
+    {
+      "mutation": "M285",
+      "status": "EQUIVALENT_DID",
+      "kind": "set",
+      "property": "git never reports a replacement object's content under a certified name",
+      "original_guard": {
+        "file": "crates/axon-fabric/src/readiness.rs"
+      },
+      "subsumed_by": [
+        "M385",
+        "M289"
+      ],
+      "live_killing_mutant": "joint:M285+M385+M289",
+      "all_paths": "every git call goes through git_cmd, which clears the environment (no GIT_REPLACE_REF_BASE) and disables replacement objects (M385); every object read is re-hashed to its name (M289)",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M285",
+          "M385",
+          "M289"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "e1e2a22f3535c0db9d3853f79d8e9ac5201d0392"
     }
   ]
 }

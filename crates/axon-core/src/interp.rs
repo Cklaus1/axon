@@ -4753,7 +4753,11 @@ mod tests {
         )
         .expect("parses");
         let end = |t: &str| run_test_fn_outcome(&prog, t);
-        assert_eq!(end("t_handler"), Ok(TestEnd::Completed));
+        assert_eq!(
+            end("t_handler"),
+            Ok(TestEnd::Completed),
+            "ATTACK: a handler completion was caught by a `with` that did not install it"
+        );
         assert!(end("t_nan").is_err(), "NaN passed an f64 assertion");
         assert_eq!(end("t_inf"), Ok(TestEnd::Completed));
         assert_eq!(end("t_honest"), Ok(TestEnd::Completed));

@@ -13,8 +13,20 @@ show them for one named attack stays ACTIVE.
 
 "A removed" applies R's own registry mutation; "B removed" applies each
 subsuming sibling's registry mutation. The attack is R's own killing test:
-normally it asserts the attack is refused, so "attack succeeds" == that test
-FAILS. This demonstrates the SAME property reopening, not an unrelated red.
+"attack succeeds" == that test FAILS and the panic that fails it matches R's
+attack marker (scripts/v022_attack_markers.py, shared with the mutation run).
+This demonstrates the SAME property reopening, not an unrelated red.
+
+STALE rows (C9 round 1): the old text being absent is not accepted as proof
+that a guard is gone. A stale row must name a `replacement`, an ACTIVE row
+mutating the guard's current form, and this script executes that
+replacement's kill (baseline passes; mutated, the test fails on the
+replacement's own attack marker).
+
+    python3 scripts/v022_paired_disable.py [--only=M1,M2] [OUT.json]
+
+--only re-executes just the named records and keeps every other record of
+the existing file (each record carries the commit it was executed at).
 
 FULL-SUITE CONDITION (C8 certifying review wf_bff9835f-4a0): with A removed
 alone, the WHOLE package suite must stay green (`retired_guard_full_suite` =
@@ -91,7 +103,8 @@ def full_suite_ok(pkg, flags=""):
     out = r.stdout + r.stderr
     if "could not compile" in out or "error[E" in out:
         return None, out
-    fails = sorted(set(_re.findall(r"^\s*(\S+)\s+\.\.\.\s+FAILED", out, _re.M)))
+    # Both libtest formats: `name ... FAILED` and, under -q, `name --- FAILED`.
+    fails = sorted(set(_re.findall(r"^\s*(\S+)\s+(?:\.\.\.|---)\s+FAILED", out, _re.M)))
     ok = (r.returncode == 0 and "test result: FAILED" not in out)
     return ok, fails
 
@@ -133,6 +146,9 @@ def main():
     if sh("git status --porcelain -- crates").stdout.strip():
         sys.exit("refused: uncommitted changes under crates/ — paired-disable is evidence about a commit")
     commit = sh("git rev-parse HEAD").stdout.strip()
+    argv = [a for a in sys.argv[1:] if not a.startswith("--only=")]
+    only_arg = next((a.split("=", 1)[1] for a in sys.argv[1:] if a.startswith("--only=")), None)
+    only = None if only_arg is None else set(only_arg.split(","))
     # The guard set B (subsuming siblings) for each retired row A. A row is
     # retired ONLY if all four cells hold for ONE named attack (operator rule,
     # 2026-09-29): A+B present -> refused; A removed -> refused (by B);
@@ -146,22 +162,41 @@ def main():
         # which calls rooted_key with the identical arguments. M104, M209, M210
         # (store-writer misattribution), M103 (development class), M254 and
         # M255 (store-writer route) were all load-bearing and are ACTIVE.
-        "M245": {"siblings": ["M264"], "kind": "pair",
-                 "attack_marker": "monitor: activated on a revoked key"},
+        "M245": {"siblings": ["M264"], "kind": "pair"},
         # M58 (call_fn_frame's break/continue arm) vs M59 (contain_frame). ALL
         # PATHS: call_fn_frame has exactly ONE caller (interp.rs, in call_fn),
         # and it wraps the call in contain_frame, which maps break/continue to
         # the same panic. The attack is M58's OWN (function-body escapes only);
         # the older test also attacked a closure, a route M58 never guarded.
-        "M58": {"siblings": ["M59"], "kind": "pair",
-                "attack_marker": "escaped a function body"},
+        "M58": {"siblings": ["M59"], "kind": "pair"},
+        # C9 round 1 (harness workstream): kills that were another check's
+        # refusal. The attack is each row's own test, which accepts ANY
+        # refusal (the layers are independent) and panics "ATTACK: …" on
+        # acceptance; the all-paths argument is EQUIV_RECORD[...]["all_paths"].
+        "M27": {"siblings": ["M30"], "kind": "pair"},
+        "M29": {"siblings": ["M30"], "kind": "pair"},
+        "M214": {"siblings": ["M233"], "kind": "pair"},
+        "M216": {"siblings": ["M299"], "kind": "pair"},
+        "M377": {"siblings": ["M378"], "kind": "pair"},
+        "M378": {"siblings": ["M377"], "kind": "pair"},
+        "M384": {"siblings": ["M29", "M30"], "kind": "set"},
+        "M285": {"siblings": ["M385", "M289"], "kind": "set"},
+        "M385": {"siblings": ["M285", "M289"], "kind": "set"},
+        "M287": {"siblings": ["M290"], "kind": "pair"},
+        "M288": {"siblings": ["M290"], "kind": "pair"},
     }
     # Every retired row has a matrix and no active row has one.
     if set(GUARD_SETS) != set(mut.EQUIVALENT_DID):
         sys.exit(f"refused: GUARD_SETS {sorted(GUARD_SETS)} != EQUIVALENT_DID {sorted(mut.EQUIVALENT_DID)}")
+    if only is not None:
+        unknown = sorted(only - set(GUARD_SETS) - set(mut.STALE_REFACTORED))
+        if unknown:
+            sys.exit(f"--only: no retirement record for {unknown}")
     records = []
     ok = True
     for rid, gs in GUARD_SETS.items():
+        if only is not None and rid not in only:
+            continue
         rec = mut.EQUIV_RECORD[rid]
         row = BY_ID[rid]
         pkg, target, test = row[5], row[6], row[7]
@@ -189,8 +224,10 @@ def main():
             # a different property's assertion). C9 re-audit: M209's "attack
             # succeeds" cell was a setup panic, and M104/M210's joint cells
             # failed on the VERIFIER iteration, i.e. another property. Only the
-            # row's own attack message counts as the attack succeeding.
-            if gs["attack_marker"] not in out:
+            # row's own attack marker IN THE PANIC THAT FAILED THE TEST counts
+            # as the attack succeeding (C9 round 1: the marker is the one the
+            # mutation run uses, and a caught earlier panic no longer counts).
+            if not mut.attack_succeeded(rid, out, test):
                 return "OTHER_FAILURE"
             return "ATTACK_SUCCEEDS"
 
@@ -210,7 +247,12 @@ def main():
             try:
                 if any(e[0].startswith("crates/axon-core/") for e in edits) and not build_axon():
                     return "BUILD_FAILED", []
-                fok, fails = full_suite_ok(pkg, row_flags(target))
+                # The row's package AND the crate that owns the guard: a
+                # loop-contracts guard tested through axon-loop must leave
+                # loop-contracts' own suite green too.
+                owner = row[2].split("/")[1] if row[2].startswith("crates/") else pkg
+                pkgs = pkg if owner == pkg else f"{pkg} -p {owner}"
+                fok, fails = full_suite_ok(pkgs, row_flags(target))
             finally:
                 rest()
                 if any(e[0].startswith("crates/axon-core/") for e in edits):
@@ -235,32 +277,86 @@ def main():
             "mutation": rid, "status": "EQUIVALENT_DID", "kind": gs["kind"],
             "property": rec["property"], "original_guard": {"file": row[2]},
             "subsumed_by": sibs, "live_killing_mutant": rec["killer"],
-            "matrix": matrix, "holds": good,
+            "all_paths": rec.get("all_paths"),
+            "matrix": matrix, "holds": good, "commit": commit,
         })
         print(f"{'OK ' if good else 'BAD'} {rid} [{gs['kind']}]: base={baseline} "
               f"retired_off={retired_only} sib_off={sib_only} set_off={joint} full_suite={full_state}",
               flush=True)
-    # M204 (refactored): no current guard to disable; its property is covered
-    # by live killing rows, recorded but not paired.
+    # STALE rows (C9 round 1). "The old text is absent" shows only that the TEXT
+    # changed: M204 was recorded stale while its guard lived on, refactored,
+    # with no row. A stale row holds ONLY if it names a replacement that is an
+    # ACTIVE row (not retired, its text present exactly once) AND that
+    # replacement is killed here by its OWN attack: baseline passes, the
+    # replacement's mutation fails the test on its attack marker.
     for rid, rec in mut.STALE_REFACTORED.items():
+        if only is not None and rid not in only:
+            continue
+        rep = rec.get("replacement")
+        old_present = open(os.path.join(ROOT, BY_ID[rid][2])).read().count(BY_ID[rid][3]) > 0
+        rep_state = "NO_REPLACEMENT"
+        if rep in BY_ID and rep not in mut.RETIRED:
+            rrow = BY_ID[rep]
+            pkg, target, test = rrow[5], rrow[6], rrow[7]
+            base_ok, _ = run_test(pkg, target, test)
+            rest = apply_edits([edit_of(rep)])
+            if not base_ok:
+                rep_state = "REPLACEMENT_BASELINE_FAILS"
+            elif rest is None:
+                rep_state = "REPLACEMENT_NOT_APPLICABLE"
+            else:
+                core = rrow[2].startswith("crates/axon-core/")
+                try:
+                    if core:
+                        build_axon()
+                    passed, out = run_test(pkg, target, test)
+                finally:
+                    rest()
+                    if core:
+                        build_axon()
+                if passed is None:
+                    rep_state = "REPLACEMENT_COMPILE_ERROR"
+                elif passed:
+                    rep_state = "REPLACEMENT_SURVIVES"
+                elif mut.attack_succeeded(rep, out, test):
+                    rep_state = "REPLACEMENT_KILLED"
+                else:
+                    rep_state = "REPLACEMENT_REFUSED_ELSEWHERE"
+        elif rep in BY_ID:
+            rep_state = "REPLACEMENT_RETIRED"
+        holds = (not old_present) and rep_state == "REPLACEMENT_KILLED"
+        ok &= holds
         records.append({
             "mutation": rid, "status": "STALE_REFACTORED", "property": rec["property"],
-            "original_guard": rec["how"],
-            # The row is stale ONLY if its guard is really gone.
-            "old_string_present": open(os.path.join(ROOT, BY_ID[rid][2])).read().count(BY_ID[rid][3]) > 0,
-            "subsumed_by": rec["subsumed_by"], "live_killing_mutant": rec["killer"],
-            "matrix": None, "holds": True,
+            "original_guard": rec["how"], "old_string_present": old_present,
+            "replacement": rep, "replacement_state": rep_state,
+            "matrix": None, "holds": holds, "commit": commit,
         })
-        if records[-1]["old_string_present"]:
-            ok = False
-            records[-1]["holds"] = False
-        print(f"{'OK ' if records[-1]['holds'] else 'BAD'} {rid}: stale ({rec['how']}); "
-              f"property covered by live killers {rec['subsumed_by']}",
+        print(f"{'OK ' if holds else 'BAD'} {rid}: stale ({rec['how']}); replacement {rep}: {rep_state}",
               flush=True)
-    doc = {"schema": "axon-v022-paired-disable/1", "commit": commit, "all_hold": ok,
+    out = argv[0] if argv else "governance/status/v022-psv-paired-disable.json"
+    path = os.path.join(ROOT, out)
+    if only is not None:
+        # A partial run replaces ONLY the named rows' records in the existing
+        # file; every other record keeps the commit it was executed at.
+        try:
+            prev = json.load(open(path))
+            kept = [r for r in prev.get("records", [])
+                    if r["mutation"] not in only
+                    and (r["mutation"] in GUARD_SETS or r["mutation"] in mut.STALE_REFACTORED)]
+        except (OSError, ValueError):
+            kept = []
+        for r in kept:
+            r.setdefault("commit", prev.get("commit"))
+        records = kept + records
+        ok = all(r["holds"] for r in records)
+    missing = sorted((set(GUARD_SETS) | set(mut.STALE_REFACTORED)) - {r["mutation"] for r in records})
+    if missing:
+        print(f"BAD no record for {missing}", flush=True)
+        ok = False
+    doc = {"schema": "axon-v022-paired-disable/2", "commit": commit, "all_hold": ok,
            "records": records}
-    out = sys.argv[1] if len(sys.argv) > 1 else "governance/status/v022-psv-paired-disable.json"
-    with open(os.path.join(ROOT, out), "w") as f:
+    with open(path, "w") as f:
         json.dump(doc, f, indent=2)
         f.write("\n")
     print(f"paired-disable: {sum(r['holds'] for r in records)}/{len(records)} hold -> {out}")
