@@ -112,11 +112,27 @@ pub fn check_owned_chain(base: &Path, dir: &Path, entries: bool) -> Result<(), S
 }
 
 /// The `*.pub` keys under `dir`: each exactly one 64-hex-char Ed25519 public
-/// key, returned lowercase. An absent or empty root holds nothing.
+/// key, returned lowercase. An absent (NotFound) or empty root holds nothing.
+/// Any OTHER failure to list it (EACCES, ENOTDIR, ELOOP, ...) refuses: a root
+/// that cannot be read is not a root that holds no key (C9 round 2, PSV-6;
+/// A67). Callers that decide key-role separation rely on this.
 pub fn keys_in(dir: &Path) -> Result<Vec<String>, String> {
     let mut keys = Vec::new();
-    if let Ok(rd) = std::fs::read_dir(dir) {
-        let mut paths: Vec<PathBuf> = rd.filter_map(|e| e.ok().map(|e| e.path())).collect();
+    let listed = match std::fs::read_dir(dir) {
+        Ok(rd) => Some(rd),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => {
+            return Err(format!(
+                "trust root {} cannot be read ({e}): what it holds cannot be known",
+                dir.display()
+            ))
+        }
+    };
+    if let Some(rd) = listed {
+        let mut paths = rd
+            .map(|e| e.map(|e| e.path()))
+            .collect::<Result<Vec<PathBuf>, _>>()
+            .map_err(|e| format!("trust root {}: {e}", dir.display()))?;
         paths.sort();
         for p in paths {
             if p.extension().and_then(|e| e.to_str()) != Some("pub") {
