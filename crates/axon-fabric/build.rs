@@ -2,7 +2,17 @@
 //! the installed readiness verifier reports WHAT it is — its source revision,
 //! whether that tree was dirty, the compiler and profile — so a certification
 //! can bind it and replacing the verifier is not a silent change of authority.
-//! Falls back to "unknown" without git; a production verifier must be clean.
+//!
+//! `fabric_revision` / `source_dirty` come from `src/provenance.rs` (the
+//! operator's `/usr/bin/git`, environment dropped, replace objects off; dirty
+//! on any skip-worktree/assume-unchanged entry, replace ref, graft, change,
+//! untracked file, or file ignored by a rule outside the tracked tree). Without
+//! git the revision is "unknown" and the tree is dirty; a production verifier
+//! must be clean.
+
+#[path = "src/provenance.rs"]
+#[allow(dead_code)]
+mod provenance;
 
 use std::process::Command;
 
@@ -14,14 +24,23 @@ fn out(cmd: &str, args: &[&str]) -> Option<String> {
 }
 
 fn main() {
-    let sha = out("git", &["rev-parse", "HEAD"]).unwrap_or_else(|| "unknown".into());
-    let dirty = out("git", &["status", "--porcelain", "--untracked-files=no"])
-        .map(|s| !s.is_empty())
-        .unwrap_or(true);
+    let dir = std::path::PathBuf::from(
+        std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".into()),
+    );
+    let p = provenance::provenance(&dir);
+    // A release build is what an operator installs: say why it is dirty.
+    if std::env::var("PROFILE").as_deref() == Ok("release") {
+        for why in &p.dirty {
+            println!("cargo:warning=axon-fabric source_dirty: {why}");
+        }
+    }
     let rustc = std::env::var("RUSTC").unwrap_or_else(|_| "rustc".into());
     let rustc_v = out(&rustc, &["-V"]).unwrap_or_else(|| "unknown".into());
-    println!("cargo:rustc-env=AXON_FABRIC_GIT_SHA={sha}");
-    println!("cargo:rustc-env=AXON_FABRIC_GIT_DIRTY={dirty}");
+    println!("cargo:rustc-env=AXON_FABRIC_GIT_SHA={}", p.revision);
+    println!(
+        "cargo:rustc-env=AXON_FABRIC_GIT_DIRTY={}",
+        !p.dirty.is_empty()
+    );
     println!("cargo:rustc-env=AXON_FABRIC_RUSTC={rustc_v}");
     println!(
         "cargo:rustc-env=AXON_FABRIC_PROFILE={}",
@@ -31,9 +50,28 @@ fn main() {
         "cargo:rustc-env=AXON_FABRIC_TARGET={}",
         std::env::var("TARGET").unwrap_or_default()
     );
-    if let Some(gd) = out("git", &["rev-parse", "--git-dir"]) {
-        println!("cargo:rerun-if-changed={gd}/HEAD");
-        println!("cargo:rerun-if-changed={gd}/index");
+    // Re-derive whenever anything the answer depends on may have changed: the
+    // git state, and the whole working tree (a change in ANOTHER crate, or an
+    // untracked file, makes the tree dirty without touching this crate; the
+    // old rule watched only this crate's src/, so such a build kept a stale
+    // `source_dirty: false`). Each top-level entry is watched recursively,
+    // except `.git` (its state is watched above) and an in-tree cargo target
+    // directory, which every build writes. Residual: a NEW top-level entry is
+    // seen at the next re-run, not by itself.
+    for w in &p.watch {
+        println!("cargo:rerun-if-changed={}", w.display());
+    }
+    let out_dir = std::env::var_os("OUT_DIR").map(std::path::PathBuf::from);
+    if let Ok(top) = provenance::toplevel(&dir) {
+        if let Ok(rd) = std::fs::read_dir(&top) {
+            for e in rd.flatten() {
+                let p = e.path();
+                let is_target = out_dir.as_ref().is_some_and(|o| o.starts_with(&p));
+                if e.file_name() != ".git" && !is_target {
+                    println!("cargo:rerun-if-changed={}", p.display());
+                }
+            }
+        }
     }
     println!("cargo:rerun-if-changed=src");
 }

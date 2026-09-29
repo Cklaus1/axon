@@ -22,6 +22,7 @@ pub mod grants;
 pub mod journal;
 pub mod observer;
 pub mod protected_host;
+pub mod provenance;
 pub mod psv;
 pub mod readiness;
 pub mod signing;
