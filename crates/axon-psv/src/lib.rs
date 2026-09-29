@@ -235,6 +235,7 @@ pub fn check_inputs(
                 l.path
             ));
         }
+        undigested_shape(root).map_err(|e| format!("{what} input holds {e}: refused"))?;
         Ok(axon_workspace_recipe::workspace_version_ref(
             &axon_workspace_recipe::workspace_manifest_bytes(
                 &axon_workspace_recipe::manifest_entries(&entries),
@@ -274,6 +275,97 @@ pub fn check_inputs(
         matches: true,
         ..found
     })
+}
+
+/// The directory `mkfs.ext4` creates at the root of every input image. It is
+/// accepted only there, and only EMPTY (then it is exactly what mkfs made).
+const MKFS_LOST_FOUND: &str = "lost+found";
+
+/// The permission bits (`& 0o7777`) a guest input entry may carry. The
+/// WorkspaceVersion recipe records only a file's exec bit, so every other bit
+/// must be one of the forms the host normalises to — the launcher's image
+/// (`psv_image`: 0644/0755) or the store's read-only materialization
+/// (0444/0555). All are world-readable, never group/other-writable, and carry
+/// no setuid/setgid/sticky bit.
+fn mode_is_normalised(dir: bool, exec: bool, mode: u32) -> bool {
+    match (dir, exec) {
+        (true, _) | (false, true) => mode == 0o755 || mode == 0o555,
+        (false, false) => mode == 0o644 || mode == 0o444,
+    }
+}
+
+/// PSV-2 (C9 certifying review): what the tree digest CANNOT see. The
+/// digest is a cross-peer contract (MiCode `WORKSPACE_VERSION_RECIPE.md`,
+/// computed by `micode-persist::workspace_version` too), so it is not
+/// extended; instead a guest input holding anything it leaves out is
+/// refused. That is:
+/// * a directory holding no digested entry (an empty directory, or one
+///   holding only such directories) — it is invisible to the digest, yet
+///   `dir_list`/`file_exists` and module resolution can observe it;
+/// * a mode other than the normalised forms ([`mode_is_normalised`]) on a
+///   file or directory below the root — the digest records only the exec
+///   bit, yet the unprivileged test child sees the rest.
+///
+/// The root itself is the input's mount point (its mode is the image's, not
+/// the tree's), and an empty `lost+found` at the root is the one entry mkfs
+/// adds. `Err` describes the first offender, in path order.
+#[cfg(unix)]
+fn undigested_shape(root: &Path) -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+    // The number of digested entries at or below `dir`.
+    fn walk(dir: &Path, prefix: &str) -> Result<usize, String> {
+        let io = |e: std::io::Error| format!("an unreadable directory ({}): {e}", dir.display());
+        let mut names: Vec<std::fs::DirEntry> = std::fs::read_dir(dir)
+            .map_err(io)?
+            .collect::<Result<_, _>>()
+            .map_err(io)?;
+        names.sort_by_key(|d| d.file_name());
+        let mut digested = 0;
+        for d in names {
+            let name = d.file_name().to_string_lossy().into_owned();
+            let path = if prefix.is_empty() {
+                name.clone()
+            } else {
+                format!("{prefix}/{name}")
+            };
+            let meta = std::fs::symlink_metadata(d.path()).map_err(io)?;
+            let mode = meta.permissions().mode() & 0o7777;
+            if meta.is_dir() {
+                let below = walk(&d.path(), &path)?;
+                if below == 0 {
+                    if prefix.is_empty() && name == MKFS_LOST_FOUND {
+                        continue;
+                    }
+                    return Err(format!(
+                        "an empty directory ({path}), which the digest cannot see"
+                    ));
+                }
+                if !mode_is_normalised(true, false, mode) {
+                    return Err(format!(
+                        "{path} with mode {mode:04o}, which the digest does not record"
+                    ));
+                }
+                digested += below;
+            } else {
+                // A symlink is refused by the caller; a special file by the
+                // recipe's walker. Only a regular file reaches here.
+                let exec = axon_workspace_recipe::is_exec(&meta);
+                if meta.is_file() && !mode_is_normalised(false, exec, mode) {
+                    return Err(format!(
+                        "{path} with mode {mode:04o}, which the digest does not record"
+                    ));
+                }
+                digested += 1;
+            }
+        }
+        Ok(digested)
+    }
+    walk(root, "").map(|_| ())
+}
+
+#[cfg(not(unix))]
+fn undigested_shape(_root: &Path) -> Result<(), String> {
+    Ok(())
 }
 
 // ── §4 completion key ───────────────────────────────────────────────────────

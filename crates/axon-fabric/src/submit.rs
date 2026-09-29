@@ -100,6 +100,10 @@ impl EpochSource {
     }
 }
 
+/// Why a protected host with no observer launches no protected check.
+pub const NO_OBSERVER: &str = "this protected host configures no observer: a protected launch \
+                               requires a preflight observation, so nothing is launched";
+
 /// Operator configuration for one submit. Nothing here comes from the request.
 #[derive(Debug, Clone)]
 pub struct SubmitConfig {
@@ -1121,6 +1125,17 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
                 p.id
             )));
         }
+        // A protected launch needs a preflight observation: a protected host
+        // whose config has no observer section could only ever produce
+        // `guest-unobserved` verdicts, so it launches nothing (PSV-6, C9
+        // certifying review). Refused here, before any reservation or launch.
+        if cfg.protected_host.is_some()
+            && cfg.observer.is_none()
+            && p.id == backend::LINUX_MICROVM_PROTECTED.id
+            && req.job_kind == axon_loop_contracts::JobKind::RegisteredCheck
+        {
+            return Err(backend::Unsupported(NO_OBSERVER.to_string()));
+        }
         if p.id == backend::LINUX_MICROVM_PROTECTED.id {
             backend::GuestPolicy::for_grant(&req, &ceiling).map(|g| (p, Some(g)))
         } else {
@@ -1504,8 +1519,15 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
                     launch.scrub();
                     let hv = crate::psv::derive(&launch, &res.out_dir, observation.as_ref());
                     // B2: a protected verdict travels with the exact documents
-                    // its joins are verified over.
-                    if let (Some(o), Some(v)) = (&observation, &hv.guest_verdict) {
+                    // its joins are verified over, including the guest verdict's
+                    // own bytes, which the loop joins to the receipt (bundle /2).
+                    // ONLY a protected verdict: intake refuses a bundle beside a
+                    // receipt that claims no protected evidence, so an observed
+                    // launch whose verdict is not protected carries none and is
+                    // recorded as the unknown it is (PSV-4, C9 certifying review).
+                    if let (Some(o), crate::psv::EvidenceClass::Protected, Some(v)) =
+                        (&observation, hv.class, &hv.guest_verdict)
+                    {
                         psv_evidence = Some(crate::psv::evidence_bundle(&launch, o, v));
                     }
                     launch.discard();
