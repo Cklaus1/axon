@@ -103,7 +103,8 @@ def full_suite_ok(pkg, flags=""):
     out = r.stdout + r.stderr
     if "could not compile" in out or "error[E" in out:
         return None, out
-    fails = sorted(set(_re.findall(r"^\s*(\S+)\s+\.\.\.\s+FAILED", out, _re.M)))
+    # Both libtest formats: `name ... FAILED` and, under -q, `name --- FAILED`.
+    fails = sorted(set(_re.findall(r"^\s*(\S+)\s+(?:\.\.\.|---)\s+FAILED", out, _re.M)))
     ok = (r.returncode == 0 and "test result: FAILED" not in out)
     return ok, fails
 

@@ -268,7 +268,9 @@ fn a_replaced_head_with_a_skip_worktree_index_is_not_certified() {
     git(&c.repo, &["read-tree", "HEAD"]);
     git(&c.repo, &["update-index", "--skip-worktree", CODE]);
     assert_eq!(c.worktree_code(), "// the agent's code\n");
-    c.refused("refs/replace/ object replacements");
+    // Refused by the replace refusal (M285), the skip-worktree refusal (M287)
+    // and the object-store checks, each alone: any refusal is correct (C9 round 1).
+    c.refused_any();
 }
 
 /// `git replace` alone: the working tree is reset to the certified bytes, but

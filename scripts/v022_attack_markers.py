@@ -104,7 +104,7 @@ ATTACK_MARKERS = {
     'M72': '\\): Ok\\(Completed\\)',
     'M73': 'resume[^\\n]*: Ok\\(Completed\\)',
     # UNCLEAR@a3db33bd: bare assert_eq end(t_handler)==Ok(Completed); with the mutation v becomes 107 (swallowed completion), which IS the attack, but t_inf/t_honest share the same assertion shape so the message cannot tell
-    'M74': ATTACK,
+    'M74': r'ATTACK: a handler completion was caught by a `with` that did not install it',
     'M75': 'failed: refinement named after a builtin type: \\[\\]',
     'M76': 'NaN passed an f64 assertion',
     'M77': 'an exit\\(0\\) property case passed',
@@ -346,7 +346,7 @@ ATTACK_MARKERS = {
     'M282': "another scope's op was reconciled by an authorized status",
     'M283': 'unwrap_err\\(\\)` on an `Ok` value: \\(\\)',
     # UNCLEAR@a3db33bd: Combined assert prints both verdicts; 2-line evidence does not show whether either was PASS or a different refusal.
-    'M284': '(fake git on PATH|GIT_DIR/GIT_WORK_TREE): \\{[^\\n]*\\"status\\":\\"PASS\\"',
+    'M284': r"ATTACK: the caller's environment steered the verdict to PASS",
     # WEAK@a3db33bd: PARTIAL via worktree_differs (M290); reason mismatch only.
     'M285': r'assertion `left != right` failed: (ATTACK: certified PASS despite the attack: )?\{[^\n]*"status":"PASS"',
     'M286': r'assertion `left != right` failed: (ATTACK: certified PASS despite the attack: )?\{[^\n]*"status":"PASS"',

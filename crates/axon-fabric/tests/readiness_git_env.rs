@@ -68,6 +68,13 @@ fn the_callers_path_and_git_environment_do_not_steer_the_verdict() {
         &c,
     );
     // Both are evaluated before either is asserted, so a failure shows both.
+    // A PASS under either is the attack getting through (C9 round 1: a
+    // refusal for another reason is not).
+    assert!(
+        by_path["status"] != "PASS" && by_git_dir["status"] != "PASS",
+        "ATTACK: the caller's environment steered the verdict to PASS:\n  fake git on PATH: \
+         {by_path}\n  GIT_DIR/GIT_WORK_TREE: {by_git_dir}"
+    );
     assert!(
         refused(&by_path, why) && refused(&by_git_dir, why),
         "expected {why:?} under each:\n  fake git on PATH: {by_path}\n  GIT_DIR/GIT_WORK_TREE: {by_git_dir}"
