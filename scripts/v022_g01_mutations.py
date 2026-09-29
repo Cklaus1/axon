@@ -49,6 +49,9 @@ if not os.environ.get("V022_KEEP_TMPDIR"):
     import shutil
     import tempfile
     _tmp = tempfile.mkdtemp(prefix=f"v022-harness-{os.getpid()}-", dir="/var/tmp")
+    # /tmp's own mode: tests assume it (the non-dumpable probe runs as nobody
+    # and must reach its fixture), and mkdtemp's 0700 broke that one test.
+    os.chmod(_tmp, 0o1777)
     os.environ["TMPDIR"] = _tmp
     atexit.register(shutil.rmtree, _tmp, True)
 
