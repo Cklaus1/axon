@@ -715,7 +715,7 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       is the only guard, and panics `ATTACK: ...` if it gets through (M24, M28, M140, M201, M205,
       M215, M217, M262, M263). Or the guard is dominated on every path and is retired under the
       four-cell rule with its all-paths argument recorded (M27, M29, M214, M216, M285, M287, M288,
-      and the new M377, M378, M384, M385). Tests on those routes accept any refusal, because
+      and the new M377, M378, M384, M385; M384 is ACTIVE again, amendment 42). Tests on those routes accept any refusal, because
       which independent layer refuses is not the property.
     - STALE ("the old text is absent") no longer shows that a guard is gone. M204's guard lived on,
       refactored, with no row. A stale row must name an ACTIVE replacement row, and both harnesses
@@ -753,3 +753,40 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
     - Operational consequence: every authority root under `/etc/axon/trust` must be readable by
       the Fabric service UID, or protected launches and qualification refuse.
     Negative-matrix A67. Mutation rows M460-M466.
+
+42. **The observation signer is recorded and joined; protected digests are sha256s; one suite-id
+    parser; the qualification join is producer-side (C9 round 2, PSV-5, loop workstream).**
+    - `check_bundle` verified the preflight observation under ANY key of the operator observer root
+      and dropped the signer. It now also requires the signer to be the key the store registers for
+      exactly one TRUSTED observer (the store narrows the root, as for the verifier) and returns it.
+      Intake (`verification_observation_signed_by`) and EVL (`verification.observation_signed_by`)
+      record it, and admission's `reverify_protected` requires the record to BE the signer the bundle
+      re-verifies under, as for `context_signed_by` (A62). A missing or different attribution does
+      not count. Negative-matrix A68.
+    - A64 refused only the all-zero placeholder. Every `*sha256` field of a protected launch manifest
+      must now be 64 lowercase hex and not all zero (`protected_evidence::is_sha256_hex`, over the
+      same field walk). Fabric's `psv::prepare` refuses to build a manifest with any `*sha256` that
+      is not 64 lowercase hex, so `verifier_identity()`'s `unknown` fallback never reaches a launch.
+      The zero placeholder is still built for a hostless (never protected) launch. Receipt digest
+      refs and the observation's digest fields are each joined to a manifest field or computed
+      digest, so they inherit the format. Negative-matrix A69.
+    - M384's retirement was false. `check_bundle` runs BEFORE `check_pins`, not after, and
+      `check_pins` read the suite id with `split('@')`, so a manifest suite id holding `@` was
+      refused only by M384. M384 is ACTIVE again; its killer is that attack at `check_bundle`'s own
+      boundary. The source is fixed too: one parser (`axon_cortex::runner::check_suite_id`,
+      `parse_check_suite_ref`, `check_suite_ref`) for Fabric's check registry (every registration,
+      file or library), the receipt and manifest suite references, the loop's store pins (the config
+      is refused when written and when read) and `check_pins`. On the intake, EVL and admission
+      routes the store's config check now refuses an ambiguous pin before M384 is reached; M384
+      stays the only guard at `check_bundle`'s boundary. Negative-matrix A69.
+    - §9 says "the guest digests equal the qualification's", and the gap map said intake and EVL
+      verify the qualification. They do not. The loop joins the receipt's `qualification-sha256`
+      and guest digests to the manifest and the observation, and pins only the guest interpreter
+      (`executable_digest`). The join of kernel, rootfs, init and interpreter to the B263
+      qualification is PRODUCER-side: Fabric's dispatch takes them from the profile manifest whose
+      bytes the qualification hashed (`psv::prepare`). Carrying the signed B263 record and the
+      profile manifest in the bundle, and verifying both under the Qualification root, is a larger
+      change than this round's scope, so the text is amended rather than the join added. A
+      loop-side qualification join remains a FUTURE item.
+    - Not done here (MINOR, not in this workstream): the manifest's `limits` are not joined to the
+      request's limits.

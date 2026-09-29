@@ -37,6 +37,11 @@ pub mod profile;
 pub mod protected_evidence;
 pub mod receipt;
 pub mod schema;
+/// The ONE check-suite reference parser every side uses (Fabric's registry and
+/// receipts, the loop's store pins, `check_pins` and `check_bundle`).
+pub mod suite {
+    pub use axon_cortex::runner::{check_suite_id, check_suite_ref, parse_check_suite_ref};
+}
 
 pub use canonical::{
     canonical_bytes, canonical_json, digest, digest_value, parse, parse_bytes, parse_value,

@@ -188,7 +188,8 @@ fn a_visible_suite_is_listed_for_the_subject_and_a_hidden_one_is_not() {
             root: "/nowhere".into(),
             entry: "h.ax".into(),
             workspace_version_ref: format!("acf1:{}", "1".repeat(64)),
-        });
+        })
+        .unwrap();
     }
     let ids: Vec<&str> = reg
         .subject_visible_checks()

@@ -130,43 +130,66 @@ pub struct PsvEvidence {
     pub guest_verdict: String,
 }
 
-/// A protected manifest names every digest it carries (C9 round 1, PSV-7).
-/// Fabric's `psv::prepare` writes an all-zero sha256 where it has nothing to
-/// name (a library launch with no operator host config: `host_config_sha256`
-/// and `suite.registry_sha256`), and the observation joins it field for field,
-/// so the joins alone accept "no operator host" as a value. Every `*sha256`
-/// field of the manifest, found by walking its own serialization (a field
-/// added later is covered too), must not be that placeholder.
-fn names_every_digest(m: &axon_psv::LaunchManifest) -> Result<(), String> {
-    fn walk(path: &str, v: &serde_json::Value) -> Result<(), String> {
-        match v {
-            serde_json::Value::Object(o) => {
-                for (k, x) in o {
-                    let p = if path.is_empty() {
-                        k.clone()
-                    } else {
-                        format!("{path}.{k}")
-                    };
-                    if k.ends_with("sha256")
-                        && x.as_str()
-                            .is_some_and(|d| !d.is_empty() && d.bytes().all(|b| b == b'0'))
-                    {
-                        return Err(format!(
-                            "the launch manifest's {p} is all zeros: a protected launch names no \
-                             such digest (no operator host), so it is not protected evidence"
-                        ));
-                    }
-                    walk(&p, x)?;
+/// Exactly a sha256 as the stack writes one: 64 LOWERCASE hex characters.
+pub fn is_sha256_hex(d: &str) -> bool {
+    d.len() == 64 && d.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+}
+
+/// Every `*sha256` field of a launch manifest, by path, with its value (`""`
+/// for a non-string), found by walking the manifest's OWN serialization, so a
+/// field added later is covered too. Shared by the loop's check and Fabric's
+/// `psv::prepare`, so the producer and the consumer judge the same fields.
+pub fn manifest_digest_fields(
+    m: &axon_psv::LaunchManifest,
+) -> Result<Vec<(String, String)>, String> {
+    fn walk(path: &str, v: &serde_json::Value, out: &mut Vec<(String, String)>) {
+        if let serde_json::Value::Object(o) = v {
+            for (k, x) in o {
+                let p = if path.is_empty() {
+                    k.clone()
+                } else {
+                    format!("{path}.{k}")
+                };
+                if k.ends_with("sha256") {
+                    out.push((p.clone(), x.as_str().unwrap_or_default().to_string()));
                 }
-                Ok(())
+                walk(&p, x, out);
             }
-            _ => Ok(()),
         }
     }
+    let mut out = Vec::new();
     walk(
         "",
         &serde_json::to_value(m).map_err(|e| format!("the launch manifest: {e}"))?,
-    )
+        &mut out,
+    );
+    Ok(out)
+}
+
+/// A protected manifest names every digest it carries (C9 round 1, PSV-7;
+/// round 2, PSV-5). Fabric's `psv::prepare` writes an all-zero sha256 where it
+/// has nothing to name (a library launch with no operator host config:
+/// `host_config_sha256` and `suite.registry_sha256`), and the observation joins
+/// it field for field, so the joins alone accept "no operator host" as a
+/// value — and equally `""`, `unknown` (`verifier_identity()`'s fallback) or
+/// any other string both documents agree on. Every `*sha256` field must be a
+/// sha256 ([`is_sha256_hex`]) and not that placeholder.
+fn names_every_digest(m: &axon_psv::LaunchManifest) -> Result<(), String> {
+    for (p, d) in manifest_digest_fields(m)? {
+        if !is_sha256_hex(&d) {
+            return Err(format!(
+                "the launch manifest's {p} is {d:?}, not a sha256 (64 lowercase hex): a protected \
+                 launch names every digest it carries, so it is not protected evidence"
+            ));
+        }
+        if d.bytes().all(|b| b == b'0') {
+            return Err(format!(
+                "the launch manifest's {p} is all zeros: a protected launch names no such digest \
+                 (no operator host), so it is not protected evidence"
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn one_ref<'a>(rc: &'a ExecutionReceipt, prefix: &str) -> Option<&'a str> {
@@ -185,7 +208,10 @@ fn one_ref<'a>(rc: &'a ExecutionReceipt, prefix: &str) -> Option<&'a str> {
 ///    well-formed protected manifest;
 /// 2. the observation's bytes are the receipt's `preflight-observation-sha256`,
 ///    signed in the OBSERVER domain by a key the OPERATOR's observer root holds
-///    (O2), naming that key;
+///    (O2), naming that key, and registered by the store for exactly ONE of the
+///    trusted `observers` (the store narrows the root, never widens it) — that
+///    observer and key are returned, for intake and EVL to record and admission
+///    to join (C9 round 2, PSV-5);
 /// 3. the observation joins the manifest field for field (its digest, nonce,
 ///    profile, revisions, launcher, host config, guest, verifier, registry,
 ///    policy);
@@ -202,7 +228,8 @@ pub fn check_bundle(
     rc: &ExecutionReceipt,
     bundle: &str,
     epoch: u64,
-) -> Result<(), String> {
+    observers: &std::collections::BTreeMap<crate::OpaqueRef, String>,
+) -> Result<ObservationSigner, String> {
     use crate::operator_trust::{rooted_keys, verify_evidence_signature, TrustAuthority};
     check(req, rc)?;
     let b: PsvEvidence = serde_json::from_str(bundle)
@@ -240,6 +267,34 @@ pub fn check_bundle(
             o.observer_key_id
         ));
     }
+    // …by an observer the STORE trusts, under the key it registered for that
+    // observer: the store narrows the operator root, never widens it, exactly
+    // as for the verifier (O2). Any other key the root holds is some other
+    // identity's, and the observation is attributed to no one (C9 round 2,
+    // PSV-5, class c). Exactly one: two observers sharing a key cannot say
+    // which of them observed.
+    let by: Vec<&crate::OpaqueRef> = observers
+        .iter()
+        .filter(|(_, k)| crate::attestation::key_id_of_hex(k).as_deref() == Some(signer.as_str()))
+        .map(|(who, _)| who)
+        .collect();
+    let observer = match by.as_slice() {
+        [one] => (*one).clone(),
+        [] => {
+            return Err(format!(
+                "the observation is signed by {signer}, which is no observer the store trusts \
+                 (a key the operator root holds is authority only for the identity it is \
+                 registered to)"
+            ))
+        }
+        _ => {
+            return Err(format!(
+                "the observation is signed by {signer}, which {} trusted observers share: it is \
+                 attributed to none of them",
+                by.len()
+            ))
+        }
+    };
     // 3. the observation joins the manifest
     o.joins(&m, &m_sha)?;
     // …and was made under the trial's authority epoch, which the loop joins
@@ -365,5 +420,19 @@ pub fn check_bundle(
             ))
         }
     }
-    Ok(())
+    Ok(ObservationSigner {
+        observer_ref: observer,
+        key_id: signer,
+    })
+}
+
+/// Who signed a protected verdict's preflight observation: a store-trusted
+/// observer and the key it verified under. Intake and EVL record it, and
+/// admission joins the record to the signer it re-verifies (C9 round 2,
+/// PSV-5), as it does the context's `context_signed_by` (A62).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ObservationSigner {
+    pub observer_ref: crate::OpaqueRef,
+    /// `ed25519:<16 hex>`.
+    pub key_id: String,
 }

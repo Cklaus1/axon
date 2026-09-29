@@ -180,7 +180,6 @@ def main():
         "M216": {"siblings": ["M299"], "kind": "pair"},
         "M377": {"siblings": ["M378"], "kind": "pair"},
         "M378": {"siblings": ["M377"], "kind": "pair"},
-        "M384": {"siblings": ["M29", "M30"], "kind": "set"},
         "M285": {"siblings": ["M385", "M289"], "kind": "set"},
         "M385": {"siblings": ["M285", "M289"], "kind": "set"},
         "M287": {"siblings": ["M290"], "kind": "pair"},

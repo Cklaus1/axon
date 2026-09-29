@@ -166,35 +166,6 @@
       "commit": "a49f6a3f47542314d22645a5fc2f5a38965e4c9b"
     },
     {
-      "mutation": "M384",
-      "status": "EQUIVALENT_DID",
-      "kind": "set",
-      "property": "a protected verdict's request named the manifest's suite",
-      "original_guard": {
-        "file": "crates/axon-loop-contracts/src/protected_evidence.rs"
-      },
-      "subsumed_by": [
-        "M29",
-        "M30"
-      ],
-      "live_killing_mutant": "joint:M384+M29+M30",
-      "all_paths": "check_bundle runs inside verify_check_evidence after check_pins, which requires argv[0] == check:{acc_suite}; check_bundle's own check-suite join (M237) makes the manifest suite the receipt's, which check_pins makes acc's",
-      "matrix": {
-        "baseline": "ATTACK_REFUSED",
-        "retired_guard_disabled": "ATTACK_REFUSED",
-        "guard_set_disabled": "ATTACK_SUCCEEDS",
-        "guard_set": [
-          "M384",
-          "M29",
-          "M30"
-        ],
-        "retired_guard_full_suite": "SUITE_OK",
-        "sibling_set_disabled": "ATTACK_REFUSED"
-      },
-      "holds": true,
-      "commit": "a49f6a3f47542314d22645a5fc2f5a38965e4c9b"
-    },
-    {
       "mutation": "M285",
       "status": "EQUIVALENT_DID",
       "kind": "set",

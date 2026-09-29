@@ -352,3 +352,71 @@ fn an_empty_mandatory_match_is_not_run_never_passed() {
     );
     let _ = std::fs::remove_dir_all(&ws);
 }
+
+// ── C9 round 2, LOOP workstream: one suite-id parser (PSV-5, M384) ──────────
+
+/// A check suite id holding a separator of `check-suite:<id>@<version>#<entry>`
+/// is never registered, by a library caller or from a registry file: the
+/// loop's pins would read `check-suite:acceptance@x@<v>#e` as suite
+/// `acceptance` while Fabric's manifest named `acceptance@x`. Control: a plain
+/// id registers.
+#[test]
+fn a_check_suite_id_holding_a_reference_separator_is_never_registered() {
+    use axon_cortex::runner::{CheckVisibility, RegisteredCheck};
+    let check = |id: &str| RegisteredCheck {
+        id: id.into(),
+        visibility: CheckVisibility::Hidden,
+        root: "/nowhere".into(),
+        entry: "accept.ax".into(),
+        workspace_version_ref: format!("acf1:{}", "1".repeat(64)),
+    };
+    let mut reg = CheckRegistry::new();
+    reg.register_check(check("acceptance"))
+        .expect("control: a plain id registers");
+    for id in ["acceptance@x", "acc#e", "a:b", "a/b", "a b", ""] {
+        if reg.register_check(check(id)).is_ok() {
+            panic!("ATTACK: check suite id {id:?} holding a reference separator was REGISTERED");
+        }
+        assert!(reg.check(id).is_none(), "{id:?}");
+    }
+    let dir = std::env::temp_dir().join(format!("c9r2-suite-id-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let f = dir.join("r.json");
+    std::fs::write(
+        &f,
+        serde_json::json!({"schema":"cortex-check-registry/1","executors":[],"checks":[{
+            "id":"acceptance@x","visibility":"hidden","root":"/r","entry":"h.ax",
+            "workspace_version_ref": format!("acf1:{}", "1".repeat(64))}]})
+        .to_string(),
+    )
+    .unwrap();
+    let loaded = CheckRegistry::load(&f);
+    let _ = std::fs::remove_dir_all(&dir);
+    match loaded {
+        Ok(_) => panic!("ATTACK: check suite id \"acceptance@x\" was REGISTERED from a file"),
+        Err(e) => assert!(e.contains("is not an id"), "{e}"),
+    }
+}
+
+/// The one parser reads a reference the one way it can be read, and refuses
+/// every reference with a second reading (a separator in the version).
+#[test]
+fn a_check_suite_reference_parses_one_way_or_not_at_all() {
+    use axon_cortex::runner::{check_suite_ref, parse_check_suite_ref};
+    let v = format!("acf1:{}", "5".repeat(64));
+    let r = check_suite_ref("acceptance", &v, "accept.ax");
+    assert_eq!(
+        parse_check_suite_ref(&r).unwrap(),
+        ("acceptance", v.as_str(), "accept.ax")
+    );
+    for bad in [
+        format!("check-suite:acceptance@x@{v}#accept.ax"),
+        format!("check-suite:@{v}#accept.ax"),
+        "check-suite:acceptance@#accept.ax".to_string(),
+        format!("check-suite:acceptance@{v}#"),
+        format!("check-suite:acceptance@{v}"),
+        format!("check:acceptance@{v}#accept.ax"),
+    ] {
+        assert!(parse_check_suite_ref(&bad).is_err(), "{bad}");
+    }
+}

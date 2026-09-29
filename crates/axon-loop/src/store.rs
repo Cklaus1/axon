@@ -158,6 +158,40 @@ impl Config {
     pub fn observers(&self) -> BTreeSet<OpaqueRef> {
         self.trusted_observers.iter().cloned().collect()
     }
+    /// The observers this store TRUSTS, each with the key it registered for
+    /// it: what a protected verdict's preflight observation may be signed by
+    /// (`check_bundle` also requires the key in the operator's observer root).
+    /// A key registered for an identity the store does not trust is no one's.
+    pub fn trusted_observer_keys(&self) -> std::collections::BTreeMap<OpaqueRef, String> {
+        let trusted = self.observers();
+        self.observer_keys
+            .iter()
+            .filter(|(who, _)| trusted.contains(*who))
+            .map(|(who, k)| (who.clone(), k.clone()))
+            .collect()
+    }
+
+    /// Every suite reference the operator pinned (a verifier's
+    /// `check_suites`, a task's acceptance `check_suite`) reads ONE way, by the
+    /// parser Fabric's registry uses (`axon_loop_contracts::suite`): a
+    /// reference whose id or version holds a separator names two suites, and
+    /// `check_pins` would pick one while the launch manifest named the other
+    /// (C9 round 2, PSV-5). Checked when the config is written and whenever it
+    /// is read.
+    pub fn check_suite_refs(&self) -> std::result::Result<(), String> {
+        use axon_loop_contracts::suite::parse_check_suite_ref;
+        for (v, pin) in &self.verifier_pins {
+            for s in &pin.check_suites {
+                parse_check_suite_ref(s)
+                    .map_err(|e| format!("config: verifier {v}'s pinned suite: {e}"))?;
+            }
+        }
+        for (t, acc) in &self.task_acceptance {
+            parse_check_suite_ref(&acc.check_suite)
+                .map_err(|e| format!("config: task {t}'s acceptance suite: {e}"))?;
+        }
+        Ok(())
+    }
 
     /// ADR-002: distinct keys and distinct roles — clean compromise
     /// boundaries. No public key is registered for two roles (verifier,
@@ -562,6 +596,7 @@ impl Store {
                     &serde_json::to_string(&v).map_err(|e| LoopError::Io(e.to_string()))?,
                 )?;
                 c.check_separation().map_err(crate::error::refused)?;
+                c.check_suite_refs().map_err(crate::error::refused)?;
                 Ok(c)
             }
             None => Ok(Config {
@@ -582,6 +617,7 @@ impl Store {
 
     pub fn write_config(&self, c: &Config) -> Result<()> {
         c.check_separation().map_err(crate::error::refused)?;
+        c.check_suite_refs().map_err(crate::error::refused)?;
         self.write_json(&self.root.join("config.json"), c)
     }
 

@@ -974,8 +974,8 @@ MUTATIONS = [
     ('M364', 'PSV-6 (A63): rooted refuses a key another operator root also holds (verifier/observer/monitor lookups)', 'crates/axon-loop-contracts/src/operator_trust.rs', '        exclusive(a, &want)\n', '        Ok(())\n', 'axon-loop', '--test intake', 'a_verifier_key_held_by_another_operator_root_authenticates_no_verdict'),
     ('M365', 'PSV-6 (A63): exclusive compares the key with every other operator root', 'crates/axon-loop-contracts/src/operator_trust.rs', '        if root_keys_hex(b)?.contains(&want) {', '        if false && root_keys_hex(b)?.contains(&want) {', 'axon-loop', '--test intake', 'an_observer_key_held_by_another_operator_root_authenticates_no_observation'),
     ('M366', 'PSV-7 (A64): check_bundle refuses a manifest with an all-zero digest', 'crates/axon-loop-contracts/src/protected_evidence.rs', '    names_every_digest(&m)?;\n', '    let _ = names_every_digest(&m);\n', 'axon-loop', '--test intake', 'a_protected_manifest_naming_no_operator_host_is_refused'),
-    ('M367', 'PSV-7 (A64): an all-zero sha256 is the refused placeholder', 'crates/axon-loop-contracts/src/protected_evidence.rs', '.is_some_and(|d| !d.is_empty() && d.bytes().all(|b| b == b\'0\'))', '.is_some_and(|d| d.is_empty())', 'axon-loop', '--test intake', 'a_protected_manifest_naming_no_operator_host_is_refused'),
-    ('M368', 'PSV-7 (A64): nested manifest digests (suite.registry_sha256) are walked too', 'crates/axon-loop-contracts/src/protected_evidence.rs', '                    walk(&p, x)?;\n', '                    let _ = (&p, x);\n', 'axon-loop', '--test intake', 'a_protected_manifest_naming_no_operator_host_is_refused'),
+    ('M367', 'PSV-7 (A64): an all-zero sha256 is the refused placeholder', 'crates/axon-loop-contracts/src/protected_evidence.rs', '        if d.bytes().all(|b| b == b\'0\') {', '        if false && d.bytes().all(|b| b == b\'0\') {', 'axon-loop', '--test intake', 'a_protected_manifest_naming_no_operator_host_is_refused'),
+    ('M368', 'PSV-7 (A64): nested manifest digests (suite.registry_sha256) are walked too', 'crates/axon-loop-contracts/src/protected_evidence.rs', '                walk(&p, x, out);\n', '                let _ = (&p, x);\n', 'axon-loop', '--test intake', 'a_protected_manifest_naming_no_operator_host_is_refused'),
     # ── C9 round 1b, workstream LOOP (M425-M434): the consumer-side join on
     # the protected EXECUTION leg (class b). verify_execution (EVL's protected
     # leg AND admission's re-derivation) requires the attested receipt itself
@@ -1005,7 +1005,11 @@ MUTATIONS = [
     ('M381', 'PSV-5: the manifest guest kernel joins the receipt ref', 'crates/axon-loop-contracts/src/protected_evidence.rs', '            &m.guest.kernel_sha256,\n            want("guest-kernel-sha256:")?,', '            want("guest-kernel-sha256:")?,\n            want("guest-kernel-sha256:")?,', 'axon-loop', '--test intake', 'each_protected_join_is_verified_over_the_documents'),
     ('M382', 'PSV-5: the manifest qualification joins the receipt ref', 'crates/axon-loop-contracts/src/protected_evidence.rs', '            &m.qualification_sha256,\n            want("qualification-sha256:")?,', '            want("qualification-sha256:")?,\n            want("qualification-sha256:")?,', 'axon-loop', '--test intake', 'each_protected_join_is_verified_over_the_documents'),
     ('M383', 'B2: the bundle is axon-psv-evidence/2', 'crates/axon-loop-contracts/src/protected_evidence.rs', '    if b.schema != PSV_EVIDENCE_SCHEMA {', '    if false && b.schema != PSV_EVIDENCE_SCHEMA {', 'axon-loop', '--test intake', 'each_protected_join_is_verified_over_the_documents'),
-    ('M384', "B2: the request's suite (argv[0]) is the manifest's (EQUIVALENT: dominated by intake's argv/suite joins M29+M30)", 'crates/axon-loop-contracts/src/protected_evidence.rs', '    if req.argv.first().map(String::as_str) != Some(&format!("check:{}", m.suite.id)) {', '    if false && req.argv.first().map(String::as_str) != Some(&format!("check:{}", m.suite.id)) {', 'axon-loop', '--test intake', 'a_protected_verdict_for_a_request_that_named_another_suite_is_refused'),
+    # C9 round 2 (LOOP): ACTIVE again. The retirement's all-paths argument was
+    # false (check_bundle runs BEFORE check_pins, and check_pins read the id
+    # with split('@')); the killer is the '@'-id attack at check_bundle's own
+    # boundary, where this join is the only guard.
+    ('M384', "B2: the request's suite (argv[0]) is the manifest's", 'crates/axon-loop-contracts/src/protected_evidence.rs', '    if req.argv.first().map(String::as_str) != Some(&format!("check:{}", m.suite.id)) {', '    if false && req.argv.first().map(String::as_str) != Some(&format!("check:{}", m.suite.id)) {', 'axon-loop', '--test intake', 'the_bundle_refuses_a_manifest_suite_the_request_did_not_run'),
     ('M385', 'readiness: git reads no replacement objects (GIT_NO_REPLACE_OBJECTS and --no-replace-objects)', 'crates/axon-fabric/src/readiness.rs', '        .env("GIT_NO_REPLACE_OBJECTS", "1")\n        .env("GIT_CONFIG_NOSYSTEM", "1")\n        .env("GIT_CONFIG_GLOBAL", "/dev/null")\n        .env("GIT_OPTIONAL_LOCKS", "0")\n        .env("GIT_TERMINAL_PROMPT", "0")\n        .arg("--no-replace-objects")\n', '        .env("GIT_CONFIG_NOSYSTEM", "1")\n        .env("GIT_CONFIG_GLOBAL", "/dev/null")\n        .env("GIT_OPTIONAL_LOCKS", "0")\n        .env("GIT_TERMINAL_PROMPT", "0")\n', 'axon-fabric', '--test readiness', 'a_replaced_head_commit_is_not_certified'),
     # ── C9 round 1b, workstream PSV (M410-M424): round-1 fixes that had a test
     # but no row, each killed by its own ATTACK where it is the only guard,
@@ -1104,6 +1108,44 @@ MUTATIONS = [
      '            check_owned_chain(base, peer, true)?;',
      '            let _ = check_owned_chain(base, peer, true);',
      'axon-fabric', '--test readiness_attribution', 'an_agent_owned_peer_root_decides_no_separation'),
+    # ── C9 round 2, workstream LOOP (M470-M479): PSV-5 observation signer
+    # (A68), manifest digest format (A69), one suite-id parser (M384's source).
+    ('M470', "PSV-5 (A68): the observation's signer is a key the store registers for a trusted observer (the store narrows the observer root)", 'crates/axon-loop-contracts/src/protected_evidence.rs',
+     '        .filter(|(_, k)| crate::attestation::key_id_of_hex(k).as_deref() == Some(signer.as_str()))',
+     '        .filter(|_| true)',
+     'axon-loop', '--test intake', 'an_observation_signed_by_a_rooted_key_no_trusted_observer_holds_is_refused'),
+    ('M471', "PSV-5 (A68): only TRUSTED observers' registered keys may sign an observation", 'crates/axon-loop/src/store.rs',
+     '            .filter(|(who, _)| trusted.contains(*who))',
+     '            .filter(|_| true)',
+     'axon-loop', '--test intake', 'an_observation_signed_by_a_key_registered_to_an_untrusted_observer_is_refused'),
+    ('M472', "PSV-5 (A68): admission joins the recorded observation signer to the one the bundle re-verifies under", 'crates/axon-loop/src/admission.rs',
+     '    if v.observation_signed_by != observation_signer {',
+     '    if false && v.observation_signed_by != observation_signer {',
+     'axon-loop', '--test protected_attribution', 'an_observation_attributed_to_another_trusted_observer_does_not_count'),
+    ('M473', "PSV-5 (A69): every protected manifest *sha256 field is 64 lowercase hex", 'crates/axon-loop-contracts/src/protected_evidence.rs',
+     '        if !is_sha256_hex(&d) {\n            return Err(format!(\n                "the launch manifest',
+     '        if false && !is_sha256_hex(&d) {\n            return Err(format!(\n                "the launch manifest',
+     'axon-loop', '--test intake', 'a_protected_manifest_digest_field_that_is_not_a_sha256_is_refused'),
+    ('M474', "PSV-5 (A69): Fabric's prepare builds no manifest naming a *sha256 that is not one (verifier 'unknown')", 'crates/axon-fabric/src/psv.rs',
+     '        if !is_sha256_hex(&d) {',
+     '        if false && !is_sha256_hex(&d) {',
+     'axon-fabric', '--test one_read', 'prepare_builds_no_manifest_naming_a_digest_that_is_not_a_sha256'),
+    ('M475', "PSV-5 (M384 source): an operator config pinning an ambiguous suite reference is not written", 'crates/axon-loop/src/store.rs',
+     '        c.check_suite_refs().map_err(crate::error::refused)?;\n        self.write_json',
+     '        self.write_json',
+     'axon-loop', '--test intake', 'a_suite_reference_with_a_second_reading_is_never_pinned'),
+    ('M476', "PSV-5 (M384 source): a config file pinning an ambiguous suite reference is not read", 'crates/axon-loop/src/store.rs',
+     '                c.check_suite_refs().map_err(crate::error::refused)?;\n                Ok(c)',
+     '                Ok(c)',
+     'axon-loop', '--test intake', 'a_suite_reference_with_a_second_reading_is_never_pinned'),
+    ('M477', "PSV-5 (M384 source): Fabric's check registry registers no suite id holding a reference separator", 'crates/axon-cortex/src/runner.rs',
+     '        check_suite_id(&c.id)?;\n',
+     '',
+     'axon-cortex', '--test check_executor', 'a_check_suite_id_holding_a_reference_separator_is_never_registered'),
+    ('M478', "PSV-5 (A68): an observation key two trusted observers share is attributed to neither", 'crates/axon-loop-contracts/src/protected_evidence.rs',
+     '        [one] => (*one).clone(),',
+     '        [one, ..] => (*one).clone(),',
+     'axon-loop', '--test intake', 'an_observation_key_two_trusted_observers_share_is_attributed_to_neither'),
 ]
 
 
@@ -1181,9 +1223,6 @@ EQUIV_RECORD = {
     "M378": {"property": "the launch manifest is for the request's and receipt's candidate",
              "subsumed_by": ["M377"], "killer": "M379",
              "all_paths": "as M377, symmetrically: manifest==request and request==receipt (M33) imply manifest==receipt"},
-    "M384": {"property": "a protected verdict's request named the manifest's suite",
-             "subsumed_by": ["M29", "M30"], "killer": "joint:M384+M29+M30",
-             "all_paths": "check_bundle runs inside verify_check_evidence after check_pins, which requires argv[0] == check:{acc_suite}; check_bundle's own check-suite join (M237) makes the manifest suite the receipt's, which check_pins makes acc's"},
     "M285": {"property": "git never reports a replacement object's content under a certified name",
              "subsumed_by": ["M385", "M289"], "killer": "joint:M285+M385+M289",
              "all_paths": "every git call goes through git_cmd, which clears the environment (no GIT_REPLACE_REF_BASE) and disables replacement objects (M385); every object read is re-hashed to its name (M289)"},

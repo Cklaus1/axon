@@ -1325,7 +1325,10 @@ fn a_verdict_counts_only_for_what_the_operator_pinned() {
         let mut config = c.s.config().unwrap();
         let saved = config.clone();
         for p in config.verifier_pins.values_mut() {
-            p.check_suites = vec![format!("check-suite:acceptance@acf1:{}", "7".repeat(64))];
+            p.check_suites = vec![format!(
+                "check-suite:acceptance@acf1:{}#accept.ax",
+                "7".repeat(64)
+            )];
         }
         c.s.write_config(&config).unwrap();
         let before = snapshot(c.s.root());
@@ -1576,7 +1579,7 @@ fn each_verification_rule_is_load_bearing_on_its_own() {
         "requester-chosen test",
         "registered acceptance",
     );
-    let other_suite = format!("check-suite:lenient@acf1:{}", "7".repeat(64));
+    let other_suite = format!("check-suite:lenient@acf1:{}#accept.ax", "7".repeat(64));
     let mut config = c.s.config().unwrap();
     config
         .verifier_pins
@@ -1761,7 +1764,7 @@ fn a_verdict_on_one_tasks_check_cannot_decide_another_task() {
 /// conjunct alone. Positive control: the newer version is recorded.
 #[test]
 fn a_verdict_from_another_pinned_version_of_the_suite_does_not_decide_the_task() {
-    let v2 = format!("check-suite:acceptance@acf1:{}", "6".repeat(64));
+    let v2 = format!("check-suite:acceptance@acf1:{}#accept.ax", "6".repeat(64));
     let c = case(Some(500));
     let mut config = c.s.config().unwrap();
     config
@@ -2332,13 +2335,23 @@ fn each_protected_join_is_verified_over_the_documents() {
         assert!(e.to_string().contains(why), "{name}: {e}");
     }
 
-    // The observation signed by a key NOT in the operator's observer root.
+    // The observation signed by a key NOT in the operator's observer root,
+    // which the STORE registers for a trusted observer (C9 round 2: the store
+    // may narrow the root, so a key it does not list is refused by that
+    // narrowing too; this one only the operator root can refuse).
     let c = case(Some(500));
     pin_protected(&c);
     let mut rc = check_receipt("passed", 2);
     let b = common::make_protected(&req, &mut rc, |_| {}, |_| {});
     let mut bv: Value = serde_json::from_str(&b).unwrap();
-    let (other, _) = axon_loop_contracts::attestation::generate().unwrap();
+    let (other, other_pk) = axon_loop_contracts::attestation::generate().unwrap();
+    {
+        let mut cfg = c.s.config().unwrap();
+        let stranger = OpaqueRef::new("agent:store-only-observer").unwrap();
+        cfg.trusted_observers.push(stranger.clone());
+        cfg.observer_keys.insert(stranger, other_pk);
+        c.s.write_config(&cfg).unwrap();
+    }
     {
         use axon_loop_contracts::operator_trust::{evidence_signing_message, TrustAuthority};
         use ring::signature::{Ed25519KeyPair, KeyPair};
@@ -2667,4 +2680,275 @@ fn a_verifier_key_held_by_another_operator_root_authenticates_no_verdict() {
         "{e}"
     );
     run_vb(&c, &ep, &req, &rc, &att, Some(&b)).expect("the genuine bundle joins");
+}
+
+// ── C9 round 2, LOOP workstream (PSV-5): observation signer, digest format,
+// ── one suite-id parser ─────────────────────────────────────────────────────
+
+/// Re-sign a bundle's observation (bytes unchanged) with `sk`.
+fn observation_signed_with(b: &str, sk: &[u8]) -> String {
+    use axon_loop_contracts::operator_trust::{evidence_signing_message, TrustAuthority};
+    use ring::signature::{Ed25519KeyPair, KeyPair};
+    let kp = Ed25519KeyPair::from_pkcs8(sk).unwrap();
+    let mut bv: Value = serde_json::from_str(b).unwrap();
+    let obs = bv["observation"].as_str().unwrap().as_bytes().to_vec();
+    let hx = |b: &[u8]| b.iter().map(|x| format!("{x:02x}")).collect::<String>();
+    bv["observation_signature"] = json!(json!({
+        "schema": "axon-evidence-signature/2", "alg": "ed25519", "domain": "observer",
+        "public_key": hx(kp.public_key().as_ref()),
+        "signature": hx(kp.sign(&evidence_signing_message(TrustAuthority::Observer, &obs)).as_ref()),
+    })
+    .to_string());
+    bv.to_string()
+}
+
+/// A protected (receipt, bundle) whose observation names and is signed by the
+/// fresh key `sk`/`pk` (everything else genuine).
+fn observed_by(req: &Value, sk: &[u8], pk: &str) -> (Value, String) {
+    let kid = axon_loop_contracts::attestation::key_id_of_hex(pk).unwrap();
+    let mut rc = check_receipt("passed", 2);
+    let b = common::make_protected(req, &mut rc, |_| {}, |o| o.observer_key_id = kid);
+    (rc, observation_signed_with(&b, sk))
+}
+
+/// A68 (C9 round 2, PSV-5, class c): the observation signed by a SECOND key
+/// the operator's observer root holds, which the store registers for no
+/// trusted observer. `check_bundle` verified under the whole root and dropped
+/// the signer, so the store's narrowing did not apply and no one was
+/// attributed (reviewer probe zz_probe_second_root_observer_not_in_store,
+/// ACCEPTED). Control: the genuine bundle joins and records its observer.
+#[test]
+fn an_observation_signed_by_a_rooted_key_no_trusted_observer_holds_is_refused() {
+    let req = check_request();
+    let c = case(Some(500));
+    pin_protected(&c);
+    let (sk, pk) = axon_loop_contracts::attestation::generate().unwrap();
+    let (rc, b) = observed_by(&req, &sk, &pk);
+    let ep = verified(&c.ep, &req, &rc, "passed");
+    let att = attest(&verifier_key().0, common::VERIFIER, &req, &rc);
+    let r = with_planted("observer", &pk, || {
+        run_vb(&c, &ep, &req, &rc, &att, Some(&b))
+    });
+    match r {
+        Ok(_) => panic!(
+            "ATTACK: an observation signed by a rooted key the store trusts for no observer was \
+             ACCEPTED"
+        ),
+        Err(e) => assert!(
+            e.to_string().contains("no observer the store trusts"),
+            "{e}"
+        ),
+    }
+    // Control: the genuine bundle joins, and the intake record names the
+    // observer that signed its observation.
+    let (grc, gb) = genuine(&req);
+    let gep = verified(&c.ep, &req, &grc, "passed");
+    let gatt = attest(&verifier_key().0, common::VERIFIER, &req, &grc);
+    let out = run_vb(&c, &gep, &req, &grc, &gatt, Some(&gb)).expect("the genuine bundle joins");
+    let by = out
+        .record
+        .verification_observation_signed_by
+        .expect("a protected intake records its observation signer");
+    assert_eq!(by.issuer_ref.as_str(), common::OBSERVER);
+    assert_eq!(by.key_id, common::observer_key_id());
+}
+
+/// A68: a key the operator root holds and the store registers for an observer
+/// it does NOT trust (`observer_keys` without `trusted_observers`) is no
+/// trusted observer's.
+#[test]
+fn an_observation_signed_by_a_key_registered_to_an_untrusted_observer_is_refused() {
+    let req = check_request();
+    let c = case(Some(500));
+    pin_protected(&c);
+    let (sk, pk) = axon_loop_contracts::attestation::generate().unwrap();
+    {
+        let mut cfg = c.s.config().unwrap();
+        cfg.observer_keys.insert(
+            OpaqueRef::new("agent:untrusted-observer").unwrap(),
+            pk.clone(),
+        );
+        c.s.write_config(&cfg).unwrap();
+    }
+    let (rc, b) = observed_by(&req, &sk, &pk);
+    let ep = verified(&c.ep, &req, &rc, "passed");
+    let att = attest(&verifier_key().0, common::VERIFIER, &req, &rc);
+    let r = with_planted("observer", &pk, || {
+        run_vb(&c, &ep, &req, &rc, &att, Some(&b))
+    });
+    match r {
+        Ok(_) => panic!(
+            "ATTACK: an observation signed by the key of an observer the store does not trust \
+             was ACCEPTED"
+        ),
+        Err(e) => assert!(
+            e.to_string().contains("no observer the store trusts"),
+            "{e}"
+        ),
+    }
+}
+
+/// A68: two trusted observers registered with ONE rooted key: the observation
+/// cannot say which of them observed, so it is attributed to neither.
+#[test]
+fn an_observation_key_two_trusted_observers_share_is_attributed_to_neither() {
+    let req = check_request();
+    let c = case(Some(500));
+    pin_protected(&c);
+    {
+        let mut cfg = c.s.config().unwrap();
+        let twin = OpaqueRef::new("agent:twin-observer").unwrap();
+        cfg.trusted_observers.push(twin.clone());
+        cfg.observer_keys
+            .insert(twin, common::observer_key().1.clone());
+        c.s.write_config(&cfg).unwrap();
+    }
+    let (rc, b) = genuine(&req);
+    let ep = verified(&c.ep, &req, &rc, "passed");
+    let att = attest(&verifier_key().0, common::VERIFIER, &req, &rc);
+    match run_vb(&c, &ep, &req, &rc, &att, Some(&b)) {
+        Ok(o) => panic!(
+            "ATTACK: an observation whose key two trusted observers share was ACCEPTED, \
+             attributed to {:?}",
+            o.record.verification_observation_signed_by
+        ),
+        Err(e) => assert!(e.to_string().contains("trusted observers share"), "{e}"),
+    }
+}
+
+/// A69 (C9 round 2, PSV-5, class a): a protected manifest `*sha256` field that
+/// is not a sha256 — `unknown` (Fabric's `verifier_identity()` fallback), a
+/// stray word, upper case, one character short, or empty — which the
+/// observation joins field for field. Only the all-zero placeholder was
+/// refused (reviewer probe zz_probe_non_digest_manifest_fields, ACCEPTED).
+/// Each field is refused alone; control: the genuine bundle joins.
+#[test]
+fn a_protected_manifest_digest_field_that_is_not_a_sha256_is_refused() {
+    type Edit = fn(&mut axon_psv::LaunchManifest);
+    let cases: [(&str, Edit); 7] = [
+        ("verifier_sha256 unknown", |m| {
+            m.verifier_sha256 = "unknown".into()
+        }),
+        ("launcher_sha256 x", |m| m.launcher_sha256 = "x".into()),
+        ("host_config_sha256 upper case", |m| {
+            m.host_config_sha256 = "A".repeat(64)
+        }),
+        ("suite.registry_sha256 63 hex", |m| {
+            m.suite.registry_sha256 = "a".repeat(63)
+        }),
+        ("policy_sha256 65 hex", |m| m.policy_sha256 = "a".repeat(65)),
+        ("profile_manifest_sha256 non-hex", |m| {
+            m.profile_manifest_sha256 = "g".repeat(64)
+        }),
+        ("firecracker_sha256 empty", |m| {
+            m.firecracker_sha256 = String::new()
+        }),
+    ];
+    let req = check_request();
+    for (name, edit) in cases {
+        let c = case(Some(500));
+        pin_protected(&c);
+        let mut rc = check_receipt("passed", 2);
+        let b = common::make_protected(&req, &mut rc, edit, |_| {});
+        let ep = verified(&c.ep, &req, &rc, "passed");
+        let att = attest(&verifier_key().0, common::VERIFIER, &req, &rc);
+        match run_vb(&c, &ep, &req, &rc, &att, Some(&b)) {
+            Ok(_) => {
+                panic!("ATTACK: a protected manifest whose {name} is not a sha256 was ACCEPTED")
+            }
+            Err(e) => assert!(
+                e.to_string().contains("not a sha256")
+                    || (name.ends_with("empty") && e.to_string().contains("all zeros")),
+                "{name}: {e}"
+            ),
+        }
+    }
+    let c = case(Some(500));
+    pin_protected(&c);
+    let (rc, b) = genuine(&req);
+    let ep = verified(&c.ep, &req, &rc, "passed");
+    let att = attest(&verifier_key().0, common::VERIFIER, &req, &rc);
+    run_vb(&c, &ep, &req, &rc, &att, Some(&b)).expect("control: the genuine bundle joins");
+}
+
+/// M384 (C9 round 2: the retirement was refuted, ACTIVE again). At
+/// `check_bundle`'s own boundary, a manifest whose suite id holds `@`
+/// (`acceptance@x`) formats to the receipt's check-suite ref
+/// `acceptance@x@<v>#accept.ax` byte for byte (M237 holds), while the request
+/// ran `check:acceptance`: only the request-suite join refuses it. (On the
+/// intake route the store's suite-ref parser now refuses such a pin as well,
+/// `a_suite_reference_with_a_second_reading_is_never_pinned`.)
+#[test]
+fn the_bundle_refuses_a_manifest_suite_the_request_did_not_run() {
+    let odd = format!("acceptance@x@acf1:{}#accept.ax", "5".repeat(64));
+    let c = case(Some(500));
+    let req = check_request(); // argv ["check:acceptance", "t_"]
+    let mut rc = check_receipt("passed", 2);
+    let b = common::make_protected(
+        &req,
+        &mut rc,
+        |m| m.suite.id = "acceptance@x".into(),
+        |_| {},
+    );
+    {
+        let refs = rc["evidence_refs"].as_array_mut().unwrap();
+        refs.retain(|e| !e.as_str().unwrap().starts_with("check-suite:"));
+        refs.push(json!(format!("check-suite:{odd}")));
+    }
+    let typed_req: ComputeRequest = serde_json::from_value(req.clone()).unwrap();
+    let typed_rc: ExecutionReceipt = serde_json::from_value(rc.clone()).unwrap();
+    let observers = c.s.config().unwrap().trusted_observer_keys();
+    common::operator_root();
+    match axon_loop_contracts::protected_evidence::check_bundle(
+        &typed_req, &typed_rc, &b, 0, &observers,
+    ) {
+        Ok(_) => panic!(
+            "ATTACK: a protected bundle for suite acceptance@x joined a request that ran \
+             check:acceptance: ACCEPTED"
+        ),
+        Err(e) => assert!(e.contains("not the manifest's suite"), "{e}"),
+    }
+    // Control: the genuine bundle joins at the same boundary.
+    let (grc, gb) = genuine(&req);
+    let grc: ExecutionReceipt = serde_json::from_value(grc).unwrap();
+    axon_loop_contracts::protected_evidence::check_bundle(&typed_req, &grc, &gb, 0, &observers)
+        .expect("control: the genuine bundle joins");
+}
+
+/// C9 round 2, PSV-5 (M384's source): a pinned suite reference with a second
+/// reading (`check-suite:acceptance@x@<v>#accept.ax`, which `split('@')` read as
+/// suite `acceptance`) is refused when the operator config is WRITTEN, and a
+/// config file carrying one is refused when READ. Control: the fixture config
+/// reads and writes.
+#[test]
+fn a_suite_reference_with_a_second_reading_is_never_pinned() {
+    let odd = format!("check-suite:acceptance@x@acf1:{}#accept.ax", "5".repeat(64));
+    let c = case(Some(500));
+    let good = c.s.config().expect("control: the fixture config reads");
+    c.s.write_config(&good).expect("control: and writes");
+    let mut bad = good.clone();
+    for p in bad.verifier_pins.values_mut() {
+        p.check_suites.push(odd.clone());
+    }
+    if c.s.write_config(&bad).is_ok() {
+        panic!("ATTACK: a pinned suite reference with a second reading was WRITTEN to the config");
+    }
+    // A config file that carries one (written around `write_config`).
+    let p = c.s.root().join("config.json");
+    let mut v: Value = serde_json::from_str(&std::fs::read_to_string(&p).unwrap()).unwrap();
+    let t = v["task_acceptance"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .next()
+        .unwrap()
+        .clone();
+    v["task_acceptance"][&t]["check_suite"] = json!(odd);
+    std::fs::write(&p, serde_json::to_string(&v).unwrap()).unwrap();
+    match c.s.config() {
+        Ok(_) => {
+            panic!("ATTACK: a config pinning a suite reference with a second reading was READ")
+        }
+        Err(e) => assert!(e.to_string().contains("acceptance suite"), "{e}"),
+    }
 }
