@@ -213,8 +213,8 @@ def main():
         # C9 round 2: provenance skip-worktree tag vs the byte comparison.
         "M346": {"siblings": ["M451"], "kind": "pair"},
         # C9 round 2 (decision C): git untracked views vs the filesystem walk.
-        "M347": {"siblings": ["M500"], "kind": "pair"},
-        "M414": {"siblings": ["M500"], "kind": "pair"},
+        "M347": {"siblings": ["M501"], "kind": "pair"},
+        "M414": {"siblings": ["M501"], "kind": "pair"},
         "M60": {"siblings": ["M69"], "kind": "pair"},
         "M89": {"siblings": ["M86", "M96"], "kind": "set"},
     }

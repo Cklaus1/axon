@@ -338,7 +338,8 @@ mod tests {
     }
 
     /// Either guard's reason: the status/ignore check (M347/M414) and the
-    /// filesystem walk (M500) each refuse an untracked input alone (their
+    /// filesystem walk's directory branch (M501) each refuse an untracked input
+    /// in an untracked directory alone (their
     /// four-cell records, C9 round 2).
     fn assert_dirty_either(r: &Path, attack: &str, why: &str, or: &str) {
         let p = provenance(r);
@@ -428,10 +429,11 @@ mod tests {
         std::fs::create_dir_all(r.join(".cargo")).unwrap();
         std::fs::write(r.join(".cargo/config.toml"), "[build]\n").unwrap();
         std::fs::write(r.join(".cargo/.gitignore"), "*\n").unwrap();
-        assert_dirty(
+        assert_dirty_either(
             &r,
             "a self-ignoring .gitignore hid an untracked .cargo/config.toml",
             "outside the tracked tree",
+            "not in the tree",
         );
     }
 
