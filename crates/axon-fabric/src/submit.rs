@@ -1525,9 +1525,20 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
                     // receipt that claims no protected evidence, so an observed
                     // launch whose verdict is not protected carries none and is
                     // recorded as the unknown it is (PSV-4, C9 certifying review).
-                    if let (Some(o), crate::psv::EvidenceClass::Protected, Some(v)) =
-                        (&observation, hv.class, &hv.guest_verdict)
+                    //
+                    // The CLASS is the one gate. A protected verdict always
+                    // carries its bytes: `derive` attaches them only on the
+                    // fully verified path, where the observation is what makes
+                    // it protected. So a second "bytes present" condition here
+                    // would be the class check restated. It was, after the C9
+                    // merge, and neither half could then be killed on its own
+                    // (M311 survived). Should the bytes ever be absent, the bundle
+                    // carries none and intake's guest-verdict join (M299)
+                    // refuses it: fail closed, not a silent second gate.
+                    if let (Some(o), crate::psv::EvidenceClass::Protected) =
+                        (&observation, hv.class)
                     {
+                        let v = hv.guest_verdict.as_deref().unwrap_or_default();
                         psv_evidence = Some(crate::psv::evidence_bundle(&launch, o, v));
                     }
                     launch.discard();
