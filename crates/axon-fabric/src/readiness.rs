@@ -158,31 +158,57 @@ impl ReadinessTrust {
     }
 }
 
-/// The key ids (`ed25519:<16 hex>`) of the keys in an operator root now.
-fn key_ids(dir: &Path) -> Result<Vec<String>, String> {
-    Ok(axon_loop_contracts::operator_trust::keys_in(dir)?
-        .iter()
-        .filter_map(|h| {
-            (0..h.len())
-                .step_by(2)
-                .map(|i| u8::from_str_radix(&h[i..i + 2], 16).ok())
-                .collect::<Option<Vec<u8>>>()
-        })
-        .map(|k| axon_loop_contracts::operator_trust::key_fingerprint(&k))
-        .collect())
-}
+impl ReadinessTrust {
+    /// Every authority root readiness knows: its three, and the others as
+    /// `issuers_dir`'s siblings (the `/etc/axon/trust/<authority>` layout).
+    fn roots(&self) -> Vec<(TrustAuthority, PathBuf)> {
+        let mut roots =
+            crate::backend::sibling_roots(TrustAuthority::Qualification, &self.issuers_dir);
+        for (a, dir) in &mut roots {
+            match a {
+                TrustAuthority::Observer => *dir = self.observer_dir.clone(),
+                TrustAuthority::Verifier => *dir = self.verifier_dir.clone(),
+                _ => {}
+            }
+        }
+        roots.push((TrustAuthority::Qualification, self.issuers_dir.clone()));
+        roots
+    }
 
-/// The raw public keys in an operator root now.
-fn keys(dir: &Path) -> Result<Vec<Vec<u8>>, String> {
-    Ok(axon_loop_contracts::operator_trust::keys_in(dir)?
-        .iter()
-        .filter_map(|h| {
-            (0..h.len())
-                .step_by(2)
-                .map(|i| u8::from_str_radix(&h[i..i + 2], 16).ok())
-                .collect::<Option<Vec<u8>>>()
-        })
-        .collect())
+    /// The keys (hex) of the root at `dir` NOW, read EXCLUSIVELY: refused
+    /// whole if any is also held by another authority root, which is walked
+    /// from the ownership base and must be readable (C9 round 2,
+    /// FIELD-ORIGIN; A67). The verifier root holds the host signer's key, so
+    /// that key in the qualification root (Fabric minting a certification or
+    /// a B263 record) is refused here too. Every readiness trust read comes
+    /// through this.
+    fn exclusive_keys(&self, dir: &Path) -> Result<Vec<String>, String> {
+        let roots = self.roots();
+        let a = roots
+            .iter()
+            .find(|(_, d)| d == dir)
+            .map(|(a, _)| *a)
+            .ok_or_else(|| format!("{} is not one of readiness's trust roots", dir.display()))?;
+        crate::backend::exclusive_root_keys(a, dir, &roots, Some(&self.ownership_base), None)
+    }
+
+    /// The key ids (`ed25519:<16 hex>`) of the keys in an operator root now.
+    fn key_ids(&self, dir: &Path) -> Result<Vec<String>, String> {
+        Ok(self
+            .keys(dir)?
+            .iter()
+            .map(|k| axon_loop_contracts::operator_trust::key_fingerprint(k))
+            .collect())
+    }
+
+    /// The raw public keys in an operator root now.
+    fn keys(&self, dir: &Path) -> Result<Vec<Vec<u8>>, String> {
+        Ok(self
+            .exclusive_keys(dir)?
+            .iter()
+            .filter_map(|h| crate::backend::hex_decode(h))
+            .collect())
+    }
 }
 
 #[cfg(unix)]
@@ -740,11 +766,11 @@ fn certification(repo: &Path, component: &str, trust: &ReadinessTrust) -> Result
     // Authority: the operator's roots, never the repository.
     trust.check()?;
     attribution(component, &doc, trust, &evidence)?;
-    let issuer = crate::backend::verify_operator_evidence_signed(
+    let issuer = axon_loop_contracts::operator_trust::verify_evidence_signature(
         "evidence",
         &rec_bytes,
         &crate::backend::read_signature("evidence", &sidecar(&rec))?,
-        &trust.issuers_dir,
+        &trust.keys(&trust.issuers_dir)?,
         TrustAuthority::Qualification,
     )?;
     let exp = repo.join(TRUST_EXPECTATIONS);
@@ -824,7 +850,7 @@ fn attribution(
         ("observer_key_id", &trust.observer_dir, "observer"),
         ("verifier_key_id", &trust.verifier_dir, "verifier"),
     ] {
-        if !key_ids(dir)?.iter().any(|k| k == s(field)) {
+        if !trust.key_ids(dir)?.iter().any(|k| k == s(field)) {
             return Err(format!(
                 "{component}: {field} {} is not a key in the operator's {root} root ({}): the \
                  record names who authenticated the run, and that must be a key the operator \
@@ -847,7 +873,7 @@ fn attribution(
         "observation",
         obs,
         &crate::backend::read_signature("observation", &sidecar(obs_path))?,
-        &keys(&trust.observer_dir)?,
+        &trust.keys(&trust.observer_dir)?,
         TrustAuthority::Observer,
     )
     .map_err(|e| format!("{component}: {e}"))?;
@@ -892,7 +918,7 @@ fn attribution(
         "B263 qualification record",
         b,
         &crate::backend::read_signature("B263 qualification record", &sidecar(b_path))?,
-        &keys(&trust.issuers_dir)?,
+        &trust.keys(&trust.issuers_dir)?,
         TrustAuthority::Qualification,
     )
     .map_err(|e| format!("{component}: {e}"))?;

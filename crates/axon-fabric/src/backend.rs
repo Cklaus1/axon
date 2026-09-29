@@ -235,6 +235,10 @@ pub struct QualificationTrust {
     /// [`check_operator_owned`]). True for [`QualificationTrust::operator`], the
     /// only constructor the `axon-fabric` CLI uses.
     pub operator_owned: bool,
+    /// The protected host's attestation signer (`signer.public_key`, hex),
+    /// set when the host config loads. Fabric holds its private half, so the
+    /// qualification root must never hold it (C9 round 2; A67).
+    pub host_signer_public_key: Option<String>,
 }
 
 impl QualificationTrust {
@@ -246,6 +250,7 @@ impl QualificationTrust {
             max_age_s: DEFAULT_EVIDENCE_MAX_AGE_S,
             clock: Clock::System,
             operator_owned: true,
+            host_signer_public_key: None,
         }
     }
 
@@ -261,7 +266,20 @@ impl QualificationTrust {
             max_age_s: DEFAULT_EVIDENCE_MAX_AGE_S,
             clock: Clock::System,
             operator_owned: false,
+            host_signer_public_key: None,
         }
+    }
+
+    /// The issuer keys this trust accepts NOW: the qualification root read
+    /// exclusively ([`exclusive_root_keys`]) against its sibling roots and
+    /// the host signer, at every read, not only when the host config loaded.
+    pub fn trusted_keys(&self) -> Result<Vec<Vec<u8>>, String> {
+        trusted_issuers(
+            TrustAuthority::Qualification,
+            &self.issuers_dir,
+            self.operator_owned.then_some(Path::new("/")),
+            self.host_signer_public_key.as_deref(),
+        )
     }
 }
 
@@ -463,29 +481,104 @@ pub fn parse_utc(s: &str) -> Option<i64> {
     Some(days * 86_400 + h * 3600 + mi * 60 + se)
 }
 
-/// Load the trusted issuer public keys. A malformed key file is an error
-/// (fail closed), never skipped; no keys at all is an error too.
-fn trusted_issuers(dir: &Path) -> Result<Vec<Vec<u8>>, String> {
-    let mut keys = Vec::new();
-    if let Ok(rd) = std::fs::read_dir(dir) {
-        let mut paths: Vec<PathBuf> = rd.filter_map(|e| e.ok().map(|e| e.path())).collect();
-        paths.sort();
-        for p in paths {
-            if p.extension().and_then(|e| e.to_str()) != Some("pub") {
-                continue;
-            }
-            let t = std::fs::read_to_string(&p).map_err(|e| format!("{}: {e}", p.display()))?;
-            match hex_decode(&t) {
-                Some(k) if k.len() == 32 => keys.push(k),
-                _ => {
-                    return Err(format!(
-                        "trusted issuer key {} is not a 64-hex-char Ed25519 public key",
-                        p.display()
-                    ))
-                }
-            }
+/// Every other authority's root, as `dir`'s SIBLINGS named by authority:
+/// the `/etc/axon/trust/<authority>/` layout, so for an operator root these
+/// are exactly the other operator roots the loop's
+/// `operator_trust::exclusive` reads. Derived from `TrustAuthority::ALL`,
+/// never a hand-written list.
+pub fn sibling_roots(a: TrustAuthority, dir: &Path) -> Vec<(TrustAuthority, PathBuf)> {
+    let up = dir.parent().unwrap_or(Path::new("/nonexistent"));
+    TrustAuthority::ALL
+        .into_iter()
+        .filter(|b| *b != a)
+        .map(|b| (b, up.join(b.dir_name())))
+        .collect()
+}
+
+/// ADR-002 key-role separation at EVERY Fabric trust-root read (C9 round 2,
+/// PSV-6 + FIELD-ORIGIN; A67), decided the loop's way
+/// (`operator_trust::exclusive`): the keys of `a`'s root `dir`, refused whole
+/// if any of them is
+/// * the host signer's public key (`host_signer`) and `a` is not the verifier
+///   authority: Fabric holds that key's private half and signs any domain;
+/// * held by another authority's root in `peers`: a key in two roots is
+///   authority for both.
+///
+/// A peer is ABSENT only when it does not exist (NotFound). A present peer is
+/// walked for operator ownership (from `owned_from`, when given) and read with
+/// `keys_in`, which refuses a root it cannot list, so an unreadable root is
+/// never read as holding no key. `dir` itself is read with `keys_in` too; its
+/// ownership is the caller's walk.
+pub(crate) fn exclusive_root_keys(
+    a: TrustAuthority,
+    dir: &Path,
+    peers: &[(TrustAuthority, PathBuf)],
+    owned_from: Option<&Path>,
+    host_signer: Option<&str>,
+) -> Result<Vec<String>, String> {
+    use axon_loop_contracts::operator_trust::keys_in;
+    let mine = keys_in(dir)?;
+    let fp = |k: &str| {
+        hex_decode(k)
+            .map(|b| axon_loop_contracts::attestation::key_fingerprint(&b))
+            .unwrap_or_else(|| k.to_string())
+    };
+    if let Some(signer) = host_signer.filter(|_| a != TrustAuthority::Verifier) {
+        let signer = signer.trim().to_ascii_lowercase();
+        if mine.contains(&signer) {
+            return Err(format!(
+                "the {} root {} holds the host signer's public key {}: Fabric holds that key's \
+                 private half, so it could mint {} evidence (ADR-002 key-role separation)",
+                a.dir_name(),
+                dir.display(),
+                fp(&signer),
+                a.dir_name()
+            ));
         }
     }
+    for (b, peer) in peers {
+        if *b == a {
+            continue;
+        }
+        if matches!(std::fs::symlink_metadata(peer), Err(e) if e.kind() == std::io::ErrorKind::NotFound)
+        {
+            continue;
+        }
+        #[cfg(unix)]
+        if let Some(base) = owned_from {
+            check_owned_chain(base, peer, true)?;
+        }
+        let theirs = keys_in(peer)?;
+        if let Some(k) = mine.iter().find(|k| theirs.contains(k)) {
+            return Err(format!(
+                "key {} is in the {} root {} AND the {} root {}: a key serves one authority \
+                 (ADR-002 key-role separation)",
+                fp(k),
+                a.dir_name(),
+                dir.display(),
+                b.dir_name(),
+                peer.display()
+            ));
+        }
+    }
+    Ok(mine)
+}
+
+/// Load the trusted issuer public keys of `a`'s root `dir`, exclusively
+/// ([`exclusive_root_keys`] against `dir`'s sibling roots). A malformed key
+/// file is an error (fail closed), never skipped; no keys at all is an error
+/// too.
+fn trusted_issuers(
+    a: TrustAuthority,
+    dir: &Path,
+    owned_from: Option<&Path>,
+    host_signer: Option<&str>,
+) -> Result<Vec<Vec<u8>>, String> {
+    let keys: Vec<Vec<u8>> =
+        exclusive_root_keys(a, dir, &sibling_roots(a, dir), owned_from, host_signer)?
+            .iter()
+            .filter_map(|h| hex_decode(h))
+            .collect();
     if keys.is_empty() {
         return Err(format!(
             "no trusted evidence issuer is configured ({} holds no *.pub key); unsigned or \
@@ -494,6 +587,14 @@ fn trusted_issuers(dir: &Path) -> Result<Vec<Vec<u8>>, String> {
         ));
     }
     Ok(keys)
+}
+
+/// Where the peers of a root named only by path are walked from: an
+/// operator root (`/etc/axon/trust/<a>`) has operator peers, walked from
+/// `/`; any other directory (a test root, a caller's `--issuers`) is not
+/// the operator's and its peers are read unwalked.
+fn operator_walk(a: TrustAuthority, dir: &Path) -> Option<&'static Path> {
+    (dir == a.operator_dir()).then_some(Path::new("/"))
 }
 
 /// Verify a detached `axon-evidence-signature/2` over `bytes`. Returns the
@@ -541,7 +642,12 @@ pub fn verify_operator_evidence(
     authority: TrustAuthority,
 ) -> Result<String, String> {
     let bytes = read_regular(record).map_err(|e| format!("evidence {e}"))?;
-    let trusted = trusted_issuers(issuers_dir)?;
+    let trusted = trusted_issuers(
+        authority,
+        issuers_dir,
+        operator_walk(authority, issuers_dir),
+        None,
+    )?;
     verify_detached("evidence", &bytes, sig, &trusted, authority)
 }
 
@@ -555,7 +661,12 @@ pub fn verify_operator_evidence_signed(
     issuers_dir: &Path,
     authority: TrustAuthority,
 ) -> Result<String, String> {
-    let trusted = trusted_issuers(issuers_dir)?;
+    let trusted = trusted_issuers(
+        authority,
+        issuers_dir,
+        operator_walk(authority, issuers_dir),
+        None,
+    )?;
     axon_loop_contracts::operator_trust::verify_evidence_signature(
         what, bytes, sig_text, &trusted, authority,
     )
@@ -570,7 +681,12 @@ pub fn verify_operator_evidence_bytes(
     issuers_dir: &Path,
     authority: TrustAuthority,
 ) -> Result<String, String> {
-    let trusted = trusted_issuers(issuers_dir)?;
+    let trusted = trusted_issuers(
+        authority,
+        issuers_dir,
+        operator_walk(authority, issuers_dir),
+        None,
+    )?;
     verify_detached(what, bytes, sig, &trusted, authority)
 }
 
@@ -629,7 +745,7 @@ impl LinuxProfileConfig {
         if self.trust.operator_owned {
             check_operator_owned(&self.trust.issuers_dir)?;
         }
-        let trusted = trusted_issuers(&self.trust.issuers_dir)?;
+        let trusted = self.trust.trusted_keys()?;
         let sig_path = self
             .evidence_signature
             .clone()

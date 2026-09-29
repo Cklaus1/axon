@@ -594,6 +594,104 @@ fn an_observer_root_sharing_a_key_with_another_role_is_refused_at_load() {
     }
 }
 
+/// FIELD-ORIGIN (C9 round 2; A67): key-role separation held on the observer
+/// route only. The host signer's public key in ANY authority root but the
+/// verifier's (its intended place) lets Fabric, which holds the private half,
+/// mint that authority's statements; `load` refuses it for the qualification,
+/// observer, admission and monitor roots. Control: in the verifier root it
+/// loads.
+#[test]
+fn the_host_signer_key_in_any_root_but_the_verifiers_is_refused_at_load() {
+    let h = Host::new();
+    h.load().expect("control: a conforming host");
+    let signer = axon_loop_contracts::attestation::public_key_of(
+        &std::fs::read(h.p("keys/attest.pk8")).unwrap(),
+    )
+    .unwrap();
+    for (role, dir) in [
+        ("qualification", h.p("trusted_issuers")),
+        ("observer", h.p("observer")),
+        ("admission", h.p("admission")),
+        ("monitor", h.p("monitor")),
+    ] {
+        std::fs::create_dir_all(&dir).unwrap();
+        let planted = dir.join("signer.pub");
+        std::fs::write(&planted, format!("{signer}\n")).unwrap();
+        let got = h.load();
+        assert!(
+            got.as_ref()
+                .is_err_and(|e| e.contains("host signer") && e.contains(role)),
+            "ATTACK: a {role} root holding the host signer's public key loaded: {:?}",
+            got.map(|_| ())
+        );
+        std::fs::remove_file(&planted).unwrap();
+        h.load().expect("restored");
+    }
+    std::fs::create_dir_all(h.p("verifier")).unwrap();
+    std::fs::write(h.p("verifier/signer.pub"), format!("{signer}\n")).unwrap();
+    h.load()
+        .expect("control: the verifier root is where the host signer's key belongs");
+}
+
+/// Fabric's host signing key.
+fn fabric_key(h: &Host) -> Issuer {
+    Issuer(
+        ring::signature::Ed25519KeyPair::from_pkcs8(
+            &std::fs::read(h.p("keys/attest.pk8")).unwrap(),
+        )
+        .unwrap(),
+    )
+}
+
+/// FIELD-ORIGIN (C9 round 2; A67), at EVERY qualification, not only at load:
+/// once the host has loaded, the host signer's public key is planted in the
+/// qualification root and Fabric signs its own B263 record with the private
+/// half it holds. `qualification()` must not accept it. Control: the same
+/// record signed by the operator's issuer qualifies.
+#[test]
+fn a_b263_record_minted_with_the_host_signer_key_never_qualifies() {
+    let h = Host::new();
+    let ph = h.load().expect("control: a conforming host");
+    ph.linux
+        .qualification()
+        .expect("control: the operator's record qualifies");
+    let fabric = fabric_key(&h);
+    fabric.trust_in(&h.p("trusted_issuers"), "planted");
+    let mut ev = good_evidence(&sha256_file(&h.p("manifest.json")));
+    ev["issuer_key_id"] = json!(fabric.key_id());
+    fabric.write_signed(&h.p("evidence.json"), &ev);
+    let got = ph.linux.qualification().map(|q| q.issuer);
+    assert!(
+        got.is_err(),
+        "ATTACK: a B263 record minted with the host signer's key qualified the protected \
+         profile: {got:?}"
+    );
+    assert!(got.unwrap_err().contains("host signer"));
+}
+
+/// FIELD-ORIGIN (C9 round 2; A67): a qualification key that the verifier
+/// root also holds is authority for both, so `qualification()` refuses it at
+/// every read (as the loop's `exclusive` does). Control: before the verifier
+/// root holds it, the record qualifies.
+#[test]
+fn a_qualification_key_shared_with_the_verifier_root_never_qualifies() {
+    let h = Host::new();
+    let ph = h.load().expect("control: a conforming host");
+    ph.linux.qualification().expect("control: qualifies");
+    h.issuer.trust_in(&h.p("verifier"), "shared");
+    let got = ph.linux.qualification().map(|q| q.issuer);
+    assert!(
+        got.is_err(),
+        "ATTACK: a qualification key also held by the verifier root qualified the protected \
+         profile: {got:?}"
+    );
+    let e = got.unwrap_err();
+    assert!(
+        e.contains("key-role separation") && e.contains("verifier"),
+        "{e}"
+    );
+}
+
 /// The trust preflight's probe list IS what `load` enforces (C9 dev review
 /// round 1; A56 / FIELD-ORIGIN preflight coverage). `pinned_paths` (printed by
 /// `axon-fabric protected-host-paths`, which the preflight runs) is checked

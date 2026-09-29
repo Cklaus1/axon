@@ -273,6 +273,38 @@ impl ProtectedHost {
         let out_root = path_at("/out_root")?;
         parent_owned(&out_root)?;
         leaf_owned(&out_root)?;
+        // ADR-002 at load for EVERY authority root but the verifier's (C9
+        // round 2, FIELD-ORIGIN; A67): none holds the host signer's public
+        // key (Fabric holds its private half and signs any domain), and none
+        // shares a key with another root. The qualification trust keeps the
+        // signer's key, so `qualification()` re-checks at every read. A
+        // configured observer's root is `check_separation`'s, below. The
+        // roots' OWNERSHIP is walked where each is used (`qualification()`,
+        // `observe`) and by the trust preflight, not here; an unreadable
+        // root still refuses (`keys_in`).
+        use crate::backend::TrustAuthority;
+        trust.host_signer_public_key = Some(signer.public_key.clone());
+        let observed = v.get("observer").is_some_and(|o| !o.is_null());
+        let roots: Vec<(TrustAuthority, PathBuf)> =
+            std::iter::once((TrustAuthority::Observer, observer_trust.dir.clone()))
+                .chain(observer_trust.separate_from.iter().map(|(a, d)| match a {
+                    TrustAuthority::Qualification => (*a, trust.issuers_dir.clone()),
+                    _ => (*a, d.clone()),
+                }))
+                .collect();
+        for (a, dir) in &roots {
+            if *a == TrustAuthority::Verifier || (*a == TrustAuthority::Observer && observed) {
+                continue;
+            }
+            crate::backend::exclusive_root_keys(
+                *a,
+                dir,
+                &roots,
+                None,
+                Some(&signer.public_key),
+            )
+            .map_err(bad)?;
+        }
         let observer = match v.get("observer") {
             None | Some(Value::Null) => None,
             Some(ob) => {

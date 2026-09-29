@@ -297,3 +297,48 @@ fn a_b263_record_of_another_profile_is_refused() {
         "does not name an axon-b263-evidence/1 record",
     );
 }
+
+// ── ADR-002 key-role separation at every readiness trust read (A67) ────────
+
+/// FIELD-ORIGIN (C9 round 2; A67): readiness read its roots without
+/// exclusivity. The verifier root holds the host signer's public key (its
+/// intended place); planted in the qualification root too, Fabric (which
+/// holds the private half) signs a certification record that readiness
+/// accepted. A key in two roots is authority for neither. Control: the
+/// genuine certification passes (the fixture asserts it).
+#[test]
+fn a_certification_signed_by_the_host_signer_key_is_refused() {
+    let Some(c) = certified() else { return };
+    c.verifier.trust_in(&c.trust.issuers_dir, "planted");
+    resign(&c, &c.verifier, |_| {});
+    attack(
+        &c,
+        "the host signer's key, planted in the qualification root, signed the certification",
+        "key-role separation",
+    );
+}
+
+/// FIELD-ORIGIN (C9 round 2; A67): the other authority roots readiness
+/// compares against are the operator's, walked for ownership like the loop's
+/// `exclusive` walks them. A monitor root the agent owns could drop a shared
+/// key at will, so what it holds is not evidence of separation. Control: the
+/// same root operator-owned passes.
+#[test]
+fn an_agent_owned_peer_root_decides_no_separation() {
+    use std::os::unix::fs::PermissionsExt;
+    let Some(c) = certified() else { return };
+    let monitor = c.trust.issuers_dir.parent().unwrap().join("monitor");
+    std::fs::create_dir_all(&monitor).unwrap();
+    std::fs::set_permissions(&monitor, std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert_eq!(
+        c.verdict()["status"],
+        "PASS",
+        "control: an operator-owned monitor root"
+    );
+    std::os::unix::fs::chown(&monitor, Some(65534), None).unwrap();
+    attack(
+        &c,
+        "an agent-owned monitor root was read as holding no shared key",
+        "not root",
+    );
+}
