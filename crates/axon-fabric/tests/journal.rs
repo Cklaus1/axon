@@ -785,3 +785,33 @@ fn g13_a_journal_holding_a_duplicate_settlement_line_is_corrupt() {
         Err(JournalError::Corrupt { .. })
     ));
 }
+
+/// C9 dev review round 1 (the `operator()` stat class): only NotFound means
+/// "no journal". A journal path that cannot be stat'ed (ENOTDIR, ELOOP) used
+/// to read as "nothing recorded", so `status`/`cancel` answered for an op
+/// they could not see instead of refusing. Control: an absent journal is
+/// `None`.
+#[test]
+fn only_a_missing_journal_is_no_journal() {
+    let d = tempfile::tempdir().unwrap();
+    let file = d.path().join("file");
+    std::fs::write(&file, "x").unwrap();
+    let lp = d.path().join("loop");
+    std::os::unix::fs::symlink(&lp, &lp).unwrap();
+    for (what, p) in [
+        ("ENOTDIR", file.join("ops.journal")),
+        ("ELOOP", lp.join("ops.journal")),
+    ] {
+        let got = axon_fabric::Journal::open_unreconciled(&p);
+        assert!(
+            got.is_err(),
+            "ATTACK: a journal that cannot be stat'ed ({what}) was read as no journal: {:?}",
+            got.map(|j| j.is_some())
+        );
+    }
+    assert!(
+        axon_fabric::Journal::open_unreconciled(d.path().join("absent"))
+            .unwrap()
+            .is_none()
+    );
+}

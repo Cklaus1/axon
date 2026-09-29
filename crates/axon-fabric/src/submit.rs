@@ -1128,11 +1128,11 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
         // A protected launch needs a preflight observation: a protected host
         // whose config has no observer section could only ever produce
         // `guest-unobserved` verdicts, so it launches nothing (PSV-6, C9
-        // certifying review). Refused here, before any reservation or launch.
+        // certifying review). Refused here, before any reservation or launch,
+        // whatever the job kind (C9 dev review round 1; A54).
         if cfg.protected_host.is_some()
             && cfg.observer.is_none()
             && p.id == backend::LINUX_MICROVM_PROTECTED.id
-            && req.job_kind == axon_loop_contracts::JobKind::RegisteredCheck
         {
             return Err(backend::Unsupported(NO_OBSERVER.to_string()));
         }
@@ -1207,7 +1207,6 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
     // The protected profile judges ONLY an operator suite, through the trusted
     // guest runner (PSV). A candidate-named file is never a protected check.
     if profile.id == backend::LINUX_MICROVM_PROTECTED.id
-        && req.job_kind == axon_loop_contracts::JobKind::RegisteredCheck
         && (target.suite.is_none() || target.filter.is_none())
     {
         return Err(SubmitError::Unregistered(format!(
@@ -1428,9 +1427,11 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
             );
             (r, report, reason)
         }
-        id if id == backend::LINUX_MICROVM_PROTECTED.id
-            && req.job_kind == axon_loop_contracts::JobKind::RegisteredCheck =>
-        {
+        // EVERY launch on the protected profile is this one: launch manifest,
+        // custodian nonce, preflight observation (PSV-6; A54). There is no
+        // other arm for it, and `run_linux_profile` cannot launch without the
+        // manifest.
+        id if id == backend::LINUX_MICROVM_PROTECTED.id => {
             let lx = cfg.linux.as_ref().expect("selected only when configured");
             let policy = guest_policy
                 .as_ref()
@@ -1509,15 +1510,14 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
             });
             match observed {
                 Ok((launch, observation)) => {
-                    let res = backend::run_linux_profile(
-                        lx,
-                        &run_dir.join(&file),
-                        &req,
-                        policy,
-                        Some(&launch),
-                    );
+                    let res = backend::run_linux_profile(lx, &req, policy, &launch);
                     launch.scrub();
                     let hv = crate::psv::derive(&launch, &res.out_dir, observation.as_ref());
+                    let guest_verdict = hv.guest_verdict.clone();
+                    // The receipt FIRST: `psv_receipt` downgrades an
+                    // inadmissible launch to guest-unobserved whatever `derive`
+                    // saw, so only the FINAL receipt knows the class.
+                    let out = psv_receipt(&req, &journal, res, q, hv, liability);
                     // B2: a protected verdict travels with the exact documents
                     // its joins are verified over, including the guest verdict's
                     // own bytes, which the loop joins to the receipt (bundle /2).
@@ -1526,23 +1526,34 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
                     // launch whose verdict is not protected carries none and is
                     // recorded as the unknown it is (PSV-4, C9 certifying review).
                     //
-                    // The CLASS is the one gate. A protected verdict always
-                    // carries its bytes: `derive` attaches them only on the
-                    // fully verified path, where the observation is what makes
-                    // it protected. So a second "bytes present" condition here
-                    // would be the class check restated. It was, after the C9
-                    // merge, and neither half could then be killed on its own
-                    // (M311 survived). Should the bytes ever be absent, the bundle
-                    // carries none and intake's guest-verdict join (M299)
-                    // refuses it: fail closed, not a silent second gate.
+                    // The class of the FINAL receipt is the one gate. It was
+                    // `derive`'s class, taken before the downgrade, so an
+                    // unbound, cleanup-incomplete or died-after-verdict launch
+                    // shipped a bundle beside a guest-unobserved receipt (PSV-4
+                    // and PSV-5, C9 dev review round 1; A55).
+                    //
+                    // A protected verdict always carries its bytes: `derive`
+                    // attaches them only on the fully verified path, where the
+                    // observation is what makes it protected. So a second "bytes
+                    // present" condition here would be the class check restated.
+                    // It was, after the C9 merge, and neither half could then be
+                    // killed on its own (M311 survived). Should the bytes ever be
+                    // absent, the bundle carries none and intake's guest-verdict
+                    // join (M299) refuses it: fail closed, not a silent second
+                    // gate.
+                    let final_class = out
+                        .as_ref()
+                        .ok()
+                        .and_then(|(r, _, _)| crate::psv::EvidenceClass::of_receipt(r))
+                        .unwrap_or(crate::psv::EvidenceClass::GuestUnobserved);
                     if let (Some(o), crate::psv::EvidenceClass::Protected) =
-                        (&observation, hv.class)
+                        (&observation, final_class)
                     {
-                        let v = hv.guest_verdict.as_deref().unwrap_or_default();
+                        let v = guest_verdict.as_deref().unwrap_or_default();
                         psv_evidence = Some(crate::psv::evidence_bundle(&launch, o, v));
                     }
                     launch.discard();
-                    psv_receipt(&req, &journal, res, q, hv, liability)?
+                    out?
                 }
                 Err(why) => {
                     // Nothing launched: the private inputs (and any secret
@@ -1574,15 +1585,6 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
                     )
                 }
             }
-        }
-        id if id == backend::LINUX_MICROVM_PROTECTED.id => {
-            let lx = cfg.linux.as_ref().expect("selected only when configured");
-            let policy = guest_policy
-                .as_ref()
-                .expect("built when the profile was selected");
-            let res = backend::run_linux_profile(lx, &run_dir.join(&file), &req, policy, None);
-            let q = qualified.as_ref().expect("qualified at dispatch");
-            linux_receipt(&req, &journal, res, q, liability)?
         }
         other => {
             // Selection returned a backend with no dispatcher: say so, keep

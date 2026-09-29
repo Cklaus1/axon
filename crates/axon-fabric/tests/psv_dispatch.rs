@@ -511,31 +511,6 @@ fn a_valid_verdict_from_an_unbound_launch_counts_for_nothing() {
 use axon_fabric::backend::Clock;
 use axon_fabric::observer::{NonceStore, ObserverConfig, ObserverTrust};
 
-struct ObserverKey {
-    pk8: PathBuf,
-    key_id: String,
-}
-
-fn observer_key(dir: &Path, name: &str, trust_in: &[&Path]) -> ObserverKey {
-    use ring::signature::KeyPair;
-    let rng = ring::rand::SystemRandom::new();
-    let doc = ring::signature::Ed25519KeyPair::generate_pkcs8(&rng).unwrap();
-    let kp = ring::signature::Ed25519KeyPair::from_pkcs8(doc.as_ref()).unwrap();
-    let pk8 = dir.join(format!("{name}.pk8"));
-    std::fs::write(&pk8, doc.as_ref()).unwrap();
-    let hexpk = hex(kp.public_key().as_ref());
-    for d in trust_in {
-        std::fs::create_dir_all(d).unwrap();
-        std::fs::write(d.join(format!("{name}.pub")), format!("{hexpk}\n")).unwrap();
-    }
-    use sha2::{Digest, Sha256};
-    let key_id = format!(
-        "ed25519:{}",
-        &hex(&Sha256::digest(kp.public_key().as_ref()))[..16]
-    );
-    ObserverKey { pk8, key_id }
-}
-
 impl World {
     fn observer_roots(&self) -> PathBuf {
         self.env.dir.path().join("observer_keys")
@@ -544,57 +519,7 @@ impl World {
     /// `authority`.
     fn observer(&self, mode: &str, key: &ObserverKey, authority: &str) -> ObserverConfig {
         let d = self.env.dir.path();
-        let script = d.join(format!("observer-{mode}-{authority}.sh"));
-        std::fs::write(
-            &script,
-            format!(
-                r#"#!/bin/sh
-while [ $# -gt 0 ]; do case "$1" in --manifest) M="$2"; shift 2;; --out) O="$2"; shift 2;; *) shift;; esac; done
-[ "{mode}" = exit ] && exit 1
-if [ "{mode}" = wait ]; then
-    # Hold the observation open until the test says go (the epoch moves meanwhile).
-    touch "{d}/observer-waiting"; i=0
-    while [ ! -f "{d}/observer-go" ] && [ $i -lt 400 ]; do sleep 0.05; i=$((i+1)); done
-fi
-if [ "{mode}" = replay ]; then
-    cp "{prev}" "$O/observation.json" && cp "{prev}.sig" "$O/observation.json.sig"; exit $?
-fi
-python3 - "$M" "$O/observation.json" "{mode}" "{kid}" <<'PY'
-import json, sys, hashlib, datetime
-m_path, out, mode, kid = sys.argv[1:]
-raw = open(m_path, "rb").read(); m = json.loads(raw)
-now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-o = {{"schema": "axon-preflight-observation/1", "observer_key_id": kid,
-     "nonce": m["observation_nonce"], "epoch": 0, "observed_at": now,
-     "host_profile": m["backend_profile"], "fabric_revision": m["fabric_revision"],
-     "firecracker_sha256": m["firecracker_sha256"], "launcher_sha256": m["launcher_sha256"],
-     "host_config_sha256": m["host_config_sha256"], "guest": m["guest"],
-     "verifier_sha256": m["verifier_sha256"],
-     "suite_registry_sha256": m["suite"]["registry_sha256"], "policy_sha256": m["policy_sha256"],
-     "intended_launch_manifest_sha256": hashlib.sha256(raw).hexdigest()}}
-if mode == "stale": o["observed_at"] = "2020-01-01T00:00:00Z"
-if mode == "other-manifest": o["intended_launch_manifest_sha256"] = "0" * 64
-if mode == "kernel": o["guest"] = dict(o["guest"], kernel_sha256="9" * 64)
-if mode == "epoch": o["epoch"] = 7
-if mode == "nonce-forged": o["nonce"] = "ab" * 16
-if mode == "claims-other-key": o["observer_key_id"] = "ed25519:0000000000000000"
-if mode == "verifier": o["verifier_sha256"] = "7" * 64
-json.dump(o, open(out, "w"))
-PY
-{fabric} sign-evidence --record "$O/observation.json" --key {key} --authority {authority} >/dev/null || exit 1
-# Keep this genuine signed observation, so a later test can REPLAY it.
-cp "$O/observation.json" "{prev}"; cp "$O/observation.json.sig" "{prev}.sig"
-"#,
-                kid = key.key_id,
-                prev = d.join("prev-observation.json").display(),
-                d = d.display(),
-                fabric = env!("CARGO_BIN_EXE_axon-fabric"),
-                key = key.pk8.display(),
-            ),
-        )
-        .unwrap();
-        std::fs::set_permissions(&script, std::os::unix::fs::PermissionsExt::from_mode(0o755))
-            .unwrap();
+        let script = observer_script(d, mode, key, authority);
         ObserverConfig {
             command_sha256: sha256_file(&script),
             command: script,
@@ -1031,6 +956,119 @@ fn a_protected_host_with_no_observer_launches_nothing() {
     assert_eq!(class(&s), "protected");
 }
 
+/// PSV-6 (C9 dev review round 1; A54): A49 for an EXECUTION. An
+/// `interpreter_run` on a protected host launched with no manifest, no nonce
+/// and no observation, even when the host HAD an observer, and Fabric then
+/// attested it as a protected execution that EVL counts. Now the protected
+/// profile runs only the observed check path: with or without an observer
+/// section the execution is refused before anything is reserved, the
+/// observer never runs, no nonce is issued, nothing launches, and nothing
+/// would be attested. Control: the same host with an observer still runs an
+/// operator-suite check, observed and protected.
+#[test]
+fn a_protected_host_launches_no_execution_with_or_without_an_observer() {
+    for with_observer in [false, true] {
+        let w = World::new();
+        let key = observer_key(w.env.dir.path(), "obs", &[&w.observer_roots()]);
+        let mut cfg = w.protected_cfg();
+        let lx = w.lx("", "");
+        let out_root = lx.out_root.clone();
+        cfg.linux = Some(lx);
+        if with_observer {
+            cfg.observer = Some(w.observer("", &key, "observer"));
+        }
+        let nonces = w.env.dir.path().join("custodian-nonces");
+        let op = format!("op-ph-exec-{with_observer}");
+        let mut r = w.request(&op, "f.ax", "t_psv_ok");
+        r["job_kind"] = json!("interpreter_run");
+        r["argv"] = json!(["f.ax"]);
+        let text = r.to_string();
+        let got = submit(&text, &cfg);
+        let launched_any = std::fs::read_dir(&out_root).unwrap().next().is_some();
+        assert!(
+            !launched_any && w.env.launch_records() == 0,
+            "ATTACK: an interpreter_run launched on a protected host (observer section: \
+             {with_observer}) with no launch manifest, nonce or observation: {got:?}"
+        );
+        let s = got.expect("refused as unsupported, not an error");
+        assert_eq!(
+            s.receipt.status,
+            ReceiptStatus::Unsupported,
+            "{:?}",
+            s.reason
+        );
+        assert!(s.ran_under.is_none(), "nothing ran");
+        assert!(s.psv_evidence.is_none());
+        assert!(
+            !w.env.dir.path().join("prev-observation.json").exists(),
+            "the observer never ran"
+        );
+        assert!(
+            std::fs::read_dir(&nonces).map_or(true, |mut d| d.next().is_none()),
+            "no nonce was issued"
+        );
+        let req = axon_loop_contracts::parse(&text).unwrap();
+        assert!(
+            axon_fabric::signing::execution_attestation_decision(
+                &req,
+                &s.receipt,
+                s.replayed,
+                s.ran_under.as_ref()
+            )
+            .is_err(),
+            "ATTACK: Fabric would attest the refused execution"
+        );
+    }
+    // Control: the observed check path on the same kind of host.
+    let w = World::new();
+    let key = observer_key(w.env.dir.path(), "obs", &[&w.observer_roots()]);
+    let mut cfg = w.protected_cfg();
+    cfg.linux = Some(w.lx("", ""));
+    cfg.observer = Some(w.observer("", &key, "observer"));
+    let s = submit(
+        &w.request("op-ph-exec-ctl", "check:acc", "t_psv_ok")
+            .to_string(),
+        &cfg,
+    )
+    .unwrap();
+    assert_eq!(
+        s.receipt.verification,
+        ReceiptVerification::Passed,
+        "{:?}",
+        s.reason
+    );
+    assert_eq!(class(&s), "protected");
+}
+
+/// The protected profile's declaration offers no execution: `select` never
+/// picks it for an `interpreter_run` (PSV-6, A54), whatever the evidence.
+#[test]
+fn the_protected_profile_is_never_selected_for_an_execution() {
+    let w = World::new();
+    let lx = w.lx("", "");
+    let mut r = w.request("op-sel-exec", "f.ax", "t_psv_ok");
+    r["job_kind"] = json!("interpreter_run");
+    r["argv"] = json!(["f.ax"]);
+    let req: axon_loop_contracts::ComputeRequest =
+        axon_loop_contracts::parse(&r.to_string()).unwrap();
+    let got = backend::select(&req, Some(&lx), backend::AuthorityNeeds::default());
+    assert!(
+        got.is_err(),
+        "ATTACK: the protected profile was selected for an interpreter_run: {:?}",
+        got.map(|p| p.id)
+    );
+    // Control: the same request as an operator-suite check is selected.
+    let req: axon_loop_contracts::ComputeRequest =
+        axon_loop_contracts::parse(&w.request("op-sel-chk", "check:acc", "t_psv_ok").to_string())
+            .unwrap();
+    assert_eq!(
+        backend::select(&req, Some(&lx), backend::AuthorityNeeds::default())
+            .unwrap()
+            .id,
+        backend::LINUX_MICROVM_PROTECTED.id
+    );
+}
+
 /// PSV-4 (C9 certifying review): an OBSERVED launch whose verdict is not
 /// protected (here a forged pass, which derives `guest-unobserved` Unknown)
 /// carries NO `axon-psv-evidence/1` bundle. Intake refuses a bundle beside a
@@ -1065,6 +1103,112 @@ fn an_observed_verdict_that_is_not_protected_carries_no_bundle() {
     let s = w.submit_observed(w.observer("", &key, "observer"), "op-obs-np-ok");
     assert_eq!(class(&s), "protected", "{:?}", s.reason);
     assert!(s.psv_evidence.is_some(), "a protected verdict carries it");
+}
+
+/// PSV-4 / PSV-5 (C9 dev review round 1; A55): the bundle is decided from the
+/// FINAL receipt. Each launch here is OBSERVED and returns a GENUINE, keyed
+/// pass, so `derive` alone says protected; the launch itself was not
+/// admissible (the launcher could not bind it, could not clean up, or the
+/// runner died after the verdict), so `psv_receipt` downgrades it to
+/// guest-unobserved. The bundle used to be taken from `derive`'s class, before
+/// that downgrade, and so shipped beside a receipt that claims nothing
+/// protected. Control: the admissible observed launch keeps its bundle
+/// (`an_observed_verdict_that_is_not_protected_carries_no_bundle`).
+#[test]
+fn an_inadmissible_observed_launch_is_never_protected_and_carries_no_bundle() {
+    for tamper in ["unbound", "cleanup-incomplete", "runner-died-after-verdict"] {
+        let w = World::new();
+        let key = observer_key(w.env.dir.path(), "obs", &[&w.observer_roots()]);
+        let mut cfg = w.env.cfg(0);
+        cfg.linux = Some(w.lx(tamper, ""));
+        cfg.observer = Some(w.observer("", &key, "observer"));
+        let op = format!("op-obs-inadm-{tamper}");
+        let text = w.request(&op, "check:acc", "t_psv_ok").to_string();
+        let s = submit(&text, &cfg).unwrap();
+        assert!(launched(&w, &op), "{tamper}: the observed launch ran");
+        let got = class(&s);
+        let ran = s.ran_under.as_ref().map(|r| r.evidence_class.clone());
+        assert_eq!(
+            got,
+            "guest-unobserved",
+            "ATTACK: {tamper}: an inadmissible observed launch was classed {got} (ran_under \
+             {ran:?}, bundle {})",
+            s.psv_evidence.is_some()
+        );
+        assert_eq!(ran.as_deref(), Some("guest-unobserved"), "{tamper}");
+        assert!(
+            !axon_loop_contracts::protected_evidence::claims_protected(&s.receipt),
+            "{tamper}"
+        );
+        assert!(
+            s.psv_evidence.is_none(),
+            "ATTACK: {tamper}: a bundle travels beside a receipt downgraded to guest-unobserved"
+        );
+        assert_ne!(
+            s.receipt.verification,
+            ReceiptVerification::Passed,
+            "{tamper}"
+        );
+    }
+}
+
+/// PSV-6 key-role separation at Fabric (C9 dev review round 1; A57). The
+/// observation is genuinely signed by a key in the observer root, but that
+/// key is ALSO the host's attestation signer (whose private half Fabric
+/// holds), or ALSO in another operator authority root: either way Fabric
+/// could mint the observation itself. `observe` refuses, whatever the host
+/// config said when it loaded (the roots are read at every observation), and
+/// nothing launches. Control: the same observer with a key in no other role
+/// launches, observed and protected.
+#[test]
+fn an_observer_key_that_holds_another_role_is_refused_at_every_observation() {
+    for role in [
+        "host-signer",
+        "verifier",
+        "qualification",
+        "admission",
+        "monitor",
+    ] {
+        let w = World::new();
+        let d = w.env.dir.path().to_path_buf();
+        let key = observer_key(&d, "obs", &[&w.observer_roots()]);
+        let mut ob = w.observer("", &key, "observer");
+        if role == "host-signer" {
+            ob.trust.host_signer_public_key = Some(key.public_hex.clone());
+        } else {
+            let other = ob
+                .trust
+                .separate_from
+                .iter()
+                .find(|(a, _)| a.dir_name() == role)
+                .map(|(_, p)| p.clone())
+                .unwrap();
+            std::fs::create_dir_all(&other).unwrap();
+            std::fs::write(other.join("also.pub"), format!("{}\n", key.public_hex)).unwrap();
+        }
+        let op = format!("op-obs-role-{role}");
+        let s = w.submit_observed(ob, &op);
+        assert!(
+            !launched(&w, &op) && s.receipt.verification != ReceiptVerification::Passed,
+            "ATTACK: an observation signed by a key that is also the {role} key launched \
+             ({:?}, class {})",
+            s.receipt.verification,
+            class(&s)
+        );
+        assert!(
+            s.reason
+                .as_deref()
+                .unwrap_or("")
+                .contains("key-role separation"),
+            "{role}: {:?}",
+            s.reason
+        );
+        assert!(s.psv_evidence.is_none(), "{role}");
+    }
+    let w = World::new();
+    let key = observer_key(w.env.dir.path(), "obs", &[&w.observer_roots()]);
+    let s = w.submit_observed(w.observer("", &key, "observer"), "op-obs-role-ctl");
+    assert_eq!(class(&s), "protected", "control: {:?}", s.reason);
 }
 
 /// PSV-3 (C9 certifying review): the Passed branch's KEYED check

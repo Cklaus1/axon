@@ -17,18 +17,13 @@ use std::path::{Path, PathBuf};
 
 const GUEST: &str = "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd";
 
+/// The protected profile runs only an operator-suite check (PSV-6, A54), so
+/// qualification is exercised on one.
 fn run_request(env: &Env, op: &str) -> Value {
-    let mut r = request(env, op, "t_ok");
-    r["required"]["hardware_isolation"] = json!(true);
-    r["required"]["os"] = json!("linux");
-    r["job_kind"] = json!("interpreter_run");
-    r["argv"] = json!(["f.ax"]);
-    r["registered_executable_ref"] = json!(backend::LINUX_GUEST_AXON_ID);
+    let candidate = psv_suite(env);
+    let mut r = request(env, op, "t_psv_ok");
+    as_protected_check(&mut r, &candidate, GUEST);
     r["grant_ref"] = json!("grant:open");
-    r["executable_digest"] = json!(axon_cortex::runner::fabric_executable_digest(
-        backend::LINUX_GUEST_AXON_ID,
-        GUEST
-    ));
     r
 }
 
@@ -42,7 +37,7 @@ struct World {
 
 impl World {
     fn new() -> World {
-        World::with_manifest(&lx_manifest(GUEST))
+        World::with_manifest(&full_lx_manifest(GUEST))
     }
     fn with_manifest(manifest: &str) -> World {
         let env = Env::new();
@@ -174,7 +169,7 @@ fn a_signed_fresh_clean_pass_record_is_accepted_and_its_caveat_reaches_the_recei
 
 #[test]
 fn matching_manifest_engine_pins_are_accepted() {
-    let mut m: Value = serde_json::from_str(&lx_manifest(GUEST)).unwrap();
+    let mut m: Value = serde_json::from_str(&full_lx_manifest(GUEST)).unwrap();
     m["engine"] = json!({"firecracker_sha256": TEST_FC_SHA, "jailer_sha256": TEST_JAILER_SHA});
     let w = World::with_manifest(&m.to_string());
     w.assert_accepted(w.cfg(&w.evidence()));
@@ -400,7 +395,7 @@ fn missing_engine_digests_are_refused() {
 
 #[test]
 fn a_manifest_that_pins_no_engine_is_refused() {
-    let mut m: Value = serde_json::from_str(&lx_manifest(GUEST)).unwrap();
+    let mut m: Value = serde_json::from_str(&full_lx_manifest(GUEST)).unwrap();
     m.as_object_mut().unwrap().remove("engine");
     let w = World::with_manifest(&m.to_string());
     w.assert_refused(w.cfg(&w.evidence()), "pins no engine");
@@ -408,7 +403,7 @@ fn a_manifest_that_pins_no_engine_is_refused() {
 
 #[test]
 fn engine_digests_differing_from_the_manifest_pins_are_refused() {
-    let mut m: Value = serde_json::from_str(&lx_manifest(GUEST)).unwrap();
+    let mut m: Value = serde_json::from_str(&full_lx_manifest(GUEST)).unwrap();
     m["engine"] = json!({"firecracker_sha256": "f".repeat(64), "jailer_sha256": TEST_JAILER_SHA});
     let w = World::with_manifest(&m.to_string());
     w.assert_refused(
@@ -427,7 +422,7 @@ fn evidence_from_a_dirty_tree_is_refused() {
 
 #[test]
 fn a_manifest_built_from_a_dirty_tree_is_refused() {
-    let mut m: Value = serde_json::from_str(&lx_manifest(GUEST)).unwrap();
+    let mut m: Value = serde_json::from_str(&full_lx_manifest(GUEST)).unwrap();
     m["source"]["axon_tree_dirty_at_build"] = json!(true);
     let w = World::with_manifest(&m.to_string());
     w.assert_refused(w.cfg(&w.evidence()), "built from a dirty");

@@ -518,3 +518,168 @@ pub fn set_launcher(lx: &mut LinuxProfileConfig, launcher: PathBuf) {
     lx.launcher_sha256 = sha256_file(&launcher);
     lx.launcher = launcher;
 }
+
+// ── The protected profile runs ONLY an observed operator-suite check ────────
+//
+// PSV-6 (C9 dev review round 1; A54): `interpreter_run` is no longer offered on
+// `linux-microvm-protected`, and every launch there goes through the launch
+// manifest. A test that exercises the profile's OTHER properties (policy
+// delivery, qualification, grant authority) therefore submits a registered
+// operator-suite check: these helpers register suite `acc` and store the
+// candidate, as the PSV dispatch tests do.
+
+/// The operator suite `acc`. Its test names differ from the candidate
+/// fixture's own `t_ok`/`t_bad` (a sealed candidate defining a name the suite
+/// defines is refused: PCI, E0004).
+pub const PSV_SUITE: &str = "mod f\nuse f.{double}\n\n@[test]\nfn t_psv_ok() { assert_eq(double(21), 42) }\n\n@[test]\nfn t_psv_fail() { assert_eq(double(1), 3) }\n";
+
+/// A profile manifest that pins everything a launch manifest names.
+pub fn full_lx_manifest(guest_axon_sha: &str) -> String {
+    let mut m: Value = serde_json::from_str(&lx_manifest(guest_axon_sha)).unwrap();
+    for (n, c) in [
+        ("vmlinux", '1'),
+        ("rootfs.sqfs", '2'),
+        ("axon-guest-init", '3'),
+    ] {
+        m["artifacts"][n] = json!({"sha256": c.to_string().repeat(64)});
+    }
+    m.to_string()
+}
+
+/// Register suite `acc` in `env`'s check registry and store `env.ws` as the
+/// candidate; returns the candidate's `workspace_version_ref`.
+pub fn psv_suite(env: &Env) -> axon_loop_contracts::Acf1Ref {
+    use axon_fabric::workspace::{Quota, WorkspaceStore, WorkspaceTree};
+    let suite_root = env.dir.path().join("suites/acc");
+    std::fs::create_dir_all(&suite_root).unwrap();
+    std::fs::write(suite_root.join("accept.ax"), PSV_SUITE).unwrap();
+    let suite_ref = WorkspaceTree::import_dir(&suite_root, &Quota::default())
+        .unwrap()
+        .reference()
+        .to_string();
+    let mut reg: Value =
+        serde_json::from_str(&std::fs::read_to_string(&env.registry).unwrap()).unwrap();
+    reg["checks"] = json!([{
+        "id": "acc", "visibility": "hidden", "root": suite_root,
+        "entry": "accept.ax", "workspace_version_ref": suite_ref,
+    }]);
+    std::fs::write(&env.registry, reg.to_string()).unwrap();
+    WorkspaceStore::open(&env.cfg(0).state_dir, &scope().tenant_id)
+        .unwrap()
+        .import_dir(&env.ws, &Quota::default())
+        .unwrap()
+}
+
+/// Make `r` a protected-profile request for the operator suite check
+/// `check:acc` / `t_psv_ok` over `candidate`, run by the guest interpreter
+/// pinned at `guest_axon_sha`.
+pub fn as_protected_check(
+    r: &mut Value,
+    candidate: &axon_loop_contracts::Acf1Ref,
+    guest_axon_sha: &str,
+) {
+    r["required"]["hardware_isolation"] = json!(true);
+    r["required"]["os"] = json!("linux");
+    r["job_kind"] = json!("registered_check");
+    r["argv"] = json!(["check:acc", "t_psv_ok"]);
+    r["workspace_version_ref"] = json!(candidate.as_str());
+    r["registered_executable_ref"] = json!(axon_fabric::backend::LINUX_GUEST_AXON_ID);
+    r["executable_digest"] = json!(axon_cortex::runner::fabric_executable_digest(
+        axon_fabric::backend::LINUX_GUEST_AXON_ID,
+        guest_axon_sha
+    ));
+}
+
+// ── The stand-in preflight observer (M3) ─────────────────────────────────────
+//
+// It composes the observation FROM the launch manifest and signs it with
+// `axon-fabric sign-evidence` (the operator tool). It proves the PROTOCOL —
+// domain, root, joins, freshness, nonce — never a measurement.
+
+pub struct ObserverKey {
+    pub pk8: PathBuf,
+    pub key_id: String,
+    /// The public key, 64 hex.
+    pub public_hex: String,
+}
+
+pub fn observer_key(dir: &Path, name: &str, trust_in: &[&Path]) -> ObserverKey {
+    use ring::signature::KeyPair;
+    let rng = ring::rand::SystemRandom::new();
+    let doc = ring::signature::Ed25519KeyPair::generate_pkcs8(&rng).unwrap();
+    let kp = ring::signature::Ed25519KeyPair::from_pkcs8(doc.as_ref()).unwrap();
+    let pk8 = dir.join(format!("{name}.pk8"));
+    std::fs::write(&pk8, doc.as_ref()).unwrap();
+    let hexpk = hex(kp.public_key().as_ref());
+    for d in trust_in {
+        std::fs::create_dir_all(d).unwrap();
+        std::fs::write(d.join(format!("{name}.pub")), format!("{hexpk}\n")).unwrap();
+    }
+    use sha2::{Digest, Sha256};
+    let key_id = format!(
+        "ed25519:{}",
+        &hex(&Sha256::digest(kp.public_key().as_ref()))[..16]
+    );
+    ObserverKey {
+        pk8,
+        key_id,
+        public_hex: hexpk,
+    }
+}
+
+/// An observer program in `d`: `mode` applies ONE defect; `key` signs, as
+/// `authority`. A genuine observation is also kept as `d/prev-observation.json`
+/// (so a later test can REPLAY it).
+pub fn observer_script(d: &Path, mode: &str, key: &ObserverKey, authority: &str) -> PathBuf {
+    let script = d.join(format!("observer-{mode}-{authority}.sh"));
+    std::fs::write(
+        &script,
+        format!(
+            r#"#!/bin/sh
+while [ $# -gt 0 ]; do case "$1" in --manifest) M="$2"; shift 2;; --out) O="$2"; shift 2;; *) shift;; esac; done
+[ "{mode}" = exit ] && exit 1
+if [ "{mode}" = wait ]; then
+# Hold the observation open until the test says go (the epoch moves meanwhile).
+touch "{d}/observer-waiting"; i=0
+while [ ! -f "{d}/observer-go" ] && [ $i -lt 400 ]; do sleep 0.05; i=$((i+1)); done
+fi
+if [ "{mode}" = replay ]; then
+cp "{prev}" "$O/observation.json" && cp "{prev}.sig" "$O/observation.json.sig"; exit $?
+fi
+python3 - "$M" "$O/observation.json" "{mode}" "{kid}" <<'PY'
+import json, sys, hashlib, datetime
+m_path, out, mode, kid = sys.argv[1:]
+raw = open(m_path, "rb").read(); m = json.loads(raw)
+now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+o = {{"schema": "axon-preflight-observation/1", "observer_key_id": kid,
+ "nonce": m["observation_nonce"], "epoch": 0, "observed_at": now,
+ "host_profile": m["backend_profile"], "fabric_revision": m["fabric_revision"],
+ "firecracker_sha256": m["firecracker_sha256"], "launcher_sha256": m["launcher_sha256"],
+ "host_config_sha256": m["host_config_sha256"], "guest": m["guest"],
+ "verifier_sha256": m["verifier_sha256"],
+ "suite_registry_sha256": m["suite"]["registry_sha256"], "policy_sha256": m["policy_sha256"],
+ "intended_launch_manifest_sha256": hashlib.sha256(raw).hexdigest()}}
+if mode == "stale": o["observed_at"] = "2020-01-01T00:00:00Z"
+if mode == "other-manifest": o["intended_launch_manifest_sha256"] = "0" * 64
+if mode == "kernel": o["guest"] = dict(o["guest"], kernel_sha256="9" * 64)
+if mode == "epoch": o["epoch"] = 7
+if mode == "nonce-forged": o["nonce"] = "ab" * 16
+if mode == "claims-other-key": o["observer_key_id"] = "ed25519:0000000000000000"
+if mode == "verifier": o["verifier_sha256"] = "7" * 64
+json.dump(o, open(out, "w"))
+PY
+{fabric} sign-evidence --record "$O/observation.json" --key {key} --authority {authority} >/dev/null || exit 1
+# Keep this genuine signed observation, so a later test can REPLAY it.
+cp "$O/observation.json" "{prev}"; cp "$O/observation.json.sig" "{prev}.sig"
+"#,
+            kid = key.key_id,
+            prev = d.join("prev-observation.json").display(),
+            d = d.display(),
+            fabric = env!("CARGO_BIN_EXE_axon-fabric"),
+            key = key.pk8.display(),
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&script, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    script
+}

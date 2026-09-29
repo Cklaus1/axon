@@ -34,6 +34,11 @@ impl Host {
         let root = env.dir.path().join("host");
         std::fs::create_dir_all(root.join("dist")).unwrap();
         std::fs::create_dir_all(root.join("keys")).unwrap();
+        // The service's own private leaves (A56).
+        for d in ["runs", "nonces"] {
+            std::fs::create_dir_all(root.join(d)).unwrap();
+            std::fs::set_permissions(root.join(d), std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
         let issuer = Issuer::generate();
         let manifest = lx_manifest(&"a".repeat(64));
         std::fs::write(root.join("manifest.json"), &manifest).unwrap();
@@ -343,6 +348,272 @@ fn the_out_root_and_nonce_store_sit_under_operator_owned_directories() {
         assert!(e.contains(why), "out_root under {}: {e}", dir.display());
         let e = with(h.p("runs"), dir.join("nonces")).unwrap_err();
         assert!(e.contains(why), "nonce_store under {}: {e}", dir.display());
+    }
+}
+
+/// C9 dev review round 1 (A56): the out_root and nonce_store LEAVES, not only
+/// their parents. Each leaf sits directly under an operator-owned parent (so
+/// the parent walk passes) but is agent-owned, group/other-accessible, a
+/// symlink, or absent. An agent that owns or can write the leaf can swap
+/// `<op>.psv-inputs` between `prepare` and the launcher's copy, or erase
+/// nonce records so an observation replays. Control: the service-owned 0700
+/// leaves load (`the_out_root_and_nonce_store_sit_under_operator_owned_directories`
+/// and the end of this test). Needs root to create root-owned parents.
+#[test]
+fn the_out_root_and_nonce_store_leaves_are_the_services_own_and_private() {
+    if unsafe { libc::geteuid() } != 0 {
+        eprintln!("skipped: needs root to create root-owned fixtures");
+        return;
+    }
+    let h = Host::new();
+    let base = h.env.dir.path();
+    for d in [base.to_path_buf(), h.root.clone(), h.p("dist"), h.p("keys")] {
+        std::fs::set_permissions(&d, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    for f in [
+        "launcher.sh",
+        "manifest.json",
+        "registry.json",
+        "evidence.json",
+    ] {
+        std::fs::set_permissions(h.p(f), std::fs::Permissions::from_mode(0o644)).unwrap();
+    }
+    std::fs::write(h.p("observer.sh"), "#!/bin/sh\n").unwrap();
+    std::fs::set_permissions(h.p("observer.sh"), std::fs::Permissions::from_mode(0o755)).unwrap();
+    let with = |out_root: PathBuf, nonces: PathBuf| {
+        h.write_config(|v| {
+            v["out_root"] = json!(out_root);
+            v["observer"] = json!({
+                "command": {"path": h.p("observer.sh"), "sha256": sha256_file(&h.p("observer.sh"))},
+                "nonce_store": nonces,
+                "max_age_s": 300,
+            });
+        });
+        std::fs::set_permissions(h.config(), std::fs::Permissions::from_mode(0o644)).unwrap();
+        ProtectedHost::for_test(&h.config(), Some(base), h.trust())
+    };
+    type Breaker = (&'static str, &'static str, fn(&Path));
+    let cases: [Breaker; 5] = [
+        ("an agent-owned leaf", "not the service uid", |p| {
+            std::os::unix::fs::chown(p, Some(1000), None).unwrap()
+        }),
+        (
+            "a group-writable leaf",
+            "accessible to group or other",
+            |p| std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o770)).unwrap(),
+        ),
+        (
+            "an other-writable leaf",
+            "accessible to group or other",
+            |p| std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o703)).unwrap(),
+        ),
+        ("a symlinked leaf", "symlink", |p| {
+            let real = p.with_extension("real");
+            std::fs::rename(p, &real).unwrap();
+            std::os::unix::fs::symlink(&real, p).unwrap();
+        }),
+        ("an absent leaf", "must exist", |p| {
+            std::fs::remove_dir(p).unwrap()
+        }),
+    ];
+    for leaf in ["runs", "nonces"] {
+        for (what, why, break_it) in &cases {
+            let p = h.p(leaf);
+            break_it(&p);
+            let got = with(h.p("runs"), h.p("nonces"));
+            assert!(
+                got.as_ref().is_err_and(|e| e.contains(why)),
+                "ATTACK: {leaf} as {what} was accepted as the service's own private directory: \
+                 {:?}",
+                got.map(|_| ())
+            );
+            // restore
+            let _ = std::fs::remove_file(&p);
+            let _ = std::fs::remove_dir(&p);
+            if p.with_extension("real").exists() {
+                std::fs::rename(p.with_extension("real"), &p).unwrap();
+            } else {
+                std::fs::create_dir(&p).unwrap();
+            }
+            std::os::unix::fs::chown(&p, Some(0), None).unwrap();
+            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o700)).unwrap();
+            with(h.p("runs"), h.p("nonces")).expect("control: restored leaves load");
+        }
+    }
+}
+
+/// ADR-002 key-role separation when the host config LOADS (C9 dev review
+/// round 1; A57): the observer root may hold neither the host signer's public
+/// key (Fabric holds its private half and signs any domain) nor a key of
+/// another operator authority root. Control: a key in no other role loads.
+#[test]
+fn an_observer_root_sharing_a_key_with_another_role_is_refused_at_load() {
+    let h = Host::new();
+    std::fs::write(h.p("observer.sh"), "#!/bin/sh\n").unwrap();
+    let observer_config = |v: &mut Value| {
+        v["observer"] = json!({
+            "command": {"path": h.p("observer.sh"), "sha256": sha256_file(&h.p("observer.sh"))},
+            "nonce_store": h.p("nonces"),
+        });
+    };
+    h.write_config(observer_config);
+    let signer = axon_loop_contracts::attestation::public_key_of(
+        &std::fs::read(h.p("keys/attest.pk8")).unwrap(),
+    )
+    .unwrap();
+    let obs_root = h.p("observer");
+    std::fs::create_dir_all(&obs_root).unwrap();
+    let other = Issuer::generate();
+    std::fs::write(
+        obs_root.join("obs.pub"),
+        format!("{}\n", other.public_hex()),
+    )
+    .unwrap();
+    h.load().expect("control: an observer key in no other role");
+
+    // The observer root holds the host signer's key.
+    std::fs::write(obs_root.join("signer.pub"), format!("{signer}\n")).unwrap();
+    let got = h.load();
+    assert!(
+        got.as_ref().is_err_and(|e| e.contains("host signer")),
+        "ATTACK: an observer root holding the host signer's public key loaded: {:?}",
+        got.map(|_| ())
+    );
+    std::fs::remove_file(obs_root.join("signer.pub")).unwrap();
+    h.load().expect("restored");
+
+    // The observer key is also a key of another authority.
+    for (role, dir) in [
+        ("qualification", h.p("trusted_issuers")),
+        ("verifier", h.p("verifier")),
+        ("admission", h.p("admission")),
+        ("monitor", h.p("monitor")),
+    ] {
+        std::fs::create_dir_all(&dir).unwrap();
+        let dup = dir.join("dup.pub");
+        std::fs::write(&dup, format!("{}\n", other.public_hex())).unwrap();
+        let got = h.load();
+        assert!(
+            got.as_ref()
+                .is_err_and(|e| e.contains("key-role separation") && e.contains(role)),
+            "ATTACK: an observer key that is also a {role} key loaded: {:?}",
+            got.map(|_| ())
+        );
+        std::fs::remove_file(&dup).unwrap();
+        h.load().expect("restored");
+    }
+}
+
+/// The trust preflight's probe list IS what `load` enforces (C9 dev review
+/// round 1; A56 / FIELD-ORIGIN preflight coverage). `pinned_paths` (printed by
+/// `axon-fabric protected-host-paths`, which the preflight runs) is checked
+/// against `load` in BOTH directions on a full host (observer, grant registry,
+/// artifacts): every path whose ownership `load` refuses is on the list (or is
+/// an ancestor of, or a direct entry of, a listed path), and every listed path,
+/// made agent-owned, is refused by `load`. The preflight used to keep its own
+/// list and so missed the grant registry and grant files, the observer command,
+/// `artifacts_dir` and the out_root / nonce_store directories. Needs root.
+#[test]
+fn the_preflight_probe_list_is_exactly_what_load_enforces() {
+    use axon_fabric::protected_host::{pinned_paths, PinnedKind};
+    if unsafe { libc::geteuid() } != 0 {
+        eprintln!("skipped: needs root to create root-owned fixtures");
+        return;
+    }
+    let h = Host::new();
+    let base = h.env.dir.path();
+    std::fs::create_dir_all(h.p("grants")).unwrap();
+    write_grant_registry(
+        &h.p("grants/grants.json"),
+        &[("grant:test", PRINCIPAL, GRANT_FS)],
+    );
+    std::fs::write(h.p("dist/vmlinux"), "k").unwrap();
+    std::fs::write(h.p("observer.sh"), "#!/bin/sh\n").unwrap();
+    h.write_config(|v| {
+        let pin = |n: &str| json!({"path": h.p(n), "sha256": sha256_file(&h.p(n))});
+        v["observer"] = json!({"command": pin("observer.sh"), "nonce_store": h.p("nonces")});
+        v["grant_registry"] = pin("grants/grants.json");
+    });
+    // Everything the operator's, 0755/0644; the key and the service dirs as set.
+    let mut all: Vec<PathBuf> = vec![base.to_path_buf()];
+    let mut i = 0;
+    while i < all.len() {
+        if all[i].is_dir() && !all[i].is_symlink() {
+            let mut sub: Vec<PathBuf> = std::fs::read_dir(&all[i])
+                .unwrap()
+                .map(|e| e.unwrap().path())
+                .collect();
+            sub.sort();
+            all.extend(sub);
+        }
+        i += 1;
+    }
+    for p in &all {
+        let mode = if p.is_dir() { 0o755 } else { 0o644 };
+        std::fs::set_permissions(p, std::fs::Permissions::from_mode(mode)).unwrap();
+    }
+    for d in ["runs", "nonces"] {
+        std::fs::set_permissions(h.p(d), std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    std::fs::set_permissions(
+        h.p("keys/attest.pk8"),
+        std::fs::Permissions::from_mode(0o600),
+    )
+    .unwrap();
+    let load = || ProtectedHost::for_test(&h.config(), Some(base), h.trust());
+    load().expect("control: the full host loads");
+
+    let listed = pinned_paths(&h.config()).unwrap();
+    for want in [
+        h.p("grants/grants.json"),
+        h.p("grants/grant_test.axgrant"),
+        h.p("observer.sh"),
+        h.p("dist"),
+        h.p("runs"),
+        h.p("nonces"),
+    ] {
+        assert!(
+            listed.iter().any(|(_, p)| *p == want),
+            "ATTACK: the trust preflight never probes {}, which load pins: {listed:?}",
+            want.display()
+        );
+    }
+    let covered = |x: &Path| {
+        listed.iter().any(|(k, p)| {
+            p == x
+                || p.starts_with(x)
+                || (*k == PinnedKind::OperatorDir && x.parent() == Some(p.as_path()))
+        })
+    };
+    // load ⊆ list: whatever load refuses for its ownership, the preflight probes.
+    for x in &all {
+        std::os::unix::fs::chown(x, Some(1000), None).unwrap();
+        let refused = load().is_err();
+        std::os::unix::fs::chown(x, Some(0), None).unwrap();
+        assert!(
+            !refused || covered(x),
+            "ATTACK: load enforces the ownership of {} but the trust preflight never probes it",
+            x.display()
+        );
+    }
+    load().expect("restored");
+    // list ⊆ load: every listed path is one load really enforces.
+    for (k, p) in &listed {
+        let target = match k {
+            // The key FILE is checked when the binary reads it; load walks
+            // the directory holding it.
+            PinnedKind::SigningKey => p.parent().unwrap().to_path_buf(),
+            _ => p.clone(),
+        };
+        std::os::unix::fs::chown(&target, Some(1000), None).unwrap();
+        let refused = load().is_err();
+        std::os::unix::fs::chown(&target, Some(0), None).unwrap();
+        assert!(
+            refused,
+            "the preflight probes {} ({}), which load does not enforce",
+            target.display(),
+            k.as_str()
+        );
     }
 }
 

@@ -38,13 +38,14 @@ struct World {
     env: Env,
     issuer: Issuer,
     manifest_sha: String,
+    candidate: axon_loop_contracts::Acf1Ref,
 }
 
 impl World {
     fn new() -> World {
         let env = Env::new();
         let m = env.dir.path().join("manifest.json");
-        std::fs::write(&m, lx_manifest(GUEST)).unwrap();
+        std::fs::write(&m, full_lx_manifest(GUEST)).unwrap();
         let manifest_sha = sha256_file(&m);
         write_grant_registry(
             &env.grant_registry,
@@ -55,10 +56,12 @@ impl World {
                 ("grant:long", &long_principal(), GRANT_FS),
             ],
         );
+        let candidate = psv_suite(&env);
         World {
             env,
             issuer: Issuer::generate(),
             manifest_sha,
+            candidate,
         }
     }
     fn dir(&self) -> &Path {
@@ -104,19 +107,13 @@ impl World {
         std::fs::create_dir_all(&lx.out_root).unwrap();
         lx
     }
+    /// The protected profile runs only an operator-suite check (PSV-6, A54),
+    /// so the policy is exercised on one.
     fn request(&self, op: &str, grant: &str, principal: &str) -> Value {
-        let mut r = request(&self.env, op, "t_ok");
-        r["required"]["hardware_isolation"] = json!(true);
-        r["required"]["os"] = json!("linux");
-        r["job_kind"] = json!("interpreter_run");
-        r["argv"] = json!(["f.ax"]);
-        r["registered_executable_ref"] = json!(backend::LINUX_GUEST_AXON_ID);
+        let mut r = request(&self.env, op, "t_psv_ok");
+        as_protected_check(&mut r, &self.candidate, GUEST);
         r["grant_ref"] = json!(grant);
         r["principal_ref"] = json!(principal);
-        r["executable_digest"] = json!(axon_cortex::runner::fabric_executable_digest(
-            backend::LINUX_GUEST_AXON_ID,
-            GUEST
-        ));
         r
     }
     fn submit(

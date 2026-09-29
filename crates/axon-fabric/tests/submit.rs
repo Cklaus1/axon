@@ -302,9 +302,20 @@ fn linux_cfg(env: &Env, manifest_bytes: &str, evidence_sha: &str) -> LinuxProfil
 fn linux_profile_eligibility_is_bound_to_the_qualified_manifest() {
     let env = Env::new();
     let manifest = lx_manifest(&"ab".repeat(32));
+    // An operator-suite check: the only job the protected profile offers.
     let req = axon_loop_contracts::parse::<axon_loop_contracts::ComputeRequest>(
         &{
             let mut r = linux_request(&env, "op-e");
+            r["argv"] = json!(["check:acc", "t_psv_ok"]);
+            r
+        }
+        .to_string(),
+    )
+    .unwrap();
+    // An execution is never offered there (PSV-6, A54).
+    let exec = axon_loop_contracts::parse::<axon_loop_contracts::ComputeRequest>(
+        &{
+            let mut r = linux_request(&env, "op-x");
             r["job_kind"] = json!("interpreter_run");
             r["argv"] = json!(["f.ax"]);
             r
@@ -318,6 +329,12 @@ fn linux_profile_eligibility_is_bound_to_the_qualified_manifest() {
             .unwrap()
             .id,
         "linux-microvm-protected"
+    );
+    let e = backend::select(&exec, Some(&ok), Default::default()).unwrap_err();
+    assert!(
+        e.0.contains("job_kind InterpreterRun unsupported"),
+        "{}",
+        e.0
     );
     // A changed manifest (evidence names a different sha) is ineligible.
     let changed = linux_cfg(&env, &manifest, &"0".repeat(64));
@@ -617,30 +634,29 @@ fn an_epoch_change_between_submit_and_launch_is_refused_before_the_launch_record
 // They say nothing about the VM itself — B263's qualification harness does.
 // (`stand_in_launcher` lives in `common`, shared with `qualification.rs`.)
 
+/// The protected profile runs only an operator-suite check through the
+/// launch-manifest path (PSV-6, A54): the dispatch contract is exercised on one.
 fn linux_run_request(env: &Env, op: &str, manifest_guest_axon: &str) -> serde_json::Value {
+    let candidate = psv_suite(env);
     let mut r = linux_request(env, op);
-    r["job_kind"] = json!("interpreter_run");
-    r["argv"] = json!(["f.ax"]);
-    r["registered_executable_ref"] = json!(backend::LINUX_GUEST_AXON_ID);
+    as_protected_check(&mut r, &candidate, manifest_guest_axon);
     // The Linux guest has no policy channel (x1): only a grant that
     // withholds nothing is eligible.
     r["grant_ref"] = json!("grant:open");
-    r["executable_digest"] = json!(axon_cortex::runner::fabric_executable_digest(
-        backend::LINUX_GUEST_AXON_ID,
-        manifest_guest_axon
-    ));
     r
 }
 
 fn linux_submit(env: &Env, op: &str, launcher: std::path::PathBuf) -> axon_fabric::Submission {
     let guest = "cd".repeat(32);
-    let manifest = lx_manifest(&guest);
+    let manifest = full_lx_manifest(&guest);
     let mut lx = linux_cfg(env, &manifest, "");
     set_launcher(&mut lx, launcher);
     std::fs::create_dir_all(&lx.out_root).unwrap();
+    // Before the config: it registers the suite the config's registry loads.
+    let req = linux_run_request(env, op, &guest);
     let mut cfg = env.cfg(0);
     cfg.linux = Some(lx);
-    submit(&linux_run_request(env, op, &guest).to_string(), &cfg).unwrap()
+    submit(&req.to_string(), &cfg).unwrap()
 }
 
 #[test]
@@ -652,8 +668,9 @@ fn linux_profile_ok_run_maps_to_a_completed_receipt() {
     assert_eq!(r.backend_profile_ref.as_str(), "linux-microvm-protected");
     assert_eq!(r.status, ReceiptStatus::Completed);
     assert_eq!(r.process_exit_code, Some(0));
-    // The profile runs a program; it does not produce a check verdict.
-    assert_eq!(r.verification, ReceiptVerification::NotRequested);
+    // The stand-in returns no guest verdict: Fabric derives none, and the
+    // receipt says so rather than trusting the launcher's exit.
+    assert_eq!(r.verification, ReceiptVerification::Unknown);
     assert!(r
         .evidence_refs
         .iter()
@@ -704,13 +721,14 @@ fn linux_profile_failures_are_outcome_unknown_with_liability() {
 fn a_changed_manifest_makes_the_linux_profile_ineligible_with_no_launch() {
     let env = Env::new();
     let guest = "cd".repeat(32);
-    let manifest = lx_manifest(&guest);
+    let manifest = full_lx_manifest(&guest);
     let mut lx = linux_cfg(&env, &manifest, &"0".repeat(64)); // evidence ≠ manifest
     set_launcher(&mut lx, stand_in_launcher(&env, 0, true, true, 0));
     std::fs::create_dir_all(&lx.out_root).unwrap();
+    let req = linux_run_request(&env, "op-chg", &guest);
     let mut cfg = env.cfg(0);
     cfg.linux = Some(lx.clone());
-    let s = submit(&linux_run_request(&env, "op-chg", &guest).to_string(), &cfg).unwrap();
+    let s = submit(&req.to_string(), &cfg).unwrap();
     assert_eq!(s.receipt.status, ReceiptStatus::Unsupported);
     assert_eq!(env.launch_records(), 0);
     assert!(!lx.out_root.join("launches").exists(), "launcher never ran");
@@ -1004,7 +1022,7 @@ fn a_launcher_replaced_after_eligibility_never_runs() {
     }
     let env = Env::new();
     let guest = "cd".repeat(32);
-    let mut lx = linux_cfg(&env, &lx_manifest(&guest), "");
+    let mut lx = linux_cfg(&env, &full_lx_manifest(&guest), "");
     // A private copy, so swapping it cannot disturb other tests' launchers.
     let own = env.dir.path().join("own-launcher.sh");
     std::fs::copy(stand_in_launcher(&env, 0, true, true, 0), &own).unwrap();
@@ -1012,15 +1030,12 @@ fn a_launcher_replaced_after_eligibility_never_runs() {
     set_launcher(&mut lx, own);
     std::fs::create_dir_all(&lx.out_root).unwrap();
     let launches = lx.out_root.join("launches");
+    let req = linux_run_request(&env, "op-lx-swap", &guest);
     let mut cfg = env.cfg(0);
     cfg.linux = Some(lx);
     cfg.pre_launch_hook = Some(swap);
     // Refused by the dispatch-time recheck, before any launch record.
-    let e = submit(
-        &linux_run_request(&env, "op-lx-swap", &guest).to_string(),
-        &cfg,
-    )
-    .unwrap_err();
+    let e = submit(&req.to_string(), &cfg).unwrap_err();
     assert!(e.to_string().contains("RULE:launcher-pinned"), "{e}");
     assert!(!launches.exists(), "the replaced launcher ran");
     assert_eq!(env.launch_records(), 0, "no launch record");
