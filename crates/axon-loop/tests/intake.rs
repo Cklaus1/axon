@@ -2191,3 +2191,168 @@ fn each_protected_join_is_verified_over_the_documents() {
     let e = run_vb(&c, &ep, &req, &rc, &att, Some(&b)).unwrap_err();
     assert!(e.to_string().contains("does not claim"), "{e}");
 }
+
+/// Replace the receipt's single `prefix` ref with `prefix` + `value`.
+fn set_ref(rc: &mut Value, prefix: &str, value: &str) {
+    let refs = rc["evidence_refs"].as_array_mut().unwrap();
+    refs.retain(|e| !e.as_str().unwrap().starts_with(prefix));
+    refs.push(serde_json::json!(format!("{prefix}{value}")));
+}
+
+/// PSV-5 (C9 certifying review): each manifest-to-request/receipt join that no
+/// test killed is load-bearing ON ITS OWN. Each case forges exactly ONE field
+/// on an otherwise genuine protected bundle — observer-signed, attested by the
+/// operator-rooted verifier, every other join intact — and must be refused by
+/// THAT join, for its own reason (`the launch manifest's <field> is`).
+#[test]
+fn each_manifest_join_to_the_request_and_receipt_refuses_its_own_forgery() {
+    use axon_psv::LaunchManifest as M;
+    let req = check_request();
+    type EditM = fn(&mut M);
+    type EditRc = fn(&mut Value);
+    let cases: [(&str, EditM, EditRc, &str); 5] = [
+        (
+            "manifest for another operation",
+            |m| m.operation_id = "op-other".into(),
+            |_| {},
+            "the launch manifest's operation_id is op-other, but the request/receipt names op-1",
+        ),
+        (
+            "manifest for another task",
+            |m| m.task_id = "task-other".into(),
+            |_| {},
+            "the launch manifest's task_id is task-other, but the request/receipt names task-1",
+        ),
+        (
+            "receipt rootfs ref not the manifest's",
+            |_| {},
+            |rc| set_ref(rc, "guest-rootfs-sha256:", &"0".repeat(64)),
+            "the launch manifest's guest rootfs is",
+        ),
+        (
+            // The manifest (and the observation that joins it) name another
+            // interpreter; the receipt keeps the PINNED one, so `check` holds
+            // and only this join can refuse. Not "e"*64: that is the pin.
+            "manifest for another interpreter than the receipt's pinned one",
+            |m| m.guest.axon_sha256 = "a".repeat(64),
+            |rc| set_ref(rc, "guest-axon-sha256:", &common::check_executable_sha256()),
+            "the launch manifest's guest axon is",
+        ),
+        (
+            "receipt init ref not the manifest's",
+            |_| {},
+            |rc| set_ref(rc, "guest-init-sha256:", &"0".repeat(64)),
+            "the launch manifest's guest init is",
+        ),
+    ];
+    for (name, em, erc, why) in cases {
+        let c = case(Some(500));
+        pin_protected(&c);
+        let mut rc = check_receipt("passed", 2);
+        let b = common::make_protected(&req, &mut rc, em, |_| {});
+        erc(&mut rc);
+        let ep = verified(&c.ep, &req, &rc, "passed");
+        let att = attest(&verifier_key().0, common::VERIFIER, &req, &rc);
+        let e = match run_vb(&c, &ep, &req, &rc, &att, Some(&b)) {
+            Err(e) => e,
+            Ok(_) => panic!("{name}: ACCEPTED"),
+        };
+        assert!(e.to_string().contains(why), "{name}: {e}");
+    }
+    // Control: the same path, nothing forged, is accepted.
+    let c = case(Some(500));
+    pin_protected(&c);
+    let (rc, b) = genuine(&req);
+    let ep = verified(&c.ep, &req, &rc, "passed");
+    let att = attest(&verifier_key().0, common::VERIFIER, &req, &rc);
+    run_vb(&c, &ep, &req, &rc, &att, Some(&b)).expect("the genuine bundle joins");
+}
+
+/// PSV-5 (C9 certifying review, MINOR): the receipt's `guest-verdict-sha256`
+/// was required but joined to NOTHING on the loop side — `axon-psv-evidence/1`
+/// did not carry the verdict. `/2` carries its exact bytes, and each join is
+/// refused for its own reason on an otherwise genuine protected bundle: the
+/// bytes are the receipt's digest, the verdict is this manifest's, for its
+/// test and inputs, and claims the outcome the receipt COUNTS.
+#[test]
+fn the_guest_verdict_is_joined_to_the_receipt_and_the_manifest() {
+    use axon_psv::{GuestStatus, GuestVerdict as V};
+    let req = check_request();
+    type EditV = fn(&mut V);
+    type EditB = fn(&mut Value);
+    let cases: [(&str, EditV, EditB, &str); 8] = [
+        (
+            // Bytes the receipt does not name (the digest guard alone refuses:
+            // nothing else reads exit_code).
+            "bundle verdict is not the receipt's",
+            |_| {},
+            |b| {
+                let v = b["guest_verdict"].as_str().unwrap().to_string();
+                assert!(v.contains("\"exit_code\":0"), "{v}");
+                b["guest_verdict"] = json!(v.replace("\"exit_code\":0", "\"exit_code\":1"));
+            },
+            "the guest verdict's bytes are",
+        ),
+        (
+            "verdict with another schema",
+            |v| v.schema = "axon-guest-verdict/0".into(),
+            |_| {},
+            "the guest verdict is axon-guest-verdict/0, not axon-guest-verdict/1",
+        ),
+        (
+            "verdict for another launch manifest",
+            |v| v.launch_manifest_sha256 = "0".repeat(64),
+            |_| {},
+            "the guest verdict is for launch manifest",
+        ),
+        (
+            "verdict for another test",
+            |v| v.test = "t_other".into(),
+            |_| {},
+            "the guest verdict's test is t_other, not the manifest's t_",
+        ),
+        (
+            "verdict whose inputs did not match",
+            |v| v.inputs.matches = false,
+            |_| {},
+            "the guest verdict's inputs are not the manifest's",
+        ),
+        (
+            "verdict for another candidate tree",
+            |v| v.inputs.candidate_tree_digest = format!("acf1:{}", "8".repeat(64)),
+            |_| {},
+            "the guest verdict's inputs are not the manifest's",
+        ),
+        (
+            "verdict claims another outcome than the receipt counts",
+            |v| v.status = GuestStatus::Failed,
+            |_| {},
+            "the guest verdict claims Failed, but the receipt counts Passed",
+        ),
+        (
+            // A `/1` bundle has no verdict to join: refused, never read as one.
+            "a /1 bundle carrying no guest verdict",
+            |_| {},
+            |b| {
+                b["schema"] = json!("axon-psv-evidence/1");
+                b.as_object_mut().unwrap().remove("guest_verdict");
+            },
+            "missing field `guest_verdict`",
+        ),
+    ];
+    for (name, ev, eb, why) in cases {
+        let c = case(Some(500));
+        pin_protected(&c);
+        let mut rc = check_receipt("passed", 2);
+        let b = common::make_protected_v(&req, &mut rc, |_| {}, |_| {}, ev);
+        let mut bv: Value = serde_json::from_str(&b).unwrap();
+        eb(&mut bv);
+        let ep = verified(&c.ep, &req, &rc, "passed");
+        let att = attest(&verifier_key().0, common::VERIFIER, &req, &rc);
+        let e = match run_vb(&c, &ep, &req, &rc, &att, Some(&bv.to_string())) {
+            Err(e) => e,
+            Ok(_) => panic!("{name}: ACCEPTED"),
+        };
+        assert!(e.to_string().contains(why), "{name}: {e}");
+    }
+}

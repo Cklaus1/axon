@@ -298,6 +298,10 @@ pub struct HostVerdict {
     pub evidence: Vec<String>,
     /// The certified parser's report, when the output parsed.
     pub report: Option<serde_json::Value>,
+    /// The guest verdict's exact bytes (the launcher-bound ones the receipt's
+    /// `guest-verdict-sha256` names), for a verdict derived from them; carried
+    /// into the `axon-psv-evidence/2` bundle (C9, PSV-5).
+    pub guest_verdict: Option<Vec<u8>>,
 }
 
 /// A preflight observation Fabric has VERIFIED (M3). `derive` only asks whether
@@ -310,15 +314,21 @@ pub struct VerifiedObservation {
     pub signature: String,
 }
 
-/// The `axon-psv-evidence/1` bundle for a PROTECTED verdict: the exact launch
-/// manifest, observation and observer signature the receipt's digests name
+/// The `axon-psv-evidence/2` bundle for a PROTECTED verdict: the exact launch
+/// manifest, observation and observer signature, and guest verdict the
+/// receipt's digests name
 /// (`axon_loop_contracts::protected_evidence::check_bundle` verifies it).
-pub fn evidence_bundle(launch: &Launch, o: &VerifiedObservation) -> serde_json::Value {
+pub fn evidence_bundle(
+    launch: &Launch,
+    o: &VerifiedObservation,
+    guest_verdict: &[u8],
+) -> serde_json::Value {
     serde_json::json!({
         "schema": axon_loop_contracts::protected_evidence::PSV_EVIDENCE_SCHEMA,
         "launch_manifest": String::from_utf8_lossy(&launch.manifest.bytes()),
         "observation": String::from_utf8_lossy(&o.bytes),
         "observation_signature": o.signature,
+        "guest_verdict": String::from_utf8_lossy(guest_verdict),
     })
 }
 
@@ -352,6 +362,7 @@ pub fn derive(
         reason: Some(why),
         evidence: with_class(evidence, EvidenceClass::GuestUnobserved),
         report,
+        guest_verdict: None,
     };
     let dir = out_dir.join("out");
     let vbytes = match std::fs::read(dir.join("verdict.json")) {
@@ -520,6 +531,7 @@ pub fn derive(
         reason: None,
         evidence: with_class(evidence, class),
         report: Some(report_json),
+        guest_verdict: Some(vbytes),
     }
 }
 
