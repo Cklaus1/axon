@@ -399,7 +399,8 @@ ATTACK_MARKERS = {
     'M381': r"receipt kernel ref not the manifest's \(the reviewer's repro\): ACCEPTED",
     'M382': r"receipt qualification ref not the manifest's: ACCEPTED",
     'M383': r'a bundle of another schema version: ACCEPTED',
-    'M384': r'ATTACK: a protected verdict for a request that named another suite: ACCEPTED',
+    # C9 round 2 (LOOP): ACTIVE again; its own '@'-id attack at check_bundle.
+    'M384': r'ATTACK: a protected bundle for suite acceptance@x joined a request that ran\s+check:acceptance: ACCEPTED',
     'M385': r'ATTACK: certified PASS despite the attack: \{[^\n]*"status":"PASS"',
     # ── C9 round 1: FABRIC/READINESS/INPUTS/LOOP rows (M320-M369). Placeholder
     # marker until tightened from the merged tree's own kill evidence.
@@ -486,4 +487,14 @@ ATTACK_MARKERS = {
     # C8 without markers, which made their joint cell unmatchable (C9 r1b).
     'M58': r"ATTACK: `[^`]*` passed: a break/continue escaped a function body",
     'M245': r'ATTACK: monitor: activated on a revoked key',
+    # ── C9 round 2, workstream LOOP (M470-M479) ──
+    'M470': r'ATTACK: an observation signed by a rooted key the store trusts for no observer was\s+ACCEPTED',
+    'M471': r'ATTACK: an observation signed by the key of an observer the store does not trust\s+was ACCEPTED',
+    'M472': r'ATTACK: a forged attribution was admitted: Accept',
+    'M473': r'ATTACK: a protected manifest whose verifier_sha256 unknown is not a sha256 was ACCEPTED',
+    'M474': r'ATTACK: prepare built a launch manifest whose launcher_sha256 is "unknown"',
+    'M475': r'ATTACK: a pinned suite reference with a second reading was WRITTEN to the config',
+    'M476': r'ATTACK: a config pinning a suite reference with a second reading was READ',
+    'M477': r'ATTACK: check suite id "acceptance@x" holding a reference separator was REGISTERED',
+    'M478': r'ATTACK: an observation whose key two trusted observers share was ACCEPTED',
 }
