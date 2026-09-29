@@ -135,7 +135,7 @@ reason, not just the refusal. "Today" is the state at `b590f536`.
 | A5 | wrong attempt | intake identity join | existing | **ALREADY_PROVEN** |
 | A6 | wrong guest image | launch-manifest ↔ observation ↔ receipt join | M2, M3, M4 | launcher pin only (a repository script, F5) |
 | A7 | wrong kernel / runtime | same as A6 | M2, M3, M4 | same as A6 |
-| A8 | stale observer evidence | intake: epoch/age | M3, M4 | missing |
+| A8 | stale observer evidence | Fabric at launch: age (`max_age_s`) + one-use custodian nonce; loop: epoch join (A30) — NOT age (C9 correction) | M3, M4 | proven at Fabric (negative-matrix A8, A15, A30) |
 | A9 | observer signature from the wrong authority domain | `RULE:authority-domain` | exists (`b590f536`), must be wired to M3 | mechanism proven; no observation to apply it to |
 | A10 | wrong verifier | intake attestation verification | existing + O2 | **ALREADY_PROVEN** for the key; key origin is F9 |
 | A11 | replayed completion proof | fresh per-run key; token bound to operation + launch manifest | M1, M2 | local: fresh key per run (PCI); guest: missing |

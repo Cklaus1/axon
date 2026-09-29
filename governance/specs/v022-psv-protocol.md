@@ -296,7 +296,10 @@ A result counts as protected only if all of these hold:
 - the attestation verifies under an O2 key;
 - the receipt names `evidence-class:protected`;
 - the launch-manifest digest equals the observation's `intended_launch_manifest_sha256`;
-- the observation verifies under an O2 observer key, fresh and in epoch;
+- the observation verifies under an O2 observer key and is of the trial's epoch (the loop checks both);
+  it was fresh and its nonce unused when Fabric consumed it at launch (§7). The loop does NOT re-check
+  age and keeps no nonce registry: a re-derivation long after the launch must not expire a genuine
+  verdict (C9 correction; the earlier wording implied a loop-side freshness check that never existed);
 - the guest digests equal the qualification's;
 - suite, test, candidate, trial, attempt and operation all equal the experiment's.
 
@@ -575,3 +578,17 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
     commit, the trees and the working-tree bytes are re-hashed. Negative-matrix A46. Still open, and
     it needs an operator decision: an untracked file hidden by `.git/info/exclude` or a self-ignoring
     `.gitignore` is invisible to the check, and refusing such files would change what counts as READY.
+33. **The guest verdict itself is joined; the evidence bundle is `/2` (PSV-5; supersedes amendment 9's
+    bundle shape).** `guest-verdict-sha256` was required but joined to nothing. The bundle now carries
+    the exact verdict bytes. They must hash to the receipt's digest, be `axon-guest-verdict/1`, name
+    the bundle's launch manifest and test, carry the manifest's inputs, and claim the outcome the loop
+    counts. A `/1` bundle is refused. The five manifest joins that no test killed (operation, task,
+    guest rootfs/axon/init) are each the only refusal of their forgery and are now tested.
+    Negative-matrix A47, A48. The loop does not check an observation's age: see §9 and A8.
+34. **Protected identity at Fabric and the runner (PSV-2/3/4/6).**
+    - A protected host with no observer section launches nothing (A49).
+    - A bundle travels only with a protected verdict (A50).
+    - The pass side needs exactly one keyed result line, with its own discriminator (A51).
+    - The runner refuses to read the completion secret if it cannot make itself non-dumpable (A52).
+    - The guest input check refuses trees holding what the digest cannot see. The digest is a
+      cross-peer contract with MiCode, so it is unchanged (A53).
