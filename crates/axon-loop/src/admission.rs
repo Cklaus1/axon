@@ -310,7 +310,7 @@ fn reverify_protected(
     t: &crate::evl::TrialResult,
     v: &crate::evl::VerificationEvidence,
     rc: &axon_loop_contracts::ExecutionReceipt,
-) -> Result<()> {
+) -> Result<crate::evl::SignedBy> {
     let fail = |e: String| {
         refused(format!(
             "trial {}'s protected verdict does not re-verify from its stored documents ({e}): \
@@ -347,7 +347,7 @@ fn reverify_protected(
         .map(|r| text("fabric-psv-evidence", r))
         .transpose()?;
     let subjects: BTreeSet<OpaqueRef> = eval.subject_issuers.iter().cloned().collect();
-    let (_, verified_rc, _, _) = crate::intake::verify_check_evidence(
+    let (_, verified_rc, _, signed_key) = crate::intake::verify_check_evidence(
         &ep,
         &req_text,
         &rc_text,
@@ -357,6 +357,23 @@ fn reverify_protected(
         psv.as_deref(),
     )
     .map_err(|e| fail(e.to_string()))?;
+    // The record's attribution IS the signer that just re-verified (C9 round
+    // 1, PSV-5, class c): the verdict was authenticated by the episode's
+    // issuer under `signed_key`, and a record naming any other identity, even
+    // one the operator root also holds, names the wrong authenticator.
+    if ep.verification.issuer_ref.as_ref() != Some(&v.issuer_ref) || signed_key != v.key_id {
+        return Err(fail(format!(
+            "the record attributes it to {} under {}, but it re-verifies as signed by {} under \
+             {signed_key}",
+            v.issuer_ref,
+            v.key_id,
+            ep.verification
+                .issuer_ref
+                .as_ref()
+                .map(|i| i.to_string())
+                .unwrap_or_else(|| "no issuer".into()),
+        )));
+    }
     // The recorded outcome IS the verdict the verifier signed (dev review
     // round wf_bf757240-925: a signed FAILED verdict counted as a pass).
     use axon_loop_contracts::ReceiptVerification as RV;
@@ -398,7 +415,7 @@ fn reverify_protected(
             "its protected context is not authenticated: observer {who} is not held with that key by the operator root: {e}"
         ))
     })?;
-    axon_loop_contracts::attestation::verify_document(
+    let ctx_key = axon_loop_contracts::attestation::verify_document(
         &sig,
         crate::evl::CONTEXT_DOMAIN,
         &who,
@@ -406,6 +423,16 @@ fn reverify_protected(
         key,
     )
     .map_err(|e| fail(format!("context signature: {e}")))?;
+    // …and the record says it was admitted under THAT observer (C9 round 1,
+    // PSV-5). Its `context_signed_by` is joined to the returned signer in
+    // `derive`, after the attribution's own presence and root checks.
+    if t.context_observer_ref.as_ref() != Some(&who) {
+        return Err(fail(format!(
+            "the record says its context was admitted under observer {:?}, but it was observed \
+             by {who}",
+            t.context_observer_ref
+        )));
+    }
     // …and its execution leg, from its own documents (PSV-7).
     let att_ref = v
         .execution_attestation_ref
@@ -420,7 +447,10 @@ fn reverify_protected(
     let att: serde_json::Value = serde_json::from_str(&text("acf-attestations", att_ref)?)
         .map_err(|e| fail(format!("execution attestation: {e}")))?;
     crate::evl::verify_execution(&att, &areq, &arc, config).map_err(fail)?;
-    Ok(())
+    Ok(crate::evl::SignedBy {
+        issuer_ref: who,
+        key_id: ctx_key,
+    })
 }
 
 pub(crate) fn derive(
@@ -540,6 +570,8 @@ pub(crate) fn derive(
     // only to what has not happened yet.
     let config = tx.store.config()?;
     let verifiers = config.verifiers();
+    // Who re-verifiably signed each counted protected trial's context.
+    let mut context_signers = std::collections::BTreeMap::new();
     for arm in &eval.arms {
         for t in &arm.trials {
             if !matches!(
@@ -595,7 +627,8 @@ pub(crate) fn derive(
                 },
             )?;
             if eval.evaluation_class == crate::plan::EvaluationClass::Protected {
-                reverify_protected(tx, &config, eval, arm, t, v, &rc)?;
+                let signer = reverify_protected(tx, &config, eval, arm, t, v, &rc)?;
+                context_signers.insert((arm.arm_id.clone(), t.trial_id.clone()), signer);
             }
         }
     }
@@ -647,6 +680,21 @@ pub(crate) fn derive(
                          no longer counts",
                         t.trial_id
                     )));
+                }
+                // …and the attribution IS the signer that re-verified it (C9
+                // round 1, PSV-5): a second observer the operator root also
+                // holds is still the wrong authenticator.
+                if let (Some(c), Some(signer)) = (
+                    &t.context_signed_by,
+                    context_signers.get(&(arm.arm_id.clone(), t.trial_id.clone())),
+                ) {
+                    if c != signer {
+                        return Err(refused(format!(
+                            "trial {}'s context is attributed to {} under {}, but it re-verifies \
+                             as signed by {} under {}: its verdict does not count",
+                            t.trial_id, c.issuer_ref, c.key_id, signer.issuer_ref, signer.key_id
+                        )));
+                    }
                 }
                 if t.safety == crate::safety::SafetyState::Clear
                     && !tx.entries().iter().any(|e| {
