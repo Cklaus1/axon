@@ -46,6 +46,28 @@ def run_test(pkg, target, test):
     return (r.returncode == 0 and "1 passed" in out), out
 
 
+def full_suite_ok(pkg):
+    """True iff the WHOLE package suite passes. A retired (equivalent) guard,
+    removed ALONE, must not break ANY test in the package — not merely its own
+    --exact test. This closes the methodology gap the C8 certifying review
+    (wf_bff9835f-4a0) found: M254 passed its assigned relabel test with its
+    guard removed (that property is independently covered), yet removing the
+    reverify_protected call broke three OTHER protected-class tests, so the
+    guard was load-bearing, not equivalent. A retirement that fails this check
+    is a FALSE retirement. Returns (ok, failing_tests) or (None, out) on a
+    broken build."""
+    import re as _re
+    cmd = ("source scripts/lib_bounded_run.sh && "
+           f"bounded_run 12G 1800 cargo test -q -p {pkg} 2>&1")
+    r = sh(cmd)
+    out = r.stdout + r.stderr
+    if "could not compile" in out or "error[E" in out:
+        return None, out
+    fails = sorted(set(_re.findall(r"^\s*(\S+)\s+\.\.\.\s+FAILED", out, _re.M)))
+    ok = (r.returncode == 0 and "test result: FAILED" not in out)
+    return ok, fails
+
+
 def apply_edits(edits):
     """edits: list of (path, old, new). Returns a restore() closure or None if
     any old is not uniquely present."""
@@ -90,7 +112,6 @@ def main():
     # behaviourally invisible).
     GUARD_SETS = {
         "M245": {"siblings": ["M264"], "kind": "pair"},
-        "M254": {"siblings": ["M261", "M262"], "kind": "set"},
         "M104": {"siblings": ["M99", "M208", "M269", "M207"], "kind": "set"},
         "M210": {"siblings": ["M207", "M208", "M99", "M269"], "kind": "set"},
         "M255": {"siblings": ["M254", "M212", "M213", "M261", "M262"], "kind": "set"},
@@ -126,16 +147,44 @@ def main():
         baseline = phase([])
         retired_only = phase(a)          # removing the retired guard alone
         joint = phase(a + b)             # retired + its subsuming siblings
+
+        # Full-suite check (methodology fix, C8 review wf_bff9835f-4a0): the
+        # retired guard removed ALONE must not break ANY test in the package,
+        # not merely its own --exact test. M254 passed its assigned relabel
+        # test with its guard removed yet broke three OTHER protected-class
+        # tests — a load-bearing guard the old single-test matrix hid.
+        def full_after(edits):
+            rest = apply_edits(edits)
+            if rest is None:
+                return "EDIT_NOT_APPLICABLE", []
+            try:
+                if any(e[0].startswith("crates/axon-core/") for e in edits) and not build_axon():
+                    return "BUILD_FAILED", []
+                fok, fails = full_suite_ok(pkg)
+            finally:
+                rest()
+                if any(e[0].startswith("crates/axon-core/") for e in edits):
+                    build_axon()
+            if fok is None:
+                return "COMPILE_ERROR", []
+            return ("SUITE_OK" if fok else "SUITE_BROKEN"), fails
+        full_state, full_fails = full_after(a)
+
         matrix = {"baseline": baseline, "retired_guard_disabled": retired_only,
-                  "guard_set_disabled": joint, "guard_set": [rid] + sibs}
+                  "guard_set_disabled": joint, "guard_set": [rid] + sibs,
+                  "retired_guard_full_suite": full_state}
+        if full_fails:
+            matrix["retired_guard_full_suite_failures"] = full_fails[:12]
         if gs["kind"] == "asymmetric":
             sib_only = phase(b)          # the dominating sibling alone
             matrix["dominating_sibling_disabled"] = sib_only
             good = (baseline == "ATTACK_REFUSED" and retired_only == "ATTACK_REFUSED"
-                    and sib_only == "ATTACK_SUCCEEDS" and joint == "ATTACK_SUCCEEDS")
+                    and sib_only == "ATTACK_SUCCEEDS" and joint == "ATTACK_SUCCEEDS"
+                    and full_state == "SUITE_OK")
         else:
             good = (baseline == "ATTACK_REFUSED" and retired_only == "ATTACK_REFUSED"
-                    and joint == "ATTACK_SUCCEEDS")
+                    and joint == "ATTACK_SUCCEEDS"
+                    and full_state == "SUITE_OK")
         ok &= good
         records.append({
             "mutation": rid, "status": "EQUIVALENT_DID", "kind": gs["kind"],
@@ -144,7 +193,7 @@ def main():
             "matrix": matrix, "holds": good,
         })
         print(f"{'OK ' if good else 'BAD'} {rid} [{gs['kind']}]: base={baseline} "
-              f"retired_off={retired_only} set_off={joint}"
+              f"retired_off={retired_only} set_off={joint} full_suite={full_state}"
               + (f" sib_off={matrix.get('dominating_sibling_disabled')}" if gs['kind']=='asymmetric' else ""),
               flush=True)
     # M204 (refactored): no current guard to disable; its property is covered

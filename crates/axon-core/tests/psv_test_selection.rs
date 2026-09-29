@@ -629,6 +629,23 @@ fn guess(x: i64) -> i64 { x }
         !b.contains("\"status\":\"ok\""),
         "a sealed random_f64 draw must be refused: {b}"
     );
+    // Attacks C/D/E: the distribution samplers carry the SAME "Random" effect
+    // and draw from the SAME process-global stream, so they must be refused too.
+    // The first hardening (random_i64/random_f64 only) missed these three; the
+    // certifying review (wf_bff9835f-4a0) reproduced the gap. The refusal is now
+    // effect-row keyed in pre_effect_gate, covering every Random builtin.
+    for (name, draw) in [
+        ("gaussian_sample", "let _s = gaussian_sample(0.0, 1.0)"),
+        ("beta_sample", "let _s = beta_sample(2.0, 5.0)"),
+        ("categorical_sample", "let _s = categorical_sample([0.5, 0.5])"),
+    ] {
+        let cand = format!("{draw}\nfn guess(x: i64) -> i64 {{ x }}\n");
+        let out = run(&cand);
+        assert!(
+            !out.contains("\"status\":\"ok\""),
+            "a sealed {name} draw must be refused: {out}"
+        );
+    }
     // Control: a candidate that draws nothing passes (the suite's own
     // random_i64 draw is unsealed and allowed).
     let honest = "fn guess(x: i64) -> i64 { x }

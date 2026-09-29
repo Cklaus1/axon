@@ -500,6 +500,24 @@ impl<'p> Interp<'p> {
         ledger_kind: Option<axon_audit::EffectKind>,
         scope_args: Option<&[Value]>,
     ) -> Result<(), Flow> {
+        // PSV-1 (certifying review wf_bff9835f-4a0): a SEALED candidate frame may
+        // not touch the RNG the operator's @[forall] acceptance test shares —
+        // neither reseed (srand) nor draw (random_i64/random_f64/gaussian_sample/
+        // beta_sample/categorical_sample). Every Random-effect builtin advances
+        // the same process-global stream, so a draw at candidate load can SHIFT
+        // the operator test's inputs even without a reseed. Keyed on the effect
+        // ROW so ANY current or future Random builtin is covered by construction:
+        // the earlier per-arm guards (srand/random_f64/random_i64 only) missed the
+        // three samplers, which the review reproduced. One enforcement point, at
+        // the single gate every effect passes through. Pinned by
+        // psv_test_selection.rs::a_sealed_candidate_cannot_draw_from_the_rng.
+        if self.seal.active && self.frame_sealed.get() && effects.contains(&"Random") {
+            return Err(Flow::SandboxViolation(format!(
+                "{op_name} is refused in a sealed module: candidate code may not touch \
+                 the RNG the operator's test shares"
+            )));
+        }
+
         // R4 §4.3 — mandatory `@[agent]` action log (I-13). When a capability-
         // bearing operation is performed from inside an `@[agent]` fn, inject one
         // `agent_action` audit record naming the tool and the capability it
@@ -2867,35 +2885,16 @@ impl<'p> Interp<'p> {
                 // Same seed → identical random_*/goal_run_random sequence.
                 // (The AXON_SEED env var does the same without code changes.)
                 want(1)?;
-                // A SEALED (candidate) frame may not reseed the process RNG:
-                // it shares the stream the operator's acceptance test draws
-                // from, so a reseed would let the candidate choose the test's
-                // random inputs (dev review round wf_bf757240-925, PSV-1).
-                if self.seal.active && self.frame_sealed.get() {
-                    return Err(crate::interp::Flow::SandboxViolation(
-                        "srand is refused in a sealed module: candidate code may not reseed the \
-                         RNG the operator's test draws from"
-                            .to_string(),
-                    ));
-                }
+                // The sealed-frame refusal for every Random-effect builtin
+                // (srand reseed + all draws) lives once in pre_effect_gate,
+                // keyed on the effect row — see PSV-1 there.
                 set_rand_seed(as_int(&args[0])?);
                 ok!(Value::Unit);
             }
             "random_f64" => {
                 want(0)?;
-                // A SEALED (candidate) frame may not DRAW from the process RNG
-                // either: every draw advances the shared stream the operator's
-                // acceptance test (@[forall]) then draws from, so candidate code
-                // could SHIFT the test's random inputs even without reseeding.
-                // srand is already refused (reseed); this closes the draw side
-                // (certifying review wf_afca02ad-f81, PSV-1 MAJOR-ADJACENT).
-                if self.seal.active && self.frame_sealed.get() {
-                    return Err(crate::interp::Flow::SandboxViolation(
-                        "random_f64 is refused in a sealed module: candidate code may not draw \
-                         from the RNG the operator's test shares"
-                            .to_string(),
-                    ));
-                }
+                // Sealed-frame RNG refusal is enforced once in pre_effect_gate
+                // (effect-row keyed), covering this draw and the samplers.
                 // 53-bit mantissa → uniform [0.0, 1.0)
                 ok!(Value::Float(
                     (next_rand_u64() >> 11) as f64 / 9_007_199_254_740_992.0
@@ -2903,15 +2902,7 @@ impl<'p> Interp<'p> {
             }
             "random_i64" => {
                 want(2)?;
-                // Same sealed-frame refusal as random_f64: a draw advances the
-                // shared stream the operator's test draws from.
-                if self.seal.active && self.frame_sealed.get() {
-                    return Err(crate::interp::Flow::SandboxViolation(
-                        "random_i64 is refused in a sealed module: candidate code may not draw \
-                         from the RNG the operator's test shares"
-                            .to_string(),
-                    ));
-                }
+                // Sealed-frame RNG refusal is enforced once in pre_effect_gate.
                 let (lo, hi) = (as_int(&args[0])?, as_int(&args[1])?);
                 // Inverted bounds are a caller error: fail loudly instead of
                 // silently returning `lo`, which masquerades as success

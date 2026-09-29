@@ -57,7 +57,7 @@ depth, and each has its own test.
 | A38 | a forged record swaps the arms' policy_refs | each counted trial's episode must have run its arm's policy | `ran policy` | `crates/axon-loop/tests/protected_class.rs::a_protected_record_must_agree_with_its_re_verified_documents` |
 | A39 | a genuine FAILED verdict recorded as a pass, or a context no observer signed | the recorded outcome must equal the signed verdict; the context signature is stored and re-verified under the operator observer root | `is not the signed verdict`; `context signature` | `crates/axon-loop/tests/protected_class.rs::a_protected_record_must_agree_with_its_re_verified_documents` |
 | A40 | a sealed candidate reseeds the RNG the operator test draws from | `srand` refused in a sealed frame | (reseed does not pass) | `crates/axon-core/tests/psv_test_selection.rs::a_sealed_candidate_cannot_reseed_the_rng` |
-| A41 | a sealed candidate DRAWS from the RNG (random_i64/random_f64) to shift the operator test's draw | `random_i64`/`random_f64` refused in a sealed frame | (a sealed draw does not pass) | `crates/axon-core/tests/psv_test_selection.rs::a_sealed_candidate_cannot_draw_from_the_rng` |
+| A41 | a sealed candidate DRAWS from the RNG (random_i64/random_f64 OR the gaussian/beta/categorical samplers) to shift the operator test's draw | every Random-effect builtin refused in a sealed frame, enforced once in `pre_effect_gate` keyed on the effect row (covers current + future Random builtins) | (a sealed draw does not pass) | `crates/axon-core/tests/psv_test_selection.rs::a_sealed_candidate_cannot_draw_from_the_rng` |
 
 ## What these rows do NOT prove (PROTECTED_ONLY)
 
