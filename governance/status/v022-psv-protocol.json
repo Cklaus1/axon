@@ -48,7 +48,7 @@
     }
   },
   "psv_protocol_proven": {
-    "state": "PROVEN (development evidence only) \u2014 candidate 7b (c525552d) frozen run fully green and its independent certifying review REGISTERED all 9 claims incl. EQUIVALENCE",
+    "state": "NOT PROVEN \u2014 7b withdrawn 2026-09-29 (see proven.withdrawn); Candidate 8 not yet certified",
     "frozen_run": "candidate 2 (8102d404, micode fc6221a5): the proof run was fully green (640 + 1573 axon tests, 5311 micode, 215/215 mutants killed, real-guest boot 6/6, interop 287, micode gates 22, trees clean)",
     "review": {
       "run": "wf_d725935a-7ed",
@@ -395,7 +395,8 @@
         ]
       },
       "means": "the PSV protocol holds as DEVELOPMENT evidence. It earns NO protected-readiness credit: protected_backend, g01_on_protected_backend and pci_on_protected_backend stay NOT_RUN, and PROTECTED_VERIFIER_READY stays NOT_READY until the operator-controlled environment certifies them. Stage 7 / CX-21 remain PREREGISTERED.",
-      "later_correction": "C8 certifying review wf_bff9835f-4a0 (2026-09-29) showed M254 \u2014 retired here as EQUIVALENT_DID \u2014 was a FALSE retirement at this candidate too: removing the reverify_protected call alone breaks three protected-class tests, so the guard is load-bearing. 7b's EQUIVALENCE registration was therefore wrong for M254 (the paired-disable matrix ran its assigned relabel test, which M261/M262 refuse independently). No protocol property was left unverified \u2014 M254's guard was present and its properties were killed by active mutants \u2014 but the claim '8 retired rows are genuinely equivalent' was false. Corrected from Candidate 8 onward (M254 active; full-suite condition added to paired-disable)."
+      "later_correction": "C8 certifying review wf_bff9835f-4a0 (2026-09-29) showed M254 \u2014 retired here as EQUIVALENT_DID \u2014 was a FALSE retirement at this candidate too: removing the reverify_protected call alone breaks three protected-class tests, so the guard is load-bearing. 7b's EQUIVALENCE registration was therefore wrong for M254 (the paired-disable matrix ran its assigned relabel test, which M261/M262 refuse independently). No protocol property was left unverified \u2014 M254's guard was present and its properties were killed by active mutants \u2014 but the claim '8 retired rows are genuinely equivalent' was false. Corrected from Candidate 8 onward (M254 active; full-suite condition added to paired-disable).",
+      "withdrawn": "2026-09-29: PSV_PROTOCOL_PROVEN at 7b (c525552d) is WITHDRAWN. The Candidate-8 certifying review wf_ae3a5a74-41e executed three defects that were present at 7b: (1) PSV-1 \u2014 a sealed candidate steers the shared process RNG (7b refused only srand; random_*, the samplers and the goal_* searches all draw from the operator's stream) and a WRONG candidate gets a keyed PASS through the real runner; (2) M255 and (3) M103 \u2014 retired as equivalent at 7b but load-bearing (M255: the only admission-side check that a counted verdict claims protected evidence when a store writer bypasses EVL; M103: the only re-derivation pin check for development-class decisions). There is currently NO valid PSV_PROTOCOL_PROVEN evidence. It earned no readiness credit either way; readiness is unchanged (NOT_READY)."
     },
     "open_followups": [],
     "resolved_followups": [
@@ -443,7 +444,37 @@
         "methodology": "v022_paired_disable.py now runs a full-suite check per retired row (a guard removed alone must not break ANY test in the package) \u2014 the check that flags M254."
       },
       "corrected_freeze": "cb9fa2ea proof GREEN, NZ=0 (bind-c8d): 0b 261/261 apply, gate PASS, boot 11/11, active 261/261 killed (M254 by its named-property test), 0 survivors, 0 stale, paired-disable 7/7 with full_suite=SUITE_OK on every row. Intermediate candidates 2568963f (gate: cargo fmt) and 7b9736b9 (M254 row pointed at the wrong file -> stale 260/261; M255 joint cell not applicable) were superseded. Freeze re-cut to commit the regenerated paired-disable manifest (the committed one still listed M254 as equivalent).",
-      "readiness_credit": "none"
+      "readiness_credit": "none",
+      "second_certifying_review": {
+        "run": "wf_ae3a5a74-41e",
+        "candidate": "4943489f",
+        "reviewers": 9,
+        "errored": 0,
+        "verdict": "DO_NOT_REGISTER",
+        "register": [
+          "PSV-2",
+          "PSV-3",
+          "PSV-5",
+          "PSV-6",
+          "FIELD-ORIGIN"
+        ],
+        "do_not_register": [
+          "PSV-1",
+          "PSV-4",
+          "PSV-7",
+          "EQUIVALENCE"
+        ],
+        "blockers": {
+          "rng_goal_steering": "goal_run/goal_run_random/goal_run_multistart/goal_run_categorical/goal_continue carry effect row {AI,Net,IO} but call next_rand_u64() on the shared RNG; the effect-row-keyed sealed refusal misses them. Executed: wrong candidate keyed PASS 5/5 via real axon_psv::runner::run.",
+          "M255_false_retirement": "admission.rs:321 claims_protected is the only admission check stopping a genuinely signed guest-unobserved/development verdict from counting in a protected decision under a store-writer forged evaluation; removing it reaches Accept; whole axon-loop suite green.",
+          "M103_false_retirement": "admission.rs:588 derive-time check_pins is the only re-derivation pin check for development class (reverify_protected runs only for protected); removing it activates a candidate on a withdrawn pin; registered G11-r22-rollback-revalidate relied on it."
+        },
+        "major_adjacent": {
+          "PSV-5": "five of twelve manifest-to-request/receipt joins killed by no test: operation_id, task_id, guest rootfs, guest axon, guest init",
+          "FIELD-ORIGIN": "readiness.rs certification git queries inherit caller env and honour git replace / skip-worktree; spoofable by a repo writer"
+        },
+        "methodology_lesson": "A green package suite is not evidence a guard is redundant \u2014 only that no existing test exercises the route. 3 of 7 retired rows (M254, M103, M255) were load-bearing."
+      }
     }
   },
   "closure_gate": {
