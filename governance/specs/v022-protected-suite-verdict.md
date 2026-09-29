@@ -252,8 +252,20 @@ The readiness script requires every field, with well-formed digests and commit i
 - `trust_preflight_sha256` naming one of those evidence files, which is an
   `axon-trust-preflight/1` report with `mode: protected` and `verdict: PASS`;
 - `readiness_verifier_sha256` equal to the sha256 of the verifier deciding now;
+- `observer_key_id` and `verifier_key_id` to be keys in `/etc/axon/trust/observer/` and
+  `/etc/axon/trust/verifier/` now;
+- `observation_sha256` to name one of the evidence files: an `axon-preflight-observation/1` whose
+  detached observer-domain signature (`<file>.sig`) verifies under the observer root, signed by
+  `observer_key_id`, observing this profile, this `fabric_revision` and this guest;
+- `b263_qualification_sha256` to name one of the evidence files: an `axon-b263-evidence/1` record of
+  this profile, qualification-signed (`<file>.sig`) under the operator root, whose
+  `profile.artifacts` are this guest (`vmlinux` = `guest_kernel_sha256`, `rootfs.sqfs` =
+  `guest_image_sha256`, `axon` = `guest_runtime_sha256`);
 - the operator-installed `verify-readiness` to verify the signature under the operator root;
 - if `trust-expectations.json` lists expected issuers, the signer to be among them.
+
+Every file is read ONCE, as a regular file and never through a symlink, and each check above,
+including the signature, is made on that one buffer.
 
 Any later change to the spec, the code or the evidence therefore invalidates the certification
 rather than inheriting it.

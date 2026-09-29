@@ -84,9 +84,15 @@ pub const COMPONENTS: [(&str, &[&str], &[&str]); 3] = [
 
 /// Where authority comes from. Production: the operator's qualification root,
 /// checked from `/` and required unwritable by this process.
+///
+/// Three roots are read: QUALIFICATION (who may certify), and the OBSERVER
+/// and VERIFIER roots that the record's attribution (`observer_key_id`,
+/// `verifier_key_id`) must name keys in, at decision time.
 #[derive(Debug, Clone)]
 pub struct ReadinessTrust {
     pub issuers_dir: PathBuf,
+    observer_dir: PathBuf,
+    verifier_dir: PathBuf,
     ownership_base: PathBuf,
     require_unwritable: bool,
 }
@@ -95,18 +101,25 @@ impl ReadinessTrust {
     pub fn operator() -> ReadinessTrust {
         ReadinessTrust {
             issuers_dir: TrustAuthority::Qualification.operator_dir(),
+            observer_dir: TrustAuthority::Observer.operator_dir(),
+            verifier_dir: TrustAuthority::Verifier.operator_dir(),
             ownership_base: PathBuf::from("/"),
             require_unwritable: true,
         }
     }
 
     /// TESTS ONLY: a temp root (its ancestors are not operator-owned, and the
-    /// test runs as its owner). A build with this carries `TEST_TRUST_BUILD`
-    /// and reports `build: "test-trust"`, which readiness never accepts.
+    /// test runs as its owner). The observer and verifier roots are
+    /// `issuers_dir`'s siblings `observer/` and `verifier/`, as under
+    /// `/etc/axon/trust/`. A build with this carries `TEST_TRUST_BUILD` and
+    /// reports `build: "test-trust"`, which readiness never accepts.
     #[cfg(any(test, feature = "test-trust-root"))]
     pub fn test(base: &Path, issuers_dir: &Path) -> ReadinessTrust {
+        let sib = |n: &str| issuers_dir.parent().unwrap_or(base).join(n);
         ReadinessTrust {
             issuers_dir: issuers_dir.to_path_buf(),
+            observer_dir: sib("observer"),
+            verifier_dir: sib("verifier"),
             ownership_base: base.to_path_buf(),
             require_unwritable: false,
         }
@@ -115,24 +128,26 @@ impl ReadinessTrust {
     fn check(&self) -> Result<(), String> {
         #[cfg(unix)]
         {
-            crate::backend::check_owned_from_pub(&self.ownership_base, &self.issuers_dir)?;
-            if self.require_unwritable {
-                let mut paths = vec![self.issuers_dir.clone()];
-                let mut p = self.issuers_dir.clone();
-                while let Some(parent) = p.parent().map(Path::to_path_buf) {
-                    paths.push(parent.clone());
-                    p = parent;
-                }
-                if let Ok(rd) = std::fs::read_dir(&self.issuers_dir) {
-                    paths.extend(rd.filter_map(|e| e.ok().map(|e| e.path())));
-                }
-                for q in paths {
-                    if writable_by_me(&q) {
-                        return Err(format!(
-                            "{} is writable by the process running this check: an agent-writable \
-                             trust root authorizes nothing",
-                            q.display()
-                        ));
+            for dir in [&self.issuers_dir, &self.observer_dir, &self.verifier_dir] {
+                crate::backend::check_owned_from_pub(&self.ownership_base, dir)?;
+                if self.require_unwritable {
+                    let mut paths = vec![dir.clone()];
+                    let mut p = dir.clone();
+                    while let Some(parent) = p.parent().map(Path::to_path_buf) {
+                        paths.push(parent.clone());
+                        p = parent;
+                    }
+                    if let Ok(rd) = std::fs::read_dir(dir) {
+                        paths.extend(rd.filter_map(|e| e.ok().map(|e| e.path())));
+                    }
+                    for q in paths {
+                        if writable_by_me(&q) {
+                            return Err(format!(
+                                "{} is writable by the process running this check: an \
+                                 agent-writable trust root authorizes nothing",
+                                q.display()
+                            ));
+                        }
                     }
                 }
             }
@@ -141,6 +156,33 @@ impl ReadinessTrust {
         #[cfg(not(unix))]
         Err("operator trust cannot be checked on this platform".into())
     }
+}
+
+/// The key ids (`ed25519:<16 hex>`) of the keys in an operator root now.
+fn key_ids(dir: &Path) -> Result<Vec<String>, String> {
+    Ok(axon_loop_contracts::operator_trust::keys_in(dir)?
+        .iter()
+        .filter_map(|h| {
+            (0..h.len())
+                .step_by(2)
+                .map(|i| u8::from_str_radix(&h[i..i + 2], 16).ok())
+                .collect::<Option<Vec<u8>>>()
+        })
+        .map(|k| axon_loop_contracts::operator_trust::key_fingerprint(&k))
+        .collect())
+}
+
+/// The raw public keys in an operator root now.
+fn keys(dir: &Path) -> Result<Vec<Vec<u8>>, String> {
+    Ok(axon_loop_contracts::operator_trust::keys_in(dir)?
+        .iter()
+        .filter_map(|h| {
+            (0..h.len())
+                .step_by(2)
+                .map(|i| u8::from_str_radix(&h[i..i + 2], 16).ok())
+                .collect::<Option<Vec<u8>>>()
+        })
+        .collect())
 }
 
 #[cfg(unix)]
@@ -153,10 +195,19 @@ fn writable_by_me(p: &Path) -> bool {
     unsafe { libc::access(c.as_ptr(), libc::W_OK) == 0 }
 }
 
-fn sha256_file(p: &Path) -> Result<String, String> {
+/// Every repository file readiness decides on is read ONCE, as a regular
+/// file, never through a symlink ([`crate::backend::read_regular`]).
+fn read_once(p: &Path) -> Result<Vec<u8>, String> {
+    crate::backend::read_regular(p)
+}
+
+fn sha256_hex(b: &[u8]) -> String {
     use sha2::{Digest, Sha256};
-    let b = std::fs::read(p).map_err(|e| format!("{}: {e}", p.display()))?;
-    Ok(format!("{:x}", Sha256::digest(&b)))
+    format!("{:x}", Sha256::digest(b))
+}
+
+fn sha256_file(p: &Path) -> Result<String, String> {
+    Ok(sha256_hex(&read_once(p)?))
 }
 
 /// The operator-installed git. Never resolved through the caller's PATH: a
@@ -482,10 +533,12 @@ fn certification(repo: &Path, component: &str, trust: &ReadinessTrust) -> Result
              protected host)"
         ));
     }
-    let doc: Value = serde_json::from_slice(
-        &std::fs::read(&rec).map_err(|e| format!("{}: {e}", rec.display()))?,
-    )
-    .map_err(|e| format!("{component}: record is not JSON: {e}"))?;
+    // ONE read of the record. Every field below is checked on these bytes,
+    // and the operator signature is verified over these bytes: never over a
+    // second read of the path, which can be other bytes (review PSV-7).
+    let rec_bytes = read_once(&rec).map_err(|e| format!("{component}: record {e}"))?;
+    let doc: Value = serde_json::from_slice(&rec_bytes)
+        .map_err(|e| format!("{component}: record is not JSON: {e}"))?;
     let missing: Vec<&str> = CERT_FIELDS
         .iter()
         .copied()
@@ -630,26 +683,26 @@ fn certification(repo: &Path, component: &str, trust: &ReadinessTrust) -> Result
         .as_array()
         .filter(|a| !a.is_empty())
         .ok_or(format!("{component}: no evidence listed"))?;
+    // Each evidence file is read ONCE: the digest bound into the bundle and
+    // the bytes parsed below (preflight, observation, B263 record) are one
+    // buffer.
     let mut concat = String::new();
-    let mut preflight = None;
+    let mut evidence: Vec<Evidence> = Vec::new();
     for e in ev {
         let p = e
             .as_str()
             .ok_or(format!("{component}: evidence entries are paths"))?;
-        let h = sha256_file(&repo.join(p))?;
-        if doc["trust_preflight_sha256"].as_str() == Some(h.as_str()) {
-            preflight = Some(repo.join(p));
-        }
+        let b = read_once(&repo.join(p)).map_err(|e| format!("{component}: evidence {e}"))?;
+        let h = sha256_hex(&b);
         concat.push_str(&h);
+        evidence.push((repo.join(p), h, b));
     }
     // The executable trust-root preflight (real write attempts under the
     // service UIDs, scripts/trust_root_preflight.sh) is part of the certified
     // evidence, and must be a PROTECTED-mode run that passed. A dev-mode run
     // proves the mechanism and certifies nothing.
-    let pf = preflight.ok_or(format!(
-        "{component}: trust_preflight_sha256 names no certified evidence file"
-    ))?;
-    let pf: Value = serde_json::from_slice(&std::fs::read(&pf).map_err(|e| e.to_string())?)
+    let (_, _, pf) = named(&evidence, component, &doc, "trust_preflight_sha256")?;
+    let pf: Value = serde_json::from_slice(pf)
         .map_err(|e| format!("{component}: trust preflight report: {e}"))?;
     if pf["schema"] != TRUST_PREFLIGHT_SCHEMA
         || pf["mode"] != "protected"
@@ -684,19 +737,19 @@ fn certification(repo: &Path, component: &str, trust: &ReadinessTrust) -> Result
             "{component}: this verifier was built from a dirty tree"
         ));
     }
-    // Authority: the operator's root, never the repository.
+    // Authority: the operator's roots, never the repository.
     trust.check()?;
-    let mut sig = rec.as_os_str().to_owned();
-    sig.push(".sig");
-    let issuer = crate::backend::verify_operator_evidence(
-        &rec,
-        Path::new(&sig),
+    attribution(component, &doc, trust, &evidence)?;
+    let issuer = crate::backend::verify_operator_evidence_signed(
+        "evidence",
+        &rec_bytes,
+        &crate::backend::read_signature("evidence", &sidecar(&rec))?,
         &trust.issuers_dir,
         TrustAuthority::Qualification,
     )?;
     let exp = repo.join(TRUST_EXPECTATIONS);
     if exp.exists() {
-        let v: Value = serde_json::from_slice(&std::fs::read(&exp).map_err(|e| e.to_string())?)
+        let v: Value = serde_json::from_slice(&read_once(&exp)?)
             .map_err(|e| format!("{TRUST_EXPECTATIONS}: {e}"))?;
         if let Some(list) = v["qualification_issuers"].as_array() {
             if !list.iter().any(|x| x.as_str() == Some(issuer.as_str())) {
@@ -708,6 +761,151 @@ fn certification(repo: &Path, component: &str, trust: &ReadinessTrust) -> Result
         }
     }
     Ok(issuer)
+}
+
+fn sidecar(p: &Path) -> PathBuf {
+    let mut s = p.as_os_str().to_owned();
+    s.push(".sig");
+    PathBuf::from(s)
+}
+
+/// A certified evidence file, read once: (path, sha256, bytes).
+type Evidence = (PathBuf, String, Vec<u8>);
+
+/// The certified evidence file whose digest is the record's `field`.
+fn named<'a>(
+    evidence: &'a [Evidence],
+    component: &str,
+    doc: &Value,
+    field: &str,
+) -> Result<&'a Evidence, String> {
+    evidence
+        .iter()
+        .find(|(_, h, _)| doc[field].as_str() == Some(h.as_str()))
+        .ok_or(format!(
+            "{component}: {field} names no certified evidence file"
+        ))
+}
+
+/// The record's ATTRIBUTION, joined to the operator's roots and to the
+/// certified evidence at decision time (review PSV-7 / FIELD-ORIGIN, class
+/// c). The record says who observed the protected run, who verified it, which
+/// B263 qualification it ran under and which guest; each of those statements
+/// must be true of something this verifier can check, not merely well-formed:
+///
+/// * `observer_key_id` and `verifier_key_id` are keys in the operator's
+///   observer and verifier roots NOW;
+/// * `observation_sha256` names a certified evidence file whose detached
+///   OBSERVER-domain signature verifies under the observer root, signed by
+///   `observer_key_id`, observing this profile, this `fabric_revision` and
+///   these guest digests;
+/// * `b263_qualification_sha256` names a certified evidence file that is a
+///   QUALIFICATION-signed `axon-b263-evidence/1` record of this profile, whose
+///   qualified artifacts are the certified guest (`vmlinux` = kernel,
+///   `rootfs.sqfs` = image, `axon` = runtime).
+fn attribution(
+    component: &str,
+    doc: &Value,
+    trust: &ReadinessTrust,
+    evidence: &[Evidence],
+) -> Result<(), String> {
+    use axon_loop_contracts::operator_trust::verify_evidence_signature;
+    let s = |k: &str| doc[k].as_str().unwrap_or("");
+    for (field, dir, root) in [
+        ("observer_key_id", &trust.observer_dir, "observer"),
+        ("verifier_key_id", &trust.verifier_dir, "verifier"),
+    ] {
+        if !key_ids(dir)?.iter().any(|k| k == s(field)) {
+            return Err(format!(
+                "{component}: {field} {} is not a key in the operator's {root} root ({}): the \
+                 record names who authenticated the run, and that must be a key the operator \
+                 trusts for it",
+                s(field),
+                dir.display()
+            ));
+        }
+    }
+    let guest = [
+        ("guest_kernel_sha256", "vmlinux"),
+        ("guest_image_sha256", "rootfs.sqfs"),
+        ("guest_runtime_sha256", "axon"),
+    ];
+
+    // The observation: signed by the named observer key, under the observer
+    // root, and observing what the record certifies.
+    let (obs_path, _, obs) = named(evidence, component, doc, "observation_sha256")?;
+    let signer = verify_evidence_signature(
+        "observation",
+        obs,
+        &crate::backend::read_signature("observation", &sidecar(obs_path))?,
+        &keys(&trust.observer_dir)?,
+        TrustAuthority::Observer,
+    )
+    .map_err(|e| format!("{component}: {e}"))?;
+    if signer != s("observer_key_id") {
+        return Err(format!(
+            "{component}: the observation is signed by {signer}, not the certified \
+             observer_key_id {}",
+            s("observer_key_id")
+        ));
+    }
+    let o: axon_psv::PreflightObservation = serde_json::from_slice(obs)
+        .map_err(|e| format!("{component}: the observation is malformed: {e}"))?;
+    let observed = [
+        ("host_profile", o.host_profile.as_str(), PROTECTED_PROFILE),
+        ("fabric_revision", &o.fabric_revision, s("fabric_revision")),
+        (
+            "guest_kernel_sha256",
+            &o.guest.kernel_sha256,
+            s("guest_kernel_sha256"),
+        ),
+        (
+            "guest_image_sha256",
+            &o.guest.rootfs_sha256,
+            s("guest_image_sha256"),
+        ),
+        (
+            "guest_runtime_sha256",
+            &o.guest.axon_sha256,
+            s("guest_runtime_sha256"),
+        ),
+    ];
+    if let Some((k, got, want)) = observed.iter().find(|(_, got, want)| got != want) {
+        return Err(format!(
+            "{component}: the observation records {k} {got}, but the record certifies {want}"
+        ));
+    }
+
+    // The B263 qualification: operator-signed, of this profile, and of this
+    // guest.
+    let (b_path, _, b) = named(evidence, component, doc, "b263_qualification_sha256")?;
+    verify_evidence_signature(
+        "B263 qualification record",
+        b,
+        &crate::backend::read_signature("B263 qualification record", &sidecar(b_path))?,
+        &keys(&trust.issuers_dir)?,
+        TrustAuthority::Qualification,
+    )
+    .map_err(|e| format!("{component}: {e}"))?;
+    let q: Value = serde_json::from_slice(b)
+        .map_err(|e| format!("{component}: the B263 qualification record: {e}"))?;
+    if q["schema"] != "axon-b263-evidence/1" || q["profile"]["name"] != PROTECTED_PROFILE {
+        return Err(format!(
+            "{component}: b263_qualification_sha256 does not name an axon-b263-evidence/1 \
+             record of {PROTECTED_PROFILE}"
+        ));
+    }
+    for (k, artifact) in guest {
+        let qualified = q["profile"]["artifacts"][artifact]["sha256"].as_str();
+        if qualified != Some(s(k)) {
+            return Err(format!(
+                "{component}: {k} {} is not the B263-qualified {artifact} ({})",
+                s(k),
+                qualified.unwrap_or("absent")
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Schema of `scripts/trust_root_preflight.sh`'s report.

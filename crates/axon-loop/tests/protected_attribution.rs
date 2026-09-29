@@ -7,7 +7,7 @@
 //! identity the operator root never held, or none at all; since C9 round 1
 //! (PSV-5) `reverify_protected` also requires the recorded identity to BE the
 //! signer that re-verified, so a record naming a second identity the operator
-//! root DOES hold is refused too (negative-matrix A65). Each test forges
+//! root DOES hold is refused too (negative-matrix A62). Each test forges
 //! exactly one attribution on an otherwise GENUINE protected evaluation
 //! (every document still verifies under the real, operator-rooted signer),
 //! with an in-world positive control: the unforged record ACCEPTs.
@@ -206,7 +206,7 @@ fn root_holds(authority: &str, pk: &str) {
     std::fs::write(root.join(authority).join("second.pub"), format!("{pk}\n")).unwrap();
 }
 
-/// A65 (C9 round 1, PSV-5): a counted protected verdict ATTRIBUTED to a SECOND
+/// A62 (C9 round 1, PSV-5): a counted protected verdict ATTRIBUTED to a SECOND
 /// verifier that the operator root DOES hold (trusted, keyed, pinned, rooted),
 /// while the verdict was authenticated by VERIFIER. Every document still
 /// re-verifies; only the attribution is wrong.
@@ -230,7 +230,7 @@ fn a_verdict_attributed_to_another_rooted_verifier_does_not_count() {
     refused(&w, "mis-verifier", &fe, "re-verifies as signed by");
 }
 
-/// A65: a counted protected trial whose context is ATTRIBUTED
+/// A62: a counted protected trial whose context is ATTRIBUTED
 /// (`context_signed_by`) to a second observer the operator root DOES hold,
 /// while the context was signed by OBSERVER.
 #[test]
@@ -250,7 +250,7 @@ fn a_context_attributed_to_another_rooted_observer_does_not_count() {
     refused(&w, "mis-observer", &fe, "re-verifies as signed by");
 }
 
-/// A65: a counted protected trial whose record says its context was ADMITTED
+/// A62: a counted protected trial whose record says its context was ADMITTED
 /// under (`context_observer_ref`) a second, trusted observer, while OBSERVER
 /// observed and signed it.
 #[test]

@@ -1,0 +1,319 @@
+//! PSV-7 (C9 round 1): the bytes an authority is verified over must be the
+//! bytes the decision uses. The readiness verifier used to check one read of
+//! the certification record and verify the operator signature over a SECOND
+//! read, and to hash the trust preflight on one read and parse it on another;
+//! the B263 qualification hashed the profile manifest and parsed a second
+//! read. A repository writer who serves different bytes to the two reads — a
+//! FIFO, or a rename between the two opens — made one genuine signature
+//! certify anything.
+//!
+//! Each attack below starts from a GENUINE certification (PASS) and must
+//! leave the component not PASS. Two ways of serving two reads:
+//! * a FIFO in place of the file (refused now: not a regular file);
+//! * a rename of other bytes into place right after the first reader closes
+//!   the file (inotify IN_CLOSE_NOWRITE): a regular file throughout, so only
+//!   reading once defeats it.
+
+mod common;
+mod readiness_fixture;
+use common::*;
+use readiness_fixture::*;
+
+use serde_json::{json, Value};
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
+
+/// Replace `path` with a FIFO that serves each of `reads` to one opener, in
+/// order. The feeder opens without blocking (so it gives up, rather than
+/// hanging the test, when nobody reads) and ignores a reader that goes away.
+fn fifo_serving(path: &Path, reads: Vec<Vec<u8>>) -> std::thread::JoinHandle<usize> {
+    use std::os::unix::fs::OpenOptionsExt;
+    let _ = std::fs::remove_file(path);
+    let c = std::ffi::CString::new(path.to_str().unwrap()).unwrap();
+    assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o644) }, 0, "mkfifo");
+    let path = path.to_path_buf();
+    std::thread::spawn(move || {
+        let mut served = 0;
+        for bytes in reads {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            let f = loop {
+                match std::fs::OpenOptions::new()
+                    .write(true)
+                    .custom_flags(libc::O_NONBLOCK)
+                    .open(&path)
+                {
+                    Ok(f) => break Some(f),
+                    Err(_) if Instant::now() < deadline => {
+                        std::thread::sleep(Duration::from_millis(5))
+                    }
+                    Err(_) => break None,
+                }
+            };
+            let Some(mut f) = f else { break };
+            let _ = f.write_all(&bytes);
+            drop(f);
+            served += 1;
+            // Let the reader see EOF and close before the next open pairs.
+            std::thread::sleep(Duration::from_millis(300));
+        }
+        served
+    })
+}
+
+/// Serve `first` at `path` to the first reader; the moment that reader closes
+/// it, rename `second` into place. Returns whether the swap happened.
+fn swap_after_first_read(
+    path: &Path,
+    first: &[u8],
+    second: &[u8],
+) -> std::thread::JoinHandle<bool> {
+    std::fs::write(path, first).unwrap();
+    let staged: PathBuf = path.with_extension("swap");
+    std::fs::write(&staged, second).unwrap();
+    let fd = unsafe { libc::inotify_init1(libc::IN_CLOEXEC) };
+    assert!(fd >= 0, "inotify_init1");
+    let c = std::ffi::CString::new(path.to_str().unwrap()).unwrap();
+    assert!(unsafe { libc::inotify_add_watch(fd, c.as_ptr(), libc::IN_CLOSE_NOWRITE) } >= 0);
+    let path = path.to_path_buf();
+    std::thread::spawn(move || {
+        let mut pfd = libc::pollfd {
+            fd,
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        let ready = unsafe { libc::poll(&mut pfd, 1, 20_000) } > 0;
+        if ready {
+            std::fs::rename(&staged, &path).unwrap();
+        }
+        unsafe { libc::close(fd) };
+        ready
+    })
+}
+
+fn components(c: &Certified) -> Value {
+    axon_fabric::readiness::protected_components(&c.repo, &c.trust)["components"].clone()
+}
+
+/// The agent's commit changes code outside governance/, so the genuine record
+/// no longer applies; the forged one names the agent's commit and is unsigned
+/// (its sidecar signature is the genuine one).
+fn forged_for_agent_commit(c: &Certified) -> (Vec<u8>, Vec<u8>) {
+    let genuine = std::fs::read(c.record()).unwrap();
+    let (_before, agent) = c.commit_changed_code();
+    c.refused("changed since the certified revision");
+    let mut forged: Value = serde_json::from_slice(&genuine).unwrap();
+    forged["axon_sha"] = json!(agent);
+    let forged = serde_json::to_vec(&forged).unwrap();
+    // Control: the forged record served on EVERY read does not verify.
+    std::fs::write(c.record(), &forged).unwrap();
+    c.refused("does not verify");
+    (forged, genuine)
+}
+
+#[test]
+fn a_record_served_twice_by_a_fifo_certifies_nothing() {
+    let Some(c) = certified() else { return };
+    let (forged, genuine) = forged_for_agent_commit(&c);
+    let feeder = fifo_serving(&c.record(), vec![forged, genuine]);
+    let v = c.verdict();
+    feeder.join().unwrap();
+    assert_ne!(
+        v["status"], "PASS",
+        "ATTACK: a FIFO served the checked record and the signed record as two reads, and \
+         the operator's signature over the certified revision certified the agent's commit: {v}"
+    );
+    assert!(v.to_string().contains("not a regular file"), "{v}");
+}
+
+#[test]
+fn a_record_renamed_between_two_reads_certifies_nothing() {
+    let Some(c) = certified() else { return };
+    let (forged, genuine) = forged_for_agent_commit(&c);
+    let swapped = swap_after_first_read(&c.record(), &forged, &genuine);
+    let v = c.verdict();
+    assert!(swapped.join().unwrap(), "the record was never read");
+    assert_ne!(
+        v["status"], "PASS",
+        "ATTACK: the genuine record was renamed in after the fields were checked on the \
+         forged one, and the signature over the second read certified the agent's commit: {v}"
+    );
+    assert!(v.to_string().contains("does not verify"), "{v}");
+}
+
+/// One component's signature must not certify another: the reviewer's second
+/// repro (protected_backend's record + signature, relabelled pci).
+#[test]
+fn one_components_signature_does_not_certify_another_through_a_fifo() {
+    let Some(c) = certified() else { return };
+    let genuine = std::fs::read(c.record()).unwrap();
+    let genuine_sig = std::fs::read(sig_of(&c.record())).unwrap();
+    let reg = c
+        .repo
+        .join("governance/cortex_gate_execution_registry.json");
+    let mut r: Value = serde_json::from_slice(&std::fs::read(&reg).unwrap()).unwrap();
+    for g in ["G03-r22-trial-isolation", "G03-r22-physical-isolation"] {
+        r["gates"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"gate_id": g}));
+    }
+    std::fs::write(&reg, r.to_string()).unwrap();
+    write(
+        &c.repo
+            .join("governance/proofs/v022-pci-microvm/CERTIFICATION.md"),
+        "agent-written\n",
+    );
+    let pci = c
+        .repo
+        .join("governance/proofs/v022-protected/pci_on_protected_backend.json");
+    let mut forged: Value = serde_json::from_slice(&genuine).unwrap();
+    forged["component"] = json!("pci_on_protected_backend");
+    let forged = serde_json::to_vec(&forged).unwrap();
+    std::fs::write(sig_of(&pci), &genuine_sig).unwrap();
+    // Control: as a plain file, the relabelled record does not verify.
+    std::fs::write(&pci, &forged).unwrap();
+    assert_ne!(components(&c)["pci_on_protected_backend"]["status"], "PASS");
+    let feeder = fifo_serving(&pci, vec![forged, genuine]);
+    let v = components(&c);
+    feeder.join().unwrap();
+    assert_eq!(v["protected_backend"]["status"], "PASS", "{v}");
+    assert_ne!(
+        v["pci_on_protected_backend"]["status"], "PASS",
+        "ATTACK: protected_backend's signature certified pci_on_protected_backend, which the \
+         operator never signed: {v}"
+    );
+}
+
+/// The trust preflight the operator certified is a FAILING protected run;
+/// the second read serves a passing one.
+fn failing_preflight_certified(c: &Certified) -> (Vec<u8>, Vec<u8>) {
+    let fail = json!({"schema": axon_fabric::readiness::TRUST_PREFLIGHT_SCHEMA,
+                      "mode": "protected", "verdict": "FAIL"})
+    .to_string()
+    .into_bytes();
+    let pass = std::fs::read(c.repo.join(PREFLIGHT)).unwrap();
+    std::fs::write(c.repo.join(PREFLIGHT), &fail).unwrap();
+    let evidence: Vec<String> =
+        serde_json::from_slice::<Value>(&std::fs::read(c.record()).unwrap()).unwrap()["evidence"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| e.as_str().unwrap().to_string())
+            .collect();
+    let ev: Vec<&str> = evidence.iter().map(String::as_str).collect();
+    let bundle = bundle_of(&c.repo, &ev);
+    let pf = sha(&c.repo.join(PREFLIGHT));
+    resign(c, &c.operator, |r| {
+        r["trust_preflight_sha256"] = json!(pf);
+        r["evidence_bundle_sha256"] = json!(bundle);
+    });
+    // Control: the failing preflight, read as it is, is refused.
+    c.refused("not a passing protected-mode");
+    (fail, pass)
+}
+
+#[test]
+fn a_preflight_renamed_between_hash_and_parse_certifies_nothing() {
+    let Some(c) = certified() else { return };
+    let (fail, pass) = failing_preflight_certified(&c);
+    let swapped = swap_after_first_read(&c.repo.join(PREFLIGHT), &fail, &pass);
+    let v = c.verdict();
+    assert!(swapped.join().unwrap(), "the preflight was never read");
+    assert_ne!(
+        v["status"], "PASS",
+        "ATTACK: the certified (failing) preflight was hashed, a passing one was renamed in, \
+         and the second read was parsed: {v}"
+    );
+    assert!(
+        v.to_string().contains("not a passing protected-mode"),
+        "{v}"
+    );
+}
+
+#[test]
+fn a_preflight_served_twice_by_a_fifo_certifies_nothing() {
+    let Some(c) = certified() else { return };
+    let (fail, pass) = failing_preflight_certified(&c);
+    let feeder = fifo_serving(&c.repo.join(PREFLIGHT), vec![fail, pass]);
+    let v = c.verdict();
+    feeder.join().unwrap();
+    assert_ne!(
+        v["status"], "PASS",
+        "ATTACK: a FIFO served the hashed preflight and the parsed preflight as two reads: {v}"
+    );
+}
+
+/// Not an attack on its own now that every file is read once, but the rule
+/// is that evidence is a regular file reached without a symlink.
+#[test]
+fn a_symlinked_record_or_signature_is_refused() {
+    let Some(c) = certified() else { return };
+    let real = c._d.path().join("elsewhere.json");
+    std::fs::rename(c.record(), &real).unwrap();
+    std::os::unix::fs::symlink(&real, c.record()).unwrap();
+    c.refused("is a symlink");
+
+    let Some(c) = certified() else { return };
+    let real = c._d.path().join("elsewhere.sig");
+    std::fs::rename(sig_of(&c.record()), &real).unwrap();
+    std::os::unix::fs::symlink(&real, sig_of(&c.record())).unwrap();
+    c.refused("is a symlink");
+}
+
+/// A signature FIFO with no writer must not hang the verifier.
+#[test]
+fn a_signature_fifo_with_no_writer_does_not_hang_readiness() {
+    let Some(c) = certified() else { return };
+    let sig = sig_of(&c.record());
+    std::fs::remove_file(&sig).unwrap();
+    let cs = std::ffi::CString::new(sig.to_str().unwrap()).unwrap();
+    assert_eq!(unsafe { libc::mkfifo(cs.as_ptr(), 0o644) }, 0);
+    let (tx, rx) = std::sync::mpsc::channel();
+    let repo = c.repo.clone();
+    let trust = c.trust.clone();
+    std::thread::spawn(move || {
+        let v = axon_fabric::readiness::protected_components(&repo, &trust);
+        let _ = tx.send(v);
+    });
+    let v = rx
+        .recv_timeout(Duration::from_secs(60))
+        .expect("readiness hung on a FIFO signature");
+    let pb = &v["components"]["protected_backend"];
+    assert_ne!(pb["status"], "PASS", "{pb}");
+    assert!(pb.to_string().contains("not a regular file"), "{pb}");
+}
+
+// ── the B263 qualification: one read of the profile manifest ────────────────
+
+const QUALIFIED_GUEST: &str = "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd";
+const OTHER_GUEST: &str = "abababababababababababababababababababababababababababababababab";
+
+#[test]
+fn a_manifest_renamed_between_hash_and_parse_does_not_change_the_qualified_guest() {
+    let d = tempfile::tempdir().unwrap();
+    let manifest = d.path().join("manifest.json");
+    let qualified = lx_manifest(QUALIFIED_GUEST);
+    std::fs::write(&manifest, &qualified).unwrap();
+    let issuer = Issuer::generate();
+    let lx = qualified_linux_cfg(d.path(), &issuer, &good_evidence(&sha256_file(&manifest)));
+    // Control: read as it is, the qualified guest is the manifest's.
+    assert_eq!(
+        lx.qualification().unwrap().guest_axon_sha256,
+        QUALIFIED_GUEST
+    );
+
+    let swapped = swap_after_first_read(
+        &manifest,
+        qualified.as_bytes(),
+        lx_manifest(OTHER_GUEST).as_bytes(),
+    );
+    let q = lx.qualification();
+    assert!(swapped.join().unwrap(), "the manifest was never read");
+    let got = q.map(|q| q.guest_axon_sha256).unwrap_or_default();
+    assert_ne!(
+        got, OTHER_GUEST,
+        "ATTACK: the qualified manifest was hashed, another was renamed in, and the guest the \
+         launch would pin came from the second read"
+    );
+}

@@ -2357,7 +2357,7 @@ fn the_guest_verdict_is_joined_to_the_receipt_and_the_manifest() {
     }
 }
 
-/// A67 (C9 round 1, PSV-7): a protected bundle whose launch manifest names
+/// A64 (C9 round 1, PSV-7): a protected bundle whose launch manifest names
 /// no operator host — the all-zero `host_config_sha256` or
 /// `suite.registry_sha256` Fabric's `psv::prepare` writes when it has no host
 /// config — is not protected evidence. The observation joins the manifest
@@ -2413,7 +2413,7 @@ fn with_planted<T>(authority: &str, key: &str, f: impl FnOnce() -> T) -> T {
     out
 }
 
-/// A66 (C9 round 1, PSV-6, class a): ADR-002 was enforced on the store's key
+/// A63 (C9 round 1, PSV-6, class a): ADR-002 was enforced on the store's key
 /// maps, never on the operator ROOTS that authorize. The observer's key,
 /// planted in ANY other operator root (so, e.g., Fabric's verifier signer
 /// could mint observations), authenticates no observation: `check_bundle`
@@ -2448,7 +2448,7 @@ fn an_observer_key_held_by_another_operator_root_authenticates_no_observation() 
     }
 }
 
-/// A66: the same separation for every key the loop looks up one at a time
+/// A63: the same separation for every key the loop looks up one at a time
 /// (`operator_trust::rooted`): the verifier's key, also held by the operator's
 /// monitor root, authenticates no verdict.
 #[test]

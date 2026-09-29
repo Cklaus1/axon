@@ -121,7 +121,7 @@ impl Host {
         std::fs::write(root.join("keys/attest.pk8"), pk8.as_ref()).unwrap();
         std::fs::set_permissions(
             root.join("keys/attest.pk8"),
-            std::fs::Permissions::from_mode(0o600),
+            std::fs::Permissions::from_mode(0o400),
         )
         .unwrap();
         // The OPERATOR's grants: principal:test may run deny-all only.
@@ -811,4 +811,29 @@ fn an_unreconciled_journal_refuses_writes_over_a_torn_tail() {
     j.reconcile_scope(&scope()).unwrap();
     j.cancel(&op, "x", None).unwrap();
     assert_eq!(j.view(&op).unwrap().state, axon_fabric::OpState::Cancelled);
+}
+
+/// Spec §2 rule 1: the protected signer key is mode 0400. On a host where
+/// everything else authorizes the run (a pinned operator grant registry), an
+/// owner-WRITABLE key (0600) must still refuse before anything launches: the
+/// service that holds the key must not be able to replace it.
+#[test]
+fn an_owner_writable_signer_key_signs_nothing() {
+    let h = Host::new();
+    // Control: at 0400 the same request completes.
+    let (c, out) = h.submit(&h.linux_request("op-k0", "grant:x"), None);
+    assert_eq!(c, 0, "{out}");
+    assert_eq!(launches(&h), 1);
+    std::fs::set_permissions(
+        h.p("keys/attest.pk8"),
+        std::fs::Permissions::from_mode(0o600),
+    )
+    .unwrap();
+    let r = h.submit(&h.linux_request("op-k1", "grant:x"), None);
+    assert!(
+        r.0 != 0 && launches(&h) == 1,
+        "ATTACK: an owner-writable (0600) signing key signed a protected run: {}",
+        r.1
+    );
+    assert_refused("0600 key", &r, 4, "unregistered", "writable by no one");
 }

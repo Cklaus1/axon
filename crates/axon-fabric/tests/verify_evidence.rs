@@ -67,6 +67,17 @@ fn only_a_trusted_operator_signature_over_the_exact_bytes_verifies() {
     let (c, v) = verify(&rec, &issuers);
     assert_eq!(c, 0, "{v}");
     assert_eq!(v["verified"], true, "{v}");
+    // A caller-chosen root verifies nothing on the operator's behalf, and the
+    // output says so: it names the root and the build, and is not authoritative.
+    assert_eq!(
+        v["authoritative"], false,
+        "ATTACK: a caller-chosen --issuers root was reported as authoritative: {v}"
+    );
+    assert_eq!(v["trust_root"], json!(issuers), "{v}");
+    assert_eq!(v["operator_root"], "/etc/axon/trust/qualification", "{v}");
+    assert_eq!(v["build"], "test-trust", "{v}");
+    assert!(v["non_authoritative_because"].is_string(), "{v}");
+    assert!(v["verifier"]["sha256"].is_string(), "{v}");
 
     // Any change to the record's bytes breaks it.
     let mut bytes = std::fs::read(&rec).unwrap();

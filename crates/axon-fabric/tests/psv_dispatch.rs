@@ -669,7 +669,7 @@ fn a_verified_observation_makes_the_guest_verdict_protected() {
     let w = World::new();
     let key = observer_key(w.env.dir.path(), "obs", &[&w.observer_roots()]);
     // On a protected HOST (its O1 identity set): a hostless library launch
-    // writes all-zero host and registry digests, which the loop refuses (A67).
+    // writes all-zero host and registry digests, which the loop refuses (A64).
     let mut cfg = w.protected_cfg();
     cfg.linux = Some(w.lx("", ""));
     cfg.observer = Some(w.observer("", &key, "observer"));
@@ -724,7 +724,7 @@ fn a_verified_observation_makes_the_guest_verdict_protected() {
     )
     .unwrap_err();
     assert!(e.contains("authority epoch"), "{e}");
-    // A67: the same launch with no operator host config (a library caller)
+    // A64: the same launch with no operator host config (a library caller)
     // names no host, and the loop does not take it as protected evidence.
     let hostless = w.submit_observed(w.observer("", &key, "observer"), "op-obs-nohost");
     let hreq = axon_loop_contracts::parse(

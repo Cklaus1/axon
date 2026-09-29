@@ -57,7 +57,7 @@ impl Host {
         std::fs::write(root.join("keys/attest.pk8"), pk8.as_ref()).unwrap();
         std::fs::set_permissions(
             root.join("keys/attest.pk8"),
-            std::fs::Permissions::from_mode(0o600),
+            std::fs::Permissions::from_mode(0o400),
         )
         .unwrap();
         let h = Host { env, issuer, root };
@@ -411,7 +411,16 @@ fn the_host_signer_key_must_be_private_and_match_its_pin() {
         t.contains("protected-host signer") && t.contains("readable by no one else"),
         "{t}"
     );
+    // Spec §2 rule 1: mode 0400. An owner-WRITABLE key (0600) is refused too:
+    // the service that holds it must not be able to replace it.
     std::fs::set_permissions(&key, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let t = run();
+    assert!(
+        t.contains("protected-host signer") && t.contains("writable by no one"),
+        "ATTACK: an owner-writable (0600) signing key was accepted, but the protocol requires \
+         0400: {t}"
+    );
+    std::fs::set_permissions(&key, std::fs::Permissions::from_mode(0o400)).unwrap();
     h.write_config(|v| v["signer"]["public_key"] = json!("ab".repeat(32)));
     let t = run();
     assert!(t.contains("does not derive the pinned public_key"), "{t}");
