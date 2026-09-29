@@ -208,6 +208,9 @@ def main():
         "M400": {"siblings": ["M187"], "kind": "pair"},
         "M273": {"siblings": ["M401"], "kind": "pair"},
         "M401": {"siblings": ["M273"], "kind": "pair"},
+        # C9 round 1b (core workstream): EQUIV_RECORD[...]["all_paths"].
+        "M60": {"siblings": ["M69"], "kind": "pair"},
+        "M89": {"siblings": ["M86", "M96"], "kind": "set"},
     }
     # Every retired row has a matrix and no active row has one.
     if set(GUARD_SETS) != set(mut.EQUIVALENT_DID):

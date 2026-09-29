@@ -92,7 +92,8 @@ ATTACK_MARKERS = {
     'M57': 'unwrap_err\\(\\)` on an `Ok` value: Submission',
     'M59': 'these escapes passed the test',
     # WEAK@a3db33bd: e.len()==1 but the message is M69's 'method ... defined more than once': the duplicate impl was still refused by the dispatch check
-    'M60': ATTACK,
+    # core r1b: EQUIVALENT_DID vs M69; its own attack (the joint cell) is the no-op second impl running.
+    'M60': r"ATTACK: a second `impl J for E` replaced the operator's `check`: Ok\(Completed\)",
     'M61': 'failed: let: \\[\\]',
     'M62': 'failed: refinement: \\[\\]',
     'M63': 'failed: exit\\(0\\): .*left: true\\s+right: false',
@@ -116,14 +117,16 @@ ATTACK_MARKERS = {
     'M81': 'reads the answer key: .*left: true\\s+right: false',
     'M82': 'failed: refinement named after a generic parameter: \\[\\]',
     # WEAK@a3db33bd: an honest two-file merge got a spurious E0002 '__refine_0 defined more than once': the collision is refused by the duplicate-refinement check (M62), a false refusal not a shadowing attack
-    'M83': ATTACK,
+    # core r1b: killed on the collision itself, observed at the parser before any check runs.
+    'M83': r"ATTACK: the candidate's inline refinement took the operator's synthetic name `__refine_\d+`",
     'M84': 'unwrap_err\\(\\)` on an `Ok` value: CheckReport',
     'M85': 'the ambient module resolved',
     'M86': 'direct call: Ok\\(Completed\\)',
     'M87': 'global read: Ok\\(Completed\\)',
     'M88': 'refinement attaching to an operator annotation: Ok\\(Completed\\)',
     # WEAK@a3db33bd: out is Err('assertion failed: 0 != 42'): the by-name call did not deliver the operator's answer (another mechanism, likely the per-provenance kernel M96 or a run-time seal, stopped it); the candidate's own assert failed
-    'M89': ATTACK,
+    # core r1b: EQUIVALENT_DID vs {M86, M96}; the joint cell's attack is an operator fn run through a fiber.
+    'M89': r"ATTACK: (a sealed frame ran the operator's `expected` as a fiber and returned its answer|the operator's scheduler ran an operator function a sealed frame queued): Ok\(Completed\)",
     'M90': 'a candidate closure called by the operator: Ok\\(Completed\\)',
     'M91': 'a candidate closure called by the operator: Ok\\(Completed\\)',
     'M92': 'a candidate handler arm: Ok\\(Completed\\)',
@@ -311,7 +314,8 @@ ATTACK_MARKERS = {
     'M249': 'CEIL:\\[[^\\]]*Exec',
     'M250': '(?m)^[\\w-]+: \\{[^\\n]*\\"status\\":\\"ok\\"',
     # WEAK@a3db33bd: Failing panic is err.contains("may not supply it") with EMPTY stderr; line 471 (no ok status) held, so the candidate copy never became the rubric.
-    'M251': '\\"status\\":\\"ok\\"',
+    # core r1b: only-guard route = the operator's library (~/.axon/lib), searched after the candidate.
+    'M251': r'ATTACK: a sealed module\'s copy of the operator library\'s `rubric` defined the rubric: [^\n]*"status":"ok"',
     'M252': 'observation\\ of\\ another\\ authority\\ epoch: ACCEPTED',
     'M253': '\\n\\s*left: Passed\\n\\s*right: Passed',
     'M254': '\\n\\s*left: Accept\\n\\s*right: Accept',
@@ -321,7 +325,8 @@ ATTACK_MARKERS = {
     'M258': '\\n\\s*left: Accept\\n\\s*right: Accept',
     'M259': '\\n\\s*left: Accept\\n\\s*right: Accept',
     # WEAK@a3db33bd: Same shape as M251: empty stderr reason mismatch, stdout never ok.
-    'M260': '\\"status\\":\\"ok\\"',
+    # core r1b: same only-guard route as M251 (the candidate module's NESTED use).
+    'M260': r'ATTACK: a sealed module\'s copy of the operator library\'s `rubric` defined the rubric: [^\n]*"status":"ok"',
     'M261': 'counts are not its trials: admitted',
     # WEAK@a3db33bd: Refused by reverify_protected ('does not re-verify from its stored documents'), reason mismatch (reviewer log M262.log).
     'M262': r'ATTACK: a protected plan admitted an evaluation relabelled development',

@@ -4527,6 +4527,122 @@ mod tests {
         );
     }
 
+    /// Serialises the interpreter tests that set the process-global sealed
+    /// directory set (`resolver::set_sealed_module_dirs`).
+    static SEALED_DIRS_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// A second `impl J for E` must never replace the first's methods. The
+    /// interpreter keys methods by (type, name) and keeps the LAST, so a
+    /// duplicate impl whose `check` is a no-op would silently disarm the
+    /// operator's. Two resolver checks refuse it (the impl-uniqueness check
+    /// and the per-(type, method) dispatch check), each on its own; this
+    /// accepts EITHER refusal (E0002), and fails "ATTACK:" only when the
+    /// pipeline accepts the program and the no-op actually ran.
+    #[test]
+    fn a_second_impl_never_replaces_the_first_impls_method() {
+        let head = "type E = { want: i64 }\ntrait J { fn check(self: E, got: i64) }\n\
+                    impl J for E { fn check(self: E, got: i64) { assert_eq(got, self.want) } }\n\
+                    @[test]\nfn t() {\n    let e = E { want: 42 }\n    e.check(0)\n}\n";
+        let errors = |src: &str| -> Vec<String> {
+            crate::check_pipeline(src, "t.ax")
+                .into_iter()
+                .filter(|d| d.severity == "error")
+                .map(|d| format!("{} {}", d.code, d.message))
+                .collect()
+        };
+        // Control: the operator's check is live — the program is well formed
+        // and its test FAILS on the wrong answer.
+        assert!(errors(head).is_empty(), "control: {:?}", errors(head));
+        let prog = crate::parse_source(head).expect("parses");
+        assert!(
+            run_test_fn_outcome(&prog, "t").is_err(),
+            "control: check is live"
+        );
+        // Attack: a second impl whose `check` accepts anything.
+        let src = format!("{head}impl J for E {{ fn check(self: E, got: i64) {{ }} }}\n");
+        let e = errors(&src);
+        if e.is_empty() {
+            let prog = crate::parse_source(&src).expect("parses");
+            let out = run_test_fn_outcome(&prog, "t");
+            assert!(
+                out.is_err(),
+                "ATTACK: a second `impl J for E` replaced the operator's `check`: {out:?}"
+            );
+        }
+        assert!(
+            e.len() == 1 && e[0].starts_with("E0002"),
+            "a duplicate impl is refused by exactly one E0002: {e:?}"
+        );
+    }
+
+    /// A sealed frame that queues an operator function as a fiber never gets
+    /// it run. `scheduler_spawn` seal-checks the name when it is queued; were
+    /// that check absent, the fiber would still never run an operator
+    /// function, on EITHER route to its execution:
+    /// * run from a sealed frame: every fiber is called through `call_fn`,
+    ///   whose call edge refuses an operator function in a sealed frame;
+    /// * run by the operator: it cannot be — a fiber lives in the kernel of
+    ///   the frame that queued it, and a sealed frame's kernel is its own.
+    ///
+    /// So this accepts any refusal, and fails "ATTACK:" only when an operator
+    /// function actually ran. (Moved here from
+    /// `runtime_sealing_holds_without_the_static_check`, whose two fiber cases
+    /// asserted the queue-time refusal itself — a refusal reason on routes the
+    /// call edge and the per-provenance kernel each dominate.)
+    #[test]
+    fn a_sealed_fiber_never_runs_an_operator_function() {
+        use crate::span::intern_source;
+        let suite = "fn expected(n: i64) -> i64 { n * 2 }\n\
+                     @[test]\nfn t() { assert_eq(double(21), expected(21)) }\n\
+                     @[test]\nfn t_later() {\n    let d = double(21)\n    scheduler_run()\n    assert(d == 42 && scheduler_done_count() > 0)\n}\n\
+                     @[test]\nfn t_later_control() {\n    let _ = scheduler_spawn(\"expected\", 1)\n    scheduler_run()\n    assert(scheduler_done_count() > 0)\n}\n";
+        let run = |cand: &str, test: &str| {
+            let s = crate::parse_source_in(suite, intern_source("/pci-fb-suite/h.ax", suite))
+                .expect("suite parses");
+            let c = crate::parse_source_in(cand, intern_source("/pci-fb-sealed/f.ax", cand))
+                .expect("candidate parses");
+            let prog = Program {
+                items: s.items.into_iter().chain(c.items).collect(),
+            };
+            // The sealed set is process-global: hold the lock across
+            // set/run/clear so a concurrent sealed test cannot swap it.
+            let _g = SEALED_DIRS_TEST_LOCK
+                .lock()
+                .unwrap_or_else(|p| p.into_inner());
+            crate::resolver::set_sealed_module_dirs(&[std::path::PathBuf::from("/pci-fb-sealed")]);
+            let out = run_test_fn_outcome(&prog, test);
+            crate::resolver::set_sealed_module_dirs(&[]);
+            out
+        };
+        // Controls: a sealed frame may queue and run its OWN function as a
+        // fiber and read the result, and the operator's scheduler runs what
+        // the OPERATOR queues — so each attack below fails on the seal, not
+        // on the scheduler.
+        let honest = "fn double(n: i64) -> i64 { n * 2 }\n";
+        let own = "fn twice(n: i64) -> i64 { n * 2 }\n\
+                   fn double(n: i64) -> i64 {\n    let id = scheduler_spawn(\"twice\", n)\n    scheduler_run()\n    scheduler_result(id)\n}\n";
+        assert_eq!(run(own, "t"), Ok(TestEnd::Completed), "control: own fiber");
+        assert_eq!(
+            run(honest, "t_later_control"),
+            Ok(TestEnd::Completed),
+            "control: the operator's scheduler runs the operator's fiber"
+        );
+        // Run from the sealed frame, returning the operator's answer.
+        let now = "fn double(n: i64) -> i64 {\n    let id = scheduler_spawn(\"expected\", n)\n    scheduler_run()\n    scheduler_result(id)\n}\n";
+        let out = run(now, "t");
+        assert!(
+            out != Ok(TestEnd::Completed),
+            "ATTACK: a sealed frame ran the operator's `expected` as a fiber and returned its answer: {out:?}"
+        );
+        // Queued for the operator's scheduler to run later.
+        let later = "fn double(n: i64) -> i64 {\n    let _ = scheduler_spawn(\"expected\", n)\n    n * 2\n}\n";
+        let out = run(later, "t_later");
+        assert!(
+            out != Ok(TestEnd::Completed),
+            "ATTACK: the operator's scheduler ran an operator function a sealed frame queued: {out:?}"
+        );
+    }
+
     #[test]
     fn runtime_sealing_holds_without_the_static_check() {
         // PCI candidate-3 review: the STATIC sealing walk missed match guards,
@@ -4561,6 +4677,11 @@ mod tests {
             let prog = Program {
                 items: s.items.into_iter().chain(c.items).collect(),
             };
+            // The sealed set is process-global: hold the lock across
+            // set/run/clear so a concurrent sealed test cannot swap it.
+            let _g = SEALED_DIRS_TEST_LOCK
+                .lock()
+                .unwrap_or_else(|p| p.into_inner());
             crate::resolver::set_sealed_module_dirs(&[std::path::PathBuf::from("/pci-rt-sealed")]);
             let out = run_test_fn_outcome(&prog, test);
             crate::resolver::set_sealed_module_dirs(&[]);
@@ -4590,11 +4711,8 @@ mod tests {
         for (why, cand, test) in [
             ("direct call", "fn double(n: i64) -> i64 { expected(n) }\n", "t"),
             ("method on a builtin type", "fn double(n: i64) -> i64 { n.answer() }\n", "t"),
-            (
-                "function named in a string",
-                "fn double(n: i64) -> i64 {\n    let id = scheduler_spawn(\"expected\", n)\n    scheduler_run()\n    scheduler_result(id)\n}\n",
-                "t",
-            ),
+            // A function named in a string (`scheduler_spawn`): see
+            // `a_sealed_fiber_never_runs_an_operator_function`.
             ("global read", "fn double(n: i64) -> i64 { dict_get_or(TABLE, \"k\", 0) }\n", "t_key"),
             (
                 "match guard",
@@ -4610,11 +4728,6 @@ mod tests {
                 "a candidate closure called by the operator",
                 "fn double(n: i64) -> i64 { n * 2 }\nfn twice() -> fn(i64) -> i64 { |n: i64| expected(n) }\n",
                 "t_closure",
-            ),
-            (
-                "queues an operator function for later",
-                "fn double(n: i64) -> i64 {\n    let _ = scheduler_spawn(\"expected\", n)\n    n * 2\n}\n",
-                "t",
             ),
             (
                 "module-level initializer",
