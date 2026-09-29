@@ -80,7 +80,10 @@ MUTATIONS = [
      "crates/axon-fabric/src/submit.rs",
      'join(&[dir.0.join("check"), dir.0.join("candidate")])',
      'join(&[dir.0.join("candidate"), dir.0.join("check")])',
-     "axon-fabric", "--test check_effects", "a_candidate_cannot_shadow_a_module_of_the_suite"),
+     # C9 round 2 (harness): re-anchored on the property only the order
+     # guards (the security attack, a planted helper steering a broken
+     # candidate to PASS, needs M436 removed too).
+     "axon-fabric", "--test check_effects", "an_honest_candidate_holding_a_suite_module_name_is_judged_by_the_suite"),
     ("M05", "intake: the policy's proposer is a subject",
      "crates/axon-loop/src/intake.rs",
      "        .chain(crate::evo::proposer_in(&tx, &ep.scope, &ep.policy_ref))\n",
@@ -1075,6 +1078,111 @@ MUTATIONS = [
 ]
 
 
+# ── C9 round 2, HARNESS workstream (M480-M499; amendment 43) ────────────────
+# Load-bearing guards the round-2 EQUIVALENCE review found with no row. Each
+# ACTIVE row's test fails on its OWN attack (scripts/v022_attack_markers.py);
+# M482 and M487 are retired under the four-cell rule (EQUIV_RECORD below).
+_RB = 'crates/axon-fabric/src/backend.rs'
+_READ_FLAGS = '        o.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC);'
+_SG = 'crates/axon-fabric/src/signing.rs'
+_PH = 'crates/axon-fabric/src/protected_host.rs'
+_RD = 'crates/axon-fabric/src/readiness.rs'
+MUTATIONS += [
+    # read_regular, the one reader behind readiness, evidence, signatures,
+    # observations and the B263 manifest.
+    ('M480', 'PSV-7/readiness: evidence is never read through a symlink (read_regular O_NOFOLLOW)', _RB,
+     _READ_FLAGS, '        o.custom_flags(libc::O_NONBLOCK | libc::O_CLOEXEC);',
+     'axon-fabric', '--test one_read', 'a_symlinked_record_or_signature_is_refused'),
+    ('M481', 'PSV-7/readiness: a FIFO with no writer cannot hang the verifier (read_regular O_NONBLOCK)', _RB,
+     _READ_FLAGS, '        o.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);',
+     'axon-fabric', '--test one_read', 'a_signature_fifo_with_no_writer_does_not_hang_readiness'),
+    ('M482', 'PSV-7/readiness: nothing read from a FIFO, device or directory is evidence (read_regular is_file)', _RB,
+     '    if !md.is_file() {', '    if false && !md.is_file() {',
+     'axon-fabric', '--test one_read', 'a_record_served_twice_by_a_fifo_certifies_nothing'),
+    # execution_attestation_decision: each arm is the only refusal on its input.
+    ('M483', 'PSV-6: a registered check is never attested as an execution', _SG,
+     '    if req.job_kind == JobKind::RegisteredCheck {\n        return Err(NOT_AN_EXECUTION);',
+     '    if false && req.job_kind == JobKind::RegisteredCheck {\n        return Err(NOT_AN_EXECUTION);',
+     'axon-fabric', '--lib', 'signing::tests::a_registered_check_is_never_attested_as_an_execution'),
+    ('M484', 'PSV-6: an execution on a non-protected backend is never attested', _SG,
+     '        Some(_) => return Err(NOT_PROTECTED_EXECUTION),', '        Some(_) => {}',
+     'axon-fabric', '--lib', 'signing::tests::an_execution_on_another_backend_is_never_attested'),
+    ('M485', 'PSV-6: an execution whose journal names no backend is never attested', _SG,
+     '        None => return Err(KEY_REACHABLE),', '        None => {}',
+     'axon-fabric', '--lib', 'signing::tests::an_execution_with_no_journal_backend_is_never_attested'),
+    # service_leaf (out_root, nonce_store).
+    ('M486', "A56: a service leaf is a real directory", _PH,
+     '    if !m.is_dir() {', '    if false && !m.is_dir() {',
+     'axon-fabric', '--test protected_host', 'a_regular_file_service_leaf_is_refused'),
+    ('M487', "A56: a service leaf is not a symlink", _PH,
+     '    if m.file_type().is_symlink() {', '    if false && m.file_type().is_symlink() {',
+     'axon-fabric', '--test protected_host', 'a_symlinked_service_leaf_is_refused'),
+    # the protected signer key, opened once.
+    ('M488', 'O1 rule 1: the protected signer key is never opened through a symlink', 'crates/axon-fabric/src/bin/axon-fabric.rs',
+     '            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC)',
+     '            .custom_flags(libc::O_NONBLOCK | libc::O_CLOEXEC)',
+     'axon-fabric', '--test grant_registry_authority', 'a_symlinked_signer_key_signs_nothing'),
+    # no_xattr fails closed.
+    ('M489', 'PSV-2: an entry whose extended attributes cannot be listed is never read as carrying none', 'crates/axon-psv/src/lib.rs',
+     '                _ => return Err(unreadable(e)),', '                _ => return Ok(()),',
+     'axon-psv', '--lib', 'xattr_tests::an_entry_whose_attributes_cannot_be_listed_is_never_read_as_clean'),
+    # readiness: an agent-writable trust root authorizes nothing.
+    ('M490', 'readiness: a trust root the verifier can write is refused (require_unwritable enforced)', _RD,
+     '                if self.require_unwritable {', '                if false && self.require_unwritable {',
+     'axon-fabric', '--lib', 'readiness::tests::a_trust_root_this_process_can_write_authorizes_nothing'),
+    ('M491', 'readiness: writable_by_me reports what this process can write', _RD,
+     '    unsafe { libc::access(c.as_ptr(), libc::W_OK) == 0 }',
+     '    unsafe { libc::access(c.as_ptr(), libc::W_OK) == 0 && false }',
+     'axon-fabric', '--lib', 'readiness::tests::a_trust_root_this_process_can_write_authorizes_nothing'),
+    ('M492', 'readiness: the production trust requires unwritable roots', _RD,
+     '            require_unwritable: true,', '            require_unwritable: false,',
+     'axon-fabric', '--lib', 'readiness::tests::a_trust_root_this_process_can_write_authorizes_nothing'),
+]
+# profiles/linux-microvm/guest-init.sh had NO row (round-2 review). Its guards,
+# and what covers each (amendment 43):
+#   input mounts ro,nodev,nosuid,noexec   rows M493-M496 (the script text) AND
+#                                         boot case `mounts` (in effect in a
+#                                         real guest, psv_guest_boot_test.sh)
+#   one launch-manifest word (ambiguous)  row M497: the script's own block run
+#                                         against fake cmdlines
+#   PSV runner under env -i + guest-init  row M498 (the non-PSV route: M499)
+#   /work nosuid,nodev; /out bind mount   boot case `mounts`; the verdict on the
+#                                         returned drive: boot cases pass/tampered
+#   serial digests (LOADED, VERDICT-INIT) boot cases pass/tampered (host joins)
+#   policy report                         b263_profile_wiring policy-report tests
+#   cgroup pids/memory ceilings           B263 qualification evidence (guest.json),
+#                                         not a PSV verdict property: no row
+# A mutation row can only pin the script TEXT; that the kernel honours it is
+# the boot test's, and a boot SKIP (77) proves nothing.
+_GI = 'profiles/linux-microvm/guest-init.sh'
+_GIT = 'guest_init_sh_mounts_every_psv_input_read_only'
+MUTATIONS += [
+    ('M493', 'PSV-2 guest: the candidate drive is mounted read-only', _GI,
+     '-o ro,nodev,nosuid,noexec /dev/vdc', '-o nodev,nosuid,noexec /dev/vdc',
+     'axon-guest-init', '--test b263_profile_wiring', _GIT),
+    ('M494', 'PSV-2 guest: the suite drive is mounted read-only', _GI,
+     '-o ro,nodev,nosuid,noexec /dev/vdd', '-o nodev,nosuid,noexec /dev/vdd',
+     'axon-guest-init', '--test b263_profile_wiring', _GIT),
+    ('M495', 'PSV-2 guest: the job drive is mounted read-only', _GI,
+     '-o ro,nodev,nosuid,noexec /dev/vde', '-o nodev,nosuid,noexec /dev/vde',
+     'axon-guest-init', '--test b263_profile_wiring', _GIT),
+    ('M496', 'PSV-2 guest: the candidate drive is mounted noexec', _GI,
+     '-o ro,nodev,nosuid,noexec /dev/vdc', '-o ro,nodev,nosuid /dev/vdc',
+     'axon-guest-init', '--test b263_profile_wiring', _GIT),
+    ('M497', 'PSV guest: a cmdline naming two launch manifests stops the guest', _GI,
+     '[ "$PSV_WORDS" -le 1 ] || fail "psv-ambiguous"', '[ "$PSV_WORDS" -le 9 ] || fail "psv-ambiguous"',
+     'axon-guest-init', '--test b263_profile_wiring', 'guest_init_sh_refuses_two_launch_manifest_words'),
+    ('M498', 'PSV guest: the key-holding runner is exec\'d under env -i and axon-guest-init', _GI,
+     '        exec env -i PATH=/bin:/usr/bin HOME=/tmp XDG_CACHE_HOME=/tmp/cache \\\n            /usr/bin/axon-guest-init /usr/bin/axon-psv-runner',
+     '        exec env PATH=/bin:/usr/bin HOME=/tmp XDG_CACHE_HOME=/tmp/cache \\\n            /usr/bin/axon-guest-init /usr/bin/axon-psv-runner',
+     'axon-guest-init', '--test b263_profile_wiring', 'guest_init_sh_execs_the_psv_runner_under_axon_guest_init_inside_env_i'),
+    ('M499', 'B263 guest: the workload is exec\'d under env -i (non-PSV route)', _GI,
+     '    exec env -i PATH=/bin:/usr/bin HOME=/work XDG_CACHE_HOME=/tmp/cache \\\n',
+     '    exec env PATH=/bin:/usr/bin HOME=/work XDG_CACHE_HOME=/tmp/cache \\\n',
+     'axon-guest-init', '--test b263_profile_wiring', 'guest_init_sh_execs_the_workload_under_axon_guest_init_inside_env_i'),
+]
+
+
 # Protected Check Isolation guards (governance/specs/v022-protected-check-isolation.md):
 # candidate code must not alter what the operator's check runs or what PASS
 # means. Kept here so nothing is lost, but certified under PCI, not G01
@@ -1207,19 +1315,17 @@ EQUIV_RECORD = {
             "all_paths": "every fiber runs in builtin_scheduler_run_once (scheduler_run, supervisor_run) through call_fn. A fiber lives in the kernel of the frame that queued it (k() = kernels[frame_sealed], M96), so a sealed frame's fiber is run only from a sealed frame, where call_fn's call edge (M86) refuses an operator function. Executed: M89+M86 reopens the sealed-frame route, M89+M96 reopens the operator-frame route"},
 }
 # ── C9 round 1b (psv workstream) ──
-# ── C9 round 1b, integration: the first-match rule (M436) dominates the
-# search order (M04) on every route. (M260 was proposed too and is NOT
-# retired: without it a sealed module's use pulls in a suite module the entry
-# never imports, a keyed PASS; its full-suite four-cell cell caught that.)
-EQUIV_RECORD["M04"] = {
-    "property": "a candidate module never shadows a suite module's name",
-    "subsumed_by": ["M436"], "killer": "joint:M04+M436",
-    "all_paths": "Fabric always runs a check with the candidate SEALED (--seal), so a candidate module "
-                 "shadowing a suite name is a name that a sealed dir and an unsealed dir both hold. With "
-                 "the order reversed (M04 off), that name's first match is the sealed copy, and "
-                 "load_module_recursive's first-match rule (M436) refuses exactly that (E0901), for every "
-                 "importer; with M436 off, suite-first order finds the suite's copy first. Only with both "
-                 "off does the candidate's copy define the suite's module"}
+# ── C9 round 1b, integration: M04 was retired here against the first-match
+# rule M436 ("a candidate module never shadows a suite module's name"). C9
+# round 2 (harness) REINSTATES it ACTIVE: the order is the only guard of the
+# RIGHT verdict for an honest candidate holding a module named like a suite
+# module (M436 turns the wrong verdict into none, it does not restore the
+# right one), and its full-suite cell now fails on that test
+# (an_honest_candidate_holding_a_suite_module_name_is_judged_by_the_suite).
+# The guest twin, M177, was scored KILLED on the same shape. (M260 was
+# proposed too and is NOT retired: without it a sealed module's use pulls in a
+# suite module the entry never imports, a keyed PASS; its full-suite four-cell
+# cell caught that.)
 EQUIV_RECORD["M152"] = {
     "property": "a signature made for one authority never verifies for another",
     "subsumed_by": ["M153"], "killer": "joint:M152+M153",
@@ -1236,6 +1342,29 @@ EQUIV_RECORD["M418"] = {
                  "returns the signer's fingerprint) and requires signer == observer_key_id (M339). key_ids and "
                  "keys read the same operator root, so signer in root and signer == observer_key_id put "
                  "observer_key_id in the root"}
+# ── C9 round 2, HARNESS workstream: guards subsumed on every path. Each
+# test accepts ANY refusal and fails on the joint attack only.
+EQUIV_RECORD["M482"] = {
+    "property": "readiness decides on ONE set of bytes per file: a FIFO serving each read "
+                "differently certifies nothing (the retired check's only unique effect is naming "
+                "the FIFO in the reason)",
+    "subsumed_by": ["M481", "M335"], "killer": "joint:M482+M481+M335",
+    "all_paths": "read_regular is the one reader of every file readiness, the evidence/signature "
+                 "readers, the observer and the B263 qualification decide on, and each caller "
+                 "decides on the single buffer it returns (M335/M336/M337 for readiness's record, "
+                 "preflight and manifest). A FIFO serves one set of bytes per open, so a single "
+                 "read of a FIFO is no more than a regular file an agent could have written; the "
+                 "two-read substitution needs a second read (M335 off). The non-blocking open (M481) "
+                 "is in the set only so the test's feeder can connect: with it on, a FIFO whose "
+                 "writer has not connected reads EOF. Executed: M482 alone, M482+M481, and M481+M335 "
+                 "each refuse; M482+M481+M335 certifies the agent's commit"}
+EQUIV_RECORD["M487"] = {
+    "property": "a service leaf (out_root, nonce_store) that is a symlink never loads",
+    "subsumed_by": ["M486", "M327"], "killer": "joint:M487+M486+M327",
+    "all_paths": "service_leaf is the only check of the two leaves and reads symlink_metadata, "
+                 "which never follows: for a symlink, is_dir() is false (M486 refuses it on every "
+                 "unix) and st_mode is 0777 on Linux (M327 refuses it). Only with both removed "
+                 "does a link owned by the service euid load"}
 EQUIVALENT_DID = set(EQUIV_RECORD)
 # STALE: a row whose old text no longer exists. "The old text is absent" shows
 # only that the TEXT changed, not that the guard is gone (C9 dev review: M204
