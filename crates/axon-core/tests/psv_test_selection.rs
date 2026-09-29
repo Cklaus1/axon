@@ -408,23 +408,47 @@ fn a_sealed_modules_use_never_reaches_an_unimported_suite_module() {
 /// `rubric`; the candidate's module `use`s `rubric` and ships a same-named
 /// copy. That copy must never become the rubric. Control: the honest
 /// candidate passes against the operator's rubric.
+///
+/// C9 round 1b: the suite-first case alone cannot tell this guard is there —
+/// the search reaches `suite/rubric.ax` before the candidate's copy, so with
+/// the guard removed the operator's rubric still loads and the attack fails
+/// for a reason that is not this guard. The ONLY-GUARD route is an operator
+/// module in a directory searched AFTER the candidate's: the operator's
+/// library (`~/.axon/lib`, which a non-exclusive run searches after every
+/// `AXON_PATH` entry). There the candidate's copy is the first file found,
+/// and the sealed-`use` check is the one thing that stops it defining the
+/// rubric.
 #[test]
 fn a_sealed_module_never_supplies_an_operator_modules_name() {
     use std::io::Write;
-    let run = |cand: &[(&str, &str)]| -> (String, String) {
-        let d = fresh(&format!("claim-{}", cand.len()));
+    // `in_lib`: the operator's rubric lives in the operator's library under
+    // HOME (searched after the candidate), not in the suite tree.
+    let run = |cand: &[(&str, &str)], in_lib: bool| -> (String, String) {
+        let d = fresh(&format!("claim-{}-{in_lib}", cand.len()));
         std::fs::create_dir_all(d.join("cand")).unwrap();
         std::fs::create_dir_all(d.join("suite")).unwrap();
+        std::fs::create_dir_all(d.join("home/.axon/lib")).unwrap();
         std::fs::write(
             d.join("suite/accept.ax"),
             "mod f\nuse f.{double}\nmod rubric\nuse rubric.{expected}\n\n@[test]\nfn t_ok() { assert_eq(double(21), expected()) }\n",
         )
         .unwrap();
-        std::fs::write(d.join("suite/rubric.ax"), "fn expected() -> i64 { 42 }\n").unwrap();
+        let rubric_dir = if in_lib { "home/.axon/lib" } else { "suite" };
+        std::fs::write(
+            d.join(rubric_dir).join("rubric.ax"),
+            "fn expected() -> i64 { 42 }\n",
+        )
+        .unwrap();
         for (n, src) in cand {
             std::fs::write(d.join("cand").join(n), src).unwrap();
         }
-        let mut c = Command::new(env!("CARGO_BIN_EXE_axon"))
+        let mut c = Command::new(env!("CARGO_BIN_EXE_axon"));
+        c.env_clear();
+        if !in_lib {
+            // The PSV runner's shape: the named directories and nothing else.
+            c.env("AXON_PATH_EXCLUSIVE", "1");
+        }
+        let mut c = c
             .current_dir(d.join("suite"))
             .arg("test")
             .arg(d.join("suite/accept.ax"))
@@ -437,13 +461,12 @@ fn a_sealed_module_never_supplies_an_operator_modules_name() {
             ])
             .arg("--seal")
             .arg(d.join("cand"))
-            .env_clear()
             .env("PATH", "/usr/bin:/bin")
+            .env("HOME", d.join("home"))
             .env(
                 "AXON_PATH",
                 format!("{}:{}", d.join("suite").display(), d.join("cand").display()),
             )
-            .env("AXON_PATH_EXCLUSIVE", "1")
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
@@ -456,18 +479,30 @@ fn a_sealed_module_never_supplies_an_operator_modules_name() {
             String::from_utf8_lossy(&out.stderr).into_owned(),
         )
     };
-    let (ok, _) = run(&[("f.ax", "fn double(x: i64) -> i64 { x * 2 }\n")]);
-    assert!(
-        ok.contains("\"status\":\"ok\""),
-        "control: an honest candidate passes: {ok}"
-    );
-    let (out, err) = run(&[
+    let honest = [("f.ax", "fn double(x: i64) -> i64 { x * 2 }\n")];
+    let attack = [
         (
             "f.ax",
             "use rubric.{expected}\nfn double(x: i64) -> i64 { 999 }\n",
         ),
         ("rubric.ax", "fn expected() -> i64 { 999 }\n"),
-    ]);
+    ];
+    for in_lib in [true, false] {
+        let (ok, _) = run(&honest, in_lib);
+        assert!(
+            ok.contains("\"status\":\"ok\""),
+            "control (in_lib={in_lib}): an honest candidate passes: {ok}"
+        );
+    }
+    // The only-guard route first, so a missing guard fails HERE, on the
+    // attack getting through.
+    let (out, err) = run(&attack, true);
+    assert!(
+        !out.contains("\"status\":\"ok\""),
+        "ATTACK: a sealed module's copy of the operator library's `rubric` defined the rubric: {out}\n{err}"
+    );
+    assert!(err.contains("may not supply it"), "{err}");
+    let (out, err) = run(&attack, false);
     assert!(!out.contains("\"status\":\"ok\""), "{out}\n{err}");
     assert!(err.contains("may not supply it"), "{err}");
 }

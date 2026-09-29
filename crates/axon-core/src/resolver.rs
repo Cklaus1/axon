@@ -3048,7 +3048,14 @@ mod tests {
             let result = resolve_program(&prog, "test.ax");
             let e = errors_with_code(&result, E0002);
             assert_eq!(e.len(), 1, "{why}: {e:?}");
-            assert!(e[0].contains(name), "{why}: {e:?}");
+            // The duplicate `impl` case is refused by EITHER of two
+            // independent checks — impl uniqueness, or the per-(type, method)
+            // dispatch check, since both impls define `check` — so either
+            // reason is a refusal here. The attack itself (the second `check`
+            // replacing the first) is `interp::tests::
+            // a_second_impl_never_replaces_the_first_impls_method`.
+            let dispatch = why == "impl" && e[0].contains("method `check` on `E`");
+            assert!(e[0].contains(name) || dispatch, "{why}: {e:?}");
         }
     }
 
@@ -3064,6 +3071,45 @@ mod tests {
             items: s.items.into_iter().chain(c.items).collect(),
         };
         resolve_program_sealed(&prog, "h.ax", &[std::path::PathBuf::from("/pci-sealed")])
+    }
+
+    /// An inline refinement desugars to a synthetic named refinement. Named
+    /// per file alone, the operator's and a candidate's first ones were both
+    /// `__refine_0`: one name for two predicates in the merged program, so
+    /// one replaces the other (the interpreter keeps the last) or, with the
+    /// duplicate check in the way, an honest candidate is refused. The
+    /// collision itself is the defect, and it is observed here at the parser,
+    /// before any later check can hide it.
+    #[test]
+    fn two_files_inline_refinements_never_share_a_name() {
+        use crate::span::intern_source;
+        let names = |path: &str, src: &str| -> Vec<String> {
+            crate::parse_source_in(src, intern_source(path, src))
+                .expect("parses")
+                .items
+                .into_iter()
+                .filter_map(|i| match i {
+                    Item::RefineDef(r) => Some(r.name),
+                    _ => None,
+                })
+                .collect()
+        };
+        let suite = "fn check(x: i64 where x == 42) -> i64 { x }\n";
+        let cand = "fn helper(n: i64 where n >= 0) -> i64 { n }\n";
+        let s = names("/refine-suite/h.ax", suite);
+        let c = names("/refine-cand/f.ax", cand);
+        assert!(
+            s.len() == 1 && c.len() == 1,
+            "one synthetic refinement each: {s:?} {c:?}"
+        );
+        assert!(
+            s[0] != c[0],
+            "ATTACK: the candidate's inline refinement took the operator's synthetic name `{}`",
+            s[0]
+        );
+        // And the honest merge resolves.
+        let r = sealed_merge(suite, cand);
+        assert!(r.errors.is_empty(), "{:?}", r.errors);
     }
 
     #[test]

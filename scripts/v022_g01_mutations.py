@@ -333,7 +333,7 @@ MUTATIONS = [
      'crates/axon-core/src/resolver.rs',
      '                    if !impls.insert(key) {',
      '                    if false && !impls.insert(key) {',
-     'axon-core', '--no-default-features --lib', 'resolver::tests::duplicate_let_refinement_or_impl_produces_e0002'),
+     'axon-core', '--no-default-features --lib', 'interp::tests::a_second_impl_never_replaces_the_first_impls_method'),
     ('M61', 'resolver: a module-level let is unique in the merged program',
      'crates/axon-core/src/resolver.rs',
      '                        if !matches!(prev, Symbol::Builtin { .. }) {\n                            dup(self, format!("the constant `{name}`"), *span);',
@@ -443,7 +443,7 @@ MUTATIONS = [
      'crates/axon-core/src/parser.rs',
      '            format!("__refine_{}_{}", self.source.0, self.synthetic_refine_count)',
      '            format!("__refine_{}", self.synthetic_refine_count)',
-     'axon-core', '--no-default-features --lib', 'resolver::tests::a_sealed_module_cannot_reach_the_operators_names'),
+     'axon-core', '--no-default-features --lib', 'resolver::tests::two_files_inline_refinements_never_share_a_name'),
     ('M84', 'Cortex via Fabric: only a Fabric verdict of passed/failed is a verdict',
      'crates/axon-cortex/src/runner.rs',
      '            Some("passed") | Some("failed") => {}',
@@ -473,7 +473,7 @@ MUTATIONS = [
      'crates/axon-core/src/interp/builtins.rs',
      '                if self.fn_by_name(&fn_name)?.is_none() {',
      '                if !self.fns.contains_key(&fn_name) {',
-     'axon-core', '--no-default-features --lib', 'interp::tests::runtime_sealing_holds_without_the_static_check'),
+     'axon-core', '--no-default-features --lib', 'interp::tests::a_sealed_fiber_never_runs_an_operator_function'),
     ('M90', 'interpreter: a closure runs under the provenance of the frame that created it',
      'crates/axon-core/src/interp.rs',
      '        let origin = self.seal.active && captured.borrow().contains_key(SEALED_CLOSURE_MARK);',
@@ -1051,6 +1051,15 @@ EQUIV_RECORD = {
     "M288": {"property": "an uncommitted change hidden by assume-unchanged is not certified",
              "subsumed_by": ["M290"], "killer": "joint:M288+M290",
              "all_paths": "as M287 (assume-unchanged, the other index flag)"},
+    # ── C9 round 1b (core workstream). Interpreter/resolver rows whose kill was
+    # another check's refusal; the attack is each row's own test, which
+    # accepts any refusal and panics "ATTACK: ..." when the attack gets through.
+    "M60": {"property": "a second impl never replaces the first impl's method",
+            "subsumed_by": ["M69"], "killer": "joint:M60+M69",
+            "all_paths": "the ONLY harm of a duplicate impl is the interpreter's method table (keyed (type_name_of(for_type), method), last insert wins) replacing a method; with M60's check off every impl takes the else branch, whose dispatch check keys on the SAME type_name_of and method name and refuses any second definition of that key (E0002), whatever the traits. A duplicate impl sharing no method key replaces nothing (a missing required method is E0502; impl_table is a set)"},
+    "M89": {"property": "a sealed frame never gets an operator function run through a fiber",
+            "subsumed_by": ["M86", "M96"], "killer": "joint:M89+M86+M96",
+            "all_paths": "every fiber runs in builtin_scheduler_run_once (scheduler_run, supervisor_run) through call_fn. A fiber lives in the kernel of the frame that queued it (k() = kernels[frame_sealed], M96), so a sealed frame's fiber is run only from a sealed frame, where call_fn's call edge (M86) refuses an operator function. Executed: M89+M86 reopens the sealed-frame route, M89+M96 reopens the operator-frame route"},
 }
 EQUIVALENT_DID = set(EQUIV_RECORD)
 # STALE: a row whose old text no longer exists. "The old text is absent" shows
