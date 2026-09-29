@@ -28,7 +28,7 @@ ATTACK_MARKERS = {
     'M01': r'ATTACK: a replayed receipt was signed',
     'M02': 'must be refused',
     'M03': 'altered, still verified',
-    'M04': 'judged its own broken double.*left: Passed',
+    'M04': r"ATTACK: the candidate's helper\.ax judged its own broken double",
     'M05': 'unwrap_err\\(\\)` on an `Ok` value',
     'M06': 'unwrap_err\\(\\)` on an `Ok` value',
     'M07': 'unwrap_err\\(\\)` on an `Ok` value',
@@ -194,8 +194,8 @@ ATTACK_MARKERS = {
     'M147': 'unwrap_err\\(\\)` on an `Ok` value: ProtectedHost',
     'M148': 'unwrap_err\\(\\)` on an `Ok` value: ProtectedHost',
     'M149': r'assertion `left != right` failed: (ATTACK: certified PASS despite the attack: )?\{[^\n]*"status":"PASS"',
-    'M150': r'assertion `left != right` failed: (ATTACK: certified PASS despite the attack: )?\{[^\n]*"status":"PASS"',
-    'M151': r'assertion `left != right` failed: (ATTACK: certified PASS despite the attack: )?\{[^\n]*"status":"PASS"',
+    'M150': r'ATTACK: certified PASS despite the attack: a dev-mode trust preflight',
+    'M151': r'ATTACK: certified PASS despite the attack: a trust preflight that is no certified evidence file',
     # C9 r1b psv: EQUIVALENT_DID (four-cell vs M153); the attack is an UNRELABELLED cross-domain signature
     'M152': 'ATTACK: a \\w+ signature, its domain field unchanged, was accepted as \\w+',
     'M153': 'relabelled as [^\\n]*"verified":true',
@@ -247,7 +247,7 @@ ATTACK_MARKERS = {
     'M193': 'failed: op-obs-claims-other-key-observer-observer\\s*\\n\\s*left: (?!NotRun)',
     'M194': 'failed: op-obs-epoch-observer-observer\\s*\\n\\s*left: (?!NotRun)',
     'M195': 'failed: op-obs-stale-observer-observer\\s*\\n\\s*left: (?!NotRun)',
-    'M196': 'left: 0\\s*\\n\\s*right: 1',
+    'M196': r"ATTACK: a verified observation's nonce was not spent",
     'M197': 'unwrap_err\\(\\)` on an `Ok` value: \\(\\)',
     'M198': 'unwrap_err\\(\\)` on an `Ok` value: \\(\\)',
     # C9 round 1b (fabric): only-guard: a record planted at the traversal target

@@ -211,6 +211,11 @@ fn a_dev_mode_or_uncertified_trust_preflight_is_refused() {
     resign(&c, &c.operator, |r| {
         r["trust_preflight_sha256"] = json!("8".repeat(64))
     });
+    let v = c.verdict();
+    assert_ne!(
+        v["status"], "PASS",
+        "ATTACK: certified PASS despite the attack: a trust preflight that is no certified evidence file: {v}"
+    );
     c.refused("names no certified evidence file");
 
     let Some(c) = certified() else { return };
@@ -219,16 +224,29 @@ fn a_dev_mode_or_uncertified_trust_preflight_is_refused() {
         &json!({"schema": TRUST_PREFLIGHT_SCHEMA, "mode": "dev", "verdict": "PASS"}).to_string(),
     );
     let pf = sha(&c.repo.join(PREFLIGHT));
-    use sha2::{Digest, Sha256};
-    let ev = sha(&c
-        .repo
-        .join("governance/proofs/v022-protected/run-evidence.md"));
-    let bundle = format!("{:x}", Sha256::digest(format!("{ev}{pf}").as_bytes()));
+    // The bundle over the record's OWN evidence list (it names the observation
+    // and the B263 record too since C9 round 1), so the dev-mode preflight is
+    // the ONLY thing wrong and the protected-mode check the only refusal.
+    let rec: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(c.record()).unwrap()).unwrap();
+    let evidence: Vec<String> = rec["evidence"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e.as_str().unwrap().to_string())
+        .collect();
+    let refs: Vec<&str> = evidence.iter().map(String::as_str).collect();
+    let bundle = bundle_of(&c.repo, &refs);
     resign(&c, &c.operator, |r| {
         r["trust_preflight_sha256"] = json!(pf);
         r["evidence_bundle_sha256"] = json!(bundle);
     });
     c.commit("dev-mode preflight");
+    let v = c.verdict();
+    assert_ne!(
+        v["status"], "PASS",
+        "ATTACK: certified PASS despite the attack: a dev-mode trust preflight: {v}"
+    );
     c.refused("not a passing protected-mode");
 }
 

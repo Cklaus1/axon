@@ -519,7 +519,9 @@ fn a_sealed_module_never_supplies_an_operator_modules_name() {
         !out.contains("\"status\":\"ok\""),
         "ATTACK: a sealed module's copy of the operator library's `rubric` defined the rubric: {out}\n{err}"
     );
-    assert!(err.contains("may not supply it"), "{err}");
+    // No reason check on this route: the nested use judged as sealed (M260)
+    // and the first-match rule (M436) each refuse it alone (M260's four-cell
+    // record), with different diagnostics.
     let (out, err) = run(&attack, false);
     assert!(!out.contains("\"status\":\"ok\""), "{out}\n{err}");
     assert!(err.contains("may not supply it"), "{err}");

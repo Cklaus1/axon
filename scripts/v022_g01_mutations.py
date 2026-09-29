@@ -717,13 +717,13 @@ MUTATIONS = [
     ('M142', 'O1: a pinned file is exactly its pinned bytes', 'crates/axon-fabric/src/protected_host.rs', 'if got != pin {', 'if false && got != pin {', 'axon-fabric', '--test protected_host', 'a_replaced_launcher_is_refused_at_load_and_after_load'),
     ('M143', 'O1: every O1 path is operator-owned', 'crates/axon-fabric/src/protected_host.rs', 'Some(base) => check_owned_chain(base, p, entries),', 'Some(_base) => Ok(()),', 'axon-fabric', '--test protected_host', 'every_o1_path_must_be_operator_owned'),
     ('M144', 'O1: the host config schema is exact', 'crates/axon-fabric/src/protected_host.rs', 'if keys != KEYS {', 'if false && keys != KEYS {', 'axon-fabric', '--test protected_host', 'the_config_schema_is_exact_and_every_path_absolute'),
-    ('M145', 'O1: every protected path is absolute', 'crates/axon-fabric/src/protected_host.rs', 'if !p.is_absolute() {', 'if false && !p.is_absolute() {', 'axon-fabric', '--test protected_host', 'the_config_schema_is_exact_and_every_path_absolute'),
+    ('M145', 'O1: every protected path is absolute', 'crates/axon-fabric/src/protected_host.rs', '            if !p.is_absolute() {\n                return Err(bad(format!(', '            if false && !p.is_absolute() {\n                return Err(bad(format!(', 'axon-fabric', '--test protected_host', 'the_config_schema_is_exact_and_every_path_absolute'),
     ('M146', "O1: the signing key's directory is operator-owned", 'crates/axon-fabric/src/protected_host.rs', 'if let Some(dir) = signer.key_path.parent() {', 'if let Some(dir) = None::<&Path> {', 'axon-fabric', '--test protected_host', 'every_o1_path_must_be_operator_owned'),
     ('M147', 'O1: the artifacts directory is operator-owned', 'crates/axon-fabric/src/protected_host.rs', 'owned(&artifacts_dir, true).map_err(bad)?;', '', 'axon-fabric', '--test protected_host', 'every_o1_path_must_be_operator_owned'),
     ('M148', 'O1: the B263 record is operator-owned', 'crates/axon-fabric/src/protected_host.rs', 'owned(&record, false).map_err(bad)?;', '', 'axon-fabric', '--test protected_host', 'every_o1_path_must_be_operator_owned'),
     ('M149', 'readiness: a certification binds the verifier that made it', 'crates/axon-fabric/src/readiness.rs', 'if doc["readiness_verifier_sha256"] != me["sha256"] {', 'if false && doc["readiness_verifier_sha256"] != me["sha256"] {', 'axon-fabric', '--test readiness', 'another_verifier_binary_does_not_inherit_the_certification'),
     ('M150', 'readiness: the trust preflight must be protected-mode', 'crates/axon-fabric/src/readiness.rs', '|| pf["mode"] != "protected"', '|| false', 'axon-fabric', '--test readiness', 'a_dev_mode_or_uncertified_trust_preflight_is_refused'),
-    ('M151', 'readiness: the trust preflight is a certified evidence file', 'crates/axon-fabric/src/readiness.rs', 'let pf = preflight.ok_or(format!(', 'let pf = preflight.or(Some(repo.join("governance/proofs/v022-protected/trust-preflight.json"))).ok_or(format!(', 'axon-fabric', '--test readiness', 'a_dev_mode_or_uncertified_trust_preflight_is_refused'),
+    ('M151', 'readiness: the trust preflight is a certified evidence file', 'crates/axon-fabric/src/readiness.rs', '    let (_, _, pf) = named(&evidence, component, &doc, "trust_preflight_sha256")?;\n', '    let pf_fallback = std::fs::read(repo.join("governance/proofs/v022-protected/trust-preflight.json")).unwrap_or_default();\n    let pf: &[u8] = named(&evidence, component, &doc, "trust_preflight_sha256").map(|e| e.2.as_slice()).unwrap_or(&pf_fallback);\n', 'axon-fabric', '--test readiness', 'a_dev_mode_or_uncertified_trust_preflight_is_refused'),
     ('M152', "RULE:authority-domain: the signature's domain field (EQUIVALENT: dominated by the domain-bound message, M153)", 'crates/axon-loop-contracts/src/operator_trust.rs', 'if sv["domain"] != authority.dir_name() {', 'if false && sv["domain"] != authority.dir_name() {', 'axon-fabric', '--test verify_evidence', 'an_unrelabelled_signature_for_another_authority_verifies_nowhere_else'),
     ('M153', 'RULE:authority-domain: the domain is in the signed message', 'crates/axon-loop-contracts/src/operator_trust.rs', '.verify(&evidence_signing_message(authority, bytes), &sig)', '.verify(&evidence_signing_message(TrustAuthority::Qualification, bytes), &sig)', 'axon-fabric', '--test verify_evidence', 'each_authority_verifies_only_its_own_domain_message'),
     ('M154', 'PSV §3: the manifest verifies only under the digest Fabric named', 'crates/axon-psv/src/lib.rs', 'if got != expected_sha256 {', 'if false && got != expected_sha256 {', 'axon-psv', '--test protocol', 'manifest_bytes_are_canonical_and_verify_only_under_their_own_digest'),
@@ -804,7 +804,7 @@ MUTATIONS = [
     ('M226', 'a PSV verdict names its one matched check', 'crates/axon-fabric/src/submit.rs', '        r.matched_checks = Some(1);\n', '', 'axon-fabric', '--test psv_dispatch', 'an_operator_suite_passes_through_the_guest_path_as_guest_unobserved'),
     ('M227', 'observation joins the manifest verifier', 'crates/axon-psv/src/lib.rs', '("verifier_sha256", &self.verifier_sha256, &m.verifier_sha256),', '("verifier_sha256", &m.verifier_sha256, &m.verifier_sha256),', 'axon-fabric', '--test psv_dispatch', 'every_defective_observation_refuses_the_launch'),
     ('M228', 'the verify step inherits no caller environment', 'crates/axon-fabric/src/backend.rs', '            // (PATH, …) steers the pinned launcher (review wf_d725935a-7ed).\n            .env_clear()\n', '            // (PATH, …) steers the pinned launcher (review wf_d725935a-7ed).\n', 'axon-fabric', '--test psv_dispatch', 'the_verify_step_inherits_nothing_from_the_caller'),
-    ('M229', 'the per-attempt secret is scrubbed when the launcher returns', 'crates/axon-fabric/src/backend.rs', '    if let Some(l) = psv {\n        l.scrub();\n    }\n', '    let _ = &psv;\n', 'axon-fabric', '--test psv_dispatch', 'the_verify_step_inherits_nothing_from_the_caller'),
+    ('M229', 'the per-attempt secret is scrubbed when the launcher returns', 'crates/axon-fabric/src/backend.rs', '    psv.scrub();\n    let launcher = lx.launcher.clone();', '    let _ = &psv;\n    let launcher = lx.launcher.clone();', 'axon-fabric', '--test psv_dispatch', 'the_verify_step_inherits_nothing_from_the_caller'),
     ('M230', 'B2: intake joins a protected claim over the bundle', 'crates/axon-loop/src/intake.rs', 'axon_loop_contracts::protected_evidence::check_bundle(\n            &req,\n            &rc,\n            bundle,\n            ep.authority_epoch.get(),\n        )\n        .map_err(|e| {', 'axon_loop_contracts::protected_evidence::check(&req, &rc).map(|_| bundle).map(|_| ()).map_err(|e| {', 'axon-loop', '--test intake', 'each_protected_join_is_verified_over_the_documents'),
     ('M231', 'B2: a bundle for a non-protected receipt is refused', 'crates/axon-loop/src/intake.rs', '} else if psv_evidence.is_some() {', '} else if false && psv_evidence.is_some() {', 'axon-loop', '--test intake', 'each_protected_join_is_verified_over_the_documents'),
     ('M232', 'B2: the bundle manifest is the receipt manifest', 'crates/axon-loop-contracts/src/protected_evidence.rs', 'if m_sha != want("launch-manifest-sha256:")? {', 'if false && m_sha != want("launch-manifest-sha256:")? {', 'axon-loop', '--test intake', 'each_protected_join_is_verified_over_the_documents'),
@@ -1190,6 +1190,26 @@ EQUIV_RECORD = {
             "all_paths": "every fiber runs in builtin_scheduler_run_once (scheduler_run, supervisor_run) through call_fn. A fiber lives in the kernel of the frame that queued it (k() = kernels[frame_sealed], M96), so a sealed frame's fiber is run only from a sealed frame, where call_fn's call edge (M86) refuses an operator function. Executed: M89+M86 reopens the sealed-frame route, M89+M96 reopens the operator-frame route"},
 }
 # ── C9 round 1b (psv workstream) ──
+# ── C9 round 1b, integration: the first-match rule (M436) dominates the
+# search order (M04) and the nested-use-is-sealed flag (M260) on every route.
+EQUIV_RECORD["M04"] = {
+    "property": "a candidate module never shadows a suite module's name",
+    "subsumed_by": ["M436"], "killer": "joint:M04+M436",
+    "all_paths": "Fabric always runs a check with the candidate SEALED (--seal), so a candidate module "
+                 "shadowing a suite name is a name that a sealed dir and an unsealed dir both hold. With "
+                 "the order reversed (M04 off), that name's first match is the sealed copy, and "
+                 "load_module_recursive's first-match rule (M436) refuses exactly that (E0901), for every "
+                 "importer; with M436 off, suite-first order finds the suite's copy first. Only with both "
+                 "off does the candidate's copy define the suite's module"}
+EQUIV_RECORD["M260"] = {
+    "property": "a sealed module's nested use never supplies an operator module's name",
+    "subsumed_by": ["M436"], "killer": "joint:M260+M436",
+    "all_paths": "M260 marks a sealed module's nested use as from_sealed. The attack it stops is the "
+                 "sealed copy of a name an operator dir holds being loaded; that copy is loaded only if it "
+                 "is the name's FIRST match, which M436 refuses whoever imports. When the first match is an "
+                 "operator file, loading it gives the candidate the operator's own module (already readable "
+                 "under an IO grant, accepted), not a substitution. So the refusal M260 adds never stands "
+                 "alone"}
 EQUIV_RECORD["M152"] = {
     "property": "a signature made for one authority never verifies for another",
     "subsumed_by": ["M153"], "killer": "joint:M152+M153",

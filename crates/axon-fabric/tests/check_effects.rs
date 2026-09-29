@@ -578,10 +578,13 @@ fn a_candidate_cannot_shadow_a_module_of_the_suite() {
         ("helper.ax", "fn want() -> i64 { 0 }\n"),
     ]);
     let sub = submit(&r.to_string(), &s.env.cfg(0)).unwrap();
-    assert_eq!(
+    // Suite-first order (M04) and the sealed-import rule (M436) each refuse
+    // this alone (M04's four-cell record): Failed with the order, Unknown when
+    // only M436 stands. The attack is the check PASSING.
+    assert_ne!(
         sub.receipt.verification,
-        ReceiptVerification::Failed,
-        "the candidate's helper.ax judged its own broken double: {:?} {:?}",
+        ReceiptVerification::Passed,
+        "ATTACK: the candidate's helper.ax judged its own broken double: {:?} {:?}",
         sub.reason,
         sub.check_report
     );

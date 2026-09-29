@@ -426,6 +426,14 @@ fn the_out_root_and_nonce_store_sit_under_operator_owned_directories() {
     assert_eq!(ph.linux.out_root, h.p("runs"));
 
     for (dir, why) in [(&agent, "not root"), (&open, "writable")] {
+        // The LEAVES themselves are the service's own and private (C9 round
+        // 1b): so the parent is the ONLY thing wrong, and the parent walk the
+        // only refusal (the leaf check, A56, would otherwise refuse first).
+        for leaf in ["runs", "nonces"] {
+            std::fs::create_dir_all(dir.join(leaf)).unwrap();
+            std::fs::set_permissions(dir.join(leaf), std::fs::Permissions::from_mode(0o700))
+                .unwrap();
+        }
         let e = with(dir.join("runs"), h.p("nonces")).unwrap_err();
         assert!(e.contains(why), "out_root under {}: {e}", dir.display());
         let e = with(h.p("runs"), dir.join("nonces")).unwrap_err();

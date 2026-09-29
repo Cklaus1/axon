@@ -758,7 +758,10 @@ fn a_verified_observation_makes_the_guest_verdict_protected() {
         .flatten()
         .filter(|e| e.path().extension().is_some_and(|x| x == "used"))
         .count();
-    assert_eq!(used, 2);
+    assert_eq!(
+        used, 2,
+        "ATTACK: a verified observation's nonce was not spent, so it can authorize another launch"
+    );
 }
 
 /// Each defect refuses the LAUNCH (nothing runs), for its own reason, and is
