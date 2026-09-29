@@ -592,3 +592,22 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
     - The runner refuses to read the completion secret if it cannot make itself non-dumpable (A52).
     - The guest input check refuses trees holding what the digest cannot see. The digest is a
       cross-peer contract with MiCode, so it is unchanged (A53).
+35. **Fabric launches on the protected profile only through the observed path (C9 dev review
+    round 1: PSV-4/5/6, FIELD-ORIGIN).**
+    - The protected profile runs only an operator-suite `registered_check`. Every launch on it
+      goes through the launch manifest, the custodian nonce and the preflight observation, and
+      Fabric has no other way to start the launcher. An `interpreter_run` used to launch there
+      with none of these and was attested as a protected execution (A54).
+    - Fabric attests an execution only when its receipt carries the protected class, the
+      launch-manifest digest and the preflight-observation digest. No execution can carry them
+      today, so no protected execution leg exists, and EVL's protected class (amendment 18)
+      cannot count a trial until an observed execution path is designed.
+    - A bundle travels only with a receipt whose FINAL class is protected. The class is read
+      after an inadmissible launch is downgraded, not from `derive` (A55).
+    - `out_root` and `observer.nonce_store` must exist, be directories owned by the Fabric
+      service UID, and be mode 0700. Only a missing host config means "not a protected host".
+      The trust preflight probes the paths `axon-fabric protected-host-paths` lists, which is the
+      list `ProtectedHost::load` walks (A56).
+    - ADR-002 key-role separation is checked on the operator roots themselves: the observer root
+      may hold neither the host signer's public key nor a key of another authority root. This is
+      checked when the host config loads and again at every observation (A57).
