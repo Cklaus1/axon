@@ -425,19 +425,34 @@ fn the_launchers_environment_does_not_steer_a_signed_verdict() {
     std::fs::write(&reg_path, reg.to_string()).unwrap();
 
     use std::io::Write;
-    let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_axon-fabric"))
-        .args(submit_args(&env, &reg_path, &pure))
-        .env("AXON_STRICT", "1")
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .spawn()
-        .unwrap();
-    let mut pipe = child.stdin.take().unwrap();
-    pipe.write_all(suite_request(&env, "op-env").to_string().as_bytes())
-        .unwrap();
-    drop(pipe);
-    let out: Value = serde_json::from_slice(&child.wait_with_output().unwrap().stdout).unwrap();
-    assert_eq!(out["receipt"]["verification"], "passed", "{out}");
+    let submit_under = |strict: bool, op: &str| -> Value {
+        let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_axon-fabric"));
+        cmd.args(submit_args(&env, &reg_path, &pure));
+        if strict {
+            cmd.env("AXON_STRICT", "1");
+        } else {
+            cmd.env_remove("AXON_STRICT");
+        }
+        let mut child = cmd
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut pipe = child.stdin.take().unwrap();
+        pipe.write_all(suite_request(&env, op).to_string().as_bytes())
+            .unwrap();
+        drop(pipe);
+        serde_json::from_slice(&child.wait_with_output().unwrap().stdout).unwrap()
+    };
+    // Control (C9 round 2): the same submission with no AXON_STRICT in
+    // Fabric's environment passes, so a difference below is the variable.
+    let out = submit_under(false, "op-env-control");
+    assert_eq!(out["receipt"]["verification"], "passed", "control: {out}");
+    let out = submit_under(true, "op-env");
+    assert_eq!(
+        out["receipt"]["verification"], "passed",
+        "ATTACK: AXON_STRICT in the launcher's environment steered the signed verdict: {out}"
+    );
 }
 
 /// Re-audit 5 (mutation reviewer): Fabric signs a local check because the

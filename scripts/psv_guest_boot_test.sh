@@ -14,6 +14,10 @@
 #   candidate    the candidate changes after the job is made: the guest refuses
 #                and nothing runs
 #   tampered     the returned drive's verdict is replaced: --verify-result 27
+#   mounts       guest-init.sh's mounts are IN EFFECT in the guest, as the test
+#                child sees them: /in/{candidate,suite,job} ro,nodev,nosuid,
+#                noexec; /work nodev,nosuid
+#                (C9 round 2: rows M493-M496 pin only the script's text)
 #
 # Exit 0 all PASS; 1 any FAIL; 77 SKIP (not root / no KVM / no image). A SKIP is
 # a non-result and is reported as such, never as a pass.
@@ -64,6 +68,15 @@ fn t_ok() { assert_eq(double(21), 42) }
 
 @[test]
 fn t_bad() { assert_eq(double(1), 3) }
+
+@[test]
+fn t_mounts() {
+    match read_file("/proc/mounts") {
+        Ok(m) => println("MOUNTS-BEGIN\n{m}MOUNTS-END")
+        Err(e) => println("MOUNTS-ERR:{e}")
+    }
+    assert_eq(double(2), 4)
+}
 
 @[test]
 fn t_custody() {
@@ -121,6 +134,35 @@ if [[ $RC == 0 ]] && grep -q 'STDIN-SAW:\[\]' <<<"$SO" && grep -q 'SECRET-REFUSE
     ok "custody: stdin at EOF; the secret file is Permission denied to the test uid"
 else
     bad custody "rc=$RC stdout=$(head -c 400 <<<"$SO")"
+fi
+
+# mounts: what the kernel actually applied, read by the test child itself.
+run mounts accept.ax t_mounts
+SO="$(cat "$W/mounts/out/out/test-stdout" 2>/dev/null)"
+MW="$(python3 - "$W/mounts/out/out/test-stdout" <<'PY'
+import sys
+t = open(sys.argv[1], errors="replace").read()
+if "MOUNTS-BEGIN" not in t:
+    print("no mount table in the test output"); sys.exit(0)
+t = t.split("MOUNTS-BEGIN", 1)[1].split("MOUNTS-END", 1)[0]
+opts = {}
+for l in t.splitlines():
+    f = l.split()
+    if len(f) >= 4:
+        opts[f[1]] = set(f[3].split(","))
+want = {"/in/candidate": {"ro", "nodev", "nosuid", "noexec"},
+        "/in/suite": {"ro", "nodev", "nosuid", "noexec"},
+        "/in/job": {"ro", "nodev", "nosuid", "noexec"},
+        "/work": {"nodev", "nosuid"}}
+bad = [f"{m}: {sorted(w - opts.get(m, set()))} missing (have {sorted(opts.get(m, set()))})"
+       for m, w in want.items() if m not in opts or not w <= opts[m]]
+print("; ".join(bad))
+PY
+)"
+if [[ $RC == 0 && -z "$MW" ]]; then
+    ok "mounts: the inputs are ro,nodev,nosuid,noexec and /work nodev,nosuid in the guest"
+else
+    bad mounts "rc=$RC ${MW:-} stdout=$(head -c 300 <<<"$SO")"
 fi
 
 # seal
