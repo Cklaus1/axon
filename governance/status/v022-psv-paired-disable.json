@@ -1,6 +1,6 @@
 {
   "schema": "axon-v022-paired-disable/2",
-  "commit": "89d5efd808600ffc44606cfc8c30c929c542495a",
+  "commit": "47114bd1b6c72d3f8491440be82d6dbc92c32db9",
   "all_hold": true,
   "records": [
     {
@@ -751,6 +751,33 @@
       },
       "holds": true,
       "commit": "89d5efd808600ffc44606cfc8c30c929c542495a"
+    },
+    {
+      "mutation": "M346",
+      "status": "EQUIVALENT_DID",
+      "kind": "pair",
+      "property": "build provenance never reads a tree with an edited tracked file as clean",
+      "original_guard": {
+        "file": "crates/axon-fabric/src/provenance.rs"
+      },
+      "subsumed_by": [
+        "M451"
+      ],
+      "live_killing_mutant": "joint:M346+M451",
+      "all_paths": "provenance() runs head_bytes_differ (M451) on every call, before the ls-files tag check: it hashes every blob of HEAD's tree against the working-tree bytes, so an edited, deleted or replaced tracked file is dirty whatever the index says. A skip-worktree bit hides only worktree-vs-index differences from git status; an index that differs from HEAD still shows in status (staged), and a worktree equal to HEAD is the committed source. So M346's refusal never stands alone",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M346",
+          "M451"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "47114bd1b6c72d3f8491440be82d6dbc92c32db9"
     }
   ]
 }
