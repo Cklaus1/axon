@@ -397,8 +397,13 @@
       "means": "the PSV protocol holds as DEVELOPMENT evidence. It earns NO protected-readiness credit: protected_backend, g01_on_protected_backend and pci_on_protected_backend stay NOT_RUN, and PROTECTED_VERIFIER_READY stays NOT_READY until the operator-controlled environment certifies them. Stage 7 / CX-21 remain PREREGISTERED."
     },
     "open_followups": [
-      "MAJOR-ADJACENT (certifying review wf_afca02ad-f81, PSV-1): a sealed candidate may call random_i64/random_f64 and advance the shared process RNG the operator's @[forall] test draws from. srand is refused in sealed frames but random_* is not; it cannot choose or predict inputs (seed unreadable, srand refused), only shift them, and cannot change the rubric. Fix: give random_* the sealed-frame refusal, or a per-frame RNG stream.",
       "ENV HYGIENE: an earlier review agent (running as root) created /etc/axon/trust/qualification, which made the readiness deriver's reason string drift and failed a frozen run's 1f. Removed. Review-agent briefs now forbid writing /etc. Consider making the readiness check robust to ambient /etc leftovers."
+    ],
+    "resolved_followups": [
+      {
+        "was": "MAJOR-ADJACENT (certifying review wf_afca02ad-f81, PSV-1): a sealed candidate may call random_i64/random_f64 and advance the shared process RNG the operator's @[forall] test draws from. srand is refused in sealed frames but random_* is not; it cannot choose or predict inputs (seed unreadable, srand refused), only shift them, and cannot change the rubric. Fix: give random_* the sealed-frame refusal, or a per-frame RNG stream.",
+        "resolution": "commit b8bbdb74 (dev tree axon-s3-veto): random_i64 and random_f64 now raise SandboxViolation in a sealed frame, mirroring srand. Test a_sealed_candidate_cannot_draw_from_the_rng (RC=0); mutations M271 (f64) + M272 (i64) both KILLED by discriminator; matrix row A41. Hardens toward candidate 8; frozen 7b (c525552d) evidence unchanged, no readiness credit."
+      }
     ]
   },
   "closure_gate": {

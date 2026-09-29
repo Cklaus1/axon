@@ -7,7 +7,7 @@ Rows are the gap map's A1–A19, the protocol spec's A20–A21, A22–A24 from t
 independent review (wf_d725935a-7ed, B1–B3), A25–A26 from the candidate-3b review
 (wf_1bc28496-38e), A27 from the candidate-4 review (wf_ecfcd666-6c9), A28 from
 the candidate-5 review (wf_293dfdb6-9d8), A29–A32 from dev review-loop round 1 (wf_336353cb-a2b), A33–A36 from round 2
-(wf_7cb5856d-806), and A37–A40 from round 3 (wf_bf757240-925). Every cited test asserts its row's
+(wf_7cb5856d-806), A37–A40 from round 3 (wf_bf757240-925), and A41 from the candidate-7b certifying review (wf_afca02ad-f81, PSV-1 MAJOR-ADJACENT follow-up). Every cited test asserts its row's
 SPECIFIC refusal (the reason, not only a non-pass), and runs in the fabric/psv/loop suites or in
 `gate.sh`. `scripts/psv_matrix_check.py` fails when a row is missing, cites no test, or cites a
 test that does not exist (`file::function`), so this table cannot silently rot.
@@ -57,6 +57,7 @@ depth, and each has its own test.
 | A38 | a forged record swaps the arms' policy_refs | each counted trial's episode must have run its arm's policy | `ran policy` | `crates/axon-loop/tests/protected_class.rs::a_protected_record_must_agree_with_its_re_verified_documents` |
 | A39 | a genuine FAILED verdict recorded as a pass, or a context no observer signed | the recorded outcome must equal the signed verdict; the context signature is stored and re-verified under the operator observer root | `is not the signed verdict`; `context signature` | `crates/axon-loop/tests/protected_class.rs::a_protected_record_must_agree_with_its_re_verified_documents` |
 | A40 | a sealed candidate reseeds the RNG the operator test draws from | `srand` refused in a sealed frame | (reseed does not pass) | `crates/axon-core/tests/psv_test_selection.rs::a_sealed_candidate_cannot_reseed_the_rng` |
+| A41 | a sealed candidate DRAWS from the RNG (random_i64/random_f64) to shift the operator test's draw | `random_i64`/`random_f64` refused in a sealed frame | (a sealed draw does not pass) | `crates/axon-core/tests/psv_test_selection.rs::a_sealed_candidate_cannot_draw_from_the_rng` |
 
 ## What these rows do NOT prove (PROTECTED_ONLY)
 

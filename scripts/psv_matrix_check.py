@@ -2,7 +2,7 @@
 """Check governance/specs/v022-psv-negative-matrix.md against the tree.
 
 FAILS when:
-* any row A1..A40 is missing;
+* any row A1..A_FLOOR is missing, or a gap below the highest row present;
 * a row cites no test;
 * a cited `path::function` names a file that does not exist, or a function
   that file does not define as a `fn`;
@@ -27,7 +27,13 @@ def main():
         if m:
             rows[m.group(1)] = line
     bad = []
-    for n in range(1, 41):
+    # Require A1..A_FLOOR at minimum (a known count, so a truncation below it is
+    # caught), and every row up to the highest present (so a gap above the floor
+    # is caught too). Bump FLOOR when a row is added.
+    FLOOR = 41
+    present = [int(k[1:]) for k in rows]
+    hi = max([FLOOR] + present)
+    for n in range(1, hi + 1):
         k = f"A{n}"
         if k not in rows:
             bad.append(f"{k}: row missing")
@@ -52,7 +58,7 @@ def main():
             print("  " + b)
         return 1
     n = sum(len(re.findall(r"`[^`]+`", rows[k].split("|")[-2])) for k in rows)
-    print(f"psv_matrix_check: PASS — 40 rows, {n} test citations, all resolve")
+    print(f"psv_matrix_check: PASS — {len(rows)} rows, {n} test citations, all resolve")
     return 0
 
 
