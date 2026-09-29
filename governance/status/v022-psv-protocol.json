@@ -406,7 +406,44 @@
         "was": "ENV HYGIENE: an earlier review agent (running as root) created /etc/axon/trust/qualification, which made the readiness deriver's reason string drift and failed a frozen run's 1f. Removed. Review-agent briefs now forbid writing /etc. Consider making the readiness check robust to ambient /etc leftovers.",
         "resolution": "commit 76847d45 (dev tree axon-s3-veto): install-shape failures in protected_verifier_ready.py collapse to one stable NOT_INSTALLED_HERE reason, so a stray root-owned /etc/axon/trust/qualification no longer drifts the committed readiness file under --check. Test an_ambient_etc_leftover_does_not_change_readiness pins the invariant across absent/empty/symlink/writable shapes (no /etc write, no root). --check PASS, readiness NOT_READY unchanged. PASS-gating untouched."
       }
-    ]
+    ],
+    "candidate_8": {
+      "first_freeze": {
+        "axon": "01e22d50",
+        "micode": "63fe711b",
+        "image_source_rev": "4d689bee",
+        "proof": "GREEN (bind-c8/PROOF-SUMMARY.json): gate PASS, active 260/260 killed, boot 11/11, paired-disable 8/8, trees clean; two harness observations (0b retired-rows, boot psv_dev prereq) re-run cleanly at the same SHA",
+        "certifying_review": {
+          "run": "wf_bff9835f-4a0",
+          "reviewers": 9,
+          "completed": 8,
+          "errored": [
+            "PSV-2 (StructuredOutput retry cap)"
+          ],
+          "verdict": "DO_NOT_REGISTER",
+          "register": [
+            "PSV-1",
+            "PSV-3",
+            "PSV-4",
+            "PSV-5",
+            "PSV-6",
+            "PSV-7",
+            "FIELD-ORIGIN"
+          ],
+          "blocker": "EQUIVALENCE: M254 is a FALSE retirement \u2014 reverify_protected is the SOLE enforcement site for properties active mutants M258/M259/M267/M268/M269 test; removing it alone breaks three protected-class tests. Subsumption inverted. Methodology gap: paired-disable ran each row against its registry-assigned test, not its named property.",
+          "major_adjacent": "PSV-1: sealed-RNG hardening incomplete \u2014 gaussian_sample/beta_sample/categorical_sample (same Random effect) were unguarded; reviewer reproduced a sealed candidate shifting the operator stream via gaussian_sample."
+        },
+        "outcome": "NOT recorded as PROVEN \u2014 a real claim-level blocker was found. 01e22d50 stands as the failed-candidate evidence."
+      },
+      "fixes": {
+        "commit": "bce231ad",
+        "psv_1": "hoisted the sealed-frame Random refusal into pre_effect_gate keyed on the effect row (covers all six RNG builtins + future by construction); removed the three per-arm guards; extended the draw test to the samplers; matrix A41 updated; M270/M271/M272 retargeted to the hoisted guard, each verified KILLED.",
+        "equivalence": "M254 reclassified ACTIVE with a named-property discriminator (a_protected_admission_re_verifies_the_execution_leg_from_its_documents), verified KILLED; removed from EQUIV_RECORD. Active 260->261, retired-equivalent 7->6. The six remaining (M103/M104/M209/M210/M245/M255) re-confirmed genuinely redundant by a full-suite check.",
+        "methodology": "v022_paired_disable.py now runs a full-suite check per retired row (a guard removed alone must not break ANY test in the package) \u2014 the check that flags M254."
+      },
+      "corrected_freeze": "in progress at bce231ad (guest image rebuilt for the builtins.rs change); re-proof + one fresh certifying review to follow.",
+      "readiness_credit": "none"
+    }
   },
   "closure_gate": {
     "state": "GREEN (operator-independent gates) at dev HEAD d1118c88",
