@@ -78,6 +78,10 @@ struct Entry {
 #[derive(Debug, Clone, Default)]
 pub struct GrantRegistry {
     entries: Vec<Entry>,
+    /// sha256 of the exact registry bytes that were parsed. Recorded in every
+    /// operation's intent, so what authorized an op is auditable, and — on a
+    /// protected host — compared with the operator's pin.
+    sha256: String,
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {
@@ -86,10 +90,42 @@ fn sha256_hex(bytes: &[u8]) -> String {
 }
 
 impl GrantRegistry {
+    /// A registry the CALLER names (development: no protected host). Its
+    /// digest is still recorded ([`GrantRegistry::sha256`]).
     pub fn load(file: &Path) -> Result<Self, String> {
-        let text = std::fs::read_to_string(file)
+        let bytes = std::fs::read(file)
             .map_err(|e| format!("cannot read grant registry {}: {e}", file.display()))?;
-        let v: serde_json::Value = serde_json::from_str(&text)
+        Self::parse(file, &bytes)
+    }
+
+    /// The OPERATOR's registry, pinned by the protected-host config: the bytes
+    /// are read ONCE, and parsed only if they are exactly the pinned ones.
+    pub fn load_pinned(file: &Path, pin: &str) -> Result<Self, String> {
+        let bytes = std::fs::read(file)
+            .map_err(|e| format!("cannot read grant registry {}: {e}", file.display()))?;
+        let got = sha256_hex(&bytes);
+        if !got.eq_ignore_ascii_case(pin) {
+            return Err(format!(
+                "grant registry {} has sha256 {got}, not its pin {pin}",
+                file.display()
+            ));
+        }
+        Self::parse(file, &bytes)
+    }
+
+    /// sha256 of the registry bytes this was parsed from.
+    pub fn sha256(&self) -> &str {
+        &self.sha256
+    }
+
+    /// Every grant file the registry names (for the operator-ownership walk).
+    pub fn grant_files(&self) -> impl Iterator<Item = &Path> {
+        self.entries.iter().map(|e| e.path.as_path())
+    }
+
+    fn parse(file: &Path, bytes: &[u8]) -> Result<Self, String> {
+        let sha256 = sha256_hex(bytes);
+        let v: serde_json::Value = serde_json::from_slice(bytes)
             .map_err(|e| format!("grant registry {} is not JSON: {e}", file.display()))?;
         if v.get("schema").and_then(|s| s.as_str()) != Some(GRANT_REGISTRY_SCHEMA) {
             return Err(format!(
@@ -125,7 +161,7 @@ impl GrantRegistry {
                 sha256,
             });
         }
-        Ok(GrantRegistry { entries })
+        Ok(GrantRegistry { entries, sha256 })
     }
 
     /// Resolve `grant_ref` for `principal_ref`. Every failure is a refusal:

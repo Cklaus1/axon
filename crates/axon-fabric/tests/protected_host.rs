@@ -303,7 +303,9 @@ fn without_the_operator_file_the_profile_is_not_configured() {
 /// On a protected host the suite registry IS the operator's: with no
 /// `--check-registry` at all, submit loads the host config's registry and goes
 /// on to the next requirement (the grant registry), never asking the caller
-/// for one.
+/// for one. The grant registry is the operator's too (D1): this host config
+/// pins none, so nothing is authorized — and the caller is not asked for one
+/// (`grant_registry_authority.rs`).
 #[test]
 fn a_protected_host_loads_the_operators_registry_not_the_callers() {
     let h = Host::new();
@@ -321,7 +323,8 @@ fn a_protected_host_loads_the_operators_registry_not_the_callers() {
         .unwrap();
     let text = String::from_utf8_lossy(&out.stdout);
     assert!(!text.contains("--check-registry"), "{text}");
-    assert!(text.contains("--grant-registry"), "{text}");
+    assert!(!text.contains("--grant-registry"), "{text}");
+    assert!(text.contains("pins no grant_registry"), "{text}");
 }
 
 /// The protected signer is the host config's: a key readable by anyone else,

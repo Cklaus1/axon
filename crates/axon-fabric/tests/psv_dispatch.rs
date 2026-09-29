@@ -401,6 +401,9 @@ fn a_protected_host_runs_nothing_outside_the_protected_profile() {
     cfg.protected_host = Some(axon_fabric::psv::HostIdentity {
         config_sha256: "1".repeat(64),
         suite_registry_sha256: "2".repeat(64),
+        // The operator's pin is this env's registry: the refusal below is the
+        // protected-profile rule, not D1's registry check.
+        grant_registry_sha256: Some(cfg.grants.sha256().to_string()),
     });
     let s = submit(&r.to_string(), &cfg).unwrap();
     assert_eq!(

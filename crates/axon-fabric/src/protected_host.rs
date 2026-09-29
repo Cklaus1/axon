@@ -9,7 +9,12 @@
 //! * the B263 qualification record and its age limit;
 //! * the operator suite registry (pinned);
 //! * the attestation signer;
-//! * the output root.
+//! * the output root;
+//! * the operator GRANT registry (pinned; every grant file it names
+//!   operator-owned). It is the only source of a request's authority and of
+//!   the guest effect policy derived from it: `axon-fabric` refuses a caller
+//!   `--grant-registry` on a protected host, on every route (D1). A host
+//!   config without one authorizes nothing.
 //!
 //! The caller NAMES a registered suite. It never points at a launcher, a
 //! manifest, a registry or a key, and `axon-fabric submit` refuses every flag
@@ -61,6 +66,26 @@ pub struct ProtectedHost {
     pub signer: SignerSpec,
     /// M3: the preflight observer, if this host has one.
     pub observer: Option<crate::observer::ObserverConfig>,
+    /// D1: the operator's grant registry and its pin. `None`: this host pins
+    /// no grant registry, so nothing is authorized on it ([`Self::grants`]).
+    pub grant_registry: Option<(PathBuf, String)>,
+}
+
+/// Why a protected host authorizes nothing when its config pins no grant
+/// registry.
+pub const NO_GRANT_REGISTRY: &str =
+    "this protected host's config pins no grant_registry: nothing is authorized on it";
+
+impl ProtectedHost {
+    /// The operator's grant registry — the ONLY authority source on a
+    /// protected host. Read once and parsed only at its pin.
+    pub fn grants(&self) -> Result<crate::grants::GrantRegistry, String> {
+        let (path, pin) = self
+            .grant_registry
+            .as_ref()
+            .ok_or_else(|| NO_GRANT_REGISTRY.to_string())?;
+        crate::grants::GrantRegistry::load_pinned(path, pin)
+    }
 }
 
 const KEYS: [&str; 8] = [
@@ -134,8 +159,8 @@ impl ProtectedHost {
             .map(|o| o.keys().map(String::as_str).collect())
             .unwrap_or_default();
         keys.sort_unstable();
-        // `observer` is the one optional section (M3).
-        keys.retain(|k| *k != "observer");
+        // `observer` (M3) and `grant_registry` (D1) are the optional sections.
+        keys.retain(|k| *k != "observer" && *k != "grant_registry");
         if keys != KEYS {
             return Err(bad(format!("must have exactly {KEYS:?}; has {keys:?}")));
         }
@@ -238,6 +263,20 @@ impl ProtectedHost {
                 })
             }
         };
+        // D1: the grant registry is pinned and operator-owned, and so is every
+        // grant file it names (and so the directory an `.approval` token sits
+        // in): the caller writes none of them.
+        let grant_registry = match v.get("grant_registry") {
+            None | Some(Value::Null) => None,
+            Some(_) => {
+                let (path, pin) = pinned("grant_registry")?;
+                let reg = crate::grants::GrantRegistry::load_pinned(&path, &pin).map_err(bad)?;
+                for g in reg.grant_files() {
+                    owned(g, false).map_err(bad)?;
+                }
+                Some((path, pin))
+            }
+        };
 
         Ok(ProtectedHost {
             config_sha256: sha256_hex(&bytes),
@@ -256,6 +295,7 @@ impl ProtectedHost {
             suite_registry_sha256,
             signer,
             observer,
+            grant_registry,
         })
     }
 }

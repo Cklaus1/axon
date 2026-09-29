@@ -813,6 +813,10 @@ struct Inner {
     file: File,
     seq: u64,
     state: State,
+    /// Recovery not yet done: the byte length of the last whole line when a
+    /// torn tail follows it (`Some(len)` until it is truncated). Nothing is
+    /// appended while a torn tail is still on disk.
+    torn_at: Option<u64>,
 }
 
 /// A durable operation journal. `Send + Sync`; share it with `Arc`.
@@ -858,12 +862,41 @@ fn fsync_dir(path: &Path) -> std::io::Result<()> {
 impl Journal {
     /// Open (creating if absent) and reconcile. See the module docs.
     pub fn open(path: impl AsRef<Path>) -> Result<(Journal, RecoveryReport), JournalError> {
-        let path = path.as_ref().to_path_buf();
+        let (journal, mut report) = Self::open_inner(path.as_ref(), true)?;
+        journal.recover(None, &mut report)?;
+        Ok((journal, report))
+    }
+
+    /// Open an EXISTING journal under its exclusive lock and replay it,
+    /// writing NOTHING: no header, no torn-tail truncation, no reconcile.
+    /// `Ok(None)` when there is no journal at `path`. For a route that must
+    /// authorize the caller against the recorded ops BEFORE any write
+    /// (`status`/`cancel`): it then calls [`Journal::reconcile_scope`] for the
+    /// one scope it was authorized for.
+    pub fn open_unreconciled(path: impl AsRef<Path>) -> Result<Option<Journal>, JournalError> {
+        if std::fs::symlink_metadata(path.as_ref()).is_err() {
+            return Ok(None);
+        }
+        Self::open_inner(path.as_ref(), false).map(|(j, _)| Some(j))
+    }
+
+    /// Recovery for ONE scope of a journal from [`Journal::open_unreconciled`]:
+    /// truncate a torn tail, and turn that scope's launched-but-unfinished ops
+    /// into `OutcomeUnknown`. Ops of every other scope are left exactly as
+    /// recorded (the next full [`Journal::open`] reconciles them).
+    pub fn reconcile_scope(&self, scope: &Scope) -> Result<RecoveryReport, JournalError> {
+        let mut report = RecoveryReport::default();
+        self.recover(Some(scope), &mut report)?;
+        Ok(report)
+    }
+
+    fn open_inner(path: &Path, create: bool) -> Result<(Journal, RecoveryReport), JournalError> {
+        let path = path.to_path_buf();
         let existed = path.exists();
         let file = OpenOptions::new()
             .read(true)
             .append(true)
-            .create(true)
+            .create(create)
             .open(&path)?;
         lock_exclusive(&file, &path)?;
         if !existed {
@@ -932,17 +965,37 @@ impl Journal {
             report.records_replayed += 1;
         }
         drop(reader);
-        if report.torn_tail_bytes > 0 {
-            file.set_len(good_len)?;
-            file.sync_all()?;
-        }
-
+        let torn_at = (report.torn_tail_bytes > 0).then_some(good_len);
         let journal = Journal {
             path,
-            inner: Mutex::new(Inner { file, seq, state }),
+            inner: Mutex::new(Inner {
+                file,
+                seq,
+                state,
+                torn_at,
+            }),
         };
-        if seq == 0 {
-            journal.append(Rec::Header {
+        Ok((journal, report))
+    }
+
+    /// The writing half of recovery: truncate a torn tail, write the header
+    /// of an empty journal, and reconcile the launched ops of `scope` (every
+    /// scope when `None`).
+    fn recover(
+        &self,
+        scope: Option<&Scope>,
+        report: &mut RecoveryReport,
+    ) -> Result<(), JournalError> {
+        {
+            let mut g = self.lock();
+            if let Some(len) = g.torn_at {
+                g.file.set_len(len)?;
+                g.file.sync_all()?;
+                g.torn_at = None;
+            }
+        }
+        if self.lock().seq == 0 {
+            self.append(Rec::Header {
                 schema: JOURNAL_SCHEMA.to_string(),
             })?;
         }
@@ -951,12 +1004,12 @@ impl Journal {
         // effect. It becomes OutcomeUnknown, liability kept — never Completed
         // and never re-run.
         let (launched, intended, reserved) = {
-            let g = journal.lock();
+            let g = self.lock();
             let pick = |s: OpState| {
                 g.state
                     .ops
                     .values()
-                    .filter(|v| v.state == s)
+                    .filter(|v| v.state == s && scope.is_none_or(|sc| &v.intent.scope == sc))
                     .map(|v| v.intent.op.clone())
                     .collect::<Vec<_>>()
             };
@@ -967,7 +1020,7 @@ impl Journal {
             )
         };
         for op in launched {
-            journal.append(Rec::OutcomeUnknown {
+            self.append(Rec::OutcomeUnknown {
                 op: op.clone(),
                 reason: "journal reopened with the operation launched and no terminal \
                          record; the effect may or may not have happened"
@@ -977,7 +1030,7 @@ impl Journal {
         }
         report.pending_intended = intended;
         report.pending_reserved = reserved;
-        Ok((journal, report))
+        Ok(())
     }
 
     pub fn path(&self) -> &Path {
@@ -999,6 +1052,11 @@ impl Journal {
     /// an identical duplicate, which writes nothing).
     fn append_inner(&self, rec: Rec) -> Result<bool, JournalError> {
         let mut g = self.lock();
+        if g.torn_at.is_some() {
+            return Err(JournalError::Io(std::io::Error::other(
+                "journal has an unrecovered torn tail: reconcile before writing",
+            )));
+        }
         let change = g.state.transition(&rec)?;
         if matches!(change, Change::Duplicate) {
             return Ok(false);

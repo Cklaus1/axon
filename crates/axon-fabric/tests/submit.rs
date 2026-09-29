@@ -150,7 +150,8 @@ fn cancellation_before_launch_releases_after_launch_keeps_liability() {
         trial_id: axon_loop_contracts::TrialId::new("trial-1").unwrap(),
         attempt_id: axon_loop_contracts::AttemptId::new("attempt-1").unwrap(),
         input_digest: axon_loop_contracts::Ref::new(format!("cl22:{}", "1".repeat(64))).unwrap(),
-        config: json!({}),
+        // As `submit` records it: the registry that authorized the op (D1).
+        config: json!({"grant": {"registry_sha256": sha256_file(&env.grant_registry)}}),
         // The authority `submit` records ("principal|grant"): only it may cancel.
         authority_ref: format!("{PRINCIPAL}|grant:test"),
         authority_epoch: axon_loop_contracts::AuthorityEpoch::new(0).unwrap(),

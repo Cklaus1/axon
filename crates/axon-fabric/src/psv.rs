@@ -64,6 +64,10 @@ impl EvidenceClass {
 pub struct HostIdentity {
     pub config_sha256: String,
     pub suite_registry_sha256: String,
+    /// D1: the pin of the operator's grant registry (`None`: the host config
+    /// pins none, and `submit` authorizes nothing). Not in the launch
+    /// manifest itself — `config_sha256` already binds the pin.
+    pub grant_registry_sha256: Option<String>,
 }
 
 /// One attempt's launch: the manifest, its digest, and the secret that stays
