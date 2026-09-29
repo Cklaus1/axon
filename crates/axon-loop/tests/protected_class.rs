@@ -1125,23 +1125,13 @@ fn a_counted_trial_cannot_borrow_another_trials_verdict() {
     clear_all(&w.s, &v);
     let (rec, _) = evaluate(&w.s, &v).unwrap();
     let cand = w.cand_ref.to_string();
-    let fe = forge_eval(&w, "bw", &rec, |j| {
-        for arm in j["arms"].as_array_mut().unwrap() {
-            if arm["policy_ref"] == cand {
-                let ts = arm["trials"].as_array_mut().unwrap();
-                let (ep, ver) = (ts[0]["episode_ref"].clone(), ts[0]["verification"].clone());
-                ts[1]["episode_ref"] = ep;
-                ts[1]["verification"] = ver;
-            }
-        }
-    });
-    refused_or_not_accepted(&w, "bw", &fe, "another trial's");
     // The WHOLE borrow (C9 round 1): c1 cites every document of c0's trial,
     // context signature and execution leg included, so each re-verifies from
     // its own stored documents. Only the episode-identity join is left to see
-    // that the documents are another trial's. Borrowing the episode and
-    // verdict alone (above) is also refused by the context-signature check,
-    // which could not show this guard is load-bearing (C9 dev review, M263).
+    // that the documents are another trial's. It runs first, so a mutant is
+    // scored on it. Borrowing the episode and verdict alone (below) is also
+    // refused by the context-signature check, which could not show this guard
+    // is load-bearing (C9 dev review, M263).
     let fe = forge_eval(&w, "bw", &rec, |j| {
         for arm in j["arms"].as_array_mut().unwrap() {
             if arm["policy_ref"] == cand {
@@ -1161,6 +1151,30 @@ fn a_counted_trial_cannot_borrow_another_trials_verdict() {
         Ok((adm, _)) => panic!(
             "ATTACK: a trial counted another trial's whole verified evidence: {:?} {:?}",
             adm.decision, adm.reasons
+        ),
+    }
+    let fe = forge_eval(&w, "bw", &rec, |j| {
+        for arm in j["arms"].as_array_mut().unwrap() {
+            if arm["policy_ref"] == cand {
+                let ts = arm["trials"].as_array_mut().unwrap();
+                let (ep, ver) = (ts[0]["episode_ref"].clone(), ts[0]["verification"].clone());
+                ts[1]["episode_ref"] = ep;
+                ts[1]["verification"] = ver;
+            }
+        }
+    });
+    // Borrowing only the episode and verdict: the identity join refuses it,
+    // and so does the context-signature check (c1's signature vouches for
+    // c1's context), each alone. Any refusal is correct here.
+    match admit(&w.s, "bw", &fe, ADMITTER, false) {
+        Err(e) => assert!(
+            e.to_string().contains("another trial's")
+                || e.to_string().contains("context signature"),
+            "{e}"
+        ),
+        Ok((adm, _)) => panic!(
+            "ATTACK: a trial counted another trial's verdict: {:?}",
+            adm.decision
         ),
     }
 }

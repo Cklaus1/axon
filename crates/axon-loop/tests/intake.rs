@@ -1941,10 +1941,27 @@ fn a_verifier_key_planted_in_the_store_never_authenticates_protected_evidence() 
         c.s.write_config(&cfg).unwrap();
     };
 
+    // Planted key, protected claim (genuine bundle): refused, for the root reason.
+    let c = case(Some(500));
+    pin_protected(&c);
+    plant(&c);
+    let (rc, b) = genuine(&req);
+    let ep = verified(&c.ep, &req, &rc, "passed");
+    let att = attest(&planted_sk, common::VERIFIER, &req, &rc);
+    let e = run_vb(&c, &ep, &req, &rc, &att, Some(&b)).unwrap_err();
+    // With the protected-claim gate removed this is ALSO refused (a bundle
+    // beside a receipt the development route treats as claiming nothing), so
+    // either reason is correct here (C9 round 1).
+    assert!(
+        e.to_string().contains("operator's verifier root")
+            || e.to_string().contains("does not claim protected evidence"),
+        "{e}"
+    );
+
     // C9 round 1 (M205): planted key, protected claim, NO bundle. Without the
     // protected-claim gate the receipt falls to the development route, where
     // the store's (planted) key suffices and no bundle is needed: the gate is
-    // the only guard. With a bundle (below) the "bundle for a receipt that
+    // the only guard. With a bundle (above) the "bundle for a receipt that
     // claims nothing" refusal also stops it, so that case cannot show it.
     let c = case(Some(500));
     pin_protected(&c);
@@ -1954,16 +1971,6 @@ fn a_verifier_key_planted_in_the_store_never_authenticates_protected_evidence() 
     let att = attest(&planted_sk, common::VERIFIER, &req, &rc);
     let e = run_vb(&c, &ep, &req, &rc, &att, None)
         .expect_err("ATTACK: a protected claim was authenticated by a store-planted verifier key");
-    assert!(e.to_string().contains("operator's verifier root"), "{e}");
-
-    // Planted key, protected claim (genuine bundle): refused, for the root reason.
-    let c = case(Some(500));
-    pin_protected(&c);
-    plant(&c);
-    let (rc, b) = genuine(&req);
-    let ep = verified(&c.ep, &req, &rc, "passed");
-    let att = attest(&planted_sk, common::VERIFIER, &req, &rc);
-    let e = run_vb(&c, &ep, &req, &rc, &att, Some(&b)).unwrap_err();
     assert!(e.to_string().contains("operator's verifier root"), "{e}");
 
     // Planted key, NO protected claim: development evidence, store keys suffice.
