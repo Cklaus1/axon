@@ -170,12 +170,46 @@ fn only_the_pinned_operator_registry_defines_suites() {
         "{e}"
     );
 
+    // A caller registry on a protected host: see
+    // `a_caller_registry_never_defines_suites_on_a_protected_host`.
+}
+
+/// O1/A17: on a protected host the caller's `--check-registry` never becomes
+/// the suite registry. Two layers keep it out, each on its own: the flag is
+/// refused by name (M139), and the protected arm takes the host config's
+/// registry whatever the caller names (M141). Which one stops it is not the
+/// property (four-cell, EQUIV_RECORD["M139"]); the caller's file being LOADED
+/// is. It is not a registry at all, so loading it is visible by its path.
+#[test]
+fn a_caller_registry_never_defines_suites_on_a_protected_host() {
     let h = Host::new();
-    let (c, out) = h.submit(&["--check-registry", "/tmp/mine.json"]);
-    assert_eq!(c, 2, "{out}");
+    let caller = h.env.dir.path().join("caller-registry.json");
+    std::fs::write(&caller, "a caller's registry, not the operator's").unwrap();
+    let req = h.p("request.json");
+    std::fs::write(&req, "{}").unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_axon-fabric"))
+        .arg("submit")
+        .arg("--request")
+        .arg(&req)
+        .arg("--protected-host-config")
+        .arg(h.config())
+        .arg("--protected-host-issuers")
+        .arg(h.p("trusted_issuers"))
+        .arg("--check-registry")
+        .arg(&caller)
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&out.stdout);
     assert!(
-        out.contains("--check-registry is not accepted on a protected host"),
-        "{out}"
+        !text.contains("caller-registry.json"),
+        "ATTACK: the caller's --check-registry was loaded as the suite registry on a protected \
+         host: {text}"
+    );
+    assert_ne!(out.status.code(), Some(0), "{text}");
+    assert!(
+        text.contains("--check-registry is not accepted on a protected host")
+            || text.contains("pins no grant_registry"),
+        "{text}"
     );
 }
 
@@ -183,13 +217,61 @@ fn only_the_pinned_operator_registry_defines_suites() {
 /// refused, by name, before anything else is read.
 #[test]
 fn every_caller_protected_flag_is_refused_by_name() {
-    for flag in REFUSED_CALLER_FLAGS {
+    // A complete, valid development submit: without a refused flag it runs
+    // (control), so a flag that is not refused BY NAME is accepted and the
+    // submit goes ahead. Nothing else on this route reads these flags, so the
+    // by-name refusal is the only guard (C9 round 1b: with a nonexistent
+    // request file, an io error refused the call instead).
+    let env = Env::new();
+    let req = env.dir.path().join("request.json");
+    let dev_submit = |op: &str, extra: &[&str]| {
+        let mut r = request(&env, op, "t_ok");
+        r["operation_id"] = json!(op);
+        std::fs::write(&req, r.to_string()).unwrap();
         let out = Command::new(env!("CARGO_BIN_EXE_axon-fabric"))
-            .args(["submit", flag, "/tmp/x", "--request", "/nonexistent"])
+            .arg("submit")
+            .args(extra)
+            .arg("--request")
+            .arg(&req)
+            .arg("--journal")
+            .arg(&env.journal)
+            .arg("--check-registry")
+            .arg(&env.registry)
+            .arg("--grant-registry")
+            .arg(&env.grant_registry)
+            .arg("--store")
+            .arg(&env.store)
+            .args([
+                "--tenant",
+                "tenant-t",
+                "--family",
+                "family-f",
+                "--expected-epoch",
+                "0",
+            ])
+            .arg("--workspace")
+            .arg(&env.ws)
+            .arg("--state")
+            .arg(env.dir.path().join("fabric-state"))
             .output()
             .unwrap();
-        let text = String::from_utf8_lossy(&out.stdout);
-        assert_eq!(out.status.code(), Some(2), "{flag}: {text}");
+        (
+            out.status.code(),
+            String::from_utf8_lossy(&out.stdout).into_owned(),
+        )
+    };
+    let (c, out) = dev_submit("op-flag-control", &[]);
+    assert_eq!(
+        c,
+        Some(0),
+        "control: the route runs without the flag: {out}"
+    );
+    for (i, flag) in REFUSED_CALLER_FLAGS.iter().enumerate() {
+        let (c, text) = dev_submit(&format!("op-flag-{i}"), &[flag, "/tmp/x"]);
+        if c == Some(0) {
+            panic!("ATTACK: {flag} was accepted: a submit ran with a caller protected-profile flag: {text}");
+        }
+        assert_eq!(c, Some(2), "{flag}: {text}");
         assert!(
             text.contains(&format!("{flag} is not accepted"))
                 && text.contains(PROTECTED_HOST_CONFIG),

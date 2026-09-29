@@ -219,18 +219,26 @@ mod tests {
     }
 
     /// The signing oracle: whatever a replayed journal claims the op ran
-    /// under — the microVM, no effects — a replay is never signed.
+    /// under — the microVM, no effects, a signable class — a replay is never
+    /// signed. This is the decision's own contract, and REPLAYED is its only
+    /// guard for a replay whose `ran_under` names a class the backend derives
+    /// (C9 round 1b, M01). The binary's replay path also stamps the class
+    /// `unknown` (`submit::ran_under_of`), which `WRONG_CLASS` refuses: defence
+    /// in depth, not a substitute for this rule.
     #[test]
     fn a_replay_is_never_signed_whatever_its_journal_claims() {
         let r = req("registered_check", "check:acc@1");
         for claimed in [
             ran(LINUX_MICROVM_PROTECTED.id, ""),
+            ran_as(LINUX_MICROVM_PROTECTED.id, "", "protected"),
             ran(LOCAL_INTERPRETER.id, ""),
         ] {
-            assert_eq!(
-                attestation_decision(&r, true, Some(&claimed)),
-                Err(REPLAYED)
+            let got = attestation_decision(&r, true, Some(&claimed));
+            assert!(
+                got.is_err(),
+                "ATTACK: a replayed receipt was signed (ran_under {claimed:?}): {got:?}"
             );
+            assert_eq!(got, Err(REPLAYED));
         }
     }
 

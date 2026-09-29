@@ -100,6 +100,11 @@ impl EpochSource {
     }
 }
 
+/// The protected profile's one job: an operator suite with a named test.
+pub const PROTECTED_SUITE_ONLY: &str = "the protected profile judges only an operator suite \
+     (`check:<id>`) with a named test: there is no launch manifest for a candidate file or an \
+     execution";
+
 /// Why a protected host with no observer launches no protected check.
 pub const NO_OBSERVER: &str = "this protected host configures no observer: a protected launch \
                                requires a preflight observation, so nothing is launched";
@@ -1437,7 +1442,17 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
                 .as_ref()
                 .expect("built when the profile was selected");
             let q = qualified.as_ref().expect("qualified at dispatch");
-            let suite = target.suite.as_ref().expect("checked above");
+            // The protected profile judges only an operator suite with a named
+            // test. The pre-reservation check above (M187) refuses anything
+            // else first; this is the same rule where the launch is built, so
+            // a request that reaches the arm without one is a structured
+            // refusal (NotRun, nothing launched), never a crash (an
+            // `expect("checked above")` panicked here when that check was
+            // removed: C9 round 1b, M187).
+            let spec = match (target.suite.as_ref(), filter.as_deref()) {
+                (Some(s), Some(t)) => Ok((s.id.clone(), s.version.clone(), t.to_string())),
+                _ => Err(PROTECTED_SUITE_ONLY.to_string()),
+            };
             let epoch = cfg.expected_epoch.get();
             // B3 (review wf_d725935a-7ed): the launch inputs are NEVER read
             // from the run dir under the caller-supplied --state (the caller
@@ -1446,41 +1461,43 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
             // re-verifies every blob against its hash, into a Fabric-private
             // 0700 dir under the operator-owned out_root; `prepare` then
             // requires each tree to BE the registered/requested version.
-            let inputs = crate::psv::private_inputs(
-                lx,
-                &cfg.state_dir,
-                &cfg.epoch.scope().tenant_id,
-                &req,
-                &suite.version,
-            );
+            let inputs = spec.clone().and_then(|(_, version, _)| {
+                crate::psv::private_inputs(
+                    lx,
+                    &cfg.state_dir,
+                    &cfg.epoch.scope().tenant_id,
+                    &req,
+                    &version,
+                )
+            });
             // M3: the custodian's nonce goes INTO the manifest the observer
             // then observes.
             let nonce = match &cfg.observer {
                 Some(o) => o.nonces.issue(epoch, &o.clock),
                 None => Ok("none".to_string()),
             };
-            let prepared =
-                inputs
-                    .and_then(|dir| nonce.map(|n| (dir, n)))
-                    .and_then(|(dir, nonce)| {
-                        crate::psv::prepare(
-                            &req,
-                            &crate::psv::PrepareInputs {
-                                qualification: q,
-                                profile_manifest: &lx.manifest,
-                                host: cfg.protected_host.as_ref(),
-                                policy_json: policy.json(),
-                                suite_id: &suite.id,
-                                suite_version: suite.version.as_str(),
-                                entry: &file,
-                                test: filter.as_deref().expect("checked above"),
-                                candidate_dir: &dir.join("candidate"),
-                                suite_dir: &dir.join("check"),
-                                job_dir: &dir.join("job"),
-                                observation_nonce: &nonce,
-                            },
-                        )
-                    });
+            let prepared = inputs
+                .and_then(|dir| nonce.map(|n| (dir, n)))
+                .and_then(|(dir, nonce)| spec.map(|s| (dir, nonce, s)))
+                .and_then(|(dir, nonce, (suite_id, suite_version, test))| {
+                    crate::psv::prepare(
+                        &req,
+                        &crate::psv::PrepareInputs {
+                            qualification: q,
+                            profile_manifest: &lx.manifest,
+                            host: cfg.protected_host.as_ref(),
+                            policy_json: policy.json(),
+                            suite_id: &suite_id,
+                            suite_version: suite_version.as_str(),
+                            entry: &file,
+                            test: &test,
+                            candidate_dir: &dir.join("candidate"),
+                            suite_dir: &dir.join("check"),
+                            job_dir: &dir.join("job"),
+                            observation_nonce: &nonce,
+                        },
+                    )
+                });
             // The observation, verified BEFORE anything is launched; a
             // refusal launches nothing.
             let observed = prepared.and_then(|launch| match &cfg.observer {

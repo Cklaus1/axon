@@ -184,6 +184,15 @@ def main():
         "M385": {"siblings": ["M285", "M289"], "kind": "set"},
         "M287": {"siblings": ["M290"], "kind": "pair"},
         "M288": {"siblings": ["M290"], "kind": "pair"},
+        # C9 round 1b (fabric workstream): mutual pairs whose attack is each
+        # pair's shared test; all-paths arguments in EQUIV_RECORD.
+        "M139": {"siblings": ["M141"], "kind": "pair"},
+        "M141": {"siblings": ["M139"], "kind": "pair"},
+        "M183": {"siblings": ["M312"], "kind": "pair"},
+        "M187": {"siblings": ["M400"], "kind": "pair"},
+        "M400": {"siblings": ["M187"], "kind": "pair"},
+        "M273": {"siblings": ["M401"], "kind": "pair"},
+        "M401": {"siblings": ["M273"], "kind": "pair"},
     }
     # Every retired row has a matrix and no active row has one.
     if set(GUARD_SETS) != set(mut.EQUIVALENT_DID):

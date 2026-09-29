@@ -270,12 +270,16 @@ fn a_failing_test_is_failed_whatever_the_guest_claims() {
         s.reason
     );
     // The guest claims a pass: the certified parser reads the output, and it
-    // says failed.
+    // says failed. The claim must not move the verdict AT ALL: a failing test
+    // that became Unknown (no verdict) has had its failure suppressed by the
+    // guest, even where the later pass checks still refuse a counted pass
+    // (C9 round 1b: the guest's claim is the attack, the parser the only
+    // guard that keeps the verdict Failed).
     let s = w.submit_with(w.lx("claim-pass", ""), "op-psv-claim", "t_psv_fail");
     assert_eq!(
         s.receipt.verification,
         ReceiptVerification::Failed,
-        "{:?}",
+        "ATTACK: the guest's claim of a pass steered a failing test's verdict: {:?}",
         s.reason
     );
 }
@@ -318,8 +322,22 @@ fn a_previous_attempts_genuine_pass_does_not_replay() {
     assert!(prev.join("out/test-stdout").exists());
     let lx = w.lx("replay", &format!("--replay-from {}", prev.display()));
     let s = w.submit_with(lx, "op-psv-a2", "t_psv_ok");
+    assert_ne!(
+        s.receipt.verification,
+        ReceiptVerification::Passed,
+        "ATTACK: a previous attempt's genuine pass was counted as this launch's pass: {:?}",
+        s.reason
+    );
     assert_eq!(s.receipt.verification, ReceiptVerification::Unknown);
-    assert!(s.reason.unwrap().contains("without completion evidence"));
+    // WHICH check refuses is not the property on this route: the completion
+    // token (M183) and the keyed result line (M312) are the same HMAC under
+    // this launch's key, and each refuses the replay alone (four-cell,
+    // EQUIV_RECORD["M183"]). Either reason is accepted.
+    let why = s.reason.unwrap_or_default();
+    assert!(
+        why.contains("without completion evidence") || why.contains("result line"),
+        "{why}"
+    );
 }
 
 /// An inadmissible launch (the VMM died) has no verdict and no protected class.
@@ -341,17 +359,36 @@ fn only_an_operator_suite_runs_on_the_protected_profile() {
     let lx = w.lx("", "");
     let launches = lx.out_root.clone();
     cfg.linux = Some(lx);
-    let e = submit(
+    let got = submit(
         &w.request("op-psv-cand", "f.ax", "t_psv_ok").to_string(),
         &cfg,
-    )
-    .unwrap_err();
-    assert!(e.to_string().contains("only as an operator suite"), "{e}");
-    assert_eq!(w.env.launch_records(), 0);
-    assert!(
-        std::fs::read_dir(&launches).unwrap().next().is_none(),
-        "nothing launched"
     );
+    assert!(
+        !launched(&w, "op-psv-cand")
+            && std::fs::read_dir(&launches).unwrap().next().is_none()
+            && !matches!(&got, Ok(s) if s.receipt.verification == ReceiptVerification::Passed),
+        "ATTACK: a candidate file was launched as a check on the protected profile: {:?}",
+        got.as_ref().map(|s| (&s.receipt.verification, &s.reason))
+    );
+    // Two independent layers refuse it: the pre-reservation check (M187) and
+    // the protected arm, which builds no launch manifest without an operator
+    // suite (M402). Which one refuses is not the property (four-cell,
+    // EQUIV_RECORD["M187"]); with M187 removed the op is reserved and
+    // journalled before the arm refuses it, so the launch-record count is not
+    // asserted on this route.
+    match got {
+        Err(e) => assert!(e.to_string().contains("only as an operator suite"), "{e}"),
+        Ok(s) => {
+            assert_eq!(s.receipt.verification, ReceiptVerification::NotRun);
+            assert!(
+                s.reason
+                    .as_deref()
+                    .is_some_and(|r| r.contains(axon_fabric::submit::PROTECTED_SUITE_ONLY)),
+                "{:?}",
+                s.reason
+            );
+        }
+    }
 }
 
 /// A profile manifest that does not pin the guest's kernel/rootfs/init builds
@@ -791,6 +828,17 @@ fn a_nonce_authorizes_exactly_one_launch() {
         dir: d.path().join("n"),
     };
     let c = Clock::FixedUnix(1_000_000);
+    // A path-shaped nonce names a record OUTSIDE the store. One is planted
+    // there that passes every other check (this epoch, fresh, unused), so the
+    // format check is the only guard on this route (C9 round 1b, M199).
+    let outside = d.path().join("x.issued");
+    std::fs::write(&outside, r#"{"epoch":3,"issued_unix":1000000}"#).unwrap();
+    let got = st.consume("../x", 3, &c, 60);
+    assert!(
+        got.is_err() && outside.exists(),
+        "ATTACK: a path-shaped nonce was consumed from outside the custodian's store: {got:?}"
+    );
+    assert!(got.unwrap_err().contains("not one"));
     let n = st.issue(3, &c).unwrap();
     assert!(st.consume(&n, 4, &c, 60).unwrap_err().contains("epoch"));
     assert!(st
@@ -806,10 +854,6 @@ fn a_nonce_authorizes_exactly_one_launch() {
         .consume(&"cd".repeat(16), 3, &c, 60)
         .unwrap_err()
         .contains("never issued"));
-    assert!(st
-        .consume("../x", 3, &c, 60)
-        .unwrap_err()
-        .contains("not one"));
 }
 
 /// The observer program is pinned: other bytes are refused before it runs.
@@ -822,8 +866,20 @@ fn an_unpinned_observer_is_refused() {
     text.push_str("\n# changed\n");
     std::fs::write(&ob.command, text).unwrap();
     let s = w.submit_observed(ob, "op-obs-pin");
-    assert!(s.reason.unwrap().contains("not its pin"));
-    assert!(!launched(&w, "op-obs-pin"));
+    // The changed program still produces a valid, signed observation, so the
+    // pin is the only guard on this route (C9 round 1b).
+    assert!(
+        !launched(&w, "op-obs-pin") && s.receipt.verification != ReceiptVerification::Passed,
+        "ATTACK: an unpinned observer program ran and its observation authorized a launch \
+         ({:?}, class {})",
+        s.receipt.verification,
+        class(&s)
+    );
+    assert!(
+        s.reason.clone().unwrap().contains("not its pin"),
+        "{:?}",
+        s.reason
+    );
 }
 
 /// A2 through the Fabric: the operator suite changes under the guest; the
@@ -886,10 +942,13 @@ fn a_run_dir_swapped_under_the_callers_state_changes_nothing() {
         &cfg,
     )
     .unwrap();
+    // The verdict itself is the property: without the swap this run is
+    // Failed, so any other verdict (a pass, or no verdict at all) is the
+    // caller's swap reaching the launch.
     assert_eq!(
         s.receipt.verification,
         ReceiptVerification::Failed,
-        "{:?}",
+        "ATTACK: a run dir swapped under the caller's state changed the verdict: {:?}",
         s.reason
     );
 }
