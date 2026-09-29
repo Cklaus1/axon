@@ -871,6 +871,17 @@ MUTATIONS = [
     ('M316', 'PSV-2: only an EMPTY ROOT lost+found is exempt', 'crates/axon-psv/src/lib.rs', 'if prefix.is_empty() && name == MKFS_LOST_FOUND {', 'if name == MKFS_LOST_FOUND {', 'axon-psv', '--test protocol', 'inputs_holding_what_the_digest_cannot_see_are_refused'),
     ('M317', 'PSV-2: a directory mode the digest does not record is refused', 'crates/axon-psv/src/lib.rs', 'if !mode_is_normalised(true, false, mode) {', 'if false && !mode_is_normalised(true, false, mode) {', 'axon-psv', '--test protocol', 'inputs_holding_what_the_digest_cannot_see_are_refused'),
     ('M318', 'PSV-2: a file mode the digest does not record is refused', 'crates/axon-psv/src/lib.rs', 'if meta.is_file() && !mode_is_normalised(false, exec, mode) {', 'if false && meta.is_file() && !mode_is_normalised(false, exec, mode) {', 'axon-psv', '--test protocol', 'inputs_holding_what_the_digest_cannot_see_are_refused'),
+    # ── C9 round-1 fix wave, workstream INPUTS (PSV-2: extended attributes on a
+    # guest input — what neither the tree digest nor the mode check can see).
+    ('M350', 'PSV-2 (c9r1): the input ROOT carrying an extended attribute is refused', 'crates/axon-psv/src/lib.rs', '    no_xattr(root, ".")?;\n', '    let _ = no_xattr(root, ".");\n', 'axon-psv', '--test protocol', 'inputs_carrying_an_extended_attribute_are_refused'),
+    ('M351', 'PSV-2 (c9r1): an input entry carrying an extended attribute is refused', 'crates/axon-psv/src/lib.rs', '            no_xattr(&d.path(), &path)?;\n', '            let _ = no_xattr(&d.path(), &path);\n', 'axon-psv', '--test protocol', 'inputs_carrying_an_extended_attribute_are_refused'),
+    ('M352', 'PSV-2 (c9r1): EVERY xattr namespace is refused, not a list (a user.*-only check misses an ACL)', 'crates/axon-psv/src/lib.rs', '.find(|s| !s.is_empty())', '.find(|s| s.starts_with(b"user."))', 'axon-psv', '--test protocol', 'inputs_carrying_an_extended_attribute_are_refused'),
+    ('M353', 'PSV-2 (c9r1): the real runner refuses an ACL-carrying input instead of running it to a keyed Failed', 'crates/axon-psv/src/lib.rs', '            no_xattr(&d.path(), &path)?;\n', '            let _ = no_xattr(&d.path(), &path);\n', 'axon-psv', '--test runner', 'an_input_carrying_an_acl_is_refused_not_run'),
+    ('M354', "PSV-2 (c9r1): the launcher's input copy preserves no ACL/xattr", 'scripts/fc_linux_profile.sh', '    cp -R "$2/." "$st/" || return 1\n', '    cp -a "$2/." "$st/" || return 1\n', 'axon-fabric', '--test launcher_isolation', 'the_launchers_input_image_carries_no_extended_attribute'),
+    ('M355', "PSV-2 (c9r1): the launcher's mkfs copies no xattr into an input image", 'scripts/fc_linux_profile.sh', '-E root_owner=0:0,no_copy_xattrs -d "$st"', '-E root_owner=0:0 -d "$st"', 'axon-fabric', '--test launcher_isolation', 'the_launchers_input_image_carries_no_extended_attribute'),
+    ('M356', 'PSV-2 (c9r1): the guest mounts the candidate input noacl', 'profiles/linux-microvm/guest-init.sh', 'ro,nodev,nosuid,noexec,noacl /dev/vdc', 'ro,nodev,nosuid,noexec /dev/vdc', 'axon-guest-init', '--test b263_profile_wiring', 'guest_init_sh_mounts_every_psv_input_noacl'),
+    ('M357', 'PSV-2 (c9r1): the guest mounts the suite input noacl', 'profiles/linux-microvm/guest-init.sh', 'ro,nodev,nosuid,noexec,noacl /dev/vdd', 'ro,nodev,nosuid,noexec /dev/vdd', 'axon-guest-init', '--test b263_profile_wiring', 'guest_init_sh_mounts_every_psv_input_noacl'),
+    ('M358', 'PSV-2 (c9r1): the guest mounts the job input noacl', 'profiles/linux-microvm/guest-init.sh', 'ro,nodev,nosuid,noexec,noacl /dev/vde', 'ro,nodev,nosuid,noexec /dev/vde', 'axon-guest-init', '--test b263_profile_wiring', 'guest_init_sh_mounts_every_psv_input_noacl'),
 ]
 
 
@@ -944,6 +955,8 @@ LEGACY_EQUIV = set()
 RETIRED = LEGACY_EQUIV | EQUIVALENT_DID | set(STALE_REFACTORED)
 BINDING_IDS = {f"M{n}" for n in range(101, 137)}
 PSV_IDS = {f"M{n}" for n in range(137, 319)}
+# C9 round-1 fix wave, workstream INPUTS: M350-M359 are PSV rows.
+PSV_IDS |= {f"M{n}" for n in range(350, 360)}
 
 
 def in_scope(mid, scope):
