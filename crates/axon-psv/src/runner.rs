@@ -140,9 +140,16 @@ pub fn run(cfg: &RunnerConfig) -> GuestVerdict {
         suite_tree_digest: String::new(),
         matches: false,
     };
-    // 1. The secret: exactly 32 bytes, kept in this process.
+    // 1. The secret: exactly 32 bytes, kept in this process. The length
+    // guard is the ONLY check: the copy below is total (it cannot panic), so
+    // a verifier never crashes on a hostile secret, and nothing after this
+    // line re-checks the length.
     let secret: [u8; 32] = match std::fs::read(&cfg.secret) {
-        Ok(b) if b.len() == 32 => b.try_into().expect("32 bytes"),
+        Ok(b) if b.len() == 32 => {
+            let mut s = [0u8; 32];
+            s.iter_mut().zip(&b).for_each(|(d, x)| *d = *x);
+            s
+        }
         Ok(b) => {
             return refused(
                 cfg,

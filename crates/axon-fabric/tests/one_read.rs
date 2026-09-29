@@ -317,3 +317,116 @@ fn a_manifest_renamed_between_hash_and_parse_does_not_change_the_qualified_guest
          launch would pin came from the second read"
     );
 }
+
+// ── psv::prepare: the manifest it pins the guest from is the qualified one ──
+
+/// `psv::prepare` reads the profile manifest again, after the qualification
+/// hashed it, to take the guest kernel, image and init digests it pins in the
+/// launch manifest. That read is joined to the qualified digest: a manifest
+/// changed after qualification (another kernel) prepares nothing. This join is
+/// the only guard on the route: `prepare` takes the qualification as given.
+#[test]
+fn prepare_pins_the_guest_only_from_the_manifest_the_qualification_hashed() {
+    use axon_workspace_recipe::{tree_version_ref, Quota};
+    let env = Env::new();
+    let d = env.dir.path();
+    let manifest = d.join("manifest.json");
+    std::fs::write(&manifest, full_lx_manifest(QUALIFIED_GUEST)).unwrap();
+    let issuer = Issuer::generate();
+    let lx = qualified_linux_cfg(d, &issuer, &good_evidence(&sha256_file(&manifest)));
+    assert_eq!(lx.manifest, manifest);
+    let q = lx.qualification().unwrap();
+
+    let (cand, suite) = (d.join("in/candidate"), d.join("in/check"));
+    std::fs::create_dir_all(&cand).unwrap();
+    std::fs::create_dir_all(&suite).unwrap();
+    std::fs::write(cand.join("f.ax"), "fn main() {}\n").unwrap();
+    std::fs::write(suite.join("accept.ax"), "@[test] fn t_ok() {}\n").unwrap();
+    let quota = Quota::default();
+    let cand_ref = tree_version_ref(&cand, &quota).unwrap();
+    let suite_ref = tree_version_ref(&suite, &quota).unwrap();
+    let mut rq = request(&env, "op-prepare-join", "t_ok");
+    rq["workspace_version_ref"] = json!(cand_ref);
+    let rq: axon_loop_contracts::ComputeRequest = serde_json::from_value(rq).unwrap();
+    let prepare = |job: &str| {
+        axon_fabric::psv::prepare(
+            &rq,
+            &axon_fabric::psv::PrepareInputs {
+                qualification: &q,
+                profile_manifest: &lx.manifest,
+                host: None,
+                policy_json: "{}",
+                suite_id: "acc",
+                suite_version: &suite_ref,
+                entry: "accept.ax",
+                test: "t_ok",
+                candidate_dir: &cand,
+                suite_dir: &suite,
+                job_dir: &d.join(job),
+                observation_nonce: "none",
+            },
+        )
+    };
+    // Control: the qualified manifest prepares, pinning its kernel.
+    let qualified_kernel = "1".repeat(64);
+    let launch = prepare("job-control").unwrap();
+    assert_eq!(launch.manifest.guest.kernel_sha256, qualified_kernel);
+
+    // The manifest now names another kernel; the qualification is unchanged.
+    let mut other: Value = serde_json::from_str(&full_lx_manifest(QUALIFIED_GUEST)).unwrap();
+    other["artifacts"]["vmlinux"]["sha256"] = json!("9".repeat(64));
+    std::fs::write(&lx.manifest, other.to_string()).unwrap();
+    match prepare("job-attack") {
+        Ok(l) => panic!(
+            "ATTACK: prepare pinned guest kernel {} from a profile manifest the qualification \
+             never hashed",
+            l.manifest.guest.kernel_sha256
+        ),
+        Err(e) => assert!(e.contains("not the qualified manifest"), "{e}"),
+    }
+}
+
+// ── interpret_linux_result: the digest recorded is of the bytes interpreted ─
+
+/// `interpret_linux_result` records `sha256-result-json:` as evidence and
+/// decides the outcome from result.json. Both must come from ONE read: a
+/// result.json renamed in after the first read closes (inotify) would
+/// otherwise decide the outcome while the evidence names the other bytes.
+/// The first file is padded with whitespace (still the same JSON) so that
+/// hashing it takes long enough for the swap to land before any second read.
+#[test]
+fn the_result_json_hashed_as_evidence_is_the_one_interpreted() {
+    use axon_fabric::backend::{interpret_linux_result, LinuxOutcome};
+    use sha2::{Digest, Sha256};
+    let d = tempfile::tempdir().unwrap();
+    let rj = d.path().join("result.json");
+    let result = |status: &str, complete: bool| {
+        json!({
+            "schema": "axon-linux-microvm-result/1", "status": status,
+            "admissible": complete, "output_bound": true, "workload_exit": 0,
+            "outputs": {"stdout": {"sha256": "a".repeat(64)}},
+            "cleanup": {"complete": complete, "left_behind": []},
+        })
+        .to_string()
+    };
+    // Hashed first: cleanup not confirmed, so Unknown.
+    let mut first = result("vmm-died", false).into_bytes();
+    first.extend(std::iter::repeat_n(b' ', 96 << 20));
+    let second = result("ok", true).into_bytes();
+    let first_sha = format!("{:x}", Sha256::digest(&first));
+
+    let swapped = swap_after_first_read(&rj, &first, &second);
+    let (outcome, why, evidence) = interpret_linux_result(Some(0), d.path(), &mut || Some(0));
+    assert!(swapped.join().unwrap(), "result.json was never read");
+    let recorded = format!("sha256-result-json:{first_sha}");
+    assert!(evidence.contains(&recorded), "{evidence:?}");
+    assert!(
+        !matches!(outcome, LinuxOutcome::Ok { .. }),
+        "ATTACK: one result.json was hashed as evidence ({first_sha}) and another, renamed in, \
+         decided the outcome Ok ({why})"
+    );
+    assert!(
+        matches!(outcome, LinuxOutcome::Unknown),
+        "{outcome:?} {why}"
+    );
+}

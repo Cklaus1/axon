@@ -193,8 +193,8 @@ ATTACK_MARKERS = {
     'M149': r'assertion `left != right` failed: (ATTACK: certified PASS despite the attack: )?\{[^\n]*"status":"PASS"',
     'M150': r'assertion `left != right` failed: (ATTACK: certified PASS despite the attack: )?\{[^\n]*"status":"PASS"',
     'M151': r'assertion `left != right` failed: (ATTACK: certified PASS despite the attack: )?\{[^\n]*"status":"PASS"',
-    # WEAK@a3db33bd: refused 'does not verify ... not the ones the issuer signed' (M153's check), reason mismatch vs 'is for authority'
-    'M152': ATTACK,
+    # C9 r1b psv: EQUIVALENT_DID (four-cell vs M153); the attack is an UNRELABELLED cross-domain signature
+    'M152': 'ATTACK: a \\w+ signature, its domain field unchanged, was accepted as \\w+',
     'M153': 'relabelled as [^\\n]*"verified":true',
     'M154': 'unwrap_err\\(\\)` on an `Ok` value: LaunchManifest',
     'M155': 'unwrap_err\\(\\)` on an `Ok` value: LaunchManifest',
@@ -212,19 +212,19 @@ ATTACK_MARKERS = {
     'M167': 'left: (Passed|Failed|Unknown)\\s*\\n\\s*right: Refused',
     'M168': 'left: (Passed|Failed|Unknown)\\s*\\n\\s*right: Refused',
     'M169': 'failed: "(t_ok --json|-x|t_\\*|)"\\s*\\n\\s*left: (Passed|Failed|Unknown)',
-    # WEAK@a3db33bd: panic '32 bytes' in runner.rs production code; the short secret is never used
-    'M170': ATTACK,
+    # C9 r1b psv: the post-guard copy is total (no expect), so the length guard is the only check
+    'M170': 'ATTACK: a \\d+-byte completion secret was accepted and the test ran',
     'M171': 'stdin was not at EOF: STDIN-SAW:\\[[^\\]]',
-    # WEAK@a3db33bd: without the drop read_file still fails on UTF-8 encoding (SECRET-REFUSED without Permission denied); secret not read
-    'M172': ATTACK,
+    # C9 r1b psv: the fixture secret is printable, so the uid drop is the only guard
+    'M172': 'ATTACK: candidate code read the completion secret',
     'M173': 'failed: substring\\s*\\n\\s*left: Passed',
     'M174': 'left: Passed\\s*\\n\\s*right: Unknown',
     'M175': 'left: Passed\\s*\\n\\s*right: Unknown',
     'M177': 'left: (Failed|Unknown|Refused|NotRun)\\s*\\n\\s*right: Passed',
     'M178': 'left: Passed\\s*\\n\\s*right: Passed',
     'M179': 'failed: other-manifest\\s*\\n\\s*left: (Passed|Failed)',
-    # WEAK@a3db33bd: Unknown by 'inputs or test are not this launch's' instead of 'the guest refused'
-    'M180': ATTACK,
+    # C9 r1b psv: a Refused verdict over a genuine pass; nothing after the check reads the status
+    'M180': 'ATTACK: the guest refused, and the Fabric counted its run as Passed',
     'M181': 'failed: inputs\\s*\\n\\s*left: (Passed|Failed)',
     'M182': 'failed: stdout\\s*\\n\\s*left: (Passed|Failed)',
     # WEAK@a3db33bd: replay still Unknown (line before passed); only the reason 'without completion evidence' is missing
@@ -284,8 +284,8 @@ ATTACK_MARKERS = {
     'M222': 'unwrap_err\\(\\)` on an `Ok` value: LaunchManifest',
     'M223': 'unwrap_err\\(\\)` on an `Ok` value: LaunchManifest',
     'M224': 'unwrap_err\\(\\)` on an `Ok` value: InputCheck',
-    # WEAK@a3db33bd: Failing panic is e.contains("symlink") with 'candidate tree is X, not the Y the launch manifest names' - refused by the digest join.
-    'M225': ATTACK,
+    # C9 r1b psv: the manifest digest names the tree WITH the link, so the digest join agrees
+    'M225': 'ATTACK: a candidate holding a symlink was accepted under a digest naming it',
     'M226': 'the guest-path receipt parses as a contract: .*matched_checks',
     'M227': 'failed: op-obs-verifier-[\\w-]+\\n\\s*left: (?!NotRun)\\w+\\n\\s*right: NotRun',
     'M228': 'assertion `left == right` failed\\n\\s*left: \\"yes\\"\\n\\s*right: \\"no\\"',
@@ -413,31 +413,6 @@ ATTACK_MARKERS = {
     'M332': ATTACK,
     'M333': ATTACK,
     'M334': ATTACK,
-    'M335': ATTACK,
-    'M336': ATTACK,
-    'M337': ATTACK,
-    'M338': ATTACK,
-    'M339': ATTACK,
-    'M340': ATTACK,
-    'M341': ATTACK,
-    'M342': ATTACK,
-    'M343': ATTACK,
-    'M344': ATTACK,
-    'M345': ATTACK,
-    'M346': ATTACK,
-    'M347': ATTACK,
-    'M348': ATTACK,
-    'M349': ATTACK,
-    'M350': ATTACK,
-    'M351': ATTACK,
-    'M352': ATTACK,
-    'M353': ATTACK,
-    'M354': ATTACK,
-    'M355': ATTACK,
-    'M356': ATTACK,
-    'M357': ATTACK,
-    'M358': ATTACK,
-    'M369': ATTACK,
     # ── C9 round 1b, workstream LOOP: M360-M368 tightened from the
     # b3f32ee2 `--only` run's failing panics.
     'M360': r'ATTACK: a forged attribution was admitted: Accept',
@@ -455,4 +430,45 @@ ATTACK_MARKERS = {
     'M426': r'ATTACK: no launch manifest: an unobserved execution leg was counted as protected',
     'M427': r'ATTACK: no preflight observation: an unobserved execution leg was counted as protected',
     'M428': r'ATTACK: a development-backend execution leg was admitted as protected: Accept',
+    'M335': 'ATTACK: the genuine record was renamed in after the fields were checked on the\\s+forged one',
+    'M336': 'ATTACK: the certified \\(failing\\) preflight was hashed, a passing one was renamed in',
+    'M337': 'ATTACK: the qualified manifest was hashed, another was renamed in, and the guest',
+    'M338': 'ATTACK: the record names a verifier key the operator never trusted and readiness still said PASS',
+    'M339': 'ATTACK: the record attributes the observation to a key that did not make it and readiness still said PASS',
+    'M340': "ATTACK: an agent-signed observation stood in for the operator observer's and readiness still said PASS",
+    'M341': 'ATTACK: the observer saw another (guest kernel|fabric revision) than the one certified and readiness still said PASS',
+    'M342': "ATTACK: the record's b263_qualification_sha256 names no certified evidence and readiness still said PASS",
+    'M343': "ATTACK: an agent-signed B263 record stood in for the operator's qualification and readiness still said PASS",
+    'M344': 'ATTACK: the B263 qualification qualified another \\S+ than the certified \\S+ and readiness still said PASS',
+    'M345': 'ATTACK: a B263 qualification of another profile stood in for the protected one and readiness still said PASS',
+    'M346': 'ATTACK: a skip-worktree entry hid a modified source file, and the build provenance still says source_dirty: false',
+    'M347': 'ATTACK: an untracked \\.cargo/config\\.toml changes the build, and the build provenance still says source_dirty: false',
+    'M348': 'ATTACK: an owner-writable \\(0600\\) signing key signed a protected run',
+    'M349': "ATTACK: the record's observation_sha256 names no certified evidence and readiness still said PASS",
+    'M350': 'ATTACK: an input carrying \\S+ on "\\." was ACCEPTED',
+    'M351': 'ATTACK: an input carrying \\S+ on "[^."][^"]*" was ACCEPTED',
+    'M352': 'ATTACK: an input carrying system\\.posix_acl_\\w+ on "[^"]*" was ACCEPTED',
+    'M353': 'ATTACK: an input carrying a POSIX ACL was not refused and the job ran',
+    # C9 r1b psv: LAYER row (decision in its MUTATIONS comment): ACTIVE, killed by its own layer's output
+    'M354': "ATTACK: psv_image's copy carried extended attributes of the input into the\\s+staging tree",
+    # C9 r1b psv: LAYER row (decision in its MUTATIONS comment): ACTIVE, killed by its own layer's output
+    'M355': 'ATTACK: an extended attribute on the staging tree reached the guest input image',
+    # C9 r1b psv: LAYER row (decision in its MUTATIONS comment): ACTIVE, killed by its own layer's output
+    'M356': 'ATTACK: a PSV input is mounted with POSIX ACLs honoured.*/dev/vdc\\b',
+    # C9 r1b psv: LAYER row (decision in its MUTATIONS comment): ACTIVE, killed by its own layer's output
+    'M357': 'ATTACK: a PSV input is mounted with POSIX ACLs honoured.*/dev/vdd\\b',
+    # C9 r1b psv: LAYER row (decision in its MUTATIONS comment): ACTIVE, killed by its own layer's output
+    'M358': 'ATTACK: a PSV input is mounted with POSIX ACLs honoured.*/dev/vde\\b',
+    'M369': 'ATTACK: a narrowing list that cannot be read was read as absent',
+    # ── C9 round 1b, workstream PSV (M410-M418) ──
+    'M410': r'ATTACK: prepare pinned guest kernel \w+ from a profile manifest the qualification never hashed',
+    'M411': r'ATTACK: one result\.json was hashed as evidence \(\w+\) and another, renamed in,\s+decided the outcome Ok',
+    'M412': r'ATTACK: a replace ref rewrote what HEAD names, and the build provenance still says source_dirty: false',
+    'M413': r'ATTACK: a grafts file rewrote ancestry, and the build provenance still says source_dirty: false',
+    'M414': r'ATTACK: info/exclude hid an untracked \.cargo/config\.toml, and the build provenance still says source_dirty: false',
+    'M415': r'ATTACK: a test-trust build reported its answer as authoritative',
+    'M416': r'ATTACK: a caller-chosen --issuers root was reported as authoritative in a\s+production build',
+    'M417': r'ATTACK: an operator root failing the ownership walk was reported as\s+authoritative',
+    # EQUIVALENT_DID (four-cell vs M339+M340): the joint cell's attack.
+    'M418': r'ATTACK: the record names an observer key the operator never trusted, that key made\s+the observation, and readiness still said PASS',
 }

@@ -247,7 +247,13 @@ fn a_signature_for_another_authority_is_not_a_qualification_signature() {
         let mut sig = c.record().into_os_string();
         sig.push(".sig");
         std::fs::write(&sig, c.operator.sign_for(a, &bytes)).unwrap();
-        c.refused("is for authority");
+        // The domain field (M152) and the domain-separated message (M153)
+        // each refuse this alone (M152's four-cell record): either reason.
+        let v = c.refused_any().to_string();
+        assert!(
+            v.contains("is for authority") || v.contains("does not verify"),
+            "{v}"
+        );
         // Relabelling the domain field without re-signing breaks the signature.
         let mut v: Value = serde_json::from_str(&c.operator.sign_for(a, &bytes)).unwrap();
         v["domain"] = json!("qualification");

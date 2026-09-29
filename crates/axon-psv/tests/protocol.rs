@@ -285,7 +285,14 @@ fn inputs_with_links_or_omitted_entries_are_refused() {
     assert!(check_inputs(&m, &cand, &suite, &q).is_ok());
 
     std::os::unix::fs::symlink("f.ax", cand.join("g.ax")).unwrap();
-    let (_, e) = check_inputs(&m, &cand, &suite, &q).unwrap_err();
+    // The manifest NAMES the tree with the link (the store's importer accepts
+    // one, and the digest recipe records it), so the digest join agrees and
+    // the no-symlink rule is the only thing that refuses it.
+    let mut with_link = m.clone();
+    with_link.candidate.tree_digest = axon_workspace_recipe::tree_version_ref(&cand, &q).unwrap();
+    assert_ne!(with_link.candidate.tree_digest, m.candidate.tree_digest);
+    let (_, e) = check_inputs(&with_link, &cand, &suite, &q)
+        .expect_err("ATTACK: a candidate holding a symlink was accepted under a digest naming it");
     assert!(e.contains("symlink"), "{e}");
     std::fs::remove_file(cand.join("g.ax")).unwrap();
 

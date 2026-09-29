@@ -156,7 +156,10 @@ fn fixture_with(entry: &str, test: &str, drop: bool, candidate: &str) -> Fx {
     ] {
         std::fs::set_permissions(f, std::fs::Permissions::from_mode(0o644)).unwrap();
     }
-    let secret: [u8; 32] = std::array::from_fn(|i| (i as u8).wrapping_mul(37).wrapping_add(11));
+    // Printable ASCII on purpose: candidate code reads files as UTF-8, so a
+    // binary secret would be unreadable to it for an incidental reason (an
+    // encoding error) and hide whether the uid drop is what refuses it.
+    let secret: [u8; 32] = std::array::from_fn(|i| b'A' + ((i as u8).wrapping_mul(7) % 26));
     std::fs::write(&secret_path, secret).unwrap();
     std::fs::set_permissions(&secret_path, std::fs::Permissions::from_mode(0o400)).unwrap();
     let q = Quota::default();
@@ -332,13 +335,21 @@ fn nothing_executes_unless_every_input_is_the_named_one() {
         assert!(!ran(&fx));
     }
 
-    // The secret is not a 32-byte secret.
-    let fx = fixture("t_ok", false);
-    std::fs::set_permissions(&fx.cfg.secret, std::fs::Permissions::from_mode(0o600)).unwrap();
-    std::fs::write(&fx.cfg.secret, b"short").unwrap();
-    let v = run(&fx.cfg);
-    assert!(v.refusal.unwrap().contains("not 32"));
-    assert!(!ran(&fx));
+    // The secret is not a 32-byte secret: too short, and too long. The
+    // length guard is the only check (the copy after it is total), so without
+    // it the job would run under a padded or truncated secret.
+    for bad in [&b"short"[..], &[7u8; 64][..]] {
+        let fx = fixture("t_ok", false);
+        std::fs::set_permissions(&fx.cfg.secret, std::fs::Permissions::from_mode(0o600)).unwrap();
+        std::fs::write(&fx.cfg.secret, bad).unwrap();
+        let v = run(&fx.cfg);
+        assert!(
+            !ran(&fx) && v.status == GuestStatus::Refused,
+            "ATTACK: a {}-byte completion secret was accepted and the test ran: {v:?}",
+            bad.len()
+        );
+        assert!(v.refusal.unwrap().contains("not 32"));
+    }
 }
 
 /// A11: a proof from one attempt (or trial) does not verify for another —
@@ -384,13 +395,18 @@ fn neither_the_secret_nor_the_key_reaches_candidate_code_or_the_output() {
     if root {
         // Refused BECAUSE of the uid drop — not for an incidental reason. A
         // first version accepted any refusal and passed with the drop removed:
-        // the secret is not UTF-8, so `read_file` failed on encoding before
-        // permission ever mattered (found by the `no-drop` mutant).
+        // the secret was not UTF-8, so `read_file` failed on encoding before
+        // permission ever mattered (found by the `no-drop` mutant). The
+        // fixture's secret is now printable, so the drop is the only guard: as
+        // root, without it, candidate code reads the 0400 file.
+        assert!(
+            !stdout.contains("SECRET-READ:"),
+            "ATTACK: candidate code read the completion secret: {stdout}"
+        );
         assert!(
             stdout.contains("SECRET-REFUSED:") && stdout.contains("Permission denied"),
             "{stdout}"
         );
-        assert!(!stdout.contains("SECRET-READ:"), "{stdout}");
         assert_eq!(v.status, GuestStatus::Passed, "{v:?}");
     } else {
         eprintln!("note: not root, so the uid drop (secret-file refusal) is not exercised");

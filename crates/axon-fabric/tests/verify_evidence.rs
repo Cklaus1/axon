@@ -128,16 +128,49 @@ fn each_authority_verifies_only_its_own_domain_message() {
                     "{v}"
                 );
             }
-            // Unrelabelled, the field alone refuses it.
-            if made != want {
-                std::fs::write(sig_of(&rec), key.sign_for(made, &bytes)).unwrap();
-                let (c, v) = verify_as(&rec, &issuers, want.dir_name());
-                assert_eq!(c, 4, "{v}");
-                assert!(
-                    v["reason"].as_str().unwrap().contains("is for authority"),
-                    "{v}"
-                );
+        }
+    }
+}
+
+/// RULE:authority-domain, the `domain` FIELD (M152), on the one route it
+/// guards: a genuine signature made for one authority, NOT relabelled,
+/// presented to another. Two independent checks refuse it: the field names
+/// the wrong authority (M152), and the signed message is domain-separated so
+/// the signature does not verify under the other authority's message (M153).
+/// Which of the two refuses is not the property, so any refusal is accepted;
+/// only acceptance is the attack. ALL PATHS (the four-cell record for M152):
+/// `verify_evidence_signature` is the only reader of the field and always goes
+/// on to verify over `evidence_signing_message(authority, …)` for the CALLER's
+/// authority; a signature made for another authority verifies there only if
+/// the message is not domain-bound, which is exactly M153.
+#[test]
+fn an_unrelabelled_signature_for_another_authority_verifies_nowhere_else() {
+    use axon_fabric::backend::TrustAuthority;
+    let d = tempfile::tempdir().unwrap();
+    let issuers = d.path().join("trusted");
+    let rec = d.path().join("record.json");
+    std::fs::write(&rec, br#"{"statement":"x"}"#).unwrap();
+    let key = Issuer::generate();
+    key.trust_in(&issuers, "operator");
+    let bytes = std::fs::read(&rec).unwrap();
+    for want in TrustAuthority::ALL {
+        for made in TrustAuthority::ALL {
+            if made == want {
+                continue;
             }
+            std::fs::write(sig_of(&rec), key.sign_for(made, &bytes)).unwrap();
+            let (c, v) = verify_as(&rec, &issuers, want.dir_name());
+            assert_ne!(
+                c, 0,
+                "ATTACK: a {made:?} signature, its domain field unchanged, was accepted as \
+                 {want:?}: {v}"
+            );
+            assert_eq!(c, 4, "{v}");
+            let why = v["reason"].as_str().unwrap();
+            assert!(
+                why.contains("is for authority") || why.contains("does not verify"),
+                "{v}"
+            );
         }
     }
 }

@@ -198,6 +198,29 @@ pub use axon_loop_contracts::operator_trust::{TrustAuthority, OPERATOR_TRUST_ROO
 /// Whether this build carries the TEST-ONLY trust constructors.
 pub const TEST_TRUST_BUILD: bool = cfg!(any(test, feature = "test-trust-root"));
 
+/// Whether a `verify-evidence` answer is AUTHORITATIVE (review FIELD-ORIGIN,
+/// C9 round 1). `--issuers` is the caller's choice, so "verified" alone says
+/// only that some key in a directory the caller named signed the bytes. The
+/// answer speaks for the operator only when this is a production build, the
+/// root is the operator's own root for the authority, and that root passes the
+/// ownership walk (`owned`). `Err` is why it is not. Each condition is its own
+/// guard: in a test-trust build the first alone decides, so each is tested on
+/// the inputs where it is the only one that can refuse.
+pub fn verify_evidence_authority(
+    test_trust_build: bool,
+    issuers: &Path,
+    operator_root: &Path,
+    owned: Result<(), String>,
+) -> Result<(), String> {
+    if test_trust_build {
+        return Err("this is a test-trust build".into());
+    }
+    if issuers != operator_root {
+        return Err("the trust root is the caller's --issuers, not the operator's root".into());
+    }
+    owned.map_err(|e| format!("the operator root fails the ownership walk: {e}"))
+}
+
 /// The trust root for qualification evidence. Only PUBLIC keys live here; the
 /// signing key is held by the operator (decision D6) and never by this tree.
 #[derive(Debug, Clone)]
@@ -1296,6 +1319,33 @@ pub fn run_linux_profile(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `verify-evidence`'s `authoritative` flag, one condition at a time, each
+    /// on the inputs where it is the ONLY one that can refuse. The CLI always
+    /// runs as a test-trust build under test, so the production conditions are
+    /// unreachable there (verify_evidence.rs checks the integrated answer).
+    #[test]
+    fn verify_evidence_is_authoritative_only_for_the_operators_owned_root_in_production() {
+        let op = Path::new("/etc/axon/trust/qualification");
+        let caller = Path::new("/tmp/caller-issuers");
+        assert_eq!(verify_evidence_authority(false, op, op, Ok(())), Ok(()));
+        let why = verify_evidence_authority(true, op, op, Ok(())).expect_err(
+            "ATTACK: a test-trust build reported its answer as authoritative for the operator's \
+             own, owned root",
+        );
+        assert!(why.contains("test-trust build"), "{why}");
+        let why = verify_evidence_authority(false, caller, op, Ok(())).expect_err(
+            "ATTACK: a caller-chosen --issuers root was reported as authoritative in a \
+             production build",
+        );
+        assert!(why.contains("the caller's --issuers"), "{why}");
+        let why = verify_evidence_authority(false, op, op, Err("group-writable".into()))
+            .expect_err(
+                "ATTACK: an operator root failing the ownership walk was reported as \
+                 authoritative",
+            );
+        assert!(why.contains("ownership walk: group-writable"), "{why}");
+    }
 
     /// ADR-001 D3: the loop counts a protected evaluation only on a backend in
     /// `PROTECTED_PROFILES`. That list is the loop's; the profiles are Fabric's.

@@ -293,9 +293,13 @@ fn verify_evidence(a: &Args) {
     // is the operator's own for this authority, passes the operator-ownership
     // walk, and this is a production build (review FIELD-ORIGIN, C9 round 1).
     let operator_root = authority.operator_dir();
-    let owned = axon_fabric::backend::check_operator_owned(&issuers);
-    let authoritative =
-        !axon_fabric::backend::TEST_TRUST_BUILD && issuers == operator_root && owned.is_ok();
+    let authority_of_answer = axon_fabric::backend::verify_evidence_authority(
+        axon_fabric::backend::TEST_TRUST_BUILD,
+        &issuers,
+        &operator_root,
+        axon_fabric::backend::check_operator_owned(&issuers),
+    );
+    let authoritative = authority_of_answer.is_ok();
     match axon_fabric::backend::verify_operator_evidence(&record, &sig, &issuers, authority) {
         Ok(issuer) => println!(
             "{}",
@@ -307,15 +311,7 @@ fn verify_evidence(a: &Args) {
                 "trust_root": issuers,
                 "operator_root": operator_root,
                 "authoritative": authoritative,
-                "non_authoritative_because": if authoritative { serde_json::Value::Null } else {
-                    serde_json::json!(if axon_fabric::backend::TEST_TRUST_BUILD {
-                        "this is a test-trust build".to_string()
-                    } else if issuers != operator_root {
-                        "the trust root is the caller's --issuers, not the operator's root".to_string()
-                    } else {
-                        format!("the operator root fails the ownership walk: {}", owned.err().unwrap_or_default())
-                    })
-                },
+                "non_authoritative_because": authority_of_answer.err(),
                 "build": if axon_fabric::backend::TEST_TRUST_BUILD { "test-trust" } else { "production" },
                 "verifier": axon_fabric::readiness::verifier_identity(),
             })
@@ -553,6 +549,13 @@ fn psv_host_guest() {
         }
         // A failure, reported with a clean exit.
         "exit0" => v["exit_code"] = serde_json::json!(0),
+        // The guest REFUSED, but everything else is a genuine pass (keyed
+        // output, its digest, exit 0, this launch's inputs and test): the
+        // guest's refusal alone must stand (M180).
+        "refused-after-pass" => {
+            v["status"] = serde_json::json!("refused");
+            v["refusal"] = serde_json::json!("the runner refused after the run");
+        }
         "candidate-changed"
         | "suite-changed"
         | "unbound"
