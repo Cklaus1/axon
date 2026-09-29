@@ -245,11 +245,17 @@ def main():
     for rid, rec in mut.STALE_REFACTORED.items():
         records.append({
             "mutation": rid, "status": "STALE_REFACTORED", "property": rec["property"],
-            "original_guard": "refactored away (amendment 16)",
+            "original_guard": rec["how"],
+            # The row is stale ONLY if its guard is really gone.
+            "old_string_present": open(os.path.join(ROOT, BY_ID[rid][2])).read().count(BY_ID[rid][3]) > 0,
             "subsumed_by": rec["subsumed_by"], "live_killing_mutant": rec["killer"],
             "matrix": None, "holds": True,
         })
-        print(f"OK  {rid}: refactored; property covered by live killers {rec['subsumed_by']}",
+        if records[-1]["old_string_present"]:
+            ok = False
+            records[-1]["holds"] = False
+        print(f"{'OK ' if records[-1]['holds'] else 'BAD'} {rid}: stale ({rec['how']}); "
+              f"property covered by live killers {rec['subsumed_by']}",
               flush=True)
     doc = {"schema": "axon-v022-paired-disable/1", "commit": commit, "all_hold": ok,
            "records": records}

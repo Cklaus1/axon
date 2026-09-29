@@ -926,11 +926,11 @@ EQUIVALENT_DID = set(EQUIV_RECORD)
 # M204's historical guard (the submit observe seam) was REFACTORED away by
 # amendment 16; it no longer applies. Its property is enforced by M192-M195
 # (observe returns Err on a defect) and M253 (epoch recheck), all live killers.
-STALE_REFACTORED = {"M204": {"property": "a defective/replayed observation must not launch", "subsumed_by": ["M192", "M253"], "killer": "M253"},
+STALE_REFACTORED = {"M204": {"property": "a defective/replayed observation must not launch", "subsumed_by": ["M192", "M253"], "killer": "M253", "how": "the submit observe seam was restructured by amendment 16 (epoch re-read after the observer)"},
                     # C9 re-audit: M176 was listed as a LEGACY EQUIVALENT but its guard no longer
                     # exists (old string absent) -- it became the `Some(0)` of the Passed arm in
                     # runner.rs, which no row mutated. It is STALE; M293 now kills that arm.
-                    "M176": {"property": "a pass needs exit 0", "subsumed_by": ["M293"], "killer": "M293"}}
+                    "M176": {"property": "a pass needs exit 0", "subsumed_by": ["M293"], "killer": "M293", "how": "the exit-0 guard became the Some(0) of the Passed arm in runner.rs (C9 re-audit)"}}
 
 # M176 (the runner's exit-0 guard) is equivalent since `--exact` (PSV review
 # wf_d725935a-7ed, B1): the runner now executes exactly the one registered
