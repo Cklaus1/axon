@@ -22,6 +22,9 @@
 //!   (the repository may narrow, never add).
 
 use crate::backend::{TrustAuthority, TEST_TRUST_BUILD};
+#[cfg(unix)]
+use crate::git_data::worktree_differs;
+use crate::git_data::{Objects, GIT_BIN};
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 
@@ -210,45 +213,16 @@ fn sha256_file(p: &Path) -> Result<String, String> {
     Ok(sha256_hex(&read_once(p)?))
 }
 
-/// The operator-installed git. Never resolved through the caller's PATH: a
-/// `git` earlier on PATH is whatever the caller (or an agent that can shape
-/// the caller's environment) says it is.
-const GIT_BIN: &str = "/usr/bin/git";
-
 /// A git invocation that answers about THIS repository's real objects and
-/// nothing else. The caller's environment is dropped (GIT_DIR, GIT_WORK_TREE,
-/// GIT_INDEX_FILE, GIT_CONFIG_*, GIT_REPLACE_REF_BASE, PATH… all steer git),
-/// replace refs are not honoured, system and global config are not read, and
-/// the repository-local settings that run code or answer from a cache
-/// (fsmonitor, hooks, the untracked cache) are overridden on the command line.
+/// nothing else ([`crate::git_data::git_cmd`], the one implementation build
+/// provenance shares): the caller's environment dropped, replace refs off,
+/// system and global config unread, the working tree the one asked about,
+/// no fetch of any kind, and the repository-local settings that run code or
+/// answer from a cache overridden on the command line. The repository's own
+/// config is refused unless it is inert ([`refuse_git_spoofing`]).
 fn git_cmd(repo: &Path) -> Result<std::process::Command, String> {
     let top = std::fs::canonicalize(repo).map_err(|e| format!("{}: {e}", repo.display()))?;
-    let mut c = std::process::Command::new(GIT_BIN);
-    c.env_clear()
-        .env("PATH", "/usr/bin:/bin")
-        .env("LC_ALL", "C")
-        .env("GIT_NO_REPLACE_OBJECTS", "1")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_OPTIONAL_LOCKS", "0")
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .arg("--no-replace-objects")
-        .args(["-c", "core.fsmonitor=", "-c", "core.hooksPath=/dev/null"])
-        .args([
-            "-c",
-            "core.untrackedCache=false",
-            "-c",
-            "advice.graftFileDeprecated=false",
-        ])
-        // Ownership is not what this check trusts (every answer below is
-        // re-verified or refused); the repository may belong to another uid.
-        .args(["-c", "safe.directory=*"])
-        .arg("-C")
-        .arg(&top)
-        .arg("--work-tree")
-        .arg(&top)
-        .stdin(std::process::Stdio::null());
-    Ok(c)
+    Ok(crate::git_data::git_cmd(&top))
 }
 
 fn git(repo: &Path, args: &[&str]) -> Result<(bool, String), String> {
@@ -266,6 +240,11 @@ fn git(repo: &Path, args: &[&str]) -> Result<(bool, String), String> {
 /// the objects and files that are there. Any of it present: refused, never
 /// interpreted.
 fn refuse_git_spoofing(repo: &Path, component: &str) -> Result<(), String> {
+    // The repository's own .git/config: a promisor remote with a
+    // core.sshCommand, core.worktree, a filter driver… (review PSV-7, C9
+    // round 2). Refused before git is asked anything else.
+    let top = std::fs::canonicalize(repo).map_err(|e| format!("{}: {e}", repo.display()))?;
+    crate::git_data::refuse_config(&top).map_err(|e| format!("{component}: {e}"))?;
     let (ok, replaced) = git(
         repo,
         &["for-each-ref", "--format=%(refname)", "refs/replace/"],
@@ -316,204 +295,6 @@ fn refuse_git_spoofing(repo: &Path, component: &str) -> Result<(), String> {
         }
     }
     Ok(())
-}
-
-/// SHA-1, only to check that an object's bytes hash to its git name (the
-/// certified `axon_sha` is a SHA-1 object id). Not used for anything else.
-fn sha1(data: &[u8]) -> [u8; 20] {
-    let mut h: [u32; 5] = [0x67452301, 0xEFCDAB89, 0x98BADCFE, 0x10325476, 0xC3D2E1F0];
-    let mut m = data.to_vec();
-    m.push(0x80);
-    while m.len() % 64 != 56 {
-        m.push(0);
-    }
-    m.extend_from_slice(&((data.len() as u64).wrapping_mul(8)).to_be_bytes());
-    for chunk in m.chunks(64) {
-        let mut w = [0u32; 80];
-        for (i, b) in chunk.chunks(4).enumerate() {
-            w[i] = u32::from_be_bytes([b[0], b[1], b[2], b[3]]);
-        }
-        for i in 16..80 {
-            w[i] = (w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16]).rotate_left(1);
-        }
-        let [mut a, mut b, mut c, mut d, mut e] = h;
-        for (i, wi) in w.iter().enumerate() {
-            let (f, k) = match i {
-                0..=19 => ((b & c) | (!b & d), 0x5A827999),
-                20..=39 => (b ^ c ^ d, 0x6ED9EBA1),
-                40..=59 => ((b & c) | (b & d) | (c & d), 0x8F1BBCDC),
-                _ => (b ^ c ^ d, 0xCA62C1D6),
-            };
-            let t = a
-                .rotate_left(5)
-                .wrapping_add(f)
-                .wrapping_add(e)
-                .wrapping_add(k)
-                .wrapping_add(*wi);
-            e = d;
-            d = c;
-            c = b.rotate_left(30);
-            b = a;
-            a = t;
-        }
-        for (x, y) in h.iter_mut().zip([a, b, c, d, e]) {
-            *x = x.wrapping_add(y);
-        }
-    }
-    let mut out = [0u8; 20];
-    for (i, x) in h.iter().enumerate() {
-        out[i * 4..i * 4 + 4].copy_from_slice(&x.to_be_bytes());
-    }
-    out
-}
-
-fn hex20(b: &[u8]) -> String {
-    b.iter().map(|x| format!("{x:02x}")).collect()
-}
-
-/// The git object id of `body` stored as an object of type `ty`.
-fn object_id(ty: &str, body: &[u8]) -> String {
-    let mut m = format!("{ty} {}\0", body.len()).into_bytes();
-    m.extend_from_slice(body);
-    hex20(&sha1(&m))
-}
-
-/// The repository's object store, read through `git cat-file --batch`, where
-/// an object is accepted only if its bytes hash to the name asked for. Git
-/// does not check that for a tree it reads for `diff`, so a forged loose
-/// object under a certified name would otherwise be believed.
-struct Objects {
-    child: std::process::Child,
-    out: std::io::BufReader<std::process::ChildStdout>,
-}
-
-impl Objects {
-    fn open(repo: &Path) -> Result<Objects, String> {
-        let mut child = git_cmd(repo)?
-            .args(["cat-file", "--batch"])
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-            .map_err(|e| format!("{GIT_BIN}: {e}"))?;
-        let out = std::io::BufReader::new(child.stdout.take().ok_or("git cat-file: no stdout")?);
-        Ok(Objects { child, out })
-    }
-
-    fn read(&mut self, oid: &str, want: &str) -> Result<Vec<u8>, String> {
-        use std::io::{BufRead, Read, Write};
-        let io = |e: std::io::Error| format!("git cat-file: {e}");
-        let stdin = self.child.stdin.as_mut().ok_or("git cat-file: no stdin")?;
-        writeln!(stdin, "{oid}")
-            .and_then(|()| stdin.flush())
-            .map_err(io)?;
-        let mut header = String::new();
-        self.out.read_line(&mut header).map_err(io)?;
-        let f: Vec<&str> = header.trim_end().split(' ').collect();
-        let size = match f.as_slice() {
-            [o, t, n] if *o == oid && *t == want => n.parse::<usize>().ok(),
-            _ => None,
-        }
-        .filter(|n| *n <= 1 << 30)
-        .ok_or(format!(
-            "object {oid} is not a {want} in this repository's object store"
-        ))?;
-        let mut body = vec![0u8; size + 1];
-        self.out.read_exact(&mut body).map_err(io)?;
-        body.pop();
-        if object_id(want, &body) != oid {
-            return Err(format!(
-                "object {oid} does not hash to its name: the object store is forged or damaged, \
-                 and nothing read from it is certified"
-            ));
-        }
-        Ok(body)
-    }
-
-    /// Every non-tree entry of `commit`'s tree outside `governance/`, as
-    /// path → (mode, object id), each tree on the way verified by hash.
-    fn entries(
-        &mut self,
-        commit: &str,
-    ) -> Result<std::collections::BTreeMap<Vec<u8>, (u32, String)>, String> {
-        let c = self.read(commit, "commit")?;
-        let mut stack = vec![(
-            Vec::new(),
-            c.strip_prefix(b"tree ")
-                .and_then(|r| r.get(..40))
-                .map(|t| String::from_utf8_lossy(t).to_string())
-                .ok_or(format!("commit {commit} names no tree"))?,
-        )];
-        let mut out = std::collections::BTreeMap::new();
-        while let Some((prefix, tree)) = stack.pop() {
-            let b = self.read(&tree, "tree")?;
-            let mut i = 0;
-            while i < b.len() {
-                let bad = || format!("tree {tree} is malformed");
-                let sp = i + b[i..].iter().position(|&x| x == b' ').ok_or_else(bad)?;
-                let nul = sp + b[sp..].iter().position(|&x| x == 0).ok_or_else(bad)?;
-                let id = b.get(nul + 1..nul + 21).ok_or_else(bad)?;
-                let mode = std::str::from_utf8(&b[i..sp])
-                    .ok()
-                    .and_then(|m| u32::from_str_radix(m, 8).ok())
-                    .ok_or_else(bad)?;
-                let mut path = prefix.clone();
-                path.extend_from_slice(&b[sp + 1..nul]);
-                i = nul + 21;
-                if mode == 0o40000 {
-                    if path != b"governance" {
-                        path.push(b'/');
-                        stack.push((path, hex20(id)));
-                    }
-                } else if !path.starts_with(b"governance/") {
-                    out.insert(path, (mode, hex20(id)));
-                }
-            }
-        }
-        Ok(out)
-    }
-}
-
-impl Drop for Objects {
-    fn drop(&mut self) {
-        drop(self.child.stdin.take());
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-    }
-}
-
-/// The first certified path whose working-tree bytes (and kind, and
-/// executable bit) are not the certified object, hashed here from the file
-/// itself: neither the index nor git's view of the working tree is consulted.
-#[cfg(unix)]
-fn worktree_differs(
-    repo: &Path,
-    certified: &std::collections::BTreeMap<Vec<u8>, (u32, String)>,
-) -> Option<String> {
-    use std::os::unix::ffi::{OsStrExt, OsStringExt};
-    use std::os::unix::fs::PermissionsExt;
-    certified
-        .iter()
-        .find(|(path, (mode, oid))| {
-            let p = repo.join(std::ffi::OsStr::from_bytes(path));
-            let Ok(md) = std::fs::symlink_metadata(&p) else {
-                return true;
-            };
-            let body = match mode {
-                0o120000 if md.file_type().is_symlink() => std::fs::read_link(&p)
-                    .ok()
-                    .map(|t| t.into_os_string().into_vec()),
-                0o100644 | 0o100755
-                    if md.is_file()
-                        && (md.permissions().mode() & 0o100 != 0) == (*mode == 0o100755) =>
-                {
-                    std::fs::read(&p).ok()
-                }
-                _ => None,
-            };
-            body.is_none_or(|b| object_id("blob", &b) != *oid)
-        })
-        .map(|(path, _)| String::from_utf8_lossy(path).to_string())
 }
 
 fn is_hex(v: &Value, n: usize) -> bool {
@@ -652,12 +433,13 @@ fn certification(repo: &Path, component: &str, trust: &ReadinessTrust) -> Result
         if !ok {
             return Err(format!("{component}: this tree has no HEAD commit"));
         }
-        let mut objects = Objects::open(repo)?;
+        let top = std::fs::canonicalize(repo).map_err(|e| format!("{}: {e}", repo.display()))?;
+        let mut objects = Objects::open(&top)?;
         let want = objects
-            .entries(certified)
+            .entries(certified, Some(b"governance"))
             .map_err(|e| format!("{component}: {e}"))?;
         let have = objects
-            .entries(&head)
+            .entries(&head, Some(b"governance"))
             .map_err(|e| format!("{component}: {e}"))?;
         outside.extend(
             want.keys()
@@ -988,35 +770,4 @@ pub fn protected_components(repo: &Path, trust: &ReadinessTrust) -> Value {
         "verifier": verifier_identity(),
         "components": out,
     })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn object_ids_are_git_object_ids() {
-        assert_eq!(
-            hex20(&sha1(b"abc")),
-            "a9993e364706816aba3e25717850c26c9cd0d89d"
-        );
-        assert_eq!(
-            hex20(&sha1(b"")),
-            "da39a3ee5e6b4b0d3255bfef95601890afd80709"
-        );
-        let long = vec![b'a'; 1000];
-        assert_eq!(
-            hex20(&sha1(&long)),
-            "291e9a6c66994949b57ba5e650361e98fc36b1ba"
-        );
-        // `git hash-object` of "hello\n" and of an empty tree.
-        assert_eq!(
-            object_id("blob", b"hello\n"),
-            "ce013625030ba8dba906f756967f9e9ca394464a"
-        );
-        assert_eq!(
-            object_id("tree", b""),
-            "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
-        );
-    }
 }

@@ -3,13 +3,18 @@
 //! whether that tree was dirty, the compiler and profile — so a certification
 //! can bind it and replacing the verifier is not a silent change of authority.
 //!
-//! `fabric_revision` / `source_dirty` come from `src/provenance.rs` (the
-//! operator's `/usr/bin/git`, environment dropped, replace objects off; dirty
-//! on any skip-worktree/assume-unchanged entry, replace ref, graft, change,
-//! untracked file, or file ignored by a rule outside the tracked tree). Without
-//! git the revision is "unknown" and the tree is dirty; a production verifier
-//! must be clean.
+//! `fabric_revision` / `source_dirty` come from `src/provenance.rs` over
+//! `src/git_data.rs` (the operator's `/usr/bin/git`, environment dropped,
+//! replace objects off, the repository's own config refused unless it is
+//! inert, never fetching; dirty on any skip-worktree/assume-unchanged entry,
+//! replace ref, graft, change, untracked file, file ignored by a rule outside
+//! the tracked tree, or file whose bytes are not HEAD's). Without git the
+//! revision is "unknown" and the tree is dirty; a production verifier must be
+//! clean.
 
+#[path = "src/git_data.rs"]
+#[allow(dead_code)]
+mod git_data;
 #[path = "src/provenance.rs"]
 #[allow(dead_code)]
 mod provenance;
