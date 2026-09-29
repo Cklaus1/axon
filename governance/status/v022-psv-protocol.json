@@ -475,6 +475,26 @@
         },
         "methodology_lesson": "A green package suite is not evidence a guard is redundant \u2014 only that no existing test exercises the route. 3 of 7 retired rows (M254, M103, M255) were load-bearing."
       }
+    },
+    "candidate_9": {
+      "state": "DEV HARDENING WAVE in progress (operator decision 2026-09-29: class-level fixes, then a dev adversarial review to zero blockers, THEN one freeze + proof + one certifying review)",
+      "naming": "C7b = proof WITHDRAWN; C8 = FAILED certification attempts (01e22d50, 2568963f, 7b9736b9, cb9fa2ea, 4943489f); C9 = this candidate",
+      "objectives": {
+        "1_rng": "DONE 8a7962fb: RNG moved into the per-provenance Kernel; process-global stream deleted; sealed stream one-way seeded; drift test derives Random builtins from BUILTINS; runner-level steering regression; M270-M272 killed",
+        "2_equivalence": "DONE 8a7962fb: M254/M103/M255/M104/M209/M210 ACTIVE with named-property killing tests; M176 STALE (M293 replaces it); M58 + M245 EQUIVALENT on executed four-cell matrices with own-attack markers; paired-disable requires all four cells, attack-message markers, row-flag full suite",
+        "3_field_origin": "DONE b3902ed5 (c9/field-origin): all reviewer git spoofs + 2 new reproduced and refused; object-store re-hash; out_root/nonce_store ownership; M284-M292 killed",
+        "4_major_adjacent": "IN PROGRESS: loop-side joins (PSV-5 five untested joins, guest-verdict-sha256, PSV-6 age/nonce vs matrix claim) and fabric-side identity (PSV-6 observer-absent launch, PSV-4 bundle emission, PSV-3 keyed pass-side row + prctl fail-closed, PSV-2 tree digest)",
+        "5_lane_a_d1": "DONE 782d9b4f (c9/authority): forged --grant-registry reproduced on dev + protected host; operator-pinned registry; authorize before any journal write; M273-M283 killed"
+      },
+      "registry": "291 rows at 70ad8da7: 287 active; retired 2 equivalent (M58, M245) + 2 stale (M176, M204); 0 legacy",
+      "negative_matrix": "46 rows (A42-A46 added), 107 citations resolve (0359839f)",
+      "open_operator_decisions": [
+        "readiness: untracked files hidden by .git/info/exclude or a self-ignoring .gitignore are invisible to the certification check; refusing them changes what counts as READY (amendment 32)"
+      ],
+      "lane_b_prep_followups": [
+        "D1 now refuses a caller --grant-registry on a protected host: Cortex FabricSubmitExecutor (crates/axon-cortex/src/runner.rs ~2632) and MiCode always pass one, so their protected-host path must stop doing so before a protected host is deployed; protected-host.json must add grant_registry {path, sha256}"
+      ],
+      "readiness_credit": "none; readiness NOT_READY"
     }
   },
   "closure_gate": {
