@@ -116,6 +116,13 @@ def consumer_packages(owner):
 
 
 CONSUMER_BASELINE = {}
+# One test thread per consumer suite: several consumers' tests write an
+# executable stand-in and exec it while another test thread forks, and the
+# fork's inherited write fd makes the exec fail ETXTBSY ("Text file busy").
+# Measured on the CLEAN tree: axon-psv's runner suite failed 1 run in 3 that
+# way inside the harness, which read as SUITE_BROKEN for rows it says nothing
+# about (C9 round 2).
+CONSUMER_FLAGS = "-- --test-threads=1"
 
 
 def interpreter_env():
@@ -340,7 +347,7 @@ def main():
                 # axon-core's --no-default-features, are not theirs).
                 states = {}
                 for c in consumers:
-                    cok, cfails = full_suite_ok(c, env=interpreter_env())
+                    cok, cfails = full_suite_ok(c, CONSUMER_FLAGS, env=interpreter_env())
                     states[c] = "COMPILE_ERROR" if cok is None else ("SUITE_OK" if cok else "SUITE_BROKEN")
                     if cok is False:
                         # Named per consumer, ahead of the owner's (the record
@@ -362,7 +369,7 @@ def main():
         cons_base = {}
         for c in consumers:
             if c not in CONSUMER_BASELINE:  # the clean tree is the same for every row
-                cok, _ = full_suite_ok(c, env=interpreter_env())
+                cok, _ = full_suite_ok(c, CONSUMER_FLAGS, env=interpreter_env())
                 CONSUMER_BASELINE[c] = "SUITE_OK" if cok else ("COMPILE_ERROR" if cok is None else "SUITE_BROKEN")
             cons_base[c] = CONSUMER_BASELINE[c]
         if any(v != "SUITE_OK" for v in cons_base.values()):
