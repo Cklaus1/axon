@@ -296,3 +296,123 @@ fn inputs_with_links_or_omitted_entries_are_refused() {
     let (_, e) = check_inputs(&m, &cand, &suite, &q).unwrap_err();
     assert!(e.contains(".git") && e.contains("omits"), "{e}");
 }
+
+/// PSV-2 (C9 certifying review): the tree digest is a CROSS-PEER contract
+/// (MiCode's WORKSPACE_VERSION_RECIPE.md), and it cannot see an empty
+/// directory or any mode bit but exec. So the guest refuses an input holding
+/// either — each case first shows the digest is UNCHANGED (the check it used
+/// to be is blind to it), then that the input check refuses it, naming it.
+/// Controls: the normalised forms (launcher 0644/0755, store read-only
+/// 0444/0555) and mkfs's empty root `lost+found` are accepted.
+#[test]
+fn inputs_holding_what_the_digest_cannot_see_are_refused() {
+    use std::os::unix::fs::PermissionsExt;
+    let chmod =
+        |p: &Path, m: u32| std::fs::set_permissions(p, std::fs::Permissions::from_mode(m)).unwrap();
+    let d = tempfile::tempdir().unwrap();
+    let (cand, suite) = (d.path().join("cand"), d.path().join("suite"));
+    tree(
+        &cand,
+        &[("f.ax", "fn main() {}\n"), ("lib/h.ax", "fn h() {}\n")],
+    );
+    tree(&suite, &[("accept.ax", "@[test] fn t_ok() {}\n")]);
+    // Normalised explicitly: the test does not depend on the umask.
+    for (p, m) in [
+        (cand.join("f.ax"), 0o644),
+        (cand.join("lib"), 0o755),
+        (cand.join("lib/h.ax"), 0o644),
+        (suite.join("accept.ax"), 0o644),
+    ] {
+        chmod(&p, m);
+    }
+    let q = Quota::default();
+    let mut m = manifest();
+    m.candidate.tree_digest = axon_workspace_recipe::tree_version_ref(&cand, &q).unwrap();
+    m.suite.tree_digest = axon_workspace_recipe::tree_version_ref(&suite, &q).unwrap();
+    assert!(check_inputs(&m, &cand, &suite, &q).is_ok());
+    let blind = |root: &Path, want: &str| {
+        assert_eq!(
+            axon_workspace_recipe::tree_version_ref(root, &q).unwrap(),
+            want,
+            "the digest sees this case: it is not one it is blind to"
+        );
+    };
+    // The panic names the refusal that did not happen, so a kill says which.
+    let refused = |want: &str| match check_inputs(&m, &cand, &suite, &q) {
+        Ok(v) => panic!("accepted, but must refuse with {want:?}: {v:?}"),
+        Err((found, e)) => {
+            assert!(!found.matches);
+            assert_eq!(e, want);
+        }
+    };
+
+    // An empty directory — named like a module, the reviewer's probe.
+    std::fs::create_dir(cand.join("g.ax")).unwrap();
+    blind(&cand, &m.candidate.tree_digest);
+    refused(
+        "candidate input holds an empty directory (g.ax), which the digest cannot see: refused",
+    );
+    std::fs::remove_dir(cand.join("g.ax")).unwrap();
+    // …or one holding only empty directories.
+    std::fs::create_dir_all(cand.join("lib/x/y")).unwrap();
+    blind(&cand, &m.candidate.tree_digest);
+    refused(
+        "candidate input holds an empty directory (lib/x/y), which the digest cannot see: refused",
+    );
+    std::fs::remove_dir_all(cand.join("lib/x")).unwrap();
+    // …and in the suite too.
+    std::fs::create_dir(suite.join("planted")).unwrap();
+    blind(&suite, &m.suite.tree_digest);
+    refused("suite input holds an empty directory (planted), which the digest cannot see: refused");
+    std::fs::remove_dir(suite.join("planted")).unwrap();
+    // `lost+found` is exempt only EMPTY and only at the root.
+    std::fs::create_dir(cand.join("lib/lost+found")).unwrap();
+    refused("candidate input holds an empty directory (lib/lost+found), which the digest cannot see: refused");
+    std::fs::remove_dir(cand.join("lib/lost+found")).unwrap();
+
+    // A mode the digest does not record: file and directory.
+    for (p, mode, want) in [
+        ("f.ax", 0o000, "f.ax with mode 0000"),
+        ("f.ax", 0o600, "f.ax with mode 0600"),
+        ("f.ax", 0o666, "f.ax with mode 0666"),
+        ("f.ax", 0o744, "f.ax with mode 0744"),
+        ("f.ax", 0o4755, "f.ax with mode 4755"),
+        ("lib", 0o700, "lib with mode 0700"),
+        ("lib", 0o1777, "lib with mode 1777"),
+        ("lib/h.ax", 0o640, "lib/h.ax with mode 0640"),
+    ] {
+        let path = cand.join(p);
+        let before = std::fs::metadata(&path).unwrap().permissions().mode() & 0o7777;
+        chmod(&path, mode);
+        // 0744 and 4755 set the exec bit on a 0644 file, which the digest
+        // DOES record; every other case leaves the digest unchanged.
+        if !matches!(mode, 0o744 | 0o4755) {
+            blind(&cand, &m.candidate.tree_digest);
+        }
+        refused(&format!(
+            "candidate input holds {want}, which the digest does not record: refused"
+        ));
+        chmod(&path, before);
+    }
+    assert!(check_inputs(&m, &cand, &suite, &q).is_ok());
+
+    // Controls. mkfs's EMPTY root lost+found (0700, as mkfs makes it).
+    std::fs::create_dir(cand.join("lost+found")).unwrap();
+    chmod(&cand.join("lost+found"), 0o700);
+    assert!(check_inputs(&m, &cand, &suite, &q).is_ok());
+    // …but not a non-empty one: it is then an ordinary 0700 directory.
+    std::fs::write(cand.join("lost+found/#12"), "x").unwrap();
+    chmod(&cand.join("lost+found/#12"), 0o644);
+    let (_, e) = check_inputs(&m, &cand, &suite, &q).unwrap_err();
+    assert!(e.contains("lost+found with mode 0700"), "{e}");
+    std::fs::remove_dir_all(cand.join("lost+found")).unwrap();
+    // The store's read-only materialization (0444 files, 0555 dirs), and the
+    // root's own mode (the mount point) is not the tree's.
+    chmod(&cand.join("f.ax"), 0o444);
+    chmod(&cand.join("lib/h.ax"), 0o444);
+    chmod(&cand.join("lib"), 0o555);
+    chmod(&cand, 0o700);
+    assert!(check_inputs(&m, &cand, &suite, &q).is_ok());
+    chmod(&cand, 0o755);
+    chmod(&cand.join("lib"), 0o755);
+}

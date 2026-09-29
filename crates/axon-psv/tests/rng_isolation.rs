@@ -157,10 +157,18 @@ fn check(candidate: &str) -> (GuestVerdict, Option<bool>) {
             tree_digest: sv,
             registry_sha256: "c".repeat(64),
         },
-        candidate: CandidateRef { workspace_version: cv.clone(), tree_digest: cv },
-        completion: Completion { scheme: COMPLETION_SCHEME.into() },
+        candidate: CandidateRef {
+            workspace_version: cv.clone(),
+            tree_digest: cv,
+        },
+        completion: Completion {
+            scheme: COMPLETION_SCHEME.into(),
+        },
         observation_nonce: "e".repeat(32),
-        limits: Limits { wall_time_ms: 120_000, output_bytes: 1 << 20 },
+        limits: Limits {
+            wall_time_ms: 120_000,
+            output_bytes: 1 << 20,
+        },
     };
     std::fs::write(job.join("launch-manifest.json"), m.bytes()).unwrap();
     let axon = axon();
@@ -194,7 +202,11 @@ fn a_candidate_steering_the_rng_through_goal_search_does_not_pass_a_randomized_c
         GuestStatus::Failed,
         "a wrong candidate that steers the RNG must fail the randomized check: {v:?}"
     );
-    assert_eq!(host, Some(false), "the host must derive a keyed FAILURE, not a pass");
+    assert_eq!(
+        host,
+        Some(false),
+        "the host must derive a keyed FAILURE, not a pass"
+    );
 }
 
 /// Control: the same randomized check still PASSES a correct candidate, so the
@@ -203,5 +215,9 @@ fn a_candidate_steering_the_rng_through_goal_search_does_not_pass_a_randomized_c
 fn a_correct_candidate_passes_the_same_randomized_check() {
     let (v, host) = check(CORRECT_CANDIDATE);
     assert_eq!(v.status, GuestStatus::Passed, "control: {v:?}");
-    assert_eq!(host, Some(true), "control: the host verifies the keyed pass");
+    assert_eq!(
+        host,
+        Some(true),
+        "control: the host verifies the keyed pass"
+    );
 }

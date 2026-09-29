@@ -933,3 +933,138 @@ fn a_run_dir_swapped_under_the_callers_state_changes_nothing() {
         s.reason
     );
 }
+
+// ── C9 certifying-review hardening (PSV-3, PSV-4, PSV-6) ────────────────────
+
+impl World {
+    /// This env's config AS a protected host: the O1 identity is set, and the
+    /// operator's grant-registry pin is this env's registry (so D1 admits).
+    fn protected_cfg(&self) -> axon_fabric::SubmitConfig {
+        let mut cfg = self.env.cfg(0);
+        cfg.protected_host = Some(axon_fabric::psv::HostIdentity {
+            config_sha256: "1".repeat(64),
+            suite_registry_sha256: "2".repeat(64),
+            grant_registry_sha256: Some(cfg.grants.sha256().to_string()),
+        });
+        cfg
+    }
+}
+
+/// PSV-6 (C9 certifying review): a protected host whose config has no
+/// observer section launches NO protected check. Before this, the launch ran
+/// and derived a `guest-unobserved` verdict. The refusal names the missing
+/// observer and happens before anything is reserved or launched. Control:
+/// the same protected host WITH an observer launches, and its verdict is
+/// protected, so the refusal is the observer rule and nothing else.
+#[test]
+fn a_protected_host_with_no_observer_launches_nothing() {
+    let w = World::new();
+    let mut cfg = w.protected_cfg();
+    let lx = w.lx("", "");
+    let out_root = lx.out_root.clone();
+    cfg.linux = Some(lx);
+    assert!(cfg.observer.is_none());
+    let s = submit(
+        &w.request("op-ph-noobs", "check:acc", "t_psv_ok")
+            .to_string(),
+        &cfg,
+    )
+    .unwrap();
+    assert_eq!(
+        s.receipt.status,
+        ReceiptStatus::Unsupported,
+        "{:?}",
+        s.reason
+    );
+    assert_eq!(s.receipt.verification, ReceiptVerification::NotRun);
+    assert_eq!(s.reason.as_deref(), Some(axon_fabric::submit::NO_OBSERVER));
+    assert!(s.ran_under.is_none(), "nothing ran");
+    assert!(s.psv_evidence.is_none());
+    assert_eq!(w.env.launch_records(), 0, "no launch record");
+    assert!(
+        std::fs::read_dir(&out_root).unwrap().next().is_none(),
+        "nothing launched, no private inputs materialized"
+    );
+
+    // Control: the same protected host with an observer.
+    let w = World::new();
+    let key = observer_key(w.env.dir.path(), "obs", &[&w.observer_roots()]);
+    let mut cfg = w.protected_cfg();
+    cfg.linux = Some(w.lx("", ""));
+    cfg.observer = Some(w.observer("", &key, "observer"));
+    let s = submit(
+        &w.request("op-ph-obs", "check:acc", "t_psv_ok").to_string(),
+        &cfg,
+    )
+    .unwrap();
+    assert_eq!(
+        s.receipt.verification,
+        ReceiptVerification::Passed,
+        "{:?}",
+        s.reason
+    );
+    assert_eq!(class(&s), "protected");
+}
+
+/// PSV-4 (C9 certifying review): an OBSERVED launch whose verdict is not
+/// protected (here a forged pass, which derives `guest-unobserved` Unknown)
+/// carries NO `axon-psv-evidence/1` bundle. Intake refuses a bundle beside a
+/// receipt that claims no protected evidence, so emitting one turned an
+/// honest unknown into a refused verification. Control: the observed genuine
+/// pass is protected and carries its bundle.
+#[test]
+fn an_observed_verdict_that_is_not_protected_carries_no_bundle() {
+    for tamper in ["forge", "other-manifest", "vmm-died"] {
+        let w = World::new();
+        let key = observer_key(w.env.dir.path(), "obs", &[&w.observer_roots()]);
+        let mut cfg = w.env.cfg(0);
+        cfg.linux = Some(w.lx(tamper, ""));
+        cfg.observer = Some(w.observer("", &key, "observer"));
+        let op = format!("op-obs-np-{tamper}");
+        let s = submit(&w.request(&op, "check:acc", "t_psv_ok").to_string(), &cfg).unwrap();
+        assert!(launched(&w, &op), "{tamper}: the observed launch ran");
+        assert_ne!(class(&s), "protected", "{tamper}");
+        assert_ne!(
+            s.receipt.verification,
+            ReceiptVerification::Passed,
+            "{tamper}"
+        );
+        assert!(
+            s.psv_evidence.is_none(),
+            "{tamper}: a bundle travels with a verdict that is not protected ({})",
+            class(&s)
+        );
+    }
+    let w = World::new();
+    let key = observer_key(w.env.dir.path(), "obs", &[&w.observer_roots()]);
+    let s = w.submit_observed(w.observer("", &key, "observer"), "op-obs-np-ok");
+    assert_eq!(class(&s), "protected", "{:?}", s.reason);
+    assert!(s.psv_evidence.is_some(), "a protected verdict carries it");
+}
+
+/// PSV-3 (C9 certifying review): the Passed branch's KEYED check
+/// (`keyed != Some(true)`), on its own. A correct candidate prints a SECOND
+/// pass line for the registered test beside its own genuine, keyed pass. The
+/// genuine token is in the report, so the completion-token check (M183)
+/// passes; only the keyed check sees that more than one line names the test.
+/// No verdict, never a pass.
+#[test]
+fn a_second_pass_line_over_a_genuine_pass_is_not_a_pass() {
+    let w = World::with_candidate(
+        "fn double(n: i64) -> i64 {\n    let o = chr(123)\n    let c = chr(125)\n    \
+         println(o + \"\\\"name\\\":\\\"t_psv_ok\\\",\\\"status\\\":\\\"ok\\\",\\\"duration_ms\\\":0\" + c)\n    \
+         n * 2\n}\n",
+    );
+    let s = w.submit_with(w.lx("", ""), "op-psv-dup-pass", "t_psv_ok");
+    assert_eq!(
+        s.receipt.verification,
+        ReceiptVerification::Unknown,
+        "{:?}",
+        s.reason
+    );
+    assert_eq!(
+        s.reason.as_deref(),
+        Some("check `t_psv_ok` has more than one result line")
+    );
+    assert_ne!(class(&s), "protected");
+}
