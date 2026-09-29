@@ -24,6 +24,21 @@ const COPIED: [&str; 4] = [
     "crates/axon-fabric/src/bin/axon-provenance.rs",
 ];
 const INIT_SRC: &str = "crates/axon-guest-init/src/main.rs";
+/// The PCI-certified revision as the real script spells it.
+const PCI: &str = "PCI_CERTIFIED = \"31413ca7\"";
+
+fn rev_of(r: &Path, what: &str) -> String {
+    let o = Command::new(GIT)
+        .arg("-C")
+        .arg(r)
+        .args(["rev-parse", what])
+        .output()
+        .unwrap();
+    format!(
+        "PCI_CERTIFIED = \"{}\"",
+        String::from_utf8(o.stdout).unwrap().trim()
+    )
+}
 
 fn git(r: &Path, args: &[&str]) {
     let st = Command::new(GIT)
@@ -53,16 +68,23 @@ fn fixture(init_git: bool) -> Fx {
     let d = tempfile::tempdir().unwrap();
     let repo = d.path().join("repo");
     let src = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
-    for f in COPIED {
-        write(
-            &repo.join(f),
-            &std::fs::read_to_string(src.join(f)).unwrap(),
-        );
-    }
     write(&repo.join(".gitignore"), "/dist/\n/target/\n");
-    write(&repo.join(INIT_SRC), "fn main() {}\n");
+    // The manifest binds the PCI lineage (HEAD descends from the certified
+    // revision): here the certified revision is this repository's first
+    // commit, substituted into the copied script.
+    let mut pci = PCI.to_string();
     if init_git {
         git(&repo, &["init", "-q", "-b", "main"]);
+        git(&repo, &["add", "-A"]);
+        git(&repo, &["commit", "-q", "-m", "PCI-certified base"]);
+        pci = rev_of(&repo, "HEAD");
+    }
+    for f in COPIED {
+        let text = std::fs::read_to_string(src.join(f)).unwrap();
+        write(&repo.join(f), &text.replace(PCI, &pci));
+    }
+    write(&repo.join(INIT_SRC), "fn main() {}\n");
+    if init_git {
         git(&repo, &["add", "-A"]);
         git(&repo, &["commit", "-q", "-m", "reviewed"]);
     }
@@ -415,4 +437,66 @@ fn the_b263_evidence_tree_dirty_is_the_rust_provenance() {
         "ATTACK: the B263 evidence's tree_dirty is not the hardened provenance (PATH git, \
          untracked files excluded, cannot-tell read as clean)"
     );
+}
+
+// ── Operator decision C (amendment 44, A70): git-ignore excuses nothing in
+// the guest manifest either. Only the operator's allowlist
+// (/etc/axon/provenance-allowlist) could, and none is installed here.
+
+#[test]
+fn a_gitignored_build_input_is_dirty() {
+    let f = fixture(true);
+    // `/target/` is ignored by the reviewed .gitignore; cargo reads a
+    // `target/`-free build input as readily from any ignored path, e.g. a
+    // crate-local `.cargo/config.toml` the tree's own rule hides.
+    write(&f.repo.join(".gitignore"), "/dist/\n/target/\n.cargo/\n");
+    git(&f.repo, &["commit", "-q", "-am", "ignore rules"]);
+    write(
+        &f.repo.join("crates/axon-guest-init/.cargo/config.toml"),
+        "[build]\nrustflags = [\"--cfg\", \"feature=\\\"dev-allow-no-policy\\\"\"]\n",
+    );
+    assert_dirty(
+        &f.build(),
+        "a .gitignored .cargo/config.toml turned on the guest's no-policy bypass",
+    );
+}
+
+#[test]
+fn an_info_exclude_hidden_build_script_is_dirty() {
+    let f = fixture(true);
+    write(&f.repo.join(".git/info/exclude"), "build.rs\n");
+    write(
+        &f.repo.join("crates/axon-guest-init/build.rs"),
+        "fn main() { println!(\"cargo:rustc-cfg=feature=\\\"dev-allow-no-policy\\\"\"); }\n",
+    );
+    assert_dirty(
+        &f.build(),
+        "info/exclude hid an untracked guest-init build.rs",
+    );
+}
+
+// ── Operator decision E (amendment 44, A71): the manifest binds the PCI
+// lineage, asked the protected way. The build's early `--descends` check is
+// a development check and makes nothing clean.
+
+#[test]
+fn a_head_that_does_not_descend_from_the_pci_certification_is_dirty() {
+    let f = fixture(true);
+    // HEAD becomes an orphan with the same tree: the certified base is not
+    // its ancestor, whatever the shell's early check did or did not run.
+    let o = Command::new(GIT)
+        .arg("-C")
+        .arg(&f.repo)
+        .args(["-c", "user.name=t", "-c", "user.email=t@example"])
+        .args(["commit-tree", "HEAD^{tree}", "-m", "unrelated history"])
+        .output()
+        .unwrap();
+    let orphan = String::from_utf8(o.stdout).unwrap().trim().to_string();
+    git(&f.repo, &["update-ref", "refs/heads/main", &orphan]);
+    let src = f.build();
+    assert_dirty(
+        &src,
+        "a HEAD that does not descend from the PCI-certified revision",
+    );
+    assert!(src.to_string().contains("PCI lineage"), "{src}");
 }

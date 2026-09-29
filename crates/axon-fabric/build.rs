@@ -11,6 +11,15 @@
 //! the tracked tree, or file whose bytes are not HEAD's). Without git the
 //! revision is "unknown" and the tree is dirty; a production verifier must be
 //! clean.
+//!
+//! "Clean" is the one source-tree rule (`git_data::tree_differs`, operator
+//! decisions C and E, amendment 44): every filesystem object in the tree
+//! counts, `.gitignore`d or not, unless the operator's root-owned
+//! `/etc/axon/provenance-allowlist` excuses it; and the tree must be a
+//! standalone clone, never a linked worktree. So a certified verifier is
+//! built from a standalone clone, with the allowlist installed (for an
+//! in-tree `target/`) or `CARGO_TARGET_DIR` outside the tree. The allowlist
+//! is not watched below: a changed allowlist is seen at the next re-run.
 
 #[path = "src/git_data.rs"]
 #[allow(dead_code)]

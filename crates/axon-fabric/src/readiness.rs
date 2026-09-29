@@ -22,9 +22,7 @@
 //!   (the repository may narrow, never add).
 
 use crate::backend::{TrustAuthority, TEST_TRUST_BUILD};
-#[cfg(unix)]
-use crate::git_data::worktree_differs;
-use crate::git_data::{Objects, GIT_BIN};
+use crate::git_data::{load_allowlist, tree_differs, AllowlistSource, Objects, GIT_BIN};
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 
@@ -98,6 +96,10 @@ pub struct ReadinessTrust {
     verifier_dir: PathBuf,
     ownership_base: PathBuf,
     require_unwritable: bool,
+    /// The operator's provenance allowlist (decision C): the only thing that
+    /// may excuse an object in the working tree that is not in the
+    /// certified tree.
+    allowlist: AllowlistSource,
 }
 
 impl ReadinessTrust {
@@ -108,24 +110,38 @@ impl ReadinessTrust {
             verifier_dir: TrustAuthority::Verifier.operator_dir(),
             ownership_base: PathBuf::from("/"),
             require_unwritable: true,
+            allowlist: AllowlistSource::operator(),
         }
     }
 
     /// TESTS ONLY: a temp root (its ancestors are not operator-owned, and the
     /// test runs as its owner). The observer and verifier roots are
     /// `issuers_dir`'s siblings `observer/` and `verifier/`, as under
-    /// `/etc/axon/trust/`. A build with this carries `TEST_TRUST_BUILD` and
-    /// reports `build: "test-trust"`, which readiness never accepts.
+    /// `/etc/axon/trust/`, and the provenance allowlist is
+    /// `provenance-allowlist` beside `trust/`, as `/etc/axon/provenance-allowlist`
+    /// is beside `/etc/axon/trust/`. A build with this carries
+    /// `TEST_TRUST_BUILD` and reports `build: "test-trust"`, which readiness
+    /// never accepts.
     #[cfg(any(test, feature = "test-trust-root"))]
     pub fn test(base: &Path, issuers_dir: &Path) -> ReadinessTrust {
-        let sib = |n: &str| issuers_dir.parent().unwrap_or(base).join(n);
+        let trust = issuers_dir.parent().unwrap_or(base);
+        let sib = |n: &str| trust.join(n);
         ReadinessTrust {
             issuers_dir: issuers_dir.to_path_buf(),
             observer_dir: sib("observer"),
             verifier_dir: sib("verifier"),
             ownership_base: base.to_path_buf(),
             require_unwritable: false,
+            allowlist: AllowlistSource::test(
+                base,
+                &trust.parent().unwrap_or(base).join("provenance-allowlist"),
+            ),
         }
+    }
+
+    /// Where this trust reads the provenance allowlist from.
+    pub fn allowlist_path(&self) -> &Path {
+        self.allowlist.path()
     }
 
     fn check(&self) -> Result<(), String> {
@@ -266,10 +282,23 @@ fn git(repo: &Path, args: &[&str]) -> Result<(bool, String), String> {
 /// the objects and files that are there. Any of it present: refused, never
 /// interpreted.
 fn refuse_git_spoofing(repo: &Path, component: &str) -> Result<(), String> {
+    // A protected answer comes from a STANDALONE CLONE (operator decision E,
+    // amendment 44): `.git` must be a real directory at the top of `repo`. A
+    // gitfile (a linked worktree, a submodule) or a symlink names a
+    // repository chosen elsewhere, and is refused like build provenance
+    // refuses it.
+    let top = std::fs::canonicalize(repo).map_err(|e| format!("{}: {e}", repo.display()))?;
+    let found = crate::git_data::discover(&top).map_err(|e| format!("{component}: {e}"))?;
+    if found != top {
+        return Err(format!(
+            "{component}: {} is not the top of a standalone clone (its repository is {})",
+            top.display(),
+            found.display()
+        ));
+    }
     // The repository's own .git/config: a promisor remote with a
     // core.sshCommand, core.worktree, a filter driver… (review PSV-7, C9
     // round 2). Refused before git is asked anything else.
-    let top = std::fs::canonicalize(repo).map_err(|e| format!("{}: {e}", repo.display()))?;
     crate::git_data::refuse_config(&top).map_err(|e| format!("{component}: {e}"))?;
     let (ok, replaced) = git(
         repo,
@@ -452,8 +481,10 @@ fn certification(repo: &Path, component: &str, trust: &ReadinessTrust) -> Result
         .filter(|f| !f.is_empty() && !f.starts_with("governance/"))
         .collect();
     // The same question answered from objects verified by hash: the certified
-    // tree (named by the signed axon_sha), HEAD's tree, and the working-tree
-    // bytes, outside governance/.
+    // tree (named by the signed axon_sha), HEAD's tree, and the working tree
+    // AS A FILESYSTEM outside governance/ (decision C, amendment 44): every
+    // object counts, git-ignore rules excuse nothing, and only the operator's
+    // provenance allowlist excuses generated material.
     if outside.is_empty() {
         let (ok, head) = git(repo, &["rev-parse", "--verify", "HEAD^{commit}"])?;
         if !ok {
@@ -473,12 +504,8 @@ fn certification(repo: &Path, component: &str, trust: &ReadinessTrust) -> Result
                 .filter(|p| want.get(*p) != have.get(*p))
                 .map(|p| String::from_utf8_lossy(p).to_string()),
         );
-        #[cfg(unix)]
-        outside.extend(worktree_differs(repo, &want));
-        #[cfg(not(unix))]
-        return Err(format!(
-            "{component}: the working tree cannot be verified on this platform"
-        ));
+        let allow = load_allowlist(&trust.allowlist);
+        outside.extend(tree_differs(&top, &want, Some(b"governance"), &allow));
     }
     if let Some(f) = outside.first() {
         return Err(format!(

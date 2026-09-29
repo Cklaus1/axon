@@ -882,7 +882,7 @@ MUTATIONS = [
     ('M287', 'readiness: a skip-worktree index entry is refused', 'crates/axon-fabric/src/readiness.rs', "if tag == b'S' || tag == b's' {", 'if false {', 'axon-fabric', '--test readiness', 'a_skip_worktree_entry_is_not_certified'),
     ('M288', 'readiness: an assume-unchanged index entry is refused', 'crates/axon-fabric/src/readiness.rs', 'if tag.is_ascii_lowercase() {', 'if false && tag.is_ascii_lowercase() {', 'axon-fabric', '--test readiness', 'an_assume_unchanged_entry_is_not_certified'),
     ('M289', 'readiness: an object must hash to its name', 'crates/axon-fabric/src/git_data.rs', 'if object_id(want, &body) != oid {', 'if false && object_id(want, &body) != oid {', 'axon-fabric', '--test readiness', 'a_forged_object_under_the_certified_name_is_not_certified'),
-    ('M290', 'readiness: working-tree bytes are hashed against the certified tree', 'crates/axon-fabric/src/readiness.rs', 'outside.extend(worktree_differs(repo, &want));', 'outside.extend(worktree_differs(repo, &want).filter(|_| false));', 'axon-fabric', '--test readiness', 'any_change_to_source_scripts_or_manifests_invalidates_it'),
+    ('M290', 'readiness: working-tree bytes are hashed against the certified tree', 'crates/axon-fabric/src/readiness.rs', 'outside.extend(tree_differs(&top, &want, Some(b"governance"), &allow));', 'outside.extend(tree_differs(&top, &want, Some(b"governance"), &allow).into_iter().filter(|_| false));', 'axon-fabric', '--test readiness', 'any_change_to_source_scripts_or_manifests_invalidates_it'),
     ('M291', 'protected host: out_root sits under an operator-owned directory', 'crates/axon-fabric/src/protected_host.rs', 'parent_owned(&out_root)?;', 'parent_owned(&out_root).ok();', 'axon-fabric', '--test protected_host', 'the_out_root_and_nonce_store_sit_under_operator_owned_directories'),
     ('M292', 'protected host: observer nonce_store sits under an operator-owned directory', 'crates/axon-fabric/src/protected_host.rs', 'parent_owned(&nonces)?;', 'parent_owned(&nonces).ok();', 'axon-fabric', '--test protected_host', 'the_out_root_and_nonce_store_sit_under_operator_owned_directories'),
     ('M293', 'runner: a Passed verdict needs the keyed token AND exit 0 (the Some(0) of the Passed arm; replaces stale M176)', 'crates/axon-psv/src/runner.rs', '        (GuestStatus::Passed, Some(true), Some(0)) => GuestStatus::Passed,', '        (GuestStatus::Passed, Some(true), _) => GuestStatus::Passed,', 'axon-psv', '--test runner', 'a_genuine_keyed_pass_from_a_run_that_exits_non_zero_is_not_a_pass'),
@@ -1158,8 +1158,8 @@ MUTATIONS = [
      "axon-fabric", "--lib", "provenance::tests::a_filter_driver_in_the_repository_config_never_runs"),
     ("M451", "FIELD-ORIGIN: build provenance hashes the working-tree bytes against HEAD's tree (not git's stat cache)",
      "crates/axon-fabric/src/provenance.rs",
-     "    if let Some(why) = head_bytes_differ(&top, &revision) {",
-     "    if let Some(why) = head_bytes_differ(&top, &revision).filter(|_| false) {",
+     "    dirty.extend(head_bytes_differ(&top, &revision, allow));",
+     "    dirty.extend(head_bytes_differ(&top, &revision, allow).into_iter().filter(|_| false));",
      "axon-fabric", "--lib", "provenance::tests::a_forged_index_stat_entry_does_not_hide_an_edit"),
     ("M452", "PSV-7: git never fetches (no lazy fetch of a missing object, no transport)",
      "crates/axon-fabric/src/git_data.rs",
@@ -1201,6 +1201,48 @@ MUTATIONS = [
      "    if std::fs::symlink_metadata(top.join(&g)).is_ok() {",
      "    if false && std::fs::symlink_metadata(top.join(&g)).is_ok() {",
      "axon-fabric", "--test guest_provenance", "grafted_ancestry_does_not_pass_the_lineage_check"),
+    # ── C9 round 2, workstream BCE (M500-M519): operator decisions C and E
+    # (amendment 44). C: every filesystem object in the tree counts for a
+    # protected provenance answer; git-ignore rules excuse nothing; only the
+    # operator-owned allowlist does (git_data::tree_differs, shared by
+    # readiness, build provenance and the guest manifest). E: a gitfile /
+    # linked worktree never gives a protected-clean answer. M290 and M451
+    # were re-anchored to the rule's call sites (same guards, same tests).
+    ("M500", "C (A70): the tree walk reports a file that is not in the tree, however git ignores it",
+     "crates/axon-fabric/src/git_data.rs",
+     "            } else if !allow.exact.contains(&rel) {",
+     "            } else if false && !allow.exact.contains(&rel) {",
+     "axon-fabric", "--lib", "provenance::tests::a_gitignored_build_script_is_dirty"),
+    ("M501", "C (A70): the tree walk reports a directory that is not in the tree unless the allowlist excuses it",
+     "crates/axon-fabric/src/git_data.rs",
+     "                if allow.dirs.contains(&rel) {",
+     "                if true || allow.dirs.contains(&rel) {",
+     "axon-fabric", "--lib", "provenance::tests::a_gitignored_cargo_config_directory_is_dirty"),
+    ("M502", "C (A70): an allowlist that is not operator-owned excuses nothing",
+     "crates/axon-fabric/src/git_data.rs",
+     "        owned_chain(&src.base, &src.path).map_err(|e| {",
+     "        owned_chain(&src.base, &src.path).or::<String>(Ok(())).map_err(|e| {",
+     "axon-fabric", "--lib", "provenance::tests::an_allowlist_that_is_not_operator_owned_excuses_nothing"),
+    ("M503", "C (A70): an allowlist entry that names or holds a tracked path is refused whole",
+     "crates/axon-fabric/src/git_data.rs",
+     "    if let Some(e) = allow.covers_tracked(tree) {",
+     "    if let Some(e) = allow.covers_tracked(tree).filter(|_| false) {",
+     "axon-fabric", "--lib", "provenance::tests::an_allowlist_entry_covering_a_source_is_refused"),
+    ("M504", "E (A71): readiness certifies only a standalone clone (a gitfile / linked worktree is refused)",
+     "crates/axon-fabric/src/readiness.rs",
+     '    let found = crate::git_data::discover(&top).map_err(|e| format!("{component}: {e}"))?;',
+     '    let found = crate::git_data::discover_linked(&top).map_err(|e| format!("{component}: {e}"))?;',
+     "axon-fabric", "--test readiness", "a_linked_worktree_is_not_certified"),
+    ("M505", "E (A71): the guest manifest is dirty unless the protected PCI lineage answer descends",
+     "scripts/linux_profile_manifest.py",
+     """            d["dirty"].append(f"PCI lineage: {lin.get('why')}")""",
+     "            pass",
+     "axon-fabric", "--test guest_provenance", "a_head_that_does_not_descend_from_the_pci_certification_is_dirty"),
+    ("M506", "E (A71): the guest manifest asks for the PCI lineage at all (not only the build's development check)",
+     "scripts/linux_profile_manifest.py",
+     '    now = provenance(PCI_CERTIFIED)',
+     '    now = provenance()',
+     "axon-fabric", "--test guest_provenance", "a_head_that_does_not_descend_from_the_pci_certification_is_dirty"),
 ]
 
 
@@ -1404,9 +1446,9 @@ LEGACY_EQUIV = set()
 RETIRED = LEGACY_EQUIV | EQUIVALENT_DID | set(STALE_REFACTORED)
 BINDING_IDS = {f"M{n}" for n in range(101, 137)}
 # Every id range the PSV rounds allocate (C9 round 1 uses up to M399; round
-# 1b allocates M400-M499). An id outside every scope would silently fall into
+# 1b allocates M400-M499, round 2 M500-M519). An id outside every scope would silently fall into
 # g01.
-PSV_IDS = {f"M{n}" for n in range(137, 500)}
+PSV_IDS = {f"M{n}" for n in range(137, 520)}
 
 
 def in_scope(mid, scope):

@@ -144,6 +144,14 @@ build_rootfs_linux() {
     # The guest axon must carry the certified PCI interpreter (the survey found
     # the pinned one predated it): refuse a revision that does not descend from
     # the PCI certification (governance/proofs/v022-pci/CERTIFICATION.md).
+    # This early check is a DEVELOPMENT check (a linked worktree may pass it);
+    # the manifest binds the protected answer itself.
+    #
+    # EVIDENCE BUILDS (amendment 44, decisions C and E): the manifest is clean
+    # only from a STANDALONE CLONE (a linked worktree's gitfile is dirty), in
+    # which every object outside HEAD's tree is dirty unless the operator's
+    # root-owned /etc/axon/provenance-allowlist excuses it (`target/` and
+    # `dist/` for this build). .gitignore excuses nothing.
     python3 scripts/linux_profile_manifest.py --descends 31413ca7 || {
         echo "[build-guest-image] ERROR: HEAD does not descend from PCI-certified 31413ca7" >&2
         exit 1

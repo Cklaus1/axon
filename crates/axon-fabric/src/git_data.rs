@@ -398,6 +398,349 @@ pub fn worktree_differs(top: &Path, tree: &Entries) -> Option<String> {
         .map(|(path, _)| String::from_utf8_lossy(path).to_string())
 }
 
+// ── The source-tree rule (operator decision C, 2026-09-29; amendment 44) ──
+//
+// For a PROTECTED answer about a tree (readiness certification, build
+// provenance, the guest manifest), EVERY filesystem object under the working
+// tree takes part: tracked-and-changed, untracked, `.gitignore`d, hidden by
+// `info/exclude` or `core.excludesFile`, anything. Git-ignore rules are
+// repository data and have no authority to excuse anything. The ONLY
+// exceptions are paths on the operator's allowlist of generated, non-input
+// material ([`ALLOWLIST_PATH`]), which the operator owns and installs. A
+// missing allowlist excuses nothing.
+
+/// The operator's provenance allowlist (production). Walked from `/` like
+/// the operator trust roots: every component root-owned, not group- or
+/// other-writable, not a symlink.
+pub const ALLOWLIST_PATH: &str = "/etc/axon/provenance-allowlist";
+/// The allowlist's first line, exactly.
+pub const ALLOWLIST_SCHEMA: &str = "axon-provenance-allowlist/1";
+
+/// Where an allowlist is read from, and the directory its ownership walk
+/// starts at.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AllowlistSource {
+    path: PathBuf,
+    base: PathBuf,
+}
+
+impl AllowlistSource {
+    /// The operator's allowlist, [`ALLOWLIST_PATH`], walked from `/`.
+    pub fn operator() -> AllowlistSource {
+        AllowlistSource {
+            path: PathBuf::from(ALLOWLIST_PATH),
+            base: PathBuf::from("/"),
+        }
+    }
+
+    /// TESTS ONLY: an allowlist under a temp `base` (the test runs as root,
+    /// so a file it creates is root-owned; the walk starts at `base`).
+    #[cfg(any(test, feature = "test-trust-root"))]
+    pub fn test(base: &Path, path: &Path) -> AllowlistSource {
+        AllowlistSource {
+            path: path.to_path_buf(),
+            base: base.to_path_buf(),
+        }
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+/// The excused paths: exact relative paths (a file or symlink), and
+/// directory prefixes (an entry ending in `/`: that real directory and
+/// everything below it). No globs.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Allowlist {
+    exact: std::collections::BTreeSet<Vec<u8>>,
+    dirs: std::collections::BTreeSet<Vec<u8>>,
+}
+
+impl Allowlist {
+    /// Parse the fixed format: the first line is [`ALLOWLIST_SCHEMA`]; then
+    /// one entry per line, blank lines and `#` comments ignored. An entry is
+    /// a relative path of plain components (no `.`, `..`, `.git`, empty
+    /// component, leading `/`, whitespace, control character, backslash or
+    /// glob character); a trailing `/` makes it a directory prefix. Anything
+    /// else refuses the WHOLE list.
+    pub fn parse(text: &[u8]) -> Result<Allowlist, String> {
+        let text = std::str::from_utf8(text).map_err(|_| "the allowlist is not UTF-8")?;
+        let mut lines = text.lines();
+        if lines.next() != Some(ALLOWLIST_SCHEMA) {
+            return Err(format!(
+                "the allowlist's first line is not {ALLOWLIST_SCHEMA}"
+            ));
+        }
+        let mut a = Allowlist::default();
+        for line in lines {
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            let (body, dir) = match line.strip_suffix('/') {
+                Some(b) => (b, true),
+                None => (line, false),
+            };
+            let bad = body.is_empty()
+                || body.starts_with('/')
+                || body
+                    .chars()
+                    .any(|c| c.is_whitespace() || c.is_control() || "\\*?[]{}!".contains(c))
+                || body
+                    .split('/')
+                    .any(|c| c.is_empty() || c == "." || c == ".." || c == ".git");
+            if bad {
+                return Err(format!(
+                    "allowlist entry {line:?} is not a plain relative path or directory prefix \
+                     (no globs, no `.`/`..`/`.git`, no leading `/`)"
+                ));
+            }
+            if dir {
+                a.dirs.insert(body.as_bytes().to_vec());
+            } else {
+                a.exact.insert(body.as_bytes().to_vec());
+            }
+        }
+        Ok(a)
+    }
+
+    /// An entry that names, or holds, a path of `tree`: refused. The
+    /// allowlist may excuse generated material only, never a source.
+    pub fn covers_tracked(&self, tree: &Entries) -> Option<String> {
+        let under = |p: &[u8], e: &[u8]| {
+            p == e || (p.len() > e.len() && p.starts_with(e) && p[e.len()] == b'/')
+        };
+        tree.keys().find_map(|p| {
+            self.exact
+                .iter()
+                .chain(self.dirs.iter())
+                .find(|e| under(p, e))
+                .map(|e| {
+                    format!(
+                        "allowlist entry {} covers the tracked path {}: the allowlist excuses \
+                         generated material only, never a source",
+                        String::from_utf8_lossy(e),
+                        String::from_utf8_lossy(p)
+                    )
+                })
+        })
+    }
+}
+
+/// Every component from `base` down to `path` is root-owned, not group- or
+/// other-writable and not a symlink (the operator-ownership walk, std-only
+/// here because `build.rs` and the helper include this file).
+#[cfg(unix)]
+fn owned_chain(base: &Path, path: &Path) -> Result<(), String> {
+    use std::os::unix::fs::MetadataExt;
+    if !path.is_absolute() {
+        return Err(format!("{} is not an absolute path", path.display()));
+    }
+    let rel = path
+        .strip_prefix(base)
+        .map_err(|_| format!("{} is not below {}", path.display(), base.display()))?;
+    let check = |p: &Path| -> Result<(), String> {
+        let m = std::fs::symlink_metadata(p).map_err(|e| format!("{}: {e}", p.display()))?;
+        if m.file_type().is_symlink() {
+            return Err(format!("{} is a symlink", p.display()));
+        }
+        if m.uid() != 0 {
+            return Err(format!(
+                "{} is owned by uid {}, not root",
+                p.display(),
+                m.uid()
+            ));
+        }
+        if m.mode() & 0o022 != 0 {
+            return Err(format!(
+                "{} is group- or other-writable (mode {:o})",
+                p.display(),
+                m.mode() & 0o7777
+            ));
+        }
+        Ok(())
+    };
+    let mut p = base.to_path_buf();
+    check(&p)?;
+    for c in rel.components() {
+        p.push(c);
+        check(&p)?;
+    }
+    Ok(())
+}
+
+/// The operator's allowlist from `src`: absent (NotFound) excuses nothing;
+/// present, it must pass the operator-ownership walk and be a regular file,
+/// read once, or it is refused (Err), never read as empty.
+pub fn load_allowlist(src: &AllowlistSource) -> Result<Allowlist, String> {
+    let lst = match std::fs::symlink_metadata(&src.path) {
+        Ok(m) => m,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Allowlist::default()),
+        Err(e) => return Err(format!("{}: {e}", src.path.display())),
+    };
+    #[cfg(unix)]
+    {
+        use std::io::Read;
+        use std::os::unix::fs::MetadataExt;
+        owned_chain(&src.base, &src.path).map_err(|e| {
+            format!(
+                "the provenance allowlist is not operator-owned ({e}): an allowlist the \
+                 repository's writer could edit excuses nothing"
+            )
+        })?;
+        let f =
+            std::fs::File::open(&src.path).map_err(|e| format!("{}: {e}", src.path.display()))?;
+        let md = f
+            .metadata()
+            .map_err(|e| format!("{}: {e}", src.path.display()))?;
+        if !md.is_file() || md.dev() != lst.dev() || md.ino() != lst.ino() {
+            return Err(format!(
+                "{} is not the regular file the ownership walk checked",
+                src.path.display()
+            ));
+        }
+        let mut b = Vec::new();
+        f.take(1 << 16)
+            .read_to_end(&mut b)
+            .map_err(|e| format!("{}: {e}", src.path.display()))?;
+        Allowlist::parse(&b).map_err(|e| format!("{}: {e}", src.path.display()))
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = lst;
+        Err("operator ownership cannot be checked on this platform".into())
+    }
+}
+
+/// How many reasons one answer lists before summarising the rest.
+const MAX_REASONS: usize = 20;
+
+/// Every filesystem object under `top` that is NOT a path of `tree` and not
+/// excused by `allow`: the untracked half of [`tree_differs`]. `.git` at the
+/// top (the repository itself) and a top-level `skip` directory are not
+/// walked. A directory holding no tracked path is reported once, whole; a
+/// symlink is never followed. Nothing git says about ignoring is consulted.
+#[cfg(unix)]
+pub fn untracked_objects(
+    top: &Path,
+    tree: &Entries,
+    skip: Option<&[u8]>,
+    allow: &Allowlist,
+) -> Vec<String> {
+    use std::os::unix::ffi::{OsStrExt, OsStringExt};
+    let mut tracked_dirs = std::collections::BTreeSet::new();
+    for p in tree.keys() {
+        for (i, b) in p.iter().enumerate() {
+            if *b == b'/' {
+                tracked_dirs.insert(p[..i].to_vec());
+            }
+        }
+    }
+    let skipped = |p: &[u8]| {
+        skip.is_some_and(|s| {
+            p == s || (p.len() > s.len() && p.starts_with(s) && p[s.len()] == b'/')
+        })
+    };
+    let show = |p: &[u8]| String::from_utf8_lossy(p).to_string();
+    let mut out = Vec::new();
+    let mut stack: Vec<Vec<u8>> = vec![Vec::new()];
+    while let Some(dir) = stack.pop() {
+        let abs = top.join(std::ffi::OsStr::from_bytes(&dir));
+        let listed: Result<Vec<Vec<u8>>, std::io::Error> = std::fs::read_dir(&abs)
+            .and_then(|rd| rd.map(|e| e.map(|e| e.file_name().into_vec())).collect());
+        let mut names = match listed {
+            Ok(n) => n,
+            Err(e) => {
+                out.push(format!("cannot tell: {}: {e}", abs.display()));
+                continue;
+            }
+        };
+        names.sort();
+        for name in names {
+            if dir.is_empty() && name == b".git" {
+                continue;
+            }
+            let mut rel = dir.clone();
+            if !rel.is_empty() {
+                rel.push(b'/');
+            }
+            rel.extend_from_slice(&name);
+            if skipped(&rel) || tree.contains_key(&rel) {
+                // A tracked path's kind and bytes are compared against the
+                // tree by `worktree_differs`.
+                continue;
+            }
+            let md = match std::fs::symlink_metadata(top.join(std::ffi::OsStr::from_bytes(&rel))) {
+                Ok(m) => m,
+                Err(e) => {
+                    out.push(format!("cannot tell: {}: {e}", show(&rel)));
+                    continue;
+                }
+            };
+            if md.is_dir() {
+                if allow.dirs.contains(&rel) {
+                    continue;
+                }
+                if tracked_dirs.contains(&rel) {
+                    stack.push(rel);
+                } else {
+                    out.push(format!(
+                        "{}/: a directory that is not in the tree and not on the operator's \
+                         provenance allowlist (git-ignore rules excuse nothing)",
+                        show(&rel)
+                    ));
+                }
+            } else if !allow.exact.contains(&rel) {
+                out.push(format!(
+                    "{}: a file that is not in the tree and not on the operator's provenance \
+                     allowlist (git-ignore rules excuse nothing)",
+                    show(&rel)
+                ));
+            }
+        }
+    }
+    out
+}
+
+/// THE rule for a protected answer about a working tree (decision C): why
+/// the tree at `top` (outside a top-level `skip` directory) is not exactly
+/// `tree`, as a filesystem, allowing only what the operator's allowlist
+/// excuses. Empty means it is. Readiness certification, build provenance and
+/// the guest manifest all decide through this, and nothing else.
+pub fn tree_differs(
+    top: &Path,
+    tree: &Entries,
+    skip: Option<&[u8]>,
+    allow: &Result<Allowlist, String>,
+) -> Vec<String> {
+    let allow = match allow {
+        Ok(a) => a,
+        Err(e) => return vec![format!("the provenance allowlist is refused: {e}")],
+    };
+    if let Some(e) = allow.covers_tracked(tree) {
+        return vec![format!("the provenance allowlist is refused: {e}")];
+    }
+    #[cfg(unix)]
+    {
+        let mut out: Vec<String> = worktree_differs(top, tree)
+            .map(|p| format!("{p}: its bytes are not the tree's committed bytes"))
+            .into_iter()
+            .collect();
+        out.extend(untracked_objects(top, tree, skip, allow));
+        if out.len() > MAX_REASONS {
+            let more = out.len() - MAX_REASONS;
+            out.truncate(MAX_REASONS);
+            out.push(format!("... and {more} more"));
+        }
+        out
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (top, skip);
+        vec!["cannot tell: the working tree cannot be walked on this platform".into()]
+    }
+}
+
 /// The nearest ancestor of `dir` holding a `.git` of any kind, and what it is.
 fn find_dotgit(dir: &Path) -> Result<(PathBuf, std::fs::Metadata), String> {
     let start = std::fs::canonicalize(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
@@ -430,8 +773,10 @@ pub fn discover(dir: &Path) -> Result<PathBuf, String> {
 }
 
 /// [`discover`], also accepting a linked worktree's gitfile (never a
-/// symlink): for a question about history only (the guest build's lineage
-/// check), where it does not matter which clone asks.
+/// symlink): for a DEVELOPMENT question about history only (the guest
+/// build's early lineage check), where it does not matter which clone asks.
+/// Never used for a protected answer (decision E): the guest manifest's
+/// lineage, like everything else protected, is asked through [`discover`].
 pub fn discover_linked(dir: &Path) -> Result<PathBuf, String> {
     let (top, m) = find_dotgit(dir)?;
     if m.is_dir() || m.is_file() {
@@ -616,5 +961,41 @@ pub(crate) mod tests {
             "ATTACK: a gitfile naming a repository elsewhere was accepted as the build's tree",
         );
         assert!(e.contains("gitfile"), "{e}");
+    }
+
+    #[test]
+    fn the_allowlist_format_is_plain_paths_and_prefixes_only() {
+        let ok = Allowlist::parse(
+            format!("{ALLOWLIST_SCHEMA}\n# generated\n\ntarget/\ndist/\nprofiles/x/out.json\n")
+                .as_bytes(),
+        )
+        .unwrap();
+        assert!(
+            ok.dirs.contains(b"target".as_slice())
+                && ok.exact.contains(b"profiles/x/out.json".as_slice())
+        );
+        for bad in [
+            "*",
+            "crates/*/build.rs",
+            "src/**",
+            "a?",
+            "[ab]",
+            "/etc/x",
+            "../x",
+            "a/../b",
+            "./a",
+            ".git/",
+            "a//b",
+            "a b",
+            "x\\y",
+            "/",
+        ] {
+            assert!(
+                Allowlist::parse(format!("{ALLOWLIST_SCHEMA}\n{bad}\n").as_bytes()).is_err(),
+                "allowlist entry {bad:?} must be refused"
+            );
+        }
+        assert!(Allowlist::parse(b"target/\n").is_err(), "no schema line");
+        assert!(Allowlist::parse(format!("{ALLOWLIST_SCHEMA}\n").as_bytes()).is_ok());
     }
 }

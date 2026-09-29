@@ -609,6 +609,9 @@ def run(c):
 def sha(p): return hashlib.sha256(open(p, "rb").read()).hexdigest()
 man = json.load(open(man_p))
 sys.path.insert(0, os.path.join(repo, "scripts"))
+# No scripts/__pycache__/: every object in the tree counts for provenance
+# (amendment 44), and compiled bytecode is an input the next run would load.
+sys.dont_write_bytecode = True
 import linux_profile_manifest as lpm  # noqa: E402  (the one provenance implementation)
 prov = lpm.provenance()
 counts = {s: sum(1 for r in rows if r["status"] == s) for s in ("PASS", "FAIL", "BLOCKED")}

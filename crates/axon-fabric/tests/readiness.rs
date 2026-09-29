@@ -475,3 +475,122 @@ fn a_promisor_remote_in_the_repository_config_runs_nothing_as_the_verifier() {
     );
     assert_ne!(v["status"], "PASS", "{v}");
 }
+
+// ── Operator decision C (amendment 44, A70): git-ignore has no authority.
+// The working tree counts as a FILESYSTEM: an object outside governance/ that
+// is not in the certified tree is a change, however git is told to ignore
+// it, unless the operator's provenance allowlist excuses it.
+
+fn not_certified(c: &Certified, attack: &str) -> Value {
+    let v = c.verdict();
+    assert_ne!(
+        v["status"], "PASS",
+        "ATTACK: {attack}, and readiness still certified the tree: {v}"
+    );
+    v
+}
+
+/// Write the operator's allowlist (root-owned, 0644) for this fixture.
+fn install_allowlist(c: &Certified, entries: &str) -> std::path::PathBuf {
+    let p = c.trust.allowlist_path().to_path_buf();
+    write(&p, &format!("axon-provenance-allowlist/1\n{entries}"));
+    std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o644)).unwrap();
+    p
+}
+
+#[test]
+fn a_gitignored_input_is_not_certified() {
+    let Some(c) = certified() else { return };
+    // `.env` is ignored by the certified tree's own .gitignore, as in the
+    // real repository, and axon-ai reads it as configuration.
+    write(
+        &c.repo.join(".env"),
+        "AXON_AI_BASE_URL=http://attacker.invalid\n",
+    );
+    let v = not_certified(&c, "a .gitignored .env was ignored as a change");
+    assert!(
+        v.to_string()
+            .contains(".env: a file that is not in the tree"),
+        "{v}"
+    );
+}
+
+#[test]
+fn an_info_exclude_hidden_file_is_not_certified() {
+    let Some(c) = certified() else { return };
+    write(&c.repo.join(".git/info/exclude"), ".cargo/\n");
+    write(
+        &c.repo.join(".cargo/config.toml"),
+        "[build]\nrustflags = [\"--cfg\", \"agent\"]\n",
+    );
+    let v = not_certified(
+        &c,
+        "info/exclude hid an untracked .cargo/config.toml from the certification",
+    );
+    assert!(v.to_string().contains(".cargo/: a directory"), "{v}");
+}
+
+#[test]
+fn an_untracked_source_is_not_certified() {
+    let Some(c) = certified() else { return };
+    write(
+        &c.repo.join("crates/axon-fabric/build.rs"),
+        "fn main() {}\n",
+    );
+    not_certified(&c, "an untracked build.rs was not a change");
+}
+
+#[test]
+fn only_the_operators_allowlist_excuses_generated_output() {
+    let Some(c) = certified() else { return };
+    write(&c.repo.join("target/debug/axon-fabric"), "build output\n");
+    // No allowlist: nothing is excused, ignored or not.
+    let v = not_certified(&c, "an ignored target/ was excused without an allowlist");
+    assert!(v.to_string().contains("target/: a directory"), "{v}");
+    // The operator's allowlist excuses it (the control)...
+    let p = install_allowlist(&c, "target/\ndist/\n");
+    assert_eq!(c.verdict()["status"], "PASS", "{}", c.verdict());
+    // ...and only it.
+    write(&c.repo.join(".env"), "X=1\n");
+    not_certified(&c, "an allowlist for target/ also excused .env");
+    std::fs::remove_file(c.repo.join(".env")).unwrap();
+    // An allowlist the repository's writer could edit excuses nothing.
+    std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o666)).unwrap();
+    let v = not_certified(&c, "an other-writable allowlist excused target/");
+    assert!(v.to_string().contains("not operator-owned"), "{v}");
+    std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o644)).unwrap();
+    std::os::unix::fs::chown(&p, Some(1000), None).unwrap();
+    not_certified(&c, "an allowlist owned by another uid excused target/");
+    std::os::unix::fs::chown(&p, Some(0), None).unwrap();
+    // An entry that covers a source is refused whole.
+    install_allowlist(&c, "target/\ncrates/\n");
+    let v = not_certified(&c, "an allowlist entry covering crates/ was accepted");
+    assert!(v.to_string().contains("covers the tracked path"), "{v}");
+}
+
+// ── Operator decision E (amendment 44, A71): a protected answer comes from a
+// standalone clone. A linked worktree (a `.git` FILE) is refused.
+
+#[test]
+fn a_linked_worktree_is_not_certified() {
+    let Some(c) = certified() else { return };
+    let wt = c._d.path().join("wt");
+    git(
+        &c.repo,
+        &["worktree", "add", "-q", "--detach", wt.to_str().unwrap()],
+    );
+    assert!(std::fs::symlink_metadata(wt.join(".git"))
+        .unwrap()
+        .is_file());
+    let v = protected_components(&wt, &c.trust)["components"]["protected_backend"].clone();
+    assert_ne!(
+        v["status"], "PASS",
+        "ATTACK: readiness certified a linked worktree (a gitfile names the repository): {v}"
+    );
+    assert!(v.to_string().contains("gitfile"), "{v}");
+    assert_eq!(
+        c.verdict()["status"],
+        "PASS",
+        "control: the standalone clone"
+    );
+}

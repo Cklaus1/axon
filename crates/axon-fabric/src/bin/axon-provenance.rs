@@ -3,7 +3,14 @@
 //! `{"schema", "revision", "dirty": [reasons]}`. Empty `dirty` means clean.
 //!
 //! `axon-provenance --descends REV [DIR]`: exit 0 only if HEAD descends from
-//! REV, asked of the same hardened git (the guest build's PCI lineage check).
+//! REV, asked of the same hardened git (the guest build's early PCI lineage
+//! check). A DEVELOPMENT answer: a linked worktree is accepted.
+//!
+//! `axon-provenance --lineage REV [DIR]`: the provenance answer plus
+//! `"lineage": {"rev", "descends", "why"}`, the PROTECTED lineage answer
+//! (decision E: a gitfile or linked worktree is refused, never descends).
+//! The guest manifest binds this one, so a development lineage check can
+//! never make a manifest clean.
 //!
 //! This is `src/provenance.rs` over `src/git_data.rs`, the SAME code
 //! `build.rs` stamps the readiness verifier with, so the guest-image
@@ -43,12 +50,32 @@ fn main() {
         }
         return;
     }
-    let dir = args.first().cloned().unwrap_or_else(|| ".".into());
-    let p = provenance::provenance(std::path::Path::new(&dir));
+    let (lineage, rest) = match args.first().map(String::as_str) {
+        Some("--lineage") => (
+            Some(args.get(1).cloned().unwrap_or_default()),
+            args.get(2..).unwrap_or(&[]),
+        ),
+        _ => (None, &args[..]),
+    };
+    let dir = rest.first().cloned().unwrap_or_else(|| ".".into());
+    let dir = std::path::Path::new(&dir);
+    let p = provenance::provenance(dir);
     let dirty: Vec<String> = p.dirty.iter().map(|d| json_str(d)).collect();
+    let lineage = lineage.map(|rev| {
+        let (descends, why) = match provenance::descends_from_protected(dir, &rev) {
+            Ok(()) => (true, String::new()),
+            Err(e) => (false, e),
+        };
+        format!(
+            ",\"lineage\":{{\"rev\":{},\"descends\":{descends},\"why\":{}}}",
+            json_str(&rev),
+            json_str(&why)
+        )
+    });
     println!(
-        "{{\"schema\":\"axon-provenance/1\",\"revision\":{},\"dirty\":[{}]}}",
+        "{{\"schema\":\"axon-provenance/1\",\"revision\":{},\"dirty\":[{}]{}}}",
         json_str(&p.revision),
-        dirty.join(",")
+        dirty.join(","),
+        lineage.unwrap_or_default()
     );
 }

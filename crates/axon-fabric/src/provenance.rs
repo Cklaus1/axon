@@ -27,7 +27,15 @@
 //! * an untracked file is ignored by a rule that is not in a TRACKED
 //!   `.gitignore` (`info/exclude`, an untracked `.gitignore`, a config
 //!   `core.excludesFile`): only the reviewed tree may say what to ignore;
-//! * any file of HEAD's tree, hashed from its bytes, is not HEAD's object.
+//! * the working tree, as a FILESYSTEM, is not HEAD's tree
+//!   ([`crate::git_data::tree_differs`], operator decision C, amendment 44):
+//!   a file of HEAD's tree whose bytes are not HEAD's object, or ANY other
+//!   object under the tree (untracked, `.gitignore`d, hidden by
+//!   `info/exclude`: git-ignore rules excuse nothing) that is not on the
+//!   operator's provenance allowlist (`/etc/axon/provenance-allowlist`).
+//!
+//! The git checks above may only ADD reasons; nothing git says about
+//! ignoring a file can make the tree clean.
 
 use crate::git_data::{self, run, text};
 use std::path::{Path, PathBuf};
@@ -59,8 +67,14 @@ pub fn toplevel(dir: &Path) -> Result<PathBuf, String> {
     git_data::discover(dir)
 }
 
-/// The provenance of the repository containing `dir`.
+/// The provenance of the repository containing `dir`, under the operator's
+/// provenance allowlist.
 pub fn provenance(dir: &Path) -> Provenance {
+    provenance_with(dir, &git_data::AllowlistSource::operator())
+}
+
+/// [`provenance`], with the allowlist read from `allow`.
+pub fn provenance_with(dir: &Path, allow: &git_data::AllowlistSource) -> Provenance {
     let unknown = |why: String| Provenance {
         revision: "unknown".into(),
         dirty: vec![why],
@@ -85,11 +99,9 @@ pub fn provenance(dir: &Path) -> Provenance {
         .map(|p| top.join(p))
         .collect();
     let mut dirty = dirty_reasons(&top);
-    // HEAD's committed bytes against the FILES, hashed here: git's stat
-    // cache (the index, a repository file) is not consulted.
-    if let Some(why) = head_bytes_differ(&top, &revision) {
-        dirty.push(why);
-    }
+    // HEAD's tree against the FILESYSTEM, hashed and walked here: neither
+    // git's stat cache (the index) nor any ignore rule is consulted.
+    dirty.extend(head_bytes_differ(&top, &revision, allow));
     Provenance {
         revision,
         dirty,
@@ -101,11 +113,25 @@ pub fn provenance(dir: &Path) -> Provenance {
 /// the same git as [`provenance`]: the repository's config refused unless
 /// inert, replace objects off, and an `info/grafts` file (which rewrites
 /// ancestry and which git still honours) refused. Err says why not.
+///
+/// A DEVELOPMENT answer: a linked worktree is accepted
+/// ([`git_data::discover_linked`]). The protected answer, which the guest
+/// manifest binds, is [`descends_from_protected`].
 pub fn descends_from(dir: &Path, rev: &str) -> Result<(), String> {
+    lineage(git_data::discover_linked(dir)?, rev)
+}
+
+/// [`descends_from`] for a PROTECTED answer (decision E): the tree must be a
+/// standalone clone. A gitfile (linked worktree) or symlinked `.git` is
+/// refused ([`git_data::discover`]).
+pub fn descends_from_protected(dir: &Path, rev: &str) -> Result<(), String> {
+    lineage(git_data::discover(dir)?, rev)
+}
+
+fn lineage(top: PathBuf, rev: &str) -> Result<(), String> {
     if rev.is_empty() || rev.starts_with('-') {
         return Err(format!("{rev:?} is not a revision"));
     }
-    let top = git_data::discover_linked(dir)?;
     git_data::refuse_config(&top)?;
     let g = text(&top, &["rev-parse", "--git-path", "info/grafts"])?;
     if std::fs::symlink_metadata(top.join(&g)).is_ok() {
@@ -124,17 +150,17 @@ pub fn descends_from(dir: &Path, rev: &str) -> Result<(), String> {
     }
 }
 
-/// Why the working tree at `top` is not byte-for-byte `revision`'s tree, if
-/// it is not (or cannot be shown to be).
-pub fn head_bytes_differ(top: &Path, revision: &str) -> Option<String> {
-    let tree = git_data::Objects::open(top).and_then(|mut o| o.entries(revision, None));
-    match tree {
-        Err(e) => Some(format!("cannot tell: {e}")),
-        #[cfg(unix)]
-        Ok(t) => git_data::worktree_differs(top, &t)
-            .map(|p| format!("{p}: its bytes are not HEAD's committed bytes")),
-        #[cfg(not(unix))]
-        Ok(_) => Some("cannot tell: the working tree cannot be hashed on this platform".into()),
+/// Why the working tree at `top` is not exactly `revision`'s tree as a
+/// filesystem ([`git_data::tree_differs`], under the allowlist from
+/// `allow`), if it is not (or cannot be shown to be).
+pub fn head_bytes_differ(
+    top: &Path,
+    revision: &str,
+    allow: &git_data::AllowlistSource,
+) -> Vec<String> {
+    match git_data::Objects::open(top).and_then(|mut o| o.entries(revision, None)) {
+        Err(e) => vec![format!("cannot tell: {e}")],
+        Ok(t) => git_data::tree_differs(top, &t, None, &git_data::load_allowlist(allow)),
     }
 }
 
@@ -314,8 +340,6 @@ mod tests {
     #[test]
     fn a_clean_tree_is_clean_and_names_its_head() {
         let (_d, r) = repo();
-        std::fs::create_dir_all(r.join("target/debug")).unwrap();
-        std::fs::write(r.join("target/debug/x"), "build output\n").unwrap();
         let p = provenance(&r);
         assert_eq!(p.dirty, Vec::<String>::new());
         assert_eq!(p.revision.len(), 40);
@@ -337,9 +361,9 @@ mod tests {
              still says source_dirty: false"
         );
         assert!(
-            p.dirty
-                .iter()
-                .any(|w| w.contains("skip-worktree") || w.contains("not HEAD's committed bytes")),
+            p.dirty.iter().any(
+                |w| w.contains("skip-worktree") || w.contains("not the tree's committed bytes")
+            ),
             "{:?}",
             p.dirty
         );
@@ -564,7 +588,7 @@ mod tests {
         assert_dirty(
             &r,
             "an index entry forged to match the modified file's stat data hid the edit",
-            "bytes are not HEAD's",
+            "not the tree's committed bytes",
         );
     }
 
@@ -594,5 +618,181 @@ mod tests {
             "ATTACK: build provenance ran the repository's filter driver as the builder"
         );
         assert!(!p.dirty.is_empty(), "the edit is dirty: {p:?}");
+    }
+
+    // ── Operator decision C (amendment 44, A70): git-ignore has no authority.
+    // Every filesystem object in the tree counts; only the operator's
+    // allowlist excuses generated material.
+
+    /// An allowlist file under the test's temp base, root-owned (the test
+    /// runs as root) and 0644, with `entries` after the schema line.
+    fn allowlist(d: &Path, entries: &str) -> crate::git_data::AllowlistSource {
+        use std::os::unix::fs::PermissionsExt;
+        let p = d.join("provenance-allowlist");
+        std::fs::write(
+            &p,
+            format!("{}\n{entries}", crate::git_data::ALLOWLIST_SCHEMA),
+        )
+        .unwrap();
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o644)).unwrap();
+        crate::git_data::AllowlistSource::test(d, &p)
+    }
+
+    fn as_root() -> bool {
+        // SAFETY: geteuid has no preconditions.
+        let root = unsafe { libc::geteuid() } == 0;
+        if !root {
+            eprintln!("skipped: an operator-owned allowlist must be root-owned");
+        }
+        root
+    }
+
+    fn assert_dirty_under(r: &Path, src: &crate::git_data::AllowlistSource, attack: &str) {
+        let p = provenance_with(r, src);
+        assert!(
+            !p.dirty.is_empty(),
+            "ATTACK: {attack}, and the build provenance still says source_dirty: false"
+        );
+    }
+
+    #[test]
+    fn a_gitignored_build_script_is_dirty() {
+        // The reviewed tree's own (tracked, committed) .gitignore matches a
+        // build input. Git reports nothing; the file still changes the build.
+        let (_d, r) = repo();
+        std::fs::write(r.join(".gitignore"), "/target\nbuild.rs\n").unwrap();
+        git(&r, &["commit", "-q", "-am", "ignore rules"]);
+        std::fs::write(
+            r.join("build.rs"),
+            "fn main() { println!(\"cargo:rustc-cfg=agent\"); }\n",
+        )
+        .unwrap();
+        let st = run(
+            &r,
+            &["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+        )
+        .unwrap();
+        assert!(
+            st.is_empty(),
+            "control: git's status does not show the file"
+        );
+        assert_dirty(
+            &r,
+            "a .gitignored build.rs changes the build",
+            "build.rs: a file that is not in the tree",
+        );
+    }
+
+    #[test]
+    fn a_gitignored_cargo_config_directory_is_dirty() {
+        let (_d, r) = repo();
+        std::fs::write(r.join(".gitignore"), "/target\n.cargo/\n").unwrap();
+        git(&r, &["commit", "-q", "-am", "ignore rules"]);
+        std::fs::create_dir_all(r.join(".cargo")).unwrap();
+        std::fs::write(
+            r.join(".cargo/config.toml"),
+            "[build]\nrustflags = [\"--cfg\", \"agent\"]\n",
+        )
+        .unwrap();
+        assert_dirty(
+            &r,
+            "a .gitignored .cargo/config.toml changes the build",
+            ".cargo/: a directory that is not in the tree",
+        );
+    }
+
+    #[test]
+    fn an_allowlisted_generated_path_is_excused_and_nothing_else() {
+        if !as_root() {
+            return;
+        }
+        let (d, r) = repo();
+        std::fs::create_dir_all(r.join("target/debug")).unwrap();
+        std::fs::write(r.join("target/debug/x"), "build output\n").unwrap();
+        // No allowlist installed: nothing is excused, git-ignored or not.
+        let none = crate::git_data::AllowlistSource::test(d.path(), &d.path().join("absent"));
+        assert!(
+            provenance_with(&r, &none)
+                .dirty
+                .iter()
+                .any(|w| w.contains("target/: a directory")),
+            "a missing allowlist excuses nothing"
+        );
+        // The operator's allowlist excuses the generated directory.
+        let src = allowlist(d.path(), "# generated\ntarget/\n");
+        let p = provenance_with(&r, &src);
+        assert_eq!(p.dirty, Vec::<String>::new(), "control: target/ is excused");
+        // ...and only it: a build input beside it is still dirty.
+        std::fs::write(r.join("build.rs"), "fn main() {}\n").unwrap();
+        assert!(!provenance_with(&r, &src).dirty.is_empty());
+        std::fs::remove_file(r.join("build.rs")).unwrap();
+        // A SYMLINK named target/ is not the directory the entry excuses.
+        std::fs::remove_dir_all(r.join("target")).unwrap();
+        std::os::unix::fs::symlink(r.join("src"), r.join("target")).unwrap();
+        assert!(!provenance_with(&r, &src).dirty.is_empty());
+    }
+
+    #[test]
+    fn an_allowlist_that_is_not_operator_owned_excuses_nothing() {
+        use std::os::unix::fs::PermissionsExt;
+        if !as_root() {
+            return;
+        }
+        let (d, r) = repo();
+        // Anything under an excused target/ is out of the reviewed tree: an
+        // allowlist that anyone could edit could excuse a build input.
+        std::fs::create_dir_all(r.join("target")).unwrap();
+        std::fs::write(r.join("target/build.rs"), "fn main() {}\n").unwrap();
+        let src = allowlist(d.path(), "target/\n");
+        assert_eq!(
+            provenance_with(&r, &src).dirty,
+            Vec::<String>::new(),
+            "control: an operator-owned allowlist excuses its entry"
+        );
+        let p = src.path().to_path_buf();
+        // Writable by anyone: the repository's writer could have written it.
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o666)).unwrap();
+        assert_dirty_under(
+            &r,
+            &src,
+            "an other-writable allowlist excused an untracked target/",
+        );
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o644)).unwrap();
+        std::os::unix::fs::chown(&p, Some(1000), None).unwrap();
+        assert_dirty_under(
+            &r,
+            &src,
+            "an allowlist owned by another uid excused an untracked target/",
+        );
+        assert!(provenance_with(&r, &src)
+            .dirty
+            .iter()
+            .any(|w| w.contains("not operator-owned")));
+    }
+
+    #[test]
+    fn an_allowlist_entry_covering_a_source_is_refused() {
+        if !as_root() {
+            return;
+        }
+        let (d, r) = repo();
+        std::fs::write(r.join("src/build.rs"), "fn main() {}\n").unwrap();
+        for entry in ["src/\n", "src/lib.rs\n"] {
+            let src = allowlist(d.path(), entry);
+            let p = provenance_with(&r, &src);
+            assert!(
+                !p.dirty.is_empty(),
+                "ATTACK: an allowlist entry ({}) covering a tracked source directory excused an \
+                 untracked src/build.rs, and the build provenance still says source_dirty: false",
+                entry.trim()
+            );
+            assert!(
+                p.dirty
+                    .iter()
+                    .any(|w| w.contains("covers the tracked path")),
+                "{:?}",
+                p.dirty
+            );
+        }
     }
 }

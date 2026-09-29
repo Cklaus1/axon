@@ -174,6 +174,9 @@ pub fn certified() -> Option<Certified> {
         "# PSV\n",
     );
     write(&repo.join("crates/axon-fabric/src/lib.rs"), "// code\n");
+    // Generated output is ignored as in the real repository (an allowlisted
+    // path must also pass readiness's untracked listing, which can only add).
+    write(&repo.join(".gitignore"), "/target/\n/dist/\n.env\n");
     write(
         &repo.join("scripts/protected_verifier_ready.py"),
         "# script\n",

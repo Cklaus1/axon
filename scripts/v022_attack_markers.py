@@ -516,4 +516,12 @@ ATTACK_MARKERS = {
     'M457': r"ATTACK: the tree moved to another commit between the snapshot and the manifest, and the guest manifest says axon_tree_dirty_at_build: false",
     'M458': r"ATTACK: the tree was dirty when the build started and clean again by manifest time, and the guest manifest says axon_tree_dirty_at_build: false",
     'M459': r"ATTACK: grafted ancestry passed the guest build's PCI lineage check",
+    # ── C9 round 2, workstream BCE (M500-M519): decisions C and E ──
+    'M500': r"ATTACK: a \.gitignored build\.rs changes the build, and the build provenance still says source_dirty: false",
+    'M501': r"ATTACK: a \.gitignored \.cargo/config\.toml changes the build, and the build provenance still says source_dirty: false",
+    'M502': r"ATTACK: an other-writable allowlist excused an untracked target/, and the build provenance still says source_dirty: false",
+    'M503': r"ATTACK: an allowlist entry \(src/\) covering a tracked source directory excused an\s+untracked src/build\.rs",
+    'M504': r"ATTACK: readiness certified a linked worktree \(a gitfile names the repository\)",
+    'M505': r"ATTACK: a HEAD that does not descend from the PCI-certified revision, and the guest manifest says axon_tree_dirty_at_build: false",
+    'M506': r"ATTACK: a HEAD that does not descend from the PCI-certified revision, and the guest manifest says axon_tree_dirty_at_build: false",
 }

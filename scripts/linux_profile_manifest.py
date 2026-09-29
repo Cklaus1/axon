@@ -26,6 +26,16 @@ count, and the repository's own git config is refused unless it is inert
 build-guest-image.sh takes a `--snapshot` BEFORE it builds; the manifest is
 clean only if that snapshot and the tree now are both clean and name the same
 revision, so the artifacts' source is the tree described.
+
+"Clean" is the ONE source-tree rule (operator decision C, amendment 44):
+every filesystem object under the tree counts, including `.gitignore`d and
+`info/exclude`-hidden files; only paths on the operator's allowlist
+(/etc/axon/provenance-allowlist, root-owned; `target/` and `dist/` for a normal
+build) are excused, and a missing allowlist excuses nothing. A gitfile / linked
+worktree is never clean (decision E): an evidence-producing guest image is
+built from a STANDALONE CLONE. The manifest also binds the PCI lineage, asked
+the protected way (a linked worktree never descends); `--descends` is the
+build's early development check and makes nothing clean.
 """
 import hashlib
 import json
@@ -36,6 +46,9 @@ import tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 HELPER = os.path.join(ROOT, "crates", "axon-fabric", "src", "bin", "axon-provenance.rs")
+# The PCI-certified revision the guest's axon must descend from
+# (governance/proofs/v022-pci/CERTIFICATION.md).
+PCI_CERTIFIED = "31413ca7"
 
 
 def sha(path):
@@ -71,10 +84,13 @@ def helper(args):
                               env={"PATH": "/usr/bin:/bin", "LC_ALL": "C"}), None
 
 
-def provenance():
-    """The axon-provenance/1 answer for ROOT's tree, or a DIRTY "cannot tell"."""
+def provenance(lineage=None):
+    """The axon-provenance/1 answer for ROOT's tree, or a DIRTY "cannot tell".
+
+    With `lineage`, the tree is also dirty unless HEAD descends from it, asked
+    the PROTECTED way (a linked worktree never descends)."""
     try:
-        r, err = helper([])
+        r, err = helper(["--lineage", lineage] if lineage else [])
         if r is None:
             return cannot_tell(err)
         d = json.loads(r.stdout)
@@ -84,12 +100,19 @@ def provenance():
             or not isinstance(d.get("revision"), str) or not isinstance(d.get("dirty"), list)
             or not all(isinstance(x, str) for x in d["dirty"])):
         return cannot_tell("the provenance helper gave no axon-provenance/1 answer")
+    if lineage:
+        lin = d.get("lineage")
+        if (not isinstance(lin, dict) or lin.get("rev") != lineage
+                or not isinstance(lin.get("descends"), bool)):
+            d["dirty"].append("cannot tell: the provenance helper gave no PCI lineage answer")
+        elif lin["descends"] is not True:
+            d["dirty"].append(f"PCI lineage: {lin.get('why')}")
     return d
 
 
 def source_state(pre_path):
     """(revision, reasons): the tree now, joined with the pre-build snapshot."""
-    now = provenance()
+    now = provenance(PCI_CERTIFIED)
     reasons = list(now["dirty"])
     pre = None
     if pre_path:
@@ -155,8 +178,10 @@ def main():
             "axon_psv_runner_build": "RUSTFLAGS='-C target-feature=+crt-static' cargo build "
                                      "--locked -p axon-psv --bin axon-psv-runner --release "
                                      "--target x86_64-unknown-linux-musl",
-            "pci_lineage": {"certified_revision": "31413ca7",
-                            "rule": "axon_git_rev_at_build descends from it (git merge-base --is-ancestor)"},
+            "pci_lineage": {"certified_revision": PCI_CERTIFIED,
+                            "rule": "axon_git_rev_at_build descends from it (git merge-base "
+                                    "--is-ancestor, from a standalone clone); a tree that does "
+                                    "not is dirty"},
             "rustc": first_line(["rustc", "--version"]),
         },
         "kernel": {
