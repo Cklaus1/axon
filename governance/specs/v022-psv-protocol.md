@@ -755,5 +755,9 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       too. It now asks the helper (`--descends`), which uses the same git and refuses
       `info/grafts`. History does not depend on which clone asks, so the lineage check accepts a
       linked worktree; the provenance of a linked worktree is always dirty.
+    - Fabric's qualification also requires the B263 evidence record's `source.tree_dirty` to be
+      false. `b263_qualify.sh` computed it from PATH git, untracked files excluded, and a failed
+      git read as clean. It now takes the same provenance. That script needs KVM to run end to
+      end, so only its wiring is tested; it has no mutation row.
     - Rows A65 and A66, mutations M450-M459. M346 (the skip-worktree refusal in provenance) is now
       dominated by the byte comparison (M451). It is a four-cell candidate, not retired here.

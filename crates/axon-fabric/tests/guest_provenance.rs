@@ -396,3 +396,23 @@ fn a_linked_worktree_passes_the_lineage_check_but_is_never_clean() {
         "ATTACK: a gitfile naming a repository elsewhere was accepted as the build's tree: {p}"
     );
 }
+
+/// Fabric's qualification also requires the B263 evidence record's
+/// `source.tree_dirty` to be false. It came from PATH git with untracked
+/// files excluded, and a git that failed read as clean (`bool(None)`). It is
+/// the same provenance now; b263_qualify.sh needs KVM to run end to end, so
+/// this checks its wiring.
+#[test]
+fn the_b263_evidence_tree_dirty_is_the_rust_provenance() {
+    let s = std::fs::read_to_string(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../scripts/b263_qualify.sh"),
+    )
+    .unwrap();
+    assert!(
+        s.contains("prov = lpm.provenance()")
+            && s.contains(r#""tree_dirty": bool(prov["dirty"]) or prov["revision"] == "unknown","#)
+            && !s.contains(r#"["git", "status""#),
+        "ATTACK: the B263 evidence's tree_dirty is not the hardened provenance (PATH git, \
+         untracked files excluded, cannot-tell read as clean)"
+    );
+}
