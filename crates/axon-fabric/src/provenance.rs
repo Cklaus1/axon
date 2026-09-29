@@ -776,6 +776,11 @@ mod tests {
             return;
         }
         let (d, r) = repo();
+        // Ignored by the reviewed tree's own rule, so git's status is silent
+        // and only the allowlist's own validation stands between the entry
+        // and the source.
+        std::fs::write(r.join(".gitignore"), "/target\nbuild.rs\n").unwrap();
+        git(&r, &["commit", "-q", "-am", "ignore rules"]);
         std::fs::write(r.join("src/build.rs"), "fn main() {}\n").unwrap();
         for entry in ["src/\n", "src/lib.rs\n"] {
             let src = allowlist(d.path(), entry);
