@@ -217,12 +217,26 @@ impl ProtectedHost {
         if let Some(dir) = signer.key_path.parent() {
             owned(dir, false).map_err(bad)?;
         }
+        // The Fabric service writes its runs under `out_root`, and the
+        // custodian its nonce records under `nonce_store`: neither leaf is the
+        // operator's, but WHERE it sits is, exactly as for the signing key. An
+        // agent-writable ancestor could swap either for a directory it
+        // controls (pre-planted run outputs; erased nonce records, so an
+        // observation replays).
+        let parent_owned = |p: &Path| -> Result<(), String> {
+            let dir = p
+                .parent()
+                .ok_or_else(|| bad(format!("{} has no parent directory", p.display())))?;
+            owned(dir, false).map_err(bad)
+        };
         let out_root = path_at("/out_root")?;
+        parent_owned(&out_root)?;
         let observer = match v.get("observer") {
             None | Some(Value::Null) => None,
             Some(ob) => {
                 let (command, command_sha256) = pinned("observer/command")?;
                 let nonces = path_at("/observer/nonce_store")?;
+                parent_owned(&nonces)?;
                 Some(crate::observer::ObserverConfig {
                     command,
                     command_sha256,
