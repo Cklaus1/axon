@@ -216,7 +216,27 @@ fn signer_from(
             .unwrap_or(std::path::Path::new("."))
             .join(path);
     }
-    let meta = std::fs::symlink_metadata(&path)
+    // ONE open, never through a symlink: the file whose owner and mode are
+    // checked is the file whose bytes are read (a path stat'd and then read
+    // again can be two files).
+    let mut f = {
+        use std::os::unix::fs::OpenOptionsExt;
+        std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC)
+            .open(&path)
+            .unwrap_or_else(|e| {
+                if e.raw_os_error() == Some(libc::ELOOP) {
+                    bad(format!(
+                        "key {} is not a regular file (a symlink)",
+                        path.display()
+                    ))
+                }
+                bad(format!("key {}: {e}", path.display()))
+            })
+    };
+    let meta = f
+        .metadata()
         .unwrap_or_else(|e| bad(format!("key {}: {e}", path.display())));
     {
         use std::os::unix::fs::MetadataExt;
@@ -225,15 +245,20 @@ fn signer_from(
         }
         // SAFETY: geteuid has no preconditions and cannot fail.
         let euid = unsafe { libc::geteuid() };
-        if meta.uid() != euid || meta.mode() & 0o077 != 0 {
+        // Spec §2 rule 1: mode 0400. Readable by no one else, and writable by
+        // no one — not even its owner, the service that uses it.
+        if meta.uid() != euid || meta.mode() & 0o277 != 0 {
             bad(format!(
-                "key {} must be owned by this uid and readable by no one else (mode {:o})",
+                "key {} must be owned by this uid, readable by no one else and writable by no one \
+                 (mode 0400; it is {:o})",
                 path.display(),
                 meta.mode() & 0o777
             ));
         }
     }
-    let key = std::fs::read(&path).unwrap_or_else(|e| bad(format!("key {}: {e}", path.display())));
+    let mut key = Vec::new();
+    std::io::Read::read_to_end(&mut f, &mut key)
+        .unwrap_or_else(|e| bad(format!("key {}: {e}", path.display())));
     let pk = axon_loop_contracts::attestation::public_key_of(&key)
         .unwrap_or_else(|e| bad(format!("key {}: {e}", path.display())));
     if pk != field("public_key") {
@@ -254,10 +279,38 @@ fn verify_evidence(a: &Args) {
         s.push(".sig");
         PathBuf::from(s)
     });
+    // `--issuers` is the CALLER's choice, so "verified" alone says only that
+    // some key in a directory the caller named signed these bytes. The output
+    // names that root and this build, and is authoritative only when the root
+    // is the operator's own for this authority, passes the operator-ownership
+    // walk, and this is a production build (review FIELD-ORIGIN, C9 round 1).
+    let operator_root = authority.operator_dir();
+    let owned = axon_fabric::backend::check_operator_owned(&issuers);
+    let authoritative =
+        !axon_fabric::backend::TEST_TRUST_BUILD && issuers == operator_root && owned.is_ok();
     match axon_fabric::backend::verify_operator_evidence(&record, &sig, &issuers, authority) {
         Ok(issuer) => println!(
             "{}",
-            serde_json::json!({"schema":"axon-fabric-verify-evidence/1","verified":true,"issuer":issuer})
+            serde_json::json!({
+                "schema": "axon-fabric-verify-evidence/1",
+                "verified": true,
+                "issuer": issuer,
+                "authority": authority.dir_name(),
+                "trust_root": issuers,
+                "operator_root": operator_root,
+                "authoritative": authoritative,
+                "non_authoritative_because": if authoritative { serde_json::Value::Null } else {
+                    serde_json::json!(if axon_fabric::backend::TEST_TRUST_BUILD {
+                        "this is a test-trust build".to_string()
+                    } else if issuers != operator_root {
+                        "the trust root is the caller's --issuers, not the operator's root".to_string()
+                    } else {
+                        format!("the operator root fails the ownership walk: {}", owned.err().unwrap_or_default())
+                    })
+                },
+                "build": if axon_fabric::backend::TEST_TRUST_BUILD { "test-trust" } else { "production" },
+                "verifier": axon_fabric::readiness::verifier_identity(),
+            })
         ),
         Err(e) => refuse("unregistered", &e, 4),
     }
@@ -564,7 +617,7 @@ fn keygen(a: &Args) {
         let mut f = std::fs::OpenOptions::new()
             .write(true)
             .create_new(true)
-            .mode(0o600)
+            .mode(0o400)
             .open(&out)
             .unwrap_or_else(|e| refuse("io", &format!("{}: {e}", out.display()), 2));
         f.write_all(pkcs8.as_ref())

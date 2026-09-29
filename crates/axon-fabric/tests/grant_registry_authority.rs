@@ -121,7 +121,7 @@ impl Host {
         std::fs::write(root.join("keys/attest.pk8"), pk8.as_ref()).unwrap();
         std::fs::set_permissions(
             root.join("keys/attest.pk8"),
-            std::fs::Permissions::from_mode(0o600),
+            std::fs::Permissions::from_mode(0o400),
         )
         .unwrap();
         // The OPERATOR's grants: principal:test may run deny-all only.

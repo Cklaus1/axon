@@ -141,7 +141,7 @@ fn fabric_signs_as_the_operators_signer_and_only_when_the_workload_cannot_reach_
     {
         use std::os::unix::fs::PermissionsExt;
         let mode = std::fs::metadata(&key).unwrap().permissions().mode() & 0o777;
-        assert_eq!(mode, 0o600);
+        assert_eq!(mode, 0o400);
     }
     assert_ne!(keygen(&key).0, 0, "keygen never overwrites a key");
     let signer = |path: &Path, pk: &str| json!({"issuer_ref": "fabric:verifier", "key_path": path, "public_key": pk});
@@ -254,7 +254,7 @@ fn fabric_signs_as_the_operators_signer_and_only_when_the_workload_cannot_reach_
             .unwrap();
     let junk = env.dir.path().join("junk.pk8");
     std::fs::write(&junk, b"not pkcs8").unwrap();
-    chmod(&junk, 0o600);
+    chmod(&junk, 0o400);
     let mut extra = signer(&key, &pk);
     extra["note"] = json!("x");
     let mut missing = signer(&key, &pk);
