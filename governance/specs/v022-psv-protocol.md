@@ -533,3 +533,45 @@ A37–A40.
     acceptance test makes. `srand` is now refused (SandboxViolation) from a sealed frame; the
     operator's test may still use randomness.
 26. (Grouped with 24: the arm-policy, outcome and context-signature joins are one fix.)
+
+The next six come from the two Candidate-8 certifying reviews (wf_bff9835f-4a0 and wf_ae3a5a74-41e,
+both DO_NOT_REGISTER) and the C9 hardening wave. The second review's findings were present at 7b
+too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protocol.json).
+
+27. **Every RNG draw comes from the running frame's kernel (PSV-1; supersedes amendment 25's
+    mechanism).** Amendment 25 refused `srand` by name. The next fix refused draws by the `Random`
+    effect row. Both were lists, and the review steered the operator's stream through
+    `goal_run_random`, whose row is `{AI,Net,IO}`, to a keyed PASS for a wrong candidate. The RNG
+    now lives in the interpreter's per-provenance `Kernel`. `rng_next`/`rng_reseed` select the
+    running frame's kernel, and the process-global stream is gone. The sealed kernel's stream is
+    seeded by a one-way SHA-256 derivation of the operator seed. So sealed code can neither move,
+    reseed nor learn the operator's stream, whatever builtin it uses. Candidate code may still use
+    randomness. Negative-matrix A40, A41, A42.
+28. **Equivalence is not presumed (mutation evidence).** Of eight rows once retired as
+    "equivalent", six were load-bearing (M254, M103, M255, M104, M209, M210). They had passed
+    paired-disable only because each row's assigned test attacked a route another guard covers.
+    All six are ACTIVE, each killed by a test of its named property. A row is retired only if all
+    four cells hold for ONE named attack, with the attack's own failure message; the full package
+    suite (in the row's feature configuration) stays green without it; and an all-paths dominance
+    argument is recorded. Only M58 and M245 meet this. M176 was stale, not equivalent (M293 now
+    kills its refactored guard).
+29. **A counted receipt must claim protected evidence, on every writer route (PSV-7).** A store
+    writer repointed a genuine protected record at genuinely signed guest-unobserved or
+    development verdicts. That is refused at admission (`does not claim protected evidence`).
+    Negative-matrix A43.
+30. **A protected record's attribution is checked, not only its documents (PSV-7).** Re-verification
+    authenticates each document's own signer, but never compared it with the record's attribution.
+    Admission's attribution checks are the only guard against a record that names an identity the
+    operator root never held. Negative-matrix A44.
+31. **The grant registry of a protected host is operator-pinned (FIELD-ORIGIN / Lane-A D1).** This
+    closes the follow-up recorded after amendment 12 ("the guest effect policy comes from the
+    caller's `--grant-registry`"). A caller registry is refused on every route of a protected host.
+    status/cancel authorize before any journal write and reconcile only their own scope. In
+    development, the authorizing registry's sha256 is recorded in the op's intent.
+    Negative-matrix A45.
+32. **Readiness certification is decided from the object store, not from git's porcelain view
+    (FIELD-ORIGIN).** Git runs env-cleared from a fixed binary, with replace objects disabled.
+    Replace refs, grafts, and skip-worktree or assume-unchanged entries are refused. The certified
+    commit, the trees and the working-tree bytes are re-hashed. Negative-matrix A46. Still open, and
+    it needs an operator decision: an untracked file hidden by `.git/info/exclude` or a self-ignoring
+    `.gitignore` is invisible to the check, and refusing such files would change what counts as READY.
