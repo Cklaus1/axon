@@ -45,7 +45,10 @@ MUTATIONS = [
      "crates/axon-fabric/src/signing.rs",
      "        return Err(CANDIDATE_RUBRIC);\n    }\n    if replayed {\n        return Err(REPLAYED);",
      "        return Err(CANDIDATE_RUBRIC);\n    }\n    if false && replayed {\n        return Err(REPLAYED);",
-     "axon-fabric", "--test attestation", "a_replay_is_never_signed_not_even_a_genuine_one"),
+     # C9 round 1b: the decision's own contract (a replay whose ran_under names
+     # a signable class); the integration test's replay carries class
+     # `unknown`, which WRONG_CLASS also refuses (defence in depth).
+     "axon-fabric", "--lib", "signing::tests::a_replay_is_never_signed_whatever_its_journal_claims"),
     ("M02", "attestation signature verification",
      "crates/axon-loop-contracts/src/attestation.rs",
      "    UnparsedPublicKey::new(&ED25519, &registered)\n        .verify(&bytes, &sig)",
@@ -705,9 +708,12 @@ MUTATIONS = [
     #    (sort-nested, no-scrub, no-diff-fail) are documented, never rows. ──
     ('M137', 'O1: eligibility requires the launcher at its pin (RULE:launcher-pinned)', 'crates/axon-fabric/src/backend.rs', 'if got != self.launcher_sha256 {', 'if false && got != self.launcher_sha256 {', 'axon-fabric', '--test protected_host', 'a_replaced_launcher_is_refused_at_load_and_after_load'),
     ('M138', 'O1/A21: submit refuses every caller protected flag', 'crates/axon-fabric/src/bin/axon-fabric.rs', 'if a.opt(flag).is_some() {', 'if false && a.opt(flag).is_some() {', 'axon-fabric', '--test protected_host', 'every_caller_protected_flag_is_refused_by_name'),
-    ('M139', 'O1/A17: no caller registry on a protected host', 'crates/axon-fabric/src/bin/axon-fabric.rs', 'if host.is_some() && a.opt("--check-registry").is_some() {', 'if false && host.is_some() && a.opt("--check-registry").is_some() {', 'axon-fabric', '--test protected_host', 'only_the_pinned_operator_registry_defines_suites'),
+    ('M139', 'O1/A17: no caller registry on a protected host', 'crates/axon-fabric/src/bin/axon-fabric.rs', 'if host.is_some() && a.opt("--check-registry").is_some() {', 'if false && host.is_some() && a.opt("--check-registry").is_some() {', 'axon-fabric', '--test protected_host', 'a_caller_registry_never_defines_suites_on_a_protected_host'),
     ('M140', "O1: the protected signer is the host config's", 'crates/axon-fabric/src/bin/axon-fabric.rs', 'Some(h) => Some(host_signer(h)),', 'Some(_) => signer(&registry_path),', 'axon-fabric', '--test protected_host', 'the_host_signer_key_must_be_private_and_match_its_pin'),
-    ('M141', "O1: a protected host loads the operator's registry", 'crates/axon-fabric/src/bin/axon-fabric.rs', 'Some(h) => h.suite_registry.clone(),', 'Some(_) => PathBuf::from(a.req("--check-registry")),', 'axon-fabric', '--test protected_host', 'a_protected_host_loads_the_operators_registry_not_the_callers'),
+    # C9 round 1b: re-anchored. The old mutation (`Some(_) => PathBuf::from(a.req("--check-registry"))`)
+    # made a protected host fail CLOSED (it demanded a caller registry that M139 refuses): it removed
+    # no protection, only liveness. Removing the guard is the caller override below.
+    ('M141', "O1: a protected host loads the operator's registry", 'crates/axon-fabric/src/bin/axon-fabric.rs', 'Some(h) => h.suite_registry.clone(),', 'Some(h) => a.opt("--check-registry").map(PathBuf::from).unwrap_or_else(|| h.suite_registry.clone()),', 'axon-fabric', '--test protected_host', 'a_caller_registry_never_defines_suites_on_a_protected_host'),
     ('M142', 'O1: a pinned file is exactly its pinned bytes', 'crates/axon-fabric/src/protected_host.rs', 'if got != pin {', 'if false && got != pin {', 'axon-fabric', '--test protected_host', 'a_replaced_launcher_is_refused_at_load_and_after_load'),
     ('M143', 'O1: every O1 path is operator-owned', 'crates/axon-fabric/src/protected_host.rs', 'Some(base) => check_owned_chain(base, p, entries),', 'Some(_base) => Ok(()),', 'axon-fabric', '--test protected_host', 'every_o1_path_must_be_operator_owned'),
     ('M144', 'O1: the host config schema is exact', 'crates/axon-fabric/src/protected_host.rs', 'if keys != KEYS {', 'if false && keys != KEYS {', 'axon-fabric', '--test protected_host', 'the_config_schema_is_exact_and_every_path_absolute'),
@@ -790,7 +796,7 @@ MUTATIONS = [
     ('M218', 'M4: intake holds a protected claim to every join', 'crates/axon-loop/src/intake.rs', '        axon_loop_contracts::protected_evidence::check_bundle(\n            &req,\n            &rc,\n            bundle,\n            ep.authority_epoch.get(),\n        )\n        .map_err(|e| {', '        Ok::<&str, String>(bundle).map(|_| ()).map_err(|e: String| {', 'axon-loop', '--test intake', 'a_protected_claim_without_every_join_is_refused'),
     ('M219', 'B1: a sealed candidate @[test] is never collected', 'crates/axon-core/src/main.rs', 'if !sealed.is_empty() && axon_core::resolver::span_in_sealed(f.span, &sealed) {', 'if false && axon_core::resolver::span_in_sealed(f.span, &sealed) {', 'axon-core', '--no-default-features --test psv_test_selection', 'a_sealed_candidates_own_test_is_never_collected'),
     ('M220', 'B1: the runner selects exactly the registered test', 'crates/axon-psv/src/runner.rs', '        .arg("--exact")\n', '', 'axon-psv', '--test runner', 'a_suite_sibling_does_not_run_beside_the_registered_test'),
-    ('M221', 'B3: launch inputs come from the store, never the caller-owned run dir', 'crates/axon-fabric/src/submit.rs', '            let inputs = crate::psv::private_inputs(\n                lx,\n', '            let inputs = match &target.bound { Bound::Version { dir, .. } => Ok::<PathBuf, String>(dir.0.clone()), _ => unreachable!() }; let _ = (\n                lx,\n', 'axon-fabric', '--test psv_dispatch', 'a_run_dir_swapped_under_the_callers_state_changes_nothing'),
+    ('M221', 'B3: launch inputs come from the store, never the caller-owned run dir', 'crates/axon-fabric/src/submit.rs', '                crate::psv::private_inputs(\n                    lx,\n                    &cfg.state_dir,\n                    &cfg.epoch.scope().tenant_id,\n                    &req,\n                    &version,\n                )\n', '                { let _ = (lx, &version); match &target.bound { Bound::Version { dir, .. } => Ok::<PathBuf, String>(dir.0.clone()), _ => unreachable!() } }\n', 'axon-fabric', '--test psv_dispatch', 'a_run_dir_swapped_under_the_callers_state_changes_nothing'),
     ('M222', 'B3: a manifest candidate tree digest is its WorkspaceVersion', 'crates/axon-psv/src/lib.rs', 'if m.candidate.tree_digest != m.candidate.workspace_version {', 'if false && m.candidate.tree_digest != m.candidate.workspace_version {', 'axon-psv', '--test protocol', 'a_tree_digest_must_be_the_version_it_names'),
     ('M223', 'B3: a manifest suite tree digest is its version', 'crates/axon-psv/src/lib.rs', 'if m.suite.tree_digest != m.suite.version {', 'if false && m.suite.tree_digest != m.suite.version {', 'axon-psv', '--test protocol', 'a_tree_digest_must_be_the_version_it_names'),
     ('M224', 'guest input: nothing the digest omits', 'crates/axon-psv/src/lib.rs', 'if let Some(o) = omitted.first() {', 'if let Some(o) = omitted.first().filter(|_| false) {', 'axon-psv', '--test protocol', 'inputs_with_links_or_omitted_entries_are_refused'),
@@ -1038,6 +1044,23 @@ MUTATIONS = [
      '        ("observer_key_id", &trust.observer_dir, "observer"),\n',
      "",
      "axon-fabric", "--test readiness_attribution", "an_observer_key_id_outside_the_observer_root_is_refused"),
+    # ── C9 round 1b, FABRIC workstream rows (M400-M409) ──
+    # M400: the protected arm builds no launch for anything but an operator
+    # suite with a named test. Replaced a production `expect("checked above")`
+    # that PANICKED when M187 was removed (a crash is not a refusal). Mutual
+    # pair with M187 (four-cell); the mutation is the historical attack: the
+    # candidate's own file judged as the suite.
+    ('M400', 'PSV: the protected arm launches only an operator suite with a named test (structured, was a panic)', 'crates/axon-fabric/src/submit.rs',
+     '                _ => Err(PROTECTED_SUITE_ONLY.to_string()),',
+     '                _ => Ok((file.clone(), req.workspace_version_ref.clone(), filter.clone().unwrap_or_default())),',
+     'axon-fabric', '--test psv_dispatch', 'only_an_operator_suite_runs_on_the_protected_profile'),
+    # M401: on a protected host the grant registry is the operator's pinned
+    # one whatever the caller names (the structural half of D1). Mutual pair
+    # with M273 (four-cell).
+    ('M401', "D1: a protected host resolves grants from the operator's pinned registry, never a caller path", 'crates/axon-fabric/src/bin/axon-fabric.rs',
+     '            h.grants()\n                .unwrap_or_else(|e| refuse("unauthorized", &format!("protected host: {e}"), 7))',
+     '            a.opt("--grant-registry").map(|p| axon_fabric::GrantRegistry::load(&PathBuf::from(p))).unwrap_or_else(|| h.grants())\n                .unwrap_or_else(|e| refuse("unauthorized", &format!("protected host: {e}"), 7))',
+     'axon-fabric', '--test grant_registry_authority', 'a_protected_host_refuses_a_caller_grant_registry_on_every_route'),
 ]
 
 
@@ -1140,6 +1163,28 @@ EQUIV_RECORD = {
     "M210": {"property": "a counted protected trial's context attribution is an observer the operator observer root holds, under the recorded key",
              "subsumed_by": ["M361"], "killer": "joint:M210+M361",
              "all_paths": "derive's rooted-observer check runs only for a PROTECTED evaluation's counted trials, after the verifier loop, where reverify_protected has returned the context's signer for EVERY such trial (trusted observer, rooted_key held, signature verified under it); M361 then requires context_signed_by to equal that signer. So the attribution is rooted with that key whenever M361 passes. No other reader of context_signed_by exists"},
+    # ── C9 round 1b (fabric workstream) ──
+    "M139": {"property": "on a protected host the caller's --check-registry never becomes the suite registry",
+             "subsumed_by": ["M141"], "killer": "joint:M139+M141",
+             "all_paths": "the binary reads --check-registry in exactly two places, both in submit(): M139's refusal and the registry_path match; on a protected host (host is Some) that match's arm is h.suite_registry (M141), which never reads the flag, so with M139 removed the flag is read by nothing"},
+    "M141": {"property": "on a protected host the caller's --check-registry never becomes the suite registry",
+             "subsumed_by": ["M139"], "killer": "joint:M139+M141",
+             "all_paths": "M139's refusal runs before the registry_path match on the same host (Some) and tests a.opt(--check-registry), the same lookup the override would use; nothing between them can succeed without passing it, so the override is reached only with the flag absent"},
+    "M183": {"property": "a pass rests on this launch's keyed completion evidence",
+             "subsumed_by": ["M312"], "killer": "joint:M183+M312",
+             "all_paths": "both checks sit in derive()'s Passed arm; M312 requires exactly one result line naming the test, status ok, whose completion equals outcome_token(K, test, true), which is the same HMAC as completion_token(K, test); parse_axon_test_json records that line's token in report.completion, so M312 passing implies M183's predicate"},
+    "M187": {"property": "the protected profile launches only an operator suite with a named test",
+             "subsumed_by": ["M400"], "killer": "joint:M187+M400",
+             "all_paths": "the protected arm of the dispatch match is the only launch path for the protected profile, and every request reaching it passes M400's spec match, which yields a launch spec only for (Some(suite), Some(test)); M187 is the same predicate before reservation"},
+    "M400": {"property": "the protected profile launches only an operator suite with a named test",
+             "subsumed_by": ["M187"], "killer": "joint:M187+M400",
+             "all_paths": "M187 runs for every request whose selected profile is the protected one, before reservation, and returns Err unless target.suite and target.filter are both Some; the protected arm is reached only with that profile"},
+    "M273": {"property": "on a protected host a caller grant registry never authorizes status or cancel",
+             "subsumed_by": ["M401"], "killer": "joint:M273+M401",
+             "all_paths": "grant_registry() is the one reader of --grant-registry for status/cancel (and submit, where M274 refuses first); on a protected host its arm resolves h.grants(), the operator's pinned registry (M401), which never reads the flag"},
+    "M401": {"property": "on a protected host a caller grant registry never authorizes status or cancel",
+             "subsumed_by": ["M273"], "killer": "joint:M273+M401",
+             "all_paths": "within the same arm, M273's by-name refusal of --grant-registry runs first and tests the flag's presence (has), which any value the override could read implies"},
 }
 # ── C9 round 1b (psv workstream) ──
 EQUIV_RECORD["M152"] = {

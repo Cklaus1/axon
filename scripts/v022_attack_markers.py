@@ -24,8 +24,8 @@ are marked `# WEAK@a3db33bd` with the finding; see the round's report.
 ATTACK = r"ATTACK:"
 
 ATTACK_MARKERS = {
-    # WEAK@a3db33bd: guard off: a replay has no ran_under, so KEY_REACHABLE withholds; receipt_attestation stays null and only the withheld REASON differs (line 390 passed)
-    'M01': ATTACK,
+    # C9 round 1b (fabric): only-guard: the decision's own contract (lib test)
+    'M01': r'ATTACK: a replayed receipt was signed',
     'M02': 'must be refused',
     'M03': 'altered, still verified',
     'M04': 'judged its own broken double.*left: Passed',
@@ -84,8 +84,8 @@ ATTACK_MARKERS = {
     'M49': 'left: Passed\\s+right: Unknown',
     'M50': 'unwrap_err\\(\\)` on an `Ok` value: PointerRecord',
     'M51': 'unwrap_err\\(\\)` on an `Ok` value: Some\\(Ref',
-    # WEAK@a3db33bd: submit still errored with 'conflict: check suite ... judges a published WorkspaceVersion' (kind conflict), not the ':' refusal: another check refused
-    'M52': ATTACK,
+    # C9 round 1b (fabric): only-guard: the candidate is published under the colon state dir
+    'M52': r"ATTACK: a check ran under a state dir containing ':'",
     'M53': 'a module from the trial cache judged the candidate.*left: Passed',
     'M54': 'unwrap_err\\(\\)` on an `Ok` value',
     'M55': 'the check workload copied the signing key',
@@ -175,14 +175,14 @@ ATTACK_MARKERS = {
     'M135': 'c3: [^\\n]*\\n\\s*left: [^\\n]*\\n\\s*right: \\(Unknown, Some\\(Unverifiable\\)\\)',
     'M136': 'c5: [^\\n]*\\n\\s*left: [^\\n]*\\n\\s*right: \\(Unknown, Some\\(Cancelled\\)\\)',
     'M137': 'unwrap_err\\(\\)` on an `Ok` value: LinuxQualification',
-    # WEAK@a3db33bd: flag accepted, then refused by an io error on the fixture's /nonexistent request; the caller flag never affects a verdict
-    'M138': ATTACK,
-    # WEAK@a3db33bd: refused by io error: /tmp/mine.json does not exist in the fixture
-    'M139': ATTACK,
+    # C9 round 1b (fabric): only-guard: a full valid dev submit; nothing else reads these flags
+    'M138': r'ATTACK: --[a-z-]+ was accepted: a submit ran with a caller protected-profile flag',
+    # C9 round 1b (fabric): EQUIVALENT (four-cell with M141)
+    'M139': r"ATTACK: the caller's --check-registry was loaded as the suite registry",
     # WEAK@a3db33bd: refused by the D1 grant check 'pins no grant_registry' (protected_host.rs), signer never reached
     'M140': r'ATTACK: a (group-readable host signer key|host signer key that does not derive its pin) was not refused',
-    # WEAK@a3db33bd: usage '--check-registry is required': the mutated host asks for a caller registry but none can be supplied
-    'M141': ATTACK,
+    # C9 round 1b (fabric): EQUIVALENT (four-cell with M139); re-anchored mutation
+    'M141': r"ATTACK: the caller's --check-registry was loaded as the suite registry",
     'M142': 'unwrap_err\\(\\)` on an `Ok` value: ProtectedHost',
     'M143': 'unwrap_err\\(\\)` on an `Ok` value: ProtectedHost',
     'M144': 'unwrap_err\\(\\)` on an `Ok` value: ProtectedHost',
@@ -227,19 +227,19 @@ ATTACK_MARKERS = {
     'M180': 'ATTACK: the guest refused, and the Fabric counted its run as Passed',
     'M181': 'failed: inputs\\s*\\n\\s*left: (Passed|Failed)',
     'M182': 'failed: stdout\\s*\\n\\s*left: (Passed|Failed)',
-    # WEAK@a3db33bd: replay still Unknown (line before passed); only the reason 'without completion evidence' is missing
-    'M183': ATTACK,
+    # C9 round 1b (fabric): EQUIVALENT (four-cell with M312)
+    'M183': r"ATTACK: a previous attempt's genuine pass was counted",
     'M184': 'left: (Passed|Failed)\\s*\\n\\s*right: Unknown',
-    # WEAK@a3db33bd: left Unknown ('passed without completion evidence'), not a counted Passed
-    'M185': ATTACK,
+    # C9 round 1b (fabric): only-guard: the verdict moved off Failed
+    'M185': r"ATTACK: the guest's claim of a pass steered a failing test's verdict.*\n\s*left: (Unknown|Passed|NotRun)",
     'M186': 'left: "protected"\\s*\\n\\s*right: "guest-unobserved"',
-    # WEAK@a3db33bd: panic 'checked above' in submit.rs production code
-    'M187': ATTACK,
+    # C9 round 1b (fabric): EQUIVALENT (four-cell with M400); the expect panic is now a structured refusal
+    'M187': r'ATTACK: a candidate file was launched as a check on the protected profile',
     'M188': 'left: Passed\\s*\\n\\s*right: Passed',
     'M189': 'left: ""\\s*\\n\\s*right: "development"',
     'M190': 'linux-microvm-protected "" development\\s*\\n\\s*left: Ok',
-    # WEAK@a3db33bd: reason is Some but lacks 'not its pin': refused elsewhere
-    'M191': ATTACK,
+    # C9 round 1b (fabric): only-guard: the changed program still signs a valid observation
+    'M191': r'ATTACK: an unpinned observer program ran and its observation authorized a launch',
     'M192': 'failed: op-obs--qualification-observer\\s*\\n\\s*left: (?!NotRun)',
     'M193': 'failed: op-obs-claims-other-key-observer-observer\\s*\\n\\s*left: (?!NotRun)',
     'M194': 'failed: op-obs-epoch-observer-observer\\s*\\n\\s*left: (?!NotRun)',
@@ -247,8 +247,8 @@ ATTACK_MARKERS = {
     'M196': 'left: 0\\s*\\n\\s*right: 1',
     'M197': 'unwrap_err\\(\\)` on an `Ok` value: \\(\\)',
     'M198': 'unwrap_err\\(\\)` on an `Ok` value: \\(\\)',
-    # WEAK@a3db33bd: consume('../x') still Err, reason lacks 'not one' (refused as never issued / io)
-    'M199': ATTACK,
+    # C9 round 1b (fabric): only-guard: a record planted at the traversal target
+    'M199': r'ATTACK: a path-shaped nonce was consumed from outside the custodian',
     'M200': 'failed: op-obs-other-manifest-observer-observer\\s*\\n\\s*left: (?!NotRun)',
     # WEAK@a3db33bd: refused by the custodian 'nonce ... was never issued', not the join
     'M201': r'failed: op-obs-nonce-issued-elsewhere-observer-observer\s*\n\s*left: (?!NotRun)',
@@ -279,8 +279,8 @@ ATTACK_MARKERS = {
     'M218': r'ATTACK: [^\n]*: ACCEPTED',
     'M219': '\\n\\[[^\\n]*\\"t_cand_probe\\"[^\\n]*\\]',
     'M220': 'failed: GuestVerdict \\{.*\\n\\s*left: (?!Passed)\\w+\\n\\s*right: Passed',
-    # WEAK@a3db33bd: Failure is NotRun with 'launch manifest not built: suite tree is X, not the registered Y' - the swap was refused by prepare, not by private_inputs.
-    'M221': '\\n\\s*left: Passed\\n\\s*right: Failed',
+    # C9 round 1b (fabric): only-guard: the verdict moved off Failed
+    'M221': r"ATTACK: a run dir swapped under the caller's state changed the verdict.*\n\s*left: (Unknown|Passed|NotRun)",
     'M222': 'unwrap_err\\(\\)` on an `Ok` value: LaunchManifest',
     'M223': 'unwrap_err\\(\\)` on an `Ok` value: LaunchManifest',
     'M224': 'unwrap_err\\(\\)` on an `Ok` value: InputCheck',
@@ -336,8 +336,8 @@ ATTACK_MARKERS = {
     'M270': "the candidate's RNG activity moved the operator's stream",
     'M271': 'the reseed must not pass',
     'M272': 'its stream mirrors the operator seed',
-    # WEAK@a3db33bd: Failing panic is the exit-code assert with out = unauthorized 'grant:root is not in the grant registry': the caller's forged registry was NOT honoured (pin decided).
-    'M273': ATTACK,
+    # C9 round 1b (fabric): EQUIVALENT (four-cell with M401)
+    'M273': r'ATTACK: (status|cancel): a caller grant registry was honoured',
     'M274': 'submit \\(unread request\\): \\{\\"kind\\":\\"io\\"',
     'M275': 'unwrap_err\\(\\)` on an `Ok` value: Submission',
     'M276': 'unwrap_err\\(\\)` on an `Ok` value: Submission',
@@ -398,21 +398,6 @@ ATTACK_MARKERS = {
     'M385': r'ATTACK: certified PASS despite the attack: \{[^\n]*"status":"PASS"',
     # ── C9 round 1: FABRIC/READINESS/INPUTS/LOOP rows (M320-M369). Placeholder
     # marker until tightened from the merged tree's own kill evidence.
-    'M320': ATTACK,
-    'M321': ATTACK,
-    'M322': ATTACK,
-    'M323': ATTACK,
-    'M324': ATTACK,
-    'M325': ATTACK,
-    'M326': ATTACK,
-    'M327': ATTACK,
-    'M328': ATTACK,
-    'M329': ATTACK,
-    'M330': ATTACK,
-    'M331': ATTACK,
-    'M332': ATTACK,
-    'M333': ATTACK,
-    'M334': ATTACK,
     # ── C9 round 1b, workstream LOOP: M360-M368 tightened from the
     # b3f32ee2 `--only` run's failing panics.
     'M360': r'ATTACK: a forged attribution was admitted: Accept',
@@ -471,4 +456,26 @@ ATTACK_MARKERS = {
     'M417': r'ATTACK: an operator root failing the ownership walk was reported as\s+authoritative',
     # EQUIVALENT_DID (four-cell vs M339+M340): the joint cell's attack.
     'M418': r'ATTACK: the record names an observer key the operator never trusted, that key made\s+the observation, and readiness still said PASS',
+    # ── C9 round 1b, FABRIC workstream rows (M400-M409) ──
+    # M400 / M401: EQUIVALENT (four-cell with M187 / M273).
+    'M400': r'ATTACK: a candidate file was launched as a check on the protected profile',
+    'M401': r'ATTACK: (status|cancel): a caller grant registry was honoured',
+    # ── C9 round 1: FABRIC/READINESS/INPUTS/LOOP rows (M320-M369). M320-M334
+    # (fabric) tightened in round 1b from a fresh --only run's kill evidence;
+    # the rest are placeholders until their workstreams tighten them.
+    'M320': r'ATTACK: an unobserved protected-profile execution \(.*\) was attested as a protected execution',
+    'M321': r'ATTACK: the protected profile was selected for an interpreter_run',
+    'M322': r'ATTACK: [a-z-]+: a bundle travels beside a receipt downgraded to guest-unobserved',
+    'M323': r'ATTACK: [a-z-]+: an inadmissible observed launch was classed protected',
+    'M324': r"ATTACK: (runs|nonces) as an agent-owned leaf was accepted as the service's own private directory",
+    'M325': r"ATTACK: (runs|nonces) as an agent-owned leaf was accepted as the service's own private directory",
+    'M326': r"ATTACK: (runs|nonces) as an agent-owned leaf was accepted as the service's own private directory",
+    'M327': r"ATTACK: (runs|nonces) as a group-writable leaf was accepted as the service's own private directory",
+    'M328': r"ATTACK: an observer root holding the host signer's public key loaded",
+    'M329': r'ATTACK: an observation signed by a key that is also the [a-z-]+ key launched',
+    'M330': r"ATTACK: an observer root holding the host signer's public key loaded",
+    'M331': r'ATTACK: an observer key that is also a [a-z]+ key loaded',
+    'M332': r"ATTACK: a host config that cannot be stat'ed \(ENOTDIR\) was read as 'not a protected host'",
+    'M333': r"ATTACK: a journal that cannot be stat'ed \(ENOTDIR\) was read as no journal",
+    'M334': r'ATTACK: the trust preflight never probes .*, which load pins',
 }

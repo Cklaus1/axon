@@ -1,60 +1,8 @@
 {
   "schema": "axon-v022-paired-disable/2",
-  "commit": "992276cf71afac8c18a3abf63e73d11195afca73",
+  "commit": "merged: see each record",
   "all_hold": true,
   "records": [
-    {
-      "mutation": "M245",
-      "status": "EQUIVALENT_DID",
-      "kind": "pair",
-      "property": "a protected clearance is a real monitor signature under the operator monitor root",
-      "original_guard": {
-        "file": "crates/axon-loop/src/admission.rs"
-      },
-      "subsumed_by": [
-        "M264"
-      ],
-      "live_killing_mutant": "M264",
-      "matrix": {
-        "baseline": "ATTACK_REFUSED",
-        "retired_guard_disabled": "ATTACK_REFUSED",
-        "guard_set_disabled": "ATTACK_SUCCEEDS",
-        "guard_set": [
-          "M245",
-          "M264"
-        ],
-        "retired_guard_full_suite": "SUITE_OK",
-        "sibling_set_disabled": "ATTACK_REFUSED"
-      },
-      "holds": true,
-      "commit": "4d835f0bec043fe165e0ec808f6be809c7cfb713"
-    },
-    {
-      "mutation": "M58",
-      "status": "EQUIVALENT_DID",
-      "kind": "pair",
-      "property": "a break/continue raised in a FUNCTION BODY does not escape into the caller's loop",
-      "original_guard": {
-        "file": "crates/axon-core/src/interp.rs"
-      },
-      "subsumed_by": [
-        "M59"
-      ],
-      "live_killing_mutant": "M59",
-      "matrix": {
-        "baseline": "ATTACK_REFUSED",
-        "retired_guard_disabled": "ATTACK_REFUSED",
-        "guard_set_disabled": "ATTACK_SUCCEEDS",
-        "guard_set": [
-          "M58",
-          "M59"
-        ],
-        "retired_guard_full_suite": "SUITE_OK",
-        "sibling_set_disabled": "ATTACK_REFUSED"
-      },
-      "holds": true,
-      "commit": "4d835f0bec043fe165e0ec808f6be809c7cfb713"
-    },
     {
       "mutation": "M27",
       "status": "EQUIVALENT_DID",
@@ -110,6 +58,179 @@
       "commit": "ea4f82dcb399c3b5f91a38f9d552a3d7cf021ac9"
     },
     {
+      "mutation": "M58",
+      "status": "EQUIVALENT_DID",
+      "kind": "pair",
+      "property": "a break/continue raised in a FUNCTION BODY does not escape into the caller's loop",
+      "original_guard": {
+        "file": "crates/axon-core/src/interp.rs"
+      },
+      "subsumed_by": [
+        "M59"
+      ],
+      "live_killing_mutant": "M59",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M58",
+          "M59"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "4d835f0bec043fe165e0ec808f6be809c7cfb713"
+    },
+    {
+      "mutation": "M139",
+      "status": "EQUIVALENT_DID",
+      "kind": "pair",
+      "property": "on a protected host the caller's --check-registry never becomes the suite registry",
+      "original_guard": {
+        "file": "crates/axon-fabric/src/bin/axon-fabric.rs"
+      },
+      "subsumed_by": [
+        "M141"
+      ],
+      "live_killing_mutant": "joint:M139+M141",
+      "all_paths": "the binary reads --check-registry in exactly two places, both in submit(): M139's refusal and the registry_path match; on a protected host (host is Some) that match's arm is h.suite_registry (M141), which never reads the flag, so with M139 removed the flag is read by nothing",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M139",
+          "M141"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "df1aea0b1b94d99bcf1eadbc2236b648be9d4ebb"
+    },
+    {
+      "mutation": "M141",
+      "status": "EQUIVALENT_DID",
+      "kind": "pair",
+      "property": "on a protected host the caller's --check-registry never becomes the suite registry",
+      "original_guard": {
+        "file": "crates/axon-fabric/src/bin/axon-fabric.rs"
+      },
+      "subsumed_by": [
+        "M139"
+      ],
+      "live_killing_mutant": "joint:M139+M141",
+      "all_paths": "M139's refusal runs before the registry_path match on the same host (Some) and tests a.opt(--check-registry), the same lookup the override would use; nothing between them can succeed without passing it, so the override is reached only with the flag absent",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M141",
+          "M139"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "df1aea0b1b94d99bcf1eadbc2236b648be9d4ebb"
+    },
+    {
+      "mutation": "M152",
+      "status": "EQUIVALENT_DID",
+      "kind": "pair",
+      "property": "a signature made for one authority never verifies for another",
+      "original_guard": {
+        "file": "crates/axon-loop-contracts/src/operator_trust.rs"
+      },
+      "subsumed_by": [
+        "M153"
+      ],
+      "live_killing_mutant": "joint:M152+M153",
+      "all_paths": "verify_evidence_signature is the ONLY reader of the signature's domain field (Fabric backend, readiness, loop protected_evidence all call it); after the field check it always verifies over evidence_signing_message(authority, bytes) for the CALLER's authority, not the field's, so a signature made for another authority verifies only if the message is not domain-bound (M153). The relabelled case is M153's own (active) attack",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M152",
+          "M153"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "992276cf71afac8c18a3abf63e73d11195afca73"
+    },
+    {
+      "mutation": "M176",
+      "status": "STALE_REFACTORED",
+      "property": "a pass needs exit 0",
+      "original_guard": "the exit-0 guard became the Some(0) of the Passed arm in runner.rs (C9 re-audit)",
+      "old_string_present": false,
+      "replacement": "M293",
+      "replacement_state": "REPLACEMENT_KILLED",
+      "matrix": null,
+      "holds": true,
+      "commit": "ea4f82dcb399c3b5f91a38f9d552a3d7cf021ac9"
+    },
+    {
+      "mutation": "M183",
+      "status": "EQUIVALENT_DID",
+      "kind": "pair",
+      "property": "a pass rests on this launch's keyed completion evidence",
+      "original_guard": {
+        "file": "crates/axon-fabric/src/psv.rs"
+      },
+      "subsumed_by": [
+        "M312"
+      ],
+      "live_killing_mutant": "joint:M183+M312",
+      "all_paths": "both checks sit in derive()'s Passed arm; M312 requires exactly one result line naming the test, status ok, whose completion equals outcome_token(K, test, true), which is the same HMAC as completion_token(K, test); parse_axon_test_json records that line's token in report.completion, so M312 passing implies M183's predicate",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M183",
+          "M312"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "df1aea0b1b94d99bcf1eadbc2236b648be9d4ebb"
+    },
+    {
+      "mutation": "M187",
+      "status": "EQUIVALENT_DID",
+      "kind": "pair",
+      "property": "the protected profile launches only an operator suite with a named test",
+      "original_guard": {
+        "file": "crates/axon-fabric/src/submit.rs"
+      },
+      "subsumed_by": [
+        "M400"
+      ],
+      "live_killing_mutant": "joint:M187+M400",
+      "all_paths": "the protected arm of the dispatch match is the only launch path for the protected profile, and every request reaching it passes M400's spec match, which yields a launch spec only for (Some(suite), Some(test)); M187 is the same predicate before reservation",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M187",
+          "M400"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "df1aea0b1b94d99bcf1eadbc2236b648be9d4ebb"
+    },
+    {
       "mutation": "M214",
       "status": "EQUIVALENT_DID",
       "kind": "pair",
@@ -156,6 +277,142 @@
         "guard_set": [
           "M216",
           "M299"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "ea4f82dcb399c3b5f91a38f9d552a3d7cf021ac9"
+    },
+    {
+      "mutation": "M245",
+      "status": "EQUIVALENT_DID",
+      "kind": "pair",
+      "property": "a protected clearance is a real monitor signature under the operator monitor root",
+      "original_guard": {
+        "file": "crates/axon-loop/src/admission.rs"
+      },
+      "subsumed_by": [
+        "M264"
+      ],
+      "live_killing_mutant": "M264",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M245",
+          "M264"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "4d835f0bec043fe165e0ec808f6be809c7cfb713"
+    },
+    {
+      "mutation": "M273",
+      "status": "EQUIVALENT_DID",
+      "kind": "pair",
+      "property": "on a protected host a caller grant registry never authorizes status or cancel",
+      "original_guard": {
+        "file": "crates/axon-fabric/src/bin/axon-fabric.rs"
+      },
+      "subsumed_by": [
+        "M401"
+      ],
+      "live_killing_mutant": "joint:M273+M401",
+      "all_paths": "grant_registry() is the one reader of --grant-registry for status/cancel (and submit, where M274 refuses first); on a protected host its arm resolves h.grants(), the operator's pinned registry (M401), which never reads the flag",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M273",
+          "M401"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "df1aea0b1b94d99bcf1eadbc2236b648be9d4ebb"
+    },
+    {
+      "mutation": "M285",
+      "status": "EQUIVALENT_DID",
+      "kind": "set",
+      "property": "git never reports a replacement object's content under a certified name",
+      "original_guard": {
+        "file": "crates/axon-fabric/src/readiness.rs"
+      },
+      "subsumed_by": [
+        "M385",
+        "M289"
+      ],
+      "live_killing_mutant": "joint:M285+M385+M289",
+      "all_paths": "every git call goes through git_cmd, which clears the environment (no GIT_REPLACE_REF_BASE) and disables replacement objects (M385); every object read is re-hashed to its name (M289)",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M285",
+          "M385",
+          "M289"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "e1e2a22f3535c0db9d3853f79d8e9ac5201d0392"
+    },
+    {
+      "mutation": "M287",
+      "status": "EQUIVALENT_DID",
+      "kind": "pair",
+      "property": "an uncommitted change hidden by skip-worktree is not certified",
+      "original_guard": {
+        "file": "crates/axon-fabric/src/readiness.rs"
+      },
+      "subsumed_by": [
+        "M290"
+      ],
+      "live_killing_mutant": "joint:M287+M290",
+      "all_paths": "the flag only hides worktree-vs-index; worktree_differs hashes every certified path's bytes directly (never the index), a missing file differs, and a path outside the certified tree already differs in the tree diff",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M287",
+          "M290"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "ea4f82dcb399c3b5f91a38f9d552a3d7cf021ac9"
+    },
+    {
+      "mutation": "M288",
+      "status": "EQUIVALENT_DID",
+      "kind": "pair",
+      "property": "an uncommitted change hidden by assume-unchanged is not certified",
+      "original_guard": {
+        "file": "crates/axon-fabric/src/readiness.rs"
+      },
+      "subsumed_by": [
+        "M290"
+      ],
+      "live_killing_mutant": "joint:M288+M290",
+      "all_paths": "as M287 (assume-unchanged, the other index flag)",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M288",
+          "M290"
         ],
         "retired_guard_full_suite": "SUITE_OK",
         "sibling_set_disabled": "ATTACK_REFUSED"
@@ -276,126 +533,58 @@
       "commit": "ea4f82dcb399c3b5f91a38f9d552a3d7cf021ac9"
     },
     {
-      "mutation": "M287",
+      "mutation": "M400",
       "status": "EQUIVALENT_DID",
       "kind": "pair",
-      "property": "an uncommitted change hidden by skip-worktree is not certified",
+      "property": "the protected profile launches only an operator suite with a named test",
       "original_guard": {
-        "file": "crates/axon-fabric/src/readiness.rs"
+        "file": "crates/axon-fabric/src/submit.rs"
       },
       "subsumed_by": [
-        "M290"
+        "M187"
       ],
-      "live_killing_mutant": "joint:M287+M290",
-      "all_paths": "the flag only hides worktree-vs-index; worktree_differs hashes every certified path's bytes directly (never the index), a missing file differs, and a path outside the certified tree already differs in the tree diff",
+      "live_killing_mutant": "joint:M187+M400",
+      "all_paths": "M187 runs for every request whose selected profile is the protected one, before reservation, and returns Err unless target.suite and target.filter are both Some; the protected arm is reached only with that profile",
       "matrix": {
         "baseline": "ATTACK_REFUSED",
         "retired_guard_disabled": "ATTACK_REFUSED",
         "guard_set_disabled": "ATTACK_SUCCEEDS",
         "guard_set": [
-          "M287",
-          "M290"
+          "M400",
+          "M187"
         ],
         "retired_guard_full_suite": "SUITE_OK",
         "sibling_set_disabled": "ATTACK_REFUSED"
       },
       "holds": true,
-      "commit": "ea4f82dcb399c3b5f91a38f9d552a3d7cf021ac9"
+      "commit": "df1aea0b1b94d99bcf1eadbc2236b648be9d4ebb"
     },
     {
-      "mutation": "M288",
+      "mutation": "M401",
       "status": "EQUIVALENT_DID",
       "kind": "pair",
-      "property": "an uncommitted change hidden by assume-unchanged is not certified",
+      "property": "on a protected host a caller grant registry never authorizes status or cancel",
       "original_guard": {
-        "file": "crates/axon-fabric/src/readiness.rs"
+        "file": "crates/axon-fabric/src/bin/axon-fabric.rs"
       },
       "subsumed_by": [
-        "M290"
+        "M273"
       ],
-      "live_killing_mutant": "joint:M288+M290",
-      "all_paths": "as M287 (assume-unchanged, the other index flag)",
+      "live_killing_mutant": "joint:M273+M401",
+      "all_paths": "within the same arm, M273's by-name refusal of --grant-registry runs first and tests the flag's presence (has), which any value the override could read implies",
       "matrix": {
         "baseline": "ATTACK_REFUSED",
         "retired_guard_disabled": "ATTACK_REFUSED",
         "guard_set_disabled": "ATTACK_SUCCEEDS",
         "guard_set": [
-          "M288",
-          "M290"
+          "M401",
+          "M273"
         ],
         "retired_guard_full_suite": "SUITE_OK",
         "sibling_set_disabled": "ATTACK_REFUSED"
       },
       "holds": true,
-      "commit": "ea4f82dcb399c3b5f91a38f9d552a3d7cf021ac9"
-    },
-    {
-      "mutation": "M176",
-      "status": "STALE_REFACTORED",
-      "property": "a pass needs exit 0",
-      "original_guard": "the exit-0 guard became the Some(0) of the Passed arm in runner.rs (C9 re-audit)",
-      "old_string_present": false,
-      "replacement": "M293",
-      "replacement_state": "REPLACEMENT_KILLED",
-      "matrix": null,
-      "holds": true,
-      "commit": "ea4f82dcb399c3b5f91a38f9d552a3d7cf021ac9"
-    },
-    {
-      "mutation": "M285",
-      "status": "EQUIVALENT_DID",
-      "kind": "set",
-      "property": "git never reports a replacement object's content under a certified name",
-      "original_guard": {
-        "file": "crates/axon-fabric/src/readiness.rs"
-      },
-      "subsumed_by": [
-        "M385",
-        "M289"
-      ],
-      "live_killing_mutant": "joint:M285+M385+M289",
-      "all_paths": "every git call goes through git_cmd, which clears the environment (no GIT_REPLACE_REF_BASE) and disables replacement objects (M385); every object read is re-hashed to its name (M289)",
-      "matrix": {
-        "baseline": "ATTACK_REFUSED",
-        "retired_guard_disabled": "ATTACK_REFUSED",
-        "guard_set_disabled": "ATTACK_SUCCEEDS",
-        "guard_set": [
-          "M285",
-          "M385",
-          "M289"
-        ],
-        "retired_guard_full_suite": "SUITE_OK",
-        "sibling_set_disabled": "ATTACK_REFUSED"
-      },
-      "holds": true,
-      "commit": "e1e2a22f3535c0db9d3853f79d8e9ac5201d0392"
-    },
-    {
-      "mutation": "M152",
-      "status": "EQUIVALENT_DID",
-      "kind": "pair",
-      "property": "a signature made for one authority never verifies for another",
-      "original_guard": {
-        "file": "crates/axon-loop-contracts/src/operator_trust.rs"
-      },
-      "subsumed_by": [
-        "M153"
-      ],
-      "live_killing_mutant": "joint:M152+M153",
-      "all_paths": "verify_evidence_signature is the ONLY reader of the signature's domain field (Fabric backend, readiness, loop protected_evidence all call it); after the field check it always verifies over evidence_signing_message(authority, bytes) for the CALLER's authority, not the field's, so a signature made for another authority verifies only if the message is not domain-bound (M153). The relabelled case is M153's own (active) attack",
-      "matrix": {
-        "baseline": "ATTACK_REFUSED",
-        "retired_guard_disabled": "ATTACK_REFUSED",
-        "guard_set_disabled": "ATTACK_SUCCEEDS",
-        "guard_set": [
-          "M152",
-          "M153"
-        ],
-        "retired_guard_full_suite": "SUITE_OK",
-        "sibling_set_disabled": "ATTACK_REFUSED"
-      },
-      "holds": true,
-      "commit": "992276cf71afac8c18a3abf63e73d11195afca73"
+      "commit": "df1aea0b1b94d99bcf1eadbc2236b648be9d4ebb"
     },
     {
       "mutation": "M418",

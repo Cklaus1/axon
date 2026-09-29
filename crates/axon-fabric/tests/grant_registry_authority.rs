@@ -451,18 +451,38 @@ fn a_protected_host_refuses_a_caller_grant_registry_on_every_route() {
             Some(&forged),
             Some(&h),
         );
-        assert_refused(verb, &r, 2, "usage", CALLER_REGISTRY_REFUSED);
-        // Even naming the OPERATOR's own file is refused: the flag itself is.
+        if r.0 == 0 {
+            panic!(
+                "ATTACK: {verb}: a caller grant registry was honoured on a protected host: {}",
+                r.1
+            );
+        }
+        // Two layers keep the caller's registry out, each on its own: the
+        // flag is refused by name (M273), and the protected arm resolves from
+        // the operator's pinned registry whatever the caller names (M401).
+        // Which one refuses is not the property (four-cell,
+        // EQUIV_RECORD["M273"]).
+        if r.0 == 2 {
+            assert_refused(verb, &r, 2, "usage", CALLER_REGISTRY_REFUSED);
+        } else {
+            assert_refused(verb, &r, 7, "unauthorized", "not in the grant registry");
+        }
+        // Naming the OPERATOR's own file: refused by name, or (were the
+        // by-name refusal gone) served from the pinned registry, which is
+        // that same file. Either way the operator's registry decides. Asked
+        // with `status` only, which writes nothing either way.
         let r = status_cancel(
             &h.env,
-            verb,
+            "status",
             "op-ok",
             PRINCIPAL,
             "grant:test",
             Some(&op_reg),
             Some(&h),
         );
-        assert_refused(verb, &r, 2, "usage", CALLER_REGISTRY_REFUSED);
+        if r.0 != 0 {
+            assert_refused(verb, &r, 2, "usage", CALLER_REGISTRY_REFUSED);
+        }
         // Without the flag, the operator's registry decides: not granted.
         let r = status_cancel(
             &h.env,

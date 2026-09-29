@@ -683,10 +683,26 @@ fn a_state_dir_that_would_split_the_module_path_is_refused() {
     let mut cfg = s.env.cfg(0);
     let evil = s.env.dir.path().join("x:y");
     cfg.state_dir = evil.clone();
-    let e = submit(&suite_request(&s, "op-colon").to_string(), &cfg).unwrap_err();
+    // The candidate is published under the colon state dir too, so every
+    // other check on this route passes: the ':' refusal is the only guard
+    // (C9 round 1b; without this, the unpublished candidate was refused
+    // elsewhere and the row was never killed by its own attack).
+    WorkspaceStore::open(&evil, &tenant())
+        .unwrap()
+        .import_dir(&s.env.ws, &Quota::default())
+        .unwrap();
+    let got = submit(&suite_request(&s, "op-colon").to_string(), &cfg);
+    let e = match got {
+        Ok(sub) => panic!(
+            "ATTACK: a check ran under a state dir containing ':' (its module path splits \
+             into caller-chosen directories): {:?} {:?}",
+            sub.receipt.verification, sub.reason
+        ),
+        Err(e) => e,
+    };
     assert_eq!(e.kind(), "malformed", "{e}");
     assert!(e.to_string().contains("contains ':'"), "{e}");
-    assert!(!evil.exists(), "nothing was written under it");
+    assert!(!evil.join("runs").exists(), "nothing was written under it");
     assert_untouched(&s.env, "colon state dir");
     // Positive control.
     let sub = submit(&suite_request(&s, "op-plain").to_string(), &s.env.cfg(0)).unwrap();
