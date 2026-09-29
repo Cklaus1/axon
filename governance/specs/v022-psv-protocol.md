@@ -592,3 +592,28 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
     - The runner refuses to read the completion secret if it cannot make itself non-dumpable (A52).
     - The guest input check refuses trees holding what the digest cannot see. The digest is a
       cross-peer contract with MiCode, so it is unchanged (A53).
+38. **Attribution is joined to the signer; one key, one authority root; a protected manifest
+    names its host (C9 round 1, loop workstream).**
+    - The recorded attribution of a counted protected trial must BE the signer that re-verified it:
+      the verdict's issuer and key id, the context's `context_signed_by`, and its
+      `context_observer_ref`. Amendment 30 only asked whether the named identity was trusted and
+      rooted, so a record naming a second identity the operator root also holds was accepted
+      (PSV-5). Negative-matrix A65.
+    - ADR-002's key separation is checked at the operator roots, not only in the store config.
+      `operator_trust::rooted` and `rooted_keys` refuse a key that another operator root also
+      holds, so an observer key that is also a verifier (or qualification, admission, monitor) key
+      authenticates nothing, in `check_bundle` or in any rooted lookup (PSV-6). The store's
+      `check_separation` stays as a second check. The Fabric side is a separate workstream.
+      Negative-matrix A66.
+    - `check_bundle` refuses a launch manifest in which any `*sha256` field is all zeros. That is
+      the placeholder Fabric's `psv::prepare` writes when there is no operator host config
+      (`host_config_sha256`, `suite.registry_sha256`). `LaunchManifest::verify` in `axon-psv` is
+      unchanged, because the guest runner also calls it for development launches (PSV-7).
+      Negative-matrix A67.
+    - **Accepted, open (class d; not fixed and not claimed):** `protected_scopes`,
+      `task_acceptance` and `verifier_pins.check_suites` are still store config. A store writer can
+      declassify a scope, or point a protected evaluation at another operator-registered suite or
+      test. No development verdict is labelled protected by this, because the evaluation record
+      then says development. This is ADR-001's accepted limitation (`v022-G01-claim.md`, "Accepted
+      limitations"), recorded as a follow-up after amendments 10 and 12. Review rounds should treat
+      it as accepted, not as a new finding. The negative matrix lists it under "Accepted, open".

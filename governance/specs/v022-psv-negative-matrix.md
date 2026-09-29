@@ -70,6 +70,18 @@ depth, and each has its own test.
 | A51 | the candidate prints a second, unkeyed pass line beside its own genuine keyed pass | Fabric's pass side requires exactly one KEYED result line | `has more than one result line` | `crates/axon-fabric/tests/psv_dispatch.rs::a_second_pass_line_over_a_genuine_pass_is_not_a_pass` |
 | A52 | the runner cannot make itself non-dumpable and goes on to read the completion secret | the runner refuses before reading S | `could not make the runner non-dumpable` | `crates/axon-psv/src/bin/axon-psv-runner.rs::a_runner_that_cannot_become_non_dumpable_never_reads_the_secret` |
 | A53 | a candidate or suite input holds what the tree digest cannot see (an empty directory, an unrecorded file/directory mode), so the guest sees a difference its check does not | the guest input check refuses such trees (the digest is a cross-peer contract with MiCode and is unchanged) | `input holds`; `refused` | `crates/axon-psv/tests/protocol.rs::inputs_holding_what_the_digest_cannot_see_are_refused` |
+| A65 | a store writer attributes a counted protected verdict or its context to a SECOND identity the operator root does hold (trusted, keyed, rooted), while the documents were signed by another | admission: the recorded verifier and key, `context_signed_by`, and `context_observer_ref` must each equal the signer that re-verified | `re-verifies as signed by`; `it was observed by` | `crates/axon-loop/tests/protected_attribution.rs::a_verdict_attributed_to_another_rooted_verifier_does_not_count`, `crates/axon-loop/tests/protected_attribution.rs::a_context_attributed_to_another_rooted_observer_does_not_count`, `crates/axon-loop/tests/protected_attribution.rs::a_context_admitted_under_another_trusted_observer_does_not_count` |
+| A66 | one public key sits in two operator authority roots (e.g. the observer root and the verifier root), so its holder can sign statements of both | `operator_trust::rooted` / `rooted_keys`: a key another operator root also holds is authority for neither (loop side; `check_bundle` observer root and every rooted lookup) | `one key never holds two authorities` | `crates/axon-loop/tests/intake.rs::an_observer_key_held_by_another_operator_root_authenticates_no_observation`, `crates/axon-loop/tests/intake.rs::a_verifier_key_held_by_another_operator_root_authenticates_no_verdict` |
+| A67 | a protected bundle whose launch manifest names no operator host (all-zero `host_config_sha256` or `suite.registry_sha256`, as a hostless library launch writes) | intake `check_bundle`: no `*sha256` field of the manifest may be all zeros | `… is all zeros` | `crates/axon-loop/tests/intake.rs::a_protected_manifest_naming_no_operator_host_is_refused`, `crates/axon-fabric/tests/psv_dispatch.rs::a_verified_observation_makes_the_guest_verdict_protected` |
+
+## Accepted, open (not rows: nothing refuses these yet)
+
+- **Store-config pins (class d; ADR-001 accepted limitation).** `protected_scopes`,
+  `task_acceptance` and `verifier_pins.check_suites` are store config, not operator-rooted. A store
+  writer can declassify a scope, or point a protected evaluation at another operator-registered
+  suite or test. Accepted in `v022-G01-claim.md` ("Accepted limitations") and recorded as a
+  follow-up in the protocol (after amendments 10 and 12; amendment 38). It is accepted, not
+  overlooked.
 
 ## What these rows do NOT prove (PROTECTED_ONLY)
 

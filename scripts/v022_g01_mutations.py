@@ -871,6 +871,23 @@ MUTATIONS = [
     ('M316', 'PSV-2: only an EMPTY ROOT lost+found is exempt', 'crates/axon-psv/src/lib.rs', 'if prefix.is_empty() && name == MKFS_LOST_FOUND {', 'if name == MKFS_LOST_FOUND {', 'axon-psv', '--test protocol', 'inputs_holding_what_the_digest_cannot_see_are_refused'),
     ('M317', 'PSV-2: a directory mode the digest does not record is refused', 'crates/axon-psv/src/lib.rs', 'if !mode_is_normalised(true, false, mode) {', 'if false && !mode_is_normalised(true, false, mode) {', 'axon-psv', '--test protocol', 'inputs_holding_what_the_digest_cannot_see_are_refused'),
     ('M318', 'PSV-2: a file mode the digest does not record is refused', 'crates/axon-psv/src/lib.rs', 'if meta.is_file() && !mode_is_normalised(false, exec, mode) {', 'if false && meta.is_file() && !mode_is_normalised(false, exec, mode) {', 'axon-psv', '--test protocol', 'inputs_holding_what_the_digest_cannot_see_are_refused'),
+    # ── C9 round 1, workstream LOOP (M360-M374): attribution joined to the
+    # re-verified signer (A65), key-role separation at the operator roots (A66),
+    # a protected manifest names its host (A67).
+    # NOTE (not retired here): with M360/M361 in place, M209 and M210 are
+    # equivalent-shaped. Their attacks (an identity the operator root never
+    # held) are now also refused by the join to the re-verified signer, so
+    # each mutant's test fails on the join's reason, not its ATTACK assertion.
+    # Candidates for four-cell retirement; M104 (presence) stays sole.
+    ('M360', 'PSV-5 (A65): a protected verdict\'s recorded verifier and key ARE the signer that re-verified', 'crates/axon-loop/src/admission.rs', '    if ep.verification.issuer_ref.as_ref() != Some(&v.issuer_ref) || signed_key != v.key_id {', '    if false && ep.verification.issuer_ref.as_ref() != Some(&v.issuer_ref) || signed_key != v.key_id && false {', 'axon-loop', '--test protected_attribution', 'a_verdict_attributed_to_another_rooted_verifier_does_not_count'),
+    ('M361', 'PSV-5 (A65): a protected context\'s context_signed_by IS the observer and key that re-verified it', 'crates/axon-loop/src/admission.rs', '                    if c != signer {', '                    if false && c != signer {', 'axon-loop', '--test protected_attribution', 'a_context_attributed_to_another_rooted_observer_does_not_count'),
+    ('M362', 'PSV-5 (A65): a protected context\'s context_observer_ref IS the observer that signed it', 'crates/axon-loop/src/admission.rs', '    if t.context_observer_ref.as_ref() != Some(&who) {', '    if false && t.context_observer_ref.as_ref() != Some(&who) {', 'axon-loop', '--test protected_attribution', 'a_context_admitted_under_another_trusted_observer_does_not_count'),
+    ('M363', 'PSV-6 (A66): rooted_keys refuses a root sharing a key with another operator root (check_bundle observer root)', 'crates/axon-loop-contracts/src/operator_trust.rs', '    for k in &keys {\n        exclusive(a, k)?;\n    }\n', '    for k in &keys {\n        let _ = (a, k);\n    }\n', 'axon-loop', '--test intake', 'an_observer_key_held_by_another_operator_root_authenticates_no_observation'),
+    ('M364', 'PSV-6 (A66): rooted refuses a key another operator root also holds (verifier/observer/monitor lookups)', 'crates/axon-loop-contracts/src/operator_trust.rs', '        exclusive(a, &want)\n', '        Ok(())\n', 'axon-loop', '--test intake', 'a_verifier_key_held_by_another_operator_root_authenticates_no_verdict'),
+    ('M365', 'PSV-6 (A66): exclusive compares the key with every other operator root', 'crates/axon-loop-contracts/src/operator_trust.rs', '        if root_keys_hex(b)?.contains(&want) {', '        if false && root_keys_hex(b)?.contains(&want) {', 'axon-loop', '--test intake', 'an_observer_key_held_by_another_operator_root_authenticates_no_observation'),
+    ('M366', 'PSV-7 (A67): check_bundle refuses a manifest with an all-zero digest', 'crates/axon-loop-contracts/src/protected_evidence.rs', '    names_every_digest(&m)?;\n', '    let _ = names_every_digest(&m);\n', 'axon-loop', '--test intake', 'a_protected_manifest_naming_no_operator_host_is_refused'),
+    ('M367', 'PSV-7 (A67): an all-zero sha256 is the refused placeholder', 'crates/axon-loop-contracts/src/protected_evidence.rs', '.is_some_and(|d| !d.is_empty() && d.bytes().all(|b| b == b\'0\'))', '.is_some_and(|d| d.is_empty())', 'axon-loop', '--test intake', 'a_protected_manifest_naming_no_operator_host_is_refused'),
+    ('M368', 'PSV-7 (A67): nested manifest digests (suite.registry_sha256) are walked too', 'crates/axon-loop-contracts/src/protected_evidence.rs', '                    walk(&p, x)?;\n', '                    let _ = (&p, x);\n', 'axon-loop', '--test intake', 'a_protected_manifest_naming_no_operator_host_is_refused'),
 ]
 
 
@@ -944,6 +961,8 @@ LEGACY_EQUIV = set()
 RETIRED = LEGACY_EQUIV | EQUIVALENT_DID | set(STALE_REFACTORED)
 BINDING_IDS = {f"M{n}" for n in range(101, 137)}
 PSV_IDS = {f"M{n}" for n in range(137, 319)}
+# C9 round 1, workstream LOOP.
+PSV_IDS |= {f"M{n}" for n in range(360, 375)}
 
 
 def in_scope(mid, scope):
