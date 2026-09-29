@@ -121,12 +121,14 @@ CONSUMER_BASELINE = {}
 def interpreter_env():
     """Consumers exec target/debug/axon: name it, so none of them falls back
     to a stale or ambient binary (axon-os looks under the WORKSPACE target
-    dir, not CARGO_TARGET_DIR, and SKIPS when nothing is there)."""
+    dir, not CARGO_TARGET_DIR, and SKIPS when nothing is there). Consumers
+    only: axon-core's own parity tests read AXON_BIN as a NATIVE (codegen)
+    compiler, which the interpreter build is not."""
     target = os.environ.get("CARGO_TARGET_DIR", os.path.join(ROOT, "target"))
     return f"AXON_BIN={os.path.join(target, 'debug', 'axon')} "
 
 
-def full_suite_ok(pkg, flags=""):
+def full_suite_ok(pkg, flags="", env=""):
     """True iff the WHOLE package suite passes. A retired (equivalent) guard,
     removed ALONE, must not break ANY test in the package — not merely its own
     --exact test. This closes the methodology gap the C8 certifying review
@@ -138,7 +140,7 @@ def full_suite_ok(pkg, flags=""):
     broken build."""
     import re as _re
     cmd = ("source scripts/lib_bounded_run.sh && "
-           f"{interpreter_env()}bounded_run 12G 2400 cargo test -q -p {pkg} {flags} 2>&1")
+           f"{env}bounded_run 12G 2400 cargo test -q -p {pkg} {flags} 2>&1")
     r = sh(cmd)
     out = r.stdout + r.stderr
     if "could not compile" in out or "error[E" in out:
@@ -338,10 +340,12 @@ def main():
                 # axon-core's --no-default-features, are not theirs).
                 states = {}
                 for c in consumers:
-                    cok, cfails = full_suite_ok(c)
+                    cok, cfails = full_suite_ok(c, env=interpreter_env())
                     states[c] = "COMPILE_ERROR" if cok is None else ("SUITE_OK" if cok else "SUITE_BROKEN")
                     if cok is False:
-                        fails = fails + [f"{c}: {t}" for t in cfails] or fails + [f"{c}: (suite failed)"]
+                        # Named per consumer, ahead of the owner's (the record
+                        # keeps the first 12).
+                        fails = [f"{c}: {t}" for t in cfails][:6] + [f"{c}: (suite failed)"] + fails
             finally:
                 rest()
                 if any(e[0].startswith("crates/axon-core/") for e in edits):
@@ -358,7 +362,7 @@ def main():
         cons_base = {}
         for c in consumers:
             if c not in CONSUMER_BASELINE:  # the clean tree is the same for every row
-                cok, _ = full_suite_ok(c)
+                cok, _ = full_suite_ok(c, env=interpreter_env())
                 CONSUMER_BASELINE[c] = "SUITE_OK" if cok else ("COMPILE_ERROR" if cok is None else "SUITE_BROKEN")
             cons_base[c] = CONSUMER_BASELINE[c]
         if any(v != "SUITE_OK" for v in cons_base.values()):

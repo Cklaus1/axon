@@ -482,8 +482,10 @@ fn the_out_root_and_nonce_store_leaves_are_the_services_own_and_private() {
         std::fs::set_permissions(h.config(), std::fs::Permissions::from_mode(0o644)).unwrap();
         ProtectedHost::for_test(&h.config(), Some(base), h.trust())
     };
+    // A symlinked leaf is a_symlinked_service_leaf_is_refused (any refusal:
+    // three checks refuse it, and the symlink check is retired, M487).
     type Breaker = (&'static str, &'static str, fn(&Path));
-    let cases: [Breaker; 5] = [
+    let cases: [Breaker; 4] = [
         ("an agent-owned leaf", "not the service uid", |p| {
             std::os::unix::fs::chown(p, Some(1000), None).unwrap()
         }),
@@ -497,11 +499,6 @@ fn the_out_root_and_nonce_store_leaves_are_the_services_own_and_private() {
             "accessible to group or other",
             |p| std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o703)).unwrap(),
         ),
-        ("a symlinked leaf", "symlink", |p| {
-            let real = p.with_extension("real");
-            std::fs::rename(p, &real).unwrap();
-            std::os::unix::fs::symlink(&real, p).unwrap();
-        }),
         ("an absent leaf", "must exist", |p| {
             std::fs::remove_dir(p).unwrap()
         }),
