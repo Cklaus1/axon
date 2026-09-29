@@ -400,5 +400,14 @@
       "MAJOR-ADJACENT (certifying review wf_afca02ad-f81, PSV-1): a sealed candidate may call random_i64/random_f64 and advance the shared process RNG the operator's @[forall] test draws from. srand is refused in sealed frames but random_* is not; it cannot choose or predict inputs (seed unreadable, srand refused), only shift them, and cannot change the rubric. Fix: give random_* the sealed-frame refusal, or a per-frame RNG stream.",
       "ENV HYGIENE: an earlier review agent (running as root) created /etc/axon/trust/qualification, which made the readiness deriver's reason string drift and failed a frozen run's 1f. Removed. Review-agent briefs now forbid writing /etc. Consider making the readiness check robust to ambient /etc leftovers."
     ]
+  },
+  "closure_gate": {
+    "state": "GREEN (operator-independent gates) at dev HEAD 08c5b7e1",
+    "note": "The full scripts/gate.sh passes in the dev tree after clippy-gating the two PSV crates (axon-psv, axon-workspace-recipe). This is dev evidence about the CI gate, not a protected-readiness leg.",
+    "gate": "scripts/gate.sh --> \"gate PASSED\"",
+    "skipped_harnesses": "7 harnesses SKIPPED and reported by the gate as non-results, NOT passes (parity/offline suites are gated out under --no-default-features). I-2 interp/codegen/AOT-wasm parity NOT verified by this run; use scripts/gate.sh --strict or scripts/parity_all.sh to assert it.",
+    "commit": "08c5b7e1 gate: clippy-gate axon-psv and axon-workspace-recipe",
+    "readiness": "unchanged: NOT_READY (protected_backend, g01_on_protected_backend, pci_on_protected_backend still NOT_RUN)",
+    "not_a_pass_claim": "SKIP is not PASS; the 7 skipped harnesses are recorded as measured-nothing."
   }
 }
