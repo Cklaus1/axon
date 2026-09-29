@@ -1310,3 +1310,115 @@ fn a_protected_record_must_agree_with_its_re_verified_documents() {
         refused_or_not_accepted(&w, &exp, &fe, why);
     }
 }
+
+/// PSV-4 / PSV-7, Candidate-8 certifying review wf_ae3a5a74-41e. A store writer
+/// takes a GENUINE protected evaluation and repoints every counted trial's
+/// verification at a verdict Fabric genuinely signed, but whose class is not
+/// protected: guest-unobserved (a protected-profile launch with no
+/// observation) or development (the local interpreter). EVL never sees the
+/// substitution, so the only admission-side stop is the check that each counted
+/// receipt CLAIMS protected evidence (mutation M255). That guard had been
+/// retired as "equivalent", and the whole axon-loop suite stayed green without
+/// it because no test forged this route. With it removed, both variants
+/// reached ACCEPT.
+fn a_genuinely_signed_verdict_of_class(class: &str) {
+    let w = world();
+    protect(&w.s);
+    pin_protected_backend(&w.s);
+    freeze_plan(&w.s, "sub", &w.inc_ref, &w.cand_ref, |_| {}).unwrap();
+    let specs = pair(&w.inc, &w.cand, 2, 2, 2, Some(100), Some(50));
+    assign_specs(&w.s, "sub", &specs);
+    let mut v = evl_request("sub", &w.inc, &w.cand, &specs, &EvlOpts::default());
+    on_protected_backend(&mut v);
+    clear_all(&w.s, &v);
+    let (rec, genuine) = evaluate(&w.s, &v).unwrap();
+    assert_eq!(rec.evaluation_class, axon_loop::plan::EvaluationClass::Protected);
+
+    // Each delivered trial: the SAME verification request, with a receipt of
+    // `class` that Fabric genuinely signs, stored where intake would put it.
+    let mut subst: std::collections::BTreeMap<String, (Ref, Ref, Ref)> = Default::default();
+    for t in v["trials"].as_array().unwrap() {
+        if !t["verification_receipt"].is_object() {
+            continue;
+        }
+        let mut rc = t["verification_receipt"].clone();
+        let refs: Vec<Value> = rc["evidence_refs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|e| {
+                let s = e.as_str().unwrap();
+                !(s.starts_with("evidence-class:")
+                    || s.starts_with("launch-manifest-sha256:")
+                    || s.starts_with("preflight-observation-sha256:"))
+            })
+            .cloned()
+            .chain([json!(format!("evidence-class:{class}"))])
+            .collect();
+        rc["evidence_refs"] = json!(refs);
+        if class == "development" {
+            rc["backend_profile_ref"] = json!(CHECK_PROFILE);
+        }
+        let att = attest(VERIFIER, &t["verification_request"], &rc);
+        let mut ep = t["episode"].clone();
+        ep["verification"]["verifier_ref"] = json!(digest_value(&rc).unwrap());
+        let rc_ref = w.s.put_cas("fabric-receipts", &rc).unwrap();
+        let att_ref = w.s.put_cas("fabric-attestations", &att).unwrap();
+        let ep_ref = w.s.put_cas("episodes", &ep).unwrap();
+        let _ = w.s.put_cas("fabric-requests", &t["verification_request"]).unwrap();
+        let tid = t["episode"]["identity"]["trial_id"].as_str().unwrap().to_string();
+        subst.insert(tid, (ep_ref, rc_ref, att_ref));
+    }
+    assert!(!subst.is_empty(), "setup: no delivered trial to substitute");
+
+    let mut j = serde_json::to_value(&rec).unwrap();
+    let mut n = 0;
+    for arm in j["arms"].as_array_mut().unwrap() {
+        for t in arm["trials"].as_array_mut().unwrap() {
+            let tid = t["trial_id"].as_str().unwrap().to_string();
+            if let (Some((ep, rc, att)), true) = (subst.get(&tid), t["verification"].is_object()) {
+                t["episode_ref"] = json!(ep);
+                t["verification"]["receipt_ref"] = json!(rc);
+                t["verification"]["attestation_ref"] = json!(att);
+                t["verification"].as_object_mut().unwrap().remove("psv_evidence_ref");
+                n += 1;
+            }
+        }
+    }
+    assert!(n > 0, "setup: no counted trial substituted");
+    let forged: axon_loop::evl::EvaluationRecord = serde_json::from_value(j).unwrap();
+    let fe = w.s.put_cas("evaluations", &forged).unwrap();
+    forged_append(
+        w.s.root(),
+        axon_loop::ledger::Event::Evaluation {
+            scope: scope(),
+            experiment_id: "sub".into(),
+            evaluation_ref: fe.clone(),
+            freeze_seq: forged.freeze_seq,
+            authority_epoch: forged.authority_epoch,
+        },
+    );
+    match admit(&w.s, "sub", &fe, ADMITTER, false) {
+        Err(e) => assert!(
+            e.to_string().contains("does not claim protected evidence"),
+            "{class}: refused, but not by the claims-protected check: {e}"
+        ),
+        Ok((adm, _)) => panic!(
+            "{class}: a genuinely signed {class} verdict was counted in a PROTECTED decision: {:?} {:?}",
+            adm.decision, adm.reasons
+        ),
+    }
+    // Control: the genuine protected evaluation it was forged from is admitted.
+    let (ok, _) = admit(&w.s, "sub", &genuine, ADMITTER, false).unwrap();
+    assert_eq!(ok.decision, Decision::Accept, "control: {:?}", ok.reasons);
+}
+
+#[test]
+fn a_genuinely_signed_unobserved_verdict_cannot_count_in_a_protected_record() {
+    a_genuinely_signed_verdict_of_class("guest-unobserved")
+}
+
+#[test]
+fn a_genuinely_signed_development_verdict_cannot_count_in_a_protected_record() {
+    a_genuinely_signed_verdict_of_class("development")
+}

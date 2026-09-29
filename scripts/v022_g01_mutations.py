@@ -313,11 +313,7 @@ MUTATIONS = [
      '    refuse_links(\n        cv.entries\n            .iter()\n            .map(|e| (e.path.as_str(), e.mode == workspace::MODE_LINK)),\n        "the candidate",\n    )?;',
      '    let _ = &cv;',
      'axon-fabric', '--test check_effects', 'a_candidate_holding_a_symlink_is_refused'),
-    ('M58', 'interpreter: loop control does not cross a function boundary',
-     'crates/axon-core/src/interp.rs',
-     '            Err(Flow::Break) | Err(Flow::Continue) => {\n                return panic(format!("`break`/`continue` outside a loop in `{}`", f.name))\n            }\n',
-     '',
-     'axon-core', '--no-default-features --lib', 'interp::tests::an_escaped_break_or_continue_does_not_pass_a_test'),
+    ('M58', 'interpreter: loop control does not cross a function boundary', 'crates/axon-core/src/interp.rs', '            Err(Flow::Break) | Err(Flow::Continue) => {\n                return panic(format!("`break`/`continue` outside a loop in `{}`", f.name))\n            }\n', '', 'axon-core', '--no-default-features --lib', 'interp::tests::an_escaped_break_or_continue_from_a_function_body_does_not_pass_a_test'),
     ('M59', 'interpreter: loop control is contained at every frame edge (fn, closure, predicate)',
      'crates/axon-core/src/interp.rs',
      '            Flow::Break | Flow::Continue => {\n                panic(format!("`break`/`continue` outside a loop in {site}"))\n            }',
@@ -533,16 +529,8 @@ MUTATIONS = [
      'crates/axon-loop/src/pointer.rs',
      '    if let Some(role) = crate::admission::other_loop_role(&config, &b.issuer_ref) {\n        return Err(refused(format!(\n            "baseline issuer {} is also', '    if let Some(role) = None::<&str> {\n        return Err(refused(format!(\n            "baseline issuer {} is also',
      'axon-loop', '--test pointer', 'a_baseline_issuer_holds_no_other_loop_role'),
-    ('M103', 'derive: a counted verdict is still pinned (profile, revision, suite, acceptance)',
-     'crates/axon-loop/src/admission.rs',
-     'crate::intake::check_pins(&config, &v.issuer_ref, &t.task_id, &req, &rc).map_err(',
-     'Ok::<(), LoopError>(()).map_err(',
-     'axon-loop', '--test protected_class', 'a_rollback_rechecks_profile_qualification'),
-    ('M104', "derive: a protected context's observer and key are still current",
-     'crates/axon-loop/src/admission.rs',
-     '                ) && !t.context_signed_by.as_ref().is_some_and(|c| {',
-     '                ) && false && !t.context_signed_by.as_ref().is_some_and(|c| {',
-     'axon-loop', '--test protected_class', 'a_protected_activation_rests_only_on_current_authority'),
+    ('M103', 'derive check_pins: a DEVELOPMENT-class decision re-checks the operator pins at re-derivation (LOAD-BEARING: reverify_protected covers only the protected class; C8 review wf_ae3a5a74-41e reinstated it from equivalent)', 'crates/axon-loop/src/admission.rs', 'crate::intake::check_pins(&config, &v.issuer_ref, &t.task_id, &req, &rc).map_err(', 'Ok::<(), LoopError>(()).map_err(', 'axon-loop', '--test dev_rederivation', 'a_development_activation_after_the_revision_pin_changes_is_refused'),
+    ('M104', 'a counted protected trial must carry a CURRENT observer attribution (LOAD-BEARING on the store-writer misattribution route; C9 re-audit reinstated it)', 'crates/axon-loop/src/admission.rs', '                ) && !t.context_signed_by.as_ref().is_some_and(|c| {', '                ) && false && !t.context_signed_by.as_ref().is_some_and(|c| {', 'axon-loop', '--test protected_attribution', 'a_protected_verdict_without_its_context_attribution_does_not_count'),
     ('M105', "derive: a clearance's monitor and key are still current",
      'crates/axon-loop/src/admission.rs',
      '                if t.safety == crate::safety::SafetyState::Clear\n',
@@ -777,8 +765,8 @@ MUTATIONS = [
     ('M206', 'O2: rooted() requires the key in the operator root', 'crates/axon-loop-contracts/src/operator_trust.rs', 'if keys_in(&dir)?.contains(&want) {', 'if true {', 'axon-loop', '--test intake', 'a_verifier_key_planted_in_the_store_never_authenticates_protected_evidence'),
     ('M207', 'O2: rooted_key consults the operator root', 'crates/axon-loop/src/store.rs', '        axon_loop_contracts::operator_trust::rooted(a, k)?;\n', '', 'axon-loop', '--test protected_class', 'an_observer_key_planted_in_the_store_is_not_authority'),
     ('M208', "O2/A18: EVL's protected context uses an operator-rooted observer key", 'crates/axon-loop/src/evl.rs', 'crate::store::Config::rooted_key(\n        &config.observer_keys,\n        who,\n        axon_loop_contracts::operator_trust::TrustAuthority::Observer,\n    )', 'config.observer_keys.get(who).ok_or_else(String::new)', 'axon-loop', '--test protected_class', 'an_observer_key_planted_in_the_store_is_not_authority'),
-    ('M209', 'O2: a verifier key revoked at the root un-counts at activation', 'crates/axon-loop/src/admission.rs', 'crate::store::Config::rooted_key(\n                    &config.verifier_keys,\n                    &v.issuer_ref,\n                    axon_loop_contracts::operator_trust::TrustAuthority::Verifier,\n                )', 'config.verifier_keys.get(&v.issuer_ref).ok_or_else(String::new)', 'axon-loop', '--test protected_class', 'a_key_revoked_at_the_operator_root_no_longer_counts'),
-    ('M210', 'O2: an observer key revoked at the root un-counts at activation', 'crates/axon-loop/src/admission.rs', 'crate::store::Config::rooted_key(\n                            &config.observer_keys,\n                            &c.issuer_ref,\n                            axon_loop_contracts::operator_trust::TrustAuthority::Observer,\n                        )', 'config.observer_keys.get(&c.issuer_ref).ok_or_else(String::new)', 'axon-loop', '--test protected_class', 'a_key_revoked_at_the_operator_root_no_longer_counts'),
+    ('M209', 'a counted verdict attributed to a verifier must name one the operator verifier ROOT holds (LOAD-BEARING on the misattribution route; C9 re-audit reinstated it)', 'crates/axon-loop/src/admission.rs', 'crate::store::Config::rooted_key(\n                    &config.verifier_keys,\n                    &v.issuer_ref,\n                    axon_loop_contracts::operator_trust::TrustAuthority::Verifier,\n                )', 'config.verifier_keys.get(&v.issuer_ref).ok_or_else(String::new)', 'axon-loop', '--test protected_attribution', 'a_verdict_attributed_to_a_verifier_the_operator_root_never_held_does_not_count'),
+    ('M210', 'a context attributed to an observer must name one the operator observer ROOT holds (LOAD-BEARING on the misattribution route; C9 re-audit reinstated it)', 'crates/axon-loop/src/admission.rs', 'crate::store::Config::rooted_key(\n                            &config.observer_keys,\n                            &c.issuer_ref,\n                            axon_loop_contracts::operator_trust::TrustAuthority::Observer,\n                        )', 'config.observer_keys.get(&c.issuer_ref).ok_or_else(String::new)', 'axon-loop', '--test protected_attribution', 'a_context_attributed_to_an_observer_the_operator_root_never_held_does_not_count'),
     ('M211', 'M4/A13/A14: a protected evaluation counts only protected-class evidence', 'crates/axon-loop/src/evl.rs', '        // M4: a verdict counts in a protected evaluation only as PROTECTED\n', '        // M4 (mutated)\n        #[cfg(any())]\n', 'axon-loop', '--test protected_class', 'only_protected_class_evidence_counts_in_a_protected_evaluation'),
     ('M212', 'M4: the one class must be protected', 'crates/axon-loop-contracts/src/protected_evidence.rs', '["protected"] => {}', '[_] => {}', 'axon-loop', '--test protected_class', 'only_protected_class_evidence_counts_in_a_protected_evaluation'),
     ('M213', 'M4/A13: a protected claim needs a protected backend', 'crates/axon-loop-contracts/src/protected_evidence.rs', 'if !crate::PROTECTED_PROFILES.contains(&rc.backend_profile_ref.as_str()) {', 'if false {', 'axon-loop', '--test intake', 'a_protected_claim_without_every_join_is_refused'),
@@ -823,7 +811,7 @@ MUTATIONS = [
     ('M252', "PSV-6 (r1): the observation's epoch joins the trial's", 'crates/axon-loop-contracts/src/protected_evidence.rs', '    if o.epoch != epoch {', '    if false && o.epoch != epoch {', 'axon-loop', '--test intake', 'each_protected_join_is_verified_over_the_documents'),
     ('M253', 'PSV-6 (r1): an epoch that moved during observation refuses the launch', 'crates/axon-fabric/src/submit.rs', 'Ok(now) if now == cfg.expected_epoch => Ok((launch, Some(v))),', '_ => Ok((launch, Some(v))),', 'axon-fabric', '--test psv_dispatch', 'an_epoch_that_moves_while_the_observer_runs_refuses_the_launch'),
     ('M254', 'PSV-7: a protected decision re-verifies every counted verdict (LOAD-BEARING — reverify_protected is the sole enforcement site; certifying review wf_bff9835f-4a0 reclassified from equivalent to active)', 'crates/axon-loop/src/admission.rs', 'reverify_protected(tx, &config, eval, arm, t, v, &rc)?;', 'let _ = (eval, &rc);', 'axon-loop', '--test protected_class', 'a_protected_admission_re_verifies_the_execution_leg_from_its_documents'),
-    ('M255', 'PSV-7 (r1): a counted protected verdict claims protected evidence', 'crates/axon-loop/src/admission.rs', '    if !axon_loop_contracts::protected_evidence::claims_protected(rc) {', '    if false && !axon_loop_contracts::protected_evidence::claims_protected(rc) {', 'axon-loop', '--test psv7_relabel', 'development_verdicts_relabelled_protected_are_refused'),
+    ('M255', 'admission: every counted receipt must CLAIM protected evidence (LOAD-BEARING: the only stop for a store writer substituting a genuinely signed guest-unobserved or development verdict; C8 review wf_ae3a5a74-41e reinstated it from equivalent)', 'crates/axon-loop/src/admission.rs', '    if !axon_loop_contracts::protected_evidence::claims_protected(rc) {', '    if false && !axon_loop_contracts::protected_evidence::claims_protected(rc) {', 'axon-loop', '--test protected_class', 'a_genuinely_signed_unobserved_verdict_cannot_count_in_a_protected_record'),
     ('M256', "PSV-7 (r1): a protected execution leg needs Fabric's execution attestation", 'crates/axon-loop/src/evl.rs', 'if let Err(e) = verify_execution(&d.acf_att, areq, rcpt, config) {', 'if let Err(e) = Ok::<(), String>(()).map(|_| (areq, rcpt)) {', 'axon-loop', '--test protected_class', 'a_relabelled_execution_leg_counts_nothing_in_a_protected_evaluation'),
     ('M257', 'PSV-7 (r1): the execution attestation key is operator-rooted', 'crates/axon-loop/src/evl.rs', '    let key = crate::store::Config::rooted_key(\n        &config.verifier_keys,\n        &issuer,\n        axon_loop_contracts::operator_trust::TrustAuthority::Verifier,\n    )?;', '    let key = config\n        .verifier_keys\n        .get(&issuer)\n        .ok_or_else(|| "no key".to_string())?;', 'axon-loop', '--test protected_class', 'a_relabelled_execution_leg_counts_nothing_in_a_protected_evaluation'),
     ('M258', 'PSV-7 (r1): admission re-verifies the execution leg', 'crates/axon-loop/src/admission.rs', 'crate::evl::verify_execution(&att, &areq, &arc, config).map_err(fail)?;', 'let _ = (&att, &areq, &arc);', 'axon-loop', '--test protected_class', 'a_protected_admission_re_verifies_the_execution_leg_from_its_documents'),
@@ -838,9 +826,10 @@ MUTATIONS = [
     ('M267', "PSV-7 (r3): a counted trial's episode ran its arm's policy", 'crates/axon-loop/src/admission.rs', '    if ep.policy_ref != arm.policy_ref {', '    if false && ep.policy_ref != arm.policy_ref {', 'axon-loop', '--test protected_class', 'a_protected_record_must_agree_with_its_re_verified_documents'),
     ('M268', "PSV-7 (r3): a counted trial's outcome is its signed verdict", 'crates/axon-loop/src/admission.rs', '        (crate::evl::Outcome::VerifiedPass, RV::Passed)\n        | (crate::evl::Outcome::Fail, RV::Failed) => {}', '        (_, _) if true => {}', 'axon-loop', '--test protected_class', 'a_protected_record_must_agree_with_its_re_verified_documents'),
     ('M269', "PSV-7 (r3): a counted trial's context signature re-verifies", 'crates/axon-loop/src/admission.rs', '    )\n    .map_err(|e| fail(format!("context signature: {e}")))?;', '    )\n    .ok();', 'axon-loop', '--test protected_class', 'a_protected_record_must_agree_with_its_re_verified_documents'),
-    ('M270', 'PSV-1 (hoisted, wf_bff9835f-4a0): sealed frame — seal.active clause of the effect-row RNG guard', 'crates/axon-core/src/interp/builtins.rs', '        if self.seal.active && self.frame_sealed.get() && effects.contains(&"Random") {', '        if false && self.frame_sealed.get() && effects.contains(&"Random") {', 'axon-core', '--no-default-features --test psv_test_selection', 'a_sealed_candidate_cannot_reseed_the_rng'),
-    ('M271', 'PSV-1 (hoisted, wf_bff9835f-4a0): sealed frame — Random effect-row clause (covers random_* AND the samplers)', 'crates/axon-core/src/interp/builtins.rs', '        if self.seal.active && self.frame_sealed.get() && effects.contains(&"Random") {', '        if self.seal.active && self.frame_sealed.get() && effects.contains(&"__never__") {', 'axon-core', '--no-default-features --test psv_test_selection', 'a_sealed_candidate_cannot_draw_from_the_rng'),
-    ('M272', 'PSV-1 (hoisted, wf_bff9835f-4a0): sealed frame — frame_sealed clause of the effect-row RNG guard', 'crates/axon-core/src/interp/builtins.rs', '        if self.seal.active && self.frame_sealed.get() && effects.contains(&"Random") {', '        if self.seal.active && false && effects.contains(&"Random") {', 'axon-core', '--no-default-features --test psv_test_selection', 'a_sealed_candidate_cannot_draw_from_the_rng'),
+    ('M270', "PSV-1: a draw comes from the RUNNING frame's kernel (a sealed frame never draws the operator stream)", 'crates/axon-core/src/interp.rs', '        self.k().rng_next()', '        self.kernels[0].rng_next()', 'axon-core', '--no-default-features --test psv_test_selection', 'sealed_rng_activity_never_moves_the_operators_stream'),
+    ('M271', "PSV-1: srand reseeds only the RUNNING frame's kernel (a sealed srand never reseeds the operator stream)", 'crates/axon-core/src/interp.rs', '        self.k().rng_set(n)', '        self.kernels[0].rng_set(n)', 'axon-core', '--no-default-features --test psv_test_selection', 'a_sealed_candidate_cannot_reseed_the_rng'),
+    ('M272', "PSV-1: the sealed kernel's stream is seeded by a one-way derivation (its draws reveal nothing of the operator seed)", 'crates/axon-core/src/interp.rs', '            x = if self.rng_sealed { sealed_rng_seed(s) } else { s };', '            x = s;', 'axon-core', '--no-default-features --test psv_test_selection', 'a_sealed_candidates_own_stream_reveals_nothing_of_the_operators'),
+    ('M293', 'runner: a Passed verdict needs the keyed token AND exit 0 (the Some(0) of the Passed arm; replaces stale M176)', 'crates/axon-psv/src/runner.rs', '        (GuestStatus::Passed, Some(true), Some(0)) => GuestStatus::Passed,', '        (GuestStatus::Passed, Some(true), _) => GuestStatus::Passed,', 'axon-psv', '--test runner', 'a_genuine_keyed_pass_from_a_run_that_exits_non_zero_is_not_a_pass'),
 ]
 
 
@@ -889,18 +878,18 @@ PCI_IDS = {"M04", "M44", "M49", "M52", "M53", "M57", "M59", "M60", "M61", "M62",
 # NOT count as killed. `killer` is a live ACTIVE row that turns the property's
 # discriminator red.
 EQUIV_RECORD = {
-    "M103": {"property": "the counted verdict is still operator-pinned", "subsumed_by": ["M26"], "killer": "M26"},
-    "M104": {"property": "the counted verdict's context is observer-authenticated", "subsumed_by": ["M99", "M208", "M269", "M207"], "killer": "M99"},
-    "M209": {"property": "a protected verdict is authenticated under an operator-rooted verifier key", "subsumed_by": ["M205"], "killer": "M205"},
-    "M210": {"property": "a protected context is authenticated under an operator-rooted observer key", "subsumed_by": ["M207", "M208", "M99", "M269"], "killer": "M208"},
+    "M58": {"property": "a break/continue raised in a FUNCTION BODY does not escape into the caller's loop", "subsumed_by": ["M59"], "killer": "M59"},
     "M245": {"property": "a protected clearance is a real monitor signature under the operator monitor root", "subsumed_by": ["M264"], "killer": "M264"},
-    "M255": {"property": "only a protected-class receipt counts in a protected decision", "subsumed_by": ["M254", "M212", "M213", "M261", "M262"], "killer": "M212"},
 }
 EQUIVALENT_DID = set(EQUIV_RECORD)
 # M204's historical guard (the submit observe seam) was REFACTORED away by
 # amendment 16; it no longer applies. Its property is enforced by M192-M195
 # (observe returns Err on a defect) and M253 (epoch recheck), all live killers.
-STALE_REFACTORED = {"M204": {"property": "a defective/replayed observation must not launch", "subsumed_by": ["M192", "M253"], "killer": "M253"}}
+STALE_REFACTORED = {"M204": {"property": "a defective/replayed observation must not launch", "subsumed_by": ["M192", "M253"], "killer": "M253"},
+                    # C9 re-audit: M176 was listed as a LEGACY EQUIVALENT but its guard no longer
+                    # exists (old string absent) -- it became the `Some(0)` of the Passed arm in
+                    # runner.rs, which no row mutated. It is STALE; M293 now kills that arm.
+                    "M176": {"property": "a pass needs exit 0", "subsumed_by": ["M293"], "killer": "M293"}}
 
 # M176 (the runner's exit-0 guard) is equivalent since `--exact` (PSV review
 # wf_d725935a-7ed, B1): the runner now executes exactly the one registered
@@ -908,10 +897,12 @@ STALE_REFACTORED = {"M204": {"property": "a defective/replayed observation must 
 # Its killing test (a failing SIBLING beside a passing named test) described
 # the very behaviour B1 removed. The guard stays as defence in depth; M184
 # (Fabric's own exit-0 check) remains killed.
-LEGACY_EQUIV = {"M58", "M176"}
+# C9 re-audit: the legacy set is EMPTY. M176 is stale (above). M58 had no recorded
+# property, subsuming guard or killer, so under the four-cell rule it is ACTIVE.
+LEGACY_EQUIV = set()
 RETIRED = LEGACY_EQUIV | EQUIVALENT_DID | set(STALE_REFACTORED)
 BINDING_IDS = {f"M{n}" for n in range(101, 137)}
-PSV_IDS = {f"M{n}" for n in range(137, 273)}
+PSV_IDS = {f"M{n}" for n in range(137, 294)}
 
 
 def in_scope(mid, scope):
@@ -1027,11 +1018,31 @@ def print_evidence_model(rows, scope, extra=""):
     print(f"Mutation registry: {len(MUTATIONS)} total")
     print(f"Active mutants: {killed}/{active} killed"
           f"{'' if base_ok else ' (baselines NOT all pass)'}{extra}")
-    print(f"Retired equivalent/subsumed: {len(EQUIVALENT_DID)} defence-in-depth "
-          f"(paired-disable) + {len(STALE_REFACTORED)} refactored + "
-          f"{len(LEGACY_EQUIV)} legacy = {len(RETIRED)}")
+    # Retired rows are reported by WHAT they are, and each class is checked
+    # against the tree: an equivalent's guard must still exist (else it is not
+    # an equivalent but a stale row), a stale row's guard must be gone (else it
+    # is a live guard with no mutant). C9 re-audit: M176 sat under "legacy
+    # equivalent" for a guard that no longer existed, hidden from the line
+    # below, which counts ACTIVE rows only.
+    by_id = {r[0]: r for r in MUTATIONS}
+    def applies(mid):
+        r = by_id[mid]
+        try:
+            return open(os.path.join(ROOT, r[2])).read().count(r[3]) == 1
+        except OSError:
+            return False
+    eq_gone = sorted(m for m in EQUIVALENT_DID | LEGACY_EQUIV if not applies(m))
+    stale_live = sorted(m for m in STALE_REFACTORED if applies(m))
+    print(f"Retired EQUIVALENT (four-cell paired-disable, never counted killed): "
+          f"{len(EQUIVALENT_DID)} {sorted(EQUIVALENT_DID)}"
+          + (f"  <-- NOT EQUIVALENT, guard absent: {eq_gone}" if eq_gone else ""))
+    print(f"Retired STALE (guard refactored away; property killed by named live rows): "
+          f"{len(STALE_REFACTORED)} {sorted(STALE_REFACTORED)}"
+          + (f"  <-- NOT STALE, guard still present: {stale_live}" if stale_live else ""))
+    if LEGACY_EQUIV:
+        print(f"Retired LEGACY (unaudited): {len(LEGACY_EQUIV)} {sorted(LEGACY_EQUIV)}")
     print(f"Unexpected survivors: {len(survivors)}{(' '+str(survivors)) if survivors else ''}")
-    print(f"Stale/unapplied: {len(stale)}{(' '+str(stale)) if stale else ''}")
+    print(f"Active rows stale/unapplied: {len(stale)}{(' '+str(stale)) if stale else ''}")
 
 
 def main():

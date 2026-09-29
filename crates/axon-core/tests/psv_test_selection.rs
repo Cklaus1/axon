@@ -474,8 +474,8 @@ fn a_sealed_module_never_supplies_an_operator_modules_name() {
 
 /// Dev review round wf_bf757240-925 (PSV-1): a sealed candidate cannot reseed
 /// the process RNG the operator's test draws from. The candidate reseeds to a
-/// fixed seed at load and returns the draw it can then PREDICT; with srand
-/// refused it cannot, so it guesses wrong. Control: an honest candidate that
+/// fixed seed at load and returns the draw it can then PREDICT. Its srand
+/// reseeds only its OWN kernel's stream, so it guesses wrong. Control: an honest candidate that
 /// echoes the value it is given passes.
 #[test]
 fn a_sealed_candidate_cannot_reseed_the_rng() {
@@ -552,109 +552,148 @@ fn guess(x: i64) -> i64 {{ {PREDICTED} }}
     );
 }
 
-/// Certifying review wf_afca02ad-f81 (PSV-1, MAJOR-ADJACENT): a sealed candidate
-/// cannot DRAW from the process RNG either — not only reseed it. Every draw
-/// advances the shared stream the operator's `@[forall]` test then draws from, so
-/// a draw at candidate load SHIFTS the test's random input even without a reseed
-/// (the candidate cannot predict the shifted value, but it can perturb the test).
-/// With random_* refused in a sealed frame the draw is a SandboxViolation and the
-/// run fails; the honest control that draws nothing still passes (the suite's own
-/// draw is in an unsealed frame and is allowed).
-#[test]
-fn a_sealed_candidate_cannot_draw_from_the_rng() {
+/// Run one registered test of `suite` with `cand` sealed, in the runner's shape.
+fn run_sealed(tag: &str, suite: &str, cand: &str, test: &str, env: &[(&str, &str)]) -> String {
     use std::io::Write;
-    let run = |cand: &str| -> String {
-        let d = fresh(&format!("rngdraw-{}", cand.len()));
-        std::fs::create_dir_all(d.join("cand")).unwrap();
-        std::fs::create_dir_all(d.join("suite")).unwrap();
-        std::fs::write(
-            d.join("suite/accept.ax"),
-            "mod f
-use f.{guess}
+    let d = fresh(tag);
+    std::fs::create_dir_all(d.join("cand")).unwrap();
+    std::fs::create_dir_all(d.join("suite")).unwrap();
+    std::fs::write(d.join("suite/accept.ax"), suite).unwrap();
+    std::fs::write(d.join("cand/f.ax"), cand).unwrap();
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_axon"));
+    cmd.current_dir(d.join("suite"))
+        .arg("test")
+        .arg(d.join("suite/accept.ax"))
+        .args(["--json", "--filter", test, "--exact", "--completion-key-stdin"])
+        .arg("--seal")
+        .arg(d.join("cand"))
+        .env_clear()
+        .env("PATH", "/usr/bin:/bin")
+        .env("AXON_ALLOWED_EFFECTS", "IO,Random,AI,Net")
+        .env(
+            "AXON_PATH",
+            format!("{}:{}", d.join("suite").display(), d.join("cand").display()),
+        )
+        .env("AXON_PATH_EXCLUSIVE", "1")
+        .env("XDG_CACHE_HOME", d.join("cache"))
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
+    let mut c = cmd.spawn().unwrap();
+    writeln!(c.stdin.take().unwrap(), "{}", "0b".repeat(32)).unwrap();
+    let out = c.wait_with_output().unwrap();
+    String::from_utf8_lossy(&out.stdout).into_owned()
+}
+
+/// PSV-1, certifying review wf_ae3a5a74-41e. A sealed candidate cannot move
+/// the operator's RNG stream — by ANY builtin. Every draw comes from the
+/// running frame's kernel, and the candidate's kernel has its own stream. The
+/// operator seeds, draws `x`, reseeds, lets the candidate churn, draws `y`:
+/// `x == y`. Two earlier fixes guarded a LIST (three builtin names, then the
+/// `Random` effect row) and each missed a route — the samplers, then the
+/// `goal_*` searches, whose row says `{AI,Net,IO}`. So the churn is not a
+/// hand-picked list for the Random-row builtins: it is checked against
+/// `builtins::BUILTINS` at test time, and a new `Random` builtin fails this
+/// test until the churn exercises it from a sealed frame.
+#[test]
+fn sealed_rng_activity_never_moves_the_operators_stream() {
+    use axon_core::builtins::{builtin_effect_row, BUILTINS};
+    // How to call each RNG-reaching builtin from the candidate.
+    let calls: &[(&str, &str)] = &[
+        ("random_i64", "random_i64(0, 1000000)"),
+        ("random_f64", "random_f64()"),
+        ("srand", "srand(7)"),
+        ("gaussian_sample", "gaussian_sample(0.0, 1.0)"),
+        ("beta_sample", "beta_sample(2.0, 5.0)"),
+        ("categorical_sample", "categorical_sample([0.5, 0.5])"),
+        // Not Random-row, yet they draw (the route the review executed).
+        ("goal_run_random", "goal_run_random(\"probe\", 1000000.0, 5, 0, 1000000)"),
+        ("goal_run_multistart", "goal_run_multistart(\"probe\", 1000000.0, 2, 3, 0, 1000000)"),
+        ("goal_run_categorical", "goal_run_categorical(\"cprobe\", 4, 100.0, 5)"),
+    ];
+    let covered: Vec<&str> = calls.iter().map(|(n, _)| *n).collect();
+    let random_row: Vec<&str> = BUILTINS
+        .iter()
+        .map(|b| b.name)
+        .filter(|n| builtin_effect_row(n).contains(&"Random"))
+        .collect();
+    assert!(!random_row.is_empty(), "drift test found no Random builtins at all");
+    for n in &random_row {
+        assert!(
+            covered.contains(n),
+            "`{n}` carries the Random effect but is not exercised from a sealed frame \
+             here — add it to `calls` so its draws are proven not to reach the operator's stream"
+        );
+    }
+    let body: String = calls
+        .iter()
+        .enumerate()
+        .map(|(i, (_, c))| format!("    let _r{i} = {c}\n"))
+        .collect();
+    let cand = format!(
+        "@[adaptive]\nfn probe(a: i64) -> i64 {{ a }}\n@[adaptive]\nfn cprobe(c: i64) -> i64 {{ c }}\n\
+         pub fn churn() -> i64 {{\n{body}    0\n}}\n"
+    );
+    let suite = "mod f
+use f.{churn}
+
+@[test]
+fn t_ok() {
+    srand(20260929)
+    let x = random_i64(0, 1000000)
+    srand(20260929)
+    let _ = churn()
+    let y = random_i64(0, 1000000)
+    assert_eq(x, y)
+}
+
+@[test]
+fn t_moves() {
+    srand(20260929)
+    let x = random_i64(0, 1000000)
+    srand(20260929)
+    let _ = churn()
+    let _own = random_i64(0, 1000000)
+    let y = random_i64(0, 1000000)
+    assert_eq(x, y)
+}
+";
+    let out = run_sealed("rng-churn", suite, &cand, "t_ok", &[]);
+    assert!(
+        out.contains("\"status\":\"ok\""),
+        "the candidate's RNG activity moved the operator's stream: {out}"
+    );
+    // Control: the SAME check detects a stream that really moved (an operator
+    // draw between x and y), so the pass above is the property, not a no-op.
+    let moved = run_sealed("rng-churn-ctl", suite, &cand, "t_moves", &[]);
+    assert!(
+        moved.contains("\"status\":\"failed\""),
+        "control: an operator-side draw must change y: {moved}"
+    );
+}
+
+/// PSV-1: drawing from its own stream tells a candidate nothing about the
+/// operator's. Under a fixed `AXON_SEED` both kernels start from the same
+/// operator seed; the sealed kernel's is passed through a one-way derivation,
+/// so the candidate's first draw is NOT the operator's first draw.
+#[test]
+fn a_sealed_candidates_own_stream_reveals_nothing_of_the_operators() {
+    let suite = "mod f
+use f.{peek}
 
 @[test]
 fn t_ok() {
     let x = random_i64(0, 1000000)
-    assert_eq(guess(x), x)
+    assert_eq(peek(), x)
 }
-",
-        )
-        .unwrap();
-        std::fs::write(d.join("cand/f.ax"), cand).unwrap();
-        let mut c = Command::new(env!("CARGO_BIN_EXE_axon"))
-            .current_dir(d.join("suite"))
-            .arg("test")
-            .arg(d.join("suite/accept.ax"))
-            .args([
-                "--json",
-                "--filter",
-                "t_ok",
-                "--exact",
-                "--completion-key-stdin",
-            ])
-            .arg("--seal")
-            .arg(d.join("cand"))
-            .env_clear()
-            .env("PATH", "/usr/bin:/bin")
-            .env("AXON_ALLOWED_EFFECTS", "IO,Random")
-            .env(
-                "AXON_PATH",
-                format!("{}:{}", d.join("suite").display(), d.join("cand").display()),
-            )
-            .env("AXON_PATH_EXCLUSIVE", "1")
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
-            .unwrap();
-        writeln!(c.stdin.take().unwrap(), "{}", "0b".repeat(32)).unwrap();
-        let out = c.wait_with_output().unwrap();
-        String::from_utf8_lossy(&out.stdout).into_owned()
-    };
-    // Attack A: draw an i64 at load to shift the operator's stream.
-    let attack_i = "let _shift = random_i64(0, 100)
-fn guess(x: i64) -> i64 { x }
 ";
-    let a = run(attack_i);
+    let cand = "pub fn peek() -> i64 { random_i64(0, 1000000) }\n";
+    let out = run_sealed("rng-peek", suite, cand, "t_ok", &[("AXON_SEED", "424242")]);
     assert!(
-        !a.contains("\"status\":\"ok\""),
-        "a sealed random_i64 draw must be refused: {a}"
-    );
-    // Attack B: same via random_f64.
-    let attack_f = "let _shift = random_f64()
-fn guess(x: i64) -> i64 { x }
-";
-    let b = run(attack_f);
-    assert!(
-        !b.contains("\"status\":\"ok\""),
-        "a sealed random_f64 draw must be refused: {b}"
-    );
-    // Attacks C/D/E: the distribution samplers carry the SAME "Random" effect
-    // and draw from the SAME process-global stream, so they must be refused too.
-    // The first hardening (random_i64/random_f64 only) missed these three; the
-    // certifying review (wf_bff9835f-4a0) reproduced the gap. The refusal is now
-    // effect-row keyed in pre_effect_gate, covering every Random builtin.
-    for (name, draw) in [
-        ("gaussian_sample", "let _s = gaussian_sample(0.0, 1.0)"),
-        ("beta_sample", "let _s = beta_sample(2.0, 5.0)"),
-        (
-            "categorical_sample",
-            "let _s = categorical_sample([0.5, 0.5])",
-        ),
-    ] {
-        let cand = format!("{draw}\nfn guess(x: i64) -> i64 {{ x }}\n");
-        let out = run(&cand);
-        assert!(
-            !out.contains("\"status\":\"ok\""),
-            "a sealed {name} draw must be refused: {out}"
-        );
-    }
-    // Control: a candidate that draws nothing passes (the suite's own
-    // random_i64 draw is unsealed and allowed).
-    let honest = "fn guess(x: i64) -> i64 { x }
-";
-    assert!(
-        run(honest).contains("\"status\":\"ok\""),
-        "control: honest candidate passes"
+        out.contains("\"status\":\"failed\""),
+        "the candidate's first draw equalled the operator's — its stream mirrors the operator seed: {out}"
     );
 }

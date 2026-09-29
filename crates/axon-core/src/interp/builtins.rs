@@ -8,7 +8,7 @@
 //! move). `self.<method>` (incl. the already-split goal.rs methods) and the
 //! parent's private `Interp` fields resolve across the module boundary;
 //! `use super::*` pulls in Value/Flow + the free helpers (display, as_*,
-//! emit_stdout, fmt_g, next_rand_u64, append_*_jsonl, values_equal, …).
+//! emit_stdout, fmt_g, append_*_jsonl, values_equal, …).
 
 use super::*;
 
@@ -500,24 +500,6 @@ impl<'p> Interp<'p> {
         ledger_kind: Option<axon_audit::EffectKind>,
         scope_args: Option<&[Value]>,
     ) -> Result<(), Flow> {
-        // PSV-1 (certifying review wf_bff9835f-4a0): a SEALED candidate frame may
-        // not touch the RNG the operator's @[forall] acceptance test shares —
-        // neither reseed (srand) nor draw (random_i64/random_f64/gaussian_sample/
-        // beta_sample/categorical_sample). Every Random-effect builtin advances
-        // the same process-global stream, so a draw at candidate load can SHIFT
-        // the operator test's inputs even without a reseed. Keyed on the effect
-        // ROW so ANY current or future Random builtin is covered by construction:
-        // the earlier per-arm guards (srand/random_f64/random_i64 only) missed the
-        // three samplers, which the review reproduced. One enforcement point, at
-        // the single gate every effect passes through. Pinned by
-        // psv_test_selection.rs::a_sealed_candidate_cannot_draw_from_the_rng.
-        if self.seal.active && self.frame_sealed.get() && effects.contains(&"Random") {
-            return Err(Flow::SandboxViolation(format!(
-                "{op_name} is refused in a sealed module: candidate code may not touch \
-                 the RNG the operator's test shares"
-            )));
-        }
-
         // R4 §4.3 — mandatory `@[agent]` action log (I-13). When a capability-
         // bearing operation is performed from inside an `@[agent]` fn, inject one
         // `agent_action` audit record naming the tool and the capability it
@@ -2885,24 +2867,20 @@ impl<'p> Interp<'p> {
                 // Same seed → identical random_*/goal_run_random sequence.
                 // (The AXON_SEED env var does the same without code changes.)
                 want(1)?;
-                // The sealed-frame refusal for every Random-effect builtin
-                // (srand reseed + all draws) lives once in pre_effect_gate,
-                // keyed on the effect row — see PSV-1 there.
-                set_rand_seed(as_int(&args[0])?);
+                // Reseeds only the running frame's kernel stream: a sealed
+                // srand cannot choose the operator's inputs (PSV-1).
+                self.rng_reseed(as_int(&args[0])?);
                 ok!(Value::Unit);
             }
             "random_f64" => {
                 want(0)?;
-                // Sealed-frame RNG refusal is enforced once in pre_effect_gate
-                // (effect-row keyed), covering this draw and the samplers.
                 // 53-bit mantissa → uniform [0.0, 1.0)
                 ok!(Value::Float(
-                    (next_rand_u64() >> 11) as f64 / 9_007_199_254_740_992.0
+                    (self.rng_next() >> 11) as f64 / 9_007_199_254_740_992.0
                 ));
             }
             "random_i64" => {
                 want(2)?;
-                // Sealed-frame RNG refusal is enforced once in pre_effect_gate.
                 let (lo, hi) = (as_int(&args[0])?, as_int(&args[1])?);
                 // Inverted bounds are a caller error: fail loudly instead of
                 // silently returning `lo`, which masquerades as success
@@ -2920,7 +2898,7 @@ impl<'p> Interp<'p> {
                     ok!(Value::Int(lo));
                 }
                 let range = (hi as i128 - lo as i128) as u128;
-                ok!(Value::Int(lo + (next_rand_u64() as u128 % range) as i64));
+                ok!(Value::Int(lo + (self.rng_next() as u128 % range) as i64));
             }
             "str_pad_start" => {
                 want(3)?;
@@ -6111,7 +6089,7 @@ impl<'p> Interp<'p> {
                 if sigma <= 0.0 {
                     return panic(format!("gaussian_sample: sigma must be > 0 (got {sigma})"));
                 }
-                ok!(Value::Float(mu + sigma * std_normal_sample()));
+                ok!(Value::Float(mu + sigma * std_normal_sample(&|| self.rng_next())));
             }
 
             "beta_mean" => {
@@ -6162,8 +6140,8 @@ impl<'p> Interp<'p> {
                     ));
                 }
                 // Beta(alpha, beta_b) = Gamma(alpha) / (Gamma(alpha) + Gamma(beta_b))
-                let ga = gamma_sample(alpha);
-                let gb = gamma_sample(beta_b);
+                let ga = gamma_sample(alpha, &|| self.rng_next());
+                let gb = gamma_sample(beta_b, &|| self.rng_next());
                 let s = ga + gb;
                 ok!(Value::Float(if s > 0.0 {
                     ga / s
@@ -6289,7 +6267,7 @@ impl<'p> Interp<'p> {
                 if probs.is_empty() {
                     return panic("categorical_sample: probs must be non-empty".to_string());
                 }
-                let u = (next_rand_u64() >> 11) as f64 / 9_007_199_254_740_992.0;
+                let u = (self.rng_next() >> 11) as f64 / 9_007_199_254_740_992.0;
                 let mut cum = 0.0;
                 let mut result = probs.len() as i64 - 1;
                 for (i, v) in probs.iter().enumerate() {
@@ -6358,29 +6336,29 @@ fn erf_approx(x: f64) -> f64 {
 }
 
 /// Standard normal sample via Box-Muller transform.
-fn std_normal_sample() -> f64 {
-    let u1 = ((next_rand_u64() >> 11) as f64 / 9_007_199_254_740_992.0).max(1e-300);
-    let u2 = (next_rand_u64() >> 11) as f64 / 9_007_199_254_740_992.0;
+fn std_normal_sample(rng: &dyn Fn() -> u64) -> f64 {
+    let u1 = ((rng() >> 11) as f64 / 9_007_199_254_740_992.0).max(1e-300);
+    let u2 = (rng() >> 11) as f64 / 9_007_199_254_740_992.0;
     (-2.0 * u1.ln()).sqrt() * (2.0 * std::f64::consts::PI * u2).cos()
 }
 
 /// Gamma(k) sample via Marsaglia-Tsang "squeeze" method.
 /// Works for any k > 0 (uses k < 1 reduction: Gamma(k) = Gamma(k+1) * U^(1/k)).
-fn gamma_sample(k: f64) -> f64 {
+fn gamma_sample(k: f64, rng: &dyn Fn() -> u64) -> f64 {
     if k < 1.0 {
-        let u = ((next_rand_u64() >> 11) as f64 / 9_007_199_254_740_992.0).max(1e-300);
-        return gamma_sample(k + 1.0) * u.powf(1.0 / k);
+        let u = ((rng() >> 11) as f64 / 9_007_199_254_740_992.0).max(1e-300);
+        return gamma_sample(k + 1.0, rng) * u.powf(1.0 / k);
     }
     let d = k - 1.0 / 3.0;
     let c = 1.0 / (9.0 * d).sqrt();
     loop {
-        let x = std_normal_sample();
+        let x = std_normal_sample(rng);
         let v_inner = 1.0 + c * x;
         if v_inner <= 0.0 {
             continue;
         }
         let v = v_inner * v_inner * v_inner;
-        let u = ((next_rand_u64() >> 11) as f64 / 9_007_199_254_740_992.0).max(1e-300);
+        let u = ((rng() >> 11) as f64 / 9_007_199_254_740_992.0).max(1e-300);
         let x2 = x * x;
         if u < 1.0 - 0.0331 * x2 * x2 {
             return d * v;

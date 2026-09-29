@@ -283,13 +283,14 @@ impl<'p> Interp<'p> {
         let mut best_dist: f64 = f64::INFINITY;
         let mut i: i64 = 0;
         while i < n_samples {
-            // Uniform per-dim in `[lo, hi)` via the same `next_rand_u64`
-            // helper the `random_i64` builtin uses — keeps RNG semantics
-            // consistent across calls within one run.
+            // Uniform per-dim in `[lo, hi)` from the running frame's kernel
+            // stream (`rng_next`), the same one `random_i64` uses — so RNG
+            // semantics stay consistent within a run, and a sealed frame's
+            // search never advances the operator's stream.
             let mut probe: Vec<Value> = Vec::with_capacity(n_dims);
             let range = (hi as i128 - lo as i128) as u128;
             for _ in 0..n_dims {
-                let v = lo + (next_rand_u64() as u128 % range.max(1)) as i64;
+                let v = lo + (self.rng_next() as u128 % range.max(1)) as i64;
                 probe.push(Value::Int(v));
             }
             let result = self.call_fn(f, probe)?;
@@ -409,7 +410,7 @@ impl<'p> Interp<'p> {
             // Budget < |choices|: random-sample (with replacement) `max_evals` of them.
             let mut i = 0;
             while i < max_evals {
-                let c = (next_rand_u64() % n_choices as u64) as i64;
+                let c = (self.rng_next() % n_choices as u64) as i64;
                 if eval_choice(c, &mut best_score, &mut best_dist)? {
                     break;
                 }
@@ -469,7 +470,7 @@ impl<'p> Interp<'p> {
         let mut s: i64 = 0;
         while s < n_starts {
             let start: Vec<i64> = (0..n_dims)
-                .map(|_| lo + (next_rand_u64() as u128 % range.max(1)) as i64)
+                .map(|_| lo + (self.rng_next() as u128 % range.max(1)) as i64)
                 .collect();
             let score = if n_dims == 1 {
                 // Single-arg: bypass the multi-i64 path's per-dim wiring
@@ -564,7 +565,7 @@ impl<'p> Interp<'p> {
         let mut population: Vec<Vec<i64>> = (0..pop)
             .map(|_| {
                 (0..n_dims)
-                    .map(|_| lo + (next_rand_u64() as u128 % range.max(1)) as i64)
+                    .map(|_| lo + (self.rng_next() as u128 % range.max(1)) as i64)
                     .collect()
             })
             .collect();
@@ -604,11 +605,11 @@ impl<'p> Interp<'p> {
                 next.push(elite.clone()); // carry the elite forward (elitism)
             }
             while (next.len() as i64) < pop {
-                let (_, parent) = &scored[(next_rand_u64() as usize) % scored.len()];
+                let (_, parent) = &scored[(self.rng_next() as usize) % scored.len()];
                 let child: Vec<i64> = parent
                     .iter()
                     .map(|&g| {
-                        let jitter = (next_rand_u64() as i64 % (2 * step + 1)) - step;
+                        let jitter = (self.rng_next() as i64 % (2 * step + 1)) - step;
                         (g + jitter).clamp(lo, hi - 1)
                     })
                     .collect();

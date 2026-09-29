@@ -501,3 +501,36 @@ fn the_process_holding_k_is_given_no_exec() {
     let out = std::fs::read_to_string(fx.cfg.out.join("test-stdout")).unwrap();
     assert!(out.contains("CEIL:[IO,Net]"), "{out}");
 }
+
+/// A pass needs BOTH the keyed completion token AND a clean exit. The token is
+/// genuine here: the real interpreter runs the passing test and prints it. But
+/// the run then exits 3, as a crash after the output would. That is Unknown,
+/// never Passed. This is the `Some(0)` of the runner's Passed arm (mutation
+/// M293). It replaces M176, whose guard was refactored into that arm and whose
+/// named test no longer existed (C9 re-audit).
+#[test]
+fn a_genuine_keyed_pass_from_a_run_that_exits_non_zero_is_not_a_pass() {
+    let mut fx = fixture("t_ok", false);
+    let real = fx.cfg.axon.clone();
+    let wrapper = real.with_file_name("axon-exit3");
+    std::fs::write(
+        &wrapper,
+        format!("#!/bin/sh\n'{}' \"$@\"\nexit 3\n", real.display()),
+    )
+    .unwrap();
+    std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o755)).unwrap();
+    fx.cfg.axon = wrapper;
+    let v = run(&fx.cfg);
+    let stdout = std::fs::read_to_string(fx.cfg.out.join("test-stdout")).unwrap_or_default();
+    assert!(
+        stdout.contains(&host_token(&fx.secret, &fx.m, "t_ok")),
+        "setup: the real interpreter's genuine keyed pass must be in the output: {stdout}"
+    );
+    assert_eq!(v.exit_code, Some(3), "setup: the run exited non-zero");
+    assert_eq!(
+        v.status,
+        GuestStatus::Unknown,
+        "a genuine keyed pass from a run that exited non-zero was reported {:?}",
+        v.status
+    );
+}

@@ -634,6 +634,58 @@ struct Kernel {
     /// one-way latch is the whole safety property: a kill-switch you can turn
     /// back off is not a kill-switch.
     corrigible_halted: Cell<bool>,
+    /// This kernel's xorshift64 RNG state (`0` = not yet seeded). EVERY draw —
+    /// `random_*`, the distribution samplers, `srand`, the `goal_*` searches
+    /// and `@[forall]` input generation — goes through [`Interp::rng_next`] /
+    /// [`Interp::rng_reseed`], i.e. through the kernel of the frame that is
+    /// running. There is no process-global stream, so a sealed candidate can
+    /// neither advance, reseed nor observe the operator's stream, whichever
+    /// builtin it uses (PSV-1). The C8 certifying review wf_ae3a5a74-41e
+    /// steered the old shared stream through `goal_run_random`, whose effect
+    /// row does not say `Random`, after two narrower fixes, one keyed on
+    /// builtin names and one on the effect row, had each missed a route.
+    rng: Cell<u64>,
+    /// Whether this is the sealed (candidate) kernel. Its stream is seeded by a
+    /// one-way derivation, so drawing from it reveals nothing about the
+    /// operator's seed — see [`sealed_rng_seed`].
+    rng_sealed: bool,
+}
+
+impl Kernel {
+    /// The next draw from THIS kernel's stream, seeding it on first use.
+    fn rng_next(&self) -> u64 {
+        let mut x = self.rng.get();
+        if x == 0 {
+            let s = rng_seed();
+            x = if self.rng_sealed { sealed_rng_seed(s) } else { s };
+        }
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        self.rng.set(x);
+        x
+    }
+
+    /// `srand(n)`: reseed THIS kernel's stream only. `n == 0` maps to a
+    /// non-zero sentinel so it does not read as "not yet seeded".
+    fn rng_set(&self, n: i64) {
+        self.rng.set((n as u64) | 1);
+    }
+}
+
+/// The sealed kernel's initial RNG state: SHA-256 over a domain tag and the
+/// operator seed. Deterministic under `AXON_SEED` (replay still reproduces a
+/// candidate's draws), but one-way, so a candidate that reads its own stream
+/// (xorshift64's output IS its state) learns nothing about the operator's.
+fn sealed_rng_seed(operator_seed: u64) -> u64 {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    h.update(b"axon-sealed-rng/1\0");
+    h.update(operator_seed.to_le_bytes());
+    let d = h.finalize();
+    let mut b = [0u8; 8];
+    b.copy_from_slice(&d[..8]);
+    u64::from_le_bytes(b) | 1
 }
 
 pub struct Interp<'p> {
@@ -2839,9 +2891,11 @@ impl<'p> Interp<'p> {
         // and the active-handle field below are derived from it.
         // Both kernels start identical — the SAME ambient effect ceiling, so a
         // sealed frame may narrow it but never widen it.
-        let mk_kernel = || {
+        let mk_kernel = |sealed: bool| {
             let ambient = ambient_sandbox();
             Kernel {
+                rng: Cell::new(0),
+                rng_sealed: sealed,
                 provenance: RefCell::new(HashMap::new()),
                 provenance_inputs: RefCell::new(HashMap::new()),
                 provenance_inputs_f64: RefCell::new(HashMap::new()),
@@ -2866,7 +2920,7 @@ impl<'p> Interp<'p> {
             }
         };
         Interp {
-            kernels: [mk_kernel(), mk_kernel()],
+            kernels: [mk_kernel(false), mk_kernel(true)],
             seal,
             frame_sealed: Cell::new(false),
             fns,
@@ -3168,6 +3222,18 @@ impl<'p> Interp<'p> {
     /// candidate's own. Handle-addressed state is only ever reached through it.
     fn k(&self) -> &Kernel {
         &self.kernels[usize::from(self.frame_sealed.get())]
+    }
+
+    /// The ONLY way to draw a random number: from the running frame's kernel.
+    /// A sealed frame draws from the candidate's own stream and so can never
+    /// advance or observe the operator's (PSV-1).
+    pub(crate) fn rng_next(&self) -> u64 {
+        self.k().rng_next()
+    }
+
+    /// The ONLY way to reseed (`srand`): the running frame's kernel only.
+    pub(crate) fn rng_reseed(&self, n: i64) {
+        self.k().rng_set(n)
     }
 
     /// Run `g` with the frame's provenance set to `sealed`, restoring it after.
@@ -4004,14 +4070,6 @@ pub use provenance::{
     ProvRecord, RunStartRecord,
 };
 
-/// A pseudo-random `u64` from a process-global xorshift state (seeded from the
-/// clock on first use). Single-threaded interpreter, so no CAS needed.
-use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
-
-/// Global xorshift64 RNG state. `0` means "uninitialized" — the first draw
-/// seeds it (see [`rng_seed`]). Explicitly settable via [`set_rand_seed`]
-/// (the `srand` builtin) for reproducible runs.
-static RNG_STATE: AtomicU64 = AtomicU64::new(0);
 
 /// Parse the ambient run-level token cap from `AXON_BUDGET_TOKENS`.
 ///
@@ -4113,24 +4171,6 @@ fn rng_seed() -> u64 {
     (now_ms() as u64) | 1
 }
 
-/// Explicitly set the RNG seed (the `srand(n)` builtin). `n == 0` is mapped
-/// to a non-zero sentinel so it doesn't read as "uninitialized".
-fn set_rand_seed(n: i64) {
-    let s = (n as u64) | 1;
-    RNG_STATE.store(s, AtomicOrdering::Relaxed);
-}
-
-fn next_rand_u64() -> u64 {
-    let mut x = RNG_STATE.load(AtomicOrdering::Relaxed);
-    if x == 0 {
-        x = rng_seed();
-    }
-    x ^= x << 13;
-    x ^= x >> 7;
-    x ^= x << 17;
-    RNG_STATE.store(x, AtomicOrdering::Relaxed);
-    x
-}
 
 /// Render `n` in `base` (2–36), '-'-prefixed when negative.
 fn i64_to_radix(n: i64, base: u32) -> String {
@@ -4798,6 +4838,33 @@ mod tests {
             run_test_fn(&prog, "t_own_loop_ok").is_ok(),
             "a test's own break still works"
         );
+    }
+
+    /// M58's OWN property, and only it: a `break`/`continue` raised in a named
+    /// FUNCTION BODY does not escape into the caller's loop. The test above also
+    /// attacks a closure, which never goes through `call_fn_frame`, so it cannot
+    /// separate M58 from `contain_frame` (M59): with M59 removed the closure case
+    /// reopens whatever M58 does (C9 four-cell run). Every attack here enters
+    /// `call_fn_frame`, whose ONLY caller wraps it in `contain_frame`.
+    #[test]
+    fn an_escaped_break_or_continue_from_a_function_body_does_not_pass_a_test() {
+        let prog = crate::parse_source(
+            "fn stop(n: i64) -> i64 {\n    if n > 0 { break }\n    n\n}\n\
+             fn skip(n: i64) -> i64 {\n    if n > 0 { continue }\n    n\n}\n\
+             @[test]\nfn t_break() { assert_eq(stop(1), 99) }\n\
+             @[test]\nfn t_continue() { assert_eq(skip(1), 99) }\n\
+             @[test]\nfn t_while() {\n    let mut i = 1\n    while i < 4 {\n        assert_eq(stop(i), 99)\n        i = i + 1\n    }\n}\n\
+             @[test]\nfn t_for() {\n    for i in 1..4 {\n        assert_eq(skip(i), 99)\n    }\n}\n\
+             @[test]\nfn t_ok() { assert_eq(stop(0), 0) }\n",
+        )
+        .expect("parses");
+        for t in ["t_break", "t_continue", "t_while", "t_for"] {
+            assert!(
+                run_test_fn(&prog, t).is_err(),
+                "ATTACK: `{t}` passed: a break/continue escaped a function body"
+            );
+        }
+        assert!(run_test_fn(&prog, "t_ok").is_ok(), "control: t_ok");
     }
     use super::*;
 

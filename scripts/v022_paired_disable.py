@@ -4,9 +4,12 @@
 sibling(s) S, prove the retirement is genuine by the matrix:
 
     A present, B present  -> attack REFUSED   (baseline)
-    A removed,  B present  -> attack REFUSED   (R's guard alone is redundant)
-    A present, B removed  -> attack REFUSED    (S's guard alone is redundant)
-    A removed,  B removed  -> attack SUCCEEDS   (the two are jointly load-bearing)
+    A removed,  B present  -> attack REFUSED   (A alone is redundant)
+    A present, B removed  -> attack REFUSED   (B alone is redundant: A guards it)
+    A removed,  B removed  -> attack SUCCEEDS  (jointly load-bearing, same attack)
+
+ALL FOUR cells are required (operator rule, 2026-09-29). A row that cannot
+show them for one named attack stays ACTIVE.
 
 "A removed" applies R's own registry mutation; "B removed" applies each
 subsuming sibling's registry mutation. The attack is R's own killing test:
@@ -53,7 +56,25 @@ def run_test(pkg, target, test):
     return (r.returncode == 0 and "1 passed" in out), out
 
 
-def full_suite_ok(pkg):
+def row_flags(target):
+    """The feature flags of a row's cargo target (e.g. --no-default-features)
+    without its --test/--lib selector, so the full-suite check builds the SAME
+    configuration the row's own test runs in (not, say, the LLVM codegen suite
+    for an interpreter-only row)."""
+    out, skip = [], False
+    for t in target.split():
+        if skip:
+            skip = False
+            continue
+        if t in ("--test", "--bin", "--example", "--bench"):
+            skip = True
+            continue
+        if t != "--lib":
+            out.append(t)
+    return " ".join(out)
+
+
+def full_suite_ok(pkg, flags=""):
     """True iff the WHOLE package suite passes. A retired (equivalent) guard,
     removed ALONE, must not break ANY test in the package — not merely its own
     --exact test. This closes the methodology gap the C8 certifying review
@@ -65,7 +86,7 @@ def full_suite_ok(pkg):
     broken build."""
     import re as _re
     cmd = ("source scripts/lib_bounded_run.sh && "
-           f"bounded_run 12G 1800 cargo test -q -p {pkg} 2>&1")
+           f"bounded_run 12G 1800 cargo test -q -p {pkg} {flags} 2>&1")
     r = sh(cmd)
     out = r.stdout + r.stderr
     if "could not compile" in out or "error[E" in out:
@@ -112,19 +133,32 @@ def main():
     if sh("git status --porcelain -- crates").stdout.strip():
         sys.exit("refused: uncommitted changes under crates/ — paired-disable is evidence about a commit")
     commit = sh("git rev-parse HEAD").stdout.strip()
-    # The guard set (retired row + subsuming siblings) whose JOINT removal
-    # reopens the SAME attack, discovered empirically (each retired guard
-    # removed alone leaves the attack refused). "asymmetric": a single sibling
-    # alone reopens, so the retired guard is dominated (its removal is
-    # behaviourally invisible).
+    # The guard set B (subsuming siblings) for each retired row A. A row is
+    # retired ONLY if all four cells hold for ONE named attack (operator rule,
+    # 2026-09-29): A+B present -> refused; A removed -> refused (by B);
+    # B removed -> refused (by A); A+B removed -> the same attack SUCCEEDS.
+    # "Asymmetric" (B alone reopens) is NOT a retirement: it means A does not
+    # guard that attack at all, and may guard another route — exactly how M103
+    # (development class) and M255 (store-writer route) hid until the C8 review.
     GUARD_SETS = {
-        "M245": {"siblings": ["M264"], "kind": "pair"},
-        "M104": {"siblings": ["M99", "M208", "M269", "M207"], "kind": "set"},
-        "M210": {"siblings": ["M207", "M208", "M99", "M269"], "kind": "set"},
-        "M255": {"siblings": ["M254", "M212", "M213", "M261", "M262"], "kind": "set"},
-        "M103": {"siblings": ["M26"], "kind": "asymmetric"},
-        "M209": {"siblings": ["M205"], "kind": "asymmetric"},
+        # The only row that survived the C9 re-audit (all four cells executed):
+        # admission.rs's monitor key_id check is dominated by clearance_verifies,
+        # which calls rooted_key with the identical arguments. M104, M209, M210
+        # (store-writer misattribution), M103 (development class), M254 and
+        # M255 (store-writer route) were all load-bearing and are ACTIVE.
+        "M245": {"siblings": ["M264"], "kind": "pair",
+                 "attack_marker": "monitor: activated on a revoked key"},
+        # M58 (call_fn_frame's break/continue arm) vs M59 (contain_frame). ALL
+        # PATHS: call_fn_frame has exactly ONE caller (interp.rs, in call_fn),
+        # and it wraps the call in contain_frame, which maps break/continue to
+        # the same panic. The attack is M58's OWN (function-body escapes only);
+        # the older test also attacked a closure, a route M58 never guarded.
+        "M58": {"siblings": ["M59"], "kind": "pair",
+                "attack_marker": "escaped a function body"},
     }
+    # Every retired row has a matrix and no active row has one.
+    if set(GUARD_SETS) != set(mut.EQUIVALENT_DID):
+        sys.exit(f"refused: GUARD_SETS {sorted(GUARD_SETS)} != EQUIVALENT_DID {sorted(mut.EQUIVALENT_DID)}")
     records = []
     ok = True
     for rid, gs in GUARD_SETS.items():
@@ -142,14 +176,23 @@ def main():
             try:
                 if any(e[0].startswith("crates/axon-core/") for e in edits) and not build_axon():
                     return "BUILD_FAILED"
-                passed, _ = run_test(pkg, target, test)
+                passed, out = run_test(pkg, target, test)
             finally:
                 rest()
                 if any(e[0].startswith("crates/axon-core/") for e in edits):
                     build_axon()
             if passed is None:
                 return "COMPILE_ERROR"
-            return "ATTACK_REFUSED" if passed else "ATTACK_SUCCEEDS"
+            if passed:
+                return "ATTACK_REFUSED"
+            # A test can fail for a reason that is not the attack (a setup panic,
+            # a different property's assertion). C9 re-audit: M209's "attack
+            # succeeds" cell was a setup panic, and M104/M210's joint cells
+            # failed on the VERIFIER iteration, i.e. another property. Only the
+            # row's own attack message counts as the attack succeeding.
+            if gs["attack_marker"] not in out:
+                return "OTHER_FAILURE"
+            return "ATTACK_SUCCEEDS"
 
         baseline = phase([])
         retired_only = phase(a)          # removing the retired guard alone
@@ -167,7 +210,7 @@ def main():
             try:
                 if any(e[0].startswith("crates/axon-core/") for e in edits) and not build_axon():
                     return "BUILD_FAILED", []
-                fok, fails = full_suite_ok(pkg)
+                fok, fails = full_suite_ok(pkg, row_flags(target))
             finally:
                 rest()
                 if any(e[0].startswith("crates/axon-core/") for e in edits):
@@ -182,16 +225,11 @@ def main():
                   "retired_guard_full_suite": full_state}
         if full_fails:
             matrix["retired_guard_full_suite_failures"] = full_fails[:12]
-        if gs["kind"] == "asymmetric":
-            sib_only = phase(b)          # the dominating sibling alone
-            matrix["dominating_sibling_disabled"] = sib_only
-            good = (baseline == "ATTACK_REFUSED" and retired_only == "ATTACK_REFUSED"
-                    and sib_only == "ATTACK_SUCCEEDS" and joint == "ATTACK_SUCCEEDS"
-                    and full_state == "SUITE_OK")
-        else:
-            good = (baseline == "ATTACK_REFUSED" and retired_only == "ATTACK_REFUSED"
-                    and joint == "ATTACK_SUCCEEDS"
-                    and full_state == "SUITE_OK")
+        sib_only = phase(b)              # B removed, A present
+        matrix["sibling_set_disabled"] = sib_only
+        good = (baseline == "ATTACK_REFUSED" and retired_only == "ATTACK_REFUSED"
+                and sib_only == "ATTACK_REFUSED" and joint == "ATTACK_SUCCEEDS"
+                and full_state == "SUITE_OK")
         ok &= good
         records.append({
             "mutation": rid, "status": "EQUIVALENT_DID", "kind": gs["kind"],
@@ -200,8 +238,7 @@ def main():
             "matrix": matrix, "holds": good,
         })
         print(f"{'OK ' if good else 'BAD'} {rid} [{gs['kind']}]: base={baseline} "
-              f"retired_off={retired_only} set_off={joint} full_suite={full_state}"
-              + (f" sib_off={matrix.get('dominating_sibling_disabled')}" if gs['kind']=='asymmetric' else ""),
+              f"retired_off={retired_only} sib_off={sib_only} set_off={joint} full_suite={full_state}",
               flush=True)
     # M204 (refactored): no current guard to disable; its property is covered
     # by live killing rows, recorded but not paired.

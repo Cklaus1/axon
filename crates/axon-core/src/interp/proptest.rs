@@ -3,8 +3,9 @@
 //! seeded-random typed inputs for a `@[test] @[forall]` fn, runs the body
 //! each case, and on the first failure SHRINKS toward zero/empty to report a
 //! minimal counterexample (R8). Orthogonal to interpretation itself.
-//! `use super::*` pulls in Interp/Program/FnDef/Value/Flow, the RNG
-//! (next_rand_u64), display, on_deep_stack, and is_i64_type/is_f64_type.
+//! `use super::*` pulls in Interp/Program/FnDef/Value/Flow, display,
+//! on_deep_stack, and is_i64_type/is_f64_type. Draws come from the running
+//! frame's kernel stream (`Interp::rng_next`), passed into `PropGen::random`.
 
 use super::*;
 
@@ -67,7 +68,7 @@ pub(super) fn run_property_test_inner(
 
     // Try `cases` random inputs; on the first failing one, shrink it.
     for _ in 0..cases {
-        let args: Vec<Value> = gens.iter().map(|g| g.random()).collect();
+        let args: Vec<Value> = gens.iter().map(|g| g.random(&|| interp.rng_next())).collect();
         if let Err(msg) = run_once(&interp, f, &args) {
             // Found a failing case — shrink toward minimal.
             let (shrunk_args, shrunk_msg) = shrink(&interp, f, &gens, args, msg);
@@ -204,12 +205,14 @@ pub(super) fn prop_gen_for(ty: &crate::ast::AxonType) -> Option<PropGen> {
 }
 
 impl PropGen {
-    fn random(&self) -> Value {
+    /// Draws come from `rng` — the running frame's kernel stream, never a
+    /// process-global one (see `Interp::rng_next`).
+    fn random(&self, rng: &dyn Fn() -> u64) -> Value {
         match self {
             // Bias toward small magnitudes (good property-test inputs) but cover
             // the full i64 range occasionally.
             PropGen::I64 => {
-                let r = next_rand_u64();
+                let r = rng();
                 let v = if r & 7 == 0 {
                     r as i64
                 } else {
@@ -218,14 +221,14 @@ impl PropGen {
                 Value::Int(v)
             }
             PropGen::F64 => {
-                let r = next_rand_u64();
+                let r = rng();
                 Value::Float((r % 2001) as f64 / 100.0 - 10.0)
             }
-            PropGen::Bool => Value::Bool(next_rand_u64() & 1 == 0),
+            PropGen::Bool => Value::Bool(rng() & 1 == 0),
             PropGen::Str => {
-                let len = (next_rand_u64() % 8) as usize;
+                let len = (rng() % 8) as usize;
                 let s: String = (0..len)
-                    .map(|_| (b'a' + (next_rand_u64() % 26) as u8) as char)
+                    .map(|_| (b'a' + (rng() % 26) as u8) as char)
                     .collect();
                 Value::Str(s)
             }
