@@ -64,7 +64,9 @@ fail() {
 mount -t ext4 -o nosuid,nodev /dev/vdb /work || fail "workspace-mount"
 
 # PSV mode (v022-psv-protocol.md §4): the cmdline names a launch manifest. The
-# inputs are three READ-ONLY drives, mounted nodev,nosuid,noexec:
+# inputs are three READ-ONLY drives, mounted nodev,nosuid,noexec,noacl — noacl
+# so the test uid's access is the mode bits alone (PSV-2: an ACL the digest
+# cannot see must not change what the child can read):
 #   /dev/vdc -> /in/candidate   /dev/vdd -> /in/suite   /dev/vde -> /in/job
 # and the trusted runner (axon-psv-runner) checks them before anything runs.
 set -f
@@ -75,9 +77,9 @@ done
 set +f
 [ "$PSV_WORDS" -le 1 ] || fail "psv-ambiguous"
 if [ -n "$PSV_MSHA" ]; then
-    mount -t ext4 -o ro,nodev,nosuid,noexec /dev/vdc /in/candidate || fail "psv-candidate-mount"
-    mount -t ext4 -o ro,nodev,nosuid,noexec /dev/vdd /in/suite || fail "psv-suite-mount"
-    mount -t ext4 -o ro,nodev,nosuid,noexec /dev/vde /in/job || fail "psv-job-mount"
+    mount -t ext4 -o ro,nodev,nosuid,noexec,noacl /dev/vdc /in/candidate || fail "psv-candidate-mount"
+    mount -t ext4 -o ro,nodev,nosuid,noexec,noacl /dev/vdd /in/suite || fail "psv-suite-mount"
+    mount -t ext4 -o ro,nodev,nosuid,noexec,noacl /dev/vde /in/job || fail "psv-job-mount"
     echo "PSV-MANIFEST sha256=$PSV_MSHA"
 else
     [ -f /work/job/program.ax ] || fail "no-program"

@@ -433,11 +433,18 @@ WS_IN_SHA="$(sha256sum "$OUT/workspace.img" | cut -d' ' -f1)"
 # normalised (readable, not writable; the EXECUTABLE bit — part of the tree
 # digest — is kept), so the unprivileged test uid in the guest can read the
 # trees but nothing is writable. The job image holds the secret 0400 root.
+# The copy preserves NO attribute (PSV-2, C9 dev review): `cp -a` carried
+# POSIX ACLs and every other xattr into the image (mkfs.ext4 -d copies
+# them), where an ACL restricts the test uid behind a normalised mode and an
+# unchanged tree digest. Plain `cp -R` copies neither, and keeps the exec
+# bit (`--no-preserve=all` would drop it, and the digest records it). mkfs copies none either (no_copy_xattrs: nothing
+# the staging directory picks up — an inherited default ACL, a host LSM label
+# — reaches the image). The guest also mounts noacl and refuses any xattr.
 PSV_IMGS=()
 declare -A PSV_IMG_SHA=()
 psv_image() {  # NAME SRC
     local st; st="$(mktemp -d)"
-    cp -a "$2/." "$st/" || return 1
+    cp -R "$2/." "$st/" || return 1
     chown -R -h root:root "$st"
     find "$st" -type d -exec chmod 0755 {} +
     find "$st" -type f -perm /111 -exec chmod 0755 {} +
@@ -445,7 +452,7 @@ psv_image() {  # NAME SRC
     if [[ "$1" == job ]]; then chmod 0444 "$st/launch-manifest.json"; chmod 0400 "$st/completion-secret"; fi
     local kib; kib=$(( $(du -sk "$st" | cut -f1) * 2 + 8192 ))
     truncate -s "${kib}K" "$OUT/$1.img"
-    mkfs.ext4 -q -F -O ^has_journal -E root_owner=0:0 -d "$st" "$OUT/$1.img" || { rm -rf "$st"; return 1; }
+    mkfs.ext4 -q -F -O ^has_journal -E root_owner=0:0,no_copy_xattrs -d "$st" "$OUT/$1.img" || { rm -rf "$st"; return 1; }
     rm -rf "$st"
     PSV_IMGS+=("$1"); PSV_IMG_SHA[$1]="$(sha256sum "$OUT/$1.img" | cut -d' ' -f1)"
 }
