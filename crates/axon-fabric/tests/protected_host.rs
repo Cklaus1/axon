@@ -289,6 +289,63 @@ fn every_o1_path_must_be_operator_owned() {
     assert!(load().unwrap_err().contains("not root"));
 }
 
+/// Where the Fabric writes its runs (`out_root`) and the custodian its nonce
+/// records (`observer.nonce_store`) is operator trust material too: the leaf
+/// belongs to the service, every directory above it to the operator (as for
+/// the signing key). Needs root to create root-owned fixtures.
+#[test]
+fn the_out_root_and_nonce_store_sit_under_operator_owned_directories() {
+    if unsafe { libc::geteuid() } != 0 {
+        eprintln!("skipped: needs root to create root-owned fixtures");
+        return;
+    }
+    let h = Host::new();
+    let base = h.env.dir.path();
+    for d in [base.to_path_buf(), h.root.clone(), h.p("dist"), h.p("keys")] {
+        std::fs::set_permissions(&d, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    for f in [
+        "launcher.sh",
+        "manifest.json",
+        "registry.json",
+        "evidence.json",
+    ] {
+        std::fs::set_permissions(h.p(f), std::fs::Permissions::from_mode(0o644)).unwrap();
+    }
+    std::fs::write(h.p("observer.sh"), "#!/bin/sh\n").unwrap();
+    std::fs::set_permissions(h.p("observer.sh"), std::fs::Permissions::from_mode(0o755)).unwrap();
+    // A directory an agent (uid 1000) can write, and one anyone can.
+    let agent = h.p("agent");
+    std::fs::create_dir(&agent).unwrap();
+    std::os::unix::fs::chown(&agent, Some(1000), None).unwrap();
+    let open = h.p("open");
+    std::fs::create_dir(&open).unwrap();
+    std::fs::set_permissions(&open, std::fs::Permissions::from_mode(0o777)).unwrap();
+
+    let with = |out_root: PathBuf, nonces: PathBuf| {
+        h.write_config(|v| {
+            v["out_root"] = json!(out_root);
+            v["observer"] = json!({
+                "command": {"path": h.p("observer.sh"), "sha256": sha256_file(&h.p("observer.sh"))},
+                "nonce_store": nonces,
+                "max_age_s": 300,
+            });
+        });
+        std::fs::set_permissions(h.config(), std::fs::Permissions::from_mode(0o644)).unwrap();
+        ProtectedHost::for_test(&h.config(), Some(base), h.trust())
+    };
+    // Positive control: both under the operator's directory.
+    let ph = with(h.p("runs"), h.p("nonces")).expect("operator-owned parents");
+    assert_eq!(ph.linux.out_root, h.p("runs"));
+
+    for (dir, why) in [(&agent, "not root"), (&open, "writable")] {
+        let e = with(dir.join("runs"), h.p("nonces")).unwrap_err();
+        assert!(e.contains(why), "out_root under {}: {e}", dir.display());
+        let e = with(h.p("runs"), dir.join("nonces")).unwrap_err();
+        assert!(e.contains(why), "nonce_store under {}: {e}", dir.display());
+    }
+}
+
 /// On this (development) host there is no operator host config: the
 /// protected profile is simply not configured — never a fallback.
 #[test]

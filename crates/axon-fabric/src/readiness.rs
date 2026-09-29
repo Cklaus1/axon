@@ -159,17 +159,310 @@ fn sha256_file(p: &Path) -> Result<String, String> {
     Ok(format!("{:x}", Sha256::digest(&b)))
 }
 
-fn git(repo: &Path, args: &[&str]) -> Result<(bool, String), String> {
-    let out = std::process::Command::new("git")
+/// The operator-installed git. Never resolved through the caller's PATH: a
+/// `git` earlier on PATH is whatever the caller (or an agent that can shape
+/// the caller's environment) says it is.
+const GIT_BIN: &str = "/usr/bin/git";
+
+/// A git invocation that answers about THIS repository's real objects and
+/// nothing else. The caller's environment is dropped (GIT_DIR, GIT_WORK_TREE,
+/// GIT_INDEX_FILE, GIT_CONFIG_*, GIT_REPLACE_REF_BASE, PATH… all steer git),
+/// replace refs are not honoured, system and global config are not read, and
+/// the repository-local settings that run code or answer from a cache
+/// (fsmonitor, hooks, the untracked cache) are overridden on the command line.
+fn git_cmd(repo: &Path) -> Result<std::process::Command, String> {
+    let top = std::fs::canonicalize(repo).map_err(|e| format!("{}: {e}", repo.display()))?;
+    let mut c = std::process::Command::new(GIT_BIN);
+    c.env_clear()
+        .env("PATH", "/usr/bin:/bin")
+        .env("LC_ALL", "C")
+        .env("GIT_NO_REPLACE_OBJECTS", "1")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_OPTIONAL_LOCKS", "0")
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .arg("--no-replace-objects")
+        .args(["-c", "core.fsmonitor=", "-c", "core.hooksPath=/dev/null"])
+        .args([
+            "-c",
+            "core.untrackedCache=false",
+            "-c",
+            "advice.graftFileDeprecated=false",
+        ])
+        // Ownership is not what this check trusts (every answer below is
+        // re-verified or refused); the repository may belong to another uid.
+        .args(["-c", "safe.directory=*"])
         .arg("-C")
-        .arg(repo)
+        .arg(&top)
+        .arg("--work-tree")
+        .arg(&top)
+        .stdin(std::process::Stdio::null());
+    Ok(c)
+}
+
+fn git(repo: &Path, args: &[&str]) -> Result<(bool, String), String> {
+    let out = git_cmd(repo)?
         .args(args)
         .output()
-        .map_err(|e| format!("git: {e}"))?;
+        .map_err(|e| format!("{GIT_BIN}: {e}"))?;
     Ok((
         out.status.success(),
         String::from_utf8_lossy(&out.stdout).trim().to_string(),
     ))
+}
+
+/// Repository-local git state that makes git report something other than
+/// the objects and files that are there. Any of it present: refused, never
+/// interpreted.
+fn refuse_git_spoofing(repo: &Path, component: &str) -> Result<(), String> {
+    let (ok, replaced) = git(
+        repo,
+        &["for-each-ref", "--format=%(refname)", "refs/replace/"],
+    )?;
+    if !ok {
+        return Err(format!("{component}: cannot list refs/replace/"));
+    }
+    if let Some(r) = replaced.lines().next() {
+        return Err(format!(
+            "{component}: the repository has refs/replace/ object replacements (e.g. {r}): git \
+             would report another object's content under a certified name, so no certification \
+             applies"
+        ));
+    }
+    let (ok, grafts) = git(repo, &["rev-parse", "--git-path", "info/grafts"])?;
+    if !ok || grafts.is_empty() {
+        return Err(format!(
+            "{component}: cannot locate the repository's info/grafts"
+        ));
+    }
+    let grafts = repo.join(grafts);
+    if std::fs::symlink_metadata(&grafts).is_ok() {
+        return Err(format!(
+            "{component}: the repository has an info/grafts file ({}): grafted parents rewrite \
+             ancestry, so no certification applies",
+            grafts.display()
+        ));
+    }
+    // `-v`: `S` marks skip-worktree, a lowercase tag assume-unchanged. Either
+    // tells git not to look at the file, which is exactly what is certified.
+    let (ok, index) = git(repo, &["ls-files", "-z", "-v"])?;
+    if !ok {
+        return Err(format!("{component}: cannot read the index"));
+    }
+    for e in index.split('\0').filter(|e| e.len() > 2) {
+        let (tag, path) = (e.as_bytes()[0], &e[2..]);
+        if tag == b'S' || tag == b's' {
+            return Err(format!(
+                "{component}: index entry {path} is marked skip-worktree: git does not compare it \
+                 with the working tree, so no certification applies"
+            ));
+        }
+        if tag.is_ascii_lowercase() {
+            return Err(format!(
+                "{component}: index entry {path} is marked assume-unchanged: git does not compare \
+                 it with the working tree, so no certification applies"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// SHA-1, only to check that an object's bytes hash to its git name (the
+/// certified `axon_sha` is a SHA-1 object id). Not used for anything else.
+fn sha1(data: &[u8]) -> [u8; 20] {
+    let mut h: [u32; 5] = [0x67452301, 0xEFCDAB89, 0x98BADCFE, 0x10325476, 0xC3D2E1F0];
+    let mut m = data.to_vec();
+    m.push(0x80);
+    while m.len() % 64 != 56 {
+        m.push(0);
+    }
+    m.extend_from_slice(&((data.len() as u64).wrapping_mul(8)).to_be_bytes());
+    for chunk in m.chunks(64) {
+        let mut w = [0u32; 80];
+        for (i, b) in chunk.chunks(4).enumerate() {
+            w[i] = u32::from_be_bytes([b[0], b[1], b[2], b[3]]);
+        }
+        for i in 16..80 {
+            w[i] = (w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16]).rotate_left(1);
+        }
+        let [mut a, mut b, mut c, mut d, mut e] = h;
+        for (i, wi) in w.iter().enumerate() {
+            let (f, k) = match i {
+                0..=19 => ((b & c) | (!b & d), 0x5A827999),
+                20..=39 => (b ^ c ^ d, 0x6ED9EBA1),
+                40..=59 => ((b & c) | (b & d) | (c & d), 0x8F1BBCDC),
+                _ => (b ^ c ^ d, 0xCA62C1D6),
+            };
+            let t = a
+                .rotate_left(5)
+                .wrapping_add(f)
+                .wrapping_add(e)
+                .wrapping_add(k)
+                .wrapping_add(*wi);
+            e = d;
+            d = c;
+            c = b.rotate_left(30);
+            b = a;
+            a = t;
+        }
+        for (x, y) in h.iter_mut().zip([a, b, c, d, e]) {
+            *x = x.wrapping_add(y);
+        }
+    }
+    let mut out = [0u8; 20];
+    for (i, x) in h.iter().enumerate() {
+        out[i * 4..i * 4 + 4].copy_from_slice(&x.to_be_bytes());
+    }
+    out
+}
+
+fn hex20(b: &[u8]) -> String {
+    b.iter().map(|x| format!("{x:02x}")).collect()
+}
+
+/// The git object id of `body` stored as an object of type `ty`.
+fn object_id(ty: &str, body: &[u8]) -> String {
+    let mut m = format!("{ty} {}\0", body.len()).into_bytes();
+    m.extend_from_slice(body);
+    hex20(&sha1(&m))
+}
+
+/// The repository's object store, read through `git cat-file --batch`, where
+/// an object is accepted only if its bytes hash to the name asked for. Git
+/// does not check that for a tree it reads for `diff`, so a forged loose
+/// object under a certified name would otherwise be believed.
+struct Objects {
+    child: std::process::Child,
+    out: std::io::BufReader<std::process::ChildStdout>,
+}
+
+impl Objects {
+    fn open(repo: &Path) -> Result<Objects, String> {
+        let mut child = git_cmd(repo)?
+            .args(["cat-file", "--batch"])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .map_err(|e| format!("{GIT_BIN}: {e}"))?;
+        let out = std::io::BufReader::new(child.stdout.take().ok_or("git cat-file: no stdout")?);
+        Ok(Objects { child, out })
+    }
+
+    fn read(&mut self, oid: &str, want: &str) -> Result<Vec<u8>, String> {
+        use std::io::{BufRead, Read, Write};
+        let io = |e: std::io::Error| format!("git cat-file: {e}");
+        let stdin = self.child.stdin.as_mut().ok_or("git cat-file: no stdin")?;
+        writeln!(stdin, "{oid}")
+            .and_then(|()| stdin.flush())
+            .map_err(io)?;
+        let mut header = String::new();
+        self.out.read_line(&mut header).map_err(io)?;
+        let f: Vec<&str> = header.trim_end().split(' ').collect();
+        let size = match f.as_slice() {
+            [o, t, n] if *o == oid && *t == want => n.parse::<usize>().ok(),
+            _ => None,
+        }
+        .filter(|n| *n <= 1 << 30)
+        .ok_or(format!(
+            "object {oid} is not a {want} in this repository's object store"
+        ))?;
+        let mut body = vec![0u8; size + 1];
+        self.out.read_exact(&mut body).map_err(io)?;
+        body.pop();
+        if object_id(want, &body) != oid {
+            return Err(format!(
+                "object {oid} does not hash to its name: the object store is forged or damaged, \
+                 and nothing read from it is certified"
+            ));
+        }
+        Ok(body)
+    }
+
+    /// Every non-tree entry of `commit`'s tree outside `governance/`, as
+    /// path → (mode, object id), each tree on the way verified by hash.
+    fn entries(
+        &mut self,
+        commit: &str,
+    ) -> Result<std::collections::BTreeMap<Vec<u8>, (u32, String)>, String> {
+        let c = self.read(commit, "commit")?;
+        let mut stack = vec![(
+            Vec::new(),
+            c.strip_prefix(b"tree ")
+                .and_then(|r| r.get(..40))
+                .map(|t| String::from_utf8_lossy(t).to_string())
+                .ok_or(format!("commit {commit} names no tree"))?,
+        )];
+        let mut out = std::collections::BTreeMap::new();
+        while let Some((prefix, tree)) = stack.pop() {
+            let b = self.read(&tree, "tree")?;
+            let mut i = 0;
+            while i < b.len() {
+                let bad = || format!("tree {tree} is malformed");
+                let sp = i + b[i..].iter().position(|&x| x == b' ').ok_or_else(bad)?;
+                let nul = sp + b[sp..].iter().position(|&x| x == 0).ok_or_else(bad)?;
+                let id = b.get(nul + 1..nul + 21).ok_or_else(bad)?;
+                let mode = std::str::from_utf8(&b[i..sp])
+                    .ok()
+                    .and_then(|m| u32::from_str_radix(m, 8).ok())
+                    .ok_or_else(bad)?;
+                let mut path = prefix.clone();
+                path.extend_from_slice(&b[sp + 1..nul]);
+                i = nul + 21;
+                if mode == 0o40000 {
+                    if path != b"governance" {
+                        path.push(b'/');
+                        stack.push((path, hex20(id)));
+                    }
+                } else if !path.starts_with(b"governance/") {
+                    out.insert(path, (mode, hex20(id)));
+                }
+            }
+        }
+        Ok(out)
+    }
+}
+
+impl Drop for Objects {
+    fn drop(&mut self) {
+        drop(self.child.stdin.take());
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+/// The first certified path whose working-tree bytes (and kind, and
+/// executable bit) are not the certified object, hashed here from the file
+/// itself: neither the index nor git's view of the working tree is consulted.
+#[cfg(unix)]
+fn worktree_differs(
+    repo: &Path,
+    certified: &std::collections::BTreeMap<Vec<u8>, (u32, String)>,
+) -> Option<String> {
+    use std::os::unix::ffi::{OsStrExt, OsStringExt};
+    use std::os::unix::fs::PermissionsExt;
+    certified
+        .iter()
+        .find(|(path, (mode, oid))| {
+            let p = repo.join(std::ffi::OsStr::from_bytes(path));
+            let Ok(md) = std::fs::symlink_metadata(&p) else {
+                return true;
+            };
+            let body = match mode {
+                0o120000 if md.file_type().is_symlink() => std::fs::read_link(&p)
+                    .ok()
+                    .map(|t| t.into_os_string().into_vec()),
+                0o100644 | 0o100755
+                    if md.is_file()
+                        && (md.permissions().mode() & 0o100 != 0) == (*mode == 0o100755) =>
+                {
+                    std::fs::read(&p).ok()
+                }
+                _ => None,
+            };
+            body.is_none_or(|b| object_id("blob", &b) != *oid)
+        })
+        .map(|(path, _)| String::from_utf8_lossy(path).to_string())
 }
 
 fn is_hex(v: &Value, n: usize) -> bool {
@@ -247,12 +540,23 @@ fn certification(repo: &Path, component: &str, trust: &ReadinessTrust) -> Result
         ));
     }
     let certified = doc["axon_sha"].as_str().expect("checked");
+    refuse_git_spoofing(repo, component)?;
     if !git(repo, &["merge-base", "--is-ancestor", certified, "HEAD"])?.0 {
         return Err(format!(
             "{component}: axon_sha {certified} is not an ancestor of this tree"
         ));
     }
-    let (ok, changed) = git(repo, &["diff", "--name-only", certified, "HEAD"])?;
+    let (ok, changed) = git(
+        repo,
+        &[
+            "diff",
+            "--no-renames",
+            "--name-only",
+            "-z",
+            certified,
+            "HEAD",
+        ],
+    )?;
     // Behind the ancestor check above (so no test reaches it): a git failure
     // here — e.g. a damaged object store — is never read as "no change".
     if !ok {
@@ -261,26 +565,60 @@ fn certification(repo: &Path, component: &str, trust: &ReadinessTrust) -> Result
              is assumed unchanged"
         ));
     }
-    // `-z`: NUL-separated `XY path` entries, exactly as git wrote them (a
-    // trimmed line-mode output loses the status column of the first entry).
-    let dirty = std::process::Command::new("git")
-        .arg("-C")
-        .arg(repo)
-        .args(["status", "--porcelain", "-z", "--untracked-files=all"])
-        .output()
-        .map_err(|e| format!("git: {e}"))?;
-    let dirty = String::from_utf8_lossy(&dirty.stdout).to_string();
-    let outside: Vec<String> = changed
-        .lines()
-        .map(str::to_string)
-        .chain(
-            dirty
-                .split('\0')
-                .filter(|e| e.len() > 3)
-                .map(|e| e[3..].to_string()),
-        )
+    // Staged (index vs HEAD) and untracked files. The working tree itself is
+    // compared below from the file bytes, not through git's porcelain view.
+    let (ok_staged, staged) = git(
+        repo,
+        &[
+            "diff-index",
+            "--cached",
+            "--no-renames",
+            "--name-only",
+            "-z",
+            "HEAD",
+        ],
+    )?;
+    let (ok_untracked, untracked) =
+        git(repo, &["ls-files", "-z", "--others", "--exclude-standard"])?;
+    if !ok_staged || !ok_untracked {
+        return Err(format!(
+            "{component}: cannot read the index or the working tree: nothing unverified is \
+             assumed unchanged"
+        ));
+    }
+    let mut outside: Vec<String> = [changed, staged, untracked]
+        .iter()
+        .flat_map(|l| l.split('\0').map(str::to_string).collect::<Vec<_>>())
         .filter(|f| !f.is_empty() && !f.starts_with("governance/"))
         .collect();
+    // The same question answered from objects verified by hash: the certified
+    // tree (named by the signed axon_sha), HEAD's tree, and the working-tree
+    // bytes, outside governance/.
+    if outside.is_empty() {
+        let (ok, head) = git(repo, &["rev-parse", "--verify", "HEAD^{commit}"])?;
+        if !ok {
+            return Err(format!("{component}: this tree has no HEAD commit"));
+        }
+        let mut objects = Objects::open(repo)?;
+        let want = objects
+            .entries(certified)
+            .map_err(|e| format!("{component}: {e}"))?;
+        let have = objects
+            .entries(&head)
+            .map_err(|e| format!("{component}: {e}"))?;
+        outside.extend(
+            want.keys()
+                .chain(have.keys())
+                .filter(|p| want.get(*p) != have.get(*p))
+                .map(|p| String::from_utf8_lossy(p).to_string()),
+        );
+        #[cfg(unix)]
+        outside.extend(worktree_differs(repo, &want));
+        #[cfg(not(unix))]
+        return Err(format!(
+            "{component}: the working tree cannot be verified on this platform"
+        ));
+    }
     if let Some(f) = outside.first() {
         return Err(format!(
             "{component}: {} file(s) outside governance/ changed since the certified revision \
@@ -443,4 +781,35 @@ pub fn protected_components(repo: &Path, trust: &ReadinessTrust) -> Value {
         "verifier": verifier_identity(),
         "components": out,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn object_ids_are_git_object_ids() {
+        assert_eq!(
+            hex20(&sha1(b"abc")),
+            "a9993e364706816aba3e25717850c26c9cd0d89d"
+        );
+        assert_eq!(
+            hex20(&sha1(b"")),
+            "da39a3ee5e6b4b0d3255bfef95601890afd80709"
+        );
+        let long = vec![b'a'; 1000];
+        assert_eq!(
+            hex20(&sha1(&long)),
+            "291e9a6c66994949b57ba5e650361e98fc36b1ba"
+        );
+        // `git hash-object` of "hello\n" and of an empty tree.
+        assert_eq!(
+            object_id("blob", b"hello\n"),
+            "ce013625030ba8dba906f756967f9e9ca394464a"
+        );
+        assert_eq!(
+            object_id("tree", b""),
+            "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+        );
+    }
 }

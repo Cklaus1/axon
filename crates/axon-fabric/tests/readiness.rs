@@ -13,178 +13,14 @@
 //! readiness; the production `ReadinessTrust::operator()` is exercised last.
 
 mod common;
+mod readiness_fixture;
 use common::*;
+use readiness_fixture::*;
 
 use axon_fabric::backend::TrustAuthority;
-use axon_fabric::readiness::{
-    protected_components, verifier_identity, ReadinessTrust, CERT_SCHEMA, TRUST_PREFLIGHT_SCHEMA,
-};
+use axon_fabric::readiness::{protected_components, ReadinessTrust, TRUST_PREFLIGHT_SCHEMA};
 use serde_json::{json, Value};
 use std::os::unix::fs::PermissionsExt;
-use std::path::{Path, PathBuf};
-use std::process::Command;
-
-const PREFLIGHT: &str = "governance/proofs/v022-protected/trust-preflight.json";
-
-const GATES: [&str; 3] = [
-    "G13-r22-profile-qualification",
-    "G13-r22-profile-eligibility",
-    "G13-r22-guest-truth",
-];
-
-fn git(repo: &Path, args: &[&str]) {
-    let st = Command::new("git")
-        .arg("-C")
-        .arg(repo)
-        .args(["-c", "user.name=t", "-c", "user.email=t@example"])
-        .args(args)
-        .status()
-        .unwrap();
-    assert!(st.success(), "git {args:?}");
-}
-
-fn head(repo: &Path) -> String {
-    let o = Command::new("git")
-        .arg("-C")
-        .arg(repo)
-        .args(["rev-parse", "HEAD"])
-        .output()
-        .unwrap();
-    String::from_utf8(o.stdout).unwrap().trim().to_string()
-}
-
-fn sha(p: &Path) -> String {
-    use sha2::{Digest, Sha256};
-    format!("{:x}", Sha256::digest(std::fs::read(p).unwrap()))
-}
-
-fn write(p: &Path, s: &str) {
-    std::fs::create_dir_all(p.parent().unwrap()).unwrap();
-    std::fs::write(p, s).unwrap();
-}
-
-struct Certified {
-    _d: tempfile::TempDir,
-    repo: PathBuf,
-    trust: ReadinessTrust,
-    operator: Issuer,
-}
-
-impl Certified {
-    fn verdict(&self) -> Value {
-        protected_components(&self.repo, &self.trust)["components"]["protected_backend"].clone()
-    }
-    fn record(&self) -> PathBuf {
-        self.repo
-            .join("governance/proofs/v022-protected/protected_backend.json")
-    }
-    fn commit(&self, msg: &str) {
-        git(&self.repo, &["add", "-A"]);
-        git(&self.repo, &["commit", "-q", "-m", msg]);
-    }
-    /// The component is NOT PASS, and the reason names `why`.
-    fn refused(&self, why: &str) {
-        let v = self.verdict();
-        assert_ne!(v["status"], "PASS", "{v}");
-        assert!(v.to_string().contains(why), "expected {why:?}: {v}");
-    }
-}
-
-/// A repository whose protected_backend is genuinely certified: the gate rows
-/// and a v2 record signed by the operator key in the test trust root.
-fn certified() -> Option<Certified> {
-    if unsafe { libc::geteuid() } != 0 {
-        eprintln!("skipped: the test trust root must be root-owned");
-        return None;
-    }
-    let d = tempfile::tempdir().unwrap();
-    std::fs::set_permissions(d.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
-    let repo = d.path().join("repo");
-    std::fs::create_dir(&repo).unwrap();
-    git(&repo, &["init", "-q", "-b", "main"]);
-    let gates: Vec<Value> = GATES.iter().map(|g| json!({"gate_id": g})).collect();
-    write(
-        &repo.join("governance/cortex_gate_execution_registry.json"),
-        &json!({"gates": gates}).to_string(),
-    );
-    write(
-        &repo.join("governance/specs/v022-protected-suite-verdict.md"),
-        "# PSV\n",
-    );
-    write(&repo.join("crates/axon-fabric/src/lib.rs"), "// code\n");
-    write(
-        &repo.join("scripts/protected_verifier_ready.py"),
-        "# script\n",
-    );
-    write(&repo.join("profiles/linux-microvm/manifest.json"), "{}\n");
-    write(
-        &repo.join("governance/proofs/v022-protected/run-evidence.md"),
-        "protected run\n",
-    );
-    write(
-        &repo.join(PREFLIGHT),
-        &json!({"schema": TRUST_PREFLIGHT_SCHEMA, "mode": "protected", "verdict": "PASS"})
-            .to_string(),
-    );
-    git(&repo, &["add", "-A"]);
-    git(&repo, &["commit", "-q", "-m", "certified tree"]);
-
-    let root = d.path().join("trust/qualification");
-    std::fs::create_dir_all(&root).unwrap();
-    for p in [d.path().join("trust"), root.clone()] {
-        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
-    }
-    let operator = Issuer::generate();
-    operator.trust_in(&root, "operator");
-    std::fs::set_permissions(
-        root.join("operator.pub"),
-        std::fs::Permissions::from_mode(0o644),
-    )
-    .unwrap();
-    let trust = ReadinessTrust::test(d.path(), &root);
-
-    let c = Certified {
-        repo,
-        trust,
-        operator,
-        _d: d,
-    };
-    let ev = "governance/proofs/v022-protected/run-evidence.md";
-    use sha2::{Digest, Sha256};
-    let pf = sha(&c.repo.join(PREFLIGHT));
-    let bundle = format!(
-        "{:x}",
-        Sha256::digest(format!("{}{pf}", sha(&c.repo.join(ev))).as_bytes())
-    );
-    let h = head(&c.repo);
-    let rec = json!({
-        "schema": CERT_SCHEMA, "component": "protected_backend",
-        "host_profile": "linux-microvm-protected", "qualification_profile": "linux-microvm-protected",
-        "psv_spec_sha256": sha(&c.repo.join("governance/specs/v022-protected-suite-verdict.md")),
-        "axon_sha": h, "micode_sha": "a".repeat(40), "fabric_revision": h,
-        "guest_image_sha256": "1".repeat(64), "guest_kernel_sha256": "2".repeat(64),
-        "guest_runtime_sha256": "3".repeat(64),
-        "suite": {"id": "acceptance", "version": "v1", "entry": "accept.ax", "test": "t_ok", "digest": "4".repeat(64)},
-        "candidate_tree_ref": format!("acf1:{}", "5".repeat(64)),
-        "observer_key_id": "ed25519:0000000000000000", "observation_sha256": "6".repeat(64),
-        "verifier_key_id": "ed25519:1111111111111111", "b263_qualification_sha256": "7".repeat(64),
-        "evidence": [ev, PREFLIGHT], "evidence_bundle_sha256": bundle,
-        "readiness_verifier_sha256": verifier_identity()["sha256"],
-        "trust_preflight_sha256": pf,
-        "certified_at": "2026-09-28T00:00:00Z",
-    });
-    c.operator.write_signed(&c.record(), &rec);
-    c.commit("certification (governance only)");
-    let v = c.verdict();
-    assert_eq!(v["status"], "PASS", "the positive control must pass: {v}");
-    Some(c)
-}
-
-fn resign(c: &Certified, who: &Issuer, edit: impl FnOnce(&mut Value)) {
-    let mut rec: Value = serde_json::from_slice(&std::fs::read(c.record()).unwrap()).unwrap();
-    edit(&mut rec);
-    who.write_signed(&c.record(), &rec);
-}
 
 #[test]
 fn a_repository_signed_or_planted_key_is_not_authority() {
@@ -401,4 +237,146 @@ fn a_signature_for_another_authority_is_not_a_qualification_signature() {
         std::fs::write(&sig, v.to_string()).unwrap();
         c.refused("does not verify");
     }
+}
+
+// ---------------------------------------------------------------------------
+// Repository-local git state that makes git misreport the tree. The verdict
+// used to rest on three git answers (is-ancestor, diff, status); each test
+// below made all three say "certified, unchanged" while the code differed.
+// ---------------------------------------------------------------------------
+
+/// The reviewer's composite spoof: the agent's commit is `git replace`d by a
+/// commit carrying the certified tree, the index is reset to it, and the
+/// changed file is marked skip-worktree. The worktree AND the real HEAD hold
+/// the agent's code.
+#[test]
+fn a_replaced_head_with_a_skip_worktree_index_is_not_certified() {
+    let Some(c) = certified() else { return };
+    let (before, agent) = c.commit_changed_code();
+    let fake = git_out(
+        &c.repo,
+        &[
+            "commit-tree",
+            &format!("{before}^{{tree}}"),
+            "-p",
+            &before,
+            "-m",
+            "fake",
+        ],
+    );
+    git(&c.repo, &["replace", &agent, &fake]);
+    git(&c.repo, &["read-tree", "HEAD"]);
+    git(&c.repo, &["update-index", "--skip-worktree", CODE]);
+    assert_eq!(c.worktree_code(), "// the agent's code\n");
+    c.refused("refs/replace/ object replacements");
+}
+
+/// `git replace` alone: the working tree is reset to the certified bytes, but
+/// the commit HEAD really names (the one that would be built or shipped from
+/// this history) holds the agent's code.
+#[test]
+fn a_replaced_head_commit_is_not_certified() {
+    let Some(c) = certified() else { return };
+    let (before, agent) = c.commit_changed_code();
+    let fake = git_out(
+        &c.repo,
+        &[
+            "commit-tree",
+            &format!("{before}^{{tree}}"),
+            "-p",
+            &before,
+            "-m",
+            "fake",
+        ],
+    );
+    git(&c.repo, &["replace", &agent, &fake]);
+    git(&c.repo, &["read-tree", "-u", "--reset", "HEAD"]);
+    assert_eq!(c.worktree_code(), "// code\n");
+    assert_eq!(head(&c.repo), agent, "HEAD really is the agent's commit");
+    c.refused("refs/replace/ object replacements");
+}
+
+/// info/grafts rewrites ancestry: a history that does not descend from the
+/// certified revision reads as one that does.
+#[test]
+fn grafted_ancestry_is_not_certified() {
+    let Some(c) = certified() else { return };
+    let orphan = git_out(
+        &c.repo,
+        &["commit-tree", "HEAD^{tree}", "-m", "unrelated history"],
+    );
+    git(&c.repo, &["update-ref", "refs/heads/main", &orphan]);
+    c.refused("is not an ancestor of this tree");
+    let grafts = c.repo.join(".git/info/grafts");
+    write(&grafts, &format!("{orphan} {}\n", c.certified_sha()));
+    c.refused("info/grafts file");
+}
+
+/// skip-worktree alone: an uncommitted change git is told not to look at.
+#[test]
+fn a_skip_worktree_entry_is_not_certified() {
+    let Some(c) = certified() else { return };
+    write(&c.repo.join(CODE), "// the agent's code\n");
+    git(&c.repo, &["update-index", "--skip-worktree", CODE]);
+    c.refused("is marked skip-worktree");
+}
+
+/// assume-unchanged alone: the same, through the other index flag.
+#[test]
+fn an_assume_unchanged_entry_is_not_certified() {
+    let Some(c) = certified() else { return };
+    write(&c.repo.join(CODE), "// the agent's code\n");
+    git(&c.repo, &["update-index", "--assume-unchanged", CODE]);
+    c.refused("is marked assume-unchanged");
+}
+
+/// A zlib stream of `data` in one stored (uncompressed) deflate block.
+fn zlib_stored(data: &[u8]) -> Vec<u8> {
+    let n = u16::try_from(data.len()).unwrap();
+    let mut o = vec![0x78, 0x01, 0x01];
+    o.extend(n.to_le_bytes());
+    o.extend((!n).to_le_bytes());
+    o.extend(data);
+    let (mut a, mut b) = (1u32, 0u32);
+    for &x in data {
+        a = (a + u32::from(x)) % 65521;
+        b = (b + a) % 65521;
+    }
+    o.extend(((b << 16) | a).to_be_bytes());
+    o
+}
+
+/// A forged loose object: the certified revision's root tree object is
+/// overwritten with the agent's tree. Git verifies a commit's hash when it
+/// parses one, but not a tree it reads for `diff`, so the certified name now
+/// reads as the agent's code.
+#[test]
+fn a_forged_object_under_the_certified_name_is_not_certified() {
+    let Some(c) = certified() else { return };
+    let cert_tree = git_out(
+        &c.repo,
+        &["rev-parse", &format!("{}^{{tree}}", c.certified_sha())],
+    );
+    c.commit_changed_code();
+    let agent_tree = git_raw(&c.repo, &["cat-file", "tree", "HEAD^{tree}"]);
+    let mut obj = format!("tree {}\0", agent_tree.len()).into_bytes();
+    obj.extend(&agent_tree);
+    let loose = c
+        .repo
+        .join(".git/objects")
+        .join(&cert_tree[..2])
+        .join(&cert_tree[2..]);
+    assert!(loose.exists(), "the fixture's objects are loose");
+    std::fs::write(&loose, zlib_stored(&obj)).unwrap();
+    c.refused("does not hash to its name");
+}
+
+/// A rename into governance/: `git diff --name-only` with rename detection
+/// names only the destination, so the removed code looked governance-only.
+#[test]
+fn moving_code_into_governance_is_a_change() {
+    let Some(c) = certified() else { return };
+    git(&c.repo, &["mv", CODE, "governance/lib.rs"]);
+    c.commit("move code under governance/");
+    c.refused("changed since the certified revision");
 }
