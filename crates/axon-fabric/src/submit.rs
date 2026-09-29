@@ -1505,8 +1505,8 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
                     let hv = crate::psv::derive(&launch, &res.out_dir, observation.as_ref());
                     // B2: a protected verdict travels with the exact documents
                     // its joins are verified over.
-                    if let Some(o) = &observation {
-                        psv_evidence = Some(crate::psv::evidence_bundle(&launch, o));
+                    if let (Some(o), Some(v)) = (&observation, &hv.guest_verdict) {
+                        psv_evidence = Some(crate::psv::evidence_bundle(&launch, o, v));
                     }
                     launch.discard();
                     psv_receipt(&req, &journal, res, q, hv, liability)?

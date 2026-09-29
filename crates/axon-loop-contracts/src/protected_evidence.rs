@@ -109,10 +109,12 @@ pub fn check(req: &ComputeRequest, rc: &ExecutionReceipt) -> Result<(), String> 
 
 // ── B2 (review wf_d725935a-7ed): the JOINS, over the exact documents ────────
 
-pub const PSV_EVIDENCE_SCHEMA: &str = "axon-psv-evidence/1";
+/// `/2` adds the guest verdict (C9, PSV-5): `/1` carried nothing the receipt's
+/// `guest-verdict-sha256` could be joined to.
+pub const PSV_EVIDENCE_SCHEMA: &str = "axon-psv-evidence/2";
 
-/// `axon-psv-evidence/1`: the EXACT bytes Fabric launched and observed, as the
-/// receipt's digests name them.
+/// `axon-psv-evidence/2`: the EXACT bytes Fabric launched, observed and
+/// derived its verdict from, as the receipt's digests name them.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PsvEvidence {
@@ -123,6 +125,9 @@ pub struct PsvEvidence {
     pub observation: String,
     /// Its detached OBSERVER-domain `axon-evidence-signature/2`.
     pub observation_signature: String,
+    /// The guest verdict's exact bytes (`axon-guest-verdict/1`), the ones the
+    /// launcher bound and Fabric derived the receipt's verification from.
+    pub guest_verdict: String,
 }
 
 fn one_ref<'a>(rc: &'a ExecutionReceipt, prefix: &str) -> Option<&'a str> {
@@ -149,7 +154,10 @@ fn one_ref<'a>(rc: &'a ExecutionReceipt, prefix: &str) -> Option<&'a str> {
 ///    attempt; the candidate (the request's and receipt's WorkspaceVersion);
 ///    the suite (the receipt's `check-suite:` ref) and the test (the request's
 ///    argv); and the guest kernel/rootfs/axon/init and qualification digests the
-///    receipt names.
+///    receipt names;
+/// 5. the guest verdict's bytes are the receipt's `guest-verdict-sha256`, name
+///    this manifest, its test and its inputs, and claim the outcome the receipt
+///    counts (Passed or Failed; a protected receipt carries no other).
 pub fn check_bundle(
     req: &ComputeRequest,
     rc: &ExecutionReceipt,
@@ -270,6 +278,52 @@ pub fn check_bundle(
             req.argv.first(),
             m.suite.id
         ));
+    }
+    // 5. the guest verdict (C9, PSV-5): the receipt's `guest-verdict-sha256`
+    // names these bytes, and they are this launch's verdict for the outcome the
+    // loop counts.
+    let v_sha = axon_psv::sha256_hex(b.guest_verdict.as_bytes());
+    if v_sha != want("guest-verdict-sha256:")? {
+        return Err(format!(
+            "the guest verdict's bytes are {v_sha}, not the receipt's guest-verdict-sha256"
+        ));
+    }
+    let v: axon_psv::GuestVerdict = serde_json::from_str(&b.guest_verdict)
+        .map_err(|e| format!("the guest verdict is malformed: {e}"))?;
+    if v.schema != axon_psv::GUEST_VERDICT_SCHEMA {
+        return Err(format!(
+            "the guest verdict is {}, not {}",
+            v.schema,
+            axon_psv::GUEST_VERDICT_SCHEMA
+        ));
+    }
+    if v.launch_manifest_sha256 != m_sha {
+        return Err(format!(
+            "the guest verdict is for launch manifest {}, not the bundle's {m_sha}",
+            v.launch_manifest_sha256
+        ));
+    }
+    if v.test != m.suite.test {
+        return Err(format!(
+            "the guest verdict's test is {}, not the manifest's {}",
+            v.test, m.suite.test
+        ));
+    }
+    if !(v.inputs.matches
+        && v.inputs.candidate_tree_digest == m.candidate.tree_digest
+        && v.inputs.suite_tree_digest == m.suite.tree_digest)
+    {
+        return Err("the guest verdict's inputs are not the manifest's".into());
+    }
+    use crate::ReceiptVerification as RV;
+    use axon_psv::GuestStatus as GS;
+    match (&rc.verification, v.status) {
+        (RV::Passed, GS::Passed) | (RV::Failed, GS::Failed) => {}
+        (counted, claimed) => {
+            return Err(format!(
+                "the guest verdict claims {claimed:?}, but the receipt counts {counted:?}"
+            ))
+        }
     }
     Ok(())
 }

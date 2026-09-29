@@ -1091,6 +1091,18 @@ pub fn make_protected(
     edit_m: impl FnOnce(&mut axon_psv::LaunchManifest),
     edit_o: impl FnOnce(&mut axon_psv::PreflightObservation),
 ) -> String {
+    make_protected_v(req, rc, edit_m, edit_o, |_| {})
+}
+
+/// [`make_protected`], with `edit_v` applied to the guest verdict (whose
+/// status is the receipt's verification) before the receipt names its digest.
+pub fn make_protected_v(
+    req: &Value,
+    rc: &mut Value,
+    edit_m: impl FnOnce(&mut axon_psv::LaunchManifest),
+    edit_o: impl FnOnce(&mut axon_psv::PreflightObservation),
+    edit_v: impl FnOnce(&mut axon_psv::GuestVerdict),
+) -> String {
     use axon_psv::*;
     let h = |c: &str| c.repeat(64);
     let suite = check_suite();
@@ -1164,6 +1176,31 @@ pub fn make_protected(
     };
     edit_o(&mut o);
     let o_bytes = serde_json::to_vec(&o).unwrap();
+    let mut v = GuestVerdict {
+        schema: GUEST_VERDICT_SCHEMA.into(),
+        launch_manifest_sha256: m_sha.clone(),
+        inputs: InputCheck {
+            candidate_tree_digest: m.candidate.tree_digest.clone(),
+            suite_tree_digest: m.suite.tree_digest.clone(),
+            matches: true,
+        },
+        test: m.suite.test.clone(),
+        status: match rc["verification"].as_str() {
+            Some("passed") => GuestStatus::Passed,
+            Some("failed") => GuestStatus::Failed,
+            _ => GuestStatus::Unknown,
+        },
+        refusal: None,
+        exit_code: Some(0),
+        report: None,
+        runner: Runner {
+            init_sha256: h("3"),
+            axon_sha256: m.guest.axon_sha256.clone(),
+        },
+        stdout_sha256: None,
+    };
+    edit_v(&mut v);
+    let v_bytes = v.bytes();
     rc["backend_profile_ref"] = serde_json::json!("linux-microvm-protected");
     let refs = rc["evidence_refs"].as_array_mut().unwrap();
     refs.retain(|e| {
@@ -1174,7 +1211,7 @@ pub fn make_protected(
         "evidence-class:protected".to_string(),
         format!("launch-manifest-sha256:{m_sha}"),
         format!("preflight-observation-sha256:{}", sha256_hex(&o_bytes)),
-        format!("guest-verdict-sha256:{}", h("c")),
+        format!("guest-verdict-sha256:{}", sha256_hex(&v_bytes)),
         format!("guest-kernel-sha256:{}", m.guest.kernel_sha256),
         format!("guest-rootfs-sha256:{}", m.guest.rootfs_sha256),
         format!("guest-axon-sha256:{}", m.guest.axon_sha256),
@@ -1184,10 +1221,11 @@ pub fn make_protected(
         refs.push(serde_json::json!(r));
     }
     serde_json::json!({
-        "schema": "axon-psv-evidence/1",
+        "schema": "axon-psv-evidence/2",
         "launch_manifest": String::from_utf8(m_bytes).unwrap(),
         "observation": String::from_utf8(o_bytes.clone()).unwrap(),
         "observation_signature": observer_sign(&o_bytes),
+        "guest_verdict": String::from_utf8(v_bytes).unwrap(),
     })
     .to_string()
 }
