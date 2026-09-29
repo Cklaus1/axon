@@ -440,9 +440,21 @@ IN="{input}"; OUT="{output}"
 printf '{{"schema":"axon-fabric-submit/1","receipt":{{"input_workspace_ref":"%s","output_workspace_ref":"%s","status":"completed","verification":"{verdict}"}},"check_report":{{"schema":"cortex-check-report/1","failed":[],"passed":["t_ok"],"total":1,"exit_code":0}},"replayed":false,"backend":"x","reason":null}}\n' "$IN" "$OUT"
 "#
     );
-    std::fs::write(&p, body).unwrap();
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+    // The executable is written by a SEPARATE process (`cp`): if this process
+    // held a write fd, a sibling test thread's fork could inherit it and the
+    // exec would fail with ETXTBSY ("Text file busy").
+    let staged = p.with_extension("staged");
+    std::fs::write(&staged, body).unwrap();
+    assert!(std::process::Command::new("cp")
+        .arg(&staged)
+        .arg(&p)
+        .status()
+        .unwrap()
+        .success());
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
     p
 }
 
