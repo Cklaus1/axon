@@ -314,6 +314,57 @@ pub struct LinuxQualification {
 /// The B263 assertion that qualifies the guest policy channel (ACF-G25).
 pub const X1_GUEST_POLICY_CHANNEL: &str = "x1_guest_policy_channel";
 
+/// Read `p` ONCE, as a regular file, not through a symlink. The bytes returned
+/// are the only bytes a caller may verify, hash, parse or decide on: a second
+/// read of the same path can return different bytes (a FIFO serves each open
+/// something new; a rename swaps the file between two opens), so "the bytes
+/// the signature covers" and "the bytes the decision used" must be one buffer
+/// (review PSV-7, C9 round 1). The open is non-blocking so a FIFO with no
+/// writer cannot hang the caller; anything but a regular file is refused.
+pub fn read_regular(p: &Path) -> Result<Vec<u8>, String> {
+    use std::io::Read;
+    /// Evidence, records and signatures are small; nothing legitimate is
+    /// bigger, and an unbounded read is a denial of service.
+    const MAX: u64 = 256 << 20;
+    let mut o = std::fs::OpenOptions::new();
+    o.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        o.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC);
+    }
+    let f = o.open(p).map_err(|e| {
+        #[cfg(unix)]
+        let symlink = e.raw_os_error() == Some(libc::ELOOP);
+        #[cfg(not(unix))]
+        let symlink = false;
+        if symlink {
+            format!(
+                "{} is a symlink: evidence is read only from a regular file",
+                p.display()
+            )
+        } else {
+            format!("{}: {e}", p.display())
+        }
+    })?;
+    let md = f.metadata().map_err(|e| format!("{}: {e}", p.display()))?;
+    if !md.is_file() {
+        return Err(format!(
+            "{} is not a regular file: a FIFO, device or directory can serve different bytes to \
+             each read, so nothing read from it is evidence",
+            p.display()
+        ));
+    }
+    let mut b = Vec::new();
+    f.take(MAX + 1)
+        .read_to_end(&mut b)
+        .map_err(|e| format!("{}: {e}", p.display()))?;
+    if b.len() as u64 > MAX {
+        return Err(format!("{} is larger than {MAX} bytes", p.display()));
+    }
+    Ok(b)
+}
+
 pub(crate) fn sha256_file(p: &Path) -> Result<String, String> {
     use sha2::{Digest, Sha256};
     let b = std::fs::read(p).map_err(|e| format!("{}: {e}", p.display()))?;
@@ -427,26 +478,27 @@ fn verify_detached(
     trusted: &[Vec<u8>],
     authority: TrustAuthority,
 ) -> Result<String, String> {
-    let sig_file = match std::fs::read_to_string(sig_path) {
-        Ok(t) => Some(t),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-        Err(e) => return Err(format!("{what} signature {}: {e}", sig_path.display())),
-    };
+    let sig_file = read_signature(what, sig_path)?;
+    // The cryptographic rules are the loop's too: one implementation.
+    axon_loop_contracts::operator_trust::verify_evidence_signature(
+        what, bytes, &sig_file, trusted, authority,
+    )
+}
+
+/// The detached signature at `sig_path`, read ONCE ([`read_regular`]). Absent
+/// is its own refusal (RULE:unsigned).
+pub fn read_signature(what: &str, sig_path: &Path) -> Result<String, String> {
     // RULE:unsigned
-    if sig_file.is_none() {
+    if std::fs::symlink_metadata(sig_path).is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound)
+    {
         return Err(format!(
             "{what} is unsigned: no detached signature at {}",
             sig_path.display()
         ));
     }
-    // The cryptographic rules are the loop's too: one implementation.
-    axon_loop_contracts::operator_trust::verify_evidence_signature(
-        what,
-        bytes,
-        &sig_file.expect("checked above"),
-        trusted,
-        authority,
-    )
+    let b = read_regular(sig_path).map_err(|e| format!("{what} signature {e}"))?;
+    String::from_utf8(b)
+        .map_err(|_| format!("{what} signature {} is not UTF-8", sig_path.display()))
 }
 
 /// Verify an operator-signed evidence document (e.g. a protected-host
@@ -461,9 +513,25 @@ pub fn verify_operator_evidence(
     issuers_dir: &Path,
     authority: TrustAuthority,
 ) -> Result<String, String> {
-    let bytes = std::fs::read(record).map_err(|e| format!("evidence {}: {e}", record.display()))?;
+    let bytes = read_regular(record).map_err(|e| format!("evidence {e}"))?;
     let trusted = trusted_issuers(issuers_dir)?;
     verify_detached("evidence", &bytes, sig, &trusted, authority)
+}
+
+/// [`verify_operator_evidence_bytes`] with the signature TEXT already read
+/// too: the caller keeps exactly the signature it verified (e.g. to carry it
+/// into a bundle) instead of reading the file a second time.
+pub fn verify_operator_evidence_signed(
+    what: &str,
+    bytes: &[u8],
+    sig_text: &str,
+    issuers_dir: &Path,
+    authority: TrustAuthority,
+) -> Result<String, String> {
+    let trusted = trusted_issuers(issuers_dir)?;
+    axon_loop_contracts::operator_trust::verify_evidence_signature(
+        what, bytes, sig_text, &trusted, authority,
+    )
 }
 
 /// [`verify_operator_evidence`] over bytes the caller has ALREADY read, so the
@@ -523,9 +591,11 @@ impl LinuxProfileConfig {
     /// A changed manifest is ineligible — never "probably fine".
     pub fn qualification(&self) -> Result<LinuxQualification, String> {
         let launcher_sha256 = self.launcher_pinned()?;
-        let manifest_sha256 = sha256_file(&self.manifest)?;
-        let ev_bytes = std::fs::read(&self.evidence)
-            .map_err(|e| format!("evidence {}: {e}", self.evidence.display()))?;
+        // ONE read of the manifest: the bytes hashed (and compared with the
+        // qualified manifest_sha256) are the bytes parsed below.
+        let manifest_bytes = read_regular(&self.manifest).map_err(|e| format!("manifest {e}"))?;
+        let manifest_sha256 = sha256_hex(&manifest_bytes);
+        let ev_bytes = read_regular(&self.evidence).map_err(|e| format!("evidence {e}"))?;
         let evidence_sha256 = sha256_hex(&ev_bytes);
         // Authenticity first: nothing in an unauthenticated record is read
         // as a claim.
@@ -609,7 +679,7 @@ impl LinuxProfileConfig {
         // ── Waivers for BLOCKED assertions ──────────────────────────────────
         let mut waivers = std::collections::BTreeMap::<String, Waiver>::new();
         if let (false, Some(wp)) = (blocked.is_empty(), &self.waivers) {
-            let wb = std::fs::read(wp).map_err(|e| format!("waivers {}: {e}", wp.display()))?;
+            let wb = read_regular(wp).map_err(|e| format!("waivers {e}"))?;
             verify_detached(
                 "waiver file",
                 &wb,
@@ -680,10 +750,8 @@ impl LinuxProfileConfig {
         }
 
         // ── Engine, source, host ────────────────────────────────────────────
-        let m: serde_json::Value = serde_json::from_str(
-            &std::fs::read_to_string(&self.manifest).map_err(|e| e.to_string())?,
-        )
-        .map_err(|e| format!("manifest is not JSON: {e}"))?;
+        let m: serde_json::Value = serde_json::from_slice(&manifest_bytes)
+            .map_err(|e| format!("manifest is not JSON: {e}"))?;
         let eng = &ev["engine"];
         // RULE:engine-digests
         if !is_hex64(&eng["firecracker_sha256"]) || !is_hex64(&eng["jailer_sha256"]) {
@@ -938,12 +1006,12 @@ pub fn interpret_linux_result(
 ) -> (LinuxOutcome, String, Vec<String>) {
     let rj = out.join("result.json");
     let mut evidence = Vec::new();
-    if let Ok(s) = sha256_file(&rj) {
-        evidence.push(format!("sha256-result-json:{s}"));
+    // ONE read: the digest recorded as evidence is of the bytes interpreted.
+    let bytes = read_regular(&rj).ok();
+    if let Some(b) = &bytes {
+        evidence.push(format!("sha256-result-json:{}", sha256_hex(b)));
     }
-    let r: Option<serde_json::Value> = std::fs::read_to_string(&rj)
-        .ok()
-        .and_then(|t| serde_json::from_str(&t).ok());
+    let r: Option<serde_json::Value> = bytes.and_then(|b| serde_json::from_slice(&b).ok());
     let Some(r) = r else {
         return (
             LinuxOutcome::Unknown,

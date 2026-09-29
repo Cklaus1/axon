@@ -169,12 +169,15 @@ pub fn observe(
     }
     // ONE read: the bytes whose signature is verified are the bytes parsed,
     // joined and digested (review wf_d725935a-7ed).
-    let bytes = std::fs::read(&rec).map_err(|e| format!("observation: {e}"))?;
+    let bytes = crate::backend::read_regular(&rec).map_err(|e| format!("observation: {e}"))?;
+    // The signature is read once too, and the SAME text goes into the bundle.
+    let signature =
+        crate::backend::read_signature("observation", &work.join("observation.json.sig"))?;
     // The OBSERVER domain, under the OBSERVER root (RULE:authority-domain).
-    let signer = crate::backend::verify_operator_evidence_bytes(
+    let signer = crate::backend::verify_operator_evidence_signed(
         "observation",
         &bytes,
-        &work.join("observation.json.sig"),
+        &signature,
         &cfg.trust.dir,
         TrustAuthority::Observer,
     )?;
@@ -203,8 +206,6 @@ pub fn observe(
     // its nonce, and it can be spent once.
     cfg.nonces
         .consume(&o.nonce, epoch, &cfg.clock, cfg.max_age_s)?;
-    let signature = std::fs::read_to_string(work.join("observation.json.sig"))
-        .map_err(|e| format!("observation signature: {e}"))?;
     Ok(VerifiedObservation {
         sha256: axon_psv::sha256_hex(&bytes),
         bytes,

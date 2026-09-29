@@ -4,6 +4,7 @@
 //! root, which each test then attacks.
 
 use crate::common::*;
+use axon_fabric::backend::TrustAuthority;
 use axon_fabric::readiness::{
     protected_components, verifier_identity, ReadinessTrust, CERT_SCHEMA, TRUST_PREFLIGHT_SCHEMA,
 };
@@ -56,6 +57,68 @@ pub struct Certified {
     pub repo: PathBuf,
     pub trust: ReadinessTrust,
     pub operator: Issuer,
+    /// The key in the operator's OBSERVER root that signed the observation.
+    pub observer: Issuer,
+    /// The key in the operator's VERIFIER root the record names.
+    pub verifier: Issuer,
+}
+
+/// The certified observation and B263 record (repository paths).
+pub const OBSERVATION: &str = "governance/proofs/v022-protected/observation.json";
+pub const B263: &str = "governance/proofs/v022-protected/b263.json";
+/// The certified guest: (record field, B263 artifact, digest).
+pub const GUEST: [(&str, &str, &str); 3] = [
+    (
+        "guest_kernel_sha256",
+        "vmlinux",
+        "2222222222222222222222222222222222222222222222222222222222222222",
+    ),
+    (
+        "guest_image_sha256",
+        "rootfs.sqfs",
+        "1111111111111111111111111111111111111111111111111111111111111111",
+    ),
+    (
+        "guest_runtime_sha256",
+        "axon",
+        "3333333333333333333333333333333333333333333333333333333333333333",
+    ),
+];
+
+/// An observation of the certified run by `observer` (fabric revision `rev`).
+pub fn observation(observer: &Issuer, rev: &str) -> Value {
+    json!({
+        "schema": "axon-preflight-observation/1",
+        "observer_key_id": observer.key_id(),
+        "nonce": "0".repeat(32), "epoch": 1, "observed_at": "2026-09-28T00:00:00Z",
+        "host_profile": "linux-microvm-protected", "fabric_revision": rev,
+        "firecracker_sha256": "8".repeat(64), "launcher_sha256": "9".repeat(64),
+        "host_config_sha256": "a".repeat(64),
+        "guest": {"kernel_sha256": GUEST[0].2, "rootfs_sha256": GUEST[1].2,
+                  "axon_sha256": GUEST[2].2, "init_sha256": "b".repeat(64)},
+        "verifier_sha256": "c".repeat(64), "suite_registry_sha256": "d".repeat(64),
+        "policy_sha256": "e".repeat(64), "intended_launch_manifest_sha256": "f".repeat(64),
+    })
+}
+
+/// A B263 record qualifying the certified guest.
+pub fn b263_record() -> Value {
+    json!({
+        "schema": "axon-b263-evidence/1",
+        "profile": {"name": "linux-microvm-protected", "manifest_sha256": "7".repeat(64),
+                    "artifacts": {
+                        "vmlinux": {"sha256": GUEST[0].2},
+                        "rootfs.sqfs": {"sha256": GUEST[1].2},
+                        "axon": {"sha256": GUEST[2].2}}},
+        "result": "PASS",
+    })
+}
+
+/// Write `v` to `path` and its `authority`-domain signature by `who` to `.sig`.
+pub fn write_signed_for(who: &Issuer, authority: TrustAuthority, path: &Path, v: &Value) {
+    let bytes = serde_json::to_vec_pretty(v).unwrap();
+    write(path, std::str::from_utf8(&bytes).unwrap());
+    std::fs::write(sig_of(path), who.sign_for(authority, &bytes)).unwrap();
 }
 
 impl Certified {
@@ -114,49 +177,76 @@ pub fn certified() -> Option<Certified> {
         &json!({"schema": TRUST_PREFLIGHT_SCHEMA, "mode": "protected", "verdict": "PASS"})
             .to_string(),
     );
+    // The fabric revision the observation names: a fixed commit id (the
+    // record certifies the same one).
+    let rev = "f".repeat(40);
+    let operator = Issuer::generate();
+    let observer = Issuer::generate();
+    let verifier = Issuer::generate();
+    write_signed_for(
+        &observer,
+        TrustAuthority::Observer,
+        &repo.join(OBSERVATION),
+        &observation(&observer, &rev),
+    );
+    write_signed_for(
+        &operator,
+        TrustAuthority::Qualification,
+        &repo.join(B263),
+        &b263_record(),
+    );
     git(&repo, &["add", "-A"]);
     git(&repo, &["commit", "-q", "-m", "certified tree"]);
 
-    let root = d.path().join("trust/qualification");
-    std::fs::create_dir_all(&root).unwrap();
-    for p in [d.path().join("trust"), root.clone()] {
-        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
-    }
-    let operator = Issuer::generate();
-    operator.trust_in(&root, "operator");
+    std::fs::create_dir_all(d.path().join("trust")).unwrap();
     std::fs::set_permissions(
-        root.join("operator.pub"),
-        std::fs::Permissions::from_mode(0o644),
+        d.path().join("trust"),
+        std::fs::Permissions::from_mode(0o755),
     )
     .unwrap();
+    for (dir, who, name) in [
+        ("qualification", &operator, "operator"),
+        ("observer", &observer, "observer"),
+        ("verifier", &verifier, "verifier"),
+    ] {
+        let root = d.path().join("trust").join(dir);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o755)).unwrap();
+        who.trust_in(&root, name);
+        std::fs::set_permissions(
+            root.join(format!("{name}.pub")),
+            std::fs::Permissions::from_mode(0o644),
+        )
+        .unwrap();
+    }
+    let root = d.path().join("trust/qualification");
     let trust = ReadinessTrust::test(d.path(), &root);
 
     let c = Certified {
         repo,
         trust,
         operator,
+        observer,
+        verifier,
         _d: d,
     };
     let ev = "governance/proofs/v022-protected/run-evidence.md";
-    use sha2::{Digest, Sha256};
+    let evidence = [ev, PREFLIGHT, OBSERVATION, B263];
     let pf = sha(&c.repo.join(PREFLIGHT));
-    let bundle = format!(
-        "{:x}",
-        Sha256::digest(format!("{}{pf}", sha(&c.repo.join(ev))).as_bytes())
-    );
     let h = head(&c.repo);
     let rec = json!({
         "schema": CERT_SCHEMA, "component": "protected_backend",
         "host_profile": "linux-microvm-protected", "qualification_profile": "linux-microvm-protected",
         "psv_spec_sha256": sha(&c.repo.join("governance/specs/v022-protected-suite-verdict.md")),
-        "axon_sha": h, "micode_sha": "a".repeat(40), "fabric_revision": h,
-        "guest_image_sha256": "1".repeat(64), "guest_kernel_sha256": "2".repeat(64),
-        "guest_runtime_sha256": "3".repeat(64),
+        "axon_sha": h, "micode_sha": "a".repeat(40), "fabric_revision": rev,
+        GUEST[1].0: GUEST[1].2, GUEST[0].0: GUEST[0].2, GUEST[2].0: GUEST[2].2,
         "suite": {"id": "acceptance", "version": "v1", "entry": "accept.ax", "test": "t_ok", "digest": "4".repeat(64)},
         "candidate_tree_ref": format!("acf1:{}", "5".repeat(64)),
-        "observer_key_id": "ed25519:0000000000000000", "observation_sha256": "6".repeat(64),
-        "verifier_key_id": "ed25519:1111111111111111", "b263_qualification_sha256": "7".repeat(64),
-        "evidence": [ev, PREFLIGHT], "evidence_bundle_sha256": bundle,
+        "observer_key_id": c.observer.key_id(),
+        "observation_sha256": sha(&c.repo.join(OBSERVATION)),
+        "verifier_key_id": c.verifier.key_id(),
+        "b263_qualification_sha256": sha(&c.repo.join(B263)),
+        "evidence": evidence, "evidence_bundle_sha256": bundle_of(&c.repo, &evidence),
         "readiness_verifier_sha256": verifier_identity()["sha256"],
         "trust_preflight_sha256": pf,
         "certified_at": "2026-09-28T00:00:00Z",
@@ -166,6 +256,13 @@ pub fn certified() -> Option<Certified> {
     let v = c.verdict();
     assert_eq!(v["status"], "PASS", "the positive control must pass: {v}");
     Some(c)
+}
+
+/// The bundle digest over `evidence`'s files, in order.
+pub fn bundle_of(repo: &Path, evidence: &[&str]) -> String {
+    use sha2::{Digest, Sha256};
+    let cat: String = evidence.iter().map(|e| sha(&repo.join(e))).collect();
+    format!("{:x}", Sha256::digest(cat.as_bytes()))
 }
 
 pub fn resign(c: &Certified, who: &Issuer, edit: impl FnOnce(&mut Value)) {

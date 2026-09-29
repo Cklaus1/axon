@@ -160,10 +160,18 @@ pub fn private_inputs(
 /// two files (`launch-manifest.json`, `completion-secret` 0400).
 pub fn prepare(req: &ComputeRequest, i: &PrepareInputs<'_>) -> Result<Launch, String> {
     let q = i.qualification;
-    let pm: serde_json::Value = serde_json::from_slice(
-        &std::fs::read(i.profile_manifest).map_err(|e| format!("profile manifest: {e}"))?,
-    )
-    .map_err(|e| format!("profile manifest: {e}"))?;
+    // The guest digests come from THESE bytes, so they must be the manifest
+    // the qualification hashed (a second read of the path is another file).
+    let pm_bytes = crate::backend::read_regular(i.profile_manifest)
+        .map_err(|e| format!("profile manifest: {e}"))?;
+    if crate::backend::sha256_hex(&pm_bytes) != q.manifest_sha256 {
+        return Err(format!(
+            "profile manifest: the bytes read now are not the qualified manifest {}",
+            q.manifest_sha256
+        ));
+    }
+    let pm: serde_json::Value =
+        serde_json::from_slice(&pm_bytes).map_err(|e| format!("profile manifest: {e}"))?;
     let quota = axon_psv::Quota::default();
     let tree = |what: &str, d: &Path| {
         axon_workspace_recipe::tree_version_ref(d, &quota).map_err(|e| format!("{what} tree: {e}"))
