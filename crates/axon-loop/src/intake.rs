@@ -199,6 +199,11 @@ pub struct IntakeRecord {
     /// for any other verdict.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub verification_psv_evidence_ref: Option<Ref>,
+    /// PROTECTED verdict: the store-trusted observer whose signature
+    /// authenticated its preflight observation, and the key it verified under
+    /// (C9 round 2, PSV-5). Absent for any other verdict.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verification_observation_signed_by: Option<crate::evl::SignedBy>,
 }
 
 /// What `intake_episode` returns.
@@ -375,7 +380,7 @@ pub fn intake_episode(store: &Store, input: &IntakeInput<'_>) -> Result<IntakeOu
     // binds no loop scope (an attestation v2 item), so without this a single
     // signed verdict could be recorded again under another tenant or family
     // and count there as an independent trial (re-audit 5, executed).
-    if let Some((_, rc, _, _)) = &verification {
+    if let Some((_, rc, _, _, _)) = &verification {
         let rc_ref = digest(rc)?;
         for e in tx.entries() {
             if let Event::EpisodeIntake { intake, .. } = &e.event {
@@ -397,7 +402,7 @@ pub fn intake_episode(store: &Store, input: &IntakeInput<'_>) -> Result<IntakeOu
     store.put_cas("contexts", &ctx)?;
     let mut attestation_ref = None;
     let mut psv_ref = None;
-    if let Some((req, rc, att, _)) = &verification {
+    if let Some((req, rc, att, _, _)) = &verification {
         store.put_cas("fabric-requests", req)?;
         store.put_cas("fabric-receipts", rc)?;
         attestation_ref = Some(store.put_cas("fabric-attestations", att)?);
@@ -434,15 +439,16 @@ pub fn intake_episode(store: &Store, input: &IntakeInput<'_>) -> Result<IntakeOu
         .map(|r| r.to_string()),
         verification_receipt_ref: verification
             .as_ref()
-            .map(|(_, rc, _, _)| digest(rc))
+            .map(|(_, rc, _, _, _)| digest(rc))
             .transpose()?,
         verification_request_ref: verification
             .as_ref()
-            .map(|(req, _, _, _)| digest(req))
+            .map(|(req, _, _, _, _)| digest(req))
             .transpose()?,
         verification_attestation_ref: attestation_ref,
         verification_psv_evidence_ref: psv_ref,
         verification_key_id: verification.as_ref().map(|v| v.3.clone()),
+        verification_observation_signed_by: verification.as_ref().and_then(|v| v.4.clone()),
     };
     let seq = tx.append(Event::EpisodeIntake {
         scope: ep.scope.clone(),
@@ -592,7 +598,7 @@ fn check_verification(
     ep: &LoopEpisode,
     config: &crate::store::Config,
     subject: &BTreeSet<OpaqueRef>,
-) -> Result<Option<(ComputeRequest, ExecutionReceipt, Value, String)>> {
+) -> Result<Option<CheckedVerification>> {
     let v = &ep.verification;
     let Some(vref) = &v.verifier_ref else {
         if input.verification_request.is_some()
@@ -626,6 +632,17 @@ fn check_verification(
     .map(Some)
 }
 
+/// What [`verify_check_evidence`] authenticated: the typed request and
+/// receipt, the attestation, the verifier key id, and, for a PROTECTED verdict,
+/// who signed its preflight observation.
+pub type CheckedVerification = (
+    ComputeRequest,
+    ExecutionReceipt,
+    Value,
+    String,
+    Option<crate::evl::SignedBy>,
+);
+
 /// The verification join and its authentication, shared by intake (step 8)
 /// and EVL judging: `ep.verification` cites a Fabric registered check, and
 /// `(req_text, rc_text, att_text)` must be exactly that check's request,
@@ -653,7 +670,7 @@ pub fn verify_check_evidence(
     config: &crate::store::Config,
     subject: &BTreeSet<OpaqueRef>,
     psv_evidence: Option<&str>,
-) -> Result<(ComputeRequest, ExecutionReceipt, Value, String)> {
+) -> Result<CheckedVerification> {
     let v = &ep.verification;
     let vref = v
         .verifier_ref
@@ -704,6 +721,7 @@ pub fn verify_check_evidence(
     // O2: a receipt that claims PROTECTED evidence is authenticated only under
     // a verifier key the OPERATOR root holds; the store may name it, never
     // supply it.
+    let mut observation_signed_by = None;
     if axon_loop_contracts::protected_evidence::claims_protected(&rc) {
         crate::store::Config::rooted_key(
             verifier_keys,
@@ -724,17 +742,22 @@ pub fn verify_check_evidence(
                  its launch manifest and observation cannot be joined"
             ))
         })?;
-        axon_loop_contracts::protected_evidence::check_bundle(
+        let o = axon_loop_contracts::protected_evidence::check_bundle(
             &req,
             &rc,
             bundle,
             ep.authority_epoch.get(),
+            &config.trusted_observer_keys(),
         )
         .map_err(|e| {
             refused(format!(
                 "protected evidence from verifier {issuer} does not join: {e}"
             ))
         })?;
+        observation_signed_by = Some(crate::evl::SignedBy {
+            issuer_ref: o.observer_ref,
+            key_id: o.key_id,
+        });
     } else if psv_evidence.is_some() {
         return Err(refused(
             "an axon-psv-evidence bundle was presented for a receipt that does not claim \
@@ -826,7 +849,7 @@ pub fn verify_check_evidence(
     if v.matched_checks != rc.matched_checks.unwrap_or(0) {
         return Err(refused("matched_checks differs from the check receipt's"));
     }
-    Ok((req, rc, att, key_id))
+    Ok((req, rc, att, key_id, observation_signed_by))
 }
 
 /// What the verifier ran must be what the operator pins for it NOW: the
@@ -908,11 +931,12 @@ pub(crate) fn check_pins(
             task
         ))
     })?;
-    let acc_suite = acc
-        .check_suite
-        .strip_prefix("check-suite:")
-        .and_then(|x| x.split('@').next())
-        .unwrap_or("");
+    // The one parser (`Config::check_suite_refs` refused the config were it
+    // ambiguous): never a local `split('@')`, which read `acceptance@x@...` as
+    // `acceptance` (C9 round 2, PSV-5).
+    let acc_suite = axon_loop_contracts::suite::parse_check_suite_ref(&acc.check_suite)
+        .map(|(id, _, _)| id)
+        .map_err(refused)?;
     if req.argv != [format!("check:{acc_suite}"), acc.check.clone()] || recorded != acc.check_suite
     {
         return Err(refused(format!(

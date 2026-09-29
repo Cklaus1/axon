@@ -347,7 +347,7 @@ fn reverify_protected(
         .map(|r| text("fabric-psv-evidence", r))
         .transpose()?;
     let subjects: BTreeSet<OpaqueRef> = eval.subject_issuers.iter().cloned().collect();
-    let (_, verified_rc, _, signed_key) = crate::intake::verify_check_evidence(
+    let (_, verified_rc, _, signed_key, observation_signer) = crate::intake::verify_check_evidence(
         &ep,
         &req_text,
         &rc_text,
@@ -372,6 +372,17 @@ fn reverify_protected(
                 .as_ref()
                 .map(|i| i.to_string())
                 .unwrap_or_else(|| "no issuer".into()),
+        )));
+    }
+    // …and the record's observation attribution IS the observer that signed
+    // the preflight observation it just re-verified (C9 round 2, PSV-5, class
+    // c): absent, or naming any other identity, even one the store trusts and
+    // the operator root holds, it names the wrong authenticator.
+    if v.observation_signed_by != observation_signer {
+        return Err(fail(format!(
+            "the record attributes its preflight observation to {:?}, but it re-verifies as \
+             signed by {:?}",
+            v.observation_signed_by, observation_signer
         )));
     }
     // The recorded outcome IS the verdict the verifier signed (dev review

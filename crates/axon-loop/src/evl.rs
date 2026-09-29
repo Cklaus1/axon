@@ -324,6 +324,12 @@ pub struct VerificationEvidence {
     /// execution leg (`acf-attestations/`), re-verified at admission.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub execution_attestation_ref: Option<Ref>,
+    /// PROTECTED verdict: the store-trusted observer that signed the preflight
+    /// observation, and its key (C9 round 2, PSV-5). Admission requires it to
+    /// BE the signer the bundle re-verifies under, as it does the context's
+    /// `context_signed_by` (A62).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observation_signed_by: Option<SignedBy>,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
@@ -1131,7 +1137,7 @@ fn judge(
                 subjects,
                 text(&d.psv).as_deref(),
             )
-            .and_then(|(q, r, a, key_id)| {
+            .and_then(|(q, r, a, key_id, observation_signed_by)| {
                 // Authenticated by `verify` above (it is in the signed bytes).
                 let issued = axon_loop_contracts::attestation::issued_ms(&a)
                     .ok_or_else(|| refused("an authenticated attestation states no issued_ms"))?;
@@ -1156,6 +1162,7 @@ fn judge(
                         } else {
                             Some(digest_value(&d.acf_att)?)
                         },
+                        observation_signed_by,
                     },
                     issued,
                 ))

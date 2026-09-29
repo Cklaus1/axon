@@ -1410,10 +1410,9 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
             // part of that identity: the check registry is caller-named, so
             // without it a registry could run another file of the pinned
             // suite tree under the same id@version (re-audit 3).
-            let suite = target
-                .suite
-                .as_ref()
-                .map(|s| format!("check-suite:{}@{}#{}", s.id, s.version, target.file));
+            let suite = target.suite.as_ref().map(|s| {
+                axon_cortex::runner::check_suite_ref(&s.id, s.version.as_str(), &target.file)
+            });
             let (mut r, report, reason) = local_receipt(
                 &req,
                 &journal,

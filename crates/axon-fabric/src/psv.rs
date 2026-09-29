@@ -265,6 +265,22 @@ pub fn prepare(req: &ComputeRequest, i: &PrepareInputs<'_>) -> Result<Launch, St
             output_bytes: req.limits.output_bytes,
         },
     };
+    // Every `*sha256` the manifest carries IS one (C9 round 2, PSV-5): the
+    // verifier's own digest falls back to `unknown` when its executable
+    // cannot be hashed, and a qualification or profile manifest can name
+    // anything. The all-zero placeholder above stays well-formed (a hostless
+    // launch is never protected; the loop refuses it, A64). The field set and
+    // the format are the loop's own (`protected_evidence`), so producer and
+    // consumer judge the same fields the same way.
+    use axon_loop_contracts::protected_evidence::{is_sha256_hex, manifest_digest_fields};
+    for (field, d) in manifest_digest_fields(&manifest)? {
+        if !is_sha256_hex(&d) {
+            return Err(format!(
+                "launch manifest {field} is {d:?}, not a sha256: Fabric launches no manifest \
+                 naming a digest it could not take"
+            ));
+        }
+    }
     let mut secret = [0u8; 32];
     ring::rand::SecureRandom::fill(&ring::rand::SystemRandom::new(), &mut secret)
         .map_err(|_| "no system randomness for the completion secret".to_string())?;
@@ -378,10 +394,7 @@ pub fn derive(
         // The CANONICAL suite reference, exactly as the local path records it:
         // operator pins and task acceptance compare it byte for byte
         // (`axon_loop::intake::check_pins`); the test is the request's argv.
-        format!(
-            "check-suite:{}@{}#{}",
-            m.suite.id, m.suite.version, m.suite.entry
-        ),
+        axon_cortex::runner::check_suite_ref(&m.suite.id, &m.suite.version, &m.suite.entry),
     ];
     let unknown = |why: String, evidence: Vec<String>, report| HostVerdict {
         verification: ReceiptVerification::Unknown,

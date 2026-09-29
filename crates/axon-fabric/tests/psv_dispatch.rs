@@ -709,11 +709,28 @@ fn a_verified_observation_makes_the_guest_verdict_protected() {
     }
     axon_loop_contracts::operator_trust::set_test_root(&root);
     let epoch = w.env.cfg(0).expected_epoch.get();
+    // The store-trusted observers the loop narrows the operator root to: this
+    // observer, under its key.
+    let observers: std::collections::BTreeMap<_, _> = std::fs::read_dir(w.observer_roots())
+        .unwrap()
+        .flatten()
+        .map(|e| {
+            (
+                axon_loop_contracts::OpaqueRef::new("fixture:observer").unwrap(),
+                std::fs::read_to_string(e.path())
+                    .unwrap()
+                    .trim()
+                    .to_string(),
+            )
+        })
+        .collect();
+    assert_eq!(observers.len(), 1, "one observer key in the fixture root");
     axon_loop_contracts::protected_evidence::check_bundle(
         &req,
         &s.receipt,
         &bundle.to_string(),
         epoch,
+        &observers,
     )
     .expect("the loop joins what Fabric launched and observed");
     // Under another authority epoch it does not (PSV-6, dev round 1).
@@ -722,6 +739,7 @@ fn a_verified_observation_makes_the_guest_verdict_protected() {
         &s.receipt,
         &bundle.to_string(),
         epoch + 1,
+        &observers,
     )
     .unwrap_err();
     assert!(e.contains("authority epoch"), "{e}");
@@ -738,6 +756,7 @@ fn a_verified_observation_makes_the_guest_verdict_protected() {
         &hostless.receipt,
         &hostless.psv_evidence.clone().expect("a bundle").to_string(),
         epoch,
+        &observers,
     )
     .unwrap_err();
     assert!(e.contains("host_config_sha256 is all zeros"), "{e}");
@@ -749,7 +768,8 @@ fn a_verified_observation_makes_the_guest_verdict_protected() {
         &req,
         &s.receipt,
         &bad.to_string(),
-        epoch
+        epoch,
+        &observers,
     )
     .is_err());
     // Each launch spent its own nonce (the host launch and the hostless one).

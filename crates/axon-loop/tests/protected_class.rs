@@ -671,7 +671,10 @@ fn a_protected_activation_rests_only_on_current_authority() {
                 c.trusted_observers.retain(|x| x != &o);
                 c.observer_keys.remove(&o);
             },
-            "no longer trusts",
+            // C9 round 2 (PSV-5): the verdict's preflight observation was
+            // signed by this observer too, and re-verifying the bundle now
+            // finds no trusted observer holding its key, first.
+            "no observer the store trusts",
         ),
         (
             "observer-rekeyed",
@@ -679,7 +682,7 @@ fn a_protected_activation_rests_only_on_current_authority() {
                 c.observer_keys
                     .insert(OpaqueRef::new(OBSERVER).unwrap(), fresh_key());
             },
-            "protected context is not authenticated",
+            "no observer the store trusts",
         ),
         (
             "profile-withdrawn",
@@ -822,6 +825,14 @@ fn an_observer_key_planted_in_the_store_is_not_authority() {
         withdraw(&w, |c| {
             c.observer_keys
                 .insert(OpaqueRef::new(OBSERVER).unwrap(), planted_pk.clone());
+            // The verdicts' preflight OBSERVATIONS stay signed by the fixture
+            // observer key, which the store now registers for a second trusted
+            // identity (C9 round 2: an observation counts only under a key the
+            // store registers for a trusted observer). This test is about the
+            // CONTEXT's key.
+            let signer = OpaqueRef::new("fixture:observation-signer").unwrap();
+            c.trusted_observers.push(signer.clone());
+            c.observer_keys.insert(signer, observer_key().1.clone());
         });
         freeze_plan(&w.s, "exp", &w.inc_ref, &w.cand_ref, |_| {}).unwrap();
         assign_specs(&w.s, "exp", &specs_for(&w));

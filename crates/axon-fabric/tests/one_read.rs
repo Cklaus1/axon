@@ -386,6 +386,65 @@ fn prepare_pins_the_guest_only_from_the_manifest_the_qualification_hashed() {
     }
 }
 
+/// A69 (C9 round 2, PSV-5, class a): `psv::prepare` builds no launch manifest
+/// naming a `*sha256` that is not a sha256 (`unknown`, as `verifier_identity()`
+/// falls back to when its executable cannot be hashed; here a qualification's
+/// launcher digest). The loop refuses such a manifest too (`check_bundle`);
+/// Fabric must not launch one. Control: the qualified inputs prepare.
+#[test]
+fn prepare_builds_no_manifest_naming_a_digest_that_is_not_a_sha256() {
+    use axon_workspace_recipe::{tree_version_ref, Quota};
+    let env = Env::new();
+    let d = env.dir.path();
+    let manifest = d.join("manifest.json");
+    std::fs::write(&manifest, full_lx_manifest(QUALIFIED_GUEST)).unwrap();
+    let issuer = Issuer::generate();
+    let lx = qualified_linux_cfg(d, &issuer, &good_evidence(&sha256_file(&manifest)));
+    let q = lx.qualification().unwrap();
+    let (cand, suite) = (d.join("in/candidate"), d.join("in/check"));
+    std::fs::create_dir_all(&cand).unwrap();
+    std::fs::create_dir_all(&suite).unwrap();
+    std::fs::write(cand.join("f.ax"), "fn main() {}\n").unwrap();
+    std::fs::write(suite.join("accept.ax"), "@[test] fn t_ok() {}\n").unwrap();
+    let quota = Quota::default();
+    let cand_ref = tree_version_ref(&cand, &quota).unwrap();
+    let suite_ref = tree_version_ref(&suite, &quota).unwrap();
+    let mut rq = request(&env, "op-prepare-digests", "t_ok");
+    rq["workspace_version_ref"] = json!(cand_ref);
+    let rq: axon_loop_contracts::ComputeRequest = serde_json::from_value(rq).unwrap();
+    let prepare = |q: &axon_fabric::backend::LinuxQualification, job: &str| {
+        axon_fabric::psv::prepare(
+            &rq,
+            &axon_fabric::psv::PrepareInputs {
+                qualification: q,
+                profile_manifest: &lx.manifest,
+                host: None,
+                policy_json: "{}",
+                suite_id: "acc",
+                suite_version: &suite_ref,
+                entry: "accept.ax",
+                test: "t_ok",
+                candidate_dir: &cand,
+                suite_dir: &suite,
+                job_dir: &d.join(job),
+                observation_nonce: "none",
+            },
+        )
+    };
+    prepare(&q, "job-control").expect("control: the qualified inputs prepare");
+    for bad in ["unknown", "x", ""] {
+        let mut q2 = q.clone();
+        q2.launcher_sha256 = bad.into();
+        match prepare(&q2, &format!("job-{}", bad.len())) {
+            Ok(l) => panic!(
+                "ATTACK: prepare built a launch manifest whose launcher_sha256 is {:?}",
+                l.manifest.launcher_sha256
+            ),
+            Err(e) => assert!(e.contains("not a sha256"), "{bad:?}: {e}"),
+        }
+    }
+}
+
 // ── interpret_linux_result: the digest recorded is of the bytes interpreted ─
 
 /// `interpret_linux_result` records `sha256-result-json:` as evidence and

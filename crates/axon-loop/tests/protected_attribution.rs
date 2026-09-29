@@ -300,3 +300,56 @@ fn a_context_admitted_under_another_trusted_observer_does_not_count() {
     });
     refused(&w, "mis-admitted", &fe, "it was observed by");
 }
+
+/// A68 (C9 round 2, PSV-5, class c): the observer that signed a counted
+/// protected verdict's preflight OBSERVATION is recorded
+/// (`verification.observation_signed_by`) and joined at admission to the
+/// signer the bundle re-verifies under, as `context_signed_by` is (A62). A
+/// record naming a second observer the store trusts and the operator root
+/// holds, or naming none, does not count. The genuine record ACCEPTs (the
+/// control in `genuine`), and it names the fixture observer.
+#[test]
+fn an_observation_attributed_to_another_trusted_observer_does_not_count() {
+    const OTHER: &str = "agent:other-observation-signer";
+    let (_, pk) = axon_loop_contracts::attestation::generate().unwrap();
+    let (w, rec) = genuine("mis-observation");
+    for arm in &rec.arms {
+        for t in &arm.trials {
+            if let Some(v) = &t.verification {
+                let by = v
+                    .observation_signed_by
+                    .as_ref()
+                    .expect("control: a counted protected verdict records its observation signer");
+                assert_eq!(by.issuer_ref.as_str(), OBSERVER);
+            }
+        }
+    }
+    root_holds("observer", &pk);
+    let mut cfg = w.s.config().unwrap();
+    let o = OpaqueRef::new(OTHER).unwrap();
+    cfg.trusted_observers.push(o.clone());
+    cfg.observer_keys.insert(o, pk.clone());
+    w.s.write_config(&cfg).unwrap();
+    let fe = forge_counted(&w, "mis-observation", &rec, |t| {
+        t["verification"]["observation_signed_by"] =
+            json!({"issuer_ref": OTHER, "key_id": key_id(&pk)});
+    });
+    refused(
+        &w,
+        "mis-observation",
+        &fe,
+        "attributes its preflight observation",
+    );
+    let fe = forge_counted(&w, "mis-observation", &rec, |t| {
+        t["verification"]
+            .as_object_mut()
+            .unwrap()
+            .remove("observation_signed_by");
+    });
+    refused(
+        &w,
+        "mis-observation",
+        &fe,
+        "attributes its preflight observation",
+    );
+}

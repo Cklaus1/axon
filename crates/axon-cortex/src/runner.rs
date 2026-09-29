@@ -1809,6 +1809,54 @@ pub struct RegisteredCheck {
     pub workspace_version_ref: String,
 }
 
+/// A registered check suite's id, as `check:<id>` and
+/// `check-suite:<id>@<version>#<entry>` carry it: non-empty, and none of the
+/// separators those forms use (`@`, `#`, `:`), no `/`, no whitespace or control
+/// character. ONE parser for every side (Fabric's registry, the loop's store
+/// pins and `check_pins`), so no two sides read one reference as two suites
+/// (C9 round 2, PSV-5: the loop's `split('@')` read `acceptance@x@...` as the
+/// suite `acceptance` while the manifest named `acceptance@x`).
+pub fn check_suite_id(id: &str) -> Result<&str, String> {
+    if id.is_empty()
+        || id
+            .chars()
+            .any(|c| matches!(c, '@' | '#' | ':' | '/') || c.is_whitespace() || c.is_control())
+    {
+        return Err(format!(
+            "check suite id {id:?} is not an id: it must be non-empty, with no `@`, `#`, `:`, `/`, \
+             whitespace or control character"
+        ));
+    }
+    Ok(id)
+}
+
+/// `check-suite:<id>@<version>#<entry>` as `(id, version, entry)`, the id by
+/// [`check_suite_id`] and a version with no `@` or `#`, so the split is the
+/// only one there is.
+pub fn parse_check_suite_ref(r: &str) -> Result<(&str, &str, &str), String> {
+    let bad = |why: &str| format!("check suite reference {r:?} {why}");
+    let rest = r
+        .strip_prefix("check-suite:")
+        .ok_or_else(|| bad("is not check-suite:<id>@<version>#<entry>"))?;
+    let (id, rest) = rest
+        .split_once('@')
+        .ok_or_else(|| bad("names no version"))?;
+    let (version, entry) = rest.split_once('#').ok_or_else(|| bad("names no entry"))?;
+    check_suite_id(id).map_err(|e| bad(&e))?;
+    if version.is_empty() || version.contains(['@', '#']) || entry.is_empty() {
+        return Err(bad(
+            "is ambiguous: its version holds a separator, or its version or entry is empty",
+        ));
+    }
+    Ok((id, version, entry))
+}
+
+/// The one way a suite reference is written (Fabric's receipt and manifest,
+/// the loop's join), the inverse of [`parse_check_suite_ref`].
+pub fn check_suite_ref(id: &str, version: &str, entry: &str) -> String {
+    format!("check-suite:{id}@{version}#{entry}")
+}
+
 /// The id the local interpreter executor is registered under.
 pub const LOCAL_AXON_TEST_ID: &str = "axon-test-local";
 
@@ -1879,10 +1927,15 @@ impl CheckRegistry {
             .filter(|c| c.visibility == CheckVisibility::Visible)
     }
 
-    /// Register a check suite (operator input).
-    pub fn register_check(&mut self, c: RegisteredCheck) {
+    /// Register a check suite (operator input). Its id must parse as one
+    /// ([`check_suite_id`]): every registration, from a file or a library
+    /// caller, flows through here, so no suite Fabric runs can carry an id the
+    /// loop would read differently.
+    pub fn register_check(&mut self, c: RegisteredCheck) -> Result<(), String> {
+        check_suite_id(&c.id)?;
         self.checks.retain(|k| k.id != c.id);
         self.checks.push(c);
+        Ok(())
     }
 
     /// Load `{"schema":"cortex-check-registry/1","executors":[{"id","path","sha256"}]}`,
@@ -1969,7 +2022,7 @@ impl CheckRegistry {
                 root,
                 entry: field("entry")?.to_string(),
                 workspace_version_ref: r.to_string(),
-            });
+            })?;
         }
         Ok(reg)
     }
