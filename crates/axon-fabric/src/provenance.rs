@@ -97,6 +97,33 @@ pub fn provenance(dir: &Path) -> Provenance {
     }
 }
 
+/// Does HEAD of the tree containing `dir` descend from `rev`? Answered by
+/// the same git as [`provenance`]: the repository's config refused unless
+/// inert, replace objects off, and an `info/grafts` file (which rewrites
+/// ancestry and which git still honours) refused. Err says why not.
+pub fn descends_from(dir: &Path, rev: &str) -> Result<(), String> {
+    if rev.is_empty() || rev.starts_with('-') {
+        return Err(format!("{rev:?} is not a revision"));
+    }
+    let top = toplevel(dir)?;
+    git_data::refuse_config(&top)?;
+    let g = text(&top, &["rev-parse", "--git-path", "info/grafts"])?;
+    if std::fs::symlink_metadata(top.join(&g)).is_ok() {
+        return Err(format!(
+            "{g} rewrites ancestry: no lineage is read through it"
+        ));
+    }
+    let st = git_data::git_cmd(&top)
+        .args(["merge-base", "--is-ancestor", rev, "HEAD"])
+        .status()
+        .map_err(|e| format!("{GIT_BIN}: {e}"))?;
+    if st.success() {
+        Ok(())
+    } else {
+        Err(format!("HEAD does not descend from {rev}"))
+    }
+}
+
 /// Why the working tree at `top` is not byte-for-byte `revision`'s tree, if
 /// it is not (or cannot be shown to be).
 pub fn head_bytes_differ(top: &Path, revision: &str) -> Option<String> {

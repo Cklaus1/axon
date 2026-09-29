@@ -486,7 +486,7 @@ ATTACK_MARKERS = {
     # C8 without markers, which made their joint cell unmatchable (C9 r1b).
     'M58': r"ATTACK: `[^`]*` passed: a break/continue escaped a function body",
     'M245': r'ATTACK: monitor: activated on a revoked key',
-    # ── C9 round 2, workstream PROVENANCE (M450-M458) ──
+    # ── C9 round 2, workstream PROVENANCE (M450-M459) ──
     'M450': r"ATTACK: build provenance ran the repository's filter driver as the builder",
     'M451': r"ATTACK: an index entry forged to match the modified file's stat data hid the edit, and the build provenance still says source_dirty: false",
     'M452': r"ATTACK: git run as the verifier lazily fetched a missing object and ran the\s+repository's core\.sshCommand",
@@ -496,4 +496,5 @@ ATTACK_MARKERS = {
     'M456': r"ATTACK: no snapshot of the tree the artifacts were built from, and the guest manifest says axon_tree_dirty_at_build: false",
     'M457': r"ATTACK: the tree moved to another commit between the snapshot and the manifest, and the guest manifest says axon_tree_dirty_at_build: false",
     'M458': r"ATTACK: the tree was dirty when the build started and clean again by manifest time, and the guest manifest says axon_tree_dirty_at_build: false",
+    'M459': r"ATTACK: grafted ancestry passed the guest build's PCI lineage check",
 }

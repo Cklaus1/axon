@@ -144,7 +144,7 @@ build_rootfs_linux() {
     # The guest axon must carry the certified PCI interpreter (the survey found
     # the pinned one predated it): refuse a revision that does not descend from
     # the PCI certification (governance/proofs/v022-pci/CERTIFICATION.md).
-    git merge-base --is-ancestor 31413ca7 HEAD || {
+    python3 scripts/linux_profile_manifest.py --descends 31413ca7 || {
         echo "[build-guest-image] ERROR: HEAD does not descend from PCI-certified 31413ca7" >&2
         exit 1
     }

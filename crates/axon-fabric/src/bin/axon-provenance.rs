@@ -2,6 +2,9 @@
 //! (default `.`), as `axon-provenance/1` JSON on stdout:
 //! `{"schema", "revision", "dirty": [reasons]}`. Empty `dirty` means clean.
 //!
+//! `axon-provenance --descends REV [DIR]`: exit 0 only if HEAD descends from
+//! REV, asked of the same hardened git (the guest build's PCI lineage check).
+//!
 //! This is `src/provenance.rs` over `src/git_data.rs`, the SAME code
 //! `build.rs` stamps the readiness verifier with, so the guest-image
 //! manifest's `axon_tree_dirty_at_build` (scripts/linux_profile_manifest.py,
@@ -30,7 +33,17 @@ fn json_str(s: &str) -> String {
 }
 
 fn main() {
-    let dir = std::env::args().nth(1).unwrap_or_else(|| ".".into());
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().map(String::as_str) == Some("--descends") {
+        let rev = args.get(1).map(String::as_str).unwrap_or("");
+        let dir = args.get(2).map(String::as_str).unwrap_or(".");
+        if let Err(e) = provenance::descends_from(std::path::Path::new(dir), rev) {
+            eprintln!("axon-provenance: {e}");
+            std::process::exit(1);
+        }
+        return;
+    }
+    let dir = args.first().cloned().unwrap_or_else(|| ".".into());
     let p = provenance::provenance(std::path::Path::new(&dir));
     let dirty: Vec<String> = p.dirty.iter().map(|d| json_str(d)).collect();
     println!(

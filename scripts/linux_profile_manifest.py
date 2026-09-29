@@ -2,6 +2,7 @@
 """Write dist/guest-linux/manifest.json for the protected Linux microVM profile.
 
 Usage: linux_profile_manifest.py --snapshot <out.json>
+       linux_profile_manifest.py --descends <rev>
        linux_profile_manifest.py [--pre <snapshot.json>] <dist-dir> <profile-dir>
 
 Every artifact the launcher consumes is recorded by sha256. The launcher
@@ -57,19 +58,26 @@ def cannot_tell(why):
     return {"revision": "unknown", "dirty": [f"cannot tell: {why}"]}
 
 
+def helper(args):
+    """Build the axon-provenance helper and run it on ROOT: (CompletedProcess or None, error)."""
+    with tempfile.TemporaryDirectory(prefix="axon-provenance-") as t:
+        exe = os.path.join(t, "axon-provenance")
+        rustc = os.environ.get("RUSTC", "rustc")
+        b = subprocess.run([rustc, "--edition", "2021", "-C", "opt-level=1", "-o", exe, HELPER],
+                           capture_output=True, text=True, cwd=ROOT, check=False)
+        if b.returncode != 0:
+            return None, f"the provenance helper did not build: {b.stderr.strip()[-400:]}"
+        return subprocess.run([exe] + args + [ROOT], capture_output=True, text=True, check=False,
+                              env={"PATH": "/usr/bin:/bin", "LC_ALL": "C"}), None
+
+
 def provenance():
     """The axon-provenance/1 answer for ROOT's tree, or a DIRTY "cannot tell"."""
     try:
-        with tempfile.TemporaryDirectory(prefix="axon-provenance-") as t:
-            exe = os.path.join(t, "axon-provenance")
-            rustc = os.environ.get("RUSTC", "rustc")
-            b = subprocess.run([rustc, "--edition", "2021", "-C", "opt-level=1", "-o", exe, HELPER],
-                               capture_output=True, text=True, cwd=ROOT, check=False)
-            if b.returncode != 0:
-                return cannot_tell(f"the provenance helper did not build: {b.stderr.strip()[-400:]}")
-            r = subprocess.run([exe, ROOT], capture_output=True, text=True, check=False,
-                               env={"PATH": "/usr/bin:/bin", "LC_ALL": "C"})
-            d = json.loads(r.stdout)
+        r, err = helper([])
+        if r is None:
+            return cannot_tell(err)
+        d = json.loads(r.stdout)
     except (OSError, ValueError) as e:
         return cannot_tell(f"the provenance helper failed: {e}")
     if (r.returncode != 0 or not isinstance(d, dict) or d.get("schema") != "axon-provenance/1"
@@ -101,6 +109,17 @@ def source_state(pre_path):
 
 def main():
     args = sys.argv[1:]
+    if args[:1] == ["--descends"]:
+        # The PCI lineage check, asked of the hardened git (never PATH git).
+        try:
+            r, err = helper(["--descends", args[1]])
+        except OSError as e:
+            r, err = None, str(e)
+        if r is None or r.returncode != 0:
+            print(f"lineage: cannot show HEAD descends from {args[1]}: "
+                  f"{err or r.stderr.strip()}", file=sys.stderr)
+            sys.exit(1)
+        return
     if args[:1] == ["--snapshot"]:
         with open(args[1], "w") as f:
             json.dump(provenance(), f)

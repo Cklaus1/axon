@@ -1076,7 +1076,7 @@ MUTATIONS = [
     # whether a tree is the commit it claims to be, from ONE implementation
     # (crates/axon-fabric/src/git_data.rs, shared by readiness, build.rs and
     # the guest-manifest helper). M284/M289/M385 moved there from
-    # readiness.rs with the code (same guards, same tests). M459 unused.
+    # readiness.rs with the code (same guards, same tests).
     ("M450", "FIELD-ORIGIN: the repository's own git config is refused unless every key is inert",
      "crates/axon-fabric/src/git_data.rs",
      "        if !allowed_key(&key) {",
@@ -1122,6 +1122,11 @@ MUTATIONS = [
      '        reasons.extend(f"before the build: {r}" for r in pre["dirty"])',
      "        pass",
      "axon-fabric", "--test guest_provenance", "a_tree_dirty_when_the_build_started_is_dirty"),
+    ("M459", "FIELD-ORIGIN: the guest build's PCI lineage check refuses an info/grafts file",
+     "crates/axon-fabric/src/provenance.rs",
+     "    if std::fs::symlink_metadata(top.join(&g)).is_ok() {",
+     "    if false && std::fs::symlink_metadata(top.join(&g)).is_ok() {",
+     "axon-fabric", "--test guest_provenance", "grafted_ancestry_does_not_pass_the_lineage_check"),
 ]
 
 

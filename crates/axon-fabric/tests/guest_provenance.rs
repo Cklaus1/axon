@@ -281,3 +281,90 @@ fn an_edit_during_the_build_is_dirty() {
         "an untracked build.rs appeared after the snapshot, before the manifest",
     );
 }
+
+impl Fx {
+    /// `--descends REV`: did the lineage check pass?
+    fn descends(&self, rev: &str, env: &[(&str, String)]) -> bool {
+        let mut c = Command::new("python3");
+        c.arg(self.repo.join("scripts/linux_profile_manifest.py"))
+            .args(["--descends", rev])
+            .current_dir(&self.repo)
+            .stderr(Stdio::null());
+        for (k, v) in env {
+            c.env(k, v);
+        }
+        c.status().unwrap().success()
+    }
+    fn rev(&self, what: &str) -> String {
+        let o = Command::new(GIT)
+            .arg("-C")
+            .arg(&self.repo)
+            .args(["-c", "user.name=t", "-c", "user.email=t@example"])
+            .args(["rev-parse", what])
+            .output()
+            .unwrap();
+        String::from_utf8(o.stdout).unwrap().trim().to_string()
+    }
+    /// HEAD becomes an orphan commit with the same tree: it descends from
+    /// nothing. Returns the certified (old HEAD) revision.
+    fn orphan_head(&self) -> String {
+        let certified = self.rev("HEAD");
+        let o = Command::new(GIT)
+            .arg("-C")
+            .arg(&self.repo)
+            .args(["-c", "user.name=t", "-c", "user.email=t@example"])
+            .args(["commit-tree", "HEAD^{tree}", "-m", "unrelated history"])
+            .output()
+            .unwrap();
+        let orphan = String::from_utf8(o.stdout).unwrap().trim().to_string();
+        git(&self.repo, &["update-ref", "refs/heads/main", &orphan]);
+        certified
+    }
+}
+
+#[test]
+fn the_lineage_check_accepts_a_descendant() {
+    let f = fixture(true);
+    let certified = f.rev("HEAD");
+    write(&f.repo.join(INIT_SRC), "fn main() { /* later */ }\n");
+    git(&f.repo, &["commit", "-q", "-am", "later"]);
+    assert!(f.descends(&certified, &[]), "a descendant descends");
+    let certified = f.orphan_head();
+    assert!(!f.descends(&certified, &[]), "an orphan does not");
+}
+
+#[test]
+fn grafted_ancestry_does_not_pass_the_lineage_check() {
+    let f = fixture(true);
+    let certified = f.orphan_head();
+    let orphan = f.rev("HEAD");
+    write(
+        &f.repo.join(".git/info/grafts"),
+        &format!("{orphan} {certified}\n"),
+    );
+    assert!(
+        !f.descends(&certified, &[]),
+        "ATTACK: grafted ancestry passed the guest build's PCI lineage check"
+    );
+}
+
+#[test]
+fn a_git_on_the_callers_path_does_not_answer_the_lineage_check() {
+    let f = fixture(true);
+    let certified = f.orphan_head();
+    let bin = f.d.path().join("fakebin");
+    write(&bin.join("git"), "#!/bin/sh\nexit 0\n");
+    std::fs::set_permissions(bin.join("git"), std::fs::Permissions::from_mode(0o755)).unwrap();
+    let path = vec![(
+        "PATH",
+        format!(
+            "{}:{}",
+            bin.display(),
+            std::env::var("PATH").unwrap_or_default()
+        ),
+    )];
+    assert!(
+        !f.descends(&certified, &path),
+        "ATTACK: a git on the caller's PATH answered the guest build's PCI lineage check"
+    );
+}

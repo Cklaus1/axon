@@ -726,3 +726,33 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
     Status: the evidence model and harness are implemented. Rows the round-1 audit found weak and
     that are not fixed yet are listed in the round's report. They show as REFUSED_ELSEWHERE, so a
     run cannot pass while they remain.
+40. **How Axon learns whether a tree is its commit: one hardened git (FIELD-ORIGIN / PSV-7, C9
+    round 2).** Amendment 36 hardened build provenance against the caller's environment, but the
+    repository's own `.git/config` still steered git: `core.worktree` pointed `status` at a clean
+    mirror, and `core.checkStat=minimal` with `core.trustCtime=false` hid a same-size edit. The
+    guest manifest's `axon_tree_dirty_at_build` still came from PATH git, skipped untracked files
+    and read "cannot tell" as clean. Readiness's git honoured a promisor remote, so a missing object
+    was lazily fetched through the repository's `core.sshCommand`, as the verifier.
+    - One implementation, `crates/axon-fabric/src/git_data.rs` (std only), serves readiness,
+      `build.rs` and the `axon-provenance` helper. It never fetches (`GIT_NO_LAZY_FETCH=1`,
+      `protocol.allow=never`), forces `--work-tree`, and overrides the stat-cache, excludes and
+      attributes settings.
+    - The repository's config is refused unless every key is on an inert allowlist (core layout
+      keys, keys git_cmd overrides, remote url/fetch, branch tracking, user, lfs). It is located
+      and parsed without running git inside the repository. An unknown key is refused, never
+      interpreted. Readiness refuses such a repository before it asks git anything else.
+    - Build provenance hashes every file of HEAD's tree (each object verified by hash) from the
+      working-tree bytes. Git's stat cache is not trusted, since the index is a repository file:
+      a forged stat entry hid an edit from `status`. A gitfile or symlinked `.git` is refused, so a
+      verifier is built from a plain clone.
+    - `scripts/linux_profile_manifest.py` compiles the helper with `rustc` and takes its answer.
+      Cannot tell is dirty. `build-guest-image.sh` snapshots the tree before it builds. The
+      manifest is clean only if the snapshot and the tree at manifest time are both clean and name
+      the same revision. The reasons are recorded in `axon_tree_dirty_reasons`. The guest image
+      contents are unchanged, so no boot test is needed. Fabric already refuses anything but a
+      boolean `false`.
+    - The build script's PCI lineage check (`merge-base --is-ancestor 31413ca7`) used PATH git
+      too. It now asks the helper (`--descends`), which uses the same git and refuses
+      `info/grafts`.
+    - Rows A65 and A66, mutations M450-M459. M346 (the skip-worktree refusal in provenance) is now
+      dominated by the byte comparison (M451). It is a four-cell candidate, not retired here.
