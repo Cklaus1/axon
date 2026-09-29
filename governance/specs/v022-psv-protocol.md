@@ -582,6 +582,8 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
     commit, the trees and the working-tree bytes are re-hashed. Negative-matrix A46. Still open, and
     it needs an operator decision: an untracked file hidden by `.git/info/exclude` or a self-ignoring
     `.gitignore` is invisible to the check, and refusing such files would change what counts as READY.
+    CLOSED by amendment 44 (operator decision C): every object in the tree counts; only the
+    operator's allowlist excuses generated material.
 33. **The guest verdict itself is joined; the evidence bundle is `/2` (PSV-5; supersedes amendment 9's
     bundle shape).** `guest-verdict-sha256` was required but joined to nothing. The bundle now carries
     the exact verdict bytes. They must hash to the receipt's digest, be `axon-guest-verdict/1`, name
@@ -641,7 +643,7 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       any change, any untracked non-ignored file, and any file ignored by a rule outside a tracked
       `.gitignore` make the build dirty. It re-derives whenever the working tree changes, not only
       this crate's `src/` (A60). This is stricter than readiness's own untracked-file check
-      (amendment 32's open item stays open there). A digest of the compiled sources is not
+      (amendment 32's open item stays open there; both are superseded by amendment 44's one rule). A digest of the compiled sources is not
       recorded: a build script cannot see the compiled file set, and on a clean tree
       `fabric_revision` already names it.
     - The signing key must be mode 0400 (§2 rule 1); 0600 is refused and `keygen` writes 0400.
@@ -825,3 +827,91 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       loop-side qualification join remains a FUTURE item.
     - Not done here (MINOR, not in this workstream): the manifest's `limits` are not joined to the
       request's limits.
+44. **Operator decisions B, C and E (2026-09-29): strict protected counting; git-ignore has no
+    security authority; protected answers come from a standalone clone (C9 round 2, bce
+    workstream).** The operator adopted these as written.
+    - **B, strict counting.** A trial counts as protected only with the whole chain. Each link and
+      the check that enforces it:
+      1. Qualified profile: Fabric `qualification()` at dispatch.
+      2. Fresh observer evidence: Fabric `observer::observe` (pinned observer, operator observer
+         root, role separation, epoch, age, one-use nonce); the loop's `check_bundle` (A68).
+      3. Pinned privileged launcher: `launcher_pinned`; `launcher_sha256` joined from the manifest
+         to the observation.
+      4. Exact manifest: `psv::prepare`; `check_bundle` (A64, A69).
+      5. Protected guest execution: a protected host runs only the protected profile, and only an
+         operator suite (amendments 22, 35).
+      6. Affirmative completion: `psv::derive` (keyed completion token, amendment 11).
+      7. Protected verdict: `derive` and `check` (exactly the `protected` class).
+      8. Verifier authentication: `verify_check_evidence` under the operator verifier root, then
+         admission's `reverify_protected` (amendments 17, 20).
+      9. Exact joins: `check_bundle`, `check_pins`, and the attribution joins (A62, A68).
+      10. The attested execution leg (amendment 18): `evl::verify_execution` with
+          `observed_protected_execution`.
+      No code relaxes any link. Fabric cannot produce link 10 today, since no job can be both an
+      execution and protected (amendment 35). So **zero protected trials count until an OBSERVED
+      EXECUTION path exists**. The operator has accepted that consequence. Incomplete chains
+      still count as attempt, cost, failure or unknown. Follow-up: an observed execution path,
+      which needs a cross-peer manifest shape with MiCode. A read-only audit of every link found no
+      route by which an incomplete chain counts as protected, so A72 is unused. It recorded two
+      latent items for that follow-up:
+      * A test-trust Fabric build is not refused at a protected launch, and nothing on the loop
+        side pins the manifest's `verifier_sha256` to the installed verifier.
+      * `observed_protected_execution` checks that its manifest and observation references are
+        well-formed, and joins them to nothing. Its hex check also accepts upper case.
+      Both are harmless while link 10 cannot be produced. Both must be closed when it can.
+    - **C, git-ignore has no authority.** Readiness certification, build provenance (`build.rs`)
+      and the guest manifest (`axon-provenance` helper) decide "is this tree its commit?" through
+      ONE rule, `git_data::tree_differs`. It walks the working tree as a filesystem and compares it
+      with HEAD's tree (for readiness, the certified tree, outside `governance/`):
+      * a tracked path whose kind, mode or bytes differ is a change;
+      * ANY other object is a change: an untracked file, a `.gitignore`d one, one hidden by
+        `info/exclude` or `core.excludesFile`, a special file, or a directory that holds no
+        tracked path (reported whole). `.git` at the top is not walked, and symlinks are not
+        followed.
+      The only exceptions are paths on the operator's allowlist, `/etc/axon/provenance-allowlist`.
+      * It is walked from `/` like the trust roots: every component root-owned, not group- or
+        other-writable, not a symlink. It is then read once as the regular file that was walked.
+      * Format: the first line is `axon-provenance-allowlist/1`; then one entry per line (`#`
+        comments). An entry is an exact relative path, or a directory prefix ending in `/` (that
+        real directory and everything below it). There are no globs, no `.`, `..` or `.git`
+        components, no leading `/`, and no whitespace. Anything else refuses the whole list.
+      * An entry that names or holds a tracked path is refused, so the list can never excuse a
+        source.
+      * A missing allowlist excuses nothing. A present one that fails the ownership walk is
+        refused (the answer is dirty), never read as empty.
+      * Default contents for a normal build, installed by the operator as root, mode 0644:
+        `axon-provenance-allowlist/1`, `target/`, `dist/`. `target/` is cargo's in-tree output,
+        and `dist/` is the guest build's output. A certified build may instead set
+        `CARGO_TARGET_DIR` outside the tree. Excusing `target/` trusts the build to start from an
+        empty target: cargo reuses what it finds there.
+      * Tests use `AllowlistSource::test` (test-trust builds only). `b263_qualify.sh` no longer
+        writes `scripts/__pycache__/`.
+      * Git's own views (status, the ignored-file check, readiness's untracked listing) are kept,
+        and may only ADD reasons. The walk dominates M347 and M414 now. Both are four-cell
+        candidates, not retired here.
+      * Row A70; mutations M500-M503. M290 and M451 were re-anchored to the rule's call sites.
+    - **E, a protected answer comes from a standalone clone.** Build provenance already refused a
+      gitfile or symlinked `.git` (A65).
+      * Readiness now refuses them before it asks git anything (`refuse_git_spoofing`), and
+        `repo` must be the top of the clone.
+      * The guest manifest binds the PCI lineage itself. It asks `axon-provenance --lineage`,
+        which answers through `descends_from_protected` (standalone clone only). A tree that does
+        not descend is dirty.
+      * `build-guest-image.sh`'s early `--descends` check stays a development check: it accepts a
+        linked worktree and can make nothing clean.
+      * Row A71; mutations M504-M506. `descends_from_protected`'s own gitfile refusal is not given
+        a row: in a worktree, the manifest is already dirty by A65's refusal (M453).
+    - **Operational consequence.** A freeze, a certified verifier build and an evidence guest
+      image run from a STANDALONE CLONE, never a linked worktree, with the allowlist installed or
+      nothing generated in the tree. A guest image built in a developer worktree is always dirty.
+      Fabric's qualification refuses it (RULE:manifest-clean), and that is intended.
+      * The committed `profiles/linux-microvm/manifest.json` says clean at `3f81dc67`. That value
+        was produced under the old rule, so the evidence image must be rebuilt under this one.
+      * `scripts/v022_freeze_manifest.py` records `git rev-parse HEAD` and the profile manifest's
+        revision and digests, but not whether its root is a standalone clone. It also does not
+        record whether the guest manifest is clean.
+      * What must change, not done here: the freeze must refuse a root whose `.git` is not a
+        directory, and must bind `axon_tree_dirty_at_build: false` and
+        `axon_tree_dirty_reasons: []`.
+      * The long-run target is unchanged: the input tree is digest X, and X is what was reviewed,
+        launched and evaluated.

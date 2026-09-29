@@ -6,7 +6,13 @@ still claim the same evidence. Emits axon-v022-psv-freeze/1.
 Binds: Axon SHA, MiCode SHA, guest image digest; mutation-registry digest,
 active-mutant count, retired-equivalent count; equivalence-record digest;
 paired-disable evidence digest; PSV spec / protocol / gap-map / negative-matrix
-hashes. Reads only; writes the manifest to the path given (or stdout)."""
+hashes. Reads only; writes the manifest to the path given (or stdout).
+
+REQUIREMENT (protocol amendment 44, operator decision E): a freeze runs from a
+STANDALONE CLONE, never a linked worktree, and binds a guest image whose
+manifest says axon_tree_dirty_at_build: false under the amendment-44 rule. This
+script does not yet enforce either: it does not refuse a root whose .git is not
+a directory, and it does not bind the guest manifest's dirty flag and reasons."""
 import hashlib
 import importlib.util
 import json

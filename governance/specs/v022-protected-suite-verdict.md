@@ -315,7 +315,10 @@ Five distinct things. Keep them apart; each has one source.
 The manifest DESCRIBES and PINS the binary. It is not the binary, and the binary is not configured
 by it. To install:
 
-1. Build `axon-fabric` in release mode from a clean checkout of the reviewed revision.
+1. Build `axon-fabric` in release mode from a clean checkout of the reviewed revision. It must
+   be a STANDALONE CLONE, not a linked worktree. Either `CARGO_TARGET_DIR` points outside the
+   tree, or `/etc/axon/provenance-allowlist` (root-owned, 0644) excuses `target/`. Every object in
+   the tree counts, and `.gitignore` excuses nothing (protocol amendment 44).
 2. Copy it to the chosen path as root, with mode 0755.
 3. Run THAT installed path: `/usr/local/libexec/axon/axon-fabric verifier-manifest`. Never run the
    build tree's copy for this step: the manifest names the executable that produced it, so running

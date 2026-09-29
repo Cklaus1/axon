@@ -489,11 +489,36 @@
       "registry": "387 rows at 89d5efd8: 358 active; retired 28 equivalent + 1 stale (M176); 0 legacy",
       "negative_matrix": "64 rows (A47-A64 in C9), 163 citations resolve",
       "open_operator_decisions": [
-        "readiness: untracked files hidden by .git/info/exclude or a self-ignoring .gitignore (amendment 32); and whether build provenance's stricter counting of them is acceptable",
         "deployment model: fc_linux_profile.sh requires uid 0 and Fabric runs it directly, while the trust preflight refuses a root Fabric actor (A20). Option A: non-root Fabric + a narrow privileged launcher helper; option B: root Fabric, restated preflight, O_NOFOLLOW/ownership-walked caller paths",
-        "protected class: amendment 18 requires a Fabric-attested protected EXECUTION leg; Fabric now attests no unobserved execution, so no protected evaluation can count a trial (fails closed). Option A: an observed execution path (new manifest shape, cross-peer with MiCode); option B: amend 18 so the class rests on the verification leg",
         "hash-then-exec of the pinned launcher / observer command (fexecve or a copy)"
       ],
+      "operator_decisions_2026_09_29": {
+        "adopted": "as written (operator, 2026-09-29); A and D are a separate workstream and stay listed under open_operator_decisions until that workstream records them",
+        "B_strict_protected_counting": {
+          "decision": "a trial counts as protected only with the whole chain: qualified profile, fresh observer evidence, pinned privileged launcher, exact manifest, protected guest execution, affirmative completion, protected verdict, verifier authentication, exact joins, and amendment 18's attested execution leg",
+          "accepted_consequence": "ZERO protected trials count until an OBSERVED EXECUTION path exists; incomplete chains count only as attempt/cost/failure/unknown",
+          "record": "amendment 44 (the chain, link by link, with its enforcing checks)",
+          "audit": "read-only audit of every link at c453a4c6: no route by which an incomplete chain counts as protected; negative-matrix A72 unused",
+          "followups": [
+            "an observed execution path: a cross-peer manifest shape with MiCode, so Fabric can attest a protected EXECUTION leg (amendment 18)",
+            "when that path exists: refuse a protected launch from a test-trust Fabric build, or pin the manifest's verifier_sha256 to the installed verifier on the loop side",
+            "when that path exists: observed_protected_execution must verify and join its manifest and observation references (today it checks them for format only, and accepts upper-case hex)"
+          ]
+        },
+        "C_git_ignore_has_no_authority": {
+          "decision": "for protected provenance every filesystem object in the tree counts; only an operator-owned allowlist of generated paths excuses anything",
+          "closes": "amendment 32's open item (info/exclude / self-ignoring .gitignore hidden from readiness)",
+          "implemented": "git_data::tree_differs, one rule for readiness, build.rs provenance and the guest-manifest helper; allowlist /etc/axon/provenance-allowlist (axon-provenance-allowlist/1; exact paths and dir prefixes; default target/ and dist/; missing = nothing excused)",
+          "record": "amendment 44; negative-matrix A70; mutations M500-M503 (M290, M451 re-anchored)",
+          "operator_action": "install /etc/axon/provenance-allowlist as root, mode 0644, on each host that builds a certified verifier or an evidence guest image (or build with CARGO_TARGET_DIR outside the tree)"
+        },
+        "E_worktrees_refused_for_protected_builds": {
+          "decision": "a gitfile / linked worktree never gives a protected-clean answer; developer worktrees stay fine for development",
+          "implemented": "readiness refuses a non-directory .git; build provenance already did (A65); the guest manifest binds the PCI lineage asked from a standalone clone",
+          "record": "amendment 44; negative-matrix A71; mutations M504-M506",
+          "operational_consequence": "freezes, certified verifier builds and evidence guest images run from a standalone clone; scripts/v022_freeze_manifest.py must still be taught to refuse a linked-worktree root and to bind the guest manifest's axon_tree_dirty_at_build/_reasons (documented, not done); the committed profiles/linux-microvm/manifest.json predates this rule and must be rebuilt for evidence"
+        }
+      },
       "lane_b_prep_followups": [
         "D1 now refuses a caller --grant-registry on a protected host: Cortex FabricSubmitExecutor (crates/axon-cortex/src/runner.rs ~2632) and MiCode always pass one, so their protected-host path must stop doing so before a protected host is deployed; protected-host.json must add grant_registry {path, sha256}"
       ],
