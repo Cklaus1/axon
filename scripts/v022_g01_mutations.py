@@ -871,6 +871,22 @@ MUTATIONS = [
     ('M316', 'PSV-2: only an EMPTY ROOT lost+found is exempt', 'crates/axon-psv/src/lib.rs', 'if prefix.is_empty() && name == MKFS_LOST_FOUND {', 'if name == MKFS_LOST_FOUND {', 'axon-psv', '--test protocol', 'inputs_holding_what_the_digest_cannot_see_are_refused'),
     ('M317', 'PSV-2: a directory mode the digest does not record is refused', 'crates/axon-psv/src/lib.rs', 'if !mode_is_normalised(true, false, mode) {', 'if false && !mode_is_normalised(true, false, mode) {', 'axon-psv', '--test protocol', 'inputs_holding_what_the_digest_cannot_see_are_refused'),
     ('M318', 'PSV-2: a file mode the digest does not record is refused', 'crates/axon-psv/src/lib.rs', 'if meta.is_file() && !mode_is_normalised(false, exec, mode) {', 'if false && meta.is_file() && !mode_is_normalised(false, exec, mode) {', 'axon-psv', '--test protocol', 'inputs_holding_what_the_digest_cannot_see_are_refused'),
+    # ── C9 round-1 fix wave: FABRIC workstream (M320-M334; matrix A54-A57) ──
+    ('M320', 'PSV-6/A54: an execution is attested only with the observed launch in its receipt', 'crates/axon-fabric/src/signing.rs', '    if !observed_launch(receipt) {', '    if false && !observed_launch(receipt) {', 'axon-fabric', '--lib', 'signing::tests::an_unobserved_protected_profile_execution_is_never_attested'),
+    ('M321', 'PSV-6/A54: the protected profile offers no interpreter_run', 'crates/axon-fabric/src/backend.rs', '    // round 1; A54).\n    job_kinds: &[JobKind::RegisteredCheck],', '    // round 1; A54).\n    job_kinds: &[JobKind::InterpreterRun, JobKind::RegisteredCheck],', 'axon-fabric', '--test psv_dispatch', 'the_protected_profile_is_never_selected_for_an_execution'),
+    ('M322', "PSV-4/A55: the bundle is decided from the FINAL receipt's class", 'crates/axon-fabric/src/submit.rs', '.and_then(|(r, _, _)| crate::psv::EvidenceClass::of_receipt(r))', '.and(Some(crate::psv::EvidenceClass::Protected))', 'axon-fabric', '--test psv_dispatch', 'an_inadmissible_observed_launch_is_never_protected_and_carries_no_bundle'),
+    ('M323', 'PSV-4/A55: an inadmissible launch is never protected (psv_receipt downgrade)', 'crates/axon-fabric/src/submit.rs', '    if !launched_ok {\n        // Whatever derive saw', '    if false && !launched_ok {\n        // Whatever derive saw', 'axon-fabric', '--test psv_dispatch', 'an_inadmissible_observed_launch_is_never_protected_and_carries_no_bundle'),
+    ('M324', "A56: the out_root LEAF is the service's own and private", 'crates/axon-fabric/src/protected_host.rs', '        leaf_owned(&out_root)?;', '        leaf_owned(&out_root).ok();', 'axon-fabric', '--test protected_host', 'the_out_root_and_nonce_store_leaves_are_the_services_own_and_private'),
+    ('M325', "A56: the nonce_store LEAF is the service's own and private", 'crates/axon-fabric/src/protected_host.rs', '                leaf_owned(&nonces)?;', '                leaf_owned(&nonces).ok();', 'axon-fabric', '--test protected_host', 'the_out_root_and_nonce_store_leaves_are_the_services_own_and_private'),
+    ('M326', 'A56: a service leaf is owned by the service euid', 'crates/axon-fabric/src/protected_host.rs', '    if m.uid() != euid {', '    if false && m.uid() != euid {', 'axon-fabric', '--test protected_host', 'the_out_root_and_nonce_store_leaves_are_the_services_own_and_private'),
+    ('M327', 'A56: a service leaf has no group/other access (0700)', 'crates/axon-fabric/src/protected_host.rs', '    if m.mode() & 0o077 != 0 {', '    if false && m.mode() & 0o077 != 0 {', 'axon-fabric', '--test protected_host', 'the_out_root_and_nonce_store_leaves_are_the_services_own_and_private'),
+    ('M328', 'A57: key-role separation is checked when the host config loads', 'crates/axon-fabric/src/protected_host.rs', '                observer_trust.check_separation().map_err(bad)?;', '                let _ = observer_trust.check_separation();', 'axon-fabric', '--test protected_host', 'an_observer_root_sharing_a_key_with_another_role_is_refused_at_load'),
+    ('M329', 'A57: key-role separation is re-checked at every observation', 'crates/axon-fabric/src/observer.rs', '    cfg.trust.check_separation()?;', '    let _ = cfg.trust.check_separation();', 'axon-fabric', '--test psv_dispatch', 'an_observer_key_that_holds_another_role_is_refused_at_every_observation'),
+    ('M330', "A57: the observer root never holds the host signer's key", 'crates/axon-fabric/src/observer.rs', '            if observers.contains(&signer) {', '            if false && observers.contains(&signer) {', 'axon-fabric', '--test protected_host', 'an_observer_root_sharing_a_key_with_another_role_is_refused_at_load'),
+    ('M331', 'A57: an observer key is in no other authority root', 'crates/axon-fabric/src/observer.rs', 'observers.iter().find(|k| theirs.contains(k))', 'observers.iter().find(|k| false && theirs.contains(k))', 'axon-fabric', '--test protected_host', 'an_observer_root_sharing_a_key_with_another_role_is_refused_at_load'),
+    ('M332', 'protected host: only NotFound means no host config', 'crates/axon-fabric/src/protected_host.rs', '        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),', '        Err(_) => Ok(false),', 'axon-fabric', '--lib', 'protected_host::tests::only_a_missing_host_config_means_not_a_protected_host'),
+    ('M333', 'journal: only NotFound means no journal (status/cancel)', 'crates/axon-fabric/src/journal.rs', '            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),', '            Err(_) => return Ok(None),', 'axon-fabric', '--test journal', 'only_a_missing_journal_is_no_journal'),
+    ('M334', 'preflight: the probe list carries every grant file load pins', 'crates/axon-fabric/src/protected_host.rs', '                .map(|g| (OperatorFile, g.to_path_buf())),', '                .map(|g| (OperatorFile, g.to_path_buf()))\n                .filter(|_| false),', 'axon-fabric', '--test protected_host', 'the_preflight_probe_list_is_exactly_what_load_enforces'),
 ]
 
 
@@ -944,6 +960,8 @@ LEGACY_EQUIV = set()
 RETIRED = LEGACY_EQUIV | EQUIVALENT_DID | set(STALE_REFACTORED)
 BINDING_IDS = {f"M{n}" for n in range(101, 137)}
 PSV_IDS = {f"M{n}" for n in range(137, 319)}
+# C9 round-1 fix wave, FABRIC workstream (M320-M334).
+PSV_IDS |= {f"M{n}" for n in range(320, 335)}
 
 
 def in_scope(mid, scope):

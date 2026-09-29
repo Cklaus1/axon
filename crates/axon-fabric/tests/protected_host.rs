@@ -574,7 +574,7 @@ fn the_preflight_probe_list_is_exactly_what_load_enforces() {
     ] {
         assert!(
             listed.iter().any(|(_, p)| *p == want),
-            "the probe list omits {}: {listed:?}",
+            "ATTACK: the trust preflight never probes {}, which load pins: {listed:?}",
             want.display()
         );
     }
