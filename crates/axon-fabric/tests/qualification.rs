@@ -491,6 +491,9 @@ fn the_real_b263_record_is_refused() {
         waivers: None,
         trust,
         out_root: d.join("lx-out"),
+        exec_owner: None,
+        interpreter: None,
+        privileged: None,
     };
     std::fs::create_dir_all(&lx.out_root).unwrap();
     let w = World {
@@ -550,6 +553,9 @@ fn the_stage3_requalification_record_is_refused_until_signed_and_waived() {
         waivers: None,
         trust,
         out_root: d.join("lx-out"),
+        exec_owner: None,
+        interpreter: None,
+        privileged: None,
     };
     std::fs::create_dir_all(&lx.out_root).unwrap();
     let w = World {
@@ -604,6 +610,9 @@ fn the_committed_profile_has_no_trusted_issuer_so_protected_dispatch_is_refused(
         waivers: None,
         trust,
         out_root: env.dir.path().join("lx-out"),
+        exec_owner: None,
+        interpreter: None,
+        privileged: None,
     };
     std::fs::create_dir_all(&lx.out_root).unwrap();
     let w = World {

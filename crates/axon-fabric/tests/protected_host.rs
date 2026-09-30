@@ -50,6 +50,8 @@ impl Host {
         );
         let launcher = stand_in_launcher(&env, 0, true, true, 0);
         std::fs::copy(&launcher, root.join("launcher.sh")).unwrap();
+        // A: the privileged helper the host pins (a stand-in; load never runs it).
+        std::fs::write(root.join("protected-launcher"), "\x7fELF stand-in").unwrap();
         std::fs::write(root.join("executor.bin"), "#!/bin/sh\n").unwrap();
         write_registry(
             &root.join("registry.json"),
@@ -81,6 +83,7 @@ impl Host {
         let mut v = json!({
             "schema": "axon-protected-host/1",
             "launcher": pin("launcher.sh"),
+            "privileged_launcher": pin("protected-launcher"),
             "profile_manifest": pin("manifest.json"),
             "artifacts_dir": self.p("dist"),
             "qualification": {"record": self.p("evidence.json"), "signature": null,
@@ -907,4 +910,49 @@ fn the_host_signer_key_must_be_private_and_match_its_pin() {
         t.contains("does not derive the pinned public_key"),
         "ATTACK: a host signer key that does not derive its pin was not refused: {t}"
     );
+}
+
+/// A: the privileged helper's operator config and the host config describe
+/// ONE launch path. A helper admitting another uid, writing elsewhere, or
+/// running another launcher or profile manifest than the host pins would
+/// execute bytes no launch manifest or observation names.
+#[test]
+fn the_helper_config_must_agree_with_the_host_config() {
+    use axon_fabric::privileged_launcher::HelperConfig;
+    use axon_fabric::protected_host::helper_agrees;
+    let h = Host::new();
+    let host = h.load().unwrap();
+    let euid = unsafe { libc::geteuid() };
+    let good = json!({
+        "schema": "axon-protected-launcher/1", "fabric_uid": euid,
+        "interpreter": {"path": "/bin/bash", "sha256": "a".repeat(64)},
+        "launcher": {"path": h.p("launcher.sh"), "sha256": sha256_file(&h.p("launcher.sh"))},
+        "profile_manifest": {"path": h.p("manifest.json"),
+                             "sha256": sha256_file(&h.p("manifest.json"))},
+        "artifacts_dir": h.p("dist"), "firecracker": "/usr/local/bin/firecracker",
+        "jailer": "/usr/local/bin/jailer", "out_root": h.p("runs"),
+        "staging_root": h.p("staging"), "max_timeout_s": 60, "max_input_bytes": 1,
+    });
+    let cfg = |edit: &dyn Fn(&mut Value)| -> HelperConfig {
+        let mut v = good.clone();
+        edit(&mut v);
+        serde_json::from_value(v).unwrap()
+    };
+    helper_agrees(&cfg(&|_| {}), &host, euid).expect("control: one launch path");
+    let why = helper_agrees(
+        &cfg(&|v| v["launcher"]["sha256"] = json!("b".repeat(64))),
+        &host,
+        euid,
+    )
+    .expect_err("ATTACK: a helper config running another launcher than the host pins was accepted");
+    assert!(why.contains("runs launcher"), "{why}");
+    let why = helper_agrees(&cfg(&|v| v["fabric_uid"] = json!(euid + 1)), &host, euid)
+        .expect_err("ATTACK: a helper config admitting another uid than Fabric's was accepted");
+    assert!(why.contains("admits uid"), "{why}");
+    for edit in [
+        (|v: &mut Value| v["out_root"] = json!("/var/lib/elsewhere")) as fn(&mut Value),
+        |v| v["profile_manifest"]["sha256"] = json!("c".repeat(64)),
+    ] {
+        assert!(helper_agrees(&cfg(&edit), &host, euid).is_err());
+    }
 }

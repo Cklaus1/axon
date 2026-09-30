@@ -468,6 +468,9 @@ pub fn qualified_linux_cfg(dir: &Path, issuer: &Issuer, evidence: &Value) -> Lin
         waivers: None,
         trust,
         out_root: dir.join("lx-out"),
+        exec_owner: None,
+        interpreter: None,
+        privileged: None,
     }
 }
 
@@ -510,6 +513,16 @@ exit {exit}
     use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
     p
+}
+
+/// The system bash, pinned at its current bytes (D: a script authority runs
+/// under a pinned interpreter).
+pub fn bash_pin() -> axon_fabric::sealed_exec::Pinned {
+    let path = PathBuf::from("/bin/bash");
+    axon_fabric::sealed_exec::Pinned {
+        sha256: sha256_file(&path),
+        path,
+    }
 }
 
 /// Point `lx` at `launcher` AND pin it: the two always move together, as the
@@ -689,4 +702,122 @@ cp "$O/observation.json" "{prev}"; cp "$O/observation.json.sig" "{prev}.sig"
     .unwrap();
     std::fs::set_permissions(&script, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
     script
+}
+
+// ── A: the privileged launcher helper, test-trust fixture ───────────────────
+//
+// The REAL `axon-protected-launcher` (a test-trust build: `--test-config`),
+// run unprivileged as this uid. Its config names fake guest artifacts and a
+// fake engine whose REAL digests the profile manifest pins, since the helper
+// re-verifies every one of them itself.
+
+/// The engine files and guest artifacts a helper fixture pins, under `dir`.
+pub struct HelperInputs {
+    pub dist: PathBuf,
+    pub firecracker: PathBuf,
+    pub jailer: PathBuf,
+    pub fc_sha: String,
+    pub jailer_sha: String,
+    pub kernel_sha: String,
+    pub rootfs_sha: String,
+}
+
+/// Write fake `dist/{vmlinux,rootfs.sqfs}` and `engine/{firecracker,jailer}`
+/// under `dir` (0644, not group/other-writable).
+pub fn helper_inputs(dir: &Path) -> HelperInputs {
+    let dist = dir.join("dist");
+    let engine = dir.join("engine");
+    std::fs::create_dir_all(&dist).unwrap();
+    std::fs::create_dir_all(&engine).unwrap();
+    let put = |p: &Path, b: &str| {
+        std::fs::write(p, b).unwrap();
+        std::fs::set_permissions(p, std::os::unix::fs::PermissionsExt::from_mode(0o644)).unwrap();
+        sha256_file(p)
+    };
+    let kernel_sha = put(&dist.join("vmlinux"), "fake kernel\n");
+    let rootfs_sha = put(&dist.join("rootfs.sqfs"), "fake rootfs\n");
+    let fc_sha = put(&engine.join("firecracker"), "fake firecracker\n");
+    let jailer_sha = put(&engine.join("jailer"), "fake jailer\n");
+    HelperInputs {
+        dist,
+        firecracker: engine.join("firecracker"),
+        jailer: engine.join("jailer"),
+        fc_sha,
+        jailer_sha,
+        kernel_sha,
+        rootfs_sha,
+    }
+}
+
+impl HelperInputs {
+    /// `manifest` (a full profile manifest) re-pinned to these files.
+    pub fn pin_manifest(&self, manifest: &str) -> String {
+        let mut m: Value = serde_json::from_str(manifest).unwrap();
+        m["engine"] = json!({"firecracker_sha256": self.fc_sha, "jailer_sha256": self.jailer_sha});
+        m["artifacts"]["vmlinux"] = json!({"sha256": self.kernel_sha});
+        m["artifacts"]["rootfs.sqfs"] = json!({"sha256": self.rootfs_sha});
+        m.to_string()
+    }
+    /// A B263 record's engine, made to agree with [`Self::pin_manifest`].
+    pub fn pin_evidence(&self, ev: &mut Value) {
+        ev["engine"]["firecracker_sha256"] = json!(self.fc_sha);
+        ev["engine"]["jailer_sha256"] = json!(self.jailer_sha);
+    }
+}
+
+/// The helper binary this build produced, pinned.
+pub fn helper_pin() -> axon_fabric::sealed_exec::Pinned {
+    let path = PathBuf::from(env!("CARGO_BIN_EXE_axon-protected-launcher"));
+    axon_fabric::sealed_exec::Pinned {
+        sha256: sha256_file(&path),
+        path,
+    }
+}
+
+/// Write the helper's `axon-protected-launcher/1` config at `dir/name` for `launcher` / `manifest` / `out_root`
+/// (made the service's private 0700 dir), with a private staging root; the
+/// Fabric uid is this uid. Returns the config path.
+pub fn write_helper_config(
+    dir: &Path,
+    inputs: &HelperInputs,
+    launcher: &Path,
+    manifest: &Path,
+    out_root: &Path,
+    name: &str,
+) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::create_dir_all(out_root).unwrap();
+    std::fs::set_permissions(out_root, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let staging = dir.join("helper-staging");
+    std::fs::create_dir_all(&staging).unwrap();
+    std::fs::set_permissions(&staging, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let pin = |p: &Path| json!({"path": p, "sha256": sha256_file(p)});
+    let bash = bash_pin();
+    let cfg = json!({
+        "schema": "axon-protected-launcher/1",
+        "fabric_uid": unsafe { libc::getuid() },
+        "interpreter": {"path": bash.path, "sha256": bash.sha256},
+        "launcher": pin(launcher),
+        "profile_manifest": pin(manifest),
+        "artifacts_dir": inputs.dist,
+        "firecracker": inputs.firecracker,
+        "jailer": inputs.jailer,
+        "out_root": out_root,
+        "staging_root": staging,
+        "max_timeout_s": 3600,
+        "max_input_bytes": 1u64 << 30,
+    });
+    let p = dir.join(name);
+    std::fs::write(&p, cfg.to_string()).unwrap();
+    std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o644)).unwrap();
+    p
+}
+
+/// Route `lx` through the test-trust helper with `config`.
+pub fn use_helper(lx: &mut LinuxProfileConfig, config: &Path) {
+    lx.privileged = Some(axon_fabric::backend::PrivilegedRoute {
+        helper: helper_pin(),
+        owner: unsafe { libc::geteuid() },
+        test_config: Some(config.to_path_buf()),
+    });
 }

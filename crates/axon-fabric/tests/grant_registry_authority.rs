@@ -108,8 +108,16 @@ impl Host {
             std::fs::set_permissions(root.join(d), std::fs::Permissions::from_mode(0o700)).unwrap();
         }
         let issuer = Issuer::generate();
-        std::fs::write(root.join("manifest.json"), full_lx_manifest(GUEST)).unwrap();
+        // A: the launch goes through the (test-trust) privileged helper,
+        // which re-verifies the artifacts and engine the manifest pins.
+        let inputs = helper_inputs(&root);
+        std::fs::write(
+            root.join("manifest.json"),
+            inputs.pin_manifest(&full_lx_manifest(GUEST)),
+        )
+        .unwrap();
         let mut ev = good_evidence(&sha256_file(&root.join("manifest.json")));
+        inputs.pin_evidence(&mut ev);
         ev["assertions"]
             .as_array_mut()
             .unwrap()
@@ -120,6 +128,18 @@ impl Host {
         qualified_linux_cfg(&root, &issuer, &ev);
         let launcher = stand_in_launcher(&env, 0, true, true, 0);
         std::fs::copy(&launcher, root.join("launcher.sh")).unwrap();
+        // The helper binary and the observer's interpreter, copied in: a host
+        // whose ownership is walked from its own base pins nothing outside it.
+        std::fs::copy(helper_pin().path, root.join("protected-launcher")).unwrap();
+        std::fs::copy("/bin/bash", root.join("bash")).unwrap();
+        write_helper_config(
+            &root,
+            &inputs,
+            &root.join("launcher.sh"),
+            &root.join("manifest.json"),
+            &root.join("runs"),
+            "protected-launcher.json",
+        );
         // The operator suite `acc` (the protected profile runs only an
         // operator-suite check, PSV-6 / A54) and the candidate, in the store
         // the CLI reads (`<journal>.state`).
@@ -183,6 +203,9 @@ impl Host {
         let mut v = json!({
             "schema": "axon-protected-host/1",
             "launcher": pin("launcher.sh"),
+            "privileged_launcher": {"path": self.p("protected-launcher"),
+                                    "sha256": sha256_file(&self.p("protected-launcher")),
+                                    "test_config": self.p("protected-launcher.json")},
             "profile_manifest": pin("manifest.json"),
             "artifacts_dir": self.p("dist"),
             "qualification": {"record": self.p("evidence.json"), "signature": null,
@@ -193,7 +216,8 @@ impl Host {
                            &std::fs::read(self.p("keys/attest.pk8")).unwrap()).unwrap(),
                        "key_path": self.p("keys/attest.pk8")},
             "out_root": self.p("runs"),
-            "observer": {"command": pin("observer.sh"), "nonce_store": self.p("nonces"),
+            "observer": {"command": pin("observer.sh"), "interpreter": pin("bash"),
+                         "nonce_store": self.p("nonces"),
                          "max_age_s": 300},
         });
         if grant_registry {

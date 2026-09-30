@@ -158,6 +158,14 @@ pub struct ObserverConfig {
     /// --out DIR` writes `DIR/observation.json` + `.sig`.
     pub command: PathBuf,
     pub command_sha256: String,
+    /// D: the interpreter a SCRIPT observer runs under, pinned; the script is
+    /// handed to it as `/dev/fd/N` of the verified descriptor. `None`: the
+    /// command must be a binary (a `#!` file is refused, never run through
+    /// its unpinned first line).
+    pub interpreter: Option<crate::sealed_exec::Pinned>,
+    /// D: the uid that must own the command and its interpreter (root on a
+    /// protected host). `None`: any owner (tests without an operator only).
+    pub exec_owner: Option<u32>,
     pub trust: ObserverTrust,
     pub nonces: NonceStore,
     pub max_age_s: u64,
@@ -174,28 +182,46 @@ pub fn observe(
     epoch: u64,
     work: &Path,
 ) -> Result<VerifiedObservation, String> {
-    // The observer program is an authority: exactly its pinned bytes.
-    let got = crate::backend::sha256_file(&cfg.command)?;
-    if got != cfg.command_sha256 {
-        return Err(format!(
-            "observer {} has sha256 {got}, not its pin {}",
-            cfg.command.display(),
-            cfg.command_sha256
-        ));
-    }
+    // The observer program is an authority: exactly its pinned bytes, and
+    // (D) those bytes are the ones executed: hashed on the open descriptor,
+    // which is then executed itself (a script through its pinned interpreter,
+    // reading the same descriptor).
+    use crate::sealed_exec::{self, Lease, Pinned};
+    let program = sealed_exec::open_verified(
+        &Pinned {
+            path: cfg.command.clone(),
+            sha256: cfg.command_sha256.clone(),
+        },
+        cfg.exec_owner,
+        Lease::IfGranted,
+    )
+    .map_err(|e| format!("observer {e}"))?;
+    let interpreter = match &cfg.interpreter {
+        Some(p) => Some(
+            sealed_exec::open_verified(p, cfg.exec_owner, Lease::IfGranted)
+                .map_err(|e| format!("observer interpreter {e}"))?,
+        ),
+        None => None,
+    };
     std::fs::create_dir(work).map_err(|e| format!("observation dir: {e}"))?;
-    let status = std::process::Command::new(&cfg.command)
-        .arg("--manifest")
-        .arg(manifest_file)
-        .arg("--out")
-        .arg(work)
-        .env_clear()
-        .env("PATH", "/usr/sbin:/usr/bin:/sbin:/bin")
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map_err(|e| format!("observer did not run: {e}"))?;
+    let status = sealed_exec::command(
+        &program,
+        interpreter.as_ref(),
+        &[
+            "--manifest".into(),
+            manifest_file.as_os_str().to_os_string(),
+            "--out".into(),
+            work.as_os_str().to_os_string(),
+        ],
+        &[("PATH", "/usr/sbin:/usr/bin:/sbin:/bin")],
+        &[],
+    )
+    .map_err(|e| format!("observer did not run: {e}"))?
+    .stdin(std::process::Stdio::null())
+    .stdout(std::process::Stdio::null())
+    .stderr(std::process::Stdio::null())
+    .status()
+    .map_err(|e| format!("observer did not run: {e}"))?;
     if !status.success() {
         return Err(format!("observer exited {:?}", status.code()));
     }

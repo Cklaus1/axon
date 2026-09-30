@@ -1924,7 +1924,13 @@ fn psv_receipt(
         r.matched_checks = Some(1);
     }
     r.evidence_refs.extend(hv.evidence.into_iter().map(opaque));
-    if !launched_ok {
+    // Operator decision B: a protected verdict needs the pinned PRIVILEGED
+    // launcher in its chain. A launch Fabric ran itself (the development
+    // route) is never protected, whatever else it carries (A, amendment 45).
+    let privileged = res
+        .route
+        .may_attest_protected(crate::backend::TEST_TRUST_BUILD);
+    if !launched_ok || !privileged {
         // Whatever derive saw, an inadmissible launch is never protected.
         r.evidence_refs
             .retain(|e| !e.as_str().starts_with(crate::psv::EVIDENCE_CLASS_PREFIX));

@@ -16,6 +16,9 @@ fail() { echo "FAIL: $*"; exit 1; }
 # (the list ProtectedHost::load walks). gate.sh builds axon-fabric first.
 FABRIC_BIN=${AXON_FABRIC_BIN:-${CARGO_TARGET_DIR:-$HERE/../target}/debug/axon-fabric}
 [ -x "$FABRIC_BIN" ] || fail "needs the axon-fabric binary at $FABRIC_BIN (cargo build -p axon-fabric, or set AXON_FABRIC_BIN)"
+# A (amendment 45): the privileged launcher helper, built beside axon-fabric.
+HELPER_BIN=${AXON_PROTECTED_LAUNCHER_BIN:-$(dirname "$FABRIC_BIN")/axon-protected-launcher}
+[ -x "$HELPER_BIN" ] || fail "needs the axon-protected-launcher binary at $HELPER_BIN (cargo build -p axon-fabric)"
 V=40001 C=40002 A1=40003 A2=40004 F=40005
 BASE=$(mktemp -d /var/tmp/axon-preflight.XXXXXX); chmod 0755 "$BASE"
 trap 'rm -rf "$BASE"' EXIT
@@ -35,7 +38,13 @@ fixture() {
   # The Fabric service's own private directories, under an operator directory.
   mkdir -p "$O1D/svc/runs" "$O1D/svc/nonces"; chown $F:$F "$O1D/svc/runs" "$O1D/svc/nonces"
   chmod 0700 "$O1D/svc/runs" "$O1D/svc/nonces"
-  python3 - "$O1D" <<'PY'
+  # A: the setuid-root helper (group = the Fabric's), its root-private staging
+  # root, and the engine its own config pins.
+  cp "$HELPER_BIN" "$O1D/protected-launcher"; chown 0:$F "$O1D/protected-launcher"
+  chmod 4750 "$O1D/protected-launcher"
+  mkdir -p "$O1D/staging" "$O1D/engine"; chmod 0700 "$O1D/staging"; chmod 0755 "$O1D/engine"
+  for f in engine/firecracker engine/jailer dist/rootfs.sqfs; do echo x >"$O1D/$f"; chmod 0644 "$O1D/$f"; done
+  python3 - "$O1D" "${HELPER_FABRIC:-$F}" <<'PY'
 import json, sys
 d = sys.argv[1]
 json.dump({"schema": "axon-fabric-grant-registry/1",
@@ -48,18 +57,29 @@ json.dump({"schema": "axon-protected-host/1",
            "qualification": {"record": f"{d}/record.json", "signature": None, "waivers": None},
            "signer": {"key_path": f"{d}/keys/attest.pk8"},
            "out_root": f"{d}/svc/runs",
+           "privileged_launcher": {"path": f"{d}/protected-launcher"},
            "observer": {"command": {"path": f"{d}/observer.sh"}, "nonce_store": f"{d}/svc/nonces"},
            "grant_registry": {"path": f"{d}/grants/grants.json"}},
           open(f"{d}/protected-host.json", "w"))
+z = "0" * 64
+json.dump({"schema": "axon-protected-launcher/1", "fabric_uid": int(sys.argv[2]),
+           "interpreter": {"path": "/bin/bash", "sha256": z},
+           "launcher": {"path": f"{d}/launcher.sh", "sha256": z},
+           "profile_manifest": {"path": f"{d}/manifest.json", "sha256": z},
+           "artifacts_dir": f"{d}/dist", "firecracker": f"{d}/engine/firecracker",
+           "jailer": f"{d}/engine/jailer", "out_root": f"{d}/svc/runs",
+           "staging_root": f"{d}/staging", "max_timeout_s": 60, "max_input_bytes": 1},
+          open(f"{d}/protected-launcher.json", "w"))
 PY
-  chmod 0644 "$O1D/protected-host.json" "$O1D/grants/grants.json"
+  chmod 0644 "$O1D/protected-host.json" "$O1D/grants/grants.json" "$O1D/protected-launcher.json"
 }
 # A guest's view: the root's parent hidden behind an empty mount (dev stand-in
 # for a Firecracker guest, whose image never contains the host path).
 GUEST_OK="unshare --mount --propagation private sh -c 'mount -t tmpfs none $BASE && sh $HERE/trust_root_guest_probe.sh $ROOT'"
 GUEST_HOST="sh $HERE/trust_root_guest_probe.sh $ROOT"
 run() { # guest-cmd → sets OUT, RC
-  OUT=$("$PF" --root "$ROOT" --host-config "$BASE/o1/protected-host.json" --fabric-bin "$FABRIC_BIN" --verifier $V \
+  OUT=$("$PF" --root "$ROOT" --host-config "$BASE/o1/protected-host.json" \
+    --launcher-config "$BASE/o1/protected-launcher.json" --fabric-bin "$FABRIC_BIN" --verifier $V \
     --custodian $C --fabric $F --agent $A1 --agent $A2 --guest-cmd "$1")
   RC=$?
 }
@@ -123,6 +143,20 @@ for t in runs nonces; do
   fixture; chmod 0777 "$BASE/o1/svc/$t"; run "$GUEST_OK"
   failed_on "world-writable service directory $t" "c['action']=='create' and c['actor'].startswith('agent') and c['target'].endswith('/svc/$t')"
 done
+
+# A (amendment 45): the privileged helper. Each defect FAILS on its own check.
+fixture; chmod 0750 "$BASE/o1/protected-launcher"; run "$GUEST_OK"
+failed_on "helper not setuid" "c['action']=='helper-mode' or (c['action']=='exec-helper' and c['actor']=='fabric')"
+fixture; chmod 4755 "$BASE/o1/protected-launcher"; run "$GUEST_OK"
+failed_on "helper executable by other actors" "c['action']=='exec-helper' and c['actor'].startswith('agent')"
+fixture; chmod 4770 "$BASE/o1/protected-launcher"; run "$GUEST_OK"
+failed_on "helper writable by the Fabric group" "c['action']=='open-write' and c['actor']=='fabric' and c['target'].endswith('protected-launcher')"
+fixture; chown $A1 "$BASE/o1/protected-launcher"; chmod 4750 "$BASE/o1/protected-launcher"; run "$GUEST_OK"
+failed_on "helper not root-owned" "c['action']=='helper-mode'"
+HELPER_FABRIC=$A2 fixture; run "$GUEST_OK"
+failed_on "helper admits another uid than the Fabric" "c['action']=='helper-admits'"
+fixture; chmod 0666 "$BASE/o1/engine/jailer"; run "$GUEST_OK"
+failed_on "agent-writable engine the helper pins" "c['action']=='open-write' and c['actor'].startswith('agent') and c['target'].endswith('/engine/jailer')"
 
 # u:$A1:rw as a POSIX access ACL, written as its xattr (no setfacl needed):
 # version 2, then (tag u16, perm u16, id u32) entries in tag order.

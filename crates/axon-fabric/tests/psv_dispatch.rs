@@ -30,6 +30,8 @@ struct World {
     issuer: Issuer,
     candidate: Acf1Ref,
     manifest: PathBuf,
+    /// A: what the privileged helper re-verifies (the manifest pins them).
+    inputs: HelperInputs,
 }
 
 /// A profile manifest that pins everything a launch manifest names.
@@ -80,22 +82,42 @@ impl World {
             .import_dir(&env.ws, &Quota::default())
             .unwrap();
         let manifest = env.dir.path().join("manifest.json");
-        std::fs::write(&manifest, text).unwrap();
+        let inputs = helper_inputs(&env.dir.path().join("helper-inputs"));
+        std::fs::write(&manifest, inputs.pin_manifest(text)).unwrap();
         World {
             env,
             issuer: Issuer::generate(),
             candidate,
             manifest,
+            inputs,
         }
     }
+    /// The launch through the (test-trust) privileged helper: the route a
+    /// protected host takes (A).
     fn lx(&self, tamper: &str, extra: &str) -> LinuxProfileConfig {
-        let d = self.env.dir.path();
-        let mut lx = qualified_linux_cfg(
-            d,
-            &self.issuer,
-            &good_evidence(&sha256_file(&self.manifest)),
+        let mut lx = self.lx_direct(tamper, extra);
+        let name = format!("protected-launcher-{}.json", &lx.launcher_sha256[..16]);
+        let cfg = write_helper_config(
+            self.env.dir.path(),
+            &self.inputs,
+            &lx.launcher,
+            &self.manifest,
+            &lx.out_root,
+            &name,
         );
-        let script = d.join(format!("psv-launcher-{tamper}.sh"));
+        use_helper(&mut lx, &cfg);
+        lx
+    }
+    /// The DIRECT (development) route: Fabric runs the launcher itself.
+    fn lx_direct(&self, tamper: &str, extra: &str) -> LinuxProfileConfig {
+        let d = self.env.dir.path();
+        let mut ev = good_evidence(&sha256_file(&self.manifest));
+        self.inputs.pin_evidence(&mut ev);
+        let mut lx = qualified_linux_cfg(d, &self.issuer, &ev);
+        let script = d.join(format!(
+            "psv-launcher-{tamper}-{}.sh",
+            &axon_fabric::backend::jail_id(extra)[4..12]
+        ));
         std::fs::write(
             &script,
             format!(
@@ -177,8 +199,8 @@ fn an_operator_suite_passes_through_the_guest_path_as_guest_unobserved() {
         "launch-manifest-sha256:",
         "guest-verdict-sha256:",
         &format!("guest-axon-sha256:{GUEST}"),
-        &format!("guest-kernel-sha256:{}", "1".repeat(64)),
-        &format!("guest-rootfs-sha256:{}", "2".repeat(64)),
+        &format!("guest-kernel-sha256:{}", w.inputs.kernel_sha),
+        &format!("guest-rootfs-sha256:{}", w.inputs.rootfs_sha),
         "check-suite:acc@acf1:",
     ] {
         assert!(
@@ -599,6 +621,10 @@ impl World {
         ObserverConfig {
             command_sha256: sha256_file(&script),
             command: script,
+            // D: the script observer runs under the pinned bash, from its
+            // verified descriptor.
+            interpreter: Some(bash_pin()),
+            exec_owner: Some(unsafe { libc::geteuid() }),
             trust: ObserverTrust::for_test(&self.observer_roots()),
             nonces: NonceStore {
                 dir: d.join("custodian-nonces"),
@@ -1375,4 +1401,89 @@ fn a_second_pass_line_over_a_genuine_pass_is_not_a_pass() {
         Some("check `t_psv_ok` has more than one result line")
     );
     assert_ne!(class(&s), "protected");
+}
+
+// ── A (amendment 45): the protected chain needs the PRIVILEGED launcher ─────
+
+/// Operator decision B: a protected verdict needs the pinned privileged
+/// launcher in its chain. The same fully observed launch on a protected host,
+/// taken by the DIRECT (development) route — Fabric executing the launcher
+/// itself — is never protected and carries no bundle, whatever else holds.
+/// Control: the identical launch through the helper is protected.
+#[test]
+fn a_dev_route_launch_is_never_attested_protected() {
+    let w = World::new();
+    let key = observer_key(w.env.dir.path(), "obs", &[&w.observer_roots()]);
+    let mut cfg = w.protected_cfg();
+    cfg.linux = Some(w.lx_direct("", ""));
+    cfg.observer = Some(w.observer("", &key, "observer"));
+    let s = submit(
+        &w.request("op-dev-route", "check:acc", "t_psv_ok")
+            .to_string(),
+        &cfg,
+    )
+    .unwrap();
+    assert_eq!(
+        s.receipt.verification,
+        ReceiptVerification::Passed,
+        "{:?}",
+        s.reason
+    );
+    assert!(
+        class(&s) != "protected" && s.psv_evidence.is_none(),
+        "ATTACK: a launch Fabric ran itself (the development route, no privileged launcher) \
+         was attested protected: class {}",
+        class(&s)
+    );
+    assert_eq!(class(&s), "guest-unobserved");
+    // Control: through the privileged helper, the same launch is protected.
+    let mut cfg = w.protected_cfg();
+    cfg.linux = Some(w.lx("", ""));
+    cfg.observer = Some(w.observer("", &key, "observer"));
+    let s = submit(
+        &w.request("op-helper-route", "check:acc", "t_psv_ok")
+            .to_string(),
+        &cfg,
+    )
+    .unwrap();
+    assert_eq!(class(&s), "protected", "control: {:?}", s.reason);
+    assert!(s.psv_evidence.is_some());
+}
+
+/// A: the launcher the helper ran must be the one this launch's manifest
+/// (and so its observation) names. A helper configured with another launcher
+/// yields no verdict.
+#[test]
+fn a_helper_that_ran_another_launcher_than_the_pinned_one_yields_no_verdict() {
+    let w = World::new();
+    let key = observer_key(w.env.dir.path(), "obs", &[&w.observer_roots()]);
+    let mut lx = w.lx("", "");
+    // The helper's operator config names a DIFFERENT launcher (a working one).
+    let other = w.lx_direct("", "--note other-launcher");
+    let cfg_path = write_helper_config(
+        w.env.dir.path(),
+        &w.inputs,
+        &other.launcher,
+        &w.manifest,
+        &lx.out_root,
+        "protected-launcher-other.json",
+    );
+    use_helper(&mut lx, &cfg_path);
+    let mut cfg = w.protected_cfg();
+    cfg.linux = Some(lx);
+    cfg.observer = Some(w.observer("", &key, "observer"));
+    let s = submit(
+        &w.request("op-other-launcher", "check:acc", "t_psv_ok")
+            .to_string(),
+        &cfg,
+    )
+    .unwrap();
+    assert!(
+        s.receipt.verification != ReceiptVerification::Passed && class(&s) != "protected",
+        "ATTACK: a launch by a launcher other than the one the manifest pins was accepted: {:?} \
+         class {}",
+        s.receipt.verification,
+        class(&s)
+    );
+    assert!(s.reason.unwrap_or_default().contains("not the pinned"));
 }
