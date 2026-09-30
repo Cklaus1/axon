@@ -1092,11 +1092,139 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       which takes `--test-config`); decide whether the out root and the staging root may share a filesystem with anything
       else; and the compiled-launcher follow-up above if the operator wants the script's tools out
       of the TCB.
+46. **Sealed code acts only on its own operations; a test completes only when its body ran to its
+    end (C9 round 3, core workstream; PSV-1 and PSV-3 blockers).**
+    - **PSV-1, handlers.** A candidate's `with handler` answered builtins that the OPERATOR's code
+      performed: a closure the suite handed the candidate, called inside the candidate's `with`.
+      The arm aborted the operator's listener at its `println` (the assert never ran), or resumed
+      its `read_file` with bytes the candidate chose. Both gave a keyed pass for a wrong answer
+      through the real runner. The rule now lives in one predicate, `Interp::handler_may_answer`:
+      a SEALED handler frame may answer or abort an operation only if no OPERATOR frame has been
+      entered since the frame was installed. Otherwise the search goes on outward to an operator
+      frame, or the real builtin runs. `with_frame` is the only place provenance changes, and it
+      counts active frames of each provenance, so the check is exact. It covers a third route the
+      review did not execute: the operator's listener calls a CANDIDATE function, and the
+      candidate's outer handler aborts at that function's `println`. The operation is sealed, but
+      the abort would unwind through operator code. A check on "is the operation's frame sealed"
+      misses that route (row M562 is killed by exactly it). The same predicate gates the
+      multi-shot replay feed. A sealed arm's `resume(v)` is never the result of an operator
+      operation during the replay: that operation cannot be re-fired, so it is E1314. An operator
+      handler still answers anything, including an operation candidate code performs inside it.
+      The candidate's handler still answers the candidate's own operations. `run_handler_arm` is
+      the one frame-selection point; `host_await*` and every effectful builtin reach it through
+      the same interception in `call_builtin`. No other code selects a frame.
+    - **PSV-1, RNG.** Operator code that runs ABOVE a sealed frame is refused the operator RNG
+      (`Interp::rng_next` and `rng_reseed`, the only draw and reseed paths). Examples are a closure
+      the suite handed the candidate, or an operator handler arm answering a candidate operation.
+      The run fails with a clear error. The candidate decides how many times such code runs, so a
+      draw there would advance the operator's stream by a count the candidate chose, and steer
+      the operator's next challenge (review run3.log: 652 after one call, 125 after five). We
+      REFUSE rather than give that code a third stream. A third stream is still advanced by
+      call count, so what the closure draws stays candidate-scheduled. A refusal is fail-closed
+      and visible to the suite author, who can draw before handing code to the candidate. The
+      candidate's own draws (sealed kernel) and the operator's draws with no sealed frame below
+      them are unchanged. The superseded note is PCI spec row 10's "a closure the suite hands to
+      the candidate runs under the candidate's handlers by the suite's own choice". A closure the
+      suite hands over still runs where the candidate calls it, but candidate handlers no longer
+      reach it and it cannot draw the operator RNG. The PCI spec is not edited here.
+    - **PSV-3.** `run_test_fn_inner` decided Completed from the returned value's tag. `?` on a
+      type-confused `None` returns `None`, which is not `Err`, so it read as a completion and a
+      genuine token was minted. The single source is now whether the TEST frame's body evaluated
+      to its end. `call_fn_frame` records it for the test's depth. Any `Flow::Return` there, from
+      `?` or `return`, whatever it carries, is EndedEarly and gets no token. This is stricter
+      than before for an explicit `return` in a test body: `axon test` still reports it as
+      passing, but it no longer carries completion evidence. The confusion itself is closed where
+      it is cheap and sound. A `fn` declared `-> Result` that returns `Some`/`None`, or one
+      declared `-> Option` that returns `Ok`/`Err`, panics at its return boundary. The review's
+      exact candidate now FAILS on that confusion.
+    - **Language follow-up (not fixed here).** `dict_get`, `dict_get_or` and `host_await_val`
+      return a free type variable, so a stored value of any type unifies with any use. A closure
+      has no declared return type at run time, so the boundary check does not cover its return
+      (it still catches the value at the next declared `fn`, including a test declared
+      `-> Result`). An `Option`-returning test whose `?` meets a well-typed `None` is the route
+      where the completion rule is the only guard; a test pins it
+      (`a_test_ended_by_question_mark_is_never_completed`, `t_find`). The fix belongs in the type
+      system: typed dicts, or a runtime tag check against the inferred type.
+    - **Rows.** M560 (the frame-selection filter), M561 (the replay feed), M562 (counting operator
+      frames rather than reading the current provenance), M563 (the RNG refusal), M564/M565 (the
+      completion decision and the flag it reads), M566 (the return-boundary check). Negative matrix
+      A76 and A77. The guest image must be REBUILT to carry the new interpreter; its scripts and
+      runner are unchanged.
+
+47. **Readiness applies Fabric's B263 rules; decision E by what git acts on; lineage from
+    hash-checked objects (C9 round 3, readiness workstream).**
+    - **One set of B263 rules (PSV-7).** Readiness checked only the signature, schema, profile and
+      guest digests of the B263 record a certification names. An operator-signed record that
+      FAILED, was stale, came from a dirty tree or named no host certified PASS, and readiness
+      stayed PASS after the host's qualification lapsed, while Fabric refused every protected
+      launch. The record's rules (issuer-claimed, fail-zero, pass-count, blocked-count, result,
+      waivers, end not future and within the maximum age, engine digests, tree-clean, host, caveat)
+      are now one function, `backend::accept_b263`, called by Fabric's `qualification()` and by
+      readiness. Readiness judges currency at DECISION time (system clock, Fabric's default 30
+      days), takes waivers only from certified, qualification-signed waiver files bound to the
+      record, joins the observation's `firecracker_sha256` to the record's engine, and requires
+      `certified_at` to parse, to be no earlier than the observation's `observed_at`, and not to be
+      in the future. The manifest rules (engine pins, manifest-clean, manifest identity) stay
+      Fabric's, since they are about the host's installed manifest. The readiness fixture's B263
+      record is now a genuine qualifying record. Negative-matrix A78.
+    - **Decision E on the repository git acts on.** `git_data::discover` accepted any real `.git`
+      directory. A linked worktree's admin dir copied in as `.git` (its `commondir` naming another
+      clone) got a clean, descending answer from readiness, build and guest provenance and the
+      freeze. `discover` now also requires the hardened git's `--git-common-dir` to be `top/.git`.
+      `v022_freeze_manifest.py` applies the same rule through `/usr/bin/git` with the caller's
+      environment dropped, which also stops a caller's `GIT_DIR` from choosing the bound
+      `axon_sha`. Negative-matrix A79.
+    - **Lineage from verified objects.** Readiness and `provenance::lineage` used `git merge-base
+      --is-ancestor`, whose commit walk never checks an object's hash. `git_data::descends` walks
+      from HEAD through `Objects` (every commit hashed against its name, parents parsed from those
+      bytes) and stops at the revision or a root. The review judged the readiness route immaterial
+      because of its tree comparison; executed, it was not: the forged ancestor certified PASS,
+      since the orphan carried the certified tree. Negative-matrix A80.
+    - **Rows M570-M584**, each killed by its own attack. Tested but not rowed (the allocation is
+      spent): the `certified_at` parse, the moved RULE:issuer-claimed on the readiness route, and
+      the freeze script's caller-environment drop.
+
+49. **The suite join has one reading; the launch names its authority (C9 round 3, loop
+    workstream; PSV-5 and PSV-6; matrix A81, A82; rows M610-M618).**
+    - **Suite join (A81).** `check_bundle` formatted the manifest's suite as
+      `{id}@{version}#{entry}` and compared that string with the receipt's `check-suite:` ref. A
+      manifest naming version `V#x`, entry `accept.ax` therefore joined the pin
+      `check-suite:acceptance@V#x#accept.ax`, which the one parser reads as version `V`, entry
+      `x#accept.ax` (reproduced on bf964212: the reviewer's case was recorded as a protected
+      verdict). The receipt's ref is now read by `parse_check_suite_ref` and compared with the
+      manifest field by field; the request's `check:<id>` is compared with the parsed id. The one
+      writer, `runner::check_suite_ref`, now returns an error unless the reference it writes reads
+      back as exactly its (id, version, entry); Fabric's `register_check` (every registration, file
+      or library) and `psv::prepare` go through it, and Fabric writes a suite's reference once,
+      where the suite is resolved. `check_pins` compared the argv id as a string prefix of the
+      recorded ref; it now compares the parsed id. The parser already refused `@` and `#` in a
+      version and a separator in an id. An entry may still hold `#` or `@`: it is the tail after
+      the version's first `#`, so with the id and version separator-free every reference has one
+      reading, and the second readings were all consumers that did not use the parser.
+    - **Launch authority (A82).** The launch manifest is now `axon-launch-manifest/2`: it carries
+      `authority` = {`epoch`, `tenant_id`, `task_family`}, the scope's authority epoch the launch
+      was made under and the scope. The observer receives the manifest, and its signed
+      `intended_launch_manifest_sha256` covers the authority. `check_bundle` takes the trial's
+      scope beside its epoch (intake passes the episode's, which it binds to the scope pointer) and
+      refuses a manifest naming another epoch, tenant or family. On a protected host the
+      launch-time epoch is read from the store the host config pins (`authority_store`, optional
+      key; its parent directory is operator-owned and the trust preflight probes it as
+      `authority-store`). A caller `--store` that names another store is refused; one naming the
+      same store is accepted, as MiCode passes it; a host config that pins none launches nothing.
+      The preflight observation's own shape is unchanged: its `epoch` is still joined to the
+      trial's epoch, and now also transitively to the manifest's.
+    - **Consumers.** MiCode (`micode-persist/src/fabric_check.rs`) keeps the `psv_evidence` bundle
+      verbatim and parses no launch manifest, so nothing there breaks. On a protected host its
+      `loop_store` must be the host config's `authority_store`. The guest runner verifies the
+      manifest (`LaunchManifest::verify`, `deny_unknown_fields`), so an image built before this
+      change refuses every `/2` manifest: **the guest image must be rebuilt** and
+      `psv_guest_boot_test.sh` re-run on it before this counts as proven in a guest. An operator
+      observer program must read the manifest's `authority.epoch` rather than any fixed value.
 
 50. **The observation nonce belongs to a CUSTODIAN, and the root helper launches only on its one
     observation (operator decision D6; C9 round 3, custodian workstream; PSV-6 findings "there is
     no separate custodian" and "the setuid-root helper launches without any observation").**
-    Negative-matrix A83-A84; mutation rows M620-M638. Supersedes the nonce parts of §7, of
+    Negative-matrix A83-A84; mutation rows M620-M639. Supersedes the nonce parts of §7, of
     amendment 35 (A56's `nonce_store` leaf) and of amendment 45's helper description; §2's
     example `observer.nonce_store` is superseded by `observer.custodian`.
     - **Before.** Fabric issued the nonce (its own RNG), stored it (a Fabric-owned 0700
@@ -1150,12 +1278,12 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       the observation's epoch, as root. Only a protected custodian's spend (a test custodian's
       inside a test-trust helper) authorizes the launch. Any failure: exit 30, nothing launched.
       `helper_agrees` holds the helper's custodian and host signer to the host config's.
-    - **Where this meets the epoch workstream.** The epoch the helper joins is the observation's,
-      checked by the custodian against the epoch the nonce was issued for, which is the
-      `expected_epoch` Fabric was given. When the launch manifest gains the authority epoch and
-      scope (the loop workstream), `verify_observation`'s join and the helper's snapshot manifest
-      carry it with no change here; the helper should then also require `o.epoch` to equal the
-      manifest's epoch (one line in `verify_observation_at_root`).
+    - **Where this meets the epoch workstream (amendment 49).** The launch manifest is
+      `axon-launch-manifest/2` and names `authority {epoch, tenant_id, task_family}`. At the root
+      boundary the observation's epoch must equal the snapshot manifest's `authority.epoch`, and
+      the custodian holds the same epoch to the one the nonce was issued for. So the epoch the
+      root launch is authorized under is the one the manifest (and the digest the verdict binds)
+      names, not a claim beside it (mutation row M639).
     - **Trust preflight.** `axon-fabric protected-host-paths` lists the custodian's config
       (operator file), its store and socket, and its three uids; `trust_root_preflight.sh`
       requires the custodian actor to be the config's `custodian_uid`, separate from the Fabric's

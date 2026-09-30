@@ -12,6 +12,8 @@
 #[path = "common/exec.rs"]
 mod exec;
 use exec::write_executable;
+#[path = "common/git_attacks.rs"]
+mod git_attacks;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -499,4 +501,62 @@ fn a_head_that_does_not_descend_from_the_pci_certification_is_dirty() {
         "a HEAD that does not descend from the PCI-certified revision",
     );
     assert!(src.to_string().contains("PCI lineage"), "{src}");
+}
+
+/// Decision E by what git acts on (review PSV-7 / FIELD-ORIGIN, C9 round 3;
+/// A79): the guest helper gave a linked worktree whose admin directory was
+/// copied in as a real `.git` a clean, PCI-descending answer. Control: the
+/// clone it came from is clean.
+#[test]
+fn a_linked_worktree_disguised_as_a_git_directory_is_never_clean() {
+    let f = fixture(true);
+    let wt = f.d.path().join("wt");
+    git_attacks::disguise_worktree(&f.repo, &wt);
+    let snap = |repo: &Path, name: &str| -> Value {
+        let p = f.d.path().join(name);
+        Fx {
+            d: tempfile::tempdir().unwrap(),
+            repo: repo.to_path_buf(),
+        }
+        .script(&["--snapshot", p.to_str().unwrap()], &[]);
+        serde_json::from_slice(&std::fs::read(&p).unwrap()).unwrap()
+    };
+    let control = snap(&f.repo, "clone-pre.json");
+    assert_eq!(
+        control["dirty"],
+        serde_json::json!([]),
+        "control: {control}"
+    );
+    let p = snap(&wt, "wt-pre.json");
+    assert!(
+        p["dirty"].as_array().is_some_and(|d| d
+            .iter()
+            .any(|r| r.as_str().is_some_and(|r| r.contains("linked worktree")))),
+        "ATTACK: a linked worktree's admin dir placed as .git was accepted as the build's tree: {p}"
+    );
+}
+
+/// A80: the guest manifest's PCI lineage is read from hash-checked objects.
+/// HEAD becomes D, whose parent C is an orphan (so HEAD does NOT descend from
+/// the PCI-certified base); C's loose object is then rewritten under its own
+/// name to name the base as its parent. `git merge-base --is-ancestor`
+/// believed it and the manifest read clean. Control: before the forgery the
+/// manifest is dirty for lineage.
+#[test]
+fn a_forged_ancestor_object_does_not_pass_the_pci_lineage() {
+    let f = fixture(true);
+    let base = f.rev("HEAD~1");
+    let c = git_attacks::commit_tree(&f.repo, &[], "C");
+    let d = git_attacks::commit_tree(&f.repo, &[&c], "D");
+    git(&f.repo, &["update-ref", "refs/heads/main", &d]);
+    let src = f.build();
+    assert!(
+        src.to_string().contains("PCI lineage"),
+        "control: an unforged non-descendant is dirty for lineage: {src}"
+    );
+    git_attacks::forge_parent(&f.repo, &c, &base);
+    assert_dirty(
+        &f.build(),
+        "a forged ancestor object made HEAD descend from the PCI-certified revision",
+    );
 }

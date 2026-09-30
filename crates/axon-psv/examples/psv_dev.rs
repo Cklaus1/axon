@@ -91,6 +91,11 @@ fn make_job(args: &[String]) {
         // A custodian-issued nonce when the launch goes through the
         // privileged helper, which spends it (amendment 50).
         observation_nonce: arg(args, "--nonce").unwrap_or_else(|| "dev".into()),
+        authority: AuthorityRef {
+            epoch: 0,
+            tenant_id: "tenant-t".into(),
+            task_family: "family-f".into(),
+        },
         limits: Limits {
             wall_time_ms: 60_000,
             output_bytes: 1 << 20,

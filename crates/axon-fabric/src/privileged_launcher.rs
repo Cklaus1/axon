@@ -978,6 +978,16 @@ fn verify_observation_at_root(
         &req.psv_manifest_sha256,
     )
     .map_err(|e| format!("no verified observation: {e}"))?;
+    // "Of this epoch" at the root boundary: the observation's epoch is the
+    // authority epoch the launch manifest names (`/2`, loop workstream), and
+    // the custodian then holds it to the epoch the nonce was issued for.
+    if o.epoch != m.authority.epoch {
+        return Err(format!(
+            "no verified observation: it is for epoch {}, but the launch manifest names \
+             authority epoch {}",
+            o.epoch, m.authority.epoch
+        ));
+    }
     Ok(o.epoch)
 }
 

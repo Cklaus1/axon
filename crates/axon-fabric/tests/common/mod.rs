@@ -666,7 +666,7 @@ m_path, out, mode, kid = sys.argv[1:]
 raw = open(m_path, "rb").read(); m = json.loads(raw)
 now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 o = {{"schema": "axon-preflight-observation/1", "observer_key_id": kid,
- "nonce": m["observation_nonce"], "epoch": 0, "observed_at": now,
+ "nonce": m["observation_nonce"], "epoch": m["authority"]["epoch"], "observed_at": now,
  "host_profile": m["backend_profile"], "fabric_revision": m["fabric_revision"],
  "firecracker_sha256": m["firecracker_sha256"], "launcher_sha256": m["launcher_sha256"],
  "host_config_sha256": m["host_config_sha256"], "guest": m["guest"],
@@ -985,7 +985,7 @@ pub fn start_custodian(dir: &Path) -> TestCustodian {
 pub fn test_launch_manifest(op: &str, nonce: &str) -> Value {
     let h = |c: char| c.to_string().repeat(64);
     json!({
-        "schema": "axon-launch-manifest/1",
+        "schema": "axon-launch-manifest/2",
         "operation_id": op, "task_id": "task:t", "trial_id": "trial:t", "attempt_id": "attempt:1",
         "backend_profile": "linux-microvm-protected", "fabric_revision": "rev",
         "verifier_sha256": h('1'), "qualification_sha256": h('2'), "host_config_sha256": h('3'),
@@ -998,6 +998,7 @@ pub fn test_launch_manifest(op: &str, nonce: &str) -> Value {
         "candidate": {"workspace_version": "ws", "tree_digest": h('e')},
         "completion": {"scheme": "axon-guest-completion/1"},
         "observation_nonce": nonce,
+        "authority": {"epoch": 0, "tenant_id": "tenant-t", "task_family": "family-f"},
         "limits": {"wall_time_ms": 60000, "output_bytes": 1048576},
     })
 }

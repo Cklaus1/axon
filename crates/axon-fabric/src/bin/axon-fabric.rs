@@ -835,14 +835,19 @@ fn submit(a: &Args) {
         grant_registry_sha256: h.grant_registry.as_ref().map(|(_, pin)| pin.clone()),
     });
     let observer = host.as_ref().and_then(|h| h.observer.clone());
+    // A82: on a protected host the launch-time epoch is read from the store
+    // the operator pinned, never a caller's --store.
+    let store = match &host {
+        Some(h) => h
+            .authority_store(a.opt("--store").map(PathBuf::from).as_deref())
+            .unwrap_or_else(|e| refuse("unregistered", &e, 4)),
+        None => PathBuf::from(a.req("--store")),
+    };
     let linux = host.map(|h| h.linux);
     let cfg = SubmitConfig {
         journal: PathBuf::from(a.req("--journal")),
         registry,
-        epoch: EpochSource::LoopStore {
-            store: PathBuf::from(a.req("--store")),
-            scope: sc,
-        },
+        epoch: EpochSource::LoopStore { store, scope: sc },
         expected_epoch: expected,
         workspace: PathBuf::from(a.opt("--workspace").unwrap_or_else(|| ".".into())),
         state_dir: state_dir(a),

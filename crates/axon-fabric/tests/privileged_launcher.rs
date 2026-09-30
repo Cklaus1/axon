@@ -226,6 +226,10 @@ impl Fx {
             ),
         })
     }
+    /// A nonce the fixture's custodian issues for `epoch`.
+    fn cust_issue(&self, epoch: u64) -> String {
+        self._cust.issue(epoch)
+    }
     /// How many times the stand-in launcher ran.
     fn launches(&self) -> usize {
         std::fs::read_to_string(&self.marker)
@@ -746,4 +750,42 @@ fn an_observation_signed_with_the_host_signer_launches_nothing() {
     f.put_inputs();
     let (code, rep) = f.run(&r, None);
     assert_eq!(code, Some(0), "control: the key in no other role: {rep}");
+}
+
+/// PSV-6 "of this epoch" at the root boundary: a genuine, correctly signed
+/// observation of THIS manifest (same nonce, same facts) made for another
+/// epoch than the manifest's `authority.epoch`. The nonce was issued for the
+/// observation's epoch, so the custodian would spend it: the manifest join is
+/// the only refusal. Control: the observation at the manifest's epoch
+/// launches.
+#[test]
+fn an_observation_whose_epoch_is_not_the_manifests_launches_nothing() {
+    let f = fx(None, "", |_| {});
+    // A manifest naming a nonce issued for epoch 7 but authority epoch 0,
+    // and an observation for epoch 7: the custodian would spend it (epoch 7
+    // matches the issue), so only the manifest join can refuse.
+    let mut m: Value = serde_json::from_slice(&f.manifest).unwrap();
+    m["observation_nonce"] = json!(f.cust_issue(7));
+    let manifest = serde_json::to_vec(&m).unwrap();
+    let obs = serde_json::to_vec(&observation_of(&manifest, &f.observer.key_id(), 7)).unwrap();
+    let f = Fx {
+        manifest,
+        observation: obs,
+        ..f
+    };
+    f.put_inputs();
+    let (code, rep) = f.run(&f.request("op-epoch"), None);
+    assert!(
+        code == Some(30) && f.launches() == 0,
+        "ATTACK: an observation for epoch 7 launched a manifest naming authority epoch 0: \
+         {code:?} {rep}"
+    );
+    assert!(
+        rep["error"].as_str().unwrap().contains("authority epoch"),
+        "{rep}"
+    );
+    // Control: the fixture's own observation (epoch 0 = the manifest's).
+    let f = fx(None, "", |_| {});
+    let (code, rep) = f.run(&f.request("op-1"), None);
+    assert_eq!(code, Some(0), "control: {rep}");
 }

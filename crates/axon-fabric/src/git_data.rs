@@ -359,6 +359,37 @@ impl Objects {
     }
 }
 
+impl Objects {
+    /// Is `target` `from` or an ancestor of it? Each commit read by hash
+    /// ([`Objects::read`]) and its parents taken from those verified bytes.
+    pub fn reaches(&mut self, from: &str, target: &str) -> Result<bool, String> {
+        let mut seen = std::collections::BTreeSet::new();
+        let mut todo = vec![from.to_string()];
+        while let Some(c) = todo.pop() {
+            if c == target {
+                return Ok(true);
+            }
+            if !seen.insert(c.clone()) {
+                continue;
+            }
+            let body = self.read(&c, "commit")?;
+            for line in body.split(|b| *b == b'\n') {
+                if line.is_empty() {
+                    break; // end of the header
+                }
+                if let Some(p) = line.strip_prefix(b"parent ") {
+                    let p = String::from_utf8_lossy(p).to_string();
+                    if !is_oid(&p) {
+                        return Err(format!("commit {c} names a malformed parent"));
+                    }
+                    todo.push(p);
+                }
+            }
+        }
+        Ok(false)
+    }
+}
+
 impl Drop for Objects {
     fn drop(&mut self) {
         drop(self.child.stdin.take());
@@ -762,14 +793,94 @@ fn find_dotgit(dir: &Path) -> Result<(PathBuf, std::fs::Metadata), String> {
 /// verifier or guest image is built from a plain clone.
 pub fn discover(dir: &Path) -> Result<PathBuf, String> {
     let (top, m) = find_dotgit(dir)?;
-    match m {
+    let top = match m {
         m if m.is_dir() => Ok(top),
         _ => Err(format!(
             "{} is not a directory (a gitfile or symlink names a repository elsewhere): \
              refused, build from a plain clone",
             top.join(".git").display()
         )),
+    }?;
+    own_repository(&top)?;
+    Ok(top)
+}
+
+/// Decision E, on what git ACTS on rather than on what kind of file `.git`
+/// is (review PSV-7 / FIELD-ORIGIN, C9 round 3; A79): a linked worktree's
+/// admin directory copied in as a real `.git` directory still names another
+/// repository in its `commondir`, and git reads that repository's objects,
+/// refs and config. Asked of the hardened git itself, whose answer every
+/// later call acts on: the repository's common dir must be `top/.git`.
+fn own_repository(top: &Path) -> Result<(), String> {
+    let dotgit = top.join(".git");
+    let common = text(
+        top,
+        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+    )?;
+    let canon = |p: &Path| std::fs::canonicalize(p).map_err(|e| format!("{}: {e}", p.display()));
+    let (got, want) = (canon(Path::new(&common))?, canon(&dotgit)?);
+    if got != want {
+        return Err(format!(
+            "{} is a linked worktree's git dir (its repository is {}): refused, a protected \
+             answer comes from a standalone clone",
+            dotgit.display(),
+            got.display()
+        ));
     }
+    Ok(())
+}
+
+/// Does HEAD of the working tree at `top` descend from `rev` (or is it
+/// `rev`)? Answered from the object store through [`Objects`], never by
+/// git's own commit walk (`merge-base --is-ancestor`), which does not check
+/// that an object's bytes hash to its name: a forged ancestor object made a
+/// non-descending HEAD "descend" (review FIELD-ORIGIN, C9 round 3; A80).
+/// Every commit on the way is read by hash, its parents parsed from those
+/// bytes; the walk stops at `rev` or at a root. A tag `rev` is peeled the
+/// same way. Anything unreadable is Err, never "descends".
+pub fn descends(top: &Path, rev: &str) -> Result<(), String> {
+    if rev.is_empty() || rev.starts_with('-') {
+        return Err(format!("{rev:?} is not a revision"));
+    }
+    let head = text(top, &["rev-parse", "--verify", "HEAD^{commit}"])?;
+    let mut target = text(
+        top,
+        &[
+            "rev-parse",
+            "--verify",
+            "--end-of-options",
+            &format!("{rev}^{{object}}"),
+        ],
+    )?;
+    let mut o = Objects::open(top)?;
+    for _ in 0..8 {
+        match text(top, &["cat-file", "-t", &target])?.as_str() {
+            "commit" => {
+                return if o.reaches(&head, &target)? {
+                    Ok(())
+                } else {
+                    Err(format!("HEAD does not descend from {rev}"))
+                };
+            }
+            "tag" => {
+                let t = o.read(&target, "tag")?;
+                target = t
+                    .strip_prefix(b"object ")
+                    .and_then(|r| r.get(..40))
+                    .map(|x| String::from_utf8_lossy(x).to_string())
+                    .filter(|x| is_oid(x))
+                    .ok_or(format!("tag {target} names no object"))?;
+            }
+            other => return Err(format!("{rev} is a {other}, not a commit")),
+        }
+    }
+    Err(format!("{rev}: too many nested tags"))
+}
+
+fn is_oid(s: &str) -> bool {
+    s.len() == 40
+        && s.bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
 /// [`discover`], also accepting a linked worktree's gitfile (never a
@@ -941,6 +1052,64 @@ pub(crate) mod tests {
             git(&r, &["config", k, v]);
         }
         assert_eq!(refuse_config(&r), Ok(()));
+    }
+
+    /// The repository attacks shared with the integration tests (one copy,
+    /// `tests/common/git_attacks.rs`, declared at each crate root).
+    pub(crate) use crate::test_git_attacks::{commit_tree, disguise_worktree, forge_parent, rev};
+
+    /// Decision E (A79): a linked worktree whose admin directory is placed as
+    /// a real `.git` directory is refused like its gitfile. Control: the
+    /// standalone clone it came from.
+    #[test]
+    fn a_linked_worktree_disguised_as_a_git_directory_is_refused() {
+        let d = tempfile::tempdir().unwrap();
+        let r = d.path().join("repo");
+        std::fs::create_dir_all(&r).unwrap();
+        git(&r, &["init", "-q", "-b", "main"]);
+        std::fs::write(r.join("f"), "x\n").unwrap();
+        git(&r, &["add", "-A"]);
+        git(&r, &["commit", "-q", "-m", "c"]);
+        let wt = d.path().join("wt");
+        disguise_worktree(&r, &wt);
+        assert_eq!(discover(&r).unwrap(), r.canonicalize().unwrap(), "control");
+        let got = discover(&wt);
+        assert!(
+            got.is_err(),
+            "ATTACK: a linked worktree's admin dir placed as .git was accepted as a standalone \
+             clone: {got:?}"
+        );
+        assert!(got.unwrap_err().contains("linked worktree"));
+    }
+
+    /// A80: lineage is read from hash-checked objects. R -> A (the certified
+    /// revision) on one side; R -> C -> D (HEAD) on the other. C's loose
+    /// object is rewritten under its own name to say `parent A`. Control: a
+    /// genuine descendant descends, and the unforged HEAD does not.
+    #[test]
+    fn a_forged_ancestor_object_does_not_make_head_descend() {
+        let d = tempfile::tempdir().unwrap();
+        let r = d.path().join("repo");
+        std::fs::create_dir_all(&r).unwrap();
+        git(&r, &["init", "-q", "-b", "main"]);
+        std::fs::write(r.join("f"), "x\n").unwrap();
+        git(&r, &["add", "-A"]);
+        git(&r, &["commit", "-q", "-m", "R"]);
+        let root = rev(&r, "HEAD");
+        let a = commit_tree(&r, &[&root], "A (certified)");
+        let c = commit_tree(&r, &[&root], "C");
+        let head = commit_tree(&r, &[&c], "D");
+        git(&r, &["update-ref", "refs/heads/main", &head]);
+        let top = r.canonicalize().unwrap();
+        assert!(descends(&top, &root).is_ok(), "control: R is an ancestor");
+        assert!(descends(&top, &a).is_err(), "control: A is not");
+        forge_parent(&r, &c, &a);
+        let got = descends(&top, &a);
+        assert!(
+            got.is_err(),
+            "ATTACK: a forged ancestor object made HEAD descend from a revision it does not: \
+             {got:?}"
+        );
     }
 
     #[test]

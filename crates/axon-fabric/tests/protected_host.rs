@@ -798,11 +798,13 @@ fn the_preflight_probe_list_is_exactly_what_load_enforces() {
     );
     std::fs::write(h.p("dist/vmlinux"), "k").unwrap();
     std::fs::write(h.p("observer.sh"), "#!/bin/sh\n").unwrap();
+    std::fs::create_dir_all(h.p("authority/loop-store")).unwrap();
     h.write_config(|v| {
         let pin = |n: &str| json!({"path": h.p(n), "sha256": sha256_file(&h.p(n))});
         v["observer"] = json!({"command": pin("observer.sh"),
                                "custodian": {"socket": h.p("custodian/custodian.sock"), "uid": 4244}});
         v["grant_registry"] = pin("grants/grants.json");
+        v["authority_store"] = json!(h.p("authority/loop-store"));
     });
     // Everything the operator's, 0755/0644; the key and the service dirs as set.
     let mut all: Vec<PathBuf> = vec![base.to_path_buf()];
@@ -839,6 +841,7 @@ fn the_preflight_probe_list_is_exactly_what_load_enforces() {
         h.p("dist"),
         h.p("runs"),
         h.p("custodian/custodian.sock"),
+        h.p("authority/loop-store"),
     ] {
         assert!(
             listed.iter().any(|(_, p)| *p == want),
@@ -874,6 +877,8 @@ fn the_preflight_probe_list_is_exactly_what_load_enforces() {
             PinnedKind::SigningKey | PinnedKind::CustodianSocket => {
                 p.parent().unwrap().to_path_buf()
             }
+            // A82: the store is the loop's; load walks the directory holding it.
+            PinnedKind::AuthorityStore => p.parent().unwrap().to_path_buf(),
             _ => p.clone(),
         };
         std::os::unix::fs::chown(&target, Some(1000), None).unwrap();

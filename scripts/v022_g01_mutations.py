@@ -208,7 +208,8 @@ MUTATIONS = [
      'axon-loop', '--test intake', 'a_verdict_counts_only_for_what_the_operator_pinned'),
     ('M29', 'intake: the recorded suite is the one argv named',
      'crates/axon-loop/src/intake.rs',
-     '    if !recorded.starts_with(&format!("check-suite:{suite_id}@"))\n        ||',
+     # C9 r3 (loop, A81): re-anchored; the recorded id is read by the one parser.
+     '    if axon_loop_contracts::suite::parse_check_suite_ref(recorded).map(|(id, _, _)| id)\n        != Ok(suite_id)\n        ||',
      '    if false\n        ||',
      'axon-loop', '--test intake', 'a_verdict_recorded_for_a_suite_the_request_did_not_name_is_refused'),
     ('M30', "intake: argv is the task's registered acceptance check",
@@ -275,8 +276,9 @@ MUTATIONS = [
     ('M43', "Fabric: the suite's entry is in the signed identity",
      'crates/axon-fabric/src/submit.rs',
      # C9 r2 (rows): re-anchored; the ref is now written by runner::check_suite_ref.
-     'axon_cortex::runner::check_suite_ref(&s.id, s.version.as_str(), &target.file)',
-     'format!("check-suite:{}@{}", s.id, s.version)',
+     # C9 r3 (loop, A81): re-anchored; written once, where the suite resolves.
+     'axon_cortex::runner::check_suite_ref(id, version.as_str(), &c.entry)',
+     'Ok::<String, String>(format!("check-suite:{}@{}", id, version))',
      'axon-fabric', '--test attestation', 'fabric_signs_as_the_operators_signer_and_only_when_the_workload_cannot_reach_the_key'),
     ('M44', 'Fabric: a check runs from an empty environment',
      'crates/axon-fabric/src/submit.rs',
@@ -834,7 +836,7 @@ MUTATIONS = [
     ('M234', 'B2: the observation names its signer', 'crates/axon-loop-contracts/src/protected_evidence.rs', 'if o.observer_key_id != signer {', 'if false && o.observer_key_id != signer {', 'axon-loop', '--test intake', 'each_protected_join_is_verified_over_the_documents'),
     ('M235', 'B2: the observation joins the manifest', 'crates/axon-loop-contracts/src/protected_evidence.rs', '    o.joins(&m, &m_sha)?;\n', '', 'axon-loop', '--test intake', 'each_protected_join_is_verified_over_the_documents'),
     ('M236', 'B2: the manifest joins the request and receipt', 'crates/axon-loop-contracts/src/protected_evidence.rs', '        if manifest != other {', '        if false && manifest != other {', 'axon-loop', '--test intake', 'each_protected_join_is_verified_over_the_documents'),
-    ('M237', 'B2: the manifest suite is the receipt check-suite', 'crates/axon-loop-contracts/src/protected_evidence.rs', 'if want("check-suite:")? != suite_ref {', 'if false && want("check-suite:")? != suite_ref {', 'axon-loop', '--test intake', 'each_protected_join_is_verified_over_the_documents'),
+    ('M237', 'B2: the manifest suite is the receipt check-suite', 'crates/axon-loop-contracts/src/protected_evidence.rs', '    if manifest_suite != (sid, sver, sentry) {', '    if false && manifest_suite != (sid, sver, sentry) {', 'axon-loop', '--test intake', 'each_protected_join_is_verified_over_the_documents'),
     ('M238', 'B2: the observation is signed under the operator observer root', 'crates/axon-loop-contracts/src/protected_evidence.rs', '        &rooted_keys(TrustAuthority::Observer)?,\n        TrustAuthority::Observer,', '        &serde_json::from_str::<serde_json::Value>(&b.observation_signature).ok().and_then(|v| v["public_key"].as_str().and_then(|h| (0..h.len()).step_by(2).map(|i| u8::from_str_radix(&h[i..i + 2], 16).ok()).collect::<Option<Vec<u8>>>())).into_iter().collect::<Vec<_>>(),\n        TrustAuthority::Observer,', 'axon-loop', '--test intake', 'each_protected_join_is_verified_over_the_documents'),
     ('M239', 'PSV-4 (3b): a Failed verdict needs the keyed failure token', 'crates/axon-fabric/src/psv.rs', 'if keyed != Some(false) {', 'if false && keyed != Some(false) {', 'axon-fabric', '--test psv_dispatch', 'every_forgery_of_the_returned_evidence_is_unknown_for_its_own_reason'),
     ('M240', 'PSV-4 (3b): a Failed verdict needs a failing exit', 'crates/axon-fabric/src/psv.rs', 'if matches!(v.exit_code, Some(0) | None) {', 'if false {', 'axon-fabric', '--test psv_dispatch', 'a_failure_with_a_clean_exit_is_not_a_verdict'),
@@ -937,8 +939,8 @@ MUTATIONS = [
     ('M339', "FIELD-ORIGIN: the observation is signed by the record's observer_key_id", 'crates/axon-fabric/src/readiness.rs', '    if signer != s("observer_key_id") {', '    if false && signer != s("observer_key_id") {', 'axon-fabric', '--test readiness_attribution', 'an_observation_by_another_observer_key_is_refused'),
     ('M340', 'FIELD-ORIGIN: the certified observation verifies under the operator observer root', 'crates/axon-fabric/src/readiness.rs', '        TrustAuthority::Observer,\n    )\n    .map_err(|e| format!("{component}: {e}"))?;', '        TrustAuthority::Observer,\n    )\n    .unwrap_or_else(|_| s("observer_key_id").to_string());', 'axon-fabric', '--test readiness_attribution', 'an_observation_not_signed_by_an_observer_root_key_is_refused'),
     ('M341', 'FIELD-ORIGIN: the observation observed the certified profile, revision and guest', 'crates/axon-fabric/src/readiness.rs', '.find(|(_, got, want)| got != want)', '.find(|(_, got, want)| got != want && false)', 'axon-fabric', '--test readiness_attribution', 'an_observation_of_another_run_is_refused'),
-    ('M342', 'FIELD-ORIGIN: b263_qualification_sha256 names a certified evidence file', 'crates/axon-fabric/src/readiness.rs', '    let (b_path, _, b) = named(evidence, component, doc, "b263_qualification_sha256")?;', '    let (b_path, _, b) = named(evidence, component, doc, "b263_qualification_sha256")\n        .or_else(|_| evidence.last().ok_or(String::new()))?;', 'axon-fabric', '--test readiness_attribution', 'a_b263_digest_that_names_no_evidence_file_is_refused'),
-    ('M343', 'FIELD-ORIGIN: the certified B263 record verifies under the operator qualification root', 'crates/axon-fabric/src/readiness.rs', '        TrustAuthority::Qualification,\n    )\n    .map_err(|e| format!("{component}: {e}"))?;', '        TrustAuthority::Qualification,\n    )\n    .ok();', 'axon-fabric', '--test readiness_attribution', 'a_b263_record_not_signed_under_the_qualification_root_is_refused'),
+    ('M342', 'FIELD-ORIGIN: b263_qualification_sha256 names a certified evidence file', 'crates/axon-fabric/src/readiness.rs', '    let (b_path, b_sha, b) = named(evidence, component, doc, "b263_qualification_sha256")?;', '    let (b_path, b_sha, b) = named(evidence, component, doc, "b263_qualification_sha256")\n        .or_else(|_| evidence.last().ok_or(String::new()))?;', 'axon-fabric', '--test readiness_attribution', 'a_b263_digest_that_names_no_evidence_file_is_refused'),
+    ('M343', 'FIELD-ORIGIN: the certified B263 record verifies under the operator qualification root', 'crates/axon-fabric/src/readiness.rs', '        TrustAuthority::Qualification,\n    )\n    .map_err(|e| format!("{component}: {e}"))?;', '        TrustAuthority::Qualification,\n    )\n    .or_else(|_| serde_json::from_slice::<Value>(b).map(|v| v["issuer_key_id"].as_str().unwrap_or("").to_string()).map_err(|e| e.to_string()))\n    .map_err(|e| format!("{component}: {e}"))?;', 'axon-fabric', '--test readiness_attribution', 'a_b263_record_not_signed_under_the_qualification_root_is_refused'),
     ('M344', 'FIELD-ORIGIN: the certified guest digests are the B263-qualified artifacts', 'crates/axon-fabric/src/readiness.rs', '        if qualified != Some(s(k)) {', '        if false && qualified != Some(s(k)) {', 'axon-fabric', '--test readiness_attribution', 'a_b263_record_of_another_guest_is_refused'),
     ('M345', 'FIELD-ORIGIN: the certified B263 record is axon-b263-evidence/1 of the protected profile', 'crates/axon-fabric/src/readiness.rs', '    if q["schema"] != "axon-b263-evidence/1" || q["profile"]["name"] != PROTECTED_PROFILE {', '    if false && (q["schema"] != "axon-b263-evidence/1" || q["profile"]["name"] != PROTECTED_PROFILE) {', 'axon-fabric', '--test readiness_attribution', 'a_b263_record_of_another_profile_is_refused'),
     ('M346', 'FIELD-ORIGIN: build provenance counts a skip-worktree entry as dirty', 'crates/axon-fabric/src/provenance.rs', "            if tag == b'S' || tag == b's' {", "            if false && (tag == b'S' || tag == b's') {", 'axon-fabric', '--lib', 'provenance::tests::a_skip_worktree_or_assume_unchanged_change_is_dirty'),
@@ -1014,7 +1016,7 @@ MUTATIONS = [
     # false (check_bundle runs BEFORE check_pins, and check_pins read the id
     # with split('@')); the killer is the '@'-id attack at check_bundle's own
     # boundary, where this join is the only guard.
-    ('M384', "B2: the request's suite (argv[0]) is the manifest's", 'crates/axon-loop-contracts/src/protected_evidence.rs', '    if req.argv.first().map(String::as_str) != Some(&format!("check:{}", m.suite.id)) {', '    if false && req.argv.first().map(String::as_str) != Some(&format!("check:{}", m.suite.id)) {', 'axon-loop', '--test intake', 'the_bundle_refuses_a_manifest_suite_the_request_did_not_run'),
+    ('M384', "B2: the request's suite (argv[0]) is the manifest's", 'crates/axon-loop-contracts/src/protected_evidence.rs', '    if req.argv.first().and_then(|a| a.strip_prefix("check:")) != Some(sid) {', '    if false && req.argv.first().and_then(|a| a.strip_prefix("check:")) != Some(sid) {', 'axon-loop', '--test intake', 'the_bundle_refuses_a_manifest_suite_the_request_did_not_run'),
     ('M385', 'readiness: git reads no replacement objects (GIT_NO_REPLACE_OBJECTS and --no-replace-objects)', 'crates/axon-fabric/src/git_data.rs', '        .env("GIT_NO_REPLACE_OBJECTS", "1")\n        .env("GIT_CONFIG_NOSYSTEM", "1")\n        .env("GIT_CONFIG_GLOBAL", "/dev/null")\n        .env("GIT_OPTIONAL_LOCKS", "0")\n        .env("GIT_TERMINAL_PROMPT", "0")\n        .arg("--no-replace-objects")\n', '        .env("GIT_CONFIG_NOSYSTEM", "1")\n        .env("GIT_CONFIG_GLOBAL", "/dev/null")\n        .env("GIT_OPTIONAL_LOCKS", "0")\n        .env("GIT_TERMINAL_PROMPT", "0")\n', 'axon-fabric', '--test readiness', 'a_replaced_head_commit_is_not_certified'),
     # ── C9 round 1b, workstream PSV (M410-M424): round-1 fixes that had a test
     # but no row, each killed by its own ATTACK where it is the only guard,
@@ -1144,7 +1146,8 @@ MUTATIONS = [
      '                Ok(c)',
      'axon-loop', '--test intake', 'a_suite_reference_with_a_second_reading_is_never_pinned'),
     ('M477', "PSV-5 (M384 source): Fabric's check registry registers no suite id holding a reference separator", 'crates/axon-cortex/src/runner.rs',
-     '        check_suite_id(&c.id)?;\n',
+     # C9 r3 (loop, A81): re-anchored; the id is checked by the whole-reference writer.
+     '        check_suite_ref(&c.id, &c.workspace_version_ref, &c.entry)?;\n',
      '',
      'axon-cortex', '--test check_executor', 'a_check_suite_id_holding_a_reference_separator_is_never_registered'),
     ('M478', "PSV-5 (A68): an observation key two trusted observers share is attributed to neither", 'crates/axon-loop-contracts/src/protected_evidence.rs',
@@ -1459,6 +1462,76 @@ MUTATIONS += [
      '            require_unwritable: true,', '            require_unwritable: false,',
      'axon-fabric', '--lib', 'readiness::tests::a_trust_root_this_process_can_write_authorizes_nothing'),
 ]
+# ── C9 round 3, integration: readiness judges B263 currency by the host config's
+# qualification.max_age_s, one reading with Fabric (M567, A78).
+MUTATIONS += [
+    ('M567', "PSV-7 (A78): readiness judges B263 currency by the host config's qualification.max_age_s (one reading with Fabric)", 'crates/axon-fabric/src/readiness.rs', '    crate::protected_host::qualification_max_age_s(&v)\n', '    let _ = &v;\n    Ok(DEFAULT_EVIDENCE_MAX_AGE_S)\n', 'axon-fabric', '--test readiness_attribution', 'readiness_judges_b263_currency_by_the_host_configs_maximum_age'),
+]
+# ── C9 round 3, workstream READINESS (M570-M584; A78-A80, amendment 47) ──
+# PSV-7: readiness applies Fabric's B263 acceptance rules (ONE function,
+# backend::accept_b263) to the record a certification names, at decision time,
+# and joins the observation to it. Decision E by what git acts on (discover's
+# common-dir check, the freeze script's), and lineage from hash-checked objects.
+_QB = 'crates/axon-fabric/src/backend.rs'
+_QR = 'crates/axon-fabric/src/readiness.rs'
+_QG = 'crates/axon-fabric/src/git_data.rs'
+_QF = 'scripts/v022_freeze_manifest.py'
+_QA = '--test readiness_attribution'
+MUTATIONS += [
+    ('M570', 'PSV-7: a B263 record with a FAIL assertion certifies nothing (RULE:fail-zero, shared)', _QB,
+     '    if ev["counts"]["FAIL"].as_u64() != Some(0) || !failed.is_empty() {',
+     '    if false && (ev["counts"]["FAIL"].as_u64() != Some(0) || !failed.is_empty()) {',
+     'axon-fabric', _QA, 'a_failed_b263_record_is_refused'),
+    ('M571', 'PSV-7: only a PASS (or waived PASS_WITH_BLOCKED) B263 record certifies (RULE:result, shared)', _QB,
+     '    if !((result == "PASS" && blocked.is_empty())',
+     '    if false && !((result == "PASS" && blocked.is_empty())',
+     'axon-fabric', _QA, 'a_b263_record_whose_result_is_not_pass_is_refused'),
+    ('M572', 'PSV-7: a stale B263 record certifies nothing (RULE:end-fresh, shared)', _QB,
+     '    if (now - end) as u64 > max_age_s {',
+     '    if false && (now - end) as u64 > max_age_s {',
+     'axon-fabric', _QA, 'a_stale_b263_record_is_refused'),
+    ('M573', 'PSV-7: a B263 record from a dirty tree certifies nothing (RULE:tree-clean, shared)', _QB,
+     '    if ev["source"]["tree_dirty"] != serde_json::Value::Bool(false) {',
+     '    if false && ev["source"]["tree_dirty"] != serde_json::Value::Bool(false) {',
+     'axon-fabric', _QA, 'a_b263_record_from_a_dirty_tree_is_refused'),
+    ('M574', 'PSV-7: a B263 record naming no host certifies nothing (RULE:host, shared)', _QB,
+     '    if host.is_empty() {', '    if false && host.is_empty() {',
+     'axon-fabric', _QA, 'a_b263_record_that_names_no_host_is_refused'),
+    ('M575', 'PSV-7: the observed launch ran the B263-qualified firecracker', _QR,
+     '    if o.firecracker_sha256 != b263.firecracker_sha256 {',
+     '    if false && o.firecracker_sha256 != b263.firecracker_sha256 {',
+     'axon-fabric', _QA, 'a_b263_record_of_another_engine_is_refused'),
+    ('M576', 'PSV-7: readiness judges B263 currency at decision time with Fabric\'s maximum age', _QR,
+     'now, trust.max_age_s, || {', 'now, u64::MAX, || {',
+     'axon-fabric', _QA, 'a_b263_qualification_that_lapsed_after_certification_is_refused'),
+    ('M577', 'PSV-7: a certification is not dated before the run it certifies was observed', _QR,
+     '    if observed_at > certified_at {', '    if false && observed_at > certified_at {',
+     'axon-fabric', _QA, 'a_certification_dated_before_its_observation_is_refused'),
+    ('M578', 'PSV-7: a certification is not dated in the future', _QR,
+     '    if certified_at > now {', '    if false && certified_at > now {',
+     'axon-fabric', _QA, 'a_certification_dated_in_the_future_is_refused'),
+    ('M579', 'PSV-7: a certified B263 waiver verifies under the operator qualification root', _QR,
+     '            TrustAuthority::Qualification,\n        )\n        .map_err(|e| format!("{component}: {e}"))?;',
+     '            TrustAuthority::Qualification,\n        )\n        .ok();',
+     'axon-fabric', _QA, 'a_b263_waiver_not_signed_by_the_operator_is_refused'),
+    ('M580', 'Decision E (A79): the repository git acts on is top/.git (no disguised linked worktree)', _QG,
+     '    if got != want {', '    if false && got != want {',
+     'axon-fabric', '--test readiness', 'a_linked_worktree_disguised_as_a_git_directory_is_not_certified'),
+    ('M581', 'A80: lineage is walked over hash-checked commits, never git merge-base', _QG,
+     '                return if o.reaches(&head, &target)? {',
+     '                return if git_cmd(top).args(["merge-base", "--is-ancestor", rev, "HEAD"]).status().is_ok_and(|s| s.success()) {',
+     'axon-fabric', '--test guest_provenance', 'a_forged_ancestor_object_does_not_pass_the_pci_lineage'),
+    ('M582', 'Decision E (A79): the freeze refuses a root whose repository is not its own .git', _QF,
+     '    if not common or os.path.realpath(common) != os.path.realpath(dotgit):', '    if False:',
+     'axon-fabric', '--test freeze_manifest', 'a_linked_worktree_disguised_as_a_git_directory_does_not_freeze'),
+    ('M583', 'Decision E: the freeze refuses a root whose .git is not a real directory', _QF,
+     '    if os.path.islink(dotgit) or not os.path.isdir(dotgit):', '    if False:',
+     'axon-fabric', '--test freeze_manifest', 'a_symlinked_git_dir_does_not_freeze'),
+    ('M584', 'Decision E: the freeze refuses a guest manifest that is not clean with no reasons', _QF,
+     '    if src.get("axon_tree_dirty_at_build") is not False or src.get("axon_tree_dirty_reasons") != []:',
+     '    if False:',
+     'axon-fabric', '--test freeze_manifest', 'a_dirty_guest_manifest_does_not_freeze'),
+]
 # profiles/linux-microvm/guest-init.sh had NO row (round-2 review). Its guards,
 # and what covers each (amendment 43):
 #   input mounts ro,nodev,nosuid,noexec   rows M493-M496 (the script text) AND
@@ -1501,6 +1574,99 @@ MUTATIONS += [
      '    exec env -i PATH=/bin:/usr/bin HOME=/work XDG_CACHE_HOME=/tmp/cache \\\n',
      '    exec env PATH=/bin:/usr/bin HOME=/work XDG_CACHE_HOME=/tmp/cache \\\n',
      'axon-guest-init', '--test b263_profile_wiring', 'guest_init_sh_execs_the_workload_under_axon_guest_init_inside_env_i'),
+]
+
+
+# ── C9 round 3, workstream CORE (M560-M569; amendment 46, matrix A76-A77) ───
+# PSV-1: a sealed handler frame never answers or aborts an operation performed
+# under OPERATOR provenance (live frame, replay feed), and operator code a
+# sealed frame runs never draws the operator RNG. PSV-3: a test is Completed
+# only when its body evaluated to its end; a declared Result/Option fn never
+# returns the other constructor. Each row's test fails on its OWN attack.
+_CI = 'crates/axon-core/src/interp.rs'
+_CL = '--no-default-features --lib'
+MUTATIONS += [
+    ('M560', 'PSV-1: a sealed handler frame is skipped for an operator operation (run_handler_arm, the one frame selection)',
+     'crates/axon-core/src/interp/eval.rs',
+     '                self.handler_may_answer(f.sealed, f.operator_frames)',
+     '                { let _ = f; true }',
+     'axon-core', _CL, 'interp::tests::a_sealed_handler_never_answers_or_aborts_operator_code'),
+    ('M561', 'PSV-1: a sealed arm\'s multi-shot replay feed never answers an operator operation',
+     'crates/axon-core/src/interp/builtins.rs',
+     '                let may = self.handler_may_answer(r.sealed, r.operator_frames);',
+     '                let may = true;',
+     'axon-core', _CL, 'interp::tests::a_sealed_handler_never_answers_or_aborts_operator_code'),
+    ('M562', 'PSV-1: sealed-frame eligibility counts OPERATOR frames entered since install (not only the current frame\'s provenance)',
+     _CI,
+     '        !sealed || operator_frames == self.operator_frames.get()',
+     '        !sealed || self.frame_sealed.get() || operator_frames == usize::MAX',
+     'axon-core', _CL, 'interp::tests::a_sealed_handler_never_answers_or_aborts_operator_code'),
+    ('M563', 'PSV-1: operator code a sealed frame runs never draws or reseeds the operator RNG (rng_guard)',
+     _CI,
+     '        if !self.frame_sealed.get() && self.sealed_frames.get() > 0 {',
+     '        if false {',
+     'axon-core', _CL, 'interp::tests::operator_code_a_sealed_frame_runs_never_draws_the_operator_rng'),
+    ('M564', 'PSV-3: a test whose body did not evaluate to its end is EndedEarly, whatever it returned',
+     _CI,
+     '        Ok(_) if !interp.test_body_finished.get() => Ok(TestEnd::EndedEarly(',
+     '        Ok(_) if false => Ok(TestEnd::EndedEarly(',
+     'axon-core', _CL, 'interp::tests::a_test_ended_by_question_mark_is_never_completed'),
+    ('M565', 'PSV-3: the test frame records whether its body finished (a return or ? did not)',
+     _CI,
+     '            self.test_body_finished.set(body_result.is_ok());',
+     '            self.test_body_finished.set(true);',
+     'axon-core', _CL, 'interp::tests::a_test_ended_by_question_mark_is_never_completed'),
+    ('M566', 'PSV-3: a fn declared -> Result (Option) never returns an Option (Result) value',
+     _CI,
+     '            if confused {',
+     '            if false && confused {',
+     'axon-core', _CL, 'interp::tests::a_declared_result_fn_never_returns_an_option'),
+]
+# ── C9 round 3, LOOP workstream (M610-M619; amendment 49; matrix A81-A82) ──
+# A81 (PSV-5): the suite join reads the receipt's reference with the ONE parser
+# and compares (id, version, entry) field by field; the one writer refuses a
+# suite whose reference would read as another (Fabric's registry, prepare).
+# A82 (PSV-6): the launch manifest names its authority (epoch, tenant, family),
+# the loop joins each to its own scope pointer, and a protected host reads the
+# launch-time epoch from the store its config pins. M619 is unallocated.
+_PE = 'crates/axon-loop-contracts/src/protected_evidence.rs'
+MUTATIONS += [
+    ('M610', 'PSV-5 (A81): check_bundle joins the suite field by field through the one parser, not by formatting', _PE,
+     '    if manifest_suite != (sid, sver, sentry) {',
+     '    if format!("{}@{}#{}", m.suite.id, m.suite.version, m.suite.entry) != receipt_suite["check-suite:".len()..] {',
+     'axon-loop', '--test intake', 'a_manifest_suite_that_formats_to_the_pin_but_reads_as_another_is_refused'),
+    ('M611', 'PSV-5 (A81): the one writer writes only a suite reference that reads back as that suite', 'crates/axon-cortex/src/runner.rs',
+     '    if parse_check_suite_ref(&r)? != (id, version, entry) {',
+     '    if false && parse_check_suite_ref(&r)? != (id, version, entry) {',
+     'axon-cortex', '--test check_executor', 'a_suite_reference_is_written_only_if_it_reads_back_as_that_suite'),
+    ('M612', "PSV-5 (A81): Fabric's prepare builds no manifest whose suite reads as another", 'crates/axon-fabric/src/psv.rs',
+     '    let suite_ref = axon_cortex::runner::check_suite_ref(i.suite_id, i.suite_version, i.entry)\n        .map_err(|e| format!("launch manifest suite: {e}"))?;',
+     '    let suite_ref = format!("check-suite:{}@{}#{}", i.suite_id, i.suite_version, i.entry);',
+     'axon-fabric', '--test one_read', 'prepare_builds_no_manifest_whose_suite_reads_as_another'),
+    ('M613', "PSV-5 (A81): Fabric's check registry registers no suite version holding a reference separator", 'crates/axon-cortex/src/runner.rs',
+     '        check_suite_ref(&c.id, &c.workspace_version_ref, &c.entry)?;\n',
+     '        check_suite_ref(&c.id, "v", &c.entry)?;\n',
+     'axon-cortex', '--test check_executor', 'a_suite_version_holding_a_reference_separator_is_never_registered'),
+    ('M614', "PSV-6 (A82): the launch manifest's authority epoch is the trial's", _PE,
+     '    if m.authority.epoch != epoch {',
+     '    if false && m.authority.epoch != epoch {',
+     'axon-loop', '--test intake', 'a_launch_whose_manifest_names_another_authority_epoch_is_refused'),
+    ('M615', "PSV-6 (A82): the launch manifest's tenant is the trial's", _PE,
+     '    if m.authority.tenant_id != scope.tenant_id.as_str() {',
+     '    if false && m.authority.tenant_id != scope.tenant_id.as_str() {',
+     'axon-loop', '--test intake', 'a_launch_whose_manifest_names_another_scope_is_refused'),
+    ('M616', "PSV-6 (A82): the launch manifest's task family is the trial's", _PE,
+     '    if m.authority.task_family != scope.task_family.as_str() {',
+     '    if false && m.authority.task_family != scope.task_family.as_str() {',
+     'axon-loop', '--test intake', 'a_launch_whose_manifest_names_another_scope_is_refused'),
+    ('M617', 'PSV-6 (A82): a protected launch reads its epoch from the pinned store, never a caller --store naming another', 'crates/axon-fabric/src/protected_host.rs',
+     '            if same(c) != same(&pinned) {',
+     '            if false && same(c) != same(&pinned) {',
+     'axon-fabric', '--test grant_registry_authority', 'a_protected_launch_reads_its_epoch_only_from_the_pinned_store'),
+    ('M618', 'PSV-6 (A82): a protected host that pins no authority store launches nothing', 'crates/axon-fabric/src/protected_host.rs',
+     '            None => return Err(NO_AUTHORITY_STORE.to_string()),',
+     '            None => return caller.map(Path::to_path_buf).ok_or_else(String::new),',
+     'axon-fabric', '--test grant_registry_authority', 'a_protected_host_that_pins_no_authority_store_launches_nothing'),
 ]
 
 
@@ -1589,6 +1755,10 @@ MUTATIONS += [
      '            host_signer_public_key: Some(c.observer.host_signer_public_key.clone()),',
      '            host_signer_public_key: None,',
      'axon-fabric', '--test privileged_launcher', 'an_observation_signed_with_the_host_signer_launches_nothing'),
+    ('M639', 'PSV-6/A84: at the root boundary the observation is of the manifest\'s authority epoch', _PL,
+     '    if o.epoch != m.authority.epoch {',
+     '    if false && o.epoch != m.authority.epoch {',
+     'axon-fabric', '--test privileged_launcher', 'an_observation_whose_epoch_is_not_the_manifests_launches_nothing'),
 ]
 
 
@@ -1854,8 +2024,8 @@ BINDING_IDS = {f"M{n}" for n in range(101, 137)}
 # 1b allocates M400-M499, round 2 M500-M519). An id outside every scope would silently fall into
 # g01.
 PSV_IDS = {f"M{n}" for n in range(137, 550)}
-# C9 round 3, CUSTODIAN workstream (amendment 50): protected-suite-verdict rows.
-PSV_IDS |= {f"M{n}" for n in range(620, 640)}
+# C9 round 3: rows M560-M649 are PSV rows (workstream ranges).
+PSV_IDS |= {f"M{n}" for n in range(550, 650)}
 
 
 def in_scope(mid, scope):

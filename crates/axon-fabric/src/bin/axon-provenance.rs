@@ -18,12 +18,16 @@
 //! which compiles this file with `rustc` directly) and the verifier's
 //! `source_dirty` have one implementation. It depends on `std` only.
 
+// git_data's own tests use the shared repository attacks.
 #[path = "../git_data.rs"]
 #[allow(dead_code)]
 mod git_data;
 #[path = "../provenance.rs"]
 #[allow(dead_code)]
 mod provenance;
+#[cfg(test)]
+#[path = "../../tests/common/git_attacks.rs"]
+mod test_git_attacks;
 
 fn json_str(s: &str) -> String {
     let mut o = String::from("\"");

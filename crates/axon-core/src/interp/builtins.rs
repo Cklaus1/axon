@@ -692,7 +692,11 @@ impl<'p> Interp<'p> {
             let mut replay = self.resume_replay.borrow_mut();
             if let Some(r) = replay.as_mut() {
                 let row = crate::builtins::builtin_effect_row(name);
-                if row.iter().any(|e| r.effect == **e) {
+                // A sealed arm's feed never answers the operator's operation
+                // (PSV-1, C9 round 3): the replay cannot re-fire it either, so
+                // it is the unsound case below, not a fed hit.
+                let may = self.handler_may_answer(r.sealed, r.operator_frames);
+                if may && row.iter().any(|e| r.effect == **e) {
                     // The handled effect's op. The first hit consumes the feed
                     // (the resume value); a second hit can't be soundly re-fired.
                     if !r.consumed {
@@ -705,6 +709,13 @@ impl<'p> Interp<'p> {
                          when the handled body performs exactly one effect and is otherwise \
                          pure (a side effect cannot be re-executed on replay) [E1314]",
                         r.effect
+                    )));
+                } else if !may && !row.is_empty() {
+                    return Err(crate::interp::Flow::MultiShotUnsound(format!(
+                        "effect `{}` (via `{name}`) is performed by the operator's code during \
+                         the replay of a sealed handler's continuation; sealed code cannot \
+                         answer it and a replay cannot re-fire it [E1314]",
+                        row[0]
                     )));
                 } else if !row.is_empty() {
                     // A DIFFERENT effect during the replay also can't be re-fired.
@@ -744,6 +755,8 @@ impl<'p> Interp<'p> {
                     1 => args[0].clone(),
                     _ => Value::Tuple(args.to_vec()),
                 };
+                // `run_handler_arm` is the ONE place a frame is chosen; it
+                // skips a frame that may not answer this operation (PSV-1).
                 if let Some(v) = self.run_handler_arm(eff, payload)? {
                     return Ok(Some(v));
                 }
@@ -2869,14 +2882,14 @@ impl<'p> Interp<'p> {
                 want(1)?;
                 // Reseeds only the running frame's kernel stream: a sealed
                 // srand cannot choose the operator's inputs (PSV-1).
-                self.rng_reseed(as_int(&args[0])?);
+                self.rng_reseed(as_int(&args[0])?)?;
                 ok!(Value::Unit);
             }
             "random_f64" => {
                 want(0)?;
                 // 53-bit mantissa → uniform [0.0, 1.0)
                 ok!(Value::Float(
-                    (self.rng_next() >> 11) as f64 / 9_007_199_254_740_992.0
+                    (self.rng_next()? >> 11) as f64 / 9_007_199_254_740_992.0
                 ));
             }
             "random_i64" => {
@@ -2898,7 +2911,7 @@ impl<'p> Interp<'p> {
                     ok!(Value::Int(lo));
                 }
                 let range = (hi as i128 - lo as i128) as u128;
-                ok!(Value::Int(lo + (self.rng_next() as u128 % range) as i64));
+                ok!(Value::Int(lo + (self.rng_next()? as u128 % range) as i64));
             }
             "str_pad_start" => {
                 want(3)?;
@@ -6089,7 +6102,7 @@ impl<'p> Interp<'p> {
                 if sigma <= 0.0 {
                     return panic(format!("gaussian_sample: sigma must be > 0 (got {sigma})"));
                 }
-                ok!(Value::Float(mu + sigma * std_normal_sample(&|| self.rng_next())));
+                ok!(Value::Float(mu + sigma * std_normal_sample(&|| self.rng_next())?));
             }
 
             "beta_mean" => {
@@ -6140,8 +6153,8 @@ impl<'p> Interp<'p> {
                     ));
                 }
                 // Beta(alpha, beta_b) = Gamma(alpha) / (Gamma(alpha) + Gamma(beta_b))
-                let ga = gamma_sample(alpha, &|| self.rng_next());
-                let gb = gamma_sample(beta_b, &|| self.rng_next());
+                let ga = gamma_sample(alpha, &|| self.rng_next())?;
+                let gb = gamma_sample(beta_b, &|| self.rng_next())?;
                 let s = ga + gb;
                 ok!(Value::Float(if s > 0.0 {
                     ga / s
@@ -6267,7 +6280,7 @@ impl<'p> Interp<'p> {
                 if probs.is_empty() {
                     return panic("categorical_sample: probs must be non-empty".to_string());
                 }
-                let u = (self.rng_next() >> 11) as f64 / 9_007_199_254_740_992.0;
+                let u = (self.rng_next()? >> 11) as f64 / 9_007_199_254_740_992.0;
                 let mut cum = 0.0;
                 let mut result = probs.len() as i64 - 1;
                 for (i, v) in probs.iter().enumerate() {
@@ -6336,35 +6349,35 @@ fn erf_approx(x: f64) -> f64 {
 }
 
 /// Standard normal sample via Box-Muller transform.
-fn std_normal_sample(rng: &dyn Fn() -> u64) -> f64 {
-    let u1 = ((rng() >> 11) as f64 / 9_007_199_254_740_992.0).max(1e-300);
-    let u2 = (rng() >> 11) as f64 / 9_007_199_254_740_992.0;
-    (-2.0 * u1.ln()).sqrt() * (2.0 * std::f64::consts::PI * u2).cos()
+fn std_normal_sample(rng: &dyn Fn() -> Result<u64, Flow>) -> Result<f64, Flow> {
+    let u1 = ((rng()? >> 11) as f64 / 9_007_199_254_740_992.0).max(1e-300);
+    let u2 = (rng()? >> 11) as f64 / 9_007_199_254_740_992.0;
+    Ok((-2.0 * u1.ln()).sqrt() * (2.0 * std::f64::consts::PI * u2).cos())
 }
 
 /// Gamma(k) sample via Marsaglia-Tsang "squeeze" method.
 /// Works for any k > 0 (uses k < 1 reduction: Gamma(k) = Gamma(k+1) * U^(1/k)).
-fn gamma_sample(k: f64, rng: &dyn Fn() -> u64) -> f64 {
+fn gamma_sample(k: f64, rng: &dyn Fn() -> Result<u64, Flow>) -> Result<f64, Flow> {
     if k < 1.0 {
-        let u = ((rng() >> 11) as f64 / 9_007_199_254_740_992.0).max(1e-300);
-        return gamma_sample(k + 1.0, rng) * u.powf(1.0 / k);
+        let u = ((rng()? >> 11) as f64 / 9_007_199_254_740_992.0).max(1e-300);
+        return Ok(gamma_sample(k + 1.0, rng)? * u.powf(1.0 / k));
     }
     let d = k - 1.0 / 3.0;
     let c = 1.0 / (9.0 * d).sqrt();
     loop {
-        let x = std_normal_sample(rng);
+        let x = std_normal_sample(rng)?;
         let v_inner = 1.0 + c * x;
         if v_inner <= 0.0 {
             continue;
         }
         let v = v_inner * v_inner * v_inner;
-        let u = ((rng() >> 11) as f64 / 9_007_199_254_740_992.0).max(1e-300);
+        let u = ((rng()? >> 11) as f64 / 9_007_199_254_740_992.0).max(1e-300);
         let x2 = x * x;
         if u < 1.0 - 0.0331 * x2 * x2 {
-            return d * v;
+            return Ok(d * v);
         }
         if u.ln() < 0.5 * x2 + d * (1.0 - v + v.ln()) {
-            return d * v;
+            return Ok(d * v);
         }
     }
 }

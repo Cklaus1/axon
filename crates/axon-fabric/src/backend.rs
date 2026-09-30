@@ -743,9 +743,211 @@ fn sidecar_sig(p: &Path) -> PathBuf {
     PathBuf::from(s)
 }
 
-struct Waiver {
+pub(crate) struct Waiver {
     reason: String,
     expires: Option<i64>,
+}
+
+/// BLOCKED-assertion waivers by assertion name.
+pub(crate) type Waivers = std::collections::BTreeMap<String, Waiver>;
+
+/// A waiver file's waivers, refused unless it is an [`WAIVER_SCHEMA`] file
+/// bound to the evidence record whose sha256 is `evidence_sha256`
+/// (RULE:waiver-bound). The caller has verified its signature.
+pub(crate) fn parse_waivers(wb: &[u8], evidence_sha256: &str) -> Result<Waivers, String> {
+    let w: serde_json::Value =
+        serde_json::from_slice(wb).map_err(|e| format!("waivers are not JSON: {e}"))?;
+    if w["schema"] != WAIVER_SCHEMA {
+        return Err(format!("waiver file schema is not {WAIVER_SCHEMA}"));
+    }
+    // RULE:waiver-bound
+    if w["evidence_sha256"].as_str() != Some(evidence_sha256) {
+        return Err(
+            "waiver file is bound to a different evidence record; a waiver is not transferable"
+                .into(),
+        );
+    }
+    let mut waivers = Waivers::new();
+    for x in w["waivers"]
+        .as_array()
+        .ok_or("waiver file has no waivers list")?
+    {
+        let name = non_empty(&x["assertion"]).ok_or("a waiver names no assertion")?;
+        waivers.insert(
+            name,
+            Waiver {
+                reason: non_empty(&x["reason"]).unwrap_or_default(),
+                expires: x["expires"].as_str().and_then(parse_utc),
+            },
+        );
+    }
+    Ok(waivers)
+}
+
+/// What a B263 record that [`accept_b263`] accepts states.
+#[derive(Debug, Clone)]
+pub struct AcceptedB263 {
+    pub host: String,
+    pub caveat: String,
+    /// `end`, as written and as Unix seconds.
+    pub end: String,
+    pub end_unix: i64,
+    pub firecracker_sha256: String,
+    pub jailer_sha256: String,
+    /// The BLOCKED assertions its waivers cover.
+    pub waived: Vec<String>,
+    /// [`X1_GUEST_POLICY_CHANNEL`] is PASS.
+    pub guest_policy_channel: bool,
+}
+
+/// THE rules that make a signed `axon-b263-evidence/1` record a CURRENT
+/// qualification: one implementation, applied by Fabric before a protected
+/// launch ([`LinuxProfileConfig::qualification`]) and by readiness to the
+/// record a certification names (review PSV-7, C9 round 3; A78). Readiness
+/// used to check only the record's signature, schema, profile and guest
+/// digests, so a FAIL, stale, dirty-tree or host-less record Fabric refuses
+/// certified PASS.
+///
+/// `issuer` is the key that verified the record's signature (the caller
+/// checks the signature, schema and profile, each under its own trust).
+/// `now` is the decision time; `waivers` loads the verified waivers for the
+/// record's BLOCKED assertions and is called only when there are some.
+pub(crate) fn accept_b263(
+    ev: &serde_json::Value,
+    issuer: &str,
+    now: i64,
+    max_age_s: u64,
+    waivers: impl FnOnce() -> Result<Waivers, String>,
+) -> Result<AcceptedB263, String> {
+    // RULE:issuer-claimed: the record names the key it is issued under, and
+    // that is the key that verified it — a record signed by one trusted
+    // issuer cannot pass as another's.
+    if ev["issuer_key_id"].as_str() != Some(issuer) {
+        return Err(format!(
+            "evidence record claims issuer_key_id {} but is signed by {issuer}",
+            ev["issuer_key_id"]
+        ));
+    }
+
+    // ── Verdict ────────────────────────────────────────────────────────
+    let assertions = ev["assertions"]
+        .as_array()
+        .ok_or("evidence record has no assertions list")?;
+    let with = |st: &str| -> Vec<String> {
+        assertions
+            .iter()
+            .filter(|a| a["status"] == st)
+            .map(|a| a["name"].as_str().unwrap_or("?").to_string())
+            .collect()
+    };
+    let blocked = with("BLOCKED");
+    let failed = with("FAIL");
+    let guest_policy_channel = with("PASS").iter().any(|n| n == X1_GUEST_POLICY_CHANNEL);
+    // RULE:fail-zero
+    if ev["counts"]["FAIL"].as_u64() != Some(0) || !failed.is_empty() {
+        return Err(format!(
+            "evidence record has FAIL assertions (or none counted): {failed:?}"
+        ));
+    }
+    // RULE:pass-count
+    if ev["counts"]["PASS"].as_u64().unwrap_or(0) == 0 {
+        return Err(
+            "evidence record counts no PASS assertion; an empty run qualifies nothing".into(),
+        );
+    }
+    // RULE:blocked-count
+    if ev["counts"]["BLOCKED"].as_u64() != Some(blocked.len() as u64) {
+        return Err(format!(
+            "evidence counts.BLOCKED {} disagrees with the {} BLOCKED assertion(s)",
+            ev["counts"]["BLOCKED"],
+            blocked.len()
+        ));
+    }
+    let result = ev["result"].as_str().unwrap_or("");
+    // RULE:result
+    if !((result == "PASS" && blocked.is_empty())
+        || (result == "PASS_WITH_BLOCKED" && !blocked.is_empty()))
+    {
+        return Err(format!("evidence result is {result:?}; only PASS, or PASS_WITH_BLOCKED with every BLOCKED waived, qualifies"));
+    }
+
+    // ── Waivers for BLOCKED assertions ──────────────────────────────────
+    let waivers = if blocked.is_empty() {
+        Waivers::new()
+    } else {
+        waivers()?
+    };
+    for name in &blocked {
+        // RULE:blocked-unwaived
+        if !waivers.contains_key(name) {
+            return Err(format!(
+                "BLOCKED assertion {name} is not covered by an issuer-signed waiver"
+            ));
+        }
+        // RULE:waiver-reason
+        if waivers.get(name).is_some_and(|w| w.reason.is_empty()) {
+            return Err(format!("the waiver for {name} states no reason"));
+        }
+        // RULE:waiver-expiry
+        if waivers
+            .get(name)
+            .is_some_and(|w| w.expires.is_none_or(|t| now >= t))
+        {
+            return Err(format!(
+                "the waiver for {name} has expired (or states no parseable expiry)"
+            ));
+        }
+    }
+
+    // ── Freshness ───────────────────────────────────────────────────────
+    let end_s = ev["end"].as_str().unwrap_or("").to_string();
+    let end = parse_utc(&end_s).ok_or(format!(
+        "evidence end {end_s:?} is not a YYYY-MM-DDTHH:MM:SSZ time"
+    ))?;
+    // RULE:end-not-future
+    if end > now {
+        return Err(format!("evidence end {end_s} is in the future"));
+    }
+    // RULE:end-fresh
+    if (now - end) as u64 > max_age_s {
+        return Err(format!(
+            "evidence end {end_s} is stale (older than {max_age_s} s)"
+        ));
+    }
+
+    // ── Engine, source, host ────────────────────────────────────────────
+    let eng = &ev["engine"];
+    // RULE:engine-digests
+    if !is_hex64(&eng["firecracker_sha256"]) || !is_hex64(&eng["jailer_sha256"]) {
+        return Err("evidence record lacks engine.firecracker_sha256 / engine.jailer_sha256; an unidentified VMM qualifies nothing".into());
+    }
+    // RULE:tree-clean
+    if ev["source"]["tree_dirty"] != serde_json::Value::Bool(false) {
+        return Err("evidence was produced from a dirty (or unstated) source tree".into());
+    }
+    let host = non_empty(&ev["host"]).unwrap_or_default();
+    // RULE:host
+    if host.is_empty() {
+        return Err("evidence record states no host".into());
+    }
+    let caveat = non_empty(&ev["caveat"]).unwrap_or_default();
+    // RULE:caveat
+    if caveat.is_empty() {
+        return Err(
+            "evidence record states no caveat; say what the boundary excludes, even if nothing"
+                .into(),
+        );
+    }
+    Ok(AcceptedB263 {
+        host,
+        caveat,
+        end: end_s,
+        end_unix: end,
+        firecracker_sha256: eng["firecracker_sha256"].as_str().unwrap_or("").into(),
+        jailer_sha256: eng["jailer_sha256"].as_str().unwrap_or("").into(),
+        waived: blocked,
+        guest_policy_channel,
+    })
 }
 
 impl LinuxProfileConfig {
@@ -778,7 +980,9 @@ impl LinuxProfileConfig {
     /// * `host` and `caveat` are stated (the caveat travels into receipts);
     /// * the manifest in use is byte-identical to the one qualified.
     ///
-    /// A changed manifest is ineligible — never "probably fine".
+    /// A changed manifest is ineligible — never "probably fine". The record's
+    /// own rules (verdict, waivers, freshness, engine digests, source tree,
+    /// host, caveat) are [`accept_b263`], which readiness applies too.
     pub fn qualification(&self) -> Result<LinuxQualification, String> {
         let launcher_sha256 = self.launcher_pinned()?;
         // ONE read of the manifest: the bytes hashed (and compared with the
@@ -813,62 +1017,13 @@ impl LinuxProfileConfig {
         if ev["profile"]["name"] != LINUX_MICROVM_PROTECTED.id {
             return Err("evidence record is for a different profile".into());
         }
-        // RULE:issuer-claimed: the record names the key it is issued under, and
-        // that is the key that verified it — a record signed by one trusted
-        // issuer cannot pass as another's.
-        if ev["issuer_key_id"].as_str() != Some(issuer.as_str()) {
-            return Err(format!(
-                "evidence record claims issuer_key_id {} but is signed by {issuer}",
-                ev["issuer_key_id"]
-            ));
-        }
         let now = self.trust.clock.now_unix();
-
-        // ── Verdict ────────────────────────────────────────────────────────
-        let assertions = ev["assertions"]
-            .as_array()
-            .ok_or("evidence record has no assertions list")?;
-        let with = |st: &str| -> Vec<String> {
-            assertions
-                .iter()
-                .filter(|a| a["status"] == st)
-                .map(|a| a["name"].as_str().unwrap_or("?").to_string())
-                .collect()
-        };
-        let blocked = with("BLOCKED");
-        let failed = with("FAIL");
-        let guest_policy_channel = with("PASS").iter().any(|n| n == X1_GUEST_POLICY_CHANNEL);
-        // RULE:fail-zero
-        if ev["counts"]["FAIL"].as_u64() != Some(0) || !failed.is_empty() {
-            return Err(format!(
-                "evidence record has FAIL assertions (or none counted): {failed:?}"
-            ));
-        }
-        // RULE:pass-count
-        if ev["counts"]["PASS"].as_u64().unwrap_or(0) == 0 {
-            return Err(
-                "evidence record counts no PASS assertion; an empty run qualifies nothing".into(),
-            );
-        }
-        // RULE:blocked-count
-        if ev["counts"]["BLOCKED"].as_u64() != Some(blocked.len() as u64) {
-            return Err(format!(
-                "evidence counts.BLOCKED {} disagrees with the {} BLOCKED assertion(s)",
-                ev["counts"]["BLOCKED"],
-                blocked.len()
-            ));
-        }
-        let result = ev["result"].as_str().unwrap_or("");
-        // RULE:result
-        if !((result == "PASS" && blocked.is_empty())
-            || (result == "PASS_WITH_BLOCKED" && !blocked.is_empty()))
-        {
-            return Err(format!("evidence result is {result:?}; only PASS, or PASS_WITH_BLOCKED with every BLOCKED waived, qualifies"));
-        }
-
-        // ── Waivers for BLOCKED assertions ──────────────────────────────────
-        let mut waivers = std::collections::BTreeMap::<String, Waiver>::new();
-        if let (false, Some(wp)) = (blocked.is_empty(), &self.waivers) {
+        // The record's own qualifying rules: ONE implementation, shared with
+        // readiness (review PSV-7, C9 round 3; A78).
+        let b = accept_b263(&ev, &issuer, now, self.trust.max_age_s, || {
+            let Some(wp) = &self.waivers else {
+                return Ok(Waivers::new());
+            };
             let wb = read_regular(wp).map_err(|e| format!("waivers {e}"))?;
             verify_detached(
                 "waiver file",
@@ -877,76 +1032,13 @@ impl LinuxProfileConfig {
                 &trusted,
                 TrustAuthority::Qualification,
             )?;
-            let w: serde_json::Value =
-                serde_json::from_slice(&wb).map_err(|e| format!("waivers are not JSON: {e}"))?;
-            if w["schema"] != WAIVER_SCHEMA {
-                return Err(format!("waiver file schema is not {WAIVER_SCHEMA}"));
-            }
-            // RULE:waiver-bound
-            if w["evidence_sha256"].as_str() != Some(evidence_sha256.as_str()) {
-                return Err("waiver file is bound to a different evidence record; a waiver is not transferable".into());
-            }
-            for x in w["waivers"]
-                .as_array()
-                .ok_or("waiver file has no waivers list")?
-            {
-                let name = non_empty(&x["assertion"]).ok_or("a waiver names no assertion")?;
-                waivers.insert(
-                    name,
-                    Waiver {
-                        reason: non_empty(&x["reason"]).unwrap_or_default(),
-                        expires: x["expires"].as_str().and_then(parse_utc),
-                    },
-                );
-            }
-        }
-        for name in &blocked {
-            // RULE:blocked-unwaived
-            if !waivers.contains_key(name) {
-                return Err(format!(
-                    "BLOCKED assertion {name} is not covered by an issuer-signed waiver"
-                ));
-            }
-            // RULE:waiver-reason
-            if waivers.get(name).is_some_and(|w| w.reason.is_empty()) {
-                return Err(format!("the waiver for {name} states no reason"));
-            }
-            // RULE:waiver-expiry
-            if waivers
-                .get(name)
-                .is_some_and(|w| w.expires.is_none_or(|t| now >= t))
-            {
-                return Err(format!(
-                    "the waiver for {name} has expired (or states no parseable expiry)"
-                ));
-            }
-        }
+            parse_waivers(&wb, &evidence_sha256)
+        })?;
 
-        // ── Freshness ───────────────────────────────────────────────────────
-        let end_s = ev["end"].as_str().unwrap_or("").to_string();
-        let end = parse_utc(&end_s).ok_or(format!(
-            "evidence end {end_s:?} is not a YYYY-MM-DDTHH:MM:SSZ time"
-        ))?;
-        // RULE:end-not-future
-        if end > now {
-            return Err(format!("evidence end {end_s} is in the future"));
-        }
-        // RULE:end-fresh
-        if (now - end) as u64 > self.trust.max_age_s {
-            return Err(format!(
-                "evidence end {end_s} is stale (older than {} s)",
-                self.trust.max_age_s
-            ));
-        }
-
-        // ── Engine, source, host ────────────────────────────────────────────
+        // ── Engine pins and the build tree (this host's manifest) ─────────
         let m: serde_json::Value = serde_json::from_slice(&manifest_bytes)
             .map_err(|e| format!("manifest is not JSON: {e}"))?;
         let eng = &ev["engine"];
-        // RULE:engine-digests
-        if !is_hex64(&eng["firecracker_sha256"]) || !is_hex64(&eng["jailer_sha256"]) {
-            return Err("evidence record lacks engine.firecracker_sha256 / engine.jailer_sha256; an unidentified VMM qualifies nothing".into());
-        }
         let pin = &m["engine"];
         // RULE:engine-pin — REQUIRED. It used to apply only "when the manifest
         // has an engine block", so a manifest without one qualified any VMM the
@@ -960,26 +1052,9 @@ impl LinuxProfileConfig {
         {
             return Err("evidence engine digests differ from the manifest's engine pins".into());
         }
-        // RULE:tree-clean
-        if ev["source"]["tree_dirty"] != serde_json::Value::Bool(false) {
-            return Err("evidence was produced from a dirty (or unstated) source tree".into());
-        }
         // RULE:manifest-clean
         if m["source"]["axon_tree_dirty_at_build"] != serde_json::Value::Bool(false) {
             return Err("manifest artifacts were built from a dirty (or unstated) tree".into());
-        }
-        let host = non_empty(&ev["host"]).unwrap_or_default();
-        // RULE:host
-        if host.is_empty() {
-            return Err("evidence record states no host".into());
-        }
-        let caveat = non_empty(&ev["caveat"]).unwrap_or_default();
-        // RULE:caveat
-        if caveat.is_empty() {
-            return Err(
-                "evidence record states no caveat; say what the boundary excludes, even if nothing"
-                    .into(),
-            );
         }
 
         // ── Manifest identity ───────────────────────────────────────────────
@@ -1004,13 +1079,13 @@ impl LinuxProfileConfig {
             guest_axon_sha256,
             evidence_sha256,
             issuer,
-            host,
-            caveat,
-            end: end_s,
-            firecracker_sha256: eng["firecracker_sha256"].as_str().unwrap_or("").into(),
-            jailer_sha256: eng["jailer_sha256"].as_str().unwrap_or("").into(),
-            waived: blocked,
-            guest_policy_channel,
+            host: b.host,
+            caveat: b.caveat,
+            end: b.end,
+            firecracker_sha256: b.firecracker_sha256,
+            jailer_sha256: b.jailer_sha256,
+            waived: b.waived,
+            guest_policy_channel: b.guest_policy_channel,
         })
     }
 }

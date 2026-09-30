@@ -13,6 +13,8 @@
 //! readiness; the production `ReadinessTrust::operator()` is exercised last.
 
 mod common;
+#[path = "common/git_attacks.rs"]
+mod git_attacks;
 mod readiness_fixture;
 use common::*;
 use readiness_fixture::*;
@@ -593,4 +595,44 @@ fn a_linked_worktree_is_not_certified() {
         "PASS",
         "control: the standalone clone"
     );
+}
+
+/// Decision E by what git acts on (review PSV-7, C9 round 3; A79): the same
+/// linked worktree with its admin directory copied in as a real `.git`
+/// (`commondir` naming the clone's `.git`) was certified PASS, because only
+/// the KIND of `.git` was checked. Control: the standalone clone.
+#[test]
+fn a_linked_worktree_disguised_as_a_git_directory_is_not_certified() {
+    let Some(c) = certified() else { return };
+    let wt = c._d.path().join("wt");
+    git_attacks::disguise_worktree(&c.repo, &wt);
+    let v = protected_components(&wt, &c.trust)["components"]["protected_backend"].clone();
+    assert_ne!(
+        v["status"], "PASS",
+        "ATTACK: readiness certified a linked worktree whose admin dir was placed as .git: {v}"
+    );
+    assert!(v.to_string().contains("linked worktree"), "{v}");
+    assert_eq!(
+        c.verdict()["status"],
+        "PASS",
+        "control: the standalone clone"
+    );
+}
+
+/// A80 on the readiness route: the certified revision's ancestry is read from
+/// hash-checked objects. HEAD is replaced by D (parent C, an orphan with the
+/// certified tree); C's loose object is then forged, under its own name, to
+/// name the certified commit as its parent. Control: before the forgery
+/// readiness refuses for ancestry; after it, still refused.
+#[test]
+fn a_forged_ancestor_object_does_not_make_the_tree_descend_from_the_certified_revision() {
+    let Some(c) = certified() else { return };
+    let certified = c.certified_sha();
+    let orphan = git_attacks::commit_tree(&c.repo, &[], "C");
+    let d = git_attacks::commit_tree(&c.repo, &[&orphan], "D");
+    git(&c.repo, &["update-ref", "refs/heads/main", &d]);
+    c.refused("is not an ancestor of this tree");
+    git_attacks::forge_parent(&c.repo, &orphan, &certified);
+    let v = c.refused_any();
+    assert!(v.to_string().contains("is not an ancestor"), "{v}");
 }

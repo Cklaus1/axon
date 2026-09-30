@@ -205,6 +205,11 @@ fn fixture_with(entry: &str, test: &str, drop: bool, candidate: &str) -> Fx {
             scheme: COMPLETION_SCHEME.into(),
         },
         observation_nonce: "e".repeat(32),
+        authority: AuthorityRef {
+            epoch: 0,
+            tenant_id: "tenant-t".into(),
+            task_family: "family-f".into(),
+        },
         limits: Limits {
             wall_time_ms: 60_000,
             output_bytes: 1 << 20,

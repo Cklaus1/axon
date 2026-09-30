@@ -4,7 +4,7 @@
 //! root, which each test then attacks.
 
 use crate::common::*;
-use axon_fabric::backend::TrustAuthority;
+use axon_fabric::backend::{parse_utc, Clock, TrustAuthority};
 use axon_fabric::readiness::{
     protected_components, verifier_identity, ReadinessTrust, CERT_SCHEMA, TRUST_PREFLIGHT_SCHEMA,
 };
@@ -85,14 +85,28 @@ pub const GUEST: [(&str, &str, &str); 3] = [
     ),
 ];
 
+/// The fixture's decision time. Readiness is pinned to it, so the genuine
+/// B263 record below stays CURRENT (its `end` within Fabric's 30 days).
+pub const FIXTURE_NOW: &str = "2026-09-28T12:00:00Z";
+/// When the run was observed, and when the operator certified it.
+pub const OBSERVED_AT: &str = "2026-09-28T00:00:00Z";
+pub const CERTIFIED_AT: &str = "2026-09-28T06:00:00Z";
+/// The engine the observed launch ran, and the B263 record qualified.
+pub const FC_SHA: &str = "8888888888888888888888888888888888888888888888888888888888888888";
+pub const JAILER_SHA: &str = "6666666666666666666666666666666666666666666666666666666666666666";
+
+pub fn at(t: &str) -> Clock {
+    Clock::FixedUnix(parse_utc(t).unwrap())
+}
+
 /// An observation of the certified run by `observer` (fabric revision `rev`).
 pub fn observation(observer: &Issuer, rev: &str) -> Value {
     json!({
         "schema": "axon-preflight-observation/1",
         "observer_key_id": observer.key_id(),
-        "nonce": "0".repeat(32), "epoch": 1, "observed_at": "2026-09-28T00:00:00Z",
+        "nonce": "0".repeat(32), "epoch": 1, "observed_at": OBSERVED_AT,
         "host_profile": "linux-microvm-protected", "fabric_revision": rev,
-        "firecracker_sha256": "8".repeat(64), "launcher_sha256": "9".repeat(64),
+        "firecracker_sha256": FC_SHA, "launcher_sha256": "9".repeat(64),
         "host_config_sha256": "a".repeat(64),
         "guest": {"kernel_sha256": GUEST[0].2, "rootfs_sha256": GUEST[1].2,
                   "axon_sha256": GUEST[2].2, "init_sha256": "b".repeat(64)},
@@ -101,16 +115,34 @@ pub fn observation(observer: &Issuer, rev: &str) -> Value {
     })
 }
 
-/// A B263 record qualifying the certified guest.
-pub fn b263_record() -> Value {
+/// A GENUINE B263 record qualifying the certified guest, issued under
+/// `issuer`: one Fabric's own qualification rules accept (PASS, no FAIL, a
+/// PASS counted, fresh at [`FIXTURE_NOW`], a clean tree, a host, a caveat,
+/// engine digests, the issuer it is signed by). The review found the
+/// fixture's record had none of these and still certified (C9 round 3).
+pub fn b263_record(issuer: &Issuer) -> Value {
     json!({
         "schema": "axon-b263-evidence/1",
+        "work_package": "B263",
+        "issuer_key_id": issuer.key_id(),
+        "host": "WSL2-nested",
+        "caveat": "Nested virtualization; the L0 hypervisor is outside the qualified boundary.",
+        "source": {"axon_git_rev": "0".repeat(40), "tree_dirty": false},
+        "engine": {"firecracker": "Firecracker v1.10.1", "firecracker_sha256": FC_SHA,
+                   "jailer": "Jailer v1.10.1", "jailer_sha256": JAILER_SHA},
         "profile": {"name": "linux-microvm-protected", "manifest_sha256": "7".repeat(64),
                     "artifacts": {
                         "vmlinux": {"sha256": GUEST[0].2},
                         "rootfs.sqfs": {"sha256": GUEST[1].2},
                         "axon": {"sha256": GUEST[2].2}}},
+        "assertions": [
+            {"name": "a1_boot_runs_ax_expected_stdout", "status": "PASS"},
+            {"name": "x3_l0_hypervisor_boundary", "status": "PASS"}
+        ],
+        "counts": {"total": 2, "PASS": 2, "FAIL": 0, "BLOCKED": 0},
         "result": "PASS",
+        "start": "2026-09-27T23:00:00Z",
+        "end": "2026-09-27T23:30:00Z",
     })
 }
 
@@ -207,7 +239,7 @@ pub fn certified() -> Option<Certified> {
         &operator,
         TrustAuthority::Qualification,
         &repo.join(B263),
-        &b263_record(),
+        &b263_record(&operator),
     );
     git(&repo, &["add", "-A"]);
     git(&repo, &["commit", "-q", "-m", "certified tree"]);
@@ -234,7 +266,7 @@ pub fn certified() -> Option<Certified> {
         .unwrap();
     }
     let root = d.path().join("trust/qualification");
-    let trust = ReadinessTrust::test(d.path(), &root);
+    let trust = ReadinessTrust::test(d.path(), &root).at(at(FIXTURE_NOW));
 
     let c = Certified {
         repo,
@@ -263,7 +295,7 @@ pub fn certified() -> Option<Certified> {
         "evidence": evidence, "evidence_bundle_sha256": bundle_of(&c.repo, &evidence),
         "readiness_verifier_sha256": verifier_identity()["sha256"],
         "trust_preflight_sha256": pf,
-        "certified_at": "2026-09-28T00:00:00Z",
+        "certified_at": CERTIFIED_AT,
     });
     c.operator.write_signed(&c.record(), &rec);
     c.commit("certification (governance only)");

@@ -243,7 +243,7 @@ fn a_b263_record_not_signed_under_the_qualification_root_is_refused() {
         &c,
         B263,
         "b263_qualification_sha256",
-        &b263_record(),
+        &b263_record(&agent),
         &agent,
         TrustAuthority::Qualification,
     );
@@ -258,7 +258,7 @@ fn a_b263_record_not_signed_under_the_qualification_root_is_refused() {
 fn a_b263_record_of_another_guest_is_refused() {
     for (i, (field, artifact, _)) in GUEST.iter().enumerate() {
         let Some(c) = certified() else { return };
-        let mut b = b263_record();
+        let mut b = b263_record(&c.operator);
         b["profile"]["artifacts"][artifact]["sha256"] = json!(format!("{:x}", i + 10).repeat(64));
         rebind(
             &c,
@@ -281,7 +281,7 @@ fn a_b263_record_of_another_guest_is_refused() {
 #[test]
 fn a_b263_record_of_another_profile_is_refused() {
     let Some(c) = certified() else { return };
-    let mut b = b263_record();
+    let mut b = b263_record(&c.operator);
     b["profile"]["name"] = json!("linux-microvm-dev");
     rebind(
         &c,
@@ -340,5 +340,303 @@ fn an_agent_owned_peer_root_decides_no_separation() {
         &c,
         "an agent-owned monitor root was read as holding no shared key",
         "not root",
+    );
+}
+
+// ── the B263 record is a CURRENT qualification (review PSV-7, C9 round 3;
+// A78) ─────────────────────────────────────────────────────────────────────
+//
+// Readiness checked the named record's signature, schema, profile and guest
+// digests, and nothing Fabric's own qualification() refuses: an
+// operator-signed record that FAILED, went stale, came from a dirty tree,
+// named no host or qualified another engine still certified PASS. The rules
+// are now ONE function (backend::accept_b263) both apply. Each attack below
+// is the genuine record with one thing wrong, re-signed by the operator; the
+// genuine record (the fixture's control, asserted PASS) is the control.
+
+/// The genuine record with `edit` applied, signed by the operator and bound
+/// into a re-signed certification.
+fn with_b263(c: &Certified, edit: impl FnOnce(&mut Value)) {
+    let mut b = b263_record(&c.operator);
+    edit(&mut b);
+    rebind(
+        c,
+        B263,
+        "b263_qualification_sha256",
+        &b,
+        &c.operator,
+        TrustAuthority::Qualification,
+    );
+}
+
+#[test]
+fn a_failed_b263_record_is_refused() {
+    let Some(c) = certified() else { return };
+    with_b263(&c, |b| {
+        b["assertions"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"name": "a4_guest_policy_enforced", "status": "FAIL"}));
+        b["counts"]["FAIL"] = json!(1);
+        b["counts"]["total"] = json!(3);
+    });
+    attack(
+        &c,
+        "a B263 record with a FAIL assertion certified the protected backend",
+        "has FAIL assertions",
+    );
+}
+
+#[test]
+fn a_b263_record_whose_result_is_not_pass_is_refused() {
+    let Some(c) = certified() else { return };
+    with_b263(&c, |b| b["result"] = json!("FAIL"));
+    attack(
+        &c,
+        "a B263 record whose result is FAIL certified the protected backend",
+        "only PASS, or PASS_WITH_BLOCKED",
+    );
+}
+
+#[test]
+fn a_stale_b263_record_is_refused() {
+    let Some(c) = certified() else { return };
+    with_b263(&c, |b| {
+        b["start"] = json!("2026-07-01T00:00:00Z");
+        b["end"] = json!("2026-07-01T01:00:00Z");
+    });
+    attack(
+        &c,
+        "a B263 record 89 days old certified the protected backend",
+        "is stale",
+    );
+}
+
+/// Currency is judged at DECISION time: the genuine record, once more than
+/// 30 days old, no longer certifies, exactly as Fabric then refuses every
+/// protected launch under it. Control: the same repository decided now.
+#[test]
+fn a_b263_qualification_that_lapsed_after_certification_is_refused() {
+    let Some(c) = certified() else { return };
+    let later = c.trust.clone().at(at("2026-10-29T00:00:00Z"));
+    let v = axon_fabric::readiness::protected_components(&c.repo, &later)["components"]
+        ["protected_backend"]
+        .clone();
+    assert_ne!(
+        v["status"], "PASS",
+        "ATTACK: the host's B263 qualification lapsed (31 days) and readiness still said PASS: {v}"
+    );
+    assert!(v.to_string().contains("is stale"), "{v}");
+    assert_eq!(
+        c.verdict()["status"],
+        "PASS",
+        "control: decided while current"
+    );
+}
+
+#[test]
+fn a_b263_record_from_a_dirty_tree_is_refused() {
+    let Some(c) = certified() else { return };
+    with_b263(&c, |b| b["source"]["tree_dirty"] = json!(true));
+    attack(
+        &c,
+        "a B263 record produced from a dirty source tree certified the protected backend",
+        "dirty (or unstated) source tree",
+    );
+}
+
+#[test]
+fn a_b263_record_that_names_no_host_is_refused() {
+    let Some(c) = certified() else { return };
+    with_b263(&c, |b| b["host"] = json!(" "));
+    attack(
+        &c,
+        "a B263 record naming no host certified the protected backend",
+        "states no host",
+    );
+}
+
+/// "Another host": the record qualified a different VMM than the one the
+/// observed launch ran. The observation's firecracker is joined to the
+/// record's engine.
+#[test]
+fn a_b263_record_of_another_engine_is_refused() {
+    let Some(c) = certified() else { return };
+    with_b263(&c, |b| {
+        b["engine"]["firecracker_sha256"] = json!("5".repeat(64));
+        b["host"] = json!("a laptop");
+    });
+    attack(
+        &c,
+        "a B263 record qualifying another host's firecracker certified the observed launch",
+        "but the B263 qualification qualified",
+    );
+}
+
+#[test]
+fn a_b263_record_claiming_another_issuer_is_refused() {
+    let Some(c) = certified() else { return };
+    let other = Issuer::generate();
+    with_b263(&c, |b| b["issuer_key_id"] = json!(other.key_id()));
+    attack(
+        &c,
+        "a B263 record claiming another issuer certified the protected backend",
+        "claims issuer_key_id",
+    );
+}
+
+#[test]
+fn a_certification_dated_before_its_observation_is_refused() {
+    let Some(c) = certified() else { return };
+    resign(&c, &c.operator, |r| {
+        r["certified_at"] = json!("2026-09-27T00:00:00Z")
+    });
+    attack(
+        &c,
+        "a certification dated before the run it certifies was observed",
+        "cannot precede what it certifies",
+    );
+}
+
+#[test]
+fn a_certification_dated_in_the_future_is_refused() {
+    let Some(c) = certified() else { return };
+    resign(&c, &c.operator, |r| {
+        r["certified_at"] = json!("2026-12-01T00:00:00Z")
+    });
+    attack(
+        &c,
+        "a certification dated in the future",
+        "is in the future",
+    );
+}
+
+#[test]
+fn a_certification_whose_certified_at_is_not_a_time_is_refused() {
+    let Some(c) = certified() else { return };
+    resign(&c, &c.operator, |r| r["certified_at"] = json!("1999"));
+    attack(
+        &c,
+        "a certification whose certified_at is not a time",
+        "protected_backend: certified_at",
+    );
+}
+
+// ── BLOCKED assertions: waived only by certified, operator-signed waivers ──
+
+/// Add `v` (signed by `who` for the qualification domain) to the certified
+/// evidence as `file`, and have the operator re-sign the record.
+fn add_evidence(c: &Certified, file: &str, v: &Value, who: &Issuer) {
+    write_signed_for(who, TrustAuthority::Qualification, &c.repo.join(file), v);
+    let rec: Value = serde_json::from_slice(&std::fs::read(c.record()).unwrap()).unwrap();
+    let mut ev: Vec<String> = rec["evidence"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e.as_str().unwrap().to_string())
+        .collect();
+    ev.push(file.to_string());
+    let evr: Vec<&str> = ev.iter().map(String::as_str).collect();
+    let bundle = bundle_of(&c.repo, &evr);
+    resign(c, &c.operator, |r| {
+        r["evidence"] = json!(ev);
+        r["evidence_bundle_sha256"] = json!(bundle);
+    });
+}
+
+const WAIVER: &str = "governance/proofs/v022-protected/b263-waivers.json";
+
+/// The genuine record with x3 BLOCKED (PASS_WITH_BLOCKED), and a waiver for
+/// it signed by `who`.
+fn blocked_x3_waived_by(c: &Certified, who: &Issuer) {
+    with_b263(c, |b| {
+        b["assertions"][1]["status"] = json!("BLOCKED");
+        b["counts"]["PASS"] = json!(1);
+        b["counts"]["BLOCKED"] = json!(1);
+        b["result"] = json!("PASS_WITH_BLOCKED");
+    });
+    let waiver = json!({
+        "schema": "axon-b263-waiver/1",
+        "evidence_sha256": sha(&c.repo.join(B263)),
+        "waivers": [{"assertion": "x3_l0_hypervisor_boundary",
+                     "reason": "operator decision D2", "expires": "2026-12-31T00:00:00Z"}],
+    });
+    add_evidence(c, WAIVER, &waiver, who);
+}
+
+#[test]
+fn a_blocked_b263_assertion_under_a_certified_operator_waiver_certifies() {
+    let Some(c) = certified() else { return };
+    blocked_x3_waived_by(&c, &c.operator);
+    let v = c.verdict();
+    assert_eq!(
+        v["status"], "PASS",
+        "control: an operator-waived BLOCKED x3: {v}"
+    );
+}
+
+#[test]
+fn a_blocked_b263_assertion_with_no_waiver_is_refused() {
+    let Some(c) = certified() else { return };
+    with_b263(&c, |b| {
+        b["assertions"][1]["status"] = json!("BLOCKED");
+        b["counts"]["PASS"] = json!(1);
+        b["counts"]["BLOCKED"] = json!(1);
+        b["result"] = json!("PASS_WITH_BLOCKED");
+    });
+    attack(
+        &c,
+        "a B263 record with an unwaived BLOCKED assertion certified the protected backend",
+        "not covered by an issuer-signed waiver",
+    );
+}
+
+#[test]
+fn a_b263_waiver_not_signed_by_the_operator_is_refused() {
+    let Some(c) = certified() else { return };
+    let agent = Issuer::generate();
+    blocked_x3_waived_by(&c, &agent);
+    attack(
+        &c,
+        "an agent-signed waiver excused a BLOCKED B263 assertion",
+        "not a trusted evidence issuer",
+    );
+}
+
+/// C9 round 3 integration: readiness judges B263 currency with the SAME
+/// maximum age the operator's host config sets for Fabric
+/// (`qualification.max_age_s`, one reading). The fixture's record is 12.5 h
+/// old at FIXTURE_NOW; a host config allowing one hour must make it stale for
+/// readiness exactly as it is for Fabric's launch-time qualification.
+#[test]
+fn readiness_judges_b263_currency_by_the_host_configs_maximum_age() {
+    let Some(c) = certified() else { return };
+    let cfg = c._d.path().join("protected-host.json");
+    let decide = |max_age: Value| {
+        std::fs::write(
+            &cfg,
+            json!({"qualification": {"max_age_s": max_age}}).to_string(),
+        )
+        .unwrap();
+        let t = c.trust.clone().with_host_config(&cfg);
+        axon_fabric::readiness::protected_components(&c.repo, &t)["components"]["protected_backend"]
+            .clone()
+    };
+    let v = decide(json!(3600));
+    assert_ne!(
+        v["status"], "PASS",
+        "ATTACK: the host config allows one hour, the B263 record is 12.5 h old, and readiness still said PASS: {v}"
+    );
+    assert!(v.to_string().contains("is stale"), "{v}");
+    let v = decide(json!("a week"));
+    assert_ne!(
+        v["status"], "PASS",
+        "a malformed host max age must refuse: {v}"
+    );
+    assert!(v.to_string().contains("max_age_s is not a number"), "{v}");
+    assert_eq!(
+        decide(json!(86400))["status"],
+        "PASS",
+        "control: a host config allowing a day certifies the same record"
     );
 }

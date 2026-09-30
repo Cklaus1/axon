@@ -21,7 +21,7 @@
 //! * the signer is among the repository's expected issuers, if it lists any
 //!   (the repository may narrow, never add).
 
-use crate::backend::{TrustAuthority, TEST_TRUST_BUILD};
+use crate::backend::{Clock, TrustAuthority, DEFAULT_EVIDENCE_MAX_AGE_S, TEST_TRUST_BUILD};
 use crate::git_data::{load_allowlist, tree_differs, AllowlistSource, Objects, GIT_BIN};
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
@@ -100,6 +100,33 @@ pub struct ReadinessTrust {
     /// may excuse an object in the working tree that is not in the
     /// certified tree.
     allowlist: AllowlistSource,
+    /// Decision time: a B263 qualification is current only if its `end` is
+    /// within `max_age_s` of NOW, as Fabric's own launch check requires
+    /// (review PSV-7, C9 round 3; A78). Production: the system clock and the
+    /// maximum age the operator's host config sets for Fabric (the same
+    /// reading, [`crate::protected_host::qualification_max_age_s`]). An Err
+    /// here (an unreadable, non-operator-owned or malformed host config)
+    /// refuses every certification rather than falling back to a default.
+    clock: Clock,
+    max_age_s: Result<u64, String>,
+}
+
+/// The B263 maximum age the host config at `path` sets. Only a MISSING config
+/// means Fabric's default; a present one must pass the operator-ownership walk
+/// and is read once, as a regular file.
+fn host_max_age_s(base: &Path, path: &Path) -> Result<u64, String> {
+    match std::fs::symlink_metadata(path) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(DEFAULT_EVIDENCE_MAX_AGE_S)
+        }
+        Err(e) => return Err(format!("{}: {e}", path.display())),
+        Ok(_) => {}
+    }
+    crate::backend::check_operator_owned_below(base, path)?;
+    let bytes = crate::backend::read_regular(path)?;
+    let v: serde_json::Value =
+        serde_json::from_slice(&bytes).map_err(|e| format!("{}: {e}", path.display()))?;
+    crate::protected_host::qualification_max_age_s(&v)
 }
 
 impl ReadinessTrust {
@@ -111,6 +138,11 @@ impl ReadinessTrust {
             ownership_base: PathBuf::from("/"),
             require_unwritable: true,
             allowlist: AllowlistSource::operator(),
+            clock: Clock::System,
+            max_age_s: host_max_age_s(
+                Path::new("/"),
+                Path::new(crate::protected_host::PROTECTED_HOST_CONFIG),
+            ),
         }
     }
 
@@ -136,7 +168,24 @@ impl ReadinessTrust {
                 base,
                 &trust.parent().unwrap_or(base).join("provenance-allowlist"),
             ),
+            clock: Clock::System,
+            max_age_s: Ok(DEFAULT_EVIDENCE_MAX_AGE_S),
         }
+    }
+
+    /// TESTS ONLY: judge B263 currency with the maximum age the host config
+    /// at `path` sets (ownership walked from this trust's `ownership_base`).
+    #[cfg(any(test, feature = "test-trust-root"))]
+    pub fn with_host_config(mut self, path: &Path) -> ReadinessTrust {
+        self.max_age_s = host_max_age_s(&self.ownership_base, path);
+        self
+    }
+
+    /// TESTS ONLY: decide as of `clock`.
+    #[cfg(any(test, feature = "test-trust-root"))]
+    pub fn at(mut self, clock: Clock) -> ReadinessTrust {
+        self.clock = clock;
+        self
     }
 
     /// Where this trust reads the provenance allowlist from.
@@ -430,9 +479,12 @@ fn certification(repo: &Path, component: &str, trust: &ReadinessTrust) -> Result
     }
     let certified = doc["axon_sha"].as_str().expect("checked");
     refuse_git_spoofing(repo, component)?;
-    if !git(repo, &["merge-base", "--is-ancestor", certified, "HEAD"])?.0 {
+    // Ancestry from hash-checked objects (the one implementation build and
+    // guest provenance use), never git's unverified commit walk.
+    let top = std::fs::canonicalize(repo).map_err(|e| format!("{}: {e}", repo.display()))?;
+    if let Err(e) = crate::git_data::descends(&top, certified) {
         return Err(format!(
-            "{component}: axon_sha {certified} is not an ancestor of this tree"
+            "{component}: axon_sha {certified} is not an ancestor of this tree ({e})"
         ));
     }
     let (ok, changed) = git(
@@ -490,7 +542,6 @@ fn certification(repo: &Path, component: &str, trust: &ReadinessTrust) -> Result
         if !ok {
             return Err(format!("{component}: this tree has no HEAD commit"));
         }
-        let top = std::fs::canonicalize(repo).map_err(|e| format!("{}: {e}", repo.display()))?;
         let mut objects = Objects::open(&top)?;
         let want = objects
             .entries(certified, Some(b"governance"))
@@ -646,7 +697,12 @@ fn named<'a>(
 /// * `b263_qualification_sha256` names a certified evidence file that is a
 ///   QUALIFICATION-signed `axon-b263-evidence/1` record of this profile, whose
 ///   qualified artifacts are the certified guest (`vmlinux` = kernel,
-///   `rootfs.sqfs` = image, `axon` = runtime).
+///   `rootfs.sqfs` = image, `axon` = runtime), and that is a CURRENT
+///   qualification by Fabric's own rules ([`crate::backend::accept_b263`]:
+///   PASS, no FAIL, fresh at decision time, clean tree, a host, engine
+///   digests), whose firecracker is the observed one;
+/// * the run was observed no later than `certified_at`, which is not in the
+///   future.
 fn attribution(
     component: &str,
     doc: &Value,
@@ -722,8 +778,8 @@ fn attribution(
 
     // The B263 qualification: operator-signed, of this profile, and of this
     // guest.
-    let (b_path, _, b) = named(evidence, component, doc, "b263_qualification_sha256")?;
-    verify_evidence_signature(
+    let (b_path, b_sha, b) = named(evidence, component, doc, "b263_qualification_sha256")?;
+    let b_issuer = verify_evidence_signature(
         "B263 qualification record",
         b,
         &crate::backend::read_signature("B263 qualification record", &sidecar(b_path))?,
@@ -749,7 +805,84 @@ fn attribution(
             ));
         }
     }
+    // ...and a CURRENT qualification by the rules Fabric launches under, at
+    // decision time (review PSV-7, C9 round 3; A78): the ONE implementation,
+    // [`crate::backend::accept_b263`]. Its waivers are certified evidence
+    // too: a qualification-signed waiver file bound to this record.
+    let now = trust.clock.now_unix();
+    let max_age_s = trust
+        .max_age_s
+        .clone()
+        .map_err(|e| format!("{component}: the host config's qualification maximum age: {e}"))?;
+    let b263 = crate::backend::accept_b263(&q, &b_issuer, now, max_age_s, || {
+        certified_waivers(component, evidence, b_sha, trust)
+    })
+    .map_err(|e| {
+        format!("{component}: the B263 record is not a current qualification Fabric launches under: {e}")
+    })?;
+    // The observed launch ran the engine that was qualified.
+    if o.firecracker_sha256 != b263.firecracker_sha256 {
+        return Err(format!(
+            "{component}: the observation records firecracker {}, but the B263 qualification \
+             qualified {}",
+            o.firecracker_sha256, b263.firecracker_sha256
+        ));
+    }
+    // Time: the run was observed before it was certified, and the
+    // certification is not from the future.
+    let certified_at = crate::backend::parse_utc(s("certified_at")).ok_or(format!(
+        "{component}: certified_at {:?} is not a YYYY-MM-DDTHH:MM:SSZ time",
+        s("certified_at")
+    ))?;
+    let observed_at = crate::backend::parse_utc(&o.observed_at).ok_or(format!(
+        "{component}: the observation's observed_at {:?} is not a YYYY-MM-DDTHH:MM:SSZ time",
+        o.observed_at
+    ))?;
+    if observed_at > certified_at {
+        return Err(format!(
+            "{component}: the run was observed at {} but certified at {}: a certification \
+             cannot precede what it certifies",
+            o.observed_at,
+            s("certified_at")
+        ));
+    }
+    if certified_at > now {
+        return Err(format!(
+            "{component}: certified_at {} is in the future",
+            s("certified_at")
+        ));
+    }
     Ok(())
+}
+
+/// The waivers among the certified evidence for the B263 record whose sha256
+/// is `b263_sha`: every `axon-b263-waiver/1` file, each verified under the
+/// operator's qualification root and bound to that record (Fabric's
+/// RULE:waiver-bound). None ⇒ no waiver.
+fn certified_waivers(
+    component: &str,
+    evidence: &[Evidence],
+    b263_sha: &str,
+    trust: &ReadinessTrust,
+) -> Result<crate::backend::Waivers, String> {
+    let mut all = crate::backend::Waivers::new();
+    for (p, _, bytes) in evidence {
+        let is_waiver = serde_json::from_slice::<Value>(bytes)
+            .is_ok_and(|w| w["schema"] == crate::backend::WAIVER_SCHEMA);
+        if !is_waiver {
+            continue;
+        }
+        axon_loop_contracts::operator_trust::verify_evidence_signature(
+            "waiver file",
+            bytes,
+            &crate::backend::read_signature("waiver file", &sidecar(p))?,
+            &trust.keys(&trust.issuers_dir)?,
+            TrustAuthority::Qualification,
+        )
+        .map_err(|e| format!("{component}: {e}"))?;
+        all.extend(crate::backend::parse_waivers(bytes, b263_sha)?);
+    }
+    Ok(all)
 }
 
 /// Schema of `scripts/trust_root_preflight.sh`'s report.

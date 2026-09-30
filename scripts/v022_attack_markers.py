@@ -401,7 +401,7 @@ ATTACK_MARKERS = {
     'M382': r"receipt qualification ref not the manifest's: ACCEPTED",
     'M383': r'a bundle of another schema version: ACCEPTED',
     # C9 round 2 (LOOP): ACTIVE again; its own '@'-id attack at check_bundle.
-    'M384': r'ATTACK: a protected bundle for suite acceptance@x joined a request that ran\s+check:acceptance: ACCEPTED',
+    'M384': r'ATTACK: a protected bundle for suite other joined a request that ran\s+check:acceptance: ACCEPTED',
     'M385': r'ATTACK: certified PASS despite the attack: \{[^\n]*"status":"PASS"',
     # ── C9 round 1: FABRIC/READINESS/INPUTS/LOOP rows (M320-M369). Placeholder
     # marker until tightened from the merged tree's own kill evidence.
@@ -633,6 +633,48 @@ ATTACK_MARKERS.update({
     'M498': r'ATTACK: the PSV runner is launched outside `env -i` \+ axon-guest-init: exec env PATH=',
     'M499': r'workload must be exec.d inside `env -i`: exec env PATH=',
 })
+# ── C9 round 3, workstream READINESS (M570-M584) ──
+ATTACK_MARKERS.update({
+    'M570': r'ATTACK: a B263 record with a FAIL assertion certified the protected backend and readiness still said PASS',
+    'M571': r'ATTACK: a B263 record whose result is FAIL certified the protected backend and readiness still said PASS',
+    'M572': r'ATTACK: a B263 record 89 days old certified the protected backend and readiness still said PASS',
+    'M573': r'ATTACK: a B263 record produced from a dirty source tree certified the protected backend and readiness still said PASS',
+    'M574': r'ATTACK: a B263 record naming no host certified the protected backend and readiness still said PASS',
+    'M575': r"ATTACK: a B263 record qualifying another host's firecracker certified the observed launch and readiness still said PASS",
+    'M576': r"ATTACK: the host's B263 qualification lapsed \(31 days\) and readiness still said PASS",
+    'M577': r'ATTACK: a certification dated before the run it certifies was observed and readiness still said PASS',
+    'M578': r'ATTACK: a certification dated in the future and readiness still said PASS',
+    'M579': r'ATTACK: an agent-signed waiver excused a BLOCKED B263 assertion and readiness still said PASS',
+    'M580': r'ATTACK: readiness certified a linked worktree whose admin dir was placed as \.git',
+    'M581': r'ATTACK: a forged ancestor object made HEAD descend from the PCI-certified revision, and the guest manifest says axon_tree_dirty_at_build: false',
+    'M582': r'ATTACK: the freeze bound evidence from a linked worktree whose admin dir was placed as \.git: Ok\(',
+    'M583': r"ATTACK: the freeze bound evidence from a tree whose \.git is a symlink to another clone's: Ok\(",
+    'M584': r'ATTACK: the freeze bound evidence from a guest image built from a dirty tree: Ok\(',
+})
+# C9 round 3, workstream CORE (M560-M569; amendment 46).
+ATTACK_MARKERS.update({
+    'M560': r'ATTACK: sealed handler answered operator code: the candidate.s arm aborted the operator.s listener at its println \(t_abort\)',
+    'M561': r'ATTACK: sealed handler answered operator code: the candidate.s multi-shot replay fed the operator.s read_file \(t_replay\)',
+    'M562': r'ATTACK: sealed handler answered operator code: the candidate.s arm aborted the operator.s listener through a candidate call \(t_through\)',
+    'M563': r'ATTACK: the candidate steered the operator.s challenge by calling its closure five times: Ok\(Completed\)',
+    'M564': r'ATTACK: a test that ended early at `\?` was counted complete \(t_find\): Ok\(Completed\)',
+    'M565': r'ATTACK: a test that ended early at `\?` was counted complete \(t_find\): Ok\(Completed\)',
+    'M566': r'ATTACK: a fn declared -> Result returned a None across its boundary: Ok\(EndedEarly',
+})
+# C9 round 3, integration.
+ATTACK_MARKERS['M567'] = r'ATTACK: the host config allows one hour, the B263 record is 12\.5 h old, and readiness still said PASS'
+# ── C9 round 3, LOOP workstream (M610-M618; amendment 49) ──
+ATTACK_MARKERS.update({
+    'M610': r'ATTACK: a manifest naming suite version "acf1:5{64}#x" entry accept\.ax joined the pin',
+    'M611': r'ATTACK: suite version "acf1:5{64}#x" entry "accept\.ax" was written as check-suite:acceptance@acf1:5{64}#x#accept\.ax',
+    'M612': r'ATTACK: prepare built a launch manifest for suite id "acc@x"',
+    'M613': r'ATTACK: suite version "acf1:1{64}#x" holding a reference separator was REGISTERED',
+    'M614': r'ATTACK: a protected verdict launched under authority epoch 5 was recorded for a\s+trial at epoch 0: ACCEPTED',
+    'M615': r'ATTACK: a protected verdict launched for tenant other-tenant was recorded in\s+tenant tenant-a: ACCEPTED',
+    'M616': r'ATTACK: a protected verdict launched for task family other-family was recorded\s+in family coding: ACCEPTED',
+    'M617': r'ATTACK: a protected launch took its authority epoch from a caller-named --store\s+\S*caller-store: ACCEPTED',
+    'M618': r'ATTACK: a protected host that pins no authority store launched with the caller\'s\s+--store: ACCEPTED',
+})
 ATTACK_MARKERS.update({
     # ── C9 round 3, CUSTODIAN workstream (M620-M638; amendment 50) ─────────
     # M325 re-pointed to the custodian's store (the Fabric nonce_store leaf it
@@ -658,4 +700,5 @@ ATTACK_MARKERS.update({
     'M636': r"ATTACK: a helper config spending through another custodian than the host's was\s+accepted: Ok\(\(\)\)",
     'M637': r"ATTACK: a helper config naming another host signer than the host's was accepted: Ok\(\(\)\)",
     'M638': r"ATTACK: the root helper launched on an observation signed with the host signer's key",
+    'M639': r'ATTACK: an observation for epoch 7 launched a manifest naming authority epoch 0',
 })

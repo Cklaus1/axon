@@ -68,10 +68,22 @@ pub(super) fn run_property_test_inner(
 
     // Try `cases` random inputs; on the first failing one, shrink it.
     for _ in 0..cases {
-        let args: Vec<Value> = gens
+        let args: Vec<Value> = match gens
             .iter()
             .map(|g| g.random(&|| interp.rng_next()))
-            .collect();
+            .collect::<Result<_, Flow>>()
+        {
+            Ok(a) => a,
+            // Unreachable today (no sealed frame is below the generator), but
+            // a refused draw is a failure, never a pass on fewer cases.
+            Err(f) => {
+                return PropertyOutcome::Failed {
+                    counterexample: String::new(),
+                    message: flow_to_msg(f),
+                    seed,
+                }
+            }
+        };
         if let Err(msg) = run_once(&interp, f, &args) {
             // Found a failing case — shrink toward minimal.
             let (shrunk_args, shrunk_msg) = shrink(&interp, f, &gens, args, msg);
@@ -210,12 +222,12 @@ pub(super) fn prop_gen_for(ty: &crate::ast::AxonType) -> Option<PropGen> {
 impl PropGen {
     /// Draws come from `rng` — the running frame's kernel stream, never a
     /// process-global one (see `Interp::rng_next`).
-    fn random(&self, rng: &dyn Fn() -> u64) -> Value {
-        match self {
+    fn random(&self, rng: &dyn Fn() -> Result<u64, Flow>) -> Result<Value, Flow> {
+        Ok(match self {
             // Bias toward small magnitudes (good property-test inputs) but cover
             // the full i64 range occasionally.
             PropGen::I64 => {
-                let r = rng();
+                let r = rng()?;
                 let v = if r & 7 == 0 {
                     r as i64
                 } else {
@@ -224,18 +236,18 @@ impl PropGen {
                 Value::Int(v)
             }
             PropGen::F64 => {
-                let r = rng();
+                let r = rng()?;
                 Value::Float((r % 2001) as f64 / 100.0 - 10.0)
             }
-            PropGen::Bool => Value::Bool(rng() & 1 == 0),
+            PropGen::Bool => Value::Bool(rng()? & 1 == 0),
             PropGen::Str => {
-                let len = (rng() % 8) as usize;
+                let len = (rng()? % 8) as usize;
                 let s: String = (0..len)
-                    .map(|_| (b'a' + (rng() % 26) as u8) as char)
-                    .collect();
+                    .map(|_| Ok((b'a' + (rng()? % 26) as u8) as char))
+                    .collect::<Result<_, Flow>>()?;
                 Value::Str(s)
             }
-        }
+        })
     }
 
     /// The minimal value for this type (the binary-search target).

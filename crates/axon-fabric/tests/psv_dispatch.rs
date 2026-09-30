@@ -795,6 +795,7 @@ fn a_verified_observation_makes_the_guest_verdict_protected() {
         &s.receipt,
         &bundle.to_string(),
         epoch,
+        &scope(),
         &observers,
     )
     .expect("the loop joins what Fabric launched and observed");
@@ -804,10 +805,25 @@ fn a_verified_observation_makes_the_guest_verdict_protected() {
         &s.receipt,
         &bundle.to_string(),
         epoch + 1,
+        &scope(),
         &observers,
     )
     .unwrap_err();
     assert!(e.contains("authority epoch"), "{e}");
+    // A82: Fabric's manifest names the scope it launched for, and the loop
+    // joins it: the same bundle does not count in another scope.
+    let mut other = scope();
+    other.tenant_id = axon_loop_contracts::TenantId::new("other-tenant").unwrap();
+    let e = axon_loop_contracts::protected_evidence::check_bundle(
+        &req,
+        &s.receipt,
+        &bundle.to_string(),
+        epoch,
+        &other,
+        &observers,
+    )
+    .unwrap_err();
+    assert!(e.contains("launch manifest is for tenant"), "{e}");
     // A64: the same launch with no operator host config (a library caller)
     // names no host, and the loop does not take it as protected evidence.
     let hostless = w.submit_observed(w.observer("", &key, "observer"), "op-obs-nohost");
@@ -821,6 +837,7 @@ fn a_verified_observation_makes_the_guest_verdict_protected() {
         &hostless.receipt,
         &hostless.psv_evidence.clone().expect("a bundle").to_string(),
         epoch,
+        &scope(),
         &observers,
     )
     .unwrap_err();
@@ -834,6 +851,7 @@ fn a_verified_observation_makes_the_guest_verdict_protected() {
         &s.receipt,
         &bad.to_string(),
         epoch,
+        &scope(),
         &observers,
     )
     .is_err());
