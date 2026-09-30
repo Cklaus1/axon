@@ -477,7 +477,7 @@
       }
     },
     "candidate_9": {
-      "state": "DEV REVIEW LOOP: round 1 found 6 blockers; the round-1 fix wave (1 + 1b) is merged and evidenced; dev review round 2 next. No freeze until a round has zero blockers.",
+      "state": "DEV REVIEW LOOP: round 2 found 4 blockers; the round-2 fix wave (and operator decisions A-E) is merged and evidenced at d6f9cbf5; dev review round 3 next. No freeze until a round has zero blockers.",
       "naming": "C7b = proof WITHDRAWN; C8 = FAILED certification attempts (01e22d50, 2568963f, 7b9736b9, cb9fa2ea, 4943489f); C9 = this candidate",
       "objectives": {
         "1_rng": "DONE 8a7962fb: RNG moved into the per-provenance Kernel; process-global stream deleted; sealed stream one-way seeded; drift test derives Random builtins from BUILTINS; runner-level steering regression; M270-M272 killed",
@@ -488,10 +488,7 @@
       },
       "registry": "387 rows at 89d5efd8: 358 active; retired 28 equivalent + 1 stale (M176); 0 legacy",
       "negative_matrix": "64 rows (A47-A64 in C9), 163 citations resolve",
-      "open_operator_decisions": [
-        "deployment model: fc_linux_profile.sh requires uid 0 and Fabric runs it directly, while the trust preflight refuses a root Fabric actor (A20). Option A: non-root Fabric + a narrow privileged launcher helper; option B: root Fabric, restated preflight, O_NOFOLLOW/ownership-walked caller paths",
-        "hash-then-exec of the pinned launcher / observer command (fexecve or a copy)"
-      ],
+      "open_operator_decisions": [],
       "operator_decisions_2026_09_29": {
         "adopted": "as written (operator, 2026-09-29); A and D are a separate workstream and stay listed under open_operator_decisions until that workstream records them",
         "B_strict_protected_counting": {
@@ -558,7 +555,46 @@
         "known_limits": [
           "the codegen/native parity tests exec a prebuilt target/debug/axon that a mutation never rebuilds, so a full-suite cell does not exercise a mutated guard through native codegen"
         ]
-      }
+      },
+      "dev_review_round_2": {
+        "run": "wf_9aa89b50-00a",
+        "tree": "043a0cb0",
+        "verdicts": "7 REGISTER, 2 DO_NOT_REGISTER (FIELD-ORIGIN, EQUIVALENCE)",
+        "blockers": [
+          "FIELD-ORIGIN: build provenance trusted repository git config (core.worktree, checkStat/trustCtime)",
+          "FIELD-ORIGIN: guest-manifest provenance used unhardened PATH git, ignored untracked files, failed open",
+          "EQUIVALENCE: M177 a weak kill (M436 refused first; guest twin of M04)",
+          "EQUIVALENCE: load-bearing guards without rows (read_regular O_NOFOLLOW/is_file, attestation arms, ...)"
+        ]
+      },
+      "round_2_fix_wave": {
+        "dev_head": "d6f9cbf5",
+        "fixed": [
+          "one hardened git (git_data.rs) for readiness, build and guest provenance; repo config allowlisted, never fetches; bytes hashed against HEAD (A65-A66, amendment 40)",
+          "one key one authority root at Fabric and readiness; unreadable root refuses (A67, amendment 41)",
+          "observation signer recorded and joined; strict *sha256 format; one suite-id parser; M384 ACTIVE (A68-A69, amendment 42)",
+          "harness: M177/M04 honest-collision rows ACTIVE; marker audit; rows M480-M499; consumer-crate full-suite cells with clean baselines (amendment 43)",
+          "operator decisions B, C, E encoded (A70-A71, amendment 44; freeze refuses a non-standalone clone and an unclean guest manifest)",
+          "operator decisions A, D: setuid axon-protected-launcher; same-byte exec (sealed_exec) for launcher, helper, observer (A72-A75, amendment 45)",
+          "11 rows made honest after round-2 merges; racy swap tests made deterministic (fanotify); ETXTBSY-prone fixtures write executables via a separate process"
+        ],
+        "guest": "boot 13/13 PASS at 86ca12c0 on the image built at 3f81dc67 (incl. helper and mounts); the evidence image must be rebuilt from a standalone clone before a freeze (decision E)",
+        "integration": "d6f9cbf5: fmt, builds, clippy, six PSV packages + axon-core tests, trust preflight fixtures, matrix 75 rows: all exit 0",
+        "mutation": "full two-shard run at d6f9cbf5: registry 469; ACTIVE 436/436 KILLED by their own attack; REFUSED_ELSEWHERE 0; survivors 0; unapplied 0; 32 EQUIVALENT_DID; 1 STALE (M176 -> M293)",
+        "paired_disable": "33/33 hold (full run at de523f4c; M287/M482/M217 at 816a4f52). 816a4f52..d6f9cbf5 changes only test fixtures (executables written via a separate process) and merges",
+        "known_limits": [
+          "codegen/native parity tests exec a prebuilt target/debug/axon a mutation never rebuilds",
+          "one_read's fifo_serving uses a 300 ms pause: it can only make an attack fail (a false survivor), never a false kill"
+        ]
+      },
+      "operator_items_before_protected_deployment": [
+        "install /etc/axon/provenance-allowlist (target/, dist/)",
+        "review setuid-root helper vs daemon (amendment 45)",
+        "deploy non-root fabric uid, the helper 04750 root:fabric-group, /etc/axon/protected-launcher.json, pin privileged_launcher in protected-host.json",
+        "re-pin the launcher (bytes changed)",
+        "place out and staging roots",
+        "decide on the compiled-launcher follow-up"
+      ]
     }
   },
   "closure_gate": {
