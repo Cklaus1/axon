@@ -2303,3 +2303,520 @@ fn an_observation_of_another_guest_init_launches_nothing() {
     let (code, rep) = f.run(&f.request("op-1"), None);
     assert_eq!(code, Some(0), "control: {rep}");
 }
+
+// ── C9 round 4 fix wave, ROWS2 wave 2, STRICT (rows M795-M814) ──────────────
+//
+// Refusal sites that were exempt as "dominated" (or with no stated kind).
+// Each gets an attack that reaches it ALONE (an ACTIVE row), or the attack its
+// EQUIVALENT_DID four-cell record is executed with (retired, never counted
+// killed).
+
+/// A request with the fixture's genuine observation, `edit` applied.
+fn edited_request(f: &Fx, out: &str, edit: impl FnOnce(&mut Value)) -> Value {
+    let mut r = f.request(out);
+    edit(&mut r);
+    r
+}
+
+/// A (M795): the helper takes one request schema. A request of another
+/// schema, every field of the current one genuine, launches nothing.
+/// Control: the same request with the current schema launches.
+#[test]
+fn a_request_of_another_schema_launches_nothing() {
+    let f = fx(None, "", |_| {});
+    let r = edited_request(&f, "op-1", |r| {
+        r["schema"] = json!("axon-protected-launch-request/9")
+    });
+    let (code, rep) = f.run(&r, None);
+    assert!(
+        code == Some(30) && f.launches() == 0,
+        "ATTACK: the root helper launched a request of another schema: {code:?} {rep}"
+    );
+    assert!(
+        rep["error"]
+            .as_str()
+            .unwrap_or("")
+            .contains("request schema is not"),
+        "{rep}"
+    );
+    let (code, rep) = f.run(&f.request("op-1"), None);
+    assert_eq!(code, Some(0), "control: {rep}");
+}
+
+/// A (M796, retired EQUIVALENT_DID against M623 and M797; the attack of its
+/// four-cell record): the request's `psv_manifest_sha256` is the snapshot
+/// manifest's digest spelled in UPPER case, with an observation of that same
+/// spelling. Three checks refuse it, each alone: the request's own format
+/// rule (M796), the snapshot manifest's digest compared with it (M623), and
+/// the custodian's rule that a spend names a lowercase sha256 (M797). Any
+/// reason; only a launch is the attack. Control: the genuine request.
+#[test]
+fn a_request_naming_its_manifest_digest_in_another_spelling_launches_nothing() {
+    let f = fx(None, "", |_| {});
+    let up = axon_psv::sha256_hex(&f.manifest).to_uppercase();
+    let mut o = observation_of(&f.manifest, &f.observer.key_id(), 0);
+    o["intended_launch_manifest_sha256"] = json!(up);
+    let o = serde_json::to_vec(&o).unwrap();
+    let r = edited_request(&f, "op-u", |r| {
+        r["psv_manifest_sha256"] = json!(up);
+        r["observation"] = json!(String::from_utf8(o.clone()).unwrap());
+        r["observation_signature"] = json!(f
+            .observer
+            .sign_for(axon_fabric::backend::TrustAuthority::Observer, &o));
+    });
+    let (code, rep) = f.run(&r, None);
+    assert!(
+        code == Some(30) && f.launches() == 0,
+        "ATTACK: the root helper launched a request whose manifest digest is not a lowercase \
+         sha256: {code:?} {rep}"
+    );
+    let f = fx(None, "", |_| {});
+    let (code, rep) = f.run(&f.request("op-1"), None);
+    assert_eq!(code, Some(0), "control: {rep}");
+}
+
+/// A (M798): the request's timeout is bounded by the operator's
+/// `max_timeout_s` (3600 in the fixture): a request asking for more launches
+/// nothing (the launcher would be run with the Fabric's ceiling instead of
+/// the operator's). Control: the operator's maximum itself launches.
+#[test]
+fn a_request_asking_for_more_time_than_the_operator_allows_launches_nothing() {
+    let f = fx(None, "", |_| {});
+    let r = edited_request(&f, "op-t", |r| r["timeout_s"] = json!(3601));
+    let (code, rep) = f.run(&r, None);
+    assert!(
+        code == Some(30) && f.launches() == 0,
+        "ATTACK: the root helper launched with a timeout above the operator's max_timeout_s: \
+         {code:?} {rep}"
+    );
+    assert!(
+        rep["error"].as_str().unwrap_or("").contains("timeout_s"),
+        "{rep}"
+    );
+    let r = edited_request(&f, "op-1", |r| r["timeout_s"] = json!(3600));
+    let (code, rep) = f.run(&r, None);
+    assert_eq!(code, Some(0), "control: {rep}");
+}
+
+/// The fixture with the manifest naming `policy` (and a genuine observation
+/// of that manifest), `policy` put beside the job.
+fn fx_with_policy(policy: Vec<u8>) -> Fx {
+    let f = fx(None, "", |_| {});
+    let mut m: Value = serde_json::from_slice(&f.manifest).unwrap();
+    m["policy_sha256"] = json!(axon_psv::sha256_hex(&policy));
+    let manifest = serde_json::to_vec(&m).unwrap();
+    let observation =
+        serde_json::to_vec(&observation_of(&manifest, &f.observer.key_id(), 0)).unwrap();
+    let f = Fx {
+        manifest,
+        observation,
+        policy,
+        ..f
+    };
+    f.put_inputs();
+    f
+}
+
+/// A (M799): the guest policy the root helper copies is at most 64 KiB. One
+/// byte more, even when it IS the manifest's policy and the observation of
+/// that manifest is genuine, launches nothing. Control: exactly 64 KiB
+/// launches (the padding is valid JSON whitespace; only the size refuses).
+#[test]
+fn a_policy_over_the_helpers_bound_launches_nothing() {
+    let padded = |n: usize| {
+        let mut p = TEST_GUEST_POLICY.as_bytes().to_vec();
+        p.resize(n, b' ');
+        p
+    };
+    let f = fx_with_policy(padded((64 << 10) + 1));
+    let (code, rep) = f.run(&f.request("op-big"), None);
+    assert!(
+        code == Some(30) && f.launches() == 0,
+        "ATTACK: the root helper launched a policy over its 64 KiB bound: {code:?} {rep}"
+    );
+    assert!(
+        rep["error"].as_str().unwrap_or("").contains("too large"),
+        "{rep}"
+    );
+    let f = fx_with_policy(padded(64 << 10));
+    let (code, rep) = f.run(&f.request("op-1"), None);
+    assert_eq!(code, Some(0), "control: {rep}");
+}
+
+/// A (M800): every psv input is spelled exactly `<out root>/<inputs>/<leaf>`.
+/// A candidate path naming the same directory in another spelling (`./`, a
+/// doubled or trailing `/`) launches nothing, although the snapshot would
+/// read the same files. Control: the plain spelling launches.
+#[test]
+fn a_psv_input_spelled_another_way_launches_nothing() {
+    let f = fx(None, "", |_| {});
+    let i = f.out_root.join(INPUTS);
+    for spelled in [
+        format!("{}/./candidate", i.display()),
+        format!("{}//candidate", i.display()),
+        format!("{}/candidate/", i.display()),
+    ] {
+        let r = edited_request(&f, "op-s", |r| r["psv_candidate"] = json!(spelled));
+        let (code, rep) = f.run(&r, None);
+        assert!(
+            code == Some(30) && f.launches() == 0,
+            "ATTACK: the root helper launched a request whose candidate is spelled {spelled}: \
+             {code:?} {rep}"
+        );
+    }
+    let (code, rep) = f.run(&f.request("op-1"), None);
+    assert_eq!(code, Some(0), "control: {rep}");
+}
+
+/// A (M801, retired EQUIVALENT_DID against M800; the attack of its four-cell
+/// record): a psv input naming another leaf of the inputs dir. The leaf-name
+/// rule (M801) and the exact-spelling rule (M800) each refuse it alone.
+/// Control: the plain request.
+#[test]
+fn a_psv_input_naming_another_leaf_launches_nothing() {
+    let f = fx(None, "", |_| {});
+    let other = f.out_root.join(INPUTS).join("shadow");
+    let r = edited_request(&f, "op-l", |r| r["psv_candidate"] = json!(other));
+    let (code, rep) = f.run(&r, None);
+    assert!(
+        code == Some(30) && f.launches() == 0,
+        "ATTACK: the root helper launched a request whose candidate names another leaf: \
+         {code:?} {rep}"
+    );
+    let (code, rep) = f.run(&f.request("op-1"), None);
+    assert_eq!(code, Some(0), "control: {rep}");
+}
+
+/// A (M804, retired EQUIVALENT_DID against M802; the attack of its four-cell
+/// record): the request's out dir IS its inputs dir. The out==inputs rule
+/// (M804) and the out dir's must-be-new rule (M802: the inputs dir exists)
+/// each refuse it alone. Control: the plain request.
+#[test]
+fn an_out_dir_that_is_the_inputs_dir_launches_nothing() {
+    let f = fx(None, "", |_| {});
+    let r = edited_request(&f, INPUTS, |_| {});
+    let (code, rep) = f.run(&r, None);
+    assert!(
+        code == Some(30) && f.launches() == 0,
+        "ATTACK: the root helper launched into its own psv inputs dir: {code:?} {rep}"
+    );
+    let f = fx(None, "", |_| {});
+    let (code, rep) = f.run(&f.request("op-1"), None);
+    assert_eq!(code, Some(0), "control: {rep}");
+}
+
+/// A (M802), ROOT ONLY: the root launcher writes only into an out dir the
+/// helper CREATED. A root-owned directory already at the out path (a helper
+/// out dir whose hand-over failed, holding what that launch left) is never
+/// launched into: the must-be-new rule is the only check, since the dir is
+/// root's and the owner re-check after it would pass. Control: a new out dir.
+#[test]
+fn a_root_owned_out_dir_that_already_exists_is_never_launched_into() {
+    if skip_unless_root() {
+        return;
+    }
+    let f = fx(Some(FABRIC), "", |_| {});
+    let stale = f.out_root.join("op-1");
+    std::fs::create_dir(&stale).unwrap();
+    set_mode(&stale, 0o700);
+    std::fs::write(stale.join("left-by-an-earlier-launch"), "x").unwrap();
+    let (code, rep) = f.run(&f.request("op-1"), Some((FABRIC, &[])));
+    assert!(
+        code == Some(30) && !f.launched(),
+        "ATTACK: the root helper launched into an out dir that already existed: {code:?} {rep}"
+    );
+    assert!(
+        rep["error"].as_str().unwrap_or("").contains("must be new"),
+        "{rep}"
+    );
+    // The out dir is made after the nonce is spent: a fresh launch.
+    let f = fx(Some(FABRIC), "", |_| {});
+    let (code, rep) = f.run(&f.request("op-1"), Some((FABRIC, &[])));
+    assert_eq!(code, Some(0), "control: {rep}");
+}
+
+/// A (M803, retired EQUIVALENT_DID against M802; the attack of its four-cell
+/// record), ROOT ONLY: the Fabric uid put its own directory at the out path
+/// before the launch. The must-be-new rule (M802) and the owner re-check
+/// after the open (M803: the dir is not root's) each refuse it alone.
+/// Control: a new out dir.
+#[test]
+fn a_fabric_owned_out_dir_that_already_exists_is_never_launched_into() {
+    if skip_unless_root() {
+        return;
+    }
+    let f = fx(Some(FABRIC), "", |_| {});
+    let planted = f.out_root.join("op-1");
+    std::fs::create_dir(&planted).unwrap();
+    chown(&planted, FABRIC);
+    let (code, rep) = f.run(&f.request("op-1"), Some((FABRIC, &[])));
+    assert!(
+        code == Some(30) && !f.launched(),
+        "ATTACK: the root helper launched into an out dir the Fabric uid made: {code:?} {rep}"
+    );
+    // The out dir is made after the nonce is spent: a fresh launch.
+    let f = fx(Some(FABRIC), "", |_| {});
+    let (code, rep) = f.run(&f.request("op-1"), Some((FABRIC, &[])));
+    assert_eq!(code, Some(0), "control: {rep}");
+}
+
+/// A (M805), ROOT ONLY: the helper reads a psv input only from a directory the
+/// Fabric uid owns. Here the candidate DIRECTORY is root's (its files stay
+/// the Fabric's, so the per-file owner rule, M538, passes): only the leaf
+/// owner rule refuses it. Control: the Fabric's own directory launches.
+#[test]
+fn a_root_owned_candidate_directory_is_never_read_by_the_helper() {
+    if skip_unless_root() {
+        return;
+    }
+    let f = fx(Some(FABRIC), "", |_| {});
+    std::os::unix::fs::lchown(f.out_root.join(INPUTS).join("candidate"), Some(0), Some(0)).unwrap();
+    let (code, rep) = f.run(&f.request("op-1"), Some((FABRIC, &[])));
+    assert!(
+        code == Some(30) && !f.launched(),
+        "ATTACK: the root helper read a root-owned candidate directory and launched: \
+         {code:?} {rep}"
+    );
+    assert!(
+        rep["error"]
+            .as_str()
+            .unwrap_or("")
+            .contains("psv input candidate is owned by uid 0"),
+        "{rep}"
+    );
+    let f = fx(Some(FABRIC), "", |_| {});
+    let (code, rep) = f.run(&f.request("op-1"), Some((FABRIC, &[])));
+    assert_eq!(code, Some(0), "control: {rep}");
+}
+
+/// Sh for one request `body` (a JSON line) as `uid` to the custodian at
+/// `sock`, the reply to `$1/<out>`.
+fn ask_custodian(uid: u32, sock: &str, body: &str, out: &str) -> String {
+    let body = body.replace('"', "\\\"");
+    format!(
+        "setpriv --reuid={uid} --regid={uid} --clear-groups -- python3 -c '\n\
+         import socket, sys\n\
+         s = socket.socket(socket.AF_UNIX)\n\
+         s.settimeout(20)\n\
+         s.connect(\"{sock}\")\n\
+         s.sendall(b\"{body}\\n\")\n\
+         sys.stdout.write(s.recv(4096).decode())\n\
+         ' > \"$1/{out}\" 2>/dev/null\n"
+    )
+}
+
+/// D6 on the PRODUCTION custodian (M806), ROOT ONLY: a request of another
+/// schema is answered with a refusal, never with a nonce. Control: the same
+/// request with the current schema is served.
+#[test]
+fn a_protected_custodian_answers_no_request_of_another_schema() {
+    if !root_with_etc_axon() {
+        return;
+    }
+    let d = production_etc_with_custodian(|_| {});
+    let s = d.path();
+    let issue = |schema: &str| json!({"schema": schema, "op": "issue", "epoch": 0}).to_string();
+    in_production_etc(
+        s,
+        "custodian",
+        &format!(
+            "{}{}",
+            ask_custodian(
+                FABRIC,
+                CUSTODIAN_SOCK,
+                &issue("axon-custodian-request/9"),
+                "attack.json"
+            ),
+            ask_custodian(
+                FABRIC,
+                CUSTODIAN_SOCK,
+                &issue("axon-custodian-request/1"),
+                "control.json"
+            ),
+        ),
+    );
+    let read = |n: &str| std::fs::read_to_string(s.join(n)).unwrap_or_default();
+    assert!(
+        read("control.json").contains("\"ok\":true"),
+        "control: {} ({})",
+        read("control.json"),
+        read("custodian.err")
+    );
+    let reply = read("attack.json");
+    assert!(
+        !reply.contains("\"ok\":true"),
+        "ATTACK: a protected custodian answered a request of another schema: {reply}"
+    );
+    assert!(reply.contains("request schema is not"), "{reply}");
+}
+
+/// A84 on the PRODUCTION custodian (M797), ROOT ONLY: a spend must name the
+/// launch manifest it is spent for, as a lowercase sha256 (the record the
+/// custodian keeps of which launch spent the nonce). A spend by the launcher
+/// uid (root) naming anything else spends nothing. Control: the same spend
+/// naming a sha256 is served.
+#[test]
+fn a_protected_custodian_spends_nothing_for_a_spend_naming_no_manifest() {
+    if !root_with_etc_axon() {
+        return;
+    }
+    let nonce = "0123456789abcdef0123456789abcdef";
+    let spend = |manifest: &str| {
+        json!({"schema": "axon-custodian-request/1", "op": "spend", "epoch": 0,
+               "nonce": nonce, "manifest_sha256": manifest})
+        .to_string()
+    };
+    let d = production_etc_with_custodian(|_| {});
+    let s = d.path();
+    in_production_etc(
+        s,
+        "custodian",
+        &ask_custodian(0, CUSTODIAN_SOCK, &spend(&"A".repeat(64)), "attack.json"),
+    );
+    let reply = std::fs::read_to_string(s.join("attack.json")).unwrap_or_default();
+    assert!(
+        !reply.contains("\"ok\":true"),
+        "ATTACK: a protected custodian spent a nonce on a spend naming no launch manifest: \
+         {reply}"
+    );
+    assert!(reply.contains("names no launch manifest"), "{reply}");
+    let d = production_etc_with_custodian(|_| {});
+    let s = d.path();
+    in_production_etc(
+        s,
+        "custodian",
+        &ask_custodian(0, CUSTODIAN_SOCK, &spend(&"a".repeat(64)), "control.json"),
+    );
+    let reply = std::fs::read_to_string(s.join("control.json")).unwrap_or_default();
+    assert!(
+        reply.contains("\"ok\":true"),
+        "control: {reply} ({})",
+        std::fs::read_to_string(s.join("custodian.err")).unwrap_or_default()
+    );
+}
+
+/// D6 (M813, retired EQUIVALENT_DID against M325; the attack of its
+/// four-cell record), ROOT ONLY: the production custodian's store is a
+/// SYMLINK (owned by the custodian uid) to its real 0700 store. The
+/// not-a-directory rule (M813) and the no-group/other-access rule (M325: a
+/// symlink's lstat mode is 0777 on Linux) each refuse it alone. Control: the
+/// store itself serves.
+#[test]
+fn a_protected_custodian_never_serves_from_a_symlinked_store() {
+    if !root_with_etc_axon() {
+        return;
+    }
+    let d = production_etc_with_custodian(|v| v["store"] = json!("/etc/axon/custodian/link"));
+    let s = d.path();
+    std::os::unix::fs::symlink("nonces", s.join("etc/custodian/link")).unwrap();
+    // The namespace script chowns the tree to root; the link must be the
+    // custodian's (else its owner rule, M630, would refuse it first).
+    let script = format!(
+        "chown -h {CUSTODIAN}:{CUSTODIAN} /etc/axon/custodian/link\n{}",
+        ask_issue(FABRIC, CUSTODIAN_SOCK, "reply.json")
+    );
+    in_production_etc_before_custodian(s, "custodian", &script);
+    let reply = std::fs::read_to_string(s.join("reply.json")).unwrap_or_default();
+    assert!(
+        !reply.contains("\"ok\":true"),
+        "ATTACK: a protected custodian served from a store that is a symlink: {reply}"
+    );
+    let d = production_etc_with_custodian(|_| {});
+    let s = d.path();
+    in_production_etc(
+        s,
+        "custodian",
+        &ask_issue(FABRIC, CUSTODIAN_SOCK, "reply.json"),
+    );
+    let reply = std::fs::read_to_string(s.join("reply.json")).unwrap_or_default();
+    assert!(reply.contains("\"ok\":true"), "control: {reply}");
+}
+
+/// [`in_production_etc`], with the first line of `body` (up to its first
+/// newline) run as root BEFORE the custodian is started, the rest after.
+fn in_production_etc_before_custodian(s: &Path, store_parent: &str, body: &str) {
+    let (pre, rest) = body.split_once('\n').unwrap_or((body, ""));
+    let sock = CUSTODIAN_SOCK;
+    let script = format!(
+        "set -e\n\
+         mount -t tmpfs -o mode=0755 tmpfs /etc/axon\n\
+         cp -a \"$1/etc/.\" /etc/axon/\n\
+         chown -R 0:0 /etc/axon\n\
+         chmod 0755 /etc/axon\n\
+         chown -R {FABRIC}:{FABRIC} /etc/axon/runs\n\
+         chmod 0700 /etc/axon/runs /etc/axon/staging\n\
+         chown -R {CUSTODIAN}:{CUSTODIAN} /etc/axon/{store_parent}/nonces\n\
+         chmod 0700 /etc/axon/{store_parent}/nonces\n\
+         {pre}\n\
+         {{ systemd-socket-activate -l {sock} setpriv --reuid={CUSTODIAN} \
+         --regid={CUSTODIAN} --clear-groups -- \"$1/axon-custodian\"; \
+         echo $? > \"$1/custodian.code\"; }} 2> \"$1/custodian.err\" &\n\
+         C=$!\n\
+         set +e\n\
+         n=0; while [ ! -S {sock} ] && [ $n -lt 200 ]; do sleep 0.05; n=$((n+1)); done\n\
+         chmod 0666 {sock}\n\
+         {rest}\n\
+         pkill -f \"$1/axon-custodian\" 2>/dev/null; wait $C 2>/dev/null\n\
+         exit 0\n"
+    );
+    let st = Command::new("unshare")
+        .args(["-m", "--propagation", "private", "sh", "-c", &script, "sh"])
+        .arg(s)
+        .status()
+        .unwrap();
+    assert!(st.success(), "setup: the namespace script failed");
+}
+
+/// The trust preflight's probe list (M807, M808): `axon-fabric
+/// protected-host-paths` lists exactly what `ProtectedHost::load` enforces, so
+/// a host config `load` refuses gets no list either: one naming a relative
+/// path (M807), or of another schema (M808). Control: the production host's
+/// three configs list.
+#[test]
+fn the_probe_list_is_refused_for_a_host_config_load_refuses() {
+    let paths = |edit: fn(&mut Value)| {
+        let d = production_host_etc(edit, |_| {});
+        let t = d.path().join("etc");
+        let o = Command::new(env!("CARGO_BIN_EXE_axon-fabric"))
+            .arg("protected-host-paths")
+            .arg("--config")
+            .arg(t.join("protected-host.json"))
+            .arg("--launcher-config")
+            .arg(t.join("protected-launcher.json"))
+            .arg("--custodian-config")
+            .arg(t.join("custodian.json"))
+            .output()
+            .unwrap();
+        (
+            o.status.code(),
+            String::from_utf8_lossy(&o.stdout).to_string(),
+            String::from_utf8_lossy(&o.stderr).to_string(),
+        )
+    };
+    let (code, out, err) = paths(|_| {});
+    assert!(
+        code == Some(0) && out.contains("/etc/axon/launcher.sh"),
+        "control: {code:?} {out} {err}"
+    );
+    for (edit, attack, why) in [
+        (
+            (|v: &mut Value| v["launcher"]["path"] = json!("etc/axon/launcher.sh"))
+                as fn(&mut Value),
+            "a relative launcher path",
+            "is not absolute",
+        ),
+        (
+            |v| v["schema"] = json!("axon-protected-host/0"),
+            "a host config of another schema",
+            "schema is not",
+        ),
+    ] {
+        let (code, out, err) = paths(edit);
+        assert!(
+            code != Some(0),
+            "ATTACK: the preflight probe list was printed for a host config load refuses \
+             ({attack}): {out}"
+        );
+        assert!(format!("{out}{err}").contains(why), "{why}: {out} {err}");
+    }
+}

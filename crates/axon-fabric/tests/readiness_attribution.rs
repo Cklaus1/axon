@@ -61,10 +61,22 @@ fn a_verifier_key_id_outside_the_verifier_root_is_refused() {
     resign(&c, &c.operator, |r| {
         r["verifier_key_id"] = json!(stranger.key_id())
     });
-    attack(
-        &c,
-        "the record names a verifier key the operator never trusted",
-        "is not a key in the operator's verifier root",
+    // Two checks refuse it, each alone (M338, retired EQUIVALENT_DID with a
+    // four-cell record against M812, C9 round 4 rows2): the membership check
+    // and launched()'s lookup of verifier_key_id in the verifier root.
+    // Which one refuses is not the property; only PASS is the attack.
+    let v = c.verdict();
+    assert_ne!(
+        v["status"], "PASS",
+        "ATTACK: the record names a verifier key the operator never trusted and readiness \
+         still said PASS: {v}"
+    );
+    assert!(
+        v.to_string()
+            .contains("is not a key in the operator's verifier root")
+            || v.to_string()
+                .contains("names no key in the operator's verifier root"),
+        "{v}"
     );
 }
 

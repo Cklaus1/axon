@@ -938,7 +938,7 @@ fn a_verified_observation_makes_the_guest_verdict_protected() {
 
 /// One defect each: (observer mode, signing authority, root holding the key,
 /// the reason a refusal names; `|` separates alternatives).
-const DEFECTIVE_OBSERVATIONS: [(&str, &str, &str, &str); 11] = [
+const DEFECTIVE_OBSERVATIONS: [(&str, &str, &str, &str); 12] = [
     // A9: another authority domain (the key IS a trusted observer). The
     // domain field (M152) and the domain-separated message (M153) each
     // refuse it alone (M152's four-cell record), so either reason.
@@ -989,6 +989,10 @@ const DEFECTIVE_OBSERVATIONS: [(&str, &str, &str, &str); 11] = [
         "but is signed by",
     ),
     ("exit", "observer", "observer", "observer exited"),
+    // C9 round 4 (rows2, M811): the observer leaves a GENUINE signed
+    // observation and then exits non-zero. Only its exit status refuses it:
+    // the observation verifies and joins.
+    ("disown", "observer", "observer", "observer exited"),
     // §7: the observer measures the INSTALLED verifier; another one refuses.
     ("verifier", "observer", "observer", "verifier_sha256"),
 ];

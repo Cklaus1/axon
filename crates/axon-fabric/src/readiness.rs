@@ -316,15 +316,22 @@ fn git_cmd(repo: &Path) -> Result<std::process::Command, String> {
     Ok(crate::git_data::git_cmd(&top))
 }
 
-fn git(repo: &Path, args: &[&str]) -> Result<(bool, String), String> {
+/// `git args` in `repo`: its stdout, or a refusal naming `component` when
+/// git fails. The ONE place a git failure is decided (C9 round 4, rows2): a
+/// failed answer is never read as an empty one ("no replace refs", "no
+/// change", "no index entry"), whichever question it answered.
+fn git(repo: &Path, component: &str, args: &[&str]) -> Result<String, String> {
     let out = git_cmd(repo)?
         .args(args)
         .output()
         .map_err(|e| format!("{GIT_BIN}: {e}"))?;
-    Ok((
-        out.status.success(),
-        String::from_utf8_lossy(&out.stdout).trim().to_string(),
-    ))
+    if !out.status.success() {
+        return Err(format!(
+            "{component}: git {} failed: nothing unverified is assumed unchanged",
+            args.first().copied().unwrap_or("")
+        ));
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
 /// Repository-local git state that makes git report something other than
@@ -348,14 +355,16 @@ fn refuse_git_spoofing(repo: &Path, component: &str) -> Result<(), String> {
     // The repository's own .git/config: a promisor remote with a
     // core.sshCommand, core.worktree, a filter driver… (review PSV-7, C9
     // round 2). Refused before git is asked anything else.
-    crate::git_data::refuse_config(&top).map_err(|e| format!("{component}: {e}"))?;
-    let (ok, replaced) = git(
+    // The config of the repository git DISCOVERS from `repo` (`found`): the
+    // one every git call below reads. Equal to `top` once the rule above
+    // holds; naming `found` keeps each rule the only check of its own fact
+    // (C9 round 4, rows2: a missing `.git` at `top` was refused by both).
+    crate::git_data::refuse_config(&found).map_err(|e| format!("{component}: {e}"))?;
+    let replaced = git(
         repo,
+        component,
         &["for-each-ref", "--format=%(refname)", "refs/replace/"],
     )?;
-    if !ok {
-        return Err(format!("{component}: cannot list refs/replace/"));
-    }
     if let Some(r) = replaced.lines().next() {
         return Err(format!(
             "{component}: the repository has refs/replace/ object replacements (e.g. {r}): git \
@@ -363,8 +372,8 @@ fn refuse_git_spoofing(repo: &Path, component: &str) -> Result<(), String> {
              applies"
         ));
     }
-    let (ok, grafts) = git(repo, &["rev-parse", "--git-path", "info/grafts"])?;
-    if !ok || grafts.is_empty() {
+    let grafts = git(repo, component, &["rev-parse", "--git-path", "info/grafts"])?;
+    if grafts.is_empty() {
         return Err(format!(
             "{component}: cannot locate the repository's info/grafts"
         ));
@@ -379,10 +388,7 @@ fn refuse_git_spoofing(repo: &Path, component: &str) -> Result<(), String> {
     }
     // `-v`: `S` marks skip-worktree, a lowercase tag assume-unchanged. Either
     // tells git not to look at the file, which is exactly what is certified.
-    let (ok, index) = git(repo, &["ls-files", "-z", "-v"])?;
-    if !ok {
-        return Err(format!("{component}: cannot read the index"));
-    }
+    let index = git(repo, component, &["ls-files", "-z", "-v"])?;
     for e in index.split('\0').filter(|e| e.len() > 2) {
         let (tag, path) = (e.as_bytes()[0], &e[2..]);
         if tag == b'S' || tag == b's' {
@@ -487,8 +493,9 @@ fn certification(repo: &Path, component: &str, trust: &ReadinessTrust) -> Result
             "{component}: axon_sha {certified} is not an ancestor of this tree ({e})"
         ));
     }
-    let (ok, changed) = git(
+    let changed = git(
         repo,
+        component,
         &[
             "diff",
             "--no-renames",
@@ -498,18 +505,11 @@ fn certification(repo: &Path, component: &str, trust: &ReadinessTrust) -> Result
             "HEAD",
         ],
     )?;
-    // Behind the ancestor check above (so no test reaches it): a git failure
-    // here — e.g. a damaged object store — is never read as "no change".
-    if !ok {
-        return Err(format!(
-            "{component}: cannot compare this tree with axon_sha {certified}: nothing unverified \
-             is assumed unchanged"
-        ));
-    }
     // Staged (index vs HEAD) and untracked files. The working tree itself is
     // compared below from the file bytes, not through git's porcelain view.
-    let (ok_staged, staged) = git(
+    let staged = git(
         repo,
+        component,
         &[
             "diff-index",
             "--cached",
@@ -519,14 +519,11 @@ fn certification(repo: &Path, component: &str, trust: &ReadinessTrust) -> Result
             "HEAD",
         ],
     )?;
-    let (ok_untracked, untracked) =
-        git(repo, &["ls-files", "-z", "--others", "--exclude-standard"])?;
-    if !ok_staged || !ok_untracked {
-        return Err(format!(
-            "{component}: cannot read the index or the working tree: nothing unverified is \
-             assumed unchanged"
-        ));
-    }
+    let untracked = git(
+        repo,
+        component,
+        &["ls-files", "-z", "--others", "--exclude-standard"],
+    )?;
     let mut outside: Vec<String> = [changed, staged, untracked]
         .iter()
         .flat_map(|l| l.split('\0').map(str::to_string).collect::<Vec<_>>())
@@ -538,10 +535,7 @@ fn certification(repo: &Path, component: &str, trust: &ReadinessTrust) -> Result
     // object counts, git-ignore rules excuse nothing, and only the operator's
     // provenance allowlist excuses generated material.
     if outside.is_empty() {
-        let (ok, head) = git(repo, &["rev-parse", "--verify", "HEAD^{commit}"])?;
-        if !ok {
-            return Err(format!("{component}: this tree has no HEAD commit"));
-        }
+        let head = git(repo, component, &["rev-parse", "--verify", "HEAD^{commit}"])?;
         let mut objects = Objects::open(&top)?;
         let want = objects
             .entries(certified, Some(b"governance"))
