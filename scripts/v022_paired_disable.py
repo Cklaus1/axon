@@ -26,7 +26,14 @@ replacement's own attack marker).
     python3 scripts/v022_paired_disable.py [--only=M1,M2] [OUT.json]
 
 --only re-executes just the named records and keeps every other record of
-the existing file (each record carries the commit it was executed at).
+the existing file (each record carries the commit it was executed at). A kept
+record must still be CURRENT (C9 round 3, EQUIVALENCE): the git blob of the
+row's file, of its test file(s) (the test module's source, or the integration
+test and its tests/common fixtures) and of every sibling's file must be the
+same now as at the record's commit. A stale kept record refuses the run;
+--reexecute-stale runs it again instead. --check-stale only lists them.
+
+    python3 scripts/v022_paired_disable.py --check-stale [STATUS.json]
 
 FULL-SUITE CONDITION (C8 certifying review wf_bff9835f-4a0): with A removed
 alone, the WHOLE package suite must stay green (`retired_guard_full_suite` =
@@ -186,16 +193,84 @@ def edit_of(mid):
     return (r[2], r[3], r[4])
 
 
+def test_files(row):
+    """The source files a row's test is made of: for `--lib`, the module
+    file the test path names; for `--test NAME`, tests/NAME.rs and every file
+    under the package's tests/common. None when they cannot be found (the
+    record then cannot be shown current)."""
+    pkg, target, test = row[5], row[6], row[7]
+    base = f"crates/{pkg}"
+    t = target.split()
+    if "--test" in t:
+        name = t[t.index("--test") + 1]
+        files = [f"{base}/tests/{name}.rs"]
+        common = os.path.join(ROOT, base, "tests", "common")
+        for d, _, fs in os.walk(common):
+            files += [os.path.relpath(os.path.join(d, f), ROOT) for f in sorted(fs)]
+        return files
+    if "--lib" in t:
+        segs = test.split("::")[:-1]
+        segs = [x for x in segs if x != "tests"]
+        for cand in (f"{base}/src/{'/'.join(segs)}.rs", f"{base}/src/{'/'.join(segs)}/mod.rs"):
+            if segs and os.path.exists(os.path.join(ROOT, cand)):
+                return [cand]
+        return None
+    return None
+
+
+def blob_at(commit, path):
+    r = sh(f"git rev-parse --verify --quiet {commit}:{path}")
+    return r.stdout.strip() or None if r.returncode == 0 else None
+
+
+def blob_now(path):
+    if not os.path.exists(os.path.join(ROOT, path)):
+        return None
+    return sh(f"git hash-object -- {path}").stdout.strip() or None
+
+
+def stale_reasons(record, guard_sets):
+    """Why a kept record is no longer evidence about this tree (empty: it is
+    current). Every file its matrix depended on must be byte-identical (by
+    git blob) to what it was at the record's commit."""
+    rid, commit = record["mutation"], record.get("commit")
+    if not commit or sh(f"git cat-file -e {commit}^{{commit}}").returncode != 0:
+        return [f"its commit {commit!r} is not in this repository"]
+    ids = [rid]
+    if rid in guard_sets:
+        ids += guard_sets[rid]["siblings"]
+    elif rid in mut.STALE_REFACTORED and mut.STALE_REFACTORED[rid].get("replacement"):
+        ids.append(mut.STALE_REFACTORED[rid]["replacement"])
+    paths = set()
+    for i in ids:
+        if i not in BY_ID:
+            return [f"{i} is no longer a registry row"]
+        paths.add(BY_ID[i][2])
+    tf = test_files(BY_ID[ids[-1] if rid in mut.STALE_REFACTORED else rid])
+    if tf is None:
+        return [f"the test files of {rid} cannot be located"]
+    paths |= set(tf)
+    out = []
+    for path in sorted(paths):
+        then, now = blob_at(commit, path), blob_now(path)
+        if then != now:
+            out.append(f"{path} changed since {commit[:8]}")
+    return out
+
+
 def build_axon():
     return sh("source scripts/lib_bounded_run.sh && bounded_run 16G 1800 "
               "cargo build -q -p axon-core --no-default-features --bin axon").returncode == 0
 
 
 def main():
-    if sh("git status --porcelain -- crates").stdout.strip():
+    if "--check-stale" not in sys.argv[1:] and sh("git status --porcelain -- crates").stdout.strip():
         sys.exit("refused: uncommitted changes under crates/ — paired-disable is evidence about a commit")
     commit = sh("git rev-parse HEAD").stdout.strip()
-    argv = [a for a in sys.argv[1:] if not a.startswith("--only=")]
+    flags = {"--reexecute-stale", "--check-stale"}
+    argv = [a for a in sys.argv[1:] if not a.startswith("--only=") and a not in flags]
+    reexecute_stale = "--reexecute-stale" in sys.argv[1:]
+    check_stale = "--check-stale" in sys.argv[1:]
     only_arg = next((a.split("=", 1)[1] for a in sys.argv[1:] if a.startswith("--only=")), None)
     only = None if only_arg is None else set(only_arg.split(","))
     # The guard set B (subsuming siblings) for each retired row A. A row is
@@ -274,14 +349,55 @@ def main():
         # symlink check vs is_dir (M486) and the mode check (M327).
         "M482": {"siblings": ["M481", "M335"], "kind": "set"},
         "M487": {"siblings": ["M486", "M327"], "kind": "set"},
+        # C9 round 3 (harness): mutual pairs on the decision-A/D path.
+        # Interpreter-is-a-script refusal vs the verified descriptor being
+        # close-on-exec (kernel ENOENT); staging-root 0700 vs the per-launch
+        # dir's 0700. EQUIV_RECORD[...]["all_paths"].
+        "M594": {"siblings": ["M595"], "kind": "pair"},
+        "M595": {"siblings": ["M594"], "kind": "pair"},
+        "M596": {"siblings": ["M597"], "kind": "pair"},
+        "M597": {"siblings": ["M596"], "kind": "pair"},
     }
     # Every retired row has a matrix and no active row has one.
     if set(GUARD_SETS) != set(mut.EQUIVALENT_DID):
         sys.exit(f"refused: GUARD_SETS {sorted(GUARD_SETS)} != EQUIVALENT_DID {sorted(mut.EQUIVALENT_DID)}")
+    out_path = os.path.join(ROOT, argv[0] if argv else "governance/status/v022-psv-paired-disable.json")
+    if check_stale:
+        prev = json.load(open(out_path))
+        n = 0
+        for r in prev.get("records", []):
+            r.setdefault("commit", prev.get("commit"))
+            why = stale_reasons(r, GUARD_SETS)
+            if why:
+                n += 1
+                print(f"STALE {r['mutation']} (executed at {str(r['commit'])[:8]}): " + "; ".join(why))
+            else:
+                print(f"current {r['mutation']} (executed at {str(r['commit'])[:8]})")
+        print(f"{n} of {len(prev.get('records', []))} records stale under the currency rule")
+        sys.exit(1 if n else 0)
     if only is not None:
         unknown = sorted(only - set(GUARD_SETS) - set(mut.STALE_REFACTORED))
         if unknown:
             sys.exit(f"--only: no retirement record for {unknown}")
+        # A record kept from an earlier commit must still be current.
+        try:
+            prev_doc = json.load(open(out_path))
+        except (OSError, ValueError):
+            prev_doc = {"records": []}
+        stale = {}
+        for r in prev_doc.get("records", []):
+            if r["mutation"] in only:
+                continue
+            r.setdefault("commit", prev_doc.get("commit"))
+            why = stale_reasons(r, GUARD_SETS)
+            if why:
+                stale[r["mutation"]] = why
+        if stale and not reexecute_stale:
+            for k, v in sorted(stale.items()):
+                print(f"STALE {k}: " + "; ".join(v), flush=True)
+            sys.exit(f"refused: {len(stale)} kept record(s) are not current at this commit "
+                     f"({sorted(stale)}); re-execute them (--reexecute-stale) or name them in --only")
+        only |= set(stale)
     records = []
     # A row with no marker can never show its attack succeeding, so its joint
     # cell would read OTHER_FAILURE by construction (M58/M245, C9 round 1b).
@@ -473,7 +589,7 @@ def main():
         print(f"{'OK ' if holds else 'BAD'} {rid}: stale ({rec['how']}); replacement {rep}: {rep_state}",
               flush=True)
     out = argv[0] if argv else "governance/status/v022-psv-paired-disable.json"
-    path = os.path.join(ROOT, out)
+    path = out_path
     if only is not None:
         # A partial run replaces ONLY the named rows' records in the existing
         # file; every other record keeps the commit it was executed at.

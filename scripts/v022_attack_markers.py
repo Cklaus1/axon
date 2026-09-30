@@ -625,13 +625,41 @@ ATTACK_MARKERS.update({
 })
 ATTACK_MARKERS.update({
     # guest-init.sh (the script text; the boot test proves it in effect)
-    'M493': r'ro missing: mount -t ext4 -o nodev,nosuid,noexec /dev/vdc /in/candidate',
-    'M494': r'ro missing: mount -t ext4 -o nodev,nosuid,noexec /dev/vdd /in/suite',
-    'M495': r'ro missing: mount -t ext4 -o nodev,nosuid,noexec /dev/vde /in/job',
-    'M496': r'noexec missing: mount -t ext4 -o ro,nodev,nosuid /dev/vdc /in/candidate',
+    'M493': r'ATTACK: the candidate drive is in effect mounted without ro \(',  # C9 r3 (harness): behavioural
+    'M494': r'ATTACK: the suite drive is in effect mounted without ro \(',  # C9 r3 (harness): behavioural
+    'M495': r'ATTACK: the job drive is in effect mounted without ro \(',  # C9 r3 (harness): behavioural
+    'M496': r'ATTACK: the candidate drive is in effect mounted without noexec \(',  # C9 r3 (harness): behavioural
     'M497': r'ATTACK: a cmdline naming two launch manifests was accepted: TOOK=',
-    'M498': r'ATTACK: the PSV runner is launched outside `env -i` \+ axon-guest-init: exec env PATH=',
-    'M499': r'workload must be exec.d inside `env -i`: exec env PATH=',
+    'M498': r"ATTACK: the PSV runner started with a variable from PID 1's environment",  # C9 r3 (harness): behavioural
+    'M499': r"ATTACK: the workload started with a variable from PID 1's environment",  # C9 r3 (harness): behavioural
+})
+# ── C9 round 3, HARNESS workstream (EQUIVALENCE; M585-M609) ──
+ATTACK_MARKERS.update({
+    'M585': r'ATTACK: a helper config of mode 646 \(writable by another uid\) was obeyed and\s+launched',
+    'M586': r'ATTACK: a helper config owned by uid 4243 \(not the operator\) was obeyed and\s+launched',
+    'M587': r'ATTACK: the helper launched into an out root below a directory another uid can\s+write \(mode 777\)',
+    'M588': r'ATTACK: the helper launched into an out root below a directory uid 4243 owns',
+    'M589': r'ATTACK: the helper launched into an out root below a directory another uid can\s+write \(mode 777\)',
+    'M590': r'ATTACK: the helper launched with a firecracker binary owned by uid 4243, who can\s+rewrite it after it is verified',
+    'M591': r'ATTACK: an authority program that could not be leased \(leased=false\) was\s+verified under Lease::Required',
+    'M592': r'ATTACK: a file that changed between its read and the verdict was vouched for\s+as the pinned bytes',
+    'M593': r'ATTACK: an authority program larger than MAX_BYTES \(268435456\) was read and\s+hashed whole',
+    'M594': r'ATTACK: an interpreter that is itself a script ran through its own #! line',
+    'M595': r'ATTACK: an interpreter that is itself a script ran through its own #! line',
+    'M596': r"ATTACK: uid 4243 read the per-attempt secret out of the helper's snapshot",
+    'M597': r"ATTACK: uid 4243 read the per-attempt secret out of the helper's snapshot",
+    'M598': r"ATTACK: the Fabric swapped the root helper's snapshot under a staging root it owns",
+    'M599': r'ATTACK: the root helper took a launch.s inputs from, and deleted the job dir out of,\s+a directory the Fabric uid does not own',
+    'M600': r'ATTACK: a jail id holding a path staged the launch.s inputs at "[^"]*\.\./escaped',
+    'M601': r'ATTACK: a production helper took its config from a path its caller named\s+\(--test-config\) and launched as root',
+    'M602': r'ATTACK: a production helper that is not root in every id launched \(the launcher ran\s+with ruid Some\("4242',
+    'M603': r'ATTACK: a test-trust helper \(which obeys --test-config\) reported itself as a\s+production build',
+    'M604': r'ATTACK: a helper reporting build "test-trust" put the launch on a route that\s+attests protected in a production Fabric',
+    'M605': r'ATTACK: a production Fabric lets a launch by a test-trust helper \(which obeys a\s+caller-chosen --test-config\) attest a protected verdict',
+    'M606': r'ATTACK: a launch Fabric ran itself \(the development route, no privileged launcher\)\s+was attested protected',
+    'M607': r'ATTACK: the candidate drive is in effect mounted without ro \(',
+    'M608': r'ATTACK: the suite drive is in effect mounted without noexec \(',
+    'M609': r'ATTACK: the job drive is in effect mounted without nodev \(',
 })
 # ── C9 round 3, workstream READINESS (M570-M584) ──
 ATTACK_MARKERS.update({

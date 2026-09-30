@@ -1534,12 +1534,16 @@ MUTATIONS += [
 ]
 # profiles/linux-microvm/guest-init.sh had NO row (round-2 review). Its guards,
 # and what covers each (amendment 43):
-#   input mounts ro,nodev,nosuid,noexec   rows M493-M496 (the script text) AND
+#   input mounts ro,nodev,nosuid,noexec   rows M493-M496, M607-M609 (the script's
+#                                         own mount block run on loop devices,
+#                                         /proc/mounts read back: C9 round 3) AND
 #                                         boot case `mounts` (in effect in a
 #                                         real guest, psv_guest_boot_test.sh)
 #   one launch-manifest word (ambiguous)  row M497: the script's own block run
 #                                         against fake cmdlines
-#   PSV runner under env -i + guest-init  row M498 (the non-PSV route: M499)
+#   PSV runner under env -i + guest-init  row M498 (the non-PSV route: M499); the
+#                                         workload block run, the child's
+#                                         environ read back (C9 round 3)
 #   /work nosuid,nodev; /out bind mount   boot case `mounts`; the verdict on the
 #                                         returned drive: boot cases pass/tampered
 #   serial digests (LOADED, VERDICT-INIT) boot cases pass/tampered (host joins)
@@ -1549,7 +1553,9 @@ MUTATIONS += [
 # A mutation row can only pin the script TEXT; that the kernel honours it is
 # the boot test's, and a boot SKIP (77) proves nothing.
 _GI = 'profiles/linux-microvm/guest-init.sh'
-_GIT = 'guest_init_sh_mounts_every_psv_input_read_only'
+# C9 round 3 (harness): killed by BEHAVIOUR, not the script text: the
+# block runs against loop-device ext4 images and /proc/mounts decides.
+_GIT = 'guest_init_sh_psv_input_mounts_are_in_effect_read_only'
 MUTATIONS += [
     ('M493', 'PSV-2 guest: the candidate drive is mounted read-only', _GI,
      '-o ro,nodev,nosuid,noexec /dev/vdc', '-o nodev,nosuid,noexec /dev/vdc',
@@ -1569,11 +1575,11 @@ MUTATIONS += [
     ('M498', 'PSV guest: the key-holding runner is exec\'d under env -i and axon-guest-init', _GI,
      '        exec env -i PATH=/bin:/usr/bin HOME=/tmp XDG_CACHE_HOME=/tmp/cache \\\n            /usr/bin/axon-guest-init /usr/bin/axon-psv-runner',
      '        exec env PATH=/bin:/usr/bin HOME=/tmp XDG_CACHE_HOME=/tmp/cache \\\n            /usr/bin/axon-guest-init /usr/bin/axon-psv-runner',
-     'axon-guest-init', '--test b263_profile_wiring', 'guest_init_sh_execs_the_psv_runner_under_axon_guest_init_inside_env_i'),
+     'axon-guest-init', '--test b263_profile_wiring', 'guest_init_sh_psv_runner_starts_with_exactly_the_fixed_environment'),
     ('M499', 'B263 guest: the workload is exec\'d under env -i (non-PSV route)', _GI,
      '    exec env -i PATH=/bin:/usr/bin HOME=/work XDG_CACHE_HOME=/tmp/cache \\\n',
      '    exec env PATH=/bin:/usr/bin HOME=/work XDG_CACHE_HOME=/tmp/cache \\\n',
-     'axon-guest-init', '--test b263_profile_wiring', 'guest_init_sh_execs_the_workload_under_axon_guest_init_inside_env_i'),
+     'axon-guest-init', '--test b263_profile_wiring', 'guest_init_sh_workload_starts_with_exactly_the_fixed_environment'),
 ]
 
 
@@ -1670,6 +1676,118 @@ MUTATIONS += [
 ]
 
 
+# ── C9 round 3, HARNESS workstream (EQUIVALENCE; M585-M609; amendment 48) ──
+# Guards of the decision-A/D path (the setuid helper, same-byte exec) that had
+# NO row: the round-3 review removed each and the whole axon-fabric suite
+# stayed green. Each row's test attacks the route where that guard is the ONLY
+# one. scripts/v022_refusal_coverage.py now fails when a refusal site in the
+# protected helper files has neither a row nor a reasoned exemption.
+# M594/M595 and M596/M597 are retired as mutual PAIRS (EQUIV_RECORD).
+_HPL = 'crates/axon-fabric/src/privileged_launcher.rs'
+_HSE = 'crates/axon-fabric/src/sealed_exec.rs'
+_HBIN = 'crates/axon-fabric/src/bin/axon-protected-launcher.rs'
+_HT = '--test privileged_launcher'
+MUTATIONS += [
+    ('M585', "A: the helper's config file is not writable by another uid (load_config)", _HPL,
+     '    if st.st_uid != a.operator_uid || st.st_mode & 0o022 != 0 {\n        return Err(bad(format!(\n            "must be owned by the operator',
+     '    if st.st_uid != a.operator_uid || false {\n        return Err(bad(format!(\n            "must be owned by the operator',
+     'axon-fabric', _HT, 'a_helper_config_other_uids_can_write_is_never_obeyed'),
+    ('M586', "A: the helper's config file is owned by the operator (load_config)", _HPL,
+     '    if st.st_uid != a.operator_uid || st.st_mode & 0o022 != 0 {\n        return Err(bad(format!(\n            "must be owned by the operator',
+     '    if false || st.st_mode & 0o022 != 0 {\n        return Err(bad(format!(\n            "must be owned by the operator',
+     'axon-fabric', _HT, 'a_helper_config_owned_by_another_uid_is_never_obeyed'),
+    ('M587', 'A: every directory above a walked operator path is checked (walk_open)', _HPL,
+     '        operator_dir(&here, &st, a)?;\n        here.push(name);',
+     '        let _ = operator_dir(&here, &st, a);\n        here.push(name);',
+     'axon-fabric', _HT, 'an_out_root_below_a_directory_others_can_write_launches_nothing'),
+    ('M588', 'A: an operator directory is owned by the operator (operator_dir)', _HPL,
+     '    if st.st_uid != a.operator_uid {\n        return Err(format!(\n            "{} is owned by uid {}, not the operator ({})",',
+     '    if false {\n        return Err(format!(\n            "{} is owned by uid {}, not the operator ({})",',
+     'axon-fabric', _HT, 'an_out_root_below_a_directory_another_uid_owns_launches_nothing'),
+    ('M589', 'A: an operator directory is not group/other-writable (operator_dir)', _HPL,
+     '    if st.st_mode & 0o022 != 0 {\n        return Err(format!(\n            "{} is group- or other-writable (mode {:o})",',
+     '    if false {\n        return Err(format!(\n            "{} is group- or other-writable (mode {:o})",',
+     'axon-fabric', _HT, 'an_out_root_below_a_directory_others_can_write_launches_nothing'),
+    ('M590', 'A: the helper re-verifies the pinned kernel/rootfs/firecracker/jailer (verify_inputs)', _HPL,
+     '            owner,\n            Lease::IfGranted,\n        )?;\n    }\n    Ok(manifest)',
+     '            owner,\n            Lease::IfGranted,\n        ).ok();\n    }\n    Ok(manifest)',
+     'axon-fabric', _HT, 'a_boot_input_the_helper_cannot_vouch_for_launches_nothing'),
+    ('M591', 'D: an object that cannot be leased is refused under Lease::Required', _HSE,
+     '        if lease == Lease::Required {',
+     '        if false && lease == Lease::Required {',
+     'axon-fabric', '--lib', 'sealed_exec::tests::an_authority_program_that_cannot_be_leased_is_refused_in_production'),
+    ('M592', 'D: the inode is re-checked after its bytes are hashed (post-hash unchanged)', _HSE,
+     "    // The bytes read are the inode's bytes only if it did not change meanwhile.\n    v.unchanged()?;\n",
+     "    // The bytes read are the inode's bytes only if it did not change meanwhile.\n",
+     'axon-fabric', '--lib', 'sealed_exec::tests::a_file_changed_while_it_was_hashed_is_not_vouched_for'),
+    ('M593', 'D: an authority program over MAX_BYTES is never read', _HSE,
+     '    if id.size < 0 || id.size as u64 > MAX_BYTES {',
+     '    if id.size < 0 {',
+     'axon-fabric', '--lib', 'sealed_exec::tests::an_authority_program_over_the_size_bound_is_never_read'),
+    ('M594', 'D: an interpreter that is itself a script is refused (command)', _HSE,
+     '            if i.script {\n',
+     '            if false && i.script {\n',
+     'axon-fabric', '--lib', 'sealed_exec::tests::an_interpreter_that_is_a_script_never_runs_its_own_interpreter_line'),
+    ('M595', 'D: a verified descriptor is close-on-exec (a script run by descriptor cannot reach its #! line)', _HSE,
+     '    let fd = file.as_raw_fd();\n    let id = identity(fd)',
+     '    let fd = file.as_raw_fd();\n    unsafe { libc::fcntl(fd, libc::F_SETFD, 0) };\n    let id = identity(fd)',
+     'axon-fabric', '--lib', 'sealed_exec::tests::an_interpreter_that_is_a_script_never_runs_its_own_interpreter_line'),
+    ('M596', 'A: the staging root is private (0700)', _HPL,
+     '    if st.st_mode & 0o077 != 0 {\n        return Err(format!(\n            "staging root',
+     '    if false && st.st_mode & 0o077 != 0 {\n        return Err(format!(\n            "staging root',
+     'axon-fabric', _HT, 'the_staged_secret_is_never_readable_by_another_uid'),
+    ('M597', "A: each launch's staging dir is created private (0700)", _HPL,
+     '    std::fs::DirBuilder::new()\n        .mode(0o700)',
+     '    std::fs::DirBuilder::new()\n        .mode(0o755)',
+     'axon-fabric', _HT, 'the_staged_secret_is_never_readable_by_another_uid'),
+    ('M598', 'A: the staging root is an operator directory (the Fabric cannot swap the snapshot)', _HPL,
+     '    operator_dir(&c.staging_root, &st, a)?;',
+     '    let _ = operator_dir(&c.staging_root, &st, a);',
+     'axon-fabric', _HT, 'a_staging_root_the_fabric_owns_launches_nothing'),
+    ('M599', "A: the psv inputs dir is the Fabric uid's (snapshot_inputs)", _HPL,
+     '    if st.st_uid != c.fabric_uid {\n        return Err(format!(\n            "psv inputs dir is owned',
+     '    if false {\n        return Err(format!(\n            "psv inputs dir is owned',
+     'axon-fabric', _HT, 'a_root_owned_inputs_dir_is_never_used_by_the_helper'),
+    ('M600', 'A: the jail id is [a-zA-Z0-9-]{1,60} (it names the staging dir)', _HPL,
+     '    if !id_ok {\n',
+     '    if false && !id_ok {\n',
+     'axon-fabric', _HT, 'a_jail_id_holding_a_path_never_stages_outside_the_staging_root'),
+    ('M601', 'A: --test-config exists only in a test-trust build of the helper (PRODUCTION build)', _HBIN,
+     '[f, p] if f == "--test-config" && axon_fabric::backend::TEST_TRUST_BUILD => {',
+     '[f, p] if f == "--test-config" => {',
+     'axon-fabric', _HT, 'a_production_helper_never_takes_its_config_from_a_path_its_caller_names'),
+    ('M602', 'A: the helper refuses unless its euid is 0 (PRODUCTION build)', _HBIN,
+     '    if euid != 0 && !authority.test {',
+     '    if false && euid != 0 && !authority.test {',
+     'axon-fabric', _HT, 'a_production_helper_that_is_not_root_launches_nothing'),
+    ('M603', 'PSV-4: a test-trust helper reports its build as test-trust (build_name)', _HPL,
+     '    if crate::backend::TEST_TRUST_BUILD {\n        "test-trust"',
+     '    if false {\n        "test-trust"',
+     'axon-fabric', _HT, 'a_test_trust_helper_never_reports_itself_as_a_production_build'),
+    ('M604', "PSV-4: a report not naming the production build puts the launch on a test route", 'crates/axon-fabric/src/backend.rs',
+     '            test_build: report.build != "production",',
+     '            test_build: false,',
+     'axon-fabric', '--lib', 'backend::tests::a_test_trust_helpers_report_never_puts_a_launch_on_a_production_route'),
+    ('M605', "PSV-4: this Fabric build's own trust decides whether a test-trust route attests (PRODUCTION build)", 'crates/axon-fabric/src/backend.rs',
+     '    route.may_attest_protected(TEST_TRUST_BUILD)',
+     '    route.may_attest_protected(true)',
+     'axon-fabric', _HT, 'a_production_fabric_never_lets_a_test_trust_helper_attest_protected'),
+    ('M606', "PSV-4: psv_receipt asks attests_protected, never assumes", 'crates/axon-fabric/src/submit.rs',
+     '    let privileged = crate::backend::attests_protected(res.route);',
+     '    let privileged = true;',
+     'axon-fabric', '--test psv_dispatch', 'a_dev_route_launch_is_never_attested_protected'),
+    ('M607', 'PSV-2 guest: a later `rw` never undoes the candidate drive\'s `ro`', _GI,
+     '-o ro,nodev,nosuid,noexec /dev/vdc', '-o ro,nodev,nosuid,noexec,rw /dev/vdc',
+     'axon-guest-init', '--test b263_profile_wiring', _GIT),
+    ('M608', 'PSV-2 guest: a later `exec` never undoes the suite drive\'s `noexec`', _GI,
+     '-o ro,nodev,nosuid,noexec /dev/vdd', '-o ro,nodev,nosuid,noexec,exec /dev/vdd',
+     'axon-guest-init', '--test b263_profile_wiring', _GIT),
+    ('M609', 'PSV-2 guest: a later `dev,suid` never undoes the job drive\'s `nodev,nosuid`', _GI,
+     '-o ro,nodev,nosuid,noexec /dev/vde', '-o ro,nodev,nosuid,noexec,dev,suid /dev/vde',
+     'axon-guest-init', '--test b263_profile_wiring', _GIT),
+]
+
+
 # ── C9 round 3, CUSTODIAN workstream (M620-M639; amendment 50, operator
 # decision D6): the nonce is issued, stored and spent by the custodian as its
 # own uid (negative-matrix A83); the root helper launches only on its ONE
@@ -1695,9 +1813,9 @@ MUTATIONS += [
      '    if digest != req.psv_manifest_sha256 {',
      '    if false && digest != req.psv_manifest_sha256 {',
      'axon-fabric', '--test privileged_launcher', 'an_observation_of_another_manifest_launches_nothing'),
-    ('M624', 'D6: a dev custodian\'s spend never authorizes a root launch', _PL,
-     '        (Mode::Protected, _) | (Mode::Test, true)\n',
-     '        (Mode::Protected, _) | (Mode::Test, true) | (Mode::Dev, _)\n',
+    ('M624', 'D6: a dev custodian\'s spend never authorizes a root launch (the helper applies the mode rule)', _PL,
+     '    if !custodian_mode_launches(mode, a.test) {',
+     '    if false && !custodian_mode_launches(mode, a.test) {',
      'axon-fabric', '--test privileged_launcher', 'a_dev_custodian_never_yields_a_protected_launch'),
     ('M625', 'D6: a production helper launches only on a PROTECTED custodian\'s spend (not a test custodian\'s)', _PL,
      '        (Mode::Protected, _) | (Mode::Test, true)\n',
@@ -1988,6 +2106,44 @@ EQUIV_RECORD["M217"] = {
                  "fields, which names_every_digest (M473) requires to be 64 lowercase hex before "
                  "any join runs. So a ref that is not a sha256 is refused whenever M217's rule "
                  "would have refused it, and M473 stays ACTIVE and killed"}
+# C9 round 3 (harness): two mutual PAIRS in the decision-A/D path. Each guard
+# alone is dominated by the other on every path; removing both reopens the
+# attack. Four cells executed with scripts/v022_paired_disable.py.
+EQUIV_RECORD["M594"] = {
+    "property": "an interpreter that is itself a #! script never runs through its own #! line",
+    "subsumed_by": ["M595"], "killer": "joint:M594+M595",
+    "all_paths": "sealed_exec::command has four callers (privileged_launcher::run twice, "
+                 "backend::run_direct twice, observer::observe, backend::run_privileged with no "
+                 "interpreter), and none puts the interpreter's descriptor in `inherit`; only "
+                 "the PROGRAM's is inherited. open_verified opens every object close-on-exec, so "
+                 "execveat(interpreter_fd, \"\", AT_EMPTY_PATH) of a #! script fails with ENOENT "
+                 "(the kernel cannot hand /dev/fd/N of a close-on-exec descriptor to the #! "
+                 "interpreter; measured). M594 removed alone: the exec fails, nothing runs. "
+                 "M595 removed alone: M594 refuses in command()"}
+EQUIV_RECORD["M595"] = {
+    "property": "an interpreter that is itself a #! script never runs through its own #! line",
+    "subsumed_by": ["M594"], "killer": "joint:M594+M595",
+    "all_paths": "the only descriptor a script is executed FROM is the interpreter's (a script "
+                 "PROGRAM with no interpreter is refused by M529; with one, the program is read "
+                 "as /dev/fd/N, never executed); an interpreter that is a script is refused by "
+                 "M594 before any fork. So a verified descriptor that is not close-on-exec is "
+                 "never executed as a script while M594 stands"}
+EQUIV_RECORD["M596"] = {
+    "property": "no other uid can read the per-attempt secret in the helper's staging snapshot",
+    "subsumed_by": ["M597"], "killer": "joint:M596+M597",
+    "all_paths": "new_staging is the only creator of a staging dir and every snapshot file is "
+                 "written below the per-launch dir it creates, with mode 0700 (M597) under "
+                 "harden()'s umask 022; the staging root is operator-owned and not group/other-"
+                 "writable (M598, M589), so no other uid can create, rename or replace entries "
+                 "in it. With M596 removed alone (a 0755 staging root) another uid can list "
+                 "the root but not enter the 0700 per-launch dir. With M597 removed alone the "
+                 "0700 root (M596) stops traversal"}
+EQUIV_RECORD["M597"] = {
+    "property": "no other uid can read the per-attempt secret in the helper's staging snapshot",
+    "subsumed_by": ["M596"], "killer": "joint:M596+M597",
+    "all_paths": "the per-launch dir sits directly in the staging root, which must be 0700 "
+                 "(M596) and operator-owned (M598): no other uid can traverse into it whatever "
+                 "the per-launch dir's own mode"}
 EQUIVALENT_DID = set(EQUIV_RECORD)
 # STALE: a row whose old text no longer exists. "The old text is absent" shows
 # only that the TEXT changed, not that the guard is gone (C9 dev review: M204

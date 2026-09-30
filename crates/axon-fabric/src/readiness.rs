@@ -122,7 +122,7 @@ fn host_max_age_s(base: &Path, path: &Path) -> Result<u64, String> {
         Err(e) => return Err(format!("{}: {e}", path.display())),
         Ok(_) => {}
     }
-    crate::backend::check_operator_owned_below(base, path)?;
+    crate::backend::check_owned_from_pub(base, path)?;
     let bytes = crate::backend::read_regular(path)?;
     let v: serde_json::Value =
         serde_json::from_slice(&bytes).map_err(|e| format!("{}: {e}", path.display()))?;

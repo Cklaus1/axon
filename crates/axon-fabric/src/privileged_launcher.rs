@@ -377,6 +377,8 @@ pub fn load_config(path: &Path, a: &Authority) -> Result<HelperConfig, String> {
         &c.jailer,
         &c.out_root,
         &c.staging_root,
+        &c.observer.root,
+        &c.custodian.socket,
     ] {
         if !p.is_absolute()
             || p.components()
@@ -395,17 +397,6 @@ pub fn load_config(path: &Path, a: &Authority) -> Result<HelperConfig, String> {
         return Err(bad(
             "max_timeout_s and max_input_bytes must be positive".into()
         ));
-    }
-    for p in [&c.observer.root, &c.custodian.socket] {
-        if !p.is_absolute()
-            || p.components()
-                .any(|c| !matches!(c, Component::RootDir | Component::Normal(_)))
-        {
-            return Err(bad(format!(
-                "{} is not an absolute plain path",
-                p.display()
-            )));
-        }
     }
     if c.observer.max_age_s == 0 || !is_hex64(&c.observer.host_signer_public_key) {
         return Err(bad(

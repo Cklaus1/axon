@@ -636,6 +636,17 @@ fn verifier_manifest() {
     m["schema"] = serde_json::json!("axon-verifier-manifest/1");
     m["path"] = serde_json::json!(exe);
     m["trust_roots"] = serde_json::Value::Object(roots);
+    // Which launch routes this build lets attest a protected verdict: the
+    // very function psv_receipt calls (PSV-4, C9 round 3). A production
+    // verifier says false for a test-trust helper; no test build can show it.
+    use axon_fabric::backend::{attests_protected, LaunchRoute};
+    m["launch_routes_attesting_protected"] = serde_json::json!({
+        "direct": attests_protected(LaunchRoute::Direct),
+        "privileged_production_helper":
+            attests_protected(LaunchRoute::Privileged { test_build: false }),
+        "privileged_test_trust_helper":
+            attests_protected(LaunchRoute::Privileged { test_build: true }),
+    });
     println!("{}", serde_json::to_string_pretty(&m).unwrap());
 }
 

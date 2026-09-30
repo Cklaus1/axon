@@ -1937,9 +1937,7 @@ fn psv_receipt(
     // Operator decision B: a protected verdict needs the pinned PRIVILEGED
     // launcher in its chain. A launch Fabric ran itself (the development
     // route) is never protected, whatever else it carries (A, amendment 45).
-    let privileged = res
-        .route
-        .may_attest_protected(crate::backend::TEST_TRUST_BUILD);
+    let privileged = crate::backend::attests_protected(res.route);
     if !launched_ok || !privileged {
         // Whatever derive saw, an inadmissible launch is never protected.
         r.evidence_refs
