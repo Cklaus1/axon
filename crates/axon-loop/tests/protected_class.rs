@@ -1780,3 +1780,124 @@ fn a_cited_unknown_from_a_development_verification_is_unverifiable() {
         "{r:?}"
     );
 }
+
+/// C9 round 4 fix wave, ROWS2 wave 2 (M829): the counters a protected
+/// decision reads ARE its trials' outcomes. A store writer marks the
+/// candidate's trials Unknown (nothing left to re-verify) while the stored
+/// counters still say two passes; the trials are still the plan's population,
+/// so only the counter check refuses it.
+#[test]
+fn a_protected_arm_whose_counters_are_not_its_trials_is_refused() {
+    let w = world();
+    protect(&w.s);
+    pin_protected_backend(&w.s);
+    freeze_plan(&w.s, "gc", &w.inc_ref, &w.cand_ref, |_| {}).unwrap();
+    assign_specs(&w.s, "gc", &specs_for(&w));
+    let mut v = evl_request("gc", &w.inc, &w.cand, &specs_for(&w), &EvlOpts::default());
+    on_protected_backend(&mut v);
+    clear_all(&w.s, &v);
+    let (rec, e) = evaluate(&w.s, &v).unwrap();
+    let cand = w.cand_ref.to_string();
+    let fe = forge_eval(&w, "gc", &rec, |j| {
+        for arm in j["arms"].as_array_mut().unwrap() {
+            if arm["policy_ref"] == cand {
+                for t in arm["trials"].as_array_mut().unwrap() {
+                    t["outcome"] = json!("unknown");
+                    t.as_object_mut().unwrap().remove("verification");
+                }
+            }
+        }
+    });
+    match admit(&w.s, "gc", &fe, ADMITTER, false) {
+        Err(LoopError::Refused(m)) => assert!(m.contains("counts are not its trials"), "{m}"),
+        Ok((adm, _)) => panic!(
+            "ATTACK: a protected decision counted stored counters its trials do not bear: {:?} \
+             {:?}",
+            adm.decision, adm.reasons
+        ),
+        Err(e) => panic!("refused otherwise: {e}"),
+    }
+    let (adm, _) = admit(&w.s, "gc", &e, ADMITTER, false).unwrap();
+    assert_eq!(adm.decision, Decision::Accept, "control: {:?}", adm.reasons);
+}
+
+/// C9 round 4 fix wave, ROWS2 wave 2 (M850; four-cell record against M122
+/// and M104): a protected decision re-verifies each counted context under an
+/// observer the operator TRUSTS now. The contexts here are observed and
+/// signed by a SECOND observer (its own key, rooted in the operator's observer
+/// root), while the verdicts' preflight observations are the fixture
+/// observer's; after the ACCEPT the operator withdraws the second observer
+/// (its key stays registered and rooted). Activation re-derives the admission:
+/// the context no longer counts. Three checks refuse it, each alone: the
+/// re-verification's trust check (M850), the any-class context-observer check
+/// (M122) and the protected attribution check (M104). Control: nothing
+/// withdrawn, it activates.
+#[test]
+fn a_context_observer_the_operator_withdrew_counts_nothing_at_activation() {
+    const OBSERVER2: &str = "fixture:observer-two";
+    let key2 = axon_loop_contracts::attestation::generate().unwrap();
+    let root = operator_root();
+    std::fs::write(root.join("observer/second.pub"), format!("{}\n", key2.1)).unwrap();
+    let setup = |exp: &str| -> (World, Ref) {
+        let w = world();
+        protect(&w.s);
+        pin_protected_backend(&w.s);
+        withdraw(&w, |c| {
+            let o = OpaqueRef::new(OBSERVER2).unwrap();
+            c.trusted_observers.push(o.clone());
+            c.observer_keys.insert(o, key2.1.clone());
+        });
+        freeze_plan(&w.s, exp, &w.inc_ref, &w.cand_ref, |_| {}).unwrap();
+        assign_specs(&w.s, exp, &specs_for(&w));
+        let mut v = evl_request(exp, &w.inc, &w.cand, &specs_for(&w), &EvlOpts::default());
+        for t in v["trials"].as_array_mut().unwrap() {
+            t["context"]["observed_issuer_ref"] = json!(OBSERVER2);
+            t["context_signature"] = axon_loop_contracts::attestation::sign_document(
+                &key2.0,
+                axon_loop::evl::CONTEXT_DOMAIN,
+                &OpaqueRef::new(OBSERVER2).unwrap(),
+                &t["context"],
+            )
+            .unwrap();
+            t["episode"]["context_ref"] = json!(digest_value(&t["context"]).unwrap());
+        }
+        on_protected_backend(&mut v);
+        clear_all(&w.s, &v);
+        let (_, e) = evaluate(&w.s, &v).unwrap();
+        let (rec, adm) = admit(&w.s, exp, &e, ADMITTER, false).unwrap();
+        assert_eq!(
+            rec.decision,
+            Decision::Accept,
+            "setup: the second observer's contexts count: {:?}",
+            rec.reasons
+        );
+        (w, adm)
+    };
+    let act = |w: &World, adm: &Ref| {
+        apply(
+            w,
+            transition(
+                "a1",
+                "activate",
+                &w.inc_ref,
+                Some(&w.cand_ref),
+                1,
+                Some(adm),
+                false,
+            ),
+        )
+    };
+    let (w, adm) = setup("withdrawn");
+    withdraw(&w, |c| {
+        c.trusted_observers.retain(|o| o.as_str() != OBSERVER2)
+    });
+    match act(&w, &adm) {
+        Err(LoopError::Refused(m)) => assert!(m.contains("no longer trusts"), "{m}"),
+        o => panic!(
+            "ATTACK: a protected activation counted contexts observed by an observer the \
+             operator withdrew: {o:?}"
+        ),
+    }
+    let (w, adm) = setup("control");
+    assert_eq!(act(&w, &adm).unwrap(), Some(w.cand_ref.clone()), "control");
+}

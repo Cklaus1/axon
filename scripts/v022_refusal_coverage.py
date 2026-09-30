@@ -289,6 +289,93 @@ EXEMPT += [
 ]
 
 
+# C9 round 4 fix wave, rows2 wave 2, LOOP (admission.rs, intake.rs). Kinds:
+# NOT A SITE (the body of a refusal constructor, each use a site of its own),
+# NOTHING TO ADMIT (an error or a None with no value the code could continue
+# with: a mutation letting it through would have to invent the value), a
+# CONDITION A NAMED ROW MUTATES at another line (that row ACTIVE and killed).
+LA = "crates/axon-loop/src/admission.rs"
+LI = "crates/axon-loop/src/intake.rs"
+EXEMPT += [
+    (LA, "        refused(format!(\n            \"trial {}'s protected verdict does not re-verify",
+     "NOT A SITE: the body of reverify_protected's `fail` constructor; each use is its own site"),
+    (LA, "    .map_err(|e| fail(e.to_string()))?;\n    // The record's attribution IS the signer",
+     "NOTHING TO ADMIT: verify_check_evidence failed, so there is no verified receipt, key or "
+     "observation signer to destructure (the tuple exists only on Ok)"),
+    (LA, "        (o, r) => {\n            return Err(fail(format!(",
+     "A CONDITION A NAMED ROW MUTATES: the arm is the complement of the two matching arms M268 "
+     "replaces with `(_, _) if true => {}` (ACTIVE, killed)"),
+    (LA, '        serde_json::from_str(&ctx_text).map_err(|e| fail(format!("context: {e}")))?;',
+     "NOTHING TO ADMIT: the stored context does not parse, so there is no context to verify"),
+    (LA, '        .ok_or_else(|| fail("it cites no context signature".into()))?;',
+     "NOTHING TO ADMIT: no context signature ref, so there is no signature to verify"),
+    (LA, '        .map_err(|e| fail(format!("context signature: {e}")))?;\n    let who',
+     "NOTHING TO ADMIT: the stored context signature does not parse"),
+    (LA, '        .map_err(|e| fail(format!("context observer: {e}")))?;',
+     "NOTHING TO ADMIT: the context names no valid observer identity"),
+    (LA, "        fail(format!(\n            \"its protected context is not authenticated: observer {who}",
+     "NOTHING TO ADMIT: rooted_key found no operator-rooted key for the observer, so there is no key "
+     "to verify the context signature under"),
+    (LA, '            .map_err(|e| fail(format!("execution request: {e}")))?;',
+     "NOTHING TO ADMIT: the stored execution request does not parse"),
+    (LA, '            .map_err(|e| fail(format!("execution receipt: {e}")))?;',
+     "NOTHING TO ADMIT: the stored execution receipt does not parse"),
+    (LA, '        .map_err(|e| fail(format!("execution attestation: {e}")))?;',
+     "NOTHING TO ADMIT: the stored execution attestation does not parse"),
+    (LA, "                    refused(format!(\n                        \"trial {}'s verdict is no longer pinned",
+     "A CONDITION A NAMED ROW MUTATES: the check_pins call whose error this maps is M103's "
+     "(ACTIVE, killed)"),
+    (LA, "                    return Err(refused(format!(\n                        \"trial {}'s protected context is not authenticated",
+     "A CONDITION A NAMED ROW MUTATES: M104 disables this refusal's condition at its first line "
+     "(ACTIVE, killed)"),
+    (LA, "                    return Err(refused(format!(\n                        \"trial {}'s clearance is not from a monitor",
+     "A CONDITION A NAMED ROW MUTATES: M105 (the clearance condition) and M264 (its signature "
+     "re-verification) (ACTIVE, killed)"),
+    (LI, "        Refusal::Semantic(s) => refused(format!(\"{what}: {s}\")),",
+     "NOT A SITE: the body of the `semantic` converter; every use is `parse(..).map_err(semantic(..))?`, "
+     "its own site with no parsed value on Err"),
+    (LI, "        Err(LoopError::Refused(_)) => {\n            return Err(refused(format!(",
+     "NOTHING TO ADMIT: the store holds no such policy, so there is no PolicyEnvelope to bind"),
+    (LI, "        Err(e) => return Err(e),\n    };\n    if tx.is_revoked",
+     "NOTHING TO ADMIT: the policy could not be read (an I/O or corrupt-record error)"),
+    (LI, '                .map_err(|e| refused(format!("psv evidence bundle: {e}")))?;',
+     "NOTHING TO ADMIT: the bundle text does not parse, so there is no value to store; the same "
+     "text was already parsed and joined by check_bundle (M218/M230)"),
+    (LI, '    let obj = v.as_object().ok_or_else(|| shape("ack: not an object"))?;',
+     "NOTHING TO ADMIT: the ack is not an object, so it has no fields to check"),
+    (LI, '                .ok_or_else(|| shape(format!("ack: candidate {c} is not a candidate id")))',
+     "NOTHING TO ADMIT: the entry is not a CandidateId, so there is no candidate to add"),
+    (LI, "        [] => Err(refused(format!(\n            \"no ack:",
+     "NOTHING TO ADMIT: no ack joins the episode"),
+    (LI, "        refused(format!(\n            \"projection_ref {want} names a PolicyProjection",
+     "NOTHING TO ADMIT: the episode names a projection and none was presented"),
+    (LI, "        return Err(refused(format!(\n            \"verifier_ref {vref} names a Fabric check receipt",
+     "NOTHING TO ADMIT: the verification request and receipt were not both presented"),
+    (LI, '        .ok_or_else(|| refused("the episode cites no verifier_ref"))?;',
+     "NOTHING TO ADMIT: no verifier_ref to join the receipt to"),
+    (LI, "            refused(format!(\n                \"protected evidence from verifier {issuer} carries no",
+     "NOTHING TO ADMIT: a protected claim with no psv bundle has nothing to join"),
+    (LI, "            refused(format!(\n                \"protected evidence from verifier {issuer} does not join",
+     "NOTHING TO ADMIT: check_bundle failed, so there is no verified observation (its observer and "
+     "key) to attribute; the call itself is M218/M230's (ACTIVE, killed)"),
+    (LI, "        refused(format!(\n            \"the verification is not authenticated: no acf-receipt",
+     "NOTHING TO ADMIT: no attestation text to verify"),
+    (LI, "        refused(format!(\n            \"verifier {issuer} has no operator pin",
+     "NOTHING TO ADMIT: no operator pin for the verifier to compare the check with"),
+    (LI, "        return Err(refused(format!(\n            \"rubric: the check ran {entry:?}, a file",
+     "NOTHING TO ADMIT: the check names no registered suite id to join to the pin"),
+    (LI, "        refused(format!(\n            \"acceptance: task {} has no operator-registered",
+     "NOTHING TO ADMIT: the task has no registered acceptance check to compare with"),
+    (LI, "            Some(x) => x.as_u64().map(|n| Some(Some(n))).ok_or_else(|| {\n                shape(format!(",
+     "NOTHING TO ADMIT: the spend is not a number, so there is no spend to read"),
+    (LI, "                let hint = if mc == 0 && c > 0 {",
+     "A CONDITION A NAMED ROW MUTATES: this refusal's condition is `if c != want` two lines up, "
+     "M846's (ACTIVE, killed); the `if` here only chooses the message"),
+    (LI, "        None => Err(shape(\n            \"source episode: cost states neither",
+     "NOTHING TO ADMIT: the canonical episode states no cost field at all"),
+]
+
+
 def load_rows():
     spec = importlib.util.spec_from_file_location("mut", os.path.join(ROOT, "scripts/v022_g01_mutations.py"))
     mut = importlib.util.module_from_spec(spec)

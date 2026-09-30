@@ -795,3 +795,298 @@ fn a_report_only_accept_says_so() {
         rec.reasons
     );
 }
+
+// ── C9 round 4 fix wave, ROWS2 wave 2 (rows M815-M859): refusal sites of
+// `admission.rs` that had no row. Each attack goes through the production
+// `admission::admit` (or activation through `pointer::transition`), over
+// records a STORE WRITER forges (the evaluation record and the ledger are the
+// store writer's to write; the signatures are not), and is refused by the
+// one check under test. Control first: the unforged route admits.
+
+/// A genuine dev-class evaluation of `exp`, forged by `forge` (the record's
+/// JSON), put in the CAS and journalled by a forged ledger append. Returns
+/// (the genuine record, the forged ref).
+fn forged_evaluation(
+    w: &World,
+    exp: &str,
+    forge: impl FnOnce(&mut serde_json::Value),
+) -> (axon_loop::evl::EvaluationRecord, Ref) {
+    freeze_plan(&w.s, exp, &w.inc_ref, &w.cand_ref, |_| {}).unwrap();
+    let specs = pair(&w.inc, &w.cand, 2, 2, 2, Some(100), Some(50));
+    let (rec, _) = evaluate(
+        &w.s,
+        &evl_request(exp, &w.inc, &w.cand, &specs, &EvlOpts::default()),
+    )
+    .unwrap();
+    let mut j = serde_json::to_value(&rec).unwrap();
+    forge(&mut j);
+    let forged: axon_loop::evl::EvaluationRecord = serde_json::from_value(j).unwrap();
+    let fe = w.s.put_cas("evaluations", &forged).unwrap();
+    forged_append(
+        w.s.root(),
+        axon_loop::ledger::Event::Evaluation {
+            scope: scope(),
+            experiment_id: exp.into(),
+            evaluation_ref: fe.clone(),
+            freeze_seq: forged.freeze_seq,
+            authority_epoch: forged.authority_epoch,
+        },
+    );
+    (rec, fe)
+}
+
+/// Each binding and independence rule of `derive`, on the route where it
+/// alone refuses (M815-M822): one field of a genuine evaluation forged by a
+/// store writer, admitted by the trusted, independent admitter.
+#[test]
+fn each_admission_binding_refuses_its_own_forgery() {
+    let w = world();
+    let (_, fe) = forged_evaluation(&w, "ctl", |_| {});
+    let (adm, _) = admit(&w.s, "ctl", &fe, ADMITTER, false).unwrap();
+    assert_eq!(adm.decision, Decision::Accept, "control: {:?}", adm.reasons);
+    type Forge = fn(&mut serde_json::Value);
+    let cases: [(&str, Forge, &str); 7] = [
+        (
+            "an evaluation of another scope",
+            |j| j["scope"]["task_family"] = json!("other-family"),
+            "evaluation scope differs",
+        ),
+        (
+            "an evaluation of another experiment",
+            |j| j["experiment_id"] = json!("another-experiment"),
+            "belongs to a different experiment",
+        ),
+        (
+            "an evaluation made under another plan",
+            |j| j["plan_ref"] = json!(r('9')),
+            "made under a different plan",
+        ),
+        (
+            "an evaluation made under another freeze",
+            |j| j["freeze_seq"] = json!(j["freeze_seq"].as_u64().unwrap() + 1000),
+            "not made under this freeze",
+        ),
+        (
+            "an evaluation with a third arm",
+            |j| {
+                let mut extra = j["arms"][0].clone();
+                extra["arm_id"] = json!("extra-arm");
+                extra["policy_ref"] = json!(r('7'));
+                j["arms"].as_array_mut().unwrap().push(extra);
+            },
+            "exactly an incumbent and a candidate arm",
+        ),
+        (
+            "an evaluation listing the admitter as a subject issuer",
+            |j| {
+                j["subject_issuers"]
+                    .as_array_mut()
+                    .unwrap()
+                    .push(json!(ADMITTER))
+            },
+            "it is a subject issuer",
+        ),
+        (
+            "an evaluation naming the admitter as its evaluator",
+            |j| j["evaluator_ref"] = json!(ADMITTER),
+            "it is the evaluator",
+        ),
+    ];
+    for (i, (attack, forge, why)) in cases.into_iter().enumerate() {
+        let w = world();
+        let exp = format!("exp{i}");
+        let (_, fe) = forged_evaluation(&w, &exp, forge);
+        match admit(&w.s, &exp, &fe, ADMITTER, false) {
+            Err(LoopError::Refused(m)) => assert!(m.contains(why), "{attack}: {m}"),
+            Ok((adm, _)) => panic!(
+                "ATTACK: {attack} was admitted: {:?} {:?}",
+                adm.decision, adm.reasons
+            ),
+            Err(e) => panic!("{attack}: refused otherwise: {e}"),
+        }
+    }
+}
+
+/// M823: a counted verdict whose evaluation does not record which verifier
+/// authenticated it does not count. A store writer drops the `verification`
+/// of one of the candidate's passes; the counters still say it passed.
+#[test]
+fn a_counted_verdict_with_no_recorded_verifier_is_refused() {
+    let w = world();
+    let cand = w.cand_ref.to_string();
+    let (_, fe) = forged_evaluation(&w, "exp", |j| {
+        for arm in j["arms"].as_array_mut().unwrap() {
+            if arm["policy_ref"] == cand {
+                arm["trials"][0]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("verification");
+            }
+        }
+    });
+    match admit(&w.s, "exp", &fe, ADMITTER, false) {
+        Err(LoopError::Refused(m)) => assert!(m.contains("does not record which"), "{m}"),
+        Ok((adm, _)) => panic!(
+            "ATTACK: a verdict with no recorded verifier counted: {:?} {:?}",
+            adm.decision, adm.reasons
+        ),
+        Err(e) => panic!("refused otherwise: {e}"),
+    }
+}
+
+/// M824: only a trusted admitter admits. `op:stranger` holds no loop role,
+/// so no role rule refuses it; only the trusted-admitter set does.
+#[test]
+fn an_admitter_the_operator_does_not_trust_admits_nothing() {
+    let w = world();
+    let (_, fe) = forged_evaluation(&w, "exp", |_| {});
+    match admit(&w.s, "exp", &fe, "op:stranger", false) {
+        Err(LoopError::Refused(m)) => assert!(m.contains("trusted-admitter"), "{m}"),
+        Ok((adm, _)) => panic!(
+            "ATTACK: an untrusted admitter admitted: {:?} {:?}",
+            adm.decision, adm.reasons
+        ),
+        Err(e) => panic!("refused otherwise: {e}"),
+    }
+    let (adm, _) = admit(&w.s, "exp", &fe, ADMITTER, false).unwrap();
+    assert_eq!(adm.decision, Decision::Accept, "control: {:?}", adm.reasons);
+}
+
+/// M825: a mechanism-test admission counts only mechanism-test evidence.
+/// The genuine evaluation's trials are confirmation-corpus.
+#[test]
+fn a_mechanism_test_admission_counts_no_confirmation_trial() {
+    let w = world();
+    let (_, fe) = forged_evaluation(&w, "exp", |_| {});
+    match admit(&w.s, "exp", &fe, ADMITTER, true) {
+        Err(LoopError::Refused(m)) => assert!(m.contains("corpus role"), "{m}"),
+        Ok((adm, _)) => panic!(
+            "ATTACK: a mechanism-test admission counted confirmation evidence: {:?} {:?}",
+            adm.decision, adm.reasons
+        ),
+        Err(e) => panic!("refused otherwise: {e}"),
+    }
+}
+
+/// M826: an evaluation journalled BEFORE the freeze it names is not an
+/// evaluation under that freeze. A store writer rewrites the (unkeyed)
+/// ledger, putting a genuine evaluation's journal entry just before the
+/// plan's freeze, re-chained; the record names the freeze's new sequence, so
+/// every other binding holds.
+#[test]
+fn an_evaluation_journalled_before_its_freeze_is_refused() {
+    let w = world();
+    let (rec, _) = forged_evaluation(&w, "exp", |_| {});
+    let mut l = read_ledger(w.s.root());
+    let at = l
+        .iter()
+        .position(|e| matches!(&e.event, axon_loop::ledger::Event::Freeze { .. }))
+        .unwrap();
+    let mut forged = rec.clone();
+    forged.freeze_seq = l[at].seq + 1;
+    let fe = w.s.put_cas("evaluations", &forged).unwrap();
+    let ev = axon_loop::ledger::Entry {
+        schema: Default::default(),
+        seq: 0,
+        prev: r('0'),
+        recorded_ms: l[at].recorded_ms,
+        event: axon_loop::ledger::Event::Evaluation {
+            scope: scope(),
+            experiment_id: "exp".into(),
+            evaluation_ref: fe.clone(),
+            freeze_seq: forged.freeze_seq,
+            authority_epoch: forged.authority_epoch,
+        },
+        mac: None,
+    };
+    l.insert(at, ev);
+    rechain(&mut l);
+    write_ledger(w.s.root(), &l);
+    forge_head(w.s.root(), &l);
+    match admit(&w.s, "exp", &fe, ADMITTER, false) {
+        Err(LoopError::Refused(m)) => assert!(m.contains("predates the freeze"), "{m}"),
+        Ok((adm, _)) => panic!(
+            "ATTACK: an evaluation journalled before its freeze was admitted: {:?} {:?}",
+            adm.decision, adm.reasons
+        ),
+        Err(e) => panic!("refused otherwise: {e}"),
+    }
+}
+
+/// Renumber and re-chain a forged ledger from its first entry.
+fn rechain(l: &mut [axon_loop::ledger::Entry]) {
+    for i in 0..l.len() {
+        l[i].seq = i as u64 + 1;
+        if i > 0 {
+            l[i].prev = digest(&l[i - 1]).unwrap();
+        }
+    }
+}
+
+fn activate(w: &World, adm: &Ref) -> Result<PointerRecordOut, LoopError> {
+    pointer::transition(
+        &w.s,
+        &tparse(&transition(
+            "a1",
+            "activate",
+            &w.inc_ref,
+            Some(&w.cand_ref),
+            1,
+            Some(adm),
+            false,
+        )),
+    )
+    .map(|_| ())
+}
+type PointerRecordOut = ();
+
+/// M827, M828: activation re-derives the admission from the journal. A store
+/// writer (a) removes a genuine ACCEPT's journal entry, re-chaining the
+/// ledger (the record is still in the CAS, and still re-derives identically:
+/// only "journalled by `admit`" refuses it), or (b) stores an ACCEPT record
+/// whose reasons differ from what the plan and evaluation decide, with a
+/// forged journal entry for it (only the re-derivation equality refuses it).
+/// Control: the genuine journalled ACCEPT activates.
+#[test]
+fn activation_rests_only_on_a_journalled_admission_that_re_derives() {
+    let w = world();
+    let adm = accepted(&w, "exp");
+    let mut l = read_ledger(w.s.root());
+    l.retain(|e| {
+        !matches!(&e.event, axon_loop::ledger::Event::Admission { admission_ref, .. }
+            if admission_ref == &adm)
+    });
+    rechain(&mut l);
+    write_ledger(w.s.root(), &l);
+    forge_head(w.s.root(), &l);
+    match activate(&w, &adm) {
+        Err(LoopError::Refused(m)) => assert!(m.contains("never journalled"), "{m}"),
+        other => panic!("ATTACK: an admission never journalled by `admit` activated: {other:?}"),
+    }
+
+    let w = world();
+    let adm = accepted(&w, "exp");
+    let mut rec: axon_loop::admission::AdmissionRecord =
+        w.s.get_record("admissions", &adm).unwrap();
+    rec.reasons.push("a reason the plan never gave".into());
+    let fa = w.s.put_cas("admissions", &rec).unwrap();
+    forged_append(
+        w.s.root(),
+        axon_loop::ledger::Event::Admission {
+            scope: rec.scope.clone(),
+            experiment_id: rec.experiment_id.clone(),
+            admission_ref: fa.clone(),
+            target_policy_ref: rec.target_policy_ref.clone(),
+            decision: rec.decision,
+            mechanism_test: rec.mechanism_test,
+        },
+    );
+    match activate(&w, &fa) {
+        Err(LoopError::Refused(m)) => assert!(m.contains("does not re-derive"), "{m}"),
+        other => panic!(
+            "ATTACK: an admission record that does not re-derive from its plan and evaluation \
+             activated: {other:?}"
+        ),
+    }
+    activate(&w, &adm).expect("control: the genuine journalled ACCEPT activates");
+}

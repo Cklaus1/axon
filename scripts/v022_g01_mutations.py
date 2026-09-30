@@ -2689,6 +2689,177 @@ MUTATIONS += [
      'axon-fabric', '--test privileged_launcher', 'an_observation_of_another_guest_init_launches_nothing'),
 ]
 
+# ── C9 round 4 fix wave, ROWS2 wave 2, LOOP (M815-M859) ──
+# The refusal sites of admission.rs and intake.rs that had no row: each is
+# attacked through the production entry (admission::admit, activation through
+# pointer::transition, intake::intake_episode) where it alone refuses; M852-M856
+# are retired EQUIVALENT with executed four-cell records (EQUIV_RECORD below).
+_R2LA = 'crates/axon-loop/src/admission.rs'
+_R2LI = 'crates/axon-loop/src/intake.rs'
+_R2EA = '--test evl_admission'
+_R2IN = '--test intake'
+_R2PC = '--test protected_class'
+_R2BIND = 'each_admission_binding_refuses_its_own_forgery'
+_R2JOIN = 'each_intake_join_refuses_its_own_defect'
+MUTATIONS += [
+ ('M815', "admission: the evaluation's scope is the frozen plan's", _R2LA,
+  '    if eval.scope != plan.scope {', '    if false && eval.scope != plan.scope {', 'axon-loop', _R2EA, _R2BIND),
+ ('M816', "admission: the evaluation belongs to the plan's experiment", _R2LA,
+  '    if eval.experiment_id != plan.experiment_id {', '    if false && eval.experiment_id != plan.experiment_id {', 'axon-loop', _R2EA, _R2BIND),
+ ('M817', "admission: the evaluation was made under the frozen plan", _R2LA,
+  '    if eval.plan_ref != frozen.plan_ref {', '    if false && eval.plan_ref != frozen.plan_ref {', 'axon-loop', _R2EA, _R2BIND),
+ ('M818', "admission: the evaluation was made under this freeze", _R2LA,
+  '    if eval.freeze_seq != frozen.freeze_seq {', '    if false && eval.freeze_seq != frozen.freeze_seq {', 'axon-loop', _R2EA, _R2BIND),
+ ('M819', "admission: exactly an incumbent and a candidate arm", _R2LA,
+  '    if eval.arms.len() != 2 {', '    if false && eval.arms.len() != 2 {', 'axon-loop', _R2EA, _R2BIND),
+ ('M820', "admission: the admitter is not a subject issuer of the evaluation", _R2LA,
+  '    if eval.subject_issuers.contains(admitter) {', '    if false && eval.subject_issuers.contains(admitter) {', 'axon-loop', _R2EA, _R2BIND),
+ ('M821', "admission: the admitter is not the evaluator", _R2LA,
+  '    if &eval.evaluator_ref == admitter {', '    if false && &eval.evaluator_ref == admitter {', 'axon-loop', _R2EA, _R2BIND),
+ ('M822', "admission: only a trusted admitter admits", _R2LA,
+  '    if !admitters.contains(admitter) {', '    if false && !admitters.contains(admitter) {', 'axon-loop', _R2EA,
+  'an_admitter_the_operator_does_not_trust_admits_nothing'),
+ ('M823', "admission: a counted verdict records the verifier that authenticated it", _R2LA,
+  '            let v = t.verification.as_ref().ok_or_else(|| {\n',
+  '            let Some(v) = t.verification.as_ref() else { continue };\n            Some(()).ok_or_else(|| {\n',
+  'axon-loop', _R2EA, 'a_counted_verdict_with_no_recorded_verifier_is_refused'),
+ ('M824', "admission: a mechanism-test admission counts only mechanism-test evidence", _R2LA,
+  '                if role != want {', '                if false && role != want {', 'axon-loop', _R2EA,
+  'a_mechanism_test_admission_counts_no_confirmation_trial'),
+ ('M825', "admission: an evaluation journalled before its freeze is refused", _R2LA,
+  '    if eval_seq <= frozen.freeze_seq {', '    if false && eval_seq <= frozen.freeze_seq {', 'axon-loop', _R2EA,
+  'an_evaluation_journalled_before_its_freeze_is_refused'),
+ ('M826', "activation: the admission was journalled by `admit`", _R2LA,
+  '    if tx.admission_event(adm_ref).is_none() {', '    if false && tx.admission_event(adm_ref).is_none() {', 'axon-loop', _R2EA,
+  'activation_rests_only_on_a_journalled_admission_that_re_derives'),
+ ('M827', "activation: the stored admission re-derives identically", _R2LA,
+  '    if again != stored {', '    if false && again != stored {', 'axon-loop', _R2EA,
+  'activation_rests_only_on_a_journalled_admission_that_re_derives'),
+ ('M828', "activation: only an ACCEPT activates", _R2LA,
+  '    if again.decision != Decision::Accept {', '    if false && again.decision != Decision::Accept {', 'axon-loop', _R2EA,
+  'only_an_accepted_currently_authorized_admission_activates'),
+ ('M829', "PSV-7: a protected arm's counters are its trials' outcomes", _R2LA,
+  '        if arm.assigned != arm.trials.len() as u64\n            || arm.verified_pass != n(Outcome::VerifiedPass)\n            || arm.fail != n(Outcome::Fail)\n            || arm.unknown != n(Outcome::Unknown)\n            || arm.missing != missing\n        {',
+  '        if false\n            && (arm.assigned != arm.trials.len() as u64\n                || arm.verified_pass != n(Outcome::VerifiedPass)\n                || arm.fail != n(Outcome::Fail)\n                || arm.unknown != n(Outcome::Unknown)\n                || arm.missing != missing)\n        {',
+  'axon-loop', _R2PC, 'a_protected_arm_whose_counters_are_not_its_trials_is_refused'),
+ ('M830', "intake: the context receipt is the one the episode names", _R2LI,
+  '    if ctx_ref != ep.context_ref {', '    if false && ctx_ref != ep.context_ref {', 'axon-loop', _R2IN, _R2JOIN),
+ ('M831', "intake: only a bound (started) task is an episode", _R2LI,
+  '    if ctx.expected != ctx.observed {', '    if false && ctx.expected != ctx.observed {', 'axon-loop', _R2IN, _R2JOIN),
+ ('M832', "intake: a refused sidecar is not an episode", _R2LI,
+  '    if ep.status == EpisodeStatus::Refused {', '    if false && ep.status == EpisodeStatus::Refused {', 'axon-loop', _R2IN, _R2JOIN),
+ ('M833', "intake: the policy reference is a cl22: reference", _R2LI,
+  '    if ep.policy_ref.scheme() != RefScheme::Cl22 {', '    if false && ep.policy_ref.scheme() != RefScheme::Cl22 {', 'axon-loop', _R2IN, _R2JOIN),
+ ('M834', "intake: an ack has exactly the ack's fields", _R2LI,
+  '    if keys != want {\n        return Err(shape(format!(\n            "ack: fields',
+  '    if false && keys != want {\n        return Err(shape(format!(\n            "ack: fields', 'axon-loop', _R2IN, _R2JOIN),
+ ('M835', "intake: the ack records a pinned policy", _R2LI,
+  '    if pin["state"] != "pinned" {', '    if false && pin["state"] != "pinned" {', 'axon-loop', _R2IN, _R2JOIN),
+ ('M836', "intake: the ack pins the episode's policy", _R2LI,
+  '    if pin["policy_ref"] != ep.policy_ref.as_str() || pin["policy_id"] != policy.policy_id.as_str()\n',
+  '    if false && (pin["policy_ref"] != ep.policy_ref.as_str() || pin["policy_id"] != policy.policy_id.as_str())\n',
+  'axon-loop', _R2IN, _R2JOIN),
+ ('M837', "intake: the ack's shortlist is the stored policy's", _R2LI,
+  '    if pin["shortlist"] != json!(shortlist) {', '    if false && pin["shortlist"] != json!(shortlist) {', 'axon-loop', _R2IN, _R2JOIN),
+ ('M838', "intake: the ack's candidate list digests to its candidate_set_ref", _R2LI,
+  '    if digest_value(cands)? != ep.candidate_set_ref {', '    if false && digest_value(cands)? != ep.candidate_set_ref {', 'axon-loop', _R2IN, _R2JOIN),
+ ('M839', "intake: an ambiguous ack is refused, never guessed", _R2LI,
+  '        many => Err(refused(format!(\n            "ambiguous ack',
+  '        [(_, t), ..] => Ok(t),\n        #[allow(unreachable_patterns)]\n        many => Err(refused(format!(\n            "ambiguous ack',
+  'axon-loop', _R2IN, _R2JOIN),
+ ('M840', "intake: the projection is the one the episode names", _R2LI,
+  '    if &r != want {', '    if false && &r != want {', 'axon-loop', _R2IN, _R2JOIN),
+ ('M841', "intake: the projection maps the episode's policy", _R2LI,
+  '    if proj.sidecar_policy_ref != ep.policy_ref {', '    if false && proj.sidecar_policy_ref != ep.policy_ref {', 'axon-loop', _R2IN, _R2JOIN),
+ ('M842', "intake: verification evidence the episode does not cite is refused", _R2LI,
+  '        if input.verification_request.is_some()\n',
+  '        if false && input.verification_request.is_some()\n', 'axon-loop', _R2IN, _R2JOIN),
+ ('M843', "intake: the canonical episode is the one the sidecar names", _R2LI,
+  '    if r != ep.source_episode_ref {', '    if false && r != ep.source_episode_ref {', 'axon-loop', _R2IN, _R2JOIN),
+ ('M844', "intake: a known canonical spend is never dropped", _R2LI,
+  '        (Some(mc), None) => {\n            return Err(',
+  '        (Some(_), None) => {}\n        #[allow(unreachable_patterns)]\n        (Some(mc), None) => {\n            return Err(',
+  'axon-loop', _R2IN, _R2JOIN),
+ ('M845', "intake: a cost the canonical episode does not know is never substituted", _R2LI,
+  '        (None, Some(c)) => {\n            return Err(',
+  '        (None, Some(_)) => {}\n        #[allow(unreachable_patterns)]\n        (None, Some(c)) => {\n            return Err(',
+  'axon-loop', _R2IN, _R2JOIN),
+ ('M846', "intake: the sidecar's cost is the canonical spend under the round-up rule", _R2LI,
+  '            if c != want {', '            if false && c != want {', 'axon-loop', _R2IN, _R2JOIN),
+ ('M847', "intake: a MiCode not-produced marker is never a policy reference", _R2LI,
+  '        if *named == marker {', '        if false && *named == marker {', 'axon-loop', _R2IN,
+  'a_not_produced_marker_is_never_a_policy_reference'),
+ ('M848', "intake: a revoked policy records no episode", _R2LI,
+  '    if tx.is_revoked(&ep.scope, &ep.policy_ref) {', '    if false && tx.is_revoked(&ep.scope, &ep.policy_ref) {', 'axon-loop', _R2IN,
+  'an_episode_of_a_revoked_policy_is_refused'),
+ ('M849', "intake: one trial identity, one set of bytes", _R2LI,
+  '            if intake.scope == ep.scope && intake.identity == ep.identity {',
+  '            if false && intake.scope == ep.scope && intake.identity == ep.identity {', 'axon-loop', _R2IN,
+  'a_second_episode_for_a_recorded_trial_is_a_conflict'),
+ ('M850', "intake: the receipt records exactly one check suite version", _R2LI,
+  '        [one] => *one,\n        _ => {',
+  '        [one] => *one,\n        [first, ..] => *first,\n        _ => {', 'axon-loop', _R2IN,
+  'a_receipt_recording_two_suite_versions_decides_nothing'),
+ ('M851', "intake: the check is this attempt's Fabric operation (the `same` refusal)", _R2LI,
+  '    if !same {', '    if false && !same {', 'axon-loop', _R2IN, 'each_verification_rule_is_load_bearing_on_its_own'),
+ ('M852', "PSV-7: a protected context re-verifies under an observer the operator trusts now (EQUIVALENT: four-cell vs M122+M104)", _R2LA,
+  '    if !config.observers().contains(&who) {', '    if false && !config.observers().contains(&who) {', 'axon-loop', _R2PC,
+  'a_context_observer_the_operator_withdrew_counts_nothing_at_activation'),
+ ('M853', "intake: check_ack refuses an ack of another schema (EQUIVALENT pair with M854)", _R2LI,
+  '    if obj["schema"] != ACK_SCHEMA {', '    if false && obj["schema"] != ACK_SCHEMA {', 'axon-loop', _R2IN,
+  'an_ack_of_another_schema_or_view_is_never_joined'),
+ ('M854', "intake: select_ack passes over an ack of another schema (EQUIVALENT pair with M853)", _R2LI,
+  '        if v.get("schema").and_then(Value::as_str) != Some(ACK_SCHEMA) {',
+  '        if false && v.get("schema").and_then(Value::as_str) != Some(ACK_SCHEMA) {', 'axon-loop', _R2IN,
+  'an_ack_of_another_schema_or_view_is_never_joined'),
+ ('M855', "intake: check_ack refuses an ack over another candidate view (EQUIVALENT pair with M856)", _R2LI,
+  '    if obj["candidate_set_ref"] != ep.candidate_set_ref.as_str() {',
+  '    if false && obj["candidate_set_ref"] != ep.candidate_set_ref.as_str() {', 'axon-loop', _R2IN,
+  'an_ack_of_another_schema_or_view_is_never_joined'),
+ ('M856', "intake: select_ack passes over an ack over another candidate view (EQUIVALENT pair with M855)", _R2LI,
+  '        if pin_ref != Some(ep.policy_ref.as_str()) || csr != Some(ep.candidate_set_ref.as_str()) {',
+  '        if pin_ref != Some(ep.policy_ref.as_str()) {\n            let _ = csr;', 'axon-loop', _R2IN,
+  'an_ack_of_another_schema_or_view_is_never_joined'),
+]
+
+# The four-cell retirements of the block above (executed with
+# scripts/v022_paired_disable.py; never counted killed).
+EQUIV_RECORD["M852"] = {
+    "property": "a counted protected context rests on an observer the operator trusts at the derivation",
+    "subsumed_by": ["M122", "M104"], "killer": "joint:M852+M122+M104",
+    "all_paths": "reverify_protected has one caller, derive, which calls it for every counted trial of a "
+                 "protected evaluation and, with no early Ok after it, then runs (a) the any-class loop "
+                 "refusing a trial whose context_observer_ref is not in config.observers() (M122) and "
+                 "(b) the protected loop refusing a trial whose context_signed_by issuer is not in "
+                 "config.observers() (M104). reverify_protected itself refuses unless "
+                 "t.context_observer_ref == Some(who) (M362), where `who` is the observer M852 checks, "
+                 "so on every path a `who` outside config.observers() is also a context_observer_ref "
+                 "outside it (M122); M104 refuses the same trial through its signer attribution"}
+EQUIV_RECORD["M853"] = {
+    "property": "an ack of another schema never joins an episode",
+    "subsumed_by": ["M854"], "killer": "joint:M853+M854",
+    "all_paths": "check_ack has one caller, intake_episode, which hands it only the text select_ack "
+                 "returns; select_ack passes over every text whose schema is not ACK_SCHEMA (M854), so "
+                 "the text check_ack sees always has that schema"}
+EQUIV_RECORD["M854"] = {
+    "property": "an ack of another schema never joins an episode",
+    "subsumed_by": ["M853"], "killer": "joint:M853+M854",
+    "all_paths": "select_ack's only caller hands its result to check_ack, which refuses any schema "
+                 "but ACK_SCHEMA (M853) before anything is recorded"}
+EQUIV_RECORD["M855"] = {
+    "property": "an ack over another candidate view never joins an episode",
+    "subsumed_by": ["M856"], "killer": "joint:M855+M856",
+    "all_paths": "check_ack has one caller, intake_episode, which hands it only the text select_ack "
+                 "returns; select_ack passes over every ack whose candidate_set_ref is not the "
+                 "episode's (M856), so the ack check_ack sees always names the episode's view"}
+EQUIV_RECORD["M856"] = {
+    "property": "an ack over another candidate view never joins an episode",
+    "subsumed_by": ["M855"], "killer": "joint:M855+M856",
+    "all_paths": "select_ack's only caller hands its result to check_ack, which refuses an ack whose "
+                 "candidate_set_ref is not the episode's (M855) before anything is recorded"}
+EQUIVALENT_DID |= {"M852", "M853", "M854", "M855", "M856"}
+RETIRED |= {"M852", "M853", "M854", "M855", "M856"}
+
 BINDING_IDS = {f"M{n}" for n in range(101, 137)}
 # Every id range the PSV rounds allocate (C9 round 1 uses up to M399; round
 # 1b allocates M400-M499, round 2 M500-M519). An id outside every scope would silently fall into

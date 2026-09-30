@@ -3205,3 +3205,298 @@ fn a_launch_whose_manifest_names_another_scope_is_refused() {
         ),
     }
 }
+
+// ── C9 round 4 fix wave, ROWS2 wave 2 (rows M815-M859): refusal sites of
+// `intake.rs` that had no row. Each attack goes through the production
+// `intake_episode` with ONE defect in otherwise genuine documents, on the
+// route where the check under test is the only refusal. Control first: the
+// genuine documents are recorded.
+
+/// Every document `intake_episode` reads, owned, so a case can edit any one.
+#[derive(Clone)]
+struct Docs {
+    ep: Value,
+    ctx: Value,
+    acks: Vec<Value>,
+    projection: Option<Value>,
+    src: Option<Value>,
+    vreq: Option<Value>,
+}
+
+fn docs(c: &Case) -> Docs {
+    Docs {
+        ep: c.ep.clone(),
+        ctx: c.ctx.clone(),
+        acks: vec![c.ack.clone()],
+        projection: None,
+        src: Some(c.src.clone()),
+        vreq: None,
+    }
+}
+
+fn intake_docs(c: &Case, d: &Docs) -> Result<axon_loop::intake::IntakeOutcome, LoopError> {
+    let acks: Vec<String> = d.acks.iter().map(Value::to_string).collect();
+    intake_episode(
+        &c.s,
+        &IntakeInput {
+            episode: &d.ep.to_string(),
+            context: &d.ctx.to_string(),
+            acks: &acks,
+            projection: d.projection.as_ref().map(Value::to_string).as_deref(),
+            source_episode: d.src.as_ref().map(Value::to_string).as_deref(),
+            verification_request: d.vreq.as_ref().map(Value::to_string).as_deref(),
+            verification_receipt: None,
+            verification_attestation: None,
+            verification_psv_evidence: None,
+        },
+    )
+}
+
+/// One refusal per case: `why` names the check; anything recorded is the
+/// attack getting through.
+fn refused_for(c: &Case, d: &Docs, attack: &str, why: &str) {
+    match intake_docs(c, d) {
+        Err(e @ (LoopError::Refused(_) | LoopError::Malformed(_))) => {
+            assert!(e.to_string().contains(why), "{attack}: {e}")
+        }
+        Ok(o) => panic!("ATTACK: {attack} was recorded: {o:?}"),
+        Err(e) => panic!("{attack}: refused otherwise: {e}"),
+    }
+}
+
+/// M830-M845: the intake joins before step 8, each on its own defect.
+#[test]
+fn each_intake_join_refuses_its_own_defect() {
+    let c = case(Some(500));
+    intake_docs(&c, &docs(&c)).expect("control: the genuine documents are recorded");
+    let proj = |sidecar: &Ref, acf: char| {
+        json!({"sidecar_policy_ref": sidecar,
+               "acf_policy_digest": format!("acf1:{}", acf.to_string().repeat(64)),
+               "projection_ref": format!("cl22:{}", "9".repeat(64))})
+    };
+    type Edit = Box<dyn Fn(&Case, &mut Docs)>;
+    let cases: Vec<(&str, Edit, &str)> = vec![
+        (
+            "a context receipt other than the one the episode names",
+            Box::new(|_, d| d.ctx["context_id"] = json!("ctx-other")),
+            "context receipt digests to",
+        ),
+        (
+            "an episode whose context did not bind (expected != observed)",
+            Box::new(|c, d| {
+                d.ctx = context(0, &"a".repeat(40));
+                d.ep = sidecar(&c.p, &d.ctx, &c.ack, &c.src, Some(500));
+            }),
+            "TASK_NOT_STARTED",
+        ),
+        (
+            "a sidecar of status refused",
+            Box::new(|_, d| d.ep["status"] = json!("refused")),
+            "status refused",
+        ),
+        (
+            "a policy_ref of another scheme naming the stored policy's digest",
+            Box::new(|_, d| {
+                let hex = d.ep["policy_ref"].as_str().unwrap()[5..].to_string();
+                d.ep["policy_ref"] = json!(format!("acf1:{hex}"));
+                d.acks[0]["pin"]["policy_ref"] = json!(format!("acf1:{hex}"));
+            }),
+            "is not a cl22: policy reference",
+        ),
+        (
+            "an ack with a field no ack has",
+            Box::new(|_, d| d.acks[0]["note"] = json!("extra")),
+            "expected exactly",
+        ),
+        (
+            "an ack whose pin state is not pinned",
+            Box::new(|_, d| d.acks[0]["pin"]["state"] = json!("unpinned")),
+            "not pinned",
+        ),
+        (
+            "an ack pinning another policy id",
+            Box::new(|_, d| d.acks[0]["pin"]["policy_id"] = json!("pol-other")),
+            "pins a different policy",
+        ),
+        (
+            "an ack pinning another shortlist",
+            Box::new(|_, d| d.acks[0]["pin"]["shortlist"] = json!(["read"])),
+            "shortlist is not the stored policy's",
+        ),
+        (
+            "an ack whose candidate list is not its candidate_set_ref's",
+            Box::new(|_, d| {
+                d.acks[0]["candidates"] = json!(["bash", "edit", "grep", "read", "write", "zsh"])
+            }),
+            "does not digest to its candidate_set_ref",
+        ),
+        (
+            "an ambiguous ack (a second, different ack pinning the same policy and view)",
+            Box::new(|_, d| {
+                let mut other = d.acks[0].clone();
+                other["pin"]["state"] = json!("unpinned");
+                d.acks.push(other);
+            }),
+            "ambiguous ack",
+        ),
+        (
+            "a projection other than the one the episode names",
+            Box::new(move |c, d| {
+                let good = proj(&digest(&c.p).unwrap(), 'c');
+                d.ep["projection_ref"] = json!(digest_value(&good).unwrap());
+                d.projection = Some(proj(&digest(&c.p).unwrap(), 'd'));
+            }),
+            "projection digests to",
+        ),
+        (
+            "a projection of another sidecar policy",
+            Box::new(move |_, d| {
+                let wrong = proj(&Ref::new(format!("cl22:{}", "8".repeat(64))).unwrap(), 'c');
+                d.ep["projection_ref"] = json!(digest_value(&wrong).unwrap());
+                d.projection = Some(wrong);
+            }),
+            "different sidecar policy",
+        ),
+        (
+            "verification evidence the episode does not cite",
+            Box::new(|_, d| d.vreq = Some(check_request())),
+            "sidecar names no verifier_ref",
+        ),
+        (
+            "a canonical episode other than the one the sidecar names",
+            Box::new(|_, d| d.src = Some(source_episode(Some(501)))),
+            "source episode digests to",
+        ),
+        (
+            "a sidecar dropping the canonical episode's known spend",
+            Box::new(|c, d| d.ep = sidecar(&c.p, &c.ctx, &c.ack, &c.src, None)),
+            "a known figure was dropped",
+        ),
+        (
+            "a sidecar stating a cost the canonical episode does not know",
+            Box::new(|c, d| {
+                let src = source_episode(None);
+                d.ep = sidecar(&c.p, &c.ctx, &c.ack, &src, Some(500));
+                d.src = Some(src);
+            }),
+            "records NO known spend",
+        ),
+        (
+            "a sidecar whose cost is not the canonical spend converted",
+            Box::new(|_, d| d.ep["usage"]["cost_micro"] = json!(6)),
+            "round-up rule",
+        ),
+    ];
+    for (attack, edit, why) in cases {
+        let c = case(Some(500));
+        let mut d = docs(&c);
+        edit(&c, &mut d);
+        refused_for(&c, &d, attack, why);
+    }
+}
+
+/// M846: a MiCode not-produced marker is never a policy: here the stored
+/// policy itself names the `controls_ref` marker, so every join to the policy
+/// holds and only the marker rule refuses the episode.
+#[test]
+fn a_not_produced_marker_is_never_a_policy_reference() {
+    let mut c = case(Some(500));
+    let mut p = policy(&["grep", "read"]);
+    p.controls_ref = micode_not_produced_ref("controls_ref");
+    axon_loop::candidates::put_policy(&c.s, &p).unwrap();
+    c.ack = ack(&p);
+    c.ep = sidecar(&p, &c.ctx, &c.ack, &c.src, Some(500));
+    c.p = p;
+    refused_for(
+        &c,
+        &docs(&c),
+        "an episode whose controls_ref is MiCode's not-produced marker",
+        "not-produced marker",
+    );
+}
+
+/// M847: a revoked policy records no episode.
+#[test]
+fn an_episode_of_a_revoked_policy_is_refused() {
+    let c = case(Some(500));
+    axon_loop::pointer::revoke(
+        &c.s,
+        &intake_scope(),
+        &digest(&c.p).unwrap(),
+        &Ref::new(format!("cl22:{}", "e".repeat(64))).unwrap(),
+        &OpaqueRef::new(common::ADMITTER).unwrap(),
+    )
+    .unwrap();
+    refused_for(
+        &c,
+        &docs(&c),
+        "an episode of a revoked policy",
+        "is revoked",
+    );
+}
+
+/// M848: one trial identity, one set of bytes. A second, different episode
+/// for the same trial is a conflict, never a second record.
+#[test]
+fn a_second_episode_for_a_recorded_trial_is_a_conflict() {
+    let c = case(Some(500));
+    intake_docs(&c, &docs(&c)).expect("control: the first episode is recorded");
+    let mut d = docs(&c);
+    d.ep["corpus_role"] = json!("discovery");
+    match intake_docs(&c, &d) {
+        Err(LoopError::Conflict(m)) => assert!(m.contains("different bytes"), "{m}"),
+        Ok(o) => panic!("ATTACK: a second episode for a recorded trial was recorded: {o:?}"),
+        Err(e) => panic!("refused otherwise: {e}"),
+    }
+}
+
+/// M849: the receipt records exactly ONE suite version. A genuinely signed
+/// receipt recording the pinned version AND another is refused: which one
+/// ran is not guessed.
+#[test]
+fn a_receipt_recording_two_suite_versions_decides_nothing() {
+    let c = case(Some(500));
+    let v2 = format!("check-suite:acceptance@acf1:{}#accept.ax", "6".repeat(64));
+    let mut rc = check_receipt("passed", 1);
+    rc["evidence_refs"] = json!(["check-report:fixture", common::check_suite(), v2]);
+    let (ctx, ep, req, rc) = for_task(&c, "task-1", rc);
+    match run_ctx(&c, &ctx, &ep, &req, &rc) {
+        Err(LoopError::Refused(m)) => assert!(m.contains("exactly one check suite"), "{m}"),
+        Ok(()) => panic!("ATTACK: a receipt recording two suite versions decided the task"),
+        Err(e) => panic!("refused otherwise: {e}"),
+    }
+    let (ctx, ep, req, rc) = for_task(&c, "task-1", check_receipt("passed", 1));
+    run_ctx(&c, &ctx, &ep, &req, &rc).expect("control: one suite version is recorded");
+}
+
+/// M851/M852 and M853/M854 (each pair retired EQUIVALENT under the
+/// four-cell rule): the ack's schema and its candidate_set_ref are each
+/// checked twice on the one route. `select_ack` passes over an ack of
+/// another schema or view (M852, M854), and `check_ack` refuses the ack it is
+/// handed (M851, M853). An ack of another schema, or pinning the policy over
+/// another view, is refused by either alone: any refusal. Control: the
+/// genuine ack is recorded.
+#[test]
+fn an_ack_of_another_schema_or_view_is_never_joined() {
+    let c = case(Some(500));
+    intake_docs(&c, &docs(&c)).expect("control: the genuine ack is recorded");
+    type Edit = fn(&mut Value);
+    let cases: [(&str, Edit); 2] = [
+        ("an ack of another schema", |a| {
+            a["schema"] = json!("micode.closed-loop.policy-ack/0")
+        }),
+        ("an ack over another candidate view", |a| {
+            a["candidate_set_ref"] = json!(format!("cl22:{}", "6".repeat(64)))
+        }),
+    ];
+    for (attack, edit) in cases {
+        let c = case(Some(500));
+        let mut d = docs(&c);
+        edit(&mut d.acks[0]);
+        match intake_docs(&c, &d) {
+            Err(LoopError::Refused(_) | LoopError::Malformed(_)) => {}
+            Ok(o) => panic!("ATTACK: {attack} was joined and the episode recorded: {o:?}"),
+            Err(e) => panic!("{attack}: refused otherwise: {e}"),
+        }
+    }
+}
