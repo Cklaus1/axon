@@ -566,28 +566,43 @@ fn a_candidate_cannot_supply_the_acceptance_test_through_fabric() {
 /// The launcher's `--verify-result` runs with a CLEARED environment: nothing
 /// of the caller's (PATH, …) reaches the pinned launcher (review
 /// wf_d725935a-7ed).
+///
+/// Both routes (C9 round 2, rows): through the privileged helper the verify
+/// step is the helper's child, and the helper has already dropped its whole
+/// environment (`harden`) and removed its snapshot (M543); on the DIRECT
+/// route Fabric runs `--verify-result` itself, from a process that still holds
+/// the caller's environment, so there `sealed_exec::command`'s envp (M228) and
+/// Fabric's own `psv.scrub()` (M229) are the only guards.
 #[test]
 fn the_verify_step_inherits_nothing_from_the_caller() {
     std::env::set_var("PSV_VERIFY_ENV_PROBE", "leak");
     let w = World::new();
-    let lx = w.lx("", "");
-    let out_root = lx.out_root.clone();
-    let s = w.submit_with(lx, "op-psv-env", "t_psv_ok");
-    assert_eq!(
-        s.receipt.verification,
-        ReceiptVerification::Passed,
-        "{:?}",
-        s.reason
-    );
-    let seen = std::fs::read_to_string(out_root.join("op-psv-env/verify-env-leaked")).unwrap();
-    assert_eq!(seen, "no");
-    // The per-attempt secret is already gone when the verify step runs.
-    let secret =
-        std::fs::read_to_string(out_root.join("op-psv-env/verify-secret-present")).unwrap();
-    assert_eq!(
-        secret, "no",
-        "the secret outlived the launch into the verify step"
-    );
+    for (route, lx, op) in [
+        ("privileged", w.lx("", ""), "op-psv-env"),
+        ("direct", w.lx_direct("", ""), "op-psv-env-direct"),
+    ] {
+        let out_root = lx.out_root.clone();
+        let s = w.submit_with(lx, op, "t_psv_ok");
+        assert_eq!(
+            s.receipt.verification,
+            ReceiptVerification::Passed,
+            "{route}: {:?}",
+            s.reason
+        );
+        let seen =
+            std::fs::read_to_string(out_root.join(format!("{op}/verify-env-leaked"))).unwrap();
+        assert_eq!(
+            seen, "no",
+            "ATTACK: {route}: the caller's environment reached the verify step"
+        );
+        // The per-attempt secret is already gone when the verify step runs.
+        let secret =
+            std::fs::read_to_string(out_root.join(format!("{op}/verify-secret-present"))).unwrap();
+        assert_eq!(
+            secret, "no",
+            "ATTACK: {route}: the secret outlived the launch into the verify step"
+        );
+    }
 }
 
 /// A GENUINE, valid verdict from a launch the launcher could not bind (exit

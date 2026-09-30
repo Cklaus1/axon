@@ -2274,14 +2274,19 @@ fn each_protected_join_is_verified_over_the_documents() {
         (
             // C9 round 1 (M217): a guest kernel digest that is not a sha256,
             // named consistently by the manifest, the signed observation and
-            // the receipt, so every equality join holds. Only the rule that
-            // each join is a sha256 refuses it.
+            // the receipt, so every equality join holds. Two independent
+            // rules refuse it (C9 round 2, rows): `check`'s rule that each
+            // receipt join is a sha256 (M217) and the manifest's own
+            // `names_every_digest` (A69, M473), which check_bundle runs on
+            // every path before the joins. M217 is the four-cell EQUIVALENT
+            // of M473, so either refusal is accepted; only ACCEPTED is the
+            // attack.
             "a malformed kernel digest every document agrees on",
             |m| m.guest.kernel_sha256 = "not-a-sha256".into(),
             |_| {},
             |_| {},
             None,
-            "is not a sha256",
+            "not a sha256",
         ),
         (
             // C9 round 1: a bundle of another schema version, every document

@@ -227,6 +227,8 @@ def main():
         "M29": {"siblings": ["M30"], "kind": "pair"},
         "M214": {"siblings": ["M233"], "kind": "pair"},
         "M216": {"siblings": ["M299"], "kind": "pair"},
+        # C9 round 2 (rows): check's sha256 rule vs names_every_digest (A69).
+        "M217": {"siblings": ["M473"], "kind": "pair"},
         "M377": {"siblings": ["M378"], "kind": "pair"},
         "M378": {"siblings": ["M377"], "kind": "pair"},
         "M285": {"siblings": ["M385", "M289"], "kind": "set"},

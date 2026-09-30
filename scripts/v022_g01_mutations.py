@@ -274,8 +274,9 @@ MUTATIONS = [
     ('M42', 'signing: only if the workload could not reach the key', 'crates/axon-fabric/src/signing.rs', '    } else if r.effect_ceiling.is_empty() {', '    } else if true {', 'axon-fabric', '--lib', 'signing::tests::an_effectless_local_run_signs_and_an_effectful_one_does_not'),
     ('M43', "Fabric: the suite's entry is in the signed identity",
      'crates/axon-fabric/src/submit.rs',
-     '.map(|s| format!("check-suite:{}@{}#{}", s.id, s.version, target.file));',
-     '.map(|s| format!("check-suite:{}@{}", s.id, s.version));',
+     # C9 r2 (rows): re-anchored; the ref is now written by runner::check_suite_ref.
+     'axon_cortex::runner::check_suite_ref(&s.id, s.version.as_str(), &target.file)',
+     'format!("check-suite:{}@{}", s.id, s.version)',
      'axon-fabric', '--test attestation', 'fabric_signs_as_the_operators_signer_and_only_when_the_workload_cannot_reach_the_key'),
     ('M44', 'Fabric: a check runs from an empty environment',
      'crates/axon-fabric/src/submit.rs',
@@ -616,8 +617,9 @@ MUTATIONS = [
      'axon-loop', '--test evl_admission', 'the_proposer_cannot_admit_its_own_candidate_whatever_the_record_lists'),
     ('M115', 'config: one key per role, checked on read as well as write (ADR-002)',
      'crates/axon-loop/src/store.rs',
-     ')?;\n                c.check_separation().map_err(crate::error::refused)?;\n                Ok(c)',
-     ')?;\n                Ok(c)',
+     # C9 r2 (rows): re-anchored; check_suite_refs now sits between it and Ok(c).
+     ')?;\n                c.check_separation().map_err(crate::error::refused)?;\n                c.check_suite_refs().map_err(crate::error::refused)?;\n                Ok(c)',
+     ')?;\n                c.check_suite_refs().map_err(crate::error::refused)?;\n                Ok(c)',
      'axon-loop', '--test evl_admission', 'an_observer_key_and_identity_are_its_own'),
     ('M116', "facts: a multi-currency arm's liability is summed, never 0",
      'crates/axon-loop/src/admission.rs',
@@ -783,7 +785,7 @@ MUTATIONS = [
     ('M188', 'M2: an inadmissible launch has no verdict', 'crates/axon-fabric/src/submit.rs', 'let launched_ok = matches!(res.outcome, backend::LinuxOutcome::Ok { .. });', 'let launched_ok = true;', 'axon-fabric', '--test psv_dispatch', 'a_valid_verdict_from_an_unbound_launch_counts_for_nothing'),
     ('M189', 'M2/A13: a local run is development evidence', 'crates/axon-fabric/src/submit.rs', '            r.evidence_refs.insert(\n                0,\n                opaque(crate::psv::EvidenceClass::Development.evidence_ref()),\n            );', '', 'axon-fabric', '--test psv_dispatch', 'a_local_check_is_development_evidence'),
     ('M190', '§6/A13: a class is signed only where its backend derives it', 'crates/axon-fabric/src/signing.rs', '"protected" | "guest-unobserved" => Ok(()),\n            _ => Err(WRONG_CLASS),', '_ => Ok(()),', 'axon-fabric', '--lib', 'signing::tests::a_class_is_signed_only_where_its_backend_derives_it'),
-    ('M191', 'M3: the observer program is pinned', 'crates/axon-fabric/src/observer.rs', 'if got != cfg.command_sha256 {', 'if false && got != cfg.command_sha256 {', 'axon-fabric', '--test psv_dispatch', 'an_unpinned_observer_is_refused'),
+    ('M191', 'M3: the observer program is pinned', 'crates/axon-fabric/src/observer.rs', '            sha256: cfg.command_sha256.clone(),\n        },\n        cfg.exec_owner,', '            sha256: crate::backend::sha256_file(&cfg.command).unwrap_or_default(),\n        },\n        cfg.exec_owner,', 'axon-fabric', '--test psv_dispatch', 'an_unpinned_observer_is_refused'),
     ('M192', 'M3/A9: the OBSERVER domain', 'crates/axon-fabric/src/observer.rs', '        &cfg.trust.dir,\n        TrustAuthority::Observer,', '        &cfg.trust.dir,\n        TrustAuthority::Qualification,', 'axon-fabric', '--test psv_dispatch', 'every_defective_observation_refuses_the_launch'),
     ('M193', 'M3: the claimed observer is the signer', 'crates/axon-fabric/src/observer.rs', 'if o.observer_key_id != signer {', 'if false && o.observer_key_id != signer {', 'axon-fabric', '--test psv_dispatch', 'every_defective_observation_refuses_the_launch'),
     ('M194', "M3/A8: the observation's epoch", 'crates/axon-fabric/src/observer.rs', 'if o.epoch != epoch {', 'if false && o.epoch != epoch {', 'axon-fabric', '--test psv_dispatch', 'every_defective_observation_refuses_the_launch'),
@@ -813,7 +815,7 @@ MUTATIONS = [
     ('M215', "M4/A6: the guest interpreter is the request's pinned executable", 'crates/axon-loop-contracts/src/protected_evidence.rs', 'if req.executable_digest.as_str() != want {', 'if false && req.executable_digest.as_str() != want {', 'axon-loop', '--test intake', 'each_protected_join_is_verified_over_the_documents'),
     ('M216', 'M4: each join exactly once', 'crates/axon-loop-contracts/src/protected_evidence.rs', '            [d] if d.len() == 64 && d.bytes().all(|b| b.is_ascii_hexdigit()) => {', '            [d, ..] if d.len() == 64 && d.bytes().all(|b| b.is_ascii_hexdigit()) => {', 'axon-loop', '--test intake', 'a_protected_claim_without_every_join_is_refused'),
     ('M217', 'M4: each join is a sha256', 'crates/axon-loop-contracts/src/protected_evidence.rs', '[d] if d.len() == 64 && d.bytes().all(|b| b.is_ascii_hexdigit()) =>', '[d] =>', 'axon-loop', '--test intake', 'each_protected_join_is_verified_over_the_documents'),
-    ('M218', 'M4: intake holds a protected claim to every join', 'crates/axon-loop/src/intake.rs', '        axon_loop_contracts::protected_evidence::check_bundle(\n            &req,\n            &rc,\n            bundle,\n            ep.authority_epoch.get(),\n        )\n        .map_err(|e| {', '        Ok::<&str, String>(bundle).map(|_| ()).map_err(|e: String| {', 'axon-loop', '--test intake', 'a_protected_claim_without_every_join_is_refused'),
+    ('M218', 'M4: intake holds a protected claim to every join', 'crates/axon-loop/src/intake.rs', '        let o = axon_loop_contracts::protected_evidence::check_bundle(\n            &req,\n            &rc,\n            bundle,\n            ep.authority_epoch.get(),\n            &config.trusted_observer_keys(),\n        )\n        .map_err(|e| {', '        let o = Ok::<_, String>(axon_loop_contracts::protected_evidence::ObservationSigner { observer_ref: issuer.clone(), key_id: bundle.len().to_string() })\n        .map_err(|e: String| {', 'axon-loop', '--test intake', 'a_protected_claim_without_every_join_is_refused'),
     ('M219', 'B1: a sealed candidate @[test] is never collected', 'crates/axon-core/src/main.rs', 'if !sealed.is_empty() && axon_core::resolver::span_in_sealed(f.span, &sealed) {', 'if false && axon_core::resolver::span_in_sealed(f.span, &sealed) {', 'axon-core', '--no-default-features --test psv_test_selection', 'a_sealed_candidates_own_test_is_never_collected'),
     ('M220', 'B1: the runner selects exactly the registered test', 'crates/axon-psv/src/runner.rs', '        .arg("--exact")\n', '', 'axon-psv', '--test runner', 'a_suite_sibling_does_not_run_beside_the_registered_test'),
     ('M221', 'B3: launch inputs come from the store, never the caller-owned run dir', 'crates/axon-fabric/src/submit.rs', '                crate::psv::private_inputs(\n                    lx,\n                    &cfg.state_dir,\n                    &cfg.epoch.scope().tenant_id,\n                    &req,\n                    &version,\n                )\n', '                { let _ = (lx, &version); match &target.bound { Bound::Version { dir, .. } => Ok::<PathBuf, String>(dir.0.clone()), _ => unreachable!() } }\n', 'axon-fabric', '--test psv_dispatch', 'a_run_dir_swapped_under_the_callers_state_changes_nothing'),
@@ -823,9 +825,9 @@ MUTATIONS = [
     ('M225', 'guest input: no symlink', 'crates/axon-psv/src/lib.rs', '.find(|e| e.kind == axon_workspace_recipe::EntryKind::Symlink)', '.find(|e| false && e.kind == axon_workspace_recipe::EntryKind::Symlink)', 'axon-psv', '--test protocol', 'inputs_with_links_or_omitted_entries_are_refused'),
     ('M226', 'a PSV verdict names its one matched check', 'crates/axon-fabric/src/submit.rs', '        r.matched_checks = Some(1);\n', '', 'axon-fabric', '--test psv_dispatch', 'an_operator_suite_passes_through_the_guest_path_as_guest_unobserved'),
     ('M227', 'observation joins the manifest verifier', 'crates/axon-psv/src/lib.rs', '("verifier_sha256", &self.verifier_sha256, &m.verifier_sha256),', '("verifier_sha256", &m.verifier_sha256, &m.verifier_sha256),', 'axon-fabric', '--test psv_dispatch', 'every_defective_observation_refuses_the_launch'),
-    ('M228', 'the verify step inherits no caller environment', 'crates/axon-fabric/src/backend.rs', '            // (PATH, …) steers the pinned launcher (review wf_d725935a-7ed).\n            .env_clear()\n', '            // (PATH, …) steers the pinned launcher (review wf_d725935a-7ed).\n', 'axon-fabric', '--test psv_dispatch', 'the_verify_step_inherits_nothing_from_the_caller'),
-    ('M229', 'the per-attempt secret is scrubbed when the launcher returns', 'crates/axon-fabric/src/backend.rs', '    psv.scrub();\n    let launcher = lx.launcher.clone();', '    let _ = &psv;\n    let launcher = lx.launcher.clone();', 'axon-fabric', '--test psv_dispatch', 'the_verify_step_inherits_nothing_from_the_caller'),
-    ('M230', 'B2: intake joins a protected claim over the bundle', 'crates/axon-loop/src/intake.rs', 'axon_loop_contracts::protected_evidence::check_bundle(\n            &req,\n            &rc,\n            bundle,\n            ep.authority_epoch.get(),\n        )\n        .map_err(|e| {', 'axon_loop_contracts::protected_evidence::check(&req, &rc).map(|_| bundle).map(|_| ()).map_err(|e| {', 'axon-loop', '--test intake', 'each_protected_join_is_verified_over_the_documents'),
+    ('M228', 'the verify step inherits no caller environment (C9 r2: re-anchored at sealed_exec::command, which builds the envp of every sealed child from exactly its env)', 'crates/axon-fabric/src/sealed_exec.rs', '    let envp = env\n        .iter()\n        .map(|(k, v)| c(format!("{k}={v}").as_bytes()))', '    let envp = std::env::vars()\n        .filter(|(k, _)| !env.iter().any(|(e, _)| e == k))\n        .chain(env.iter().map(|(k, v)| (k.to_string(), v.to_string())))\n        .map(|(k, v)| c(format!("{k}={v}").as_bytes()))', 'axon-fabric', '--test psv_dispatch', 'the_verify_step_inherits_nothing_from_the_caller'),
+    ('M229', 'the per-attempt secret is scrubbed when the launcher returns', 'crates/axon-fabric/src/backend.rs', '    psv.scrub();\n    let out2 = out.clone();', '    let _ = &psv;\n    let out2 = out.clone();', 'axon-fabric', '--test psv_dispatch', 'the_verify_step_inherits_nothing_from_the_caller'),
+    ('M230', 'B2: intake joins a protected claim over the bundle', 'crates/axon-loop/src/intake.rs', 'axon_loop_contracts::protected_evidence::check_bundle(\n            &req,\n            &rc,\n            bundle,\n            ep.authority_epoch.get(),\n            &config.trusted_observer_keys(),\n        )\n        .map_err(|e| {', 'axon_loop_contracts::protected_evidence::check(&req, &rc).map(|_| axon_loop_contracts::protected_evidence::ObservationSigner { observer_ref: issuer.clone(), key_id: bundle.len().to_string() })\n        .map_err(|e| {', 'axon-loop', '--test intake', 'each_protected_join_is_verified_over_the_documents'),
     ('M231', 'B2: a bundle for a non-protected receipt is refused', 'crates/axon-loop/src/intake.rs', '} else if psv_evidence.is_some() {', '} else if false && psv_evidence.is_some() {', 'axon-loop', '--test intake', 'each_protected_join_is_verified_over_the_documents'),
     ('M232', 'B2: the bundle manifest is the receipt manifest', 'crates/axon-loop-contracts/src/protected_evidence.rs', 'if m_sha != want("launch-manifest-sha256:")? {', 'if false && m_sha != want("launch-manifest-sha256:")? {', 'axon-loop', '--test intake', 'each_protected_join_is_verified_over_the_documents'),
     ('M233', 'B2: the bundle observation is the receipt observation', 'crates/axon-loop-contracts/src/protected_evidence.rs', 'if o_sha != want("preflight-observation-sha256:")? {', 'if false && o_sha != want("preflight-observation-sha256:")? {', 'axon-loop', '--test intake', 'each_protected_join_is_verified_over_the_documents'),
@@ -914,7 +916,7 @@ MUTATIONS = [
     ('M320', 'PSV-6/A54: an execution is attested only with the observed launch in its receipt', 'crates/axon-fabric/src/signing.rs', '    if !observed_launch(receipt) {', '    if false && !observed_launch(receipt) {', 'axon-fabric', '--lib', 'signing::tests::an_unobserved_protected_profile_execution_is_never_attested'),
     ('M321', 'PSV-6/A54: the protected profile offers no interpreter_run', 'crates/axon-fabric/src/backend.rs', '    // round 1; A54).\n    job_kinds: &[JobKind::RegisteredCheck],', '    // round 1; A54).\n    job_kinds: &[JobKind::InterpreterRun, JobKind::RegisteredCheck],', 'axon-fabric', '--test psv_dispatch', 'the_protected_profile_is_never_selected_for_an_execution'),
     ('M322', "PSV-4/A55: the bundle is decided from the FINAL receipt's class", 'crates/axon-fabric/src/submit.rs', '.and_then(|(r, _, _)| crate::psv::EvidenceClass::of_receipt(r))', '.and(Some(crate::psv::EvidenceClass::Protected))', 'axon-fabric', '--test psv_dispatch', 'an_inadmissible_observed_launch_is_never_protected_and_carries_no_bundle'),
-    ('M323', 'PSV-4/A55: an inadmissible launch is never protected (psv_receipt downgrade)', 'crates/axon-fabric/src/submit.rs', '    if !launched_ok {\n        // Whatever derive saw', '    if false && !launched_ok {\n        // Whatever derive saw', 'axon-fabric', '--test psv_dispatch', 'an_inadmissible_observed_launch_is_never_protected_and_carries_no_bundle'),
+    ('M323', 'PSV-4/A55: an inadmissible launch is never protected (psv_receipt downgrade)', 'crates/axon-fabric/src/submit.rs', '    if !launched_ok || !privileged {\n        // Whatever derive saw', '    if !privileged {\n        // Whatever derive saw', 'axon-fabric', '--test psv_dispatch', 'an_inadmissible_observed_launch_is_never_protected_and_carries_no_bundle'),
     ('M324', "A56: the out_root LEAF is the service's own and private", 'crates/axon-fabric/src/protected_host.rs', '        leaf_owned(&out_root)?;', '        leaf_owned(&out_root).ok();', 'axon-fabric', '--test protected_host', 'the_out_root_and_nonce_store_leaves_are_the_services_own_and_private'),
     ('M325', "A56: the nonce_store LEAF is the service's own and private", 'crates/axon-fabric/src/protected_host.rs', '                leaf_owned(&nonces)?;', '                leaf_owned(&nonces).ok();', 'axon-fabric', '--test protected_host', 'the_out_root_and_nonce_store_leaves_are_the_services_own_and_private'),
     ('M326', 'A56: a service leaf is owned by the service euid', 'crates/axon-fabric/src/protected_host.rs', '    if m.uid() != euid {', '    if false && m.uid() != euid {', 'axon-fabric', '--test protected_host', 'the_out_root_and_nonce_store_leaves_are_the_services_own_and_private'),
@@ -1708,6 +1710,26 @@ EQUIV_RECORD["M487"] = {
                  "which never follows: for a symlink, is_dir() is false (M486 refuses it on every "
                  "unix) and st_mode is 0777 on Linux (M327 refuses it). Only with both removed "
                  "does a link owned by the service euid load"}
+# C9 round 2 (rows): M217 was REFUSED_ELSEWHERE in the de523f4c run -- the
+# round-2 strict manifest digest rule (A69, M473) refused its attack first.
+# Four cells executed (this workstream, and scripts/v022_paired_disable.py):
+# M217 off -> refused (names_every_digest); M473 off -> refused (check's
+# sha256 rule); both off -> the malformed kernel digest is ACCEPTED.
+EQUIV_RECORD["M217"] = {
+    "property": "each protected receipt join (the eight REQUIRED_DIGEST_REFS) is a sha256",
+    "subsumed_by": ["M473"], "killer": "joint:M217+M473",
+    "all_paths": "protected_evidence::check has two callers, check_bundle and EVL's pre-check "
+                 "(evl.rs), and EVL's pre-check passing implies claims_protected, so "
+                 "verify_check_evidence then runs check_bundle as well; admission's "
+                 "reverify_protected (the store-writer route) reaches the same check_bundle "
+                 "through verify_check_evidence. The development class never calls check. In "
+                 "check_bundle every one of the eight refs must EQUAL a value that is a lowercase "
+                 "sha256 on every path: launch-manifest, preflight-observation and guest-verdict "
+                 "equal sha256_hex of the bundle's bytes (M233/M299 and the manifest join), and "
+                 "guest-kernel/rootfs/axon/init and qualification equal the manifest's *sha256 "
+                 "fields, which names_every_digest (M473) requires to be 64 lowercase hex before "
+                 "any join runs. So a ref that is not a sha256 is refused whenever M217's rule "
+                 "would have refused it, and M473 stays ACTIVE and killed"}
 EQUIVALENT_DID = set(EQUIV_RECORD)
 # STALE: a row whose old text no longer exists. "The old text is absent" shows
 # only that the TEXT changed, not that the guard is gone (C9 dev review: M204

@@ -291,8 +291,9 @@ ATTACK_MARKERS = {
     'M225': 'ATTACK: a candidate holding a symlink was accepted under a digest naming it',
     'M226': 'the guest-path receipt parses as a contract: .*matched_checks',
     'M227': 'failed: op-obs-verifier-[\\w-]+\\n\\s*left: (?!NotRun)\\w+\\n\\s*right: NotRun',
-    'M228': 'assertion `left == right` failed\\n\\s*left: \\"yes\\"\\n\\s*right: \\"no\\"',
-    'M229': 'the secret outlived the launch into the verify step',
+    # C9 r2 (rows): the test now attacks both routes; these guards are the direct route's only ones.
+    'M228': "ATTACK: direct: the caller's environment reached the verify step",
+    'M229': 'ATTACK: direct: the secret outlived the launch into the verify step',
     'M230': 'manifest\\ for\\ another\\ trial: ACCEPTED',
     'M231': 'unwrap_err\\(\\)` on an `Ok` value: IntakeOutcome',
     'M232': 'receipt\\ names\\ another\\ launch\\ manifest: ACCEPTED',
@@ -447,7 +448,8 @@ ATTACK_MARKERS = {
     'M369': 'ATTACK: a narrowing list that cannot be read was read as absent',
     # ── C9 round 1b, workstream PSV (M410-M418) ──
     'M410': r'ATTACK: prepare pinned guest kernel \w+ from a profile manifest the qualification never hashed',
-    'M411': r'ATTACK: one result\.json was hashed as evidence \(\w+\) and another, renamed in,\s+decided the outcome Ok',
+    # C9 r2 (rows): the second read is now served by an in-place write under a held open.
+    'M411': r'ATTACK: one result\.json was hashed as evidence \(\w+\) and another, written in\s+place, decided the outcome Ok',
     'M412': r'ATTACK: a replace ref rewrote what HEAD names, and the build provenance still says source_dirty: false',
     'M413': r'ATTACK: a grafts file rewrote ancestry, and the build provenance still says source_dirty: false',
     'M414': r'ATTACK: info/exclude hid an untracked \.cargo/config\.toml, and the build provenance still says source_dirty: false',

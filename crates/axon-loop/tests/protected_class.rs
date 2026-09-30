@@ -1481,10 +1481,14 @@ fn a_genuinely_signed_verdict_of_class(class: &str) {
                 t["episode_ref"] = json!(ep);
                 t["verification"]["receipt_ref"] = json!(rc);
                 t["verification"]["attestation_ref"] = json!(att);
-                t["verification"]
-                    .as_object_mut()
-                    .unwrap()
-                    .remove("psv_evidence_ref");
+                let ve = t["verification"].as_object_mut().unwrap();
+                ve.remove("psv_evidence_ref");
+                // …and the record states what an unobserved verdict honestly
+                // re-verifies as: no observation signer. Leaving the genuine
+                // record's signer in place let the observation-signer join
+                // refuse the forgery first (C9 round 2), so the claims-protected
+                // check (M255) was no longer the guard this attacked.
+                ve.remove("observation_signed_by");
                 n += 1;
             }
         }
