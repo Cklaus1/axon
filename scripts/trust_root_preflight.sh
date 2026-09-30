@@ -18,8 +18,17 @@
 #              here (C9 dev review round 1: a copy here missed the grant
 #              registry and grant files, the observer command, artifacts_dir and
 #              the out_root / nonce_store directories)
-#   service    out_root and observer.nonce_store belong to the Fabric UID: no
-#              other actor can create in them or chmod them
+#   service    out_root belongs to the Fabric UID: no other actor can create
+#              in it or chmod it
+#   custodian  (amendment 50, decision D6) the observation nonce is issued,
+#              stored and spent by the CUSTODIAN as its own uid: its config
+#              (/etc/axon/custodian.json) is an operator file; it runs as the
+#              --custodian uid, which is neither the --fabric uid nor root; it
+#              issues to the --fabric uid and spends for root (the helper)
+#              only; its store is its own 0700 directory, which the custodian
+#              CAN create in and the Fabric, the verifier and every agent
+#              cannot (create or chmod); the directory its socket is bound in
+#              is the operator's
 #   helper     (operator decision A, amendment 45) Fabric runs NON-ROOT (root is
 #              refused as every actor) and reaches a root launch only through
 #              the privileged helper `axon-protected-launcher` the host config
@@ -50,7 +59,7 @@
 # Usage (as root, which is needed to switch UID — never as the actors):
 #   trust_root_preflight.sh --verifier UID[:GID] --custodian UID[:GID] --fabric UID[:GID] \
 #       --agent UID[:GID] [--agent …] --guest-cmd 'CMD' \
-#       [--root DIR --host-config FILE --launcher-config FILE --fabric-bin FILE] [--out FILE]
+#       [--root DIR --host-config FILE --launcher-config FILE --custodian-config FILE --fabric-bin FILE] [--out FILE]
 #
 # Exit 0 = PASS, 1 = FAIL (a refusal did not happen), 2 = cannot run (usage,
 # not root, root missing) — never a pass.
@@ -60,7 +69,8 @@ OPERATOR_TRUST_ROOT=/etc/axon/trust
 SCHEMA=axon-trust-preflight/1
 ROOT="" OUT="" GUEST="" VERIFIER="" CUSTODIAN="" FABRIC="" HOST_CONFIG="" SIGNING_KEY="" FABRIC_BIN=""
 LAUNCHER_CONFIG="" HELPER="" HELPER_FABRIC_UID=""
-O1=() O1_DIRS=() SERVICE_DIRS=()
+CUSTODIAN_CONFIG="" CUSTODIAN_STORE="" CUSTODIAN_UID="" CUSTODIAN_FABRIC_UID="" CUSTODIAN_LAUNCHER_UID=""
+O1=() O1_DIRS=() SERVICE_DIRS=() SOCKET_DIRS=()
 AGENTS=()
 die() { printf '{"schema":"%s","verdict":"NOT_RUN","reason":"%s"}\n' "$SCHEMA" "$1"; exit 2; }
 while [ $# -gt 0 ]; do
@@ -74,6 +84,7 @@ while [ $# -gt 0 ]; do
     --host-config) HOST_CONFIG="$2"; shift 2 ;;
     --fabric-bin) FABRIC_BIN="$2"; shift 2 ;;
     --launcher-config) LAUNCHER_CONFIG="$2"; shift 2 ;;
+    --custodian-config) CUSTODIAN_CONFIG="$2"; shift 2 ;;
     --agent) AGENTS+=("$2"); shift 2 ;;
     *) die "unknown argument $1" ;;
   esac
@@ -90,6 +101,7 @@ if [ "$MODE" = protected ]; then
   [ -z "$HOST_CONFIG" ] || die "--host-config is dev-only: protected mode reads /etc/axon/protected-host.json"
   [ -z "$FABRIC_BIN" ] || die "--fabric-bin is dev-only: protected mode runs the installed verifier named by $ROOT/verifier.json"
   [ -z "$LAUNCHER_CONFIG" ] || die "--launcher-config is dev-only: protected mode reads /etc/axon/protected-launcher.json"
+  [ -z "$CUSTODIAN_CONFIG" ] || die "--custodian-config is dev-only: protected mode reads /etc/axon/custodian.json"
   HOST_CONFIG=/etc/axon/protected-host.json
   FABRIC_BIN=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["path"])' "$ROOT/verifier.json" 2>/dev/null) \
     || die "$ROOT/verifier.json names no installed verifier path"
@@ -99,7 +111,8 @@ fi
 # The pinned paths, from the SAME list ProtectedHost::load walks.
 PATHS=$(mktemp); trap 'rm -f "$PATHS"' EXIT
 "$FABRIC_BIN" protected-host-paths --config "$HOST_CONFIG" ${LAUNCHER_CONFIG:+--launcher-config "$LAUNCHER_CONFIG"} \
-  >"$PATHS" 2>/dev/null || die "axon-fabric protected-host-paths refused $HOST_CONFIG (or the privileged launcher's config)"
+  ${CUSTODIAN_CONFIG:+--custodian-config "$CUSTODIAN_CONFIG"} \
+  >"$PATHS" 2>/dev/null || die "axon-fabric protected-host-paths refused $HOST_CONFIG (or the privileged launcher's or the custodian's config)"
 while IFS=$'\t' read -r kind p; do
   case "$kind" in
     operator-file) O1+=("$p") ;;
@@ -108,11 +121,17 @@ while IFS=$'\t' read -r kind p; do
     service-dir) SERVICE_DIRS+=("$p") ;;
     privileged-helper) [ -z "$HELPER" ] || die "two privileged helpers listed"; HELPER=$p; O1+=("$p") ;;
     helper-fabric-uid) HELPER_FABRIC_UID=$p ;;
+    custodian-socket) SOCKET_DIRS+=("$(dirname "$p")") ;;
+    custodian-store) [ -z "$CUSTODIAN_STORE" ] || die "two custodian stores listed"; CUSTODIAN_STORE=$p ;;
+    custodian-uid) CUSTODIAN_UID=$p ;;
+    custodian-fabric-uid) CUSTODIAN_FABRIC_UID=$p ;;
+    custodian-launcher-uid) CUSTODIAN_LAUNCHER_UID=$p ;;
     *) die "axon-fabric listed an unknown path kind $kind" ;;
   esac
 done <"$PATHS"
 [ -n "$SIGNING_KEY" ] && [ ${#O1[@]} -gt 0 ] || die "axon-fabric listed no signing key or no pinned file"
 [ -n "$HELPER" ] && [ -n "$HELPER_FABRIC_UID" ] || die "axon-fabric listed no privileged helper (A: a protected host launches only through one)"
+[ -n "$CUSTODIAN_STORE" ] && [ -n "$CUSTODIAN_UID" ] || die "axon-fabric listed no custodian (amendment 50: the nonce is the custodian's)"
 case "$ROOT" in /*) ;; *) die "--root must be absolute" ;; esac
 [ -d "$ROOT/qualification" ] || die "$ROOT/qualification does not exist"
 
@@ -157,7 +176,10 @@ for d in "${O1_DIRS[@]}"; do
     if [ -d "$e" ]; then DIRS+=("$e"); else FILES+=("$e"); fi
   done < <(find "$d" -mindepth 1 -maxdepth 1 | sort)
 done
-for f in "${O1[@]}" "${O1_DIRS[@]}" "$SIGNING_KEY" "${SERVICE_DIRS[@]}"; do
+# The custodian's socket directory is the operator's (nobody may bind there);
+# the directory ABOVE the custodian's store too.
+DIRS+=("${SOCKET_DIRS[@]}")
+for f in "${O1[@]}" "${O1_DIRS[@]}" "$SIGNING_KEY" "${SERVICE_DIRS[@]}" "$CUSTODIAN_STORE"; do
   d=$(dirname "$f"); DIRS+=("$d")
   if [ "$MODE" = protected ]; then
     while [ "$d" != / ]; do d=$(dirname "$d"); DIRS+=("$d"); done
@@ -196,6 +218,17 @@ cannot_modify() { # actor uid:gid [service: also the Fabric's own directories]
   done
 }
 
+# Amendment 50: nobody but the custodian creates in (or chmods) its store — a
+# planted `.issued` is a nonce it never issued, an erased `.used` a nonce that
+# spends twice.
+cannot_touch_store() { # actor uid:gid
+  local who=$1 ug=$2 probe="$CUSTODIAN_STORE/.axon-preflight-probe-$$"
+  if as "$ug" mkdir "$probe"; then rmdir "$probe"; record "$who" "$ug" create "$CUSTODIAN_STORE" refused SUCCEEDED
+  else record "$who" "$ug" create "$CUSTODIAN_STORE" refused refused; fi
+  if as "$ug" python3 -c 'import os,sys; p=sys.argv[1]; os.chmod(p, os.stat(p).st_mode & 0o7777)' "$CUSTODIAN_STORE"; then record "$who" "$ug" chmod "$CUSTODIAN_STORE" refused SUCCEEDED
+  else record "$who" "$ug" chmod "$CUSTODIAN_STORE" refused refused; fi
+}
+
 V=$(resolve "$VERIFIER") || die "verifier: not a non-root user: $VERIFIER"
 C=$(resolve "$CUSTODIAN") || die "custodian: not a non-root user: $CUSTODIAN"
 [ ${#QFILES[@]} -gt 0 ] || record verifier "$V" read "$ROOT/qualification" "a key to read" "empty"
@@ -210,6 +243,28 @@ cannot_modify verifier "$V" service
 cannot_modify custodian "$C" service
 F=$(resolve "$FABRIC") || die "fabric: not a non-root user: $FABRIC"
 cannot_modify fabric "$F"
+# Amendment 50: the custodian is its OWN uid — not the Fabric's, not root — and
+# its config names exactly these actors.
+record operator - custodian-config-uid "$CUSTODIAN_UID" "${C%%:*}" "$CUSTODIAN_UID"
+cstate=separate
+[ "${C%%:*}" != "${F%%:*}" ] || cstate="the Fabric's uid"
+[ "$CUSTODIAN_UID" != "$CUSTODIAN_FABRIC_UID" ] || cstate="its config names the Fabric's uid as the custodian"
+[ "$CUSTODIAN_UID" != 0 ] || cstate="root"
+record operator - custodian-separate "$CUSTODIAN_UID" separate "$cstate"
+record operator - custodian-issues-to "$CUSTODIAN_UID" "${F%%:*}" "$CUSTODIAN_FABRIC_UID"
+record operator - custodian-spends-for "$CUSTODIAN_UID" 0 "$CUSTODIAN_LAUNCHER_UID"
+smode=$(stat -c '%u %a %F' "$CUSTODIAN_STORE" 2>/dev/null)
+read -r su sa sf <<<"$smode"
+sstate=ok
+[ "$sf" = directory ] || sstate="not a directory (${sf:-missing})"
+[ "$su" = "${C%%:*}" ] || sstate="owner ${su:-?}, not the custodian ${C%%:*}"
+[ $(( 8#${sa:-777} & 8#0077 )) -eq 0 ] || sstate="mode $sa: group/other access"
+record operator - store-mode "$CUSTODIAN_STORE" ok "$sstate"
+probe="$CUSTODIAN_STORE/.axon-preflight-probe-$$"
+if as "$C" mkdir "$probe"; then rmdir "$probe"; record custodian "$C" create "$CUSTODIAN_STORE" created created
+else record custodian "$C" create "$CUSTODIAN_STORE" created refused; fi
+cannot_touch_store fabric "$F"
+cannot_touch_store verifier "$V"
 # A (amendment 45): the Fabric actor is not root (resolve refuses uid 0 for
 # every actor), and its ONLY route to a root launch is the privileged helper.
 record operator - helper-admits "$HELPER" "${F%%:*}" "$HELPER_FABRIC_UID"
@@ -258,6 +313,7 @@ done
 for a in "${AGENTS[@]}"; do
   A=$(resolve "$a") || die "agent: not a non-root user: $a"
   cannot_modify "agent:$a" "$A" service
+  cannot_touch_store "agent:$a" "$A"
   if probe "$A" >/dev/null; then record "agent:$a" "$A" exec-helper "$HELPER" refused SUCCEEDED
   else record "agent:$a" "$A" exec-helper "$HELPER" refused refused; fi
   if reads "$A"; then record "agent:$a" "$A" read-key "$SIGNING_KEY" refused SUCCEEDED

@@ -265,48 +265,110 @@ fi
 # Fabric uid: the real launcher, image and engine, run by a setuid-root
 # (test-trust) axon-protected-launcher from its verified descriptors, with the
 # out dir handed to the launcher as /dev/fd/N and the manifest as /dev/fd/M.
+# Amendment 50: the helper launches only with the launch's ONE observation,
+# verified under its observer root, and spends the manifest's nonce through the
+# custodian (a test-trust axon-custodian here); the same request a second time
+# launches nothing.
 # PSV_SKIP_HELPER=1 skips it (then it is reported, never counted as a pass).
 if [[ -n "${PSV_SKIP_HELPER:-}" ]]; then
     echo "SKIP helper: PSV_SKIP_HELPER set (UNPROVEN)"
 else
     FU="${PSV_HELPER_UID:-4242}"
-    (cd "$REPO" && cargo build -q -p axon-fabric --features test-trust-root --bin axon-protected-launcher) \
-        || bad helper "cargo build -p axon-fabric --features test-trust-root --bin axon-protected-launcher"
-    HB="${CARGO_TARGET_DIR:-$REPO/target}/debug/axon-protected-launcher"
-    H="$W/helper"; mkdir -p "$H/runs" "$H/staging"; chmod 0755 "$H"
+    (cd "$REPO" && cargo build -q -p axon-fabric --features test-trust-root \
+        --bin axon-protected-launcher --bin axon-custodian --bin axon-fabric) \
+        || bad helper "cargo build -p axon-fabric --features test-trust-root --bin axon-protected-launcher --bin axon-custodian --bin axon-fabric"
+    TD="${CARGO_TARGET_DIR:-$REPO/target}/debug"
+    HB="$TD/axon-protected-launcher"
+    H="$W/helper"; mkdir -p "$H/runs" "$H/staging" "$H/cust/nonces" "$H/observer"; chmod 0755 "$H"
+    chmod 0700 "$H/cust/nonces"
     cp -r "$REPO/dist/guest-linux" "$H/dist"; chmod -R go-w "$H/dist"
     cp "$LAUNCH" "$H/fc_linux_profile.sh"; chmod 0755 "$H/fc_linux_profile.sh"
     chmod 0700 "$H/staging"; chown "$FU:$FU" "$H/runs"; chmod 0700 "$H/runs"
+    # The custodian (test-trust; every role this root process: it issues the
+    # nonce to this script and spends it for the helper, which is root then).
+    python3 - "$H" <<'PY'
+import json, sys
+h = sys.argv[1]
+json.dump({"schema": "axon-custodian/1", "custodian_uid": 0, "fabric_uid": 0, "launcher_uid": 0,
+           "socket": f"{h}/cust/custodian.sock", "store": f"{h}/cust/nonces", "max_age_s": 300},
+          open(f"{h}/cust/custodian.json", "w"))
+PY
+    "$TD/axon-custodian" --test-config "$H/cust/custodian.json" 2>"$H/cust/log" &
+    CUST_PID=$!
+    for _ in $(seq 100); do [[ -S "$H/cust/custodian.sock" ]] && break; sleep 0.05; done
+    ask() { python3 - "$H/cust/custodian.sock" "$1" <<'PY'
+import socket, sys
+s = socket.socket(socket.AF_UNIX); s.connect(sys.argv[1])
+s.sendall(sys.argv[2].encode() + b"\n"); s.shutdown(socket.SHUT_WR)
+b = b""
+while True:
+    c = s.recv(4096)
+    if not c: break
+    b += c
+print(b.decode())
+PY
+    }
+    NONCE="$(ask '{"schema":"axon-custodian-request/1","op":"issue","epoch":0}' \
+        | python3 -c 'import json,sys; print(json.load(sys.stdin)["nonce"])')"
     I="$H/runs/fab-boot.psv-inputs"; mkdir -p "$I"
     cp -r "$W/cand" "$I/candidate"; cp -r "$W/suite" "$I/check"
     MSHA="$("$DEV" make-job --candidate "$I/candidate" --suite "$I/check" --entry accept.ax \
-        --test t_ok --job "$I/job" | python3 -c 'import json,sys; print(json.load(sys.stdin)["manifest_sha256"])')"
+        --test t_ok --job "$I/job" --nonce "$NONCE" | python3 -c 'import json,sys; print(json.load(sys.stdin)["manifest_sha256"])')"
     cp -r "$I/job" "$W/helper-job"   # the helper consumes Fabric's job files
+    cp -r "$I" "$W/helper-inputs-again"   # …and Fabric can always rebuild them
     chown -R "$FU:$FU" "$I"
+    # The observer: a key in the helper's observer root, and the observation of
+    # this manifest signed with it (observer domain).
+    KEYJ="$("$TD/axon-fabric" keygen --out "$H/obs.pk8")"
+    printf '%s' "$KEYJ" | python3 -c 'import json,sys; print(json.load(sys.stdin)["public_key"])' >"$H/observer/obs.pub"
+    python3 - "$I/job/launch-manifest.json" "$H/observation.json" \
+        "$(printf '%s' "$KEYJ" | python3 -c 'import json,sys; print(json.load(sys.stdin)["fingerprint"])')" <<'PY'
+import datetime, hashlib, json, sys
+mp, out, kid = sys.argv[1:]
+raw = open(mp, "rb").read(); m = json.loads(raw)
+now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+json.dump({"schema": "axon-preflight-observation/1", "observer_key_id": kid,
+ "nonce": m["observation_nonce"], "epoch": 0, "observed_at": now,
+ "host_profile": m["backend_profile"], "fabric_revision": m["fabric_revision"],
+ "firecracker_sha256": m["firecracker_sha256"], "launcher_sha256": m["launcher_sha256"],
+ "host_config_sha256": m["host_config_sha256"], "guest": m["guest"],
+ "verifier_sha256": m["verifier_sha256"],
+ "suite_registry_sha256": m["suite"]["registry_sha256"], "policy_sha256": m["policy_sha256"],
+ "intended_launch_manifest_sha256": hashlib.sha256(raw).hexdigest()}, open(out, "w"))
+PY
+    "$TD/axon-fabric" sign-evidence --record "$H/observation.json" --key "$H/obs.pk8" \
+        --authority observer >/dev/null || bad helper "sign-evidence (observer)"
     python3 - "$H" "$FU" "$REPO/dist/guest-linux/manifest.json" "${POLICY}" "$MSHA" <<'PY'
 import hashlib, json, sys
 h, fu, man, pol, msha = sys.argv[1:]
 sha = lambda p: hashlib.sha256(open(p, "rb").read()).hexdigest()
-json.dump({"schema": "axon-protected-launcher/1", "fabric_uid": int(fu),
+json.dump({"schema": "axon-protected-launcher/2", "fabric_uid": int(fu),
            "interpreter": {"path": "/bin/bash", "sha256": sha("/bin/bash")},
            "launcher": {"path": f"{h}/fc_linux_profile.sh", "sha256": sha(f"{h}/fc_linux_profile.sh")},
            "profile_manifest": {"path": f"{h}/dist/manifest.json", "sha256": sha(f"{h}/dist/manifest.json")},
            "artifacts_dir": f"{h}/dist", "firecracker": "/usr/local/bin/firecracker",
            "jailer": "/usr/local/bin/jailer", "out_root": f"{h}/runs", "staging_root": f"{h}/staging",
-           "max_timeout_s": 300, "max_input_bytes": 1 << 30}, open(f"{h}/protected-launcher.json", "w"))
+           "max_timeout_s": 300, "max_input_bytes": 1 << 30,
+           "observer": {"root": f"{h}/observer", "max_age_s": 300, "host_signer_public_key": "0" * 64},
+           "custodian": {"socket": f"{h}/cust/custodian.sock", "uid": 0}},
+          open(f"{h}/protected-launcher.json", "w"))
 i = f"{h}/runs/fab-boot.psv-inputs"
-json.dump({"schema": "axon-protected-launch-request/1", "id": "fab-boot", "out": f"{h}/runs/op-boot",
-           "psv_candidate": f"{i}/candidate", "psv_suite": f"{i}/check", "psv_job": f"{i}/job",
-           "psv_manifest_sha256": msha, "policy_json": open(pol).read(), "timeout_s": 90},
-          open(f"{h}/request.json", "w"))
+for name, out in (("op-boot", "request.json"), ("op-boot-again", "request-again.json")):
+    json.dump({"schema": "axon-protected-launch-request/2", "id": "fab-boot", "out": f"{h}/runs/{name}",
+               "psv_candidate": f"{i}/candidate", "psv_suite": f"{i}/check", "psv_job": f"{i}/job",
+               "psv_manifest_sha256": msha, "policy_json": open(pol).read(), "timeout_s": 90,
+               "observation": open(f"{h}/observation.json").read(),
+               "observation_signature": open(f"{h}/observation.json.sig").read()},
+              open(f"{h}/{out}", "w"))
 PY
     chmod 0644 "$H/protected-launcher.json"
     cp "$HB" "$H/axon-protected-launcher"; chown "0:$FU" "$H/axon-protected-launcher"
     chmod 4750 "$H/axon-protected-launcher"
     # A shell running AS the Fabric uid makes the exec (setpriv's own exec
     # still holds root's DAC override).
-    setpriv --reuid="$FU" --regid="$FU" --clear-groups -- sh -c 'exec "$0" --test-config "$1"' \
-        "$H/axon-protected-launcher" "$H/protected-launcher.json" <"$H/request.json" >"$H/report.json" 2>"$H/helper.log"
+    helper() { setpriv --reuid="$FU" --regid="$FU" --clear-groups -- sh -c 'exec "$0" --test-config "$1"' \
+        "$H/axon-protected-launcher" "$H/protected-launcher.json" <"$1" >"$2" 2>>"$H/helper.log"; }
+    helper "$H/request.json" "$H/report.json"
     HRC=$?
     R="$(cat "$H/report.json")"
     V="$("$DEV" check-verdict --job "$W/helper-job" --verdict "$H/runs/op-boot/out/verdict.json" 2>/dev/null)"
@@ -314,10 +376,22 @@ PY
     if [[ $HRC == 0 ]] && printf '%s' "$R" | python3 -c 'import json,sys; r=json.load(sys.stdin); sys.exit(0 if r["launched"] and r["launcher_exit"]==0 and r["verify_exit"]==0 and r["unchanged"] and r["error"] is None else 1)' \
        && [[ "$(jq_r "$H/runs/op-boot/result.json" psv.bound)" == true && "$OWN" == "$FU" ]] \
        && printf '%s' "$V" | python3 -c 'import json,sys; v=json.load(sys.stdin); sys.exit(0 if v["status"]=="passed" and v["manifest_joins"] and v["token_verifies"] else 1)'; then
-        ok "helper: a non-root Fabric uid launched the pass case through the setuid helper (launcher and bash same-byte; out dir as /dev/fd/N); verdict bound, token verifies, out dir handed back"
+        ok "helper: a non-root Fabric uid launched the pass case through the setuid helper (launcher and bash same-byte; out dir as /dev/fd/N; observation verified and nonce spent at the root boundary); verdict bound, token verifies, out dir handed back"
     else
         bad helper "rc=$HRC report=$R owner=$OWN verdict=$V log=$(tail -c 300 "$H/helper.log")"
     fi
+    # Amendment 50 (A84): the SAME observation, inputs rebuilt by the Fabric
+    # uid, a second out dir: the custodian spent the nonce, nothing launches.
+    rm -rf "$I"; cp -r "$W/helper-inputs-again" "$I"; chown -R "$FU:$FU" "$I"
+    helper "$H/request-again.json" "$H/report-again.json"
+    HRC2=$?
+    R2="$(cat "$H/report-again.json")"
+    if [[ $HRC2 == 30 && ! -e "$H/runs/op-boot-again" ]] && grep -q "already used" <<<"$R2"; then
+        ok "helper-replay: one observation, one root launch (the second request spends a used nonce: refused, nothing launched)"
+    else
+        bad helper-replay "rc=$HRC2 report=$R2"
+    fi
+    kill "$CUST_PID" 2>/dev/null; wait "$CUST_PID" 2>/dev/null
 fi
 
 echo "psv guest boot test: $FAILS failure(s)"

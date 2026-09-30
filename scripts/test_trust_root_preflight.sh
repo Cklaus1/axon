@@ -35,18 +35,25 @@ fixture() {
     echo x >"$O1D/$f"; chmod 0644 "$O1D/$f"
   done
   echo k >"$O1D/keys/attest.pk8"; chown $F:$F "$O1D/keys/attest.pk8"; chmod 0400 "$O1D/keys/attest.pk8"
-  # The Fabric service's own private directories, under an operator directory.
-  mkdir -p "$O1D/svc/runs" "$O1D/svc/nonces"; chown $F:$F "$O1D/svc/runs" "$O1D/svc/nonces"
-  chmod 0700 "$O1D/svc/runs" "$O1D/svc/nonces"
+  # The Fabric service's own private directory, under an operator directory.
+  mkdir -p "$O1D/svc/runs"; chown $F:$F "$O1D/svc/runs"; chmod 0700 "$O1D/svc/runs"
+  # Amendment 50: the custodian's own 0700 store, and the operator directory
+  # its socket is bound in.
+  mkdir -p "$O1D/cust/nonces" "$O1D/run"; chmod 0755 "$O1D/cust" "$O1D/run"
+  chown ${STORE_OWNER:-$C}:${STORE_OWNER:-$C} "$O1D/cust/nonces"; chmod 0700 "$O1D/cust/nonces"
   # A: the setuid-root helper (group = the Fabric's), its root-private staging
   # root, and the engine its own config pins.
   cp "$HELPER_BIN" "$O1D/protected-launcher"; chown 0:$F "$O1D/protected-launcher"
   chmod 4750 "$O1D/protected-launcher"
   mkdir -p "$O1D/staging" "$O1D/engine"; chmod 0700 "$O1D/staging"; chmod 0755 "$O1D/engine"
   for f in engine/firecracker engine/jailer dist/rootfs.sqfs; do echo x >"$O1D/$f"; chmod 0644 "$O1D/$f"; done
-  python3 - "$O1D" "${HELPER_FABRIC:-$F}" <<'PY'
+  python3 - "$O1D" "${HELPER_FABRIC:-$F}" "${CUSTODIAN_AS:-$C}" "$F" <<'PY'
 import json, sys
 d = sys.argv[1]
+json.dump({"schema": "axon-custodian/1", "custodian_uid": int(sys.argv[3]),
+           "fabric_uid": int(sys.argv[4]), "launcher_uid": 0,
+           "socket": f"{d}/run/custodian.sock", "store": f"{d}/cust/nonces", "max_age_s": 300},
+          open(f"{d}/custodian.json", "w"))
 json.dump({"schema": "axon-fabric-grant-registry/1",
            "grants": [{"grant_ref": "grant:g", "principal_ref": "principal:p", "path": "g.axgrant",
                        "sha256": "0" * 64}]}, open(f"{d}/grants/grants.json", "w"))
@@ -58,20 +65,25 @@ json.dump({"schema": "axon-protected-host/1",
            "signer": {"key_path": f"{d}/keys/attest.pk8"},
            "out_root": f"{d}/svc/runs",
            "privileged_launcher": {"path": f"{d}/protected-launcher"},
-           "observer": {"command": {"path": f"{d}/observer.sh"}, "nonce_store": f"{d}/svc/nonces"},
+           "observer": {"command": {"path": f"{d}/observer.sh"},
+                        "custodian": {"socket": f"{d}/run/custodian.sock", "uid": int(sys.argv[3])}},
            "grant_registry": {"path": f"{d}/grants/grants.json"}},
           open(f"{d}/protected-host.json", "w"))
 z = "0" * 64
-json.dump({"schema": "axon-protected-launcher/1", "fabric_uid": int(sys.argv[2]),
+json.dump({"schema": "axon-protected-launcher/2", "fabric_uid": int(sys.argv[2]),
            "interpreter": {"path": "/bin/bash", "sha256": z},
            "launcher": {"path": f"{d}/launcher.sh", "sha256": z},
            "profile_manifest": {"path": f"{d}/manifest.json", "sha256": z},
            "artifacts_dir": f"{d}/dist", "firecracker": f"{d}/engine/firecracker",
            "jailer": f"{d}/engine/jailer", "out_root": f"{d}/svc/runs",
-           "staging_root": f"{d}/staging", "max_timeout_s": 60, "max_input_bytes": 1},
+           "staging_root": f"{d}/staging", "max_timeout_s": 60, "max_input_bytes": 1,
+           "observer": {"root": "/etc/axon/trust/observer", "max_age_s": 300,
+                        "host_signer_public_key": "0" * 64},
+           "custodian": {"socket": f"{d}/run/custodian.sock", "uid": int(sys.argv[3])}},
           open(f"{d}/protected-launcher.json", "w"))
 PY
-  chmod 0644 "$O1D/protected-host.json" "$O1D/grants/grants.json" "$O1D/protected-launcher.json"
+  chmod 0644 "$O1D/protected-host.json" "$O1D/grants/grants.json" "$O1D/protected-launcher.json" \
+    "$O1D/custodian.json"
 }
 # A guest's view: the root's parent hidden behind an empty mount (dev stand-in
 # for a Firecracker guest, whose image never contains the host path).
@@ -79,7 +91,8 @@ GUEST_OK="unshare --mount --propagation private sh -c 'mount -t tmpfs none $BASE
 GUEST_HOST="sh $HERE/trust_root_guest_probe.sh $ROOT"
 run() { # guest-cmd → sets OUT, RC
   OUT=$("$PF" --root "$ROOT" --host-config "$BASE/o1/protected-host.json" \
-    --launcher-config "$BASE/o1/protected-launcher.json" --fabric-bin "$FABRIC_BIN" --verifier $V \
+    --launcher-config "$BASE/o1/protected-launcher.json" \
+    --custodian-config "$BASE/o1/custodian.json" --fabric-bin "$FABRIC_BIN" --verifier $V \
     --custodian $C --fabric $F --agent $A1 --agent $A2 --guest-cmd "$1")
   RC=$?
 }
@@ -137,12 +150,24 @@ for t in dist grants svc; do
   fixture; chown $A1 "$BASE/o1/$t"; run "$GUEST_OK"
   failed_on "agent-owned directory $t" "c['action']=='create' and c['actor']=='agent:$A1' and c['target'].endswith('/o1/$t')"
 done
-for t in runs nonces; do
+for t in runs; do
   fixture; chown $A1 "$BASE/o1/svc/$t"; run "$GUEST_OK"
   failed_on "agent-owned service directory $t" "c['action']=='create' and c['actor']=='agent:$A1' and c['target'].endswith('/svc/$t')"
   fixture; chmod 0777 "$BASE/o1/svc/$t"; run "$GUEST_OK"
   failed_on "world-writable service directory $t" "c['action']=='create' and c['actor'].startswith('agent') and c['target'].endswith('/svc/$t')"
 done
+
+# Amendment 50: the custodian. Each defect FAILS on its own check.
+STORE_OWNER=$F fixture; run "$GUEST_OK"
+failed_on "custodian store owned by the Fabric" "c['action']=='create' and c['actor']=='fabric' and c['target'].endswith('/cust/nonces')"
+fixture; chgrp $F "$BASE/o1/cust/nonces"; chmod 0770 "$BASE/o1/cust/nonces"; run "$GUEST_OK"
+failed_on "custodian store the Fabric group can write" "c['action']=='create' and c['actor']=='fabric' and c['target'].endswith('/cust/nonces')"
+CUSTODIAN_AS=$F fixture; run "$GUEST_OK"
+failed_on "custodian running as the Fabric uid" "c['action']=='custodian-separate'"
+fixture; chown $A1 "$BASE/o1/run"; run "$GUEST_OK"
+failed_on "agent-owned custodian socket directory" "c['action']=='create' and c['actor']=='agent:$A1' and c['target'].endswith('/o1/run')"
+fixture; chmod 0666 "$BASE/o1/custodian.json"; run "$GUEST_OK"
+failed_on "agent-writable custodian config" "c['action']=='open-write' and c['actor'].startswith('agent') and c['target'].endswith('/custodian.json')"
 
 # A (amendment 45): the privileged helper. Each defect FAILS on its own check.
 fixture; chmod 0750 "$BASE/o1/protected-launcher"; run "$GUEST_OK"
