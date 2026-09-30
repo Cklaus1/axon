@@ -204,6 +204,10 @@ pub fn open_verified(p: &Pinned, owner: Option<u32>, lease: Lease) -> Result<Ver
         .take(MAX_BYTES + 1)
         .read_to_end(&mut bytes)
         .map_err(|e| format!("{shown}: {e}"))?;
+    // Tests only: act between the read and the verdict (the window the
+    // post-hash check below exists for). Compiled out of every other build.
+    #[cfg(test)]
+    tests::after_read();
     let sha256 = crate::backend::sha256_hex(&bytes);
     let v = Verified {
         file,
@@ -359,6 +363,63 @@ mod tests {
 
     fn euid() -> u32 {
         unsafe { libc::geteuid() }
+    }
+
+    thread_local! {
+        static AFTER_READ: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+            const { std::cell::RefCell::new(None) };
+    }
+
+    /// open_verified's test seam: runs (once) what the test set on this thread.
+    pub(super) fn after_read() {
+        if let Some(f) = AFTER_READ.with(|h| h.borrow_mut().take()) {
+            f()
+        }
+    }
+
+    /// Run `f` on a thread WITHOUT `CAP_LEASE` (capabilities are per thread,
+    /// so the rest of the test process keeps it). As root, a file owned by
+    /// another uid can then not be leased: the production helper's position
+    /// for any object whose owner it is not, when it lacks the capability.
+    fn without_cap_lease<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
+        std::thread::spawn(move || {
+            #[repr(C)]
+            struct Hdr {
+                version: u32,
+                pid: i32,
+            }
+            #[repr(C)]
+            #[derive(Clone, Copy, Default)]
+            struct Data {
+                effective: u32,
+                permitted: u32,
+                inheritable: u32,
+            }
+            const CAP_LEASE: u32 = 28;
+            let mut h = Hdr {
+                version: 0x2008_0522, // _LINUX_CAPABILITY_VERSION_3
+                pid: 0,
+            };
+            let mut d = [Data::default(); 2];
+            // SAFETY: capget/capset on this thread with a v3 header and two
+            // data words, as the ABI requires.
+            unsafe {
+                assert_eq!(libc::syscall(libc::SYS_capget, &mut h, d.as_mut_ptr()), 0);
+                d[0].effective &= !(1 << CAP_LEASE);
+                d[0].permitted &= !(1 << CAP_LEASE);
+                assert_eq!(libc::syscall(libc::SYS_capset, &mut h, d.as_ptr()), 0);
+            }
+            f()
+        })
+        .join()
+        .unwrap()
+    }
+
+    /// Hand `p` to another uid (root only): what makes a lease unavailable
+    /// to a root thread without `CAP_LEASE`.
+    fn give_away(p: &Path) -> u32 {
+        std::os::unix::fs::chown(p, Some(4242), None).unwrap();
+        4242
     }
 
     fn write_exec(p: &Path, body: &str) -> Pinned {
@@ -628,6 +689,143 @@ mod tests {
             "ATTACK: a script was executed through the interpreter its #! line names, unpinned",
         );
         assert!(why.contains("no interpreter is pinned"), "{why}");
+    }
+
+    /// D, production (C9 round 3, harness): the privileged helper opens the
+    /// launcher and its interpreter with `Lease::Required`. An object it cannot
+    /// lease is refused: without the lease, a writer that opens the file after
+    /// the hash is never detected, and the bytes that run need not be the
+    /// bytes that were verified. Here the lease is unavailable because the
+    /// file is another uid's and the thread lacks `CAP_LEASE` (as non-root:
+    /// root's own bash, which no other uid may lease).
+    #[test]
+    fn an_authority_program_that_cannot_be_leased_is_refused_in_production() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("launcher.sh");
+        let pin = write_exec(&p, "#!/bin/sh\necho hi\n");
+        let try_open = |lease: Lease| {
+            if euid() == 0 {
+                let owner = give_away(&p);
+                let pin = pin.clone();
+                without_cap_lease(move || {
+                    open_verified(&pin, Some(owner), lease).map(|v| v.leased())
+                })
+            } else {
+                open_verified(&bash(), Some(0), lease).map(|v| v.leased())
+            }
+        };
+        match try_open(Lease::Required) {
+            Err(why) => assert!(why.contains("no read lease"), "{why}"),
+            Ok(leased) => panic!(
+                "ATTACK: an authority program that could not be leased (leased={leased}) was \
+                 verified under Lease::Required: a writer after the hash would go undetected"
+            ),
+        }
+        // Control: development mode takes it, with no lease.
+        assert_eq!(try_open(Lease::IfGranted), Ok(false), "control");
+    }
+
+    /// D (C9 round 3, harness): the bytes hashed are the inode's bytes only
+    /// if it did not change while they were read. Here the file grows between
+    /// the read and the verdict (another process appends to it): the hash is
+    /// of the ORIGINAL bytes and equals the pin, while the file now holds
+    /// other bytes. For an object that is verified and not executed (the
+    /// helper's kernel, rootfs, firecracker and jailer) no later check exists,
+    /// so the post-hash check is the only one.
+    #[test]
+    fn a_file_changed_while_it_was_hashed_is_not_vouched_for() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("vmlinux");
+        let pin = write_exec(&p, "#!/bin/sh\necho genuine\n");
+        let owner = if euid() == 0 { give_away(&p) } else { euid() };
+        let run = {
+            let (p, pin) = (p.clone(), pin.clone());
+            move || {
+                AFTER_READ.with(|h| {
+                    *h.borrow_mut() = Some(Box::new(move || {
+                        // Another process, O_NONBLOCK: with no lease it
+                        // appends; with one (non-root, the owner) the open
+                        // breaks it and returns at once.
+                        let _ = std::process::Command::new("sh")
+                            .arg("-c")
+                            .arg("printf 'echo appended\\n' | dd of=\"$1\" oflag=append,nonblock conv=notrunc status=none")
+                            .arg("sh")
+                            .arg(&p)
+                            .stderr(std::process::Stdio::null())
+                            .status();
+                    }))
+                });
+                open_verified(&pin, Some(owner), Lease::IfGranted).map(|v| v.sha256().to_string())
+            }
+        };
+        let got = if euid() == 0 {
+            without_cap_lease(run)
+        } else {
+            run()
+        };
+        if let Ok(sha) = got {
+            panic!(
+                "ATTACK: a file that changed between its read and the verdict was vouched for \
+                 as the pinned bytes ({sha}), which the inode no longer holds"
+            );
+        }
+    }
+
+    /// D (C9 round 3, harness): an authority program is read with a bound.
+    /// A file over MAX_BYTES is refused before it is read; an unbounded read
+    /// of a pinned path is a denial of service of the root helper.
+    #[test]
+    fn an_authority_program_over_the_size_bound_is_never_read() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("huge");
+        // Sparse, and sized by another process (no write fd in this one).
+        let st = std::process::Command::new("truncate")
+            .arg("-s")
+            .arg((MAX_BYTES + 1).to_string())
+            .arg(&p)
+            .status()
+            .unwrap();
+        assert!(st.success(), "setup: truncate");
+        let pin = Pinned {
+            path: p,
+            sha256: "0".repeat(64),
+        };
+        match open_verified(&pin, None, Lease::IfGranted) {
+            Err(why) if why.contains("larger than") => {}
+            other => panic!(
+                "ATTACK: an authority program larger than MAX_BYTES ({MAX_BYTES}) was read and \
+                 hashed whole: {other:?}"
+            ),
+        }
+    }
+
+    /// D (C9 round 3, harness): an INTERPRETER that is itself a `#!` script
+    /// would run through its own first line, an interpreter no pin covers.
+    /// Two guards stop it: the refusal in `command`, and the verified
+    /// descriptor being close-on-exec (the kernel then cannot hand a script
+    /// executed by descriptor to its `#!` interpreter: ENOENT). The attack is
+    /// the unpinned interpreter line RUNNING.
+    #[test]
+    fn an_interpreter_that_is_a_script_never_runs_its_own_interpreter_line() {
+        let d = tempfile::tempdir().unwrap();
+        let prog = write_exec(&d.path().join("launcher.sh"), "#!/bin/sh\necho launcher\n");
+        let interp = write_exec(
+            &d.path().join("interp.sh"),
+            "#!/bin/sh\necho UNPINNED-INTERPRETER-LINE-RAN\n",
+        );
+        let prog = open_verified(&prog, Some(euid()), Lease::IfGranted).unwrap();
+        let interp = open_verified(&interp, Some(euid()), Lease::IfGranted).unwrap();
+        if let Ok(mut cmd) = command(&prog, Some(&interp), &[], &[("PATH", "/usr/bin:/bin")], &[]) {
+            let out = cmd.stdout(std::process::Stdio::piped()).output();
+            let text = out
+                .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+                .unwrap_or_default();
+            assert!(
+                !text.contains("UNPINNED-INTERPRETER-LINE-RAN"),
+                "ATTACK: an interpreter that is itself a script ran through its own #! line, an \
+                 interpreter no pin covers: {text:?}"
+            );
+        }
     }
 
     /// Bytes that are not the pin are refused (control for every test above:
