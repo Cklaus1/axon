@@ -633,3 +633,21 @@ ATTACK_MARKERS.update({
     'M498': r'ATTACK: the PSV runner is launched outside `env -i` \+ axon-guest-init: exec env PATH=',
     'M499': r'workload must be exec.d inside `env -i`: exec env PATH=',
 })
+# ── C9 round 3, workstream READINESS (M570-M584) ──
+ATTACK_MARKERS.update({
+    'M570': r'ATTACK: a B263 record with a FAIL assertion certified the protected backend and readiness still said PASS',
+    'M571': r'ATTACK: a B263 record whose result is FAIL certified the protected backend and readiness still said PASS',
+    'M572': r'ATTACK: a B263 record 89 days old certified the protected backend and readiness still said PASS',
+    'M573': r'ATTACK: a B263 record produced from a dirty source tree certified the protected backend and readiness still said PASS',
+    'M574': r'ATTACK: a B263 record naming no host certified the protected backend and readiness still said PASS',
+    'M575': r"ATTACK: a B263 record qualifying another host's firecracker certified the observed launch and readiness still said PASS",
+    'M576': r"ATTACK: the host's B263 qualification lapsed \(31 days\) and readiness still said PASS",
+    'M577': r'ATTACK: a certification dated before the run it certifies was observed and readiness still said PASS',
+    'M578': r'ATTACK: a certification dated in the future and readiness still said PASS',
+    'M579': r'ATTACK: an agent-signed waiver excused a BLOCKED B263 assertion and readiness still said PASS',
+    'M580': r'ATTACK: readiness certified a linked worktree whose admin dir was placed as \.git',
+    'M581': r'ATTACK: a forged ancestor object made HEAD descend from the PCI-certified revision, and the guest manifest says axon_tree_dirty_at_build: false',
+    'M582': r'ATTACK: the freeze bound evidence from a linked worktree whose admin dir was placed as \.git: Ok\(',
+    'M583': r"ATTACK: the freeze bound evidence from a tree whose \.git is a symlink to another clone's: Ok\(",
+    'M584': r'ATTACK: the freeze bound evidence from a guest image built from a dirty tree: Ok\(',
+})

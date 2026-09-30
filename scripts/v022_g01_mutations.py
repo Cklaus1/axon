@@ -937,8 +937,8 @@ MUTATIONS = [
     ('M339', "FIELD-ORIGIN: the observation is signed by the record's observer_key_id", 'crates/axon-fabric/src/readiness.rs', '    if signer != s("observer_key_id") {', '    if false && signer != s("observer_key_id") {', 'axon-fabric', '--test readiness_attribution', 'an_observation_by_another_observer_key_is_refused'),
     ('M340', 'FIELD-ORIGIN: the certified observation verifies under the operator observer root', 'crates/axon-fabric/src/readiness.rs', '        TrustAuthority::Observer,\n    )\n    .map_err(|e| format!("{component}: {e}"))?;', '        TrustAuthority::Observer,\n    )\n    .unwrap_or_else(|_| s("observer_key_id").to_string());', 'axon-fabric', '--test readiness_attribution', 'an_observation_not_signed_by_an_observer_root_key_is_refused'),
     ('M341', 'FIELD-ORIGIN: the observation observed the certified profile, revision and guest', 'crates/axon-fabric/src/readiness.rs', '.find(|(_, got, want)| got != want)', '.find(|(_, got, want)| got != want && false)', 'axon-fabric', '--test readiness_attribution', 'an_observation_of_another_run_is_refused'),
-    ('M342', 'FIELD-ORIGIN: b263_qualification_sha256 names a certified evidence file', 'crates/axon-fabric/src/readiness.rs', '    let (b_path, _, b) = named(evidence, component, doc, "b263_qualification_sha256")?;', '    let (b_path, _, b) = named(evidence, component, doc, "b263_qualification_sha256")\n        .or_else(|_| evidence.last().ok_or(String::new()))?;', 'axon-fabric', '--test readiness_attribution', 'a_b263_digest_that_names_no_evidence_file_is_refused'),
-    ('M343', 'FIELD-ORIGIN: the certified B263 record verifies under the operator qualification root', 'crates/axon-fabric/src/readiness.rs', '        TrustAuthority::Qualification,\n    )\n    .map_err(|e| format!("{component}: {e}"))?;', '        TrustAuthority::Qualification,\n    )\n    .ok();', 'axon-fabric', '--test readiness_attribution', 'a_b263_record_not_signed_under_the_qualification_root_is_refused'),
+    ('M342', 'FIELD-ORIGIN: b263_qualification_sha256 names a certified evidence file', 'crates/axon-fabric/src/readiness.rs', '    let (b_path, b_sha, b) = named(evidence, component, doc, "b263_qualification_sha256")?;', '    let (b_path, b_sha, b) = named(evidence, component, doc, "b263_qualification_sha256")\n        .or_else(|_| evidence.last().ok_or(String::new()))?;', 'axon-fabric', '--test readiness_attribution', 'a_b263_digest_that_names_no_evidence_file_is_refused'),
+    ('M343', 'FIELD-ORIGIN: the certified B263 record verifies under the operator qualification root', 'crates/axon-fabric/src/readiness.rs', '        TrustAuthority::Qualification,\n    )\n    .map_err(|e| format!("{component}: {e}"))?;', '        TrustAuthority::Qualification,\n    )\n    .or_else(|_| serde_json::from_slice::<Value>(b).map(|v| v["issuer_key_id"].as_str().unwrap_or("").to_string()).map_err(|e| e.to_string()))\n    .map_err(|e| format!("{component}: {e}"))?;', 'axon-fabric', '--test readiness_attribution', 'a_b263_record_not_signed_under_the_qualification_root_is_refused'),
     ('M344', 'FIELD-ORIGIN: the certified guest digests are the B263-qualified artifacts', 'crates/axon-fabric/src/readiness.rs', '        if qualified != Some(s(k)) {', '        if false && qualified != Some(s(k)) {', 'axon-fabric', '--test readiness_attribution', 'a_b263_record_of_another_guest_is_refused'),
     ('M345', 'FIELD-ORIGIN: the certified B263 record is axon-b263-evidence/1 of the protected profile', 'crates/axon-fabric/src/readiness.rs', '    if q["schema"] != "axon-b263-evidence/1" || q["profile"]["name"] != PROTECTED_PROFILE {', '    if false && (q["schema"] != "axon-b263-evidence/1" || q["profile"]["name"] != PROTECTED_PROFILE) {', 'axon-fabric', '--test readiness_attribution', 'a_b263_record_of_another_profile_is_refused'),
     ('M346', 'FIELD-ORIGIN: build provenance counts a skip-worktree entry as dirty', 'crates/axon-fabric/src/provenance.rs', "            if tag == b'S' || tag == b's' {", "            if false && (tag == b'S' || tag == b's') {", 'axon-fabric', '--lib', 'provenance::tests::a_skip_worktree_or_assume_unchanged_change_is_dirty'),
@@ -1459,6 +1459,71 @@ MUTATIONS += [
      '            require_unwritable: true,', '            require_unwritable: false,',
      'axon-fabric', '--lib', 'readiness::tests::a_trust_root_this_process_can_write_authorizes_nothing'),
 ]
+# ── C9 round 3, workstream READINESS (M570-M584; A78-A80, amendment 47) ──
+# PSV-7: readiness applies Fabric's B263 acceptance rules (ONE function,
+# backend::accept_b263) to the record a certification names, at decision time,
+# and joins the observation to it. Decision E by what git acts on (discover's
+# common-dir check, the freeze script's), and lineage from hash-checked objects.
+_QB = 'crates/axon-fabric/src/backend.rs'
+_QR = 'crates/axon-fabric/src/readiness.rs'
+_QG = 'crates/axon-fabric/src/git_data.rs'
+_QF = 'scripts/v022_freeze_manifest.py'
+_QA = '--test readiness_attribution'
+MUTATIONS += [
+    ('M570', 'PSV-7: a B263 record with a FAIL assertion certifies nothing (RULE:fail-zero, shared)', _QB,
+     '    if ev["counts"]["FAIL"].as_u64() != Some(0) || !failed.is_empty() {',
+     '    if false && (ev["counts"]["FAIL"].as_u64() != Some(0) || !failed.is_empty()) {',
+     'axon-fabric', _QA, 'a_failed_b263_record_is_refused'),
+    ('M571', 'PSV-7: only a PASS (or waived PASS_WITH_BLOCKED) B263 record certifies (RULE:result, shared)', _QB,
+     '    if !((result == "PASS" && blocked.is_empty())',
+     '    if false && !((result == "PASS" && blocked.is_empty())',
+     'axon-fabric', _QA, 'a_b263_record_whose_result_is_not_pass_is_refused'),
+    ('M572', 'PSV-7: a stale B263 record certifies nothing (RULE:end-fresh, shared)', _QB,
+     '    if (now - end) as u64 > max_age_s {',
+     '    if false && (now - end) as u64 > max_age_s {',
+     'axon-fabric', _QA, 'a_stale_b263_record_is_refused'),
+    ('M573', 'PSV-7: a B263 record from a dirty tree certifies nothing (RULE:tree-clean, shared)', _QB,
+     '    if ev["source"]["tree_dirty"] != serde_json::Value::Bool(false) {',
+     '    if false && ev["source"]["tree_dirty"] != serde_json::Value::Bool(false) {',
+     'axon-fabric', _QA, 'a_b263_record_from_a_dirty_tree_is_refused'),
+    ('M574', 'PSV-7: a B263 record naming no host certifies nothing (RULE:host, shared)', _QB,
+     '    if host.is_empty() {', '    if false && host.is_empty() {',
+     'axon-fabric', _QA, 'a_b263_record_that_names_no_host_is_refused'),
+    ('M575', 'PSV-7: the observed launch ran the B263-qualified firecracker', _QR,
+     '    if o.firecracker_sha256 != b263.firecracker_sha256 {',
+     '    if false && o.firecracker_sha256 != b263.firecracker_sha256 {',
+     'axon-fabric', _QA, 'a_b263_record_of_another_engine_is_refused'),
+    ('M576', 'PSV-7: readiness judges B263 currency at decision time with Fabric\'s maximum age', _QR,
+     'now, trust.max_age_s, || {', 'now, u64::MAX, || {',
+     'axon-fabric', _QA, 'a_b263_qualification_that_lapsed_after_certification_is_refused'),
+    ('M577', 'PSV-7: a certification is not dated before the run it certifies was observed', _QR,
+     '    if observed_at > certified_at {', '    if false && observed_at > certified_at {',
+     'axon-fabric', _QA, 'a_certification_dated_before_its_observation_is_refused'),
+    ('M578', 'PSV-7: a certification is not dated in the future', _QR,
+     '    if certified_at > now {', '    if false && certified_at > now {',
+     'axon-fabric', _QA, 'a_certification_dated_in_the_future_is_refused'),
+    ('M579', 'PSV-7: a certified B263 waiver verifies under the operator qualification root', _QR,
+     '            TrustAuthority::Qualification,\n        )\n        .map_err(|e| format!("{component}: {e}"))?;',
+     '            TrustAuthority::Qualification,\n        )\n        .ok();',
+     'axon-fabric', _QA, 'a_b263_waiver_not_signed_by_the_operator_is_refused'),
+    ('M580', 'Decision E (A79): the repository git acts on is top/.git (no disguised linked worktree)', _QG,
+     '    if got != want {', '    if false && got != want {',
+     'axon-fabric', '--test readiness', 'a_linked_worktree_disguised_as_a_git_directory_is_not_certified'),
+    ('M581', 'A80: lineage is walked over hash-checked commits, never git merge-base', _QG,
+     '                return if o.reaches(&head, &target)? {',
+     '                return if git_cmd(top).args(["merge-base", "--is-ancestor", rev, "HEAD"]).status().is_ok_and(|s| s.success()) {',
+     'axon-fabric', '--test guest_provenance', 'a_forged_ancestor_object_does_not_pass_the_pci_lineage'),
+    ('M582', 'Decision E (A79): the freeze refuses a root whose repository is not its own .git', _QF,
+     '    if not common or os.path.realpath(common) != os.path.realpath(dotgit):', '    if False:',
+     'axon-fabric', '--test freeze_manifest', 'a_linked_worktree_disguised_as_a_git_directory_does_not_freeze'),
+    ('M583', 'Decision E: the freeze refuses a root whose .git is not a real directory', _QF,
+     '    if os.path.islink(dotgit) or not os.path.isdir(dotgit):', '    if False:',
+     'axon-fabric', '--test freeze_manifest', 'a_symlinked_git_dir_does_not_freeze'),
+    ('M584', 'Decision E: the freeze refuses a guest manifest that is not clean with no reasons', _QF,
+     '    if src.get("axon_tree_dirty_at_build") is not False or src.get("axon_tree_dirty_reasons") != []:',
+     '    if False:',
+     'axon-fabric', '--test freeze_manifest', 'a_dirty_guest_manifest_does_not_freeze'),
+]
 # profiles/linux-microvm/guest-init.sh had NO row (round-2 review). Its guards,
 # and what covers each (amendment 43):
 #   input mounts ro,nodev,nosuid,noexec   rows M493-M496 (the script text) AND
@@ -1766,6 +1831,8 @@ BINDING_IDS = {f"M{n}" for n in range(101, 137)}
 # 1b allocates M400-M499, round 2 M500-M519). An id outside every scope would silently fall into
 # g01.
 PSV_IDS = {f"M{n}" for n in range(137, 550)}
+# C9 round 3, workstream READINESS.
+PSV_IDS |= {f"M{n}" for n in range(570, 585)}
 
 
 def in_scope(mid, scope):

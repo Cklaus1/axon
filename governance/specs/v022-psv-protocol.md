@@ -1092,3 +1092,35 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       which takes `--test-config`); decide whether the out root and the staging root may share a filesystem with anything
       else; and the compiled-launcher follow-up above if the operator wants the script's tools out
       of the TCB.
+47. **Readiness applies Fabric's B263 rules; decision E by what git acts on; lineage from
+    hash-checked objects (C9 round 3, readiness workstream).**
+    - **One set of B263 rules (PSV-7).** Readiness checked only the signature, schema, profile and
+      guest digests of the B263 record a certification names. An operator-signed record that
+      FAILED, was stale, came from a dirty tree or named no host certified PASS, and readiness
+      stayed PASS after the host's qualification lapsed, while Fabric refused every protected
+      launch. The record's rules (issuer-claimed, fail-zero, pass-count, blocked-count, result,
+      waivers, end not future and within the maximum age, engine digests, tree-clean, host, caveat)
+      are now one function, `backend::accept_b263`, called by Fabric's `qualification()` and by
+      readiness. Readiness judges currency at DECISION time (system clock, Fabric's default 30
+      days), takes waivers only from certified, qualification-signed waiver files bound to the
+      record, joins the observation's `firecracker_sha256` to the record's engine, and requires
+      `certified_at` to parse, to be no earlier than the observation's `observed_at`, and not to be
+      in the future. The manifest rules (engine pins, manifest-clean, manifest identity) stay
+      Fabric's, since they are about the host's installed manifest. The readiness fixture's B263
+      record is now a genuine qualifying record. Negative-matrix A78.
+    - **Decision E on the repository git acts on.** `git_data::discover` accepted any real `.git`
+      directory. A linked worktree's admin dir copied in as `.git` (its `commondir` naming another
+      clone) got a clean, descending answer from readiness, build and guest provenance and the
+      freeze. `discover` now also requires the hardened git's `--git-common-dir` to be `top/.git`.
+      `v022_freeze_manifest.py` applies the same rule through `/usr/bin/git` with the caller's
+      environment dropped, which also stops a caller's `GIT_DIR` from choosing the bound
+      `axon_sha`. Negative-matrix A79.
+    - **Lineage from verified objects.** Readiness and `provenance::lineage` used `git merge-base
+      --is-ancestor`, whose commit walk never checks an object's hash. `git_data::descends` walks
+      from HEAD through `Objects` (every commit hashed against its name, parents parsed from those
+      bytes) and stops at the revision or a root. The review judged the readiness route immaterial
+      because of its tree comparison; executed, it was not: the forged ancestor certified PASS,
+      since the orphan carried the certified tree. Negative-matrix A80.
+    - **Rows M570-M584**, each killed by its own attack. Tested but not rowed (the allocation is
+      spent): the `certified_at` parse, the moved RULE:issuer-claimed on the readiness route, and
+      the freeze script's caller-environment drop.
