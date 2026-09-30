@@ -1,6 +1,6 @@
 {
   "schema": "axon-v022-paired-disable/2",
-  "commit": "47114bd1b6c72d3f8491440be82d6dbc92c32db9",
+  "commit": "a98e2bbadafde9b71a0fe22536e3d07ceb10c842",
   "all_hold": true,
   "records": [
     {
@@ -778,6 +778,60 @@
       },
       "holds": true,
       "commit": "47114bd1b6c72d3f8491440be82d6dbc92c32db9"
+    },
+    {
+      "mutation": "M347",
+      "status": "EQUIVALENT_DID",
+      "kind": "pair",
+      "property": "build provenance never reads an untracked input as clean",
+      "original_guard": {
+        "file": "crates/axon-fabric/src/provenance.rs"
+      },
+      "subsumed_by": [
+        "M501"
+      ],
+      "live_killing_mutant": "joint:M347+M501",
+      "all_paths": "provenance() always runs head_bytes_differ -> tree_differs, whose untracked_objects walk (M500 files, M501 whole untracked directories) reports every filesystem object not in HEAD's tree and not on the operator allowlist, without consulting git. `status --untracked-files=all` (M347) only ever ADDS reasons; an untracked non-ignored file is exactly one the walk reports. So M347's refusal never stands alone",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M347",
+          "M501"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "a98e2bbadafde9b71a0fe22536e3d07ceb10c842"
+    },
+    {
+      "mutation": "M414",
+      "status": "EQUIVALENT_DID",
+      "kind": "pair",
+      "property": "build provenance never reads a file hidden by a non-tracked ignore rule as clean",
+      "original_guard": {
+        "file": "crates/axon-fabric/src/provenance.rs"
+      },
+      "subsumed_by": [
+        "M501"
+      ],
+      "live_killing_mutant": "joint:M414+M501",
+      "all_paths": "a file ignored by info/exclude, an untracked .gitignore or a config excludesFile is an object not in HEAD's tree; the walk (M501 for its untracked directory, M500 for a file) reports it unless the operator allowlist names it, and git-ignore plays no part in the walk (decision C). The check-ignore source test (M414) only ADDS a reason. So it never stands alone",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M414",
+          "M501"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "a98e2bbadafde9b71a0fe22536e3d07ceb10c842"
     }
   ]
 }
