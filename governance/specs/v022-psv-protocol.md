@@ -1092,3 +1092,40 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       which takes `--test-config`); decide whether the out root and the staging root may share a filesystem with anything
       else; and the compiled-launcher follow-up above if the operator wants the script's tools out
       of the TCB.
+
+49. **The suite join has one reading; the launch names its authority (C9 round 3, loop
+    workstream; PSV-5 and PSV-6; matrix A81, A82; rows M610-M618).**
+    - **Suite join (A81).** `check_bundle` formatted the manifest's suite as
+      `{id}@{version}#{entry}` and compared that string with the receipt's `check-suite:` ref. A
+      manifest naming version `V#x`, entry `accept.ax` therefore joined the pin
+      `check-suite:acceptance@V#x#accept.ax`, which the one parser reads as version `V`, entry
+      `x#accept.ax` (reproduced on bf964212: the reviewer's case was recorded as a protected
+      verdict). The receipt's ref is now read by `parse_check_suite_ref` and compared with the
+      manifest field by field; the request's `check:<id>` is compared with the parsed id. The one
+      writer, `runner::check_suite_ref`, now returns an error unless the reference it writes reads
+      back as exactly its (id, version, entry); Fabric's `register_check` (every registration, file
+      or library) and `psv::prepare` go through it, and Fabric writes a suite's reference once,
+      where the suite is resolved. `check_pins` compared the argv id as a string prefix of the
+      recorded ref; it now compares the parsed id. The parser already refused `@` and `#` in a
+      version and a separator in an id. An entry may still hold `#` or `@`: it is the tail after
+      the version's first `#`, so with the id and version separator-free every reference has one
+      reading, and the second readings were all consumers that did not use the parser.
+    - **Launch authority (A82).** The launch manifest is now `axon-launch-manifest/2`: it carries
+      `authority` = {`epoch`, `tenant_id`, `task_family`}, the scope's authority epoch the launch
+      was made under and the scope. The observer receives the manifest, and its signed
+      `intended_launch_manifest_sha256` covers the authority. `check_bundle` takes the trial's
+      scope beside its epoch (intake passes the episode's, which it binds to the scope pointer) and
+      refuses a manifest naming another epoch, tenant or family. On a protected host the
+      launch-time epoch is read from the store the host config pins (`authority_store`, optional
+      key; its parent directory is operator-owned and the trust preflight probes it as
+      `authority-store`). A caller `--store` that names another store is refused; one naming the
+      same store is accepted, as MiCode passes it; a host config that pins none launches nothing.
+      The preflight observation's own shape is unchanged: its `epoch` is still joined to the
+      trial's epoch, and now also transitively to the manifest's.
+    - **Consumers.** MiCode (`micode-persist/src/fabric_check.rs`) keeps the `psv_evidence` bundle
+      verbatim and parses no launch manifest, so nothing there breaks. On a protected host its
+      `loop_store` must be the host config's `authority_store`. The guest runner verifies the
+      manifest (`LaunchManifest::verify`, `deny_unknown_fields`), so an image built before this
+      change refuses every `/2` manifest: **the guest image must be rebuilt** and
+      `psv_guest_boot_test.sh` re-run on it before this counts as proven in a guest. An operator
+      observer program must read the manifest's `authority.epoch` rather than any fixed value.

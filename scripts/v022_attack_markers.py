@@ -401,7 +401,7 @@ ATTACK_MARKERS = {
     'M382': r"receipt qualification ref not the manifest's: ACCEPTED",
     'M383': r'a bundle of another schema version: ACCEPTED',
     # C9 round 2 (LOOP): ACTIVE again; its own '@'-id attack at check_bundle.
-    'M384': r'ATTACK: a protected bundle for suite acceptance@x joined a request that ran\s+check:acceptance: ACCEPTED',
+    'M384': r'ATTACK: a protected bundle for suite other joined a request that ran\s+check:acceptance: ACCEPTED',
     'M385': r'ATTACK: certified PASS despite the attack: \{[^\n]*"status":"PASS"',
     # ── C9 round 1: FABRIC/READINESS/INPUTS/LOOP rows (M320-M369). Placeholder
     # marker until tightened from the merged tree's own kill evidence.
@@ -632,4 +632,16 @@ ATTACK_MARKERS.update({
     'M497': r'ATTACK: a cmdline naming two launch manifests was accepted: TOOK=',
     'M498': r'ATTACK: the PSV runner is launched outside `env -i` \+ axon-guest-init: exec env PATH=',
     'M499': r'workload must be exec.d inside `env -i`: exec env PATH=',
+})
+# ── C9 round 3, LOOP workstream (M610-M618; amendment 49) ──
+ATTACK_MARKERS.update({
+    'M610': r'ATTACK: a manifest naming suite version "acf1:5{64}#x" entry accept\.ax joined the pin',
+    'M611': r'ATTACK: suite version "acf1:5{64}#x" entry "accept\.ax" was written as check-suite:acceptance@acf1:5{64}#x#accept\.ax',
+    'M612': r'ATTACK: prepare built a launch manifest for suite id "acc@x"',
+    'M613': r'ATTACK: suite version "acf1:1{64}#x" holding a reference separator was REGISTERED',
+    'M614': r'ATTACK: a protected verdict launched under authority epoch 5 was recorded for a\s+trial at epoch 0: ACCEPTED',
+    'M615': r'ATTACK: a protected verdict launched for tenant other-tenant was recorded in\s+tenant tenant-a: ACCEPTED',
+    'M616': r'ATTACK: a protected verdict launched for task family other-family was recorded\s+in family coding: ACCEPTED',
+    'M617': r'ATTACK: a protected launch took its authority epoch from a caller-named --store\s+\S*caller-store: ACCEPTED',
+    'M618': r'ATTACK: a protected host that pins no authority store launched with the caller\'s\s+--store: ACCEPTED',
 })
