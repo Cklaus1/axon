@@ -2812,7 +2812,11 @@ def main():
             scrubbed = rel.startswith("crates/") and spawns_scripts(pkg, target)
             if scrubbed:
                 scrub_workspace_binaries()
-            if scrubbed or (rel.startswith("crates/axon-core/") and "--lib" not in target):
+            # Any axon-core integration test run rebuilds `axon` with the test
+            # build's feature set (dev-dependency unification), whichever file
+            # the row guards (a scripts/ row judged by an axon-core test too).
+            core = rel.startswith("crates/axon-core/") or pkg == "axon-core"
+            if scrubbed or (core and "--lib" not in target):
                 if build_interpreter().returncode != 0:
                     sys.exit(f"FATAL: could not rebuild the interpreter after {mid}")
             if scrubbed and os.path.realpath(workspace_target_dir()) == os.path.realpath(cargo_target_dir()):
