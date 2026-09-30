@@ -639,7 +639,7 @@ ATTACK_MARKERS.update({
     'M561': r'ATTACK: sealed handler answered operator code: the candidate.s multi-shot replay fed the operator.s read_file \(t_replay\)',
     'M562': r'ATTACK: sealed handler answered operator code: the candidate.s arm aborted the operator.s listener through a candidate call \(t_through\)',
     'M563': r'ATTACK: the candidate steered the operator.s challenge by calling its closure five times: Ok\(Completed\)',
-    'M564': r'ATTACK: a test that ended early at `\?` was counted complete \(t_solve\): Ok\(Completed\)',
-    'M565': r'ATTACK: a test that ended early at `\?` was counted complete \(t_solve\): Ok\(Completed\)',
+    'M564': r'ATTACK: a test that ended early at `\?` was counted complete \(t_find\): Ok\(Completed\)',
+    'M565': r'ATTACK: a test that ended early at `\?` was counted complete \(t_find\): Ok\(Completed\)',
     'M566': r'ATTACK: a fn declared -> Result returned a None across its boundary: Ok\(EndedEarly',
 })

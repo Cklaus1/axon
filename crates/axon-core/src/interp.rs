@@ -4915,9 +4915,10 @@ mod tests {
     /// its end. The review's route: a `?` on a type-confused `None` returned
     /// `None` from the test, which is not an `Err`, so the returned VALUE read
     /// as a completion and a token was minted though the assert never ran.
-    /// The boundary check below closes that confusion for a declared `fn`;
-    /// a CLOSURE has no declared return type at run time, so through one the
-    /// completion rule is the only guard.
+    /// The return-boundary check also stops `t_solve` (the test itself is
+    /// declared `-> Result` and would return a `None`). `t_find` is the route
+    /// where the completion rule is the ONLY guard: an `Option`-returning test
+    /// whose `?` meets an honest `None` returns a well-typed `None`.
     #[test]
     fn a_test_ended_by_question_mark_is_never_completed() {
         let suite = "@[test]\nfn t_solve() -> Result<i64, str> {\n    let f = solver()\n    let v = f(21)?\n    assert_eq(v, 42)\n    Ok(v)\n}\n\

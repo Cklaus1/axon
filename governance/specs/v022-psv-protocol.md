@@ -1139,10 +1139,12 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       exact candidate now FAILS on that confusion.
     - **Language follow-up (not fixed here).** `dict_get`, `dict_get_or` and `host_await_val`
       return a free type variable, so a stored value of any type unifies with any use. A closure
-      has no declared return type at run time, so the boundary check does not cover it. Through a
-      closure, the completion rule above is the only guard, and a test pins it
-      (`a_test_ended_by_question_mark_is_never_completed`). The fix belongs in the type system:
-      typed dicts, or a runtime tag check against the inferred type.
+      has no declared return type at run time, so the boundary check does not cover its return
+      (it still catches the value at the next declared `fn`, including a test declared
+      `-> Result`). An `Option`-returning test whose `?` meets a well-typed `None` is the route
+      where the completion rule is the only guard; a test pins it
+      (`a_test_ended_by_question_mark_is_never_completed`, `t_find`). The fix belongs in the type
+      system: typed dicts, or a runtime tag check against the inferred type.
     - **Rows.** M560 (the frame-selection filter), M561 (the replay feed), M562 (counting operator
       frames rather than reading the current provenance), M563 (the RNG refusal), M564/M565 (the
       completion decision and the flag it reads), M566 (the return-boundary check). Negative matrix
