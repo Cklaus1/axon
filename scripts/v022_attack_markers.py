@@ -782,3 +782,41 @@ ATTACK_MARKERS.update({
     'M749': r'ATTACK: a record carrying two run outputs certified the run and readiness still said PASS',
     'M750': r'ATTACK: a record with no run in its evidence certified the run and readiness still said PASS',
 })
+
+# ── C9 round 4, EQUIVALENCE (ROWS workstream, M690-M719): each row killed on
+# the PRODUCTION route; the re-anchored rows' markers are their new tests'.
+ATTACK_MARKERS.update({
+    'M690': r'ATTACK: a readiness run that can write its operator trust roots certified PASS',
+    'M490': r'ATTACK: a readiness run that can write its operator trust roots certified PASS',
+    'M491': r'ATTACK: a readiness run that can write its operator trust roots certified PASS',
+    'M492': r'ATTACK: a readiness run that can write its operator trust roots certified PASS',
+    'M691': r'ATTACK: an evidence file changed after certification and readiness still certified the bundle',
+    'M692': r'ATTACK: a record certifying another component certified protected_backend',
+    'M693': r'ATTACK: a record of another host profile certified the protected profile',
+    'M694': r'ATTACK: a record of another qualification profile certified the protected profile',
+    'M695': r'ATTACK: the PSV spec changed after certification and readiness still certified',
+    'M696': r"ATTACK: an orphan history holding the certified tree was certified as the certified\s+revision's descendant",
+    'M697': r'ATTACK: code changed outside governance/ after certification and readiness still certified',
+    'M698': r'ATTACK: a record of another schema was read as a protected certification',
+    'M699': r"ATTACK: a record naming an observer key outside the operator's observer root was certified",
+    'M700': r'ATTACK: a protected custodian whose config names the Fabric uid as the custodian served',
+    'M629': r'ATTACK: a protected custodian whose config names the Fabric uid as the custodian served',
+    'M640': r'ATTACK: a protected custodian whose config lets uid 4242 spend nonces served',
+    'M701': r'ATTACK: a protected custodian whose config names root as the Fabric served',
+    'M702': r'ATTACK: a protected custodian not started by its socket unit served',
+    'M703': r'ATTACK: a protected custodian activated on another socket than its configured one served',
+    # Four-cell records (EQUIV_RECORD): the joint attack's own marker.
+    'M704': r'ATTACK: a production Fabric running as root was accepted on a protected host',
+    'M546': r'ATTACK: a production Fabric running as root was accepted on a protected host',
+    'M705': r"ATTACK: a production Fabric accepted a protected host whose custodian is the Fabric's\s+own uid",
+    'M634': r"ATTACK: a production Fabric accepted a protected host whose custodian is the Fabric's\s+own uid",
+    'M706': r'ATTACK: a production Fabric read the helper config under development rules',
+    'M707': r'ATTACK: a production Fabric accepted a helper config running another launcher than the host pins',
+    'M547': r'ATTACK: a production Fabric accepted a helper config running another launcher than the host pins',
+    'M548': r"ATTACK: a production Fabric accepted a helper config admitting another uid than the Fabric's",
+    'M636': r"ATTACK: a production Fabric accepted a helper config spending through another custodian than the host's",
+    'M637': r"ATTACK: a production Fabric accepted a helper config naming another host signer than the host's",
+    'M708': r'ATTACK: the production helper launched an authority program it could not lease',
+    'M591': r'ATTACK: the production helper launched an authority program it could not lease',
+    'M709': r'ATTACK: a production helper obeyed the test-trust lease switch',
+})

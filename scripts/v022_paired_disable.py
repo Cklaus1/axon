@@ -444,6 +444,13 @@ def main():
         "M453": {"siblings": ["M580"], "kind": "pair"},
         "M459": {"siblings": ["M581"], "kind": "pair"},
         "M602": {"siblings": ["M628"], "kind": "pair"},
+        # C9 round 4 (rows, EQUIVALENCE): the two rule functions whose one
+        # production caller is ProtectedHost::operator(), where each is
+        # dominated; executed with the production axon-fabric.
+        "M704": {"siblings": ["M548"], "kind": "pair"},
+        "M546": {"siblings": ["M548"], "kind": "pair"},
+        "M705": {"siblings": ["M633"], "kind": "pair"},
+        "M634": {"siblings": ["M633"], "kind": "pair"},
     }
     # Every retired row has a matrix and no active row has one.
     if set(GUARD_SETS) != set(mut.EQUIVALENT_DID):
