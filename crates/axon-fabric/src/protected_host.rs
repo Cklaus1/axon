@@ -4,6 +4,9 @@
 //! Everything that defines a protected run is resolved from ONE file,
 //! [`PROTECTED_HOST_CONFIG`], operator-owned from `/` down:
 //! * the launcher (pinned by sha256);
+//! * the PRIVILEGED launcher helper (`axon-protected-launcher`, pinned): Fabric
+//!   runs non-root, and the helper is its only route to a root launch
+//!   (operator decision A; amendment 45);
 //! * the profile manifest (pinned);
 //! * the guest artifacts;
 //! * the B263 qualification record and its age limit;
@@ -88,10 +91,11 @@ impl ProtectedHost {
     }
 }
 
-const KEYS: [&str; 8] = [
+const KEYS: [&str; 9] = [
     "artifacts_dir",
     "launcher",
     "out_root",
+    "privileged_launcher",
     "profile_manifest",
     "qualification",
     "schema",
@@ -111,13 +115,22 @@ impl ProtectedHost {
         if !is_configured(p)? {
             return Ok(None);
         }
-        Self::load(
+        // SAFETY: geteuid cannot fail.
+        let euid = unsafe { libc::geteuid() };
+        fabric_is_not_root(euid)?;
+        let host = Self::load(
             p,
             Some(Path::new("/")),
+            0,
             QualificationTrust::operator(),
             crate::observer::ObserverTrust::operator(),
-        )
-        .map(Some)
+        )?;
+        let helper = crate::privileged_launcher::load_config(
+            Path::new(crate::privileged_launcher::CONFIG_PATH),
+            &crate::privileged_launcher::Authority::production(),
+        )?;
+        helper_agrees(&helper, &host, euid)?;
+        Ok(Some(host))
     }
 
     /// TESTS ONLY. With `owned_below`, operator ownership is checked from that
@@ -138,13 +151,21 @@ impl ProtectedHost {
                 *dir = trust.issuers_dir.clone();
             }
         }
-        Self::load(config, owned_below, trust, observers)
+        // SAFETY: geteuid cannot fail.
+        Self::load(
+            config,
+            owned_below,
+            unsafe { libc::geteuid() },
+            trust,
+            observers,
+        )
     }
 
     #[cfg(unix)]
     fn load(
         config: &Path,
         owned_below: Option<&Path>,
+        exec_owner: u32,
         mut trust: QualificationTrust,
         mut observer_trust: crate::observer::ObserverTrust,
     ) -> Result<Self, String> {
@@ -207,6 +228,21 @@ impl ProtectedHost {
             Ok((p, pin))
         };
         let (launcher, launcher_sha256) = pinned("launcher")?;
+        // A: the helper Fabric reaches a root launch through; D: executed
+        // from its verified descriptor, owned by the operator.
+        let (helper, helper_sha256) = pinned("privileged_launcher")?;
+        // TEST-TRUST builds only: the helper's own test config. A production
+        // helper reads only its fixed path, so a production Fabric refuses
+        // the key rather than send a flag the helper would refuse.
+        let helper_test_config = match v.pointer("/privileged_launcher/test_config") {
+            None | Some(Value::Null) => None,
+            Some(_) if !crate::backend::TEST_TRUST_BUILD => {
+                return Err(bad(
+                    "privileged_launcher.test_config is a test-trust-build key".into(),
+                ))
+            }
+            Some(_) => Some(path_at("/privileged_launcher/test_config")?),
+        };
         let (manifest, _) = pinned("profile_manifest")?;
         let (suite_registry, suite_registry_sha256) = pinned("suite_registry")?;
         let artifacts_dir = path_at("/artifacts_dir")?;
@@ -310,9 +346,18 @@ impl ProtectedHost {
                 // signer or another authority root (A57).
                 observer_trust.host_signer_public_key = Some(signer.public_key.clone());
                 observer_trust.check_separation().map_err(bad)?;
+                let interpreter = match ob.get("interpreter") {
+                    None | Some(Value::Null) => None,
+                    Some(_) => {
+                        let (path, sha256) = pinned("observer/interpreter")?;
+                        Some(crate::sealed_exec::Pinned { path, sha256 })
+                    }
+                };
                 Some(crate::observer::ObserverConfig {
                     command,
                     command_sha256,
+                    interpreter,
+                    exec_owner: Some(exec_owner),
                     trust: observer_trust,
                     nonces: crate::observer::NonceStore { dir: nonces },
                     max_age_s: match ob.get("max_age_s") {
@@ -352,6 +397,16 @@ impl ProtectedHost {
                 waivers,
                 trust,
                 out_root,
+                exec_owner: Some(exec_owner),
+                interpreter: None,
+                privileged: Some(crate::backend::PrivilegedRoute {
+                    helper: crate::sealed_exec::Pinned {
+                        path: helper,
+                        sha256: helper_sha256,
+                    },
+                    owner: exec_owner,
+                    test_config: helper_test_config,
+                }),
             },
             suite_registry,
             suite_registry_sha256,
@@ -379,6 +434,9 @@ pub enum PinnedKind {
     /// A directory the Fabric SERVICE owns, private (`out_root`,
     /// `observer.nonce_store`); the directory above it is operator-owned.
     ServiceDir,
+    /// The privileged launcher helper (A): operator-owned like any pinned
+    /// file, and also setuid-root and executable by the Fabric uid alone.
+    PrivilegedHelper,
 }
 
 impl PinnedKind {
@@ -388,6 +446,7 @@ impl PinnedKind {
             PinnedKind::OperatorDir => "operator-dir",
             PinnedKind::SigningKey => "signing-key",
             PinnedKind::ServiceDir => "service-dir",
+            PinnedKind::PrivilegedHelper => "privileged-helper",
         }
     }
 }
@@ -434,11 +493,15 @@ pub fn pinned_paths(config: &Path) -> Result<Vec<(PinnedKind, PathBuf)>, String>
             out.push((OperatorFile, path_at(ptr)?));
         }
     }
+    out.push((PrivilegedHelper, path_at("/privileged_launcher/path")?));
     out.push((OperatorDir, path_at("/artifacts_dir")?));
     out.push((SigningKey, path_at("/signer/key_path")?));
     out.push((ServiceDir, path_at("/out_root")?));
     if present("/observer") {
         out.push((OperatorFile, path_at("/observer/command/path")?));
+        if present("/observer/interpreter") {
+            out.push((OperatorFile, path_at("/observer/interpreter/path")?));
+        }
         out.push((ServiceDir, path_at("/observer/nonce_store")?));
     }
     if present("/grant_registry") {
@@ -452,6 +515,86 @@ pub fn pinned_paths(config: &Path) -> Result<Vec<(PinnedKind, PathBuf)>, String>
         out.push((OperatorFile, reg));
     }
     Ok(out)
+}
+
+/// Every path the privileged helper's OWN config pins (it is read by the
+/// helper, not by `load`), for the trust preflight: the config itself, the
+/// interpreter, launcher, profile manifest, firecracker and jailer, the
+/// artifacts dir and the root-private staging root. Also the Fabric uid the
+/// helper admits, which the preflight holds to its `--fabric` actor.
+pub fn helper_pinned_paths(config: &Path) -> Result<(u32, Vec<(PinnedKind, PathBuf)>), String> {
+    let bytes = std::fs::read(config).map_err(|e| format!("{}: {e}", config.display()))?;
+    let c: crate::privileged_launcher::HelperConfig =
+        serde_json::from_slice(&bytes).map_err(|e| format!("{}: {e}", config.display()))?;
+    use PinnedKind::*;
+    Ok((
+        c.fabric_uid,
+        vec![
+            (OperatorFile, config.to_path_buf()),
+            (OperatorFile, c.interpreter.path),
+            (OperatorFile, c.launcher.path),
+            (OperatorFile, c.profile_manifest.path),
+            (OperatorFile, c.firecracker),
+            (OperatorFile, c.jailer),
+            (OperatorDir, c.artifacts_dir),
+            (OperatorDir, c.staging_root),
+            (ServiceDir, c.out_root),
+        ],
+    ))
+}
+
+/// Operator decision A: on a protected host Fabric runs as a non-root uid;
+/// its only route to a root launch is the privileged helper.
+pub fn fabric_is_not_root(euid: u32) -> Result<(), String> {
+    if euid == 0 {
+        return Err(
+            "Fabric is running as root on a protected host: it must run as its own non-root \
+             service uid and reach the launch only through axon-protected-launcher (operator \
+             decision A)"
+                .into(),
+        );
+    }
+    Ok(())
+}
+
+/// The helper's operator config and the host config describe ONE launch path:
+/// the helper admits this Fabric uid, writes under this out root, and runs
+/// the launcher (and profile manifest) this host pins, so the launcher digest
+/// in every launch manifest and observation is the one the helper executes.
+pub fn helper_agrees(
+    helper: &crate::privileged_launcher::HelperConfig,
+    host: &ProtectedHost,
+    euid: u32,
+) -> Result<(), String> {
+    let why = if helper.fabric_uid != euid {
+        format!(
+            "admits uid {}, but Fabric runs as uid {euid}",
+            helper.fabric_uid
+        )
+    } else if helper.out_root != host.linux.out_root {
+        format!(
+            "writes under {}, but the host's out_root is {}",
+            helper.out_root.display(),
+            host.linux.out_root.display()
+        )
+    } else if helper.launcher.sha256 != host.linux.launcher_sha256 {
+        format!(
+            "runs launcher {}, but the host pins {}",
+            helper.launcher.sha256, host.linux.launcher_sha256
+        )
+    } else if crate::backend::sha256_file(&host.linux.manifest)
+        .ok()
+        .as_deref()
+        != Some(helper.profile_manifest.sha256.as_str())
+    {
+        "pins another profile manifest than the host's".to_string()
+    } else {
+        return Ok(());
+    };
+    Err(format!(
+        "{}: the privileged launcher's config {why}",
+        crate::privileged_launcher::CONFIG_PATH
+    ))
 }
 
 /// Whether the operator's host config exists. Only NotFound means "not a
@@ -506,6 +649,18 @@ fn service_leaf(p: &Path) -> Result<(), String> {
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+
+    /// A: a protected host refuses a root Fabric (it would need no helper,
+    /// and hold every authority the helper keeps from it).
+    #[test]
+    fn a_root_fabric_is_refused_on_a_protected_host() {
+        let got = fabric_is_not_root(0);
+        assert!(
+            got.is_err(),
+            "ATTACK: Fabric running as root was accepted on a protected host"
+        );
+        fabric_is_not_root(991).expect("control: a service uid");
+    }
 
     /// C9 dev review round 1: `operator()` read ANY stat error as "not a
     /// protected host" and ran in development mode (caller registries and

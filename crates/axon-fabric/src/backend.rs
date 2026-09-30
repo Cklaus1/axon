@@ -155,6 +155,53 @@ pub struct LinuxProfileConfig {
     pub trust: QualificationTrust,
     /// Parent of per-operation `--out` directories.
     pub out_root: PathBuf,
+    /// D: the uid that must own the launcher (and interpreter) Fabric itself
+    /// executes on the DIRECT route. `None`: any owner (development only; the
+    /// direct route never attests a protected verdict).
+    pub exec_owner: Option<u32>,
+    /// D: the interpreter the launcher script runs under on the DIRECT route
+    /// (pinned; executed from its verified descriptor). `None`: `/bin/bash`,
+    /// hashed where it is executed (development only).
+    pub interpreter: Option<crate::sealed_exec::Pinned>,
+    /// A: the privileged helper that launches on a protected host (Fabric is
+    /// non-root there). `None`: the DIRECT development route, which never
+    /// yields protected evidence ([`LaunchRoute::may_attest_protected`]).
+    pub privileged: Option<PrivilegedRoute>,
+}
+
+/// A: how Fabric reaches the privileged helper.
+#[derive(Debug, Clone)]
+pub struct PrivilegedRoute {
+    /// `axon-protected-launcher`, pinned in the protected-host config.
+    pub helper: crate::sealed_exec::Pinned,
+    /// Its owner (root on a protected host).
+    pub owner: u32,
+    /// TEST-TRUST helper builds only: `--test-config FILE`. A production
+    /// helper refuses the flag; a production Fabric never sends it.
+    pub test_config: Option<PathBuf>,
+}
+
+/// Which route a Linux-profile launch took.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LaunchRoute {
+    /// Fabric executed the launcher itself (development and tests).
+    Direct,
+    /// Through the privileged helper; `test_build` when the helper says it is
+    /// a test-trust build.
+    Privileged { test_build: bool },
+}
+
+impl LaunchRoute {
+    /// Operator decision B: a protected verdict needs the pinned PRIVILEGED
+    /// launcher in its chain. The direct route never qualifies, and a
+    /// test-trust helper qualifies only inside a test-trust Fabric (whose
+    /// trust roots are test roots anyway).
+    pub fn may_attest_protected(self, fabric_test_build: bool) -> bool {
+        match self {
+            LaunchRoute::Direct => false,
+            LaunchRoute::Privileged { test_build } => !test_build || fabric_test_build,
+        }
+    }
 }
 
 /// Default ceiling on the age of a qualification record: 30 days.
@@ -1129,6 +1176,7 @@ pub struct LinuxRun {
     pub reason: String,
     pub evidence: Vec<String>,
     pub out_dir: PathBuf,
+    pub route: LaunchRoute,
 }
 
 /// Jail id for an operation: `fab-` + 16 hex of sha256(op id).
@@ -1328,11 +1376,221 @@ pub fn run_linux_profile(
     policy: &GuestPolicy,
     psv: &crate::psv::Launch,
 ) -> LinuxRun {
+    match &lx.privileged {
+        Some(h) => run_privileged(lx, h, req, policy, psv),
+        None => run_direct(lx, req, policy, psv),
+    }
+}
+
+const LAUNCH_PATH: &str = "/usr/sbin:/usr/bin:/sbin:/bin:/usr/local/bin";
+
+fn guest_policy_ref(policy: &GuestPolicy) -> String {
+    format!(
+        "guest-policy-sha256:{}",
+        sha256_hex(policy.json().as_bytes())
+    )
+}
+
+/// A: the launch through the privileged helper. Fabric (non-root) sends the
+/// per-launch request; the helper, from its operator config, verifies and
+/// runs the pinned launcher as root and reports. Fabric then requires the
+/// report to name the launcher its own manifest pins.
+fn run_privileged(
+    lx: &LinuxProfileConfig,
+    h: &PrivilegedRoute,
+    req: &ComputeRequest,
+    policy: &GuestPolicy,
+    psv: &crate::psv::Launch,
+) -> LinuxRun {
+    use crate::privileged_launcher as pl;
+    use std::io::{Read, Write};
     let out = lx.out_root.join(req.operation_id.as_str());
+    let route = LaunchRoute::Privileged { test_build: true };
+    let refused = |reason: String| LinuxRun {
+        outcome: LinuxOutcome::Refused,
+        reason,
+        evidence: vec![],
+        out_dir: out.clone(),
+        route,
+    };
+    let helper = match crate::sealed_exec::open_verified(
+        &h.helper,
+        Some(h.owner),
+        crate::sealed_exec::Lease::IfGranted,
+    ) {
+        Ok(v) => v,
+        Err(e) => return refused(format!("privileged launcher: {e}")),
+    };
+    let request = pl::LaunchRequest {
+        schema: pl::REQUEST_SCHEMA.into(),
+        id: jail_id(req.operation_id.as_str()),
+        out: out.clone(),
+        psv_candidate: psv.candidate_dir.clone(),
+        psv_suite: psv.suite_dir.clone(),
+        psv_job: psv.job_dir.clone(),
+        psv_manifest_sha256: psv.digest.clone(),
+        policy_json: policy.json().to_string(),
+        timeout_s: req.limits.wall_time_ms.div_ceil(1000).max(1),
+    };
+    let mut args: Vec<std::ffi::OsString> = vec![];
+    if let Some(t) = &h.test_config {
+        args.push("--test-config".into());
+        args.push(t.clone().into_os_string());
+    }
+    let cmd = crate::sealed_exec::command(&helper, None, &args, &[("PATH", LAUNCH_PATH)], &[]);
+    let child = cmd.and_then(|mut c| {
+        c.stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .map_err(|e| e.to_string())
+    });
+    let mut child = match child {
+        Ok(c) => c,
+        Err(e) => return refused(format!("privileged launcher did not start: {e}")),
+    };
+    let body = serde_json::to_vec(&request).unwrap_or_default();
+    if let Some(mut i) = child.stdin.take() {
+        let _ = i.write_all(&body);
+    }
+    let mut text = Vec::new();
+    if let Some(o) = child.stdout.take() {
+        let _ = o.take(1 << 20).read_to_end(&mut text);
+    }
+    let status = child.wait().ok().and_then(|s| s.code());
+    let policy_ref = guest_policy_ref(policy);
+    let unknown = |reason: String, route| LinuxRun {
+        outcome: LinuxOutcome::Unknown,
+        reason,
+        evidence: vec![policy_ref.clone()],
+        out_dir: out.clone(),
+        route,
+    };
+    let report: pl::LaunchReport = match serde_json::from_slice(&text) {
+        Ok(r) => r,
+        Err(e) => {
+            return unknown(
+                format!("privileged launcher (exit {status:?}) gave no report: {e}"),
+                route,
+            )
+        }
+    };
+    let route = LaunchRoute::Privileged {
+        test_build: report.build != "production",
+    };
+    if report.schema != pl::REPORT_SCHEMA {
+        return unknown(
+            "privileged launcher report has another schema".into(),
+            route,
+        );
+    }
+    if !report.launched {
+        let why = report.error.unwrap_or_default();
+        return match status {
+            Some(pl::EXIT_REFUSED) => LinuxRun {
+                outcome: LinuxOutcome::Refused,
+                reason: format!("privileged launcher refused: {why}"),
+                evidence: vec![],
+                out_dir: out.clone(),
+                route,
+            },
+            _ => unknown(
+                format!("privileged launcher exited {status:?}: {why}"),
+                route,
+            ),
+        };
+    }
+    // The job's source (the secret) was consumed by the helper; its dir goes.
+    psv.scrub();
+    if status != Some(pl::EXIT_LAUNCHED) || report.error.is_some() {
+        return unknown(
+            format!(
+                "privileged launcher exited {status:?} after the launch: {}",
+                report.error.unwrap_or_default()
+            ),
+            route,
+        );
+    }
+    // The launcher the helper ran is the one this launch's manifest pins
+    // (the launch manifest's and the observation's launcher_sha256).
+    if report.launcher_sha256.as_deref() != Some(lx.launcher_sha256.as_str()) {
+        return unknown(
+            format!(
+                "the privileged launcher ran launcher {:?}, not the pinned {}",
+                report.launcher_sha256, lx.launcher_sha256
+            ),
+            route,
+        );
+    }
+    if !report.unchanged || helper.unchanged().is_err() {
+        return unknown(
+            "the launcher, its interpreter or the helper changed during the launch".into(),
+            route,
+        );
+    }
+    let verify_exit = report.verify_exit;
+    let (outcome, reason, mut evidence) =
+        interpret_linux_result(report.launcher_exit, &out, &mut || verify_exit);
+    evidence.push(policy_ref);
+    LinuxRun {
+        outcome,
+        reason,
+        evidence,
+        out_dir: out,
+        route,
+    }
+}
+
+/// The DIRECT route (development and tests): Fabric executes the pinned
+/// launcher itself, same-byte (D), under the pinned (or dev) interpreter. It
+/// never yields protected evidence.
+fn run_direct(
+    lx: &LinuxProfileConfig,
+    req: &ComputeRequest,
+    policy: &GuestPolicy,
+    psv: &crate::psv::Launch,
+) -> LinuxRun {
+    use crate::sealed_exec::{self, Lease, Pinned};
+    let out = lx.out_root.join(req.operation_id.as_str());
+    let route = LaunchRoute::Direct;
     // Beside `--out`, never in it: the launcher requires a new/empty out dir.
     let policy_file = lx
         .out_root
         .join(format!("{}.policy.json", req.operation_id.as_str()));
+    let refused = |reason: String| LinuxRun {
+        // The launcher was never invoked: nothing was acquired.
+        outcome: LinuxOutcome::Refused,
+        reason,
+        evidence: vec![],
+        out_dir: out.clone(),
+        route,
+    };
+    // D: the launcher and its interpreter, opened and verified ONCE; these
+    // descriptors are what runs, for the launch and for --verify-result.
+    let launcher = match sealed_exec::open_verified(
+        &Pinned {
+            path: lx.launcher.clone(),
+            sha256: lx.launcher_sha256.clone(),
+        },
+        lx.exec_owner,
+        Lease::IfGranted,
+    ) {
+        Ok(v) => v,
+        Err(e) => return refused(format!("launcher: {e}")),
+    };
+    let interp_pin = match &lx.interpreter {
+        Some(p) => Ok(p.clone()),
+        None => {
+            let p = PathBuf::from("/bin/bash");
+            sha256_file(&p).map(|sha256| Pinned { path: p, sha256 })
+        }
+    };
+    let interpreter = match interp_pin
+        .and_then(|p| sealed_exec::open_verified(&p, lx.exec_owner, Lease::IfGranted))
+    {
+        Ok(v) => v,
+        Err(e) => return refused(format!("launcher interpreter: {e}")),
+    };
     let written = std::fs::create_dir_all(&lx.out_root).and_then(|()| {
         use std::io::Write as _;
         // create_new: a pre-existing file (or symlink) is not ours to reuse.
@@ -1343,53 +1601,66 @@ pub fn run_linux_profile(
             .write_all(policy.json().as_bytes())
     });
     if let Err(e) = written {
-        return LinuxRun {
-            // The launcher was never invoked: nothing was acquired.
-            outcome: LinuxOutcome::Refused,
-            reason: format!(
-                "could not write the guest policy {}: {e}",
-                policy_file.display()
-            ),
-            evidence: vec![],
-            out_dir: out,
-        };
+        return refused(format!(
+            "could not write the guest policy {}: {e}",
+            policy_file.display()
+        ));
     }
-    let policy_ref = format!(
-        "guest-policy-sha256:{}",
-        sha256_hex(policy.json().as_bytes())
-    );
+    let policy_ref = guest_policy_ref(policy);
     let timeout_s = req.limits.wall_time_ms.div_ceil(1000).max(1);
-    let mut cmd = std::process::Command::new(&lx.launcher);
-    cmd.arg("--policy").arg(&policy_file);
+    let o = |p: &Path| p.as_os_str().to_os_string();
+    let mut args: Vec<std::ffi::OsString> = vec!["--policy".into(), o(&policy_file)];
     // PSV: the candidate, the suite and the job are three separate read-only
     // drives; the manifest digest is Fabric's.
-    cmd.arg("--psv-candidate")
-        .arg(&psv.candidate_dir)
-        .arg("--psv-suite")
-        .arg(&psv.suite_dir)
-        .arg("--psv-job")
-        .arg(&psv.job_dir)
-        .arg("--psv-manifest-sha")
-        .arg(&psv.digest);
-    cmd.arg("--out")
-        .arg(&out)
-        .arg("--manifest")
-        .arg(&lx.manifest)
-        .arg("--timeout-s")
-        .arg(timeout_s.to_string())
-        .arg("--id")
-        .arg(jail_id(req.operation_id.as_str()))
-        .env_clear()
-        .env("PATH", "/usr/sbin:/usr/bin:/sbin:/bin:/usr/local/bin");
-    if let Some(a) = &lx.artifacts_dir {
-        cmd.arg("--artifacts-dir").arg(a);
+    args.extend([
+        "--psv-candidate".into(),
+        o(&psv.candidate_dir),
+        "--psv-suite".into(),
+        o(&psv.suite_dir),
+        "--psv-job".into(),
+        o(&psv.job_dir),
+        "--psv-manifest-sha".into(),
+        psv.digest.clone().into(),
+        "--out".into(),
+        o(&out),
+        "--manifest".into(),
+        o(&lx.manifest),
+        "--timeout-s".into(),
+        timeout_s.to_string().into(),
+        "--id".into(),
+        jail_id(req.operation_id.as_str()).into(),
+    ]);
+    // The launcher runs from a descriptor, so it cannot find its repository
+    // from `$0`: name the artifacts dir it would have defaulted to.
+    let artifacts = lx.artifacts_dir.clone().or_else(|| {
+        lx.launcher
+            .parent()
+            .and_then(Path::parent)
+            .map(|r| r.join("dist/guest-linux"))
+    });
+    if let Some(a) = artifacts {
+        args.extend(["--artifacts-dir".into(), o(&a)]);
     }
-    let exit = match cmd
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-    {
+    let env = [("PATH", LAUNCH_PATH)];
+    // Nothing of the caller's environment (PATH, …) steers the pinned
+    // launcher, for the launch and the verify step alike (review
+    // wf_d725935a-7ed): the child runs under exactly `env`.
+    let quiet = |cmd: Result<std::process::Command, String>| {
+        cmd.and_then(|mut c| {
+            c.stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .map_err(|e| e.to_string())
+        })
+    };
+    let exit = match quiet(sealed_exec::command(
+        &launcher,
+        Some(&interpreter),
+        &args,
+        &env,
+        &[],
+    )) {
         Ok(s) => s.code(),
         Err(e) => {
             return LinuxRun {
@@ -1399,28 +1670,24 @@ pub fn run_linux_profile(
                 reason: format!("could not run the launcher: {e}"),
                 evidence: vec![policy_ref],
                 out_dir: out,
+                route,
             };
         }
     };
     // The job drive's source (the per-attempt secret) leaves the host the
     // moment the launcher returns — before any further child runs.
     psv.scrub();
-    let launcher = lx.launcher.clone();
     let out2 = out.clone();
-    let mut verify = move || {
-        std::process::Command::new(&launcher)
-            .arg("--verify-result")
-            .arg(&out2)
-            // Like the launch itself: nothing of the caller's environment
-            // (PATH, …) steers the pinned launcher (review wf_d725935a-7ed).
-            .env_clear()
-            .env("PATH", "/usr/sbin:/usr/bin:/sbin:/bin:/usr/local/bin")
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .ok()
-            .and_then(|s| s.code())
+    let mut verify = || {
+        quiet(sealed_exec::command(
+            &launcher,
+            Some(&interpreter),
+            &["--verify-result".into(), out2.clone().into_os_string()],
+            &env,
+            &[],
+        ))
+        .ok()
+        .and_then(|s| s.code())
     };
     let (outcome, reason, mut evidence) = interpret_linux_result(exit, &out, &mut verify);
     evidence.push(policy_ref);
@@ -1429,6 +1696,7 @@ pub fn run_linux_profile(
         reason,
         evidence,
         out_dir: out,
+        route,
     }
 }
 
@@ -1500,6 +1768,24 @@ mod tests {
         assert!(LINUX_MICROVM_PROTECTED
             .job_kinds
             .contains(&JobKind::RegisteredCheck));
+    }
+
+    /// A/B: only the privileged route attests protected, and a test-trust
+    /// helper only inside a test-trust Fabric.
+    #[test]
+    fn only_a_production_helper_attests_protected_in_a_production_fabric() {
+        assert!(
+            !LaunchRoute::Privileged { test_build: true }.may_attest_protected(false),
+            "ATTACK: a test-trust helper (which takes --test-config, a caller-chosen config) \
+             attested a protected verdict in a production Fabric"
+        );
+        assert!(
+            !LaunchRoute::Direct.may_attest_protected(false)
+                && !LaunchRoute::Direct.may_attest_protected(true),
+            "ATTACK: the direct (development) route may attest a protected verdict"
+        );
+        assert!(LaunchRoute::Privileged { test_build: false }.may_attest_protected(false));
+        assert!(LaunchRoute::Privileged { test_build: true }.may_attest_protected(true));
     }
 
     #[test]

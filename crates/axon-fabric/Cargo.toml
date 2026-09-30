@@ -10,6 +10,12 @@ description = "Axon compute fabric (v0.22 M1): durable operation journal, aggreg
 name = "axon-fabric"
 path = "src/bin/axon-fabric.rs"
 
+# Operator decision A: the ONLY root component of a protected host. Installed
+# setuid-root, executable by the Fabric group alone (privileged_launcher.rs).
+[[bin]]
+name = "axon-protected-launcher"
+path = "src/bin/axon-protected-launcher.rs"
+
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }

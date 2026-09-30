@@ -22,11 +22,14 @@
 //! axon-fabric verify-evidence --record FILE --issuers DIR --authority A [--signature FILE]
 //! axon-fabric sign-evidence --record FILE --key PKCS8 --authority A   (OPERATOR, with the operator's key)
 //! axon-fabric verifier-manifest   (OPERATOR: the installed binary describes itself → verifier.json)
-//! axon-fabric protected-host-paths [--config FILE]   (the trust preflight's probe list)
+//! axon-fabric protected-host-paths [--config FILE] [--launcher-config FILE]   (the trust preflight's probe list)
 //!
 //! `protected-host-paths` prints every path a protected-host config pins, one
 //! `KIND<TAB>PATH` line each (`operator-file`, `operator-dir`, `signing-key`,
-//! `service-dir`): the list `ProtectedHost::load` ownership-walks, so the
+//! `service-dir`, `privileged-helper`), then the paths the privileged
+//! helper's own config pins (`--launcher-config`, default
+//! /etc/axon/protected-launcher.json) and one `helper-fabric-uid<TAB>UID`
+//! line: the list `ProtectedHost::load` ownership-walks, so the
 //! trust preflight probes exactly those. It verifies no pin and authorizes
 //! nothing; `--config` defaults to /etc/axon/protected-host.json.
 //!
@@ -639,8 +642,24 @@ fn protected_host_paths(a: &Args) {
         .opt("--config")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(axon_fabric::protected_host::PROTECTED_HOST_CONFIG));
-    let paths = axon_fabric::protected_host::pinned_paths(&cfg)
+    let mut paths = axon_fabric::protected_host::pinned_paths(&cfg)
         .unwrap_or_else(|e| refuse("unregistered", &e, 4));
+    // A: the privileged helper's own operator config and what it pins. The
+    // helper reads only its fixed path; `--launcher-config` names a dev
+    // fixture's (it lists paths and authorizes nothing).
+    let helper_cfg = a
+        .opt("--launcher-config")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(axon_fabric::privileged_launcher::CONFIG_PATH));
+    let (fabric_uid, helper_paths) = axon_fabric::protected_host::helper_pinned_paths(&helper_cfg)
+        .unwrap_or_else(|e| refuse("unregistered", &e, 4));
+    for hp in helper_paths {
+        if !paths.contains(&hp) {
+            paths.push(hp);
+        }
+    }
+    // The uid the helper admits: the preflight holds it to its Fabric actor.
+    println!("helper-fabric-uid\t{fabric_uid}");
     for (kind, p) in paths {
         let s = p.to_string_lossy();
         if s.contains(['\t', '\n']) || s != p.as_os_str().to_str().unwrap_or_default() {

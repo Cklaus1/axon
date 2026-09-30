@@ -20,6 +20,16 @@
 #              the out_root / nonce_store directories)
 #   service    out_root and observer.nonce_store belong to the Fabric UID: no
 #              other actor can create in them or chmod them
+#   helper     (operator decision A, amendment 45) Fabric runs NON-ROOT (root is
+#              refused as every actor) and reaches a root launch only through
+#              the privileged helper `axon-protected-launcher` the host config
+#              pins: root-owned, setuid, not group/other-writable, no access
+#              for other; its own config (/etc/axon/protected-launcher.json)
+#              and every path THAT pins are operator files too, and it admits
+#              exactly the --fabric uid. Executed for real: as the Fabric uid
+#              `--probe` must report effective uid 0 (setuid honoured, no
+#              nosuid mount; a production build in protected mode), and as
+#              every other actor the kernel must refuse the exec
 #   guest      cannot even ADDRESS the root (--guest-cmd runs
 #              trust_root_guest_probe.sh inside the candidate guest)
 #
@@ -40,7 +50,7 @@
 # Usage (as root, which is needed to switch UID — never as the actors):
 #   trust_root_preflight.sh --verifier UID[:GID] --custodian UID[:GID] --fabric UID[:GID] \
 #       --agent UID[:GID] [--agent …] --guest-cmd 'CMD' \
-#       [--root DIR --host-config FILE --fabric-bin FILE] [--out FILE]
+#       [--root DIR --host-config FILE --launcher-config FILE --fabric-bin FILE] [--out FILE]
 #
 # Exit 0 = PASS, 1 = FAIL (a refusal did not happen), 2 = cannot run (usage,
 # not root, root missing) — never a pass.
@@ -49,6 +59,7 @@ set -uo pipefail
 OPERATOR_TRUST_ROOT=/etc/axon/trust
 SCHEMA=axon-trust-preflight/1
 ROOT="" OUT="" GUEST="" VERIFIER="" CUSTODIAN="" FABRIC="" HOST_CONFIG="" SIGNING_KEY="" FABRIC_BIN=""
+LAUNCHER_CONFIG="" HELPER="" HELPER_FABRIC_UID=""
 O1=() O1_DIRS=() SERVICE_DIRS=()
 AGENTS=()
 die() { printf '{"schema":"%s","verdict":"NOT_RUN","reason":"%s"}\n' "$SCHEMA" "$1"; exit 2; }
@@ -62,6 +73,7 @@ while [ $# -gt 0 ]; do
     --fabric) FABRIC="$2"; shift 2 ;;
     --host-config) HOST_CONFIG="$2"; shift 2 ;;
     --fabric-bin) FABRIC_BIN="$2"; shift 2 ;;
+    --launcher-config) LAUNCHER_CONFIG="$2"; shift 2 ;;
     --agent) AGENTS+=("$2"); shift 2 ;;
     *) die "unknown argument $1" ;;
   esac
@@ -77,6 +89,7 @@ if [ -n "$ROOT" ]; then MODE=dev; else MODE=protected; ROOT=$OPERATOR_TRUST_ROOT
 if [ "$MODE" = protected ]; then
   [ -z "$HOST_CONFIG" ] || die "--host-config is dev-only: protected mode reads /etc/axon/protected-host.json"
   [ -z "$FABRIC_BIN" ] || die "--fabric-bin is dev-only: protected mode runs the installed verifier named by $ROOT/verifier.json"
+  [ -z "$LAUNCHER_CONFIG" ] || die "--launcher-config is dev-only: protected mode reads /etc/axon/protected-launcher.json"
   HOST_CONFIG=/etc/axon/protected-host.json
   FABRIC_BIN=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["path"])' "$ROOT/verifier.json" 2>/dev/null) \
     || die "$ROOT/verifier.json names no installed verifier path"
@@ -85,18 +98,21 @@ fi
 [ -n "$FABRIC_BIN" ] && [ -x "$FABRIC_BIN" ] || die "axon-fabric ${FABRIC_BIN:-(none)} is not executable (dev mode: --fabric-bin)"
 # The pinned paths, from the SAME list ProtectedHost::load walks.
 PATHS=$(mktemp); trap 'rm -f "$PATHS"' EXIT
-"$FABRIC_BIN" protected-host-paths --config "$HOST_CONFIG" >"$PATHS" 2>/dev/null \
-  || die "axon-fabric protected-host-paths refused $HOST_CONFIG"
+"$FABRIC_BIN" protected-host-paths --config "$HOST_CONFIG" ${LAUNCHER_CONFIG:+--launcher-config "$LAUNCHER_CONFIG"} \
+  >"$PATHS" 2>/dev/null || die "axon-fabric protected-host-paths refused $HOST_CONFIG (or the privileged launcher's config)"
 while IFS=$'\t' read -r kind p; do
   case "$kind" in
     operator-file) O1+=("$p") ;;
     operator-dir) O1_DIRS+=("$p") ;;
     signing-key) [ -z "$SIGNING_KEY" ] || die "two signing keys listed"; SIGNING_KEY=$p ;;
     service-dir) SERVICE_DIRS+=("$p") ;;
+    privileged-helper) [ -z "$HELPER" ] || die "two privileged helpers listed"; HELPER=$p; O1+=("$p") ;;
+    helper-fabric-uid) HELPER_FABRIC_UID=$p ;;
     *) die "axon-fabric listed an unknown path kind $kind" ;;
   esac
 done <"$PATHS"
 [ -n "$SIGNING_KEY" ] && [ ${#O1[@]} -gt 0 ] || die "axon-fabric listed no signing key or no pinned file"
+[ -n "$HELPER" ] && [ -n "$HELPER_FABRIC_UID" ] || die "axon-fabric listed no privileged helper (A: a protected host launches only through one)"
 case "$ROOT" in /*) ;; *) die "--root must be absolute" ;; esac
 [ -d "$ROOT/qualification" ] || die "$ROOT/qualification does not exist"
 
@@ -194,6 +210,43 @@ cannot_modify verifier "$V" service
 cannot_modify custodian "$C" service
 F=$(resolve "$FABRIC") || die "fabric: not a non-root user: $FABRIC"
 cannot_modify fabric "$F"
+# A (amendment 45): the Fabric actor is not root (resolve refuses uid 0 for
+# every actor), and its ONLY route to a root launch is the privileged helper.
+record operator - helper-admits "$HELPER" "${F%%:*}" "$HELPER_FABRIC_UID"
+hmode=$(stat -c '%u %g %a' "$HELPER" 2>/dev/null)
+read -r hu hg ha <<<"$hmode"
+hstate=ok
+[ "$hu" = 0 ] || hstate="owner $hu, not root"
+[ "$hg" = "${F#*:}" ] || hstate="group $hg, not the Fabric's ${F#*:}"
+[ $(( 8#${ha:-0} & 8#4000 )) -ne 0 ] || hstate="mode $ha: not setuid"
+[ $(( 8#${ha:-0} & 8#0022 )) -eq 0 ] || hstate="mode $ha: group/other-writable"
+[ $(( 8#${ha:-0} & 8#0007 )) -eq 0 ] || hstate="mode $ha: other has access"
+record operator - helper-mode "$HELPER" ok "$hstate"
+probe() { # uid:gid → the helper's --probe JSON, as that actor (no supplementary groups)
+  # The exec is made by a shell RUNNING as the actor: setpriv's own exec still
+  # holds root's DAC override (measured: it runs a 0700 root file as uid
+  # 40004), so exec'ing the helper from setpriv directly proves nothing.
+  setpriv --reuid="${1%%:*}" --regid="${1#*:}" --clear-groups --inh-caps=-all -- \
+    sh -c 'exec "$0" --probe' "$HELPER" 2>/dev/null
+}
+want_build=any; [ "$MODE" = protected ] && want_build=production
+pj=$(probe "$F")
+pv=$(printf '%s' "$pj" | python3 -c '
+import json,sys
+want, uid = sys.argv[1], sys.argv[2]
+try: p = json.load(sys.stdin)
+except Exception: print("no probe result"); sys.exit()
+bad = []
+if p.get("schema") != "axon-protected-launcher-probe/1": bad.append("schema")
+if p.get("euid") != 0: bad.append("euid %s (setuid not honoured: nosuid mount, or not setuid)" % p.get("euid"))
+if str(p.get("ruid")) != uid: bad.append("ruid %s" % p.get("ruid"))
+if want != "any" and p.get("build") != want: bad.append("build %s" % p.get("build"))
+print("; ".join(bad) or "root-through-helper")' "$want_build" "${F%%:*}" 2>/dev/null)
+record fabric "$F" exec-helper "$HELPER" root-through-helper "${pv:-no probe result}"
+for who in "verifier:$V" "custodian:$C"; do
+  if probe "${who#*:}" >/dev/null; then record "${who%%:*}" "${who#*:}" exec-helper "$HELPER" refused SUCCEEDED
+  else record "${who%%:*}" "${who#*:}" exec-helper "$HELPER" refused refused; fi
+done
 # A20: the signing key is readable by the Fabric UID and by NO ONE else.
 reads() { as "$1" sh -c 'exec 3<"$1"' _ "$SIGNING_KEY"; }
 if reads "$F"; then record fabric "$F" read-key "$SIGNING_KEY" read read
@@ -205,6 +258,8 @@ done
 for a in "${AGENTS[@]}"; do
   A=$(resolve "$a") || die "agent: not a non-root user: $a"
   cannot_modify "agent:$a" "$A" service
+  if probe "$A" >/dev/null; then record "agent:$a" "$A" exec-helper "$HELPER" refused SUCCEEDED
+  else record "agent:$a" "$A" exec-helper "$HELPER" refused refused; fi
   if reads "$A"; then record "agent:$a" "$A" read-key "$SIGNING_KEY" refused SUCCEEDED
   else record "agent:$a" "$A" read-key "$SIGNING_KEY" refused refused; fi
 done
