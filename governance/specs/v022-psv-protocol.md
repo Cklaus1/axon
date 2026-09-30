@@ -1584,3 +1584,72 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       run: a manifest, an observer-signed observation of it, and a receipt attested by the
       verifier-root key. Its B263 attacks relaunch under the attacked record, so each one still
       reaches the rule it was written for.
+
+58. **The refusal-site gate covers the custodian, readiness, the protected host, the observer and
+    the guest protocol (C9 round 4 fix wave, EQUIVALENCE (4); rows2 workstream, rows
+    M760-M774).**
+    - **Before.** `scripts/v022_refusal_coverage.py` scanned the three helper files only
+      (amendment 48). Amendment 55 measured 38 unrowed, unexempted refusal sites in the next four
+      files. At 866474ea the count was 41 in those four and 44 with `observer.rs` and axon-psv
+      `lib.rs`. The gate already failed on the helper at that base: the policy change
+      (amendment 54) moved the policy size bound into `snapshot_policy` (a stale exemption) and
+      added an owner check with no row.
+    - **After.** The gate scans `custodian.rs`, `bin/axon-custodian.rs`, `readiness.rs`,
+      `protected_host.rs`, `observer.rs` and `crates/axon-psv/src/lib.rs` as well. A `use` line
+      that names `TEST_TRUST_BUILD` is no longer a site, because it reads nothing. Count per file
+      (uncovered before, then rows and exemptions after): custodian 10, then 13 rowed and 7
+      exempt; axon-custodian 1, then 1 rowed; readiness 24, then 30 rowed and 17 exempt;
+      protected_host 6, then 17 rowed and 2 exempt; observer 3, then 6 rowed and 3 exempt;
+      axon-psv lib 6, then 18 rowed and 3 exempt.
+    - **New ACTIVE rows, each attacked through the production route where it alone refuses:**
+      - The production `axon-custodian`, socket-activated under `/etc/axon` (a tmpfs in a
+        private mount namespace), refuses a config of another schema (M760) or with
+        `max_age_s` 0 (M761).
+      - The helper reads a custodian's refused spend as a refusal (M762, `CustodianRef::call`'s
+        `!r.ok`, attacked by the one-observation replay).
+      - The production custodian takes no `--test-config` (M763).
+      - A production `axon-fabric submit` refuses a host config of another schema (M764), one
+        naming the helper's test-trust `test_config` (M765), and a host config it cannot stat
+        (M766: EACCES as the Fabric uid). It refuses these rather than running as a
+        development host.
+      - A production readiness verifier built from a dirty tree certifies nothing (M767). Clean
+        and dirty production builds are made from one copy of these sources, and the clean one
+        certifies (the control).
+      - A narrowing list the verifier cannot stat is not read as absent (M768, EACCES as uid 4242
+        on the production decision).
+      - The repository may narrow the issuers but never add one (M769).
+      - A test-trust verifier names itself so, both in its identity (M770, which
+        `protected_verifier_ready.py` requires to be `production`) and in its report (M771).
+      - The helper reads `policy.json` only as a regular file of the Fabric uid (M772).
+      - The observation joins the manifest pair by pair (M773) and on `guest.init_sha256`
+        (M774, a new helper-route attack whose only difference is the init digest).
+    - **Exemptions.** Each is in the script with a reason a reviewer can check. The categories
+      are:
+      - an OS or tool error that fails closed;
+      - an operator-authored or operator-signed field;
+      - a site whose condition a named row already mutates at another line (M490/M491, M338/M418,
+        M749, M350-M352);
+      - an arm with no value to admit with;
+      - a check that only re-reports what the next statement refuses on the same input
+        (`found != top` before `refuse_config`; git failures before the hash-checked tree
+        comparison, M290/M697).
+      None of these is an EQUIVALENT_DID retirement, and none is counted as killed.
+    - **Not scanned yet** (listed by the gate on every run, with counts measured at 866474ea):
+      `psv.rs` 2 (the tree re-reads need a workspace version whose materialisation does not read
+      back as itself), axon-psv `runner.rs` 4 (guest), `protected_evidence.rs` 9,
+      axon-loop `admission.rs` 18 and `intake.rs` 27. Scanning the loop files as they are would
+      also miss their tail-expression refusals (`Err(refused(…))` without `return`), which the
+      site pattern does not match. That pattern would have to be extended first.
+    - **Base repairs in tests only.** The readiness fixture now fills `GuestVerdict.policy_sha256`;
+      five readiness test binaries did not compile at the base. The production readiness test
+      (M490-M492, M690) re-launches the run under its re-dated B263 record. Its control was
+      PARTIAL at the base ("the evidence bundle changed").
+    - **Found, not fixed here (readiness workstream's area).** M338 (the verifier_key_id
+      membership, ACTIVE) is REFUSED_ELSEWHERE at 866474ea. Since amendment 57, `launched()` also
+      looks `verifier_key_id` up in the verifier root and verifies the receipt attestation under
+      it (M740), so its test's attack is refused there too. M338 needs a four-cell retirement
+      against M740, or an attack that reaches it alone.
+    - Evidence at c2c80ebd: `v022_g01_mutations.py --scope=all --only=M760-M774` plus the cited
+      M325, M490, M491, M703 and M749, all KILLED by their own attack; M338 REFUSED_ELSEWHERE, as
+      above.
+    - No production behaviour changed: no matrix row, no operator deployment.

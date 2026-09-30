@@ -211,8 +211,9 @@ EXEMPT += [
      "first directory upward that does), and the next statement, refuse_config(&top), refuses "
      "a top with no .git directory ('is not a git directory')"),
     (RD, '        return Err(format!("{component}: cannot list refs/replace/"));',
-     "serves the refs/replace/ refusal M285, retired EQUIVALENT: git runs with replacement objects "
-     "off (M385), so a replace ref never changes an answer"),
+     "serves the refs/replace/ refusal M285, retired EQUIVALENT: git_cmd turns replacement "
+     "objects off (--no-replace-objects and GIT_NO_REPLACE_OBJECTS, the M385 pair, itself retired "
+     "with a four-cell record), so a replace ref never changes an answer"),
     (RD, "    if !ok || grafts.is_empty() {",
      "fails closed: without it an empty answer names `repo` itself as the grafts file, which "
      "exists, and the graft refusal fires (the graft refusal M286 is itself retired EQUIVALENT)"),
@@ -243,8 +244,11 @@ EXEMPT += [
     (RD, '            return Err(format!("{component}: this tree has no HEAD commit"));',
      "fails closed: an empty HEAD name makes Objects::entries fail"),
     (RD, "        if !trust.key_ids(dir)?.iter().any(|k| k == s(field)) {",
-     "rowed where the same removal is made, per field: M338 drops the verifier_key_id entry of "
-     "this loop, M418 (retired EQUIVALENT, four-cell record) the observer_key_id entry"),
+     "per field: the observer_key_id entry is M418's (retired EQUIVALENT, four-cell record: the "
+     "observation's signer must verify under the observer root, M340, and be that key, M339); "
+     "the verifier_key_id entry is M338's, which since amendment 57 is REFUSED_ELSEWHERE "
+     "(launched() looks verifier_key_id up in the verifier root and verifies the receipt "
+     "attestation under it, M740): M338 needs a four-cell retirement (open item, amendment 58)"),
     (RD, "        [] => Err(format!(",
      "no document to admit with: an arm that let an empty match through would have to invent the "
      "run's bytes"),
