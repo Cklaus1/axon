@@ -80,16 +80,33 @@ fn clone(d: &Path) -> PathBuf {
     r
 }
 
-/// Run the freeze from `root`: Ok(stdout) or Err(stderr).
-fn freeze(root: &Path) -> Result<String, String> {
-    let o = Command::new("python3")
-        .arg(root.join("scripts/v022_freeze_manifest.py"))
+/// The rustc-wrapper variables the freeze refuses (a development sccache
+/// run sets one). Each test states its own environment rather than inherit
+/// the caller's, so a refusal it does not judge cannot answer first.
+const WRAPPERS: [&str; 4] = [
+    "RUSTC_WRAPPER",
+    "RUSTC_WORKSPACE_WRAPPER",
+    "CARGO_BUILD_RUSTC_WRAPPER",
+    "CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER",
+];
+
+/// The freeze command from `root`, with no compiler wrapper in its env.
+fn freeze_cmd(root: &Path) -> Command {
+    let mut c = Command::new("python3");
+    c.arg(root.join("scripts/v022_freeze_manifest.py"))
         .arg("freeze.json")
         .arg(root.join("no-micode"))
         .current_dir(root)
-        .env("V022_KEEP_TMPDIR", "1")
-        .output()
-        .unwrap();
+        .env("V022_KEEP_TMPDIR", "1");
+    for v in WRAPPERS {
+        c.env_remove(v);
+    }
+    c
+}
+
+/// Run the freeze from `root`: Ok(stdout) or Err(stderr).
+fn freeze(root: &Path) -> Result<String, String> {
+    let o = freeze_cmd(root).output().unwrap();
     if o.status.success() {
         Ok(String::from_utf8_lossy(&o.stdout).to_string())
     } else {
@@ -116,6 +133,28 @@ fn a_standalone_clone_with_a_clean_guest_manifest_freezes() {
     let m: serde_json::Value =
         serde_json::from_slice(&std::fs::read(r.join("freeze.json")).unwrap()).unwrap();
     assert_eq!(m["schema"], "axon-v022-psv-freeze/1");
+}
+
+/// A freeze is never made through a compiler wrapper (sccache is for
+/// development runs only): each wrapper variable alone refuses it. Control:
+/// the same clone with none set freezes.
+#[test]
+fn a_compiler_wrapper_does_not_freeze() {
+    let d = tempfile::tempdir().unwrap();
+    let r = clone(d.path());
+    for v in WRAPPERS {
+        let o = freeze_cmd(&r).env(v, "sccache").output().unwrap();
+        let e = String::from_utf8_lossy(&o.stderr);
+        assert!(
+            !o.status.success(),
+            "ATTACK: a freeze was made through a compiler wrapper ({v}=sccache)"
+        );
+        assert!(e.contains("compiler wrapper"), "{v}: {e}");
+    }
+    assert!(
+        freeze(&r).is_ok(),
+        "control: with no wrapper the clone freezes"
+    );
 }
 
 #[test]
@@ -212,12 +251,7 @@ fn the_callers_git_environment_does_not_choose_the_bound_revision() {
         &["commit", "-q", "--allow-empty", "-m", "elsewhere"],
     );
     let head = git_attacks::rev(&r, "HEAD");
-    let o = Command::new("python3")
-        .arg(r.join("scripts/v022_freeze_manifest.py"))
-        .arg("freeze.json")
-        .arg(r.join("no-micode"))
-        .current_dir(&r)
-        .env("V022_KEEP_TMPDIR", "1")
+    let o = freeze_cmd(&r)
         .env("GIT_DIR", other.join(".git"))
         .status()
         .unwrap();
