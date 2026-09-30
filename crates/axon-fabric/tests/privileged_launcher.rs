@@ -38,6 +38,9 @@ struct Fx {
     /// The launch manifest in the job dir, and its genuine observation.
     manifest: Vec<u8>,
     observation: Vec<u8>,
+    /// `<inputs>/policy.json` (the manifest's own, [`TEST_GUEST_POLICY`],
+    /// unless a test puts another there).
+    policy: Vec<u8>,
 }
 
 /// How the fixture's custodian runs.
@@ -67,9 +70,10 @@ if [ "$1" = "--verify-result" ]; then
   [ -e "$(cat "$O/job-path")/completion-secret" ] && echo yes > "$O/verify-secret-present" || echo no > "$O/verify-secret-present"
   exit 0
 fi
-while [ $# -gt 0 ]; do case "$1" in --out) OUT="$2"; shift 2;; --psv-job) JOB="$2"; shift 2;; *) shift;; esac; done
+while [ $# -gt 0 ]; do case "$1" in --out) OUT="$2"; shift 2;; --psv-job) JOB="$2"; shift 2;; --policy) POL="$2"; shift 2;; *) shift;; esac; done
 echo ran >> "{marker}"
 id -ru > "$OUT/ruid"; id -u > "$OUT/euid"
+sha256sum "$POL" | cut -d' ' -f1 > "$OUT/policy-sha"
 echo "$JOB" > "$OUT/job-path"
 [ -e "{source}/job/completion-secret" ] && echo yes > "$OUT/source-secret-present" || echo no > "$OUT/source-secret-present"
 mkdir -p "$OUT/out"
@@ -160,6 +164,7 @@ fn fx_with(
         observer,
         manifest,
         observation,
+        policy: TEST_GUEST_POLICY.as_bytes().to_vec(),
     };
     f.put_inputs();
     let installed = fabric.map(|u| {
@@ -196,6 +201,9 @@ impl Fx {
             std::fs::create_dir_all(i.join(sub)).unwrap();
             std::fs::write(i.join(sub).join(name), body).unwrap();
         }
+        // PSV-6 (A87): the guest policy, beside the job (never in the request).
+        let _ = std::fs::remove_file(i.join("policy.json"));
+        std::fs::write(i.join("policy.json"), &self.policy).unwrap();
         let secret = i.join("job/completion-secret");
         let _ = std::fs::remove_file(&secret);
         std::fs::write(&secret, [7u8; 32]).unwrap();
@@ -210,14 +218,13 @@ impl Fx {
     fn request(&self, out: &str) -> Value {
         let i = self.out_root.join(INPUTS);
         json!({
-            "schema": "axon-protected-launch-request/2",
+            "schema": "axon-protected-launch-request/3",
             "id": "fab-0123456789abcdef",
             "out": self.out_root.join(out),
             "psv_candidate": i.join("candidate"),
             "psv_suite": i.join("check"),
             "psv_job": i.join("job"),
             "psv_manifest_sha256": sha256_file(&i.join("job/launch-manifest.json")),
-            "policy_json": "{\"schema\":\"axon-vm-mmds/1\",\"allowed_effects\":[]}",
             "timeout_s": 60,
             "observation": String::from_utf8(self.observation.clone()).unwrap(),
             "observation_signature": self.observer.sign_for(
@@ -955,6 +962,7 @@ fn production_etc(s: &Path, store_parent: &str) {
     }
     std::fs::write(i.join("job/completion-secret"), [7u8; 32]).unwrap();
     set_mode(&i.join("job/completion-secret"), 0o400);
+    std::fs::write(i.join("policy.json"), TEST_GUEST_POLICY).unwrap();
     std::fs::create_dir_all(t.join("staging")).unwrap();
     std::fs::create_dir_all(t.join("run")).unwrap();
     let nonces = t.join(store_parent).join("nonces");
@@ -1004,14 +1012,13 @@ fn production_etc(s: &Path, store_parent: &str) {
     std::fs::write(
         s.join("request.json"),
         json!({
-            "schema": "axon-protected-launch-request/2",
+            "schema": "axon-protected-launch-request/3",
             "id": "fab-0123456789abcdef",
             "out": e.join("runs/op-1"),
             "psv_candidate": ei.join("candidate"),
             "psv_suite": ei.join("check"),
             "psv_job": ei.join("job"),
             "psv_manifest_sha256": sha256_file(&i.join("job/launch-manifest.json")),
-            "policy_json": "{\"schema\":\"axon-vm-mmds/1\",\"allowed_effects\":[]}",
             "timeout_s": 60,
             "observation": String::from_utf8(observation.clone()).unwrap(),
             "observation_signature": observer.sign_for(
@@ -1466,6 +1473,107 @@ fn an_observation_whose_epoch_is_not_the_manifests_launches_nothing() {
         "{rep}"
     );
     // Control: the fixture's own observation (epoch 0 = the manifest's).
+    let f = fx(None, "", |_| {});
+    let (code, rep) = f.run(&f.request("op-1"), None);
+    assert_eq!(code, Some(0), "control: {rep}");
+}
+
+/// PSV-6 (C9 round 4; A87), the reviewer's reproduction as an attack. The
+/// Fabric uid holds a GENUINE observation of a launch manifest naming policy
+/// P1 (`allowed_effects: []`), and puts P2 (IO, Net, Time) where the helper
+/// takes the guest policy from. The helper refuses before the nonce is spent,
+/// so the SAME manifest and observation then launch with P1 (control), and the
+/// launcher is handed exactly the manifest's policy. The old channel (a
+/// `policy_json` in the request) is not accepted at all.
+#[test]
+fn a_genuine_observation_of_one_policy_never_launches_another() {
+    let p2 = r#"{"schema":"axon-vm-mmds/1","allowed_effects":["IO","Net","Time"]}"#;
+    let f = fx(None, "", |_| {});
+    let named = serde_json::from_slice::<Value>(&f.manifest).unwrap()["policy_sha256"].clone();
+    assert_eq!(
+        named,
+        json!(axon_psv::sha256_hex(TEST_GUEST_POLICY.as_bytes()))
+    );
+    let f = Fx {
+        policy: p2.as_bytes().to_vec(),
+        ..f
+    };
+    f.put_inputs();
+    let (code, rep) = f.run(&f.request("op-p2"), None);
+    assert!(
+        code == Some(30) && f.launches() == 0 && !f.out_root.join("op-p2").exists(),
+        "ATTACK: the root helper launched policy P2 under a genuine observation of a manifest \
+         naming P1: {code:?} {rep}"
+    );
+    assert!(
+        rep["error"]
+            .as_str()
+            .unwrap_or("")
+            .contains("not the policy_sha256"),
+        "{rep}"
+    );
+    // The old channel: a policy beside the manifest in the request itself.
+    let f = Fx {
+        policy: TEST_GUEST_POLICY.as_bytes().to_vec(),
+        ..f
+    };
+    f.put_inputs();
+    let mut r = f.request("op-p2-req");
+    r["policy_json"] = json!(p2);
+    let (code, rep) = f.run(&r, None);
+    assert!(
+        code == Some(30) && f.launches() == 0,
+        "the request carries no policy: {code:?} {rep}"
+    );
+    // Control: the refusal came before the spend, so the same manifest and
+    // observation launch with the manifest's policy, which is what the
+    // launcher is handed.
+    f.put_inputs();
+    let (code, rep) = f.run(&f.request("op-1"), None);
+    assert_eq!(code, Some(0), "control: {rep}");
+    let got = std::fs::read_to_string(f.out_root.join("op-1/policy-sha")).unwrap();
+    assert_eq!(
+        json!(got.trim()),
+        named,
+        "the launcher was handed another policy"
+    );
+}
+
+/// PSV-6 (A87): on the protected profile a policy with no effect ceiling
+/// (`allowed_effects` omitted) is refused at the root boundary even when it IS
+/// the manifest's and the observation of that manifest is genuine: an absent
+/// ceiling is never read as "no ceiling". Control: the fixture's explicit
+/// `allowed_effects: []` launches (`the_helper_launches_a_well_formed_request…`,
+/// and the control below).
+#[test]
+fn a_manifest_policy_naming_no_ceiling_launches_nothing() {
+    let p0 = r#"{"schema":"axon-vm-mmds/1","budget_tokens":0}"#;
+    let f = fx(None, "", |_| {});
+    let mut m: Value = serde_json::from_slice(&f.manifest).unwrap();
+    m["policy_sha256"] = json!(axon_psv::sha256_hex(p0.as_bytes()));
+    let manifest = serde_json::to_vec(&m).unwrap();
+    let observation =
+        serde_json::to_vec(&observation_of(&manifest, &f.observer.key_id(), 0)).unwrap();
+    let f = Fx {
+        manifest,
+        observation,
+        policy: p0.as_bytes().to_vec(),
+        ..f
+    };
+    f.put_inputs();
+    let (code, rep) = f.run(&f.request("op-p0"), None);
+    assert!(
+        code == Some(30) && f.launches() == 0,
+        "ATTACK: the root helper launched a manifest policy that states no effect ceiling: \
+         {code:?} {rep}"
+    );
+    assert!(
+        rep["error"]
+            .as_str()
+            .unwrap_or("")
+            .contains("names no allowed_effects"),
+        "{rep}"
+    );
     let f = fx(None, "", |_| {});
     let (code, rep) = f.run(&f.request("op-1"), None);
     assert_eq!(code, Some(0), "control: {rep}");

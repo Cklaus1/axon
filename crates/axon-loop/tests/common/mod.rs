@@ -1214,6 +1214,7 @@ pub fn make_protected_v(
     let mut v = GuestVerdict {
         schema: GUEST_VERDICT_SCHEMA.into(),
         launch_manifest_sha256: m_sha.clone(),
+        policy_sha256: m.policy_sha256.clone(),
         inputs: InputCheck {
             candidate_tree_digest: m.candidate.tree_digest.clone(),
             suite_tree_digest: m.suite.tree_digest.clone(),

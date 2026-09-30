@@ -1535,8 +1535,7 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
             });
             match observed {
                 Ok((launch, observation)) => {
-                    let res =
-                        backend::run_linux_profile(lx, &req, policy, &launch, observation.as_ref());
+                    let res = backend::run_linux_profile(lx, &req, &launch, observation.as_ref());
                     launch.scrub();
                     let hv = crate::psv::derive(&launch, &res.out_dir, observation.as_ref());
                     let guest_verdict = hv.guest_verdict.clone();

@@ -485,6 +485,17 @@ fn psv_host_guest() {
         )
         .unwrap();
     }
+    // The guest is booted under the `--policy` bytes (the launcher embeds them
+    // on the kernel cmdline, where the runner reads them). `policy`: a
+    // launcher that embedded ANOTHER policy than the one it was given
+    // (PSV-6, A87: the runner must refuse it).
+    let mut policy = std::fs::read(need("--policy")).ok();
+    if tamper == "policy" {
+        policy = Some(
+            br#"{"schema":"axon-vm-mmds/1","allowed_effects":["AI","Exec","IO","Net","Time"]}"#
+                .to_vec(),
+        );
+    }
     let v = run(&RunnerConfig {
         manifest: job.join("launch-manifest.json"),
         secret: job.join("completion-secret"),
@@ -495,7 +506,7 @@ fn psv_host_guest() {
         runner_exe: PathBuf::from(need("--axon")),
         expected_manifest_sha256: sha.clone(),
         drop: None,
-        effect_ceiling: None,
+        policy,
     });
     let mut v = serde_json::to_value(&v).unwrap();
     let rehash = |od: &std::path::Path, v: &mut serde_json::Value| {
@@ -530,6 +541,9 @@ fn psv_host_guest() {
         }
         "other-manifest" => v["launch_manifest_sha256"] = serde_json::json!("0".repeat(64)),
         "inputs" => v["inputs"]["match"] = serde_json::json!(false),
+        // A genuine run whose verdict names another policy than the
+        // manifest's (PSV-6, A87: Fabric's join must refuse it).
+        "verdict-policy" => v["policy_sha256"] = serde_json::json!("e".repeat(64)),
         // A previous attempt's genuine output, re-labelled for this launch.
         "replay" => {
             let from = PathBuf::from(need("--replay-from"));
@@ -563,6 +577,7 @@ fn psv_host_guest() {
             v["refusal"] = serde_json::json!("the runner refused after the run");
         }
         "candidate-changed"
+        | "policy"
         | "suite-changed"
         | "unbound"
         | "swap-after"

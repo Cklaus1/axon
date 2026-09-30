@@ -2546,7 +2546,7 @@ fn the_guest_verdict_is_joined_to_the_receipt_and_the_manifest() {
             "verdict with another schema",
             |v| v.schema = "axon-guest-verdict/0".into(),
             |_| {},
-            "the guest verdict is axon-guest-verdict/0, not axon-guest-verdict/1",
+            "the guest verdict is axon-guest-verdict/0, not axon-guest-verdict/2",
         ),
         (
             "verdict for another launch manifest",
@@ -2604,6 +2604,47 @@ fn the_guest_verdict_is_joined_to_the_receipt_and_the_manifest() {
         };
         assert!(e.to_string().contains(why), "{name}: {e}");
     }
+}
+
+/// PSV-6 (C9 round 4; A87): the guest verdict names the digest of the policy
+/// the guest ran under, and the loop joins it to the manifest's
+/// `policy_sha256` (which the observation joined). A genuine bundle whose
+/// verdict ran another policy (or none) is refused: the receipt binds the
+/// policy that ran. Control: the genuine bundle joins.
+#[test]
+fn a_guest_verdict_that_ran_another_policy_is_refused() {
+    use axon_psv::GuestVerdict as V;
+    let req = check_request();
+    type EditV = fn(&mut V);
+    let cases: [(&str, EditV); 2] = [
+        ("another policy", |v| v.policy_sha256 = "e".repeat(64)),
+        ("no policy", |v| v.policy_sha256 = String::new()),
+    ];
+    for (name, ev) in cases {
+        let c = case(Some(500));
+        pin_protected(&c);
+        let mut rc = check_receipt("passed", 2);
+        let b = make_protected_v(&req, &mut rc, |_| {}, |_| {}, ev);
+        let ep = verified(&c.ep, &req, &rc, "passed");
+        let att = attest(&verifier_key().0, common::VERIFIER, &req, &rc);
+        let e = match run_vb(&c, &ep, &req, &rc, &att, Some(&b)) {
+            Err(e) => e,
+            Ok(_) => panic!(
+                "ATTACK: {name}: a guest verdict that ran a policy other than the manifest's \
+                 was ACCEPTED"
+            ),
+        };
+        assert!(
+            e.to_string().contains("the guest verdict ran policy"),
+            "{name}: {e}"
+        );
+    }
+    let c = case(Some(500));
+    pin_protected(&c);
+    let (rc, b) = genuine(&req);
+    let ep = verified(&c.ep, &req, &rc, "passed");
+    let att = attest(&verifier_key().0, common::VERIFIER, &req, &rc);
+    run_vb(&c, &ep, &req, &rc, &att, Some(&b)).expect("control: the genuine bundle joins");
 }
 
 /// A64 (C9 round 1, PSV-7): a protected bundle whose launch manifest names

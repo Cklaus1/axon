@@ -1468,8 +1468,10 @@ impl GuestPolicy {
     }
 }
 
-/// Launch one PSV check through the Linux profile launcher, delivering
-/// `policy` to the guest with `--policy FILE`.
+/// Launch one PSV check through the Linux profile launcher, delivering the
+/// guest policy the launch manifest names (`psv`'s, [`crate::psv::Launch::policy_path`])
+/// to the guest with `--policy FILE`. There is no policy parameter: a policy
+/// beside the manifest was a claim no one joined (PSV-6, C9 round 4; A87).
 ///
 /// `psv` is REQUIRED: it is the launch manifest (with the custodian nonce the
 /// observer observed) and the three drives. There is no program-only launch:
@@ -1483,22 +1485,21 @@ impl GuestPolicy {
 pub fn run_linux_profile(
     lx: &LinuxProfileConfig,
     req: &ComputeRequest,
-    policy: &GuestPolicy,
     psv: &crate::psv::Launch,
     observation: Option<&crate::psv::VerifiedObservation>,
 ) -> LinuxRun {
     match &lx.privileged {
-        Some(h) => run_privileged(lx, h, req, policy, psv, observation),
-        None => run_direct(lx, req, policy, psv),
+        Some(h) => run_privileged(lx, h, req, psv, observation),
+        None => run_direct(lx, req, psv),
     }
 }
 
 const LAUNCH_PATH: &str = "/usr/sbin:/usr/bin:/sbin:/bin:/usr/local/bin";
 
-fn guest_policy_ref(policy: &GuestPolicy) -> String {
+fn guest_policy_ref(psv: &crate::psv::Launch) -> String {
     format!(
         "guest-policy-sha256:{}",
-        sha256_hex(policy.json().as_bytes())
+        sha256_hex(psv.policy_json().as_bytes())
     )
 }
 
@@ -1510,7 +1511,6 @@ fn run_privileged(
     lx: &LinuxProfileConfig,
     h: &PrivilegedRoute,
     req: &ComputeRequest,
-    policy: &GuestPolicy,
     psv: &crate::psv::Launch,
     observation: Option<&crate::psv::VerifiedObservation>,
 ) -> LinuxRun {
@@ -1541,7 +1541,6 @@ fn run_privileged(
         psv_suite: psv.suite_dir.clone(),
         psv_job: psv.job_dir.clone(),
         psv_manifest_sha256: psv.digest.clone(),
-        policy_json: policy.json().to_string(),
         timeout_s: req.limits.wall_time_ms.div_ceil(1000).max(1),
         // Absent: empty, and the helper refuses (no launch without one).
         observation: observation
@@ -1575,7 +1574,7 @@ fn run_privileged(
         let _ = o.take(1 << 20).read_to_end(&mut text);
     }
     let status = child.wait().ok().and_then(|s| s.code());
-    let policy_ref = guest_policy_ref(policy);
+    let policy_ref = guest_policy_ref(psv);
     let unknown = |reason: String, route| LinuxRun {
         outcome: LinuxOutcome::Unknown,
         reason,
@@ -1659,19 +1658,13 @@ fn run_privileged(
 /// The DIRECT route (development and tests): Fabric executes the pinned
 /// launcher itself, same-byte (D), under the pinned (or dev) interpreter. It
 /// never yields protected evidence.
-fn run_direct(
-    lx: &LinuxProfileConfig,
-    req: &ComputeRequest,
-    policy: &GuestPolicy,
-    psv: &crate::psv::Launch,
-) -> LinuxRun {
+fn run_direct(lx: &LinuxProfileConfig, req: &ComputeRequest, psv: &crate::psv::Launch) -> LinuxRun {
     use crate::sealed_exec::{self, Lease, Pinned};
     let out = lx.out_root.join(req.operation_id.as_str());
     let route = LaunchRoute::Direct;
-    // Beside `--out`, never in it: the launcher requires a new/empty out dir.
-    let policy_file = lx
-        .out_root
-        .join(format!("{}.policy.json", req.operation_id.as_str()));
+    // The policy the manifest names, where `psv::prepare` wrote it (beside the
+    // job dir, never in `--out`: the launcher requires a new/empty out dir).
+    let policy_file = psv.policy_path();
     let refused = |reason: String| LinuxRun {
         // The launcher was never invoked: nothing was acquired.
         outcome: LinuxOutcome::Refused,
@@ -1706,22 +1699,10 @@ fn run_direct(
         Ok(v) => v,
         Err(e) => return refused(format!("launcher interpreter: {e}")),
     };
-    let written = std::fs::create_dir_all(&lx.out_root).and_then(|()| {
-        use std::io::Write as _;
-        // create_new: a pre-existing file (or symlink) is not ours to reuse.
-        std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&policy_file)?
-            .write_all(policy.json().as_bytes())
-    });
-    if let Err(e) = written {
-        return refused(format!(
-            "could not write the guest policy {}: {e}",
-            policy_file.display()
-        ));
+    if let Err(e) = std::fs::create_dir_all(&lx.out_root) {
+        return refused(format!("out root {}: {e}", lx.out_root.display()));
     }
-    let policy_ref = guest_policy_ref(policy);
+    let policy_ref = guest_policy_ref(psv);
     let timeout_s = req.limits.wall_time_ms.div_ceil(1000).max(1);
     let o = |p: &Path| p.as_os_str().to_os_string();
     let mut args: Vec<std::ffi::OsString> = vec!["--policy".into(), o(&policy_file)];

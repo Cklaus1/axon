@@ -101,6 +101,10 @@ pub struct Launch {
     pub job_dir: PathBuf,
     pub candidate_dir: PathBuf,
     pub suite_dir: PathBuf,
+    /// The guest policy's exact bytes: the ones the manifest's `policy_sha256`
+    /// names, written to [`Launch::policy_path`]. Every route launches THESE
+    /// (PSV-6, C9 round 4; A87): there is no second policy beside the launch.
+    policy_json: String,
 }
 
 impl std::fmt::Debug for Launch {
@@ -184,7 +188,8 @@ pub fn private_inputs(
 }
 
 /// Build this attempt's launch manifest and secret, and write the job drive's
-/// two files (`launch-manifest.json`, `completion-secret` 0400).
+/// two files (`launch-manifest.json`, `completion-secret` 0400) and, beside
+/// the job dir, the guest policy the manifest names (`policy.json`).
 pub fn prepare(req: &ComputeRequest, i: &PrepareInputs<'_>) -> Result<Launch, String> {
     let q = i.qualification;
     // The guest digests come from THESE bytes, so they must be the manifest
@@ -306,6 +311,12 @@ pub fn prepare(req: &ComputeRequest, i: &PrepareInputs<'_>) -> Result<Launch, St
     std::fs::write(i.job_dir.join("launch-manifest.json"), manifest.bytes())
         .map_err(|e| format!("job dir: {e}"))?;
     write_private(&i.job_dir.join("completion-secret"), &secret)?;
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(i.job_dir.with_file_name("policy.json"))
+        .and_then(|mut f| std::io::Write::write_all(&mut f, i.policy_json.as_bytes()))
+        .map_err(|e| format!("guest policy: {e}"))?;
     Ok(Launch {
         suite_ref,
         digest: manifest.digest(),
@@ -314,6 +325,7 @@ pub fn prepare(req: &ComputeRequest, i: &PrepareInputs<'_>) -> Result<Launch, St
         job_dir: i.job_dir.to_path_buf(),
         candidate_dir: i.candidate_dir.to_path_buf(),
         suite_dir: i.suite_dir.to_path_buf(),
+        policy_json: i.policy_json.to_string(),
     })
 }
 
@@ -330,6 +342,16 @@ fn write_private(p: &Path, bytes: &[u8]) -> Result<(), String> {
 }
 
 impl Launch {
+    /// The guest policy the manifest names (its exact bytes).
+    pub fn policy_json(&self) -> &str {
+        &self.policy_json
+    }
+    /// `<inputs>/policy.json`: where [`prepare`] wrote the policy, beside the
+    /// job dir. The privileged helper snapshots it from there; the direct
+    /// route hands it to the launcher.
+    pub fn policy_path(&self) -> PathBuf {
+        self.job_dir.with_file_name("policy.json")
+    }
     /// The key Fabric expects the guest's interpreter to have used, derived
     /// from Fabric's OWN secret and manifest.
     fn key(&self) -> [u8; 32] {
@@ -458,6 +480,17 @@ pub fn derive(
             format!(
                 "the guest verdict is for launch manifest {}, not this launch's {}",
                 v.launch_manifest_sha256, launch.digest
+            ),
+            evidence,
+            None,
+        );
+    }
+    // PSV-6 (A87): the guest ran the policy this launch's manifest names.
+    if v.policy_sha256 != m.policy_sha256 {
+        return unknown(
+            format!(
+                "the guest ran policy {:?}, not the policy_sha256 {} this launch's manifest names",
+                v.policy_sha256, m.policy_sha256
             ),
             evidence,
             None,

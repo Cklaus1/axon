@@ -8,7 +8,7 @@
 //! written. Prints `PSV-VERDICT sha256=<hex>` on the console for the launcher
 //! to cross-check against `/out/verdict.json`.
 
-use axon_psv::runner::{run_and_emit, RunnerConfig};
+use axon_psv::runner::{policy_from_cmdline, run_and_emit, RunnerConfig};
 use std::path::PathBuf;
 
 /// The unprivileged identity the test runs as (the rootfs's `nobody`).
@@ -74,7 +74,9 @@ fn run_guest() -> Result<(), String> {
         runner_exe: PathBuf::from("/proc/self/exe"),
         expected_manifest_sha256: expected,
         drop: Some((TEST_UID, TEST_GID)),
-        effect_ceiling: std::env::var("AXON_ALLOWED_EFFECTS").ok(),
+        // The policy axon-guest-init enforces, from the same cmdline: the
+        // runner holds it to the manifest's policy_sha256 (PSV-6, A87).
+        policy: policy_from_cmdline(&cmdline),
     };
     match run_and_emit(&cfg) {
         Ok((_, sha)) => {

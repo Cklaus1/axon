@@ -6,7 +6,10 @@
 //!    only ever receives the derived key `K`, and candidate code never
 //!    receives either;
 //! 2. verify the launch manifest: exactly the bytes Fabric named on the kernel
-//!    command line, canonical, and for the protected profile;
+//!    command line, canonical, and for the protected profile; then hold the
+//!    guest policy (the kernel-cmdline word `axon-guest-init` enforces) to the
+//!    manifest's `policy_sha256`, and require it to state an effect ceiling,
+//!    which the test then runs under (PSV-6, A87);
 //! 3. re-digest the candidate and the suite trees, and compare each with the
 //!    manifest;
 //! 4. verify the test identity: the entry exists in the suite tree, and the
@@ -44,8 +47,33 @@ pub struct RunnerConfig {
     pub expected_manifest_sha256: String,
     /// Run the test as this uid:gid (in the guest: always set).
     pub drop: Option<(u32, u32)>,
-    /// The guest policy's effect ceiling, passed through unchanged.
-    pub effect_ceiling: Option<String>,
+    /// The guest policy's exact bytes: the decoded kernel-cmdline word
+    /// `axon.policy=` that `axon-guest-init` enforces ([`policy_from_cmdline`]),
+    /// or `None` when there is no single decodable one. PSV-6 (A87): it must
+    /// be the policy the manifest names, and the test's effect ceiling is
+    /// derived from it ([`crate::protected_policy_ceiling`]), never from the
+    /// environment.
+    pub policy: Option<Vec<u8>>,
+}
+
+/// The guest policy on a kernel command line: the base64 (standard, padded)
+/// value of its ONE `axon.policy=` word, decoded. `None` when there is no such
+/// word, more than one, or it does not decode (then `axon-guest-init` has
+/// already refused to run anything).
+pub fn policy_from_cmdline(cmdline: &str) -> Option<Vec<u8>> {
+    use base64::Engine;
+    let mut words = cmdline
+        .split_whitespace()
+        .filter_map(|w| w.strip_prefix("axon.policy="));
+    match (words.next(), words.next()) {
+        (Some(b64), None) => base64::engine::general_purpose::STANDARD.decode(b64).ok(),
+        _ => None,
+    }
+}
+
+/// sha256 of the policy the runner was given, `""` for none.
+fn given_policy_sha256(cfg: &RunnerConfig) -> String {
+    cfg.policy.as_deref().map(sha256_hex).unwrap_or_default()
 }
 
 fn refused(
@@ -58,6 +86,7 @@ fn refused(
     GuestVerdict {
         schema: GUEST_VERDICT_SCHEMA.into(),
         launch_manifest_sha256: m_sha.into(),
+        policy_sha256: given_policy_sha256(cfg),
         inputs,
         test: test.into(),
         status: GuestStatus::Refused,
@@ -186,6 +215,18 @@ pub fn run(cfg: &RunnerConfig) -> GuestVerdict {
     };
     let m_sha = m.digest();
     let test = m.suite.test.clone();
+    // 2b. PSV-6 (C9 round 4; A87): the policy this guest runs under IS the one
+    // the manifest names, and states an effect ceiling; the test's ceiling is
+    // taken from it. Checked before anything is read from the inputs.
+    let ceiling = match cfg
+        .policy
+        .as_deref()
+        .ok_or_else(|| "no guest policy on the kernel command line".to_string())
+        .and_then(|p| protected_policy_ceiling(p, &m))
+    {
+        Ok(c) => c,
+        Err(e) => return refused(cfg, &m_sha, none, &test, e),
+    };
     // 3. Both inputs, each against its own digest.
     let inputs = match check_inputs(&m, &cfg.candidate, &cfg.suite, &Quota::default()) {
         Ok(i) => i,
@@ -217,7 +258,7 @@ pub fn run(cfg: &RunnerConfig) -> GuestVerdict {
     }
     // 5. Exactly that test, with K and nothing else.
     let key = completion_key(&secret, &m);
-    let (exit_code, stdout, stderr) = match exec_axon_test(cfg, &m, &key) {
+    let (exit_code, stdout, stderr) = match exec_axon_test(cfg, &m, &key, &ceiling) {
         Ok(r) => r,
         Err(e) => return refused(cfg, &m_sha, inputs, &test, format!("axon test: {e}")),
     };
@@ -242,6 +283,7 @@ pub fn run(cfg: &RunnerConfig) -> GuestVerdict {
     GuestVerdict {
         schema: GUEST_VERDICT_SCHEMA.into(),
         launch_manifest_sha256: m_sha,
+        policy_sha256: given_policy_sha256(cfg),
         inputs,
         test,
         status,
@@ -266,6 +308,7 @@ fn exec_axon_test(
     cfg: &RunnerConfig,
     m: &LaunchManifest,
     key: &[u8; 32],
+    ceiling: &str,
 ) -> Result<(Option<i32>, String, String), String> {
     use std::process::{Command, Stdio};
     let mut cmd = Command::new(&cfg.axon);
@@ -295,10 +338,10 @@ fn exec_axon_test(
     // The guest policy's ceiling, WITHOUT `Exec`: the process that runs the
     // candidate also holds K, so it spawns nothing, whatever the caller's
     // grant allowed (review wf_ecfcd666-6c9, PSV-3). `axon test` enforces the
-    // same under a completion key; this does not rely on it.
-    if let Some(c) = &cfg.effect_ceiling {
-        cmd.env("AXON_ALLOWED_EFFECTS", without_exec(c));
-    }
+    // same under a completion key; this does not rely on it. The ceiling is
+    // ALWAYS set: it comes from the manifest's policy, which must state one
+    // (PSV-6, A87), and `""` denies every effect.
+    cmd.env("AXON_ALLOWED_EFFECTS", without_exec(ceiling));
     #[cfg(target_os = "linux")]
     {
         use std::os::unix::process::CommandExt;

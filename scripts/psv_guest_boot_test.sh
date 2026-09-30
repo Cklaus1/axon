@@ -20,6 +20,11 @@
 #                child sees them: /in/{candidate,suite,job} ro,nodev,nosuid,
 #                noexec; /work nodev,nosuid
 #                (C9 round 2: rows M493-M496 pin only the script's text)
+#   policy-*     PSV-6 (C9 round 4, A87): the guest runs only the policy the
+#                launch manifest names. The launcher refuses a --policy the
+#                manifest does not name (nothing acquired); a guest booted
+#                under another policy word refuses in its runner; the helper
+#                refuses one before spending the nonce
 #
 # Exit 0 all PASS; 1 any FAIL; 77 SKIP (not root / no KVM / no image). A SKIP is
 # a non-result and is reported as such, never as a pass.
@@ -98,12 +103,15 @@ run() {
     local c="$1" entry="$2" test="$3"
     mkdir -p "$W/$c"
     cp -r "${CAND_SRC:-$W/cand}" "$W/$c/cand"; cp -r "${SUITE_SRC:-$W/suite}" "$W/$c/suite"
+    # The manifest names the policy's digest (PSV-6, A87); POLICY_LAUNCH hands
+    # the launcher another one.
     MSHA="$("$DEV" make-job --candidate "$W/$c/cand" --suite "$W/$c/suite" --entry "$entry" \
-        --test "$test" --job "$W/$c/job" | python3 -c 'import json,sys; print(json.load(sys.stdin)["manifest_sha256"])')"
+        --test "$test" --job "$W/$c/job" --policy "${POLICY_FOR:-$POLICY}" \
+        | python3 -c 'import json,sys; print(json.load(sys.stdin)["manifest_sha256"])')"
     [[ -n "${4:-}" ]] && eval "$4"
     "$LAUNCH" --psv-candidate "$W/$c/cand" --psv-suite "$W/$c/suite" --psv-job "$W/$c/job" \
-        --psv-manifest-sha "$MSHA" --policy "${POLICY_FOR:-$POLICY}" --out "$W/$c/out" --timeout-s 90 \
-        > "$W/$c/launch.log" 2>&1
+        --psv-manifest-sha "$MSHA" --policy "${POLICY_LAUNCH:-${POLICY_FOR:-$POLICY}}" \
+        --out "$W/$c/out" --timeout-s 90 > "$W/$c/launch.log" 2>&1
     RC=$?
 }
 check() { "$DEV" check-verdict --job "$W/$1/job" --verdict "$W/$1/out/out/verdict.json" 2>/dev/null; }
@@ -112,8 +120,8 @@ check() { "$DEV" check-verdict --job "$W/$1/job" --verdict "$W/$1/out/out/verdic
 run pass accept.ax t_ok
 V="$(check pass)"
 if [[ $RC == 0 && "$(jq_r "$W/pass/out/result.json" psv.bound)" == true ]] \
-   && printf '%s' "$V" | python3 -c 'import json,sys; v=json.load(sys.stdin); sys.exit(0 if v["status"]=="passed" and v["manifest_joins"] and v["token_verifies"] else 1)'; then
-    ok "pass: the named test passed in the guest; verdict bound to serial; token verifies under the host-derived key"
+   && printf '%s' "$V" | python3 -c 'import json,sys; v=json.load(sys.stdin); sys.exit(0 if v["status"]=="passed" and v["manifest_joins"] and v["policy_joins"] and v["token_verifies"] else 1)'; then
+    ok "pass: the named test passed in the guest under the manifest's policy; verdict bound to serial; token verifies under the host-derived key"
 else
     bad pass "rc=$RC psv=$(jq_r "$W/pass/out/result.json" psv) verdict=$V"
 fi
@@ -165,6 +173,29 @@ if [[ $RC == 0 && -z "$MW" ]]; then
     ok "mounts: the inputs are ro,nodev,nosuid,noexec and /work nodev,nosuid in the guest"
 else
     bad mounts "rc=$RC ${MW:-} stdout=$(head -c 300 <<<"$SO")"
+fi
+
+# PSV-6 (C9 round 4, A87): the manifest names policy-io; the launcher is
+# handed policy-io-exec. It refuses before acquiring anything.
+IOEXEC="$REPO/profiles/linux-microvm/fixtures/policy-io-exec.json"
+POLICY_LAUNCH="$IOEXEC" run policy-launcher accept.ax t_ok
+if [[ $RC == 22 && ! -e "$W/policy-launcher/out/out/verdict.json" ]] \
+   && grep -q "not the policy_sha256" "$W/policy-launcher/launch.log"; then
+    ok "policy-launcher: a --policy the launch manifest does not name is refused before anything is acquired (22)"
+else
+    bad policy-launcher "rc=$RC log=$(tail -c 300 "$W/policy-launcher/launch.log")"
+fi
+# …and a guest booted under ANOTHER policy word than the one the launcher
+# validated (test hook: the launcher embeds policy-io-exec on the cmdline).
+# axon-guest-init enforces that word; the runner holds it to the manifest's
+# policy_sha256 and refuses before anything runs; the verdict names it.
+FC_PROFILE_TEST_EMBED_POLICY="$IOEXEC" run policy-guest accept.ax t_ok
+V="$(check policy-guest)"
+if printf '%s' "$V" | python3 -c 'import json,sys; v=json.load(sys.stdin); sys.exit(0 if v["status"]=="refused" and "not the policy_sha256" in (v["refusal"] or "") and not v["policy_joins"] else 1)' \
+   && [[ ! -e "$W/policy-guest/out/out/test-stdout" ]]; then
+    ok "policy-guest: a guest booted under a policy the manifest does not name refuses in its runner (nothing ran; the verdict names the policy it was given)"
+else
+    bad policy-guest "rc=$RC verdict=$V"
 fi
 
 # seal
@@ -313,7 +344,10 @@ PY
     I="$H/runs/fab-boot.psv-inputs"; mkdir -p "$I"
     cp -r "$W/cand" "$I/candidate"; cp -r "$W/suite" "$I/check"
     MSHA="$("$DEV" make-job --candidate "$I/candidate" --suite "$I/check" --entry accept.ax \
-        --test t_ok --job "$I/job" --nonce "$NONCE" | python3 -c 'import json,sys; print(json.load(sys.stdin)["manifest_sha256"])')"
+        --test t_ok --job "$I/job" --nonce "$NONCE" --policy "$POLICY" \
+        | python3 -c 'import json,sys; print(json.load(sys.stdin)["manifest_sha256"])')"
+    # The guest policy travels beside the job, never in the request (A87).
+    cp "$POLICY" "$I/policy.json"
     cp -r "$I/job" "$W/helper-job"   # the helper consumes Fabric's job files
     cp -r "$I" "$W/helper-inputs-again"   # …and Fabric can always rebuild them
     chown -R "$FU:$FU" "$I"
@@ -353,10 +387,11 @@ json.dump({"schema": "axon-protected-launcher/2", "fabric_uid": int(fu),
            "custodian": {"socket": f"{h}/cust/custodian.sock", "uid": 0}},
           open(f"{h}/protected-launcher.json", "w"))
 i = f"{h}/runs/fab-boot.psv-inputs"
-for name, out in (("op-boot", "request.json"), ("op-boot-again", "request-again.json")):
-    json.dump({"schema": "axon-protected-launch-request/2", "id": "fab-boot", "out": f"{h}/runs/{name}",
+for name, out in (("op-boot", "request.json"), ("op-boot-again", "request-again.json"),
+                  ("op-boot-policy", "request-policy.json")):
+    json.dump({"schema": "axon-protected-launch-request/3", "id": "fab-boot", "out": f"{h}/runs/{name}",
                "psv_candidate": f"{i}/candidate", "psv_suite": f"{i}/check", "psv_job": f"{i}/job",
-               "psv_manifest_sha256": msha, "policy_json": open(pol).read(), "timeout_s": 90,
+               "psv_manifest_sha256": msha, "timeout_s": 90,
                "observation": open(f"{h}/observation.json").read(),
                "observation_signature": open(f"{h}/observation.json.sig").read()},
               open(f"{h}/{out}", "w"))
@@ -368,6 +403,19 @@ PY
     # still holds root's DAC override).
     helper() { setpriv --reuid="$FU" --regid="$FU" --clear-groups -- sh -c 'exec "$0" --test-config "$1"' \
         "$H/axon-protected-launcher" "$H/protected-launcher.json" <"$1" >"$2" 2>>"$H/helper.log"; }
+    # A87 through the helper: the SAME genuine observation, with Fabric's
+    # policy.json swapped for policy-io-exec. Refused before the spend, so the
+    # pass case below still launches on this very nonce.
+    cp "$IOEXEC" "$I/policy.json"; chown "$FU:$FU" "$I/policy.json"
+    helper "$H/request-policy.json" "$H/report-policy.json"
+    HRCP=$?
+    RP="$(cat "$H/report-policy.json")"
+    if [[ $HRCP == 30 && ! -e "$H/runs/op-boot-policy" ]] && grep -q "not the policy_sha256" <<<"$RP"; then
+        ok "helper-policy: a genuine observation of the manifest's policy never launches another (refused before the nonce is spent)"
+    else
+        bad helper-policy "rc=$HRCP report=$RP"
+    fi
+    rm -rf "$I"; cp -r "$W/helper-inputs-again" "$I"; chown -R "$FU:$FU" "$I"
     helper "$H/request.json" "$H/report.json"
     HRC=$?
     R="$(cat "$H/report.json")"

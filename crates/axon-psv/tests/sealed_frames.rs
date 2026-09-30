@@ -16,6 +16,10 @@ use axon_psv::*;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
+/// The guest policy the manifest names and the runner is given (PSV-6, A87):
+/// the ceiling this test used to pass directly (the runner drops `Exec`).
+const POLICY: &str = r#"{"schema":"axon-vm-mmds/1","allowed_effects":["Net","AI","IO","Exec"]}"#;
+
 fn axon() -> PathBuf {
     let p = std::env::var_os("AXON_BIN")
         .map(PathBuf::from)
@@ -87,7 +91,7 @@ fn check(suite: &str, files: &[(&str, &str)], candidate: &str, test: &str) -> Se
             axon_sha256: "8".repeat(64),
             init_sha256: "9".repeat(64),
         },
-        policy_sha256: "a".repeat(64),
+        policy_sha256: sha256_hex(POLICY.as_bytes()),
         suite: SuiteRef {
             id: "s".into(),
             version: sv.clone(),
@@ -128,7 +132,7 @@ fn check(suite: &str, files: &[(&str, &str)], candidate: &str, test: &str) -> Se
         drop: None,
         // The developer-profile grant's ceiling as Fabric derives it (Exec is
         // then stripped by the runner).
-        effect_ceiling: Some("Net,AI,IO,Exec".into()),
+        policy: Some(POLICY.as_bytes().to_vec()),
     };
     let v = run(&cfg);
     let stdout = std::fs::read_to_string(cfg.out.join("test-stdout")).unwrap_or_default();
