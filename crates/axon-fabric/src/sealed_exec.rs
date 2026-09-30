@@ -362,7 +362,18 @@ mod tests {
     }
 
     fn write_exec(p: &Path, body: &str) -> Pinned {
-        std::fs::write(p, body).unwrap();
+        // Written by a SEPARATE process: a write fd held here would be
+        // inherited by a sibling test thread's fork, and the read lease would
+        // then (correctly) see a writer (a flake in the full suite, C9 r2).
+        let staged = p.with_extension("staged");
+        std::fs::write(&staged, body).unwrap();
+        assert!(std::process::Command::new("cp")
+            .arg(&staged)
+            .arg(p)
+            .status()
+            .unwrap()
+            .success());
+        std::fs::remove_file(&staged).unwrap();
         std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o755)).unwrap();
         Pinned {
             path: p.to_path_buf(),
