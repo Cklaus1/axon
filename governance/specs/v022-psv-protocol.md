@@ -1417,3 +1417,50 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       `--no-default-features`, so its in-process codegen tests record SKIP ("axon build (no codegen
       feature)"); the parity scripts build their own codegen axon and do run. Android legs SKIP (no
       NDK or emulator). These are skips, not passes.
+
+55. **A protected rule is evidenced where it decides, not where it is defined (C9 round 4,
+    EQUIVALENCE; rows workstream).** Before: four protected rules were enforced in production
+    through calls that had no row, and the whole axon-fabric suite stayed green with each call
+    removed (readiness's `trust.check()`, the custodian's `load_config` → `check(true)`,
+    `ProtectedHost::operator()`'s four calls, the helper's `Authority::lease()`), as did the
+    custodian's socket-activation checks. Eight ACTIVE rows (M490-M492, M629, M640, M546, M634,
+    M591) were killed only by a unit test calling the rule function directly; M547/M548/M636/M637
+    only by a test calling `helper_agrees` directly. After: every one is attacked through the
+    PRODUCTION entry, with `/etc/axon` a tmpfs in a private mount namespace (`unshare -m`; the
+    host's `/etc` is never written) and the binaries started as their units start them.
+    - **Readiness** (`--test readiness`). The installed `verify-readiness`, deciding with
+      `ReadinessTrust::operator()`, run as root (which can write every trust root) certifies
+      nothing; the same decision by a uid that cannot write the roots certifies (control). M690
+      (the `trust.check()` call); M490-M492 re-anchored. The record's unrowed bindings each get an
+      attack on the route where they alone refuse: bundle (M691), component (M692), host profile
+      (M693), qualification profile (M694), PSV spec (M695), the `descends` call (M696), a change
+      outside governance/ (M697), schema (M698), the `attribution` call (M699).
+    - **The production custodian** (`--test privileged_launcher`). `axon-custodian` with no
+      arguments, socket-activated as its uid under a config breaking one A83 rule, serves nothing:
+      custodian = Fabric (M629), a spender other than 0 (M640), root as the Fabric (M701, a rule
+      that had no row), and the call that applies them (M700). Started without its unit's
+      `LISTEN_PID`/`LISTEN_FDS` (M702), or activated on another socket (M703), it serves nothing.
+    - **`ProtectedHost::operator()`**, run by a production `axon-fabric submit`. The helper config
+      is read under the production rules (M706) and must describe the host's launch path (M707,
+      the `helper_agrees` call; M547, M548, M636, M637 re-anchored). `fabric_is_not_root` and
+      `custodian_is_separate` are DOMINATED on their one production route: a root Fabric is refused
+      by `helper_agrees` (M548; a helper admitting root is refused by M536), and a custodian that is
+      the Fabric uid by the helper config's own rule (M633). So M704/M546 (vs M548) and M705/M634
+      (vs M633) are retired EQUIVALENT_DID with four-cell records on the production route, never
+      counted as killed; their unit tests are now controls only (a direct attack assertion there
+      would fail the retired guard's full-suite cell while proving only the helper refuses).
+    - **Decision D, the lease.** A root helper is always granted a lease on a root-owned file, so the
+      production refusal (`Lease::Required`) can only be reached by changing the host
+      (`fs.leases-enable`). A TEST-TRUST-ONLY switch (`/etc/axon/TEST-no-read-lease`, in
+      `sealed_exec::take_read_lease`) makes every lease unavailable; the test-trust helper in
+      production mode (`Authority::production()`, setuid-root) then launches nothing (M708, the
+      selection; M591 re-anchored). M709 rows the switch's gate: the production-build helper, with
+      the switch present, launches, and its binary does not contain the switch's path.
+    - **Not done here.** `scripts/v022_refusal_coverage.py` still scans the three helper files only;
+      extended to custodian.rs, bin/axon-custodian.rs, readiness.rs and protected_host.rs it names
+      38 refusal sites with neither a row nor an exemption (measured at this commit).
+    - Operator deployment: none. No matrix row: no production behaviour changed (the lease switch
+      is absent from the production build, M709).
+    - Evidence at 06ad62bc: `v022_g01_mutations.py --only=` the 28 new or re-anchored ACTIVE rows,
+      28/28 KILLED by their own attack; `v022_paired_disable.py --only=M704,M546,M705,M634`, all
+      four cells and the full-suite cell hold for each.
