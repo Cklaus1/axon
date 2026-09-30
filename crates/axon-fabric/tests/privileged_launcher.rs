@@ -266,12 +266,20 @@ impl Fx {
             .spawn()
             .unwrap();
         use std::io::Write;
-        child
+        // A refusal may come before the request is read: outside the Fabric
+        // group the kernel refuses the exec itself (126) and nothing reads
+        // stdin. Whether the write then lands in the pipe or meets a closed
+        // one is timing, so a broken pipe is not a test failure; the exit
+        // code and report below are what each case judges.
+        match child
             .stdin
             .take()
             .unwrap()
             .write_all(request.to_string().as_bytes())
-            .unwrap();
+        {
+            Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => {}
+            r => r.unwrap(),
+        }
         let out = child.wait_with_output().unwrap();
         let report = serde_json::from_slice(&out.stdout).unwrap_or(Value::Null);
         (out.status.code(), report)
