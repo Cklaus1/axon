@@ -32,6 +32,12 @@ pub mod signing;
 pub mod submit;
 pub mod workspace;
 
+/// Test executables written through a separate process (shared with the
+/// integration tests' `tests/common`).
+#[cfg(test)]
+#[path = "../tests/common/exec.rs"]
+pub(crate) mod test_exec;
+
 pub use grants::{GrantRegistry, ResolvedGrant};
 pub use journal::{
     Begin, Billing, Intent, Journal, JournalError, OpState, OpView, RecoveryReport, ResourceVector,

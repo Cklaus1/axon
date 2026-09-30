@@ -49,7 +49,7 @@ impl Host {
             &good_evidence(&sha256_file(&root.join("manifest.json"))),
         );
         let launcher = stand_in_launcher(&env, 0, true, true, 0);
-        std::fs::copy(&launcher, root.join("launcher.sh")).unwrap();
+        copy_executable(&launcher, root.join("launcher.sh"), 0o755);
         // A: the privileged helper the host pins (a stand-in; load never runs it).
         std::fs::write(root.join("protected-launcher"), "\x7fELF stand-in").unwrap();
         std::fs::write(root.join("executor.bin"), "#!/bin/sh\n").unwrap();
@@ -150,7 +150,11 @@ fn a_conforming_host_config_defines_the_whole_protected_profile() {
 fn a_replaced_launcher_is_refused_at_load_and_after_load() {
     let h = Host::new();
     let ph = h.load().expect("conforming");
-    std::fs::write(h.p("launcher.sh"), "#!/bin/sh\necho '{\"exit\":0}'\n").unwrap();
+    write_executable(
+        &h.p("launcher.sh"),
+        "#!/bin/sh\necho '{\"exit\":0}'\n",
+        0o755,
+    );
     let e = h.load().unwrap_err();
     assert!(e.contains("launcher") && e.contains("not its pin"), "{e}");
     let e = ph.linux.qualification().unwrap_err();
@@ -402,8 +406,7 @@ fn the_out_root_and_nonce_store_sit_under_operator_owned_directories() {
     ] {
         std::fs::set_permissions(h.p(f), std::fs::Permissions::from_mode(0o644)).unwrap();
     }
-    std::fs::write(h.p("observer.sh"), "#!/bin/sh\n").unwrap();
-    std::fs::set_permissions(h.p("observer.sh"), std::fs::Permissions::from_mode(0o755)).unwrap();
+    write_executable(&h.p("observer.sh"), "#!/bin/sh\n", 0o755);
     // A directory an agent (uid 1000) can write, and one anyone can.
     let agent = h.p("agent");
     std::fs::create_dir(&agent).unwrap();
@@ -471,8 +474,7 @@ fn the_out_root_and_nonce_store_leaves_are_the_services_own_and_private() {
     ] {
         std::fs::set_permissions(h.p(f), std::fs::Permissions::from_mode(0o644)).unwrap();
     }
-    std::fs::write(h.p("observer.sh"), "#!/bin/sh\n").unwrap();
-    std::fs::set_permissions(h.p("observer.sh"), std::fs::Permissions::from_mode(0o755)).unwrap();
+    write_executable(&h.p("observer.sh"), "#!/bin/sh\n", 0o755);
     let with = |out_root: PathBuf, nonces: PathBuf| {
         h.write_config(|v| {
             v["out_root"] = json!(out_root);

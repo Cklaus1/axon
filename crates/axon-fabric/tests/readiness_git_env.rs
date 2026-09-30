@@ -9,7 +9,6 @@ mod readiness_fixture;
 use readiness_fixture::*;
 
 use serde_json::Value;
-use std::os::unix::fs::PermissionsExt;
 
 fn under(vars: &[(&str, String)], c: &Certified) -> Value {
     let saved: Vec<_> = vars
@@ -50,8 +49,7 @@ fn the_callers_path_and_git_environment_do_not_steer_the_verdict() {
     // A `git` earlier on PATH that says yes to everything.
     let bin = scratch.join("fakebin");
     std::fs::create_dir_all(&bin).unwrap();
-    std::fs::write(bin.join("git"), "#!/bin/sh\nexit 0\n").unwrap();
-    std::fs::set_permissions(bin.join("git"), std::fs::Permissions::from_mode(0o755)).unwrap();
+    common::write_executable(&bin.join("git"), "#!/bin/sh\nexit 0\n", 0o755);
     let path = format!(
         "{}:{}",
         bin.display(),

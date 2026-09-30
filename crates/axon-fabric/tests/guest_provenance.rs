@@ -9,8 +9,10 @@
 //! `build-guest-image.sh` does: `--snapshot` before the build, then the
 //! manifest with `--pre`.
 
+#[path = "common/exec.rs"]
+mod exec;
+use exec::write_executable;
 use serde_json::Value;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -104,9 +106,7 @@ fn fixture(init_git: bool) -> Fx {
         write(&d.path().join("dist").join(a), a);
     }
     for b in ["fc", "jl"] {
-        let p = d.path().join(b);
-        write(&p, "#!/bin/sh\necho v1\n");
-        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+        write_executable(&d.path().join(b), "#!/bin/sh\necho v1\n", 0o755);
     }
     Fx { d, repo }
 }
@@ -225,8 +225,8 @@ fn a_git_on_the_callers_path_is_not_asked() {
     let f = fixture(true);
     write(&f.repo.join(INIT_SRC), "fn main() { /* agent */ }\n");
     let bin = f.d.path().join("fakebin");
-    write(&bin.join("git"), "#!/bin/sh\nexit 0\n");
-    std::fs::set_permissions(bin.join("git"), std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::fs::create_dir_all(&bin).unwrap();
+    write_executable(&bin.join("git"), "#!/bin/sh\nexit 0\n", 0o755);
     let path = vec![(
         "PATH",
         format!(
@@ -375,8 +375,8 @@ fn a_git_on_the_callers_path_does_not_answer_the_lineage_check() {
     let f = fixture(true);
     let certified = f.orphan_head();
     let bin = f.d.path().join("fakebin");
-    write(&bin.join("git"), "#!/bin/sh\nexit 0\n");
-    std::fs::set_permissions(bin.join("git"), std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::fs::create_dir_all(&bin).unwrap();
+    write_executable(&bin.join("git"), "#!/bin/sh\nexit 0\n", 0o755);
     let path = vec![(
         "PATH",
         format!(

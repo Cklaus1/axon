@@ -9,6 +9,7 @@
 //! The row that matters most is the first one: exit 0 must mean a hidden check
 //! the generator never saw accepted the repair, not that the loop finished.
 
+mod common;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -859,12 +860,7 @@ fn cli_drives_an_external_generator_and_shows_it_no_grader() {
 
     let script = |name: &str, body: &str| -> std::path::PathBuf {
         let p = ws.join(name);
-        std::fs::write(&p, body).unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
-        }
+        common::write_executable(&p, body, 0o755);
         p
     };
     let run = |gen: &str| -> (i32, String, String) {
@@ -1045,12 +1041,7 @@ fn cli_survives_a_generator_that_misbehaves() {
 
     let script = |name: &str, body: &str| -> std::path::PathBuf {
         let p = ws.join(name);
-        std::fs::write(&p, body).unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
-        }
+        common::write_executable(&p, body, 0o755);
         p
     };
     let run = |gen: &std::path::PathBuf| -> (i32, String) {
@@ -1147,12 +1138,7 @@ fn cli_fails_closed_when_the_recheck_cannot_run() {
 
     let exe = |name: &str, body: String| -> std::path::PathBuf {
         let p = ws.join(name);
-        std::fs::write(&p, body).unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
-        }
+        common::write_executable(&p, body, 0o755);
         p
     };
 
@@ -1283,20 +1269,15 @@ fn cli_shows_the_generator_the_same_body_on_the_warned_path() {
     // mechanism — quietly does the work. An earlier version of this test did
     // exactly that and passed with the undo under test deleted.
     let gen = ws.join("picky.sh");
-    std::fs::write(
+    common::write_executable(
         &gen,
         "#!/bin/sh\n\
          p=$(cat)\n\
          case \"$p\" in *'n + 3'*) ;; *) echo 'not the body I started from' >&2; exit 1 ;; esac\n\
          case \"$p\" in *'Already tried'*) printf '\\n    let n = n + 0\\n    n * 2\\n' ;; \
                         *) printf '\\n    let n = n + 0\\n    n + 4\\n' ;; esac\n",
-    )
-    .unwrap();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&gen, std::fs::Permissions::from_mode(0o755)).unwrap();
-    }
+        0o755,
+    );
 
     let out = Command::new(env!("CARGO_BIN_EXE_cortex"))
         .args(["repair", "--workspace"])

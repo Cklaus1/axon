@@ -8,6 +8,10 @@ use axon_loop::store::{Config, ConfigSchema};
 use axon_loop_contracts::{AuthorityEpoch, OpaqueRef, PolicyTransition, Scope};
 use serde_json::{json, Value};
 
+pub mod exec;
+#[allow(unused_imports)]
+pub use exec::{copy_executable, write_executable};
+
 pub const ADMITTER: &str = "admitter:fabric-test";
 
 /// Locate a workspace binary these tests drive but cargo does not build for
@@ -77,17 +81,15 @@ fn t_bad() { assert_eq(double(2), 5) }
 /// per invocation — the observable "a process was spawned" fact.
 pub fn spawn_counting_wrapper(dir: &Path, spawns: &Path) -> PathBuf {
     let p = dir.join("axon-counting.sh");
-    std::fs::write(
+    write_executable(
         &p,
         format!(
             "#!/bin/sh\necho \"$1\" >> '{}'\nexec '{}' \"$@\"\n",
             spawns.display(),
             axon_bin().display()
         ),
-    )
-    .unwrap();
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+        0o755,
+    );
     p
 }
 
@@ -509,9 +511,7 @@ J
 exit {exit}
 "#
     );
-    std::fs::write(&p, body).unwrap();
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+    write_executable(&p, body, 0o755);
     p
 }
 
@@ -645,7 +645,7 @@ pub fn observer_key(dir: &Path, name: &str, trust_in: &[&Path]) -> ObserverKey {
 /// (so a later test can REPLAY it).
 pub fn observer_script(d: &Path, mode: &str, key: &ObserverKey, authority: &str) -> PathBuf {
     let script = d.join(format!("observer-{mode}-{authority}.sh"));
-    std::fs::write(
+    write_executable(
         &script,
         format!(
             r#"#!/bin/sh
@@ -698,9 +698,8 @@ cp "$O/observation.json" "{prev}"; cp "$O/observation.json.sig" "{prev}.sig"
             fabric = env!("CARGO_BIN_EXE_axon-fabric"),
             key = key.pk8.display(),
         ),
-    )
-    .unwrap();
-    std::fs::set_permissions(&script, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+        0o755,
+    );
     script
 }
 

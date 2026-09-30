@@ -6,7 +6,7 @@
 //! directory and the capture bound observable without depending on what the
 //! interpreter prints.
 
-use std::os::unix::fs::PermissionsExt;
+mod common;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -24,8 +24,7 @@ fn tmp(tag: &str) -> PathBuf {
 
 fn script(dir: &Path, body: &str) -> PathBuf {
     let p = dir.join("fake-axon.sh");
-    std::fs::write(&p, format!("#!/bin/sh\n{body}\n")).unwrap();
-    std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+    common::write_executable(&p, format!("#!/bin/sh\n{body}\n"), 0o755);
     p
 }
 

@@ -5,6 +5,7 @@
 //! Uses `CARGO_BIN_EXE_axon` (set by cargo for the codegen-free `axon` binary
 //! built under `--no-default-features`).
 
+mod common;
 use std::process::Command;
 
 fn axon() -> Command {
@@ -27893,7 +27894,10 @@ fn editing_an_imported_module_invalidates_the_build_cache() {
     // compiler can change underneath it. Copying the binary once gives this
     // test a compiler identity nothing else can touch.
     let pinned = dir.join("axon-pinned");
-    std::fs::copy(env!("CARGO_BIN_EXE_axon"), &pinned).unwrap();
+    // Copied by a separate process: an in-process copy holds a write fd a
+    // sibling test thread's fork can inherit, and the exec below then fails
+    // with ETXTBSY ("Text file busy").
+    common::copy_executable(env!("CARGO_BIN_EXE_axon"), &pinned, 0o755);
 
     // A private cache dir, so this test neither reads nor pollutes the user's.
     let build = |tag: &str| -> Option<String> {

@@ -453,16 +453,14 @@ fn the_submitted_ops_state_is_visible_after_reopen() {
 /// A registered "interpreter" that records its spawn, then blocks until killed.
 fn slow_wrapper(env: &Env, marker: &std::path::Path) -> std::path::PathBuf {
     let p = env.dir.path().join("axon-slow.sh");
-    std::fs::write(
+    write_executable(
         &p,
         format!(
             "#!/bin/sh\necho $$ > '{}'\nexec sleep 300\n",
             marker.display()
         ),
-    )
-    .unwrap();
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+        0o755,
+    );
     p
 }
 
@@ -900,18 +898,14 @@ fn a_timeout_after_launch_is_unknown_with_liability_and_is_never_retried() {
     let env = Env::new();
     let starts = env.dir.path().join("starts.log");
     let slow = env.dir.path().join("axon-timeout.sh");
-    std::fs::write(
+    write_executable(
         &slow,
         format!(
             "#!/bin/sh\necho start >> '{}'\nexec sleep 300\n",
             starts.display()
         ),
-    )
-    .unwrap();
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&slow, std::fs::Permissions::from_mode(0o755)).unwrap();
-    }
+        0o755,
+    );
     write_registry(&env.registry, &slow, None);
     let mut req = request(&env, "op-timeout", "t_ok");
     req["executable_digest"] = json!(axon_cortex::runner::fabric_executable_digest(
@@ -1018,15 +1012,14 @@ fn one_failed_check_fails_the_whole_suite_whatever_the_rest_score() {
 fn a_launcher_replaced_after_eligibility_never_runs() {
     fn swap(cfg: &axon_fabric::SubmitConfig) {
         let l = &cfg.linux.as_ref().unwrap().launcher;
-        std::fs::write(l, "#!/bin/sh\necho REPLACED >> /dev/null\nexit 0\n").unwrap();
+        write_executable(l, "#!/bin/sh\necho REPLACED >> /dev/null\nexit 0\n", 0o755);
     }
     let env = Env::new();
     let guest = "cd".repeat(32);
     let mut lx = linux_cfg(&env, &full_lx_manifest(&guest), "");
     // A private copy, so swapping it cannot disturb other tests' launchers.
     let own = env.dir.path().join("own-launcher.sh");
-    std::fs::copy(stand_in_launcher(&env, 0, true, true, 0), &own).unwrap();
-    std::fs::set_permissions(&own, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    copy_executable(stand_in_launcher(&env, 0, true, true, 0), &own, 0o755);
     set_launcher(&mut lx, own);
     std::fs::create_dir_all(&lx.out_root).unwrap();
     let launches = lx.out_root.join("launches");

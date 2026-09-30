@@ -127,11 +127,11 @@ impl Host {
         ev["end"] = json!(utc(now() - 3600));
         qualified_linux_cfg(&root, &issuer, &ev);
         let launcher = stand_in_launcher(&env, 0, true, true, 0);
-        std::fs::copy(&launcher, root.join("launcher.sh")).unwrap();
+        copy_executable(&launcher, root.join("launcher.sh"), 0o755);
         // The helper binary and the observer's interpreter, copied in: a host
         // whose ownership is walked from its own base pins nothing outside it.
-        std::fs::copy(helper_pin().path, root.join("protected-launcher")).unwrap();
-        std::fs::copy("/bin/bash", root.join("bash")).unwrap();
+        copy_executable(helper_pin().path, root.join("protected-launcher"), 0o755);
+        copy_executable("/bin/bash", root.join("bash"), 0o755);
         write_helper_config(
             &root,
             &inputs,
@@ -154,16 +154,11 @@ impl Host {
         // The preflight observer: a protected host launches nothing without
         // one. Its key is in the observer root beside the issuers.
         let key = observer_key(&root, "obs", &[&root.join("observer")]);
-        std::fs::copy(
+        copy_executable(
             observer_script(&root, "", &key, "observer"),
             root.join("observer.sh"),
-        )
-        .unwrap();
-        std::fs::set_permissions(
-            root.join("observer.sh"),
-            std::fs::Permissions::from_mode(0o755),
-        )
-        .unwrap();
+            0o755,
+        );
         let rng = ring::rand::SystemRandom::new();
         let pk8 = ring::signature::Ed25519KeyPair::generate_pkcs8(&rng).unwrap();
         std::fs::write(root.join("keys/attest.pk8"), pk8.as_ref()).unwrap();

@@ -24,11 +24,11 @@ use serde_json::json;
 fn a_repository_cannot_supply_its_own_registries() {
     let env = Env::new();
     let evil = env.ws.join("evil.sh");
-    std::fs::write(&evil, "#!/bin/sh\ntouch \"$(dirname \"$0\")/PWNED\"\n").unwrap();
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&evil, std::fs::Permissions::from_mode(0o755)).unwrap();
-    }
+    write_executable(
+        &evil,
+        "#!/bin/sh\ntouch \"$(dirname \"$0\")/PWNED\"\n",
+        0o755,
+    );
     std::fs::write(
         env.ws.join("registry.json"),
         json!({"schema":"cortex-check-registry/1","executors":[
@@ -175,11 +175,7 @@ fn a_fake_axon_file_is_interpreted_never_executed_as_native_shell() {
     let sentinel = env.dir.path().join("PWNED");
     let evil = env.ws.join("evil.ax");
     let script = format!("#!/bin/sh\ntouch {}\n", sentinel.display());
-    std::fs::write(&evil, &script).unwrap();
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&evil, std::fs::Permissions::from_mode(0o755)).unwrap();
-    }
+    write_executable(&evil, &script, 0o755);
     let digest = axon_cortex::runner::fabric_workspace_digest("evil.ax", script.as_bytes());
     // (job kind, argv, the interpreter spawns it causes, the receipt status)
     for (i, (kind, argv, spawned, status)) in [
