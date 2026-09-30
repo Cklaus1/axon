@@ -5176,6 +5176,29 @@ mod tests {
                  @[test]\nfn t() {\n    with handler { on IO(p) => resume(check(p)) } {\n        println(\"go\")\n    }\n}\n",
             ),
         ];
+        // Through an OPERATOR HELPER (C9 round 3, rows): a `return` escaping
+        // the candidate's frame lands in the helper, which then returns the
+        // CANDIDATE's value as its own. The test body itself runs to its end,
+        // so the completion rule (`EndedEarly`) cannot see it: the frame edge
+        // is the only guard on this route. Checked first, so a shape the
+        // completion rule also refuses cannot mask it.
+        for (why, def) in [
+            ("param refinement", "fn solve(n: i64 where if n > 0 { return 42 } else { true }) -> i64 { n * 0 }\n"),
+            ("return refinement", "fn solve(n: i64) -> (i64 where if _ == 0 { return 42 } else { true }) { n * 0 }\n"),
+            ("verify", "@[verify(if value == 0 { return 42 } else { true })]\nfn solve(n: i64) -> i64 { n * 0 }\n"),
+        ] {
+            let prog = crate::parse_source(&format!(
+                "{def}fn check(n: i64) -> i64 {{\n    solve(n)\n}}\n\
+                 @[test]\nfn t() {{ assert_eq(check(21), 42) }}\n"
+            ))
+            .expect("parses");
+            let end = run_test_fn_outcome(&prog, "t");
+            assert!(
+                end.is_err(),
+                "ATTACK: a `return` escaped the candidate's {why} into the operator's helper \
+                 and the test completed ({why} (helper): {end:?})"
+            );
+        }
         for (why, def) in escapes {
             for (shape, body) in bodies {
                 let prog = crate::parse_source(&format!("{def}{body}")).expect("parses");

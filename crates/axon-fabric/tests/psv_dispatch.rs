@@ -212,8 +212,14 @@ fn an_operator_suite_passes_through_the_guest_path_as_guest_unobserved() {
     let back: axon_loop_contracts::ExecutionReceipt =
         axon_loop_contracts::parse(&rt).expect("the guest-path receipt parses as a contract");
     assert_eq!(back.matched_checks, Some(1));
-    // Never protected without an observation (A14).
-    assert_eq!(class(&s), "guest-unobserved");
+    // Never protected without an observation (A14): derive's None arm (M186)
+    // and psv_receipt's downgrade of a route that does not attest (M606)
+    // each hold it alone here (four-cell record, C9 round 3).
+    assert_eq!(
+        class(&s),
+        "guest-unobserved",
+        "ATTACK: a verdict made without an observation was classed protected"
+    );
     assert_eq!(
         s.ran_under.as_ref().unwrap().evidence_class,
         "guest-unobserved"
@@ -867,64 +873,68 @@ fn a_verified_observation_makes_the_guest_verdict_protected() {
     );
 }
 
+/// One defect each: (observer mode, signing authority, root holding the key,
+/// the reason a refusal names; `|` separates alternatives).
+const DEFECTIVE_OBSERVATIONS: [(&str, &str, &str, &str); 11] = [
+    // A9: another authority domain (the key IS a trusted observer). The
+    // domain field (M152) and the domain-separated message (M153) each
+    // refuse it alone (M152's four-cell record), so either reason.
+    (
+        "",
+        "qualification",
+        "observer",
+        "is for authority|does not verify",
+    ),
+    // A key the observer root does not hold (only the qualification root).
+    (
+        "",
+        "observer",
+        "qualification",
+        "not a trusted evidence issuer",
+    ),
+    ("stale", "observer", "observer", "old (max 300s)"),
+    ("epoch", "observer", "observer", "for epoch 7"),
+    (
+        "other-manifest",
+        "observer",
+        "observer",
+        "intended_launch_manifest_sha256",
+    ),
+    ("kernel", "observer", "observer", "guest.kernel_sha256"),
+    // A nonce the manifest does not name, never issued: the manifest join
+    // and the store's "never issued" each refuse it alone, so either
+    // reason is correct here (C9 round 1).
+    (
+        "nonce-forged",
+        "observer",
+        "observer",
+        "observation nonce is|never issued",
+    ),
+    // C9 round 1 (M201): a nonce the custodian really issued (same epoch,
+    // same age) for ANOTHER launch. The store would consume it, so the
+    // manifest-nonce join is the only guard.
+    (
+        "nonce-issued-elsewhere",
+        "observer",
+        "observer",
+        "observation nonce is",
+    ),
+    (
+        "claims-other-key",
+        "observer",
+        "observer",
+        "but is signed by",
+    ),
+    ("exit", "observer", "observer", "observer exited"),
+    // §7: the observer measures the INSTALLED verifier; another one refuses.
+    ("verifier", "observer", "observer", "verifier_sha256"),
+];
+
 /// Each defect refuses the LAUNCH (nothing runs), for its own reason, and is
 /// never protected.
 #[test]
 fn every_defective_observation_refuses_the_launch() {
-    for (mode, authority, key_in, why) in [
-        // A9: another authority domain (the key IS a trusted observer). The
-        // domain field (M152) and the domain-separated message (M153) each
-        // refuse it alone (M152's four-cell record), so either reason.
-        (
-            "",
-            "qualification",
-            "observer",
-            "is for authority|does not verify",
-        ),
-        // A key the observer root does not hold (only the qualification root).
-        (
-            "",
-            "observer",
-            "qualification",
-            "not a trusted evidence issuer",
-        ),
-        ("stale", "observer", "observer", "old (max 300s)"),
-        ("epoch", "observer", "observer", "for epoch 7"),
-        (
-            "other-manifest",
-            "observer",
-            "observer",
-            "intended_launch_manifest_sha256",
-        ),
-        ("kernel", "observer", "observer", "guest.kernel_sha256"),
-        // A nonce the manifest does not name, never issued: the manifest join
-        // and the store's "never issued" each refuse it alone, so either
-        // reason is correct here (C9 round 1).
-        (
-            "nonce-forged",
-            "observer",
-            "observer",
-            "observation nonce is|never issued",
-        ),
-        // C9 round 1 (M201): a nonce the custodian really issued (same epoch,
-        // same age) for ANOTHER launch. The store would consume it, so the
-        // manifest-nonce join is the only guard.
-        (
-            "nonce-issued-elsewhere",
-            "observer",
-            "observer",
-            "observation nonce is",
-        ),
-        (
-            "claims-other-key",
-            "observer",
-            "observer",
-            "but is signed by",
-        ),
-        ("exit", "observer", "observer", "observer exited"),
-        // §7: the observer measures the INSTALLED verifier; another one refuses.
-        ("verifier", "observer", "observer", "verifier_sha256"),
-    ] {
+    for (mode, authority, key_in, why) in DEFECTIVE_OBSERVATIONS {
         let w = World::new();
         let d = w.env.dir.path().to_path_buf();
         let roots: Vec<PathBuf> = match key_in {
@@ -947,6 +957,48 @@ fn every_defective_observation_refuses_the_launch() {
             "{op}: {r}"
         );
         assert!(!launched(&w, &op), "{op}: launched");
+        assert_ne!(class(&s), "protected", "{op}");
+    }
+}
+
+/// The same defects on the DIRECT route (C9 round 3, rows). Through the
+/// privileged helper the root boundary re-verifies the observation and spends
+/// its nonce (amendment 50), so there Fabric's own preflight is a fail-fast
+/// in front of it. Fabric running the launcher itself (a development host, or
+/// a library consumer composing its own profile) has no helper behind it:
+/// Fabric's preflight is the ONLY check between an observation the operator's
+/// observer root refuses and a launch. Such a launch is never protected
+/// (M606), but it must not RUN either.
+#[test]
+fn every_defective_observation_launches_nothing_on_the_direct_route() {
+    for (mode, authority, key_in, why) in DEFECTIVE_OBSERVATIONS {
+        let w = World::new();
+        let d = w.env.dir.path().to_path_buf();
+        let roots: Vec<PathBuf> = match key_in {
+            "observer" => vec![w.observer_roots()],
+            _ => {
+                observer_key(&d, "real-observer", &[&w.observer_roots()]);
+                vec![d.join("trusted_issuers")]
+            }
+        };
+        let rr: Vec<&Path> = roots.iter().map(PathBuf::as_path).collect();
+        let key = observer_key(&d, "obs", &rr);
+        let op = format!("op-obs-{mode}-{authority}-{key_in}-direct");
+        let mut cfg = w.env.cfg(0);
+        cfg.linux = Some(w.lx_direct("", ""));
+        cfg.observer = Some(w.observer(mode, &key, authority));
+        let s = submit(&w.request(&op, "check:acc", "t_psv_ok").to_string(), &cfg).unwrap();
+        assert!(
+            s.receipt.verification == ReceiptVerification::NotRun && !launched(&w, &op),
+            "ATTACK: {op}: a defective observation launched on the direct route ({:?}): {:?}",
+            s.receipt.verification,
+            s.reason
+        );
+        let r = s.reason.clone().unwrap_or_default();
+        assert!(
+            r.contains("preflight observation refused") && why.split('|').any(|w| r.contains(w)),
+            "{op}: {r}"
+        );
         assert_ne!(class(&s), "protected", "{op}");
     }
 }
@@ -1131,6 +1183,38 @@ impl World {
 /// protected, so the refusal is the observer rule and nothing else.
 #[test]
 fn a_protected_host_with_no_observer_launches_nothing() {
+    // The DIRECT route first (C9 round 3, rows): a library consumer composing
+    // a protected host with a launcher Fabric runs itself. No privileged
+    // helper stands behind it (the helper refuses a launch with no
+    // observation, amendment 50), so the observer rule is the only guard
+    // here, and without it the launch runs and derives the guest-unobserved
+    // verdict this rule exists to prevent.
+    let w = World::new();
+    let mut cfg = w.protected_cfg();
+    let lx = w.lx_direct("", "");
+    let out_root = lx.out_root.clone();
+    cfg.linux = Some(lx);
+    assert!(cfg.observer.is_none());
+    let s = submit(
+        &w.request("op-ph-noobs-direct", "check:acc", "t_psv_ok")
+            .to_string(),
+        &cfg,
+    )
+    .unwrap();
+    assert!(
+        s.receipt.status == ReceiptStatus::Unsupported
+            && std::fs::read_dir(&out_root).unwrap().next().is_none(),
+        "ATTACK: a protected host with no observer launched a protected-profile check \
+         (direct route): {:?} {:?} {:?}",
+        s.receipt.status,
+        s.receipt.verification,
+        s.reason
+    );
+    assert_eq!(s.reason.as_deref(), Some(axon_fabric::submit::NO_OBSERVER));
+    assert_eq!(w.env.launch_records(), 0, "no launch record");
+
+    // Through the privileged helper (the route a protected host's own config
+    // takes), which would also refuse (M620): the observer rule answers first.
     let w = World::new();
     let mut cfg = w.protected_cfg();
     let lx = w.lx("", "");

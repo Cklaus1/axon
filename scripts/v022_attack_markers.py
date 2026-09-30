@@ -730,3 +730,25 @@ ATTACK_MARKERS.update({
     'M638': r"ATTACK: the root helper launched on an observation signed with the host signer's key",
     'M639': r'ATTACK: an observation for epoch 7 launched a manifest naming authority epoch 0',
 })
+ATTACK_MARKERS.update({
+    # ── C9 round 3, ROWS workstream (M640-M649): the 15 rows the 1084ed1c
+    # run left unkilled, each re-attacked where its guard is still the ONLY
+    # guard, or retired under the four-cell rule.
+    # M72: through an operator HELPER the escaped `return` ends the helper
+    # with the candidate's value and the test body completes (the completion
+    # rule refuses the direct shape first).
+    'M72': r"ATTACK: a `return` escaped the candidate's [a-z ]+ into the operator's helper and the test completed",
+    # M194/M201/M204: on the DIRECT route no privileged helper re-verifies the
+    # observation; the attack is the defective observation's launch.
+    'M194': r'ATTACK: op-obs-epoch-observer-observer-direct: a defective observation launched on the direct route',
+    'M201': r'ATTACK: op-obs-nonce-(forged|issued-elsewhere)-observer-observer-direct: a defective observation launched on the direct route',
+    'M204': r'ATTACK: op-obs-[\w-]*-direct: a defective observation launched on the direct route',
+    # M310: a protected host composed with a launcher Fabric runs itself.
+    'M310': r'ATTACK: a protected host with no observer launched a protected-profile check\s+\(direct route\)',
+    # M284: the development lineage answer, under the caller's GIT_DIR (decision
+    # E's repository-identity rule refuses it on every protected path).
+    'M284': r"ATTACK: the caller's GIT_DIR named another repository and it answered the development\s+lineage check",
+    'M640': r'ATTACK: a protected custodian config letting uid 4242 spend nonces was accepted',
+    'M641': r'ATTACK: a protected custodian served from a store whose parent the Fabric uid\s+owns',
+    'M642': r"ATTACK: a branch named like the certified revision's abbreviation made an orphan HEAD\s+descend from it",
+})

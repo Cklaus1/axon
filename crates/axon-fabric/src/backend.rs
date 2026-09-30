@@ -359,6 +359,18 @@ pub fn check_operator_owned(dir: &Path) -> Result<(), String> {
     check_owned_from(Path::new("/"), dir)
 }
 
+/// [`check_operator_owned`] for a directory whose ENTRIES are not the
+/// operator's: every component from `/` down to `dir` (and `dir` itself) is
+/// root-owned, not group/other-writable and not a symlink, but what `dir`
+/// holds is not listed. For the custodian store's parent: WHERE the store
+/// sits is the operator's, while the store itself is the custodian's own
+/// (its uid, 0700), so listing the parent's entries would refuse every
+/// correctly deployed store (C9 round 3, rows).
+#[cfg(unix)]
+pub fn check_operator_chain(dir: &Path) -> Result<(), String> {
+    check_owned_chain(Path::new("/"), dir, false)
+}
+
 /// TESTS ONLY: [`check_operator_owned`] from `base` down (a temp dir's
 /// ancestors are not operator-owned).
 #[cfg(all(unix, any(test, feature = "test-trust-root")))]

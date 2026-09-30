@@ -393,6 +393,93 @@ fn a_git_on_the_callers_path_does_not_answer_the_lineage_check() {
     );
 }
 
+/// The DEVELOPMENT lineage answer (`axon-provenance --descends`, which the
+/// guest build's early check wraps, and `provenance::descends_from` for a
+/// library consumer) runs under its CALLER's environment. It accepts a linked
+/// worktree (history does not depend on which clone asks), so decision E's
+/// repository-identity rule (the common dir must be `top/.git`), which
+/// refuses a GIT_DIR on every protected path, is not on this one: git_cmd's
+/// cleared environment is the only thing that keeps a GIT_DIR naming another
+/// repository from answering (C9 round 3, rows; M284).
+#[test]
+fn the_callers_git_dir_does_not_answer_the_development_lineage_check() {
+    let f = fixture(true);
+    // A clone whose HEAD IS the certified revision, taken before the
+    // repository's history is replaced by an orphan.
+    let honest = f.d.path().join("honest");
+    let st = Command::new(GIT)
+        .args(["clone", "-q"])
+        .arg(&f.repo)
+        .arg(&honest)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .unwrap();
+    assert!(st.success(), "setup: clone");
+    let certified = f.orphan_head();
+    let ask = |env: &[(&str, &Path)]| {
+        let mut c = Command::new(env!("CARGO_BIN_EXE_axon-provenance"));
+        c.args(["--descends", &certified])
+            .arg(&f.repo)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        for (k, v) in env {
+            c.env(k, v);
+        }
+        c.status().unwrap().success()
+    };
+    assert!(!ask(&[]), "control: the orphan does not descend");
+    let git_dir = honest.join(".git");
+    assert!(
+        !ask(&[("GIT_DIR", &git_dir)]),
+        "ATTACK: the caller's GIT_DIR named another repository and it answered the development \
+         lineage check (HEAD descends from {certified})"
+    );
+}
+
+/// The guest build names the PCI-certified revision by an ABBREVIATION
+/// (`PCI_CERTIFIED = "31413ca7"`). git resolves a name to a REF before an
+/// abbreviated hash, so a branch the repository holds, named like that
+/// abbreviation and pointing at HEAD, made an orphan HEAD "descend" from it,
+/// on the protected answer the manifest binds (`--lineage`) and the build's
+/// early check (`--descends`) alike (C9 round 3, rows; M642). A revision is
+/// named by its hash only. Control: the abbreviation of a real ancestor
+/// descends.
+#[test]
+fn a_branch_named_like_the_certified_abbreviation_does_not_answer_the_lineage() {
+    let f = fixture(true);
+    let certified = f.rev("HEAD");
+    let short = certified[..8].to_string();
+    let ask = |args: &[&str]| {
+        let o = Command::new(env!("CARGO_BIN_EXE_axon-provenance"))
+            .args(args)
+            .arg(&f.repo)
+            .stderr(Stdio::null())
+            .output()
+            .unwrap();
+        let lin = serde_json::from_slice::<Value>(&o.stdout)
+            .ok()
+            .map(|v| v["lineage"]["descends"].clone());
+        (o.status.success(), lin)
+    };
+    let control = (ask(&["--descends", &short]), ask(&["--lineage", &short]));
+    assert_eq!(
+        (control.0 .0, control.1 .1.clone()),
+        (true, Some(Value::Bool(true))),
+        "control: the certified abbreviation of HEAD itself descends"
+    );
+    f.orphan_head();
+    git(&f.repo, &["branch", &short, "HEAD"]);
+    let (dev, protected) = (ask(&["--descends", &short]), ask(&["--lineage", &short]));
+    assert!(
+        !dev.0 && protected.1 == Some(Value::Bool(false)),
+        "ATTACK: a branch named like the certified revision's abbreviation made an orphan HEAD \
+         descend from it (--descends exit ok: {}, --lineage descends: {:?})",
+        dev.0,
+        protected.1
+    );
+}
+
 /// A linked worktree (a `.git` FILE): its lineage is still answered (history
 /// does not depend on which clone asks), but it is never described as a
 /// clean build tree — a verifier or guest image is built from a plain clone.
@@ -414,9 +501,9 @@ fn a_linked_worktree_passes_the_lineage_check_but_is_never_clean() {
     linked.script(&["--snapshot", snap.to_str().unwrap()], &[]);
     let p: Value = serde_json::from_slice(&std::fs::read(&snap).unwrap()).unwrap();
     assert!(
-        p["dirty"].as_array().is_some_and(|d| d
-            .iter()
-            .any(|r| r.as_str().is_some_and(|r| r.contains("gitfile")))),
+        p["dirty"].as_array().is_some_and(|d| d.iter().any(|r| r
+            .as_str()
+            .is_some_and(|r| r.contains("gitfile") || r.contains("linked worktree")))),
         "ATTACK: a gitfile naming a repository elsewhere was accepted as the build's tree: {p}"
     );
 }

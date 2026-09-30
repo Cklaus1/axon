@@ -824,6 +824,8 @@ fn production_build() -> &'static Path {
                 "axon-protected-launcher",
                 "--bin",
                 "axon-fabric",
+                "--bin",
+                "axon-custodian",
                 "--target-dir",
             ])
             .arg(&target)
@@ -895,57 +897,81 @@ fn a_production_fabric_never_lets_a_test_trust_helper_attest_protected() {
     );
 }
 
-/// A (M602), ROOT ONLY, PRODUCTION BUILD: the helper launches only when it
-/// is root in every id (installed setuid-root). Installed any other way (on
-/// a nosuid mount, or given file capabilities instead) it would run the
-/// launch as its CALLER's uid, which can then signal or trace it. Here the
-/// helper runs as the Fabric uid holding the capabilities it would need
-/// (lease, DAC override, chown, fowner), so nothing but the euid check
-/// stands in the way. The operator tree sits at the helper's FIXED config
-/// path, /etc/axon, on a tmpfs in a PRIVATE mount namespace: the host's /etc
-/// is never written.
-#[test]
-fn a_production_helper_that_is_not_root_launches_nothing() {
-    if skip_unless_root() {
-        return;
-    }
-    if !Path::new("/etc/axon").is_dir() {
-        eprintln!("skipped: no /etc/axon mount point (this test never creates one)");
-        return;
-    }
-    let bin = production_build().join("axon-protected-launcher");
-    let d = tempfile::tempdir_in("/var/tmp").unwrap();
-    let s = d.path();
-    set_mode(s, 0o755);
+/// The /etc/axon tree of a PRODUCTION helper and a PROTECTED custodian, built
+/// under `s/etc` (copied onto a tmpfs at /etc/axon inside a private mount
+/// namespace by [`in_production_etc`]): the helper's config, pinned inputs, a
+/// stand-in launcher, one launch's inputs (a manifest naming a nonce the
+/// custodian's store holds as issued for epoch 0, now), that manifest's
+/// genuine observation signed under the operator observer root, and the
+/// custodian's config (launcher_uid 0). Writes the request to
+/// `s/request.json`. `store_parent` is where the custodian's store sits,
+/// below /etc/axon.
+fn production_etc(s: &Path, store_parent: &str) {
+    let bin = production_build();
+    let t = s.join("etc");
+    std::fs::create_dir(&t).unwrap();
     let e = Path::new("/etc/axon");
-    let inputs = helper_inputs(s);
+    let inputs = helper_inputs(&t);
     std::fs::write(
-        s.join("manifest.json"),
+        t.join("manifest.json"),
         inputs.pin_manifest(&full_lx_manifest(&"cd".repeat(32))),
     )
     .unwrap();
     write_executable(
-        &s.join("launcher.sh"),
+        &t.join("launcher.sh"),
         "#!/bin/sh\n[ \"$1\" = \"--verify-result\" ] && exit 0\n\
          while [ $# -gt 0 ]; do case \"$1\" in --out) OUT=\"$2\"; shift 2;; *) shift;; esac; done\n\
          id -ru > \"$OUT/ruid\"\nexit 0\n",
         0o755,
     );
-    copy_executable(&bin, s.join("axon-protected-launcher"), 0o755);
-    let i = s.join("runs").join(INPUTS);
+    copy_executable(
+        bin.join("axon-protected-launcher"),
+        s.join("axon-protected-launcher"),
+        0o755,
+    );
+    copy_executable(bin.join("axon-custodian"), s.join("axon-custodian"), 0o755);
+    let nonce = "0123456789abcdef0123456789abcdef";
+    let manifest = serde_json::to_vec(&test_launch_manifest("op-1", nonce)).unwrap();
+    let observer = Issuer::generate();
+    observer.trust_in(&t.join("observer"), "obs");
+    let observation =
+        serde_json::to_vec(&observation_of(&manifest, &observer.key_id(), 0)).unwrap();
+    let i = t.join("runs").join(INPUTS);
     for (sub, name, body) in [
-        ("candidate", "f.ax", "fn f() -> i64 { 1 }\n"),
-        ("check", "accept.ax", "// suite\n"),
-        ("job", "launch-manifest.json", "{}"),
+        ("candidate", "f.ax", b"fn f() -> i64 { 1 }\n".as_slice()),
+        ("check", "accept.ax", b"// suite\n".as_slice()),
+        ("job", "launch-manifest.json", manifest.as_slice()),
     ] {
         std::fs::create_dir_all(i.join(sub)).unwrap();
         std::fs::write(i.join(sub).join(name), body).unwrap();
     }
-    std::fs::create_dir_all(s.join("staging")).unwrap();
-    let pin = |p: &str| json!({"path": e.join(p), "sha256": sha256_file(&s.join(p))});
+    std::fs::write(i.join("job/completion-secret"), [7u8; 32]).unwrap();
+    set_mode(&i.join("job/completion-secret"), 0o400);
+    std::fs::create_dir_all(t.join("staging")).unwrap();
+    std::fs::create_dir_all(t.join("run")).unwrap();
+    let nonces = t.join(store_parent).join("nonces");
+    std::fs::create_dir_all(&nonces).unwrap();
+    let now = axon_fabric::backend::Clock::System.now_unix();
+    std::fs::write(
+        nonces.join(format!("{nonce}.issued")),
+        json!({"epoch": 0, "issued_unix": now}).to_string(),
+    )
+    .unwrap();
+    let socket = e.join("run/custodian.sock");
+    std::fs::write(
+        t.join("custodian.json"),
+        json!({
+            "schema": "axon-custodian/1",
+            "custodian_uid": CUSTODIAN, "fabric_uid": FABRIC, "launcher_uid": 0,
+            "socket": socket, "store": e.join(store_parent).join("nonces"), "max_age_s": 300,
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let pin = |p: &str| json!({"path": e.join(p), "sha256": sha256_file(&t.join(p))});
     let bash = bash_pin();
     std::fs::write(
-        s.join("protected-launcher.json"),
+        t.join("protected-launcher.json"),
         json!({
             "schema": "axon-protected-launcher/2",
             "fabric_uid": FABRIC,
@@ -959,12 +985,9 @@ fn a_production_helper_that_is_not_root_launches_nothing() {
             "staging_root": e.join("staging"),
             "max_timeout_s": 3600,
             "max_input_bytes": 1u64 << 30,
-            // Amendment 50. With the euid check removed, the launch still
-            // needs a PROTECTED custodian's spend, which it takes only from
-            // uid 0: this helper (euid FABRIC) could never spend one.
             "observer": {"root": e.join("observer"), "max_age_s": 300,
                          "host_signer_public_key": TEST_HOST_SIGNER},
-            "custodian": {"socket": e.join("run/custodian.sock"), "uid": 4244},
+            "custodian": {"socket": socket, "uid": CUSTODIAN},
         })
         .to_string(),
     )
@@ -982,27 +1005,47 @@ fn a_production_helper_that_is_not_root_launches_nothing() {
             "psv_manifest_sha256": sha256_file(&i.join("job/launch-manifest.json")),
             "policy_json": "{\"schema\":\"axon-vm-mmds/1\",\"allowed_effects\":[]}",
             "timeout_s": 60,
-            "observation": "",
-            "observation_signature": "",
+            "observation": String::from_utf8(observation.clone()).unwrap(),
+            "observation_signature": observer.sign_for(
+                axon_fabric::backend::TrustAuthority::Observer,
+                &observation,
+            ),
         })
         .to_string(),
     )
     .unwrap();
-    let caps = "+lease,+dac_override,+chown,+fowner";
+}
+
+/// Run `body` (sh, `$1` = `s`) in a private mount namespace where `s/etc` is
+/// /etc/axon (root-owned; runs the Fabric uid's, the custodian's store its
+/// uid's, 0700) and the PROTECTED custodian runs as its unit would start it:
+/// its socket bound by root and passed as fd 3 (`systemd-socket-activate`,
+/// which execs it on the first connection; mode 0666, the unit's
+/// `SocketMode=`, so the Fabric uid can reach it), the custodian itself as
+/// its uid.
+/// The custodian's stderr goes to `s/custodian.err`; it is stopped after
+/// `body`. The host's /etc is never written.
+fn in_production_etc(s: &Path, store_parent: &str, body: &str) {
+    let sock = "/etc/axon/run/custodian.sock";
     let script = format!(
         "set -e\n\
          mount -t tmpfs -o mode=0755 tmpfs /etc/axon\n\
-         cp -a \"$1/.\" /etc/axon/\n\
+         cp -a \"$1/etc/.\" /etc/axon/\n\
          chown -R 0:0 /etc/axon\n\
          chmod 0755 /etc/axon\n\
          chown -R {FABRIC}:{FABRIC} /etc/axon/runs\n\
          chmod 0700 /etc/axon/runs /etc/axon/staging\n\
+         chown -R {CUSTODIAN}:{CUSTODIAN} /etc/axon/{store_parent}/nonces\n\
+         chmod 0700 /etc/axon/{store_parent}/nonces\n\
+         {{ systemd-socket-activate -l {sock} setpriv --reuid={CUSTODIAN} \
+         --regid={CUSTODIAN} --clear-groups -- \"$1/axon-custodian\"; \
+         echo $? > \"$1/custodian.code\"; }} 2> \"$1/custodian.err\" &\n\
+         C=$!\n\
          set +e\n\
-         setpriv --reuid={FABRIC} --regid={FABRIC} --clear-groups --inh-caps={caps} \
-         --ambient-caps={caps} -- /etc/axon/axon-protected-launcher \
-         < /etc/axon/request.json > \"$1/report.json\"\n\
-         echo $? > \"$1/code\"\n\
-         cp -a /etc/axon/runs/op-1 \"$1/result\" 2>/dev/null\n\
+         n=0; while [ ! -S {sock} ] && [ $n -lt 200 ]; do sleep 0.05; n=$((n+1)); done\n\
+         chmod 0666 {sock}\n\
+         {body}\n\
+         pkill -f \"$1/axon-custodian\" 2>/dev/null; wait $C 2>/dev/null\n\
          exit 0\n"
     );
     let st = Command::new("unshare")
@@ -1011,8 +1054,60 @@ fn a_production_helper_that_is_not_root_launches_nothing() {
         .status()
         .unwrap();
     assert!(st.success(), "setup: the namespace script failed");
-    let code = std::fs::read_to_string(s.join("code")).unwrap_or_default();
-    let rep = std::fs::read_to_string(s.join("report.json")).unwrap_or_default();
+}
+
+/// A (M602), ROOT ONLY, PRODUCTION BUILD: the helper launches only when it
+/// is root in every id (installed setuid-root). Installed any other way (on
+/// a nosuid mount, or given file capabilities instead) it would run the
+/// launch as its CALLER's uid, which can then signal or trace it. Here the
+/// helper runs as the Fabric uid holding the capabilities it would need
+/// (lease, DAC override, chown, fowner), with everything else a launch needs
+/// GENUINE (C9 round 3, rows): the snapshot's launch manifest, its
+/// observation signed under the operator observer root, and a PROTECTED
+/// custodian (the production `axon-custodian`, socket-activated as its own
+/// uid) holding the manifest's nonce. Two checks then stand in the way, each
+/// alone: this euid check (M602) and the custodian's rule that only the
+/// launcher uid, which its config must set to 0 (M640), spends a nonce
+/// (M628). Control: the same launch (its inputs put back, as the Fabric uid
+/// can always rebuild them) through the helper installed setuid-root runs,
+/// so the fixture reaches a real launch.
+#[test]
+fn a_production_helper_that_is_not_root_launches_nothing() {
+    if skip_unless_root() {
+        return;
+    }
+    if !Path::new("/etc/axon").is_dir() {
+        eprintln!("skipped: no /etc/axon mount point (this test never creates one)");
+        return;
+    }
+    let d = tempfile::tempdir_in("/var/tmp").unwrap();
+    let s = d.path();
+    set_mode(s, 0o755);
+    production_etc(s, "custodian");
+    let caps = "+lease,+dac_override,+chown,+fowner";
+    in_production_etc(
+        s,
+        "custodian",
+        &format!(
+            "setpriv --reuid={FABRIC} --regid={FABRIC} --clear-groups --inh-caps={caps} \
+             --ambient-caps={caps} -- \"$1/axon-protected-launcher\" \
+             < \"$1/request.json\" > \"$1/report.json\"\n\
+             echo $? > \"$1/code\"\n\
+             cp -a /etc/axon/runs/op-1 \"$1/result\" 2>/dev/null\n\
+             rm -rf /etc/axon/runs/op-1 /etc/axon/runs/{INPUTS}\n\
+             cp -a \"$1/etc/runs/{INPUTS}\" /etc/axon/runs/\n\
+             chown -R {FABRIC}:{FABRIC} /etc/axon/runs/{INPUTS}\n\
+             cp \"$1/axon-protected-launcher\" /etc/axon/h\n\
+             chown 0:{FABRIC} /etc/axon/h\n\
+             chmod 04750 /etc/axon/h\n\
+             setpriv --reuid={FABRIC} --regid={FABRIC} --clear-groups -- \
+             sh -c 'exec /etc/axon/h' < \"$1/request.json\" > \"$1/control.json\"\n\
+             echo $? > \"$1/control.code\"\n\
+             cp -a /etc/axon/runs/op-1 \"$1/control\" 2>/dev/null"
+        ),
+    );
+    let read = |n: &str| std::fs::read_to_string(s.join(n)).unwrap_or_default();
+    let (code, rep, cust_err) = (read("code"), read("report.json"), read("custodian.err"));
     let ruid = std::fs::read_to_string(s.join("result/ruid")).ok();
     assert!(
         ruid.is_none() && code.trim() == "30",
@@ -1020,7 +1115,84 @@ fn a_production_helper_that_is_not_root_launches_nothing() {
          with ruid {ruid:?}, which the caller can signal or trace): exit {} {rep}",
         code.trim()
     );
-    assert!(rep.contains("not 0"), "the refusal names the euid: {rep}");
+    // Refused by the euid check (M602) or, with it removed, by the protected
+    // custodian refusing a spend from a uid other than 0 (M628): either
+    // reason (four-cell record, C9 round 3). Any OTHER refusal means the
+    // fixture did not reach the spend, and proves nothing.
+    assert!(
+        rep.contains("not 0") || rep.contains("is not the launcher uid 0"),
+        "the refusal is the euid's or the protected custodian's spend rule: {rep} \
+         (custodian: {cust_err})"
+    );
+    assert_eq!(
+        (
+            read("control.code").trim(),
+            read("control/ruid").trim().to_string()
+        ),
+        ("0", "0".to_string()),
+        "control: the setuid-root helper launches as root: {} (custodian: {cust_err})",
+        read("control.json")
+    );
+}
+
+/// The PROTECTED custodian's store must sit where the operator put it: every
+/// directory above it root-owned and not group/other-writable (the store
+/// itself is the custodian's own, checked by `check_store`). A store in a
+/// directory the Fabric uid owns could be renamed away and replaced with one
+/// holding nonces nobody issued (C9 round 3, rows; M641). It was checked by
+/// listing the parent's ENTRIES too, which refused every correctly deployed
+/// store (the store is the custodian's uid's): no protected custodian could
+/// start. Control: the same custodian with an operator-owned parent serves.
+#[test]
+fn a_protected_custodian_serves_only_from_a_store_the_operator_placed() {
+    if skip_unless_root() {
+        return;
+    }
+    if !Path::new("/etc/axon").is_dir() {
+        eprintln!("skipped: no /etc/axon mount point (this test never creates one)");
+        return;
+    }
+    // A client as the Fabric uid: one issue request, the reply to `$1/<n>`.
+    let ask = |n: &str| {
+        format!(
+            "setpriv --reuid={FABRIC} --regid={FABRIC} --clear-groups -- python3 -c '\n\
+             import socket, sys\n\
+             s = socket.socket(socket.AF_UNIX)\n\
+             s.settimeout(20)\n\
+             s.connect(\"/etc/axon/run/custodian.sock\")\n\
+             s.sendall(b\"{{\\\"schema\\\":\\\"axon-custodian-request/1\\\",\\\"op\\\":\\\"issue\\\",\\\"epoch\\\":0}}\\n\")\n\
+             sys.stdout.write(s.recv(4096).decode())\n\
+             ' > \"$1/{n}\" 2>/dev/null"
+        )
+    };
+    for (parent, agent_owned) in [("agent", true), ("custodian", false)] {
+        let d = tempfile::tempdir_in("/var/tmp").unwrap();
+        let s = d.path();
+        set_mode(s, 0o755);
+        production_etc(s, parent);
+        let own = if agent_owned {
+            format!("chown {FABRIC}:{FABRIC} /etc/axon/{parent}\n")
+        } else {
+            String::new()
+        };
+        in_production_etc(s, parent, &format!("{own}{}", ask("reply.json")));
+        let reply = std::fs::read_to_string(s.join("reply.json")).unwrap_or_default();
+        let err = std::fs::read_to_string(s.join("custodian.err")).unwrap_or_default();
+        if agent_owned {
+            assert!(
+                !reply.contains("\"ok\":true"),
+                "ATTACK: a protected custodian served from a store whose parent the Fabric uid \
+                 owns: {reply}"
+            );
+            assert!(err.contains("not root"), "{err}");
+        } else {
+            assert!(
+                reply.contains("\"ok\":true") && reply.contains("\"mode\":\"protected\""),
+                "control: the protected custodian serves from an operator-placed store: {reply} \
+                 ({err})"
+            );
+        }
+    }
 }
 
 // ── Amendment 50: the observation and its nonce, at the ROOT boundary ───────
