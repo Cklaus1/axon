@@ -1360,3 +1360,26 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       `/etc/axon/protected-host.json` and the `observer` and `custodian` sections to
       `/etc/axon/protected-launcher.json` (the helper's config schema is now `/2`); run
       `trust_root_preflight.sh` in protected mode with `--custodian` set to the custodian user.
+
+51. **Every row is killed by its own attack, or retired against a named sibling; two defects the
+    rows wave found (C9 round 3).** The full mutation run at `1084ed1c` left 15 rows that were not
+    killed by their own attack (9 refused elsewhere, 2 survivors, 4 unapplied). None was counted.
+    - **Re-attacked (the guard is still the only guard).** M72 (a `return` escaping a candidate
+      predicate through an operator helper); M194/M201/M204 (the direct route, where no privileged
+      helper re-verifies the observation); M310 (a library-composed protected host with a launcher
+      Fabric runs itself); M284 (the development lineage under the caller's `GIT_DIR`).
+    - **Re-anchored on the guard's current form.** M218/M230, M270 and M576.
+    - **Retired EQUIVALENT_DID** (four-cell records, all-paths argument in `EQUIV_RECORD`; never
+      counted as killed): M186 (vs M606 + M620), M286 and M459 (vs the hashed ancestry walk M581),
+      M453 (vs the common-dir rule M580), and M602 (vs the custodian spend rule M628). The
+      `launcher_uid == 0` half of M602's guard became its own row, M640.
+    - **Defect: a protected custodian could never start.** Its store-parent check listed the
+      parent's entries, and the custodian-owned store is one of them. The rule is now the parent
+      CHAIN only (`backend::check_operator_chain`). Row M641; matrix A83. M602's test now drives the
+      production helper against the production, socket-activated custodian.
+    - **Defect: a ref answered the lineage** (matrix A85, row M642). `descends` resolved the
+      revision with `git rev-parse`, which prefers a ref to an abbreviated hash. A branch named like
+      the certified abbreviation made an orphan HEAD descend. `git_data::object_named` now resolves
+      by object name only, and refuses a ref name, an ambiguous prefix and a prefix naming nothing.
+      This is the same class as A80: the repository under review must not choose which object a
+      certified name means.
