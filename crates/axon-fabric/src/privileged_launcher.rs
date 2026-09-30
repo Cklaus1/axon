@@ -558,7 +558,7 @@ fn copy_tree(src: RawFd, dst: &Path, owner: u32, budget: &mut u64) -> Result<(),
                 if size > *budget {
                     return Err("the psv inputs exceed max_input_bytes".into());
                 }
-                *budget -= size;
+                *budget = budget.saturating_sub(size);
                 use std::os::unix::fs::OpenOptionsExt;
                 let mode = if st.st_mode & 0o111 != 0 {
                     0o755

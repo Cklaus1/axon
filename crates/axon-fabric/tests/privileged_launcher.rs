@@ -386,18 +386,18 @@ fn a_non_root_fabric_reaches_a_root_launch_only_through_the_helper() {
     assert!(rep.is_null() && !f.launched());
     // The Fabric uid, through the helper: a root launch.
     let (code, rep) = f.run(&f.request("op-1"), Some((FABRIC, &[])));
-    assert_eq!(code, Some(0), "{rep}");
     let out = f.out_root.join("op-1");
-    let ruid = std::fs::read_to_string(out.join("ruid")).unwrap();
-    let e = std::fs::read_to_string(out.join("euid")).unwrap();
-    assert_eq!(e.trim(), "0", "the launcher ran as root");
+    let ruid = std::fs::read_to_string(out.join("ruid")).unwrap_or_default();
     assert_eq!(
         ruid.trim(),
         "0",
-        "ATTACK: the launcher ran with the caller's real uid {}: the non-root caller could \
-         signal or trace the root launch",
+        "ATTACK: the launcher ran with the caller's real uid (ruid {:?}, not 0): the non-root \
+         caller could signal or trace the root launch, and bash drops a setuid euid to it",
         ruid.trim()
     );
+    assert_eq!(code, Some(0), "{rep}");
+    let e = std::fs::read_to_string(out.join("euid")).unwrap();
+    assert_eq!(e.trim(), "0", "the launcher ran as root");
     use std::os::unix::fs::MetadataExt;
     for p in walk(&out) {
         assert_eq!(

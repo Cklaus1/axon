@@ -613,7 +613,8 @@ mod tests {
         let p = d.path().join("launcher.sh");
         let mut pin = write_exec(&p, "#!/bin/sh\necho hi\n");
         pin.sha256 = "0".repeat(64);
-        let why = open_verified(&pin, Some(euid()), Lease::IfGranted).unwrap_err();
+        let why = open_verified(&pin, Some(euid()), Lease::IfGranted)
+            .expect_err("ATTACK: bytes other than the pin were verified for exec");
         assert!(why.contains("not its pin"), "{why}");
     }
 }
