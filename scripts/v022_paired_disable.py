@@ -162,6 +162,17 @@ def full_suite_ok(pkg, flags="", env=""):
     # Both libtest formats: `name ... FAILED` and, under -q, `name --- FAILED`.
     fails = sorted(set(_re.findall(r"^\s*(\S+)\s+(?:\.\.\.|---)\s+FAILED", out, _re.M)))
     ok = (r.returncode == 0 and "test result: FAILED" not in out)
+    if not ok:
+        # Keep the failing cell's whole output: a failure that does not
+        # reproduce is diagnosable only from the panic it actually printed.
+        import hashlib as _h
+        d = "/var/tmp/pd-cells"
+        os.makedirs(d, exist_ok=True)
+        tag = _h.sha256((pkg + flags + env + out).encode()).hexdigest()[:12]
+        path = os.path.join(d, f"{pkg}-{tag}.log")
+        with open(path, "w") as fh:
+            fh.write(out)
+        print(f"    cell output kept: {path}", flush=True)
     return ok, fails
 
 
