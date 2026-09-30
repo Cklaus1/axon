@@ -1092,3 +1092,89 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       which takes `--test-config`); decide whether the out root and the staging root may share a filesystem with anything
       else; and the compiled-launcher follow-up above if the operator wants the script's tools out
       of the TCB.
+
+50. **The observation nonce belongs to a CUSTODIAN, and the root helper launches only on its one
+    observation (operator decision D6; C9 round 3, custodian workstream; PSV-6 findings "there is
+    no separate custodian" and "the setuid-root helper launches without any observation").**
+    Negative-matrix A83-A84; mutation rows M620-M638. Supersedes the nonce parts of §7, of
+    amendment 35 (A56's `nonce_store` leaf) and of amendment 45's helper description; §2's
+    example `observer.nonce_store` is superseded by `observer.custodian`.
+    - **Before.** Fabric issued the nonce (its own RNG), stored it (a Fabric-owned 0700
+      `nonce_store`, which a protected host REQUIRED to be Fabric's: `service_leaf`) and spent it
+      (`observe`). "Used once" was enforced by the principal the observation constrains. The
+      setuid-root helper's request carried no observation, so the Fabric uid could launch any
+      number of times for one observed manifest, or with none.
+    - **The custodian (`axon-custodian`, a bin of `axon-fabric`; `custodian.rs`).** Its own uid,
+      socket-activated by systemd (example units in `profiles/protected-host/systemd/`, config
+      example `profiles/protected-host/custodian.json.example`; nothing is installed). It reads
+      only `/etc/axon/custodian.json` (`axon-custodian/1`: `custodian_uid`, `fabric_uid`,
+      `launcher_uid`, `socket`, `store`, `max_age_s`), walked from `/` operator-owned by the same
+      reader as the helper's config. A protected start refuses: a custodian uid equal to the
+      Fabric's or 0, a Fabric uid 0, a spender (`launcher_uid`) other than 0; running as another
+      uid than `custodian_uid`; a store that is not its own 0700 directory, or whose parent chain
+      is not the operator's; no systemd activation (`LISTEN_PID`/`LISTEN_FDS`), or an activated
+      socket at another path. Callers are authenticated by `SO_PEERCRED`: `issue` (a fresh
+      128-bit nonce bound to an epoch) only for `fabric_uid`; `spend` only for `launcher_uid`,
+      and a nonce spends once (the existing atomic rename, now inside the custodian's store; the
+      `.used` record then names the manifest it was spent for). Clients authenticate the custodian
+      the same way: the socket's listener must be the custodian uid, or root (systemd binds an
+      activated listener, so `SO_PEERCRED` on the client side reports PID 1). Every reply states
+      the custodian's mode: `protected`, `test` (a test-trust build's `--test-config`) or `dev`.
+    - **DEV.** `axon-custodian --dev --socket P --store D` is a manual launch that binds its own
+      socket and answers `mode: dev`; Fabric may also keep an in-process store in development
+      (`Custodian::InProcess`). Neither ever yields a protected launch: the helper refuses a dev
+      custodian's spend, and it spends only through the custodian ITS operator config names,
+      which never issued an in-process nonce.
+    - **Fabric.** The host config's `observer` section names `custodian: {socket, uid}`; a
+      `nonce_store` there is refused. `ProtectedHost::operator` refuses a custodian uid equal to
+      Fabric's euid or 0; the socket's directory is ownership-walked like `out_root`'s parent.
+      Fabric holds only a client: it is ISSUED the nonce and puts it in the manifest; the
+      observation is verified as before (an early check, so the root helper is never asked to
+      launch on an observation Fabric can already refuse), but Fabric spends NOTHING. The
+      decision: the spend moves entirely to the root boundary. A Fabric spend first would leave
+      the helper nothing to spend unless the record had a second state, and a check performed by
+      the constrained principal proves nothing to the boundary that must hold against it; the
+      custodian refuses a Fabric spend outright (`launcher_uid`). The direct (development) route
+      has no root boundary, never counts (amendment 45), and spends nothing.
+    - **The helper (replaces amendment 45's request and config bullets).** Request
+      `axon-protected-launch-request/2` adds `observation` (the exact bytes Fabric verified) and
+      `observation_signature`; config `axon-protected-launcher/2` adds `observer: {root,
+      max_age_s, host_signer_public_key}` and `custodian: {socket, uid}` (a uid equal to the
+      Fabric's or 0 is refused). After the inputs are snapshotted into the root-private staging
+      dir, and before the out dir exists, the helper: requires the snapshot's
+      `job/launch-manifest.json` to have the request's `psv_manifest_sha256`; verifies the
+      observation with `observer::verify_observation`, the ONE function Fabric's `observe` also
+      uses (observer root operator-walked, key-role separation including the host signer,
+      observer-domain signature, signer = claimed key, field-for-field join to that manifest and
+      digest, freshness); then spends the manifest's nonce through the configured custodian with
+      the observation's epoch, as root. Only a protected custodian's spend (a test custodian's
+      inside a test-trust helper) authorizes the launch. Any failure: exit 30, nothing launched.
+      `helper_agrees` holds the helper's custodian and host signer to the host config's.
+    - **Where this meets the epoch workstream.** The epoch the helper joins is the observation's,
+      checked by the custodian against the epoch the nonce was issued for, which is the
+      `expected_epoch` Fabric was given. When the launch manifest gains the authority epoch and
+      scope (the loop workstream), `verify_observation`'s join and the helper's snapshot manifest
+      carry it with no change here; the helper should then also require `o.epoch` to equal the
+      manifest's epoch (one line in `verify_observation_at_root`).
+    - **Trust preflight.** `axon-fabric protected-host-paths` lists the custodian's config
+      (operator file), its store and socket, and its three uids; `trust_root_preflight.sh`
+      requires the custodian actor to be the config's `custodian_uid`, separate from the Fabric's
+      and not root, issuing to the `--fabric` uid and spending for root; the store to be the
+      custodian's own 0700 directory that the custodian can create in and the Fabric, the verifier
+      and every agent cannot (create or chmod); and the socket directory to be the operator's.
+    - **Tests (each an ATTACK and a control).** One observation replayed for a second helper
+      launch (and in the real guest boot test); a helper launch with no observation, a minted
+      one, or one signed with the host signer; an observation of another manifest, and a snapshot
+      other than the named manifest; a Fabric-served custodian socket (root); Fabric writing the
+      custodian's store, and a store the Fabric owns (root); a non-Fabric uid issued a nonce and
+      a Fabric spend (root and unit); a dev custodian and an in-process Fabric nonce never
+      launching; config and host rules. Existing rows M196 (the custodian's spend), M292 (the
+      socket directory is the operator's) and M325 (the store is private) are re-pointed to the
+      guards that replace theirs; M291/M324/M326/M327 follow their renamed tests.
+    - **Operator deployment this adds (PROTECTED_ONLY).** Create a custodian system user (its own
+      uid and group, no login); install the production `axon-custodian` (root-owned, pinned like
+      every authority program), `/etc/axon/custodian.json` (root-owned 0644), and the two systemd
+      units; enable the socket; add the `observer.custodian` section to
+      `/etc/axon/protected-host.json` and the `observer` and `custodian` sections to
+      `/etc/axon/protected-launcher.json` (the helper's config schema is now `/2`); run
+      `trust_root_preflight.sh` in protected mode with `--custodian` set to the custodian user.
