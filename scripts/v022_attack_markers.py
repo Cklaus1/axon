@@ -633,3 +633,13 @@ ATTACK_MARKERS.update({
     'M498': r'ATTACK: the PSV runner is launched outside `env -i` \+ axon-guest-init: exec env PATH=',
     'M499': r'workload must be exec.d inside `env -i`: exec env PATH=',
 })
+# C9 round 3, workstream CORE (M560-M569; amendment 46).
+ATTACK_MARKERS.update({
+    'M560': r'ATTACK: sealed handler answered operator code: the candidate.s arm aborted the operator.s listener at its println \(t_abort\)',
+    'M561': r'ATTACK: sealed handler answered operator code: the candidate.s multi-shot replay fed the operator.s read_file \(t_replay\)',
+    'M562': r'ATTACK: sealed handler answered operator code: the candidate.s arm aborted the operator.s listener through a candidate call \(t_through\)',
+    'M563': r'ATTACK: the candidate steered the operator.s challenge by calling its closure five times: Ok\(Completed\)',
+    'M564': r'ATTACK: a test that ended early at `\?` was counted complete \(t_solve\): Ok\(Completed\)',
+    'M565': r'ATTACK: a test that ended early at `\?` was counted complete \(t_solve\): Ok\(Completed\)',
+    'M566': r'ATTACK: a fn declared -> Result returned a None across its boundary: Ok\(EndedEarly',
+})

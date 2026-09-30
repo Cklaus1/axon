@@ -1092,3 +1092,60 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       which takes `--test-config`); decide whether the out root and the staging root may share a filesystem with anything
       else; and the compiled-launcher follow-up above if the operator wants the script's tools out
       of the TCB.
+46. **Sealed code acts only on its own operations; a test completes only when its body ran to its
+    end (C9 round 3, core workstream; PSV-1 and PSV-3 blockers).**
+    - **PSV-1, handlers.** A candidate's `with handler` answered builtins that the OPERATOR's code
+      performed: a closure the suite handed the candidate, called inside the candidate's `with`.
+      The arm aborted the operator's listener at its `println` (the assert never ran), or resumed
+      its `read_file` with bytes the candidate chose. Both gave a keyed pass for a wrong answer
+      through the real runner. The rule now lives in one predicate, `Interp::handler_may_answer`:
+      a SEALED handler frame may answer or abort an operation only if no OPERATOR frame has been
+      entered since the frame was installed. Otherwise the search goes on outward to an operator
+      frame, or the real builtin runs. `with_frame` is the only place provenance changes, and it
+      counts active frames of each provenance, so the check is exact. It covers a third route the
+      review did not execute: the operator's listener calls a CANDIDATE function, and the
+      candidate's outer handler aborts at that function's `println`. The operation is sealed, but
+      the abort would unwind through operator code. A check on "is the operation's frame sealed"
+      misses that route (row M562 is killed by exactly it). The same predicate gates the
+      multi-shot replay feed. A sealed arm's `resume(v)` is never the result of an operator
+      operation during the replay: that operation cannot be re-fired, so it is E1314. An operator
+      handler still answers anything, including an operation candidate code performs inside it.
+      The candidate's handler still answers the candidate's own operations. `run_handler_arm` is
+      the one frame-selection point; `host_await*` and every effectful builtin reach it through
+      the same interception in `call_builtin`. No other code selects a frame.
+    - **PSV-1, RNG.** Operator code that runs ABOVE a sealed frame is refused the operator RNG
+      (`Interp::rng_next` and `rng_reseed`, the only draw and reseed paths). Examples are a closure
+      the suite handed the candidate, or an operator handler arm answering a candidate operation.
+      The run fails with a clear error. The candidate decides how many times such code runs, so a
+      draw there would advance the operator's stream by a count the candidate chose, and steer
+      the operator's next challenge (review run3.log: 652 after one call, 125 after five). We
+      REFUSE rather than give that code a third stream. A third stream is still advanced by
+      call count, so what the closure draws stays candidate-scheduled. A refusal is fail-closed
+      and visible to the suite author, who can draw before handing code to the candidate. The
+      candidate's own draws (sealed kernel) and the operator's draws with no sealed frame below
+      them are unchanged. The superseded note is PCI spec row 10's "a closure the suite hands to
+      the candidate runs under the candidate's handlers by the suite's own choice". A closure the
+      suite hands over still runs where the candidate calls it, but candidate handlers no longer
+      reach it and it cannot draw the operator RNG. The PCI spec is not edited here.
+    - **PSV-3.** `run_test_fn_inner` decided Completed from the returned value's tag. `?` on a
+      type-confused `None` returns `None`, which is not `Err`, so it read as a completion and a
+      genuine token was minted. The single source is now whether the TEST frame's body evaluated
+      to its end. `call_fn_frame` records it for the test's depth. Any `Flow::Return` there, from
+      `?` or `return`, whatever it carries, is EndedEarly and gets no token. This is stricter
+      than before for an explicit `return` in a test body: `axon test` still reports it as
+      passing, but it no longer carries completion evidence. The confusion itself is closed where
+      it is cheap and sound. A `fn` declared `-> Result` that returns `Some`/`None`, or one
+      declared `-> Option` that returns `Ok`/`Err`, panics at its return boundary. The review's
+      exact candidate now FAILS on that confusion.
+    - **Language follow-up (not fixed here).** `dict_get`, `dict_get_or` and `host_await_val`
+      return a free type variable, so a stored value of any type unifies with any use. A closure
+      has no declared return type at run time, so the boundary check does not cover it. Through a
+      closure, the completion rule above is the only guard, and a test pins it
+      (`a_test_ended_by_question_mark_is_never_completed`). The fix belongs in the type system:
+      typed dicts, or a runtime tag check against the inferred type.
+    - **Rows.** M560 (the frame-selection filter), M561 (the replay feed), M562 (counting operator
+      frames rather than reading the current provenance), M563 (the RNG refusal), M564/M565 (the
+      completion decision and the flag it reads), M566 (the return-boundary check). Negative matrix
+      A76 and A77. The guest image must be REBUILT to carry the new interpreter; its scripts and
+      runner are unchanged.
+
