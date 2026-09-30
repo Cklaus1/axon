@@ -10,7 +10,7 @@ guards from the CODE instead of trusting the list.
 
 A refusal site is a non-test line in a PROTECTED file matching SITE
 (`return Err(`, `Err(format!`, `refuse(`, `Err(bad(`, or a read of
-`TEST_TRUST_BUILD`). Its guard block runs from the nearest opening
+`TEST_TRUST_BUILD`; a `use` declaration is not a read). Its guard block runs from the nearest opening
 condition above it (`if` / `else if` / `match` / a match arm), at most
 MAX_UP lines up, to the site itself. The site is COVERED when some row of
 the registry (ACTIVE or retired: a retired row is still reviewed, with its
@@ -39,7 +39,26 @@ PROTECTED = [
     "crates/axon-fabric/src/privileged_launcher.rs",
     "crates/axon-fabric/src/sealed_exec.rs",
     "crates/axon-fabric/src/bin/axon-protected-launcher.rs",
+    # C9 round 4 fix wave, rows2 (amendment 58): the custodian, its binary,
+    # readiness, the protected host config and the observer's nonce store.
+    "crates/axon-fabric/src/custodian.rs",
+    "crates/axon-fabric/src/bin/axon-custodian.rs",
+    "crates/axon-fabric/src/readiness.rs",
+    "crates/axon-fabric/src/protected_host.rs",
+    "crates/axon-fabric/src/observer.rs",
+    "crates/axon-psv/src/lib.rs",
 ]
+# Protected decision files NOT yet scanned, with the refusal sites that had
+# neither a row nor an exemption when they were last measured (amendment 58).
+# Printed on every run so the gap is visible; moving a file into PROTECTED is
+# how it closes.
+NOT_YET_SCANNED = {
+    "crates/axon-fabric/src/psv.rs": 2,
+    "crates/axon-psv/src/runner.rs": 4,
+    "crates/axon-loop-contracts/src/protected_evidence.rs": 9,
+    "crates/axon-loop/src/admission.rs": 18,
+    "crates/axon-loop/src/intake.rs": 27,
+}
 SITE = re.compile(r"return Err\(|\bErr\(format!|\brefuse\(|\bErr\(bad\(|TEST_TRUST_BUILD")
 OPENER = re.compile(r"^\s*(\}\s*else\s+if\b|if\b|match\b|let\s+\w+\s*=\s*if\b)|=>")
 MAX_UP = 10
@@ -91,9 +110,10 @@ EXEMPT = [
     (PL, "    if r.timeout_s == 0 || r.timeout_s > c.max_timeout_s {",
      "UNROWED, candidate: bounds the wall time of a root launch; the launcher applies its "
      "own ceiling (--timeout-s), not verified here. Left for a row with a launcher-side check"),
-    (PL, "    if r.policy_json.len() > MAX_POLICY {",
-     "bound on bytes copied to the staging dir; the whole request is already bounded to "
-     "MAX_REQUEST (256 KiB) at the read, so this only tightens a bound that exists"),
+    (PL, "    if bytes.len() > MAX_POLICY {",
+     "bound on the policy bytes copied to the snapshot: the read before it is already bounded "
+     "to MAX_POLICY + 1 bytes (`take`), so this refuses one byte more than a bound that exists; "
+     "and the bytes are then held to the manifest's policy_sha256 (PSV-6)"),
     (PL, "        if p.file_name() != Some(OsStr::new(leaf)) {",
      "UNROWED, candidate: the leaf name of each psv input; the snapshot opens the FIXED "
      "names candidate/check/job under the inputs dir whatever the request spells, so a "
@@ -138,6 +158,127 @@ EXEMPT = [
      "OS error reading stdin: nothing is launched (fails closed)"),
 ]
 
+# C9 round 4 fix wave, rows2 (amendment 58). Categories as above, plus: a site
+# whose condition a named row already mutates at another line (the removal is
+# the same), an arm that has no value to admit with, and a check that only
+# re-reports what the next statement refuses on the same input.
+CU = "crates/axon-fabric/src/custodian.rs"
+RD = "crates/axon-fabric/src/readiness.rs"
+PH = "crates/axon-fabric/src/protected_host.rs"
+OB = "crates/axon-fabric/src/observer.rs"
+PS = "crates/axon-psv/src/lib.rs"
+EXEMPT += [
+    (CU, "            if !plain_absolute(p) {",
+     "operator-authored fields of the operator-owned /etc/axon/custodian.json (read through "
+     "read_operator_file, the helper config's walk, M585-M589); and on the protected route the "
+     "socket must EQUAL the path systemd bound (M703), which is absolute"),
+    (CU, "    if m.file_type().is_symlink() || !m.is_dir() {",
+     "a symlink: lstat reports mode 0777 for every symlink on Linux, so the next check (no "
+     "group/other access, M325) refuses it; a non-directory owned by the custodian with mode 0600 "
+     "fails every issue and spend (creating or reading <store>/<nonce>.issued is ENOTDIR): fails "
+     "closed"),
+    (CU, '        return Err(format!("SO_PEERCRED: {}", std::io::Error::last_os_error()));',
+     "OS error from getsockopt: the connection is answered with a refusal (server) or refused "
+     "(client); no peer is assumed"),
+    (CU, "        if r.schema != REPLY_SCHEMA || Mode::parse(&r.mode).is_none() {",
+     "the reply comes from the authenticated custodian (peer uid, M626); `schema` is a version "
+     "tag, and a mode that does not parse is read as Dev, which launches nothing protected "
+     "(custodian_mode_launches accepts Protected, or Test in a test authority)"),
+    (CU, "        if r.schema != REQUEST_SCHEMA {",
+     "a version tag of a fixed-shape request (deny_unknown_fields) whose every field is judged on "
+     "its own: the op by name, the peer per op (M627, M628), the nonce by the store (M196), the "
+     "manifest as 64 hex"),
+    (CU, '            other => Err(format!("unknown op {other:?}")),',
+     "an unknown op changes no state and returns no nonce: admitted, it could only answer ok with "
+     "nothing, which neither client reads as a nonce (issue requires one) or sends (the helper "
+     "sends `spend` only)"),
+    (CU, '        return Err("fd 3 is not the activated socket".into());',
+     "fails closed: UnixListener::local_addr on a descriptor that is not a socket fails "
+     "(ENOTSOCK, 'activated socket:'), and a socket at another path is refused by M703"),
+    (PH, '        return Err(bad(format!("{ptr} is not absolute")));',
+     "pinned_paths authorizes nothing: it prints the preflight's probe list; load() refuses the "
+     "same relative path (M145) before anything runs"),
+    (PH, '    if v["schema"] != PROTECTED_HOST_SCHEMA {\n        return Err(bad(format!("schema is not {PROTECTED_HOST_SCHEMA}")));\n    }\n    let path_at',
+     "pinned_paths authorizes nothing (the probe list); load() refuses the same config (M764)"),
+    (RD, "        Err(e) => return Err(format!(\"{}: {e}\", path.display())),\n        Ok(_) => {}",
+     "OS error from lstat other than NotFound: the path is then walked by check_owned_from_pub and "
+     "read by read_regular, which fail on it; never read as the default"),
+    (RD, "                        if writable_by_me(&q) {",
+     "rowed where the same removal is made: M490 (the enclosing require_unwritable condition) and "
+     "M491 (writable_by_me's predicate), both killed on the production decision"),
+    (RD, "    if found != top {",
+     "dominated: `found` differs from `top` only when `top` holds no .git (discover returns the "
+     "first directory upward that does), and the next statement, refuse_config(&top), refuses "
+     "a top with no .git directory ('is not a git directory')"),
+    (RD, '        return Err(format!("{component}: cannot list refs/replace/"));',
+     "serves the refs/replace/ refusal M285, retired EQUIVALENT: git runs with replacement objects "
+     "off (M385), so a replace ref never changes an answer"),
+    (RD, "    if !ok || grafts.is_empty() {",
+     "fails closed: without it an empty answer names `repo` itself as the grafts file, which "
+     "exists, and the graft refusal fires (the graft refusal M286 is itself retired EQUIVALENT)"),
+    (RD, '        return Err(format!("{component}: cannot read the index"));',
+     "serves the skip-worktree / assume-unchanged refusals M287/M288, retired EQUIVALENT: the "
+     "working tree is compared by its bytes (tree_differs, M290), never through the index"),
+    (RD, "    if !rec.exists() {",
+     "fails closed: read_once, the next read of the same path, fails on a missing record"),
+    (RD, '            return Err(format!("{component}: {k} is not a sha256"));',
+     "a format check on fields of the OPERATOR-SIGNED record (signature verified over these bytes, "
+     "M335); each is also compared for equality with a digest computed here (M695 spec, M349 "
+     "observation, M342 B263, M691 bundle, M149 verifier, M151 preflight, M344 guest), which a "
+     "non-hex value never equals"),
+    (RD, '            return Err(format!("{component}: {k} is not a full commit id"));',
+     "format check on fields of the operator-signed record (M335): axon_sha is then resolved by "
+     "descends (M696), fabric_revision joined to the observation (M341), micode_sha is "
+     "operator-attested by design (amendment 57)"),
+    (RD, '    if ["id", "version", "entry", "test", "digest"]',
+     "format check on the operator-signed record's suite (M335); each field is joined to the "
+     "launch manifest (M747)"),
+    (RD, "    if !ok {\n        return Err(format!(\n            \"{component}: cannot compare this tree",
+     "git's answers only ADD to the change set: whenever they add nothing (a failed git included), "
+     "the comparison from hash-checked objects runs (the certified and HEAD trees' entries, and "
+     "tree_differs over the filesystem, M290) and M697 refuses any difference"),
+    (RD, "    if !ok_staged || !ok_untracked {",
+     "as the `git diff` failure above: an empty answer leaves the hash-checked comparison (M290, "
+     "M697) to decide"),
+    (RD, '            return Err(format!("{component}: this tree has no HEAD commit"));',
+     "fails closed: an empty HEAD name makes Objects::entries fail"),
+    (RD, "        if !trust.key_ids(dir)?.iter().any(|k| k == s(field)) {",
+     "rowed where the same removal is made, per field: M338 drops the verifier_key_id entry of "
+     "this loop, M418 (retired EQUIVALENT, four-cell record) the observer_key_id entry"),
+    (RD, "        [] => Err(format!(",
+     "no document to admit with: an arm that let an empty match through would have to invent the "
+     "run's bytes"),
+    (RD, "        many => Err(format!(",
+     "rowed: M749's mutation (`[(_, _, b), ..] => Ok(b)`) is the removal of this arm"),
+    (RD, "    if b.schema != protected_evidence::PSV_EVIDENCE_SCHEMA {",
+     "a version tag inside the certified run document, which the operator-signed evidence bundle "
+     "digest binds (M691); its payload (manifest, verdict) is joined by digest to the attested "
+     "receipt (M742)"),
+    (PS, "    if doc.schema != GUEST_POLICY_SCHEMA {",
+     "a version tag of a fixed-shape document (deny_unknown_fields) already pinned by digest to "
+     "the launch manifest's policy_sha256 (the check before it), which the observation joins; "
+     "the tag selects nothing, only allowed_effects is read"),
+    (PS, "            Some(first) => Err(format!(",
+     "rowed where the same removal is made: M350 and M351 (each call of no_xattr) and M352 (the "
+     "predicate that selects `first`)"),
+    (PS, '    Err(format!(\n        "{shown}, whose extended attributes this platform cannot list"',
+     "compiled only for a unix that is not Linux (cfg): the guest and every protected host are "
+     "Linux; it fails closed where it exists"),
+    (PS, "        if self.schema != PREFLIGHT_OBSERVATION_SCHEMA {",
+     "a version tag of a fixed-shape document (deny_unknown_fields) whose observer-root signature "
+     "is verified over these bytes before joins is called (verify_observation; readiness's "
+     "attribution, M340); every fact it carries is then joined (M773, M774)"),
+    (OB, "            Err(_) if used.exists() => return Err(",
+     "no record to continue with: a mutation admitting here would have to invent the `.issued` "
+     "record, and the atomic rename of the missing `.issued` below fails ('already used')"),
+    (OB, '            Err(_) => return Err(format!("nonce {nonce} was never issued by this custodian")),',
+     "as above: no `.issued` record, and the rename below fails on it"),
+    (OB, '        return Err(format!("observer exited {:?}", status.code()));',
+     "the exit status adds no authority: whatever the observer left is read once and its "
+     "signature verified under the observer root (verify_observation), then joined to the "
+     "manifest; an observer that failed leaves nothing that verifies"),
+]
+
 
 def load_rows():
     spec = importlib.util.spec_from_file_location("mut", os.path.join(ROOT, "scripts/v022_g01_mutations.py"))
@@ -164,7 +305,8 @@ def sites(text):
     out = []
     for i, l in enumerate(lines):
         s = l.strip()
-        if s.startswith("//") or not SITE.search(l):
+        # A `use` declaration names TEST_TRUST_BUILD; it reads nothing.
+        if s.startswith("//") or s.startswith("use ") or not SITE.search(l):
             continue
         g = i
         for j in range(i, max(-1, i - MAX_UP - 1), -1):
@@ -225,6 +367,9 @@ def main():
             if hits == 0:
                 bad.append(f"{f}:{line + 1}: exemption matches no refusal site: {anchor!r}")
         print(f"{f}: {covered} covered by a row, {exempt} exempt")
+    for f, n in NOT_YET_SCANNED.items():
+        print(f"{f}: NOT YET SCANNED ({n} refusal sites had neither a row nor an exemption "
+              f"when measured; amendment 58)")
     for b in bad:
         print(f"BAD {b}")
     if bad:

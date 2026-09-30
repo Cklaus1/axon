@@ -673,26 +673,30 @@ fn bind_to_system_clock_and(c: &Certified, verifier: &std::path::Path) {
             .unwrap();
         String::from_utf8(o.stdout).unwrap().trim().to_string()
     };
+    // B263 issued, then the run observed, then certified, all in the past
+    // of the system clock (the record is current at both `observed_at` and
+    // now, A89): the run is launched again under the re-dated record, so the
+    // launch manifest names its digest (M745).
     let mut b = b263_record(&c.operator);
-    b["start"] = json!(utc(7200));
-    b["end"] = json!(utc(3600));
+    b["start"] = json!(utc(4 * 3600));
+    b["end"] = json!(utc(3 * 3600));
     write_signed_for(
         &c.operator,
         TrustAuthority::Qualification,
         &c.repo.join(B263),
         &b,
     );
-    let ev = "governance/proofs/v022-protected/run-evidence.md";
-    let evidence = [ev, PREFLIGHT, OBSERVATION, B263];
-    let (b_sha, bundle, v_sha) = (
-        sha(&c.repo.join(B263)),
-        bundle_of(&c.repo, &evidence),
-        sha(verifier),
+    let observed_at = utc(2 * 3600);
+    relaunch(
+        c,
+        keep(),
+        Box::new(move |o: &mut Value| o["observed_at"] = json!(observed_at)),
+        keep(),
     );
-    resign(c, &c.operator, |r| {
-        r["b263_qualification_sha256"] = json!(b_sha);
-        r["evidence_bundle_sha256"] = json!(bundle);
+    let v_sha = sha(verifier);
+    rebundle(c, |r| {
         r["readiness_verifier_sha256"] = json!(v_sha);
+        r["certified_at"] = json!(utc(3600));
     });
     c.commit("certification re-dated for the production decision (governance only)");
 }
@@ -702,9 +706,14 @@ fn bind_to_system_clock_and(c: &Certified, verifier: &std::path::Path) {
 /// installed at /etc/axon/trust/ (root-owned, 0755/0644) in a private mount
 /// namespace. Returns (the verdict as root, the verdict as uid 4242).
 fn production_verdicts(c: &Certified) -> (Value, Value) {
+    production_verdicts_by(c, std::path::Path::new(env!("CARGO_BIN_EXE_axon-fabric")))
+}
+
+/// [`production_verdicts`], decided by the `axon-fabric` build at `verifier`.
+fn production_verdicts_by(c: &Certified, verifier: &std::path::Path) -> (Value, Value) {
     let d = c._d.path();
     let bin = d.join("axon-fabric");
-    std::fs::copy(env!("CARGO_BIN_EXE_axon-fabric"), &bin).unwrap();
+    std::fs::copy(verifier, &bin).unwrap();
     std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
     bind_to_system_clock_and(c, &bin);
     let script = "set -e\n\
@@ -932,5 +941,200 @@ fn a_record_attributed_to_an_untrusted_observer_is_not_certified() {
         v.to_string()
             .contains("is not a key in the operator's observer root"),
         "{v}"
+    );
+}
+
+// ── C9 round 4 fix wave, ROWS2 (EQUIVALENCE (4); rows M760-M819) ────────────
+//
+// Refusal sites of readiness.rs that had neither a row nor an exemption
+// (`scripts/v022_refusal_coverage.py`, now scanning this file). Each is
+// attacked on the production decision.
+
+/// PRODUCTION builds of `axon-fabric` (no test-trust-root), once per test
+/// process: `(clean, dirty)`. Both are built from one copy of this
+/// workspace's tracked sources, as they are in the working tree, made a
+/// standalone clone of its own: `clean` with the copy committed (it reports
+/// `source_dirty: false`), `dirty` with one uncommitted file added
+/// (`source_dirty: true`). The copy keeps the sources' timestamps and the
+/// commit is deterministic, so a later process rebuilds only what changed.
+fn production_verifiers() -> &'static (std::path::PathBuf, std::path::PathBuf) {
+    use std::path::{Path, PathBuf};
+    use std::process::Command;
+    static V: std::sync::OnceLock<(PathBuf, PathBuf)> = std::sync::OnceLock::new();
+    V.get_or_init(|| {
+        let exe = PathBuf::from(env!("CARGO_BIN_EXE_axon-fabric"));
+        let base = exe
+            .parent()
+            .and_then(Path::parent)
+            .unwrap()
+            .join("rows2-production-verifier");
+        let (src, target) = (base.join("src"), base.join("target"));
+        let _ = std::fs::remove_dir_all(&src);
+        std::fs::create_dir_all(&src).unwrap();
+        let ws = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let st = Command::new("sh")
+            .args([
+                "-c",
+                "git -C \"$1\" ls-files -z -- Cargo.toml Cargo.lock rust-toolchain.toml .cargo \
+                 crates | tar -C \"$1\" --null -T - -cf - | tar -xpf - -C \"$2\"",
+                "sh",
+            ])
+            .arg(&ws)
+            .arg(&src)
+            .status()
+            .unwrap();
+        assert!(st.success(), "setup: copying the workspace sources failed");
+        let git = |args: &[&str]| {
+            let st = Command::new("git")
+                .current_dir(&src)
+                .env("GIT_AUTHOR_DATE", "2026-01-01T00:00:00Z")
+                .env("GIT_COMMITTER_DATE", "2026-01-01T00:00:00Z")
+                .args(["-c", "user.name=rows2", "-c", "user.email=rows2@invalid"])
+                .args(args)
+                .status()
+                .unwrap();
+            assert!(st.success(), "setup: git {args:?} failed");
+        };
+        git(&["init", "-q", "-b", "main"]);
+        git(&["add", "-A"]);
+        git(&["commit", "-q", "-m", "copy"]);
+        let build = |name: &str, dirty: bool| -> PathBuf {
+            let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
+            let out = Command::new(cargo)
+                .current_dir(&src)
+                .args([
+                    "build",
+                    "--offline",
+                    "-j",
+                    "4",
+                    "-p",
+                    "axon-fabric",
+                    "--bin",
+                    "axon-fabric",
+                    "--target-dir",
+                ])
+                .arg(&target)
+                .env_remove("CARGO_TARGET_DIR")
+                .env_remove("CARGO_BUILD_TARGET_DIR")
+                .output()
+                .unwrap();
+            assert!(
+                out.status.success(),
+                "setup: the production build failed: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+            let bin = base.join(name);
+            std::fs::copy(target.join("debug/axon-fabric"), &bin).unwrap();
+            let m = Command::new(&bin)
+                .arg("verifier-manifest")
+                .output()
+                .unwrap();
+            let v: Value = serde_json::from_slice(&m.stdout).unwrap();
+            assert!(
+                v["build"] == "production" && v["source_dirty"] == dirty,
+                "setup: not a {} production build: {v}",
+                if dirty { "dirty" } else { "clean" }
+            );
+            bin
+        };
+        let clean = build("clean-axon-fabric", false);
+        write(
+            &src.join("crates/axon-fabric/src/UNCOMMITTED.txt"),
+            "a change nobody committed\n",
+        );
+        let dirty = build("dirty-axon-fabric", true);
+        (clean, dirty)
+    })
+}
+
+/// PSV-7 (M769, M772, M773), ROOT ONLY, PRODUCTION BUILD: a production
+/// readiness verifier built from a DIRTY tree certifies nothing, even when
+/// the operator's record names exactly its bytes: which source it is cannot
+/// be told from its revision. And each build names itself in its verdict (the
+/// report's `build`, and the verifier's own identity, which the relay
+/// `scripts/protected_verifier_ready.py` requires to be `production`): a
+/// test-trust build never reports itself as a production one. Control: the
+/// production verifier built from the SAME sources committed certifies,
+/// through the same decision, so only the dirty build refuses.
+#[test]
+fn a_production_verifier_built_from_a_dirty_tree_certifies_nothing() {
+    if !can_mount_etc_axon() {
+        return;
+    }
+    let report = |bin: &std::path::Path| -> Value {
+        let o = std::process::Command::new(bin)
+            .args(["verify-readiness", "--repo", "/nonexistent"])
+            .output()
+            .unwrap();
+        serde_json::from_slice(&o.stdout).unwrap()
+    };
+    let r = report(std::path::Path::new(env!("CARGO_BIN_EXE_axon-fabric")));
+    assert_eq!(
+        r["verifier"]["build"], "test-trust",
+        "ATTACK: a test-trust verifier's identity names the production build: {r}"
+    );
+    assert_eq!(
+        r["build"], "test-trust",
+        "ATTACK: a test-trust verifier's report names the production build: {r}"
+    );
+    let (clean, dirty) = production_verifiers();
+    let r = report(clean);
+    assert!(
+        r["build"] == "production" && r["verifier"]["build"] == "production",
+        "control: a production verifier names itself so: {r}"
+    );
+    let Some(c) = certified() else { return };
+    let (_, v) = production_verdicts_by(&c, dirty);
+    assert_ne!(
+        v["status"], "PASS",
+        "ATTACK: a production verifier built from a dirty tree certified PASS: {v}"
+    );
+    assert!(v.to_string().contains("built from a dirty tree"), "{v}");
+    let Some(c) = certified() else { return };
+    let (_, v) = production_verdicts_by(&c, clean);
+    assert_eq!(
+        v["status"], "PASS",
+        "control: the production verifier built from the same sources committed certifies: {v}"
+    );
+}
+
+/// C9 round 1 class, production decision (M770), ROOT ONLY: a narrowing
+/// list the verifier cannot STAT is not read as absent. The repository names
+/// only a stranger as its qualification issuer; its directory is 0700 root,
+/// so the production verifier, running as uid 4242, gets EACCES on it. Read
+/// as absent, the narrowing would vanish and the operator's issuer be
+/// accepted. Control: the same list, readable, refuses the operator's issuer
+/// (the list is honoured), so only the stat error stands between the two.
+#[test]
+fn a_narrowing_list_the_verifier_cannot_stat_is_not_read_as_absent() {
+    if !can_mount_etc_axon() {
+        return;
+    }
+    let narrow = |c: &Certified| {
+        write(
+            &c.repo.join("governance/status/trust-expectations.json"),
+            &json!({"qualification_issuers": ["ed25519:ffffffffffffffff"]}).to_string(),
+        );
+        c.commit("narrow to a stranger");
+    };
+    let Some(c) = certified() else { return };
+    narrow(&c);
+    std::fs::set_permissions(
+        c.repo.join("governance/status"),
+        std::fs::Permissions::from_mode(0o700),
+    )
+    .unwrap();
+    let (_, v) = production_verdicts(&c);
+    assert_ne!(
+        v["status"], "PASS",
+        "ATTACK: a narrowing list the verifier could not stat was read as absent: {v}"
+    );
+    assert!(v.to_string().contains("Permission denied"), "{v}");
+    let Some(c) = certified() else { return };
+    narrow(&c);
+    let (_, v) = production_verdicts(&c);
+    assert!(
+        v.to_string().contains("not one this repository expects"),
+        "control: the readable list is honoured: {v}"
     );
 }
