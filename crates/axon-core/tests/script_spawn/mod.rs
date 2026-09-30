@@ -475,3 +475,184 @@ pub fn spawn_violations(src: &str) -> Vec<String> {
     }
     out
 }
+
+// ── the workspace binaries a test executes directly ────────────────────────
+
+/// A workspace binary that a test EXECUTES but whose crate this test's cargo
+/// run does not build (the `axon` interpreter from axon-psv, axon-fabric,
+/// axon-cortex, axon-os and axon-intent tests; the `cortex` CLI; `axon-os`),
+/// as cargo has made it current for THIS tree.
+///
+/// It used to be whatever `$AXON_BIN` or `<target>/debug/<name>` held:
+/// `cargo test -p axon-psv` never rebuilds axon-core, so after a merge the
+/// PSV-1 attack test ran an interpreter that predated the fix and PASSED THE
+/// ATTACK (C9 round 4, integration). Now:
+/// * a binary named in `var` (the mutation and paired-disable harnesses name
+///   the interpreter they just built) is used only if it is at least as new as
+///   every source file cargo would rebuild it from (the package and its
+///   workspace path dependencies, and Cargo.lock); a stale one is REFUSED;
+/// * otherwise the test BUILDS it: `cargo <build>` into
+///   `<this test's target dir>/workspace-bins`, and runs exactly the file that
+///   build left (cargo rebuilds whatever changed), never one that merely sits
+///   in a target dir.
+pub fn workspace_bin(var: &str, build: &[&str], name: &str) -> PathBuf {
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+    let pkg = build
+        .iter()
+        .position(|a| *a == "-p")
+        .and_then(|i| build.get(i + 1))
+        .copied()
+        .unwrap_or_else(|| panic!("workspace_bin: {build:?} names no -p package"));
+    if let Some(p) = std::env::var_os(var) {
+        let p = PathBuf::from(p);
+        assert!(p.is_file(), "{var}={} is not a file", p.display());
+        let stale = stale_against_sources(&p, pkg);
+        assert!(
+            stale.is_none(),
+            "refused: {var}={} is older than {} -- it was not built from this tree \
+             (rebuild it: cargo {})",
+            p.display(),
+            stale.unwrap_or_default(),
+            build.join(" ")
+        );
+        return p;
+    }
+    static BUILT: Mutex<Option<HashMap<String, PathBuf>>> = Mutex::new(None);
+    let key = format!("{} => {name}", build.join(" "));
+    let mut built = BUILT.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(p) = built.get_or_insert_with(HashMap::new).get(&key) {
+        return p.clone();
+    }
+    // <target>/<profile>/deps/<this test> -> <target>
+    let exe = std::env::current_exe().unwrap();
+    let target = exe
+        .ancestors()
+        .nth(3)
+        .expect("this test's target dir")
+        .join("workspace-bins");
+    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
+    let o = Command::new(&cargo)
+        .args(build)
+        .arg("-q")
+        .current_dir(repo_root())
+        .env("CARGO_TARGET_DIR", &target)
+        .output()
+        .unwrap();
+    assert!(
+        o.status.success(),
+        "could not build {name} from this tree (cargo {}):\n{}",
+        build.join(" "),
+        String::from_utf8_lossy(&o.stderr)
+    );
+    let profile = target.join("debug");
+    let p = if build.contains(&"--example") {
+        profile.join("examples").join(name)
+    } else {
+        profile.join(name)
+    };
+    assert!(
+        p.is_file(),
+        "cargo {} left no {}",
+        build.join(" "),
+        p.display()
+    );
+    built.as_mut().unwrap().insert(key, p.clone());
+    p
+}
+
+/// The newest source file cargo would rebuild `pkg`'s binaries from, when it
+/// is newer than `bin` (None: `bin` is current).
+fn stale_against_sources(bin: &Path, pkg: &str) -> Option<String> {
+    let built = std::fs::metadata(bin).ok()?.modified().ok()?;
+    let root = repo_root();
+    let mut crates = vec![root.join("crates").join(pkg)];
+    let mut seen = std::collections::HashSet::new();
+    let mut newest: Option<(std::time::SystemTime, PathBuf)> = None;
+    let mut consider = |p: &Path| {
+        if let Ok(t) = std::fs::metadata(p).and_then(|m| m.modified()) {
+            if newest.as_ref().is_none_or(|(n, _)| t > *n) {
+                newest = Some((t, p.to_path_buf()));
+            }
+        }
+    };
+    consider(&root.join("Cargo.lock"));
+    while let Some(dir) = crates.pop() {
+        let Ok(dir) = dir.canonicalize() else {
+            continue;
+        };
+        if !seen.insert(dir.clone()) {
+            continue;
+        }
+        // Workspace path dependencies: `path = "../x"` in the manifest.
+        if let Ok(m) = std::fs::read_to_string(dir.join("Cargo.toml")) {
+            for line in m.lines() {
+                if let Some(i) = line.find("path = \"") {
+                    let rest = &line[i + 8..];
+                    if let Some(end) = rest.find('"') {
+                        let dep = dir.join(&rest[..end]);
+                        if dep.join("Cargo.toml").is_file() {
+                            crates.push(dep);
+                        }
+                    }
+                }
+            }
+        }
+        let mut stack = vec![dir];
+        while let Some(d) = stack.pop() {
+            let Ok(rd) = std::fs::read_dir(&d) else {
+                continue;
+            };
+            for e in rd.flatten() {
+                let p = e.path();
+                let n = e.file_name();
+                if n == "target" || n == "tests" || n == "benches" {
+                    continue;
+                }
+                if p.is_dir() {
+                    stack.push(p);
+                } else {
+                    consider(&p);
+                }
+            }
+        }
+    }
+    newest
+        .filter(|(t, _)| *t > built)
+        .map(|(_, p)| p.display().to_string())
+}
+
+/// Lines of a test source that pick a workspace binary to EXECUTE around
+/// [`workspace_bin`]: reading a binary-naming variable directly, or naming a
+/// `<profile>/axon*` / `<profile>/cortex*` file in a target dir. (A line that
+/// WRITES such a path, as a fixture's build output, is not a choice of binary.)
+pub fn binary_resolution_violations(src: &str) -> Vec<String> {
+    let mut out = vec![];
+    for (n, raw) in src.lines().enumerate() {
+        let l = raw.trim_start();
+        if l.starts_with("//") || l.contains("write(") || l.contains("write_executable(") {
+            continue;
+        }
+        // (A kernel image is named explicitly or not at all: AXON_GUEST_KERNEL.)
+        let reads_var = BINARY_VARS
+            .iter()
+            .filter(|v| **v != "AXON_GUEST_KERNEL")
+            .any(|v| {
+                l.contains(&format!("var_os(\"{v}\")")) || l.contains(&format!("env::var(\"{v}\")"))
+            });
+        let names_profile_bin = l.contains("join(\"")
+            && ["debug/", "release/"].iter().any(|p| {
+                ["axon", "cortex"]
+                    .iter()
+                    .any(|b| l.contains(&format!("{p}{b}")))
+            });
+        if reads_var || names_profile_bin {
+            out.push(format!(
+                "line {}: picks a workspace binary around script_spawn::workspace_bin: {}",
+                n + 1,
+                raw.trim()
+            ));
+        }
+    }
+    out
+}

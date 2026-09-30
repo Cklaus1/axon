@@ -11,28 +11,28 @@
 //! * PSV-3: a `?` on a type-confused `None` ended the operator's test before
 //!   its assert, and a genuine completion token was minted.
 
+#[path = "../../axon-core/tests/script_spawn/mod.rs"]
+mod script_spawn;
 use axon_psv::runner::{run, RunnerConfig};
 use axon_psv::*;
 use std::os::unix::fs::PermissionsExt;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 fn axon() -> PathBuf {
-    let p = std::env::var_os("AXON_BIN")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            let t = std::env::var_os("CARGO_TARGET_DIR")
-                .map(PathBuf::from)
-                .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target"));
-            t.join("debug/axon")
-        });
-    assert!(
-        p.exists(),
-        "these tests need the real interpreter at {} — build it with \
-         `cargo build -p axon-core --no-default-features --bin axon` (or set AXON_BIN). \
-         This is a FAILURE, not a skip.",
-        p.display()
-    );
-    p
+    // The interpreter as cargo has made it current for THIS tree, never a
+    // stale `target/debug/axon` (tests/script_spawn::workspace_bin).
+    script_spawn::workspace_bin(
+        "AXON_BIN",
+        &[
+            "build",
+            "-p",
+            "axon-core",
+            "--no-default-features",
+            "--bin",
+            "axon",
+        ],
+        "axon",
+    )
 }
 
 /// What the guest decided, the host's keyed outcome, and the test's stdout.

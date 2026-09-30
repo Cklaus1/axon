@@ -1445,7 +1445,18 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       build if any test in ANY crate spawns a script another way (bash, sh, python3, env, direct
       exec, a script path handed to `.arg`), if any script under `scripts/`, `examples/`,
       `profiles/` or the root picks a binary another way, or if a script accepts a binary through
-      a variable the helper does not strip. `axon-vm`'s live boot takes only `AXON_GUEST_KERNEL`
+      a variable the helper does not strip. The same rule covers Rust tests that EXEC a workspace
+      binary their own cargo run does not build (the `axon` interpreter from axon-psv, axon-fabric,
+      axon-cortex, axon-os and axon-intent tests; `cortex`; `axon-os`): integration measured the
+      PSV-1 attack test PASSING THE ATTACK on a `debug/axon` that predated the fix, because
+      `cargo test -p axon-psv` never rebuilds axon-core. They now go through
+      `script_spawn::workspace_bin`, which BUILDS the binary with cargo into
+      `<target>/workspace-bins` (cargo rebuilds whatever changed), or, when a harness names it
+      (`AXON_BIN`), refuses it unless it is at least as new as every source file of its package,
+      its workspace path dependencies and `Cargo.lock`; the drift gate refuses a test that reads a
+      binary variable or joins a `<profile>/axon*`/`cortex*` path itself. The axon-os/axon-intent
+      suites that used to SKIP without a built interpreter now build it and run.
+      `axon-vm`'s live boot takes only `AXON_GUEST_KERNEL`
       (it fell back to a kernel no test built). Skips stay skips: the codegen probes are unchanged.
     - **Harness integrity.** Both harnesses refuse ANY uncommitted change (`git status
       --porcelain --untracked-files=all`, the whole tree: 24 rows guard files in `scripts/` and

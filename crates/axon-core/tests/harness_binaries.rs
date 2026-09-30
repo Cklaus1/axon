@@ -18,7 +18,8 @@
 
 mod script_spawn;
 use script_spawn::{
-    binary_choice_violations, caller_binary_vars, repo_root, spawn_violations, Bins, BINARY_VARS,
+    binary_choice_violations, binary_resolution_violations, caller_binary_vars, repo_root,
+    spawn_violations, Bins, BINARY_VARS,
 };
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -96,7 +97,7 @@ fn a_harness_that_builds_nothing_runs_no_binary_its_caller_did_not_name() {
     );
     let stale = root.join("stale-ran");
     let on_path = root.join("path-ran");
-    planted(&root.join("target/debug/axon"), &stale);
+    planted(&root.join("target").join("debug").join("axon"), &stale);
     planted(&root.join("fakebin/axon"), &on_path);
     let path = format!(
         "{}:{}",
@@ -178,7 +179,7 @@ fn a_building_harness_runs_the_binary_cargo_built_not_one_left_in_target() {
         &root.join(".cargo/config.toml"),
         "[build]\ntarget-dir = \"tgt\"\n",
     );
-    planted(&root.join("target/debug/axon"), &stale_ran);
+    planted(&root.join("target").join("debug").join("axon"), &stale_ran);
     let out = script_spawn::script(
         "bash",
         root.join("scripts/clock_parity.sh"),
@@ -421,6 +422,12 @@ fn every_script_spawn_in_the_workspace_goes_through_the_helper() {
             continue;
         }
         let text = std::fs::read_to_string(&f).unwrap();
+        for v in binary_resolution_violations(&text) {
+            bad.push(format!(
+                "{}: {v}",
+                f.strip_prefix(&root).unwrap_or(&f).display()
+            ));
+        }
         for v in spawn_violations(&text) {
             bad.push(format!(
                 "{}: {v}",
@@ -471,6 +478,50 @@ fn the_spawn_helper_refuses_a_script_that_guesses_its_binary() {
     assert!(
         o.status.success() && ok_ran.exists(),
         "control: an honest script runs"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// A binary a harness names for a test to exec is refused when it is older
+/// than the sources cargo would rebuild it from: the PSV-1 attack test PASSED
+/// its attack on a `debug/axon` that predated the fix (C9 round 4,
+/// integration). Control: a binary newer than its sources is used as named.
+#[test]
+fn a_named_binary_older_than_its_sources_is_refused() {
+    let root = scratch("stale-named");
+    let stale = root.join("axon-stale");
+    write(&stale, "#!/bin/sh\n");
+    std::fs::File::options()
+        .write(true)
+        .open(&stale)
+        .unwrap()
+        .set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(86_400))
+        .unwrap();
+    // Only this test reads this variable.
+    std::env::set_var("AXON_TEST_NAMED_BIN", &stale);
+    let build = [
+        "build",
+        "-p",
+        "axon-core",
+        "--no-default-features",
+        "--bin",
+        "axon",
+    ];
+    let got = std::panic::catch_unwind(|| {
+        script_spawn::workspace_bin("AXON_TEST_NAMED_BIN", &build, "axon")
+    });
+    assert!(
+        got.is_err(),
+        "ATTACK: a named binary older than its sources was handed to a test to exec"
+    );
+    let fresh = root.join("axon-fresh");
+    write(&fresh, "#!/bin/sh\n");
+    std::env::set_var("AXON_TEST_NAMED_BIN", &fresh);
+    let got = script_spawn::workspace_bin("AXON_TEST_NAMED_BIN", &build, "axon");
+    std::env::remove_var("AXON_TEST_NAMED_BIN");
+    assert_eq!(
+        got, fresh,
+        "control: a current named binary is used as named"
     );
     let _ = std::fs::remove_dir_all(&root);
 }

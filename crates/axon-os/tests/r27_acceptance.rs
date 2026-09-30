@@ -3,6 +3,8 @@
 //! Pure-core tests (latch/ledger/coalition/corrigible) run always.
 //! CLI integration tests (A1/A2/A3) skip if the axon-os/axon binaries aren't built.
 
+#[path = "../../axon-core/tests/script_spawn/mod.rs"]
+mod script_spawn;
 use axon_os::coalition::{Coalition, CoalitionCeiling};
 use axon_os::corrigible::{
     check_kill, coalition_bound_verdict, r27_tcb_modules_present, resource_bound_verdict,
@@ -38,22 +40,20 @@ fn axon_os_bin() -> PathBuf {
 /// without a built compiler is legitimate. But it SAYS so now: a green run that
 /// checked nothing must not look like a green run that checked everything.
 fn axon_bin() -> Option<PathBuf> {
-    if let Some(p) = std::env::var_os("AXON_BIN") {
-        let p = PathBuf::from(p);
-        if p.exists() {
-            return Some(p);
-        }
-    }
-    let p = workspace_root().join("target/debug/axon");
-    if p.exists() {
-        return Some(p);
-    }
-    eprintln!(
-        "axon-os acceptance: SKIPPING — no axon binary at {} (build it, or set AXON_BIN). \
-         This test reports PASS without having checked anything.",
-        p.display()
-    );
-    None
+    // Built from THIS tree by cargo (tests/script_spawn::workspace_bin): it
+    // used to take a stale `target/debug/axon`, or skip when none sat there.
+    Some(script_spawn::workspace_bin(
+        "AXON_BIN",
+        &[
+            "build",
+            "-p",
+            "axon-core",
+            "--no-default-features",
+            "--bin",
+            "axon",
+        ],
+        "axon",
+    ))
 }
 
 fn tmp(name: &str) -> PathBuf {
