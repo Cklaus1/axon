@@ -1903,6 +1903,18 @@ MUTATIONS += [
      'axon-fabric', '--test guest_provenance', 'a_branch_named_like_the_certified_abbreviation_does_not_answer_the_lineage'),
 ]
 
+# C9 round 4 (harness): sccache is installed for DEVELOPMENT evidence runs
+# only; a freeze refuses any rustc wrapper. build-guest-image.sh carries the
+# same refusal as its first statement; it has no row because executing that
+# script without it is a full kernel and rootfs build (refusal exercised by
+# hand: exit 2; amendment 52).
+MUTATIONS += [
+    ('M650', 'EVIDENCE (decision E): a freeze is never made through a compiler wrapper', 'scripts/v022_freeze_manifest.py',
+     '    if wrappers:\n',
+     '    if False and wrappers:\n',
+     'axon-fabric', '--test freeze_manifest', 'a_compiler_wrapper_does_not_freeze'),
+]
+
 # Protected Check Isolation guards (governance/specs/v022-protected-check-isolation.md):
 # candidate code must not alter what the operator's check runs or what PASS
 # means. Kept here so nothing is lost, but certified under PCI, not G01
@@ -2267,6 +2279,8 @@ BINDING_IDS = {f"M{n}" for n in range(101, 137)}
 PSV_IDS = {f"M{n}" for n in range(137, 550)}
 # C9 round 3: rows M560-M649 are PSV rows (workstream ranges).
 PSV_IDS |= {f"M{n}" for n in range(550, 650)}
+# C9 round 4: M650-M699.
+PSV_IDS |= {f"M{n}" for n in range(650, 700)}
 
 
 def in_scope(mid, scope):

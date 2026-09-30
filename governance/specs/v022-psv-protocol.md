@@ -1383,3 +1383,37 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       by object name only, and refuses a ref name, an ambiguous prefix and a prefix naming nothing.
       This is the same class as A80: the repository under review must not choose which object a
       certified name means.
+
+52. **Evidence runs build and run the same bytes; paired-disable shards; development-only compiler
+    cache (C9 round 4, harness).** Nothing here relaxes a counting rule. Equivalents are still never
+    counted as killed, and all four cells plus the consumer cells stay.
+    - **A harness script runs what it builds.** `cli_run.rs` spawned 51 harness scripts under the
+      caller's `CARGO_TARGET_DIR`. The scripts `cargo build` into that directory and then exec
+      `target/debug/<bin>` by path (76 scripts hard-code it). Every integration and paired-disable
+      run sets the variable, so their native and wasm parity legs judged whatever binary was already
+      in the tree's `target/`: at 05d78061 that was an axon built at 2caab1b2. Fixed at the one
+      spawn: `harness_bash()` removes the variable, and
+      `every_harness_script_is_spawned_with_its_own_target_dir` refuses a bare spawn. Integration
+      at 291f6065 is the first run whose parity legs built and ran the compiler under test.
+    - **Tests whose attack no longer reached its guard.** Amendment 50 gave `submit_with` an
+      automatic observer but left `only_an_operator_suite_runs_on_the_protected_profile`'s
+      hand-built config unobserved. With M187 and M400 both removed, the helper refused for want of
+      an observation, and the test still passed. It is now observed; its four cells hold. The
+      launcher test's request write treated a broken pipe (the kernel refusing the exec, 126, before
+      stdin is read) as a panic; that flake is fixed.
+    - **Sharded paired-disable.** `--shard=K/N` runs one slice in its own standalone clone and
+      target dir. `--join` writes the status file only when the shards are exactly 0..N-1 of one N,
+      all at HEAD, each holding exactly its slice, and together covering every record once
+      (`scripts/test_v022_paired_disable_join.py`, 8 refusals and 2 controls). The harness builds
+      every binary the suites exec before any cell runs, and refuses to run without them. A failing
+      full-suite cell keeps its output.
+    - **Compiler cache for development only.** sccache runs only in the development evidence
+      runners (`RUSTC_WRAPPER` in the runner, never global). A cache is an input the source tree
+      does not contain (decision E), so `v022_freeze_manifest.py` refuses any rustc wrapper (row
+      M650, test `a_compiler_wrapper_does_not_freeze`). `build-guest-image.sh` refuses one as its
+      first statement; it has a stated reason instead of a row, because removing that refusal makes
+      a mutation run perform a full image build. The refusal was exercised by hand (exit 2).
+    - **Known limits carried into round 4.** The integration's `axon-core` leg runs
+      `--no-default-features`, so its in-process codegen tests record SKIP ("axon build (no codegen
+      feature)"); the parity scripts build their own codegen axon and do run. Android legs SKIP (no
+      NDK or emulator). These are skips, not passes.
