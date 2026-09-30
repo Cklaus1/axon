@@ -477,7 +477,7 @@
       }
     },
     "candidate_9": {
-      "state": "DEV REVIEW LOOP: round 2 found 4 blockers; the round-2 fix wave (and operator decisions A-E) is merged and evidenced at d6f9cbf5; dev review round 3 next. No freeze until a round has zero blockers.",
+      "state": "DEV REVIEW LOOP: round 3 found 5 blockers; the round-3 fix wave is merged and evidenced at 82d88da3; dev review round 4 next. No freeze until a round has zero blockers.",
       "naming": "C7b = proof WITHDRAWN; C8 = FAILED certification attempts (01e22d50, 2568963f, 7b9736b9, cb9fa2ea, 4943489f); C9 = this candidate",
       "objectives": {
         "1_rng": "DONE 8a7962fb: RNG moved into the per-provenance Kernel; process-global stream deleted; sealed stream one-way seeded; drift test derives Random builtins from BUILTINS; runner-level steering regression; M270-M272 killed",
@@ -587,13 +587,56 @@
           "one_read's fifo_serving uses a 300 ms pause: it can only make an attack fail (a false survivor), never a false kill"
         ]
       },
+      "dev_review_round_3": {
+        "run": "wf_92efee64-823",
+        "tree": "bf964212",
+        "verdicts": "5 REGISTER, 4 DO_NOT_REGISTER",
+        "blockers": [
+          "PSV-1: a sealed handler intercepted operator builtins (a keyed PASS)",
+          "PSV-3: a None into `?` counted as Completed",
+          "PSV-7: readiness accepted any operator-signed B263 record",
+          "EQUIVALENCE: helper/sealed_exec guards without rows; guest-init rows killed only by a textual test"
+        ],
+        "majors_closed_in_wave": [
+          "disguised linked worktree (A79)",
+          "forged lineage (A80)",
+          "helper launched without an observation (A84)",
+          "no D6 custodian (A83)",
+          "epoch was the caller's claim (A82)",
+          "suite join by strings (A81)",
+          "stale paired-disable records (currency rule)"
+        ]
+      },
+      "round_3_fix_wave": {
+        "dev_head": "82d88da3",
+        "fixed": [
+          "sealed frames act only on their own operations; operator RNG refused under a sealed frame; completion only when the body ran to its end (A76-A77, amendment 46)",
+          "readiness applies Fabric's B263 rules incl. the host config's qualification.max_age_s; decision E by common-dir; lineage from hash-checked objects (A78-A80, amendment 47)",
+          "every helper-path refusal has a row or a reasoned exemption (v022_refusal_coverage.py in gate.sh); kept paired-disable records must be current (amendment 48)",
+          "one suite-join reading; launch manifest /2 names its authority; protected host pins authority_store (A81-A82, amendment 49)",
+          "separate axon-custodian (D6); the root helper launches only on its one verified observation (A83-A84, amendment 50)",
+          "rows wave: 15 unkilled rows made honest; a protected custodian could not start (M641); a ref answered the lineage (M642, A85) (amendment 51)",
+          "round-4 harness: parity scripts run what they build (harness_bash); the M187/M400 test reaches its guard; paired-disable --shard/--join; sccache development-only, refused by the freeze (M650) and the guest-image build (amendment 52)"
+        ],
+        "evidence": {
+          "mutation": "550 rows: 507/507 ACTIVE killed by their own attack (full two-shard run at d7018783); no production source changed since; rows whose tests changed re-run: 29/29 at 291f6065, 47/47 incl. M650 at 35145195; 0 REFUSED_ELSEWHERE, 0 survivors; 41 EQUIVALENT_DID + 1 STALE never counted killed",
+          "paired_disable": "42/42 hold (39 from 3 joined shards at 9e488073; M58/M60/M89 at 19de26d0); 0 stale at 82d88da3",
+          "integration": "291f6065 (crates identical at 82d88da3): fmt, builds incl. production fabric, clippy, six-package and axon-core tests, trust preflight, matrix (85 rows) all rc 0; SKIPs recorded as skips: axon-core in-process codegen tests (--no-default-features), Android",
+          "guest_boot": "14/14 at 2caab1b2 (pinned 1084ed1c); rebuild from a standalone clone before a freeze"
+        }
+      },
       "operator_items_before_protected_deployment": [
         "install /etc/axon/provenance-allowlist (target/, dist/)",
         "review setuid-root helper vs daemon (amendment 45)",
         "deploy non-root fabric uid, the helper 04750 root:fabric-group, /etc/axon/protected-launcher.json, pin privileged_launcher in protected-host.json",
         "re-pin the launcher (bytes changed)",
         "place out and staging roots",
-        "decide on the compiled-launcher follow-up"
+        "decide on the compiled-launcher follow-up",
+        "custodian system user, production axon-custodian, /etc/axon/custodian.json and its two systemd units (SocketMode must let the Fabric uid connect)",
+        "set authority_store in protected-host.json; the observer copies authority.epoch",
+        "re-pin the helper and the launcher after the round-3 changes",
+        "review root-owned listener acceptance (socket activation)",
+        "a certification with PASS_WITH_BLOCKED needs a waiver file"
       ]
     }
   },
