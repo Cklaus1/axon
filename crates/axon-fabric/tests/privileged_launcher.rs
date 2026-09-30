@@ -947,7 +947,7 @@ fn a_production_helper_that_is_not_root_launches_nothing() {
     std::fs::write(
         s.join("protected-launcher.json"),
         json!({
-            "schema": "axon-protected-launcher/1",
+            "schema": "axon-protected-launcher/2",
             "fabric_uid": FABRIC,
             "interpreter": {"path": bash.path, "sha256": bash.sha256},
             "launcher": pin("launcher.sh"),
@@ -959,6 +959,12 @@ fn a_production_helper_that_is_not_root_launches_nothing() {
             "staging_root": e.join("staging"),
             "max_timeout_s": 3600,
             "max_input_bytes": 1u64 << 30,
+            // Amendment 50. With the euid check removed, the launch still
+            // needs a PROTECTED custodian's spend, which it takes only from
+            // uid 0: this helper (euid FABRIC) could never spend one.
+            "observer": {"root": e.join("observer"), "max_age_s": 300,
+                         "host_signer_public_key": TEST_HOST_SIGNER},
+            "custodian": {"socket": e.join("run/custodian.sock"), "uid": 4244},
         })
         .to_string(),
     )
@@ -967,7 +973,7 @@ fn a_production_helper_that_is_not_root_launches_nothing() {
     std::fs::write(
         s.join("request.json"),
         json!({
-            "schema": "axon-protected-launch-request/1",
+            "schema": "axon-protected-launch-request/2",
             "id": "fab-0123456789abcdef",
             "out": e.join("runs/op-1"),
             "psv_candidate": ei.join("candidate"),
@@ -976,6 +982,8 @@ fn a_production_helper_that_is_not_root_launches_nothing() {
             "psv_manifest_sha256": sha256_file(&i.join("job/launch-manifest.json")),
             "policy_json": "{\"schema\":\"axon-vm-mmds/1\",\"allowed_effects\":[]}",
             "timeout_s": 60,
+            "observation": "",
+            "observation_signature": "",
         })
         .to_string(),
     )
