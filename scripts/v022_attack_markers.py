@@ -753,3 +753,26 @@ ATTACK_MARKERS.update({
     'M642': r"ATTACK: a branch named like the certified revision's abbreviation made an orphan HEAD\s+descend from it",
     'M650': r'ATTACK: a freeze was made through a compiler wrapper',
 })
+
+# C9 round 4, CORE workstream (M651-M667, amendment 53, matrix A86): each
+# attack's own getting-through is the test COMPLETING (`Ok(Completed)`), never
+# a refusal reason, so a different check refusing it is REFUSED_ELSEWHERE.
+ATTACK_MARKERS.update({
+    'M651': r"ATTACK: the candidate's `ok` ran under the operator's method name: Ok\(Completed\)",
+    'M652': r"ATTACK: a confused bool crossed a declared `-> i64` return: Ok\(Completed\)",
+    'M653': r"ATTACK: an `Other` crossed a declared `-> Point` return: Ok\(Completed\)",
+    'M654': r"ATTACK: a confused element crossed a declared `-> \[i64\]` return: Ok\(Completed\)",
+    'M655': r"ATTACK: a confused payload crossed a declared `-> Option<i64>` return: Ok\(Completed\)",
+    'M656': r"ATTACK: a confused element crossed a declared `-> \(i64, i64\)` return: Ok\(Completed\)",
+    'M657': r"ATTACK: a confused field crossed a declared `-> Holder` return: Ok\(Completed\)",
+    'M658': r"ATTACK: a confused field was constructed into a candidate global: Ok\(Completed\)",
+    'M659': r"ATTACK: a confused value entered the operator's `x: i64` parameter: Ok\(Completed\)",
+    'M660': r"ATTACK: a value at an undetermined type parameter crossed into operator code: Ok\(Completed\)",
+    'M661': r"ATTACK: a closure declared `fn\(i64\) -> i64` returned a confused bool: Ok\(Completed\)",
+    'M662': r"ATTACK: the operator's listener was called with a confused bool: Ok\(Completed\)",
+    'M663': r"ATTACK: a confused bool was sent on a `Chan<i64>` the operator reads: Ok\(Completed\)",
+    'M664': r"ATTACK: a confused bool was bound to the operator's `let r: i64`: Ok\(Completed\)",
+    'M665': r"ATTACK: a sealed module named the operator's `\w+` in a type position \([^)]*\): \[\]",
+    'M666': r"ATTACK: a bool passed the operator's `T: Judge` bound through `Lax`: Ok\(Completed\)",
+    'M667': r"ATTACK: the operator's `\|r: i64\|` listener was called with a confused bool: Ok\(Completed\)",
+})

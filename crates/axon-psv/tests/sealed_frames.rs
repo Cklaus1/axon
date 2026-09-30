@@ -312,3 +312,122 @@ fn a_test_ended_early_by_a_confused_question_mark_gets_no_token() {
         s.host
     );
 }
+
+/// C9 round 4, PSV-1 (amendment 53, matrix A86): the candidate never
+/// chooses the code that runs under the operator's judging method. The
+/// review's suite and candidates, exactly: `r.ok()` is meant to run the
+/// operator's `impl Judge for i64`; a `dict_get` type confusion (its value
+/// type is free) handed the operator a `Fake`, and the method call — which
+/// dispatches on the RUNTIME type — ran the candidate's `Fake::ok`. Keyed
+/// PASS through this runner, which Fabric's `psv::derive` would sign.
+const SUITE_DISPATCH: &str = r#"mod sol
+use sol.{solve}
+
+trait Judge {
+    fn ok(self) -> bool
+}
+
+impl Judge for i64 {
+    fn ok(self: i64) -> bool { self == 9 }
+}
+
+impl Judge for bool {
+    fn ok(self: bool) -> bool { self }
+}
+
+@[test]
+fn accept() {
+    let r = solve(3)
+    assert(r.ok())
+}
+"#;
+const DISPATCH_GOOD: &str = "pub fn solve(n: i64) -> i64 { n * n }\n";
+const DISPATCH_WRONG: &str = "pub fn solve(n: i64) -> i64 { n + 1 }\n";
+const FAKE_OK: &str = "type Fake = { v: i64 }\ntrait Mine {\n    fn ok(self) -> bool\n}\nimpl Mine for Fake {\n    fn ok(self: Fake) -> bool { true }\n}\n";
+
+/// The reviewer's second variant: the operator's impl is on the candidate's
+/// own interface type `Point`.
+const SUITE_POINT: &str = r#"mod sol
+use sol.{Point, solve}
+
+trait Judge {
+    fn ok(self) -> bool
+}
+
+impl Judge for Point {
+    fn ok(self: Point) -> bool { self.x * self.x == 9 && self.y == 0 }
+}
+
+@[test]
+fn accept() {
+    let p = solve(3)
+    assert(p.ok())
+}
+"#;
+
+fn refused_unkeyed(s: &Seen) -> bool {
+    s.status != GuestStatus::Passed && s.host != Some(true)
+}
+
+#[test]
+fn the_candidate_never_chooses_the_operators_judging_method() {
+    // Controls: the suites discriminate.
+    for (suite, good, wrong) in [
+        (SUITE_DISPATCH, DISPATCH_GOOD.to_string(), DISPATCH_WRONG.to_string()),
+        (
+            SUITE_POINT,
+            "pub type Point = { x: i64, y: i64 }\npub fn solve(n: i64) -> Point { Point { x: n, y: 0 } }\n"
+                .to_string(),
+            "pub type Point = { x: i64, y: i64 }\npub fn solve(n: i64) -> Point { Point { x: n + 1, y: 5 } }\n"
+                .to_string(),
+        ),
+    ] {
+        let s = check(suite, &[], &good, "accept");
+        assert_eq!(
+            (s.status, s.host),
+            (GuestStatus::Passed, Some(true)),
+            "control: {}",
+            s.stdout
+        );
+        let s = check(suite, &[], &wrong, "accept");
+        assert_eq!(
+            (s.status, s.host),
+            (GuestStatus::Failed, Some(false)),
+            "control: {}",
+            s.stdout
+        );
+    }
+    let attacks: [(&str, &str, String); 4] = [
+        (
+            "the review's Fake from a `-> i64` fn (type confusion)",
+            SUITE_DISPATCH,
+            format!("{FAKE_OK}pub fn solve(n: i64) -> i64 {{\n    let d = dict_new()\n    dict_set(d, \"k\", Fake {{ v: n + 1 }})\n    match dict_get(d, \"k\") {{\n        Some(v) => v\n        None => 0\n    }}\n}}\n"),
+        ),
+        (
+            "the review's second variant: a Fake from a `-> Point` fn",
+            SUITE_POINT,
+            format!("pub type Point = {{ x: i64, y: i64 }}\n{}pub fn solve(n: i64) -> Point {{\n    let d = dict_new()\n    dict_set(d, \"k\", Fake {{ v: n + 1 }})\n    match dict_get(d, \"k\") {{\n        Some(v) => v\n        None => Point {{ x: 0, y: 0 }}\n    }}\n}}\n", FAKE_OK),
+        ),
+        (
+            "no confusion: the candidate DECLARES `-> Fake`",
+            SUITE_DISPATCH,
+            format!("{FAKE_OK}pub fn solve(n: i64) -> Fake {{ Fake {{ v: n }} }}\n"),
+        ),
+        (
+            "a confused `true` selecting the operator's own lenient impl",
+            SUITE_DISPATCH,
+            "pub fn solve(n: i64) -> i64 {\n    let d = dict_new()\n    dict_set(d, \"k\", true)\n    match dict_get(d, \"k\") {\n        Some(v) => v\n        None => 0\n    }\n}\n".to_string(),
+        ),
+    ];
+    for (why, suite, cand) in attacks {
+        let s = check(suite, &[], &cand, "accept");
+        assert!(
+            refused_unkeyed(&s),
+            "ATTACK: the candidate chose the code under the operator's judging method ({why}) and got a keyed pass: {:?} {:?} {}",
+            s.status,
+            s.host,
+            s.stdout
+        );
+        assert_eq!(s.host, Some(false), "a keyed FAILURE ({why}): {}", s.stdout);
+    }
+}
