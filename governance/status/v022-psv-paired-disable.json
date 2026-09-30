@@ -1,7 +1,7 @@
 {
   "schema": "axon-v022-paired-disable/2",
-  "commit": "9e4880739952007fc96e7c3395c52cef978c5f85",
-  "all_hold": false,
+  "commit": "19de26d038112f963b4b146a6554be56858feeee",
+  "all_hold": true,
   "records": [
     {
       "mutation": "M19",
@@ -103,164 +103,6 @@
         "sibling_set_disabled": "ATTACK_REFUSED"
       },
       "holds": true,
-      "commit": "9e4880739952007fc96e7c3395c52cef978c5f85"
-    },
-    {
-      "mutation": "M58",
-      "status": "EQUIVALENT_DID",
-      "kind": "pair",
-      "property": "a break/continue raised in a FUNCTION BODY does not escape into the caller's loop",
-      "original_guard": {
-        "file": "crates/axon-core/src/interp.rs"
-      },
-      "subsumed_by": [
-        "M59"
-      ],
-      "live_killing_mutant": "M59",
-      "all_paths": null,
-      "matrix": {
-        "baseline": "ATTACK_REFUSED",
-        "retired_guard_disabled": "ATTACK_REFUSED",
-        "guard_set_disabled": "ATTACK_SUCCEEDS",
-        "guard_set": [
-          "M58",
-          "M59"
-        ],
-        "retired_guard_full_suite": "BASELINE_BROKEN",
-        "full_suite_packages": [
-          "axon-core",
-          "axon-cortex",
-          "axon-fabric",
-          "axon-intent",
-          "axon-os",
-          "axon-psv",
-          "axon-wasm",
-          "axon-web"
-        ],
-        "consumer_suites": {},
-        "retired_guard_full_suite_failures": [
-          "axon-core: SUITE_BROKEN on the clean tree",
-          "codegen_arr_sum_and_contains_match_interp",
-          "codegen_bitwise_and_casts_match_interp",
-          "codegen_dict_core_matches_interp",
-          "codegen_parse_int_or_and_float_or_match_interp",
-          "host_await_runs_identically_on_wasm_wasip1",
-          "wasm_aot_env_var_runs_on_wasm",
-          "wasm_aot_stdout_matches_interp_across_corpus",
-          "wasm_asyncify_host_await_suspends_across_async_r7c",
-          "wasm_browser_host_await_round_trips_r7c",
-          "wasm_host_io_matches_native_via_wasi",
-          "wasm_interp_matches_native_on_pure_compute"
-        ],
-        "sibling_set_disabled": "ATTACK_REFUSED"
-      },
-      "holds": false,
-      "commit": "9e4880739952007fc96e7c3395c52cef978c5f85"
-    },
-    {
-      "mutation": "M60",
-      "status": "EQUIVALENT_DID",
-      "kind": "pair",
-      "property": "a second impl never replaces the first impl's method",
-      "original_guard": {
-        "file": "crates/axon-core/src/resolver.rs"
-      },
-      "subsumed_by": [
-        "M69"
-      ],
-      "live_killing_mutant": "joint:M60+M69",
-      "all_paths": "the ONLY harm of a duplicate impl is the interpreter's method table (keyed (type_name_of(for_type), method), last insert wins) replacing a method; with M60's check off every impl takes the else branch, whose dispatch check keys on the SAME type_name_of and method name and refuses any second definition of that key (E0002), whatever the traits. A duplicate impl sharing no method key replaces nothing (a missing required method is E0502; impl_table is a set)",
-      "matrix": {
-        "baseline": "ATTACK_REFUSED",
-        "retired_guard_disabled": "ATTACK_REFUSED",
-        "guard_set_disabled": "ATTACK_SUCCEEDS",
-        "guard_set": [
-          "M60",
-          "M69"
-        ],
-        "retired_guard_full_suite": "BASELINE_BROKEN",
-        "full_suite_packages": [
-          "axon-core",
-          "axon-cortex",
-          "axon-fabric",
-          "axon-intent",
-          "axon-os",
-          "axon-psv",
-          "axon-wasm",
-          "axon-web"
-        ],
-        "consumer_suites": {},
-        "retired_guard_full_suite_failures": [
-          "axon-core: SUITE_BROKEN on the clean tree",
-          "codegen_arr_sum_and_contains_match_interp",
-          "codegen_bitwise_and_casts_match_interp",
-          "codegen_dict_core_matches_interp",
-          "codegen_parse_int_or_and_float_or_match_interp",
-          "host_await_runs_identically_on_wasm_wasip1",
-          "wasm_aot_env_var_runs_on_wasm",
-          "wasm_aot_stdout_matches_interp_across_corpus",
-          "wasm_asyncify_host_await_suspends_across_async_r7c",
-          "wasm_browser_host_await_round_trips_r7c",
-          "wasm_host_io_matches_native_via_wasi",
-          "wasm_interp_matches_native_on_pure_compute"
-        ],
-        "sibling_set_disabled": "ATTACK_REFUSED"
-      },
-      "holds": false,
-      "commit": "9e4880739952007fc96e7c3395c52cef978c5f85"
-    },
-    {
-      "mutation": "M89",
-      "status": "EQUIVALENT_DID",
-      "kind": "set",
-      "property": "a sealed frame never gets an operator function run through a fiber",
-      "original_guard": {
-        "file": "crates/axon-core/src/interp/builtins.rs"
-      },
-      "subsumed_by": [
-        "M86",
-        "M96"
-      ],
-      "live_killing_mutant": "joint:M89+M86+M96",
-      "all_paths": "every fiber runs in builtin_scheduler_run_once (scheduler_run, supervisor_run) through call_fn. A fiber lives in the kernel of the frame that queued it (k() = kernels[frame_sealed], M96), so a sealed frame's fiber is run only from a sealed frame, where call_fn's call edge (M86) refuses an operator function. Executed: M89+M86 reopens the sealed-frame route, M89+M96 reopens the operator-frame route",
-      "matrix": {
-        "baseline": "ATTACK_REFUSED",
-        "retired_guard_disabled": "ATTACK_REFUSED",
-        "guard_set_disabled": "ATTACK_SUCCEEDS",
-        "guard_set": [
-          "M89",
-          "M86",
-          "M96"
-        ],
-        "retired_guard_full_suite": "BASELINE_BROKEN",
-        "full_suite_packages": [
-          "axon-core",
-          "axon-cortex",
-          "axon-fabric",
-          "axon-intent",
-          "axon-os",
-          "axon-psv",
-          "axon-wasm",
-          "axon-web"
-        ],
-        "consumer_suites": {},
-        "retired_guard_full_suite_failures": [
-          "axon-core: SUITE_BROKEN on the clean tree",
-          "codegen_arr_sum_and_contains_match_interp",
-          "codegen_bitwise_and_casts_match_interp",
-          "codegen_dict_core_matches_interp",
-          "codegen_parse_int_or_and_float_or_match_interp",
-          "host_await_runs_identically_on_wasm_wasip1",
-          "wasm_aot_env_var_runs_on_wasm",
-          "wasm_aot_stdout_matches_interp_across_corpus",
-          "wasm_asyncify_host_await_suspends_across_async_r7c",
-          "wasm_browser_host_await_round_trips_r7c",
-          "wasm_host_io_matches_native_via_wasi",
-          "wasm_interp_matches_native_on_pure_compute"
-        ],
-        "sibling_set_disabled": "ATTACK_REFUSED"
-      },
-      "holds": false,
       "commit": "9e4880739952007fc96e7c3395c52cef978c5f85"
     },
     {
@@ -1428,6 +1270,146 @@
       },
       "holds": true,
       "commit": "9e4880739952007fc96e7c3395c52cef978c5f85"
+    },
+    {
+      "mutation": "M58",
+      "status": "EQUIVALENT_DID",
+      "kind": "pair",
+      "property": "a break/continue raised in a FUNCTION BODY does not escape into the caller's loop",
+      "original_guard": {
+        "file": "crates/axon-core/src/interp.rs"
+      },
+      "subsumed_by": [
+        "M59"
+      ],
+      "live_killing_mutant": "M59",
+      "all_paths": null,
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M58",
+          "M59"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "full_suite_packages": [
+          "axon-core",
+          "axon-cortex",
+          "axon-fabric",
+          "axon-intent",
+          "axon-os",
+          "axon-psv",
+          "axon-wasm",
+          "axon-web"
+        ],
+        "consumer_suites": {
+          "axon-cortex": "SUITE_OK",
+          "axon-fabric": "SUITE_OK",
+          "axon-intent": "SUITE_OK",
+          "axon-os": "SUITE_OK",
+          "axon-psv": "SUITE_OK",
+          "axon-wasm": "SUITE_OK",
+          "axon-web": "SUITE_OK"
+        },
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "19de26d038112f963b4b146a6554be56858feeee"
+    },
+    {
+      "mutation": "M60",
+      "status": "EQUIVALENT_DID",
+      "kind": "pair",
+      "property": "a second impl never replaces the first impl's method",
+      "original_guard": {
+        "file": "crates/axon-core/src/resolver.rs"
+      },
+      "subsumed_by": [
+        "M69"
+      ],
+      "live_killing_mutant": "joint:M60+M69",
+      "all_paths": "the ONLY harm of a duplicate impl is the interpreter's method table (keyed (type_name_of(for_type), method), last insert wins) replacing a method; with M60's check off every impl takes the else branch, whose dispatch check keys on the SAME type_name_of and method name and refuses any second definition of that key (E0002), whatever the traits. A duplicate impl sharing no method key replaces nothing (a missing required method is E0502; impl_table is a set)",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M60",
+          "M69"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "full_suite_packages": [
+          "axon-core",
+          "axon-cortex",
+          "axon-fabric",
+          "axon-intent",
+          "axon-os",
+          "axon-psv",
+          "axon-wasm",
+          "axon-web"
+        ],
+        "consumer_suites": {
+          "axon-cortex": "SUITE_OK",
+          "axon-fabric": "SUITE_OK",
+          "axon-intent": "SUITE_OK",
+          "axon-os": "SUITE_OK",
+          "axon-psv": "SUITE_OK",
+          "axon-wasm": "SUITE_OK",
+          "axon-web": "SUITE_OK"
+        },
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "19de26d038112f963b4b146a6554be56858feeee"
+    },
+    {
+      "mutation": "M89",
+      "status": "EQUIVALENT_DID",
+      "kind": "set",
+      "property": "a sealed frame never gets an operator function run through a fiber",
+      "original_guard": {
+        "file": "crates/axon-core/src/interp/builtins.rs"
+      },
+      "subsumed_by": [
+        "M86",
+        "M96"
+      ],
+      "live_killing_mutant": "joint:M89+M86+M96",
+      "all_paths": "every fiber runs in builtin_scheduler_run_once (scheduler_run, supervisor_run) through call_fn. A fiber lives in the kernel of the frame that queued it (k() = kernels[frame_sealed], M96), so a sealed frame's fiber is run only from a sealed frame, where call_fn's call edge (M86) refuses an operator function. Executed: M89+M86 reopens the sealed-frame route, M89+M96 reopens the operator-frame route",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M89",
+          "M86",
+          "M96"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "full_suite_packages": [
+          "axon-core",
+          "axon-cortex",
+          "axon-fabric",
+          "axon-intent",
+          "axon-os",
+          "axon-psv",
+          "axon-wasm",
+          "axon-web"
+        ],
+        "consumer_suites": {
+          "axon-cortex": "SUITE_OK",
+          "axon-fabric": "SUITE_OK",
+          "axon-intent": "SUITE_OK",
+          "axon-os": "SUITE_OK",
+          "axon-psv": "SUITE_OK",
+          "axon-wasm": "SUITE_OK",
+          "axon-web": "SUITE_OK"
+        },
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "19de26d038112f963b4b146a6554be56858feeee"
     }
   ]
 }
