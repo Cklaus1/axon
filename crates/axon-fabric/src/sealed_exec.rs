@@ -133,6 +133,29 @@ fn check_unchanged(fd: RawFd, id: &Identity, leased: bool) -> i32 {
     0
 }
 
+/// A read lease on `fd`, as the kernel answers.
+///
+/// TEST-TRUST BUILDS ONLY (C9 round 4, EQUIVALENCE; M709): while
+/// `/etc/axon/TEST-no-read-lease` exists, the answer is EINVAL, as on a
+/// filesystem that grants no lease (9p, NFS). A root helper on a root-owned
+/// file is always granted one, so without this a test could reach the
+/// production helper's `Lease::Required` refusal only by changing the host
+/// (`fs.leases-enable`). The branch, and the path, are not in a production
+/// build: a production helper takes the kernel's answer, always (M709's test
+/// runs the production helper with the switch present).
+fn take_read_lease(fd: RawFd) -> std::io::Result<()> {
+    #[cfg(feature = "test-trust-root")]
+    if Path::new("/etc/axon/TEST-no-read-lease").exists() {
+        return Err(std::io::Error::from_raw_os_error(libc::EINVAL));
+    }
+    // SAFETY: F_SETLEASE on a read-only descriptor we own.
+    if unsafe { libc::fcntl(fd, libc::F_SETLEASE, libc::F_RDLCK) } == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
+}
+
 /// Open `p` for execution: `O_NOFOLLOW`, a regular file, owned by `owner` or
 /// by root (root can change anything anyway; any owner when `None`:
 /// development only), not group- or other-writable, its descriptor's bytes
@@ -173,28 +196,29 @@ pub fn open_verified(p: &Pinned, owner: Option<u32>, lease: Lease) -> Result<Ver
             id.mode & 0o7777
         ));
     }
-    // SAFETY: F_SETLEASE on a read-only descriptor we own.
-    let leased = if unsafe { libc::fcntl(fd, libc::F_SETLEASE, libc::F_RDLCK) } == 0 {
-        // Taking a lease makes this process the file's signal owner, and a
-        // break would deliver SIGIO (default: terminate). No owner: the break
-        // is observed by polling F_GETLEASE, never by a signal.
-        // SAFETY: F_SETOWN on our descriptor.
-        unsafe { libc::fcntl(fd, libc::F_SETOWN, 0) };
-        true
-    } else {
-        let e = std::io::Error::last_os_error();
-        if e.raw_os_error() == Some(libc::EAGAIN) {
-            return Err(format!(
-                "{shown} is open for writing by some process: its bytes can change after they \
-                 are verified"
-            ));
+    let leased = match take_read_lease(fd) {
+        Ok(()) => {
+            // Taking a lease makes this process the file's signal owner, and a
+            // break would deliver SIGIO (default: terminate). No owner: the
+            // break is observed by polling F_GETLEASE, never by a signal.
+            // SAFETY: F_SETOWN on our descriptor.
+            unsafe { libc::fcntl(fd, libc::F_SETOWN, 0) };
+            true
         }
-        if lease == Lease::Required {
-            return Err(format!(
-                "{shown}: no read lease ({e}); without one a later writer is not detected"
-            ));
+        Err(e) => {
+            if e.raw_os_error() == Some(libc::EAGAIN) {
+                return Err(format!(
+                    "{shown} is open for writing by some process: its bytes can change after \
+                     they are verified"
+                ));
+            }
+            if lease == Lease::Required {
+                return Err(format!(
+                    "{shown}: no read lease ({e}); without one a later writer is not detected"
+                ));
+            }
+            false
         }
-        false
     };
     if id.size < 0 || id.size as u64 > MAX_BYTES {
         return Err(format!("{shown} is larger than {MAX_BYTES} bytes"));

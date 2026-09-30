@@ -1915,6 +1915,117 @@ MUTATIONS += [
      'axon-fabric', '--test freeze_manifest', 'a_compiler_wrapper_does_not_freeze'),
 ]
 
+# ── C9 round 4, EQUIVALENCE (ROWS workstream, M690-M719; amendment 55) ─────
+# The dev review (round 4) found protected rules enforced in production
+# through CALLS with no row (the whole axon-fabric suite stayed green with
+# each call removed), and ACTIVE rows killed only by a unit test calling the
+# rule function directly. Every row below is killed through the PRODUCTION
+# entry: readiness's decision in the installed `verify-readiness`
+# (ReadinessTrust::operator(), /etc/axon/trust in a private mount namespace),
+# the production `axon-custodian` socket-activated under /etc/axon, a
+# production `axon-fabric` whose ProtectedHost::operator() reads
+# /etc/axon/protected-host.json, and the setuid-root helper in production
+# mode. /etc/axon is a tmpfs in a private mount namespace; the host's /etc is
+# never written.
+_RDT = '--test readiness'
+_RDW = 'a_readiness_run_that_can_write_its_trust_roots_certifies_nothing'
+_CUT = 'a_protected_custodian_under_a_config_breaking_a83_serves_nothing'
+_ACT = 'a_protected_custodian_serves_only_its_units_activation_on_its_socket'
+_PHR = 'a_production_fabric_running_as_root_is_refused_on_a_protected_host'
+_PHC = 'a_production_fabric_refuses_a_protected_host_whose_custodian_is_the_fabric'
+_PHH = 'a_production_fabric_refuses_a_helper_config_that_disagrees_with_its_host'
+_LEA = 'a_production_helper_launches_nothing_it_cannot_lease'
+MUTATIONS += [
+    # readiness: the decision's own calls and bindings.
+    ('M690', "readiness: the certification decision checks the operator's trust roots (trust.check(), incl. unwritable by the verifier)", _RD,
+     '    trust.check()?;\n    attribution(', '    let _ = trust.check();\n    attribution(',
+     'axon-fabric', _RDT, _RDW),
+    ('M691', 'readiness: the evidence bundle is the certified one (evidence_bundle_sha256)', _RD,
+     '    if doc["evidence_bundle_sha256"].as_str()\n', '    if false && doc["evidence_bundle_sha256"].as_str()\n',
+     'axon-fabric', _RDT, 'an_evidence_file_changed_after_certification_is_not_certified'),
+    ('M692', 'readiness: the record certifies THIS component', _RD,
+     '    if doc["component"] != component\n', '    if false && doc["component"] != component\n',
+     'axon-fabric', _RDT, 'a_record_for_another_component_or_profile_is_not_certified'),
+    ('M693', 'readiness: the record certifies the protected host profile', _RD,
+     '        || doc["host_profile"] != PROTECTED_PROFILE\n', '        || false\n',
+     'axon-fabric', _RDT, 'a_record_for_another_component_or_profile_is_not_certified'),
+    ('M694', 'readiness: the record certifies the protected qualification profile', _RD,
+     '        || doc["qualification_profile"] != PROTECTED_PROFILE\n', '        || false\n',
+     'axon-fabric', _RDT, 'a_record_for_another_component_or_profile_is_not_certified'),
+    ('M695', "readiness: the record certifies this tree's PSV spec", _RD,
+     '    if doc["psv_spec_sha256"].as_str() != Some(', '    if false && doc["psv_spec_sha256"].as_str() != Some(',
+     'axon-fabric', _RDT, 'a_changed_psv_spec_is_not_certified'),
+    ('M696', 'readiness: this tree descends from the certified revision (the descends call)', _RD,
+     '    if let Err(e) = crate::git_data::descends(&top, certified) {', '    if let Err(e) = Ok::<(), String>(()) {',
+     'axon-fabric', _RDT, 'a_history_not_descending_from_the_certified_revision_is_not_certified'),
+    ('M697', 'readiness: nothing outside governance/ changed since the certified revision', _RD,
+     '    if let Some(f) = outside.first() {', '    if let Some(f) = None::<&String> {',
+     'axon-fabric', _RDT, 'a_committed_code_change_is_not_certified'),
+    ('M698', 'readiness: the record is of the certification schema', _RD,
+     '    if doc["schema"] != CERT_SCHEMA || !missing.is_empty() {', '    if !missing.is_empty() {',
+     'axon-fabric', _RDT, 'a_record_of_another_schema_is_not_certified'),
+    ('M699', "readiness: the record's attribution is checked at the decision (the attribution call)", _RD,
+     '    attribution(component, &doc, trust, &evidence)?;', '    let _ = attribution(component, &doc, trust, &evidence);',
+     'axon-fabric', _RDT, 'a_record_attributed_to_an_untrusted_observer_is_not_certified'),
+    # the production custodian.
+    ('M700', 'A83: the production custodian applies the PROTECTED config rules (load_config -> check(true))', _CU,
+     '    c.check(!a.test)\n', '    c.check(false)\n',
+     'axon-fabric', _HT, _CUT),
+    ('M701', 'A83: a protected custodian config names neither the custodian nor the Fabric as root', _CU,
+     '        if self.custodian_uid == 0 || self.fabric_uid == 0 {',
+     '        if false && (self.custodian_uid == 0 || self.fabric_uid == 0) {',
+     'axon-fabric', _HT, _CUT),
+    ('M702', 'D6: a protected custodian serves only a listener its socket unit passed (LISTEN_PID/LISTEN_FDS)', _CU,
+     '    if pid != std::process::id().to_string() || fds != "1" {',
+     '    if false && (pid != std::process::id().to_string() || fds != "1") {',
+     'axon-fabric', _HT, _ACT),
+    ('M703', 'D6: a protected custodian serves only on the socket its config names', _CU,
+     '    if at.as_pathname() != Some(socket) {', '    if false && at.as_pathname() != Some(socket) {',
+     'axon-fabric', _HT, _ACT),
+    # ProtectedHost::operator(), the one production caller of each rule.
+    ('M704', 'A: a protected host refuses a root Fabric (the fabric_is_not_root call in operator())', _PH,
+     '        fabric_is_not_root(euid)?;\n', '        let _ = fabric_is_not_root(euid);\n',
+     'axon-fabric', _HT, _PHR),
+    ('M705', 'A83: a protected host refuses a custodian that is the Fabric uid or root (the custodian_is_separate call)', _PH,
+     '            custodian_is_separate(c.uid, euid)?;', '            let _ = custodian_is_separate(c.uid, euid);',
+     'axon-fabric', _HT, _PHC),
+    ('M706', "A83: operator() reads the helper's config under the PRODUCTION rules", _PH,
+     '            &crate::privileged_launcher::Authority::production(),\n        )?;\n        helper_agrees(',
+     '            &crate::privileged_launcher::Authority {\n                test: true,\n'
+     '                ..crate::privileged_launcher::Authority::production()\n            },\n        )?;\n        helper_agrees(',
+     'axon-fabric', _HT, _PHH),
+    ('M707', "A: operator() refuses a helper config describing another launch path (the helper_agrees call)", _PH,
+     '        helper_agrees(&helper, &host, euid)?;', '        let _ = helper_agrees(&helper, &host, euid);',
+     'axon-fabric', _HT, _PHH),
+    # decision D: the production helper's lease policy.
+    ('M708', 'D: the production helper opens authority programs under Lease::Required (Authority::lease)', _HPL,
+     '        // Root holds CAP_LEASE, so a production helper always gets one.\n        if self.test {',
+     '        // Root holds CAP_LEASE, so a production helper always gets one.\n        if true || self.test {',
+     'axon-fabric', _HT, _LEA),
+    ('M709', "D: the test-trust lease switch is not in a production build (the seam M708's test drives)", _HSE,
+     '    #[cfg(feature = "test-trust-root")]\n    if Path::new("/etc/axon/TEST-no-read-lease").exists() {',
+     '    #[cfg(all())]\n    if Path::new("/etc/axon/TEST-no-read-lease").exists() {',
+     'axon-fabric', _HT, _LEA),
+]
+# Rows the round-4 review found killed only by a unit test calling the rule
+# directly, RE-ANCHORED on the production route above (the unit tests stay as
+# controls). Previous test in the comment.
+_REANCHOR_R4 = {
+    'M490': (_RDT, _RDW),  # was --lib readiness::tests::a_trust_root_this_process_can_write_authorizes_nothing
+    'M491': (_RDT, _RDW),  # was the same unit test
+    'M492': (_RDT, _RDW),  # was the same unit test
+    'M629': (_HT, _CUT),   # was --lib custodian::tests::a_custodian_that_is_the_fabric_is_refused
+    'M640': (_HT, _CUT),   # was --lib custodian::tests::a_protected_custodian_config_lets_only_root_spend
+    'M546': (_HT, _PHR),   # was --lib protected_host::tests::a_root_fabric_is_refused_on_a_protected_host (EQUIVALENT below)
+    'M634': (_HT, _PHC),   # was --lib protected_host::tests::a_custodian_that_is_the_fabric_uid_is_refused_on_a_protected_host (EQUIVALENT below)
+    'M547': (_HT, _PHH),   # was --test protected_host the_helper_config_must_agree_with_the_host_config
+    'M548': (_HT, _PHH),   # was the same test (helper_agrees called directly)
+    'M636': (_HT, _PHH),   # was the same test
+    'M637': (_HT, _PHH),   # was the same test
+    'M591': (_HT, _LEA),   # was --lib sealed_exec::tests::an_authority_program_that_cannot_be_leased_is_refused_in_production
+}
+MUTATIONS = [r[:6] + _REANCHOR_R4[r[0]] if r[0] in _REANCHOR_R4 else r for r in MUTATIONS]
+
 # Protected Check Isolation guards (governance/specs/v022-protected-check-isolation.md):
 # candidate code must not alter what the operator's check runs or what PASS
 # means. Kept here so nothing is lost, but certified under PCI, not G01
@@ -2241,6 +2352,47 @@ EQUIV_RECORD["M602"] = {
                  "helper accepts only a socket its configured custodian uid or root serves (M626). "
                  "So a helper that is not root never spends, and never launches. Executed with the "
                  "production helper and the production (socket-activated) custodian"}
+# C9 round 4, ROWS workstream (EQUIVALENCE): fabric_is_not_root and
+# custodian_is_separate have ONE production caller, ProtectedHost::operator(),
+# where each is one of two checks that refuse its attack alone. Their only
+# kill was a unit test calling the function; the four cells are executed on
+# the production route (a production axon-fabric reading /etc/axon in a
+# private mount namespace) with scripts/v022_paired_disable.py, and the unit
+# tests are controls only (protected_host::tests).
+EQUIV_RECORD["M704"] = {
+    "property": "a protected host refuses a Fabric running as root",
+    "subsumed_by": ["M548"], "killer": "joint:M704+M548",
+    "all_paths": "operator() is the only production caller of fabric_is_not_root and the only "
+                 "constructor of a production ProtectedHost (the test-trust --protected-host-config "
+                 "route is absent from a production build). After the call it always loads the "
+                 "helper's operator config with Authority::production() (M706) and runs "
+                 "helper_agrees(helper, host, euid). load_config refuses a helper config with "
+                 "fabric_uid 0 in production (M536), and helper_agrees refuses fabric_uid != euid "
+                 "(M548). So with euid 0 every path is refused: fabric_uid 0 by M536, any other "
+                 "by M548. Executed with the production axon-fabric as root"}
+EQUIV_RECORD["M546"] = {
+    "property": "a protected host refuses a Fabric running as root",
+    "subsumed_by": ["M548"], "killer": "joint:M546+M548",
+    "all_paths": "fabric_is_not_root has one caller, operator() (M704's call); M546 disables the "
+                 "same refusal inside it, so M704's argument applies unchanged: euid 0 is refused "
+                 "by M536 (helper fabric_uid 0) or M548 (any other)"}
+EQUIV_RECORD["M705"] = {
+    "property": "a protected host refuses a custodian that is the Fabric's own uid or root",
+    "subsumed_by": ["M633"], "killer": "joint:M705+M633",
+    "all_paths": "operator() is custodian_is_separate's only production caller, reached only for "
+                 "a host with an observer (a Service custodian). It then loads the helper config "
+                 "under the production rules (M706), whose own rule refuses a helper custodian "
+                 "that is the helper's fabric_uid or 0 (M633), and helper_agrees requires the "
+                 "helper's custodian to EQUAL the host's (M636) and its fabric_uid to equal euid "
+                 "(M548). So a host custodian equal to euid or 0 is refused on every path: by "
+                 "M633 when the helper agrees, by M636 or M548 when it does not. A host with no "
+                 "observer names no custodian for Fabric to be issued a nonce by. Executed with "
+                 "the production axon-fabric"}
+EQUIV_RECORD["M634"] = {
+    "property": "a protected host refuses a custodian that is the Fabric's own uid or root",
+    "subsumed_by": ["M633"], "killer": "joint:M634+M633",
+    "all_paths": "custodian_is_separate has one caller, operator() (M705's call); M634 disables "
+                 "the same refusal inside it, so M705's argument applies unchanged"}
 EQUIVALENT_DID = set(EQUIV_RECORD)
 # STALE: a row whose old text no longer exists. "The old text is absent" shows
 # only that the TEXT changed, not that the guard is gone (C9 dev review: M204
@@ -2279,8 +2431,8 @@ BINDING_IDS = {f"M{n}" for n in range(101, 137)}
 PSV_IDS = {f"M{n}" for n in range(137, 550)}
 # C9 round 3: rows M560-M649 are PSV rows (workstream ranges).
 PSV_IDS |= {f"M{n}" for n in range(550, 650)}
-# C9 round 4: M650-M699.
-PSV_IDS |= {f"M{n}" for n in range(650, 700)}
+# C9 round 4: M650-M699, and the rows workstream's M690-M719.
+PSV_IDS |= {f"M{n}" for n in range(650, 720)}
 
 
 def in_scope(mid, scope):

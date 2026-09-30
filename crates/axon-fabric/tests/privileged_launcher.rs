@@ -1034,7 +1034,13 @@ fn production_etc(s: &Path, store_parent: &str) {
 /// The custodian's stderr goes to `s/custodian.err`; it is stopped after
 /// `body`. The host's /etc is never written.
 fn in_production_etc(s: &Path, store_parent: &str, body: &str) {
-    let sock = "/etc/axon/run/custodian.sock";
+    in_production_etc_with(s, store_parent, "/etc/axon/run/custodian.sock", "", body)
+}
+
+/// [`in_production_etc`], with the custodian's activation socket at `sock`
+/// and `prefix` run between `setpriv` and the custodian (e.g. an `env` that
+/// changes what systemd passed).
+fn in_production_etc_with(s: &Path, store_parent: &str, sock: &str, prefix: &str, body: &str) {
     let script = format!(
         "set -e\n\
          mount -t tmpfs -o mode=0755 tmpfs /etc/axon\n\
@@ -1046,7 +1052,7 @@ fn in_production_etc(s: &Path, store_parent: &str, body: &str) {
          chown -R {CUSTODIAN}:{CUSTODIAN} /etc/axon/{store_parent}/nonces\n\
          chmod 0700 /etc/axon/{store_parent}/nonces\n\
          {{ systemd-socket-activate -l {sock} setpriv --reuid={CUSTODIAN} \
-         --regid={CUSTODIAN} --clear-groups -- \"$1/axon-custodian\"; \
+         --regid={CUSTODIAN} --clear-groups -- {prefix} \"$1/axon-custodian\"; \
          echo $? > \"$1/custodian.code\"; }} 2> \"$1/custodian.err\" &\n\
          C=$!\n\
          set +e\n\
@@ -1469,4 +1475,473 @@ fn an_observation_whose_epoch_is_not_the_manifests_launches_nothing() {
     let f = fx(None, "", |_| {});
     let (code, rep) = f.run(&f.request("op-1"), None);
     assert_eq!(code, Some(0), "control: {rep}");
+}
+
+// ── C9 round 4, EQUIVALENCE (rows workstream; M690-M719) ────────────────────
+//
+// Protected rules enforced in production through calls with no row, or rows
+// killed only by a unit test calling the rule directly. Each test here drives
+// the PRODUCTION entry: the production-build binaries, reading their config
+// from /etc/axon (a tmpfs in a private mount namespace; the host's /etc is
+// never written), socket-activated as their units start them.
+
+/// Sh for one `issue` request as `uid` to the custodian at `sock`, the reply
+/// to `$1/<out>`.
+fn ask_issue(uid: u32, sock: &str, out: &str) -> String {
+    format!(
+        "setpriv --reuid={uid} --regid={uid} --clear-groups -- python3 -c '\n\
+         import socket, sys\n\
+         s = socket.socket(socket.AF_UNIX)\n\
+         s.settimeout(20)\n\
+         s.connect(\"{sock}\")\n\
+         s.sendall(b\"{{\\\"schema\\\":\\\"axon-custodian-request/1\\\",\\\"op\\\":\\\"issue\\\",\\\"epoch\\\":0}}\\n\")\n\
+         sys.stdout.write(s.recv(4096).decode())\n\
+         ' > \"$1/{out}\" 2>/dev/null\n"
+    )
+}
+
+fn root_with_etc_axon() -> bool {
+    if skip_unless_root() {
+        return false;
+    }
+    if !Path::new("/etc/axon").is_dir() {
+        eprintln!("skipped: no /etc/axon mount point (this test never creates one)");
+        return false;
+    }
+    true
+}
+
+/// A fresh production /etc/axon (see [`production_etc`]) in a new temp dir,
+/// with the custodian's config edited by `edit`.
+fn production_etc_with_custodian(edit: impl FnOnce(&mut Value)) -> tempfile::TempDir {
+    let d = tempfile::tempdir_in("/var/tmp").unwrap();
+    set_mode(d.path(), 0o755);
+    production_etc(d.path(), "custodian");
+    let p = d.path().join("etc/custodian.json");
+    let mut v: Value = serde_json::from_slice(&std::fs::read(&p).unwrap()).unwrap();
+    edit(&mut v);
+    std::fs::write(&p, v.to_string()).unwrap();
+    d
+}
+
+const CUSTODIAN_SOCK: &str = "/etc/axon/run/custodian.sock";
+
+/// A83 on the PRODUCTION custodian (M700; M629 and M640 re-anchored here;
+/// M701), ROOT ONLY: `axon-custodian` with no arguments reads
+/// /etc/axon/custodian.json and applies the PROTECTED config rules there
+/// (`load_config` -> `check(true)`) before serving anything. Three configs
+/// an operator could mistype, each breaking one rule and nothing else: the
+/// custodian is the Fabric uid (M629), a uid other than 0 spends (M640), the
+/// Fabric is root (M701). The custodian itself runs, socket-activated, as the
+/// uid its config names, from its own 0700 store, so no other check refuses
+/// it; asked for a nonce by the configured Fabric uid, it must serve nothing.
+/// Control: the operator's conforming config serves, in protected mode.
+#[test]
+fn a_protected_custodian_under_a_config_breaking_a83_serves_nothing() {
+    if !root_with_etc_axon() {
+        return;
+    }
+    let d = production_etc_with_custodian(|_| {});
+    let s = d.path();
+    in_production_etc(
+        s,
+        "custodian",
+        &ask_issue(FABRIC, CUSTODIAN_SOCK, "reply.json"),
+    );
+    let reply = std::fs::read_to_string(s.join("reply.json")).unwrap_or_default();
+    assert!(
+        reply.contains("\"ok\":true") && reply.contains("\"mode\":\"protected\""),
+        "control: the production custodian serves under the operator's config: {reply} ({})",
+        std::fs::read_to_string(s.join("custodian.err")).unwrap_or_default()
+    );
+    for (fabric, launcher, attack, why) in [
+        (
+            CUSTODIAN,
+            0,
+            "a protected custodian whose config names the Fabric uid as the custodian served",
+            "is the Fabric uid",
+        ),
+        (
+            FABRIC,
+            FABRIC,
+            "a protected custodian whose config lets uid 4242 spend nonces served",
+            "not 0",
+        ),
+        (
+            0,
+            0,
+            "a protected custodian whose config names root as the Fabric served",
+            "neither the custodian nor the Fabric runs as root",
+        ),
+    ] {
+        let d = production_etc_with_custodian(|v| {
+            v["fabric_uid"] = json!(fabric);
+            v["launcher_uid"] = json!(launcher);
+        });
+        let s = d.path();
+        in_production_etc(
+            s,
+            "custodian",
+            &ask_issue(fabric, CUSTODIAN_SOCK, "reply.json"),
+        );
+        let reply = std::fs::read_to_string(s.join("reply.json")).unwrap_or_default();
+        let err = std::fs::read_to_string(s.join("custodian.err")).unwrap_or_default();
+        assert!(!reply.contains("\"ok\":true"), "ATTACK: {attack}: {reply}");
+        assert!(err.contains(why), "{why}: {err}");
+    }
+}
+
+/// D6 on the PRODUCTION custodian (M702, M703), ROOT ONLY: a protected
+/// custodian serves only the listener its systemd socket unit passed, at the
+/// socket its config names. Started with the socket at fd 3 but without the
+/// activation's `LISTEN_PID`/`LISTEN_FDS` (not by its unit: M702), or
+/// activated on another socket than the configured one (M703), it serves
+/// nothing, although the socket it holds would take the request. Control:
+/// its unit's activation on the configured socket serves.
+#[test]
+fn a_protected_custodian_serves_only_its_units_activation_on_its_socket() {
+    if !root_with_etc_axon() {
+        return;
+    }
+    let other = "/etc/axon/run/other.sock";
+    for (sock, prefix, attack, why) in [
+        (CUSTODIAN_SOCK, "", "", ""),
+        (
+            CUSTODIAN_SOCK,
+            "env -u LISTEN_PID -u LISTEN_FDS",
+            "a protected custodian not started by its socket unit served",
+            "not socket-activated",
+        ),
+        (
+            other,
+            "",
+            "a protected custodian activated on another socket than its configured one served",
+            "not the configured",
+        ),
+    ] {
+        let d = production_etc_with_custodian(|_| {});
+        let s = d.path();
+        in_production_etc_with(
+            s,
+            "custodian",
+            sock,
+            prefix,
+            &ask_issue(FABRIC, sock, "reply.json"),
+        );
+        let reply = std::fs::read_to_string(s.join("reply.json")).unwrap_or_default();
+        let err = std::fs::read_to_string(s.join("custodian.err")).unwrap_or_default();
+        if attack.is_empty() {
+            assert!(
+                reply.contains("\"ok\":true") && reply.contains("\"mode\":\"protected\""),
+                "control: the unit's activation serves: {reply} ({err})"
+            );
+            continue;
+        }
+        assert!(!reply.contains("\"ok\":true"), "ATTACK: {attack}: {reply}");
+        assert!(err.contains(why), "{why}: {err}");
+    }
+}
+
+/// A production /etc/axon for `ProtectedHost::operator()`: [`production_etc`]
+/// (the helper's config and pinned inputs, the custodian's config) plus the
+/// host config /etc/axon/protected-host.json describing the SAME launch path
+/// (launcher, profile manifest, out root, custodian, host signer), a
+/// qualification and an observer trust root at /etc/axon/trust/, and the
+/// production `axon-fabric` at `s/axon-fabric`. `host` and `helper` edit the
+/// two configs.
+fn production_host_etc(
+    host: impl FnOnce(&mut Value),
+    helper: impl FnOnce(&mut Value),
+) -> tempfile::TempDir {
+    let d = tempfile::tempdir_in("/var/tmp").unwrap();
+    let s = d.path();
+    set_mode(s, 0o755);
+    production_etc(s, "custodian");
+    let bin = production_build();
+    copy_executable(bin.join("axon-fabric"), s.join("axon-fabric"), 0o755);
+    let t = s.join("etc");
+    let e = Path::new("/etc/axon");
+    copy_executable(
+        bin.join("axon-protected-launcher"),
+        t.join("protected-launcher"),
+        0o755,
+    );
+    std::fs::write(t.join("observer.sh"), "#!/bin/sh\n").unwrap();
+    std::fs::write(t.join("registry.json"), "{}\n").unwrap();
+    std::fs::write(t.join("evidence.json"), "{}\n").unwrap();
+    std::fs::create_dir_all(t.join("keys")).unwrap();
+    Issuer::generate().trust_in(&t.join("trust/qualification"), "operator");
+    Issuer::generate().trust_in(&t.join("trust/observer"), "observer");
+    let pin = |p: &str| json!({"path": e.join(p), "sha256": sha256_file(&t.join(p))});
+    let mut v = json!({
+        "schema": "axon-protected-host/1",
+        "launcher": pin("launcher.sh"),
+        "privileged_launcher": pin("protected-launcher"),
+        "profile_manifest": pin("manifest.json"),
+        "artifacts_dir": e.join("dist"),
+        "qualification": {"record": e.join("evidence.json"), "signature": null,
+                          "waivers": null, "max_age_s": 2_592_000},
+        "suite_registry": pin("registry.json"),
+        "signer": {"issuer_ref": "verifier:fabric", "public_key": TEST_HOST_SIGNER,
+                   "key_path": e.join("keys/attest.pk8")},
+        "out_root": e.join("runs"),
+        "observer": {"command": pin("observer.sh"),
+                     "custodian": {"socket": e.join("run/custodian.sock"), "uid": CUSTODIAN}},
+    });
+    host(&mut v);
+    std::fs::write(t.join("protected-host.json"), v.to_string()).unwrap();
+    let p = t.join("protected-launcher.json");
+    let mut h: Value = serde_json::from_slice(&std::fs::read(&p).unwrap()).unwrap();
+    helper(&mut h);
+    std::fs::write(&p, h.to_string()).unwrap();
+    d
+}
+
+/// The production `axon-fabric submit` in `s`'s /etc/axon, as `uid` (whose
+/// out root it is): `ProtectedHost::operator()` decides first. A request
+/// that does not exist makes an ACCEPTED host exit 2 (`io`) at the request,
+/// and a refused one exit 4 (`protected host: …`). Returns (exit, report).
+fn fabric_on_production_host(s: &Path, uid: u32) -> (String, String) {
+    in_production_etc(
+        s,
+        "custodian",
+        &format!(
+            "chown {uid}:{uid} /etc/axon/runs\n\
+             setpriv --reuid={uid} --regid={uid} --clear-groups -- \"$1/axon-fabric\" submit \
+             --request /nonexistent/request.json > \"$1/fabric.json\"\n\
+             echo $? > \"$1/fabric.code\""
+        ),
+    );
+    let read = |n: &str| std::fs::read_to_string(s.join(n)).unwrap_or_default();
+    (read("fabric.code").trim().to_string(), read("fabric.json"))
+}
+
+/// The control every `ProtectedHost::operator()` test starts from: the
+/// conforming production host, as the Fabric uid, is accepted (the run
+/// reaches its request).
+fn a_conforming_production_host_is_accepted() {
+    let d = production_host_etc(|_| {}, |_| {});
+    let (code, rep) = fabric_on_production_host(d.path(), FABRIC);
+    assert!(
+        code == "2" && rep.contains("\"kind\":\"io\""),
+        "control: a conforming protected host is accepted (the run reaches its request): \
+         exit {code} {rep}"
+    );
+}
+
+/// A on `ProtectedHost::operator()` (M704, M546; four-cell records against
+/// M548), ROOT ONLY: a production `axon-fabric` running as ROOT on a host
+/// whose /etc/axon/protected-host.json exists is refused. Two rules refuse
+/// it, each alone: `fabric_is_not_root`, and `helper_agrees`, because the
+/// helper's config admits the Fabric uid, never root (a helper config
+/// admitting root is refused by its own `load_config`, M536). The Fabric's
+/// out root is root's here, as it would be for a root service, so nothing
+/// else refuses: either reason.
+#[test]
+fn a_production_fabric_running_as_root_is_refused_on_a_protected_host() {
+    if !root_with_etc_axon() {
+        return;
+    }
+    a_conforming_production_host_is_accepted();
+    let d = production_host_etc(|_| {}, |_| {});
+    let (code, rep) = fabric_on_production_host(d.path(), 0);
+    assert!(
+        code == "4",
+        "ATTACK: a production Fabric running as root was accepted on a protected host: \
+         exit {code} {rep}"
+    );
+    assert!(
+        rep.contains("running as root")
+            || rep.contains("admits uid 4242, but Fabric runs as uid 0"),
+        "{rep}"
+    );
+}
+
+/// A83 on `ProtectedHost::operator()` (M705, M634; four-cell records against
+/// M633), ROOT ONLY: a host config whose custodian IS the Fabric's uid (with
+/// the helper's config naming that same custodian, so the two agree) is
+/// refused. Two rules refuse it, each alone: `custodian_is_separate`, and
+/// the helper config's own rule (its custodian is its Fabric uid): either
+/// reason.
+#[test]
+fn a_production_fabric_refuses_a_protected_host_whose_custodian_is_the_fabric() {
+    if !root_with_etc_axon() {
+        return;
+    }
+    a_conforming_production_host_is_accepted();
+    let d = production_host_etc(
+        |v| v["observer"]["custodian"]["uid"] = json!(FABRIC),
+        |h| h["custodian"]["uid"] = json!(FABRIC),
+    );
+    let (code, rep) = fabric_on_production_host(d.path(), FABRIC);
+    assert!(
+        code == "4",
+        "ATTACK: a production Fabric accepted a protected host whose custodian is the Fabric's \
+         own uid: exit {code} {rep}"
+    );
+    assert!(
+        rep.contains("is a separate uid") || rep.contains("is the Fabric uid or root"),
+        "{rep}"
+    );
+}
+
+/// A, A83 and ADR-002 on `ProtectedHost::operator()` (M706, M707; M547,
+/// M548, M636 and M637 re-anchored here), ROOT ONLY: `operator()` reads the
+/// helper's operator config under the PRODUCTION rules, and refuses one that
+/// describes another launch path than the host config. Each attack is one
+/// operator mistake, refused by one check alone:
+///
+/// * a host with no observer, and a helper config whose custodian is the
+///   Fabric uid: only the production rules refuse it (M706; with no observer
+///   nothing compares custodians);
+/// * the helper runs another launcher (M547), admits another uid (M548),
+///   spends through another custodian (M636), or names another host signer
+///   (M637) than the host config: only `helper_agrees` refuses each (M707,
+///   its call).
+#[test]
+fn a_production_fabric_refuses_a_helper_config_that_disagrees_with_its_host() {
+    if !root_with_etc_axon() {
+        return;
+    }
+    a_conforming_production_host_is_accepted();
+    let d = production_host_etc(
+        |v| {
+            v.as_object_mut().unwrap().remove("observer");
+        },
+        |h| h["custodian"]["uid"] = json!(FABRIC),
+    );
+    let (code, rep) = fabric_on_production_host(d.path(), FABRIC);
+    assert!(
+        code == "4",
+        "ATTACK: a production Fabric read the helper config under development rules and \
+         accepted a helper whose custodian is the Fabric uid: exit {code} {rep}"
+    );
+    assert!(rep.contains("is the Fabric uid or root"), "{rep}");
+    for (edit, attack, why) in [
+        (
+            (|h: &mut Value| h["launcher"]["sha256"] = json!("b".repeat(64))) as fn(&mut Value),
+            "a helper config running another launcher than the host pins",
+            "runs launcher",
+        ),
+        (
+            |h| h["fabric_uid"] = json!(OTHER),
+            "a helper config admitting another uid than the Fabric's",
+            "admits uid",
+        ),
+        (
+            |h| h["custodian"]["uid"] = json!(4245),
+            "a helper config spending through another custodian than the host's",
+            "spends through custodian",
+        ),
+        (
+            |h| h["observer"]["host_signer_public_key"] = json!("d".repeat(64)),
+            "a helper config naming another host signer than the host's",
+            "names another host signer",
+        ),
+    ] {
+        let d = production_host_etc(|_| {}, edit);
+        let (code, rep) = fabric_on_production_host(d.path(), FABRIC);
+        assert!(
+            code == "4",
+            "ATTACK: a production Fabric accepted {attack}: exit {code} {rep}"
+        );
+        assert!(rep.contains(why), "{why}: {rep}");
+    }
+}
+
+/// One launch by `helper` (a file in `s`), installed setuid-root at
+/// /etc/axon/h, from the Fabric uid, in a fresh production /etc/axon; with
+/// `no_lease`, the test-trust switch `/etc/axon/TEST-no-read-lease` exists
+/// (every read lease refused, as on a filesystem that grants none). Returns
+/// (exit, report, the launcher's ruid if it ran).
+fn production_launch(helper: &str, no_lease: bool) -> (String, String, Option<String>) {
+    let d = tempfile::tempdir_in("/var/tmp").unwrap();
+    let s = d.path();
+    set_mode(s, 0o755);
+    production_etc(s, "custodian");
+    copy_executable(
+        env!("CARGO_BIN_EXE_axon-protected-launcher"),
+        s.join("test-trust-launcher"),
+        0o755,
+    );
+    let switch = if no_lease {
+        "touch /etc/axon/TEST-no-read-lease\n"
+    } else {
+        ""
+    };
+    in_production_etc(
+        s,
+        "custodian",
+        &format!(
+            "{switch}cp \"$1/{helper}\" /etc/axon/h\n\
+             chown 0:{FABRIC} /etc/axon/h\n\
+             chmod 04750 /etc/axon/h\n\
+             setpriv --reuid={FABRIC} --regid={FABRIC} --clear-groups -- \
+             sh -c 'exec /etc/axon/h' < \"$1/request.json\" > \"$1/report.json\"\n\
+             echo $? > \"$1/code\"\n\
+             cp -a /etc/axon/runs/op-1 \"$1/result\" 2>/dev/null"
+        ),
+    );
+    let read = |n: &str| std::fs::read_to_string(s.join(n)).unwrap_or_default();
+    (
+        read("code").trim().to_string(),
+        read("report.json"),
+        std::fs::read_to_string(s.join("result/ruid"))
+            .ok()
+            .map(|r| r.trim().to_string()),
+    )
+}
+
+/// D on the PRODUCTION helper's route (M708; M591 re-anchored here; M709),
+/// ROOT ONLY: installed setuid-root and reading its operator config
+/// (`Authority::production()`), the helper opens every authority program
+/// under `Lease::Required` (M708 selects it, M591 refuses without one).
+/// Without the lease a writer that opens the launcher after its hash goes
+/// undetected, so the bytes that run need not be the bytes verified. The
+/// kernel always grants a root helper a lease on a root-owned file, so the
+/// refusal is driven with the test-trust switch that makes every lease
+/// unavailable (a filesystem that grants none): the test-trust helper, in
+/// PRODUCTION mode, launches nothing. Control: the same helper with the
+/// lease available launches, as root. And the switch is not in a production
+/// build (M709): the production helper, with the switch present, launches.
+#[test]
+fn a_production_helper_launches_nothing_it_cannot_lease() {
+    if !root_with_etc_axon() {
+        return;
+    }
+    let (code, rep, ruid) = production_launch("test-trust-launcher", false);
+    assert_eq!(
+        (code.as_str(), ruid.as_deref()),
+        ("0", Some("0")),
+        "control: the helper, in production mode, launches as root when it holds the lease: \
+         {rep}"
+    );
+    let (code, rep, ruid) = production_launch("test-trust-launcher", true);
+    assert!(
+        code == "30" && ruid.is_none(),
+        "ATTACK: the production helper launched an authority program it could not lease: \
+         exit {code} ruid {ruid:?} {rep}"
+    );
+    assert!(rep.contains("no read lease"), "{rep}");
+    let (code, rep, ruid) = production_launch("axon-protected-launcher", true);
+    assert_eq!(
+        (code.as_str(), ruid.as_deref()),
+        ("0", Some("0")),
+        "ATTACK: a production helper obeyed the test-trust lease switch (the test seam is in \
+         the production build): {rep}"
+    );
+    let prod = std::fs::read(production_build().join("axon-protected-launcher")).unwrap();
+    let test_trust = std::fs::read(env!("CARGO_BIN_EXE_axon-protected-launcher")).unwrap();
+    let has = |b: &[u8]| {
+        b.windows(b"TEST-no-read-lease".len())
+            .any(|w| w == b"TEST-no-read-lease")
+    };
+    assert!(
+        has(&test_trust),
+        "control: the test-trust helper carries the switch"
+    );
+    assert!(
+        !has(&prod),
+        "ATTACK: the production helper binary carries the test-trust lease switch"
+    );
 }
