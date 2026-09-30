@@ -767,3 +767,18 @@ ATTACK_MARKERS.update({
     'M678': r'ATTACK: the launcher went past a --policy the launch manifest does not name',
     'M679': r'ATTACK: the launcher went past a manifest policy that states no effect ceiling',
 })
+
+# C9 round 4, workstream READINESS (M740-M750; A88, A89).
+ATTACK_MARKERS.update({
+    'M740': r'ATTACK: the record names a verifier key that did not attest the run and readiness still said PASS',
+    'M741': r'ATTACK: an attested guest-unobserved receipt certified a protected run and readiness still said PASS',
+    'M742': r'ATTACK: the verifier attested a receipt of another launch and readiness still said PASS',
+    'M743': r'ATTACK: the verifier attested a receipt of another trial than the launch and readiness still said PASS',
+    'M744': r"ATTACK: the certified observation's host_config_sha256 is not the run's launch's and readiness still said PASS",
+    'M745': r'ATTACK: a current B263 record for another host certified a launch made under a different record and readiness still said PASS',
+    'M746': r'ATTACK: a B263 record issued after the run was observed certified it and readiness still said PASS',
+    'M747': r'ATTACK: the record certifies a suite id the launch did not run and readiness still said PASS',
+    'M748': r'ATTACK: the record certifies a candidate the launch did not run and readiness still said PASS',
+    'M749': r'ATTACK: a record carrying two run outputs certified the run and readiness still said PASS',
+    'M750': r'ATTACK: a record with no run in its evidence certified the run and readiness still said PASS',
+})

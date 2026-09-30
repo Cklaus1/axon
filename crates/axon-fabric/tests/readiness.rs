@@ -106,11 +106,14 @@ fn a_changed_spec_evidence_or_record_invalidates_it() {
     );
     c.refused("evidence bundle changed");
 
+    // A byte changed after the operator signed: the micode_sha, the one
+    // field only the signature stands behind (every other is also joined to
+    // a verified document, amendment 57), so the signature is what refuses.
     let Some(c) = certified() else { return };
     let mut bytes = std::fs::read(c.record()).unwrap();
     let s = String::from_utf8(bytes.clone())
         .unwrap()
-        .replace("t_ok", "t_ko");
+        .replace(&"a".repeat(40), &"b".repeat(40));
     bytes = s.into_bytes();
     std::fs::write(c.record(), bytes).unwrap();
     c.refused("does not verify");

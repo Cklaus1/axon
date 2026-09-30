@@ -1484,3 +1484,56 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       before protected use (already PROTECTED_ONLY-open). Install the new helper (request `/3`) and
       launcher together with the Fabric that writes `<inputs>/policy.json`: an older Fabric's `/2`
       request is refused (unknown schema), never launched.
+
+57. **Readiness joins the certification record's run attribution to the run itself, and the B263
+    record to the qualification the observed launch ran under (C9 round 4, readiness workstream;
+    rows M740-M750).**
+    - **Before.** `attribution()` joined `observer_key_id` to the observation's signer, but
+      `verifier_key_id` was checked only for membership in the verifier root, `suite` only for
+      non-empty fields, and `candidate_tree_ref` and `micode_sha` only for format. The observation's
+      `suite_registry_sha256`, `verifier_sha256`, `host_config_sha256` and
+      `intended_launch_manifest_sha256` were compared with nothing, because the launch manifest was
+      not in the evidence. So `b263_qualification_sha256` was never joined to the manifest's
+      `qualification_sha256`, and `accept_b263` judged currency only at decision time: any
+      operator-signed, currently fresh B263 record with the same guest and engine certified a run
+      launched under a different record, for example one issued after the run or for another
+      host. The operator's signature was the only thing behind these fields (class c).
+    - **After: the run is certified evidence.** The record's `evidence` must hold exactly one
+      `axon-fabric-submit/1` (Fabric's own submit output: the receipt, its
+      `acf-receipt-attestation/2`, and the `axon-psv-evidence/2` bundle with the exact launch
+      manifest and guest verdict) and exactly one `acf-compute-request/1` (the request it
+      answered). None, or two, is refused. Readiness (`launched`, called at the end of
+      `attribution` on the production decision) then requires:
+      - the attestation verifies (`attestation::verify`) over that request and receipt under the
+        verifier-root key whose id is `verifier_key_id`, so the key id is the key that signed;
+      - the receipt is protected evidence (`protected_evidence::check`) and names the bundle's
+        manifest, the certified observation (`observation_sha256`), the bundle's guest verdict and
+        the manifest's qualification, and the manifest's operation, task, trial, attempt, candidate
+        and test are the request's and receipt's;
+      - the certified observation joins the manifest field for field
+        (`PreflightObservation::joins`: intended manifest digest, nonce, verifier, host config,
+        suite registry, policy, launcher, engine, guest);
+      - the record's `b263_qualification_sha256` is the manifest's `qualification_sha256`, the
+        digest Fabric computed from the record its operator host config pins;
+      - the record's `suite` (id, version, entry, test, and `digest` = the suite tree digest) and
+        `candidate_tree_ref` are the manifest's.
+    - **Currency at `observed_at`.** `accept_b263` is also applied with `observed_at` as the
+      time, so the record's `end` must be no later than the observation and within the maximum age
+      of it. The decision-time check stays. Of the two, only "end after the run" can differ in
+      practice: a record stale at `observed_at` is stale now too.
+    - **Not joined, and why.** `micode_sha` stays operator-attested: no document a protected run
+      produces carries a MiCode revision. The B263 `host` string has no observed counterpart
+      either: no observation or manifest names a host. The host is joined through the digest
+      instead. The observed host's operator config pins the record path, Fabric computes
+      `qualification_sha256` from it, and the observation covers the manifest. A record for
+      another host is therefore another digest and is refused. Pinning a host identity in the
+      host config remains the separate MINOR finding.
+    - **Operator deployment.** When assembling a certification record on the protected host, the
+      operator adds the run's `axon-fabric submit` stdout (with `receipt_attestation` and
+      `psv_evidence` present) and the request file to `evidence`, beside the observation and the
+      B263 record. No new key or root is needed.
+    - Negative-matrix A88 (run attribution) and A89 (B263 joined to the launch), tests in
+      `crates/axon-fabric/tests/readiness_launch.rs`. The readiness fixture now builds a genuine
+      run: a manifest, an observer-signed observation of it, and a receipt attested by the
+      verifier-root key. Its B263 attacks relaunch under the attacked record, so each one still
+      reaches the rule it was written for.

@@ -1968,6 +1968,56 @@ MUTATIONS += [
      'axon-fabric', '--test launcher_isolation', 'the_launcher_boots_only_the_policy_the_manifest_names'),
 ]
 
+# ── C9 round 4, workstream READINESS (M740-M759): the certification record's
+# run attribution joined to verified documents (A88) and the certified B263
+# record to the qualification the observed launch ran under (A89).
+MUTATIONS += [
+    ('M740', "FIELD-ORIGIN (A88): verifier_key_id is the key that signed the certified run's receipt attestation", 'crates/axon-fabric/src/readiness.rs',
+     '    attestation::verify(att, &issuer, &req, &rc, &key).map_err(|e| {',
+     '    Ok::<String, String>(String::new()).map_err(|e: String| {',
+     'axon-fabric', '--test readiness_launch', 'the_verifier_key_id_is_the_key_that_attested_the_run'),
+    ('M741', 'FIELD-ORIGIN (A88): the attested receipt is protected evidence', 'crates/axon-fabric/src/readiness.rs',
+     '    protected_evidence::check(&req, &rc)\n        .map_err(',
+     '    protected_evidence::check(&req, &rc)\n        .or(Ok::<(), String>(()))\n        .map_err(',
+     'axon-fabric', '--test readiness_launch', 'an_attested_receipt_that_is_not_protected_evidence_is_refused'),
+    ('M742', "FIELD-ORIGIN (A88): the attested receipt names the certified launch's manifest, observation, verdict and qualification", 'crates/axon-fabric/src/readiness.rs',
+     '.find(|(p, want)| one_ref(&rc, p) != Some(*want))',
+     '.find(|(p, want)| one_ref(&rc, p) != Some(*want) && false)',
+     'axon-fabric', '--test readiness_launch', 'an_attested_receipt_of_another_launch_is_refused'),
+    ('M743', "FIELD-ORIGIN (A88): the attested request/receipt is the launch manifest's operation, trial and candidate", 'crates/axon-fabric/src/readiness.rs',
+     '.find(|(_, a, b)| a.as_str() != *b)',
+     '.find(|(_, a, b)| a.as_str() != *b && false)',
+     'axon-fabric', '--test readiness_launch', 'an_attested_receipt_of_another_trial_is_refused'),
+    ('M744', "FIELD-ORIGIN (A88): the certified observation joins the run's launch manifest (host config, registry, verifier, intended manifest)", 'crates/axon-fabric/src/readiness.rs',
+     '    o.joins(&m, &m_sha).map_err(|e| {',
+     '    o.joins(&m, &m_sha).or(Ok::<(), String>(())).map_err(|e| {',
+     'axon-fabric', '--test readiness_launch', 'the_certified_observation_is_of_the_runs_launch'),
+    ('M745', 'PSV-7 (A89): the certified B263 record is the qualification the observed launch ran under', 'crates/axon-fabric/src/readiness.rs',
+     '    if m.qualification_sha256 != s("b263_qualification_sha256") {',
+     '    if false && m.qualification_sha256 != s("b263_qualification_sha256") {',
+     'axon-fabric', '--test readiness_launch', 'a_b263_record_the_launch_did_not_run_under_is_refused'),
+    ('M746', 'PSV-7 (A89): the certified B263 record was current when the run was observed', 'crates/axon-fabric/src/readiness.rs',
+     '    crate::backend::accept_b263(&q, &b_issuer, observed_at, max_age_s, || {',
+     '    crate::backend::accept_b263(&q, &b_issuer, now, max_age_s, || {',
+     'axon-fabric', '--test readiness_launch', 'a_b263_record_issued_after_the_run_is_refused'),
+    ('M747', "FIELD-ORIGIN (A88): the record's suite is the suite the observed launch ran", 'crates/axon-fabric/src/readiness.rs',
+     '.find(|(k, launched)| doc["suite"][k].as_str() != Some(launched.as_str()))',
+     '.find(|(k, launched)| doc["suite"][k].as_str() != Some(launched.as_str()) && false)',
+     'axon-fabric', '--test readiness_launch', 'the_record_suite_is_the_suite_the_launch_ran'),
+    ('M748', "FIELD-ORIGIN (A88): the record's candidate_tree_ref is the candidate the observed launch ran", 'crates/axon-fabric/src/readiness.rs',
+     '    if s("candidate_tree_ref") != m.candidate.tree_digest {',
+     '    if false && s("candidate_tree_ref") != m.candidate.tree_digest {',
+     'axon-fabric', '--test readiness_launch', 'the_record_candidate_is_the_candidate_the_launch_ran'),
+    ('M749', 'FIELD-ORIGIN (A88): exactly one run document of each kind is in the certified evidence', 'crates/axon-fabric/src/readiness.rs',
+     '        [(_, _, b)] => Ok(b),',
+     '        [(_, _, b), ..] => Ok(b),',
+     'axon-fabric', '--test readiness_launch', 'a_record_carrying_two_runs_is_refused'),
+    ('M750', 'FIELD-ORIGIN (A88/A89): readiness requires the run in the certified evidence and joins it', 'crates/axon-fabric/src/readiness.rs',
+     '    launched(component, doc, trust, evidence, &o)\n}',
+     '    let _ = launched;\n    Ok(())\n}',
+     'axon-fabric', '--test readiness_launch', 'a_record_whose_evidence_lacks_the_run_is_refused'),
+]
+
 # Protected Check Isolation guards (governance/specs/v022-protected-check-isolation.md):
 # candidate code must not alter what the operator's check runs or what PASS
 # means. Kept here so nothing is lost, but certified under PCI, not G01
@@ -2334,6 +2384,8 @@ PSV_IDS = {f"M{n}" for n in range(137, 550)}
 PSV_IDS |= {f"M{n}" for n in range(550, 650)}
 # C9 round 4: M650-M699.
 PSV_IDS |= {f"M{n}" for n in range(650, 700)}
+# C9 round 4 fix wave: readiness M740-M759.
+PSV_IDS |= {f"M{n}" for n in range(740, 760)}
 
 
 def in_scope(mid, scope):

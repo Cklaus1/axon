@@ -702,7 +702,10 @@ fn named<'a>(
 ///   PASS, no FAIL, fresh at decision time, clean tree, a host, engine
 ///   digests), whose firecracker is the observed one;
 /// * the run was observed no later than `certified_at`, which is not in the
-///   future.
+///   future, and the B263 record was ALSO current at `observed_at` (issued
+///   before the run, within the maximum age of it);
+/// * the run itself is in the certified evidence and joined to every other
+///   attribution field ([`launched`]).
 fn attribution(
     component: &str,
     doc: &Value,
@@ -846,10 +849,258 @@ fn attribution(
             s("certified_at")
         ));
     }
+    // ...and the B263 record was a CURRENT qualification WHEN THE RUN WAS
+    // OBSERVED, not only now (C9 round 4, PSV-7; A89): issued (`end`) no
+    // later than observed_at and within the maximum age of it, by the same
+    // rules ([`crate::backend::accept_b263`]). A record issued after the run
+    // qualified nothing that ran.
+    crate::backend::accept_b263(&q, &b_issuer, observed_at, max_age_s, || {
+        certified_waivers(component, evidence, b_sha, trust)
+    })
+    .map_err(|e| {
+        format!(
+            "{component}: the B263 record was not a current qualification when the run was \
+             observed ({}): {e}",
+            o.observed_at
+        )
+    })?;
     if certified_at > now {
         return Err(format!(
             "{component}: certified_at {} is in the future",
             s("certified_at")
+        ));
+    }
+    launched(component, doc, trust, evidence, &o)
+}
+
+/// The schema of `axon-fabric submit`'s output: the attested receipt, its
+/// `acf-receipt-attestation/2` and the run's `axon-psv-evidence/2` bundle.
+pub const RUN_OUTPUT_SCHEMA: &str = "axon-fabric-submit/1";
+/// The schema of the compute request that run answered.
+pub const REQUEST_SCHEMA: &str = "acf-compute-request/1";
+
+/// The ONE certified evidence file whose schema is `schema`. None, or more
+/// than one, is refused: which document the run was is never guessed.
+fn the_one<'a>(
+    evidence: &'a [Evidence],
+    component: &str,
+    schema: &str,
+    what: &str,
+) -> Result<&'a [u8], String> {
+    let found: Vec<&Evidence> = evidence
+        .iter()
+        .filter(|(_, _, b)| serde_json::from_slice::<Value>(b).is_ok_and(|v| v["schema"] == schema))
+        .collect();
+    match found.as_slice() {
+        [(_, _, b)] => Ok(b),
+        [] => Err(format!(
+            "{component}: the certified evidence carries no {what} ({schema}): the record's \
+             run attribution has no document to be joined to"
+        )),
+        many => Err(format!(
+            "{component}: the certified evidence carries {} {what}s ({schema}): which one was \
+             the run is not stated",
+            many.len()
+        )),
+    }
+}
+
+/// The value of the receipt's ONE evidence ref starting `prefix`.
+fn one_ref<'a>(rc: &'a axon_loop_contracts::ExecutionReceipt, prefix: &str) -> Option<&'a str> {
+    let mut it = rc
+        .evidence_refs
+        .iter()
+        .filter_map(|e| e.as_str().strip_prefix(prefix));
+    match (it.next(), it.next()) {
+        (Some(v), None) => Some(v),
+        _ => None,
+    }
+}
+
+/// The record's RUN attribution, joined to VERIFIED documents (C9 round 4,
+/// PSV-7 / FIELD-ORIGIN class c; A88, A89). The certified evidence must carry
+/// the run itself: Fabric's `axon-fabric-submit/1` output (the receipt, its
+/// `acf-receipt-attestation/2`, and the `axon-psv-evidence/2` bundle holding
+/// the exact launch manifest) and the `acf-compute-request/1` it answered.
+/// Then:
+///
+/// * `verifier_key_id` is the key that SIGNED the receipt attestation: the
+///   verifier root's key under that id verifies it over this request and
+///   receipt ([`axon_loop_contracts::attestation::verify`]);
+/// * that receipt is protected evidence
+///   ([`axon_loop_contracts::protected_evidence::check`]) naming THIS launch:
+///   the bundle's manifest, the certified observation (`observation_sha256`),
+///   the bundle's guest verdict and the manifest's qualification, with the
+///   manifest's operation, task, trial, attempt, candidate and test;
+/// * the certified observation joins that manifest field for field
+///   ([`axon_psv::PreflightObservation::joins`]: its
+///   `intended_launch_manifest_sha256`, nonce, verifier, host config, suite
+///   registry, policy, launcher, engine and guest);
+/// * the record's `b263_qualification_sha256` is the manifest's
+///   `qualification_sha256`: the B263 record the observed launch RAN UNDER
+///   (Fabric computed it from the record its operator host config pins), not
+///   another current one — for another host, or issued later;
+/// * the record's `suite` (id, version, entry, test, digest = tree digest)
+///   and `candidate_tree_ref` are the manifest's.
+///
+/// `micode_sha` stays operator-attested: no document a protected run
+/// produces carries a MiCode revision.
+fn launched(
+    component: &str,
+    doc: &Value,
+    trust: &ReadinessTrust,
+    evidence: &[Evidence],
+    o: &axon_psv::PreflightObservation,
+) -> Result<(), String> {
+    use axon_loop_contracts::{attestation, protected_evidence, OpaqueRef};
+    let s = |k: &str| doc[k].as_str().unwrap_or("");
+    let run: Value = serde_json::from_slice(the_one(
+        evidence,
+        component,
+        RUN_OUTPUT_SCHEMA,
+        "Fabric run output",
+    )?)
+    .map_err(|e| format!("{component}: the certified run output: {e}"))?;
+    let req: axon_loop_contracts::ComputeRequest = axon_loop_contracts::parse_bytes(the_one(
+        evidence,
+        component,
+        REQUEST_SCHEMA,
+        "compute request",
+    )?)
+    .map_err(|e| format!("{component}: the certified compute request: {e}"))?;
+    let rc: axon_loop_contracts::ExecutionReceipt =
+        axon_loop_contracts::parse(&run["receipt"].to_string())
+            .map_err(|e| format!("{component}: the certified run's receipt: {e}"))?;
+
+    // verifier_key_id: the verifier root's key under that id signed the
+    // attestation of THIS receipt answering THIS request.
+    let key = trust
+        .exclusive_keys(&trust.verifier_dir)?
+        .into_iter()
+        .find(|k| attestation::key_id_of_hex(k).as_deref() == Some(s("verifier_key_id")))
+        .ok_or(format!(
+            "{component}: verifier_key_id {} names no key in the operator's verifier root",
+            s("verifier_key_id")
+        ))?;
+    let att = &run["receipt_attestation"];
+    let issuer = OpaqueRef::new(att["issuer_ref"].as_str().unwrap_or(""))
+        .map_err(|e| format!("{component}: the receipt attestation names no issuer: {e}"))?;
+    attestation::verify(att, &issuer, &req, &rc, &key).map_err(|e| {
+        format!(
+            "{component}: the certified receipt attestation is not verifier_key_id {}'s \
+             attestation of the certified receipt: {e}",
+            s("verifier_key_id")
+        )
+    })?;
+    protected_evidence::check(&req, &rc)
+        .map_err(|e| format!("{component}: the attested receipt is not protected evidence: {e}"))?;
+
+    // The launch manifest, as the run's bundle carries it.
+    let b: protected_evidence::PsvEvidence = serde_json::from_value(run["psv_evidence"].clone())
+        .map_err(|e| {
+            format!("{component}: the certified run carries no psv evidence bundle: {e}")
+        })?;
+    if b.schema != protected_evidence::PSV_EVIDENCE_SCHEMA {
+        return Err(format!(
+            "{component}: the run's evidence bundle is not {}",
+            protected_evidence::PSV_EVIDENCE_SCHEMA
+        ));
+    }
+    let m_sha = sha256_hex(b.launch_manifest.as_bytes());
+    let m = axon_psv::LaunchManifest::verify(b.launch_manifest.as_bytes(), &m_sha)
+        .map_err(|e| format!("{component}: the run's launch manifest: {e}"))?;
+
+    // The attested receipt names this launch's documents...
+    let v_sha = sha256_hex(b.guest_verdict.as_bytes());
+    let refs = [
+        ("launch-manifest-sha256:", m_sha.as_str()),
+        ("preflight-observation-sha256:", s("observation_sha256")),
+        ("guest-verdict-sha256:", v_sha.as_str()),
+        ("qualification-sha256:", m.qualification_sha256.as_str()),
+    ];
+    if let Some((p, want)) = refs.iter().find(|(p, want)| one_ref(&rc, p) != Some(*want)) {
+        return Err(format!(
+            "{component}: the attested receipt names {p}{}, but the certified run's is {want}",
+            one_ref(&rc, p).unwrap_or("(none, or more than one)")
+        ));
+    }
+    // ...and is the manifest's request, trial and candidate.
+    let ids = [
+        ("operation_id", &m.operation_id, req.operation_id.as_str()),
+        ("task_id", &m.task_id, req.task_id.as_str()),
+        ("trial_id", &m.trial_id, req.trial_id.as_str()),
+        ("attempt_id", &m.attempt_id, req.attempt_id.as_str()),
+        (
+            "operation_id (receipt)",
+            &m.operation_id,
+            rc.operation_id.as_str(),
+        ),
+        ("task_id (receipt)", &m.task_id, rc.task_id.as_str()),
+        ("trial_id (receipt)", &m.trial_id, rc.trial_id.as_str()),
+        (
+            "attempt_id (receipt)",
+            &m.attempt_id,
+            rc.attempt_id.as_str(),
+        ),
+        (
+            "candidate",
+            &m.candidate.workspace_version,
+            req.workspace_version_ref.as_str(),
+        ),
+        (
+            "candidate (receipt)",
+            &m.candidate.workspace_version,
+            rc.input_workspace_ref.as_str(),
+        ),
+        (
+            "test",
+            &m.suite.test,
+            req.argv.get(1).map(String::as_str).unwrap_or(""),
+        ),
+    ];
+    if let Some((k, manifest, other)) = ids.iter().find(|(_, a, b)| a.as_str() != *b) {
+        return Err(format!(
+            "{component}: the launch manifest's {k} is {manifest}, but the attested \
+             request/receipt names {other}"
+        ));
+    }
+
+    // The certified observation is of THIS manifest, field for field.
+    o.joins(&m, &m_sha).map_err(|e| {
+        format!("{component}: the certified observation is not of the run's launch: {e}")
+    })?;
+
+    // The record's attribution is the launch's.
+    if m.qualification_sha256 != s("b263_qualification_sha256") {
+        return Err(format!(
+            "{component}: the observed launch ran under B263 qualification {}, but the record \
+             certifies {}",
+            m.qualification_sha256,
+            s("b263_qualification_sha256")
+        ));
+    }
+    let suite = [
+        ("id", &m.suite.id),
+        ("version", &m.suite.version),
+        ("entry", &m.suite.entry),
+        ("test", &m.suite.test),
+        ("digest", &m.suite.tree_digest),
+    ];
+    if let Some((k, launched)) = suite
+        .iter()
+        .find(|(k, launched)| doc["suite"][k].as_str() != Some(launched.as_str()))
+    {
+        return Err(format!(
+            "{component}: the record's suite {k} is {}, but the observed launch ran {launched}",
+            doc["suite"][k]
+        ));
+    }
+    if s("candidate_tree_ref") != m.candidate.tree_digest {
+        return Err(format!(
+            "{component}: the record's candidate_tree_ref is {}, but the observed launch ran \
+             candidate {}",
+            s("candidate_tree_ref"),
+            m.candidate.tree_digest
         ));
     }
     Ok(())
