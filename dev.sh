@@ -6,7 +6,10 @@
 set -euo pipefail
 
 CARGO=/root/.cargo/bin/cargo
-AXON=./target/debug/axon
+# The interpreter this helper builds, at the path cargo builds it to (never a
+# guessed ./target path: CARGO_TARGET_DIR or a config may move it).
+. scripts/lib/axon_bin.sh
+AXON="$(built_bin axon)"
 
 # Build the codegen-free interpreter CLI (fast, no LLVM). Used by run/examples.
 build_interp() { $CARGO build -q -p axon-core --no-default-features --bin axon; }

@@ -44,7 +44,10 @@ if [[ -z "${PSV_DEV:-}" ]]; then
     (cd "$REPO" && cargo build -q -p axon-psv --example psv_dev) \
         || { echo "FAIL: cargo build -p axon-psv --example psv_dev"; exit 1; }
 fi
-DEV="${PSV_DEV:-${CARGO_TARGET_DIR:-$REPO/target}/debug/examples/psv_dev}"
+# At the path cargo built it to, not a guessed ${CARGO_TARGET_DIR:-target}
+# (scripts/lib/axon_bin.sh).
+. "$REPO/scripts/lib/axon_bin.sh"
+DEV="${PSV_DEV:-$(cd "$REPO" && built_bin examples/psv_dev)}"
 [[ -x "$DEV" ]] || { echo "FAIL: $DEV missing (cargo build -p axon-psv --example psv_dev)"; exit 1; }
 echo "judge: $DEV"
 

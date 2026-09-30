@@ -15,7 +15,8 @@ OUT="examples/browser/axon_interp.async.wasm"
 
 echo "building axon-wasm (wasm32-unknown-unknown)…"
 cargo build -q -p axon-wasm --target wasm32-unknown-unknown --release
-RAW="target/wasm32-unknown-unknown/release/axon_wasm.wasm"
+. scripts/lib/axon_bin.sh
+RAW="$(built_bin axon_wasm.wasm wasm32-unknown-unknown release)"  # the build just made
 
 # binaryen must be told which modern-rustc wasm features to accept (every version
 # tested: 108/120/127 — not a version pin); --asyncify

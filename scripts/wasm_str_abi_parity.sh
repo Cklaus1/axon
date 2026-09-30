@@ -58,8 +58,9 @@ if ! _rt_err="$(cargo build -q -p axon-rt --target wasm32-wasip1 2>&1)"; then
   echo "$_rt_err" | sed 's/^/    | /'
   exit 1
 fi
-AXON="${AXON:-target/debug/axon}"
-INTERP="target/debug/axon-run"
+. scripts/lib/axon_bin.sh
+use_built AXON axon  # the binary the build above produced (or the one the caller named)
+INTERP=""; use_built INTERP axon-run  # built above; never caller-named
 WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
 
 # A program that routes through 13 distinct str builtins (str scalars/transforms

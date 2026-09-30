@@ -37,7 +37,8 @@ if ! cargo build -q -p axon-core --bin axon 2>/dev/null; then
   exit 0
 fi
 cargo build -q -p axon-rt 2>/dev/null || true
-AXON="${AXON:-target/debug/axon}"
+. scripts/lib/axon_bin.sh
+use_built AXON axon  # the binary the build above produced (or the one the caller named)
 
 # (1) Infinite recursion — must panic gracefully (exit 101) on BOTH engines.
 REC="$WORK/rec.ax"

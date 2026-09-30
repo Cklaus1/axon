@@ -443,7 +443,7 @@ fn only_an_operator_suite_runs_on_the_protected_profile() {
     );
     // Two independent layers refuse it: the pre-reservation check (M187) and
     // the protected arm, which builds no launch manifest without an operator
-    // suite (M402). Which one refuses is not the property (four-cell,
+    // suite (M400). Which one refuses is not the property (four-cell,
     // EQUIV_RECORD["M187"]); with M187 removed the op is reserved and
     // journalled before the arm refuses it, so the launch-record count is not
     // asserted on this route.

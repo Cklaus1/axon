@@ -29,21 +29,37 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-# The image is evidence about these sources (operator decision E): no compiler
-# wrapper may stand between them and the bytes. A cache (sccache is installed
-# for DEVELOPMENT evidence runs only) is an input this tree does not contain.
-for v in RUSTC_WRAPPER RUSTC_WORKSPACE_WRAPPER CARGO_BUILD_RUSTC_WRAPPER CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER; do
-    if [ -n "${!v:-}" ]; then
-        echo "refused: $v is set (${!v}); a guest image is never built through a compiler wrapper" >&2
-        exit 2
-    fi
-done
-for f in "${CARGO_HOME:-$HOME/.cargo}"/config "${CARGO_HOME:-$HOME/.cargo}"/config.toml .cargo/config .cargo/config.toml; do
-    if [ -f "$f" ] && grep -Eq '^[[:space:]]*rustc-(workspace-)?wrapper[[:space:]]*=' "$f"; then
-        echo "refused: $f configures a rustc wrapper; a guest image is never built through one" >&2
-        exit 2
-    fi
-done
+# The image is evidence about these sources (operator decision E): nothing may
+# stand between them and the bytes -- no compiler wrapper (sccache is for
+# DEVELOPMENT evidence runs only), no substituted rustc, no injected rustflags
+# or linker, no artifact from an earlier build. That used to be a LIST of four
+# wrapper variables and four config files; cargo resolves far more (ancestor
+# configs, dotted keys, RUSTC, RUSTFLAGS, linkers, RUSTUP_TOOLCHAIN, a reused
+# target dir), and two C9 round-4 reviewers built through each of them. So
+# every cargo run here goes through scripts/guest_build_env.py, which builds in
+# an environment it CONSTRUCTS (caller env dropped; the pinned toolchain; a
+# fresh CARGO_HOME and target dir) and refuses unless cargo's EFFECTIVE config
+# is only the tree's own. Its record goes into the guest manifest, and the
+# freeze refuses an image built any other way.
+BUILD_ENV=""
+gcargo_begin() {  # gcargo_begin <dir>: a fresh controlled build, recorded in <dir>/build-env.json
+    BUILD_ENV="$1/build-env.json"
+    rm -f "$BUILD_ENV"
+    python3 scripts/guest_build_env.py begin "$BUILD_ENV" || exit 2
+}
+gcargo() {  # gcargo [--rustflags FLAGS] -- <cargo args>: cargo in the controlled environment
+    python3 scripts/guest_build_env.py cargo "$BUILD_ENV" "$@"
+}
+gpath() {  # gpath <triple> <profile> <name>: where the controlled build put <name>
+    python3 scripts/guest_build_env.py path "$BUILD_ENV" "$@"
+}
+if [[ "${1:-}" == "--build-env-only" ]]; then
+    # The controlled environment alone, then stop: its refusal is exercised
+    # through this production route by crates/axon-fabric/tests/guest_build_env.rs.
+    mkdir -p "${2:?--build-env-only needs a directory}"
+    gcargo_begin "$2"
+    exit 0
+fi
 
 DIST="dist/guest"
 KERNEL_ONLY="${1:-}"
@@ -58,8 +74,8 @@ build_kernel_axon() {
 
     # Build the kernel ELF.  Requires rust-src component and lld.
     # The custom target JSON is at crates/axon-guest-kernel/targets/x86_64-axon-metal.json.
-    RUSTFLAGS="-C target-feature=+crt-static" \
-    cargo build -p axon-guest-kernel \
+    gcargo_begin "$DIST"
+    gcargo --rustflags "-C target-feature=+crt-static" -- build -p axon-guest-kernel \
         -Z json-target-spec \
         --target "crates/axon-guest-kernel/targets/x86_64-axon-metal.json" \
         --release \
@@ -67,7 +83,8 @@ build_kernel_axon() {
         -Z build-std-features=compiler-builtins-mem \
         --quiet 2>&1
 
-    local KERNEL_ELF="target/x86_64-axon-metal/release/axon-guest-kernel"
+    local KERNEL_ELF
+    KERNEL_ELF="$(gpath x86_64-axon-metal release axon-guest-kernel)"
     if [[ ! -f "$KERNEL_ELF" ]]; then
         echo "[build-guest-image] ERROR: kernel ELF not found at $KERNEL_ELF"
         exit 1
@@ -177,14 +194,15 @@ build_rootfs_linux() {
     # Rust provenance that stamps the readiness verifier). The manifest is
     # clean only if this and the tree at manifest time are clean and agree.
     mkdir -p "$LDIST"
+    gcargo_begin "$LDIST"
     python3 scripts/linux_profile_manifest.py --snapshot "$LDIST/provenance.pre.json"
 
     echo "[build-guest-image] Building axon interpreter (static musl, --locked)..."
-    RUSTFLAGS="-C target-feature=+crt-static" \
-        cargo build --locked -p axon-core \
+    gcargo --rustflags "-C target-feature=+crt-static" -- build --locked -p axon-core \
             --target x86_64-unknown-linux-musl \
-            --no-default-features --bin axon --release --quiet
-    local AXON_BIN="${CARGO_TARGET_DIR:-target}/x86_64-unknown-linux-musl/release/axon"
+            --no-default-features --bin axon --release --quiet || exit 1
+    local AXON_BIN
+    AXON_BIN="$(gpath x86_64-unknown-linux-musl release axon)"
     if ! file "$AXON_BIN" | grep -q 'static'; then
         echo "[build-guest-image] ERROR: $AXON_BIN is not statically linked" >&2
         exit 1
@@ -196,10 +214,10 @@ build_rootfs_linux() {
     # DEFAULT FEATURES ONLY: `dev-allow-no-policy` compiles in a runtime
     # no-policy escape, and must never reach an image.
     echo "[build-guest-image] Building axon-guest-init (static musl, --locked, default features)..."
-    RUSTFLAGS="-C target-feature=+crt-static" \
-        cargo build --locked -p axon-guest-init \
-            --target x86_64-unknown-linux-musl --release --quiet
-    local INIT_BIN="${CARGO_TARGET_DIR:-target}/x86_64-unknown-linux-musl/release/axon-guest-init"
+    gcargo --rustflags "-C target-feature=+crt-static" -- build --locked -p axon-guest-init \
+            --target x86_64-unknown-linux-musl --release --quiet || exit 1
+    local INIT_BIN
+    INIT_BIN="$(gpath x86_64-unknown-linux-musl release axon-guest-init)"
     if ! file "$INIT_BIN" | grep -q 'static'; then
         echo "[build-guest-image] ERROR: $INIT_BIN is not statically linked" >&2
         exit 1
@@ -213,10 +231,14 @@ build_rootfs_linux() {
 
     # axon-psv-runner: the trusted suite-verdict runner (v022-psv-protocol.md §4).
     echo "[build-guest-image] Building axon-psv-runner (static musl, --locked)..."
-    RUSTFLAGS="-C target-feature=+crt-static" \
-        cargo build --locked -p axon-psv --bin axon-psv-runner \
-            --target x86_64-unknown-linux-musl --release --quiet
-    local RUNNER_BIN="${CARGO_TARGET_DIR:-target}/x86_64-unknown-linux-musl/release/axon-psv-runner"
+    gcargo --rustflags "-C target-feature=+crt-static" -- build --locked -p axon-psv --bin axon-psv-runner \
+            --target x86_64-unknown-linux-musl --release --quiet || exit 1
+    local RUNNER_BIN
+    RUNNER_BIN="$(gpath x86_64-unknown-linux-musl release axon-psv-runner)"
+    # The digests of exactly what this controlled build produced; the freeze
+    # requires the manifest's artifacts to be these.
+    python3 scripts/guest_build_env.py finish "$BUILD_ENV" \
+        "axon=$AXON_BIN" "axon-guest-init=$INIT_BIN" "axon-psv-runner=$RUNNER_BIN" || exit 1
     if ! file "$RUNNER_BIN" | grep -q 'static'; then
         echo "[build-guest-image] ERROR: $RUNNER_BIN is not statically linked" >&2
         exit 1
@@ -250,6 +272,7 @@ build_rootfs_linux() {
     cp "$AXON_BIN" "$LDIST/axon"
     cp "$INIT_BIN" "$LDIST/axon-guest-init"
     cp "$RUNNER_BIN" "$LDIST/axon-psv-runner"
+    python3 scripts/guest_build_env.py discard "$BUILD_ENV"
     # The image's root must be traversable by the unprivileged test uid.
     local ROOTMODE
     # `sed -n 1p`, not `head -1`: head closes the pipe early, and under
@@ -280,15 +303,16 @@ build_kernel() {
 
 build_initramfs() {
     echo "[build-guest-image] Building axon interpreter (static musl)..."
-    RUSTFLAGS="-C target-feature=+crt-static" \
-        cargo build -p axon-core \
+    [[ -n "$BUILD_ENV" ]] || gcargo_begin "$DIST"
+    gcargo --rustflags "-C target-feature=+crt-static" -- build -p axon-core \
             --target x86_64-unknown-linux-musl \
             --no-default-features \
             --bin axon \
             --release \
-            --quiet
+            --quiet || exit 1
 
-    local AXON_BIN="${CARGO_TARGET_DIR:-target}/x86_64-unknown-linux-musl/release/axon"
+    local AXON_BIN
+    AXON_BIN="$(gpath x86_64-unknown-linux-musl release axon)"
     local INITDIR
     INITDIR="$(mktemp -d)"
     # AUDIT T12: INITDIR is `local` to this function, but an EXIT trap runs in
@@ -307,12 +331,12 @@ build_initramfs() {
     if [[ "$BACKEND" == "linux" ]]; then
         # Linux backend: include axon-guest-init as /init (PID-1 supervisor).
         echo "[build-guest-image] Building axon-guest-init (static musl)..."
-        RUSTFLAGS="-C target-feature=+crt-static" \
-            cargo build -p axon-guest-init \
+        gcargo --rustflags "-C target-feature=+crt-static" -- build -p axon-guest-init \
                 --target x86_64-unknown-linux-musl \
                 --release \
-                --quiet
-        local INIT_BIN="${CARGO_TARGET_DIR:-target}/x86_64-unknown-linux-musl/release/axon-guest-init"
+                --quiet || exit 1
+        local INIT_BIN
+        INIT_BIN="$(gpath x86_64-unknown-linux-musl release axon-guest-init)"
         cp "$INIT_BIN" "$INITDIR/init"
         chmod +x "$INITDIR/init"
         strip "$INITDIR/init" 2>/dev/null || true

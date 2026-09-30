@@ -13,31 +13,36 @@
 # (the absence of the `syscall-dispatch:` marker, which case 1 proves is real by
 # requiring it), clean exit. The real allow path is tracked OPEN, not done.
 #
-# Requires: the freestanding kernel (AXON_GUEST_KERNEL, else
-# $CARGO_TARGET_DIR/x86_64-axon-metal/release/, else target/x86_64-axon-metal/release/),
+# Requires: the freestanding kernel (AXON_GUEST_KERNEL, else built here),
 # plus Firecracker + KVM (fc_boot_test.sh provides the boot harness). Prerequisites
 # absent → prints "skipping" and exits 0; gate.sh records that as a SKIP, never a PASS.
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
-if [[ -n "${AXON_GUEST_KERNEL:-}" ]]; then
-    KERNEL="$AXON_GUEST_KERNEL"
-elif [[ -n "${CARGO_TARGET_DIR:-}" && -f "$CARGO_TARGET_DIR/x86_64-axon-metal/release/axon-guest-kernel" ]]; then
-    KERNEL="$CARGO_TARGET_DIR/x86_64-axon-metal/release/axon-guest-kernel"
-else
-    KERNEL="target/x86_64-axon-metal/release/axon-guest-kernel"
-fi
-export AXON_GUEST_KERNEL="$KERNEL"   # fc_boot_test.sh boots exactly this artifact
-if [[ ! -f "$KERNEL" ]]; then
-    echo "kernel_enforce_test: kernel not built ($KERNEL) — skipping"
-    echo "  build: cargo build -p axon-guest-kernel \\"
-    echo "    --target \$(pwd)/crates/axon-guest-kernel/targets/x86_64-axon-metal.json \\"
-    echo "    -Z build-std=core,compiler_builtins -Z build-std-features=compiler-builtins-mem \\"
-    echo "    -Z json-target-spec --release"
-    exit 0
-fi
 command -v firecracker >/dev/null 2>&1 || { echo "kernel_enforce_test: firecracker absent — skipping"; exit 0; }
 [[ -e /dev/kvm ]] || { echo "kernel_enforce_test: /dev/kvm absent — skipping"; exit 0; }
+
+# The kernel booted is the one the caller names in AXON_GUEST_KERNEL, or the one
+# built HERE from this tree -- never one that merely sits under target/ or
+# $CARGO_TARGET_DIR (C9 round 4; scripts/lib/axon_bin.sh).
+. scripts/lib/axon_bin.sh
+if [[ -z "${AXON_GUEST_KERNEL:-}" ]]; then
+    if ! kerr="$(cargo build -q -p axon-guest-kernel \
+            --target "$(pwd)/crates/axon-guest-kernel/targets/x86_64-axon-metal.json" \
+            -Z build-std=core,compiler_builtins -Z build-std-features=compiler-builtins-mem \
+            -Z json-target-spec --release 2>&1)"; then
+        printf '%s\n' "$kerr" | tail -5 | sed 's/^/    /'
+        echo "kernel_enforce_test: kernel build unavailable — skipping"
+        exit 0
+    fi
+    use_built AXON_GUEST_KERNEL axon-guest-kernel x86_64-axon-metal release
+fi
+KERNEL="$AXON_GUEST_KERNEL"
+export AXON_GUEST_KERNEL   # fc_boot_test.sh boots exactly this artifact
+if [[ ! -f "$KERNEL" ]]; then
+    echo "kernel_enforce_test: FAIL — AXON_GUEST_KERNEL=$KERNEL is not a file" >&2
+    exit 1
+fi
 
 b64() { printf '%s' "$1" | base64 -w0; }
 boot() { timeout 90 bash scripts/fc_boot_test.sh --policy "$1" 2>&1; }

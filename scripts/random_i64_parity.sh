@@ -23,7 +23,8 @@ if ! cargo build -q -p axon-core --bin axon 2>/dev/null; then
   echo "random_i64_parity: codegen build unavailable (LLVM absent) — skipping"
   exit 0
 fi
-AXON="${AXON:-target/debug/axon}"
+. scripts/lib/axon_bin.sh
+use_built AXON axon  # the binary the build above produced (or the one the caller named)
 
 # AUDIT T51 (GATE-04). This used to `exit 0` here on a build failure — but
 # `build_run` is ALWAYS invoked as `code="$(build_run ...)"`, so the exit

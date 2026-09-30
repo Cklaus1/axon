@@ -39,7 +39,10 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
-AXON="${AXON:-./target/debug/axon}"
+# The binary whose verbs are checked is the one the caller names in AXON, never
+# one that merely sits in target/ (C9 round 4). Unnamed, the verb check is
+# SKIPPED -- fatal under CLAIMS_GATE_REQUIRE=1 -- exactly as a missing binary was.
+AXON="${AXON:-}"
 DOC="CLAUDE.md"
 
 pass=0; fail=0; warned=0
@@ -68,9 +71,9 @@ if [ ! -x "$AXON" ]; then
   # that silently stopped checking verbs would be worse than a red build).
   # Mirrors BROWSER_PARITY_REQUIRE=1 in browser_compute_parity.sh.
   if [ "${CLAIMS_GATE_REQUIRE:-0}" = 1 ]; then
-    bad "verbs" "no axon binary at $AXON and CLAIMS_GATE_REQUIRE=1 — build it first: cargo build -p axon-core --no-default-features --bin axon"
+    bad "verbs" "no axon binary named (AXON='$AXON') and CLAIMS_GATE_REQUIRE=1 — build it and name it: AXON=<path> (cargo build -p axon-core --no-default-features --bin axon)"
   else
-    echo "  SKIP verbs — no axon binary at $AXON (set CLAIMS_GATE_REQUIRE=1 to make this fatal)"
+    echo "  SKIP verbs — no axon binary named (AXON='$AXON'; set CLAIMS_GATE_REQUIRE=1 to make this fatal)"
   fi
 else
   HELP="$("$AXON" --help 2>&1)"

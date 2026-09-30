@@ -18,6 +18,13 @@ names another repository: C9 round 3, A79), asked of the operator's git the
 way axon-fabric's git_data::discover asks it; and so is a guest manifest that
 is not clean with no reasons. The clean flag and its reasons are bound.
 
+C9 round 4 (amendment 56): the guest manifest must also carry the record of the
+controlled build environment its binaries were built in
+(scripts/guest_build_env.py): exactly the constructed environment, fresh
+CARGO_HOME and target dir, no effective cargo setting the build would use, and
+artifact digests equal to the manifest's. The record's digest and `rustc -vV`
+are bound.
+
 Git is /usr/bin/git with the caller's environment dropped (GIT_DIR and the like
 cannot steer which repository answers) and replace objects off."""
 import hashlib
@@ -67,8 +74,11 @@ def not_standalone(root):
 
 
 def main():
-    # A freeze records evidence about these sources; no compiler wrapper (the
-    # development-only sccache) may stand between them and what is built.
+    # The freeze process itself compiles nothing; this refuses only a freeze
+    # run from a shell that names a rustc wrapper (the development sccache),
+    # as defence in depth. Whether the BYTES the freeze binds were built
+    # through a wrapper is judged below, from the guest manifest's recorded
+    # controlled build environment -- not from this process's variables.
     wrappers = [v for v in ("RUSTC_WRAPPER", "RUSTC_WORKSPACE_WRAPPER", "CARGO_BUILD_RUSTC_WRAPPER",
                             "CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER") if os.environ.get(v)]
     if wrappers:
@@ -100,6 +110,29 @@ def main():
                  f"(axon_tree_dirty_at_build={src.get('axon_tree_dirty_at_build')!r}, "
                  f"reasons={src.get('axon_tree_dirty_reasons')!r}): rebuild the guest image in a "
                  "standalone clone with the operator allowlist installed (amendment 44)")
+    # The guest's bytes were built in the controlled environment (C9 round 4):
+    # scripts/guest_build_env.py dropped the caller's environment, used the
+    # pinned toolchain, a fresh CARGO_HOME and target dir, and refused any
+    # effective cargo config but the tree's own. A list of wrapper variables
+    # checked here could not see an ancestor config, RUSTC, RUSTFLAGS, a linker
+    # or a reused target dir; the record of the environment that built the
+    # bytes can.
+    sys.dont_write_bytecode = True
+    gspec = importlib.util.spec_from_file_location("guest_build_env",
+                                                   os.path.join(ROOT, "scripts/guest_build_env.py"))
+    gbe = importlib.util.module_from_spec(gspec)
+    gspec.loader.exec_module(gbe)
+    benv = src.get("build_environment")
+    why = gbe.shape_problems(benv) if benv is not None else "the manifest records no build environment"
+    if why:
+        sys.exit("refused: the guest image was not built in the controlled build environment "
+                 f"(scripts/guest_build_env.py): {why}")
+    built = (benv or {}).get("artifacts") or {}
+    unbound = [n for n in ("axon", "axon-guest-init", "axon-psv-runner")
+               if not built.get(n) or built.get(n) != (img.get("artifacts", {}).get(n) or {}).get("sha256")]
+    if unbound:
+        sys.exit(f"refused: the guest manifest's {unbound} are not the bytes its controlled build "
+                 "produced (scripts/guest_build_env.py records each artifact's digest)")
     manifest = {
         "schema": "axon-v022-psv-freeze/1",
         "axon_sha": git(["rev-parse", "HEAD"], ROOT),
@@ -108,7 +141,9 @@ def main():
                         "artifacts": {k: v["sha256"] for k, v in img["artifacts"].items()},
                         "source_revision": src["axon_git_rev_at_build"],
                         "axon_tree_dirty_at_build": src["axon_tree_dirty_at_build"],
-                        "axon_tree_dirty_reasons": src["axon_tree_dirty_reasons"]},
+                        "axon_tree_dirty_reasons": src["axon_tree_dirty_reasons"],
+                        "build_environment_sha256": sha_str(json.dumps(benv, sort_keys=True)),
+                        "rustc": benv["toolchain"]["rustc_vV"]},
         "mutation_registry_total": len(mut.MUTATIONS),
         "active_mutants": len(active),
         "retired_equivalent": len(mut.EQUIVALENT_DID),

@@ -19,8 +19,13 @@ into a pass. Every file is restored and re-hashed after each mutation.
 --only runs a SAMPLE of the scope's rows; its output is marked and cannot be
 merged as a shard.
 
-Refuses to run on a tree with uncommitted changes under crates/: the result is
-evidence about a COMMIT, and it names that commit. Exit 0 only when every
+Refuses to run on a tree with ANY uncommitted change (C9 round 4: a check of
+crates/ alone let a locally edited scripts/ or profiles/ guard -- 24 rows guard
+files there -- and a locally edited registry or marker file stamp the commit):
+the result is evidence about a COMMIT, and it names that commit. Every run and
+shard records the git blobs of the registry and marker files and each row's
+old/new text digest; --merge refuses shards that disagree with each other or
+with the registry it judges them against. Exit 0 only when every
 baseline passes and every mutation is KILLED by its own attack.
 
 Each cargo run is contained by scripts/lib_bounded_run.sh (memory ceiling and
@@ -1909,10 +1914,90 @@ MUTATIONS += [
 # script without it is a full kernel and rootfs build (refusal exercised by
 # hand: exit 2; amendment 52).
 MUTATIONS += [
-    ('M650', 'EVIDENCE (decision E): a freeze is never made through a compiler wrapper', 'scripts/v022_freeze_manifest.py',
+    ('M650', 'EVIDENCE (decision E): the freeze process refuses a compiler-wrapper variable in its own environment (defence in depth; what BUILT the guest is M734-M738)', 'scripts/v022_freeze_manifest.py',
      '    if wrappers:\n',
      '    if False and wrappers:\n',
      'axon-fabric', '--test freeze_manifest', 'a_compiler_wrapper_does_not_freeze'),
+]
+
+# C9 round 4 (harness2, amendment 56): EQUIVALENCE (6) -- every check execs
+# the binary built from the tree under test (scripts pick a binary only through
+# scripts/lib/axon_bin.sh; tests run scripts only through
+# crates/axon-core/tests/script_spawn); EQUIVALENCE (5) -- the harnesses
+# refuse any uncommitted change and record the registry they ran; FIELD-ORIGIN
+# / PSV-2 -- the guest image is built in a constructed environment
+# (scripts/guest_build_env.py) and the freeze binds only such an image.
+_HB = '--no-default-features --test harness_binaries'
+_HI = '--no-default-features --test harness_integrity'
+_GE = 'scripts/guest_build_env.py'
+_FZ = 'scripts/v022_freeze_manifest.py'
+_FT = 'a_guest_image_not_built_in_the_controlled_environment_does_not_freeze'
+MUTATIONS += [
+    ('M720', 'EQUIVALENCE (6): a harness that builds nothing runs only the binary its caller names (no fallback to target/ or PATH)', 'scripts/lib/axon_bin.sh',
+     # (the mutant's text is split so the script drift scanner reads no path here)
+     '  v="${!var:-}"\n', '  v="${!var:-$PWD/tar' + 'get/debug/axon}"\n',
+     'axon-core', _HB, 'a_harness_that_builds_nothing_runs_no_binary_its_caller_did_not_name'),
+    ('M721', 'EQUIVALENCE (6): a building harness runs the file cargo built, at the path cargo resolves', 'scripts/lib/axon_bin.sh',
+     "  printf '%s\\n' \"$d\"\n}", "  printf '%s\\n' \"$PWD/target\"\n}",
+     'axon-core', _HB, 'a_building_harness_runs_the_binary_cargo_built_not_one_left_in_target'),
+    ('M722', 'EQUIVALENCE (6): an ambient binary-naming variable never reaches a script a test runs', 'crates/axon-core/tests/script_spawn/mod.rs',
+     '        c.env_remove(v);\n', '        let _ = v;\n',
+     'axon-core', _HB, 'an_ambient_binary_variable_never_reaches_a_script'),
+    ('M723', 'EQUIVALENCE (6): the spawn helper refuses a script that guesses its binary', 'crates/axon-core/tests/script_spawn/mod.rs',
+     '        bad.is_empty(),\n        "refused to run {}', '        true || bad.is_empty(),\n        "refused to run {}',
+     'axon-core', _HB, 'the_spawn_helper_refuses_a_script_that_guesses_its_binary'),
+    ('M724', 'EQUIVALENCE (6): the workspace drift test flags an interpreter spawned on a script file in any crate', 'crates/axon-core/tests/script_spawn/mod.rs',
+     '            if !inline {\n', '            if false && !inline {\n',
+     'axon-core', _HB, 'every_script_spawn_in_the_workspace_goes_through_the_helper'),
+    ('M725', 'EQUIVALENCE (6): the script drift test flags a binary chosen by a guessed target/ path', 'crates/axon-core/tests/script_spawn/mod.rs',
+     '            if !own.contains(&dir) {\n', '            if false && !own.contains(&dir) {\n',
+     'axon-core', _HB, 'no_script_picks_a_binary_it_neither_built_nor_was_given'),
+    ('M726', 'EQUIVALENCE (5): a mutation run refuses any uncommitted change in the tree, not only under crates/', 'scripts/v022_g01_mutations.py',
+     '    dirty = uncommitted()\n    if dirty:\n', '    dirty = ""\n    if dirty:\n',
+     'axon-core', _HI, 'a_mutation_run_refuses_a_tree_with_an_uncommitted_change_outside_crates'),
+    ('M727', 'EQUIVALENCE (5): a paired-disable run refuses any uncommitted change in the tree', 'scripts/v022_paired_disable.py',
+     '    if "--check-stale" not in sys.argv[1:] and mut.uncommitted():\n', '    if False and "--check-stale" not in sys.argv[1:] and mut.uncommitted():\n',
+     'axon-core', _HI, 'a_paired_disable_run_refuses_a_tree_with_an_uncommitted_change_outside_crates'),
+    ('M728', 'EQUIVALENCE (5): --merge refuses a shard made from another registry or marker file', 'scripts/v022_g01_mutations.py',
+     '        if d.get("registry_blobs") != here:\n', '        if False and d.get("registry_blobs") != here:\n',
+     'axon-core', _HI, 'a_merge_refuses_a_shard_made_from_another_registry'),
+    ('M729', 'EQUIVALENCE (5): --join refuses a shard made from another registry or marker file', 'scripts/v022_paired_disable.py',
+     '        if d.get("registry_blobs") != here:\n', '        if False and d.get("registry_blobs") != here:\n',
+     'axon-core', _HI, 'a_join_refuses_a_shard_made_from_another_registry'),
+    ('M730', "FIELD-ORIGIN: the guest build refuses any effective cargo config setting it would use (ancestor, dotted key, the tree's own)", _GE,
+     '        if not key or not key_cannot_reach_the_build(key):\n', '        if False and (not key or not key_cannot_reach_the_build(key)):\n',
+     'axon-fabric', '--test guest_build_env', 'a_cargo_config_setting_the_guest_build_would_use_is_refused'),
+    ('M731', "FIELD-ORIGIN: the guest build runs cargo in the environment it constructs, never the caller's", _GE,
+     '    env = dict(rec["env"])\n', '    env = {**os.environ, **rec["env"]}\n',
+     'axon-fabric', '--test guest_build_env', 'a_callers_compiler_wrapper_does_not_reach_the_guest_builds_cargo'),
+    ('M732', 'FIELD-ORIGIN: the guest toolchain is resolved by rustup under a cleared environment', _GE,
+     '    env = {"HOME": home, "PATH": "/usr/bin:/bin", "LC_ALL": "C"}\n', '    env = dict(os.environ, HOME=home)\n',
+     'axon-fabric', '--test guest_build_env', 'a_callers_rustup_home_does_not_choose_the_guest_toolchain'),
+    ('M733', 'FIELD-ORIGIN: the provenance helper is compiled by the pinned rustc, never $RUSTC', 'scripts/linux_profile_manifest.py',
+     '            rustc = pinned_rustc()\n', '            rustc = os.environ.get("RUSTC") or pinned_rustc()\n',
+     'axon-fabric', '--test guest_provenance', 'a_callers_rustc_does_not_build_the_provenance_helper'),
+    ('M734', 'EVIDENCE: the freeze binds only a guest image with a controlled-build record', _FZ,
+     '    if why:\n        sys.exit("refused: the guest image was not built in the controlled build environment "',
+     '    if False and why:\n        sys.exit("refused: the guest image was not built in the controlled build environment "',
+     'axon-fabric', '--test freeze_manifest', _FT),
+    ('M735', "EVIDENCE: a controlled-build record's environment is exactly the constructed one", _GE,
+     '    if env != want or rec.get("cargo_home") != want["CARGO_HOME"] or rec.get("target_dir") != want["CARGO_TARGET_DIR"]:\n',
+     '    if False:\n',
+     'axon-fabric', '--test freeze_manifest', _FT),
+    ('M736', 'EVIDENCE: a controlled-build record names a fresh target dir and CARGO_HOME', _GE,
+     '    if rec.get("target_dir_created_empty") is not True or rec.get("cargo_home_created_empty") is not True:\n',
+     '    if False:\n',
+     'axon-fabric', '--test freeze_manifest', _FT),
+    ('M737', 'EVIDENCE: a controlled-build record held no cargo config setting the build would use', _GE,
+     '    if (rec.get("effective_config") or {}).get("foreign") != []:\n', '    if False:\n',
+     'axon-fabric', '--test freeze_manifest', _FT),
+    ('M738', 'EVIDENCE: the freeze binds only guest artifacts the controlled build produced', _FZ,
+     '    if unbound:\n', '    if False and unbound:\n',
+     'axon-fabric', '--test freeze_manifest', 'a_guest_artifact_the_controlled_build_did_not_produce_does_not_freeze'),
+    ('M739', 'EQUIVALENCE (currency): a kept paired-disable record is stale once its owner or consumer packages change', 'scripts/v022_paired_disable.py',
+     '    if changed:\n        out.append(f"{len(changed)} file(s) of the owner/consumer packages',
+     '    if False and changed:\n        out.append(f"{len(changed)} file(s) of the owner/consumer packages',
+     'axon-core', _HI, 'a_kept_record_is_stale_once_its_owner_package_changes'),
 ]
 
 # Protected Check Isolation guards (governance/specs/v022-protected-check-isolation.md):
@@ -2073,8 +2158,10 @@ EQUIV_RECORD["M347"] = {
     "all_paths": "provenance() always runs head_bytes_differ -> tree_differs, whose untracked_objects "
                  "walk (M500 files, M501 whole untracked directories) reports every filesystem object not in HEAD's tree and not on the "
                  "operator allowlist, without consulting git. `status --untracked-files=all` (M347) "
-                 "only ever ADDS reasons; an untracked non-ignored file is exactly one the walk "
-                 "reports. So M347's refusal never stands alone"}
+                 "only ever ADDS reasons; an untracked non-ignored file is one the walk reports "
+                 "unless the operator allowlist names it, and an allowlisted file is excused by "
+                 "decision C, which makes the allowlist the authority (so what status would add "
+                 "there is not a lost property). So M347's refusal never stands alone"}
 EQUIV_RECORD["M414"] = {
     "property": "build provenance never reads a file hidden by a non-tracked ignore rule as clean",
     "subsumed_by": ["M501"], "killer": "joint:M414+M501",
@@ -2281,6 +2368,8 @@ PSV_IDS = {f"M{n}" for n in range(137, 550)}
 PSV_IDS |= {f"M{n}" for n in range(550, 650)}
 # C9 round 4: M650-M699.
 PSV_IDS |= {f"M{n}" for n in range(650, 700)}
+# C9 round 4 (harness2): M720-M739.
+PSV_IDS |= {f"M{n}" for n in range(720, 740)}
 
 
 def in_scope(mid, scope):
@@ -2301,9 +2390,108 @@ def sh(cmd):
     return subprocess.run(cmd, cwd=ROOT, shell=True, capture_output=True, text=True)
 
 
+def cargo_target_dir():
+    """The directory cargo builds into from ROOT, as CARGO resolves it
+    (CARGO_TARGET_DIR, then any config's build.target-dir, then ROOT/target):
+    never a guess (scripts/lib/axon_bin.sh, C9 round 4)."""
+    r = subprocess.run(["cargo", "metadata", "--format-version", "1", "--no-deps"], cwd=ROOT,
+                       capture_output=True, text=True)
+    try:
+        return json.loads(r.stdout)["target_directory"]
+    except (ValueError, KeyError):
+        sys.exit(f"refused: cannot tell where cargo builds (cargo metadata: {r.stderr.strip()[-300:]})")
+
+
+# The files that define what a run IS: the registry and the attack markers.
+# Their git blobs are recorded in every run and shard, so a run made from a
+# locally edited registry cannot pass for one made from the commit it names.
+REGISTRY_FILES = ("scripts/v022_g01_mutations.py", "scripts/v022_attack_markers.py")
+
+
+def uncommitted():
+    """Every uncommitted change in the WHOLE tree (tracked edits, staged
+    changes, untracked non-ignored files), or "" for a clean tree."""
+    return sh("git status --porcelain --untracked-files=all").stdout.strip()
+
+
+def registry_blobs():
+    return {f: sh(f"git hash-object -- {f}").stdout.strip() for f in REGISTRY_FILES}
+
+
+def row_digest(row):
+    """sha256 of a row's old and new text: the edit a result was made with."""
+    return {"old_sha256": hashlib.sha256(row[3].encode()).hexdigest(),
+            "new_sha256": hashlib.sha256(row[4].encode()).hexdigest()}
+
+
+def workspace_target_dir():
+    """Where a script spawned by a test builds: the WORKSPACE's own target
+    dir, as cargo resolves it with CARGO_TARGET_DIR removed (the spawn helper,
+    crates/axon-core/tests/script_spawn, removes it)."""
+    env = {k: v for k, v in os.environ.items() if k != "CARGO_TARGET_DIR"}
+    r = subprocess.run(["cargo", "metadata", "--format-version", "1", "--no-deps"], cwd=ROOT,
+                       env=env, capture_output=True, text=True)
+    try:
+        return json.loads(r.stdout)["target_directory"]
+    except (ValueError, KeyError):
+        sys.exit("refused: cannot tell where a script's build lands (cargo metadata failed)")
+
+
+def scrub_workspace_binaries():
+    """Remove every executable a script built into the workspace target dir.
+
+    A cell runs the MUTATED tree, and a building script under it (clock_parity,
+    the parity harnesses ...) writes <workspace>/target/<profile>/<bin> from
+    that tree. Scripts no longer fall back to such a file (scripts/lib/
+    axon_bin.sh), but a mutant binary left behind is still a binary not built
+    from the tree the NEXT cell judges (C9 round 4, EQUIVALENCE (6d)); so it is
+    removed after every cell. Returns how many files were removed."""
+    base = workspace_target_dir()
+    n = 0
+    profiles = [os.path.join(base, p) for p in ("debug", "release")]
+    try:
+        for sub in os.listdir(base):
+            for p in ("debug", "release"):
+                profiles.append(os.path.join(base, sub, p))
+    except OSError:
+        return 0
+    for prof in profiles:
+        for d in (prof, os.path.join(prof, "examples")):
+            try:
+                names = os.listdir(d)
+            except OSError:
+                continue
+            for name in names:
+                f = os.path.join(d, name)
+                if os.path.isfile(f) and not os.path.islink(f) and os.access(f, os.X_OK):
+                    os.unlink(f)
+                    n += 1
+    return n
+
+
+def spawns_scripts(package, target):
+    """Whether a row's test target runs repository scripts (it calls the one
+    spawn helper, crates/axon-core/tests/script_spawn)."""
+    t = target.split()
+    if "--test" not in t:
+        return False
+    path = os.path.join(ROOT, "crates", package, "tests", t[t.index("--test") + 1] + ".rs")
+    try:
+        return "script_spawn::script(" in open(path).read()
+    except OSError:
+        return False
+
+
+# Binary-naming variables a caller's shell may carry. Every cell runs with them
+# REMOVED, so a test's workspace_bin() finds the binary this run built, never
+# one an ambient AXON_BIN / CORTEX_BIN names (C9 round 4).
+AMBIENT_BINARY_VARS = ("AXON", "AXON_BIN", "CORTEX_BIN")
+UNSET_AMBIENT = "unset " + " ".join(AMBIENT_BINARY_VARS) + "; "
+
+
 def cargo_test(package, target, test):
     cmd = (
-        "source scripts/lib_bounded_run.sh && "
+        f"source scripts/lib_bounded_run.sh && {UNSET_AMBIENT}"
         f"bounded_run {MEM} 1800 cargo test -q -p {package} {target} -- --exact {test}"
     )
     r = subprocess.run(["bash", "-c", cmd], cwd=ROOT, capture_output=True, text=True)
@@ -2401,6 +2589,22 @@ def merge(out, parts):
         for k in ("commit", "scope"):
             if d[k] != base[k]:
                 sys.exit(f"refused: shards disagree on {k}: {d[k]} vs {base[k]}")
+    # The registry each shard ran from must be this one: the same blobs, and
+    # every row's old/new text the same as the row judged here (C9 round 4).
+    here = registry_blobs()
+    if uncommitted():
+        sys.exit("refused: --merge judges the shards against this tree's registry; the tree is not clean")
+    for p, d in zip(parts, docs):
+        if d.get("registry_blobs") != here:
+            sys.exit(f"refused: shard {p} ran from registry/marker blobs {d.get('registry_blobs')}, "
+                     f"not this tree's {here}")
+        if d.get("tree_clean") is not True:
+            sys.exit(f"refused: shard {p} does not record a clean tree")
+        by_id = {m[0]: m for m in MUTATIONS}
+        for r in d.get("mutations", []):
+            row = by_id.get(r.get("id"))
+            if row is None or {k: r.get(k) for k in ("old_sha256", "new_sha256")} != row_digest(row):
+                sys.exit(f"refused: shard {p} ran {r.get('id')} with an edit that is not this registry's row")
         if d.get("only") is not None:
             sys.exit(f"refused: {d['only']} is a sample (--only), not a shard")
         if (d.get("shard") or {}).get("of") != len(docs):
@@ -2419,7 +2623,9 @@ def merge(out, parts):
     rows.sort(key=lambda r: order[r["id"]])
     ok = all(d["all_killed"] for d in docs)
     doc = {"schema": "axon-v022-mutation-run/3", "gate": base["gate"], "scope": base["scope"],
-           "commit": base["commit"], "toolchain": [d["toolchain"] for d in docs],
+           "commit": base["commit"], "registry_blobs": here, "tree_clean": True,
+           "environment": [d.get("environment") for d in docs],
+           "toolchain": [d["toolchain"] for d in docs],
            "merged_from": [{"shard": d["shard"], "all_killed": d["all_killed"]} for d in docs],
            "all_killed": ok, "mutations": rows}
     with open(out, "w") as f:
@@ -2534,9 +2740,10 @@ def main():
         sys.exit(f"refused: ATTACK_MARKERS drift: active rows with no marker {missing}; "
                  f"markers for no row {orphan} (scripts/v022_attack_markers.py)")
     sys.argv = [sys.argv[0], args[0]]
-    dirty = sh("git status --porcelain -- crates").stdout.strip()
+    dirty = uncommitted()
     if dirty:
-        sys.exit(f"refused: uncommitted changes under crates/ — a mutation run is evidence about a commit\n{dirty}")
+        sys.exit(f"refused: uncommitted changes in the tree — a mutation run is evidence about a commit\n{dirty}")
+    blobs = registry_blobs()
     commit = sh("git rev-parse HEAD").stdout.strip()
     # The Fabric integration tests exec the `axon` interpreter from the target
     # dir: build it from THIS tree first, so no baseline or kill rests on a
@@ -2549,8 +2756,7 @@ def main():
     built = build_interpreter()
     if built.returncode != 0:
         sys.exit(f"refused: could not build the axon interpreter\n{built.stderr[-2000:]}")
-    target = os.environ.get("CARGO_TARGET_DIR", os.path.join(ROOT, "target"))
-    axon_bin = os.path.join(target, "debug", "axon")
+    axon_bin = os.path.join(cargo_target_dir(), "debug", "axon")
     toolchain = {
         "rustc": sh("rustc -V").stdout.strip(),
         "cargo": sh("cargo -V").stdout.strip(),
@@ -2601,13 +2807,26 @@ def main():
             # An integration-test kill of an axon-core mutant rebuilds the
             # shared interpreter binary FROM THE MUTANT. Rebuild it from the
             # restored tree, or every later Fabric row runs a mutated
-            # interpreter.
-            if rel.startswith("crates/axon-core/") and "--lib" not in target:
+            # interpreter. A test that ran scripts may also have left mutant
+            # binaries in the WORKSPACE target dir: remove them.
+            scrubbed = rel.startswith("crates/") and spawns_scripts(pkg, target)
+            if scrubbed:
+                scrub_workspace_binaries()
+            if scrubbed or (rel.startswith("crates/axon-core/") and "--lib" not in target):
                 if build_interpreter().returncode != 0:
                     sys.exit(f"FATAL: could not rebuild the interpreter after {mid}")
+            if scrubbed and os.path.realpath(workspace_target_dir()) == os.path.realpath(cargo_target_dir()):
+                # The scrub emptied THIS run's target dir too: rebuild what its
+                # later cells exec (the cortex CLI tests, the PSV dev tool).
+                for cmd in ("cargo build -q -p axon-cortex --bins", "cargo build -q -p axon-psv --example psv_dev"):
+                    r = subprocess.run(["bash", "-c", f"source scripts/lib_bounded_run.sh && bounded_run {MEM} 1800 {cmd}"],
+                                       cwd=ROOT, capture_output=True, text=True)
+                    if r.returncode != 0:
+                        sys.exit(f"FATAL: could not rebuild ({cmd}) after {mid}")
         good = base == "passed" and result == "killed"
         ok &= good
         results.append({"id": mid, "guard": guard, "file": rel, "package": pkg,
+                         **row_digest((mid, guard, rel, old, new)),
                          "target": target, "test": test, "baseline": base, "result": result,
                          "attack_marker": ATTACK_MARKERS.get(mid),
                          "kill_evidence": evidence})
@@ -2617,7 +2836,10 @@ def main():
         print(f"BAD interpreter binary changed during the run ({axon_bin})", flush=True)
         ok = False
     doc = {"schema": "axon-v022-mutation-run/3", "gate": "G01" if scope == "g01" else scope,
-           "scope": scope, "commit": commit,
+           "scope": scope, "commit": commit, "registry_blobs": blobs,
+           "tree_clean": True,  # refused at the start otherwise
+           "environment": {"euid": os.geteuid(), "etc_axon_present": os.path.isdir("/etc/axon"),
+                           "unset": list(AMBIENT_BINARY_VARS)},
            "toolchain": toolchain,
            "shard": None if shard is None else {"index": shard[0], "of": shard[1]},
            # A sample (--only) is not a run of the scope, and merge refuses it.

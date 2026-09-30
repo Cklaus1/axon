@@ -38,6 +38,7 @@ the protected way (a linked worktree never descends); `--descends` is the
 build's early development check and makes nothing clean.
 """
 import hashlib
+import importlib.util
 import json
 import os
 import subprocess
@@ -71,11 +72,33 @@ def cannot_tell(why):
     return {"revision": "unknown", "dirty": [f"cannot tell: {why}"]}
 
 
+def pinned_rustc():
+    """The pinned toolchain's own rustc, resolved the way the guest build
+    resolves it (scripts/guest_build_env.py: rustup under a cleared
+    environment, the channel rust-toolchain.toml names). Never $RUSTC or PATH:
+    the helper this compiles DECIDES whether the tree is clean, and a caller's
+    RUSTC could compile one that always says so (C9 round 4)."""
+    # No bytecode cache: a scripts/__pycache__/ written here would itself make
+    # the tree this manifest describes dirty.
+    sys.dont_write_bytecode = True
+    spec = importlib.util.spec_from_file_location(
+        "guest_build_env", os.path.join(ROOT, "scripts", "guest_build_env.py"))
+    gbe = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(gbe)
+    try:
+        return gbe.toolchain()[2]
+    except SystemExit as e:
+        raise OSError(f"the pinned toolchain cannot be resolved: {e}")
+
+
 def helper(args):
     """Build the axon-provenance helper and run it on ROOT: (CompletedProcess or None, error)."""
     with tempfile.TemporaryDirectory(prefix="axon-provenance-") as t:
         exe = os.path.join(t, "axon-provenance")
-        rustc = os.environ.get("RUSTC", "rustc")
+        try:
+            rustc = pinned_rustc()
+        except OSError as e:
+            return None, str(e)
         b = subprocess.run([rustc, "--edition", "2021", "-C", "opt-level=1", "-o", exe, HELPER],
                            capture_output=True, text=True, cwd=ROOT, check=False)
         if b.returncode != 0:
@@ -130,6 +153,18 @@ def source_state(pre_path):
     return now["revision"], reasons
 
 
+def build_environment(dist):
+    """The controlled-build record build-guest-image.sh left in `dist`, or None."""
+    try:
+        with open(os.path.join(dist, "build-env.json")) as f:
+            rec = json.load(f)
+    except (OSError, ValueError):
+        return None
+    if isinstance(rec, dict) and isinstance(rec.get("toolchain"), dict):
+        rec["toolchain"].setdefault("rustc_vV", "")
+    return rec if isinstance(rec, dict) else None
+
+
 def main():
     args = sys.argv[1:]
     if args[:1] == ["--descends"]:
@@ -160,6 +195,7 @@ def main():
             pin[k] = v
     rev, reasons = source_state(pre_path)
     dirty = bool(reasons)
+    benv = build_environment(dist)
     manifest = {
         "schema": "axon-linux-microvm-profile/1",
         "profile": "linux-microvm-protected",
@@ -182,7 +218,17 @@ def main():
                             "rule": "axon_git_rev_at_build descends from it (every commit "
                                     "on the way read by hash, from a standalone clone); a tree "
                                     "that does not is dirty"},
-            "rustc": first_line(["rustc", "--version"]),
+            # The compiler that built the artifacts: the controlled build's
+            # pinned rustc, never whichever `rustc` is first on PATH.
+            "rustc": (benv["toolchain"].get("rustc_vV", "").splitlines() or ["unknown"])[0]
+                     if benv and isinstance(benv.get("toolchain"), dict) else "unknown",
+            # The controlled build environment the three binaries were built in
+            # (scripts/guest_build_env.py), verbatim: toolchain identity, the
+            # exact environment cargo saw, fresh CARGO_HOME and target dir,
+            # cargo's effective config, and the digest of each artifact it
+            # built. None when the image was not built that way; the freeze
+            # refuses such an image.
+            "build_environment": benv,
         },
         "kernel": {
             "version": pin["KERNEL_VERSION"],

@@ -108,7 +108,8 @@ if [[ " $PHASES " == *" build "* ]]; then
   echo "  likely hit the cap; run on a high-core box for a real verdict."
   # Clean only axon-core's artifacts so deps stay warm (don't rebuild LLVM/inkwell).
   cargo clean -p axon-core 2>/dev/null
-  objdir="target/debug/deps"
+  . scripts/lib/axon_bin.sh
+  objdir=""; use_built objdir deps  # where cargo puts the objects it builds
   before=$(find "$objdir" -name 'axon_core*.o' 2>/dev/null | wc -l)
   start=$(date +%s)
   # CARGO_INCREMENTAL=0 for a clean measurement, matching BUILD_DIAGNOSIS.

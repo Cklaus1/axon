@@ -73,31 +73,19 @@ fn note_skip(what: &str) {
     }
 }
 
-/// Where the freestanding guest kernel is looked for, in order:
-/// `AXON_GUEST_KERNEL` (explicit), then `x86_64-axon-metal/release/` under the
-/// target dir THIS test was built into (so a custom `CARGO_TARGET_DIR` is
-/// honoured — the binary under test lives there), then the workspace `target/`
-/// (where `scripts/build-guest-image.sh` puts it by default).
+/// The freestanding guest kernel is the one named in `AXON_GUEST_KERNEL`, and
+/// only that. It used to fall back to whatever sat at
+/// `x86_64-axon-metal/release/` under this test's target dir or the
+/// workspace's: nothing in `cargo test -p axon-vm` builds the kernel, so that
+/// file was built from some other tree at some other time, and the live boot
+/// judged it (C9 round 4, EQUIVALENCE (6): a check execs the binary built from
+/// the tree under test, never a stale one). Unnamed, the live tests SKIP, and
+/// the skip is recorded (fatal under AXON_HARNESS_STRICT=1).
 fn kernel_candidates() -> Vec<PathBuf> {
-    let mut v = Vec::new();
-    if let Some(p) = std::env::var_os("AXON_GUEST_KERNEL") {
-        v.push(PathBuf::from(p));
-        return v; // explicit means explicit: no silent fallback
-    }
-    let rel = "x86_64-axon-metal/release/axon-guest-kernel";
-    // CARGO_BIN_EXE_axon-vm = <target>/<profile>/axon-vm
-    if let Some(target) = Path::new(env!("CARGO_BIN_EXE_axon-vm"))
-        .parent()
-        .and_then(Path::parent)
-    {
-        v.push(target.join(rel));
-    }
-    v.push(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../target")
-            .join(rel),
-    );
-    v
+    std::env::var_os("AXON_GUEST_KERNEL")
+        .map(PathBuf::from)
+        .into_iter()
+        .collect()
 }
 
 fn live_prereqs() -> Option<PathBuf> {

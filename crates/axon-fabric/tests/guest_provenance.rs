@@ -14,6 +14,9 @@ mod exec;
 use exec::write_executable;
 #[path = "common/git_attacks.rs"]
 mod git_attacks;
+#[path = "../../axon-core/tests/script_spawn/mod.rs"]
+mod script_spawn;
+use script_spawn::Bins;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -21,8 +24,10 @@ use std::process::{Command, Stdio};
 const GIT: &str = "/usr/bin/git";
 /// The files the manifest step runs, copied from THIS tree (so a mutation
 /// of any of them is what runs).
-const COPIED: [&str; 4] = [
+const COPIED: [&str; 6] = [
     "scripts/linux_profile_manifest.py",
+    "scripts/guest_build_env.py",
+    "rust-toolchain.toml",
     "crates/axon-fabric/src/git_data.rs",
     "crates/axon-fabric/src/provenance.rs",
     "crates/axon-fabric/src/bin/axon-provenance.rs",
@@ -115,9 +120,13 @@ fn fixture(init_git: bool) -> Fx {
 
 impl Fx {
     fn script(&self, args: &[&str], env: &[(&str, String)]) {
-        let mut c = Command::new("python3");
-        c.arg(self.repo.join("scripts/linux_profile_manifest.py"))
-            .args(args)
+        // The manifest step compiles its own provenance helper and runs that.
+        let mut c = script_spawn::script(
+            "python3",
+            self.repo.join("scripts/linux_profile_manifest.py"),
+            Bins::BuildsItsOwn,
+        );
+        c.args(args)
             .current_dir(&self.repo)
             .env("FC_BIN", self.d.path().join("fc"))
             .env("JAILER_BIN", self.d.path().join("jl"))
@@ -247,11 +256,63 @@ fn a_git_on_the_callers_path_is_not_asked() {
 #[test]
 fn a_provenance_helper_that_cannot_run_is_dirty() {
     let f = fixture(true);
-    let env = vec![("RUSTC", "/bin/false".to_string())];
-    f.snapshot(&env);
+    // The helper's source no longer compiles (committed, so nothing else in
+    // the tree is dirty): the answer is "cannot tell", which is dirty.
+    write(
+        &f.repo.join("crates/axon-fabric/src/bin/axon-provenance.rs"),
+        "fn main() { this does not compile }\n",
+    );
+    git(
+        &f.repo,
+        &["commit", "-q", "-am", "a helper that cannot build"],
+    );
+    f.snapshot(&[]);
     assert_dirty(
-        &f.manifest(true, &env),
+        &f.manifest(true, &[]),
         "the provenance helper could not be built (\"cannot tell\")",
+    );
+}
+
+/// The helper that DECIDES whether the tree is clean is compiled by the
+/// pinned toolchain's own rustc (scripts/guest_build_env.py's resolution),
+/// never `$RUSTC`: a caller's RUSTC could compile a helper that always says
+/// clean (C9 round 4, FIELD-ORIGIN). Here RUSTC names a "compiler" whose
+/// output reports a clean tree for this dirty one.
+#[test]
+fn a_callers_rustc_does_not_build_the_provenance_helper() {
+    let f = fixture(true);
+    write(&f.repo.join(INIT_SRC), "fn main() { /* uncommitted */ }\n");
+    let head = f.rev("HEAD");
+    // The helper that "compiler" emits: a clean answer, whatever the tree.
+    let lying = f.d.path().join("lying-helper");
+    write_executable(
+        &lying,
+        format!(
+            "#!/bin/sh\nL=\"\"\nif [ \"$1\" = --lineage ]; then \
+             L=\",\\\"lineage\\\":{{\\\"rev\\\":\\\"$2\\\",\\\"descends\\\":true}}\"; fi\n\
+             echo \"{{\\\"schema\\\":\\\"axon-provenance/1\\\",\\\"revision\\\":\\\"{head}\\\",\\\"dirty\\\":[]$L}}\"\n"
+        ),
+        0o755,
+    );
+    let fake = f.d.path().join("fake-rustc");
+    let used = f.d.path().join("fake-rustc-used");
+    write_executable(
+        &fake,
+        format!(
+            "#!/bin/sh\n: > '{}'\nwhile [ \"$1\" != -o ]; do shift; done\ncp '{}' \"$2\"\nchmod 0755 \"$2\"\n",
+            used.display(),
+            lying.display()
+        ),
+        0o755,
+    );
+    let env = vec![("RUSTC", fake.display().to_string())];
+    f.snapshot(&env);
+    let src = f.manifest(true, &env);
+    assert!(
+        src["axon_tree_dirty_at_build"] == Value::Bool(true) && !used.exists(),
+        "ATTACK: a caller's RUSTC built the provenance helper and it called a dirty tree \
+         clean (rustc used: {}): {src}",
+        used.exists()
     );
 }
 
@@ -309,9 +370,13 @@ fn an_edit_during_the_build_is_dirty() {
 impl Fx {
     /// `--descends REV`: did the lineage check pass?
     fn descends(&self, rev: &str, env: &[(&str, String)]) -> bool {
-        let mut c = Command::new("python3");
-        c.arg(self.repo.join("scripts/linux_profile_manifest.py"))
-            .args(["--descends", rev])
+        // The manifest step compiles its own provenance helper and runs that.
+        let mut c = script_spawn::script(
+            "python3",
+            self.repo.join("scripts/linux_profile_manifest.py"),
+            Bins::BuildsItsOwn,
+        );
+        c.args(["--descends", rev])
             .current_dir(&self.repo)
             .stderr(Stdio::null());
         for (k, v) in env {

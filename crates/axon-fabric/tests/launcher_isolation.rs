@@ -6,7 +6,10 @@
 
 #[path = "common/exec.rs"]
 mod exec;
+#[path = "../../axon-core/tests/script_spawn/mod.rs"]
+mod script_spawn;
 use exec::write_executable;
+use script_spawn::Bins;
 use std::path::Path;
 use std::process::Command;
 
@@ -25,8 +28,8 @@ fn run_from_hostile_cwd(launcher: &Path) -> bool {
     for f in ["workspace.img", "serial.log", "result.json"] {
         std::fs::write(vd.join(f), "{}").unwrap();
     }
-    let _ = Command::new("bash")
-        .arg(launcher)
+    // The launcher runs firecracker/jailer, which this workspace does not build.
+    let _ = script_spawn::script("bash", launcher, Bins::NoWorkspaceBinary)
         .arg("--verify-result")
         .arg(&vd)
         .current_dir(&cwd)

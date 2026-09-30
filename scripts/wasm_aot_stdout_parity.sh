@@ -59,8 +59,9 @@ if ! _rt_err="$(cargo build -q -p axon-rt --target wasm32-wasip1 2>&1)"; then
   echo "$_rt_err" | sed 's/^/    | /'
   exit 1
 fi
-AXON="${AXON:-target/debug/axon}"
-INTERP="target/debug/axon-run"
+. scripts/lib/axon_bin.sh
+use_built AXON axon  # the binary the build above produced (or the one the caller named)
+INTERP=""; use_built INTERP axon-run  # built above; never caller-named
 
 # Builtins whose host the pure AOT-wasm path doesn't provide → skip those files.
 EXCLUDE_RE='ai_complete|ai_extract|spawn|thread|chan_|goal_run|goal_eval|agent_|read_file|write_file|env_var|exec\(|random_|srand'

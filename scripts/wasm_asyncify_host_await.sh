@@ -43,7 +43,8 @@ if ! berr="$(cargo build -q -p axon-wasm --target wasm32-unknown-unknown --relea
   printf '%s\n' "$berr" | tail -8 | sed 's/^/    /'
   exit 1
 fi
-RAW=target/wasm32-unknown-unknown/release/axon_wasm.wasm
+. scripts/lib/axon_bin.sh
+RAW=""; use_built RAW axon_wasm.wasm wasm32-unknown-unknown release  # the build just made
 [ -s "$RAW" ] || { echo "wasm_asyncify_host_await: FAIL — build reported success but $RAW is missing or empty"; exit 1; }
 ASYNC="$WORK/axon_wasm.async.wasm"
 # Modern wasm features rustc emits must be enabled explicitly for binaryen to

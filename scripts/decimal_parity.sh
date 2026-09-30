@@ -80,7 +80,8 @@ if ! cargo build -q -p axon-core --bin axon 2>"$WORK/codegen_build.err"; then
     echo "decimal_parity: codegen build unavailable (no llvm-config on PATH) — skipping refusal check"
   fi
 else
-  CAXON="target/debug/axon"
+  . scripts/lib/axon_bin.sh
+  CAXON=""; use_built CAXON axon  # the codegen build just made
   prog="$WORK/dec_codegen.ax"
   printf '%s\n' 'fn main() { assert(0.1d + 0.2d == 0.3d) }' > "$prog"
   out="$("$CAXON" build "$prog" 2>&1)"

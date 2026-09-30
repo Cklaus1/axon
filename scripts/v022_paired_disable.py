@@ -27,11 +27,24 @@ replacement's own attack marker).
 
 --only re-executes just the named records and keeps every other record of
 the existing file (each record carries the commit it was executed at). A kept
-record must still be CURRENT (C9 round 3, EQUIVALENCE): the git blob of the
-row's file, of its test file(s) (the test module's source, or the integration
-test and its tests/common fixtures) and of every sibling's file must be the
-same now as at the record's commit. A stale kept record refuses the run;
---reexecute-stale runs it again instead. --check-stale only lists them.
+record must still be CURRENT (C9 round 3; widened C9 round 4): the git blob of
+the row's file, of its test file(s) and of every sibling's file must be the
+same now as at the record's commit, NO file of the owner package or of any
+consumer package (whose full suites the record vouches for) may have changed
+since, and the registry edits and attack marker it was executed with must be
+this registry's. A stale kept record refuses the run; --reexecute-stale runs
+it again instead. --check-stale only lists them.
+
+The tree must be clean -- ALL of it, not only crates/ (C9 round 4: 24 rows
+guard files in scripts/ and profiles/, and the registry itself is in
+scripts/). Every run and shard records the registry and marker blobs, each
+record's edit digest, and the uid and environment its cells ran under;
+--join refuses shards that disagree with this tree's registry. Cells run with
+AXON / AXON_BIN / CORTEX_BIN removed (a consumer cell is handed the
+interpreter this run built), a full-suite cell reports the root-only tests
+that SKIPPED rather than counting them as passes, and every executable a
+script built into the workspace target dir from a MUTATED tree is removed
+after the cell, with this run's prerequisites rebuilt.
 
     python3 scripts/v022_paired_disable.py --check-stale [STATUS.json]
 
@@ -64,9 +77,21 @@ def sh(cmd):
     return subprocess.run(["bash", "-c", cmd], cwd=ROOT, capture_output=True, text=True)
 
 
+def cargo_target_dir():
+    """The directory cargo builds into from ROOT, as CARGO resolves it
+    (CARGO_TARGET_DIR, then any config's build.target-dir, then ROOT/target):
+    never a guess (scripts/lib/axon_bin.sh, C9 round 4)."""
+    r = subprocess.run(["cargo", "metadata", "--format-version", "1", "--no-deps"], cwd=ROOT,
+                       capture_output=True, text=True)
+    try:
+        return json.loads(r.stdout)["target_directory"]
+    except (ValueError, KeyError):
+        sys.exit(f"refused: cannot tell where cargo builds (cargo metadata: {r.stderr.strip()[-300:]})")
+
+
 def run_test(pkg, target, test):
     """True iff the row's test PASSES (attack refused)."""
-    cmd = ("source scripts/lib_bounded_run.sh && "
+    cmd = (f"source scripts/lib_bounded_run.sh && {mut.UNSET_AMBIENT}"
            f"bounded_run 12G 1200 cargo test -q -p {pkg} {target} -- --exact {test}")
     r = sh(cmd)
     out = r.stdout + r.stderr
@@ -123,6 +148,8 @@ def consumer_packages(owner):
 
 
 CONSUMER_BASELINE = {}
+# (pkg, flags, env) -> the tests the last such cell reported as SKIPPED.
+CELL_SKIPS = {}
 # One test thread per consumer suite: several consumers' tests write an
 # executable stand-in and exec it while another test thread forks, and the
 # fork's inherited write fd makes the exec fail ETXTBSY ("Text file busy").
@@ -133,13 +160,35 @@ CONSUMER_FLAGS = "-- --test-threads=1"
 
 
 def interpreter_env():
-    """Consumers exec target/debug/axon: name it, so none of them falls back
-    to a stale or ambient binary (axon-os looks under the WORKSPACE target
-    dir, not CARGO_TARGET_DIR, and SKIPS when nothing is there). Consumers
-    only: axon-core's own parity tests read AXON_BIN as a NATIVE (codegen)
-    compiler, which the interpreter build is not."""
-    target = os.environ.get("CARGO_TARGET_DIR", os.path.join(ROOT, "target"))
-    return f"AXON_BIN={os.path.join(target, 'debug', 'axon')} "
+    """Consumers exec the interpreter this harness built: name it, so none of
+    them falls back to a stale or ambient binary (axon-os looks under the
+    WORKSPACE target dir, not CARGO_TARGET_DIR, and SKIPS when nothing is
+    there). Consumers only: axon-core's own parity tests read AXON_BIN as a
+    NATIVE (codegen) compiler, which the interpreter build is not."""
+    return f"AXON_BIN={os.path.join(cargo_target_dir(), 'debug', 'axon')} "
+
+
+# The marker a root-only (or host-dependent) test prints when it returns
+# without exercising anything: `eprintln!("skipped: ...")` across the Fabric
+# suites. libtest reports such a test as PASSED; --show-output lets the cell
+# see and COUNT it as a skip (C9 round 4).
+SKIP_MARK = "skipped:"
+
+
+def skipped_tests(out):
+    """Tests whose captured output (under --show-output) says they skipped."""
+    import re as _re
+    names, cur = [], None
+    for line in out.splitlines():
+        m = _re.match(r"^---- (\S+) std(?:out|err) ----$", line)
+        if m:
+            cur = m.group(1)
+            continue
+        if line.startswith(("successes:", "failures:", "test result:")):
+            cur = None
+        elif cur and line.strip().startswith(SKIP_MARK) and cur not in names:
+            names.append(cur)
+    return names
 
 
 def full_suite_ok(pkg, flags="", env=""):
@@ -153,8 +202,9 @@ def full_suite_ok(pkg, flags="", env=""):
     is a FALSE retirement. Returns (ok, failing_tests) or (None, out) on a
     broken build."""
     import re as _re
-    cmd = ("source scripts/lib_bounded_run.sh && "
-           f"{env}bounded_run 12G 2400 cargo test -q -p {pkg} {flags} 2>&1")
+    show = f"{flags} --show-output" if " -- " in f" {flags} " else f"{flags} -- --show-output"
+    cmd = (f"source scripts/lib_bounded_run.sh && {mut.UNSET_AMBIENT}"
+           f"{env}bounded_run 12G 2400 cargo test -q -p {pkg} {show} 2>&1")
     r = sh(cmd)
     out = r.stdout + r.stderr
     if "could not compile" in out or "error[E" in out:
@@ -162,6 +212,7 @@ def full_suite_ok(pkg, flags="", env=""):
     # Both libtest formats: `name ... FAILED` and, under -q, `name --- FAILED`.
     fails = sorted(set(_re.findall(r"^\s*(\S+)\s+(?:\.\.\.|---)\s+FAILED", out, _re.M)))
     ok = (r.returncode == 0 and "test result: FAILED" not in out)
+    CELL_SKIPS[(pkg, flags, env)] = skipped_tests(out)
     if not ok:
         # Keep the failing cell's whole output: a failure that does not
         # reproduce is diagnosable only from the panic it actually printed.
@@ -266,12 +317,51 @@ def stale_reasons(record, guard_sets):
         then, now = blob_at(commit, path), blob_now(path)
         if then != now:
             out.append(f"{path} changed since {commit[:8]}")
+    # The record's full-suite cells vouch for the WHOLE owner package and every
+    # consumer package, and its all-paths argument reasons about files the list
+    # above never named (M602's bin/axon-custodian.rs, M186's route
+    # derivation): any change in those packages makes it stale (C9 round 4).
+    row = BY_ID[ids[-1] if rid in mut.STALE_REFACTORED else rid]
+    owner = row[2].split("/")[1] if row[2].startswith("crates/") else row[5]
+    pkgs = sorted({owner, row[5], *consumer_packages(owner)})
+    changed = sh(f"git diff --name-only {commit} -- " + " ".join(f"crates/{p}" for p in pkgs)).stdout.split()
+    if changed:
+        out.append(f"{len(changed)} file(s) of the owner/consumer packages {pkgs} changed since "
+                   f"{commit[:8]} (e.g. {changed[0]})")
+    # ...and it was executed with exactly this registry's edits and marker.
+    if record.get("edits_sha256") != current_edits_digest(rid):
+        out.append("its edits or attack marker are not this registry's (or were not recorded)")
     return out
 
 
 def build_axon():
     return sh("source scripts/lib_bounded_run.sh && bounded_run 16G 1800 "
               "cargo build -q -p axon-core --no-default-features --bin axon").returncode == 0
+
+
+def after_cell(edits):
+    """After a cell that ran a MUTATED tree: remove every executable a script
+    built into the workspace target dir from it, then rebuild this run's
+    prerequisites from the restored tree, so no later cell (or script) meets a
+    mutant binary (C9 round 4, EQUIVALENCE (6d))."""
+    if any(e[0].startswith("crates/") for e in edits):
+        mut.scrub_workspace_binaries()
+        build_prereqs()
+
+
+def edits_digest(rid, siblings):
+    """sha256 of exactly what a record executed: the retired row's and each
+    sibling's old/new text, and the retired row's attack marker."""
+    return hashlib.sha256(json.dumps(
+        [mut.row_digest(BY_ID[i]) for i in [rid, *siblings]] + [mut.ATTACK_MARKERS.get(rid)],
+        sort_keys=True).encode()).hexdigest()
+
+
+def environment():
+    """Who and where the cells ran: a full-suite cell with root-only tests
+    means something different as root, and with or without /etc/axon."""
+    return {"euid": os.geteuid(), "etc_axon_present": os.path.isdir("/etc/axon"),
+            "unset": list(mut.AMBIENT_BINARY_VARS), "consumer_axon_bin": interpreter_env().strip()}
 
 
 def build_prereqs():
@@ -295,12 +385,22 @@ def join_shards(argv, commit, universe):
     slice selects, and together they cover every record exactly once."""
     if len(argv) < 2:
         sys.exit("usage: --join OUT.json SHARD.json...")
-    if sh("git status --porcelain -- crates scripts").stdout.strip():
+    if mut.uncommitted():
         sys.exit("refused: --join judges coverage against this commit's registry; the tree is not clean")
     docs = [json.load(open(p)) for p in argv[1:]]
     bad = [p for p, d in zip(argv[1:], docs) if d.get("commit") != commit]
     if bad:
         sys.exit(f"refused: shard(s) {bad} were not executed at {commit[:8]}")
+    # Each shard ran from THIS registry, in a clean tree (C9 round 4): the same
+    # registry/marker blobs, and every record's edits the ones this registry
+    # holds -- a shard made from a locally edited registry is refused.
+    here = mut.registry_blobs()
+    for p, d in zip(argv[1:], docs):
+        if d.get("registry_blobs") != here:
+            sys.exit(f"refused: shard {p} ran from registry/marker blobs {d.get('registry_blobs')}, "
+                     f"not this tree's {here}")
+        if d.get("tree_clean") is not True:
+            sys.exit(f"refused: shard {p} does not record a clean tree")
     try:
         slices = [tuple(int(x) for x in d["shard"].split("/")) for d in docs]
     except (KeyError, AttributeError, ValueError):
@@ -317,6 +417,10 @@ def join_shards(argv, commit, universe):
                      f"(want {want}, has {sorted(got)})")
         if any(r.get("commit", commit) != commit for r in d["records"]):
             sys.exit(f"refused: shard {k}/{n} carries a record from another commit")
+        for r in d["records"]:
+            if r.get("edits_sha256") != current_edits_digest(r["mutation"]):
+                sys.exit(f"refused: shard {k}/{n} executed {r['mutation']} with edits that are not "
+                         "this registry's")
         records += d["records"]
         seen += got
     dup = sorted({r for r in seen if seen.count(r) > 1})
@@ -328,7 +432,8 @@ def join_shards(argv, commit, universe):
     ok = all(r["holds"] for r in records)
     records.sort(key=lambda r: int(r["mutation"][1:]))
     doc = {"schema": "axon-v022-paired-disable/2", "commit": commit, "all_hold": ok,
-           "records": records}
+           "registry_blobs": here, "tree_clean": True,
+           "environment": [d.get("environment") for d in docs], "records": records}
     with open(os.path.join(ROOT, argv[0]), "w") as f:
         json.dump(doc, f, indent=2)
         f.write("\n")
@@ -336,9 +441,116 @@ def join_shards(argv, commit, universe):
     sys.exit(0 if ok else 1)
 
 
+# The guard set B (subsuming siblings) for each retired row A. A row is
+# retired ONLY if all four cells hold for ONE named attack (operator rule,
+# 2026-09-29): A+B present -> refused; A removed -> refused (by B);
+# B removed -> refused (by A); A+B removed -> the same attack SUCCEEDS.
+# "Asymmetric" (B alone reopens) is NOT a retirement: it means A does not
+# guard that attack at all, and may guard another route — exactly how M103
+# (development class) and M255 (store-writer route) hid until the C8 review.
+GUARD_SETS = {
+    # The only row that survived the C9 re-audit (all four cells executed):
+    # admission.rs's monitor key_id check is dominated by clearance_verifies,
+    # which calls rooted_key with the identical arguments. M104, M209, M210
+    # (store-writer misattribution), M103 (development class), M254 and
+    # M255 (store-writer route) were all load-bearing and are ACTIVE.
+    # (M209/M210 again EQUIVALENT since M360/M361: C9 round 1b, below.)
+    "M245": {"siblings": ["M264"], "kind": "pair"},
+    # M58 (call_fn_frame's break/continue arm) vs M59 (contain_frame). ALL
+    # PATHS: call_fn_frame has exactly ONE caller (interp.rs, in call_fn),
+    # and it wraps the call in contain_frame, which maps break/continue to
+    # the same panic. The attack is M58's OWN (function-body escapes only);
+    # the older test also attacked a closure, a route M58 never guarded.
+    "M58": {"siblings": ["M59"], "kind": "pair"},
+    # C9 round 1 (harness workstream): kills that were another check's
+    # refusal. The attack is each row's own test, which accepts ANY
+    # refusal (the layers are independent) and panics "ATTACK: …" on
+    # acceptance; the all-paths argument is EQUIV_RECORD[...]["all_paths"].
+    "M27": {"siblings": ["M30"], "kind": "pair"},
+    "M29": {"siblings": ["M30"], "kind": "pair"},
+    "M214": {"siblings": ["M233"], "kind": "pair"},
+    "M216": {"siblings": ["M299"], "kind": "pair"},
+    # C9 round 2 (rows): check's sha256 rule vs names_every_digest (A69).
+    "M217": {"siblings": ["M473"], "kind": "pair"},
+    "M377": {"siblings": ["M378"], "kind": "pair"},
+    "M378": {"siblings": ["M377"], "kind": "pair"},
+    "M285": {"siblings": ["M385", "M289"], "kind": "set"},
+    "M385": {"siblings": ["M285", "M289"], "kind": "set"},
+    "M287": {"siblings": ["M290"], "kind": "pair"},
+    "M288": {"siblings": ["M290"], "kind": "pair"},
+    # C9 round 1b (LOOP). M19: EVL's D3 execution-leg filter vs the backend
+    # join in verify_execution (M428), which runs right after it on the
+    # same receipt. M209/M210: derive's rooted-identity checks vs the join
+    # to the re-verified signer (M360/M361), which reverify_protected runs
+    # for the same trial on every path (EQUIV_RECORD "all_paths").
+    "M19": {"siblings": ["M428"], "kind": "pair"},
+    "M209": {"siblings": ["M360"], "kind": "pair"},
+    "M210": {"siblings": ["M361"], "kind": "pair"},
+    # C9 round 1b (psv workstream). M152: the attack is an UNRELABELLED
+    # signature made for another authority (the relabelled one is M153's
+    # own attack). M418: a stranger key named as observer_key_id AND
+    # signing the observation.
+    "M152": {"siblings": ["M153"], "kind": "pair"},
+    "M418": {"siblings": ["M339", "M340"], "kind": "set"},
+    # C9 round 1b (fabric workstream): mutual pairs whose attack is each
+    # pair's shared test; all-paths arguments in EQUIV_RECORD.
+    "M139": {"siblings": ["M141"], "kind": "pair"},
+    "M141": {"siblings": ["M139"], "kind": "pair"},
+    "M183": {"siblings": ["M312"], "kind": "pair"},
+    "M187": {"siblings": ["M400"], "kind": "pair"},
+    "M400": {"siblings": ["M187"], "kind": "pair"},
+    "M273": {"siblings": ["M401"], "kind": "pair"},
+    "M401": {"siblings": ["M273"], "kind": "pair"},
+    # C9 round 1b (core workstream): EQUIV_RECORD[...]["all_paths"].
+    # C9 round 1b, integration: M04 vs the first-match rule M436 --
+    # REINSTATED ACTIVE in C9 round 2 (harness): the order alone guards an
+    # honest candidate's verdict, and its full-suite cell fails on that.
+    # C9 round 2: provenance skip-worktree tag vs the byte comparison.
+    "M346": {"siblings": ["M451"], "kind": "pair"},
+    # C9 round 2 (decision C): git untracked views vs the filesystem walk.
+    "M347": {"siblings": ["M501"], "kind": "pair"},
+    "M414": {"siblings": ["M501"], "kind": "pair"},
+    "M60": {"siblings": ["M69"], "kind": "pair"},
+    "M89": {"siblings": ["M86", "M96"], "kind": "set"},
+    # C9 round 2 (harness): read_regular's regular-file check vs the
+    # non-blocking open (M481) and the one-read rule (M335); service_leaf's
+    # symlink check vs is_dir (M486) and the mode check (M327).
+    "M482": {"siblings": ["M481", "M335"], "kind": "set"},
+    "M487": {"siblings": ["M486", "M327"], "kind": "set"},
+    # C9 round 3 (harness): mutual pairs on the decision-A/D path.
+    # Interpreter-is-a-script refusal vs the verified descriptor being
+    # close-on-exec (kernel ENOENT); staging-root 0700 vs the per-launch
+    # dir's 0700. EQUIV_RECORD[...]["all_paths"].
+    "M594": {"siblings": ["M595"], "kind": "pair"},
+    "M595": {"siblings": ["M594"], "kind": "pair"},
+    "M596": {"siblings": ["M597"], "kind": "pair"},
+    "M597": {"siblings": ["M596"], "kind": "pair"},
+    # C9 round 3 (rows): no route leaves these guards alone.
+    # EQUIV_RECORD[...]["all_paths"]. M186 on the direct route (the
+    # privileged route's own sibling M620 in the set too); M286/M459 vs
+    # the hashed ancestry walk; M453 vs the common-dir rule; M602 vs the
+    # protected custodian's spend rule, with the production helper and
+    # custodian.
+    "M186": {"siblings": ["M606", "M620"], "kind": "set"},
+    "M286": {"siblings": ["M581"], "kind": "pair"},
+    "M453": {"siblings": ["M580"], "kind": "pair"},
+    "M459": {"siblings": ["M581"], "kind": "pair"},
+    "M602": {"siblings": ["M628"], "kind": "pair"},
+}
+
+
+def current_edits_digest(rid):
+    """What executing record `rid` NOW would run (its edits and marker)."""
+    if rid in GUARD_SETS:
+        return edits_digest(rid, GUARD_SETS[rid]["siblings"])
+    rep = (mut.STALE_REFACTORED.get(rid) or {}).get("replacement")
+    return edits_digest(rep, []) if rep in BY_ID else None
+
+
 def main():
-    if "--check-stale" not in sys.argv[1:] and sh("git status --porcelain -- crates").stdout.strip():
-        sys.exit("refused: uncommitted changes under crates/ — paired-disable is evidence about a commit")
+    if "--check-stale" not in sys.argv[1:] and mut.uncommitted():
+        sys.exit("refused: uncommitted changes in the tree — paired-disable is evidence about a commit\n"
+                 + mut.uncommitted())
     commit = sh("git rev-parse HEAD").stdout.strip()
     flags = {"--reexecute-stale", "--check-stale"}
     argv = [a for a in sys.argv[1:]
@@ -349,102 +561,6 @@ def main():
     check_stale = "--check-stale" in sys.argv[1:]
     only_arg = next((a.split("=", 1)[1] for a in sys.argv[1:] if a.startswith("--only=")), None)
     only = None if only_arg is None else set(only_arg.split(","))
-    # The guard set B (subsuming siblings) for each retired row A. A row is
-    # retired ONLY if all four cells hold for ONE named attack (operator rule,
-    # 2026-09-29): A+B present -> refused; A removed -> refused (by B);
-    # B removed -> refused (by A); A+B removed -> the same attack SUCCEEDS.
-    # "Asymmetric" (B alone reopens) is NOT a retirement: it means A does not
-    # guard that attack at all, and may guard another route — exactly how M103
-    # (development class) and M255 (store-writer route) hid until the C8 review.
-    GUARD_SETS = {
-        # The only row that survived the C9 re-audit (all four cells executed):
-        # admission.rs's monitor key_id check is dominated by clearance_verifies,
-        # which calls rooted_key with the identical arguments. M104, M209, M210
-        # (store-writer misattribution), M103 (development class), M254 and
-        # M255 (store-writer route) were all load-bearing and are ACTIVE.
-        # (M209/M210 again EQUIVALENT since M360/M361: C9 round 1b, below.)
-        "M245": {"siblings": ["M264"], "kind": "pair"},
-        # M58 (call_fn_frame's break/continue arm) vs M59 (contain_frame). ALL
-        # PATHS: call_fn_frame has exactly ONE caller (interp.rs, in call_fn),
-        # and it wraps the call in contain_frame, which maps break/continue to
-        # the same panic. The attack is M58's OWN (function-body escapes only);
-        # the older test also attacked a closure, a route M58 never guarded.
-        "M58": {"siblings": ["M59"], "kind": "pair"},
-        # C9 round 1 (harness workstream): kills that were another check's
-        # refusal. The attack is each row's own test, which accepts ANY
-        # refusal (the layers are independent) and panics "ATTACK: …" on
-        # acceptance; the all-paths argument is EQUIV_RECORD[...]["all_paths"].
-        "M27": {"siblings": ["M30"], "kind": "pair"},
-        "M29": {"siblings": ["M30"], "kind": "pair"},
-        "M214": {"siblings": ["M233"], "kind": "pair"},
-        "M216": {"siblings": ["M299"], "kind": "pair"},
-        # C9 round 2 (rows): check's sha256 rule vs names_every_digest (A69).
-        "M217": {"siblings": ["M473"], "kind": "pair"},
-        "M377": {"siblings": ["M378"], "kind": "pair"},
-        "M378": {"siblings": ["M377"], "kind": "pair"},
-        "M285": {"siblings": ["M385", "M289"], "kind": "set"},
-        "M385": {"siblings": ["M285", "M289"], "kind": "set"},
-        "M287": {"siblings": ["M290"], "kind": "pair"},
-        "M288": {"siblings": ["M290"], "kind": "pair"},
-        # C9 round 1b (LOOP). M19: EVL's D3 execution-leg filter vs the backend
-        # join in verify_execution (M428), which runs right after it on the
-        # same receipt. M209/M210: derive's rooted-identity checks vs the join
-        # to the re-verified signer (M360/M361), which reverify_protected runs
-        # for the same trial on every path (EQUIV_RECORD "all_paths").
-        "M19": {"siblings": ["M428"], "kind": "pair"},
-        "M209": {"siblings": ["M360"], "kind": "pair"},
-        "M210": {"siblings": ["M361"], "kind": "pair"},
-        # C9 round 1b (psv workstream). M152: the attack is an UNRELABELLED
-        # signature made for another authority (the relabelled one is M153's
-        # own attack). M418: a stranger key named as observer_key_id AND
-        # signing the observation.
-        "M152": {"siblings": ["M153"], "kind": "pair"},
-        "M418": {"siblings": ["M339", "M340"], "kind": "set"},
-        # C9 round 1b (fabric workstream): mutual pairs whose attack is each
-        # pair's shared test; all-paths arguments in EQUIV_RECORD.
-        "M139": {"siblings": ["M141"], "kind": "pair"},
-        "M141": {"siblings": ["M139"], "kind": "pair"},
-        "M183": {"siblings": ["M312"], "kind": "pair"},
-        "M187": {"siblings": ["M400"], "kind": "pair"},
-        "M400": {"siblings": ["M187"], "kind": "pair"},
-        "M273": {"siblings": ["M401"], "kind": "pair"},
-        "M401": {"siblings": ["M273"], "kind": "pair"},
-        # C9 round 1b (core workstream): EQUIV_RECORD[...]["all_paths"].
-        # C9 round 1b, integration: M04 vs the first-match rule M436 --
-        # REINSTATED ACTIVE in C9 round 2 (harness): the order alone guards an
-        # honest candidate's verdict, and its full-suite cell fails on that.
-        # C9 round 2: provenance skip-worktree tag vs the byte comparison.
-        "M346": {"siblings": ["M451"], "kind": "pair"},
-        # C9 round 2 (decision C): git untracked views vs the filesystem walk.
-        "M347": {"siblings": ["M501"], "kind": "pair"},
-        "M414": {"siblings": ["M501"], "kind": "pair"},
-        "M60": {"siblings": ["M69"], "kind": "pair"},
-        "M89": {"siblings": ["M86", "M96"], "kind": "set"},
-        # C9 round 2 (harness): read_regular's regular-file check vs the
-        # non-blocking open (M481) and the one-read rule (M335); service_leaf's
-        # symlink check vs is_dir (M486) and the mode check (M327).
-        "M482": {"siblings": ["M481", "M335"], "kind": "set"},
-        "M487": {"siblings": ["M486", "M327"], "kind": "set"},
-        # C9 round 3 (harness): mutual pairs on the decision-A/D path.
-        # Interpreter-is-a-script refusal vs the verified descriptor being
-        # close-on-exec (kernel ENOENT); staging-root 0700 vs the per-launch
-        # dir's 0700. EQUIV_RECORD[...]["all_paths"].
-        "M594": {"siblings": ["M595"], "kind": "pair"},
-        "M595": {"siblings": ["M594"], "kind": "pair"},
-        "M596": {"siblings": ["M597"], "kind": "pair"},
-        "M597": {"siblings": ["M596"], "kind": "pair"},
-        # C9 round 3 (rows): no route leaves these guards alone.
-        # EQUIV_RECORD[...]["all_paths"]. M186 on the direct route (the
-        # privileged route's own sibling M620 in the set too); M286/M459 vs
-        # the hashed ancestry walk; M453 vs the common-dir rule; M602 vs the
-        # protected custodian's spend rule, with the production helper and
-        # custodian.
-        "M186": {"siblings": ["M606", "M620"], "kind": "set"},
-        "M286": {"siblings": ["M581"], "kind": "pair"},
-        "M453": {"siblings": ["M580"], "kind": "pair"},
-        "M459": {"siblings": ["M581"], "kind": "pair"},
-        "M602": {"siblings": ["M628"], "kind": "pair"},
-    }
     # Every retired row has a matrix and no active row has one.
     if set(GUARD_SETS) != set(mut.EQUIVALENT_DID):
         sys.exit(f"refused: GUARD_SETS {sorted(GUARD_SETS)} != EQUIVALENT_DID {sorted(mut.EQUIVALENT_DID)}")
@@ -534,8 +650,7 @@ def main():
                 passed, out = run_test(pkg, target, test)
             finally:
                 rest()
-                if any(e[0].startswith("crates/axon-core/") for e in edits):
-                    build_axon()
+                after_cell(edits)
             if passed is None:
                 return "COMPILE_ERROR"
             if passed:
@@ -586,8 +701,7 @@ def main():
                         fails = [f"{c}: {t}" for t in cfails][:6] + [f"{c}: (suite failed)"] + fails
             finally:
                 rest()
-                if any(e[0].startswith("crates/axon-core/") for e in edits):
-                    build_axon()
+                after_cell(edits)
             if fok is None or "COMPILE_ERROR" in states.values():
                 return "COMPILE_ERROR", [], states
             ok_all = fok and all(v == "SUITE_OK" for v in states.values())
@@ -630,6 +744,11 @@ def main():
                   "consumer_suites": cons_states}
         if full_fails:
             matrix["retired_guard_full_suite_failures"] = full_fails[:12]
+        # Root-only tests that returned early are SKIPS, never passes: named
+        # per package so a reader sees what the full-suite cell did not run.
+        matrix["retired_guard_full_suite_skipped"] = {
+            f"{k[0]}{(' ' + k[1]) if k[1] else ''}": v
+            for k, v in CELL_SKIPS.items() if v and (k[0] in (own_pkgs, *consumers))}
         sib_only = phase(b)              # B removed, A present
         matrix["sibling_set_disabled"] = sib_only
         good = (baseline == "ATTACK_REFUSED" and retired_only == "ATTACK_REFUSED"
@@ -642,6 +761,7 @@ def main():
             "subsumed_by": sibs, "live_killing_mutant": rec["killer"],
             "all_paths": rec.get("all_paths"),
             "matrix": matrix, "holds": good, "commit": commit,
+            "edits_sha256": edits_digest(rid, sibs), "environment": environment(),
         })
         print(f"{'OK ' if good else 'BAD'} {rid} [{gs['kind']}]: base={baseline} "
               f"retired_off={retired_only} sib_off={sib_only} set_off={joint} full_suite={full_state}",
@@ -677,8 +797,7 @@ def main():
                     passed, out = run_test(pkg, target, test)
                 finally:
                     rest()
-                    if core:
-                        build_axon()
+                    after_cell([edit_of(rep)])
                 if passed is None:
                     rep_state = "REPLACEMENT_COMPILE_ERROR"
                 elif passed:
@@ -696,6 +815,8 @@ def main():
             "original_guard": rec["how"], "old_string_present": old_present,
             "replacement": rep, "replacement_state": rep_state,
             "matrix": None, "holds": holds, "commit": commit,
+            "edits_sha256": edits_digest(rep, []) if rep in BY_ID else None,
+            "environment": environment(),
         })
         print(f"{'OK ' if holds else 'BAD'} {rid}: stale ({rec['how']}); replacement {rep}: {rep_state}",
               flush=True)
@@ -720,6 +841,7 @@ def main():
         print(f"BAD no record for {missing}", flush=True)
         ok = False
     doc = {"schema": "axon-v022-paired-disable/2", "commit": commit, "all_hold": ok,
+           "registry_blobs": mut.registry_blobs(), "tree_clean": True, "environment": environment(),
            "records": records}
     if sel is not None:
         doc |= {"shard": shard_arg, "selected": sorted(sel, key=lambda r: int(r[1:]))}

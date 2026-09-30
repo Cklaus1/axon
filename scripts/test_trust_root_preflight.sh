@@ -13,8 +13,15 @@ PF="$HERE/trust_root_preflight.sh"
 if [ "$(id -u)" != 0 ]; then echo "NOT_RUN: needs root to act as service UIDs (not a pass)"; exit 0; fi
 fail() { echo "FAIL: $*"; exit 1; }
 # The preflight takes its path list from `axon-fabric protected-host-paths`
-# (the list ProtectedHost::load walks). gate.sh builds axon-fabric first.
-FABRIC_BIN=${AXON_FABRIC_BIN:-${CARGO_TARGET_DIR:-$HERE/../target}/debug/axon-fabric}
+# (the list ProtectedHost::load walks). The binary is the one the caller names
+# in AXON_FABRIC_BIN, or the one built HERE from this tree -- never one that
+# merely sits in target/ (C9 round 4; scripts/lib/axon_bin.sh).
+. "$HERE/lib/axon_bin.sh"
+if [ -z "${AXON_FABRIC_BIN:-}" ]; then
+  (cd "$HERE/.." && cargo build -q -p axon-fabric --bins) || fail "cargo build -p axon-fabric --bins"
+  AXON_FABRIC_BIN="$(cd "$HERE/.." && built_bin axon-fabric)" || fail "cannot tell where cargo built axon-fabric"
+fi
+FABRIC_BIN=$AXON_FABRIC_BIN
 [ -x "$FABRIC_BIN" ] || fail "needs the axon-fabric binary at $FABRIC_BIN (cargo build -p axon-fabric, or set AXON_FABRIC_BIN)"
 # A (amendment 45): the privileged launcher helper, built beside axon-fabric.
 HELPER_BIN=${AXON_PROTECTED_LAUNCHER_BIN:-$(dirname "$FABRIC_BIN")/axon-protected-launcher}

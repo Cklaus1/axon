@@ -56,18 +56,12 @@ ZSDK="${ZEPHYR_SDK_INSTALL_DIR:-$HOME/zephyr-sdk}"
 	skip "arm-zephyr-eabi toolchain not found under $ZSDK (set ZEPHYR_SDK_INSTALL_DIR)"
 export ZEPHYR_SDK_INSTALL_DIR="$ZSDK"
 
-# Find the axon binary (prefer the workspace target dir) and confirm codegen.
-AXON_BIN=""
-for candidate in \
-	"$REPO/target/debug/axon" \
-	"$REPO/target/release/axon" \
-	"$(command -v axon 2>/dev/null || true)"; do
-	if [[ -x "$candidate" ]]; then
-		AXON_BIN="$candidate"
-		break
-	fi
-done
-[[ -n "$AXON_BIN" ]] || skip "axon binary not found (build with: cargo build -p axon-core)"
+# The axon binary is the one the caller names in AXON_BIN -- never one that
+# merely sits in target/ or on PATH (scripts/lib/axon_bin.sh; C9 round 4: a
+# planted `axon` on PATH was run here and the check PASSED). None named is a
+# refusal (exit 2), not a skip.
+. "$REPO/scripts/lib/axon_bin.sh"
+named_bin AXON_BIN zephyr_qemu_gate
 # NOTE: there is deliberately no --help-based codegen probe here. `--emit-obj` is
 # listed in `--help` unconditionally (the CLI surface is identical either way;
 # only the runtime behavior is feature-gated), so a flag-presence check cannot

@@ -14,16 +14,15 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-# AXON_GUEST_KERNEL (explicit) wins, then $CARGO_TARGET_DIR, then the workspace
-# target/ — the same order crates/axon-vm/tests/lib_launch.rs uses, so a build
-# into a per-lane CARGO_TARGET_DIR is found without copying into the repo.
-if [[ -n "${AXON_GUEST_KERNEL:-}" ]]; then
-    KERNEL="$AXON_GUEST_KERNEL"
-elif [[ -n "${CARGO_TARGET_DIR:-}" && -f "$CARGO_TARGET_DIR/x86_64-axon-metal/release/axon-guest-kernel" ]]; then
-    KERNEL="$CARGO_TARGET_DIR/x86_64-axon-metal/release/axon-guest-kernel"
-else
-    KERNEL="$(pwd)/target/x86_64-axon-metal/release/axon-guest-kernel"
+# The kernel booted is the one the caller names in AXON_GUEST_KERNEL (as
+# kernel_enforce_test.sh does) -- never whatever sits under $CARGO_TARGET_DIR or
+# target/: that file was built from some tree at some time (C9 round 4;
+# scripts/lib/axon_bin.sh). None named is a refusal, exit 1.
+if [[ -z "${AXON_GUEST_KERNEL:-}" ]]; then
+    echo "ERROR: AXON_GUEST_KERNEL names no kernel; this harness boots only the kernel its caller names" >&2
+    exit 1
 fi
+KERNEL="$AXON_GUEST_KERNEL"
 
 if [[ ! -f "$KERNEL" ]]; then
     echo "ERROR: kernel not found at $KERNEL" >&2

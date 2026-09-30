@@ -5,7 +5,10 @@
 set -uo pipefail
 REPO=$(cd "$(dirname "$0")/../../.." && pwd)
 CVE="$REPO/examples/flagship/cve"
-AXON="$REPO/target/debug/axon"
+# The binaries the caller names, or the ones built here from this tree -- never
+# ones that merely sit in target/ (C9 round 4; scripts/lib/axon_bin.sh).
+. "$REPO/scripts/lib/axon_bin.sh"
+AXON="${AXON:-$(cd "$REPO" && cargo build -q -p axon-core --no-default-features --bin axon >&2 2>/dev/null && built_bin axon || true)}"
 
 bold() { printf '\033[1m%s\033[0m\n' "$*"; }
 dim()  { printf '\033[2m%s\033[0m\n' "$*"; }

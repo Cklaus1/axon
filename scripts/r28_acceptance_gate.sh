@@ -72,10 +72,13 @@ LEDGER_PATH="/tmp/r28_gate_$$.jsonl"
 # Build the binaries.
 cargo build -p axon-core --no-default-features --bin axon --manifest-path "$ROOT/Cargo.toml" --quiet
 cargo build -p axon-os --manifest-path "$ROOT/Cargo.toml" --quiet
+. "$ROOT/scripts/lib/axon_bin.sh"
+AXON="$(cd "$ROOT" && built_bin axon)" || exit 2  # the two just built
+AXON_OS="$(cd "$ROOT" && built_bin axon-os)" || exit 2
 
 # Run a small Axon program with the audit ledger enabled.
 AXON_AI_MOCK=1 AXON_AUDIT_LEDGER="$LEDGER_PATH" \
-    "$ROOT/target/debug/axon" run "$ROOT/examples/hello.ax" 2>/dev/null || true
+    "$AXON" run "$ROOT/examples/hello.ax" 2>/dev/null || true
 
 if [ ! -f "$LEDGER_PATH" ]; then
     echo "FAIL: no ledger produced at $LEDGER_PATH"
@@ -87,7 +90,7 @@ echo "  OK: ledger produced ($ENTRY_COUNT entries)"
 # ── [A5] audit verify ──────────────────────────────────────────────────────
 
 echo "[A5] audit verify (clean ledger)..."
-"$ROOT/target/debug/axon-os" audit verify --ledger "$LEDGER_PATH"
+"$AXON_OS" audit verify --ledger "$LEDGER_PATH"
 echo "  OK: verify PASS"
 
 # ── [A6] Tamper detection ──────────────────────────────────────────────────
@@ -96,7 +99,7 @@ echo "[A6] Tamper detection..."
 cp "$LEDGER_PATH" "${LEDGER_PATH}.orig"
 # Corrupt the entry_hash of the first line.
 sed -i '1s/"entry_hash":"[^"]*"/"entry_hash":"0000000000000000000000000000000000000000000000000000000000000000"/' "$LEDGER_PATH"
-if "$ROOT/target/debug/axon-os" audit verify --ledger "$LEDGER_PATH" 2>/dev/null; then
+if "$AXON_OS" audit verify --ledger "$LEDGER_PATH" 2>/dev/null; then
     echo "FAIL: tampered ledger should have failed verification"
     exit 1
 fi
@@ -109,8 +112,8 @@ cp "${LEDGER_PATH}.orig" "$LEDGER_PATH"
 
 echo "[A7] Export/import round-trip..."
 EXPORT_PATH="/tmp/r28_export_$$.json"
-"$ROOT/target/debug/axon-os" audit show --ledger "$LEDGER_PATH" --json > "$EXPORT_PATH"
-"$ROOT/target/debug/axon-os" audit verify --ledger "$LEDGER_PATH"
+"$AXON_OS" audit show --ledger "$LEDGER_PATH" --json > "$EXPORT_PATH"
+"$AXON_OS" audit verify --ledger "$LEDGER_PATH"
 echo "  OK: export/import round-trip passed"
 
 # ── Cleanup ────────────────────────────────────────────────────────────────
