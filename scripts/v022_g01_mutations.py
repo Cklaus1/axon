@@ -2703,8 +2703,8 @@ PSV_IDS |= {f"M{n}" for n in range(740, 760)}
 
 # C9 round 4: M650-M699, and the rows workstream's M690-M719.
 PSV_IDS |= {f"M{n}" for n in range(650, 720)}
-# C9 round 4 fix wave: rows2 M760-M819.
-PSV_IDS |= {f"M{n}" for n in range(760, 820)}
+# C9 round 4 fix wave: rows2 M760-M819, and wave 2 up to M859.
+PSV_IDS |= {f"M{n}" for n in range(760, 860)}
 
 
 def in_scope(mid, scope):
