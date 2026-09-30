@@ -29,6 +29,22 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# The image is evidence about these sources (operator decision E): no compiler
+# wrapper may stand between them and the bytes. A cache (sccache is installed
+# for DEVELOPMENT evidence runs only) is an input this tree does not contain.
+for v in RUSTC_WRAPPER RUSTC_WORKSPACE_WRAPPER CARGO_BUILD_RUSTC_WRAPPER CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER; do
+    if [ -n "${!v:-}" ]; then
+        echo "refused: $v is set (${!v}); a guest image is never built through a compiler wrapper" >&2
+        exit 2
+    fi
+done
+for f in "${CARGO_HOME:-$HOME/.cargo}"/config "${CARGO_HOME:-$HOME/.cargo}"/config.toml .cargo/config .cargo/config.toml; do
+    if [ -f "$f" ] && grep -Eq '^[[:space:]]*rustc-(workspace-)?wrapper[[:space:]]*=' "$f"; then
+        echo "refused: $f configures a rustc wrapper; a guest image is never built through one" >&2
+        exit 2
+    fi
+done
+
 DIST="dist/guest"
 KERNEL_ONLY="${1:-}"
 BACKEND="${AXON_KERNEL_BACKEND:-axon}"

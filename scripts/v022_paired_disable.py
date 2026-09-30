@@ -274,12 +274,64 @@ def build_axon():
               "cargo build -q -p axon-core --no-default-features --bin axon").returncode == 0
 
 
+def join_shards(argv, commit, universe):
+    """`--join OUT S0.json S1.json ...`: the status file from shard runs. It
+    refuses unless every shard was executed at THIS commit (the registry the
+    coverage is judged against is this commit's, and the tree is clean), the
+    shards are exactly 0..N-1 of one N, each carries exactly the records its
+    slice selects, and together they cover every record exactly once."""
+    if len(argv) < 2:
+        sys.exit("usage: --join OUT.json SHARD.json...")
+    if sh("git status --porcelain -- crates scripts").stdout.strip():
+        sys.exit("refused: --join judges coverage against this commit's registry; the tree is not clean")
+    docs = [json.load(open(p)) for p in argv[1:]]
+    bad = [p for p, d in zip(argv[1:], docs) if d.get("commit") != commit]
+    if bad:
+        sys.exit(f"refused: shard(s) {bad} were not executed at {commit[:8]}")
+    try:
+        slices = [tuple(int(x) for x in d["shard"].split("/")) for d in docs]
+    except (KeyError, AttributeError, ValueError):
+        sys.exit("refused: an input is not a shard run (no shard K/N)")
+    ns = {n for _, n in slices}
+    if len(ns) != 1 or sorted(k for k, _ in slices) != list(range(ns.pop())):
+        sys.exit(f"refused: shards {sorted(slices)} are not exactly 0..N-1 of one N")
+    records, seen = [], []
+    for (k, n), d in zip(slices, docs):
+        want = [r for i, r in enumerate(universe) if i % n == k]
+        got = [r["mutation"] for r in d["records"]]
+        if sorted(d.get("selected", [])) != sorted(want) or sorted(got) != sorted(want):
+            sys.exit(f"refused: shard {k}/{n} does not hold exactly its slice at this commit "
+                     f"(want {want}, has {sorted(got)})")
+        if any(r.get("commit", commit) != commit for r in d["records"]):
+            sys.exit(f"refused: shard {k}/{n} carries a record from another commit")
+        records += d["records"]
+        seen += got
+    dup = sorted({r for r in seen if seen.count(r) > 1})
+    if dup or sorted(seen) != sorted(universe):
+        sys.exit(f"refused: coverage is not every record exactly once (duplicates {dup}, "
+                 f"missing {sorted(set(universe) - set(seen))})")
+    for r in records:
+        r["commit"] = commit
+    ok = all(r["holds"] for r in records)
+    records.sort(key=lambda r: int(r["mutation"][1:]))
+    doc = {"schema": "axon-v022-paired-disable/2", "commit": commit, "all_hold": ok,
+           "records": records}
+    with open(os.path.join(ROOT, argv[0]), "w") as f:
+        json.dump(doc, f, indent=2)
+        f.write("\n")
+    print(f"paired-disable (joined {len(docs)} shards): {sum(r['holds'] for r in records)}/{len(records)} hold -> {argv[0]}")
+    sys.exit(0 if ok else 1)
+
+
 def main():
     if "--check-stale" not in sys.argv[1:] and sh("git status --porcelain -- crates").stdout.strip():
         sys.exit("refused: uncommitted changes under crates/ — paired-disable is evidence about a commit")
     commit = sh("git rev-parse HEAD").stdout.strip()
     flags = {"--reexecute-stale", "--check-stale"}
-    argv = [a for a in sys.argv[1:] if not a.startswith("--only=") and a not in flags]
+    argv = [a for a in sys.argv[1:]
+            if not a.startswith(("--only=", "--shard=")) and a not in flags and a != "--join"]
+    join = "--join" in sys.argv[1:]
+    shard_arg = next((a.split("=", 1)[1] for a in sys.argv[1:] if a.startswith("--shard=")), None)
     reexecute_stale = "--reexecute-stale" in sys.argv[1:]
     check_stale = "--check-stale" in sys.argv[1:]
     only_arg = next((a.split("=", 1)[1] for a in sys.argv[1:] if a.startswith("--only=")), None)
@@ -383,6 +435,25 @@ def main():
     # Every retired row has a matrix and no active row has one.
     if set(GUARD_SETS) != set(mut.EQUIVALENT_DID):
         sys.exit(f"refused: GUARD_SETS {sorted(GUARD_SETS)} != EQUIVALENT_DID {sorted(mut.EQUIVALENT_DID)}")
+    universe = sorted(set(GUARD_SETS) | set(mut.STALE_REFACTORED), key=lambda r: int(r[1:]))
+    if join:
+        join_shards(argv, commit, universe)
+    sel = None
+    if shard_arg is not None:
+        # One of N disjoint slices of the records, run in its OWN clone and
+        # target dir at the same commit; `--join` makes the status file only
+        # when the slices cover every record exactly once at that commit.
+        if only is not None or reexecute_stale or check_stale:
+            sys.exit("refused: --shard runs a fresh slice; it takes no --only/--reexecute-stale/--check-stale")
+        try:
+            k, n = (int(x) for x in shard_arg.split("/"))
+        except ValueError:
+            sys.exit(f"refused: --shard={shard_arg} is not K/N")
+        if not (n >= 1 and 0 <= k < n):
+            sys.exit(f"refused: --shard={shard_arg}: K is 0-indexed and below N")
+        if not argv:
+            sys.exit("refused: a shard writes its own OUT.json, never the status file")
+        sel = {r for i, r in enumerate(universe) if i % n == k}
     out_path = os.path.join(ROOT, argv[0] if argv else "governance/status/v022-psv-paired-disable.json")
     if check_stale:
         prev = json.load(open(out_path))
@@ -429,6 +500,8 @@ def main():
     ok = True
     for rid, gs in GUARD_SETS.items():
         if only is not None and rid not in only:
+            continue
+        if sel is not None and rid not in sel:
             continue
         rec = mut.EQUIV_RECORD[rid]
         row = BY_ID[rid]
@@ -568,6 +641,8 @@ def main():
     for rid, rec in mut.STALE_REFACTORED.items():
         if only is not None and rid not in only:
             continue
+        if sel is not None and rid not in sel:
+            continue
         rep = rec.get("replacement")
         old_present = open(os.path.join(ROOT, BY_ID[rid][2])).read().count(BY_ID[rid][3]) > 0
         rep_state = "NO_REPLACEMENT"
@@ -626,12 +701,14 @@ def main():
             r.setdefault("commit", prev.get("commit"))
         records = kept + records
         ok = all(r["holds"] for r in records)
-    missing = sorted((set(GUARD_SETS) | set(mut.STALE_REFACTORED)) - {r["mutation"] for r in records})
+    missing = sorted((sel if sel is not None else set(universe)) - {r["mutation"] for r in records})
     if missing:
         print(f"BAD no record for {missing}", flush=True)
         ok = False
     doc = {"schema": "axon-v022-paired-disable/2", "commit": commit, "all_hold": ok,
            "records": records}
+    if sel is not None:
+        doc |= {"shard": shard_arg, "selected": sorted(sel, key=lambda r: int(r[1:]))}
     with open(path, "w") as f:
         json.dump(doc, f, indent=2)
         f.write("\n")

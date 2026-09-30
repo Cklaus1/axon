@@ -67,6 +67,12 @@ def not_standalone(root):
 
 
 def main():
+    # A freeze records evidence about these sources; no compiler wrapper (the
+    # development-only sccache) may stand between them and what is built.
+    wrappers = [v for v in ("RUSTC_WRAPPER", "RUSTC_WORKSPACE_WRAPPER", "CARGO_BUILD_RUSTC_WRAPPER",
+                            "CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER") if os.environ.get(v)]
+    if wrappers:
+        sys.exit(f"refused: {wrappers} set; a freeze is never made through a compiler wrapper")
     out = sys.argv[1] if len(sys.argv) > 1 else None
     micode = sys.argv[2] if len(sys.argv) > 2 else os.path.join(os.path.dirname(ROOT), "micode-v022-wt")
     spec = importlib.util.spec_from_file_location("mut", os.path.join(ROOT, "scripts/v022_g01_mutations.py"))
