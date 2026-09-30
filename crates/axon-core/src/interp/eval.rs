@@ -1106,6 +1106,7 @@ impl<'p> Interp<'p> {
             body: body.clone(),
             env_snapshot: env.snapshot(),
             sealed: self.frame_sealed.get(),
+            operator_frames: self.operator_frames.get(),
         };
         let depth = self.handlers.borrow().len();
         self.handlers.borrow_mut().push(frame);
@@ -1163,6 +1164,8 @@ impl<'p> Interp<'p> {
             effect: ctx.effect.clone(),
             feed: v,
             consumed: false,
+            sealed: ctx.sealed,
+            operator_frames: self.operator_frames.get(),
         });
         let mut body_env = Env::from_snapshot(ctx.env_snapshot.clone());
         let result = self.eval(&ctx.body, &mut body_env);
@@ -1183,19 +1186,29 @@ impl<'p> Interp<'p> {
         // so a non-tail arm can replay the continuation (multi-shot).
         let hit = {
             let stack = self.handlers.borrow();
-            stack.iter().enumerate().rev().find_map(|(i, frame)| {
-                frame.arms.iter().find(|a| a.effect == eff).map(|a| {
-                    (
-                        i,
-                        a.binding.clone(),
-                        a.body.clone(),
-                        a.captured.clone(),
-                        frame.body.clone(),
-                        frame.env_snapshot.clone(),
-                        frame.sealed,
-                    )
+            // A sealed frame is skipped (the search goes on outward) when the
+            // operation is the operator's: see `handler_may_answer` (PSV-1).
+            let eligible = |f: &&crate::interp::HandlerFrame| {
+                self.handler_may_answer(f.sealed, f.operator_frames)
+            };
+            stack
+                .iter()
+                .enumerate()
+                .rev()
+                .filter(|(_, f)| eligible(f))
+                .find_map(|(i, frame)| {
+                    frame.arms.iter().find(|a| a.effect == eff).map(|a| {
+                        (
+                            i,
+                            a.binding.clone(),
+                            a.body.clone(),
+                            a.captured.clone(),
+                            frame.body.clone(),
+                            frame.env_snapshot.clone(),
+                            frame.sealed,
+                        )
+                    })
                 })
-            })
         };
         let Some((idx, binding, arm_body, captured, with_body, with_env, arm_sealed)) = hit else {
             return Ok(None);
@@ -1243,6 +1256,7 @@ impl<'p> Interp<'p> {
             effect: eff.to_string(),
             body: with_body,
             env_snapshot: with_env,
+            sealed: arm_sealed,
         });
         let mut arm_env = Env::from_snapshot(captured);
         arm_env.push();

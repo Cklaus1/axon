@@ -700,6 +700,21 @@ pub struct Interp<'p> {
     /// a sealed (candidate) module, and whether the frame now running is one.
     seal: Seal,
     frame_sealed: Cell<bool>,
+    /// How many frames of each provenance are active (entered through
+    /// [`Interp::with_frame`] and not yet left). `with_frame` is the ONLY
+    /// place provenance changes, so these are exact. Two decisions read them:
+    /// * a sealed handler frame answers an operation only when no OPERATOR
+    ///   frame was entered after it was installed ([`Interp::handler_may_answer`]);
+    /// * operator code never draws from the operator RNG while a sealed frame
+    ///   is below it ([`Interp::rng_next`]).
+    sealed_frames: Cell<usize>,
+    operator_frames: Cell<usize>,
+    /// The call depth of the `@[test]` frame being run (`0` = none), and
+    /// whether THAT frame's body evaluated to its end. The one fact test
+    /// completion is decided on (C9 round 3, PSV-3): not the returned value's
+    /// tag, which a `?` on a type-confused `None` made read as a completion.
+    test_frame_depth: Cell<usize>,
+    test_body_finished: Cell<bool>,
     fns: HashMap<String, &'p FnDef>,
     #[allow(dead_code)]
     structs: HashMap<String, &'p TypeDef>,
@@ -855,6 +870,11 @@ struct HandlerFrame {
     /// Provenance of the frame that installed this handler: its arms run
     /// under it (PCI runtime sealing).
     sealed: bool,
+    /// `Interp::operator_frames` when this handler was installed. A SEALED
+    /// frame may answer an operation only while the count is unchanged, i.e.
+    /// no operator code lies between the `with` and the operation (PSV-1,
+    /// C9 round 3). See [`Interp::handler_may_answer`].
+    operator_frames: usize,
 }
 
 /// A runtime handler arm: the payload binding, the arm body, and a snapshot of
@@ -888,6 +908,13 @@ struct ResumeReplay {
     /// Whether the feed has been consumed yet (the first hit consumes it; a
     /// second effect hit in the same replay is the unsound case → E1314).
     consumed: bool,
+    /// Provenance of the handler whose arm armed this replay, and
+    /// `Interp::operator_frames` when it did. The feed answers an operation
+    /// only under the same rule as a live handler frame
+    /// ([`Interp::handler_may_answer`]): a sealed arm's `resume(v)` never
+    /// becomes the result of an operation the operator's code performs.
+    sealed: bool,
+    operator_frames: usize,
 }
 
 /// Phase 6 (multi-shot resume): the suspended computation a handler arm is
@@ -904,6 +931,8 @@ struct ResumeCtx {
     body: crate::ast::Expr,
     /// The environment snapshot the body originally evaluated in.
     env_snapshot: HashMap<String, Value>,
+    /// Provenance of the handler frame whose arm is servicing this body.
+    sealed: bool,
 }
 
 /// Default max interpreter call depth before a graceful "recursion limit"
@@ -2731,10 +2760,18 @@ fn run_test_fn_inner(program: &Program, name: &str) -> Result<TestEnd, String> {
     let Some(f) = interp.fns.get(name).copied() else {
         return Err(format!("no function `{name}`"));
     };
+    interp.test_frame_depth.set(interp.call_depth.get() + 1);
+    interp.test_body_finished.set(false);
     match interp.call_fn(f, vec![]) {
-        // `call_fn` already ends a `return` (and a `?`) at the test's own
-        // frame, so a returned value arrives here as `Ok` — one arm decides
-        // both the tail value and an early `return`.
+        // COMPLETED is decided on one fact: the test's own body evaluated to
+        // its end (`call_fn_frame` records it). `call_fn` turns a `return` or
+        // a `?` into an ordinary `Ok` at the test's frame, so the returned
+        // VALUE cannot say whether the assertions after it ran: a `?` on a
+        // type-confused `None` returned `None`, which read as a completion and
+        // was minted a token (C9 round 3, PSV-3).
+        Ok(_) if !interp.test_body_finished.get() => Ok(TestEnd::EndedEarly(
+            "the test body ended early (a `return` or `?`): it did not complete".to_string(),
+        )),
         Ok(Value::Err(_)) => Ok(TestEnd::EndedEarly(
             "the test returned `Err`: it did not complete".to_string(),
         )),
@@ -2927,6 +2964,10 @@ impl<'p> Interp<'p> {
             kernels: [mk_kernel(false), mk_kernel(true)],
             seal,
             frame_sealed: Cell::new(false),
+            sealed_frames: Cell::new(0),
+            operator_frames: Cell::new(0),
+            test_frame_depth: Cell::new(0),
+            test_body_finished: Cell::new(false),
             fns,
             structs,
             enums,
@@ -3231,19 +3272,59 @@ impl<'p> Interp<'p> {
     /// The ONLY way to draw a random number: from the running frame's kernel.
     /// A sealed frame draws from the candidate's own stream and so can never
     /// advance or observe the operator's (PSV-1).
-    pub(crate) fn rng_next(&self) -> u64 {
-        self.k().rng_next()
+    ///
+    /// OPERATOR code running ABOVE a sealed frame (a closure the suite handed
+    /// the candidate, an operator handler arm answering a candidate operation)
+    /// is REFUSED: the candidate decides how many times such code runs, so
+    /// every draw it made would advance the operator's stream by a count the
+    /// candidate chose, and steer the operator's next challenge (C9 round 3,
+    /// PSV-1, amendment 46).
+    pub(crate) fn rng_next(&self) -> Result<u64, Flow> {
+        self.rng_guard()?;
+        Ok(self.k().rng_next())
     }
 
-    /// The ONLY way to reseed (`srand`): the running frame's kernel only.
-    pub(crate) fn rng_reseed(&self, n: i64) {
-        self.k().rng_set(n)
+    /// The ONLY way to reseed (`srand`): the running frame's kernel only,
+    /// under the same refusal as [`Interp::rng_next`].
+    pub(crate) fn rng_reseed(&self, n: i64) -> Result<(), Flow> {
+        self.rng_guard()?;
+        self.k().rng_set(n);
+        Ok(())
+    }
+
+    fn rng_guard(&self) -> Result<(), Flow> {
+        if !self.frame_sealed.get() && self.sealed_frames.get() > 0 {
+            return panic(
+                "the operator's random stream cannot be used by operator code that sealed code \
+                 (the candidate under test) is running — the candidate would choose how far it \
+                 advances; draw before handing the code to the candidate",
+            );
+        }
+        Ok(())
+    }
+
+    /// Whether handler `frame` may answer (or abort) the operation being
+    /// performed now. An operator frame may answer anything. A SEALED frame
+    /// may answer only while no operator frame has been entered since it was
+    /// installed: otherwise the operation belongs to — or unwinds through —
+    /// the operator's code, and the candidate would choose its result or skip
+    /// the rest of it (C9 round 3, PSV-1). The single predicate for live
+    /// frames (`call_builtin`, `run_handler_arm`) and the replay feed.
+    pub(crate) fn handler_may_answer(&self, sealed: bool, operator_frames: usize) -> bool {
+        !sealed || operator_frames == self.operator_frames.get()
     }
 
     /// Run `g` with the frame's provenance set to `sealed`, restoring it after.
     pub(crate) fn with_frame<T>(&self, sealed: bool, g: impl FnOnce() -> T) -> T {
         let prev = self.frame_sealed.replace(sealed);
+        let count = if sealed {
+            &self.sealed_frames
+        } else {
+            &self.operator_frames
+        };
+        count.set(count.get() + 1);
         let out = g();
+        count.set(count.get() - 1);
         self.frame_sealed.set(prev);
         out
     }
@@ -3498,6 +3579,11 @@ impl<'p> Interp<'p> {
             snap.remove("goal_met"); // injected by call_fn, not a user binding
             *self.main_locals.borrow_mut() = snap;
         }
+        // PSV-3: the test frame's completion is WHETHER ITS BODY RAN TO ITS
+        // END. A `return` or a `?` (whatever it carried) did not.
+        if depth == self.test_frame_depth.get() {
+            self.test_body_finished.set(body_result.is_ok());
+        }
         let mut result = match body_result {
             Ok(v) => v,
             Err(Flow::Return(v)) => v,
@@ -3512,6 +3598,35 @@ impl<'p> Interp<'p> {
             }
             Err(other) => return Err(other),
         };
+        // A value whose constructor contradicts the declared `Result`/`Option`
+        // return type is a runtime type confusion (an untyped `dict_get` yields
+        // a free type variable, so a stored `None` type-checks as a `Result`).
+        // Refuse it here, at the one boundary every return crosses, instead of
+        // letting a caller's `?` read it as the other type (C9 round 3, PSV-3).
+        {
+            use crate::ast::AxonType as T;
+            let base = |t: &T| match t {
+                T::Result { .. } => Some("Result"),
+                T::Option(_) => Some("Option"),
+                T::Generic { base, .. } if base == "Result" || base == "Option" => {
+                    Some(if base == "Result" { "Result" } else { "Option" })
+                }
+                _ => None,
+            };
+            let confused = matches!(
+                (f.return_type.as_ref().and_then(base), &result),
+                (Some("Result"), Value::Some(_) | Value::None)
+                    | (Some("Option"), Value::Ok(_) | Value::Err(_))
+            );
+            if confused {
+                return panic(format!(
+                    "`{}` is declared to return {} but produced {} — a runtime type confusion",
+                    f.name,
+                    f.return_type.as_ref().and_then(base).unwrap_or_default(),
+                    value::display(&result)
+                ));
+            }
+        }
         // Soft typing at the RETURN boundary: a fn declared `-> T` (a plain
         // scalar) whose body produces an `Uncertain<T>`/`Temporal<T>` unwraps to
         // the inner value — the same rule as a plain-T parameter. Without this,
@@ -4640,6 +4755,230 @@ mod tests {
         assert!(
             out != Ok(TestEnd::Completed),
             "ATTACK: the operator's scheduler ran an operator function a sealed frame queued: {out:?}"
+        );
+    }
+
+    /// Run `test` of `suite` with `cand` loaded from a SEALED directory
+    /// (`/<tag>-sealed`), holding the sealed-set lock across set/run/clear.
+    fn sealed_outcome(tag: &str, suite: &str, cand: &str, test: &str) -> Result<TestEnd, String> {
+        use crate::span::intern_source;
+        let sdir = format!("/{tag}-sealed");
+        let s = crate::parse_source_in(suite, intern_source(&format!("/{tag}-suite/h.ax"), suite))
+            .expect("suite parses");
+        let c = crate::parse_source_in(cand, intern_source(&format!("{sdir}/f.ax"), cand))
+            .expect("candidate parses");
+        let prog = Program {
+            items: s.items.into_iter().chain(c.items).collect(),
+        };
+        let _g = SEALED_DIRS_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        crate::resolver::set_sealed_module_dirs(&[std::path::PathBuf::from(&sdir)]);
+        let out = run_test_fn_outcome(&prog, test);
+        crate::resolver::set_sealed_module_dirs(&[]);
+        out
+    }
+
+    /// C9 round 3, PSV-1: a SEALED handler frame never answers or aborts an
+    /// operation performed under OPERATOR provenance. The review executed two
+    /// variants to a keyed pass: the candidate's `on IO` arm ABORTED the
+    /// operator's listener at its first `println` (skipping its assert), and
+    /// RESUMED the operator's `read_file` with bytes the candidate chose. A
+    /// third route has the same root: the operator's listener calls a
+    /// CANDIDATE function whose `println` the candidate's outer handler
+    /// aborts, unwinding through the operator's code. A fourth goes through
+    /// the multi-shot replay feed instead of a live frame.
+    #[test]
+    fn a_sealed_handler_never_answers_or_aborts_operator_code() {
+        let dir = std::env::temp_dir().join(format!("psv1-handler-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let want = dir.join("expected.txt");
+        std::fs::write(&want, "42\n").unwrap();
+        let want = want.display().to_string();
+        let suite = format!(
+            "fn want() -> i64 {{\n    let raw = match read_file(\"{want}\") {{ Ok(s) => s  Err(e) => \"\" }}\n    match parse_int(str_trim(raw)) {{ Ok(n) => n  Err(e) => -1 }}\n}}\n\
+             @[test]\nfn t_abort() {{ visit(|v: i64| {{\n    println(\"listener saw {{to_str(v)}}\")\n    assert_eq(v, 42)\n}}) }}\n\
+             @[test]\nfn t_resume() {{ visit(|v: i64| {{ assert_eq(v, want()) }}) }}\n\
+             @[test]\nfn t_through() {{ visit(|v: i64| {{ assert_eq(noisy(v), 42) }}) }}\n\
+             @[test]\nfn t_replay() {{ visit(|v: i64| {{ assert_eq(v, want()) }}) }}\n\
+             @[test]\nfn t_own() {{ assert_eq(mine(), 5) }}\n\
+             @[test]\nfn t_op() {{\n    let v = with handler {{ on IO(p) => resume(Ok(\"42\")) }} {{\n        match read_file(\"/nonexistent/psv1\") {{ Ok(s) => s  Err(e) => \"no\" }}\n    }}\n    assert(v == \"42\")\n}}\n\
+             @[test]\nfn t_op_around() {{\n    with handler {{ on IO(p) => resume(Ok(\"7\")) }} {{\n        visit(|v: i64| {{ assert_eq(v, want()) }})\n    }}\n}}\n"
+        );
+        let honest = "fn noisy(v: i64) -> i64 { println(\"n\")  v }\n\
+                      fn mine() -> i64 {\n    let a = with handler { on IO(p) => resume(Ok(\"5\")) } {\n        match read_file(\"/nonexistent/own\") { Ok(s) => s  Err(e) => \"0\" }\n    }\n    let b = with handler { on IO(p) => 5 } {\n        println(\"x\")\n        1\n    }\n    match parse_int(a) { Ok(n) => if n == b { n } else { 0 }  Err(e) => 0 }\n}\n";
+        let good = format!("{honest}fn visit(cb: fn(i64) -> ()) {{ cb(42) }}\n");
+        let wrong7 = format!("{honest}fn visit(cb: fn(i64) -> ()) {{ cb(7) }}\n");
+        // Controls: the honest candidate passes each shape and a wrong one
+        // fails it, so each check below is live; the candidate's OWN handler
+        // still handles the candidate's own operations (resume and abort);
+        // an operator handler still handles the operator's operation, also
+        // when candidate frames lie between it and the operation.
+        for t in ["t_abort", "t_resume", "t_through", "t_own", "t_op"] {
+            assert_eq!(
+                sealed_outcome("psv1h", &suite, &good, t),
+                Ok(TestEnd::Completed),
+                "control: {t}"
+            );
+        }
+        for t in ["t_abort", "t_resume", "t_through"] {
+            assert!(
+                sealed_outcome("psv1h", &suite, &wrong7, t).is_err(),
+                "control: wrong fails {t}"
+            );
+        }
+        assert_eq!(
+            sealed_outcome("psv1h", &suite, &wrong7, "t_op_around").map_err(|_| ()),
+            Ok(TestEnd::Completed),
+            "control: the operator's own handler answers the operator's read_file"
+        );
+        let attacks = [
+            (
+                "t_abort",
+                "the candidate's arm aborted the operator's listener at its println",
+                "fn visit(cb: fn(i64) -> ()) {\n    let _ = with handler { on IO(p) => 0 } {\n        cb(7)\n        0\n    }\n}\n",
+            ),
+            (
+                "t_resume",
+                "the candidate's arm resumed the operator's read_file with its own bytes",
+                "fn visit(cb: fn(i64) -> ()) {\n    with handler { on IO(p) => resume(Ok(\"7\")) } {\n        cb(7)\n    }\n}\n",
+            ),
+            (
+                "t_through",
+                "the candidate's arm aborted the operator's listener through a candidate call",
+                "fn visit(cb: fn(i64) -> ()) {\n    let _ = with handler { on IO(p) => 0 } {\n        cb(7)\n        0\n    }\n}\n",
+            ),
+            (
+                "t_replay",
+                "the candidate's multi-shot replay fed the operator's read_file",
+                "fn visit(cb: fn(i64) -> ()) {\n    let st = dict_new()\n    let _ = with handler { on IO(p) => {\n        dict_set(st, \"replaying\", 1)\n        resume(Ok(\"7\"))\n    } } {\n        if !dict_has(st, \"replaying\") { println(\"mine\") }\n        cb(7)\n        0\n    }\n}\n",
+            ),
+        ];
+        for (t, what, visit) in attacks {
+            let cand = format!("{honest}{visit}");
+            let out = sealed_outcome("psv1h", &suite, &cand, t);
+            assert!(
+                out != Ok(TestEnd::Completed),
+                "ATTACK: sealed handler answered operator code: {what} ({t}): {out:?}"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// C9 round 3, PSV-1 (the RNG route of the same root): operator code a
+    /// sealed frame runs — here a closure the suite hands the candidate —
+    /// cannot draw from the operator's stream, because the CANDIDATE chooses
+    /// how many times it runs and so how far the stream advances. The attack:
+    /// the candidate is right only at the challenge the operator draws after
+    /// FIVE ticks, and ticks five times. Refused, not given another stream:
+    /// amendment 46.
+    #[test]
+    fn operator_code_a_sealed_frame_runs_never_draws_the_operator_rng() {
+        // `srand(7)`: the operator's stream is 327, 652, 743, 107, 850, 125 …
+        let suite = "@[test]\nfn t_accept() {\n    srand(7)\n    warm(|| { let _ = random_i64(0, 1000) })\n    let c = random_i64(0, 1000)\n    assert(solve(c))\n}\n\
+                     @[test]\nfn t_seeded() {\n    srand(7)\n    warm(|| { let _ = random_i64(0, 1000) })\n    assert_eq(random_i64(0, 1000), 327)\n}\n\
+                     @[test]\nfn t_reseed() {\n    srand(7)\n    warm(|| { srand(1) })\n    assert(solve(random_i64(0, 1000)))\n}\n";
+        let right_at_125 = "fn solve(c: i64) -> bool { c == 125 }\n";
+        // Controls: with no tick the operator's own draws work and follow
+        // the seed; the candidate draws freely from its OWN stream.
+        let idle =
+            format!("{right_at_125}fn warm(tick: fn() -> ()) {{ let _ = random_i64(0, 9) }}\n");
+        assert_eq!(
+            sealed_outcome("psv1r", suite, &idle, "t_seeded"),
+            Ok(TestEnd::Completed),
+            "control"
+        );
+        assert!(
+            sealed_outcome("psv1r", suite, &idle, "t_accept").is_err(),
+            "control: 327 is wrong"
+        );
+        let steer = format!(
+            "{right_at_125}fn warm(tick: fn() -> ()) {{ tick() tick() tick() tick() tick() }}\n"
+        );
+        let out = sealed_outcome("psv1r", suite, &steer, "t_accept");
+        assert!(
+            out != Ok(TestEnd::Completed),
+            "ATTACK: the candidate steered the operator's challenge by calling its closure five times: {out:?}"
+        );
+        assert!(
+            matches!(&out, Err(m) if m.contains("operator's random stream")),
+            "the refusal names the rule: {out:?}"
+        );
+        let reseed = "fn solve(c: i64) -> bool { c == 0 }\nfn warm(tick: fn() -> ()) { tick() }\n";
+        assert!(
+            sealed_outcome("psv1r", suite, reseed, "t_reseed").is_err(),
+            "operator code a sealed frame runs cannot reseed the operator stream either"
+        );
+    }
+
+    /// C9 round 3, PSV-3: a test is COMPLETED only when its body evaluated to
+    /// its end. The review's route: a `?` on a type-confused `None` returned
+    /// `None` from the test, which is not an `Err`, so the returned VALUE read
+    /// as a completion and a token was minted though the assert never ran.
+    /// The return-boundary check also stops `t_solve` (the test itself is
+    /// declared `-> Result` and would return a `None`). `t_find` is the route
+    /// where the completion rule is the ONLY guard: an `Option`-returning test
+    /// whose `?` meets an honest `None` returns a well-typed `None`.
+    #[test]
+    fn a_test_ended_by_question_mark_is_never_completed() {
+        let suite = "@[test]\nfn t_solve() -> Result<i64, str> {\n    let f = solver()\n    let v = f(21)?\n    assert_eq(v, 42)\n    Ok(v)\n}\n\
+                     @[test]\nfn t_find() -> Option<i64> {\n    let v = find(21)?\n    assert_eq(v, 42)\n    Some(v)\n}\n";
+        let honest = "fn solver() -> fn(i64) -> Result<i64, str> { |x: i64| Ok(x * 2) }\nfn find(x: i64) -> Option<i64> { Some(x * 2) }\n";
+        let err = "fn solver() -> fn(i64) -> Result<i64, str> { |x: i64| Err(\"no\") }\nfn find(x: i64) -> Option<i64> { Some(x) }\n";
+        for t in ["t_solve", "t_find"] {
+            assert_eq!(
+                sealed_outcome("psv3q", suite, honest, t),
+                Ok(TestEnd::Completed),
+                "control: {t}"
+            );
+        }
+        assert!(
+            matches!(
+                sealed_outcome("psv3q", suite, err, "t_solve"),
+                Ok(TestEnd::EndedEarly(_))
+            ),
+            "control: an honest Err ends the test early"
+        );
+        assert!(
+            sealed_outcome("psv3q", suite, err, "t_find").is_err(),
+            "control: wrong fails"
+        );
+        let confused = "fn solver() -> fn(i64) -> Result<i64, str> {\n    |x: i64| {\n        let d = dict_new()\n        let n: Option<i64> = None\n        dict_set(d, \"k\", n)\n        match dict_get(d, \"k\") { Some(v) => v  None => Err(\"u\") }\n    }\n}\nfn find(x: i64) -> Option<i64> { None }\n";
+        for t in ["t_solve", "t_find"] {
+            let out = sealed_outcome("psv3q", suite, confused, t);
+            assert!(
+                out != Ok(TestEnd::Completed),
+                "ATTACK: a test that ended early at `?` was counted complete ({t}): {out:?}"
+            );
+        }
+    }
+
+    /// C9 round 3, PSV-3: a `fn` declared `-> Result` never hands its caller a
+    /// `None` (nor an `Option` fn an `Ok`/`Err`). The review's exact
+    /// candidate: an untyped `dict_get` gives a free type variable, so a
+    /// stored `None` type-checks as the `Result`. Refused at the return
+    /// boundary, the test FAILS on the confusion instead of ending early.
+    #[test]
+    fn a_declared_result_fn_never_returns_an_option() {
+        let suite = "@[test]\nfn t_solve() -> Result<i64, str> {\n    let v = solve(21)?\n    assert_eq(v, 42)\n    Ok(v)\n}\n";
+        let confused = "fn solve(x: i64) -> Result<i64, str> {\n    let d = dict_new()\n    let n: Option<i64> = None\n    dict_set(d, \"k\", n)\n    match dict_get(d, \"k\") {\n        Some(v) => v\n        None => Err(\"unreachable\")\n    }\n}\n";
+        let honest = "fn solve(x: i64) -> Result<i64, str> { Ok(x * 2) }\n";
+        assert_eq!(
+            sealed_outcome("psv3b", suite, honest, "t_solve"),
+            Ok(TestEnd::Completed),
+            "control"
+        );
+        let out = sealed_outcome("psv3b", suite, confused, "t_solve");
+        assert!(
+            matches!(&out, Err(m) if m.contains("runtime type confusion")),
+            "ATTACK: a fn declared -> Result returned a None across its boundary: {out:?}"
+        );
+        let opt = "@[test]\nfn t_find() -> Option<i64> {\n    let v = find(21)?\n    Some(v)\n}\n";
+        let confused_opt = "fn find(x: i64) -> Option<i64> {\n    let d = dict_new()\n    let e: Result<i64, str> = Ok(42)\n    dict_set(d, \"k\", e)\n    match dict_get(d, \"k\") { Some(v) => v  None => None }\n}\n";
+        let out = sealed_outcome("psv3b", opt, confused_opt, "t_find");
+        assert!(
+            matches!(&out, Err(m) if m.contains("runtime type confusion")),
+            "an Option fn returned an Ok across its boundary: {out:?}"
         );
     }
 

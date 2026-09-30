@@ -650,4 +650,13 @@ ATTACK_MARKERS.update({
     'M582': r'ATTACK: the freeze bound evidence from a linked worktree whose admin dir was placed as \.git: Ok\(',
     'M583': r"ATTACK: the freeze bound evidence from a tree whose \.git is a symlink to another clone's: Ok\(",
     'M584': r'ATTACK: the freeze bound evidence from a guest image built from a dirty tree: Ok\(',
+# C9 round 3, workstream CORE (M560-M569; amendment 46).
+ATTACK_MARKERS.update({
+    'M560': r'ATTACK: sealed handler answered operator code: the candidate.s arm aborted the operator.s listener at its println \(t_abort\)',
+    'M561': r'ATTACK: sealed handler answered operator code: the candidate.s multi-shot replay fed the operator.s read_file \(t_replay\)',
+    'M562': r'ATTACK: sealed handler answered operator code: the candidate.s arm aborted the operator.s listener through a candidate call \(t_through\)',
+    'M563': r'ATTACK: the candidate steered the operator.s challenge by calling its closure five times: Ok\(Completed\)',
+    'M564': r'ATTACK: a test that ended early at `\?` was counted complete \(t_find\): Ok\(Completed\)',
+    'M565': r'ATTACK: a test that ended early at `\?` was counted complete \(t_find\): Ok\(Completed\)',
+    'M566': r'ATTACK: a fn declared -> Result returned a None across its boundary: Ok\(EndedEarly',
 })

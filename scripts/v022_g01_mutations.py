@@ -1569,6 +1569,53 @@ MUTATIONS += [
 ]
 
 
+# ── C9 round 3, workstream CORE (M560-M569; amendment 46, matrix A76-A77) ───
+# PSV-1: a sealed handler frame never answers or aborts an operation performed
+# under OPERATOR provenance (live frame, replay feed), and operator code a
+# sealed frame runs never draws the operator RNG. PSV-3: a test is Completed
+# only when its body evaluated to its end; a declared Result/Option fn never
+# returns the other constructor. Each row's test fails on its OWN attack.
+_CI = 'crates/axon-core/src/interp.rs'
+_CL = '--no-default-features --lib'
+MUTATIONS += [
+    ('M560', 'PSV-1: a sealed handler frame is skipped for an operator operation (run_handler_arm, the one frame selection)',
+     'crates/axon-core/src/interp/eval.rs',
+     '                self.handler_may_answer(f.sealed, f.operator_frames)',
+     '                { let _ = f; true }',
+     'axon-core', _CL, 'interp::tests::a_sealed_handler_never_answers_or_aborts_operator_code'),
+    ('M561', 'PSV-1: a sealed arm\'s multi-shot replay feed never answers an operator operation',
+     'crates/axon-core/src/interp/builtins.rs',
+     '                let may = self.handler_may_answer(r.sealed, r.operator_frames);',
+     '                let may = true;',
+     'axon-core', _CL, 'interp::tests::a_sealed_handler_never_answers_or_aborts_operator_code'),
+    ('M562', 'PSV-1: sealed-frame eligibility counts OPERATOR frames entered since install (not only the current frame\'s provenance)',
+     _CI,
+     '        !sealed || operator_frames == self.operator_frames.get()',
+     '        !sealed || self.frame_sealed.get() || operator_frames == usize::MAX',
+     'axon-core', _CL, 'interp::tests::a_sealed_handler_never_answers_or_aborts_operator_code'),
+    ('M563', 'PSV-1: operator code a sealed frame runs never draws or reseeds the operator RNG (rng_guard)',
+     _CI,
+     '        if !self.frame_sealed.get() && self.sealed_frames.get() > 0 {',
+     '        if false {',
+     'axon-core', _CL, 'interp::tests::operator_code_a_sealed_frame_runs_never_draws_the_operator_rng'),
+    ('M564', 'PSV-3: a test whose body did not evaluate to its end is EndedEarly, whatever it returned',
+     _CI,
+     '        Ok(_) if !interp.test_body_finished.get() => Ok(TestEnd::EndedEarly(',
+     '        Ok(_) if false => Ok(TestEnd::EndedEarly(',
+     'axon-core', _CL, 'interp::tests::a_test_ended_by_question_mark_is_never_completed'),
+    ('M565', 'PSV-3: the test frame records whether its body finished (a return or ? did not)',
+     _CI,
+     '            self.test_body_finished.set(body_result.is_ok());',
+     '            self.test_body_finished.set(true);',
+     'axon-core', _CL, 'interp::tests::a_test_ended_by_question_mark_is_never_completed'),
+    ('M566', 'PSV-3: a fn declared -> Result (Option) never returns an Option (Result) value',
+     _CI,
+     '            if confused {',
+     '            if false && confused {',
+     'axon-core', _CL, 'interp::tests::a_declared_result_fn_never_returns_an_option'),
+]
+
+
 # Protected Check Isolation guards (governance/specs/v022-protected-check-isolation.md):
 # candidate code must not alter what the operator's check runs or what PASS
 # means. Kept here so nothing is lost, but certified under PCI, not G01
@@ -1831,8 +1878,8 @@ BINDING_IDS = {f"M{n}" for n in range(101, 137)}
 # 1b allocates M400-M499, round 2 M500-M519). An id outside every scope would silently fall into
 # g01.
 PSV_IDS = {f"M{n}" for n in range(137, 550)}
-# C9 round 3, workstream READINESS.
-PSV_IDS |= {f"M{n}" for n in range(570, 585)}
+# C9 round 3: rows M560-M649 are PSV rows (workstream ranges).
+PSV_IDS |= {f"M{n}" for n in range(550, 650)}
 
 
 def in_scope(mid, scope):

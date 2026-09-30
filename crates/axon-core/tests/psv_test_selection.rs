@@ -695,12 +695,28 @@ fn guess(x: i64) -> i64 {{ {PREDICTED} }}
 
 /// Run one registered test of `suite` with `cand` sealed, in the runner's shape.
 fn run_sealed(tag: &str, suite: &str, cand: &str, test: &str, env: &[(&str, &str)]) -> String {
+    run_sealed_with(tag, suite, cand, test, env, &[])
+}
+
+/// [`run_sealed`], with extra operator fixture files in the suite directory
+/// (the test's working directory).
+fn run_sealed_with(
+    tag: &str,
+    suite: &str,
+    cand: &str,
+    test: &str,
+    env: &[(&str, &str)],
+    suite_files: &[(&str, &str)],
+) -> String {
     use std::io::Write;
     let d = fresh(tag);
     std::fs::create_dir_all(d.join("cand")).unwrap();
     std::fs::create_dir_all(d.join("suite")).unwrap();
     std::fs::write(d.join("suite/accept.ax"), suite).unwrap();
     std::fs::write(d.join("cand/f.ax"), cand).unwrap();
+    for (name, body) in suite_files {
+        std::fs::write(d.join("suite").join(name), body).unwrap();
+    }
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_axon"));
     cmd.current_dir(d.join("suite"))
         .arg("test")
@@ -854,5 +870,148 @@ fn t_ok() {
     assert!(
         out.contains("\"status\":\"failed\""),
         "the candidate's first draw equalled the operator's — its stream mirrors the operator seed: {out}"
+    );
+}
+
+/// C9 round 3, PSV-1, through `axon test --seal` (the runner's argv): a
+/// SEALED candidate's effect handler never answers or aborts an operation the
+/// OPERATOR's code performs. The review's two executed variants — the arm
+/// aborts the operator's listener at its `println` (its assert never runs),
+/// and the arm resumes the operator's fixture read with bytes the candidate
+/// chose — each gave a keyed "ok" for the wrong answer 7.
+#[test]
+fn a_sealed_handler_never_answers_or_aborts_the_operators_listener() {
+    let abort_suite = "mod f
+use f.{visit}
+
+@[test]
+fn hidden_completion() {
+    visit(|v: i64| {
+        println(\"listener saw {to_str(v)}\")
+        assert_eq(v, 42)
+    })
+}
+";
+    let resume_suite = "mod f
+use f.{visit}
+
+@[test]
+fn hidden_completion() {
+    visit(|v: i64| {
+        let raw = match read_file(\"expected.txt\") { Ok(s) => s  Err(e) => \"\" }
+        let want = match parse_int(str_trim(raw)) { Ok(n) => n  Err(e) => -1 }
+        assert_eq(v, want)
+    })
+}
+";
+    let fixture = [("expected.txt", "42\n")];
+    let good = "fn visit(cb: fn(i64) -> ()) {\n    cb(42)\n}\n";
+    let wrong = "fn visit(cb: fn(i64) -> ()) {\n    cb(7)\n}\n";
+    let abort = "fn visit(cb: fn(i64) -> ()) {\n    let _ = with handler { on IO(p) => 0 } {\n        cb(7)\n        0\n    }\n}\n";
+    let resume = "fn visit(cb: fn(i64) -> ()) {\n    with handler { on IO(p) => resume(Ok(\"7\")) } {\n        cb(7)\n    }\n}\n";
+    let run = |tag: &str, suite: &str, cand: &str| {
+        run_sealed_with(tag, suite, cand, "hidden_completion", &[], &fixture)
+    };
+    // Controls: each check is live — the right answer passes, 7 fails.
+    for (tag, suite) in [("h-abort", abort_suite), ("h-resume", resume_suite)] {
+        let ok = run(&format!("{tag}-good"), suite, good);
+        assert!(ok.contains("\"status\":\"ok\""), "control {tag}: {ok}");
+        let bad = run(&format!("{tag}-wrong"), suite, wrong);
+        assert!(
+            bad.contains("\"status\":\"failed\""),
+            "control {tag}: {bad}"
+        );
+    }
+    let out = run("h-abort-attack", abort_suite, abort);
+    assert!(
+        !out.contains("\"status\":\"ok\""),
+        "ATTACK: the candidate's handler aborted the operator's listener and 7 passed: {out}"
+    );
+    let out = run("h-resume-attack", resume_suite, resume);
+    assert!(
+        !out.contains("\"status\":\"ok\""),
+        "ATTACK: the candidate's handler chose the operator's fixture bytes and 7 passed: {out}"
+    );
+    // Control: the candidate's handler still handles the CANDIDATE's own
+    // operation, and it may still print (its println runs for real).
+    let own = "fn visit(cb: fn(i64) -> ()) {\n    let v = with handler { on IO(p) => resume(Ok(\"42\")) } {\n        match read_file(\"/nonexistent/psv1\") { Ok(s) => s  Err(e) => \"0\" }\n    }\n    match parse_int(v) { Ok(n) => cb(n)  Err(e) => cb(0) }\n}\n";
+    let out = run("h-own", resume_suite, own);
+    assert!(
+        out.contains("\"status\":\"ok\""),
+        "control: own handler: {out}"
+    );
+}
+
+/// C9 round 3, PSV-1 (RNG route): a closure the operator hands the candidate
+/// runs as OPERATOR code, so were it allowed to draw from the operator's
+/// stream, the candidate would choose the operator's next challenge by how
+/// many times it calls it (review run3.log: 652 after one call, 125 after
+/// five). The attack below is right ONLY at 125 and calls the closure five
+/// times. Refused (amendment 46).
+#[test]
+fn a_candidate_cannot_steer_the_operators_challenge_through_its_closure() {
+    let suite = "mod f
+use f.{warm, solve}
+
+@[test]
+fn t_accept() {
+    srand(7)
+    warm(|| { let _ = random_i64(0, 1000) })
+    let challenge = random_i64(0, 1000)
+    assert(solve(challenge))
+}
+";
+    let steer = "pub fn warm(tick: fn() -> ()) { tick() tick() tick() tick() tick() }\n\
+                 pub fn solve(c: i64) -> bool { c == 125 }\n";
+    let out = run_sealed("rng-closure-steer", suite, steer, "t_accept", &[]);
+    assert!(
+        !out.contains("\"status\":\"ok\""),
+        "ATTACK: the candidate steered the operator's challenge through the operator's closure: {out}"
+    );
+    assert!(
+        out.contains("operator's random stream"),
+        "the refusal names the rule: {out}"
+    );
+    // Control: no tick, and the operator's own draw follows the seed (327).
+    let idle = "pub fn warm(tick: fn() -> ()) { }\npub fn solve(c: i64) -> bool { c == 327 }\n";
+    let out = run_sealed("rng-closure-idle", suite, idle, "t_accept", &[]);
+    assert!(out.contains("\"status\":\"ok\""), "control: {out}");
+}
+
+/// C9 round 3, PSV-3: the review's exact candidate and suite. `?` on a
+/// type-confused `None` (an untyped `dict_get` of a stored `None`) ended the
+/// operator's test before its assert, and a genuine completion token was
+/// minted. It must never print "ok".
+#[test]
+fn a_test_that_ends_early_at_question_mark_is_never_ok() {
+    let suite = "mod f
+use f.{solve}
+
+@[test]
+fn t_solve() -> Result<i64, str> {
+    let v = solve(21)?
+    assert_eq(v, 42)
+    Ok(v)
+}
+";
+    let confusing = "fn solve(x: i64) -> Result<i64, str> {\n    let d = dict_new()\n    let n: Option<i64> = None\n    dict_set(d, \"k\", n)\n    match dict_get(d, \"k\") {\n        Some(v) => v\n        None => Err(\"unreachable\")\n    }\n}\n";
+    let out = run_sealed("q-confused", suite, confusing, "t_solve", &[]);
+    assert!(
+        !out.contains("\"status\":\"ok\""),
+        "ATTACK: a test that ended early at `?` was reported ok with a completion token: {out}"
+    );
+    // Controls: an honest pass is ok; an honest Err is not.
+    let honest = "fn solve(x: i64) -> Result<i64, str> { Ok(x * 2) }\n";
+    let out = run_sealed("q-honest", suite, honest, "t_solve", &[]);
+    assert!(out.contains("\"status\":\"ok\""), "control: {out}");
+    assert!(
+        out.contains("\"completion\""),
+        "control: a completed test carries a token: {out}"
+    );
+    let err = "fn solve(x: i64) -> Result<i64, str> { Err(\"no\") }\n";
+    let out = run_sealed("q-err", suite, err, "t_solve", &[]);
+    assert!(
+        !out.contains("\"completion\"") || !out.contains("\"status\":\"ok\""),
+        "control: an honest Err is not a completed pass: {out}"
     );
 }
