@@ -60,7 +60,7 @@ OPERATOR_TRUST_ROOT=/etc/axon/trust
 SCHEMA=axon-trust-preflight/1
 ROOT="" OUT="" GUEST="" VERIFIER="" CUSTODIAN="" FABRIC="" HOST_CONFIG="" SIGNING_KEY="" FABRIC_BIN=""
 LAUNCHER_CONFIG="" HELPER="" HELPER_FABRIC_UID=""
-O1=() O1_DIRS=() SERVICE_DIRS=()
+O1=() O1_DIRS=() SERVICE_DIRS=() AUTHORITY_STORES=()
 AGENTS=()
 die() { printf '{"schema":"%s","verdict":"NOT_RUN","reason":"%s"}\n' "$SCHEMA" "$1"; exit 2; }
 while [ $# -gt 0 ]; do
@@ -106,6 +106,8 @@ while IFS=$'\t' read -r kind p; do
     operator-dir) O1_DIRS+=("$p") ;;
     signing-key) [ -z "$SIGNING_KEY" ] || die "two signing keys listed"; SIGNING_KEY=$p ;;
     service-dir) SERVICE_DIRS+=("$p") ;;
+    # A82: the loop's store; the directory holding it is the operator's.
+    authority-store) AUTHORITY_STORES+=("$p") ;;
     privileged-helper) [ -z "$HELPER" ] || die "two privileged helpers listed"; HELPER=$p; O1+=("$p") ;;
     helper-fabric-uid) HELPER_FABRIC_UID=$p ;;
     *) die "axon-fabric listed an unknown path kind $kind" ;;
@@ -157,7 +159,7 @@ for d in "${O1_DIRS[@]}"; do
     if [ -d "$e" ]; then DIRS+=("$e"); else FILES+=("$e"); fi
   done < <(find "$d" -mindepth 1 -maxdepth 1 | sort)
 done
-for f in "${O1[@]}" "${O1_DIRS[@]}" "$SIGNING_KEY" "${SERVICE_DIRS[@]}"; do
+for f in "${O1[@]}" "${O1_DIRS[@]}" "$SIGNING_KEY" "${SERVICE_DIRS[@]}" "${AUTHORITY_STORES[@]}"; do
   d=$(dirname "$f"); DIRS+=("$d")
   if [ "$MODE" = protected ]; then
     while [ "$d" != / ]; do d=$(dirname "$d"); DIRS+=("$d"); done

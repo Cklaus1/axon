@@ -165,6 +165,11 @@ fn check(candidate: &str) -> (GuestVerdict, Option<bool>) {
             scheme: COMPLETION_SCHEME.into(),
         },
         observation_nonce: "e".repeat(32),
+        authority: AuthorityRef {
+            epoch: 0,
+            tenant_id: "tenant-t".into(),
+            task_family: "family-f".into(),
+        },
         limits: Limits {
             wall_time_ms: 120_000,
             output_bytes: 1 << 20,

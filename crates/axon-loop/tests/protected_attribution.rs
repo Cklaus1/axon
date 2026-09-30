@@ -57,7 +57,7 @@ fn on_protected_backend(v: &mut Value) {
             let bundle = make_protected(
                 &req,
                 &mut t["verification_receipt"],
-                |_| {},
+                |m| m.authority.epoch = epoch,
                 |o| o.epoch = epoch,
             );
             t["verification_psv_evidence"] = serde_json::from_str(&bundle).unwrap();

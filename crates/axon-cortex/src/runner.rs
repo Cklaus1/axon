@@ -1852,9 +1852,23 @@ pub fn parse_check_suite_ref(r: &str) -> Result<(&str, &str, &str), String> {
 }
 
 /// The one way a suite reference is written (Fabric's receipt and manifest,
-/// the loop's join), the inverse of [`parse_check_suite_ref`].
-pub fn check_suite_ref(id: &str, version: &str, entry: &str) -> String {
-    format!("check-suite:{id}@{version}#{entry}")
+/// the loop's join), the inverse of [`parse_check_suite_ref`]. It writes only
+/// a reference that reads back as exactly `(id, version, entry)`: a version
+/// holding `#` or `@` (or a bad id, or an empty part) formats into a string
+/// the parser reads as ANOTHER suite, so it is refused here rather than
+/// written (C9 round 3, PSV-5; A81). The entry is the tail after the version's
+/// `#`, so with the id and version separator-free every reference has one
+/// reading.
+pub fn check_suite_ref(id: &str, version: &str, entry: &str) -> Result<String, String> {
+    check_suite_id(id)?;
+    let r = format!("check-suite:{id}@{version}#{entry}");
+    if parse_check_suite_ref(&r)? != (id, version, entry) {
+        return Err(format!(
+            "check suite (id {id:?}, version {version:?}, entry {entry:?}) has no reference of \
+             its own: {r:?} reads as another suite"
+        ));
+    }
+    Ok(r)
 }
 
 /// The id the local interpreter executor is registered under.
@@ -1932,7 +1946,11 @@ impl CheckRegistry {
     /// caller, flows through here, so no suite Fabric runs can carry an id the
     /// loop would read differently.
     pub fn register_check(&mut self, c: RegisteredCheck) -> Result<(), String> {
-        check_suite_id(&c.id)?;
+        // The id (by [`check_suite_id`]) AND the whole reference it will be
+        // written as: it must read back as this suite. A version holding `#`
+        // or `@`, registered through the library (the file loader also
+        // requires acf1 hex), would not (C9 round 3, PSV-5; A81).
+        check_suite_ref(&c.id, &c.workspace_version_ref, &c.entry)?;
         self.checks.retain(|k| k.id != c.id);
         self.checks.push(c);
         Ok(())

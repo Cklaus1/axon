@@ -533,6 +533,8 @@ fn prepare_pins_the_guest_only_from_the_manifest_the_qualification_hashed() {
                 suite_dir: &suite,
                 job_dir: &d.join(job),
                 observation_nonce: "none",
+                authority_epoch: 0,
+                scope: &scope(),
             },
         )
     };
@@ -597,6 +599,8 @@ fn prepare_builds_no_manifest_naming_a_digest_that_is_not_a_sha256() {
                 suite_dir: &suite,
                 job_dir: &d.join(job),
                 observation_nonce: "none",
+                authority_epoch: 0,
+                scope: &scope(),
             },
         )
     };
@@ -611,6 +615,81 @@ fn prepare_builds_no_manifest_naming_a_digest_that_is_not_a_sha256() {
             ),
             Err(e) => assert!(e.contains("not a sha256"), "{bad:?}: {e}"),
         }
+    }
+}
+
+// ── C9 round 3, loop workstream (PSV-5 A81, PSV-6 A82) ────────────────────
+
+/// A81: `psv::prepare` builds no launch manifest whose suite has a second
+/// reading: its suite reference is written by the one writer, which refuses an
+/// id holding `@` (the reference would read as suite `acc`, version
+/// `x@<v>`). Control: the plain suite prepares, and the manifest carries the
+/// launch's authority epoch and scope (A82).
+#[test]
+fn prepare_builds_no_manifest_whose_suite_reads_as_another() {
+    use axon_workspace_recipe::{tree_version_ref, Quota};
+    let env = Env::new();
+    let d = env.dir.path();
+    let manifest = d.join("manifest.json");
+    std::fs::write(&manifest, full_lx_manifest(QUALIFIED_GUEST)).unwrap();
+    let issuer = Issuer::generate();
+    let lx = qualified_linux_cfg(d, &issuer, &good_evidence(&sha256_file(&manifest)));
+    let q = lx.qualification().unwrap();
+    let (cand, suite) = (d.join("in/candidate"), d.join("in/check"));
+    std::fs::create_dir_all(&cand).unwrap();
+    std::fs::create_dir_all(&suite).unwrap();
+    std::fs::write(cand.join("f.ax"), "fn main() {}\n").unwrap();
+    std::fs::write(suite.join("accept.ax"), "@[test] fn t_ok() {}\n").unwrap();
+    let quota = Quota::default();
+    let cand_ref = tree_version_ref(&cand, &quota).unwrap();
+    let suite_ref = tree_version_ref(&suite, &quota).unwrap();
+    let mut rq = request(&env, "op-prepare-suite", "t_ok");
+    rq["workspace_version_ref"] = json!(cand_ref);
+    let rq: axon_loop_contracts::ComputeRequest = serde_json::from_value(rq).unwrap();
+    let sc = scope();
+    let prepare = |id: &str, job: &str| {
+        axon_fabric::psv::prepare(
+            &rq,
+            &axon_fabric::psv::PrepareInputs {
+                qualification: &q,
+                profile_manifest: &lx.manifest,
+                host: None,
+                policy_json: "{}",
+                suite_id: id,
+                suite_version: &suite_ref,
+                entry: "accept.ax",
+                test: "t_ok",
+                candidate_dir: &cand,
+                suite_dir: &suite,
+                job_dir: &d.join(job),
+                observation_nonce: "none",
+                authority_epoch: 3,
+                scope: &sc,
+            },
+        )
+    };
+    let ok = prepare("acc", "job-control").expect("control: the plain suite prepares");
+    assert_eq!(
+        (
+            ok.manifest.authority.epoch,
+            ok.manifest.authority.tenant_id.as_str(),
+            ok.manifest.authority.task_family.as_str()
+        ),
+        (3, sc.tenant_id.as_str(), sc.task_family.as_str()),
+        "control: the manifest carries the launch's authority"
+    );
+    assert_eq!(
+        ok.suite_ref,
+        format!("check-suite:acc@{suite_ref}#accept.ax"),
+        "control: the one reference"
+    );
+    match prepare("acc@x", "job-attack") {
+        Ok(l) => panic!(
+            "ATTACK: prepare built a launch manifest for suite id {:?}, whose reference {} \
+             reads as another suite",
+            l.manifest.suite.id, l.suite_ref
+        ),
+        Err(e) => assert!(e.contains("launch manifest suite"), "{e}"),
     }
 }
 

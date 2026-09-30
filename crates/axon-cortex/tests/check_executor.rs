@@ -403,7 +403,8 @@ fn a_check_suite_id_holding_a_reference_separator_is_never_registered() {
 fn a_check_suite_reference_parses_one_way_or_not_at_all() {
     use axon_cortex::runner::{check_suite_ref, parse_check_suite_ref};
     let v = format!("acf1:{}", "5".repeat(64));
-    let r = check_suite_ref("acceptance", &v, "accept.ax");
+    let r =
+        check_suite_ref("acceptance", &v, "accept.ax").expect("a plain suite has its reference");
     assert_eq!(
         parse_check_suite_ref(&r).unwrap(),
         ("acceptance", v.as_str(), "accept.ax")
@@ -417,5 +418,68 @@ fn a_check_suite_reference_parses_one_way_or_not_at_all() {
         format!("check:acceptance@{v}#accept.ax"),
     ] {
         assert!(parse_check_suite_ref(&bad).is_err(), "{bad}");
+    }
+}
+
+// ── C9 round 3, loop workstream (PSV-5, A81): a reference is written only if
+// it reads back as the suite it was written for ──────────────────────────────
+
+/// The writer refuses a suite whose reference the one parser reads as another
+/// suite: (version `V#x`, entry `accept.ax`) formats to
+/// `check-suite:acceptance@V#x#accept.ax`, which reads as (version `V`, entry
+/// `x#accept.ax`). Control: the pin's own reading writes and round-trips.
+#[test]
+fn a_suite_reference_is_written_only_if_it_reads_back_as_that_suite() {
+    use axon_cortex::runner::{check_suite_ref, parse_check_suite_ref};
+    let v = format!("acf1:{}", "5".repeat(64));
+    let own = check_suite_ref("acceptance", &v, "x#accept.ax")
+        .expect("control: an entry holding `#` has one reading");
+    assert_eq!(
+        parse_check_suite_ref(&own).unwrap(),
+        ("acceptance", v.as_str(), "x#accept.ax")
+    );
+    for (ver, entry) in [
+        (format!("{v}#x"), "accept.ax"),
+        (format!("{v}@x"), "accept.ax"),
+    ] {
+        if let Ok(r) = check_suite_ref("acceptance", &ver, entry) {
+            panic!(
+                "ATTACK: suite version {ver:?} entry {entry:?} was written as {r}, which the \
+                 parser reads as {:?}: the writer made a second reading",
+                parse_check_suite_ref(&r)
+            );
+        }
+    }
+    assert!(
+        check_suite_ref("acceptance", &v, "").is_err(),
+        "empty entry"
+    );
+    assert!(
+        check_suite_ref("acceptance", "", "accept.ax").is_err(),
+        "empty version"
+    );
+}
+
+/// A library registration of a suite whose version holds a reference
+/// separator is refused: its reference would read as another suite (the file
+/// loader also requires acf1 hex). Control: the plain version registers.
+#[test]
+fn a_suite_version_holding_a_reference_separator_is_never_registered() {
+    use axon_cortex::runner::{CheckVisibility, RegisteredCheck};
+    let v = format!("acf1:{}", "1".repeat(64));
+    let check = |version: String| RegisteredCheck {
+        id: "acceptance".into(),
+        visibility: CheckVisibility::Hidden,
+        root: "/nowhere".into(),
+        entry: "accept.ax".into(),
+        workspace_version_ref: version,
+    };
+    let mut reg = CheckRegistry::new();
+    reg.register_check(check(v.clone()))
+        .expect("control: a plain version registers");
+    for bad in [format!("{v}#x"), format!("{v}@x")] {
+        if reg.register_check(check(bad.clone())).is_ok() {
+            panic!("ATTACK: suite version {bad:?} holding a reference separator was REGISTERED");
+        }
     }
 }

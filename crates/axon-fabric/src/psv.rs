@@ -30,8 +30,8 @@
 use axon_cortex::runner::{completion_token, parse_axon_test_json, CheckVerdict};
 use axon_loop_contracts::{ComputeRequest, ReceiptVerification};
 use axon_psv::{
-    CandidateRef, Completion, GuestDigests, GuestStatus, GuestVerdict, LaunchManifest, Limits,
-    SuiteRef, COMPLETION_SCHEME, LAUNCH_MANIFEST_SCHEMA, PROTECTED_PROFILE,
+    AuthorityRef, CandidateRef, Completion, GuestDigests, GuestStatus, GuestVerdict,
+    LaunchManifest, Limits, SuiteRef, COMPLETION_SCHEME, LAUNCH_MANIFEST_SCHEMA, PROTECTED_PROFILE,
 };
 use std::path::{Path, PathBuf};
 
@@ -93,6 +93,9 @@ pub struct HostIdentity {
 /// with Fabric (and, on the job drive, with the trusted runner).
 pub struct Launch {
     pub manifest: LaunchManifest,
+    /// The manifest suite's ONE reference (`check-suite:<id>@<version>#<entry>`),
+    /// written by the one writer in [`prepare`]; the receipt names exactly it.
+    pub suite_ref: String,
     pub digest: String,
     secret: [u8; 32],
     pub job_dir: PathBuf,
@@ -132,6 +135,11 @@ pub struct PrepareInputs<'a> {
     /// A new, empty directory for the job drive's contents.
     pub job_dir: &'a Path,
     pub observation_nonce: &'a str,
+    /// The scope's authority epoch this launch is made under, and the scope:
+    /// bound INTO the manifest, so the observation covers them and the loop
+    /// joins them to its own scope pointer (C9 round 3, PSV-6; A82).
+    pub authority_epoch: u64,
+    pub scope: &'a axon_loop_contracts::Scope,
 }
 
 /// Where [`private_inputs`] puts this operation's inputs.
@@ -214,6 +222,11 @@ pub fn prepare(req: &ComputeRequest, i: &PrepareInputs<'_>) -> Result<Launch, St
             i.suite_version
         ));
     }
+    // The suite as its ONE reference reads it: a suite whose reference would
+    // read as another (a version holding `#`, an id holding `@`) builds no
+    // manifest (C9 round 3, PSV-5; A81).
+    let suite_ref = axon_cortex::runner::check_suite_ref(i.suite_id, i.suite_version, i.entry)
+        .map_err(|e| format!("launch manifest suite: {e}"))?;
     let manifest = LaunchManifest {
         schema: LAUNCH_MANIFEST_SCHEMA.into(),
         operation_id: req.operation_id.as_str().into(),
@@ -260,6 +273,11 @@ pub fn prepare(req: &ComputeRequest, i: &PrepareInputs<'_>) -> Result<Launch, St
             scheme: COMPLETION_SCHEME.into(),
         },
         observation_nonce: i.observation_nonce.into(),
+        authority: AuthorityRef {
+            epoch: i.authority_epoch,
+            tenant_id: i.scope.tenant_id.as_str().into(),
+            task_family: i.scope.task_family.as_str().into(),
+        },
         limits: Limits {
             wall_time_ms: req.limits.wall_time_ms,
             output_bytes: req.limits.output_bytes,
@@ -289,6 +307,7 @@ pub fn prepare(req: &ComputeRequest, i: &PrepareInputs<'_>) -> Result<Launch, St
         .map_err(|e| format!("job dir: {e}"))?;
     write_private(&i.job_dir.join("completion-secret"), &secret)?;
     Ok(Launch {
+        suite_ref,
         digest: manifest.digest(),
         manifest,
         secret,
@@ -394,7 +413,7 @@ pub fn derive(
         // The CANONICAL suite reference, exactly as the local path records it:
         // operator pins and task acceptance compare it byte for byte
         // (`axon_loop::intake::check_pins`); the test is the request's argv.
-        axon_cortex::runner::check_suite_ref(&m.suite.id, &m.suite.version, &m.suite.entry),
+        launch.suite_ref.clone(),
     ];
     let unknown = |why: String, evidence: Vec<String>, report| HostVerdict {
         verification: ReceiptVerification::Unknown,

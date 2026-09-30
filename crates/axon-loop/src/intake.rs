@@ -747,6 +747,7 @@ pub fn verify_check_evidence(
             &rc,
             bundle,
             ep.authority_epoch.get(),
+            &ep.scope,
             &config.trusted_observer_keys(),
         )
         .map_err(|e| {
@@ -915,7 +916,12 @@ pub(crate) fn check_pins(
             ))
         }
     };
-    if !recorded.starts_with(&format!("check-suite:{suite_id}@"))
+    // The recorded suite's id by the ONE parser, never a formatted prefix:
+    // `starts_with("check-suite:{argv id}@")` read an argv id `acceptance@V#e`
+    // as naming the pin `acceptance@V#e@...` (id `acceptance`) (C9 round 3,
+    // PSV-5; A81).
+    if axon_loop_contracts::suite::parse_check_suite_ref(recorded).map(|(id, _, _)| id)
+        != Ok(suite_id)
         || !pin.check_suites.iter().any(|p| p == recorded)
     {
         return Err(refused(format!(
