@@ -47,6 +47,11 @@ PROTECTED = [
     "crates/axon-fabric/src/protected_host.rs",
     "crates/axon-fabric/src/observer.rs",
     "crates/axon-psv/src/lib.rs",
+    "crates/axon-fabric/src/psv.rs",
+    "crates/axon-psv/src/runner.rs",
+    "crates/axon-loop-contracts/src/protected_evidence.rs",
+    "crates/axon-loop/src/admission.rs",
+    "crates/axon-loop/src/intake.rs",
 ]
 # Protected decision files NOT yet scanned, with the refusal sites that had
 # neither a row nor an exemption when they were last measured (amendment 58).
@@ -288,7 +293,10 @@ def load_rows():
     spec = importlib.util.spec_from_file_location("mut", os.path.join(ROOT, "scripts/v022_g01_mutations.py"))
     mut = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mut)
-    return mut.MUTATIONS
+    # A retired STALE row names text that is gone by definition (its
+    # replacement, an ACTIVE row, mutates the guard's current form).
+    stale = set(getattr(mut, "STALE_REFACTORED", {}))
+    return [r for r in mut.MUTATIONS if r[0] not in stale]
 
 
 def code_lines(text):
@@ -304,13 +312,57 @@ def line_of(text, offset):
     return text.count("\n", 0, offset)
 
 
+# Amendment 58 (extended): a refusal is also a TAIL expression (`Err(…)` as
+# an arm's or a block's value, no `return`) and a call of a refusal
+# constructor (`refused(`, `fail(`, `shape(` in the loop, the runner's
+# `refused(`, the verdict's `unknown(`). A definition of one is not a site.
+ERR = re.compile(r"\bErr\(")
+CTOR = re.compile(r"\b(refused|fail|shape|unknown)\(")
+CTOR_DEF = re.compile(r"\bfn\s+(refused|fail|shape|unknown)\b|\blet\s+(refused|fail|shape|unknown)\s*=")
+
+
+def err_is_expression(l, at):
+    """Whether the `Err(` at `at` in line `l` builds a value (a refusal)
+    rather than matching one (`Err(e) =>`, `if let Err(e) = …`,
+    `matches!(x, Err(_))`, `Ok(_) | Err(_) =>`). A group that does not close
+    on its line is an expression (a pattern is never multi-line here)."""
+    before = l[:at]
+    if re.search(r"\b(let|matches!\()\s*$", before) or re.search(r"\bmatches!\(.*,\s*$", before):
+        return False
+    depth, j = 0, at + 3
+    while j < len(l):
+        if l[j] == "(":
+            depth += 1
+        elif l[j] == ")":
+            depth -= 1
+            if depth == 0:
+                break
+        j += 1
+    else:
+        return True
+    rest = l[j + 1:].lstrip()
+    if re.match(r"(=>|if\b|\||=[^=])", rest):
+        return False
+    if before.rstrip().endswith("|"):
+        return False
+    return True
+
+
+def is_site(l):
+    if SITE.search(l):
+        return True
+    if any(err_is_expression(l, m.start()) for m in ERR.finditer(l)):
+        return True
+    return bool(CTOR.search(l)) and not CTOR_DEF.search(l)
+
+
 def sites(text):
     lines = code_lines(text)
     out = []
     for i, l in enumerate(lines):
         s = l.strip()
         # A `use` declaration names TEST_TRUST_BUILD; it reads nothing.
-        if s.startswith("//") or s.startswith("use ") or not SITE.search(l):
+        if s.startswith("//") or s.startswith("use ") or not is_site(l):
             continue
         g = i
         for j in range(i, max(-1, i - MAX_UP - 1), -1):
