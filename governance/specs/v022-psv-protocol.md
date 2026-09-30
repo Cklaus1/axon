@@ -825,3 +825,135 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       loop-side qualification join remains a FUTURE item.
     - Not done here (MINOR, not in this workstream): the manifest's `limits` are not joined to the
       request's limits.
+
+45. **Fabric runs non-root and reaches root only through `axon-protected-launcher`; authority
+    programs are executed from the descriptor that was hashed (operator decisions A and D,
+    2026-09-29; C9 round 2, launcher workstream).** Negative-matrix A73-A76; mutation rows
+    M520-M549.
+    - **Mechanism: a setuid-root helper, not a root daemon.** `axon-protected-launcher` (a bin of
+      `axon-fabric`) is installed root-owned, mode 04750, group = the Fabric service's group, on a
+      filesystem without `nosuid`. Fabric (non-root) executes it per launch and writes ONE request
+      on its stdin. A daemon on a `SO_PEERCRED` socket authenticates the caller no better than the
+      kernel's real uid does here, but it is a root process that is always running and listening,
+      with a lifecycle, concurrency and a socket to protect. The setuid helper exists only for the
+      duration of one launch. What a setuid program inherits from its caller is reset first,
+      before anything is read: signal dispositions and mask, umask, working directory, every
+      descriptor above stderr, the environment, resource limits (core 0; the rest raised). After
+      the caller is authenticated the helper becomes root in every id (`setgroups(0)`,
+      `setresgid(0,0,0)`, `setresuid(0,0,0)`), so the caller can no longer signal or trace it, and
+      bash does not drop a setuid euid back to the caller's uid.
+    - **Request (`axon-protected-launch-request/1`), per-launch data only, unknown fields denied:**
+      jail id, out dir, the three PSV input dirs, the launch manifest digest, the guest policy
+      bytes, the timeout. Nothing in it names an executable, a manifest, an artifact or a config,
+      and no field is evaluated by a shell (each is one argv word). Every path must be a plainly
+      spelled direct child of the operator's out root in Fabric's fixed shape (`<out>/<op>`,
+      `<out>/<inputs>/{candidate,check,job}`); anything else is refused (exit 30, nothing
+      launched).
+    - **Operator config only** (`axon-protected-launcher/1` at the fixed path
+      `/etc/axon/protected-launcher.json`, read through an `O_NOFOLLOW` walk from `/`, every
+      directory and the file operator-owned and not group/other-writable): the Fabric uid (never
+      0), the pinned interpreter (bash), the pinned launcher, the pinned profile manifest, the
+      artifacts dir, firecracker and jailer paths, the out root, a root-private staging root, the
+      timeout and input-size limits. The helper itself re-verifies the manifest at its pin and the
+      kernel, rootfs, firecracker and jailer at the manifest's pins (each operator-owned, opened
+      without following a symlink) before anything is acquired. The launcher script still copies
+      and re-hashes them itself.
+    - **What root touches of Fabric's.** The out root and the input dirs are opened from `/` one
+      `O_NOFOLLOW` component at a time, ownership re-checked on each descriptor. The inputs are
+      copied into a root-private snapshot: Fabric-owned regular files and directories only (a
+      root-owned hard link, a symlink or a FIFO is refused), bounded by `max_input_bytes`, modes
+      set to what the tree digest records. Fabric's job files (the per-attempt secret) are consumed
+      at the snapshot, and the snapshot is removed when the launcher returns, before
+      `--verify-result`. The out dir is created by the helper (root 0700) and given to the
+      launcher as `/dev/fd/N`, so a rename in Fabric's out root cannot redirect a root write. The
+      helper runs `--verify-result` itself, then hands the tree to the Fabric uid: directories,
+      regular files and symlinks (never followed) are chowned, set-id bits cleared, and any other
+      file type (a device node, a FIFO, a socket) is removed, whatever put it there.
+    - **Fabric side.** The protected-host config must pin `privileged_launcher` (path + sha256).
+      `ProtectedHost::operator` refuses a root Fabric and a helper config that admits another uid,
+      writes under another out root, or runs another launcher or profile manifest than the host
+      pins. Fabric executes the helper from its verified descriptor (D) and requires the report's
+      `launcher_sha256` to be the launcher the launch manifest and observation name. A launch that
+      did not go through the privileged helper is never protected: `psv_receipt` downgrades it to
+      `guest-unobserved`, so no bundle is emitted (operator decision B's "pinned privileged
+      launcher"). The development route (no helper configured: tests and dev hosts) still runs the
+      launcher directly, same-byte, and cannot produce protected evidence. A test-trust helper
+      (it accepts `--test-config`, a caller-chosen config) counts only inside a test-trust Fabric.
+    - **Trust preflight.** Root is refused as every actor, including Fabric. The helper and its
+      config, and every path that config pins, are operator files (probed like the others). New
+      checks: the helper is root-owned, setuid, not group/other-writable, no access for other,
+      group = the Fabric's; it admits exactly the `--fabric` uid; `--probe` run as the Fabric uid
+      reports effective uid 0 (the setuid bit is honoured) and, in protected mode, a production
+      build; for every other actor the kernel refuses the exec. MEASURED while writing this:
+      `setpriv`'s own exec still holds root's DAC override (it ran a 0700 root-owned file as uid
+      40004), so the exec is made by a shell already running as the actor. The existing probes
+      were not affected: each runs a program that then makes the attempt.
+    - **D: same-byte hash-and-exec** (`sealed_exec`, the one exec path for the launcher, the
+      helper and the observer). The object is opened once with `O_NOFOLLOW`; on the descriptor it
+      must be a regular file, owned by the operator (or root), not group/other-writable; a read
+      lease is taken (the kernel refuses one while any process holds the file open for writing,
+      and any later open for writing breaks it; the lease is set with no signal owner, since a
+      break otherwise delivers SIGIO, which terminated the test process); the descriptor's bytes
+      are hashed and compared with the pin; the command executes THAT descriptor with
+      `execveat(fd, "", AT_EMPTY_PATH)`. A script is never executed through its `#!` line: its
+      interpreter must be pinned too, is executed from its own verified descriptor, and reads the
+      script as `/dev/fd/N`, a reopen of the same inode. In the child, immediately before
+      `execveat`, each descriptor's identity (device, inode, size, mtime, ctime, mode, owner) is
+      re-read and the lease must still be held; otherwise the exec is refused (ETXTBSY). The helper
+      re-checks both after `--verify-result` and reports `unchanged`.
+    - **Why this is "bytes authenticated == bytes executed" for an immutable inode.** The hash is
+      over the descriptor, and the descriptor is what is executed, so a rename, a symlink swap or a
+      directory swap changes only what the PATH names, never what runs (tested with a directory
+      rename: the verified bytes run). The inode is immutable to every non-root uid: root-owned and
+      not group/other-writable, so only root (the operator, inside the TCB) can open it for
+      writing. A writer that already held it open (from before a chown or chmod) prevents the
+      lease, so the open is refused. A root writer after the hash breaks the lease and the exec is
+      refused, or the run is reported changed. The interpreter reads the same inode through
+      `/dev/fd/N` from offset 0, so the bytes it reads are the bytes hashed while the inode is
+      unchanged, and `unchanged` covers the whole run through `--verify-result`. Fabric, running
+      non-root, cannot lease the root-owned helper or observer, so on its side immutability rests
+      on the owner/mode check plus the identity re-check. That is the stated operator model:
+      only root writes root-owned files.
+    - **What would still need a compiled launcher (FOLLOW-UP, not done here).** The launcher is a
+      738-line bash script. Its own bytes and bash's are pinned and executed same-byte, but it runs
+      unpinned root-owned host tools from a fixed PATH (python3, coreutils, e2fsprogs `mkfs.ext4`
+      and `debugfs`, iproute2, util-linux); the out-dir and manifest descriptors it inherits are
+      closed only by the pinned jailer (`close_range`, seen in the pinned binary) before the VMM
+      runs. A compiled launcher would pin or remove those tools, close every inherited descriptor
+      itself, and let the helper execute one pinned binary with no interpreter.
+    - **TCB of the root side:** the kernel; the helper binary (its Rust std, serde_json, sha2, ring,
+      libc); the operator config file; the pinned bash and launcher; the root-owned system tools
+      above; the pinned firecracker and jailer; the pinned kernel and rootfs. The dynamic loader
+      and shared libraries of bash and the helper are root-owned system files, unpinned.
+    - **Candidates for four-cell retirement, not rowed (each dominated on every path, argument
+      given; none retired here):** the parent-side `unchanged()` in `sealed_exec::command` and the
+      post-hash `unchanged()` in `open_verified` (the same `check_unchanged` runs in the child
+      before every exec: M524/M527); the leaf-name check in `validate_request` and the
+      `parent.join(leaf)` equality beside it (each implies the other; M533 left unused); the
+      helper's `O_NOFOLLOW` on the input and out-root walk (every object reached is then required
+      to be Fabric-owned or operator-owned on its descriptor, so a followed link reaches nothing
+      Fabric could not already read); the set-id clear in the hand-over (the kernel's chown already
+      clears S_ISUID/S_ISGID); the report's `unchanged` flag and Fabric's check of it (a changed or
+      lease-broken inode already refuses the `--verify-result` exec, and the outcome is unknown).
+      Paths that only a PRODUCTION build takes cannot be exercised by the test-trust harness: the
+      helper's refusal when its effective uid is not 0, its refusal of `--test-config`, and
+      Fabric's refusal of a `privileged_launcher.test_config` key.
+    - **Real guest, through the helper.** `scripts/psv_guest_boot_test.sh` gains a `helper` case:
+      the pass case launched by a non-root uid through a setuid-root (test-trust) helper, with the
+      real launcher, image and engine, the launcher and bash executed from their verified
+      descriptors and the out dir and manifest handed over as `/dev/fd/N`. Running it found a
+      launcher defect: the cleanup's leftover-process check (`pgrep -f -- "--id $ID"`) matched
+      the launcher's OWN command line whenever the caller names the id, which Fabric always did
+      and the helper does, so every such launch ended cleanup-incomplete (24, unknown). The
+      check now excludes the launcher's own pid, and runs `pgrep` as a simple command (a
+      command-substitution subshell carries the same command line and matched too). The guest
+      image is unchanged. Result on the current image (built at 3f81dc67): 12/12 PASS, the
+      previous 11 plus `helper`.
+    - **Before a protected host can be deployed:** install the production helper and its config
+      (operator; this change writes nothing under /etc); run the Fabric service as its own non-root
+      uid with the helper's group; run `trust_root_preflight.sh` in protected mode on the host;
+      re-pin the launcher (its bytes changed here) in the host config and the helper config;
+      exercise the PRODUCTION helper build on the host (the boot test uses a test-trust build,
+      which takes `--test-config`); decide whether the out root and the staging root may share a filesystem with anything
+      else; and the compiled-launcher follow-up above if the operator wants the script's tools out
+      of the TCB.
