@@ -1,7 +1,7 @@
 {
   "schema": "axon-v022-paired-disable/2",
-  "commit": "de523f4ce2bef18da3ffcfb588123016475924b6",
-  "all_hold": false,
+  "commit": "816a4f52985c70470eeedfaed042c7413e434301",
+  "all_hold": true,
   "records": [
     {
       "mutation": "M19",
@@ -567,45 +567,6 @@
       "commit": "de523f4ce2bef18da3ffcfb588123016475924b6"
     },
     {
-      "mutation": "M217",
-      "status": "EQUIVALENT_DID",
-      "kind": "pair",
-      "property": "each protected receipt join (the eight REQUIRED_DIGEST_REFS) is a sha256",
-      "original_guard": {
-        "file": "crates/axon-loop-contracts/src/protected_evidence.rs"
-      },
-      "subsumed_by": [
-        "M473"
-      ],
-      "live_killing_mutant": "joint:M217+M473",
-      "all_paths": "protected_evidence::check has two callers, check_bundle and EVL's pre-check (evl.rs), and EVL's pre-check passing implies claims_protected, so verify_check_evidence then runs check_bundle as well; admission's reverify_protected (the store-writer route) reaches the same check_bundle through verify_check_evidence. The development class never calls check. In check_bundle every one of the eight refs must EQUAL a value that is a lowercase sha256 on every path: launch-manifest, preflight-observation and guest-verdict equal sha256_hex of the bundle's bytes (M233/M299 and the manifest join), and guest-kernel/rootfs/axon/init and qualification equal the manifest's *sha256 fields, which names_every_digest (M473) requires to be 64 lowercase hex before any join runs. So a ref that is not a sha256 is refused whenever M217's rule would have refused it, and M473 stays ACTIVE and killed",
-      "matrix": {
-        "baseline": "ATTACK_REFUSED",
-        "retired_guard_disabled": "ATTACK_REFUSED",
-        "guard_set_disabled": "ATTACK_SUCCEEDS",
-        "guard_set": [
-          "M217",
-          "M473"
-        ],
-        "retired_guard_full_suite": "SUITE_OK",
-        "full_suite_packages": [
-          "axon-loop",
-          "axon-loop-contracts",
-          "axon-fabric",
-          "axon-reflex",
-          "cortex-policy-adapter"
-        ],
-        "consumer_suites": {
-          "axon-fabric": "SUITE_OK",
-          "axon-reflex": "SUITE_OK",
-          "cortex-policy-adapter": "SUITE_OK"
-        },
-        "sibling_set_disabled": "ATTACK_REFUSED"
-      },
-      "holds": true,
-      "commit": "c974ea7b112d76a710ee352dc78886b1da9d902c"
-    },
-    {
       "mutation": "M245",
       "status": "EQUIVALENT_DID",
       "kind": "pair",
@@ -701,40 +662,6 @@
         "sibling_set_disabled": "ATTACK_REFUSED"
       },
       "holds": true,
-      "commit": "de523f4ce2bef18da3ffcfb588123016475924b6"
-    },
-    {
-      "mutation": "M287",
-      "status": "EQUIVALENT_DID",
-      "kind": "pair",
-      "property": "an uncommitted change hidden by skip-worktree is not certified",
-      "original_guard": {
-        "file": "crates/axon-fabric/src/readiness.rs"
-      },
-      "subsumed_by": [
-        "M290"
-      ],
-      "live_killing_mutant": "joint:M287+M290",
-      "all_paths": "the flag only hides worktree-vs-index; worktree_differs hashes every certified path's bytes directly (never the index), a missing file differs, and a path outside the certified tree already differs in the tree diff",
-      "matrix": {
-        "baseline": "ATTACK_REFUSED",
-        "retired_guard_disabled": "ATTACK_REFUSED",
-        "guard_set_disabled": "ATTACK_SUCCEEDS",
-        "guard_set": [
-          "M287",
-          "M290"
-        ],
-        "retired_guard_full_suite": "SUITE_BROKEN",
-        "full_suite_packages": [
-          "axon-fabric"
-        ],
-        "consumer_suites": {},
-        "retired_guard_full_suite_failures": [
-          "sealed_exec::tests::a_launcher_open_for_writing_when_hashed_is_refused"
-        ],
-        "sibling_set_disabled": "ATTACK_REFUSED"
-      },
-      "holds": false,
       "commit": "de523f4ce2bef18da3ffcfb588123016475924b6"
     },
     {
@@ -1068,42 +995,6 @@
       "commit": "de523f4ce2bef18da3ffcfb588123016475924b6"
     },
     {
-      "mutation": "M482",
-      "status": "EQUIVALENT_DID",
-      "kind": "set",
-      "property": "readiness decides on ONE set of bytes per file: a FIFO serving each read differently certifies nothing (the retired check's only unique effect is naming the FIFO in the reason)",
-      "original_guard": {
-        "file": "crates/axon-fabric/src/backend.rs"
-      },
-      "subsumed_by": [
-        "M481",
-        "M335"
-      ],
-      "live_killing_mutant": "joint:M482+M481+M335",
-      "all_paths": "read_regular is the one reader of every file readiness, the evidence/signature readers, the observer and the B263 qualification decide on, and each caller decides on the single buffer it returns (M335/M336/M337 for readiness's record, preflight and manifest). A FIFO serves one set of bytes per open, so a single read of a FIFO is no more than a regular file an agent could have written; the two-read substitution needs a second read (M335 off). The non-blocking open (M481) is in the set only so the test's feeder can connect: with it on, a FIFO whose writer has not connected reads EOF. Executed: M482 alone, M482+M481, and M481+M335 each refuse; M482+M481+M335 certifies the agent's commit",
-      "matrix": {
-        "baseline": "ATTACK_REFUSED",
-        "retired_guard_disabled": "ATTACK_REFUSED",
-        "guard_set_disabled": "ATTACK_SUCCEEDS",
-        "guard_set": [
-          "M482",
-          "M481",
-          "M335"
-        ],
-        "retired_guard_full_suite": "SUITE_BROKEN",
-        "full_suite_packages": [
-          "axon-fabric"
-        ],
-        "consumer_suites": {},
-        "retired_guard_full_suite_failures": [
-          "sealed_exec::tests::a_launcher_open_for_writing_when_hashed_is_refused"
-        ],
-        "sibling_set_disabled": "ATTACK_REFUSED"
-      },
-      "holds": false,
-      "commit": "de523f4ce2bef18da3ffcfb588123016475924b6"
-    },
-    {
       "mutation": "M487",
       "status": "EQUIVALENT_DID",
       "kind": "set",
@@ -1135,6 +1026,109 @@
       },
       "holds": true,
       "commit": "de523f4ce2bef18da3ffcfb588123016475924b6"
+    },
+    {
+      "mutation": "M217",
+      "status": "EQUIVALENT_DID",
+      "kind": "pair",
+      "property": "each protected receipt join (the eight REQUIRED_DIGEST_REFS) is a sha256",
+      "original_guard": {
+        "file": "crates/axon-loop-contracts/src/protected_evidence.rs"
+      },
+      "subsumed_by": [
+        "M473"
+      ],
+      "live_killing_mutant": "joint:M217+M473",
+      "all_paths": "protected_evidence::check has two callers, check_bundle and EVL's pre-check (evl.rs), and EVL's pre-check passing implies claims_protected, so verify_check_evidence then runs check_bundle as well; admission's reverify_protected (the store-writer route) reaches the same check_bundle through verify_check_evidence. The development class never calls check. In check_bundle every one of the eight refs must EQUAL a value that is a lowercase sha256 on every path: launch-manifest, preflight-observation and guest-verdict equal sha256_hex of the bundle's bytes (M233/M299 and the manifest join), and guest-kernel/rootfs/axon/init and qualification equal the manifest's *sha256 fields, which names_every_digest (M473) requires to be 64 lowercase hex before any join runs. So a ref that is not a sha256 is refused whenever M217's rule would have refused it, and M473 stays ACTIVE and killed",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M217",
+          "M473"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "full_suite_packages": [
+          "axon-loop",
+          "axon-loop-contracts",
+          "axon-fabric",
+          "axon-reflex",
+          "cortex-policy-adapter"
+        ],
+        "consumer_suites": {
+          "axon-fabric": "SUITE_OK",
+          "axon-reflex": "SUITE_OK",
+          "cortex-policy-adapter": "SUITE_OK"
+        },
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "816a4f52985c70470eeedfaed042c7413e434301"
+    },
+    {
+      "mutation": "M287",
+      "status": "EQUIVALENT_DID",
+      "kind": "pair",
+      "property": "an uncommitted change hidden by skip-worktree is not certified",
+      "original_guard": {
+        "file": "crates/axon-fabric/src/readiness.rs"
+      },
+      "subsumed_by": [
+        "M290"
+      ],
+      "live_killing_mutant": "joint:M287+M290",
+      "all_paths": "the flag only hides worktree-vs-index; worktree_differs hashes every certified path's bytes directly (never the index), a missing file differs, and a path outside the certified tree already differs in the tree diff",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M287",
+          "M290"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "full_suite_packages": [
+          "axon-fabric"
+        ],
+        "consumer_suites": {},
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "816a4f52985c70470eeedfaed042c7413e434301"
+    },
+    {
+      "mutation": "M482",
+      "status": "EQUIVALENT_DID",
+      "kind": "set",
+      "property": "readiness decides on ONE set of bytes per file: a FIFO serving each read differently certifies nothing (the retired check's only unique effect is naming the FIFO in the reason)",
+      "original_guard": {
+        "file": "crates/axon-fabric/src/backend.rs"
+      },
+      "subsumed_by": [
+        "M481",
+        "M335"
+      ],
+      "live_killing_mutant": "joint:M482+M481+M335",
+      "all_paths": "read_regular is the one reader of every file readiness, the evidence/signature readers, the observer and the B263 qualification decide on, and each caller decides on the single buffer it returns (M335/M336/M337 for readiness's record, preflight and manifest). A FIFO serves one set of bytes per open, so a single read of a FIFO is no more than a regular file an agent could have written; the two-read substitution needs a second read (M335 off). The non-blocking open (M481) is in the set only so the test's feeder can connect: with it on, a FIFO whose writer has not connected reads EOF. Executed: M482 alone, M482+M481, and M481+M335 each refuse; M482+M481+M335 certifies the agent's commit",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M482",
+          "M481",
+          "M335"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "full_suite_packages": [
+          "axon-fabric"
+        ],
+        "consumer_suites": {},
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "816a4f52985c70470eeedfaed042c7413e434301"
     }
   ]
 }
