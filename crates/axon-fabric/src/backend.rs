@@ -202,6 +202,25 @@ impl LaunchRoute {
             LaunchRoute::Privileged { test_build } => !test_build || fabric_test_build,
         }
     }
+
+    /// The route a helper's report puts a launch on. Anything but a report
+    /// naming the `production` build is a test build: an unknown or missing
+    /// name never reads as production (PSV-4, C9 round 3).
+    pub fn of_report(report: &crate::privileged_launcher::LaunchReport) -> LaunchRoute {
+        LaunchRoute::Privileged {
+            test_build: report.build != "production",
+        }
+    }
+}
+
+/// THE decision whether a launch on `route` may attest a protected verdict in
+/// THIS Fabric build (`psv_receipt` and the verifier manifest both call it).
+/// `TEST_TRUST_BUILD` is true in every `cargo test` build, so this call's
+/// production value is observable only from a production build: the verifier
+/// manifest reports it (`launch_routes_attesting_protected`), and
+/// tests/privileged_launcher.rs builds one to read it (PSV-4, C9 round 3).
+pub fn attests_protected(route: LaunchRoute) -> bool {
+    route.may_attest_protected(TEST_TRUST_BUILD)
 }
 
 /// Default ceiling on the age of a qualification record: 30 days.
@@ -1550,9 +1569,7 @@ fn run_privileged(
             )
         }
     };
-    let route = LaunchRoute::Privileged {
-        test_build: report.build != "production",
-    };
+    let route = LaunchRoute::of_report(&report);
     if report.schema != pl::REPORT_SCHEMA {
         return unknown(
             "privileged launcher report has another schema".into(),
@@ -1861,6 +1878,40 @@ mod tests {
         );
         assert!(LaunchRoute::Privileged { test_build: false }.may_attest_protected(false));
         assert!(LaunchRoute::Privileged { test_build: true }.may_attest_protected(true));
+    }
+
+    /// PSV-4 (C9 round 3): the route a production Fabric derives from a
+    /// helper's report. A report of a test-trust helper (which obeys
+    /// `--test-config`, a config of the caller's choosing) must put the launch
+    /// on a TEST route, and so never attest protected in a production Fabric
+    /// (`may_attest_protected(false)`: the production value of
+    /// `TEST_TRUST_BUILD`, which no `cargo test` build has). Any build name
+    /// other than exactly `production` is a test build.
+    #[test]
+    fn a_test_trust_helpers_report_never_puts_a_launch_on_a_production_route() {
+        let report = |build: &str| crate::privileged_launcher::LaunchReport {
+            schema: crate::privileged_launcher::REPORT_SCHEMA.into(),
+            build: build.into(),
+            launched: true,
+            error: None,
+            launcher_sha256: None,
+            interpreter_sha256: None,
+            launcher_exit: Some(0),
+            verify_exit: Some(0),
+            unchanged: true,
+        };
+        for build in ["test-trust", "", "Production", "production ", "unknown"] {
+            let route = LaunchRoute::of_report(&report(build));
+            assert!(
+                !route.may_attest_protected(false),
+                "ATTACK: a helper reporting build {build:?} put the launch on a route that \
+                 attests protected in a production Fabric ({route:?})"
+            );
+        }
+        assert!(
+            LaunchRoute::of_report(&report("production")).may_attest_protected(false),
+            "control: a production helper's launch may attest protected"
+        );
     }
 
     #[test]

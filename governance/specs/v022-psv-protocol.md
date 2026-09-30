@@ -1184,6 +1184,60 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       spent): the `certified_at` parse, the moved RULE:issuer-claimed on the readiness route, and
       the freeze script's caller-environment drop.
 
+48. **Every refusal on the helper path has a row or a stated reason; guest mounts and the runner
+    environment are judged by behaviour; kept four-cell records must be current (C9 round 3,
+    harness workstream; rows M585-M609).**
+    - **Rows derived from the code.** `scripts/v022_refusal_coverage.py` (run by `gate.sh`) lists
+      every refusal site in `privileged_launcher.rs`, `sealed_exec.rs` and
+      `bin/axon-protected-launcher.rs` (`return Err(`, `Err(format!`, `refuse(`, `Err(bad(`, and
+      each read of `TEST_TRUST_BUILD`). Each must be overlapped by a registry row or sit on its
+      exemption list with a reason (an OS error that fails closed, an operator-authored field of
+      the operator-owned config, or a named dominating check). It fails on an unrowed site, a
+      stale or redundant exemption, and a row whose text no longer applies. `--without=M…`
+      shows it naming a site once its row is dropped.
+    - **New ACTIVE rows, each attacking the route where it is the only guard:** the config file's
+      mode (M585) and owner (M586); the ancestor walk (M587) and `operator_dir`'s owner and mode
+      (M588, M589); the helper's own re-verification of kernel, rootfs, firecracker and jailer
+      (M590: a firecracker with the pinned bytes owned by another uid, which the launcher's
+      sha256 check would pass); `Lease::Required` (M591); the post-hash `unchanged()` (M592: for
+      the kernel, rootfs and engine, which are verified but not executed, nothing re-checks them
+      later, so amendment 45's listing of it as dominated was wrong for them); `MAX_BYTES`
+      (M593); the staging root being operator-owned (M598: a Fabric-owned root lets the Fabric
+      swap the snapshot the launcher then reads); the inputs dir's owner (M599); the jail id
+      (M600: `../x` staged the inputs outside the staging root); `build_name` (M603).
+    - **Production-build paths are now exercised.** Every `cargo test` build is test-trust, so
+      `tests/privileged_launcher.rs` builds the helper and Fabric a second time, without the
+      feature, into a target dir of its own. Against that build: a setuid helper offered a
+      root-owned config through `--test-config` must refuse it (M601); a helper running as the
+      Fabric uid with lease, DAC-override, chown and fowner capabilities, its config at
+      `/etc/axon` on a tmpfs in a private mount namespace (the host's `/etc` is never written),
+      must refuse on its euid (M602); and the verifier manifest must report that a test-trust
+      helper's route never attests protected (M605).
+    - **PSV-4.** The report-to-route derivation is `LaunchRoute::of_report` (M604, unit tested with
+      a test-trust report), and `psv_receipt` calls `backend::attests_protected` (M606), the one
+      reader of `TEST_TRUST_BUILD` for this decision. One mutant stays structurally untestable:
+      rewriting the call in `psv_receipt` to an inline `may_attest_protected(true)` equals the
+      real code in every test build. It is named here rather than counted.
+    - **Retired as mutual pairs (four cells executed):** the interpreter-is-a-script refusal
+      (M594) and the verified descriptor being close-on-exec (M595): the kernel refuses to run a
+      `#!` script executed from a close-on-exec descriptor (ENOENT, measured), and no caller
+      inherits the interpreter's descriptor. The staging root's 0700 (M596) and the per-launch
+      staging dir's 0700 (M597): either one keeps another uid out of the snapshot. The same
+      reasoning makes M529 (a script program with no interpreter) equivalent-shaped: its recorded
+      kill is the refusal message, while the exec itself would fail with ENOENT.
+    - **Guest mounts by behaviour.** M493-M496 were killed by a text test that passed with `,rw`
+      appended, which both util-linux and busybox mount apply as read-write. They, and new rows
+      M607-M609 (a later `rw`, `exec`, `dev,suid`), are now killed by running the script's own
+      mount block on loop-device ext4 images, as root in a private mount namespace, and reading
+      `/proc/mounts`. M498/M499 run the workload block with a polluted PID-1 environment and read
+      the exec'd child's environ. The boot test's `mounts` case still checks the same property
+      inside a real guest; this one runs in `cargo test` without a VM. The text test remains for
+      a non-root lane and now reads the effective option set.
+    - **Paired-disable `--only` keeps only current records.** A kept record needs the git blob of
+      its row's file, its test files (the test module, or the integration test and its
+      `tests/common`) and every sibling's file to be unchanged since the record's commit. Stale
+      records refuse the run, or are re-executed with `--reexecute-stale`. `--check-stale` lists
+      them: 24 of the 33 records in the status file at bf964212 are stale by this rule.
 49. **The suite join has one reading; the launch names its authority (C9 round 3, loop
     workstream; PSV-5 and PSV-6; matrix A81, A82; rows M610-M618).**
     - **Suite join (A81).** `check_bundle` formatted the manifest's suite as
