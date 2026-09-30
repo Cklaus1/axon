@@ -10,9 +10,10 @@ hashes. Reads only; writes the manifest to the path given (or stdout).
 
 REQUIREMENT (protocol amendment 44, operator decision E): a freeze runs from a
 STANDALONE CLONE, never a linked worktree, and binds a guest image whose
-manifest says axon_tree_dirty_at_build: false under the amendment-44 rule. This
-script does not yet enforce either: it does not refuse a root whose .git is not
-a directory, and it does not bind the guest manifest's dirty flag and reasons."""
+manifest says axon_tree_dirty_at_build: false under the amendment-44 rule. Both
+are enforced here: a root whose .git is not a real directory (a gitfile, i.e. a
+linked worktree, or a symlink) is refused, and so is a guest manifest that is
+not clean with no reasons; the clean flag and its reasons are bound."""
 import hashlib
 import importlib.util
 import json
@@ -53,14 +54,26 @@ def main():
     equivalence_digest = sha_str(json.dumps(equiv, sort_keys=True))
     active = [r[0] for r in mut.MUTATIONS if r[0] not in mut.RETIRED]
 
+    dotgit = os.path.join(ROOT, ".git")
+    if os.path.islink(dotgit) or not os.path.isdir(dotgit):
+        sys.exit(f"refused: {ROOT} is not a standalone clone (.git is not a real directory): "
+                 "a freeze runs from a standalone clone (amendment 44, decision E)")
     img = json.load(open(os.path.join(ROOT, "profiles/linux-microvm/manifest.json")))
+    src = img.get("source", {})
+    if src.get("axon_tree_dirty_at_build") is not False or src.get("axon_tree_dirty_reasons") != []:
+        sys.exit("refused: the guest manifest is not clean with no reasons "
+                 f"(axon_tree_dirty_at_build={src.get('axon_tree_dirty_at_build')!r}, "
+                 f"reasons={src.get('axon_tree_dirty_reasons')!r}): rebuild the guest image in a "
+                 "standalone clone with the operator allowlist installed (amendment 44)")
     manifest = {
         "schema": "axon-v022-psv-freeze/1",
         "axon_sha": git(["rev-parse", "HEAD"], ROOT),
         "micode_sha": git(["rev-parse", "HEAD"], micode) if os.path.isdir(micode) else None,
         "guest_image": {"profile_manifest_sha256": sha_file("profiles/linux-microvm/manifest.json"),
                         "artifacts": {k: v["sha256"] for k, v in img["artifacts"].items()},
-                        "source_revision": img["source"]["axon_git_rev_at_build"]},
+                        "source_revision": src["axon_git_rev_at_build"],
+                        "axon_tree_dirty_at_build": src["axon_tree_dirty_at_build"],
+                        "axon_tree_dirty_reasons": src["axon_tree_dirty_reasons"]},
         "mutation_registry_total": len(mut.MUTATIONS),
         "active_mutants": len(active),
         "retired_equivalent": len(mut.EQUIVALENT_DID),

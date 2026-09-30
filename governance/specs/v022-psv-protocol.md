@@ -910,8 +910,10 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       * `scripts/v022_freeze_manifest.py` records `git rev-parse HEAD` and the profile manifest's
         revision and digests, but not whether its root is a standalone clone. It also does not
         record whether the guest manifest is clean.
-      * What must change, not done here: the freeze must refuse a root whose `.git` is not a
-        directory, and must bind `axon_tree_dirty_at_build: false` and
-        `axon_tree_dirty_reasons: []`.
+      * Done at integration: the freeze now refuses a root whose `.git` is not a real
+        directory (checked: it refuses the dev worktree), and refuses a guest manifest that is
+        not `axon_tree_dirty_at_build: false` with `axon_tree_dirty_reasons: []` (checked: the
+        committed manifest, built at 3f81dc67 under the old rule, has no reasons field and is
+        refused). It binds both values.
       * The long-run target is unchanged: the input tree is digest X, and X is what was reviewed,
         launched and evaluated.
