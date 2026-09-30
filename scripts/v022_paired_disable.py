@@ -274,6 +274,19 @@ def build_axon():
               "cargo build -q -p axon-core --no-default-features --bin axon").returncode == 0
 
 
+def build_prereqs():
+    """Every binary a full-suite cell execs, built for THIS tree into THIS
+    target dir, before any cell runs. A missing one (the cortex bins, say, in
+    a fresh shard target) breaks every cell of the suite that needs it for a
+    reason that says nothing about the guard, so a run without them is
+    refused rather than recorded as a page of SUITE_BROKEN."""
+    for what, cmd in (("axon", "cargo build -q -p axon-core --no-default-features --bin axon"),
+                      ("cortex bins", "cargo build -q -p axon-cortex --bins"),
+                      ("psv_dev", "cargo build -q -p axon-psv --example psv_dev")):
+        if sh(f"source scripts/lib_bounded_run.sh && bounded_run 16G 1800 {cmd}").returncode != 0:
+            sys.exit(f"refused: could not build {what} ({cmd}); no cell runs without it")
+
+
 def join_shards(argv, commit, universe):
     """`--join OUT S0.json S1.json ...`: the status file from shard runs. It
     refuses unless every shard was executed at THIS commit (the registry the
@@ -491,6 +504,7 @@ def main():
             sys.exit(f"refused: {len(stale)} kept record(s) are not current at this commit "
                      f"({sorted(stale)}); re-execute them (--reexecute-stale) or name them in --only")
         only |= set(stale)
+    build_prereqs()
     records = []
     # A row with no marker can never show its attack succeeding, so its joint
     # cell would read OTHER_FAILURE by construction (M58/M245, C9 round 1b).
