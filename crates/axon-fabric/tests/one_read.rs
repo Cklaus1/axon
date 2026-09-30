@@ -10,9 +10,13 @@
 //! Each attack below starts from a GENUINE certification (PASS) and must
 //! leave the component not PASS. Two ways of serving two reads:
 //! * a FIFO in place of the file (refused now: not a regular file);
-//! * a rename of other bytes into place right after the first reader closes
-//!   the file (inotify IN_CLOSE_NOWRITE): a regular file throughout, so only
-//!   reading once defeats it.
+//! * other bytes served to the second read of a regular file: renamed into
+//!   place while the reader is held opening a file it opens in between
+//!   (`swap_while_gate_opens`), or, where it opens nothing in between,
+//!   written in place while its second open is held (`replace_on_second_open`).
+//!   Both hold the reader with fanotify FAN_OPEN_PERM, so the swap cannot lose
+//!   a race (C9 round 2: the inotify rename that preceded them could, and M336
+//!   survived a loaded run). Only reading once defeats either.
 
 mod common;
 mod readiness_fixture;
@@ -61,56 +65,30 @@ fn fifo_serving(path: &Path, reads: Vec<Vec<u8>>) -> std::thread::JoinHandle<usi
     })
 }
 
-/// Serve `first` at `path` to the first reader; the moment that reader closes
-/// it, rename `second` into place. Returns whether the swap happened.
-fn swap_after_first_read(
-    path: &Path,
-    first: &[u8],
-    second: &[u8],
-) -> std::thread::JoinHandle<bool> {
-    std::fs::write(path, first).unwrap();
-    let staged: PathBuf = path.with_extension("swap");
-    std::fs::write(&staged, second).unwrap();
-    let fd = unsafe { libc::inotify_init1(libc::IN_CLOEXEC) };
-    assert!(fd >= 0, "inotify_init1");
-    let c = std::ffi::CString::new(path.to_str().unwrap()).unwrap();
-    assert!(unsafe { libc::inotify_add_watch(fd, c.as_ptr(), libc::IN_CLOSE_NOWRITE) } >= 0);
-    let path = path.to_path_buf();
-    std::thread::spawn(move || {
-        let mut pfd = libc::pollfd {
-            fd,
-            events: libc::POLLIN,
-            revents: 0,
-        };
-        let ready = unsafe { libc::poll(&mut pfd, 1, 20_000) } > 0;
-        if ready {
-            std::fs::rename(&staged, &path).unwrap();
-        }
-        unsafe { libc::close(fd) };
-        ready
-    })
+/// An open of `path` that the test holds (fanotify FAN_OPEN_PERM) until this
+/// thread answers. `stop` ends the watch; closing the group allows every open
+/// still pending or to come.
+struct OpenGate {
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    thread: std::thread::JoinHandle<usize>,
 }
 
-/// Serve `first` at `path`, and rename `second` into place while the reader
-/// is BLOCKED opening `gate`, a file it opens after its first read of `path`
-/// (fanotify FAN_OPEN_PERM: the open waits for this thread's answer, and the
-/// answer comes only after the rename). Unlike [`swap_after_first_read`],
-/// which races the reader's very next open, this cannot lose the race under
-/// load: M336 survived the C9 round-2 two-shard run that way, its rename
-/// landing after both reads. Returns whether the gate fired.
-fn swap_while_gate_opens(
-    path: &Path,
-    first: &[u8],
-    second: &[u8],
-    gate: &Path,
-) -> std::thread::JoinHandle<bool> {
-    std::fs::write(path, first).unwrap();
-    let staged: PathBuf = path.with_extension("swap");
-    std::fs::write(&staged, second).unwrap();
+impl OpenGate {
+    /// Stop watching; the number of opens of the file that were seen.
+    fn finish(self) -> usize {
+        self.stop.store(true, std::sync::atomic::Ordering::SeqCst);
+        self.thread.join().unwrap()
+    }
+}
+
+/// A fanotify group, OPEN_PERM on `path`, whose event descriptors are
+/// read-write (`event_f_flags`), so the watcher can write the file through
+/// the very descriptor of a held open without generating an event itself.
+fn open_perm_group(path: &Path, event_flags: libc::c_int) -> libc::c_int {
     let fd = unsafe {
         libc::fanotify_init(
             libc::FAN_CLOEXEC | libc::FAN_CLASS_CONTENT,
-            libc::O_RDONLY as libc::c_uint,
+            event_flags as libc::c_uint,
         )
     };
     assert!(
@@ -118,7 +96,7 @@ fn swap_while_gate_opens(
         "fanotify_init: {}",
         std::io::Error::last_os_error()
     );
-    let g = std::ffi::CString::new(gate.to_str().unwrap()).unwrap();
+    let g = std::ffi::CString::new(path.to_str().unwrap()).unwrap();
     assert_eq!(
         unsafe {
             libc::fanotify_mark(
@@ -133,6 +111,98 @@ fn swap_while_gate_opens(
         "fanotify_mark: {}",
         std::io::Error::last_os_error()
     );
+    fd
+}
+
+/// Answer one held open: allow it, and close its event descriptor.
+fn allow(group: libc::c_int, event_fd: libc::c_int) {
+    let r = libc::fanotify_response {
+        fd: event_fd,
+        response: libc::FAN_ALLOW,
+    };
+    unsafe {
+        libc::write(
+            group,
+            (&r as *const libc::fanotify_response).cast(),
+            std::mem::size_of::<libc::fanotify_response>(),
+        );
+        libc::close(event_fd);
+    }
+}
+
+/// Serve `first` at `path` to its first opener and `second` to every later
+/// one: each later open is HELD (FAN_OPEN_PERM) while the file's bytes are
+/// replaced in place through the held open's own descriptor, and only then
+/// allowed. For a reader with no other open between its two reads of `path`
+/// (so no gate for [`swap_while_gate_opens`]), this is the deterministic way
+/// to serve two reads two contents: an inotify rename after the first close
+/// raced the second open, and could lose it under load (M336, C9 round 2).
+fn replace_on_second_open(path: &Path, first: &[u8], second: &[u8]) -> OpenGate {
+    std::fs::write(path, first).unwrap();
+    let fd = open_perm_group(path, libc::O_RDWR);
+    let second = second.to_vec();
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let stopped = stop.clone();
+    let thread = std::thread::spawn(move || {
+        let mut opens = 0usize;
+        while !stopped.load(std::sync::atomic::Ordering::SeqCst) {
+            let mut pfd = libc::pollfd {
+                fd,
+                events: libc::POLLIN,
+                revents: 0,
+            };
+            if unsafe { libc::poll(&mut pfd, 1, 100) } <= 0 {
+                continue;
+            }
+            let mut buf = [0u8; 4096];
+            let n = unsafe { libc::read(fd, buf.as_mut_ptr().cast(), buf.len()) };
+            assert!(n > 0, "fanotify read");
+            let mut off = 0usize;
+            while off < n as usize {
+                let m: libc::fanotify_event_metadata =
+                    unsafe { std::ptr::read_unaligned(buf.as_ptr().add(off).cast()) };
+                if m.fd >= 0 {
+                    if opens >= 1 {
+                        // The opener is held: the bytes it will read are
+                        // replaced before its open returns.
+                        unsafe {
+                            assert_eq!(libc::ftruncate(m.fd, 0), 0, "ftruncate");
+                            assert_eq!(
+                                libc::pwrite(m.fd, second.as_ptr().cast(), second.len(), 0),
+                                second.len() as isize,
+                                "pwrite"
+                            );
+                        }
+                    }
+                    opens += 1;
+                    allow(fd, m.fd);
+                }
+                off += m.event_len as usize;
+            }
+        }
+        unsafe { libc::close(fd) };
+        opens
+    });
+    OpenGate { stop, thread }
+}
+
+/// Serve `first` at `path`, and rename `second` into place while the reader
+/// is BLOCKED opening `gate`, a file it opens after its first read of `path`
+/// (fanotify FAN_OPEN_PERM: the open waits for this thread's answer, and the
+/// answer comes only after the rename). An inotify rename after the first
+/// close raced the reader's very next open and could lose under load: M336
+/// survived the C9 round-2 two-shard run that way, its rename landing after
+/// both reads. Returns whether the gate fired.
+fn swap_while_gate_opens(
+    path: &Path,
+    first: &[u8],
+    second: &[u8],
+    gate: &Path,
+) -> std::thread::JoinHandle<bool> {
+    std::fs::write(path, first).unwrap();
+    let staged: PathBuf = path.with_extension("swap");
+    std::fs::write(&staged, second).unwrap();
+    let fd = open_perm_group(gate, libc::O_RDONLY);
     let path = path.to_path_buf();
     std::thread::spawn(move || {
         let mut pfd = libc::pollfd {
@@ -152,18 +222,7 @@ fn swap_while_gate_opens(
                 let m: libc::fanotify_event_metadata =
                     unsafe { std::ptr::read_unaligned(buf.as_ptr().add(off).cast()) };
                 if m.fd >= 0 {
-                    let r = libc::fanotify_response {
-                        fd: m.fd,
-                        response: libc::FAN_ALLOW,
-                    };
-                    unsafe {
-                        libc::write(
-                            fd,
-                            (&r as *const libc::fanotify_response).cast(),
-                            std::mem::size_of::<libc::fanotify_response>(),
-                        );
-                        libc::close(m.fd);
-                    }
+                    allow(fd, m.fd);
                 }
                 off += m.event_len as usize;
             }
@@ -217,9 +276,18 @@ fn a_record_served_twice_by_a_fifo_certifies_nothing() {
 fn a_record_renamed_between_two_reads_certifies_nothing() {
     let Some(c) = certified() else { return };
     let (forged, genuine) = forged_for_agent_commit(&c);
-    let swapped = swap_after_first_read(&c.record(), &forged, &genuine);
+    // The record is read first, then the PSV spec is
+    // hashed long before the signature is checked: the rename lands while
+    // the reader is held opening the spec.
+    let swapped = swap_while_gate_opens(
+        &c.record(),
+        &forged,
+        &genuine,
+        &c.repo
+            .join("governance/specs/v022-protected-suite-verdict.md"),
+    );
     let v = c.verdict();
-    assert!(swapped.join().unwrap(), "the record was never read");
+    assert!(swapped.join().unwrap(), "the PSV spec was never opened");
     assert_ne!(
         v["status"], "PASS",
         "ATTACK: the genuine record was renamed in after the fields were checked on the \
@@ -401,13 +469,16 @@ fn a_manifest_renamed_between_hash_and_parse_does_not_change_the_qualified_guest
         QUALIFIED_GUEST
     );
 
-    let swapped = swap_after_first_read(
+    // The qualification reads the manifest, then its evidence record: the
+    // rename lands while it is held opening the evidence.
+    let swapped = swap_while_gate_opens(
         &manifest,
         qualified.as_bytes(),
         lx_manifest(OTHER_GUEST).as_bytes(),
+        &lx.evidence,
     );
     let q = lx.qualification();
-    assert!(swapped.join().unwrap(), "the manifest was never read");
+    assert!(swapped.join().unwrap(), "the evidence was never opened");
     let got = q.map(|q| q.guest_axon_sha256).unwrap_or_default();
     assert_ne!(
         got, OTHER_GUEST,
@@ -549,8 +620,9 @@ fn prepare_builds_no_manifest_naming_a_digest_that_is_not_a_sha256() {
 /// decides the outcome from result.json. Both must come from ONE read: a
 /// result.json renamed in after the first read closes (inotify) would
 /// otherwise decide the outcome while the evidence names the other bytes.
-/// The first file is padded with whitespace (still the same JSON) so that
-/// hashing it takes long enough for the swap to land before any second read.
+/// Nothing is opened between the two reads, so the second OPEN is held
+/// (fanotify) while the bytes are replaced in place: deterministic, where the
+/// old inotify rename needed 96 MiB of padding to win its race.
 #[test]
 fn the_result_json_hashed_as_evidence_is_the_one_interpreted() {
     use axon_fabric::backend::{interpret_linux_result, LinuxOutcome};
@@ -567,20 +639,19 @@ fn the_result_json_hashed_as_evidence_is_the_one_interpreted() {
         .to_string()
     };
     // Hashed first: cleanup not confirmed, so Unknown.
-    let mut first = result("vmm-died", false).into_bytes();
-    first.extend(std::iter::repeat_n(b' ', 96 << 20));
+    let first = result("vmm-died", false).into_bytes();
     let second = result("ok", true).into_bytes();
     let first_sha = format!("{:x}", Sha256::digest(&first));
 
-    let swapped = swap_after_first_read(&rj, &first, &second);
+    let gate = replace_on_second_open(&rj, &first, &second);
     let (outcome, why, evidence) = interpret_linux_result(Some(0), d.path(), &mut || Some(0));
-    assert!(swapped.join().unwrap(), "result.json was never read");
+    assert!(gate.finish() >= 1, "result.json was never read");
     let recorded = format!("sha256-result-json:{first_sha}");
     assert!(evidence.contains(&recorded), "{evidence:?}");
     assert!(
         !matches!(outcome, LinuxOutcome::Ok { .. }),
-        "ATTACK: one result.json was hashed as evidence ({first_sha}) and another, renamed in, \
-         decided the outcome Ok ({why})"
+        "ATTACK: one result.json was hashed as evidence ({first_sha}) and another, written in \
+         place, decided the outcome Ok ({why})"
     );
     assert!(
         matches!(outcome, LinuxOutcome::Unknown),

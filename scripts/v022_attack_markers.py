@@ -448,7 +448,8 @@ ATTACK_MARKERS = {
     'M369': 'ATTACK: a narrowing list that cannot be read was read as absent',
     # ── C9 round 1b, workstream PSV (M410-M418) ──
     'M410': r'ATTACK: prepare pinned guest kernel \w+ from a profile manifest the qualification never hashed',
-    'M411': r'ATTACK: one result\.json was hashed as evidence \(\w+\) and another, renamed in,\s+decided the outcome Ok',
+    # C9 r2 (rows): the second read is now served by an in-place write under a held open.
+    'M411': r'ATTACK: one result\.json was hashed as evidence \(\w+\) and another, written in\s+place, decided the outcome Ok',
     'M412': r'ATTACK: a replace ref rewrote what HEAD names, and the build provenance still says source_dirty: false',
     'M413': r'ATTACK: a grafts file rewrote ancestry, and the build provenance still says source_dirty: false',
     'M414': r'ATTACK: info/exclude hid an untracked \.cargo/config\.toml, and the build provenance still says source_dirty: false',
