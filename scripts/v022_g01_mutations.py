@@ -2610,6 +2610,85 @@ STALE_REFACTORED = {
 # property, subsuming guard or killer, so under the four-cell rule it is ACTIVE.
 LEGACY_EQUIV = set()
 RETIRED = LEGACY_EQUIV | EQUIVALENT_DID | set(STALE_REFACTORED)
+# ── C9 round 4 fix wave, ROWS2 workstream (M760-M819; amendment 58): the
+# refusal sites scripts/v022_refusal_coverage.py names once it scans the
+# custodian, its binary, readiness and the protected host config (and the two
+# the policy change added to the helper). Each is attacked on the PRODUCTION
+# route where it is the only refusal.
+_R2T = 'a_protected_custodian_under_a_malformed_config_serves_nothing'
+_R2H = 'a_production_fabric_refuses_a_host_config_it_cannot_vouch_for'
+_R2V = 'a_production_verifier_built_from_a_dirty_tree_certifies_nothing'
+MUTATIONS += [
+    ('M760', 'A83: a protected custodian applies its config schema (production custodian)',
+     'crates/axon-fabric/src/custodian.rs',
+     '        if self.schema != CONFIG_SCHEMA {', '        if false && self.schema != CONFIG_SCHEMA {',
+     'axon-fabric', '--test privileged_launcher', _R2T),
+    ('M761', 'A83: a protected custodian requires a positive nonce lifetime (production custodian)',
+     'crates/axon-fabric/src/custodian.rs',
+     '        if self.max_age_s == 0 {', '        if false && self.max_age_s == 0 {',
+     'axon-fabric', '--test privileged_launcher', _R2T),
+    ('M762', "A84: the helper reads a custodian's refusal of a spend as a refusal (CustodianRef::call)",
+     'crates/axon-fabric/src/custodian.rs',
+     '        if !r.ok {', '        if false && !r.ok {',
+     'axon-fabric', '--test privileged_launcher', 'one_observation_launches_the_root_launcher_once'),
+    ('M763', 'D6: --test-config exists only in a test-trust build of the custodian (PRODUCTION build)',
+     'crates/axon-fabric/src/bin/axon-custodian.rs',
+     '        Some("--test-config") if axon_fabric::backend::TEST_TRUST_BUILD => {',
+     '        Some("--test-config") => {',
+     'axon-fabric', '--test privileged_launcher',
+     'a_production_custodian_never_takes_its_config_from_a_path_its_caller_names'),
+    ('M764', 'A: a production Fabric reads only an axon-protected-host/1 config (ProtectedHost::load)',
+     'crates/axon-fabric/src/protected_host.rs',
+     '        if v["schema"] != PROTECTED_HOST_SCHEMA {', '        if false && v["schema"] != PROTECTED_HOST_SCHEMA {',
+     'axon-fabric', '--test privileged_launcher', _R2H),
+    ('M765', "A: a production Fabric refuses the helper's test-trust config key (PRODUCTION build)",
+     'crates/axon-fabric/src/protected_host.rs',
+     '            Some(_) if !crate::backend::TEST_TRUST_BUILD => {', '            Some(_) if false => {',
+     'axon-fabric', '--test privileged_launcher', _R2H),
+    ('M766', 'A: a host config that cannot be stat\'ed runs nothing (never read as not-a-protected-host)',
+     'crates/axon-fabric/src/protected_host.rs',
+     '        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),\n        Err(e) => Err(format!(',
+     '        Err(_) => Ok(false),\n        #[allow(unreachable_patterns)]\n        Err(e) => Err(format!(',
+     'axon-fabric', '--test privileged_launcher', _R2H),
+    ('M767', 'PSV-7: a production readiness verifier built from a dirty tree certifies nothing',
+     'crates/axon-fabric/src/readiness.rs',
+     '    if !TEST_TRUST_BUILD && me["source_dirty"] == true {',
+     '    if false && !TEST_TRUST_BUILD && me["source_dirty"] == true {',
+     'axon-fabric', '--test readiness', _R2V),
+    ('M768', 'readiness: a narrowing list the verifier cannot stat is not read as absent (production decision)',
+     'crates/axon-fabric/src/readiness.rs',
+     '        Err(e) => return Err(format!("{TRUST_EXPECTATIONS}: {e}")),', '        Err(_) => false,',
+     'axon-fabric', '--test readiness', 'a_narrowing_list_the_verifier_cannot_stat_is_not_read_as_absent'),
+    ('M769', 'readiness: the repository may narrow the qualification issuers, never add',
+     'crates/axon-fabric/src/readiness.rs',
+     '            if !list.iter().any(|x| x.as_str() == Some(issuer.as_str())) {',
+     '            if false && !list.iter().any(|x| x.as_str() == Some(issuer.as_str())) {',
+     'axon-fabric', '--test readiness', 'the_repository_may_narrow_the_issuers_never_add'),
+    ('M770', "PSV-4: the readiness verifier's identity names a test-trust build as such (the relay requires production)",
+     'crates/axon-fabric/src/readiness.rs',
+     '        "sha256": sha,\n        "build": if TEST_TRUST_BUILD {', '        "sha256": sha,\n        "build": if false {',
+     'axon-fabric', '--test readiness', _R2V),
+    ('M771', "PSV-4: the readiness report names a test-trust build as such",
+     'crates/axon-fabric/src/readiness.rs',
+     '        // A build carrying the test trust constructors never earns readiness.\n        "build": if TEST_TRUST_BUILD {',
+     '        // A build carrying the test trust constructors never earns readiness.\n        "build": if false {',
+     'axon-fabric', '--test readiness', _R2V),
+    ('M772', "A: the root helper reads the guest policy only as a regular file of the Fabric uid",
+     'crates/axon-fabric/src/privileged_launcher.rs',
+     '    if st.st_mode & libc::S_IFMT != libc::S_IFREG || st.st_uid != owner {',
+     '    if false && (st.st_mode & libc::S_IFMT != libc::S_IFREG || st.st_uid != owner) {',
+     'axon-fabric', '--test privileged_launcher', 'a_root_owned_policy_is_never_read_by_the_helper'),
+    ('M773', 'A84: the observation joins the launch manifest field for field (the comparison of every pair)',
+     'crates/axon-psv/src/lib.rs',
+     '            if observed != launch {', '            if false && observed != launch {',
+     'axon-fabric', '--test privileged_launcher', 'an_observation_of_another_manifest_launches_nothing'),
+    ('M774', "A84: the observation's guest init is the launch manifest's",
+     'crates/axon-psv/src/lib.rs',
+     '        if self.guest.init_sha256 != m.guest.init_sha256 {',
+     '        if false && self.guest.init_sha256 != m.guest.init_sha256 {',
+     'axon-fabric', '--test privileged_launcher', 'an_observation_of_another_guest_init_launches_nothing'),
+]
+
 BINDING_IDS = {f"M{n}" for n in range(101, 137)}
 # Every id range the PSV rounds allocate (C9 round 1 uses up to M399; round
 # 1b allocates M400-M499, round 2 M500-M519). An id outside every scope would silently fall into
@@ -2624,6 +2703,8 @@ PSV_IDS |= {f"M{n}" for n in range(740, 760)}
 
 # C9 round 4: M650-M699, and the rows workstream's M690-M719.
 PSV_IDS |= {f"M{n}" for n in range(650, 720)}
+# C9 round 4 fix wave: rows2 M760-M819.
+PSV_IDS |= {f"M{n}" for n in range(760, 820)}
 
 
 def in_scope(mid, scope):

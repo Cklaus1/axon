@@ -248,6 +248,7 @@ pub fn write_launch(
             axon_sha256: m.guest.axon_sha256.clone(),
         },
         stdout_sha256: None,
+        policy_sha256: m.policy_sha256.clone(),
     };
     let v_bytes = v.bytes();
     let req = json!({
