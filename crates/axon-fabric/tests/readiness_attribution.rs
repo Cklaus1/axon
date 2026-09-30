@@ -96,7 +96,7 @@ fn revoking_the_verifier_key_revokes_the_certification() {
 fn an_observer_key_id_outside_the_observer_root_is_refused() {
     let Some(c) = certified() else { return };
     let stranger = Issuer::generate();
-    let obs = observation(&stranger, &"f".repeat(40));
+    let obs = c.observed(&stranger, &"f".repeat(40));
     rebind(
         &c,
         OBSERVATION,
@@ -163,7 +163,7 @@ fn an_observation_not_signed_by_an_observer_root_key_is_refused() {
     let agent = Issuer::generate();
     // It claims to be the operator's observer, and says everything the
     // record certifies; only the signature is not the observer's.
-    let obs = observation(&c.observer, &"f".repeat(40));
+    let obs = c.observed(&c.observer, &"f".repeat(40));
     rebind(
         &c,
         OBSERVATION,
@@ -187,7 +187,7 @@ fn an_observation_not_signed_by_an_observer_root_key_is_refused() {
 #[test]
 fn an_observation_of_another_run_is_refused() {
     let Some(c) = certified() else { return };
-    let mut obs = observation(&c.observer, &"f".repeat(40));
+    let mut obs = c.observed(&c.observer, &"f".repeat(40));
     obs["guest"]["kernel_sha256"] = json!("9".repeat(64));
     rebind(
         &c,
@@ -204,7 +204,7 @@ fn an_observation_of_another_run_is_refused() {
     );
 
     let Some(c) = certified() else { return };
-    let obs = observation(&c.observer, &"e".repeat(40));
+    let obs = c.observed(&c.observer, &"e".repeat(40));
     rebind(
         &c,
         OBSERVATION,
@@ -356,6 +356,10 @@ fn an_agent_owned_peer_root_decides_no_separation() {
 
 /// The genuine record with `edit` applied, signed by the operator and bound
 /// into a re-signed certification.
+///
+/// The observed launch ran UNDER that record (C9 round 4, A89): the run is
+/// relaunched with the manifest naming it, so each attack reaches the rule
+/// it is written for and not the qualification join.
 fn with_b263(c: &Certified, edit: impl FnOnce(&mut Value)) {
     let mut b = b263_record(&c.operator);
     edit(&mut b);
@@ -367,6 +371,7 @@ fn with_b263(c: &Certified, edit: impl FnOnce(&mut Value)) {
         &c.operator,
         TrustAuthority::Qualification,
     );
+    relaunch(c, keep(), keep(), keep());
 }
 
 #[test]
