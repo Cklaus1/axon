@@ -383,7 +383,18 @@ PY
     # verification — independent re-observation, not trust in the calls above
     local left=()
     [[ -n "$FC_PID" ]] && kill -0 "$FC_PID" 2>/dev/null && left+=("vmm-pid:$FC_PID")
-    pgrep -f -- "--id $ID( |$)" >/dev/null 2>&1 && left+=("process-matching-id")
+    # This launcher's OWN command line carries `--id $ID` whenever the caller
+    # names the id (Fabric and axon-protected-launcher do), so it is not a
+    # leftover. Measured through the helper: every such launch read as
+    # cleanup-incomplete (24), matching only itself.
+    # pgrep runs as a simple command of THIS shell (a command substitution's
+    # subshell carries the same command line and matched too, measured).
+    local p stray=() plist
+    plist="$(mktemp)"
+    pgrep -f -- "--id $ID( |$)" >"$plist" 2>/dev/null
+    while read -r p; do [[ -n "$p" && "$p" != "$$" ]] && stray+=("$p"); done <"$plist"
+    rm -f "$plist"
+    [[ ${#stray[@]} -gt 0 ]] && left+=("process-matching-id:${stray[*]}")
     [[ -e "$CG_DIR" ]] && left+=("cgroup:$CG_DIR")
     [[ -e "$JAIL_DIR" ]] && left+=("chroot:$JAIL_DIR")
     [[ -n "${ENGINE_DIR:-}" && -e "$ENGINE_DIR" ]] && left+=("engine-copy:$ENGINE_DIR")

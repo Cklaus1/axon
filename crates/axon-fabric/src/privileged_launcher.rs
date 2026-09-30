@@ -669,8 +669,8 @@ fn make_out(root: RawFd, name: &OsStr) -> Result<OwnedFd, String> {
 
 /// Give the finished out tree to the Fabric uid: every directory, regular
 /// file and symlink (never followed) is chowned; set-id bits are cleared;
-/// anything else (a device node, a FIFO, a socket a hostile guest image
-/// could carry out through `rdump`) is removed, never handed over.
+/// anything else (a device node, a FIFO, a socket), whatever put it there,
+/// is removed, never handed over.
 fn hand_over(dir: RawFd, uid: u32) -> Result<(), String> {
     for name in names_in(dir)? {
         let cn = cstr(&name)?;

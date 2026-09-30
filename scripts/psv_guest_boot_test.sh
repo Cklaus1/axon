@@ -14,6 +14,8 @@
 #   candidate    the candidate changes after the job is made: the guest refuses
 #                and nothing runs
 #   tampered     the returned drive's verdict is replaced: --verify-result 27
+#   helper       the pass case through the setuid privileged helper, as a
+#                non-root Fabric uid (amendment 45)
 #
 # Exit 0 all PASS; 1 any FAIL; 77 SKIP (not root / no KVM / no image). A SKIP is
 # a non-result and is reported as such, never as a pass.
@@ -215,6 +217,65 @@ if [[ -n "$ST" && "$ST" != passed ]] && grep -q "does not fall through" "$W/fall
     ok "fall: an unreadable suite module is E0901, never the candidate's same-named module (status $ST)"
 else
     bad fall "status=$ST rc=$RC stderr=$(head -c 300 "$W/fall/out/out/test-stderr" 2>/dev/null)"
+fi
+
+# A (amendment 45): the pass case THROUGH THE PRIVILEGED HELPER, as a non-root
+# Fabric uid: the real launcher, image and engine, run by a setuid-root
+# (test-trust) axon-protected-launcher from its verified descriptors, with the
+# out dir handed to the launcher as /dev/fd/N and the manifest as /dev/fd/M.
+# PSV_SKIP_HELPER=1 skips it (then it is reported, never counted as a pass).
+if [[ -n "${PSV_SKIP_HELPER:-}" ]]; then
+    echo "SKIP helper: PSV_SKIP_HELPER set (UNPROVEN)"
+else
+    FU="${PSV_HELPER_UID:-4242}"
+    (cd "$REPO" && cargo build -q -p axon-fabric --features test-trust-root --bin axon-protected-launcher) \
+        || bad helper "cargo build -p axon-fabric --features test-trust-root --bin axon-protected-launcher"
+    HB="${CARGO_TARGET_DIR:-$REPO/target}/debug/axon-protected-launcher"
+    H="$W/helper"; mkdir -p "$H/runs" "$H/staging"; chmod 0755 "$H"
+    cp -r "$REPO/dist/guest-linux" "$H/dist"; chmod -R go-w "$H/dist"
+    cp "$LAUNCH" "$H/fc_linux_profile.sh"; chmod 0755 "$H/fc_linux_profile.sh"
+    chmod 0700 "$H/staging"; chown "$FU:$FU" "$H/runs"; chmod 0700 "$H/runs"
+    I="$H/runs/fab-boot.psv-inputs"; mkdir -p "$I"
+    cp -r "$W/cand" "$I/candidate"; cp -r "$W/suite" "$I/check"
+    MSHA="$("$DEV" make-job --candidate "$I/candidate" --suite "$I/check" --entry accept.ax \
+        --test t_ok --job "$I/job" | python3 -c 'import json,sys; print(json.load(sys.stdin)["manifest_sha256"])')"
+    cp -r "$I/job" "$W/helper-job"   # the helper consumes Fabric's job files
+    chown -R "$FU:$FU" "$I"
+    python3 - "$H" "$FU" "$REPO/dist/guest-linux/manifest.json" "${POLICY}" "$MSHA" <<'PY'
+import hashlib, json, sys
+h, fu, man, pol, msha = sys.argv[1:]
+sha = lambda p: hashlib.sha256(open(p, "rb").read()).hexdigest()
+json.dump({"schema": "axon-protected-launcher/1", "fabric_uid": int(fu),
+           "interpreter": {"path": "/bin/bash", "sha256": sha("/bin/bash")},
+           "launcher": {"path": f"{h}/fc_linux_profile.sh", "sha256": sha(f"{h}/fc_linux_profile.sh")},
+           "profile_manifest": {"path": f"{h}/dist/manifest.json", "sha256": sha(f"{h}/dist/manifest.json")},
+           "artifacts_dir": f"{h}/dist", "firecracker": "/usr/local/bin/firecracker",
+           "jailer": "/usr/local/bin/jailer", "out_root": f"{h}/runs", "staging_root": f"{h}/staging",
+           "max_timeout_s": 300, "max_input_bytes": 1 << 30}, open(f"{h}/protected-launcher.json", "w"))
+i = f"{h}/runs/fab-boot.psv-inputs"
+json.dump({"schema": "axon-protected-launch-request/1", "id": "fab-boot", "out": f"{h}/runs/op-boot",
+           "psv_candidate": f"{i}/candidate", "psv_suite": f"{i}/check", "psv_job": f"{i}/job",
+           "psv_manifest_sha256": msha, "policy_json": open(pol).read(), "timeout_s": 90},
+          open(f"{h}/request.json", "w"))
+PY
+    chmod 0644 "$H/protected-launcher.json"
+    cp "$HB" "$H/axon-protected-launcher"; chown "0:$FU" "$H/axon-protected-launcher"
+    chmod 4750 "$H/axon-protected-launcher"
+    # A shell running AS the Fabric uid makes the exec (setpriv's own exec
+    # still holds root's DAC override).
+    setpriv --reuid="$FU" --regid="$FU" --clear-groups -- sh -c 'exec "$0" --test-config "$1"' \
+        "$H/axon-protected-launcher" "$H/protected-launcher.json" <"$H/request.json" >"$H/report.json" 2>"$H/helper.log"
+    HRC=$?
+    R="$(cat "$H/report.json")"
+    V="$("$DEV" check-verdict --job "$W/helper-job" --verdict "$H/runs/op-boot/out/verdict.json" 2>/dev/null)"
+    OWN="$(stat -c %u "$H/runs/op-boot" 2>/dev/null)"
+    if [[ $HRC == 0 ]] && printf '%s' "$R" | python3 -c 'import json,sys; r=json.load(sys.stdin); sys.exit(0 if r["launched"] and r["launcher_exit"]==0 and r["verify_exit"]==0 and r["unchanged"] and r["error"] is None else 1)' \
+       && [[ "$(jq_r "$H/runs/op-boot/result.json" psv.bound)" == true && "$OWN" == "$FU" ]] \
+       && printf '%s' "$V" | python3 -c 'import json,sys; v=json.load(sys.stdin); sys.exit(0 if v["status"]=="passed" and v["manifest_joins"] and v["token_verifies"] else 1)'; then
+        ok "helper: a non-root Fabric uid launched the pass case through the setuid helper (launcher and bash same-byte; out dir as /dev/fd/N); verdict bound, token verifies, out dir handed back"
+    else
+        bad helper "rc=$HRC report=$R owner=$OWN verdict=$V log=$(tail -c 300 "$H/helper.log")"
+    fi
 fi
 
 echo "psv guest boot test: $FAILS failure(s)"
