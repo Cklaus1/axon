@@ -422,6 +422,13 @@ fn only_an_operator_suite_runs_on_the_protected_profile() {
     let mut cfg = w.env.cfg(0);
     let lx = w.lx("", "");
     let launches = lx.out_root.clone();
+    // Observed like every helper-route launch (`submit_with`): without an
+    // observer the helper refuses for want of an observation, so the attack
+    // never reached the operator-suite rule this test judges (amendment 50
+    // left this hand-built config unobserved; C9 round 4 four-cell run).
+    if lx.privileged.is_some() {
+        cfg.observer = Some(w.auto_observer());
+    }
     cfg.linux = Some(lx);
     let got = submit(
         &w.request("op-psv-cand", "f.ax", "t_psv_ok").to_string(),
