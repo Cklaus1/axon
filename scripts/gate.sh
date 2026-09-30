@@ -301,6 +301,9 @@ bash scripts/test_trust_root_preflight.sh || fail "v0.22 trust-root preflight me
 # PSV negative matrix: every row A1..A21 cites tests that exist (a renamed or
 # deleted test fails here, rather than leaving a row claiming coverage).
 python3 -B scripts/psv_matrix_check.py || fail "v0.22 PSV negative matrix"
+# Every refusal site in the protected helper files (decision A/D) has a
+# mutation row or a reasoned exemption (C9 round 3, amendment 48).
+python3 -B scripts/v022_refusal_coverage.py || fail "v0.22 protected refusal-site coverage"
 # PSV in a REAL Firecracker guest. SKIP (77: no root/KVM/built image) is a
 # NON-RESULT, reported as such, never as a pass.
 cargo build -q -p axon-psv --example psv_dev || fail "v0.22 PSV dev tool build"
