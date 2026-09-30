@@ -633,3 +633,29 @@ ATTACK_MARKERS.update({
     'M498': r'ATTACK: the PSV runner is launched outside `env -i` \+ axon-guest-init: exec env PATH=',
     'M499': r'workload must be exec.d inside `env -i`: exec env PATH=',
 })
+ATTACK_MARKERS.update({
+    # ── C9 round 3, CUSTODIAN workstream (M620-M638; amendment 50) ─────────
+    # M325 re-pointed to the custodian's store (the Fabric nonce_store leaf it
+    # covered no longer exists); M196 to the custodian's spend (same test and
+    # marker); M292 to the custodian socket's directory (same marker).
+    'M325': r'ATTACK: a nonce store its group can write \(the Fabric.s group\) was accepted',
+    'M620': r'ATTACK: the root helper launched with no observation',
+    'M621': r'ATTACK: one observation launched the root launcher twice',
+    'M622': r'ATTACK: one observation launched the root launcher twice',
+    'M623': r'ATTACK: the root helper launched a snapshot manifest other than the one the request',
+    'M624': r'ATTACK: a launch whose nonce a DEV custodian spent ran as a protected launch',
+    'M625': r"ATTACK: a production helper accepted a test custodian's spend",
+    'M626': r'ATTACK: the root helper spent the nonce through a custodian the Fabric uid serves',
+    'M627': r'ATTACK: a uid that is not the Fabric was issued a nonce',
+    'M628': r'ATTACK: the Fabric spent a nonce itself',
+    'M629': r'ATTACK: a custodian running as the Fabric uid was accepted',
+    'M630': r'ATTACK: a nonce store another uid owns was accepted',
+    'M631': r'ATTACK: the custodian served from a nonce store its group can write',
+    'M632': r'ATTACK: a custodian ran as a uid other than its configured custodian uid',
+    'M633': r'ATTACK: a helper config spending through a custodian of uid \d+',
+    'M634': r"ATTACK: a protected host config naming the Fabric's own uid as its custodian was",
+    'M635': r'ATTACK: a host config giving Fabric its own nonce store loaded: Ok\(\(\)\)',
+    'M636': r"ATTACK: a helper config spending through another custodian than the host's was\s+accepted: Ok\(\(\)\)",
+    'M637': r"ATTACK: a helper config naming another host signer than the host's was accepted: Ok\(\(\)\)",
+    'M638': r"ATTACK: the root helper launched on an observation signed with the host signer's key",
+})

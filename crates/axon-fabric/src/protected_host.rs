@@ -640,41 +640,42 @@ pub fn helper_agrees(
     host: &ProtectedHost,
     euid: u32,
 ) -> Result<(), String> {
-    let why =
-        if helper.fabric_uid != euid {
-            format!(
-                "admits uid {}, but Fabric runs as uid {euid}",
-                helper.fabric_uid
-            )
-        } else if helper.out_root != host.linux.out_root {
-            format!(
-                "writes under {}, but the host's out_root is {}",
-                helper.out_root.display(),
-                host.linux.out_root.display()
-            )
-        } else if helper.launcher.sha256 != host.linux.launcher_sha256 {
-            format!(
-                "runs launcher {}, but the host pins {}",
-                helper.launcher.sha256, host.linux.launcher_sha256
-            )
-        } else if crate::backend::sha256_file(&host.linux.manifest)
-            .ok()
-            .as_deref()
-            != Some(helper.profile_manifest.sha256.as_str())
-        {
-            "pins another profile manifest than the host's".to_string()
-        } else if let Some(want) = host.observer.as_ref().map(|o| &o.custodian).filter(
-            |c| !matches!(c, crate::custodian::Custodian::Service(r) if *r == helper.custodian),
-        ) {
-            format!(
-                "spends through custodian {:?}, but the host's observer is issued by {want:?}",
-                helper.custodian
-            )
-        } else if helper.observer.host_signer_public_key != host.signer.public_key {
-            "names another host signer than the host's".to_string()
-        } else {
-            return Ok(());
-        };
+    // Amendment 50: the custodian the host's observer is issued by.
+    let custodian_differs = host.observer.as_ref().is_some_and(|o| {
+        !matches!(&o.custodian, crate::custodian::Custodian::Service(r) if *r == helper.custodian)
+    });
+    let why = if helper.fabric_uid != euid {
+        format!(
+            "admits uid {}, but Fabric runs as uid {euid}",
+            helper.fabric_uid
+        )
+    } else if helper.out_root != host.linux.out_root {
+        format!(
+            "writes under {}, but the host's out_root is {}",
+            helper.out_root.display(),
+            host.linux.out_root.display()
+        )
+    } else if helper.launcher.sha256 != host.linux.launcher_sha256 {
+        format!(
+            "runs launcher {}, but the host pins {}",
+            helper.launcher.sha256, host.linux.launcher_sha256
+        )
+    } else if crate::backend::sha256_file(&host.linux.manifest)
+        .ok()
+        .as_deref()
+        != Some(helper.profile_manifest.sha256.as_str())
+    {
+        "pins another profile manifest than the host's".to_string()
+    } else if custodian_differs {
+        format!(
+            "spends through custodian {:?}, but the host's observer names another",
+            helper.custodian
+        )
+    } else if helper.observer.host_signer_public_key != host.signer.public_key {
+        "names another host signer than the host's".to_string()
+    } else {
+        return Ok(());
+    };
     Err(format!(
         "{}: the privileged launcher's config {why}",
         crate::privileged_launcher::CONFIG_PATH

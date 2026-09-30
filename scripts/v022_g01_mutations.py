@@ -790,7 +790,7 @@ MUTATIONS = [
     ('M193', 'M3: the claimed observer is the signer', 'crates/axon-fabric/src/observer.rs', 'if o.observer_key_id != signer {', 'if false && o.observer_key_id != signer {', 'axon-fabric', '--test psv_dispatch', 'every_defective_observation_refuses_the_launch'),
     ('M194', "M3/A8: the observation's epoch", 'crates/axon-fabric/src/observer.rs', 'if o.epoch != epoch {', 'if false && o.epoch != epoch {', 'axon-fabric', '--test psv_dispatch', 'every_defective_observation_refuses_the_launch'),
     ('M195', "M3/A8: the observation's age", 'crates/axon-fabric/src/observer.rs', 'if age < 0 || age as u64 > cfg.max_age_s {', 'if false && (age < 0 || age as u64 > cfg.max_age_s) {', 'axon-fabric', '--test psv_dispatch', 'every_defective_observation_refuses_the_launch'),
-    ('M196', 'M3/A15: a verified observation spends its nonce', 'crates/axon-fabric/src/observer.rs', '    cfg.nonces\n        .consume(&o.nonce, epoch, &cfg.clock, cfg.max_age_s)?;', '', 'axon-fabric', '--test psv_dispatch', 'a_verified_observation_makes_the_guest_verdict_protected'),
+    ('M196', 'M3/A15 -> amendment 50: a verified observation spends its nonce (in the CUSTODIAN, for the root helper)', 'crates/axon-fabric/src/custodian.rs', '                self.store\n                    .consume(nonce, r.epoch, &self.clock, self.cfg.max_age_s)?;', '                let _ = (&self.store, nonce);', 'axon-fabric', '--test psv_dispatch', 'a_verified_observation_makes_the_guest_verdict_protected'),
     ('M197', 'M3: a nonce is of its epoch', 'crates/axon-fabric/src/observer.rs', 'if rec["epoch"].as_u64() != Some(epoch) {', 'if false && rec["epoch"].as_u64() != Some(epoch) {', 'axon-fabric', '--test psv_dispatch', 'a_nonce_authorizes_exactly_one_launch'),
     ('M198', 'M3/A8: a nonce has a maximum age', 'crates/axon-fabric/src/observer.rs', 'if age < 0 || age as u64 > max_age_s {', 'if false && (age < 0 || age as u64 > max_age_s) {', 'axon-fabric', '--test psv_dispatch', 'a_nonce_authorizes_exactly_one_launch'),
     ('M199', 'M3: a nonce is one this custodian issues', 'crates/axon-fabric/src/observer.rs', 'if nonce.len() != 32 || !nonce.bytes().all(|b| b.is_ascii_hexdigit()) {', 'if false {', 'axon-fabric', '--test psv_dispatch', 'a_nonce_authorizes_exactly_one_launch'),
@@ -888,8 +888,8 @@ MUTATIONS = [
     ('M288', 'readiness: an assume-unchanged index entry is refused', 'crates/axon-fabric/src/readiness.rs', 'if tag.is_ascii_lowercase() {', 'if false && tag.is_ascii_lowercase() {', 'axon-fabric', '--test readiness', 'an_assume_unchanged_entry_is_not_certified'),
     ('M289', 'readiness: an object must hash to its name', 'crates/axon-fabric/src/git_data.rs', 'if object_id(want, &body) != oid {', 'if false && object_id(want, &body) != oid {', 'axon-fabric', '--test readiness', 'a_forged_object_under_the_certified_name_is_not_certified'),
     ('M290', 'readiness: working-tree bytes are hashed against the certified tree', 'crates/axon-fabric/src/readiness.rs', 'outside.extend(tree_differs(&top, &want, Some(b"governance"), &allow));', 'outside.extend(tree_differs(&top, &want, Some(b"governance"), &allow).into_iter().filter(|_| false));', 'axon-fabric', '--test readiness', 'any_change_to_source_scripts_or_manifests_invalidates_it'),
-    ('M291', 'protected host: out_root sits under an operator-owned directory', 'crates/axon-fabric/src/protected_host.rs', 'parent_owned(&out_root)?;', 'parent_owned(&out_root).ok();', 'axon-fabric', '--test protected_host', 'the_out_root_and_nonce_store_sit_under_operator_owned_directories'),
-    ('M292', 'protected host: observer nonce_store sits under an operator-owned directory', 'crates/axon-fabric/src/protected_host.rs', 'parent_owned(&nonces)?;', 'parent_owned(&nonces).ok();', 'axon-fabric', '--test protected_host', 'the_out_root_and_nonce_store_sit_under_operator_owned_directories'),
+    ('M291', 'protected host: out_root sits under an operator-owned directory', 'crates/axon-fabric/src/protected_host.rs', 'parent_owned(&out_root)?;', 'parent_owned(&out_root).ok();', 'axon-fabric', '--test protected_host', 'the_out_root_and_custodian_socket_sit_under_operator_owned_directories'),
+    ('M292', 'protected host: the custodian socket (formerly the Fabric nonce_store; amendment 50) sits under an operator-owned directory', 'crates/axon-fabric/src/protected_host.rs', 'parent_owned(&socket)?;', 'parent_owned(&socket).ok();', 'axon-fabric', '--test protected_host', 'the_out_root_and_custodian_socket_sit_under_operator_owned_directories'),
     ('M293', 'runner: a Passed verdict needs the keyed token AND exit 0 (the Some(0) of the Passed arm; replaces stale M176)', 'crates/axon-psv/src/runner.rs', '        (GuestStatus::Passed, Some(true), Some(0)) => GuestStatus::Passed,', '        (GuestStatus::Passed, Some(true), _) => GuestStatus::Passed,', 'axon-psv', '--test runner', 'a_genuine_keyed_pass_from_a_run_that_exits_non_zero_is_not_a_pass'),
     ('M294', 'PSV-5: the manifest operation_id joins the request', 'crates/axon-loop-contracts/src/protected_evidence.rs', '("operation_id", &m.operation_id, req.operation_id.as_str()),', '("operation_id", req.operation_id.as_str(), req.operation_id.as_str()),', 'axon-loop', '--test intake', 'each_manifest_join_to_the_request_and_receipt_refuses_its_own_forgery'),
     ('M295', 'PSV-5: the manifest task_id joins the request', 'crates/axon-loop-contracts/src/protected_evidence.rs', '("task_id", &m.task_id, req.task_id.as_str()),', '("task_id", req.task_id.as_str(), req.task_id.as_str()),', 'axon-loop', '--test intake', 'each_manifest_join_to_the_request_and_receipt_refuses_its_own_forgery'),
@@ -917,10 +917,10 @@ MUTATIONS = [
     ('M321', 'PSV-6/A54: the protected profile offers no interpreter_run', 'crates/axon-fabric/src/backend.rs', '    // round 1; A54).\n    job_kinds: &[JobKind::RegisteredCheck],', '    // round 1; A54).\n    job_kinds: &[JobKind::InterpreterRun, JobKind::RegisteredCheck],', 'axon-fabric', '--test psv_dispatch', 'the_protected_profile_is_never_selected_for_an_execution'),
     ('M322', "PSV-4/A55: the bundle is decided from the FINAL receipt's class", 'crates/axon-fabric/src/submit.rs', '.and_then(|(r, _, _)| crate::psv::EvidenceClass::of_receipt(r))', '.and(Some(crate::psv::EvidenceClass::Protected))', 'axon-fabric', '--test psv_dispatch', 'an_inadmissible_observed_launch_is_never_protected_and_carries_no_bundle'),
     ('M323', 'PSV-4/A55: an inadmissible launch is never protected (psv_receipt downgrade)', 'crates/axon-fabric/src/submit.rs', '    if !launched_ok || !privileged {\n        // Whatever derive saw', '    if !privileged {\n        // Whatever derive saw', 'axon-fabric', '--test psv_dispatch', 'an_inadmissible_observed_launch_is_never_protected_and_carries_no_bundle'),
-    ('M324', "A56: the out_root LEAF is the service's own and private", 'crates/axon-fabric/src/protected_host.rs', '        leaf_owned(&out_root)?;', '        leaf_owned(&out_root).ok();', 'axon-fabric', '--test protected_host', 'the_out_root_and_nonce_store_leaves_are_the_services_own_and_private'),
-    ('M325', "A56: the nonce_store LEAF is the service's own and private", 'crates/axon-fabric/src/protected_host.rs', '                leaf_owned(&nonces)?;', '                leaf_owned(&nonces).ok();', 'axon-fabric', '--test protected_host', 'the_out_root_and_nonce_store_leaves_are_the_services_own_and_private'),
-    ('M326', 'A56: a service leaf is owned by the service euid', 'crates/axon-fabric/src/protected_host.rs', '    if m.uid() != euid {', '    if false && m.uid() != euid {', 'axon-fabric', '--test protected_host', 'the_out_root_and_nonce_store_leaves_are_the_services_own_and_private'),
-    ('M327', 'A56: a service leaf has no group/other access (0700)', 'crates/axon-fabric/src/protected_host.rs', '    if m.mode() & 0o077 != 0 {', '    if false && m.mode() & 0o077 != 0 {', 'axon-fabric', '--test protected_host', 'the_out_root_and_nonce_store_leaves_are_the_services_own_and_private'),
+    ('M324', "A56: the out_root LEAF is the service's own and private", 'crates/axon-fabric/src/protected_host.rs', '        leaf_owned(&out_root)?;', '        leaf_owned(&out_root).ok();', 'axon-fabric', '--test protected_host', 'the_out_root_leaf_is_the_services_own_and_private'),
+    ('M325', "A56 -> amendment 50: the nonce store is its owner's (now the custodian's) own and private: no group/other access", 'crates/axon-fabric/src/custodian.rs', '    if m.mode() & 0o077 != 0 {', '    if false && m.mode() & 0o077 != 0 {', 'axon-fabric', '--lib', 'custodian::tests::a_nonce_store_others_can_reach_is_refused'),
+    ('M326', 'A56: a service leaf is owned by the service euid', 'crates/axon-fabric/src/protected_host.rs', '    if m.uid() != euid {', '    if false && m.uid() != euid {', 'axon-fabric', '--test protected_host', 'the_out_root_leaf_is_the_services_own_and_private'),
+    ('M327', 'A56: a service leaf has no group/other access (0700)', 'crates/axon-fabric/src/protected_host.rs', '    if m.mode() & 0o077 != 0 {', '    if false && m.mode() & 0o077 != 0 {', 'axon-fabric', '--test protected_host', 'the_out_root_leaf_is_the_services_own_and_private'),
     ('M328', 'A57: key-role separation is checked when the host config loads', 'crates/axon-fabric/src/protected_host.rs', '                observer_trust.check_separation().map_err(bad)?;', '                let _ = observer_trust.check_separation();', 'axon-fabric', '--test protected_host', 'an_observer_root_sharing_a_key_with_another_role_is_refused_at_load'),
     ('M329', 'A57: key-role separation is re-checked at every observation', 'crates/axon-fabric/src/observer.rs', '    cfg.trust.check_separation()?;', '    let _ = cfg.trust.check_separation();', 'axon-fabric', '--test psv_dispatch', 'an_observer_key_that_holds_another_role_is_refused_at_every_observation'),
     ('M330', "A57: the observer root never holds the host signer's key (C9 r2: the check moved to backend::exclusive_root_keys, one implementation for every Fabric trust read)", 'crates/axon-fabric/src/backend.rs', '        if mine.contains(&signer) {', '        if false && mine.contains(&signer) {', 'axon-fabric', '--test protected_host', 'an_observer_root_sharing_a_key_with_another_role_is_refused_at_load'),
@@ -1504,6 +1504,94 @@ MUTATIONS += [
 ]
 
 
+# ── C9 round 3, CUSTODIAN workstream (M620-M639; amendment 50, operator
+# decision D6): the nonce is issued, stored and spent by the custodian as its
+# own uid (negative-matrix A83); the root helper launches only on its ONE
+# observation, verified and spent at the root boundary (A84).
+_PL = 'crates/axon-fabric/src/privileged_launcher.rs'
+_CU = 'crates/axon-fabric/src/custodian.rs'
+_CB = 'crates/axon-fabric/src/bin/axon-custodian.rs'
+MUTATIONS += [
+    ('M620', 'A84: the root helper launches nothing without a verified observation', _PL,
+     '    let epoch = verify_observation_at_root(c, a, req, &m)?;',
+     '    let epoch = verify_observation_at_root(c, a, req, &m).unwrap_or(0);',
+     'axon-fabric', '--test privileged_launcher', 'a_root_launch_without_an_observation_launches_nothing'),
+    ('M621', 'A84: the root helper spends the nonce through the custodian (one nonce, one launch)', _PL,
+     '    spend_at_root(c, a, &m.observation_nonce, epoch, &req.psv_manifest_sha256)\n}',
+     '    let _ = spend_at_root(c, a, &m.observation_nonce, epoch, &req.psv_manifest_sha256);\n    Ok(())\n}',
+     'axon-fabric', '--test privileged_launcher', 'one_observation_launches_the_root_launcher_once'),
+    ('M622', 'A84: a nonce spends once (the store\'s atomic rename, in the custodian)',
+     'crates/axon-fabric/src/observer.rs',
+     '        std::fs::rename(&issued, &used).map_err(|_| format!("nonce {nonce} was already used"))',
+     '        std::fs::copy(&issued, &used)\n            .map(drop)\n            .map_err(|_| format!("nonce {nonce} was already used"))',
+     'axon-fabric', '--test privileged_launcher', 'one_observation_launches_the_root_launcher_once'),
+    ('M623', 'A84: the snapshot the root launcher boots is the manifest the request and its observation name', _PL,
+     '    if digest != req.psv_manifest_sha256 {',
+     '    if false && digest != req.psv_manifest_sha256 {',
+     'axon-fabric', '--test privileged_launcher', 'an_observation_of_another_manifest_launches_nothing'),
+    ('M624', 'D6: a dev custodian\'s spend never authorizes a root launch', _PL,
+     '        (Mode::Protected, _) | (Mode::Test, true)\n',
+     '        (Mode::Protected, _) | (Mode::Test, true) | (Mode::Dev, _)\n',
+     'axon-fabric', '--test privileged_launcher', 'a_dev_custodian_never_yields_a_protected_launch'),
+    ('M625', 'D6: a production helper launches only on a PROTECTED custodian\'s spend (not a test custodian\'s)', _PL,
+     '        (Mode::Protected, _) | (Mode::Test, true)\n',
+     '        (Mode::Protected, _) | (Mode::Test, _)\n',
+     'axon-fabric', '--lib', 'privileged_launcher::tests::only_a_protected_custodian_authorizes_a_production_launch'),
+    ('M626', 'A83: a client (the helper, Fabric) accepts a custodian socket only from the custodian uid or root (SO_PEERCRED)', _CU,
+     '        if peer != self.uid && peer != 0 {',
+     '        if false && peer != self.uid && peer != 0 {',
+     'axon-fabric', '--test privileged_launcher', 'a_custodian_socket_the_fabric_serves_is_refused_by_the_helper'),
+    ('M627', 'A83: the custodian issues a nonce to the Fabric uid only (SO_PEERCRED)', _CU,
+     '                if peer != self.cfg.fabric_uid {',
+     '                if false && peer != self.cfg.fabric_uid {',
+     'axon-fabric', '--lib', 'custodian::tests::only_fabric_is_issued_and_only_the_launcher_spends'),
+    ('M628', 'A83: only the launcher uid (the root helper) spends a nonce; never the Fabric', _CU,
+     '                if peer != self.cfg.launcher_uid {',
+     '                if false && peer != self.cfg.launcher_uid {',
+     'axon-fabric', '--lib', 'custodian::tests::only_fabric_is_issued_and_only_the_launcher_spends'),
+    ('M629', 'A83: a custodian config naming the Fabric uid as the custodian is refused', _CU,
+     '        if self.custodian_uid == self.fabric_uid {',
+     '        if false && self.custodian_uid == self.fabric_uid {',
+     'axon-fabric', '--lib', 'custodian::tests::a_custodian_that_is_the_fabric_is_refused'),
+    ('M630', 'A83: the nonce store is owned by the custodian euid', _CU,
+     '    if m.uid() != euid {',
+     '    if false && m.uid() != euid {',
+     'axon-fabric', '--lib', 'custodian::tests::a_nonce_store_others_can_reach_is_refused'),
+    ('M631', 'A83: the custodian checks its store before serving any request', _CB,
+     '    cu::check_store(&cfg.store, euid()).unwrap_or_else(|e| die(&e));',
+     '    let _ = cu::check_store(&cfg.store, euid());',
+     'axon-fabric', '--test custodian', 'a_custodian_refuses_a_store_others_can_reach'),
+    ('M632', 'A83: the custodian runs only as its configured custodian uid', _CB,
+     '    if euid() != c.custodian_uid {',
+     '    if false && euid() != c.custodian_uid {',
+     'axon-fabric', '--test custodian', 'a_custodian_runs_only_as_its_configured_uid'),
+    ('M633', 'A83: the helper config names a custodian that is neither the Fabric uid nor root', _PL,
+     '    if !a.test && (c.custodian.uid == c.fabric_uid || c.custodian.uid == 0) {',
+     '    if false && !a.test && (c.custodian.uid == c.fabric_uid || c.custodian.uid == 0) {',
+     'axon-fabric', '--lib', 'privileged_launcher::tests::a_helper_config_admitting_root_as_the_fabric_is_refused'),
+    ('M634', 'A83: the protected host config names a custodian that is neither the Fabric uid nor root', _PH,
+     '    if custodian_uid == euid || custodian_uid == 0 {',
+     '    if false && (custodian_uid == euid || custodian_uid == 0) {',
+     'axon-fabric', '--lib', 'protected_host::tests::a_custodian_that_is_the_fabric_uid_is_refused_on_a_protected_host'),
+    ('M635', 'A83: a host config giving Fabric a nonce store is refused', _PH,
+     '                if ob.get("nonce_store").is_some() {',
+     '                if false && ob.get("nonce_store").is_some() {',
+     'axon-fabric', '--test protected_host', 'a_host_config_giving_fabric_a_nonce_store_is_refused'),
+    ('M636', 'A83: the helper spends through the custodian the host config names', _PH,
+     '        !matches!(&o.custodian, crate::custodian::Custodian::Service(r) if *r == helper.custodian)',
+     '        { let _ = o; false }',
+     'axon-fabric', '--test protected_host', 'the_helper_config_must_agree_with_the_host_config'),
+    ('M637', 'A83/ADR-002: the helper config names the host\'s signer (kept out of its observer root)', _PH,
+     '    } else if helper.observer.host_signer_public_key != host.signer.public_key {',
+     '    } else if false {',
+     'axon-fabric', '--test protected_host', 'the_helper_config_must_agree_with_the_host_config'),
+    ('M638', 'A84/ADR-002: at the root boundary the observer root may not hold the host signer\'s key', _PL,
+     '            host_signer_public_key: Some(c.observer.host_signer_public_key.clone()),',
+     '            host_signer_public_key: None,',
+     'axon-fabric', '--test privileged_launcher', 'an_observation_signed_with_the_host_signer_launches_nothing'),
+]
+
+
 # Protected Check Isolation guards (governance/specs/v022-protected-check-isolation.md):
 # candidate code must not alter what the operator's check runs or what PASS
 # means. Kept here so nothing is lost, but certified under PCI, not G01
@@ -1766,6 +1854,8 @@ BINDING_IDS = {f"M{n}" for n in range(101, 137)}
 # 1b allocates M400-M499, round 2 M500-M519). An id outside every scope would silently fall into
 # g01.
 PSV_IDS = {f"M{n}" for n in range(137, 550)}
+# C9 round 3, CUSTODIAN workstream (amendment 50): protected-suite-verdict rows.
+PSV_IDS |= {f"M{n}" for n in range(620, 640)}
 
 
 def in_scope(mid, scope):
