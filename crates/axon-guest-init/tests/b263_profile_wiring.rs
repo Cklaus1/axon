@@ -211,3 +211,81 @@ fn guest_init_sh_mounts_every_psv_input_read_only() {
         );
     }
 }
+
+/// PSV mode (C9 round 2, harness): the key-holding runner is exec'd like the
+/// workload, under `env -i` and axon-guest-init. A `NAME=value` cmdline word
+/// the kernel copied into PID 1's environment must not reach the process that
+/// holds the completion secret. The older test above pins only the non-PSV
+/// `axon run` route.
+#[test]
+fn guest_init_sh_execs_the_psv_runner_under_axon_guest_init_inside_env_i() {
+    let sh = read("profiles/linux-microvm/guest-init.sh");
+    let runs: Vec<String> = logical_lines(&sh)
+        .into_iter()
+        .filter(|l| l.contains("/usr/bin/axon-psv-runner") && l.starts_with("exec "))
+        .collect();
+    assert_eq!(
+        runs.len(),
+        1,
+        "exactly one PSV runner launch expected: {runs:?}"
+    );
+    let l = &runs[0];
+    assert!(
+        l.starts_with("exec env -i ")
+            && l.contains(" /usr/bin/axon-guest-init /usr/bin/axon-psv-runner"),
+        "ATTACK: the PSV runner is launched outside `env -i` + axon-guest-init: {l}"
+    );
+}
+
+/// The PSV block of guest-init.sh, run against a fake cmdline: prints the
+/// manifest word it took, or the `B263-FAIL` reason it stopped on.
+fn psv_manifest_block(cmdline: &str) -> String {
+    let sh = read("profiles/linux-microvm/guest-init.sh");
+    let start = sh
+        .find("PSV_MSHA=\"\"; PSV_WORDS=0")
+        .expect("PSV block start");
+    let end_pat = "fail \"psv-ambiguous\"";
+    let end = sh.find(end_pat).expect("PSV block end") + end_pat.len();
+    let dir = std::env::temp_dir().join(format!(
+        "axon-b263-psv-words-{}-{}",
+        std::process::id(),
+        cmdline.len()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let cmd_path = dir.join("cmdline");
+    std::fs::write(&cmd_path, format!("{cmdline}\n")).unwrap();
+    let script = format!(
+        "fail() {{ echo \"B263-FAIL $1\"; exit 0; }}\nset -f\n{}\necho \"TOOK=$PSV_MSHA\"\n",
+        sh[start..end].replace("/proc/cmdline", &cmd_path.display().to_string())
+    );
+    let out = Command::new("sh")
+        .arg("-c")
+        .arg(&script)
+        .output()
+        .expect("run sh");
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(out.status.success(), "PSV block failed: {out:?}");
+    String::from_utf8(out.stdout).unwrap().trim().to_string()
+}
+
+/// A cmdline naming TWO launch manifests stops the guest (`psv-ambiguous`):
+/// the runner takes the FIRST `axon.psv.manifest=` word and /init reports the
+/// LAST on serial, so two words would let the verdict and the serial report
+/// name different manifests. Control: one word is taken as named.
+#[test]
+fn guest_init_sh_refuses_two_launch_manifest_words() {
+    let a = "a".repeat(64);
+    let b = "b".repeat(64);
+    assert_eq!(
+        psv_manifest_block(&format!("console=ttyS0 axon.psv.manifest={a}")),
+        format!("TOOK={a}"),
+        "control"
+    );
+    let got = psv_manifest_block(&format!(
+        "console=ttyS0 axon.psv.manifest={a} axon.psv.manifest={b}"
+    ));
+    assert_eq!(
+        got, "B263-FAIL psv-ambiguous",
+        "ATTACK: a cmdline naming two launch manifests was accepted: {got}"
+    );
+}

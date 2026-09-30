@@ -71,6 +71,9 @@ fn t_pair_breaks() { assert_eq(double(1), 5) }
 @[test]
 fn t_helper() { assert_eq(helper_want(), 42) }
 
+@[test]
+fn t_steer() { assert_eq(double(21), want()) }
+
 fn helper_want() -> i64 { want() }
 
 @[test]
@@ -441,7 +444,16 @@ fn a_forged_or_duplicated_result_line_is_not_a_pass() {
 fn a_suite_sibling_does_not_run_beside_the_registered_test() {
     let fx = fixture("t_pair", false);
     let v = run(&fx.cfg);
-    assert_eq!(v.status, GuestStatus::Passed, "{v:?}");
+    // The attack (M220): `t_pair_breaks`, which the filter matches as a
+    // SUBSTRING, ran beside the registered test. Only the interpreter's own
+    // result line for it counts (the verdict's report keeps just the named
+    // test); any other failure is the control below.
+    let out = std::fs::read_to_string(fx.cfg.out.join("test-stdout")).unwrap_or_default();
+    assert!(
+        !out.contains("\"name\":\"t_pair_breaks\""),
+        "ATTACK: a suite sibling ran beside the registered test t_pair: {out} {v:?}"
+    );
+    assert_eq!(v.status, GuestStatus::Passed, "control: {v:?}");
     assert_eq!(v.exit_code, Some(0));
     let r = v.report.unwrap();
     assert_eq!(r.passed, vec!["t_pair".to_string()]);
@@ -459,13 +471,59 @@ fn a_candidate_cannot_supply_the_registered_test() {
     assert!(v.report.unwrap().passed.is_empty());
 }
 
-/// The operator suite's own modules come first on the module path: a
-/// candidate that plants `helper.ax` does not replace the suite's helper.
+/// The operator suite's own modules come first on the module path (M177). An
+/// HONEST candidate that happens to hold a module named like one of the
+/// suite's (`helper.ax`) is judged against the suite's helper and passes.
+///
+/// With the order reversed, the candidate's copy is the first match for the
+/// suite's `use helper`: the sealed-import rule (M436) then refuses the run
+/// (E0901, Unknown), and without that rule the candidate's `want` defines the
+/// suite's helper (a keyed Failed for an honest candidate). Either way the
+/// verdict is no longer the suite's, and the order is the ONLY guard: M436
+/// turns a wrong verdict into no verdict, it does not restore the right one.
+/// The attack assertion fires only on evidence that the candidate's file was
+/// resolved first (its E0901, or the planted `want` failing `t_helper`); any
+/// other failure is the control below.
 #[test]
 fn a_candidate_cannot_shadow_the_suites_own_modules() {
     let fx = fixture("t_helper", false);
     let v = run(&fx.cfg);
-    assert_eq!(v.status, GuestStatus::Passed, "{v:?}");
+    let err = std::fs::read_to_string(fx.cfg.out.join("test-stderr")).unwrap_or_default();
+    let candidate_first = err.contains("module `helper`: a sealed module may not supply it")
+        || (v.status == GuestStatus::Failed
+            && v.report
+                .as_ref()
+                .is_some_and(|r| r.failed.iter().any(|t| t == "t_helper")));
+    assert!(
+        !candidate_first,
+        "ATTACK: the candidate's helper.ax was resolved before the suite's own helper: \
+         {:?} {v:?} {err}",
+        v.status
+    );
+    assert_eq!(v.status, GuestStatus::Passed, "control: {v:?} {err}");
+}
+
+/// The SECURITY reading of the same order: a candidate whose `double` is
+/// broken plants a `helper.ax` that moves the expected value to match. The
+/// suite's helper must judge it (Failed). Suite-first order (M177) and the
+/// sealed-import rule (M436) each refuse this alone; only with both removed
+/// does the planted helper define the suite's and the check PASS. The guest
+/// twin of Fabric's `a_candidate_cannot_shadow_a_module_of_the_suite`.
+#[test]
+fn a_planted_helper_cannot_steer_the_suite_to_pass() {
+    let fx = fixture_with(
+        "accept.ax",
+        "t_steer",
+        false,
+        "fn double(x: i64) -> i64 { x * 0 }\n",
+    );
+    let v = run(&fx.cfg);
+    let err = std::fs::read_to_string(fx.cfg.out.join("test-stderr")).unwrap_or_default();
+    assert_ne!(
+        v.status,
+        GuestStatus::Passed,
+        "ATTACK: the candidate's helper.ax judged its own broken double: {v:?} {err}"
+    );
 }
 
 /// The candidate runs SEALED (PCI, E0004): a candidate module that reads the

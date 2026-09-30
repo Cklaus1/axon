@@ -555,3 +555,79 @@ ATTACK_MARKERS = {
     'M548': r"ATTACK: a helper config admitting another uid than Fabric's was accepted",
     'M549': r"ATTACK: the launcher ran with the caller's real uid",
 }
+
+# ── C9 round 2, HARNESS workstream (amendment 43) ───────────────────────────
+# New rows M480-M492, and the round-2 audit of every marker that matched a
+# bare non-pass verdict, a generic status or a generic assertion shape: each
+# is tightened so it cannot also match another check's refusal or a setup
+# failure. Overrides are applied here, not in place, so the edit is additive.
+ATTACK_MARKERS.update({
+    # new rows
+    'M480': r'ATTACK: certified PASS despite the attack: \{[^\n]*"status":"PASS"',
+    'M481': r'ATTACK: readiness hung on a FIFO signature with no writer',
+    'M482': r'ATTACK: a FIFO served the checked record and the signed record as two reads',
+    'M483': r'ATTACK: a registered check was attested as a protected execution\s*\n\s*left: Ok\(\(\)\)',
+    'M484': r'ATTACK: an execution on a non-protected backend was attested as protected\s*\n\s*left: Ok\(\(\)\)',
+    'M485': r'ATTACK: an execution whose journal names no backend was attested as protected\s*\n\s*left: Ok\(\(\)\)',
+    'M486': r"ATTACK: a regular file was accepted as the service's own directory: Ok\(\(\)\)",
+    'M487': r"ATTACK: a symlinked service leaf was accepted as the service's own directory: Ok\(\(\)\)",
+    'M488': r'ATTACK: a signer key reached through a symlink out of the operator-owned key\s+directory was accepted and a protected run launched',
+    'M489': r'ATTACK: an entry whose extended attributes could not be listed was read as\s+carrying none: Ok\(\(\)\)',
+    'M490': r'ATTACK: a trust root writable by the process running readiness authorized: Ok\(\(\)\)',
+    'M491': r'ATTACK: a trust root writable by the process running readiness authorized: Ok\(\(\)\)',
+    'M492': r'ATTACK: the production readiness trust accepts a trust root the verifier can write',
+    # M04/M177: the ORDER, on the property only it guards (an honest
+    # candidate's colliding module is never resolved first). Was: any non-pass
+    # (M177), which M436's E0901 refusal matched (round-2 blocker).
+    'M04': r"ATTACK: the candidate's helper\.ax was resolved before the suite's own helper \(its\s+presence alone changed the verdict\)[^\n]*\n\s*left: (Unknown|Failed)",
+    'M177': r"ATTACK: the candidate's helper\.ax was resolved before the suite's own helper: (Unknown|Failed) ",
+    # M220: the sibling's own result line, not any non-pass verdict.
+    'M220': r'ATTACK: a suite sibling ran beside the registered test t_pair: .*\{"name":"t_pair_breaks","status":"failed"',
+    # M74: the attack's own value (the candidate's handler swallowed the
+    # operator's completion: 107), not any Err of an honest program.
+    'M74': r'ATTACK: a handler completion was caught by a `with` that did not install it\s*\n\s*left: Err\("assertion failed: 107 != 7"\)',
+    # M44: after a control run with no AXON_STRICT passes.
+    'M44': r"ATTACK: AXON_STRICT in the launcher's environment steered the signed verdict",
+    # M140: the run went on to read its arguments, i.e. past the signer check
+    # (the test pins the grant registry so nothing else refuses first).
+    'M140': r'ATTACK: a (group-readable host signer key|host signer key that does not derive its pin) was not refused: \{"kind":"usage","reason":"--tenant is required"',
+    # A launched observation shows a verdict of a run; NotRun is the refusal,
+    # and NotRequested is no launch either.
+    'M192': r'failed: op-obs--qualification-observer\s*\n\s*left: (Passed|Failed|Unknown)\s*\n\s*right: NotRun',
+    'M193': r'failed: op-obs-claims-other-key-observer-observer\s*\n\s*left: (Passed|Failed|Unknown)\s*\n\s*right: NotRun',
+    'M194': r'failed: op-obs-epoch-observer-observer\s*\n\s*left: (Passed|Failed|Unknown)\s*\n\s*right: NotRun',
+    'M195': r'failed: op-obs-stale-observer-observer\s*\n\s*left: (Passed|Failed|Unknown)\s*\n\s*right: NotRun',
+    'M200': r'failed: op-obs-other-manifest-observer-observer\s*\n\s*left: (Passed|Failed|Unknown)\s*\n\s*right: NotRun',
+    'M201': r'failed: op-obs-nonce-issued-elsewhere-observer-observer\s*\n\s*left: (Passed|Failed|Unknown)\s*\n\s*right: NotRun',
+    'M202': r'failed: op-obs-kernel-observer-observer\s*\n\s*left: (Passed|Failed|Unknown)\s*\n\s*right: NotRun',
+    # M204 swallows observe's Err for EVERY defective observation, so its
+    # attack is whichever case runs first; it must still be a LAUNCH.
+    'M204': r'failed: op-obs-[\w-]+\s*\n\s*left: (Passed|Failed|Unknown)\s*\n\s*right: NotRun',
+    'M227': r'failed: op-obs-verifier-[\w-]+\n\s*left: (Passed|Failed|Unknown)\n\s*right: NotRun',
+    # A forgery ACCEPTED is a verdict (Passed/Failed); any other non-Unknown
+    # would be another refusal.
+    'M239': r'failed: forge-fail\n\s*left: (Passed|Failed)\n\s*right: Unknown',
+    'M241': r'failed: swap-after\n\s*left: (Passed|Failed)\n\s*right: Unknown',
+    # It RAN (a run's status), not Denied/Canceled by another check.
+    'M265': r'failed: None\n\s*left: (Completed|Failed|TimedOut|OutcomeUnknown)\n\s*right: Unsupported',
+    'M310': r'failed: Some\(\"ok\"\)\n\s*left: (Completed|Failed|TimedOut|OutcomeUnknown)\n\s*right: Unsupported',
+    # These ATTACK messages sit on `is_err_and(contains(reason))`, which also
+    # fails on a refusal for another reason: only the printed Ok(()) is a load.
+    'M324': r"ATTACK: (runs|nonces) as an agent-owned leaf was accepted as the service's own private directory: Ok\(\(\)\)",
+    'M325': r"ATTACK: (runs|nonces) as an agent-owned leaf was accepted as the service's own private directory: Ok\(\(\)\)",
+    'M326': r"ATTACK: (runs|nonces) as an agent-owned leaf was accepted as the service's own private directory: Ok\(\(\)\)",
+    'M327': r"ATTACK: (runs|nonces) as a group-writable leaf was accepted as the service's own private directory: Ok\(\(\)\)",
+    'M328': r"ATTACK: an observer root holding the host signer's public key loaded: Ok\(\(\)\)",
+    'M330': r"ATTACK: an observer root holding the host signer's public key loaded: Ok\(\(\)\)",
+    'M331': r'ATTACK: an observer key that is also a [a-z]+ key loaded: Ok\(\(\)\)',
+})
+ATTACK_MARKERS.update({
+    # guest-init.sh (the script text; the boot test proves it in effect)
+    'M493': r'ro missing: mount -t ext4 -o nodev,nosuid,noexec /dev/vdc /in/candidate',
+    'M494': r'ro missing: mount -t ext4 -o nodev,nosuid,noexec /dev/vdd /in/suite',
+    'M495': r'ro missing: mount -t ext4 -o nodev,nosuid,noexec /dev/vde /in/job',
+    'M496': r'noexec missing: mount -t ext4 -o ro,nodev,nosuid /dev/vdc /in/candidate',
+    'M497': r'ATTACK: a cmdline naming two launch manifests was accepted: TOOK=',
+    'M498': r'ATTACK: the PSV runner is launched outside `env -i` \+ axon-guest-init: exec env PATH=',
+    'M499': r'workload must be exec.d inside `env -i`: exec env PATH=',
+})

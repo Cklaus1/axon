@@ -910,3 +910,30 @@ fn an_owner_writable_signer_key_signs_nothing() {
     );
     assert_refused("0600 key", &r, 4, "unregistered", "writable by no one");
 }
+
+/// The signer key is opened ONCE, never through a symlink (C9 round 2,
+/// harness): the directory the operator-ownership check walks (M146) is the
+/// directory whose file is read. A `key_path` that is a symlink to the same
+/// 0400 key held elsewhere passes every other check (the key file is the
+/// service's, 0400, and derives its pin), so only `O_NOFOLLOW` refuses it.
+/// Control: the key in place signs.
+#[test]
+fn a_symlinked_signer_key_signs_nothing() {
+    let h = Host::new();
+    let (c, out) = h.submit(&h.linux_request("op-s0", "grant:x"), None);
+    assert_eq!(c, 0, "{out}");
+    assert_eq!(launches(&h), 1);
+    let key = h.p("keys/attest.pk8");
+    let away = h.p("elsewhere/attest.pk8");
+    std::fs::create_dir_all(away.parent().unwrap()).unwrap();
+    std::fs::rename(&key, &away).unwrap();
+    std::os::unix::fs::symlink(&away, &key).unwrap();
+    let r = h.submit(&h.linux_request("op-s1", "grant:x"), None);
+    assert!(
+        r.0 != 0 && launches(&h) == 1,
+        "ATTACK: a signer key reached through a symlink out of the operator-owned key \
+         directory was accepted and a protected run launched: {}",
+        r.1
+    );
+    assert_refused("symlinked key", &r, 4, "unregistered", "a symlink");
+}

@@ -604,33 +604,6 @@
       "commit": "a49f6a3f47542314d22645a5fc2f5a38965e4c9b"
     },
     {
-      "mutation": "M04",
-      "status": "EQUIVALENT_DID",
-      "kind": "pair",
-      "property": "a candidate module never shadows a suite module's name",
-      "original_guard": {
-        "file": "crates/axon-fabric/src/submit.rs"
-      },
-      "subsumed_by": [
-        "M436"
-      ],
-      "live_killing_mutant": "joint:M04+M436",
-      "all_paths": "Fabric always runs a check with the candidate SEALED (--seal), so a candidate module shadowing a suite name is a name that a sealed dir and an unsealed dir both hold. With the order reversed (M04 off), that name's first match is the sealed copy, and load_module_recursive's first-match rule (M436) refuses exactly that (E0901), for every importer; with M436 off, suite-first order finds the suite's copy first. Only with both off does the candidate's copy define the suite's module",
-      "matrix": {
-        "baseline": "ATTACK_REFUSED",
-        "retired_guard_disabled": "ATTACK_REFUSED",
-        "guard_set_disabled": "ATTACK_SUCCEEDS",
-        "guard_set": [
-          "M04",
-          "M436"
-        ],
-        "retired_guard_full_suite": "SUITE_OK",
-        "sibling_set_disabled": "ATTACK_REFUSED"
-      },
-      "holds": true,
-      "commit": "a49f6a3f47542314d22645a5fc2f5a38965e4c9b"
-    },
-    {
       "mutation": "M176",
       "status": "STALE_REFACTORED",
       "property": "a pass needs exit 0",

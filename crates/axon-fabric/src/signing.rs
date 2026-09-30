@@ -333,6 +333,45 @@ mod tests {
         );
     }
 
+    /// C9 round 2 (harness): each arm of the decision is the ONLY refusal on
+    /// its input. Every case below carries a fully OBSERVED receipt and is not
+    /// replayed, so with the arm removed nothing else refuses it.
+    #[test]
+    fn a_registered_check_is_never_attested_as_an_execution() {
+        let vm = ran_as(LINUX_MICROVM_PROTECTED.id, "IO", "protected");
+        assert_eq!(
+            execution_attestation_decision(
+                &req("registered_check", "check:acc@1"),
+                &receipt(&OBSERVED),
+                false,
+                Some(&vm)
+            ),
+            Err(NOT_AN_EXECUTION),
+            "ATTACK: a registered check was attested as a protected execution"
+        );
+    }
+
+    #[test]
+    fn an_execution_on_another_backend_is_never_attested() {
+        let exec = req("interpreter_run", "prog.ax");
+        let local = ran_as(LOCAL_INTERPRETER.id, "", "protected");
+        assert_eq!(
+            execution_attestation_decision(&exec, &receipt(&OBSERVED), false, Some(&local)),
+            Err(NOT_PROTECTED_EXECUTION),
+            "ATTACK: an execution on a non-protected backend was attested as protected"
+        );
+    }
+
+    #[test]
+    fn an_execution_with_no_journal_backend_is_never_attested() {
+        let exec = req("interpreter_run", "prog.ax");
+        assert_eq!(
+            execution_attestation_decision(&exec, &receipt(&OBSERVED), false, None),
+            Err(KEY_REACHABLE),
+            "ATTACK: an execution whose journal names no backend was attested as protected"
+        );
+    }
+
     #[test]
     fn an_unobserved_protected_profile_execution_is_never_attested() {
         let exec = req("interpreter_run", "prog.ax");

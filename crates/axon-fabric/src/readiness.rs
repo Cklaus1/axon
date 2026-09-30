@@ -824,3 +824,41 @@ pub fn protected_components(repo: &Path, trust: &ReadinessTrust) -> Value {
         "components": out,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// C9 round 2 (harness): a trust root the process running readiness can
+    /// WRITE authorizes nothing. Production requires it (`operator()`), and
+    /// `check()` enforces it through `writable_by_me` over the root, its
+    /// ancestors and its entries. Here the roots are root-owned and 0700, so
+    /// every OTHER trust check passes and only the writability check refuses:
+    /// the process that made them (the test, as root) can write them.
+    #[cfg(unix)]
+    #[test]
+    fn a_trust_root_this_process_can_write_authorizes_nothing() {
+        assert!(
+            ReadinessTrust::operator().require_unwritable,
+            "ATTACK: the production readiness trust accepts a trust root the verifier can write"
+        );
+        if unsafe { libc::geteuid() } != 0 {
+            eprintln!("skipped: the trust roots must be root-owned");
+            return;
+        }
+        let d = tempfile::tempdir().unwrap();
+        let issuers = d.path().join("qualification");
+        for r in ["qualification", "observer", "verifier"] {
+            std::fs::create_dir(d.path().join(r)).unwrap();
+        }
+        let mut t = ReadinessTrust::test(d.path(), &issuers);
+        t.check()
+            .expect("control: the same roots pass every other trust check");
+        t.require_unwritable = true;
+        let got = t.check();
+        assert!(
+            got.is_err(),
+            "ATTACK: a trust root writable by the process running readiness authorized: {got:?}"
+        );
+    }
+}

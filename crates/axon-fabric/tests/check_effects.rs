@@ -583,12 +583,49 @@ fn a_candidate_cannot_shadow_a_module_of_the_suite() {
     ]);
     let sub = submit(&r.to_string(), &s.env.cfg(0)).unwrap();
     // Suite-first order (M04) and the sealed-import rule (M436) each refuse
-    // this alone (M04's four-cell record): Failed with the order, Unknown when
-    // only M436 stands. The attack is the check PASSING.
+    // this alone: Failed with the order, Unknown when only M436 stands. The
+    // attack is the check PASSING, and needs both removed. M04's own row is
+    // the honest candidate below, where the order is the only guard.
     assert_ne!(
         sub.receipt.verification,
         ReceiptVerification::Passed,
         "ATTACK: the candidate's helper.ax judged its own broken double: {:?} {:?}",
+        sub.reason,
+        sub.check_report
+    );
+}
+
+/// The ORDER itself (M04), which the sealed-import rule does not restore: an
+/// HONEST candidate that happens to hold a module named like one of the
+/// suite's (`helper.ax`) is judged against the suite's helper and passes.
+/// With the order reversed, the candidate's copy is the first match for the
+/// suite's `use helper`: the sealed-import rule (M436) refuses the run (E0901,
+/// Unknown), and without it the candidate's `want` defines the suite's helper
+/// (Failed). The order is the only guard of the right verdict; the Fabric
+/// twin of the guest runner's `a_candidate_cannot_shadow_the_suites_own_modules`
+/// (M177). Fabric reports no interpreter stderr, so the discriminator is a
+/// CONTROL: the same honest candidate WITHOUT `helper.ax` passes first, and
+/// the two submissions differ only by that file, which the candidate itself
+/// never imports. With the suite first it is never reached, so its presence
+/// alone changing the verdict is the candidate's file being resolved.
+#[test]
+fn an_honest_candidate_holding_a_suite_module_name_is_judged_by_the_suite() {
+    let (s, r) = suite_with_helper(&[]);
+    let sub = submit(&r.to_string(), &s.env.cfg(0)).unwrap();
+    assert_eq!(
+        sub.receipt.verification,
+        ReceiptVerification::Passed,
+        "control: {:?} {:?}",
+        sub.reason,
+        sub.check_report
+    );
+    let (s, r) = suite_with_helper(&[("helper.ax", "fn want() -> i64 { 0 }\n")]);
+    let sub = submit(&r.to_string(), &s.env.cfg(0)).unwrap();
+    assert_eq!(
+        sub.receipt.verification,
+        ReceiptVerification::Passed,
+        "ATTACK: the candidate's helper.ax was resolved before the suite's own helper (its \
+         presence alone changed the verdict): {:?} {:?}",
         sub.reason,
         sub.check_report
     );

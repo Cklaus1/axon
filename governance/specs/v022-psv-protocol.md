@@ -827,6 +827,48 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       loop-side qualification join remains a FUTURE item.
     - Not done here (MINOR, not in this workstream): the manifest's `limits` are not joined to the
       request's limits.
+43. **An only-guard route, or a retirement, for every weak or missing row (mutation evidence;
+    C9 round 2, harness).** The round-2 EQUIVALENCE review found M177 scored KILLED on M436's
+    E0901 refusal, markers that matched any non-pass or any refusal, and load-bearing guards with
+    no row.
+    - **The module order (M177 guest, M04 Fabric).** The security attack, a planted `helper.ax`
+      steering a broken candidate to PASS, needs both the order and the first-match rule (M436)
+      removed. The order alone guards another property: an HONEST candidate holding a module named
+      like a suite module is judged by the suite's module. With the order reversed, M436 turns that
+      into no verdict (E0901) and, without M436, a wrong one. Both rows are ACTIVE on that
+      property. Their tests fire only on evidence that the candidate's file was resolved first
+      (its E0901, the planted value failing the test, or, in Fabric, a verdict that differs from a
+      control submission only by that file). M04 was retired in round 1b against M436. It is
+      reinstated, because its full-suite cell now fails on that test. The joint security attack
+      stays as a test on both routes.
+    - **Markers.** Every marker that matched a bare non-pass verdict, a generic status or an
+      `is_err_and(contains(reason))` shape now requires the attack's own evidence: the sibling's
+      result line (M220), the attack's value 107 (M74), a control run (M44), the run reading its
+      arguments (M140), a launched verdict rather than any non-`NotRun` (M192-M204, M227), an
+      accepted forgery (M239, M241), a run status (M265, M310), a printed `Ok(())` (M324-M331).
+      An `unwrap_err()` on an `Ok` marker is acceptance by construction: an `Ok` cannot come from
+      a refusal, and a setup failure panics elsewhere.
+    - **New ACTIVE rows (M480-M499).** `read_regular`'s O_NOFOLLOW and O_NONBLOCK, each arm of
+      `execution_attestation_decision`, a service leaf being a directory, the signer key's
+      O_NOFOLLOW, `no_xattr` failing closed, readiness's unwritable-root check (its enforcement,
+      `writable_by_me`, and the production flag). For guest-init.sh: the input drives' `ro` and
+      `noexec` options, the one-manifest-word rule (the script's own block, run against fake
+      cmdlines), and `env -i` for the PSV runner and for the non-PSV workload.
+    - **Retired (four-cell).** `read_regular`'s regular-file check (M482) against the non-blocking
+      open and the one-read rule (M481, M335). With every decision made on one read, a FIFO serves
+      nothing a regular file could not. `service_leaf`'s symlink check (M487) against `is_dir`
+      (M486) and the mode check (M327). The tests on those routes accept any refusal, so neither
+      retired check's reason text is asserted.
+    - **guest-init.sh.** A row pins only the script's text. That the kernel applied it is the boot
+      test's job: `psv_guest_boot_test.sh` gains a `mounts` case, in which the test child reads
+      `/proc/mounts`. The `/out` bind mount and the serial digests are covered by the `pass` and
+      `tampered` cases. The cgroup ceilings are B263 evidence, not a verdict property, and have no
+      row. A boot SKIP (77) proves nothing.
+    - **Full-suite cell.** For a retired row, the cell also runs every consumer of the guard's
+      crate: its workspace reverse dependencies and, for axon-core, every package that execs the
+      interpreter binary (it names `AXON_BIN`). The list is derived from the tree. Each consumer
+      runs in its own configuration with `AXON_BIN` set. A consumer suite that fails on the clean
+      tree makes the cell CONSUMER_BASELINE_BROKEN, never a pass.
 44. **Operator decisions B, C and E (2026-09-29): strict protected counting; git-ignore has no
     security authority; protected answers come from a standalone clone (C9 round 2, bce
     workstream).** The operator adopted these as written.

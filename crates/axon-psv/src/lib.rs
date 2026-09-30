@@ -673,3 +673,28 @@ impl PreflightObservation {
         Ok(())
     }
 }
+
+#[cfg(all(test, target_os = "linux"))]
+mod xattr_tests {
+    use super::*;
+
+    /// C9 round 2 (harness): where an entry's extended attributes cannot be
+    /// LISTED, it is never read as carrying none. `llistxattr` fails on an
+    /// entry that vanished between the directory read and the listing (or
+    /// one it cannot reach); only `ENOTSUP` (a filesystem with no attributes
+    /// at all) means "none". Control: a plain file lists none.
+    #[test]
+    fn an_entry_whose_attributes_cannot_be_listed_is_never_read_as_clean() {
+        let d = tempfile::tempdir().unwrap();
+        let f = d.path().join("f.ax");
+        std::fs::write(&f, "x").unwrap();
+        no_xattr(&f, "f.ax").expect("control: a plain file carries no attribute");
+        let gone = d.path().join("vanished.ax");
+        let got = no_xattr(&gone, "vanished.ax");
+        assert!(
+            got.is_err(),
+            "ATTACK: an entry whose extended attributes could not be listed was read as \
+             carrying none: {got:?}"
+        );
+    }
+}

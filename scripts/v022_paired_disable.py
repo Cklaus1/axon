@@ -86,7 +86,56 @@ def row_flags(target):
     return " ".join(out)
 
 
-def full_suite_ok(pkg, flags=""):
+def _workspace_packages():
+    """{name: [workspace deps (normal, dev, build)]} from cargo metadata."""
+    r = sh("cargo metadata --format-version 1 --no-deps")
+    meta = json.loads(r.stdout)
+    names = {p["name"] for p in meta["packages"]}
+    return {p["name"]: sorted({d["name"] for d in p["dependencies"] if d["name"] in names})
+            for p in meta["packages"]}
+
+
+def consumer_packages(owner):
+    """Every package whose tests exercise `owner`'s code, other than `owner`
+    (C9 round 2, harness; the consumer-suite gap that hid M254):
+
+    * its workspace REVERSE dependencies (they link `owner`'s library), and
+    * for axon-core, every package whose tests or sources exec the `axon`
+      INTERPRETER BINARY (they name `AXON_BIN`): axon-fabric's check runs,
+      axon-psv's runner, axon-cortex's executor and the rest link nothing of
+      axon-core, so no dependency edge names them.
+
+    Derived from the tree, not a list, so a new consumer joins the cell."""
+    pk = _workspace_packages()
+    out = {n for n, deps in pk.items() if owner in deps}
+    if owner == "axon-core":
+        r = sh("grep -rl AXON_BIN crates/*/src crates/*/tests 2>/dev/null")
+        out |= {line.split("/")[1] for line in r.stdout.split() if line.startswith("crates/")}
+    out.discard(owner)
+    return sorted(n for n in out if n in pk)
+
+
+CONSUMER_BASELINE = {}
+# One test thread per consumer suite: several consumers' tests write an
+# executable stand-in and exec it while another test thread forks, and the
+# fork's inherited write fd makes the exec fail ETXTBSY ("Text file busy").
+# Measured on the CLEAN tree: axon-psv's runner suite failed 1 run in 3 that
+# way inside the harness, which read as SUITE_BROKEN for rows it says nothing
+# about (C9 round 2).
+CONSUMER_FLAGS = "-- --test-threads=1"
+
+
+def interpreter_env():
+    """Consumers exec target/debug/axon: name it, so none of them falls back
+    to a stale or ambient binary (axon-os looks under the WORKSPACE target
+    dir, not CARGO_TARGET_DIR, and SKIPS when nothing is there). Consumers
+    only: axon-core's own parity tests read AXON_BIN as a NATIVE (codegen)
+    compiler, which the interpreter build is not."""
+    target = os.environ.get("CARGO_TARGET_DIR", os.path.join(ROOT, "target"))
+    return f"AXON_BIN={os.path.join(target, 'debug', 'axon')} "
+
+
+def full_suite_ok(pkg, flags="", env=""):
     """True iff the WHOLE package suite passes. A retired (equivalent) guard,
     removed ALONE, must not break ANY test in the package — not merely its own
     --exact test. This closes the methodology gap the C8 certifying review
@@ -98,7 +147,7 @@ def full_suite_ok(pkg, flags=""):
     broken build."""
     import re as _re
     cmd = ("source scripts/lib_bounded_run.sh && "
-           f"bounded_run 12G 1800 cargo test -q -p {pkg} {flags} 2>&1")
+           f"{env}bounded_run 12G 2400 cargo test -q -p {pkg} {flags} 2>&1")
     r = sh(cmd)
     out = r.stdout + r.stderr
     if "could not compile" in out or "error[E" in out:
@@ -208,8 +257,9 @@ def main():
         "M273": {"siblings": ["M401"], "kind": "pair"},
         "M401": {"siblings": ["M273"], "kind": "pair"},
         # C9 round 1b (core workstream): EQUIV_RECORD[...]["all_paths"].
-        # C9 round 1b, integration: M04 vs the first-match rule M436.
-        "M04": {"siblings": ["M436"], "kind": "pair"},
+        # C9 round 1b, integration: M04 vs the first-match rule M436 --
+        # REINSTATED ACTIVE in C9 round 2 (harness): the order alone guards an
+        # honest candidate's verdict, and its full-suite cell fails on that.
         # C9 round 2: provenance skip-worktree tag vs the byte comparison.
         "M346": {"siblings": ["M451"], "kind": "pair"},
         # C9 round 2 (decision C): git untracked views vs the filesystem walk.
@@ -217,6 +267,11 @@ def main():
         "M414": {"siblings": ["M501"], "kind": "pair"},
         "M60": {"siblings": ["M69"], "kind": "pair"},
         "M89": {"siblings": ["M86", "M96"], "kind": "set"},
+        # C9 round 2 (harness): read_regular's regular-file check vs the
+        # non-blocking open (M481) and the one-read rule (M335); service_leaf's
+        # symlink check vs is_dir (M486) and the mode check (M327).
+        "M482": {"siblings": ["M481", "M335"], "kind": "set"},
+        "M487": {"siblings": ["M486", "M327"], "kind": "set"},
     }
     # Every retired row has a matrix and no active row has one.
     if set(GUARD_SETS) != set(mut.EQUIVALENT_DID):
@@ -291,18 +346,61 @@ def main():
                 owner = row[2].split("/")[1] if row[2].startswith("crates/") else pkg
                 pkgs = pkg if owner == pkg else f"{pkg} -p {owner}"
                 fok, fails = full_suite_ok(pkgs, row_flags(target))
+                # ...and every CONSUMER of the owner crate, each in its own
+                # default configuration (C9 round 2: the row's flags, e.g.
+                # axon-core's --no-default-features, are not theirs).
+                states = {}
+                for c in consumers:
+                    cok, cfails = full_suite_ok(c, CONSUMER_FLAGS, env=interpreter_env())
+                    states[c] = "COMPILE_ERROR" if cok is None else ("SUITE_OK" if cok else "SUITE_BROKEN")
+                    if cok is False:
+                        # Named per consumer, ahead of the owner's (the record
+                        # keeps the first 12).
+                        fails = [f"{c}: {t}" for t in cfails][:6] + [f"{c}: (suite failed)"] + fails
             finally:
                 rest()
                 if any(e[0].startswith("crates/axon-core/") for e in edits):
                     build_axon()
-            if fok is None:
-                return "COMPILE_ERROR", []
-            return ("SUITE_OK" if fok else "SUITE_BROKEN"), fails
-        full_state, full_fails = full_after(a)
+            if fok is None or "COMPILE_ERROR" in states.values():
+                return "COMPILE_ERROR", [], states
+            ok_all = fok and all(v == "SUITE_OK" for v in states.values())
+            return ("SUITE_OK" if ok_all else "SUITE_BROKEN"), fails, states
+        owner_crate = row[2].split("/")[1] if row[2].startswith("crates/") else pkg
+        consumers = [c for c in consumer_packages(owner_crate) if c != pkg]
+        # A consumer suite that is red on the CLEAN tree says nothing about the
+        # guard (an environment failure must not read as evidence, and must
+        # not read as a pass either): it makes the cell CONSUMER_BASELINE_BROKEN.
+        cons_base = {}
+        for c in consumers:
+            if c not in CONSUMER_BASELINE:  # the clean tree is the same for every row
+                cok, _ = full_suite_ok(c, CONSUMER_FLAGS, env=interpreter_env())
+                CONSUMER_BASELINE[c] = "SUITE_OK" if cok else ("COMPILE_ERROR" if cok is None else "SUITE_BROKEN")
+            cons_base[c] = CONSUMER_BASELINE[c]
+        # The row's own package set too (C9 round 2): axon-core's native-parity
+        # harnesses read `target/debug/axon` under the WORKSPACE, whatever
+        # CARGO_TARGET_DIR says, so under a private target dir they fail on
+        # the clean tree, and that read as SUITE_BROKEN for M58/M60/M89.
+        own_pkgs = pkg if owner_crate == pkg else f"{pkg} -p {owner_crate}"
+        own_key = (own_pkgs, row_flags(target))
+        if own_key not in CONSUMER_BASELINE:
+            ook, ofails = full_suite_ok(own_pkgs, row_flags(target))
+            CONSUMER_BASELINE[own_key] = ("SUITE_OK" if ook else
+                                          ("COMPILE_ERROR" if ook is None else "SUITE_BROKEN"), ofails)
+        own_base, own_base_fails = CONSUMER_BASELINE[own_key]
+        if own_base != "SUITE_OK":
+            full_state, full_fails, cons_states = "BASELINE_BROKEN", [
+                f"{own_pkgs}: {own_base} on the clean tree"] + list(own_base_fails)[:11], {}
+        elif any(v != "SUITE_OK" for v in cons_base.values()):
+            full_state, full_fails, cons_states = "CONSUMER_BASELINE_BROKEN", [
+                f"{c}: {v} on the clean tree" for c, v in cons_base.items() if v != "SUITE_OK"], {}
+        else:
+            full_state, full_fails, cons_states = full_after(a)
 
         matrix = {"baseline": baseline, "retired_guard_disabled": retired_only,
                   "guard_set_disabled": joint, "guard_set": [rid] + sibs,
-                  "retired_guard_full_suite": full_state}
+                  "retired_guard_full_suite": full_state,
+                  "full_suite_packages": [pkg] + ([owner_crate] if owner_crate != pkg else []) + consumers,
+                  "consumer_suites": cons_states}
         if full_fails:
             matrix["retired_guard_full_suite_failures"] = full_fails[:12]
         sib_only = phase(b)              # B removed, A present

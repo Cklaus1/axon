@@ -485,8 +485,10 @@ fn the_out_root_and_nonce_store_leaves_are_the_services_own_and_private() {
         std::fs::set_permissions(h.config(), std::fs::Permissions::from_mode(0o644)).unwrap();
         ProtectedHost::for_test(&h.config(), Some(base), h.trust())
     };
+    // A symlinked leaf is a_symlinked_service_leaf_is_refused (any refusal:
+    // three checks refuse it, and the symlink check is retired, M487).
     type Breaker = (&'static str, &'static str, fn(&Path));
-    let cases: [Breaker; 5] = [
+    let cases: [Breaker; 4] = [
         ("an agent-owned leaf", "not the service uid", |p| {
             std::os::unix::fs::chown(p, Some(1000), None).unwrap()
         }),
@@ -500,11 +502,6 @@ fn the_out_root_and_nonce_store_leaves_are_the_services_own_and_private() {
             "accessible to group or other",
             |p| std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o703)).unwrap(),
         ),
-        ("a symlinked leaf", "symlink", |p| {
-            let real = p.with_extension("real");
-            std::fs::rename(p, &real).unwrap();
-            std::os::unix::fs::symlink(&real, p).unwrap();
-        }),
         ("an absent leaf", "must exist", |p| {
             std::fs::remove_dir(p).unwrap()
         }),
@@ -533,6 +530,78 @@ fn the_out_root_and_nonce_store_leaves_are_the_services_own_and_private() {
             with(h.p("runs"), h.p("nonces")).expect("control: restored leaves load");
         }
     }
+}
+
+/// A host whose `out_root` leaf is the service's own 0700 directory, with the
+/// loader for it (root only: the fixtures are root-owned).
+fn leaf_host() -> Option<(Host, PathBuf)> {
+    if unsafe { libc::geteuid() } != 0 {
+        eprintln!("skipped: needs root to create root-owned fixtures");
+        return None;
+    }
+    let h = Host::new();
+    let base = h.env.dir.path().to_path_buf();
+    for d in [base.clone(), h.root.clone(), h.p("dist"), h.p("keys")] {
+        std::fs::set_permissions(&d, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    for f in [
+        "launcher.sh",
+        "manifest.json",
+        "registry.json",
+        "evidence.json",
+    ] {
+        std::fs::set_permissions(h.p(f), std::fs::Permissions::from_mode(0o644)).unwrap();
+    }
+    h.write_config(|v| v["out_root"] = json!(h.p("runs")));
+    std::fs::set_permissions(h.config(), std::fs::Permissions::from_mode(0o644)).unwrap();
+    std::fs::set_permissions(h.p("runs"), std::fs::Permissions::from_mode(0o700)).unwrap();
+    ProtectedHost::for_test(&h.config(), Some(&base), h.trust())
+        .expect("control: the service's own 0700 directory loads");
+    Some((h, base))
+}
+
+/// A service leaf that is a SYMLINK to the service's own 0700 directory is
+/// refused (C9 round 2, harness). Three checks refuse it: the symlink check,
+/// `!is_dir()` (symlink_metadata never reports a directory for a link) and the
+/// mode check (a Linux link is 0777), so any refusal is accepted here and the
+/// symlink check is retired against the other two (four-cell record). The
+/// ATTACK fires only when the link LOADS.
+#[test]
+fn a_symlinked_service_leaf_is_refused() {
+    let Some((h, base)) = leaf_host() else { return };
+    let runs = h.p("runs");
+    let real = h.p("runs-real");
+    std::fs::rename(&runs, &real).unwrap();
+    std::os::unix::fs::symlink(&real, &runs).unwrap();
+    let got = ProtectedHost::for_test(&h.config(), Some(&base), h.trust());
+    assert!(
+        got.is_err(),
+        "ATTACK: a symlinked service leaf was accepted as the service's own directory: {:?}",
+        got.map(|_| ())
+    );
+}
+
+/// A service leaf that is a REGULAR FILE (the service's own, 0600) is refused:
+/// only `!is_dir()` refuses it (C9 round 2, harness). The ATTACK fires only
+/// when it LOADS; a refusal for another reason is reported separately.
+#[test]
+fn a_regular_file_service_leaf_is_refused() {
+    let Some((h, base)) = leaf_host() else { return };
+    let runs = h.p("runs");
+    std::fs::remove_dir(&runs).unwrap();
+    std::fs::write(&runs, "").unwrap();
+    std::fs::set_permissions(&runs, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let got = ProtectedHost::for_test(&h.config(), Some(&base), h.trust());
+    assert!(
+        got.is_err(),
+        "ATTACK: a regular file was accepted as the service's own directory: {:?}",
+        got.map(|_| ())
+    );
+    assert!(
+        got.as_ref().is_err_and(|e| e.contains("not a directory")),
+        "refused for another reason: {:?}",
+        got.map(|_| ())
+    );
 }
 
 /// ADR-002 key-role separation when the host config LOADS (C9 dev review

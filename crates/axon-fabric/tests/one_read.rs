@@ -123,7 +123,11 @@ fn a_record_served_twice_by_a_fifo_certifies_nothing() {
         "ATTACK: a FIFO served the checked record and the signed record as two reads, and \
          the operator's signature over the certified revision certified the agent's commit: {v}"
     );
-    assert!(v.to_string().contains("not a regular file"), "{v}");
+    // Not WHICH layer refused it: `read_regular`'s regular-file check, and
+    // reading the record ONCE (M335; a non-blocking open of a FIFO whose
+    // writer has not yet connected also reads EOF), each refuse this alone.
+    // The regular-file check is retired against them (four-cell record,
+    // C9 round 2); its only unique effect is naming the FIFO in the reason.
 }
 
 #[test]
@@ -278,10 +282,13 @@ fn a_signature_fifo_with_no_writer_does_not_hang_readiness() {
     });
     let v = rx
         .recv_timeout(Duration::from_secs(60))
-        .expect("readiness hung on a FIFO signature");
+        .expect("ATTACK: readiness hung on a FIFO signature with no writer");
+    // The non-blocking open (read_regular's O_NONBLOCK) is the ONLY guard of
+    // the hang: the regular-file check runs after the open returns, so it
+    // cannot stop an open that blocks. Which layer then refuses the FIFO is
+    // not asserted (see a_record_served_twice_by_a_fifo_certifies_nothing).
     let pb = &v["components"]["protected_backend"];
     assert_ne!(pb["status"], "PASS", "{pb}");
-    assert!(pb.to_string().contains("not a regular file"), "{pb}");
 }
 
 // ── the B263 qualification: one read of the profile manifest ────────────────
