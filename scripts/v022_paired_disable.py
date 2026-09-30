@@ -372,7 +372,21 @@ def main():
                 cok, _ = full_suite_ok(c, CONSUMER_FLAGS, env=interpreter_env())
                 CONSUMER_BASELINE[c] = "SUITE_OK" if cok else ("COMPILE_ERROR" if cok is None else "SUITE_BROKEN")
             cons_base[c] = CONSUMER_BASELINE[c]
-        if any(v != "SUITE_OK" for v in cons_base.values()):
+        # The row's own package set too (C9 round 2): axon-core's native-parity
+        # harnesses read `target/debug/axon` under the WORKSPACE, whatever
+        # CARGO_TARGET_DIR says, so under a private target dir they fail on
+        # the clean tree, and that read as SUITE_BROKEN for M58/M60/M89.
+        own_pkgs = pkg if owner_crate == pkg else f"{pkg} -p {owner_crate}"
+        own_key = (own_pkgs, row_flags(target))
+        if own_key not in CONSUMER_BASELINE:
+            ook, ofails = full_suite_ok(own_pkgs, row_flags(target))
+            CONSUMER_BASELINE[own_key] = ("SUITE_OK" if ook else
+                                          ("COMPILE_ERROR" if ook is None else "SUITE_BROKEN"), ofails)
+        own_base, own_base_fails = CONSUMER_BASELINE[own_key]
+        if own_base != "SUITE_OK":
+            full_state, full_fails, cons_states = "BASELINE_BROKEN", [
+                f"{own_pkgs}: {own_base} on the clean tree"] + list(own_base_fails)[:11], {}
+        elif any(v != "SUITE_OK" for v in cons_base.values()):
             full_state, full_fails, cons_states = "CONSUMER_BASELINE_BROKEN", [
                 f"{c}: {v} on the clean tree" for c, v in cons_base.items() if v != "SUITE_OK"], {}
         else:
