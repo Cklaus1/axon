@@ -7,6 +7,7 @@
 //! * `--exact` selects only the test with exactly the filter's name.
 //!   Control: without it the substring sibling runs.
 
+mod common;
 use std::path::Path;
 use std::process::Command;
 
@@ -259,8 +260,7 @@ fn holding_a_completion_key_makes_the_process_non_dumpable() {
     let d = fresh("dump");
     std::fs::set_permissions(&d, std::fs::Permissions::from_mode(0o777)).unwrap();
     let axon = d.join("axon");
-    std::fs::copy(env!("CARGO_BIN_EXE_axon"), &axon).unwrap();
-    std::fs::set_permissions(&axon, std::fs::Permissions::from_mode(0o755)).unwrap();
+    common::copy_executable(env!("CARGO_BIN_EXE_axon"), &axon, 0o755);
     std::fs::write(
         d.join("sleep.ax"),
         "@[test]\nfn t_sleep() { sleep_ms(2500) }\n",

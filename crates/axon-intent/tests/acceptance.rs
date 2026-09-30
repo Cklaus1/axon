@@ -7,6 +7,7 @@
 //!
 //! Every §0 acceptance check name appears here as a real, non-stubbed test.
 
+mod common;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -368,12 +369,7 @@ fn acc_a4_synthesis_isolated_timeout() {
     let dir = tmp("a4");
     // A stand-in "axon" that ignores args and sleeps far past the timeout.
     let fake = dir.join("hang.sh");
-    std::fs::write(&fake, "#!/bin/sh\nsleep 30\n").unwrap();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
-    }
+    common::write_executable(&fake, "#!/bin/sh\nsleep 30\n", 0o755);
     let start = std::time::Instant::now();
     let mut cmd = Command::new(intent_bin());
     cmd.args([

@@ -74,8 +74,7 @@ fn fx(fabric: Option<u32>, extra: &str, edit: impl FnOnce(&mut Value)) -> Fx {
     )
     .unwrap();
     let launcher = base.join("launcher.sh");
-    std::fs::write(&launcher, stand_in(&base, extra)).unwrap();
-    std::fs::set_permissions(&launcher, std::fs::Permissions::from_mode(0o755)).unwrap();
+    write_executable(&launcher, stand_in(&base, extra), 0o755);
     let out_root = base.join("runs");
     let cfg = write_helper_config(
         &base,
@@ -112,7 +111,7 @@ fn fx(fabric: Option<u32>, extra: &str, edit: impl FnOnce(&mut Value)) -> Fx {
             std::os::unix::fs::lchown(&p, Some(u), Some(u)).unwrap();
         }
         let h = base.join("axon-protected-launcher");
-        std::fs::copy(helper_pin().path, &h).unwrap();
+        copy_executable(helper_pin().path, &h, 0o755);
         std::os::unix::fs::chown(&h, Some(0), Some(u)).unwrap();
         std::fs::set_permissions(&h, std::fs::Permissions::from_mode(0o4750)).unwrap();
         h

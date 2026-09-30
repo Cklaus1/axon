@@ -10,8 +10,10 @@
 //! * secret custody: the child sees EOF on stdin, the secret file is unreadable
 //!   to it, and neither S nor K appears in anything the runner emits.
 
+mod common;
 use axon_psv::runner::{report_for, run, run_and_emit, RunnerConfig};
 use axon_psv::*;
+use common::{copy_executable, write_executable};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
@@ -214,8 +216,7 @@ fn fixture_with(entry: &str, test: &str, drop: bool, candidate: &str) -> Fx {
     // run's `$HOME/.cache` target made the dropped child fail to exec, so the
     // custody test depended on WHERE the build lived).
     let axon_copy = d.path().join("axon");
-    std::fs::copy(axon(), &axon_copy).unwrap();
-    std::fs::set_permissions(&axon_copy, std::fs::Permissions::from_mode(0o755)).unwrap();
+    copy_executable(axon(), &axon_copy, 0o755);
     let cfg = RunnerConfig {
         manifest: job.join("launch-manifest.json"),
         secret: secret_path,
@@ -553,14 +554,13 @@ fn a_lone_unkeyed_failure_line_is_not_a_verdict() {
             "0000"
         };
         let script = fx._d.path().join(format!("dying-axon-{keyed}.sh"));
-        std::fs::write(
+        write_executable(
             &script,
             format!(
                 "#!/bin/sh\nread K\nprintf '{{\"name\":\"t_ok\",\"status\":\"failed\",\"duration_ms\":0,\"message\":\"x\",\"completion\":\"%s\"}}\\n' \"{token}\"\nexit 1\n"
             ),
-        )
-        .unwrap();
-        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+            0o755,
+        );
         fx.cfg.axon = script;
         let v = run(&fx.cfg);
         assert_eq!(v.status, want, "keyed={keyed}: {v:?}");
@@ -576,12 +576,11 @@ fn a_lone_unkeyed_failure_line_is_not_a_verdict() {
 fn the_process_holding_k_is_given_no_exec() {
     let mut fx = fixture("t_ok", false);
     let script = fx._d.path().join("ceiling-axon.sh");
-    std::fs::write(
+    write_executable(
         &script,
         "#!/bin/sh\nread K\necho \"CEIL:[$AXON_ALLOWED_EFFECTS]\"\nexit 1\n",
-    )
-    .unwrap();
-    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        0o755,
+    );
     fx.cfg.axon = script;
     fx.cfg.effect_ceiling = Some("IO,Exec,Net".into());
     run(&fx.cfg);
@@ -600,12 +599,11 @@ fn a_genuine_keyed_pass_from_a_run_that_exits_non_zero_is_not_a_pass() {
     let mut fx = fixture("t_ok", false);
     let real = fx.cfg.axon.clone();
     let wrapper = real.with_file_name("axon-exit3");
-    std::fs::write(
+    write_executable(
         &wrapper,
         format!("#!/bin/sh\n'{}' \"$@\"\nexit 3\n", real.display()),
-    )
-    .unwrap();
-    std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o755)).unwrap();
+        0o755,
+    );
     fx.cfg.axon = wrapper;
     let v = run(&fx.cfg);
     let stdout = std::fs::read_to_string(fx.cfg.out.join("test-stdout")).unwrap_or_default();

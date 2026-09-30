@@ -9,7 +9,7 @@
 
 #![cfg(target_os = "linux")]
 
-use std::os::unix::fs::PermissionsExt;
+mod common;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -71,12 +71,11 @@ fn env() -> Env {
 /// recorded pid IS the process the launcher spawned.
 fn stub(e: &Env, body: &str) -> FirecrackerBin {
     let p = e.dir.path().join("firecracker");
-    std::fs::write(
+    common::write_executable(
         &p,
         format!("#!/bin/sh\necho $$ > '{}'\n{body}\n", e.pidfile.display()),
-    )
-    .unwrap();
-    std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+        0o755,
+    );
     FirecrackerBin::at(&p).unwrap()
 }
 

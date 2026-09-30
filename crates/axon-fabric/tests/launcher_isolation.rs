@@ -4,6 +4,9 @@
 //! call is isolated (`python3 -I`). Control: the same launcher with `-I`
 //! stripped does import the planted module.
 
+#[path = "common/exec.rs"]
+mod exec;
+use exec::write_executable;
 use std::path::Path;
 use std::process::Command;
 
@@ -172,7 +175,7 @@ fn run_psv_image(script: &str) -> Imaged {
     // (mkfs's own layer must keep it out of the image).
     let staged = d.path().join("staged.txt");
     let wrapper = wrap.join("mkfs.ext4");
-    std::fs::write(
+    write_executable(
         &wrapper,
         format!(
             r#"#!/bin/bash
@@ -191,9 +194,8 @@ exec {real} "$@"
 "#,
             real = sbin("mkfs.ext4"),
         ),
-    )
-    .unwrap();
-    std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o755)).unwrap();
+        0o755,
+    );
 
     let body = format!(
         "set -u\nOUT={out:?}\nPSV_IMGS=()\ndeclare -A PSV_IMG_SHA=()\n{func}\npsv_image candidate {src:?} || exit 9\n"

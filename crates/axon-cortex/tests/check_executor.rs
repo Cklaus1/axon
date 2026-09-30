@@ -12,6 +12,7 @@
 //! * an empty match on a mandatory check is `NotRun`, never `Passed`, and
 //!   `verify` fails closed on it.
 
+mod common;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -77,17 +78,15 @@ fn hidden_completion() { assert_eq(double(3), 6) }
 /// `marker`. If the marker exists, the wrapper was spawned.
 fn marker_wrapper(dir: &Path, marker: &Path) -> PathBuf {
     let p = dir.join("axon-wrapper.sh");
-    std::fs::write(
+    common::write_executable(
         &p,
         format!(
             "#!/bin/sh\ntouch '{}'\nexec '{}' \"$@\"\n",
             marker.display(),
             axon_bin().display()
         ),
-    )
-    .unwrap();
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+        0o755,
+    );
     p
 }
 
@@ -191,7 +190,7 @@ fn runner_new_pins_on_first_use_and_refuses_a_later_swap() {
     let r = Runner::new(&wrapper, &dir);
     assert_eq!(r.run_hidden_check("f.ax", "t_passes").unwrap(), Some(true));
     std::fs::remove_file(&marker).unwrap();
-    std::fs::write(&wrapper, "#!/bin/sh\ntouch /dev/null\n").unwrap();
+    common::write_executable(&wrapper, "#!/bin/sh\ntouch /dev/null\n", 0o755);
     assert!(r.run_hidden_check("f.ax", "t_passes").is_err());
     assert!(!marker.exists());
     let _ = std::fs::remove_dir_all(&dir);

@@ -118,17 +118,15 @@ impl World {
             "psv-launcher-{tamper}-{}.sh",
             &axon_fabric::backend::jail_id(extra)[4..12]
         ));
-        std::fs::write(
+        write_executable(
             &script,
             format!(
                 "#!/bin/sh\nexec {} __psv-host-guest --axon {} --tamper '{tamper}' {extra} \"$@\"\n",
                 env!("CARGO_BIN_EXE_axon-fabric"),
                 axon_bin().display()
             ),
-        )
-        .unwrap();
-        std::fs::set_permissions(&script, std::os::unix::fs::PermissionsExt::from_mode(0o755))
-            .unwrap();
+            0o755,
+        );
         set_launcher(&mut lx, script);
         std::fs::create_dir_all(&lx.out_root).unwrap();
         lx

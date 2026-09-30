@@ -365,16 +365,7 @@ mod tests {
         // Written by a SEPARATE process: a write fd held here would be
         // inherited by a sibling test thread's fork, and the read lease would
         // then (correctly) see a writer (a flake in the full suite, C9 r2).
-        let staged = p.with_extension("staged");
-        std::fs::write(&staged, body).unwrap();
-        assert!(std::process::Command::new("cp")
-            .arg(&staged)
-            .arg(p)
-            .status()
-            .unwrap()
-            .success());
-        std::fs::remove_file(&staged).unwrap();
-        std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o755)).unwrap();
+        crate::test_exec::write_executable(p, body, 0o755);
         Pinned {
             path: p.to_path_buf(),
             sha256: crate::backend::sha256_hex(body.as_bytes()),
@@ -441,14 +432,14 @@ mod tests {
         let dir = d.path().join("bin");
         std::fs::create_dir(&dir).unwrap();
         let p = dir.join("helper");
-        std::fs::copy("/bin/true", &p).unwrap();
+        crate::test_exec::copy_executable("/bin/true", &p, 0o755);
         let pin = Pinned {
             sha256: crate::backend::sha256_hex(&std::fs::read(&p).unwrap()),
             path: p.clone(),
         };
         let staged = d.path().join("staged");
         std::fs::create_dir(&staged).unwrap();
-        std::fs::copy("/bin/false", staged.join("helper")).unwrap();
+        crate::test_exec::copy_executable("/bin/false", staged.join("helper"), 0o755);
         let v = open_verified(&pin, None, Lease::IfGranted).unwrap();
         let mut cmd = command(&v, None, &[], &[], &[]).unwrap();
         std::fs::rename(&dir, d.path().join("old")).unwrap();
@@ -505,18 +496,20 @@ mod tests {
         let p = d.path().join("launcher.sh");
         let pin = write_exec(&p, "#!/bin/sh\necho genuine\n");
         let got = run_between(&pin, || {
-            use std::os::unix::fs::OpenOptionsExt;
-            // O_NONBLOCK: the open starts the lease break and returns at once
-            // (EWOULDBLOCK) instead of waiting out lease-break-time; a holder
-            // without a lease would have let it write.
-            if let Ok(mut f) = std::fs::OpenOptions::new()
-                .write(true)
-                .custom_flags(libc::O_NONBLOCK)
-                .open(&p)
-            {
-                use std::io::Write;
-                f.write_all(b"#!/bin/sh\necho REWRITTEN\n").unwrap();
-            }
+            // The writer is ANOTHER process (`dd`), so no write fd to the
+            // launcher ever exists in this test process for a sibling test
+            // thread's fork to inherit. O_NONBLOCK (`oflag=nonblock`): the
+            // open starts the lease break and returns at once (EWOULDBLOCK,
+            // `dd` then fails, which is ignored) instead of waiting out
+            // lease-break-time; a holder without a lease would have let it
+            // write. `conv=notrunc`: written in place, as an open for write is.
+            let _ = std::process::Command::new("sh")
+                .arg("-c")
+                .arg("printf '#!/bin/sh\\necho REWRITTEN\\n' | dd of=\"$1\" oflag=nonblock conv=notrunc status=none")
+                .arg("sh")
+                .arg(&p)
+                .stderr(std::process::Stdio::null())
+                .status();
         });
         match got {
             Err(why) => assert!(why.contains("os error 26"), "{why}"),
