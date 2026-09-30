@@ -471,6 +471,9 @@ struct Target {
 struct Suite {
     id: String,
     version: Acf1Ref,
+    /// `check-suite:<id>@<version>#<entry>`, written once by the one writer
+    /// (which refuses a suite whose reference would read as another: A81).
+    reference: String,
 }
 
 impl Target {
@@ -825,6 +828,15 @@ fn check_suite_target(
     let version = store
         .publish(&tree)
         .map_err(|e| SubmitError::Workspace(e.to_string()))?;
+    // The registered suite that judged the candidate travels in the receipt
+    // (and so under the verifier's attestation): a consumer can require an
+    // operator-pinned suite, never a file the subject wrote
+    // (G01-r22-verifier-separation). The ENTRY file is part of that identity:
+    // the check registry is caller-named, so without it a registry could run
+    // another file of the pinned suite tree under the same id@version
+    // (re-audit 3).
+    let reference = axon_cortex::runner::check_suite_ref(id, version.as_str(), &c.entry)
+        .map_err(|e| SubmitError::Unregistered(format!("check suite `{id}` refused: {e}")))?;
     let dir = RunDir::new(&cfg.state_dir, req.operation_id.as_str())?;
     store
         .materialize(cand, &dir.0.join("candidate"), false)
@@ -842,6 +854,7 @@ fn check_suite_target(
         suite: Some(Suite {
             id: id.to_string(),
             version,
+            reference,
         }),
     })
 }
@@ -1403,16 +1416,8 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
                 filter: filter.as_deref(),
             });
             let seen = post_run(&req, cfg, &target);
-            // The registered suite that judged the candidate travels in the
-            // receipt (and so under the verifier's attestation): a consumer
-            // can require an operator-pinned suite, never a file the
-            // subject wrote (G01-r22-verifier-separation). The ENTRY file is
-            // part of that identity: the check registry is caller-named, so
-            // without it a registry could run another file of the pinned
-            // suite tree under the same id@version (re-audit 3).
-            let suite = target.suite.as_ref().map(|s| {
-                axon_cortex::runner::check_suite_ref(&s.id, s.version.as_str(), &target.file)
-            });
+            // The suite reference written when the suite was resolved.
+            let suite = target.suite.as_ref().map(|s| s.reference.clone());
             let (mut r, report, reason) = local_receipt(
                 &req,
                 &journal,
@@ -1494,6 +1499,8 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
                             suite_dir: &dir.join("check"),
                             job_dir: &dir.join("job"),
                             observation_nonce: &nonce,
+                            authority_epoch: epoch,
+                            scope: cfg.epoch.scope(),
                         },
                     )
                 });

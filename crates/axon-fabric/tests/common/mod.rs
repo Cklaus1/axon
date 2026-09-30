@@ -665,7 +665,7 @@ m_path, out, mode, kid = sys.argv[1:]
 raw = open(m_path, "rb").read(); m = json.loads(raw)
 now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 o = {{"schema": "axon-preflight-observation/1", "observer_key_id": kid,
- "nonce": m["observation_nonce"], "epoch": 0, "observed_at": now,
+ "nonce": m["observation_nonce"], "epoch": m["authority"]["epoch"], "observed_at": now,
  "host_profile": m["backend_profile"], "fabric_revision": m["fabric_revision"],
  "firecracker_sha256": m["firecracker_sha256"], "launcher_sha256": m["launcher_sha256"],
  "host_config_sha256": m["host_config_sha256"], "guest": m["guest"],

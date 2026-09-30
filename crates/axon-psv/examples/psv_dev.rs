@@ -89,6 +89,11 @@ fn make_job(args: &[String]) {
             scheme: COMPLETION_SCHEME.into(),
         },
         observation_nonce: "dev".into(),
+        authority: AuthorityRef {
+            epoch: 0,
+            tenant_id: "tenant-t".into(),
+            task_family: "family-f".into(),
+        },
         limits: Limits {
             wall_time_ms: 60_000,
             output_bytes: 1 << 20,

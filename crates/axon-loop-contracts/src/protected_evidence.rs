@@ -214,7 +214,8 @@ fn one_ref<'a>(rc: &'a ExecutionReceipt, prefix: &str) -> Option<&'a str> {
 ///    to join (C9 round 2, PSV-5);
 /// 3. the observation joins the manifest field for field (its digest, nonce,
 ///    profile, revisions, launcher, host config, guest, verifier, registry,
-///    policy);
+///    policy), and the observation's epoch and the manifest's authority (epoch,
+///    tenant, family) are the loop's own `epoch` and `scope`;
 /// 4. the manifest joins the request and receipt: operation, task, trial and
 ///    attempt; the candidate (the request's and receipt's WorkspaceVersion);
 ///    the suite (the receipt's `check-suite:` ref) and the test (the request's
@@ -228,6 +229,7 @@ pub fn check_bundle(
     rc: &ExecutionReceipt,
     bundle: &str,
     epoch: u64,
+    scope: &crate::Scope,
     observers: &std::collections::BTreeMap<crate::OpaqueRef, String>,
 ) -> Result<ObservationSigner, String> {
     use crate::operator_trust::{rooted_keys, verify_evidence_signature, TrustAuthority};
@@ -307,6 +309,31 @@ pub fn check_bundle(
             o.epoch
         ));
     }
+    // …and the LAUNCH was made under it, in this scope: the manifest names the
+    // authority epoch and scope it was launched under, the observation's
+    // intended-manifest digest covers them, and they are joined here to the
+    // loop's OWN scope pointer (`epoch`, `scope`: the episode's, which intake
+    // binds to the pointer). Before, the launch-time epoch was the caller's
+    // `--expected-epoch` against a caller-named store, and the observer could
+    // only echo it (C9 round 3, PSV-6; A82).
+    if m.authority.epoch != epoch {
+        return Err(format!(
+            "the launch manifest is for authority epoch {}, not the trial's epoch {epoch}",
+            m.authority.epoch
+        ));
+    }
+    if m.authority.tenant_id != scope.tenant_id.as_str() {
+        return Err(format!(
+            "the launch manifest is for tenant {}, not the trial's tenant {}",
+            m.authority.tenant_id, scope.tenant_id
+        ));
+    }
+    if m.authority.task_family != scope.task_family.as_str() {
+        return Err(format!(
+            "the launch manifest is for task family {}, not the trial's family {}",
+            m.authority.task_family, scope.task_family
+        ));
+    }
     // 4. the manifest joins the request and the receipt
     let pairs: [(&str, &str, &str); 12] = [
         ("operation_id", &m.operation_id, req.operation_id.as_str()),
@@ -361,13 +388,26 @@ pub fn check_bundle(
             ));
         }
     }
-    let suite_ref = format!("{}@{}#{}", m.suite.id, m.suite.version, m.suite.entry);
-    if want("check-suite:")? != suite_ref {
+    // The suite, field by field through the ONE parser: never the manifest's
+    // fields formatted into a string and compared, which joined a manifest
+    // naming (version `V#x`, entry `accept.ax`) to a receipt the parser reads
+    // as (version `V`, entry `x#accept.ax`) (C9 round 3, PSV-5; A81).
+    let receipt_suite = format!("check-suite:{}", want("check-suite:")?);
+    let (sid, sver, sentry) = crate::suite::parse_check_suite_ref(&receipt_suite)
+        .map_err(|e| format!("the receipt's check-suite is not one suite: {e}"))?;
+    let manifest_suite = (
+        m.suite.id.as_str(),
+        m.suite.version.as_str(),
+        m.suite.entry.as_str(),
+    );
+    if manifest_suite != (sid, sver, sentry) {
         return Err(format!(
-            "the launch manifest's suite {suite_ref} is not the receipt's check-suite"
+            "the launch manifest's suite (id {:?}, version {:?}, entry {:?}) is not the \
+             receipt's check-suite (id {sid:?}, version {sver:?}, entry {sentry:?})",
+            m.suite.id, m.suite.version, m.suite.entry
         ));
     }
-    if req.argv.first().map(String::as_str) != Some(&format!("check:{}", m.suite.id)) {
+    if req.argv.first().and_then(|a| a.strip_prefix("check:")) != Some(sid) {
         return Err(format!(
             "the request ran {:?}, not the manifest's suite {}",
             req.argv.first(),

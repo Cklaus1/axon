@@ -72,6 +72,10 @@ pub struct ProtectedHost {
     /// D1: the operator's grant registry and its pin. `None`: this host pins
     /// no grant registry, so nothing is authorized on it ([`Self::grants`]).
     pub grant_registry: Option<(PathBuf, String)>,
+    /// A82: the axon-loop store the launch-time authority epoch is read from.
+    /// `None`: this host pins none, so it launches nothing
+    /// ([`Self::authority_store`]).
+    pub authority_store: Option<PathBuf>,
 }
 
 /// Why a protected host authorizes nothing when its config pins no grant
@@ -79,7 +83,37 @@ pub struct ProtectedHost {
 pub const NO_GRANT_REGISTRY: &str =
     "this protected host's config pins no grant_registry: nothing is authorized on it";
 
+/// Why a protected host launches nothing when its config pins no authority
+/// store.
+pub const NO_AUTHORITY_STORE: &str = "this protected host's config pins no authority_store: the \
+     launch-time authority epoch has no operator source, so nothing is launched";
+
 impl ProtectedHost {
+    /// A82 (C9 round 3, PSV-6): the axon-loop store the launch-time authority
+    /// epoch is read from is the one this host config pins, never the caller's
+    /// `--store`. A caller may still name it (MiCode does), but only as that
+    /// same store: naming another is refused, not silently replaced, so a
+    /// misconfigured caller learns which store is the authority.
+    pub fn authority_store(&self, caller: Option<&Path>) -> Result<PathBuf, String> {
+        let pinned: PathBuf = match &self.authority_store {
+            Some(p) => p.clone(),
+            None => return Err(NO_AUTHORITY_STORE.to_string()),
+        };
+        if let Some(c) = caller {
+            let same = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+            if same(c) != same(&pinned) {
+                return Err(format!(
+                    "--store {} is not the authority store this protected host pins ({}): the \
+                     launch-time authority epoch is read from the operator's store, never a \
+                     caller's",
+                    c.display(),
+                    pinned.display()
+                ));
+            }
+        }
+        Ok(pinned)
+    }
+
     /// The operator's grant registry — the ONLY authority source on a
     /// protected host. Read once and parsed only at its pin.
     pub fn grants(&self) -> Result<crate::grants::GrantRegistry, String> {
@@ -188,8 +222,9 @@ impl ProtectedHost {
             .map(|o| o.keys().map(String::as_str).collect())
             .unwrap_or_default();
         keys.sort_unstable();
-        // `observer` (M3) and `grant_registry` (D1) are the optional sections.
-        keys.retain(|k| *k != "observer" && *k != "grant_registry");
+        // `observer` (M3), `grant_registry` (D1) and `authority_store` (A82)
+        // are the optional sections.
+        keys.retain(|k| *k != "observer" && *k != "grant_registry" && *k != "authority_store");
         if keys != KEYS {
             return Err(bad(format!("must have exactly {KEYS:?}; has {keys:?}")));
         }
@@ -385,6 +420,19 @@ impl ProtectedHost {
             }
         };
 
+        // A82: the authority store, where the operator put it. The store's
+        // contents are the loop's (its writer), but WHERE it sits is the
+        // operator's: an agent-writable ancestor could swap in a store at
+        // another epoch.
+        let authority_store = match v.get("authority_store") {
+            None | Some(Value::Null) => None,
+            Some(_) => {
+                let p = path_at("/authority_store")?;
+                parent_owned(&p)?;
+                Some(p)
+            }
+        };
+
         Ok(ProtectedHost {
             config_sha256: sha256_hex(&bytes),
             linux: LinuxProfileConfig {
@@ -413,6 +461,7 @@ impl ProtectedHost {
             signer,
             observer,
             grant_registry,
+            authority_store,
         })
     }
 }
@@ -437,6 +486,9 @@ pub enum PinnedKind {
     /// The privileged launcher helper (A): operator-owned like any pinned
     /// file, and also setuid-root and executable by the Fabric uid alone.
     PrivilegedHelper,
+    /// A82: the axon-loop authority store. Its contents are the loop's; the
+    /// directory holding it is the operator's.
+    AuthorityStore,
 }
 
 impl PinnedKind {
@@ -447,6 +499,7 @@ impl PinnedKind {
             PinnedKind::SigningKey => "signing-key",
             PinnedKind::ServiceDir => "service-dir",
             PinnedKind::PrivilegedHelper => "privileged-helper",
+            PinnedKind::AuthorityStore => "authority-store",
         }
     }
 }
@@ -503,6 +556,9 @@ pub fn pinned_paths(config: &Path) -> Result<Vec<(PinnedKind, PathBuf)>, String>
             out.push((OperatorFile, path_at("/observer/interpreter/path")?));
         }
         out.push((ServiceDir, path_at("/observer/nonce_store")?));
+    }
+    if present("/authority_store") {
+        out.push((AuthorityStore, path_at("/authority_store")?));
     }
     if present("/grant_registry") {
         let reg = path_at("/grant_registry/path")?;

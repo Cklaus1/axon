@@ -28,6 +28,44 @@ fn scope_json() -> Value {
     json!({"tenant_id": "tenant-a", "task_family": "coding"})
 }
 
+/// This file's trial scope, typed.
+fn intake_scope() -> Scope {
+    serde_json::from_value(scope_json()).unwrap()
+}
+
+/// `common::make_protected`, launched under THIS file's trial scope (A82: the
+/// manifest names the scope it was launched for, joined to the trial's).
+fn make_protected(
+    req: &Value,
+    rc: &mut Value,
+    edit_m: impl FnOnce(&mut axon_psv::LaunchManifest),
+    edit_o: impl FnOnce(&mut axon_psv::PreflightObservation),
+) -> String {
+    make_protected_v(req, rc, edit_m, edit_o, |_| {})
+}
+
+/// `common::make_protected_v` under this file's trial scope.
+fn make_protected_v(
+    req: &Value,
+    rc: &mut Value,
+    edit_m: impl FnOnce(&mut axon_psv::LaunchManifest),
+    edit_o: impl FnOnce(&mut axon_psv::PreflightObservation),
+    edit_v: impl FnOnce(&mut axon_psv::GuestVerdict),
+) -> String {
+    let sc = intake_scope();
+    common::make_protected_v(
+        req,
+        rc,
+        |m| {
+            m.authority.tenant_id = sc.tenant_id.as_str().into();
+            m.authority.task_family = sc.task_family.as_str().into();
+            edit_m(m)
+        },
+        edit_o,
+        edit_v,
+    )
+}
+
 fn policy(shortlist: &[&str]) -> PolicyEnvelope {
     parse(
         &json!({
@@ -1921,7 +1959,7 @@ fn pin_protected(c: &Case) {
 /// A genuine protected (receipt, bundle) for the fixture check request.
 fn genuine(req: &Value) -> (Value, String) {
     let mut rc = check_receipt("passed", 2);
-    let b = common::make_protected(req, &mut rc, |_| {}, |_| {});
+    let b = make_protected(req, &mut rc, |_| {}, |_| {});
     (rc, b)
 }
 
@@ -2318,7 +2356,7 @@ fn each_protected_join_is_verified_over_the_documents() {
         let c = case(Some(500));
         pin_protected(&c);
         let mut rc = check_receipt("passed", 2);
-        let b = common::make_protected(&req, &mut rc, em, eo);
+        let b = make_protected(&req, &mut rc, em, eo);
         erc(&mut rc);
         let ep = verified(&c.ep, &req, &rc, "passed");
         let att = attest(&verifier_key().0, common::VERIFIER, &req, &rc);
@@ -2347,7 +2385,7 @@ fn each_protected_join_is_verified_over_the_documents() {
     let c = case(Some(500));
     pin_protected(&c);
     let mut rc = check_receipt("passed", 2);
-    let b = common::make_protected(&req, &mut rc, |_| {}, |_| {});
+    let b = make_protected(&req, &mut rc, |_| {}, |_| {});
     let mut bv: Value = serde_json::from_str(&b).unwrap();
     let (other, other_pk) = axon_loop_contracts::attestation::generate().unwrap();
     {
@@ -2460,7 +2498,7 @@ fn each_manifest_join_to_the_request_and_receipt_refuses_its_own_forgery() {
         let c = case(Some(500));
         pin_protected(&c);
         let mut rc = check_receipt("passed", 2);
-        let b = common::make_protected(&req, &mut rc, em, |_| {});
+        let b = make_protected(&req, &mut rc, em, |_| {});
         erc(&mut rc);
         let ep = verified(&c.ep, &req, &rc, "passed");
         let att = attest(&verifier_key().0, common::VERIFIER, &req, &rc);
@@ -2555,7 +2593,7 @@ fn the_guest_verdict_is_joined_to_the_receipt_and_the_manifest() {
         let c = case(Some(500));
         pin_protected(&c);
         let mut rc = check_receipt("passed", 2);
-        let b = common::make_protected_v(&req, &mut rc, |_| {}, |_| {}, ev);
+        let b = make_protected_v(&req, &mut rc, |_| {}, |_| {}, ev);
         let mut bv: Value = serde_json::from_str(&b).unwrap();
         eb(&mut bv);
         let ep = verified(&c.ep, &req, &rc, "passed");
@@ -2594,7 +2632,7 @@ fn a_protected_manifest_naming_no_operator_host_is_refused() {
         let c = case(Some(500));
         pin_protected(&c);
         let mut rc = check_receipt("passed", 2);
-        let b = common::make_protected(&req, &mut rc, em, |_| {});
+        let b = make_protected(&req, &mut rc, em, |_| {});
         let ep = verified(&c.ep, &req, &rc, "passed");
         let att = attest(&verifier_key().0, common::VERIFIER, &req, &rc);
         let e = match run_vb(&c, &ep, &req, &rc, &att, Some(&b)) {
@@ -2712,7 +2750,7 @@ fn observation_signed_with(b: &str, sk: &[u8]) -> String {
 fn observed_by(req: &Value, sk: &[u8], pk: &str) -> (Value, String) {
     let kid = axon_loop_contracts::attestation::key_id_of_hex(pk).unwrap();
     let mut rc = check_receipt("passed", 2);
-    let b = common::make_protected(req, &mut rc, |_| {}, |o| o.observer_key_id = kid);
+    let b = make_protected(req, &mut rc, |_| {}, |o| o.observer_key_id = kid);
     (rc, observation_signed_with(&b, sk))
 }
 
@@ -2854,7 +2892,7 @@ fn a_protected_manifest_digest_field_that_is_not_a_sha256_is_refused() {
         let c = case(Some(500));
         pin_protected(&c);
         let mut rc = check_receipt("passed", 2);
-        let b = common::make_protected(&req, &mut rc, edit, |_| {});
+        let b = make_protected(&req, &mut rc, edit, |_| {});
         let ep = verified(&c.ep, &req, &rc, "passed");
         let att = attest(&verifier_key().0, common::VERIFIER, &req, &rc);
         match run_vb(&c, &ep, &req, &rc, &att, Some(&b)) {
@@ -2877,22 +2915,30 @@ fn a_protected_manifest_digest_field_that_is_not_a_sha256_is_refused() {
 }
 
 /// M384 (C9 round 2: the retirement was refuted, ACTIVE again). At
-/// `check_bundle`'s own boundary, a manifest whose suite id holds `@`
-/// (`acceptance@x`) formats to the receipt's check-suite ref
-/// `acceptance@x@<v>#accept.ax` byte for byte (M237 holds), while the request
-/// ran `check:acceptance`: only the request-suite join refuses it. (On the
-/// intake route the store's suite-ref parser now refuses such a pin as well,
+/// `check_bundle`'s own boundary, a manifest for suite `other` whose receipt
+/// names `check-suite:other@<v>#accept.ax` (so the suite join, M237, holds
+/// field by field) while the request ran `check:acceptance`: only the
+/// request-suite join refuses it. (C9 round 3, A81: the round-2 form of this
+/// attack, a manifest id `acceptance@x`, is now refused by the suite join
+/// itself, since the receipt's reference is read by the one parser; on the
+/// intake route the store refuses such a pin as well,
 /// `a_suite_reference_with_a_second_reading_is_never_pinned`.)
 #[test]
 fn the_bundle_refuses_a_manifest_suite_the_request_did_not_run() {
-    let odd = format!("acceptance@x@acf1:{}#accept.ax", "5".repeat(64));
+    let v = format!("acf1:{}", "5".repeat(64));
+    let odd = format!("other@{v}#accept.ax");
     let c = case(Some(500));
     let req = check_request(); // argv ["check:acceptance", "t_"]
     let mut rc = check_receipt("passed", 2);
-    let b = common::make_protected(
+    let b = make_protected(
         &req,
         &mut rc,
-        |m| m.suite.id = "acceptance@x".into(),
+        |m| {
+            m.suite.id = "other".into();
+            m.suite.version = v.clone();
+            m.suite.tree_digest = v.clone();
+            m.suite.entry = "accept.ax".into();
+        },
         |_| {},
     );
     {
@@ -2905,10 +2951,15 @@ fn the_bundle_refuses_a_manifest_suite_the_request_did_not_run() {
     let observers = c.s.config().unwrap().trusted_observer_keys();
     common::operator_root();
     match axon_loop_contracts::protected_evidence::check_bundle(
-        &typed_req, &typed_rc, &b, 0, &observers,
+        &typed_req,
+        &typed_rc,
+        &b,
+        0,
+        &intake_scope(),
+        &observers,
     ) {
         Ok(_) => panic!(
-            "ATTACK: a protected bundle for suite acceptance@x joined a request that ran \
+            "ATTACK: a protected bundle for suite other joined a request that ran \
              check:acceptance: ACCEPTED"
         ),
         Err(e) => assert!(e.contains("not the manifest's suite"), "{e}"),
@@ -2916,8 +2967,15 @@ fn the_bundle_refuses_a_manifest_suite_the_request_did_not_run() {
     // Control: the genuine bundle joins at the same boundary.
     let (grc, gb) = genuine(&req);
     let grc: ExecutionReceipt = serde_json::from_value(grc).unwrap();
-    axon_loop_contracts::protected_evidence::check_bundle(&typed_req, &grc, &gb, 0, &observers)
-        .expect("control: the genuine bundle joins");
+    axon_loop_contracts::protected_evidence::check_bundle(
+        &typed_req,
+        &grc,
+        &gb,
+        0,
+        &intake_scope(),
+        &observers,
+    )
+    .expect("control: the genuine bundle joins");
 }
 
 /// C9 round 2, PSV-5 (M384's source): a pinned suite reference with a second
@@ -2955,5 +3013,154 @@ fn a_suite_reference_with_a_second_reading_is_never_pinned() {
             panic!("ATTACK: a config pinning a suite reference with a second reading was READ")
         }
         Err(e) => assert!(e.to_string().contains("acceptance suite"), "{e}"),
+    }
+}
+
+// ── C9 round 3, loop workstream (PSV-5, A81): the suite join has ONE reading ──
+
+/// Pin `pinned` as the verifier's suite and the task's acceptance suite, and
+/// build a protected verification whose receipt names `pinned` and whose
+/// manifest's suite is edited by `edit`; intake's outcome.
+fn suite_join_case(
+    pinned: &str,
+    edit: impl FnOnce(&mut axon_psv::LaunchManifest),
+) -> Result<axon_loop::intake::IntakeOutcome, LoopError> {
+    let c = case(Some(500));
+    let mut cfg = c.s.config().unwrap();
+    for p in cfg.verifier_pins.values_mut() {
+        p.backend_profiles.push("linux-microvm-protected".into());
+        p.check_suites.push(pinned.to_string());
+    }
+    for a in cfg.task_acceptance.values_mut() {
+        a.check_suite = pinned.to_string();
+    }
+    c.s.write_config(&cfg)
+        .expect("setup: a pin whose entry holds `#` reads one way, so it is writable");
+    let req = check_request();
+    let mut rc = check_receipt("passed", 2);
+    let b = make_protected(&req, &mut rc, edit, |_| {});
+    {
+        let refs = rc["evidence_refs"].as_array_mut().unwrap();
+        refs.retain(|e| !e.as_str().unwrap().starts_with("check-suite:"));
+        refs.push(json!(pinned));
+    }
+    let ep = verified(&c.ep, &req, &rc, "passed");
+    let att = attest(&verifier_key().0, common::VERIFIER, &req, &rc);
+    run_vb(&c, &ep, &req, &rc, &att, Some(&b))
+}
+
+/// R3 reviewer (PSV-5; /var/tmp/c9r3-psv5): check_bundle formatted the
+/// manifest's suite and compared strings. The pin
+/// `acceptance@V#x#accept.ax` reads (by the one parser) as version `V`, entry
+/// `x#accept.ax`; a manifest naming version `V#x`, entry `accept.ax` formats to
+/// the same string, so a verdict on ANOTHER (unparseable) suite joined it.
+/// Control: the manifest that names the pin's own reading is accepted.
+#[test]
+fn a_manifest_suite_that_formats_to_the_pin_but_reads_as_another_is_refused() {
+    let v = format!("acf1:{}", "5".repeat(64));
+    let pinned = format!("check-suite:acceptance@{v}#x#accept.ax");
+    let (_, pv, pe) = axon_loop_contracts::suite::parse_check_suite_ref(&pinned).unwrap();
+    assert_eq!(
+        (pv, pe),
+        (v.as_str(), "x#accept.ax"),
+        "setup: the one reading"
+    );
+    let control = suite_join_case(&pinned, |m| {
+        m.suite.version = v.clone();
+        m.suite.tree_digest = v.clone();
+        m.suite.entry = "x#accept.ax".into();
+    });
+    assert!(
+        control.is_ok(),
+        "control: the manifest naming the pin's own reading joins: {control:?}"
+    );
+    let vx = format!("{v}#x");
+    let got = suite_join_case(&pinned, |m| {
+        m.suite.version = vx.clone();
+        m.suite.tree_digest = vx.clone();
+        m.suite.entry = "accept.ax".into();
+    });
+    match got {
+        Ok(o) => panic!(
+            "ATTACK: a manifest naming suite version {vx:?} entry accept.ax joined the pin \
+             {pinned}, which reads as version {v} entry x#accept.ax: a protected verdict on \
+             another suite was recorded (observation signer {:?})",
+            o.record.verification_observation_signed_by
+        ),
+        Err(e) => assert!(
+            e.to_string().contains("is not the receipt's check-suite"),
+            "refused for another reason: {e}"
+        ),
+    }
+}
+
+// ── C9 round 3, loop workstream (PSV-6, A82): the launch's authority is the
+// loop's own ──────────────────────────────────────────────────────────────────
+
+/// A protected verdict whose launch manifest names `edit`'s authority, with
+/// every other document genuine (the observation is of THAT manifest, at the
+/// trial's epoch 0); intake's outcome.
+fn authority_case(
+    edit: impl FnOnce(&mut axon_psv::AuthorityRef),
+) -> Result<axon_loop::intake::IntakeOutcome, LoopError> {
+    let c = case(Some(500));
+    pin_protected(&c);
+    let req = check_request();
+    let mut rc = check_receipt("passed", 2);
+    let b = make_protected(&req, &mut rc, |m| edit(&mut m.authority), |_| {});
+    let ep = verified(&c.ep, &req, &rc, "passed");
+    let att = attest(&verifier_key().0, common::VERIFIER, &req, &rc);
+    run_vb(&c, &ep, &req, &rc, &att, Some(&b))
+}
+
+/// A82: the launch-time epoch used to be the caller's `--expected-epoch`,
+/// which the observer echoed without seeing. The manifest now names the
+/// authority epoch it was launched under, the observer signs its digest, and
+/// intake joins it to the loop's own scope pointer. A launch under another
+/// epoch (the observation still says 0, the trial's) is refused. Control: the
+/// genuine manifest (epoch 0, the fixture scope) is recorded.
+#[test]
+fn a_launch_whose_manifest_names_another_authority_epoch_is_refused() {
+    authority_case(|_| {}).expect("control: the launch under the trial's own authority joins");
+    match authority_case(|a| a.epoch = 5) {
+        Ok(_) => panic!(
+            "ATTACK: a protected verdict launched under authority epoch 5 was recorded for a \
+             trial at epoch 0: ACCEPTED"
+        ),
+        Err(e) => assert!(
+            e.to_string()
+                .contains("launch manifest is for authority epoch 5"),
+            "refused for another reason: {e}"
+        ),
+    }
+}
+
+/// A82: a launch made for another scope does not count in this one. The
+/// manifest names the tenant and the family it was launched for; each is
+/// joined to the trial's scope on its own. Control as above.
+#[test]
+fn a_launch_whose_manifest_names_another_scope_is_refused() {
+    authority_case(|_| {}).expect("control: the launch in the trial's own scope joins");
+    match authority_case(|a| a.tenant_id = "other-tenant".into()) {
+        Ok(_) => panic!(
+            "ATTACK: a protected verdict launched for tenant other-tenant was recorded in \
+             tenant tenant-a: ACCEPTED"
+        ),
+        Err(e) => assert!(
+            e.to_string()
+                .contains("launch manifest is for tenant other-tenant"),
+            "refused for another reason: {e}"
+        ),
+    }
+    match authority_case(|a| a.task_family = "other-family".into()) {
+        Ok(_) => panic!(
+            "ATTACK: a protected verdict launched for task family other-family was recorded \
+             in family coding: ACCEPTED"
+        ),
+        Err(e) => assert!(
+            e.to_string()
+                .contains("launch manifest is for task family other-family"),
+            "refused for another reason: {e}"
+        ),
     }
 }

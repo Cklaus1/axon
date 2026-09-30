@@ -17,7 +17,7 @@ pub use axon_workspace_recipe::{sha256_hex, Quota};
 
 pub mod runner;
 
-pub const LAUNCH_MANIFEST_SCHEMA: &str = "axon-launch-manifest/1";
+pub const LAUNCH_MANIFEST_SCHEMA: &str = "axon-launch-manifest/2";
 pub const GUEST_VERDICT_SCHEMA: &str = "axon-guest-verdict/1";
 pub const COMPLETION_SCHEME: &str = "axon-guest-completion/1";
 pub const PROTECTED_PROFILE: &str = "linux-microvm-protected";
@@ -64,7 +64,22 @@ pub struct Limits {
     pub output_bytes: u64,
 }
 
-/// `axon-launch-manifest/1`. Built by Fabric per attempt; carries NO secret.
+/// The loop authority a launch is made under: the scope's authority epoch at
+/// launch, and the scope (tenant, task family) it was read for. It is part of
+/// the manifest, so the observation's `intended_launch_manifest_sha256` covers
+/// it and the loop joins it to its OWN scope pointer (C9 round 3, PSV-6; A82).
+/// Before `/2` the epoch was only the caller's `--expected-epoch`, which the
+/// observer echoed without ever seeing.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AuthorityRef {
+    pub epoch: u64,
+    pub tenant_id: String,
+    pub task_family: String,
+}
+
+/// `axon-launch-manifest/2`. Built by Fabric per attempt; carries NO secret.
+/// `/2` added [`AuthorityRef`] (`authority`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LaunchManifest {
@@ -89,6 +104,7 @@ pub struct LaunchManifest {
     pub candidate: CandidateRef,
     pub completion: Completion,
     pub observation_nonce: String,
+    pub authority: AuthorityRef,
     pub limits: Limits,
 }
 
@@ -146,7 +162,7 @@ impl LaunchManifest {
     }
     /// The guest's check: `bytes` are exactly the manifest Fabric named by
     /// `expected_sha256` (on the kernel command line), canonical, and a
-    /// well-formed `axon-launch-manifest/1` for the protected profile.
+    /// well-formed `axon-launch-manifest/2` for the protected profile.
     pub fn verify(bytes: &[u8], expected_sha256: &str) -> Result<LaunchManifest, String> {
         let got = sha256_hex(bytes);
         if got != expected_sha256 {

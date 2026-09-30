@@ -1178,6 +1178,12 @@ pub fn make_protected_v(
             scheme: COMPLETION_SCHEME.into(),
         },
         observation_nonce: h("b")[..32].into(),
+        // The loop's own scope pointer at the fixture's epoch (A82).
+        authority: AuthorityRef {
+            epoch: 0,
+            tenant_id: scope().tenant_id.as_str().into(),
+            task_family: scope().task_family.as_str().into(),
+        },
         limits: Limits {
             wall_time_ms: 60_000,
             output_bytes: 1 << 20,

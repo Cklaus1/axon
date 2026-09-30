@@ -214,6 +214,9 @@ impl Host {
             "observer": {"command": pin("observer.sh"), "interpreter": pin("bash"),
                          "nonce_store": self.p("nonces"),
                          "max_age_s": 300},
+            // A82: the launch-time epoch store is the operator's (here, the
+            // one the caller also names).
+            "authority_store": self.env.store,
         });
         if grant_registry {
             v["grant_registry"] = pin("grants/grants.json");
@@ -235,6 +238,15 @@ impl Host {
         r
     }
     fn submit(&self, req: &Value, grant_registry: Option<&Path>) -> (i32, String) {
+        self.submit_store(req, grant_registry, &self.env.store)
+    }
+    /// [`Self::submit`], the caller naming `store` as its `--store`.
+    fn submit_store(
+        &self,
+        req: &Value,
+        grant_registry: Option<&Path>,
+        store: &Path,
+    ) -> (i32, String) {
         let rp = self.env.dir.path().join("req.json");
         std::fs::write(&rp, req.to_string()).unwrap();
         let mut c = fabric();
@@ -243,7 +255,7 @@ impl Host {
         c.arg("--journal")
             .arg(&self.env.journal)
             .arg("--store")
-            .arg(&self.env.store)
+            .arg(store)
             .args(["--tenant", "tenant-t", "--family", "family-f"])
             .args(["--expected-epoch", "0"])
             .arg("--workspace")
@@ -931,4 +943,81 @@ fn a_symlinked_signer_key_signs_nothing() {
         r.1
     );
     assert_refused("symlinked key", &r, 4, "unregistered", "a symlink");
+}
+
+// ── C9 round 3, loop workstream (PSV-6, A82): the launch-time epoch store is
+// the operator's ──────────────────────────────────────────────────────────────
+
+/// A copy of the scope's authority store at `to`: the SAME epoch, so only the
+/// store's origin differs from the pinned one.
+fn copy_store(h: &Host, to: &Path) {
+    let st = std::process::Command::new("cp")
+        .arg("-a")
+        .arg(&h.env.store)
+        .arg(to)
+        .status()
+        .unwrap();
+    assert!(st.success(), "setup: copy the authority store");
+}
+
+/// A82: on a protected host the launch-time authority epoch is read from the
+/// store the host config pins. A caller `--store` naming ANOTHER store (here a
+/// copy at the same epoch, so nothing else refuses it) is refused before
+/// anything launches. Control: the pinned store, named by the caller too,
+/// launches.
+#[test]
+fn a_protected_launch_reads_its_epoch_only_from_the_pinned_store() {
+    let h = Host::new();
+    let other = h.env.dir.path().join("caller-store");
+    copy_store(&h, &other);
+    let r = h.submit_store(&h.linux_request("op-a82-other", "grant:test"), None, &other);
+    if r.0 == 0 {
+        panic!(
+            "ATTACK: a protected launch took its authority epoch from a caller-named --store \
+             {}: ACCEPTED: {}",
+            other.display(),
+            r.1
+        );
+    }
+    assert_refused(
+        "caller store",
+        &r,
+        4,
+        "unregistered",
+        "is not the authority store this protected host pins",
+    );
+    assert_eq!(launches(&h), 0);
+    let (c, out) = h.submit(&h.linux_request("op-a82-pinned", "grant:test"), None);
+    assert_eq!(c, 0, "control: the pinned store launches: {out}");
+    assert_eq!(launches(&h), 1);
+}
+
+/// A82: a protected host whose config pins no authority store launches
+/// nothing, whatever `--store` the caller names. Control: the same host with
+/// the store pinned launches.
+#[test]
+fn a_protected_host_that_pins_no_authority_store_launches_nothing() {
+    let h = Host::new();
+    let mut v: Value = serde_json::from_str(&std::fs::read_to_string(h.config()).unwrap()).unwrap();
+    v.as_object_mut().unwrap().remove("authority_store");
+    std::fs::write(h.config(), v.to_string()).unwrap();
+    let r = h.submit(&h.linux_request("op-a82-none", "grant:test"), None);
+    if r.0 == 0 {
+        panic!(
+            "ATTACK: a protected host that pins no authority store launched with the caller's \
+             --store: ACCEPTED: {}",
+            r.1
+        );
+    }
+    assert_refused(
+        "no authority store",
+        &r,
+        4,
+        "unregistered",
+        axon_fabric::protected_host::NO_AUTHORITY_STORE,
+    );
+    assert_eq!(launches(&h), 0);
+    h.write_config();
+    let (c, out) = h.submit(&h.linux_request("op-a82-some", "grant:test"), None);
+    assert_eq!(c, 0, "control: with the store pinned, it launches: {out}");
 }
