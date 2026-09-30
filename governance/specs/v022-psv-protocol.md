@@ -1137,14 +1137,20 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       it is cheap and sound. A `fn` declared `-> Result` that returns `Some`/`None`, or one
       declared `-> Option` that returns `Ok`/`Err`, panics at its return boundary. The review's
       exact candidate now FAILS on that confusion.
-    - **Language follow-up (not fixed here).** `dict_get`, `dict_get_or` and `host_await_val`
-      return a free type variable, so a stored value of any type unifies with any use. A closure
-      has no declared return type at run time, so the boundary check does not cover its return
-      (it still catches the value at the next declared `fn`, including a test declared
-      `-> Result`). An `Option`-returning test whose `?` meets a well-typed `None` is the route
-      where the completion rule is the only guard; a test pins it
-      (`a_test_ended_by_question_mark_is_never_completed`, `t_find`). The fix belongs in the type
-      system: typed dicts, or a runtime tag check against the inferred type.
+    - **Language follow-up (not fixed here; this note corrected by amendment 53).** `dict_get`,
+      `dict_get_or` and `host_await_val` return a free type variable, so a stored value of any type
+      unifies with any use. The return-boundary check above compares ONE thing: the constructor
+      family of a declared `Result` or `Option` return (`Some`/`None` from a `-> Result` fn,
+      `Ok`/`Err` from a `-> Option` fn). It checks no scalar kind, no struct or enum name, no
+      payload and no element, no parameter, and no closure return (a closure has no declared return
+      type at run time). This note used to say a confused value is still caught "at the next
+      declared `fn`". That held only for a `Result`/`Option` mismatch: a struct, scalar or `str`
+      returned from a fn declared `-> i64` crossed silently, and the round-4 review turned that into
+      a keyed PASS (the operator's `r.ok()` dispatched on the runtime type to the candidate's
+      method; amendment 53, matrix A86), which is a rubric substitution, not only a completion
+      issue. An `Option`-returning test whose `?` meets a well-typed `None` is the route where the
+      completion rule is the only guard; a test pins it
+      (`a_test_ended_by_question_mark_is_never_completed`, `t_find`).
     - **Rows.** M560 (the frame-selection filter), M561 (the replay feed), M562 (counting operator
       frames rather than reading the current provenance), M563 (the RNG refusal), M564/M565 (the
       completion decision and the flag it reads), M566 (the return-boundary check). Negative matrix
@@ -1417,6 +1423,76 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       `--no-default-features`, so its in-process codegen tests record SKIP ("axon build (no codegen
       feature)"); the parity scripts build their own codegen axon and do run. Android legs SKIP (no
       NDK or emulator). These are skips, not passes.
+
+53. **The candidate never chooses the code that runs under the operator's judging method: every
+    value is cast at every declared boundary, and an operator method name is the operator's (C9
+    round 4, core workstream, PSV-1; matrix A86).**
+    - **Before.** A method call selects its method by the receiver's RUNTIME type
+      (`self.methods.get(&(argv[0].type_name(), method))`), and nothing tied that type to the one
+      the operator's code saw. Two routes reached a keyed PASS for a wrong candidate through
+      `axon_psv::runner::run` (review logs `/var/tmp/c9r4-psv1/`): (a) a TYPE CONFUSION: `dict_get`'s
+      value type is free (`Deferred`, which unifies with anything), so a candidate's
+      `pub fn solve(n: i64) -> i64` returned its own `Fake`, and the operator's `r.ok()`, meant for
+      `impl Judge for i64`, ran the candidate's `impl Mine for Fake`; the same with the operator's
+      impl on the candidate's interface type `Point`. Amendment 46's return check compared only
+      `Result` against `Option`. (b) NO confusion at all (found while fixing (a)): the candidate
+      DECLARES `-> Fake`; the checker resolves a method call by name only, so `r.ok()` still type
+      checks, and ran `Fake::ok`. And `check_sealed` walked only expressions, so a candidate could
+      name the operator's types and traits in signatures, fields, bounds and impl headers.
+    - **After (the value boundary, `interp/conform.rs`).** One cast, `Interp::cast`, applied at
+      every point where a value meets a DECLARED type: a named fn's or method's arguments at entry
+      and its result at return (`call_fn_frame`, generalizing amendment 46's check, which is now
+      the `confused` decision of this cast), a closure's arguments and result under every
+      `fn(..) -> ..` type the reference crossed (a per-reference contract chain, gradual typing's
+      function proxy, so one closure used at two types is not confused), a lambda's own parameter
+      annotations, every value sent on a channel under the element types the channel object
+      crossed, a `let x: T` annotation, and each field of a struct or enum literal. What is cast:
+      scalar kind (every integer width is one kind), `str`, `bool`, `()`, `Decimal`; a struct or
+      enum by name and then its fields against the declared field types; `Option`/`Result` by
+      constructor and then the payload; arrays and tuples element by element; a refinement by its
+      base; `dyn Trait` and a type parameter's bounds by an `impl` of that trait. A type parameter
+      is BOUND from the first value that meets it (the arguments in order, or a closure's first
+      result) and every later value must agree. At a seal crossing (a sealed fn or closure
+      returning to operator code) a value at a type parameter nothing determined is refused: by
+      parametricity no honest body produces one (`fn solve<T>(n: i64) -> T`). A declared type the
+      interpreter cannot read (an unknown name, `Dict`, `Uncertain<T>`, a handle) is accepted: the
+      cast refuses only what it can SHOW is another type, so no honest program is rejected (the
+      full axon-core suite and every example stay green).
+    - **After (the dispatch edge, `Interp::seal_method`).** In operator code, a method name the
+      operator's code defines (in its impls or traits) is the operator's: a call that would
+      dispatch it to a SEALED method is refused. The candidate's own method names (its API) stay
+      callable from the suite. Route (b) has no confusion, so the cast cannot see it; this edge is
+      its only guard, and it also stops (a) on its own.
+    - **After (static, E0004).** `check_sealed` walks type positions too: parameter and return
+      types, struct and variant fields, refinement bases, trait method signatures, impl headers
+      (trait and `for` type), generic bounds, and `let`/lambda annotations inside bodies. The
+      item's own type parameters are local names and are not counted.
+    - **What is NOT claimed.** (1) A value that meets NO declared type on its way to operator code
+      is dynamically typed by the language: a `Dict` value (the type system gives `dict_get` no
+      element type) and an unannotated module-level `let` of the candidate. The dispatch edge
+      still keeps the candidate's methods from running under an operator method name there; a
+      suite that relies on such a value's TYPE pins it with an annotation (`let r: i64 = X`),
+      which is cast. (2) The candidate chooses its own declared types. If the suite dispatches a
+      method on a value whose type is the candidate's declaration, the operator's impl FOR THAT
+      TYPE runs (e.g. a lenient `impl Judge for bool` when the candidate declares `-> bool`): that
+      is the operator's own rubric, and a suite pins the type by annotation. (3) A closure that
+      crosses the host boundary (`host_await_val`) comes back without its contract: the host is
+      operator code. (4) Native codegen is unchanged: the PSV guest runs the interpreter.
+    - **Rows.** M651 (the dispatch edge), M652 (integer kind), M653 (struct name), M654 (array
+      elements), M655 (`Option` payload), M656 (tuple elements), M657 (struct fields at a return),
+      M658 (struct-literal fields), M659 (parameters), M660 (the parametricity refusal at a seal
+      crossing), M661/M662 (closure result and arguments), M663 (channel sends), M664 (`let`
+      annotations), M665 (E0004 over type positions), M666 (trait bounds), M667 (lambda
+      annotations). Each attack carries a confused `true` that selects the operator's OWN lenient
+      `impl Judge for bool`, so no candidate method is involved and the dispatch edge cannot stand
+      in for the cast; each marker is the attack's test COMPLETING. M566 (amendment 46) now anchors
+      the whole return cast and stays killed by its own test. Negative matrix A86. Real-runner
+      test: `crates/axon-psv/tests/sealed_frames.rs::the_candidate_never_chooses_the_operators_judging_method`
+      (the review's two candidates, the declared-`Fake` candidate, and the confused `true`; GOOD
+      is a keyed pass, WRONG a keyed failure, every attack a keyed failure). It fails against an
+      interpreter built at 1b687d95 (keyed pass for the review's Fake).
+    - **Operator deployment.** The guest image must be REBUILT to carry the new interpreter; its
+      scripts and runner are unchanged.
 
 54. **The guest runs the policy its launch manifest names, and the receipt binds it (C9 round 4,
     PSV-6 BLOCKER; matrix A87; rows M670-M679).**

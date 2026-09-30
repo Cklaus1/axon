@@ -91,6 +91,11 @@ pub enum Value {
         params: Vec<String>,
         body: Box<Expr>,
         captured: Rc<RefCell<HashMap<String, Value>>>,
+        /// The `fn(..) -> ..` types this REFERENCE crossed (outermost =
+        /// latest), cast on every call — gradual typing's function proxy,
+        /// per reference, so one closure used at two types is not confused
+        /// (C9 round 4, PSV-1, amendment 53; see `interp/conform.rs`).
+        contract: Option<Rc<conform::Contract>>,
     },
     /// A channel — a shared FIFO queue. Cloning shares the same channel (Rc), so
     /// a `spawn`ed body and the main flow see the same queue. The interpreter is
@@ -143,6 +148,15 @@ impl Value {
         }
     }
 }
+
+/// Channel address → (the channel, the element contracts it was stamped with).
+type ChanContracts = HashMap<
+    usize,
+    (
+        std::rc::Weak<RefCell<VecDeque<Value>>>,
+        Vec<Rc<conform::Contract>>,
+    ),
+>;
 
 // ── Non-local control flow ──────────────────────────────────────────────────
 
@@ -436,6 +450,11 @@ struct Seal {
     /// Struct types defined in a sealed module: their whole-struct `where`
     /// runs under THEIR provenance, whoever constructs one.
     types: std::collections::HashSet<String>,
+    /// Method names the OPERATOR's code defines (in its impls and traits).
+    /// In operator code such a name means the operator's method: a call that
+    /// would dispatch it to a sealed method (the receiver's runtime type is
+    /// one the candidate chose) is refused (C9 round 4, PSV-1, amendment 53).
+    operator_methods: std::collections::HashSet<String>,
 }
 
 /// Capture-cell key marking a closure created in a SEALED frame. Starts with
@@ -722,6 +741,20 @@ pub struct Interp<'p> {
     enums: HashMap<String, &'p EnumDef>,
     /// `(type_name, method_name) → method def` from impl blocks.
     methods: HashMap<(String, String), &'p FnDef>,
+    /// The impl block each method was defined in (by `FnDef` address), for
+    /// reading its signature: `Self` and the impl's type parameters.
+    impl_of: HashMap<usize, &'p ImplBlock>,
+    /// The traits the program defines, and `(type_name, trait)` for each
+    /// `impl Trait for Type`: `dyn Trait` and trait bounds are cast by them.
+    user_traits: std::collections::HashSet<String>,
+    trait_impls: std::collections::HashSet<(String, String)>,
+    /// A named refinement's base type (`type Pos = i64 where …` → `i64`).
+    refine_bases: HashMap<String, &'p crate::ast::AxonType>,
+    /// The element types each channel OBJECT crossed (by address; the weak
+    /// handle keeps the address from being reused while the entry exists).
+    chan_contracts: RefCell<ChanContracts>,
+    /// [`Interp::fn_cx`]'s per-fn signature environments.
+    fn_cx_cache: RefCell<HashMap<usize, conform::Cx>>,
     /// Module-level `let NAME = …` constant definitions, in source order.
     global_defs: Vec<(String, &'p Expr)>,
     /// Evaluated module-level constants (populated by [`Interp::init_globals`]).
@@ -1692,6 +1725,7 @@ impl SendValue {
                 params,
                 body,
                 captured,
+                ..
             } => {
                 let snapshot = captured.borrow();
                 let mut keys: Vec<&String> = snapshot.keys().collect();
@@ -1798,6 +1832,8 @@ impl SendValue {
                         .map(|(k, v)| (k, v.into_value()))
                         .collect(),
                 )),
+                // The host built this value: it crossed no declared type here.
+                contract: None,
             },
             SendValue::Tuple(xs) => Value::Tuple(xs.into_iter().map(Self::into_value).collect()),
             SendValue::Dict(entries) => {
@@ -2884,6 +2920,21 @@ impl<'p> Interp<'p> {
                         }
                         _ => {}
                     }
+                    match item {
+                        Item::ImplBlock(b) if !sealed(b.span) => {
+                            for m in &b.methods {
+                                if !sealed(m.span) {
+                                    seal.operator_methods.insert(m.name.clone());
+                                }
+                            }
+                        }
+                        Item::TraitDef(t) if !sealed(t.span) => {
+                            for m in &t.methods {
+                                seal.operator_methods.insert(m.name.clone());
+                            }
+                        }
+                        _ => {}
+                    }
                 }
             }
             seal
@@ -2892,6 +2943,10 @@ impl<'p> Interp<'p> {
         let mut structs = HashMap::new();
         let mut enums = HashMap::new();
         let mut methods = HashMap::new();
+        let mut impl_of = HashMap::new();
+        let mut user_traits = std::collections::HashSet::new();
+        let mut trait_impls = std::collections::HashSet::new();
+        let mut refine_bases = HashMap::new();
         let mut global_defs = Vec::new();
         let mut refine_preds = HashMap::new();
 
@@ -2904,6 +2959,10 @@ impl<'p> Interp<'p> {
                     // Phase 5: index the predicate so `call_fn` can evaluate it as
                     // a runtime precondition when a param's type is this refinement.
                     refine_preds.insert(r.name.clone(), r.predicate.as_ref());
+                    refine_bases.insert(r.name.clone(), &r.base);
+                }
+                Item::TraitDef(t) => {
+                    user_traits.insert(t.name.clone());
                 }
                 Item::TypeDef(t) => {
                     structs.insert(t.name.clone(), t);
@@ -2911,14 +2970,14 @@ impl<'p> Interp<'p> {
                 Item::EnumDef(e) => {
                     enums.insert(e.name.clone(), e);
                 }
-                Item::ImplBlock(ImplBlock {
-                    for_type,
-                    methods: ms,
-                    ..
-                }) => {
-                    let tn = type_name_of(for_type);
-                    for m in ms {
+                Item::ImplBlock(b) => {
+                    let tn = type_name_of(&b.for_type);
+                    if !b.trait_name.is_empty() {
+                        trait_impls.insert((tn.clone(), b.trait_name.clone()));
+                    }
+                    for m in &b.methods {
                         methods.insert((tn.clone(), m.name.clone()), m);
+                        impl_of.insert(m as *const FnDef as usize, b);
                     }
                 }
                 Item::LetDef { name, value, .. } => {
@@ -2972,6 +3031,12 @@ impl<'p> Interp<'p> {
             structs,
             enums,
             methods,
+            impl_of,
+            user_traits,
+            trait_impls,
+            refine_bases,
+            chan_contracts: RefCell::new(HashMap::new()),
+            fn_cx_cache: RefCell::new(HashMap::new()),
             global_defs,
             globals: HashMap::new(),
             call_depth: Cell::new(0),
@@ -3202,9 +3267,31 @@ impl<'p> Interp<'p> {
         // `@[verify]` — is one frame for loop control, and runs under the
         // callee's provenance.
         let callee = self.fn_is_sealed(f);
+        // A candidate fn returning to operator code: the seal crossing where
+        // a value at an undetermined type parameter is refused (amendment 53).
+        let crossing = self.seal.active && callee && !self.frame_sealed.get();
         self.with_frame(callee, || {
-            contain_frame(self.call_fn_frame(f, args), &format!("`{}`", f.name))
+            contain_frame(
+                self.call_fn_frame(f, args, crossing),
+                &format!("`{}`", f.name),
+            )
         })
+    }
+
+    /// The type environment of `f`'s signature for ONE activation: the
+    /// signature part is cached per fn; the type-parameter bindings are fresh.
+    fn fn_cx(&self, f: &FnDef) -> conform::Cx {
+        let key = f as *const FnDef as usize;
+        let cached = self.fn_cx_cache.borrow().get(&key).cloned();
+        let cx = match cached {
+            Some(cx) => cx,
+            None => {
+                let cx = conform::Cx::of_fn(f, self.impl_of.get(&key).copied());
+                self.fn_cx_cache.borrow_mut().insert(key, cx.clone());
+                cx
+            }
+        };
+        cx.fresh()
     }
 
     /// Whether `f` was defined in a sealed (candidate) module.
@@ -3218,6 +3305,29 @@ impl<'p> Interp<'p> {
             return panic(format!(
                 "sealed code (the candidate under test) cannot run `{}`, which the operator defines",
                 f.name
+            ));
+        }
+        Ok(())
+    }
+
+    /// The method-dispatch edge: in operator code, a method name the operator
+    /// defines is the operator's. A method call selects its method by the
+    /// receiver's RUNTIME type, which the candidate chooses (its declared
+    /// return type, or a type confusion), so without this edge the candidate
+    /// chose which code ran under the operator's judging method's name — the
+    /// C9 round-4 review's keyed pass. A candidate's OWN method names (its
+    /// API, which the suite may call) are not affected.
+    pub(crate) fn seal_method(&self, f: &FnDef, tn: &str) -> Result<(), Flow> {
+        if self.seal.active
+            && !self.frame_sealed.get()
+            && self.fn_is_sealed(f)
+            && self.seal.operator_methods.contains(&f.name)
+        {
+            return panic(format!(
+                "operator code called `.{}()`, a method the operator defines, on a value of type \
+                 `{tn}` whose `{}` is the candidate's — the candidate would choose the code that \
+                 runs under the operator's method",
+                f.name, f.name
             ));
         }
         Ok(())
@@ -3329,7 +3439,7 @@ impl<'p> Interp<'p> {
         out
     }
 
-    fn call_fn_frame(&self, f: &FnDef, args: Vec<Value>) -> R {
+    fn call_fn_frame(&self, f: &FnDef, args: Vec<Value>, crossing: bool) -> R {
         // Bound recursion: a graceful panic instead of a process-aborting stack
         // overflow on runaway/infinite recursion. `_guard` restores the depth on
         // any return path (including `?`).
@@ -3410,6 +3520,10 @@ impl<'p> Interp<'p> {
         // reports a single "input N" suffix.
         let input_arg: Option<i64> = input_args.first().copied();
         let mut env = Env::new();
+        // The signature's type environment for this activation: every
+        // argument and the result are CAST to the declared types in it
+        // (amendment 53, `interp/conform.rs`).
+        let cx = self.fn_cx(f);
         for (p, a) in f.params.iter().zip(args) {
             // Soft typing: `Uncertain<T>` is compatible with a plain-`T` parameter
             // (the checker allows it). If the declared param type is NOT itself a
@@ -3428,11 +3542,21 @@ impl<'p> Interp<'p> {
             // R19 Slice B: coerce Int→SizedInt when the declared param type is a
             // non-i64 integer width — ensures arithmetic inside the callee's body
             // uses width-correct ops (completeness, I-9).
-            let a = if let Some(width) = interp_eval_axon_type_to_width(&p.ty) {
+            let mut a = if let Some(width) = interp_eval_axon_type_to_width(&p.ty) {
                 interp_eval_coerce_to_sized(a, width)
             } else {
                 a
             };
+            if let Err(why) = self.cast(&mut a, &p.ty, &cx) {
+                return panic(format!(
+                    "argument `{}` of `{}` is declared `{}` but is {} — a runtime type confusion \
+                     ({why})",
+                    p.name,
+                    f.name,
+                    crate::doc::render_type(&p.ty),
+                    value::display(&a)
+                ));
+            }
             env.define(p.name.clone(), a);
         }
         // Phase 5: refinement-type PRECONDITIONS. A parameter `p: T where P`
@@ -3598,32 +3722,34 @@ impl<'p> Interp<'p> {
             }
             Err(other) => return Err(other),
         };
-        // A value whose constructor contradicts the declared `Result`/`Option`
-        // return type is a runtime type confusion (an untyped `dict_get` yields
-        // a free type variable, so a stored `None` type-checks as a `Result`).
-        // Refuse it here, at the one boundary every return crosses, instead of
-        // letting a caller's `?` read it as the other type (C9 round 3, PSV-3).
+        // The result is CAST to the declared return type (C9 round 3 checked
+        // only a `Result`/`Option` constructor against the other; round 4,
+        // amendment 53, checks the whole declared type — scalar kind, struct
+        // or enum name and fields, `Option`/`Result` payloads, array and tuple
+        // elements, trait bounds, type parameters bound by the arguments).
+        // An untyped `dict_get` yields a free type variable, so a stored
+        // value of ANY type type-checks as the declared one; refused here, at
+        // the one boundary every return crosses, it never reaches a caller
+        // that would dispatch a method on its runtime type. At a seal
+        // crossing (`crossing`), a value at a type parameter no argument
+        // determined is refused too.
         {
-            use crate::ast::AxonType as T;
-            let base = |t: &T| match t {
-                T::Result { .. } => Some("Result"),
-                T::Option(_) => Some("Option"),
-                T::Generic { base, .. } if base == "Result" || base == "Option" => {
-                    Some(if base == "Result" { "Result" } else { "Option" })
-                }
-                _ => None,
+            let mismatch = match f.return_type.as_ref() {
+                Some(rt) => self.cast(&mut result, rt, &cx.strict(crossing)).err(),
+                None => None,
             };
-            let confused = matches!(
-                (f.return_type.as_ref().and_then(base), &result),
-                (Some("Result"), Value::Some(_) | Value::None)
-                    | (Some("Option"), Value::Ok(_) | Value::Err(_))
-            );
+            let confused = mismatch.is_some();
             if confused {
                 return panic(format!(
-                    "`{}` is declared to return {} but produced {} — a runtime type confusion",
+                    "`{}` is declared to return `{}` but produced {} — a runtime type confusion \
+                     ({})",
                     f.name,
-                    f.return_type.as_ref().and_then(base).unwrap_or_default(),
-                    value::display(&result)
+                    f.return_type
+                        .as_ref()
+                        .map(crate::doc::render_type)
+                        .unwrap_or_default(),
+                    value::display(&result),
+                    mismatch.unwrap_or_default()
                 ));
             }
         }
@@ -3923,6 +4049,7 @@ impl<'p> Interp<'p> {
             params,
             body,
             captured,
+            contract,
         } = c
         else {
             return panic(format!("value of type {} is not callable", c.type_name()));
@@ -3934,6 +4061,9 @@ impl<'p> Interp<'p> {
                 args.len()
             ));
         }
+        let mut args = args;
+        // The arguments are cast to every `fn` type this reference crossed.
+        self.closure_args_check(&contract, &mut args)?;
         let mut env = Env::new();
         // Base scope = captured bindings; a fresh scope holds the parameters.
         // The base scope is a CLONE of the shared cell's contents so the body
@@ -3948,6 +4078,8 @@ impl<'p> Interp<'p> {
         // refused at its edge, as for a named fn (`contain_frame`).
         // A closure runs under the provenance of the frame that CREATED it.
         let origin = self.seal.active && captured.borrow().contains_key(SEALED_CLOSURE_MARK);
+        // A candidate closure returning to operator code is a seal crossing.
+        let crossing = origin && !self.frame_sealed.get();
         let out = self.with_frame(origin, || {
             contain_frame(
                 match self.eval(&body, &mut env) {
@@ -3970,7 +4102,10 @@ impl<'p> Interp<'p> {
                 }
             }
         }
-        out
+        // The result is cast to every `fn` type this reference crossed.
+        let mut v = out?;
+        self.closure_ret_check(&contract, &mut v, crossing)?;
+        Ok(v)
     }
 
     // ── goal_run: hill-climb / retrospective best-observed ───────────────────
@@ -4155,6 +4290,9 @@ fn now_ms() -> i64 {
 // there; inherent methods resolve across split impl blocks, so call sites in
 // this file are unchanged. (A `mod` must be at module scope, not inside `impl`.)
 mod goal;
+// Declared-type conformance at every value boundary (C9 round 4, PSV-1,
+// amendment 53).
+pub mod conform;
 // Core tree-walking evaluator (eval/eval_block/eval_call/eval_binop/
 // match_pattern) extracted to interp/eval.rs (R0 slice 5). Its methods live in a
 // second `impl Interp` block there; inherent methods resolve across split impl
@@ -4979,6 +5117,413 @@ mod tests {
         assert!(
             matches!(&out, Err(m) if m.contains("runtime type confusion")),
             "an Option fn returned an Ok across its boundary: {out:?}"
+        );
+    }
+
+    // ── C9 round 4, PSV-1 (amendment 53, matrix A86): the candidate never
+    // chooses the code that runs under the operator's judging method. The
+    // review's keyed pass: a candidate returned its own `Fake` from a fn
+    // declared `-> i64` (a type confusion through `dict_get`, whose value
+    // type is free), and the operator's `r.ok()` dispatched on the RUNTIME
+    // type to the candidate's `Fake::ok`. Two sources close it: every value
+    // is CAST to the declared type at each boundary it crosses, and in
+    // operator code an operator-defined method name is the operator's.
+    //
+    // `ok` on an i64 is the real check (3 * 3 = 9); `ok` on a bool reads the
+    // bool — a second, lenient impl the operator wrote for its own reasons.
+    // A confused `true` selects it, so each attack below reaches a PASS
+    // unless its own guard refuses it (no candidate method is involved, so
+    // the dispatch edge cannot stand in for the cast).
+    const JUDGE: &str = "trait Judge {\n    fn ok(self) -> bool\n}\nimpl Judge for i64 {\n    fn ok(self: i64) -> bool { self == 9 }\n}\nimpl Judge for bool {\n    fn ok(self: bool) -> bool { self }\n}\n";
+    /// Candidate-side laundering: a `true`, typed as whatever the context
+    /// wants.
+    const LAUNDER: &str = "fn stash(v: bool) -> Dict {\n    let d = dict_new()\n    dict_set(d, \"k\", v)\n    d\n}\n";
+    const CONFUSED: &str = "match dict_get(stash(true), \"k\") { Some(v) => v  None => 0 }";
+
+    fn judged(tag: &str, suite: &str, cand: &str) -> Result<TestEnd, String> {
+        sealed_outcome(
+            tag,
+            &format!("{JUDGE}{suite}"),
+            &format!("{LAUNDER}{}", cand.replace("CONFUSED", CONFUSED)),
+            "t",
+        )
+    }
+
+    /// A control pair on one suite: the right candidate completes, the wrong
+    /// one fails — so the attack meets a live check.
+    fn live(tag: &str, suite: &str, good: &str, wrong: &str) {
+        assert_eq!(
+            judged(tag, suite, good),
+            Ok(TestEnd::Completed),
+            "control: the right answer"
+        );
+        assert!(
+            judged(tag, suite, wrong).is_err(),
+            "control: the wrong answer fails"
+        );
+    }
+
+    fn confusion_refused(out: &Result<TestEnd, String>) -> bool {
+        matches!(out, Err(m) if m.contains("runtime type confusion"))
+    }
+
+    /// The dispatch edge. No type confusion at all: the candidate DECLARES
+    /// `-> Fake`, and `Fake` has its own `ok`. The operator's `r.ok()` would
+    /// run it. The candidate's own method names (its API) stay callable.
+    #[test]
+    fn a_candidates_method_never_runs_under_the_operators_method_name() {
+        let suite = "@[test]\nfn t() {\n    let r = solve(3)\n    assert(r.ok())\n}\n\
+                     @[test]\nfn t_api() {\n    assert_eq(sq(3).twice(), 18)\n}\n";
+        let api = "type Sq = { v: i64 }\ntrait Api {\n    fn twice(self) -> i64\n}\nimpl Api for Sq {\n    fn twice(self: Sq) -> i64 { self.v * 2 }\n}\nfn sq(n: i64) -> Sq { Sq { v: n * n } }\n";
+        live(
+            "psv1d",
+            suite,
+            &format!("{api}fn solve(n: i64) -> i64 {{ n * n }}\n"),
+            &format!("{api}fn solve(n: i64) -> i64 {{ n + 1 }}\n"),
+        );
+        let fake = format!(
+            "{api}type Fake = {{ v: i64 }}\ntrait Mine {{\n    fn ok(self) -> bool\n}}\nimpl Mine for Fake {{\n    fn ok(self: Fake) -> bool {{ true }}\n}}\nfn solve(n: i64) -> Fake {{ Fake {{ v: n }} }}\n"
+        );
+        let out = judged("psv1d", suite, &fake);
+        assert!(
+            out != Ok(TestEnd::Completed),
+            "ATTACK: the candidate's `ok` ran under the operator's method name: {out:?}"
+        );
+        assert!(
+            matches!(&out, Err(m) if m.contains("a method the operator defines")),
+            "the refusal names the rule: {out:?}"
+        );
+        assert_eq!(
+            sealed_outcome(
+                "psv1d",
+                &format!("{JUDGE}{suite}"),
+                &format!("{LAUNDER}{fake}"),
+                "t_api"
+            ),
+            Ok(TestEnd::Completed),
+            "control: the suite still calls the candidate's own API"
+        );
+    }
+
+    /// Scalar kind: a confused `true` from a fn declared `-> i64`.
+    #[test]
+    fn a_confused_scalar_never_crosses_a_declared_return() {
+        let suite = "@[test]\nfn t() {\n    let r = solve(3)\n    assert(r.ok())\n}\n";
+        live(
+            "psv1s",
+            suite,
+            "fn solve(n: i64) -> i64 { n * n }\n",
+            "fn solve(n: i64) -> i64 { n + 1 }\n",
+        );
+        let out = judged("psv1s", suite, "fn solve(n: i64) -> i64 { CONFUSED }\n");
+        assert!(
+            out != Ok(TestEnd::Completed) && confusion_refused(&out),
+            "ATTACK: a confused bool crossed a declared `-> i64` return: {out:?}"
+        );
+    }
+
+    /// Struct name: an `Other` returned from a fn declared `-> Point`.
+    #[test]
+    fn a_confused_struct_never_crosses_as_another_struct() {
+        let suite = "impl Judge for Point {\n    fn ok(self: Point) -> bool { self.x == 9 }\n}\n\
+                     impl Judge for Other {\n    fn ok(self: Other) -> bool { true }\n}\n\
+                     @[test]\nfn t() {\n    assert(solve(3).ok())\n}\n";
+        let types = "type Point = { x: i64 }\ntype Other = { x: i64 }\n";
+        live(
+            "psv1n",
+            suite,
+            &format!("{types}fn solve(n: i64) -> Point {{ Point {{ x: n * n }} }}\n"),
+            &format!("{types}fn solve(n: i64) -> Point {{ Point {{ x: n + 1 }} }}\n"),
+        );
+        let attack = format!(
+            "{types}fn keep(v: Other) -> Dict {{\n    let d = dict_new()\n    dict_set(d, \"k\", v)\n    d\n}}\n\
+             fn solve(n: i64) -> Point {{\n    match dict_get(keep(Other {{ x: n }}), \"k\") {{ Some(v) => v  None => Point {{ x: 0 }} }}\n}}\n"
+        );
+        let out = judged("psv1n", suite, &attack);
+        assert!(
+            out != Ok(TestEnd::Completed) && confusion_refused(&out),
+            "ATTACK: an `Other` crossed a declared `-> Point` return: {out:?}"
+        );
+    }
+
+    /// Array elements, `Option` payloads, tuple elements.
+    #[test]
+    fn a_confused_element_never_crosses_inside_an_array() {
+        let suite = "@[test]\nfn t() {\n    assert(solve(3)[0].ok())\n}\n";
+        live(
+            "psv1a",
+            suite,
+            "fn solve(n: i64) -> [i64] { [n * n] }\n",
+            "fn solve(n: i64) -> [i64] { [n + 1] }\n",
+        );
+        let out = judged("psv1a", suite, "fn solve(n: i64) -> [i64] { [CONFUSED] }\n");
+        assert!(
+            out != Ok(TestEnd::Completed) && confusion_refused(&out),
+            "ATTACK: a confused element crossed a declared `-> [i64]` return: {out:?}"
+        );
+    }
+
+    #[test]
+    fn a_confused_payload_never_crosses_inside_an_option() {
+        let suite = "@[test]\nfn t() {\n    match solve(3) {\n        Some(r) => assert(r.ok())\n        None => assert(false)\n    }\n}\n";
+        live(
+            "psv1o",
+            suite,
+            "fn solve(n: i64) -> Option<i64> { Some(n * n) }\n",
+            "fn solve(n: i64) -> Option<i64> { Some(n + 1) }\n",
+        );
+        let out = judged(
+            "psv1o",
+            suite,
+            "fn solve(n: i64) -> Option<i64> { Some(CONFUSED) }\n",
+        );
+        assert!(
+            out != Ok(TestEnd::Completed) && confusion_refused(&out),
+            "ATTACK: a confused payload crossed a declared `-> Option<i64>` return: {out:?}"
+        );
+    }
+
+    #[test]
+    fn a_confused_element_never_crosses_inside_a_tuple() {
+        let suite = "@[test]\nfn t() {\n    assert(solve(3).0.ok())\n}\n";
+        live(
+            "psv1t",
+            suite,
+            "fn solve(n: i64) -> (i64, i64) { (n * n, 0) }\n",
+            "fn solve(n: i64) -> (i64, i64) { (n + 1, 0) }\n",
+        );
+        let out = judged(
+            "psv1t",
+            suite,
+            "fn solve(n: i64) -> (i64, i64) { (CONFUSED, 0) }\n",
+        );
+        assert!(
+            out != Ok(TestEnd::Completed) && confusion_refused(&out),
+            "ATTACK: a confused element crossed a declared `-> (i64, i64)` return: {out:?}"
+        );
+    }
+
+    /// A struct's fields at the return: the field was ASSIGNED after
+    /// construction, so only the deep return cast sees it.
+    #[test]
+    fn a_confused_field_never_crosses_inside_a_struct() {
+        let suite = "@[test]\nfn t() {\n    assert(solve(3).v.ok())\n}\n";
+        let ty = "type Holder = { v: i64 }\n";
+        live(
+            "psv1f",
+            suite,
+            &format!("{ty}fn solve(n: i64) -> Holder {{ Holder {{ v: n * n }} }}\n"),
+            &format!("{ty}fn solve(n: i64) -> Holder {{ Holder {{ v: n + 1 }} }}\n"),
+        );
+        let out = judged(
+            "psv1f",
+            suite,
+            &format!("{ty}fn solve(n: i64) -> Holder {{\n    let h = Holder {{ v: 0 }}\n    h.v = CONFUSED\n    h\n}}\n"),
+        );
+        assert!(
+            out != Ok(TestEnd::Completed) && confusion_refused(&out),
+            "ATTACK: a confused field crossed a declared `-> Holder` return: {out:?}"
+        );
+    }
+
+    /// A field at CONSTRUCTION: a candidate global the suite reads crosses
+    /// no fn boundary, so the struct literal is the declared type it meets.
+    #[test]
+    fn a_confused_field_is_refused_at_construction() {
+        let suite = "@[test]\nfn t() {\n    assert(H.v.ok())\n}\n";
+        let ty = "type Holder = { v: i64 }\n";
+        live(
+            "psv1c",
+            suite,
+            &format!("{ty}let H = Holder {{ v: 9 }}\n"),
+            &format!("{ty}let H = Holder {{ v: 4 }}\n"),
+        );
+        let out = judged(
+            "psv1c",
+            suite,
+            &format!("{ty}let H = Holder {{ v: CONFUSED }}\n"),
+        );
+        assert!(
+            out != Ok(TestEnd::Completed) && confusion_refused(&out),
+            "ATTACK: a confused field was constructed into a candidate global: {out:?}"
+        );
+    }
+
+    /// A declared PARAMETER: an unannotated candidate global handed to the
+    /// operator's typed helper.
+    #[test]
+    fn a_confused_argument_never_enters_a_declared_parameter() {
+        let suite =
+            "fn judge(x: i64) -> bool { x.ok() }\n@[test]\nfn t() {\n    assert(judge(X))\n}\n";
+        live("psv1p", suite, "let X = 9\n", "let X = 4\n");
+        let out = judged("psv1p", suite, "let X = CONFUSED\n");
+        assert!(
+            out != Ok(TestEnd::Completed) && confusion_refused(&out),
+            "ATTACK: a confused value entered the operator's `x: i64` parameter: {out:?}"
+        );
+    }
+
+    /// Parametricity at a seal crossing: `fn solve<T>(n: i64) -> T` has no
+    /// argument of type `T`, so no honest body produces a `T`. An honest
+    /// generic candidate whose `T` IS determined still crosses.
+    #[test]
+    fn a_value_at_an_undetermined_type_parameter_never_crosses_the_seal() {
+        let suite = "@[test]\nfn t() {\n    let r = solve(3)\n    assert(r.ok())\n}\n\
+                     @[test]\nfn t_pick() {\n    assert(pick(9).ok())\n}\n";
+        let pick = "fn pick<T>(x: T) -> T { x }\n";
+        live(
+            "psv1g",
+            suite,
+            &format!("{pick}fn solve(n: i64) -> i64 {{ n * n }}\n"),
+            &format!("{pick}fn solve(n: i64) -> i64 {{ n + 1 }}\n"),
+        );
+        let attack = format!(
+            "{pick}fn solve<T>(n: i64) -> T {{\n    match dict_get(stash(true), \"k\") {{ Some(v) => v  None => solve(n) }}\n}}\n"
+        );
+        let out = judged("psv1g", suite, &attack);
+        assert!(
+            out != Ok(TestEnd::Completed) && confusion_refused(&out),
+            "ATTACK: a value at an undetermined type parameter crossed into operator code: {out:?}"
+        );
+        assert_eq!(
+            sealed_outcome(
+                "psv1g",
+                &format!("{JUDGE}{suite}"),
+                &format!("{LAUNDER}{attack}"),
+                "t_pick"
+            ),
+            Ok(TestEnd::Completed),
+            "control: an honest generic crosses when its argument determines `T`"
+        );
+    }
+
+    /// A closure's RESULT under the `fn` type it crossed.
+    #[test]
+    fn a_closures_confused_result_never_crosses_its_declared_type() {
+        let suite = "@[test]\nfn t() {\n    let f = mk()\n    assert(f(3).ok())\n}\n";
+        live(
+            "psv1k",
+            suite,
+            "fn mk() -> fn(i64) -> i64 { |n| n * n }\n",
+            "fn mk() -> fn(i64) -> i64 { |n| n + 1 }\n",
+        );
+        let out = judged(
+            "psv1k",
+            suite,
+            "fn mk() -> fn(i64) -> i64 { |n| CONFUSED }\n",
+        );
+        assert!(
+            out != Ok(TestEnd::Completed) && confusion_refused(&out),
+            "ATTACK: a closure declared `fn(i64) -> i64` returned a confused bool: {out:?}"
+        );
+    }
+
+    /// A closure's ARGUMENTS: the candidate calls the operator's listener
+    /// with a confused value under the `fn(i64) -> ()` it declared.
+    #[test]
+    fn a_closures_confused_argument_never_crosses_its_declared_type() {
+        let suite = "@[test]\nfn t() {\n    visit(|r| assert(r.ok()))\n}\n";
+        live(
+            "psv1l",
+            suite,
+            "fn visit(cb: fn(i64) -> ()) { cb(9) }\n",
+            "fn visit(cb: fn(i64) -> ()) { cb(4) }\n",
+        );
+        let out = judged(
+            "psv1l",
+            suite,
+            "fn visit(cb: fn(i64) -> ()) { cb(CONFUSED) }\n",
+        );
+        assert!(
+            out != Ok(TestEnd::Completed) && confusion_refused(&out),
+            "ATTACK: the operator's listener was called with a confused bool: {out:?}"
+        );
+    }
+
+    /// The listener's OWN annotation: the candidate declares `fn(T) -> ()`,
+    /// so only the operator's `|r: i64|` states the type.
+    #[test]
+    fn a_lambdas_annotated_parameter_is_cast() {
+        let suite = "@[test]\nfn t() {\n    visit(|r: i64| assert(r.ok()))\n}\n";
+        live(
+            "psv1m",
+            suite,
+            "fn visit<T>(cb: fn(T) -> ()) { cb(9) }\n",
+            "fn visit<T>(cb: fn(T) -> ()) { cb(4) }\n",
+        );
+        let out = judged(
+            "psv1m",
+            suite,
+            "fn visit<T>(cb: fn(T) -> ()) { cb(CONFUSED) }\n",
+        );
+        assert!(
+            out != Ok(TestEnd::Completed) && confusion_refused(&out),
+            "ATTACK: the operator's `|r: i64|` listener was called with a confused bool: {out:?}"
+        );
+    }
+
+    /// A channel is one invariant object: what the candidate sends on a
+    /// `Chan<i64>` is cast.
+    #[test]
+    fn a_confused_value_is_never_sent_on_a_declared_channel() {
+        let suite = "@[test]\nfn t() {\n    let c = chan<i64>()\n    fill(c)\n    assert(c.recv().ok())\n}\n";
+        live(
+            "psv1q",
+            suite,
+            "fn fill(c: Chan<i64>) { c.send(9) }\n",
+            "fn fill(c: Chan<i64>) { c.send(4) }\n",
+        );
+        let out = judged(
+            "psv1q",
+            suite,
+            "fn fill(c: Chan<i64>) { c.send(CONFUSED) }\n",
+        );
+        assert!(
+            out != Ok(TestEnd::Completed) && confusion_refused(&out),
+            "ATTACK: a confused bool was sent on a `Chan<i64>` the operator reads: {out:?}"
+        );
+    }
+
+    /// A `let` annotation: the suite pins the type of a candidate global.
+    #[test]
+    fn a_let_annotation_is_cast() {
+        let suite = "@[test]\nfn t() {\n    let r: i64 = X\n    assert(r.ok())\n}\n";
+        live("psv1b", suite, "let X = 9\n", "let X = 4\n");
+        let out = judged("psv1b", suite, "let X = CONFUSED\n");
+        assert!(
+            out != Ok(TestEnd::Completed) && confusion_refused(&out),
+            "ATTACK: a confused bool was bound to the operator's `let r: i64`: {out:?}"
+        );
+    }
+
+    /// A trait BOUND: `judge<T: Judge>` over a value whose type implements
+    /// only another trait with a same-named, lenient method.
+    #[test]
+    fn a_type_parameters_trait_bound_is_cast() {
+        let suite = "trait Judge {\n    fn ok(self) -> bool\n}\nimpl Judge for i64 {\n    fn ok(self: i64) -> bool { self == 9 }\n}\n\
+                     trait Lax {\n    fn ok(self) -> bool\n}\nimpl Lax for bool {\n    fn ok(self: bool) -> bool { self }\n}\n\
+                     fn judge<T: Judge>(x: T) -> bool { x.ok() }\n@[test]\nfn t() {\n    assert(judge(X))\n}\n";
+        let run = |cand: &str| {
+            sealed_outcome(
+                "psv1r2",
+                suite,
+                &format!("{LAUNDER}{}", cand.replace("CONFUSED", CONFUSED)),
+                "t",
+            )
+        };
+        assert_eq!(
+            run("let X = 9\n"),
+            Ok(TestEnd::Completed),
+            "control: the right answer"
+        );
+        assert!(
+            run("let X = 4\n").is_err(),
+            "control: the wrong answer fails"
+        );
+        let out = run("let X = CONFUSED\n");
+        assert!(
+            out != Ok(TestEnd::Completed) && confusion_refused(&out),
+            "ATTACK: a bool passed the operator's `T: Judge` bound through `Lax`: {out:?}"
         );
     }
 

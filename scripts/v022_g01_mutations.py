@@ -1915,6 +1915,89 @@ MUTATIONS += [
      'axon-fabric', '--test freeze_manifest', 'a_compiler_wrapper_does_not_freeze'),
 ]
 
+# ── C9 round 4, CORE workstream (M651-M667; amendment 53; matrix A86) ──
+# PSV-1: the candidate never chooses the code that runs under the operator's
+# judging method. M651 is the method-dispatch seal edge (no confusion needed:
+# the candidate DECLARES its own type). M652-M664/M666/M667 are the
+# declared-type CAST at each value boundary (interp/conform.rs): each attack
+# carries a confused `true` that selects the operator's OWN lenient impl, so
+# no candidate method is involved and the dispatch edge cannot stand in for
+# the cast. M665 is the static E0004 walk over type positions.
+_CC = 'crates/axon-core/src/interp/conform.rs'
+_CE = 'crates/axon-core/src/interp/eval.rs'
+_T4 = 'interp::tests::'
+MUTATIONS += [
+    ('M651', "PSV-1 (A86): in operator code an operator-defined method name never dispatches to the candidate's method", _CI,
+     '            && self.seal.operator_methods.contains(&f.name)',
+     '            && false',
+     'axon-core', _CL, _T4 + 'a_candidates_method_never_runs_under_the_operators_method_name'),
+    ('M652', 'PSV-1 (A86): a value is cast to a declared integer type by kind', _CC,
+     'return kind_ok(matches!(v, Value::Int(_) | Value::SizedInt { .. }))',
+     'return kind_ok(true)',
+     'axon-core', _CL, _T4 + 'a_confused_scalar_never_crosses_a_declared_return'),
+    ('M653', 'PSV-1 (A86): a struct value is cast to a declared struct type by name', _CC,
+     '            if name != n {',
+     '            if false {',
+     'axon-core', _CL, _T4 + 'a_confused_struct_never_crosses_as_another_struct'),
+    ('M654', 'PSV-1 (A86): a declared array type casts every element', _CC,
+     '                        self.cast_at(x, inner, cx, d)?;',
+     '                        let _ = (x, inner);',
+     'axon-core', _CL, _T4 + 'a_confused_element_never_crosses_inside_an_array'),
+    ('M655', 'PSV-1 (A86): a declared Option type casts its payload', _CC,
+     '            Value::Some(x) => self.cast_at(x, inner, cx, d),',
+     '            Value::Some(_) => Ok(()),',
+     'axon-core', _CL, _T4 + 'a_confused_payload_never_crosses_inside_an_option'),
+    ('M656', 'PSV-1 (A86): a declared tuple type casts every element', _CC,
+     '                        self.cast_at(x, t, cx, d)?;',
+     '                        let _ = (x, t);',
+     'axon-core', _CL, _T4 + 'a_confused_element_never_crosses_inside_a_tuple'),
+    ('M657', "PSV-1 (A86): a declared struct type casts the struct's fields", _CC,
+     '                    self.cast_at(fv, &tf.ty, &fcx, d)\n                        .map_err(|e| format!("field `{}` of `{n}`: {e}", tf.name))?;',
+     '                    self.cast_at(fv, &any(), &fcx, d)\n                        .map_err(|e| format!("field `{}` of `{n}`: {e}", tf.name))?;',
+     'axon-core', _CL, _T4 + 'a_confused_field_never_crosses_inside_a_struct'),
+    ('M658', 'PSV-1 (A86): a struct literal casts each field to its declared type', _CE,
+     'if let Err(why) = self.cast_field(name, fname, &mut fval) {',
+     'if let Err(why) = Ok::<(), String>(()) {',
+     'axon-core', _CL, _T4 + 'a_confused_field_is_refused_at_construction'),
+    ('M659', "PSV-1 (A86): a fn's arguments are cast to its declared parameter types", _CI,
+     'if let Err(why) = self.cast(&mut a, &p.ty, &cx) {',
+     'if let Err(why) = Ok::<(), String>(()) {',
+     'axon-core', _CL, _T4 + 'a_confused_argument_never_enters_a_declared_parameter'),
+    ('M660', 'PSV-1 (A86): at a seal crossing a value at a type parameter no argument determined is refused', _CC,
+     '            None if cx.strict => Err(format!(',
+     '            None if false => Err(format!(',
+     'axon-core', _CL, _T4 + 'a_value_at_an_undetermined_type_parameter_never_crosses_the_seal'),
+    ('M661', "PSV-1 (A86): a closure's result is cast to every fn type it crossed", _CI,
+     '        self.closure_ret_check(&contract, &mut v, crossing)?;',
+     '        let _ = crossing;',
+     'axon-core', _CL, _T4 + 'a_closures_confused_result_never_crosses_its_declared_type'),
+    ('M662', "PSV-1 (A86): a closure's arguments are cast to every fn type it crossed", _CI,
+     '        self.closure_args_check(&contract, &mut args)?;',
+     '        let _ = &contract;',
+     'axon-core', _CL, _T4 + 'a_closures_confused_argument_never_crosses_its_declared_type'),
+    ('M663', 'PSV-1 (A86): a value sent on a channel is cast to every element type the channel crossed', _CE,
+     '                            self.chan_send_check(q, &mut v)?;',
+     '                            let _ = &q;',
+     'axon-core', _CL, _T4 + 'a_confused_value_is_never_sent_on_a_declared_channel'),
+    ('M664', 'PSV-1 (A86): a let annotation casts the bound value', _CE,
+     'if let Err(why) = self.cast(&mut v, t, &Default::default()) {',
+     'if let Err(why) = Ok::<(), String>(()) {',
+     'axon-core', _CL, _T4 + 'a_let_annotation_is_cast'),
+    ('M665', "PSV-1 (A86): E0004 walks type positions (signatures, fields, impl headers, bounds, annotations)", 'crates/axon-core/src/resolver.rs',
+     '            for n in names\n                .into_iter()\n                .chain(annotated.iter().map(String::as_str))\n            {',
+     '            for n in Vec::<&str>::new() {',
+     'axon-core', _CL, 'resolver::tests::a_sealed_module_cannot_name_the_operators_types_or_traits'),
+    ('M666', "PSV-1 (A86): a type parameter's trait bounds are cast by an impl of the trait", _CC,
+     '                            self.check_impl(v, tr)?;',
+     '                            let _ = tr;',
+     'axon-core', _CL, _T4 + 'a_type_parameters_trait_bound_is_cast'),
+    ('M667', "PSV-1 (A86): a lambda's own parameter annotations are its first contract", _CC,
+     '        if params.iter().all(|p| p.ty.is_none()) {',
+     '        if true {',
+     'axon-core', _CL, _T4 + 'a_lambdas_annotated_parameter_is_cast'),
+]
+
+
 # ── C9 round 4, POLICY workstream (M670-M689; PSV-6 BLOCKER, amendment 54,
 # negative matrix A87): the policy a protected launch runs is the policy its
 # launch manifest names (policy_sha256, joined by the observation) and states
