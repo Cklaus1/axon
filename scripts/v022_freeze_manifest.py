@@ -12,8 +12,14 @@ REQUIREMENT (protocol amendment 44, operator decision E): a freeze runs from a
 STANDALONE CLONE, never a linked worktree, and binds a guest image whose
 manifest says axon_tree_dirty_at_build: false under the amendment-44 rule. Both
 are enforced here: a root whose .git is not a real directory (a gitfile, i.e. a
-linked worktree, or a symlink) is refused, and so is a guest manifest that is
-not clean with no reasons; the clean flag and its reasons are bound."""
+linked worktree, or a symlink) is refused; so is a root whose repository is not
+its own .git (a linked worktree's admin dir copied in as .git, whose commondir
+names another repository: C9 round 3, A79), asked of the operator's git the
+way axon-fabric's git_data::discover asks it; and so is a guest manifest that
+is not clean with no reasons. The clean flag and its reasons are bound.
+
+Git is /usr/bin/git with the caller's environment dropped (GIT_DIR and the like
+cannot steer which repository answers) and replace objects off."""
 import hashlib
 import importlib.util
 import json
@@ -33,8 +39,31 @@ def sha_str(s):
     return hashlib.sha256(s.encode()).hexdigest()
 
 
+GIT = "/usr/bin/git"
+# The caller's environment is dropped: GIT_DIR, GIT_COMMON_DIR, GIT_CONFIG_*
+# and a git on PATH would otherwise choose what answers.
+GIT_ENV = {"PATH": "/usr/bin:/bin", "LC_ALL": "C", "GIT_CONFIG_NOSYSTEM": "1",
+           "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_NO_REPLACE_OBJECTS": "1",
+           "GIT_TERMINAL_PROMPT": "0", "GIT_NO_LAZY_FETCH": "1"}
+
+
 def git(args, cwd):
-    return subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True).stdout.strip()
+    return subprocess.run([GIT, "--no-replace-objects", "-c", "safe.directory=*",
+                           "-c", "core.fsmonitor=", "-C", cwd, *args],
+                          env=GIT_ENV, capture_output=True, text=True).stdout.strip()
+
+
+def not_standalone(root):
+    """Why `root` is not a standalone clone (decision E), or None. The rule
+    axon-fabric's git_data::discover applies: .git is a real directory, and the
+    repository git acts on (its common dir) is that directory."""
+    dotgit = os.path.join(root, ".git")
+    if os.path.islink(dotgit) or not os.path.isdir(dotgit):
+        return ".git is not a real directory"
+    common = git(["rev-parse", "--path-format=absolute", "--git-common-dir"], root)
+    if not common or os.path.realpath(common) != os.path.realpath(dotgit):
+        return f"its repository is {common or 'unknown'} (a linked worktree's git dir)"
+    return None
 
 
 def main():
@@ -54,9 +83,9 @@ def main():
     equivalence_digest = sha_str(json.dumps(equiv, sort_keys=True))
     active = [r[0] for r in mut.MUTATIONS if r[0] not in mut.RETIRED]
 
-    dotgit = os.path.join(ROOT, ".git")
-    if os.path.islink(dotgit) or not os.path.isdir(dotgit):
-        sys.exit(f"refused: {ROOT} is not a standalone clone (.git is not a real directory): "
+    why = not_standalone(ROOT)
+    if why:
+        sys.exit(f"refused: {ROOT} is not a standalone clone ({why}): "
                  "a freeze runs from a standalone clone (amendment 44, decision E)")
     img = json.load(open(os.path.join(ROOT, "profiles/linux-microvm/manifest.json")))
     src = img.get("source", {})

@@ -38,6 +38,12 @@ pub mod workspace;
 #[path = "../tests/common/exec.rs"]
 pub(crate) mod test_exec;
 
+/// Repository attacks (a disguised linked worktree, a forged ancestor
+/// object), shared with the integration tests.
+#[cfg(test)]
+#[path = "../tests/common/git_attacks.rs"]
+pub(crate) mod test_git_attacks;
+
 pub use grants::{GrantRegistry, ResolvedGrant};
 pub use journal::{
     Begin, Billing, Intent, Journal, JournalError, OpState, OpView, RecoveryReport, ResourceVector,

@@ -139,15 +139,8 @@ fn lineage(top: PathBuf, rev: &str) -> Result<(), String> {
             "{g} rewrites ancestry: no lineage is read through it"
         ));
     }
-    let st = git_data::git_cmd(&top)
-        .args(["merge-base", "--is-ancestor", rev, "HEAD"])
-        .status()
-        .map_err(|e| format!("{GIT_BIN}: {e}"))?;
-    if st.success() {
-        Ok(())
-    } else {
-        Err(format!("HEAD does not descend from {rev}"))
-    }
+    // Ancestry read from hash-checked objects, never git's commit walk.
+    git_data::descends(&top, rev)
 }
 
 /// Why the working tree at `top` is not exactly `revision`'s tree as a
@@ -322,6 +315,27 @@ mod tests {
         git(&r, &["add", "-A"]);
         git(&r, &["commit", "-q", "-m", "reviewed"]);
         (d, r)
+    }
+
+    /// Decision E (A79) for BUILD provenance: a linked worktree whose admin
+    /// directory is placed as a real `.git` gets no clean answer, nor a
+    /// protected lineage. Control: the standalone clone it came from.
+    #[test]
+    fn a_linked_worktree_disguised_as_a_git_directory_is_dirty() {
+        let (d, r) = repo();
+        let wt = d.path().join("wt");
+        crate::git_data::tests::disguise_worktree(&r, &wt);
+        assert!(provenance(&r).dirty.is_empty(), "control: the clone");
+        assert_dirty(
+            &wt,
+            "a linked worktree's admin dir placed as .git",
+            "linked worktree",
+        );
+        let head = crate::git_data::tests::rev(&r, "HEAD");
+        assert!(
+            descends_from_protected(&wt, &head).is_err(),
+            "ATTACK: a disguised linked worktree gave a protected lineage answer"
+        );
     }
 
     fn assert_dirty(r: &Path, attack: &str, why: &str) {

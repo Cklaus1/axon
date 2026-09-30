@@ -179,9 +179,9 @@ def main():
                                      "--locked -p axon-psv --bin axon-psv-runner --release "
                                      "--target x86_64-unknown-linux-musl",
             "pci_lineage": {"certified_revision": PCI_CERTIFIED,
-                            "rule": "axon_git_rev_at_build descends from it (git merge-base "
-                                    "--is-ancestor, from a standalone clone); a tree that does "
-                                    "not is dirty"},
+                            "rule": "axon_git_rev_at_build descends from it (every commit "
+                                    "on the way read by hash, from a standalone clone); a tree "
+                                    "that does not is dirty"},
             "rustc": first_line(["rustc", "--version"]),
         },
         "kernel": {
