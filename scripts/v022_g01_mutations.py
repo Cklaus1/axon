@@ -2689,6 +2689,18 @@ MUTATIONS += [
      'axon-fabric', '--test privileged_launcher', 'an_observation_of_another_guest_init_launches_nothing'),
 ]
 
+# ── C9 round 4 fix wave, ROWS2 wave 2 (M775-M794; amendment 58): the sites the
+# extended site pattern names in psv.rs, runner.rs and protected_evidence.rs.
+MUTATIONS += [
+    ('M775', 'PSV-4: a check that produced no verdict is never receipted as one (CheckVerdict::NotRun)', 'crates/axon-fabric/src/psv.rs', '        CheckVerdict::NotRun => {\n            return unknown(', '        CheckVerdict::NotRun => ReceiptVerification::Passed,\n        #[allow(unreachable_patterns)]\n        CheckVerdict::NotRun => {\n            return unknown(', 'axon-fabric', '--test psv_dispatch', 'a_check_that_produced_no_verdict_is_never_receipted_as_one'),
+    ('M776', 'M4: a protected receipt states an evidence class (none is not protected)', 'crates/axon-loop-contracts/src/protected_evidence.rs', '        [] => return Err("the receipt states no evidence class: not protected evidence".into()),', '        [] => {}', 'axon-fabric', '--test readiness_launch', 'an_attested_receipt_stating_no_evidence_class_is_refused'),
+    ('M777', 'M4: a protected receipt states exactly one evidence class', 'crates/axon-loop-contracts/src/protected_evidence.rs', '        many => {\n            return Err(format!(\n                "the receipt states {} evidence classes",\n                many.len()\n            ))\n        }', '        many => {\n            let _ = many;\n        }', 'axon-fabric', '--test readiness_launch', 'an_attested_receipt_stating_two_evidence_classes_is_refused'),
+    ('M778', 'M4: a protected receipt names every required digest ref', 'crates/axon-loop-contracts/src/protected_evidence.rs', '            [] => return Err(format!("a protected receipt names no {prefix}…")),', '            [] => {}', 'axon-fabric', '--test readiness_launch', 'an_attested_receipt_naming_no_guest_kernel_is_refused'),
+    ('M779', 'PSV-5: the receipt counts the outcome the guest verdict claims (a counted failure of a guest pass)', 'crates/axon-loop-contracts/src/protected_evidence.rs', '        (RV::Passed, GS::Passed) | (RV::Failed, GS::Failed) => {}\n        (counted, claimed) => {', '        (RV::Passed, GS::Passed) | (RV::Failed, _) => {}\n        (counted, claimed) => {', 'axon-loop', '--test intake', 'a_receipt_counting_a_guest_pass_as_a_failure_is_refused'),
+    ('M780', 'A3: the runner runs only a suite entry that is a file in the suite tree', 'crates/axon-psv/src/runner.rs', '    if axon_workspace_recipe::check_path(&m.suite.entry, &Quota::default()).is_err()', '    if false && axon_workspace_recipe::check_path(&m.suite.entry, &Quota::default()).is_err()', 'axon-psv', '--test runner', 'a_suite_entry_outside_the_suite_tree_never_runs'),
+    ('M781', "PSV limits: a run whose output exceeded the manifest's limit yields no verdict", 'crates/axon-psv/src/runner.rs', '    if oo || eo {', '    if false && (oo || eo) {', 'axon-psv', '--test runner', 'a_run_that_exceeded_its_output_limit_yields_no_verdict'),
+]
+
 BINDING_IDS = {f"M{n}" for n in range(101, 137)}
 # Every id range the PSV rounds allocate (C9 round 1 uses up to M399; round
 # 1b allocates M400-M499, round 2 M500-M519). An id outside every scope would silently fall into

@@ -289,6 +289,90 @@ EXEMPT += [
 ]
 
 
+# C9 round 4 fix wave, rows2 wave 2 (amendment 58): the sites the extended
+# pattern (tail `Err(…)`, refusal constructors) names in the files scanned
+# since, outside the loop crate. Kinds: NOTHING TO ADMIT (the arm holds an
+# error and no value the code after it could run on), OS ERROR (fails closed:
+# the operation does not happen), NAMED ROW (a registry row mutates this
+# refusal's condition at another line; the removal is the same), NON-LINUX
+# (compiled out), UNREACHABLE (no input reaches it; the fact is named).
+PSVF = "crates/axon-fabric/src/psv.rs"
+RUN = "crates/axon-psv/src/runner.rs"
+PEV = "crates/axon-loop-contracts/src/protected_evidence.rs"
+EXEMPT += [
+    (PL, "        Err(why) => return (LaunchReport::refused(why), EXIT_REFUSED),\n    };\n    if caller_uid",
+     "NOTHING TO ADMIT: load_config failed, so there is no config to launch under"),
+    (PL, "    if let Err(why) = become_root() {",
+     "OS ERROR: setresgid/setgroups/setresuid failing leaves the process not root in every id; "
+     "the helper then launches nothing (the refusal). It can fail only without CAP_SETUID/SETGID, "
+     "and the binary refuses before this unless its euid is 0 (M602)"),
+    (PL, "        Err(why) => (LaunchReport::refused(why), EXIT_REFUSED),\n        Ok(p) => run(&c, p),",
+     "NOTHING TO ADMIT: prepare failed, so there is no Prepared (verified programs, staged "
+     "snapshot, out dir) to run"),
+    (PL, "        Err(why) => {\n            let _ = std::fs::remove_dir_all(&staging);\n            Err(why)",
+     "NOTHING TO ADMIT: snapshot/observation/out-dir failed, so no out dir exists to build a "
+     "Prepared from; the staging dir is removed"),
+    (SE, "        Err(std::io::Error::last_os_error())\n    }\n}\n\n/// Open `p` for execution",
+     "OS ERROR: F_SETLEASE refused; the caller's Lease::Required refusal on it is M591 (killed on "
+     "the production helper, amendment 55)"),
+    (SE, "        Err(std::io::Error::last_os_error())\n    }\n}\n\n// The closure owns",
+     "OS ERROR: execveat returned, so the verified program did not replace the child; nothing "
+     "ran"),
+    (CU, "            Err(e) => self.reply(Err(e)),",
+     "NOTHING TO ADMIT: SO_PEERCRED failed, so there is no peer uid for decide() to judge"),
+    (RD, '        Err("operator trust cannot be checked on this platform".into())',
+     "NON-UNIX: compiled only under cfg(not(unix)); Linux builds the unix branch"),
+    (PSVF, "    if cand_tree != req.workspace_version_ref.as_str() {",
+     "UNREACHABLE: the candidate dir was created NEW (DirBuilder::create, not recursive) and "
+     "0700 by materialize_inputs, and written by WorkspaceStore::materialize from store.tree(r), "
+     "which re-derives r from hash-checked blobs (\"does not re-derive\"); between that write and "
+     "this read only the custodian issue call runs, which is another uid's process. The guest "
+     "holds the same digest again (M159)"),
+    (PSVF, "    if suite_tree != i.suite_version {",
+     "UNREACHABLE: as the candidate check above (the suite is materialized from the same ref)"),
+    (PSVF, '        Err(e) => return unknown(format!("no guest verdict: {e}"), evidence, None),',
+     "NOTHING TO ADMIT: no verdict bytes were read"),
+    (PSVF, '        Err(e) => return unknown(format!("guest verdict is malformed: {e}"), evidence, None),',
+     "NOTHING TO ADMIT: the bytes do not parse as a GuestVerdict"),
+    (PSVF, '        Err(e) => return unknown(format!("no guest test output: {e}"), evidence, None),',
+     "NOTHING TO ADMIT: no test output bytes were read"),
+    (PSVF, '        Err(e) => {\n            return unknown(\n                format!("no verdict from the test output: {e}"),',
+     "NOTHING TO ADMIT: the test output parses to no report"),
+    (RUN, '        Ok(b) => {\n            return refused(\n                cfg,\n                "",\n                none,\n                "",\n                format!("completion secret is {} bytes, not 32", b.len()),',
+     "NOTHING TO ADMIT: no 32-byte secret, so no key K; the length rule itself is M170"),
+    (RUN, '        Err(e) => return refused(cfg, "", none, "", format!("completion secret: {e}")),',
+     "NOTHING TO ADMIT: the secret was not read"),
+    (RUN, '        Err(e) => return refused(cfg, "", none, "", format!("launch manifest: {e}")),',
+     "NOTHING TO ADMIT: the manifest was not read"),
+    (RUN, "        Err(e) => return refused(cfg, &sha256_hex(&m_bytes), none, \"\", e),",
+     "NOTHING TO ADMIT: no verified manifest; the digest it is verified under is M167"),
+    (RUN, "        Err(e) => return refused(cfg, &m_sha, none, &test, e),",
+     "NAMED ROW: the Err is protected_policy_ceiling's, whose call is M673 and whose no-ceiling "
+     "refusal is M674; with no policy there is no ceiling to run under"),
+    (RUN, '        Err(e) => return refused(cfg, &m_sha, inputs, &test, format!("axon test: {e}")),',
+     "NOTHING TO ADMIT: the test did not run to an exit status and output (spawn failed, killed "
+     "at the wall-clock limit, or over the output limit, M781)"),
+    (RUN, "                if libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0",
+     "OS ERROR: pre_exec failing makes spawn fail; the test does not run"),
+    (RUN, "                    if libc::setgroups(0, std::ptr::null()) != 0",
+     "OS ERROR: pre_exec failing makes spawn fail; the test does not run (the uid drop is M172)"),
+    (RUN, "    let Some(status) = status else {",
+     "NOTHING TO ADMIT: the child was killed at the wall-clock limit, so there is no exit status; "
+     "a verdict needs Some(0) for a pass (M293) and Some(nonzero) for a failure (M242)"),
+    (PEV, "        [one] => {\n            return Err(format!(\n                \"the receipt's evidence class is {one}",
+     "NAMED ROW: M212 (`[\"protected\"]` -> `[_]`) is the removal of this arm"),
+    (PEV, '            [d] => return Err(format!("{prefix}{d} is not a sha256")),',
+     "NAMED ROW: M217 (retired EQUIVALENT, four-cell record) drops the hex condition of the arm "
+     "above, which makes this arm unreachable: the same removal"),
+    (PEV, '            _ => {\n                return Err(format!(\n                    "a protected receipt names {prefix}… more than once"',
+     "NAMED ROW: M216 (retired EQUIVALENT, four-cell record) widens the arm above to `[d, ..]`, "
+     "which makes this arm unreachable: the same removal"),
+    (PEV, "        [] => {\n            return Err(format!(\n                \"the observation is signed by {signer}, which is no observer",
+     "NAMED ROW: M470 (the key filter that makes `by` empty) is the removal of this refusal"),
+    (PEV, "        _ => {\n            return Err(format!(\n                \"the observation is signed by {signer}, which {} trusted observers share",
+     "NAMED ROW: M478 (`[one]` -> `[one, ..]`) is the removal of this arm"),
+]
+
 def load_rows():
     spec = importlib.util.spec_from_file_location("mut", os.path.join(ROOT, "scripts/v022_g01_mutations.py"))
     mut = importlib.util.module_from_spec(spec)

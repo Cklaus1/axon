@@ -1725,3 +1725,35 @@ fn a_nonce_fabric_issued_itself_never_authorizes_a_root_launch() {
     let s = w.submit_observed(w.observer("", &key, "observer"), "op-service-nonce");
     assert_eq!(class(&s), "protected", "control: {:?}", s.reason);
 }
+
+/// PSV-4 (M775; C9 round 4 fix wave, rows2): a check the guest ran but that
+/// produced NO result line (the suite does not define the requested test) is
+/// never receipted as a verdict. The CheckVerdict::NotRun arm is the only
+/// refusal: the run exited, the verdict is bound and joined, so every other
+/// check passes it. Control: the defined test passes.
+#[test]
+fn a_check_that_produced_no_verdict_is_never_receipted_as_one() {
+    let w = World::new();
+    let s = w.submit_with(w.lx("", ""), "op-psv-notrun", "t_psv_absent");
+    assert_eq!(
+        s.receipt.verification,
+        ReceiptVerification::Unknown,
+        "ATTACK: a check that produced no verdict was receipted as {:?}",
+        s.receipt.verification
+    );
+    assert!(
+        s.reason
+            .as_deref()
+            .unwrap_or("")
+            .contains("produced no verdict"),
+        "{:?}",
+        s.reason
+    );
+    let s = w.submit_with(w.lx("", ""), "op-psv-notrun-ok", "t_psv_ok");
+    assert_eq!(
+        s.receipt.verification,
+        ReceiptVerification::Passed,
+        "control: {:?}",
+        s.reason
+    );
+}

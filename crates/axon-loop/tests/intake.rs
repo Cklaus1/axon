@@ -3205,3 +3205,48 @@ fn a_launch_whose_manifest_names_another_scope_is_refused() {
         ),
     }
 }
+
+/// PSV-5 (M779; C9 round 4 fix wave, rows2): the guest verdict's outcome is
+/// the one the receipt counts, in BOTH directions. A receipt counting a
+/// genuine guest PASS as a failure (an evaluator suppressing a rival arm's
+/// pass) is refused like the opposite splice. Control: the genuine failed
+/// bundle joins.
+#[test]
+fn a_receipt_counting_a_guest_pass_as_a_failure_is_refused() {
+    use axon_psv::GuestStatus;
+    let req = check_request();
+    for splice in [false, true] {
+        let c = case(Some(500));
+        pin_protected(&c);
+        let mut rc = check_receipt("failed", 0);
+        let b = make_protected_v(
+            &req,
+            &mut rc,
+            |_| {},
+            |_| {},
+            |v| {
+                if splice {
+                    v.status = GuestStatus::Passed
+                }
+            },
+        );
+        let ep = verified(&c.ep, &req, &rc, "failed");
+        let att = attest(&verifier_key().0, common::VERIFIER, &req, &rc);
+        let r = run_vb(&c, &ep, &req, &rc, &att, Some(&b));
+        if !splice {
+            assert!(r.is_ok(), "control: the genuine failed bundle joins: {r:?}");
+            continue;
+        }
+        let e = match r {
+            Err(e) => e,
+            Ok(_) => {
+                panic!("ATTACK: a receipt counting a guest-verdict pass as a failure was ACCEPTED")
+            }
+        };
+        assert!(
+            e.to_string()
+                .contains("the guest verdict claims Passed, but the receipt counts Failed"),
+            "{e}"
+        );
+    }
+}

@@ -870,3 +870,60 @@ fn the_runner_reads_the_one_cmdline_policy_word() {
     assert_eq!(policy_from_cmdline("console=ttyS0"), None);
     assert_eq!(policy_from_cmdline("axon.policy=!!"), None);
 }
+
+// ── C9 round 4 fix wave, rows2 (M780, M781) ─────────────────────────────────
+
+/// A3 (M780): the suite entry is a FILE IN THE SUITE TREE. A manifest whose
+/// entry climbs out of it (`../candidate/f.ax`, the candidate's own module,
+/// with the candidate's own `@[test]` named) would have the runner judge the
+/// candidate by the candidate. The inputs, manifest, policy and test name
+/// are otherwise genuine, so only the entry check refuses it: nothing runs.
+/// Control: the suite's own entry runs.
+#[test]
+fn a_suite_entry_outside_the_suite_tree_never_runs() {
+    let fx = fixture_at("../candidate/f.ax", "t_cand_probe", false);
+    let v = run(&fx.cfg);
+    assert!(
+        v.status == GuestStatus::Refused && !ran(&fx),
+        "ATTACK: the runner ran a suite entry outside the suite tree (the candidate's own \
+         module): {v:?}"
+    );
+    assert!(
+        v.refusal
+            .as_deref()
+            .unwrap_or("")
+            .contains("is not a file in the suite tree"),
+        "{v:?}"
+    );
+    let fx = fixture("t_ok", false);
+    assert_eq!(run(&fx.cfg).status, GuestStatus::Passed, "control");
+}
+
+/// A candidate that floods stderr past the manifest's output limit while the
+/// registered test genuinely passes. The limit is part of the launch: a run
+/// that exceeded it was truncated, and a truncated run yields no verdict.
+const FLOODING_CANDIDATE: &str = "fn double(x: i64) -> i64 {\n    let i = 0\n    while i < 40000 {\n        eprintln(\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\")\n        i = i + 1\n    }\n    x * 2\n}\n";
+
+/// PSV limits (M781): a run whose output exceeded `limits.output_bytes` is
+/// refused, never verdicted, even when its keyed pass line is intact (the
+/// flood is on stderr). Control: the same candidate without the flood passes.
+#[test]
+fn a_run_that_exceeded_its_output_limit_yields_no_verdict() {
+    let fx = fixture_with("accept.ax", "t_ok", false, FLOODING_CANDIDATE);
+    let v = run(&fx.cfg);
+    assert_eq!(
+        v.status,
+        GuestStatus::Refused,
+        "ATTACK: a run whose output exceeded its limit was verdicted {:?}",
+        v.status
+    );
+    assert!(
+        v.refusal
+            .as_deref()
+            .unwrap_or("")
+            .contains("output exceeded"),
+        "{v:?}"
+    );
+    let fx = fixture("t_ok", false);
+    assert_eq!(run(&fx.cfg).status, GuestStatus::Passed, "control");
+}

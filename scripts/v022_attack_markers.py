@@ -858,4 +858,12 @@ ATTACK_MARKERS.update({
     'M772': r"ATTACK: a root-owned policy\.json among the Fabric's inputs was read by the root helper",
     'M773': r'ATTACK: an observation of another manifest launched the root launcher',
     'M774': r'ATTACK: an observation of another guest init launched the root launcher',
+    # ── rows2 wave 2 (M775-M794) ──
+    'M775': r'ATTACK: a check that produced no verdict was receipted as',
+    'M776': r'ATTACK: an attested receipt stating no evidence class certified a protected run',
+    'M777': r'ATTACK: an attested receipt stating two evidence classes certified a protected run',
+    'M778': r'ATTACK: an attested protected receipt naming no guest kernel certified a protected run',
+    'M779': r'ATTACK: a receipt counting a guest-verdict pass as a failure was ACCEPTED',
+    'M780': r'ATTACK: the runner ran a suite entry outside the suite tree',
+    'M781': r'ATTACK: a run whose output exceeded its limit was verdicted',
 })
