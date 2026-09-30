@@ -661,3 +661,5 @@ ATTACK_MARKERS.update({
     'M565': r'ATTACK: a test that ended early at `\?` was counted complete \(t_find\): Ok\(Completed\)',
     'M566': r'ATTACK: a fn declared -> Result returned a None across its boundary: Ok\(EndedEarly',
 })
+# C9 round 3, integration.
+ATTACK_MARKERS['M567'] = r'ATTACK: the host config allows one hour, the B263 record is 12\.5 h old, and readiness still said PASS'

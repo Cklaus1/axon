@@ -602,3 +602,41 @@ fn a_b263_waiver_not_signed_by_the_operator_is_refused() {
         "not a trusted evidence issuer",
     );
 }
+
+/// C9 round 3 integration: readiness judges B263 currency with the SAME
+/// maximum age the operator's host config sets for Fabric
+/// (`qualification.max_age_s`, one reading). The fixture's record is 12.5 h
+/// old at FIXTURE_NOW; a host config allowing one hour must make it stale for
+/// readiness exactly as it is for Fabric's launch-time qualification.
+#[test]
+fn readiness_judges_b263_currency_by_the_host_configs_maximum_age() {
+    let Some(c) = certified() else { return };
+    let cfg = c._d.path().join("protected-host.json");
+    let decide = |max_age: Value| {
+        std::fs::write(
+            &cfg,
+            json!({"qualification": {"max_age_s": max_age}}).to_string(),
+        )
+        .unwrap();
+        let t = c.trust.clone().with_host_config(&cfg);
+        axon_fabric::readiness::protected_components(&c.repo, &t)["components"]["protected_backend"]
+            .clone()
+    };
+    let v = decide(json!(3600));
+    assert_ne!(
+        v["status"], "PASS",
+        "ATTACK: the host config allows one hour, the B263 record is 12.5 h old, and readiness still said PASS: {v}"
+    );
+    assert!(v.to_string().contains("is stale"), "{v}");
+    let v = decide(json!("a week"));
+    assert_ne!(
+        v["status"], "PASS",
+        "a malformed host max age must refuse: {v}"
+    );
+    assert!(v.to_string().contains("max_age_s is not a number"), "{v}");
+    assert_eq!(
+        decide(json!(86400))["status"],
+        "PASS",
+        "control: a host config allowing a day certifies the same record"
+    );
+}

@@ -34,6 +34,19 @@ use std::path::{Path, PathBuf};
 
 /// The one place a protected host's configuration lives.
 pub const PROTECTED_HOST_CONFIG: &str = "/etc/axon/protected-host.json";
+
+/// The maximum age of a B263 qualification the operator configured in the
+/// host config (`qualification.max_age_s`; absent means Fabric's default). ONE
+/// reading, used by Fabric's launch-time qualification AND by readiness, so
+/// the two never judge currency differently (C9 round 3 integration).
+pub fn qualification_max_age_s(host_config: &Value) -> Result<u64, String> {
+    match host_config["qualification"].get("max_age_s") {
+        None | Some(Value::Null) => Ok(DEFAULT_EVIDENCE_MAX_AGE_S),
+        Some(n) => n
+            .as_u64()
+            .ok_or_else(|| "qualification.max_age_s is not a number".into()),
+    }
+}
 pub const PROTECTED_HOST_SCHEMA: &str = "axon-protected-host/1";
 
 /// Every `--linux-*` / registry flag `submit` refuses when it would configure
@@ -262,12 +275,7 @@ impl ProtectedHost {
         for p in signature.iter().chain(waivers.iter()) {
             owned(p, false).map_err(bad)?;
         }
-        trust.max_age_s = match q.get("max_age_s") {
-            None | Some(Value::Null) => DEFAULT_EVIDENCE_MAX_AGE_S,
-            Some(n) => n
-                .as_u64()
-                .ok_or_else(|| bad("qualification.max_age_s is not a number".into()))?,
-        };
+        trust.max_age_s = qualification_max_age_s(&v).map_err(bad)?;
 
         let sg = &v["signer"];
         let signer = SignerSpec {

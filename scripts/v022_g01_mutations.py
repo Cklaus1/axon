@@ -1459,6 +1459,11 @@ MUTATIONS += [
      '            require_unwritable: true,', '            require_unwritable: false,',
      'axon-fabric', '--lib', 'readiness::tests::a_trust_root_this_process_can_write_authorizes_nothing'),
 ]
+# ── C9 round 3, integration: readiness judges B263 currency by the host config's
+# qualification.max_age_s, one reading with Fabric (M567, A78).
+MUTATIONS += [
+    ('M567', "PSV-7 (A78): readiness judges B263 currency by the host config's qualification.max_age_s (one reading with Fabric)", 'crates/axon-fabric/src/readiness.rs', '    crate::protected_host::qualification_max_age_s(&v)\n', '    let _ = &v;\n    Ok(DEFAULT_EVIDENCE_MAX_AGE_S)\n', 'axon-fabric', '--test readiness_attribution', 'readiness_judges_b263_currency_by_the_host_configs_maximum_age'),
+]
 # ── C9 round 3, workstream READINESS (M570-M584; A78-A80, amendment 47) ──
 # PSV-7: readiness applies Fabric's B263 acceptance rules (ONE function,
 # backend::accept_b263) to the record a certification names, at decision time,

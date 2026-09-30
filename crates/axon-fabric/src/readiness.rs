@@ -102,10 +102,31 @@ pub struct ReadinessTrust {
     allowlist: AllowlistSource,
     /// Decision time: a B263 qualification is current only if its `end` is
     /// within `max_age_s` of NOW, as Fabric's own launch check requires
-    /// (review PSV-7, C9 round 3; A78). Production: the system clock and
-    /// Fabric's default maximum age.
+    /// (review PSV-7, C9 round 3; A78). Production: the system clock and the
+    /// maximum age the operator's host config sets for Fabric (the same
+    /// reading, [`crate::protected_host::qualification_max_age_s`]). An Err
+    /// here (an unreadable, non-operator-owned or malformed host config)
+    /// refuses every certification rather than falling back to a default.
     clock: Clock,
-    max_age_s: u64,
+    max_age_s: Result<u64, String>,
+}
+
+/// The B263 maximum age the host config at `path` sets. Only a MISSING config
+/// means Fabric's default; a present one must pass the operator-ownership walk
+/// and is read once, as a regular file.
+fn host_max_age_s(base: &Path, path: &Path) -> Result<u64, String> {
+    match std::fs::symlink_metadata(path) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(DEFAULT_EVIDENCE_MAX_AGE_S)
+        }
+        Err(e) => return Err(format!("{}: {e}", path.display())),
+        Ok(_) => {}
+    }
+    crate::backend::check_operator_owned_below(base, path)?;
+    let bytes = crate::backend::read_regular(path)?;
+    let v: serde_json::Value =
+        serde_json::from_slice(&bytes).map_err(|e| format!("{}: {e}", path.display()))?;
+    crate::protected_host::qualification_max_age_s(&v)
 }
 
 impl ReadinessTrust {
@@ -118,7 +139,10 @@ impl ReadinessTrust {
             require_unwritable: true,
             allowlist: AllowlistSource::operator(),
             clock: Clock::System,
-            max_age_s: DEFAULT_EVIDENCE_MAX_AGE_S,
+            max_age_s: host_max_age_s(
+                Path::new("/"),
+                Path::new(crate::protected_host::PROTECTED_HOST_CONFIG),
+            ),
         }
     }
 
@@ -145,8 +169,16 @@ impl ReadinessTrust {
                 &trust.parent().unwrap_or(base).join("provenance-allowlist"),
             ),
             clock: Clock::System,
-            max_age_s: DEFAULT_EVIDENCE_MAX_AGE_S,
+            max_age_s: Ok(DEFAULT_EVIDENCE_MAX_AGE_S),
         }
+    }
+
+    /// TESTS ONLY: judge B263 currency with the maximum age the host config
+    /// at `path` sets (ownership walked from this trust's `ownership_base`).
+    #[cfg(any(test, feature = "test-trust-root"))]
+    pub fn with_host_config(mut self, path: &Path) -> ReadinessTrust {
+        self.max_age_s = host_max_age_s(&self.ownership_base, path);
+        self
     }
 
     /// TESTS ONLY: decide as of `clock`.
@@ -778,7 +810,11 @@ fn attribution(
     // [`crate::backend::accept_b263`]. Its waivers are certified evidence
     // too: a qualification-signed waiver file bound to this record.
     let now = trust.clock.now_unix();
-    let b263 = crate::backend::accept_b263(&q, &b_issuer, now, trust.max_age_s, || {
+    let max_age_s = trust
+        .max_age_s
+        .clone()
+        .map_err(|e| format!("{component}: the host config's qualification maximum age: {e}"))?;
+    let b263 = crate::backend::accept_b263(&q, &b_issuer, now, max_age_s, || {
         certified_waivers(component, evidence, b_sha, trust)
     })
     .map_err(|e| {
