@@ -650,6 +650,7 @@ ATTACK_MARKERS.update({
     'M582': r'ATTACK: the freeze bound evidence from a linked worktree whose admin dir was placed as \.git: Ok\(',
     'M583': r"ATTACK: the freeze bound evidence from a tree whose \.git is a symlink to another clone's: Ok\(",
     'M584': r'ATTACK: the freeze bound evidence from a guest image built from a dirty tree: Ok\(',
+})
 # C9 round 3, workstream CORE (M560-M569; amendment 46).
 ATTACK_MARKERS.update({
     'M560': r'ATTACK: sealed handler answered operator code: the candidate.s arm aborted the operator.s listener at its println \(t_abort\)',
