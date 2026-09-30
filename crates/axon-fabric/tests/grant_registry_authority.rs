@@ -94,19 +94,19 @@ struct Host {
     env: Env,
     root: PathBuf,
     candidate: axon_loop_contracts::Acf1Ref,
+    _custodian: TestCustodian,
 }
 
 impl Host {
     fn new() -> Host {
         let env = Env::new();
         let root = env.dir.path().join("host");
-        for d in ["dist", "keys", "grants", "runs", "nonces"] {
+        for d in ["dist", "keys", "grants", "runs"] {
             std::fs::create_dir_all(root.join(d)).unwrap();
         }
-        // The service's own private leaves (A56).
-        for d in ["runs", "nonces"] {
-            std::fs::set_permissions(root.join(d), std::fs::Permissions::from_mode(0o700)).unwrap();
-        }
+        // The service's own private leaf (A56).
+        std::fs::set_permissions(root.join("runs"), std::fs::Permissions::from_mode(0o700))
+            .unwrap();
         let issuer = Issuer::generate();
         // A: the launch goes through the (test-trust) privileged helper,
         // which re-verifies the artifacts and engine the manifest pins.
@@ -153,7 +153,13 @@ impl Host {
             .unwrap();
         // The preflight observer: a protected host launches nothing without
         // one. Its key is in the observer root beside the issuers.
-        let key = observer_key(&root, "obs", &[&root.join("observer")]);
+        // The privileged helper verifies the same observation under its own
+        // configured root (amendment 50).
+        let key = observer_key(
+            &root,
+            "obs",
+            &[&root.join("observer"), &observer_root(&root)],
+        );
         copy_executable(
             observer_script(&root, "", &key, "observer"),
             root.join("observer.sh"),
@@ -175,10 +181,14 @@ impl Host {
                 ("grant:x", PRINCIPAL, GRANT_DENY),
             ],
         );
+        // Amendment 50: the custodian that issues the nonce and that the
+        // helper spends it through.
+        let custodian = start_custodian(&root);
         let h = Host {
             env,
             root,
             candidate,
+            _custodian: custodian,
         };
         h.write_config();
         h
@@ -212,7 +222,8 @@ impl Host {
                        "key_path": self.p("keys/attest.pk8")},
             "out_root": self.p("runs"),
             "observer": {"command": pin("observer.sh"), "interpreter": pin("bash"),
-                         "nonce_store": self.p("nonces"),
+                         "custodian": {"socket": custodian_socket(&self.root),
+                                       "uid": unsafe { libc::geteuid() }},
                          "max_age_s": 300},
         });
         if grant_registry {

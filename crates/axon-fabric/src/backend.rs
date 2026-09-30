@@ -1370,14 +1370,19 @@ impl GuestPolicy {
 /// the launcher's `--program` mode ran an `interpreter_run` on the protected
 /// profile with no manifest, no nonce and no observation (PSV-6, C9 dev review
 /// round 1; A54), so nothing here can build one.
+///
+/// `observation` travels to the privileged launcher, which verifies it itself
+/// and spends its nonce (amendment 50): without one the helper launches
+/// nothing. The direct (development) route never counts and needs none.
 pub fn run_linux_profile(
     lx: &LinuxProfileConfig,
     req: &ComputeRequest,
     policy: &GuestPolicy,
     psv: &crate::psv::Launch,
+    observation: Option<&crate::psv::VerifiedObservation>,
 ) -> LinuxRun {
     match &lx.privileged {
-        Some(h) => run_privileged(lx, h, req, policy, psv),
+        Some(h) => run_privileged(lx, h, req, policy, psv, observation),
         None => run_direct(lx, req, policy, psv),
     }
 }
@@ -1401,6 +1406,7 @@ fn run_privileged(
     req: &ComputeRequest,
     policy: &GuestPolicy,
     psv: &crate::psv::Launch,
+    observation: Option<&crate::psv::VerifiedObservation>,
 ) -> LinuxRun {
     use crate::privileged_launcher as pl;
     use std::io::{Read, Write};
@@ -1431,6 +1437,11 @@ fn run_privileged(
         psv_manifest_sha256: psv.digest.clone(),
         policy_json: policy.json().to_string(),
         timeout_s: req.limits.wall_time_ms.div_ceil(1000).max(1),
+        // Absent: empty, and the helper refuses (no launch without one).
+        observation: observation
+            .map(|o| String::from_utf8_lossy(&o.bytes).into_owned())
+            .unwrap_or_default(),
+        observation_signature: observation.map(|o| o.signature.clone()).unwrap_or_default(),
     };
     let mut args: Vec<std::ffi::OsString> = vec![];
     if let Some(t) = &h.test_config {

@@ -32,6 +32,11 @@ struct World {
     manifest: PathBuf,
     /// A: what the privileged helper re-verifies (the manifest pins them).
     inputs: HelperInputs,
+    /// Amendment 50: the custodian that issues and spends the nonce.
+    custodian: TestCustodian,
+    /// The observer every helper-route launch gets unless the test sets one
+    /// (the helper launches nothing without an observation).
+    auto_observer: std::sync::OnceLock<ObserverKey>,
 }
 
 /// A profile manifest that pins everything a launch manifest names.
@@ -84,12 +89,15 @@ impl World {
         let manifest = env.dir.path().join("manifest.json");
         let inputs = helper_inputs(&env.dir.path().join("helper-inputs"));
         std::fs::write(&manifest, inputs.pin_manifest(text)).unwrap();
+        let custodian = start_custodian(env.dir.path());
         World {
             env,
             issuer: Issuer::generate(),
             candidate,
             manifest,
             inputs,
+            custodian,
+            auto_observer: std::sync::OnceLock::new(),
         }
     }
     /// The launch through the (test-trust) privileged helper: the route a
@@ -148,8 +156,24 @@ impl World {
     }
     fn submit_with(&self, lx: LinuxProfileConfig, op: &str, test: &str) -> axon_fabric::Submission {
         let mut cfg = self.env.cfg(0);
+        // Amendment 50: the privileged helper launches nothing without an
+        // observation, so a helper-route launch is an OBSERVED one.
+        if lx.privileged.is_some() {
+            cfg.observer = Some(self.auto_observer());
+        }
         cfg.linux = Some(lx);
         submit(&self.request(op, "check:acc", test).to_string(), &cfg).unwrap()
+    }
+}
+
+impl World {
+    /// An honest observer (its own key), for a helper-route launch whose
+    /// test is not about the observation.
+    fn auto_observer(&self) -> ObserverConfig {
+        let key = self.auto_observer.get_or_init(|| {
+            observer_key(self.env.dir.path(), "auto-obs", &[&self.observer_roots()])
+        });
+        self.observer("", key, "observer")
     }
 }
 
@@ -171,7 +195,9 @@ fn class(s: &axon_fabric::Submission) -> String {
 #[test]
 fn an_operator_suite_passes_through_the_guest_path_as_guest_unobserved() {
     let w = World::new();
-    let s = w.submit_with(w.lx("", ""), "op-psv-ok", "t_psv_ok");
+    // The DIRECT route: the privileged helper launches nothing without an
+    // observation at all (amendment 50; privileged_launcher.rs).
+    let s = w.submit_with(w.lx_direct("", ""), "op-psv-ok", "t_psv_ok");
     assert_eq!(s.backend, Some("linux-microvm-protected"));
     assert_eq!(s.receipt.status, ReceiptStatus::Completed, "{:?}", s.reason);
     assert_eq!(
@@ -620,6 +646,7 @@ fn a_valid_verdict_from_an_unbound_launch_counts_for_nothing() {
 // PROTOCOL — domain, root, joins, freshness, nonce — never a measurement.
 
 use axon_fabric::backend::Clock;
+use axon_fabric::custodian::Custodian;
 use axon_fabric::observer::{NonceStore, ObserverConfig, ObserverTrust};
 
 impl World {
@@ -639,9 +666,8 @@ impl World {
             interpreter: Some(bash_pin()),
             exec_owner: Some(unsafe { libc::geteuid() }),
             trust: ObserverTrust::for_test(&self.observer_roots()),
-            nonces: NonceStore {
-                dir: d.join("custodian-nonces"),
-            },
+            // Amendment 50: Fabric holds only a client of the custodian.
+            custodian: Custodian::Service(self.custodian.client()),
             max_age_s: 300,
             clock: Clock::System,
         }
@@ -1044,6 +1070,7 @@ fn a_run_dir_swapped_under_the_callers_state_changes_nothing() {
     let w = World::new();
     let mut cfg = w.env.cfg(0);
     cfg.linux = Some(w.lx("", ""));
+    cfg.observer = Some(w.auto_observer());
     cfg.pre_launch_hook = Some(swap);
     let s = submit(
         &w.request("op-psv-b3", "check:acc", "t_psv_fail")
@@ -1499,4 +1526,37 @@ fn a_helper_that_ran_another_launcher_than_the_pinned_one_yields_no_verdict() {
         class(&s)
     );
     assert!(s.reason.unwrap_or_default().contains("not the pinned"));
+}
+
+/// D6 / amendment 50: a Fabric that keeps its own nonces (the in-process
+/// development custodian) never reaches a root launch: the privileged
+/// launcher spends only through the custodian its operator config names,
+/// which never issued them. Control: the custodian service's nonce launches
+/// and is protected.
+#[test]
+fn a_nonce_fabric_issued_itself_never_authorizes_a_root_launch() {
+    let w = World::new();
+    let key = observer_key(w.env.dir.path(), "obs", &[&w.observer_roots()]);
+    let mut ob = w.observer("", &key, "observer");
+    ob.custodian = Custodian::InProcess(NonceStore {
+        dir: w.env.dir.path().join("fabric-own-nonces"),
+    });
+    let s = w.submit_observed(ob, "op-own-nonce");
+    assert!(
+        !launched(&w, "op-own-nonce") && class(&s) != "protected",
+        "ATTACK: a nonce Fabric issued itself (the in-process dev custodian) authorized a root \
+         launch ({:?}, class {})",
+        s.receipt.verification,
+        class(&s)
+    );
+    assert!(
+        s.reason
+            .clone()
+            .unwrap_or_default()
+            .contains("never issued"),
+        "{:?}",
+        s.reason
+    );
+    let s = w.submit_observed(w.observer("", &key, "observer"), "op-service-nonce");
+    assert_eq!(class(&s), "protected", "control: {:?}", s.reason);
 }

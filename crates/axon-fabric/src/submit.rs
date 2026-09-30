@@ -1470,9 +1470,11 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
                 )
             });
             // M3: the custodian's nonce goes INTO the manifest the observer
-            // then observes.
+            // then observes. Fabric is ISSUED it by the custodian (its own
+            // uid on a protected host) and never spends it: the privileged
+            // launcher spends it at the root boundary (amendment 50).
             let nonce = match &cfg.observer {
-                Some(o) => o.nonces.issue(epoch, &o.clock),
+                Some(o) => o.custodian.issue(epoch, &o.clock),
                 None => Ok("none".to_string()),
             };
             let prepared = inputs
@@ -1526,7 +1528,8 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
             });
             match observed {
                 Ok((launch, observation)) => {
-                    let res = backend::run_linux_profile(lx, &req, policy, &launch);
+                    let res =
+                        backend::run_linux_profile(lx, &req, policy, &launch, observation.as_ref());
                     launch.scrub();
                     let hv = crate::psv::derive(&launch, &res.out_dir, observation.as_ref());
                     let guest_verdict = hv.guest_verdict.clone();

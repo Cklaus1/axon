@@ -22,14 +22,17 @@
 //! axon-fabric verify-evidence --record FILE --issuers DIR --authority A [--signature FILE]
 //! axon-fabric sign-evidence --record FILE --key PKCS8 --authority A   (OPERATOR, with the operator's key)
 //! axon-fabric verifier-manifest   (OPERATOR: the installed binary describes itself → verifier.json)
-//! axon-fabric protected-host-paths [--config FILE] [--launcher-config FILE]   (the trust preflight's probe list)
+//! axon-fabric protected-host-paths [--config FILE] [--launcher-config FILE] [--custodian-config FILE]   (the trust preflight's probe list)
 //!
 //! `protected-host-paths` prints every path a protected-host config pins, one
 //! `KIND<TAB>PATH` line each (`operator-file`, `operator-dir`, `signing-key`,
 //! `service-dir`, `privileged-helper`), then the paths the privileged
 //! helper's own config pins (`--launcher-config`, default
 //! /etc/axon/protected-launcher.json) and one `helper-fabric-uid<TAB>UID`
-//! line: the list `ProtectedHost::load` ownership-walks, so the
+//! line, then the custodian's own config and store (`--custodian-config`,
+//! default /etc/axon/custodian.json; `custodian-store`) and its
+//! `custodian-uid`, `custodian-fabric-uid` and `custodian-launcher-uid`
+//! lines (amendment 50): the list `ProtectedHost::load` ownership-walks, so the
 //! trust preflight probes exactly those. It verifies no pin and authorizes
 //! nothing; `--config` defaults to /etc/axon/protected-host.json.
 //!
@@ -658,8 +661,27 @@ fn protected_host_paths(a: &Args) {
             paths.push(hp);
         }
     }
+    // Amendment 50: the custodian's own operator config and its store. It is
+    // read by the custodian, not by `load`; `--custodian-config` names a dev
+    // fixture's.
+    let cust_cfg = a
+        .opt("--custodian-config")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(axon_fabric::custodian::CONFIG_PATH));
+    let (cust, cust_paths) = axon_fabric::protected_host::custodian_pinned_paths(&cust_cfg)
+        .unwrap_or_else(|e| refuse("unregistered", &e, 4));
+    for cp in cust_paths {
+        if !paths.contains(&cp) {
+            paths.push(cp);
+        }
+    }
     // The uid the helper admits: the preflight holds it to its Fabric actor.
     println!("helper-fabric-uid\t{fabric_uid}");
+    // The custodian's three roles: the preflight holds them to its actors and
+    // requires the custodian to be neither the Fabric nor root.
+    println!("custodian-uid\t{}", cust.custodian_uid);
+    println!("custodian-fabric-uid\t{}", cust.fabric_uid);
+    println!("custodian-launcher-uid\t{}", cust.launcher_uid);
     for (kind, p) in paths {
         let s = p.to_string_lossy();
         if s.contains(['\t', '\n']) || s != p.as_os_str().to_str().unwrap_or_default() {

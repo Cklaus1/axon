@@ -1,0 +1,44 @@
+# Operator decision D6 / amendment 50: the observation-nonce custodian.
+# EXAMPLE for the operator to install beside axon-custodian.socket; nothing in
+# the repository installs it.
+#
+# It runs as its OWN uid (never the Fabric's, never root), is started only by
+# its socket (it refuses to run without LISTEN_FDS; `--dev` is the manual,
+# never-protected mode), reads /etc/axon/custodian.json, and keeps its nonce
+# records in its own 0700 store. `custodian_uid` in that config is this
+# User's uid; `fabric_uid` the Fabric service's; `launcher_uid` 0 (the
+# setuid-root axon-protected-launcher spends the nonce); `store`
+# /var/lib/axon-custodian/nonces (systemd creates /var/lib/axon-custodian
+# root-owned and the leaf owned by User, mode 0700).
+
+[Unit]
+Description=Axon observation-nonce custodian
+Requires=axon-custodian.socket
+After=axon-custodian.socket
+
+[Service]
+Type=simple
+# The installed production build (pin its bytes like every authority program).
+ExecStart=/usr/local/libexec/axon/axon-custodian
+User=axon-custodian
+Group=axon-custodian
+StateDirectory=axon-custodian/nonces
+StateDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+PrivateNetwork=yes
+RestrictAddressFamilies=AF_UNIX
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+Restart=on-failure

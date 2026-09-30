@@ -125,6 +125,11 @@ impl ProtectedHost {
             QualificationTrust::operator(),
             crate::observer::ObserverTrust::operator(),
         )?;
+        if let Some(crate::custodian::Custodian::Service(c)) =
+            host.observer.as_ref().map(|o| &o.custodian)
+        {
+            custodian_is_separate(c.uid, euid)?;
+        }
         let helper = crate::privileged_launcher::load_config(
             Path::new(crate::privileged_launcher::CONFIG_PATH),
             &crate::privileged_launcher::Authority::production(),
@@ -286,14 +291,14 @@ impl ProtectedHost {
         if let Some(dir) = signer.key_path.parent() {
             owned(dir, false).map_err(bad)?;
         }
-        // The Fabric service writes its runs under `out_root`, and the
-        // custodian its nonce records under `nonce_store`: neither leaf is the
-        // operator's, but WHERE it sits is, exactly as for the signing key. An
-        // agent-writable ancestor could swap either for a directory it
-        // controls (pre-planted run outputs; erased nonce records, so an
-        // observation replays). The LEAF is the service's own, and private:
-        // an agent-owned or group/other-accessible leaf allows the same swap
-        // one level down (C9 dev review round 1; A56).
+        // The Fabric service writes its runs under `out_root`: the leaf is not
+        // the operator's, but WHERE it sits is, exactly as for the signing
+        // key. An agent-writable ancestor could swap it for a directory it
+        // controls (pre-planted run outputs). The LEAF is the service's own,
+        // and private: an agent-owned or group/other-accessible leaf allows
+        // the same swap one level down (C9 dev review round 1; A56). The
+        // custodian's socket sits under an operator directory too (below);
+        // its nonce STORE is not Fabric's at all (amendment 50).
         let parent_owned = |p: &Path| -> Result<(), String> {
             let dir = p
                 .parent()
@@ -339,9 +344,27 @@ impl ProtectedHost {
             None | Some(Value::Null) => None,
             Some(ob) => {
                 let (command, command_sha256) = pinned("observer/command")?;
-                let nonces = path_at("/observer/nonce_store")?;
-                parent_owned(&nonces)?;
-                leaf_owned(&nonces)?;
+                // Amendment 50 (A83): the nonce store is the CUSTODIAN's, kept
+                // as its own uid; Fabric holds only a client connection. A
+                // host config giving Fabric a store (A56's old shape) is
+                // refused, never read as one.
+                if ob.get("nonce_store").is_some() {
+                    return Err(bad(
+                        "observer.nonce_store: the nonce store is the custodian's \
+                                    own, never Fabric's; name observer.custodian {socket, uid} \
+                                    (amendment 50)"
+                            .into(),
+                    ));
+                }
+                let socket = path_at("/observer/custodian/socket")?;
+                let custodian_uid = ob
+                    .pointer("/custodian/uid")
+                    .and_then(Value::as_u64)
+                    .and_then(|u| u32::try_from(u).ok())
+                    .ok_or_else(|| bad("observer.custodian.uid is not a uid".into()))?;
+                // Where the socket sits is the operator's: no other uid can
+                // bind a custodian of its own there.
+                parent_owned(&socket)?;
                 // ADR-002: the observer root shares no key with the host
                 // signer or another authority root (A57).
                 observer_trust.host_signer_public_key = Some(signer.public_key.clone());
@@ -359,7 +382,12 @@ impl ProtectedHost {
                     interpreter,
                     exec_owner: Some(exec_owner),
                     trust: observer_trust,
-                    nonces: crate::observer::NonceStore { dir: nonces },
+                    custodian: crate::custodian::Custodian::Service(
+                        crate::custodian::CustodianRef {
+                            socket,
+                            uid: custodian_uid,
+                        },
+                    ),
                     max_age_s: match ob.get("max_age_s") {
                         None | Some(Value::Null) => crate::observer::DEFAULT_OBSERVATION_MAX_AGE_S,
                         Some(n) => n
@@ -431,9 +459,15 @@ pub enum PinnedKind {
     /// The attestation signing key: readable by the Fabric UID alone (A20);
     /// the directory above it is operator-owned.
     SigningKey,
-    /// A directory the Fabric SERVICE owns, private (`out_root`,
-    /// `observer.nonce_store`); the directory above it is operator-owned.
+    /// A directory the Fabric SERVICE owns, private (`out_root`); the
+    /// directory above it is operator-owned.
     ServiceDir,
+    /// The custodian's socket (amendment 50): its directory is the
+    /// operator's, so no other uid can bind a custodian there.
+    CustodianSocket,
+    /// The custodian's nonce store: the CUSTODIAN uid's own, 0700 — no other
+    /// actor (Fabric above all) can create, write or chmod in it.
+    CustodianStore,
     /// The privileged launcher helper (A): operator-owned like any pinned
     /// file, and also setuid-root and executable by the Fabric uid alone.
     PrivilegedHelper,
@@ -446,6 +480,8 @@ impl PinnedKind {
             PinnedKind::OperatorDir => "operator-dir",
             PinnedKind::SigningKey => "signing-key",
             PinnedKind::ServiceDir => "service-dir",
+            PinnedKind::CustodianSocket => "custodian-socket",
+            PinnedKind::CustodianStore => "custodian-store",
             PinnedKind::PrivilegedHelper => "privileged-helper",
         }
     }
@@ -502,7 +538,7 @@ pub fn pinned_paths(config: &Path) -> Result<Vec<(PinnedKind, PathBuf)>, String>
         if present("/observer/interpreter") {
             out.push((OperatorFile, path_at("/observer/interpreter/path")?));
         }
-        out.push((ServiceDir, path_at("/observer/nonce_store")?));
+        out.push((CustodianSocket, path_at("/observer/custodian/socket")?));
     }
     if present("/grant_registry") {
         let reg = path_at("/grant_registry/path")?;
@@ -557,40 +593,88 @@ pub fn fabric_is_not_root(euid: u32) -> Result<(), String> {
     Ok(())
 }
 
+/// Amendment 50 (A83): on a protected host the custodian Fabric is issued its
+/// nonce by is not Fabric (nor root): a nonce kept by the principal it
+/// constrains is no constraint.
+pub fn custodian_is_separate(custodian_uid: u32, euid: u32) -> Result<(), String> {
+    if custodian_uid == euid || custodian_uid == 0 {
+        return Err(format!(
+            "the host config's observer.custodian.uid is {custodian_uid}, the Fabric's own uid \
+             ({euid}) or root: the custodian is a separate uid (amendment 50)"
+        ));
+    }
+    Ok(())
+}
+
+/// Every path the custodian's OWN config pins (read by the custodian, not by
+/// `load`), for the trust preflight: the config and the store. Also the uids
+/// it names (custodian, Fabric, launcher), which the preflight holds to its
+/// actors.
+pub fn custodian_pinned_paths(
+    config: &Path,
+) -> Result<
+    (
+        crate::custodian::CustodianConfig,
+        Vec<(PinnedKind, PathBuf)>,
+    ),
+    String,
+> {
+    let bytes = std::fs::read(config).map_err(|e| format!("{}: {e}", config.display()))?;
+    let c: crate::custodian::CustodianConfig =
+        serde_json::from_slice(&bytes).map_err(|e| format!("{}: {e}", config.display()))?;
+    let paths = vec![
+        (PinnedKind::OperatorFile, config.to_path_buf()),
+        (PinnedKind::CustodianStore, c.store.clone()),
+    ];
+    Ok((c, paths))
+}
+
 /// The helper's operator config and the host config describe ONE launch path:
 /// the helper admits this Fabric uid, writes under this out root, and runs
 /// the launcher (and profile manifest) this host pins, so the launcher digest
 /// in every launch manifest and observation is the one the helper executes.
+/// It spends through the custodian the host names, and keeps the host signer
+/// out of the observer root it verifies under (amendment 50).
 pub fn helper_agrees(
     helper: &crate::privileged_launcher::HelperConfig,
     host: &ProtectedHost,
     euid: u32,
 ) -> Result<(), String> {
-    let why = if helper.fabric_uid != euid {
-        format!(
-            "admits uid {}, but Fabric runs as uid {euid}",
-            helper.fabric_uid
-        )
-    } else if helper.out_root != host.linux.out_root {
-        format!(
-            "writes under {}, but the host's out_root is {}",
-            helper.out_root.display(),
-            host.linux.out_root.display()
-        )
-    } else if helper.launcher.sha256 != host.linux.launcher_sha256 {
-        format!(
-            "runs launcher {}, but the host pins {}",
-            helper.launcher.sha256, host.linux.launcher_sha256
-        )
-    } else if crate::backend::sha256_file(&host.linux.manifest)
-        .ok()
-        .as_deref()
-        != Some(helper.profile_manifest.sha256.as_str())
-    {
-        "pins another profile manifest than the host's".to_string()
-    } else {
-        return Ok(());
-    };
+    let why =
+        if helper.fabric_uid != euid {
+            format!(
+                "admits uid {}, but Fabric runs as uid {euid}",
+                helper.fabric_uid
+            )
+        } else if helper.out_root != host.linux.out_root {
+            format!(
+                "writes under {}, but the host's out_root is {}",
+                helper.out_root.display(),
+                host.linux.out_root.display()
+            )
+        } else if helper.launcher.sha256 != host.linux.launcher_sha256 {
+            format!(
+                "runs launcher {}, but the host pins {}",
+                helper.launcher.sha256, host.linux.launcher_sha256
+            )
+        } else if crate::backend::sha256_file(&host.linux.manifest)
+            .ok()
+            .as_deref()
+            != Some(helper.profile_manifest.sha256.as_str())
+        {
+            "pins another profile manifest than the host's".to_string()
+        } else if let Some(want) = host.observer.as_ref().map(|o| &o.custodian).filter(
+            |c| !matches!(c, crate::custodian::Custodian::Service(r) if *r == helper.custodian),
+        ) {
+            format!(
+                "spends through custodian {:?}, but the host's observer is issued by {want:?}",
+                helper.custodian
+            )
+        } else if helper.observer.host_signer_public_key != host.signer.public_key {
+            "names another host signer than the host's".to_string()
+        } else {
+            return Ok(());
+        };
     Err(format!(
         "{}: the privileged launcher's config {why}",
         crate::privileged_launcher::CONFIG_PATH
@@ -660,6 +744,20 @@ mod tests {
             "ATTACK: Fabric running as root was accepted on a protected host"
         );
         fabric_is_not_root(991).expect("control: a service uid");
+    }
+
+    /// Amendment 50 (A83): the custodian a protected host names is not the
+    /// Fabric's own uid (nor root).
+    #[test]
+    fn a_custodian_that_is_the_fabric_uid_is_refused_on_a_protected_host() {
+        let got = custodian_is_separate(991, 991);
+        assert!(
+            got.is_err(),
+            "ATTACK: a protected host config naming the Fabric's own uid as its custodian was \
+             accepted"
+        );
+        assert!(custodian_is_separate(0, 991).is_err(), "root custodian");
+        custodian_is_separate(993, 991).expect("control: a separate custodian uid");
     }
 
     /// C9 dev review round 1: `operator()` read ANY stat error as "not a

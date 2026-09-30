@@ -644,7 +644,8 @@ pub fn observer_key(dir: &Path, name: &str, trust_in: &[&Path]) -> ObserverKey {
 /// `authority`. A genuine observation is also kept as `d/prev-observation.json`
 /// (so a later test can REPLAY it).
 pub fn observer_script(d: &Path, mode: &str, key: &ObserverKey, authority: &str) -> PathBuf {
-    let script = d.join(format!("observer-{mode}-{authority}.sh"));
+    let name = key.pk8.file_stem().unwrap().to_string_lossy().into_owned();
+    let script = d.join(format!("observer-{mode}-{authority}-{name}.sh"));
     write_executable(
         &script,
         format!(
@@ -793,7 +794,7 @@ pub fn write_helper_config(
     let pin = |p: &Path| json!({"path": p, "sha256": sha256_file(p)});
     let bash = bash_pin();
     let cfg = json!({
-        "schema": "axon-protected-launcher/1",
+        "schema": "axon-protected-launcher/2",
         "fabric_uid": unsafe { libc::getuid() },
         "interpreter": {"path": bash.path, "sha256": bash.sha256},
         "launcher": pin(launcher),
@@ -805,6 +806,11 @@ pub fn write_helper_config(
         "staging_root": staging,
         "max_timeout_s": 3600,
         "max_input_bytes": 1u64 << 30,
+        // Amendment 50: the helper verifies the observation under this root
+        // and spends its nonce through this custodian ([`start_custodian`]).
+        "observer": {"root": observer_root(dir), "max_age_s": 300,
+                     "host_signer_public_key": TEST_HOST_SIGNER},
+        "custodian": {"socket": custodian_socket(dir), "uid": unsafe { libc::geteuid() }},
     });
     let p = dir.join(name);
     std::fs::write(&p, cfg.to_string()).unwrap();
@@ -819,4 +825,219 @@ pub fn use_helper(lx: &mut LinuxProfileConfig, config: &Path) {
         owner: unsafe { libc::geteuid() },
         test_config: Some(config.to_path_buf()),
     });
+}
+
+// ── Amendment 50: the custodian, and observed launches at the helper ────────
+
+/// The host signer key a test helper config names (no test root holds it).
+pub const TEST_HOST_SIGNER: &str =
+    "0000000000000000000000000000000000000000000000000000000000000000";
+
+/// Where a fixture's operator observer root is (the helper verifies under it).
+pub fn observer_root(dir: &Path) -> PathBuf {
+    dir.join("observer_keys")
+}
+
+/// Where a fixture's custodian listens.
+pub fn custodian_socket(dir: &Path) -> PathBuf {
+    dir.join("custodian.sock")
+}
+
+/// A running `axon-custodian`, killed when dropped.
+pub struct TestCustodian {
+    child: std::process::Child,
+    pub socket: PathBuf,
+    pub store: PathBuf,
+    pub uid: u32,
+}
+
+impl Drop for TestCustodian {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+impl TestCustodian {
+    /// The client a Fabric (or the helper) holds.
+    pub fn client(&self) -> axon_fabric::custodian::CustodianRef {
+        axon_fabric::custodian::CustodianRef {
+            socket: self.socket.clone(),
+            uid: self.uid,
+        }
+    }
+    /// A nonce for `epoch`, issued to this process.
+    pub fn issue(&self, epoch: u64) -> String {
+        self.client().issue(epoch).unwrap().0
+    }
+}
+
+/// How to start a custodian.
+pub enum CustodianRun {
+    /// `--test-config`, as this process (`mode: test`).
+    Test,
+    /// `--test-config` through `setpriv` as `uid` (root tests only).
+    TestAs(u32),
+    /// A manual `--dev` launch (`mode: dev`).
+    Dev,
+}
+
+/// Start a custodian in `dir` (socket [`custodian_socket`], store
+/// `dir/custodian-nonces`, 0700): every role this process's uid unless
+/// `edit` says otherwise. Waits until it listens; `Err(stderr)` if it exits
+/// first (a refused start).
+pub fn try_start_custodian(
+    dir: &Path,
+    run: CustodianRun,
+    edit: impl FnOnce(&mut Value),
+) -> Result<TestCustodian, String> {
+    use std::os::unix::fs::PermissionsExt;
+    let me = unsafe { libc::geteuid() };
+    let store = dir.join("custodian-nonces");
+    let socket = custodian_socket(dir);
+    let mut cfg = json!({
+        "schema": "axon-custodian/1",
+        "custodian_uid": me, "fabric_uid": me, "launcher_uid": me,
+        "socket": socket, "store": store, "max_age_s": 300,
+    });
+    if !store.exists() {
+        std::fs::create_dir_all(&store).unwrap();
+        std::fs::set_permissions(&store, std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    let bin = env!("CARGO_BIN_EXE_axon-custodian");
+    let mut c = match run {
+        CustodianRun::Test | CustodianRun::TestAs(_) => {
+            if let CustodianRun::TestAs(u) = run {
+                cfg["custodian_uid"] = json!(u);
+            }
+            edit(&mut cfg);
+            let path = dir.join("custodian.json");
+            std::fs::write(&path, cfg.to_string()).unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+            let mut c = match run {
+                CustodianRun::TestAs(u) => {
+                    let mut c = std::process::Command::new("setpriv");
+                    c.arg(format!("--reuid={u}"))
+                        .arg(format!("--regid={u}"))
+                        .arg("--clear-groups")
+                        .arg("--")
+                        .arg(bin);
+                    c
+                }
+                _ => std::process::Command::new(bin),
+            };
+            c.arg("--test-config").arg(&path);
+            c
+        }
+        CustodianRun::Dev => {
+            edit(&mut cfg);
+            let mut c = std::process::Command::new(bin);
+            c.arg("--dev")
+                .arg("--socket")
+                .arg(&socket)
+                .arg("--store")
+                .arg(&store);
+            for (k, f) in [
+                ("fabric_uid", "--fabric-uid"),
+                ("launcher_uid", "--launcher-uid"),
+            ] {
+                c.arg(f).arg(cfg[k].to_string());
+            }
+            c
+        }
+    };
+    let uid = cfg["custodian_uid"].as_u64().unwrap() as u32;
+    let mut child = c
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    for _ in 0..400 {
+        if child.try_wait().unwrap().is_some() {
+            let mut e = String::new();
+            use std::io::Read;
+            let _ = child.stderr.take().unwrap().read_to_string(&mut e);
+            return Err(e);
+        }
+        if std::os::unix::net::UnixStream::connect(&socket).is_ok() {
+            return Ok(TestCustodian {
+                child,
+                socket,
+                store,
+                uid,
+            });
+        }
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+    let _ = child.kill();
+    Err("the custodian did not start listening".into())
+}
+
+/// [`try_start_custodian`], which must start (a test-trust custodian as this
+/// process).
+pub fn start_custodian(dir: &Path) -> TestCustodian {
+    try_start_custodian(dir, CustodianRun::Test, |_| {}).expect("the test custodian starts")
+}
+
+/// A well-formed `axon-launch-manifest/1` naming `nonce` (its facts are
+/// arbitrary but consistent, so an observation composed from it joins).
+pub fn test_launch_manifest(op: &str, nonce: &str) -> Value {
+    let h = |c: char| c.to_string().repeat(64);
+    json!({
+        "schema": "axon-launch-manifest/1",
+        "operation_id": op, "task_id": "task:t", "trial_id": "trial:t", "attempt_id": "attempt:1",
+        "backend_profile": "linux-microvm-protected", "fabric_revision": "rev",
+        "verifier_sha256": h('1'), "qualification_sha256": h('2'), "host_config_sha256": h('3'),
+        "launcher_sha256": h('4'), "firecracker_sha256": h('5'), "profile_manifest_sha256": h('6'),
+        "guest": {"kernel_sha256": h('7'), "rootfs_sha256": h('8'), "axon_sha256": h('9'),
+                  "init_sha256": h('a')},
+        "policy_sha256": h('b'),
+        "suite": {"id": "acc", "version": "v", "entry": "accept.ax", "test": "t_ok",
+                  "tree_digest": h('c'), "registry_sha256": h('d')},
+        "candidate": {"workspace_version": "ws", "tree_digest": h('e')},
+        "completion": {"scheme": "axon-guest-completion/1"},
+        "observation_nonce": nonce,
+        "limits": {"wall_time_ms": 60000, "output_bytes": 1048576},
+    })
+}
+
+/// The observation an honest observer makes of `manifest_bytes` (the
+/// dev stand-in's composition), for `epoch`, now.
+pub fn observation_of(manifest_bytes: &[u8], key_id: &str, epoch: u64) -> Value {
+    let m: Value = serde_json::from_slice(manifest_bytes).unwrap();
+    let now = axon_fabric::backend::Clock::System.now_unix();
+    json!({
+        "schema": "axon-preflight-observation/1", "observer_key_id": key_id,
+        "nonce": m["observation_nonce"], "epoch": epoch, "observed_at": utc(now),
+        "host_profile": m["backend_profile"], "fabric_revision": m["fabric_revision"],
+        "firecracker_sha256": m["firecracker_sha256"], "launcher_sha256": m["launcher_sha256"],
+        "host_config_sha256": m["host_config_sha256"], "guest": m["guest"],
+        "verifier_sha256": m["verifier_sha256"],
+        "suite_registry_sha256": m["suite"]["registry_sha256"], "policy_sha256": m["policy_sha256"],
+        "intended_launch_manifest_sha256": axon_psv::sha256_hex(manifest_bytes),
+    })
+}
+
+/// `YYYY-MM-DDTHH:MM:SSZ` for a Unix time.
+pub fn utc(t: i64) -> String {
+    let days = t.div_euclid(86_400);
+    let secs = t.rem_euclid(86_400);
+    // Civil from days (Howard Hinnant's algorithm).
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    format!(
+        "{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}Z",
+        secs / 3600,
+        secs % 3600 / 60,
+        secs % 60
+    )
 }

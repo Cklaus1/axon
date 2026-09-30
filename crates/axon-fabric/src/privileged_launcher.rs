@@ -45,8 +45,10 @@ use crate::sealed_exec::{self, Lease, Pinned};
 
 /// The one place the helper's configuration lives (production).
 pub const CONFIG_PATH: &str = "/etc/axon/protected-launcher.json";
-pub const CONFIG_SCHEMA: &str = "axon-protected-launcher/1";
-pub const REQUEST_SCHEMA: &str = "axon-protected-launch-request/1";
+/// `/2` (amendment 50): the config names the observer root and the custodian.
+pub const CONFIG_SCHEMA: &str = "axon-protected-launcher/2";
+/// `/2` (amendment 50): the request carries the observation.
+pub const REQUEST_SCHEMA: &str = "axon-protected-launch-request/2";
 pub const REPORT_SCHEMA: &str = "axon-protected-launch-report/1";
 pub const PROBE_SCHEMA: &str = "axon-protected-launcher-probe/1";
 
@@ -91,6 +93,25 @@ pub struct HelperConfig {
     pub staging_root: PathBuf,
     pub max_timeout_s: u64,
     pub max_input_bytes: u64,
+    /// Amendment 50: the observation every launch requires is verified HERE,
+    /// under this operator observer root.
+    pub observer: HelperObserver,
+    /// Amendment 50: the custodian the helper spends each launch's nonce
+    /// through. Never the Fabric uid.
+    pub custodian: crate::custodian::CustodianRef,
+}
+
+/// The helper's observer section (operator config).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HelperObserver {
+    /// `/etc/axon/trust/observer` in production.
+    pub root: PathBuf,
+    pub max_age_s: u64,
+    /// The host's attestation signer (hex): Fabric holds its private half, so
+    /// the observer root must not hold it (ADR-002; the host config's
+    /// `signer.public_key`, held equal by `helper_agrees`).
+    pub host_signer_public_key: String,
 }
 
 /// `axon-protected-launch-request/1`: per-launch data only.
@@ -110,6 +131,11 @@ pub struct LaunchRequest {
     /// The exact `axon-vm-mmds/1` bytes (the launcher validates them).
     pub policy_json: String,
     pub timeout_s: u64,
+    /// Amendment 50: the exact observation bytes Fabric verified, and their
+    /// observer signature (`axon-evidence-signature/2`). The helper verifies
+    /// them itself and launches nothing without them.
+    pub observation: String,
+    pub observation_signature: String,
 }
 
 /// `axon-protected-launch-report/1`.
@@ -285,9 +311,10 @@ impl DirOpen for std::fs::OpenOptions {
     }
 }
 
-/// Read the operator's config: its directory chain from the walk base, and
-/// the file itself, operator-owned and not group/other-writable.
-pub fn load_config(path: &Path, a: &Authority) -> Result<HelperConfig, String> {
+/// Read an operator file: its directory chain from the walk base, and the
+/// file itself, operator-owned and not group/other-writable. ONE reader for
+/// the helper's config and the custodian's (amendment 50).
+pub fn read_operator_file(path: &Path, a: &Authority) -> Result<Vec<u8>, String> {
     use std::io::Read;
     let bad = |why: String| format!("{}: {why}", path.display());
     let parent = path.parent().ok_or_else(|| bad("no parent".into()))?;
@@ -317,6 +344,13 @@ pub fn load_config(path: &Path, a: &Authority) -> Result<HelperConfig, String> {
         .take(MAX_REQUEST)
         .read_to_end(&mut bytes)
         .map_err(|e| bad(e.to_string()))?;
+    Ok(bytes)
+}
+
+/// Read the operator's config ([`read_operator_file`]) and check it.
+pub fn load_config(path: &Path, a: &Authority) -> Result<HelperConfig, String> {
+    let bad = |why: String| format!("{}: {why}", path.display());
+    let bytes = read_operator_file(path, a)?;
     let c: HelperConfig = serde_json::from_slice(&bytes).map_err(|e| bad(e.to_string()))?;
     if c.schema != CONFIG_SCHEMA {
         return Err(bad(format!("schema is not {CONFIG_SCHEMA}")));
@@ -361,6 +395,32 @@ pub fn load_config(path: &Path, a: &Authority) -> Result<HelperConfig, String> {
         return Err(bad(
             "max_timeout_s and max_input_bytes must be positive".into()
         ));
+    }
+    for p in [&c.observer.root, &c.custodian.socket] {
+        if !p.is_absolute()
+            || p.components()
+                .any(|c| !matches!(c, Component::RootDir | Component::Normal(_)))
+        {
+            return Err(bad(format!(
+                "{} is not an absolute plain path",
+                p.display()
+            )));
+        }
+    }
+    if c.observer.max_age_s == 0 || !is_hex64(&c.observer.host_signer_public_key) {
+        return Err(bad(
+            "observer.max_age_s must be positive and observer.host_signer_public_key a \
+             lowercase 64-hex key"
+                .into(),
+        ));
+    }
+    // A83: the nonce is not the constrained principal's to keep.
+    if !a.test && (c.custodian.uid == c.fabric_uid || c.custodian.uid == 0) {
+        return Err(bad(format!(
+            "custodian.uid {} is the Fabric uid or root: the custodian is its own uid \
+             (amendment 50)",
+            c.custodian.uid
+        )));
     }
     Ok(c)
 }
@@ -829,6 +889,7 @@ fn prepare(c: &HelperConfig, a: &Authority, request: &[u8]) -> Result<Prepared, 
             std::fs::write(staging.join("policy.json"), req.policy_json.as_bytes())
                 .map_err(|e| format!("policy: {e}"))
         })
+        .and_then(|()| observed_launch(c, a, &req, &staging))
         .and_then(|()| make_out(root.as_raw_fd(), &plan.out_name));
     match staged {
         Ok(out) => Ok(Prepared {
@@ -846,6 +907,109 @@ fn prepare(c: &HelperConfig, a: &Authority, request: &[u8]) -> Result<Prepared, 
             Err(why)
         }
     }
+}
+
+/// Amendment 50 (negative matrix A84): no root launch without its ONE
+/// observation. Over the root-private SNAPSHOT (never Fabric's dir):
+/// 1. the snapshot's `job/launch-manifest.json` is the manifest the request
+///    names (`psv_manifest_sha256`), which the launcher is told and the verdict
+///    binds;
+/// 2. the observation verifies under the operator's observer root, by the
+///    SAME function Fabric's early check uses ([`crate::observer::verify_observation`]),
+///    and joins that manifest field for field;
+/// 3. the manifest's nonce is spent through the CUSTODIAN, as root: one
+///    nonce, one launch. A dev custodian's spend is refused.
+fn observed_launch(
+    c: &HelperConfig,
+    a: &Authority,
+    req: &LaunchRequest,
+    staging: &Path,
+) -> Result<(), String> {
+    let m = snapshot_manifest(staging, req)?;
+    let epoch = verify_observation_at_root(c, a, req, &m)?;
+    spend_at_root(c, a, &m.observation_nonce, epoch, &req.psv_manifest_sha256)
+}
+
+/// The snapshot's launch manifest, which must be the one the request names.
+fn snapshot_manifest(
+    staging: &Path,
+    req: &LaunchRequest,
+) -> Result<axon_psv::LaunchManifest, String> {
+    let bytes = std::fs::read(staging.join("job").join("launch-manifest.json"))
+        .map_err(|e| format!("the snapshot has no launch-manifest.json: {e}"))?;
+    let digest = crate::backend::sha256_hex(&bytes);
+    if digest != req.psv_manifest_sha256 {
+        return Err(format!(
+            "the snapshot's launch-manifest.json has sha256 {digest}, not the request's \
+             psv_manifest_sha256 {}",
+            req.psv_manifest_sha256
+        ));
+    }
+    serde_json::from_slice(&bytes).map_err(|e| format!("launch-manifest.json: {e}"))
+}
+
+/// The observation, verified under the operator's observer root and joined to
+/// `m` (whose digest is the request's). Returns its epoch.
+fn verify_observation_at_root(
+    c: &HelperConfig,
+    a: &Authority,
+    req: &LaunchRequest,
+    m: &axon_psv::LaunchManifest,
+) -> Result<u64, String> {
+    use crate::backend::TrustAuthority;
+    let rules = crate::observer::ObservationRules {
+        trust: crate::observer::ObserverTrust {
+            dir: c.observer.root.clone(),
+            operator_owned: !a.test,
+            separate_from: crate::backend::sibling_roots(
+                TrustAuthority::Observer,
+                &c.observer.root,
+            ),
+            host_signer_public_key: Some(c.observer.host_signer_public_key.clone()),
+        },
+        max_age_s: c.observer.max_age_s,
+        clock: crate::backend::Clock::System,
+    };
+    let o = crate::observer::verify_observation(
+        &rules,
+        req.observation.as_bytes(),
+        &req.observation_signature,
+        m,
+        &req.psv_manifest_sha256,
+    )
+    .map_err(|e| format!("no verified observation: {e}"))?;
+    Ok(o.epoch)
+}
+
+/// Spend `nonce` through the operator's custodian, as root.
+fn spend_at_root(
+    c: &HelperConfig,
+    a: &Authority,
+    nonce: &str,
+    epoch: u64,
+    manifest_sha256: &str,
+) -> Result<(), String> {
+    let mode = c
+        .custodian
+        .spend(nonce, epoch, manifest_sha256)
+        .map_err(|e| format!("the observation's nonce was not spent: {e}"))?;
+    if !custodian_mode_launches(mode, a.test) {
+        return Err(format!(
+            "the custodian that spent the nonce is a {} custodian: never a protected launch",
+            mode.as_str()
+        ));
+    }
+    Ok(())
+}
+
+/// Whose spend authorizes a root launch: a protected custodian's, or (in a
+/// test-trust helper only) a test custodian's. Never a dev custodian's (D6).
+pub fn custodian_mode_launches(mode: crate::custodian::Mode, test_helper: bool) -> bool {
+    use crate::custodian::Mode;
+    matches!(
+        (mode, test_helper),
+        (Mode::Protected, _) | (Mode::Test, true)
+    )
 }
 
 fn run(c: &HelperConfig, p: Prepared) -> (LaunchReport, i32) {
@@ -1054,6 +1218,15 @@ mod tests {
             staging_root: "/var/lib/axon-protected-launcher".into(),
             max_timeout_s: 600,
             max_input_bytes: 1 << 30,
+            observer: HelperObserver {
+                root: "/etc/axon/trust/observer".into(),
+                max_age_s: 300,
+                host_signer_public_key: "c".repeat(64),
+            },
+            custodian: crate::custodian::CustodianRef {
+                socket: "/run/axon-custodian/custodian.sock".into(),
+                uid: 993,
+            },
         }
     }
 
@@ -1069,6 +1242,8 @@ mod tests {
             psv_manifest_sha256: "b".repeat(64),
             policy_json: "{}".into(),
             timeout_s: 60,
+            observation: "{}".into(),
+            observation_signature: "{}".into(),
         }
     }
 
@@ -1118,6 +1293,26 @@ mod tests {
         }
     }
 
+    /// D6 (amendment 50): a production helper launches only on a PROTECTED
+    /// custodian's spend; a test custodian's counts only inside a test-trust
+    /// helper, and a dev custodian's never.
+    #[test]
+    fn only_a_protected_custodian_authorizes_a_production_launch() {
+        use crate::custodian::Mode;
+        assert!(custodian_mode_launches(Mode::Protected, false), "control");
+        assert!(custodian_mode_launches(Mode::Test, true), "control: a test");
+        assert!(
+            !custodian_mode_launches(Mode::Test, false),
+            "ATTACK: a production helper accepted a test custodian's spend"
+        );
+        for test in [false, true] {
+            assert!(
+                !custodian_mode_launches(Mode::Dev, test),
+                "ATTACK: a dev custodian's spend authorized a launch (test helper: {test})"
+            );
+        }
+    }
+
     /// A: the request schema is fixed; an unknown field is refused, never
     /// ignored (it could be read as a knob the helper does not have).
     #[test]
@@ -1157,6 +1352,9 @@ mod tests {
             "artifacts_dir": "/opt/dist", "firecracker": "/opt/firecracker",
             "jailer": "/opt/jailer", "out_root": "/var/runs", "staging_root": "/var/st",
             "max_timeout_s": 60, "max_input_bytes": 1,
+            "observer": {"root": "/etc/axon/trust/observer", "max_age_s": 300,
+                         "host_signer_public_key": "c".repeat(64)},
+            "custodian": {"socket": "/run/axon-custodian/custodian.sock", "uid": 993},
         });
         let a = Authority {
             // SAFETY: geteuid cannot fail.
@@ -1173,6 +1371,18 @@ mod tests {
         v["fabric_uid"] = serde_json::json!(991);
         std::fs::write(&p, v.to_string()).unwrap();
         load_config(&p, &a).expect("control: a service uid");
+        // A83 (amendment 50): the custodian the helper spends through is not
+        // the Fabric (nor root).
+        for uid in [991, 0] {
+            v["custodian"]["uid"] = serde_json::json!(uid);
+            std::fs::write(&p, v.to_string()).unwrap();
+            let got = load_config(&p, &a);
+            assert!(
+                got.is_err(),
+                "ATTACK: a helper config spending through a custodian of uid {uid} (the Fabric's \
+                 or root) was accepted"
+            );
+        }
     }
 
     #[test]
@@ -1184,7 +1394,7 @@ mod tests {
             |r| r.psv_manifest_sha256 = "B".repeat(64),
             |r| r.timeout_s = 0,
             |r| r.timeout_s = 601,
-            |r| r.schema = "axon-protected-launch-request/2".into(),
+            |r| r.schema = "axon-protected-launch-request/1".into(),
         ] {
             let mut r = req();
             edit(&mut r);

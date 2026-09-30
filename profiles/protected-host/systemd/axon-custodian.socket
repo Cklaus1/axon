@@ -1,0 +1,26 @@
+# Operator decision D6 / amendment 50: the observation-nonce custodian's
+# socket. EXAMPLE for the operator to install (e.g. under
+# /etc/systemd/system/); nothing in the repository installs it.
+#
+# The socket is bound by systemd (root), in a root-owned 0755 directory, so no
+# other uid can bind a custodian of its own at this path. Fabric reaches it
+# through its group; the setuid-root helper as root. Other uids cannot connect.
+# The path must equal `socket` in /etc/axon/custodian.json and
+# `observer.custodian.socket` in /etc/axon/protected-host.json and
+# `custodian.socket` in /etc/axon/protected-launcher.json: the custodian
+# refuses an activation on any other socket.
+
+[Unit]
+Description=Axon observation-nonce custodian socket
+
+[Socket]
+ListenStream=/run/axon-custodian/custodian.sock
+SocketUser=root
+SocketGroup=axon-fabric
+SocketMode=0660
+DirectoryMode=0755
+Accept=no
+RemoveOnStop=yes
+
+[Install]
+WantedBy=sockets.target

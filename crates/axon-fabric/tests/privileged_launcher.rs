@@ -20,7 +20,9 @@ fn euid() -> u32 {
 }
 
 /// A helper fixture: operator config, pinned inputs, a stand-in launcher,
-/// the Fabric's out root with one launch's PSV inputs in it.
+/// the Fabric's out root with one launch's PSV inputs in it, and (amendment
+/// 50) a running custodian, an observer key in the operator observer root,
+/// and that launch's genuine observation.
 struct Fx {
     _d: tempfile::TempDir,
     base: PathBuf,
@@ -29,6 +31,30 @@ struct Fx {
     marker: PathBuf,
     /// The setuid-root copy of the helper (root tests only).
     installed: Option<PathBuf>,
+    /// The Fabric uid the inputs belong to (root tests), or this uid.
+    fabric: Option<u32>,
+    _cust: TestCustodian,
+    observer: Issuer,
+    /// The launch manifest in the job dir, and its genuine observation.
+    manifest: Vec<u8>,
+    observation: Vec<u8>,
+}
+
+/// How the fixture's custodian runs.
+struct Custody {
+    run: CustodianRun,
+    /// A subdirectory of the base for the custodian (its socket and store),
+    /// owned by this uid (a custodian run as another uid binds there).
+    dir_owner: Option<u32>,
+}
+
+impl Custody {
+    fn test() -> Custody {
+        Custody {
+            run: CustodianRun::Test,
+            dir_owner: None,
+        }
+    }
 }
 
 /// The stand-in launcher: it records that it ran, what it ran as, and what
@@ -59,6 +85,15 @@ exit 0
 /// Build the fixture under `base_in`. `fabric` is the uid the helper admits
 /// (`None`: this uid, the helper run unprivileged).
 fn fx(fabric: Option<u32>, extra: &str, edit: impl FnOnce(&mut Value)) -> Fx {
+    fx_with(fabric, extra, edit, Custody::test())
+}
+
+fn fx_with(
+    fabric: Option<u32>,
+    extra: &str,
+    edit: impl FnOnce(&mut Value),
+    custody: Custody,
+) -> Fx {
     let d = match fabric {
         // setuid needs a filesystem without nosuid; /var/tmp is the host's.
         Some(_) => tempfile::tempdir_in("/var/tmp").unwrap(),
@@ -84,46 +119,57 @@ fn fx(fabric: Option<u32>, extra: &str, edit: impl FnOnce(&mut Value)) -> Fx {
         &out_root,
         "protected-launcher.json",
     );
+    // Amendment 50: the custodian (its own dir when it runs as another uid).
+    let cust_dir = match custody.dir_owner {
+        None => base.clone(),
+        Some(u) => {
+            let d = base.join("cust");
+            std::fs::create_dir(&d).unwrap();
+            std::os::unix::fs::chown(&d, Some(u), Some(u)).unwrap();
+            let store = d.join("custodian-nonces");
+            std::fs::create_dir(&store).unwrap();
+            std::fs::set_permissions(&store, std::fs::Permissions::from_mode(0o700)).unwrap();
+            std::os::unix::fs::chown(&store, Some(u), Some(u)).unwrap();
+            d
+        }
+    };
+    let cust = try_start_custodian(&cust_dir, custody.run, |_| {}).expect("the custodian starts");
+    let observer = Issuer::generate();
+    observer.trust_in(&observer_root(&base), "obs");
     let mut v: Value = serde_json::from_str(&std::fs::read_to_string(&cfg).unwrap()).unwrap();
     if let Some(u) = fabric {
         v["fabric_uid"] = json!(u);
     }
+    v["custodian"]["socket"] = json!(cust.socket);
     edit(&mut v);
     std::fs::write(&cfg, v.to_string()).unwrap();
-    // The Fabric's inputs for one launch: candidate, suite, job.
-    let i = out_root.join(INPUTS);
-    for (sub, name, body) in [
-        ("candidate", "f.ax", "fn f() -> i64 { 1 }\n"),
-        ("check", "accept.ax", "// suite\n"),
-        ("job", "launch-manifest.json", "{}"),
-    ] {
-        std::fs::create_dir_all(i.join(sub)).unwrap();
-        std::fs::write(i.join(sub).join(name), body).unwrap();
-    }
-    std::fs::write(i.join("job/completion-secret"), [7u8; 32]).unwrap();
-    std::fs::set_permissions(
-        i.join("job/completion-secret"),
-        std::fs::Permissions::from_mode(0o400),
-    )
-    .unwrap();
+    // One launch's manifest, naming a nonce the custodian issued, and its
+    // genuine observation.
+    let manifest = serde_json::to_vec(&test_launch_manifest("op-1", &cust.issue(0))).unwrap();
+    let observation =
+        serde_json::to_vec(&observation_of(&manifest, &observer.key_id(), 0)).unwrap();
+    let f = Fx {
+        marker: base.join("launched"),
+        _d: d,
+        base: base.clone(),
+        cfg,
+        out_root: out_root.clone(),
+        installed: None,
+        fabric,
+        _cust: cust,
+        observer,
+        manifest,
+        observation,
+    };
+    f.put_inputs();
     let installed = fabric.map(|u| {
-        for p in walk(&out_root) {
-            std::os::unix::fs::lchown(&p, Some(u), Some(u)).unwrap();
-        }
         let h = base.join("axon-protected-launcher");
         copy_executable(helper_pin().path, &h, 0o755);
         std::os::unix::fs::chown(&h, Some(0), Some(u)).unwrap();
         std::fs::set_permissions(&h, std::fs::Permissions::from_mode(0o4750)).unwrap();
         h
     });
-    Fx {
-        marker: base.join("launched"),
-        _d: d,
-        base,
-        cfg,
-        out_root,
-        installed,
-    }
+    Fx { installed, ..f }
 }
 
 fn walk(p: &Path) -> Vec<PathBuf> {
@@ -137,10 +183,34 @@ fn walk(p: &Path) -> Vec<PathBuf> {
 }
 
 impl Fx {
+    /// The Fabric's inputs for one launch: candidate, suite, job (the
+    /// manifest and the secret). Again after a launch consumed the job: the
+    /// Fabric uid can always rebuild them.
+    fn put_inputs(&self) {
+        let i = self.out_root.join(INPUTS);
+        for (sub, name, body) in [
+            ("candidate", "f.ax", b"fn f() -> i64 { 1 }\n".as_slice()),
+            ("check", "accept.ax", b"// suite\n".as_slice()),
+            ("job", "launch-manifest.json", self.manifest.as_slice()),
+        ] {
+            std::fs::create_dir_all(i.join(sub)).unwrap();
+            std::fs::write(i.join(sub).join(name), body).unwrap();
+        }
+        let secret = i.join("job/completion-secret");
+        let _ = std::fs::remove_file(&secret);
+        std::fs::write(&secret, [7u8; 32]).unwrap();
+        std::fs::set_permissions(&secret, std::fs::Permissions::from_mode(0o400)).unwrap();
+        if let Some(u) = self.fabric {
+            for p in walk(&self.out_root) {
+                std::os::unix::fs::lchown(&p, Some(u), Some(u)).unwrap();
+            }
+        }
+    }
+    /// The request for this launch, carrying its genuine observation.
     fn request(&self, out: &str) -> Value {
         let i = self.out_root.join(INPUTS);
         json!({
-            "schema": "axon-protected-launch-request/1",
+            "schema": "axon-protected-launch-request/2",
             "id": "fab-0123456789abcdef",
             "out": self.out_root.join(out),
             "psv_candidate": i.join("candidate"),
@@ -149,7 +219,18 @@ impl Fx {
             "psv_manifest_sha256": sha256_file(&i.join("job/launch-manifest.json")),
             "policy_json": "{\"schema\":\"axon-vm-mmds/1\",\"allowed_effects\":[]}",
             "timeout_s": 60,
+            "observation": String::from_utf8(self.observation.clone()).unwrap(),
+            "observation_signature": self.observer.sign_for(
+                axon_fabric::backend::TrustAuthority::Observer,
+                &self.observation,
+            ),
         })
+    }
+    /// How many times the stand-in launcher ran.
+    fn launches(&self) -> usize {
+        std::fs::read_to_string(&self.marker)
+            .map(|s| s.lines().count())
+            .unwrap_or(0)
     }
     /// Run the helper with `request`, as `as_uid` (`None`: this process;
     /// `Some((uid, groups))`: through setpriv, the setuid copy).
@@ -435,4 +516,234 @@ fn a_root_owned_file_among_the_inputs_is_never_read_by_the_helper() {
             .contains("not the Fabric uid"),
         "{rep}"
     );
+}
+
+// ── Amendment 50: the observation and its nonce, at the ROOT boundary ───────
+//
+// Driven against the helper alone: no Fabric check runs before it, so each
+// refusal here is the helper's (or its custodian's) and nothing else's.
+
+/// A84: ONE observation, ONE root launch. The Fabric uid rebuilds the same
+/// inputs and sends the same request (the same manifest, the same genuine
+/// observation) for a second out dir; the custodian has spent the nonce, so
+/// the helper launches nothing. Control: the first launch.
+#[test]
+fn one_observation_launches_the_root_launcher_once() {
+    let f = fx(None, "", |_| {});
+    let (code, rep) = f.run(&f.request("op-1"), None);
+    assert_eq!(code, Some(0), "control: the observed launch runs: {rep}");
+    assert_eq!(f.launches(), 1);
+    f.put_inputs();
+    let (code, rep) = f.run(&f.request("op-2"), None);
+    assert!(
+        code == Some(30) && f.launches() == 1 && !f.out_root.join("op-2").exists(),
+        "ATTACK: one observation launched the root launcher twice: {code:?} {rep}"
+    );
+    assert!(
+        rep["error"].as_str().unwrap().contains("already used"),
+        "{rep}"
+    );
+}
+
+/// A84: no root launch without an observation. The request carries none (the
+/// Fabric uid skipped the observer), or one no trusted observer signed (the
+/// Fabric uid minted it with a key of its own). The manifest's nonce is a
+/// genuine, unspent one, so the observation is the only thing missing.
+/// Control: the same fixture's genuine observation launches.
+#[test]
+fn a_root_launch_without_an_observation_launches_nothing() {
+    let f = fx(None, "", |_| {});
+    let mut r = f.request("op-none");
+    r["observation"] = json!("");
+    r["observation_signature"] = json!("");
+    let (code, rep) = f.run(&r, None);
+    assert!(
+        code == Some(30) && f.launches() == 0,
+        "ATTACK: the root helper launched with no observation: {code:?} {rep}"
+    );
+    assert!(
+        rep["error"]
+            .as_str()
+            .unwrap()
+            .contains("no verified observation"),
+        "{rep}"
+    );
+    // Minted: the right bytes, signed by a key the observer root lacks. (A
+    // refused request has consumed the job, as every request does: the
+    // Fabric uid rebuilds it.)
+    f.put_inputs();
+    let minted = Issuer::generate();
+    let mut r = f.request("op-minted");
+    r["observation_signature"] = json!(minted.sign_for(
+        axon_fabric::backend::TrustAuthority::Observer,
+        &f.observation
+    ));
+    let (code, rep) = f.run(&r, None);
+    assert!(
+        code == Some(30) && f.launches() == 0,
+        "ATTACK: the root helper launched on an observation no trusted observer signed: \
+         {code:?} {rep}"
+    );
+    f.put_inputs();
+    let (code, rep) = f.run(&f.request("op-1"), None);
+    assert_eq!(code, Some(0), "control: the genuine observation: {rep}");
+    assert_eq!(f.launches(), 1);
+}
+
+/// A84: the observation must be of the manifest the helper launches. The
+/// other manifest carries the SAME nonce and the same host facts, so only the
+/// manifest joins refuse:
+/// * (O) the request names the snapshot's manifest, but the observation is of
+///   another one (its `intended_launch_manifest_sha256`);
+/// * (S) the request and the observation name the other manifest, but the
+///   snapshot the root launcher would boot is this one.
+///
+/// Control: this manifest with its own observation launches.
+#[test]
+fn an_observation_of_another_manifest_launches_nothing() {
+    let f = fx(None, "", |_| {});
+    let m: Value = serde_json::from_slice(&f.manifest).unwrap();
+    let mut other = m.clone();
+    other["operation_id"] = json!("op-other");
+    other["candidate"]["tree_digest"] = json!("f".repeat(64));
+    let other = serde_json::to_vec(&other).unwrap();
+    let other_obs = serde_json::to_vec(&observation_of(&other, &f.observer.key_id(), 0)).unwrap();
+    let signed = |o: &[u8]| {
+        f.observer
+            .sign_for(axon_fabric::backend::TrustAuthority::Observer, o)
+    };
+    // (O)
+    let mut r = f.request("op-o");
+    r["observation"] = json!(String::from_utf8(other_obs.clone()).unwrap());
+    r["observation_signature"] = json!(signed(&other_obs));
+    let (code, rep) = f.run(&r, None);
+    assert!(
+        code == Some(30) && f.launches() == 0,
+        "ATTACK: an observation of another manifest launched the root launcher: {code:?} {rep}"
+    );
+    // (S)
+    f.put_inputs();
+    let mut r = f.request("op-s");
+    r["psv_manifest_sha256"] = json!(axon_psv::sha256_hex(&other));
+    r["observation"] = json!(String::from_utf8(other_obs.clone()).unwrap());
+    r["observation_signature"] = json!(signed(&other_obs));
+    let (code, rep) = f.run(&r, None);
+    assert!(
+        code == Some(30) && f.launches() == 0,
+        "ATTACK: the root helper launched a snapshot manifest other than the one the request \
+         and its observation name: {code:?} {rep}"
+    );
+    f.put_inputs();
+    let (code, rep) = f.run(&f.request("op-1"), None);
+    assert_eq!(code, Some(0), "control: {rep}");
+}
+
+/// D6: a DEV custodian (a manual `axon-custodian --dev`) never yields a
+/// protected launch: the helper refuses the spend it answers, even though
+/// the nonce, the observation and everything else are genuine. Control: the
+/// same fixture with a test custodian launches
+/// (`one_observation_launches_the_root_launcher_once`).
+#[test]
+fn a_dev_custodian_never_yields_a_protected_launch() {
+    let f = fx_with(
+        None,
+        "",
+        |_| {},
+        Custody {
+            run: CustodianRun::Dev,
+            dir_owner: None,
+        },
+    );
+    let (code, rep) = f.run(&f.request("op-1"), None);
+    assert!(
+        code == Some(30) && f.launches() == 0,
+        "ATTACK: a launch whose nonce a DEV custodian spent ran as a protected launch: \
+         {code:?} {rep}"
+    );
+    assert!(
+        rep["error"].as_str().unwrap().contains("dev custodian"),
+        "{rep}"
+    );
+}
+
+const CUSTODIAN: u32 = 4244;
+
+/// A83, ROOT ONLY: the helper authenticates the custodian by the kernel. The
+/// Fabric uid runs a custodian of its own at the configured socket (a full
+/// one: it issued this launch's nonce and would spend it). The helper's
+/// config names the custodian uid, so the helper refuses a socket the Fabric
+/// uid serves. Control: the same launch, with the helper configured to trust
+/// that uid, runs, so the peer check was the only refusal.
+#[test]
+fn a_custodian_socket_the_fabric_serves_is_refused_by_the_helper() {
+    if euid() != 0 {
+        eprintln!("skipped: needs root to install a setuid helper and act as service uids");
+        return;
+    }
+    let f = fx_with(
+        Some(FABRIC),
+        "",
+        |v| v["custodian"]["uid"] = json!(CUSTODIAN),
+        Custody {
+            // The Fabric's own "custodian": issues to this (root) test
+            // process, spends for the root helper.
+            run: CustodianRun::TestAs(FABRIC),
+            dir_owner: Some(FABRIC),
+        },
+    );
+    let (code, rep) = f.run(&f.request("op-1"), Some((FABRIC, &[])));
+    assert!(
+        code == Some(30) && f.launches() == 0,
+        "ATTACK: the root helper spent the nonce through a custodian the Fabric uid serves: \
+         {code:?} {rep}"
+    );
+    assert!(
+        rep["error"].as_str().unwrap().contains("served by uid"),
+        "{rep}"
+    );
+    let mut v: Value = serde_json::from_str(&std::fs::read_to_string(&f.cfg).unwrap()).unwrap();
+    v["custodian"]["uid"] = json!(FABRIC);
+    std::fs::write(&f.cfg, v.to_string()).unwrap();
+    f.put_inputs();
+    let (code, rep) = f.run(&f.request("op-2"), Some((FABRIC, &[])));
+    assert_eq!(
+        code,
+        Some(0),
+        "control: the peer check was the refusal: {rep}"
+    );
+}
+
+/// ADR-002 at the ROOT boundary: Fabric holds the host signer's private key
+/// and can sign any domain. If that key is also in the observer root, Fabric
+/// can mint an observation that verifies, so the helper refuses the root
+/// (it knows the host signer from its operator config). Control: the same
+/// key, when it is NOT the host signer, is a legitimate observer.
+#[test]
+fn an_observation_signed_with_the_host_signer_launches_nothing() {
+    let signer = Issuer::generate();
+    let f = fx(None, "", |v| {
+        v["observer"]["host_signer_public_key"] = json!(signer.public_hex())
+    });
+    signer.trust_in(&observer_root(&f.base), "signer");
+    let minted = serde_json::to_vec(&observation_of(&f.manifest, &signer.key_id(), 0)).unwrap();
+    let mut r = f.request("op-minted");
+    r["observation"] = json!(String::from_utf8(minted.clone()).unwrap());
+    r["observation_signature"] =
+        json!(signer.sign_for(axon_fabric::backend::TrustAuthority::Observer, &minted));
+    let (code, rep) = f.run(&r, None);
+    assert!(
+        code == Some(30) && f.launches() == 0,
+        "ATTACK: the root helper launched on an observation signed with the host signer's key: \
+         {code:?} {rep}"
+    );
+    assert!(
+        rep["error"].as_str().unwrap().contains("host signer"),
+        "{rep}"
+    );
+    let mut v: Value = serde_json::from_str(&std::fs::read_to_string(&f.cfg).unwrap()).unwrap();
+    v["observer"]["host_signer_public_key"] = json!(TEST_HOST_SIGNER);
+    std::fs::write(&f.cfg, v.to_string()).unwrap();
+    f.put_inputs();
+    let (code, rep) = f.run(&r, None);
+    assert_eq!(code, Some(0), "control: the key in no other role: {rep}");
 }

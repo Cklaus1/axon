@@ -34,11 +34,13 @@ impl Host {
         let root = env.dir.path().join("host");
         std::fs::create_dir_all(root.join("dist")).unwrap();
         std::fs::create_dir_all(root.join("keys")).unwrap();
-        // The service's own private leaves (A56).
-        for d in ["runs", "nonces"] {
-            std::fs::create_dir_all(root.join(d)).unwrap();
-            std::fs::set_permissions(root.join(d), std::fs::Permissions::from_mode(0o700)).unwrap();
-        }
+        // The service's own private leaf (A56).
+        std::fs::create_dir_all(root.join("runs")).unwrap();
+        std::fs::set_permissions(root.join("runs"), std::fs::Permissions::from_mode(0o700))
+            .unwrap();
+        // The operator's directory the custodian's socket sits in (amendment
+        // 50): the socket is systemd's, the store the custodian's own.
+        std::fs::create_dir_all(root.join("custodian")).unwrap();
         let issuer = Issuer::generate();
         let manifest = lx_manifest(&"a".repeat(64));
         std::fs::write(root.join("manifest.json"), &manifest).unwrap();
@@ -383,12 +385,14 @@ fn every_o1_path_must_be_operator_owned() {
     assert!(load().unwrap_err().contains("not root"));
 }
 
-/// Where the Fabric writes its runs (`out_root`) and the custodian its nonce
-/// records (`observer.nonce_store`) is operator trust material too: the leaf
-/// belongs to the service, every directory above it to the operator (as for
-/// the signing key). Needs root to create root-owned fixtures.
+/// Where the Fabric writes its runs (`out_root`) and where the custodian's
+/// socket sits (`observer.custodian.socket`; amendment 50) is operator trust
+/// material too: the out_root leaf belongs to the service, and every
+/// directory above either to the operator (as for the signing key). An
+/// agent-writable socket directory lets the agent bind a custodian of its
+/// own. Needs root to create root-owned fixtures.
 #[test]
-fn the_out_root_and_nonce_store_sit_under_operator_owned_directories() {
+fn the_out_root_and_custodian_socket_sit_under_operator_owned_directories() {
     if unsafe { libc::geteuid() } != 0 {
         eprintln!("skipped: needs root to create root-owned fixtures");
         return;
@@ -415,48 +419,51 @@ fn the_out_root_and_nonce_store_sit_under_operator_owned_directories() {
     std::fs::create_dir(&open).unwrap();
     std::fs::set_permissions(&open, std::fs::Permissions::from_mode(0o777)).unwrap();
 
-    let with = |out_root: PathBuf, nonces: PathBuf| {
+    let with = |out_root: PathBuf, socket: PathBuf| {
         h.write_config(|v| {
             v["out_root"] = json!(out_root);
             v["observer"] = json!({
                 "command": {"path": h.p("observer.sh"), "sha256": sha256_file(&h.p("observer.sh"))},
-                "nonce_store": nonces,
+                "custodian": {"socket": socket, "uid": 4244},
                 "max_age_s": 300,
             });
         });
         std::fs::set_permissions(h.config(), std::fs::Permissions::from_mode(0o644)).unwrap();
         ProtectedHost::for_test(&h.config(), Some(base), h.trust())
     };
+    let sock = |d: &Path| d.join("custodian.sock");
     // Positive control: both under the operator's directory.
-    let ph = with(h.p("runs"), h.p("nonces")).expect("operator-owned parents");
+    let ph = with(h.p("runs"), sock(&h.p("custodian"))).expect("operator-owned parents");
     assert_eq!(ph.linux.out_root, h.p("runs"));
 
     for (dir, why) in [(&agent, "not root"), (&open, "writable")] {
         // The LEAVES themselves are the service's own and private (C9 round
         // 1b): so the parent is the ONLY thing wrong, and the parent walk the
         // only refusal (the leaf check, A56, would otherwise refuse first).
-        for leaf in ["runs", "nonces"] {
-            std::fs::create_dir_all(dir.join(leaf)).unwrap();
-            std::fs::set_permissions(dir.join(leaf), std::fs::Permissions::from_mode(0o700))
-                .unwrap();
-        }
-        let e = with(dir.join("runs"), h.p("nonces")).unwrap_err();
+        std::fs::create_dir_all(dir.join("runs")).unwrap();
+        std::fs::set_permissions(dir.join("runs"), std::fs::Permissions::from_mode(0o700)).unwrap();
+        let e = with(dir.join("runs"), sock(&h.p("custodian"))).unwrap_err();
         assert!(e.contains(why), "out_root under {}: {e}", dir.display());
-        let e = with(h.p("runs"), dir.join("nonces")).unwrap_err();
-        assert!(e.contains(why), "nonce_store under {}: {e}", dir.display());
+        let e = with(h.p("runs"), sock(dir)).unwrap_err();
+        assert!(
+            e.contains(why),
+            "custodian socket under {}: {e}",
+            dir.display()
+        );
     }
 }
 
-/// C9 dev review round 1 (A56): the out_root and nonce_store LEAVES, not only
-/// their parents. Each leaf sits directly under an operator-owned parent (so
-/// the parent walk passes) but is agent-owned, group/other-accessible, a
-/// symlink, or absent. An agent that owns or can write the leaf can swap
-/// `<op>.psv-inputs` between `prepare` and the launcher's copy, or erase
-/// nonce records so an observation replays. Control: the service-owned 0700
-/// leaves load (`the_out_root_and_nonce_store_sit_under_operator_owned_directories`
+/// C9 dev review round 1 (A56): the out_root LEAF, not only its parent. The
+/// leaf sits directly under an operator-owned parent (so the parent walk
+/// passes) but is agent-owned, group/other-accessible, a symlink, or absent.
+/// An agent that owns or can write the leaf can swap `<op>.psv-inputs`
+/// between `prepare` and the launcher's copy. (The nonce store was the other
+/// leaf here; since amendment 50 it is the custodian's own, never Fabric's:
+/// `custodian::check_store`.) Control: the service-owned 0700 leaf loads
+/// (`the_out_root_and_custodian_socket_sit_under_operator_owned_directories`
 /// and the end of this test). Needs root to create root-owned parents.
 #[test]
-fn the_out_root_and_nonce_store_leaves_are_the_services_own_and_private() {
+fn the_out_root_leaf_is_the_services_own_and_private() {
     if unsafe { libc::geteuid() } != 0 {
         eprintln!("skipped: needs root to create root-owned fixtures");
         return;
@@ -475,12 +482,12 @@ fn the_out_root_and_nonce_store_leaves_are_the_services_own_and_private() {
         std::fs::set_permissions(h.p(f), std::fs::Permissions::from_mode(0o644)).unwrap();
     }
     write_executable(&h.p("observer.sh"), "#!/bin/sh\n", 0o755);
-    let with = |out_root: PathBuf, nonces: PathBuf| {
+    let with = |out_root: PathBuf| {
         h.write_config(|v| {
             v["out_root"] = json!(out_root);
             v["observer"] = json!({
                 "command": {"path": h.p("observer.sh"), "sha256": sha256_file(&h.p("observer.sh"))},
-                "nonce_store": nonces,
+                "custodian": {"socket": h.p("custodian/custodian.sock"), "uid": 4244},
                 "max_age_s": 300,
             });
         });
@@ -508,11 +515,11 @@ fn the_out_root_and_nonce_store_leaves_are_the_services_own_and_private() {
             std::fs::remove_dir(p).unwrap()
         }),
     ];
-    for leaf in ["runs", "nonces"] {
+    for leaf in ["runs"] {
         for (what, why, break_it) in &cases {
             let p = h.p(leaf);
             break_it(&p);
-            let got = with(h.p("runs"), h.p("nonces"));
+            let got = with(h.p("runs"));
             assert!(
                 got.as_ref().is_err_and(|e| e.contains(why)),
                 "ATTACK: {leaf} as {what} was accepted as the service's own private directory: \
@@ -529,7 +536,7 @@ fn the_out_root_and_nonce_store_leaves_are_the_services_own_and_private() {
             }
             std::os::unix::fs::chown(&p, Some(0), None).unwrap();
             std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o700)).unwrap();
-            with(h.p("runs"), h.p("nonces")).expect("control: restored leaves load");
+            with(h.p("runs")).expect("control: restored leaves load");
         }
     }
 }
@@ -617,7 +624,7 @@ fn an_observer_root_sharing_a_key_with_another_role_is_refused_at_load() {
     let observer_config = |v: &mut Value| {
         v["observer"] = json!({
             "command": {"path": h.p("observer.sh"), "sha256": sha256_file(&h.p("observer.sh"))},
-            "nonce_store": h.p("nonces"),
+            "custodian": {"socket": h.p("custodian/custodian.sock"), "uid": 4244},
         });
     };
     h.write_config(observer_config);
@@ -793,7 +800,8 @@ fn the_preflight_probe_list_is_exactly_what_load_enforces() {
     std::fs::write(h.p("observer.sh"), "#!/bin/sh\n").unwrap();
     h.write_config(|v| {
         let pin = |n: &str| json!({"path": h.p(n), "sha256": sha256_file(&h.p(n))});
-        v["observer"] = json!({"command": pin("observer.sh"), "nonce_store": h.p("nonces")});
+        v["observer"] = json!({"command": pin("observer.sh"),
+                               "custodian": {"socket": h.p("custodian/custodian.sock"), "uid": 4244}});
         v["grant_registry"] = pin("grants/grants.json");
     });
     // Everything the operator's, 0755/0644; the key and the service dirs as set.
@@ -814,9 +822,7 @@ fn the_preflight_probe_list_is_exactly_what_load_enforces() {
         let mode = if p.is_dir() { 0o755 } else { 0o644 };
         std::fs::set_permissions(p, std::fs::Permissions::from_mode(mode)).unwrap();
     }
-    for d in ["runs", "nonces"] {
-        std::fs::set_permissions(h.p(d), std::fs::Permissions::from_mode(0o700)).unwrap();
-    }
+    std::fs::set_permissions(h.p("runs"), std::fs::Permissions::from_mode(0o700)).unwrap();
     std::fs::set_permissions(
         h.p("keys/attest.pk8"),
         std::fs::Permissions::from_mode(0o600),
@@ -832,7 +838,7 @@ fn the_preflight_probe_list_is_exactly_what_load_enforces() {
         h.p("observer.sh"),
         h.p("dist"),
         h.p("runs"),
-        h.p("nonces"),
+        h.p("custodian/custodian.sock"),
     ] {
         assert!(
             listed.iter().any(|(_, p)| *p == want),
@@ -863,8 +869,11 @@ fn the_preflight_probe_list_is_exactly_what_load_enforces() {
     for (k, p) in &listed {
         let target = match k {
             // The key FILE is checked when the binary reads it; load walks
-            // the directory holding it.
-            PinnedKind::SigningKey => p.parent().unwrap().to_path_buf(),
+            // the directory holding it. The custodian's socket is systemd's
+            // (absent here); load walks the directory it is bound in.
+            PinnedKind::SigningKey | PinnedKind::CustodianSocket => {
+                p.parent().unwrap().to_path_buf()
+            }
             _ => p.clone(),
         };
         std::os::unix::fs::chown(&target, Some(1000), None).unwrap();
@@ -992,10 +1001,19 @@ fn the_helper_config_must_agree_with_the_host_config() {
     use axon_fabric::privileged_launcher::HelperConfig;
     use axon_fabric::protected_host::helper_agrees;
     let h = Host::new();
-    let host = h.load().unwrap();
     let euid = unsafe { libc::geteuid() };
+    // Amendment 50: a host with an observer, whose nonce the custodian issues.
+    std::fs::write(h.p("observer.sh"), "#!/bin/sh\n").unwrap();
+    Issuer::generate().trust_in(&h.p("observer"), "obs");
+    h.write_config(|v| {
+        v["observer"] = json!({
+            "command": {"path": h.p("observer.sh"), "sha256": sha256_file(&h.p("observer.sh"))},
+            "custodian": {"socket": h.p("custodian/custodian.sock"), "uid": 4244},
+        });
+    });
+    let host = h.load().unwrap();
     let good = json!({
-        "schema": "axon-protected-launcher/1", "fabric_uid": euid,
+        "schema": "axon-protected-launcher/2", "fabric_uid": euid,
         "interpreter": {"path": "/bin/bash", "sha256": "a".repeat(64)},
         "launcher": {"path": h.p("launcher.sh"), "sha256": sha256_file(&h.p("launcher.sh"))},
         "profile_manifest": {"path": h.p("manifest.json"),
@@ -1003,6 +1021,9 @@ fn the_helper_config_must_agree_with_the_host_config() {
         "artifacts_dir": h.p("dist"), "firecracker": "/usr/local/bin/firecracker",
         "jailer": "/usr/local/bin/jailer", "out_root": h.p("runs"),
         "staging_root": h.p("staging"), "max_timeout_s": 60, "max_input_bytes": 1,
+        "observer": {"root": "/etc/axon/trust/observer", "max_age_s": 300,
+                     "host_signer_public_key": host.signer.public_key},
+        "custodian": {"socket": h.p("custodian/custodian.sock"), "uid": 4244},
     });
     let cfg = |edit: &dyn Fn(&mut Value)| -> HelperConfig {
         let mut v = good.clone();
@@ -1026,4 +1047,67 @@ fn the_helper_config_must_agree_with_the_host_config() {
     ] {
         assert!(helper_agrees(&cfg(&edit), &host, euid).is_err());
     }
+    // Amendment 50: the helper spends through the custodian the host's
+    // observer is issued by, never another (a socket Fabric could serve).
+    for edit in [
+        (|v: &mut Value| v["custodian"]["uid"] = json!(4245)) as fn(&mut Value),
+        |v| v["custodian"]["socket"] = json!("/run/elsewhere/custodian.sock"),
+    ] {
+        let got = helper_agrees(&cfg(&edit), &host, euid);
+        assert!(
+            got.as_ref()
+                .is_err_and(|e| e.contains("spends through custodian")),
+            "ATTACK: a helper config spending through another custodian than the host's was \
+             accepted: {got:?}"
+        );
+    }
+    // …and keeps the host signer out of the root it verifies observations
+    // under: it names the host's signer, never another key.
+    let got = helper_agrees(
+        &cfg(&|v| v["observer"]["host_signer_public_key"] = json!("d".repeat(64))),
+        &host,
+        euid,
+    );
+    assert!(
+        got.as_ref().is_err_and(|e| e.contains("host signer")),
+        "ATTACK: a helper config naming another host signer than the host's was accepted: {got:?}"
+    );
+}
+
+/// Amendment 50 (A83): the nonce store is the CUSTODIAN's, never Fabric's. A
+/// host config that still gives Fabric one (`observer.nonce_store`, the old
+/// A56 shape) is refused, not read as a store Fabric keeps. Control: the
+/// same config naming only the custodian loads.
+#[test]
+fn a_host_config_giving_fabric_a_nonce_store_is_refused() {
+    let h = Host::new();
+    std::fs::write(h.p("observer.sh"), "#!/bin/sh\n").unwrap();
+    Issuer::generate().trust_in(&h.p("observer"), "obs");
+    std::fs::create_dir_all(h.p("nonces")).unwrap();
+    let with = |store: bool| {
+        h.write_config(|v| {
+            v["observer"] = json!({
+                "command": {"path": h.p("observer.sh"), "sha256": sha256_file(&h.p("observer.sh"))},
+                "custodian": {"socket": h.p("custodian/custodian.sock"), "uid": 4244},
+            });
+            if store {
+                v["observer"]["nonce_store"] = json!(h.p("nonces"));
+            }
+        });
+        h.load()
+    };
+    let got = with(true);
+    assert!(
+        got.is_err(),
+        "ATTACK: a host config giving Fabric its own nonce store loaded: {:?}",
+        got.map(|_| ())
+    );
+    let ob = with(false)
+        .expect("control: the custodian only")
+        .observer
+        .unwrap();
+    assert!(matches!(
+        ob.custodian,
+        axon_fabric::custodian::Custodian::Service(ref c) if c.uid == 4244
+    ));
 }

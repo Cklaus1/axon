@@ -2,20 +2,29 @@
 //! ADR-002).
 //!
 //! Before a protected launch the Fabric:
-//! 1. takes a fresh nonce from the CUSTODIAN's store and puts it in the launch
-//!    manifest;
+//! 1. is issued a fresh nonce by the CUSTODIAN (a separate uid; amendment 50,
+//!    [`crate::custodian`]) and puts it in the launch manifest;
 //! 2. asks the operator-pinned OBSERVER program to observe that launch (the
 //!    observer signs with its own key, observer domain);
-//! 3. verifies the observation and CONSUMES the nonce;
-//! 4. launches only if every step held.
+//! 3. verifies the observation (an early check: nothing reaches the root
+//!    helper on an observation Fabric can already refuse);
+//! 4. hands the observation to the privileged launcher, which verifies it
+//!    AGAIN by the same [`verify_observation`], and spends the nonce through
+//!    the custodian at the root boundary: one nonce, one launch.
+//!
+//! Fabric never spends a nonce. A spend by the principal the nonce constrains
+//! proves nothing to the root boundary, and a Fabric spend first would leave
+//! the helper nothing to spend (amendment 50).
 //!
 //! Step 3 means all of these hold:
 //! * the signature verifies under a key in the OBSERVER trust root — not the
 //!   qualification root, not the repository;
 //! * the observation is of THIS launch manifest, field for field;
 //! * it names the key that signed it;
-//! * it is fresh and of this epoch;
-//! * the nonce was issued by the store and never used before.
+//! * it is fresh and of this epoch.
+//!
+//! The helper adds: the nonce was issued by the custodian, for the observed
+//! epoch, and never spent before.
 //!
 //! Any failure refuses the launch: nothing runs.
 //!
@@ -32,7 +41,9 @@ use std::path::{Path, PathBuf};
 pub const DEFAULT_OBSERVATION_MAX_AGE_S: u64 = 300;
 
 /// The custodian's nonce store: one file per issued nonce; consuming renames it
-/// to `.used`, atomically, so a nonce authorizes at most one launch.
+/// to `.used`, atomically, so a nonce authorizes at most one launch. On a
+/// protected host only the custodian ([`crate::custodian::Server`]) opens it,
+/// as its own uid.
 #[derive(Debug, Clone)]
 pub struct NonceStore {
     pub dir: PathBuf,
@@ -167,13 +178,78 @@ pub struct ObserverConfig {
     /// protected host). `None`: any owner (tests without an operator only).
     pub exec_owner: Option<u32>,
     pub trust: ObserverTrust,
-    pub nonces: NonceStore,
+    /// Amendment 50: who issues the nonce. Fabric only asks.
+    pub custodian: crate::custodian::Custodian,
     pub max_age_s: u64,
     pub clock: Clock,
 }
 
+/// What an observation is verified against. ONE implementation
+/// ([`verify_observation`]) for Fabric's early check and the privileged
+/// launcher's check at the root boundary (amendment 50).
+#[derive(Debug, Clone)]
+pub struct ObservationRules {
+    pub trust: ObserverTrust,
+    pub max_age_s: u64,
+    pub clock: Clock,
+}
+
+/// Verify an observation (`bytes`, its detached `signature`) of the launch
+/// manifest `m` whose digest is `manifest_digest`:
+/// * the observer root is the operator's (walked, when it is) and shares no
+///   key with another role;
+/// * the signature verifies under a key in the OBSERVER root, observer domain;
+/// * the observation names the key that signed it;
+/// * it joins `m` field for field and is of `manifest_digest`;
+/// * it is fresh.
+///
+/// The epoch is the caller's to join (Fabric: its expected epoch; the helper:
+/// the custodian's issuing epoch, at the spend).
+pub fn verify_observation(
+    cfg: &ObservationRules,
+    bytes: &[u8],
+    signature: &str,
+    m: &LaunchManifest,
+    manifest_digest: &str,
+) -> Result<PreflightObservation, String> {
+    if cfg.trust.operator_owned {
+        crate::backend::check_operator_owned(&cfg.trust.dir)?;
+    }
+    // The roots as they are NOW, not as they were when the host config
+    // loaded: a key added to another root since then is refused here.
+    cfg.trust.check_separation()?;
+    // The OBSERVER domain, under the OBSERVER root (RULE:authority-domain).
+    let signer = crate::backend::verify_operator_evidence_signed(
+        "observation",
+        bytes,
+        signature,
+        &cfg.trust.dir,
+        TrustAuthority::Observer,
+    )?;
+    let o: PreflightObservation =
+        serde_json::from_slice(bytes).map_err(|e| format!("observation is malformed: {e}"))?;
+    if o.observer_key_id != signer {
+        return Err(format!(
+            "observation claims observer {} but is signed by {signer}",
+            o.observer_key_id
+        ));
+    }
+    o.joins(m, manifest_digest)?;
+    let at = crate::backend::parse_utc(&o.observed_at)
+        .ok_or_else(|| format!("observed_at {:?} is not a UTC timestamp", o.observed_at))?;
+    let age = cfg.clock.now_unix() - at;
+    if age < 0 || age as u64 > cfg.max_age_s {
+        return Err(format!(
+            "observation is {age}s old (max {}s)",
+            cfg.max_age_s
+        ));
+    }
+    Ok(o)
+}
+
 /// Obtain and verify the observation of `m` (whose manifest bytes are at
-/// `manifest_file`), consuming its nonce. `work` is a new directory.
+/// `manifest_file`). `work` is a new directory. The nonce is NOT spent here:
+/// the privileged launcher spends it through the custodian (amendment 50).
 pub fn observe(
     cfg: &ObserverConfig,
     m: &LaunchManifest,
@@ -226,51 +302,27 @@ pub fn observe(
         return Err(format!("observer exited {:?}", status.code()));
     }
     let rec = work.join("observation.json");
-    if cfg.trust.operator_owned {
-        crate::backend::check_operator_owned(&cfg.trust.dir)?;
-    }
-    // The roots as they are NOW, not as they were when the host config
-    // loaded: a key added to another root since then is refused here.
-    cfg.trust.check_separation()?;
     // ONE read: the bytes whose signature is verified are the bytes parsed,
     // joined and digested (review wf_d725935a-7ed).
     let bytes = crate::backend::read_regular(&rec).map_err(|e| format!("observation: {e}"))?;
-    // The signature is read once too, and the SAME text goes into the bundle.
+    // The signature is read once too, and the SAME text goes into the bundle
+    // and to the privileged launcher.
     let signature =
         crate::backend::read_signature("observation", &work.join("observation.json.sig"))?;
-    // The OBSERVER domain, under the OBSERVER root (RULE:authority-domain).
-    let signer = crate::backend::verify_operator_evidence_signed(
-        "observation",
+    let o = verify_observation(
+        &ObservationRules {
+            trust: cfg.trust.clone(),
+            max_age_s: cfg.max_age_s,
+            clock: cfg.clock,
+        },
         &bytes,
         &signature,
-        &cfg.trust.dir,
-        TrustAuthority::Observer,
+        m,
+        manifest_digest,
     )?;
-    let o: PreflightObservation =
-        serde_json::from_slice(&bytes).map_err(|e| format!("observation is malformed: {e}"))?;
-    if o.observer_key_id != signer {
-        return Err(format!(
-            "observation claims observer {} but is signed by {signer}",
-            o.observer_key_id
-        ));
-    }
-    o.joins(m, manifest_digest)?;
     if o.epoch != epoch {
         return Err(format!("observation is for epoch {}, not {epoch}", o.epoch));
     }
-    let at = crate::backend::parse_utc(&o.observed_at)
-        .ok_or_else(|| format!("observed_at {:?} is not a UTC timestamp", o.observed_at))?;
-    let age = cfg.clock.now_unix() - at;
-    if age < 0 || age as u64 > cfg.max_age_s {
-        return Err(format!(
-            "observation is {age}s old (max {}s)",
-            cfg.max_age_s
-        ));
-    }
-    // Last: consume. Only an observation that is otherwise acceptable spends
-    // its nonce, and it can be spent once.
-    cfg.nonces
-        .consume(&o.nonce, epoch, &cfg.clock, cfg.max_age_s)?;
     Ok(VerifiedObservation {
         sha256: axon_psv::sha256_hex(&bytes),
         bytes,

@@ -88,7 +88,9 @@ fn make_job(args: &[String]) {
         completion: Completion {
             scheme: COMPLETION_SCHEME.into(),
         },
-        observation_nonce: "dev".into(),
+        // A custodian-issued nonce when the launch goes through the
+        // privileged helper, which spends it (amendment 50).
+        observation_nonce: arg(args, "--nonce").unwrap_or_else(|| "dev".into()),
         limits: Limits {
             wall_time_ms: 60_000,
             output_bytes: 1 << 20,

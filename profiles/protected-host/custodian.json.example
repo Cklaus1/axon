@@ -1,0 +1,9 @@
+{
+  "schema": "axon-custodian/1",
+  "custodian_uid": 993,
+  "fabric_uid": 991,
+  "launcher_uid": 0,
+  "socket": "/run/axon-custodian/custodian.sock",
+  "store": "/var/lib/axon-custodian/nonces",
+  "max_age_s": 300
+}

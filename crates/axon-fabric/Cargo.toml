@@ -16,6 +16,13 @@ path = "src/bin/axon-fabric.rs"
 name = "axon-protected-launcher"
 path = "src/bin/axon-protected-launcher.rs"
 
+# Operator decision D6 / amendment 50: the custodian, its own uid on a
+# protected host (systemd socket-activated), issuing and spending the
+# observation nonce. `--dev` is a manual, never-protected launch.
+[[bin]]
+name = "axon-custodian"
+path = "src/bin/axon-custodian.rs"
+
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }
