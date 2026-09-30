@@ -6,8 +6,8 @@
 //! * the guest verdict runner verifies the manifest it was handed, re-digests
 //!   its inputs, and derives the same key for the interpreter.
 //!
-//! Dependencies are minimal (sha2, serde, serde_json and the workspace
-//! recipe), so the static musl guest can link it.
+//! Dependencies are minimal (sha2, serde, serde_json, base64 and the
+//! workspace recipe), so the static musl guest can link it.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -18,7 +18,11 @@ pub use axon_workspace_recipe::{sha256_hex, Quota};
 pub mod runner;
 
 pub const LAUNCH_MANIFEST_SCHEMA: &str = "axon-launch-manifest/2";
-pub const GUEST_VERDICT_SCHEMA: &str = "axon-guest-verdict/1";
+/// `/2` (C9 round 4, PSV-6; A87): the verdict names the digest of the guest
+/// policy the runner ran under (`policy_sha256`).
+pub const GUEST_VERDICT_SCHEMA: &str = "axon-guest-verdict/2";
+/// The schema of the guest policy (`axon-vm-mmds/1`).
+pub const GUEST_POLICY_SCHEMA: &str = "axon-vm-mmds/1";
 pub const COMPLETION_SCHEME: &str = "axon-guest-completion/1";
 pub const PROTECTED_PROFILE: &str = "linux-microvm-protected";
 
@@ -208,6 +212,65 @@ impl LaunchManifest {
         Ok(m)
     }
 }
+
+// ── §4 guest policy ─────────────────────────────────────────────────────────
+
+/// The fields of an `axon-vm-mmds/1` guest policy. Unknown fields and a
+/// duplicated field are refused (serde's derive refuses a repeated field).
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code)]
+struct GuestPolicyDoc {
+    schema: String,
+    allowed_effects: Option<Vec<String>>,
+    principal: Option<String>,
+    run_id: Option<String>,
+    budget_tokens: Option<u64>,
+    source_hash: Option<String>,
+    seccomp_bpf_b64: Option<String>,
+}
+
+/// PSV-6 (C9 round 4; A87): the ONE rule for the policy a protected launch
+/// runs under, applied by the root helper (before the nonce is spent), by
+/// Fabric where it binds the policy into the launch, and by the guest runner
+/// (before anything executes). Returns the effect ceiling
+/// (`AXON_ALLOWED_EFFECTS` form: comma-separated, `""` = deny every effect).
+///
+/// 1. `policy` IS the policy the launch manifest names: its sha256 is the
+///    manifest's `policy_sha256`, which the observation joins field for field.
+///    A policy beside the manifest is a claim; only the named one runs.
+/// 2. It states an effect ceiling. On the protected profile an ABSENT
+///    `allowed_effects` (omitted or `null`) is refused, never read as "no
+///    ceiling": "I did not say" is not "I said none" (CLAUDE.md), and the
+///    protected profile has no permissive default to fall back to. An
+///    explicitly EMPTY list is a ceiling: it denies every effect.
+pub fn protected_policy_ceiling(policy: &[u8], m: &LaunchManifest) -> Result<String, String> {
+    let got = sha256_hex(policy);
+    if got != m.policy_sha256 {
+        return Err(format!(
+            "the guest policy is sha256 {got}, not the policy_sha256 {} the launch manifest \
+             names: only the manifest's policy runs",
+            m.policy_sha256
+        ));
+    }
+    let doc: GuestPolicyDoc = serde_json::from_slice(policy)
+        .map_err(|e| format!("the guest policy is not {GUEST_POLICY_SCHEMA}: {e}"))?;
+    if doc.schema != GUEST_POLICY_SCHEMA {
+        return Err(format!(
+            "the guest policy's schema is {:?}, not {GUEST_POLICY_SCHEMA}",
+            doc.schema
+        ));
+    }
+    match doc.allowed_effects {
+        Some(effects) => Ok(effects.join(",")),
+        None => Err(NO_CEILING.into()),
+    }
+}
+
+/// Why a protected policy with no `allowed_effects` is refused.
+pub const NO_CEILING: &str = "the guest policy names no allowed_effects: on the protected \
+     profile an absent effect ceiling is refused, never read as no ceiling (an empty list \
+     denies every effect)";
 
 // ── §4 input check ──────────────────────────────────────────────────────────
 
@@ -571,13 +634,18 @@ pub struct Runner {
     pub axon_sha256: String,
 }
 
-/// `axon-guest-verdict/1`. The guest's `status` is a CLAIM; Fabric derives the
+/// `axon-guest-verdict/2`. The guest's `status` is a CLAIM; Fabric derives the
 /// verdict (§5).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GuestVerdict {
     pub schema: String,
     pub launch_manifest_sha256: String,
+    /// `/2` (PSV-6, A87): sha256 of the guest policy the runner was given (the
+    /// decoded kernel-cmdline word `axon-guest-init` enforces), or `""` when it
+    /// was given none. Fabric and the loop join it to the manifest's
+    /// `policy_sha256`, so the receipt binds the policy that ran.
+    pub policy_sha256: String,
     pub inputs: InputCheck,
     pub test: String,
     pub status: GuestStatus,

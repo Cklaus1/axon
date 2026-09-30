@@ -193,6 +193,30 @@ if [[ -n "$PSV_CAND$PSV_SUITE$PSV_JOB$PSV_MSHA" ]]; then
     [[ "$(sha256sum "$PSV_JOB/launch-manifest.json" | cut -d' ' -f1)" == "$PSV_MSHA" ]] \
         || die_usage "the job's launch-manifest.json is not the --psv-manifest-sha Fabric named"
     [[ "$(stat -c %s "$PSV_JOB/completion-secret")" == 32 ]] || die_usage "completion-secret must be 32 bytes"
+    # PSV-6 (C9 round 4; A87): the policy this launch boots is the policy the
+    # launch manifest names (its policy_sha256, which the observation joins),
+    # and it states an effect ceiling: on the protected profile an absent
+    # allowed_effects is refused, never read as "no ceiling". Both routes (the
+    # privileged helper's and the direct one) come through here.
+    [[ -n "$POLICY" && -f "$POLICY" ]] || die_usage "PSV mode needs --policy FILE: the policy the launch manifest names"
+    PSV_POLICY_ERR="$(python3 -I - "$PSV_JOB/launch-manifest.json" "$POLICY" <<'PY'
+import hashlib, json, sys
+want = json.load(open(sys.argv[1])).get("policy_sha256")
+raw = open(sys.argv[2], "rb").read()
+got = hashlib.sha256(raw).hexdigest()
+if got != want:
+    print(f"the --policy is sha256 {got}, not the policy_sha256 {want} the launch manifest names: a PSV launch boots only the manifest's policy")
+    sys.exit(1)
+try:
+    p = json.loads(raw)
+except ValueError as e:
+    print(f"the --policy is not JSON: {e}")
+    sys.exit(1)
+if not isinstance(p, dict) or not isinstance(p.get("allowed_effects"), list):
+    print("the --policy names no allowed_effects: on the protected profile an absent effect ceiling is refused, never read as no ceiling")
+    sys.exit(1)
+PY
+)" || die_usage "$PSV_POLICY_ERR"
 else
     [[ -n "$PROGRAM" && -f "$PROGRAM" ]] || die_usage "--program FILE required"
 fi

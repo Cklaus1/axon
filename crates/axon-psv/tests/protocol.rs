@@ -209,6 +209,7 @@ fn a_guest_verdict_round_trips_and_refuses_unknown_fields() {
     let v = GuestVerdict {
         schema: GUEST_VERDICT_SCHEMA.into(),
         launch_manifest_sha256: "0".repeat(64),
+        policy_sha256: "a".repeat(64),
         inputs: InputCheck {
             candidate_tree_digest: "acf1:x".into(),
             suite_tree_digest: "acf1:y".into(),

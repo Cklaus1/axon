@@ -982,6 +982,11 @@ pub fn start_custodian(dir: &Path) -> TestCustodian {
 
 /// A well-formed `axon-launch-manifest/1` naming `nonce` (its facts are
 /// arbitrary but consistent, so an observation composed from it joins).
+/// The guest policy a test launch manifest names (its digest is the
+/// manifest's `policy_sha256`; C9 round 4, PSV-6: the fixture used to name
+/// `bbbb…`, the digest of nothing, and no one noticed).
+pub const TEST_GUEST_POLICY: &str = r#"{"schema":"axon-vm-mmds/1","allowed_effects":[]}"#;
+
 pub fn test_launch_manifest(op: &str, nonce: &str) -> Value {
     let h = |c: char| c.to_string().repeat(64);
     json!({
@@ -992,7 +997,7 @@ pub fn test_launch_manifest(op: &str, nonce: &str) -> Value {
         "launcher_sha256": h('4'), "firecracker_sha256": h('5'), "profile_manifest_sha256": h('6'),
         "guest": {"kernel_sha256": h('7'), "rootfs_sha256": h('8'), "axon_sha256": h('9'),
                   "init_sha256": h('a')},
-        "policy_sha256": h('b'),
+        "policy_sha256": axon_psv::sha256_hex(TEST_GUEST_POLICY.as_bytes()),
         "suite": {"id": "acc", "version": "v", "entry": "accept.ax", "test": "t_ok",
                   "tree_digest": h('c'), "registry_sha256": h('d')},
         "candidate": {"workspace_version": "ws", "tree_digest": h('e')},

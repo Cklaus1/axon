@@ -9,8 +9,10 @@
 //!
 //! * the request is ONE fixed JSON schema on stdin, parsed with unknown
 //!   fields denied: a jail id, the launch's out dir and PSV input dirs, the
-//!   launch manifest digest, the guest policy bytes and a timeout. Nothing
-//!   in it names an executable, a manifest, an artifact or a config;
+//!   launch manifest digest, a timeout and the observation. Nothing in it
+//!   names an executable, a manifest, an artifact or a config, and it carries
+//!   no policy: the guest policy is the snapshot's `policy.json`, which must
+//!   be the policy the launch manifest names (PSV-6, C9 round 4; A87);
 //! * everything else comes from the operator's config at the FIXED path
 //!   [`CONFIG_PATH`], ownership-walked from `/`: the pinned interpreter and
 //!   launcher, the pinned profile manifest (which pins the kernel, rootfs,
@@ -47,8 +49,10 @@ use crate::sealed_exec::{self, Lease, Pinned};
 pub const CONFIG_PATH: &str = "/etc/axon/protected-launcher.json";
 /// `/2` (amendment 50): the config names the observer root and the custodian.
 pub const CONFIG_SCHEMA: &str = "axon-protected-launcher/2";
-/// `/2` (amendment 50): the request carries the observation.
-pub const REQUEST_SCHEMA: &str = "axon-protected-launch-request/2";
+/// `/2` (amendment 50): the request carries the observation. `/3` (amendment
+/// 54, A87): it no longer carries the guest policy, which is taken from the
+/// PSV inputs snapshot and held to the launch manifest's `policy_sha256`.
+pub const REQUEST_SCHEMA: &str = "axon-protected-launch-request/3";
 pub const REPORT_SCHEMA: &str = "axon-protected-launch-report/1";
 pub const PROBE_SCHEMA: &str = "axon-protected-launcher-probe/1";
 
@@ -114,7 +118,7 @@ pub struct HelperObserver {
     pub host_signer_public_key: String,
 }
 
-/// `axon-protected-launch-request/1`: per-launch data only.
+/// `axon-protected-launch-request/3`: per-launch data only.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct LaunchRequest {
@@ -123,13 +127,12 @@ pub struct LaunchRequest {
     pub id: String,
     /// `<out_root>/<name>`: created by the helper; must not exist.
     pub out: PathBuf,
-    /// `<out_root>/<inputs>/candidate`, `…/check`, `…/job`.
+    /// `<out_root>/<inputs>/candidate`, `…/check`, `…/job`. The guest policy
+    /// is `<inputs>/policy.json`, beside them (PSV-6, A87).
     pub psv_candidate: PathBuf,
     pub psv_suite: PathBuf,
     pub psv_job: PathBuf,
     pub psv_manifest_sha256: String,
-    /// The exact `axon-vm-mmds/1` bytes (the launcher validates them).
-    pub policy_json: String,
     pub timeout_s: u64,
     /// Amendment 50: the exact observation bytes Fabric verified, and their
     /// observer signature (`axon-evidence-signature/2`). The helper verifies
@@ -471,9 +474,6 @@ pub fn validate_request(r: &LaunchRequest, c: &HelperConfig) -> Result<Plan, Str
             r.timeout_s, c.max_timeout_s
         ));
     }
-    if r.policy_json.len() > MAX_POLICY {
-        return Err("policy_json is too large".into());
-    }
     let out_name = child_of(&c.out_root, &r.out, "out")?;
     let mut inputs = None;
     for (p, leaf) in [
@@ -648,9 +648,10 @@ fn set_mode(p: &Path, mode: u32) -> Result<(), String> {
         .map_err(|e| format!("{}: {e}", p.display()))
 }
 
-/// Snapshot `<inputs>/{candidate,check,job}` into `staging`, then remove the
-/// job's two files from Fabric's dir (the secret then exists once: in the
-/// root-private snapshot, removed when the launcher returns).
+/// Snapshot `<inputs>/{candidate,check,job}` and `<inputs>/policy.json` into
+/// `staging`, then remove the job's two files from Fabric's dir (the secret
+/// then exists once: in the root-private snapshot, removed when the launcher
+/// returns).
 fn snapshot_inputs(
     root: RawFd,
     inputs: &OsStr,
@@ -665,6 +666,7 @@ fn snapshot_inputs(
             st.st_uid
         ));
     }
+    snapshot_policy(ifd.as_raw_fd(), &staging.join("policy.json"), c.fabric_uid)?;
     let mut budget = c.max_input_bytes;
     for leaf in ["candidate", "check", "job"] {
         let fd = openat(ifd.as_raw_fd(), OsStr::new(leaf), DIR_FLAGS).map_err(|e| {
@@ -696,6 +698,42 @@ fn snapshot_inputs(
         }
     }
     Ok(())
+}
+
+/// Copy `<inputs>/policy.json` (a regular file of the Fabric uid, never
+/// followed, at most [`MAX_POLICY`] bytes) to `dst` in the root-private
+/// snapshot. What the launcher boots is `dst`; [`observed_launch`] holds it to
+/// the manifest's `policy_sha256` before the nonce is spent.
+fn snapshot_policy(inputs: RawFd, dst: &Path, owner: u32) -> Result<(), String> {
+    let fd = openat(
+        inputs,
+        OsStr::new("policy.json"),
+        libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_NONBLOCK,
+    )
+    .map_err(|e| {
+        if e.raw_os_error() == Some(libc::ELOOP) {
+            "the psv policy.json is a symlink: never followed".to_string()
+        } else {
+            format!("the psv inputs hold no policy.json: {e}")
+        }
+    })?;
+    let st = fstat(fd.as_raw_fd())?;
+    if st.st_mode & libc::S_IFMT != libc::S_IFREG || st.st_uid != owner {
+        return Err(format!(
+            "the psv policy.json is not a regular file of the Fabric uid (uid {})",
+            st.st_uid
+        ));
+    }
+    use std::io::Read;
+    let mut bytes = Vec::new();
+    std::fs::File::from(fd)
+        .take(MAX_POLICY as u64 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| format!("policy.json: {e}"))?;
+    if bytes.len() > MAX_POLICY {
+        return Err("the psv policy.json is too large".into());
+    }
+    std::fs::write(dst, &bytes).map_err(|e| format!("policy: {e}"))
 }
 
 /// Create `<out_root>/<name>` (it must not exist) and open it; it is the
@@ -876,10 +914,6 @@ fn prepare(c: &HelperConfig, a: &Authority, request: &[u8]) -> Result<Prepared, 
     let root = open_out_root(c, a)?;
     let staging = new_staging(c, a, &req.id)?;
     let staged = snapshot_inputs(root.as_raw_fd(), &plan.inputs_name, &staging, c)
-        .and_then(|()| {
-            std::fs::write(staging.join("policy.json"), req.policy_json.as_bytes())
-                .map_err(|e| format!("policy: {e}"))
-        })
         .and_then(|()| observed_launch(c, a, &req, &staging))
         .and_then(|()| make_out(root.as_raw_fd(), &plan.out_name));
     match staged {
@@ -904,7 +938,9 @@ fn prepare(c: &HelperConfig, a: &Authority, request: &[u8]) -> Result<Prepared, 
 /// observation. Over the root-private SNAPSHOT (never Fabric's dir):
 /// 1. the snapshot's `job/launch-manifest.json` is the manifest the request
 ///    names (`psv_manifest_sha256`), which the launcher is told and the verdict
-///    binds;
+///    binds; and the snapshot's `policy.json`, the policy the launcher boots,
+///    is the one that manifest names and states an effect ceiling (PSV-6, C9
+///    round 4; A87: it was the request's `policy_json`, joined to nothing);
 /// 2. the observation verifies under the operator's observer root, by the
 ///    SAME function Fabric's early check uses ([`crate::observer::verify_observation`]),
 ///    and joins that manifest field for field;
@@ -917,6 +953,7 @@ fn observed_launch(
     staging: &Path,
 ) -> Result<(), String> {
     let m = snapshot_manifest(staging, req)?;
+    policy_at_root(staging, &m)?;
     let epoch = verify_observation_at_root(c, a, req, &m)?;
     spend_at_root(c, a, &m.observation_nonce, epoch, &req.psv_manifest_sha256)
 }
@@ -937,6 +974,18 @@ fn snapshot_manifest(
         ));
     }
     serde_json::from_slice(&bytes).map_err(|e| format!("launch-manifest.json: {e}"))
+}
+
+/// The snapshot's policy is the launch manifest's (whose digest is the
+/// request's, and which the observation then joins field for field, its
+/// `policy_sha256` included), and it states an effect ceiling
+/// ([`axon_psv::protected_policy_ceiling`]). Refused BEFORE the nonce is spent.
+fn policy_at_root(staging: &Path, m: &axon_psv::LaunchManifest) -> Result<(), String> {
+    let bytes = std::fs::read(staging.join("policy.json"))
+        .map_err(|e| format!("the snapshot has no policy.json: {e}"))?;
+    axon_psv::protected_policy_ceiling(&bytes, m)
+        .map(|_| ())
+        .map_err(|e| format!("no launch under this policy: {e}"))
 }
 
 /// The observation, verified under the operator's observer root and joined to
@@ -1241,7 +1290,6 @@ mod tests {
             psv_suite: format!("{r}/op-1.psv-inputs/check").into(),
             psv_job: format!("{r}/op-1.psv-inputs/job").into(),
             psv_manifest_sha256: "b".repeat(64),
-            policy_json: "{}".into(),
             timeout_s: 60,
             observation: "{}".into(),
             observation_signature: "{}".into(),

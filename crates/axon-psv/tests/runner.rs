@@ -105,6 +105,23 @@ struct Fx {
     secret: [u8; 32],
 }
 
+/// The fixture's guest policy: every effect but `Exec` stated (the runner
+/// drops `Exec` whatever the policy says). PSV-6 (A87): the manifest names
+/// ITS digest, and the runner is given exactly these bytes.
+const FIXTURE_POLICY: &str =
+    r#"{"schema":"axon-vm-mmds/1","allowed_effects":["AI","Chan","IO","Net","Random","Time"]}"#;
+
+impl Fx {
+    /// Make `policy` the one the manifest names (the manifest is rewritten
+    /// and re-named) and the one the runner is given.
+    fn name_policy(&mut self, policy: &str) {
+        self.m.policy_sha256 = sha256_hex(policy.as_bytes());
+        std::fs::write(&self.cfg.manifest, self.m.bytes()).unwrap();
+        self.cfg.expected_manifest_sha256 = self.m.digest();
+        self.cfg.policy = Some(policy.as_bytes().to_vec());
+    }
+}
+
 fn hex(b: &[u8]) -> String {
     b.iter().map(|x| format!("{x:02x}")).collect()
 }
@@ -188,7 +205,7 @@ fn fixture_with(entry: &str, test: &str, drop: bool, candidate: &str) -> Fx {
             axon_sha256: "8".repeat(64),
             init_sha256: "9".repeat(64),
         },
-        policy_sha256: "a".repeat(64),
+        policy_sha256: sha256_hex(FIXTURE_POLICY.as_bytes()),
         suite: SuiteRef {
             id: "acceptance".into(),
             version: axon_workspace_recipe::tree_version_ref(&suite, &q).unwrap(),
@@ -232,7 +249,7 @@ fn fixture_with(entry: &str, test: &str, drop: bool, candidate: &str) -> Fx {
         runner_exe: axon_copy,
         expected_manifest_sha256: m.digest(),
         drop: drop.then_some((65534, 65534)),
-        effect_ceiling: None,
+        policy: Some(FIXTURE_POLICY.as_bytes().to_vec()),
     };
     Fx {
         _d: d,
@@ -587,7 +604,7 @@ fn the_process_holding_k_is_given_no_exec() {
         0o755,
     );
     fx.cfg.axon = script;
-    fx.cfg.effect_ceiling = Some("IO,Exec,Net".into());
+    fx.name_policy(r#"{"schema":"axon-vm-mmds/1","allowed_effects":["IO","Exec","Net"]}"#);
     run(&fx.cfg);
     let out = std::fs::read_to_string(fx.cfg.out.join("test-stdout")).unwrap();
     assert!(out.contains("CEIL:[IO,Net]"), "{out}");
@@ -762,4 +779,94 @@ fn a_job_file_carrying_an_acl_is_refused_not_run() {
     let fx = fixture("t_fixture", root);
     let v = run(&fx.cfg);
     assert_eq!(v.status, GuestStatus::Passed, "control: {v:?}");
+}
+
+/// PSV-6 (C9 round 4; A87), the in-guest guard. The manifest names policy P1;
+/// the guest was booted under P2 (a wider ceiling), or under no policy word at
+/// all. The runner refuses before anything runs, and its verdict names the
+/// policy it WAS given, so Fabric and the loop can see which one it was.
+/// Control: the manifest's own policy runs, and the verdict names it.
+#[test]
+fn the_guest_runs_only_the_policy_the_manifest_names() {
+    let p2 = r#"{"schema":"axon-vm-mmds/1","allowed_effects":["AI","Exec","IO","Net","Time"]}"#;
+    let mut fx = fixture("t_ok", false);
+    fx.cfg.policy = Some(p2.as_bytes().to_vec());
+    let v = run(&fx.cfg);
+    assert!(
+        v.status == GuestStatus::Refused && !ran(&fx),
+        "ATTACK: the guest ran policy P2 while the launch manifest names P1: {v:?}"
+    );
+    let why = v.refusal.clone().unwrap_or_default();
+    assert!(why.contains("not the policy_sha256"), "{why}");
+    assert_eq!(v.policy_sha256, sha256_hex(p2.as_bytes()));
+
+    let mut fx = fixture("t_ok", false);
+    fx.cfg.policy = None;
+    let v = run(&fx.cfg);
+    assert!(
+        v.status == GuestStatus::Refused && !ran(&fx),
+        "ATTACK: the guest ran with no policy word while the launch manifest names one: {v:?}"
+    );
+    assert_eq!(v.policy_sha256, "");
+
+    // Control: the manifest's policy.
+    let fx = fixture("t_ok", false);
+    let v = run(&fx.cfg);
+    assert_eq!(v.status, GuestStatus::Passed, "control: {v:?}");
+    assert_eq!(v.policy_sha256, fx.m.policy_sha256);
+}
+
+/// PSV-6 (A87): on the protected profile a policy that states no effect
+/// ceiling (`allowed_effects` omitted, or `null`) is refused even when it IS
+/// the manifest's policy: an absent ceiling is never read as "no ceiling".
+/// Control: an explicitly EMPTY list is a ceiling, and the test runs under it
+/// (deny every effect).
+#[test]
+fn a_policy_naming_no_ceiling_never_runs_unrestricted() {
+    for p in [
+        r#"{"schema":"axon-vm-mmds/1","budget_tokens":0}"#,
+        r#"{"schema":"axon-vm-mmds/1","allowed_effects":null,"budget_tokens":0}"#,
+    ] {
+        let mut fx = fixture("t_ok", false);
+        fx.name_policy(p);
+        let v = run(&fx.cfg);
+        assert!(
+            v.status == GuestStatus::Refused && !ran(&fx),
+            "ATTACK: a manifest policy with no allowed_effects ran the test with no effect \
+             ceiling: {p} {v:?}"
+        );
+        assert_eq!(v.refusal.as_deref(), Some(NO_CEILING), "{p}");
+    }
+    // Control: `[]` states a ceiling; the test runs under it.
+    let mut fx = fixture("t_ok", false);
+    fx.name_policy(r#"{"schema":"axon-vm-mmds/1","allowed_effects":[]}"#);
+    let script = fx._d.path().join("ceiling-axon.sh");
+    write_executable(
+        &script,
+        "#!/bin/sh\nread K\necho \"CEIL:[${AXON_ALLOWED_EFFECTS-UNSET}]\"\nexit 1\n",
+        0o755,
+    );
+    fx.cfg.axon = script;
+    run(&fx.cfg);
+    let out = std::fs::read_to_string(fx.cfg.out.join("test-stdout")).unwrap();
+    assert!(
+        out.contains("CEIL:[]"),
+        "ATTACK: the test did not run under the manifest policy's (empty) ceiling: {out}"
+    );
+}
+
+/// The policy the runner holds to the manifest is the cmdline word
+/// `axon-guest-init` enforces: exactly one `axon.policy=` word, decoded.
+#[test]
+fn the_runner_reads_the_one_cmdline_policy_word() {
+    use axon_psv::runner::policy_from_cmdline;
+    let one = "console=ttyS0 axon.policy=eyJhIjoxfQ== axon.psv.manifest=00";
+    assert_eq!(policy_from_cmdline(one).as_deref(), Some(&b"{\"a\":1}"[..]));
+    assert_eq!(
+        policy_from_cmdline("axon.policy=eyJhIjoxfQ== axon.policy=e30="),
+        None,
+        "two policy words are ambiguous"
+    );
+    assert_eq!(policy_from_cmdline("console=ttyS0"), None);
+    assert_eq!(policy_from_cmdline("axon.policy=!!"), None);
 }

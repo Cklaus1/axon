@@ -753,3 +753,17 @@ ATTACK_MARKERS.update({
     'M642': r"ATTACK: a branch named like the certified revision's abbreviation made an orphan HEAD\s+descend from it",
     'M650': r'ATTACK: a freeze was made through a compiler wrapper',
 })
+
+# ── C9 round 4, POLICY workstream (M670-M689; PSV-6, amendment 54, A87).
+ATTACK_MARKERS.update({
+    'M670': r'ATTACK: the root helper launched policy P2 under a genuine observation of a manifest\s+naming P1',
+    'M671': r'ATTACK: the root helper launched policy P2 under a genuine observation of a manifest\s+naming P1',
+    'M672': r'ATTACK: the root helper launched a manifest policy that states no effect ceiling',
+    'M673': r'ATTACK: the guest ran policy P2 while the launch manifest names P1',
+    'M674': r'ATTACK: a manifest policy with no allowed_effects ran the test with no effect\s+ceiling',
+    'M675': r"ATTACK: the test did not run under the manifest policy's \(empty\) ceiling",
+    'M676': r"ATTACK: a guest verdict naming another policy than the manifest's was counted",
+    'M677': r"ATTACK: (another|no) policy: a guest verdict that ran a policy other than the manifest's\s+was ACCEPTED",
+    'M678': r'ATTACK: the launcher went past a --policy the launch manifest does not name',
+    'M679': r'ATTACK: the launcher went past a manifest policy that states no effect ceiling',
+})

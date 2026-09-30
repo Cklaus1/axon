@@ -1915,6 +1915,59 @@ MUTATIONS += [
      'axon-fabric', '--test freeze_manifest', 'a_compiler_wrapper_does_not_freeze'),
 ]
 
+# ── C9 round 4, POLICY workstream (M670-M689; PSV-6 BLOCKER, amendment 54,
+# negative matrix A87): the policy a protected launch runs is the policy its
+# launch manifest names (policy_sha256, joined by the observation) and states
+# an effect ceiling. One rule (axon_psv::protected_policy_ceiling), applied at
+# the root helper before the nonce spend (M670-M672), in the guest runner
+# before anything runs (M673-M675), in the launcher both routes run
+# (M678-M679); the verdict names the policy digest and Fabric (M676) and the
+# loop (M677) join it to the manifest.
+_PSV_LIB = 'crates/axon-psv/src/lib.rs'
+_PSV_RUN = 'crates/axon-psv/src/runner.rs'
+MUTATIONS += [
+    ('M670', 'PSV-6/A87: the root helper holds the snapshot policy to the manifest before the spend', _PL,
+     '    policy_at_root(staging, &m)?;\n',
+     '    let _ = policy_at_root(staging, &m);\n',
+     'axon-fabric', '--test privileged_launcher', 'a_genuine_observation_of_one_policy_never_launches_another'),
+    ('M671', "PSV-6/A87: the protected policy's sha256 is the manifest's policy_sha256 (root helper route)", _PSV_LIB,
+     '    if got != m.policy_sha256 {\n',
+     '    if false && got != m.policy_sha256 {\n',
+     'axon-fabric', '--test privileged_launcher', 'a_genuine_observation_of_one_policy_never_launches_another'),
+    ('M672', 'PSV-6/A87: a protected policy with no allowed_effects is refused, never "no ceiling" (root helper route)', _PSV_LIB,
+     '        None => Err(NO_CEILING.into()),',
+     '        None => Ok(String::new()),',
+     'axon-fabric', '--test privileged_launcher', 'a_manifest_policy_naming_no_ceiling_launches_nothing'),
+    ('M673', "PSV-6/A87: the guest runner holds the cmdline policy to the manifest's policy_sha256", _PSV_RUN,
+     '        .and_then(|p| protected_policy_ceiling(p, &m))\n',
+     '        .map(|_| String::new())\n',
+     'axon-psv', '--test runner', 'the_guest_runs_only_the_policy_the_manifest_names'),
+    ('M674', 'PSV-6/A87: a protected policy with no allowed_effects is refused, never "no ceiling" (guest runner route)', _PSV_LIB,
+     '        None => Err(NO_CEILING.into()),',
+     '        None => Ok(String::new()),',
+     'axon-psv', '--test runner', 'a_policy_naming_no_ceiling_never_runs_unrestricted'),
+    ('M675', "PSV-6/A87: the test always runs under the manifest policy's ceiling (an empty one included)", _PSV_RUN,
+     '    cmd.env("AXON_ALLOWED_EFFECTS", without_exec(ceiling));\n',
+     '',
+     'axon-psv', '--test runner', 'a_policy_naming_no_ceiling_never_runs_unrestricted'),
+    ('M676', "PSV-6/A87: Fabric joins the guest verdict's policy_sha256 to the manifest's", 'crates/axon-fabric/src/psv.rs',
+     '    if v.policy_sha256 != m.policy_sha256 {\n        return unknown(',
+     '    if false && v.policy_sha256 != m.policy_sha256 {\n        return unknown(',
+     'axon-fabric', '--test psv_dispatch', 'a_guest_under_a_policy_the_manifest_does_not_name_yields_no_verdict'),
+    ('M677', "PSV-6/A87: the loop joins the guest verdict's policy_sha256 to the manifest's", 'crates/axon-loop-contracts/src/protected_evidence.rs',
+     '    if v.policy_sha256 != m.policy_sha256 {\n        return Err(format!(',
+     '    if false && v.policy_sha256 != m.policy_sha256 {\n        return Err(format!(',
+     'axon-loop', '--test intake', 'a_guest_verdict_that_ran_another_policy_is_refused'),
+    ('M678', "PSV-6/A87: the launcher boots in PSV mode only the policy the launch manifest names", 'scripts/fc_linux_profile.sh',
+     'if got != want:\n',
+     'if False and got != want:\n',
+     'axon-fabric', '--test launcher_isolation', 'the_launcher_boots_only_the_policy_the_manifest_names'),
+    ('M679', 'PSV-6/A87: the launcher refuses a PSV policy that states no effect ceiling', 'scripts/fc_linux_profile.sh',
+     'if not isinstance(p, dict) or not isinstance(p.get("allowed_effects"), list):\n',
+     'if False:\n',
+     'axon-fabric', '--test launcher_isolation', 'the_launcher_boots_only_the_policy_the_manifest_names'),
+]
+
 # Protected Check Isolation guards (governance/specs/v022-protected-check-isolation.md):
 # candidate code must not alter what the operator's check runs or what PASS
 # means. Kept here so nothing is lost, but certified under PCI, not G01

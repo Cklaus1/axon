@@ -1417,3 +1417,70 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       `--no-default-features`, so its in-process codegen tests record SKIP ("axon build (no codegen
       feature)"); the parity scripts build their own codegen axon and do run. Android legs SKIP (no
       NDK or emulator). These are skips, not passes.
+
+54. **The guest runs the policy its launch manifest names, and the receipt binds it (C9 round 4,
+    PSV-6 BLOCKER; matrix A87; rows M670-M679).**
+    - **Before.** §4 says the policy's sha256 "is bound in the launch manifest (`policy_sha256`)",
+      and the observation joins that field. But the policy that ran was the helper request's
+      `policy_json`, which Fabric supplied per request and nothing compared with the manifest:
+      not the helper (`validate_request` checked only its size), not `fc_linux_profile.sh` (it
+      compares the guest-reported policy with the one it embedded, both from the request), not
+      `axon-guest-init` or `axon-psv-runner`. `axon-guest-verdict/1` named no policy. So a genuine
+      observation of a manifest naming P1 (`allowed_effects: []`) launched P2 (IO, Net, Time),
+      and a policy with no `allowed_effects` ran the candidate with no effect ceiling (the runner
+      set `AXON_ALLOWED_EFFECTS` only when one was present). Reproduced by the reviewer through the
+      real test-trust helper, a test custodian and a genuine observer signature, and re-run here
+      as an attack test at `1b687d95` (launched, exit 0). The helper tests' manifest fixture named
+      `policy_sha256` `bbbb…`, the digest of nothing, and nothing noticed.
+    - **After.** One rule, `axon_psv::protected_policy_ceiling(policy, manifest)`: the policy's
+      sha256 IS the manifest's `policy_sha256`, and it states `allowed_effects`. It returns the
+      effect ceiling. It is applied at every point the policy crosses:
+      - *Root helper* (`axon-protected-launcher`, request schema `/3`). The request carries no
+        policy. Fabric writes the policy `psv::prepare` bound to `<inputs>/policy.json`, beside
+        the job dir. The helper snapshots it into its root-private staging (a regular file of the
+        Fabric uid, never followed, at most 64 KiB), holds it to the snapshot manifest (whose
+        digest is the request's and which the observation then joins field for field) BEFORE the
+        observation is verified and the nonce spent, and hands the launcher exactly that snapshot.
+        A refused policy therefore spends nothing (the tests launch the same observation with the
+        right policy afterwards).
+      - *Launcher* (`fc_linux_profile.sh`, PSV mode, both routes). `--policy` is required; its
+        sha256 must be the job manifest's `policy_sha256` and it must state `allowed_effects`,
+        refused with exit 22 before anything is acquired.
+      - *Guest runner* (`axon-psv-runner`, the in-guest guard). It reads the ONE `axon.policy=`
+        cmdline word (the one `axon-guest-init` enforces), decodes it, and applies the rule after
+        the manifest check and before the inputs are read; any failure is a refusal and nothing
+        runs. The test then ALWAYS runs under that policy's ceiling (minus `Exec`), taken from the
+        verified policy rather than the environment; `[]` denies every effect.
+      - *Verdict and joins.* `axon-guest-verdict/2` adds `policy_sha256` (the digest of the policy
+        the runner was given, `""` for none). Fabric's `psv::derive` and the loop's `check_bundle`
+        require it to equal the manifest's, so the receipt binds the policy that ran.
+      - *Fabric.* `backend::run_linux_profile` takes no policy parameter: both the helper route and
+        the direct route launch the `Launch`'s policy (the bytes whose digest the manifest names),
+        so Fabric cannot hand the launcher a second policy.
+    - **Decision: a missing ceiling on the protected profile.** Following CLAUDE.md's rule that "I
+      did not say" and "I said none" are different statements: an explicitly empty
+      `allowed_effects: []` is a ceiling that denies every effect; an ABSENT one (omitted or
+      `null`) is REFUSED on the protected profile by the helper, the launcher and the runner. It
+      never falls back to "no ceiling", and the protected profile has no permissive default to
+      fall back to. Fabric's own policy (`GuestPolicy::for_grant`) always states one. The generic
+      `axon-guest-init` behaviour (warn, run unrestricted on that axis) is unchanged for non-PSV
+      program runs, which never yield protected evidence.
+    - **Rows.** M670 (helper call), M671/M672 (the rule's digest and ceiling halves, helper route),
+      M673 (runner call), M674 (ceiling half, runner route), M675 (the ceiling is always set),
+      M676 (Fabric's verdict join), M677 (the loop's verdict join), M678/M679 (the launcher's two
+      checks). Matrix A87. `psv_dev make-job` now takes `--policy FILE` and `check-verdict`
+      reports `policy_joins`.
+    - **Tests.** `privileged_launcher.rs::a_genuine_observation_of_one_policy_never_launches_another`
+      and `::a_manifest_policy_naming_no_ceiling_launches_nothing` (real test-trust helper, test
+      custodian, genuine observer signature); `launcher_isolation.rs::the_launcher_boots_only_the_policy_the_manifest_names`
+      (the real launcher script); `runner.rs::the_guest_runs_only_the_policy_the_manifest_names`,
+      `::a_policy_naming_no_ceiling_never_runs_unrestricted`, `::the_runner_reads_the_one_cmdline_policy_word`;
+      `psv_dispatch.rs::a_guest_under_a_policy_the_manifest_does_not_name_yields_no_verdict` (both
+      routes, the real runner); `intake.rs::a_guest_verdict_that_ran_another_policy_is_refused`.
+      `psv_guest_boot_test.sh` adds `policy-launcher`, `policy-guest` (the in-guest guard in a real
+      Firecracker guest, through the launcher's embed test hook) and `helper-policy`.
+    - **Operator deployment.** Rebuild the guest image (`axon-psv-runner` changed) and re-pin
+      `profiles/linux-microvm/manifest.json`; a B263 re-qualification of the image is needed
+      before protected use (already PROTECTED_ONLY-open). Install the new helper (request `/3`) and
+      launcher together with the Fabric that writes `<inputs>/policy.json`: an older Fabric's `/2`
+      request is refused (unknown schema), never launched.
