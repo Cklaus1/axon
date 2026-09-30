@@ -751,4 +751,5 @@ ATTACK_MARKERS.update({
     'M640': r'ATTACK: a protected custodian config letting uid 4242 spend nonces was accepted',
     'M641': r'ATTACK: a protected custodian served from a store whose parent the Fabric uid\s+owns',
     'M642': r"ATTACK: a branch named like the certified revision's abbreviation made an orphan HEAD\s+descend from it",
+    'M650': r'ATTACK: a freeze was made through a compiler wrapper',
 })
