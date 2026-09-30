@@ -291,8 +291,9 @@ ATTACK_MARKERS = {
     'M225': 'ATTACK: a candidate holding a symlink was accepted under a digest naming it',
     'M226': 'the guest-path receipt parses as a contract: .*matched_checks',
     'M227': 'failed: op-obs-verifier-[\\w-]+\\n\\s*left: (?!NotRun)\\w+\\n\\s*right: NotRun',
-    'M228': 'assertion `left == right` failed\\n\\s*left: \\"yes\\"\\n\\s*right: \\"no\\"',
-    'M229': 'the secret outlived the launch into the verify step',
+    # C9 r2 (rows): the test now attacks both routes; these guards are the direct route's only ones.
+    'M228': "ATTACK: direct: the caller's environment reached the verify step",
+    'M229': 'ATTACK: direct: the secret outlived the launch into the verify step',
     'M230': 'manifest\\ for\\ another\\ trial: ACCEPTED',
     'M231': 'unwrap_err\\(\\)` on an `Ok` value: IntakeOutcome',
     'M232': 'receipt\\ names\\ another\\ launch\\ manifest: ACCEPTED',

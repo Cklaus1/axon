@@ -91,6 +91,89 @@ fn swap_after_first_read(
     })
 }
 
+/// Serve `first` at `path`, and rename `second` into place while the reader
+/// is BLOCKED opening `gate`, a file it opens after its first read of `path`
+/// (fanotify FAN_OPEN_PERM: the open waits for this thread's answer, and the
+/// answer comes only after the rename). Unlike [`swap_after_first_read`],
+/// which races the reader's very next open, this cannot lose the race under
+/// load: M336 survived the C9 round-2 two-shard run that way, its rename
+/// landing after both reads. Returns whether the gate fired.
+fn swap_while_gate_opens(
+    path: &Path,
+    first: &[u8],
+    second: &[u8],
+    gate: &Path,
+) -> std::thread::JoinHandle<bool> {
+    std::fs::write(path, first).unwrap();
+    let staged: PathBuf = path.with_extension("swap");
+    std::fs::write(&staged, second).unwrap();
+    let fd = unsafe {
+        libc::fanotify_init(
+            libc::FAN_CLOEXEC | libc::FAN_CLASS_CONTENT,
+            libc::O_RDONLY as libc::c_uint,
+        )
+    };
+    assert!(
+        fd >= 0,
+        "fanotify_init: {}",
+        std::io::Error::last_os_error()
+    );
+    let g = std::ffi::CString::new(gate.to_str().unwrap()).unwrap();
+    assert_eq!(
+        unsafe {
+            libc::fanotify_mark(
+                fd,
+                libc::FAN_MARK_ADD,
+                libc::FAN_OPEN_PERM,
+                libc::AT_FDCWD,
+                g.as_ptr(),
+            )
+        },
+        0,
+        "fanotify_mark: {}",
+        std::io::Error::last_os_error()
+    );
+    let path = path.to_path_buf();
+    std::thread::spawn(move || {
+        let mut pfd = libc::pollfd {
+            fd,
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        let ready = unsafe { libc::poll(&mut pfd, 1, 20_000) } > 0;
+        if ready {
+            let mut buf = [0u8; 4096];
+            let n = unsafe { libc::read(fd, buf.as_mut_ptr().cast(), buf.len()) };
+            assert!(n > 0, "fanotify read");
+            // The reader is held in open(gate) until the answer below.
+            std::fs::rename(&staged, &path).unwrap();
+            let mut off = 0usize;
+            while off < n as usize {
+                let m: libc::fanotify_event_metadata =
+                    unsafe { std::ptr::read_unaligned(buf.as_ptr().add(off).cast()) };
+                if m.fd >= 0 {
+                    let r = libc::fanotify_response {
+                        fd: m.fd,
+                        response: libc::FAN_ALLOW,
+                    };
+                    unsafe {
+                        libc::write(
+                            fd,
+                            (&r as *const libc::fanotify_response).cast(),
+                            std::mem::size_of::<libc::fanotify_response>(),
+                        );
+                        libc::close(m.fd);
+                    }
+                }
+                off += m.event_len as usize;
+            }
+        }
+        // Closing the group allows every open still pending or to come.
+        unsafe { libc::close(fd) };
+        ready
+    })
+}
+
 fn components(c: &Certified) -> Value {
     axon_fabric::readiness::protected_components(&c.repo, &c.trust)["components"].clone()
 }
@@ -221,9 +304,17 @@ fn failing_preflight_certified(c: &Certified) -> (Vec<u8>, Vec<u8>) {
 fn a_preflight_renamed_between_hash_and_parse_certifies_nothing() {
     let Some(c) = certified() else { return };
     let (fail, pass) = failing_preflight_certified(&c);
-    let swapped = swap_after_first_read(&c.repo.join(PREFLIGHT), &fail, &pass);
+    // The evidence is read in the record's order (run-evidence, PREFLIGHT,
+    // OBSERVATION, B263): the rename lands while the reader is held opening
+    // the observation, after the preflight was read and hashed.
+    let swapped = swap_while_gate_opens(
+        &c.repo.join(PREFLIGHT),
+        &fail,
+        &pass,
+        &c.repo.join(OBSERVATION),
+    );
     let v = c.verdict();
-    assert!(swapped.join().unwrap(), "the preflight was never read");
+    assert!(swapped.join().unwrap(), "the observation was never opened");
     assert_ne!(
         v["status"], "PASS",
         "ATTACK: the certified (failing) preflight was hashed, a passing one was renamed in, \
