@@ -534,13 +534,34 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let p = d.path().join("launcher.sh");
         let pin = write_exec(&p, "#!/bin/sh\necho genuine\n");
-        let writer = std::fs::OpenOptions::new().write(true).open(&p).unwrap();
+        // The writer is ANOTHER process: a write fd held in this test process
+        // would be copied into any sibling test thread's fork, and would still
+        // be open for the control below (a flake in the full suite, C9 r2).
+        use std::io::BufRead;
+        let mut writer = std::process::Command::new("sh")
+            .arg("-c")
+            .arg("exec 3>>\"$1\"; echo ready; exec sleep 60")
+            .arg("sh")
+            .arg(&p)
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut line = String::new();
+        std::io::BufReader::new(writer.stdout.take().unwrap())
+            .read_line(&mut line)
+            .unwrap();
+        assert_eq!(
+            line.trim(),
+            "ready",
+            "setup: the writer holds the file open"
+        );
         let got = open_verified(&pin, Some(euid()), Lease::IfGranted);
+        let _ = writer.kill();
+        let _ = writer.wait();
         let why = got.expect_err(
             "ATTACK: a launcher another process holds open for writing was verified for exec",
         );
         assert!(why.contains("open for writing"), "{why}");
-        drop(writer);
         open_verified(&pin, Some(euid()), Lease::IfGranted).expect("control: no writer");
     }
 

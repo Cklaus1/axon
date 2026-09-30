@@ -1,8 +1,88 @@
 {
   "schema": "axon-v022-paired-disable/2",
-  "commit": "a98e2bbadafde9b71a0fe22536e3d07ceb10c842",
-  "all_hold": true,
+  "commit": "de523f4ce2bef18da3ffcfb588123016475924b6",
+  "all_hold": false,
   "records": [
+    {
+      "mutation": "M245",
+      "status": "EQUIVALENT_DID",
+      "kind": "pair",
+      "property": "a protected clearance is a real monitor signature under the operator monitor root",
+      "original_guard": {
+        "file": "crates/axon-loop/src/admission.rs"
+      },
+      "subsumed_by": [
+        "M264"
+      ],
+      "live_killing_mutant": "M264",
+      "all_paths": null,
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M245",
+          "M264"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "full_suite_packages": [
+          "axon-loop",
+          "axon-fabric"
+        ],
+        "consumer_suites": {
+          "axon-fabric": "SUITE_OK"
+        },
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "de523f4ce2bef18da3ffcfb588123016475924b6"
+    },
+    {
+      "mutation": "M58",
+      "status": "EQUIVALENT_DID",
+      "kind": "pair",
+      "property": "a break/continue raised in a FUNCTION BODY does not escape into the caller's loop",
+      "original_guard": {
+        "file": "crates/axon-core/src/interp.rs"
+      },
+      "subsumed_by": [
+        "M59"
+      ],
+      "live_killing_mutant": "M59",
+      "all_paths": null,
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M58",
+          "M59"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "full_suite_packages": [
+          "axon-core",
+          "axon-cortex",
+          "axon-fabric",
+          "axon-intent",
+          "axon-os",
+          "axon-psv",
+          "axon-wasm",
+          "axon-web"
+        ],
+        "consumer_suites": {
+          "axon-cortex": "SUITE_OK",
+          "axon-fabric": "SUITE_OK",
+          "axon-intent": "SUITE_OK",
+          "axon-os": "SUITE_OK",
+          "axon-psv": "SUITE_OK",
+          "axon-wasm": "SUITE_OK",
+          "axon-web": "SUITE_OK"
+        },
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "de523f4ce2bef18da3ffcfb588123016475924b6"
+    },
     {
       "mutation": "M27",
       "status": "EQUIVALENT_DID",
@@ -25,10 +105,17 @@
           "M30"
         ],
         "retired_guard_full_suite": "SUITE_OK",
+        "full_suite_packages": [
+          "axon-loop",
+          "axon-fabric"
+        ],
+        "consumer_suites": {
+          "axon-fabric": "SUITE_OK"
+        },
         "sibling_set_disabled": "ATTACK_REFUSED"
       },
       "holds": true,
-      "commit": "a49f6a3f47542314d22645a5fc2f5a38965e4c9b"
+      "commit": "de523f4ce2bef18da3ffcfb588123016475924b6"
     },
     {
       "mutation": "M29",
@@ -52,10 +139,17 @@
           "M30"
         ],
         "retired_guard_full_suite": "SUITE_OK",
+        "full_suite_packages": [
+          "axon-loop",
+          "axon-fabric"
+        ],
+        "consumer_suites": {
+          "axon-fabric": "SUITE_OK"
+        },
         "sibling_set_disabled": "ATTACK_REFUSED"
       },
       "holds": true,
-      "commit": "a49f6a3f47542314d22645a5fc2f5a38965e4c9b"
+      "commit": "de523f4ce2bef18da3ffcfb588123016475924b6"
     },
     {
       "mutation": "M214",
@@ -79,10 +173,22 @@
           "M233"
         ],
         "retired_guard_full_suite": "SUITE_OK",
+        "full_suite_packages": [
+          "axon-loop",
+          "axon-loop-contracts",
+          "axon-fabric",
+          "axon-reflex",
+          "cortex-policy-adapter"
+        ],
+        "consumer_suites": {
+          "axon-fabric": "SUITE_OK",
+          "axon-reflex": "SUITE_OK",
+          "cortex-policy-adapter": "SUITE_OK"
+        },
         "sibling_set_disabled": "ATTACK_REFUSED"
       },
       "holds": true,
-      "commit": "a49f6a3f47542314d22645a5fc2f5a38965e4c9b"
+      "commit": "de523f4ce2bef18da3ffcfb588123016475924b6"
     },
     {
       "mutation": "M216",
@@ -106,10 +212,22 @@
           "M299"
         ],
         "retired_guard_full_suite": "SUITE_OK",
+        "full_suite_packages": [
+          "axon-loop",
+          "axon-loop-contracts",
+          "axon-fabric",
+          "axon-reflex",
+          "cortex-policy-adapter"
+        ],
+        "consumer_suites": {
+          "axon-fabric": "SUITE_OK",
+          "axon-reflex": "SUITE_OK",
+          "cortex-policy-adapter": "SUITE_OK"
+        },
         "sibling_set_disabled": "ATTACK_REFUSED"
       },
       "holds": true,
-      "commit": "a49f6a3f47542314d22645a5fc2f5a38965e4c9b"
+      "commit": "de523f4ce2bef18da3ffcfb588123016475924b6"
     },
     {
       "mutation": "M377",
@@ -133,10 +251,22 @@
           "M378"
         ],
         "retired_guard_full_suite": "SUITE_OK",
+        "full_suite_packages": [
+          "axon-loop",
+          "axon-loop-contracts",
+          "axon-fabric",
+          "axon-reflex",
+          "cortex-policy-adapter"
+        ],
+        "consumer_suites": {
+          "axon-fabric": "SUITE_OK",
+          "axon-reflex": "SUITE_OK",
+          "cortex-policy-adapter": "SUITE_OK"
+        },
         "sibling_set_disabled": "ATTACK_REFUSED"
       },
       "holds": true,
-      "commit": "a49f6a3f47542314d22645a5fc2f5a38965e4c9b"
+      "commit": "de523f4ce2bef18da3ffcfb588123016475924b6"
     },
     {
       "mutation": "M378",
@@ -160,10 +290,22 @@
           "M377"
         ],
         "retired_guard_full_suite": "SUITE_OK",
+        "full_suite_packages": [
+          "axon-loop",
+          "axon-loop-contracts",
+          "axon-fabric",
+          "axon-reflex",
+          "cortex-policy-adapter"
+        ],
+        "consumer_suites": {
+          "axon-fabric": "SUITE_OK",
+          "axon-reflex": "SUITE_OK",
+          "cortex-policy-adapter": "SUITE_OK"
+        },
         "sibling_set_disabled": "ATTACK_REFUSED"
       },
       "holds": true,
-      "commit": "a49f6a3f47542314d22645a5fc2f5a38965e4c9b"
+      "commit": "de523f4ce2bef18da3ffcfb588123016475924b6"
     },
     {
       "mutation": "M285",
@@ -189,10 +331,14 @@
           "M289"
         ],
         "retired_guard_full_suite": "SUITE_OK",
+        "full_suite_packages": [
+          "axon-fabric"
+        ],
+        "consumer_suites": {},
         "sibling_set_disabled": "ATTACK_REFUSED"
       },
       "holds": true,
-      "commit": "a49f6a3f47542314d22645a5fc2f5a38965e4c9b"
+      "commit": "de523f4ce2bef18da3ffcfb588123016475924b6"
     },
     {
       "mutation": "M385",
@@ -200,7 +346,7 @@
       "kind": "set",
       "property": "git never reports a replacement object's content under a certified name",
       "original_guard": {
-        "file": "crates/axon-fabric/src/readiness.rs"
+        "file": "crates/axon-fabric/src/git_data.rs"
       },
       "subsumed_by": [
         "M285",
@@ -218,10 +364,14 @@
           "M289"
         ],
         "retired_guard_full_suite": "SUITE_OK",
+        "full_suite_packages": [
+          "axon-fabric"
+        ],
+        "consumer_suites": {},
         "sibling_set_disabled": "ATTACK_REFUSED"
       },
       "holds": true,
-      "commit": "a49f6a3f47542314d22645a5fc2f5a38965e4c9b"
+      "commit": "de523f4ce2bef18da3ffcfb588123016475924b6"
     },
     {
       "mutation": "M287",
@@ -244,11 +394,18 @@
           "M287",
           "M290"
         ],
-        "retired_guard_full_suite": "SUITE_OK",
+        "retired_guard_full_suite": "SUITE_BROKEN",
+        "full_suite_packages": [
+          "axon-fabric"
+        ],
+        "consumer_suites": {},
+        "retired_guard_full_suite_failures": [
+          "sealed_exec::tests::a_launcher_open_for_writing_when_hashed_is_refused"
+        ],
         "sibling_set_disabled": "ATTACK_REFUSED"
       },
-      "holds": true,
-      "commit": "a49f6a3f47542314d22645a5fc2f5a38965e4c9b"
+      "holds": false,
+      "commit": "de523f4ce2bef18da3ffcfb588123016475924b6"
     },
     {
       "mutation": "M288",
@@ -272,10 +429,14 @@
           "M290"
         ],
         "retired_guard_full_suite": "SUITE_OK",
+        "full_suite_packages": [
+          "axon-fabric"
+        ],
+        "consumer_suites": {},
         "sibling_set_disabled": "ATTACK_REFUSED"
       },
       "holds": true,
-      "commit": "a49f6a3f47542314d22645a5fc2f5a38965e4c9b"
+      "commit": "de523f4ce2bef18da3ffcfb588123016475924b6"
     },
     {
       "mutation": "M19",
@@ -299,10 +460,17 @@
           "M428"
         ],
         "retired_guard_full_suite": "SUITE_OK",
+        "full_suite_packages": [
+          "axon-loop",
+          "axon-fabric"
+        ],
+        "consumer_suites": {
+          "axon-fabric": "SUITE_OK"
+        },
         "sibling_set_disabled": "ATTACK_REFUSED"
       },
       "holds": true,
-      "commit": "a49f6a3f47542314d22645a5fc2f5a38965e4c9b"
+      "commit": "de523f4ce2bef18da3ffcfb588123016475924b6"
     },
     {
       "mutation": "M209",
@@ -326,10 +494,17 @@
           "M360"
         ],
         "retired_guard_full_suite": "SUITE_OK",
+        "full_suite_packages": [
+          "axon-loop",
+          "axon-fabric"
+        ],
+        "consumer_suites": {
+          "axon-fabric": "SUITE_OK"
+        },
         "sibling_set_disabled": "ATTACK_REFUSED"
       },
       "holds": true,
-      "commit": "a49f6a3f47542314d22645a5fc2f5a38965e4c9b"
+      "commit": "de523f4ce2bef18da3ffcfb588123016475924b6"
     },
     {
       "mutation": "M210",
@@ -353,10 +528,17 @@
           "M361"
         ],
         "retired_guard_full_suite": "SUITE_OK",
+        "full_suite_packages": [
+          "axon-loop",
+          "axon-fabric"
+        ],
+        "consumer_suites": {
+          "axon-fabric": "SUITE_OK"
+        },
         "sibling_set_disabled": "ATTACK_REFUSED"
       },
       "holds": true,
-      "commit": "a49f6a3f47542314d22645a5fc2f5a38965e4c9b"
+      "commit": "de523f4ce2bef18da3ffcfb588123016475924b6"
     },
     {
       "mutation": "M152",
@@ -380,10 +562,22 @@
           "M153"
         ],
         "retired_guard_full_suite": "SUITE_OK",
+        "full_suite_packages": [
+          "axon-fabric",
+          "axon-loop-contracts",
+          "axon-loop",
+          "axon-reflex",
+          "cortex-policy-adapter"
+        ],
+        "consumer_suites": {
+          "axon-loop": "SUITE_OK",
+          "axon-reflex": "SUITE_OK",
+          "cortex-policy-adapter": "SUITE_OK"
+        },
         "sibling_set_disabled": "ATTACK_REFUSED"
       },
       "holds": true,
-      "commit": "a49f6a3f47542314d22645a5fc2f5a38965e4c9b"
+      "commit": "de523f4ce2bef18da3ffcfb588123016475924b6"
     },
     {
       "mutation": "M418",
@@ -409,10 +603,14 @@
           "M340"
         ],
         "retired_guard_full_suite": "SUITE_OK",
+        "full_suite_packages": [
+          "axon-fabric"
+        ],
+        "consumer_suites": {},
         "sibling_set_disabled": "ATTACK_REFUSED"
       },
       "holds": true,
-      "commit": "a49f6a3f47542314d22645a5fc2f5a38965e4c9b"
+      "commit": "de523f4ce2bef18da3ffcfb588123016475924b6"
     },
     {
       "mutation": "M139",
@@ -436,10 +634,14 @@
           "M141"
         ],
         "retired_guard_full_suite": "SUITE_OK",
+        "full_suite_packages": [
+          "axon-fabric"
+        ],
+        "consumer_suites": {},
         "sibling_set_disabled": "ATTACK_REFUSED"
       },
       "holds": true,
-      "commit": "a49f6a3f47542314d22645a5fc2f5a38965e4c9b"
+      "commit": "de523f4ce2bef18da3ffcfb588123016475924b6"
     },
     {
       "mutation": "M141",
@@ -463,10 +665,14 @@
           "M139"
         ],
         "retired_guard_full_suite": "SUITE_OK",
+        "full_suite_packages": [
+          "axon-fabric"
+        ],
+        "consumer_suites": {},
         "sibling_set_disabled": "ATTACK_REFUSED"
       },
       "holds": true,
-      "commit": "a49f6a3f47542314d22645a5fc2f5a38965e4c9b"
+      "commit": "de523f4ce2bef18da3ffcfb588123016475924b6"
     },
     {
       "mutation": "M183",
@@ -490,10 +696,14 @@
           "M312"
         ],
         "retired_guard_full_suite": "SUITE_OK",
+        "full_suite_packages": [
+          "axon-fabric"
+        ],
+        "consumer_suites": {},
         "sibling_set_disabled": "ATTACK_REFUSED"
       },
       "holds": true,
-      "commit": "a49f6a3f47542314d22645a5fc2f5a38965e4c9b"
+      "commit": "de523f4ce2bef18da3ffcfb588123016475924b6"
     },
     {
       "mutation": "M187",
@@ -517,10 +727,14 @@
           "M400"
         ],
         "retired_guard_full_suite": "SUITE_OK",
+        "full_suite_packages": [
+          "axon-fabric"
+        ],
+        "consumer_suites": {},
         "sibling_set_disabled": "ATTACK_REFUSED"
       },
       "holds": true,
-      "commit": "a49f6a3f47542314d22645a5fc2f5a38965e4c9b"
+      "commit": "de523f4ce2bef18da3ffcfb588123016475924b6"
     },
     {
       "mutation": "M400",
@@ -544,10 +758,14 @@
           "M187"
         ],
         "retired_guard_full_suite": "SUITE_OK",
+        "full_suite_packages": [
+          "axon-fabric"
+        ],
+        "consumer_suites": {},
         "sibling_set_disabled": "ATTACK_REFUSED"
       },
       "holds": true,
-      "commit": "a49f6a3f47542314d22645a5fc2f5a38965e4c9b"
+      "commit": "de523f4ce2bef18da3ffcfb588123016475924b6"
     },
     {
       "mutation": "M273",
@@ -571,10 +789,14 @@
           "M401"
         ],
         "retired_guard_full_suite": "SUITE_OK",
+        "full_suite_packages": [
+          "axon-fabric"
+        ],
+        "consumer_suites": {},
         "sibling_set_disabled": "ATTACK_REFUSED"
       },
       "holds": true,
-      "commit": "a49f6a3f47542314d22645a5fc2f5a38965e4c9b"
+      "commit": "de523f4ce2bef18da3ffcfb588123016475924b6"
     },
     {
       "mutation": "M401",
@@ -598,76 +820,107 @@
           "M273"
         ],
         "retired_guard_full_suite": "SUITE_OK",
+        "full_suite_packages": [
+          "axon-fabric"
+        ],
+        "consumer_suites": {},
         "sibling_set_disabled": "ATTACK_REFUSED"
       },
       "holds": true,
-      "commit": "a49f6a3f47542314d22645a5fc2f5a38965e4c9b"
+      "commit": "de523f4ce2bef18da3ffcfb588123016475924b6"
     },
     {
-      "mutation": "M176",
-      "status": "STALE_REFACTORED",
-      "property": "a pass needs exit 0",
-      "original_guard": "the exit-0 guard became the Some(0) of the Passed arm in runner.rs (C9 re-audit)",
-      "old_string_present": false,
-      "replacement": "M293",
-      "replacement_state": "REPLACEMENT_KILLED",
-      "matrix": null,
-      "holds": true,
-      "commit": "a49f6a3f47542314d22645a5fc2f5a38965e4c9b"
-    },
-    {
-      "mutation": "M245",
+      "mutation": "M346",
       "status": "EQUIVALENT_DID",
       "kind": "pair",
-      "property": "a protected clearance is a real monitor signature under the operator monitor root",
+      "property": "build provenance never reads a tree with an edited tracked file as clean",
       "original_guard": {
-        "file": "crates/axon-loop/src/admission.rs"
+        "file": "crates/axon-fabric/src/provenance.rs"
       },
       "subsumed_by": [
-        "M264"
+        "M451"
       ],
-      "live_killing_mutant": "M264",
-      "all_paths": null,
+      "live_killing_mutant": "joint:M346+M451",
+      "all_paths": "provenance() runs head_bytes_differ (M451) on every call, before the ls-files tag check: it hashes every blob of HEAD's tree against the working-tree bytes, so an edited, deleted or replaced tracked file is dirty whatever the index says. A skip-worktree bit hides only worktree-vs-index differences from git status; an index that differs from HEAD still shows in status (staged), and a worktree equal to HEAD is the committed source. So M346's refusal never stands alone",
       "matrix": {
         "baseline": "ATTACK_REFUSED",
         "retired_guard_disabled": "ATTACK_REFUSED",
         "guard_set_disabled": "ATTACK_SUCCEEDS",
         "guard_set": [
-          "M245",
-          "M264"
+          "M346",
+          "M451"
         ],
         "retired_guard_full_suite": "SUITE_OK",
+        "full_suite_packages": [
+          "axon-fabric"
+        ],
+        "consumer_suites": {},
         "sibling_set_disabled": "ATTACK_REFUSED"
       },
       "holds": true,
-      "commit": "16a32769fb1c26d96e01ed061484d3a0656e5557"
+      "commit": "de523f4ce2bef18da3ffcfb588123016475924b6"
     },
     {
-      "mutation": "M58",
+      "mutation": "M347",
       "status": "EQUIVALENT_DID",
       "kind": "pair",
-      "property": "a break/continue raised in a FUNCTION BODY does not escape into the caller's loop",
+      "property": "build provenance never reads an untracked input as clean",
       "original_guard": {
-        "file": "crates/axon-core/src/interp.rs"
+        "file": "crates/axon-fabric/src/provenance.rs"
       },
       "subsumed_by": [
-        "M59"
+        "M501"
       ],
-      "live_killing_mutant": "M59",
-      "all_paths": null,
+      "live_killing_mutant": "joint:M347+M501",
+      "all_paths": "provenance() always runs head_bytes_differ -> tree_differs, whose untracked_objects walk (M500 files, M501 whole untracked directories) reports every filesystem object not in HEAD's tree and not on the operator allowlist, without consulting git. `status --untracked-files=all` (M347) only ever ADDS reasons; an untracked non-ignored file is exactly one the walk reports. So M347's refusal never stands alone",
       "matrix": {
         "baseline": "ATTACK_REFUSED",
         "retired_guard_disabled": "ATTACK_REFUSED",
         "guard_set_disabled": "ATTACK_SUCCEEDS",
         "guard_set": [
-          "M58",
-          "M59"
+          "M347",
+          "M501"
         ],
         "retired_guard_full_suite": "SUITE_OK",
+        "full_suite_packages": [
+          "axon-fabric"
+        ],
+        "consumer_suites": {},
         "sibling_set_disabled": "ATTACK_REFUSED"
       },
       "holds": true,
-      "commit": "89d5efd808600ffc44606cfc8c30c929c542495a"
+      "commit": "de523f4ce2bef18da3ffcfb588123016475924b6"
+    },
+    {
+      "mutation": "M414",
+      "status": "EQUIVALENT_DID",
+      "kind": "pair",
+      "property": "build provenance never reads a file hidden by a non-tracked ignore rule as clean",
+      "original_guard": {
+        "file": "crates/axon-fabric/src/provenance.rs"
+      },
+      "subsumed_by": [
+        "M501"
+      ],
+      "live_killing_mutant": "joint:M414+M501",
+      "all_paths": "a file ignored by info/exclude, an untracked .gitignore or a config excludesFile is an object not in HEAD's tree; the walk (M501 for its untracked directory, M500 for a file) reports it unless the operator allowlist names it, and git-ignore plays no part in the walk (decision C). The check-ignore source test (M414) only ADDS a reason. So it never stands alone",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M414",
+          "M501"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "full_suite_packages": [
+          "axon-fabric"
+        ],
+        "consumer_suites": {},
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "de523f4ce2bef18da3ffcfb588123016475924b6"
     },
     {
       "mutation": "M60",
@@ -691,10 +944,29 @@
           "M69"
         ],
         "retired_guard_full_suite": "SUITE_OK",
+        "full_suite_packages": [
+          "axon-core",
+          "axon-cortex",
+          "axon-fabric",
+          "axon-intent",
+          "axon-os",
+          "axon-psv",
+          "axon-wasm",
+          "axon-web"
+        ],
+        "consumer_suites": {
+          "axon-cortex": "SUITE_OK",
+          "axon-fabric": "SUITE_OK",
+          "axon-intent": "SUITE_OK",
+          "axon-os": "SUITE_OK",
+          "axon-psv": "SUITE_OK",
+          "axon-wasm": "SUITE_OK",
+          "axon-web": "SUITE_OK"
+        },
         "sibling_set_disabled": "ATTACK_REFUSED"
       },
       "holds": true,
-      "commit": "89d5efd808600ffc44606cfc8c30c929c542495a"
+      "commit": "de523f4ce2bef18da3ffcfb588123016475924b6"
     },
     {
       "mutation": "M89",
@@ -720,91 +992,110 @@
           "M96"
         ],
         "retired_guard_full_suite": "SUITE_OK",
+        "full_suite_packages": [
+          "axon-core",
+          "axon-cortex",
+          "axon-fabric",
+          "axon-intent",
+          "axon-os",
+          "axon-psv",
+          "axon-wasm",
+          "axon-web"
+        ],
+        "consumer_suites": {
+          "axon-cortex": "SUITE_OK",
+          "axon-fabric": "SUITE_OK",
+          "axon-intent": "SUITE_OK",
+          "axon-os": "SUITE_OK",
+          "axon-psv": "SUITE_OK",
+          "axon-wasm": "SUITE_OK",
+          "axon-web": "SUITE_OK"
+        },
         "sibling_set_disabled": "ATTACK_REFUSED"
       },
       "holds": true,
-      "commit": "89d5efd808600ffc44606cfc8c30c929c542495a"
+      "commit": "de523f4ce2bef18da3ffcfb588123016475924b6"
     },
     {
-      "mutation": "M346",
+      "mutation": "M482",
       "status": "EQUIVALENT_DID",
-      "kind": "pair",
-      "property": "build provenance never reads a tree with an edited tracked file as clean",
+      "kind": "set",
+      "property": "readiness decides on ONE set of bytes per file: a FIFO serving each read differently certifies nothing (the retired check's only unique effect is naming the FIFO in the reason)",
       "original_guard": {
-        "file": "crates/axon-fabric/src/provenance.rs"
+        "file": "crates/axon-fabric/src/backend.rs"
       },
       "subsumed_by": [
-        "M451"
+        "M481",
+        "M335"
       ],
-      "live_killing_mutant": "joint:M346+M451",
-      "all_paths": "provenance() runs head_bytes_differ (M451) on every call, before the ls-files tag check: it hashes every blob of HEAD's tree against the working-tree bytes, so an edited, deleted or replaced tracked file is dirty whatever the index says. A skip-worktree bit hides only worktree-vs-index differences from git status; an index that differs from HEAD still shows in status (staged), and a worktree equal to HEAD is the committed source. So M346's refusal never stands alone",
+      "live_killing_mutant": "joint:M482+M481+M335",
+      "all_paths": "read_regular is the one reader of every file readiness, the evidence/signature readers, the observer and the B263 qualification decide on, and each caller decides on the single buffer it returns (M335/M336/M337 for readiness's record, preflight and manifest). A FIFO serves one set of bytes per open, so a single read of a FIFO is no more than a regular file an agent could have written; the two-read substitution needs a second read (M335 off). The non-blocking open (M481) is in the set only so the test's feeder can connect: with it on, a FIFO whose writer has not connected reads EOF. Executed: M482 alone, M482+M481, and M481+M335 each refuse; M482+M481+M335 certifies the agent's commit",
       "matrix": {
         "baseline": "ATTACK_REFUSED",
         "retired_guard_disabled": "ATTACK_REFUSED",
         "guard_set_disabled": "ATTACK_SUCCEEDS",
         "guard_set": [
-          "M346",
-          "M451"
+          "M482",
+          "M481",
+          "M335"
         ],
-        "retired_guard_full_suite": "SUITE_OK",
+        "retired_guard_full_suite": "SUITE_BROKEN",
+        "full_suite_packages": [
+          "axon-fabric"
+        ],
+        "consumer_suites": {},
+        "retired_guard_full_suite_failures": [
+          "sealed_exec::tests::a_launcher_open_for_writing_when_hashed_is_refused"
+        ],
         "sibling_set_disabled": "ATTACK_REFUSED"
       },
-      "holds": true,
-      "commit": "47114bd1b6c72d3f8491440be82d6dbc92c32db9"
+      "holds": false,
+      "commit": "de523f4ce2bef18da3ffcfb588123016475924b6"
     },
     {
-      "mutation": "M347",
+      "mutation": "M487",
       "status": "EQUIVALENT_DID",
-      "kind": "pair",
-      "property": "build provenance never reads an untracked input as clean",
+      "kind": "set",
+      "property": "a service leaf (out_root, nonce_store) that is a symlink never loads",
       "original_guard": {
-        "file": "crates/axon-fabric/src/provenance.rs"
+        "file": "crates/axon-fabric/src/protected_host.rs"
       },
       "subsumed_by": [
-        "M501"
+        "M486",
+        "M327"
       ],
-      "live_killing_mutant": "joint:M347+M501",
-      "all_paths": "provenance() always runs head_bytes_differ -> tree_differs, whose untracked_objects walk (M500 files, M501 whole untracked directories) reports every filesystem object not in HEAD's tree and not on the operator allowlist, without consulting git. `status --untracked-files=all` (M347) only ever ADDS reasons; an untracked non-ignored file is exactly one the walk reports. So M347's refusal never stands alone",
+      "live_killing_mutant": "joint:M487+M486+M327",
+      "all_paths": "service_leaf is the only check of the two leaves and reads symlink_metadata, which never follows: for a symlink, is_dir() is false (M486 refuses it on every unix) and st_mode is 0777 on Linux (M327 refuses it). Only with both removed does a link owned by the service euid load",
       "matrix": {
         "baseline": "ATTACK_REFUSED",
         "retired_guard_disabled": "ATTACK_REFUSED",
         "guard_set_disabled": "ATTACK_SUCCEEDS",
         "guard_set": [
-          "M347",
-          "M501"
+          "M487",
+          "M486",
+          "M327"
         ],
         "retired_guard_full_suite": "SUITE_OK",
+        "full_suite_packages": [
+          "axon-fabric"
+        ],
+        "consumer_suites": {},
         "sibling_set_disabled": "ATTACK_REFUSED"
       },
       "holds": true,
-      "commit": "a98e2bbadafde9b71a0fe22536e3d07ceb10c842"
+      "commit": "de523f4ce2bef18da3ffcfb588123016475924b6"
     },
     {
-      "mutation": "M414",
-      "status": "EQUIVALENT_DID",
-      "kind": "pair",
-      "property": "build provenance never reads a file hidden by a non-tracked ignore rule as clean",
-      "original_guard": {
-        "file": "crates/axon-fabric/src/provenance.rs"
-      },
-      "subsumed_by": [
-        "M501"
-      ],
-      "live_killing_mutant": "joint:M414+M501",
-      "all_paths": "a file ignored by info/exclude, an untracked .gitignore or a config excludesFile is an object not in HEAD's tree; the walk (M501 for its untracked directory, M500 for a file) reports it unless the operator allowlist names it, and git-ignore plays no part in the walk (decision C). The check-ignore source test (M414) only ADDS a reason. So it never stands alone",
-      "matrix": {
-        "baseline": "ATTACK_REFUSED",
-        "retired_guard_disabled": "ATTACK_REFUSED",
-        "guard_set_disabled": "ATTACK_SUCCEEDS",
-        "guard_set": [
-          "M414",
-          "M501"
-        ],
-        "retired_guard_full_suite": "SUITE_OK",
-        "sibling_set_disabled": "ATTACK_REFUSED"
-      },
+      "mutation": "M176",
+      "status": "STALE_REFACTORED",
+      "property": "a pass needs exit 0",
+      "original_guard": "the exit-0 guard became the Some(0) of the Passed arm in runner.rs (C9 re-audit)",
+      "old_string_present": false,
+      "replacement": "M293",
+      "replacement_state": "REPLACEMENT_KILLED",
+      "matrix": null,
       "holds": true,
-      "commit": "a98e2bbadafde9b71a0fe22536e3d07ceb10c842"
+      "commit": "de523f4ce2bef18da3ffcfb588123016475924b6"
     }
   ]
 }
