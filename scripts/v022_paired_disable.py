@@ -357,6 +357,17 @@ def main():
         "M595": {"siblings": ["M594"], "kind": "pair"},
         "M596": {"siblings": ["M597"], "kind": "pair"},
         "M597": {"siblings": ["M596"], "kind": "pair"},
+        # C9 round 3 (rows): no route leaves these guards alone.
+        # EQUIV_RECORD[...]["all_paths"]. M186 on the direct route (the
+        # privileged route's own sibling M620 in the set too); M286/M459 vs
+        # the hashed ancestry walk; M453 vs the common-dir rule; M602 vs the
+        # protected custodian's spend rule, with the production helper and
+        # custodian.
+        "M186": {"siblings": ["M606", "M620"], "kind": "set"},
+        "M286": {"siblings": ["M581"], "kind": "pair"},
+        "M453": {"siblings": ["M580"], "kind": "pair"},
+        "M459": {"siblings": ["M581"], "kind": "pair"},
+        "M602": {"siblings": ["M628"], "kind": "pair"},
     }
     # Every retired row has a matrix and no active row has one.
     if set(GUARD_SETS) != set(mut.EQUIVALENT_DID):

@@ -66,7 +66,9 @@ fn main() {
             must_run_as(&c);
             // WHERE the store sits is the operator's; the store itself is ours.
             let parent = c.store.parent().unwrap_or(std::path::Path::new("/"));
-            axon_fabric::backend::check_operator_owned(parent).unwrap_or_else(|e| die(&e));
+            // The chain only: the parent's entries include the store, which
+            // is the custodian's uid's by design (check_store below).
+            axon_fabric::backend::check_operator_chain(parent).unwrap_or_else(|e| die(&e));
             (c, Mode::Protected)
         }
         Some("--test-config") if axon_fabric::backend::TEST_TRUST_BUILD => {

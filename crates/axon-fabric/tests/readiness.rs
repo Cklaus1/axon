@@ -358,7 +358,10 @@ fn grafted_ancestry_is_not_certified() {
     c.refused("is not an ancestor of this tree");
     let grafts = c.repo.join(".git/info/grafts");
     write(&grafts, &format!("{orphan} {}\n", c.certified_sha()));
-    c.refused("info/grafts file");
+    // Refused by the info/grafts refusal (M286) AND by the ancestry walk over
+    // hash-checked commit objects, which never reads grafts (M581), each
+    // alone (four-cell record, C9 round 3): any refusal is correct.
+    c.refused_any();
 }
 
 /// skip-worktree alone: an uncommitted change git is told not to look at.
@@ -589,7 +592,12 @@ fn a_linked_worktree_is_not_certified() {
         v["status"], "PASS",
         "ATTACK: readiness certified a linked worktree (a gitfile names the repository): {v}"
     );
-    assert!(v.to_string().contains("gitfile"), "{v}");
+    // The gitfile refusal (M453) and the common-dir rule (M580) each refuse
+    // it alone (four-cell record, C9 round 3): either reason.
+    assert!(
+        v.to_string().contains("gitfile") || v.to_string().contains("linked worktree"),
+        "{v}"
+    );
     assert_eq!(
         c.verdict()["status"],
         "PASS",

@@ -843,15 +843,7 @@ pub fn descends(top: &Path, rev: &str) -> Result<(), String> {
         return Err(format!("{rev:?} is not a revision"));
     }
     let head = text(top, &["rev-parse", "--verify", "HEAD^{commit}"])?;
-    let mut target = text(
-        top,
-        &[
-            "rev-parse",
-            "--verify",
-            "--end-of-options",
-            &format!("{rev}^{{object}}"),
-        ],
-    )?;
+    let mut target = object_named(top, rev)?;
     let mut o = Objects::open(top)?;
     for _ in 0..8 {
         match text(top, &["cat-file", "-t", &target])?.as_str() {
@@ -875,6 +867,38 @@ pub fn descends(top: &Path, rev: &str) -> Result<(), String> {
         }
     }
     Err(format!("{rev}: too many nested tags"))
+}
+
+/// The object `rev` names, by HASH only: a full object id as it is, or the
+/// ONE object an abbreviation (4 to 39 lowercase hex digits) matches. Never a
+/// ref: git's own resolution prefers a ref to an abbreviated hash, so a
+/// branch the repository holds, named like the certified revision's
+/// abbreviation (the guest build's PCI_CERTIFIED is one), named whatever
+/// commit it points at, and an orphan HEAD "descended" from the certified
+/// revision (C9 round 3, rows).
+fn object_named(top: &Path, rev: &str) -> Result<String, String> {
+    if is_oid(rev) {
+        return Ok(rev.to_string());
+    }
+    if !(4..40).contains(&rev.len())
+        || !rev
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    {
+        return Err(format!(
+            "{rev:?} is not an object id or an abbreviation of one: a revision is named by its \
+             hash, never by a ref the repository controls"
+        ));
+    }
+    let all = text(top, &["rev-parse", &format!("--disambiguate={rev}")])?;
+    let mut named = all.lines().filter(|l| is_oid(l));
+    match (named.next(), named.next()) {
+        (Some(one), None) => Ok(one.to_string()),
+        (None, _) => Err(format!("no object is named {rev}")),
+        _ => Err(format!(
+            "{rev} is ambiguous: more than one object's name begins with it"
+        )),
+    }
 }
 
 fn is_oid(s: &str) -> bool {
@@ -1129,7 +1153,12 @@ pub(crate) mod tests {
         let e = discover(&w).expect_err(
             "ATTACK: a gitfile naming a repository elsewhere was accepted as the build's tree",
         );
-        assert!(e.contains("gitfile"), "{e}");
+        // The kind check (M453) and the common-dir rule (M580, what git acts
+        // on) each refuse it alone (four-cell record, C9 round 3).
+        assert!(
+            e.contains("gitfile") || e.contains("linked worktree"),
+            "{e}"
+        );
     }
 
     #[test]

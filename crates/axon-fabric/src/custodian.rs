@@ -534,6 +534,25 @@ mod tests {
         assert!(c.check(true).is_err(), "a root custodian");
     }
 
+    /// A83 (M640): on a protected host only uid 0, the setuid-root helper,
+    /// spends a nonce. The custodian's peer rule (M628) admits exactly the
+    /// configured launcher uid, so a config naming any other uid would let a
+    /// helper that is NOT root in every id (installed without setuid, M602)
+    /// spend, and launch as its caller. A uid that is neither the Fabric's
+    /// nor the custodian's, so no other rule refuses it.
+    #[test]
+    fn a_protected_custodian_config_lets_only_root_spend() {
+        cfg().check(true).expect("control: launcher_uid 0");
+        let mut c = cfg();
+        c.launcher_uid = 4242;
+        let got = c.check(true);
+        assert!(
+            got.is_err(),
+            "ATTACK: a protected custodian config letting uid 4242 spend nonces was accepted"
+        );
+        assert!(got.unwrap_err().contains("not 0"));
+    }
+
     /// Amendment 50: Fabric is issued a nonce; only the launcher uid spends it.
     #[test]
     fn only_fabric_is_issued_and_only_the_launcher_spends() {

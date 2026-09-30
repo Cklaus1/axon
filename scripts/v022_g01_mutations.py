@@ -790,20 +790,20 @@ MUTATIONS = [
     ('M191', 'M3: the observer program is pinned', 'crates/axon-fabric/src/observer.rs', '            sha256: cfg.command_sha256.clone(),\n        },\n        cfg.exec_owner,', '            sha256: crate::backend::sha256_file(&cfg.command).unwrap_or_default(),\n        },\n        cfg.exec_owner,', 'axon-fabric', '--test psv_dispatch', 'an_unpinned_observer_is_refused'),
     ('M192', 'M3/A9: the OBSERVER domain', 'crates/axon-fabric/src/observer.rs', '        &cfg.trust.dir,\n        TrustAuthority::Observer,', '        &cfg.trust.dir,\n        TrustAuthority::Qualification,', 'axon-fabric', '--test psv_dispatch', 'every_defective_observation_refuses_the_launch'),
     ('M193', 'M3: the claimed observer is the signer', 'crates/axon-fabric/src/observer.rs', 'if o.observer_key_id != signer {', 'if false && o.observer_key_id != signer {', 'axon-fabric', '--test psv_dispatch', 'every_defective_observation_refuses_the_launch'),
-    ('M194', "M3/A8: the observation's epoch", 'crates/axon-fabric/src/observer.rs', 'if o.epoch != epoch {', 'if false && o.epoch != epoch {', 'axon-fabric', '--test psv_dispatch', 'every_defective_observation_refuses_the_launch'),
+    ('M194', "M3/A8: the observation's epoch", 'crates/axon-fabric/src/observer.rs', 'if o.epoch != epoch {', 'if false && o.epoch != epoch {', 'axon-fabric', '--test psv_dispatch', 'every_defective_observation_launches_nothing_on_the_direct_route'),
     ('M195', "M3/A8: the observation's age", 'crates/axon-fabric/src/observer.rs', 'if age < 0 || age as u64 > cfg.max_age_s {', 'if false && (age < 0 || age as u64 > cfg.max_age_s) {', 'axon-fabric', '--test psv_dispatch', 'every_defective_observation_refuses_the_launch'),
     ('M196', 'M3/A15 -> amendment 50: a verified observation spends its nonce (in the CUSTODIAN, for the root helper)', 'crates/axon-fabric/src/custodian.rs', '                self.store\n                    .consume(nonce, r.epoch, &self.clock, self.cfg.max_age_s)?;', '                let _ = (&self.store, nonce);', 'axon-fabric', '--test psv_dispatch', 'a_verified_observation_makes_the_guest_verdict_protected'),
     ('M197', 'M3: a nonce is of its epoch', 'crates/axon-fabric/src/observer.rs', 'if rec["epoch"].as_u64() != Some(epoch) {', 'if false && rec["epoch"].as_u64() != Some(epoch) {', 'axon-fabric', '--test psv_dispatch', 'a_nonce_authorizes_exactly_one_launch'),
     ('M198', 'M3/A8: a nonce has a maximum age', 'crates/axon-fabric/src/observer.rs', 'if age < 0 || age as u64 > max_age_s {', 'if false && (age < 0 || age as u64 > max_age_s) {', 'axon-fabric', '--test psv_dispatch', 'a_nonce_authorizes_exactly_one_launch'),
     ('M199', 'M3: a nonce is one this custodian issues', 'crates/axon-fabric/src/observer.rs', 'if nonce.len() != 32 || !nonce.bytes().all(|b| b.is_ascii_hexdigit()) {', 'if false {', 'axon-fabric', '--test psv_dispatch', 'a_nonce_authorizes_exactly_one_launch'),
     ('M200', 'M3/A15: the observation is of THIS manifest', 'crates/axon-psv/src/lib.rs', '                manifest_digest,\n            ),', '                &self.intended_launch_manifest_sha256,\n            ),', 'axon-fabric', '--test psv_dispatch', 'every_defective_observation_refuses_the_launch'),
-    ('M201', "M3: the observation's nonce is the manifest's", 'crates/axon-psv/src/lib.rs', '("nonce", &self.nonce, &m.observation_nonce),', '("nonce", &self.nonce, &self.nonce),', 'axon-fabric', '--test psv_dispatch', 'every_defective_observation_refuses_the_launch'),
+    ('M201', "M3: the observation's nonce is the manifest's", 'crates/axon-psv/src/lib.rs', '("nonce", &self.nonce, &m.observation_nonce),', '("nonce", &self.nonce, &self.nonce),', 'axon-fabric', '--test psv_dispatch', 'every_defective_observation_launches_nothing_on_the_direct_route'),
     ('M202', "M3/A7: the observed kernel is the launch's", 'crates/axon-psv/src/lib.rs', '                &self.guest.kernel_sha256,\n                &m.guest.kernel_sha256,', '                &self.guest.kernel_sha256,\n                &self.guest.kernel_sha256,', 'axon-fabric', '--test psv_dispatch', 'every_defective_observation_refuses_the_launch'),
     ('M203', 'M3: a verified observation makes the verdict protected', 'crates/axon-fabric/src/submit.rs', 'let hv = crate::psv::derive(&launch, &res.out_dir, observation.as_ref());', 'let hv = crate::psv::derive(&launch, &res.out_dir, None);', 'axon-fabric', '--test psv_dispatch', 'a_verified_observation_makes_the_guest_verdict_protected'),
     # C9 round 1: re-anchored on the CURRENT seam (it had been recorded STALE while
     # its guard lived on). The mutant swallows observe's Err and launches with no
     # observation, as the pre-refactor mutant did.
-    ('M204', 'M3: a refused observation launches nothing', 'crates/axon-fabric/src/submit.rs', '                .map_err(|e| format!("preflight observation refused: {e}"))\n                .and_then(|v| {\n', '                .map_or_else(|_| Ok::<_, String>(None), |v| Ok(Some(v)))\n                .and_then(|v| {\n                    let Some(v) = v else {\n                        return Ok((launch, None));\n                    };\n', 'axon-fabric', '--test psv_dispatch', 'every_defective_observation_refuses_the_launch'),
+    ('M204', 'M3: a refused observation launches nothing', 'crates/axon-fabric/src/submit.rs', '                .map_err(|e| format!("preflight observation refused: {e}"))\n                .and_then(|v| {\n', '                .map_or_else(|_| Ok::<_, String>(None), |v| Ok(Some(v)))\n                .and_then(|v| {\n                    let Some(v) = v else {\n                        return Ok((launch, None));\n                    };\n', 'axon-fabric', '--test psv_dispatch', 'every_defective_observation_launches_nothing_on_the_direct_route'),
     ('M205', 'O2/A18: protected evidence needs an operator-rooted verifier key', 'crates/axon-loop/src/intake.rs', '    if axon_loop_contracts::protected_evidence::claims_protected(&rc) {', '    if false && axon_loop_contracts::protected_evidence::claims_protected(&rc) {', 'axon-loop', '--test intake', 'a_verifier_key_planted_in_the_store_never_authenticates_protected_evidence'),
     ('M206', 'O2: rooted() requires the key in the operator root', 'crates/axon-loop-contracts/src/operator_trust.rs', '    if root_keys_hex(a)?.contains(&want) {', '    if true {', 'axon-loop', '--test intake', 'a_verifier_key_planted_in_the_store_never_authenticates_protected_evidence'),
     ('M207', 'O2: rooted_key consults the operator root', 'crates/axon-loop/src/store.rs', '        axon_loop_contracts::operator_trust::rooted(a, k)?;\n', '', 'axon-loop', '--test protected_class', 'an_observer_key_planted_in_the_store_is_not_authority'),
@@ -817,7 +817,7 @@ MUTATIONS = [
     ('M215', "M4/A6: the guest interpreter is the request's pinned executable", 'crates/axon-loop-contracts/src/protected_evidence.rs', 'if req.executable_digest.as_str() != want {', 'if false && req.executable_digest.as_str() != want {', 'axon-loop', '--test intake', 'each_protected_join_is_verified_over_the_documents'),
     ('M216', 'M4: each join exactly once', 'crates/axon-loop-contracts/src/protected_evidence.rs', '            [d] if d.len() == 64 && d.bytes().all(|b| b.is_ascii_hexdigit()) => {', '            [d, ..] if d.len() == 64 && d.bytes().all(|b| b.is_ascii_hexdigit()) => {', 'axon-loop', '--test intake', 'a_protected_claim_without_every_join_is_refused'),
     ('M217', 'M4: each join is a sha256', 'crates/axon-loop-contracts/src/protected_evidence.rs', '[d] if d.len() == 64 && d.bytes().all(|b| b.is_ascii_hexdigit()) =>', '[d] =>', 'axon-loop', '--test intake', 'each_protected_join_is_verified_over_the_documents'),
-    ('M218', 'M4: intake holds a protected claim to every join', 'crates/axon-loop/src/intake.rs', '        let o = axon_loop_contracts::protected_evidence::check_bundle(\n            &req,\n            &rc,\n            bundle,\n            ep.authority_epoch.get(),\n            &config.trusted_observer_keys(),\n        )\n        .map_err(|e| {', '        let o = Ok::<_, String>(axon_loop_contracts::protected_evidence::ObservationSigner { observer_ref: issuer.clone(), key_id: bundle.len().to_string() })\n        .map_err(|e: String| {', 'axon-loop', '--test intake', 'a_protected_claim_without_every_join_is_refused'),
+    ('M218', 'M4: intake holds a protected claim to every join', 'crates/axon-loop/src/intake.rs', '        let o = axon_loop_contracts::protected_evidence::check_bundle(\n            &req,\n            &rc,\n            bundle,\n            ep.authority_epoch.get(),\n            &ep.scope,\n            &config.trusted_observer_keys(),\n        )\n        .map_err(|e| {', '        let o = Ok::<_, String>(axon_loop_contracts::protected_evidence::ObservationSigner { observer_ref: issuer.clone(), key_id: bundle.len().to_string() })\n        .map_err(|e: String| {', 'axon-loop', '--test intake', 'a_protected_claim_without_every_join_is_refused'),
     ('M219', 'B1: a sealed candidate @[test] is never collected', 'crates/axon-core/src/main.rs', 'if !sealed.is_empty() && axon_core::resolver::span_in_sealed(f.span, &sealed) {', 'if false && axon_core::resolver::span_in_sealed(f.span, &sealed) {', 'axon-core', '--no-default-features --test psv_test_selection', 'a_sealed_candidates_own_test_is_never_collected'),
     ('M220', 'B1: the runner selects exactly the registered test', 'crates/axon-psv/src/runner.rs', '        .arg("--exact")\n', '', 'axon-psv', '--test runner', 'a_suite_sibling_does_not_run_beside_the_registered_test'),
     ('M221', 'B3: launch inputs come from the store, never the caller-owned run dir', 'crates/axon-fabric/src/submit.rs', '                crate::psv::private_inputs(\n                    lx,\n                    &cfg.state_dir,\n                    &cfg.epoch.scope().tenant_id,\n                    &req,\n                    &version,\n                )\n', '                { let _ = (lx, &version); match &target.bound { Bound::Version { dir, .. } => Ok::<PathBuf, String>(dir.0.clone()), _ => unreachable!() } }\n', 'axon-fabric', '--test psv_dispatch', 'a_run_dir_swapped_under_the_callers_state_changes_nothing'),
@@ -829,7 +829,7 @@ MUTATIONS = [
     ('M227', 'observation joins the manifest verifier', 'crates/axon-psv/src/lib.rs', '("verifier_sha256", &self.verifier_sha256, &m.verifier_sha256),', '("verifier_sha256", &m.verifier_sha256, &m.verifier_sha256),', 'axon-fabric', '--test psv_dispatch', 'every_defective_observation_refuses_the_launch'),
     ('M228', 'the verify step inherits no caller environment (C9 r2: re-anchored at sealed_exec::command, which builds the envp of every sealed child from exactly its env)', 'crates/axon-fabric/src/sealed_exec.rs', '    let envp = env\n        .iter()\n        .map(|(k, v)| c(format!("{k}={v}").as_bytes()))', '    let envp = std::env::vars()\n        .filter(|(k, _)| !env.iter().any(|(e, _)| e == k))\n        .chain(env.iter().map(|(k, v)| (k.to_string(), v.to_string())))\n        .map(|(k, v)| c(format!("{k}={v}").as_bytes()))', 'axon-fabric', '--test psv_dispatch', 'the_verify_step_inherits_nothing_from_the_caller'),
     ('M229', 'the per-attempt secret is scrubbed when the launcher returns', 'crates/axon-fabric/src/backend.rs', '    psv.scrub();\n    let out2 = out.clone();', '    let _ = &psv;\n    let out2 = out.clone();', 'axon-fabric', '--test psv_dispatch', 'the_verify_step_inherits_nothing_from_the_caller'),
-    ('M230', 'B2: intake joins a protected claim over the bundle', 'crates/axon-loop/src/intake.rs', 'axon_loop_contracts::protected_evidence::check_bundle(\n            &req,\n            &rc,\n            bundle,\n            ep.authority_epoch.get(),\n            &config.trusted_observer_keys(),\n        )\n        .map_err(|e| {', 'axon_loop_contracts::protected_evidence::check(&req, &rc).map(|_| axon_loop_contracts::protected_evidence::ObservationSigner { observer_ref: issuer.clone(), key_id: bundle.len().to_string() })\n        .map_err(|e| {', 'axon-loop', '--test intake', 'each_protected_join_is_verified_over_the_documents'),
+    ('M230', 'B2: intake joins a protected claim over the bundle', 'crates/axon-loop/src/intake.rs', 'axon_loop_contracts::protected_evidence::check_bundle(\n            &req,\n            &rc,\n            bundle,\n            ep.authority_epoch.get(),\n            &ep.scope,\n            &config.trusted_observer_keys(),\n        )\n        .map_err(|e| {', 'axon_loop_contracts::protected_evidence::check(&req, &rc).map(|_| axon_loop_contracts::protected_evidence::ObservationSigner { observer_ref: issuer.clone(), key_id: bundle.len().to_string() })\n        .map_err(|e| {', 'axon-loop', '--test intake', 'each_protected_join_is_verified_over_the_documents'),
     ('M231', 'B2: a bundle for a non-protected receipt is refused', 'crates/axon-loop/src/intake.rs', '} else if psv_evidence.is_some() {', '} else if false && psv_evidence.is_some() {', 'axon-loop', '--test intake', 'each_protected_join_is_verified_over_the_documents'),
     ('M232', 'B2: the bundle manifest is the receipt manifest', 'crates/axon-loop-contracts/src/protected_evidence.rs', 'if m_sha != want("launch-manifest-sha256:")? {', 'if false && m_sha != want("launch-manifest-sha256:")? {', 'axon-loop', '--test intake', 'each_protected_join_is_verified_over_the_documents'),
     ('M233', 'B2: the bundle observation is the receipt observation', 'crates/axon-loop-contracts/src/protected_evidence.rs', 'if o_sha != want("preflight-observation-sha256:")? {', 'if false && o_sha != want("preflight-observation-sha256:")? {', 'axon-loop', '--test intake', 'each_protected_join_is_verified_over_the_documents'),
@@ -869,7 +869,7 @@ MUTATIONS = [
     ('M267', "PSV-7 (r3): a counted trial's episode ran its arm's policy", 'crates/axon-loop/src/admission.rs', '    if ep.policy_ref != arm.policy_ref {', '    if false && ep.policy_ref != arm.policy_ref {', 'axon-loop', '--test protected_class', 'a_protected_record_must_agree_with_its_re_verified_documents'),
     ('M268', "PSV-7 (r3): a counted trial's outcome is its signed verdict", 'crates/axon-loop/src/admission.rs', '        (crate::evl::Outcome::VerifiedPass, RV::Passed)\n        | (crate::evl::Outcome::Fail, RV::Failed) => {}', '        (_, _) if true => {}', 'axon-loop', '--test protected_class', 'a_protected_record_must_agree_with_its_re_verified_documents'),
     ('M269', "PSV-7 (r3): a counted trial's context signature re-verifies", 'crates/axon-loop/src/admission.rs', '    )\n    .map_err(|e| fail(format!("context signature: {e}")))?;', '    )\n    .unwrap_or_else(|_| {\n        t.context_signed_by\n            .clone()\n            .map(|s| s.key_id)\n            .unwrap_or_default()\n    });', 'axon-loop', '--test protected_class', 'a_protected_record_must_agree_with_its_re_verified_documents'),
-    ('M270', "PSV-1: a draw comes from the RUNNING frame's kernel (a sealed frame never draws the operator stream)", 'crates/axon-core/src/interp.rs', '        self.k().rng_next()', '        self.kernels[0].rng_next()', 'axon-core', '--no-default-features --test psv_test_selection', 'sealed_rng_activity_never_moves_the_operators_stream'),
+    ('M270', "PSV-1: a draw comes from the RUNNING frame's kernel (a sealed frame never draws the operator stream)", 'crates/axon-core/src/interp.rs', '        Ok(self.k().rng_next())', '        Ok(self.kernels[0].rng_next())', 'axon-core', '--no-default-features --test psv_test_selection', 'sealed_rng_activity_never_moves_the_operators_stream'),
     ('M271', "PSV-1: srand reseeds only the RUNNING frame's kernel (a sealed srand never reseeds the operator stream)", 'crates/axon-core/src/interp.rs', '        self.k().rng_set(n)', '        self.kernels[0].rng_set(n)', 'axon-core', '--no-default-features --test psv_test_selection', 'a_sealed_candidate_cannot_reseed_the_rng'),
     ('M272', "PSV-1: the sealed kernel's stream is seeded by a one-way derivation (its draws reveal nothing of the operator seed)", 'crates/axon-core/src/interp.rs', '            x = if self.rng_sealed {\n                sealed_rng_seed(s)\n            } else {\n                s\n            };', '            x = s;', 'axon-core', '--no-default-features --test psv_test_selection', 'a_sealed_candidates_own_stream_reveals_nothing_of_the_operators'),
     ('M273', 'D1: a caller --grant-registry is refused on a protected host (every route)', 'crates/axon-fabric/src/bin/axon-fabric.rs', '            if a.has("--grant-registry") {\n                refuse_caller_grant_registry();', '            if false && a.has("--grant-registry") {\n                refuse_caller_grant_registry();', 'axon-fabric', '--test grant_registry_authority', 'a_protected_host_refuses_a_caller_grant_registry_on_every_route'),
@@ -883,7 +883,7 @@ MUTATIONS = [
     ('M281', 'D1: status/cancel write nothing to the journal before authorization', 'crates/axon-fabric/src/bin/axon-fabric.rs', '    let j = Journal::open_unreconciled(PathBuf::from(a.req("--journal")))', '    let _ = Journal::open(PathBuf::from(a.req("--journal")));\n    let j = Journal::open_unreconciled(PathBuf::from(a.req("--journal")))', 'axon-fabric', '--test grant_registry_authority', 'status_and_cancel_authorize_before_any_write_and_reconcile_only_their_scope'),
     ('M282', "D1: status/cancel reconcile only the authorized op's scope", 'crates/axon-fabric/src/journal.rs', '.filter(|v| v.state == s && scope.is_none_or(|sc| &v.intent.scope == sc))', '.filter(|v| v.state == s)', 'axon-fabric', '--test grant_registry_authority', 'status_and_cancel_authorize_before_any_write_and_reconcile_only_their_scope'),
     ('M283', 'D1: an unreconciled journal refuses every append over a torn tail', 'crates/axon-fabric/src/journal.rs', '        if g.torn_at.is_some() {', '        if false && g.torn_at.is_some() {', 'axon-fabric', '--test grant_registry_authority', 'an_unreconciled_journal_refuses_writes_over_a_torn_tail'),
-    ('M284', 'readiness: git runs with the caller environment cleared', 'crates/axon-fabric/src/git_data.rs', 'c.env_clear()', 'c.env_remove("AXON_NO_SUCH_VAR")', 'axon-fabric', '--test readiness_git_env', 'the_callers_path_and_git_environment_do_not_steer_the_verdict'),
+    ('M284', 'readiness: git runs with the caller environment cleared', 'crates/axon-fabric/src/git_data.rs', 'c.env_clear()', 'c.env_remove("AXON_NO_SUCH_VAR")', 'axon-fabric', '--test guest_provenance', 'the_callers_git_dir_does_not_answer_the_development_lineage_check'),
     ('M285', 'readiness: refs/replace/ replacements are refused', 'crates/axon-fabric/src/readiness.rs', 'if let Some(r) = replaced.lines().next() {', 'if let Some(r) = replaced.lines().next().filter(|_| false) {', 'axon-fabric', '--test readiness', 'a_replaced_head_commit_is_not_certified'),
     ('M286', 'readiness: an info/grafts file is refused', 'crates/axon-fabric/src/readiness.rs', 'if std::fs::symlink_metadata(&grafts).is_ok() {', 'if false && std::fs::symlink_metadata(&grafts).is_ok() {', 'axon-fabric', '--test readiness', 'grafted_ancestry_is_not_certified'),
     ('M287', 'readiness: a skip-worktree index entry is refused', 'crates/axon-fabric/src/readiness.rs', "if tag == b'S' || tag == b's' {", 'if false {', 'axon-fabric', '--test readiness', 'a_skip_worktree_entry_is_not_certified'),
@@ -1502,7 +1502,7 @@ MUTATIONS += [
      '    if false && o.firecracker_sha256 != b263.firecracker_sha256 {',
      'axon-fabric', _QA, 'a_b263_record_of_another_engine_is_refused'),
     ('M576', 'PSV-7: readiness judges B263 currency at decision time with Fabric\'s maximum age', _QR,
-     'now, trust.max_age_s, || {', 'now, u64::MAX, || {',
+     'now, max_age_s, || {', 'now, u64::MAX, || {',
      'axon-fabric', _QA, 'a_b263_qualification_that_lapsed_after_certification_is_refused'),
     ('M577', 'PSV-7: a certification is not dated before the run it certifies was observed', _QR,
      '    if observed_at > certified_at {', '    if false && observed_at > certified_at {',
@@ -1879,6 +1879,29 @@ MUTATIONS += [
      'axon-fabric', '--test privileged_launcher', 'an_observation_whose_epoch_is_not_the_manifests_launches_nothing'),
 ]
 
+# ── C9 round 3, ROWS workstream (M640-M649): guards the retirement records
+# below rest on that had no row. M640: the custodian config's launcher_uid==0
+# rule, which M602's four-cell record (vs M628) needs on the path where the
+# custodian is configured with another spender. M641: the protected
+# custodian's store-parent rule (fixed here: it listed the parent's entries,
+# the store among them, so no correctly deployed protected custodian could
+# start; the chain alone is the property).
+MUTATIONS += [
+    ('M640', 'A83: a protected custodian config lets only uid 0 (the setuid-root helper) spend', _CU,
+     '        if self.launcher_uid != 0 {',
+     '        if false && self.launcher_uid != 0 {',
+     'axon-fabric', '--lib', 'custodian::tests::a_protected_custodian_config_lets_only_root_spend'),
+    ('M641', 'A83: a protected custodian serves only from a store whose parent chain is the operator\'s', 'crates/axon-fabric/src/bin/axon-custodian.rs',
+     '            axon_fabric::backend::check_operator_chain(parent).unwrap_or_else(|e| die(&e));',
+     '            let _ = parent;',
+     'axon-fabric', '--test privileged_launcher', 'a_protected_custodian_serves_only_from_a_store_the_operator_placed'),
+    # M642 (found while retiring M459): the lineage's revision is resolved by
+    # hash only; git's own resolution prefers a ref to an abbreviated hash.
+    ('M642', 'FIELD-ORIGIN: the lineage names its revision by hash, never through a ref the repository holds', 'crates/axon-fabric/src/git_data.rs',
+     '    let mut target = object_named(top, rev)?;',
+     '    let mut target = text(top, &["rev-parse", "--verify", "--end-of-options", &format!("{rev}^{{object}}")])?;',
+     'axon-fabric', '--test guest_provenance', 'a_branch_named_like_the_certified_abbreviation_does_not_answer_the_lineage'),
+]
 
 # Protected Check Isolation guards (governance/specs/v022-protected-check-isolation.md):
 # candidate code must not alter what the operator's check runs or what PASS
@@ -2144,6 +2167,68 @@ EQUIV_RECORD["M597"] = {
     "all_paths": "the per-launch dir sits directly in the staging root, which must be 0700 "
                  "(M596) and operator-owned (M598): no other uid can traverse into it whatever "
                  "the per-launch dir's own mode"}
+# C9 round 3, ROWS workstream: rows the 1084ed1c run scored REFUSED_ELSEWHERE
+# or survived, where no route leaves the guard alone. Each four-cell record
+# is executed with scripts/v022_paired_disable.py; the other rows of that
+# run were re-attacked on the route where their guard IS alone (M72 through
+# an operator helper, M194/M201/M204/M310 on the direct route, M284 on the
+# development lineage).
+EQUIV_RECORD["M186"] = {
+    "property": "a guest verdict made without a verified observation is never classed protected",
+    "subsumed_by": ["M606", "M620"], "killer": "joint:M186+M606+M620",
+    "all_paths": "derive has one caller (submit's protected-profile arm) and receives no observation "
+                 "exactly when the config has no observer (observe returns a verified observation or "
+                 "Err, and Err launches nothing: M204). Its class reaches the receipt only through "
+                 "psv_receipt, which re-labels guest-unobserved every launch that is not admissible "
+                 "on a route that attests protected: the DIRECT route never attests (M606, "
+                 "attests_protected), and on the PRIVILEGED route an admissible launch needs the "
+                 "helper to launch, which it never does without a verified observation (M620; its "
+                 "refusal is not launched_ok, which M323's clause downgrades). HostVerdict.class "
+                 "itself has no reader. So a verdict with no observation is guest-unobserved on "
+                 "every route whatever derive's None arm says. Executed on the direct route"}
+EQUIV_RECORD["M286"] = {
+    "property": "readiness never certifies a tree whose ancestry an info/grafts file rewrites",
+    "subsumed_by": ["M581"], "killer": "joint:M286+M581",
+    "all_paths": "refuse_git_spoofing has one caller (the protected_backend component), and the only "
+                 "parent-dependent answer readiness then takes is git_data::descends on axon_sha, "
+                 "a full commit id (checked 40-hex; object_named takes it as a hash, M642), which "
+                 "reads every commit's parents from the hash-checked object bytes (M581) and never "
+                 "from git's commit walk, the only reader of grafts. `git diff certified HEAD` and "
+                 "the tree walk compare trees, which grafts do not touch. So a grafts file changes "
+                 "no answer readiness decides on"}
+EQUIV_RECORD["M453"] = {
+    "property": "a gitfile .git (a repository chosen elsewhere) never answers a protected provenance question",
+    "subsumed_by": ["M580"], "killer": "joint:M453+M580",
+    "all_paths": "discover is the protected entry for every caller (readiness, build provenance's "
+                 "toplevel, descends_from_protected) and, after the kind check, always runs "
+                 "own_repository: git's own --git-common-dir (env cleared) must canonicalize to "
+                 "top/.git. For a gitfile, top/.git is a FILE while git's common dir is a "
+                 "directory, so the two never match (and a gitfile git cannot follow is Err). A "
+                 "symlinked .git stays refused by the kind check with M453 applied. So the kind "
+                 "check's refusal of a gitfile never stands alone"}
+EQUIV_RECORD["M459"] = {
+    "property": "the guest build's PCI lineage never passes through grafted ancestry",
+    "subsumed_by": ["M581"], "killer": "joint:M459+M581",
+    "all_paths": "lineage() is the one body of descends_from (--descends) and descends_from_protected "
+                 "(--lineage, the manifest's); after the grafts refusal it always calls "
+                 "git_data::descends, which names the revision by hash only (object_named, M642: no "
+                 "ref, no parent navigation) and walks parents parsed from hash-checked commit "
+                 "bytes (M581), never git's commit walk, the only reader of grafts. So a grafts "
+                 "file cannot change the answer"}
+EQUIV_RECORD["M602"] = {
+    "property": "a production helper that is not root in every id never launches",
+    "subsumed_by": ["M628"], "killer": "joint:M602+M628",
+    "all_paths": "every launch goes serve_as -> prepare -> observed_launch, which verifies the "
+                 "observation (M620) and then spends its nonce through the operator's custodian "
+                 "(M621) before make_out and run; run is reached only from a Prepared. The spend "
+                 "is authorized by the custodian's SO_PEERCRED rule: only launcher_uid spends "
+                 "(M628). A helper whose euid is not 0 connects with that euid (become_root is a "
+                 "no-op without euid 0). A PROTECTED custodian's config must set launcher_uid to 0 "
+                 "(CustodianConfig::check(true), M640); a test custodian (launcher_uid unchecked) "
+                 "authorizes no production launch (M625), a dev one none at all (M624); the "
+                 "helper accepts only a socket its configured custodian uid or root serves (M626). "
+                 "So a helper that is not root never spends, and never launches. Executed with the "
+                 "production helper and the production (socket-activated) custodian"}
 EQUIVALENT_DID = set(EQUIV_RECORD)
 # STALE: a row whose old text no longer exists. "The old text is absent" shows
 # only that the TEXT changed, not that the guard is gone (C9 dev review: M204
