@@ -89,15 +89,34 @@ def cargo_target_dir():
         sys.exit(f"refused: cannot tell where cargo builds (cargo metadata: {r.stderr.strip()[-300:]})")
 
 
+def build_tests(pkg, flags, env=""):
+    """Build the tests a cell runs, ALONE: (ok, output). Whether the cell's
+    edit broke the build is the outcome of THIS cargo invocation, never a
+    string found in a test's output: tests build and exec workspace binaries
+    themselves (script_spawn::workspace_bin), and a nested build that fails
+    prints `could not compile` into the test's output (C9 round 4,
+    amendment 59; M58's consumer baseline read CONSUMER_BASELINE_BROKEN)."""
+    build_flags = f" {flags} ".split(" -- ")[0].strip()
+    r = sh(f"source scripts/lib_bounded_run.sh && {mut.UNSET_AMBIENT}"
+           f"{env}bounded_run 12G 2400 cargo test -q -p {pkg} {build_flags} --no-run 2>&1")
+    return r.returncode == 0, r.stdout + r.stderr
+
+
 def run_test(pkg, target, test):
-    """True iff the row's test PASSES (attack refused)."""
+    """True iff the row's test PASSES (attack refused). None: the build
+    failed. A cell that did not pass keeps its whole output (amendment 59)."""
+    built, bout = build_tests(pkg, target)
+    if not built:
+        mut.keep_output(f"pd-cell-build-{pkg}", bout)
+        return None, bout  # a broken edit (or a killed build), not a verdict
     cmd = (f"source scripts/lib_bounded_run.sh && {mut.UNSET_AMBIENT}"
            f"bounded_run 12G 1200 cargo test -q -p {pkg} {target} -- --exact {test}")
     r = sh(cmd)
     out = r.stdout + r.stderr
-    if "could not compile" in out or "error[E" in out:
-        return None, out  # a broken edit, not a verdict
-    return (r.returncode == 0 and "1 passed" in out), out
+    passed = r.returncode == 0 and "1 passed" in out
+    if not passed:
+        mut.keep_output(f"pd-cell-{pkg}-{test.split('::')[-1]}", out)
+    return passed, out
 
 
 def row_flags(target):
@@ -203,12 +222,19 @@ def full_suite_ok(pkg, flags="", env=""):
     broken build."""
     import re as _re
     show = f"{flags} --show-output" if " -- " in f" {flags} " else f"{flags} -- --show-output"
+    # The build first, alone: a broken build is THIS invocation's failure,
+    # and its output is kept like any other cell's (amendment 59: the early
+    # return used to come BEFORE the keep, so a compile error kept nothing).
+    built, bout = build_tests(pkg, flags, env)
+    if not built:
+        mut.keep_output(f"pd-suite-build-{pkg}", bout)
+        return None, bout
     cmd = (f"source scripts/lib_bounded_run.sh && {mut.UNSET_AMBIENT}"
            f"{env}bounded_run 12G 2400 cargo test -q -p {pkg} {show} 2>&1")
     r = sh(cmd)
     out = r.stdout + r.stderr
-    if "could not compile" in out or "error[E" in out:
-        return None, out
+    # The tests are built: compiler text in this output is a TEST's (a nested
+    # build it ran, or a diagnostic it printed), judged as that test's result.
     # Both libtest formats: `name ... FAILED` and, under -q, `name --- FAILED`.
     fails = sorted(set(_re.findall(r"^\s*(\S+)\s+(?:\.\.\.|---)\s+FAILED", out, _re.M)))
     ok = (r.returncode == 0 and "test result: FAILED" not in out)
@@ -216,14 +242,7 @@ def full_suite_ok(pkg, flags="", env=""):
     if not ok:
         # Keep the failing cell's whole output: a failure that does not
         # reproduce is diagnosable only from the panic it actually printed.
-        import hashlib as _h
-        d = "/var/tmp/pd-cells"
-        os.makedirs(d, exist_ok=True)
-        tag = _h.sha256((pkg + flags + env + out).encode()).hexdigest()[:12]
-        path = os.path.join(d, f"{pkg}-{tag}.log")
-        with open(path, "w") as fh:
-            fh.write(out)
-        print(f"    cell output kept: {path}", flush=True)
+        mut.keep_output(f"pd-suite-{pkg}", out)
     return ok, fails
 
 

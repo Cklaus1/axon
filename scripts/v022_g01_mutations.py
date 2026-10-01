@@ -3180,6 +3180,62 @@ BINDING_IDS = {f"M{n}" for n in range(101, 137)}
 # Every id range the PSV rounds allocate (C9 round 1 uses up to M399; round
 # 1b allocates M400-M499, round 2 M500-M519). An id outside every scope would silently fall into
 # g01.
+# C9 round 4 fix wave, rows3 (amendment 59): a cell's build is judged by its
+# own cargo invocation, never by compiler text a TEST printed (axon-cortex's
+# compile_fail doctests under --show-output made M58's consumer baseline read
+# CONSUMER_BASELINE_BROKEN), and every cell that did not pass keeps its whole
+# output, compile errors included. Judged through the real harnesses on a
+# miniature workspace (crates/axon-core/tests/harness_integrity.rs).
+_HN_MUT = 'a_mutation_run_does_not_take_a_tests_nested_build_output_for_a_compile_error'
+_HN_PD = 'a_paired_disable_run_does_not_take_a_tests_nested_build_output_for_a_compile_error'
+_HK_MUT = 'a_mutation_baseline_that_does_not_build_keeps_its_output'
+_HK_PD = 'a_paired_disable_cell_that_does_not_build_keeps_its_output'
+_TEXT_RULE = '    if "could not compile" in out or "error[E" in out:\n'
+MUTATIONS += [
+    ('M880', 'EVIDENCE (rows3): a mutation cell is a compile error only when its own build fails, not when a test prints compiler text',
+     'scripts/v022_g01_mutations.py',
+     "    # The tests are built: compiler text in this output is the TEST's (a\n",
+     _TEXT_RULE + '        return "compile_error", out\n'
+     "    # The tests are built: compiler text in this output is the TEST's (a\n",
+     'axon-core', _HI2, _HN_MUT),
+    ('M881', 'EVIDENCE (rows3): a paired-disable cell is a broken build only when its own build fails',
+     'scripts/v022_paired_disable.py',
+     '    passed = r.returncode == 0 and "1 passed" in out\n',
+     _TEXT_RULE + '        return None, out\n    passed = r.returncode == 0 and "1 passed" in out\n',
+     'axon-core', _HI2, _HN_PD),
+    ('M882', 'EVIDENCE (rows3): a full-suite or consumer cell is a broken build only when its own build fails (M58 CONSUMER_BASELINE_BROKEN)',
+     'scripts/v022_paired_disable.py',
+     "    # The tests are built: compiler text in this output is a TEST's (a nested\n",
+     _TEXT_RULE + '        return None, out\n'
+     "    # The tests are built: compiler text in this output is a TEST's (a nested\n",
+     'axon-core', _HI2, _HN_PD),
+    ('M883', 'EVIDENCE (rows3): a mutation baseline that did not pass keeps its whole output',
+     'scripts/v022_g01_mutations.py',
+     '                              else keep_output(f"baseline-{mid}", b_out))\n',
+     '                              else None)\n',
+     'axon-core', _HI2, _HK_MUT),
+    ('M884', 'EVIDENCE (rows3): a mutated cell that did not pass keeps its whole output',
+     'scripts/v022_g01_mutations.py',
+     '                    kept = keep_output(f"cell-{mid}", out)\n',
+     '                    kept = None\n',
+     'axon-core', _HI2, _HK_MUT),
+    ('M885', "EVIDENCE (rows3): a paired-disable cell whose test did not build keeps the build's output",
+     'scripts/v022_paired_disable.py',
+     '        mut.keep_output(f"pd-cell-build-{pkg}", bout)\n',
+     '        pass\n',
+     'axon-core', _HI2, _HK_PD),
+    ('M886', "EVIDENCE (rows3): a full-suite cell that did not build keeps the build's output (it returned before the keep)",
+     'scripts/v022_paired_disable.py',
+     '        mut.keep_output(f"pd-suite-build-{pkg}", bout)\n',
+     '        pass\n',
+     'axon-core', _HI2, _HK_PD),
+    ('M887', 'EVIDENCE (rows3): a paired-disable cell whose test failed keeps its whole output',
+     'scripts/v022_paired_disable.py',
+     "        mut.keep_output(f\"pd-cell-{pkg}-{test.split('::')[-1]}\", out)\n",
+     '        pass\n',
+     'axon-core', _HI2, _HN_PD),
+]
+
 PSV_IDS = {f"M{n}" for n in range(137, 550)}
 # C9 round 3: rows M560-M649 are PSV rows (workstream ranges).
 PSV_IDS |= {f"M{n}" for n in range(550, 650)}
@@ -3196,6 +3252,8 @@ PSV_IDS |= {f"M{n}" for n in range(740, 760)}
 PSV_IDS |= {f"M{n}" for n in range(650, 720)}
 # C9 round 4 fix wave: rows2 M760-M819, and wave 2 up to M859.
 PSV_IDS |= {f"M{n}" for n in range(760, 860)}
+# C9 round 4 fix wave: rows3 M880-M899 (amendment 59).
+PSV_IDS |= {f"M{n}" for n in range(880, 900)}
 
 
 def in_scope(mid, scope):
@@ -3315,15 +3373,56 @@ AMBIENT_BINARY_VARS = ("AXON", "AXON_BIN", "CORTEX_BIN")
 UNSET_AMBIENT = "unset " + " ".join(AMBIENT_BINARY_VARS) + "; "
 
 
+# Where a cell's whole output is kept when it did not pass (C9 round 4,
+# amendment 59): a label alone ("compile_error", CONSUMER_BASELINE_BROKEN) is
+# not evidence, and an environmental failure that does not reproduce is
+# diagnosable only from what it printed.
+KEEP_DIR = "/var/tmp/v022-cells"
+
+
+def keep_output(kind, out):
+    """Write `out` under KEEP_DIR, print where, and return the path."""
+    os.makedirs(KEEP_DIR, exist_ok=True)
+    tag = hashlib.sha256(f"{kind}\n{out}".encode()).hexdigest()[:12]
+    path = os.path.join(KEEP_DIR, f"{re.sub(r'[^A-Za-z0-9_.-]+', '_', kind)}-{tag}.log")
+    with open(path, "w") as fh:
+        fh.write(out)
+    print(f"    output kept: {path}", flush=True)
+    return path
+
+
+def cargo_build_tests(package, target, env=""):
+    """Build the tests a cell will run, ALONE: (ok, output). A compile error is
+    the outcome of THIS cargo invocation, never a string found in a test's
+    output. Tests build and exec workspace binaries themselves
+    (script_spawn::workspace_bin), and a nested build that fails prints
+    `could not compile` / `error[E…]` into the test's output; a label taken
+    from the whole output read that as the row's own compile error (M278's
+    baseline, C9 round 4; amendment 59)."""
+    cmd = (
+        f"source scripts/lib_bounded_run.sh && {UNSET_AMBIENT}"
+        f"{env}bounded_run {MEM} 1800 cargo test -q -p {package} {target} --no-run"
+    )
+    r = subprocess.run(["bash", "-c", cmd], cwd=ROOT, capture_output=True, text=True)
+    return r.returncode == 0, r.stdout + r.stderr
+
+
 def cargo_test(package, target, test):
+    built, bout = cargo_build_tests(package, target)
+    if not built:
+        # The build itself failed: a compiler error, or the build was killed
+        # (memory bound, timeout) — named apart, so an environment failure
+        # does not read as a broken edit.
+        kind = "compile_error" if ("could not compile" in bout or "error[E" in bout) else "build_failed"
+        return kind, bout
     cmd = (
         f"source scripts/lib_bounded_run.sh && {UNSET_AMBIENT}"
         f"bounded_run {MEM} 1800 cargo test -q -p {package} {target} -- --exact {test}"
     )
     r = subprocess.run(["bash", "-c", cmd], cwd=ROOT, capture_output=True, text=True)
     out = r.stdout + r.stderr
-    if "could not compile" in out or "error[E" in out:
-        return "compile_error", out
+    # The tests are built: compiler text in this output is the TEST's (a
+    # nested build it ran), judged as the test's pass or failure below.
     if r.returncode == 0 and "1 passed" in out:
         return "passed", out
     if r.returncode != 0 and "test result: FAILED" in out and f"{test} --- FAILED" in out:
@@ -3601,8 +3700,11 @@ def main():
             continue
         key = (pkg, target, test)
         if key not in baselines:
-            baselines[key] = cargo_test(pkg, target, test)[0]
-        base = baselines[key]
+            b_outcome, b_out = cargo_test(pkg, target, test)
+            baselines[key] = (b_outcome, None if b_outcome == "passed"
+                              else keep_output(f"baseline-{mid}", b_out))
+        base, base_kept = baselines[key]
+        kept = None
         path = os.path.join(ROOT, rel)
         original = open(path).read()
         before = sha(path)
@@ -3625,6 +3727,8 @@ def main():
                     # string differed. Never counted as killed.
                     result = "refused_elsewhere"
                 evidence = kill_line(out, test) if outcome == "failed" else None
+                if outcome != "passed":
+                    kept = keep_output(f"cell-{mid}", out)
             finally:
                 with open(path, "w") as f:
                     f.write(original)
@@ -3659,7 +3763,9 @@ def main():
                          **row_digest((mid, guard, rel, old, new)),
                          "target": target, "test": test, "baseline": base, "result": result,
                          "attack_marker": ATTACK_MARKERS.get(mid),
-                         "kill_evidence": evidence})
+                         "kill_evidence": evidence,
+                         **({"baseline_output": base_kept} if base_kept else {}),
+                         **({"cell_output": kept} if kept else {})})
         print(f"{'OK ' if good else 'BAD'} {mid} baseline={base} {result}  {guard}", flush=True)
     # The run must end on the interpreter it started with.
     if toolchain["axon_bin_sha256"] is not None and sha(axon_bin) != toolchain["axon_bin_sha256"]:

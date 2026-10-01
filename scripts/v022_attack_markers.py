@@ -966,4 +966,13 @@ ATTACK_MARKERS.update({
     'M856': 'ATTACK: an ack over another candidate view was joined',
     'M851': r"another trial's evidence: IntakeOutcome",
     'M857': 'ATTACK: a trial delivered with a context other than the one its intaken episode names counted',
+    # C9 round 4 fix wave, rows3 (amendment 59).
+    'M880': r"ATTACK: a nested build's failure printed inside a passing test was taken for the\s+row's own compile error",
+    'M881': r"ATTACK: a nested build's failure printed inside a passing test was taken for a\s+broken build",
+    'M882': r"ATTACK: a nested build's failure printed inside a passing test was taken for a\s+broken build",
+    'M883': r'ATTACK: a baseline that did not build kept no output',
+    'M884': r'ATTACK: a mutated cell that did not pass kept no output',
+    'M885': r'ATTACK: a paired-disable cell whose test did not build kept no output',
+    'M886': r'ATTACK: a paired-disable full-suite cell that did not build kept no output',
+    'M887': r'ATTACK: a paired-disable cell whose test failed kept no output',
 })
