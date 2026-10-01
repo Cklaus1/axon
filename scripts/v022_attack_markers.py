@@ -1019,4 +1019,9 @@ ATTACK_MARKERS.update({
     'M973': 'ATTACK: one trial id issued for two tasks: the population was issued',
     'M974': 'ATTACK: a trial assigned twice: the population was issued',
     'M975': 'ATTACK: an evaluation never journalled was admitted',
+    'M976': 'ATTACK: a config breaking role separation was written \\(registered for two roles\\)',
+    'M977': 'ATTACK: a config breaking role separation was written \\(is also a trusted verifier\\)',
+    'M978': 'ATTACK: an evaluation record edited in the store was admitted',
+    'M979': 'ATTACK: a store write followed a symlinked directory out of the store',
+    'M980': 'ATTACK: a store write followed a symlinked directory out of the store',
 })

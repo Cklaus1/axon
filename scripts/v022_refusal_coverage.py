@@ -546,6 +546,50 @@ EXEMPT += [
     (EV, '.ok_or_else(|| refused(format!("evaluation has no arm for policy {p}")))?;',
      "NOTHING TO ADMIT: no arm ran the policy, so there is no arm to return"),
 ]
+ST = "crates/axon-loop/src/store.rs"
+EXEMPT += [
+    (ST, "        if operator_key.len() < 16 {",
+     "OPERATOR-AUTHORED: AXON_ATTEST_KEY is the operator's environment for the loop process; the "
+     "refusal only fails closed (the store does not open)"),
+    (ST, "            Err(std::env::VarError::NotUnicode(_)) => Err(LoopError::Usage(format!(",
+     "OPERATOR-AUTHORED: the operator's environment; the refusal only fails closed (the store does "
+     "not open, never falls back to unkeyed)"),
+    (ST, '                    return Err(LoopError::Io(format!(\n                        "non-normal store path {}",',
+     "UNREACHABLE: every store path is built by the store from its root joined with segments "
+     "validated by check_segment or the ids.rs newtypes (charset [A-Za-z0-9._:-], first character "
+     "alphanumeric) or with digest hex, so no component is `..`, `.` or a root"),
+    (ST, "                Err(e) => return Err(e.into()),\n            }\n        }\n        Ok(())",
+     "OS ERROR: lstat failing for a reason other than NotFound; the path is refused (fails closed)"),
+    (ST, "                Err(e) => return Err(e.into()),\n            }\n            let m = fs::symlink_metadata(&cur)?;",
+     "OS ERROR: create_dir failing for a reason other than AlreadyExists; nothing is written"),
+    (ST, "            if !m.is_dir() {",
+     "FAILS CLOSED: a component that is not a directory makes the write below it fail with ENOTDIR "
+     "(an OS error); nothing is written outside the path"),
+    (ST, "            Err(e) => Err(map_open(p, e)),",
+     "OS ERROR: the open failed (an O_NOFOLLOW refusal of a final-component symlink is the kernel's "
+     "ELOOP, which map_open only names); nothing is read"),
+    (ST, "        if r.scheme() != RefScheme::Cl22 {",
+     "SELECTS NOTHING: put_cas names a file only by the cl22 digest it computes; a read by a "
+     "non-cl22 ref names a file whose content digest (cl22) is compared with the ref by check_name "
+     "(M978) or get_cas_text, which a non-cl22 ref never equals"),
+    (ST, '            .ok_or_else(|| crate::error::refused(format!("no {kind} record {r}")))',
+     "NOTHING TO ADMIT: no such record, so there are no bytes to return"),
+    (ST, "        if axon_loop_contracts::digest(&v)? != *r {",
+     "SELECTS NOTHING (authenticated downstream): every get_cas_text caller authenticates the text "
+     "over its exact bytes before use: clearance and context signatures by verify_document (M951), "
+     "the Fabric request/receipt by the verifier's attestation (M02), the PSV bundle by check_bundle, "
+     "the execution documents by verify_execution (M940-M943); a CAS record read as a TYPED value "
+     "goes through check_name (M978)"),
+    (ST, "    if axon_loop_contracts::canonical_bytes(&back)? != axon_loop_contracts::canonical_bytes(&v)? {",
+     "SELECTS NOTHING (named downstream check): an alternative encoding this refuses decodes to the "
+     "same typed value, which is what every reader uses; an omitted (defaulted) field decodes to a "
+     "value whose digest is not the record's name (check_name, M978) or not the ledger chain's "
+     "(ledger.rs, NOT YET SCANNED)"),
+    (ST, '            Err(e) => {\n                return Err(LoopError::Io(format!(\n                    "{} line {}: {e}",',
+     "SELECTS NOTHING (named downstream check): a JSONL file is the ledger, whose entries are hash-"
+     "chained (each `prev` is the previous entry's digest, ledger.rs, NOT YET SCANNED), so a line "
+     "skipped instead of refused breaks the chain at the next entry"),
+]
 
 def load_rows():
     spec = importlib.util.spec_from_file_location("mut", os.path.join(ROOT, "scripts/v022_g01_mutations.py"))

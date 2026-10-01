@@ -3358,7 +3358,7 @@ MUTATIONS += [
     ('M972', 'check_population (4b): a trial id once in the population (EQUIVALENT: M973)', 'crates/axon-loop/src/evl.rs', '        if !trial_ids.insert(&a.trial_id) {', '        if !trial_ids.insert(&a.trial_id) && false {', 'axon-loop', '--test evl_refusal_sites', 'a_trial_id_issued_for_two_tasks_is_never_issued'),
     ('M973', 'plan::assign (4b): a trial is issued once (EQUIVALENT: M972)', 'crates/axon-loop/src/plan.rs', '        if !trials.insert(&t.trial_id) || !attempts.insert((&t.trial_id, &t.attempt_id)) {', '        if (!trials.insert(&t.trial_id) || !attempts.insert((&t.trial_id, &t.attempt_id))) && false {', 'axon-loop', '--test evl_refusal_sites', 'a_trial_id_issued_for_two_tasks_is_never_issued'),
     ('M974', 'check_population (4b): a (task, arm, trial) once (EQUIVALENT: M972 + M973)', 'crates/axon-loop/src/evl.rs', '        if !assigned_keys.insert((a.task_id.clone(), a.arm_id.clone(), a.trial_id.clone())) {', '        if !assigned_keys.insert((a.task_id.clone(), a.arm_id.clone(), a.trial_id.clone())) && false {', 'axon-loop', '--test evl_refusal_sites', 'a_trial_assigned_twice_is_never_issued'),
-    ('M975', 'EVL (4b): only a journalled evaluation is read as evidence', 'crates/axon-loop/src/evl.rs', '    let (seq, _) = tx.evaluation_event(r).ok_or_else(|| {\n        refused(format!(\n            "evaluation {r} was never journalled by `evl evaluate`"\n        ))\n    })?;', '    let seq = tx.evaluation_event(r).map(|(s, _)| s).unwrap_or(0);', 'axon-loop', '--test evl_refusal_sites', 'an_unjournalled_evaluation_is_never_admitted'),
+    ('M975', 'EVL (4b): only a journalled evaluation is read as evidence', 'crates/axon-loop/src/evl.rs', '    let (seq, _) = tx.evaluation_event(r).ok_or_else(|| {\n        refused(format!(\n            "evaluation {r} was never journalled by `evl evaluate`"\n        ))\n    })?;', '    let seq = tx.evaluation_event(r).map(|(s, _)| s).unwrap_or(u64::MAX);', 'axon-loop', '--test evl_refusal_sites', 'an_unjournalled_evaluation_is_never_admitted'),
 ]
 
 EQUIV_RECORD["M954"] = {
@@ -3437,6 +3437,31 @@ EQUIV_RECORD["M974"] = {
                  "each refuse on every path"}
 EQUIVALENT_DID |= {"M954", "M955", "M956", "M957", "M962", "M964", "M965", "M970", "M971", "M972", "M973", "M974"}
 RETIRED |= {"M954", "M955", "M956", "M957", "M962", "M964", "M965", "M970", "M971", "M972", "M973", "M974"}
+
+# rows4a (amendment 61): store.rs.
+MUTATIONS += [
+    ('M976', 'ADR-002 (4b): one public key is never registered for two roles', 'crates/axon-loop/src/store.rs', '                    if prev != role {', '                    if false && prev != role {', 'axon-loop', '--test evl_admission', 'an_observer_key_and_identity_are_its_own'),
+    ('M977', 'ADR-002 (4b): a preflight observer holds no other loop role', 'crates/axon-loop/src/store.rs', '                if set.contains(o) {', '                if false && set.contains(o) {', 'axon-loop', '--test evl_admission', 'an_observer_key_and_identity_are_its_own'),
+    ('M978', 'store (4b): a CAS record is read only if its content digests to its name', 'crates/axon-loop/src/store.rs', '        if &d != r {', '        if false && &d != r {', 'axon-loop', '--test store_integrity', 'a_journalled_evaluation_edited_in_place_is_never_admitted'),
+    ('M979', 'store (4b): no store path crosses a symlink (guard; EQUIVALENT for writes: M980)', 'crates/axon-loop/src/store.rs', '                Ok(m) if m.file_type().is_symlink() => return Err(symlink_err(&cur)),', '                Ok(m) if false && m.file_type().is_symlink() => return Err(symlink_err(&cur)),', 'axon-loop', '--test store_integrity', 'a_store_directory_replaced_by_a_symlink_is_never_written_through'),
+    ('M980', 'store (4b): ensure_dir re-checks each component is no symlink (EQUIVALENT: M979)', 'crates/axon-loop/src/store.rs', '            if m.file_type().is_symlink() {\n                return Err(symlink_err(&cur));', '            if false && m.file_type().is_symlink() {\n                return Err(symlink_err(&cur));', 'axon-loop', '--test store_integrity', 'a_store_directory_replaced_by_a_symlink_is_never_written_through'),
+]
+
+EQUIV_RECORD["M979"] = {
+    "property": "nothing is written through a symlink inside the store",
+    "subsumed_by": ["M980"], "killer": "joint:M979+M980",
+    "all_paths": "every store write goes through write_atomic, which first calls ensure_dir(parent): ensure_dir "
+                 "walks every component below the root (create_dir, then lstat) and refuses a symlink (M980) "
+                 "before anything is written; a READ through a symlinked directory returns only bytes that must "
+                 "still digest to their name (check_name, M978) or that the ledger verifies"}
+EQUIV_RECORD["M980"] = {
+    "property": "nothing is written through a symlink inside the store",
+    "subsumed_by": ["M979"], "killer": "joint:M979+M980",
+    "all_paths": "ensure_dir's first statement is guard(dir), which lstat()s every existing component and refuses a "
+                 "symlink (M979); M980 differs only for a component that became a symlink between the two calls "
+                 "(a concurrent writer), which write_atomic's guard(path) after ensure_dir refuses again"}
+EQUIVALENT_DID |= {"M979", "M980"}
+RETIRED |= {"M979", "M980"}
 
 PSV_IDS = {f"M{n}" for n in range(137, 550)}
 # C9 round 3: rows M560-M649 are PSV rows (workstream ranges).
