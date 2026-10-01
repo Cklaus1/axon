@@ -393,6 +393,29 @@ EXEMPT += [
 ]
 
 
+# ── C9 round 4b, CORE2 (amendment 60): the interpreter's declared-type cast
+# (conform.rs, every refusal arm) and its seal edges. The seal edges live in
+# interp.rs among refusals that are not protected decisions, so that file is
+# scanned only between two anchors (REGIONS; each once in the file); a row
+# for interp.rs whose text lies outside the region is not this scan's. The
+# interpreter refuses with `return panic(` as well as `Err(`.
+CF = "crates/axon-core/src/interp/conform.rs"
+REGIONS = {"crates/axon-core/src/interp.rs": (
+    "    /// Whether `f` was defined in a sealed (candidate) module.",
+    "    /// Run `g` with the frame's provenance set to `sealed`, restoring it after.")}
+PROTECTED += [CF, *REGIONS]
+SITE = re.compile(SITE.pattern + r"|\breturn panic\(")
+EXEMPT += [
+    (CF, '            return Err("the value is nested too deeply to check against its declared type".into());',
+     "NO INPUT REACHES IT: a value nested 1,000,000 deep cannot be built in a run (each "
+     "construction copies and casts what it nests; measured 2,000/4,000/8,000 levels of a "
+     "recursive struct at 1.7s/7.8s/78s), and a declared type is that deep only through "
+     "recursion the value itself must supply"),
+    (CF, "                    if ps.len() != params.len() {",
+     "NO CONSEQUENCE: a closure of another arity panics at its first call (call_closure checks "
+     "the count) and dispatches on `fn` whatever its arity, so it selects no other code"),
+]
+
 def load_rows():
     spec = importlib.util.spec_from_file_location("mut", os.path.join(ROOT, "scripts/v022_g01_mutations.py"))
     mut = importlib.util.module_from_spec(spec)
@@ -488,11 +511,17 @@ def main():
     bad = []
     for f in PROTECTED:
         text = open(os.path.join(ROOT, f)).read()
+        whole = text
+        if f in REGIONS:  # amendment 60: only the region is scanned (blank elsewhere)
+            a, b = (text.index(x) for x in REGIONS[f])
+            text = re.sub(r"[^\n]", "", text[:a]) + text[a:b] + re.sub(r"[^\n]", "", text[b:])
         spans = []
         for r in rows:
             if r[2] != f:
                 continue
             n = text.count(r[3])
+            if f in REGIONS and n == 0 and whole.count(r[3]) == 1:
+                continue  # amendment 60: a row outside the scanned region
             if n != 1:
                 bad.append(f"{r[0]}: its old text occurs {n} times in {f} (covers nothing)")
                 continue

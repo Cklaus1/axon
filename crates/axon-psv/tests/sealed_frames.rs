@@ -435,3 +435,140 @@ fn the_candidate_never_chooses_the_operators_judging_method() {
         assert_eq!(s.host, Some(false), "a keyed FAILURE ({why}): {}", s.stdout);
     }
 }
+
+/// C9 round 4b, PSV-1 (amendment 60, matrix A86): the review's two new
+/// members of the class, through the real runner. (1) The cast took every
+/// integer width for one kind while the dispatch keys on the width: a `u8`
+/// laundered into a fn declared `-> i64` — and kept by the suite's own
+/// `let r: i64` pin — ran the operator's lenient `impl Judge for u8`.
+const SUITE_WIDTH: &str = r#"mod sol
+use sol.{solve}
+
+trait Judge {
+    fn ok(self) -> bool
+}
+
+impl Judge for i64 {
+    fn ok(self: i64) -> bool { self == 9 }
+}
+
+impl Judge for u8 {
+    fn ok(self: u8) -> bool { true }
+}
+
+fn judge(x: i64) -> bool { x.ok() }
+
+@[test]
+fn accept() {
+    let r: i64 = solve(3)
+    assert(judge(r))
+}
+
+@[test]
+fn accept_bare() {
+    let r = solve(3)
+    assert(r.ok())
+}
+"#;
+
+/// (2) A non-closure crossed a declared fn type, and a call through the
+/// local fell through to NAME resolution: the operator's own reference
+/// `fn square` answered for the candidate. The second suite reaches the call
+/// with no declared fn type in the way (a `Dict`'s values are untyped).
+const SUITE_FNREF: &str = r#"mod sol
+use sol.{make_square}
+
+fn square(n: i64) -> i64 { n * n }
+
+@[test]
+fn accept() {
+    let square = make_square()
+    assert(square(3) == 9 && square(5) == 25)
+}
+"#;
+
+const SUITE_FNTABLE: &str = r#"mod sol
+use sol.{table}
+
+fn square(n: i64) -> i64 { n * n }
+
+@[test]
+fn accept() {
+    match dict_get(table(), "sq") {
+        Some(square) => assert(square(3) == 9 && square(5) == 25)
+        None => assert(false)
+    }
+}
+"#;
+
+#[test]
+fn the_candidate_never_selects_the_operators_code_by_width_or_by_name() {
+    let table = |v: &str| {
+        format!("pub fn table() -> Dict {{\n    let d = dict_new()\n    dict_set(d, \"sq\", {v})\n    d\n}}\n")
+    };
+    // Controls: each suite discriminates.
+    for (suite, test, good, wrong) in [
+        (
+            SUITE_WIDTH,
+            "accept",
+            DISPATCH_GOOD.to_string(),
+            DISPATCH_WRONG.to_string(),
+        ),
+        (
+            SUITE_WIDTH,
+            "accept_bare",
+            DISPATCH_GOOD.to_string(),
+            DISPATCH_WRONG.to_string(),
+        ),
+        (
+            SUITE_FNREF,
+            "accept",
+            "pub fn make_square() -> fn(i64) -> i64 { |n: i64| n * n }\n".to_string(),
+            "pub fn make_square() -> fn(i64) -> i64 { |n: i64| n + 1 }\n".to_string(),
+        ),
+        (
+            SUITE_FNTABLE,
+            "accept",
+            table("|n: i64| n * n"),
+            table("|n: i64| n + 1"),
+        ),
+    ] {
+        let s = check(suite, &[], &good, test);
+        assert_eq!(
+            (s.status, s.host),
+            (GuestStatus::Passed, Some(true)),
+            "control: {}",
+            s.stdout
+        );
+        let s = check(suite, &[], &wrong, test);
+        assert_eq!(
+            (s.status, s.host),
+            (GuestStatus::Failed, Some(false)),
+            "control: {}",
+            s.stdout
+        );
+    }
+    let width = "fn narrow(n: u8) -> u8 { n }\npub fn solve(n: i64) -> i64 {\n    let d = dict_new()\n    dict_set(d, \"k\", narrow(4 as u8))\n    match dict_get(d, \"k\") {\n        Some(v) => v\n        None => 0\n    }\n}\n";
+    let attacks: [(&str, &str, &str, String); 4] = [
+        ("a u8 at a declared i64, pinned by `let r: i64`", SUITE_WIDTH, "accept", width.to_string()),
+        ("a u8 at a declared i64, unpinned", SUITE_WIDTH, "accept_bare", width.to_string()),
+        (
+            "a confused 0 at a declared fn type",
+            SUITE_FNREF,
+            "accept",
+            "pub fn make_square() -> fn(i64) -> i64 {\n    let d = dict_new()\n    dict_set(d, \"k\", 0)\n    match dict_get(d, \"k\") {\n        Some(v) => v\n        None => |n: i64| n + 1\n    }\n}\n".to_string(),
+        ),
+        ("a 0 in a table, called through the local `square`", SUITE_FNTABLE, "accept", table("0")),
+    ];
+    for (why, suite, test, cand) in attacks {
+        let s = check(suite, &[], &cand, test);
+        assert!(
+            refused_unkeyed(&s),
+            "ATTACK: the candidate selected the operator's code ({why}) and got a keyed pass: {:?} {:?} {}",
+            s.status,
+            s.host,
+            s.stdout
+        );
+        assert_eq!(s.host, Some(false), "a keyed FAILURE ({why}): {}", s.stdout);
+    }
+}
