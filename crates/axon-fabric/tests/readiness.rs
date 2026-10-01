@@ -106,11 +106,14 @@ fn a_changed_spec_evidence_or_record_invalidates_it() {
     );
     c.refused("evidence bundle changed");
 
+    // A byte changed after the operator signed: the micode_sha, the one
+    // field only the signature stands behind (every other is also joined to
+    // a verified document, amendment 57), so the signature is what refuses.
     let Some(c) = certified() else { return };
     let mut bytes = std::fs::read(c.record()).unwrap();
     let s = String::from_utf8(bytes.clone())
         .unwrap()
-        .replace("t_ok", "t_ko");
+        .replace(&"a".repeat(40), &"b".repeat(40));
     bytes = s.into_bytes();
     std::fs::write(c.record(), bytes).unwrap();
     c.refused("does not verify");
@@ -643,4 +646,495 @@ fn a_forged_ancestor_object_does_not_make_the_tree_descend_from_the_certified_re
     git_attacks::forge_parent(&c.repo, &orphan, &certified);
     let v = c.refused_any();
     assert!(v.to_string().contains("is not an ancestor"), "{v}");
+}
+
+// ── C9 round 4, EQUIVALENCE (rows workstream; M690-M699) ────────────────────
+//
+// Each readiness rule below was killed only by a unit test calling it
+// directly, or its call site had no row. These tests reach it through the
+// production decision: the installed `axon-fabric verify-readiness`, whose
+// trust is `ReadinessTrust::operator()` (the operator's /etc/axon/trust roots,
+// the system clock), run in a private mount namespace with a tmpfs at
+// /etc/axon. The host's /etc is never written.
+
+/// The fixture's B263 record re-dated to the system clock (the production
+/// decision reads the real time), re-signed, and the record re-bound to it
+/// and to `verifier` (the verify-readiness binary that will decide). Commits.
+fn bind_to_system_clock_and(c: &Certified, verifier: &std::path::Path) {
+    let utc = |ago_s: u64| {
+        let t = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            - ago_s;
+        let o = std::process::Command::new("date")
+            .args(["-u", "-d", &format!("@{t}"), "+%Y-%m-%dT%H:%M:%SZ"])
+            .output()
+            .unwrap();
+        String::from_utf8(o.stdout).unwrap().trim().to_string()
+    };
+    // B263 issued, then the run observed, then certified, all in the past
+    // of the system clock (the record is current at both `observed_at` and
+    // now, A89): the run is launched again under the re-dated record, so the
+    // launch manifest names its digest (M745).
+    let mut b = b263_record(&c.operator);
+    b["start"] = json!(utc(4 * 3600));
+    b["end"] = json!(utc(3 * 3600));
+    write_signed_for(
+        &c.operator,
+        TrustAuthority::Qualification,
+        &c.repo.join(B263),
+        &b,
+    );
+    let observed_at = utc(2 * 3600);
+    relaunch(
+        c,
+        keep(),
+        Box::new(move |o: &mut Value| o["observed_at"] = json!(observed_at)),
+        keep(),
+    );
+    let v_sha = sha(verifier);
+    rebundle(c, |r| {
+        r["readiness_verifier_sha256"] = json!(v_sha);
+        r["certified_at"] = json!(utc(3600));
+    });
+    c.commit("certification re-dated for the production decision (governance only)");
+}
+
+/// `verify-readiness --repo` for the certified repository, decided with the
+/// operator's trust (`ReadinessTrust::operator()`): the fixture's three roots
+/// installed at /etc/axon/trust/ (root-owned, 0755/0644) in a private mount
+/// namespace. Returns (the verdict as root, the verdict as uid 4242).
+fn production_verdicts(c: &Certified) -> (Value, Value) {
+    production_verdicts_by(c, std::path::Path::new(env!("CARGO_BIN_EXE_axon-fabric")))
+}
+
+/// [`production_verdicts`], decided by the `axon-fabric` build at `verifier`.
+fn production_verdicts_by(c: &Certified, verifier: &std::path::Path) -> (Value, Value) {
+    let d = c._d.path();
+    let bin = d.join("axon-fabric");
+    std::fs::copy(verifier, &bin).unwrap();
+    std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+    bind_to_system_clock_and(c, &bin);
+    let script = "set -e\n\
+         mount -t tmpfs -o mode=0755 tmpfs /etc/axon\n\
+         cp -a \"$1/trust\" /etc/axon/trust\n\
+         chown -R 0:0 /etc/axon\n\
+         chmod -R go-w /etc/axon\n\
+         set +e\n\
+         \"$1/axon-fabric\" verify-readiness --repo \"$2\" > \"$1/as-root.json\"\n\
+         setpriv --reuid=4242 --regid=4242 --clear-groups -- \
+         \"$1/axon-fabric\" verify-readiness --repo \"$2\" > \"$1/as-4242.json\"\n\
+         exit 0\n";
+    let st = std::process::Command::new("unshare")
+        .args(["-m", "--propagation", "private", "sh", "-c", script, "sh"])
+        .arg(d)
+        .arg(&c.repo)
+        .status()
+        .unwrap();
+    assert!(st.success(), "setup: the namespace script failed");
+    let read = |n: &str| -> Value {
+        let s = std::fs::read_to_string(d.join(n)).unwrap_or_default();
+        serde_json::from_str::<Value>(&s)
+            .unwrap_or_else(|e| panic!("setup: {n} is not a verdict ({e}): {s}"))["components"]
+            ["protected_backend"]
+            .clone()
+    };
+    (read("as-root.json"), read("as-4242.json"))
+}
+
+fn can_mount_etc_axon() -> bool {
+    if !std::path::Path::new("/etc/axon").is_dir() {
+        eprintln!("skipped: no /etc/axon mount point (this test never creates one)");
+        return false;
+    }
+    true
+}
+
+/// Readiness (M690; M490, M491 and M492 re-anchored here), ROOT ONLY: the
+/// production decision refuses a trust root the process deciding can WRITE.
+/// Root can write every root on the host, so an operator (or an agent that
+/// became root) running `verify-readiness` as root decides with authority it
+/// could have planted itself. The production trust requires unwritable roots
+/// (M492), `check()` enforces it (M490) through `writable_by_me` (M491), and
+/// the decision calls `check()` (M690): with any one gone, the root run
+/// certifies. Control: the same decision, by a uid that cannot write the
+/// roots, certifies, so the fixture reaches PASS through the production
+/// trust and only the writability refuses.
+#[test]
+fn a_readiness_run_that_can_write_its_trust_roots_certifies_nothing() {
+    let Some(c) = certified() else { return };
+    if !can_mount_etc_axon() {
+        return;
+    }
+    let (as_root, as_other) = production_verdicts(&c);
+    assert_eq!(
+        as_other["status"], "PASS",
+        "control: a verifier uid that cannot write the operator's roots certifies: {as_other}"
+    );
+    assert_ne!(
+        as_root["status"], "PASS",
+        "ATTACK: a readiness run that can write its operator trust roots certified PASS: \
+         {as_root}"
+    );
+    assert!(
+        as_root
+            .to_string()
+            .contains("writable by the process running this check"),
+        "{as_root}"
+    );
+}
+
+/// The verdict must not be PASS: the attack is the record (or tree) `attack`
+/// describes getting certified. Control first: the untouched fixture PASSes.
+fn not_pass_under(c: &Certified, attack: &str) -> Value {
+    let v = c.verdict();
+    assert_ne!(v["status"], "PASS", "ATTACK: {attack}: {v}");
+    v
+}
+
+/// Each binding of the operator's record to THIS repository and component
+/// had no row (C9 round 4, EQUIVALENCE). One attack per binding, each on the
+/// route where that binding is the only check that refuses it.
+///
+/// M691: an evidence file changed after certification. `run-evidence.md` is
+/// bound by nothing but the bundle digest (the observation and B263 record
+/// are also bound one by one), and a change under governance/ is allowed.
+#[test]
+fn an_evidence_file_changed_after_certification_is_not_certified() {
+    let Some(c) = certified() else { return };
+    write(
+        &c.repo
+            .join("governance/proofs/v022-protected/run-evidence.md"),
+        "the agent's evidence\n",
+    );
+    c.commit("governance: other evidence");
+    let v = not_pass_under(
+        &c,
+        "an evidence file changed after certification and readiness still certified the bundle",
+    );
+    assert!(v.to_string().contains("evidence bundle changed"), "{v}");
+}
+
+/// M692-M694: a genuine operator record for another component, or of another
+/// host or qualification profile, certifies nothing here. Each is re-signed
+/// by the operator (so the signature holds) and differs in one field only.
+#[test]
+fn a_record_for_another_component_or_profile_is_not_certified() {
+    for (field, value, attack) in [
+        (
+            "component",
+            "pci_on_protected_backend",
+            "a record certifying another component certified protected_backend",
+        ),
+        (
+            "host_profile",
+            "linux-microvm-dev",
+            "a record of another host profile certified the protected profile",
+        ),
+        (
+            "qualification_profile",
+            "linux-microvm-dev",
+            "a record of another qualification profile certified the protected profile",
+        ),
+    ] {
+        let Some(c) = certified() else { return };
+        resign(&c, &c.operator, |r| r[field] = json!(value));
+        let v = not_pass_under(&c, attack);
+        assert!(
+            v.to_string()
+                .contains("not a linux-microvm-protected certification of protected_backend"),
+            "{field}: {v}"
+        );
+    }
+}
+
+/// M695: the PSV spec the record certifies is the one in this tree. The spec
+/// sits under governance/, where a change is otherwise allowed, and it is not
+/// part of the evidence bundle: the spec digest is its only binding.
+#[test]
+fn a_changed_psv_spec_is_not_certified() {
+    let Some(c) = certified() else { return };
+    write(
+        &c.repo
+            .join("governance/specs/v022-protected-suite-verdict.md"),
+        "# PSV, as the agent would have it\n",
+    );
+    c.commit("governance: another PSV");
+    let v = not_pass_under(
+        &c,
+        "the PSV spec changed after certification and readiness still certified",
+    );
+    assert!(v.to_string().contains("certifies another version"), "{v}");
+}
+
+/// M696: HEAD is an orphan history (C, then D) holding the certified tree
+/// byte for byte. Every tree comparison finds no change; only the ancestry
+/// of the certified revision refuses it.
+#[test]
+fn a_history_not_descending_from_the_certified_revision_is_not_certified() {
+    let Some(c) = certified() else { return };
+    let orphan = git_attacks::commit_tree(&c.repo, &[], "C");
+    let d = git_attacks::commit_tree(&c.repo, &[&orphan], "D");
+    git(&c.repo, &["update-ref", "refs/heads/main", &d]);
+    let v = not_pass_under(
+        &c,
+        "an orphan history holding the certified tree was certified as the certified revision's \
+         descendant",
+    );
+    assert!(v.to_string().contains("is not an ancestor"), "{v}");
+}
+
+/// M697: a committed change to code outside governance/. The history still
+/// descends from the certified revision, and the record and evidence are
+/// untouched: the outside-governance comparison is the only refusal.
+#[test]
+fn a_committed_code_change_is_not_certified() {
+    let Some(c) = certified() else { return };
+    write(&c.repo.join(CODE), "// the agent's code\n");
+    c.commit("agent: code");
+    let v = not_pass_under(
+        &c,
+        "code changed outside governance/ after certification and readiness still certified",
+    );
+    assert!(
+        v.to_string()
+            .contains("changed since the certified revision"),
+        "{v}"
+    );
+}
+
+/// M698: a record of another schema is not this certification, even with
+/// every field present and the operator's signature over it.
+#[test]
+fn a_record_of_another_schema_is_not_certified() {
+    let Some(c) = certified() else { return };
+    resign(&c, &c.operator, |r| {
+        r["schema"] = json!("axon-v022-protected-certification/1")
+    });
+    let v = not_pass_under(
+        &c,
+        "a record of another schema was read as a protected certification",
+    );
+    assert!(
+        v.to_string()
+            .contains("not a axon-v022-protected-certification/2"),
+        "{v}"
+    );
+}
+
+/// M699: the record's attribution is checked at the decision. Here it names
+/// an observer key the operator's observer root does not hold (re-signed by
+/// the operator, so the signature holds): only the attribution refuses it.
+#[test]
+fn a_record_attributed_to_an_untrusted_observer_is_not_certified() {
+    let Some(c) = certified() else { return };
+    let stranger = Issuer::generate();
+    resign(&c, &c.operator, |r| {
+        r["observer_key_id"] = json!(stranger.key_id())
+    });
+    let v = not_pass_under(
+        &c,
+        "a record naming an observer key outside the operator's observer root was certified",
+    );
+    assert!(
+        v.to_string()
+            .contains("is not a key in the operator's observer root"),
+        "{v}"
+    );
+}
+
+// ── C9 round 4 fix wave, ROWS2 (EQUIVALENCE (4); rows M760-M819) ────────────
+//
+// Refusal sites of readiness.rs that had neither a row nor an exemption
+// (`scripts/v022_refusal_coverage.py`, now scanning this file). Each is
+// attacked on the production decision.
+
+/// PRODUCTION builds of `axon-fabric` (no test-trust-root), once per test
+/// process: `(clean, dirty)`. Both are built from one copy of this
+/// workspace's tracked sources, as they are in the working tree, made a
+/// standalone clone of its own: `clean` with the copy committed (it reports
+/// `source_dirty: false`), `dirty` with one uncommitted file added
+/// (`source_dirty: true`). The copy keeps the sources' timestamps and the
+/// commit is deterministic, so a later process rebuilds only what changed.
+fn production_verifiers() -> &'static (std::path::PathBuf, std::path::PathBuf) {
+    use std::path::{Path, PathBuf};
+    use std::process::Command;
+    static V: std::sync::OnceLock<(PathBuf, PathBuf)> = std::sync::OnceLock::new();
+    V.get_or_init(|| {
+        let exe = PathBuf::from(env!("CARGO_BIN_EXE_axon-fabric"));
+        let base = exe
+            .parent()
+            .and_then(Path::parent)
+            .unwrap()
+            .join("rows2-production-verifier");
+        let (src, target) = (base.join("src"), base.join("target"));
+        let _ = std::fs::remove_dir_all(&src);
+        std::fs::create_dir_all(&src).unwrap();
+        let ws = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let st = Command::new("sh")
+            .args([
+                "-c",
+                "git -C \"$1\" ls-files -z -- Cargo.toml Cargo.lock rust-toolchain.toml .cargo \
+                 crates | tar -C \"$1\" --null -T - -cf - | tar -xpf - -C \"$2\"",
+                "sh",
+            ])
+            .arg(&ws)
+            .arg(&src)
+            .status()
+            .unwrap();
+        assert!(st.success(), "setup: copying the workspace sources failed");
+        let git = |args: &[&str]| {
+            let st = Command::new("git")
+                .current_dir(&src)
+                .env("GIT_AUTHOR_DATE", "2026-01-01T00:00:00Z")
+                .env("GIT_COMMITTER_DATE", "2026-01-01T00:00:00Z")
+                .args(["-c", "user.name=rows2", "-c", "user.email=rows2@invalid"])
+                .args(args)
+                .status()
+                .unwrap();
+            assert!(st.success(), "setup: git {args:?} failed");
+        };
+        git(&["init", "-q", "-b", "main"]);
+        git(&["add", "-A"]);
+        git(&["commit", "-q", "-m", "copy"]);
+        let build = |name: &str, dirty: bool| -> PathBuf {
+            let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
+            let out = Command::new(cargo)
+                .current_dir(&src)
+                .args([
+                    "build",
+                    "--offline",
+                    "-j",
+                    "4",
+                    "-p",
+                    "axon-fabric",
+                    "--bin",
+                    "axon-fabric",
+                    "--target-dir",
+                ])
+                .arg(&target)
+                .env_remove("CARGO_TARGET_DIR")
+                .env_remove("CARGO_BUILD_TARGET_DIR")
+                .output()
+                .unwrap();
+            assert!(
+                out.status.success(),
+                "setup: the production build failed: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+            let bin = base.join(name);
+            std::fs::copy(target.join("debug/axon-fabric"), &bin).unwrap();
+            let m = Command::new(&bin)
+                .arg("verifier-manifest")
+                .output()
+                .unwrap();
+            let v: Value = serde_json::from_slice(&m.stdout).unwrap();
+            assert!(
+                v["build"] == "production" && v["source_dirty"] == dirty,
+                "setup: not a {} production build: {v}",
+                if dirty { "dirty" } else { "clean" }
+            );
+            bin
+        };
+        let clean = build("clean-axon-fabric", false);
+        write(
+            &src.join("crates/axon-fabric/src/UNCOMMITTED.txt"),
+            "a change nobody committed\n",
+        );
+        let dirty = build("dirty-axon-fabric", true);
+        (clean, dirty)
+    })
+}
+
+/// PSV-7 (M769, M772, M773), ROOT ONLY, PRODUCTION BUILD: a production
+/// readiness verifier built from a DIRTY tree certifies nothing, even when
+/// the operator's record names exactly its bytes: which source it is cannot
+/// be told from its revision. And each build names itself in its verdict (the
+/// report's `build`, and the verifier's own identity, which the relay
+/// `scripts/protected_verifier_ready.py` requires to be `production`): a
+/// test-trust build never reports itself as a production one. Control: the
+/// production verifier built from the SAME sources committed certifies,
+/// through the same decision, so only the dirty build refuses.
+#[test]
+fn a_production_verifier_built_from_a_dirty_tree_certifies_nothing() {
+    if !can_mount_etc_axon() {
+        return;
+    }
+    let report = |bin: &std::path::Path| -> Value {
+        let o = std::process::Command::new(bin)
+            .args(["verify-readiness", "--repo", "/nonexistent"])
+            .output()
+            .unwrap();
+        serde_json::from_slice(&o.stdout).unwrap()
+    };
+    let r = report(std::path::Path::new(env!("CARGO_BIN_EXE_axon-fabric")));
+    assert_eq!(
+        r["verifier"]["build"], "test-trust",
+        "ATTACK: a test-trust verifier's identity names the production build: {r}"
+    );
+    assert_eq!(
+        r["build"], "test-trust",
+        "ATTACK: a test-trust verifier's report names the production build: {r}"
+    );
+    let (clean, dirty) = production_verifiers();
+    let r = report(clean);
+    assert!(
+        r["build"] == "production" && r["verifier"]["build"] == "production",
+        "control: a production verifier names itself so: {r}"
+    );
+    let Some(c) = certified() else { return };
+    let (_, v) = production_verdicts_by(&c, dirty);
+    assert_ne!(
+        v["status"], "PASS",
+        "ATTACK: a production verifier built from a dirty tree certified PASS: {v}"
+    );
+    assert!(v.to_string().contains("built from a dirty tree"), "{v}");
+    let Some(c) = certified() else { return };
+    let (_, v) = production_verdicts_by(&c, clean);
+    assert_eq!(
+        v["status"], "PASS",
+        "control: the production verifier built from the same sources committed certifies: {v}"
+    );
+}
+
+/// C9 round 1 class, production decision (M770), ROOT ONLY: a narrowing
+/// list the verifier cannot STAT is not read as absent. The repository names
+/// only a stranger as its qualification issuer; its directory is 0700 root,
+/// so the production verifier, running as uid 4242, gets EACCES on it. Read
+/// as absent, the narrowing would vanish and the operator's issuer be
+/// accepted. Control: the same list, readable, refuses the operator's issuer
+/// (the list is honoured), so only the stat error stands between the two.
+#[test]
+fn a_narrowing_list_the_verifier_cannot_stat_is_not_read_as_absent() {
+    if !can_mount_etc_axon() {
+        return;
+    }
+    let narrow = |c: &Certified| {
+        write(
+            &c.repo.join("governance/status/trust-expectations.json"),
+            &json!({"qualification_issuers": ["ed25519:ffffffffffffffff"]}).to_string(),
+        );
+        c.commit("narrow to a stranger");
+    };
+    let Some(c) = certified() else { return };
+    narrow(&c);
+    std::fs::set_permissions(
+        c.repo.join("governance/status"),
+        std::fs::Permissions::from_mode(0o700),
+    )
+    .unwrap();
+    let (_, v) = production_verdicts(&c);
+    assert_ne!(
+        v["status"], "PASS",
+        "ATTACK: a narrowing list the verifier could not stat was read as absent: {v}"
+    );
+    assert!(v.to_string().contains("Permission denied"), "{v}");
+    let Some(c) = certified() else { return };
+    narrow(&c);
+    let (_, v) = production_verdicts(&c);
+    assert!(
+        v.to_string().contains("not one this repository expects"),
+        "control: the readable list is honoured: {v}"
+    );
 }

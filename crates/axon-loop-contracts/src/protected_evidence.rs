@@ -125,7 +125,7 @@ pub struct PsvEvidence {
     pub observation: String,
     /// Its detached OBSERVER-domain `axon-evidence-signature/2`.
     pub observation_signature: String,
-    /// The guest verdict's exact bytes (`axon-guest-verdict/1`), the ones the
+    /// The guest verdict's exact bytes (`axon-guest-verdict/2`), the ones the
     /// launcher bound and Fabric derived the receipt's verification from.
     pub guest_verdict: String,
 }
@@ -436,6 +436,14 @@ pub fn check_bundle(
         return Err(format!(
             "the guest verdict is for launch manifest {}, not the bundle's {m_sha}",
             v.launch_manifest_sha256
+        ));
+    }
+    // PSV-6 (C9 round 4; A87): the policy the guest ran under is the one the
+    // manifest names (and the observation joined): the receipt binds it.
+    if v.policy_sha256 != m.policy_sha256 {
+        return Err(format!(
+            "the guest verdict ran policy {:?}, not the manifest's policy_sha256 {}",
+            v.policy_sha256, m.policy_sha256
         ));
     }
     if v.test != m.suite.test {

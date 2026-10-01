@@ -31,9 +31,9 @@
         "rustc_vV": "rustc 1.99.0-nightly (375b1431b 2026-07-10)\nbinary: rustc\ncommit-hash: 375b1431b7d89d1c2e2bc168c011848ae12b7d14\ncommit-date: 2026-07-10\nhost: x86_64-unknown-linux-gnu\nrelease: 1.99.0-nightly\nLLVM version: 22.1.8"
       },
       "env": {
-        "CARGO_HOME": "/var/tmp/axon-guest-build-nplf7qgx/cargo-home",
-        "CARGO_TARGET_DIR": "/var/tmp/axon-guest-build-nplf7qgx/target",
-        "HOME": "/var/tmp/axon-guest-build-nplf7qgx",
+        "CARGO_HOME": "/var/tmp/axon-guest-build-oc3fbv35/cargo-home",
+        "CARGO_TARGET_DIR": "/var/tmp/axon-guest-build-oc3fbv35/target",
+        "HOME": "/var/tmp/axon-guest-build-oc3fbv35",
         "LC_ALL": "C",
         "PATH": "/root/.rustup/toolchains/nightly-2026-07-11-x86_64-unknown-linux-gnu/bin:/usr/bin:/bin",
         "RUSTC": "/root/.rustup/toolchains/nightly-2026-07-11-x86_64-unknown-linux-gnu/bin/rustc"
@@ -47,9 +47,9 @@
         "RUSTC"
       ],
       "proxy_vars": [],
-      "cargo_home": "/var/tmp/axon-guest-build-nplf7qgx/cargo-home",
+      "cargo_home": "/var/tmp/axon-guest-build-oc3fbv35/cargo-home",
       "cargo_home_created_empty": true,
-      "target_dir": "/var/tmp/axon-guest-build-nplf7qgx/target",
+      "target_dir": "/var/tmp/axon-guest-build-oc3fbv35/target",
       "target_dir_created_empty": true,
       "effective_config": {
         "origins": [
@@ -105,9 +105,9 @@
         }
       ],
       "artifacts": {
-        "axon": "6a6b5de6b1985b942d9711858f2791f7a2deff0a82be9bbee7e96ba713f2d270",
-        "axon-guest-init": "cb981ac80da1b7188dc1bf66118a82d93368ddc16cd90d0792d389c08a7e3bcf",
-        "axon-psv-runner": "2b52a364e505a9f5ce490a1e9a3f3dfac308907de81bb6b076caf169d502c0a0"
+        "axon": "0d73bbb9c1bcae7bf48f78cbe21fbbcb337304d319dce32108c4d77a20f0cecd",
+        "axon-guest-init": "7f366d7c62a4e0fdb52690b252d94cafaf466a60635348dd5b72543e91e9082f",
+        "axon-psv-runner": "fd60343f4a556d8e353db1ee23d2b14f02129745a1326a6d3ae48c5229bfcbbe"
       }
     }
   },
@@ -139,23 +139,23 @@
     },
     "rootfs.sqfs": {
       "path": "dist/guest-linux/rootfs.sqfs",
-      "sha256": "0b7820817cbe026308885477d8c223c14f1fca21c82d370ee9f91c0272861881",
-      "bytes": 5488640
+      "sha256": "3f56794d7f4f058bdbe8e9970deb879add942a4682051ca1015d41912c360781",
+      "bytes": 5529600
     },
     "axon": {
       "path": "dist/guest-linux/axon",
-      "sha256": "6a6b5de6b1985b942d9711858f2791f7a2deff0a82be9bbee7e96ba713f2d270",
-      "bytes": 8218928
+      "sha256": "0d73bbb9c1bcae7bf48f78cbe21fbbcb337304d319dce32108c4d77a20f0cecd",
+      "bytes": 8276272
     },
     "axon-guest-init": {
       "path": "dist/guest-linux/axon-guest-init",
-      "sha256": "cb981ac80da1b7188dc1bf66118a82d93368ddc16cd90d0792d389c08a7e3bcf",
-      "bytes": 733288
+      "sha256": "7f366d7c62a4e0fdb52690b252d94cafaf466a60635348dd5b72543e91e9082f",
+      "bytes": 733320
     },
     "axon-psv-runner": {
       "path": "dist/guest-linux/axon-psv-runner",
-      "sha256": "2b52a364e505a9f5ce490a1e9a3f3dfac308907de81bb6b076caf169d502c0a0",
-      "bytes": 864936
+      "sha256": "fd60343f4a556d8e353db1ee23d2b14f02129745a1326a6d3ae48c5229bfcbbe",
+      "bytes": 885416
     }
   },
   "engine": {

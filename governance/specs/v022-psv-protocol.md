@@ -1137,14 +1137,20 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       it is cheap and sound. A `fn` declared `-> Result` that returns `Some`/`None`, or one
       declared `-> Option` that returns `Ok`/`Err`, panics at its return boundary. The review's
       exact candidate now FAILS on that confusion.
-    - **Language follow-up (not fixed here).** `dict_get`, `dict_get_or` and `host_await_val`
-      return a free type variable, so a stored value of any type unifies with any use. A closure
-      has no declared return type at run time, so the boundary check does not cover its return
-      (it still catches the value at the next declared `fn`, including a test declared
-      `-> Result`). An `Option`-returning test whose `?` meets a well-typed `None` is the route
-      where the completion rule is the only guard; a test pins it
-      (`a_test_ended_by_question_mark_is_never_completed`, `t_find`). The fix belongs in the type
-      system: typed dicts, or a runtime tag check against the inferred type.
+    - **Language follow-up (not fixed here; this note corrected by amendment 53).** `dict_get`,
+      `dict_get_or` and `host_await_val` return a free type variable, so a stored value of any type
+      unifies with any use. The return-boundary check above compares ONE thing: the constructor
+      family of a declared `Result` or `Option` return (`Some`/`None` from a `-> Result` fn,
+      `Ok`/`Err` from a `-> Option` fn). It checks no scalar kind, no struct or enum name, no
+      payload and no element, no parameter, and no closure return (a closure has no declared return
+      type at run time). This note used to say a confused value is still caught "at the next
+      declared `fn`". That held only for a `Result`/`Option` mismatch: a struct, scalar or `str`
+      returned from a fn declared `-> i64` crossed silently, and the round-4 review turned that into
+      a keyed PASS (the operator's `r.ok()` dispatched on the runtime type to the candidate's
+      method; amendment 53, matrix A86), which is a rubric substitution, not only a completion
+      issue. An `Option`-returning test whose `?` meets a well-typed `None` is the route where the
+      completion rule is the only guard; a test pins it
+      (`a_test_ended_by_question_mark_is_never_completed`, `t_find`).
     - **Rows.** M560 (the frame-selection filter), M561 (the replay feed), M562 (counting operator
       frames rather than reading the current provenance), M563 (the RNG refusal), M564/M565 (the
       completion decision and the flag it reads), M566 (the return-boundary check). Negative matrix
@@ -1418,6 +1424,190 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       feature)"); the parity scripts build their own codegen axon and do run. Android legs SKIP (no
       NDK or emulator). These are skips, not passes.
 
+53. **The candidate never chooses the code that runs under the operator's judging method: every
+    value is cast at every declared boundary, and an operator method name is the operator's (C9
+    round 4, core workstream, PSV-1; matrix A86).**
+    - **Before.** A method call selects its method by the receiver's RUNTIME type
+      (`self.methods.get(&(argv[0].type_name(), method))`), and nothing tied that type to the one
+      the operator's code saw. Two routes reached a keyed PASS for a wrong candidate through
+      `axon_psv::runner::run` (review logs `/var/tmp/c9r4-psv1/`): (a) a TYPE CONFUSION: `dict_get`'s
+      value type is free (`Deferred`, which unifies with anything), so a candidate's
+      `pub fn solve(n: i64) -> i64` returned its own `Fake`, and the operator's `r.ok()`, meant for
+      `impl Judge for i64`, ran the candidate's `impl Mine for Fake`; the same with the operator's
+      impl on the candidate's interface type `Point`. Amendment 46's return check compared only
+      `Result` against `Option`. (b) NO confusion at all (found while fixing (a)): the candidate
+      DECLARES `-> Fake`; the checker resolves a method call by name only, so `r.ok()` still type
+      checks, and ran `Fake::ok`. And `check_sealed` walked only expressions, so a candidate could
+      name the operator's types and traits in signatures, fields, bounds and impl headers.
+    - **After (the value boundary, `interp/conform.rs`).** One cast, `Interp::cast`, applied at
+      every point where a value meets a DECLARED type: a named fn's or method's arguments at entry
+      and its result at return (`call_fn_frame`, generalizing amendment 46's check, which is now
+      the `confused` decision of this cast), a closure's arguments and result under every
+      `fn(..) -> ..` type the reference crossed (a per-reference contract chain, gradual typing's
+      function proxy, so one closure used at two types is not confused), a lambda's own parameter
+      annotations, every value sent on a channel under the element types the channel object
+      crossed, a `let x: T` annotation, and each field of a struct or enum literal. What is cast:
+      scalar kind (every integer width is one kind), `str`, `bool`, `()`, `Decimal`; a struct or
+      enum by name and then its fields against the declared field types; `Option`/`Result` by
+      constructor and then the payload; arrays and tuples element by element; a refinement by its
+      base; `dyn Trait` and a type parameter's bounds by an `impl` of that trait. A type parameter
+      is BOUND from the first value that meets it (the arguments in order, or a closure's first
+      result) and every later value must agree. At a seal crossing (a sealed fn or closure
+      returning to operator code) a value at a type parameter nothing determined is refused: by
+      parametricity no honest body produces one (`fn solve<T>(n: i64) -> T`). A declared type the
+      interpreter cannot read (an unknown name, `Dict`, `Uncertain<T>`, a handle) is accepted: the
+      cast refuses only what it can SHOW is another type, so no honest program is rejected (the
+      full axon-core suite and every example stay green).
+    - **After (the dispatch edge, `Interp::seal_method`).** In operator code, a method name the
+      operator's code defines (in its impls or traits) is the operator's: a call that would
+      dispatch it to a SEALED method is refused. The candidate's own method names (its API) stay
+      callable from the suite. Route (b) has no confusion, so the cast cannot see it; this edge is
+      its only guard, and it also stops (a) on its own.
+    - **After (static, E0004).** `check_sealed` walks type positions too: parameter and return
+      types, struct and variant fields, refinement bases, trait method signatures, impl headers
+      (trait and `for` type), generic bounds, and `let`/lambda annotations inside bodies. The
+      item's own type parameters are local names and are not counted.
+    - **What is NOT claimed.** (1) A value that meets NO declared type on its way to operator code
+      is dynamically typed by the language: a `Dict` value (the type system gives `dict_get` no
+      element type) and an unannotated module-level `let` of the candidate. The dispatch edge
+      still keeps the candidate's methods from running under an operator method name there; a
+      suite that relies on such a value's TYPE pins it with an annotation (`let r: i64 = X`),
+      which is cast. (2) The candidate chooses its own declared types. If the suite dispatches a
+      method on a value whose type is the candidate's declaration, the operator's impl FOR THAT
+      TYPE runs (e.g. a lenient `impl Judge for bool` when the candidate declares `-> bool`): that
+      is the operator's own rubric, and a suite pins the type by annotation. (3) A closure that
+      crosses the host boundary (`host_await_val`) comes back without its contract: the host is
+      operator code. (4) Native codegen is unchanged: the PSV guest runs the interpreter.
+    - **Rows.** M651 (the dispatch edge), M652 (integer kind), M653 (struct name), M654 (array
+      elements), M655 (`Option` payload), M656 (tuple elements), M657 (struct fields at a return),
+      M658 (struct-literal fields), M659 (parameters), M660 (the parametricity refusal at a seal
+      crossing), M661/M662 (closure result and arguments), M663 (channel sends), M664 (`let`
+      annotations), M665 (E0004 over type positions), M666 (trait bounds), M667 (lambda
+      annotations). Each attack carries a confused `true` that selects the operator's OWN lenient
+      `impl Judge for bool`, so no candidate method is involved and the dispatch edge cannot stand
+      in for the cast; each marker is the attack's test COMPLETING. M566 (amendment 46) now anchors
+      the whole return cast and stays killed by its own test. Negative matrix A86. Real-runner
+      test: `crates/axon-psv/tests/sealed_frames.rs::the_candidate_never_chooses_the_operators_judging_method`
+      (the review's two candidates, the declared-`Fake` candidate, and the confused `true`; GOOD
+      is a keyed pass, WRONG a keyed failure, every attack a keyed failure). It fails against an
+      interpreter built at 1b687d95 (keyed pass for the review's Fake).
+    - **Operator deployment.** The guest image must be REBUILT to carry the new interpreter; its
+      scripts and runner are unchanged.
+
+54. **The guest runs the policy its launch manifest names, and the receipt binds it (C9 round 4,
+    PSV-6 BLOCKER; matrix A87; rows M670-M679).**
+    - **Before.** §4 says the policy's sha256 "is bound in the launch manifest (`policy_sha256`)",
+      and the observation joins that field. But the policy that ran was the helper request's
+      `policy_json`, which Fabric supplied per request and nothing compared with the manifest:
+      not the helper (`validate_request` checked only its size), not `fc_linux_profile.sh` (it
+      compares the guest-reported policy with the one it embedded, both from the request), not
+      `axon-guest-init` or `axon-psv-runner`. `axon-guest-verdict/1` named no policy. So a genuine
+      observation of a manifest naming P1 (`allowed_effects: []`) launched P2 (IO, Net, Time),
+      and a policy with no `allowed_effects` ran the candidate with no effect ceiling (the runner
+      set `AXON_ALLOWED_EFFECTS` only when one was present). Reproduced by the reviewer through the
+      real test-trust helper, a test custodian and a genuine observer signature, and re-run here
+      as an attack test at `1b687d95` (launched, exit 0). The helper tests' manifest fixture named
+      `policy_sha256` `bbbb…`, the digest of nothing, and nothing noticed.
+    - **After.** One rule, `axon_psv::protected_policy_ceiling(policy, manifest)`: the policy's
+      sha256 IS the manifest's `policy_sha256`, and it states `allowed_effects`. It returns the
+      effect ceiling. It is applied at every point the policy crosses:
+      - *Root helper* (`axon-protected-launcher`, request schema `/3`). The request carries no
+        policy. Fabric writes the policy `psv::prepare` bound to `<inputs>/policy.json`, beside
+        the job dir. The helper snapshots it into its root-private staging (a regular file of the
+        Fabric uid, never followed, at most 64 KiB), holds it to the snapshot manifest (whose
+        digest is the request's and which the observation then joins field for field) BEFORE the
+        observation is verified and the nonce spent, and hands the launcher exactly that snapshot.
+        A refused policy therefore spends nothing (the tests launch the same observation with the
+        right policy afterwards).
+      - *Launcher* (`fc_linux_profile.sh`, PSV mode, both routes). `--policy` is required; its
+        sha256 must be the job manifest's `policy_sha256` and it must state `allowed_effects`,
+        refused with exit 22 before anything is acquired.
+      - *Guest runner* (`axon-psv-runner`, the in-guest guard). It reads the ONE `axon.policy=`
+        cmdline word (the one `axon-guest-init` enforces), decodes it, and applies the rule after
+        the manifest check and before the inputs are read; any failure is a refusal and nothing
+        runs. The test then ALWAYS runs under that policy's ceiling (minus `Exec`), taken from the
+        verified policy rather than the environment; `[]` denies every effect.
+      - *Verdict and joins.* `axon-guest-verdict/2` adds `policy_sha256` (the digest of the policy
+        the runner was given, `""` for none). Fabric's `psv::derive` and the loop's `check_bundle`
+        require it to equal the manifest's, so the receipt binds the policy that ran.
+      - *Fabric.* `backend::run_linux_profile` takes no policy parameter: both the helper route and
+        the direct route launch the `Launch`'s policy (the bytes whose digest the manifest names),
+        so Fabric cannot hand the launcher a second policy.
+    - **Decision: a missing ceiling on the protected profile.** Following CLAUDE.md's rule that "I
+      did not say" and "I said none" are different statements: an explicitly empty
+      `allowed_effects: []` is a ceiling that denies every effect; an ABSENT one (omitted or
+      `null`) is REFUSED on the protected profile by the helper, the launcher and the runner. It
+      never falls back to "no ceiling", and the protected profile has no permissive default to
+      fall back to. Fabric's own policy (`GuestPolicy::for_grant`) always states one. The generic
+      `axon-guest-init` behaviour (warn, run unrestricted on that axis) is unchanged for non-PSV
+      program runs, which never yield protected evidence.
+    - **Rows.** M670 (helper call), M671/M672 (the rule's digest and ceiling halves, helper route),
+      M673 (runner call), M674 (ceiling half, runner route), M675 (the ceiling is always set),
+      M676 (Fabric's verdict join), M677 (the loop's verdict join), M678/M679 (the launcher's two
+      checks). Matrix A87. `psv_dev make-job` now takes `--policy FILE` and `check-verdict`
+      reports `policy_joins`.
+    - **Tests.** `privileged_launcher.rs::a_genuine_observation_of_one_policy_never_launches_another`
+      and `::a_manifest_policy_naming_no_ceiling_launches_nothing` (real test-trust helper, test
+      custodian, genuine observer signature); `launcher_isolation.rs::the_launcher_boots_only_the_policy_the_manifest_names`
+      (the real launcher script); `runner.rs::the_guest_runs_only_the_policy_the_manifest_names`,
+      `::a_policy_naming_no_ceiling_never_runs_unrestricted`, `::the_runner_reads_the_one_cmdline_policy_word`;
+      `psv_dispatch.rs::a_guest_under_a_policy_the_manifest_does_not_name_yields_no_verdict` (both
+      routes, the real runner); `intake.rs::a_guest_verdict_that_ran_another_policy_is_refused`.
+      `psv_guest_boot_test.sh` adds `policy-launcher`, `policy-guest` (the in-guest guard in a real
+      Firecracker guest, through the launcher's embed test hook) and `helper-policy`.
+    - **Operator deployment.** Rebuild the guest image (`axon-psv-runner` changed) and re-pin
+      `profiles/linux-microvm/manifest.json`; a B263 re-qualification of the image is needed
+      before protected use (already PROTECTED_ONLY-open). Install the new helper (request `/3`) and
+      launcher together with the Fabric that writes `<inputs>/policy.json`: an older Fabric's `/2`
+      request is refused (unknown schema), never launched.
+
+55. **A protected rule is evidenced where it decides, not where it is defined (C9 round 4,
+    EQUIVALENCE; rows workstream).** Before: four protected rules were enforced in production
+    through calls that had no row, and the whole axon-fabric suite stayed green with each call
+    removed (readiness's `trust.check()`, the custodian's `load_config` → `check(true)`,
+    `ProtectedHost::operator()`'s four calls, the helper's `Authority::lease()`), as did the
+    custodian's socket-activation checks. Eight ACTIVE rows (M490-M492, M629, M640, M546, M634,
+    M591) were killed only by a unit test calling the rule function directly; M547/M548/M636/M637
+    only by a test calling `helper_agrees` directly. After: every one is attacked through the
+    PRODUCTION entry, with `/etc/axon` a tmpfs in a private mount namespace (`unshare -m`; the
+    host's `/etc` is never written) and the binaries started as their units start them.
+    - **Readiness** (`--test readiness`). The installed `verify-readiness`, deciding with
+      `ReadinessTrust::operator()`, run as root (which can write every trust root) certifies
+      nothing; the same decision by a uid that cannot write the roots certifies (control). M690
+      (the `trust.check()` call); M490-M492 re-anchored. The record's unrowed bindings each get an
+      attack on the route where they alone refuse: bundle (M691), component (M692), host profile
+      (M693), qualification profile (M694), PSV spec (M695), the `descends` call (M696), a change
+      outside governance/ (M697), schema (M698), the `attribution` call (M699).
+    - **The production custodian** (`--test privileged_launcher`). `axon-custodian` with no
+      arguments, socket-activated as its uid under a config breaking one A83 rule, serves nothing:
+      custodian = Fabric (M629), a spender other than 0 (M640), root as the Fabric (M701, a rule
+      that had no row), and the call that applies them (M700). Started without its unit's
+      `LISTEN_PID`/`LISTEN_FDS` (M702), or activated on another socket (M703), it serves nothing.
+    - **`ProtectedHost::operator()`**, run by a production `axon-fabric submit`. The helper config
+      is read under the production rules (M706) and must describe the host's launch path (M707,
+      the `helper_agrees` call; M547, M548, M636, M637 re-anchored). `fabric_is_not_root` and
+      `custodian_is_separate` are DOMINATED on their one production route: a root Fabric is refused
+      by `helper_agrees` (M548; a helper admitting root is refused by M536), and a custodian that is
+      the Fabric uid by the helper config's own rule (M633). So M704/M546 (vs M548) and M705/M634
+      (vs M633) are retired EQUIVALENT_DID with four-cell records on the production route, never
+      counted as killed; their unit tests are now controls only (a direct attack assertion there
+      would fail the retired guard's full-suite cell while proving only the helper refuses).
+    - **Decision D, the lease.** A root helper is always granted a lease on a root-owned file, so the
+      production refusal (`Lease::Required`) can only be reached by changing the host
+      (`fs.leases-enable`). A TEST-TRUST-ONLY switch (`/etc/axon/TEST-no-read-lease`, in
+      `sealed_exec::take_read_lease`) makes every lease unavailable; the test-trust helper in
+      production mode (`Authority::production()`, setuid-root) then launches nothing (M708, the
+      selection; M591 re-anchored). M709 rows the switch's gate: the production-build helper, with
+      the switch present, launches, and its binary does not contain the switch's path.
+    - **Not done here.** `scripts/v022_refusal_coverage.py` still scans the three helper files only;
+      extended to custodian.rs, bin/axon-custodian.rs, readiness.rs and protected_host.rs it names
+      38 refusal sites with neither a row nor an exemption (measured at this commit).
+    - Operator deployment: none. No matrix row: no production behaviour changed (the lease switch
+      is absent from the production build, M709).
+    - Evidence at 06ad62bc: `v022_g01_mutations.py --only=` the 28 new or re-anchored ACTIVE rows,
+      28/28 KILLED by their own attack; `v022_paired_disable.py --only=M704,M546,M705,M634`, all
+      four cells and the full-suite cell hold for each.
+
 56. **A check runs the binary built from the tree under test; the harnesses judge only a clean
     commit and say which registry they ran; the guest image is built in an environment the build
     constructs (C9 round 4, harness2: EQUIVALENCE (6) blocker, EQUIVALENCE (5) and FIELD-ORIGIN /
@@ -1522,3 +1712,125 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       `/etc/axon`.
     - **Also corrected.** `psv_dispatch.rs` named M402 for the protected arm (it is M400);
       `EQUIV_RECORD["M347"].all_paths` now states the allowlist's role under decision C.
+
+57. **Readiness joins the certification record's run attribution to the run itself, and the B263
+    record to the qualification the observed launch ran under (C9 round 4, readiness workstream;
+    rows M740-M750).**
+    - **Before.** `attribution()` joined `observer_key_id` to the observation's signer, but
+      `verifier_key_id` was checked only for membership in the verifier root, `suite` only for
+      non-empty fields, and `candidate_tree_ref` and `micode_sha` only for format. The observation's
+      `suite_registry_sha256`, `verifier_sha256`, `host_config_sha256` and
+      `intended_launch_manifest_sha256` were compared with nothing, because the launch manifest was
+      not in the evidence. So `b263_qualification_sha256` was never joined to the manifest's
+      `qualification_sha256`, and `accept_b263` judged currency only at decision time: any
+      operator-signed, currently fresh B263 record with the same guest and engine certified a run
+      launched under a different record, for example one issued after the run or for another
+      host. The operator's signature was the only thing behind these fields (class c).
+    - **After: the run is certified evidence.** The record's `evidence` must hold exactly one
+      `axon-fabric-submit/1` (Fabric's own submit output: the receipt, its
+      `acf-receipt-attestation/2`, and the `axon-psv-evidence/2` bundle with the exact launch
+      manifest and guest verdict) and exactly one `acf-compute-request/1` (the request it
+      answered). None, or two, is refused. Readiness (`launched`, called at the end of
+      `attribution` on the production decision) then requires:
+      - the attestation verifies (`attestation::verify`) over that request and receipt under the
+        verifier-root key whose id is `verifier_key_id`, so the key id is the key that signed;
+      - the receipt is protected evidence (`protected_evidence::check`) and names the bundle's
+        manifest, the certified observation (`observation_sha256`), the bundle's guest verdict and
+        the manifest's qualification, and the manifest's operation, task, trial, attempt, candidate
+        and test are the request's and receipt's;
+      - the certified observation joins the manifest field for field
+        (`PreflightObservation::joins`: intended manifest digest, nonce, verifier, host config,
+        suite registry, policy, launcher, engine, guest);
+      - the record's `b263_qualification_sha256` is the manifest's `qualification_sha256`, the
+        digest Fabric computed from the record its operator host config pins;
+      - the record's `suite` (id, version, entry, test, and `digest` = the suite tree digest) and
+        `candidate_tree_ref` are the manifest's.
+    - **Currency at `observed_at`.** `accept_b263` is also applied with `observed_at` as the
+      time, so the record's `end` must be no later than the observation and within the maximum age
+      of it. The decision-time check stays. Of the two, only "end after the run" can differ in
+      practice: a record stale at `observed_at` is stale now too.
+    - **Not joined, and why.** `micode_sha` stays operator-attested: no document a protected run
+      produces carries a MiCode revision. The B263 `host` string has no observed counterpart
+      either: no observation or manifest names a host. The host is joined through the digest
+      instead. The observed host's operator config pins the record path, Fabric computes
+      `qualification_sha256` from it, and the observation covers the manifest. A record for
+      another host is therefore another digest and is refused. Pinning a host identity in the
+      host config remains the separate MINOR finding.
+    - **Operator deployment.** When assembling a certification record on the protected host, the
+      operator adds the run's `axon-fabric submit` stdout (with `receipt_attestation` and
+      `psv_evidence` present) and the request file to `evidence`, beside the observation and the
+      B263 record. No new key or root is needed.
+    - Negative-matrix A88 (run attribution) and A89 (B263 joined to the launch), tests in
+      `crates/axon-fabric/tests/readiness_launch.rs`. The readiness fixture now builds a genuine
+      run: a manifest, an observer-signed observation of it, and a receipt attested by the
+      verifier-root key. Its B263 attacks relaunch under the attacked record, so each one still
+      reaches the rule it was written for.
+
+58. **The refusal-site gate covers the custodian, readiness, the protected host, the observer and
+    the guest protocol (C9 round 4 fix wave, EQUIVALENCE (4); rows2 workstream, rows
+    M760-M774).**
+    - **Before.** `scripts/v022_refusal_coverage.py` scanned the three helper files only
+      (amendment 48). Amendment 55 measured 38 unrowed, unexempted refusal sites in the next four
+      files. At 866474ea the count was 41 in those four and 44 with `observer.rs` and axon-psv
+      `lib.rs`. The gate already failed on the helper at that base: the policy change
+      (amendment 54) moved the policy size bound into `snapshot_policy` (a stale exemption) and
+      added an owner check with no row.
+    - **After.** The gate scans `custodian.rs`, `bin/axon-custodian.rs`, `readiness.rs`,
+      `protected_host.rs`, `observer.rs` and `crates/axon-psv/src/lib.rs` as well. A `use` line
+      that names `TEST_TRUST_BUILD` is no longer a site, because it reads nothing. Count per file
+      (uncovered before, then rows and exemptions after): custodian 10, then 13 rowed and 7
+      exempt; axon-custodian 1, then 1 rowed; readiness 24, then 30 rowed and 17 exempt;
+      protected_host 6, then 17 rowed and 2 exempt; observer 3, then 6 rowed and 3 exempt;
+      axon-psv lib 6, then 18 rowed and 3 exempt.
+    - **New ACTIVE rows, each attacked through the production route where it alone refuses:**
+      - The production `axon-custodian`, socket-activated under `/etc/axon` (a tmpfs in a
+        private mount namespace), refuses a config of another schema (M760) or with
+        `max_age_s` 0 (M761).
+      - The helper reads a custodian's refused spend as a refusal (M762, `CustodianRef::call`'s
+        `!r.ok`, attacked by the one-observation replay).
+      - The production custodian takes no `--test-config` (M763).
+      - A production `axon-fabric submit` refuses a host config of another schema (M764), one
+        naming the helper's test-trust `test_config` (M765), and a host config it cannot stat
+        (M766: EACCES as the Fabric uid). It refuses these rather than running as a
+        development host.
+      - A production readiness verifier built from a dirty tree certifies nothing (M767). Clean
+        and dirty production builds are made from one copy of these sources, and the clean one
+        certifies (the control).
+      - A narrowing list the verifier cannot stat is not read as absent (M768, EACCES as uid 4242
+        on the production decision).
+      - The repository may narrow the issuers but never add one (M769).
+      - A test-trust verifier names itself so, both in its identity (M770, which
+        `protected_verifier_ready.py` requires to be `production`) and in its report (M771).
+      - The helper reads `policy.json` only as a regular file of the Fabric uid (M772).
+      - The observation joins the manifest pair by pair (M773) and on `guest.init_sha256`
+        (M774, a new helper-route attack whose only difference is the init digest).
+    - **Exemptions.** Each is in the script with a reason a reviewer can check. The categories
+      are:
+      - an OS or tool error that fails closed;
+      - an operator-authored or operator-signed field;
+      - a site whose condition a named row already mutates at another line (M490/M491, M338/M418,
+        M749, M350-M352);
+      - an arm with no value to admit with;
+      - a check that only re-reports what the next statement refuses on the same input
+        (`found != top` before `refuse_config`; git failures before the hash-checked tree
+        comparison, M290/M697).
+      None of these is an EQUIVALENT_DID retirement, and none is counted as killed.
+    - **Not scanned yet** (listed by the gate on every run, with counts measured at 866474ea):
+      `psv.rs` 2 (the tree re-reads need a workspace version whose materialisation does not read
+      back as itself), axon-psv `runner.rs` 4 (guest), `protected_evidence.rs` 9,
+      axon-loop `admission.rs` 18 and `intake.rs` 27. Scanning the loop files as they are would
+      also miss their tail-expression refusals (`Err(refused(…))` without `return`), which the
+      site pattern does not match. That pattern would have to be extended first.
+    - **Base repairs in tests only.** The readiness fixture now fills `GuestVerdict.policy_sha256`;
+      five readiness test binaries did not compile at the base. The production readiness test
+      (M490-M492, M690) re-launches the run under its re-dated B263 record. Its control was
+      PARTIAL at the base ("the evidence bundle changed").
+    - **Found, not fixed here (readiness workstream's area).** M338 (the verifier_key_id
+      membership, ACTIVE) is REFUSED_ELSEWHERE at 866474ea. Since amendment 57, `launched()` also
+      looks `verifier_key_id` up in the verifier root and verifies the receipt attestation under
+      it (M740), so its test's attack is refused there too. M338 needs a four-cell retirement
+      against M740, or an attack that reaches it alone.
+    - Evidence at c2c80ebd: `v022_g01_mutations.py --scope=all --only=M760-M774` plus the cited
+      M325, M490, M491, M703 and M749, all KILLED by their own attack; M338 REFUSED_ELSEWHERE, as
+      above.
+    - No production behaviour changed: no matrix row, no operator deployment.

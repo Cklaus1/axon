@@ -627,6 +627,10 @@ fn stale_against_sources(bin: &Path, pkg: &str) -> Option<String> {
 /// `<profile>/axon*` / `<profile>/cortex*` file in a target dir. (A line that
 /// WRITES such a path, as a fixture's build output, is not a choice of binary.)
 pub fn binary_resolution_violations(src: &str) -> Vec<String> {
+    // A test that runs its own `cargo build --target-dir DIR` and execs what
+    // that build left chose its directory (as a script assigning
+    // CARGO_TARGET_DIR does).
+    let builds_into_its_own_dir = src.contains("\"--target-dir\"");
     let mut out = vec![];
     for (n, raw) in src.lines().enumerate() {
         let l = raw.trim_start();
@@ -640,7 +644,8 @@ pub fn binary_resolution_violations(src: &str) -> Vec<String> {
             .any(|v| {
                 l.contains(&format!("var_os(\"{v}\")")) || l.contains(&format!("env::var(\"{v}\")"))
             });
-        let names_profile_bin = l.contains("join(\"")
+        let names_profile_bin = !builds_into_its_own_dir
+            && l.contains("join(\"")
             && ["debug/", "release/"].iter().any(|p| {
                 ["axon", "cortex"]
                     .iter()

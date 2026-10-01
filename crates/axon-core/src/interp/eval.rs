@@ -128,11 +128,22 @@ impl<'p> Interp<'p> {
                 // Completeness requirement: EVERY static-type-introduction site must
                 // coerce so no SizedInt value is left as a bare Int at any missed site,
                 // which would silently compute in i64 (I-9).
-                let v = if let Some(width) = ty.as_ref().and_then(axon_type_to_width) {
+                let mut v = if let Some(width) = ty.as_ref().and_then(axon_type_to_width) {
                     coerce_to_sized(v, width)
                 } else {
                     v
                 };
+                // The annotation is a declared type: cast to it (amendment 53).
+                if let Some(t) = ty {
+                    if let Err(why) = self.cast(&mut v, t, &Default::default()) {
+                        return panic(format!(
+                            "`{name}` is declared `{}` but was bound to {} — a runtime type \
+                             confusion ({why})",
+                            crate::doc::render_type(t),
+                            display(&v)
+                        ));
+                    }
+                }
                 env.define(name.clone(), v);
                 Ok(Value::Unit)
             }
@@ -390,7 +401,9 @@ impl<'p> Interp<'p> {
                 if let Value::Chan(q) = &recv {
                     return match method.as_str() {
                         "send" => {
-                            let v = self.eval(&args[0], env)?;
+                            let mut v = self.eval(&args[0], env)?;
+                            // Cast to every element type the channel crossed.
+                            self.chan_send_check(q, &mut v)?;
                             q.borrow_mut().push_back(v);
                             Ok(Value::Unit)
                         }
@@ -426,6 +439,7 @@ impl<'p> Interp<'p> {
                 }
                 let tn = argv[0].type_name();
                 if let Some(f) = self.methods.get(&(tn.clone(), method.clone())) {
+                    self.seal_method(f, &tn)?;
                     self.call_fn(f, argv)
                 } else {
                     panic(format!("no method `{method}` on type `{tn}`"))
@@ -517,6 +531,15 @@ impl<'p> Interp<'p> {
                     } else {
                         fval
                     };
+                    // A field is a declared type: cast to it (amendment 53).
+                    let mut fval = fval;
+                    if let Err(why) = self.cast_field(name, fname, &mut fval) {
+                        return panic(format!(
+                            "field `{fname}` of `{name}` was given {} — a runtime type confusion \
+                             ({why})",
+                            display(&fval)
+                        ));
+                    }
                     fmap.insert(fname.clone(), fval);
                 }
                 if let Some((enum_name, variant)) = name.split_once("::") {
@@ -620,6 +643,8 @@ impl<'p> Interp<'p> {
             }
 
             Expr::Lambda { params, body, .. } => {
+                // Its own parameter annotations are its first contract.
+                let contract = Self::lambda_contract(params);
                 let mut cell = env.snapshot();
                 // PCI: a closure remembers that a SEALED frame created it, so it
                 // runs sealed wherever it is later called.
@@ -634,6 +659,7 @@ impl<'p> Interp<'p> {
                     body: body.clone(),
                     // T40: a SHARED, persistent capture cell — see Value::Closure.
                     captured: std::rc::Rc::new(std::cell::RefCell::new(cell)),
+                    contract,
                 })
             }
 

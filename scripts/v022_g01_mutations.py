@@ -2000,6 +2000,303 @@ MUTATIONS += [
      'axon-core', _HI, 'a_kept_record_is_stale_once_its_owner_package_changes'),
 ]
 
+# ── C9 round 4, CORE workstream (M651-M667; amendment 53; matrix A86) ──
+# PSV-1: the candidate never chooses the code that runs under the operator's
+# judging method. M651 is the method-dispatch seal edge (no confusion needed:
+# the candidate DECLARES its own type). M652-M664/M666/M667 are the
+# declared-type CAST at each value boundary (interp/conform.rs): each attack
+# carries a confused `true` that selects the operator's OWN lenient impl, so
+# no candidate method is involved and the dispatch edge cannot stand in for
+# the cast. M665 is the static E0004 walk over type positions.
+_CC = 'crates/axon-core/src/interp/conform.rs'
+_CE = 'crates/axon-core/src/interp/eval.rs'
+_T4 = 'interp::tests::'
+MUTATIONS += [
+    ('M651', "PSV-1 (A86): in operator code an operator-defined method name never dispatches to the candidate's method", _CI,
+     '            && self.seal.operator_methods.contains(&f.name)',
+     '            && false',
+     'axon-core', _CL, _T4 + 'a_candidates_method_never_runs_under_the_operators_method_name'),
+    ('M652', 'PSV-1 (A86): a value is cast to a declared integer type by kind', _CC,
+     'return kind_ok(matches!(v, Value::Int(_) | Value::SizedInt { .. }))',
+     'return kind_ok(true)',
+     'axon-core', _CL, _T4 + 'a_confused_scalar_never_crosses_a_declared_return'),
+    ('M653', 'PSV-1 (A86): a struct value is cast to a declared struct type by name', _CC,
+     '            if name != n {',
+     '            if false {',
+     'axon-core', _CL, _T4 + 'a_confused_struct_never_crosses_as_another_struct'),
+    ('M654', 'PSV-1 (A86): a declared array type casts every element', _CC,
+     '                        self.cast_at(x, inner, cx, d)?;',
+     '                        let _ = (x, inner);',
+     'axon-core', _CL, _T4 + 'a_confused_element_never_crosses_inside_an_array'),
+    ('M655', 'PSV-1 (A86): a declared Option type casts its payload', _CC,
+     '            Value::Some(x) => self.cast_at(x, inner, cx, d),',
+     '            Value::Some(_) => Ok(()),',
+     'axon-core', _CL, _T4 + 'a_confused_payload_never_crosses_inside_an_option'),
+    ('M656', 'PSV-1 (A86): a declared tuple type casts every element', _CC,
+     '                        self.cast_at(x, t, cx, d)?;',
+     '                        let _ = (x, t);',
+     'axon-core', _CL, _T4 + 'a_confused_element_never_crosses_inside_a_tuple'),
+    ('M657', "PSV-1 (A86): a declared struct type casts the struct's fields", _CC,
+     '                    self.cast_at(fv, &tf.ty, &fcx, d)\n                        .map_err(|e| format!("field `{}` of `{n}`: {e}", tf.name))?;',
+     '                    self.cast_at(fv, &any(), &fcx, d)\n                        .map_err(|e| format!("field `{}` of `{n}`: {e}", tf.name))?;',
+     'axon-core', _CL, _T4 + 'a_confused_field_never_crosses_inside_a_struct'),
+    ('M658', 'PSV-1 (A86): a struct literal casts each field to its declared type', _CE,
+     'if let Err(why) = self.cast_field(name, fname, &mut fval) {',
+     'if let Err(why) = Ok::<(), String>(()) {',
+     'axon-core', _CL, _T4 + 'a_confused_field_is_refused_at_construction'),
+    ('M659', "PSV-1 (A86): a fn's arguments are cast to its declared parameter types", _CI,
+     'if let Err(why) = self.cast(&mut a, &p.ty, &cx) {',
+     'if let Err(why) = Ok::<(), String>(()) {',
+     'axon-core', _CL, _T4 + 'a_confused_argument_never_enters_a_declared_parameter'),
+    ('M660', 'PSV-1 (A86): at a seal crossing a value at a type parameter no argument determined is refused', _CC,
+     '            None if cx.strict => Err(format!(',
+     '            None if false => Err(format!(',
+     'axon-core', _CL, _T4 + 'a_value_at_an_undetermined_type_parameter_never_crosses_the_seal'),
+    ('M661', "PSV-1 (A86): a closure's result is cast to every fn type it crossed", _CI,
+     '        self.closure_ret_check(&contract, &mut v, crossing)?;',
+     '        let _ = crossing;',
+     'axon-core', _CL, _T4 + 'a_closures_confused_result_never_crosses_its_declared_type'),
+    ('M662', "PSV-1 (A86): a closure's arguments are cast to every fn type it crossed", _CI,
+     '        self.closure_args_check(&contract, &mut args)?;',
+     '        let _ = &contract;',
+     'axon-core', _CL, _T4 + 'a_closures_confused_argument_never_crosses_its_declared_type'),
+    ('M663', 'PSV-1 (A86): a value sent on a channel is cast to every element type the channel crossed', _CE,
+     '                            self.chan_send_check(q, &mut v)?;',
+     '                            let _ = &q;',
+     'axon-core', _CL, _T4 + 'a_confused_value_is_never_sent_on_a_declared_channel'),
+    ('M664', 'PSV-1 (A86): a let annotation casts the bound value', _CE,
+     'if let Err(why) = self.cast(&mut v, t, &Default::default()) {',
+     'if let Err(why) = Ok::<(), String>(()) {',
+     'axon-core', _CL, _T4 + 'a_let_annotation_is_cast'),
+    ('M665', "PSV-1 (A86): E0004 walks type positions (signatures, fields, impl headers, bounds, annotations)", 'crates/axon-core/src/resolver.rs',
+     '            for n in names\n                .into_iter()\n                .chain(annotated.iter().map(String::as_str))\n            {',
+     '            for n in Vec::<&str>::new() {',
+     'axon-core', _CL, 'resolver::tests::a_sealed_module_cannot_name_the_operators_types_or_traits'),
+    ('M666', "PSV-1 (A86): a type parameter's trait bounds are cast by an impl of the trait", _CC,
+     '                            self.check_impl(v, tr)?;',
+     '                            let _ = tr;',
+     'axon-core', _CL, _T4 + 'a_type_parameters_trait_bound_is_cast'),
+    ('M667', "PSV-1 (A86): a lambda's own parameter annotations are its first contract", _CC,
+     '        if params.iter().all(|p| p.ty.is_none()) {',
+     '        if true {',
+     'axon-core', _CL, _T4 + 'a_lambdas_annotated_parameter_is_cast'),
+]
+
+
+# ── C9 round 4, POLICY workstream (M670-M689; PSV-6 BLOCKER, amendment 54,
+# negative matrix A87): the policy a protected launch runs is the policy its
+# launch manifest names (policy_sha256, joined by the observation) and states
+# an effect ceiling. One rule (axon_psv::protected_policy_ceiling), applied at
+# the root helper before the nonce spend (M670-M672), in the guest runner
+# before anything runs (M673-M675), in the launcher both routes run
+# (M678-M679); the verdict names the policy digest and Fabric (M676) and the
+# loop (M677) join it to the manifest.
+_PSV_LIB = 'crates/axon-psv/src/lib.rs'
+_PSV_RUN = 'crates/axon-psv/src/runner.rs'
+MUTATIONS += [
+    ('M670', 'PSV-6/A87: the root helper holds the snapshot policy to the manifest before the spend', _PL,
+     '    policy_at_root(staging, &m)?;\n',
+     '    let _ = policy_at_root(staging, &m);\n',
+     'axon-fabric', '--test privileged_launcher', 'a_genuine_observation_of_one_policy_never_launches_another'),
+    ('M671', "PSV-6/A87: the protected policy's sha256 is the manifest's policy_sha256 (root helper route)", _PSV_LIB,
+     '    if got != m.policy_sha256 {\n',
+     '    if false && got != m.policy_sha256 {\n',
+     'axon-fabric', '--test privileged_launcher', 'a_genuine_observation_of_one_policy_never_launches_another'),
+    ('M672', 'PSV-6/A87: a protected policy with no allowed_effects is refused, never "no ceiling" (root helper route)', _PSV_LIB,
+     '        None => Err(NO_CEILING.into()),',
+     '        None => Ok(String::new()),',
+     'axon-fabric', '--test privileged_launcher', 'a_manifest_policy_naming_no_ceiling_launches_nothing'),
+    ('M673', "PSV-6/A87: the guest runner holds the cmdline policy to the manifest's policy_sha256", _PSV_RUN,
+     '        .and_then(|p| protected_policy_ceiling(p, &m))\n',
+     '        .map(|_| String::new())\n',
+     'axon-psv', '--test runner', 'the_guest_runs_only_the_policy_the_manifest_names'),
+    ('M674', 'PSV-6/A87: a protected policy with no allowed_effects is refused, never "no ceiling" (guest runner route)', _PSV_LIB,
+     '        None => Err(NO_CEILING.into()),',
+     '        None => Ok(String::new()),',
+     'axon-psv', '--test runner', 'a_policy_naming_no_ceiling_never_runs_unrestricted'),
+    ('M675', "PSV-6/A87: the test always runs under the manifest policy's ceiling (an empty one included)", _PSV_RUN,
+     '    cmd.env("AXON_ALLOWED_EFFECTS", without_exec(ceiling));\n',
+     '',
+     'axon-psv', '--test runner', 'a_policy_naming_no_ceiling_never_runs_unrestricted'),
+    ('M676', "PSV-6/A87: Fabric joins the guest verdict's policy_sha256 to the manifest's", 'crates/axon-fabric/src/psv.rs',
+     '    if v.policy_sha256 != m.policy_sha256 {\n        return unknown(',
+     '    if false && v.policy_sha256 != m.policy_sha256 {\n        return unknown(',
+     'axon-fabric', '--test psv_dispatch', 'a_guest_under_a_policy_the_manifest_does_not_name_yields_no_verdict'),
+    ('M677', "PSV-6/A87: the loop joins the guest verdict's policy_sha256 to the manifest's", 'crates/axon-loop-contracts/src/protected_evidence.rs',
+     '    if v.policy_sha256 != m.policy_sha256 {\n        return Err(format!(',
+     '    if false && v.policy_sha256 != m.policy_sha256 {\n        return Err(format!(',
+     'axon-loop', '--test intake', 'a_guest_verdict_that_ran_another_policy_is_refused'),
+    ('M678', "PSV-6/A87: the launcher boots in PSV mode only the policy the launch manifest names", 'scripts/fc_linux_profile.sh',
+     'if got != want:\n',
+     'if False and got != want:\n',
+     'axon-fabric', '--test launcher_isolation', 'the_launcher_boots_only_the_policy_the_manifest_names'),
+    ('M679', 'PSV-6/A87: the launcher refuses a PSV policy that states no effect ceiling', 'scripts/fc_linux_profile.sh',
+     'if not isinstance(p, dict) or not isinstance(p.get("allowed_effects"), list):\n',
+     'if False:\n',
+     'axon-fabric', '--test launcher_isolation', 'the_launcher_boots_only_the_policy_the_manifest_names'),
+]
+
+# ── C9 round 4, workstream READINESS (M740-M759): the certification record's
+# run attribution joined to verified documents (A88) and the certified B263
+# record to the qualification the observed launch ran under (A89).
+MUTATIONS += [
+    ('M740', "FIELD-ORIGIN (A88): verifier_key_id is the key that signed the certified run's receipt attestation", 'crates/axon-fabric/src/readiness.rs',
+     '    attestation::verify(att, &issuer, &req, &rc, &key).map_err(|e| {',
+     '    Ok::<String, String>(String::new()).map_err(|e: String| {',
+     'axon-fabric', '--test readiness_launch', 'the_verifier_key_id_is_the_key_that_attested_the_run'),
+    ('M741', 'FIELD-ORIGIN (A88): the attested receipt is protected evidence', 'crates/axon-fabric/src/readiness.rs',
+     '    protected_evidence::check(&req, &rc)\n        .map_err(',
+     '    protected_evidence::check(&req, &rc)\n        .or(Ok::<(), String>(()))\n        .map_err(',
+     'axon-fabric', '--test readiness_launch', 'an_attested_receipt_that_is_not_protected_evidence_is_refused'),
+    ('M742', "FIELD-ORIGIN (A88): the attested receipt names the certified launch's manifest, observation, verdict and qualification", 'crates/axon-fabric/src/readiness.rs',
+     '.find(|(p, want)| one_ref(&rc, p) != Some(*want))',
+     '.find(|(p, want)| one_ref(&rc, p) != Some(*want) && false)',
+     'axon-fabric', '--test readiness_launch', 'an_attested_receipt_of_another_launch_is_refused'),
+    ('M743', "FIELD-ORIGIN (A88): the attested request/receipt is the launch manifest's operation, trial and candidate", 'crates/axon-fabric/src/readiness.rs',
+     '.find(|(_, a, b)| a.as_str() != *b)',
+     '.find(|(_, a, b)| a.as_str() != *b && false)',
+     'axon-fabric', '--test readiness_launch', 'an_attested_receipt_of_another_trial_is_refused'),
+    ('M744', "FIELD-ORIGIN (A88): the certified observation joins the run's launch manifest (host config, registry, verifier, intended manifest)", 'crates/axon-fabric/src/readiness.rs',
+     '    o.joins(&m, &m_sha).map_err(|e| {',
+     '    o.joins(&m, &m_sha).or(Ok::<(), String>(())).map_err(|e| {',
+     'axon-fabric', '--test readiness_launch', 'the_certified_observation_is_of_the_runs_launch'),
+    ('M745', 'PSV-7 (A89): the certified B263 record is the qualification the observed launch ran under', 'crates/axon-fabric/src/readiness.rs',
+     '    if m.qualification_sha256 != s("b263_qualification_sha256") {',
+     '    if false && m.qualification_sha256 != s("b263_qualification_sha256") {',
+     'axon-fabric', '--test readiness_launch', 'a_b263_record_the_launch_did_not_run_under_is_refused'),
+    ('M746', 'PSV-7 (A89): the certified B263 record was current when the run was observed', 'crates/axon-fabric/src/readiness.rs',
+     '    crate::backend::accept_b263(&q, &b_issuer, observed_at, max_age_s, || {',
+     '    crate::backend::accept_b263(&q, &b_issuer, now, max_age_s, || {',
+     'axon-fabric', '--test readiness_launch', 'a_b263_record_issued_after_the_run_is_refused'),
+    ('M747', "FIELD-ORIGIN (A88): the record's suite is the suite the observed launch ran", 'crates/axon-fabric/src/readiness.rs',
+     '.find(|(k, launched)| doc["suite"][k].as_str() != Some(launched.as_str()))',
+     '.find(|(k, launched)| doc["suite"][k].as_str() != Some(launched.as_str()) && false)',
+     'axon-fabric', '--test readiness_launch', 'the_record_suite_is_the_suite_the_launch_ran'),
+    ('M748', "FIELD-ORIGIN (A88): the record's candidate_tree_ref is the candidate the observed launch ran", 'crates/axon-fabric/src/readiness.rs',
+     '    if s("candidate_tree_ref") != m.candidate.tree_digest {',
+     '    if false && s("candidate_tree_ref") != m.candidate.tree_digest {',
+     'axon-fabric', '--test readiness_launch', 'the_record_candidate_is_the_candidate_the_launch_ran'),
+    ('M749', 'FIELD-ORIGIN (A88): exactly one run document of each kind is in the certified evidence', 'crates/axon-fabric/src/readiness.rs',
+     '        [(_, _, b)] => Ok(b),',
+     '        [(_, _, b), ..] => Ok(b),',
+     'axon-fabric', '--test readiness_launch', 'a_record_carrying_two_runs_is_refused'),
+    ('M750', 'FIELD-ORIGIN (A88/A89): readiness requires the run in the certified evidence and joins it', 'crates/axon-fabric/src/readiness.rs',
+     '    launched(component, doc, trust, evidence, &o)\n}',
+     '    let _ = launched;\n    Ok(())\n}',
+     'axon-fabric', '--test readiness_launch', 'a_record_whose_evidence_lacks_the_run_is_refused'),
+]
+
+# ── C9 round 4, EQUIVALENCE (ROWS workstream, M690-M719; amendment 55) ─────
+# The dev review (round 4) found protected rules enforced in production
+# through CALLS with no row (the whole axon-fabric suite stayed green with
+# each call removed), and ACTIVE rows killed only by a unit test calling the
+# rule function directly. Every row below is killed through the PRODUCTION
+# entry: readiness's decision in the installed `verify-readiness`
+# (ReadinessTrust::operator(), /etc/axon/trust in a private mount namespace),
+# the production `axon-custodian` socket-activated under /etc/axon, a
+# production `axon-fabric` whose ProtectedHost::operator() reads
+# /etc/axon/protected-host.json, and the setuid-root helper in production
+# mode. /etc/axon is a tmpfs in a private mount namespace; the host's /etc is
+# never written.
+_RDT = '--test readiness'
+_RDW = 'a_readiness_run_that_can_write_its_trust_roots_certifies_nothing'
+_CUT = 'a_protected_custodian_under_a_config_breaking_a83_serves_nothing'
+_ACT = 'a_protected_custodian_serves_only_its_units_activation_on_its_socket'
+_PHR = 'a_production_fabric_running_as_root_is_refused_on_a_protected_host'
+_PHC = 'a_production_fabric_refuses_a_protected_host_whose_custodian_is_the_fabric'
+_PHH = 'a_production_fabric_refuses_a_helper_config_that_disagrees_with_its_host'
+_LEA = 'a_production_helper_launches_nothing_it_cannot_lease'
+MUTATIONS += [
+    # readiness: the decision's own calls and bindings.
+    ('M690', "readiness: the certification decision checks the operator's trust roots (trust.check(), incl. unwritable by the verifier)", _RD,
+     '    trust.check()?;\n    attribution(', '    let _ = trust.check();\n    attribution(',
+     'axon-fabric', _RDT, _RDW),
+    ('M691', 'readiness: the evidence bundle is the certified one (evidence_bundle_sha256)', _RD,
+     '    if doc["evidence_bundle_sha256"].as_str()\n', '    if false && doc["evidence_bundle_sha256"].as_str()\n',
+     'axon-fabric', _RDT, 'an_evidence_file_changed_after_certification_is_not_certified'),
+    ('M692', 'readiness: the record certifies THIS component', _RD,
+     '    if doc["component"] != component\n', '    if false && doc["component"] != component\n',
+     'axon-fabric', _RDT, 'a_record_for_another_component_or_profile_is_not_certified'),
+    ('M693', 'readiness: the record certifies the protected host profile', _RD,
+     '        || doc["host_profile"] != PROTECTED_PROFILE\n', '        || false\n',
+     'axon-fabric', _RDT, 'a_record_for_another_component_or_profile_is_not_certified'),
+    ('M694', 'readiness: the record certifies the protected qualification profile', _RD,
+     '        || doc["qualification_profile"] != PROTECTED_PROFILE\n', '        || false\n',
+     'axon-fabric', _RDT, 'a_record_for_another_component_or_profile_is_not_certified'),
+    ('M695', "readiness: the record certifies this tree's PSV spec", _RD,
+     '    if doc["psv_spec_sha256"].as_str() != Some(', '    if false && doc["psv_spec_sha256"].as_str() != Some(',
+     'axon-fabric', _RDT, 'a_changed_psv_spec_is_not_certified'),
+    ('M696', 'readiness: this tree descends from the certified revision (the descends call)', _RD,
+     '    if let Err(e) = crate::git_data::descends(&top, certified) {', '    if let Err(e) = Ok::<(), String>(()) {',
+     'axon-fabric', _RDT, 'a_history_not_descending_from_the_certified_revision_is_not_certified'),
+    ('M697', 'readiness: nothing outside governance/ changed since the certified revision', _RD,
+     '    if let Some(f) = outside.first() {', '    if let Some(f) = None::<&String> {',
+     'axon-fabric', _RDT, 'a_committed_code_change_is_not_certified'),
+    ('M698', 'readiness: the record is of the certification schema', _RD,
+     '    if doc["schema"] != CERT_SCHEMA || !missing.is_empty() {', '    if !missing.is_empty() {',
+     'axon-fabric', _RDT, 'a_record_of_another_schema_is_not_certified'),
+    ('M699', "readiness: the record's attribution is checked at the decision (the attribution call)", _RD,
+     '    attribution(component, &doc, trust, &evidence)?;', '    let _ = attribution(component, &doc, trust, &evidence);',
+     'axon-fabric', _RDT, 'a_record_attributed_to_an_untrusted_observer_is_not_certified'),
+    # the production custodian.
+    ('M700', 'A83: the production custodian applies the PROTECTED config rules (load_config -> check(true))', _CU,
+     '    c.check(!a.test)\n', '    c.check(false)\n',
+     'axon-fabric', _HT, _CUT),
+    ('M701', 'A83: a protected custodian config names neither the custodian nor the Fabric as root', _CU,
+     '        if self.custodian_uid == 0 || self.fabric_uid == 0 {',
+     '        if false && (self.custodian_uid == 0 || self.fabric_uid == 0) {',
+     'axon-fabric', _HT, _CUT),
+    ('M702', 'D6: a protected custodian serves only a listener its socket unit passed (LISTEN_PID/LISTEN_FDS)', _CU,
+     '    if pid != std::process::id().to_string() || fds != "1" {',
+     '    if false && (pid != std::process::id().to_string() || fds != "1") {',
+     'axon-fabric', _HT, _ACT),
+    ('M703', 'D6: a protected custodian serves only on the socket its config names', _CU,
+     '    if at.as_pathname() != Some(socket) {', '    if false && at.as_pathname() != Some(socket) {',
+     'axon-fabric', _HT, _ACT),
+    # ProtectedHost::operator(), the one production caller of each rule.
+    ('M704', 'A: a protected host refuses a root Fabric (the fabric_is_not_root call in operator())', _PH,
+     '        fabric_is_not_root(euid)?;\n', '        let _ = fabric_is_not_root(euid);\n',
+     'axon-fabric', _HT, _PHR),
+    ('M705', 'A83: a protected host refuses a custodian that is the Fabric uid or root (the custodian_is_separate call)', _PH,
+     '            custodian_is_separate(c.uid, euid)?;', '            let _ = custodian_is_separate(c.uid, euid);',
+     'axon-fabric', _HT, _PHC),
+    ('M706', "A83: operator() reads the helper's config under the PRODUCTION rules", _PH,
+     '            &crate::privileged_launcher::Authority::production(),\n        )?;\n        helper_agrees(',
+     '            &crate::privileged_launcher::Authority {\n                test: true,\n'
+     '                ..crate::privileged_launcher::Authority::production()\n            },\n        )?;\n        helper_agrees(',
+     'axon-fabric', _HT, _PHH),
+    ('M707', "A: operator() refuses a helper config describing another launch path (the helper_agrees call)", _PH,
+     '        helper_agrees(&helper, &host, euid)?;', '        let _ = helper_agrees(&helper, &host, euid);',
+     'axon-fabric', _HT, _PHH),
+    # decision D: the production helper's lease policy.
+    ('M708', 'D: the production helper opens authority programs under Lease::Required (Authority::lease)', _HPL,
+     '        // Root holds CAP_LEASE, so a production helper always gets one.\n        if self.test {',
+     '        // Root holds CAP_LEASE, so a production helper always gets one.\n        if true || self.test {',
+     'axon-fabric', _HT, _LEA),
+    ('M709', "D: the test-trust lease switch is not in a production build (the seam M708's test drives)", _HSE,
+     '    #[cfg(feature = "test-trust-root")]\n    if Path::new("/etc/axon/TEST-no-read-lease").exists() {',
+     '    #[cfg(all())]\n    if Path::new("/etc/axon/TEST-no-read-lease").exists() {',
+     'axon-fabric', _HT, _LEA),
+]
+# Rows the round-4 review found killed only by a unit test calling the rule
+# directly, RE-ANCHORED on the production route above (the unit tests stay as
+# controls). Previous test in the comment.
+_REANCHOR_R4 = {
+    'M490': (_RDT, _RDW),  # was --lib readiness::tests::a_trust_root_this_process_can_write_authorizes_nothing
+    'M491': (_RDT, _RDW),  # was the same unit test
+    'M492': (_RDT, _RDW),  # was the same unit test
+    'M629': (_HT, _CUT),   # was --lib custodian::tests::a_custodian_that_is_the_fabric_is_refused
+    'M640': (_HT, _CUT),   # was --lib custodian::tests::a_protected_custodian_config_lets_only_root_spend
+    'M546': (_HT, _PHR),   # was --lib protected_host::tests::a_root_fabric_is_refused_on_a_protected_host (EQUIVALENT below)
+    'M634': (_HT, _PHC),   # was --lib protected_host::tests::a_custodian_that_is_the_fabric_uid_is_refused_on_a_protected_host (EQUIVALENT below)
+    'M547': (_HT, _PHH),   # was --test protected_host the_helper_config_must_agree_with_the_host_config
+    'M548': (_HT, _PHH),   # was the same test (helper_agrees called directly)
+    'M636': (_HT, _PHH),   # was the same test
+    'M637': (_HT, _PHH),   # was the same test
+    'M591': (_HT, _LEA),   # was --lib sealed_exec::tests::an_authority_program_that_cannot_be_leased_is_refused_in_production
+}
+MUTATIONS = [r[:6] + _REANCHOR_R4[r[0]] if r[0] in _REANCHOR_R4 else r for r in MUTATIONS]
+
 # Protected Check Isolation guards (governance/specs/v022-protected-check-isolation.md):
 # candidate code must not alter what the operator's check runs or what PASS
 # means. Kept here so nothing is lost, but certified under PCI, not G01
@@ -2328,6 +2625,47 @@ EQUIV_RECORD["M602"] = {
                  "helper accepts only a socket its configured custodian uid or root serves (M626). "
                  "So a helper that is not root never spends, and never launches. Executed with the "
                  "production helper and the production (socket-activated) custodian"}
+# C9 round 4, ROWS workstream (EQUIVALENCE): fabric_is_not_root and
+# custodian_is_separate have ONE production caller, ProtectedHost::operator(),
+# where each is one of two checks that refuse its attack alone. Their only
+# kill was a unit test calling the function; the four cells are executed on
+# the production route (a production axon-fabric reading /etc/axon in a
+# private mount namespace) with scripts/v022_paired_disable.py, and the unit
+# tests are controls only (protected_host::tests).
+EQUIV_RECORD["M704"] = {
+    "property": "a protected host refuses a Fabric running as root",
+    "subsumed_by": ["M548"], "killer": "joint:M704+M548",
+    "all_paths": "operator() is the only production caller of fabric_is_not_root and the only "
+                 "constructor of a production ProtectedHost (the test-trust --protected-host-config "
+                 "route is absent from a production build). After the call it always loads the "
+                 "helper's operator config with Authority::production() (M706) and runs "
+                 "helper_agrees(helper, host, euid). load_config refuses a helper config with "
+                 "fabric_uid 0 in production (M536), and helper_agrees refuses fabric_uid != euid "
+                 "(M548). So with euid 0 every path is refused: fabric_uid 0 by M536, any other "
+                 "by M548. Executed with the production axon-fabric as root"}
+EQUIV_RECORD["M546"] = {
+    "property": "a protected host refuses a Fabric running as root",
+    "subsumed_by": ["M548"], "killer": "joint:M546+M548",
+    "all_paths": "fabric_is_not_root has one caller, operator() (M704's call); M546 disables the "
+                 "same refusal inside it, so M704's argument applies unchanged: euid 0 is refused "
+                 "by M536 (helper fabric_uid 0) or M548 (any other)"}
+EQUIV_RECORD["M705"] = {
+    "property": "a protected host refuses a custodian that is the Fabric's own uid or root",
+    "subsumed_by": ["M633"], "killer": "joint:M705+M633",
+    "all_paths": "operator() is custodian_is_separate's only production caller, reached only for "
+                 "a host with an observer (a Service custodian). It then loads the helper config "
+                 "under the production rules (M706), whose own rule refuses a helper custodian "
+                 "that is the helper's fabric_uid or 0 (M633), and helper_agrees requires the "
+                 "helper's custodian to EQUAL the host's (M636) and its fabric_uid to equal euid "
+                 "(M548). So a host custodian equal to euid or 0 is refused on every path: by "
+                 "M633 when the helper agrees, by M636 or M548 when it does not. A host with no "
+                 "observer names no custodian for Fabric to be issued a nonce by. Executed with "
+                 "the production axon-fabric"}
+EQUIV_RECORD["M634"] = {
+    "property": "a protected host refuses a custodian that is the Fabric's own uid or root",
+    "subsumed_by": ["M633"], "killer": "joint:M634+M633",
+    "all_paths": "custodian_is_separate has one caller, operator() (M705's call); M634 disables "
+                 "the same refusal inside it, so M705's argument applies unchanged"}
 EQUIVALENT_DID = set(EQUIV_RECORD)
 # STALE: a row whose old text no longer exists. "The old text is absent" shows
 # only that the TEXT changed, not that the guard is gone (C9 dev review: M204
@@ -2359,6 +2697,85 @@ STALE_REFACTORED = {
 # property, subsuming guard or killer, so under the four-cell rule it is ACTIVE.
 LEGACY_EQUIV = set()
 RETIRED = LEGACY_EQUIV | EQUIVALENT_DID | set(STALE_REFACTORED)
+# ── C9 round 4 fix wave, ROWS2 workstream (M760-M819; amendment 58): the
+# refusal sites scripts/v022_refusal_coverage.py names once it scans the
+# custodian, its binary, readiness and the protected host config (and the two
+# the policy change added to the helper). Each is attacked on the PRODUCTION
+# route where it is the only refusal.
+_R2T = 'a_protected_custodian_under_a_malformed_config_serves_nothing'
+_R2H = 'a_production_fabric_refuses_a_host_config_it_cannot_vouch_for'
+_R2V = 'a_production_verifier_built_from_a_dirty_tree_certifies_nothing'
+MUTATIONS += [
+    ('M760', 'A83: a protected custodian applies its config schema (production custodian)',
+     'crates/axon-fabric/src/custodian.rs',
+     '        if self.schema != CONFIG_SCHEMA {', '        if false && self.schema != CONFIG_SCHEMA {',
+     'axon-fabric', '--test privileged_launcher', _R2T),
+    ('M761', 'A83: a protected custodian requires a positive nonce lifetime (production custodian)',
+     'crates/axon-fabric/src/custodian.rs',
+     '        if self.max_age_s == 0 {', '        if false && self.max_age_s == 0 {',
+     'axon-fabric', '--test privileged_launcher', _R2T),
+    ('M762', "A84: the helper reads a custodian's refusal of a spend as a refusal (CustodianRef::call)",
+     'crates/axon-fabric/src/custodian.rs',
+     '        if !r.ok {', '        if false && !r.ok {',
+     'axon-fabric', '--test privileged_launcher', 'one_observation_launches_the_root_launcher_once'),
+    ('M763', 'D6: --test-config exists only in a test-trust build of the custodian (PRODUCTION build)',
+     'crates/axon-fabric/src/bin/axon-custodian.rs',
+     '        Some("--test-config") if axon_fabric::backend::TEST_TRUST_BUILD => {',
+     '        Some("--test-config") => {',
+     'axon-fabric', '--test privileged_launcher',
+     'a_production_custodian_never_takes_its_config_from_a_path_its_caller_names'),
+    ('M764', 'A: a production Fabric reads only an axon-protected-host/1 config (ProtectedHost::load)',
+     'crates/axon-fabric/src/protected_host.rs',
+     '        if v["schema"] != PROTECTED_HOST_SCHEMA {', '        if false && v["schema"] != PROTECTED_HOST_SCHEMA {',
+     'axon-fabric', '--test privileged_launcher', _R2H),
+    ('M765', "A: a production Fabric refuses the helper's test-trust config key (PRODUCTION build)",
+     'crates/axon-fabric/src/protected_host.rs',
+     '            Some(_) if !crate::backend::TEST_TRUST_BUILD => {', '            Some(_) if false => {',
+     'axon-fabric', '--test privileged_launcher', _R2H),
+    ('M766', 'A: a host config that cannot be stat\'ed runs nothing (never read as not-a-protected-host)',
+     'crates/axon-fabric/src/protected_host.rs',
+     '        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),\n        Err(e) => Err(format!(',
+     '        Err(_) => Ok(false),\n        #[allow(unreachable_patterns)]\n        Err(e) => Err(format!(',
+     'axon-fabric', '--test privileged_launcher', _R2H),
+    ('M767', 'PSV-7: a production readiness verifier built from a dirty tree certifies nothing',
+     'crates/axon-fabric/src/readiness.rs',
+     '    if !TEST_TRUST_BUILD && me["source_dirty"] == true {',
+     '    if false && !TEST_TRUST_BUILD && me["source_dirty"] == true {',
+     'axon-fabric', '--test readiness', _R2V),
+    ('M768', 'readiness: a narrowing list the verifier cannot stat is not read as absent (production decision)',
+     'crates/axon-fabric/src/readiness.rs',
+     '        Err(e) => return Err(format!("{TRUST_EXPECTATIONS}: {e}")),', '        Err(_) => false,',
+     'axon-fabric', '--test readiness', 'a_narrowing_list_the_verifier_cannot_stat_is_not_read_as_absent'),
+    ('M769', 'readiness: the repository may narrow the qualification issuers, never add',
+     'crates/axon-fabric/src/readiness.rs',
+     '            if !list.iter().any(|x| x.as_str() == Some(issuer.as_str())) {',
+     '            if false && !list.iter().any(|x| x.as_str() == Some(issuer.as_str())) {',
+     'axon-fabric', '--test readiness', 'the_repository_may_narrow_the_issuers_never_add'),
+    ('M770', "PSV-4: the readiness verifier's identity names a test-trust build as such (the relay requires production)",
+     'crates/axon-fabric/src/readiness.rs',
+     '        "sha256": sha,\n        "build": if TEST_TRUST_BUILD {', '        "sha256": sha,\n        "build": if false {',
+     'axon-fabric', '--test readiness', _R2V),
+    ('M771', "PSV-4: the readiness report names a test-trust build as such",
+     'crates/axon-fabric/src/readiness.rs',
+     '        // A build carrying the test trust constructors never earns readiness.\n        "build": if TEST_TRUST_BUILD {',
+     '        // A build carrying the test trust constructors never earns readiness.\n        "build": if false {',
+     'axon-fabric', '--test readiness', _R2V),
+    ('M772', "A: the root helper reads the guest policy only as a regular file of the Fabric uid",
+     'crates/axon-fabric/src/privileged_launcher.rs',
+     '    if st.st_mode & libc::S_IFMT != libc::S_IFREG || st.st_uid != owner {',
+     '    if false && (st.st_mode & libc::S_IFMT != libc::S_IFREG || st.st_uid != owner) {',
+     'axon-fabric', '--test privileged_launcher', 'a_root_owned_policy_is_never_read_by_the_helper'),
+    ('M773', 'A84: the observation joins the launch manifest field for field (the comparison of every pair)',
+     'crates/axon-psv/src/lib.rs',
+     '            if observed != launch {', '            if false && observed != launch {',
+     'axon-fabric', '--test privileged_launcher', 'an_observation_of_another_manifest_launches_nothing'),
+    ('M774', "A84: the observation's guest init is the launch manifest's",
+     'crates/axon-psv/src/lib.rs',
+     '        if self.guest.init_sha256 != m.guest.init_sha256 {',
+     '        if false && self.guest.init_sha256 != m.guest.init_sha256 {',
+     'axon-fabric', '--test privileged_launcher', 'an_observation_of_another_guest_init_launches_nothing'),
+]
+
 BINDING_IDS = {f"M{n}" for n in range(101, 137)}
 # Every id range the PSV rounds allocate (C9 round 1 uses up to M399; round
 # 1b allocates M400-M499, round 2 M500-M519). An id outside every scope would silently fall into
@@ -2370,6 +2787,13 @@ PSV_IDS |= {f"M{n}" for n in range(550, 650)}
 PSV_IDS |= {f"M{n}" for n in range(650, 700)}
 # C9 round 4 (harness2): M720-M739.
 PSV_IDS |= {f"M{n}" for n in range(720, 740)}
+# C9 round 4 fix wave: readiness M740-M759.
+PSV_IDS |= {f"M{n}" for n in range(740, 760)}
+
+# C9 round 4: M650-M699, and the rows workstream's M690-M719.
+PSV_IDS |= {f"M{n}" for n in range(650, 720)}
+# C9 round 4 fix wave: rows2 M760-M819.
+PSV_IDS |= {f"M{n}" for n in range(760, 820)}
 
 
 def in_scope(mid, scope):

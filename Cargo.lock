@@ -324,6 +324,7 @@ name = "axon-psv"
 version = "0.1.0"
 dependencies = [
  "axon-workspace-recipe",
+ "base64",
  "libc",
  "serde",
  "serde_json",

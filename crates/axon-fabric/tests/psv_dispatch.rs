@@ -652,6 +652,62 @@ fn a_valid_verdict_from_an_unbound_launch_counts_for_nothing() {
     assert_eq!(class(&s), "guest-unobserved");
 }
 
+/// PSV-6 (C9 round 4; A87): the policy the guest runs under is the policy
+/// the launch manifest names, and the receipt binds the one that ran.
+/// * (G) the launcher embedded ANOTHER policy (a wider ceiling) than the one
+///   the manifest names: the in-guest runner refuses it, on the helper route
+///   and on the direct route alike, and there is no verdict;
+/// * (V) a genuine passing run whose verdict names another policy: Fabric's
+///   join of the verdict's `policy_sha256` to the manifest's refuses it.
+///
+/// Control: the manifest's own policy, observed, through the helper: a
+/// protected pass.
+#[test]
+fn a_guest_under_a_policy_the_manifest_does_not_name_yields_no_verdict() {
+    let w = World::new();
+    for (route, lx) in [
+        ("helper", w.lx("policy", "")),
+        ("direct", w.lx_direct("policy", "")),
+    ] {
+        let s = w.submit_with(lx, &format!("op-psv-policy-{route}"), "t_psv_ok");
+        assert!(
+            s.receipt.verification == ReceiptVerification::Unknown && class(&s) != "protected",
+            "ATTACK: {route}: a guest booted under a policy the launch manifest does not name \
+             yielded a verdict: {:?} {:?}",
+            s.receipt.verification,
+            s.reason
+        );
+        assert!(
+            s.reason.clone().unwrap_or_default().contains("policy"),
+            "{route}: {:?}",
+            s.reason
+        );
+    }
+    let s = w.submit_with(w.lx("verdict-policy", ""), "op-psv-vpolicy", "t_psv_ok");
+    assert!(
+        s.receipt.verification == ReceiptVerification::Unknown && class(&s) != "protected",
+        "ATTACK: a guest verdict naming another policy than the manifest's was counted: {:?} {:?}",
+        s.receipt.verification,
+        s.reason
+    );
+    assert!(
+        s.reason
+            .clone()
+            .unwrap_or_default()
+            .contains("the guest ran policy"),
+        "{:?}",
+        s.reason
+    );
+    let s = w.submit_with(w.lx("", ""), "op-psv-policy-ok", "t_psv_ok");
+    assert_eq!(
+        s.receipt.verification,
+        ReceiptVerification::Passed,
+        "control: {:?}",
+        s.reason
+    );
+    assert_eq!(class(&s), "protected");
+}
+
 // ── M3: the preflight observation ───────────────────────────────────────────
 //
 // The stand-in observer composes the observation FROM the launch manifest and

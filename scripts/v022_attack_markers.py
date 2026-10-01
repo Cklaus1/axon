@@ -774,3 +774,109 @@ ATTACK_MARKERS.update({
     'M738': r'ATTACK: the freeze bound a guest [\w-]+ its controlled build did not produce',
     'M739': r'ATTACK: a kept paired-disable record stayed current after its owner package\s+changed',
 })
+
+# C9 round 4, CORE workstream (M651-M667, amendment 53, matrix A86): each
+# attack's own getting-through is the test COMPLETING (`Ok(Completed)`), never
+# a refusal reason, so a different check refusing it is REFUSED_ELSEWHERE.
+ATTACK_MARKERS.update({
+    'M651': r"ATTACK: the candidate's `ok` ran under the operator's method name: Ok\(Completed\)",
+    'M652': r"ATTACK: a confused bool crossed a declared `-> i64` return: Ok\(Completed\)",
+    'M653': r"ATTACK: an `Other` crossed a declared `-> Point` return: Ok\(Completed\)",
+    'M654': r"ATTACK: a confused element crossed a declared `-> \[i64\]` return: Ok\(Completed\)",
+    'M655': r"ATTACK: a confused payload crossed a declared `-> Option<i64>` return: Ok\(Completed\)",
+    'M656': r"ATTACK: a confused element crossed a declared `-> \(i64, i64\)` return: Ok\(Completed\)",
+    'M657': r"ATTACK: a confused field crossed a declared `-> Holder` return: Ok\(Completed\)",
+    'M658': r"ATTACK: a confused field was constructed into a candidate global: Ok\(Completed\)",
+    'M659': r"ATTACK: a confused value entered the operator's `x: i64` parameter: Ok\(Completed\)",
+    'M660': r"ATTACK: a value at an undetermined type parameter crossed into operator code: Ok\(Completed\)",
+    'M661': r"ATTACK: a closure declared `fn\(i64\) -> i64` returned a confused bool: Ok\(Completed\)",
+    'M662': r"ATTACK: the operator's listener was called with a confused bool: Ok\(Completed\)",
+    'M663': r"ATTACK: a confused bool was sent on a `Chan<i64>` the operator reads: Ok\(Completed\)",
+    'M664': r"ATTACK: a confused bool was bound to the operator's `let r: i64`: Ok\(Completed\)",
+    'M665': r"ATTACK: a sealed module named the operator's `\w+` in a type position \([^)]*\): \[\]",
+    'M666': r"ATTACK: a bool passed the operator's `T: Judge` bound through `Lax`: Ok\(Completed\)",
+    'M667': r"ATTACK: the operator's `\|r: i64\|` listener was called with a confused bool: Ok\(Completed\)",
+})
+
+# ── C9 round 4, POLICY workstream (M670-M689; PSV-6, amendment 54, A87).
+ATTACK_MARKERS.update({
+    'M670': r'ATTACK: the root helper launched policy P2 under a genuine observation of a manifest\s+naming P1',
+    'M671': r'ATTACK: the root helper launched policy P2 under a genuine observation of a manifest\s+naming P1',
+    'M672': r'ATTACK: the root helper launched a manifest policy that states no effect ceiling',
+    'M673': r'ATTACK: the guest ran policy P2 while the launch manifest names P1',
+    'M674': r'ATTACK: a manifest policy with no allowed_effects ran the test with no effect\s+ceiling',
+    'M675': r"ATTACK: the test did not run under the manifest policy's \(empty\) ceiling",
+    'M676': r"ATTACK: a guest verdict naming another policy than the manifest's was counted",
+    'M677': r"ATTACK: (another|no) policy: a guest verdict that ran a policy other than the manifest's\s+was ACCEPTED",
+    'M678': r'ATTACK: the launcher went past a --policy the launch manifest does not name',
+    'M679': r'ATTACK: the launcher went past a manifest policy that states no effect ceiling',
+})
+
+# C9 round 4, workstream READINESS (M740-M750; A88, A89).
+ATTACK_MARKERS.update({
+    'M740': r'ATTACK: the record names a verifier key that did not attest the run and readiness still said PASS',
+    'M741': r'ATTACK: an attested guest-unobserved receipt certified a protected run and readiness still said PASS',
+    'M742': r'ATTACK: the verifier attested a receipt of another launch and readiness still said PASS',
+    'M743': r'ATTACK: the verifier attested a receipt of another trial than the launch and readiness still said PASS',
+    'M744': r"ATTACK: the certified observation's host_config_sha256 is not the run's launch's and readiness still said PASS",
+    'M745': r'ATTACK: a current B263 record for another host certified a launch made under a different record and readiness still said PASS',
+    'M746': r'ATTACK: a B263 record issued after the run was observed certified it and readiness still said PASS',
+    'M747': r'ATTACK: the record certifies a suite id the launch did not run and readiness still said PASS',
+    'M748': r'ATTACK: the record certifies a candidate the launch did not run and readiness still said PASS',
+    'M749': r'ATTACK: a record carrying two run outputs certified the run and readiness still said PASS',
+    'M750': r'ATTACK: a record with no run in its evidence certified the run and readiness still said PASS',
+})
+
+# ── C9 round 4, EQUIVALENCE (ROWS workstream, M690-M719): each row killed on
+# the PRODUCTION route; the re-anchored rows' markers are their new tests'.
+ATTACK_MARKERS.update({
+    'M690': r'ATTACK: a readiness run that can write its operator trust roots certified PASS',
+    'M490': r'ATTACK: a readiness run that can write its operator trust roots certified PASS',
+    'M491': r'ATTACK: a readiness run that can write its operator trust roots certified PASS',
+    'M492': r'ATTACK: a readiness run that can write its operator trust roots certified PASS',
+    'M691': r'ATTACK: an evidence file changed after certification and readiness still certified the bundle',
+    'M692': r'ATTACK: a record certifying another component certified protected_backend',
+    'M693': r'ATTACK: a record of another host profile certified the protected profile',
+    'M694': r'ATTACK: a record of another qualification profile certified the protected profile',
+    'M695': r'ATTACK: the PSV spec changed after certification and readiness still certified',
+    'M696': r"ATTACK: an orphan history holding the certified tree was certified as the certified\s+revision's descendant",
+    'M697': r'ATTACK: code changed outside governance/ after certification and readiness still certified',
+    'M698': r'ATTACK: a record of another schema was read as a protected certification',
+    'M699': r"ATTACK: a record naming an observer key outside the operator's observer root was certified",
+    'M700': r'ATTACK: a protected custodian whose config names the Fabric uid as the custodian served',
+    'M629': r'ATTACK: a protected custodian whose config names the Fabric uid as the custodian served',
+    'M640': r'ATTACK: a protected custodian whose config lets uid 4242 spend nonces served',
+    'M701': r'ATTACK: a protected custodian whose config names root as the Fabric served',
+    'M702': r'ATTACK: a protected custodian not started by its socket unit served',
+    'M703': r'ATTACK: a protected custodian activated on another socket than its configured one served',
+    # Four-cell records (EQUIV_RECORD): the joint attack's own marker.
+    'M704': r'ATTACK: a production Fabric running as root was accepted on a protected host',
+    'M546': r'ATTACK: a production Fabric running as root was accepted on a protected host',
+    'M705': r"ATTACK: a production Fabric accepted a protected host whose custodian is the Fabric's\s+own uid",
+    'M634': r"ATTACK: a production Fabric accepted a protected host whose custodian is the Fabric's\s+own uid",
+    'M706': r'ATTACK: a production Fabric read the helper config under development rules',
+    'M707': r'ATTACK: a production Fabric accepted a helper config running another launcher than the host pins',
+    'M547': r'ATTACK: a production Fabric accepted a helper config running another launcher than the host pins',
+    'M548': r"ATTACK: a production Fabric accepted a helper config admitting another uid than the Fabric's",
+    'M636': r"ATTACK: a production Fabric accepted a helper config spending through another custodian than the host's",
+    'M637': r"ATTACK: a production Fabric accepted a helper config naming another host signer than the host's",
+    'M708': r'ATTACK: the production helper launched an authority program it could not lease',
+    'M591': r'ATTACK: the production helper launched an authority program it could not lease',
+    'M709': r'ATTACK: a production helper obeyed the test-trust lease switch',
+    # ── C9 round 4 fix wave, ROWS2 (M760-M819; amendment 58) ──────────────
+    'M760': r'ATTACK: a protected custodian whose config is of another schema served',
+    'M761': r'ATTACK: a protected custodian whose config sets no nonce lifetime',
+    'M762': r'ATTACK: one observation launched the root launcher twice',
+    'M763': r'ATTACK: the production custodian took its config from a path its caller named',
+    'M764': r'ATTACK: a production Fabric accepted a host config of another schema',
+    'M765': r"ATTACK: a production Fabric accepted a host config naming the helper's test-trust config",
+    'M766': r'ATTACK: a production Fabric accepted a host whose config it cannot stat',
+    'M767': r'ATTACK: a production verifier built from a dirty tree certified PASS',
+    'M768': r'ATTACK: a narrowing list the verifier could not stat was read as absent',
+    'M769': r'ATTACK: certified PASS despite the attack',
+    'M770': r"ATTACK: a test-trust verifier's identity names the production build",
+    'M771': r"ATTACK: a test-trust verifier's report names the production build",
+    'M772': r"ATTACK: a root-owned policy\.json among the Fabric's inputs was read by the root helper",
+    'M773': r'ATTACK: an observation of another manifest launched the root launcher',
+    'M774': r'ATTACK: an observation of another guest init launched the root launcher',
+})

@@ -3,12 +3,15 @@
 //! a verdict with the SAME protocol crate. It is not an authority and earns
 //! nothing.
 //!
-//!   psv_dev make-job --candidate DIR --suite DIR --entry FILE --test NAME --job DIR [--attempt ID]
-//!       writes DIR/launch-manifest.json + DIR/completion-secret (32 fresh bytes)
-//!       and prints {"manifest_sha256": …}
+//!   psv_dev make-job --candidate DIR --suite DIR --entry FILE --test NAME --job DIR
+//!           --policy FILE [--attempt ID] [--nonce N]
+//!       writes DIR/launch-manifest.json + DIR/completion-secret (32 fresh bytes);
+//!       the manifest names FILE's sha256 as its policy_sha256 (the guest runs
+//!       only that policy: PSV-6, A87). Prints {"manifest_sha256": …}
 //!   psv_dev check-verdict --job DIR --verdict FILE
 //!       re-derives K from the job's secret and manifest (never from the
-//!       verdict) and prints {"status", "manifest_joins", "token_verifies", "refusal"}
+//!       verdict) and prints {"status", "manifest_joins", "policy_joins",
+//!       "token_verifies", "refusal"}
 
 use axon_psv::*;
 use std::path::PathBuf;
@@ -72,7 +75,10 @@ fn make_job(args: &[String]) {
             axon_sha256: z('0'),
             init_sha256: z('0'),
         },
-        policy_sha256: z('0'),
+        policy_sha256: sha256_hex(&std::fs::read(req(args, "--policy")).unwrap_or_else(|e| {
+            eprintln!("psv_dev: --policy: {e}");
+            std::process::exit(2)
+        })),
         suite: SuiteRef {
             id: "dev-suite".into(),
             version: digest(&suite),
@@ -139,6 +145,8 @@ fn check_verdict(args: &[String]) {
         serde_json::json!({
             "status": v.status,
             "manifest_joins": v.launch_manifest_sha256 == m.digest(),
+            "policy_joins": v.policy_sha256 == m.policy_sha256,
+            "policy_sha256": v.policy_sha256,
             "token_verifies": token_verifies,
             "refusal": v.refusal,
             "runner": v.runner,

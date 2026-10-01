@@ -261,6 +261,17 @@ The readiness script requires every field, with well-formed digests and commit i
   this profile, qualification-signed (`<file>.sig`) under the operator root, whose
   `profile.artifacts` are this guest (`vmlinux` = `guest_kernel_sha256`, `rootfs.sqfs` =
   `guest_image_sha256`, `axon` = `guest_runtime_sha256`);
+- the B263 record to have been current when the run was observed (`end` no later than
+  `observed_at`, within the maximum age of it), as well as at decision time;
+- the run itself among the evidence (amendment 57): exactly one `axon-fabric-submit/1` (Fabric's
+  submit output: the receipt, its `acf-receipt-attestation/2` and the `axon-psv-evidence/2`
+  bundle) and exactly one `acf-compute-request/1`. The attestation must verify under the
+  verifier-root key `verifier_key_id` names. The receipt must be protected evidence naming the
+  bundle's launch manifest, this observation, the guest verdict and the manifest's qualification.
+  The observation must join that manifest field for field. The manifest's `qualification_sha256`
+  must be `b263_qualification_sha256`, and its suite and candidate must be the record's `suite`
+  (`digest` = the suite tree digest) and `candidate_tree_ref`. `micode_sha` is operator-attested:
+  no run document carries it;
 - the operator-installed `verify-readiness` to verify the signature under the operator root;
 - if `trust-expectations.json` lists expected issuers, the signer to be among them.
 

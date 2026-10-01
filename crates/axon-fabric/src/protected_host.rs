@@ -799,29 +799,17 @@ fn service_leaf(p: &Path) -> Result<(), String> {
 mod tests {
     use super::*;
 
-    /// A: a protected host refuses a root Fabric (it would need no helper,
-    /// and hold every authority the helper keeps from it).
+    /// CONTROLS ONLY (C9 round 4, EQUIVALENCE): the rule functions admit the
+    /// honest case. Their refusals are evidenced on the route that decides
+    /// them, `ProtectedHost::operator()` run by a production `axon-fabric`
+    /// (tests/privileged_launcher.rs): there each is one of two checks that
+    /// refuse the attack alone, recorded under the four-cell rule (M546/M704
+    /// with M548, M634/M705 with M633), never counted as killed. A direct
+    /// attack assertion here would count the helper's refusal as the
+    /// property's (the weak kill the round-4 review found).
     #[test]
-    fn a_root_fabric_is_refused_on_a_protected_host() {
-        let got = fabric_is_not_root(0);
-        assert!(
-            got.is_err(),
-            "ATTACK: Fabric running as root was accepted on a protected host"
-        );
+    fn the_rule_functions_admit_a_separate_non_root_fabric_and_custodian() {
         fabric_is_not_root(991).expect("control: a service uid");
-    }
-
-    /// Amendment 50 (A83): the custodian a protected host names is not the
-    /// Fabric's own uid (nor root).
-    #[test]
-    fn a_custodian_that_is_the_fabric_uid_is_refused_on_a_protected_host() {
-        let got = custodian_is_separate(991, 991);
-        assert!(
-            got.is_err(),
-            "ATTACK: a protected host config naming the Fabric's own uid as its custodian was \
-             accepted"
-        );
-        assert!(custodian_is_separate(0, 991).is_err(), "root custodian");
         custodian_is_separate(993, 991).expect("control: a separate custodian uid");
     }
 

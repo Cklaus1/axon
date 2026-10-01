@@ -301,3 +301,85 @@ fn the_launchers_input_image_carries_no_extended_attribute() {
         got.image_xattrs
     );
 }
+
+/// Run the real launcher in PSV mode with a launch manifest naming
+/// `named`'s digest and `--policy` holding `given`. Returns its exit and
+/// stderr. Nothing is acquired either way: there is no engine here, so a
+/// policy the launcher ACCEPTS is refused later, for the missing VMM.
+fn psv_launch_with_policy(named: &str, given: &str) -> (Option<i32>, String) {
+    use sha2::{Digest, Sha256};
+    let sha = |b: &[u8]| format!("{:x}", Sha256::digest(b));
+    let d = tempfile::tempdir().unwrap();
+    let p = |n: &str| d.path().join(n);
+    for dir in ["cand", "suite", "job"] {
+        std::fs::create_dir(p(dir)).unwrap();
+    }
+    std::fs::write(p("cand/f.ax"), "fn f() -> i64 { 1 }\n").unwrap();
+    std::fs::write(p("suite/accept.ax"), "// suite\n").unwrap();
+    let m = format!("{{\"policy_sha256\":\"{}\"}}", sha(named.as_bytes()));
+    std::fs::write(p("job/launch-manifest.json"), &m).unwrap();
+    std::fs::write(p("job/completion-secret"), [7u8; 32]).unwrap();
+    std::fs::write(p("policy.json"), given).unwrap();
+    let launcher = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scripts/fc_linux_profile.sh");
+    // The launcher runs firecracker/jailer, which this workspace does not build.
+    let o = script_spawn::script("bash", &launcher, Bins::NoWorkspaceBinary)
+        .args(["--psv-candidate"])
+        .arg(p("cand"))
+        .arg("--psv-suite")
+        .arg(p("suite"))
+        .arg("--psv-job")
+        .arg(p("job"))
+        .arg("--psv-manifest-sha")
+        .arg(sha(m.as_bytes()))
+        .arg("--policy")
+        .arg(p("policy.json"))
+        .arg("--out")
+        .arg(p("out"))
+        .arg("--fc-bin")
+        .arg(p("absent/firecracker"))
+        .env_clear()
+        .env("PATH", "/usr/sbin:/usr/bin:/sbin:/bin")
+        .output()
+        .unwrap();
+    (
+        o.status.code(),
+        String::from_utf8_lossy(&o.stderr).into_owned(),
+    )
+}
+
+/// PSV-6 (C9 round 4; A87): the launcher, which both routes run (the
+/// privileged helper's and the direct one), boots only the policy the launch
+/// manifest names, and only one that states an effect ceiling:
+/// * the manifest names P1 (`allowed_effects: []`), `--policy` is P2 (IO, Net,
+///   Time): refused, for that reason;
+/// * the manifest names P0, which states NO ceiling, and `--policy` is P0:
+///   refused (an absent ceiling is never read as none).
+///
+/// Control: `--policy` is the manifest's P1, and the launcher goes past the
+/// policy check (to the missing engine, nothing acquired).
+#[test]
+fn the_launcher_boots_only_the_policy_the_manifest_names() {
+    let p1 = r#"{"schema":"axon-vm-mmds/1","allowed_effects":[]}"#;
+    let p2 = r#"{"schema":"axon-vm-mmds/1","allowed_effects":["IO","Net","Time"]}"#;
+    let p0 = r#"{"schema":"axon-vm-mmds/1","budget_tokens":0}"#;
+    let (code, err) = psv_launch_with_policy(p1, p2);
+    assert!(
+        code == Some(22) && err.contains("not the policy_sha256"),
+        "ATTACK: the launcher went past a --policy the launch manifest does not name: \
+         {code:?} {err}"
+    );
+    let (code, err) = psv_launch_with_policy(p0, p0);
+    assert!(
+        code == Some(22) && err.contains("names no allowed_effects"),
+        "ATTACK: the launcher went past a manifest policy that states no effect ceiling: \
+         {code:?} {err}"
+    );
+    let (code, err) = psv_launch_with_policy(p1, p1);
+    assert!(
+        code == Some(22)
+            && !err.contains("not the policy_sha256")
+            && !err.contains("allowed_effects")
+            && err.contains("firecracker"),
+        "control: the manifest's policy passes the policy check: {code:?} {err}"
+    );
+}

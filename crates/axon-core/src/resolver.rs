@@ -1253,37 +1253,107 @@ impl<'a> Resolver<'a> {
             };
             let mut exprs: Vec<&Expr> = Vec::new();
             let mut fns: Vec<&FnDef> = Vec::new();
+            // TYPE positions too (C9 round 4, PSV-1, amendment 53): a
+            // signature, a field, an impl header, a bound or an annotation
+            // naming an operator type or trait is the same reach into the
+            // operator's code as an expression naming it. `generics` are the
+            // item's own type parameters, which are local names.
+            let mut types: Vec<&crate::ast::AxonType> = Vec::new();
+            let mut names: Vec<&str> = Vec::new();
+            let mut generics: Vec<&str> = Vec::new();
             match item {
                 Item::FnDef(f) => fns.push(f),
-                Item::ImplBlock(b) => fns.extend(b.methods.iter()),
-                Item::RefineDef(r) => exprs.push(&r.predicate),
-                Item::TypeDef(t) => exprs.extend(t.refinement.as_deref()),
+                Item::ImplBlock(b) => {
+                    fns.extend(b.methods.iter());
+                    types.push(&b.for_type);
+                    names.push(&b.trait_name);
+                    generics.extend(b.generic_params.iter().map(String::as_str));
+                    names.extend(
+                        b.generic_bounds
+                            .iter()
+                            .flat_map(|(_, ts)| ts)
+                            .map(String::as_str),
+                    );
+                }
+                Item::RefineDef(r) => {
+                    exprs.push(&r.predicate);
+                    types.push(&r.base);
+                }
+                Item::TypeDef(t) => {
+                    exprs.extend(t.refinement.as_deref());
+                    types.extend(t.fields.iter().map(|f| &f.ty));
+                    generics.extend(t.generic_params.iter().map(String::as_str));
+                }
+                Item::EnumDef(e) => {
+                    types.extend(e.variants.iter().flat_map(|v| &v.fields).map(|f| &f.ty));
+                    generics.extend(e.generic_params.iter().map(String::as_str));
+                }
+                Item::TraitDef(t) => {
+                    for m in &t.methods {
+                        types.extend(m.params.iter().map(|p| &p.ty));
+                        types.extend(m.return_type.as_ref());
+                    }
+                    generics.extend(t.generic_params.iter().map(String::as_str));
+                }
                 Item::LetDef { value, .. } => exprs.push(value),
-                Item::EnumDef(_) | Item::TraitDef(_) | Item::ModDecl(_) | Item::UseDecl(_) => {}
+                Item::ModDecl(_) | Item::UseDecl(_) => {}
             }
             for f in fns {
                 exprs.push(&f.body);
                 if let Some(v) = &f.verify {
                     exprs.push(&v.predicate);
                 }
+                types.extend(f.params.iter().map(|p| &p.ty));
+                types.extend(f.return_type.as_ref());
+                generics.extend(f.generic_params.iter().map(String::as_str));
+                names.extend(
+                    f.generic_bounds
+                        .iter()
+                        .flat_map(|(_, ts)| ts)
+                        .map(String::as_str),
+                );
             }
             let mut reached: Vec<String> = Vec::new();
+            let reach = |n: &str, reached: &mut Vec<String>| {
+                // Every segment of a qualified name (`rubric::expected`,
+                // `Enum::Variant`), not just the whole string.
+                for seg in n.split("::") {
+                    if suite.contains(seg) && !reached.iter().any(|r| r == seg) {
+                        reached.push(seg.to_string());
+                    }
+                }
+            };
+            // Annotation names inside bodies (`let x: T`, `|p: T|`).
+            let mut annotated: Vec<String> = Vec::new();
             for e in exprs {
                 crate::ast::walk_expr(e, &mut |x| {
-                    let n = match x {
-                        Expr::Ident(n) => n,
-                        Expr::Assign { name, .. } => name,
-                        Expr::StructLit { name, .. } => name,
-                        _ => return,
+                    let mut ann = |t: &crate::ast::AxonType| {
+                        crate::ast::walk_type_names(t, &mut |n| annotated.push(n.to_string()))
                     };
-                    // Every segment of a qualified name (`rubric::expected`,
-                    // `Enum::Variant`), not just the whole string.
-                    for seg in n.split("::") {
-                        if suite.contains(seg) && !reached.iter().any(|r| r == seg) {
-                            reached.push(seg.to_string());
+                    match x {
+                        Expr::Ident(n)
+                        | Expr::Assign { name: n, .. }
+                        | Expr::StructLit { name: n, .. } => reach(n, &mut reached),
+                        Expr::Let { ty: Some(t), .. }
+                        | Expr::Own { ty: Some(t), .. }
+                        | Expr::RefBind { ty: Some(t), .. } => ann(t),
+                        Expr::Lambda { params, .. } => {
+                            params.iter().flat_map(|p| &p.ty).for_each(ann)
                         }
+                        _ => {}
                     }
                 });
+            }
+            for t in types {
+                crate::ast::walk_type_names(t, &mut |n| names.push(n));
+            }
+            for n in names
+                .into_iter()
+                .chain(annotated.iter().map(String::as_str))
+            {
+                if !generics.contains(&n) {
+                    reach(n, &mut reached);
+                }
             }
             for n in reached {
                 self.emit_error(
@@ -3146,6 +3216,42 @@ mod tests {
              fn double(n: i64) -> i64 {\n    let f = |k: i64| helper(k)\n    f(n)\n}\n",
         );
         assert!(r.errors.is_empty(), "{:?}", r.errors);
+    }
+
+    /// C9 round 4 (PSV-1, amendment 53): TYPE positions are a reach into the
+    /// operator's code too. A candidate that names the operator's trait in an
+    /// impl header, its type in a signature, a field, a bound or an
+    /// annotation is refused statically, like an expression naming it.
+    #[test]
+    fn a_sealed_module_cannot_name_the_operators_types_or_traits() {
+        let suite = "trait Judge {\n    fn ok(self) -> bool\n}\ntype Expect = { want: i64 }\n\
+                     impl Judge for i64 {\n    fn ok(self: i64) -> bool { self == 9 }\n}\n";
+        for (why, cand, name) in [
+            ("impl header trait", "impl Judge for str {\n    fn ok(self: str) -> bool { true }\n}\nfn solve(n: i64) -> i64 { n }\n", "Judge"),
+            ("impl header type", "trait Mine {\n    fn ok(self) -> bool\n}\nimpl Mine for Expect {\n    fn ok(self: Expect) -> bool { true }\n}\n", "Expect"),
+            ("return type", "fn solve(n: i64) -> Expect { solve(n) }\n", "Expect"),
+            ("parameter type", "fn solve(e: Option<Expect>) -> i64 { 0 }\n", "Expect"),
+            ("field type", "type Box = { e: [Expect] }\n", "Expect"),
+            ("trait bound", "fn solve<T: Judge>(x: T) -> i64 { 0 }\n", "Judge"),
+            ("dyn type", "fn solve(x: dyn Judge) -> i64 { 0 }\n", "Judge"),
+            ("let annotation", "fn solve(n: i64) -> i64 {\n    let e: Option<Expect> = None\n    n\n}\n", "Expect"),
+            ("lambda annotation", "fn solve(n: i64) -> i64 {\n    let f = |e: Expect| 0\n    n\n}\n", "Expect"),
+        ] {
+            let e = errors_with_code(&sealed_merge(suite, cand), E0004);
+            assert!(
+                e.iter().any(|m| m.contains(&format!("`{name}`"))),
+                "ATTACK: a sealed module named the operator's `{name}` in a type position ({why}): {e:?}"
+            );
+        }
+        // Honest: its own types and traits, type parameters that happen to
+        // share nothing, builtin types.
+        let r = sealed_merge(
+            suite,
+            "type Point = { x: i64 }\ntrait Mine {\n    fn area(self) -> i64\n}\n\
+             impl Mine for Point {\n    fn area(self: Point) -> i64 { self.x }\n}\n\
+             fn pick<T: Mine>(x: T, xs: [Option<Point>]) -> T { x }\n",
+        );
+        assert!(r.errors.is_empty(), "control: {:?}", r.errors);
     }
 
     #[test]

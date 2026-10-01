@@ -656,6 +656,40 @@ pub enum UnaryOp {
 /// through nested closures, and a generic callback would re-wrap its own type at
 /// every level — an infinite monomorphization that segfaults rustc rather than
 /// producing a diagnostic. Learned the hard way.)
+/// Every type or trait NAME a type mentions (`Named`, a generic's base,
+/// `dyn Trait`, a type parameter), outermost first.
+pub fn walk_type_names<'a>(t: &'a AxonType, f: &mut dyn FnMut(&'a str)) {
+    match t {
+        AxonType::Named(n) | AxonType::DynTrait(n) | AxonType::TypeParam(n) => f(n),
+        AxonType::Generic { base, args } => {
+            f(base);
+            for a in args {
+                walk_type_names(a, f);
+            }
+        }
+        AxonType::Result { ok, err } => {
+            walk_type_names(ok, f);
+            walk_type_names(err, f);
+        }
+        AxonType::Option(x)
+        | AxonType::Chan(x)
+        | AxonType::Slice(x)
+        | AxonType::Ref(x)
+        | AxonType::RawPtr(x) => walk_type_names(x, f),
+        AxonType::Fn { params, ret } => {
+            for p in params {
+                walk_type_names(p, f);
+            }
+            walk_type_names(ret, f);
+        }
+        AxonType::Tuple(xs) | AxonType::Union(xs) => {
+            for x in xs {
+                walk_type_names(x, f);
+            }
+        }
+    }
+}
+
 pub fn walk_expr(e: &Expr, f: &mut dyn FnMut(&Expr)) {
     use Expr;
     f(e);
