@@ -2238,7 +2238,7 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
 62. **The refusal-site gate covers the Fabric decision files; the root helper's report, the protected
     executable and every B263 qualification rule have rows; the protected PCI lineage names the
     certified revision by its whole hash (C9 round 4b, EQUIVALENCE (4), Fabric side; rows4b
-    workstream, rows M1020-M1084, matrix A91).**
+    workstream, rows M1020-M1100, matrix A91).**
     - **Before.** The gate scanned none of `backend.rs`, `submit.rs`, `git_data.rs`,
       `provenance.rs`, `bin/axon-fabric.rs`, `signing.rs`, `workspace.rs`, `journal.rs`,
       `branches.rs`, `grants.rs` (`bin/axon-provenance.rs` has no site). Measured at 6d6517a1 with
