@@ -595,9 +595,24 @@ impl Certified {
 /// observation, the B263 record and the evidence bundle: everything genuine
 /// except the edits.
 pub fn relaunch(c: &Certified, edit_m: EditManifest, edit_o: EditValue, edit_rc: EditValue) {
+    relaunch_observed_by(c, &c.observer, edit_m, edit_o, edit_rc)
+}
+
+/// [`relaunch`], with the run's preflight observation made (and signed for
+/// the observer authority) by `observer` instead of the operator's observer:
+/// the receipt, the manifest and the record all name THAT observation, so
+/// every amendment-57 run join holds and only the observer's identity
+/// differs.
+pub fn relaunch_observed_by(
+    c: &Certified,
+    observer: &Issuer,
+    edit_m: EditManifest,
+    edit_o: EditValue,
+    edit_rc: EditValue,
+) {
     write_launch(
         &c.repo,
-        &c.observer,
+        observer,
         &c.verifier_pkcs8,
         edit_m,
         edit_o,

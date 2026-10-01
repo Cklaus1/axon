@@ -118,18 +118,15 @@ fn revoking_the_verifier_key_revokes_the_certification() {
 fn an_observer_key_id_outside_the_observer_root_is_refused() {
     let Some(c) = certified() else { return };
     let stranger = Issuer::generate();
-    let obs = c.observed(&stranger, &"f".repeat(40));
-    rebind(
-        &c,
-        OBSERVATION,
-        "observation_sha256",
-        &obs,
-        &stranger,
-        TrustAuthority::Observer,
-    );
-    resign(&c, &c.operator, |r| {
-        r["observer_key_id"] = json!(stranger.key_id())
-    });
+    // The run is launched with the stranger making (and signing) the
+    // preflight observation, and the record names that observation and the
+    // stranger as observer_key_id: the receipt, manifest and record agree,
+    // so every amendment-57 run join holds and only the observer key's
+    // membership in the operator's observer root differs (C9 round 4
+    // pdfix; before it the observation alone was replaced and the receipt
+    // join refused the joint attack first, class e).
+    relaunch_observed_by(&c, &stranger, keep(), keep(), keep());
+    rebundle(&c, |r| r["observer_key_id"] = json!(stranger.key_id()));
     let v = c.verdict();
     assert_ne!(
         v["status"], "PASS",
