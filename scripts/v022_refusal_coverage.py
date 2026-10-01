@@ -419,6 +419,83 @@ EXEMPT += [
 ]
 
 
+# C9 round 4b fix wave, rows4a (amendment 61): the LOOP side's files the rule
+# brings in. Kinds, as before: NOTHING TO ADMIT (the refusal holds an error and
+# no value the code after it could run on), SELECTS NOTHING (the refused field
+# decides nothing the code reads: named), NAMED ROW (a registry row mutates the
+# same removal at another line), OPERATOR-AUTHORED (a field of an operator-owned
+# file or of the operator's environment: only the operator chooses it, and the
+# refusal only fails closed), OS ERROR, NON-UNIX (compiled out), UNREACHABLE
+# (no input reaches it; the fact is named).
+AT = "crates/axon-loop-contracts/src/attestation.rs"
+OT = "crates/axon-loop-contracts/src/operator_trust.rs"
+EXEMPT += [
+    (AT, '            shape(format!(\n                "the key registered for verifier {issuer_ref} is not a 64-hex Ed25519 public key"',
+     "NOTHING TO ADMIT: the registered key is not a key, so there is nothing to verify under; it "
+     "comes from Config::rooted_key (an operator-rooted key, M207/M206)"),
+    (AT, '.ok_or_else(|| shape("attestation: not a JSON object"))?;',
+     "NOTHING TO ADMIT: a non-object carries no binding or signature to verify"),
+    (AT, '.ok_or_else(|| shape("attestation: no issued_ms (the issuer\'s signing time)"))?;',
+     "NOTHING TO ADMIT: no signing time to bind (the binding needs one) or to compare with the "
+     "plan's freeze; any value substituted is then compared with the document's (M03) and signed "
+     "over (M02)"),
+    (AT, 'return Err(shape(format!("attestation: unknown field {k:?}")));',
+     "SELECTS NOTHING: an unbound field is neither signed nor read; every consumer reads only bound "
+     "fields (compared by M03, signed by M02) and issued_ms through issued_ms(), which the binding "
+     "signs"),
+    (AT, '        return Err(shape(format!(\n            "attestation: not {ATTESTATION_SCHEMA} with alg ed25519"',
+     "SELECTS NOTHING: `schema` is a bound field (M03 compares it with ATTESTATION_SCHEMA, M02 "
+     "signs it) and `alg` chooses nothing: verification is always Ed25519"),
+    (AT, '.ok_or_else(|| shape("attestation: no 32-byte public_key"))?;',
+     "SELECTS NOTHING: the presented key is only compared; the signature is always verified under "
+     "the REGISTERED key (M02)"),
+    (AT, '        return Err(shape(format!(\n            "attestation is signed by {}, not by {key_id}',
+     "SELECTS NOTHING: the presented key is never used to verify; the signature is verified under "
+     "the registered key (M02), so a document presenting another key is accepted only if the "
+     "registered key signed it"),
+    (AT, '.ok_or_else(|| shape("attestation: no 64-byte signature"))?;',
+     "NOTHING TO ADMIT: no signature to verify"),
+    (AT, '            shape(format!(\n                "attestation signature does not verify under {key_id}',
+     "NAMED ROW: M02 mutates the verification this refusal reports (the same removal)"),
+    (AT, '            shape(format!(\n                "the key registered for {issuer_ref} is not a 64-hex',
+     "NOTHING TO ADMIT: the registered key is not a key; every caller passes an operator-rooted "
+     "key (Config::rooted_key, M207/M257)"),
+    (AT, '.ok_or_else(|| shape("signature: not a JSON object"))?;',
+     "NOTHING TO ADMIT: a non-object carries no binding or signature"),
+    (AT, 'return Err(shape(format!("signature: unknown field {k:?}")));',
+     "SELECTS NOTHING: an unbound field is neither signed nor read; callers take the domain, the "
+     "issuer and the document from their own inputs (document_binding), never from the signature"),
+    (AT, 'return Err(shape("signature: alg is not ed25519"));',
+     "SELECTS NOTHING: verification is always Ed25519 under the registered key"),
+    (AT, '.ok_or_else(|| shape("signature: no 32-byte public_key"))?;',
+     "SELECTS NOTHING: the presented key is only compared, never used to verify"),
+    (AT, '        return Err(shape(format!(\n            "signed by {}, not by {key_id}',
+     "SELECTS NOTHING: the signature is verified under the registered key (M951), never the "
+     "presented one"),
+    (AT, '            return Err(shape(format!(\n                "signature: {field} is {} but',
+     "SELECTS NOTHING: the signature is verified over the binding built from the CALLER's domain, "
+     "issuer, key id and document (M951), and no caller reads a field of the signature document, "
+     "so a displayed field that differs changes nothing that is read"),
+    (AT, '.ok_or_else(|| shape("signature: no 64-byte signature"))?;',
+     "NOTHING TO ADMIT: no signature to verify"),
+    (OT, "    if !dir.is_absolute() {",
+     "re-reported by the next statement: a relative `dir` is not below the absolute `base` every "
+     "caller passes (\"/\" or an absolute test root), so strip_prefix refuses it"),
+    (OT, '        Err(e) => {\n            return Err(format!(\n                "trust root {} cannot be read',
+     "NAMED ROW: M460 mutates the arm above it to read every listing failure as NotFound, the same "
+     "removal"),
+    (OT, "            if t.len() != 64 || !t.bytes().all(|b| b.is_ascii_hexdigit()) {",
+     "OPERATOR-AUTHORED: a key file in a root the ownership walk holds root-owned and unwritable by "
+     "others (M948-M950); a malformed entry, kept, equals no presented key (keys are compared as "
+     "64-hex strings or 32-byte values), so it only fails closed"),
+    (OT, 'return Err("operator ownership cannot be checked on this platform".into());',
+     "NON-UNIX: compiled out on the only supported platform (cfg(not(unix)))"),
+    (OT, '    if sv["schema"] != EVIDENCE_SIGNATURE_SCHEMA || sv["alg"] != "ed25519" {',
+     "SELECTS NOTHING: the signed message always begins with EVIDENCE_SIGNATURE_SCHEMA "
+     "(evidence_signing_message) and verification is always Ed25519, so neither field chooses what "
+     "is verified"),
+]
+
 def load_rows():
     spec = importlib.util.spec_from_file_location("mut", os.path.join(ROOT, "scripts/v022_g01_mutations.py"))
     mut = importlib.util.module_from_spec(spec)

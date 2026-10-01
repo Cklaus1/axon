@@ -988,4 +988,11 @@ ATTACK_MARKERS.update({
     'M942': r'ATTACK: an execution attested by a verifier qualified only for development\s+backends counted',
     'M943': r'ATTACK: a protected admission accepted an execution attested by a verifier no\s+longer qualified',
     'M944': r"ATTACK: an agent-signed B263 record stood in for the operator's qualification and readiness still said PASS",
+    'M945': r'ATTACK: no launch manifest: an unobserved execution leg was counted as protected',
+    'M946': r'ATTACK: a launch manifest that is not a sha256: an unobserved execution leg was counted as protected',
+    'M947': r'ATTACK: a second launch manifest: an unobserved execution leg was counted as protected',
+    'M948': r'ATTACK: a trust-root key is a symlink, and readiness still certified PASS',
+    'M949': r'ATTACK: a trust-root key is owned by uid 1000, and readiness still certified PASS',
+    'M950': r'ATTACK: the trust root is other-writable, and readiness still certified PASS',
+    'M951': r"ATTACK: a context signature presenting the observer's key but made by another\s+key counted",
 })

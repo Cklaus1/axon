@@ -1564,7 +1564,7 @@ fn drop_ref(rc: &mut Value, prefix: &str) {
 #[test]
 fn an_unobserved_execution_leg_counts_nothing_in_a_protected_evaluation() {
     type Edit = fn(&mut Value);
-    let cases: [(&str, Edit); 5] = [
+    let cases: [(&str, Edit); 7] = [
         ("genuine", |_| {}),
         ("no evidence class", |rc| drop_ref(rc, "evidence-class:")),
         ("guest-unobserved class", |rc| {
@@ -1579,6 +1579,20 @@ fn an_unobserved_execution_leg_counts_nothing_in_a_protected_evaluation() {
         }),
         ("no preflight observation", |rc| {
             drop_ref(rc, "preflight-observation-sha256:")
+        }),
+        // Amendment 61: each arm of the one-sha256 rule (names_one_sha256).
+        ("a launch manifest that is not a sha256", |rc| {
+            drop_ref(rc, "launch-manifest-sha256:");
+            rc["evidence_refs"]
+                .as_array_mut()
+                .unwrap()
+                .push(json!("launch-manifest-sha256:not-a-digest"));
+        }),
+        ("a second launch manifest", |rc| {
+            rc["evidence_refs"]
+                .as_array_mut()
+                .unwrap()
+                .push(json!(format!("launch-manifest-sha256:{}", "c".repeat(64))));
         }),
     ];
     for (case, edit) in cases {
@@ -2108,6 +2122,58 @@ fn a_protected_admission_refuses_an_execution_attester_no_longer_qualified() {
                 rec.reasons
             ),
             (true, Err(e)) => assert!(e.to_string().contains("is not qualified"), "{e}"),
+        }
+    }
+}
+
+/// The context signature's VERIFICATION (`attestation::verify_document`, the
+/// primitive every detached signature in the loop goes through: contexts,
+/// execution attestations, clearances). The signature document presents the
+/// observer's registered key and every bound field genuinely, but its
+/// signature bytes were made by another key: only the Ed25519 verification
+/// can refuse it (amendment 61: that check had no row). Control: the
+/// observer's own signature counts.
+#[test]
+fn a_context_signature_not_made_by_the_key_it_presents_counts_nothing() {
+    for forged in [false, true] {
+        let w = protected_world();
+        trust_monitor(&w.s);
+        freeze_plan(&w.s, "fs", &w.inc_ref, &w.cand_ref, |_| {}).unwrap();
+        assign_specs(&w.s, "fs", &specs_for(&w));
+        let mut v = evl_request("fs", &w.inc, &w.cand, &specs_for(&w), &EvlOpts::default());
+        on_protected_backend(&mut v);
+        if forged {
+            let (other, _) = axon_loop_contracts::attestation::generate().unwrap();
+            for t in challenger_trials(&mut v) {
+                let by_other = axon_loop_contracts::attestation::sign_document(
+                    &other,
+                    axon_loop::evl::CONTEXT_DOMAIN,
+                    &OpaqueRef::new(OBSERVER).unwrap(),
+                    &t["context"],
+                )
+                .unwrap();
+                // Everything genuine but the signature bytes.
+                t["context_signature"]["signature"] = by_other["signature"].clone();
+            }
+        }
+        let (rec, _) = evaluate(&w.s, &v).unwrap();
+        let arm = rec.arm_for_policy(&w.cand_ref).unwrap().clone();
+        if !forged {
+            assert_eq!(arm.verified_pass, 2, "control: {:?}", arm.trials);
+        } else {
+            assert_eq!(
+                arm.verified_pass, 0,
+                "ATTACK: a context signature presenting the observer's key but made by another \
+                 key counted: {:?}",
+                arm.trials
+            );
+            assert!(
+                arm.trials
+                    .iter()
+                    .all(|t| t.reason.contains("does not verify")),
+                "{:?}",
+                arm.trials
+            );
         }
     }
 }

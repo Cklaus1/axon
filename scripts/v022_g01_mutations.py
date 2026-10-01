@@ -3287,6 +3287,51 @@ MUTATIONS += [
      'axon-fabric', '--test readiness_attribution', 'a_b263_record_not_signed_under_the_qualification_root_is_refused'),
 ]
 
+_SHA_NONE = '        [] => Err(format!(\n            "the execution receipt names no {prefix}…: the launch was not observed"\n        )),'
+_SHA_BAD = '        [d] => Err(format!(\n            "the execution receipt\'s {prefix}{d} is not a sha256"\n        )),'
+_SHA_MANY = '        _ => Err(format!(\n            "the execution receipt names {prefix}… more than once"\n        )),'
+_OT = 'crates/axon-loop-contracts/src/operator_trust.rs'
+_OWN_T = '--test trust_root_ownership'
+MUTATIONS += [
+    ('M945', 'C9r1b class-b join (4b): an attested execution receipt that names no launch digest is unobserved',
+     _EVL, _SHA_NONE, '        [] => Ok(()),', 'axon-loop', '--test protected_class',
+     'an_unobserved_execution_leg_counts_nothing_in_a_protected_evaluation'),
+    ('M946', 'C9r1b class-b join (4b): a launch digest that is not a sha256 is no observation',
+     _EVL, _SHA_BAD, '        [_d] => Ok(()),', 'axon-loop', '--test protected_class',
+     'an_unobserved_execution_leg_counts_nothing_in_a_protected_evaluation'),
+    ('M947', 'C9r1b class-b join (4b): a receipt naming a launch digest twice is ambiguous, not observed',
+     _EVL, _SHA_MANY, '        _ => Ok(()),', 'axon-loop', '--test protected_class',
+     'an_unobserved_execution_leg_counts_nothing_in_a_protected_evaluation'),
+    ('M948', 'O2 ownership walk (4b): a trust-root entry that is a symlink authorizes nothing (EQUIVALENT on Linux: M950)',
+     _OT, '        if m.file_type().is_symlink() {\n            return Err(format!(\n                "{} is a symlink: a trust root is never redirected",',
+     '        if false && m.file_type().is_symlink() {\n            return Err(format!(\n                "{} is a symlink: a trust root is never redirected",',
+     'axon-fabric', _OWN_T, 'a_symlinked_trust_root_key_authorizes_nothing'),
+    ('M949', 'O2 ownership walk (4b): a trust-root entry owned by another uid authorizes nothing',
+     _OT, '        if m.uid() != 0 {', '        if false && m.uid() != 0 {',
+     'axon-fabric', _OWN_T, 'a_trust_root_key_owned_by_another_uid_authorizes_nothing'),
+    ('M950', 'O2 ownership walk (4b): a group/other-writable trust-root entry authorizes nothing',
+     _OT, '        if m.mode() & 0o022 != 0 {\n            return Err(format!(\n                "{} is group- or other-writable (mode {:o}): it authorizes nothing",',
+     '        if false && m.mode() & 0o022 != 0 {\n            return Err(format!(\n                "{} is group- or other-writable (mode {:o}): it authorizes nothing",',
+     'axon-fabric', _OWN_T, 'an_other_writable_trust_root_authorizes_nothing'),
+    ('M951', 'verify_document (4b): a detached signature verifies under the registered key over the caller\'s binding',
+     'crates/axon-loop-contracts/src/attestation.rs',
+     '        .verify(&crate::canonical_bytes(&want)?, &s)\n        .map_err(|_| shape(format!("signature does not verify under {key_id}")))?;',
+     '        .verify(&crate::canonical_bytes(&want)?, &s)\n        .or(Ok::<(), ring::error::Unspecified>(()))\n        .map_err(|_| shape(format!("signature does not verify under {key_id}")))?;',
+     'axon-loop', '--test protected_class', 'a_context_signature_not_made_by_the_key_it_presents_counts_nothing'),
+]
+
+EQUIV_RECORD["M948"] = {
+    "property": "a symlink in an operator trust root authorizes nothing",
+    "subsumed_by": ["M950"], "killer": "joint:M948+M950",
+    "all_paths": "check_owned_chain applies its one `check` closure to the base, every component below "
+                 "it and (with entries) every entry; `check` lstat()s the path (symlink_metadata) and, "
+                 "with no return between them but refusals, tests the symlink type (M948), the owner "
+                 "(M949) and the mode (M950). On Linux, the only platform the protected profile runs "
+                 "on, a symlink's own mode is always 0777, so `mode & 0o022 != 0` (M950) refuses every "
+                 "path M948 refuses"}
+EQUIVALENT_DID |= {"M948"}
+RETIRED |= {"M948"}
+
 PSV_IDS = {f"M{n}" for n in range(137, 550)}
 # C9 round 3: rows M560-M649 are PSV rows (workstream ranges).
 PSV_IDS |= {f"M{n}" for n in range(550, 650)}
