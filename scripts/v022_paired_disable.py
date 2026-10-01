@@ -662,6 +662,19 @@ GUARD_SETS = {
     "M998": {"siblings": ["M979", "M980"], "kind": "set"},
     "M981": {"siblings": ["M819"], "kind": "pair"},
 }
+# C9 round 4b, INTEGRATE-E (amendment 64; EQUIV_RECORD in the registry).
+GUARD_SETS.update({
+    "M1375": {"siblings": ["M108"], "kind": "pair"},
+    "M1377": {"siblings": ["M978"], "kind": "pair"},
+    "M1378": {"siblings": ["M1379", "M978", "M965"], "kind": "set"},
+    "M1379": {"siblings": ["M1378", "M978", "M965"], "kind": "set"},
+    "M1380": {"siblings": ["M02"], "kind": "pair"},
+    "M1381": {"siblings": ["M1382", "M1383", "M1384", "M1385"], "kind": "set"},
+    "M1382": {"siblings": ["M1381", "M1383", "M1384", "M1385"], "kind": "set"},
+    "M1383": {"siblings": ["M1381", "M1382", "M1384", "M1385"], "kind": "set"},
+    "M1384": {"siblings": ["M1381", "M1382", "M1383", "M1385"], "kind": "set"},
+    "M1385": {"siblings": ["M1381", "M1382", "M1383", "M1384"], "kind": "set"},
+})
 
 
 def current_edits_digest(rid):

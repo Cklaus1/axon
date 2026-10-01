@@ -109,11 +109,12 @@ NOT_YET_SCANNED = {
     'crates/axon-loop-contracts/src/canonical.rs': 12,  # loop side (rows4a): not reached
     'crates/axon-loop-contracts/src/checks.rs': 34,  # loop side (rows4a): not reached
     'crates/axon-loop-contracts/src/compute.rs': 2,  # loop side (rows4a): not reached
-    'crates/axon-loop-contracts/src/episode.rs': 8,  # loop side (rows4a): not reached
+    'crates/axon-loop-contracts/src/episode.rs': 7,  # loop side (rows4a): not reached
     'crates/axon-loop-contracts/src/ids.rs': 9,  # loop side (rows4a): not reached
     'crates/axon-loop-contracts/src/lib.rs': 4,  # loop side (rows4a): not reached
+    'crates/axon-loop-contracts/src/operator_trust.rs': 1,  # integrate-E: `!dir.is_absolute()` rested only on strip_prefix refusing next; no four-cell built (amendment 64)
     'crates/axon-loop-contracts/src/policy.rs': 7,  # loop side (rows4a): not reached
-    'crates/axon-loop-contracts/src/receipt.rs': 9,  # loop side (rows4a): not reached
+    'crates/axon-loop-contracts/src/receipt.rs': 8,  # loop side (rows4a): not reached
     'crates/axon-loop-contracts/src/schema.rs': 28,  # loop side (rows4a): not reached
     'crates/axon-loop/src/ledger.rs': 18,  # loop side (rows4a): not reached
     'crates/axon-loop/src/plan.rs': 4,  # rows4a: four dominated sites (inc == cand, scope, view, adds); attacks written in tests/plan_sites.rs, four-cell rows need ids past M1019
@@ -407,14 +408,6 @@ EXEMPT += [
     (LI, "        Refusal::Semantic(s) => refused(format!(\"{what}: {s}\")),",
      "NOT A SITE: the body of the `semantic` converter; every use is `parse(..).map_err(semantic(..))?`, "
      "its own site with no parsed value on Err"),
-    (LI, "    if ep.policy_ref.scheme() != RefScheme::Cl22 {",
-     "UNREACHABLE ALONE (flagged for the integrator: the strict reading may require a four-cell "
-     "record, which cannot be built): no stored record is named other than by the cl22 digest of "
-     "its content: Store::cas_path refuses any other scheme and check_name requires the name to "
-     "equal digest(content), always cl22; so with this check removed the next statement's policy "
-     "lookup refuses the same reference, and with that lookup's scheme check also removed "
-     "check_name, then bind_episode's policy digest, still refuse it. Measured: the row (former "
-     "M833) is REFUSED_ELSEWHERE ('not a policy this store knows')"),
     (LI, "        Err(LoopError::Refused(_)) => {\n            return Err(refused(format!(",
      "NOTHING TO ADMIT: the store holds no such policy, so there is no PolicyEnvelope to bind"),
     (LI, "        Err(e) => return Err(e),\n    };\n    if tx.is_revoked",
@@ -516,9 +509,6 @@ EXEMPT += [
      "so a displayed field that differs changes nothing that is read"),
     (AT, '.ok_or_else(|| shape("signature: no 64-byte signature"))?;',
      "NOTHING TO ADMIT: no signature to verify"),
-    (OT, "    if !dir.is_absolute() {",
-     "re-reported by the next statement: a relative `dir` is not below the absolute `base` every "
-     "caller passes (\"/\" or an absolute test root), so strip_prefix refuses it"),
     (OT, '        Err(e) => {\n            return Err(format!(\n                "trust root {} cannot be read',
      "NAMED ROW: M460 mutates the arm above it to read every listing failure as NotFound, the same "
      "removal"),
@@ -535,20 +525,9 @@ EXEMPT += [
 ]
 EV = "crates/axon-loop/src/evl.rs"
 EXEMPT += [
-    (EV, '        return Err("no Fabric execution attestation was delivered".into());',
-     "RE-REPORTED: the next statement reads att[\"issuer_ref\"], which a null attestation does not "
-     "have, and refuses (\"names no issuer\"); nothing between them can admit"),
-    (EV, "    if d.ctx_sig.is_null() {",
-     "RE-REPORTED: the statements after it only build the context's value and then call "
-     "verify_document on the signature, which refuses a non-object (\"signature: not a JSON "
-     "object\"); nothing between them can admit"),
     (EV, '        refused(format!(\n            "experiment {} has no assignment journalled before execution',
      "NOTHING TO ADMIT: with no journalled assignment there is no population to judge the request "
      "against (ADR-001 §3.6)"),
-    (EV, '                    refused(format!(\n                        "trial {} was delivered and requested but never issued in',
-     "UNREACHABLE: `requested == issued` (M108) refused, a few statements above with no return "
-     "between but refusals, every request whose keys are not exactly the issued ones, and the arms "
-     "loop visits only requested keys"),
     (EV, '                    unknown(\n                        UnknownKind::Unbound,\n                        format!(\n                            "unbound: attempt {} is not this trial\'s issued attempt',
      "NAMED ROW: M107 mutates this arm's condition (`&d.ep.identity.attempt_id != issued_attempt`), "
      "the same removal"),
@@ -559,19 +538,8 @@ EXEMPT += [
     (EV, "    if intaken.contains_key(&d.ep_ref) {",
      "NAMED ROW: M15 mutates the call `intake_join(&intaken, d)` to Ok, the same removal as this "
      "function's Err arm"),
-    (EV, '.ok_or_else(|| refused("an authenticated attestation states no issued_ms"))?;',
-     "UNREACHABLE: the closure runs only after verify_check_evidence verified the attestation through "
-     "attestation::verify, which refuses one without issued_ms (\"no issued_ms\"); issued_ms() reads "
-     "the same document"),
-    (EV, '.ok_or_else(|| refused("an authenticated verdict names no issuer"))?,',
-     "UNREACHABLE: verify_check_evidence refused a verdict whose issuer_ref is None (its "
-     "independence check, `is_some_and`) before this closure runs, on the same episode"),
     (EV, "            _ => Err((\n                UnknownKind::MissingEvidence,",
      "NOTHING TO ADMIT: without the check's request and receipt there is nothing to authenticate"),
-    (EV, "            if v.matched_checks == 0 {",
-     "UNREACHABLE: a delivered episode is parsed through contract_from_value -> parse -> "
-     "LoopEpisode::validate, which refuses a passed verification with matched_checks 0 "
-     "(\"verification passed requires matched_checks > 0\"), and judge's `v` is that episode's"),
     (EV, "        VerificationResult::NotRun => unknown(",
      "NOTHING TO ADMIT: a check that did not run has no verdict; this arm only names the Unknown's "
      "kind (rowed: M133-M136)"),
@@ -603,27 +571,8 @@ EXEMPT += [
     (ST, "            Err(e) => Err(map_open(p, e)),",
      "OS ERROR: the open failed (an O_NOFOLLOW refusal of a final-component symlink is the kernel's "
      "ELOOP, which map_open only names); nothing is read"),
-    (ST, "        if r.scheme() != RefScheme::Cl22 {",
-     "SELECTS NOTHING: put_cas names a file only by the cl22 digest it computes; a read by a "
-     "non-cl22 ref names a file whose content digest (cl22) is compared with the ref by check_name "
-     "(M978) or get_cas_text, which a non-cl22 ref never equals"),
     (ST, '            .ok_or_else(|| crate::error::refused(format!("no {kind} record {r}")))',
      "NOTHING TO ADMIT: no such record, so there are no bytes to return"),
-    (ST, "        if axon_loop_contracts::digest(&v)? != *r {",
-     "SELECTS NOTHING (authenticated downstream): every get_cas_text caller authenticates the text "
-     "over its exact bytes before use: clearance and context signatures by verify_document (M951), "
-     "the Fabric request/receipt by the verifier's attestation (M02), the PSV bundle by check_bundle, "
-     "the execution documents by verify_execution (M940-M943); a CAS record read as a TYPED value "
-     "goes through check_name (M978)"),
-    (ST, "    if axon_loop_contracts::canonical_bytes(&back)? != axon_loop_contracts::canonical_bytes(&v)? {",
-     "SELECTS NOTHING (named downstream check): an alternative encoding this refuses decodes to the "
-     "same typed value, which is what every reader uses; an omitted (defaulted) field decodes to a "
-     "value whose digest is not the record's name (check_name, M978) or not the ledger chain's "
-     "(ledger.rs, NOT YET SCANNED)"),
-    (ST, '            Err(e) => {\n                return Err(LoopError::Io(format!(\n                    "{} line {}: {e}",',
-     "SELECTS NOTHING (named downstream check): a JSONL file is the ledger, whose entries are hash-"
-     "chained (each `prev` is the previous entry's digest, ledger.rs, NOT YET SCANNED), so a line "
-     "skipped instead of refused breaks the chain at the next entry"),
 ]
 SA = "crates/axon-loop/src/safety.rs"
 EXEMPT += [
@@ -1049,6 +998,37 @@ EXEMPT += [
 ]
 
 
+
+# C9 round 4b, INTEGRATE-E (amendment 64): the strict rework. The sites below
+# were exempted as RE-REPORTED / UNREACHABLE (another check refuses first).
+# Each was driven on its production route with the check that refuses first
+# ALSO removed, and the input was still refused: the site reads a value the
+# input does not have, and every later statement needs that value too
+# (logs: the integrate-E report). That is NOTHING TO ADMIT, executed, not a
+# dominance argument; the cells are named in each reason.
+EXEMPT += [
+    (EV, '        return Err("no Fabric execution attestation was delivered".into());',
+     "NOTHING TO ADMIT (executed, integrate-E): a null attestation holds no issuer, key or signature. "
+     "A protected trial delivered with none, through evaluate: this check removed -> refused \"names no "
+     "issuer\"; that also bypassed (issuer substituted) -> refused \"signature: not a JSON object\"; "
+     "every later step of verify_document reads a field a null lacks"),
+    (EV, "    if d.ctx_sig.is_null() {",
+     "NOTHING TO ADMIT (executed, integrate-E): no context signature was presented. Through evaluate on a "
+     "protected plan: this check removed -> \"signature: not a JSON object\"; that also bypassed (an empty "
+     "map) -> \"alg is not ed25519\"; every later field (public_key, signature) is equally absent"),
+    (EV, '.ok_or_else(|| refused("an authenticated attestation states no issued_ms"))?;',
+     "NOTHING TO ADMIT (executed, integrate-E): issued_ms is a SIGNED field of the attestation the "
+     "statement before verified; an attestation without it has no signed time. Through intake+evaluate: "
+     "this arm substituted (u64::MAX) -> intake refuses \"no issued_ms\"; attestation::verify's own "
+     "refusal also substituted (0) -> refused by the bound-field comparison (\"issued_ms is null but the "
+     "evidence it must vouch for has 0\", M03): no input reaches this arm with the time absent"),
+    (EV, '.ok_or_else(|| refused("an authenticated verdict names no issuer"))?,',
+     "NOTHING TO ADMIT (executed, integrate-E): a verdict with no issuer has no key to be verified under "
+     "(verify_check_evidence looks the key up by the issuer). Through intake+evaluate on failed verdicts "
+     "with issuer_ref null: this arm substituted -> intake refuses (\"not a trusted verifier independent "
+     "of the subject\"); that refusal also removed -> verify_check_evidence's issuer lookup panics "
+     "(intake.rs `expect(\"checked just above\")`): fails closed, never admits"),
+]
 
 def load_rows():
     spec = importlib.util.spec_from_file_location("mut", os.path.join(ROOT, "scripts/v022_g01_mutations.py"))
