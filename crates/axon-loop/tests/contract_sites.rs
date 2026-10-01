@@ -468,17 +468,6 @@ fn an_enum_spelled_as_a_variant_map_is_never_recorded() {
     );
 }
 
-/// lib.rs schema tag (retired against schema.rs `const`).
-#[test]
-fn an_episode_of_another_schema_version_is_never_recorded() {
-    never_intaken(
-        |_| {},
-        |ep| ep["schema"] = json!("axon.closed-loop.episode/2"),
-        &["must be \"axon.closed-loop.episode/1\"", "schema must be"],
-        "an episode of schema axon.closed-loop.episode/2",
-    );
-}
-
 /// ids.rs `check_hex64` / schema.rs `anyOf` (each retired against the other).
 #[test]
 fn a_reference_with_uppercase_hex_is_never_recorded() {
@@ -848,20 +837,6 @@ fn an_evaluation_naming_an_empty_subject_issuer_is_never_recorded() {
     );
 }
 
-/// schema.rs `const` (red-team D2): the policy's mode spelled
-/// `{"shortlist_only":null}`, which typed serde accepts and re-serializes to
-/// the SAME digest the plan froze.
-#[test]
-fn a_policy_mode_spelled_as_a_variant_map_is_never_evaluated() {
-    let (w, mut v) = frozen("mode");
-    v["policies"][1]["mode"] = json!({"shortlist_only": null});
-    never_evaluated(
-        evaluated(&w, &v),
-        &["must be \"shortlist_only\""],
-        "a policy whose mode is {\"shortlist_only\":null}",
-    );
-}
-
 #[test]
 fn a_receipt_with_more_than_128_evidence_refs_is_never_counted() {
     never_evaluated(
@@ -1050,6 +1025,35 @@ fn put_policy_text(text: &str) -> Result<Ref, LoopError> {
 #[test]
 fn control_an_honest_policy_is_stored() {
     put_policy_text(&policy_text(|_| {})).unwrap();
+}
+
+/// schema.rs `const` (red-team D2): the policy's mode spelled
+/// `{"shortlist_only":null}`, which typed serde accepts and re-serializes to
+/// the digest of the conforming bytes. (The policy route: its schema has no
+/// conditional, so removing `const` changes nothing else it reads.)
+#[test]
+fn a_policy_mode_spelled_as_a_variant_map_is_never_stored() {
+    judged(
+        put_policy_text(&policy_text(|v| {
+            v["mode"] = json!({"shortlist_only": null})
+        })),
+        &["must be \"shortlist_only\""],
+        "a policy whose mode is {\"shortlist_only\":null}",
+        "the policy was stored",
+    );
+}
+
+/// lib.rs schema tag (retired against schema.rs `const`).
+#[test]
+fn a_policy_of_another_schema_version_is_never_stored() {
+    judged(
+        put_policy_text(&policy_text(|v| {
+            v["schema"] = json!("axon.closed-loop.policy/2")
+        })),
+        &["must be \"axon.closed-loop.policy/1\"", "schema must be"],
+        "a policy of schema axon.closed-loop.policy/2",
+        "the policy was stored",
+    );
 }
 
 #[test]

@@ -1256,7 +1256,7 @@ ATTACK_MARKERS.update({
     'M1233': 'ATTACK: an episode whose input workspace is a cl22: reference: ',
     'M1234': 'ATTACK: an evaluation request naming an empty subject issuer: ',
     'M1235': 'ATTACK: a schedule in currency "usd": ',
-    'M1237': 'ATTACK: an episode of schema axon\\.closed-loop\\.episode/2: ',
+    'M1237': 'ATTACK: a policy of schema axon\\.closed-loop\\.policy/2: ',
     'M1238': 'ATTACK: an episode with no attempt_refs: ',
     'M1239': 'ATTACK: an episode naming one attempt twice: ',
     'M1240': 'ATTACK: an ACF request with cpu_millicores 0: ',
@@ -1284,4 +1284,9 @@ ATTACK_MARKERS.update({
     'M1266': 'ATTACK: a transition from epoch 1 to epoch 3: ',
     'M1267': 'ATTACK: a transition from epoch 1 to epoch 0: ',
     'M1268': 'ATTACK: a transition from epoch 1 to epoch 3: ',
+    'M1208': 'ATTACK: an episode with final usage and unresolved liability: ',
+    'M1209': 'ATTACK: a passed episode whose run failed: ',
+    'M1227': 'ATTACK: a passed receipt whose run failed: ',
+    'M1236': 'ATTACK: a passed receipt with exit code 1: ',
+    'M1241': 'ATTACK: a passed receipt whose evidence the worker reported: ',
 })
