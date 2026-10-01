@@ -354,12 +354,13 @@ fn each_assignment_defect_is_never_issued() {
     }
     plan::assign(&w.s, &record("as", json!(scope()), ADMITTER, rows(&w, ids)))
         .expect("control: the honest assignment");
-    // A second, different population for the same experiment.
+    // A second, different population for the same experiment (fresh trial
+    // ids, so the scope-wide trial-id check does not refuse it first).
     let again = record(
         "as",
         json!(scope()),
         ADMITTER,
-        rows(&w, ["i0", "i1", "c0", "c9"]),
+        rows(&w, ["j0", "j1", "d0", "d1"]),
     );
     match plan::assign(&w.s, &again) {
         Ok(r) => panic!("ATTACK: a second population was issued as {r}"),

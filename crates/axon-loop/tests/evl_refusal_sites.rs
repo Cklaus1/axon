@@ -400,7 +400,7 @@ fn each_population_defect_is_never_issued() {
 #[test]
 fn a_population_naming_a_policy_outside_the_plan_is_never_issued() {
     let w = frozen_only("po", 1);
-    let (i, c) = (&w.inc_ref, &w.cand_ref);
+    let i = &w.inc_ref;
     let other = r('e');
     never_issued(
         &w,
