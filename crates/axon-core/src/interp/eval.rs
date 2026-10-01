@@ -35,13 +35,13 @@ fn axon_type_to_width(ty: &crate::ast::AxonType) -> Option<crate::types::Type> {
 /// Coerce a runtime value to a `SizedInt` when the target type is a non-i64
 /// integer. `Int(n)` → `SizedInt{n, ty}`. Any other value is returned as-is
 /// (the type-checker has already validated the types match; this is a
-/// representation upgrade only). `SizedInt` with a different width is
-/// re-tagged to the new width (preserves the stored bit-pattern; the checker
-/// ensures same-width ops only).
+/// representation upgrade only). A `SizedInt` of another width is left as it
+/// is, and the declared-type cast that follows refuses it (the checker
+/// refuses it too, E0307): re-tagging it would turn one width into another
+/// without converting its value (C9 round 4b, amendment 60).
 fn coerce_to_sized(v: Value, width: crate::types::Type) -> Value {
     match v {
         Value::Int(n) => Value::SizedInt { val: n, ty: width },
-        Value::SizedInt { val, .. } => Value::SizedInt { val, ty: width },
         other => other,
     }
 }
@@ -1070,9 +1070,14 @@ impl<'p> Interp<'p> {
         *self.current_call_tier.borrow_mut() = tier.map(|t| t.to_string());
 
         if let Expr::Ident(name) = callee {
-            // 1. A local/captured variable holding a closure.
-            if let Some(Value::Closure { .. }) = env.get(name) {
-                let c = env.get(name).unwrap().clone();
+            // 1. A local/captured variable: it is what the name means here,
+            // so the call goes through it — a closure is called, anything
+            // else is not callable. It never falls through to a builtin or
+            // fn of the same NAME: a confused value in a local `square` would
+            // otherwise run the operator's own `fn square` (C9 round 4b,
+            // PSV-1, amendment 60).
+            if let Some(c) = env.get(name) {
+                let c = c.clone();
                 return self.call_closure(c, argv);
             }
             // 2. A builtin.

@@ -19,7 +19,12 @@
 //! enum field — so this is the one check, applied at each, rather than a
 //! check per producing builtin:
 //!
-//! * scalars by kind (every integer width is one kind), `str`, `bool`, `()`;
+//! * scalars by the SAME key a method call dispatches on (`type_name`): an
+//!   integer by its width (an `i64` at a fixed width is converted in place,
+//!   another width refused), `str`, `bool`, `()`, `Dict`; a soft wrapper by
+//!   its name, and replaced by its inner value where the declared type is a
+//!   plain concrete `T`;
+//! * at a `fn(..) -> ..` type only a closure (no named fn is ever a value);
 //! * a struct or enum by NAME, then its fields against the declared field
 //!   types; `Option`/`Result` by constructor, then the payload; arrays and
 //!   tuples element by element — as far as the declared type states them;
@@ -35,8 +40,8 @@
 //!   stamped (a channel is one invariant object) and every later send is cast.
 //!
 //! A declared type the interpreter cannot read (an unknown name, a builtin
-//! handle, `Dict`, `Uncertain<T>`) is accepted: the check refuses only what it
-//! can show is a different type, so no honest program is rejected.
+//! handle) is accepted: the check refuses only what it can show is a
+//! different type, so no honest program is rejected.
 
 use super::*;
 use crate::ast::AxonType as T;
@@ -129,7 +134,7 @@ fn any() -> T {
 
 /// The declared type a runtime value is evidence of — what a type parameter
 /// binds to. Unknown parts are `?`.
-fn shape(v: &Value) -> T {
+fn type_of_value(v: &Value) -> T {
     match v {
         Value::Int(_) => T::Named("i64".into()),
         Value::SizedInt { ty, .. } => T::Named(ty.display()),
@@ -138,20 +143,20 @@ fn shape(v: &Value) -> T {
         Value::Bool(_) => T::Named("bool".into()),
         Value::Str(_) => T::Named("str".into()),
         Value::Unit => T::Named("()".into()),
-        Value::Array(xs) => T::Slice(Box::new(xs.first().map(shape).unwrap_or_else(any))),
+        Value::Array(xs) => T::Slice(Box::new(xs.first().map(type_of_value).unwrap_or_else(any))),
         Value::Struct { name, .. } => T::Named(name.clone()),
         Value::Enum { enum_name, .. } => T::Named(enum_name.clone()),
-        Value::Some(x) => T::Option(Box::new(shape(x))),
+        Value::Some(x) => T::Option(Box::new(type_of_value(x))),
         Value::None => T::Option(Box::new(any())),
         Value::Ok(x) => T::Result {
-            ok: Box::new(shape(x)),
+            ok: Box::new(type_of_value(x)),
             err: Box::new(any()),
         },
         Value::Err(x) => T::Result {
             ok: Box::new(any()),
-            err: Box::new(shape(x)),
+            err: Box::new(type_of_value(x)),
         },
-        Value::Tuple(xs) => T::Tuple(xs.iter().map(shape).collect()),
+        Value::Tuple(xs) => T::Tuple(xs.iter().map(type_of_value).collect()),
         Value::Chan(_) => T::Chan(Box::new(any())),
         Value::Closure { .. } | Value::Dict(_) | Value::Handle { .. } => any(),
     }
@@ -255,9 +260,19 @@ impl<'p> Interp<'p> {
         }
         let d = depth + 1;
         // Soft typing: `Uncertain<T>`/`Temporal<T>` stands for its plain `T`.
-        if !matches!(ty, T::Generic { base, .. } if base == "Uncertain" || base == "Temporal") {
+        // Where the declared type fixes the runtime type, the wrapper is
+        // REPLACED by its inner value, so the value's runtime type (what a
+        // method call dispatches on) is the declared one rather than
+        // `Uncertain` (C9 round 4b, amendment 60). At a position whose type
+        // is not stated (`?`, an unbound type parameter, an unknown name)
+        // the wrapper is kept: honest generic code passes it through.
+        if !is_soft_decl(ty) {
             if let Some(mut inner) = value::soft_inner(v) {
-                return self.cast_at(&mut inner, ty, cx, d);
+                self.cast_at(&mut inner, ty, cx, d)?;
+                if self.pins_runtime_type(ty, cx) {
+                    *v = inner;
+                }
+                return Ok(());
             }
         }
         match ty {
@@ -270,7 +285,9 @@ impl<'p> Interp<'p> {
             T::Generic { base, args } => match (base.as_str(), args.as_slice()) {
                 ("Option", [inner]) => self.cast_option(v, inner, ty, cx, d),
                 ("Result", [ok, err]) => self.cast_result(v, ok, err, ty, cx, d),
-                ("Uncertain" | "Temporal", _) => Ok(()),
+                ("Uncertain" | "Temporal", args) => {
+                    self.cast_soft(v, base, args.first(), ty, cx, d)
+                }
                 _ => self.cast_named(v, base, args, ty, cx, d),
             },
             T::Slice(inner) => match v {
@@ -344,9 +361,11 @@ impl<'p> Interp<'p> {
                     }));
                     Ok(())
                 }
-                // A named fn is referred to by name; its own signature is
-                // checked when it is called.
-                _ => Ok(()),
+                // Only a closure is a fn VALUE: a named fn is never one
+                // (`let g = double` is E0306), so anything else here is a
+                // confused value — refused, never waved through to a later
+                // call or method dispatch (C9 round 4b, amendment 60).
+                _ => Err(mismatch(ty, v)),
             },
             T::Chan(elem) => match v {
                 Value::Chan(q) => self.stamp_chan(q, elem, cx),
@@ -407,10 +426,33 @@ impl<'p> Interp<'p> {
                     None => Ok(()),
                 }
             }
-            "i64" | "i32" | "i16" | "i8" | "u64" | "u32" | "u16" | "u8" | "isize" | "usize" => {
-                return kind_ok(matches!(v, Value::Int(_) | Value::SizedInt { .. }))
+            // Integers by WIDTH, the key a method call dispatches on
+            // (`Value::type_name`), never by kind: a `u8` at a declared `i64`
+            // would run the operator's `u8` impl (C9 round 4b, amendment 60).
+            // An `i64` value (`Value::Int`, also an integer literal's
+            // representation) at a fixed width is CONVERTED in place, as a
+            // parameter, `let` or field of that width always converts it; a
+            // value of another fixed width is refused, as the checker refuses
+            // it (E0307). `isize`/`usize` are represented as `i64`.
+            "i64" | "isize" | "usize" => return kind_ok(matches!(v, Value::Int(_))),
+            "i32" | "i16" | "i8" | "u64" | "u32" | "u16" | "u8" => {
+                let width = sized_width(n);
+                return match v {
+                    Value::Int(x) => {
+                        let val = *x;
+                        *v = Value::SizedInt { val, ty: width };
+                        Ok(())
+                    }
+                    Value::SizedInt { ty: w, .. } if *w == width => Ok(()),
+                    _ => Err(mismatch(ty, v)),
+                };
             }
+            // One runtime float representation (`f64`) for both names.
             "f64" | "f32" => return kind_ok(matches!(v, Value::Float(_))),
+            // The map primitive: only a dict is one (C9 round 4b).
+            "Dict" => return kind_ok(matches!(v, Value::Dict(_))),
+            // A bare soft name: only that wrapper.
+            "Uncertain" | "Temporal" => return self.cast_soft(v, n, None, ty, cx, d),
             "bool" => return kind_ok(matches!(v, Value::Bool(_))),
             "str" | "String" => return kind_ok(matches!(v, Value::Str(_))),
             "()" => return kind_ok(matches!(v, Value::Unit)),
@@ -467,6 +509,81 @@ impl<'p> Interp<'p> {
         Ok(())
     }
 
+    /// A declared `Uncertain<T>`/`Temporal<T>` (or the bare name): the wrapper
+    /// of THAT name with its inner value cast to `T` in place, or (soft
+    /// typing) a plain value cast to `T`. The other wrapper is another type.
+    fn cast_soft(
+        &self,
+        v: &mut Value,
+        base: &str,
+        inner_ty: Option<&T>,
+        ty: &T,
+        cx: &Cx,
+        d: usize,
+    ) -> Result<(), String> {
+        match v {
+            Value::Struct { name, fields } if name == "Uncertain" || name == "Temporal" => {
+                if name != base {
+                    return Err(mismatch(ty, v));
+                }
+                match (inner_ty, fields.get_mut("value")) {
+                    (Some(t), Some(x)) => self.cast_at(x, t, cx, d),
+                    _ => Ok(()),
+                }
+            }
+            _ => match inner_ty {
+                Some(t) => self.cast_at(v, t, cx, d),
+                None => Err(mismatch(ty, v)),
+            },
+        }
+    }
+
+    /// Whether the declared type `ty` (read in `cx`) fixes the runtime type of
+    /// a value cast to it — a concrete type, not `?`, an unbound type
+    /// parameter, or a name the interpreter does not know.
+    fn pins_runtime_type(&self, ty: &T, cx: &Cx) -> bool {
+        match subst(ty, cx, false) {
+            T::Named(n) | T::Generic { base: n, .. } => {
+                !cx.is_tparam(&n)
+                    && (matches!(
+                        n.as_str(),
+                        "i64"
+                            | "i32"
+                            | "i16"
+                            | "i8"
+                            | "u64"
+                            | "u32"
+                            | "u16"
+                            | "u8"
+                            | "isize"
+                            | "usize"
+                            | "f64"
+                            | "f32"
+                            | "bool"
+                            | "str"
+                            | "String"
+                            | "()"
+                            | "Decimal"
+                            | "Dict"
+                            | "Option"
+                            | "Result"
+                    ) || self.structs.contains_key(n.as_str())
+                        || self.enums.contains_key(n.as_str())
+                        || self.refine_bases.contains_key(n.as_str()))
+            }
+            T::TypeParam(_) | T::RawPtr(_) => false,
+            T::Ref(x) => self.pins_runtime_type(&x, cx),
+            T::Option(_)
+            | T::Result { .. }
+            | T::Slice(_)
+            | T::Tuple(_)
+            | T::Union(_)
+            | T::DynTrait(_)
+            | T::Fn { .. }
+            | T::Chan(_) => true,
+        }
+    }
+
     fn cast_tparam(&self, v: &mut Value, n: &str, cx: &Cx, d: usize) -> Result<(), String> {
         let bound = cx.binds.as_ref().and_then(|b| b.borrow().get(n).cloned());
         match bound {
@@ -484,7 +601,7 @@ impl<'p> Interp<'p> {
                     }
                 }
                 if let Some(b) = &cx.binds {
-                    b.borrow_mut().insert(n.to_string(), shape(v));
+                    b.borrow_mut().insert(n.to_string(), type_of_value(v));
                 }
                 Ok(())
             }
@@ -664,6 +781,29 @@ impl<'p> Interp<'p> {
             cx: Cx::default(),
             next: None,
         }))
+    }
+}
+
+/// A declared `Uncertain<T>`/`Temporal<T>` (or the bare name).
+pub(crate) fn is_soft_decl(ty: &T) -> bool {
+    match ty {
+        T::Generic { base: n, .. } | T::Named(n) => n == "Uncertain" || n == "Temporal",
+        _ => false,
+    }
+}
+
+/// The fixed width a declared integer name stands for (`i64`, `isize` and
+/// `usize` are `Value::Int`, not a `SizedInt`).
+fn sized_width(n: &str) -> crate::types::Type {
+    use crate::types::Type as W;
+    match n {
+        "i32" => W::I32,
+        "i16" => W::I16,
+        "i8" => W::I8,
+        "u64" => W::U64,
+        "u32" => W::U32,
+        "u16" => W::U16,
+        _ => W::U8,
     }
 }
 

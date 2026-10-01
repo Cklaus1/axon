@@ -3530,10 +3530,7 @@ impl<'p> Interp<'p> {
             // soft wrapper but the argument IS one, unwrap to the inner value so
             // the body sees a plain `T` (else `x * 2` on the struct silently
             // produced 0). Confidence/horizon dropped at this T-typed boundary.
-            let param_is_soft = matches!(
-                &p.ty,
-                crate::ast::AxonType::Generic { base, .. } if base == "Uncertain" || base == "Temporal"
-            );
+            let param_is_soft = conform::is_soft_decl(&p.ty);
             let a = if !param_is_soft {
                 value::soft_inner(&a).unwrap_or(a)
             } else {
@@ -4717,12 +4714,13 @@ fn interp_eval_axon_type_to_width(ty: &crate::ast::AxonType) -> Option<crate::ty
     }
 }
 
-/// Coerce Int → SizedInt (or re-tag an existing SizedInt). Other values pass
-/// through unchanged. Used at the call-arg → param boundary.
+/// Coerce Int → SizedInt. Other values (a `SizedInt` of another width
+/// included) pass through unchanged and meet the declared-type cast, which
+/// refuses another width (amendment 60). Used at the call-arg → param
+/// boundary.
 fn interp_eval_coerce_to_sized(v: Value, width: crate::types::Type) -> Value {
     match v {
         Value::Int(n) => Value::SizedInt { val: n, ty: width },
-        Value::SizedInt { val, .. } => Value::SizedInt { val, ty: width },
         other => other,
     }
 }
@@ -5524,6 +5522,651 @@ mod tests {
         assert!(
             out != Ok(TestEnd::Completed) && confusion_refused(&out),
             "ATTACK: a bool passed the operator's `T: Judge` bound through `Lax`: {out:?}"
+        );
+    }
+
+    // ── C9 round 4b (amendment 60): the cast's notion of "the same type" is
+    // the key a method call dispatches on (`Value::type_name`). ──────────────
+
+    /// The operator's judge: strict at `i64` and `u16`, LENIENT at `u8` (a
+    /// second impl the operator wrote for its own reasons).
+    const WJUDGE: &str = "trait Judge {\n    fn ok(self) -> bool\n}\nimpl Judge for i64 {\n    fn ok(self: i64) -> bool { self == 9 }\n}\nimpl Judge for u16 {\n    fn ok(self: u16) -> bool { self == 9 }\n}\nimpl Judge for u8 {\n    fn ok(self: u8) -> bool { true }\n}\n";
+    /// Candidate-side laundering of a `u8`, typed as whatever the context wants.
+    const WLAUNDER: &str = "fn narrow(n: i64) -> u8 { n as u8 }\nfn wstash(v: u8) -> Dict {\n    let d = dict_new()\n    dict_set(d, \"k\", v)\n    d\n}\n";
+    const WIDE: &str = "match dict_get(wstash(narrow(4)), \"k\") { Some(v) => v  None => DEFAULT }";
+
+    fn widened(tag: &str, suite: &str, cand: &str, default: &str) -> Result<TestEnd, String> {
+        sealed_outcome(
+            tag,
+            &format!("{WJUDGE}{suite}"),
+            &format!(
+                "{WLAUNDER}{}",
+                cand.replace("WIDE", &WIDE.replace("DEFAULT", default))
+            ),
+            "t",
+        )
+    }
+
+    /// The round-4b review's blocker: the cast took every integer width for
+    /// one kind, the dispatch keys on the width, so a `u8` at a declared `i64`
+    /// ran the operator's lenient `u8` impl — even under the suite's own
+    /// `let r: i64` pin. Every boundary the cast applies at.
+    #[test]
+    fn a_value_of_another_integer_width_never_crosses_a_declared_integer() {
+        let holder = "type Holder = { v: i64 }\n";
+        let cases: [(&str, &str, String, String, String, &str); 7] = [
+            (
+                "w4ret",
+                "@[test]\nfn t() {\n    let r: i64 = solve(3)\n    assert(r.ok())\n}\n",
+                "fn solve(n: i64) -> i64 { n * n }\n".into(),
+                "fn solve(n: i64) -> i64 { n + 1 }\n".into(),
+                "fn solve(n: i64) -> i64 { WIDE }\n".into(),
+                "0",
+            ),
+            (
+                "w4opt",
+                "@[test]\nfn t() {\n    match solve(3) {\n        Some(r) => assert(r.ok())\n        None => assert(false)\n    }\n}\n",
+                "fn solve(n: i64) -> Option<i64> { Some(n * n) }\n".into(),
+                "fn solve(n: i64) -> Option<i64> { Some(n + 1) }\n".into(),
+                "fn solve(n: i64) -> Option<i64> { Some(WIDE) }\n".into(),
+                "0",
+            ),
+            (
+                "w4clo",
+                "@[test]\nfn t() {\n    let f = mk()\n    assert(f(3).ok())\n}\n",
+                "fn mk() -> fn(i64) -> i64 { |n: i64| n * n }\n".into(),
+                "fn mk() -> fn(i64) -> i64 { |n: i64| n + 1 }\n".into(),
+                "fn mk() -> fn(i64) -> i64 { |n: i64| WIDE }\n".into(),
+                "n",
+            ),
+            (
+                "w4chan",
+                "@[test]\nfn t() {\n    let c = chan<i64>()\n    fill(c)\n    assert(c.recv().ok())\n}\n",
+                "fn fill(c: Chan<i64>) { c.send(9) }\n".into(),
+                "fn fill(c: Chan<i64>) { c.send(4) }\n".into(),
+                "fn fill(c: Chan<i64>) { c.send(WIDE) }\n".into(),
+                "0",
+            ),
+            (
+                "w4fld",
+                "@[test]\nfn t() {\n    assert(solve(3).v.ok())\n}\n",
+                format!("{holder}fn solve(n: i64) -> Holder {{ Holder {{ v: n * n }} }}\n"),
+                format!("{holder}fn solve(n: i64) -> Holder {{ Holder {{ v: n + 1 }} }}\n"),
+                format!("{holder}fn solve(n: i64) -> Holder {{ Holder {{ v: WIDE }} }}\n"),
+                "0",
+            ),
+            (
+                "w4tp",
+                "@[test]\nfn t() {\n    assert(pick(3, 9).ok())\n}\n",
+                "fn pick<T>(a: T, b: T) -> T { b }\n".into(),
+                "fn pick<T>(a: T, b: T) -> T { a }\n".into(),
+                "fn pick<T>(a: T, b: T) -> T { WIDE }\n".into(),
+                "b",
+            ),
+            (
+                "w4let",
+                "@[test]\nfn t() {\n    let r: i64 = X\n    assert(r.ok())\n}\n",
+                "let X = 9\n".into(),
+                "let X = 4\n".into(),
+                "let X = WIDE\n".into(),
+                "0",
+            ),
+        ];
+        for (tag, suite, good, wrong, attack, default) in cases {
+            assert_eq!(
+                widened(tag, suite, &good, default),
+                Ok(TestEnd::Completed),
+                "control ({tag}): the right answer"
+            );
+            assert!(
+                widened(tag, suite, &wrong, default).is_err(),
+                "control ({tag}): the wrong answer fails"
+            );
+            let out = widened(tag, suite, &attack, default);
+            assert!(
+                out != Ok(TestEnd::Completed) && confusion_refused(&out),
+                "ATTACK: a value of another integer width crossed a declared integer type ({tag}): {out:?}"
+            );
+        }
+    }
+
+    /// Two FIXED widths: a `u8` at a declared `u16` (the strict `u16` impl
+    /// against the lenient `u8` one). The `let r: u16` used to re-tag it.
+    #[test]
+    fn a_value_of_another_fixed_width_never_crosses_a_declared_fixed_width() {
+        let suite = "@[test]\nfn t() {\n    let r: u16 = solve(3)\n    assert(r.ok())\n}\n";
+        assert_eq!(
+            widened(
+                "w4u16",
+                suite,
+                "fn solve(n: i64) -> u16 { (n * n) as u16 }\n",
+                "0 as u16"
+            ),
+            Ok(TestEnd::Completed),
+            "control: the right answer"
+        );
+        assert!(
+            widened(
+                "w4u16",
+                suite,
+                "fn solve(n: i64) -> u16 { (n + 1) as u16 }\n",
+                "0 as u16"
+            )
+            .is_err(),
+            "control: the wrong answer fails"
+        );
+        let out = widened(
+            "w4u16",
+            suite,
+            "fn solve(n: i64) -> u16 { WIDE }\n",
+            "0 as u16",
+        );
+        assert!(
+            out != Ok(TestEnd::Completed) && confusion_refused(&out),
+            "ATTACK: a u8 crossed a declared u16: {out:?}"
+        );
+    }
+
+    /// The other direction: an `i64` at a declared `u8` is CONVERTED to the
+    /// width (as a `u8` parameter, `let` or field always converted it), so it
+    /// dispatches as the `u8` it is declared — never on the `i64` impl.
+    #[test]
+    fn an_i64_at_a_declared_fixed_width_takes_the_width() {
+        let judge = "trait Judge8 {\n    fn ok8(self) -> bool\n}\nimpl Judge8 for u8 {\n    fn ok8(self: u8) -> bool { self == 9 }\n}\nimpl Judge8 for i64 {\n    fn ok8(self: i64) -> bool { true }\n}\n";
+        let suite = format!(
+            "{judge}@[test]\nfn t() {{\n    match solve(3) {{\n        Some(r) => assert(r.ok8())\n        None => assert(false)\n    }}\n}}\n"
+        );
+        let stash = "fn istash(v: i64) -> Dict {\n    let d = dict_new()\n    dict_set(d, \"k\", v)\n    d\n}\n";
+        let run = |body: &str| {
+            sealed_outcome(
+                "w4conv",
+                &suite,
+                &format!("{stash}fn solve(n: i64) -> Option<u8> {{ {body} }}\n"),
+                "t",
+            )
+        };
+        assert_eq!(
+            run("Some((n * n) as u8)"),
+            Ok(TestEnd::Completed),
+            "control: the right answer"
+        );
+        assert!(
+            run("Some((n + 1) as u8)").is_err(),
+            "control: the wrong answer fails"
+        );
+        assert_eq!(
+            run("match dict_get(istash(n * n), \"k\") { Some(v) => Some(v)  None => None }"),
+            Ok(TestEnd::Completed),
+            "control: an i64 at a declared u8 is converted, and judged as the u8 it is"
+        );
+        let out = run("match dict_get(istash(n + 1), \"k\") { Some(v) => Some(v)  None => None }");
+        assert!(
+            out != Ok(TestEnd::Completed),
+            "ATTACK: an i64 crossed a declared u8 without taking its width: {out:?}"
+        );
+    }
+
+    /// Width-correct and generic code is unaffected: a `u8` keeps its width
+    /// through a type parameter, an `i64` literal at a `u8` field converts.
+    #[test]
+    fn width_correct_values_cross_unchanged() {
+        let judge = "trait W {\n    fn w(self) -> str\n}\nimpl W for u8 {\n    fn w(self: u8) -> str { \"u8\" }\n}\nimpl W for i64 {\n    fn w(self: i64) -> str { \"i64\" }\n}\n";
+        let suite = format!(
+            "{judge}type P = {{ b: u8 }}\nfn id<T>(x: T) -> T {{ x }}\nfn small() -> u8 {{ 4 as u8 }}\n\
+             @[test]\nfn t() {{\n    assert(id(small()).w() == \"u8\")\n    assert(id(5).w() == \"i64\")\n    let p = P {{ b: 7 as u8 }}\n    assert(p.b.w() == \"u8\")\n    let a: Option<u8> = Some(4 as u8)\n    match a {{\n        Some(v) => assert(v.w() == \"u8\")\n        None => assert(false)\n    }}\n}}\n"
+        );
+        assert_eq!(
+            sealed_outcome("w4ok", &suite, "fn unused() -> i64 { 0 }\n", "t"),
+            Ok(TestEnd::Completed)
+        );
+    }
+
+    /// The round-4b review's second blocker, at the cast: a named fn is never
+    /// a value (E0306), so a non-closure at a declared `fn(..) -> ..` is a
+    /// confusion. Waved through, a confused `9` selected the operator's `i64`
+    /// impl for a method called on the fn-typed value.
+    #[test]
+    fn a_non_closure_never_crosses_a_declared_fn_type() {
+        let suite = "@[test]\nfn t() {\n    let sq = make()\n    assert(sq.ok())\n}\n\
+                     @[test]\nfn t_call() {\n    let f = make()\n    assert(f(3) == 9)\n}\n";
+        let stash = "fn istash(v: i64) -> Dict {\n    let d = dict_new()\n    dict_set(d, \"k\", v)\n    d\n}\n";
+        let run = |cand: &str, test: &str| {
+            sealed_outcome(
+                "f4cast",
+                &format!("{JUDGE}{suite}"),
+                &format!("{stash}{cand}"),
+                test,
+            )
+        };
+        assert_eq!(
+            run("fn make() -> fn(i64) -> i64 { |n: i64| n * n }\n", "t_call"),
+            Ok(TestEnd::Completed),
+            "control: a real closure crosses and is called"
+        );
+        assert!(
+            run("fn make() -> fn(i64) -> i64 { |n: i64| n + 1 }\n", "t_call").is_err(),
+            "control: the wrong closure fails"
+        );
+        let out = run(
+            "fn make() -> fn(i64) -> i64 {\n    match dict_get(istash(9), \"k\") { Some(v) => v  None => |n: i64| n }\n}\n",
+            "t",
+        );
+        assert!(
+            out != Ok(TestEnd::Completed)
+                && confusion_refused(&out)
+                && matches!(&out, Err(m) if m.contains("declared `fn(i64) -> i64`")),
+            "ATTACK: a non-closure crossed a declared fn type: {out:?}"
+        );
+    }
+
+    /// The second blocker, at the call: a call through a name bound in the
+    /// local environment goes through that value, and a non-closure is not
+    /// callable. It used to fall through to a builtin or fn of the same NAME,
+    /// so a confused value in the operator's local `square` ran the
+    /// operator's own reference `fn square`. This route crosses no declared
+    /// fn type (a `Dict`'s values are untyped), so the cast cannot stand in.
+    #[test]
+    fn a_call_through_a_local_never_resolves_the_name_elsewhere() {
+        let suite = "fn square(n: i64) -> i64 { n * n }\n\
+                     @[test]\nfn t() {\n    match dict_get(table(), \"sq\") {\n        Some(square) => assert(square(3) == 9 && square(5) == 25)\n        None => assert(false)\n    }\n}\n\
+                     @[test]\nfn t_shadow() {\n    let square = |n: i64| n + 100\n    assert(square(1) == 101)\n}\n\
+                     @[test]\nfn t_plain() {\n    let sq = 4\n    assert(square(sq) == 16)\n}\n";
+        let table = |v: &str| {
+            format!("fn table() -> Dict {{\n    let d = dict_new()\n    dict_set(d, \"sq\", {v})\n    d\n}}\n")
+        };
+        let run = |v: &str, test: &str| sealed_outcome("f4call", suite, &table(v), test);
+        assert_eq!(
+            run("|n: i64| n * n", "t"),
+            Ok(TestEnd::Completed),
+            "control: the right closure"
+        );
+        assert!(
+            run("|n: i64| n + 1", "t").is_err(),
+            "control: the wrong closure fails"
+        );
+        assert_eq!(
+            run("0", "t_shadow"),
+            Ok(TestEnd::Completed),
+            "control: a local closure shadowing a fn is what the name calls"
+        );
+        assert_eq!(
+            run("0", "t_plain"),
+            Ok(TestEnd::Completed),
+            "control: with no local of that name, the fn is called"
+        );
+        let out = run("0", "t");
+        assert!(
+            out != Ok(TestEnd::Completed)
+                && matches!(&out, Err(m) if m.contains("is not callable")),
+            "ATTACK: a call through a local ran the operator's fn of the same name: {out:?}"
+        );
+    }
+
+    /// Soft wrappers. At a plain declared type the wrapper is replaced by its
+    /// inner value, so it dispatches as the declared type and never on an
+    /// operator impl for `Uncertain`.
+    #[test]
+    fn a_soft_wrapper_takes_the_declared_plain_type() {
+        let suite = "impl Judge for Uncertain {\n    fn ok(self: Uncertain) -> bool { true }\n}\n\
+                     @[test]\nfn t() {\n    assert(solve(3)[0].ok())\n}\n";
+        live(
+            "s4unwrap",
+            suite,
+            "fn solve(n: i64) -> [i64] { [n * n] }\n",
+            "fn solve(n: i64) -> [i64] { [n + 1] }\n",
+        );
+        let out = judged(
+            "s4unwrap",
+            suite,
+            "fn solve(n: i64) -> [i64] { [uncertain_new(n + 1, 0.5)] }\n",
+        );
+        assert!(
+            out != Ok(TestEnd::Completed),
+            "ATTACK: an Uncertain wrapper crossed a declared plain type: {out:?}"
+        );
+        assert_eq!(
+            judged(
+                "s4unwrap",
+                suite,
+                "fn solve(n: i64) -> [i64] { [uncertain_new(n * n, 0.5)] }\n",
+            ),
+            Ok(TestEnd::Completed),
+            "control: the right answer in a wrapper is the right answer"
+        );
+    }
+
+    /// At a declared soft type: the wrapper of THAT name, its inner value
+    /// cast to `T`; or a plain value cast to `T` (soft typing); the bare name
+    /// takes only its wrapper.
+    #[test]
+    fn a_declared_soft_type_casts_its_wrapper_and_its_inner_value() {
+        let soft = "impl Judge for Uncertain {\n    fn ok(self: Uncertain) -> bool { self.value == 9 }\n}\n\
+                    impl Judge for Temporal {\n    fn ok(self: Temporal) -> bool { true }\n}\n\
+                    impl Judge for f64 {\n    fn ok(self: f64) -> bool { true }\n}\n";
+        let s_wrap = format!(
+            "{soft}@[test]\nfn t() {{\n    let r: Uncertain<i64> = solve(3)\n    assert(r.ok())\n}}\n\
+             @[test]\nfn t_inner() {{\n    let r: Uncertain<i64> = solve(3)\n    assert(r.value.ok())\n}}\n"
+        );
+        let good = "fn solve(n: i64) -> Uncertain<i64> { uncertain_new(n * n, 0.9) }\n";
+        let wrong = "fn solve(n: i64) -> Uncertain<i64> { uncertain_new(n + 1, 0.9) }\n";
+        let laundered = |v: &str| {
+            format!(
+                "fn solve(n: i64) -> Uncertain<i64> {{\n    let d = dict_new()\n    dict_set(d, \"k\", {v})\n    match dict_get(d, \"k\") {{ Some(v) => v  None => uncertain_new(0, 0.9) }}\n}}\n"
+            )
+        };
+        for test in ["t", "t_inner"] {
+            assert_eq!(
+                sealed_outcome(
+                    "s4soft",
+                    &format!("{JUDGE}{s_wrap}"),
+                    &format!("{LAUNDER}{good}"),
+                    test
+                ),
+                Ok(TestEnd::Completed),
+                "control ({test}): the right answer"
+            );
+            assert!(
+                sealed_outcome(
+                    "s4soft",
+                    &format!("{JUDGE}{s_wrap}"),
+                    &format!("{LAUNDER}{wrong}"),
+                    test
+                )
+                .is_err(),
+                "control ({test}): the wrong answer fails"
+            );
+        }
+        let attempt = |v: &str, test: &str| {
+            sealed_outcome(
+                "s4soft",
+                &format!("{JUDGE}{s_wrap}"),
+                &format!("{LAUNDER}{}", laundered(v)),
+                test,
+            )
+        };
+        let out = attempt("temporal_new(4, 100, 0.1)", "t");
+        assert!(
+            out != Ok(TestEnd::Completed) && confusion_refused(&out),
+            "ATTACK: a Temporal crossed a declared Uncertain: {out:?}"
+        );
+        let out = attempt("uncertain_new_f64(4.0, 0.5)", "t_inner");
+        assert!(
+            out != Ok(TestEnd::Completed) && confusion_refused(&out),
+            "ATTACK: an Uncertain of another inner type crossed a declared Uncertain<i64>: {out:?}"
+        );
+        let out = attempt("true", "t");
+        assert!(
+            out != Ok(TestEnd::Completed) && confusion_refused(&out),
+            "ATTACK: a plain value of another type crossed a declared Uncertain<i64>: {out:?}"
+        );
+        // The bare name.
+        let s_bare = format!(
+            "{soft}@[test]\nfn t() {{\n    let r: Uncertain = solve(3)\n    assert(r.ok())\n}}\n"
+        );
+        let bare = |body: &str| {
+            sealed_outcome(
+                "s4bare",
+                &format!("{JUDGE}{s_bare}"),
+                &format!("{LAUNDER}fn solve(n: i64) -> Uncertain {{ {body} }}\n"),
+                "t",
+            )
+        };
+        assert_eq!(
+            bare("uncertain_new(n * n, 0.9)"),
+            Ok(TestEnd::Completed),
+            "control: bare"
+        );
+        assert!(
+            bare("uncertain_new(n + 1, 0.9)").is_err(),
+            "control: bare, wrong"
+        );
+        let out = bare(
+            "match dict_get(stash(true), \"k\") { Some(v) => v  None => uncertain_new(0, 0.9) }",
+        );
+        assert!(
+            out != Ok(TestEnd::Completed) && confusion_refused(&out),
+            "ATTACK: a plain value crossed a declared bare Uncertain: {out:?}"
+        );
+    }
+
+    /// The round-4b EQUIVALENCE blocker: the ENUM-name check had no row. An
+    /// `Other::A` laundered into a declared `-> Grade` ran the operator's
+    /// lenient `impl Judge for Other`.
+    #[test]
+    fn a_confused_enum_never_crosses_as_another_enum() {
+        let suite = "impl Judge for Grade {\n    fn ok(self: Grade) -> bool { match self { Grade::A { x } => x == 9  Grade::B { x } => false } }\n}\n\
+                     impl Judge for Other {\n    fn ok(self: Other) -> bool { true }\n}\n\
+                     @[test]\nfn t() {\n    assert(solve(3).ok())\n}\n";
+        let types =
+            "type Grade = A { x: i64 } | B { x: i64 }\ntype Other = A { x: i64 } | B { x: i64 }\n";
+        live(
+            "e4name",
+            suite,
+            &format!("{types}fn solve(n: i64) -> Grade {{ Grade::A {{ x: n * n }} }}\n"),
+            &format!("{types}fn solve(n: i64) -> Grade {{ Grade::A {{ x: n + 1 }} }}\n"),
+        );
+        let attack = format!(
+            "{types}fn keep(v: Other) -> Dict {{\n    let d = dict_new()\n    dict_set(d, \"k\", v)\n    d\n}}\n\
+             fn solve(n: i64) -> Grade {{\n    match dict_get(keep(Other::A {{ x: n }}), \"k\") {{ Some(v) => v  None => Grade::A {{ x: 0 }} }}\n}}\n"
+        );
+        let out = judged("e4name", suite, &attack);
+        assert!(
+            out != Ok(TestEnd::Completed) && confusion_refused(&out),
+            "ATTACK: an `Other::A` crossed a declared `-> Grade` return: {out:?}"
+        );
+    }
+
+    /// Every refusal arm of the cast, each reached ALONE (C9 round 4b
+    /// EQUIVALENCE audit, amendment 60). An `i64` laundered to a fn declared
+    /// another type crosses into the operator's generic judge, which would
+    /// run its lenient `i64` impl on it: each declared type's own arm is the
+    /// only check between that value and a keyed pass. Control: the type's
+    /// own value crosses (the test `t_cross` completes).
+    #[test]
+    fn every_declared_type_refuses_a_value_of_another_type() {
+        let suite = "trait Judge {\n    fn ok(self) -> bool\n}\nimpl Judge for i64 {\n    fn ok(self: i64) -> bool { true }\n}\n\
+                     fn judge<T: Judge>(x: T) -> bool { x.ok() }\n\
+                     @[test]\nfn t() {\n    assert(judge(solve(3)))\n}\n\
+                     @[test]\nfn t_cross() {\n    let r = solve(3)\n    assert(true)\n}\n";
+        let prelude = "fn istash(v: i64) -> Dict {\n    let d = dict_new()\n    dict_set(d, \"k\", v)\n    d\n}\n\
+                       type Pt = { x: i64 }\ntype Gr = A { x: i64 } | B { y: i64 }\n";
+        let cases: [(&str, &str); 14] = [
+            ("[i64]", "[0]"),
+            ("(i64, i64)", "(0, 0)"),
+            ("str|bool", "\"x\""),
+            ("Chan<i64>", "chan<i64>()"),
+            ("Option<i64>", "None"),
+            ("Result<i64, str>", "Ok(0)"),
+            ("f64", "0.5"),
+            ("bool", "false"),
+            ("str", "\"x\""),
+            ("()", "println(\"\")"),
+            ("Decimal", "1.5d"),
+            ("Dict", "dict_new()"),
+            ("Pt", "Pt { x: 0 }"),
+            ("Gr", "Gr::B { y: 0 }"),
+        ];
+        for (decl, own) in cases {
+            let run = |v: &str, test: &str| {
+                sealed_outcome(
+                    "a4every",
+                    suite,
+                    &format!(
+                        "{prelude}fn solve(n: i64) -> {decl} {{\n    match dict_get(istash({v}), \"k\") {{ Some(v) => v  None => {own} }}\n}}\n"
+                    ),
+                    test,
+                )
+            };
+            // The control: `dict_get` of a missing key is `None`, so the
+            // declared type's own value is what crosses.
+            let honest = sealed_outcome(
+                "a4every",
+                suite,
+                &format!("{prelude}fn solve(n: i64) -> {decl} {{\n    let d = dict_new()\n    match dict_get(d, \"k\") {{ Some(v) => v  None => {own} }}\n}}\n"),
+                "t_cross",
+            );
+            assert_eq!(
+                honest,
+                Ok(TestEnd::Completed),
+                "control: a `{decl}` crosses `-> {decl}`"
+            );
+            let out = run("n", "t");
+            assert!(
+                out != Ok(TestEnd::Completed) && confusion_refused(&out),
+                "ATTACK: an i64 crossed a declared `{decl}`: {out:?}"
+            );
+        }
+    }
+
+    /// The arms the generic route does not reach alone: a type parameter's
+    /// BINDING, `dyn Trait`, a generic enum's variant fields, a channel's
+    /// already-queued values, and a refinement's base type.
+    #[test]
+    fn the_remaining_cast_arms_refuse_a_value_of_another_type() {
+        // A type parameter bound by the arguments: every later value at it
+        // must agree (T = i64 here; the candidate returns a `bool`).
+        let suite = "@[test]\nfn t() {\n    assert(pick(3, 9).ok())\n}\n";
+        live(
+            "a4bind",
+            suite,
+            "fn pick<T>(a: T, b: T) -> T { b }\n",
+            "fn pick<T>(a: T, b: T) -> T { a }\n",
+        );
+        let out = judged(
+            "a4bind",
+            suite,
+            "fn pick<T>(a: T, b: T) -> T { match dict_get(stash(true), \"k\") { Some(v) => v  None => b } }\n",
+        );
+        assert!(
+            out != Ok(TestEnd::Completed) && confusion_refused(&out),
+            "ATTACK: a bool crossed a type parameter the arguments bound to i64: {out:?}"
+        );
+
+        // `dyn Strict`: a bool, which implements only `Lax` (whose method has
+        // the same name), never crosses as a `Strict`.
+        let suite = "trait Strict {\n    fn st(self) -> bool\n}\nimpl Strict for i64 {\n    fn st(self: i64) -> bool { self == 9 }\n}\n\
+                     trait Lax {\n    fn st(self) -> bool\n}\nimpl Lax for bool {\n    fn st(self: bool) -> bool { self }\n}\n\
+                     @[test]\nfn t() {\n    assert(solve(3).st())\n}\n";
+        let dyn_run = |body: &str| {
+            sealed_outcome(
+                "a4dyn",
+                suite,
+                &format!("{LAUNDER}fn solve(n: i64) -> dyn Strict {{ {body} }}\n"),
+                "t",
+            )
+        };
+        assert_eq!(
+            dyn_run("n * n"),
+            Ok(TestEnd::Completed),
+            "control: dyn, the right answer"
+        );
+        assert!(
+            dyn_run("n + 1").is_err(),
+            "control: dyn, the wrong answer fails"
+        );
+        let out = dyn_run("match dict_get(stash(true), \"k\") { Some(v) => v  None => n }");
+        assert!(
+            out != Ok(TestEnd::Completed) && confusion_refused(&out),
+            "ATTACK: a bool crossed a declared `dyn Strict`: {out:?}"
+        );
+
+        // A generic enum's variant field: at construction `T` is free, so the
+        // field is checked only against the declared `Wr<i64>`.
+        let suite = "@[test]\nfn t() {\n    match solve(3) {\n        Wr::W { v } => assert(v.ok())\n        Wr::N { v } => assert(false)\n    }\n}\n";
+        let wr = "type Wr<T> = W { v: T } | N { v: T }\n";
+        live(
+            "a4enumf",
+            suite,
+            &format!("{wr}fn solve(n: i64) -> Wr<i64> {{ Wr::W {{ v: n * n }} }}\n"),
+            &format!("{wr}fn solve(n: i64) -> Wr<i64> {{ Wr::W {{ v: n + 1 }} }}\n"),
+        );
+        let out = judged(
+            "a4enumf",
+            suite,
+            &format!("{wr}fn solve(n: i64) -> Wr<i64> {{ Wr::W {{ v: CONFUSED }} }}\n"),
+        );
+        assert!(
+            out != Ok(TestEnd::Completed) && confusion_refused(&out),
+            "ATTACK: a confused variant field crossed a declared `-> Wr<i64>`: {out:?}"
+        );
+
+        // A channel's QUEUED values: filled before it crossed `Chan<i64>`.
+        let suite = "@[test]\nfn t() {\n    let c = solve(3)\n    assert(c.recv().ok())\n}\n";
+        let chan_run = |v: &str| {
+            sealed_outcome(
+                "a4queue",
+                &format!("{JUDGE}{suite}"),
+                &format!("{LAUNDER}fn solve(n: i64) -> Chan<i64> {{\n    let c = chan<i64>()\n    c.send({v})\n    c\n}}\n"),
+                "t",
+            )
+        };
+        assert_eq!(
+            chan_run("n * n"),
+            Ok(TestEnd::Completed),
+            "control: queue, the right answer"
+        );
+        assert!(
+            chan_run("n + 1").is_err(),
+            "control: queue, the wrong answer fails"
+        );
+        let out = chan_run(CONFUSED);
+        assert!(
+            out != Ok(TestEnd::Completed) && confusion_refused(&out),
+            "ATTACK: a value queued before the channel crossed `Chan<i64>` was never cast: {out:?}"
+        );
+
+        // A non-integer at a declared fixed width (the width arm's last arm).
+        let suite = "impl Judge for u8 {\n    fn ok(self: u8) -> bool { self == 9 }\n}\n\
+                     @[test]\nfn t() {\n    assert(solve(3).ok())\n}\n";
+        live(
+            "a4u8",
+            suite,
+            "fn solve(n: i64) -> u8 { (n * n) as u8 }\n",
+            "fn solve(n: i64) -> u8 { (n + 1) as u8 }\n",
+        );
+        let out = judged(
+            "a4u8",
+            suite,
+            "fn solve(n: i64) -> u8 { match dict_get(stash(true), \"k\") { Some(v) => v  None => 0 as u8 } }\n",
+        );
+        assert!(
+            out != Ok(TestEnd::Completed) && confusion_refused(&out),
+            "ATTACK: a bool crossed a declared `u8`: {out:?}"
+        );
+
+        // A refinement's base type: `Pos = i64 where _ > 0`, and a `u8` that
+        // satisfies the predicate would run the operator's lenient `u8` impl.
+        let suite = "@[test]\nfn t() {\n    assert(solve(3).ok())\n}\n";
+        let pos = "type Pos = i64 where _ > 0\n";
+        assert_eq!(
+            widened(
+                "a4refine",
+                suite,
+                &format!("{pos}fn solve(n: i64) -> Pos {{ n * n }}\n"),
+                "1"
+            ),
+            Ok(TestEnd::Completed),
+            "control: refinement, the right answer"
+        );
+        assert!(
+            widened(
+                "a4refine",
+                suite,
+                &format!("{pos}fn solve(n: i64) -> Pos {{ n + 1 }}\n"),
+                "1"
+            )
+            .is_err(),
+            "control: refinement, the wrong answer fails"
+        );
+        let out = widened(
+            "a4refine",
+            suite,
+            &format!("{pos}fn solve(n: i64) -> Pos {{ WIDE }}\n"),
+            "1",
+        );
+        assert!(
+            out != Ok(TestEnd::Completed) && confusion_refused(&out),
+            "ATTACK: a u8 crossed a declared refinement of i64: {out:?}"
         );
     }
 
