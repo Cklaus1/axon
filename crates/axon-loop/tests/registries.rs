@@ -233,6 +233,9 @@ fn each_unexecutable_rule_never_freezes() {
     .into_iter()
     .enumerate()
     {
+        // One world per case: a candidate freezes in one experiment only, so
+        // a shared world would refuse every case for that reason instead.
+        let w = world();
         let id = format!("rules-{n}");
         let r = freeze_plan(&w.s, &id, &w.inc_ref, &w.cand_ref, |p| {
             p[field] = json!(value)

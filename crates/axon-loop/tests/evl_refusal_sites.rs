@@ -520,40 +520,21 @@ fn an_episode_bound_to_another_tenants_context_is_never_intaken() {
 #[test]
 fn a_policy_split_across_two_arms_is_never_admitted_on_half_its_trials() {
     let w = world();
-    freeze_plan(&w.s, "split", &w.inc_ref, &w.cand_ref, |_| {}).unwrap();
+    freeze_plan(&w.s, "split", &w.inc_ref, &w.cand_ref, |p| {
+        p["repetitions"] = json!(2)
+    })
+    .unwrap();
+    let (i, c) = (&w.inc, &w.cand);
+    let s = |arm, p, task: &str, t: &str, out, cost| (arm, p, task.into(), t.into(), out, cost);
     let specs: Vec<Spec<'_>> = vec![
-        (
-            "incumbent",
-            &w.inc,
-            "task-0".into(),
-            "i0".into(),
-            Out::Pass,
-            Some(100),
-        ),
-        (
-            "incumbent",
-            &w.inc,
-            "task-1".into(),
-            "i1".into(),
-            Out::Pass,
-            Some(100),
-        ),
-        (
-            "challenger-1",
-            &w.cand,
-            "task-0".into(),
-            "c0".into(),
-            Out::Pass,
-            Some(50),
-        ),
-        (
-            "challenger-2",
-            &w.cand,
-            "task-1".into(),
-            "c1".into(),
-            Out::Fail,
-            Some(50),
-        ),
+        s("incumbent", i, "task-0", "i0", Out::Pass, Some(100)),
+        s("incumbent", i, "task-0", "i0b", Out::Pass, Some(100)),
+        s("incumbent", i, "task-1", "i1", Out::Pass, Some(100)),
+        s("incumbent", i, "task-1", "i1b", Out::Pass, Some(100)),
+        s("challenger-1", c, "task-0", "c0", Out::Pass, Some(50)),
+        s("challenger-1", c, "task-1", "c1", Out::Pass, Some(50)),
+        s("challenger-2", c, "task-0", "c0b", Out::Fail, Some(50)),
+        s("challenger-2", c, "task-1", "c1b", Out::Fail, Some(50)),
     ];
     assign_specs(&w.s, "split", &specs);
     let v = evl_request("split", &w.inc, &w.cand, &specs, &EvlOpts::default());
@@ -574,5 +555,45 @@ fn a_policy_split_across_two_arms_is_never_admitted_on_half_its_trials() {
                     .contains("exactly an incumbent and a candidate arm"),
             "{err}"
         ),
+    }
+}
+
+/// A verdict counts in an evaluation only on verification evidence that
+/// authenticates THERE: the trial was intaken with its verifier's genuine
+/// attestation, and the request then delivers the same verdict with an
+/// attestation made by another key under the verifier's name. Control: the
+/// genuine attestation counts.
+#[test]
+fn a_verdict_whose_delivered_attestation_does_not_verify_never_counts() {
+    for forged in [false, true] {
+        let (w, mut v) = frozen("av");
+        assert!(intake_all(&w.s, &v).is_empty());
+        if forged {
+            let (impostor, _) = axon_loop_contracts::attestation::generate().unwrap();
+            for t in challenger(&mut v) {
+                let req: ComputeRequest =
+                    serde_json::from_value(t["verification_request"].clone()).unwrap();
+                let rc: ExecutionReceipt =
+                    serde_json::from_value(t["verification_receipt"].clone()).unwrap();
+                t["verification_attestation"] = axon_loop_contracts::attestation::sign(
+                    &impostor,
+                    &OpaqueRef::new(VERIFIER).unwrap(),
+                    &req,
+                    &rc,
+                    axon_loop::now_ms(),
+                )
+                .unwrap();
+            }
+        }
+        let (rec, _) = evaluate_only(&w, &v).unwrap();
+        let arm = rec.arm_for_policy(&w.cand_ref).unwrap();
+        if !forged {
+            assert_eq!(arm.verified_pass, 2, "control: {:?}", arm.trials);
+        } else if arm.verified_pass != 0 {
+            panic!(
+                "ATTACK: a verdict whose delivered attestation does not verify counted: {:?}",
+                arm.trials
+            );
+        }
     }
 }

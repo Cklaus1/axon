@@ -79,10 +79,51 @@ SCOPE_FN_REGIONS = {
 # (file -> reason). A file here is in scope by the rule and judged not to be a
 # decision path; the reason names what makes that checkable.
 OUT_OF_SCOPE = {
+    "crates/axon-loop/src/evo.rs":
+        "EVO proposes candidates (B273/B281); no count, admission or activation is decided by its "
+        "refusals: the decision code reads only evo::proposer_in (the recorded proposer), and only to "
+        "EXCLUDE that principal (subjects, self-promotion, assignment), so a proposal it should have "
+        "refused can only narrow what counts; the freeze's candidate check (plan.rs) re-judges every "
+        "candidate it would let through",
+    "crates/axon-loop-contracts/src/profile.rs":
+        "bridge-profile negotiation (B256): which wire versions MiCode and Axon speak; it authorizes "
+        "nothing: every document is still parsed by its own contract and judged by the scanned "
+        "decision code",
+    "crates/axon-loop/src/bin/axon-loop.rs":
+        "the CLI front end: argument and request parsing; every verb hands its one document to a "
+        "library function in a scanned file, which decides; its refusals are usage errors before "
+        "any decision",
 }
 # (file -> sites with neither a row nor an exemption, as last measured). The
 # gate re-measures each count and refuses a stale one, in both directions.
 NOT_YET_SCANNED = {
+    'crates/axon-core/src/interp.rs': 1,  # core2 (seal edges)
+    'crates/axon-core/src/interp/conform.rs': 21,  # core2
+    'crates/axon-fabric/src/backend.rs': 45,  # rows4b
+    'crates/axon-fabric/src/bin/axon-fabric.rs': 54,  # rows4b
+    'crates/axon-fabric/src/branches.rs': 22,  # unassigned
+    'crates/axon-fabric/src/git_data.rs': 23,  # rows4b
+    'crates/axon-fabric/src/grants.rs': 6,  # unassigned
+    'crates/axon-fabric/src/journal.rs': 26,  # unassigned
+    'crates/axon-fabric/src/provenance.rs': 5,  # rows4b
+    'crates/axon-fabric/src/signing.rs': 2,  # unassigned
+    'crates/axon-fabric/src/submit.rs': 37,  # rows4b
+    'crates/axon-fabric/src/workspace.rs': 20,  # unassigned
+    'crates/axon-loop-contracts/src/canonical.rs': 12,  # loop side (rows4a): not reached
+    'crates/axon-loop-contracts/src/checks.rs': 34,  # loop side (rows4a): not reached
+    'crates/axon-loop-contracts/src/compute.rs': 2,  # loop side (rows4a): not reached
+    'crates/axon-loop-contracts/src/episode.rs': 8,  # loop side (rows4a): not reached
+    'crates/axon-loop-contracts/src/ids.rs': 9,  # loop side (rows4a): not reached
+    'crates/axon-loop-contracts/src/lib.rs': 4,  # loop side (rows4a): not reached
+    'crates/axon-loop-contracts/src/policy.rs': 7,  # loop side (rows4a): not reached
+    'crates/axon-loop-contracts/src/receipt.rs': 9,  # loop side (rows4a): not reached
+    'crates/axon-loop-contracts/src/schema.rs': 28,  # loop side (rows4a): not reached
+    'crates/axon-loop/src/ledger.rs': 18,  # loop side (rows4a): not reached
+    'crates/axon-loop/src/plan.rs': 4,  # rows4a: four dominated sites (inc == cand, scope, view, adds); attacks written in tests/plan_sites.rs, four-cell rows need ids past M1019
+    'crates/axon-loop/src/pointer.rs': 34,  # loop side (rows4a): not reached
+    'crates/axon-loop/src/price.rs': 12,  # loop side (rows4a): not reached
+    'crates/axon-loop/src/tel.rs': 10,  # loop side (rows4a): not reached
+    'crates/axon-psv/src/bin/axon-psv-runner.rs': 2,  # unassigned
 }
 SITE = re.compile(r"return Err\(|\bErr\(format!|\brefuse\(|\bErr\(bad\(|TEST_TRUST_BUILD")
 OPENER = re.compile(r"^\s*(\}\s*else\s+if\b|if\b|match\b|let\s+\w+\s*=\s*if\b)|=>")
@@ -613,6 +654,21 @@ EXEMPT += [
      "SELECTS NOTHING: a record's schema tag is a version label; every record type is "
      "deny_unknown_fields with its own field set, and every stored record is read back through its "
      "digest name (M978) or the ledger chain, so the tag chooses no field and no code path"),
+]
+PLN = "crates/axon-loop/src/plan.rs"
+EXEMPT += [
+    (PLN, '        _ => return Err(refused(format!("no registered plan {id}"))),',
+     "NOTHING TO ADMIT: no registered plan, so there is no plan to load"),
+    (PLN, '            return Err(LoopError::Io(format!(\n                "store corrupt: plan {id} re-registered after its freeze"',
+     "SELECTS NOTHING: an already-frozen experiment is never frozen again (the arm returns without "
+     "appending a Freeze), and every reader binds to the Freeze event's plan_ref, not the latest "
+     "registration; the refusal only reports the corruption (a re-registration register() refuses, "
+     "M1006)"),
+    (PLN, '        return Err(refused("authority_expansion"));',
+     "UNREACHABLE: both policies are read through get_contract -> parse -> PolicyEnvelope::validate, "
+     "which refuses authority_expansion = true (\"authority_expansion must be false\")"),
+    (PLN, '        return Err(LoopError::NotReady(format!("plan {id} is not frozen")));',
+     "NOTHING TO ADMIT: no frozen plan, so nothing to judge the experiment by"),
 ]
 
 def load_rows():
