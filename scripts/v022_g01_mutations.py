@@ -2336,9 +2336,11 @@ MUTATIONS += [
      'UNSET_AMBIENT = "unset " + " ".join(AMBIENT_BINARY_VARS) + "; "\n',
      'UNSET_AMBIENT = ""\n',
      'axon-core', _HI2, _MC),
+    # Re-anchored (rows3, amendment 59): after_cell scrubs only when the cell
+    # ran a building script, and rebuilds only a prerequisite that changed.
     ('M868', 'EQUIVALENCE (6d): a paired-disable cell on a mutated tree leaves no binary in the workspace target dir', 'scripts/v022_paired_disable.py',
-     '        mut.scrub_workspace_binaries()\n        build_prereqs()\n',
-     '        build_prereqs()\n',
+     '    if spawned and any(e[0].startswith("crates/") for e in edits):\n        mut.scrub_workspace_binaries()\n',
+     '    if spawned and any(e[0].startswith("crates/") for e in edits):\n        pass\n',
      'axon-core', _HI2, _PC),
     ('M869', 'EQUIVALENCE (minor): a full-suite cell records a test that skipped as a skip, never a silent pass', 'scripts/v022_paired_disable.py',
      '    CELL_SKIPS[(pkg, flags, env)] = skipped_tests(out)\n',
@@ -3241,6 +3243,21 @@ MUTATIONS += [
      'scripts/v022_g01_mutations.py', '            rerun_core_build_script()\n        built = build_interpreter()\n        if built.returncode != 0:\n            return f"the restored tree\'s interpreter did not build', '            pass\n        built = build_interpreter()\n        if built.returncode != 0:\n            return f"the restored tree\'s interpreter did not build', 'axon-core', _HI2, _HR_MUT),
     ('M890', "EQUIVALENCE (rows3): the restored interpreter is compared to the run's, never assumed",
      'scripts/v022_g01_mutations.py', '        if os.path.exists(path) and sha(path) == expected:\n            return None', '        if True:\n            return None', 'axon-core', _HI2, _HR_MUT),
+    ('M891', "EVIDENCE (rows3): a paired-disable cell's changed prerequisite is rebuilt and byte-compared",
+     'scripts/v022_paired_disable.py',
+     '        if what == "axon" or all(\n',
+     '        if True or all(\n',
+     'axon-core', _HI2, 'a_paired_disable_cell_restores_a_prerequisite_it_changed'),
+    ('M892', 'EQUIVALENCE (6d): a cell that ran a building script on a mutated tree is scrubbed after',
+     'scripts/v022_paired_disable.py',
+     '    if spawned and any(e[0].startswith("crates/") for e in edits):\n',
+     '    if False and any(e[0].startswith("crates/") for e in edits):\n',
+     'axon-core', _HI2, _PC),
+    ('M893', 'EQUIVALENCE (6d): a full-suite cell scrubs when ANY suite it ran spawns building scripts',
+     'scripts/v022_paired_disable.py',
+     '                                      for p in [pkg, owner_crate, *consumers]))\n',
+     '                                      for p in []))\n',
+     'axon-core', _HI2, _PC),
 ]
 
 PSV_IDS = {f"M{n}" for n in range(137, 550)}
@@ -3441,6 +3458,25 @@ def spawns_scripts(package, target):
         return "script_spawn::script(" in open(path).read()
     except OSError:
         return False
+
+
+def package_spawns_scripts(package):
+    """Whether ANY test target of `package` runs repository scripts: what a
+    full-suite cell runs. A script reaches the spawn helper or the workspace
+    drift test (M724) refuses it, so the helper's call is the whole fact."""
+    d = os.path.join(ROOT, "crates", package, "tests")
+    try:
+        names = os.listdir(d)
+    except OSError:
+        return False
+    for n in names:
+        if n.endswith(".rs"):
+            try:
+                if "script_spawn::script(" in open(os.path.join(d, n)).read():
+                    return True
+            except OSError:
+                continue
+    return False
 
 
 # Binary-naming variables a caller's shell may carry. Every cell runs with them
@@ -3814,10 +3850,8 @@ def main():
             # Any axon-core integration test run rebuilds `axon` with the test
             # build's feature set (dev-dependency unification), whichever file
             # the row guards (a scripts/ row judged by an axon-core test too).
-            core = rel.startswith("crates/axon-core/") or pkg == "axon-core"
-            if scrubbed or (core and "--lib" not in target):
-                if build_interpreter().returncode != 0:
-                    sys.exit(f"FATAL: could not rebuild the interpreter after {mid}")
+            # (The interpreter is rebuilt and byte-compared after EVERY row,
+            # below: restore_interpreter.)
             if scrubbed and os.path.realpath(workspace_target_dir()) == os.path.realpath(cargo_target_dir()):
                 # The scrub emptied THIS run's target dir too: rebuild what its
                 # later cells exec (the cortex CLI tests, the PSV dev tool).

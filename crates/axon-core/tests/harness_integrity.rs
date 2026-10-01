@@ -473,10 +473,18 @@ const PROBE: &str = r##"
 fn probe() {
     use std::io::Write;
     use std::os::unix::fs::PermissionsExt;
-    if let Some(p) = std::env::var_os("FAKE_PLANT") {
+    // Only a test that runs scripts can leave a script-built binary behind
+    // (each file says so in RUNS_SCRIPTS, as it calls script_spawn::script).
+    if let Some(p) = std::env::var_os("FAKE_PLANT").filter(|_| RUNS_SCRIPTS) {
         let p = std::path::PathBuf::from(p);
         std::fs::create_dir_all(p.parent().unwrap()).unwrap();
         std::fs::write(&p, "#!/bin/sh\n").unwrap();
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    if let Some(p) = std::env::var_os("FAKE_CLOBBER") {
+        let p = std::path::PathBuf::from(p);
+        let _ = std::fs::remove_file(&p);
+        std::fs::write(&p, "#!/bin/sh\n# clobbered by a cell\n").unwrap();
         std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
     }
     if let Some(l) = std::env::var_os("FAKE_ENV_LOG") {
@@ -523,7 +531,8 @@ fn miniature(tag: &str) -> PathBuf {
     write(
         &r.join("crates/axon-core/tests/harness_binaries.rs"),
         &format!(
-            "// This test runs repository scripts through script_spawn::script(...).\n{PROBE}\n\
+            "// This test runs repository scripts through script_spawn::script(...).\n\
+             const RUNS_SCRIPTS: bool = true;\n{PROBE}\n\
              #[test]\nfn an_ambient_binary_variable_never_reaches_a_script() {{\n    probe();\n    \
              assert!(!include_str!(\"script_spawn/mod.rs\").contains(\"let _ = v;\"), \
              \"ATTACK: an ambient binary-naming variable reached a script\");\n}}\n"
@@ -541,9 +550,18 @@ fn miniature(tag: &str) -> PathBuf {
     write(
         &r.join("crates/axon-loop/tests/protected_class.rs"),
         &format!(
-            "{PROBE}\n#[test]\nfn a_key_revoked_at_the_operator_root_no_longer_counts() {{ probe(); }}\n\
+            "const RUNS_SCRIPTS: bool = false;\n{PROBE}\n#[test]\nfn a_key_revoked_at_the_operator_root_no_longer_counts() {{ probe(); }}\n\
              #[test]\nfn a_forged_unsigned_clearance_clears_nothing() {{ probe(); }}\n\
              #[test]\nfn a_root_only_test() {{ eprintln!(\"skipped: needs root (fixture)\"); }}\n"
+        ),
+    );
+    // Another suite test of the row's package that runs scripts: a full-suite
+    // cell runs it, the row's own test does not.
+    write(
+        &r.join("crates/axon-loop/tests/scripts.rs"),
+        &format!(
+            "// This test runs repository scripts through script_spawn::script(...).\n\
+             const RUNS_SCRIPTS: bool = true;\n{PROBE}\n#[test]\nfn a_script_building_test() {{ probe(); }}\n"
         ),
     );
     package(
@@ -990,6 +1008,48 @@ fn a_mutation_run_restores_the_interpreter_after_every_row() {
             && !version.ends_with("-dirty)"),
         "ATTACK: a mutated cell left the run's interpreter changed and the rows after it ran on \
          it (final interpreter {version:?}): {}",
+        text(&o)
+    );
+    let _ = std::fs::remove_dir_all(&r);
+    let _ = std::fs::remove_dir_all(out.parent().unwrap());
+    let _ = std::fs::remove_dir_all(&tgt);
+}
+
+/// paired-disable rebuilds a prerequisite only when it is missing or is not
+/// the clean build's bytes (amendment 59: rebuilding all of them after every
+/// cell cost ~45 min per record) -- and then it must. Every cell here
+/// replaces the run's `cortex` binary, as a cell building from a mutated
+/// tree would; no later cell, and not the run's end, may meet that file.
+#[test]
+fn a_paired_disable_cell_restores_a_prerequisite_it_changed() {
+    let r = miniature("pd-prereq");
+    let tgt = scratch("pd-prereq-tgt");
+    let out = scratch("pd-prereq-out").join("status.json");
+    let cortex = tgt.join("debug/cortex");
+    let o = harness_cmd(&r, HARNESS[2], &["--only=M245", out.to_str().unwrap()])
+        .env("CARGO_TARGET_DIR", &tgt)
+        .env_remove("AXON_BIN")
+        .env("FAKE_CLOBBER", &cortex)
+        .env("V022_MUT_MEM", "4G")
+        .output()
+        .unwrap();
+    let doc: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&out).unwrap_or_else(|_| "{}".into()))
+            .unwrap_or_default();
+    let rec = doc["records"]
+        .as_array()
+        .and_then(|rs| rs.iter().find(|x| x["mutation"] == "M245"))
+        .cloned()
+        .unwrap_or_default();
+    assert!(
+        rec["matrix"]["retired_guard_full_suite"].is_string(),
+        "setup: the miniature record was not executed: {}\n{doc}",
+        text(&o)
+    );
+    let now = std::fs::read(&cortex).unwrap_or_default();
+    assert!(
+        !now.is_empty() && !String::from_utf8_lossy(&now).contains("clobbered by a cell"),
+        "ATTACK: a prerequisite a cell replaced was not rebuilt from the clean tree: {}",
         text(&o)
     );
     let _ = std::fs::remove_dir_all(&r);

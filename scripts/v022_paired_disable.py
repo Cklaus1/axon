@@ -358,22 +358,61 @@ def build_axon():
               "cargo build -q -p axon-core --no-default-features --bin axon").returncode == 0
 
 
-def after_cell(edits):
-    """After a cell that ran a MUTATED tree: remove every executable a script
-    built into the workspace target dir from it, then rebuild this run's
-    prerequisites from the restored tree, so no later cell (or script) meets a
-    mutant binary (C9 round 4, EQUIVALENCE (6d))."""
-    if any(e[0].startswith("crates/") for e in edits):
+def after_cell(edits, spawned):
+    """After a cell that ran a MUTATED tree, the next cell must meet no binary
+    built from it (C9 round 4, EQUIVALENCE (6d)), and pay nothing when nothing
+    can be stale (amendment 59; a 2-shard run spent ~45 min per record
+    rebuilding every prerequisite after every cell):
+
+    * scrub the workspace target dir only when the cell ran a script that
+      builds (`spawned`: the row's test target, or any suite the cell ran,
+      calls the spawn helper) from a tree edited under crates/;
+    * rebuild a prerequisite only when it is missing or its sha256 is not the
+      clean build's recorded digest;
+    * rebuild and byte-compare the interpreter always (a no-op build when
+      nothing changed), re-running axon-core's build script if needed: a
+      mutated cell can leave it `-dirty`, and a restoring build keeps it.
+
+    A prerequisite that cannot be restored is the record's failure."""
+    if spawned and any(e[0].startswith("crates/") for e in edits):
         mut.scrub_workspace_binaries()
-        build_prereqs()
-    # Whatever the edit touched, the next cell runs the interpreter the run
-    # started with, rebuilt from the restored tree and byte-compared
-    # (amendment 59: a mutated cell can leave axon-core's build script
-    # `-dirty`, and the restoring build keeps it). A failure is the record's.
+    for what, cmd, arts in PREREQS:
+        if what == "axon" or all(
+                os.path.exists(a) and mut.sha(a) == PREREQ_SHA.get(a) for a in arts):
+            continue
+        r = sh(f"source scripts/lib_bounded_run.sh && bounded_run 16G 1800 {cmd}")
+        bad = [a for a in arts if not os.path.exists(a) or mut.sha(a) != PREREQ_SHA.get(a)]
+        if r.returncode != 0 or bad:
+            INTERP_FAULTS.append(f"{what}: not restored from the clean tree ({bad or cmd})")
     if INTERP:
         why = mut.restore_interpreter(INTERP["path"], INTERP["sha256"])
         if why:
             INTERP_FAULTS.append(why)
+
+
+def prereq_artifacts():
+    """(what, build command, the files it leaves) for every prerequisite a
+    cell execs, the files named from cargo's own metadata (the bins of
+    axon-cortex), never a guessed list."""
+    tgt = cargo_target_dir()
+    meta = json.loads(subprocess.run(
+        ["cargo", "metadata", "--format-version", "1", "--no-deps"], cwd=ROOT,
+        capture_output=True, text=True).stdout or "{}")
+    cortex = [t["name"] for p in meta.get("packages", []) if p["name"] == "axon-cortex"
+              for t in p["targets"] if "bin" in t["kind"]]
+    return [
+        ("axon", "cargo build -q -p axon-core --no-default-features --bin axon",
+         [os.path.join(tgt, "debug", "axon")]),
+        ("cortex bins", "cargo build -q -p axon-cortex --bins",
+         [os.path.join(tgt, "debug", n) for n in cortex]),
+        ("psv_dev", "cargo build -q -p axon-psv --example psv_dev",
+         [os.path.join(tgt, "debug", "examples", "psv_dev")]),
+    ]
+
+
+# Every prerequisite and the sha256 of each file the clean build left.
+PREREQS = []
+PREREQ_SHA = {}
 
 
 # The run's interpreter (path, sha256), recorded once the prerequisites are
@@ -403,9 +442,7 @@ def build_prereqs():
     a fresh shard target) breaks every cell of the suite that needs it for a
     reason that says nothing about the guard, so a run without them is
     refused rather than recorded as a page of SUITE_BROKEN."""
-    for what, cmd in (("axon", "cargo build -q -p axon-core --no-default-features --bin axon"),
-                      ("cortex bins", "cargo build -q -p axon-cortex --bins"),
-                      ("psv_dev", "cargo build -q -p axon-psv --example psv_dev")):
+    for what, cmd, _ in prereq_artifacts():
         if sh(f"source scripts/lib_bounded_run.sh && bounded_run 16G 1800 {cmd}").returncode != 0:
             sys.exit(f"refused: could not build {what} ({cmd}); no cell runs without it")
 
@@ -678,6 +715,8 @@ def main():
     build_prereqs()
     INTERP["path"] = os.path.join(cargo_target_dir(), "debug", "axon")
     INTERP["sha256"] = mut.clean_interpreter(INTERP["path"])
+    PREREQS[:] = prereq_artifacts()
+    PREREQ_SHA.update({a: mut.sha(a) for _, _, arts in PREREQS for a in arts if os.path.exists(a)})
     records = []
     # A row with no marker can never show its attack succeeding, so its joint
     # cell would read OTHER_FAILURE by construction (M58/M245, C9 round 1b).
@@ -708,7 +747,7 @@ def main():
                 passed, out = run_test(pkg, target, test)
             finally:
                 rest()
-                after_cell(edits)
+                after_cell(edits, mut.spawns_scripts(pkg, target))
             if passed is None:
                 return "COMPILE_ERROR"
             if passed:
@@ -759,7 +798,8 @@ def main():
                         fails = [f"{c}: {t}" for t in cfails][:6] + [f"{c}: (suite failed)"] + fails
             finally:
                 rest()
-                after_cell(edits)
+                after_cell(edits, any(mut.package_spawns_scripts(p)
+                                      for p in [pkg, owner_crate, *consumers]))
             if fok is None or "COMPILE_ERROR" in states.values():
                 return "COMPILE_ERROR", [], states
             ok_all = fok and all(v == "SUITE_OK" for v in states.values())
@@ -861,7 +901,7 @@ def main():
                     passed, out = run_test(pkg, target, test)
                 finally:
                     rest()
-                    after_cell([edit_of(rep)])
+                    after_cell([edit_of(rep)], mut.spawns_scripts(pkg, target))
                 if passed is None:
                     rep_state = "REPLACEMENT_COMPILE_ERROR"
                 elif passed:

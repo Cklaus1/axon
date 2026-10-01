@@ -978,4 +978,7 @@ ATTACK_MARKERS.update({
     'M888': r"ATTACK: a mutated cell left the run's interpreter changed and the rows after it ran on",
     'M889': r"ATTACK: a mutated cell left the run's interpreter changed and the rows after it ran on",
     'M890': r"ATTACK: a mutated cell left the run's interpreter changed and the rows after it ran on",
+    'M891': r'ATTACK: a prerequisite a cell replaced was not rebuilt from the clean tree',
+    'M892': r'ATTACK: a paired-disable run left a binary built from a mutated tree in the\s+workspace target dir',
+    'M893': r'ATTACK: a paired-disable run left a binary built from a mutated tree in the\s+workspace target dir',
 })
