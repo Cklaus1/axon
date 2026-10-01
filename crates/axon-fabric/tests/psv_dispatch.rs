@@ -988,7 +988,14 @@ const DEFECTIVE_OBSERVATIONS: [(&str, &str, &str, &str); 12] = [
         "observer",
         "but is signed by",
     ),
-    ("exit", "observer", "observer", "observer exited"),
+    // An observer that exits leaving NO observation: its exit status and the
+    // missing file each refuse it alone (C9 round 4, rows2), so either reason.
+    (
+        "exit",
+        "observer",
+        "observer",
+        "observer exited|observation.json: No such file",
+    ),
     // C9 round 4 (rows2, M811): the observer leaves a GENUINE signed
     // observation and then exits non-zero. Only its exit status refuses it:
     // the observation verifies and joins.
