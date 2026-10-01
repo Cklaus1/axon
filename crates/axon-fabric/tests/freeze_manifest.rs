@@ -7,6 +7,9 @@
 
 #[path = "common/git_attacks.rs"]
 mod git_attacks;
+#[path = "../../axon-core/tests/script_spawn/mod.rs"]
+mod script_spawn;
+use script_spawn::Bins;
 
 use serde_json::json;
 use std::path::{Path, PathBuf};
@@ -14,10 +17,11 @@ use std::process::{Command, Stdio};
 
 const GIT: &str = "/usr/bin/git";
 /// The script and the modules it loads.
-const COPIED: [&str; 3] = [
+const COPIED: [&str; 4] = [
     "scripts/v022_freeze_manifest.py",
     "scripts/v022_g01_mutations.py",
     "scripts/v022_attack_markers.py",
+    "scripts/guest_build_env.py",
 ];
 const MANIFEST: &str = "profiles/linux-microvm/manifest.json";
 
@@ -40,12 +44,44 @@ fn write(p: &Path, s: &str) {
 
 /// A guest manifest whose source block is `source`.
 fn manifest(source: serde_json::Value) -> String {
-    json!({"artifacts": {"vmlinux": {"sha256": "1".repeat(64)}}, "source": source}).to_string()
+    json!({"artifacts": {"vmlinux": {"sha256": "1".repeat(64)},
+                         "axon": {"sha256": "a".repeat(64)},
+                         "axon-guest-init": {"sha256": "b".repeat(64)},
+                         "axon-psv-runner": {"sha256": "c".repeat(64)}},
+           "source": source})
+    .to_string()
+}
+
+/// The record scripts/guest_build_env.py writes for a controlled build of
+/// exactly the fixture manifest's three binaries.
+fn controlled_build() -> serde_json::Value {
+    let tc = "/root/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/bin";
+    let base = "/var/tmp/axon-guest-build-x";
+    json!({
+        "schema": "axon-guest-build-env/1",
+        "controlled": true,
+        "toolchain": {"channel": "nightly", "cargo": format!("{tc}/cargo"),
+                      "cargo_sha256": "d".repeat(64), "cargo_version": "cargo 1",
+                      "rustc": format!("{tc}/rustc"), "rustc_sha256": "e".repeat(64),
+                      "rustc_vV": "rustc 1\nhost: x86_64-unknown-linux-gnu"},
+        "env": {"CARGO_HOME": format!("{base}/cargo-home"),
+                "CARGO_TARGET_DIR": format!("{base}/target"), "HOME": base,
+                "LC_ALL": "C", "PATH": format!("{tc}:/usr/bin:/bin"),
+                "RUSTC": format!("{tc}/rustc")},
+        "env_allowlist": ["CARGO_HOME", "CARGO_TARGET_DIR", "HOME", "LC_ALL", "PATH", "RUSTC"],
+        "proxy_vars": [],
+        "cargo_home": format!("{base}/cargo-home"), "cargo_home_created_empty": true,
+        "target_dir": format!("{base}/target"), "target_dir_created_empty": true,
+        "effective_config": {"origins": [], "foreign": [], "own_config": ".cargo/config.toml"},
+        "builds": [],
+        "artifacts": {"axon": "a".repeat(64), "axon-guest-init": "b".repeat(64),
+                      "axon-psv-runner": "c".repeat(64)},
+    })
 }
 
 fn clean_source() -> serde_json::Value {
     json!({"axon_git_rev_at_build": "0".repeat(40), "axon_tree_dirty_at_build": false,
-           "axon_tree_dirty_reasons": []})
+           "axon_tree_dirty_reasons": [], "build_environment": controlled_build()})
 }
 
 /// The files a freeze reads, under `root`.
@@ -92,9 +128,13 @@ const WRAPPERS: [&str; 4] = [
 
 /// The freeze command from `root`, with no compiler wrapper in its env.
 fn freeze_cmd(root: &Path) -> Command {
-    let mut c = Command::new("python3");
-    c.arg(root.join("scripts/v022_freeze_manifest.py"))
-        .arg("freeze.json")
+    // The freeze runs git, never a binary this workspace builds.
+    let mut c = script_spawn::script(
+        "python3",
+        root.join("scripts/v022_freeze_manifest.py"),
+        Bins::NoWorkspaceBinary,
+    );
+    c.arg("freeze.json")
         .arg(root.join("no-micode"))
         .current_dir(root)
         .env("V022_KEEP_TMPDIR", "1");
@@ -262,4 +302,99 @@ fn the_callers_git_environment_does_not_choose_the_bound_revision() {
         m["axon_sha"], head,
         "ATTACK: the caller's GIT_DIR chose the revision the freeze bound"
     );
+}
+
+/// C9 round 4 (FIELD-ORIGIN, PSV-2): the freeze binds only a guest image whose
+/// bytes were built in the controlled environment scripts/guest_build_env.py
+/// constructs. A list of wrapper variables checked in the FREEZE's own
+/// environment said nothing about the environment that BUILT the image: an
+/// ancestor config, RUSTC, RUSTFLAGS, a linker or a reused target dir all
+/// passed it. Each uncontrolled build below is refused; the control (the
+/// controlled record) freezes (a_standalone_clone_with_a_clean_guest_manifest_freezes).
+#[test]
+fn a_guest_image_not_built_in_the_controlled_environment_does_not_freeze() {
+    let d = tempfile::tempdir().unwrap();
+    let r = clone(d.path());
+    type Edit = Box<dyn Fn(&mut serde_json::Value)>;
+    let cases: Vec<(&str, Edit)> = vec![
+        (
+            "a caller's RUSTC_WRAPPER reached cargo",
+            Box::new(|b| {
+                b["env"]["RUSTC_WRAPPER"] = json!("/usr/bin/sccache");
+            }),
+        ),
+        (
+            "a RUSTC other than the pinned toolchain's",
+            Box::new(|b| {
+                b["env"]["RUSTC"] = json!("/tmp/evil/rustc");
+            }),
+        ),
+        (
+            "an ancestor .cargo/config.toml named a wrapper",
+            Box::new(|b| {
+                b["effective_config"]["foreign"] =
+                    json!(["build.rustc-wrapper = \"/w\" (from /var/tmp/.cargo/config.toml)"]);
+            }),
+        ),
+        (
+            "a reused target dir",
+            Box::new(|b| {
+                b["target_dir_created_empty"] = json!(false);
+            }),
+        ),
+        (
+            "a CARGO_HOME with config in it",
+            Box::new(|b| {
+                b["cargo_home_created_empty"] = json!(false);
+            }),
+        ),
+        (
+            "PATH led by a directory other than the pinned toolchain's",
+            Box::new(|b| {
+                b["env"]["PATH"] = json!("/tmp/evil/bin:/usr/bin:/bin");
+            }),
+        ),
+        // Last: with no record at all the artifact binding refuses too, so
+        // the record gate's own row is judged by the cases above.
+        (
+            "no build environment recorded (a bare cargo build)",
+            Box::new(|b| *b = json!(null)),
+        ),
+    ];
+    for (attack, edit) in cases {
+        let mut src = clean_source();
+        edit(&mut src["build_environment"]);
+        write(&r.join(MANIFEST), &manifest(src));
+        let got = freeze(&r);
+        assert!(
+            got.is_err(),
+            "ATTACK: the freeze bound a guest image not built in the controlled environment \
+             ({attack}): {got:?}"
+        );
+        let e = got.unwrap_err();
+        assert!(e.contains("controlled build environment"), "{attack}: {e}");
+    }
+    write(&r.join(MANIFEST), &manifest(clean_source()));
+    assert!(freeze(&r).is_ok(), "control: the controlled build freezes");
+}
+
+/// The controlled build's record is joined to the manifest: an artifact the
+/// manifest pins must be the bytes that build produced. Control above.
+#[test]
+fn a_guest_artifact_the_controlled_build_did_not_produce_does_not_freeze() {
+    let d = tempfile::tempdir().unwrap();
+    let r = clone(d.path());
+    for name in ["axon", "axon-guest-init", "axon-psv-runner"] {
+        let mut src = clean_source();
+        src["build_environment"]["artifacts"][name] = json!("f".repeat(64));
+        write(&r.join(MANIFEST), &manifest(src));
+        let got = freeze(&r);
+        assert!(
+            got.is_err(),
+            "ATTACK: the freeze bound a guest {name} its controlled build did not produce: {got:?}"
+        );
+        assert!(got
+            .unwrap_err()
+            .contains("not the bytes its controlled build"));
+    }
 }

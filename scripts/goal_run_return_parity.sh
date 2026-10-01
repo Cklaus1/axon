@@ -28,7 +28,8 @@ if ! cargo build -q -p axon-core --bin axon 2>/dev/null; then
   echo "goal_run_return_parity: codegen build unavailable (LLVM absent) — skipping"
   exit 0
 fi
-AXON="${AXON:-target/debug/axon}"
+. scripts/lib/axon_bin.sh
+use_built AXON axon  # the binary the build above produced (or the one the caller named)
 
 # (label, target) — the objective peaks at 100 (x=50); a far target stresses the
 # coarse seed (must leap from x=0 to ~x=50), a near target is the easy case.

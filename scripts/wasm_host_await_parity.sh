@@ -51,7 +51,8 @@ CARGO_TARGET_DIR="target/interp-only" \
   cargo build -q -p axon-core --no-default-features --bin axon 2>/dev/null || { echo "native build failed — skipping"; exit 0; }
 cargo build -q -p axon-core --no-default-features --bin axon-run --target wasm32-wasip1 2>/dev/null || { echo "wasm build failed — skipping"; exit 0; }
 NATIVE="target/interp-only/debug/axon"
-WASM="target/wasm32-wasip1/debug/axon-run.wasm"
+. scripts/lib/axon_bin.sh
+WASM=""; use_built WASM axon-run.wasm wasm32-wasip1  # the wasm build just made
 
 # (program, piped-stdin) pairs covering: a fixed-exchange prompt, EOF, and a
 # multi-turn approval loop.

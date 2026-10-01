@@ -23,7 +23,8 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"; cd "$ROOT"
 if ! cargo build -q -p axon-core --bin axon 2>/dev/null; then
   echo "wasm_object_prune: codegen build unavailable — skipping"; exit 0
 fi
-AXON="${AXON:-target/debug/axon}"
+. scripts/lib/axon_bin.sh
+use_built AXON axon  # the binary the build above produced (or the one the caller named)
 WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
 PROG="$WORK/triv.ax"; printf 'fn main() -> i64 { 21 + 21 }\n' > "$PROG"
 

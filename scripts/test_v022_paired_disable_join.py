@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """`v022_paired_disable.py --join` makes the status file only from shards that
-cover every retirement record exactly once at THIS commit. Each case below is
+cover every retirement record exactly once at THIS commit, each made from THIS
+registry in a clean tree (C9 round 4). Each case below is
 a join that must be refused, plus the control that must be accepted. Synthetic
 shard files; no cargo. Run from a clean tree:
 
@@ -15,19 +16,24 @@ import tempfile
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
 import v022_g01_mutations as mut  # noqa: E402
+import v022_paired_disable as pd  # noqa: E402
 
 HARNESS = os.path.join(ROOT, "scripts", "v022_paired_disable.py")
+BLOBS = mut.registry_blobs()
 COMMIT = subprocess.run(["git", "-C", ROOT, "rev-parse", "HEAD"], capture_output=True,
                         text=True, check=True).stdout.strip()
 UNIVERSE = sorted(set(mut.EQUIVALENT_DID) | set(mut.STALE_REFACTORED), key=lambda r: int(r[1:]))
 
 
-def shard(k, n, commit=COMMIT, drop=None, add=None, holds=True, rec_commit=None):
+def shard(k, n, commit=COMMIT, drop=None, add=None, holds=True, rec_commit=None,
+          blobs=None, clean=True, bad_edits=None):
     sel = [r for i, r in enumerate(UNIVERSE) if i % n == k]
     recs = [r for r in sel if r != drop] + ([add] if add else [])
     return {"schema": "axon-v022-paired-disable/2", "commit": commit, "all_hold": holds,
             "shard": f"{k}/{n}", "selected": sel,
-            "records": [{"mutation": r, "holds": holds, "commit": rec_commit or commit}
+            "registry_blobs": blobs or BLOBS, "tree_clean": clean,
+            "records": [{"mutation": r, "holds": holds, "commit": rec_commit or commit,
+                         "edits_sha256": "0" * 64 if r == bad_edits else pd.current_edits_digest(r)}
                         for r in recs]}
 
 
@@ -60,6 +66,15 @@ def main():
             ("a shard carrying another slice's record",
              [shard(0, 2, add=UNIVERSE[1]), shard(1, 2)]),
             ("a full-run file, not a shard", [{"commit": COMMIT, "records": []}]),
+            # C9 round 4: a shard made from a locally edited registry or marker
+            # file, or in a dirty tree, or executing edits that are not this
+            # registry's rows.
+            ("a shard from another registry",
+             [shard(0, 2), shard(1, 2, blobs={f: "0" * 40 for f in BLOBS})]),
+            ("a shard from a dirty tree", [shard(0, 2), shard(1, 2, clean=False)]),
+            ("a shard with no recorded registry", [shard(0, 2), {**shard(1, 2), "registry_blobs": None}]),
+            ("a record executed with other edits",
+             [shard(0, 2), shard(1, 2, bad_edits=UNIVERSE[1])]),
         ]
         for name, docs in cases:
             code, out, path = join(tmp, docs)

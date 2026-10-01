@@ -22,15 +22,19 @@ cd "$ROOT"
 # Build the codegen binary up front. When this harness is invoked from INSIDE a
 # `cargo test` run (the cli_run wrapper), the parent cargo holds the build lock
 # on target/, so a nested `cargo build` here would block/fail — detect that and
-# skip cleanly rather than report a false divergence. Prefer an already-built
-# binary if present (the gate builds it before running tests).
+# skip cleanly rather than report a false divergence. A binary that merely
+# sits in target/ is NOT preferred (C9 round 4): it was built from some other
+# tree. The caller names one in AXON, or this harness builds its own.
 echo "all_examples_parity: locating codegen axon binary…"
-AXON="${AXON:-target/debug/axon}"
-if [ ! -x "$AXON" ]; then
+. scripts/lib/axon_bin.sh
+# The binary the caller names, or the one THIS harness builds -- never one
+# that merely sits under target/ (scripts/lib/axon_bin.sh).
+if [ -z "${AXON:-}" ]; then
   if ! cargo build -q -p axon-core --bin axon 2>/dev/null; then
     echo "all_examples_parity: codegen build unavailable (LLVM absent or build lock) — skipping"
     exit 0
   fi
+  use_built AXON axon
 fi
 
 # The located binary EXISTING is not the same as it being able to codegen, and

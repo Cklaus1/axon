@@ -55,8 +55,9 @@ echo "wasm_parity: building axon-run (native + wasm32-wasip1)…"
 cargo build -q -p axon-core --no-default-features --bin axon-run || { echo "native build failed"; exit 1; }
 cargo build -q -p axon-core --no-default-features --bin axon-run --target wasm32-wasip1 || { echo "wasm build failed"; exit 1; }
 
-NATIVE="target/debug/axon-run"
-WASM="target/wasm32-wasip1/debug/axon-run.wasm"
+. scripts/lib/axon_bin.sh
+NATIVE=""; use_built NATIVE axon-run  # the two builds just made
+WASM=""; use_built WASM axon-run.wasm wasm32-wasip1
 
 # Pure-compute corpus (R7 §4.1 row 1): AUTO-DISCOVERED — every examples/*.ax with
 # a `fn main` that touches NONE of the host interface (fs/env/AI/threads/exec/

@@ -15,5 +15,6 @@ OUT="examples/browser/axon_interp.wasm"
 
 echo "building axon-wasm (wasm32-unknown-unknown)…"
 cargo build -q -p axon-wasm --target wasm32-unknown-unknown --release
-cp target/wasm32-unknown-unknown/release/axon_wasm.wasm "$OUT"
+. scripts/lib/axon_bin.sh
+cp "$(built_bin axon_wasm.wasm wasm32-unknown-unknown release)" "$OUT"
 echo "done: $OUT ($(wc -c < "$OUT") bytes) — serve this dir and open /playground.html"

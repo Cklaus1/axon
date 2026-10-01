@@ -12,6 +12,8 @@
 //! in a caller is opt-in per call site; three call sites existed and two had
 //! forgotten it.
 
+#[path = "../../axon-core/tests/script_spawn/mod.rs"]
+mod script_spawn;
 use axon_os::approval::{authorize, ApprovalStatus};
 use axon_os::manifest::parse;
 use std::path::Path;
@@ -148,10 +150,19 @@ fn the_approval_token_is_archived_beside_the_job_it_approved() {
     // The interpreter is a separate binary. Archival does not depend on it —
     // `cmd_run` writes the archive whatever the verdict — so the assertion
     // that matters runs either way, and only the replay leg needs it.
-    let interp = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .and_then(|p| p.parent())
-        .map(|r| r.join("target/debug/axon"));
+    // Built from THIS tree by cargo, never a stale `target/debug/axon`.
+    let interp = Some(script_spawn::workspace_bin(
+        "AXON_BIN",
+        &[
+            "build",
+            "-p",
+            "axon-core",
+            "--no-default-features",
+            "--bin",
+            "axon",
+        ],
+        "axon",
+    ));
     let mut cmd = Command::new(bin);
     cmd.args(["run"])
         .arg(&job)

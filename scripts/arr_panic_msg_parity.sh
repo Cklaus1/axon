@@ -25,7 +25,8 @@ if ! cargo build -q -p axon-core --bin axon 2>/dev/null; then
   echo "arr_panic_msg_parity: codegen build unavailable (LLVM absent) — skipping"
   exit 0
 fi
-AXON="${AXON:-target/debug/axon}"
+. scripts/lib/axon_bin.sh
+use_built AXON axon  # the binary the build above produced (or the one the caller named)
 
 run_case() {
   local label="$1" prog_src="$2"

@@ -135,8 +135,11 @@ fn the_linux_rootfs_build_installs_a_default_features_axon_guest_init() {
     let lines = logical_lines(body);
     let build = lines
         .iter()
-        .find(|l| l.contains("cargo build") && l.contains("-p axon-guest-init"))
+        .find(|l| l.contains(" build ") && l.contains("-p axon-guest-init"))
         .expect("build_rootfs_linux must build axon-guest-init");
+    // Through the controlled build environment (scripts/guest_build_env.py),
+    // never a bare cargo that inherits the caller's wrapper, rustc or flags.
+    assert!(build.trim_start().starts_with("gcargo "), "{build}");
     assert!(build.contains("--locked"), "{build}");
     assert!(build.contains("x86_64-unknown-linux-musl"), "{build}");
     assert!(

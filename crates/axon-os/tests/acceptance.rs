@@ -3,6 +3,8 @@
 //! the shipped example jobs. They skip cleanly when the interpreter binary is
 //! absent (so a codegen-less CI still passes), exactly like the parity harnesses.
 
+#[path = "../../axon-core/tests/script_spawn/mod.rs"]
+mod script_spawn;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -31,22 +33,20 @@ fn axon_os_bin() -> PathBuf {
 /// without a built compiler is legitimate. But it SAYS so now: a green run that
 /// checked nothing must not look like a green run that checked everything.
 fn axon_bin() -> Option<PathBuf> {
-    if let Some(p) = std::env::var_os("AXON_BIN") {
-        let p = PathBuf::from(p);
-        if p.exists() {
-            return Some(p);
-        }
-    }
-    let p = workspace_root().join("target/debug/axon");
-    if p.exists() {
-        return Some(p);
-    }
-    eprintln!(
-        "axon-os acceptance: SKIPPING — no axon binary at {} (build it, or set AXON_BIN). \
-         This test reports PASS without having checked anything.",
-        p.display()
-    );
-    None
+    // Built from THIS tree by cargo (tests/script_spawn::workspace_bin): it
+    // used to take a stale `target/debug/axon`, or skip when none sat there.
+    Some(script_spawn::workspace_bin(
+        "AXON_BIN",
+        &[
+            "build",
+            "-p",
+            "axon-core",
+            "--no-default-features",
+            "--bin",
+            "axon",
+        ],
+        "axon",
+    ))
 }
 
 fn examples() -> PathBuf {

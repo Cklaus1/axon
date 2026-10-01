@@ -11,29 +11,29 @@
 //!   to it, and neither S nor K appears in anything the runner emits.
 
 mod common;
+#[path = "../../axon-core/tests/script_spawn/mod.rs"]
+mod script_spawn;
 use axon_psv::runner::{report_for, run, run_and_emit, RunnerConfig};
 use axon_psv::*;
 use common::{copy_executable, write_executable};
 use std::os::unix::fs::PermissionsExt;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 fn axon() -> PathBuf {
-    let p = std::env::var_os("AXON_BIN")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            let t = std::env::var_os("CARGO_TARGET_DIR")
-                .map(PathBuf::from)
-                .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target"));
-            t.join("debug/axon")
-        });
-    assert!(
-        p.exists(),
-        "the runner tests need the real interpreter at {} — build it with \
-         `cargo build -p axon-core --no-default-features --bin axon` (or set AXON_BIN). \
-         This is a FAILURE, not a skip.",
-        p.display()
-    );
-    p
+    // The interpreter as cargo has made it current for THIS tree, never a
+    // stale `target/debug/axon` (tests/script_spawn::workspace_bin).
+    script_spawn::workspace_bin(
+        "AXON_BIN",
+        &[
+            "build",
+            "-p",
+            "axon-core",
+            "--no-default-features",
+            "--bin",
+            "axon",
+        ],
+        "axon",
+    )
 }
 
 /// It also defines its OWN `@[test]` — which the guest must never collect (B1).

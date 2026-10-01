@@ -55,6 +55,11 @@ if [ -n "$PROFILE" ] && [ "$STRICT" != 1 ]; then
   echo "gate: --profile=$PROFILE certifies a stage and requires --strict" >&2; exit 2
 fi
 
+# Every harness below that builds nothing is handed the binary THIS gate built
+# (`built_bin` names the path cargo builds to, whatever CARGO_TARGET_DIR says):
+# a harness never guesses one (scripts/lib/axon_bin.sh, C9 round 4).
+. scripts/lib/axon_bin.sh
+
 # Deterministic test environment.
 export AXON_SEED="${AXON_SEED:-42}"
 export AXON_AI_MOCK="${AXON_AI_MOCK:-1}"
@@ -362,7 +367,7 @@ python3 scripts/completeness.py \
 # A gate function that produced no readable verdict must not be scored as a
 # pass. Landed RED and deliberately unwired; wired here now that it is green,
 # because a gate nobody runs is the defect one layer up.
-bash scripts/gate_verdict_is_read.sh \
+AXON="$(built_bin axon)" bash scripts/gate_verdict_is_read.sh \
   || fail "a safety gate with no readable verdict is being scored as passed"
 
 
@@ -584,7 +589,7 @@ if [ "$STRICT" = 1 ]; then
   # having no environment channel to police. Placed under --strict beside the
   # other wasm work, since it needs wasmtime and both wasm targets.
   echo "── gate: WASI env-control refusal (wasip1 vs browser) ───────────"
-  ./scripts/wasi_env_control_gate.sh || fail "WASI env-control gate"
+  AXON="$(built_bin axon)" ./scripts/wasi_env_control_gate.sh || fail "WASI env-control gate"
 
   # THE BROADEST SWEEP IN THE REPO, and it ran nowhere. `all_examples_parity`
   # compares EVERY example under interp and native rather than a curated list —
@@ -627,7 +632,7 @@ stage order means it should have had one here" ;;
   # A gate nobody invokes reports nothing, including when it would have failed.
   echo "── gate: per-requirement acceptance gates (R22, R44) ────────────"
   run_quiet "R22 acceptance gate" ./scripts/r22_acceptance_gate.sh
-  run_quiet "R44 acceptance gate" ./scripts/r44_acceptance_gate.sh
+  run_quiet "R44 acceptance gate" env AXON="$(built_bin axon)" ./scripts/r44_acceptance_gate.sh
 
   # Two more harnesses that NOTHING invoked — found by the coverage-metric
   # audit, which measured execution instead of counting mentions. Between them
@@ -640,7 +645,7 @@ stage order means it should have had one here" ;;
   # (no llvm-objdump, not root, no gramine) rather than reporting success.
   # A harness nobody invokes reports nothing, including when it would fail.
   echo "── gate: previously-unwired harnesses (eBPF verifier, TEE simulation) ──"
-  run_quiet "eBPF verifier harness" ./scripts/ebpf_verify.sh
+  run_quiet "eBPF verifier harness" env AXON_BIN="$(built_bin axon)" ./scripts/ebpf_verify.sh
   run_quiet "TEE simulation harness" ./scripts/tee_sim_run.sh
 
   # THE THREE DOMAIN ROUND-TRIPS. `governance/specs/R22-domain-modules.md`
@@ -836,7 +841,7 @@ stage order means it should have had one here" ;;
   # That is the external_hardware class: excused from being EFFECTIVE without
   # the toolchain, never from being wired — unwired it would not run on the host
   # that HAS the hardware either.
-  run_quiet "R25 Zephyr/Cortex-M gate" ./scripts/zephyr_qemu_gate.sh
+  run_quiet "R25 Zephyr/Cortex-M gate" env AXON_BIN="$(built_bin axon)" ./scripts/zephyr_qemu_gate.sh
   run_quiet "R32 acceptance gate" ./scripts/r32_acceptance_gate.sh
   run_quiet "R39 Slice 2 gate" ./scripts/r39_slice2_gate.sh
   run_quiet "R39 Slice 3 gate" ./scripts/r39_slice3_gate.sh
@@ -853,7 +858,7 @@ stage order means it should have had one here" ;;
   # diagnostics" — a broken probe — and 1 for a real failure. `>/dev/null` makes
   # those identical in the log, and a probe that measured nothing is the failure
   # mode this whole class of check exists to expose.
-  if dlg=$(./scripts/diagnostic_location_gate.sh 2>&1); then
+  if dlg=$(AXON="$(built_bin axon)" ./scripts/diagnostic_location_gate.sh 2>&1); then
     echo "  OK $(printf '%s' "$dlg" | tail -1)"
   else
     dlg_rc=$?

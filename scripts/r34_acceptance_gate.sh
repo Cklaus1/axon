@@ -120,7 +120,8 @@ else
     fail "cargo build -p axon-vm FAILED"
 fi
 
-AXON_VM_BIN="$REPO_ROOT/target/debug/axon-vm"
+. "$REPO_ROOT/scripts/lib/axon_bin.sh"
+AXON_VM_BIN="$(cd "$REPO_ROOT" && built_bin axon-vm)" || exit 2  # the axon-vm just built
 if [ ! -x "$AXON_VM_BIN" ]; then
     fail "axon-vm binary not found at $AXON_VM_BIN"
 fi

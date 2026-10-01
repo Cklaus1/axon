@@ -149,6 +149,18 @@ def classify_suite(out, rc, declared, reproduced=None):
     return base | dict(status="FAIL", detail=f"exit {rc}; {passed} passed, {failed} failed; "
                        + "; ".join(problems or ["no parsable failure"]))
 
+def cargo_target_dir():
+    """The directory cargo builds into from ROOT, as CARGO resolves it
+    (CARGO_TARGET_DIR, then any config's build.target-dir, then ROOT/target):
+    never a guess (scripts/lib/axon_bin.sh, C9 round 4)."""
+    r = subprocess.run(["cargo", "metadata", "--format-version", "1", "--no-deps"], cwd=ROOT,
+                       capture_output=True, text=True)
+    try:
+        return json.loads(r.stdout)["target_directory"]
+    except (ValueError, KeyError):
+        sys.exit(f"refused: cannot tell where cargo builds (cargo metadata: {r.stderr.strip()[-300:]})")
+
+
 def reproduce_declared(declared, micode, axon_tgt, env, logdir):
     """Re-run each declared defect's test at its pinned revision (a throwaway worktree
     of the peer repository). Reproduced = the test FAILED with the declared fingerprint.
@@ -281,7 +293,7 @@ def main():
         return 1
     micode = os.environ.get(manifest["peer"]["env"], "")
     micode = os.path.abspath(micode) if micode else ""
-    axon_tgt = os.environ.get("CARGO_TARGET_DIR", os.path.join(ROOT, "target"))
+    axon_tgt = cargo_target_dir()
     micode_tgt = os.environ.get("MICODE_TARGET_DIR", os.path.join(axon_tgt, "micode"))
     logdir = os.path.join(os.path.dirname(os.path.abspath(a.results)), "v022-stage5-logs")
     os.makedirs(logdir, exist_ok=True)

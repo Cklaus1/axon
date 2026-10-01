@@ -63,7 +63,8 @@ echo "r23_acceptance_gate: (3) solver-free proof — build --no-default-features
 if ! cargo build -q -p axon-certcheck --no-default-features --bin certcheck; then
   echo "  solver-free build failed"; exit 1
 fi
-CERTCHECK="$ROOT/target/debug/certcheck"
+. "$ROOT/scripts/lib/axon_bin.sh"
+CERTCHECK=""; use_built CERTCHECK certcheck  # the solver-free build just made
 if ! "$CERTCHECK" check examples/proofs/mint_o2.obl examples/proofs/mint_o2.cert >/dev/null; then
   echo "  solver-free check of the example obligation FAILED"; exit 1
 fi
@@ -122,8 +123,8 @@ if cargo build -q -p axon-certcheck --features smt --bin certcheck 2>/dev/null; 
     echo "  smt test suite failed"; exit 1
   fi
   A="$(mktemp)"; B="$(mktemp)"
-  "$ROOT/target/debug/certcheck" prove examples/proofs/mint_o2.obl --out "$A" >/dev/null
-  "$ROOT/target/debug/certcheck" prove examples/proofs/mint_o2.obl --out "$B" >/dev/null
+  "$CERTCHECK" prove examples/proofs/mint_o2.obl --out "$A" >/dev/null
+  "$CERTCHECK" prove examples/proofs/mint_o2.obl --out "$B" >/dev/null
   if ! diff -q "$A" "$B" >/dev/null; then
     echo "  emission is NOT byte-identical across runs (A5 violation)"; rm -f "$A" "$B"; exit 1
   fi

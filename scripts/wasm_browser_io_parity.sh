@@ -29,9 +29,12 @@ command -v node >/dev/null 2>&1 || { echo "wasm_browser_io_parity: no node — s
 HOSTJS="scripts/wasm_browser_host.js"
 [ -f "$HOSTJS" ] || { echo "wasm_browser_io_parity: host harness missing — skipping"; exit 0; }
 
-AXON="${AXON:-target/debug/axon}"
-if [ ! -x "$AXON" ]; then
+. scripts/lib/axon_bin.sh
+# The binary the caller names, or the one THIS harness builds -- never one
+# that merely sits under target/ (scripts/lib/axon_bin.sh).
+if [ -z "${AXON:-}" ]; then
   cargo build -q -p axon-core --bin axon 2>/dev/null || { echo "wasm_browser_io_parity: codegen unavailable — skipping"; exit 0; }
+  use_built AXON axon
 fi
 # Distinguish an ABSENT target from a BROKEN build. The probe used to be
 # `if ! cargo build ... 2>/dev/null` reporting "unavailable - skipping", which

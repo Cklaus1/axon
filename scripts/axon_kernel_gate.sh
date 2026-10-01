@@ -29,8 +29,6 @@ FAIL=0
 ok()   { echo "  ✓ $*"; PASS=$((PASS+1)); }
 fail() { echo "  ✗ $*"; FAIL=$((FAIL+1)); }
 
-AXON="./target/debug/axon"
-AXON_VM="./target/debug/axon-vm"
 GOOD="examples/flagship/agent_task.ax"
 EVIL="examples/flagship/agent_task_evil.ax"
 KERNEL="dist/guest/vmlinuz"
@@ -38,15 +36,16 @@ INITRD="dist/guest/initramfs.cpio.gz"
 
 # ── Build interpreter if needed ───────────────────────────────────────────────
 
-if [[ ! -x "$AXON" ]]; then
-    echo "[axon-kernel-gate] Building axon interpreter..."
-    cargo build -p axon-core --no-default-features --bin axon --quiet
-fi
+# The binaries this gate runs are the ones it builds here -- never ones that
+# merely sit in target/ (C9 round 4; scripts/lib/axon_bin.sh).
+. scripts/lib/axon_bin.sh
+echo "[axon-kernel-gate] Building axon interpreter..."
+cargo build -p axon-core --no-default-features --bin axon --quiet
+AXON=""; use_built AXON axon
 
-if [[ ! -x "$AXON_VM" ]]; then
-    echo "[axon-kernel-gate] Building axon-vm..."
-    cargo build -p axon-vm --quiet
-fi
+echo "[axon-kernel-gate] Building axon-vm..."
+cargo build -p axon-vm --quiet
+AXON_VM=""; use_built AXON_VM axon-vm
 
 echo "[axon-kernel-gate] Layer 1: compiler (@[contained] / effect-row)"
 
@@ -80,7 +79,7 @@ echo "[axon-kernel-gate] Layer 2: BPF policy generation"
 if [[ -f "$GOOD" ]]; then
     # Build with --emit-manifest to get .axmeta.
     cargo build -p axon-core --features codegen --quiet 2>/dev/null || true
-    AXON_CODEGEN="./target/debug/axon"
+    AXON_CODEGEN=""; use_built AXON_CODEGEN axon
     if "$AXON_CODEGEN" build "$GOOD" --emit-manifest 2>/dev/null; then
         META="${GOOD%.ax}.axmeta"
         if [[ -f "$META" ]]; then

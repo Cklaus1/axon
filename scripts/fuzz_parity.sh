@@ -49,14 +49,18 @@ cd "$ROOT"
 SEED="${AXON_SEED:-42}"
 N="${FUZZ_N:-40}"   # random inputs per builtin (edges added on top)
 
-# Locate the codegen binary. Prefer an already-built one (the gate builds it
-# before tests); if absent try one build; if THAT fails (no LLVM / build lock
-# held by a parent cargo), skip cleanly rather than report a false divergence.
-AXON="${AXON:-target/debug/axon}"
-if [ ! -x "$AXON" ]; then
+# Locate the codegen binary: the one the caller names in AXON, else one build
+# of our own (never a binary that merely sits in target/, C9 round 4); if THAT
+# fails (no LLVM / build lock held by a parent cargo), skip cleanly rather than
+# report a false divergence.
+. scripts/lib/axon_bin.sh
+# The binary the caller names, or the one THIS harness builds -- never one
+# that merely sits under target/ (scripts/lib/axon_bin.sh).
+if [ -z "${AXON:-}" ]; then
   if ! cargo build -q -p axon-core --bin axon 2>/dev/null; then
     echo "fuzz_parity: codegen build unavailable (LLVM absent or build lock) — skipping"; exit 0
   fi
+  use_built AXON axon
 fi
 
 WORK="$(mktemp -d)"

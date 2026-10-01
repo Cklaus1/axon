@@ -52,7 +52,8 @@ if ! cargo build -q -p axon-rt --target wasm32-wasip1 2>/dev/null; then
   say "axon-rt wasm32-wasip1 build unavailable — skipping (exit 0)"
   exit 0
 fi
-RTLIB="target/wasm32-wasip1/debug/libaxon_rt.a"
+. scripts/lib/axon_bin.sh
+RTLIB="$(built_bin libaxon_rt.a wasm32-wasip1)" || exit 2  # the staticlib the build above produced
 [ -f "$RTLIB" ] || { say "no $RTLIB — skipping"; exit 0; }
 say "OK: wasm axon-rt staticlib built ($(wc -c <"$RTLIB") bytes) — libc/sysroot half is solved"
 
@@ -61,7 +62,8 @@ if ! cargo build -q -p axon-core --bin axon 2>/dev/null; then
   say "codegen axon binary unavailable — skipping (exit 0)"
   exit 0
 fi
-AXON="${AXON:-target/debug/axon}"
+. scripts/lib/axon_bin.sh
+use_built AXON axon  # the binary the build above produced (or the one the caller named)
 PROG="$WORK/w.ax"
 printf 'fn main() -> i64 { 21 + 21 }\n' > "$PROG"
 if ! "$AXON" target build --engine codegen --target wasm32-wasip1 "$PROG" >/dev/null 2>&1; then

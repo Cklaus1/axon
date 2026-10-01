@@ -17,7 +17,7 @@ fn cortex_bin() -> PathBuf {
     workspace_bin(
         "cortex",
         "CORTEX_BIN",
-        "run `cargo build -p axon-cortex --bins` first",
+        &["build", "-p", "axon-cortex", "--bin", "cortex"],
     )
 }
 

@@ -1608,6 +1608,111 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       28/28 KILLED by their own attack; `v022_paired_disable.py --only=M704,M546,M705,M634`, all
       four cells and the full-suite cell hold for each.
 
+56. **A check runs the binary built from the tree under test; the harnesses judge only a clean
+    commit and say which registry they ran; the guest image is built in an environment the build
+    constructs (C9 round 4, harness2: EQUIVALENCE (6) blocker, EQUIVALENCE (5) and FIELD-ORIGIN /
+    PSV-2 majors, currency and skip-accounting minors).** Nothing here relaxes a counting rule.
+    - **Before.** Amendment 52 removed `CARGO_TARGET_DIR` at `cli_run.rs`'s one spawn, but the
+      scripts still chose their binary by guessing: `clock_parity.sh` built nothing and fell back
+      to `./target/debug/axon` (a planted one was run and reported on); the R17 IR/QEMU gates,
+      spawned by `integration_fixtures.rs` with a bare `bash`, took `target/{debug,release}/axon`
+      or `command -v axon` (a planted `axon` on PATH ran and the checks PASSED); the drift test
+      counted literal spawns in one file; and a paired-disable cell left binaries built from the
+      MUTATED tree in the workspace `target/` for later cells.
+    - **After: one primitive per side.** A script picks a binary only through
+      `scripts/lib/axon_bin.sh`: `named_bin VAR` (a harness that builds nothing runs only what its
+      caller names, and REFUSES with none named, exit 2, a failure and never a skip), or
+      `use_built VAR bin` after its own `cargo build` (the path cargo built to, from
+      `cargo metadata`'s `target_directory`, never a guessed `target/`), or a target dir it
+      assigned itself. All 90 scripts (and the example demos) that hard-coded a path were moved
+      to it; `clock_parity`, `chan_parity`, `utf8_boundary_parity` and `unsigned_parity` now build
+      their own codegen axon like their peers; `replay_host_gate`, `diagnostic_location_gate`,
+      `gate_verdict_is_read`, `wasi_env_control_gate`, `reference_gate` and the R17/eBPF/Zephyr
+      gates require a named binary, and `gate.sh` / CI name the one they built. A test runs a
+      script only through `crates/axon-core/tests/script_spawn` (`Bins::Named` / `BuildsItsOwn` /
+      `NoWorkspaceBinary`), which strips every binary-naming variable from the inherited
+      environment and refuses to run a script whose text guesses. `harness_binaries.rs` fails the
+      build if any test in ANY crate spawns a script another way (bash, sh, python3, env, direct
+      exec, a script path handed to `.arg`), if any script under `scripts/`, `examples/`,
+      `profiles/` or the root picks a binary another way, or if a script accepts a binary through
+      a variable the helper does not strip. The same rule covers Rust tests that EXEC a workspace
+      binary their own cargo run does not build (the `axon` interpreter from axon-psv, axon-fabric,
+      axon-cortex, axon-os and axon-intent tests; `cortex`; `axon-os`): integration measured the
+      PSV-1 attack test PASSING THE ATTACK on a `debug/axon` that predated the fix, because
+      `cargo test -p axon-psv` never rebuilds axon-core. They now go through
+      `script_spawn::workspace_bin`, which BUILDS the binary with cargo into
+      `<target>/workspace-bins` (cargo rebuilds whatever changed), or, when a harness names it
+      (`AXON_BIN`), refuses it unless it is at least as new as every source file of its package,
+      its workspace path dependencies and `Cargo.lock`; the drift gate refuses a test that reads a
+      binary variable or joins a `<profile>/axon*`/`cortex*` path itself. The axon-os/axon-intent
+      suites that used to SKIP without a built interpreter now build it and run.
+      `axon-vm`'s live boot takes only `AXON_GUEST_KERNEL`
+      (it fell back to a kernel no test built). Skips stay skips: the codegen probes are unchanged.
+    - **Harness integrity.** Both harnesses refuse ANY uncommitted change (`git status
+      --porcelain --untracked-files=all`, the whole tree: 24 rows guard files in `scripts/` and
+      `profiles/`, and the registry and markers are in `scripts/`). Every run, shard and record
+      carries the registry/marker git blobs, each row's old/new sha256 (a record: its edits and
+      marker digest), the uid, `/etc/axon` presence and the unset variables; `--merge` and
+      `--join` refuse a shard from another registry or a dirty tree, or a row/record executed with
+      edits that are not this registry's. Cells run with `AXON`/`AXON_BIN`/`CORTEX_BIN` unset
+      (consumers are handed this run's interpreter). After every cell that ran a mutated crate and
+      could have run scripts, every executable in the workspace target dir is removed and the
+      prerequisites rebuilt. A full-suite cell runs with `--show-output` and records the tests
+      that printed `skipped:` (root-only or host-dependent) as skips, per package.
+    - **Currency.** A kept paired-disable record is stale when ANY file of its owner package or
+      of any consumer package changed since its commit (`git diff --name-only`), or when its
+      edits/marker digest is not this registry's (a record without one is stale). This commit
+      changes tests in `axon-core` and `axon-fabric`, so every kept record is stale and the
+      paired-disable status must be re-executed (`--reexecute-stale` or a fresh sharded run).
+    - **Guest image build environment.** `scripts/guest_build_env.py` replaces the list of four
+      wrapper variables and four config files. Every cargo run of `build-guest-image.sh` goes
+      through it: the caller's environment is dropped (cargo sees exactly `CARGO_HOME`,
+      `CARGO_TARGET_DIR`, `HOME`, `LC_ALL`, `PATH`, `RUSTC`, plus fetch proxies), the toolchain is
+      the one `rust-toolchain.toml` pins, resolved by rustup under a cleared environment (so
+      `RUSTUP_TOOLCHAIN`, `RUSTUP_HOME`, PATH choose nothing), `RUSTC` is that toolchain's rustc,
+      `RUSTFLAGS` only what the step passes explicitly, and `CARGO_HOME` and the target dir are
+      fresh directories it creates. Before anything builds it refuses if cargo's EFFECTIVE
+      configuration from the build directory (`cargo -Zunstable-options config get
+      --show-origin`, every ancestor config) holds any key that could reach the build, from any
+      origin (only `target.<triple>` settings for triples the build never compiles, i.e. the
+      tree's wasm rustflags, pass). Its record (`axon-guest-build-env/1`: `rustc -vV`, `cargo -V`,
+      both binaries' sha256, the exact environment, the effective config, each built artifact's
+      sha256) is embedded in the guest manifest as `source.build_environment`, and
+      `source.rustc` is now the pinned rustc's identity rather than PATH's. The freeze refuses a
+      manifest with no such record, one whose environment is not exactly the constructed one,
+      whose target dir or `CARGO_HOME` was not fresh, whose effective config held a build
+      setting, or whose `axon` / `axon-guest-init` / `axon-psv-runner` digests are not the ones the
+      controlled build produced, and binds the record's digest and `rustc -vV`.
+      `linux_profile_manifest.py` compiles its provenance helper with the pinned rustc, never
+      `$RUSTC`, and writes no bytecode cache into the tree it describes. M650 stays on the
+      freeze's own-environment refusal, renamed to say that is all it checks.
+    - **Rows** (all PSV scope, `PSV_IDS` extended by M720-M739): M720-M725 (axon_bin.sh
+      no-fallback and cargo-resolved path; the spawn helper's variable stripping and script
+      refusal; the two drift scanners), M726-M729 (whole-tree dirty refusals; merge/join registry
+      blobs), M730-M733 (effective-config key rule; constructed environment; toolchain under a
+      cleared environment; pinned rustc for the provenance helper), M734-M738 (the freeze's
+      build-environment record, environment equality, fresh dirs, effective config, artifact
+      binding), M739 (the package-wide currency rule).
+    - **Tests.** `crates/axon-core/tests/harness_binaries.rs` (planted stale `target/` binary and
+      PATH binary against the real `replay_host_gate.sh`; a config-moved target dir against the
+      real `clock_parity.sh`; ambient variables; the helper's refusal; both drift gates),
+      `crates/axon-core/tests/harness_integrity.rs` (the real harnesses in scratch repositories:
+      dirty `profiles/`, edited marker registry, untracked `scripts/` file; merge and join from
+      another registry; a record going stale on an owner-package file no list named),
+      `crates/axon-fabric/tests/guest_build_env.rs` (through `build-guest-image.sh
+      --build-env-only`: an ancestor config, the dotted key, a guest-target linker, rustflags, a
+      `build.rustc` in the tree's own config; a caller's `RUSTC_WRAPPER`, `RUSTC`, `RUSTFLAGS`
+      through a real controlled build; a planted `RUSTUP_HOME` toolchain), `freeze_manifest.rs`
+      (seven uncontrolled builds and three unbound artifacts), `guest_provenance.rs` (a caller's
+      `RUSTC` that compiles a helper reporting a dirty tree clean), and
+      `scripts/test_v022_paired_disable_join.py` (four more refusals).
+    - **Operator deployment.** A guest image must be rebuilt with this `build-guest-image.sh` (it
+      needs network for the fresh `CARGO_HOME`, and rebuilds everything in a fresh target dir);
+      an image whose manifest lacks `source.build_environment` no longer freezes. No change to
+      `/etc/axon`.
+    - **Also corrected.** `psv_dispatch.rs` named M402 for the protected arm (it is M400);
+      `EQUIV_RECORD["M347"].all_paths` now states the allowlist's role under decision C.
+
 57. **Readiness joins the certification record's run attribution to the run itself, and the B263
     record to the qualification the observed launch ran under (C9 round 4, readiness workstream;
     rows M740-M750).**

@@ -55,8 +55,9 @@ cargo build -q -p axon-wasm --target wasm32-unknown-unknown --release 2>/dev/nul
 # costs it nothing and keeps ONE binary configuration across the suite.
 cargo build -q -p axon-core --bin axon 2>/dev/null \
   || { echo "native build failed — skipping"; exit 0; }
-WASM="target/wasm32-unknown-unknown/release/axon_wasm.wasm"
-NATIVE="target/debug/axon"
+. scripts/lib/axon_bin.sh
+WASM=""; use_built WASM axon_wasm.wasm wasm32-unknown-unknown release  # the two builds just made
+NATIVE=""; use_built NATIVE axon
 DRIVER="scripts/wasm_interp_driver.js"
 WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
 
