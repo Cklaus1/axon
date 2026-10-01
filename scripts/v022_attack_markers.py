@@ -1126,7 +1126,6 @@ ATTACK_MARKERS.update({
 ATTACK_MARKERS.update({
     'M1086': r'ATTACK: a git that failed \(a corrupt index\) read as a clean tree',
     'M1087': r'ATTACK: build provenance ran a filter driver from the worktree config as the builder',
-    'M1088': r'ATTACK: a repository whose config git cannot read was described as a clean tree',
     'M1089': r'ATTACK: an untracked file hidden by info/exclude, with a name check-ignore cannot be',
     'M1090': r'ATTACK: a version naming two contents for one path was materialized',
     'M1091': r"ATTACK: a blob planted under another content's name before publication was materialized",

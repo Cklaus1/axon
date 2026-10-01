@@ -585,6 +585,15 @@ EXEMPT += [
     (FG, '    } else {\n        Err(format!(\n            "{} is a symlink: refused",',
      "DEVELOPMENT ROUTE: discover_linked's only caller is axon-provenance --descends, the guest "
      "build's early check; the manifest's lineage (--lineage) goes through discover (M1072)"),
+    (FG, '        return Err(format!("cannot read {path}: refused, never interpreted"));',
+     "UNREACHABLE (measured, checkable): refuse_config's three callers (provenance_with, "
+     "provenance::lineage, readiness) each call git_data::discover on the same repository first, "
+     "and discover's own_repository runs `git rev-parse --git-common-dir`, which reads this same "
+     "config file; a config `git config --list` cannot read (a bad line, a directory) is one "
+     "rev-parse dies on too, so discover refuses before this line ('... --git-common-dir failed'). "
+     "With run()'s status check (M1086) also removed, own_repository canonicalizes the empty "
+     "answer and fails: the four-cell run of this site (former M1088) read set_off=ATTACK_REFUSED. "
+     "Test: provenance::tests::a_config_git_cannot_read_is_never_a_clean_tree"),
     # provenance.rs
     (FP, '        Err(e) => return unknown(e),\n    };\n    // The repository',
      "NOTHING TO ADMIT: no working tree top, so provenance is unknown with a dirty reason "

@@ -873,11 +873,11 @@ mod tests {
         );
     }
 
-    /// refuse_config's refusal of a config git cannot list (M1088) and, with
-    /// it gone, what runs next on the same broken config: every git call
-    /// fails (M1086), the grafts path then reads as the repository itself
-    /// (M413) and the hashed comparison runs on no revision (M451).
-    /// Control: the repository with its config intact is clean.
+    /// A config git cannot read is never a clean tree. The refusal comes
+    /// from discover's own git call (rev-parse dies on the same config)
+    /// before refuse_config's listing is reached; that site is exempt as
+    /// unreachable, measured by this test (C9 round 4b, rows4b). Control: the
+    /// repository with its config intact is clean.
     #[test]
     fn a_config_git_cannot_read_is_never_a_clean_tree() {
         let (_d, r) = repo();

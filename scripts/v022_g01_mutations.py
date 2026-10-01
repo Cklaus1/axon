@@ -3867,10 +3867,6 @@ MUTATIONS += [
     ('M1087', "FIELD-ORIGIN (rows4b): a per-worktree config is refused (retired vs M450)", _FG,
      '    if std::fs::symlink_metadata(&wt).is_ok() {', '    if false && std::fs::symlink_metadata(&wt).is_ok() {',
      'axon-fabric', _TPL, 'provenance::tests::a_filter_driver_in_the_worktree_config_never_runs'),
-    ('M1088', "FIELD-ORIGIN (rows4b): a config git cannot list is refused (retired vs M1086+M451+M413)", _FG,
-     '    if !o.status.success() {\n        return Err(format!("cannot read {path}',
-     '    if false && !o.status.success() {\n        return Err(format!("cannot read {path}',
-     'axon-fabric', _TPL, 'provenance::tests::a_config_git_cannot_read_is_never_a_clean_tree'),
     ('M1089', "FIELD-ORIGIN (rows4b): check-ignore must account for every ignored path (retired vs M500)", _FP,
      '    if matched < ignored.len() {', '    if false && matched < ignored.len() {',
      'axon-fabric', _TPL, 'provenance::tests::an_ignored_file_check_ignore_cannot_name_is_dirty'),
@@ -3928,13 +3924,6 @@ EQUIV_RECORD["M1087"] = {
     "all_paths": "git reads config.worktree only when the repository config sets "
                  "extensions.worktreeConfig, and refuse_config refuses every key allowed_key does not list, "
                  "extensions.* among them (M450), before any git call that could read it"}
-EQUIV_RECORD["M1088"] = {
-    "property": "a repository whose config git cannot read is never described as clean",
-    "subsumed_by": ["M1086", "M451", "M413"], "killer": "joint:M1088+M1086+M451+M413",
-    "all_paths": "a config git cannot list is one every git command dies on (measured: 'bad config line', "
-                 "a directory), so with this refusal gone rev-parse HEAD fails and run() refuses (M1086); "
-                 "with that gone too the grafts path reads as '' (the repository itself, which exists: M413) "
-                 "and the hashed comparison runs on no revision (M451)"}
 EQUIV_RECORD["M1089"] = {
     "property": "an ignored untracked file is never hidden from build provenance",
     "subsumed_by": ["M500"], "killer": "joint:M1089+M500",
@@ -3965,8 +3954,10 @@ EQUIV_RECORD["M1097"] = {
     "all_paths": "the mode rule runs on the same lstat metadata in the same closure, for every component; "
                  "on Linux a symlink's own mode is always 0777, so the group/other-write rule (M1071) "
                  "refuses every symlink this rule refuses"}
-EQUIVALENT_DID |= {"M1086", "M1087", "M1088", "M1089", "M1091", "M1095", "M1096", "M1097"}
-RETIRED |= {"M1086", "M1087", "M1088", "M1089", "M1091", "M1095", "M1096", "M1097"}
+# M1088 (the unreadable-config refusal) is unallocated: its four-cell run showed the joint
+# removal still refused (UNREACHABLE, see v022_refusal_coverage.py).
+EQUIVALENT_DID |= {"M1086", "M1087", "M1089", "M1091", "M1095", "M1096", "M1097"}
+RETIRED |= {"M1086", "M1087", "M1089", "M1091", "M1095", "M1096", "M1097"}
 
 
 def in_scope(mid, scope):

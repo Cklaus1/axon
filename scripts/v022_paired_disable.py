@@ -639,7 +639,6 @@ GUARD_SETS = {
     # ROWS4B wave 2 (amendment 62, strict reading).
     "M1086": {"siblings": ["M451"], "kind": "pair"},
     "M1087": {"siblings": ["M450"], "kind": "pair"},
-    "M1088": {"siblings": ["M1086", "M451", "M413"], "kind": "set"},
     "M1089": {"siblings": ["M500"], "kind": "pair"},
     "M1091": {"siblings": ["M1081", "M1082"], "kind": "set"},
     "M1095": {"siblings": ["M1054"], "kind": "pair"},
