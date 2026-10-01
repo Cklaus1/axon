@@ -3263,6 +3263,88 @@ MUTATIONS += [
      'axon-core', _HB2, 'an_ignored_output_written_into_a_crate_is_not_a_source'),
 ]
 
+# ── C9 round 4b, harness3 workstream (M1180-M1198; amendment 63) ──
+# FIELD-ORIGIN major-adjacents on the guest image's build provenance:
+# (1) cargo's effective config was checked once, at begin, while cargo re-reads
+# it per invocation from the clone under /var/tmp; (2) the judge ignored the
+# recorded cargo args and RUSTFLAGS; (3) vmlinux and rootfs.sqfs were made
+# outside the controlled environment. scripts/guest_build_env.py now builds on
+# a private copy under a builder-only parent, holds the config to begin's
+# before AND after every invocation, runs only its table's invocations, builds
+# the kernel and the rootfs itself, and image_problems judges the whole image.
+_GBT = '--test guest_build_env'
+_FMT = '--test freeze_manifest'
+_FCO = 'a_guest_component_built_outside_the_controlled_environment_does_not_freeze'
+MUTATIONS += [
+    ('M1180', "FIELD-ORIGIN (4b-1): the guest build's parent must have no ancestor another uid can write", _GE,
+     '    if why:\n        fail(f"the guest build\'s parent directory is not private to the builder: {why}")\n',
+     '    if False and why:\n        fail(f"the guest build\'s parent directory is not private to the builder: {why}")\n',
+     'axon-fabric', _GBT, 'a_guest_build_under_a_directory_another_uid_can_write_is_refused'),
+    ('M1181', "FIELD-ORIGIN (4b-1): cargo runs on the build's private copy of the tree, never in the clone", _GE,
+     '    r = subprocess.run([rec["toolchain"]["cargo"], *args], env=env, cwd=rec["src_dir"])\n',
+     '    r = subprocess.run([rec["toolchain"]["cargo"], *args], env=env, cwd=ROOT)\n',
+     'axon-fabric', _GBT, 'an_ancestor_config_written_after_begin_does_not_reach_the_guest_build'),
+    ('M1182', "FIELD-ORIGIN (4b-1): cargo's effective config is held to begin's BEFORE every invocation", _GE,
+     '    if before != config_at_begin(rec):\n', '    if False:\n',
+     'axon-fabric', _GBT, 'a_cargo_config_planted_beside_the_private_copy_after_begin_is_refused'),
+    ('M1183', "FIELD-ORIGIN (4b-1): cargo's effective config is held to begin's AFTER every invocation", _GE,
+     '    if after != config_at_begin(rec):\n', '    if False:\n',
+     'axon-fabric', _GBT, 'a_cargo_config_written_during_a_guest_build_step_fails_that_step'),
+    ('M1184', 'FIELD-ORIGIN (4b-2): a guest cargo step runs only an invocation of the table, exactly (args and RUSTFLAGS)', _GE,
+     '    if name is None:\n        fail(f"cargo {args}', '    if False:\n        fail(f"cargo {args}',
+     'axon-fabric', _GBT, 'a_guest_cargo_step_with_extra_flags_or_args_is_refused'),
+    ('M1185', "EVIDENCE (4b-2): the judge holds every recorded cargo invocation to its table entry", _GE,
+     '    if b.get("name") is None or invocation(b.get("args"), b.get("rustflags")) != b.get("name"):\n',
+     '    if False:\n',
+     'axon-fabric', _FMT, 'a_recorded_guest_build_with_other_args_or_flags_does_not_freeze'),
+    ('M1186', "EVIDENCE (4b-1): the judge requires each invocation's config check before AND after, equal to begin's", _GE,
+     '    if b.get("config_before") != config_at_begin(rec) or b.get("config_after") != config_at_begin(rec):\n',
+     '    if False:\n',
+     'axon-fabric', _FMT, 'a_guest_build_record_without_a_config_check_around_each_invocation_does_not_freeze'),
+    ('M1187', 'EVIDENCE (4b-2): the image\'s binaries are exactly the protected builds, in order', _GE,
+     '    if names != [n for n, _, _ in PROTECTED_BUILDS]:\n', '    if False:\n',
+     'axon-fabric', _FMT, 'a_guest_image_whose_binaries_were_not_exactly_the_protected_builds_does_not_freeze'),
+    ('M1188', "EVIDENCE (4b-2): the recorded toolchain is the pinned channel's, with the linker's identity", _GE,
+     '    if (chan is None or tc.get("channel") != chan or os.path.dirname(str(tc["rustc"])) != tdir\n',
+     '    if False and (chan is None or tc.get("channel") != chan or os.path.dirname(str(tc["rustc"])) != tdir\n',
+     'axon-fabric', _FMT, 'a_guest_build_record_not_of_the_pinned_toolchain_does_not_freeze'),
+    ('M1189', 'FIELD-ORIGIN (4b-3): the rootfs installs only the bytes the controlled build recorded', _GE,
+     '        if got != rec["artifacts"].get(name):\n', '        if False:\n',
+     'axon-fabric', _GBT, 'a_rootfs_from_a_binary_the_controlled_build_did_not_produce_is_refused'),
+    ('M1190', 'EVIDENCE (4b-1): the judge requires cargo to have run on a private copy under a builder-only parent', _GE,
+     '    if rec.get("src_dir") != os.path.join(base, "src") or os.path.dirname(base) != rec.get("build_parent") or why:\n',
+     '    if False:\n',
+     'axon-fabric', _FMT, 'a_guest_build_record_not_made_in_a_private_copy_does_not_freeze'),
+    ('M1191', "FIELD-ORIGIN (4b-3): the rootfs is made by /usr/bin's mksquashfs, never the caller's PATH's", _GE,
+     '    mks = host_tool("mksquashfs")\n', '    mks = shutil.which("mksquashfs") or host_tool("mksquashfs")\n',
+     'axon-fabric', _GBT, 'a_callers_mksquashfs_or_busybox_does_not_make_the_rootfs'),
+    ('M1192', "FIELD-ORIGIN (4b-3): the kernel's make runs in a constructed environment (no caller KCFLAGS/CC/CROSS_COMPILE)", _GE,
+     '        kenv = kernel_env(base)\n', '        kenv = dict(os.environ, **kernel_env(base))\n',
+     'axon-fabric', _GBT, 'a_callers_kcflags_cc_or_path_do_not_reach_the_kernel_build'),
+    ('M1193', 'FIELD-ORIGIN (4b-3): a pinned input (kernel tarball, config, overlay, busybox) is verified as the copy used', _GE,
+     '    if got != want:\n        fail(f"{label} sha256 mismatch', '    if False:\n        fail(f"{label} sha256 mismatch',
+     'axon-fabric', _GBT, 'a_kernel_from_sources_that_are_not_the_pinned_ones_is_refused'),
+    ('M1194', 'EVIDENCE (4b-3): the freeze applies the whole-image judge', _FZ,
+     '    if outside:\n', '    if False and outside:\n',
+     'axon-fabric', _FMT, _FCO),
+    ('M1195', "EVIDENCE (4b-3): vmlinux is the bytes a controlled kernel build made from the manifest's pins", _GE,
+     '    if (not isinstance(k, dict) or k.get("schema") != KERNEL_SCHEMA or k.get("controlled") is not True\n',
+     '    if False and (not isinstance(k, dict) or k.get("schema") != KERNEL_SCHEMA or k.get("controlled") is not True\n',
+     'axon-fabric', _FMT, _FCO),
+    ('M1196', "EVIDENCE (4b-3): the kernel's make ran privately, in the constructed environment, with the recorded toolchain", _GE,
+     '    if (not isinstance(base, str) or os.path.dirname(base) != k.get("build_parent")\n',
+     '    if False and (not isinstance(base, str) or os.path.dirname(base) != k.get("build_parent")\n',
+     'axon-fabric', _FMT, _FCO),
+    ('M1197', 'EVIDENCE (4b-3): rootfs.sqfs is the bytes the controlled assembly made from the controlled artifacts and pins', _GE,
+     '    if (not isinstance(r, dict) or not sq or r.get("sha256") != sq\n',
+     '    if False and (not isinstance(r, dict) or not sq or r.get("sha256") != sq\n',
+     'axon-fabric', _FMT, _FCO),
+    ('M1198', "EVIDENCE (4b-3): the rootfs was made by /usr/bin's mksquashfs, its exact flags, in the constructed environment", _GE,
+     '    if (tool.get("path") != host_tool_path("mksquashfs") or not tool.get("sha256")\n',
+     '    if False and (tool.get("path") != host_tool_path("mksquashfs") or not tool.get("sha256")\n',
+     'axon-fabric', _FMT, _FCO),
+]
+
 PSV_IDS = {f"M{n}" for n in range(137, 550)}
 # C9 round 3: rows M560-M649 are PSV rows (workstream ranges).
 PSV_IDS |= {f"M{n}" for n in range(550, 650)}
@@ -3281,6 +3363,8 @@ PSV_IDS |= {f"M{n}" for n in range(650, 720)}
 PSV_IDS |= {f"M{n}" for n in range(760, 860)}
 # C9 round 4 fix wave: rows3 M880-M899 (amendment 59).
 PSV_IDS |= {f"M{n}" for n in range(880, 900)}
+# C9 round 4b fix wave: harness3 M1180-M1199 (amendment 63).
+PSV_IDS |= {f"M{n}" for n in range(1180, 1200)}
 
 
 def in_scope(mid, scope):

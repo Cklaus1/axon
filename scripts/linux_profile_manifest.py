@@ -165,6 +165,18 @@ def build_environment(dist):
     return rec if isinstance(rec, dict) else None
 
 
+def kernel_build(dist):
+    """The controlled kernel-build record (scripts/guest_build_env.py
+    `kernel`) left in `dist`, or None: the freeze refuses a vmlinux without
+    one (C9 round 4b, amendment 63)."""
+    try:
+        with open(os.path.join(dist, "kernel-build.json")) as f:
+            rec = json.load(f)
+    except (OSError, ValueError):
+        return None
+    return rec if isinstance(rec, dict) else None
+
+
 def main():
     args = sys.argv[1:]
     if args[:1] == ["--descends"]:
@@ -196,6 +208,7 @@ def main():
     rev, reasons = source_state(pre_path)
     dirty = bool(reasons)
     benv = build_environment(dist)
+    kbuild = kernel_build(dist)
     manifest = {
         "schema": "axon-linux-microvm-profile/1",
         "profile": "linux-microvm-protected",
@@ -222,11 +235,13 @@ def main():
             # pinned rustc, never whichever `rustc` is first on PATH.
             "rustc": (benv["toolchain"].get("rustc_vV", "").splitlines() or ["unknown"])[0]
                      if benv and isinstance(benv.get("toolchain"), dict) else "unknown",
-            # The controlled build environment the three binaries were built in
-            # (scripts/guest_build_env.py), verbatim: toolchain identity, the
-            # exact environment cargo saw, fresh CARGO_HOME and target dir,
-            # cargo's effective config, and the digest of each artifact it
-            # built. None when the image was not built that way; the freeze
+            # The controlled build environment the three binaries and the
+            # rootfs were built in (scripts/guest_build_env.py), verbatim:
+            # toolchain identity, the exact environment cargo saw, fresh
+            # CARGO_HOME and target dir, cargo's effective config before and
+            # after every invocation, each invocation, the digest of each
+            # artifact it built, and the rootfs assembly (inputs, mksquashfs,
+            # output). None when the image was not built that way; the freeze
             # refuses such an image.
             "build_environment": benv,
         },
@@ -241,7 +256,15 @@ def main():
             "overlay_file": os.path.join(prof, pin["KERNEL_OVERLAY"]),
             "overlay_sha256": pin["KERNEL_OVERLAY_SHA256"],
             "effective_config_sha256": sha(os.path.join(dist, "effective.config")),
-            "cc": first_line(["gcc", "--version"]),
+            # The compiler that built vmlinux, as the controlled kernel build
+            # recorded it -- never whichever gcc is first on this PATH.
+            "cc": ((kbuild.get("tools") or {}).get("gcc") or {}).get("version", "unknown")
+                  if kbuild else "unknown",
+            # The controlled kernel build (scripts/guest_build_env.py
+            # `kernel`), verbatim: its pins, constructed environment, make
+            # argv, host toolchain identities and the vmlinux digest. None
+            # when vmlinux was built any other way; the freeze refuses that.
+            "build_environment": kbuild,
         },
         "busybox": {"package": pin["BUSYBOX_PKG"], "sha256": pin["BUSYBOX_SHA256"]},
         "guest_init": {"path": os.path.join(prof, "guest-init.sh"),

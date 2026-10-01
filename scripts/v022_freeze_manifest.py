@@ -25,6 +25,14 @@ CARGO_HOME and target dir, no effective cargo setting the build would use, and
 artifact digests equal to the manifest's. The record's digest and `rustc -vV`
 are bound.
 
+C9 round 4b (amendment 63): the judge is the whole image's
+(guest_build_env.image_problems): the recorded cargo invocations must be
+exactly the protected table's (args, RUSTFLAGS), each with its effective-config
+check before and after; the toolchain the pinned channel's; rootfs.sqfs the
+controlled assembly's from those binaries and the pinned inputs; vmlinux the
+controlled kernel build's from the manifest's pins. The kernel record's digest
+and its gcc are bound.
+
 Git is /usr/bin/git with the caller's environment dropped (GIT_DIR and the like
 cannot steer which repository answers) and replace objects off."""
 import hashlib
@@ -133,6 +141,16 @@ def main():
     if unbound:
         sys.exit(f"refused: the guest manifest's {unbound} are not the bytes its controlled build "
                  "produced (scripts/guest_build_env.py records each artifact's digest)")
+    # C9 round 4b (FIELD-ORIGIN, amendment 63): EVERY component the manifest
+    # pins -- the three binaries, rootfs.sqfs and vmlinux -- is the bytes of a
+    # controlled step, each cargo invocation is exactly its table entry with
+    # the effective config checked before and after it, and the toolchain is
+    # the pinned channel's. One judge for the whole image.
+    outside = gbe.image_problems(img)
+    if outside:
+        sys.exit("refused: a guest image component was produced outside the controlled build "
+                 f"(scripts/guest_build_env.py): {outside}")
+    kbuild = (img.get("kernel") or {}).get("build_environment") or {}
     manifest = {
         "schema": "axon-v022-psv-freeze/1",
         "axon_sha": git(["rev-parse", "HEAD"], ROOT),
@@ -143,7 +161,9 @@ def main():
                         "axon_tree_dirty_at_build": src["axon_tree_dirty_at_build"],
                         "axon_tree_dirty_reasons": src["axon_tree_dirty_reasons"],
                         "build_environment_sha256": sha_str(json.dumps(benv, sort_keys=True)),
-                        "rustc": benv["toolchain"]["rustc_vV"]},
+                        "rustc": benv["toolchain"]["rustc_vV"],
+                        "kernel_build_sha256": sha_str(json.dumps(kbuild, sort_keys=True)),
+                        "kernel_cc": ((kbuild.get("tools") or {}).get("gcc") or {}).get("version")},
         "mutation_registry_total": len(mut.MUTATIONS),
         "active_mutants": len(active),
         "retired_equivalent": len(mut.EQUIVALENT_DID),

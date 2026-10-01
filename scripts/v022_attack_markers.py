@@ -983,3 +983,26 @@ ATTACK_MARKERS.update({
     'M893': r'ATTACK: a paired-disable run left a binary built from a mutated tree in the\s+workspace target dir',
     'M894': r'ATTACK: an ignored output a test wrote into the crate made a current binary read as\s+stale',
 })
+
+# C9 round 4b, harness3 (amendment 63): the guest image's build provenance.
+ATTACK_MARKERS.update({
+    'M1180': r'ATTACK: the guest build began under a directory any uid can write',
+    'M1181': r"ATTACK: an ancestor config written after begin wrapped the guest build's rustc",
+    'M1182': r"ATTACK: a cargo config planted after begin reached the guest build's compiler",
+    'M1183': r'ATTACK: a cargo config written during a guest build step left that step succeeded',
+    'M1184': r'ATTACK: a guest cargo step outside its table ran \(a --config naming a rustc wrapper\)',
+    'M1185': r"ATTACK: the freeze bound a guest build whose recorded invocation was not its table's \(extra RUSTFLAGS naming a linker\)",
+    'M1186': r"ATTACK: the freeze bound a guest build whose invocations were not each held to begin's config \(a config that appeared during the runner's build\)",
+    'M1187': r'ATTACK: the freeze bound a guest image whose binaries were not exactly the protected builds \(no recorded build of the runner\)',
+    'M1188': r"ATTACK: the freeze bound a guest build not of the pinned toolchain \(another channel's toolchain\)",
+    'M1189': r'ATTACK: the rootfs was assembled from a binary the controlled build did not produce',
+    'M1190': r'ATTACK: the freeze bound a guest build not made in a private copy \(an ancestor any uid could write',
+    'M1191': r"ATTACK: a mksquashfs on the caller's PATH made the rootfs",
+    'M1192': r"ATTACK: a caller's KCFLAGS/CC/CROSS_COMPILE/PATH reached the kernel build",
+    'M1193': r'ATTACK: the kernel was built from a tarball that is not the pinned one',
+    'M1194': r'ATTACK: the freeze bound a guest image component built outside the controlled environment \(no kernel build record',
+    'M1195': r"ATTACK: the freeze bound a guest image component built outside the controlled environment \(a vmlinux other than the controlled kernel build's\)",
+    'M1196': r"ATTACK: the freeze bound a guest image component built outside the controlled environment \(a kernel make run with the caller's KCFLAGS\)",
+    'M1197': r"ATTACK: the freeze bound a guest image component built outside the controlled environment \(a rootfs\.sqfs other than the controlled assembly's\)",
+    'M1198': r"ATTACK: the freeze bound a guest image component built outside the controlled environment \(a rootfs made by a mksquashfs on the caller's PATH\)",
+})
