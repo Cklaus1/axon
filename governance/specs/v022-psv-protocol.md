@@ -2160,12 +2160,20 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       `epoch.rs` 1: 0 / 1; loop `lib.rs` 1: 0 / 1. `plan.rs` 26: 18 / 4, with 4 left NOT YET
       SCANNED (below). Admission's execution leg is `verify_execution` (M941, M943).
     - **Rows.** ACTIVE, each killed by its own attack on the production route: M940-M947,
-      M949-M953, M958-M961, M963, M966-M969, M975-M978, M982-M997, M999-M1019. Retired
-      EQUIVALENT_DID with four-cell records (never counted): M948 (vs M950: a symlink's mode is
-      0777 on Linux), M954/M955, M956/M957, M962 (vs M15 + M963), M964/M965, M970/M971,
-      M972/M973, M974 (vs M972 + M973), M979/M980/M998 (the three lstat checks of the store path),
-      M981 (vs M819). The RULE:issuer-trusted row (M944) is killed through readiness (an
-      agent-signed B263 record), the production decision.
+      M949-M953, M958-M961, M963, M965-M969, M975-M978, M982-M997, M999-M1019. M965 (the
+      policy half of `bind_episode`'s byte binding) is the library primitive's own contract,
+      killed by its crate's test of it (`fixtures.rs::bind_episode_refuses_mismatches`): every
+      production caller decides the predicate first (EVL's M964; intake fetches the policy by the
+      episode's own ref), and the four-cell run showed the primitive's suite needs it, so it is not
+      retired. Retired EQUIVALENT_DID with four-cell records (never counted): M948 (vs M950: a
+      symlink's lstat mode is 0777 on Linux), M954/M955, M956/M957, M962 (vs M15 + M963), M964
+      (vs M965), M970/M971, M972/M973, M974 (vs M972 + M973), M979/M980/M998 (the three lstat
+      checks of the store path), M981 (vs M819). Tests that pinned WHICH of two independent
+      refusals answered were widened to accept either (the precedent of M487):
+      `trust_root.rs`, `readiness.rs`, `protected_host.rs` (symlink or mode) and `redteam.rs`'s
+      AB9 cherry-pick (one evaluation per experiment, or the population join). The
+      RULE:issuer-trusted row (M944) is killed through readiness (an agent-signed B263 record),
+      the production decision.
     - **Not done here.** `NOT_YET_SCANNED` lists, with counts: the Fabric files (rows4b:
       `backend.rs`, `submit.rs`, `git_data.rs`, `provenance.rs`, `bin/axon-fabric.rs`; unassigned:
       `branches.rs`, `grants.rs`, `journal.rs`, `signing.rs`, `workspace.rs`, `axon-psv-runner`),
@@ -2177,6 +2185,22 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       (`tests/plan_sites.rs`) but whose rows need ids past M1019. A freeze refuses until the list is
       empty. The two new script guards (the freeze's coverage refusal; the gate's re-measured
       count) have tests but no mutation row: the id range is exhausted.
+    - **Evidence.**
+      - `v022_g01_mutations.py --scope=all --only=<the 63 ACTIVE rows above but M965>` at
+        698d4912: 63/63 KILLED by their own attack, none refused elsewhere, no survivor
+        (`/var/tmp/c9r4b-rows4a-mut-final3.json`); M965 (with M951, M963) at 9ad610fb: KILLED
+        (`/var/tmp/c9r4b-rows4a-mut-M965.json`).
+      - `v022_paired_disable.py --only=...`: all four cells and the full-suite condition hold for
+        M954-M957, M962, M964, M970-M974, M979-M981, M998 at 698d4912
+        (`/var/tmp/c9r4b-rows4a-pd{A,B,C}.json`; pdB also holds the superseded M965 attempt,
+        whose full suite was red, which is why M965 is ACTIVE) and for M948 at 9ad610fb
+        (`/var/tmp/c9r4b-rows4a-pdD.json`).
+      - Full suites (rc 0): axon-loop and axon-loop-contracts (381), axon-reflex and
+        cortex-policy-adapter (38), axon-fabric single-threaded (553); `cargo build -p
+        axon-fabric --bins`; fmt; clippy -D warnings on axon-loop, axon-loop-contracts and
+        axon-fabric. `v022_refusal_coverage.py` passes, `--freeze` refuses (27 files NOT YET
+        SCANNED); the paired-disable join self-test passes. `psv_matrix_check.py` reports only
+        A91 missing, a row another workstream holds.
     - **Operator deployment.** A verifier whose execution attestations a protected evaluation is
       to count must be pinned for `linux-microvm-protected` in the loop store's `verifier_pins`.
       The Fabric verifier that already signs the protected verdicts is pinned so; nothing else
