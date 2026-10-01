@@ -1224,14 +1224,14 @@ ATTACK_MARKERS.update({
 # C9 round 4b, INTEGRATE-B (M1270-M1299; amendment 64): checks.rs.
 ATTACK_MARKERS.update({
     'M1270': r'ATTACK: a policy shortlisting a candidate outside the registered list was stored',
-    'M1271': r'ATTACK: a context granting a non-concrete \\(backslash\\) path: the trial counted',
+    'M1271': r'ATTACK: a context granting a non-concrete \(backslash\) path: the trial counted',
     'M1272': r'ATTACK: a context granting a glob pattern as a path: the trial counted',
     'M1273': r'ATTACK: a context granting a path that leaves the workspace: the trial counted',
     'M1274': r'ATTACK: a trial run under an expired preflight context: the trial counted',
-    'M1275': r'ATTACK: a preflight observed by the parent that expected it \\(an echo\\): the trial counted',
+    'M1275': r'ATTACK: a preflight observed by the parent that expected it \(an echo\): the trial counted',
     'M1276': r'ATTACK: a preflight observed by no recognized observer: the trial counted',
     'M1277': r'ATTACK: a trial run in the primary integration checkout: the trial counted',
-    'M1278': r'ATTACK: a read-only \\(critic\\) role granted a write set: the trial counted',
+    'M1278': r'ATTACK: a read-only \(critic\) role granted a write set: the trial counted',
     'M1279': r'ATTACK: an implementation role with no explicit write set: the trial counted',
     'M1280': r'ATTACK: an episode bound to a context of another operation: the trial counted',
     'M1281': r'ATTACK: an episode recorded under another authority epoch: the trial counted',
