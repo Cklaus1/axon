@@ -3489,7 +3489,7 @@ MUTATIONS += [
     ('M1071', "FIELD-ORIGIN (rows4b): the provenance allowlist chain is not group/other-writable", _FG,
      '        if m.mode() & 0o022 != 0 {', '        if false && m.mode() & 0o022 != 0 {',
      'axon-fabric', '--lib', 'provenance::tests::an_allowlist_that_is_not_operator_owned_excuses_nothing'),
-    ('M1072', "FIELD-ORIGIN (rows4b): a symlinked .git is no clone (discover)", _FG,
+    ('M1072', "FIELD-ORIGIN (rows4b): a symlinked .git is no clone (discover; retired vs M1085)", _FG,
      '        _ => Err(format!(\n            "{} is not a directory (a gitfile or symlink',
      '        _ if true => Ok(top),\n        _ => Err(format!(\n            "{} is not a directory (a gitfile or symlink',
      'axon-fabric', _TV, 'a_symlinked_git_dir_is_never_a_clean_build_tree'),
@@ -3527,6 +3527,9 @@ MUTATIONS += [
     ('M1082', "PSV-5 (rows4b): the materialized tree re-derives to its reference (retired vs M1081)", _FW,
      '        if t.reference() != *r {', '        if false && t.reference() != *r {',
      'axon-fabric', '--test workspace', 'a_blob_holding_other_bytes_never_materializes'),
+    ('M1085', "FIELD-ORIGIN (rows4b): refuse_config locates no git dir behind a symlinked .git (retired vs M1072)", _FG,
+     '        _ => return Err(format!("{} is not a git directory", dotgit.display())),', '        _ => dotgit,',
+     'axon-fabric', _TV, 'a_symlinked_git_dir_is_never_a_clean_build_tree'),
     # A93: the protected lineage names the certified revision by its whole hash.
     ('M1084', "FIELD-ORIGIN (rows4b, A93): the protected PCI lineage takes only a full commit id", _FP,
      '    if !git_data::is_oid(rev) {', '    if false && !git_data::is_oid(rev) {',
@@ -3576,8 +3579,23 @@ EQUIV_RECORD["M1083"] = {
                  "materialize_projection); the callers that only load (submit's refuse_links and argv "
                  "entry checks) then materialize through tree(), which re-derives the reference from "
                  "the parsed entries and the bytes read and refuses one that is not r (M1082)"}
-EQUIVALENT_DID |= {"M1038", "M1043", "M1081", "M1082", "M1083"}
-RETIRED |= {"M1038", "M1043", "M1081", "M1082", "M1083"}
+EQUIV_RECORD["M1072"] = {
+    "property": "a tree whose .git is a symlink is never a clean build tree or a protected lineage",
+    "subsumed_by": ["M1085"], "killer": "joint:M1072+M1085",
+    "all_paths": "discover() has three callers (provenance's toplevel, descends_from_protected, "
+                 "readiness's protected_components), and each calls refuse_config on the top discover "
+                 "returned before it reads anything from the repository (provenance.rs `if let Err(e) "
+                 "= git_data::refuse_config(&top)`, lineage()'s `refuse_config(&top)?`, readiness's "
+                 "`refuse_config(&found)`); refuse_config's symlink_metadata of `.git` is neither a "
+                 "directory nor a file for a symlink, so it refuses (M1085)"}
+EQUIV_RECORD["M1085"] = {
+    "property": "a tree whose .git is a symlink is never a clean build tree or a protected lineage",
+    "subsumed_by": ["M1072"], "killer": "joint:M1072+M1085",
+    "all_paths": "refuse_config's production callers (provenance, lineage, readiness) all pass the top "
+                 "discover() returned, and discover refuses a `.git` that is not a real directory "
+                 "(M1072) before it returns"}
+EQUIVALENT_DID |= {"M1038", "M1043", "M1081", "M1082", "M1083", "M1072", "M1085"}
+RETIRED |= {"M1038", "M1043", "M1081", "M1082", "M1083", "M1072", "M1085"}
 
 
 def in_scope(mid, scope):

@@ -897,7 +897,13 @@ fn a_symlinked_git_dir_is_never_a_clean_build_tree() {
         "ATTACK: a tree whose .git is a symlink to another repository was described as a clean \
          build of its HEAD: {p}"
     );
-    assert!(p.to_string().contains("gitfile or symlink"), "{p}");
+    // Two rules refuse it, each alone (four-cell pair, rows4b): discover's
+    // kind check and refuse_config's git-dir location.
+    assert!(
+        p.to_string().contains("gitfile or symlink")
+            || p.to_string().contains("is not a git directory"),
+        "{p}"
+    );
 }
 
 /// A93 (C9 round 4b, rows4b; amendment 62): the guest manifest certified its

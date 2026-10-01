@@ -2182,7 +2182,7 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
         journalled (M1065), a cancelled branch never runs again (M1066), the epoch re-read before
         the launch (M1067), the grant's cost budget (M1068), the placeholder policy (M1069).
       - Lineage and provenance, through the built `axon-provenance`: the allowlist chain's owner
-        (M1070) and write bits (M1071), a symlinked `.git` (M1072), a certified revision naming a
+        (M1070) and write bits (M1071), a certified revision naming a
         blob (M1073), a tag chain past the peel limit (M1074), an ambiguous abbreviation (M1075),
         build provenance calling the config refusal (M1076), the full-id rule (M1084, A93).
       - The axon-fabric binary: status/cancel's principal|grant binding (M1077); the protected
@@ -2191,7 +2191,9 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
     - **Retired EQUIVALENT_DID (four-cell records):** M1038 (the engine pin is required) against
       M1039; M1043 (an empty qualification root) against M1035; M1081/M1082 (blob re-verified;
       tree re-derived) as a mutual pair; M1083 (the manifest hashes to its reference) against
-      M1082. Their tests accept either refusal; three existing tests that named one message
+      M1082; M1072 (discover's symlinked `.git`) and M1085 (refuse_config's git-dir location) as a
+      mutual pair (the first run read M1072 REFUSED_ELSEWHERE: refuse_config refused the same
+      symlink, which had been exempted as nothing-to-admit; it is now rowed). Their tests accept either refusal; three existing tests that named one message
       (`no_trusted_issuer_configured_refuses_even_a_signed_record`,
       `the_committed_profile_has_no_trusted_issuer_so_protected_dispatch_is_refused`,
       `a_manifest_that_pins_no_engine_is_refused`) now accept either.

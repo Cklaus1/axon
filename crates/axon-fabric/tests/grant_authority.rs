@@ -186,11 +186,15 @@ fn admission_uses_the_request_grant_and_denies_before_launch() {
     assert_eq!(env.launch_records(), 0, "no launch record");
     assert!(!env.ws.join("out.txt").exists());
 
-    // The request may not spend more than its grant's budget.
+    // The request may not spend more than its grant's budget. rows4b: the
+    // grant's budget (500) is below the scope's (1000), so the request (600)
+    // fits the scope and only the grant's cap refuses it.
     let env = Env::new();
+    let half = GRANT_FS.replace("cost_micro = 1000", "cost_micro = 500");
+    let cfg = with_grants(&env, &[("grant:test", PRINCIPAL, &half)]);
     let mut r = request(&env, "op-over", "t_ok");
-    r["limits"]["max_cost_micro"] = json!(1001); // GRANT_FS: cost_micro = 1000
-    let s = submit(&r.to_string(), &env.cfg(0)).unwrap();
+    r["limits"]["max_cost_micro"] = json!(600);
+    let s = submit(&r.to_string(), &cfg).unwrap();
     assert!(
         s.receipt.status == ReceiptStatus::Denied && spawn_count(&env.spawns) == 0,
         "ATTACK: a request allowed to spend more than its grant's budget ran: {:?}",

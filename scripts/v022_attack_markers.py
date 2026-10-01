@@ -1045,10 +1045,11 @@ ATTACK_MARKERS.update({
     'M1076': r"ATTACK: build provenance ran the repository's filter driver as the builder",
     'M1077': r'ATTACK: (status|cancel): an op was served to a grant it was not submitted under',
     'M1078': r'ATTACK: a host signer key that does not derive its pin was not refused',
-    'M1079': r'ATTACK: a group-readable host signer key was not refused',
+    'M1079': r'ATTACK: a group-readable \(0440\) host signer key was not refused',
     'M1080': r'ATTACK: a host signer key owned by another uid was accepted',
     'M1081': r'ATTACK: a blob holding other bytes than its name was materialized',
     'M1082': r'ATTACK: a blob holding other bytes than its name was materialized',
     'M1083': r'ATTACK: a manifest of another tree was materialized',
+    'M1085': r'ATTACK: a tree whose \.git is a symlink to another repository was described as a clean',
     'M1084': r"ATTACK: an orphan HEAD brute-forced to share the certified revision's abbreviation",
 })

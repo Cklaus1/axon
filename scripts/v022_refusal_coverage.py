@@ -535,9 +535,6 @@ EXEMPT += [
      "(rev-parse HEAD '' -> Objects::read error; disambiguate '' -> the (None, _) arm; cat-file -t "
      "'' -> M1073; git-common-dir '' -> canonicalize error; grafts path '' names the repo, whose "
      "graft refusal fires); in provenance an empty revision fails head_bytes_differ"),
-    (FG, '        _ => return Err(format!("{} is not a git directory", dotgit.display())),',
-     "NOTHING TO ADMIT: no git directory to read the config from (every caller has passed "
-     "discover / discover_linked first)"),
     (FG, '        Err(e) => return Err(format!("{}: {e}", gitdir.join("commondir").display())),', _IO),
     (FG, '    if std::fs::symlink_metadata(&wt).is_ok() {',
      "FLAGGED, DOMINATED: git reads config.worktree only under extensions.worktreeConfig, and "

@@ -972,6 +972,14 @@ fn the_host_signer_key_must_be_private_and_match_its_pin() {
         t.contains("protected-host signer") && t.contains("readable by no one else"),
         "ATTACK: a group-readable host signer key was not refused: {t}"
     );
+    // rows4b (amendment 62): group-READABLE but writable by no one (0440), so
+    // only the read bits refuse it (0640 is also owner-writable).
+    std::fs::set_permissions(&key, std::fs::Permissions::from_mode(0o440)).unwrap();
+    let t = run();
+    assert!(
+        t.contains("protected-host signer") && t.contains("readable by no one else"),
+        "ATTACK: a group-readable (0440) host signer key was not refused: {t}"
+    );
     // Spec §2 rule 1: mode 0400. An owner-WRITABLE key (0600) is refused too:
     // the service that holds it must not be able to replace it.
     std::fs::set_permissions(&key, std::fs::Permissions::from_mode(0o600)).unwrap();
