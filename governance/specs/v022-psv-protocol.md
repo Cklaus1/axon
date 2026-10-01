@@ -2108,5 +2108,12 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       - At 9940675a: `--only=M722-M725,M860,M861,M894`, all KILLED.
       - At b4a298a6, through the new harness: the 43 rows above plus M278, 44/44 KILLED. M278's
         baseline passed, and no row's interpreter needed restoring.
+      - At 9940675a: `v022_paired_disable.py --only=M58` HOLDS, for the first time with its
+        full-suite cell evaluated. All four cells hold, the retired guard's full suite is
+        SUITE_OK, every consumer (axon-cortex, -fabric, -intent, -os, -psv, -wasm, -web) is
+        SUITE_OK, and no interpreter fault was recorded (record at
+        `/var/tmp/c9r4-rows3-pd-M58-final2.json`). The run exits 1 only because a `--only` run
+        covers one record. Its earlier records read BASELINE_BROKEN, then (at 49eb3765)
+        CONSUMER_BASELINE_BROKEN, so the full-suite cell had never been evaluated.
       - Refusal coverage, the matrix check and the paired-disable join test PASS.
     - No production behaviour changed: no matrix row, no operator deployment.
