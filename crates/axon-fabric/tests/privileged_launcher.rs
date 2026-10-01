@@ -2710,9 +2710,11 @@ fn a_protected_custodian_never_serves_from_a_symlinked_store() {
     let s = d.path();
     std::os::unix::fs::symlink("nonces", s.join("etc/custodian/link")).unwrap();
     // The namespace script chowns the tree to root; the link must be the
-    // custodian's (else its owner rule, M630, would refuse it first).
+    // custodian's (else its owner rule, M630, would refuse it first). Through
+    // lchown(2) itself: this host's `chown -h` (uutils 0.8) leaves a symlink's
+    // owner unchanged and exits 0 (measured).
     let script = format!(
-        "chown -h {CUSTODIAN}:{CUSTODIAN} /etc/axon/custodian/link\n{}",
+        "python3 -c 'import os; os.lchown(\"/etc/axon/custodian/link\", {CUSTODIAN}, {CUSTODIAN})'\n{}",
         ask_issue(FABRIC, CUSTODIAN_SOCK, "reply.json")
     );
     in_production_etc_before_custodian(s, "custodian", &script);

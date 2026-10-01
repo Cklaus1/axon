@@ -87,10 +87,20 @@ fn revoking_the_verifier_key_revokes_the_certification() {
     let Some(c) = certified() else { return };
     let root = c.trust.issuers_dir.parent().unwrap().join("verifier");
     std::fs::remove_file(root.join("verifier.pub")).unwrap();
-    attack(
-        &c,
-        "the verifier key was revoked at the operator root",
-        "is not a key in the operator's verifier root",
+    // The membership check (M338) and launched()'s lookup of the key (M812)
+    // each refuse it alone: either reason (C9 round 4, rows2).
+    let v = c.verdict();
+    assert_ne!(
+        v["status"], "PASS",
+        "ATTACK: the verifier key was revoked at the operator root and readiness still said \
+         PASS: {v}"
+    );
+    assert!(
+        v.to_string()
+            .contains("is not a key in the operator's verifier root")
+            || v.to_string()
+                .contains("names no key in the operator's verifier root"),
+        "{v}"
     );
 }
 
