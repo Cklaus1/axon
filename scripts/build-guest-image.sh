@@ -38,9 +38,13 @@ cd "$(dirname "$0")/.."
 # target dir), and two C9 round-4 reviewers built through each of them. So
 # every cargo run here goes through scripts/guest_build_env.py, which builds in
 # an environment it CONSTRUCTS (caller env dropped; the pinned toolchain; a
-# fresh CARGO_HOME and target dir) and refuses unless cargo's EFFECTIVE config
-# is only the tree's own. Its record goes into the guest manifest, and the
-# freeze refuses an image built any other way.
+# fresh CARGO_HOME and target dir; a private copy of the tracked tree under a
+# directory only root or the builder can write) and refuses unless cargo's
+# EFFECTIVE config is only the tree's own, before and after EVERY invocation,
+# and unless the invocation is one of its table's exactly (round 4b). The
+# kernel and the rootfs are made there too (`kernel`, `rootfs`). Its records
+# go into the guest manifest, and the freeze refuses an image any of whose
+# components was made any other way.
 BUILD_ENV=""
 gcargo_begin() {  # gcargo_begin <dir>: a fresh controlled build, recorded in <dir>/build-env.json
     BUILD_ENV="$1/build-env.json"
@@ -139,36 +143,21 @@ load_pin() {
 
 build_kernel_linux() {
     load_pin
-    local KSRC="$LDIST/linux-$KERNEL_VERSION"
     local TARBALL="$LDIST/linux-$KERNEL_VERSION.tar.xz"
-    local CONFIG="$PROFILE_DIR/$KERNEL_CONFIG"
-
-    require_sha "$CONFIG" "$KERNEL_CONFIG_SHA256" "kernel config"
     if [[ ! -f "$TARBALL" ]]; then
         echo "[build-guest-image] Downloading Linux $KERNEL_VERSION..."
         curl -fsSL -o "$TARBALL.part" "$KERNEL_URL"
         mv "$TARBALL.part" "$TARBALL"
     fi
-    require_sha "$TARBALL" "$KERNEL_TARBALL_SHA256" "kernel tarball"
-
-    # Always re-extract: a pre-existing tree could carry edits the pin cannot see.
-    rm -rf "$KSRC"
-    tar -xf "$TARBALL" -C "$LDIST"
-    require_sha "$PROFILE_DIR/$KERNEL_OVERLAY" "$KERNEL_OVERLAY_SHA256" "kernel config overlay"
-    cp "$CONFIG" "$KSRC/.config"
-    grep -E '^CONFIG_' "$PROFILE_DIR/$KERNEL_OVERLAY" >> "$KSRC/.config"
-
-    echo "[build-guest-image] Building Linux $KERNEL_VERSION (Firecracker v1.10.1 CI config)..."
-    (
-        cd "$KSRC"
-        make ARCH=x86_64 olddefconfig > /dev/null
-        KBUILD_BUILD_TIMESTAMP="1970-01-01" KBUILD_BUILD_USER=axon \
-        KBUILD_BUILD_HOST=b263 KBUILD_BUILD_VERSION=1 \
-            make ARCH=x86_64 -j"$(nproc)" vmlinux 2>&1 | tail -3
-    )
-    [[ -f "$KSRC/vmlinux" ]] || { echo "[build-guest-image] ERROR: vmlinux not built" >&2; exit 1; }
-    cp "$KSRC/vmlinux" "$LDIST/vmlinux"
-    cp "$KSRC/.config" "$LDIST/effective.config"
+    # C9 round 4b (FIELD-ORIGIN, amendment 63): the kernel is built in the
+    # controlled environment too. guest_build_env.py copies the tarball, config
+    # and overlay into a private directory, verifies each COPY against the pin,
+    # and runs make there with a constructed environment (no caller KCFLAGS,
+    # CROSS_COMPILE, CC, LLVM, MAKEFLAGS or PATH), recording the host toolchain
+    # (gcc, cc1, as, ld, make, ...) in kernel-build.json, which the manifest
+    # carries and the freeze judges.
+    echo "[build-guest-image] Building Linux $KERNEL_VERSION (Firecracker v1.10.1 CI config, controlled)..."
+    python3 scripts/guest_build_env.py kernel "$LDIST/kernel-build.json" "$LDIST" "$PROFILE_DIR" || exit 1
     echo "[build-guest-image] vmlinux → $LDIST/vmlinux ($(du -sh "$LDIST/vmlinux" | cut -f1))"
 }
 
@@ -193,9 +182,11 @@ build_rootfs_linux() {
     # The tree the binaries are built FROM, before any build step (the same
     # Rust provenance that stamps the readiness verifier). The manifest is
     # clean only if this and the tree at manifest time are clean and agree.
+    # Taken BEFORE begin copies the tracked tree into the build's private
+    # directory, so the copy lies between two clean observations of the tree.
     mkdir -p "$LDIST"
-    gcargo_begin "$LDIST"
     python3 scripts/linux_profile_manifest.py --snapshot "$LDIST/provenance.pre.json"
+    gcargo_begin "$LDIST"
 
     echo "[build-guest-image] Building axon interpreter (static musl, --locked)..."
     gcargo --rustflags "-C target-feature=+crt-static" -- build --locked -p axon-core \
@@ -244,31 +235,12 @@ build_rootfs_linux() {
         exit 1
     fi
 
-    local STAGE
-    STAGE="$(mktemp -d)"
-    trap 'rm -rf "${STAGE:-}"' EXIT
-    # mktemp -d makes the stage 0700 and it becomes the image's `/`: nothing
-    # unprivileged could traverse it (measured: the PSV runner's uid-dropped
-    # `axon test` got EACCES at execve). Every workload used to run as root, so
-    # it never showed.
-    chmod 0755 "$STAGE"
-    mkdir -p "$STAGE"/{bin,usr/bin,proc,sys,dev,tmp,work,out,in/candidate,in/suite,in/job}
-    cp "$BUSYBOX_SRC" "$STAGE/bin/busybox"
-    local applet
-    for applet in $("$STAGE/bin/busybox" --list); do
-        [[ "$applet" == busybox ]] || ln -s busybox "$STAGE/bin/$applet"
-    done
-    cp "$AXON_BIN" "$STAGE/usr/bin/axon"
-    cp "$INIT_BIN" "$STAGE/usr/bin/axon-guest-init"
-    cp "$RUNNER_BIN" "$STAGE/usr/bin/axon-psv-runner"
-    cp "$PROFILE_DIR/guest-init.sh" "$STAGE/init"
-    chmod 0755 "$STAGE/init" "$STAGE/usr/bin/axon" "$STAGE/usr/bin/axon-guest-init" \
-        "$STAGE/usr/bin/axon-psv-runner" "$STAGE/bin/busybox"
-
-    rm -f "$LDIST/rootfs.sqfs"
-    # -all-time/-mkfs-time 0 + -all-root: the image is a function of its inputs.
-    mksquashfs "$STAGE" "$LDIST/rootfs.sqfs" -noappend -all-root -no-xattrs \
-        -mkfs-time 0 -all-time 0 -comp gzip -quiet
+    # The root filesystem is assembled in the controlled environment
+    # (round 4b, amendment 63): the record's own artifacts (re-verified against
+    # their recorded digests), the pinned busybox (its COPY verified), the
+    # tree's guest-init.sh as /init, and /usr/bin/mksquashfs under a
+    # constructed environment; inputs and output are recorded.
+    python3 scripts/guest_build_env.py rootfs "$BUILD_ENV" "$LDIST/rootfs.sqfs" || exit 1
     cp "$AXON_BIN" "$LDIST/axon"
     cp "$INIT_BIN" "$LDIST/axon-guest-init"
     cp "$RUNNER_BIN" "$LDIST/axon-psv-runner"

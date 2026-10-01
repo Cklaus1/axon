@@ -146,8 +146,15 @@ fn the_linux_rootfs_build_installs_a_default_features_axon_guest_init() {
         !build.contains("--features") && !build.contains("--all-features"),
         "the image's axon-guest-init must be a DEFAULT-features build: {build}"
     );
+    // The rootfs is assembled by the controlled step (C9 round 4b, amendment
+    // 63), which installs the recorded axon-guest-init at /usr/bin.
     assert!(
-        body.contains(r#"cp "$INIT_BIN" "$STAGE/usr/bin/axon-guest-init""#),
+        body.contains(r#"python3 scripts/guest_build_env.py rootfs "$BUILD_ENV""#),
+        "the rootfs must be assembled by the controlled build step"
+    );
+    assert!(
+        read("scripts/guest_build_env.py")
+            .contains(r#""axon-guest-init": "usr/bin/axon-guest-init""#),
         "axon-guest-init must be installed into the rootfs"
     );
     assert!(

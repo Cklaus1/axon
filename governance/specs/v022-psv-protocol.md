@@ -2234,3 +2234,121 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       `scripts/psv_guest_boot_test.sh` (root, KVM); the re-pin is left to the integrator.
     - **Operator deployment.** The guest image must be REBUILT to carry the new interpreter; its
       scripts and runner are unchanged.
+
+63. **Every byte of the guest image is made in the controlled build environment, and the freeze
+    judges the whole image (C9 round 4b, harness3: three FIELD-ORIGIN major-adjacent findings on
+    the guest image's build provenance).** No counting rule is relaxed.
+    - **Before.** Amendment 56 built the three guest binaries through
+      `scripts/guest_build_env.py`, but (1) cargo's effective configuration was checked ONCE, at
+      `begin`, while cargo re-reads it on every invocation from its working directory upward; the
+      build ran in the clone, under `/var/tmp` (drwxrwxrwt), so a `.cargo/config.toml` planted in
+      an ancestor after `begin` wrapped all 34 rustc invocations of the next build, and the record
+      still read `foreign=[]` and passed the freeze (executed by the reviewer); (2) the freeze's
+      judge (`shape_problems`) never read the recorded `builds`, so a record showing
+      `--config build.rustc-wrapper=...` or `-C linker=...` in RUSTFLAGS was accepted, and
+      `run_cargo` passed any argv to cargo; (3) `vmlinux` was built with the caller's whole
+      environment (the gcc on PATH, KCFLAGS/KCPPFLAGS/CROSS_COMPILE/LLVM/CC, MAKEFLAGS) and
+      `rootfs.sqfs` with the caller's `mksquashfs`, and the freeze bound only the three Rust
+      artifacts to a build record; the manifest's `kernel.cc` was `gcc --version` from whatever
+      PATH ran the manifest step.
+    - **After.**
+      - *Immutable for the build.* `begin` copies the tree's TRACKED files (working-tree content,
+        hardened `/usr/bin/git ls-files`) into `<base>/src`, where `<base>` is a fresh directory
+        under a BUILD PARENT (`<builder home>/.cache/axon-guest-build`, or
+        `AXON_GUEST_BUILD_PARENT`) whose every ancestor must be owned by root or the builder and
+        not group/other-writable (a sticky `/var/tmp` is refused). Cargo runs there, never in the
+        clone, so no other uid can place a config anywhere cargo looks. The provenance snapshot
+        is now taken BEFORE the copy, so the copy lies between two clean observations of the tree.
+        (A consequence: the guest `axon --version` reads `(unknown)`; the manifest binds the
+        revision.)
+      - *Checked per invocation.* `cargo` re-reads the effective configuration before AND after
+        every invocation; either differing from begin's refuses (before: cargo never starts;
+        after: the step fails). Both checks are recorded in the invocation's entry.
+      - *Exact invocations.* `cargo` runs only an entry of `INVOCATIONS` (args and RUSTFLAGS
+        exactly; the protected three plus the development backends' three) and refuses anything
+        else before cargo starts.
+      - *Kernel.* `guest_build_env.py kernel` copies the pinned tarball, config and overlay into
+        a private directory, verifies each COPY against `kernel.pin`, extracts with `/usr/bin/tar`
+        and runs `/usr/bin/make ARCH=x86_64 olddefconfig` and `... -jN vmlinux` under a
+        constructed environment (`HOME`, `LC_ALL=C`, `PATH=/usr/bin:/bin`, the four
+        `KBUILD_BUILD_*`; nothing of the caller's). It records path, realpath, sha256 and version
+        of make, gcc, cc1, as, ld (required) and of the other host tools present, plus the
+        effective config and vmlinux digests, in `kernel-build.json`, which the manifest carries
+        as `kernel.build_environment` (and `kernel.cc` is now read from it).
+      - *Rootfs.* `guest_build_env.py rootfs` assembles the root filesystem from the record's own
+        artifacts (each COPY re-hashed against the recorded digest), the pinned busybox (its COPY
+        verified), the tree copy's `guest-init.sh`, with `/usr/bin/mksquashfs` and its exact
+        flags under a constructed environment; inputs, tool identity, argv and output digest go
+        into the record (`rootfs`).
+      - *The judge.* `shape_problems` additionally requires every recorded invocation to be its
+        table entry with both config checks equal to begin's, the toolchain to be the pinned
+        channel's (channel, toolchain directory, and the host linker's identity), and cargo to
+        have run on `<base>/src` under a recorded builder-only parent. The freeze then applies
+        `image_problems` to the WHOLE manifest: the binaries are exactly the protected builds in
+        order; `rootfs.sqfs` is the controlled assembly's output from the record's artifacts and
+        the manifest's busybox and guest-init digests, made by `/usr/bin/mksquashfs`, exact flags,
+        constructed environment; `vmlinux` and the effective config are the controlled kernel
+        build's, from exactly the manifest's pins, with make in the constructed environment, the
+        required tools recorded and a builder-only parent. The freeze binds the kernel record's
+        digest and its gcc. The record schemas are `axon-guest-build-env/2` and
+        `axon-guest-kernel-build/1`; a manifest built before this amendment does not freeze.
+    - **What remains recorded, not verified.** Tool identities (rustc, cargo, gcc, cc1, as, ld,
+      make, mksquashfs) are their sha256 at build time; nothing independent pins the expected
+      digests, and shared libraries they load are not hashed. This is the round-4b FUTURE item
+      for rustc, now covering the C toolchain too: **operator item** — pin the expected host
+      toolchain digests in operator trust (or a toolchain manifest) for the qualified build host.
+      The build user and root remain trusted: they can write the build parent.
+    - **Rows** (M1180-M1198, all PSV; M1199 unused):
+      - M1180: `begin` refuses a build parent with an ancestor another uid can write.
+      - M1181: cargo runs on the private copy (the reviewer's attack: an ancestor config of the
+        clone written after `begin`).
+      - M1182 / M1183: the effective-config check before / after every invocation.
+      - M1184: `cargo` runs only a table invocation (attack: `--config` naming a wrapper).
+      - M1185 / M1186: the judge holds each recorded invocation to its table entry / to both
+        config checks (attack: a record with a linker in RUSTFLAGS / a config that appeared
+        during the runner's build).
+      - M1187: the binaries are exactly the protected builds in order.
+      - M1188: the toolchain is the pinned channel's.
+      - M1189: the rootfs installs only the recorded bytes.
+      - M1190: the judge requires the private copy under a builder-only parent.
+      - M1191: the rootfs is made by `/usr/bin/mksquashfs`, never the caller's PATH's.
+      - M1192: the kernel's make runs in the constructed environment (attack: KCFLAGS, CC,
+        CROSS_COMPILE and a planted PATH).
+      - M1193: each pinned input is verified as the copy used (attack: another well-formed
+        tarball; also config, overlay, busybox).
+      - M1194: the freeze applies the whole-image judge.
+      - M1195 / M1196: vmlinux is the controlled kernel build's from the manifest's pins / its
+        make ran privately in the constructed environment with the toolchain recorded.
+      - M1197 / M1198: rootfs.sqfs is the controlled assembly's from the controlled artifacts and
+        pins / made by `/usr/bin/mksquashfs`, exact flags, constructed environment.
+    - **Tests.** `crates/axon-fabric/tests/guest_build_env.rs` (production route: the
+      `--build-env-only` begin of `build-guest-image.sh`, then the `cargo`, `finish`, `rootfs` and
+      `kernel` steps the image build calls, in a scratch git checkout): the three existing tests
+      (the ancestor-config cases now planted above the build parent) and nine new ones, each an
+      ATTACK with an honest control. `crates/axon-fabric/tests/freeze_manifest.rs`: the fixture
+      is now a whole controlled image (cargo + rootfs + kernel records); six new tests, 28 attack
+      cases. M738's test keeps the record self-consistent (its rootfs inputs follow its
+      artifacts) so it still reaches its own guard, and M737's case records the same foreign config in every invocation's checks (a self-consistent record only the begin-time judge refuses; the first run at 9f506848 had M737 survive, refused by M1186 instead); `image_problems` does not repeat
+      `shape_problems`, so M734-M737 keep a single owner. `b263_profile_wiring.rs` now reads the
+      rootfs install from the controlled step.
+    - **Evidence** (pre-squash commits on c9r4b/harness3; the final commit carries the same
+      scripts and tests).
+      - `v022_g01_mutations.py --scope=all --only=<54 rows>`: every active row guarding
+        `guest_build_env.py`, `v022_freeze_manifest.py`, `linux_profile_manifest.py` or
+        `build-guest-image.sh`, or killed by a test in `guest_build_env.rs`, `freeze_manifest.rs`,
+        `guest_provenance.rs` or `b263_profile_wiring.rs` (M284, M454-M458, M493-M499, M505,
+        M506, M581-M584, M607-M609, M642, M650, M730-M738, M872, M873, M1180-M1198): 53/54
+        KILLED by their own attack, M737 SURVIVED (refused by M1186: see Tests). After the M737
+        fixture fix, M734-M737 4/4 KILLED; after a test-only path fix in `guest_build_env.rs`,
+        its twelve rows (M730-M732, M1180-M1184, M1189, M1191-M1193) 12/12 KILLED. No
+        REFUSED_ELSEWHERE.
+      - A FULL image build (`AXON_KERNEL_BACKEND=linux scripts/build-guest-image.sh`, kernel
+        included) from a standalone clone succeeded; `shape_problems` and `image_problems` of its
+        manifest are both empty. The controlled kernel build reproduced the pinned vmlinux byte
+        for byte (`4ec3ba40...22b7`). `scripts/psv_guest_boot_test.sh` (root, KVM) on that image:
+        17 PASS, 0 failures, no SKIP. The manifest reads dirty only because this host has no
+        operator `/etc/axon/provenance-allowlist` (`dist/` unexcused); no re-pin is committed.
+    - **Operator deployment.** None for the scripts. The integrator rebuilds the final image with
+      the FULL build (`AXON_KERNEL_BACKEND=linux scripts/build-guest-image.sh`, kernel included:
+      a `--rootfs-only` build needs a `kernel-build.json` from a controlled kernel build) from a
+      standalone clone and re-pins; the operator item above stands.
