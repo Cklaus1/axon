@@ -1821,7 +1821,7 @@ fn a_protected_arm_whose_counters_are_not_its_trials_is_refused() {
     assert_eq!(adm.decision, Decision::Accept, "control: {:?}", adm.reasons);
 }
 
-/// C9 round 4 fix wave, ROWS2 wave 2 (M850; four-cell record against M122
+/// C9 round 4 fix wave, ROWS2 wave 2 (M852; four-cell record against M122
 /// and M104): a protected decision re-verifies each counted context under an
 /// observer the operator TRUSTS now. The contexts here are observed and
 /// signed by a SECOND observer (its own key, rooted in the operator's observer
@@ -1829,7 +1829,7 @@ fn a_protected_arm_whose_counters_are_not_its_trials_is_refused() {
 /// observer's; after the ACCEPT the operator withdraws the second observer
 /// (its key stays registered and rooted). Activation re-derives the admission:
 /// the context no longer counts. Three checks refuse it, each alone: the
-/// re-verification's trust check (M850), the any-class context-observer check
+/// re-verification's trust check (M852), the any-class context-observer check
 /// (M122) and the protected attribution check (M104). Control: nothing
 /// withdrawn, it activates.
 #[test]

@@ -836,7 +836,7 @@ fn forged_evaluation(
 }
 
 /// Each binding and independence rule of `derive`, on the route where it
-/// alone refuses (M815-M822): one field of a genuine evaluation forged by a
+/// alone refuses (M815-M821): one field of a genuine evaluation forged by a
 /// store writer, admitted by the trusted, independent admitter.
 #[test]
 fn each_admission_binding_refuses_its_own_forgery() {
@@ -934,7 +934,7 @@ fn a_counted_verdict_with_no_recorded_verifier_is_refused() {
     }
 }
 
-/// M824: only a trusted admitter admits. `op:stranger` holds no loop role,
+/// M822: only a trusted admitter admits. `op:stranger` holds no loop role,
 /// so no role rule refuses it; only the trusted-admitter set does.
 #[test]
 fn an_admitter_the_operator_does_not_trust_admits_nothing() {
@@ -952,7 +952,7 @@ fn an_admitter_the_operator_does_not_trust_admits_nothing() {
     assert_eq!(adm.decision, Decision::Accept, "control: {:?}", adm.reasons);
 }
 
-/// M825: a mechanism-test admission counts only mechanism-test evidence.
+/// M824: a mechanism-test admission counts only mechanism-test evidence.
 /// The genuine evaluation's trials are confirmation-corpus.
 #[test]
 fn a_mechanism_test_admission_counts_no_confirmation_trial() {
@@ -968,7 +968,7 @@ fn a_mechanism_test_admission_counts_no_confirmation_trial() {
     }
 }
 
-/// M826: an evaluation journalled BEFORE the freeze it names is not an
+/// M825: an evaluation journalled BEFORE the freeze it names is not an
 /// evaluation under that freeze. A store writer rewrites the (unkeyed)
 /// ledger, putting a genuine evaluation's journal entry just before the
 /// plan's freeze, re-chained; the record names the freeze's new sequence, so
@@ -1040,7 +1040,7 @@ fn activate(w: &World, adm: &Ref) -> Result<PointerRecordOut, LoopError> {
 }
 type PointerRecordOut = ();
 
-/// M827, M828: activation re-derives the admission from the journal. A store
+/// M826, M827: activation re-derives the admission from the journal. A store
 /// writer (a) removes a genuine ACCEPT's journal entry, re-chaining the
 /// ledger (the record is still in the CAS, and still re-derives identically:
 /// only "journalled by `admit`" refuses it), or (b) stores an ACCEPT record

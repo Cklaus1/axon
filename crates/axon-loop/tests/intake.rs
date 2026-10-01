@@ -3265,7 +3265,8 @@ fn refused_for(c: &Case, d: &Docs, attack: &str, why: &str) {
     }
 }
 
-/// M830-M845: the intake joins before step 8, each on its own defect.
+/// M831, M832, M834-M846 (M830 retired EQUIVALENT against M857): the intake
+/// joins before step 8, each on its own defect.
 #[test]
 fn each_intake_join_refuses_its_own_defect() {
     let c = case(Some(500));
@@ -3402,7 +3403,7 @@ fn each_intake_join_refuses_its_own_defect() {
     }
 }
 
-/// M846: a MiCode not-produced marker is never a policy: here the stored
+/// M847: a MiCode not-produced marker is never a policy: here the stored
 /// policy itself names the `controls_ref` marker, so every join to the policy
 /// holds and only the marker rule refuses the episode.
 #[test]
@@ -3422,7 +3423,7 @@ fn a_not_produced_marker_is_never_a_policy_reference() {
     );
 }
 
-/// M847: a revoked policy records no episode.
+/// M848: a revoked policy records no episode.
 #[test]
 fn an_episode_of_a_revoked_policy_is_refused() {
     let c = case(Some(500));
@@ -3442,7 +3443,7 @@ fn an_episode_of_a_revoked_policy_is_refused() {
     );
 }
 
-/// M848: one trial identity, one set of bytes. A second, different episode
+/// M849: one trial identity, one set of bytes. A second, different episode
 /// for the same trial is a conflict, never a second record.
 #[test]
 fn a_second_episode_for_a_recorded_trial_is_a_conflict() {
@@ -3457,7 +3458,7 @@ fn a_second_episode_for_a_recorded_trial_is_a_conflict() {
     }
 }
 
-/// M849: the receipt records exactly ONE suite version. A genuinely signed
+/// M850: the receipt records exactly ONE suite version. A genuinely signed
 /// receipt recording the pinned version AND another is refused: which one
 /// ran is not guessed.
 #[test]
@@ -3476,11 +3477,11 @@ fn a_receipt_recording_two_suite_versions_decides_nothing() {
     run_ctx(&c, &ctx, &ep, &req, &rc).expect("control: one suite version is recorded");
 }
 
-/// M851/M852 and M853/M854 (each pair retired EQUIVALENT under the
+/// M853/M854 and M855/M856 (each pair retired EQUIVALENT under the
 /// four-cell rule): the ack's schema and its candidate_set_ref are each
 /// checked twice on the one route. `select_ack` passes over an ack of
-/// another schema or view (M852, M854), and `check_ack` refuses the ack it is
-/// handed (M851, M853). An ack of another schema, or pinning the policy over
+/// another schema or view (M854, M856), and `check_ack` refuses the ack it is
+/// handed (M853, M855). An ack of another schema, or pinning the policy over
 /// another view, is refused by either alone: any refusal. Control: the
 /// genuine ack is recorded.
 #[test]
