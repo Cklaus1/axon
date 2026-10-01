@@ -3449,17 +3449,20 @@ MUTATIONS += [
 
 EQUIV_RECORD["M979"] = {
     "property": "nothing is written through a symlink inside the store",
-    "subsumed_by": ["M980"], "killer": "joint:M979+M980",
+    "subsumed_by": ["M980", "M998"], "killer": "joint:M979+M980+M998",
     "all_paths": "every store write goes through write_atomic, which first calls ensure_dir(parent): ensure_dir "
                  "walks every component below the root (create_dir, then lstat) and refuses a symlink (M980) "
-                 "before anything is written; a READ through a symlinked directory returns only bytes that must "
+                 "and, since lstat reports a symlink as no directory, any component that is not a real "
+                 "directory (M998), before anything is written; a READ through a symlinked directory returns only bytes that must "
                  "still digest to their name (check_name, M978) or that the ledger verifies"}
 EQUIV_RECORD["M980"] = {
     "property": "nothing is written through a symlink inside the store",
-    "subsumed_by": ["M979"], "killer": "joint:M979+M980",
+    "subsumed_by": ["M979", "M998"], "killer": "joint:M979+M980+M998",
     "all_paths": "ensure_dir's first statement is guard(dir), which lstat()s every existing component and refuses a "
                  "symlink (M979); M980 differs only for a component that became a symlink between the two calls "
-                 "(a concurrent writer), which write_atomic's guard(path) after ensure_dir refuses again"}
+                 "(a concurrent writer), which write_atomic's guard(path) after ensure_dir refuses again; and "
+                 "the next statement refuses a component lstat does not report as a directory (M998), "
+                 "which a symlink never is"}
 EQUIVALENT_DID |= {"M979", "M980"}
 RETIRED |= {"M979", "M980"}
 
@@ -3503,6 +3506,26 @@ MUTATIONS += [
     ('M995', 'plan rules (4b): a word rule is exactly the one the code executes', 'crates/axon-loop/src/rules.rs', '        Some(x) => Err(format!("{field} {x:?} is not executable (expected `{w}`)")),', '        Some(_x) => Ok(()),', 'axon-loop', '--test registries', 'each_unexecutable_rule_never_freezes'),
     ('M996', 'plan rules (4b): a quality margin below 100%', 'crates/axon-loop/src/rules.rs', '        if margin_ppm >= PPM {', '        if false && margin_ppm >= PPM {', 'axon-loop', '--test registries', 'each_unexecutable_rule_never_freezes'),
     ('M997', 'plan rules (4b): an economic threshold at most 100%', 'crates/axon-loop/src/rules.rs', '            if n > PPM {', '            if false && n > PPM {', 'axon-loop', '--test registries', 'each_unexecutable_rule_never_freezes'),
+]
+
+MUTATIONS += [
+    ('M998', 'store (4b): every store path component is a real directory (lstat; EQUIVALENT: M979 + M980)', 'crates/axon-loop/src/store.rs', '            if !m.is_dir() {', '            if false && !m.is_dir() {', 'axon-loop', '--test store_integrity', 'a_store_directory_replaced_by_a_symlink_is_never_written_through'),
+]
+EQUIV_RECORD["M998"] = {
+    "property": "nothing is written through a symlink inside the store",
+    "subsumed_by": ["M979", "M980"], "killer": "joint:M979+M980+M998",
+    "all_paths": "ensure_dir's first statement is guard(dir), which lstat()s every existing component and "
+                 "refuses a symlink (M979), and the statement before M998 refuses a component lstat "
+                 "reports as a symlink (M980); a regular file in the path (the only other non-directory) "
+                 "makes the write below it fail with ENOTDIR"}
+EQUIVALENT_DID |= {"M998"}
+RETIRED |= {"M998"}
+
+# rows4a (amendment 61): evl.rs rows killed by existing production-route tests.
+MUTATIONS += [
+    ('M999', "EVL (4b): a trial's context check includes its protected authentication", 'crates/axon-loop/src/evl.rs', '                } else if let Err(e) = authenticated_context(&config, frozen.evaluation_class, d) {', '                } else if let Some(e) =\n                    authenticated_context(&config, frozen.evaluation_class, d).err().filter(|_| false)\n                {', 'axon-loop', '--test protected_class', 'a_protected_context_is_authenticated_not_named'),
+    ('M1000', 'EVL (4b): a context refusal makes the trial Unknown (TASK_NOT_STARTED evidence)', 'crates/axon-loop/src/evl.rs', '                    match ctx_check {\n                        Err(e) => unknown(', '                    match ctx_check.or(Ok::<(), String>(())) {\n                        Err(e) => unknown(', 'axon-loop', '--test evidence_laundering', 'an_episode_intake_never_recorded_never_counts'),
+    ('M1001', 'EVL (4b): an unbound episode never counts', 'crates/axon-loop/src/evl.rs', '    if let Err(e) = bind_episode(&d.ep, policy, &d.ctx, epoch, verifiers, subjects) {', '    if let Some(e) = bind_episode(&d.ep, policy, &d.ctx, epoch, verifiers, subjects).err().filter(|_| false) {', 'axon-loop', '--test evl_admission', 'a_trial_delivered_with_a_context_other_than_its_episodes_counts_nothing'),
 ]
 
 PSV_IDS = {f"M{n}" for n in range(137, 550)}

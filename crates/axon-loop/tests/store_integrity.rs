@@ -73,8 +73,9 @@ fn a_journalled_evaluation_edited_in_place_is_never_admitted() {
 }
 
 /// A store directory replaced by a symlink to a directory outside the store:
-/// nothing is written through it. Two checks refuse it, each alone (the
-/// path guard, and `ensure_dir`'s per-component re-check; a four-cell pair),
+/// nothing is written through it. Three checks refuse it, each alone (the
+/// path guard, and `ensure_dir`'s per-component symlink and directory
+/// re-checks; four-cell retirements),
 /// so any refusal is accepted: only a byte landing outside the store is the
 /// attack. Control: without the symlink the evaluation is stored.
 #[test]
@@ -107,6 +108,13 @@ fn a_store_directory_replaced_by_a_symlink_is_never_written_through() {
                 r.map(|(_, e)| e)
             );
         }
-        assert!(r.unwrap_err().to_string().contains("symlink"));
+        // Three lstat-based checks refuse it, each alone (guard, ensure_dir's
+        // symlink re-check, and its is-a-directory check): which one is not
+        // the property.
+        let e = r.unwrap_err().to_string();
+        assert!(
+            e.contains("symlink") || e.contains("is not a directory"),
+            "{e}"
+        );
     }
 }

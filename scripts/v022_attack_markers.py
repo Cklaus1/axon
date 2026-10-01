@@ -1041,4 +1041,8 @@ ATTACK_MARKERS.update({
     'M995': 'ATTACK: an order rule the code does not run: the plan froze',
     'M996': 'ATTACK: a 100% quality margin: the plan froze',
     'M997': 'ATTACK: an economic threshold above 100%: the plan froze',
+    'M998': 'ATTACK: a store write followed a symlinked directory out of the store',
+    'M999': 'failed: unsigned: \\[TrialResult[^\\]]*outcome: VerifiedPass',
+    'M1000': 'ArmResult .*left: [1-9]\\d*\\s+right: 0',
+    'M1001': 'ATTACK: a trial delivered with a context other than the one its intaken episode names counted',
 })

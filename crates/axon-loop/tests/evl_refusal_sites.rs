@@ -394,7 +394,9 @@ fn each_population_defect_is_never_issued() {
 }
 
 /// Four-cell (check_population's arm-policy check vs `plan::assign`'s own):
-/// a trial assigned a policy the frozen plan does not name is never issued.
+/// the challenger arm assigned a policy the frozen plan does not name (in
+/// place of the candidate, so both-arms, coverage and repetitions hold) is
+/// never issued.
 #[test]
 fn a_population_naming_a_policy_outside_the_plan_is_never_issued() {
     let w = frozen_only("po", 1);
@@ -406,9 +408,8 @@ fn a_population_naming_a_policy_outside_the_plan_is_never_issued() {
         vec![
             row("task-0", "incumbent", "i0", i),
             row("task-1", "incumbent", "i1", i),
-            row("task-0", "challenger-1", "c0", c),
-            row("task-1", "challenger-1", "c1", c),
-            row("task-1", "challenger-2", "x1", &other),
+            row("task-0", "challenger-1", "c0", &other),
+            row("task-1", "challenger-1", "c1", &other),
         ],
         &["not supplied", "not one of the frozen plan's arms"],
         "a trial assigned a policy outside the plan",

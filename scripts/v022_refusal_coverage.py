@@ -562,9 +562,6 @@ EXEMPT += [
      "OS ERROR: lstat failing for a reason other than NotFound; the path is refused (fails closed)"),
     (ST, "                Err(e) => return Err(e.into()),\n            }\n            let m = fs::symlink_metadata(&cur)?;",
      "OS ERROR: create_dir failing for a reason other than AlreadyExists; nothing is written"),
-    (ST, "            if !m.is_dir() {",
-     "FAILS CLOSED: a component that is not a directory makes the write below it fail with ENOTDIR "
-     "(an OS error); nothing is written outside the path"),
     (ST, "            Err(e) => Err(map_open(p, e)),",
      "OS ERROR: the open failed (an O_NOFOLLOW refusal of a final-component symlink is the kernel's "
      "ELOOP, which map_open only names); nothing is read"),
