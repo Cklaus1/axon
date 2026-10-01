@@ -93,7 +93,16 @@ fn same_op_different_input_is_a_conflict_with_zero_effects() {
     let before = env.journal_text();
     let spawns = spawn_count(&env.spawns);
 
-    let err = submit(&request(&env, "op-x", "t_bad").to_string(), &env.cfg(0)).unwrap_err();
+    // rows4b (amendment 62): the attack is the second request being answered
+    // (with the first's recorded receipt, or by running it).
+    let err = match submit(&request(&env, "op-x", "t_bad").to_string(), &env.cfg(0)) {
+        Ok(s) => panic!(
+            "ATTACK: a request with a different input under an existing op id was answered: \
+             {:?} (replayed {})",
+            s.receipt.verification, s.replayed
+        ),
+        Err(e) => e,
+    };
     assert!(matches!(err, SubmitError::Conflict(_)), "{err}");
     assert_eq!(spawn_count(&env.spawns), spawns, "no spawn");
     assert_eq!(env.journal_text(), before, "no journal record");
@@ -110,9 +119,12 @@ fn epoch_mismatch_at_submit_is_refused_with_zero_effects() {
     );
     assert_eq!(spawn_count(&env.spawns), 0, "no process spawned");
     assert_eq!(env.launch_records(), 0, "no launch record");
+    // rows4b (amendment 62): the dispatch recheck would still refuse the
+    // launch; the submit-time check is what keeps an unauthorized request
+    // out of the journal (no intent, no reservation held under it).
     assert!(
         !env.journal_text().contains("op-stale"),
-        "no intent recorded either"
+        "ATTACK: a request under a superseded epoch was journalled (intent and reservation)"
     );
     // At the current epoch it runs.
     let ok = submit(&request(&env, "op-fresh", "t_ok").to_string(), &env.cfg(1)).unwrap();
@@ -606,7 +618,13 @@ fn an_epoch_change_between_submit_and_launch_is_refused_before_the_launch_record
     let env = Env::new();
     let mut cfg = env.cfg(0);
     cfg.pre_launch_hook = Some(bump_between);
-    let err = submit(&request(&env, "op-moved", "t_ok").to_string(), &cfg).unwrap_err();
+    let err = match submit(&request(&env, "op-moved", "t_ok").to_string(), &cfg) {
+        Ok(s) => panic!(
+            "ATTACK: the epoch moved between submit and launch, and the check was launched: {:?}",
+            s.receipt.status
+        ),
+        Err(e) => e,
+    };
     assert!(
         matches!(err, SubmitError::StaleEpoch { expected: 0, .. }),
         "{err}"
@@ -1032,4 +1050,212 @@ fn a_launcher_replaced_after_eligibility_never_runs() {
     assert!(e.to_string().contains("RULE:launcher-pinned"), "{e}");
     assert!(!launches.exists(), "the replaced launcher ran");
     assert_eq!(env.launch_records(), 0, "no launch record");
+}
+
+// ── C9 round 4b, rows4b (amendment 62): backend selection refuses what no
+// backend here can honour, and never substitutes a weaker one ────────────────
+//
+// Each refusal in `backend::select` had no mutation row. Each test below
+// submits ONE requirement the backends cannot meet; the attack is the request
+// running anyway (on the host interpreter, the only backend select can fall
+// through to). Control: the same request without that requirement runs.
+
+/// `r` (on `cfg`) is refused Unsupported, journalled, with nothing spawned
+/// or launched; the attack is it running.
+fn assert_never_runs(
+    env: &Env,
+    cfg: &axon_fabric::SubmitConfig,
+    r: &serde_json::Value,
+    what: &str,
+    why: &str,
+) {
+    let s = submit(&r.to_string(), cfg).unwrap();
+    assert!(
+        s.receipt.status == ReceiptStatus::Unsupported
+            && spawn_count(&env.spawns) == 0
+            && env.launch_records() == 0,
+        "ATTACK: {what}, and it ran: {:?} on {:?} ({:?})",
+        s.receipt.status,
+        s.backend,
+        s.reason
+    );
+    assert!(
+        s.reason.as_deref().unwrap_or("").contains(why),
+        "expected {why:?}: {:?}",
+        s.reason
+    );
+}
+
+fn control_runs(env: &Env, cfg: &axon_fabric::SubmitConfig, r: &serde_json::Value) {
+    let s = submit(&r.to_string(), cfg).unwrap();
+    assert_eq!(
+        s.receipt.status,
+        ReceiptStatus::Completed,
+        "control: {:?}",
+        s.reason
+    );
+    assert!(spawn_count(&env.spawns) > 0, "control: the check ran");
+}
+
+fn host_arch() -> &'static str {
+    if cfg!(target_arch = "x86_64") {
+        "x86_64"
+    } else {
+        "aarch64"
+    }
+}
+
+#[test]
+fn an_architecture_no_backend_offers_never_runs_on_the_host() {
+    let env = Env::new();
+    let mut r = request(&env, "op-sel-arch", "t_ok");
+    r["required"]["architecture"] = json!("wasm32");
+    assert_never_runs(
+        &env,
+        &env.cfg(0),
+        &r,
+        "a request requiring wasm32",
+        "architecture",
+    );
+    let mut ok = request(&env, "op-sel-arch-ok", "t_ok");
+    ok["required"]["architecture"] = json!(host_arch());
+    control_runs(&env, &env.cfg(0), &ok);
+}
+
+#[test]
+fn a_checkpoint_kind_no_backend_offers_never_runs_on_the_host() {
+    let env = Env::new();
+    let mut r = request(&env, "op-sel-ckpt", "t_ok");
+    r["required"]["checkpoint_kind"] = json!("machine_state");
+    assert_never_runs(
+        &env,
+        &env.cfg(0),
+        &r,
+        "a request requiring a machine-state checkpoint",
+        "checkpoint_kind",
+    );
+    control_runs(&env, &env.cfg(0), &request(&env, "op-sel-ckpt-ok", "t_ok"));
+}
+
+#[test]
+fn a_reproducible_grant_never_runs_non_reproducibly() {
+    let env = Env::new();
+    write_grant_registry(
+        &env.grant_registry,
+        &[(
+            "grant:test",
+            PRINCIPAL,
+            "profile = \"hermetic\"\n[grant]\nmax_label = \"internal\"\n\
+             [grant.budget]\ncost_micro = 1000\n",
+        )],
+    );
+    assert_never_runs(
+        &env,
+        &env.cfg(0),
+        &request(&env, "op-sel-hermetic", "t_ok"),
+        "a hermetic (reproducible) grant",
+        "reproducible",
+    );
+}
+
+#[test]
+fn a_brokered_network_request_never_runs_unbrokered() {
+    let env = Env::new();
+    let mut r = request(&env, "op-sel-broker", "t_ok");
+    r["required"]["network_mode"] = json!("brokered");
+    assert_never_runs(
+        &env,
+        &env.cfg(0),
+        &r,
+        "a request requiring a network broker",
+        "no egress broker",
+    );
+    control_runs(
+        &env,
+        &env.cfg(0),
+        &request(&env, "op-sel-broker-ok", "t_ok"),
+    );
+}
+
+#[test]
+fn another_engine_is_never_substituted_by_the_interpreter() {
+    let env = Env::new();
+    let mut r = request(&env, "op-sel-engine", "t_ok");
+    r["required"]["engine"] = json!("native_process");
+    assert_never_runs(
+        &env,
+        &env.cfg(0),
+        &r,
+        "a request for the native_process engine",
+        "only the Axon interpreter",
+    );
+    control_runs(
+        &env,
+        &env.cfg(0),
+        &request(&env, "op-sel-engine-ok", "t_ok"),
+    );
+}
+
+#[test]
+fn os_linux_without_hardware_isolation_never_runs_on_the_host() {
+    let env = Env::new();
+    let mut r = request(&env, "op-sel-oslinux", "t_ok");
+    r["required"]["os"] = json!("linux");
+    assert_never_runs(
+        &env,
+        &env.cfg(0),
+        &r,
+        "a request requiring os=linux",
+        "no Linux process backend",
+    );
+}
+
+#[test]
+fn hardware_isolation_is_never_dropped_to_the_host_interpreter() {
+    let env = Env::new();
+    let mut r = request(&env, "op-sel-hw", "t_ok");
+    r["required"]["hardware_isolation"] = json!(true);
+    assert_never_runs(
+        &env,
+        &env.cfg(0),
+        &r,
+        "a request requiring hardware isolation (os=none)",
+        "nothing substitutes",
+    );
+}
+
+#[test]
+fn a_path_scoped_grant_never_runs_under_the_hosts_coarse_ceiling() {
+    let env = Env::new();
+    write_grant_registry(
+        &env.grant_registry,
+        &[(
+            "grant:test",
+            PRINCIPAL,
+            "profile = \"restricted\"\n[grant]\nfs_read = [\"./data/\"]\n\
+             max_label = \"internal\"\n[grant.budget]\ncost_micro = 1000\n",
+        )],
+    );
+    assert_never_runs(
+        &env,
+        &env.cfg(0),
+        &request(&env, "op-sel-scoped", "t_ok"),
+        "a path-scoped grant on the host interpreter",
+        "not allowlists",
+    );
+}
+
+#[test]
+fn an_interpreter_run_never_runs_on_the_host_backend() {
+    let env = Env::new();
+    let mut r = request(&env, "op-sel-exec", "t_ok");
+    r["job_kind"] = json!("interpreter_run");
+    r["argv"] = json!(["f.ax"]);
+    assert_never_runs(
+        &env,
+        &env.cfg(0),
+        &r,
+        "an interpreter_run on the host backend",
+        "runs registered checks only",
+    );
 }

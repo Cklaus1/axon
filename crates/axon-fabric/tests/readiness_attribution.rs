@@ -715,3 +715,360 @@ fn readiness_judges_b263_currency_by_the_host_configs_maximum_age() {
         "control: a host config allowing a day certifies the same record"
     );
 }
+
+// ── C9 round 4b, rows4b (amendment 62): accept_b263's rules on BOTH routes ──
+//
+// `backend::accept_b263` is ONE implementation applied by Fabric before a
+// protected launch (`LinuxProfileConfig::qualification`, reached through
+// submit) and by readiness to the record a certification names. Round 4b
+// (EQUIVALENCE) found most of its rules with no mutation row. Each test below
+// presents ONE defect, signed by the trusted issuer, to BOTH production
+// routes; the attack is either route accepting it. Fabric's record is the
+// genuine qualification-test record (common::good_evidence), readiness's the
+// genuine certified one (readiness_fixture::b263_record).
+
+use axon_loop_contracts::ReceiptStatus;
+
+const FAB_GUEST: &str = "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd";
+
+/// Fabric's route: a protected submit on a host whose B263 record is the
+/// genuine one with `edit` applied (the second argument is the host's decision
+/// time), signed by the trusted issuer, or by `signer` when given (the record
+/// then names that signer's key unless `edit` names another), with `waiver`
+/// as an issuer-signed waiver file (`"evidence_sha256": "BIND"` is bound to
+/// the record). `Ok(reason)`: refused before anything ran; `Err(state)`:
+/// launched.
+fn fabric_route(
+    edit: impl FnOnce(&mut Value, &str),
+    waiver: Option<Value>,
+    signer: Option<&Issuer>,
+) -> Result<String, String> {
+    let env = Env::new();
+    let d = env.dir.path();
+    let m = d.join("manifest.json");
+    std::fs::write(&m, full_lx_manifest(FAB_GUEST)).unwrap();
+    let issuer = Issuer::generate();
+    let mut ev = good_evidence(&sha256_file(&m));
+    if let Some(s) = signer {
+        ev["issuer_key_id"] = json!(s.key_id());
+    }
+    edit(&mut ev, TEST_NOW);
+    let mut lx = qualified_linux_cfg(d, &issuer, &ev);
+    if let Some(s) = signer {
+        let bytes = std::fs::read(&lx.evidence).unwrap();
+        std::fs::write(sig_of(&lx.evidence), s.sign(&bytes)).unwrap();
+    }
+    set_launcher(&mut lx, stand_in_launcher(&env, 0, true, true, 0));
+    std::fs::create_dir_all(&lx.out_root).unwrap();
+    if let Some(mut w) = waiver {
+        if w["evidence_sha256"] == "BIND" {
+            w["evidence_sha256"] = json!(sha256_file(&lx.evidence));
+        }
+        let p = d.join("waivers.json");
+        issuer.write_signed(&p, &w);
+        lx.waivers = Some(p);
+    }
+    let candidate = psv_suite(&env);
+    let mut r = request(&env, "op-b263-rule", "t_psv_ok");
+    as_protected_check(&mut r, &candidate, FAB_GUEST);
+    r["grant_ref"] = json!("grant:open");
+    let mut cfg = env.cfg(0);
+    cfg.linux = Some(lx);
+    let s = axon_fabric::submit(&r.to_string(), &cfg).unwrap();
+    if s.receipt.status == ReceiptStatus::Unsupported && env.launch_records() == 0 {
+        Ok(s.reason.unwrap_or_default())
+    } else {
+        Err(format!("{:?} ({:?})", s.receipt.status, s.reason))
+    }
+}
+
+/// Readiness's route: the certification's protected_backend verdict.
+fn readiness_route(c: &Certified) -> Result<String, String> {
+    let v = c.verdict();
+    if v["status"] == "PASS" {
+        Err(v.to_string())
+    } else {
+        Ok(v.to_string())
+    }
+}
+
+/// The attack is EITHER route accepting; then each refusal names `why`.
+fn both_refuse(
+    what: &str,
+    why: &str,
+    fabric: Result<String, String>,
+    readiness: Option<Result<String, String>>,
+) {
+    let mut accepted = vec![];
+    if let Err(e) = &fabric {
+        accepted.push(format!("Fabric's qualification (submit launched: {e})"));
+    }
+    if let Some(Err(e)) = &readiness {
+        accepted.push(format!("readiness (PASS: {e})"));
+    }
+    assert!(
+        accepted.is_empty(),
+        "ATTACK: {what}, and it was accepted by {accepted:?}"
+    );
+    for r in std::iter::once(fabric).chain(readiness) {
+        let r = r.unwrap();
+        assert!(r.contains(why), "expected {why:?}: {r}");
+    }
+}
+
+/// The record with x3 BLOCKED (PASS_WITH_BLOCKED) on each route's own record.
+fn x3_blocked_on(b: &mut Value) {
+    let i = b["assertions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .position(|a| a["name"] == "x3_l0_hypervisor_boundary")
+        .unwrap();
+    b["assertions"][i]["status"] = json!("BLOCKED");
+    let pass = b["counts"]["PASS"].as_u64().unwrap() - 1;
+    b["counts"]["PASS"] = json!(pass);
+    b["counts"]["BLOCKED"] = json!(1);
+    b["result"] = json!("PASS_WITH_BLOCKED");
+}
+
+/// Readiness with x3 BLOCKED and, when given, `waiver` (an operator-signed
+/// waiver file; `"evidence_sha256": "BIND"` binds it to the record).
+fn readiness_blocked(c: &Certified, waiver: Option<Value>) -> Result<String, String> {
+    with_b263(c, x3_blocked_on);
+    if let Some(mut w) = waiver {
+        if w["evidence_sha256"] == "BIND" {
+            w["evidence_sha256"] = json!(sha(&c.repo.join(B263)));
+        }
+        add_evidence(c, WAIVER, &w, &c.operator);
+    }
+    readiness_route(c)
+}
+
+fn x3_waiver(reason: &str, expires: &str, bind: &str) -> Value {
+    json!({"schema": "axon-b263-waiver/1", "evidence_sha256": bind,
+           "waivers": [{"assertion": "x3_l0_hypervisor_boundary",
+                        "reason": reason, "expires": expires}]})
+}
+
+/// Both routes accept the honest PASS_WITH_BLOCKED + waiver, so each waiver
+/// attack below differs from an accepted case in its one fact.
+#[test]
+fn control_a_blocked_x3_under_a_bound_reasoned_unexpired_waiver_qualifies_on_both_routes() {
+    let w = x3_waiver("operator decision D2", "2026-12-31T00:00:00Z", "BIND");
+    let f = fabric_route(|b, _| x3_blocked_on(b), Some(w.clone()), None);
+    assert!(f.is_err(), "control: Fabric must launch: {f:?}");
+    if let Some(c) = certified() {
+        let r = readiness_blocked(&c, Some(w));
+        assert!(r.is_err(), "control: readiness must PASS: {r:?}");
+    }
+}
+
+/// RULE:issuer-trusted (operator_trust::verify_evidence_signature): a record
+/// signed by a key outside the qualification root, NAMING that key (so the
+/// issuer-claimed rule agrees), qualifies nothing.
+#[test]
+fn a_b263_record_signed_by_an_untrusted_key_naming_itself_qualifies_nothing() {
+    let rogue = Issuer::generate();
+    let f = fabric_route(|_, _| {}, None, Some(&rogue));
+    let r = certified().map(|c| {
+        rebind(
+            &c,
+            B263,
+            "b263_qualification_sha256",
+            &b263_record(&rogue),
+            &rogue,
+            TrustAuthority::Qualification,
+        );
+        relaunch(&c, keep(), keep(), keep());
+        readiness_route(&c)
+    });
+    both_refuse(
+        "a B263 record signed by a key no qualification root holds, naming that key",
+        "not a trusted evidence issuer",
+        f,
+        r,
+    );
+}
+
+/// RULE:issuer-claimed: signed by the trusted issuer, naming another key.
+#[test]
+fn a_b263_record_naming_another_issuer_qualifies_nothing_on_either_route() {
+    let other = Issuer::generate();
+    let f = fabric_route(
+        |b, _| b["issuer_key_id"] = json!(other.key_id()),
+        None,
+        None,
+    );
+    let r = certified().map(|c| {
+        with_b263(&c, |b| b["issuer_key_id"] = json!(other.key_id()));
+        readiness_route(&c)
+    });
+    both_refuse(
+        "a B263 record claims another issuer than the key that signed it",
+        "claims issuer_key_id",
+        f,
+        r,
+    );
+}
+
+/// RULE:pass-count.
+#[test]
+fn a_b263_record_counting_no_pass_qualifies_nothing_on_either_route() {
+    let f = fabric_route(|b, _| b["counts"]["PASS"] = json!(0), None, None);
+    let r = certified().map(|c| {
+        with_b263(&c, |b| b["counts"]["PASS"] = json!(0));
+        readiness_route(&c)
+    });
+    both_refuse(
+        "a B263 record counting no PASS assertion",
+        "no PASS assertion",
+        f,
+        r,
+    );
+}
+
+/// RULE:blocked-count.
+#[test]
+fn a_b263_record_whose_blocked_count_disagrees_qualifies_nothing_on_either_route() {
+    let f = fabric_route(|b, _| b["counts"]["BLOCKED"] = json!(1), None, None);
+    let r = certified().map(|c| {
+        with_b263(&c, |b| b["counts"]["BLOCKED"] = json!(1));
+        readiness_route(&c)
+    });
+    both_refuse(
+        "a B263 record whose counts.BLOCKED disagrees with its assertions",
+        "disagrees with the",
+        f,
+        r,
+    );
+}
+
+/// RULE:blocked-unwaived.
+#[test]
+fn an_unwaived_blocked_assertion_qualifies_nothing_on_either_route() {
+    let f = fabric_route(|b, _| x3_blocked_on(b), None, None);
+    let r = certified().map(|c| readiness_blocked(&c, None));
+    both_refuse(
+        "a BLOCKED assertion with no waiver",
+        "not covered by an issuer-signed waiver",
+        f,
+        r,
+    );
+}
+
+/// RULE:waiver-reason.
+#[test]
+fn a_waiver_stating_no_reason_qualifies_nothing_on_either_route() {
+    let w = x3_waiver(" ", "2026-12-31T00:00:00Z", "BIND");
+    let f = fabric_route(|b, _| x3_blocked_on(b), Some(w.clone()), None);
+    let r = certified().map(|c| readiness_blocked(&c, Some(w)));
+    both_refuse(
+        "a waiver states no reason for the BLOCKED assertion",
+        "states no reason",
+        f,
+        r,
+    );
+}
+
+/// RULE:waiver-expiry.
+#[test]
+fn an_expired_waiver_qualifies_nothing_on_either_route() {
+    let w = x3_waiver("operator decision D2", "2026-09-01T00:00:00Z", "BIND");
+    let f = fabric_route(|b, _| x3_blocked_on(b), Some(w.clone()), None);
+    let r = certified().map(|c| readiness_blocked(&c, Some(w)));
+    both_refuse(
+        "a waiver that expired before the decision",
+        "has expired",
+        f,
+        r,
+    );
+}
+
+/// RULE:waiver-bound (parse_waivers, both routes).
+#[test]
+fn a_waiver_bound_to_another_record_qualifies_nothing_on_either_route() {
+    let other = "e".repeat(64);
+    let w = x3_waiver("operator decision D2", "2026-12-31T00:00:00Z", &other);
+    let f = fabric_route(|b, _| x3_blocked_on(b), Some(w.clone()), None);
+    let r = certified().map(|c| readiness_blocked(&c, Some(w)));
+    both_refuse(
+        "a waiver bound to another B263 record",
+        "not transferable",
+        f,
+        r,
+    );
+}
+
+/// RULE:end-not-future. A record dated after the decision time.
+#[test]
+fn a_b263_record_ending_in_the_future_qualifies_nothing_on_either_route() {
+    let f = fabric_route(|b, _| b["end"] = json!("2026-09-25T12:00:01Z"), None, None);
+    let r = certified().map(|c| {
+        with_b263(&c, |b| b["end"] = json!("2026-09-28T12:00:01Z"));
+        readiness_route(&c)
+    });
+    // RULE:end-fresh refuses the same record too (a negative age read as
+    // unsigned is huge), so either reason; only acceptance is the attack.
+    let mut accepted = vec![];
+    if let Err(e) = &f {
+        accepted.push(format!("Fabric (submit launched: {e})"));
+    }
+    if let Some(Err(e)) = &r {
+        accepted.push(format!("readiness (PASS: {e})"));
+    }
+    assert!(
+        accepted.is_empty(),
+        "ATTACK: a B263 record whose end is after the decision time, and it was accepted by \
+         {accepted:?}"
+    );
+    for x in std::iter::once(f).chain(r) {
+        let x = x.unwrap();
+        assert!(x.contains("in the future") || x.contains("is stale"), "{x}");
+    }
+}
+
+/// RULE:engine-digests: a record that does not identify the jailer. (On
+/// Fabric's route the manifest's engine pin also refuses it; readiness joins
+/// only the firecracker digest to the observation.)
+#[test]
+fn a_b263_record_naming_no_jailer_qualifies_nothing_on_either_route() {
+    let f = fabric_route(
+        |b, _| {
+            b["engine"].as_object_mut().unwrap().remove("jailer_sha256");
+        },
+        None,
+        None,
+    );
+    let r = certified().map(|c| {
+        with_b263(&c, |b| {
+            b["engine"].as_object_mut().unwrap().remove("jailer_sha256");
+        });
+        readiness_route(&c)
+    });
+    let mut accepted = vec![];
+    if let Err(e) = &f {
+        accepted.push(format!("Fabric (submit launched: {e})"));
+    }
+    if let Some(Err(e)) = &r {
+        accepted.push(format!("readiness (PASS: {e})"));
+    }
+    assert!(
+        accepted.is_empty(),
+        "ATTACK: a B263 record that does not identify the VMM's jailer, and it was accepted by \
+         {accepted:?}"
+    );
+    if let Some(r) = r {
+        assert!(r.unwrap().contains("lacks engine"));
+    }
+}
+
+/// RULE:caveat.
+#[test]
+fn a_b263_record_stating_no_caveat_qualifies_nothing_on_either_route() {
+    let f = fabric_route(|b, _| b["caveat"] = json!(""), None, None);
+    let r = certified().map(|c| {
+        with_b263(&c, |b| b["caveat"] = json!(" "));
+        readiness_route(&c)
+    });
+    both_refuse("a B263 record stating no caveat", "states no caveat", f, r);
+}

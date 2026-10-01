@@ -608,3 +608,37 @@ impl AddPub for ResourceVector {
         }
     }
 }
+
+/// C9 round 4b, rows4b (amendment 62): once a branch is cancelled, a run of
+/// it is refused before anything is journalled or launched (B271). Control:
+/// the other arm still runs.
+#[test]
+fn a_cancelled_branch_never_runs_again() {
+    let w = world();
+    let cfg = w.env.cfg(0);
+    let (j, _) = Journal::open(&w.env.journal).unwrap();
+    w.br.cancel(&j, &exp_id(), &arm("challenger-1"), "lost the A/B")
+        .unwrap();
+    drop(j);
+    let spawns = spawn_count(&w.env.spawns);
+    let r = submit(
+        &branch_check(&w, "challenger-1", "after-cancel", &w.base, "t_ok").to_string(),
+        &cfg,
+    );
+    assert!(
+        matches!(r, Err(axon_fabric::SubmitError::Branch(_)))
+            && spawn_count(&w.env.spawns) == spawns,
+        "ATTACK: a run of a cancelled branch was dispatched: {:?}",
+        r.map(|s| s.receipt.status)
+    );
+    let ok = submit(
+        &branch_check(&w, "incumbent", "after-cancel-ok", &w.base, "t_ok").to_string(),
+        &cfg,
+    )
+    .unwrap();
+    assert_eq!(
+        ok.receipt.verification,
+        ReceiptVerification::Passed,
+        "control"
+    );
+}

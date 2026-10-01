@@ -49,7 +49,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 HELPER = os.path.join(ROOT, "crates", "axon-fabric", "src", "bin", "axon-provenance.rs")
 # The PCI-certified revision the guest's axon must descend from
 # (governance/proofs/v022-pci/CERTIFICATION.md).
-PCI_CERTIFIED = "31413ca7"
+PCI_CERTIFIED = "31413ca7abb6ff730e1b63718d4304c7a8402675"
 
 
 def sha(path):

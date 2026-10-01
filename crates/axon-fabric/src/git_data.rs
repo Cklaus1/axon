@@ -901,7 +901,8 @@ fn object_named(top: &Path, rev: &str) -> Result<String, String> {
     }
 }
 
-fn is_oid(s: &str) -> bool {
+/// A full (40 lowercase hex) object id.
+pub fn is_oid(s: &str) -> bool {
     s.len() == 40
         && s.bytes()
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))

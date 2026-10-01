@@ -238,7 +238,9 @@ fn no_trusted_issuer_configured_refuses_even_a_signed_record() {
     let w = World::new();
     let lx = w.cfg(&w.evidence());
     std::fs::remove_dir_all(&lx.trust.issuers_dir).unwrap();
-    w.assert_refused(lx, "no trusted evidence issuer is configured");
+    // Two rules refuse it, each alone (rows4b, four-cell record): no key
+    // configured, and the signer not being a trusted issuer.
+    w.assert_refused(lx, "trusted evidence issuer");
 }
 
 // ── refused: verdict ────────────────────────────────────────────────────────
@@ -398,7 +400,9 @@ fn a_manifest_that_pins_no_engine_is_refused() {
     let mut m: Value = serde_json::from_str(&full_lx_manifest(GUEST)).unwrap();
     m.as_object_mut().unwrap().remove("engine");
     let w = World::with_manifest(&m.to_string());
-    w.assert_refused(w.cfg(&w.evidence()), "pins no engine");
+    // The pin rule and the pin-equality rule each refuse it alone (rows4b,
+    // four-cell record): a missing pin never equals the record's digest.
+    w.assert_refused(w.cfg(&w.evidence()), "engine");
 }
 
 #[test]
@@ -620,7 +624,10 @@ fn the_committed_profile_has_no_trusted_issuer_so_protected_dispatch_is_refused(
         issuer: Issuer::generate(),
         manifest_sha: String::new(),
     };
-    w.assert_refused(lx, "no trusted evidence issuer is configured");
+    // Either rule (rows4b, four-cell record): no key configured or, with that
+    // rule removed, the next one this unsigned fixture meets (RULE:unsigned);
+    // the property is that the profile is ineligible.
+    w.assert_refused(lx, "ineligible:");
 }
 
 #[test]
@@ -662,4 +669,183 @@ fn a_record_counts_only_under_the_issuer_it_names() {
     let lx = qualified_linux_cfg(d, issuer, &ev);
     lx.qualification()
         .expect("the helper names the signing key: qualified");
+}
+
+// ── C9 round 4b, rows4b (amendment 62): the qualification rules only Fabric
+// applies (the record's identity and its binding to THIS host's manifest),
+// each through select() and submit() with an ATTACK assertion. The rules
+// shared with readiness are judged on both routes in readiness_attribution.rs.
+
+impl World {
+    /// The attack is select() choosing the protected profile or submit()
+    /// launching under `lx`; then the refusal must be `why`'s.
+    fn assert_attack_refused(&self, lx: LinuxProfileConfig, what: &str, why: &str) {
+        let sel = backend::select(&self.req("op-sel-attack"), Some(&lx), Default::default());
+        let mut cfg = self.env.cfg(0);
+        cfg.linux = Some(lx.clone());
+        let s = submit(&run_request(&self.env, "op-q-attack").to_string(), &cfg).unwrap();
+        assert!(
+            sel.is_err()
+                && s.receipt.status == ReceiptStatus::Unsupported
+                && self.env.launch_records() == 0,
+            "ATTACK: {what}, and the protected profile qualified it: select {:?}, submit {:?} \
+             ({:?})",
+            sel.map(|p| p.id),
+            s.receipt.status,
+            s.reason
+        );
+        self.assert_refused(lx, why);
+    }
+}
+
+#[test]
+fn a_record_of_another_schema_never_qualifies() {
+    let w = World::new();
+    let mut ev = w.evidence();
+    ev["schema"] = json!("axon-b263-evidence/0");
+    w.assert_attack_refused(
+        w.cfg(&ev),
+        "an issuer-signed record of another schema",
+        "schema is not axon-b263-evidence/1",
+    );
+}
+
+#[test]
+fn a_record_for_another_profile_never_qualifies() {
+    let w = World::new();
+    let mut ev = w.evidence();
+    ev["profile"]["name"] = json!("linux-microvm-dev");
+    w.assert_attack_refused(
+        w.cfg(&ev),
+        "an issuer-signed record qualifying another profile",
+        "for a different profile",
+    );
+}
+
+#[test]
+fn a_manifest_pinning_no_engine_never_qualifies() {
+    let mut m: Value = serde_json::from_str(&full_lx_manifest(GUEST)).unwrap();
+    m.as_object_mut().unwrap().remove("engine");
+    let w = World::with_manifest(&m.to_string());
+    // Either rule refuses it (four-cell record against the pin equality).
+    w.assert_attack_refused(
+        w.cfg(&w.evidence()),
+        "a host manifest that pins no VMM engine",
+        "engine",
+    );
+}
+
+#[test]
+fn engine_digests_other_than_the_manifests_pins_never_qualify() {
+    let mut m: Value = serde_json::from_str(&full_lx_manifest(GUEST)).unwrap();
+    m["engine"] = json!({"firecracker_sha256": "f".repeat(64), "jailer_sha256": TEST_JAILER_SHA});
+    let w = World::with_manifest(&m.to_string());
+    w.assert_attack_refused(
+        w.cfg(&w.evidence()),
+        "a record qualifying another firecracker than the host manifest pins",
+        "differ from the manifest's engine pins",
+    );
+}
+
+#[test]
+fn a_manifest_built_from_a_dirty_tree_never_qualifies() {
+    let mut m: Value = serde_json::from_str(&full_lx_manifest(GUEST)).unwrap();
+    m["source"]["axon_tree_dirty_at_build"] = json!(true);
+    let w = World::with_manifest(&m.to_string());
+    w.assert_attack_refused(
+        w.cfg(&w.evidence()),
+        "a host manifest whose artifacts were built from a dirty tree",
+        "built from a dirty",
+    );
+}
+
+/// The record qualified ANOTHER manifest: the one in use is not the one
+/// qualified (a changed manifest is never "probably fine").
+#[test]
+fn a_record_qualifying_another_manifest_never_qualifies_this_one() {
+    let w = World::new();
+    let mut ev = w.evidence();
+    ev["profile"]["manifest_sha256"] = json!("7".repeat(64));
+    w.assert_attack_refused(
+        w.cfg(&ev),
+        "a record qualifying another profile manifest",
+        "a changed manifest is not the qualified profile",
+    );
+}
+
+/// RULE:waiver-schema: an issuer-signed file of another schema is not a
+/// waiver, even bound to this record.
+#[test]
+fn a_waiver_file_of_another_schema_waives_nothing() {
+    let w = World::new();
+    let mut ev = w.evidence();
+    x3_blocked(&mut ev);
+    let mut lx = w.cfg(&ev);
+    w.waive(
+        &mut lx,
+        &w.issuer,
+        x3_waiver("2026-12-31T00:00:00Z", "D7"),
+        None,
+    );
+    let p = lx.waivers.clone().unwrap();
+    let mut v: Value = serde_json::from_slice(&std::fs::read(&p).unwrap()).unwrap();
+    v["schema"] = json!("axon-b263-waiver/0");
+    w.issuer.write_signed(&p, &v);
+    w.assert_attack_refused(
+        lx,
+        "an issuer-signed file of another schema waived a BLOCKED assertion",
+        "waiver file schema is not",
+    );
+}
+
+/// An EMPTY qualification root (the directory exists, holds no key) trusts
+/// nothing: no record signed by anyone qualifies.
+#[test]
+fn an_empty_qualification_root_qualifies_nothing() {
+    let w = World::new();
+    let lx = w.cfg(&w.evidence());
+    for e in std::fs::read_dir(&lx.trust.issuers_dir).unwrap() {
+        std::fs::remove_file(e.unwrap().path()).unwrap();
+    }
+    let sel = backend::select(&w.req("op-sel-empty"), Some(&lx), Default::default());
+    let mut cfg = w.env.cfg(0);
+    cfg.linux = Some(lx.clone());
+    let s = submit(&run_request(&w.env, "op-q-empty").to_string(), &cfg).unwrap();
+    assert!(
+        sel.is_err() && s.receipt.status == ReceiptStatus::Unsupported,
+        "ATTACK: a qualification root holding no key qualified a signed record: select {:?}, \
+         submit {:?}",
+        sel.map(|p| p.id),
+        s.receipt.status
+    );
+    // Two rules refuse it, each alone: no key configured, and the signer not
+    // being a trusted issuer (four-cell record). Either reason.
+    let r = s.reason.unwrap_or_default();
+    assert!(
+        r.contains("no trusted evidence issuer is configured")
+            || r.contains("not a trusted evidence issuer"),
+        "{r}"
+    );
+}
+
+/// RULE:end-not-future, on the input where it is the only rule: an operator
+/// who sets no practical maximum age (u64::MAX) makes the freshness rule
+/// admit any age, and a record dated after the decision would then read as
+/// fresh (its negative age, as an unsigned number, is below the maximum).
+#[test]
+fn a_record_from_the_future_never_qualifies_even_with_no_maximum_age() {
+    let w = World::new();
+    let mut lx = w.cfg(&w.evidence());
+    lx.trust.max_age_s = u64::MAX;
+    lx.qualification()
+        .expect("control: the genuine record, no maximum age");
+    let mut ev = w.evidence();
+    ev["end"] = json!("2026-09-25T12:00:01Z");
+    let mut lx = w.cfg(&ev);
+    lx.trust.max_age_s = u64::MAX;
+    w.assert_attack_refused(
+        lx,
+        "a record whose end is after the decision time, under no maximum age",
+        "in the future",
+    );
 }

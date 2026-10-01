@@ -124,7 +124,19 @@ pub fn descends_from(dir: &Path, rev: &str) -> Result<(), String> {
 /// [`descends_from`] for a PROTECTED answer (decision E): the tree must be a
 /// standalone clone. A gitfile (linked worktree) or symlinked `.git` is
 /// refused ([`git_data::discover`]).
+///
+/// The certified revision is named by its WHOLE hash (A91, C9 round 4b): an
+/// abbreviation names whichever object a repository makes match it, and an
+/// orphan commit brute-forced to share the guest build's 8-hex abbreviation
+/// (32 bits, an offline search), in a clone without the real commit, was the
+/// one object it named.
 pub fn descends_from_protected(dir: &Path, rev: &str) -> Result<(), String> {
+    if !git_data::is_oid(rev) {
+        return Err(format!(
+            "{rev:?} is not a full commit id: a protected lineage names the certified revision \
+             by its whole hash, never an abbreviation a repository can make match another object"
+        ));
+    }
     lineage(git_data::discover(dir)?, rev)
 }
 

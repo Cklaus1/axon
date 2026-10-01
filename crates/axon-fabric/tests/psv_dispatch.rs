@@ -1768,3 +1768,379 @@ fn a_check_that_produced_no_verdict_is_never_receipted_as_one() {
         s.reason
     );
 }
+
+// ── C9 round 4b, rows4b (amendment 62): the privileged helper's REPORT and
+// the protected executable ──────────────────────────────────────────────────
+//
+// Fabric acts on the root helper's report: it must name this protocol
+// (schema), say the launch finished (exit EXIT_LAUNCHED, no error), and say
+// that neither the launcher nor its interpreter changed, and the helper Fabric
+// verified must itself be unchanged. Round 4b (EQUIVALENCE) removed all five
+// refusals at once with the whole axon-fabric suite green. Each test below
+// reaches ONE of them through submit() on the helper route, with a control
+// through the same machinery that is protected.
+
+/// A stand-in for the privileged helper: an ELF trampoline (the helper route
+/// execs a verified BINARY; a script is refused) that runs the REAL test-trust
+/// helper, passes its report through `sed`, exits with `exit` (else the
+/// helper's own status), and with `touch_self` changes its own mode (and so its
+/// ctime) while the launch is in flight. The mode really changes: this
+/// host's chmod skips the syscall when the mode is already the one asked.
+fn forging_helper(
+    w: &World,
+    name: &str,
+    sed: &str,
+    exit: Option<i32>,
+    touch_self: bool,
+) -> axon_fabric::sealed_exec::Pinned {
+    let d = w.env.dir.path();
+    let tramp = d.join(format!("helper-{name}"));
+    let script = d.join(format!("helper-{name}.sh"));
+    let rc = exit.map_or_else(|| "$rc".to_string(), |c| c.to_string());
+    let touch = if touch_self {
+        format!("/bin/chmod 0750 '{}'\n", tramp.display())
+    } else {
+        String::new()
+    };
+    std::fs::write(
+        &script,
+        format!(
+            "out=$('{}' \"$@\")\nrc=$?\n{touch}printf '%s\\n' \"$out\" | /bin/sed -e '{sed}'\nexit {rc}\n",
+            helper_pin().path.display()
+        ),
+    )
+    .unwrap();
+    let c = d.join(format!("helper-{name}.c"));
+    std::fs::write(
+        &c,
+        format!(
+            "#include <unistd.h>\nint main(int argc, char **argv) {{\n  char *a[64]; int n = 0;\n  \
+             a[n++] = \"sh\"; a[n++] = \"{}\";\n  for (int i = 1; i < argc && n < 63; i++) a[n++] = \
+             argv[i];\n  a[n] = 0;\n  execv(\"/bin/sh\", a);\n  return 127;\n}}\n",
+            script.display()
+        ),
+    )
+    .unwrap();
+    let st = std::process::Command::new("cc")
+        .arg("-o")
+        .arg(&tramp)
+        .arg(&c)
+        .status()
+        .expect("cc: the stand-in helper is compiled by the test");
+    assert!(st.success(), "the stand-in helper did not compile");
+    axon_fabric::sealed_exec::Pinned {
+        sha256: sha256_file(&tramp),
+        path: tramp,
+    }
+}
+
+impl World {
+    /// The helper route with the helper replaced by `helper`.
+    fn lx_helper(&self, helper: axon_fabric::sealed_exec::Pinned) -> LinuxProfileConfig {
+        let mut lx = self.lx("", "");
+        lx.privileged.as_mut().unwrap().helper = helper;
+        lx
+    }
+}
+
+/// Submit on the helper route through `helper`; the attack is a verdict that
+/// is Passed or protected.
+fn forged_report(
+    w: &World,
+    helper: axon_fabric::sealed_exec::Pinned,
+    op: &str,
+    what: &str,
+) -> axon_fabric::Submission {
+    let s = w.submit_with(w.lx_helper(helper), op, "t_psv_ok");
+    assert!(
+        s.receipt.verification != ReceiptVerification::Passed && class(&s) != "protected",
+        "ATTACK: {what}, and Fabric derived a verdict from the launch: {:?} class {}",
+        s.receipt.verification,
+        class(&s)
+    );
+    s
+}
+
+/// Control for every forged-report test: the trampoline passing the real
+/// helper's report through unchanged gives the protected verdict.
+fn pass_through_helper_is_protected(w: &World, op: &str) {
+    let s = w.submit_with(
+        w.lx_helper(forging_helper(w, &format!("same-{op}"), "", None, false)),
+        op,
+        "t_psv_ok",
+    );
+    assert_eq!(
+        (s.receipt.verification, class(&s).as_str()),
+        (ReceiptVerification::Passed, "protected"),
+        "control: the pass-through stand-in helper: {:?}",
+        s.reason
+    );
+}
+
+#[test]
+fn a_helper_report_of_another_schema_yields_no_verdict() {
+    let w = World::new();
+    pass_through_helper_is_protected(&w, "op-rep-schema-ok");
+    let h = forging_helper(
+        &w,
+        "schema",
+        "s#axon-protected-launch-report/1#axon-protected-launch-report/0#",
+        None,
+        false,
+    );
+    let s = forged_report(
+        &w,
+        h,
+        "op-rep-schema",
+        "the privileged helper's report names another schema",
+    );
+    assert!(
+        s.reason.unwrap_or_default().contains("has another schema"),
+        "refused for the schema"
+    );
+}
+
+#[test]
+fn a_helper_error_after_the_launch_yields_no_verdict() {
+    let w = World::new();
+    pass_through_helper_is_protected(&w, "op-rep-err-ok");
+    // The report says the launch began and then failed (the out dir could
+    // not be handed over); the helper's exit is still EXIT_LAUNCHED.
+    let h = forging_helper(
+        &w,
+        "error",
+        "s#\"error\":null#\"error\":\"the out dir could not be handed over: forged\"#",
+        None,
+        false,
+    );
+    let s = forged_report(
+        &w,
+        h,
+        "op-rep-err",
+        "the privileged helper reported an error after the launch",
+    );
+    assert!(
+        s.reason.unwrap_or_default().contains("after the launch"),
+        "refused for the post-launch error"
+    );
+}
+
+#[test]
+fn a_helper_exit_other_than_launched_yields_no_verdict() {
+    let w = World::new();
+    pass_through_helper_is_protected(&w, "op-rep-exit-ok");
+    // The report is clean; the helper exits EXIT_UNKNOWN.
+    let h = forging_helper(
+        &w,
+        "exit",
+        "",
+        Some(axon_fabric::privileged_launcher::EXIT_UNKNOWN),
+        false,
+    );
+    let s = forged_report(
+        &w,
+        h,
+        "op-rep-exit",
+        "the privileged helper exited EXIT_UNKNOWN after the launch",
+    );
+    assert!(
+        s.reason.unwrap_or_default().contains("after the launch"),
+        "refused for the exit status"
+    );
+}
+
+/// D (same bytes): the launcher changes its own inode during the
+/// `--verify-result` run (a new mode and ctime), so the REAL helper reports
+/// `unchanged: false`. The bytes that ran are no longer the bytes pinned.
+#[test]
+fn a_launcher_that_changed_during_the_launch_yields_no_verdict() {
+    let w = World::new();
+    let d = w.env.dir.path();
+    let mut lx = w.lx_direct("", "--note self-changing");
+    let guest = format!(
+        "{} __psv-host-guest --axon {} --tamper ''",
+        env!("CARGO_BIN_EXE_axon-fabric"),
+        axon_bin().display()
+    );
+    let script = d.join("psv-launcher-self-changing.sh");
+    write_executable(
+        &script,
+        format!(
+            "#!/bin/sh\nif [ \"$1\" = --verify-result ]; then\n  {guest} \"$@\"\n  rc=$?\n  \
+             /bin/chmod 0750 '{}'\n  exit $rc\nfi\nexec {guest} \"$@\"\n",
+            script.display()
+        ),
+        0o755,
+    );
+    set_launcher(&mut lx, script.clone());
+    let cfg = write_helper_config(
+        d,
+        &w.inputs,
+        &lx.launcher,
+        &w.manifest,
+        &lx.out_root,
+        "protected-launcher-self-changing.json",
+    );
+    use_helper(&mut lx, &cfg);
+    let s = w.submit_with(lx, "op-launcher-changed", "t_psv_ok");
+    assert!(
+        s.receipt.verification != ReceiptVerification::Passed && class(&s) != "protected",
+        "ATTACK: the launcher changed during the launch (the helper reported unchanged=false), \
+         and Fabric derived a verdict from it: {:?} class {}",
+        s.receipt.verification,
+        class(&s)
+    );
+    assert!(
+        s.reason
+            .unwrap_or_default()
+            .contains("changed during the launch"),
+        "refused for the change"
+    );
+    let s = w.submit_with(w.lx("", ""), "op-launcher-changed-ok", "t_psv_ok");
+    assert_eq!(class(&s), "protected", "control: {:?}", s.reason);
+}
+
+/// D: the helper Fabric verified and executed changes during the launch; its
+/// report (passed through untouched) cannot speak for bytes that are no
+/// longer the ones verified.
+#[test]
+fn a_helper_that_changed_during_the_launch_yields_no_verdict() {
+    let w = World::new();
+    pass_through_helper_is_protected(&w, "op-helper-changed-ok");
+    let h = forging_helper(&w, "self-changing", "", None, true);
+    let s = forged_report(
+        &w,
+        h,
+        "op-helper-changed",
+        "the privileged helper changed during the launch",
+    );
+    assert!(
+        s.reason
+            .unwrap_or_default()
+            .contains("changed during the launch"),
+        "refused for the change"
+    );
+}
+
+/// The protected profile runs ONE executable, the interpreter in the
+/// qualified rootfs: a request naming another executable id (with the digest
+/// that id would have) is refused, so no receipt names an executable the
+/// guest did not run. Control: the same request naming the guest interpreter.
+#[test]
+fn a_protected_request_naming_another_executable_is_refused() {
+    let w = World::new();
+    let mut cfg = w.env.cfg(0);
+    cfg.observer = Some(w.auto_observer());
+    cfg.linux = Some(w.lx("", ""));
+    let mut r = w.request("op-other-exe", "check:acc", "t_psv_ok");
+    r["registered_executable_ref"] = json!("axon");
+    r["executable_digest"] = json!(axon_cortex::runner::fabric_executable_digest("axon", GUEST));
+    match submit(&r.to_string(), &cfg) {
+        Ok(s) => panic!(
+            "ATTACK: a protected request naming executable `axon` was run: {:?} class {}",
+            s.receipt.verification,
+            class(&s)
+        ),
+        Err(e) => assert!(
+            e.to_string().contains("runs only"),
+            "refused for the executable id: {e}"
+        ),
+    }
+    let s = submit(
+        &w.request("op-other-exe-ok", "check:acc", "t_psv_ok")
+            .to_string(),
+        &cfg,
+    )
+    .unwrap();
+    assert_eq!(class(&s), "protected", "control: {:?}", s.reason);
+}
+
+/// ...and its executable_digest must be the qualified guest interpreter's.
+#[test]
+fn a_protected_request_with_another_executable_digest_is_refused() {
+    let w = World::new();
+    let mut cfg = w.env.cfg(0);
+    cfg.observer = Some(w.auto_observer());
+    cfg.linux = Some(w.lx("", ""));
+    let mut r = w.request("op-other-digest", "check:acc", "t_psv_ok");
+    r["executable_digest"] = json!(axon_cortex::runner::fabric_executable_digest(
+        backend::LINUX_GUEST_AXON_ID,
+        &"ab".repeat(32)
+    ));
+    match submit(&r.to_string(), &cfg) {
+        Ok(s) => panic!(
+            "ATTACK: a protected request naming another guest interpreter digest was run: {:?} \
+             class {}",
+            s.receipt.verification,
+            class(&s)
+        ),
+        Err(e) => assert!(
+            e.to_string()
+                .contains("does not match the qualified guest interpreter"),
+            "refused for the digest: {e}"
+        ),
+    }
+    let s = submit(
+        &w.request("op-other-digest-ok", "check:acc", "t_psv_ok")
+            .to_string(),
+        &cfg,
+    )
+    .unwrap();
+    assert_eq!(class(&s), "protected", "control: {:?}", s.reason);
+}
+
+/// The operator suite judges only at the version the operator registered: a
+/// suite edited on disk after registration (here, a lenient test under the
+/// same name) is refused, and nothing is launched. Control: the registered
+/// suite is protected.
+#[test]
+fn a_suite_edited_after_registration_never_judges() {
+    let w = World::new();
+    let s = w.submit_with(w.lx("", ""), "op-suite-edit-ok", "t_psv_ok");
+    assert_eq!(class(&s), "protected", "control: {:?}", s.reason);
+    let suite = w.env.dir.path().join("suites/acc/accept.ax");
+    std::fs::write(
+        &suite,
+        SUITE.replace("assert_eq(double(1), 3)", "assert_eq(double(1), 2)"),
+    )
+    .unwrap();
+    let mut cfg = w.env.cfg(0);
+    cfg.observer = Some(w.auto_observer());
+    cfg.linux = Some(w.lx("", ""));
+    match submit(
+        &w.request("op-suite-edit", "check:acc", "t_psv_fail")
+            .to_string(),
+        &cfg,
+    ) {
+        Ok(s) => panic!(
+            "ATTACK: a suite edited after its registration judged the candidate: {:?} class {}",
+            s.receipt.verification,
+            class(&s)
+        ),
+        Err(e) => assert!(
+            e.to_string().contains("not the registered"),
+            "refused for the edit: {e}"
+        ),
+    }
+}
+
+/// argv is `[check:<id>, test]` and nothing else: an element the run would
+/// ignore is refused, so no attested request carries an argument that did
+/// not take part in the run.
+#[test]
+fn a_protected_check_with_an_extra_argument_is_refused() {
+    let w = World::new();
+    let mut cfg = w.env.cfg(0);
+    cfg.observer = Some(w.auto_observer());
+    cfg.linux = Some(w.lx("", ""));
+    let mut r = w.request("op-argv-extra", "check:acc", "t_psv_ok");
+    r["argv"] = json!(["check:acc", "t_psv_ok", "; sh evil.ax"]);
+    match submit(&r.to_string(), &cfg) {
+        Ok(s) => panic!(
+            "ATTACK: a check whose argv carried an element the run ignored was run: {:?} class {}",
+            s.receipt.verification,
+            class(&s)
+        ),
+        Err(e) => assert_eq!(e.kind(), "malformed", "{e}"),
+    }
+}

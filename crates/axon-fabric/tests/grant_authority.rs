@@ -100,7 +100,13 @@ fn the_all_zero_policy_digest_placeholder_is_refused_with_zero_effects() {
     let env = Env::new();
     let mut r = request(&env, "op-zero-policy", "t_ok");
     r["policy_digest"] = json!(format!("acf1:{}", "0".repeat(64)));
-    let e = submit(&r.to_string(), &env.cfg(0)).unwrap_err();
+    let e = match submit(&r.to_string(), &env.cfg(0)) {
+        Ok(s) => panic!(
+            "ATTACK: a request governed by the all-zero placeholder policy was accepted: {:?}",
+            s.receipt.status
+        ),
+        Err(e) => e,
+    };
     assert!(matches!(e, SubmitError::Malformed(_)), "{e}");
     assert!(e.to_string().contains("placeholder"), "{e}");
     assert_untouched(&env, "zero policy digest");
@@ -166,7 +172,12 @@ fn admission_uses_the_request_grant_and_denies_before_launch() {
                     [grant.budget]\ncost_micro = 1000\n";
     let cfg = with_grants(&env, &[("grant:test", PRINCIPAL, net_only)]);
     let s = submit(&request(&env, "op-deny", "t_w").to_string(), &cfg).unwrap();
-    assert_eq!(s.receipt.status, ReceiptStatus::Denied);
+    assert!(
+        s.receipt.status == ReceiptStatus::Denied && spawn_count(&env.spawns) == 0,
+        "ATTACK: axon-os admission refused a program writing files under a net-only grant, \
+         and it ran anyway: {:?}",
+        s.receipt.status
+    );
     assert!(
         s.reason.as_deref().unwrap_or("").contains("fs_write"),
         "{s:?}"
@@ -175,12 +186,20 @@ fn admission_uses_the_request_grant_and_denies_before_launch() {
     assert_eq!(env.launch_records(), 0, "no launch record");
     assert!(!env.ws.join("out.txt").exists());
 
-    // The request may not spend more than its grant's budget.
+    // The request may not spend more than its grant's budget. rows4b: the
+    // grant's budget (500) is below the scope's (1000), so the request (600)
+    // fits the scope and only the grant's cap refuses it.
     let env = Env::new();
+    let half = GRANT_FS.replace("cost_micro = 1000", "cost_micro = 500");
+    let cfg = with_grants(&env, &[("grant:test", PRINCIPAL, &half)]);
     let mut r = request(&env, "op-over", "t_ok");
-    r["limits"]["max_cost_micro"] = json!(1001); // GRANT_FS: cost_micro = 1000
-    let s = submit(&r.to_string(), &env.cfg(0)).unwrap();
-    assert_eq!(s.receipt.status, ReceiptStatus::Denied);
+    r["limits"]["max_cost_micro"] = json!(600);
+    let s = submit(&r.to_string(), &cfg).unwrap();
+    assert!(
+        s.receipt.status == ReceiptStatus::Denied && spawn_count(&env.spawns) == 0,
+        "ATTACK: a request allowed to spend more than its grant's budget ran: {:?}",
+        s.receipt.status
+    );
     assert!(s.reason.unwrap().contains("budget.cost_micro"));
     assert_eq!(spawn_count(&env.spawns), 0);
     assert_eq!(env.launch_records(), 0);

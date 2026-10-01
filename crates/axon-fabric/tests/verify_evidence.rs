@@ -39,14 +39,16 @@ fn only_a_trusted_operator_signature_over_the_exact_bytes_verifies() {
     let operator = Issuer::generate();
     operator.write_signed(&rec, &record);
 
-    // No trusted issuer configured (the committed state today): refused.
+    // No trusted issuer configured (the committed state today): refused, by
+    // the empty-root rule or, without it, RULE:issuer-trusted (rows4b,
+    // four-cell record M1043).
     let (c, v) = verify(&rec, &issuers);
     assert_eq!(c, 4, "{v}");
     assert!(
         v["reason"]
             .as_str()
             .unwrap()
-            .contains("no trusted evidence issuer"),
+            .contains("trusted evidence issuer"),
         "{v}"
     );
 

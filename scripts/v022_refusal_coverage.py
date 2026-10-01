@@ -415,6 +415,403 @@ EXEMPT += [
      "NO CONSEQUENCE: a closure of another arity panics at its first call (call_closure checks "
      "the count) and dispatches on `fn` whatever its arity, so it selects no other code"),
 ]
+# ── C9 round 4b, workstream ROWS4B (amendment 62): the Fabric decision files
+# the round-4b EQUIVALENCE review found unscanned. Every refusal site in them is
+# rowed (M1020-M1083) or exempt below. Kinds, as above, plus: DEVELOPMENT
+# ROUTE (reached only when the selected profile is the local one, whose
+# receipts are Development class, M189; the protected profile launches only an
+# operator suite `check:<id>` with a named test, M400/M187, and a protected
+# host runs nothing else, M265); NOT ON THE PROTECTED ROUTE (no caller on the
+# submit/PSV/readiness paths, callers named); NOT A VERDICT PROPERTY (decides
+# billing, idempotence or a state transition: a fresh run's `ran_under` is
+# built in memory (submit.rs `RanUnder`), the journal's recorded intent and
+# outcome are read back only for a replay or `status`, and a replay is never
+# signed (M01, M402)); USAGE (a missing or malformed argument: the command
+# runs, signs and writes nothing). FLAGGED marks a reason the integrator must
+# accept or replace.
+PROTECTED += [
+    "crates/axon-fabric/src/backend.rs",
+    "crates/axon-fabric/src/submit.rs",
+    "crates/axon-fabric/src/git_data.rs",
+    "crates/axon-fabric/src/provenance.rs",
+    "crates/axon-fabric/src/bin/axon-fabric.rs",
+    "crates/axon-fabric/src/bin/axon-provenance.rs",
+    "crates/axon-fabric/src/signing.rs",
+    "crates/axon-fabric/src/workspace.rs",
+    "crates/axon-fabric/src/journal.rs",
+    "crates/axon-fabric/src/branches.rs",
+    "crates/axon-fabric/src/grants.rs",
+]
+FB = "crates/axon-fabric/src/backend.rs"
+FS = "crates/axon-fabric/src/submit.rs"
+FG = "crates/axon-fabric/src/git_data.rs"
+FP = "crates/axon-fabric/src/provenance.rs"
+FC = "crates/axon-fabric/src/bin/axon-fabric.rs"
+FN = "crates/axon-fabric/src/signing.rs"
+FW = "crates/axon-fabric/src/workspace.rs"
+FJ = "crates/axon-fabric/src/journal.rs"
+FR = "crates/axon-fabric/src/branches.rs"
+FA = "crates/axon-fabric/src/grants.rs"
+_DEV = ("DEVELOPMENT ROUTE: reached only for a local-profile run or an argv[0] that is not "
+        "`check:<id>`; the protected profile launches only an operator suite with a named test "
+        "(submit's suite-only refusal after check_target, M400/M187) and a local receipt is "
+        "Development class (M189)")
+_JNV = ("NOT A VERDICT PROPERTY: a journal state transition, budget or settlement rule; no "
+        "verdict, receipt class or attestation is derived from the journal (a fresh run's ran_under "
+        "is built in memory; the recorded intent/outcome is read back only by a replay, never "
+        "signed (M01, M402), or by `status`)")
+_BRN = ("NOT ON THE PROTECTED ROUTE: Branches::open_experiment / publish / cancel have no caller "
+        "outside tests (tests/branches.rs, tests/restart_matrix.rs); submit calls only "
+        "branch_of_run and is_cancelled (the cancelled-branch refusal is M1066)")
+_IO = "OS ERROR: the operation failed; nothing is run, signed or written (fails closed)"
+_USE = "USAGE: a missing or malformed argument; the command runs, signs and writes nothing"
+_NTA = "NOTHING TO ADMIT: the arm holds an error and no value the code after it could run on"
+EXEMPT += [
+    # backend.rs
+    (FB, 'pub const TEST_TRUST_BUILD: bool = cfg!(any(test, feature = "test-trust-root"));',
+     "NOT A SITE: the definition of the build constant; every read of it decides on its own line "
+     "(verify_evidence_authority M415, attests_protected M545/M605, the binary's flag refusal)"),
+    (FB, '    Err(format!(\n        "{}: operator ownership cannot be checked on this platform",',
+     "NON-UNIX: compiled only under cfg(not(unix)); fails closed where it exists"),
+    (FB, '        return Err(format!("{} is larger than {MAX} bytes", p.display()));',
+     "RESOURCE BOUND: with it removed read_regular still returns the ONE buffer every caller "
+     "verifies or hashes (at most MAX+1 bytes, a prefix the signature or pinned digest must then "
+     "cover byte for byte); it bounds memory and decides no fact"),
+    (FB, '    if std::fs::symlink_metadata(sig_path).is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound)',
+     "RE-REPORT: the next statement, read_regular(sig_path), fails on the same missing path "
+     "(ENOENT); this only names it RULE:unsigned"),
+    (FB, '        if !p.job_kinds.contains(&req.job_kind) {\n            return Err(Unsupported(format!(\n                "{}: job_kind {:?} unsupported — the protected profile',
+     "NAMED ROW: M321 adds InterpreterRun to the job_kinds this condition reads; JobKind has two "
+     "variants, so the only kind this refusal can refuse is admitted by either removal"),
+    (FB, '        Err(e) => return refused(format!("privileged launcher: {e}")),',
+     "NOTHING TO ADMIT: open_verified failed, so there is no verified helper descriptor to "
+     "execute; the pin, owner and lease rules themselves are sealed_exec.rs's (scanned)"),
+    (FB, '        Err(e) => return refused(format!("privileged launcher did not start: {e}")),',
+     "OS ERROR: the helper did not start; nothing was launched"),
+    (FB, '        Err(e) => {\n            return unknown(\n                format!("privileged launcher (exit {status:?}) gave no report: {e}"),',
+     "NOTHING TO ADMIT: the helper's output is no LaunchReport, so there is no report to judge"),
+    (FB, '            _ => unknown(\n                format!("privileged launcher exited {status:?}: {why}"),',
+     "NOTHING TO ADMIT: the report says nothing was launched, so there is no result to "
+     "interpret; the arm only chooses Unknown over Refused (billing), never a verdict"),
+    (FB, '        Err(e) => return refused(format!("launcher: {e}")),',
+     "DEVELOPMENT ROUTE (run_direct, never protected: M544) and NOTHING TO ADMIT: no verified "
+     "launcher descriptor to execute"),
+    (FB, '        Err(e) => return refused(format!("launcher interpreter: {e}")),',
+     "DEVELOPMENT ROUTE (run_direct, never protected: M544) and NOTHING TO ADMIT: no verified "
+     "interpreter descriptor"),
+    (FB, '        return refused(format!("out root {}: {e}", lx.out_root.display()));',
+     "DEVELOPMENT ROUTE (run_direct, M544) and OS ERROR: the out root could not be created"),
+    # submit.rs
+    (FS, '    if req.executable_digest != want {', _DEV + " (resolve_executable is the `else` of the "
+     "protected-profile executable binding, M1056/M1057)"),
+    (FS, '        (JobKind::InterpreterRun, _) => {',
+     "UNREACHABLE: check_target runs only after backend::select succeeded, and select refuses "
+     "every interpreter_run (local: M1054; protected: M321; the Axon-kernel VM: M1052)"),
+    (FS, '            .any(|c| !matches!(c, std::path::Component::Normal(_)))', _DEV),
+    (FS, '            if r != *want {', _DEV),
+    (FS, '        } else if *want == workspace_digest(&file, &bytes) {', _DEV),
+    (FS, '        .any(|e| e.path == file && e.mode != workspace::MODE_LINK)', _DEV),
+    (FS, '    if req.job_kind != JobKind::RegisteredCheck {',
+     "UNREACHABLE: as the InterpreterRun arm, only an interpreter_run could reach "
+     "check_suite_target with another job kind, and select refuses every one"),
+    (FS, '    if !store.contains(cand) {',
+     "RE-REPORT: the next statement, store.load(cand), fails on a ref the store does not hold "
+     "(StoreError::NotPublished)"),
+    (FS, '        .any(|e| e.path == c.entry && matches!(e.kind, workspace::EntryKind::File { .. }))',
+     "OPERATOR-AUTHORED: entry and tree are fields of the operator's registry entry, the tree "
+     "equal to the registered ref (M1061); a missing entry gives the interpreter nothing to run, so "
+     "no PASS (fails closed)"),
+    (FS, '            Err(_) => axon_os::DeclaredEffects::unknown(),',
+     "NOT A SITE: the deny-by-default effect row (an unreadable program declares every effect), "
+     "not the `unknown(` refusal constructor"),
+    (FS, '            if let Err(e) = journal.reserve_within(&req.operation_id, exp.regime, move |i| {',
+     _JNV + " (a branch's budget regime; an op left Intended is refused by mark_launched)"),
+    (FS, '                    &format!("profile no longer qualified: {e}"),',
+     "NOTHING TO ADMIT: the launch-time re-qualification failed, so there is no "
+     "LinuxQualification to launch or receipt under (its rules are rowed, M1025-M1043)"),
+    (FS, '                journal.cancel(&req.operation_id, &format!("not launched: {e}"), None)?;',
+     "NOTHING TO ADMIT: no host executor was built"),
+    (FS, '    if let Some(Err(e)) = local.as_ref().map(|l| l.verify()) {',
+     _DEV + "; also cortex run_checks re-verifies the pin (verified_path) before it spawns"),
+    (FS, '                        now => Err(format!(',
+     "NAMED ROW: M253 replaces the arm above with `_ => Ok((launch, Some(v)))`, which makes this "
+     "arm unreachable: the same removal"),
+    (FS, '                    let why = if why.starts_with("preflight observation refused") {',
+     "NOT A SITE: Journal::fail records the terminal state the arm already decided"),
+    (FS, '            let why = format!("backend {other} has no dispatcher");',
+     "NOT A SITE (Journal::fail) and UNREACHABLE: select returns only the local or the protected "
+     "profile"),
+    (FS, '        Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {',
+     "NOT A SITE: Journal::fail records the timeout the arm decided (Unknown, liability kept)"),
+    (FS, '            // or no summary): failed, verification unknown, liability kept.',
+     "NOT A SITE: Journal::fail records the arm's decision"),
+    (FS, '        ReceiptStatus::OutcomeUnknown => {\n            journal.fail(&req.operation_id, &res.reason, Billing::Unknown)?',
+     "NOT A SITE: Journal::fail records the receipt status already decided"),
+    (FS, '        _ => journal.fail(&req.operation_id, &res.reason, Billing::Unknown)?,',
+     "NOT A SITE: Journal::fail records the receipt status already decided"),
+    (FS, '    journal.fail(\n        &req.operation_id,\n        why,\n        Billing::Known(ResourceVector::default()),',
+     "NOT A SITE: Journal::fail records an unsupported receipt as failed (nothing launched)"),
+    # git_data.rs
+    (FG, '        return Err(format!("git {} failed", args.join(" ")));',
+     "FLAGGED, RE-REPORT on every caller: each caller refuses the empty answer a failed git leaves "
+     "(rev-parse HEAD '' -> Objects::read error; disambiguate '' -> the (None, _) arm; cat-file -t "
+     "'' -> M1073; git-common-dir '' -> canonicalize error; grafts path '' names the repo, whose "
+     "graft refusal fires); in provenance an empty revision fails head_bytes_differ"),
+    (FG, '        Err(e) => return Err(format!("{}: {e}", gitdir.join("commondir").display())),', _IO),
+    (FG, '    if std::fs::symlink_metadata(&wt).is_ok() {',
+     "FLAGGED, DOMINATED: git reads config.worktree only under extensions.worktreeConfig, and "
+     "refuse_config refuses every extensions.* key (allowed_key, M450)"),
+    (FG, '        return Err(format!("cannot read {path}: refused, never interpreted"));',
+     "FLAGGED, RE-REPORT: every later git call parses the same config and fails on it through "
+     "run()'s status check; a config git cannot read is never interpreted as empty"),
+    (FG, '                        return Err(format!("commit {c} names a malformed parent"));',
+     "RE-REPORT: the parent is then read by Objects::read, which refuses a name that is not an "
+     "object id hashing to its bytes (M289)"),
+    (FG, '        if lines.next() != Some(ALLOWLIST_SCHEMA) {',
+     "OPERATOR-AUTHORED: the allowlist is read only after its chain is root-owned and unwritable "
+     "(M502, M1070, M1071); an entry covering a source is still refused (M503)"),
+    (FG, '            if bad {', "OPERATOR-AUTHORED: as the allowlist schema above"),
+    (FG, '        return Err(format!("{} is not an absolute path", path.display()));',
+     "RE-REPORT: the next statement, strip_prefix(base), refuses a relative path; in production "
+     "the path is the absolute ALLOWLIST_PATH constant"),
+    (FG, '            return Err(format!("{} is a symlink", p.display()));',
+     "RE-REPORT: a symlink's own lstat mode is 0777, so the mode rule on the same metadata "
+     "(M1071) refuses it, and the open below is O_NOFOLLOW"),
+    (FG, '        Err(e) => return Err(format!("{}: {e}", src.path.display())),', _IO),
+    (FG, '        if !md.is_file() || md.dev() != lst.dev() || md.ino() != lst.ino() {',
+     "OPERATOR-AUTHORED: the chain was just checked root-owned and unwritable by others, so only "
+     "root can swap the file between lstat and open; a directory fails read_to_end"),
+    (FG, '        Err("operator ownership cannot be checked on this platform".into())',
+     "NON-UNIX: compiled only under cfg(not(unix))"),
+    (FG, '        return Err(format!("{rev:?} is not a revision"));\n    }\n    let head',
+     "OPERATOR-AUTHORED: the certified revision is a constant of the build script "
+     "(PCI_CERTIFIED) or readiness's full axon_sha; object_named refuses anything not hex "
+     "(the next rule) and git is never asked to parse an option"),
+    (FG, '    {\n        return Err(format!(\n            "{rev:?} is not an object id or an abbreviation',
+     "OPERATOR-AUTHORED: as above; a name that is not hex never reaches git as a revision"),
+    (FG, '        (None, _) => Err(format!("no object is named {rev}")),',
+     "NOTHING TO ADMIT: no object is named, so there is nothing to peel"),
+    (FG, '    } else {\n        Err(format!(\n            "{} is a symlink: refused",',
+     "DEVELOPMENT ROUTE: discover_linked's only caller is axon-provenance --descends, the guest "
+     "build's early check; the manifest's lineage (--lineage) goes through discover (M1072)"),
+    # provenance.rs
+    (FP, '        Err(e) => return unknown(e),\n    };\n    // The repository',
+     "NOTHING TO ADMIT: no working tree top, so provenance is unknown with a dirty reason "
+     "(fails closed)"),
+    (FP, '        Err(e) => return unknown(e),\n    };\n    let watch',
+     "NOTHING TO ADMIT: no HEAD revision, so provenance is unknown with a dirty reason"),
+    (FP, '    if rev.is_empty() || rev.starts_with(\'-\') {\n        return Err(format!("{rev:?} is not a revision"));\n    }\n    git_data::refuse_config(&top)?;',
+     "OPERATOR-AUTHORED: as git_data::descends's identical check, which runs on the same rev next"),
+    (FP, '        return Err("git check-ignore did not account for every ignored path".into());',
+     "FLAGGED, DOMINATED: M414's property (retired, subsumed by M501): the tree walk reports every "
+     "ignored untracked object whatever check-ignore answers"),
+    # signing.rs
+    (FN, '            _ => Err(WRONG_CLASS),\n        }\n    } else {\n        Err(KEY_REACHABLE)',
+     "NAMED ROW (68): M42's `} else if true {` sends every local run to the development arm, the "
+     "removal of this branch; (65) UNREACHABLE: a local receipt's first class ref is Development "
+     "(inserted by submit) and a replay is refused before (M01/M402)"),
+    # bin/axon-fabric.rs
+    (FC, 'fn refuse(kind: &str, reason: &str, code: i32) -> ! {', "NOT A SITE: the definition of refuse"),
+    (FC, '            .unwrap_or_else(|| refuse("usage", &format!("{flag} is required"), 2))', _USE),
+    (FC, '                .unwrap_or_else(|_| refuse("usage", &format!("{flag} must be a number"), 2)),', _USE),
+    (FC, '        _ => refuse(\n            "usage",', _USE),
+    (FC, '    let bad = |why: String| -> ! { refuse("unregistered", &format!("registry signer: {why}"), 4) };',
+     "NOT A SITE: signer()'s refusal closure (its only call is the no-protected-host, development "
+     "arm)"),
+    (FC, '    let bad = |why: String| -> ! { refuse("unregistered", &format!("{what}: {why}"), 4) };',
+     "NOT A SITE: signer_from's refusal closure; its uses are rows M140, M348, M488, M1078, M1079, "
+     "M1080 (FLAGGED: the scan does not see `bad(` uses; they are rowed here regardless)"),
+    (FC, '        axon_fabric::backend::TEST_TRUST_BUILD,',
+     "NAMED ROW: the argument is the build constant; verify_evidence_authority's use of it is "
+     "M415, and it only withholds authority"),
+    (FC, '                "build": if axon_fabric::backend::TEST_TRUST_BUILD { "test-trust" } else { "production" },',
+     "NOT A SITE: a status field printed, deciding nothing"),
+    (FC, '        Err(e) => refuse("unregistered", &e, 4),\n    }\n}',
+     "NOTHING TO ADMIT: the record did not verify, so there is no issuer to print"),
+    (FC, '        if !axon_fabric::backend::TEST_TRUST_BUILD {',
+     "cfg: in a production build the block that would honour the test flags is compiled out "
+     "(#[cfg(feature = \"test-trust-root\")]), so with the refusal removed the flags are ignored and "
+     "the operator config is read; in a test-trust build it never fires"),
+    (FC, '                    .unwrap_or_else(|e| refuse("unregistered", &format!("protected host: {e}"), 4)),',
+     "cfg: compiled only in a test-trust build (#[cfg(feature = \"test-trust-root\")])"),
+    (FC, '        .unwrap_or_else(|e| refuse("unregistered", &format!("protected host: {e}"), 4))\n}',
+     "FLAGGED, UNTESTED: an operator config that exists but does not load must refuse rather than "
+     "read as no protected host; operator() reads only /etc/axon, which no test may write, so no "
+     "test reaches it (the loader's own rules are protected_host.rs's, scanned)"),
+    (FC, '        refuse(\n            "usage",\n            "--authority must be', _USE),
+    (FC, '    let key = std::fs::read(a.req("--key")).unwrap_or_else(|e| refuse("io", &e.to_string(), 2));',
+     _IO + " (sign-evidence, an operator tool)"),
+    (FC, '        .unwrap_or_else(|_| refuse("usage", "--key is not an Ed25519 PKCS#8 key", 2));',
+     "NOTHING TO ADMIT: no key pair to sign with"),
+    (FC, '    let bytes = std::fs::read(&record).unwrap_or_else(|e| refuse("io", &e.to_string(), 2));', _IO),
+    (FC, '    std::fs::write(&out, sig.to_string()).unwrap_or_else(|e| refuse("io", &e.to_string(), 2));', _IO),
+    (FC, '        .unwrap_or_else(|e| refuse("io", &e.to_string(), 2));\n    let roots', _IO),
+    (FC, '        .unwrap_or_else(|e| refuse("unregistered", &e, 4));\n    // A: the privileged',
+     "NOTHING TO ADMIT: the trust preflight's path list could not be built; the same configs are "
+     "parsed and refused by the protected-host, launcher and custodian loaders (scanned)"),
+    (FC, '        .unwrap_or_else(|e| refuse("unregistered", &e, 4));\n    for hp in helper_paths',
+     "NOTHING TO ADMIT: as above (the helper config's paths)"),
+    (FC, '        .unwrap_or_else(|e| refuse("unregistered", &e, 4));\n    for cp in cust_paths',
+     "NOTHING TO ADMIT: as above (the custodian config's paths)"),
+    (FC, "        if s.contains(['\\t', '\\n']) || s != p.as_os_str().to_str().unwrap_or_default() {",
+     "OPERATOR-AUTHORED: the paths come from the operator configs the preflight names; a path the "
+     "preflight cannot print unambiguously is refused rather than listed (fails closed)"),
+    (FC, '        .unwrap_or_else(|_| refuse("io", "key generation failed", 2));', _IO + " (keygen)"),
+    (FC, '        .unwrap_or_else(|_| refuse("io", "generated key does not load", 2))', _IO + " (keygen)"),
+    (FC, '            .unwrap_or_else(|e| refuse("io", &format!("{}: {e}", out.display()), 2));',
+     "NOTHING TO ADMIT: create_new refused, so an existing key is never overwritten"),
+    (FC, '            .unwrap_or_else(|e| refuse("io", &e.to_string(), 2));\n    }', _IO),
+    (FC, '            .unwrap_or_else(|e| refuse("unauthorized", &e, 7)),',
+     "NOTHING TO ADMIT: the development registry does not load (no protected host), so there are "
+     "no grants to resolve"),
+    (FC, 'fn refuse_caller_grant_registry() -> ! {',
+     "NOT A SITE: the body of refuse_caller_grant_registry; its uses are M274 (and M273, retired)"),
+    (FC, '            .read_to_string(&mut s)', _IO + " (the request)"),
+    (FC, '        std::fs::read_to_string(&req_src).unwrap_or_else(|e| refuse("io", &e.to_string(), 2))', _IO),
+    (FC, '    let registry = axon_cortex::runner::CheckRegistry::load(&registry_path)',
+     "NOTHING TO ADMIT: no check registry; on a protected host it is the operator's, loaded at "
+     "its pin by protected_host.rs"),
+    (FC, '        scope(&a.req("--tenant"), &a.req("--family")).unwrap_or_else(|e| refuse("usage", &e, 2));', _USE),
+    (FC, '        .unwrap_or_else(|e| refuse("usage", &format!("--expected-epoch: {e}"), 2));', _USE),
+    (FC, '            .unwrap_or_else(|e| refuse("unregistered", &e, 4)),',
+     "NOTHING TO ADMIT: the protected host's authority store is unusable; the store rule is "
+     "protected_host.rs's"),
+    (FC, '                    .unwrap_or_else(|e| refuse("io", &e.to_string(), 2));', _IO + " (output)"),
+    (FC, '                    .unwrap_or_else(|e| refuse("io", &e, 2)),', _IO + " (output)"),
+    (FC, '                            .unwrap_or_else(|e| refuse("malformed", &e.to_string(), 3));',
+     "UNREACHABLE: submit() already parsed the same request text"),
+    (FC, '                            .unwrap_or_else(|e| refuse("io", &e, 2));', _IO + " (output)"),
+    (FC, '        Err(e) => refuse(e.kind(), &e.to_string(), e.exit_code()),',
+     "NOTHING TO ADMIT: submit refused, so there is no submission to print"),
+    (FC, '        .unwrap_or_else(|e| refuse("usage", &format!("--tenant: {e}"), 2));', _USE),
+    (FC, '            .unwrap_or_else(|e| refuse("workspace", &e.to_string(), 2));', "NOTHING TO ADMIT: no store"),
+    (FC, '    .unwrap_or_else(|e| refuse(e.class(), &e.to_string(), 3));', "NOTHING TO ADMIT: no tree imported"),
+    (FC, '        .unwrap_or_else(|e| refuse("workspace", &e.to_string(), 2));\n    println!(',
+     "NOTHING TO ADMIT: nothing published"),
+    (FC, '        .unwrap_or_else(|e| refuse("unauthorized", &e, 7));\n    let op',
+     "FLAGGED, DOMINATED on the existing attacks by M1077 (a wrong principal|grant is refused by "
+     "the op's recorded binding); its unique case is a grant revoked after submission"),
+    (FC, '    let op = OperationId::new(a.req("--op")).unwrap_or_else(|e| refuse("usage", &e.to_string(), 2));', _USE),
+    (FC, '        .unwrap_or_else(|e| refuse("journal", &e.to_string(), 2))\n        .unwrap_or_else(|| refuse("unknown_op"',
+     "NOTHING TO ADMIT: no journal"),
+    (FC, '        .unwrap_or_else(|| refuse("unknown_op", &format!("no operation {op}"), 5));',
+     "NOTHING TO ADMIT: the journal holds no op"),
+    (FC, '        refuse("unknown_op", &format!("no operation {op}"), 5)\n    };\n    if v.intent',
+     "NOTHING TO ADMIT: no such op"),
+    (FC, '        .unwrap_or_else(|e| refuse("journal", &e.to_string(), 2));\n    (j, op)', _NTA),
+    (FC, '        None => refuse("unknown_op", &format!("no operation {op}"), 5),',
+     "UNREACHABLE: authorized() already found the op's view"),
+    (FC, '        refuse("unknown_op", &format!("no operation {op}"), 5)\n    };\n    let billing',
+     "UNREACHABLE: authorized() already found the op's view"),
+    (FC, '        Err(e) => refuse("journal", &e.to_string(), 5),', _NTA + " (the cancel transition failed)"),
+]
+EXEMPT += [
+    # workspace.rs
+    (FW, '            return Err(ImportRefusal::QuotaEntries {',
+     "RESOURCE BOUND: without it a larger tree is admitted, but its reference still covers exactly "
+     "its bytes, and the guest's walk applies its own quota"),
+    (FW, '                return Err(ImportRefusal::QuotaBytes { limit: quota.bytes });', "RESOURCE BOUND: as above"),
+    (FW, '            return Err(ImportRefusal::Duplicate(w[0].path.clone()));',
+     "FLAGGED, UNREACHABLE ALONE: a directory lists each name once (import), and a stored "
+     "manifest with a duplicate hashes to no reference publish wrote (load refuses it, M1083)"),
+    (FW, '                        return Err(ImportRefusal::Collision {',
+     "NOT A VERDICT PROPERTY: the case-folding rule is for case-insensitive filesystems; on the "
+     "Linux guest and host each spelling is its own file and the guest's digest still equals the "
+     "reference (M159); a file/directory collision fails create_dir_all (fails closed)"),
+    (FW, '            return Err(ImportRefusal::SpecialFile(rel.into()));',
+     "DEVELOPMENT ROUTE: import_file's only caller is check_target's plain argv file (submit)"),
+    (FW, '        if meta.len() > quota.bytes {', "DEVELOPMENT ROUTE and RESOURCE BOUND: as above"),
+    (FW, '        if have != bytes {',
+     "FLAGGED, DOMINATED: a blob or manifest file holding other bytes than its name is refused "
+     "when read (tree() re-verifies every blob, M1081/M1082; load() the manifest, M1083)"),
+    (FW, '            if std::fs::read(dest)? != bytes {', "FLAGGED, DOMINATED: as above (a concurrent publisher)"),
+    (FW, '        Err(e) => Err(e.into()),\n    }\n}', _IO),
+    (FW, '    }\n    Err(e)', _IO + " (renameat2)"),
+    (FW, '            Err(e) => return Err(e.into()),\n        }\n        if files.is_empty() {', _IO),
+    (FW, '            return Err(StoreError::Corrupt(format!("{r} has no omission record")));',
+     "NOT A VERDICT PROPERTY: omissions are not part of the reference; they are read only into "
+     "WorkspaceTree.omissions, which only `axon-fabric workspace import` prints"),
+    (FW, '            if f.parent() == Some(self.omissions_dir(r).as_path())', "NOT A VERDICT PROPERTY: as above"),
+    (FW, '                return Err(StoreError::NotPublished(r.to_string()))', "NOTHING TO ADMIT: no manifest"),
+    (FW, '            Err(e) => return Err(e.into()),\n        };\n        if workspace_version_ref', _IO),
+    (FW, '            return Err(StoreError::DestinationExists(dest.to_path_buf()));',
+     "UNREACHABLE on the protected route: psv.rs creates the inputs directory NEW (not recursive) "
+     "and materializes into new subdirectories (FLAGGED: RunDir::new on the development route "
+     "uses create_dir_all)"),
+    (FW, '                    return Err(StoreError::Io(format!("no symlinks here: {target}")));',
+     "NON-UNIX: compiled only under cfg(not(unix))"),
+    # journal.rs
+    (FJ, '                return Err(name);', _JNV),
+    (FJ, '                    return Err(JournalError::ScopeConflict {', _JNV),
+    (FJ, '                    return Err(JournalError::UnknownScope(Box::new(intent.scope.clone())));', _JNV),
+    (FJ, '                        return Err(JournalError::Conflict {\n', _JNV + " (one op, one intent; submit's input-digest rule is M1063)"),
+    (FJ, '                    return Err(bad(&v, "reserved"));', _JNV),
+    (FJ, '                    return Err(JournalError::BudgetExceeded {', _JNV),
+    (FJ, '                    return Err(bad(&v, "launched"));', _JNV),
+    (FJ, '                    return Err(bad(&v, "completed"));', _JNV),
+    (FJ, '                    return Err(bad(&v, "failed"));', _JNV),
+    (FJ, '                    _ => return Err(bad(&v, "cancelled")),', _JNV),
+    (FJ, '                    return Err(bad(&v, "outcome_unknown"));', _JNV),
+    (FJ, '                        return Err(JournalError::SettlementConflict {', _JNV),
+    (FJ, '                    _ => return Err(bad(&get(op)?, "settle_conflict")),', _JNV),
+    (FJ, '                    return Err(bad(&v, "outcome"));', _JNV),
+    (FJ, '            return Err(JournalError::InvalidSettlement(', _JNV),
+    (FJ, '            return Err(JournalError::InvalidTransition {', _JNV),
+    (FJ, '            return Err(JournalError::Locked(path.to_path_buf()));', "OS ERROR: the lock is still held at the deadline; nothing runs"),
+    (FJ, '            Err(e) => return Err(JournalError::Io(e)),', "OS ERROR: stat failed other than NotFound (NotFound is M333)"),
+    (FJ, '            if line.seq != seq + 1 {',
+     _JNV + "; a corrupt journal can at most hide an op (run fresh, a genuine run) or invent one "
+     "(a replay, never signed)"),
+    (FJ, '                        return Err(JournalError::Corrupt {', _JNV + "; as above"),
+    (FJ, '            if matches!(change, Change::Duplicate) {', _JNV + "; as above"),
+    (FJ, '                }\n                return Err(JournalError::Conflict {', _JNV),
+    (FJ, '            Err(e) => Err(e),\n        }\n    }\n\n    /// Carve', _IO + " (append's own refusals are their own sites)"),
+    (FJ, '        ) {\n            return Err(JournalError::BudgetExceeded {', _JNV),
+    (FJ, '                Err(JournalError::SettlementConflict { op, reason })', _JNV),
+    (FJ, '            Err(e) => Err(e),\n        }\n    }\n\n    /// Attach', _IO + " (passes on the error)"),
+    # branches.rs
+    (FR, '        Err(e) => Err(e.into()),', _IO + " (create_once's hard_link)"),
+    (FR, '        if !store.contains(base) {', _BRN),
+    (FR, '        if arms.len() < 2 {', _BRN),
+    (FR, '                return Err(BranchError::Invalid(format!("arm {a} declared twice")));', _BRN),
+    (FR, '            if approvers.contains(w) {', _BRN),
+    (FR, '        if approvers.is_empty() {', _BRN),
+    (FR, '            }\n            return Err(BranchError::Exists(format!(', _BRN),
+    (FR, '                return Err(BranchError::Exists(format!(', _BRN),
+    (FR, '            return Err(BranchError::Unknown(format!(',
+     "NOT A VERDICT PROPERTY: experiment(), reached on submit through branch_of_run; the lookup can "
+     "only add a refusal, and the experiment/arm it names goes only into the intent (read back "
+     "only by replays, never signed)"),
+    (FR, '            return Err(BranchError::Cancelled(format!(', _BRN),
+    (FR, '        if req.writer != br.writer {', _BRN),
+    (FR, '        if req.approver == req.writer || !exp.approvers.contains(&req.approver) {', _BRN),
+    (FR, '            return Err(BranchError::StaleEpoch(format!(', _BRN),
+    (FR, '        if !store.contains(&req.new_version) {', _BRN),
+    (FR, '        if v.intent.scope != self.scope || v.intent.trial_id != br.run_id {', _BRN),
+    (FR, '            || rc.verification != ReceiptVerification::Passed', _BRN),
+    (FR, '            || rc.output_workspace_ref.as_ref() != Some(&req.new_version)', _BRN),
+    (FR, '        if head.seq != req.expected_seq || head.version != req.expected_version {', _BRN),
+    (FR, '                return Err(BranchError::Conflict(format!(', _BRN),
+    (FR, '            Err(e) => return Err(e.into()),', _BRN),
+    (FR, '            journal.fail(', _BRN + " (538 is Journal::fail, not a refusal)"),
+    # grants.rs
+    (FA, '        if v.get("schema").and_then(|s| s.as_str()) != Some(GRANT_REGISTRY_SCHEMA) {',
+     "OPERATOR-AUTHORED: on a protected host the registry is parsed only at its pin (M277, M275, "
+     "M276); a development registry is the caller's own"),
+    (FA, '                return Err(format!("grant registry names `{grant_ref}` twice"));', "OPERATOR-AUTHORED: as above"),
+    (FA, '                return Err(format!("grant `{grant_ref}`: sha256 must be 64 hex"));',
+     "OPERATOR-AUTHORED: as above; a non-hex value also never equals the digest computed below"),
+    (FA, '        if e.principal_ref != principal_ref {',
+     "FLAGGED, NOT AUTHENTICATION: principal_ref is a request field nothing authenticates, so a "
+     "caller passes it by naming the bound principal; the limits are the registry pin (M275-M277) "
+     "and grant-file ownership (protected_host.rs)"),
+    (FA, '        if found != e.sha256 {',
+     "OPERATOR-AUTHORED on the protected route: grant files are checked root-owned when the "
+     "config loads (protected_host.rs) and the registry is pinned (M277)"),
+    (FA, '        if manifest.program != base.join(PLACEHOLDER_PROGRAM) {',
+     "UNREACHABLE EFFECT: the parsed program is never read; ResolvedGrant::manifest_for replaces "
+     "it with the request's program"),
+]
 
 def load_rows():
     spec = importlib.util.spec_from_file_location("mut", os.path.join(ROOT, "scripts/v022_g01_mutations.py"))

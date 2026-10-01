@@ -3538,6 +3538,321 @@ PSV_IDS |= {f"M{n}" for n in range(1140, 1180)}
 # C9 round 4b fix wave: harness3 M1180-M1199 (amendment 63).
 PSV_IDS |= {f"M{n}" for n in range(1180, 1200)}
 
+# ── C9 round 4b, workstream ROWS4B (M1020-M1139; amendment 62): EQUIVALENCE (4),
+# Fabric side. Round 4b found the protected Fabric decision files outside the
+# refusal-site scan, with refusals no row covered: the root helper's REPORT
+# (schema, exit, post-launch error, the same-byte property of decisions A/D),
+# the protected executable, and accept_b263 / the qualification's own rules;
+# with all five report/executable refusals removed the whole axon-fabric
+# suite stayed green. Each ACTIVE row below is killed by its OWN attack through
+# a production route (submit on the helper route; Fabric's qualification AND
+# readiness's B263 decision for the shared accept_b263 rules; the built
+# axon-provenance for the lineage naming; the axon-fabric binary). Rows
+# retired EQUIVALENT_DID carry a four-cell record (EQUIV_RECORD below).
+_FB = 'crates/axon-fabric/src/backend.rs'
+_FS = 'crates/axon-fabric/src/submit.rs'
+_FG = 'crates/axon-fabric/src/git_data.rs'
+_FP = 'crates/axon-fabric/src/provenance.rs'
+_FC = 'crates/axon-fabric/src/bin/axon-fabric.rs'
+_FW = 'crates/axon-fabric/src/workspace.rs'
+_OT = 'crates/axon-loop-contracts/src/operator_trust.rs'
+_TP = '--test psv_dispatch'
+_TR = '--test readiness_attribution'
+_TQ = '--test qualification'
+_TS = '--test submit'
+_TG = '--test guest_policy'
+_TV = '--test guest_provenance'
+MUTATIONS += [
+    # ── the privileged helper's report (run_privileged) ──
+    ('M1020', "A (rows4b): a helper report of another schema yields no verdict", _FB,
+     '    if report.schema != pl::REPORT_SCHEMA {', '    if false && report.schema != pl::REPORT_SCHEMA {',
+     'axon-fabric', _TP, 'a_helper_report_of_another_schema_yields_no_verdict'),
+    ('M1021', "A (rows4b): a helper that did not exit EXIT_LAUNCHED yields no verdict", _FB,
+     '    if status != Some(pl::EXIT_LAUNCHED) || report.error.is_some() {',
+     '    if false || report.error.is_some() {',
+     'axon-fabric', _TP, 'a_helper_exit_other_than_launched_yields_no_verdict'),
+    ('M1022', "A (rows4b): a helper error after the launch yields no verdict", _FB,
+     '    if status != Some(pl::EXIT_LAUNCHED) || report.error.is_some() {',
+     '    if status != Some(pl::EXIT_LAUNCHED) || false {',
+     'axon-fabric', _TP, 'a_helper_error_after_the_launch_yields_no_verdict'),
+    ('M1023', "D (rows4b): a launcher or interpreter that changed during the launch (report.unchanged) yields no verdict", _FB,
+     '    if !report.unchanged || helper.unchanged().is_err() {',
+     '    if false || helper.unchanged().is_err() {',
+     'axon-fabric', _TP, 'a_launcher_that_changed_during_the_launch_yields_no_verdict'),
+    ('M1024', "D (rows4b): a helper that changed during the launch yields no verdict", _FB,
+     '    if !report.unchanged || helper.unchanged().is_err() {',
+     '    if !report.unchanged || false {',
+     'axon-fabric', _TP, 'a_helper_that_changed_during_the_launch_yields_no_verdict'),
+    # ── accept_b263: ONE implementation, both routes ──
+    ('M1025', "PSV-7 (rows4b): RULE:issuer-claimed, Fabric and readiness", _FB,
+     '    if ev["issuer_key_id"].as_str() != Some(issuer) {', '    if false && ev["issuer_key_id"].as_str() != Some(issuer) {',
+     'axon-fabric', _TR, 'a_b263_record_naming_another_issuer_qualifies_nothing_on_either_route'),
+    ('M1026', "PSV-7 (rows4b): RULE:pass-count, Fabric and readiness", _FB,
+     '    if ev["counts"]["PASS"].as_u64().unwrap_or(0) == 0 {', '    if false && ev["counts"]["PASS"].as_u64().unwrap_or(0) == 0 {',
+     'axon-fabric', _TR, 'a_b263_record_counting_no_pass_qualifies_nothing_on_either_route'),
+    ('M1027', "PSV-7 (rows4b): RULE:blocked-count, Fabric and readiness", _FB,
+     '    if ev["counts"]["BLOCKED"].as_u64() != Some(blocked.len() as u64) {',
+     '    if false && ev["counts"]["BLOCKED"].as_u64() != Some(blocked.len() as u64) {',
+     'axon-fabric', _TR, 'a_b263_record_whose_blocked_count_disagrees_qualifies_nothing_on_either_route'),
+    ('M1028', "PSV-7 (rows4b): RULE:blocked-unwaived, Fabric and readiness", _FB,
+     '        if !waivers.contains_key(name) {', '        if false && !waivers.contains_key(name) {',
+     'axon-fabric', _TR, 'an_unwaived_blocked_assertion_qualifies_nothing_on_either_route'),
+    ('M1029', "PSV-7 (rows4b): RULE:waiver-reason, Fabric and readiness", _FB,
+     '        if waivers.get(name).is_some_and(|w| w.reason.is_empty()) {',
+     '        if false && waivers.get(name).is_some_and(|w| w.reason.is_empty()) {',
+     'axon-fabric', _TR, 'a_waiver_stating_no_reason_qualifies_nothing_on_either_route'),
+    ('M1030', "PSV-7 (rows4b): RULE:waiver-expiry, Fabric and readiness", _FB,
+     '            .is_some_and(|w| w.expires.is_none_or(|t| now >= t))', '            .is_some_and(|_| false)',
+     'axon-fabric', _TR, 'an_expired_waiver_qualifies_nothing_on_either_route'),
+    ('M1031', "PSV-7 (rows4b): RULE:end-not-future (the only rule under no maximum age)", _FB,
+     '    if end > now {', '    if false && end > now {',
+     'axon-fabric', _TQ, 'a_record_from_the_future_never_qualifies_even_with_no_maximum_age'),
+    ('M1032', "PSV-7 (rows4b): RULE:engine-digests (readiness joins only firecracker)", _FB,
+     '    if !is_hex64(&eng["firecracker_sha256"]) || !is_hex64(&eng["jailer_sha256"]) {',
+     '    if false && (!is_hex64(&eng["firecracker_sha256"]) || !is_hex64(&eng["jailer_sha256"])) {',
+     'axon-fabric', _TR, 'a_b263_record_naming_no_jailer_qualifies_nothing_on_either_route'),
+    ('M1033', "PSV-7 (rows4b): RULE:caveat, Fabric and readiness", _FB,
+     '    if caveat.is_empty() {', '    if false && caveat.is_empty() {',
+     'axon-fabric', _TR, 'a_b263_record_stating_no_caveat_qualifies_nothing_on_either_route'),
+    ('M1034', "PSV-7 (rows4b): RULE:waiver-bound (parse_waivers), Fabric and readiness", _FB,
+     '    if w["evidence_sha256"].as_str() != Some(evidence_sha256) {',
+     '    if false && w["evidence_sha256"].as_str() != Some(evidence_sha256) {',
+     'axon-fabric', _TR, 'a_waiver_bound_to_another_record_qualifies_nothing_on_either_route'),
+    ('M1035', "PSV-7 (rows4b): RULE:issuer-trusted (verify_evidence_signature), Fabric and readiness", _OT,
+     '    if !trusted.contains(&pk) {', '    if false && !trusted.contains(&pk) {',
+     'axon-fabric', _TR, 'a_b263_record_signed_by_an_untrusted_key_naming_itself_qualifies_nothing'),
+    # ── the qualification's own rules (this host's manifest) ──
+    ('M1036', "PSV-7 (rows4b): the qualification record's schema", _FB,
+     '        if ev["schema"] != "axon-b263-evidence/1" {', '        if false && ev["schema"] != "axon-b263-evidence/1" {',
+     'axon-fabric', _TQ, 'a_record_of_another_schema_never_qualifies'),
+    ('M1037', "PSV-7 (rows4b): the qualification record's profile", _FB,
+     '        if ev["profile"]["name"] != LINUX_MICROVM_PROTECTED.id {',
+     '        if false && ev["profile"]["name"] != LINUX_MICROVM_PROTECTED.id {',
+     'axon-fabric', _TQ, 'a_record_for_another_profile_never_qualifies'),
+    ('M1038', "PSV-7 (rows4b): RULE:engine-pin required (retired: a missing pin never equals the record's digest, M1039)", _FB,
+     '        if !is_hex64(&pin["firecracker_sha256"]) || !is_hex64(&pin["jailer_sha256"]) {',
+     '        if false && (!is_hex64(&pin["firecracker_sha256"]) || !is_hex64(&pin["jailer_sha256"])) {',
+     'axon-fabric', _TQ, 'a_manifest_pinning_no_engine_never_qualifies'),
+    ('M1039', "PSV-7 (rows4b): RULE:engine-pin equality", _FB,
+     '        if pin["firecracker_sha256"] != eng["firecracker_sha256"]\n            || pin["jailer_sha256"] != eng["jailer_sha256"]\n        {',
+     '        if false\n        {',
+     'axon-fabric', _TQ, 'engine_digests_other_than_the_manifests_pins_never_qualify'),
+    ('M1040', "PSV-7 (rows4b): RULE:manifest-clean", _FB,
+     '        if m["source"]["axon_tree_dirty_at_build"] != serde_json::Value::Bool(false) {',
+     '        if false && m["source"]["axon_tree_dirty_at_build"] != serde_json::Value::Bool(false) {',
+     'axon-fabric', _TQ, 'a_manifest_built_from_a_dirty_tree_never_qualifies'),
+    ('M1041', "PSV-7 (rows4b): the record qualifies THIS manifest", _FB,
+     '        if evidence_manifest_sha256 != manifest_sha256 {', '        if false && evidence_manifest_sha256 != manifest_sha256 {',
+     'axon-fabric', _TQ, 'a_record_qualifying_another_manifest_never_qualifies_this_one'),
+    ('M1042', "PSV-7 (rows4b): a waiver file is an axon-b263-waiver/1 (Fabric's configured waivers)", _FB,
+     '    if w["schema"] != WAIVER_SCHEMA {', '    if false && w["schema"] != WAIVER_SCHEMA {',
+     'axon-fabric', _TQ, 'a_waiver_file_of_another_schema_waives_nothing'),
+    ('M1043', "PSV-7 (rows4b): an empty qualification root trusts nothing (retired: RULE:issuer-trusted, M1035)", _FB,
+     '    if keys.is_empty() {', '    if false && keys.is_empty() {',
+     'axon-fabric', _TQ, 'an_empty_qualification_root_qualifies_nothing'),
+    # ── backend selection ──
+    ('M1044', "select (rows4b): an architecture the backend does not offer", _FB,
+     '    if !p.architectures.contains(&r.architecture) {', '    if false && !p.architectures.contains(&r.architecture) {',
+     'axon-fabric', _TS, 'an_architecture_no_backend_offers_never_runs_on_the_host'),
+    ('M1045', "select (rows4b): a checkpoint kind the backend does not offer", _FB,
+     '    if !p.checkpoint_kinds.contains(&r.checkpoint_kind) {', '    if false && !p.checkpoint_kinds.contains(&r.checkpoint_kind) {',
+     'axon-fabric', _TS, 'a_checkpoint_kind_no_backend_offers_never_runs_on_the_host'),
+    ('M1046', "select (rows4b): a reproducible (hermetic) grant is never run", _FB,
+     '    if needs.reproducible {', '    if false && needs.reproducible {',
+     'axon-fabric', _TS, 'a_reproducible_grant_never_runs_non_reproducibly'),
+    ('M1047', "select (rows4b): a brokered network request is never run unbrokered", _FB,
+     '    if r.network_mode == NetworkMode::Brokered {', '    if false && r.network_mode == NetworkMode::Brokered {',
+     'axon-fabric', _TS, 'a_brokered_network_request_never_runs_unbrokered'),
+    ('M1048', "select (rows4b): only the Axon interpreter engine is offered", _FB,
+     '    if r.engine != Engine::AxonInterpreter {', '    if false && r.engine != Engine::AxonInterpreter {',
+     'axon-fabric', _TS, 'another_engine_is_never_substituted_by_the_interpreter'),
+    ('M1049', "select (rows4b): x1, a restricting grant needs the qualified guest policy channel", _FB,
+     '        if needs.guest_policy_channel && !q.guest_policy_channel {',
+     '        if false && needs.guest_policy_channel && !q.guest_policy_channel {',
+     'axon-fabric', _TG, 'a_restricting_grant_is_never_launched_without_an_x1_pass'),
+    ('M1050', "select (rows4b): x2, a path-scoped grant on the protected profile", _FB,
+     '        if needs.path_scoped_grant {\n            return Err(Unsupported(format!(\n                "{}: the grant is path-scoped',
+     '        if false && needs.path_scoped_grant {\n            return Err(Unsupported(format!(\n                "{}: the grant is path-scoped',
+     'axon-fabric', _TG, 'a_path_scoped_grant_is_never_launched_on_the_protected_profile'),
+    ('M1051', "select (rows4b): os=linux without hardware isolation never falls to the host", _FB,
+     '    if r.os == Os::Linux {', '    if false && r.os == Os::Linux {',
+     'axon-fabric', _TS, 'os_linux_without_hardware_isolation_never_runs_on_the_host'),
+    ('M1052', "select (rows4b): hardware isolation is never dropped to the host interpreter", _FB,
+     '    if r.hardware_isolation {\n        let p = FIRECRACKER_AXON_KERNEL;',
+     '    if false && r.hardware_isolation {\n        let p = FIRECRACKER_AXON_KERNEL;',
+     'axon-fabric', _TS, 'hardware_isolation_is_never_dropped_to_the_host_interpreter'),
+    ('M1053', "select (rows4b): a path-scoped grant never runs under the host's coarse ceiling", _FB,
+     '    if needs.path_scoped_grant {\n        // The host interpreter',
+     '    if false && needs.path_scoped_grant {\n        // The host interpreter',
+     'axon-fabric', _TS, 'a_path_scoped_grant_never_runs_under_the_hosts_coarse_ceiling'),
+    ('M1054', "select (rows4b): the host backend runs registered checks only", _FB,
+     '    if !p.job_kinds.contains(&req.job_kind) {\n        return Err(Unsupported(format!(\n            "{}: job_kind {:?} unsupported (it runs registered checks only)",',
+     '    if false && !p.job_kinds.contains(&req.job_kind) {\n        return Err(Unsupported(format!(\n            "{}: job_kind {:?} unsupported (it runs registered checks only)",',
+     'axon-fabric', _TS, 'an_interpreter_run_never_runs_on_the_host_backend'),
+    ('M1055', "x1 (rows4b): a guest policy the cmdline would truncate is never launched", _FB,
+     '        if word > GUEST_POLICY_WORD_MAX {', '        if false && word > GUEST_POLICY_WORD_MAX {',
+     'axon-fabric', _TG, 'a_policy_the_guest_cmdline_would_truncate_is_never_launched'),
+    # ── submit ──
+    ('M1056', "PSV-6 (rows4b): the protected profile runs only the rootfs interpreter", _FS,
+     '        if id != backend::LINUX_GUEST_AXON_ID {', '        if false && id != backend::LINUX_GUEST_AXON_ID {',
+     'axon-fabric', _TP, 'a_protected_request_naming_another_executable_is_refused'),
+    ('M1057', "PSV-6 (rows4b): the protected request's executable digest is the qualified guest interpreter's", _FS,
+     '        if req.executable_digest != executable_digest(id, &e) {', '        if false && req.executable_digest != executable_digest(id, &e) {',
+     'axon-fabric', _TP, 'a_protected_request_with_another_executable_digest_is_refused'),
+    ('M1058', "PSV-6 (rows4b): an absent authority store is not epoch 0", _FS,
+     '                if !store.join("config.json").is_file() {', '                if false && !store.join("config.json").is_file() {',
+     'axon-fabric', '--test peer_failure_matrix', 'an_unreadable_epoch_store_at_submit_refuses_and_records_nothing'),
+    ('M1059', "submit (rows4b): a registered check's argv is [file] or [file, filter], nothing ignored", _FS,
+     '        (JobKind::RegisteredCheck, _) => {',
+     '        (JobKind::RegisteredCheck, [f, flt, ..]) => (f.clone(), Some(flt.clone())),\n        (JobKind::RegisteredCheck, _) => {',
+     'axon-fabric', _TP, 'a_protected_check_with_an_extra_argument_is_refused'),
+    ('M1060', "submit (rows4b): no symbolic link in a candidate or suite (refuse_links, every call)", _FS,
+     '        if is_link {', '        if false && is_link {',
+     'axon-fabric', '--test check_effects', 'a_candidate_holding_a_symlink_is_refused'),
+    ('M1061', "PSV-5 (rows4b): an operator suite judges only at its registered version", _FS,
+     '    if tree.reference().as_str() != c.workspace_version_ref {', '    if false && tree.reference().as_str() != c.workspace_version_ref {',
+     'axon-fabric', _TP, 'a_suite_edited_after_registration_never_judges'),
+    ('M1062', "submit (rows4b): the axon-os supervisor's refusal is final", _FS,
+     '        other => Err(format!("axon-os supervisor refused: {other:?}")),', '        _ => Ok(rec.approval),',
+     'axon-fabric', '--test grant_authority', 'admission_uses_the_request_grant_and_denies_before_launch'),
+    ('M1063', "submit (rows4b): one op id, one input", _FS,
+     '        if v.intent.input_digest != input_digest {', '        if false && v.intent.input_digest != input_digest {',
+     'axon-fabric', _TS, 'same_op_different_input_is_a_conflict_with_zero_effects'),
+    ('M1064', "PSV-6 (rows4b): an orphan is never resumed under a superseded epoch", _FS,
+     '                if v.intent.authority_epoch != cfg.expected_epoch {', '                if false && v.intent.authority_epoch != cfg.expected_epoch {',
+     'axon-fabric', '--test restart_matrix', 'an_orphan_is_not_resumed_under_a_superseded_epoch'),
+    ('M1065', "PSV-6 (rows4b): a stale-epoch request is never journalled", _FS,
+     '    if current.as_ref().ok() != Some(&cfg.expected_epoch) {', '    if false && current.as_ref().ok() != Some(&cfg.expected_epoch) {',
+     'axon-fabric', _TS, 'epoch_mismatch_at_submit_is_refused_with_zero_effects'),
+    ('M1066', "B271 (rows4b): a cancelled branch never runs again", _FS,
+     '        if branches.is_cancelled(&exp.experiment_id, &br.arm_id) {\n            // A pre-launch orphan of a cancelled branch is released here: a\n            // crash inside `Branches::cancel` (marker written, ops not yet\n            // cancelled) must not leave its reservation held until someone\n            // happens to re-run the cancel. Nothing launched, so nothing to bill.\n            if resume.is_some() {',
+     '        if false && branches.is_cancelled(&exp.experiment_id, &br.arm_id) {\n            // A pre-launch orphan of a cancelled branch is released here: a\n            // crash inside `Branches::cancel` (marker written, ops not yet\n            // cancelled) must not leave its reservation held until someone\n            // happens to re-run the cancel. Nothing launched, so nothing to bill.\n            if resume.is_some() {',
+     'axon-fabric', '--test branches', 'a_cancelled_branch_never_runs_again'),
+    ('M1067', "PSV-6 (rows4b): the epoch is re-read before the launch (every route)", _FS,
+     '    if now.as_ref().ok() != Some(&cfg.expected_epoch) {', '    if false && now.as_ref().ok() != Some(&cfg.expected_epoch) {',
+     'axon-fabric', _TS, 'an_epoch_change_between_submit_and_launch_is_refused_before_the_launch_record'),
+    ('M1068', "submit (rows4b): a request never spends more than its grant's budget", _FS,
+     '    if i64::try_from(req.limits.max_cost_micro).map_or(true, |c| c > cap) {',
+     '    if false && i64::try_from(req.limits.max_cost_micro).map_or(true, |c| c > cap) {',
+     'axon-fabric', '--test grant_authority', 'admission_uses_the_request_grant_and_denies_before_launch'),
+    ('M1069', "submit (rows4b): the all-zero placeholder policy governs nothing", _FS,
+     '    if req.policy_digest.as_str() == PLACEHOLDER_POLICY_DIGEST {', '    if false && req.policy_digest.as_str() == PLACEHOLDER_POLICY_DIGEST {',
+     'axon-fabric', '--test grant_authority', 'the_all_zero_policy_digest_placeholder_is_refused_with_zero_effects'),
+    # ── provenance / lineage (git_data, provenance) ──
+    ('M1070', "FIELD-ORIGIN (rows4b): the provenance allowlist chain is root-owned", _FG,
+     '        if m.uid() != 0 {', '        if false && m.uid() != 0 {',
+     'axon-fabric', '--lib', 'provenance::tests::an_allowlist_that_is_not_operator_owned_excuses_nothing'),
+    ('M1071', "FIELD-ORIGIN (rows4b): the provenance allowlist chain is not group/other-writable", _FG,
+     '        if m.mode() & 0o022 != 0 {', '        if false && m.mode() & 0o022 != 0 {',
+     'axon-fabric', '--lib', 'provenance::tests::an_allowlist_that_is_not_operator_owned_excuses_nothing'),
+    ('M1072', "FIELD-ORIGIN (rows4b): a symlinked .git is no clone (discover; retired vs M1085)", _FG,
+     '        _ => Err(format!(\n            "{} is not a directory (a gitfile or symlink',
+     '        _ if true => Ok(top),\n        _ => Err(format!(\n            "{} is not a directory (a gitfile or symlink',
+     'axon-fabric', _TV, 'a_symlinked_git_dir_is_never_a_clean_build_tree'),
+    ('M1073', "FIELD-ORIGIN (rows4b): a certified revision naming no commit is no lineage", _FG,
+     '            other => return Err(format!("{rev} is a {other}, not a commit")),', '            _ => return Ok(()),',
+     'axon-fabric', _TV, 'a_certified_revision_naming_a_blob_is_no_lineage'),
+    ('M1074', "FIELD-ORIGIN (rows4b): a tag chain past the peel limit is no lineage", _FG,
+     '    Err(format!("{rev}: too many nested tags"))', '    Ok(())',
+     'axon-fabric', _TV, 'a_tag_chain_deeper_than_the_peel_limit_is_no_lineage'),
+    ('M1075', "FIELD-ORIGIN (rows4b): an ambiguous abbreviation is no lineage", _FG,
+     '        _ => Err(format!(\n            "{rev} is ambiguous',
+     '        (Some(one), _) => Ok(one.to_string()),\n        _ => Err(format!(\n            "{rev} is ambiguous',
+     'axon-fabric', _TV, 'an_ambiguous_abbreviation_is_no_lineage'),
+    ('M1076', "FIELD-ORIGIN (rows4b): build provenance calls the repository-config refusal", _FP,
+     '    if let Err(e) = git_data::refuse_config(&top) {\n        return unknown(e);\n    }',
+     '    let _ = git_data::refuse_config(&top);',
+     'axon-fabric', '--lib', 'provenance::tests::a_filter_driver_in_the_repository_config_never_runs'),
+    # ── the axon-fabric binary ──
+    ('M1077', "D1 (rows4b): status/cancel serve an op only to the principal|grant it was submitted under", _FC,
+     '    if v.intent.authority_ref != format!("{principal}|{grant}") {', '    if false && v.intent.authority_ref != format!("{principal}|{grant}") {',
+     'axon-fabric', '--test grant_registry_authority', 'status_and_cancel_authorize_before_any_write_and_reconcile_only_their_scope'),
+    ('M1078', "O1 (rows4b): the protected signer key derives its pinned public key", _FC,
+     '    if pk != field("public_key") {', '    if false && pk != field("public_key") {',
+     'axon-fabric', '--test protected_host', 'the_host_signer_key_must_be_private_and_match_its_pin'),
+    ('M1079', "O1 rule 1 (rows4b): the protected signer key is readable by no one else", _FC,
+     'meta.mode() & 0o277 != 0', 'meta.mode() & 0o200 != 0',
+     'axon-fabric', '--test protected_host', 'the_host_signer_key_must_be_private_and_match_its_pin'),
+    ('M1080', "O1 rule 1 (rows4b): the protected signer key is owned by the Fabric uid", _FC,
+     'if meta.uid() != euid || ', 'if false || ',
+     'axon-fabric', '--test protected_host', 'the_host_signer_key_must_be_private_and_match_its_pin'),
+    # ── the workspace store (retired as mutual pairs, four-cell records) ──
+    ('M1081', "PSV-5 (rows4b): a blob is re-verified against its name before it is materialized (retired vs M1082)", _FW,
+     '            if sha256_hex(&content) != e.sha256 || content.len() as u64 != e.size {', '            if false {',
+     'axon-fabric', '--test workspace', 'a_blob_holding_other_bytes_never_materializes'),
+    ('M1082', "PSV-5 (rows4b): the materialized tree re-derives to its reference (retired vs M1081)", _FW,
+     '        if t.reference() != *r {', '        if false && t.reference() != *r {',
+     'axon-fabric', '--test workspace', 'a_blob_holding_other_bytes_never_materializes'),
+    ('M1085', "FIELD-ORIGIN (rows4b): refuse_config locates no git dir behind a symlinked .git (retired vs M1072)", _FG,
+     '        _ => return Err(format!("{} is not a git directory", dotgit.display())),', '        _ => dotgit,',
+     'axon-fabric', _TV, 'a_symlinked_git_dir_is_never_a_clean_build_tree'),
+    # A91: the protected lineage names the certified revision by its whole hash.
+    ('M1084', "FIELD-ORIGIN (rows4b, A91): the protected PCI lineage takes only a full commit id", _FP,
+     '    if !git_data::is_oid(rev) {', '    if false && !git_data::is_oid(rev) {',
+     'axon-fabric', _TV, 'an_abbreviated_certified_revision_never_answers_the_protected_lineage'),
+    ('M1083', "PSV-5 (rows4b): a manifest hashes to its reference (retired vs M1082)", _FW,
+     '        if workspace_version_ref(&manifest) != r.as_str() {', '        if false && workspace_version_ref(&manifest) != r.as_str() {',
+     'axon-fabric', '--test workspace', 'a_manifest_that_is_not_its_versions_never_materializes'),
+]
+PSV_IDS |= {f"M{n}" for n in range(1020, 1140)}
+# Retired EQUIVALENT_DID (rows4b): each has a dominating guard on EVERY path,
+# with an executed four-cell record (v022_paired_disable.py --only=...).
+EQUIV_RECORD["M1038"] = {
+    "property": "a qualification binds the record's engine digests to pins the host manifest states",
+    "subsumed_by": ["M1039"], "killer": "joint:M1038+M1039",
+    "all_paths": "qualification() is the only reader of the manifest's engine block; accept_b263 has "
+                 "already required both record digests to be 64 hex (RULE:engine-digests, M1032) before "
+                 "this check, and the next statement (M1039) requires each pin to EQUAL the record's "
+                 "digest: a pin that is absent or not 64 hex is never equal to a 64-hex string, so the "
+                 "equality refuses every manifest this rule refuses"}
+EQUIV_RECORD["M1043"] = {
+    "property": "a qualification root holding no key qualifies nothing",
+    "subsumed_by": ["M1035"], "killer": "joint:M1043+M1035",
+    "all_paths": "trusted_issuers() returns its keys only to verify_detached / "
+                 "verify_evidence_signature (callers: QualificationTrust::trusted_keys -> qualification() "
+                 "for the record and its waivers; verify_operator_evidence; "
+                 "verify_operator_evidence_signed; verify_operator_evidence_bytes); each passes them as "
+                 "`trusted` to operator_trust::verify_evidence_signature, whose RULE:issuer-trusted "
+                 "(M1035) refuses every signature whose key is not in `trusted`, which an empty list "
+                 "never contains"}
+EQUIV_RECORD["M1081"] = {
+    "property": "the store never materializes a blob that does not hold its name's bytes",
+    "subsumed_by": ["M1082"], "killer": "joint:M1081+M1082",
+    "all_paths": "tree() is the only reader of blob content (materialize and materialize_projection "
+                 "call it); after this check it builds the tree from the bytes READ and requires its "
+                 "re-derived reference to equal r (M1082): the reference covers every entry's sha256 "
+                 "and size, so a blob whose bytes are not its name's changes the reference"}
+EQUIV_RECORD["M1082"] = {
+    "property": "the store never materializes a blob that does not hold its name's bytes",
+    "subsumed_by": ["M1081"], "killer": "joint:M1081+M1082",
+    "all_paths": "tree() reads entries from load() (the manifest hashes to r, M1083) and refuses any "
+                 "blob whose bytes do not hash to the manifest's sha256 or size (M1081) before "
+                 "re-deriving: the re-derived reference is then the manifest's own, which hashes to r"}
+EQUIV_RECORD["M1083"] = {
+    "property": "the store never materializes a manifest that is not its version's",
+    "subsumed_by": ["M1082"], "killer": "joint:M1083+M1082",
+    "all_paths": "a load()ed manifest reaches the guest or a run only through tree() (materialize, "
+                 "materialize_projection); the callers that only load (submit's refuse_links and argv "
+                 "entry checks) then materialize through tree(), which re-derives the reference from "
+                 "the parsed entries and the bytes read and refuses one that is not r (M1082)"}
+EQUIV_RECORD["M1072"] = {
+    "property": "a tree whose .git is a symlink is never a clean build tree or a protected lineage",
+    "subsumed_by": ["M1085"], "killer": "joint:M1072+M1085",
+    "all_paths": "discover() has three callers (provenance's toplevel, descends_from_protected, "
+                 "readiness's protected_components), and each calls refuse_config on the top discover "
+                 "returned before it reads anything from the repository (provenance.rs `if let Err(e) "
+                 "= git_data::refuse_config(&top)`, lineage()'s `refuse_config(&top)?`, readiness's "
+                 "`refuse_config(&found)`); refuse_config's symlink_metadata of `.git` is neither a "
+                 "directory nor a file for a symlink, so it refuses (M1085)"}
+EQUIV_RECORD["M1085"] = {
+    "property": "a tree whose .git is a symlink is never a clean build tree or a protected lineage",
+    "subsumed_by": ["M1072"], "killer": "joint:M1072+M1085",
+    "all_paths": "refuse_config's production callers (provenance, lineage, readiness) all pass the top "
+                 "discover() returned, and discover refuses a `.git` that is not a real directory "
+                 "(M1072) before it returns"}
+EQUIVALENT_DID |= {"M1038", "M1043", "M1081", "M1082", "M1083", "M1072", "M1085"}
+RETIRED |= {"M1038", "M1043", "M1081", "M1082", "M1083", "M1072", "M1085"}
+
 
 def in_scope(mid, scope):
     if mid in RETIRED:

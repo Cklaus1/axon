@@ -345,3 +345,87 @@ fn the_launchers_boot_args_fit_the_reserved_cmdline_budget() {
         backend::GUEST_CMDLINE_MAX_SAFE
     );
 }
+
+// ── C9 round 4b, rows4b (amendment 62): the protected arm's authority
+// refusals, each with an ATTACK assertion (they had no mutation row) ─────────
+
+impl World {
+    /// The attack is a launch; then the refusal must be `why`'s.
+    fn assert_attack_unlaunched(
+        &self,
+        lx: &LinuxProfileConfig,
+        s: &axon_fabric::Submission,
+        what: &str,
+        why: &str,
+    ) {
+        assert!(
+            s.receipt.status == ReceiptStatus::Unsupported
+                && self.launches(lx) == 0
+                && self.env.launch_records() == 0,
+            "ATTACK: {what}, and the protected profile launched it: {:?} ({:?})",
+            s.receipt.status,
+            s.reason
+        );
+        self.assert_refused_unlaunched(lx, s, why);
+    }
+}
+
+/// x1: a grant that withholds an effect is launched only where the signed
+/// evidence shows the guest enforces the delivered ceiling. Control: the same
+/// grant under x1-PASS evidence launches.
+#[test]
+fn a_restricting_grant_is_never_launched_without_an_x1_pass() {
+    let w = World::new();
+    let lx = w.cfg(&good_evidence(&w.manifest_sha));
+    let s = w.submit(&lx, "op-x1-attack", "grant:deny", PRINCIPAL);
+    w.assert_attack_unlaunched(
+        &lx,
+        &s,
+        "a deny-all grant on evidence that does not show x1 PASS (an unenforced ceiling)",
+        "x1_guest_policy_channel as PASS",
+    );
+    let w = World::new();
+    let lx = w.cfg(&w.evidence_x1_pass());
+    let s = w.submit(&lx, "op-x1-control", "grant:deny", PRINCIPAL);
+    w.assert_launched_with(&lx, &s, json!([]));
+}
+
+/// x2: the protected profile does not preserve path scopes, so a path-scoped
+/// grant is refused even where x1 is PASS (the ceiling alone would be
+/// enforced, wider than the grant).
+#[test]
+fn a_path_scoped_grant_is_never_launched_on_the_protected_profile() {
+    let w = World::new();
+    write_grant_registry(
+        &w.env.grant_registry,
+        &[(
+            "grant:scoped",
+            PRINCIPAL,
+            "profile = \"restricted\"\n[grant]\nfs_read = [\"./data/\"]\n\
+             max_label = \"internal\"\n[grant.budget]\ncost_micro = 1000\n",
+        )],
+    );
+    let lx = w.cfg(&w.evidence_x1_pass());
+    let s = w.submit(&lx, "op-x2-attack", "grant:scoped", PRINCIPAL);
+    w.assert_attack_unlaunched(
+        &lx,
+        &s,
+        "a path-scoped grant on a profile that does not preserve path scopes",
+        "does not preserve path scopes",
+    );
+}
+
+/// A policy whose cmdline word the guest kernel would truncate is never
+/// launched (the guest would read a different ceiling than the one admitted).
+#[test]
+fn a_policy_the_guest_cmdline_would_truncate_is_never_launched() {
+    let w = World::new();
+    let lx = w.cfg(&w.evidence_x1_pass());
+    let s = w.submit(&lx, "op-big-attack", "grant:long", &long_principal());
+    w.assert_attack_unlaunched(
+        &lx,
+        &s,
+        "a guest policy longer than the guest cmdline budget",
+        "the kernel would truncate it",
+    );
+}

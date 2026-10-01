@@ -233,7 +233,14 @@ fn an_orphan_is_not_resumed_under_a_superseded_epoch() {
     crash_submit_at(&env, &req, Boundary::AfterReserve);
     assert_eq!(held(&env), 100);
     let now = env.bump_epoch();
-    let e = submit(&req.to_string(), &env.cfg(now)).unwrap_err();
+    let e = match submit(&req.to_string(), &env.cfg(now)) {
+        Ok(s) => panic!(
+            "ATTACK: an orphan intended under a superseded epoch was resumed under the new one: \
+             {:?}",
+            s.receipt.status
+        ),
+        Err(e) => e,
+    };
     assert!(matches!(e, SubmitError::StaleEpoch { .. }), "{e}");
     assert_eq!(held(&env), 0, "the orphan's reservation is released");
     let (j, _) = axon_fabric::Journal::open(&env.journal).unwrap();

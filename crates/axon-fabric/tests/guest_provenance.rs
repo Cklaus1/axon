@@ -34,7 +34,7 @@ const COPIED: [&str; 6] = [
 ];
 const INIT_SRC: &str = "crates/axon-guest-init/src/main.rs";
 /// The PCI-certified revision as the real script spells it.
-const PCI: &str = "PCI_CERTIFIED = \"31413ca7\"";
+const PCI: &str = "PCI_CERTIFIED = \"31413ca7abb6ff730e1b63718d4304c7a8402675\"";
 
 fn rev_of(r: &Path, what: &str) -> String {
     let o = Command::new(GIT)
@@ -527,7 +527,12 @@ fn a_branch_named_like_the_certified_abbreviation_does_not_answer_the_lineage() 
             .map(|v| v["lineage"]["descends"].clone());
         (o.status.success(), lin)
     };
-    let control = (ask(&["--descends", &short]), ask(&["--lineage", &short]));
+    // The protected answer takes only a full id (A91); the development check
+    // still resolves an abbreviation, by hash.
+    let control = (
+        ask(&["--descends", &short]),
+        ask(&["--lineage", &certified]),
+    );
     assert_eq!(
         (control.0 .0, control.1 .1.clone()),
         (true, Some(Value::Bool(true))),
@@ -710,5 +715,249 @@ fn a_forged_ancestor_object_does_not_pass_the_pci_lineage() {
     assert_dirty(
         &f.build(),
         "a forged ancestor object made HEAD descend from the PCI-certified revision",
+    );
+}
+
+// ── C9 round 4b, rows4b (amendment 62): how the certified revision is
+// NAMED. `descends` peels a name to the commit it names; each refusal on the
+// way had no row. Asked through the built `axon-provenance`, on the
+// development check (`--descends`) and the protected answer the manifest
+// binds (`--lineage`).
+
+/// (`--descends` exit ok, `--lineage` descends) for `rev` in `dir`.
+fn lineage_of(dir: &Path, rev: &str) -> (bool, Option<Value>) {
+    let ask = |args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_axon-provenance"))
+            .args(args)
+            .arg(dir)
+            .stderr(Stdio::null())
+            .output()
+            .unwrap()
+    };
+    let dev = ask(&["--descends", rev]).status.success();
+    let o = ask(&["--lineage", rev]);
+    let lin = serde_json::from_slice::<Value>(&o.stdout)
+        .ok()
+        .map(|v| v["lineage"]["descends"].clone());
+    (dev, lin)
+}
+
+fn git_out(r: &Path, args: &[&str], stdin: Option<&[u8]>) -> String {
+    use std::io::Write;
+    let mut c = Command::new(GIT)
+        .arg("-C")
+        .arg(r)
+        .args(["-c", "user.name=t", "-c", "user.email=t@example"])
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    c.stdin
+        .take()
+        .unwrap()
+        .write_all(stdin.unwrap_or(b""))
+        .unwrap();
+    let o = c.wait_with_output().unwrap();
+    assert!(o.status.success(), "git {args:?}");
+    String::from_utf8(o.stdout).unwrap().trim().to_string()
+}
+
+fn assert_no_lineage(got: (bool, Option<Value>), what: &str) {
+    assert!(
+        !got.0 && got.1 == Some(Value::Bool(false)),
+        "ATTACK: {what} (--descends exit ok: {}, --lineage descends: {:?})",
+        got.0,
+        got.1
+    );
+}
+
+/// A certified "revision" that names a BLOB is no commit, and no history
+/// descends from it. Control: HEAD's own id descends.
+#[test]
+fn a_certified_revision_naming_a_blob_is_no_lineage() {
+    let f = fixture(true);
+    let head = f.rev("HEAD");
+    assert_eq!(
+        lineage_of(&f.repo, &head),
+        (true, Some(Value::Bool(true))),
+        "control"
+    );
+    let blob = git_out(
+        &f.repo,
+        &["hash-object", "-w", "--stdin"],
+        Some(b"not a commit\n"),
+    );
+    assert_no_lineage(
+        lineage_of(&f.repo, &blob),
+        "a certified revision naming a blob answered the lineage",
+    );
+}
+
+/// A tag chain deeper than the peel limit is refused, not read as descent.
+/// Control: one annotated tag of HEAD descends.
+#[test]
+fn a_tag_chain_deeper_than_the_peel_limit_is_no_lineage() {
+    let f = fixture(true);
+    git(&f.repo, &["tag", "-a", "t-ok", "-m", "t", "HEAD"]);
+    let one = f.rev("t-ok");
+    assert_eq!(
+        lineage_of(&f.repo, &one),
+        (true, Some(Value::Bool(true))),
+        "control: a tag of HEAD"
+    );
+    let certified = f.orphan_head();
+    let mut prev = certified;
+    for i in 0..9 {
+        let name = format!("deep-{i}");
+        git(
+            &f.repo,
+            &[
+                "-c",
+                "advice.nestedTag=false",
+                "tag",
+                "-a",
+                &name,
+                "-m",
+                "t",
+                &prev,
+            ],
+        );
+        prev = f.rev(&name);
+    }
+    assert_no_lineage(
+        lineage_of(&f.repo, &prev),
+        "nine nested tags of a revision the orphan HEAD does not descend from answered the \
+         lineage",
+    );
+}
+
+/// An abbreviation that names TWO objects is refused, never resolved to
+/// whichever one sorts first. Here it names HEAD and a blob made to share
+/// its prefix (and sort after it). Control: the same abbreviation before the
+/// blob exists descends.
+#[test]
+fn an_ambiguous_abbreviation_is_no_lineage() {
+    let f = fixture(true);
+    let head = f.rev("HEAD");
+    let short = &head[..4];
+    // The development check resolves a unique abbreviation (the protected
+    // answer takes only a full id, A91, so this arm is the dev route's).
+    assert!(
+        lineage_of(&f.repo, short).0,
+        "control: a unique abbreviation of HEAD"
+    );
+    let content = (0u64..)
+        .map(|n| format!("collide {n}\n"))
+        .find(|c| {
+            let id = axon_fabric::git_data::object_id("blob", c.as_bytes());
+            id.starts_with(short) && id.as_str() > head.as_str()
+        })
+        .unwrap();
+    git_out(
+        &f.repo,
+        &["hash-object", "-w", "--stdin"],
+        Some(content.as_bytes()),
+    );
+    assert_no_lineage(
+        lineage_of(&f.repo, short),
+        "an abbreviation naming two objects answered the lineage from one of them",
+    );
+}
+
+/// A `.git` SYMLINK names a repository elsewhere: the tree beside it is no
+/// clone, and is never described as a clean build of that repository's HEAD,
+/// even with every file identical. Control: the clone itself is clean.
+#[test]
+fn a_symlinked_git_dir_is_never_a_clean_build_tree() {
+    let f = fixture(true);
+    let prov = |dir: &Path| -> Value {
+        let o = Command::new(env!("CARGO_BIN_EXE_axon-provenance"))
+            .arg(dir)
+            .stderr(Stdio::null())
+            .output()
+            .unwrap();
+        serde_json::from_slice(&o.stdout).unwrap()
+    };
+    let clean = prov(&f.repo);
+    assert_eq!(clean["dirty"], serde_json::json!([]), "control: {clean}");
+    let w = f.d.path().join("not-a-clone");
+    let st = Command::new("cp")
+        .arg("-a")
+        .arg(&f.repo)
+        .arg(&w)
+        .status()
+        .unwrap();
+    assert!(st.success());
+    std::fs::remove_dir_all(w.join(".git")).unwrap();
+    std::os::unix::fs::symlink(f.repo.join(".git"), w.join(".git")).unwrap();
+    let p = prov(&w);
+    assert!(
+        p["dirty"].as_array().is_some_and(|d| !d.is_empty()),
+        "ATTACK: a tree whose .git is a symlink to another repository was described as a clean \
+         build of its HEAD: {p}"
+    );
+    // Two rules refuse it, each alone (four-cell pair, rows4b): discover's
+    // kind check and refuse_config's git-dir location.
+    assert!(
+        p.to_string().contains("gitfile or symlink")
+            || p.to_string().contains("is not a git directory"),
+        "{p}"
+    );
+}
+
+/// A91 (C9 round 4b, rows4b; amendment 62): the guest manifest certified its
+/// PCI lineage against an ABBREVIATION (`31413ca7`, 32 bits). An abbreviation
+/// names whichever object a repository makes match it: an orphan commit whose
+/// id is brute-forced to share it, in a clone that does not hold the real
+/// certified commit, is the ONE object it names, and the orphan HEAD
+/// "descended" from the certified revision. 32 bits is an offline search; here
+/// the same attack at 16 bits. A protected lineage names the certified
+/// revision by its whole hash. Control: the full id of an ancestor descends.
+#[test]
+fn an_abbreviated_certified_revision_never_answers_the_protected_lineage() {
+    let f = fixture(true);
+    let certified = f.rev("HEAD");
+    assert_eq!(
+        lineage_of(&f.repo, &certified).1,
+        Some(Value::Bool(true)),
+        "control: the full certified id"
+    );
+    let short = certified[..4].to_string();
+    // An orphan commit over the same tree whose id begins like the certified
+    // revision's (and is not it).
+    let tree = f.rev("HEAD^{tree}");
+    let body = (0u64..)
+        .map(|n| {
+            format!(
+                "tree {tree}\nauthor a <a@example> 0 +0000\ncommitter a <a@example> 0 +0000\n\n\
+                 unrelated history {n}\n"
+            )
+        })
+        .find(|b| {
+            let id = axon_fabric::git_data::object_id("commit", b.as_bytes());
+            id.starts_with(&short) && id != certified
+        })
+        .unwrap();
+    let orphan = git_out(
+        &f.repo,
+        &["hash-object", "-t", "commit", "-w", "--stdin"],
+        Some(body.as_bytes()),
+    );
+    git(&f.repo, &["update-ref", "refs/heads/main", &orphan]);
+    // A clone that does not hold the certified commit at all.
+    git(&f.repo, &["reflog", "expire", "--expire=now", "--all"]);
+    git(&f.repo, &["gc", "-q", "--prune=now"]);
+    let got = lineage_of(&f.repo, &short);
+    assert_ne!(
+        got.1,
+        Some(Value::Bool(true)),
+        "ATTACK: an orphan HEAD brute-forced to share the certified revision's abbreviation \
+         answered the protected PCI lineage"
+    );
+    assert_eq!(
+        lineage_of(&f.repo, &certified).1,
+        Some(Value::Bool(false)),
+        "the full certified id is not in this clone"
     );
 }
