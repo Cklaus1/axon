@@ -509,3 +509,69 @@ fn an_episode_bound_to_another_tenants_context_is_never_intaken() {
         "control: the honest trials intake: {refusals:?}"
     );
 }
+
+/// One policy run by TWO arms (a population with a third arm id, which
+/// `check_population` admits: it counts per policy). The candidate passes
+/// task-0 in one arm and fails task-1 in the other; the incumbent passes
+/// both. Admission refuses a record that is not exactly two arms, and reads
+/// each arm by policy refusing the ambiguity; reading only the first arm
+/// would decide on the passing half.
+#[test]
+fn a_policy_split_across_two_arms_is_never_admitted_on_half_its_trials() {
+    let w = world();
+    freeze_plan(&w.s, "split", &w.inc_ref, &w.cand_ref, |_| {}).unwrap();
+    let specs: Vec<Spec<'_>> = vec![
+        (
+            "incumbent",
+            &w.inc,
+            "task-0".into(),
+            "i0".into(),
+            Out::Pass,
+            Some(100),
+        ),
+        (
+            "incumbent",
+            &w.inc,
+            "task-1".into(),
+            "i1".into(),
+            Out::Pass,
+            Some(100),
+        ),
+        (
+            "challenger-1",
+            &w.cand,
+            "task-0".into(),
+            "c0".into(),
+            Out::Pass,
+            Some(50),
+        ),
+        (
+            "challenger-2",
+            &w.cand,
+            "task-1".into(),
+            "c1".into(),
+            Out::Fail,
+            Some(50),
+        ),
+    ];
+    assign_specs(&w.s, "split", &specs);
+    let v = evl_request("split", &w.inc, &w.cand, &specs, &EvlOpts::default());
+    let (rec, e) = evaluate(&w.s, &v).unwrap();
+    assert_eq!(rec.arms.len(), 3, "setup: three arms recorded");
+    match admit(&w.s, "split", &e, ADMITTER, false) {
+        Ok((adm, _)) if adm.decision == axon_loop::admission::Decision::Accept => panic!(
+            "ATTACK: a candidate split across two arms was accepted on its passing half: {:?}",
+            adm.reasons
+        ),
+        Ok(_) => {}
+        // Two checks refuse it, each alone (a four-cell pair): which one is
+        // not the property.
+        Err(err) => assert!(
+            err.to_string().contains("two arms ran policy")
+                || err
+                    .to_string()
+                    .contains("exactly an incumbent and a candidate arm"),
+            "{err}"
+        ),
+    }
+}

@@ -3463,6 +3463,48 @@ EQUIV_RECORD["M980"] = {
 EQUIVALENT_DID |= {"M979", "M980"}
 RETIRED |= {"M979", "M980"}
 
+MUTATIONS += [
+    ('M981', 'EVL (4b): one arm per policy when a record is read by policy (EQUIVALENT: M819)', 'crates/axon-loop/src/evl.rs', '        if it.next().is_some() {', '        if false && it.next().is_some() {', 'axon-loop', '--test evl_refusal_sites', 'a_policy_split_across_two_arms_is_never_admitted_on_half_its_trials'),
+]
+EQUIV_RECORD["M981"] = {
+    "property": "a candidate is never admitted on part of its trials split into another arm",
+    "subsumed_by": ["M819"], "killer": "joint:M981+M819",
+    "all_paths": "arm_for_policy's callers: admission's derive, which first refuses a record that does not "
+                 "have exactly two arms (M819), and the plan freezes two distinct policies, so two arms "
+                 "sharing one policy leave none for the other; and pointer::safety_still_holds, which reads "
+                 "only an admitted evaluation's record (load_journalled of adm.evaluation_ref), one derive "
+                 "accepted under M819"}
+EQUIVALENT_DID |= {"M981"}
+RETIRED |= {"M981"}
+
+# rows4a (amendment 61): safety.rs.
+MUTATIONS += [
+    ('M982', 'ADR-001 §5 (4b): only a trusted monitor or a subject may report a trial unsafe', 'crates/axon-loop/src/safety.rs', '            if !is_monitor && !is_subject {', '            if false && !is_monitor && !is_subject {', 'axon-loop', '--test safety_sites', 'a_strangers_violation_never_vetoes_a_candidate'),
+    ('M983', 'ADR-001 §5 (4b): a clearance comes from a trusted monitor independent of the trial', 'crates/axon-loop/src/safety.rs', '            if !is_monitor || is_subject {', '            if false && !is_monitor || is_subject {', 'axon-loop', '--test safety_sites', 'a_subject_keyed_as_a_monitor_never_clears_its_own_trial'),
+    ('M984', "FG-050 (4b): a clearance's monitor signature verifies", 'crates/axon-loop/src/safety.rs', '            .map_err(|e| refused(format!("clearance signature refused: {e}")))?;', '            .ok();', 'axon-loop', '--test safety_sites', 'a_clearance_whose_signature_does_not_verify_is_never_recorded'),
+]
+
+# rows4a (amendment 61): tasks.rs, candidates.rs.
+MUTATIONS += [
+    ('M985', 'task manifest (4b): 1..=100000 tasks', 'crates/axon-loop/src/tasks.rs', '        if self.tasks.is_empty() || self.tasks.len() > 100_000 {', '        if false && (self.tasks.is_empty() || self.tasks.len() > 100_000) {', 'axon-loop', '--test registries', 'each_defective_task_manifest_is_never_registered'),
+    ('M986', 'task manifest (4b): one spelling (sorted, no repeats)', 'crates/axon-loop/src/tasks.rs', '        if !self.tasks.windows(2).all(|w| w[0] < w[1]) {', '        if false && (!self.tasks.windows(2).all(|w| w[0] < w[1])) {', 'axon-loop', '--test registries', 'each_defective_task_manifest_is_never_registered'),
+    ('M987', 'task manifest (4b): registered only by a trusted admitter', 'crates/axon-loop/src/tasks.rs', '    if !store.config()?.admitters().contains(&m.issuer_ref) {', '    if false && (!store.config()?.admitters().contains(&m.issuer_ref)) {', 'axon-loop', '--test registries', 'each_defective_task_manifest_is_never_registered'),
+    ('M988', 'task manifest (4b): a plan rests only on a REGISTERED manifest', 'crates/axon-loop/src/tasks.rs', '    if !tx.task_manifest_event(scope, r) {', '    if false && (!tx.task_manifest_event(scope, r)) {', 'axon-loop', '--test registries', 'a_planted_task_manifest_never_freezes_a_plan'),
+    ('M989', "task manifest (4b): a registered manifest's file is the manifest it names", 'crates/axon-loop/src/tasks.rs', '    if &m.manifest_ref()? != r || &m.scope != scope {', '    if false && (&m.manifest_ref()? != r || &m.scope != scope) {', 'axon-loop', '--test registries', 'a_task_manifest_edited_in_place_never_decides_a_population'),
+    ('M990', 'candidate list (4b): 1..=4096 candidates', 'crates/axon-loop/src/candidates.rs', '        if self.candidates.is_empty() || self.candidates.len() > 4096 {', '        if false && (self.candidates.is_empty() || self.candidates.len() > 4096) {', 'axon-loop', '--test registries', 'each_defective_candidate_list_is_never_registered'),
+    ('M991', 'candidate list (4b): one spelling (sorted, no repeats)', 'crates/axon-loop/src/candidates.rs', '        if !self.candidates.windows(2).all(|w| w[0] < w[1]) {', '        if false && (!self.candidates.windows(2).all(|w| w[0] < w[1])) {', 'axon-loop', '--test registries', 'each_defective_candidate_list_is_never_registered'),
+    ('M992', 'candidate list (4b): registered only by a trusted admitter', 'crates/axon-loop/src/candidates.rs', '    if !store.config()?.admitters().contains(&c.issuer_ref) {', '    if false && (!store.config()?.admitters().contains(&c.issuer_ref)) {', 'axon-loop', '--test registries', 'each_defective_candidate_list_is_never_registered'),
+    ('M993', 'candidate list (4b): a policy rests only on a REGISTERED list', 'crates/axon-loop/src/candidates.rs', '    if !tx.candidate_set_event(scope, r) {', '    if false && (!tx.candidate_set_event(scope, r)) {', 'axon-loop', '--test registries', 'a_planted_candidate_list_never_admits_a_policy'),
+    ('M994', "candidate list (4b): a registered list's file is the list it names", 'crates/axon-loop/src/candidates.rs', '    if &c.candidate_set_ref()? != r || &c.scope != scope {', '    if false && (&c.candidate_set_ref()? != r || &c.scope != scope) {', 'axon-loop', '--test registries', 'a_candidate_list_edited_in_place_never_admits_a_policy'),
+]
+
+# rows4a (amendment 61): rules.rs.
+MUTATIONS += [
+    ('M995', 'plan rules (4b): a word rule is exactly the one the code executes', 'crates/axon-loop/src/rules.rs', '        Some(x) => Err(format!("{field} {x:?} is not executable (expected `{w}`)")),', '        Some(_x) => Ok(()),', 'axon-loop', '--test registries', 'each_unexecutable_rule_never_freezes'),
+    ('M996', 'plan rules (4b): a quality margin below 100%', 'crates/axon-loop/src/rules.rs', '        if margin_ppm >= PPM {', '        if false && margin_ppm >= PPM {', 'axon-loop', '--test registries', 'each_unexecutable_rule_never_freezes'),
+    ('M997', 'plan rules (4b): an economic threshold at most 100%', 'crates/axon-loop/src/rules.rs', '            if n > PPM {', '            if false && n > PPM {', 'axon-loop', '--test registries', 'each_unexecutable_rule_never_freezes'),
+]
+
 PSV_IDS = {f"M{n}" for n in range(137, 550)}
 # C9 round 3: rows M560-M649 are PSV rows (workstream ranges).
 PSV_IDS |= {f"M{n}" for n in range(550, 650)}

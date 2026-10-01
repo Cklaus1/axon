@@ -590,6 +590,33 @@ EXEMPT += [
      "chained (each `prev` is the previous entry's digest, ledger.rs, NOT YET SCANNED), so a line "
      "skipped instead of refused breaks the chain at the next entry"),
 ]
+SA = "crates/axon-loop/src/safety.rs"
+EXEMPT += [
+    (SA, "    if (r.finding == Finding::Violation) != r.code.is_some() {",
+     "SELECTS NOTHING: only `finding` decides (safety::states): a clearance's code is never read, "
+     "and a violation with no code is never a veto (states keeps the prior state), so admitting "
+     "either changes no safety state"),
+    (SA, '            refused(format!(\n                "no intaken trial {:?} in this scope',
+     "NOTHING TO ADMIT: no intaken trial to attach the finding to; its subjects come from that "
+     "intake record"),
+    (SA, '                refused("a clearance is not authenticated: no monitor signature was presented")',
+     "NOTHING TO ADMIT: no signature to verify (M984 rows the verification)"),
+]
+RU = "crates/axon-loop/src/rules.rs"
+EP = "crates/axon-loop/src/epoch.rs"
+LL = "crates/axon-loop/src/lib.rs"
+EXEMPT += [
+    (RU, '        None => Err(format!("{field} unset")),',
+     "UNREACHABLE: plan::freeze refuses a plan with any operator field unset (unset_fields, the "
+     "statement before Rules::parse), and admission parses only a frozen plan"),
+    (EP, "    if now != claimed {",
+     "UNREACHABLE: require_current has no production caller (only crates/axon-loop/tests/pointer.rs); "
+     "Fabric's launch-time epoch check reads epoch::current and compares itself (submit.rs)"),
+    (LL, '                    Err(serde::de::Error::custom(format!(\n                        "schema must be {:?}, got {:?}",',
+     "SELECTS NOTHING: a record's schema tag is a version label; every record type is "
+     "deny_unknown_fields with its own field set, and every stored record is read back through its "
+     "digest name (M978) or the ledger chain, so the tag chooses no field and no code path"),
+]
 
 def load_rows():
     spec = importlib.util.spec_from_file_location("mut", os.path.join(ROOT, "scripts/v022_g01_mutations.py"))
