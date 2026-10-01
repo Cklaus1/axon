@@ -2224,5 +2224,13 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       `every_declared_type_refuses_a_value_of_another_type`,
       `the_remaining_cast_arms_refuse_a_value_of_another_type`. The whole axon-core suite and the
       examples stay green.
+    - **Evidence.** `v022_g01_mutations.py --scope=all --only=M652,M920-M939,M1140-M1157`: at
+      3cf23eef 36/39 KILLED (M939/M1140 REFUSED_ELSEWHERE, the union case ran first; M1155's
+      mutation did not compile); at 8a5419de, after reordering the cases and fixing M1155's
+      mutation, the 15 rows sharing that test plus M1155 all KILLED, so all 39 are KILLED by their
+      own attack. Refusal coverage (`--without=M923,M931,M1156` names their sites) and the
+      matrix check PASS. The guest image rebuilt from a standalone clone at 3cf23eef (rootfs
+      `0a45005c…935b`, axon `b29e04f0…f936`, runner `9853986c…513a`) passes every case of
+      `scripts/psv_guest_boot_test.sh` (root, KVM); the re-pin is left to the integrator.
     - **Operator deployment.** The guest image must be REBUILT to carry the new interpreter; its
       scripts and runner are unchanged.
