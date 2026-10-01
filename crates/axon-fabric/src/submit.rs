@@ -440,8 +440,14 @@ impl RunDir {
             std::process::id(),
             SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         );
-        let p = state.join("runs").join(key);
-        std::fs::create_dir_all(&p).map_err(|e| SubmitError::Workspace(e.to_string()))?;
+        let runs = state.join("runs");
+        std::fs::create_dir_all(&runs).map_err(|e| SubmitError::Workspace(e.to_string()))?;
+        // The run's own dir is created NEW (C9 round 4b): a leftover of an
+        // earlier process with the same pid and sequence number is never
+        // reused, so nothing materialized into it meets stale files.
+        let p = runs.join(key);
+        std::fs::create_dir(&p)
+            .map_err(|e| SubmitError::Workspace(format!("{}: {e}", p.display())))?;
         Ok(RunDir(p))
     }
 }

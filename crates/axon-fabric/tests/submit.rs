@@ -1259,3 +1259,48 @@ fn an_interpreter_run_never_runs_on_the_host_backend() {
         "runs registered checks only",
     );
 }
+
+// C9 round 4b, rows4b (strict reading): check_target's own job-kind refusals,
+// each the attack of a four-cell record against select's host job-kind rule
+// (M1054): either refuses the request alone, and with both removed it runs.
+
+/// An interpreter_run whose argv carries an element the run would ignore.
+#[test]
+fn an_interpreter_run_with_an_ignored_argument_never_runs() {
+    let env = Env::new();
+    let mut r = request(&env, "op-exec-extra", "t_ok");
+    r["job_kind"] = json!("interpreter_run");
+    r["argv"] = json!(["f.ax", "ignored"]);
+    refused_wherever(
+        &env,
+        &r,
+        "an interpreter_run whose argv carried an element the run ignores",
+    );
+}
+
+/// An interpreter_run naming an operator check suite: a suite runs only as a
+/// registered check.
+#[test]
+fn an_interpreter_run_never_runs_an_operator_suite() {
+    let env = Env::new();
+    let candidate = psv_suite(&env);
+    let mut r = request(&env, "op-exec-suite", "t_ok");
+    r["job_kind"] = json!("interpreter_run");
+    r["argv"] = json!(["check:acc"]);
+    r["workspace_version_ref"] = json!(candidate.as_str());
+    refused_wherever(&env, &r, "an interpreter_run of an operator check suite");
+}
+
+/// `r` is refused, by an Unsupported receipt (backend selection) or an
+/// error (check_target), with nothing spawned or launched; which layer
+/// refuses is not the property.
+fn refused_wherever(env: &Env, r: &serde_json::Value, what: &str) {
+    let ran = match submit(&r.to_string(), &env.cfg(0)) {
+        Ok(s) => s.receipt.status != ReceiptStatus::Unsupported,
+        Err(_) => false,
+    };
+    assert!(
+        !ran && spawn_count(&env.spawns) == 0 && env.launch_records() == 0,
+        "ATTACK: {what}, and it ran"
+    );
+}
