@@ -285,9 +285,69 @@ fn every_checked_in_schema_is_within_the_supported_subset() {
         }
         let schema: Value = serde_json::from_str(&std::fs::read_to_string(&p).unwrap()).unwrap();
         scan(&schema, &p.display().to_string());
+        nodes(&schema, &p.display().to_string());
         n += 1;
     }
     assert_eq!(n, 9, "six package schemas + three crate-local");
+    // The loop's pilot-plan schema, the other text `validate_against` walks
+    // (crates/axon-loop/src/plan.rs PILOT_SCHEMA_TEXT, include_str!).
+    let pilot = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../axon-loop/schemas/closed-loop-pilot.schema.json");
+    let schema: Value = serde_json::from_str(&std::fs::read_to_string(&pilot).unwrap()).unwrap();
+    scan(&schema, "closed-loop-pilot.schema.json");
+    nodes(&schema, "closed-loop-pilot.schema.json");
+}
+
+/// Amendment 64 (integrate-A): the facts the refusal-site exemptions of
+/// schema.rs's build-defect arms cite. Every SCHEMA position (the root, each
+/// property, `items`, each `anyOf`/`oneOf`/`allOf` member, `if`, `then`) is an
+/// object (never `false`, never another JSON kind); every `type` is a
+/// supported name or a list of them; `additionalProperties` is a boolean; and
+/// a node that bounds a number declares a type (which never admits a float).
+fn nodes(v: &Value, at: &str) {
+    const TYPES: &[&str] = &["object", "array", "string", "boolean", "null", "integer"];
+    let o = v
+        .as_object()
+        .unwrap_or_else(|| panic!("{at}: a schema node that is not an object: {v}"));
+    if let Some(t) = o.get("type") {
+        let names: Vec<&str> = match t {
+            Value::String(s) => vec![s.as_str()],
+            Value::Array(a) => a
+                .iter()
+                .map(|x| x.as_str().unwrap_or_else(|| panic!("{at}: type {t}")))
+                .collect(),
+            other => panic!("{at}: malformed type {other}"),
+        };
+        assert!(names.iter().all(|n| TYPES.contains(n)), "{at}: type {t}");
+    }
+    if let Some(a) = o.get("additionalProperties") {
+        assert!(a.is_boolean(), "{at}: additionalProperties {a}");
+    }
+    // A type list never names `number` (TYPES), so a declared type refuses a
+    // float whatever else it admits.
+    if o.contains_key("minimum") || o.contains_key("maximum") {
+        assert!(
+            o.contains_key("type"),
+            "{at}: a numeric bound without a type"
+        );
+    }
+    if let Some(p) = o.get("properties") {
+        for (k, x) in p.as_object().unwrap() {
+            nodes(x, &format!("{at}.{k}"));
+        }
+    }
+    for k in ["items", "if", "then"] {
+        if let Some(x) = o.get(k) {
+            nodes(x, &format!("{at}/{k}"));
+        }
+    }
+    for k in ["anyOf", "oneOf", "allOf"] {
+        if let Some(x) = o.get(k) {
+            for (i, m) in x.as_array().unwrap().iter().enumerate() {
+                nodes(m, &format!("{at}/{k}[{i}]"));
+            }
+        }
+    }
 }
 
 fn scan(v: &Value, at: &str) {
