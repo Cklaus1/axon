@@ -30,7 +30,7 @@ def main():
     # Require A1..A_FLOOR at minimum (a known count, so a truncation below it is
     # caught), and every row up to the highest present (so a gap above the floor
     # is caught too). Bump FLOOR when a row is added.
-    FLOOR = 89
+    FLOOR = 90
     present = [int(k[1:]) for k in rows]
     hi = max([FLOOR] + present)
     for n in range(1, hi + 1):
