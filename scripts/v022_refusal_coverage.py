@@ -495,6 +495,57 @@ EXEMPT += [
      "(evidence_signing_message) and verification is always Ed25519, so neither field chooses what "
      "is verified"),
 ]
+EV = "crates/axon-loop/src/evl.rs"
+EXEMPT += [
+    (EV, '        return Err("no Fabric execution attestation was delivered".into());',
+     "RE-REPORTED: the next statement reads att[\"issuer_ref\"], which a null attestation does not "
+     "have, and refuses (\"names no issuer\"); nothing between them can admit"),
+    (EV, "    if d.ctx_sig.is_null() {",
+     "RE-REPORTED: the statements after it only build the context's value and then call "
+     "verify_document on the signature, which refuses a non-object (\"signature: not a JSON "
+     "object\"); nothing between them can admit"),
+    (EV, '        refused(format!(\n            "experiment {} has no assignment journalled before execution',
+     "NOTHING TO ADMIT: with no journalled assignment there is no population to judge the request "
+     "against (ADR-001 §3.6)"),
+    (EV, '                    refused(format!(\n                        "trial {} was delivered and requested but never issued in',
+     "UNREACHABLE: `requested == issued` (M108) refused, a few statements above with no return "
+     "between but refusals, every request whose keys are not exactly the issued ones, and the arms "
+     "loop visits only requested keys"),
+    (EV, '                    unknown(\n                        UnknownKind::Unbound,\n                        format!(\n                            "unbound: attempt {} is not this trial\'s issued attempt',
+     "NAMED ROW: M107 mutates this arm's condition (`&d.ep.identity.attempt_id != issued_attempt`), "
+     "the same removal"),
+    (EV, "        if arm.assigned != arm.verified_pass + arm.fail + kinds + arm.missing",
+     "UNREACHABLE: every assigned trial increments `assigned` and exactly one counter: a missing one "
+     "`missing` and `unknown` (no kind); a delivered one is VerifiedPass or Fail with no kind, or "
+     "Unknown through `unknown()`, which always gives a kind; so both sums hold by construction"),
+    (EV, "    if intaken.contains_key(&d.ep_ref) {",
+     "NAMED ROW: M15 mutates the call `intake_join(&intaken, d)` to Ok, the same removal as this "
+     "function's Err arm"),
+    (EV, '.ok_or_else(|| refused("an authenticated attestation states no issued_ms"))?;',
+     "UNREACHABLE: the closure runs only after verify_check_evidence verified the attestation through "
+     "attestation::verify, which refuses one without issued_ms (\"no issued_ms\"); issued_ms() reads "
+     "the same document"),
+    (EV, '.ok_or_else(|| refused("an authenticated verdict names no issuer"))?,',
+     "UNREACHABLE: verify_check_evidence refused a verdict whose issuer_ref is None (its "
+     "independence check, `is_some_and`) before this closure runs, on the same episode"),
+    (EV, "            _ => Err((\n                UnknownKind::MissingEvidence,",
+     "NOTHING TO ADMIT: without the check's request and receipt there is nothing to authenticate"),
+    (EV, "            if v.matched_checks == 0 {",
+     "UNREACHABLE: a delivered episode is parsed through contract_from_value -> parse -> "
+     "LoopEpisode::validate, which refuses a passed verification with matched_checks 0 "
+     "(\"verification passed requires matched_checks > 0\"), and judge's `v` is that episode's"),
+    (EV, "        VerificationResult::NotRun => unknown(",
+     "NOTHING TO ADMIT: a check that did not run has no verdict; this arm only names the Unknown's "
+     "kind (rowed: M133-M136)"),
+    (EV, "            Some(rc) => unknown(",
+     "NOTHING TO ADMIT: the signed check reached no verdict; this arm only names the Unknown's kind "
+     "(rowed: M127, M128)"),
+    (EV, "            None => unknown(\n                run_end.or(stated).unwrap_or(UnknownKind::MissingEvidence),",
+     "NOTHING TO ADMIT: an uncited unknown has no verdict; this arm only names the Unknown's kind "
+     "(rowed: M126, M136)"),
+    (EV, '.ok_or_else(|| refused(format!("evaluation has no arm for policy {p}")))?;',
+     "NOTHING TO ADMIT: no arm ran the policy, so there is no arm to return"),
+]
 
 def load_rows():
     spec = importlib.util.spec_from_file_location("mut", os.path.join(ROOT, "scripts/v022_g01_mutations.py"))

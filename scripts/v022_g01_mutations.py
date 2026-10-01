@@ -3332,6 +3332,112 @@ EQUIV_RECORD["M948"] = {
 EQUIVALENT_DID |= {"M948"}
 RETIRED |= {"M948"}
 
+# rows4a (amendment 61): evl.rs refusal sites, check_population, and the siblings
+# their four-cell retirements name.
+MUTATIONS += [
+    ('M952', 'EVL (4b): no evaluation is recorded with no trusted verifier', 'crates/axon-loop/src/evl.rs', '    if verifiers.is_empty() {', '    if false && verifiers.is_empty() {', 'axon-loop', '--test evl_refusal_sites', 'an_evaluation_with_no_trusted_verifier_is_refused'),
+    ('M953', "EVL (4b): the evaluated policies are exactly the frozen plan's arms", 'crates/axon-loop/src/evl.rs', '    if supplied != plan_arms {', '    if false && supplied != plan_arms {', 'axon-loop', '--test evl_refusal_sites', 'an_evaluation_supplying_a_policy_outside_the_plan_is_refused'),
+    ('M954', "EVL (4b): the evaluation's scope is its plan's (EQUIVALENT: M955)", 'crates/axon-loop/src/evl.rs', '    if frozen.plan.scope != r.scope {', '    if false && frozen.plan.scope != r.scope {', 'axon-loop', '--test evl_refusal_sites', 'an_evaluation_under_another_scope_is_refused'),
+    ('M955', "EVL (4b): each supplied policy is the evaluation's scope (EQUIVALENT: M954)", 'crates/axon-loop/src/evl.rs', '        if p.scope != r.scope {', '        if false && p.scope != r.scope {', 'axon-loop', '--test evl_refusal_sites', 'an_evaluation_under_another_scope_is_refused'),
+    ('M956', 'EVL (4b) AB9/AB10: one evaluation per frozen experiment (EQUIVALENT: M957)', 'crates/axon-loop/src/evl.rs', '    if let Some((_, prior)) = tx.evaluations_of(&r.experiment_id).first() {', '    if let Some((_, prior)) = tx.evaluations_of(&r.experiment_id).first().filter(|_| false) {', 'axon-loop', '--test evl_refusal_sites', 'a_second_evaluation_of_an_experiment_is_refused'),
+    ('M957', 'EVL (4b) AB9/AB10: a trial id is evaluated once in the scope (EQUIVALENT: M956)', 'crates/axon-loop/src/evl.rs', '            .find(|t| trial_ids.contains(&t.trial_id))', '            .find(|t| false && trial_ids.contains(&t.trial_id))', 'axon-loop', '--test evl_refusal_sites', 'a_second_evaluation_of_an_experiment_is_refused'),
+    ('M958', 'EVL (4b): an unassigned delivered trial refuses the evaluation', 'crates/axon-loop/src/evl.rs', '        if !assigned_keys.contains(&key) {', '        if false && !assigned_keys.contains(&key) {', 'axon-loop', '--test evl_refusal_sites', 'an_unassigned_trial_never_rides_into_an_evaluation'),
+    ('M959', 'EVL (4b): a future-dated preflight refuses the evaluation', 'crates/axon-loop/src/evl.rs', '        if ctx.created_ms > now {', '        if false && ctx.created_ms > now {', 'axon-loop', '--test evl_refusal_sites', 'a_future_dated_preflight_refuses_the_evaluation'),
+    ('M960', 'EVL (4b) G33: a trial preflighted before the freeze refuses the evaluation', 'crates/axon-loop/src/evl.rs', '        if ctx.created_ms < frozen.freeze_ms {', '        if false && ctx.created_ms < frozen.freeze_ms {', 'axon-loop', '--test evl_refusal_sites', 'a_preflight_before_the_freeze_refuses_the_evaluation'),
+    ('M961', 'EVL (4b): a trial delivered twice refuses the evaluation', 'crates/axon-loop/src/evl.rs', '            .is_some()\n        {\n            return Err(refused(format!("trials[{i}]: trial delivered twice")));', '            .is_some()\n            && false\n        {\n            return Err(refused(format!("trials[{i}]: trial delivered twice")));', 'axon-loop', '--test evl_refusal_sites', 'a_trial_delivered_twice_refuses_the_evaluation'),
+    ('M962', 'EVL (4b): cross-tenant evidence never joins (EQUIVALENT: M15 + M963)', 'crates/axon-loop/src/evl.rs', '                } else if d.ep.scope != r.scope || d.ctx.scope != r.scope {', '                } else if false && (d.ep.scope != r.scope || d.ctx.scope != r.scope) {', 'axon-loop', '--test evl_refusal_sites', 'a_cross_tenant_context_never_counts'),
+    ('M963', 'bind_episode (4b): an episode binds only a context and policy of its own scope (intake)', 'crates/axon-loop-contracts/src/checks.rs', '    if episode.scope != ctx.scope || episode.scope != policy.scope {', '    if false && episode.scope != ctx.scope || episode.scope != policy.scope {', 'axon-loop', '--test evl_refusal_sites', 'an_episode_bound_to_another_tenants_context_is_never_intaken'),
+    ('M964', 'EVL (4b): a trial counts only for the arm whose policy it ran (EQUIVALENT: M965)', 'crates/axon-loop/src/evl.rs', '    if &d.ep.policy_ref != policy_ref {', '    if false && &d.ep.policy_ref != policy_ref {', 'axon-loop', '--test evl_refusal_sites', 'an_episode_of_another_policy_never_counts_for_an_arm'),
+    ('M965', 'bind_episode (4b): the episode ran the policy it is bound to (EQUIVALENT: M964)', 'crates/axon-loop-contracts/src/checks.rs', '    if episode.policy_ref != digest(policy)? || episode.context_ref != digest(ctx)? {', '    if episode.context_ref != digest(ctx)? {', 'axon-loop', '--test evl_refusal_sites', 'an_episode_of_another_policy_never_counts_for_an_arm'),
+    ('M966', 'check_population (4b): one policy per arm (issued by plan::assign)', 'crates/axon-loop/src/evl.rs', '        if arm_policy[&a.arm_id] != &a.policy_ref {', '        if false && arm_policy[&a.arm_id] != &a.policy_ref {', 'axon-loop', '--test evl_refusal_sites', 'each_population_defect_is_never_issued'),
+    ('M967', 'check_population (4b): both arms are assigned', 'crates/axon-loop/src/evl.rs', '    if arms_seen.len() != 2 {', '    if false && arms_seen.len() != 2 {', 'axon-loop', '--test evl_refusal_sites', 'each_population_defect_is_never_issued'),
+    ('M968', 'check_population (4b) AB9: each arm covers exactly the task manifest', 'crates/axon-loop/src/evl.rs', '        if tasks != manifest.task_set() {', '        if false && tasks != manifest.task_set() {', 'axon-loop', '--test evl_refusal_sites', 'each_population_defect_is_never_issued'),
+    ('M969', 'check_population (4b): each (arm, task) is assigned exactly `repetitions` times', 'crates/axon-loop/src/evl.rs', '    if let Some(((arm, task), n)) = per_arm_task.iter().find(|(_, n)| **n != reps) {', '    if let Some(((arm, task), n)) = per_arm_task.iter().find(|(_, n)| false && **n != reps) {', 'axon-loop', '--test evl_refusal_sites', 'each_population_defect_is_never_issued'),
+    ('M970', "check_population (4b): only the plan's arm policies (EQUIVALENT: M971)", 'crates/axon-loop/src/evl.rs', '        if !plan_arms.contains(&a.policy_ref) {', '        if false && !plan_arms.contains(&a.policy_ref) {', 'axon-loop', '--test evl_refusal_sites', 'a_population_naming_a_policy_outside_the_plan_is_never_issued'),
+    ('M971', "plan::assign (4b): only the plan's arm policies (EQUIVALENT: M970)", 'crates/axon-loop/src/plan.rs', '        if !arms.contains(&t.policy_ref) {', '        if false && !arms.contains(&t.policy_ref) {', 'axon-loop', '--test evl_refusal_sites', 'a_population_naming_a_policy_outside_the_plan_is_never_issued'),
+    ('M972', 'check_population (4b): a trial id once in the population (EQUIVALENT: M973)', 'crates/axon-loop/src/evl.rs', '        if !trial_ids.insert(&a.trial_id) {', '        if !trial_ids.insert(&a.trial_id) && false {', 'axon-loop', '--test evl_refusal_sites', 'a_trial_id_issued_for_two_tasks_is_never_issued'),
+    ('M973', 'plan::assign (4b): a trial is issued once (EQUIVALENT: M972)', 'crates/axon-loop/src/plan.rs', '        if !trials.insert(&t.trial_id) || !attempts.insert((&t.trial_id, &t.attempt_id)) {', '        if (!trials.insert(&t.trial_id) || !attempts.insert((&t.trial_id, &t.attempt_id))) && false {', 'axon-loop', '--test evl_refusal_sites', 'a_trial_id_issued_for_two_tasks_is_never_issued'),
+    ('M974', 'check_population (4b): a (task, arm, trial) once (EQUIVALENT: M972 + M973)', 'crates/axon-loop/src/evl.rs', '        if !assigned_keys.insert((a.task_id.clone(), a.arm_id.clone(), a.trial_id.clone())) {', '        if !assigned_keys.insert((a.task_id.clone(), a.arm_id.clone(), a.trial_id.clone())) && false {', 'axon-loop', '--test evl_refusal_sites', 'a_trial_assigned_twice_is_never_issued'),
+    ('M975', 'EVL (4b): only a journalled evaluation is read as evidence', 'crates/axon-loop/src/evl.rs', '    let (seq, _) = tx.evaluation_event(r).ok_or_else(|| {\n        refused(format!(\n            "evaluation {r} was never journalled by `evl evaluate`"\n        ))\n    })?;', '    let seq = tx.evaluation_event(r).map(|(s, _)| s).unwrap_or(0);', 'axon-loop', '--test evl_refusal_sites', 'an_unjournalled_evaluation_is_never_admitted'),
+]
+
+EQUIV_RECORD["M954"] = {
+    "property": "an evaluation is never recorded under another scope than its plan's",
+    "subsumed_by": ["M955"], "killer": "joint:M954+M955",
+    "all_paths": "evaluate's only path to a record passes both checks, then `supplied != plan_arms` "
+                 "(M953): every supplied policy IS one of the plan's two arms (keys are digests), and a "
+                 "PolicyEnvelope's digest covers its scope, so each supplied p.scope is the plan's scope; "
+                 "hence p.scope != r.scope (M955) holds exactly when plan.scope != r.scope (M954)"}
+EQUIV_RECORD["M955"] = {
+    "property": "an evaluation is never recorded under another scope than its plan's",
+    "subsumed_by": ["M954"], "killer": "joint:M954+M955",
+    "all_paths": "M954 runs first on every call of evaluate and refuses r.scope != plan.scope; after it "
+                 "r.scope is the plan's, and a policy of another scope has another digest, so it is "
+                 "refused by M953 or never supplied"}
+EQUIV_RECORD["M956"] = {
+    "property": "a frozen experiment has one evaluation (no REJECT re-rolled)",
+    "subsumed_by": ["M957"], "killer": "joint:M956+M957",
+    "all_paths": "a second evaluation of the experiment must assign exactly the journalled population "
+                 "(requested == issued, M108, against the ONE assignment plan::assign journals per "
+                 "experiment), so its trial ids are the first evaluation's, which the scope-wide trial-id "
+                 "check (M957) refuses"}
+EQUIV_RECORD["M957"] = {
+    "property": "a frozen experiment has one evaluation (no REJECT re-rolled)",
+    "subsumed_by": ["M956"], "killer": "joint:M956+M957",
+    "all_paths": "a trial id is issued to one experiment only (plan::assign refuses an id issued to another "
+                 "experiment of the scope), so a prior evaluation holding one of this request's trial ids "
+                 "is an evaluation of this experiment, which M956 refuses first"}
+EQUIV_RECORD["M962"] = {
+    "property": "evidence minted for another scope never counts",
+    "subsumed_by": ["M15", "M963"], "killer": "joint:M962+M15+M963",
+    "all_paths": "M962 sits in the else-if chain after intake_join (M15): the delivered episode is one intaken "
+                 "in THIS scope; intake records an episode only through bind_episode, whose scope join "
+                 "(M963) refuses an episode, context or policy of different scopes, and judge calls the same "
+                 "bind_episode on the delivered context, whose bytes the episode names (M857), so a "
+                 "context or episode outside r.scope is refused by M15 or M963 on every path"}
+EQUIV_RECORD["M964"] = {
+    "property": "a trial counts only for the arm whose policy it ran",
+    "subsumed_by": ["M965"], "killer": "joint:M964+M965",
+    "all_paths": "judge's next statement calls bind_episode with policy = policies[a.policy_ref], a map keyed "
+                 "by the policy's own digest, so digest(policy) == policy_ref and bind_episode's "
+                 "`episode.policy_ref != digest(policy)` (M965) is M964's predicate, with no return between"}
+EQUIV_RECORD["M965"] = {
+    "property": "a trial counts only for the arm whose policy it ran",
+    "subsumed_by": ["M964"], "killer": "joint:M964+M965",
+    "all_paths": "bind_episode's callers: judge, after M964's identical check (policy is keyed by its "
+                 "digest); intake, with the policy it fetched by the episode's own policy_ref, where the "
+                 "predicate cannot hold. So on every path M964 or the fetch already decides it"}
+EQUIV_RECORD["M970"] = {
+    "property": "a population names only the plan's two arm policies",
+    "subsumed_by": ["M971"], "killer": "joint:M970+M971",
+    "all_paths": "check_population's callers: plan::assign, which then refuses the same predicate over the "
+                 "same trials (`!arms.contains(&t.policy_ref)`, M971) before journalling; and evaluate, "
+                 "whose population equals the journalled one (M108), which passed M971"}
+EQUIV_RECORD["M971"] = {
+    "property": "a population names only the plan's two arm policies",
+    "subsumed_by": ["M970"], "killer": "joint:M970+M971",
+    "all_paths": "plan::assign calls check_population over the same trials before M971, and its arm-policy "
+                 "check (M970) refuses the identical predicate (plan_arms is the same two refs)"}
+EQUIV_RECORD["M972"] = {
+    "property": "a trial id is issued once in a population",
+    "subsumed_by": ["M973"], "killer": "joint:M972+M973",
+    "all_paths": "check_population's callers: plan::assign, which then refuses a repeated trial id over the "
+                 "same trials (`!trials.insert(&t.trial_id)`, M973) before journalling; evaluate, whose "
+                 "population equals the journalled one (M108)"}
+EQUIV_RECORD["M973"] = {
+    "property": "a trial id is issued once in a population",
+    "subsumed_by": ["M972"], "killer": "joint:M972+M973",
+    "all_paths": "plan::assign calls check_population over the same trials before M973, and its trial-id check "
+                 "(M972) refuses every repeated id; a repeated (trial, attempt) pair is a repeated trial id"}
+EQUIV_RECORD["M974"] = {
+    "property": "a (task, arm, trial) is assigned once",
+    "subsumed_by": ["M972", "M973"], "killer": "joint:M974+M972+M973",
+    "all_paths": "a repeated (task, arm, trial) key repeats its trial id, which check_population's trial-id "
+                 "check (M972, same function, no return between but refusals) and plan::assign's (M973) "
+                 "each refuse on every path"}
+EQUIVALENT_DID |= {"M954", "M955", "M956", "M957", "M962", "M964", "M965", "M970", "M971", "M972", "M973", "M974"}
+RETIRED |= {"M954", "M955", "M956", "M957", "M962", "M964", "M965", "M970", "M971", "M972", "M973", "M974"}
+
 PSV_IDS = {f"M{n}" for n in range(137, 550)}
 # C9 round 3: rows M560-M649 are PSV rows (workstream ranges).
 PSV_IDS |= {f"M{n}" for n in range(550, 650)}
