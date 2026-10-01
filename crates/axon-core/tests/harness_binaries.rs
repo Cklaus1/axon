@@ -525,3 +525,40 @@ fn a_named_binary_older_than_its_sources_is_refused() {
     );
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// The workspace drift gate refuses a test that resolves a workspace binary
+/// itself -- reading AXON_BIN / CORTEX_BIN, or joining a `<profile>/axon` or
+/// `<profile>/cortex` path -- instead of `script_spawn::workspace_bin`. That is
+/// exactly how the PSV-1 attack test ran a stale interpreter. Control: the
+/// helper call, and a test that builds into its own `--target-dir`, pass.
+#[test]
+fn a_test_that_resolves_its_own_binary_is_flagged() {
+    // (spelled in pieces so this file's own scan does not read them)
+    let attacks = [
+        concat!("let p = std::env::var_", "os(\"AXON_BIN\").unwrap();\n"),
+        concat!("let p = std::env::var_", "os(\"CORTEX_BIN\").unwrap();\n"),
+        concat!("let p = root.join(\"target/de", "bug/axon\");\n"),
+        concat!("let p = t.join(\"de", "bug/cortex\");\n"),
+    ];
+    for a in attacks {
+        assert!(
+            !binary_resolution_violations(a).is_empty(),
+            "ATTACK: a test resolving its own workspace binary went unflagged:\n{a}"
+        );
+    }
+    let honest = [
+        "let p = script_spawn::workspace_bin(\"AXON_BIN\", &build, \"axon\");\n",
+        concat!(
+            "c.args([\"build\", \"--target-dir\"]);\n",
+            "let b = target.join(\"de",
+            "bug/axon-fabric\");\n"
+        ),
+    ];
+    for h in honest {
+        let v = binary_resolution_violations(h);
+        assert!(
+            v.is_empty(),
+            "control: an honest form was flagged: {v:?}\n{h}"
+        );
+    }
+}

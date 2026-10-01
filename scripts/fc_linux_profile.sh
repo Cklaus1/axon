@@ -106,6 +106,36 @@ if [[ "${1:-}" == "--reap" ]]; then
     [[ ${#left[@]} -eq 0 ]]; exit $?
 fi
 
+# serial_record first|last FILE REGEX: group 1 of the first/last serial line
+# that IS the record -- the whole line, matched in full (`re.fullmatch`), and
+# TERMINATED by a newline. Never a record found inside a line, and never the
+# unterminated text after the last newline. The guest's console output can be
+# cut by its reboot or interleaved with kernel messages (C9 round 4: a serial
+# ended `PSV-VERDICT-INIT[    0.256427] reboot: Restarting system`); a cut or
+# spliced line must never be read as a record. One primitive for every serial
+# field, on the launch path and under --verify-result alike.
+serial_record() {
+    python3 -I - "$@" <<'PY'
+import re, sys
+which, path, rx = sys.argv[1:4]
+with open(path, "rb") as f:
+    lines = f.read().decode("utf-8", "replace").split("\n")[:-1]
+hits = []
+for line in lines:
+    m = re.fullmatch(rx, line[:-1] if line.endswith("\r") else line)
+    if m:
+        hits.append(m.group(1))
+if hits:
+    print(hits[0] if which == "first" else hits[-1])
+PY
+}
+SR_OUT_SHA='B263-OUT stdout=([0-9a-f]{64}) exit=[0-9]+'
+SR_OUT_EXIT='B263-OUT stdout=[0-9a-f]{64} exit=([0-9]+)'
+SR_POLICY='B263-POLICY (.*)'
+SR_DONE='(B263-DONE)'
+SR_VERDICT='PSV-VERDICT-INIT sha256=([0-9a-f]{64})'
+SR_MANIFEST='PSV-MANIFEST sha256=([0-9a-f]{64})'
+
 # ── --verify-result DIR: re-derive the output binding from the returned drive ─
 # Independent of the launch: re-extracts /out/stdout from DIR/workspace.img and
 # checks it against the digest the guest printed on the serial console and the
@@ -116,11 +146,11 @@ if [[ "${1:-}" == "--verify-result" ]]; then
     debugfs -R "dump /out/stdout $T/stdout" "$VD/workspace.img" >/dev/null 2>&1
     D="$( [[ -f "$T/stdout" ]] && sha256sum "$T/stdout" | cut -d' ' -f1 )"
     rm -rf "$T"
-    S="$(sed -n 's/.*B263-OUT stdout=\([0-9a-f]*\) exit=.*/\1/p' "$VD/serial.log" | tr -d '\r' | tail -1)"
+    S="$(serial_record last "$VD/serial.log" "$SR_OUT_SHA")"
     R="$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["outputs"]["stdout"]["sha256"])' "$VD/result.json" 2>/dev/null)"
     # the policy the guest reported (FIRST line: printed before the workload
     # starts, so a workload cannot pre-empt it) must be the one recorded
-    SP="$(sed -n 's/.*B263-POLICY sha=\([0-9a-f]*\).*/\1/p' "$VD/serial.log" | tr -d '\r' | head -1)"
+    SP="$(serial_record first "$VD/serial.log" "$SR_POLICY" | sed -n 's/^sha=\([0-9a-f]\{64\}\)$/\1/p')"
     RP="$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1])).get("policy_sha256") or "")' "$VD/result.json" 2>/dev/null)"
     echo "{\"drive\":\"$D\",\"serial\":\"$S\",\"result\":\"$R\",\"policy_serial\":\"$SP\",\"policy_result\":\"$RP\"}"
     # PSV: the returned drive's verdict, the serial digest and the result's must agree.
@@ -129,7 +159,7 @@ if [[ "${1:-}" == "--verify-result" ]]; then
         T="$(mktemp -d)"
         debugfs -R "dump /out/verdict.json $T/v" "$VD/workspace.img" >/dev/null 2>&1
         DV="$( [[ -f "$T/v" ]] && sha256sum "$T/v" | cut -d' ' -f1 )"; rm -rf "$T"
-        SV="$(grep -a 'PSV-VERDICT-INIT sha256=' "$VD/serial.log" | head -1 | sed -n 's/.*sha256=\([0-9a-f]\{64\}\).*/\1/p')"
+        SV="$(serial_record first "$VD/serial.log" "$SR_VERDICT")"
         [[ -n "$DV" && "$DV" == "$SV" && "$DV" == "$PV" ]] || exit 27
     fi
     [[ -n "$D" && "$D" == "$S" && "$D" == "$R" && -n "$RP" && "$SP" == "$RP" ]] && exit 0
@@ -670,12 +700,12 @@ if [[ -f "$OUT/workspace.img" ]]; then
     rm -rf "$RD"
 fi
 mkdir -p "$OUT/out"
-SERIAL_OUT_SHA="$(sed -n 's/.*B263-OUT stdout=\([0-9a-f]*\) exit=.*/\1/p' "$OUT/serial.log" | tr -d '\r' | tail -1)"
-SERIAL_EXIT="$(sed -n 's/.*B263-OUT stdout=[0-9a-f]* exit=\([0-9]*\).*/\1/p' "$OUT/serial.log" | tr -d '\r' | tail -1)"
-DONE=false; grep -q "B263-DONE" "$OUT/serial.log" && DONE=true
+SERIAL_OUT_SHA="$(serial_record last "$OUT/serial.log" "$SR_OUT_SHA")"
+SERIAL_EXIT="$(serial_record last "$OUT/serial.log" "$SR_OUT_EXIT")"
+DONE=false; [[ -n "$(serial_record last "$OUT/serial.log" "$SR_DONE")" ]] && DONE=true
 # FIRST B263-POLICY line: guest-init.sh prints it before the workload starts, so
 # a workload writing to the console later cannot pre-empt it.
-SERIAL_POLICY="$(grep -a -m1 'B263-POLICY ' "$OUT/serial.log" | sed 's/.*B263-POLICY //' | tr -d '\r')"
+SERIAL_POLICY="$(serial_record first "$OUT/serial.log" "$SR_POLICY")"
 SERIAL_POLICY_SHA="$(printf '%s' "$SERIAL_POLICY" | sed -n 's/^sha=\([0-9a-f]\{64\}\)$/\1/p')"
 POLICY_BOUND=false
 [[ -n "$POLICY_SHA" && "$SERIAL_POLICY_SHA" == "$POLICY_SHA" ]] && POLICY_BOUND=true
@@ -688,8 +718,8 @@ WORKLOAD_EXIT=""; [[ -f "$OUT/out/exit" ]] && WORKLOAD_EXIT="$(tr -d '\n' < "$OU
 # printed (first PSV-VERDICT line, printed by /init after the runner exits).
 PSV_BOUND=true SERIAL_VERDICT_SHA="" DRIVE_VERDICT_SHA="" SERIAL_PSV_MANIFEST=""
 if [[ "$PSV" == true ]]; then
-    SERIAL_VERDICT_SHA="$(grep -a 'PSV-VERDICT-INIT sha256=' "$OUT/serial.log" | head -1 | sed -n 's/.*PSV-VERDICT-INIT sha256=\([0-9a-f]\{64\}\).*/\1/p')"
-    SERIAL_PSV_MANIFEST="$(grep -a -m1 'PSV-MANIFEST sha256=' "$OUT/serial.log" | sed -n 's/.*PSV-MANIFEST sha256=\([0-9a-f]\{64\}\).*/\1/p')"
+    SERIAL_VERDICT_SHA="$(serial_record first "$OUT/serial.log" "$SR_VERDICT")"
+    SERIAL_PSV_MANIFEST="$(serial_record first "$OUT/serial.log" "$SR_MANIFEST")"
     [[ -f "$OUT/out/verdict.json" ]] && DRIVE_VERDICT_SHA="$(sha256sum "$OUT/out/verdict.json" | cut -d' ' -f1)"
     [[ -n "$DRIVE_VERDICT_SHA" && "$DRIVE_VERDICT_SHA" == "$SERIAL_VERDICT_SHA" && "$SERIAL_PSV_MANIFEST" == "$PSV_MSHA" ]] || PSV_BOUND=false
 fi
