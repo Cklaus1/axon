@@ -3348,7 +3348,7 @@ MUTATIONS += [
     ('M962', 'EVL (4b): cross-tenant evidence never joins (EQUIVALENT: M15 + M963)', 'crates/axon-loop/src/evl.rs', '                } else if d.ep.scope != r.scope || d.ctx.scope != r.scope {', '                } else if false && (d.ep.scope != r.scope || d.ctx.scope != r.scope) {', 'axon-loop', '--test evl_refusal_sites', 'a_cross_tenant_context_never_counts'),
     ('M963', 'bind_episode (4b): an episode binds only a context and policy of its own scope (intake)', 'crates/axon-loop-contracts/src/checks.rs', '    if episode.scope != ctx.scope || episode.scope != policy.scope {', '    if false && (episode.scope != ctx.scope || episode.scope != policy.scope) {', 'axon-loop', '--test evl_refusal_sites', 'an_episode_bound_to_another_tenants_context_is_never_intaken'),
     ('M964', 'EVL (4b): a trial counts only for the arm whose policy it ran (EQUIVALENT: M965)', 'crates/axon-loop/src/evl.rs', '    if &d.ep.policy_ref != policy_ref {', '    if false && &d.ep.policy_ref != policy_ref {', 'axon-loop', '--test evl_refusal_sites', 'an_episode_of_another_policy_never_counts_for_an_arm'),
-    ('M965', 'bind_episode (4b): the episode ran the policy it is bound to (EQUIVALENT: M964)', 'crates/axon-loop-contracts/src/checks.rs', '    if episode.policy_ref != digest(policy)? || episode.context_ref != digest(ctx)? {', '    if episode.context_ref != digest(ctx)? {', 'axon-loop', '--test evl_refusal_sites', 'an_episode_of_another_policy_never_counts_for_an_arm'),
+    ('M965', "bind_episode (4b): the episode ran the policy it is bound to (the library primitive's own contract; its production callers decide it first, M964)", 'crates/axon-loop-contracts/src/checks.rs', '    if episode.policy_ref != digest(policy)? || episode.context_ref != digest(ctx)? {', '    if episode.context_ref != digest(ctx)? {', 'axon-loop-contracts', '--test fixtures', 'bind_episode_refuses_mismatches'),
     ('M966', 'check_population (4b): one policy per arm (issued by plan::assign)', 'crates/axon-loop/src/evl.rs', '        if arm_policy[&a.arm_id] != &a.policy_ref {', '        if false && arm_policy[&a.arm_id] != &a.policy_ref {', 'axon-loop', '--test evl_refusal_sites', 'each_population_defect_is_never_issued'),
     ('M967', 'check_population (4b): both arms are assigned', 'crates/axon-loop/src/evl.rs', '    if arms_seen.len() != 2 {', '    if false && arms_seen.len() != 2 {', 'axon-loop', '--test evl_refusal_sites', 'each_population_defect_is_never_issued'),
     ('M968', 'check_population (4b) AB9: each arm covers exactly the task manifest', 'crates/axon-loop/src/evl.rs', '        if tasks != manifest.task_set() {', '        if false && tasks != manifest.task_set() {', 'axon-loop', '--test evl_refusal_sites', 'each_population_defect_is_never_issued'),
@@ -3401,12 +3401,6 @@ EQUIV_RECORD["M964"] = {
     "all_paths": "judge's next statement calls bind_episode with policy = policies[a.policy_ref], a map keyed "
                  "by the policy's own digest, so digest(policy) == policy_ref and bind_episode's "
                  "`episode.policy_ref != digest(policy)` (M965) is M964's predicate, with no return between"}
-EQUIV_RECORD["M965"] = {
-    "property": "a trial counts only for the arm whose policy it ran",
-    "subsumed_by": ["M964"], "killer": "joint:M964+M965",
-    "all_paths": "bind_episode's callers: judge, after M964's identical check (policy is keyed by its "
-                 "digest); intake, with the policy it fetched by the episode's own policy_ref, where the "
-                 "predicate cannot hold. So on every path M964 or the fetch already decides it"}
 EQUIV_RECORD["M970"] = {
     "property": "a population names only the plan's two arm policies",
     "subsumed_by": ["M971"], "killer": "joint:M970+M971",
@@ -3435,8 +3429,8 @@ EQUIV_RECORD["M974"] = {
     "all_paths": "a repeated (task, arm, trial) key repeats its trial id, which check_population's trial-id "
                  "check (M972, same function, no return between but refusals) and plan::assign's (M973) "
                  "each refuse on every path"}
-EQUIVALENT_DID |= {"M954", "M955", "M956", "M957", "M962", "M964", "M965", "M970", "M971", "M972", "M973", "M974"}
-RETIRED |= {"M954", "M955", "M956", "M957", "M962", "M964", "M965", "M970", "M971", "M972", "M973", "M974"}
+EQUIVALENT_DID |= {"M954", "M955", "M956", "M957", "M962", "M964", "M970", "M971", "M972", "M973", "M974"}
+RETIRED |= {"M954", "M955", "M956", "M957", "M962", "M964", "M970", "M971", "M972", "M973", "M974"}
 
 # rows4a (amendment 61): store.rs.
 MUTATIONS += [

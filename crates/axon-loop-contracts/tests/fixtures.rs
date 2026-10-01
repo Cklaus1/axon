@@ -303,7 +303,10 @@ fn bind_episode_refuses_mismatches() {
     let mut p = t.policy.clone();
     p.discovery_evidence_refs
         .push(Ref::new(format!("cl22:{}", "1".repeat(64))).unwrap());
-    assert!(bind_episode(&t.episode, &p, &t.context, epoch(7), &ver, &subj).is_err());
+    assert!(
+        bind_episode(&t.episode, &p, &t.context, epoch(7), &ver, &subj).is_err(),
+        "ATTACK: bind_episode bound an episode to a policy whose bytes it did not run"
+    );
     // Identity drift.
     let mut e = t.episode.clone();
     e.identity.attempt_id = AttemptId::new("another-attempt").unwrap();

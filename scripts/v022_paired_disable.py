@@ -636,7 +636,6 @@ GUARD_SETS = {
     "M957": {"siblings": ["M956"], "kind": "pair"},
     "M962": {"siblings": ["M15", "M963"], "kind": "set"},
     "M964": {"siblings": ["M965"], "kind": "pair"},
-    "M965": {"siblings": ["M964"], "kind": "pair"},
     "M970": {"siblings": ["M971"], "kind": "pair"},
     "M971": {"siblings": ["M970"], "kind": "pair"},
     "M972": {"siblings": ["M973"], "kind": "pair"},

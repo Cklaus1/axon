@@ -1008,7 +1008,7 @@ ATTACK_MARKERS.update({
     'M962': "ATTACK: a trial whose context is another tenant's counted",
     'M963': "ATTACK: an episode bound to another tenant's context was intaken",
     'M964': "ATTACK: an episode of the incumbent's policy counted for the challenger arm",
-    'M965': "ATTACK: an episode of the incumbent's policy counted for the challenger arm",
+    'M965': 'ATTACK: bind_episode bound an episode to a policy whose bytes it did not run',
     'M966': 'ATTACK: an arm assigned two policies: the population was issued',
     'M967': 'ATTACK: only one arm assigned: the population was issued',
     'M968': 'ATTACK: a subset of the task manifest: the population was issued',
