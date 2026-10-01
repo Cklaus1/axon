@@ -982,4 +982,10 @@ ATTACK_MARKERS.update({
     'M892': r'ATTACK: a paired-disable run left a binary built from a mutated tree in the\s+workspace target dir',
     'M893': r'ATTACK: a paired-disable run left a binary built from a mutated tree in the\s+workspace target dir',
     'M894': r'ATTACK: an ignored output a test wrote into the crate made a current binary read as\s+stale',
+    # C9 round 4b fix wave, rows4a (amendment 61).
+    'M940': r'ATTACK: an execution attested by a verifier the operator does not trust counted',
+    'M941': r'ATTACK: a protected admission accepted an execution attested by a verifier the\s+operator withdrew',
+    'M942': r'ATTACK: an execution attested by a verifier qualified only for development\s+backends counted',
+    'M943': r'ATTACK: a protected admission accepted an execution attested by a verifier no\s+longer qualified',
+    'M944': r"ATTACK: an agent-signed B263 record stood in for the operator's qualification and readiness still said PASS",
 })

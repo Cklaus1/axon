@@ -969,7 +969,11 @@ fn a_relabelled_execution_leg_counts_nothing_in_a_protected_evaluation() {
             let mut cfg = w.s.config().unwrap();
             let p = OpaqueRef::new(PLANTED).unwrap();
             cfg.trusted_verifiers.push(p.clone());
-            cfg.verifier_keys.insert(p, planted_pk.clone());
+            cfg.verifier_keys.insert(p.clone(), planted_pk.clone());
+            // Qualified for the protected profile (amendment 61, A92), so
+            // only the operator root's refusal of its key stands.
+            let pin = cfg.verifier_pins[&OpaqueRef::new(VERIFIER).unwrap()].clone();
+            cfg.verifier_pins.insert(p, pin);
             w.s.write_config(&cfg).unwrap();
         }
         freeze_plan(&w.s, "exp", &w.inc_ref, &w.cand_ref, |_| {}).unwrap();
@@ -1900,4 +1904,210 @@ fn a_context_observer_the_operator_withdrew_counts_nothing_at_activation() {
     }
     let (w, adm) = setup("control");
     assert_eq!(act(&w, &adm).unwrap(), Some(w.cand_ref.clone()), "control");
+}
+
+// ── amendment 61 (C9 round 4b, rows4a): the execution attestation's signer ──
+//
+// `evl::verify_execution` is the one primitive both doors use (EVL's protected
+// execution leg and admission's `reverify_protected`). Its signer must be a
+// verifier the operator TRUSTS (round 4b EQUIVALENCE: the trust check had no
+// row, and the suites stayed green without it) and one the operator QUALIFIED
+// for the backend profile the execution claims (A92: a verifier pinned only
+// for development backends attested a protected execution, and it counted).
+
+const EXEC_VERIFIER: &str = "agent:exec-verifier";
+
+/// Register a second verifier [`EXEC_VERIFIER`]: its key under the operator's
+/// verifier root and in the store, `trusted` as asked, and pinned (a copy of
+/// the fixture verifier's pin) for `profiles`. Returns its PKCS#8.
+fn second_verifier(w: &World, trusted: bool, profiles: &[&str]) -> Vec<u8> {
+    let (k, pk) = axon_loop_contracts::attestation::generate().unwrap();
+    std::fs::write(
+        operator_root().join("verifier").join("exec-verifier.pub"),
+        format!("{pk}\n"),
+    )
+    .unwrap();
+    let x = OpaqueRef::new(EXEC_VERIFIER).unwrap();
+    let mut cfg = w.s.config().unwrap();
+    cfg.verifier_keys.insert(x.clone(), pk);
+    if trusted {
+        cfg.trusted_verifiers.push(x.clone());
+    }
+    let mut pin = cfg.verifier_pins[&OpaqueRef::new(VERIFIER).unwrap()].clone();
+    pin.backend_profiles = profiles.iter().map(|p| p.to_string()).collect();
+    cfg.verifier_pins.insert(x, pin);
+    w.s.write_config(&cfg).unwrap();
+    k
+}
+
+fn drop_second_verifier_key() {
+    let _ = std::fs::remove_file(operator_root().join("verifier").join("exec-verifier.pub"));
+}
+
+/// A protected evaluation of `exp` whose challenger executions are attested
+/// by [`EXEC_VERIFIER`] (signed with `k`); every verdict is the fixture
+/// verifier's, as before. Returns the challenger arm and the evaluation.
+fn evaluated_with_exec_signer(w: &World, exp: &str, k: &[u8]) -> (axon_loop::evl::ArmResult, Ref) {
+    freeze_plan(&w.s, exp, &w.inc_ref, &w.cand_ref, |_| {}).unwrap();
+    assign_specs(&w.s, exp, &specs_for(w));
+    let mut v = evl_request(exp, &w.inc, &w.cand, &specs_for(w), &EvlOpts::default());
+    on_protected_backend(&mut v);
+    for t in challenger_trials(&mut v) {
+        t["acf_attestation"] =
+            attest_execution_with(k, EXEC_VERIFIER, &t["acf_request"], &t["acf_receipt"]);
+    }
+    clear_all(&w.s, &v);
+    let (rec, e) = evaluate(&w.s, &v).unwrap();
+    (rec.arm_for_policy(&w.cand_ref).unwrap().clone(), e)
+}
+
+fn protected_world() -> World {
+    let w = world();
+    protect(&w.s);
+    pin_protected_backend(&w.s);
+    w
+}
+
+/// EVL: an execution attested by a verifier the operator does not (or no
+/// longer) trusts counts nothing, though its key is registered, operator-
+/// rooted and pinned for the protected profile: only the trust check stands
+/// between it and a protected count (round 4b reproduction,
+/// eqv4b_revoked_verifier_test). Control: the same verifier, trusted, counts.
+#[test]
+fn a_revoked_verifiers_execution_attestation_counts_nothing() {
+    for trusted in [true, false] {
+        let w = protected_world();
+        let k = second_verifier(&w, trusted, &[PROTECTED]);
+        let (arm, _) = evaluated_with_exec_signer(&w, "rv", &k);
+        drop_second_verifier_key();
+        if trusted {
+            assert_eq!(arm.verified_pass, 2, "control: {:?}", arm.trials);
+        } else {
+            assert_eq!(
+                arm.verified_pass, 0,
+                "ATTACK: an execution attested by a verifier the operator does not trust counted \
+                 as a protected execution: {:?}",
+                arm.trials
+            );
+            assert!(
+                arm.trials
+                    .iter()
+                    .all(|t| t.reason.contains("is not a trusted verifier")),
+                "{:?}",
+                arm.trials
+            );
+        }
+    }
+}
+
+/// Admission (`reverify_protected`): the execution attester trusted when the
+/// evaluation ran, then withdrawn by the operator; the verdicts stay the
+/// fixture verifier's, still trusted, so only the execution leg's trust check
+/// refuses the ACCEPT. Control: nothing withdrawn, it is accepted.
+#[test]
+fn a_protected_admission_refuses_an_execution_attester_the_operator_withdrew() {
+    for withdrawn in [false, true] {
+        let w = protected_world();
+        let k = second_verifier(&w, true, &[PROTECTED]);
+        let (arm, e) = evaluated_with_exec_signer(&w, "aw", &k);
+        assert_eq!(arm.verified_pass, 2, "setup: {:?}", arm.trials);
+        if withdrawn {
+            withdraw(&w, |c| {
+                c.trusted_verifiers.retain(|v| v.as_str() != EXEC_VERIFIER)
+            });
+        }
+        let got = admit(&w.s, "aw", &e, ADMITTER, false);
+        drop_second_verifier_key();
+        match (withdrawn, got) {
+            (false, Ok((rec, _))) => {
+                assert_eq!(rec.decision, Decision::Accept, "control: {:?}", rec.reasons)
+            }
+            (false, Err(e)) => panic!("control: {e}"),
+            (true, Ok((rec, _))) => assert_ne!(
+                rec.decision,
+                Decision::Accept,
+                "ATTACK: a protected admission accepted an execution attested by a verifier the \
+                 operator withdrew: {:?}",
+                rec.reasons
+            ),
+            (true, Err(e)) => assert!(e.to_string().contains("is not a trusted verifier"), "{e}"),
+        }
+    }
+}
+
+/// A92 (EVL): a verifier the operator trusts, under an operator-rooted key,
+/// but QUALIFIED only for a development backend (its pin does not name the
+/// protected profile) attests a protected execution. Its attestation counts
+/// nothing: the operator's per-profile qualification bounds what a verifier
+/// may attest, as it bounds what its verdicts may come from. Control: the
+/// same verifier pinned for the protected profile counts.
+#[test]
+fn an_execution_attested_by_a_verifier_not_qualified_for_its_profile_counts_nothing() {
+    for qualified in [true, false] {
+        let w = protected_world();
+        let profiles: &[&str] = if qualified {
+            &[PROTECTED]
+        } else {
+            &["local-process-dev"]
+        };
+        let k = second_verifier(&w, true, profiles);
+        let (arm, _) = evaluated_with_exec_signer(&w, "nq", &k);
+        drop_second_verifier_key();
+        if qualified {
+            assert_eq!(arm.verified_pass, 2, "control: {:?}", arm.trials);
+        } else {
+            assert_eq!(
+                arm.verified_pass, 0,
+                "ATTACK: an execution attested by a verifier qualified only for development \
+                 backends counted as a protected execution: {:?}",
+                arm.trials
+            );
+            assert!(
+                arm.trials
+                    .iter()
+                    .all(|t| t.reason.contains("is not qualified")),
+                "{:?}",
+                arm.trials
+            );
+        }
+    }
+}
+
+/// A92 (admission): the execution attester was qualified for the protected
+/// profile when the evaluation ran; the operator then withdraws that profile
+/// from its pin. Admission re-verifies the execution leg against the pin as it
+/// is NOW, so the ACCEPT is refused. Control: the pin unchanged, accepted.
+#[test]
+fn a_protected_admission_refuses_an_execution_attester_no_longer_qualified() {
+    for withdrawn in [false, true] {
+        let w = protected_world();
+        let k = second_verifier(&w, true, &[PROTECTED]);
+        let (arm, e) = evaluated_with_exec_signer(&w, "aq", &k);
+        assert_eq!(arm.verified_pass, 2, "setup: {:?}", arm.trials);
+        if withdrawn {
+            withdraw(&w, |c| {
+                c.verifier_pins
+                    .get_mut(&OpaqueRef::new(EXEC_VERIFIER).unwrap())
+                    .unwrap()
+                    .backend_profiles
+                    .retain(|p| p != PROTECTED)
+            });
+        }
+        let got = admit(&w.s, "aq", &e, ADMITTER, false);
+        drop_second_verifier_key();
+        match (withdrawn, got) {
+            (false, Ok((rec, _))) => {
+                assert_eq!(rec.decision, Decision::Accept, "control: {:?}", rec.reasons)
+            }
+            (false, Err(e)) => panic!("control: {e}"),
+            (true, Ok((rec, _))) => assert_ne!(
+                rec.decision,
+                Decision::Accept,
+                "ATTACK: a protected admission accepted an execution attested by a verifier no \
+                 longer qualified for its profile: {:?}",
+                rec.reasons
+            ),
+            (true, Err(e)) => assert!(e.to_string().contains("is not qualified"), "{e}"),
+        }
+    }
 }

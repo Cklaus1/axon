@@ -8,7 +8,7 @@ found ten guards in the decision-A/D files with no row, and the whole
 axon-fabric suite green with each of them removed. This check derives the
 guards from the CODE instead of trusting the list.
 
-A refusal site is a non-test line in a PROTECTED file matching SITE
+A refusal site is a non-test line in an in-scope file (see SCOPE_DIRS) matching SITE
 (`return Err(`, `Err(format!`, `refuse(`, `Err(bad(`, or a read of
 `TEST_TRUST_BUILD`; a `use` declaration is not a read). Its guard block runs from the nearest opening
 condition above it (`if` / `else if` / `match` / a match arm), at most
@@ -24,10 +24,14 @@ block. The check fails on:
   * a row for a protected file whose `old` text is not present exactly once
     (it covers nothing).
 
-    python3 scripts/v022_refusal_coverage.py [--without=M1,M2]
+    python3 scripts/v022_refusal_coverage.py [--without=M1,M2] [--freeze]
 
 --without drops rows before checking: the check must then name their sites
-(a gate that cannot speak proves nothing).
+(a gate that cannot speak proves nothing). --freeze also fails while any
+in-scope file is NOT_YET_SCANNED (amendment 61); v022_freeze_manifest.py runs
+the check that way and refuses to bind a freeze otherwise.
+
+The FILE SET is a rule (amendment 61), not a list: see SCOPE_DIRS below.
 """
 import importlib.util
 import os
@@ -35,29 +39,51 @@ import re
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-PROTECTED = [
-    "crates/axon-fabric/src/privileged_launcher.rs",
-    "crates/axon-fabric/src/sealed_exec.rs",
-    "crates/axon-fabric/src/bin/axon-protected-launcher.rs",
-    # C9 round 4 fix wave, rows2 (amendment 58): the custodian, its binary,
-    # readiness, the protected host config and the observer's nonce store.
-    "crates/axon-fabric/src/custodian.rs",
-    "crates/axon-fabric/src/bin/axon-custodian.rs",
-    "crates/axon-fabric/src/readiness.rs",
-    "crates/axon-fabric/src/protected_host.rs",
-    "crates/axon-fabric/src/observer.rs",
-    "crates/axon-psv/src/lib.rs",
-    "crates/axon-fabric/src/psv.rs",
-    "crates/axon-psv/src/runner.rs",
-    "crates/axon-loop-contracts/src/protected_evidence.rs",
-    "crates/axon-loop/src/admission.rs",
-    "crates/axon-loop/src/intake.rs",
-]
-# Protected decision files NOT yet scanned, with the refusal sites that had
-# neither a row nor an exemption when they were last measured (amendment 58).
-# Printed on every run so the gap is visible; moving a file into PROTECTED is
-# how it closes.
-NOT_YET_SCANNED = {}
+# Amendment 61 (C9 round 4b, rows4a): the file set is a RULE, not a list.
+# Round 4b (EQUIVALENCE) found whole protected decision files unscanned while
+# a hand-kept PROTECTED list said otherwise and NOT_YET_SCANNED was {}: the
+# list stood in for the set (class a). The scope is now derived from the tree:
+#
+#   IN SCOPE = every non-test .rs file under SCOPE_DIRS (recursively: the
+#   protected crates' whole sources, bins included), every file in
+#   SCOPE_FILES, and, in each SCOPE_FN_REGIONS file, the non-test functions
+#   whose name matches its pattern (the interpreter's seal edges);
+#
+# and each in-scope file is exactly one of: SCANNED (every refusal site has a
+# row or a reasoned exemption, BAD otherwise), OUT_OF_SCOPE (named with a
+# reason a reviewer can check), or NOT_YET_SCANNED (named with the number of
+# its sites that have neither a row nor an exemption, which the gate
+# re-measures and refuses if it differs). An in-scope file in none of these is
+# SCANNED, so a new file is checked the day it appears. NOT_YET_SCANNED is
+# shown on every run; under --freeze (and in v022_freeze_manifest.py, which
+# calls check(freeze=True)) a non-empty NOT_YET_SCANNED fails: no freeze binds
+# evidence over a decision file nobody scanned.
+SCOPE_DIRS = (
+    "crates/axon-fabric/src",
+    "crates/axon-loop/src",
+    "crates/axon-loop-contracts/src",
+    "crates/axon-psv/src",
+)
+SCOPE_FILES = (
+    "crates/axon-core/src/interp/conform.rs",
+)
+# The interpreter's seal edges: the functions that decide what a sealed
+# (candidate) frame may reach. A site outside such a function in these files
+# is not in scope (the rest of the interpreter is the language, not a
+# protected decision).
+SEAL_FN = r"seal|conform|cast"
+SCOPE_FN_REGIONS = {
+    "crates/axon-core/src/interp.rs": SEAL_FN,
+    "crates/axon-core/src/interp/eval.rs": SEAL_FN,
+}
+# (file -> reason). A file here is in scope by the rule and judged not to be a
+# decision path; the reason names what makes that checkable.
+OUT_OF_SCOPE = {
+}
+# (file -> sites with neither a row nor an exemption, as last measured). The
+# gate re-measures each count and refuses a stale one, in both directions.
+NOT_YET_SCANNED = {
+}
 SITE = re.compile(r"return Err\(|\bErr\(format!|\brefuse\(|\bErr\(bad\(|TEST_TRUST_BUILD")
 OPENER = re.compile(r"^\s*(\}\s*else\s+if\b|if\b|match\b|let\s+\w+\s*=\s*if\b)|=>")
 MAX_UP = 10
@@ -420,9 +446,11 @@ def line_of(text, offset):
 # an arm's or a block's value, no `return`) and a call of a refusal
 # constructor (`refused(`, `fail(`, `shape(` in the loop, the runner's
 # `refused(`, the verdict's `unknown(`). A definition of one is not a site.
+# Amendment 61: and the interpreter's `panic(` (a Flow refusal: the seal
+# edges and conform.rs refuse that way; `panic!(` is not it).
 ERR = re.compile(r"\bErr\(")
-CTOR = re.compile(r"\b(refused|fail|shape|unknown)\(")
-CTOR_DEF = re.compile(r"\bfn\s+(refused|fail|shape|unknown)\b|\blet\s+(refused|fail|shape|unknown)\s*=")
+CTOR = re.compile(r"\b(refused|fail|shape|unknown|panic)\(")
+CTOR_DEF = re.compile(r"\bfn\s+(refused|fail|shape|unknown|panic)\b|\blet\s+(refused|fail|shape|unknown|panic)\s*=")
 
 
 def err_is_expression(l, at):
@@ -460,13 +488,35 @@ def is_site(l):
     return bool(CTOR.search(l)) and not CTOR_DEF.search(l)
 
 
-def sites(text):
+def fn_regions(lines, pattern):
+    """(first, last) line spans of the functions in `lines` whose name matches
+    `pattern`. A function ends at the first later line that is its own
+    indentation followed by `}` (rustfmt's layout, which cargo fmt --check
+    holds every file to)."""
+    out = []
+    head = re.compile(r"^(\s*)(pub(\([a-z]+\))?\s+)?fn\s+(\w+)")
+    for i, l in enumerate(lines):
+        m = head.match(l)
+        if not m or not re.search(pattern, m.group(4)):
+            continue
+        close = m.group(1) + "}"
+        for j in range(i + 1, len(lines)):
+            if lines[j] == close:
+                out.append((i, j))
+                break
+    return out
+
+
+def sites(text, pattern=None):
     lines = code_lines(text)
+    regions = fn_regions(lines, pattern) if pattern else None
     out = []
     for i, l in enumerate(lines):
         s = l.strip()
         # A `use` declaration names TEST_TRUST_BUILD; it reads nothing.
         if s.startswith("//") or s.startswith("use ") or not is_site(l):
+            continue
+        if regions is not None and not any(a <= i <= b for a, b in regions):
             continue
         g = i
         for j in range(i, max(-1, i - MAX_UP - 1), -1):
@@ -477,64 +527,118 @@ def sites(text):
     return out
 
 
+def in_scope_files():
+    """The rule's file set (amendment 61), sorted: every .rs under SCOPE_DIRS,
+    SCOPE_FILES, and the SCOPE_FN_REGIONS files."""
+    found = set(SCOPE_FILES) | set(SCOPE_FN_REGIONS)
+    for d in SCOPE_DIRS:
+        for dirpath, _, names in os.walk(os.path.join(ROOT, d)):
+            for n in names:
+                if n.endswith(".rs"):
+                    found.add(os.path.relpath(os.path.join(dirpath, n), ROOT))
+    return sorted(found)
+
+
+def judge_file(f, rows, bad):
+    """Judge one in-scope file: (covered, exempt, uncovered sites). Problems
+    with the registry or the exemptions go to `bad` whatever the file's state;
+    uncovered sites are returned, and reported by the caller."""
+    text = open(os.path.join(ROOT, f)).read()
+    lines = text.split("\n")
+    spans = []
+    for r in rows:
+        if r[2] != f:
+            continue
+        n = text.count(r[3])
+        if n != 1:
+            bad.append(f"{r[0]}: its old text occurs {n} times in {f} (covers nothing)")
+            continue
+        a = line_of(text, text.index(r[3]))
+        spans.append((r[0], a, a + r[3].count("\n")))
+    ex = []
+    for ef, anchor, reason in EXEMPT:
+        if ef != f:
+            continue
+        n = text.count(anchor)
+        if n != 1:
+            bad.append(f"exemption anchor occurs {n} times in {f}: {anchor!r}")
+            continue
+        ex.append([line_of(text, text.index(anchor)), anchor, reason, 0])
+    covered = exempt = 0
+    uncovered = []
+    for g, i in sites(text, SCOPE_FN_REGIONS.get(f)):
+        by = [rid for rid, a, b in spans if a <= i and b >= g]
+        ex_hit = [e for e in ex if g <= e[0] <= i]
+        for e in ex_hit:
+            e[3] += 1
+        if by:
+            covered += 1
+            for e in ex_hit:
+                bad.append(f"{f}:{i + 1}: exempt ({e[1]!r}) yet covered by {by}: drop the exemption")
+        elif ex_hit:
+            exempt += 1
+        else:
+            uncovered.append(f"{f}:{i + 1}: refusal site with no row and no exemption: "
+                             f"{lines[g].strip()} ... {lines[i].strip()}")
+    for line, anchor, _, hits in ex:
+        if hits == 0:
+            bad.append(f"{f}:{line + 1}: exemption matches no refusal site: {anchor!r}")
+    return covered, exempt, uncovered
+
+
+def check(without=(), freeze=False, out=print):
+    """Run the gate. Returns the list of problems (empty: it holds). With
+    `freeze`, a non-empty NOT_YET_SCANNED is itself a problem."""
+    rows = [r for r in load_rows() if r[0] not in set(without)]
+    bad = []
+    scope = in_scope_files()
+    for f in sorted(set(OUT_OF_SCOPE) | set(NOT_YET_SCANNED)):
+        if f not in scope:
+            bad.append(f"{f}: named in OUT_OF_SCOPE/NOT_YET_SCANNED but not in scope by the rule "
+                       "(or gone): the table must not outlive its file")
+        if f in OUT_OF_SCOPE and f in NOT_YET_SCANNED:
+            bad.append(f"{f}: both OUT_OF_SCOPE and NOT_YET_SCANNED")
+    for f in scope:
+        if f in OUT_OF_SCOPE:
+            out(f"{f}: OUT OF SCOPE ({OUT_OF_SCOPE[f]})")
+            continue
+        covered, exempt, uncovered = judge_file(f, rows, bad)
+        if f in NOT_YET_SCANNED:
+            listed = NOT_YET_SCANNED[f]
+            out(f"{f}: NOT YET SCANNED: {len(uncovered)} of {covered + exempt + len(uncovered)} "
+                f"refusal sites have neither a row nor an exemption")
+            if len(uncovered) != listed:
+                bad.append(f"{f}: NOT_YET_SCANNED says {listed} uncovered sites, measured "
+                           f"{len(uncovered)}: update the count (or, at 0, scan the file)")
+            if freeze:
+                bad.append(f"{f}: NOT YET SCANNED at a freeze ({len(uncovered)} uncovered sites)")
+            continue
+        out(f"{f}: {covered} covered by a row, {exempt} exempt")
+        bad.extend(uncovered)
+    for b in bad:
+        out(f"BAD {b}")
+    return bad
+
+
 def main():
     without = set()
+    freeze = False
     for a in sys.argv[1:]:
         if a.startswith("--without="):
             without = set(a.split("=", 1)[1].split(","))
+        elif a == "--freeze":
+            freeze = True
         else:
             sys.exit(__doc__)
-    rows = [r for r in load_rows() if r[0] not in without]
-    bad = []
-    for f in PROTECTED:
-        text = open(os.path.join(ROOT, f)).read()
-        spans = []
-        for r in rows:
-            if r[2] != f:
-                continue
-            n = text.count(r[3])
-            if n != 1:
-                bad.append(f"{r[0]}: its old text occurs {n} times in {f} (covers nothing)")
-                continue
-            a = line_of(text, text.index(r[3]))
-            spans.append((r[0], a, a + r[3].count("\n")))
-        ex = []
-        for ef, anchor, reason in EXEMPT:
-            if ef != f:
-                continue
-            n = text.count(anchor)
-            if n != 1:
-                bad.append(f"exemption anchor occurs {n} times in {f}: {anchor!r}")
-                continue
-            ex.append([line_of(text, text.index(anchor)), anchor, reason, 0])
-        covered = exempt = 0
-        for g, i in sites(text):
-            by = [rid for rid, a, b in spans if a <= i and b >= g]
-            ex_hit = [e for e in ex if g <= e[0] <= i]
-            for e in ex_hit:
-                e[3] += 1
-            if by:
-                covered += 1
-                for e in ex_hit:
-                    bad.append(f"{f}:{i + 1}: exempt ({e[1]!r}) yet covered by {by}: drop the exemption")
-            elif ex_hit:
-                exempt += 1
-            else:
-                lines = text.split("\n")
-                bad.append(f"{f}:{i + 1}: refusal site with no row and no exemption: "
-                           f"{lines[g].strip()} ... {lines[i].strip()}")
-        for line, anchor, _, hits in ex:
-            if hits == 0:
-                bad.append(f"{f}:{line + 1}: exemption matches no refusal site: {anchor!r}")
-        print(f"{f}: {covered} covered by a row, {exempt} exempt")
-    for f, n in NOT_YET_SCANNED.items():
-        print(f"{f}: NOT YET SCANNED ({n} refusal sites had neither a row nor an exemption "
-              f"when measured; amendment 58)")
-    for b in bad:
-        print(f"BAD {b}")
-    if bad:
+    if check(without, freeze):
         sys.exit(1)
-    print("refusal coverage: every refusal site in the protected files has a row or a reasoned exemption")
+    if NOT_YET_SCANNED:
+        print(f"refusal coverage: every refusal site in the scanned files has a row or a reasoned "
+              f"exemption; {len(NOT_YET_SCANNED)} in-scope file(s) NOT YET SCANNED (a freeze "
+              f"refuses until none is)")
+    else:
+        print("refusal coverage: every refusal site in every in-scope file has a row or a reasoned "
+              "exemption")
 
 
 if __name__ == "__main__":

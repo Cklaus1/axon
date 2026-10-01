@@ -3263,6 +3263,30 @@ MUTATIONS += [
      'axon-core', _HB2, 'an_ignored_output_written_into_a_crate_is_not_a_source'),
 ]
 
+# C9 round 4b fix wave, rows4a (amendment 61): the refusal-site gate's file set
+# is a rule (every source of the protected crates), and the loop side's sites
+# are rowed or exempt. M940-M1019.
+_EVL = 'crates/axon-loop/src/evl.rs'
+_EXEC_TRUST = '    if !config.verifiers().contains(&issuer) {\n        return Err(format!("{issuer} is not a trusted verifier"));'
+_EXEC_QUAL = '    if !qualified {\n        return Err(format!(\n            "{issuer} is not qualified by the operator'
+MUTATIONS += [
+    ('M940', "PSV-7 (4b): the execution attestation's signer is a verifier the operator trusts (EVL)",
+     _EVL, _EXEC_TRUST, _EXEC_TRUST.replace('    if !', '    if false && !', 1),
+     'axon-loop', '--test protected_class', 'a_revoked_verifiers_execution_attestation_counts_nothing'),
+    ('M941', "PSV-7 (4b): the execution attestation's signer is a verifier the operator trusts NOW (admission re-derivation)",
+     _EVL, _EXEC_TRUST, _EXEC_TRUST.replace('    if !', '    if false && !', 1),
+     'axon-loop', '--test protected_class', 'a_protected_admission_refuses_an_execution_attester_the_operator_withdrew'),
+    ('M942', "A92: the execution attestation's signer is pinned by the operator for the profile it attests (EVL)",
+     _EVL, _EXEC_QUAL, _EXEC_QUAL.replace('    if !', '    if false && !', 1),
+     'axon-loop', '--test protected_class', 'an_execution_attested_by_a_verifier_not_qualified_for_its_profile_counts_nothing'),
+    ('M943', "A92: the execution attestation's signer is pinned for that profile NOW (admission re-derivation)",
+     _EVL, _EXEC_QUAL, _EXEC_QUAL.replace('    if !', '    if false && !', 1),
+     'axon-loop', '--test protected_class', 'a_protected_admission_refuses_an_execution_attester_no_longer_qualified'),
+    ('M944', "RULE:issuer-trusted: an evidence signature's key is one the operator root trusts (readiness, B263)",
+     'crates/axon-loop-contracts/src/operator_trust.rs', '    if !trusted.contains(&pk) {', '    if false && !trusted.contains(&pk) {',
+     'axon-fabric', '--test readiness_attribution', 'a_b263_record_not_signed_under_the_qualification_root_is_refused'),
+]
+
 PSV_IDS = {f"M{n}" for n in range(137, 550)}
 # C9 round 3: rows M560-M649 are PSV rows (workstream ranges).
 PSV_IDS |= {f"M{n}" for n in range(550, 650)}
@@ -3281,6 +3305,8 @@ PSV_IDS |= {f"M{n}" for n in range(650, 720)}
 PSV_IDS |= {f"M{n}" for n in range(760, 860)}
 # C9 round 4 fix wave: rows3 M880-M899 (amendment 59).
 PSV_IDS |= {f"M{n}" for n in range(880, 900)}
+# C9 round 4b fix wave: rows4a M940-M1019 (amendment 61).
+PSV_IDS |= {f"M{n}" for n in range(940, 1020)}
 
 
 def in_scope(mid, scope):
