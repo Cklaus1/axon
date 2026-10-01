@@ -477,7 +477,7 @@
       }
     },
     "candidate_9": {
-      "state": "DEV REVIEW LOOP: round 3 found 5 blockers; the round-3 fix wave is merged and evidenced at 82d88da3; dev review round 4 next. No freeze until a round has zero blockers.",
+      "state": "DEV REVIEW LOOP: round 4 found 5 blockers; the fix wave is merged and evidenced (dev head 2c59ebb6); affected-claim review round 4b next, then a full nine-claim round. No freeze until a round has zero blockers.",
       "naming": "C7b = proof WITHDRAWN; C8 = FAILED certification attempts (01e22d50, 2568963f, 7b9736b9, cb9fa2ea, 4943489f); C9 = this candidate",
       "objectives": {
         "1_rng": "DONE 8a7962fb: RNG moved into the per-provenance Kernel; process-global stream deleted; sealed stream one-way seeded; drift test derives Random builtins from BUILTINS; runner-level steering regression; M270-M272 killed",
@@ -637,7 +637,37 @@
         "re-pin the helper and the launcher after the round-3 changes",
         "review root-owned listener acceptance (socket activation)",
         "a certification with PASS_WITH_BLOCKED needs a waiver file"
-      ]
+      ],
+      "dev_review_round_4": {
+        "run": "wf_af1ee3bc-9ed",
+        "tree": "1b687d95",
+        "verdicts": "6 REGISTER, 3 DO_NOT_REGISTER",
+        "blockers": [
+          "PSV-1: a candidate swaps its own method for the operator's judge (type-confused value + runtime-type dispatch), keyed PASS",
+          "PSV-6: the root helper boots the request's policy_json, never joined to the manifest's policy_sha256",
+          "EQUIVALENCE: production call sites with no row (readiness trust.check, custodian load_config check, ProtectedHost::operator calls, lease)",
+          "EQUIVALENCE: rows killed only by direct unit tests of a rule function (M490-492, M629, M640, M546, M634, M591)",
+          "EQUIVALENCE: checks exec a binary not built from the tree under test"
+        ],
+        "findings_file": "/var/tmp/c9r4-findings.txt"
+      },
+      "round_4_fix_wave": {
+        "dev_head": "2c59ebb6",
+        "fixed": [
+          "PSV-1: declared-type cast at every value boundary + method-dispatch seal edge; E0004 over type positions (A86, M651-M667, amendment 53)",
+          "PSV-6: the guest runs only the policy its manifest names, at helper/launcher/runner, verdict binds it (A87, M670-M679, amendment 54)",
+          "EQUIVALENCE: production-route rows and re-anchors; every protected decision file scanned by the refusal-site gate (M690-M857, amendments 55, 58)",
+          "harness: checks run the binary built from the tree under test; whole-tree dirty checks; guest built in a constructed environment; serial records whole lines only (A90, M720-M739, M860-M873, amendment 56)",
+          "readiness: certification fields and the B263 record joined to the verified run (A88-A89, M740-M750, amendment 57)",
+          "harness: compile errors judged by the build invocation; every failing cell keeps its output; the interpreter restored and byte-compared per row; test fixtures that no longer reached their guard (M880-M894, amendment 59)"
+        ],
+        "evidence": {
+          "integration": "aad46c05: fmt, builds incl. production fabric, clippy, six-package and axon-core suites, trust preflight, matrix (90 rows) all rc 0",
+          "mutation": "aad46c05: 682/682 ACTIVE rows killed by their own attack (2 shards, /var/tmp/c9r4f-mut-aad46c05-merged.json); 58 EQUIVALENT_DID + 1 STALE never counted",
+          "paired_disable": "aad46c05: 58/59 hold (4 shards joined); M418 + 9 readiness records re-executed at c9647b35 (test-only fix) and hold; 49/59 stale at 2c59ebb6 under the package-wide currency rule (a full run is part of the freeze proof)",
+          "guest_boot": "image built at 1aa96159 from a standalone clone in the constructed environment, pinned 49eb3765: 17/17 PASS, no SKIP"
+        }
+      }
     }
   },
   "closure_gate": {
