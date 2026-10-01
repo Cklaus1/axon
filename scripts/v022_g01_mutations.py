@@ -3831,10 +3831,11 @@ MUTATIONS += [
     ('M1351', "price (4b-I) G10: a request's schedule is the pinned one", _PR,
      '        if r != self.reference {', '        if false && r != self.reference {',
      'axon-loop', _PTS, 'a_request_naming_another_schedule_never_joins'),
-    ('M1352', "price (4b-I) G10: a request's schedule ref is a cl22 ref, byte for byte (EQUIVALENT: M1351)", _PR,
+    ('M1352', "price (4b-I) G10: resolve_opaque reads only a cl22 ref, byte for byte (the public primitive; its "
+     "one production caller then compares with the pinned ref, M1351)", _PR,
      '    if r.scheme() != RefScheme::Cl22 || r.as_str() != o.as_str() {',
      '    if false && (r.scheme() != RefScheme::Cl22 || r.as_str() != o.as_str()) {',
-     'axon-loop', _PTS, 'a_request_naming_the_schedule_under_another_scheme_never_joins'),
+     'axon-loop', _PTS, 'resolve_opaque_never_reads_another_scheme_as_a_content_ref'),
     ('M1353', "price (4b-I) G10: a request is in the pinned schedule's currency", _PR,
      '        if req.limits.currency_code != self.currency {', '        if false && req.limits.currency_code != self.currency {',
      'axon-loop', _PTS, 'a_request_in_another_currency_never_joins'),
@@ -3913,13 +3914,6 @@ EQUIV_RECORD["M1346"] = {
     "all_paths": "pin's only production caller is `tel summarize` (grep PinnedSchedule::pin); the next check "
                  "compares `expected` with digest_value(document), which is always a cl22 Ref (canonical.rs "
                  "digest_value), so a non-cl22 `expected` never equals it (M1345) with no return between"}
-EQUIV_RECORD["M1352"] = {
-    "property": "a request's price_schedule_ref is the pinned schedule's cl22 ref",
-    "subsumed_by": ["M1351"], "killer": "joint:M1352+M1351",
-    "all_paths": "resolve_opaque's only caller is check_request, which then requires r == self.reference "
-                 "(M1351), a Ref made by pin from a cl22 digest; Ref::new keeps the string unchanged (ids.rs: "
-                 "a validated newtype, lowercase hex only), so `r.as_str() != o.as_str()` never holds and a "
-                 "non-cl22 r never equals the reference"}
 EQUIV_RECORD["M1360"] = {
     "property": "a request joined by tel satisfies its contract",
     "subsumed_by": ["M1362", "M1363"], "killer": "joint:M1360+M1362+M1363",
@@ -3976,9 +3970,9 @@ EQUIV_RECORD["M1371"] = {
     "subsumed_by": ["M1008"], "killer": "joint:M1371+M1008",
     "all_paths": "Rules::parse's callers: freeze, after unset_fields (M1008) refused any of the five word "
                  "fields unset, and admission, which parses only a frozen plan"}
-EQUIVALENT_DID |= {"M1346", "M1352", "M1360", "M1361", "M1364", "M1365", "M1366", "M1367", "M1368",
+EQUIVALENT_DID |= {"M1346", "M1360", "M1361", "M1364", "M1365", "M1366", "M1367", "M1368",
                    "M1369", "M1370", "M1371"}
-RETIRED |= {"M1346", "M1352", "M1360", "M1361", "M1364", "M1365", "M1366", "M1367", "M1368",
+RETIRED |= {"M1346", "M1360", "M1361", "M1364", "M1365", "M1366", "M1367", "M1368",
             "M1369", "M1370", "M1371"}
 
 PSV_IDS = {f"M{n}" for n in range(137, 550)}

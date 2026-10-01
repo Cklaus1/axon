@@ -665,7 +665,6 @@ GUARD_SETS = {
 # C9 round 4b, INTEGRATE-D (amendment 64; EQUIV_RECORD in the registry).
 GUARD_SETS.update({
     "M1346": {"siblings": ["M1345"], "kind": "pair"},
-    "M1352": {"siblings": ["M1351"], "kind": "pair"},
     "M1360": {"siblings": ["M1362", "M1363"], "kind": "set"},
     "M1361": {"siblings": ["M1362", "M1363"], "kind": "set"},
     "M1364": {"siblings": ["M1012"], "kind": "pair"},

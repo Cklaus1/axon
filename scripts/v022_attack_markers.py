@@ -1230,7 +1230,7 @@ ATTACK_MARKERS.update({
     'M1349': r'ATTACK: a schedule repeating a coverage priced the cohort',
     'M1350': r'ATTACK: a schedule claiming execution coverage priced the cohort',
     'M1351': r'ATTACK: a request naming another schedule was joined',
-    'M1352': r'ATTACK: a request naming the schedule under another scheme was joined',
+    'M1352': r'ATTACK: resolve_opaque read a sha256 ref as the content ref',
     'M1353': r'ATTACK: a request in another currency was joined',
     'M1354': r'ATTACK: a usage naming another schedule was priced',
     'M1355': r'ATTACK: a usage in another currency was priced',

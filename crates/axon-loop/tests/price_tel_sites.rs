@@ -349,3 +349,21 @@ fn an_episode_in_a_non_schema_shape_is_never_summarized() {
         "an episode in a shape its schema refuses was summarized",
     );
 }
+
+/// `resolve_opaque` is a public primitive (its one production caller,
+/// check_request, then compares with the pinned cl22 ref, M1351): on its own
+/// it never reads a ref of another scheme as the schedule's content ref.
+/// Control: the cl22 ref resolves to itself.
+#[test]
+fn resolve_opaque_never_reads_another_scheme_as_a_content_ref() {
+    use axon_loop::price::resolve_opaque;
+    let cl22 = sched_ref();
+    assert_eq!(
+        resolve_opaque(&OpaqueRef::new(cl22.as_str()).unwrap()).unwrap(),
+        cl22
+    );
+    let sha = OpaqueRef::new(format!("sha256:{}", cl22.hex())).unwrap();
+    if let Ok(r) = resolve_opaque(&sha) {
+        panic!("ATTACK: resolve_opaque read a sha256 ref as the content ref {r}");
+    }
+}
