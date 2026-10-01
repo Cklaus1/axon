@@ -822,6 +822,13 @@ fn status_and_cancel_authorize_before_any_write_and_reconcile_only_their_scope()
             Some(&reg),
             None,
         );
+        // rows4b (amendment 62): the grant resolves for this principal, so
+        // only the op's recorded principal|grant binding refuses it.
+        assert_ne!(
+            r.0, 0,
+            "ATTACK: {verb}: an op was served to a grant it was not submitted under: {}",
+            r.1
+        );
         assert_refused(verb, &r, 7, "unauthorized", "was not submitted under");
     }
     assert_eq!(

@@ -36,7 +36,16 @@ fn an_unreadable_epoch_store_at_submit_refuses_and_records_nothing() {
     let down = env.store.with_extension("down");
     std::fs::rename(&env.store, &down).unwrap();
     let before = journal_lines(&env);
-    let e = submit(&request(&env, "op-outage", "t_ok").to_string(), &env.cfg(0)).unwrap_err();
+    // rows4b (amendment 62): an absent store must not read as a fresh one at
+    // epoch 0, which would authorize this request (expecting 0).
+    let e = match submit(&request(&env, "op-outage", "t_ok").to_string(), &env.cfg(0)) {
+        Ok(s) => panic!(
+            "ATTACK: with the authority store unavailable the request was authorized at epoch 0: \
+             {:?}",
+            s.receipt.status
+        ),
+        Err(e) => e,
+    };
     assert!(matches!(e, SubmitError::StaleEpoch { .. }), "{e}");
     assert_eq!(spawn_count(&env.spawns), 0);
     assert_eq!(env.launch_records(), 0);

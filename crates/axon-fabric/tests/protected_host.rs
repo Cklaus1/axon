@@ -981,7 +981,16 @@ fn the_host_signer_key_must_be_private_and_match_its_pin() {
         "ATTACK: an owner-writable (0600) signing key was accepted, but the protocol requires \
          0400: {t}"
     );
+    // rows4b (amendment 62): 0400 but owned by ANOTHER uid, which could read
+    // it, or replace it, as its owner.
     std::fs::set_permissions(&key, std::fs::Permissions::from_mode(0o400)).unwrap();
+    std::os::unix::fs::chown(&key, Some(1000), None).unwrap();
+    let t = run();
+    assert!(
+        t.contains("protected-host signer") && t.contains("must be owned by this uid"),
+        "ATTACK: a host signer key owned by another uid was accepted: {t}"
+    );
+    std::os::unix::fs::chown(&key, Some(unsafe { libc::geteuid() }), None).unwrap();
     h.write_config(|v| {
         v["signer"]["public_key"] = json!("ab".repeat(32));
         v["grant_registry"] = grants.clone();

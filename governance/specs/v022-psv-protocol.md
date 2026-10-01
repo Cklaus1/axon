@@ -2117,3 +2117,91 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
         CONSUMER_BASELINE_BROKEN, so the full-suite cell had never been evaluated.
       - Refusal coverage, the matrix check and the paired-disable join test PASS.
     - No production behaviour changed: no matrix row, no operator deployment.
+
+62. **The refusal-site gate covers the Fabric decision files; the root helper's report, the protected
+    executable and every B263 qualification rule have rows; the protected PCI lineage names the
+    certified revision by its whole hash (C9 round 4b, EQUIVALENCE (4), Fabric side; rows4b
+    workstream, rows M1020-M1084, matrix A93).**
+    - **Before.** The gate scanned none of `backend.rs`, `submit.rs`, `git_data.rs`,
+      `provenance.rs`, `bin/axon-fabric.rs`, `signing.rs`, `workspace.rs`, `journal.rs`,
+      `branches.rs`, `grants.rs` (`bin/axon-provenance.rs` has no site). Measured at 6d6517a1 with
+      the gate's own site rule, 240 refusal sites there had neither a row nor an exemption
+      (backend 45, submit 37, git_data 23, provenance 5, bin/axon-fabric 54, signing 2,
+      grants 6, branches 22, workspace 20, journal 26). With the helper report's schema check, its
+      exit/error check, its same-byte check (`!report.unchanged || helper.unchanged()`) and the
+      protected executable's id and digest checks all removed at once, the whole axon-fabric suite
+      stayed green (549). accept_b263's issuer-claimed, pass-count, blocked-count, blocked-unwaived,
+      waiver-reason, waiver-expiry, end-not-future, engine-digests and caveat rules, the waiver
+      binding, the qualification's schema, profile, engine-pin, manifest-clean and manifest-binding
+      rules, and RULE:issuer-trusted had no row. The guest manifest's PCI lineage resolved the
+      certified revision `31413ca7` (32 bits) by abbreviation.
+    - **After.**
+      - The gate scans those eleven files (one marked block in
+        `scripts/v022_refusal_coverage.py`). Every site is rowed or exempt with a stated reason
+        (kinds: NOT A SITE, NON-UNIX/cfg, RESOURCE BOUND, RE-REPORT, NAMED ROW, NOTHING TO ADMIT,
+        OS ERROR, OPERATOR-AUTHORED, UNREACHABLE, USAGE, DEVELOPMENT ROUTE, NOT ON THE PROTECTED
+        ROUTE, NOT A VERDICT PROPERTY; FLAGGED marks a reason the integrator must accept or
+        replace).
+      - `provenance::descends_from_protected` (the `--lineage` answer the guest manifest binds)
+        refuses a certified revision that is not a full 40-hex commit id, and
+        `scripts/linux_profile_manifest.py` names it as
+        `31413ca7abb6ff730e1b63718d4304c7a8402675` (A93). The development check (`--descends`,
+        build-guest-image.sh's early check) still resolves an abbreviation, by hash only.
+    - **New ACTIVE rows, each killed by its own attack through a production route:**
+      - Helper report, through `submit` on the helper route with a stand-in helper (an ELF
+        trampoline that runs the REAL test-trust helper and passes its report through `sed`):
+        another schema (M1020), a clean report with exit EXIT_UNKNOWN (M1021), an error after the
+        launch with exit EXIT_LAUNCHED (M1022), a launcher that changes its own inode during
+        `--verify-result` so the REAL helper reports `unchanged: false` (M1023), a helper that
+        changes its own inode during the launch (M1024).
+      - Protected executable, through `submit`: another executable id with that id's digest
+        (M1056), the guest id with another interpreter digest (M1057).
+      - accept_b263, on BOTH production routes in one test (Fabric's `submit`, which qualifies
+        before launching, and readiness's `protected_components`): issuer-claimed (M1025),
+        pass-count (M1026), blocked-count (M1027), blocked-unwaived (M1028), waiver-reason (M1029),
+        waiver-expiry (M1030), engine-digests (M1032, readiness joins only the firecracker digest,
+        so readiness alone is reached there), caveat (M1033), waiver-bound (M1034),
+        RULE:issuer-trusted (M1035: a record signed by a key no root holds, NAMING that key, so
+        issuer-claimed agrees).
+      - RULE:end-not-future (M1031) on the input where it alone refuses: under no practical
+        maximum age (`max_age_s = u64::MAX`), a future record's negative age read as unsigned
+        passes RULE:end-fresh.
+      - The qualification's own rules, through `select` and `submit`: schema (M1036), profile
+        (M1037), engine-pin equality (M1039), manifest-clean (M1040), the record qualifies THIS
+        manifest (M1041), a waiver file of another schema (M1042).
+      - Backend selection, through `submit`: architecture (M1044), checkpoint kind (M1045),
+        reproducible grant (M1046), brokered network (M1047), engine (M1048), x1 guest policy
+        channel (M1049), x2 path scope on the protected profile (M1050), os=linux without
+        isolation (M1051), hardware isolation with os=none (M1052), a path-scoped grant on the
+        host (M1053), interpreter_run on the host (M1054), a policy the guest cmdline would
+        truncate (M1055).
+      - Submit: an absent authority store is not epoch 0 (M1058), argv with an element the run
+        ignores (M1059), refuse_links' body, every call (M1060), a suite edited after
+        registration (M1061), the axon-os supervisor's refusal (M1062), one op id one input
+        (M1063), an orphan under a superseded epoch (M1064), a stale-epoch request is not
+        journalled (M1065), a cancelled branch never runs again (M1066), the epoch re-read before
+        the launch (M1067), the grant's cost budget (M1068), the placeholder policy (M1069).
+      - Lineage and provenance, through the built `axon-provenance`: the allowlist chain's owner
+        (M1070) and write bits (M1071), a symlinked `.git` (M1072), a certified revision naming a
+        blob (M1073), a tag chain past the peel limit (M1074), an ambiguous abbreviation (M1075),
+        build provenance calling the config refusal (M1076), the full-id rule (M1084, A93).
+      - The axon-fabric binary: status/cancel's principal|grant binding (M1077); the protected
+        signer key derives its pin (M1078), is readable by no one else (M1079) and is owned by
+        the Fabric uid (M1080). These are `bad(` uses the gate's site rule does not see (flagged).
+    - **Retired EQUIVALENT_DID (four-cell records):** M1038 (the engine pin is required) against
+      M1039; M1043 (an empty qualification root) against M1035; M1081/M1082 (blob re-verified;
+      tree re-derived) as a mutual pair; M1083 (the manifest hashes to its reference) against
+      M1082. Their tests accept either refusal; three existing tests that named one message
+      (`no_trusted_issuer_configured_refuses_even_a_signed_record`,
+      `the_committed_profile_has_no_trusted_issuer_so_protected_dispatch_is_refused`,
+      `a_manifest_that_pins_no_engine_is_refused`) now accept either.
+    - **Flagged for the integrator.** `bin/axon-fabric.rs`'s `ProtectedHost::operator()` refusal
+      (a config that exists but does not load must not read as no protected host) is reached by no
+      test: operator() reads only `/etc/axon`, which tests may not write. Exemptions marked
+      FLAGGED (git_data `run`'s status check, `config.worktree`, the unreadable config, provenance's
+      check-ignore count, workspace's duplicate and blob/manifest rewrite checks, the status/cancel
+      grant resolution, grants' principal binding) state a domination or reachability argument
+      that has no four-cell record.
+    - **Operator deployment.** The guest image built after this amendment carries
+      `pci_lineage.certified_revision` as the full id; `profiles/linux-microvm/manifest.json` is
+      regenerated by the next image build (harness), not edited here.

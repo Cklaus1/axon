@@ -930,3 +930,57 @@ fn the_guest_tree_digest_is_the_store_reference() {
     std::os::unix::fs::symlink("x", root.join("new-link")).unwrap();
     assert_ne!(tree_version_ref(&root, &q).unwrap(), guest, "link");
 }
+
+// ── C9 round 4b, rows4b (amendment 62): the store never materializes bytes
+// other than the version's. Two checks refuse each defect alone (the blob
+// re-verified against its name, the tree re-derived to the reference; the
+// manifest hashed to the reference), so these accept either refusal and fail
+// only on the materialization (four-cell records). On the protected route the
+// guest re-walks what it was given (M159) as a further layer.
+
+#[test]
+fn a_blob_holding_other_bytes_never_materializes() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("tree");
+    materialize_vector(&root, &vector());
+    let store = WorkspaceStore::open(&dir.path().join("state"), &tenant()).unwrap();
+    let r = store.import_dir(&root, &Quota::default()).unwrap();
+    let out = dir.path().join("out-control");
+    store.materialize(&r, &out, false).expect("control");
+    let blob = ws_root(&dir.path().join("state"))
+        .join("blobs/bad18e717145fcf190f9144d635a3295ab55ffc8cddcfc94b6c4b94b00093b42");
+    std::fs::write(&blob, "hello workspacE\n").unwrap();
+    let out = dir.path().join("out");
+    let m = store.materialize(&r, &out, false);
+    assert!(
+        matches!(m, Err(StoreError::Corrupt(_))),
+        "ATTACK: a blob holding other bytes than its name was materialized as version {r}: {m:?}"
+    );
+    assert!(!out.exists(), "no partial materialization");
+}
+
+#[test]
+fn a_manifest_that_is_not_its_versions_never_materializes() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("tree");
+    materialize_vector(&root, &vector());
+    let store = WorkspaceStore::open(&dir.path().join("state"), &tenant()).unwrap();
+    let r = store.import_dir(&root, &Quota::default()).unwrap();
+    let versions = ws_root(&dir.path().join("state")).join("versions");
+    let manifest = std::fs::read_dir(&versions)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .find(|p| p.extension().is_some_and(|x| x == "manifest"))
+        .unwrap();
+    let text = std::fs::read_to_string(&manifest).unwrap();
+    assert!(text.contains("README.md"), "{text}");
+    // Another name for the same blob: a well-formed manifest of ANOTHER tree.
+    std::fs::write(&manifest, text.replace("README.md", "READMX.md")).unwrap();
+    let out = dir.path().join("out");
+    let m = store.materialize(&r, &out, false);
+    assert!(
+        matches!(m, Err(StoreError::Corrupt(_))),
+        "ATTACK: a manifest of another tree was materialized as version {r}: {m:?}"
+    );
+    assert!(!out.exists(), "no partial materialization");
+}
