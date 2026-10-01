@@ -685,15 +685,6 @@ fn never_evaluated(
     );
 }
 
-/// For an outcome-unknown trial: recorded at all (it is an Unknown either way).
-fn never_recorded(
-    r: Result<(axon_loop::evl::EvaluationRecord, Ref), LoopError>,
-    why: &[&str],
-    attack: &str,
-) {
-    judged(r, why, attack, "the evaluation was recorded");
-}
-
 #[test]
 fn control_the_honest_evaluation_and_its_acf_variants_are_recorded() {
     let (w, v) = frozen("ok");
