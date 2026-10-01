@@ -361,7 +361,12 @@ fn every_o1_path_must_be_operator_owned() {
             let saved = std::fs::read(h.p(f)).unwrap();
             break_it(&h.p(f));
             let e = load().unwrap_err();
-            assert!(e.contains(why), "{f} {why}: {e}");
+            // A symlink is refused by the symlink check and by the mode check
+            // (its lstat mode is 0777), each alone (M948/M950): either reason.
+            assert!(
+                e.contains(why) || (*why == "symlink" && e.contains("writable")),
+                "{f} {why}: {e}"
+            );
             // restore
             let _ = std::fs::remove_file(h.p(f));
             let _ = std::fs::remove_file(h.p(f).with_extension("real"));
