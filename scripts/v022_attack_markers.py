@@ -877,7 +877,6 @@ ATTACK_MARKERS.update({
     'M830': 'ATTACK: a context receipt other than the one the episode names was recorded',
     'M831': 'ATTACK: an episode whose context did not bind \\(expected != observed\\) was recorded',
     'M832': 'ATTACK: a sidecar of status refused was recorded',
-    'M833': "ATTACK: a policy_ref of another scheme naming the stored policy's digest was recorded",
     'M834': 'ATTACK: an ack with a field no ack has was recorded',
     'M835': 'ATTACK: an ack whose pin state is not pinned was recorded',
     'M836': 'ATTACK: an ack pinning another policy id was recorded',
@@ -901,4 +900,5 @@ ATTACK_MARKERS.update({
     'M855': 'ATTACK: an ack over another candidate view was joined',
     'M856': 'ATTACK: an ack over another candidate view was joined',
     'M851': r"another trial's evidence: IntakeOutcome",
+    'M857': 'ATTACK: a trial delivered with a context other than the one its intaken episode names counted',
 })

@@ -1090,3 +1090,65 @@ fn activation_rests_only_on_a_journalled_admission_that_re_derives() {
     }
     activate(&w, &adm).expect("control: the genuine journalled ACCEPT activates");
 }
+
+/// M857 (and the four-cell record of M830 against it): evaluation re-checks
+/// each delivered trial against its INTAKEN episode, which names its context
+/// by digest. The episodes here were intaken with their genuine contexts;
+/// the evaluation request then delivers one candidate trial with another
+/// context (another `context_id`, nothing else). `intake_join` checks only the
+/// episode's existence, so the context binding in `bind_episode` is the one
+/// refusal: the trial does not count. Control: the genuine request counts it.
+#[test]
+fn a_trial_delivered_with_a_context_other_than_its_episodes_counts_nothing() {
+    let w = world();
+    freeze_plan(&w.s, "exp", &w.inc_ref, &w.cand_ref, |_| {}).unwrap();
+    let specs = pair(&w.inc, &w.cand, 2, 2, 2, Some(100), Some(50));
+    let v = evl_request("exp", &w.inc, &w.cand, &specs, &EvlOpts::default());
+    intake_all(&w.s, &v);
+    let mut forged = v.clone();
+    let i = forged["trials"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .position(|t| t["episode"]["identity"]["arm_id"] == "challenger-1")
+        .unwrap();
+    forged["trials"][i]["context"]["context_id"] = json!("ctx-delivered-instead");
+    let trial_id = forged["trials"][i]["episode"]["identity"]["trial_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let (rec, _) = axon_loop::evl::evaluate(
+        &w.s,
+        &axon_loop::evl::parse_request(&forged.to_string()).unwrap(),
+    )
+    .unwrap();
+    let t = rec
+        .arm_for_policy(&w.cand_ref)
+        .unwrap()
+        .trials
+        .iter()
+        .find(|t| t.trial_id.as_str() == trial_id)
+        .unwrap()
+        .clone();
+    assert!(
+        t.outcome == Outcome::Unknown,
+        "ATTACK: a trial delivered with a context other than the one its intaken episode names \
+         counted: {:?} {}",
+        t.outcome,
+        t.reason
+    );
+    assert!(t.reason.contains("byte mismatch"), "{}", t.reason);
+    let w = world();
+    freeze_plan(&w.s, "exp", &w.inc_ref, &w.cand_ref, |_| {}).unwrap();
+    let specs = pair(&w.inc, &w.cand, 2, 2, 2, Some(100), Some(50));
+    let (rec, _) = evaluate(
+        &w.s,
+        &evl_request("exp", &w.inc, &w.cand, &specs, &EvlOpts::default()),
+    )
+    .unwrap();
+    assert_eq!(
+        rec.arm_for_policy(&w.cand_ref).unwrap().verified_pass,
+        2,
+        "control: the genuine request counts both candidate passes"
+    );
+}

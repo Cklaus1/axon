@@ -3256,9 +3256,10 @@ fn intake_docs(c: &Case, d: &Docs) -> Result<axon_loop::intake::IntakeOutcome, L
 /// attack getting through.
 fn refused_for(c: &Case, d: &Docs, attack: &str, why: &str) {
     match intake_docs(c, d) {
-        Err(e @ (LoopError::Refused(_) | LoopError::Malformed(_))) => {
-            assert!(e.to_string().contains(why), "{attack}: {e}")
-        }
+        Err(e @ (LoopError::Refused(_) | LoopError::Malformed(_))) => assert!(
+            why.split(" | ").any(|w| e.to_string().contains(w)),
+            "{attack}: {e}"
+        ),
         Ok(o) => panic!("ATTACK: {attack} was recorded: {o:?}"),
         Err(e) => panic!("{attack}: refused otherwise: {e}"),
     }
@@ -3279,7 +3280,9 @@ fn each_intake_join_refuses_its_own_defect() {
         (
             "a context receipt other than the one the episode names",
             Box::new(|_, d| d.ctx["context_id"] = json!("ctx-other")),
-            "context receipt digests to",
+            // M830 is retired EQUIVALENT against bind_episode's context
+            // binding (M857): either refusal.
+            "context receipt digests to | policy/context byte mismatch",
         ),
         (
             "an episode whose context did not bind (expected != observed)",
@@ -3301,7 +3304,9 @@ fn each_intake_join_refuses_its_own_defect() {
                 d.ep["policy_ref"] = json!(format!("acf1:{hex}"));
                 d.acks[0]["pin"]["policy_ref"] = json!(format!("acf1:{hex}"));
             }),
-            "is not a cl22: policy reference",
+            // Unreachable alone (no stored record is named other than by its
+            // cl22 digest): either refusal; no row rests on this case.
+            "is not a cl22: policy reference | not a policy this store knows",
         ),
         (
             "an ack with a field no ack has",
@@ -3364,7 +3369,9 @@ fn each_intake_join_refuses_its_own_defect() {
         ),
         (
             "a canonical episode other than the one the sidecar names",
-            Box::new(|_, d| d.src = Some(source_episode(Some(501)))),
+            // 499 micro-cents rounds up to the same 5 cost_micro: only the
+            // digest differs.
+            Box::new(|_, d| d.src = Some(source_episode(Some(499)))),
             "source episode digests to",
         ),
         (

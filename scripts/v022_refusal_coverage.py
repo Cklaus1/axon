@@ -334,6 +334,14 @@ EXEMPT += [
     (LI, "        Refusal::Semantic(s) => refused(format!(\"{what}: {s}\")),",
      "NOT A SITE: the body of the `semantic` converter; every use is `parse(..).map_err(semantic(..))?`, "
      "its own site with no parsed value on Err"),
+    (LI, "    if ep.policy_ref.scheme() != RefScheme::Cl22 {",
+     "UNREACHABLE ALONE (flagged for the integrator: the strict reading may require a four-cell "
+     "record, which cannot be built): no stored record is named other than by the cl22 digest of "
+     "its content: Store::cas_path refuses any other scheme and check_name requires the name to "
+     "equal digest(content), always cl22; so with this check removed the next statement's policy "
+     "lookup refuses the same reference, and with that lookup's scheme check also removed "
+     "check_name, then bind_episode's policy digest, still refuse it. Measured: the row (former "
+     "M833) is REFUSED_ELSEWHERE ('not a policy this store knows')"),
     (LI, "        Err(LoopError::Refused(_)) => {\n            return Err(refused(format!(",
      "NOTHING TO ADMIT: the store holds no such policy, so there is no PolicyEnvelope to bind"),
     (LI, "        Err(e) => return Err(e),\n    };\n    if tx.is_revoked",

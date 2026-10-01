@@ -2742,14 +2742,12 @@ MUTATIONS += [
   '        if arm.assigned != arm.trials.len() as u64\n            || arm.verified_pass != n(Outcome::VerifiedPass)\n            || arm.fail != n(Outcome::Fail)\n            || arm.unknown != n(Outcome::Unknown)\n            || arm.missing != missing\n        {',
   '        if false\n            && (arm.assigned != arm.trials.len() as u64\n                || arm.verified_pass != n(Outcome::VerifiedPass)\n                || arm.fail != n(Outcome::Fail)\n                || arm.unknown != n(Outcome::Unknown)\n                || arm.missing != missing)\n        {',
   'axon-loop', _R2PC, 'a_protected_arm_whose_counters_are_not_its_trials_is_refused'),
- ('M830', "intake: the context receipt is the one the episode names", _R2LI,
+ ('M830', "intake: the context receipt is the one the episode names (EQUIVALENT: four-cell vs M857)", _R2LI,
   '    if ctx_ref != ep.context_ref {', '    if false && ctx_ref != ep.context_ref {', 'axon-loop', _R2IN, _R2JOIN),
  ('M831', "intake: only a bound (started) task is an episode", _R2LI,
   '    if ctx.expected != ctx.observed {', '    if false && ctx.expected != ctx.observed {', 'axon-loop', _R2IN, _R2JOIN),
  ('M832', "intake: a refused sidecar is not an episode", _R2LI,
   '    if ep.status == EpisodeStatus::Refused {', '    if false && ep.status == EpisodeStatus::Refused {', 'axon-loop', _R2IN, _R2JOIN),
- ('M833', "intake: the policy reference is a cl22: reference", _R2LI,
-  '    if ep.policy_ref.scheme() != RefScheme::Cl22 {', '    if false && ep.policy_ref.scheme() != RefScheme::Cl22 {', 'axon-loop', _R2IN, _R2JOIN),
  ('M834', "intake: an ack has exactly the ack's fields", _R2LI,
   '    if keys != want {\n        return Err(shape(format!(\n            "ack: fields',
   '    if false && keys != want {\n        return Err(shape(format!(\n            "ack: fields', 'axon-loop', _R2IN, _R2JOIN),
@@ -2802,6 +2800,11 @@ MUTATIONS += [
   'a_receipt_recording_two_suite_versions_decides_nothing'),
  ('M851', "intake: the check is this attempt's Fabric operation (the `same` refusal)", _R2LI,
   '    if !same {', '    if false && !same {', 'axon-loop', _R2IN, 'each_verification_rule_is_load_bearing_on_its_own'),
+ ('M857', "EVL: a delivered trial's context is the one its episode names (bind_episode's context binding)",
+  'crates/axon-loop-contracts/src/checks.rs',
+  '    if episode.policy_ref != digest(policy)? || episode.context_ref != digest(ctx)? {',
+  '    if episode.policy_ref != digest(policy)? {',
+  'axon-loop', _R2EA, 'a_trial_delivered_with_a_context_other_than_its_episodes_counts_nothing'),
  ('M852', "PSV-7: a protected context re-verifies under an observer the operator trusts now (EQUIVALENT: four-cell vs M122+M104)", _R2LA,
   '    if !config.observers().contains(&who) {', '    if false && !config.observers().contains(&who) {', 'axon-loop', _R2PC,
   'a_context_observer_the_operator_withdrew_counts_nothing_at_activation'),
@@ -2835,6 +2838,13 @@ EQUIV_RECORD["M852"] = {
                  "t.context_observer_ref == Some(who) (M362), where `who` is the observer M852 checks, "
                  "so on every path a `who` outside config.observers() is also a context_observer_ref "
                  "outside it (M122); M104 refuses the same trial through its signer attribution"}
+EQUIV_RECORD["M830"] = {
+    "property": "intake records an episode only with the context receipt it names",
+    "subsumed_by": ["M857"], "killer": "joint:M830+M857",
+    "all_paths": "intake_episode is the only caller; after this check it always calls bind_episode "
+                 "with the same episode and context (no early return between them but refusals), and "
+                 "bind_episode refuses `episode.context_ref != digest(ctx)` (M857), the identical "
+                 "predicate: ctx_ref is digest(&ctx) of the same parsed context"}
 EQUIV_RECORD["M853"] = {
     "property": "an ack of another schema never joins an episode",
     "subsumed_by": ["M854"], "killer": "joint:M853+M854",
@@ -2857,8 +2867,8 @@ EQUIV_RECORD["M856"] = {
     "subsumed_by": ["M855"], "killer": "joint:M855+M856",
     "all_paths": "select_ack's only caller hands its result to check_ack, which refuses an ack whose "
                  "candidate_set_ref is not the episode's (M855) before anything is recorded"}
-EQUIVALENT_DID |= {"M852", "M853", "M854", "M855", "M856"}
-RETIRED |= {"M852", "M853", "M854", "M855", "M856"}
+EQUIVALENT_DID |= {"M830", "M852", "M853", "M854", "M855", "M856"}
+RETIRED |= {"M830", "M852", "M853", "M854", "M855", "M856"}
 
 BINDING_IDS = {f"M{n}" for n in range(101, 137)}
 # Every id range the PSV rounds allocate (C9 round 1 uses up to M399; round
