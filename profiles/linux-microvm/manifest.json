@@ -3,12 +3,13 @@
   "profile": "linux-microvm-protected",
   "guest_truth": "Linux kernel (NOT the axon-guest-kernel)",
   "source": {
-    "axon_git_rev_at_build": "unknown",
+    "axon_git_rev_at_build": "1aa9615903aa84f152e9723622b335d813fd0dde",
     "axon_tree_dirty_at_build": true,
     "axon_tree_dirty_reasons": [
-      "/home/cklaus/projects/aicoding/axon-c9-harness/.git is not a directory (a gitfile or symlink names a repository elsewhere): refused, build from a plain clone",
-      "PCI lineage: /home/cklaus/projects/aicoding/axon-c9-harness/.git is not a directory (a gitfile or symlink names a repository elsewhere): refused, build from a plain clone",
-      "before the build: /home/cklaus/projects/aicoding/axon-c9-harness/.git is not a directory (a gitfile or symlink names a repository elsewhere): refused, build from a plain clone"
+      "dist/: a directory that is not in the tree and not on the operator's provenance allowlist (git-ignore rules excuse nothing)",
+      "target/: a directory that is not in the tree and not on the operator's provenance allowlist (git-ignore rules excuse nothing)",
+      "before the build: dist/: a directory that is not in the tree and not on the operator's provenance allowlist (git-ignore rules excuse nothing)",
+      "before the build: target/: a directory that is not in the tree and not on the operator's provenance allowlist (git-ignore rules excuse nothing)"
     ],
     "axon_build": "RUSTFLAGS='-C target-feature=+crt-static' cargo build --locked -p axon-core --no-default-features --bin axon --release --target x86_64-unknown-linux-musl",
     "axon_guest_init_build": "RUSTFLAGS='-C target-feature=+crt-static' cargo build --locked -p axon-guest-init --release --target x86_64-unknown-linux-musl (default features: no dev-allow-no-policy bypass)",
@@ -31,9 +32,9 @@
         "rustc_vV": "rustc 1.99.0-nightly (375b1431b 2026-07-10)\nbinary: rustc\ncommit-hash: 375b1431b7d89d1c2e2bc168c011848ae12b7d14\ncommit-date: 2026-07-10\nhost: x86_64-unknown-linux-gnu\nrelease: 1.99.0-nightly\nLLVM version: 22.1.8"
       },
       "env": {
-        "CARGO_HOME": "/var/tmp/axon-guest-build-oc3fbv35/cargo-home",
-        "CARGO_TARGET_DIR": "/var/tmp/axon-guest-build-oc3fbv35/target",
-        "HOME": "/var/tmp/axon-guest-build-oc3fbv35",
+        "CARGO_HOME": "/var/tmp/axon-guest-build-jjwyyzwg/cargo-home",
+        "CARGO_TARGET_DIR": "/var/tmp/axon-guest-build-jjwyyzwg/target",
+        "HOME": "/var/tmp/axon-guest-build-jjwyyzwg",
         "LC_ALL": "C",
         "PATH": "/root/.rustup/toolchains/nightly-2026-07-11-x86_64-unknown-linux-gnu/bin:/usr/bin:/bin",
         "RUSTC": "/root/.rustup/toolchains/nightly-2026-07-11-x86_64-unknown-linux-gnu/bin/rustc"
@@ -47,13 +48,13 @@
         "RUSTC"
       ],
       "proxy_vars": [],
-      "cargo_home": "/var/tmp/axon-guest-build-oc3fbv35/cargo-home",
+      "cargo_home": "/var/tmp/axon-guest-build-jjwyyzwg/cargo-home",
       "cargo_home_created_empty": true,
-      "target_dir": "/var/tmp/axon-guest-build-oc3fbv35/target",
+      "target_dir": "/var/tmp/axon-guest-build-jjwyyzwg/target",
       "target_dir_created_empty": true,
       "effective_config": {
         "origins": [
-          "/home/cklaus/projects/aicoding/axon-c9-harness/.cargo/config.toml"
+          "/var/tmp/c9r4-image-clone/.cargo/config.toml"
         ],
         "foreign": [],
         "own_config": ".cargo/config.toml"
@@ -105,9 +106,9 @@
         }
       ],
       "artifacts": {
-        "axon": "0d73bbb9c1bcae7bf48f78cbe21fbbcb337304d319dce32108c4d77a20f0cecd",
-        "axon-guest-init": "7f366d7c62a4e0fdb52690b252d94cafaf466a60635348dd5b72543e91e9082f",
-        "axon-psv-runner": "fd60343f4a556d8e353db1ee23d2b14f02129745a1326a6d3ae48c5229bfcbbe"
+        "axon": "b4dc68231af6af098e5d9a780e75d62a65f8c870d6179c12e848904aeff183c0",
+        "axon-guest-init": "8847d94252f44b594234b804bf38aac57a3c16fabdde5b8379ce04b9b6905b77",
+        "axon-psv-runner": "ea8583f7a1df44d2625b1dba986498f34489bd2b8d851c574f64ccb75cde55d6"
       }
     }
   },
@@ -129,7 +130,7 @@
   },
   "guest_init": {
     "path": "profiles/linux-microvm/guest-init.sh",
-    "sha256": "14a6ff2e35ddba81feb2f603bfe7238c79f187222df32ed8634937ded8b0cf02"
+    "sha256": "b112bb5a0a2e9add916cff7003cee68afd40a039fa88fb32235b88d1b303015d"
   },
   "artifacts": {
     "vmlinux": {
@@ -139,22 +140,22 @@
     },
     "rootfs.sqfs": {
       "path": "dist/guest-linux/rootfs.sqfs",
-      "sha256": "3f56794d7f4f058bdbe8e9970deb879add942a4682051ca1015d41912c360781",
+      "sha256": "a0b08d65cd22daefd9701544d789723277d6cf5c10fb320466a15675a1069b9f",
       "bytes": 5529600
     },
     "axon": {
       "path": "dist/guest-linux/axon",
-      "sha256": "0d73bbb9c1bcae7bf48f78cbe21fbbcb337304d319dce32108c4d77a20f0cecd",
+      "sha256": "b4dc68231af6af098e5d9a780e75d62a65f8c870d6179c12e848904aeff183c0",
       "bytes": 8276272
     },
     "axon-guest-init": {
       "path": "dist/guest-linux/axon-guest-init",
-      "sha256": "7f366d7c62a4e0fdb52690b252d94cafaf466a60635348dd5b72543e91e9082f",
-      "bytes": 733320
+      "sha256": "8847d94252f44b594234b804bf38aac57a3c16fabdde5b8379ce04b9b6905b77",
+      "bytes": 733288
     },
     "axon-psv-runner": {
       "path": "dist/guest-linux/axon-psv-runner",
-      "sha256": "fd60343f4a556d8e353db1ee23d2b14f02129745a1326a6d3ae48c5229bfcbbe",
+      "sha256": "ea8583f7a1df44d2625b1dba986498f34489bd2b8d851c574f64ccb75cde55d6",
       "bytes": 885416
     }
   },
