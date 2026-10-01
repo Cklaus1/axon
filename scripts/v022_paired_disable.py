@@ -543,6 +543,21 @@ GUARD_SETS = {
     "M546": {"siblings": ["M548"], "kind": "pair"},
     "M705": {"siblings": ["M633"], "kind": "pair"},
     "M634": {"siblings": ["M633"], "kind": "pair"},
+    # C9 round 4 fix wave, ROWS2 wave 2, STRICT.
+    "M796": {"siblings": ["M623", "M797"], "kind": "set"},
+    "M801": {"siblings": ["M800"], "kind": "pair"},
+    "M803": {"siblings": ["M802"], "kind": "pair"},
+    "M804": {"siblings": ["M802"], "kind": "pair"},
+    "M809": {"siblings": ["M810"], "kind": "pair"},
+    "M813": {"siblings": ["M325"], "kind": "pair"},
+    "M338": {"siblings": ["M812"], "kind": "pair"},
+    # C9 round 4 fix wave, rows2 wave 2, LOOP (EQUIV_RECORD in the registry).
+    "M830": {"siblings": ["M857"], "kind": "pair"},
+    "M852": {"siblings": ["M122", "M104"], "kind": "set"},
+    "M853": {"siblings": ["M854"], "kind": "pair"},
+    "M854": {"siblings": ["M853"], "kind": "pair"},
+    "M855": {"siblings": ["M856"], "kind": "pair"},
+    "M856": {"siblings": ["M855"], "kind": "pair"},
 }
 
 

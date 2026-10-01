@@ -938,7 +938,7 @@ fn a_verified_observation_makes_the_guest_verdict_protected() {
 
 /// One defect each: (observer mode, signing authority, root holding the key,
 /// the reason a refusal names; `|` separates alternatives).
-const DEFECTIVE_OBSERVATIONS: [(&str, &str, &str, &str); 11] = [
+const DEFECTIVE_OBSERVATIONS: [(&str, &str, &str, &str); 12] = [
     // A9: another authority domain (the key IS a trusted observer). The
     // domain field (M152) and the domain-separated message (M153) each
     // refuse it alone (M152's four-cell record), so either reason.
@@ -988,7 +988,18 @@ const DEFECTIVE_OBSERVATIONS: [(&str, &str, &str, &str); 11] = [
         "observer",
         "but is signed by",
     ),
-    ("exit", "observer", "observer", "observer exited"),
+    // An observer that exits leaving NO observation: its exit status and the
+    // missing file each refuse it alone (C9 round 4, rows2), so either reason.
+    (
+        "exit",
+        "observer",
+        "observer",
+        "observer exited|observation.json: No such file",
+    ),
+    // C9 round 4 (rows2, M811): the observer leaves a GENUINE signed
+    // observation and then exits non-zero. Only its exit status refuses it:
+    // the observation verifies and joins.
+    ("disown", "observer", "observer", "observer exited"),
     // §7: the observer measures the INSTALLED verifier; another one refuses.
     ("verifier", "observer", "observer", "verifier_sha256"),
 ];
@@ -1724,4 +1735,36 @@ fn a_nonce_fabric_issued_itself_never_authorizes_a_root_launch() {
     );
     let s = w.submit_observed(w.observer("", &key, "observer"), "op-service-nonce");
     assert_eq!(class(&s), "protected", "control: {:?}", s.reason);
+}
+
+/// PSV-4 (M775; C9 round 4 fix wave, rows2): a check the guest ran but that
+/// produced NO result line (the suite does not define the requested test) is
+/// never receipted as a verdict. The CheckVerdict::NotRun arm is the only
+/// refusal: the run exited, the verdict is bound and joined, so every other
+/// check passes it. Control: the defined test passes.
+#[test]
+fn a_check_that_produced_no_verdict_is_never_receipted_as_one() {
+    let w = World::new();
+    let s = w.submit_with(w.lx("", ""), "op-psv-notrun", "t_psv_absent");
+    assert_eq!(
+        s.receipt.verification,
+        ReceiptVerification::Unknown,
+        "ATTACK: a check that produced no verdict was receipted as {:?}",
+        s.receipt.verification
+    );
+    assert!(
+        s.reason
+            .as_deref()
+            .unwrap_or("")
+            .contains("produced no verdict"),
+        "{:?}",
+        s.reason
+    );
+    let s = w.submit_with(w.lx("", ""), "op-psv-notrun-ok", "t_psv_ok");
+    assert_eq!(
+        s.receipt.verification,
+        ReceiptVerification::Passed,
+        "control: {:?}",
+        s.reason
+    );
 }

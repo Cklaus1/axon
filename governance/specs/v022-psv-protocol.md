@@ -1874,3 +1874,82 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       M325, M490, M491, M703 and M749, all KILLED by their own attack; M338 REFUSED_ELSEWHERE, as
       above.
     - No production behaviour changed: no matrix row, no operator deployment.
+    - **Wave 2 (integrator decisions on the merged rows2; rows M775-M857).**
+      - **Every protected decision file is scanned; `NOT_YET_SCANNED` is empty.** The site
+        pattern now also counts a TAIL refusal: an `Err(…)` built as a value without `return`
+        (an `Err(…)` that only *matches*, such as `Err(e) =>`, `if let Err(e) =`, or `Ok(_) | Err(_)`,
+        is not counted). It also counts each call of a refusal constructor: `refused(`,
+        `fail(`, `shape(`, the runner's `refused(`, and psv.rs's `unknown(`. Their definitions
+        are not sites. `psv.rs`, axon-psv `runner.rs`, `protected_evidence.rs`, and axon-loop
+        `admission.rs` and `intake.rs` are scanned. A retired STALE row's text is absent by
+        definition, so the gate no longer reports it. Per file (sites: rowed / exempt):
+        - privileged_launcher 49: 30 / 19;
+        - sealed_exec 17: 11 / 6;
+        - axon-protected-launcher 3: 2 / 1;
+        - custodian 21: 15 / 6;
+        - axon-custodian 1: 1 / 0;
+        - readiness 44: 32 / 12;
+        - protected_host 19: 19 / 0;
+        - observer 9: 7 / 2;
+        - axon-psv lib 23: 19 / 4;
+        - psv.rs 20: 14 / 6;
+        - runner 14: 5 / 9;
+        - protected_evidence 30: 25 / 5;
+        - admission 48: 34 / 14;
+        - intake 63: 43 / 20.
+
+        "Rowed" includes the EQUIVALENT_DID retirements, each with a four-cell record and none
+        counted as killed.
+      - **New ACTIVE rows on the newly scanned sites** (rows workstream):
+        - M775: a check that produced no verdict is never receipted, through Fabric's submit.
+        - M776, M777, M778: a protected receipt states exactly one evidence class and every
+          required digest ref. Each is attacked through readiness with a re-attested receipt.
+        - M779: the receipt counts the outcome the guest verdict claims, attacked through the
+          loop's `intake_episode`.
+        - M780: the runner runs only a suite entry inside the suite tree.
+        - M781: a run over its output limit yields no verdict.
+      - **The strict reading of "dominated."** Every exemption that only repeated another check
+        is now an ACTIVE row or an EQUIVALENT_DID retirement:
+        - ACTIVE rows:
+          - M795: helper request schema.
+          - M797: custodian spend manifest digest.
+          - M798: timeout bound.
+          - M799: policy size.
+          - M800: exact input spelling.
+          - M802: the out dir must be NEW.
+          - M805: root-owned candidate dir.
+          - M806: custodian request schema.
+          - M807 and M808: `protected-host-paths` refuses what `load` refuses.
+          - M810: hash-checked change set.
+          - M811: observer exit status.
+          - M812: `launched()`'s `verifier_key_id` lookup.
+          - M814: the top of a standalone clone.
+        - Retired, four-cell, never counted: M796 (against M623 and M797), M801 (against M800),
+          M803 and M804 (against M802), M809 (against M810), M813 (against M325), and M338
+          (against M812). This resolves the open M338 item above.
+        - Source changes, both strengthening:
+          - readiness's `git()` primitive refuses a failed git once, for every question it
+            answers; six per-call checks are replaced.
+          - `refuse_config` is applied to the repository git discovers.
+      - **Loop (admission.rs, intake.rs).**
+        - ACTIVE rows M815-M829, M831, M832, M834-M851 and M857, each attacked through
+          `admission::admit`, `pointer::transition` or `intake::intake_episode`.
+        - Retired, four-cell: M830 (against M857), M852 (against M122 and M104), M853 with M854,
+          and M855 with M856.
+      - **Exemption kinds left.** Each names the fact a reviewer can check:
+        - NOTHING TO ADMIT: the arm holds an error and no value to continue with.
+        - OS/TOOL ERROR: the operation does not happen.
+        - OPERATOR-AUTHORED/SIGNED field.
+        - NAMED ROW: a registry row mutates this refusal's condition at another line.
+        - NON-LINUX cfg.
+        - UNREACHABLE BY CONSTRUCTION. Three sites are left for the integrator's ruling:
+          - psv.rs's candidate and suite tree re-reads (219, 225). The dir is created new and
+            0700 and written from a store tree that re-derives its ref; nothing of the Fabric
+            uid runs between the write and the re-read.
+          - intake.rs's `cl22` policy-scheme check (290). Every policy record the store can name
+            is filed under its own `cl22` digest (`cas_path`, `check_name`), so the check is
+            reached by no input even with those disabled. No four-cell record can be built.
+      - **Heuristic overlap.** Three loop sites (admission 543 and 825, intake 513) are covered
+        only because the scanner's guard-block heuristic overlaps a neighbouring row (M819, M826,
+        M838). Each is in substance a NOTHING-TO-ADMIT `ok_or`.
+      - No production behaviour of a guard changed: no matrix row and no operator deployment.

@@ -1025,10 +1025,19 @@ fn production_verifiers() -> &'static (std::path::PathBuf, std::path::PathBuf) {
             );
             let bin = base.join(name);
             std::fs::copy(target.join("debug/axon-fabric"), &bin).unwrap();
-            let m = Command::new(&bin)
-                .arg("verifier-manifest")
-                .output()
-                .unwrap();
+            // Just written: a test thread forking meanwhile may still hold a
+            // write descriptor to it (ETXTBSY), so the first exec is retried.
+            let m = (0..50)
+                .find_map(
+                    |_| match Command::new(&bin).arg("verifier-manifest").output() {
+                        Err(e) if e.kind() == std::io::ErrorKind::ExecutableFileBusy => {
+                            std::thread::sleep(std::time::Duration::from_millis(100));
+                            None
+                        }
+                        r => Some(r.unwrap()),
+                    },
+                )
+                .expect("setup: the copied verifier stayed busy");
             let v: Value = serde_json::from_slice(&m.stdout).unwrap();
             assert!(
                 v["build"] == "production" && v["source_dirty"] == dirty,
@@ -1136,5 +1145,121 @@ fn a_narrowing_list_the_verifier_cannot_stat_is_not_read_as_absent() {
     assert!(
         v.to_string().contains("not one this repository expects"),
         "control: the readable list is honoured: {v}"
+    );
+}
+
+// ── C9 round 4 fix wave, ROWS2 wave 2, STRICT (rows M795-M814) ──────────────
+
+/// The production decision ([`production_verdicts`], as uid 4242) with
+/// `/usr/bin/git` replaced, inside the private mount namespace only, by a
+/// wrapper that FAILS (exit 1, no output) whenever `fail` is one of its
+/// arguments and otherwise runs the real git. The host's git is never
+/// touched.
+fn production_verdict_with_git_failing(c: &Certified, fail: &str) -> Value {
+    let d = c._d.path();
+    let bin = d.join("axon-fabric");
+    std::fs::copy(env!("CARGO_BIN_EXE_axon-fabric"), &bin).unwrap();
+    std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+    bind_to_system_clock_and(c, &bin);
+    std::fs::copy("/usr/bin/git", d.join("real-git")).unwrap();
+    std::fs::write(
+        d.join("failing-git"),
+        format!(
+            "#!/bin/sh\nfor a in \"$@\"; do [ \"$a\" = \"{fail}\" ] && exit 1; done\n\
+             exec \"{}\" \"$@\"\n",
+            d.join("real-git").display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(
+        d.join("failing-git"),
+        std::fs::Permissions::from_mode(0o755),
+    )
+    .unwrap();
+    let script = "set -e\n\
+         mount -t tmpfs -o mode=0755 tmpfs /etc/axon\n\
+         cp -a \"$1/trust\" /etc/axon/trust\n\
+         chown -R 0:0 /etc/axon\n\
+         chmod -R go-w /etc/axon\n\
+         mount --bind \"$1/failing-git\" /usr/bin/git\n\
+         set +e\n\
+         setpriv --reuid=4242 --regid=4242 --clear-groups -- \
+         \"$1/axon-fabric\" verify-readiness --repo \"$2\" > \"$1/as-4242.json\"\n\
+         exit 0\n";
+    let st = std::process::Command::new("unshare")
+        .args(["-m", "--propagation", "private", "sh", "-c", script, "sh"])
+        .arg(d)
+        .arg(&c.repo)
+        .status()
+        .unwrap();
+    assert!(st.success(), "setup: the namespace script failed");
+    let s = std::fs::read_to_string(d.join("as-4242.json")).unwrap_or_default();
+    serde_json::from_str::<Value>(&s).unwrap_or_else(|e| panic!("setup: not a verdict ({e}): {s}"))
+        ["components"]["protected_backend"]
+        .clone()
+}
+
+/// Readiness (M809, retired EQUIVALENT_DID against M810; the attack of its
+/// four-cell record), ROOT ONLY, production decision: a git failure is never
+/// read as an empty answer. Here code outside governance/ is committed after
+/// certification and `git diff` FAILS (a wrapper at /usr/bin/git, in the
+/// namespace only). Two checks refuse it, each alone: the `git()` primitive's
+/// refusal of a failed git (M809), and the comparison from hash-checked
+/// objects that runs when git reports no change (M810). Control: the same
+/// change with a working git is refused as a change.
+#[test]
+fn a_failed_git_is_never_read_as_no_change() {
+    let Some(c) = certified() else { return };
+    if !can_mount_etc_axon() {
+        return;
+    }
+    write(&c.repo.join(CODE), "// the agent's code\n");
+    c.commit("agent: code");
+    let v = production_verdict_with_git_failing(&c, "diff");
+    assert_ne!(
+        v["status"], "PASS",
+        "ATTACK: a committed code change was certified while git diff failed: {v}"
+    );
+    let Some(c) = certified() else { return };
+    write(&c.repo.join(CODE), "// the agent's code\n");
+    c.commit("agent: code");
+    let v = production_verdict_with_git_failing(&c, "no-such-git-word");
+    assert!(
+        v.to_string()
+            .contains("changed since the certified revision"),
+        "control: with git working the change is refused as a change: {v}"
+    );
+}
+
+/// Operator decision E (M814): a protected answer comes from the TOP of a
+/// standalone clone. Here readiness is pointed at a directory INSIDE the
+/// certified clone holding a byte-for-byte copy of the certified tree (its
+/// record, evidence and code): git, asked there, answers from the enclosing
+/// clone, whose history descends from the certified revision, and the copy's
+/// files are the certified tree's. Only the standalone-top rule refuses it.
+/// Control: the clone itself certifies.
+#[test]
+fn a_directory_inside_a_clone_is_not_certified() {
+    let Some(c) = certified() else { return };
+    assert_eq!(c.verdict()["status"], "PASS", "control: the clone itself");
+    let nested = c.repo.join("nested");
+    std::fs::create_dir(&nested).unwrap();
+    let st = std::process::Command::new("sh")
+        .args(["-c", "git -C \"$1\" archive HEAD | tar -x -C \"$2\"", "sh"])
+        .arg(&c.repo)
+        .arg(&nested)
+        .status()
+        .unwrap();
+    assert!(st.success(), "setup: copying the certified tree failed");
+    let v = protected_components(&nested, &c.trust)["components"]["protected_backend"].clone();
+    assert_ne!(
+        v["status"], "PASS",
+        "ATTACK: readiness certified a directory inside a clone (not the top of a standalone \
+         clone): {v}"
+    );
+    assert!(
+        v.to_string()
+            .contains("is not the top of a standalone clone"),
+        "{v}"
     );
 }

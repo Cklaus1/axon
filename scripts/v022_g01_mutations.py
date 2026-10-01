@@ -2731,6 +2731,66 @@ EQUIV_RECORD["M634"] = {
     "subsumed_by": ["M633"], "killer": "joint:M634+M633",
     "all_paths": "custodian_is_separate has one caller, operator() (M705's call); M634 disables "
                  "the same refusal inside it, so M705's argument applies unchanged"}
+# C9 round 4 fix wave, ROWS2 wave 2, STRICT: dominated sites retired with
+# executed four-cell records (never counted killed).
+EQUIV_RECORD["M796"] = {
+    "property": "the helper launches only a request whose psv_manifest_sha256 is a lowercase sha256",
+    "subsumed_by": ["M623", "M797"], "killer": "joint:M796+M623+M797",
+    "all_paths": "validate_request has one production caller, prepare (via serve_as). Every "
+                 "prepared request reaches observed_launch before anything is launched: "
+                 "snapshot_manifest compares sha256_hex of the snapshot manifest (always 64 "
+                 "lowercase hex) with the request's word (M623), so a word that is not lowercase "
+                 "hex never equals it; and the nonce is spent with that word, which the "
+                 "custodian refuses unless it is 64 lowercase hex (M797). Executed with a "
+                 "genuine observation of the uppercase spelling"}
+EQUIV_RECORD["M801"] = {
+    "property": "each psv input of a request is <out root>/<inputs>/<its fixed leaf>",
+    "subsumed_by": ["M800"], "killer": "joint:M801+M800",
+    "all_paths": "the leaf-name rule and the exact-spelling rule run on the same path p in the "
+                 "same loop iteration. If p's file name is not `leaf`, parent.join(leaf) (a path "
+                 "ending in `leaf`) differs from p, so M800 refuses every input M801 refuses"}
+EQUIV_RECORD["M803"] = {
+    "property": "the root launcher writes only into the out dir the helper created",
+    "subsumed_by": ["M802"], "killer": "joint:M803+M802",
+    "all_paths": "make_out's only caller is prepare; mkdirat must CREATE the out dir (M802), so "
+                 "a pre-existing dir of any owner is refused before the owner re-check. The "
+                 "re-check refuses only a dir replaced between mkdirat and openat, a race no "
+                 "deterministic test interposes; its four-cell attack is a Fabric-owned dir "
+                 "already at the out path"}
+EQUIV_RECORD["M804"] = {
+    "property": "the out dir of a launch is not its psv inputs dir",
+    "subsumed_by": ["M802"], "killer": "joint:M804+M802",
+    "all_paths": "validate_request's only caller is prepare, which creates the out dir with "
+                 "mkdirat (M802) after snapshot_inputs opened the inputs dir: an out name equal "
+                 "to the inputs name names a directory that exists, so mkdirat refuses it"}
+EQUIV_RECORD["M809"] = {
+    "property": "readiness never reads a failed git as an empty answer",
+    "subsumed_by": ["M810"], "killer": "joint:M809+M810",
+    "all_paths": "every git() answer feeds one of: the refs/replace/ refusal (M285, retired: "
+                 "replacement objects are off, M385), the grafts path (an empty answer names the "
+                 "repository itself, which exists, so the graft refusal fires), the index tags "
+                 "(M287/M288, retired: the tree is compared by its bytes), the change lists "
+                 "(diff, diff-index, ls-files --others), which only ADD to `outside`, and HEAD's "
+                 "name for the hash-checked comparison (an empty name makes Objects::entries "
+                 "fail). When the change lists add nothing, the comparison from hash-checked "
+                 "objects runs (M810) and M697 refuses any difference. Executed with a failing "
+                 "`git diff` over a committed code change"}
+EQUIV_RECORD["M813"] = {
+    "property": "a custodian serves only from a store that is a real directory",
+    "subsumed_by": ["M325"], "killer": "joint:M813+M325",
+    "all_paths": "check_store has one caller per custodian mode (the binary, before any "
+                 "connection). A symlink's lstat mode is 0777 on Linux, so the next rule (no "
+                 "group/other access, M325) refuses every symlink; a non-directory the custodian "
+                 "owns with mode 0600 fails every issue and spend (ENOTDIR under it), so it "
+                 "serves nothing. Executed with the production custodian and a symlink it owns"}
+EQUIV_RECORD["M338"] = {
+    "property": "the record's verifier_key_id is a key of the operator's verifier root",
+    "subsumed_by": ["M812"], "killer": "joint:M338+M812",
+    "all_paths": "attribution has one caller (the decision) and always runs launched() at its "
+                 "end (M750). launched() looks verifier_key_id up among the verifier root's "
+                 "exclusive keys and refuses when none has that id; exclusive_keys is a subset "
+                 "of key_ids (it drops keys shared with another root), so every id the "
+                 "membership check refuses the lookup also refuses. Since amendment 57"}
 EQUIVALENT_DID = set(EQUIV_RECORD)
 # STALE: a row whose old text no longer exists. "The old text is absent" shows
 # only that the TEXT changed, not that the guard is gone (C9 dev review: M204
@@ -2841,6 +2901,281 @@ MUTATIONS += [
      'axon-fabric', '--test privileged_launcher', 'an_observation_of_another_guest_init_launches_nothing'),
 ]
 
+# ── C9 round 4 fix wave, ROWS2 wave 2 (M775-M794; amendment 58): the sites the
+# extended site pattern names in psv.rs, runner.rs and protected_evidence.rs.
+MUTATIONS += [
+    ('M775', 'PSV-4: a check that produced no verdict is never receipted as one (CheckVerdict::NotRun)', 'crates/axon-fabric/src/psv.rs', '        CheckVerdict::NotRun => {\n            return unknown(', '        CheckVerdict::NotRun => ReceiptVerification::Passed,\n        #[allow(unreachable_patterns)]\n        CheckVerdict::NotRun => {\n            return unknown(', 'axon-fabric', '--test psv_dispatch', 'a_check_that_produced_no_verdict_is_never_receipted_as_one'),
+    ('M776', 'M4: a protected receipt states an evidence class (none is not protected)', 'crates/axon-loop-contracts/src/protected_evidence.rs', '        [] => return Err("the receipt states no evidence class: not protected evidence".into()),', '        [] => {}', 'axon-fabric', '--test readiness_launch', 'an_attested_receipt_stating_no_evidence_class_is_refused'),
+    ('M777', 'M4: a protected receipt states exactly one evidence class', 'crates/axon-loop-contracts/src/protected_evidence.rs', '        many => {\n            return Err(format!(\n                "the receipt states {} evidence classes",\n                many.len()\n            ))\n        }', '        many => {\n            let _ = many;\n        }', 'axon-fabric', '--test readiness_launch', 'an_attested_receipt_stating_two_evidence_classes_is_refused'),
+    ('M778', 'M4: a protected receipt names every required digest ref', 'crates/axon-loop-contracts/src/protected_evidence.rs', '            [] => return Err(format!("a protected receipt names no {prefix}…")),', '            [] => {}', 'axon-fabric', '--test readiness_launch', 'an_attested_receipt_naming_no_guest_kernel_is_refused'),
+    ('M779', 'PSV-5: the receipt counts the outcome the guest verdict claims (a counted failure of a guest pass)', 'crates/axon-loop-contracts/src/protected_evidence.rs', '        (RV::Passed, GS::Passed) | (RV::Failed, GS::Failed) => {}\n        (counted, claimed) => {', '        (RV::Passed, GS::Passed) | (RV::Failed, _) => {}\n        (counted, claimed) => {', 'axon-loop', '--test intake', 'a_receipt_counting_a_guest_pass_as_a_failure_is_refused'),
+    ('M780', 'A3: the runner runs only a suite entry that is a file in the suite tree', 'crates/axon-psv/src/runner.rs', '    if axon_workspace_recipe::check_path(&m.suite.entry, &Quota::default()).is_err()', '    if false && axon_workspace_recipe::check_path(&m.suite.entry, &Quota::default()).is_err()', 'axon-psv', '--test runner', 'a_suite_entry_outside_the_suite_tree_never_runs'),
+    ('M781', "PSV limits: a run whose output exceeded the manifest's limit yields no verdict", 'crates/axon-psv/src/runner.rs', '    if oo || eo {', '    if false && (oo || eo) {', 'axon-psv', '--test runner', 'a_run_that_exceeded_its_output_limit_yields_no_verdict'),
+]
+
+# ── C9 round 4 fix wave, ROWS2 wave 2, STRICT (M795-M814) ──────────────────
+# Refusal sites exempt as "dominated" (or with no stated kind) in
+# scripts/v022_refusal_coverage.py, under the integrator's strict reading:
+# each is an ACTIVE row killed by an attack that reaches it alone, or
+# EQUIVALENT_DID (EQUIV_RECORD below) with an executed four-cell record.
+_S2PL = 'crates/axon-fabric/src/privileged_launcher.rs'
+_S2CU = 'crates/axon-fabric/src/custodian.rs'
+_S2PH = 'crates/axon-fabric/src/protected_host.rs'
+_S2RD = 'crates/axon-fabric/src/readiness.rs'
+_S2HT = '--test privileged_launcher'
+MUTATIONS += [
+    ('M795', 'A: the helper takes one request schema', _S2PL,
+     '    if r.schema != REQUEST_SCHEMA {', '    if false && r.schema != REQUEST_SCHEMA {',
+     'axon-fabric', _S2HT, 'a_request_of_another_schema_launches_nothing'),
+    ('M796', "A: the request's psv_manifest_sha256 is a lowercase sha256", _S2PL,
+     '    if !is_hex64(&r.psv_manifest_sha256) {', '    if false && !is_hex64(&r.psv_manifest_sha256) {',
+     'axon-fabric', _S2HT, 'a_request_naming_its_manifest_digest_in_another_spelling_launches_nothing'),
+    ('M797', 'A84: a custodian spend names its launch manifest as a lowercase sha256 (production custodian)', _S2CU,
+     '                    .filter(|m| is_hex(m, 64))', '                    .filter(|_| true)',
+     'axon-fabric', _S2HT, 'a_protected_custodian_spends_nothing_for_a_spend_naming_no_manifest'),
+    ('M798', "A: a request's timeout is bounded by the operator's max_timeout_s", _S2PL,
+     '    if r.timeout_s == 0 || r.timeout_s > c.max_timeout_s {', '    if r.timeout_s == 0 {',
+     'axon-fabric', _S2HT, 'a_request_asking_for_more_time_than_the_operator_allows_launches_nothing'),
+    ('M799', 'A: the guest policy the helper copies is at most MAX_POLICY bytes', _S2PL,
+     '    if bytes.len() > MAX_POLICY {', '    if false && bytes.len() > MAX_POLICY {',
+     'axon-fabric', _S2HT, 'a_policy_over_the_helpers_bound_launches_nothing'),
+    ('M800', 'A: each psv input is spelled exactly <out root>/<inputs>/<leaf>', _S2PL,
+     '        if parent.join(leaf).as_os_str() != p.as_os_str() {',
+     '        if false && parent.join(leaf).as_os_str() != p.as_os_str() {',
+     'axon-fabric', _S2HT, 'a_psv_input_spelled_another_way_launches_nothing'),
+    ('M801', "A: each psv input names its fixed leaf", _S2PL,
+     '        if p.file_name() != Some(OsStr::new(leaf)) {', '        if false && p.file_name() != Some(OsStr::new(leaf)) {',
+     'axon-fabric', _S2HT, 'a_psv_input_naming_another_leaf_launches_nothing'),
+    ('M802', 'A: the root launcher writes only into an out dir the helper created (mkdirat must create it)', _S2PL,
+     '    if unsafe { libc::mkdirat(root, cn.as_ptr(), 0o700) } != 0 {',
+     '    if unsafe { libc::mkdirat(root, cn.as_ptr(), 0o700) } != 0 && false {',
+     'axon-fabric', _S2HT, 'a_root_owned_out_dir_that_already_exists_is_never_launched_into'),
+    ('M803', 'A: the out dir opened is the one the helper created (owner re-check)', _S2PL,
+     '    if st.st_uid != unsafe { libc::geteuid() } {\n        return Err("the out dir was replaced',
+     '    if false {\n        return Err("the out dir was replaced',
+     'axon-fabric', _S2HT, 'a_fabric_owned_out_dir_that_already_exists_is_never_launched_into'),
+    ('M804', 'A: the out dir is not the psv inputs dir', _S2PL,
+     '    if inputs_name == out_name {', '    if false && inputs_name == out_name {',
+     'axon-fabric', _S2HT, 'an_out_dir_that_is_the_inputs_dir_launches_nothing'),
+    ('M805', "A: the helper reads a psv input only from a directory the Fabric uid owns", _S2PL,
+     '        if st.st_uid != c.fabric_uid {\n            return Err(format!(\n                "psv input {leaf} is owned',
+     '        if false {\n            return Err(format!(\n                "psv input {leaf} is owned',
+     'axon-fabric', _S2HT, 'a_root_owned_candidate_directory_is_never_read_by_the_helper'),
+    ('M806', 'D6: a protected custodian answers only its request schema (production custodian)', _S2CU,
+     '        if r.schema != REQUEST_SCHEMA {\n            return Err(format!("request schema is not',
+     '        if false {\n            return Err(format!("request schema is not',
+     'axon-fabric', _S2HT, 'a_protected_custodian_answers_no_request_of_another_schema'),
+    ('M807', 'the preflight probe list refuses a relative path, as load does', _S2PH,
+     '        if !p.is_absolute() {\n            return Err(bad(format!("{ptr} is not absolute")));',
+     '        if false {\n            return Err(bad(format!("{ptr} is not absolute")));',
+     'axon-fabric', _S2HT, 'the_probe_list_is_refused_for_a_host_config_load_refuses'),
+    ('M808', 'the preflight probe list refuses a host config of another schema, as load does', _S2PH,
+     '    if v["schema"] != PROTECTED_HOST_SCHEMA {\n        return Err(bad(format!("schema is not {PROTECTED_HOST_SCHEMA}")));\n    }\n    let path_at',
+     '    if false {\n        return Err(bad(format!("schema is not {PROTECTED_HOST_SCHEMA}")));\n    }\n    let path_at',
+     'axon-fabric', _S2HT, 'the_probe_list_is_refused_for_a_host_config_load_refuses'),
+    ('M809', 'readiness: a failed git is never read as an empty answer (the git() primitive)', _S2RD,
+     '    if !out.status.success() {\n        return Err(format!(\n            "{component}: git {} failed',
+     '    if false {\n        return Err(format!(\n            "{component}: git {} failed',
+     'axon-fabric', '--test readiness', 'a_failed_git_is_never_read_as_no_change'),
+    ('M810', 'readiness: when git reports no change, the change set is recomputed from hash-checked objects', _S2RD,
+     '    if outside.is_empty() {\n        let head = git(', '    if false {\n        let head = git(',
+     'axon-fabric', '--test readiness', 'a_gitignored_input_is_not_certified'),
+    ('M811', "psv: an observer that exits non-zero authorizes nothing, whatever it left", 'crates/axon-fabric/src/observer.rs',
+     '    if !status.success() {\n        return Err(format!("observer exited',
+     '    if false {\n        return Err(format!("observer exited',
+     'axon-fabric', '--test psv_dispatch', 'every_defective_observation_launches_nothing_on_the_direct_route'),
+    ('M812', "FIELD-ORIGIN (A88): the attestation is verified under the key verifier_key_id names", _S2RD,
+     '        .find(|k| attestation::key_id_of_hex(k).as_deref() == Some(s("verifier_key_id")))',
+     '        .find(|k| {\n            let att = &run["receipt_attestation"];\n            OpaqueRef::new(att["issuer_ref"].as_str().unwrap_or(""))\n                .is_ok_and(|i| attestation::verify(att, &i, &req, &rc, k).is_ok())\n        })',
+     'axon-fabric', '--test readiness_launch', 'the_verifier_key_id_is_the_key_that_attested_the_run'),
+    ('M813', "D6: a custodian's store is a real directory, never a symlink", _S2CU,
+     '    if m.file_type().is_symlink() || !m.is_dir() {', '    if false && (m.file_type().is_symlink() || !m.is_dir()) {',
+     'axon-fabric', _S2HT, 'a_protected_custodian_never_serves_from_a_symlinked_store'),
+    ('M814', 'E: readiness certifies only the TOP of a standalone clone', _S2RD,
+     '    if found != top {', '    if false && found != top {',
+     'axon-fabric', '--test readiness', 'a_directory_inside_a_clone_is_not_certified'),
+]
+# ── C9 round 4 fix wave, ROWS2 wave 2, LOOP (M815-M859) ──
+# The refusal sites of admission.rs and intake.rs that had no row: each is
+# attacked through the production entry (admission::admit, activation through
+# pointer::transition, intake::intake_episode) where it alone refuses; M852-M856
+# are retired EQUIVALENT with executed four-cell records (EQUIV_RECORD below).
+_R2LA = 'crates/axon-loop/src/admission.rs'
+_R2LI = 'crates/axon-loop/src/intake.rs'
+_R2EA = '--test evl_admission'
+_R2IN = '--test intake'
+_R2PC = '--test protected_class'
+_R2BIND = 'each_admission_binding_refuses_its_own_forgery'
+_R2JOIN = 'each_intake_join_refuses_its_own_defect'
+MUTATIONS += [
+ ('M815', "admission: the evaluation's scope is the frozen plan's", _R2LA,
+  '    if eval.scope != plan.scope {', '    if false && eval.scope != plan.scope {', 'axon-loop', _R2EA, _R2BIND),
+ ('M816', "admission: the evaluation belongs to the plan's experiment", _R2LA,
+  '    if eval.experiment_id != plan.experiment_id {', '    if false && eval.experiment_id != plan.experiment_id {', 'axon-loop', _R2EA, _R2BIND),
+ ('M817', "admission: the evaluation was made under the frozen plan", _R2LA,
+  '    if eval.plan_ref != frozen.plan_ref {', '    if false && eval.plan_ref != frozen.plan_ref {', 'axon-loop', _R2EA, _R2BIND),
+ ('M818', "admission: the evaluation was made under this freeze", _R2LA,
+  '    if eval.freeze_seq != frozen.freeze_seq {', '    if false && eval.freeze_seq != frozen.freeze_seq {', 'axon-loop', _R2EA, _R2BIND),
+ ('M819', "admission: exactly an incumbent and a candidate arm", _R2LA,
+  '    if eval.arms.len() != 2 {', '    if false && eval.arms.len() != 2 {', 'axon-loop', _R2EA, _R2BIND),
+ ('M820', "admission: the admitter is not a subject issuer of the evaluation", _R2LA,
+  '    if eval.subject_issuers.contains(admitter) {', '    if false && eval.subject_issuers.contains(admitter) {', 'axon-loop', _R2EA, _R2BIND),
+ ('M821', "admission: the admitter is not the evaluator", _R2LA,
+  '    if &eval.evaluator_ref == admitter {', '    if false && &eval.evaluator_ref == admitter {', 'axon-loop', _R2EA, _R2BIND),
+ ('M822', "admission: only a trusted admitter admits", _R2LA,
+  '    if !admitters.contains(admitter) {', '    if false && !admitters.contains(admitter) {', 'axon-loop', _R2EA,
+  'an_admitter_the_operator_does_not_trust_admits_nothing'),
+ ('M823', "admission: a counted verdict records the verifier that authenticated it", _R2LA,
+  '            let v = t.verification.as_ref().ok_or_else(|| {\n',
+  '            let Some(v) = t.verification.as_ref() else { continue };\n            Some(()).ok_or_else(|| {\n',
+  'axon-loop', _R2EA, 'a_counted_verdict_with_no_recorded_verifier_is_refused'),
+ ('M824', "admission: a mechanism-test admission counts only mechanism-test evidence", _R2LA,
+  '                if role != want {', '                if false && role != want {', 'axon-loop', _R2EA,
+  'a_mechanism_test_admission_counts_no_confirmation_trial'),
+ ('M825', "admission: an evaluation journalled before its freeze is refused", _R2LA,
+  '    if eval_seq <= frozen.freeze_seq {', '    if false && eval_seq <= frozen.freeze_seq {', 'axon-loop', _R2EA,
+  'an_evaluation_journalled_before_its_freeze_is_refused'),
+ ('M826', "activation: the admission was journalled by `admit`", _R2LA,
+  '    if tx.admission_event(adm_ref).is_none() {', '    if false && tx.admission_event(adm_ref).is_none() {', 'axon-loop', _R2EA,
+  'activation_rests_only_on_a_journalled_admission_that_re_derives'),
+ ('M827', "activation: the stored admission re-derives identically", _R2LA,
+  '    if again != stored {', '    if false && again != stored {', 'axon-loop', _R2EA,
+  'activation_rests_only_on_a_journalled_admission_that_re_derives'),
+ ('M828', "activation: only an ACCEPT activates", _R2LA,
+  '    if again.decision != Decision::Accept {', '    if false && again.decision != Decision::Accept {', 'axon-loop', _R2EA,
+  'only_an_accepted_currently_authorized_admission_activates'),
+ ('M829', "PSV-7: a protected arm's counters are its trials' outcomes", _R2LA,
+  '        if arm.assigned != arm.trials.len() as u64\n            || arm.verified_pass != n(Outcome::VerifiedPass)\n            || arm.fail != n(Outcome::Fail)\n            || arm.unknown != n(Outcome::Unknown)\n            || arm.missing != missing\n        {',
+  '        if false\n            && (arm.assigned != arm.trials.len() as u64\n                || arm.verified_pass != n(Outcome::VerifiedPass)\n                || arm.fail != n(Outcome::Fail)\n                || arm.unknown != n(Outcome::Unknown)\n                || arm.missing != missing)\n        {',
+  'axon-loop', _R2PC, 'a_protected_arm_whose_counters_are_not_its_trials_is_refused'),
+ ('M830', "intake: the context receipt is the one the episode names (EQUIVALENT: four-cell vs M857)", _R2LI,
+  '    if ctx_ref != ep.context_ref {', '    if false && ctx_ref != ep.context_ref {', 'axon-loop', _R2IN, _R2JOIN),
+ ('M831', "intake: only a bound (started) task is an episode", _R2LI,
+  '    if ctx.expected != ctx.observed {', '    if false && ctx.expected != ctx.observed {', 'axon-loop', _R2IN, _R2JOIN),
+ ('M832', "intake: a refused sidecar is not an episode", _R2LI,
+  '    if ep.status == EpisodeStatus::Refused {', '    if false && ep.status == EpisodeStatus::Refused {', 'axon-loop', _R2IN, _R2JOIN),
+ ('M834', "intake: an ack has exactly the ack's fields", _R2LI,
+  '    if keys != want {\n        return Err(shape(format!(\n            "ack: fields',
+  '    if false && keys != want {\n        return Err(shape(format!(\n            "ack: fields', 'axon-loop', _R2IN, _R2JOIN),
+ ('M835', "intake: the ack records a pinned policy", _R2LI,
+  '    if pin["state"] != "pinned" {', '    if false && pin["state"] != "pinned" {', 'axon-loop', _R2IN, _R2JOIN),
+ ('M836', "intake: the ack pins the episode's policy", _R2LI,
+  '    if pin["policy_ref"] != ep.policy_ref.as_str() || pin["policy_id"] != policy.policy_id.as_str()\n',
+  '    if false && (pin["policy_ref"] != ep.policy_ref.as_str() || pin["policy_id"] != policy.policy_id.as_str())\n',
+  'axon-loop', _R2IN, _R2JOIN),
+ ('M837', "intake: the ack's shortlist is the stored policy's", _R2LI,
+  '    if pin["shortlist"] != json!(shortlist) {', '    if false && pin["shortlist"] != json!(shortlist) {', 'axon-loop', _R2IN, _R2JOIN),
+ ('M838', "intake: the ack's candidate list digests to its candidate_set_ref", _R2LI,
+  '    if digest_value(cands)? != ep.candidate_set_ref {', '    if false && digest_value(cands)? != ep.candidate_set_ref {', 'axon-loop', _R2IN, _R2JOIN),
+ ('M839', "intake: an ambiguous ack is refused, never guessed", _R2LI,
+  '        many => Err(refused(format!(\n            "ambiguous ack',
+  '        [(_, t), ..] => Ok(t),\n        #[allow(unreachable_patterns)]\n        many => Err(refused(format!(\n            "ambiguous ack',
+  'axon-loop', _R2IN, _R2JOIN),
+ ('M840', "intake: the projection is the one the episode names", _R2LI,
+  '    if &r != want {', '    if false && &r != want {', 'axon-loop', _R2IN, _R2JOIN),
+ ('M841', "intake: the projection maps the episode's policy", _R2LI,
+  '    if proj.sidecar_policy_ref != ep.policy_ref {', '    if false && proj.sidecar_policy_ref != ep.policy_ref {', 'axon-loop', _R2IN, _R2JOIN),
+ ('M842', "intake: verification evidence the episode does not cite is refused", _R2LI,
+  '        if input.verification_request.is_some()\n',
+  '        if false && input.verification_request.is_some()\n', 'axon-loop', _R2IN, _R2JOIN),
+ ('M843', "intake: the canonical episode is the one the sidecar names", _R2LI,
+  '    if r != ep.source_episode_ref {', '    if false && r != ep.source_episode_ref {', 'axon-loop', _R2IN, _R2JOIN),
+ ('M844', "intake: a known canonical spend is never dropped", _R2LI,
+  '        (Some(mc), None) => {\n            return Err(',
+  '        (Some(_), None) => {}\n        #[allow(unreachable_patterns)]\n        (Some(mc), None) => {\n            return Err(',
+  'axon-loop', _R2IN, _R2JOIN),
+ ('M845', "intake: a cost the canonical episode does not know is never substituted", _R2LI,
+  '        (None, Some(c)) => {\n            return Err(',
+  '        (None, Some(_)) => {}\n        #[allow(unreachable_patterns)]\n        (None, Some(c)) => {\n            return Err(',
+  'axon-loop', _R2IN, _R2JOIN),
+ ('M846', "intake: the sidecar's cost is the canonical spend under the round-up rule", _R2LI,
+  '            if c != want {', '            if false && c != want {', 'axon-loop', _R2IN, _R2JOIN),
+ ('M847', "intake: a MiCode not-produced marker is never a policy reference", _R2LI,
+  '        if *named == marker {', '        if false && *named == marker {', 'axon-loop', _R2IN,
+  'a_not_produced_marker_is_never_a_policy_reference'),
+ ('M848', "intake: a revoked policy records no episode", _R2LI,
+  '    if tx.is_revoked(&ep.scope, &ep.policy_ref) {', '    if false && tx.is_revoked(&ep.scope, &ep.policy_ref) {', 'axon-loop', _R2IN,
+  'an_episode_of_a_revoked_policy_is_refused'),
+ ('M849', "intake: one trial identity, one set of bytes", _R2LI,
+  '            if intake.scope == ep.scope && intake.identity == ep.identity {',
+  '            if false && intake.scope == ep.scope && intake.identity == ep.identity {', 'axon-loop', _R2IN,
+  'a_second_episode_for_a_recorded_trial_is_a_conflict'),
+ ('M850', "intake: the receipt records exactly one check suite version", _R2LI,
+  '        [one] => *one,\n        _ => {',
+  '        [one] => *one,\n        [first, ..] => *first,\n        _ => {', 'axon-loop', _R2IN,
+  'a_receipt_recording_two_suite_versions_decides_nothing'),
+ ('M851', "intake: the check is this attempt's Fabric operation (the `same` refusal)", _R2LI,
+  '    if !same {', '    if false && !same {', 'axon-loop', _R2IN, 'each_verification_rule_is_load_bearing_on_its_own'),
+ ('M857', "EVL: a delivered trial's context is the one its episode names (bind_episode's context binding)",
+  'crates/axon-loop-contracts/src/checks.rs',
+  '    if episode.policy_ref != digest(policy)? || episode.context_ref != digest(ctx)? {',
+  '    if episode.policy_ref != digest(policy)? {',
+  'axon-loop', _R2EA, 'a_trial_delivered_with_a_context_other_than_its_episodes_counts_nothing'),
+ ('M852', "PSV-7: a protected context re-verifies under an observer the operator trusts now (EQUIVALENT: four-cell vs M122+M104)", _R2LA,
+  '    if !config.observers().contains(&who) {', '    if false && !config.observers().contains(&who) {', 'axon-loop', _R2PC,
+  'a_context_observer_the_operator_withdrew_counts_nothing_at_activation'),
+ ('M853', "intake: check_ack refuses an ack of another schema (EQUIVALENT pair with M854)", _R2LI,
+  '    if obj["schema"] != ACK_SCHEMA {', '    if false && obj["schema"] != ACK_SCHEMA {', 'axon-loop', _R2IN,
+  'an_ack_of_another_schema_or_view_is_never_joined'),
+ ('M854', "intake: select_ack passes over an ack of another schema (EQUIVALENT pair with M853)", _R2LI,
+  '        if v.get("schema").and_then(Value::as_str) != Some(ACK_SCHEMA) {',
+  '        if false && v.get("schema").and_then(Value::as_str) != Some(ACK_SCHEMA) {', 'axon-loop', _R2IN,
+  'an_ack_of_another_schema_or_view_is_never_joined'),
+ ('M855', "intake: check_ack refuses an ack over another candidate view (EQUIVALENT pair with M856)", _R2LI,
+  '    if obj["candidate_set_ref"] != ep.candidate_set_ref.as_str() {',
+  '    if false && obj["candidate_set_ref"] != ep.candidate_set_ref.as_str() {', 'axon-loop', _R2IN,
+  'an_ack_of_another_schema_or_view_is_never_joined'),
+ ('M856', "intake: select_ack passes over an ack over another candidate view (EQUIVALENT pair with M855)", _R2LI,
+  '        if pin_ref != Some(ep.policy_ref.as_str()) || csr != Some(ep.candidate_set_ref.as_str()) {',
+  '        if pin_ref != Some(ep.policy_ref.as_str()) {\n            let _ = csr;', 'axon-loop', _R2IN,
+  'an_ack_of_another_schema_or_view_is_never_joined'),
+]
+
+# The four-cell retirements of the block above (executed with
+# scripts/v022_paired_disable.py; never counted killed).
+EQUIV_RECORD["M852"] = {
+    "property": "a counted protected context rests on an observer the operator trusts at the derivation",
+    "subsumed_by": ["M122", "M104"], "killer": "joint:M852+M122+M104",
+    "all_paths": "reverify_protected has one caller, derive, which calls it for every counted trial of a "
+                 "protected evaluation and, with no early Ok after it, then runs (a) the any-class loop "
+                 "refusing a trial whose context_observer_ref is not in config.observers() (M122) and "
+                 "(b) the protected loop refusing a trial whose context_signed_by issuer is not in "
+                 "config.observers() (M104). reverify_protected itself refuses unless "
+                 "t.context_observer_ref == Some(who) (M362), where `who` is the observer M852 checks, "
+                 "so on every path a `who` outside config.observers() is also a context_observer_ref "
+                 "outside it (M122); M104 refuses the same trial through its signer attribution"}
+EQUIV_RECORD["M830"] = {
+    "property": "intake records an episode only with the context receipt it names",
+    "subsumed_by": ["M857"], "killer": "joint:M830+M857",
+    "all_paths": "intake_episode is the only caller; after this check it always calls bind_episode "
+                 "with the same episode and context (no early return between them but refusals), and "
+                 "bind_episode refuses `episode.context_ref != digest(ctx)` (M857), the identical "
+                 "predicate: ctx_ref is digest(&ctx) of the same parsed context"}
+EQUIV_RECORD["M853"] = {
+    "property": "an ack of another schema never joins an episode",
+    "subsumed_by": ["M854"], "killer": "joint:M853+M854",
+    "all_paths": "check_ack has one caller, intake_episode, which hands it only the text select_ack "
+                 "returns; select_ack passes over every text whose schema is not ACK_SCHEMA (M854), so "
+                 "the text check_ack sees always has that schema"}
+EQUIV_RECORD["M854"] = {
+    "property": "an ack of another schema never joins an episode",
+    "subsumed_by": ["M853"], "killer": "joint:M853+M854",
+    "all_paths": "select_ack's only caller hands its result to check_ack, which refuses any schema "
+                 "but ACK_SCHEMA (M853) before anything is recorded"}
+EQUIV_RECORD["M855"] = {
+    "property": "an ack over another candidate view never joins an episode",
+    "subsumed_by": ["M856"], "killer": "joint:M855+M856",
+    "all_paths": "check_ack has one caller, intake_episode, which hands it only the text select_ack "
+                 "returns; select_ack passes over every ack whose candidate_set_ref is not the "
+                 "episode's (M856), so the ack check_ack sees always names the episode's view"}
+EQUIV_RECORD["M856"] = {
+    "property": "an ack over another candidate view never joins an episode",
+    "subsumed_by": ["M855"], "killer": "joint:M855+M856",
+    "all_paths": "select_ack's only caller hands its result to check_ack, which refuses an ack whose "
+                 "candidate_set_ref is not the episode's (M855) before anything is recorded"}
+EQUIVALENT_DID |= {"M830", "M852", "M853", "M854", "M855", "M856"}
+RETIRED |= {"M830", "M852", "M853", "M854", "M855", "M856"}
+
 BINDING_IDS = {f"M{n}" for n in range(101, 137)}
 # Every id range the PSV rounds allocate (C9 round 1 uses up to M399; round
 # 1b allocates M400-M499, round 2 M500-M519). An id outside every scope would silently fall into
@@ -2859,8 +3194,8 @@ PSV_IDS |= {f"M{n}" for n in range(740, 760)}
 
 # C9 round 4: M650-M699, and the rows workstream's M690-M719.
 PSV_IDS |= {f"M{n}" for n in range(650, 720)}
-# C9 round 4 fix wave: rows2 M760-M819.
-PSV_IDS |= {f"M{n}" for n in range(760, 820)}
+# C9 round 4 fix wave: rows2 M760-M819, and wave 2 up to M859.
+PSV_IDS |= {f"M{n}" for n in range(760, 860)}
 
 
 def in_scope(mid, scope):

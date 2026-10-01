@@ -354,3 +354,74 @@ fn a_record_carrying_two_runs_is_refused() {
         "carries 2 Fabric run outputs",
     );
 }
+
+// ── C9 round 4 fix wave, rows2 (M776-M778): the receipt's class and digest
+// refs, on readiness's route (`protected_evidence::check`, M741's call). Each
+// receipt is re-attested by the verifier key, so the attestation holds and
+// only the class/ref rule refuses it.
+
+/// M776: an attested receipt stating NO evidence class certifies nothing.
+#[test]
+fn an_attested_receipt_stating_no_evidence_class_is_refused() {
+    let Some(c) = certified() else { return };
+    relaunch(
+        &c,
+        keep(),
+        keep(),
+        Box::new(|rc| {
+            rc["evidence_refs"].as_array_mut().unwrap().remove(0);
+        }),
+    );
+    attack(
+        &c,
+        "an attested receipt stating no evidence class certified a protected run",
+        "states no evidence class",
+    );
+}
+
+/// M777: an attested receipt stating TWO evidence classes (protected and
+/// guest-unobserved) is not protected evidence: which one it is is not stated.
+#[test]
+fn an_attested_receipt_stating_two_evidence_classes_is_refused() {
+    let Some(c) = certified() else { return };
+    relaunch(
+        &c,
+        keep(),
+        keep(),
+        Box::new(|rc| {
+            rc["evidence_refs"]
+                .as_array_mut()
+                .unwrap()
+                .push(json!("evidence-class:guest-unobserved"));
+        }),
+    );
+    attack(
+        &c,
+        "an attested receipt stating two evidence classes certified a protected run",
+        "evidence classes",
+    );
+}
+
+/// M778: an attested protected receipt that names no guest kernel digest.
+/// Readiness joins the manifest, observation, verdict and qualification refs
+/// itself, but not the kernel: the required-ref rule alone refuses it.
+#[test]
+fn an_attested_receipt_naming_no_guest_kernel_is_refused() {
+    let Some(c) = certified() else { return };
+    relaunch(
+        &c,
+        keep(),
+        keep(),
+        Box::new(|rc| {
+            rc["evidence_refs"]
+                .as_array_mut()
+                .unwrap()
+                .retain(|e| !e.as_str().unwrap().starts_with("guest-kernel-sha256:"));
+        }),
+    );
+    attack(
+        &c,
+        "an attested protected receipt naming no guest kernel certified a protected run",
+        "names no guest-kernel-sha256:",
+    );
+}
