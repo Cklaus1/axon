@@ -193,8 +193,11 @@ fn a_trust_root_that_is_not_operator_owned_authorizes_nothing() {
     c.refused("not root");
     std::os::unix::fs::chown(root.join("operator.pub"), Some(0), None).unwrap();
 
+    // The symlink check and the mode check (a symlink's lstat mode is 0777)
+    // each refuse it alone (M948/M950, amendment 61): either reason.
     std::os::unix::fs::symlink(root.join("operator.pub"), root.join("alias.pub")).unwrap();
-    c.refused("symlink");
+    let v = c.refused_any().to_string();
+    assert!(v.contains("symlink") || v.contains("writable"), "{v}");
 }
 
 /// Replacing the installed verifier is a change of authority: a certification

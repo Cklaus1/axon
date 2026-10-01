@@ -637,7 +637,9 @@ fn an_observer_key_and_identity_are_its_own() {
     ] {
         match w.s.write_config(bad) {
             Err(LoopError::Refused(m)) => assert!(m.contains(why), "{m}"),
-            other => panic!("config accepted ({why}): {other:?}"),
+            other => {
+                panic!("ATTACK: a config breaking role separation was written ({why}): {other:?}")
+            }
         }
     }
     // The read path refuses the same config written behind the store's back.
@@ -652,7 +654,7 @@ fn an_observer_key_and_identity_are_its_own() {
     .unwrap();
     match w.s.config() {
         Err(LoopError::Refused(m)) => assert!(m.contains("registered for two roles"), "{m}"),
-        other => panic!("a shared-key config was read back: {other:?}"),
+        other => panic!("ATTACK: a shared-key config was read back: {other:?}"),
     }
 }
 

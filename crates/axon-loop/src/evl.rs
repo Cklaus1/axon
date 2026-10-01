@@ -135,6 +135,29 @@ pub fn verify_execution(
     )
     .map_err(|e| e.to_string())?;
     observed_protected_execution(rc)?;
+    // …and by a verifier the operator QUALIFIED for the backend profile the
+    // execution claims (amendment 61, A92). The operator's pin bounds which
+    // profiles a verifier's verdicts may come from (`intake::check_pins`); an
+    // attestation of an execution is the same kind of statement about a
+    // profile, so it is bounded by the same pin, read as it is NOW (admission
+    // re-derives through here). Without it a verifier qualified only for a
+    // development backend attested a protected execution, and it counted.
+    // The signer is deliberately NOT required to be the verdict's verifier:
+    // two verifiers the operator trusts and qualified for the profile each
+    // make their own statement over their own documents, which the episode
+    // binds by digest; requiring one identity would add no authority.
+    let qualified = config.verifier_pins.get(&issuer).is_some_and(|pin| {
+        pin.backend_profiles
+            .iter()
+            .any(|p| p == rc.backend_profile_ref.as_str())
+    });
+    if !qualified {
+        return Err(format!(
+            "{issuer} is not qualified by the operator for backend {} (no verifier pin names \
+             it), so its attestation of an execution there stands for nothing",
+            rc.backend_profile_ref
+        ));
+    }
     Ok(SignedBy {
         issuer_ref: issuer,
         key_id,

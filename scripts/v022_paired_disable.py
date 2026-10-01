@@ -644,6 +644,23 @@ GUARD_SETS = {
     "M1095": {"siblings": ["M1054"], "kind": "pair"},
     "M1096": {"siblings": ["M1054"], "kind": "pair"},
     "M1097": {"siblings": ["M1071"], "kind": "pair"},
+    # C9 round 4b fix wave, rows4a (amendment 61; EQUIV_RECORD in the registry).
+    "M948": {"siblings": ["M950"], "kind": "pair"},
+    "M954": {"siblings": ["M955"], "kind": "pair"},
+    "M955": {"siblings": ["M954"], "kind": "pair"},
+    "M956": {"siblings": ["M957"], "kind": "pair"},
+    "M957": {"siblings": ["M956"], "kind": "pair"},
+    "M962": {"siblings": ["M15", "M963"], "kind": "set"},
+    "M964": {"siblings": ["M965"], "kind": "pair"},
+    "M970": {"siblings": ["M971"], "kind": "pair"},
+    "M971": {"siblings": ["M970"], "kind": "pair"},
+    "M972": {"siblings": ["M973"], "kind": "pair"},
+    "M973": {"siblings": ["M972"], "kind": "pair"},
+    "M974": {"siblings": ["M972", "M973"], "kind": "set"},
+    "M979": {"siblings": ["M980", "M998"], "kind": "set"},
+    "M980": {"siblings": ["M979", "M998"], "kind": "set"},
+    "M998": {"siblings": ["M979", "M980"], "kind": "set"},
+    "M981": {"siblings": ["M819"], "kind": "pair"},
 }
 
 

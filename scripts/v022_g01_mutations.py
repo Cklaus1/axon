@@ -3514,6 +3514,291 @@ MUTATIONS += [
      'axon-fabric', _FMT, _FCO),
 ]
 
+# C9 round 4b fix wave, rows4a (amendment 61): the refusal-site gate's file set
+# is a rule (every source of the protected crates), and the loop side's sites
+# are rowed or exempt. M940-M1019.
+_EVL = 'crates/axon-loop/src/evl.rs'
+_EXEC_TRUST = '    if !config.verifiers().contains(&issuer) {\n        return Err(format!("{issuer} is not a trusted verifier"));'
+_EXEC_QUAL = '    if !qualified {\n        return Err(format!(\n            "{issuer} is not qualified by the operator'
+MUTATIONS += [
+    ('M940', "PSV-7 (4b): the execution attestation's signer is a verifier the operator trusts (EVL)",
+     _EVL, _EXEC_TRUST, _EXEC_TRUST.replace('    if !', '    if false && !', 1),
+     'axon-loop', '--test protected_class', 'a_revoked_verifiers_execution_attestation_counts_nothing'),
+    ('M941', "PSV-7 (4b): the execution attestation's signer is a verifier the operator trusts NOW (admission re-derivation)",
+     _EVL, _EXEC_TRUST, _EXEC_TRUST.replace('    if !', '    if false && !', 1),
+     'axon-loop', '--test protected_class', 'a_protected_admission_refuses_an_execution_attester_the_operator_withdrew'),
+    ('M942', "A92: the execution attestation's signer is pinned by the operator for the profile it attests (EVL)",
+     _EVL, _EXEC_QUAL, _EXEC_QUAL.replace('    if !', '    if false && !', 1),
+     'axon-loop', '--test protected_class', 'an_execution_attested_by_a_verifier_not_qualified_for_its_profile_counts_nothing'),
+    ('M943', "A92: the execution attestation's signer is pinned for that profile NOW (admission re-derivation)",
+     _EVL, _EXEC_QUAL, _EXEC_QUAL.replace('    if !', '    if false && !', 1),
+     'axon-loop', '--test protected_class', 'a_protected_admission_refuses_an_execution_attester_no_longer_qualified'),
+    ('M944', "RULE:issuer-trusted: an evidence signature's key is one the operator root trusts (readiness, B263)",
+     'crates/axon-loop-contracts/src/operator_trust.rs', '    if !trusted.contains(&pk) {', '    if false && !trusted.contains(&pk) {',
+     'axon-fabric', '--test readiness_attribution', 'a_b263_record_not_signed_under_the_qualification_root_is_refused'),
+]
+
+_SHA_NONE = '        [] => Err(format!(\n            "the execution receipt names no {prefix}…: the launch was not observed"\n        )),'
+_SHA_BAD = '        [d] => Err(format!(\n            "the execution receipt\'s {prefix}{d} is not a sha256"\n        )),'
+_SHA_MANY = '        _ => Err(format!(\n            "the execution receipt names {prefix}… more than once"\n        )),'
+_OT = 'crates/axon-loop-contracts/src/operator_trust.rs'
+_OWN_T = '--test trust_root_ownership'
+MUTATIONS += [
+    ('M945', 'C9r1b class-b join (4b): an attested execution receipt that names no launch digest is unobserved',
+     _EVL, _SHA_NONE, '        [] => Ok(()),', 'axon-loop', '--test protected_class',
+     'an_unobserved_execution_leg_counts_nothing_in_a_protected_evaluation'),
+    ('M946', 'C9r1b class-b join (4b): a launch digest that is not a sha256 is no observation',
+     _EVL, _SHA_BAD, '        [_d] => Ok(()),', 'axon-loop', '--test protected_class',
+     'an_unobserved_execution_leg_counts_nothing_in_a_protected_evaluation'),
+    ('M947', 'C9r1b class-b join (4b): a receipt naming a launch digest twice is ambiguous, not observed',
+     _EVL, _SHA_MANY, '        _ => Ok(()),', 'axon-loop', '--test protected_class',
+     'an_unobserved_execution_leg_counts_nothing_in_a_protected_evaluation'),
+    ('M948', 'O2 ownership walk (4b): a trust-root entry that is a symlink authorizes nothing (EQUIVALENT on Linux: M950)',
+     _OT, '        if m.file_type().is_symlink() {\n            return Err(format!(\n                "{} is a symlink: a trust root is never redirected",',
+     '        if false && m.file_type().is_symlink() {\n            return Err(format!(\n                "{} is a symlink: a trust root is never redirected",',
+     'axon-fabric', _OWN_T, 'a_symlinked_trust_root_key_authorizes_nothing'),
+    ('M949', 'O2 ownership walk (4b): a trust-root entry owned by another uid authorizes nothing',
+     _OT, '        if m.uid() != 0 {', '        if false && m.uid() != 0 {',
+     'axon-fabric', _OWN_T, 'a_trust_root_key_owned_by_another_uid_authorizes_nothing'),
+    ('M950', 'O2 ownership walk (4b): a group/other-writable trust-root entry authorizes nothing',
+     _OT, '        if m.mode() & 0o022 != 0 {\n            return Err(format!(\n                "{} is group- or other-writable (mode {:o}): it authorizes nothing",',
+     '        if false && m.mode() & 0o022 != 0 {\n            return Err(format!(\n                "{} is group- or other-writable (mode {:o}): it authorizes nothing",',
+     'axon-fabric', _OWN_T, 'an_other_writable_trust_root_authorizes_nothing'),
+    ('M951', 'verify_document (4b): a detached signature verifies under the registered key over the caller\'s binding',
+     'crates/axon-loop-contracts/src/attestation.rs',
+     '        .verify(&crate::canonical_bytes(&want)?, &s)\n        .map_err(|_| shape(format!("signature does not verify under {key_id}")))?;',
+     '        .verify(&crate::canonical_bytes(&want)?, &s)\n        .or(Ok::<(), ring::error::Unspecified>(()))\n        .map_err(|_| shape(format!("signature does not verify under {key_id}")))?;',
+     'axon-loop', '--test protected_class', 'a_context_signature_not_made_by_the_key_it_presents_counts_nothing'),
+]
+
+EQUIV_RECORD["M948"] = {
+    "property": "a symlink in an operator trust root authorizes nothing",
+    "subsumed_by": ["M950"], "killer": "joint:M948+M950",
+    "all_paths": "check_owned_chain applies its one `check` closure to the base, every component below "
+                 "it and (with entries) every entry; `check` lstat()s the path (symlink_metadata) and, "
+                 "with no return between them but refusals, tests the symlink type (M948), the owner "
+                 "(M949) and the mode (M950). On Linux, the only platform the protected profile runs "
+                 "on, a symlink's own mode is always 0777, so `mode & 0o022 != 0` (M950) refuses every "
+                 "path M948 refuses"}
+EQUIVALENT_DID |= {"M948"}
+RETIRED |= {"M948"}
+
+# rows4a (amendment 61): evl.rs refusal sites, check_population, and the siblings
+# their four-cell retirements name.
+MUTATIONS += [
+    ('M952', 'EVL (4b): no evaluation is recorded with no trusted verifier', 'crates/axon-loop/src/evl.rs', '    if verifiers.is_empty() {', '    if false && verifiers.is_empty() {', 'axon-loop', '--test evl_refusal_sites', 'an_evaluation_with_no_trusted_verifier_is_refused'),
+    ('M953', "EVL (4b): the evaluated policies are exactly the frozen plan's arms", 'crates/axon-loop/src/evl.rs', '    if supplied != plan_arms {', '    if false && supplied != plan_arms {', 'axon-loop', '--test evl_refusal_sites', 'an_evaluation_supplying_a_policy_outside_the_plan_is_refused'),
+    ('M954', "EVL (4b): the evaluation's scope is its plan's (EQUIVALENT: M955)", 'crates/axon-loop/src/evl.rs', '    if frozen.plan.scope != r.scope {', '    if false && frozen.plan.scope != r.scope {', 'axon-loop', '--test evl_refusal_sites', 'an_evaluation_under_another_scope_is_refused'),
+    ('M955', "EVL (4b): each supplied policy is the evaluation's scope (EQUIVALENT: M954)", 'crates/axon-loop/src/evl.rs', '        if p.scope != r.scope {', '        if false && p.scope != r.scope {', 'axon-loop', '--test evl_refusal_sites', 'an_evaluation_under_another_scope_is_refused'),
+    ('M956', 'EVL (4b) AB9/AB10: one evaluation per frozen experiment (EQUIVALENT: M957)', 'crates/axon-loop/src/evl.rs', '    if let Some((_, prior)) = tx.evaluations_of(&r.experiment_id).first() {', '    if let Some((_, prior)) = tx.evaluations_of(&r.experiment_id).first().filter(|_| false) {', 'axon-loop', '--test evl_refusal_sites', 'a_second_evaluation_of_an_experiment_is_refused'),
+    ('M957', 'EVL (4b) AB9/AB10: a trial id is evaluated once in the scope (EQUIVALENT: M956)', 'crates/axon-loop/src/evl.rs', '            .find(|t| trial_ids.contains(&t.trial_id))', '            .find(|t| false && trial_ids.contains(&t.trial_id))', 'axon-loop', '--test evl_refusal_sites', 'a_second_evaluation_of_an_experiment_is_refused'),
+    ('M958', 'EVL (4b): an unassigned delivered trial refuses the evaluation', 'crates/axon-loop/src/evl.rs', '        if !assigned_keys.contains(&key) {', '        if false && !assigned_keys.contains(&key) {', 'axon-loop', '--test evl_refusal_sites', 'an_unassigned_trial_never_rides_into_an_evaluation'),
+    ('M959', 'EVL (4b): a future-dated preflight refuses the evaluation', 'crates/axon-loop/src/evl.rs', '        if ctx.created_ms > now {', '        if false && ctx.created_ms > now {', 'axon-loop', '--test evl_refusal_sites', 'a_future_dated_preflight_refuses_the_evaluation'),
+    ('M960', 'EVL (4b) G33: a trial preflighted before the freeze refuses the evaluation', 'crates/axon-loop/src/evl.rs', '        if ctx.created_ms < frozen.freeze_ms {', '        if false && ctx.created_ms < frozen.freeze_ms {', 'axon-loop', '--test evl_refusal_sites', 'a_preflight_before_the_freeze_refuses_the_evaluation'),
+    ('M961', 'EVL (4b): a trial delivered twice refuses the evaluation', 'crates/axon-loop/src/evl.rs', '            .is_some()\n        {\n            return Err(refused(format!("trials[{i}]: trial delivered twice")));', '            .is_some()\n            && false\n        {\n            return Err(refused(format!("trials[{i}]: trial delivered twice")));', 'axon-loop', '--test evl_refusal_sites', 'a_trial_delivered_twice_refuses_the_evaluation'),
+    ('M962', 'EVL (4b): cross-tenant evidence never joins (EQUIVALENT: M15 + M963)', 'crates/axon-loop/src/evl.rs', '                } else if d.ep.scope != r.scope || d.ctx.scope != r.scope {', '                } else if false && (d.ep.scope != r.scope || d.ctx.scope != r.scope) {', 'axon-loop', '--test evl_refusal_sites', 'a_cross_tenant_context_never_counts'),
+    ('M963', 'bind_episode (4b): an episode binds only a context and policy of its own scope (intake)', 'crates/axon-loop-contracts/src/checks.rs', '    if episode.scope != ctx.scope || episode.scope != policy.scope {', '    if false && (episode.scope != ctx.scope || episode.scope != policy.scope) {', 'axon-loop', '--test evl_refusal_sites', 'an_episode_bound_to_another_tenants_context_is_never_intaken'),
+    ('M964', 'EVL (4b): a trial counts only for the arm whose policy it ran (EQUIVALENT: M965)', 'crates/axon-loop/src/evl.rs', '    if &d.ep.policy_ref != policy_ref {', '    if false && &d.ep.policy_ref != policy_ref {', 'axon-loop', '--test evl_refusal_sites', 'an_episode_of_another_policy_never_counts_for_an_arm'),
+    ('M965', "bind_episode (4b): the episode ran the policy it is bound to (the library primitive's own contract; its production callers decide it first, M964)", 'crates/axon-loop-contracts/src/checks.rs', '    if episode.policy_ref != digest(policy)? || episode.context_ref != digest(ctx)? {', '    if episode.context_ref != digest(ctx)? {', 'axon-loop-contracts', '--test fixtures', 'bind_episode_refuses_mismatches'),
+    ('M966', 'check_population (4b): one policy per arm (issued by plan::assign)', 'crates/axon-loop/src/evl.rs', '        if arm_policy[&a.arm_id] != &a.policy_ref {', '        if false && arm_policy[&a.arm_id] != &a.policy_ref {', 'axon-loop', '--test evl_refusal_sites', 'each_population_defect_is_never_issued'),
+    ('M967', 'check_population (4b): both arms are assigned', 'crates/axon-loop/src/evl.rs', '    if arms_seen.len() != 2 {', '    if false && arms_seen.len() != 2 {', 'axon-loop', '--test evl_refusal_sites', 'each_population_defect_is_never_issued'),
+    ('M968', 'check_population (4b) AB9: each arm covers exactly the task manifest', 'crates/axon-loop/src/evl.rs', '        if tasks != manifest.task_set() {', '        if false && tasks != manifest.task_set() {', 'axon-loop', '--test evl_refusal_sites', 'each_population_defect_is_never_issued'),
+    ('M969', 'check_population (4b): each (arm, task) is assigned exactly `repetitions` times', 'crates/axon-loop/src/evl.rs', '    if let Some(((arm, task), n)) = per_arm_task.iter().find(|(_, n)| **n != reps) {', '    if let Some(((arm, task), n)) = per_arm_task.iter().find(|(_, n)| false && **n != reps) {', 'axon-loop', '--test evl_refusal_sites', 'each_population_defect_is_never_issued'),
+    ('M970', "check_population (4b): only the plan's arm policies (EQUIVALENT: M971)", 'crates/axon-loop/src/evl.rs', '        if !plan_arms.contains(&a.policy_ref) {', '        if false && !plan_arms.contains(&a.policy_ref) {', 'axon-loop', '--test evl_refusal_sites', 'a_population_naming_a_policy_outside_the_plan_is_never_issued'),
+    ('M971', "plan::assign (4b): only the plan's arm policies (EQUIVALENT: M970)", 'crates/axon-loop/src/plan.rs', '        if !arms.contains(&t.policy_ref) {', '        if false && !arms.contains(&t.policy_ref) {', 'axon-loop', '--test evl_refusal_sites', 'a_population_naming_a_policy_outside_the_plan_is_never_issued'),
+    ('M972', 'check_population (4b): a trial id once in the population (EQUIVALENT: M973)', 'crates/axon-loop/src/evl.rs', '        if !trial_ids.insert(&a.trial_id) {', '        if !trial_ids.insert(&a.trial_id) && false {', 'axon-loop', '--test evl_refusal_sites', 'a_trial_id_issued_for_two_tasks_is_never_issued'),
+    ('M973', 'plan::assign (4b): a trial is issued once (EQUIVALENT: M972)', 'crates/axon-loop/src/plan.rs', '        if !trials.insert(&t.trial_id) || !attempts.insert((&t.trial_id, &t.attempt_id)) {', '        if (!trials.insert(&t.trial_id) || !attempts.insert((&t.trial_id, &t.attempt_id))) && false {', 'axon-loop', '--test evl_refusal_sites', 'a_trial_id_issued_for_two_tasks_is_never_issued'),
+    ('M974', 'check_population (4b): a (task, arm, trial) once (EQUIVALENT: M972 + M973)', 'crates/axon-loop/src/evl.rs', '        if !assigned_keys.insert((a.task_id.clone(), a.arm_id.clone(), a.trial_id.clone())) {', '        if !assigned_keys.insert((a.task_id.clone(), a.arm_id.clone(), a.trial_id.clone())) && false {', 'axon-loop', '--test evl_refusal_sites', 'a_trial_assigned_twice_is_never_issued'),
+    ('M975', 'EVL (4b): only a journalled evaluation is read as evidence', 'crates/axon-loop/src/evl.rs', '    let (seq, _) = tx.evaluation_event(r).ok_or_else(|| {\n        refused(format!(\n            "evaluation {r} was never journalled by `evl evaluate`"\n        ))\n    })?;', '    let seq = tx.evaluation_event(r).map(|(s, _)| s).unwrap_or(u64::MAX);', 'axon-loop', '--test evl_refusal_sites', 'an_unjournalled_evaluation_is_never_admitted'),
+]
+
+EQUIV_RECORD["M954"] = {
+    "property": "an evaluation is never recorded under another scope than its plan's",
+    "subsumed_by": ["M955"], "killer": "joint:M954+M955",
+    "all_paths": "evaluate's only path to a record passes both checks, then `supplied != plan_arms` "
+                 "(M953): every supplied policy IS one of the plan's two arms (keys are digests), and a "
+                 "PolicyEnvelope's digest covers its scope, so each supplied p.scope is the plan's scope; "
+                 "hence p.scope != r.scope (M955) holds exactly when plan.scope != r.scope (M954)"}
+EQUIV_RECORD["M955"] = {
+    "property": "an evaluation is never recorded under another scope than its plan's",
+    "subsumed_by": ["M954"], "killer": "joint:M954+M955",
+    "all_paths": "M954 runs first on every call of evaluate and refuses r.scope != plan.scope; after it "
+                 "r.scope is the plan's, and a policy of another scope has another digest, so it is "
+                 "refused by M953 or never supplied"}
+EQUIV_RECORD["M956"] = {
+    "property": "a frozen experiment has one evaluation (no REJECT re-rolled)",
+    "subsumed_by": ["M957"], "killer": "joint:M956+M957",
+    "all_paths": "a second evaluation of the experiment must assign exactly the journalled population "
+                 "(requested == issued, M108, against the ONE assignment plan::assign journals per "
+                 "experiment), so its trial ids are the first evaluation's, which the scope-wide trial-id "
+                 "check (M957) refuses"}
+EQUIV_RECORD["M957"] = {
+    "property": "a frozen experiment has one evaluation (no REJECT re-rolled)",
+    "subsumed_by": ["M956"], "killer": "joint:M956+M957",
+    "all_paths": "a trial id is issued to one experiment only (plan::assign refuses an id issued to another "
+                 "experiment of the scope), so a prior evaluation holding one of this request's trial ids "
+                 "is an evaluation of this experiment, which M956 refuses first"}
+EQUIV_RECORD["M962"] = {
+    "property": "evidence minted for another scope never counts",
+    "subsumed_by": ["M15", "M963"], "killer": "joint:M962+M15+M963",
+    "all_paths": "M962 sits in the else-if chain after intake_join (M15): the delivered episode is one intaken "
+                 "in THIS scope; intake records an episode only through bind_episode, whose scope join "
+                 "(M963) refuses an episode, context or policy of different scopes, and judge calls the same "
+                 "bind_episode on the delivered context, whose bytes the episode names (M857), so a "
+                 "context or episode outside r.scope is refused by M15 or M963 on every path"}
+EQUIV_RECORD["M964"] = {
+    "property": "a trial counts only for the arm whose policy it ran",
+    "subsumed_by": ["M965"], "killer": "joint:M964+M965",
+    "all_paths": "judge's next statement calls bind_episode with policy = policies[a.policy_ref], a map keyed "
+                 "by the policy's own digest, so digest(policy) == policy_ref and bind_episode's "
+                 "`episode.policy_ref != digest(policy)` (M965) is M964's predicate, with no return between"}
+EQUIV_RECORD["M970"] = {
+    "property": "a population names only the plan's two arm policies",
+    "subsumed_by": ["M971"], "killer": "joint:M970+M971",
+    "all_paths": "check_population's callers: plan::assign, which then refuses the same predicate over the "
+                 "same trials (`!arms.contains(&t.policy_ref)`, M971) before journalling; and evaluate, "
+                 "whose population equals the journalled one (M108), which passed M971"}
+EQUIV_RECORD["M971"] = {
+    "property": "a population names only the plan's two arm policies",
+    "subsumed_by": ["M970"], "killer": "joint:M970+M971",
+    "all_paths": "plan::assign calls check_population over the same trials before M971, and its arm-policy "
+                 "check (M970) refuses the identical predicate (plan_arms is the same two refs)"}
+EQUIV_RECORD["M972"] = {
+    "property": "a trial id is issued once in a population",
+    "subsumed_by": ["M973"], "killer": "joint:M972+M973",
+    "all_paths": "check_population's callers: plan::assign, which then refuses a repeated trial id over the "
+                 "same trials (`!trials.insert(&t.trial_id)`, M973) before journalling; evaluate, whose "
+                 "population equals the journalled one (M108)"}
+EQUIV_RECORD["M973"] = {
+    "property": "a trial id is issued once in a population",
+    "subsumed_by": ["M972"], "killer": "joint:M972+M973",
+    "all_paths": "plan::assign calls check_population over the same trials before M973, and its trial-id check "
+                 "(M972) refuses every repeated id; a repeated (trial, attempt) pair is a repeated trial id"}
+EQUIV_RECORD["M974"] = {
+    "property": "a (task, arm, trial) is assigned once",
+    "subsumed_by": ["M972", "M973"], "killer": "joint:M974+M972+M973",
+    "all_paths": "a repeated (task, arm, trial) key repeats its trial id, which check_population's trial-id "
+                 "check (M972, same function, no return between but refusals) and plan::assign's (M973) "
+                 "each refuse on every path"}
+EQUIVALENT_DID |= {"M954", "M955", "M956", "M957", "M962", "M964", "M970", "M971", "M972", "M973", "M974"}
+RETIRED |= {"M954", "M955", "M956", "M957", "M962", "M964", "M970", "M971", "M972", "M973", "M974"}
+
+# rows4a (amendment 61): store.rs.
+MUTATIONS += [
+    ('M976', 'ADR-002 (4b): one public key is never registered for two roles', 'crates/axon-loop/src/store.rs', '                    if prev != role {', '                    if false && prev != role {', 'axon-loop', '--test evl_admission', 'an_observer_key_and_identity_are_its_own'),
+    ('M977', 'ADR-002 (4b): a preflight observer holds no other loop role', 'crates/axon-loop/src/store.rs', '                if set.contains(o) {', '                if false && set.contains(o) {', 'axon-loop', '--test evl_admission', 'an_observer_key_and_identity_are_its_own'),
+    ('M978', 'store (4b): a CAS record is read only if its content digests to its name', 'crates/axon-loop/src/store.rs', '        if &d != r {', '        if false && &d != r {', 'axon-loop', '--test store_integrity', 'a_journalled_evaluation_edited_in_place_is_never_admitted'),
+    ('M979', 'store (4b): no store path crosses a symlink (guard; EQUIVALENT for writes: M980)', 'crates/axon-loop/src/store.rs', '                Ok(m) if m.file_type().is_symlink() => return Err(symlink_err(&cur)),', '                Ok(m) if false && m.file_type().is_symlink() => return Err(symlink_err(&cur)),', 'axon-loop', '--test store_integrity', 'a_store_directory_replaced_by_a_symlink_is_never_written_through'),
+    ('M980', 'store (4b): ensure_dir re-checks each component is no symlink (EQUIVALENT: M979)', 'crates/axon-loop/src/store.rs', '            if m.file_type().is_symlink() {\n                return Err(symlink_err(&cur));', '            if false && m.file_type().is_symlink() {\n                return Err(symlink_err(&cur));', 'axon-loop', '--test store_integrity', 'a_store_directory_replaced_by_a_symlink_is_never_written_through'),
+]
+
+EQUIV_RECORD["M979"] = {
+    "property": "nothing is written through a symlink inside the store",
+    "subsumed_by": ["M980", "M998"], "killer": "joint:M979+M980+M998",
+    "all_paths": "every store write goes through write_atomic, which first calls ensure_dir(parent): ensure_dir "
+                 "walks every component below the root (create_dir, then lstat) and refuses a symlink (M980) "
+                 "and, since lstat reports a symlink as no directory, any component that is not a real "
+                 "directory (M998), before anything is written; a READ through a symlinked directory returns only bytes that must "
+                 "still digest to their name (check_name, M978) or that the ledger verifies"}
+EQUIV_RECORD["M980"] = {
+    "property": "nothing is written through a symlink inside the store",
+    "subsumed_by": ["M979", "M998"], "killer": "joint:M979+M980+M998",
+    "all_paths": "ensure_dir's first statement is guard(dir), which lstat()s every existing component and refuses a "
+                 "symlink (M979); M980 differs only for a component that became a symlink between the two calls "
+                 "(a concurrent writer), which write_atomic's guard(path) after ensure_dir refuses again; and "
+                 "the next statement refuses a component lstat does not report as a directory (M998), "
+                 "which a symlink never is"}
+EQUIVALENT_DID |= {"M979", "M980"}
+RETIRED |= {"M979", "M980"}
+
+MUTATIONS += [
+    ('M981', 'EVL (4b): one arm per policy when a record is read by policy (EQUIVALENT: M819)', 'crates/axon-loop/src/evl.rs', '        if it.next().is_some() {', '        if false && it.next().is_some() {', 'axon-loop', '--test evl_refusal_sites', 'a_policy_split_across_two_arms_is_never_admitted_on_half_its_trials'),
+]
+EQUIV_RECORD["M981"] = {
+    "property": "a candidate is never admitted on part of its trials split into another arm",
+    "subsumed_by": ["M819"], "killer": "joint:M981+M819",
+    "all_paths": "arm_for_policy's callers: admission's derive, which first refuses a record that does not "
+                 "have exactly two arms (M819), and the plan freezes two distinct policies, so two arms "
+                 "sharing one policy leave none for the other; and pointer::safety_still_holds, which reads "
+                 "only an admitted evaluation's record (load_journalled of adm.evaluation_ref), one derive "
+                 "accepted under M819"}
+EQUIVALENT_DID |= {"M981"}
+RETIRED |= {"M981"}
+
+# rows4a (amendment 61): safety.rs.
+MUTATIONS += [
+    ('M982', 'ADR-001 §5 (4b): only a trusted monitor or a subject may report a trial unsafe', 'crates/axon-loop/src/safety.rs', '            if !is_monitor && !is_subject {', '            if false && !is_monitor && !is_subject {', 'axon-loop', '--test safety_sites', 'a_strangers_violation_never_vetoes_a_candidate'),
+    ('M983', 'ADR-001 §5 (4b): a clearance comes from a trusted monitor independent of the trial', 'crates/axon-loop/src/safety.rs', '            if !is_monitor || is_subject {', '            if false && (!is_monitor || is_subject) {', 'axon-loop', '--test safety_sites', 'a_subject_keyed_as_a_monitor_never_clears_its_own_trial'),
+    ('M984', "FG-050 (4b): a clearance's monitor signature verifies", 'crates/axon-loop/src/safety.rs', '            .map_err(|e| refused(format!("clearance signature refused: {e}")))?;', '            .ok();', 'axon-loop', '--test safety_sites', 'a_clearance_whose_signature_does_not_verify_is_never_recorded'),
+]
+
+# rows4a (amendment 61): tasks.rs, candidates.rs.
+MUTATIONS += [
+    ('M985', 'task manifest (4b): 1..=100000 tasks', 'crates/axon-loop/src/tasks.rs', '        if self.tasks.is_empty() || self.tasks.len() > 100_000 {', '        if false && (self.tasks.is_empty() || self.tasks.len() > 100_000) {', 'axon-loop', '--test registries', 'each_defective_task_manifest_is_never_registered'),
+    ('M986', 'task manifest (4b): one spelling (sorted, no repeats)', 'crates/axon-loop/src/tasks.rs', '        if !self.tasks.windows(2).all(|w| w[0] < w[1]) {', '        if false && (!self.tasks.windows(2).all(|w| w[0] < w[1])) {', 'axon-loop', '--test registries', 'each_defective_task_manifest_is_never_registered'),
+    ('M987', 'task manifest (4b): registered only by a trusted admitter', 'crates/axon-loop/src/tasks.rs', '    if !store.config()?.admitters().contains(&m.issuer_ref) {', '    if false && (!store.config()?.admitters().contains(&m.issuer_ref)) {', 'axon-loop', '--test registries', 'each_defective_task_manifest_is_never_registered'),
+    ('M988', 'task manifest (4b): a plan rests only on a REGISTERED manifest', 'crates/axon-loop/src/tasks.rs', '    if !tx.task_manifest_event(scope, r) {', '    if false && (!tx.task_manifest_event(scope, r)) {', 'axon-loop', '--test registries', 'a_planted_task_manifest_never_freezes_a_plan'),
+    ('M989', "task manifest (4b): a registered manifest's file is the manifest it names", 'crates/axon-loop/src/tasks.rs', '    if &m.manifest_ref()? != r || &m.scope != scope {', '    if false && (&m.manifest_ref()? != r || &m.scope != scope) {', 'axon-loop', '--test registries', 'a_task_manifest_edited_in_place_never_decides_a_population'),
+    ('M990', 'candidate list (4b): 1..=4096 candidates', 'crates/axon-loop/src/candidates.rs', '        if self.candidates.is_empty() || self.candidates.len() > 4096 {', '        if false && (self.candidates.is_empty() || self.candidates.len() > 4096) {', 'axon-loop', '--test registries', 'each_defective_candidate_list_is_never_registered'),
+    ('M991', 'candidate list (4b): one spelling (sorted, no repeats)', 'crates/axon-loop/src/candidates.rs', '        if !self.candidates.windows(2).all(|w| w[0] < w[1]) {', '        if false && (!self.candidates.windows(2).all(|w| w[0] < w[1])) {', 'axon-loop', '--test registries', 'each_defective_candidate_list_is_never_registered'),
+    ('M992', 'candidate list (4b): registered only by a trusted admitter', 'crates/axon-loop/src/candidates.rs', '    if !store.config()?.admitters().contains(&c.issuer_ref) {', '    if false && (!store.config()?.admitters().contains(&c.issuer_ref)) {', 'axon-loop', '--test registries', 'each_defective_candidate_list_is_never_registered'),
+    ('M993', 'candidate list (4b): a policy rests only on a REGISTERED list', 'crates/axon-loop/src/candidates.rs', '    if !tx.candidate_set_event(scope, r) {', '    if false && (!tx.candidate_set_event(scope, r)) {', 'axon-loop', '--test registries', 'a_planted_candidate_list_never_admits_a_policy'),
+    ('M994', "candidate list (4b): a registered list's file is the list it names", 'crates/axon-loop/src/candidates.rs', '    if &c.candidate_set_ref()? != r || &c.scope != scope {', '    if false && (&c.candidate_set_ref()? != r || &c.scope != scope) {', 'axon-loop', '--test registries', 'a_candidate_list_edited_in_place_never_admits_a_policy'),
+]
+
+# rows4a (amendment 61): rules.rs.
+MUTATIONS += [
+    ('M995', 'plan rules (4b): a word rule is exactly the one the code executes', 'crates/axon-loop/src/rules.rs', '        Some(x) => Err(format!("{field} {x:?} is not executable (expected `{w}`)")),', '        Some(_x) => Ok(()),', 'axon-loop', '--test registries', 'each_unexecutable_rule_never_freezes'),
+    ('M996', 'plan rules (4b): a quality margin below 100%', 'crates/axon-loop/src/rules.rs', '        if margin_ppm >= PPM {', '        if false && margin_ppm >= PPM {', 'axon-loop', '--test registries', 'each_unexecutable_rule_never_freezes'),
+    ('M997', 'plan rules (4b): an economic threshold at most 100%', 'crates/axon-loop/src/rules.rs', '            if n > PPM {', '            if false && n > PPM {', 'axon-loop', '--test registries', 'each_unexecutable_rule_never_freezes'),
+]
+
+MUTATIONS += [
+    ('M998', 'store (4b): every store path component is a real directory (lstat; EQUIVALENT: M979 + M980)', 'crates/axon-loop/src/store.rs', '            if !m.is_dir() {', '            if false && !m.is_dir() {', 'axon-loop', '--test store_integrity', 'a_store_directory_replaced_by_a_symlink_is_never_written_through'),
+]
+EQUIV_RECORD["M998"] = {
+    "property": "nothing is written through a symlink inside the store",
+    "subsumed_by": ["M979", "M980"], "killer": "joint:M979+M980+M998",
+    "all_paths": "ensure_dir's first statement is guard(dir), which lstat()s every existing component and "
+                 "refuses a symlink (M979), and the statement before M998 refuses a component lstat "
+                 "reports as a symlink (M980); a regular file in the path (the only other non-directory) "
+                 "makes the write below it fail with ENOTDIR"}
+EQUIVALENT_DID |= {"M998"}
+RETIRED |= {"M998"}
+
+# rows4a (amendment 61): evl.rs rows killed by existing production-route tests.
+MUTATIONS += [
+    ('M999', "EVL (4b): a trial's context check includes its protected authentication", 'crates/axon-loop/src/evl.rs', '                } else if let Err(e) = authenticated_context(&config, frozen.evaluation_class, d) {', '                } else if let Some(e) =\n                    authenticated_context(&config, frozen.evaluation_class, d).err().filter(|_| false)\n                {', 'axon-loop', '--test protected_class', 'a_protected_context_is_authenticated_not_named'),
+    ('M1000', 'EVL (4b): a context refusal makes the trial Unknown (TASK_NOT_STARTED evidence)', 'crates/axon-loop/src/evl.rs', '                    match ctx_check {\n                        Err(e) => unknown(', '                    match ctx_check.or(Ok::<(), String>(())) {\n                        Err(e) => unknown(', 'axon-loop', '--test evidence_laundering', 'an_episode_intake_never_recorded_never_counts'),
+    ('M1001', 'EVL (4b): an unbound episode never counts', 'crates/axon-loop/src/evl.rs', '    if let Err(e) = bind_episode(&d.ep, policy, &d.ctx, epoch, verifiers, subjects) {', '    if let Some(e) = bind_episode(&d.ep, policy, &d.ctx, epoch, verifiers, subjects).err().filter(|_| false) {', 'axon-loop', '--test evl_admission', 'a_trial_delivered_with_a_context_other_than_its_episodes_counts_nothing'),
+]
+
+# rows4a (amendment 61): plan.rs.
+MUTATIONS += [
+    ('M1006', 'plan (4b): a frozen plan is never registered again', 'crates/axon-loop/src/plan.rs', '    if tx.freeze_of(&plan.experiment_id).is_some() {', '    if false && (tx.freeze_of(&plan.experiment_id).is_some()) {', 'axon-loop', '--test plan_sites', 'a_frozen_plan_is_never_registered_again'),
+    ('M1007', 'plan (4b): a stored plan is read only if it digests to its name', 'crates/axon-loop/src/plan.rs', '    if &p.digest()? != r {', '    if false && (&p.digest()? != r) {', 'axon-loop', '--test plan_sites', 'a_frozen_plans_file_edited_in_place_never_decides'),
+    ('M1008', 'plan (4b): no operator field is unset at the freeze', 'crates/axon-loop/src/plan.rs', '    if !unset.is_empty() {', '    if false && (!unset.is_empty()) {', 'axon-loop', '--test plan_sites', 'a_plan_with_an_operator_field_unset_never_freezes'),
+    ('M1009', 'plan (4b) no plan shopping: a candidate is frozen in one experiment', 'crates/axon-loop/src/plan.rs', '            if candidate_policy_ref == &cand {', '            if false && (candidate_policy_ref == &cand) {', 'axon-loop', '--test plan_sites', 'a_candidate_frozen_once_never_freezes_in_a_second_experiment'),
+    ('M1010', 'plan (4b) AB9: the manifest holds the planned independent units', 'crates/axon-loop/src/plan.rs', '    if (manifest.tasks.len() as u64) < units {', '    if false && ((manifest.tasks.len() as u64) < units) {', 'axon-loop', '--test plan_sites', 'a_manifest_smaller_than_the_planned_units_never_freezes'),
+    ('M1011', "check_candidate (4b): the candidate was proposed by EVO in the plan's scope", 'crates/axon-loop/src/plan.rs', '    if crate::evo::proposer_in(tx, &plan.scope, cand).is_none() {', '    if false && (crate::evo::proposer_in(tx, &plan.scope, cand).is_none()) {', 'axon-loop', '--test plan_sites', 'a_candidate_evo_never_proposed_never_freezes'),
+    ('M1012', "check_candidate (4b): the candidate's parent is the plan's incumbent", 'crates/axon-loop/src/plan.rs', '    if &ce.parent_policy_ref != inc {', '    if false && (&ce.parent_policy_ref != inc) {', 'axon-loop', '--test plan_sites', 'a_candidate_of_another_parent_never_freezes'),
+    ('M1013', "check_candidate (4b): the plan's controls are its policies'", 'crates/axon-loop/src/plan.rs', '    if Some(&ce.controls_ref) != plan.controls_ref.as_ref() || ce.controls_ref != ie.controls_ref {', '    if false && (Some(&ce.controls_ref) != plan.controls_ref.as_ref() || ce.controls_ref != ie.controls_ref) {', 'axon-loop', '--test plan_sites', 'a_plan_whose_controls_are_not_its_policies_never_freezes'),
+    ('M1014', 'plan (4b): a plan with a start blocker never starts', 'crates/axon-loop/src/plan.rs', '    if !b.is_empty() {', '    if false && (!b.is_empty()) {', 'axon-loop', '--test plan_sites', 'a_blocked_plan_never_starts'),
+    ('M1015', "assign (4b): the assignment is for the plan's scope", 'crates/axon-loop/src/plan.rs', '    if a.scope != frozen.plan.scope {', '    if false && (a.scope != frozen.plan.scope) {', 'axon-loop', '--test plan_sites', 'each_assignment_defect_is_never_issued'),
+    ('M1016', 'assign (4b): the assignment is issued by a trusted admitter', 'crates/axon-loop/src/plan.rs', '    if !config.admitters().contains(&a.issuer_ref) {', '    if false && (!config.admitters().contains(&a.issuer_ref)) {', 'axon-loop', '--test plan_sites', 'each_assignment_defect_is_never_issued'),
+    ('M1017', "assign (4b) G11: the assigner is not the scope's EVO proposer", 'crates/axon-loop/src/plan.rs', '    if tx.hypotheses(&a.scope, None).iter().any(|h| {', '    if false && tx.hypotheses(&a.scope, None).iter().any(|h| {', 'axon-loop', '--test plan_sites', 'each_assignment_defect_is_never_issued'),
+    ('M1018', 'assign (4b): the population is issued once per experiment', 'crates/axon-loop/src/plan.rs', '    if let Some((_, existing)) = tx.assignment_of(&a.experiment_id) {\n        if existing == r {', '    if let Some((_, existing)) = tx.assignment_of(&a.experiment_id).filter(|(_, e)| e == &r) {\n        if existing == r {', 'axon-loop', '--test plan_sites', 'each_assignment_defect_is_never_issued'),
+    ('M1019', 'assign (4b): a trial id is issued to one experiment of the scope', 'crates/axon-loop/src/plan.rs', '                if let Some(t) = other.trials.iter().find(|t| trials.contains(&t.trial_id)) {', '                if let Some(t) = other.trials.iter().find(|t| false && trials.contains(&t.trial_id)) {', 'axon-loop', '--test plan_sites', 'a_trial_id_of_another_experiment_is_never_issued'),
+]
+
+# rows4a (amendment 61): evl.rs, the judge's remaining refusals.
+MUTATIONS += [
+    ('M1002', 'EVL (4b): a trial whose ACF evidence does not bind never counts', 'crates/axon-loop/src/evl.rs', '        if let Err(e) = bind_acf(&d.ep, req, rcpt, proj) {', '        if let Some(e) = bind_acf(&d.ep, req, rcpt, proj).err().filter(|_| false) {', 'axon-loop', '--test evidence_laundering', 'laundered_evidence_never_crosses_independent_admission'),
+    ('M1003', 'EVL (4b) D3: a protected evaluation refuses a development backend on either leg', 'crates/axon-loop/src/evl.rs', '            if let Some(b) = b.filter(|b| !axon_loop_contracts::PROTECTED_PROFILES.contains(b)) {', '            if let Some(b) = b.filter(|b| false && !axon_loop_contracts::PROTECTED_PROFILES.contains(b)) {', 'axon-loop', '--test protected_class', 'a_cited_unknown_from_a_development_verification_is_unverifiable'),
+    ('M1004', "EVL (4b) M4: a protected verdict counts only as protected evidence (the join's refusal)", 'crates/axon-loop/src/evl.rs', '            if let Err(e) = joined {', '            if let Some(e) = joined.err().filter(|_| false) {', 'axon-loop', '--test protected_class', 'only_protected_class_evidence_counts_in_a_protected_evaluation'),
+    ('M1005', 'EVL (4b): a verdict counts only on evidence that authenticates in this evaluation', 'crates/axon-loop/src/evl.rs', '            Err((kind, e)) => return unknown(kind, format!("unauthenticated verification: {e}")),', '            Err((_kind, _e)) => {}', 'axon-loop', '--test evl_refusal_sites', 'a_verdict_whose_delivered_attestation_does_not_verify_never_counts'),
+]
+
 PSV_IDS = {f"M{n}" for n in range(137, 550)}
 # C9 round 3: rows M560-M649 are PSV rows (workstream ranges).
 PSV_IDS |= {f"M{n}" for n in range(550, 650)}
@@ -3958,6 +4243,8 @@ EQUIV_RECORD["M1097"] = {
 # removal still refused (UNREACHABLE, see v022_refusal_coverage.py).
 EQUIVALENT_DID |= {"M1086", "M1087", "M1089", "M1091", "M1095", "M1096", "M1097"}
 RETIRED |= {"M1086", "M1087", "M1089", "M1091", "M1095", "M1096", "M1097"}
+# C9 round 4b fix wave: rows4a M940-M1019 (amendment 61).
+PSV_IDS |= {f"M{n}" for n in range(940, 1020)}
 
 
 def in_scope(mid, scope):

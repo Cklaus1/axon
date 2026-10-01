@@ -2235,6 +2235,95 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
     - **Operator deployment.** The guest image must be REBUILT to carry the new interpreter; its
       scripts and runner are unchanged.
 
+61. **The refusal-site gate's file set is a rule, not a list; the loop side's refusal sites are
+    rowed or exempt; an execution is attested only by a verifier the operator qualified for its
+    profile (C9 round 4b fix wave, rows4a workstream; rows M940-M1019; matrix A92).**
+    - **Before.** Round 4b (EQUIVALENCE) found the refusal-site gate's `PROTECTED` list omitting
+      whole protected decision files (`evl.rs`, `store.rs`, `attestation.rs`, `operator_trust.rs`,
+      the Fabric backend, submit and binary) while `NOT_YET_SCANNED` was `{}`: a hand-kept list
+      standing in for the real set (class a). Two guards had no row: `evl::verify_execution`'s
+      check that the execution attestation's signer is a trusted verifier (with it removed, a
+      revoked verifier's attestation counted and the owner and consumer suites stayed green), and
+      `operator_trust::verify_evidence_signature`'s RULE:issuer-trusted.
+    - **Found and fixed (A92).** `verify_execution` checked that the signer is trusted and that its
+      key is operator-rooted, but not that the operator QUALIFIED it for the profile it attests.
+      The operator's `verifier_pins[...].backend_profiles` bounded only verdicts
+      (`intake::check_pins`). A verifier the operator trusts but pinned only for development
+      backends attested a protected execution, and the trial counted in EVL and re-verified at
+      admission (failing reproduction: `an_execution_attested_by_a_verifier_not_qualified_for_its_profile_counts_nothing`,
+      `verified_pass` 2). `verify_execution`, the one primitive both doors call, now also
+      requires the signer's operator pin to name the receipt's backend profile, read as it is now.
+      The execution attester is deliberately NOT joined to the verdict's verifier: each is
+      operator-trusted and qualified for the profile, and each signs its own documents, which the
+      episode binds by digest; requiring one identity would add no authority.
+    - **The rule (`scripts/v022_refusal_coverage.py`).** In scope: every `.rs` file under
+      `crates/axon-fabric/src`, `crates/axon-loop/src`, `crates/axon-loop-contracts/src` and
+      `crates/axon-psv/src` (recursively, bins included), `crates/axon-core/src/interp/conform.rs`,
+      and in `interp.rs` and `interp/eval.rs` the non-test functions whose name matches
+      `seal|conform|cast` (the seal edges; the interpreter's `panic(` refusal constructor is now
+      a site). Each in-scope file is exactly one of: SCANNED (every site rowed or exempt with a
+      reason, else BAD), `OUT_OF_SCOPE` (named with a checkable reason: `evo.rs`, `profile.rs`,
+      `bin/axon-loop.rs`), or `NOT_YET_SCANNED` (named with its measured count of uncovered
+      sites, which the gate re-measures and refuses when it differs). An in-scope file in none of
+      the tables is SCANNED, so a new file is judged the day it appears; a table entry naming a
+      file outside the rule is refused. `--freeze` fails while `NOT_YET_SCANNED` is non-empty, and
+      `v022_freeze_manifest.py` runs the gate that way and refuses to bind a freeze otherwise
+      (test: `freeze_manifest.rs::a_freeze_is_refused_while_a_protected_file_is_not_yet_scanned`);
+      the gate's digest and file count are bound into the freeze manifest.
+    - **Loop side, per file (sites: rowed / exempt).** `evl.rs` 64: 49 / 15 (RE-REPORTED 2,
+      NOTHING TO ADMIT 6, UNREACHABLE 5, NAMED ROW 2); `store.rs` 17: 6 / 11 (OPERATOR-AUTHORED 2,
+      UNREACHABLE 1, OS ERROR 3, SELECTS NOTHING 4, NOTHING TO ADMIT 1); `attestation.rs` 19:
+      2 / 17 (NOTHING TO ADMIT 7, SELECTS NOTHING 9, NAMED ROW 1); `operator_trust.rs` 13: 8 / 5;
+      `safety.rs` 8: 5 / 3; `tasks.rs` 5: 5 / 0; `candidates.rs` 5: 5 / 0; `rules.rs` 4: 3 / 1;
+      `epoch.rs` 1: 0 / 1; loop `lib.rs` 1: 0 / 1. `plan.rs` 26: 18 / 4, with 4 left NOT YET
+      SCANNED (below). Admission's execution leg is `verify_execution` (M941, M943).
+    - **Rows.** ACTIVE, each killed by its own attack on the production route: M940-M947,
+      M949-M953, M958-M961, M963, M965-M969, M975-M978, M982-M997, M999-M1019. M965 (the
+      policy half of `bind_episode`'s byte binding) is the library primitive's own contract,
+      killed by its crate's test of it (`fixtures.rs::bind_episode_refuses_mismatches`): every
+      production caller decides the predicate first (EVL's M964; intake fetches the policy by the
+      episode's own ref), and the four-cell run showed the primitive's suite needs it, so it is not
+      retired. Retired EQUIVALENT_DID with four-cell records (never counted): M948 (vs M950: a
+      symlink's lstat mode is 0777 on Linux), M954/M955, M956/M957, M962 (vs M15 + M963), M964
+      (vs M965), M970/M971, M972/M973, M974 (vs M972 + M973), M979/M980/M998 (the three lstat
+      checks of the store path), M981 (vs M819). Tests that pinned WHICH of two independent
+      refusals answered were widened to accept either (the precedent of M487):
+      `trust_root.rs`, `readiness.rs`, `protected_host.rs` (symlink or mode) and `redteam.rs`'s
+      AB9 cherry-pick (one evaluation per experiment, or the population join). The
+      RULE:issuer-trusted row (M944) is killed through readiness (an agent-signed B263 record),
+      the production decision.
+    - **Not done here.** `NOT_YET_SCANNED` lists, with counts: the Fabric files (rows4b:
+      `backend.rs`, `submit.rs`, `git_data.rs`, `provenance.rs`, `bin/axon-fabric.rs`; unassigned:
+      `branches.rs`, `grants.rs`, `journal.rs`, `signing.rs`, `workspace.rs`, `axon-psv-runner`),
+      the interpreter's (core2: `conform.rs`, `interp.rs`'s seal edges), and on the loop side
+      `ledger.rs`, `pointer.rs`, `price.rs`, `tel.rs`, the contract layer (`canonical.rs`,
+      `checks.rs`, `compute.rs`, `episode.rs`, `ids.rs`, contracts `lib.rs`, `policy.rs`,
+      `receipt.rs`, `schema.rs`) and `plan.rs`'s four dominated sites (incumbent equals candidate;
+      the candidate's scope, candidate view, and an added tool), whose four-cell attacks are written
+      (`tests/plan_sites.rs`) but whose rows need ids past M1019. A freeze refuses until the list is
+      empty. The two new script guards (the freeze's coverage refusal; the gate's re-measured
+      count) have tests but no mutation row: the id range is exhausted.
+    - **Evidence.**
+      - `v022_g01_mutations.py --scope=all --only=<the 63 ACTIVE rows above but M965>` at
+        698d4912: 63/63 KILLED by their own attack, none refused elsewhere, no survivor
+        (`/var/tmp/c9r4b-rows4a-mut-final3.json`); M965 (with M951, M963) at 9ad610fb: KILLED
+        (`/var/tmp/c9r4b-rows4a-mut-M965.json`).
+      - `v022_paired_disable.py --only=...`: all four cells and the full-suite condition hold for
+        M954-M957, M962, M964, M970-M974, M979-M981, M998 at 698d4912
+        (`/var/tmp/c9r4b-rows4a-pd{A,B,C}.json`; pdB also holds the superseded M965 attempt,
+        whose full suite was red, which is why M965 is ACTIVE) and for M948 at 9ad610fb
+        (`/var/tmp/c9r4b-rows4a-pdD.json`).
+      - Full suites (rc 0): axon-loop and axon-loop-contracts (381), axon-reflex and
+        cortex-policy-adapter (38), axon-fabric single-threaded (553); `cargo build -p
+        axon-fabric --bins`; fmt; clippy -D warnings on axon-loop, axon-loop-contracts and
+        axon-fabric. `v022_refusal_coverage.py` passes, `--freeze` refuses (27 files NOT YET
+        SCANNED); the paired-disable join self-test passes. `psv_matrix_check.py` reports only
+        A91 missing, a row another workstream holds.
+    - **Operator deployment.** A verifier whose execution attestations a protected evaluation is
+      to count must be pinned for `linux-microvm-protected` in the loop store's `verifier_pins`.
+      The Fabric verifier that already signs the protected verdicts is pinned so; nothing else
+      changes.
+
 62. **The refusal-site gate covers the Fabric decision files; the root helper's report, the protected
     executable and every B263 qualification rule have rows; the protected PCI lineage names the
     certified revision by its whole hash (C9 round 4b, EQUIVALENCE (4), Fabric side; rows4b

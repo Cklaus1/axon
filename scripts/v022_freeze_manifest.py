@@ -18,6 +18,9 @@ names another repository: C9 round 3, A79), asked of the operator's git the
 way axon-fabric's git_data::discover asks it; and so is a guest manifest that
 is not clean with no reasons. The clean flag and its reasons are bound.
 
+C9 round 4b (amendment 61): the refusal-site coverage gate must hold under
+--freeze (no in-scope file NOT YET SCANNED); its digest and file count are bound.
+
 C9 round 4 (amendment 56): the guest manifest must also carry the record of the
 controlled build environment its binaries were built in
 (scripts/guest_build_env.py): exactly the constructed environment, fresh
@@ -107,6 +110,19 @@ def main():
     equivalence_digest = sha_str(json.dumps(equiv, sort_keys=True))
     active = [r[0] for r in mut.MUTATIONS if r[0] not in mut.RETIRED]
 
+    # Amendment 61: no freeze binds evidence over a protected decision file
+    # nobody scanned. The refusal-site gate's file set is a rule (every source
+    # of the protected crates, plus the interpreter's seal edges), and under
+    # freeze=True a non-empty NOT_YET_SCANNED is itself a failure.
+    cspec = importlib.util.spec_from_file_location("cov", os.path.join(ROOT, "scripts/v022_refusal_coverage.py"))
+    cov = importlib.util.module_from_spec(cspec)
+    cspec.loader.exec_module(cov)
+    coverage_problems = cov.check(freeze=True, out=lambda *_: None)
+    if coverage_problems:
+        sys.exit(f"refused: the refusal-site coverage gate does not hold at a freeze "
+                 f"({len(coverage_problems)} problem(s), first: {coverage_problems[0]}); "
+                 "run scripts/v022_refusal_coverage.py --freeze (amendment 61)")
+
     why = not_standalone(ROOT)
     if why:
         sys.exit(f"refused: {ROOT} is not a standalone clone ({why}): "
@@ -172,6 +188,9 @@ def main():
         "mutation_registry_digest": registry_digest,
         "equivalence_record_digest": equivalence_digest,
         "paired_disable_digest": sha_file("governance/status/v022-psv-paired-disable.json"),
+        "refusal_coverage": {"gate_sha256": sha_file("scripts/v022_refusal_coverage.py"),
+                             "in_scope_files": len(cov.in_scope_files()),
+                             "out_of_scope": sorted(cov.OUT_OF_SCOPE)},
         "spec_hashes": {
             "protocol": sha_file("governance/specs/v022-psv-protocol.md"),
             "gap_map": sha_file("governance/specs/v022-psv-gap-map.md"),

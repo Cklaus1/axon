@@ -184,6 +184,25 @@ fn populate(root: &Path) {
         &root.join("rust-toolchain.toml"),
         "[toolchain]\nchannel = \"nightly\"\n",
     );
+    coverage_gate(root, "[]");
+}
+
+/// The refusal-site coverage gate the freeze consults (amendment 61). The
+/// scratch repository holds no protected sources, so the real gate (run by
+/// gate.sh over this tree) is stood in for by one whose verdict the test
+/// chooses: `problems` is what `check(freeze=True)` returns, and a call
+/// without freeze=True returns a problem, so a freeze that does not ask for
+/// the freeze reading never passes.
+fn coverage_gate(root: &Path, problems: &str) {
+    write(
+        &root.join("scripts/v022_refusal_coverage.py"),
+        &format!(
+            "OUT_OF_SCOPE = {{}}\n\
+             def in_scope_files():\n    return []\n\
+             def check(without=(), freeze=False, out=print):\n\
+             \x20   return {problems} if freeze else ['the freeze did not ask for --freeze']\n"
+        ),
+    );
 }
 
 /// A committed standalone clone holding the freeze inputs.
@@ -801,5 +820,26 @@ fn a_guest_component_built_outside_the_controlled_environment_does_not_freeze() 
                 Box::new(|m| rootfs(m)["env"]["LD_PRELOAD"] = json!("/var/tmp/evil.so")),
             ),
         ],
+    );
+}
+
+/// Amendment 61: a freeze is refused while the refusal-site coverage gate does
+/// not hold at a freeze (an in-scope protected file NOT YET SCANNED), so no
+/// freeze binds evidence over a decision file nobody scanned. Control: the
+/// same clone with the gate holding freezes
+/// (a_standalone_clone_with_a_clean_guest_manifest_freezes).
+#[test]
+fn a_freeze_is_refused_while_a_protected_file_is_not_yet_scanned() {
+    let d = tempfile::tempdir().unwrap();
+    let r = clone(d.path());
+    coverage_gate(
+        &r,
+        "['crates/axon-loop/src/ledger.rs: NOT YET SCANNED at a freeze (18 uncovered sites)']",
+    );
+    git(&r, &["commit", "-q", "-am", "gate"]);
+    refused(
+        &r,
+        "a tree whose refusal-site coverage does not hold at a freeze",
+        "refusal-site coverage gate does not hold at a freeze",
     );
 }
