@@ -1220,3 +1220,26 @@ ATTACK_MARKERS.update({
     'M1099': r'process_scoped/local-interpreter "" protected\s*\n\s*left: Ok',
     'M1100': 'left: Ok\\(\\(\\)\\)\\s+right: Err\\(\\"the admitted grant gives the check workload',
 })
+
+# ── C9 round 4b, INTEGRATE-C (amendment 64) ──
+ATTACK_MARKERS.update({
+    'M1300': 'ATTACK: an unauthenticated ledger line was rolled forward under the operator key',
+    'M1301': 'ATTACK: a keyed ledger \\(head MAC stripped\\) was read without its key',
+    'M1302': 'ATTACK: a keyed ledger truncated under a rewritten head was served',
+    'M1303': 'ATTACK: a keyed ledger head was read without its key',
+    'M1304': 'ATTACK: a ledger entry whose seq is not its position was served',
+    'M1305': 'ATTACK: a ledger edited in place \\(chain broken\\) was served',
+    'M1306': 'ATTACK: a ledger truncated below its head was not refused as store corruption',
+    'M1307': 'ATTACK: a ledger whose last entry is not the one its head acknowledges was served',
+    'M1308': 'ATTACK: two ledger lines past the head were served',
+    'M1309': 'ATTACK: a ledger truncated with its head deleted served a revoked policy',
+    'M1310': 'ATTACK: a store whose ledger was deleted \\(anchor kept\\) reissued its history',
+    'M1311': 'ATTACK: a store whose ledger, head and anchor were deleted reissued its history',
+    'M1312': 'ATTACK: a ledger replaced by another consistent ledger was served',
+    'M1313': 'ATTACK: a tenant directory that is a symlink was accepted in the projection',
+    'M1314': 'ATTACK: a scope family directory that is a symlink was read as the projection',
+    'M1315': 'ATTACK: a pointer.json no ledger transition projects was accepted',
+    'M1316': 'ATTACK: a scope whose pointer.json was deleted was served',
+    'M1317': "ATTACK: an edited pointer.json was accepted as the ledger's projection",
+})
+# ── end INTEGRATE-C ──

@@ -3799,6 +3799,102 @@ MUTATIONS += [
     ('M1005', 'EVL (4b): a verdict counts only on evidence that authenticates in this evaluation', 'crates/axon-loop/src/evl.rs', '            Err((kind, e)) => return unknown(kind, format!("unauthenticated verification: {e}")),', '            Err((_kind, _e)) => {}', 'axon-loop', '--test evl_refusal_sites', 'a_verdict_whose_delivered_attestation_does_not_verify_never_counts'),
 ]
 
+# ── C9 round 4b, INTEGRATE-C (amendment 64) ──
+# The ledger's and the pointer's refusal sites (ledger.rs, pointer.rs), each
+# killed by its own attack on the production route: a store tampered on disk
+# then opened by the operation a caller runs (tests/ledger_sites.rs), and the
+# public baseline / transition / revoke / resolve operations
+# (tests/pointer_sites.rs). M1300-M1344.
+MUTATIONS += [
+    ('M1300', 'ledger (C): under a key, a line without a valid entry MAC is never rolled forward', 'crates/axon-loop/src/ledger.rs',
+     '        (Some(_), _) => Err(corrupt(format!(\n            "ledger entry seq {} is not authenticated under the operator key \\\n             (forged, or written without {LEDGER_KEY_ENV})",\n            e.seq\n        ))),\n',
+     '        (Some(_), _) => Ok(()),\n',
+     'axon-loop', '--test ledger_sites', 'an_unauthenticated_line_is_never_rolled_forward_under_a_key'),
+    ('M1301', 'ledger (C): a keyed ledger (entry MACs) is never read without the key', 'crates/axon-loop/src/ledger.rs',
+     '        (None, Some(_)) => Err(corrupt(format!(\n            "ledger is keyed but no key is configured: set {LEDGER_KEY_ENV}"\n        ))),\n',
+     '        (None, Some(_)) => Ok(()),\n',
+     'axon-loop', '--test ledger_sites', 'a_keyed_ledger_is_never_read_without_its_key'),
+    ('M1302', 'ledger (C): under a key, the head (the authenticated count) carries a valid MAC', 'crates/axon-loop/src/ledger.rs',
+     '        (Some(_), _) => Err(corrupt(\n            "ledger head is not authenticated under the operator key \\\n             (rewritten, or written without the key)",\n        )),\n',
+     '        (Some(_), _) => Ok(()),\n',
+     'axon-loop', '--test ledger_sites', 'a_truncated_keyed_ledger_with_a_rewritten_head_is_refused'),
+    ('M1303', 'ledger (C): a keyed head is never read without the key', 'crates/axon-loop/src/ledger.rs',
+     '        (None, Some(_)) => Err(corrupt(format!(\n            "ledger head is keyed but no key is configured: set {LEDGER_KEY_ENV}"\n        ))),\n',
+     '        (None, Some(_)) => Ok(()),\n',
+     'axon-loop', '--test ledger_sites', 'a_keyed_head_is_never_read_without_its_key'),
+    ('M1304', 'ledger (C): every entry is numbered by its position', 'crates/axon-loop/src/ledger.rs',
+     '            if e.seq != i as u64 + 1 {\n',
+     '            if false && e.seq != i as u64 + 1 {\n',
+     'axon-loop', '--test ledger_sites', 'a_renumbered_ledger_entry_is_refused'),
+    ('M1305', "ledger (C): every entry's prev is the previous entry's digest (the chain)", 'crates/axon-loop/src/ledger.rs',
+     '            if e.prev != prev {\n',
+     '            if false && e.prev != prev {\n',
+     'axon-loop', '--test ledger_sites', 'an_edited_ledger_entry_breaks_the_chain'),
+    ('M1306', 'ledger (C): a ledger truncated below its head is refused as corrupt', 'crates/axon-loop/src/ledger.rs',
+     '                if h.seq > n {\n',
+     '                if false && h.seq > n {\n',
+     'axon-loop', '--test ledger_sites', 'a_ledger_truncated_below_its_head_is_refused_as_corrupt'),
+    ('M1307', 'ledger (C): the head names the entry at its seq', 'crates/axon-loop/src/ledger.rs',
+     '                if h.seq == 0 || tx.refs[h.seq as usize - 1] != h.entry_ref {\n',
+     '                if false && (h.seq == 0 || tx.refs[h.seq as usize - 1] != h.entry_ref) {\n',
+     'axon-loop', '--test ledger_sites', 'a_replaced_last_entry_does_not_match_its_head'),
+    ('M1308', 'ledger (C): at most one unacknowledged entry (a crash tail) past the head', 'crates/axon-loop/src/ledger.rs',
+     '                if n > h.seq + 1 {\n',
+     '                if false && n > h.seq + 1 {\n',
+     'axon-loop', '--test ledger_sites', 'two_unacknowledged_lines_are_never_served'),
+    ('M1309', 'ledger (C): a ledger of more than one entry has a head (EQUIVALENT: M1310+M1311)', 'crates/axon-loop/src/ledger.rs',
+     '            None if n > 1 => return Err(corrupt("ledger head missing")),\n',
+     '            None if false && n > 1 => return Err(corrupt("ledger head missing")),\n',
+     'axon-loop', '--test ledger_sites', 'a_ledger_truncated_with_its_head_deleted_is_refused'),
+    ('M1310', 'ledger (C): a store whose anchor remains never starts a new ledger (EQUIVALENT: M1312)', 'crates/axon-loop/src/ledger.rs',
+     '                if std::fs::symlink_metadata(anchor_path(store)).is_ok() {\n',
+     '                if false && std::fs::symlink_metadata(anchor_path(store)).is_ok() {\n',
+     'axon-loop', '--test ledger_sites', 'a_deleted_history_is_refused_while_its_anchor_remains'),
+    ('M1311', 'ledger (C): a store with a ledger-dependent directory never starts a new ledger', 'crates/axon-loop/src/ledger.rs',
+     '                    if std::fs::symlink_metadata(&p).is_ok() {\n',
+     '                    if false && std::fs::symlink_metadata(&p).is_ok() {\n',
+     'axon-loop', '--test ledger_sites', 'a_deleted_history_is_refused_while_a_dependent_directory_remains'),
+    ('M1312', "ledger (C): the ledger's first entry is the one its anchor names", 'crates/axon-loop/src/ledger.rs',
+     '            if tx.refs.first() != Some(&a.first_entry_ref) {\n',
+     '            if false && tx.refs.first() != Some(&a.first_entry_ref) {\n',
+     'axon-loop', '--test ledger_sites', 'a_replaced_ledger_does_not_match_its_anchor'),
+    ('M1313', 'ledger (C): no tenant directory of the projection is a symlink', 'crates/axon-loop/src/ledger.rs',
+     '                if t.file_type()?.is_symlink() {\n',
+     '                if false && t.file_type()?.is_symlink() {\n',
+     'axon-loop', '--test ledger_sites', 'a_symlinked_tenant_directory_is_refused'),
+    ('M1314', 'ledger (C): no family directory of the projection is a symlink (EQUIVALENT: M979)', 'crates/axon-loop/src/ledger.rs',
+     '                    if f.file_type()?.is_symlink() {\n',
+     '                    if false && f.file_type()?.is_symlink() {\n',
+     'axon-loop', '--test ledger_sites', 'a_symlinked_family_directory_is_refused'),
+    ('M1315', 'ledger (C): every pointer.json is projected by a ledger transition', 'crates/axon-loop/src/ledger.rs',
+     '                (Some(_), None) => {\n                    return Err(corrupt(format!(\n                        "pointer.json for {t}/{f} has no transition in the ledger"\n                    )))\n                }\n',
+     '                (Some(_), None) => {}\n',
+     'axon-loop', '--test ledger_sites', 'a_projection_with_no_transition_is_refused'),
+    ('M1316', 'ledger (C): every transitioned scope has its projection', 'crates/axon-loop/src/ledger.rs',
+     '                (None, Some(_)) => {\n                    return Err(corrupt(format!("pointer.json for {t}/{f} is missing")))\n                }\n',
+     '                (None, Some(_)) => {}\n',
+     'axon-loop', '--test ledger_sites', 'a_missing_projection_is_refused'),
+    ('M1317', "ledger (C): pointer.json is exactly the ledger's projection", 'crates/axon-loop/src/ledger.rs',
+     '                    if d.pointer != rec\n                        || d.ledger_seq != seq\n                        || d.entry_ref != self.refs[seq as usize - 1]\n                    {\n',
+     '                    if false\n                        && (d.pointer != rec\n                            || d.ledger_seq != seq\n                            || d.entry_ref != self.refs[seq as usize - 1])\n                    {\n',
+     'axon-loop', '--test ledger_sites', 'an_edited_projection_is_refused'),
+]
+EQUIV_RECORD['M1309'] = {
+    "property": 'a ledger whose head was deleted is never served (truncation behind a deleted head)',
+    "subsumed_by": ['M1310', 'M1311'], "killer": 'joint:M1309+M1310+M1311',
+    "all_paths": 'Tx::begin is the only reader of the ledger; with no head and n > 1 the head-missing arm refuses, and without it the match falls to the no-head arm, which refuses while ledger.anchor exists (M1310: written before the first head, never rewritten) or any ledger-dependent directory exists (M1311: a store with more than one entry has written at least its baseline/scopes); only with all three removed is the truncated ledger served'}
+EQUIV_RECORD['M1310'] = {
+    "property": 'a store whose ledger was deleted while its anchor remains never starts a new ledger',
+    "subsumed_by": ['M1312'], "killer": 'joint:M1310+M1312',
+    "all_paths": 'with no ledger (n = 0) the anchor-presence rule refuses; without it Tx::begin reads the anchor next and compares its first_entry_ref with refs.first(), which is None for an empty ledger, so the anchor binding (M1312) refuses every input this rule refuses; only both removed reissue the history'}
+EQUIV_RECORD['M1314'] = {
+    "property": 'the projection is never read through a symlinked scope family directory',
+    "subsumed_by": ['M979'], "killer": 'joint:M1314+M979',
+    "all_paths": 'every family directory the walk visits names a scope whose pointer.json is then read by Store::read_json -> read_text -> guard, which lstat()s every component and refuses the symlink (M979); a symlinked family whose name is no TaskFamily is refused as a bad scope dir; only both removed read the projection through the link'}
+EQUIVALENT_DID |= {'M1314', 'M1310', 'M1309'}
+RETIRED |= {'M1314', 'M1310', 'M1309'}
+# ── end INTEGRATE-C ──
+
 PSV_IDS = {f"M{n}" for n in range(137, 550)}
 # C9 round 3: rows M560-M649 are PSV rows (workstream ranges).
 PSV_IDS |= {f"M{n}" for n in range(550, 650)}

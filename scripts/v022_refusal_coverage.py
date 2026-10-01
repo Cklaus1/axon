@@ -115,7 +115,6 @@ NOT_YET_SCANNED = {
     'crates/axon-loop-contracts/src/policy.rs': 7,  # loop side (rows4a): not reached
     'crates/axon-loop-contracts/src/receipt.rs': 9,  # loop side (rows4a): not reached
     'crates/axon-loop-contracts/src/schema.rs': 28,  # loop side (rows4a): not reached
-    'crates/axon-loop/src/ledger.rs': 18,  # loop side (rows4a): not reached
     'crates/axon-loop/src/plan.rs': 4,  # rows4a: four dominated sites (inc == cand, scope, view, adds); attacks written in tests/plan_sites.rs, four-cell rows need ids past M1019
     'crates/axon-loop/src/pointer.rs': 34,  # loop side (rows4a): not reached
     'crates/axon-loop/src/price.rs': 12,  # loop side (rows4a): not reached
