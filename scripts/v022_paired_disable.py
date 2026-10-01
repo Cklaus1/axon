@@ -366,6 +366,20 @@ def after_cell(edits):
     if any(e[0].startswith("crates/") for e in edits):
         mut.scrub_workspace_binaries()
         build_prereqs()
+    # Whatever the edit touched, the next cell runs the interpreter the run
+    # started with, rebuilt from the restored tree and byte-compared
+    # (amendment 59: a mutated cell can leave axon-core's build script
+    # `-dirty`, and the restoring build keeps it). A failure is the record's.
+    if INTERP:
+        why = mut.restore_interpreter(INTERP["path"], INTERP["sha256"])
+        if why:
+            INTERP_FAULTS.append(why)
+
+
+# The run's interpreter (path, sha256), recorded once the prerequisites are
+# built from the clean tree; and every failure to restore it after a cell.
+INTERP = {}
+INTERP_FAULTS = []
 
 
 def edits_digest(rid, siblings):
@@ -662,6 +676,8 @@ def main():
                      f"({sorted(stale)}); re-execute them (--reexecute-stale) or name them in --only")
         only |= set(stale)
     build_prereqs()
+    INTERP["path"] = os.path.join(cargo_target_dir(), "debug", "axon")
+    INTERP["sha256"] = mut.clean_interpreter(INTERP["path"])
     records = []
     # A row with no marker can never show its attack succeeding, so its joint
     # cell would read OTHER_FAILURE by construction (M58/M245, C9 round 1b).
@@ -677,6 +693,7 @@ def main():
         rec = mut.EQUIV_RECORD[rid]
         row = BY_ID[rid]
         pkg, target, test = row[5], row[6], row[7]
+        faults_before = len(INTERP_FAULTS)
         a = [edit_of(rid)]
         sibs = gs["siblings"]
         b = [edit_of(s) for s in sibs]
@@ -792,9 +809,12 @@ def main():
             for k, v in CELL_SKIPS.items() if v and (k[0] in (own_pkgs, *consumers))}
         sib_only = phase(b)              # B removed, A present
         matrix["sibling_set_disabled"] = sib_only
+        faults = INTERP_FAULTS[faults_before:]
+        if faults:
+            matrix["interpreter_not_restored"] = faults
         good = (baseline == "ATTACK_REFUSED" and retired_only == "ATTACK_REFUSED"
                 and sib_only == "ATTACK_REFUSED" and joint == "ATTACK_SUCCEEDS"
-                and full_state == "SUITE_OK")
+                and full_state == "SUITE_OK" and not faults)
         ok &= good
         records.append({
             "mutation": rid, "status": "EQUIVALENT_DID", "kind": gs["kind"],
@@ -805,8 +825,11 @@ def main():
             "edits_sha256": edits_digest(rid, sibs), "environment": environment(),
         })
         print(f"{'OK ' if good else 'BAD'} {rid} [{gs['kind']}]: base={baseline} "
-              f"retired_off={retired_only} sib_off={sib_only} set_off={joint} full_suite={full_state}",
+              f"retired_off={retired_only} sib_off={sib_only} set_off={joint} full_suite={full_state}"
+              + (f"  INTERPRETER NOT RESTORED: {faults}" if faults else ""),
               flush=True)
+        if faults:
+            break  # no later record is judged on another interpreter
     # STALE rows (C9 round 1). "The old text is absent" shows only that the TEXT
     # changed: M204 was recorded stale while its guard lived on, refactored,
     # with no row. A stale row holds ONLY if it names a replacement that is an
@@ -849,7 +872,7 @@ def main():
                     rep_state = "REPLACEMENT_REFUSED_ELSEWHERE"
         elif rep in BY_ID:
             rep_state = "REPLACEMENT_RETIRED"
-        holds = (not old_present) and rep_state == "REPLACEMENT_KILLED"
+        holds = (not old_present) and rep_state == "REPLACEMENT_KILLED" and not INTERP_FAULTS
         ok &= holds
         records.append({
             "mutation": rid, "status": "STALE_REFACTORED", "property": rec["property"],

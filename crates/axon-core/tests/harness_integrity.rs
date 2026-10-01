@@ -898,3 +898,101 @@ fn a_paired_disable_cell_that_does_not_build_keeps_its_output() {
     let _ = std::fs::remove_dir_all(&r);
     let _ = std::fs::remove_dir_all(out.parent().unwrap());
 }
+
+// ── every row and cell ends on the run's interpreter (amendment 59) ─────────
+
+/// Give the miniature's axon-core the REAL build script (it embeds
+/// `<sha>-dirty` from `git status`, and is re-run only when .git/HEAD,
+/// .git/index or src/ change) and an `axon` that reports it, with the
+/// lockfile committed as in the real tree (an untracked one would make every
+/// build `-dirty` for a reason that is not the mechanism).
+fn real_build_script(r: &Path) {
+    write(
+        &r.join("crates/axon-core/build.rs"),
+        &std::fs::read_to_string(repo_root().join("crates/axon-core/build.rs")).unwrap(),
+    );
+    write(
+        &r.join("crates/axon-core/src/main.rs"),
+        "fn main() { println!(\"axon 0.0.0 ({})\", env!(\"AXON_GIT_SHA\")); }\n",
+    );
+    let o = Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".into()))
+        .args(["generate-lockfile", "--offline"])
+        .current_dir(r)
+        .output()
+        .unwrap();
+    assert!(o.status.success(), "setup: cargo generate-lockfile: {o:?}");
+    git(r, &["add", "-A"]);
+    git(r, &["commit", "-q", "-m", "build script"]);
+}
+
+/// `--version` of the run's interpreter in the target dir `tgt`.
+fn interpreter_version(tgt: &Path) -> String {
+    Command::new(tgt.join("debug/axon"))
+        .arg("--version")
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_else(|e| format!("(cannot run: {e})"))
+}
+
+/// Like [`run_cells`], in the target dir `tgt`.
+fn run_cells_in(r: &Path, tgt: &Path, script: &str, args: &[&str]) -> Output {
+    harness_cmd(r, script, args)
+        .env("CARGO_TARGET_DIR", tgt)
+        .env_remove("AXON_BIN")
+        .env("V022_MUT_MEM", "4G")
+        .output()
+        .unwrap()
+}
+
+/// A mutated cell that leaves the run's interpreter changed is restored
+/// before the next row, or fails ITS row. Here the cell's build re-runs the
+/// build script on the mutated tree (the baseline's test refreshed the
+/// index, as a build script's `git status` does), baking `-dirty` in, and
+/// the restoring build keeps it: nothing the build script watches changed
+/// again. That was noticed only by the end-of-run comparison, after every
+/// later row had run on it (49eb3765 shard 1: `BAD interpreter binary
+/// changed during the run`, `axon --version` = `49eb3765-dirty`).
+#[test]
+fn a_mutation_run_restores_the_interpreter_after_every_row() {
+    let r = miniature("mut-interp");
+    real_build_script(&r);
+    recommit(&r, "crates/axon-core/tests/harness_binaries.rs", |s| {
+        format!(
+            "fn refresh_index() {{\n    if !include_str!(\"script_spawn/mod.rs\").contains(\"let _ = v;\") {{\n        \
+             let i = std::path::Path::new(env!(\"CARGO_MANIFEST_DIR\")).join(\"../../.git/index\");\n        \
+             let f = std::fs::OpenOptions::new().write(true).open(&i).unwrap();\n        \
+             f.set_modified(std::time::SystemTime::now()).unwrap();\n    }}\n}}\n{}",
+            s.replace("probe();", "probe(); refresh_index();")
+        )
+    });
+    let out = scratch("mut-interp-out").join("run.json");
+    let tgt = scratch("mut-interp-tgt");
+    let o = run_cells_in(
+        &r,
+        &tgt,
+        HARNESS[0],
+        &["--scope=all", "--only=M722", out.to_str().unwrap()],
+    );
+    let doc: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&out).unwrap_or_else(|_| "{}".into()))
+            .unwrap_or_default();
+    let row = doc["mutations"][0].clone();
+    assert_eq!(
+        row["result"].as_str(),
+        Some("killed"),
+        "setup: the miniature row was not run and killed: {}\n{doc}",
+        text(&o)
+    );
+    let version = interpreter_version(&tgt);
+    assert!(
+        !text(&o).contains("interpreter binary changed")
+            && row.get("interpreter_not_restored").is_none()
+            && !version.ends_with("-dirty)"),
+        "ATTACK: a mutated cell left the run's interpreter changed and the rows after it ran on \
+         it (final interpreter {version:?}): {}",
+        text(&o)
+    );
+    let _ = std::fs::remove_dir_all(&r);
+    let _ = std::fs::remove_dir_all(out.parent().unwrap());
+    let _ = std::fs::remove_dir_all(&tgt);
+}

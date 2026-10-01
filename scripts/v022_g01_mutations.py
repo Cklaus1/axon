@@ -3190,6 +3190,7 @@ _HN_MUT = 'a_mutation_run_does_not_take_a_tests_nested_build_output_for_a_compil
 _HN_PD = 'a_paired_disable_run_does_not_take_a_tests_nested_build_output_for_a_compile_error'
 _HK_MUT = 'a_mutation_baseline_that_does_not_build_keeps_its_output'
 _HK_PD = 'a_paired_disable_cell_that_does_not_build_keeps_its_output'
+_HR_MUT = 'a_mutation_run_restores_the_interpreter_after_every_row'
 _TEXT_RULE = '    if "could not compile" in out or "error[E" in out:\n'
 MUTATIONS += [
     ('M880', 'EVIDENCE (rows3): a mutation cell is a compile error only when its own build fails, not when a test prints compiler text',
@@ -3234,6 +3235,12 @@ MUTATIONS += [
      "        mut.keep_output(f\"pd-cell-{pkg}-{test.split('::')[-1]}\", out)\n",
      '        pass\n',
      'axon-core', _HI2, _HN_PD),
+    ('M888', "EQUIVALENCE (rows3): every row ends on the run's interpreter, byte-compared, or fails itself (49eb3765 shard 1)",
+     'scripts/v022_g01_mutations.py', '        unrestored = restore_interpreter(axon_bin, toolchain["axon_bin_sha256"])\n', '        unrestored = None\n', 'axon-core', _HI2, _HR_MUT),
+    ('M889', "EQUIVALENCE (rows3): restoring the interpreter re-runs axon-core's build script on the restored tree",
+     'scripts/v022_g01_mutations.py', '            rerun_core_build_script()\n        built = build_interpreter()\n        if built.returncode != 0:\n            return f"the restored tree\'s interpreter did not build', '            pass\n        built = build_interpreter()\n        if built.returncode != 0:\n            return f"the restored tree\'s interpreter did not build', 'axon-core', _HI2, _HR_MUT),
+    ('M890', "EQUIVALENCE (rows3): the restored interpreter is compared to the run's, never assumed",
+     'scripts/v022_g01_mutations.py', '        if os.path.exists(path) and sha(path) == expected:\n            return None', '        if True:\n            return None', 'axon-core', _HI2, _HR_MUT),
 ]
 
 PSV_IDS = {f"M{n}" for n in range(137, 550)}
@@ -3284,6 +3291,76 @@ def cargo_target_dir():
         return json.loads(r.stdout)["target_directory"]
     except (ValueError, KeyError):
         sys.exit(f"refused: cannot tell where cargo builds (cargo metadata: {r.stderr.strip()[-300:]})")
+
+
+def build_interpreter():
+    """`cargo build` the run's interpreter (`axon`, in the cargo target dir)
+    from the tree as it is now."""
+    return subprocess.run(
+        ["bash", "-c", f"source scripts/lib_bounded_run.sh && bounded_run {MEM} 1800 "
+         "cargo build -q -p axon-core --no-default-features --bin axon"],
+        cwd=ROOT, capture_output=True, text=True)
+
+
+def interpreter_version(path):
+    r = subprocess.run([path, "--version"], capture_output=True, text=True)
+    return r.stdout.strip()
+
+
+def rerun_core_build_script():
+    """Make axon-core's build script run again on the tree as it is NOW.
+
+    It embeds `<sha>-dirty` when `git status` reports a change, and cargo
+    re-runs it only when .git/HEAD, .git/index or src/ change. Its own `git
+    status` refreshes .git/index, so the NEXT build re-runs it -- and when that
+    build is a mutated cell's, with the edit outside src/ (M860's
+    tests/script_spawn), `-dirty` is baked in, and the interpreter rebuilt
+    from the RESTORED tree keeps it: nothing the build script watches changed
+    again. Measured at 49eb3765 (a clone, CARGO_INCREMENTAL=0, sccache): the
+    restored tree's `axon --version` read `49eb3765-dirty`, another sha256
+    than the run's interpreter, until build.rs was touched; then it was
+    byte-identical to it again (amendment 59). Touching changes no content,
+    so the tree stays clean."""
+    build_rs = os.path.join(ROOT, "crates", "axon-core", "build.rs")
+    if os.path.exists(build_rs):
+        os.utime(build_rs)
+
+
+def restore_interpreter(path, expected):
+    """None once `path` is again the interpreter the run started with
+    (`expected`, its sha256), rebuilt from the restored tree; otherwise why
+    not. Called after EVERY row (mutation run) or cell (paired-disable), so
+    each row is judged by the interpreter built from the tree under test and
+    a failure to restore one is that row's, never discovered only at the end
+    of the run (49eb3765 shard 1)."""
+    for force in (False, True):
+        if force:
+            rerun_core_build_script()
+        built = build_interpreter()
+        if built.returncode != 0:
+            return f"the restored tree's interpreter did not build: {built.stderr.strip()[-300:]}"
+        if os.path.exists(path) and sha(path) == expected:
+            return None
+    got = sha(path) if os.path.exists(path) else "absent"
+    return (f"rebuilt from the restored tree, {path} is {got[:16]} "
+            f"({interpreter_version(path)}), not the run's {expected[:16]}")
+
+
+def clean_interpreter(path):
+    """Build the run's interpreter from the CLEAN tree and return its sha256.
+    A build-script output left `-dirty` by an earlier run in this target dir
+    is re-run first; an interpreter that still names itself dirty is refused
+    (the tree was required clean)."""
+    for force in (False, True):
+        if force:
+            rerun_core_build_script()
+        built = build_interpreter()
+        if built.returncode != 0:
+            sys.exit(f"refused: could not build the axon interpreter\n{built.stderr[-2000:]}")
+        if not interpreter_version(path).endswith("-dirty)"):
+            return sha(path)
+    sys.exit(f"refused: the interpreter built from the clean tree names itself "
+             f"{interpreter_version(path)!r}")
 
 
 # The files that define what a run IS: the registry and the attack markers.
@@ -3673,19 +3750,11 @@ def main():
     # The Fabric integration tests exec the `axon` interpreter from the target
     # dir: build it from THIS tree first, so no baseline or kill rests on a
     # stale binary, and record which one it was.
-    def build_interpreter():
-        return subprocess.run(
-            ["bash", "-c", f"source scripts/lib_bounded_run.sh && bounded_run {MEM} 1800 "
-             "cargo build -q -p axon-core --no-default-features --bin axon"],
-            cwd=ROOT, capture_output=True, text=True)
-    built = build_interpreter()
-    if built.returncode != 0:
-        sys.exit(f"refused: could not build the axon interpreter\n{built.stderr[-2000:]}")
     axon_bin = os.path.join(cargo_target_dir(), "debug", "axon")
     toolchain = {
         "rustc": sh("rustc -V").stdout.strip(),
         "cargo": sh("cargo -V").stdout.strip(),
-        "axon_bin_sha256": sha(axon_bin) if os.path.exists(axon_bin) else None,
+        "axon_bin_sha256": clean_interpreter(axon_bin),
     }
     results, ok = [], True
     baselines = {}
@@ -3757,7 +3826,12 @@ def main():
                                        cwd=ROOT, capture_output=True, text=True)
                     if r.returncode != 0:
                         sys.exit(f"FATAL: could not rebuild ({cmd}) after {mid}")
-        good = base == "passed" and result == "killed"
+        # Every row ends on the run's interpreter, rebuilt from the restored
+        # tree and byte-compared to the one the run started with (amendment
+        # 59). One that cannot be restored is THIS row's failure, and no later
+        # row is judged on another interpreter: the run stops here.
+        unrestored = restore_interpreter(axon_bin, toolchain["axon_bin_sha256"])
+        good = base == "passed" and result == "killed" and unrestored is None
         ok &= good
         results.append({"id": mid, "guard": guard, "file": rel, "package": pkg,
                          **row_digest((mid, guard, rel, old, new)),
@@ -3765,8 +3839,12 @@ def main():
                          "attack_marker": ATTACK_MARKERS.get(mid),
                          "kill_evidence": evidence,
                          **({"baseline_output": base_kept} if base_kept else {}),
-                         **({"cell_output": kept} if kept else {})})
-        print(f"{'OK ' if good else 'BAD'} {mid} baseline={base} {result}  {guard}", flush=True)
+                         **({"cell_output": kept} if kept else {}),
+                         **({"interpreter_not_restored": unrestored} if unrestored else {})})
+        print(f"{'OK ' if good else 'BAD'} {mid} baseline={base} {result}  {guard}"
+              + (f"  INTERPRETER NOT RESTORED: {unrestored}" if unrestored else ""), flush=True)
+        if unrestored:
+            break
     # The run must end on the interpreter it started with.
     if toolchain["axon_bin_sha256"] is not None and sha(axon_bin) != toolchain["axon_bin_sha256"]:
         print(f"BAD interpreter binary changed during the run ({axon_bin})", flush=True)

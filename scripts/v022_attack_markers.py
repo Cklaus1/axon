@@ -975,4 +975,7 @@ ATTACK_MARKERS.update({
     'M885': r'ATTACK: a paired-disable cell whose test did not build kept no output',
     'M886': r'ATTACK: a paired-disable full-suite cell that did not build kept no output',
     'M887': r'ATTACK: a paired-disable cell whose test failed kept no output',
+    'M888': r"ATTACK: a mutated cell left the run's interpreter changed and the rows after it ran on",
+    'M889': r"ATTACK: a mutated cell left the run's interpreter changed and the rows after it ran on",
+    'M890': r"ATTACK: a mutated cell left the run's interpreter changed and the rows after it ran on",
 })
