@@ -943,13 +943,16 @@ fn real_build_script(r: &Path) {
     git(r, &["commit", "-q", "-m", "build script"]);
 }
 
-/// `--version` of the run's interpreter in the target dir `tgt`.
-fn interpreter_version(tgt: &Path) -> String {
-    Command::new(tgt.join("debug/axon"))
-        .arg("--version")
-        .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        .unwrap_or_else(|e| format!("(cannot run: {e})"))
+/// The identity the miniature run's interpreter (in the scratch target dir
+/// `tgt`) was built with, read from its bytes -- the `AXON_GIT_SHA` string
+/// is embedded verbatim -- rather than by executing it: `clean`, `dirty`, or
+/// `absent`.
+fn built_identity(tgt: &Path) -> &'static str {
+    match std::fs::read(tgt.join("debug").join("axon")) {
+        Err(_) => "absent",
+        Ok(b) if b.windows(6).any(|w| w == b"-dirty") => "dirty",
+        Ok(_) => "clean",
+    }
 }
 
 /// Like [`run_cells`], in the target dir `tgt`.
@@ -1001,13 +1004,14 @@ fn a_mutation_run_restores_the_interpreter_after_every_row() {
         "setup: the miniature row was not run and killed: {}\n{doc}",
         text(&o)
     );
-    let version = interpreter_version(&tgt);
+    let identity = built_identity(&tgt);
+    assert_ne!(identity, "absent", "setup: the run left no interpreter");
     assert!(
         !text(&o).contains("interpreter binary changed")
             && row.get("interpreter_not_restored").is_none()
-            && !version.ends_with("-dirty)"),
+            && identity == "clean",
         "ATTACK: a mutated cell left the run's interpreter changed and the rows after it ran on \
-         it (final interpreter {version:?}): {}",
+         it (final interpreter built {identity}): {}",
         text(&o)
     );
     let _ = std::fs::remove_dir_all(&r);
@@ -1025,7 +1029,7 @@ fn a_paired_disable_cell_restores_a_prerequisite_it_changed() {
     let r = miniature("pd-prereq");
     let tgt = scratch("pd-prereq-tgt");
     let out = scratch("pd-prereq-out").join("status.json");
-    let cortex = tgt.join("debug/cortex");
+    let cortex = tgt.join("debug").join("cortex");
     let o = harness_cmd(&r, HARNESS[2], &["--only=M245", out.to_str().unwrap()])
         .env("CARGO_TARGET_DIR", &tgt)
         .env_remove("AXON_BIN")
