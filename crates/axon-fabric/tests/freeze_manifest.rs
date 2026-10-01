@@ -843,3 +843,29 @@ fn a_freeze_is_refused_while_a_protected_file_is_not_yet_scanned() {
         "refusal-site coverage gate does not hold at a freeze",
     );
 }
+
+/// Amendment 64: the freeze asks the gate for its FREEZE reading. A gate that
+/// holds day to day but not at a freeze (a protected file NOT YET SCANNED is
+/// fine between freezes, never at one) refuses the freeze; a freeze that asked
+/// for the ordinary reading would bind it. Control: the same clone with the
+/// gate holding at a freeze freezes
+/// (a_standalone_clone_with_a_clean_guest_manifest_freezes).
+#[test]
+fn a_freeze_asks_the_gate_for_its_freeze_reading() {
+    let d = tempfile::tempdir().unwrap();
+    let r = clone(d.path());
+    write(
+        &r.join("scripts/v022_refusal_coverage.py"),
+        "OUT_OF_SCOPE = {}\n\
+         def in_scope_files():\n    return []\n\
+         def check(without=(), freeze=False, out=print):\n\
+         \x20   return ['crates/axon-loop/src/tel.rs: NOT YET SCANNED at a freeze (1 uncovered sites)'] \
+         if freeze else []\n",
+    );
+    git(&r, &["commit", "-q", "-am", "gate"]);
+    refused(
+        &r,
+        "a tree whose refusal-site coverage holds only outside a freeze",
+        "refusal-site coverage gate does not hold at a freeze",
+    );
+}

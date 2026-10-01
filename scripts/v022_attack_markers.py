@@ -1220,3 +1220,13 @@ ATTACK_MARKERS.update({
     'M1099': r'process_scoped/local-interpreter "" protected\s*\n\s*left: Ok',
     'M1100': 'left: Ok\\(\\(\\)\\)\\s+right: Err\\(\\"the admitted grant gives the check workload',
 })
+
+# C9 round 4b, INTEGRATE (M1392-M1397; amendment 64): the refusal-site gate's own guards.
+ATTACK_MARKERS.update({
+    'M1392': 'ATTACK: a refusal site added to a NOT YET SCANNED file went unreported',
+    'M1393': 'ATTACK: the freeze reading of the gate held with a protected file NOT YET SCANNED',
+    'M1394': 'ATTACK: an unrowed refusal in the anchored seal region was not scanned',
+    'M1395': 'ATTACK: a REGIONS anchor that is not unique was accepted',
+    'M1396': 'ATTACK: the freeze bound evidence from a tree whose refusal-site coverage does not hold at a freeze',
+    'M1397': 'ATTACK: the freeze bound evidence from a tree whose refusal-site coverage holds only outside a freeze',
+})

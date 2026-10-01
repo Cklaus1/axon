@@ -3799,6 +3799,35 @@ MUTATIONS += [
     ('M1005', 'EVL (4b): a verdict counts only on evidence that authenticates in this evaluation', 'crates/axon-loop/src/evl.rs', '            Err((kind, e)) => return unknown(kind, format!("unauthenticated verification: {e}")),', '            Err((_kind, _e)) => {}', 'axon-loop', '--test evl_refusal_sites', 'a_verdict_whose_delivered_attestation_does_not_verify_never_counts'),
 ]
 
+# ── C9 round 4b, INTEGRATE (amendment 64) ── the refusal-site gate's own guards:
+# the re-measured NOT_YET_SCANNED count and the freeze reading (amendment 61,
+# left unrowed by rows4a), the interp.rs region UNION and its anchor
+# uniqueness (this integration), and the freeze's consultation of the gate.
+# Each is killed by the REAL gate (or the real freeze) run over a copy of the
+# tree, edited in the attack's one way.
+_RCG = 'scripts/v022_refusal_coverage.py'
+_RCT = '--no-default-features --test refusal_coverage_gate'
+MUTATIONS += [
+    ('M1392', "COVERAGE GATE (4b): a NOT YET SCANNED file's listed count is re-measured, so a site added to it is reported", _RCG,
+     '            if len(uncovered) != listed:\n', '            if False and len(uncovered) != listed:\n',
+     'axon-core', _RCT, 'a_new_site_in_a_not_yet_scanned_file_is_reported'),
+    ('M1393', 'COVERAGE GATE (4b): the freeze reading refuses while any in-scope file is NOT YET SCANNED', _RCG,
+     '            if freeze:\n', '            if False and freeze:\n',
+     'axon-core', _RCT, 'a_freeze_reading_refuses_a_not_yet_scanned_file'),
+    ('M1394', "COVERAGE GATE (4b): interp.rs is scanned over the union of the seal fns and core2's anchored region", _RCG,
+     '                regions.append(r)\n', '                pass\n',
+     'axon-core', _RCT, 'a_site_in_the_anchored_region_outside_a_seal_fn_is_scanned'),
+    ('M1395', 'COVERAGE GATE (4b): a REGIONS anchor names exactly one place', _RCG,
+     '    if text.count(a) != 1 or text.count(b) != 1:\n', '    if text.count(a) < 1 or text.count(b) < 1:\n',
+     'axon-core', _RCT, 'a_region_anchor_that_is_not_unique_is_refused'),
+    ('M1396', 'EVIDENCE (4b): no freeze binds evidence while the refusal-site gate does not hold at a freeze', 'scripts/v022_freeze_manifest.py',
+     '    if coverage_problems:\n', '    if False and coverage_problems:\n',
+     'axon-fabric', '--test freeze_manifest', 'a_freeze_is_refused_while_a_protected_file_is_not_yet_scanned'),
+    ('M1397', "EVIDENCE (4b): the freeze asks the refusal-site gate for its FREEZE reading", 'scripts/v022_freeze_manifest.py',
+     '    coverage_problems = cov.check(freeze=True, out=lambda *_: None)\n', '    coverage_problems = cov.check(freeze=False, out=lambda *_: None)\n',
+     'axon-fabric', '--test freeze_manifest', 'a_freeze_asks_the_gate_for_its_freeze_reading'),
+]
+
 PSV_IDS = {f"M{n}" for n in range(137, 550)}
 # C9 round 3: rows M560-M649 are PSV rows (workstream ranges).
 PSV_IDS |= {f"M{n}" for n in range(550, 650)}
