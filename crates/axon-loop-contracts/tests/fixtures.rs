@@ -235,14 +235,17 @@ fn shortlist_must_be_a_subset_of_the_eligible_view() {
         &t.policy.scope
     )
     .is_err());
-    assert!(check_shortlist(
-        &t.policy,
-        &all,
-        &t.policy.candidate_set_ref,
-        &other,
-        &t.policy.scope
-    )
-    .is_err());
+    assert!(
+        check_shortlist(
+            &t.policy,
+            &all,
+            &t.policy.candidate_set_ref,
+            &other,
+            &t.policy.scope
+        )
+        .is_err(),
+        "ATTACK: check_shortlist applied a policy under drifted pilot controls"
+    );
 }
 
 #[test]
@@ -250,7 +253,12 @@ fn paired_trial_requires_exact_context_equality() {
     let mut t = typed();
     let obs = set(&["fixture:observer"]);
     t.context.observed.branch = BoundedText::new("other-branch").unwrap();
-    let e = check_paired_trial_context(&t.context, 150, epoch(7), &obs).unwrap_err();
+    let e = match check_paired_trial_context(&t.context, 150, epoch(7), &obs) {
+        Ok(()) => panic!(
+            "ATTACK: the paired-trial preflight admitted observed facts other than the expected"
+        ),
+        Err(e) => e,
+    };
     assert!(e.to_string().contains("TASK_NOT_STARTED"), "{e}");
     // The general (non-paired) check does not demand equality.
     check_context_current(&t.context, 150, epoch(7), &obs).unwrap();
@@ -262,7 +270,10 @@ fn context_currency_and_roles() {
     let obs = set(&["fixture:observer"]);
     assert!(check_context_current(&t.context, 99, epoch(7), &obs).is_err());
     assert!(check_context_current(&t.context, 200, epoch(7), &obs).is_err());
-    assert!(check_context_current(&t.context, 150, epoch(8), &obs).is_err());
+    assert!(
+        check_context_current(&t.context, 150, epoch(8), &obs).is_err(),
+        "ATTACK: check_context_current admitted a context of another authority epoch"
+    );
     assert!(check_context_current(&t.context, 150, epoch(7), &set(&["someone"])).is_err());
     let mut echo = t.context.clone();
     echo.observed_issuer_ref = echo.expected_issuer_ref.clone();
@@ -290,15 +301,18 @@ fn bind_episode_refuses_mismatches() {
     // Stale epoch.
     assert!(bind_episode(&t.episode, &t.policy, &t.context, epoch(8), &ver, &subj).is_err());
     // A subject issuer cannot verify its own work.
-    assert!(bind_episode(
-        &t.episode,
-        &t.policy,
-        &t.context,
-        epoch(7),
-        &ver,
-        &set(&["fixture:independent-verifier"])
-    )
-    .is_err());
+    assert!(
+        bind_episode(
+            &t.episode,
+            &t.policy,
+            &t.context,
+            epoch(7),
+            &ver,
+            &set(&["fixture:independent-verifier"])
+        )
+        .is_err(),
+        "ATTACK: bind_episode let a subject issuer establish its own outcome"
+    );
     // Any byte change in the policy breaks the policy_ref binding.
     let mut p = t.policy.clone();
     p.discovery_evidence_refs

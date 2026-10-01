@@ -107,7 +107,7 @@ OUT_OF_SCOPE = {
 # gate re-measures each count and refuses a stale one, in both directions.
 NOT_YET_SCANNED = {
     'crates/axon-loop-contracts/src/canonical.rs': 12,  # loop side (rows4a): not reached
-    'crates/axon-loop-contracts/src/checks.rs': 34,  # loop side (rows4a): not reached
+    'crates/axon-loop-contracts/src/checks.rs': 4,  # integrate-B: 41/52/283/299 dominated, ids exhausted (amendment 64)
     'crates/axon-loop-contracts/src/compute.rs': 2,  # loop side (rows4a): not reached
     'crates/axon-loop-contracts/src/episode.rs': 8,  # loop side (rows4a): not reached
     'crates/axon-loop-contracts/src/ids.rs': 9,  # loop side (rows4a): not reached
