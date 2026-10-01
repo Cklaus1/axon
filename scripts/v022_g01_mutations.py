@@ -3853,6 +3853,112 @@ EQUIV_RECORD["M1085"] = {
 EQUIVALENT_DID |= {"M1038", "M1043", "M1081", "M1082", "M1083", "M1072", "M1085"}
 RETIRED |= {"M1038", "M1043", "M1081", "M1082", "M1083", "M1072", "M1085"}
 
+# ── C9 round 4b, ROWS4B wave 2 (M1086-M1098; amendment 62, strict reading):
+# exemptions that rested on "another check refuses it" become ACTIVE rows
+# whose attack reaches the guard alone, or EQUIVALENT_DID retirements with an
+# executed four-cell record. Rows guarding the Fabric files above.
+_TPL = '--lib'
+_TGA = '--test grant_registry_authority'
+MUTATIONS += [
+    ('M1086', "FIELD-ORIGIN (rows4b): a git that fails is refused, never read as an empty answer (retired vs M451)", _FG,
+     '    if !o.status.success() {\n        return Err(format!("git {} failed"',
+     '    if false && !o.status.success() {\n        return Err(format!("git {} failed"',
+     'axon-fabric', _TPL, 'provenance::tests::a_git_that_fails_is_never_read_as_a_clean_tree'),
+    ('M1087', "FIELD-ORIGIN (rows4b): a per-worktree config is refused (retired vs M450)", _FG,
+     '    if std::fs::symlink_metadata(&wt).is_ok() {', '    if false && std::fs::symlink_metadata(&wt).is_ok() {',
+     'axon-fabric', _TPL, 'provenance::tests::a_filter_driver_in_the_worktree_config_never_runs'),
+    ('M1089', "FIELD-ORIGIN (rows4b): check-ignore must account for every ignored path (retired vs M500)", _FP,
+     '    if matched < ignored.len() {', '    if false && matched < ignored.len() {',
+     'axon-fabric', _TPL, 'provenance::tests::an_ignored_file_check_ignore_cannot_name_is_dirty'),
+    ('M1090', "PSV-5 (rows4b): a version naming one path twice never materializes", _FW,
+     '        if let Some(w) = entries.windows(2).find(|w| w[0].path == w[1].path) {',
+     '        if let Some(w) = entries.windows(2).find(|w| false && w[0].path == w[1].path) {',
+     'axon-fabric', '--test workspace', 'a_version_naming_one_path_twice_never_materializes'),
+    ('M1091', "PSV-5 (rows4b): publication never accepts a stored file holding other bytes (retired vs M1081+M1082)", _FW,
+     '            if std::fs::read(dest)? != bytes {', '            if false && std::fs::read(dest)? != bytes {',
+     'axon-fabric', '--test workspace', 'a_blob_planted_before_publication_never_materializes'),
+    ('M1092', "D1 (rows4b): status/cancel resolve the grant against the operator registry at decision time", _FC,
+     '        .unwrap_or_else(|e| refuse("unauthorized", &e, 7));\n    let op',
+     '        .ok();\n    let op',
+     'axon-fabric', _TGA, 'a_grant_revoked_after_submission_serves_no_status_or_cancel'),
+    ('M1093', "D1 (rows4b): a grant authorizes only the principal it is bound to", 'crates/axon-fabric/src/grants.rs',
+     '        if e.principal_ref != principal_ref {', '        if false && e.principal_ref != principal_ref {',
+     'axon-fabric', '--test grant_authority', 'an_unknown_or_unbound_or_edited_grant_is_refused_with_zero_effects'),
+    ('M1094', "O1 (rows4b): a protected-host config that exists but does not load is never a development host", _FC,
+     '    ProtectedHost::operator()\n        .unwrap_or_else(|e| refuse("unregistered", &format!("protected host: {e}"), 4))\n}',
+     '    ProtectedHost::operator().unwrap_or(None)\n}',
+     'axon-fabric', _TGA, 'an_unloadable_protected_host_config_is_never_a_development_host'),
+    ('M1095', "submit (rows4b): an interpreter_run's argv is [program.ax] (retired vs M1054)", _FS,
+     '        (JobKind::InterpreterRun, _) => {',
+     '        (JobKind::InterpreterRun, [f, ..]) => (f.clone(), None),\n        (JobKind::InterpreterRun, _) => {',
+     'axon-fabric', _TS, 'an_interpreter_run_with_an_ignored_argument_never_runs'),
+    ('M1096', "submit (rows4b): an operator suite runs only as a registered check (retired vs M1054)", _FS,
+     '    if req.job_kind != JobKind::RegisteredCheck {', '    if false && req.job_kind != JobKind::RegisteredCheck {',
+     'axon-fabric', _TS, 'an_interpreter_run_never_runs_an_operator_suite'),
+    ('M1097', "FIELD-ORIGIN (rows4b): the allowlist chain has no symlink (retired vs M1071)", _FG,
+     '        if m.file_type().is_symlink() {', '        if false && m.file_type().is_symlink() {',
+     'axon-fabric', _TPL, 'provenance::tests::an_allowlist_reached_through_a_symlink_excuses_nothing'),
+    ('M1098', "D1 (rows4b): a grant file is used only at the bytes the registry pins", 'crates/axon-fabric/src/grants.rs',
+     '        if found != e.sha256 {', '        if false && found != e.sha256 {',
+     'axon-fabric', '--test grant_authority', 'an_unknown_or_unbound_or_edited_grant_is_refused_with_zero_effects'),
+]
+MUTATIONS += [
+    ('M1099', "PSV-6 (rows4b): a local receipt is signed only as development", 'crates/axon-fabric/src/signing.rs',
+     '            "development" => Ok(()),\n            _ => Err(WRONG_CLASS),', '            _ => Ok(()),',
+     'axon-fabric', '--lib', 'signing::tests::a_class_is_signed_only_where_its_backend_derives_it'),
+    ('M1100', "PSV-6 (rows4b): an effectful local check is never signed (the workload could read the key)", 'crates/axon-fabric/src/signing.rs',
+     '    } else {\n        Err(KEY_REACHABLE)\n    }', '    } else {\n        Ok(())\n    }',
+     'axon-fabric', '--lib', 'signing::tests::an_effectless_local_run_signs_and_an_effectful_one_does_not'),
+]
+EQUIV_RECORD["M1086"] = {
+    "property": "a working tree whose git fails is never described as clean",
+    "subsumed_by": ["M451"], "killer": "joint:M1086+M451",
+    "all_paths": "provenance_with always runs head_bytes_differ (M451) after dirty_reasons, whatever git "
+                 "answered: it hashes the working tree against HEAD's tree read from hash-checked objects, "
+                 "so an edit or an untracked file is reported without any git command's answer; every other "
+                 "caller of run() (descends, own_repository, object_named) refuses the empty answer a failed "
+                 "git would leave (no object is named '', '' is no commit, '' does not canonicalize)"}
+EQUIV_RECORD["M1087"] = {
+    "property": "no per-worktree git configuration takes effect in a provenance answer",
+    "subsumed_by": ["M450"], "killer": "joint:M1087+M450",
+    "all_paths": "git reads config.worktree only when the repository config sets "
+                 "extensions.worktreeConfig, and refuse_config refuses every key allowed_key does not list, "
+                 "extensions.* among them (M450), before any git call that could read it"}
+EQUIV_RECORD["M1089"] = {
+    "property": "an ignored untracked file is never hidden from build provenance",
+    "subsumed_by": ["M500"], "killer": "joint:M1089+M500",
+    "all_paths": "provenance_with always runs head_bytes_differ, whose tree walk reports every file not in "
+                 "HEAD's tree unless the operator allowlist names it exactly (M500), whatever git's ignore "
+                 "machinery or check-ignore answered"}
+EQUIV_RECORD["M1091"] = {
+    "property": "a published version never materializes bytes other than the ones it names",
+    "subsumed_by": ["M1081", "M1082"], "killer": "joint:M1091+M1081+M1082",
+    "all_paths": "a stored version reaches a run only through tree() (materialize, "
+                 "materialize_projection), which re-verifies every blob against its name (M1081) and "
+                 "re-derives the reference from the bytes read (M1082): a blob planted before publication "
+                 "fails both"}
+EQUIV_RECORD["M1095"] = {
+    "property": "an interpreter_run never runs on a backend here",
+    "subsumed_by": ["M1054"], "killer": "joint:M1095+M1054",
+    "all_paths": "check_target's only caller is submit, after backend::select succeeded; select refuses every "
+                 "interpreter_run (the host backend's job kinds, M1054; the protected profile's, M321; the "
+                 "Axon-kernel VM is refused outright)"}
+EQUIV_RECORD["M1096"] = {
+    "property": "an interpreter_run never runs on a backend here",
+    "subsumed_by": ["M1054"], "killer": "joint:M1096+M1054",
+    "all_paths": "as M1095: check_suite_target is reached only through check_target after select, which "
+                 "refuses every interpreter_run"}
+EQUIV_RECORD["M1097"] = {
+    "property": "the provenance allowlist is read only through a root-owned, unwritable, symlink-free chain",
+    "subsumed_by": ["M1071"], "killer": "joint:M1097+M1071",
+    "all_paths": "the mode rule runs on the same lstat metadata in the same closure, for every component; "
+                 "on Linux a symlink's own mode is always 0777, so the group/other-write rule (M1071) "
+                 "refuses every symlink this rule refuses"}
+# M1088 (the unreadable-config refusal) is unallocated: its four-cell run showed the joint
+# removal still refused (UNREACHABLE, see v022_refusal_coverage.py).
+EQUIVALENT_DID |= {"M1086", "M1087", "M1089", "M1091", "M1095", "M1096", "M1097"}
+RETIRED |= {"M1086", "M1087", "M1089", "M1091", "M1095", "M1096", "M1097"}
+
 
 def in_scope(mid, scope):
     if mid in RETIRED:

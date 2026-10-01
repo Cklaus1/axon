@@ -846,4 +846,133 @@ mod tests {
             );
         }
     }
+
+    // ── C9 round 4b, rows4b (amendment 62, strict reading): guards whose
+    // refusal another check also makes. Each test is the attack of a
+    // four-cell record: each guard alone refuses it, both removed it is
+    // described as clean.
+
+    /// git_data::run's status check (M1086) and the hashed comparison with
+    /// HEAD's tree (M451): with the index corrupt, `git status` and
+    /// `git ls-files` FAIL with no output, so the edit below is only seen by
+    /// a refusal of the failure or by the hashed walk. Control: the same edit
+    /// with a sound index is dirty too.
+    #[test]
+    fn a_git_that_fails_is_never_read_as_a_clean_tree() {
+        let (_d, r) = repo();
+        std::fs::write(r.join("src/lib.rs"), "// agentcod\n").unwrap();
+        assert!(
+            !provenance(&r).dirty.is_empty(),
+            "control: the edit is dirty"
+        );
+        std::fs::write(r.join(".git/index"), "garbage").unwrap();
+        let p = provenance(&r);
+        assert!(
+            !p.dirty.is_empty(),
+            "ATTACK: a git that failed (a corrupt index) read as a clean tree: {p:?}"
+        );
+    }
+
+    /// A config git cannot read is never a clean tree. The refusal comes
+    /// from discover's own git call (rev-parse dies on the same config)
+    /// before refuse_config's listing is reached; that site is exempt as
+    /// unreachable, measured by this test (C9 round 4b, rows4b). Control: the
+    /// repository with its config intact is clean.
+    #[test]
+    fn a_config_git_cannot_read_is_never_a_clean_tree() {
+        let (_d, r) = repo();
+        assert_eq!(provenance(&r).dirty, Vec::<String>::new(), "control");
+        let cfg = r.join(".git/config");
+        let mut text = std::fs::read_to_string(&cfg).unwrap();
+        text.push_str("[bad\n");
+        std::fs::write(&cfg, text).unwrap();
+        let p = provenance(&r);
+        assert!(
+            !p.dirty.is_empty(),
+            "ATTACK: a repository whose config git cannot read was described as a clean tree: \
+             {p:?}"
+        );
+    }
+
+    /// `config.worktree` (M1087) and the config-key rule (M450, which refuses
+    /// `extensions.worktreeConfig`): a filter driver set in the per-worktree
+    /// config, which git reads only with that extension on.
+    #[test]
+    fn a_filter_driver_in_the_worktree_config_never_runs() {
+        let (d, r) = repo();
+        std::fs::write(r.join(".gitattributes"), "src/lib.rs filter=evil\n").unwrap();
+        git(&r, &["add", "-A"]);
+        git(&r, &["commit", "-q", "-m", "attributes"]);
+        let marker = d.path().join("filter-ran");
+        git(&r, &["config", "extensions.worktreeConfig", "true"]);
+        std::fs::write(
+            r.join(".git/config.worktree"),
+            format!(
+                "[filter \"evil\"]\n\tclean = touch {}; printf '// reviewed\\n'\n",
+                marker.display()
+            ),
+        )
+        .unwrap();
+        std::fs::write(r.join("src/lib.rs"), "// agentcod\n").unwrap();
+        let p = provenance(&r);
+        assert!(
+            !marker.exists(),
+            "ATTACK: build provenance ran a filter driver from the worktree config as the builder"
+        );
+        assert!(!p.dirty.is_empty(), "the edit is dirty: {p:?}");
+    }
+
+    /// check-ignore's count (M1089) and the tree walk (M500): an untracked
+    /// file whose name is not UTF-8, hidden by an untracked rule naming its
+    /// exact bytes. check-ignore is asked about the name as text, which is
+    /// another name, so it does not account for the file.
+    #[test]
+    fn an_ignored_file_check_ignore_cannot_name_is_dirty() {
+        use std::os::unix::ffi::OsStrExt;
+        let (_d, r) = repo();
+        let name = std::ffi::OsStr::from_bytes(b"evil\xff.rs");
+        std::fs::write(r.join(name), "fn main() {}\n").unwrap();
+        let ex = r.join(".git/info/exclude");
+        std::fs::create_dir_all(ex.parent().unwrap()).unwrap();
+        std::fs::write(&ex, b"evil\xff.rs\n").unwrap();
+        let p = provenance(&r);
+        assert!(
+            !p.dirty.is_empty(),
+            "ATTACK: an untracked file hidden by info/exclude, with a name check-ignore cannot be \
+             asked about, was described as clean: {p:?}"
+        );
+    }
+
+    /// owned_chain's symlink rule (M1097) and its mode rule (M1071, which a
+    /// symlink's own 0777 lstat mode always meets): an allowlist reached
+    /// through a symlinked directory, every real component root-owned and
+    /// not writable by others.
+    #[test]
+    fn an_allowlist_reached_through_a_symlink_excuses_nothing() {
+        use std::os::unix::fs::PermissionsExt;
+        if !as_root() {
+            return;
+        }
+        let (d, r) = repo();
+        std::fs::create_dir_all(r.join("target")).unwrap();
+        std::fs::write(r.join("target/build.rs"), "fn main() {}\n").unwrap();
+        let real = d.path().join("elsewhere");
+        std::fs::create_dir_all(&real).unwrap();
+        std::fs::set_permissions(&real, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let src = allowlist(&real, "target/\n");
+        assert_eq!(
+            provenance_with(&r, &src).dirty,
+            Vec::<String>::new(),
+            "control: the allowlist, reached directly, excuses its entry"
+        );
+        let link = d.path().join("link");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        let via =
+            crate::git_data::AllowlistSource::test(d.path(), &link.join("provenance-allowlist"));
+        assert_dirty_under(
+            &r,
+            &via,
+            "an allowlist reached through a symlink excused an untracked target/",
+        );
+    }
 }

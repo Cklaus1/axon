@@ -1121,3 +1121,21 @@ ATTACK_MARKERS.update({
     'M1085': r'ATTACK: a tree whose \.git is a symlink to another repository was described as a clean',
     'M1084': r"ATTACK: an orphan HEAD brute-forced to share the certified revision's abbreviation",
 })
+
+# C9 round 4b, ROWS4B wave 2 (M1086-M1098; amendment 62).
+ATTACK_MARKERS.update({
+    'M1086': r'ATTACK: a git that failed \(a corrupt index\) read as a clean tree',
+    'M1087': r'ATTACK: build provenance ran a filter driver from the worktree config as the builder',
+    'M1089': r'ATTACK: an untracked file hidden by info/exclude, with a name check-ignore cannot be',
+    'M1090': r'ATTACK: a version naming two contents for one path was materialized',
+    'M1091': r"ATTACK: a blob planted under another content's name before publication was materialized",
+    'M1092': r'ATTACK: (status|cancel): an op was served under a grant the operator revoked',
+    'M1093': r'ATTACK: a grant bound to another principal authorized this one',
+    'M1094': r'ATTACK: a host whose protected-host config does not load served a development call',
+    'M1095': r'ATTACK: an interpreter_run whose argv carried an element the run ignores, and it ran',
+    'M1096': r'ATTACK: an interpreter_run of an operator check suite, and it ran',
+    'M1097': r'ATTACK: an allowlist reached through a symlink excused an untracked target/',
+    'M1098': r'ATTACK: a grant file widened after the registry pinned it authorized a run',
+    'M1099': r'process_scoped/local-interpreter "" protected\s*\n\s*left: Ok',
+    'M1100': 'left: Ok\\(\\(\\)\\)\\s+right: Err\\(\\"the admitted grant gives the check workload',
+})

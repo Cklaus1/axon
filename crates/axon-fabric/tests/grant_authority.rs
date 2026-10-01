@@ -56,7 +56,13 @@ fn an_unknown_or_unbound_or_edited_grant_is_refused_with_zero_effects() {
     // The ref exists but is bound to a different principal.
     let mut r = request(&env, "op-principal", "t_ok");
     r["principal_ref"] = json!("principal:someone-else");
-    let e = submit(&r.to_string(), &env.cfg(0)).unwrap_err();
+    let e = match submit(&r.to_string(), &env.cfg(0)) {
+        Ok(s) => panic!(
+            "ATTACK: a grant bound to another principal authorized this one: {:?}",
+            s.receipt.status
+        ),
+        Err(e) => e,
+    };
     assert!(matches!(e, SubmitError::Unauthorized(_)), "{e}");
     assert!(e.to_string().contains("bound to principal"), "{e}");
     assert_untouched(&env, "principal mismatch");
@@ -72,7 +78,13 @@ fn an_unknown_or_unbound_or_edited_grant_is_refused_with_zero_effects() {
         .unwrap()
         .replace("profile = \"restricted\"", "profile = \"developer\"");
     std::fs::write(&gfile, widened).unwrap();
-    let e = submit(&request(&env, "op-edited", "t_ok").to_string(), &cfg).unwrap_err();
+    let e = match submit(&request(&env, "op-edited", "t_ok").to_string(), &cfg) {
+        Ok(s) => panic!(
+            "ATTACK: a grant file widened after the registry pinned it authorized a run: {:?}",
+            s.receipt.status
+        ),
+        Err(e) => e,
+    };
     assert!(matches!(e, SubmitError::Unauthorized(_)), "{e}");
     assert!(e.to_string().contains("the registry pins"), "{e}");
     assert_untouched(&env, "edited grant file");

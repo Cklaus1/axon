@@ -984,3 +984,87 @@ fn a_manifest_that_is_not_its_versions_never_materializes() {
     );
     assert!(!out.exists(), "no partial materialization");
 }
+
+/// C9 round 4b, rows4b (M1090): a stored version whose manifest names ONE
+/// path twice, with two contents, is never materialized; the reference would
+/// cover both while the run reads one. The manifest hashes to its own name
+/// (so load() accepts it) and both blobs are genuine: only the duplicate rule
+/// of the tree's re-validation refuses it. Control: each content alone
+/// materializes.
+#[test]
+fn a_version_naming_one_path_twice_never_materializes() {
+    use axon_cortex::runner::{workspace_manifest_bytes, workspace_version_ref};
+    let dir = tempfile::tempdir().unwrap();
+    let state = dir.path().join("state");
+    let store = WorkspaceStore::open(&state, &tenant()).unwrap();
+    let mut entries = vec![];
+    for (i, body) in ["fn a() {}\n", "fn b() {}\n"].iter().enumerate() {
+        let root = dir.path().join(format!("t{i}"));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("f.ax"), body).unwrap();
+        let r = store.import_dir(&root, &Quota::default()).unwrap();
+        store
+            .materialize(&r, &dir.path().join(format!("ok{i}")), false)
+            .expect("control");
+        entries.extend(store.load(&r).unwrap().entries);
+    }
+    assert_eq!(entries.len(), 2);
+    let m = workspace_manifest_bytes(&entries);
+    let r = Acf1Ref::new(workspace_version_ref(&m)).unwrap();
+    let hex = r.as_str().strip_prefix("acf1:").unwrap();
+    let versions = ws_root(&state).join("versions");
+    std::fs::write(versions.join(format!("{hex}.manifest")), &m).unwrap();
+    let om = versions.join(format!("{hex}.omissions"));
+    std::fs::create_dir_all(&om).unwrap();
+    let none = {
+        use sha2::{Digest, Sha256};
+        format!("{:x}", Sha256::digest(b"[]"))
+    };
+    std::fs::write(om.join(format!("{none}.json")), "[]").unwrap();
+    assert!(
+        store.load(&r).is_ok(),
+        "setup: the manifest hashes to its name"
+    );
+    let out = dir.path().join("out");
+    let got = store.materialize(&r, &out, false);
+    assert!(
+        got.is_err(),
+        "ATTACK: a version naming two contents for one path was materialized ({:?})",
+        std::fs::read_to_string(out.join("f.ax"))
+    );
+}
+
+/// C9 round 4b, rows4b (M1091, retired EQUIVALENT_DID against M1081 and
+/// M1082): a blob planted under another content's name BEFORE publication
+/// is never what a published version materializes. Two checks refuse it,
+/// each alone: publication's comparison with the existing file, and the
+/// re-verification of every blob when the tree is read.
+#[test]
+fn a_blob_planted_before_publication_never_materializes() {
+    let dir = tempfile::tempdir().unwrap();
+    let state = dir.path().join("state");
+    let store = WorkspaceStore::open(&state, &tenant()).unwrap();
+    let real = "fn judged() { 1 }\n";
+    let planted = "fn other() { 2 }\n";
+    let blobs = ws_root(&state).join("blobs");
+    std::fs::create_dir_all(&blobs).unwrap();
+    let sha = {
+        use sha2::{Digest, Sha256};
+        format!("{:x}", Sha256::digest(real.as_bytes()))
+    };
+    std::fs::write(blobs.join(&sha), planted).unwrap();
+    let root = dir.path().join("tree");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("f.ax"), real).unwrap();
+    let out = dir.path().join("out");
+    let got = store
+        .import_dir(&root, &Quota::default())
+        .ok()
+        .and_then(|r| store.materialize(&r, &out, false).ok())
+        .and_then(|()| std::fs::read_to_string(out.join("f.ax")).ok());
+    assert_ne!(
+        got.as_deref(),
+        Some(planted),
+        "ATTACK: a blob planted under another content's name before publication was materialized"
+    );
+}

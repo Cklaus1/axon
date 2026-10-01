@@ -290,19 +290,12 @@ fn ref_hex(r: &Acf1Ref) -> &str {
 }
 
 /// Publish `bytes` at `dest` write-once: temp file, fsync, no-clobber rename.
-/// An existing `dest` is verified to hold the same bytes, never replaced.
+/// An existing `dest` (published earlier, or by a concurrent publisher) is
+/// verified to hold the same bytes, never replaced. ONE comparison, after
+/// the no-clobber rename refused: there used to be a second, before it, for
+/// a `dest` that already existed (C9 round 4b, rows4b).
 fn publish_file(dest: &Path, bytes: &[u8]) -> Result<(), StoreError> {
     use std::io::Write;
-    if dest.exists() {
-        let have = std::fs::read(dest)?;
-        if have != bytes {
-            return Err(StoreError::Corrupt(format!(
-                "{} exists with different bytes",
-                dest.display()
-            )));
-        }
-        return Ok(());
-    }
     let dir = dest.parent().expect("store paths have a parent");
     std::fs::create_dir_all(dir)?;
     let tmp = dir.join(format!(
@@ -320,10 +313,11 @@ fn publish_file(dest: &Path, bytes: &[u8]) -> Result<(), StoreError> {
     match r {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-            // A concurrent publisher won: same name ⇒ must be same bytes.
+            // Already published (or a concurrent publisher won): same name
+            // ⇒ must be same bytes.
             if std::fs::read(dest)? != bytes {
                 return Err(StoreError::Corrupt(format!(
-                    "{} raced with different bytes",
+                    "{} exists with different bytes",
                     dest.display()
                 )));
             }

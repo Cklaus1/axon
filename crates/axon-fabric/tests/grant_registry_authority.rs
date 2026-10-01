@@ -1039,3 +1039,123 @@ fn a_protected_host_that_pins_no_authority_store_launches_nothing() {
     let (c, out) = h.submit(&h.linux_request("op-a82-some", "grant:test"), None);
     assert_eq!(c, 0, "control: with the store pinned, it launches: {out}");
 }
+
+/// C9 round 4b, rows4b (M1092): on a protected host `status`/`cancel` serve
+/// an op only while the operator's registry still grants its principal|grant
+/// at decision time. Here the operator revokes `grant:x` after the op was
+/// submitted under it; the op's recorded binding still matches, so only the
+/// resolution against the pinned registry refuses. Control: before the
+/// revocation the same call is served.
+#[test]
+fn a_grant_revoked_after_submission_serves_no_status_or_cancel() {
+    let h = Host::new();
+    let reg = h.p("grants/grants.json");
+    record_op(
+        &h.env,
+        "op-revoked",
+        &format!("{PRINCIPAL}|grant:x"),
+        scope(),
+        false,
+        &reg,
+    );
+    let (c, out) = status_cancel(
+        &h.env,
+        "status",
+        "op-revoked",
+        PRINCIPAL,
+        "grant:x",
+        None,
+        Some(&h),
+    );
+    assert_eq!(c, 0, "control: served while granted: {out}");
+    write_grant_registry(&reg, &[("grant:test", PRINCIPAL, GRANT_DENY)]);
+    h.write_config();
+    for verb in ["status", "cancel"] {
+        let r = status_cancel(
+            &h.env,
+            verb,
+            "op-revoked",
+            PRINCIPAL,
+            "grant:x",
+            None,
+            Some(&h),
+        );
+        assert_ne!(
+            r.0, 0,
+            "ATTACK: {verb}: an op was served under a grant the operator revoked: {}",
+            r.1
+        );
+        assert_refused(verb, &r, 7, "unauthorized", "not in the grant registry");
+    }
+}
+
+/// C9 round 4b, rows4b (M1094), ROOT ONLY: a host whose operator config
+/// EXISTS but does not load is not a development host. The production
+/// lookup (`ProtectedHost::operator`, no test flag) reads only
+/// /etc/axon/protected-host.json, so the binary runs in a private mount
+/// namespace with a tmpfs on /etc/axon holding an unloadable config. A
+/// development call naming its own grant registry must be refused there.
+/// Control: the same call with no config in the namespace is served.
+#[test]
+fn an_unloadable_protected_host_config_is_never_a_development_host() {
+    if unsafe { libc::geteuid() } != 0 || !Path::new("/etc/axon").is_dir() {
+        eprintln!("skipped: needs root and an /etc/axon mount point");
+        return;
+    }
+    let env = Env::new();
+    let reg = env.grant_registry.clone();
+    record_op(
+        &env,
+        "op-dev",
+        &format!("{PRINCIPAL}|grant:test"),
+        scope(),
+        false,
+        &reg,
+    );
+    let run_ns = |config: Option<&str>| -> (i32, String) {
+        let d = env.dir.path();
+        if let Some(c) = config {
+            std::fs::write(d.join("host-config.json"), c).unwrap();
+        }
+        let script = "set -e\n\
+             mount -t tmpfs -o mode=0755 tmpfs /etc/axon\n\
+             if [ -f \"$1/host-config.json\" ]; then \
+             cp \"$1/host-config.json\" /etc/axon/protected-host.json; fi\n\
+             shift\n\
+             exec \"$@\"\n";
+        let o = Command::new("unshare")
+            .args(["-m", "--propagation", "private", "sh", "-c", script, "sh"])
+            .arg(d)
+            .arg(env!("CARGO_BIN_EXE_axon-fabric"))
+            .args(["status", "--journal"])
+            .arg(&env.journal)
+            .args(["--op", "op-dev", "--grant-registry"])
+            .arg(&reg)
+            .args(["--principal", PRINCIPAL, "--grant-ref", "grant:test"])
+            .output()
+            .unwrap();
+        (
+            o.status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&o.stdout).into_owned(),
+        )
+    };
+    let (c, out) = run_ns(None);
+    assert_eq!(
+        c, 0,
+        "control: no protected host, a development call is served: {out}"
+    );
+    let r = run_ns(Some("{\"schema\": \"not-a-protected-host-config\"}"));
+    assert_ne!(
+        r.0, 0,
+        "ATTACK: a host whose protected-host config does not load served a development call \
+         under a caller grant registry: {}",
+        r.1
+    );
+    assert_refused(
+        "unloadable config",
+        &r,
+        4,
+        "unregistered",
+        "protected host:",
+    );
+}
