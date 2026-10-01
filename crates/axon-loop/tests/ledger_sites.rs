@@ -350,7 +350,10 @@ fn a_ledger_truncated_with_its_head_deleted_is_refused() {
         &OpaqueRef::new(ADMITTER).unwrap(),
     )
     .unwrap();
-    assert!(pointer::resolve(&w.s, &scope()).is_err(), "control: revoked");
+    assert!(
+        pointer::resolve(&w.s, &scope()).is_err(),
+        "control: revoked"
+    );
     let mut l = ledger(&root);
     assert!(matches!(l.pop().unwrap().event, Event::Revocation { .. }));
     write_ledger(&root, &l);
@@ -363,9 +366,13 @@ fn a_ledger_truncated_with_its_head_deleted_is_refused() {
         Err(e) => {
             assert_eq!(e.exit_code(), 2, "{e}");
             assert!(
-                ["ledger head missing", "ledger.anchor", "a fence is never reissued"]
-                    .iter()
-                    .any(|y| e.to_string().contains(y)),
+                [
+                    "ledger head missing",
+                    "ledger.anchor",
+                    "a fence is never reissued"
+                ]
+                .iter()
+                .any(|y| e.to_string().contains(y)),
                 "{e}"
             );
         }
@@ -474,7 +481,11 @@ fn a_symlinked_family_directory_is_refused() {
 #[test]
 fn a_projection_with_no_transition_is_refused() {
     let w = world();
-    let other = w.s.root().join("scopes").join("other-tenant").join("other-family");
+    let other =
+        w.s.root()
+            .join("scopes")
+            .join("other-tenant")
+            .join("other-family");
     std::fs::create_dir_all(&other).unwrap();
     std::fs::copy(
         w.s.scope_dir(&scope()).join("pointer.json"),
