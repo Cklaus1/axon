@@ -4245,6 +4245,8 @@ EQUIVALENT_DID |= {"M1086", "M1087", "M1089", "M1091", "M1095", "M1096", "M1097"
 RETIRED |= {"M1086", "M1087", "M1089", "M1091", "M1095", "M1096", "M1097"}
 # C9 round 4b fix wave: rows4a M940-M1019 (amendment 61).
 PSV_IDS |= {f"M{n}" for n in range(940, 1020)}
+# C9 round 4b, integrate (amendment 64): M1200-M1399.
+PSV_IDS |= {f"M{n}" for n in range(1200, 1400)}
 
 
 def in_scope(mid, scope):
