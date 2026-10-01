@@ -926,6 +926,10 @@ fn a_record_of_another_schema_is_not_certified() {
 /// M699: the record's attribution is checked at the decision. Here it names
 /// an observer key the operator's observer root does not hold (re-signed by
 /// the operator, so the signature holds): only the attribution refuses it.
+/// Inside the attribution two layers refuse it, each alone: the membership
+/// check (M418, retired EQUIVALENT_DID against M339+M340) and the join of the
+/// observation's root-verified signer to observer_key_id (M339). Which layer
+/// refuses is not this row's property, so either reason is accepted.
 #[test]
 fn a_record_attributed_to_an_untrusted_observer_is_not_certified() {
     let Some(c) = certified() else { return };
@@ -939,7 +943,8 @@ fn a_record_attributed_to_an_untrusted_observer_is_not_certified() {
     );
     assert!(
         v.to_string()
-            .contains("is not a key in the operator's observer root"),
+            .contains("is not a key in the operator's observer root")
+            || v.to_string().contains("not the certified observer_key_id"),
         "{v}"
     );
 }
