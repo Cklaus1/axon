@@ -78,12 +78,15 @@ fn repo(tag: &str) -> PathBuf {
 
 /// `python3 <harness> <args>` in `r`.
 fn harness(r: &Path, script: &str, args: &[&str]) -> Output {
-    script_spawn::script("python3", r.join(script), Bins::BuildsItsOwn)
-        .args(args)
+    harness_cmd(r, script, args).output().unwrap()
+}
+
+fn harness_cmd(r: &Path, script: &str, args: &[&str]) -> Command {
+    let mut c = script_spawn::script("python3", r.join(script), Bins::BuildsItsOwn);
+    c.args(args)
         .current_dir(r)
-        .env("PYTHONDONTWRITEBYTECODE", "1")
-        .output()
-        .unwrap()
+        .env("PYTHONDONTWRITEBYTECODE", "1");
+    c
 }
 
 /// An inline Python program run in `r` with the harness modules importable.
@@ -198,7 +201,7 @@ fn a_paired_disable_run_refuses_a_tree_with_an_uncommitted_change_outside_crates
 /// shard 1 claims `blobs` as its registry when given.
 const MERGE_SHARDS: &str = r#"
 import json, sys, v022_g01_mutations as m
-head = sys.argv[1]; alt = sys.argv[2] == "alt"; out = sys.argv[3]
+head = sys.argv[1]; mode = sys.argv[2]; alt = mode == "alt"; out = sys.argv[3]
 rows = [r for r in m.MUTATIONS if m.in_scope(r[0], "binding")]
 for k in (0, 1):
     blobs = m.registry_blobs()
@@ -209,6 +212,10 @@ for k in (0, 1):
          "shard": {"index": k, "of": 2}, "only": None, "all_killed": True,
          "mutations": [{"id": r[0], **m.row_digest(r), "result": "killed", "baseline": "passed"}
                        for i, r in enumerate(rows) if i % 2 == k]}
+    if k == 1 and mode == "dirty":
+        d["tree_clean"] = False
+    if k == 1 and mode == "edits":
+        d["mutations"][0]["old_sha256"] = "0" * 64
     json.dump(d, open(f"{out}/s{k}.json", "w"))
 "#;
 
@@ -255,7 +262,7 @@ fn a_merge_refuses_a_shard_made_from_another_registry() {
 /// Paired-disable shards, as a run at HEAD writes them.
 const JOIN_SHARDS: &str = r#"
 import json, sys, v022_g01_mutations as m, v022_paired_disable as pd
-head = sys.argv[1]; alt = sys.argv[2] == "alt"; out = sys.argv[3]
+head = sys.argv[1]; mode = sys.argv[2]; alt = mode == "alt"; out = sys.argv[3]
 u = sorted(set(m.EQUIVALENT_DID) | set(m.STALE_REFACTORED), key=lambda r: int(r[1:]))
 for k in (0, 1):
     blobs = m.registry_blobs()
@@ -266,6 +273,10 @@ for k in (0, 1):
          "shard": f"{k}/2", "selected": sel, "registry_blobs": blobs, "tree_clean": True,
          "records": [{"mutation": x, "holds": True, "commit": head,
                       "edits_sha256": pd.current_edits_digest(x)} for x in sel]}
+    if k == 1 and mode == "dirty":
+        d["tree_clean"] = False
+    if k == 1 and mode == "edits":
+        d["records"][0]["edits_sha256"] = "0" * 64
     json.dump(d, open(f"{out}/j{k}.json", "w"))
 "#;
 
@@ -304,6 +315,85 @@ fn a_join_refuses_a_shard_made_from_another_registry() {
     );
     let _ = std::fs::remove_dir_all(&r);
     let _ = std::fs::remove_dir_all(&out);
+}
+
+/// Shards written by `program` in `mode`, merged (`HARNESS[0] --merge`) or
+/// joined (`HARNESS[2] --join`) by the real harness in a scratch clone.
+fn combine(tag: &str, program: &str, join: bool, mode: &str) -> (Output, bool) {
+    let r = repo(tag);
+    let out = scratch(&format!("{tag}-out"));
+    let head = git(&r, &["rev-parse", "HEAD"]);
+    let p = |f: &str| out.join(f).display().to_string();
+    let prog = format!(
+        "import sys; sys.argv = ['x', {head:?}, {mode:?}, {:?}]\n{program}",
+        out.display().to_string()
+    );
+    py(&r, &prog);
+    let o = if join {
+        harness(
+            &r,
+            HARNESS[2],
+            &["--join", &p("joined.json"), &p("j0.json"), &p("j1.json")],
+        )
+    } else {
+        harness(
+            &r,
+            HARNESS[0],
+            &["--merge", &p("merged.json"), &p("s0.json"), &p("s1.json")],
+        )
+    };
+    let written = out
+        .join(if join { "joined.json" } else { "merged.json" })
+        .exists();
+    let _ = std::fs::remove_dir_all(&r);
+    let _ = std::fs::remove_dir_all(&out);
+    (o, written)
+}
+
+/// --merge refuses a shard that does not record a clean tree. Control:
+/// a_merge_refuses_a_shard_made_from_another_registry's.
+#[test]
+fn a_merge_refuses_a_shard_from_a_dirty_tree() {
+    let (o, written) = combine("merge-dirty", MERGE_SHARDS, false, "dirty");
+    assert!(
+        !written && text(&o).contains("does not record a clean tree"),
+        "ATTACK: --merge accepted a shard made in a dirty tree:\n{}",
+        text(&o)
+    );
+}
+
+/// --merge refuses a shard whose row ran with an edit that is not this
+/// registry's row (same registry blobs, another old/new text).
+#[test]
+fn a_merge_refuses_a_row_run_with_another_edit() {
+    let (o, written) = combine("merge-edits", MERGE_SHARDS, false, "edits");
+    assert!(
+        !written && text(&o).contains("with an edit that is not this registry's row"),
+        "ATTACK: --merge accepted a row executed with another edit:\n{}",
+        text(&o)
+    );
+}
+
+/// --join refuses a shard that does not record a clean tree.
+#[test]
+fn a_join_refuses_a_shard_from_a_dirty_tree() {
+    let (o, written) = combine("join-dirty", JOIN_SHARDS, true, "dirty");
+    assert!(
+        !written && text(&o).contains("does not record a clean tree"),
+        "ATTACK: --join accepted a shard made in a dirty tree:\n{}",
+        text(&o)
+    );
+}
+
+/// --join refuses a record executed with edits that are not this registry's.
+#[test]
+fn a_join_refuses_a_record_run_with_other_edits() {
+    let (o, written) = combine("join-edits", JOIN_SHARDS, true, "edits");
+    assert!(
+        !written && text(&o).contains("with edits that are not"),
+        "ATTACK: --join accepted a record executed with other edits:\n{}",
+        text(&o)
+    );
 }
 
 /// A kept paired-disable record is stale once ANY file of its owner package
@@ -361,4 +451,216 @@ fn a_kept_record_is_stale_once_its_owner_package_changes() {
     );
     let _ = std::fs::remove_dir_all(&r);
     let _ = std::fs::remove_file(&status);
+}
+
+// ── the harnesses' cells, run for real on a miniature workspace ─────────────
+
+/// The registry's old text of `id` (what the harness expects to edit).
+fn old_text(r: &Path, id: &str) -> String {
+    py(
+        r,
+        &format!(
+            "import sys, v022_g01_mutations as m\n\
+             sys.stdout.write({{x[0]: x for x in m.MUTATIONS}}[{id:?}][3])"
+        ),
+    )
+}
+
+/// What every miniature test does when it runs: plant an executable in the
+/// WORKSPACE target dir (as a script built from a mutated tree would) and log
+/// the AXON_BIN it was given.
+const PROBE: &str = r##"
+fn probe() {
+    use std::io::Write;
+    use std::os::unix::fs::PermissionsExt;
+    if let Some(p) = std::env::var_os("FAKE_PLANT") {
+        let p = std::path::PathBuf::from(p);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(&p, "#!/bin/sh\n").unwrap();
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    if let Some(l) = std::env::var_os("FAKE_ENV_LOG") {
+        let v = std::env::var(concat!("AXON", "_BIN")).unwrap_or_else(|_| "unset".into());
+        let mut f = std::fs::OpenOptions::new().create(true).append(true).open(l).unwrap();
+        writeln!(f, "{v}").unwrap();
+    }
+}
+"##;
+
+fn package(r: &Path, name: &str, extra: &str) {
+    write(
+        &r.join(format!("crates/{name}/Cargo.toml")),
+        &format!(
+            "[package]\nname = \"{name}\"\nversion = \"0.0.0\"\nedition = \"2021\"\n\n\
+             [features]\ndefault = []\n{extra}"
+        ),
+    );
+    write(&r.join(format!("crates/{name}/src/lib.rs")), "\n");
+}
+
+/// A committed miniature workspace with the real harnesses: axon-core
+/// (`axon`, and a `harness_binaries` test that runs scripts, holding M722's
+/// guarded text), axon-loop (M245/M264's guarded file and their
+/// `protected_class` tests, plus a root-only test that skips), and the
+/// prerequisites paired-disable builds (cortex bins, psv_dev).
+fn miniature(tag: &str) -> PathBuf {
+    let r = repo(tag);
+    write(
+        &r.join("Cargo.toml"),
+        "[workspace]\nmembers = [\"crates/axon-core\", \"crates/axon-loop\", \
+         \"crates/axon-cortex\", \"crates/axon-psv\"]\nresolver = \"2\"\n",
+    );
+    package(
+        &r,
+        "axon-core",
+        "\n[[bin]]\nname = \"axon\"\npath = \"src/main.rs\"\n",
+    );
+    write(&r.join("crates/axon-core/src/main.rs"), "fn main() {}\n");
+    write(
+        &r.join("crates/axon-core/tests/script_spawn/mod.rs"),
+        &format!("// guarded text\n{}", old_text(&r, "M722")),
+    );
+    write(
+        &r.join("crates/axon-core/tests/harness_binaries.rs"),
+        &format!(
+            "// This test runs repository scripts through script_spawn::script(...).\n{PROBE}\n\
+             #[test]\nfn an_ambient_binary_variable_never_reaches_a_script() {{\n    probe();\n    \
+             assert!(!include_str!(\"script_spawn/mod.rs\").contains(\"let _ = v;\"), \
+             \"ATTACK: an ambient binary-naming variable reached a script\");\n}}\n"
+        ),
+    );
+    package(&r, "axon-loop", "");
+    write(
+        &r.join("crates/axon-loop/src/admission.rs"),
+        &format!(
+            "// guarded text\n{}\n{}\n",
+            old_text(&r, "M245"),
+            old_text(&r, "M264")
+        ),
+    );
+    write(
+        &r.join("crates/axon-loop/tests/protected_class.rs"),
+        &format!(
+            "{PROBE}\n#[test]\nfn a_key_revoked_at_the_operator_root_no_longer_counts() {{ probe(); }}\n\
+             #[test]\nfn a_forged_unsigned_clearance_clears_nothing() {{ probe(); }}\n\
+             #[test]\nfn a_root_only_test() {{ eprintln!(\"skipped: needs root (fixture)\"); }}\n"
+        ),
+    );
+    package(
+        &r,
+        "axon-cortex",
+        "\n[[bin]]\nname = \"cortex\"\npath = \"src/main.rs\"\n",
+    );
+    write(&r.join("crates/axon-cortex/src/main.rs"), "fn main() {}\n");
+    package(&r, "axon-psv", "");
+    write(
+        &r.join("crates/axon-psv/examples/psv_dev.rs"),
+        "fn main() {}\n",
+    );
+    git(&r, &["add", "-A"]);
+    git(&r, &["commit", "-q", "-m", "miniature workspace"]);
+    r
+}
+
+/// Run `script` with `args` on the miniature workspace `r`, under an ambient
+/// AXON_BIN, with the probe's plant/log paths. Returns (output, plant path,
+/// the AXON_BIN values the cells saw).
+fn run_cells(r: &Path, script: &str, args: &[&str]) -> (Output, PathBuf, Vec<String>) {
+    let side = scratch("cells-side");
+    // Where scripts' builds land: the WORKSPACE target dir, never the run's.
+    let plant = r
+        .join("target")
+        .join("debug")
+        .join("left-by-a-mutated-cell");
+    let log = side.join("env.log");
+    let o = harness_cmd(r, script, args)
+        .env("CARGO_TARGET_DIR", side.join("tgt"))
+        .env("AXON_BIN", "/ambient/axon-named-by-the-callers-shell")
+        .env("FAKE_PLANT", &plant)
+        .env("FAKE_ENV_LOG", &log)
+        .env("V022_MUT_MEM", "4G")
+        .output()
+        .unwrap();
+    let seen = std::fs::read_to_string(&log)
+        .unwrap_or_default()
+        .lines()
+        .map(String::from)
+        .collect();
+    let _ = std::fs::remove_dir_all(&side);
+    (o, plant, seen)
+}
+
+/// A mutation run's cell that ran scripts leaves no binary built from the
+/// MUTATED tree in the workspace target dir (scrub after the cell), and no
+/// cell sees the AXON_BIN of the shell that launched the run (C9 round 4,
+/// EQUIVALENCE (6d) and the skip/environment minor). Through the real
+/// harness, on one row, in a miniature workspace.
+#[test]
+fn a_mutation_run_leaves_no_mutant_binary_and_hides_the_callers_binary() {
+    let r = miniature("mut-cells");
+    let out = scratch("mut-cells-out").join("run.json");
+    let (o, plant, seen) = run_cells(
+        &r,
+        HARNESS[0],
+        &["--scope=all", "--only=M722", out.to_str().unwrap()],
+    );
+    let doc = std::fs::read_to_string(&out).unwrap_or_default();
+    assert!(
+        doc.contains("\"killed\""),
+        "setup: the miniature row was not run and killed: {}\n{doc}",
+        text(&o)
+    );
+    assert!(
+        !plant.exists(),
+        "ATTACK: a mutation run left a binary built from a mutated tree in the workspace \
+         target dir ({})",
+        plant.display()
+    );
+    assert!(
+        !seen.is_empty() && seen.iter().all(|v| v == "unset"),
+        "ATTACK: a mutation cell saw the caller's AXON_BIN: {seen:?}"
+    );
+    let _ = std::fs::remove_dir_all(&r);
+    let _ = std::fs::remove_dir_all(out.parent().unwrap());
+}
+
+/// A paired-disable run leaves no binary built from a mutated tree in the
+/// workspace target dir, records a test that SKIPPED in a full-suite cell as
+/// a skip (not a silent pass), and hides the caller's AXON_BIN from its cells.
+/// Through the real harness, on one record, in a miniature workspace.
+#[test]
+fn a_paired_disable_run_scrubs_counts_skips_and_hides_the_callers_binary() {
+    let r = miniature("pd-cells");
+    let out = scratch("pd-cells-out").join("status.json");
+    let (o, plant, seen) = run_cells(&r, HARNESS[2], &["--only=M245", out.to_str().unwrap()]);
+    let doc: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&out).unwrap_or_else(|_| "{}".into()))
+            .unwrap_or_default();
+    let rec = doc["records"]
+        .as_array()
+        .and_then(|rs| rs.iter().find(|x| x["mutation"] == "M245"))
+        .cloned()
+        .unwrap_or_default();
+    assert!(
+        rec["matrix"]["retired_guard_full_suite"].is_string(),
+        "setup: the miniature record was not executed: {}\n{doc}",
+        text(&o)
+    );
+    assert!(
+        !plant.exists(),
+        "ATTACK: a paired-disable run left a binary built from a mutated tree in the \
+         workspace target dir ({})",
+        plant.display()
+    );
+    let skipped = rec["matrix"]["retired_guard_full_suite_skipped"].to_string();
+    assert!(
+        skipped.contains("a_root_only_test"),
+        "ATTACK: a full-suite cell counted a skipped test as a pass (recorded skips: {skipped})"
+    );
+    assert!(
+        !seen.is_empty() && seen.iter().all(|v| v == "unset"),
+        "ATTACK: a paired-disable cell saw the caller's AXON_BIN: {seen:?}"
+    );
+    let _ = std::fs::remove_dir_all(&r);
+    let _ = std::fs::remove_dir_all(out.parent().unwrap());
 }

@@ -583,3 +583,80 @@ fn guest_init_sh_workload_starts_with_exactly_the_fixed_environment() {
         "ATTACK: the workload started with a variable from PID 1's environment: {env:?}"
     );
 }
+
+/// C9 round 4: the guest's serial record was cut by its own reboot (1 in 40
+/// boots of the pass case ended `PSV-VERDICT-INIT` -- one 16-byte UART FIFO --
+/// then the kernel's `reboot: Restarting system`). Console output sits in the
+/// tty and UART buffers, and `reboot -f` does not wait for them. Every reboot
+/// goes through `halt_guest`, which drains the console first (busybox stty
+/// applies a setting with TCSETSW, i.e. after all output has left the UART).
+/// Run here with the real functions and logging stand-ins for the three
+/// commands: the drain comes after sync and before the reboot, on the failure
+/// path; and no other line of the script reboots.
+#[test]
+fn every_guest_reboot_first_drains_the_serial_console() {
+    let sh = read("profiles/linux-microvm/guest-init.sh");
+    let func = |name: &str| {
+        let s = sh
+            .find(&format!("\n{name}() {{\n"))
+            .unwrap_or_else(|| panic!("{name}() in guest-init.sh"));
+        let e = s + sh[s..].find("\n}\n").expect("function end") + 3;
+        sh[s..e].to_string()
+    };
+    let d = scratch("halt");
+    let bin = d.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let log = d.join("calls");
+    for cmd in ["sync", "stty", "reboot"] {
+        exec::write_executable(
+            &bin.join(cmd),
+            format!(
+                "#!/bin/sh\necho \"{cmd} $*\" >> '{}'\n[ {cmd} = reboot ] && exit 0\nexit 0\n",
+                log.display()
+            ),
+            0o755,
+        );
+    }
+    let script = format!(
+        "{}{}\nfail workspace-mount\n",
+        func("halt_guest"),
+        func("fail")
+    );
+    let out = Command::new("/bin/sh")
+        .arg("-c")
+        .arg(&script)
+        .env_clear()
+        .env("PATH", &bin)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "setup: {out:?}");
+    let calls: Vec<String> = std::fs::read_to_string(&log)
+        .unwrap_or_default()
+        .lines()
+        .map(|l| l.trim().to_string())
+        .collect();
+    let _ = std::fs::remove_dir_all(&d);
+    let reboot = calls.iter().position(|c| c == "reboot -f");
+    let drain = calls
+        .iter()
+        .position(|c| c.starts_with("stty -F /dev/console "));
+    assert!(
+        matches!((drain, reboot), (Some(a), Some(b)) if a < b),
+        "ATTACK: the guest reboots without draining its serial console first: {calls:?}"
+    );
+    // ...and nothing else in the script reboots around halt_guest.
+    let halt = func("halt_guest");
+    let outside = sh.replace(&halt, "");
+    let stray: Vec<&str> = outside
+        .lines()
+        .filter(|l| !l.trim_start().starts_with('#') && l.contains("reboot"))
+        .collect();
+    assert!(
+        stray.is_empty(),
+        "ATTACK: a reboot outside halt_guest: {stray:?}"
+    );
+    assert!(
+        sh.trim_end().ends_with("halt_guest"),
+        "the script's last action is halt_guest"
+    );
+}

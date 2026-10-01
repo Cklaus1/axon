@@ -773,6 +773,21 @@ ATTACK_MARKERS.update({
     'M737': r'ATTACK: the freeze bound a guest image not built in the controlled environment\s+\(an ancestor \.cargo/config\.toml named a wrapper\)',
     'M738': r'ATTACK: the freeze bound a guest [\w-]+ its controlled build did not produce',
     'M739': r'ATTACK: a kept paired-disable record stayed current after its owner package\s+changed',
+    # C9 round 4 (harness2, amendment 56 extended).
+    'M860': r'ATTACK: a named binary older than its sources was handed to a test to exec',
+    'M861': r'ATTACK: a test resolving its own workspace binary went unflagged',
+    'M862': r'ATTACK: --merge accepted a shard made in a dirty tree',
+    'M863': r'ATTACK: --merge accepted a row executed with another edit',
+    'M864': r'ATTACK: --join accepted a shard made in a dirty tree',
+    'M865': r'ATTACK: --join accepted a record executed with other edits',
+    'M866': r'ATTACK: a mutation run left a binary built from a mutated tree in the workspace\s+target dir',
+    'M867': r"ATTACK: a mutation cell saw the caller's AXON_BIN",
+    'M868': r'ATTACK: a paired-disable run left a binary built from a mutated tree in the\s+workspace target dir',
+    'M869': r'ATTACK: a full-suite cell counted a skipped test as a pass',
+    'M870': r'ATTACK: an unterminated serial record was read as the output binding',
+    'M871': r'ATTACK: a serial verdict record spliced with a kernel message was read as the verdict',
+    'M872': r'ATTACK: the guest reboots without draining its serial console first',
+    'M873': r'ATTACK: a reboot outside halt_guest',
 })
 
 # C9 round 4, CORE workstream (M651-M667, amendment 53, matrix A86): each

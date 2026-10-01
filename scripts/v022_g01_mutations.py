@@ -2297,6 +2297,71 @@ _REANCHOR_R4 = {
 }
 MUTATIONS = [r[:6] + _REANCHOR_R4[r[0]] if r[0] in _REANCHOR_R4 else r for r in MUTATIONS]
 
+# C9 round 4 (harness2, amendment 56 extended): rows for the guards the first
+# wave left unrowed, and for the guest serial record cut by the guest's reboot.
+_SP = 'crates/axon-core/tests/script_spawn/mod.rs'
+_HB2 = '--no-default-features --test harness_binaries'
+_HI2 = '--no-default-features --test harness_integrity'
+_MC = 'a_mutation_run_leaves_no_mutant_binary_and_hides_the_callers_binary'
+_PC = 'a_paired_disable_run_scrubs_counts_skips_and_hides_the_callers_binary'
+_FCL = 'scripts/fc_linux_profile.sh'
+MUTATIONS += [
+    ('M860', 'EQUIVALENCE (6): a binary a harness names for a test to exec is refused when older than its sources', _SP,
+     '        assert!(\n            stale.is_none(),\n', '        assert!(\n            true || stale.is_none(),\n',
+     'axon-core', _HB2, 'a_named_binary_older_than_its_sources_is_refused'),
+    ('M861', 'EQUIVALENCE (6): the drift gate refuses a test that resolves a workspace binary itself', _SP,
+     '        if reads_var || names_profile_bin {\n', '        if false && (reads_var || names_profile_bin) {\n',
+     'axon-core', _HB2, 'a_test_that_resolves_its_own_binary_is_flagged'),
+    ('M862', 'EQUIVALENCE (5): --merge refuses a shard that does not record a clean tree', 'scripts/v022_g01_mutations.py',
+     '        if d.get("tree_clean") is not True:\n            sys.exit(f"refused: shard {p} does not record a clean tree")\n        by_id',
+     '        if False:\n            sys.exit(f"refused: shard {p} does not record a clean tree")\n        by_id',
+     'axon-core', _HI2, 'a_merge_refuses_a_shard_from_a_dirty_tree'),
+    ('M863', "EQUIVALENCE (5): --merge refuses a row executed with an edit that is not this registry's row", 'scripts/v022_g01_mutations.py',
+     '            if row is None or {k: r.get(k) for k in ("old_sha256", "new_sha256")} != row_digest(row):\n',
+     '            if row is None:\n',
+     'axon-core', _HI2, 'a_merge_refuses_a_row_run_with_another_edit'),
+    ('M864', 'EQUIVALENCE (5): --join refuses a shard that does not record a clean tree', 'scripts/v022_paired_disable.py',
+     '        if d.get("tree_clean") is not True:\n            sys.exit(f"refused: shard {p} does not record a clean tree")\n',
+     '        if False:\n            sys.exit(f"refused: shard {p} does not record a clean tree")\n',
+     'axon-core', _HI2, 'a_join_refuses_a_shard_from_a_dirty_tree'),
+    ('M865', "EQUIVALENCE (5): --join refuses a record executed with edits that are not this registry's", 'scripts/v022_paired_disable.py',
+     '            if r.get("edits_sha256") != current_edits_digest(r["mutation"]):\n',
+     '            if False:\n',
+     'axon-core', _HI2, 'a_join_refuses_a_record_run_with_other_edits'),
+    ('M866', 'EQUIVALENCE (6d): a mutation run removes binaries a mutated cell built into the workspace target dir', 'scripts/v022_g01_mutations.py',
+     '            scrubbed = rel.startswith("crates/") and spawns_scripts(pkg, target)\n',
+     '            scrubbed = False\n',
+     'axon-core', _HI2, _MC),
+    ('M867', "EQUIVALENCE (minor): harness cells run with the caller's AXON/AXON_BIN/CORTEX_BIN removed", 'scripts/v022_g01_mutations.py',
+     'UNSET_AMBIENT = "unset " + " ".join(AMBIENT_BINARY_VARS) + "; "\n',
+     'UNSET_AMBIENT = ""\n',
+     'axon-core', _HI2, _MC),
+    ('M868', 'EQUIVALENCE (6d): a paired-disable cell on a mutated tree leaves no binary in the workspace target dir', 'scripts/v022_paired_disable.py',
+     '        mut.scrub_workspace_binaries()\n        build_prereqs()\n',
+     '        build_prereqs()\n',
+     'axon-core', _HI2, _PC),
+    ('M869', 'EQUIVALENCE (minor): a full-suite cell records a test that skipped as a skip, never a silent pass', 'scripts/v022_paired_disable.py',
+     '    CELL_SKIPS[(pkg, flags, env)] = skipped_tests(out)\n',
+     '    CELL_SKIPS[(pkg, flags, env)] = []\n',
+     'axon-core', _HI2, _PC),
+    ('M870', 'PSV-2/serial: a serial record is never the unterminated text after the last newline', _FCL,
+     '    lines = f.read().decode("utf-8", "replace").split("\\n")[:-1]\n',
+     '    lines = f.read().decode("utf-8", "replace").split("\\n")\n',
+     'axon-fabric', '--test serial_records', 'an_unterminated_serial_record_is_no_record'),
+    ('M871', 'PSV-2/serial: a serial record is a whole line, never a match inside another line', _FCL,
+     '    m = re.fullmatch(rx, line[:-1] if line.endswith("\\r") else line)\n',
+     '    m = re.search(rx, line[:-1] if line.endswith("\\r") else line)\n',
+     'axon-fabric', '--test serial_records', 'a_verdict_record_spliced_with_a_kernel_message_is_no_record'),
+    ('M872', 'PSV-2/serial: the guest drains its serial console before every reboot', 'profiles/linux-microvm/guest-init.sh',
+     '    stty -F /dev/console -echoprt 2>/dev/null\n',
+     '',
+     'axon-guest-init', '--test b263_profile_wiring', 'every_guest_reboot_first_drains_the_serial_console'),
+    ('M873', 'PSV-2/serial: no reboot of the guest bypasses the console drain', 'profiles/linux-microvm/guest-init.sh',
+     'echo "B263-DONE"\nhalt_guest\n',
+     'echo "B263-DONE"\nreboot -f\n',
+     'axon-guest-init', '--test b263_profile_wiring', 'every_guest_reboot_first_drains_the_serial_console'),
+]
+
 # Protected Check Isolation guards (governance/specs/v022-protected-check-isolation.md):
 # candidate code must not alter what the operator's check runs or what PASS
 # means. Kept here so nothing is lost, but certified under PCI, not G01
@@ -2787,6 +2852,8 @@ PSV_IDS |= {f"M{n}" for n in range(550, 650)}
 PSV_IDS |= {f"M{n}" for n in range(650, 700)}
 # C9 round 4 (harness2): M720-M739.
 PSV_IDS |= {f"M{n}" for n in range(720, 740)}
+# C9 round 4 (harness2, second wave): M860-M879.
+PSV_IDS |= {f"M{n}" for n in range(860, 880)}
 # C9 round 4 fix wave: readiness M740-M759.
 PSV_IDS |= {f"M{n}" for n in range(740, 760)}
 

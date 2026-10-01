@@ -33,8 +33,9 @@
 # and installs seccomp otherwise. The no-policy escape hatch is compiled out of
 # the image's axon-guest-init (non-default cargo feature).
 #
-# Every path ends in `reboot -f` (reboot=k -> Firecracker exits). If this
-# script itself dies, the kernel panics (PID 1 exit) and panic=1 reboots.
+# Every path ends in halt_guest -> `reboot -f` (reboot=k -> Firecracker exits).
+# If this script itself dies, the kernel panics (PID 1 exit) and panic=1
+# reboots.
 
 PATH=/bin
 export PATH
@@ -55,10 +56,25 @@ echo "B263-VERSION $(cat /proc/version)"
 # RAM, and the host cgroup still bounds the VMM that backs it.
 echo 1 > /proc/sys/vm/overcommit_memory
 
+# The ONLY way this script reboots. What it writes to the console sits in the
+# tty and UART buffers until the UART drains them; `reboot -f` does not wait,
+# so the tail of the serial record was lost (C9 round 4, reproduced 1 in 40
+# boots of the pass case: the serial ended `PSV-VERDICT-INIT` -- the first 16
+# bytes, one UART FIFO -- then the kernel's `reboot: Restarting system`, with
+# the digest, B263-OUT and B263-DONE gone; the host refused the run, rc 21).
+# busybox stty applies a setting with TCSETSW (TCSADRAIN), which returns only
+# once every byte written to the console has left the UART, so the record is
+# whole before the reboot. The host also counts a serial record only as a
+# whole line (fc_linux_profile.sh serial_record).
+halt_guest() {
+    sync
+    stty -F /dev/console -echoprt 2>/dev/null
+    reboot -f
+}
+
 fail() {
     echo "B263-FAIL $1"
-    sync
-    reboot -f
+    halt_guest
 }
 
 mount -t ext4 -o nosuid,nodev /dev/vdb /work || fail "workspace-mount"
@@ -196,4 +212,4 @@ sync
 umount /work
 echo "B263-OUT stdout=$OUT_SHA exit=$RC"
 echo "B263-DONE"
-reboot -f
+halt_guest

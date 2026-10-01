@@ -1712,6 +1712,46 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       `/etc/axon`.
     - **Also corrected.** `psv_dispatch.rs` named M402 for the protected arm (it is M400);
       `EQUIV_RECORD["M347"].all_paths` now states the allowlist's role under decision C.
+    - **Second wave (C9 round 4, harness2 continued; rows M860-M873, `PSV_IDS` extended by
+      M860-M879).** Rows for the guards the first wave left unrowed, each killed by its own
+      attack through the production route: `workspace_bin`'s stale-named-binary refusal (M860);
+      the test-side resolution drift rule (M861, attack fixtures in
+      `a_test_that_resolves_its_own_binary_is_flagged`); `--merge` / `--join` refusing a
+      dirty-tree shard and a row or record run with edits that are not this registry's
+      (M862-M865, the real harnesses in scratch clones); the scrub of workspace binaries after a
+      mutated cell, in both harnesses (M866, M868), the removal of the caller's
+      `AXON`/`AXON_BIN`/`CORTEX_BIN` from every cell (M867), and full-suite skip accounting
+      (M869). M866-M869 run the REAL harnesses on a miniature committed workspace whose tests
+      plant an executable in the workspace target dir, log the `AXON_BIN` they were given, and
+      skip as a root-only test does.
+    - **The guest's serial record was cut by its own reboot (defect, reproduced).** One boot of
+      the pass case ended `PSV-VERDICT-INIT[    0.256427] reboot: Restarting system`; looped
+      through the boot test's exact path it reproduced 1 in 40. Mechanism: guest-init's
+      `echo` writes go into the tty and the 8250's buffer and leave as the UART drains them;
+      `reboot -f` does not wait, so everything after the first 16 bytes (one UART FIFO) of the
+      final burst was lost -- the verdict digest, `B263-OUT` and `B263-DONE` -- and the kernel's
+      own reboot message, which printk writes synchronously, landed on the same line. The host
+      refused that run (`B263-DONE` absent, rc 21), so no wrong verdict resulted; but the host
+      read every serial field with substring patterns (`.*sha256=<64 hex>.*`,
+      `grep B263-DONE`, sed on an unterminated last line), so a record spliced into another
+      line or cut before its newline was read as the record. Fixed at both ends: every reboot
+      of the guest goes through `halt_guest`, which runs `sync`, then `stty -F /dev/console`
+      (busybox applies it with TCSETSW, which returns only after all console output has left
+      the UART), then `reboot -f` (M872, and M873 for a reboot that bypasses it); and the
+      launcher reads every serial field -- on the launch path and under `--verify-result` --
+      through one primitive, `serial_record`, which takes a line only when it matches in full
+      and a newline ends it (M870 unterminated, M871 spliced). Tests:
+      `b263_profile_wiring::every_guest_reboot_first_drains_the_serial_console` (the real
+      functions with logging stand-ins) and `axon-fabric/tests/serial_records.rs` (the real
+      launcher's `--verify-result`: a verdict spliced with the kernel's reboot message, an
+      unterminated `B263-OUT`, a policy record inside another line; control: whole records
+      bind). Evidence on a real guest: with the fixed image the same loop gave 0 truncated in
+      120 boots and 0 in a further 200 (0 of 320; 1 of 40 before), and `psv_guest_boot_test.sh` 17/17 PASS
+      through the new parser. Image digests tested (not re-pinned here; the integrator builds
+      the final image from a standalone clone): rootfs.sqfs
+      455d2ddd61cd4b2eaf040d2a93b58ca453ee922a7a67551576d963b55bf83909, vmlinux
+      4ec3ba40a4024467d959fd3812af000ad9f7f9900579cc9f0fd01a465dcd22b7. Operator deployment:
+      rebuild the guest image (guest-init.sh changed).
 
 57. **Readiness joins the certification record's run attribution to the run itself, and the B263
     record to the qualification the observed launch ran under (C9 round 4, readiness workstream;
