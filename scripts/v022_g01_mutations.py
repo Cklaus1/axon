@@ -3982,7 +3982,7 @@ MUTATIONS += [
      '            if v.matched_checks == 0 {',
      '            if false && v.matched_checks == 0 {',
      'axon-loop', _CS, 'a_passed_episode_with_no_matched_check_is_never_counted'),
-    ('M1250', 'EVIDENCE (4b, integrate-A): a passed episode names its checked output, issuer and verifier (EQUIVALENT: M1210)', 'crates/axon-loop-contracts/src/episode.rs',
+    ('M1250', 'EVIDENCE (4b, integrate-A): a passed episode names its checked output, issuer and verifier (EQUIVALENT: M1269)', 'crates/axon-loop-contracts/src/episode.rs',
      '            if self.output_workspace_ref.is_none()\n                || v.output_workspace_ref.is_none()\n                || v.issuer_ref.is_none()\n                || v.verifier_ref.is_none()\n            {',
      '            if false\n                && (self.output_workspace_ref.is_none()\n                    || v.output_workspace_ref.is_none()\n                    || v.issuer_ref.is_none()\n                    || v.verifier_ref.is_none())\n            {',
      'axon-loop', _CS, 'a_passed_episode_with_no_checked_output_is_never_counted'),
@@ -4082,6 +4082,10 @@ MUTATIONS += [
      '          "target_policy_ref": {\n            "type": "null"\n          }',
      '          "target_policy_ref": {}',
      'axon-loop', _CS, 'a_pause_naming_a_target_is_never_applied'),
+    ('M1269', 'EVIDENCE (4b, integrate-A): the episode schema: a passed episode names its checked output (EQUIVALENT: M1250)', 'crates/axon-loop-contracts/schemas/closed-loop-episode.schema.json',
+     '              "output_workspace_ref": {\n                "type": "string",\n                "pattern": "^acf1:[0-9a-f]{64}$"\n              },\n              "evidence_refs": {',
+     '              "output_workspace_ref": {},\n              "evidence_refs": {',
+     'axon-loop', _CS, 'a_passed_episode_with_no_checked_output_is_never_counted'),
 ]
 # INTEGRATE-A retirements (four-cell, scripts/v022_paired_disable.py --only=...).
 EQUIV_RECORD['M1202'] = {
@@ -4206,8 +4210,8 @@ EQUIV_RECORD['M1249'] = {
     "all_paths": "the typed rule runs only on a value the schema walk already judged: every contract document is admitted through axon_loop_contracts::parse (canonical.rs: parse_value, validate_against the checked-in schema, typed serde, validate()), and validate() is called elsewhere only by tel::join on documents parse admitted and by evo::propose on a candidate it builds by remove/swap from an admitted policy (never larger, never empty, no duplicate, evidence deduplicated and capped at 256 by EVO itself), which this rule never refuses; the episode schema's conditional (passed -> matched_checks minimum 1, M1218)"}
 EQUIV_RECORD['M1250'] = {
     "property": 'a passed episode names its checked output, issuer and verifier',
-    "subsumed_by": ['M1210'], "killer": 'joint:M1250+M1210',
-    "all_paths": "the typed rule runs only on a value the schema walk already judged: every contract document is admitted through axon_loop_contracts::parse (canonical.rs: parse_value, validate_against the checked-in schema, typed serde, validate()), and validate() is called elsewhere only by tel::join on documents parse admitted and by evo::propose on a candidate it builds by remove/swap from an admitted policy (never larger, never empty, no duplicate, evidence deduplicated and capped at 256 by EVO itself), which this rule never refuses; the episode schema's conditional (passed -> each a string, M1210)"}
+    "subsumed_by": ['M1269'], "killer": 'joint:M1250+M1269',
+    "all_paths": "the typed rule runs only on a value the schema walk already judged: every contract document is admitted through axon_loop_contracts::parse (canonical.rs: parse_value, validate_against the checked-in schema, typed serde, validate()), and validate() is called elsewhere only by tel::join on documents parse admitted and by evo::propose on a candidate it builds by remove/swap from an admitted policy (never larger, never empty, no duplicate, evidence deduplicated and capped at 256 by EVO itself), which this rule never refuses; the episode schema's conditional (passed -> each a string; the checked output's clause is M1269)"}
 EQUIV_RECORD['M1251'] = {
     "property": 'a passed episode cites evidence',
     "subsumed_by": ['M1220'], "killer": 'joint:M1251+M1220',
@@ -4280,8 +4284,12 @@ EQUIV_RECORD['M1268'] = {
     "property": 'the pointer applies only next_epoch = current + 1',
     "subsumed_by": ['M1266'], "killer": 'joint:M1268+M1266',
     "all_paths": "pointer::transition's only input is a parsed PolicyTransition (no constructor in crates/*/src), whose validate() (M1266) requires next = expected + 1, and the pointer's CAS requires expected = current, so next = current + 1 already holds"}
-EQUIVALENT_DID |= {'M1246', 'M1253', 'M1244', 'M1259', 'M1243', 'M1202', 'M1245', 'M1249', 'M1239', 'M1220', 'M1227', 'M1265', 'M1266', 'M1224', 'M1262', 'M1250', 'M1226', 'M1254', 'M1258', 'M1223', 'M1268', 'M1257', 'M1207', 'M1236', 'M1267', 'M1242', 'M1233', 'M1251', 'M1203', 'M1217', 'M1252', 'M1238', 'M1219', 'M1263', 'M1209', 'M1247', 'M1261', 'M1241', 'M1237', 'M1264', 'M1255', 'M1256', 'M1214', 'M1225', 'M1240', 'M1248', 'M1232', 'M1260', 'M1208'}
-RETIRED |= {'M1246', 'M1253', 'M1244', 'M1259', 'M1243', 'M1202', 'M1245', 'M1249', 'M1239', 'M1220', 'M1227', 'M1265', 'M1266', 'M1224', 'M1262', 'M1250', 'M1226', 'M1254', 'M1258', 'M1223', 'M1268', 'M1257', 'M1207', 'M1236', 'M1267', 'M1242', 'M1233', 'M1251', 'M1203', 'M1217', 'M1252', 'M1238', 'M1219', 'M1263', 'M1209', 'M1247', 'M1261', 'M1241', 'M1237', 'M1264', 'M1255', 'M1256', 'M1214', 'M1225', 'M1240', 'M1248', 'M1232', 'M1260', 'M1208'}
+EQUIV_RECORD['M1269'] = {
+    "property": 'the episode schema: a passed episode names its checked output',
+    "subsumed_by": ['M1250'], "killer": 'joint:M1269+M1250',
+    "all_paths": 'the clause is read only by the schema walk inside parse, after which LoopEpisode::validate (M1250) refuses the same episode'}
+EQUIVALENT_DID |= {'M1257', 'M1254', 'M1226', 'M1245', 'M1263', 'M1217', 'M1240', 'M1253', 'M1246', 'M1259', 'M1248', 'M1236', 'M1242', 'M1262', 'M1241', 'M1207', 'M1244', 'M1238', 'M1237', 'M1256', 'M1225', 'M1261', 'M1203', 'M1232', 'M1243', 'M1252', 'M1220', 'M1250', 'M1251', 'M1260', 'M1264', 'M1223', 'M1227', 'M1219', 'M1258', 'M1208', 'M1268', 'M1233', 'M1249', 'M1202', 'M1247', 'M1209', 'M1265', 'M1214', 'M1224', 'M1239', 'M1266', 'M1267', 'M1269', 'M1255'}
+RETIRED |= {'M1257', 'M1254', 'M1226', 'M1245', 'M1263', 'M1217', 'M1240', 'M1253', 'M1246', 'M1259', 'M1248', 'M1236', 'M1242', 'M1262', 'M1241', 'M1207', 'M1244', 'M1238', 'M1237', 'M1256', 'M1225', 'M1261', 'M1203', 'M1232', 'M1243', 'M1252', 'M1220', 'M1250', 'M1251', 'M1260', 'M1264', 'M1223', 'M1227', 'M1219', 'M1258', 'M1208', 'M1268', 'M1233', 'M1249', 'M1202', 'M1247', 'M1209', 'M1265', 'M1214', 'M1224', 'M1239', 'M1266', 'M1267', 'M1269', 'M1255'}
 # ── end INTEGRATE-A ──
 
 PSV_IDS = {f"M{n}" for n in range(137, 550)}

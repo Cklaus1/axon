@@ -1292,4 +1292,5 @@ ATTACK_MARKERS.update({
     'M1244': 'ATTACK: an outcome_unknown receipt with an exit code: ',
     'M1253': 'ATTACK: a receipt with unknown usage and a cost: ',
     'M1263': 'ATTACK: a pause naming a target policy: ',
+    'M1269': 'ATTACK: a passed episode naming no checked output: ',
 })
