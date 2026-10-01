@@ -2579,6 +2579,66 @@ EQUIV_RECORD["M634"] = {
     "subsumed_by": ["M633"], "killer": "joint:M634+M633",
     "all_paths": "custodian_is_separate has one caller, operator() (M705's call); M634 disables "
                  "the same refusal inside it, so M705's argument applies unchanged"}
+# C9 round 4 fix wave, ROWS2 wave 2, STRICT: dominated sites retired with
+# executed four-cell records (never counted killed).
+EQUIV_RECORD["M796"] = {
+    "property": "the helper launches only a request whose psv_manifest_sha256 is a lowercase sha256",
+    "subsumed_by": ["M623", "M797"], "killer": "joint:M796+M623+M797",
+    "all_paths": "validate_request has one production caller, prepare (via serve_as). Every "
+                 "prepared request reaches observed_launch before anything is launched: "
+                 "snapshot_manifest compares sha256_hex of the snapshot manifest (always 64 "
+                 "lowercase hex) with the request's word (M623), so a word that is not lowercase "
+                 "hex never equals it; and the nonce is spent with that word, which the "
+                 "custodian refuses unless it is 64 lowercase hex (M797). Executed with a "
+                 "genuine observation of the uppercase spelling"}
+EQUIV_RECORD["M801"] = {
+    "property": "each psv input of a request is <out root>/<inputs>/<its fixed leaf>",
+    "subsumed_by": ["M800"], "killer": "joint:M801+M800",
+    "all_paths": "the leaf-name rule and the exact-spelling rule run on the same path p in the "
+                 "same loop iteration. If p's file name is not `leaf`, parent.join(leaf) (a path "
+                 "ending in `leaf`) differs from p, so M800 refuses every input M801 refuses"}
+EQUIV_RECORD["M803"] = {
+    "property": "the root launcher writes only into the out dir the helper created",
+    "subsumed_by": ["M802"], "killer": "joint:M803+M802",
+    "all_paths": "make_out's only caller is prepare; mkdirat must CREATE the out dir (M802), so "
+                 "a pre-existing dir of any owner is refused before the owner re-check. The "
+                 "re-check refuses only a dir replaced between mkdirat and openat, a race no "
+                 "deterministic test interposes; its four-cell attack is a Fabric-owned dir "
+                 "already at the out path"}
+EQUIV_RECORD["M804"] = {
+    "property": "the out dir of a launch is not its psv inputs dir",
+    "subsumed_by": ["M802"], "killer": "joint:M804+M802",
+    "all_paths": "validate_request's only caller is prepare, which creates the out dir with "
+                 "mkdirat (M802) after snapshot_inputs opened the inputs dir: an out name equal "
+                 "to the inputs name names a directory that exists, so mkdirat refuses it"}
+EQUIV_RECORD["M809"] = {
+    "property": "readiness never reads a failed git as an empty answer",
+    "subsumed_by": ["M810"], "killer": "joint:M809+M810",
+    "all_paths": "every git() answer feeds one of: the refs/replace/ refusal (M285, retired: "
+                 "replacement objects are off, M385), the grafts path (an empty answer names the "
+                 "repository itself, which exists, so the graft refusal fires), the index tags "
+                 "(M287/M288, retired: the tree is compared by its bytes), the change lists "
+                 "(diff, diff-index, ls-files --others), which only ADD to `outside`, and HEAD's "
+                 "name for the hash-checked comparison (an empty name makes Objects::entries "
+                 "fail). When the change lists add nothing, the comparison from hash-checked "
+                 "objects runs (M810) and M697 refuses any difference. Executed with a failing "
+                 "`git diff` over a committed code change"}
+EQUIV_RECORD["M813"] = {
+    "property": "a custodian serves only from a store that is a real directory",
+    "subsumed_by": ["M325"], "killer": "joint:M813+M325",
+    "all_paths": "check_store has one caller per custodian mode (the binary, before any "
+                 "connection). A symlink's lstat mode is 0777 on Linux, so the next rule (no "
+                 "group/other access, M325) refuses every symlink; a non-directory the custodian "
+                 "owns with mode 0600 fails every issue and spend (ENOTDIR under it), so it "
+                 "serves nothing. Executed with the production custodian and a symlink it owns"}
+EQUIV_RECORD["M338"] = {
+    "property": "the record's verifier_key_id is a key of the operator's verifier root",
+    "subsumed_by": ["M812"], "killer": "joint:M338+M812",
+    "all_paths": "attribution has one caller (the decision) and always runs launched() at its "
+                 "end (M750). launched() looks verifier_key_id up among the verifier root's "
+                 "exclusive keys and refuses when none has that id; exclusive_keys is a subset "
+                 "of key_ids (it drops keys shared with another root), so every id the "
+                 "membership check refuses the lookup also refuses. Since amendment 57"}
 EQUIVALENT_DID = set(EQUIV_RECORD)
 # STALE: a row whose old text no longer exists. "The old text is absent" shows
 # only that the TEXT changed, not that the guard is gone (C9 dev review: M204
@@ -2699,6 +2759,89 @@ MUTATIONS += [
     ('M779', 'PSV-5: the receipt counts the outcome the guest verdict claims (a counted failure of a guest pass)', 'crates/axon-loop-contracts/src/protected_evidence.rs', '        (RV::Passed, GS::Passed) | (RV::Failed, GS::Failed) => {}\n        (counted, claimed) => {', '        (RV::Passed, GS::Passed) | (RV::Failed, _) => {}\n        (counted, claimed) => {', 'axon-loop', '--test intake', 'a_receipt_counting_a_guest_pass_as_a_failure_is_refused'),
     ('M780', 'A3: the runner runs only a suite entry that is a file in the suite tree', 'crates/axon-psv/src/runner.rs', '    if axon_workspace_recipe::check_path(&m.suite.entry, &Quota::default()).is_err()', '    if false && axon_workspace_recipe::check_path(&m.suite.entry, &Quota::default()).is_err()', 'axon-psv', '--test runner', 'a_suite_entry_outside_the_suite_tree_never_runs'),
     ('M781', "PSV limits: a run whose output exceeded the manifest's limit yields no verdict", 'crates/axon-psv/src/runner.rs', '    if oo || eo {', '    if false && (oo || eo) {', 'axon-psv', '--test runner', 'a_run_that_exceeded_its_output_limit_yields_no_verdict'),
+]
+
+# ── C9 round 4 fix wave, ROWS2 wave 2, STRICT (M795-M814) ──────────────────
+# Refusal sites exempt as "dominated" (or with no stated kind) in
+# scripts/v022_refusal_coverage.py, under the integrator's strict reading:
+# each is an ACTIVE row killed by an attack that reaches it alone, or
+# EQUIVALENT_DID (EQUIV_RECORD below) with an executed four-cell record.
+_S2PL = 'crates/axon-fabric/src/privileged_launcher.rs'
+_S2CU = 'crates/axon-fabric/src/custodian.rs'
+_S2PH = 'crates/axon-fabric/src/protected_host.rs'
+_S2RD = 'crates/axon-fabric/src/readiness.rs'
+_S2HT = '--test privileged_launcher'
+MUTATIONS += [
+    ('M795', 'A: the helper takes one request schema', _S2PL,
+     '    if r.schema != REQUEST_SCHEMA {', '    if false && r.schema != REQUEST_SCHEMA {',
+     'axon-fabric', _S2HT, 'a_request_of_another_schema_launches_nothing'),
+    ('M796', "A: the request's psv_manifest_sha256 is a lowercase sha256", _S2PL,
+     '    if !is_hex64(&r.psv_manifest_sha256) {', '    if false && !is_hex64(&r.psv_manifest_sha256) {',
+     'axon-fabric', _S2HT, 'a_request_naming_its_manifest_digest_in_another_spelling_launches_nothing'),
+    ('M797', 'A84: a custodian spend names its launch manifest as a lowercase sha256 (production custodian)', _S2CU,
+     '                    .filter(|m| is_hex(m, 64))', '                    .filter(|_| true)',
+     'axon-fabric', _S2HT, 'a_protected_custodian_spends_nothing_for_a_spend_naming_no_manifest'),
+    ('M798', "A: a request's timeout is bounded by the operator's max_timeout_s", _S2PL,
+     '    if r.timeout_s == 0 || r.timeout_s > c.max_timeout_s {', '    if r.timeout_s == 0 {',
+     'axon-fabric', _S2HT, 'a_request_asking_for_more_time_than_the_operator_allows_launches_nothing'),
+    ('M799', 'A: the guest policy the helper copies is at most MAX_POLICY bytes', _S2PL,
+     '    if bytes.len() > MAX_POLICY {', '    if false && bytes.len() > MAX_POLICY {',
+     'axon-fabric', _S2HT, 'a_policy_over_the_helpers_bound_launches_nothing'),
+    ('M800', 'A: each psv input is spelled exactly <out root>/<inputs>/<leaf>', _S2PL,
+     '        if parent.join(leaf).as_os_str() != p.as_os_str() {',
+     '        if false && parent.join(leaf).as_os_str() != p.as_os_str() {',
+     'axon-fabric', _S2HT, 'a_psv_input_spelled_another_way_launches_nothing'),
+    ('M801', "A: each psv input names its fixed leaf", _S2PL,
+     '        if p.file_name() != Some(OsStr::new(leaf)) {', '        if false && p.file_name() != Some(OsStr::new(leaf)) {',
+     'axon-fabric', _S2HT, 'a_psv_input_naming_another_leaf_launches_nothing'),
+    ('M802', 'A: the root launcher writes only into an out dir the helper created (mkdirat must create it)', _S2PL,
+     '    if unsafe { libc::mkdirat(root, cn.as_ptr(), 0o700) } != 0 {',
+     '    if unsafe { libc::mkdirat(root, cn.as_ptr(), 0o700) } != 0 && false {',
+     'axon-fabric', _S2HT, 'a_root_owned_out_dir_that_already_exists_is_never_launched_into'),
+    ('M803', 'A: the out dir opened is the one the helper created (owner re-check)', _S2PL,
+     '    if st.st_uid != unsafe { libc::geteuid() } {\n        return Err("the out dir was replaced',
+     '    if false {\n        return Err("the out dir was replaced',
+     'axon-fabric', _S2HT, 'a_fabric_owned_out_dir_that_already_exists_is_never_launched_into'),
+    ('M804', 'A: the out dir is not the psv inputs dir', _S2PL,
+     '    if inputs_name == out_name {', '    if false && inputs_name == out_name {',
+     'axon-fabric', _S2HT, 'an_out_dir_that_is_the_inputs_dir_launches_nothing'),
+    ('M805', "A: the helper reads a psv input only from a directory the Fabric uid owns", _S2PL,
+     '        if st.st_uid != c.fabric_uid {\n            return Err(format!(\n                "psv input {leaf} is owned',
+     '        if false {\n            return Err(format!(\n                "psv input {leaf} is owned',
+     'axon-fabric', _S2HT, 'a_root_owned_candidate_directory_is_never_read_by_the_helper'),
+    ('M806', 'D6: a protected custodian answers only its request schema (production custodian)', _S2CU,
+     '        if r.schema != REQUEST_SCHEMA {\n            return Err(format!("request schema is not',
+     '        if false {\n            return Err(format!("request schema is not',
+     'axon-fabric', _S2HT, 'a_protected_custodian_answers_no_request_of_another_schema'),
+    ('M807', 'the preflight probe list refuses a relative path, as load does', _S2PH,
+     '        if !p.is_absolute() {\n            return Err(bad(format!("{ptr} is not absolute")));',
+     '        if false {\n            return Err(bad(format!("{ptr} is not absolute")));',
+     'axon-fabric', _S2HT, 'the_probe_list_is_refused_for_a_host_config_load_refuses'),
+    ('M808', 'the preflight probe list refuses a host config of another schema, as load does', _S2PH,
+     '    if v["schema"] != PROTECTED_HOST_SCHEMA {\n        return Err(bad(format!("schema is not {PROTECTED_HOST_SCHEMA}")));\n    }\n    let path_at',
+     '    if false {\n        return Err(bad(format!("schema is not {PROTECTED_HOST_SCHEMA}")));\n    }\n    let path_at',
+     'axon-fabric', _S2HT, 'the_probe_list_is_refused_for_a_host_config_load_refuses'),
+    ('M809', 'readiness: a failed git is never read as an empty answer (the git() primitive)', _S2RD,
+     '    if !out.status.success() {\n        return Err(format!(\n            "{component}: git {} failed',
+     '    if false {\n        return Err(format!(\n            "{component}: git {} failed',
+     'axon-fabric', '--test readiness', 'a_failed_git_is_never_read_as_no_change'),
+    ('M810', 'readiness: when git reports no change, the change set is recomputed from hash-checked objects', _S2RD,
+     '    if outside.is_empty() {\n        let head = git(', '    if false {\n        let head = git(',
+     'axon-fabric', '--test readiness', 'a_gitignored_input_is_not_certified'),
+    ('M811', "psv: an observer that exits non-zero authorizes nothing, whatever it left", 'crates/axon-fabric/src/observer.rs',
+     '    if !status.success() {\n        return Err(format!("observer exited',
+     '    if false {\n        return Err(format!("observer exited',
+     'axon-fabric', '--test psv_dispatch', 'every_defective_observation_launches_nothing_on_the_direct_route'),
+    ('M812', "FIELD-ORIGIN (A88): the attestation is verified under the key verifier_key_id names", _S2RD,
+     '        .find(|k| attestation::key_id_of_hex(k).as_deref() == Some(s("verifier_key_id")))',
+     '        .find(|k| {\n            let att = &run["receipt_attestation"];\n            OpaqueRef::new(att["issuer_ref"].as_str().unwrap_or(""))\n                .is_ok_and(|i| attestation::verify(att, &i, &req, &rc, k).is_ok())\n        })',
+     'axon-fabric', '--test readiness_launch', 'the_verifier_key_id_is_the_key_that_attested_the_run'),
+    ('M813', "D6: a custodian's store is a real directory, never a symlink", _S2CU,
+     '    if m.file_type().is_symlink() || !m.is_dir() {', '    if false && (m.file_type().is_symlink() || !m.is_dir()) {',
+     'axon-fabric', _S2HT, 'a_protected_custodian_never_serves_from_a_symlinked_store'),
+    ('M814', 'E: readiness certifies only the TOP of a standalone clone', _S2RD,
+     '    if found != top {', '    if false && found != top {',
+     'axon-fabric', '--test readiness', 'a_directory_inside_a_clone_is_not_certified'),
 ]
 
 BINDING_IDS = {f"M{n}" for n in range(101, 137)}

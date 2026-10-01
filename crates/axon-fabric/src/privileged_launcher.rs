@@ -1440,7 +1440,10 @@ mod tests {
         for edit in [
             (|r: &mut LaunchRequest| r.id = "a;rm -rf /".into()) as fn(&mut LaunchRequest),
             |r| r.id = String::new(),
-            |r| r.psv_manifest_sha256 = "B".repeat(64),
+            // The manifest digest's format rule is retired EQUIVALENT_DID
+            // (M796, four-cell record on the helper route, C9 round 4 rows2):
+            // a direct case here would fail its full-suite cell while proving
+            // nothing the helper route does not.
             |r| r.timeout_s = 0,
             |r| r.timeout_s = 601,
             |r| r.schema = "axon-protected-launch-request/1".into(),

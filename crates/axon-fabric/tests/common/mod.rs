@@ -692,6 +692,10 @@ PY
 {fabric} sign-evidence --record "$O/observation.json" --key {key} --authority {authority} >/dev/null || exit 1
 # Keep this genuine signed observation, so a later test can REPLAY it.
 cp "$O/observation.json" "{prev}"; cp "$O/observation.json.sig" "{prev}.sig"
+# `disown`: a genuine, signed observation left behind, and the observer then
+# reports failure (its exit status is its statement that the run is not good).
+[ "{mode}" = disown ] && exit 3
+exit 0
 "#,
             kid = key.key_id,
             prev = d.join("prev-observation.json").display(),
