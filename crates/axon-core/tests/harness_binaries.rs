@@ -526,6 +526,65 @@ fn a_named_binary_older_than_its_sources_is_refused() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// A file a TEST writes into a crate (a git-ignored output, such as
+/// axon-core's `out/`) is not a source the binary is built from: it must not
+/// make a current binary read as stale. It did, so in one paired-disable
+/// full-suite cell every consumer that ran after axon-core's own suite
+/// refused the interpreter the harness had just built (M58, C9 round 4;
+/// amendment 59). Control: a tracked source newer than the binary still
+/// refuses it (`a_named_binary_older_than_its_sources_is_refused`).
+#[test]
+fn an_ignored_output_written_into_a_crate_is_not_a_source() {
+    let root = scratch("ignored-output");
+    let fresh = root.join("axon-fresh");
+    write(&fresh, "#!/bin/sh\n");
+    // The output is written AFTER the binary: newer than it, as the suite's
+    // `out/` was than the interpreter built before the suite ran.
+    let out = repo_root().join("crates/axon-core/out");
+    let written = out.join(format!("ignored-output-probe-{}.txt", std::process::id()));
+    std::fs::create_dir_all(&out).unwrap();
+    std::fs::write(&written, "an output a test wrote\n").unwrap();
+    // Strictly newer, whatever the filesystem's timestamp granularity.
+    let after =
+        std::fs::metadata(&fresh).unwrap().modified().unwrap() + std::time::Duration::from_secs(2);
+    std::fs::File::options()
+        .write(true)
+        .open(&written)
+        .unwrap()
+        .set_modified(after)
+        .unwrap();
+    let ignored = std::process::Command::new("git")
+        .arg("-C")
+        .arg(repo_root())
+        .args(["check-ignore", "-q"])
+        .arg(&written)
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    // Only this test reads this variable.
+    std::env::set_var("AXON_TEST_IGNORED_OUT_BIN", &fresh);
+    let build = [
+        "build",
+        "-p",
+        "axon-core",
+        "--no-default-features",
+        "--bin",
+        "axon",
+    ];
+    let got = std::panic::catch_unwind(|| {
+        script_spawn::workspace_bin("AXON_TEST_IGNORED_OUT_BIN", &build, "axon")
+    });
+    std::env::remove_var("AXON_TEST_IGNORED_OUT_BIN");
+    let _ = std::fs::remove_file(&written);
+    let _ = std::fs::remove_dir_all(&root);
+    assert!(ignored, "setup: {} is not git-ignored", written.display());
+    assert!(
+        got.is_ok(),
+        "ATTACK: an ignored output a test wrote into the crate made a current binary read as \
+         stale"
+    );
+}
+
 /// The workspace drift gate refuses a test that resolves a workspace binary
 /// itself -- reading AXON_BIN / CORTEX_BIN, or joining a `<profile>/axon` or
 /// `<profile>/cortex` path -- instead of `script_spawn::workspace_bin`. That is

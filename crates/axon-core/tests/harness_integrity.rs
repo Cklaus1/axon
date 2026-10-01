@@ -473,10 +473,18 @@ const PROBE: &str = r##"
 fn probe() {
     use std::io::Write;
     use std::os::unix::fs::PermissionsExt;
-    if let Some(p) = std::env::var_os("FAKE_PLANT") {
+    // Only a test that runs scripts can leave a script-built binary behind
+    // (each file says so in RUNS_SCRIPTS, as it calls script_spawn::script).
+    if let Some(p) = std::env::var_os("FAKE_PLANT").filter(|_| RUNS_SCRIPTS) {
         let p = std::path::PathBuf::from(p);
         std::fs::create_dir_all(p.parent().unwrap()).unwrap();
         std::fs::write(&p, "#!/bin/sh\n").unwrap();
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    if let Some(p) = std::env::var_os("FAKE_CLOBBER") {
+        let p = std::path::PathBuf::from(p);
+        let _ = std::fs::remove_file(&p);
+        std::fs::write(&p, "#!/bin/sh\n# clobbered by a cell\n").unwrap();
         std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
     }
     if let Some(l) = std::env::var_os("FAKE_ENV_LOG") {
@@ -523,7 +531,8 @@ fn miniature(tag: &str) -> PathBuf {
     write(
         &r.join("crates/axon-core/tests/harness_binaries.rs"),
         &format!(
-            "// This test runs repository scripts through script_spawn::script(...).\n{PROBE}\n\
+            "// This test runs repository scripts through script_spawn::script(...).\n\
+             const RUNS_SCRIPTS: bool = true;\n{PROBE}\n\
              #[test]\nfn an_ambient_binary_variable_never_reaches_a_script() {{\n    probe();\n    \
              assert!(!include_str!(\"script_spawn/mod.rs\").contains(\"let _ = v;\"), \
              \"ATTACK: an ambient binary-naming variable reached a script\");\n}}\n"
@@ -541,9 +550,18 @@ fn miniature(tag: &str) -> PathBuf {
     write(
         &r.join("crates/axon-loop/tests/protected_class.rs"),
         &format!(
-            "{PROBE}\n#[test]\nfn a_key_revoked_at_the_operator_root_no_longer_counts() {{ probe(); }}\n\
+            "const RUNS_SCRIPTS: bool = false;\n{PROBE}\n#[test]\nfn a_key_revoked_at_the_operator_root_no_longer_counts() {{ probe(); }}\n\
              #[test]\nfn a_forged_unsigned_clearance_clears_nothing() {{ probe(); }}\n\
              #[test]\nfn a_root_only_test() {{ eprintln!(\"skipped: needs root (fixture)\"); }}\n"
+        ),
+    );
+    // Another suite test of the row's package that runs scripts: a full-suite
+    // cell runs it, the row's own test does not.
+    write(
+        &r.join("crates/axon-loop/tests/scripts.rs"),
+        &format!(
+            "// This test runs repository scripts through script_spawn::script(...).\n\
+             const RUNS_SCRIPTS: bool = true;\n{PROBE}\n#[test]\nfn a_script_building_test() {{ probe(); }}\n"
         ),
     );
     package(
@@ -663,4 +681,382 @@ fn a_paired_disable_run_scrubs_counts_skips_and_hides_the_callers_binary() {
     );
     let _ = std::fs::remove_dir_all(&r);
     let _ = std::fs::remove_dir_all(out.parent().unwrap());
+}
+
+// ── a cell's build is judged by its own cargo invocation (amendment 59) ─────
+
+/// What a test prints when a workspace binary it builds itself
+/// (`script_spawn::workspace_bin`) fails to build: the nested cargo's
+/// diagnostics, on the stderr the test process inherited (libtest does not
+/// capture a child's output). The test itself is unaffected and passes.
+const NESTED_NOISE: &str = r##"
+fn nested_build_noise() {
+    let _ = std::process::Command::new("sh")
+        .args(["-c", "echo 'error[E0425]: cannot find value in this scope' >&2; echo 'error: could not compile `nested` (lib) due to 1 previous error' >&2"])
+        .status();
+}
+"##;
+
+/// A test file of the miniature `r` rewritten with `edit`, committed.
+fn recommit(r: &Path, file: &str, edit: impl FnOnce(String) -> String) {
+    let p = r.join(file);
+    let s = std::fs::read_to_string(&p).unwrap();
+    write(&p, &edit(s));
+    git(r, &["add", "-A"]);
+    git(r, &["commit", "-q", "-m", "fixture edit"]);
+}
+
+/// Every test of `file` prints a nested build's failure and still passes.
+fn noisy(r: &Path, file: &str) {
+    recommit(r, file, |s| {
+        format!(
+            "{NESTED_NOISE}\n{}",
+            s.replace("probe();", "probe(); nested_build_noise();")
+        )
+    });
+}
+
+/// `file` no longer compiles.
+fn broken(r: &Path, file: &str) {
+    recommit(r, file, |s| {
+        format!("{s}\n#[allow(dead_code)]\nfn broken() -> i64 {{ \"not an integer\" }}\n")
+    })
+}
+
+/// The paths a harness printed as `output kept: <path>`.
+fn kept(o: &Output) -> Vec<PathBuf> {
+    text(o)
+        .lines()
+        .filter_map(|l| l.trim().strip_prefix("output kept: "))
+        .map(PathBuf::from)
+        .collect()
+}
+
+/// A nested build's failure printed INSIDE a passing test is not the row's
+/// compile error: the mutation harness judged "compile_error" from any
+/// `could not compile` / `error[E` anywhere in the output, so M278's baseline
+/// (whose test builds the interpreter through workspace_bin) read
+/// compile_error in a sharded run (C9 round 4). Control: the row is killed.
+#[test]
+fn a_mutation_run_does_not_take_a_tests_nested_build_output_for_a_compile_error() {
+    let r = miniature("mut-noise");
+    noisy(&r, "crates/axon-core/tests/harness_binaries.rs");
+    let out = scratch("mut-noise-out").join("run.json");
+    let (o, _, _) = run_cells(
+        &r,
+        HARNESS[0],
+        &["--scope=all", "--only=M722", out.to_str().unwrap()],
+    );
+    let doc: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&out).unwrap_or_else(|_| "{}".into()))
+            .unwrap_or_default();
+    let row = doc["mutations"][0].clone();
+    assert!(
+        row["id"] == "M722",
+        "setup: the miniature row was not run: {}\n{doc}",
+        text(&o)
+    );
+    assert_eq!(
+        (row["baseline"].as_str(), row["result"].as_str()),
+        (Some("passed"), Some("killed")),
+        "ATTACK: a nested build's failure printed inside a passing test was taken for the \
+         row's own compile error: {}\n{row}",
+        text(&o)
+    );
+    let _ = std::fs::remove_dir_all(&r);
+    let _ = std::fs::remove_dir_all(out.parent().unwrap());
+}
+
+/// The same for paired-disable: a nested build's failure printed inside a
+/// passing test made a full-suite (or consumer) cell read COMPILE_ERROR, and
+/// a consumer baseline CONSUMER_BASELINE_BROKEN (M58, C9 round 4).
+#[test]
+fn a_paired_disable_run_does_not_take_a_tests_nested_build_output_for_a_compile_error() {
+    let r = miniature("pd-noise");
+    noisy(&r, "crates/axon-loop/tests/protected_class.rs");
+    // The record's own test judges its guard set (M245, sibling M264): its
+    // attack succeeds only in the joint cell, as a real record's does, so
+    // that cell FAILS and must keep its output.
+    let (m245, m264) = (old_text(&r, "M245"), old_text(&r, "M264"));
+    recommit(&r, "crates/axon-loop/tests/protected_class.rs", |s| {
+        s.replace(
+            "fn a_key_revoked_at_the_operator_root_no_longer_counts() { probe(); nested_build_noise(); }",
+            &format!(
+                "fn a_key_revoked_at_the_operator_root_no_longer_counts() {{ probe(); \
+                 nested_build_noise();\n    let s = include_str!(\"../src/admission.rs\");\n    \
+                 assert!(s.contains(r###\"{m245}\"###) || s.contains(r###\"{m264}\"###), \
+                 \"ATTACK: monitor: activated on a revoked key\"); }}"
+            ),
+        )
+    });
+    let out = scratch("pd-noise-out").join("status.json");
+    let (o, _, _) = run_cells(&r, HARNESS[2], &["--only=M245", out.to_str().unwrap()]);
+    let doc: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&out).unwrap_or_else(|_| "{}".into()))
+            .unwrap_or_default();
+    let rec = doc["records"]
+        .as_array()
+        .and_then(|rs| rs.iter().find(|x| x["mutation"] == "M245"))
+        .cloned()
+        .unwrap_or_default();
+    assert!(
+        rec["matrix"]["retired_guard_full_suite"].is_string(),
+        "setup: the miniature record was not executed: {}\n{doc}",
+        text(&o)
+    );
+    assert_eq!(
+        (
+            rec["matrix"]["baseline"].as_str(),
+            rec["matrix"]["retired_guard_full_suite"].as_str()
+        ),
+        (Some("ATTACK_REFUSED"), Some("SUITE_OK")),
+        "ATTACK: a nested build's failure printed inside a passing test was taken for a \
+         broken build: {}\n{}",
+        text(&o),
+        rec["matrix"]
+    );
+    // The cell where the attack succeeds did not pass: its output is kept.
+    assert!(
+        kept(&o).iter().any(|p| p
+            .file_name()
+            .is_some_and(|n| n.to_string_lossy().starts_with("pd-cell-"))
+            && std::fs::read_to_string(p)
+                .unwrap_or_default()
+                .contains("ATTACK:")),
+        "ATTACK: a paired-disable cell whose test failed kept no output (kept {:?})",
+        kept(&o)
+    );
+    let _ = std::fs::remove_dir_all(&r);
+    let _ = std::fs::remove_dir_all(out.parent().unwrap());
+}
+
+/// A baseline that does not build keeps its whole output, and says where:
+/// the mutation record carried only the label `compile_error`, so M278's
+/// environmental failure left nothing to diagnose (C9 round 4).
+#[test]
+fn a_mutation_baseline_that_does_not_build_keeps_its_output() {
+    let r = miniature("mut-broken");
+    broken(&r, "crates/axon-core/tests/harness_binaries.rs");
+    let out = scratch("mut-broken-out").join("run.json");
+    let (o, _, _) = run_cells(
+        &r,
+        HARNESS[0],
+        &["--scope=all", "--only=M722", out.to_str().unwrap()],
+    );
+    let doc: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&out).unwrap_or_else(|_| "{}".into()))
+            .unwrap_or_default();
+    let row = doc["mutations"][0].clone();
+    assert_eq!(
+        row["baseline"].as_str(),
+        Some("compile_error"),
+        "setup: the broken baseline did not read compile_error: {}\n{doc}",
+        text(&o)
+    );
+    let path = row["baseline_output"].as_str().map(PathBuf::from);
+    let body = path
+        .as_ref()
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .unwrap_or_default();
+    assert!(
+        body.contains("error[E0308]") && kept(&o).contains(path.as_ref().unwrap()),
+        "ATTACK: a baseline that did not build kept no output (record {row}; printed {:?})",
+        kept(&o)
+    );
+    let cell = row["cell_output"].as_str().map(PathBuf::from);
+    assert!(
+        cell.as_ref()
+            .and_then(|p| std::fs::read_to_string(p).ok())
+            .is_some_and(|b| b.contains("error[E0308]"))
+            && kept(&o).contains(cell.as_ref().unwrap()),
+        "ATTACK: a mutated cell that did not pass kept no output (record {row})"
+    );
+    let _ = std::fs::remove_dir_all(&r);
+    let _ = std::fs::remove_dir_all(out.parent().unwrap());
+}
+
+/// A paired-disable cell that does not build keeps its whole output: the
+/// full-suite cell returned on a compile error BEFORE its keep-the-output
+/// branch, so M58's CONSUMER_BASELINE_BROKEN left nothing (C9 round 4).
+#[test]
+fn a_paired_disable_cell_that_does_not_build_keeps_its_output() {
+    let r = miniature("pd-broken");
+    broken(&r, "crates/axon-loop/tests/protected_class.rs");
+    let out = scratch("pd-broken-out").join("status.json");
+    let (o, _, _) = run_cells(&r, HARNESS[2], &["--only=M245", out.to_str().unwrap()]);
+    // A cell's own test build (`run_test`) and a full-suite build
+    // (`full_suite_ok`) each keep theirs.
+    for (kind, what) in [
+        (
+            "pd-cell-build-",
+            "a paired-disable cell whose test did not build",
+        ),
+        (
+            "pd-suite-build-",
+            "a paired-disable full-suite cell that did not build",
+        ),
+    ] {
+        let builds: Vec<PathBuf> = kept(&o)
+            .into_iter()
+            .filter(|p| {
+                p.file_name()
+                    .is_some_and(|n| n.to_string_lossy().starts_with(kind))
+            })
+            .collect();
+        assert!(
+            !builds.is_empty()
+                && builds.iter().all(|p| std::fs::read_to_string(p)
+                    .unwrap_or_default()
+                    .contains("error[E0308]")),
+            "ATTACK: {what} kept no output (kept {:?}): {}",
+            kept(&o),
+            text(&o)
+        );
+    }
+    let _ = std::fs::remove_dir_all(&r);
+    let _ = std::fs::remove_dir_all(out.parent().unwrap());
+}
+
+// ── every row and cell ends on the run's interpreter (amendment 59) ─────────
+
+/// Give the miniature's axon-core the REAL build script (it embeds
+/// `<sha>-dirty` from `git status`, and is re-run only when .git/HEAD,
+/// .git/index or src/ change) and an `axon` that reports it, with the
+/// lockfile committed as in the real tree (an untracked one would make every
+/// build `-dirty` for a reason that is not the mechanism).
+fn real_build_script(r: &Path) {
+    write(
+        &r.join("crates/axon-core/build.rs"),
+        &std::fs::read_to_string(repo_root().join("crates/axon-core/build.rs")).unwrap(),
+    );
+    write(
+        &r.join("crates/axon-core/src/main.rs"),
+        "fn main() { println!(\"axon 0.0.0 ({})\", env!(\"AXON_GIT_SHA\")); }\n",
+    );
+    let o = Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".into()))
+        .args(["generate-lockfile", "--offline"])
+        .current_dir(r)
+        .output()
+        .unwrap();
+    assert!(o.status.success(), "setup: cargo generate-lockfile: {o:?}");
+    git(r, &["add", "-A"]);
+    git(r, &["commit", "-q", "-m", "build script"]);
+}
+
+/// The identity the miniature run's interpreter (in the scratch target dir
+/// `tgt`) was built with, read from its bytes -- the `AXON_GIT_SHA` string
+/// is embedded verbatim -- rather than by executing it: `clean`, `dirty`, or
+/// `absent`.
+fn built_identity(tgt: &Path) -> &'static str {
+    match std::fs::read(tgt.join("debug").join("axon")) {
+        Err(_) => "absent",
+        Ok(b) if b.windows(6).any(|w| w == b"-dirty") => "dirty",
+        Ok(_) => "clean",
+    }
+}
+
+/// Like [`run_cells`], in the target dir `tgt`.
+fn run_cells_in(r: &Path, tgt: &Path, script: &str, args: &[&str]) -> Output {
+    harness_cmd(r, script, args)
+        .env("CARGO_TARGET_DIR", tgt)
+        .env_remove("AXON_BIN")
+        .env("V022_MUT_MEM", "4G")
+        .output()
+        .unwrap()
+}
+
+/// A mutated cell that leaves the run's interpreter changed is restored
+/// before the next row, or fails ITS row. Here the cell's build re-runs the
+/// build script on the mutated tree (the baseline's test refreshed the
+/// index, as a build script's `git status` does), baking `-dirty` in, and
+/// the restoring build keeps it: nothing the build script watches changed
+/// again. That was noticed only by the end-of-run comparison, after every
+/// later row had run on it (49eb3765 shard 1: `BAD interpreter binary
+/// changed during the run`, `axon --version` = `49eb3765-dirty`).
+#[test]
+fn a_mutation_run_restores_the_interpreter_after_every_row() {
+    let r = miniature("mut-interp");
+    real_build_script(&r);
+    recommit(&r, "crates/axon-core/tests/harness_binaries.rs", |s| {
+        format!(
+            "fn refresh_index() {{\n    if !include_str!(\"script_spawn/mod.rs\").contains(\"let _ = v;\") {{\n        \
+             let i = std::path::Path::new(env!(\"CARGO_MANIFEST_DIR\")).join(\"../../.git/index\");\n        \
+             let f = std::fs::OpenOptions::new().write(true).open(&i).unwrap();\n        \
+             f.set_modified(std::time::SystemTime::now()).unwrap();\n    }}\n}}\n{}",
+            s.replace("probe();", "probe(); refresh_index();")
+        )
+    });
+    let out = scratch("mut-interp-out").join("run.json");
+    let tgt = scratch("mut-interp-tgt");
+    let o = run_cells_in(
+        &r,
+        &tgt,
+        HARNESS[0],
+        &["--scope=all", "--only=M722", out.to_str().unwrap()],
+    );
+    let doc: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&out).unwrap_or_else(|_| "{}".into()))
+            .unwrap_or_default();
+    let row = doc["mutations"][0].clone();
+    assert_eq!(
+        row["result"].as_str(),
+        Some("killed"),
+        "setup: the miniature row was not run and killed: {}\n{doc}",
+        text(&o)
+    );
+    let identity = built_identity(&tgt);
+    assert_ne!(identity, "absent", "setup: the run left no interpreter");
+    assert!(
+        !text(&o).contains("interpreter binary changed")
+            && row.get("interpreter_not_restored").is_none()
+            && identity == "clean",
+        "ATTACK: a mutated cell left the run's interpreter changed and the rows after it ran on \
+         it (final interpreter built {identity}): {}",
+        text(&o)
+    );
+    let _ = std::fs::remove_dir_all(&r);
+    let _ = std::fs::remove_dir_all(out.parent().unwrap());
+    let _ = std::fs::remove_dir_all(&tgt);
+}
+
+/// paired-disable rebuilds a prerequisite only when it is missing or is not
+/// the clean build's bytes (amendment 59: rebuilding all of them after every
+/// cell cost ~45 min per record) -- and then it must. Every cell here
+/// replaces the run's `cortex` binary, as a cell building from a mutated
+/// tree would; no later cell, and not the run's end, may meet that file.
+#[test]
+fn a_paired_disable_cell_restores_a_prerequisite_it_changed() {
+    let r = miniature("pd-prereq");
+    let tgt = scratch("pd-prereq-tgt");
+    let out = scratch("pd-prereq-out").join("status.json");
+    let cortex = tgt.join("debug").join("cortex");
+    let o = harness_cmd(&r, HARNESS[2], &["--only=M245", out.to_str().unwrap()])
+        .env("CARGO_TARGET_DIR", &tgt)
+        .env_remove("AXON_BIN")
+        .env("FAKE_CLOBBER", &cortex)
+        .env("V022_MUT_MEM", "4G")
+        .output()
+        .unwrap();
+    let doc: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&out).unwrap_or_else(|_| "{}".into()))
+            .unwrap_or_default();
+    let rec = doc["records"]
+        .as_array()
+        .and_then(|rs| rs.iter().find(|x| x["mutation"] == "M245"))
+        .cloned()
+        .unwrap_or_default();
+    assert!(
+        rec["matrix"]["retired_guard_full_suite"].is_string(),
+        "setup: the miniature record was not executed: {}\n{doc}",
+        text(&o)
+    );
+    let now = std::fs::read(&cortex).unwrap_or_default();
+    assert!(
+        !now.is_empty() && !String::from_utf8_lossy(&now).contains("clobbered by a cell"),
+        "ATTACK: a prerequisite a cell replaced was not rebuilt from the clean tree: {}",
+        text(&o)
+    );
+    let _ = std::fs::remove_dir_all(&r);
+    let _ = std::fs::remove_dir_all(out.parent().unwrap());
+    let _ = std::fs::remove_dir_all(&tgt);
 }

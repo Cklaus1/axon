@@ -89,15 +89,34 @@ def cargo_target_dir():
         sys.exit(f"refused: cannot tell where cargo builds (cargo metadata: {r.stderr.strip()[-300:]})")
 
 
+def build_tests(pkg, flags, env=""):
+    """Build the tests a cell runs, ALONE: (ok, output). Whether the cell's
+    edit broke the build is the outcome of THIS cargo invocation, never a
+    string found in a test's output: tests build and exec workspace binaries
+    themselves (script_spawn::workspace_bin), and a nested build that fails
+    prints `could not compile` into the test's output (C9 round 4,
+    amendment 59; M58's consumer baseline read CONSUMER_BASELINE_BROKEN)."""
+    build_flags = f" {flags} ".split(" -- ")[0].strip()
+    r = sh(f"source scripts/lib_bounded_run.sh && {mut.UNSET_AMBIENT}"
+           f"{env}bounded_run 12G 2400 cargo test -q -p {pkg} {build_flags} --no-run 2>&1")
+    return r.returncode == 0, r.stdout + r.stderr
+
+
 def run_test(pkg, target, test):
-    """True iff the row's test PASSES (attack refused)."""
+    """True iff the row's test PASSES (attack refused). None: the build
+    failed. A cell that did not pass keeps its whole output (amendment 59)."""
+    built, bout = build_tests(pkg, target)
+    if not built:
+        mut.keep_output(f"pd-cell-build-{pkg}", bout)
+        return None, bout  # a broken edit (or a killed build), not a verdict
     cmd = (f"source scripts/lib_bounded_run.sh && {mut.UNSET_AMBIENT}"
            f"bounded_run 12G 1200 cargo test -q -p {pkg} {target} -- --exact {test}")
     r = sh(cmd)
     out = r.stdout + r.stderr
-    if "could not compile" in out or "error[E" in out:
-        return None, out  # a broken edit, not a verdict
-    return (r.returncode == 0 and "1 passed" in out), out
+    passed = r.returncode == 0 and "1 passed" in out
+    if not passed:
+        mut.keep_output(f"pd-cell-{pkg}-{test.split('::')[-1]}", out)
+    return passed, out
 
 
 def row_flags(target):
@@ -203,12 +222,19 @@ def full_suite_ok(pkg, flags="", env=""):
     broken build."""
     import re as _re
     show = f"{flags} --show-output" if " -- " in f" {flags} " else f"{flags} -- --show-output"
+    # The build first, alone: a broken build is THIS invocation's failure,
+    # and its output is kept like any other cell's (amendment 59: the early
+    # return used to come BEFORE the keep, so a compile error kept nothing).
+    built, bout = build_tests(pkg, flags, env)
+    if not built:
+        mut.keep_output(f"pd-suite-build-{pkg}", bout)
+        return None, bout
     cmd = (f"source scripts/lib_bounded_run.sh && {mut.UNSET_AMBIENT}"
            f"{env}bounded_run 12G 2400 cargo test -q -p {pkg} {show} 2>&1")
     r = sh(cmd)
     out = r.stdout + r.stderr
-    if "could not compile" in out or "error[E" in out:
-        return None, out
+    # The tests are built: compiler text in this output is a TEST's (a nested
+    # build it ran, or a diagnostic it printed), judged as that test's result.
     # Both libtest formats: `name ... FAILED` and, under -q, `name --- FAILED`.
     fails = sorted(set(_re.findall(r"^\s*(\S+)\s+(?:\.\.\.|---)\s+FAILED", out, _re.M)))
     ok = (r.returncode == 0 and "test result: FAILED" not in out)
@@ -216,14 +242,7 @@ def full_suite_ok(pkg, flags="", env=""):
     if not ok:
         # Keep the failing cell's whole output: a failure that does not
         # reproduce is diagnosable only from the panic it actually printed.
-        import hashlib as _h
-        d = "/var/tmp/pd-cells"
-        os.makedirs(d, exist_ok=True)
-        tag = _h.sha256((pkg + flags + env + out).encode()).hexdigest()[:12]
-        path = os.path.join(d, f"{pkg}-{tag}.log")
-        with open(path, "w") as fh:
-            fh.write(out)
-        print(f"    cell output kept: {path}", flush=True)
+        mut.keep_output(f"pd-suite-{pkg}", out)
     return ok, fails
 
 
@@ -339,14 +358,67 @@ def build_axon():
               "cargo build -q -p axon-core --no-default-features --bin axon").returncode == 0
 
 
-def after_cell(edits):
-    """After a cell that ran a MUTATED tree: remove every executable a script
-    built into the workspace target dir from it, then rebuild this run's
-    prerequisites from the restored tree, so no later cell (or script) meets a
-    mutant binary (C9 round 4, EQUIVALENCE (6d))."""
-    if any(e[0].startswith("crates/") for e in edits):
+def after_cell(edits, spawned):
+    """After a cell that ran a MUTATED tree, the next cell must meet no binary
+    built from it (C9 round 4, EQUIVALENCE (6d)), and pay nothing when nothing
+    can be stale (amendment 59; a 2-shard run spent ~45 min per record
+    rebuilding every prerequisite after every cell):
+
+    * scrub the workspace target dir only when the cell ran a script that
+      builds (`spawned`: the row's test target, or any suite the cell ran,
+      calls the spawn helper) from a tree edited under crates/;
+    * rebuild a prerequisite only when it is missing or its sha256 is not the
+      clean build's recorded digest;
+    * rebuild and byte-compare the interpreter always (a no-op build when
+      nothing changed), re-running axon-core's build script if needed: a
+      mutated cell can leave it `-dirty`, and a restoring build keeps it.
+
+    A prerequisite that cannot be restored is the record's failure."""
+    if spawned and any(e[0].startswith("crates/") for e in edits):
         mut.scrub_workspace_binaries()
-        build_prereqs()
+    for what, cmd, arts in PREREQS:
+        if what == "axon" or all(
+                os.path.exists(a) and mut.sha(a) == PREREQ_SHA.get(a) for a in arts):
+            continue
+        r = sh(f"source scripts/lib_bounded_run.sh && bounded_run 16G 1800 {cmd}")
+        bad = [a for a in arts if not os.path.exists(a) or mut.sha(a) != PREREQ_SHA.get(a)]
+        if r.returncode != 0 or bad:
+            INTERP_FAULTS.append(f"{what}: not restored from the clean tree ({bad or cmd})")
+    if INTERP:
+        why = mut.restore_interpreter(INTERP["path"], INTERP["sha256"])
+        if why:
+            INTERP_FAULTS.append(why)
+
+
+def prereq_artifacts():
+    """(what, build command, the files it leaves) for every prerequisite a
+    cell execs, the files named from cargo's own metadata (the bins of
+    axon-cortex), never a guessed list."""
+    tgt = cargo_target_dir()
+    meta = json.loads(subprocess.run(
+        ["cargo", "metadata", "--format-version", "1", "--no-deps"], cwd=ROOT,
+        capture_output=True, text=True).stdout or "{}")
+    cortex = [t["name"] for p in meta.get("packages", []) if p["name"] == "axon-cortex"
+              for t in p["targets"] if "bin" in t["kind"]]
+    return [
+        ("axon", "cargo build -q -p axon-core --no-default-features --bin axon",
+         [os.path.join(tgt, "debug", "axon")]),
+        ("cortex bins", "cargo build -q -p axon-cortex --bins",
+         [os.path.join(tgt, "debug", n) for n in cortex]),
+        ("psv_dev", "cargo build -q -p axon-psv --example psv_dev",
+         [os.path.join(tgt, "debug", "examples", "psv_dev")]),
+    ]
+
+
+# Every prerequisite and the sha256 of each file the clean build left.
+PREREQS = []
+PREREQ_SHA = {}
+
+
+# The run's interpreter (path, sha256), recorded once the prerequisites are
+# built from the clean tree; and every failure to restore it after a cell.
+INTERP = {}
+INTERP_FAULTS = []
 
 
 def edits_digest(rid, siblings):
@@ -370,9 +442,7 @@ def build_prereqs():
     a fresh shard target) breaks every cell of the suite that needs it for a
     reason that says nothing about the guard, so a run without them is
     refused rather than recorded as a page of SUITE_BROKEN."""
-    for what, cmd in (("axon", "cargo build -q -p axon-core --no-default-features --bin axon"),
-                      ("cortex bins", "cargo build -q -p axon-cortex --bins"),
-                      ("psv_dev", "cargo build -q -p axon-psv --example psv_dev")):
+    for what, cmd, _ in prereq_artifacts():
         if sh(f"source scripts/lib_bounded_run.sh && bounded_run 16G 1800 {cmd}").returncode != 0:
             sys.exit(f"refused: could not build {what} ({cmd}); no cell runs without it")
 
@@ -643,6 +713,10 @@ def main():
                      f"({sorted(stale)}); re-execute them (--reexecute-stale) or name them in --only")
         only |= set(stale)
     build_prereqs()
+    INTERP["path"] = os.path.join(cargo_target_dir(), "debug", "axon")
+    INTERP["sha256"] = mut.clean_interpreter(INTERP["path"])
+    PREREQS[:] = prereq_artifacts()
+    PREREQ_SHA.update({a: mut.sha(a) for _, _, arts in PREREQS for a in arts if os.path.exists(a)})
     records = []
     # A row with no marker can never show its attack succeeding, so its joint
     # cell would read OTHER_FAILURE by construction (M58/M245, C9 round 1b).
@@ -658,6 +732,7 @@ def main():
         rec = mut.EQUIV_RECORD[rid]
         row = BY_ID[rid]
         pkg, target, test = row[5], row[6], row[7]
+        faults_before = len(INTERP_FAULTS)
         a = [edit_of(rid)]
         sibs = gs["siblings"]
         b = [edit_of(s) for s in sibs]
@@ -672,7 +747,7 @@ def main():
                 passed, out = run_test(pkg, target, test)
             finally:
                 rest()
-                after_cell(edits)
+                after_cell(edits, mut.spawns_scripts(pkg, target))
             if passed is None:
                 return "COMPILE_ERROR"
             if passed:
@@ -723,7 +798,8 @@ def main():
                         fails = [f"{c}: {t}" for t in cfails][:6] + [f"{c}: (suite failed)"] + fails
             finally:
                 rest()
-                after_cell(edits)
+                after_cell(edits, any(mut.package_spawns_scripts(p)
+                                      for p in [pkg, owner_crate, *consumers]))
             if fok is None or "COMPILE_ERROR" in states.values():
                 return "COMPILE_ERROR", [], states
             ok_all = fok and all(v == "SUITE_OK" for v in states.values())
@@ -773,9 +849,12 @@ def main():
             for k, v in CELL_SKIPS.items() if v and (k[0] in (own_pkgs, *consumers))}
         sib_only = phase(b)              # B removed, A present
         matrix["sibling_set_disabled"] = sib_only
+        faults = INTERP_FAULTS[faults_before:]
+        if faults:
+            matrix["interpreter_not_restored"] = faults
         good = (baseline == "ATTACK_REFUSED" and retired_only == "ATTACK_REFUSED"
                 and sib_only == "ATTACK_REFUSED" and joint == "ATTACK_SUCCEEDS"
-                and full_state == "SUITE_OK")
+                and full_state == "SUITE_OK" and not faults)
         ok &= good
         records.append({
             "mutation": rid, "status": "EQUIVALENT_DID", "kind": gs["kind"],
@@ -786,8 +865,11 @@ def main():
             "edits_sha256": edits_digest(rid, sibs), "environment": environment(),
         })
         print(f"{'OK ' if good else 'BAD'} {rid} [{gs['kind']}]: base={baseline} "
-              f"retired_off={retired_only} sib_off={sib_only} set_off={joint} full_suite={full_state}",
+              f"retired_off={retired_only} sib_off={sib_only} set_off={joint} full_suite={full_state}"
+              + (f"  INTERPRETER NOT RESTORED: {faults}" if faults else ""),
               flush=True)
+        if faults:
+            break  # no later record is judged on another interpreter
     # STALE rows (C9 round 1). "The old text is absent" shows only that the TEXT
     # changed: M204 was recorded stale while its guard lived on, refactored,
     # with no row. A stale row holds ONLY if it names a replacement that is an
@@ -819,7 +901,7 @@ def main():
                     passed, out = run_test(pkg, target, test)
                 finally:
                     rest()
-                    after_cell([edit_of(rep)])
+                    after_cell([edit_of(rep)], mut.spawns_scripts(pkg, target))
                 if passed is None:
                     rep_state = "REPLACEMENT_COMPILE_ERROR"
                 elif passed:
@@ -830,7 +912,7 @@ def main():
                     rep_state = "REPLACEMENT_REFUSED_ELSEWHERE"
         elif rep in BY_ID:
             rep_state = "REPLACEMENT_RETIRED"
-        holds = (not old_present) and rep_state == "REPLACEMENT_KILLED"
+        holds = (not old_present) and rep_state == "REPLACEMENT_KILLED" and not INTERP_FAULTS
         ok &= holds
         records.append({
             "mutation": rid, "status": "STALE_REFACTORED", "property": rec["property"],
