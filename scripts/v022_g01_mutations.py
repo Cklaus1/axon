@@ -3420,7 +3420,7 @@ MUTATIONS += [
      'axon-core', _CL, _T4 + 'a_closures_confused_result_never_crosses_its_declared_type'),
     ('M1155', "PSV-1 (A86): a fn's result is cast to its declared return type (the return site)", _CI,
      '                Some(rt) => self.cast(&mut result, rt, &cx.strict(crossing)).err(),',
-     '                Some(_) => None,',
+     '                Some(_) => None::<String>,',
      'axon-core', _CL, _T4 + 'a_confused_scalar_never_crosses_a_declared_return'),
     ('M1157', 'PSV-1 (A86): at a declared fixed width a non-integer is refused', _CC,
      '                    _ => Err(mismatch(ty, v)),\n                };\n            }\n            // One runtime float',

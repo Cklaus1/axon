@@ -2117,3 +2117,112 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
         CONSUMER_BASELINE_BROKEN, so the full-suite cell had never been evaluated.
       - Refusal coverage, the matrix check and the paired-disable join test PASS.
     - No production behaviour changed: no matrix row, no operator deployment.
+
+60. **The cast's notion of "the same type" is the key a method call dispatches on; a call through a
+    local goes through its value; every refusal arm of the cast has its own row (C9 round 4b,
+    core2 workstream, PSV-1 and EQUIVALENCE; matrix A86).**
+    - **Before.** Review round 4b (wf_72ccc216-e8d, logs `/var/tmp/c9r4-psv1b/`) executed two new
+      members of the A86 class to a keyed PASS for a wrong candidate through
+      `axon_psv::runner::run`. (a) INTEGER WIDTHS: `cast_named` accepted any `Int` or `SizedInt`
+      at every integer name, without converting, while a method call dispatches on
+      `Value::type_name`, which for a `SizedInt` is its width. A `u8` laundered through `dict_get`
+      into a fn declared `-> i64`, and kept by the suite's own `let r: i64` (the pin amendment 53's
+      non-claim (2) recommended), ran the operator's lenient `impl Judge for u8`. The same merge held
+      at every boundary the cast applies (closure results, channel elements, struct fields,
+      `Option` payloads, type-parameter bindings), and in the other direction an `i64` at a
+      declared `u8` kept its `i64` dispatch. The parameter, `let` and field coercions also
+      RE-TAGGED a `SizedInt` of another width to the declared one without converting its value.
+      (b) A NON-CLOSURE AT A FN TYPE: `cast_at` at `T::Fn` accepted anything that was not a closure
+      ("a named fn is referred to by name"), although no named fn is ever a value (E0306); and
+      `eval_call`, for a local bound to a non-closure, fell through to a builtin and then a user fn
+      of that NAME. With the suite's reference `fn square` and `let square = make_square()`, a
+      candidate returning a confused `0` had the operator's own solution answer for it. The
+      round-4b EQUIVALENCE review added: the enum-name check (`if enum_name != n`) had no row
+      (with it removed, an `Other::A` at a declared `-> Grade` ran the operator's lenient impl for
+      `Other`), and `conform.rs` and the interpreter's seal edges were outside the refusal-coverage
+      scan.
+    - **After (the cast, `interp/conform.rs`).** Each declared type admits exactly the values whose
+      dispatch key it is. An integer by WIDTH: `i64`/`isize`/`usize` admit only `Value::Int`; a
+      fixed width admits only a `SizedInt` of that width and CONVERTS an `Int` in place (what a
+      parameter, `let` or field of that width always did); another width is refused, as the
+      checker refuses it (E0307). The parameter, `let` and field coercions convert only an `Int`
+      and no longer re-tag another width, which the cast then refuses. `Dict` admits only a dict.
+      A soft wrapper (`Uncertain`/`Temporal`) at a declared type that fixes the runtime type (a
+      scalar, struct, enum, refinement, container, `dyn`, union, `fn`, `Chan`; also a type
+      parameter whose binding is one of these) is REPLACED by its inner value, so it dispatches as
+      the declared type; at `?`, an unbound type parameter or an unknown name it is kept (honest
+      generic code passes it through). A declared `Uncertain<T>`/`Temporal<T>` admits the wrapper
+      of THAT name with its inner value cast to `T`, or a plain value cast to `T` (soft typing);
+      the bare name admits only its wrapper. At a `fn(..) -> ..` type only a closure crosses.
+    - **After (the call, `Interp::eval_call`).** A name bound in the local environment is called
+      THROUGH ITS VALUE: a closure is called, anything else panics "value of type … is not
+      callable". It never falls through to a builtin or fn of the same name. The checker already
+      refuses a call through a local of a non-fn type (E0306), so no checked program changes
+      meaning; the route existed only for a value whose type is `Deferred`.
+    - **The remaining equivalence classes (audited).** `f32` and `f64` share one runtime
+      representation (`Value::Float`, key `f64`); `str`/`String` one (`Value::Str`); `isize`/`usize`
+      are `Value::Int` (key `i64`). In each case every value at the declared type, honest or not,
+      has the same key, so the candidate's choice of value selects nothing. A tuple of another
+      arity: a longer one's extra elements are unreachable (`t.2` on a pair is a checker error), a
+      shorter one fails the read; neither changes the key (`tuple`). A closure of another arity
+      panics at its first call and dispatches on `fn`. Declared names the interpreter does not
+      know (the `Goal…` deferred prefix, a handle, `RawPtr`) still accept any value: no operator
+      impl can be keyed to them at runtime (an impl's key is the rendered declared name, which no
+      value's `type_name` produces), so the dispatch they lead to is the value's own key — that is
+      the residual, recorded here.
+    - **Restated non-claim (2) of amendment 53.** An annotation now pins the EXACT dispatch type:
+      after `let r: T = X`, a method call on `r` runs the operator's impl for `T` (for a soft or
+      unknown `T`, as stated above), whatever `X` was. What remains by design: the candidate
+      chooses its OWN declared types, so a suite that dispatches on a value typed only by the
+      candidate's signature runs the operator's impl for that declaration (e.g. a candidate
+      declaring `-> bool` selects the operator's `impl Judge for bool`). And at a declared
+      `Uncertain<T>`, soft typing lets the candidate hand either the wrapper or a plain `T`, so the
+      operator's impl for `Uncertain` or for `T` runs accordingly; a suite that cares annotates the
+      plain `T` (which unwraps). Non-claims (1), (3) and (4) of amendment 53 stand.
+    - **Rows.** Blockers: M920 (an integer width at `i64`), M921 (another fixed width), M922 (an
+      `i64` converted at a fixed width), M923 (only a closure at a fn type), M924 (a local is called
+      through its value), M925 (`Dict`), M926 (a soft wrapper unwrapped at a plain type), M927/M928
+      (a declared soft type's wrapper name and inner value), M929/M930 (a plain value at a declared
+      soft type; the bare name), M931 (the enum name — the EQUIVALENCE blocker). Audit of every
+      refusal arm, each reached ALONE by its own attack: M932 (array), M933 (tuple), M934 (union),
+      M935 (`Chan`), M936 (`Option`), M937 (`Result`), M938 (`f64`), M939 (`bool`), M1140 (`str`),
+      M1141 (`()`), M1142 (`Decimal`), M1143 (a struct), M1144 (an enum), M1145 (a type parameter's
+      binding), M1146 (`dyn Trait`), M1147 (a generic enum's variant fields), M1148 (a channel's
+      queued values), M1149 (a refinement's base), M1150 (`check_impl`), M1151 (`kind_ok`), M1152
+      (a channel send's cast), M1153/M1154 (a closure's argument and result casts), M1155 (the
+      return site), M1156 (the call edge's own condition, `seal_call`), M1157 (a non-integer at a
+      fixed width). M652 is RE-ANCHORED ACTIVE on the `i64` arm (its old text was the merged
+      integer arm; its attack, a confused `bool` at `-> i64`, is unchanged). The seal edges'
+      other rows already exist: M651 (`seal_method`), M87 (`seal_global`), M88 (`seal_refine`),
+      M562 (`handler_may_answer`), M563 (`rng_guard`), M86/M89 (the `seal_call` call sites). The
+      generic-route attacks hand an `i64` to the operator's `judge<T: Judge>`, whose lenient `i64`
+      impl is the keyed pass, so each declared type's own arm is the only check in the way; each
+      marker is the attack's test COMPLETING.
+    - **Coverage scan.** `scripts/v022_refusal_coverage.py` scans `conform.rs` and the seal-edge
+      region of `interp.rs` (between two anchors; the rest of that file is not a protected
+      decision), and counts the interpreter's `return panic(` as a refusal. Exempt, with the
+      reason: the depth bound (no input reaches it: a value 1,000,000 deep cannot be built in a
+      run; measured 2,000/4,000/8,000 levels at 1.7s/7.8s/78s) and the closure-arity check (no
+      consequence, above). The unknown-variant refusal lies in M931's block; no input reaches it
+      either (one enum per name, E0002; an undeclared variant is E0404). `shape` was renamed
+      `type_of_value` (the scanner reads `shape(` as the loop's refusal constructor).
+    - **Tests.** Real runner,
+      `crates/axon-psv/tests/sealed_frames.rs::the_candidate_never_selects_the_operators_code_by_width_or_by_name`:
+      the review's width candidate (pinned and unpinned), its fn-reference candidate, and a
+      `Dict`-table route that reaches the call with no declared fn type in the way; GOOD is a keyed
+      pass and WRONG a keyed failure on every suite, every attack a keyed failure. Against the
+      interpreter at 6d6517a1 it fails (keyed pass for the pinned width candidate). Interpreter
+      (`crates/axon-core/src/interp.rs`):
+      `a_value_of_another_integer_width_never_crosses_a_declared_integer` (seven boundaries),
+      `a_value_of_another_fixed_width_never_crosses_a_declared_fixed_width`,
+      `an_i64_at_a_declared_fixed_width_takes_the_width`, `width_correct_values_cross_unchanged`
+      (generic code, width-correct values, literal conversion), `a_non_closure_never_crosses_a_declared_fn_type`,
+      `a_call_through_a_local_never_resolves_the_name_elsewhere` (controls: a local closure
+      shadowing the fn is called; with no local the fn is called), `a_soft_wrapper_takes_the_declared_plain_type`,
+      `a_declared_soft_type_casts_its_wrapper_and_its_inner_value`,
+      `a_confused_enum_never_crosses_as_another_enum`,
+      `every_declared_type_refuses_a_value_of_another_type`,
+      `the_remaining_cast_arms_refuse_a_value_of_another_type`. The whole axon-core suite and the
+      examples stay green.
+    - **Operator deployment.** The guest image must be REBUILT to carry the new interpreter; its
+      scripts and runner are unchanged.

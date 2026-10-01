@@ -5973,7 +5973,6 @@ mod tests {
         let cases: [(&str, &str); 14] = [
             ("[i64]", "[0]"),
             ("(i64, i64)", "(0, 0)"),
-            ("str|bool", "\"x\""),
             ("Chan<i64>", "chan<i64>()"),
             ("Option<i64>", "None"),
             ("Result<i64, str>", "Ok(0)"),
@@ -5985,6 +5984,10 @@ mod tests {
             ("Dict", "dict_new()"),
             ("Pt", "Pt { x: 0 }"),
             ("Gr", "Gr::B { y: 0 }"),
+            // After `str` and `bool`: under a mutated scalar arm the union
+            // admits the value through that member, which is the scalar
+            // arm's own attack reached first.
+            ("str|bool", "\"x\""),
         ];
         for (decl, own) in cases {
             let run = |v: &str, test: &str| {
