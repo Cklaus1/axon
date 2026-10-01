@@ -981,4 +981,5 @@ ATTACK_MARKERS.update({
     'M891': r'ATTACK: a prerequisite a cell replaced was not rebuilt from the clean tree',
     'M892': r'ATTACK: a paired-disable run left a binary built from a mutated tree in the\s+workspace target dir',
     'M893': r'ATTACK: a paired-disable run left a binary built from a mutated tree in the\s+workspace target dir',
+    'M894': r'ATTACK: an ignored output a test wrote into the crate made a current binary read as\s+stale',
 })

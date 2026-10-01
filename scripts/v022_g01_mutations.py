@@ -3258,6 +3258,9 @@ MUTATIONS += [
      '                                      for p in [pkg, owner_crate, *consumers]))\n',
      '                                      for p in []))\n',
      'axon-core', _HI2, _PC),
+    ('M894', 'EQUIVALENCE (rows3): a git-ignored output a test wrote into a crate is not a source a named binary is stale against',
+     _SP, '    if !o.status.success() {\n        return None;\n    }\n    Some(\n        o.stdout', '    if true || !o.status.success() {\n        return None;\n    }\n    Some(\n        o.stdout',
+     'axon-core', _HB2, 'an_ignored_output_written_into_a_crate_is_not_a_source'),
 ]
 
 PSV_IDS = {f"M{n}" for n in range(137, 550)}

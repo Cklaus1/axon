@@ -598,6 +598,26 @@ fn stale_against_sources(bin: &Path, pkg: &str) -> Option<String> {
                 }
             }
         }
+        // The crate's files git calls part of the tree (tracked, or untracked
+        // and not ignored). A git-ignored file is an OUTPUT, not a source:
+        // axon-core's own suite writes `crates/axon-core/out/` (gitignored
+        // `out/`), and counting it made the interpreter a harness had just
+        // built read as stale, so every consumer suite that ran after it in
+        // one cell refused AXON_BIN (paired-disable M58, C9 round 4;
+        // amendment 59). Without git (a source tarball), every file counts.
+        if let Some(files) = tree_files(&root, &dir) {
+            for p in files {
+                let rel = p.strip_prefix(&dir).unwrap_or(&p);
+                if !rel.components().any(|c| {
+                    ["target", "tests", "benches"]
+                        .iter()
+                        .any(|x| c.as_os_str() == *x)
+                }) {
+                    consider(&p);
+                }
+            }
+            continue;
+        }
         let mut stack = vec![dir];
         while let Some(d) = stack.pop() {
             let Ok(rd) = std::fs::read_dir(&d) else {
@@ -620,6 +640,35 @@ fn stale_against_sources(bin: &Path, pkg: &str) -> Option<String> {
     newest
         .filter(|(t, _)| *t > built)
         .map(|(_, p)| p.display().to_string())
+}
+
+/// The files under `dir` that git counts as the working tree: tracked, or
+/// untracked and not ignored. None when git cannot say.
+fn tree_files(root: &Path, dir: &Path) -> Option<Vec<PathBuf>> {
+    let o = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args([
+            "ls-files",
+            "-z",
+            "--cached",
+            "--others",
+            "--exclude-standard",
+            "--",
+        ])
+        .arg(dir)
+        .output()
+        .ok()?;
+    if !o.status.success() {
+        return None;
+    }
+    Some(
+        o.stdout
+            .split(|b| *b == 0)
+            .filter(|f| !f.is_empty())
+            .map(|f| root.join(String::from_utf8_lossy(f).as_ref()))
+            .collect(),
+    )
 }
 
 /// Lines of a test source that pick a workspace binary to EXECUTE around
