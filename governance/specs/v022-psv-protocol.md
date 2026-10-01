@@ -1953,3 +1953,140 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
         only because the scanner's guard-block heuristic overlaps a neighbouring row (M819, M826,
         M838). Each is in substance a NOTHING-TO-ADMIT `ok_or`.
       - No production behaviour of a guard changed: no matrix row and no operator deployment.
+59. **Every row's attack reaches its own guard after amendments 54 and 57; a cell's build is judged by
+    its own cargo invocation; every cell keeps its output; every row ends on the run's interpreter
+    (C9 round 4 fix wave, rows3 workstream, rows M880-M893; M868 re-anchored).**
+    - **Before.** The full mutation run at 49eb3765 found ACTIVE rows that their own attack did
+      not kill:
+      - **M410, M474, M612** (`one_read.rs`, `psv::prepare`). Since amendment 54, `prepare`
+        writes the guest policy exclusively BESIDE the job dir. These tests called `prepare`
+        twice with job dirs in ONE parent. With the guard removed, the attack died on
+        `guest policy: File exists (os error 17)` before it reached the guard (class e). The
+        sweep found no other caller: the submit route's `private_inputs` creates a NEW
+        `<op>.psv-inputs` dir per operation, and the policy is the only exclusive producer
+        added in round 4.
+      - **M341-M345, M349** (`readiness_attribution.rs`). Each attack edited one document
+        (the observation, the record's digest, or the B263 record) and left the run documents
+        alone, so amendment 57's run joins refused it first. These are the attested receipt's
+        `preflight-observation-sha256`, and the launch's `qualification_sha256` against the
+        record.
+      - **M278 / M58 (harness).** M278's baseline read `compile_error` in a sharded run, and
+        M58's consumer baseline read `CONSUMER_BASELINE_BROKEN`. In each case the per-row record
+        kept only the label. The rule was "`could not compile` or `error[E` anywhere in the
+        output", and `full_suite_ok` returned on it BEFORE its keep-the-output branch.
+      - **Interpreter (harness).** Shard 1 ended with `BAD interpreter binary changed during the
+        run`. Its `target/debug/axon` reported `49eb3765-dirty`.
+      - **Cost (harness).** The 2-shard paired-disable run at 49eb3765 spent about 45 min per
+        record. `after_cell` scrubbed the workspace target dir and rebuilt every prerequisite
+        (axon, the cortex bins, psv_dev) after EVERY cell with an edit under crates/: three cells
+        per record, and cold under `CARGO_INCREMENTAL=0`.
+    - **After (tests only for the rows; no production source changed).**
+      - Each `prepare` gets its own inputs dir, laid out as on the submit route
+        (`<job>.psv-inputs/job`). The control asserts that the policy lands beside its own job
+        dir.
+      - Each readiness attack is relaunched (`relaunch`, `rebundle`), so every amendment-57 join
+        holds and the attack differs only in the guarded property:
+        - M341: the run launched (and was honestly observed) with another kernel, or by
+          another fabric revision, than the record certifies.
+        - M349: the receipt and the record agree on an observation digest that names no
+          certified file.
+        - M342: the launch ran under a qualification digest that no certified file has. The
+          genuine B263 record is listed last, so a lookup that settles for some file finds a
+          valid one.
+        - M343, M344, M345: the launch ran under the agent-signed record, the
+          other-guest record, or the other-profile record.
+      - All six take the first route, an honest attack that reaches the row's own guard. None
+        needed an EQUIVALENT_DID retirement.
+    - **Harness.**
+      - **Build first.** `cargo test --no-run` is run alone first. A compile error is THAT
+        invocation's failure; a killed build is `build_failed`. Compiler text in a test's
+        output is then judged as the test's own result.
+      - **Cause of M58, reproduced.** Run alone at 49eb3765 with the shard env (sccache,
+        `CARGO_INCREMENTAL=0`, alongside the integrator's four shards), the axon-cortex consumer
+        suite exits 0. Under `--show-output` (added in round 4 to count skips), its
+        `compile_fail` doctests print their expected `error[E0559]`/`error[E0599]`, and the old
+        rule read that as COMPILE_ERROR (`/var/tmp/c9r4-rows3-repro-pd/axon-cortex.log`). This is
+        deterministic, not environmental: every axon-core-owned retirement has axon-cortex among
+        its consumers, so each would read CONSUMER_BASELINE_BROKEN.
+      - **M278, not reproduced.** It passed alone and under sccache under concurrent load. It
+        also passed through the UNCHANGED harness on the shard's own sequence (M274, M276,
+        M278, M280, M282 under the shard env), with every output saved. No OOM kill was logged.
+        A recurrence is now classified by the build invocation and keeps its output.
+      - **Kept output.** Every non-passing baseline, mutated cell, paired-disable cell, build
+        and full-suite or consumer cell writes its whole output under `/var/tmp/v022-cells`. The
+        harness prints the path, and the mutation record names it (`baseline_output`,
+        `cell_output`).
+      - **Cause of the interpreter change, reproduced.** axon-core's `build.rs` embeds `-dirty`
+        and is re-run only when `.git/HEAD`, `.git/index` or `src/` change. Its own `git status`
+        refreshes `.git/index`, so the NEXT build re-runs it. In shard 1 that was M860's mutated
+        cell, after the `--lib` rows M651-M667 restored `src/`. M860's edit is in
+        `tests/script_spawn`, so `-dirty` was baked in. The restoring `cargo build` keeps it,
+        because nothing the build script watches changed again.
+
+        Measured in a 49eb3765 clone with the shard env:
+        1. Clean build: `5d9aff1e…`, `(49eb3765)`.
+        2. After an edit outside `src/`: `a460653e…`, `(49eb3765-dirty)`.
+        3. Restored and rebuilt: still `a460653e…`, `-dirty`.
+        4. After touching `build.rs`: `5d9aff1e…` again, byte-identical.
+
+        Every row after M860 in shard 1 ran an interpreter with the clean tree's code and a
+        `-dirty` identity. Only `axon --version` reads that identity, and no row's verdict
+        depends on it.
+      - **The interpreter fix.** After EVERY row, `restore_interpreter` rebuilds the
+        interpreter from the restored tree and byte-compares it to the run's. If it differs, it
+        re-runs the build script (touching `build.rs`, which changes no content) and compares
+        again. A row whose interpreter cannot be restored is BAD by name
+        (`interpreter_not_restored`), and the run stops there. The start builds from the clean
+        tree, and refuses an interpreter that names itself dirty. Paired-disable restores and
+        compares after every cell, and a failure there is the record's. The mutation harness's
+        separate post-row interpreter rebuild is removed; the per-row restore does it.
+      - **The cost fix (paired-disable).** `after_cell` keeps the guarantee and pays only for
+        what can be stale:
+        - It scrubs only when the cell ran a script that builds: the row's test target calls
+          the spawn helper (`spawns_scripts`), or, for a full-suite cell, any test of any suite
+          the cell ran does (`package_spawns_scripts`). M724's workspace drift test makes the
+          helper's call the whole fact.
+        - It rebuilds a prerequisite only when the file is missing, or its sha256 is not the
+          clean build's. The digests are recorded after `build_prereqs`, and the files are
+          named from cargo's metadata.
+        - The interpreter is always rebuilt and byte-compared. When nothing changed, that is a
+          no-op build.
+        - A prerequisite that cannot be restored is the record's failure.
+    - **Rows** (each killed by its own attack, through the REAL harness on a miniature
+      workspace, `crates/axon-core/tests/harness_integrity.rs`):
+      - M880: a test printing compiler text is not a mutation cell's compile error.
+      - M881, M882: the same for paired-disable's own cell and its full-suite/consumer cell.
+      - M883, M884: a mutation baseline / mutated cell that did not pass keeps its output.
+      - M885, M886: a paired-disable cell / full-suite cell that did not build keeps the
+        build's output.
+      - M887: a paired-disable cell whose test failed keeps its output.
+      - M888: every row ends on the run's interpreter.
+      - M889: restoring re-runs the build script.
+      - M890: the restored interpreter is compared, never assumed.
+      - M891: a cell's changed prerequisite is rebuilt and byte-compared. In the attack, every
+        cell replaces the run's `cortex`.
+      - M892, M893: a cell that ran a building script is scrubbed after. M893 is the full-suite
+        case: the miniature's row test runs no scripts, and another test of its package does.
+      - M868 is re-anchored on the scrub in its new place, with the same attack (`_PC`). The
+        miniature's tests now plant a script-built binary only where the file runs scripts
+        (`RUNS_SCRIPTS`).
+
+      The M888 attack reproduces shard 1 in the miniature: a real `build.rs`, and an index
+      refresh before the mutated cell. It fails on the unchanged harness with a final
+      `-dirty` interpreter.
+    - **Reasoned exemptions (evidence plumbing, no verdict decided):**
+      - paired-disable's failing full-suite keep (`pd-suite-`). It existed before; only its
+        writer moved into `keep_output`.
+      - paired-disable's per-cell restore call and both harnesses' clean start. No current
+        retirement edits an axon-core file outside `src/`, so no record's cell can bake `-dirty`
+        in. An attack seeded into the target dir self-heals at the start, because the harness's
+        own `git status` refreshes the index (measured). Both call the primitive that M888-M890
+        kill.
+    - **Evidence.**
+      - At 8862d1b5: `v022_g01_mutations.py --scope=all --only=<43 rows>`. These are every row
+        whose test is in `one_read.rs` or `readiness_attribution.rs`, or that guards `psv.rs`.
+        All 43 were KILLED by their own attack, including M341-M345, M349, M410, M474 and M612.
+      - At 9a823637: `--only=M880-M890`, all KILLED.
+      - At f2703ba5: `--only=M866-M869,M880-M893`, all KILLED (see the report).
+      - Refusal coverage, the matrix check and the paired-disable join test PASS.
+    - No production behaviour changed: no matrix row, no operator deployment.
