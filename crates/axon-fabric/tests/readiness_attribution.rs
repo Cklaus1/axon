@@ -166,12 +166,32 @@ fn an_observation_by_another_observer_key_is_refused() {
 
 // ── the observation ─────────────────────────────────────────────────────────
 
+/// The attested receipt and the record AGREE on an observation digest that
+/// no certified evidence file has (the run is relaunched with the receipt
+/// naming it): every run join holds, and only `named` can refuse it. Before
+/// amendment 59 the receipt still named the genuine observation, so the
+/// amendment-57 receipt join refused the attack first (class e).
 #[test]
 fn an_observation_digest_that_names_no_evidence_file_is_refused() {
     let Some(c) = certified() else { return };
-    resign(&c, &c.operator, |r| {
-        r["observation_sha256"] = json!("6".repeat(64))
-    });
+    let none = "6".repeat(64);
+    let ghost = none.clone();
+    relaunch(
+        &c,
+        keep(),
+        keep(),
+        Box::new(move |rc: &mut Value| {
+            for e in rc["evidence_refs"].as_array_mut().unwrap() {
+                if e.as_str()
+                    .unwrap()
+                    .starts_with("preflight-observation-sha256:")
+                {
+                    *e = json!(format!("preflight-observation-sha256:{ghost}"));
+                }
+            }
+        }),
+    );
+    rebundle(&c, |r| r["observation_sha256"] = json!(none));
     attack(
         &c,
         "the record's observation_sha256 names no certified evidence",
@@ -206,18 +226,20 @@ fn an_observation_not_signed_by_an_observer_root_key_is_refused() {
     attack(&c, "an unsigned observation was accepted", "is unsigned");
 }
 
+/// The run was LAUNCHED (and honestly observed) with another guest kernel,
+/// or by another fabric revision, than the record certifies: the manifest,
+/// the observation and the attested receipt all agree with each other, so
+/// every amendment-57 run join holds and only the observation-vs-record
+/// comparison can refuse it (amendment 59; before it the observation alone
+/// was edited and the receipt join refused first, class e).
 #[test]
 fn an_observation_of_another_run_is_refused() {
     let Some(c) = certified() else { return };
-    let mut obs = c.observed(&c.observer, &"f".repeat(40));
-    obs["guest"]["kernel_sha256"] = json!("9".repeat(64));
-    rebind(
+    relaunch(
         &c,
-        OBSERVATION,
-        "observation_sha256",
-        &obs,
-        &c.observer,
-        TrustAuthority::Observer,
+        Box::new(|m: &mut axon_psv::LaunchManifest| m.guest.kernel_sha256 = "9".repeat(64)),
+        keep(),
+        keep(),
     );
     attack(
         &c,
@@ -226,14 +248,11 @@ fn an_observation_of_another_run_is_refused() {
     );
 
     let Some(c) = certified() else { return };
-    let obs = c.observed(&c.observer, &"e".repeat(40));
-    rebind(
+    relaunch(
         &c,
-        OBSERVATION,
-        "observation_sha256",
-        &obs,
-        &c.observer,
-        TrustAuthority::Observer,
+        Box::new(|m: &mut axon_psv::LaunchManifest| m.fabric_revision = "e".repeat(40)),
+        keep(),
+        keep(),
     );
     attack(
         &c,
@@ -244,10 +263,33 @@ fn an_observation_of_another_run_is_refused() {
 
 // ── the B263 qualification record ──────────────────────────────────────────
 
+/// The run was launched under a qualification digest that no certified
+/// evidence file has, and the record certifies that same digest: the receipt,
+/// manifest and record agree, so the amendment-57 qualification join holds.
+/// The evidence list ends with the genuine (operator-signed) B263 record, so
+/// a lookup that settled for SOME evidence file instead of the named one
+/// would find a valid qualification: only `named` refuses (amendment 59).
 #[test]
 fn a_b263_digest_that_names_no_evidence_file_is_refused() {
     let Some(c) = certified() else { return };
-    resign(&c, &c.operator, |r| {
+    relaunch(
+        &c,
+        Box::new(|m: &mut axon_psv::LaunchManifest| m.qualification_sha256 = "7".repeat(64)),
+        keep(),
+        keep(),
+    );
+    let mut ev: Vec<String> = serde_json::from_slice::<Value>(&std::fs::read(c.record()).unwrap())
+        .unwrap()["evidence"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e.as_str().unwrap().to_string())
+        .filter(|e| e != B263)
+        .collect();
+    ev.push(B263.to_string());
+    // The order first (`rebundle` digests the list the record holds).
+    resign(&c, &c.operator, |r| r["evidence"] = json!(ev));
+    rebundle(&c, |r| {
         r["b263_qualification_sha256"] = json!("7".repeat(64))
     });
     attack(
@@ -269,6 +311,9 @@ fn a_b263_record_not_signed_under_the_qualification_root_is_refused() {
         &agent,
         TrustAuthority::Qualification,
     );
+    // The run ran under the agent's record (amendment 59): every run join
+    // holds, so only the qualification-root signature check refuses it.
+    relaunch(&c, keep(), keep(), keep());
     attack(
         &c,
         "an agent-signed B263 record stood in for the operator's qualification",
@@ -290,6 +335,9 @@ fn a_b263_record_of_another_guest_is_refused() {
             &c.operator,
             TrustAuthority::Qualification,
         );
+        // Launched under THAT record (amendment 59): the qualification join
+        // holds, and only the artifact comparison refuses it.
+        relaunch(&c, keep(), keep(), keep());
         attack(
             &c,
             &format!(
@@ -313,6 +361,9 @@ fn a_b263_record_of_another_profile_is_refused() {
         &c.operator,
         TrustAuthority::Qualification,
     );
+    // Launched under THAT record (amendment 59): the qualification join
+    // holds, and only the schema/profile check refuses it.
+    relaunch(&c, keep(), keep(), keep());
     attack(
         &c,
         "a B263 qualification of another profile stood in for the protected one",

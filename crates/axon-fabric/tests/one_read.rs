@@ -489,6 +489,17 @@ fn a_manifest_renamed_between_hash_and_parse_does_not_change_the_qualified_guest
 
 // ── psv::prepare: the manifest it pins the guest from is the qualified one ──
 
+/// The job dir of ONE prepare, inside its own inputs dir, as the submit route
+/// lays it out (`<out_root>/<op>.psv-inputs/job`). `prepare` writes the guest
+/// policy exclusively BESIDE the job dir (amendment 54), so two prepares
+/// sharing a parent would make the second die on `EEXIST` before it reaches
+/// the guard its test judges (class e; amendment 59).
+fn fresh_job_dir(d: &std::path::Path, job: &str) -> std::path::PathBuf {
+    let inputs = d.join(format!("{job}.psv-inputs"));
+    std::fs::create_dir(&inputs).expect("each prepare gets a NEW inputs dir");
+    inputs.join("job")
+}
+
 /// `psv::prepare` reads the profile manifest again, after the qualification
 /// hashed it, to take the guest kernel, image and init digests it pins in the
 /// launch manifest. That read is joined to the qualified digest: a manifest
@@ -531,7 +542,7 @@ fn prepare_pins_the_guest_only_from_the_manifest_the_qualification_hashed() {
                 test: "t_ok",
                 candidate_dir: &cand,
                 suite_dir: &suite,
-                job_dir: &d.join(job),
+                job_dir: &fresh_job_dir(d, job),
                 observation_nonce: "none",
                 authority_epoch: 0,
                 scope: &scope(),
@@ -542,6 +553,10 @@ fn prepare_pins_the_guest_only_from_the_manifest_the_qualification_hashed() {
     let qualified_kernel = "1".repeat(64);
     let launch = prepare("job-control").unwrap();
     assert_eq!(launch.manifest.guest.kernel_sha256, qualified_kernel);
+    assert!(
+        launch.policy_path().is_file(),
+        "control: the policy is written beside this launch's own job dir"
+    );
 
     // The manifest now names another kernel; the qualification is unchanged.
     let mut other: Value = serde_json::from_str(&full_lx_manifest(QUALIFIED_GUEST)).unwrap();
@@ -597,7 +612,7 @@ fn prepare_builds_no_manifest_naming_a_digest_that_is_not_a_sha256() {
                 test: "t_ok",
                 candidate_dir: &cand,
                 suite_dir: &suite,
-                job_dir: &d.join(job),
+                job_dir: &fresh_job_dir(d, job),
                 observation_nonce: "none",
                 authority_epoch: 0,
                 scope: &scope(),
@@ -661,7 +676,7 @@ fn prepare_builds_no_manifest_whose_suite_reads_as_another() {
                 test: "t_ok",
                 candidate_dir: &cand,
                 suite_dir: &suite,
-                job_dir: &d.join(job),
+                job_dir: &fresh_job_dir(d, job),
                 observation_nonce: "none",
                 authority_epoch: 3,
                 scope: &sc,
