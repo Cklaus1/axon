@@ -520,35 +520,6 @@ fn an_episode_naming_an_attempt_twice_is_never_recorded() {
     );
 }
 
-/// schema.rs `minLength` (retired against ids.rs `check_opaque`).
-#[test]
-fn an_empty_branch_name_is_never_recorded() {
-    never_intaken(
-        |ctx| {
-            ctx["expected"]["branch"] = json!("");
-            ctx["observed"]["branch"] = json!("");
-        },
-        |_| {},
-        &["shorter than 1", "length must be 1..=512"],
-        "a context whose branch is empty",
-    );
-}
-
-/// schema.rs `maxLength` (retired against ids.rs `check_opaque`).
-#[test]
-fn a_branch_name_over_512_characters_is_never_recorded() {
-    let b = json!("b".repeat(513));
-    never_intaken(
-        |ctx| {
-            ctx["expected"]["branch"] = b.clone();
-            ctx["observed"]["branch"] = b;
-        },
-        |_| {},
-        &["longer than 512", "length must be 1..=512"],
-        "a context whose branch is 513 characters",
-    );
-}
-
 /// schema.rs `required` / the typed layer's missing-field refusal (a
 /// four-cell pair).
 #[test]
@@ -760,13 +731,6 @@ fn control_the_honest_evaluation_and_its_acf_variants_are_recorded() {
     .unwrap();
 }
 
-/// A receipt with a passed verdict, otherwise as the fixture.
-fn passed(rc: &mut Value) {
-    rc["verification"] = json!("passed");
-    rc["matched_checks"] = json!(1);
-    rc["evidence_refs"] = json!(["e"]);
-}
-
 #[test]
 fn an_acf_request_with_more_than_128_arguments_is_never_counted() {
     never_evaluated(
@@ -837,14 +801,86 @@ fn an_evaluation_naming_an_empty_subject_issuer_is_never_recorded() {
     );
 }
 
+// ── venue TEL: `axon-loop tel summarize` (the binary) over ACF documents ──
+//
+// The telemetry verb reads Fabric request/receipt pairs and episodes through
+// the contracts (`contract_from_value`), then joins them; nothing on it
+// re-judges a receipt's verdict, so a contract rule is the one check there.
+
+fn tel(req: &Value) -> Result<(), LoopError> {
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(tmp.path(), req.to_string()).unwrap();
+    let o = std::process::Command::new(env!("CARGO_BIN_EXE_axon-loop"))
+        .env_remove("AXON_ATTEST_KEY")
+        .args(["tel", "summarize", "--in"])
+        .arg(tmp.path())
+        .output()
+        .unwrap();
+    if o.status.success() {
+        Ok(())
+    } else {
+        // The verb reports its refusal as JSON on stderr; read the text unescaped.
+        let err = String::from_utf8_lossy(&o.stderr).replace("\\\"", "\"");
+        Err(LoopError::Refused(err))
+    }
+}
+
+/// One Fabric attempt (the bundle's request and receipt, priced under a
+/// pinned schedule), with `edit_req` / `edit_rc` applied, summarized.
+fn tel_attempt(
+    edit_req: impl FnOnce(&mut Value),
+    edit_rc: impl FnOnce(&mut Value),
+) -> Result<(), LoopError> {
+    let doc = schedule(json!({}));
+    let sref = cl22(&doc);
+    let mut req = bundle()["acf_request"].clone();
+    req["limits"]["price_schedule_ref"] = json!(sref);
+    let mut rc = bundle()["acf_receipt"].clone();
+    edit_req(&mut req);
+    edit_rc(&mut rc);
+    tel(&json!({"schema": "axon.loop.tel-request/1", "episodes": [],
+                "price_schedule": {"ref": sref, "document": doc},
+                "fabric_attempts": [{"request": req, "receipt": rc}]}))
+}
+
+fn never_summarized(r: Result<(), LoopError>, why: &[&str], attack: &str) {
+    judged(r, why, attack, "the telemetry was summarized");
+}
+
+/// A receipt with a passed verdict, otherwise as the fixture.
+fn passed(rc: &mut Value) {
+    rc["verification"] = json!("passed");
+    rc["matched_checks"] = json!(1);
+    rc["evidence_refs"] = json!(["e"]);
+}
+
+/// An outcome-unknown receipt.
+fn outcome_unknown(rc: &mut Value) {
+    rc["status"] = json!("outcome_unknown");
+    rc["verification"] = json!("unknown");
+    rc["process_exit_code"] = json!(null);
+}
+
+#[test]
+fn control_honest_receipts_are_summarized() {
+    tel_attempt(|_| {}, |_| {}).unwrap();
+    tel_attempt(|_| {}, passed).unwrap();
+    tel_attempt(|_| {}, |rc| rc["evidence_refs"] = json!(vec!["e"; 128])).unwrap();
+    tel_attempt(|_| {}, outcome_unknown).unwrap();
+    tel_attempt(
+        |_| {},
+        |rc| {
+            rc["usage_state"] = json!("unknown");
+            rc["cost_micro"] = json!(null);
+        },
+    )
+    .unwrap();
+}
+
 #[test]
 fn a_receipt_with_more_than_128_evidence_refs_is_never_counted() {
-    never_evaluated(
-        with_acf(
-            |_| {},
-            |rc| rc["evidence_refs"] = json!(vec!["e"; 129]),
-            |_| {},
-        ),
+    never_summarized(
+        tel_attempt(|_| {}, |rc| rc["evidence_refs"] = json!(vec!["e"; 129])),
         &["more than 128", "evidence_refs: max 128"],
         "a receipt with 129 evidence refs",
     );
@@ -852,14 +888,13 @@ fn a_receipt_with_more_than_128_evidence_refs_is_never_counted() {
 
 #[test]
 fn a_passed_receipt_that_did_not_complete_is_never_counted() {
-    never_evaluated(
-        with_acf(
+    never_summarized(
+        tel_attempt(
             |_| {},
             |rc| {
                 passed(rc);
                 rc["status"] = json!("failed");
             },
-            |ep| ep["status"] = json!("failed"),
         ),
         &[
             "must be \"completed\"",
@@ -871,14 +906,13 @@ fn a_passed_receipt_that_did_not_complete_is_never_counted() {
 
 #[test]
 fn a_passed_receipt_with_a_nonzero_exit_is_never_counted() {
-    never_evaluated(
-        with_acf(
+    never_summarized(
+        tel_attempt(
             |_| {},
             |rc| {
                 passed(rc);
                 rc["process_exit_code"] = json!(1);
             },
-            |_| {},
         ),
         &[
             "must be 0",
@@ -890,14 +924,13 @@ fn a_passed_receipt_with_a_nonzero_exit_is_never_counted() {
 
 #[test]
 fn a_passed_receipt_with_no_matched_check_is_never_counted() {
-    never_evaluated(
-        with_acf(
+    never_summarized(
+        tel_attempt(
             |_| {},
             |rc| {
                 passed(rc);
                 rc["matched_checks"] = json!(0);
             },
-            |_| {},
         ),
         &[
             "less than the minimum",
@@ -909,14 +942,13 @@ fn a_passed_receipt_with_no_matched_check_is_never_counted() {
 
 #[test]
 fn a_passed_receipt_reported_by_the_worker_is_never_counted() {
-    never_evaluated(
-        with_acf(
+    never_summarized(
+        tel_attempt(
             |_| {},
             |rc| {
                 passed(rc);
                 rc["evidence_source"] = json!("worker_reported");
             },
-            |_| {},
         ),
         &[
             "must be \"supervisor_observed\"",
@@ -928,65 +960,43 @@ fn a_passed_receipt_reported_by_the_worker_is_never_counted() {
 
 #[test]
 fn a_passed_receipt_with_no_evidence_is_never_counted() {
-    never_evaluated(
-        with_acf(
+    never_summarized(
+        tel_attempt(
             |_| {},
             |rc| {
                 passed(rc);
                 rc["evidence_refs"] = json!([]);
             },
-            |_| {},
         ),
         &["fewer than 1", "verification passed requires evidence_refs"],
         "a passed receipt with no evidence",
     );
 }
 
-/// An outcome-unknown receipt (and the episode it projects to).
-fn outcome_unknown(rc: &mut Value) {
-    rc["status"] = json!("outcome_unknown");
-    rc["verification"] = json!("unknown");
-    rc["process_exit_code"] = json!(null);
-}
-
-fn unknown_episode(ep: &mut Value) {
-    ep["status"] = json!("outcome_unknown");
-    ep["verification"] = json!({"result": "unknown", "matched_checks": 0, "issuer_ref": null,
-        "verifier_ref": null, "output_workspace_ref": null, "evidence_refs": []});
-}
-
-#[test]
-fn control_an_outcome_unknown_receipt_is_evaluated() {
-    with_acf(|_| {}, outcome_unknown, unknown_episode).unwrap();
-}
-
 #[test]
 fn an_outcome_unknown_receipt_with_a_verdict_is_never_counted() {
-    never_recorded(
-        with_acf(
+    never_summarized(
+        tel_attempt(
             |_| {},
             |rc| {
                 outcome_unknown(rc);
                 rc["verification"] = json!("failed");
             },
-            unknown_episode,
         ),
         &["is not one of", "status outcome_unknown admits only"],
         "an outcome_unknown receipt with a failed verdict",
     );
 }
 
-/// receipt.rs (retired against the schema's conditional `type: null`).
 #[test]
 fn an_outcome_unknown_receipt_with_an_exit_code_is_never_counted() {
-    never_recorded(
-        with_acf(
+    never_summarized(
+        tel_attempt(
             |_| {},
             |rc| {
                 outcome_unknown(rc);
                 rc["process_exit_code"] = json!(0);
             },
-            unknown_episode,
         ),
         &[
             "is not of type",
@@ -998,8 +1008,8 @@ fn an_outcome_unknown_receipt_with_an_exit_code_is_never_counted() {
 
 #[test]
 fn a_receipt_with_unknown_usage_and_a_cost_is_never_counted() {
-    never_evaluated(
-        with_acf(|_| {}, |rc| rc["usage_state"] = json!("unknown"), |_| {}),
+    never_summarized(
+        tel_attempt(|_| {}, |rc| rc["usage_state"] = json!("unknown")),
         &["is not of type", "usage_state unknown requires cost_micro"],
         "a receipt with unknown usage and a cost",
     );
@@ -1092,20 +1102,30 @@ fn a_pause_naming_a_target_is_never_applied() {
     );
 }
 
-// ── the episode's passed-verdict rules (episode.rs), on the EVL route ───────
+// ── the episode's passed-verdict rules (episode.rs), on the TEL route ───────
+//
+// `tel summarize` reads episodes through the contract and joins only their
+// usage, so the passed-verdict rules are the one check there (on the EVL route
+// the verification join re-judges the same fields).
 
-/// The honest request with the first challenger trial's (passed) episode
-/// edited, intaken and evaluated.
-fn with_episode(
-    edit: impl FnOnce(&mut Value),
-) -> Result<(axon_loop::evl::EvaluationRecord, Ref), LoopError> {
-    with_acf(|_| {}, |_| {}, edit)
+/// A passed episode (the fixture's validated trial) with `edit` applied,
+/// summarized.
+fn tel_episode(edit: impl FnOnce(&mut Value)) -> Result<(), LoopError> {
+    let p = incumbent();
+    let mut ep = trial(&Trial::new(&p, "task-0", "incumbent", "i0"))["episode"].clone();
+    edit(&mut ep);
+    tel(&json!({"schema": "axon.loop.tel-request/1", "episodes": [ep]}))
+}
+
+#[test]
+fn control_an_honest_passed_episode_is_summarized() {
+    tel_episode(|_| {}).unwrap();
 }
 
 #[test]
 fn a_passed_episode_that_did_not_complete_is_never_counted() {
-    never_evaluated(
-        with_episode(|ep| ep["status"] = json!("failed")),
+    never_summarized(
+        tel_episode(|ep| ep["status"] = json!("failed")),
         &[
             "must be \"completed\"",
             "verification passed requires status completed",
@@ -1116,8 +1136,8 @@ fn a_passed_episode_that_did_not_complete_is_never_counted() {
 
 #[test]
 fn a_passed_episode_with_no_matched_check_is_never_counted() {
-    never_evaluated(
-        with_episode(|ep| ep["verification"]["matched_checks"] = json!(0)),
+    never_summarized(
+        tel_episode(|ep| ep["verification"]["matched_checks"] = json!(0)),
         &[
             "less than the minimum",
             "verification passed requires matched_checks",
@@ -1128,8 +1148,8 @@ fn a_passed_episode_with_no_matched_check_is_never_counted() {
 
 #[test]
 fn a_passed_episode_with_no_checked_output_is_never_counted() {
-    never_evaluated(
-        with_episode(|ep| ep["verification"]["output_workspace_ref"] = json!(null)),
+    never_summarized(
+        tel_episode(|ep| ep["verification"]["output_workspace_ref"] = json!(null)),
         &[
             "is not of type",
             "verification passed requires output_workspace_ref",
@@ -1140,10 +1160,87 @@ fn a_passed_episode_with_no_checked_output_is_never_counted() {
 
 #[test]
 fn a_passed_episode_with_no_evidence_is_never_counted() {
-    never_evaluated(
-        with_episode(|ep| ep["verification"]["evidence_refs"] = json!([])),
+    never_summarized(
+        tel_episode(|ep| ep["verification"]["evidence_refs"] = json!([])),
         &["fewer than 1", "verification passed requires evidence_refs"],
         "a passed episode citing no evidence",
+    );
+}
+
+// ── venue PLAN: `PilotPlan::parse` + `plan::register` ───────────────────────
+//
+// Several pilot fields are plain Rust types (`Vec<Ref>`, `Option<u64>`,
+// `Option<String>`) that only the checked-in pilot schema bounds, so there the
+// schema walk's keyword is the one check.
+
+fn register_plan(edit: impl FnOnce(&mut Value)) -> Result<Ref, LoopError> {
+    let w = world();
+    let mut v = complete_plan("exp-p", &w.inc_ref, &w.cand_ref);
+    edit(&mut v);
+    axon_loop::plan::register(&w.s, &axon_loop::plan::PilotPlan::parse(&v.to_string())?)
+}
+
+fn never_planned(r: Result<Ref, LoopError>, why: &[&str], attack: &str) {
+    judged(r, why, attack, "the plan was registered");
+}
+
+fn refs(n: usize) -> Vec<String> {
+    (0..n).map(|i| format!("cl22:{i:064x}")).collect()
+}
+
+#[test]
+fn control_an_honest_pilot_plan_registers() {
+    register_plan(|v| {
+        v["live_evidence"] = json!(refs(256));
+        v["independent_unit"] = json!("u".repeat(512));
+        v["independent_units"] = json!(1);
+    })
+    .unwrap();
+}
+
+#[test]
+fn a_plan_with_more_than_256_live_evidence_refs_is_never_registered() {
+    never_planned(
+        register_plan(|v| v["live_evidence"] = json!(refs(257))),
+        &["more than 256"],
+        "a pilot plan with 257 live evidence refs",
+    );
+}
+
+#[test]
+fn a_plan_naming_a_live_evidence_ref_twice_is_never_registered() {
+    let r = refs(1)[0].clone();
+    never_planned(
+        register_plan(|v| v["live_evidence"] = json!([r, r])),
+        &["duplicate item"],
+        "a pilot plan naming one live evidence ref twice",
+    );
+}
+
+#[test]
+fn a_plan_with_zero_independent_units_is_never_registered() {
+    never_planned(
+        register_plan(|v| v["independent_units"] = json!(0)),
+        &["matches none of anyOf"],
+        "a pilot plan with zero independent units",
+    );
+}
+
+#[test]
+fn a_plan_with_an_empty_independent_unit_is_never_registered() {
+    never_planned(
+        register_plan(|v| v["independent_unit"] = json!("")),
+        &["matches none of anyOf"],
+        "a pilot plan whose independent unit is empty",
+    );
+}
+
+#[test]
+fn a_plan_with_an_independent_unit_over_512_characters_is_never_registered() {
+    never_planned(
+        register_plan(|v| v["independent_unit"] = json!("u".repeat(513))),
+        &["matches none of anyOf"],
+        "a pilot plan whose independent unit is 513 characters",
     );
 }
 

@@ -3850,30 +3850,30 @@ MUTATIONS += [
      '        if c != v {',
      '        if false && c != v {',
      'axon-loop', _CS, 'a_policy_mode_spelled_as_a_variant_map_is_never_stored'),
-    ('M1213', 'EVIDENCE (4b, integrate-A): a value matching no anyOf branch is refused (EQUIVALENT: M1232)', 'crates/axon-loop-contracts/src/schema.rs',
+    ('M1213', 'EVIDENCE (4b, integrate-A): a value matching no anyOf branch is refused', 'crates/axon-loop-contracts/src/schema.rs',
      '        if !subs.iter().any(|sub| walk(sub, v, path).is_ok()) {',
      '        if false && !subs.iter().any(|sub| walk(sub, v, path).is_ok()) {',
-     'axon-loop', _CS, 'a_reference_with_uppercase_hex_is_never_recorded'),
+     'axon-loop', _CS, 'a_plan_with_zero_independent_units_is_never_registered'),
     ('M1214', 'EVIDENCE (4b, integrate-A): a value matching no oneOf branch is refused (EQUIVALENT: M1234)', 'crates/axon-loop-contracts/src/schema.rs',
      '        if n != 1 {',
      '        if false && n != 1 {',
      'axon-loop', _CS, 'an_acf_request_with_an_empty_approval_is_never_counted'),
-    ('M1215', 'EVIDENCE (4b, integrate-A): a string under minLength is refused (EQUIVALENT: M1234)', 'crates/axon-loop-contracts/src/schema.rs',
+    ('M1215', 'EVIDENCE (4b, integrate-A): a string under minLength is refused', 'crates/axon-loop-contracts/src/schema.rs',
      '        if n < min {',
      '        if false && n < min {',
-     'axon-loop', _CS, 'an_empty_branch_name_is_never_recorded'),
-    ('M1216', 'EVIDENCE (4b, integrate-A): a string over maxLength is refused (EQUIVALENT: M1234)', 'crates/axon-loop-contracts/src/schema.rs',
+     'axon-loop', _CS, 'a_plan_with_an_empty_independent_unit_is_never_registered'),
+    ('M1216', 'EVIDENCE (4b, integrate-A): a string over maxLength is refused', 'crates/axon-loop-contracts/src/schema.rs',
      '        if n > max {',
      '        if false && n > max {',
-     'axon-loop', _CS, 'a_branch_name_over_512_characters_is_never_recorded'),
+     'axon-loop', _CS, 'a_plan_with_an_independent_unit_over_512_characters_is_never_registered'),
     ('M1217', 'EVIDENCE (4b, integrate-A): a string not matching its pattern is refused (EQUIVALENT: M1233)', 'crates/axon-loop-contracts/src/schema.rs',
      '        if !ok {',
      '        if false && !ok {',
      'axon-loop', _CS, 'an_acf_reference_of_another_scheme_is_never_recorded'),
-    ('M1218', 'EVIDENCE (4b, integrate-A): an integer under its minimum is refused (EQUIVALENT: M1240)', 'crates/axon-loop-contracts/src/schema.rs',
+    ('M1218', 'EVIDENCE (4b, integrate-A): an integer under its minimum is refused', 'crates/axon-loop-contracts/src/schema.rs',
      '        if x < min {',
      '        if false && x < min {',
-     'axon-loop', _CS, 'an_acf_request_with_a_zero_limit_is_never_counted'),
+     'axon-loop', _CS, 'a_plan_with_zero_independent_units_is_never_registered'),
     ('M1219', 'EVIDENCE (4b, integrate-A): an integer over its maximum is refused (EQUIVALENT: M1204+M1240)', 'crates/axon-loop-contracts/src/schema.rs',
      '        if x > max {',
      '        if false && x > max {',
@@ -3882,14 +3882,14 @@ MUTATIONS += [
      '        if a.len() < min {',
      '        if false && a.len() < min {',
      'axon-loop', _CS, 'an_episode_naming_no_attempt_is_never_recorded'),
-    ('M1221', 'EVIDENCE (4b, integrate-A): an array over maxItems is refused (EQUIVALENT: M1242)', 'crates/axon-loop-contracts/src/schema.rs',
+    ('M1221', 'EVIDENCE (4b, integrate-A): an array over maxItems is refused', 'crates/axon-loop-contracts/src/schema.rs',
      '        if a.len() > max {',
      '        if false && a.len() > max {',
-     'axon-loop', _CS, 'an_acf_request_with_more_than_128_arguments_is_never_counted'),
-    ('M1222', 'EVIDENCE (4b, integrate-A): a uniqueItems array with a duplicate is refused (EQUIVALENT: M1239)', 'crates/axon-loop-contracts/src/schema.rs',
+     'axon-loop', _CS, 'a_plan_with_more_than_256_live_evidence_refs_is_never_registered'),
+    ('M1222', 'EVIDENCE (4b, integrate-A): a uniqueItems array with a duplicate is refused', 'crates/axon-loop-contracts/src/schema.rs',
      '            if a[..i].contains(x) {',
      '            if false && a[..i].contains(x) {',
-     'axon-loop', _CS, 'an_episode_naming_an_attempt_twice_is_never_recorded'),
+     'axon-loop', _CS, 'a_plan_naming_a_live_evidence_ref_twice_is_never_registered'),
     ('M1223', 'EVIDENCE (4b, integrate-A): a missing required field is refused by the schema (EQUIVALENT: M1225)', 'crates/axon-loop-contracts/src/schema.rs',
      '            if !o.contains_key(r) {',
      '            if false && !o.contains_key(r) {',
@@ -3974,19 +3974,19 @@ MUTATIONS += [
      '            UsageState::Final if self.unresolved_liability_micro != 0 => Err(shape(',
      '            UsageState::Final if false && self.unresolved_liability_micro != 0 => Err(shape(',
      'axon-loop', _CS, 'a_final_usage_with_liability_is_never_recorded'),
-    ('M1248', 'EVIDENCE (4b, integrate-A): a passed episode completed', 'crates/axon-loop-contracts/src/episode.rs',
+    ('M1248', 'EVIDENCE (4b, integrate-A): a passed episode completed (EQUIVALENT: M1209)', 'crates/axon-loop-contracts/src/episode.rs',
      '            if self.status != EpisodeStatus::Completed {',
      '            if false && self.status != EpisodeStatus::Completed {',
      'axon-loop', _CS, 'a_passed_episode_that_did_not_complete_is_never_counted'),
-    ('M1249', 'EVIDENCE (4b, integrate-A): a passed episode matched a check', 'crates/axon-loop-contracts/src/episode.rs',
+    ('M1249', 'EVIDENCE (4b, integrate-A): a passed episode matched a check (EQUIVALENT: M1218)', 'crates/axon-loop-contracts/src/episode.rs',
      '            if v.matched_checks == 0 {',
      '            if false && v.matched_checks == 0 {',
      'axon-loop', _CS, 'a_passed_episode_with_no_matched_check_is_never_counted'),
-    ('M1250', 'EVIDENCE (4b, integrate-A): a passed episode names its checked output, issuer and verifier', 'crates/axon-loop-contracts/src/episode.rs',
+    ('M1250', 'EVIDENCE (4b, integrate-A): a passed episode names its checked output, issuer and verifier (EQUIVALENT: M1210)', 'crates/axon-loop-contracts/src/episode.rs',
      '            if self.output_workspace_ref.is_none()\n                || v.output_workspace_ref.is_none()\n                || v.issuer_ref.is_none()\n                || v.verifier_ref.is_none()\n            {',
      '            if false\n                && (self.output_workspace_ref.is_none()\n                    || v.output_workspace_ref.is_none()\n                    || v.issuer_ref.is_none()\n                    || v.verifier_ref.is_none())\n            {',
      'axon-loop', _CS, 'a_passed_episode_with_no_checked_output_is_never_counted'),
-    ('M1251', 'EVIDENCE (4b, integrate-A): a passed episode cites evidence', 'crates/axon-loop-contracts/src/episode.rs',
+    ('M1251', 'EVIDENCE (4b, integrate-A): a passed episode cites evidence (EQUIVALENT: M1220)', 'crates/axon-loop-contracts/src/episode.rs',
      '            if v.evidence_refs.is_empty() {',
      '            if false && v.evidence_refs.is_empty() {',
      'axon-loop', _CS, 'a_passed_episode_with_no_evidence_is_never_counted'),
@@ -3998,11 +3998,11 @@ MUTATIONS += [
      '        if self.evidence_refs.len() > 128 {',
      '        if false && self.evidence_refs.len() > 128 {',
      'axon-loop', _CS, 'a_receipt_with_more_than_128_evidence_refs_is_never_counted'),
-    ('M1255', 'EVIDENCE (4b, integrate-A): a passed receipt completed (EQUIVALENT: M1212)', 'crates/axon-loop-contracts/src/receipt.rs',
+    ('M1255', 'EVIDENCE (4b, integrate-A): a passed receipt completed (EQUIVALENT: M1227)', 'crates/axon-loop-contracts/src/receipt.rs',
      '            if self.status != ReceiptStatus::Completed {',
      '            if false && self.status != ReceiptStatus::Completed {',
      'axon-loop', _CS, 'a_passed_receipt_that_did_not_complete_is_never_counted'),
-    ('M1256', 'EVIDENCE (4b, integrate-A): a passed receipt exited 0 (EQUIVALENT: M1212)', 'crates/axon-loop-contracts/src/receipt.rs',
+    ('M1256', 'EVIDENCE (4b, integrate-A): a passed receipt exited 0 (EQUIVALENT: M1236)', 'crates/axon-loop-contracts/src/receipt.rs',
      '            if self.process_exit_code != Some(0) {',
      '            if false && self.process_exit_code != Some(0) {',
      'axon-loop', _CS, 'a_passed_receipt_with_a_nonzero_exit_is_never_counted'),
@@ -4010,7 +4010,7 @@ MUTATIONS += [
      '            if !matches!(self.matched_checks, Some(n) if n >= 1) {',
      '            if false && !matches!(self.matched_checks, Some(n) if n >= 1) {',
      'axon-loop', _CS, 'a_passed_receipt_with_no_matched_check_is_never_counted'),
-    ('M1258', "EVIDENCE (4b, integrate-A): a passed receipt's evidence was supervisor-observed (EQUIVALENT: M1212)", 'crates/axon-loop-contracts/src/receipt.rs',
+    ('M1258', "EVIDENCE (4b, integrate-A): a passed receipt's evidence was supervisor-observed (EQUIVALENT: M1241)", 'crates/axon-loop-contracts/src/receipt.rs',
      '            if self.evidence_source != EvidenceSource::SupervisorObserved {',
      '            if false && self.evidence_source != EvidenceSource::SupervisorObserved {',
      'axon-loop', _CS, 'a_passed_receipt_reported_by_the_worker_is_never_counted'),
@@ -4022,11 +4022,11 @@ MUTATIONS += [
      '            if !matches!(\n                self.verification,',
      '            if false && !matches!(\n                self.verification,',
      'axon-loop', _CS, 'an_outcome_unknown_receipt_with_a_verdict_is_never_counted'),
-    ('M1261', 'EVIDENCE (4b, integrate-A): an outcome-unknown receipt has no exit code (EQUIVALENT: M1210)', 'crates/axon-loop-contracts/src/receipt.rs',
+    ('M1261', 'EVIDENCE (4b, integrate-A): an outcome-unknown receipt has no exit code (EQUIVALENT: M1244)', 'crates/axon-loop-contracts/src/receipt.rs',
      '            if self.process_exit_code.is_some() {',
      '            if false && self.process_exit_code.is_some() {',
      'axon-loop', _CS, 'an_outcome_unknown_receipt_with_an_exit_code_is_never_counted'),
-    ('M1262', 'EVIDENCE (4b, integrate-A): an unknown receipt usage states no cost (EQUIVALENT: M1210)', 'crates/axon-loop-contracts/src/receipt.rs',
+    ('M1262', 'EVIDENCE (4b, integrate-A): an unknown receipt usage states no cost (EQUIVALENT: M1253)', 'crates/axon-loop-contracts/src/receipt.rs',
      '        if self.usage_state == ReceiptUsageState::Unknown && self.cost_micro.is_some() {',
      '        if false && self.usage_state == ReceiptUsageState::Unknown && self.cost_micro.is_some() {',
      'axon-loop', _CS, 'a_receipt_with_unknown_usage_and_a_cost_is_never_counted'),
@@ -4034,7 +4034,7 @@ MUTATIONS += [
      '        if self.authority_expansion {',
      '        if false && self.authority_expansion {',
      'axon-loop', _CS, 'a_policy_claiming_authority_expansion_is_never_stored'),
-    ('M1265', 'EVIDENCE (4b, integrate-A): a pause names no target policy (EQUIVALENT: M1210)', 'crates/axon-loop-contracts/src/policy.rs',
+    ('M1265', 'EVIDENCE (4b, integrate-A): a pause names no target policy (EQUIVALENT: M1263)', 'crates/axon-loop-contracts/src/policy.rs',
      '                if self.target_policy_ref.is_some() {',
      '                if false && self.target_policy_ref.is_some() {',
      'axon-loop', _CS, 'a_pause_naming_a_target_is_never_applied'),
@@ -4070,7 +4070,218 @@ MUTATIONS += [
      '          "evidence_source": {\n            "const": "supervisor_observed"\n          },',
      '          "evidence_source": {},',
      'axon-loop', _CS, 'a_passed_receipt_reported_by_the_worker_is_never_counted'),
+    ('M1244', 'EVIDENCE (4b, integrate-A): the receipt schema: an outcome-unknown receipt has no exit code (EQUIVALENT: M1261)', 'crates/axon-loop-contracts/schemas/acf-execution-receipt.schema.json',
+     '          "process_exit_code": {\n            "type": "null"\n          }\n        }\n      }\n    },',
+     '          "process_exit_code": {}\n        }\n      }\n    },',
+     'axon-loop', _CS, 'an_outcome_unknown_receipt_with_an_exit_code_is_never_counted'),
+    ('M1253', 'EVIDENCE (4b, integrate-A): the receipt schema: an unknown usage states no cost (EQUIVALENT: M1262)', 'crates/axon-loop-contracts/schemas/acf-execution-receipt.schema.json',
+     '          "cost_micro": {\n            "type": "null"\n          }',
+     '          "cost_micro": {}',
+     'axon-loop', _CS, 'a_receipt_with_unknown_usage_and_a_cost_is_never_counted'),
+    ('M1263', 'EVIDENCE (4b, integrate-A): the transition schema: a pause names no target (EQUIVALENT: M1265)', 'crates/axon-loop-contracts/schemas/closed-loop-transition.schema.json',
+     '          "target_policy_ref": {\n            "type": "null"\n          }',
+     '          "target_policy_ref": {}',
+     'axon-loop', _CS, 'a_pause_naming_a_target_is_never_applied'),
 ]
+# INTEGRATE-A retirements (four-cell, scripts/v022_paired_disable.py --only=...).
+EQUIV_RECORD['M1202'] = {
+    "property": 'a value nested past MAX_DEPTH is never read',
+    "subsumed_by": ['M1201'], "killer": 'joint:M1202+M1201',
+    "all_paths": 'a value at depth d > 32 lies inside d >= 33 containers, so the text holds 33 open brackets before it and bounded_depth (M1201) refuses every parsed text this walk refuses; on a value the loop BUILDS (canonical_bytes of a record), the record is read back only through parse_value (strict_record, get_contract, the ledger), whose pre-scan refuses the same nesting'}
+EQUIV_RECORD['M1203'] = {
+    "property": "an object's keys count a nesting level",
+    "subsumed_by": ['M1202', 'M1201'], "killer": 'joint:M1203+M1202+M1201',
+    "all_paths": 'a non-empty object at depth 32 has a value at depth 33, which the value rule (M1202) refuses in the same walk on every path, parsed or built; on parsed text the pre-scan (M1201) also refuses its 33 open brackets'}
+EQUIV_RECORD['M1207'] = {
+    "property": 'a canonical form over MAX_BYTES is never digested',
+    "subsumed_by": ['M1200'], "killer": 'joint:M1207+M1200',
+    "all_paths": "the canonical form of a parsed value is never longer than its text (no whitespace, sorted keys, escapes no longer than the input's, -0 -> 0), so parse_value's limit (M1200) refuses every parsed value this refuses; a record the loop builds over the limit is refused where it is read back, by parse_value (M1200)"}
+EQUIV_RECORD['M1208'] = {
+    "property": 'the episode schema: a final usage leaves no liability',
+    "subsumed_by": ['M1247'], "killer": 'joint:M1208+M1247',
+    "all_paths": 'the clause is read only by the schema walk inside parse, after which LoopEpisode::validate (M1247) refuses the same episode'}
+EQUIV_RECORD['M1209'] = {
+    "property": 'the episode schema: a passed episode completed',
+    "subsumed_by": ['M1248'], "killer": 'joint:M1209+M1248',
+    "all_paths": 'the clause is read only by the schema walk inside parse, after which LoopEpisode::validate (M1248) refuses the same episode'}
+EQUIV_RECORD['M1214'] = {
+    "property": 'a value matching no oneOf branch is refused',
+    "subsumed_by": ['M1234'], "killer": 'joint:M1214+M1234',
+    "all_paths": "the schema walk runs only inside axon_loop_contracts::parse (and plan.rs's pilot schema, whose PilotPlan fields this keyword does not bound without the typed twin), and on the same value typed serde and validate() then run; every checked-in schema bound of this keyword is restated by the typed layer (lib.rs check_array/check_int, the ids.rs newtypes, the contract's validate()), which refuses the same values; the oneOf members in the checked-in schemas are a bounded string or null, both restated by Option<OpaqueRef>/Option<Acf1Ref> (check_opaque, check_acf1)"}
+EQUIV_RECORD['M1217'] = {
+    "property": 'a string not matching its schema pattern is refused',
+    "subsumed_by": ['M1233'], "killer": 'joint:M1217+M1233',
+    "all_paths": "the schema walk runs only inside axon_loop_contracts::parse (and plan.rs's pilot schema, whose PilotPlan fields this keyword does not bound without the typed twin), and on the same value typed serde and validate() then run; every checked-in schema bound of this keyword is restated by the typed layer (lib.rs check_array/check_int, the ids.rs newtypes, the contract's validate()), which refuses the same values; the five patterns are restated by TaskId-family check_id, check_ref, check_acf1, check_currency and the profile id (profile.rs, OUT_OF_SCOPE)"}
+EQUIV_RECORD['M1219'] = {
+    "property": 'an integer over its schema maximum is refused',
+    "subsumed_by": ['M1204', 'M1240'], "killer": 'joint:M1219+M1204+M1240',
+    "all_paths": 'every maximum in the checked-in schemas is 2^53-1, which parse_value (M1204) enforces on every number before the walk, or 255 for process_exit_code, typed u8 (serde refuses more); the typed check_int (M1240) restates 2^53-1'}
+EQUIV_RECORD['M1220'] = {
+    "property": 'an array under its schema minItems is refused',
+    "subsumed_by": ['M1238'], "killer": 'joint:M1220+M1238',
+    "all_paths": "the schema walk runs only inside axon_loop_contracts::parse (and plan.rs's pilot schema, whose PilotPlan fields this keyword does not bound without the typed twin), and on the same value typed serde and validate() then run; every checked-in schema bound of this keyword is restated by the typed layer (lib.rs check_array/check_int, the ids.rs newtypes, the contract's validate()), which refuses the same values (check_array's minimum; the passed-verdict conditionals by episode.rs/receipt.rs)"}
+EQUIV_RECORD['M1223'] = {
+    "property": 'a missing required field is refused',
+    "subsumed_by": ['M1225'], "killer": 'joint:M1223+M1225',
+    "all_paths": 'every required field of every checked-in schema is a non-defaulted field of its contract type (no #[serde(default)] in the contract crate), so typed serde refuses it missing; the row M1225 gives one field a default to show the two are jointly load-bearing'}
+EQUIV_RECORD['M1224'] = {
+    "property": 'a field no schema names is refused',
+    "subsumed_by": ['M1226'], "killer": 'joint:M1224+M1226',
+    "all_paths": 'every additionalProperties:false object of the checked-in schemas is a deny_unknown_fields struct of its contract type, so typed serde refuses the same field; the row M1226 drops deny_unknown_fields from Usage to show the two are jointly load-bearing'}
+EQUIV_RECORD['M1225'] = {
+    "property": 'the typed layer refuses a missing field (no implicit default)',
+    "subsumed_by": ['M1223'], "killer": 'joint:M1225+M1223',
+    "all_paths": 'a contract document is typed only after the schema walk, whose `required` (M1223) lists every field of every contract type'}
+EQUIV_RECORD['M1226'] = {
+    "property": 'the typed layer refuses an unknown field',
+    "subsumed_by": ['M1224'], "killer": 'joint:M1226+M1224',
+    "all_paths": 'a contract document is typed only after the schema walk, whose additionalProperties:false (M1224) closes every contract object'}
+EQUIV_RECORD['M1227'] = {
+    "property": 'the receipt schema: a passed receipt completed',
+    "subsumed_by": ['M1255'], "killer": 'joint:M1227+M1255',
+    "all_paths": 'the clause is read only by the schema walk inside parse, after which ExecutionReceipt::validate (M1255) refuses the same receipt'}
+EQUIV_RECORD['M1232'] = {
+    "property": 'a digest is 64 lowercase hex',
+    "subsumed_by": ['M1213'], "killer": 'joint:M1232+M1213',
+    "all_paths": "in a contract document every Ref/Acf1Ref field is also bounded by the schema's anyOf/pattern (M1213, M1217) on the same value; a Ref read by strict_record (evl, assign, admit requests) is compared for equality with a store-computed lowercase digest or names a CAS file by its hex, neither of which a non-lowercase value equals or finds"}
+EQUIV_RECORD['M1233'] = {
+    "property": 'an ACF reference is acf1:',
+    "subsumed_by": ['M1217'], "killer": 'joint:M1233+M1217',
+    "all_paths": 'every Acf1Ref field of a contract document is bounded by the schema pattern ^acf1: (M1217) on the same value; Acf1Ref is not read outside contract documents'}
+EQUIV_RECORD['M1236'] = {
+    "property": 'the receipt schema: a passed receipt exited 0',
+    "subsumed_by": ['M1256'], "killer": 'joint:M1236+M1256',
+    "all_paths": 'the clause is read only by the schema walk inside parse, after which ExecutionReceipt::validate (M1256) refuses the same receipt'}
+EQUIV_RECORD['M1237'] = {
+    "property": "a document's schema tag is its type's",
+    "subsumed_by": ['M1212'], "killer": 'joint:M1237+M1212',
+    "all_paths": "every contract's schema tag field is a const in its checked-in schema (M1212) on the same value; a record tag read by strict_record is a version label of a deny_unknown_fields type whose bytes are read back by digest"}
+EQUIV_RECORD['M1238'] = {
+    "property": "an array's cardinality is the schema's",
+    "subsumed_by": ['M1220'], "killer": 'joint:M1238+M1220',
+    "all_paths": "the typed rule runs only on a value the schema walk already judged: every contract document is admitted through axon_loop_contracts::parse (canonical.rs: parse_value, validate_against the checked-in schema, typed serde, validate()), and validate() is called elsewhere only by tel::join on documents parse admitted and by evo::propose on a candidate it builds by remove/swap from an admitted policy (never larger, never empty, no duplicate, evidence deduplicated and capped at 256 by EVO itself), which this rule never refuses; the schema's minItems/maxItems (M1220, M1221) bound the same arrays"}
+EQUIV_RECORD['M1239'] = {
+    "property": 'a unique array holds no duplicate',
+    "subsumed_by": ['M1222'], "killer": 'joint:M1239+M1222',
+    "all_paths": "the typed rule runs only on a value the schema walk already judged: every contract document is admitted through axon_loop_contracts::parse (canonical.rs: parse_value, validate_against the checked-in schema, typed serde, validate()), and validate() is called elsewhere only by tel::join on documents parse admitted and by evo::propose on a candidate it builds by remove/swap from an admitted policy (never larger, never empty, no duplicate, evidence deduplicated and capped at 256 by EVO itself), which this rule never refuses; the schema's uniqueItems (M1222) bounds the same arrays"}
+EQUIV_RECORD['M1240'] = {
+    "property": 'a bounded integer is in min..=2^53-1',
+    "subsumed_by": ['M1218'], "killer": 'joint:M1240+M1218',
+    "all_paths": "the typed rule runs only on a value the schema walk already judged: every contract document is admitted through axon_loop_contracts::parse (canonical.rs: parse_value, validate_against the checked-in schema, typed serde, validate()), and validate() is called elsewhere only by tel::join on documents parse admitted and by evo::propose on a candidate it builds by remove/swap from an admitted policy (never larger, never empty, no duplicate, evidence deduplicated and capped at 256 by EVO itself), which this rule never refuses; the schema's minimum (M1218) and parse_value's integer rule (M1204) bound the same fields"}
+EQUIV_RECORD['M1241'] = {
+    "property": "the receipt schema: a passed receipt's evidence was supervisor-observed",
+    "subsumed_by": ['M1258'], "killer": 'joint:M1241+M1258',
+    "all_paths": 'the clause is read only by the schema walk inside parse, after which ExecutionReceipt::validate (M1258) refuses the same receipt'}
+EQUIV_RECORD['M1242'] = {
+    "property": 'an ACF request carries at most 128 arguments',
+    "subsumed_by": ['M1221'], "killer": 'joint:M1242+M1221',
+    "all_paths": "the typed rule runs only on a value the schema walk already judged: every contract document is admitted through axon_loop_contracts::parse (canonical.rs: parse_value, validate_against the checked-in schema, typed serde, validate()), and validate() is called elsewhere only by tel::join on documents parse admitted and by evo::propose on a candidate it builds by remove/swap from an admitted policy (never larger, never empty, no duplicate, evidence deduplicated and capped at 256 by EVO itself), which this rule never refuses; the schema's argv maxItems 128 (M1221)"}
+EQUIV_RECORD['M1243'] = {
+    "property": 'an ACF argument is at most 8192 characters',
+    "subsumed_by": ['M1216'], "killer": 'joint:M1243+M1216',
+    "all_paths": "the typed rule runs only on a value the schema walk already judged: every contract document is admitted through axon_loop_contracts::parse (canonical.rs: parse_value, validate_against the checked-in schema, typed serde, validate()), and validate() is called elsewhere only by tel::join on documents parse admitted and by evo::propose on a candidate it builds by remove/swap from an admitted policy (never larger, never empty, no duplicate, evidence deduplicated and capped at 256 by EVO itself), which this rule never refuses; the schema's argv items maxLength 8192 (M1216)"}
+EQUIV_RECORD['M1244'] = {
+    "property": 'the receipt schema: an outcome-unknown receipt has no exit code',
+    "subsumed_by": ['M1261'], "killer": 'joint:M1244+M1261',
+    "all_paths": 'the clause is read only by the schema walk inside parse, after which ExecutionReceipt::validate (M1261) refuses the same receipt'}
+EQUIV_RECORD['M1245'] = {
+    "property": 'an unknown usage states no cost',
+    "subsumed_by": ['M1210'], "killer": 'joint:M1245+M1210',
+    "all_paths": "the typed rule runs only on a value the schema walk already judged: every contract document is admitted through axon_loop_contracts::parse (canonical.rs: parse_value, validate_against the checked-in schema, typed serde, validate()), and validate() is called elsewhere only by tel::join on documents parse admitted and by evo::propose on a candidate it builds by remove/swap from an admitted policy (never larger, never empty, no duplicate, evidence deduplicated and capped at 256 by EVO itself), which this rule never refuses; the episode schema's conditional (usage.state unknown -> cost_micro type null, M1210)"}
+EQUIV_RECORD['M1246'] = {
+    "property": 'a final usage states a known cost',
+    "subsumed_by": ['M1210'], "killer": 'joint:M1246+M1210',
+    "all_paths": "the typed rule runs only on a value the schema walk already judged: every contract document is admitted through axon_loop_contracts::parse (canonical.rs: parse_value, validate_against the checked-in schema, typed serde, validate()), and validate() is called elsewhere only by tel::join on documents parse admitted and by evo::propose on a candidate it builds by remove/swap from an admitted policy (never larger, never empty, no duplicate, evidence deduplicated and capped at 256 by EVO itself), which this rule never refuses; the episode schema's conditional (final -> cost_micro type integer, M1210)"}
+EQUIV_RECORD['M1247'] = {
+    "property": 'a final usage leaves no liability',
+    "subsumed_by": ['M1208'], "killer": 'joint:M1247+M1208',
+    "all_paths": "the typed rule runs only on a value the schema walk already judged: every contract document is admitted through axon_loop_contracts::parse (canonical.rs: parse_value, validate_against the checked-in schema, typed serde, validate()), and validate() is called elsewhere only by tel::join on documents parse admitted and by evo::propose on a candidate it builds by remove/swap from an admitted policy (never larger, never empty, no duplicate, evidence deduplicated and capped at 256 by EVO itself), which this rule never refuses; the episode schema's conditional (final -> unresolved_liability_micro const 0, M1208)"}
+EQUIV_RECORD['M1248'] = {
+    "property": 'a passed episode completed',
+    "subsumed_by": ['M1209'], "killer": 'joint:M1248+M1209',
+    "all_paths": "the typed rule runs only on a value the schema walk already judged: every contract document is admitted through axon_loop_contracts::parse (canonical.rs: parse_value, validate_against the checked-in schema, typed serde, validate()), and validate() is called elsewhere only by tel::join on documents parse admitted and by evo::propose on a candidate it builds by remove/swap from an admitted policy (never larger, never empty, no duplicate, evidence deduplicated and capped at 256 by EVO itself), which this rule never refuses; the episode schema's conditional (passed -> status const completed, M1209)"}
+EQUIV_RECORD['M1249'] = {
+    "property": 'a passed episode matched a check',
+    "subsumed_by": ['M1218'], "killer": 'joint:M1249+M1218',
+    "all_paths": "the typed rule runs only on a value the schema walk already judged: every contract document is admitted through axon_loop_contracts::parse (canonical.rs: parse_value, validate_against the checked-in schema, typed serde, validate()), and validate() is called elsewhere only by tel::join on documents parse admitted and by evo::propose on a candidate it builds by remove/swap from an admitted policy (never larger, never empty, no duplicate, evidence deduplicated and capped at 256 by EVO itself), which this rule never refuses; the episode schema's conditional (passed -> matched_checks minimum 1, M1218)"}
+EQUIV_RECORD['M1250'] = {
+    "property": 'a passed episode names its checked output, issuer and verifier',
+    "subsumed_by": ['M1210'], "killer": 'joint:M1250+M1210',
+    "all_paths": "the typed rule runs only on a value the schema walk already judged: every contract document is admitted through axon_loop_contracts::parse (canonical.rs: parse_value, validate_against the checked-in schema, typed serde, validate()), and validate() is called elsewhere only by tel::join on documents parse admitted and by evo::propose on a candidate it builds by remove/swap from an admitted policy (never larger, never empty, no duplicate, evidence deduplicated and capped at 256 by EVO itself), which this rule never refuses; the episode schema's conditional (passed -> each a string, M1210)"}
+EQUIV_RECORD['M1251'] = {
+    "property": 'a passed episode cites evidence',
+    "subsumed_by": ['M1220'], "killer": 'joint:M1251+M1220',
+    "all_paths": "the typed rule runs only on a value the schema walk already judged: every contract document is admitted through axon_loop_contracts::parse (canonical.rs: parse_value, validate_against the checked-in schema, typed serde, validate()), and validate() is called elsewhere only by tel::join on documents parse admitted and by evo::propose on a candidate it builds by remove/swap from an admitted policy (never larger, never empty, no duplicate, evidence deduplicated and capped at 256 by EVO itself), which this rule never refuses; the episode schema's conditional (passed -> evidence_refs minItems 1, M1220)"}
+EQUIV_RECORD['M1252'] = {
+    "property": 'an outcome-unknown episode carries no verdict',
+    "subsumed_by": ['M1211'], "killer": 'joint:M1252+M1211',
+    "all_paths": "the typed rule runs only on a value the schema walk already judged: every contract document is admitted through axon_loop_contracts::parse (canonical.rs: parse_value, validate_against the checked-in schema, typed serde, validate()), and validate() is called elsewhere only by tel::join on documents parse admitted and by evo::propose on a candidate it builds by remove/swap from an admitted policy (never larger, never empty, no duplicate, evidence deduplicated and capped at 256 by EVO itself), which this rule never refuses; the episode schema's conditional (outcome_unknown -> result enum not_run/unknown, M1211)"}
+EQUIV_RECORD['M1253'] = {
+    "property": 'the receipt schema: an unknown usage states no cost',
+    "subsumed_by": ['M1262'], "killer": 'joint:M1253+M1262',
+    "all_paths": 'the clause is read only by the schema walk inside parse, after which ExecutionReceipt::validate (M1262) refuses the same receipt'}
+EQUIV_RECORD['M1254'] = {
+    "property": 'a receipt cites at most 128 evidence refs',
+    "subsumed_by": ['M1221'], "killer": 'joint:M1254+M1221',
+    "all_paths": "the typed rule runs only on a value the schema walk already judged: every contract document is admitted through axon_loop_contracts::parse (canonical.rs: parse_value, validate_against the checked-in schema, typed serde, validate()), and validate() is called elsewhere only by tel::join on documents parse admitted and by evo::propose on a candidate it builds by remove/swap from an admitted policy (never larger, never empty, no duplicate, evidence deduplicated and capped at 256 by EVO itself), which this rule never refuses; the receipt schema's evidence_refs maxItems 128 (M1221)"}
+EQUIV_RECORD['M1255'] = {
+    "property": 'a passed receipt completed',
+    "subsumed_by": ['M1227'], "killer": 'joint:M1255+M1227',
+    "all_paths": "the typed rule runs only on a value the schema walk already judged: every contract document is admitted through axon_loop_contracts::parse (canonical.rs: parse_value, validate_against the checked-in schema, typed serde, validate()), and validate() is called elsewhere only by tel::join on documents parse admitted and by evo::propose on a candidate it builds by remove/swap from an admitted policy (never larger, never empty, no duplicate, evidence deduplicated and capped at 256 by EVO itself), which this rule never refuses; the receipt schema's conditional (passed -> status const completed, M1227)"}
+EQUIV_RECORD['M1256'] = {
+    "property": 'a passed receipt exited 0',
+    "subsumed_by": ['M1236'], "killer": 'joint:M1256+M1236',
+    "all_paths": "the typed rule runs only on a value the schema walk already judged: every contract document is admitted through axon_loop_contracts::parse (canonical.rs: parse_value, validate_against the checked-in schema, typed serde, validate()), and validate() is called elsewhere only by tel::join on documents parse admitted and by evo::propose on a candidate it builds by remove/swap from an admitted policy (never larger, never empty, no duplicate, evidence deduplicated and capped at 256 by EVO itself), which this rule never refuses; the receipt schema's conditional (passed -> process_exit_code const 0, M1236)"}
+EQUIV_RECORD['M1257'] = {
+    "property": 'a passed receipt matched a check',
+    "subsumed_by": ['M1218'], "killer": 'joint:M1257+M1218',
+    "all_paths": "the typed rule runs only on a value the schema walk already judged: every contract document is admitted through axon_loop_contracts::parse (canonical.rs: parse_value, validate_against the checked-in schema, typed serde, validate()), and validate() is called elsewhere only by tel::join on documents parse admitted and by evo::propose on a candidate it builds by remove/swap from an admitted policy (never larger, never empty, no duplicate, evidence deduplicated and capped at 256 by EVO itself), which this rule never refuses; the receipt schema's conditional (passed -> matched_checks minimum 1, M1218)"}
+EQUIV_RECORD['M1258'] = {
+    "property": "a passed receipt's evidence was supervisor-observed",
+    "subsumed_by": ['M1241'], "killer": 'joint:M1258+M1241',
+    "all_paths": "the typed rule runs only on a value the schema walk already judged: every contract document is admitted through axon_loop_contracts::parse (canonical.rs: parse_value, validate_against the checked-in schema, typed serde, validate()), and validate() is called elsewhere only by tel::join on documents parse admitted and by evo::propose on a candidate it builds by remove/swap from an admitted policy (never larger, never empty, no duplicate, evidence deduplicated and capped at 256 by EVO itself), which this rule never refuses; the receipt schema's conditional (passed -> evidence_source const, M1241)"}
+EQUIV_RECORD['M1259'] = {
+    "property": 'a passed receipt cites evidence',
+    "subsumed_by": ['M1220'], "killer": 'joint:M1259+M1220',
+    "all_paths": "the typed rule runs only on a value the schema walk already judged: every contract document is admitted through axon_loop_contracts::parse (canonical.rs: parse_value, validate_against the checked-in schema, typed serde, validate()), and validate() is called elsewhere only by tel::join on documents parse admitted and by evo::propose on a candidate it builds by remove/swap from an admitted policy (never larger, never empty, no duplicate, evidence deduplicated and capped at 256 by EVO itself), which this rule never refuses; the receipt schema's conditional (passed -> evidence_refs minItems 1, M1220)"}
+EQUIV_RECORD['M1260'] = {
+    "property": 'an outcome-unknown receipt carries no verdict',
+    "subsumed_by": ['M1211'], "killer": 'joint:M1260+M1211',
+    "all_paths": "the typed rule runs only on a value the schema walk already judged: every contract document is admitted through axon_loop_contracts::parse (canonical.rs: parse_value, validate_against the checked-in schema, typed serde, validate()), and validate() is called elsewhere only by tel::join on documents parse admitted and by evo::propose on a candidate it builds by remove/swap from an admitted policy (never larger, never empty, no duplicate, evidence deduplicated and capped at 256 by EVO itself), which this rule never refuses; the receipt schema's conditional (outcome_unknown -> verification enum, M1211)"}
+EQUIV_RECORD['M1261'] = {
+    "property": 'an outcome-unknown receipt has no exit code',
+    "subsumed_by": ['M1244'], "killer": 'joint:M1261+M1244',
+    "all_paths": "the typed rule runs only on a value the schema walk already judged: every contract document is admitted through axon_loop_contracts::parse (canonical.rs: parse_value, validate_against the checked-in schema, typed serde, validate()), and validate() is called elsewhere only by tel::join on documents parse admitted and by evo::propose on a candidate it builds by remove/swap from an admitted policy (never larger, never empty, no duplicate, evidence deduplicated and capped at 256 by EVO itself), which this rule never refuses; the receipt schema's conditional (outcome_unknown -> process_exit_code type null, M1244)"}
+EQUIV_RECORD['M1262'] = {
+    "property": 'an unknown receipt usage states no cost',
+    "subsumed_by": ['M1253'], "killer": 'joint:M1262+M1253',
+    "all_paths": "the typed rule runs only on a value the schema walk already judged: every contract document is admitted through axon_loop_contracts::parse (canonical.rs: parse_value, validate_against the checked-in schema, typed serde, validate()), and validate() is called elsewhere only by tel::join on documents parse admitted and by evo::propose on a candidate it builds by remove/swap from an admitted policy (never larger, never empty, no duplicate, evidence deduplicated and capped at 256 by EVO itself), which this rule never refuses; the receipt schema's conditional (usage_state unknown -> cost_micro type null, M1253)"}
+EQUIV_RECORD['M1263'] = {
+    "property": 'the transition schema: a pause names no target',
+    "subsumed_by": ['M1265'], "killer": 'joint:M1263+M1265',
+    "all_paths": 'the clause is read only by the schema walk inside parse, after which PolicyTransition::validate (M1265) refuses the same transition'}
+EQUIV_RECORD['M1264'] = {
+    "property": 'a policy never claims authority expansion',
+    "subsumed_by": ['M1212'], "killer": 'joint:M1264+M1212',
+    "all_paths": "the typed rule runs only on a value the schema walk already judged: every contract document is admitted through axon_loop_contracts::parse (canonical.rs: parse_value, validate_against the checked-in schema, typed serde, validate()), and validate() is called elsewhere only by tel::join on documents parse admitted and by evo::propose on a candidate it builds by remove/swap from an admitted policy (never larger, never empty, no duplicate, evidence deduplicated and capped at 256 by EVO itself), which this rule never refuses; the policy schema's authority_expansion const false (M1212)"}
+EQUIV_RECORD['M1265'] = {
+    "property": 'a pause names no target policy',
+    "subsumed_by": ['M1263'], "killer": 'joint:M1265+M1263',
+    "all_paths": "the typed rule runs only on a value the schema walk already judged: every contract document is admitted through axon_loop_contracts::parse (canonical.rs: parse_value, validate_against the checked-in schema, typed serde, validate()), and validate() is called elsewhere only by tel::join on documents parse admitted and by evo::propose on a candidate it builds by remove/swap from an admitted policy (never larger, never empty, no duplicate, evidence deduplicated and capped at 256 by EVO itself), which this rule never refuses; the transition schema's conditional (pause -> target_policy_ref type null, M1263)"}
+EQUIV_RECORD['M1266'] = {
+    "property": "a transition's fence is contiguous (next = expected + 1)",
+    "subsumed_by": ['M1268'], "killer": 'joint:M1266+M1268',
+    "all_paths": 'a PolicyTransition is only ever produced by parse (no constructor in crates/*/src) and only consumed by pointer::transition, which requires expected_epoch == current (CAS) and next_epoch == current + 1 (M1268) before it applies anything, together exactly this rule'}
+EQUIV_RECORD['M1267'] = {
+    "property": "a transition's next epoch is at least 1",
+    "subsumed_by": ['M1218', 'M1266', 'M1268'], "killer": 'joint:M1267+M1218+M1266+M1268',
+    "all_paths": "next_epoch = expected_epoch + 1 >= 1 whenever the fence holds (M1266, M1268 at the pointer), and the schema's minimum 1 (M1218) bounds the same field"}
+EQUIV_RECORD['M1268'] = {
+    "property": 'the pointer applies only next_epoch = current + 1',
+    "subsumed_by": ['M1266'], "killer": 'joint:M1268+M1266',
+    "all_paths": "pointer::transition's only input is a parsed PolicyTransition (no constructor in crates/*/src), whose validate() (M1266) requires next = expected + 1, and the pointer's CAS requires expected = current, so next = current + 1 already holds"}
+EQUIVALENT_DID |= {'M1246', 'M1253', 'M1244', 'M1259', 'M1243', 'M1202', 'M1245', 'M1249', 'M1239', 'M1220', 'M1227', 'M1265', 'M1266', 'M1224', 'M1262', 'M1250', 'M1226', 'M1254', 'M1258', 'M1223', 'M1268', 'M1257', 'M1207', 'M1236', 'M1267', 'M1242', 'M1233', 'M1251', 'M1203', 'M1217', 'M1252', 'M1238', 'M1219', 'M1263', 'M1209', 'M1247', 'M1261', 'M1241', 'M1237', 'M1264', 'M1255', 'M1256', 'M1214', 'M1225', 'M1240', 'M1248', 'M1232', 'M1260', 'M1208'}
+RETIRED |= {'M1246', 'M1253', 'M1244', 'M1259', 'M1243', 'M1202', 'M1245', 'M1249', 'M1239', 'M1220', 'M1227', 'M1265', 'M1266', 'M1224', 'M1262', 'M1250', 'M1226', 'M1254', 'M1258', 'M1223', 'M1268', 'M1257', 'M1207', 'M1236', 'M1267', 'M1242', 'M1233', 'M1251', 'M1203', 'M1217', 'M1252', 'M1238', 'M1219', 'M1263', 'M1209', 'M1247', 'M1261', 'M1241', 'M1237', 'M1264', 'M1255', 'M1256', 'M1214', 'M1225', 'M1240', 'M1248', 'M1232', 'M1260', 'M1208'}
 # ── end INTEGRATE-A ──
 
 PSV_IDS = {f"M{n}" for n in range(137, 550)}
