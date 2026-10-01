@@ -624,9 +624,10 @@ fn the_committed_profile_has_no_trusted_issuer_so_protected_dispatch_is_refused(
         issuer: Issuer::generate(),
         manifest_sha: String::new(),
     };
-    // Either rule (rows4b, four-cell record): no key configured, or the
-    // signer is no trusted issuer.
-    w.assert_refused(lx, "trusted evidence issuer");
+    // Either rule (rows4b, four-cell record): no key configured or, with that
+    // rule removed, the next one this unsigned fixture meets (RULE:unsigned);
+    // the property is that the profile is ineligible.
+    w.assert_refused(lx, "ineligible:");
 }
 
 #[test]
