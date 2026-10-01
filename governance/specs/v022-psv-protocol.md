@@ -1955,7 +1955,7 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       - No production behaviour of a guard changed: no matrix row and no operator deployment.
 59. **Every row's attack reaches its own guard after amendments 54 and 57; a cell's build is judged by
     its own cargo invocation; every cell keeps its output; every row ends on the run's interpreter
-    (C9 round 4 fix wave, rows3 workstream, rows M880-M893; M868 re-anchored).**
+    (C9 round 4 fix wave, rows3 workstream, rows M880-M894; M868 re-anchored).**
     - **Before.** The full mutation run at 49eb3765 found ACTIVE rows that their own attack did
       not kill:
       - **M410, M474, M612** (`one_read.rs`, `psv::prepare`). Since amendment 54, `prepare`
@@ -2052,6 +2052,21 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
         - The interpreter is always rebuilt and byte-compared. When nothing changed, that is a
           no-op build.
         - A prerequisite that cannot be restored is the record's failure.
+      - **What the first evaluated M58 full-suite cell showed.** With the consumer baselines no
+        longer misread, paired-disable `--only=M58` reached M58's full-suite cell for the first
+        time. Its kept outputs named two defects in test code, both fixed:
+        - At 9a823637, this workstream's own harness test executed
+          `<tgt>/debug/axon`, which the workspace binary-resolution lint
+          (`harness_binaries`) refuses. Fixed at 00c1509d: the test reads the identity from
+          the binary's bytes.
+        - At 00c1509d, every consumer that ran after axon-core's own suite in one cell refused
+          `AXON_BIN` with "older than `crates/axon-core/out/copy_dst.txt`". The
+          `sandbox_scope_copy` fixture of that suite writes the file, and `out/` is
+          git-ignored. `script_spawn::stale_against_sources` counted every file under the
+          crate, outputs included. It now counts the files git calls the working tree (tracked,
+          or untracked and not ignored), and falls back to the whole directory without git.
+          Attack: `an_ignored_output_written_into_a_crate_is_not_a_source` (M894). The control
+          is M860's test: a newer source still refuses.
     - **Rows** (each killed by its own attack, through the REAL harness on a miniature
       workspace, `crates/axon-core/tests/harness_integrity.rs`):
       - M880: a test printing compiler text is not a mutation cell's compile error.
@@ -2067,6 +2082,8 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
         cell replaces the run's `cortex`.
       - M892, M893: a cell that ran a building script is scrubbed after. M893 is the full-suite
         case: the miniature's row test runs no scripts, and another test of its package does.
+      - M894: a git-ignored output a test wrote into a crate is not a source that a named
+        binary is stale against.
       - M868 is re-anchored on the scrub in its new place, with the same attack (`_PC`). The
         miniature's tests now plant a script-built binary only where the file runs scripts
         (`RUNS_SCRIPTS`).
@@ -2087,6 +2104,9 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
         whose test is in `one_read.rs` or `readiness_attribution.rs`, or that guards `psv.rs`.
         All 43 were KILLED by their own attack, including M341-M345, M349, M410, M474 and M612.
       - At 9a823637: `--only=M880-M890`, all KILLED.
-      - At f2703ba5: `--only=M866-M869,M880-M893`, all KILLED (see the report).
+      - At 00c1509d: `--only=M866-M869,M880-M893`, all 18 KILLED.
+      - At 9940675a: `--only=M722-M725,M860,M861,M894`, all KILLED.
+      - At b4a298a6, through the new harness: the 43 rows above plus M278, 44/44 KILLED. M278's
+        baseline passed, and no row's interpreter needed restoring.
       - Refusal coverage, the matrix check and the paired-disable join test PASS.
     - No production behaviour changed: no matrix row, no operator deployment.
