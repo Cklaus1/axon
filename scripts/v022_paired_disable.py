@@ -628,6 +628,14 @@ GUARD_SETS = {
     "M854": {"siblings": ["M853"], "kind": "pair"},
     "M855": {"siblings": ["M856"], "kind": "pair"},
     "M856": {"siblings": ["M855"], "kind": "pair"},
+    # C9 round 4b, ROWS4B (amendment 62; EQUIV_RECORD in the registry).
+    "M1038": {"siblings": ["M1039"], "kind": "pair"},
+    "M1043": {"siblings": ["M1035"], "kind": "pair"},
+    "M1081": {"siblings": ["M1082"], "kind": "pair"},
+    "M1082": {"siblings": ["M1081"], "kind": "pair"},
+    "M1083": {"siblings": ["M1082"], "kind": "pair"},
+    "M1072": {"siblings": ["M1085"], "kind": "pair"},
+    "M1085": {"siblings": ["M1072"], "kind": "pair"},
 }
 
 
