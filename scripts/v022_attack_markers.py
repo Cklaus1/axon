@@ -1221,7 +1221,7 @@ ATTACK_MARKERS.update({
     'M1100': 'left: Ok\\(\\(\\)\\)\\s+right: Err\\(\\"the admitted grant gives the check workload',
 })
 
-# C9 round 4b, INTEGRATE-E (M1375-M1385; amendment 64).
+# C9 round 4b, INTEGRATE-E (M1375-M1380; amendment 64).
 ATTACK_MARKERS.update({
     'M1375': r'ATTACK: a trial requested and delivered but never issued was judged',
     'M1376': r'ATTACK: a ledger holding a line that is not an entry was read as the ledger',
