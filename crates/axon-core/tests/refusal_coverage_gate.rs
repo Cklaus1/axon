@@ -55,7 +55,23 @@ fn copy(from: &Path, to: &Path) {
     }
 }
 
-/// A scratch copy of everything the gate reads.
+fn git(args: &[&str]) -> Vec<u8> {
+    let o = std::process::Command::new("/usr/bin/git")
+        .arg("-C")
+        .arg(repo_root())
+        .args(args)
+        .output()
+        .unwrap();
+    assert!(o.status.success(), "setup: git {args:?}: {o:?}");
+    o.stdout
+}
+
+/// A scratch copy of everything the gate reads. The gate, its registry and
+/// markers come from the working tree (a mutation of the GATE is what these
+/// tests judge); the scanned SOURCES come from the commit (`HEAD`), never the
+/// working tree: a mutation or paired-disable cell edits a scanned source in
+/// place, and these tests' controls must not judge whichever tree the cell
+/// happens to leave (amendment 64, class e).
 fn tree(tag: &str) -> PathBuf {
     static N: AtomicU64 = AtomicU64::new(0);
     let d = std::env::temp_dir().join(format!(
@@ -65,7 +81,18 @@ fn tree(tag: &str) -> PathBuf {
     ));
     let _ = std::fs::remove_dir_all(&d);
     for f in COPY {
-        copy(&repo_root().join(f), &d.join(f));
+        if f.starts_with("scripts/") {
+            copy(&repo_root().join(f), &d.join(f));
+            continue;
+        }
+        let listed =
+            String::from_utf8(git(&["ls-tree", "-r", "--name-only", "HEAD", "--", f])).unwrap();
+        assert!(!listed.trim().is_empty(), "setup: {f} is not in HEAD");
+        for p in listed.lines() {
+            let to = d.join(p);
+            std::fs::create_dir_all(to.parent().unwrap()).unwrap();
+            std::fs::write(&to, git(&["show", &format!("HEAD:{p}")])).unwrap();
+        }
     }
     d
 }
