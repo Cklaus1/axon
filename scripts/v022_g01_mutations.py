@@ -3803,7 +3803,7 @@ MUTATIONS += [
 # refusal-site exemptions that rested only on another check refusing the same
 # input first. Each became an ACTIVE row killed by its own attack on the
 # production route (M1376), or an EQUIVALENT_DID retirement whose four cells
-# were executed against the check that dominates it (M1375, M1377-M1385). Where
+# were executed against the check that dominates it (M1375, M1377-M1380). Where
 # no four cells exist because the value the site reads is absent on every input
 # (the null attestation / context signature, the issuer, the issued_ms), the
 # executed cells are recorded in scripts/v022_refusal_coverage.py instead.
@@ -3812,10 +3812,6 @@ _IEP = '--test strict_protected_sites'
 _IE_EV = 'crates/axon-loop/src/evl.rs'
 _IE_ST = 'crates/axon-loop/src/store.rs'
 _IE_LI = 'crates/axon-loop/src/intake.rs'
-_IE_EP = 'crates/axon-loop-contracts/src/episode.rs'
-_IE_RC = 'crates/axon-loop-contracts/src/receipt.rs'
-_IE_ES = 'crates/axon-loop-contracts/schemas/closed-loop-episode.schema.json'
-_IE_RS = 'crates/axon-loop-contracts/schemas/acf-execution-receipt.schema.json'
 MUTATIONS += [
     ('M1375', 'EVL (4b, integrate-E): a trial delivered and requested but never issued is never judged (EQUIVALENT: M108)', _IE_EV,
      '                let (issued_attempt, _) = issued.get(&key).ok_or_else(|| {\n',
@@ -3843,24 +3839,6 @@ MUTATIONS += [
      '        if axon_loop_contracts::digest(&v)? != *r {',
      '        if false && axon_loop_contracts::digest(&v)? != *r {',
      'axon-loop', _IEP, 'a_stored_attestation_edited_in_place_is_never_admitted_on'),
-    ('M1381', 'EVL (4b, integrate-E): a pass over zero matched checks never counts (EQUIVALENT: M1382-M1385)', _IE_EV,
-     '            if v.matched_checks == 0 {\n                unknown(',
-     '            if false && v.matched_checks == 0 {\n                unknown(',
-     'axon-loop', _IE, 'a_pass_over_zero_matched_checks_never_counts'),
-    ('M1382', 'episode contract (4b, integrate-E): a passed verification requires matched_checks > 0 (EQUIVALENT: M1381,M1383-M1385)', _IE_EP,
-     '            if v.matched_checks == 0 {\n                return Err(shape(',
-     '            if false && v.matched_checks == 0 {\n                return Err(shape(',
-     'axon-loop', _IE, 'a_pass_over_zero_matched_checks_never_counts'),
-    ('M1383', 'receipt contract (4b, integrate-E): a passed check receipt requires matched_checks >= 1 (EQUIVALENT: M1381,M1382,M1384,M1385)', _IE_RC,
-     '            if !matches!(self.matched_checks, Some(n) if n >= 1) {',
-     '            if false && !matches!(self.matched_checks, Some(n) if n >= 1) {',
-     'axon-loop', _IE, 'a_pass_over_zero_matched_checks_never_counts'),
-    ('M1384', "episode schema (4b, integrate-E): a passed episode's matched_checks minimum is 1 (EQUIVALENT: M1381-M1383,M1385)", _IE_ES,
-     '"minimum": 1,', '"minimum": 0,',
-     'axon-loop', _IE, 'a_pass_over_zero_matched_checks_never_counts'),
-    ('M1385', "receipt schema (4b, integrate-E): a passed receipt's matched_checks minimum is 1 (EQUIVALENT: M1381-M1384)", _IE_RS,
-     '"minimum": 1,', '"minimum": 0,',
-     'axon-loop', _IE, 'a_pass_over_zero_matched_checks_never_counts'),
 ]
 EQUIV_RECORD["M1375"] = {
     "property": "only a trial the admitter issued before execution is judged",
@@ -3897,19 +3875,8 @@ EQUIV_RECORD["M1380"] = {
                  "authenticate the returned text over its exact bytes before use: verification and execution "
                  "attestations by attestation::verify (signature M02), clearance and context signatures by "
                  "verify_document (M951); an edited signed document fails that signature"}
-_IE_MC = ("a PASSED verdict with zero matched checks is refused at five independent points on the evaluation "
-          "route: the episode and receipt schemas (minimum 1 under `passed`, M1384/M1385) in the request's "
-          "contract parse, the episode and receipt contract code (M1382/M1383) at intake, and evl's vacuous "
-          "check (M1381). Executed: every leave-one-out cell refuses (or counts it Unknown); all five removed, "
-          "the four genuinely attested vacuous passes count")
-for _r in ["M1381", "M1382", "M1383", "M1384", "M1385"]:
-    EQUIV_RECORD[_r] = {
-        "property": "a pass over zero matched checks never counts",
-        "subsumed_by": [x for x in ["M1381", "M1382", "M1383", "M1384", "M1385"] if x != _r],
-        "killer": "joint:M1381+M1382+M1383+M1384+M1385",
-        "all_paths": _IE_MC}
-EQUIVALENT_DID |= {"M1375", "M1377", "M1378", "M1379", "M1380", "M1381", "M1382", "M1383", "M1384", "M1385"}
-RETIRED |= {"M1375", "M1377", "M1378", "M1379", "M1380", "M1381", "M1382", "M1383", "M1384", "M1385"}
+EQUIVALENT_DID |= {"M1375", "M1377", "M1378", "M1379", "M1380"}
+RETIRED |= {"M1375", "M1377", "M1378", "M1379", "M1380"}
 
 PSV_IDS = {f"M{n}" for n in range(137, 550)}
 # C9 round 3: rows M560-M649 are PSV rows (workstream ranges).

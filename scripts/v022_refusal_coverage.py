@@ -109,12 +109,12 @@ NOT_YET_SCANNED = {
     'crates/axon-loop-contracts/src/canonical.rs': 12,  # loop side (rows4a): not reached
     'crates/axon-loop-contracts/src/checks.rs': 34,  # loop side (rows4a): not reached
     'crates/axon-loop-contracts/src/compute.rs': 2,  # loop side (rows4a): not reached
-    'crates/axon-loop-contracts/src/episode.rs': 7,  # loop side (rows4a): not reached
+    'crates/axon-loop-contracts/src/episode.rs': 8,  # loop side (rows4a): not reached
     'crates/axon-loop-contracts/src/ids.rs': 9,  # loop side (rows4a): not reached
     'crates/axon-loop-contracts/src/lib.rs': 4,  # loop side (rows4a): not reached
     'crates/axon-loop-contracts/src/operator_trust.rs': 1,  # integrate-E: `!dir.is_absolute()` rested only on strip_prefix refusing next; no four-cell built (amendment 64)
     'crates/axon-loop-contracts/src/policy.rs': 7,  # loop side (rows4a): not reached
-    'crates/axon-loop-contracts/src/receipt.rs': 8,  # loop side (rows4a): not reached
+    'crates/axon-loop-contracts/src/receipt.rs': 9,  # loop side (rows4a): not reached
     'crates/axon-loop-contracts/src/schema.rs': 28,  # loop side (rows4a): not reached
     'crates/axon-loop/src/ledger.rs': 18,  # loop side (rows4a): not reached
     'crates/axon-loop/src/plan.rs': 4,  # rows4a: four dominated sites (inc == cand, scope, view, adds); attacks written in tests/plan_sites.rs, four-cell rows need ids past M1019
@@ -1028,6 +1028,16 @@ EXEMPT += [
      "with issuer_ref null: this arm substituted -> intake refuses (\"not a trusted verifier independent "
      "of the subject\"); that refusal also removed -> verify_check_evidence's issuer lookup panics "
      "(intake.rs `expect(\"checked just above\")`): fails closed, never admits"),
+    (EV, "            if v.matched_checks == 0 {",
+     "FLAGGED FOR THE INTEGRATOR (strict ruling; integrate-E executed it): a PASSED verdict with zero "
+     "matched checks is refused at five points: the episode and receipt SCHEMAS (`minimum: 1` under "
+     "`passed`), the episode and receipt contract code (episode.rs/receipt.rs, NOT YET SCANNED), and this "
+     "check. Executed on evaluate with genuinely attested vacuous passes: every leave-one-out cell refuses; "
+     "all five removed, the four vacuous passes count. But the schemas are the MiCode package's bytes, "
+     "pinned by digest (axon-loop-contracts tests/fixtures.rs checked_in_schemas_are_the_package_bytes), "
+     "so a schema-removal row fails the FULL-SUITE condition on that pin (paired-disable M1384/M1385 "
+     "SUITE_BROKEN), and without the schemas in the set no four cells exist. Needs a ruling: accept a "
+     "digest-pinned external schema as a set member, or keep this as the record"),
 ]
 
 def load_rows():

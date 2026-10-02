@@ -1229,9 +1229,4 @@ ATTACK_MARKERS.update({
     'M1378': r'ATTACK: an episode naming its policy by a non-cl22 alias was intaken',
     'M1379': r'ATTACK: an episode naming its policy by a non-cl22 alias was intaken',
     'M1380': r'ATTACK: a stored verification attestation edited in place was admitted on',
-    'M1381': r'ATTACK: a pass over zero matched checks counted',
-    'M1382': r'ATTACK: a pass over zero matched checks counted',
-    'M1383': r'ATTACK: a pass over zero matched checks counted',
-    'M1384': r'ATTACK: a pass over zero matched checks counted',
-    'M1385': r'ATTACK: a pass over zero matched checks counted',
 })
