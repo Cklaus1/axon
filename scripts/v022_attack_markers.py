@@ -1417,3 +1417,13 @@ ATTACK_MARKERS.update({
     'M1370': r'ATTACK: a re-registered plan was reported frozen as',
     'M1371': r'ATTACK: a plan with no missing-data rule: the plan froze',
 })
+
+# C9 round 4b, INTEGRATE-E (M1375-M1380; amendment 64).
+ATTACK_MARKERS.update({
+    'M1375': r'ATTACK: a trial requested and delivered but never issued was judged',
+    'M1376': r'ATTACK: a ledger holding a line that is not an entry was read as the ledger',
+    'M1377': r'ATTACK: an evaluation record edited in the store and re-encoded was admitted',
+    'M1378': r'ATTACK: an episode naming its policy by a non-cl22 alias was intaken',
+    'M1379': r'ATTACK: an episode naming its policy by a non-cl22 alias was intaken',
+    'M1380': r'ATTACK: a stored verification attestation edited in place was admitted on',
+})

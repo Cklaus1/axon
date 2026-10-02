@@ -4758,6 +4758,84 @@ EQUIVALENT_DID |= {"M1346", "M1360", "M1361", "M1365", "M1366", "M1367", "M1368"
                    "M1370", "M1371"}
 RETIRED |= {"M1346", "M1360", "M1361", "M1365", "M1366", "M1367", "M1368",
             "M1370", "M1371"}
+# ── C9 round 4b, INTEGRATE-E (amendment 64) ── the STRICT REWORK of the
+# refusal-site exemptions that rested only on another check refusing the same
+# input first. Each became an ACTIVE row killed by its own attack on the
+# production route (M1376), or an EQUIVALENT_DID retirement whose four cells
+# were executed against the check that dominates it (M1375, M1377-M1380). Where
+# no four cells exist because the value the site reads is absent on every input
+# (the null attestation / context signature, the issuer, the issued_ms), the
+# executed cells are recorded in scripts/v022_refusal_coverage.py instead.
+_IE = '--test strict_sites'
+_IEP = '--test strict_protected_sites'
+_IE_EV = 'crates/axon-loop/src/evl.rs'
+_IE_ST = 'crates/axon-loop/src/store.rs'
+_IE_LI = 'crates/axon-loop/src/intake.rs'
+MUTATIONS += [
+    ('M1375', 'EVL (4b, integrate-E): a trial delivered and requested but never issued is never judged (EQUIVALENT: M108)', _IE_EV,
+     '                let (issued_attempt, _) = issued.get(&key).ok_or_else(|| {\n',
+     '                let fallback = (d.ep.identity.attempt_id.clone(), d.ep.policy_ref.clone());\n'
+     '                let (issued_attempt, _) = issued.get(&key).or(Some(&fallback)).ok_or_else(|| {\n',
+     'axon-loop', _IE, 'a_trial_requested_and_delivered_but_never_issued_is_never_judged'),
+    ('M1376', 'store (4b, integrate-E): a ledger line that is not an entry, anywhere but a torn last line, is corruption', _IE_ST,
+     '            Err(_) if last && !complete => break,\n            Err(e) => {\n',
+     '            Err(_) if last && !complete => break,\n            Err(_) => continue,\n'
+     '            #[allow(unreachable_patterns)]\n            Err(e) => {\n',
+     'axon-loop', _IE, 'a_ledger_with_a_line_that_is_not_an_entry_is_never_read'),
+    ('M1377', "store (4b, integrate-E): a record is read only in its closed canonical shape (EQUIVALENT: M978)", _IE_ST,
+     '    if axon_loop_contracts::canonical_bytes(&back)? != axon_loop_contracts::canonical_bytes(&v)? {',
+     '    if false && axon_loop_contracts::canonical_bytes(&back)? != axon_loop_contracts::canonical_bytes(&v)? {',
+     'axon-loop', _IE, 'a_stored_record_edited_and_re_encoded_is_never_admitted'),
+    ('M1378', "intake (4b, integrate-E): an episode's policy is named by its cl22 digest (EQUIVALENT: M1379+M978+M965)", _IE_LI,
+     '    if ep.policy_ref.scheme() != RefScheme::Cl22 {',
+     '    if false && ep.policy_ref.scheme() != RefScheme::Cl22 {',
+     'axon-loop', _IE, 'an_episode_naming_its_policy_by_a_non_cl22_alias_is_never_intaken'),
+    ('M1379', "store (4b, integrate-E): a CAS record is named only by a cl22 reference (EQUIVALENT: M1378+M978+M965)", _IE_ST,
+     '        if r.scheme() != RefScheme::Cl22 {',
+     '        if false && r.scheme() != RefScheme::Cl22 {',
+     'axon-loop', _IE, 'an_episode_naming_its_policy_by_a_non_cl22_alias_is_never_intaken'),
+    ('M1380', "store (4b, integrate-E): a stored document's exact text is read only if it digests to its name (EQUIVALENT: M02)", _IE_ST,
+     '        if axon_loop_contracts::digest(&v)? != *r {',
+     '        if false && axon_loop_contracts::digest(&v)? != *r {',
+     'axon-loop', _IEP, 'a_stored_attestation_edited_in_place_is_never_admitted_on'),
+]
+EQUIV_RECORD["M1375"] = {
+    "property": "only a trial the admitter issued before execution is judged",
+    "subsumed_by": ["M108"], "killer": "joint:M1375+M108",
+    "all_paths": "the lookup runs only for a key in `requested` (the arms loop visits requested keys); evaluate "
+                 "refuses, with only refusals between, every request whose keyed population is not exactly the "
+                 "issued one (M108), so every requested key is issued whenever the lookup runs"}
+EQUIV_RECORD["M1377"] = {
+    "property": "a stored record is read only as the bytes its name was computed over",
+    "subsumed_by": ["M978"], "killer": "joint:M1377+M978",
+    "all_paths": "every stored record read through strict_record by name goes through get_record, which then "
+                 "re-digests the typed value (check_name, M978); an alternative encoding of the SAME value "
+                 "selects nothing (the typed value is what every reader uses), and one of an edited value "
+                 "digests to another name. The other strict_record callers parse request documents, not "
+                 "stored records, where the typed value is the request"}
+_IE_CL = ("no stored record is named but by the cl22 digest of its content: put_cas computes that name, "
+          "the CAS path is built only for a cl22 ref (M1379), the record read back is re-digested to its "
+          "name (M978), and bind_episode compares the episode's policy_ref with the digest of the bytes it "
+          "ran (M965); intake refuses a non-cl22 policy_ref first (M1378). Executed: each alone refuses the "
+          "alias attack; all four removed, it is intaken")
+EQUIV_RECORD["M1378"] = {
+    "property": "an episode's policy is named by the cl22 digest of the stored policy",
+    "subsumed_by": ["M1379", "M978", "M965"], "killer": "joint:M1378+M1379+M978+M965",
+    "all_paths": _IE_CL}
+EQUIV_RECORD["M1379"] = {
+    "property": "an episode's policy is named by the cl22 digest of the stored policy",
+    "subsumed_by": ["M1378", "M978", "M965"], "killer": "joint:M1379+M1378+M978+M965",
+    "all_paths": _IE_CL + "; the store's other readers (get_cas_text, get_record) re-digest to the name "
+                 "(M1380, M978), which a non-cl22 ref never equals"}
+EQUIV_RECORD["M1380"] = {
+    "property": "a stored document is read only as the bytes its name was computed over",
+    "subsumed_by": ["M02"], "killer": "joint:M1380+M02",
+    "all_paths": "get_cas_text's callers (admission's protected re-derivation, clearance signatures) each "
+                 "authenticate the returned text over its exact bytes before use: verification and execution "
+                 "attestations by attestation::verify (signature M02), clearance and context signatures by "
+                 "verify_document (M951); an edited signed document fails that signature"}
+EQUIVALENT_DID |= {"M1375", "M1377", "M1378", "M1379", "M1380"}
+RETIRED |= {"M1375", "M1377", "M1378", "M1379", "M1380"}
 
 PSV_IDS = {f"M{n}" for n in range(137, 550)}
 # C9 round 3: rows M560-M649 are PSV rows (workstream ranges).
