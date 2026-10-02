@@ -144,7 +144,8 @@ fn check_type(t: &Value, v: &Value, path: &str) -> Result<(), Refusal> {
         _ => return Err(fail(path, "malformed `type`")),
     };
     for n in &names {
-        if type_matches(n, v).map_err(|e| fail(path, e))? {
+        let matched = type_matches(n, v).map_err(|e| fail(path, e))?;
+        if matched {
             return Ok(());
         }
     }

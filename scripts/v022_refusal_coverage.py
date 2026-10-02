@@ -106,18 +106,10 @@ OUT_OF_SCOPE = {
 # (file -> sites with neither a row nor an exemption, as last measured). The
 # gate re-measures each count and refuses a stale one, in both directions.
 NOT_YET_SCANNED = {
-    'crates/axon-loop-contracts/src/canonical.rs': 12,  # loop side (rows4a): not reached
     'crates/axon-loop-contracts/src/checks.rs': 34,  # loop side (rows4a): not reached
-    'crates/axon-loop-contracts/src/compute.rs': 2,  # loop side (rows4a): not reached
-    'crates/axon-loop-contracts/src/episode.rs': 8,  # loop side (rows4a): not reached
-    'crates/axon-loop-contracts/src/ids.rs': 9,  # loop side (rows4a): not reached
-    'crates/axon-loop-contracts/src/lib.rs': 4,  # loop side (rows4a): not reached
-    'crates/axon-loop-contracts/src/policy.rs': 7,  # loop side (rows4a): not reached
-    'crates/axon-loop-contracts/src/receipt.rs': 9,  # loop side (rows4a): not reached
-    'crates/axon-loop-contracts/src/schema.rs': 28,  # loop side (rows4a): not reached
     'crates/axon-loop/src/ledger.rs': 18,  # loop side (rows4a): not reached
     'crates/axon-loop/src/plan.rs': 4,  # rows4a: four dominated sites (inc == cand, scope, view, adds); attacks written in tests/plan_sites.rs, four-cell rows need ids past M1019
-    'crates/axon-loop/src/pointer.rs': 34,  # loop side (rows4a): not reached
+    'crates/axon-loop/src/pointer.rs': 33,  # loop side (rows4a): not reached
     'crates/axon-loop/src/price.rs': 12,  # loop side (rows4a): not reached
     'crates/axon-loop/src/tel.rs': 10,  # loop side (rows4a): not reached
     'crates/axon-psv/src/bin/axon-psv-runner.rs': 2,  # unassigned
@@ -1049,6 +1041,79 @@ EXEMPT += [
 ]
 
 
+
+# C9 round 4b, INTEGRATE-A (amendment 64): the contract crate's remaining
+# sites. Kinds, as above, plus: COMPILED-IN (an arm that refuses only a
+# malformed SCHEMA, never a document: the schemas `validate_against` walks are
+# include_str! constants -- crates/axon-loop-contracts/schemas/*.json via
+# schema_text!, and crates/axon-loop/schemas/closed-loop-pilot.schema.json --
+# and redteam.rs every_checked_in_schema_is_within_the_supported_subset asserts
+# over every one of them that each schema position is an object, every keyword,
+# `type` and pattern is in the walker's subset and additionalProperties is a
+# boolean, so no input reaches these arms).
+CT = "crates/axon-loop-contracts/src/canonical.rs"
+CI = "crates/axon-loop-contracts/src/ids.rs"
+CP = "crates/axon-loop-contracts/src/policy.rs"
+CS = "crates/axon-loop-contracts/src/schema.rs"
+_COMPILED = ("COMPILED-IN: refuses only a malformed checked-in schema (see the block comment); "
+             "redteam.rs every_checked_in_schema_is_within_the_supported_subset holds the fact")
+EXEMPT += [
+    (CT, "            shape(m)\n",
+     "NOTHING TO ADMIT: typed serde refused the value, so there is no typed document; the arm "
+     "only classifies the refusal (unknown field/variant vs shape), both arms refuse"),
+    (CT, "        return Err(Refusal::TooLarge(bytes.len()));",
+     "OPERATOR-SIGNED: parse_bytes's only production caller (grep `parse_bytes(` in crates/*/src) "
+     "is readiness.rs's read of the certified compute request, bytes the operator-signed "
+     "evidence bundle pins by sha256 (M691/M335); and parse_bytes hands the same text to "
+     "parse_value, whose byte limit is M1200"),
+    (CT, "    let text = std::str::from_utf8(bytes).map_err(|e| shape(format!(\"invalid UTF-8: {e}\")))?;",
+     "NOTHING TO ADMIT: bytes that are not UTF-8 have no text to parse; the only production "
+     "caller reads operator-signed bytes (as above)"),
+    (CI, 'return Err(shape(format!("authority epoch {v} exceeds 2^53-1")));',
+     "UNREACHABLE BY CONSTRUCTION (FLAGGED: no four-cell can be built): a pointer epoch starts at "
+     "0 and an applied transition raises it by exactly one (pointer.rs CAS, M1266/M1268), so "
+     "next() never leaves the range; every epoch READ from a document is refused past 2^53-1 by "
+     "parse_value first (M1204) and then by the schema maximum (M1219), and even with all three "
+     "removed it is joined to the scope's current epoch (intake's epoch join, the pointer's "
+     "expected_epoch CAS), which a value past 2^53-1 never equals"),
+    (CP, "        if self.pinned_at_ms < 0 {",
+     "NO PRODUCTION PARSE (checkable): PolicyPin is MiCode's local document; Axon never parses one "
+     "(no parse/contract_from_value/from_value of PolicyPin in crates/*/src) and builds one only "
+     "in pointer.rs::resolve, with pinned_at_ms = now_ms(), which is >= 0"),
+    (CP, '                    return Err(semantic(format!(\n                        "{:?} requires target_policy_ref",',
+     "UNREACHABLE TO ADMIT (FLAGGED: no four-cell can be built): the schema's conditional also "
+     "requires a string target (M1210), and with both removed pointer.rs's activate/rollback "
+     "arm still applies nothing: `t.target_policy_ref.clone().expect(\"validated by parse\")` "
+     "panics before any write, and a target is accepted only when an admission record names it "
+     "(pointer.rs `adm.target_policy_ref != target`)"),
+    (CP, '                    return Err(semantic(format!("{:?} requires admission_ref", self.kind)));',
+     "UNREACHABLE TO ADMIT (FLAGGED: no four-cell can be built): as above: the schema's "
+     "conditional requires a string admission_ref (M1210), and pointer.rs's `t.admission_ref"
+     ".clone().expect(\"validated by parse\")` then the admission lookup by that ref refuse it"),
+    (CS, '    shape(format!("{path}: {msg}"))',
+     "NOT A SITE: the body of the walker's `fail` constructor; each use is its own site"),
+    (CS, 'Value::Bool(false) => return Err(fail(path, "schema `false` admits nothing")),', _COMPILED),
+    (CS, '_ => return Err(fail(path, "malformed schema node")),', _COMPILED),
+    (CS, "            return Err(fail(path, format!(\"unsupported schema keyword {k:?}\")));", _COMPILED),
+    (CS, 'other => return Err(format!("unsupported type {other:?}")),', _COMPILED),
+    (CS, '_ => return Err(fail(path, "malformed `type`")),', _COMPILED),
+    (CS, "        let matched = type_matches(n, v).map_err(|e| fail(path, e))?;",
+     _COMPILED + " (type_matches errs only on an unsupported type name)"),
+    (CS, 'let p = p.as_str().ok_or_else(|| fail(path, "malformed pattern"))?;', _COMPILED),
+    (CS, "let ok = pattern_matches(p, st).map_err(|e| fail(path, e))?;",
+     _COMPILED + " (pattern_matches errs only on an unsupported pattern)"),
+    (CS, 'other => return Err(format!("unsupported pattern {other:?}")),', _COMPILED),
+    (CS, 'Some(_) => return Err(fail(path, "unsupported additionalProperties form")),', _COMPILED),
+    (CS, 'serde_json::from_str(text).map_err(|e| shape(format!("checked-in schema unreadable: {e}")))',
+     "COMPILED-IN: schema::load reads only Contract::SCHEMA, the schema_text! include_str! "
+     "constants, each parsed by redteam.rs every_checked_in_schema_is_within_the_supported_subset"),
+    (CS, '        return Err(fail(path, "non-integer number"));',
+     "UNREACHABLE (FLAGGED: no four-cell can be built): a non-integer Number is refused by "
+     "parse_value before any walk (M1206); every schema node carrying minimum/maximum declares "
+     "a type, and no type name admits a float (asserted by redteam.rs every_checked_in_schema_is_within_the_supported_subset), "
+     "whose check refuses it first (M1210); and with both removed the typed layer still refuses a "
+     "float in an integer field (serde, no mutable site), so no input reaches this arm"),
+]
 
 def load_rows():
     spec = importlib.util.spec_from_file_location("mut", os.path.join(ROOT, "scripts/v022_g01_mutations.py"))
