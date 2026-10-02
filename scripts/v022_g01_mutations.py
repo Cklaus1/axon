@@ -3896,9 +3896,10 @@ MUTATIONS += [
      '    if ce.authority_expansion {', '    if false && ce.authority_expansion {',
      'axon-loop', _PSS, 'a_candidate_claiming_an_authority_expansion_never_freezes'),
     ('M1369', "contracts (4b-I): a policy claiming an authority expansion is refused by its typed rule "
-     "(EQUIVALENT: M1362)", 'crates/axon-loop-contracts/src/policy.rs',
+     "(the library primitive, for values built in code; every production reader parses first, M1362)",
+     'crates/axon-loop-contracts/src/policy.rs',
      '        if self.authority_expansion {', '        if false && self.authority_expansion {',
-     'axon-loop', _PSS, 'policy_put_never_stores_an_authority_expansion'),
+     'axon-loop-contracts', '--test parse_validate_sites', 'a_policy_built_in_code_claiming_an_expansion_never_validates'),
     ('M1370', 'freeze (4b-I): a frozen experiment is never reported frozen under a re-registered plan '
      '(EQUIVALENT: M1006)', _PN,
      '        if f.plan_ref != r {', '        if false && f.plan_ref != r {',
@@ -3954,12 +3955,6 @@ EQUIV_RECORD["M1368"] = {
                  "(`const false`, M1362) and PolicyEnvelope::validate (M1369) refuse the claim, and "
                  "require_shortlist's check_shortlist calls the same validate; the proposer record (M1011) "
                  "names only EVO proposals, which never set the flag"}
-EQUIV_RECORD["M1369"] = {
-    "property": "a policy claiming an authority expansion is refused",
-    "subsumed_by": ["M1362"], "killer": "joint:M1369+M1362",
-    "all_paths": "every production reader of a policy document parses it (policy put, get_contract, "
-                 "contract_from_value), and parse's schema walk refuses authority_expansion != false "
-                 "(closed-loop-policy.schema.json `const false`, M1362) before validate"}
 EQUIV_RECORD["M1370"] = {
     "property": "a frozen experiment is never reported frozen under another plan",
     "subsumed_by": ["M1006"], "killer": "joint:M1370+M1006",
@@ -3971,9 +3966,9 @@ EQUIV_RECORD["M1371"] = {
     "all_paths": "Rules::parse's callers: freeze, after unset_fields (M1008) refused any of the five word "
                  "fields unset, and admission, which parses only a frozen plan"}
 EQUIVALENT_DID |= {"M1346", "M1360", "M1361", "M1364", "M1365", "M1366", "M1367", "M1368",
-                   "M1369", "M1370", "M1371"}
+                   "M1370", "M1371"}
 RETIRED |= {"M1346", "M1360", "M1361", "M1364", "M1365", "M1366", "M1367", "M1368",
-            "M1369", "M1370", "M1371"}
+            "M1370", "M1371"}
 
 PSV_IDS = {f"M{n}" for n in range(137, 550)}
 # C9 round 3: rows M560-M649 are PSV rows (workstream ranges).

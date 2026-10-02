@@ -1247,7 +1247,7 @@ ATTACK_MARKERS.update({
     'M1366': r'ATTACK: a candidate over another candidate view: the plan froze',
     'M1367': r'ATTACK: a candidate adding a tool: the plan froze',
     'M1368': r'ATTACK: a candidate claiming an authority expansion: the plan froze',
-    'M1369': r'ATTACK: policy put stored a policy claiming an authority expansion',
+    'M1369': r'ATTACK: a policy built in code claiming an authority expansion validated',
     'M1370': r'ATTACK: a re-registered plan was reported frozen as',
     'M1371': r'ATTACK: a plan with no missing-data rule: the plan froze',
 })

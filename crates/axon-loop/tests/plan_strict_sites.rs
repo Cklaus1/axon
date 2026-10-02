@@ -108,8 +108,8 @@ fn a_plan_with_no_missing_data_rule_never_freezes() {
     );
 }
 
-/// Four-cell (PolicyEnvelope's typed rule; the checked-in schema's
-/// `const false`): `axon-loop policy put` never stores a policy claiming an
+/// The production route of M1369's property (refused by the checked-in
+/// schema's `const false`, M1362, and PolicyEnvelope's typed rule): `axon-loop policy put` never stores a policy claiming an
 /// authority expansion. Control: the same policy without the claim is stored.
 #[test]
 fn policy_put_never_stores_an_authority_expansion() {

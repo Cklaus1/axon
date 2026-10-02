@@ -30,3 +30,20 @@ fn parse_never_admits_a_noncontiguous_fence() {
         Err(e) => assert!(e.to_string().contains("noncontiguous fence"), "{e}"),
     }
 }
+
+/// PolicyEnvelope's typed rule holds for a value built in code (the schema
+/// walk judges only parsed text): `validate` never accepts a policy claiming
+/// an authority expansion. Control: the fixture policy validates.
+#[test]
+fn a_policy_built_in_code_claiming_an_expansion_never_validates() {
+    let text = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/bundle.json"),
+    )
+    .unwrap();
+    let mut p: PolicyEnvelope = parse(&parse_value(&text).unwrap()["policy"].to_string()).unwrap();
+    assert!(p.validate().is_ok(), "control");
+    p.authority_expansion = true;
+    if p.validate().is_ok() {
+        panic!("ATTACK: a policy built in code claiming an authority expansion validated");
+    }
+}
