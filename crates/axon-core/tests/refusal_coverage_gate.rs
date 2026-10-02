@@ -9,8 +9,10 @@
 //! named way (the ATTACK); the CONTROL is the unedited copy, on which the gate
 //! holds.
 
+mod script_spawn;
+use script_spawn::Bins;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::Output;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 const GATE: &str = "scripts/v022_refusal_coverage.py";
@@ -87,8 +89,10 @@ fn not_yet_scanned(r: &Path, f: &str, count: usize) {
 }
 
 fn gate(r: &Path, args: &[&str]) -> Output {
-    Command::new("/usr/bin/python3")
-        .arg(r.join(GATE))
+    // Through the workspace's script helper (harness_binaries'
+    // every_script_spawn_in_the_workspace_goes_through_the_helper): the gate
+    // runs no binary this workspace builds.
+    script_spawn::script("python3", r.join(GATE), Bins::NoWorkspaceBinary)
         .args(args)
         .current_dir(r)
         .env("PYTHONDONTWRITEBYTECODE", "1")
