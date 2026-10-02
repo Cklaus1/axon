@@ -489,8 +489,11 @@ fn probe() {
     }
     if let Some(l) = std::env::var_os("FAKE_ENV_LOG") {
         let v = std::env::var(concat!("AXON", "_BIN")).unwrap_or_else(|_| "unset".into());
+        // ONE write(2) of `value\n` on an O_APPEND fd: atomic for a short
+        // write, so two concurrent cells never interleave into one line
+        // (`writeln!` may write the value and the newline separately).
         let mut f = std::fs::OpenOptions::new().create(true).append(true).open(l).unwrap();
-        writeln!(f, "{v}").unwrap();
+        f.write_all(format!("{v}\n").as_bytes()).unwrap();
     }
 }
 "##;
