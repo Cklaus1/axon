@@ -716,6 +716,12 @@ GUARD_SETS.update({
     'M1269': {"siblings": ['M1250'], "kind": "pair"},
 })
 
+# C9 round 4b, INTEGRATE-B (amendment 64; EQUIV_RECORD in the registry).
+GUARD_SETS.update({
+    "M1294": {"siblings": ["M1295"], "kind": "pair"},
+    "M1296": {"siblings": ["M34", "M1291"], "kind": "set"},
+})
+
 
 def current_edits_digest(rid):
     """What executing record `rid` NOW would run (its edits and marker)."""

@@ -106,7 +106,7 @@ OUT_OF_SCOPE = {
 # (file -> sites with neither a row nor an exemption, as last measured). The
 # gate re-measures each count and refuses a stale one, in both directions.
 NOT_YET_SCANNED = {
-    'crates/axon-loop-contracts/src/checks.rs': 34,  # loop side (rows4a): not reached
+    'crates/axon-loop-contracts/src/checks.rs': 4,  # integrate-B: 41/52/283/299 dominated, ids exhausted (amendment 64)
     'crates/axon-loop/src/ledger.rs': 18,  # loop side (rows4a): not reached
     'crates/axon-loop/src/plan.rs': 4,  # rows4a: four dominated sites (inc == cand, scope, view, adds); attacks written in tests/plan_sites.rs, four-cell rows need ids past M1019
     'crates/axon-loop/src/pointer.rs': 33,  # loop side (rows4a): not reached
