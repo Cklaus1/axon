@@ -1060,3 +1060,85 @@ fn a_paired_disable_cell_restores_a_prerequisite_it_changed() {
     let _ = std::fs::remove_dir_all(out.parent().unwrap());
     let _ = std::fs::remove_dir_all(&tgt);
 }
+
+// ── amendment 64: LIBRARY_PRIMITIVE and SIBLING_ONLY (rulings R1, schema) ──
+
+/// A LIBRARY_PRIMITIVE row (ruling R1) is run, and its library test's kill is
+/// required, but it is NEVER counted among the killed active rows: the
+/// evidence model reports it in its own class. Control: an ordinary active row
+/// killed by its own attack is counted.
+#[test]
+fn a_library_primitive_row_is_never_reported_as_killed() {
+    let r = repo("libprim");
+    let out = py(
+        &r,
+        "import v022_g01_mutations as m\n\
+         lib = sorted(m.LIBRARY_PRIMITIVE, key=lambda x: int(x[1:]))[0]\n\
+         act = next(x[0] for x in m.MUTATIONS if m.in_scope(x[0], 'all') and x[0] not in m.LIBRARY_PRIMITIVE)\n\
+         rows = [{'id': i, 'result': 'killed', 'baseline': 'passed'} for i in (act, lib)]\n\
+         print('IDS', act, lib)\n\
+         m.print_evidence_model(rows, 'all', partial=True)\n",
+    );
+    let ids: Vec<&str> = out
+        .lines()
+        .find(|l| l.starts_with("IDS "))
+        .unwrap()
+        .split_whitespace()
+        .skip(1)
+        .collect();
+    let (act, lib) = (ids[0], ids[1]);
+    let active = out
+        .lines()
+        .find(|l| l.starts_with("Active mutants:"))
+        .unwrap_or_else(|| panic!("no Active line: {out}"));
+    let libline = out
+        .lines()
+        .find(|l| l.starts_with("LIBRARY_PRIMITIVE"))
+        .unwrap_or_else(|| panic!("no LIBRARY_PRIMITIVE line: {out}"));
+    if !active.starts_with("Active mutants: 1/1 KILLED") || !libline.contains(lib) {
+        panic!("ATTACK: a LIBRARY_PRIMITIVE row was counted among the killed ({lib}): {out}");
+    }
+    assert!(
+        !libline.contains(act),
+        "the active row is not a library row: {out}"
+    );
+    let _ = std::fs::remove_dir_all(&r);
+}
+
+/// A SIBLING-ONLY edit (amendment 64) exists only as a member of a retired
+/// row's guard set: it is an active row of no scope, and `--only` refuses it.
+/// Control: an ordinary active row is in scope.
+#[test]
+fn a_sibling_only_edit_is_never_an_active_row() {
+    let r = repo("sibonly");
+    let out = py(
+        &r,
+        "import v022_g01_mutations as m\n\
+         print('SIB', sorted(m.SIBLING_ONLY))\n\
+         print('INSCOPE', sorted(s for s in m.SIBLING_ONLY for sc in ('g01','pci','binding','psv','all') if m.in_scope(s, sc)))\n\
+         print('CONTROL', any(m.in_scope(x[0], 'all') for x in m.MUTATIONS))\n",
+    );
+    assert!(out.contains("CONTROL True"), "{out}");
+    let sib = out
+        .lines()
+        .find(|l| l.starts_with("SIB "))
+        .unwrap()
+        .to_string();
+    assert!(sib.contains("'M"), "no SIBLING_ONLY rows to judge: {out}");
+    if !out.contains("INSCOPE []") {
+        panic!("ATTACK: a SIBLING-ONLY edit was run as an active row: {out}");
+    }
+    let first = sib.split('\'').nth(1).unwrap().to_string();
+    let o = harness(
+        &r,
+        HARNESS[0],
+        &["--scope=all", &format!("--only={first}"), "out.json"],
+    );
+    if o.status.success() || !text(&o).contains("not active rows") {
+        panic!(
+            "ATTACK: a SIBLING-ONLY edit was run as an active row: --only={first}: {}",
+            text(&o)
+        );
+    }
+    let _ = std::fs::remove_dir_all(&r);
+}

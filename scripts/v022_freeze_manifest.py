@@ -105,10 +105,14 @@ def main():
     # mutation targets or how a row is classified changes this digest.
     reg = [[r[0], r[2], r[3], r[4], r[7]] for r in mut.MUTATIONS]
     registry_digest = sha_str(json.dumps(reg, sort_keys=True))
+    # Amendment 64: the LIBRARY_PRIMITIVE and SIBLING_ONLY classes are bound
+    # too, and neither is an active (killed-counted) row.
     equiv = {"EQUIV_RECORD": mut.EQUIV_RECORD, "STALE_REFACTORED": mut.STALE_REFACTORED,
-             "LEGACY_EQUIV": sorted(mut.LEGACY_EQUIV)}
+             "LEGACY_EQUIV": sorted(mut.LEGACY_EQUIV), "LIB_RECORD": mut.LIB_RECORD,
+             "SIBLING_RECORD": mut.SIBLING_RECORD}
     equivalence_digest = sha_str(json.dumps(equiv, sort_keys=True))
-    active = [r[0] for r in mut.MUTATIONS if r[0] not in mut.RETIRED]
+    active = [r[0] for r in mut.MUTATIONS
+              if r[0] not in mut.RETIRED | mut.LIBRARY_PRIMITIVE | mut.SIBLING_ONLY]
 
     # Amendment 61: no freeze binds evidence over a protected decision file
     # nobody scanned. The refusal-site gate's file set is a rule (every source
@@ -185,6 +189,8 @@ def main():
         "retired_equivalent": len(mut.EQUIVALENT_DID),
         "retired_stale_refactored": len(mut.STALE_REFACTORED),
         "retired_legacy": len(mut.LEGACY_EQUIV),
+        "library_primitive": len(mut.LIBRARY_PRIMITIVE),
+        "sibling_only": len(mut.SIBLING_ONLY),
         "mutation_registry_digest": registry_digest,
         "equivalence_record_digest": equivalence_digest,
         "paired_disable_digest": sha_file("governance/status/v022-psv-paired-disable.json"),

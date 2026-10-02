@@ -227,14 +227,30 @@ fn shortlist_must_be_a_subset_of_the_eligible_view() {
     assert!(e.to_string().contains("expands eligible"), "{e}");
     let other = Ref::new(format!("cl22:{}", "7".repeat(64))).unwrap();
     let all: BTreeSet<CandidateId> = t.policy.shortlist.iter().cloned().collect();
-    assert!(check_shortlist(
-        &t.policy,
-        &all,
-        &other,
-        &t.policy.controls_ref,
-        &t.policy.scope
-    )
-    .is_err());
+    assert!(
+        check_shortlist(
+            &t.policy,
+            &all,
+            &other,
+            &t.policy.controls_ref,
+            &t.policy.scope
+        )
+        .is_err(),
+        "ATTACK: check_shortlist applied a policy outside its scope or candidate view"
+    );
+    let mut elsewhere = t.policy.scope.clone();
+    elsewhere.tenant_id = TenantId::new("other-tenant").unwrap();
+    assert!(
+        check_shortlist(
+            &t.policy,
+            &all,
+            &t.policy.candidate_set_ref,
+            &t.policy.controls_ref,
+            &elsewhere
+        )
+        .is_err(),
+        "ATTACK: check_shortlist applied a policy outside its scope or candidate view"
+    );
     assert!(
         check_shortlist(
             &t.policy,

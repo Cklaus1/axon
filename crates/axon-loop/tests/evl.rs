@@ -182,7 +182,10 @@ fn bind_acf_alone_refuses_a_pass_over_other_bytes() {
         ep.verification.output_workspace_ref,
         rc.output_workspace_ref
     );
-    let e = bind_acf(&ep, &req, &rc, &proj).unwrap_err().to_string();
+    let e = match bind_acf(&ep, &req, &rc, &proj) {
+        Ok(()) => panic!("ATTACK: bind_acf joined a pass over bytes the verifier never checked"),
+        Err(e) => e.to_string(),
+    };
     assert!(e.contains("bytes changed after verification"), "{e}");
 }
 

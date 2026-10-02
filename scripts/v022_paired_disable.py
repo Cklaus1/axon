@@ -667,8 +667,6 @@ GUARD_SETS.update({
     'M1202': {"siblings": ['M1201'], "kind": "pair"},
     'M1203': {"siblings": ['M1202', 'M1201'], "kind": "set"},
     'M1207': {"siblings": ['M1200'], "kind": "pair"},
-    'M1208': {"siblings": ['M1247'], "kind": "pair"},
-    'M1209': {"siblings": ['M1248'], "kind": "pair"},
     'M1214': {"siblings": ['M1234'], "kind": "pair"},
     'M1217': {"siblings": ['M1233'], "kind": "pair"},
     'M1219': {"siblings": ['M1204', 'M1240'], "kind": "set"},
@@ -677,18 +675,14 @@ GUARD_SETS.update({
     'M1224': {"siblings": ['M1226'], "kind": "pair"},
     'M1225': {"siblings": ['M1223'], "kind": "pair"},
     'M1226': {"siblings": ['M1224'], "kind": "pair"},
-    'M1227': {"siblings": ['M1255'], "kind": "pair"},
     'M1232': {"siblings": ['M1213'], "kind": "pair"},
     'M1233': {"siblings": ['M1217'], "kind": "pair"},
-    'M1236': {"siblings": ['M1256'], "kind": "pair"},
     'M1237': {"siblings": ['M1212'], "kind": "pair"},
     'M1238': {"siblings": ['M1220'], "kind": "pair"},
     'M1239': {"siblings": ['M1222'], "kind": "pair"},
     'M1240': {"siblings": ['M1218'], "kind": "pair"},
-    'M1241': {"siblings": ['M1258'], "kind": "pair"},
     'M1242': {"siblings": ['M1221'], "kind": "pair"},
     'M1243': {"siblings": ['M1216'], "kind": "pair"},
-    'M1244': {"siblings": ['M1261'], "kind": "pair"},
     'M1245': {"siblings": ['M1210'], "kind": "pair"},
     'M1246': {"siblings": ['M1210'], "kind": "pair"},
     'M1247': {"siblings": ['M1208'], "kind": "pair"},
@@ -697,7 +691,6 @@ GUARD_SETS.update({
     'M1250': {"siblings": ['M1269'], "kind": "pair"},
     'M1251': {"siblings": ['M1220'], "kind": "pair"},
     'M1252': {"siblings": ['M1211'], "kind": "pair"},
-    'M1253': {"siblings": ['M1262'], "kind": "pair"},
     'M1254': {"siblings": ['M1221'], "kind": "pair"},
     'M1255': {"siblings": ['M1227'], "kind": "pair"},
     'M1256': {"siblings": ['M1236'], "kind": "pair"},
@@ -707,13 +700,9 @@ GUARD_SETS.update({
     'M1260': {"siblings": ['M1211'], "kind": "pair"},
     'M1261': {"siblings": ['M1244'], "kind": "pair"},
     'M1262': {"siblings": ['M1253'], "kind": "pair"},
-    'M1263': {"siblings": ['M1265'], "kind": "pair"},
-    'M1264': {"siblings": ['M1212'], "kind": "pair"},
     'M1265': {"siblings": ['M1263'], "kind": "pair"},
-    'M1266': {"siblings": ['M1268'], "kind": "pair"},
-    'M1267': {"siblings": ['M1218', 'M1266', 'M1268'], "kind": "set"},
-    'M1268': {"siblings": ['M1266'], "kind": "pair"},
-    'M1269': {"siblings": ['M1250'], "kind": "pair"},
+    'M1266': {"siblings": ['M1330'], "kind": "pair"},
+    'M1267': {"siblings": ['M1218', 'M1266', 'M1330'], "kind": "set"},
 })
 
 # C9 round 4b, INTEGRATE-B (amendment 64; EQUIV_RECORD in the registry).
@@ -742,6 +731,15 @@ GUARD_SETS.update({
     "M1368": {"siblings": ["M1369", "M1362", "M1011"], "kind": "set"},
     "M1370": {"siblings": ["M1006"], "kind": "pair"},
     "M1371": {"siblings": ["M1008"], "kind": "pair"},
+})
+
+# C9 round 4b, INTEGRATE-2 (amendment 64; EQUIV_RECORD in the registry).
+GUARD_SETS.update({
+    "M1364": {"siblings": ["M1012"], "kind": "pair"},
+    "M1372": {"siblings": ["M1249", "M1257", "M1218"], "kind": "set"},
+    "M1400": {"siblings": ["M1220", "M1238"], "kind": "set"},
+    "M1402": {"siblings": ["M45"], "kind": "pair"},
+    "M1387": {"siblings": ["M1388", "M1334"], "kind": "set"},
 })
 
 # C9 round 4b, INTEGRATE-E (amendment 64; EQUIV_RECORD in the registry).
@@ -779,6 +777,12 @@ def main():
     # Every retired row has a matrix and no active row has one.
     if set(GUARD_SETS) != set(mut.EQUIVALENT_DID):
         sys.exit(f"refused: GUARD_SETS {sorted(GUARD_SETS)} != EQUIVALENT_DID {sorted(mut.EQUIVALENT_DID)}")
+    # Amendment 64: a SIBLING-ONLY edit exists only as a member of retired
+    # rows' guard sets -- exactly the sets its record names.
+    for sid, srec in sorted(mut.SIBLING_RECORD.items()):
+        users = sorted(r for r, g in GUARD_SETS.items() if sid in g["siblings"])
+        if users != sorted(srec["member_of"]):
+            sys.exit(f"refused: SIBLING_ONLY {sid} is a member of {users}, its record says {srec['member_of']}")
     universe = sorted(set(GUARD_SETS) | set(mut.STALE_REFACTORED), key=lambda r: int(r[1:]))
     if join:
         join_shards(argv, commit, universe)

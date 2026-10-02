@@ -106,9 +106,6 @@ OUT_OF_SCOPE = {
 # (file -> sites with neither a row nor an exemption, as last measured). The
 # gate re-measures each count and refuses a stale one, in both directions.
 NOT_YET_SCANNED = {
-    'crates/axon-loop-contracts/src/checks.rs': 4,  # integrate-B: 41/52/283/299 dominated, ids exhausted (amendment 64)
-    'crates/axon-loop-contracts/src/operator_trust.rs': 1,  # integrate-E: `!dir.is_absolute()` rested only on strip_prefix refusing next; no four-cell built (amendment 64)
-    'crates/axon-loop/src/pointer.rs': 6,  # integrate-C: check_activate's six admission-route refusals (H1, K1, target, scope, label, deployment_enabled); M1300-M1344 exhausted
 }
 SITE = re.compile(r"return Err\(|\bErr\(format!|\brefuse\(|\bErr\(bad\(|TEST_TRUST_BUILD")
 OPENER = re.compile(r"^\s*(\}\s*else\s+if\b|if\b|match\b|let\s+\w+\s*=\s*if\b)|=>")
@@ -1004,7 +1001,7 @@ EXEMPT += [
      "caller reads operator-signed bytes (as above)"),
     (CI, 'return Err(shape(format!("authority epoch {v} exceeds 2^53-1")));',
      "UNREACHABLE BY CONSTRUCTION (FLAGGED: no four-cell can be built): a pointer epoch starts at "
-     "0 and an applied transition raises it by exactly one (pointer.rs CAS, M1266/M1268), so "
+     "0 and an applied transition raises it by exactly one (pointer.rs CAS, M1266/M1330), so "
      "next() never leaves the range; every epoch READ from a document is refused past 2^53-1 by "
      "parse_value first (M1204) and then by the schema maximum (M1219), and even with all three "
      "removed it is joined to the scope's current epoch (intake's epoch join, the pointer's "
@@ -1120,17 +1117,24 @@ EXEMPT += [
      "with issuer_ref null: this arm substituted -> intake refuses (\"not a trusted verifier independent "
      "of the subject\"); that refusal also removed -> verify_check_evidence's issuer lookup panics "
      "(intake.rs `expect(\"checked just above\")`): fails closed, never admits"),
-    (EV, "            if v.matched_checks == 0 {",
-     "FLAGGED FOR THE INTEGRATOR (strict ruling; integrate-E executed it): a PASSED verdict with zero "
-     "matched checks is refused at five points: the episode and receipt SCHEMAS (`minimum: 1` under "
-     "`passed`), the episode and receipt contract code (episode.rs/receipt.rs, NOT YET SCANNED), and this "
-     "check. Executed on evaluate with genuinely attested vacuous passes: every leave-one-out cell refuses; "
-     "all five removed, the four vacuous passes count. But the schemas are the MiCode package's bytes, "
-     "pinned by digest (axon-loop-contracts tests/fixtures.rs checked_in_schemas_are_the_package_bytes), "
-     "so a schema-removal row fails the FULL-SUITE condition on that pin (paired-disable M1384/M1385 "
-     "SUITE_BROKEN), and without the schemas in the set no four cells exist. Needs a ruling: accept a "
-     "digest-pinned external schema as a set member, or keep this as the record"),
 ]
+# C9 round 4b, INTEGRATE-2 (amendment 64). FLAGGED for the integrator (ruling
+# R2's form: the measured experiment is stated).
+EXEMPT += [
+    (OT, "    if !dir.is_absolute() {",
+     "NO RELATIVE INPUT (checkable; FLAGGED): every production caller passes an absolute base and an "
+     "absolute dir: the bases are the literal `/` (root_keys_hex, check_operator_chain, trusted_issuers' "
+     "`operator_owned.then_some(Path::new(\"/\"))`, readiness's production `ownership_base`, the protected "
+     "host's `Some(Path::new(\"/\"))`), and the dirs are compiled-in constants (OPERATOR_TRUST_ROOT's "
+     "operator_dir, PROTECTED_HOST_CONFIG) or paths of the root-owned protected-host and custodian configs, "
+     "whose loaders refuse a relative path (protected_host.rs `is not absolute: a protected path is a fixed "
+     "host path`, `{ptr} is not absolute`; custodian.rs `is not an absolute plain path`); the verify CLI's "
+     "caller-chosen --issuers is authoritative only when it IS the operator root (verify_evidence_authority). "
+     "Measured (integrate-2): with this check removed, check_owned_chain(\"/\", d) for d in \"etc\", "
+     "\"etc/axon/trust\", \"./etc\", \"\" still refuses each (`is not below /`, strip_prefix): no four "
+     "cells exist because that refusal is not a refusal site of its own"),
+]
+
 
 def load_rows():
     spec = importlib.util.spec_from_file_location("mut", os.path.join(ROOT, "scripts/v022_g01_mutations.py"))

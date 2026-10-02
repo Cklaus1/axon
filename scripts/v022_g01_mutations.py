@@ -4058,59 +4058,51 @@ MUTATIONS += [
      '        if self.usage_state == ReceiptUsageState::Unknown && self.cost_micro.is_some() {',
      '        if false && self.usage_state == ReceiptUsageState::Unknown && self.cost_micro.is_some() {',
      'axon-loop', _CS, 'a_receipt_with_unknown_usage_and_a_cost_is_never_counted'),
-    ('M1264', 'EVIDENCE (4b, integrate-A): a policy never claims authority expansion (EQUIVALENT: M1212)', 'crates/axon-loop-contracts/src/policy.rs',
-     '        if self.authority_expansion {',
-     '        if false && self.authority_expansion {',
-     'axon-loop', _CS, 'a_policy_claiming_authority_expansion_is_never_stored'),
     ('M1265', 'EVIDENCE (4b, integrate-A): a pause names no target policy (EQUIVALENT: M1263)', 'crates/axon-loop-contracts/src/policy.rs',
      '                if self.target_policy_ref.is_some() {',
      '                if false && self.target_policy_ref.is_some() {',
      'axon-loop', _CS, 'a_pause_naming_a_target_is_never_applied'),
-    ('M1266', "EVIDENCE (4b, integrate-A): a transition's fence is contiguous (next = expected + 1) (EQUIVALENT: M1268)", 'crates/axon-loop-contracts/src/policy.rs',
+    ('M1266', "EVIDENCE (4b, integrate-A): a transition's fence is contiguous (next = expected + 1) (EQUIVALENT: M1330)", 'crates/axon-loop-contracts/src/policy.rs',
      '        if self.next_epoch.get() != self.expected_epoch.get() + 1 {',
      '        if false && self.next_epoch.get() != self.expected_epoch.get() + 1 {',
      'axon-loop', _CS, 'a_transition_that_skips_an_epoch_is_never_applied'),
-    ('M1267', "EVIDENCE (4b, integrate-A): a transition's next epoch is at least 1 (EQUIVALENT: M1218+M1266+M1268)", 'crates/axon-loop-contracts/src/policy.rs',
+    ('M1267', "EVIDENCE (4b, integrate-A): a transition's next epoch is at least 1 (EQUIVALENT: M1218+M1266+M1330)", 'crates/axon-loop-contracts/src/policy.rs',
      '        if self.next_epoch.get() < 1 {',
      '        if false && self.next_epoch.get() < 1 {',
      'axon-loop', _CS, 'a_transition_to_epoch_zero_is_never_applied'),
-    ('M1268', 'EVIDENCE (4b, integrate-A): the pointer applies only next_epoch = current + 1 (EQUIVALENT: M1266)', 'crates/axon-loop/src/pointer.rs',
-     '    if t.next_epoch != cur.epoch.next()? {',
-     '    if false && t.next_epoch != cur.epoch.next()? {',
-     'axon-loop', _CS, 'a_transition_that_skips_an_epoch_is_never_applied'),
-    ('M1208', 'EVIDENCE (4b, integrate-A): the episode schema: a final usage leaves no liability (EQUIVALENT: M1247)', 'crates/axon-loop-contracts/schemas/closed-loop-episode.schema.json',
+    ('M1208', "EVIDENCE (4b, integrate-A): the episode schema: a final usage leaves no liability (SIBLING-ONLY: a member of M1247's set)", 'crates/axon-loop-contracts/schemas/closed-loop-episode.schema.json',
      '              "unresolved_liability_micro": {\n                "const": 0\n              }',
      '              "unresolved_liability_micro": {}',
      'axon-loop', _CS, 'a_final_usage_with_liability_is_never_recorded'),
-    ('M1209', 'EVIDENCE (4b, integrate-A): the episode schema: a passed episode completed (EQUIVALENT: M1248)', 'crates/axon-loop-contracts/schemas/closed-loop-episode.schema.json',
+    ('M1209', "EVIDENCE (4b, integrate-A): the episode schema: a passed episode completed (SIBLING-ONLY: a member of M1248's set)", 'crates/axon-loop-contracts/schemas/closed-loop-episode.schema.json',
      '      "then": {\n        "properties": {\n          "status": {\n            "const": "completed"\n          },\n          "output_workspace_ref": {',
      '      "then": {\n        "properties": {\n          "status": {},\n          "output_workspace_ref": {',
      'axon-loop', _CS, 'a_passed_episode_that_did_not_complete_is_never_counted'),
-    ('M1227', 'EVIDENCE (4b, integrate-A): the receipt schema: a passed receipt completed (EQUIVALENT: M1255)', 'crates/axon-loop-contracts/schemas/acf-execution-receipt.schema.json',
+    ('M1227', "EVIDENCE (4b, integrate-A): the receipt schema: a passed receipt completed (SIBLING-ONLY: a member of M1255's set)", 'crates/axon-loop-contracts/schemas/acf-execution-receipt.schema.json',
      '          "status": {\n            "const": "completed"\n          },\n          "process_exit_code": {',
      '          "status": {},\n          "process_exit_code": {',
      'axon-loop', _CS, 'a_passed_receipt_that_did_not_complete_is_never_counted'),
-    ('M1236', 'EVIDENCE (4b, integrate-A): the receipt schema: a passed receipt exited 0 (EQUIVALENT: M1256)', 'crates/axon-loop-contracts/schemas/acf-execution-receipt.schema.json',
+    ('M1236', "EVIDENCE (4b, integrate-A): the receipt schema: a passed receipt exited 0 (SIBLING-ONLY: a member of M1256's set)", 'crates/axon-loop-contracts/schemas/acf-execution-receipt.schema.json',
      '          "process_exit_code": {\n            "const": 0\n          },',
      '          "process_exit_code": {},',
      'axon-loop', _CS, 'a_passed_receipt_with_a_nonzero_exit_is_never_counted'),
-    ('M1241', "EVIDENCE (4b, integrate-A): the receipt schema: a passed receipt's evidence was supervisor-observed (EQUIVALENT: M1258)", 'crates/axon-loop-contracts/schemas/acf-execution-receipt.schema.json',
+    ('M1241', "EVIDENCE (4b, integrate-A): the receipt schema: a passed receipt's evidence was supervisor-observed (SIBLING-ONLY: a member of M1258's set)", 'crates/axon-loop-contracts/schemas/acf-execution-receipt.schema.json',
      '          "evidence_source": {\n            "const": "supervisor_observed"\n          },',
      '          "evidence_source": {},',
      'axon-loop', _CS, 'a_passed_receipt_reported_by_the_worker_is_never_counted'),
-    ('M1244', 'EVIDENCE (4b, integrate-A): the receipt schema: an outcome-unknown receipt has no exit code (EQUIVALENT: M1261)', 'crates/axon-loop-contracts/schemas/acf-execution-receipt.schema.json',
+    ('M1244', "EVIDENCE (4b, integrate-A): the receipt schema: an outcome-unknown receipt has no exit code (SIBLING-ONLY: a member of M1261's set)", 'crates/axon-loop-contracts/schemas/acf-execution-receipt.schema.json',
      '          "process_exit_code": {\n            "type": "null"\n          }\n        }\n      }\n    },',
      '          "process_exit_code": {}\n        }\n      }\n    },',
      'axon-loop', _CS, 'an_outcome_unknown_receipt_with_an_exit_code_is_never_counted'),
-    ('M1253', 'EVIDENCE (4b, integrate-A): the receipt schema: an unknown usage states no cost (EQUIVALENT: M1262)', 'crates/axon-loop-contracts/schemas/acf-execution-receipt.schema.json',
+    ('M1253', "EVIDENCE (4b, integrate-A): the receipt schema: an unknown usage states no cost (SIBLING-ONLY: a member of M1262's set)", 'crates/axon-loop-contracts/schemas/acf-execution-receipt.schema.json',
      '          "cost_micro": {\n            "type": "null"\n          }',
      '          "cost_micro": {}',
      'axon-loop', _CS, 'a_receipt_with_unknown_usage_and_a_cost_is_never_counted'),
-    ('M1263', 'EVIDENCE (4b, integrate-A): the transition schema: a pause names no target (EQUIVALENT: M1265)', 'crates/axon-loop-contracts/schemas/closed-loop-transition.schema.json',
+    ('M1263', "EVIDENCE (4b, integrate-A): the transition schema: a pause names no target (SIBLING-ONLY: a member of M1265's set)", 'crates/axon-loop-contracts/schemas/closed-loop-transition.schema.json',
      '          "target_policy_ref": {\n            "type": "null"\n          }',
      '          "target_policy_ref": {}',
      'axon-loop', _CS, 'a_pause_naming_a_target_is_never_applied'),
-    ('M1269', 'EVIDENCE (4b, integrate-A): the episode schema: a passed episode names its checked output (EQUIVALENT: M1250)', 'crates/axon-loop-contracts/schemas/closed-loop-episode.schema.json',
+    ('M1269', "EVIDENCE (4b, integrate-A): the episode schema: a passed episode names its checked output (SIBLING-ONLY: a member of M1250's set)", 'crates/axon-loop-contracts/schemas/closed-loop-episode.schema.json',
      '              "output_workspace_ref": {\n                "type": "string",\n                "pattern": "^acf1:[0-9a-f]{64}$"\n              },\n              "evidence_refs": {',
      '              "output_workspace_ref": {},\n              "evidence_refs": {',
      'axon-loop', _CS, 'a_passed_episode_with_no_checked_output_is_never_counted'),
@@ -4128,14 +4120,6 @@ EQUIV_RECORD['M1207'] = {
     "property": 'a canonical form over MAX_BYTES is never digested',
     "subsumed_by": ['M1200'], "killer": 'joint:M1207+M1200',
     "all_paths": "the canonical form of a parsed value is never longer than its text (no whitespace, sorted keys, escapes no longer than the input's, -0 -> 0), so parse_value's limit (M1200) refuses every parsed value this refuses; a record the loop builds over the limit is refused where it is read back, by parse_value (M1200)"}
-EQUIV_RECORD['M1208'] = {
-    "property": 'the episode schema: a final usage leaves no liability',
-    "subsumed_by": ['M1247'], "killer": 'joint:M1208+M1247',
-    "all_paths": 'the clause is read only by the schema walk inside parse, after which LoopEpisode::validate (M1247) refuses the same episode'}
-EQUIV_RECORD['M1209'] = {
-    "property": 'the episode schema: a passed episode completed',
-    "subsumed_by": ['M1248'], "killer": 'joint:M1209+M1248',
-    "all_paths": 'the clause is read only by the schema walk inside parse, after which LoopEpisode::validate (M1248) refuses the same episode'}
 EQUIV_RECORD['M1214'] = {
     "property": 'a value matching no oneOf branch is refused',
     "subsumed_by": ['M1234'], "killer": 'joint:M1214+M1234',
@@ -4168,10 +4152,6 @@ EQUIV_RECORD['M1226'] = {
     "property": 'the typed layer refuses an unknown field',
     "subsumed_by": ['M1224'], "killer": 'joint:M1226+M1224',
     "all_paths": 'a contract document is typed only after the schema walk, whose additionalProperties:false (M1224) closes every contract object'}
-EQUIV_RECORD['M1227'] = {
-    "property": 'the receipt schema: a passed receipt completed',
-    "subsumed_by": ['M1255'], "killer": 'joint:M1227+M1255',
-    "all_paths": 'the clause is read only by the schema walk inside parse, after which ExecutionReceipt::validate (M1255) refuses the same receipt'}
 EQUIV_RECORD['M1232'] = {
     "property": 'a digest is 64 lowercase hex',
     "subsumed_by": ['M1213'], "killer": 'joint:M1232+M1213',
@@ -4180,10 +4160,6 @@ EQUIV_RECORD['M1233'] = {
     "property": 'an ACF reference is acf1:',
     "subsumed_by": ['M1217'], "killer": 'joint:M1233+M1217',
     "all_paths": 'every Acf1Ref field of a contract document is bounded by the schema pattern ^acf1: (M1217) on the same value; Acf1Ref is not read outside contract documents'}
-EQUIV_RECORD['M1236'] = {
-    "property": 'the receipt schema: a passed receipt exited 0',
-    "subsumed_by": ['M1256'], "killer": 'joint:M1236+M1256',
-    "all_paths": 'the clause is read only by the schema walk inside parse, after which ExecutionReceipt::validate (M1256) refuses the same receipt'}
 EQUIV_RECORD['M1237'] = {
     "property": "a document's schema tag is its type's",
     "subsumed_by": ['M1212'], "killer": 'joint:M1237+M1212',
@@ -4200,10 +4176,6 @@ EQUIV_RECORD['M1240'] = {
     "property": 'a bounded integer is in min..=2^53-1',
     "subsumed_by": ['M1218'], "killer": 'joint:M1240+M1218',
     "all_paths": "the typed rule runs only on a value the schema walk already judged: every contract document is admitted through axon_loop_contracts::parse (canonical.rs: parse_value, validate_against the checked-in schema, typed serde, validate()), and validate() is called elsewhere only by tel::join on documents parse admitted and by evo::propose on a candidate it builds by remove/swap from an admitted policy (never larger, never empty, no duplicate, evidence deduplicated and capped at 256 by EVO itself), which this rule never refuses; the schema's minimum (M1218) and parse_value's integer rule (M1204) bound the same fields"}
-EQUIV_RECORD['M1241'] = {
-    "property": "the receipt schema: a passed receipt's evidence was supervisor-observed",
-    "subsumed_by": ['M1258'], "killer": 'joint:M1241+M1258',
-    "all_paths": 'the clause is read only by the schema walk inside parse, after which ExecutionReceipt::validate (M1258) refuses the same receipt'}
 EQUIV_RECORD['M1242'] = {
     "property": 'an ACF request carries at most 128 arguments',
     "subsumed_by": ['M1221'], "killer": 'joint:M1242+M1221',
@@ -4212,10 +4184,6 @@ EQUIV_RECORD['M1243'] = {
     "property": 'an ACF argument is at most 8192 characters',
     "subsumed_by": ['M1216'], "killer": 'joint:M1243+M1216',
     "all_paths": "the typed rule runs only on a value the schema walk already judged: every contract document is admitted through axon_loop_contracts::parse (canonical.rs: parse_value, validate_against the checked-in schema, typed serde, validate()), and validate() is called elsewhere only by tel::join on documents parse admitted and by evo::propose on a candidate it builds by remove/swap from an admitted policy (never larger, never empty, no duplicate, evidence deduplicated and capped at 256 by EVO itself), which this rule never refuses; the schema's argv items maxLength 8192 (M1216)"}
-EQUIV_RECORD['M1244'] = {
-    "property": 'the receipt schema: an outcome-unknown receipt has no exit code',
-    "subsumed_by": ['M1261'], "killer": 'joint:M1244+M1261',
-    "all_paths": 'the clause is read only by the schema walk inside parse, after which ExecutionReceipt::validate (M1261) refuses the same receipt'}
 EQUIV_RECORD['M1245'] = {
     "property": 'an unknown usage states no cost',
     "subsumed_by": ['M1210'], "killer": 'joint:M1245+M1210',
@@ -4248,10 +4216,6 @@ EQUIV_RECORD['M1252'] = {
     "property": 'an outcome-unknown episode carries no verdict',
     "subsumed_by": ['M1211'], "killer": 'joint:M1252+M1211',
     "all_paths": "the typed rule runs only on a value the schema walk already judged: every contract document is admitted through axon_loop_contracts::parse (canonical.rs: parse_value, validate_against the checked-in schema, typed serde, validate()), and validate() is called elsewhere only by tel::join on documents parse admitted and by evo::propose on a candidate it builds by remove/swap from an admitted policy (never larger, never empty, no duplicate, evidence deduplicated and capped at 256 by EVO itself), which this rule never refuses; the episode schema's conditional (outcome_unknown -> result enum not_run/unknown, M1211)"}
-EQUIV_RECORD['M1253'] = {
-    "property": 'the receipt schema: an unknown usage states no cost',
-    "subsumed_by": ['M1262'], "killer": 'joint:M1253+M1262',
-    "all_paths": 'the clause is read only by the schema walk inside parse, after which ExecutionReceipt::validate (M1262) refuses the same receipt'}
 EQUIV_RECORD['M1254'] = {
     "property": 'a receipt cites at most 128 evidence refs',
     "subsumed_by": ['M1221'], "killer": 'joint:M1254+M1221',
@@ -4288,36 +4252,20 @@ EQUIV_RECORD['M1262'] = {
     "property": 'an unknown receipt usage states no cost',
     "subsumed_by": ['M1253'], "killer": 'joint:M1262+M1253',
     "all_paths": "the typed rule runs only on a value the schema walk already judged: every contract document is admitted through axon_loop_contracts::parse (canonical.rs: parse_value, validate_against the checked-in schema, typed serde, validate()), and validate() is called elsewhere only by tel::join on documents parse admitted and by evo::propose on a candidate it builds by remove/swap from an admitted policy (never larger, never empty, no duplicate, evidence deduplicated and capped at 256 by EVO itself), which this rule never refuses; the receipt schema's conditional (usage_state unknown -> cost_micro type null, M1253)"}
-EQUIV_RECORD['M1263'] = {
-    "property": 'the transition schema: a pause names no target',
-    "subsumed_by": ['M1265'], "killer": 'joint:M1263+M1265',
-    "all_paths": 'the clause is read only by the schema walk inside parse, after which PolicyTransition::validate (M1265) refuses the same transition'}
-EQUIV_RECORD['M1264'] = {
-    "property": 'a policy never claims authority expansion',
-    "subsumed_by": ['M1212'], "killer": 'joint:M1264+M1212',
-    "all_paths": "the typed rule runs only on a value the schema walk already judged: every contract document is admitted through axon_loop_contracts::parse (canonical.rs: parse_value, validate_against the checked-in schema, typed serde, validate()), and validate() is called elsewhere only by tel::join on documents parse admitted and by evo::propose on a candidate it builds by remove/swap from an admitted policy (never larger, never empty, no duplicate, evidence deduplicated and capped at 256 by EVO itself), which this rule never refuses; the policy schema's authority_expansion const false (M1212)"}
 EQUIV_RECORD['M1265'] = {
     "property": 'a pause names no target policy',
     "subsumed_by": ['M1263'], "killer": 'joint:M1265+M1263',
     "all_paths": "the typed rule runs only on a value the schema walk already judged: every contract document is admitted through axon_loop_contracts::parse (canonical.rs: parse_value, validate_against the checked-in schema, typed serde, validate()), and validate() is called elsewhere only by tel::join on documents parse admitted and by evo::propose on a candidate it builds by remove/swap from an admitted policy (never larger, never empty, no duplicate, evidence deduplicated and capped at 256 by EVO itself), which this rule never refuses; the transition schema's conditional (pause -> target_policy_ref type null, M1263)"}
 EQUIV_RECORD['M1266'] = {
     "property": "a transition's fence is contiguous (next = expected + 1)",
-    "subsumed_by": ['M1268'], "killer": 'joint:M1266+M1268',
-    "all_paths": 'a PolicyTransition is only ever produced by parse (no constructor in crates/*/src) and only consumed by pointer::transition, which requires expected_epoch == current (CAS) and next_epoch == current + 1 (M1268) before it applies anything, together exactly this rule'}
+    "subsumed_by": ['M1330'], "killer": 'joint:M1266+M1330',
+    "all_paths": 'a PolicyTransition is only ever produced by parse (no constructor in crates/*/src) and only consumed by pointer::transition, which requires expected_epoch == current (CAS) and next_epoch == current + 1 (M1330) before it applies anything, together exactly this rule'}
 EQUIV_RECORD['M1267'] = {
     "property": "a transition's next epoch is at least 1",
-    "subsumed_by": ['M1218', 'M1266', 'M1268'], "killer": 'joint:M1267+M1218+M1266+M1268',
-    "all_paths": "next_epoch = expected_epoch + 1 >= 1 whenever the fence holds (M1266, M1268 at the pointer), and the schema's minimum 1 (M1218) bounds the same field"}
-EQUIV_RECORD['M1268'] = {
-    "property": 'the pointer applies only next_epoch = current + 1',
-    "subsumed_by": ['M1266'], "killer": 'joint:M1268+M1266',
-    "all_paths": "pointer::transition's only input is a parsed PolicyTransition (no constructor in crates/*/src), whose validate() (M1266) requires next = expected + 1, and the pointer's CAS requires expected = current, so next = current + 1 already holds"}
-EQUIV_RECORD['M1269'] = {
-    "property": 'the episode schema: a passed episode names its checked output',
-    "subsumed_by": ['M1250'], "killer": 'joint:M1269+M1250',
-    "all_paths": 'the clause is read only by the schema walk inside parse, after which LoopEpisode::validate (M1250) refuses the same episode'}
-EQUIVALENT_DID |= {'M1257', 'M1254', 'M1226', 'M1245', 'M1263', 'M1217', 'M1240', 'M1253', 'M1246', 'M1259', 'M1248', 'M1236', 'M1242', 'M1262', 'M1241', 'M1207', 'M1244', 'M1238', 'M1237', 'M1256', 'M1225', 'M1261', 'M1203', 'M1232', 'M1243', 'M1252', 'M1220', 'M1250', 'M1251', 'M1260', 'M1264', 'M1223', 'M1227', 'M1219', 'M1258', 'M1208', 'M1268', 'M1233', 'M1249', 'M1202', 'M1247', 'M1209', 'M1265', 'M1214', 'M1224', 'M1239', 'M1266', 'M1267', 'M1269', 'M1255'}
-RETIRED |= {'M1257', 'M1254', 'M1226', 'M1245', 'M1263', 'M1217', 'M1240', 'M1253', 'M1246', 'M1259', 'M1248', 'M1236', 'M1242', 'M1262', 'M1241', 'M1207', 'M1244', 'M1238', 'M1237', 'M1256', 'M1225', 'M1261', 'M1203', 'M1232', 'M1243', 'M1252', 'M1220', 'M1250', 'M1251', 'M1260', 'M1264', 'M1223', 'M1227', 'M1219', 'M1258', 'M1208', 'M1268', 'M1233', 'M1249', 'M1202', 'M1247', 'M1209', 'M1265', 'M1214', 'M1224', 'M1239', 'M1266', 'M1267', 'M1269', 'M1255'}
+    "subsumed_by": ['M1218', 'M1266', 'M1330'], "killer": 'joint:M1267+M1218+M1266+M1330',
+    "all_paths": "next_epoch = expected_epoch + 1 >= 1 whenever the fence holds (M1266, M1330 at the pointer), and the schema's minimum 1 (M1218) bounds the same field"}
+EQUIVALENT_DID |= {'M1257', 'M1254', 'M1226', 'M1245', 'M1217', 'M1240', 'M1246', 'M1259', 'M1248', 'M1242', 'M1262', 'M1207', 'M1238', 'M1237', 'M1256', 'M1225', 'M1261', 'M1203', 'M1232', 'M1243', 'M1252', 'M1220', 'M1250', 'M1251', 'M1260', 'M1223', 'M1219', 'M1258', 'M1233', 'M1249', 'M1202', 'M1247', 'M1265', 'M1214', 'M1224', 'M1239', 'M1266', 'M1267', 'M1255'}
+RETIRED |= {'M1257', 'M1254', 'M1226', 'M1245', 'M1217', 'M1240', 'M1246', 'M1259', 'M1248', 'M1242', 'M1262', 'M1207', 'M1238', 'M1237', 'M1256', 'M1225', 'M1261', 'M1203', 'M1232', 'M1243', 'M1252', 'M1220', 'M1250', 'M1251', 'M1260', 'M1223', 'M1219', 'M1258', 'M1233', 'M1249', 'M1202', 'M1247', 'M1265', 'M1214', 'M1224', 'M1239', 'M1266', 'M1267', 'M1255'}
 # ── end INTEGRATE-A ──
 # ── C9 round 4b, INTEGRATE-B (amendment 64) ── checks.rs, the cross-document joins.
 # M1270-M1293: each refusal is the FIRST on its production route (evl::evaluate for the
@@ -4671,7 +4619,7 @@ MUTATIONS += [
      'crates/axon-loop-contracts/src/canonical.rs',
      '    typed.validate()?;', '    let _ = typed.validate();',
      'axon-loop-contracts', '--test parse_validate_sites', 'parse_never_admits_a_noncontiguous_fence'),
-    ('M1364', 'freeze (4b-I): a plan never compares a policy with itself (UNRESOLVED: four cells hold vs M1012, full-suite condition broken by plan_evo_tel pinning NotReady)', _PN,
+    ('M1364', 'freeze (4b-I): a plan never compares a policy with itself (EQUIVALENT: M1012; ruling R3, amendment 64)', _PN,
      '    if inc == cand {', '    if false && inc == cand {',
      'axon-loop', _PLS, 'a_plan_comparing_a_policy_with_itself_never_freezes'),
     ('M1365', "check_candidate (4b-I): both policies are the plan's scope (EQUIVALENT: M1011)", _PN,
@@ -4836,6 +4784,226 @@ EQUIV_RECORD["M1380"] = {
                  "verify_document (M951); an edited signed document fails that signature"}
 EQUIVALENT_DID |= {"M1375", "M1377", "M1378", "M1379", "M1380"}
 RETIRED |= {"M1375", "M1377", "M1378", "M1379", "M1380"}
+
+# ── C9 round 4b, INTEGRATE-2 (amendment 64) ── the merge of integrate-A..E and
+# the last refusal sites: check_activate's admission route (pointer.rs), the
+# rest of checks.rs, evl's vacuous-pass check (integrator ruling on E's flag),
+# and the two statuses of rulings R1 and the schema ruling.
+_I2_PT = 'crates/axon-loop/src/pointer.rs'
+_I2_CK = 'crates/axon-loop-contracts/src/checks.rs'
+_I2_AS = '--test activation_sites'
+_I2_CR = '--test checks_rest_sites'
+_I2_HI = '--no-default-features --test harness_integrity'
+MUTATIONS += [
+    ('M1372', "EVL (4b, integrate-2): a pass over zero matched checks never counts (EQUIVALENT: M1249+M1257+M1218; integrator ruling on E's flag)",
+     'crates/axon-loop/src/evl.rs',
+     '            if v.matched_checks == 0 {\n                unknown(',
+     '            if false && v.matched_checks == 0 {\n                unknown(',
+     'axon-loop', '--test strict_sites', 'a_pass_over_zero_matched_checks_never_counts'),
+    ('M1373', 'HARNESS (4b, integrate-2): a LIBRARY_PRIMITIVE row is never counted among the killed active rows (ruling R1)',
+     'scripts/v022_g01_mutations.py',
+     '    lib_rows = [r for r in rows if r["id"] in LIBRARY_PRIMITIVE]\n',
+     '    lib_rows = []\n',
+     'axon-core', _I2_HI, 'a_library_primitive_row_is_never_reported_as_killed'),
+    ('M1374', 'HARNESS (4b, integrate-2): a SIBLING-ONLY edit is never an active row (schema ruling)',
+     'scripts/v022_g01_mutations.py',
+     '    if mid in RETIRED or mid in SIBLING_ONLY:\n',
+     '    if mid in RETIRED:\n',
+     'axon-core', _I2_HI, 'a_sibling_only_edit_is_never_an_active_row'),
+    ('M1400', 'checks (4b, integrate-2): a shortlist policy is never empty (EQUIVALENT: M1220+M1238)', _I2_CK,
+     '    if policy.shortlist.is_empty() {\n', '    if false && policy.shortlist.is_empty() {\n',
+     'axon-loop', _I2_CR, 'a_policy_with_an_empty_shortlist_is_never_stored'),
+    ('M1401', "checks (4b, integrate-2): a shortlist is applied only in its own scope and candidate view (LIBRARY_PRIMITIVE)", _I2_CK,
+     '    if &policy.scope != scope || &policy.candidate_set_ref != candidate_set_ref {\n',
+     '    if false && (&policy.scope != scope || &policy.candidate_set_ref != candidate_set_ref) {\n',
+     'axon-loop-contracts', '--test fixtures', 'shortlist_must_be_a_subset_of_the_eligible_view'),
+    ('M1402', "checks (4b, integrate-2): a verification never cites the context or execution documents it judges (EQUIVALENT: M45)", _I2_CK,
+     '    if v.verifier_ref\n        .iter()\n', '    if false && v.verifier_ref\n        .iter()\n',
+     'axon-loop', _I2_CR, 'a_check_request_doubling_as_the_execution_request_never_counts'),
+    ('M1403', "checks (4b, integrate-2): a pass binds only when the verified bytes are the execution's output (LIBRARY_PRIMITIVE)", _I2_CK,
+     '    if v.result == VerificationResult::Passed\n        && (receipt.output_workspace_ref.is_none()',
+     '    if false && v.result == VerificationResult::Passed\n        && (receipt.output_workspace_ref.is_none()',
+     'axon-loop', '--test evl', 'bind_acf_alone_refuses_a_pass_over_other_bytes'),
+    ('M1386', 'pointer (4b, integrate-2): an admission activates only the policy it admitted', _I2_PT,
+     '    if &adm.target_policy_ref != target {', '    if false && &adm.target_policy_ref != target {',
+     'axon-loop', _I2_AS, 'an_admission_never_activates_a_policy_it_did_not_admit'),
+    ('M1387', "pointer (4b, integrate-2): an admission activates only in its own scope (EQUIVALENT: M1388+M1334)", _I2_PT,
+     '    if adm.scope != t.scope {', '    if false && adm.scope != t.scope {',
+     'axon-loop', _I2_AS, 'an_admission_of_another_scope_never_activates_its_candidate_here'),
+    ('M1388', 'pointer (4b, integrate-2): H1, an admission displaces only the incumbent it was compared against', _I2_PT,
+     '    if &adm.incumbent_policy_ref != active {', '    if false && &adm.incumbent_policy_ref != active {',
+     'axon-loop', _I2_AS, 'an_admission_against_a_parked_incumbent_never_displaces_the_active_policy'),
+    ('M1389', 'pointer (4b, integrate-2): K1, evidence evaluated at an older epoch never activates', _I2_PT,
+     '    if adm.evaluated_at_epoch != cur.epoch {', '    if false && adm.evaluated_at_epoch != cur.epoch {',
+     'axon-loop', _I2_AS, 'an_admission_evaluated_at_an_older_epoch_never_activates'),
+    ('M1390', 'pointer (4b, integrate-2): an activation keeps its admission\'s mechanism-test label', _I2_PT,
+     '    if adm.mechanism_test != t.mechanism_test {', '    if false && adm.mechanism_test != t.mechanism_test {',
+     'axon-loop', _I2_AS, 'fixture_evidence_never_activates_a_policy_as_a_real_one'),
+    ('M1391', 'pointer (4b, integrate-2): a plan frozen with deployment disabled never activates', _I2_PT,
+     '    if !adm.deployment_enabled {', '    if false && !adm.deployment_enabled {',
+     'axon-loop', _I2_AS, 'a_plan_with_deployment_disabled_never_activates_its_candidate'),
+]
+EQUIV_RECORD["M1372"] = {
+    "property": "a pass over zero matched checks never counts",
+    "subsumed_by": ["M1249", "M1257", "M1218"], "killer": "joint:M1372+M1249+M1257+M1218",
+    "all_paths": "evl's judge reads `v`, the verification of an episode it counts only if intake recorded "
+                 "it (intake_join, M15); every episode and check receipt reaches intake and evaluate through "
+                 "axon_loop_contracts::parse, whose schema walk refuses a passed verification or receipt with "
+                 "matched_checks below the schemas' `minimum: 1` (the walker's minimum check, schema.rs, M1218) "
+                 "and whose typed rules refuse the same (LoopEpisode::validate M1249, ExecutionReceipt::validate "
+                 "M1257). The schemas' own `minimum: 1` clauses are NOT set members: the checked-in schema bytes "
+                 "are the MiCode package's, digest-pinned by axon-loop-contracts tests/fixtures.rs "
+                 "checked_in_schemas_are_the_package_bytes, so an edit of them cannot be a standalone row "
+                 "(integrator ruling, amendment 64); the walker's check that enforces them is the code member"}
+EQUIV_RECORD["M1400"] = {
+    "property": "a shortlist policy is never empty",
+    "subsumed_by": ["M1220", "M1238"], "killer": "joint:M1400+M1220+M1238",
+    "all_paths": "check_shortlist's first statement is policy.validate() on the same value, whose check_array("
+                 "\"shortlist\", .., 1, 256) (lib.rs, M1238) refuses an empty list before the emptiness check "
+                 "runs, on every caller (put_policy/require_shortlist, intake's ack, evo, axon-reflex); a parsed "
+                 "policy is also refused by the schema's minItems (the walker, schema.rs, M1220) earlier in parse"}
+EQUIV_RECORD["M1402"] = {
+    "property": "a verification never cites the context or execution documents of the trial it judges",
+    "subsumed_by": ["M45"], "killer": "joint:M1402+M45",
+    "all_paths": "bind_acf's only production caller is evl's judge, which counts only an episode intake recorded "
+                 "(intake_join, M15). Intake's verify_check_evidence requires verifier_ref == cl22 of the check "
+                 "receipt and evidence_refs == [cl22 of the check request] and then refuses either document's "
+                 "ref among the episode's context/request/receipt refs (M45): exactly this predicate for an "
+                 "intaken episode. Executed (integrate-2): M45 removed -> this check refuses; both removed -> "
+                 "the trial whose check request doubles as its execution request counts"}
+EQUIV_RECORD["M1387"] = {
+    "property": "an admission activates only in its own scope",
+    "subsumed_by": ["M1388", "M1334"], "killer": "joint:M1387+M1388+M1334",
+    "all_paths": "after the target check (M1386) the admission's target is the transition's target, whose "
+                 "envelope derive's check_candidate (re-run by rederive) requires to be of the admission's scope; "
+                 "so another scope's admission names an incumbent of that scope, never this scope's active "
+                 "policy (H1, M1388), and a target envelope of that scope, which the activation's envelope check "
+                 "refuses (M1334). Executed (integrate-2): each removed alone refuses; all three removed, scope "
+                 "B serves scope A's candidate"}
+EQUIV_RECORD["M1364"] = {
+    "property": "a plan never compares a policy with itself",
+    "subsumed_by": ["M1012"], "killer": "joint:M1364+M1012",
+    "all_paths": "freeze's check_candidate runs after this check on the same refs with only refusals between: a "
+                 "candidate with no EVO proposer is refused (M1011), and an EVO candidate's envelope names its "
+                 "parent by digest, which is never its own digest, so `parent == inc` fails when cand == inc "
+                 "(M1012); admission re-runs check_candidate and ready() refuses the same plan (start_blockers). "
+                 "plan_evo_tel's freeze_refuses_candidate_equal_incumbent pins that the freeze is REFUSED, not "
+                 "which of the two refusals answers (ruling R3, precedent M487)"}
+EQUIVALENT_DID |= {"M1372", "M1400", "M1402", "M1387", "M1364"}
+RETIRED |= {"M1372", "M1400", "M1402", "M1387", "M1364"}
+
+# LIBRARY_PRIMITIVE (ruling R1, amendment 64): a guard of a PUBLIC primitive
+# that is dominated on EVERY production route -- every production input it
+# refuses is refused on the same route by another named guard, so no
+# production-route attack reaches it alone -- and whose retirement fails ONLY
+# because a direct library test (one that calls the primitive itself) needs it.
+# The row stays in the mutation run so the library test's kill is executed and
+# recorded, but it is reported in its own class and NEVER counted killed. Each
+# record names, per production route, the guard that refuses first (or later,
+# on the same route and to the same outcome), and the library test.
+LIB_RECORD = {
+    "M965": {
+        "property": "an episode is bound only to the policy whose bytes it ran",
+        "routes": {
+            "evl::evaluate (judge)": "M964 (evl.rs `&d.ep.policy_ref != policy_ref`), the statement before "
+                                     "bind_episode; the arm's policy is keyed by its own digest",
+            "intake::intake_episode": "impossible: the policy is store.get_contract(\"policies\", &ep.policy_ref), "
+                                      "re-digested to that name by check_name (M978)"},
+        "library_test": "axon-loop-contracts --test fixtures bind_episode_refuses_mismatches"},
+    "M1295": {
+        "property": "a shortlist is applied only under the pilot's controls",
+        "routes": {
+            "intake::intake_episode (check_ack)": "M1294 (bind_episode's controls clause), earlier on the same "
+                                                  "policy and episode with only refusals between",
+            "candidates::require_shortlist, evo::propose (x2), axon-reflex shortlist": "impossible: each passes "
+                "the envelope's own controls_ref (or the request's, which it copied into the envelope)"},
+        "library_test": "axon-loop-contracts --test fixtures shortlist_must_be_a_subset_of_the_eligible_view"},
+    "M1297": {
+        "property": "a paired-trial preflight binds only when observed == expected",
+        "routes": {
+            "intake::intake_episode": "M831 (intake.rs, the identical predicate on the same context, earlier); "
+                                      "intake stores check_paired_trial_context's result, it does not refuse on it",
+            "evl::evaluate": "LATER on the same trial: bind_episode's context binding (M857) refuses a delivered "
+                             "context other than the intaken episode's, which passed M831; same outcome "
+                             "(Unknown, Unbound), another reason"},
+        "library_test": "axon-loop-contracts --test fixtures paired_trial_requires_exact_context_equality"},
+    "M1298": {
+        "property": "a preflight counts only at the current authority epoch",
+        "routes": {
+            "intake::intake_episode": "impossible: intake passes the context's own epoch as current",
+            "evl::evaluate": "LATER on the same trial: bind_episode's epoch clause (M1281) with the same epoch "
+                             "and context; same outcome (Unknown, Unbound), another reason"},
+        "library_test": "axon-loop-contracts --test fixtures context_currency_and_roles"},
+    "M1299": {
+        "property": "only a trusted verifier independent of the subject establishes an outcome",
+        "routes": {
+            "intake::intake_episode": "LATER: verify_check_evidence's independence check (M10) with the same "
+                                      "verifier and subject sets; Refused either way",
+            "evl::evaluate": "LATER: verify_check_evidence (M10) in the same judge; the trial is Unknown either "
+                             "way (the Unknown's kind differs: Unverifiable instead of Unbound)"},
+        "library_test": "axon-loop-contracts --test fixtures bind_episode_refuses_mismatches"},
+    "M1352": {
+        "property": "resolve_opaque reads only a cl22 ref, byte for byte",
+        "routes": {
+            "tel::join -> PinnedSchedule::check_request (bin axon-loop tel join)": "the next statement, M1351 "
+                "(`r != self.reference`): the pinned reference is cl22 (PinnedSchedule::pin), so a ref of "
+                "another scheme never equals it; Refused either way. The `r.as_str() != o.as_str()` clause "
+                "is always false (Ref::new keeps its input)"},
+        "library_test": "axon-loop --test price_tel_sites resolve_opaque_never_reads_another_scheme_as_a_content_ref"},
+    "M1363": {
+        "property": "parse holds a document to its typed rules",
+        "routes": {
+            "every parse caller": "the schema walk earlier in the same parse (M1362) states every typed rule "
+                                  "except two: the transition fence (next = expected + 1), which "
+                                  "pointer::transition refuses LATER (M1329/M1330, Conflict), and ProfileOffer's "
+                                  "list rules, which negotiate re-validates LATER (profile.rs)"},
+        "library_test": "axon-loop-contracts --test parse_validate_sites parse_never_admits_a_noncontiguous_fence"},
+    "M1369": {
+        "property": "a policy claiming an authority expansion is refused by its typed rule",
+        "routes": {
+            "every parsed envelope (CLI, get_contract, contract_from_value)": "the schema walk's const check "
+                "(M1212) earlier in the same parse",
+            "envelopes built in code (evo.rs, axon-reflex shortlist.rs)": "impossible: both set "
+                "authority_expansion: false literally; nothing in crates/*/src assigns the field"},
+        "library_test": "axon-loop-contracts --test parse_validate_sites "
+                        "a_policy_built_in_code_claiming_an_expansion_never_validates"},
+    "M1401": {
+        "property": "a shortlist is applied only in its own scope and candidate view",
+        "routes": {
+            "intake::intake_episode (check_ack)": "bind_episode's scope clause (M963) and candidate-view clause "
+                                                  "(M1294), earlier on the same policy and episode",
+            "candidates::require_shortlist, evo::propose (x2), axon-reflex shortlist": "impossible: each passes "
+                "the envelope's own scope and candidate_set_ref"},
+        "library_test": "axon-loop-contracts --test fixtures shortlist_must_be_a_subset_of_the_eligible_view"},
+    "M1403": {
+        "property": "a pass binds only when the verified bytes are the execution's output",
+        "routes": {
+            "evl::evaluate (judge, bind_acf's only production caller)": "bind_episode's checked-output clause "
+                "(M1296) and bind_acf's output join (M1291), earlier: v.output == episode.output == "
+                "receipt.output, and a passed episode names its output (LoopEpisode::validate)"},
+        "library_test": "axon-loop --test evl bind_acf_alone_refuses_a_pass_over_other_bytes"},
+}
+LIBRARY_PRIMITIVE = set(LIB_RECORD)
+
+# SIBLING_ONLY (integrator ruling, amendment 64): an edit that exists only as a
+# member of a retired row's guard set. It is never an ACTIVE row, never retired
+# and never counted killed; it needs no full-suite cell of its own because it
+# is not retired (the full-suite condition applies to the RETIRED guard alone).
+# These are integrate-A's schema clauses: the checked-in schema bytes are the
+# MiCode package's, digest-pinned by axon-loop-contracts tests/fixtures.rs
+# checked_in_schemas_are_the_package_bytes, so they cannot be mutated as
+# standalone rows; each is a member of the named code row's set.
+_PIN = ("the checked-in schema bytes are the MiCode package's, digest-pinned "
+        "(fixtures.rs checked_in_schemas_are_the_package_bytes)")
+SIBLING_RECORD = {r: {"member_of": m, "why": _PIN} for r, m in [
+    ("M1208", ["M1247"]), ("M1209", ["M1248"]), ("M1227", ["M1255"]), ("M1236", ["M1256"]),
+    ("M1241", ["M1258"]), ("M1244", ["M1261"]), ("M1253", ["M1262"]), ("M1263", ["M1265"]),
+    ("M1269", ["M1250"])]}
+SIBLING_ONLY = set(SIBLING_RECORD)
+_lib_bad = (LIBRARY_PRIMITIVE & (RETIRED | SIBLING_ONLY)) | (SIBLING_ONLY & RETIRED)
+assert not _lib_bad, f"a row in two classes: {sorted(_lib_bad)}"
+assert all({"property", "routes", "library_test"} <= set(v) for v in LIB_RECORD.values())
+# ── end INTEGRATE-2 ──
 
 PSV_IDS = {f"M{n}" for n in range(137, 550)}
 # C9 round 3: rows M560-M649 are PSV rows (workstream ranges).
@@ -5285,10 +5453,14 @@ RETIRED |= {"M1086", "M1087", "M1089", "M1091", "M1095", "M1096", "M1097"}
 PSV_IDS |= {f"M{n}" for n in range(940, 1020)}
 # C9 round 4b, integrate (amendment 64): M1200-M1399.
 PSV_IDS |= {f"M{n}" for n in range(1200, 1400)}
+# C9 round 4b, integrate-2 (amendment 64): M1400-M1449.
+PSV_IDS |= {f"M{n}" for n in range(1400, 1450)}
 
 
 def in_scope(mid, scope):
-    if mid in RETIRED:
+    # A SIBLING-ONLY edit exists only as a member of a retired row's guard set
+    # (amendment 64): it is never an active row of any scope.
+    if mid in RETIRED or mid in SIBLING_ONLY:
         return False
     if scope == "g01":
         return mid not in PCI_IDS and mid not in BINDING_IDS and mid not in PSV_IDS
@@ -5694,8 +5866,19 @@ def print_evidence_model(rows, scope, extra="", partial=False):
       STALE              old text gone AND a named ACTIVE replacement killed
       survivors          the test passed with the guard removed
 
+      LIBRARY_PRIMITIVE  (ruling R1, amendment 64) a guard of a public
+                         primitive, dominated on every production route,
+                         killed only by a direct library test: run, and its
+                         library-test kill required, but reported in its own
+                         class and NEVER counted among the killed
+      SIBLING_ONLY       (amendment 64) an edit that is only a member of a
+                         retired row's guard set; never run as a row
+
     Returns False when any class other than KILLED/EQUIVALENT/STALE is
-    non-empty, or a retirement record does not hold against the tree."""
+    non-empty, a LIBRARY_PRIMITIVE row's library test did not kill it, or a
+    retirement record does not hold against the tree."""
+    lib_rows = [r for r in rows if r["id"] in LIBRARY_PRIMITIVE]
+    rows = [r for r in rows if r not in lib_rows]
     active = len(rows)
     killed = [r["id"] for r in rows if r["result"] == "killed"]
     weak = [r["id"] for r in rows if r["result"] == "refused_elsewhere"]
@@ -5740,11 +5923,23 @@ def print_evidence_model(rows, scope, extra="", partial=False):
           + str({m: r.get("replacement") for m, r in sorted(STALE_REFACTORED.items())})
           + (f"  <-- NOT STALE, guard still present: {stale_live}" if stale_live else "")
           + (f"  <-- STALE RECORD DOES NOT HOLD: {stale_bad}" if stale_bad else ""))
+    lib_killed = sorted(r["id"] for r in lib_rows if r["result"] == "killed" and r["baseline"] == "passed")
+    lib_bad = sorted(r["id"] for r in lib_rows if r["id"] not in lib_killed)
+    lib_gone = sorted(m for m in LIBRARY_PRIMITIVE if not applies(m))
+    print(f"LIBRARY_PRIMITIVE (ruling R1: killed only by a direct library test; NEVER counted killed): "
+          f"{len(lib_killed)}/{len(lib_rows)} library-test kills {lib_killed}"
+          + (f"  <-- LIBRARY TEST DID NOT KILL: {lib_bad}" if lib_bad else "")
+          + (f"  <-- guard absent: {lib_gone}" if lib_gone else ""))
+    sib_gone = sorted(m for m in SIBLING_ONLY if not applies(m))
+    print(f"SIBLING_ONLY (a guard-set member only; never a row, never counted killed): "
+          f"{len(SIBLING_ONLY)} {sorted(SIBLING_ONLY)}"
+          + (f"  <-- edit does not apply: {sib_gone}" if sib_gone else ""))
     if LEGACY_EQUIV:
         print(f"Retired LEGACY (unaudited): {len(LEGACY_EQUIV)} {sorted(LEGACY_EQUIV)}")
     print(f"Unexpected survivors: {len(survivors)}{(' '+str(survivors)) if survivors else ''}")
     print(f"Active rows stale/unapplied: {len(stale)}{(' '+str(stale)) if stale else ''}")
-    return not (weak or survivors or stale or eq_gone or stale_live or stale_bad or LEGACY_EQUIV)
+    return not (weak or survivors or stale or eq_gone or stale_live or stale_bad or LEGACY_EQUIV
+                or lib_bad or lib_gone or sib_gone)
 
 
 def main():
@@ -5875,6 +6070,7 @@ def main():
         good = base == "passed" and result == "killed" and unrestored is None
         ok &= good
         results.append({"id": mid, "guard": guard, "file": rel, "package": pkg,
+                        **({"status": "LIBRARY_PRIMITIVE"} if mid in LIBRARY_PRIMITIVE else {}),
                          **row_digest((mid, guard, rel, old, new)),
                          "target": target, "test": test, "baseline": base, "result": result,
                          "attack_marker": ATTACK_MARKERS.get(mid),
@@ -5882,7 +6078,8 @@ def main():
                          **({"baseline_output": base_kept} if base_kept else {}),
                          **({"cell_output": kept} if kept else {}),
                          **({"interpreter_not_restored": unrestored} if unrestored else {})})
-        print(f"{'OK ' if good else 'BAD'} {mid} baseline={base} {result}  {guard}"
+        print(f"{'OK ' if good else 'BAD'} {mid} baseline={base} {result}"
+              f"{' (LIBRARY_PRIMITIVE: not counted killed)' if mid in LIBRARY_PRIMITIVE else ''}  {guard}"
               + (f"  INTERPRETER NOT RESTORED: {unrestored}" if unrestored else ""), flush=True)
         if unrestored:
             break

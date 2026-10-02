@@ -1289,11 +1289,9 @@ ATTACK_MARKERS.update({
     'M1260': 'ATTACK: an outcome_unknown receipt with a failed verdict: ',
     'M1261': 'ATTACK: an outcome_unknown receipt with an exit code: ',
     'M1262': 'ATTACK: a receipt with unknown usage and a cost: ',
-    'M1264': 'ATTACK: a policy with authority_expansion true: ',
     'M1265': 'ATTACK: a pause naming a target policy: ',
     'M1266': 'ATTACK: a transition from epoch 1 to epoch 3: ',
     'M1267': 'ATTACK: a transition from epoch 1 to epoch 0: ',
-    'M1268': 'ATTACK: a transition from epoch 1 to epoch 3: ',
     'M1208': 'ATTACK: an episode with final usage and unresolved liability: ',
     'M1209': 'ATTACK: a passed episode whose run failed: ',
     'M1227': 'ATTACK: a passed receipt whose run failed: ',
@@ -1426,4 +1424,21 @@ ATTACK_MARKERS.update({
     'M1378': r'ATTACK: an episode naming its policy by a non-cl22 alias was intaken',
     'M1379': r'ATTACK: an episode naming its policy by a non-cl22 alias was intaken',
     'M1380': r'ATTACK: a stored verification attestation edited in place was admitted on',
+})
+
+# C9 round 4b, INTEGRATE-2 (amendment 64).
+ATTACK_MARKERS.update({
+    'M1372': 'ATTACK: a pass over zero matched checks counted',
+    'M1373': 'ATTACK: a LIBRARY_PRIMITIVE row was counted among the killed',
+    'M1374': 'ATTACK: a SIBLING-ONLY edit was run as an active row',
+    'M1400': 'ATTACK: a policy with an empty shortlist was stored',
+    'M1401': 'ATTACK: check_shortlist applied a policy outside its scope or candidate view',
+    'M1402': 'ATTACK: a verification citing its own execution request as evidence counted as a pass',
+    'M1403': 'ATTACK: bind_acf joined a pass over bytes the verifier never checked',
+    'M1386': 'ATTACK: a policy its admission never admitted was activated',
+    'M1387': "ATTACK: another scope's admission made its candidate active here",
+    'M1388': 'ATTACK: an admission against a parked incumbent displaced the active policy',
+    'M1389': 'ATTACK: evidence evaluated at an older epoch activated a policy',
+    'M1390': 'ATTACK: mechanism-test evidence activated a policy as a real one',
+    'M1391': 'ATTACK: a plan with deployment disabled made its candidate active',
 })
