@@ -3876,7 +3876,7 @@ MUTATIONS += [
      'crates/axon-loop-contracts/src/canonical.rs',
      '    typed.validate()?;', '    let _ = typed.validate();',
      'axon-loop-contracts', '--test parse_validate_sites', 'parse_never_admits_a_noncontiguous_fence'),
-    ('M1364', 'check (4b-I): a plan never compares a policy with itself (EQUIVALENT: M1012)', _PN,
+    ('M1364', 'freeze (4b-I): a plan never compares a policy with itself (UNRESOLVED: four cells hold vs M1012, full-suite condition broken by plan_evo_tel pinning NotReady)', _PN,
      '    if inc == cand {', '    if false && inc == cand {',
      'axon-loop', _PLS, 'a_plan_comparing_a_policy_with_itself_never_freezes'),
     ('M1365', "check_candidate (4b-I): both policies are the plan's scope (EQUIVALENT: M1011)", _PN,
@@ -3926,12 +3926,6 @@ EQUIV_RECORD["M1361"] = {
     "subsumed_by": ["M1362", "M1363"], "killer": "joint:M1361+M1362+M1363",
     "all_paths": "as M1360: every receipt reaching join was parsed by contract_from_value (schema walk M1362, "
                  "ExecutionReceipt::validate M1363) and is unmodified before join"}
-EQUIV_RECORD["M1364"] = {
-    "property": "a plan never compares a policy with itself",
-    "subsumed_by": ["M1012"], "killer": "joint:M1364+M1012",
-    "all_paths": "check_candidate (same freeze, no Ok return between) requires the candidate's parent to be "
-                 "the incumbent (M1012); a policy's parent_policy_ref is never its own digest (the digest "
-                 "covers the parent field), so inc == cand fails M1012"}
 EQUIV_RECORD["M1365"] = {
     "property": "the candidate and the incumbent are the plan's scope",
     "subsumed_by": ["M1011"], "killer": "joint:M1365+M1011",
@@ -3965,9 +3959,9 @@ EQUIV_RECORD["M1371"] = {
     "subsumed_by": ["M1008"], "killer": "joint:M1371+M1008",
     "all_paths": "Rules::parse's callers: freeze, after unset_fields (M1008) refused any of the five word "
                  "fields unset, and admission, which parses only a frozen plan"}
-EQUIVALENT_DID |= {"M1346", "M1360", "M1361", "M1364", "M1365", "M1366", "M1367", "M1368",
+EQUIVALENT_DID |= {"M1346", "M1360", "M1361", "M1365", "M1366", "M1367", "M1368",
                    "M1370", "M1371"}
-RETIRED |= {"M1346", "M1360", "M1361", "M1364", "M1365", "M1366", "M1367", "M1368",
+RETIRED |= {"M1346", "M1360", "M1361", "M1365", "M1366", "M1367", "M1368",
             "M1370", "M1371"}
 
 PSV_IDS = {f"M{n}" for n in range(137, 550)}
