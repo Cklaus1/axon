@@ -721,6 +721,16 @@ GUARD_SETS.update({
     "M1294": {"siblings": ["M1295"], "kind": "pair"},
     "M1296": {"siblings": ["M34", "M1291"], "kind": "set"},
 })
+# ── C9 round 4b, INTEGRATE-C (amendment 64) ──
+GUARD_SETS.update({
+    'M1309': {"siblings": ['M1310', 'M1311'], "kind": 'set'},
+    'M1310': {"siblings": ['M1312'], "kind": 'pair'},
+    'M1314': {"siblings": ['M979'], "kind": 'pair'},
+    'M1329': {"siblings": ['M1330'], "kind": 'pair'},
+    'M1330': {"siblings": ['M1329'], "kind": 'pair'},
+    'M1334': {"siblings": ['M1322'], "kind": 'pair'},
+})
+# ── end INTEGRATE-C ──
 
 
 def current_edits_digest(rid):

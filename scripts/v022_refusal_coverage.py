@@ -107,9 +107,8 @@ OUT_OF_SCOPE = {
 # gate re-measures each count and refuses a stale one, in both directions.
 NOT_YET_SCANNED = {
     'crates/axon-loop-contracts/src/checks.rs': 4,  # integrate-B: 41/52/283/299 dominated, ids exhausted (amendment 64)
-    'crates/axon-loop/src/ledger.rs': 18,  # loop side (rows4a): not reached
     'crates/axon-loop/src/plan.rs': 4,  # rows4a: four dominated sites (inc == cand, scope, view, adds); attacks written in tests/plan_sites.rs, four-cell rows need ids past M1019
-    'crates/axon-loop/src/pointer.rs': 33,  # loop side (rows4a): not reached
+    'crates/axon-loop/src/pointer.rs': 6,  # integrate-C: check_activate's six admission-route refusals (H1, K1, target, scope, label, deployment_enabled); M1300-M1344 exhausted
     'crates/axon-loop/src/price.rs': 12,  # loop side (rows4a): not reached
     'crates/axon-loop/src/tel.rs': 10,  # loop side (rows4a): not reached
     'crates/axon-psv/src/bin/axon-psv-runner.rs': 2,  # unassigned
@@ -1114,6 +1113,19 @@ EXEMPT += [
      "whose check refuses it first (M1210); and with both removed the typed layer still refuses a "
      "float in an integer field (serde, no mutable site), so no input reaches this arm"),
 ]
+
+# C9 round 4b, INTEGRATE-C (amendment 64)
+# Kinds as above. NOTHING TO ADMIT: the arm holds no value the code after it
+# could continue with.
+PTR = "crates/axon-loop/src/pointer.rs"
+EXEMPT += [
+    (PTR, '            refused(format!(\n                "rollback target {target} was never an active predecessor in this scope"',
+     "NOTHING TO ADMIT: no history entry names the target, so there is no predecessor (its "
+     "admission, label and authority) for the rollback rules below to judge; the arm is the "
+     "ok_or_else of that lookup"),
+]
+# ── end INTEGRATE-C ──
+
 
 def load_rows():
     spec = importlib.util.spec_from_file_location("mut", os.path.join(ROOT, "scripts/v022_g01_mutations.py"))
