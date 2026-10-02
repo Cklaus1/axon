@@ -4594,6 +4594,170 @@ EQUIV_RECORD['M1334'] = {
 EQUIVALENT_DID |= {'M1310', 'M1334', 'M1314', 'M1309', 'M1330', 'M1329'}
 RETIRED |= {'M1310', 'M1334', 'M1314', 'M1309', 'M1330', 'M1329'}
 # ── end INTEGRATE-C ──
+# ── C9 round 4b, INTEGRATE-D (amendment 64) ── price.rs, tel.rs, plan.rs's
+# dominated candidate checks, rules.rs's unset word rule, and the parse layers
+# (schema walk, typed validate, PolicyEnvelope's authority rule) that the
+# four-cell retirements below name as siblings. M1345-M1371.
+_PR = 'crates/axon-loop/src/price.rs'
+_TL = 'crates/axon-loop/src/tel.rs'
+_PN = 'crates/axon-loop/src/plan.rs'
+_PTS = '--test price_tel_sites'
+_PSS = '--test plan_strict_sites'
+_PLS = '--test plan_sites'
+MUTATIONS += [
+    ('M1345', 'price (4b-I): a schedule prices only if its content digests to the pinned ref', _PR,
+     '        if actual != *expected {', '        if false && actual != *expected {',
+     'axon-loop', _PTS, 'a_schedule_whose_content_is_not_its_ref_never_prices'),
+    ('M1346', 'price (4b-I): a schedule is pinned only by a cl22 content ref (EQUIVALENT: M1345)', _PR,
+     '        if expected.scheme() != RefScheme::Cl22 {', '        if false && expected.scheme() != RefScheme::Cl22 {',
+     'axon-loop', _PTS, 'a_schedule_pinned_by_a_non_cl22_ref_never_prices'),
+    ('M1347', 'price (4b-I): a schedule of another schema never prices', _PR,
+     '        if doc.schema != PRICE_SCHEDULE_SCHEMA {', '        if false && doc.schema != PRICE_SCHEDULE_SCHEMA {',
+     'axon-loop', _PTS, 'a_schedule_of_another_schema_never_prices'),
+    ('M1348', 'price (4b-I): a schedule covering nothing never prices', _PR,
+     '        if doc.covers.is_empty() {', '        if false && doc.covers.is_empty() {',
+     'axon-loop', _PTS, 'a_schedule_covering_nothing_never_prices'),
+    ('M1349', 'price (4b-I): a schedule repeating a coverage never prices', _PR,
+     '        if covers.len() != doc.covers.len() {', '        if false && covers.len() != doc.covers.len() {',
+     'axon-loop', _PTS, 'a_schedule_repeating_a_coverage_never_prices'),
+    ('M1350', 'price (4b-I) D10: a schedule claiming execution coverage never prices', _PR,
+     '        if covers.contains(&Coverage::Execution) {', '        if false && covers.contains(&Coverage::Execution) {',
+     'axon-loop', _PTS, 'a_schedule_claiming_execution_coverage_never_prices'),
+    ('M1351', "price (4b-I) G10: a request's schedule is the pinned one", _PR,
+     '        if r != self.reference {', '        if false && r != self.reference {',
+     'axon-loop', _PTS, 'a_request_naming_another_schedule_never_joins'),
+    ('M1352', "price (4b-I) G10: resolve_opaque reads only a cl22 ref, byte for byte (the public primitive; its "
+     "one production caller then compares with the pinned ref, M1351)", _PR,
+     '    if r.scheme() != RefScheme::Cl22 || r.as_str() != o.as_str() {',
+     '    if false && (r.scheme() != RefScheme::Cl22 || r.as_str() != o.as_str()) {',
+     'axon-loop', _PTS, 'resolve_opaque_never_reads_another_scheme_as_a_content_ref'),
+    ('M1353', "price (4b-I) G10: a request is in the pinned schedule's currency", _PR,
+     '        if req.limits.currency_code != self.currency {', '        if false && req.limits.currency_code != self.currency {',
+     'axon-loop', _PTS, 'a_request_in_another_currency_never_joins'),
+    ('M1354', 'price (4b-I) G10: a usage names the pinned schedule', _PR,
+     '        if u.price_schedule_ref != self.reference {', '        if false && u.price_schedule_ref != self.reference {',
+     'axon-loop', _PTS, 'a_usage_naming_another_schedule_never_prices'),
+    ('M1355', "price (4b-I) G10: a usage is in the pinned schedule's currency", _PR,
+     '        if u.currency != self.currency {', '        if false && u.currency != self.currency {',
+     'axon-loop', _PTS, 'a_usage_in_another_currency_never_prices'),
+    ('M1356', 'tel (4b-I): an attempt is accounted once per component', _TL,
+     '            if !seen.insert(a) {', '            if !seen.insert(a) && false {',
+     'axon-loop', _PTS, 'an_attempt_named_by_two_usages_is_never_counted_twice'),
+    ('M1357', "tel (4b-I): a receipt joins only its own request's identity", _TL,
+     '        if req.operation_id != rc.operation_id\n            || req.attempt_id != rc.attempt_id\n'
+     '            || req.task_id != rc.task_id\n            || req.trial_id != rc.trial_id\n        {',
+     '        if false {',
+     'axon-loop', _PTS, 'a_receipt_of_another_attempt_never_joins_its_request'),
+    ('M1358', 'tel (4b-I) G13: one receipt is never paired with two requests', _TL,
+     '            if *q != qref {', '            if false && *q != qref {',
+     'axon-loop', _PTS, 'a_receipt_paired_with_two_requests_never_joins'),
+    ('M1359', 'tel (4b-I) G13: one attempt is never reported by two receipts', _TL,
+     '        if let Some(other) = by_attempt.get(&key) {', '        if let Some(other) = by_attempt.get(&key).filter(|_| false) {',
+     'axon-loop', _PTS, 'an_attempt_reported_by_two_receipts_is_never_counted_twice'),
+    ('M1360', "tel (4b-I): a joined request satisfies its contract (EQUIVALENT: M1362+M1363)", _TL,
+     '        req.validate()\n            .map_err(|e| refused(format!("fabric_attempts[{i}].request: {e}")))?;',
+     '        let _ = req.validate();',
+     'axon-loop', _PTS, 'a_request_breaking_its_contract_never_joins'),
+    ('M1361', "tel (4b-I): a joined receipt satisfies its contract (EQUIVALENT: M1362+M1363)", _TL,
+     '        rc.validate()\n            .map_err(|e| refused(format!("fabric_attempts[{i}].receipt: {e}")))?;',
+     '        let _ = rc.validate();',
+     'axon-loop', _PTS, 'a_receipt_breaking_its_contract_never_joins'),
+    ('M1362', "contracts (4b-I): parse holds a document to its checked-in schema (the schema walk's call)",
+     'crates/axon-loop-contracts/src/canonical.rs',
+     '    crate::schema::validate_against(&schema, &value)?;', '    let _ = crate::schema::validate_against(&schema, &value);',
+     'axon-loop', _PTS, 'an_episode_in_a_non_schema_shape_is_never_summarized'),
+    ('M1363', "contracts (4b-I): parse holds a document to its typed rules (the library primitive; the "
+     "pointer re-judges the one rule only this layer states, a contiguous fence)",
+     'crates/axon-loop-contracts/src/canonical.rs',
+     '    typed.validate()?;', '    let _ = typed.validate();',
+     'axon-loop-contracts', '--test parse_validate_sites', 'parse_never_admits_a_noncontiguous_fence'),
+    ('M1364', 'freeze (4b-I): a plan never compares a policy with itself (UNRESOLVED: four cells hold vs M1012, full-suite condition broken by plan_evo_tel pinning NotReady)', _PN,
+     '    if inc == cand {', '    if false && inc == cand {',
+     'axon-loop', _PLS, 'a_plan_comparing_a_policy_with_itself_never_freezes'),
+    ('M1365', "check_candidate (4b-I): both policies are the plan's scope (EQUIVALENT: M1011)", _PN,
+     '    if ce.scope != plan.scope || ie.scope != plan.scope {',
+     '    if false && (ce.scope != plan.scope || ie.scope != plan.scope) {',
+     'axon-loop', _PLS, 'a_candidate_of_another_scope_never_freezes'),
+    ('M1366', "check_candidate (4b-I): the candidate keeps the incumbent's view and mode (EQUIVALENT: M1011)", _PN,
+     '    if ce.candidate_set_ref != ie.candidate_set_ref || ce.mode != ie.mode {',
+     '    if false && (ce.candidate_set_ref != ie.candidate_set_ref || ce.mode != ie.mode) {',
+     'axon-loop', _PLS, 'a_candidate_over_another_candidate_view_never_freezes'),
+    ('M1367', "check_candidate (4b-I): the candidate's shortlist only subtracts (EQUIVALENT: M1011)", _PN,
+     '    if let Some(c) = ce.shortlist.iter().find(|c| !ie.shortlist.contains(c)) {',
+     '    if let Some(c) = ce.shortlist.iter().find(|c| !ie.shortlist.contains(c)).filter(|_| false) {',
+     'axon-loop', _PLS, 'a_candidate_adding_a_tool_never_freezes'),
+    ('M1368', 'check_candidate (4b-I): a candidate claiming an authority expansion never freezes '
+     '(EQUIVALENT: M1369+M1362+M1011)', _PN,
+     '    if ce.authority_expansion {', '    if false && ce.authority_expansion {',
+     'axon-loop', _PSS, 'a_candidate_claiming_an_authority_expansion_never_freezes'),
+    ('M1369', "contracts (4b-I): a policy claiming an authority expansion is refused by its typed rule "
+     "(the library primitive, for values built in code; every production reader parses first, M1362)",
+     'crates/axon-loop-contracts/src/policy.rs',
+     '        if self.authority_expansion {', '        if false && self.authority_expansion {',
+     'axon-loop-contracts', '--test parse_validate_sites', 'a_policy_built_in_code_claiming_an_expansion_never_validates'),
+    ('M1370', 'freeze (4b-I): a frozen experiment is never reported frozen under a re-registered plan '
+     '(EQUIVALENT: M1006)', _PN,
+     '        if f.plan_ref != r {', '        if false && f.plan_ref != r {',
+     'axon-loop', _PSS, 'a_re_registered_frozen_plan_is_never_frozen_under_its_new_plan'),
+    ('M1371', 'plan rules (4b-I): an unset word rule is not executable (EQUIVALENT: M1008)',
+     'crates/axon-loop/src/rules.rs',
+     '        None => Err(format!("{field} unset")),', '        None => Ok(()),',
+     'axon-loop', _PSS, 'a_plan_with_no_missing_data_rule_never_freezes'),
+]
+EQUIV_RECORD["M1346"] = {
+    "property": "a price schedule is pinned only by a cl22 content ref",
+    "subsumed_by": ["M1345"], "killer": "joint:M1346+M1345",
+    "all_paths": "pin's only production caller is `tel summarize` (grep PinnedSchedule::pin); the next check "
+                 "compares `expected` with digest_value(document), which is always a cl22 Ref (canonical.rs "
+                 "digest_value), so a non-cl22 `expected` never equals it (M1345) with no return between"}
+EQUIV_RECORD["M1360"] = {
+    "property": "a request joined by tel satisfies its contract",
+    "subsumed_by": ["M1362", "M1363"], "killer": "joint:M1360+M1362+M1363",
+    "all_paths": "tel::join's only production caller is `tel summarize`, which builds every request by "
+                 "contract_from_value -> parse, which runs the checked-in schema walk (M1362) and the same "
+                 "ComputeRequest::validate (M1363) on the same value, unmodified before join"}
+EQUIV_RECORD["M1361"] = {
+    "property": "a receipt joined by tel satisfies its contract",
+    "subsumed_by": ["M1362", "M1363"], "killer": "joint:M1361+M1362+M1363",
+    "all_paths": "as M1360: every receipt reaching join was parsed by contract_from_value (schema walk M1362, "
+                 "ExecutionReceipt::validate M1363) and is unmodified before join"}
+EQUIV_RECORD["M1365"] = {
+    "property": "the candidate and the incumbent are the plan's scope",
+    "subsumed_by": ["M1011"], "killer": "joint:M1365+M1011",
+    "all_paths": "check_candidate's earlier proposer_in(tx, &plan.scope, cand) (M1011) admits only a "
+                 "candidate EVO proposed in the plan's scope, and EVO proposes only children of the scope's "
+                 "own policies (same scope); the incumbent is the scope's (freeze binds plan.scope); "
+                 "check_candidate's only callers are freeze and admission's re-check of a frozen plan"}
+EQUIV_RECORD["M1366"] = {
+    "property": "the candidate keeps the incumbent's candidate view and mode",
+    "subsumed_by": ["M1011"], "killer": "joint:M1366+M1011",
+    "all_paths": "as M1365: an EVO proposal (M1011) copies its parent's candidate_set_ref and mode and only "
+                 "reorders/removes shortlist entries (evo.rs), and its parent is the incumbent (M1012)"}
+EQUIV_RECORD["M1367"] = {
+    "property": "the candidate's shortlist only subtracts from the incumbent's",
+    "subsumed_by": ["M1011"], "killer": "joint:M1367+M1011",
+    "all_paths": "as M1366: an EVO proposal is a subtractive mutation of its parent's shortlist"}
+EQUIV_RECORD["M1368"] = {
+    "property": "a candidate claiming an authority expansion never freezes",
+    "subsumed_by": ["M1369", "M1362", "M1011"], "killer": "joint:M1368+M1369+M1362+M1011",
+    "all_paths": "check_candidate reads both policies through get_contract -> parse, whose schema walk "
+                 "(`const false`, M1362) and PolicyEnvelope::validate (M1369) refuse the claim, and "
+                 "require_shortlist's check_shortlist calls the same validate; the proposer record (M1011) "
+                 "names only EVO proposals, which never set the flag"}
+EQUIV_RECORD["M1370"] = {
+    "property": "a frozen experiment is never reported frozen under another plan",
+    "subsumed_by": ["M1006"], "killer": "joint:M1370+M1006",
+    "all_paths": "plan::register (the only writer of a registration) refuses an experiment id that has a "
+                 "Freeze (M1006), so load_registered's latest registration is the frozen one"}
+EQUIV_RECORD["M1371"] = {
+    "property": "an unset word rule never freezes",
+    "subsumed_by": ["M1008"], "killer": "joint:M1371+M1008",
+    "all_paths": "Rules::parse's callers: freeze, after unset_fields (M1008) refused any of the five word "
+                 "fields unset, and admission, which parses only a frozen plan"}
+EQUIVALENT_DID |= {"M1346", "M1360", "M1361", "M1365", "M1366", "M1367", "M1368",
+                   "M1370", "M1371"}
+RETIRED |= {"M1346", "M1360", "M1361", "M1365", "M1366", "M1367", "M1368",
+            "M1370", "M1371"}
 
 PSV_IDS = {f"M{n}" for n in range(137, 550)}
 # C9 round 3: rows M560-M649 are PSV rows (workstream ranges).

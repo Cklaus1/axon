@@ -107,11 +107,7 @@ OUT_OF_SCOPE = {
 # gate re-measures each count and refuses a stale one, in both directions.
 NOT_YET_SCANNED = {
     'crates/axon-loop-contracts/src/checks.rs': 4,  # integrate-B: 41/52/283/299 dominated, ids exhausted (amendment 64)
-    'crates/axon-loop/src/plan.rs': 4,  # rows4a: four dominated sites (inc == cand, scope, view, adds); attacks written in tests/plan_sites.rs, four-cell rows need ids past M1019
     'crates/axon-loop/src/pointer.rs': 6,  # integrate-C: check_activate's six admission-route refusals (H1, K1, target, scope, label, deployment_enabled); M1300-M1344 exhausted
-    'crates/axon-loop/src/price.rs': 12,  # loop side (rows4a): not reached
-    'crates/axon-loop/src/tel.rs': 10,  # loop side (rows4a): not reached
-    'crates/axon-psv/src/bin/axon-psv-runner.rs': 2,  # unassigned
 }
 SITE = re.compile(r"return Err\(|\bErr\(format!|\brefuse\(|\bErr\(bad\(|TEST_TRUST_BUILD")
 OPENER = re.compile(r"^\s*(\}\s*else\s+if\b|if\b|match\b|let\s+\w+\s*=\s*if\b)|=>")
@@ -632,9 +628,6 @@ RU = "crates/axon-loop/src/rules.rs"
 EP = "crates/axon-loop/src/epoch.rs"
 LL = "crates/axon-loop/src/lib.rs"
 EXEMPT += [
-    (RU, '        None => Err(format!("{field} unset")),',
-     "UNREACHABLE: plan::freeze refuses a plan with any operator field unset (unset_fields, the "
-     "statement before Rules::parse), and admission parses only a frozen plan"),
     (EP, "    if now != claimed {",
      "UNREACHABLE: require_current has no production caller (only crates/axon-loop/tests/pointer.rs); "
      "Fabric's launch-time epoch check reads epoch::current and compares itself (submit.rs)"),
@@ -647,14 +640,6 @@ PLN = "crates/axon-loop/src/plan.rs"
 EXEMPT += [
     (PLN, '        _ => return Err(refused(format!("no registered plan {id}"))),',
      "NOTHING TO ADMIT: no registered plan, so there is no plan to load"),
-    (PLN, '            return Err(LoopError::Io(format!(\n                "store corrupt: plan {id} re-registered after its freeze"',
-     "SELECTS NOTHING: an already-frozen experiment is never frozen again (the arm returns without "
-     "appending a Freeze), and every reader binds to the Freeze event's plan_ref, not the latest "
-     "registration; the refusal only reports the corruption (a re-registration register() refuses, "
-     "M1006)"),
-    (PLN, '        return Err(refused("authority_expansion"));',
-     "UNREACHABLE: both policies are read through get_contract -> parse -> PolicyEnvelope::validate, "
-     "which refuses authority_expansion = true (\"authority_expansion must be false\")"),
     (PLN, '        return Err(LoopError::NotReady(format!("plan {id} is not frozen")));',
      "NOTHING TO ADMIT: no frozen plan, so nothing to judge the experiment by"),
 ]
@@ -1125,6 +1110,35 @@ EXEMPT += [
      "ok_or_else of that lookup"),
 ]
 # ── end INTEGRATE-C ──
+
+
+# C9 round 4b, INTEGRATE-D (amendment 64): price.rs, tel.rs, the psv runner.
+# Kinds as above, plus NO PRODUCTION CALLER (the function's callers are named
+# by a grep; none is outside tests).
+PRC = "crates/axon-loop/src/price.rs"
+TEL = "crates/axon-loop/src/tel.rs"
+PRN = "crates/axon-psv/src/bin/axon-psv-runner.rs"
+_COHORT = ("NO PRODUCTION CALLER (checkable): `grep -rn 'cohort_cost' crates/*/src` finds only tel.rs's "
+           "own definition and doc comment; it is called only from crates/axon-loop/tests/tel_price.rs. "
+           "evl/admission build economics through summarize_with_missing/summarize_with_execution, "
+           "and the tel CLI through summarize/join, none of which reaches it")
+EXEMPT += [
+    (PRC, '        refused(format!(\n            "price_schedule_ref {o} is not a content Ref',
+     "NOTHING TO ADMIT: the request's opaque string is not a Ref at all, so there is no ref to compare "
+     "with the pinned schedule (the comparison is M1351)"),
+    (TEL, '        return Err(refused("a cohort with no assigned trials has no cost"));', _COHORT),
+    (TEL, '        return Err(refused(format!(\n            "{} missing records exceed {assigned} assigned trials",', _COHORT),
+    (TEL, '            return Err(refused("no usage records: the cohort\'s cost is unknown"))', _COHORT),
+    (TEL, '        _ => return Err(refused("currencies are never mixed in one cohort cost")),', _COHORT),
+    (PRN, '        return Err("axon-psv-runner takes no arguments".into());',
+     "SELECTS NOTHING (checkable): main passes start() only std::env::args().len(); no argument is "
+     "ever read, every path is a compiled-in guest path and the manifest digest comes from "
+     "/proc/cmdline (run_guest), so an extra argument changes nothing the runner does"),
+    (PRN, '        Err(e) => Err(format!("could not write the verdict: {e}")),',
+     "NOTHING TO ADMIT: run_and_emit failed to write /out/verdict.json, so there is no verdict or "
+     "digest to print; the runner exits 3 and the host reads no verdict (psv.rs 'no guest verdict', "
+     "an Unknown)"),
+]
 
 
 def load_rows():
