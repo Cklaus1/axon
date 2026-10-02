@@ -74,7 +74,9 @@ BUILD_EXIT=$?
 set -e
 echo "$BUILD_OUT" >&2
 if [[ $BUILD_EXIT -ne 0 ]]; then
-    if echo "$BUILD_OUT" | grep -q "requires building axon with the .codegen. feature"; then
+    # One in-shell match of the refusal text this invocation printed (no pipe,
+    # no forked grep that load can kill or a pipefail race can fail).
+    if [[ "$BUILD_OUT" == *"requires building axon with the \`codegen\` feature"* ]]; then
         skip "axon binary lacks codegen support (build with: cargo build -p axon-core)"
     fi
     echo "FAIL: axon build failed (exit $BUILD_EXIT)" >&2
