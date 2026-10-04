@@ -1160,9 +1160,6 @@ EXEMPT += [
     (CU, "        if text.len() as u64 > MAX_MESSAGE {",
      "a memory bound on the reply, not an authority decision: every byte under it was already "
      "attributed to the pinned program"),
-    (CU, "    if seen.is_some_and(|s| s != pid) {",
-     "defence in depth, dominated: each message's sender is hashed against the pin on its own "
-     "(M1483), so a second process is refused unless it too executes the pinned program"),
     (CU, "    if pidfd_pid(pidfd) != Some(pid) {",
      "a race that fails closed (the sender exited between naming it and opening its executable); "
      "not deterministically reachable, and its absence would still hash an executable the pinned "

@@ -1153,11 +1153,17 @@ fn a_production_helper_that_is_not_root_launches_nothing() {
         code.trim()
     );
     // Refused by the euid check (M602) or, with it removed, by the protected
-    // custodian refusing a spend from a uid other than 0 (M628): either
-    // reason (four-cell record, C9 round 3). Any OTHER refusal means the
-    // fixture did not reach the spend, and proves nothing.
+    // custodian refusing a spend from a uid other than 0 (M628), or by the
+    // helper's verification of the pinned custodian program, which a helper
+    // that is not root cannot perform (it cannot open the custodian's
+    // /proc/<pid>/exe; M1489, amendment 66): any of these (four-cell record).
+    // Any OTHER refusal means the fixture did not reach the spend, and
+    // proves nothing.
     assert!(
-        rep.contains("not 0") || rep.contains("is not the launcher uid 0"),
+        rep.contains("not 0")
+            || rep.contains("is not the launcher uid 0")
+            || rep
+                .contains("is not served by the pinned custodian program: the sender's executable"),
         "the refusal is the euid's or the protected custodian's spend rule: {rep} \
          (custodian: {cust_err})"
     );

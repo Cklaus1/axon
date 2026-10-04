@@ -2685,7 +2685,7 @@ EQUIV_RECORD["M459"] = {
                  "file cannot change the answer"}
 EQUIV_RECORD["M602"] = {
     "property": "a production helper that is not root in every id never launches",
-    "subsumed_by": ["M628"], "killer": "joint:M602+M628",
+    "subsumed_by": ["M628", "M1489"], "killer": "joint:M602+M628+M1489",
     "all_paths": "every launch goes serve_as -> prepare -> observed_launch, which verifies the "
                  "observation (M620) and then spends its nonce through the operator's custodian "
                  "(M621) before make_out and run; run is reached only from a Prepared. The spend "
@@ -2696,7 +2696,14 @@ EQUIV_RECORD["M602"] = {
                  "authorizes no production launch (M625), a dev one none at all (M624); the "
                  "helper accepts only a socket its configured custodian uid or root serves (M626). "
                  "So a helper that is not root never spends, and never launches. Executed with the "
-                 "production helper and the production (socket-activated) custodian"}
+                 "production helper and the production (socket-activated) custodian. Amendment 66 "
+                 "(final): since amendment 65 a production helper config must pin the custodian "
+                 "program (M1485) and every reply is verified against the pin (M1489, the "
+                 "verification as a whole; M1483 its comparison). A helper whose euid is not 0 "
+                 "cannot open the custodian's /proc/<pid>/exe (another uid's process: ptrace "
+                 "read access) and refuses the reply, so the set is {M628, M1489}: measured at "
+                 "78832d1b, with M602 removed the refusal is the pin verification's, and with "
+                 "M602+M628+M1489 removed the non-root helper launches"}
 # C9 round 4, ROWS workstream (EQUIVALENCE): fabric_is_not_root and
 # custodian_is_separate have ONE production caller, ProtectedHost::operator(),
 # where each is one of two checks that refuse its attack alone. Their only
@@ -5691,6 +5698,14 @@ MUTATIONS += [
      '    let inner = script(interpreter, path, bins);\n',
      '    let inner = {\n        let _ = bins;\n        let mut c = Command::new(interpreter);\n        c.arg(path.as_ref());\n        c\n    };\n',
      'axon-core', '--no-default-features --test harness_binaries', 'a_wrapped_script_is_checked_and_stripped_like_any_other'),
+    # The custodian-program verification AS A WHOLE (M1483 mutates only its
+    # comparison): every reply's sender is identified and its executable
+    # opened and hashed. Killed by the impostor attack; also a member of
+    # M602's guard set (a non-root helper cannot open the custodian's exe).
+    ('M1489', "FIELD-ORIGIN (final): every custodian reply's sender is verified against the program pin at all", _CU,
+     '    let pid = pidfd_pid(pidfd).ok_or("its sender has exited")?;\n',
+     '    let pid = pidfd_pid(pidfd).ok_or("its sender has exited")?;\n    if true {\n        let _ = (pin, seen);\n        return Ok(pid);\n    }\n',
+     'axon-fabric', '--test privileged_launcher', 'a_custodian_program_the_operator_never_pinned_spends_nothing'),
 ]
 
 

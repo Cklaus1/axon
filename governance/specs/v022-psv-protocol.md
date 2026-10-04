@@ -2935,7 +2935,27 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       `a_wrapped_script_is_checked_and_stripped_like_any_other` (ATTACK: a guessing script under a
       wrapper is refused and never runs; every binary-naming variable is removed; control: an
       honest wrapped script runs with exactly the named binary), row M1488.
-    - **Rows.** M1487, M1488 (PSV; from the gaps assignment M1450-M1499, unused M1489-M1499
-      remain).
+    - **M602's guard set (found by the final paired-disable at 78832d1b, BAD M602).** Amendment 65
+      made every production helper verify the custodian PROGRAM on each reply (M1485 requires the
+      pin; M1483 is the comparison). A helper whose euid is not 0 cannot open the custodian's
+      `/proc/<pid>/exe` (another uid's process; ptrace read access), so with M602 removed the
+      launch is refused by the pin verification before the custodian's spend rule (M628) is
+      reached: the retired_off and set_off cells read OTHER_FAILURE and the full-suite cell
+      failed `a_production_helper_that_is_not_root_launches_nothing` (its reason assertion named
+      only the euid and M628 refusals). Not a false retirement: no route reaches M602 alone. The
+      set is now {M628, M1489}; M1489 (new, ACTIVE) removes the verification as a whole
+      (`check_sender_program` returns the pid unchecked) and is killed by the impostor attack;
+      the test accepts the pin verification's refusal as the third reason. Executed by hand at
+      the fix: base / M602 off / M628+M1489 off refused, M602+M628+M1489 off ATTACK_SUCCEEDS;
+      the whole axon-fabric suite with M602 removed rc 0.
+    - **Paired-disable suite bound (found by the same run, BAD M214 and M89).** Their four cells
+      held; the full-suite cell read SUITE_BROKEN with no failure printed: the whole
+      `cargo test -p axon-fabric` was cut by `bounded_run 12G 2400` (completed binaries summed to
+      ~2040-2060 s, psv_dispatch 925-1319 s under the 6-shard load against 466 s idle; the cut
+      landed 33-38 tests into a 40-test readiness binary still making progress). Not a hang. The
+      bound is now 7200 s (`SUITE_BOUND_S`), and a suite cut by its time or memory bound is
+      recorded as `<TIMEOUT|RESOURCE_EXHAUSTED: ...>` in the failures, never as an unnamed break.
+    - **Rows.** M1487, M1488, M1489 (PSV; from the gaps assignment M1450-M1499, unused
+      M1490-M1499 remain).
     - **Matrix.** None (an existing A of amendment 65, harden(); the harness's EQUIVALENCE (6)).
     - **Operator deployment.** None.

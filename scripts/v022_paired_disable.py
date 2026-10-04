@@ -229,10 +229,22 @@ def full_suite_ok(pkg, flags="", env=""):
     if not built:
         mut.keep_output(f"pd-suite-build-{pkg}", bout)
         return None, bout
+    # The bound is for the WHOLE package suite (C9 round 4b, final): at 2400 s
+    # the axon-fabric suite (~21 min idle, --test-threads=1) was cut mid-binary
+    # under a 6-shard load (M214's full-suite cell at 78832d1b: readiness_attribution
+    # stopped after 38 of 40 tests, no failure printed) and read SUITE_BROKEN.
     cmd = (f"source scripts/lib_bounded_run.sh && {mut.UNSET_AMBIENT}"
-           f"{env}bounded_run 12G 2400 cargo test -q -p {pkg} {show} 2>&1")
+           f"{env}bounded_run 12G {SUITE_BOUND_S} cargo test -q -p {pkg} {show} 2>&1")
     r = sh(cmd)
     out = r.stdout + r.stderr
+    if r.returncode in (124, 137):
+        # A suite cut by its wall-clock or memory bound proves nothing about
+        # any test: it is named as such, never left to read as a failure.
+        what = "TIMEOUT" if r.returncode == 124 else "RESOURCE_EXHAUSTED"
+        out += f"\n[paired-disable] the suite was cut by bounded_run ({what}, {SUITE_BOUND_S} s / 12G)\n"
+        mut.keep_output(f"pd-suite-{pkg}", out)
+        CELL_SKIPS.update({(pkg, flags, env): skipped_tests(out)})
+        return False, [f"<{what}: the whole suite exceeded bounded_run {SUITE_BOUND_S} s / 12G>"]
     # The tests are built: compiler text in this output is a TEST's (a nested
     # build it ran, or a diagnostic it printed), judged as that test's result.
     # Both libtest formats: `name ... FAILED` and, under -q, `name --- FAILED`.
@@ -244,6 +256,10 @@ def full_suite_ok(pkg, flags="", env=""):
         # reproduce is diagnosable only from the panic it actually printed.
         mut.keep_output(f"pd-suite-{pkg}", out)
     return ok, fails
+
+
+# Wall-clock bound for one whole-package suite cell (full_suite_ok).
+SUITE_BOUND_S = 7200
 
 
 def apply_edits(edits):
@@ -605,7 +621,10 @@ GUARD_SETS = {
     "M286": {"siblings": ["M581"], "kind": "pair"},
     "M453": {"siblings": ["M580"], "kind": "pair"},
     "M459": {"siblings": ["M581"], "kind": "pair"},
-    "M602": {"siblings": ["M628"], "kind": "pair"},
+    # C9 round 4b, final (amendment 66): a non-root helper also cannot verify
+    # the pinned custodian program (it cannot open another uid's
+    # /proc/<pid>/exe), so the pin verification (M1489) is in M602's set.
+    "M602": {"siblings": ["M628", "M1489"], "kind": "set"},
     # C9 round 4 (rows, EQUIVALENCE): the two rule functions whose one
     # production caller is ProtectedHost::operator(), where each is
     # dominated; executed with the production axon-fabric.

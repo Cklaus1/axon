@@ -1482,4 +1482,5 @@ ATTACK_MARKERS.update({
 ATTACK_MARKERS.update({
     'M1487': r'ATTACK: the root helper printed its stack, with addresses, to its caller',
     'M1488': r'ATTACK: a wrapped script that guesses its binary ran',
+    'M1489': r'ATTACK: the root helper spent the nonce through a custodian program the operator\s+never pinned',
 })
