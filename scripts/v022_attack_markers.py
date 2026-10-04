@@ -1476,3 +1476,9 @@ ATTACK_MARKERS.update({
     'M1472': r'ATTACK: the freeze bound a guest image with no operator host-toolchain pin',
     'M1473': r'ATTACK: the freeze accepted a host-toolchain pin owned by uid',
 })
+
+# C9 round 4b, workstream FINAL (M1487; amendment 66): harden()'s environment
+# clear, on the route where it is the only guard.
+ATTACK_MARKERS.update({
+    'M1487': r'ATTACK: the root helper printed its stack, with addresses, to its caller',
+})

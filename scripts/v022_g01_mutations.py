@@ -5667,6 +5667,22 @@ MUTATIONS += [
      'axon-fabric', '--test freeze_manifest', _FRZ),
 ]
 
+# ── C9 round 4b, workstream FINAL (M1487; amendment 66) ──────────────────────
+# Amendment 65 exempted harden()'s ENVIRONMENT clear as dominated by
+# sealed_exec::command's explicit envp (M228). Under the strict ruling it is
+# not: the helper's OWN Rust runtime reads RUST_BACKTRACE when it panics, and
+# the caller can make `--probe` panic (println! to a report pipe whose read end
+# is closed; SIGPIPE is ignored, M1481). Measured with the clear removed: the
+# setuid-root helper printed its full stack, every frame's address (binary and
+# libc), to the Fabric-uid caller's stderr. sealed_exec is not on that route,
+# so this row is killed by its OWN attack with the clear its only guard.
+# PR_SET_DUMPABLE stays a measured exemption (amendment 65).
+MUTATIONS += [
+    ('M1487', "A/harden (final): the caller's environment never reaches the root helper's own runtime (RUST_BACKTRACE: no address layout to the caller)", _PL,
+     '        std::env::remove_var(k);', '        let _ = k;',
+     'axon-fabric', '--test privileged_launcher', 'the_root_helpers_address_layout_never_reaches_its_caller'),
+]
+
 
 def in_scope(mid, scope):
     # A SIBLING-ONLY edit exists only as a member of a retired row's guard set

@@ -2890,3 +2890,30 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       <fabric unit>)`; run `b263_qualify.sh --host-label <operator name> [--caveat <text>]`;
       the toolchain pin's status line ("no reader") is now false: the freeze reads it, and refuses
       without it. The Fabric unit must not set `NoNewPrivileges=yes` (or a preset that implies it).
+
+66. **harden()'s environment clear is an ACTIVE row on the route where it is the only guard (C9
+    round 4b, final; supersedes amendment 65's "dominated" exemption for the environment clear).**
+    No counting rule is relaxed.
+    - **Before.** Amendment 65 gave `privileged_launcher::harden()`'s environment clear no row,
+      as dominated: the launcher's environment is built from nothing by `sealed_exec::command`'s
+      explicit envp (M228) and "no code on the helper's path reads a variable". The second half
+      is false. The helper's OWN Rust runtime reads `RUST_BACKTRACE` when it panics, and the
+      caller can make it panic after `harden()`: `--probe` writes its report with `println!`,
+      SIGPIPE is ignored (M1481), so a report pipe whose read end the caller has already closed
+      fails EPIPE and the write panics. Measured with the clear removed: the setuid-root helper,
+      executed by the Fabric uid with `RUST_BACKTRACE=full`, printed its full stack to the
+      caller's stderr, every frame with its address (the helper binary's and libc's): the root
+      process's address layout handed to its unprivileged caller. `sealed_exec` is not on that
+      route, so the clear is the only guard there and is not dominated.
+    - **After.** Row M1487 (`std::env::remove_var(k)` in `harden()` removed): attack
+      `the_root_helpers_address_layout_never_reaches_its_caller` (`privileged_launcher.rs`, root
+      only): the installed setuid-root (test-trust) helper is executed by python3 as the Fabric
+      uid with `RUST_BACKTRACE=full` and `--probe` on a closed pipe. Setup asserts the panic
+      happened ("failed printing to stdout"); ATTACK: no `stack backtrace`, no address in the
+      caller's stderr. Control: the same caller on an open pipe reads the probe's JSON, exit 0.
+      Killed by its own attack. The end-to-end environment assertion in
+      `a_callers_process_state_never_reaches_the_root_helper_or_its_launcher` stays (M228 is its
+      row). `PR_SET_DUMPABLE 0` remains amendment 65's measured exemption, not counted killed.
+    - **Rows.** M1487 (PSV; from the gaps assignment M1450-M1499, unused M1488-M1499 remain).
+    - **Matrix.** None (an existing A of amendment 65, harden()).
+    - **Operator deployment.** None.

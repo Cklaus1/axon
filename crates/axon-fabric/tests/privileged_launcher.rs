@@ -3049,15 +3049,104 @@ fn a_callers_process_state_never_reaches_the_root_helper_or_its_launcher() {
         ("65536".to_string(), "65536".to_string()),
         "ATTACK: the root launcher ran under its caller's open-file limit: {limits}"
     );
-    // The environment (no row: the launcher's environment is built from
-    // nothing by sealed_exec::command, and the helper reads no variable;
-    // amendment 65 records harden()'s clear as dominated there).
+    // The environment, end to end: the launcher's environment is built from
+    // nothing by sealed_exec::command (M228). harden()'s own clear has its
+    // row (M1487) on the route where it is the only guard:
+    // `the_root_helpers_address_layout_never_reaches_its_caller`.
     let env = read("launcher-env");
     assert!(
         !env.contains("HOSTILE_CALLER") && !env.contains("LD_PRELOAD") && !bash_env_ran.exists(),
         "ATTACK: the caller's environment reached the root launcher: {env}"
     );
     assert_eq!(o.status.code(), Some(0), "control: the launch ran: {rep}");
+}
+
+/// The caller of `--probe`: argv[1] is the setuid helper. With `closed`, the
+/// helper's stdout is a pipe whose read end is already closed (its report
+/// write fails EPIPE: SIGPIPE is ignored there, M1481, so `println!` PANICS);
+/// otherwise a pipe this caller drains and copies to its own stdout. The
+/// helper's environment is exactly `RUST_BACKTRACE=full`.
+const PROBE_CALLER: &str = r#"
+import os, sys
+helper, closed = sys.argv[1], sys.argv[2] == "closed"
+r, w = os.pipe()
+pid = os.fork()
+if pid == 0:
+    if closed:
+        os.close(r)
+    os.dup2(w, 1)
+    os.execve(helper, [helper, "--probe"], {"RUST_BACKTRACE": "full"})
+os.close(w)
+out = b""
+if closed:
+    os.close(r)
+else:
+    while True:
+        b = os.read(r, 65536)
+        if not b:
+            break
+        out += b
+_, st = os.waitpid(pid, 0)
+sys.stdout.write(out.decode())
+sys.exit(os.waitstatus_to_exitcode(st) & 0xff)
+"#;
+
+/// A (C9 round 4b, final; M1487), ROOT ONLY: harden()'s environment clear, on
+/// the route where it is the ONLY guard. Nothing the helper launches sees its
+/// environment (sealed_exec::command builds every child's envp from nothing,
+/// M228), but the helper's OWN Rust runtime reads `RUST_BACKTRACE` when it
+/// panics, and its caller can make it panic: `--probe` writes its report with
+/// `println!`, SIGPIPE is ignored (M1481), so a report pipe whose read end is
+/// closed makes the write fail EPIPE and the helper panic. With the caller's
+/// `RUST_BACKTRACE=full` still in its environment, the panic hook prints the
+/// root helper's stack, every frame with its ADDRESS, to the caller's stderr:
+/// the setuid-root process's address layout handed to the unprivileged Fabric
+/// uid. The panic happens after `harden()` (setup asserts it happened).
+/// Control: the same caller with an open pipe reads the probe's report.
+#[test]
+fn the_root_helpers_address_layout_never_reaches_its_caller() {
+    if skip_unless_root() {
+        return;
+    }
+    let f = fx(Some(FABRIC), "", |_| {});
+    let caller = |mode: &str| {
+        Command::new("setpriv")
+            .args([
+                &format!("--reuid={FABRIC}"),
+                &format!("--regid={FABRIC}"),
+                "--clear-groups",
+                "--",
+                "python3",
+                "-c",
+                PROBE_CALLER,
+            ])
+            .arg(f.installed.as_ref().unwrap())
+            .arg(mode)
+            .stdin(Stdio::null())
+            .output()
+            .unwrap()
+    };
+    let o = caller("closed");
+    let err = String::from_utf8_lossy(&o.stderr).to_string();
+    assert!(
+        err.contains("failed printing to stdout"),
+        "setup: the helper's probe did not panic on the closed report pipe: exit {:?} {err}",
+        o.status.code()
+    );
+    assert!(
+        !err.contains("stack backtrace") && !err.contains("0x"),
+        "ATTACK: the root helper printed its stack, with addresses, to its caller (the caller's \
+         RUST_BACKTRACE reached the setuid helper's panic hook): {err}"
+    );
+    let o = caller("open");
+    let out: Value = serde_json::from_slice(&o.stdout).unwrap_or_else(|e| {
+        panic!(
+            "control: the probe did not report to an open pipe ({e}): {:?} {}",
+            o.status.code(),
+            String::from_utf8_lossy(&o.stderr)
+        )
+    });
+    assert_eq!(o.status.code(), Some(0), "control: the probe ran: {out}");
 }
 
 /// The impostor custodian: bound on `argv[1]` (or, with `fd`, serving
