@@ -3062,25 +3062,33 @@ fn a_callers_process_state_never_reaches_the_root_helper_or_its_launcher() {
 }
 
 /// The caller of `--probe`: argv[1] is the setuid helper. With `closed`, the
-/// helper's stdout is a pipe whose read end is already closed (its report
-/// write fails EPIPE: SIGPIPE is ignored there, M1481, so `println!` PANICS);
-/// otherwise a pipe this caller drains and copies to its own stdout. The
+/// helper's stdout is a pipe with NO read end anywhere: it is closed before
+/// the fork, so the helper's report write fails EPIPE every time (SIGPIPE is
+/// ignored there, M1481, so `println!` PANICS). It was once closed in the
+/// parent AFTER the fork, and under load the helper's write could land in the
+/// pipe first (measured: 11 of 40 runs under 40 CPU spinners exited 0). A
+/// one-byte write confirms there is no reader before the helper starts.
+/// Otherwise a pipe this caller drains and copies to its own stdout. The
 /// helper's environment is exactly `RUST_BACKTRACE=full`.
 const PROBE_CALLER: &str = r#"
 import os, sys
 helper, closed = sys.argv[1], sys.argv[2] == "closed"
 r, w = os.pipe()
+if closed:
+    os.close(r)
+    # python3 ignores SIGPIPE: with no reader the write raises EPIPE.
+    try:
+        os.write(w, b"x")
+        sys.exit("setup: the closed report pipe still has a reader")
+    except BrokenPipeError:
+        pass
 pid = os.fork()
 if pid == 0:
-    if closed:
-        os.close(r)
     os.dup2(w, 1)
     os.execve(helper, [helper, "--probe"], {"RUST_BACKTRACE": "full"})
 os.close(w)
 out = b""
-if closed:
-    os.close(r)
-else:
+if not closed:
     while True:
         b = os.read(r, 65536)
         if not b:

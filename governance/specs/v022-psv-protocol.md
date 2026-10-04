@@ -2914,6 +2914,13 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       Killed by its own attack. The end-to-end environment assertion in
       `a_callers_process_state_never_reaches_the_root_helper_or_its_launcher` stays (M228 is its
       row). `PR_SET_DUMPABLE 0` remains amendment 65's measured exemption, not counted killed.
+    - **Setup race found by the final paired-disable (fixed).** The first version of the attack's
+      caller closed the report pipe's read end in the parent AFTER the fork; under load the
+      helper's write could land in the pipe first and the probe exited 0 (the setup assertion
+      failed: 11 of 40 runs under 40 CPU spinners; the clean axon-fabric baseline of one shard read
+      BASELINE_BROKEN). The read end is now closed before the fork and a one-byte write confirms
+      no reader exists before the helper starts: 0 of 60 under the same load, 0 of 40 idle; with
+      the clear removed the attack succeeded 15 of 15 under load.
     - **Harness defect found by the final paired-disable (fixed at the source).** At d39ab3ad the
       CLEAN axon-core baseline failed `harness_binaries.rs::every_script_spawn_in_the_workspace_goes_through_the_helper`:
       amendment 65's freeze tests ran `v022_freeze_manifest.py` in a private mount namespace by
