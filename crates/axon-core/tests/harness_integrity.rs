@@ -19,11 +19,12 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-const HARNESS: [&str; 4] = [
+const HARNESS: [&str; 5] = [
     "scripts/v022_g01_mutations.py",
     "scripts/v022_attack_markers.py",
     "scripts/v022_paired_disable.py",
     "scripts/lib_bounded_run.sh",
+    "scripts/v022_pd_consumers.py",
 ];
 
 fn scratch(tag: &str) -> PathBuf {
@@ -71,6 +72,12 @@ fn repo(tag: &str) -> PathBuf {
         "#!/bin/sh\n",
     );
     write(&r.join(".gitignore"), "__pycache__/\n/target/\n");
+    // An (empty) cargo workspace: paired-disable selects consumers from
+    // `cargo metadata` and refuses a tree cargo cannot describe (amendment 67).
+    write(
+        &r.join("Cargo.toml"),
+        "[workspace]\nmembers = []\nresolver = \"2\"\n",
+    );
     git(&r, &["add", "-A"]);
     git(&r, &["commit", "-q", "-m", "candidate"]);
     r
@@ -259,24 +266,52 @@ fn a_merge_refuses_a_shard_made_from_another_registry() {
     let _ = std::fs::remove_dir_all(&out);
 }
 
-/// Paired-disable shards, as a run at HEAD writes them.
+/// Paired-disable shards, as a run at HEAD writes them: every record carries
+/// the consumer selection the rule makes at HEAD (amendment 67). `mode`
+/// breaks one thing: the registry (`alt`), the tree (`dirty`), a record's
+/// edits (`edits`), or M245's selection -- removed (`nosel`), a reachable
+/// consumer skipped (`skip`), a skipped consumer with no reason (`noreason`),
+/// a passing full-suite cell that ran none of its consumers (`unran`).
 const JOIN_SHARDS: &str = r#"
 import json, sys, v022_g01_mutations as m, v022_paired_disable as pd
 head = sys.argv[1]; mode = sys.argv[2]; alt = mode == "alt"; out = sys.argv[3]
 u = sorted(set(m.EQUIVALENT_DID) | set(m.STALE_REFACTORED), key=lambda r: int(r[1:]))
+def sel(x):
+    if x in m.STALE_REFACTORED:
+        return {"not_applicable": "a stale record's replacement cell runs no full suite"}
+    return pd.consumer_selection(x)
 for k in (0, 1):
     blobs = m.registry_blobs()
     if alt and k == 1:
         blobs = {f: "0" * 40 for f in blobs}
-    sel = [x for i, x in enumerate(u) if i % 2 == k]
+    s = [x for i, x in enumerate(u) if i % 2 == k]
     d = {"schema": "axon-v022-paired-disable/2", "commit": head, "all_hold": True,
-         "shard": f"{k}/2", "selected": sel, "registry_blobs": blobs, "tree_clean": True,
+         "shard": f"{k}/2", "selected": s, "registry_blobs": blobs, "tree_clean": True,
          "records": [{"mutation": x, "holds": True, "commit": head,
-                      "edits_sha256": pd.current_edits_digest(x)} for x in sel]}
+                      "edits_sha256": pd.current_edits_digest(x),
+                      "consumer_selection": sel(x)} for x in s]}
     if k == 1 and mode == "dirty":
         d["tree_clean"] = False
     if k == 1 and mode == "edits":
         d["records"][0]["edits_sha256"] = "0" * 64
+    for r in d["records"]:
+        if r["mutation"] != "M245":
+            continue
+        c = r["consumer_selection"]
+        if mode == "nosel":
+            del r["consumer_selection"]
+        if mode == "skip":
+            assert c["run"], f"setup: M245 selects no consumer here: {c}"
+            for x in list(c["run"]):
+                del c["run"][x]
+                c["skipped"][x] = "skipped by a shard that trusted another rule"
+        if mode == "noreason":
+            assert c["skipped"], f"setup: M245 skips no consumer here: {c}"
+            for x in c["skipped"]:
+                c["skipped"][x] = ""
+        if mode == "unran":
+            assert c["run"], f"setup: M245 selects no consumer here: {c}"
+            r["matrix"] = {"retired_guard_full_suite": "SUITE_OK", "consumer_suites": {}}
     json.dump(d, open(f"{out}/j{k}.json", "w"))
 "#;
 
@@ -321,6 +356,9 @@ fn a_join_refuses_a_shard_made_from_another_registry() {
 /// joined (`HARNESS[2] --join`) by the real harness in a scratch clone.
 fn combine(tag: &str, program: &str, join: bool, mode: &str) -> (Output, bool) {
     let r = repo(tag);
+    if ["nosel", "skip", "noreason", "unran", "graph"].contains(&mode) {
+        graph(&r);
+    }
     let out = scratch(&format!("{tag}-out"));
     let head = git(&r, &["rev-parse", "HEAD"]);
     let p = |f: &str| out.join(f).display().to_string();
@@ -348,6 +386,91 @@ fn combine(tag: &str, program: &str, join: bool, mode: &str) -> (Output, bool) {
     let _ = std::fs::remove_dir_all(&r);
     let _ = std::fs::remove_dir_all(&out);
     (o, written)
+}
+
+/// A dependency graph in the scratch repo `r`, committed: axon-loop (which
+/// holds M245's guarded file), axon-fabric linking it (a consumer M245's
+/// full-suite cell must run), and axon-web, which neither links nor names it
+/// (a consumer the cell skips, with the graph's reason).
+fn graph(r: &Path) {
+    write(
+        &r.join("Cargo.toml"),
+        "[workspace]\nmembers = [\"crates/axon-loop\", \"crates/axon-fabric\", \"crates/axon-web\"]\n\
+         resolver = \"2\"\n",
+    );
+    for (name, deps) in [
+        ("axon-loop", ""),
+        ("axon-fabric", "axon-loop = { path = \"../axon-loop\" }\n"),
+        ("axon-web", ""),
+    ] {
+        write(
+            &r.join(format!("crates/{name}/Cargo.toml")),
+            &format!(
+                "[package]\nname = \"{name}\"\nversion = \"0.0.0\"\nedition = \"2021\"\n\n\
+                 [dependencies]\n{deps}"
+            ),
+        );
+        write(&r.join(format!("crates/{name}/src/lib.rs")), "\n");
+    }
+    write(&r.join("crates/axon-loop/src/admission.rs"), "// guarded\n");
+    git(r, &["add", "-A"]);
+    git(r, &["commit", "-q", "-m", "dependency graph"]);
+}
+
+/// --join refuses a record that does not name the consumers its full-suite
+/// cell ran and skipped (amendment 67). Control: the same shards with every
+/// record's selection join (a_join_refuses_a_record_that_skips_a_reachable_consumer).
+#[test]
+fn a_join_refuses_a_record_without_a_consumer_selection() {
+    let (o, written) = combine("join-nosel", JOIN_SHARDS, true, "nosel");
+    assert!(
+        !written && text(&o).contains("no consumer_selection"),
+        "ATTACK: --join accepted a record that names no consumer selection:\n{}",
+        text(&o)
+    );
+}
+
+/// --join refuses a record whose full-suite cell skipped a consumer the build
+/// graph reaches (axon-fabric links M245's axon-loop). Control: the record
+/// with the rule's selection joins.
+#[test]
+fn a_join_refuses_a_record_that_skips_a_reachable_consumer() {
+    let (o, written) = combine("join-skip", JOIN_SHARDS, true, "skip");
+    assert!(
+        !written && text(&o).contains("reachable through the graph"),
+        "ATTACK: --join accepted a record that skipped a consumer the graph reaches:\n{}",
+        text(&o)
+    );
+    let (o, written) = combine("join-graph", JOIN_SHARDS, true, "graph");
+    assert!(
+        written,
+        "control: shards carrying the rule's selection join: {}",
+        text(&o)
+    );
+}
+
+/// --join refuses a selection a reviewer cannot audit: a skipped consumer
+/// with no graph reason.
+#[test]
+fn a_join_refuses_a_skipped_consumer_without_a_reason() {
+    let (o, written) = combine("join-noreason", JOIN_SHARDS, true, "noreason");
+    assert!(
+        !written && text(&o).contains("has no graph reason"),
+        "ATTACK: --join accepted a consumer skipped without a reason:\n{}",
+        text(&o)
+    );
+}
+
+/// --join refuses a passing full-suite cell that did not run the consumers
+/// its record says were selected.
+#[test]
+fn a_join_refuses_a_passing_cell_that_ran_none_of_its_consumers() {
+    let (o, written) = combine("join-unran", JOIN_SHARDS, true, "unran");
+    assert!(
+        !written && text(&o).contains("the full-suite cell ran consumers"),
+        "ATTACK: --join accepted a passing full-suite cell that ran none of its consumers:\n{}",
+        text(&o)
+    );
 }
 
 /// --merge refuses a shard that does not record a clean tree. Control:
@@ -424,7 +547,8 @@ fn a_kept_record_is_stale_once_its_owner_package_changes() {
     let prog = format!(
         "import json, v022_paired_disable as pd\n\
          json.dump({{'commit': {at:?}, 'records': [{{'mutation': 'M245', 'commit': {at:?}, \
-         'holds': True, 'edits_sha256': pd.current_edits_digest('M245')}}]}}, \
+         'holds': True, 'edits_sha256': pd.current_edits_digest('M245'), \
+         'consumer_selection': pd.consumer_selection('M245')}}]}}, \
          open({:?}, 'w'))\n",
         status.display().to_string()
     );
@@ -447,6 +571,69 @@ fn a_kept_record_is_stale_once_its_owner_package_changes() {
         !o.status.success() && text(&o).contains("STALE M245"),
         "ATTACK: a kept paired-disable record stayed current after its owner package \
          changed:\n{}",
+        text(&o)
+    );
+    let _ = std::fs::remove_dir_all(&r);
+    let _ = std::fs::remove_file(&status);
+}
+
+/// A kept paired-disable record is stale once a package it never ran comes to
+/// reach its guard (amendment 67): its consumer selection is no longer the
+/// rule's, though no file of the owner or of a consumer it ran changed.
+/// Control: at its own commit the record is current.
+#[test]
+fn a_kept_record_is_stale_once_a_new_consumer_reaches_it() {
+    let r = repo("stale-consumer");
+    write(
+        &r.join("Cargo.toml"),
+        "[workspace]\nmembers = [\"crates/axon-loop\"]\nresolver = \"2\"\n",
+    );
+    write(
+        &r.join("crates/axon-loop/Cargo.toml"),
+        "[package]\nname = \"axon-loop\"\nversion = \"0.0.0\"\nedition = \"2021\"\n",
+    );
+    write(&r.join("crates/axon-loop/src/lib.rs"), "// v1\n");
+    git(&r, &["add", "-A"]);
+    git(&r, &["commit", "-q", "-m", "owner package"]);
+    let at = git(&r, &["rev-parse", "HEAD"]);
+    let status = r.parent().unwrap().join(format!(
+        "{}-status.json",
+        r.file_name().unwrap().to_string_lossy()
+    ));
+    let prog = format!(
+        "import json, v022_paired_disable as pd\n\
+         json.dump({{'commit': {at:?}, 'records': [{{'mutation': 'M245', 'commit': {at:?}, \
+         'holds': True, 'edits_sha256': pd.current_edits_digest('M245'), \
+         'consumer_selection': pd.consumer_selection('M245')}}]}}, \
+         open({:?}, 'w'))\n",
+        status.display().to_string()
+    );
+    py(&r, &prog);
+    let check = || harness(&r, HARNESS[2], &["--check-stale", status.to_str().unwrap()]);
+    let o = check();
+    assert!(
+        o.status.success() && text(&o).contains("current M245"),
+        "control: at its own commit the record is current: {}",
+        text(&o)
+    );
+    // A new package linking the owner: the record never ran it.
+    write(
+        &r.join("Cargo.toml"),
+        "[workspace]\nmembers = [\"crates/axon-loop\", \"crates/axon-fabric\"]\nresolver = \"2\"\n",
+    );
+    write(
+        &r.join("crates/axon-fabric/Cargo.toml"),
+        "[package]\nname = \"axon-fabric\"\nversion = \"0.0.0\"\nedition = \"2021\"\n\n\
+         [dependencies]\naxon-loop = { path = \"../axon-loop\" }\n",
+    );
+    write(&r.join("crates/axon-fabric/src/lib.rs"), "\n");
+    git(&r, &["add", "-A"]);
+    git(&r, &["commit", "-q", "-m", "a consumer of the owner"]);
+    let o = check();
+    assert!(
+        !o.status.success() && text(&o).contains("STALE M245"),
+        "ATTACK: a kept paired-disable record stayed current after a package it never ran \
+         came to link its guard:\n{}",
         text(&o)
     );
     let _ = std::fs::remove_dir_all(&r);

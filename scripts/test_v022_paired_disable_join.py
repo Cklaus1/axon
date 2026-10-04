@@ -23,17 +23,34 @@ BLOBS = mut.registry_blobs()
 COMMIT = subprocess.run(["git", "-C", ROOT, "rev-parse", "HEAD"], capture_output=True,
                         text=True, check=True).stdout.strip()
 UNIVERSE = sorted(set(mut.EQUIVALENT_DID) | set(mut.STALE_REFACTORED), key=lambda r: int(r[1:]))
+# Amendment 67: what each record's full-suite cell selects at this commit.
+SELECTION = {r: ({"not_applicable": "a stale record's replacement cell runs no full suite"}
+                 if r in mut.STALE_REFACTORED else pd.consumer_selection(r)) for r in UNIVERSE}
+# A record whose cell runs at least one consumer (to skip it).
+WITH_CONSUMER = next(r for r in UNIVERSE if SELECTION[r].get("run"))
+
+
+def selection(r, drop_sel=None, skip_one=None):
+    if r == drop_sel:
+        return {}
+    sel = json.loads(json.dumps(SELECTION[r]))
+    if r == skip_one:
+        c = sorted(sel["run"])[0]
+        del sel["run"][c]
+        sel["skipped"][c] = "skipped by a shard that trusted another rule"
+    return {"consumer_selection": sel}
 
 
 def shard(k, n, commit=COMMIT, drop=None, add=None, holds=True, rec_commit=None,
-          blobs=None, clean=True, bad_edits=None):
+          blobs=None, clean=True, bad_edits=None, drop_sel=None, skip_one=None):
     sel = [r for i, r in enumerate(UNIVERSE) if i % n == k]
     recs = [r for r in sel if r != drop] + ([add] if add else [])
     return {"schema": "axon-v022-paired-disable/2", "commit": commit, "all_hold": holds,
             "shard": f"{k}/{n}", "selected": sel,
             "registry_blobs": blobs or BLOBS, "tree_clean": clean,
             "records": [{"mutation": r, "holds": holds, "commit": rec_commit or commit,
-                         "edits_sha256": "0" * 64 if r == bad_edits else pd.current_edits_digest(r)}
+                         "edits_sha256": "0" * 64 if r == bad_edits else pd.current_edits_digest(r),
+                         **selection(r, drop_sel, skip_one)}
                         for r in recs]}
 
 
@@ -75,6 +92,12 @@ def main():
             ("a shard with no recorded registry", [shard(0, 2), {**shard(1, 2), "registry_blobs": None}]),
             ("a record executed with other edits",
              [shard(0, 2), shard(1, 2, bad_edits=UNIVERSE[1])]),
+            # Amendment 67: every record names the consumers it ran and
+            # skipped, and never skips one the build graph reaches.
+            ("a record without the consumer-selection field",
+             [shard(0, 2, drop_sel=UNIVERSE[0]), shard(1, 2)]),
+            ("a record that skipped a consumer the graph reaches",
+             [shard(k, 2, skip_one=WITH_CONSUMER) for k in (0, 1)]),
         ]
         for name, docs in cases:
             code, out, path = join(tmp, docs)

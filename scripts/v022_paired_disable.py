@@ -55,6 +55,23 @@ properties can pass the matrix above when its assigned test exercises only a
 property that is independently covered; M254 did exactly that and was in fact
 load-bearing. A row failing this condition is a false retirement.
 
+CONSUMERS (amendment 67). The full-suite cell runs the owner's and the row
+package's full suites always, then every CONSUMER the rule in
+scripts/v022_pd_consumers.py selects for the retired guard's file -- from
+`cargo metadata` (link, dev and build edges) and the tree's text (binaries a
+unit execs, paths it names or lists, build scripts' re-run sets), whole suite
+or exactly the relevant test targets. The record carries `consumer_selection`
+(every consumer run and every one skipped, with the graph reason); --join and
+the currency rule refuse a record without it, or whose selection is not the
+rule's at this commit. The retired-guard cell and the full-suite cell judge
+the same edit A, applied and built once. Clean baselines are computed once per
+(commit, package, flags, environment) and persisted under the target dir
+(`--baseline-cache=DIR` to share one between shard clones of a commit); never
+reused across commits or from a dirty tree. Each record carries
+`timing_seconds`.
+
+    python3 scripts/v022_paired_disable.py --shard=K/N [--baseline-cache=DIR] OUT.json
+
 Refuses to run against a dirty tree, and restores every file it edits.
 Writes an evidence manifest (schema axon-v022-paired-disable/1) and exits
 non-zero unless every row's matrix holds.
@@ -65,12 +82,16 @@ import json
 import os
 import subprocess
 import sys
+import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 spec = importlib.util.spec_from_file_location("mut", os.path.join(ROOT, "scripts/v022_g01_mutations.py"))
 mut = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mut)
 BY_ID = {r[0]: r for r in mut.MUTATIONS}
+_cspec = importlib.util.spec_from_file_location("v022_pd_consumers", os.path.join(ROOT, "scripts/v022_pd_consumers.py"))
+pdc = importlib.util.module_from_spec(_cspec)
+_cspec.loader.exec_module(pdc)
 
 
 def sh(cmd):
@@ -146,24 +167,96 @@ def _workspace_packages():
             for p in meta["packages"]}
 
 
-def consumer_packages(owner):
-    """Every package whose tests exercise `owner`'s code, other than `owner`
-    (C9 round 2, harness; the consumer-suite gap that hid M254):
+_SELECTOR = {}
 
-    * its workspace REVERSE dependencies (they link `owner`'s library), and
-    * for axon-core, every package whose tests or sources exec the `axon`
-      INTERPRETER BINARY (they name `AXON_BIN`): axon-fabric's check runs,
-      axon-psv's runner, axon-cortex's executor and the rest link nothing of
-      axon-core, so no dependency edge names them.
 
-    Derived from the tree, not a list, so a new consumer joins the cell."""
-    pk = _workspace_packages()
-    out = {n for n, deps in pk.items() if owner in deps}
-    if owner == "axon-core":
-        r = sh("grep -rl AXON_BIN crates/*/src crates/*/tests 2>/dev/null")
-        out |= {line.split("/")[1] for line in r.stdout.split() if line.startswith("crates/")}
-    out.discard(owner)
-    return sorted(n for n in out if n in pk)
+def selector():
+    """The consumer selector for THIS tree (amendment 67): cargo metadata and
+    the tree's text, read once per process. A workspace cargo cannot describe
+    is refused: an empty graph would skip every consumer."""
+    if "s" not in _SELECTOR:
+        r = sh("cargo metadata --format-version 1 --no-deps")
+        try:
+            meta = json.loads(r.stdout)
+        except ValueError:
+            sys.exit(f"refused: cargo metadata failed, so no consumer can be selected: {r.stderr.strip()[-300:]}")
+        _SELECTOR["s"] = pdc.Selector(pdc.Workspace(meta, pdc.Tree(ROOT)))
+    return _SELECTOR["s"]
+
+
+def owner_of(row):
+    return row[2].split("/")[1] if row[2].startswith("crates/") else row[5]
+
+
+def consumer_selection(rid):
+    """The consumers a record's full-suite cell runs (amendment 67). The cell
+    removes the retired guard ALONE (edit A, one file), so the selection is
+    for that file; the owner package and the row's package always run their
+    full suites and are not consumers. See scripts/v022_pd_consumers.py for
+    the rule and its proof."""
+    row = BY_ID[rid]
+    return selector().select(row[2], {owner_of(row), row[5]})
+
+
+def pinned_configuration():
+    """{package: feature flags} of every package that builds a binary this run
+    PINS (the prerequisites: the interpreter is built `--no-default-features`).
+    Such a package runs as a consumer in that configuration: in its default
+    one (axon-core's codegen) its test build writes the same `debug/axon` path,
+    cargo does not re-copy the pinned build over it, and every later cell
+    would meet another interpreter (measured: M400's first run, amendment 67;
+    the restore check failed closed)."""
+    out = {}
+    for cmd in PREREQ_COMMANDS:
+        t = cmd.split()
+        if "-p" in t:
+            out[t[t.index("-p") + 1]] = " ".join(x for x in t if x.startswith("--") and "feature" in x)
+    return out
+
+
+def consumer_runs(sel):
+    """[(package, cargo selector flags)] the selection runs: a whole suite,
+    or exactly the test targets the rule found relevant, each in the package's
+    default configuration unless the run pins a binary built from it."""
+    out, pinned = [], pinned_configuration()
+    for c, v in sorted(sel["run"].items()):
+        scope = v["scope"]
+        sel_flags = "" if scope == "suite" else " ".join(f"--test {t}" for t in scope)
+        out.append((c, f"{pinned.get(c, '')} {sel_flags}".strip()))
+    return out
+
+
+def selection_problem(rec):
+    """Why a record's consumer_selection cannot be accepted (None: it can).
+    A paired-disable record must carry the selection it ran -- every consumer
+    run and every one skipped, with the graph reason -- and that selection
+    must be exactly what the rule selects at this tree: a consumer the graph
+    reaches is never skipped, and a full-suite cell that passed ran every
+    consumer it selected."""
+    sel = rec.get("consumer_selection")
+    why = pdc.well_formed(sel)
+    if why:
+        return why
+    if rec["mutation"] in mut.STALE_REFACTORED:
+        return None if sel.get("not_applicable") else "a stale record's selection is not marked not_applicable"
+    if sel.get("not_applicable"):
+        return "an equivalence record must name the consumers it ran and skipped"
+    want = consumer_selection(rec["mutation"])
+    if sel.get("mutated_file") != want["mutated_file"]:
+        return f"selection is for {sel.get('mutated_file')}, the retired guard is in {want['mutated_file']}"
+    for c, v in sorted(want["run"].items()):
+        got = (sel["run"].get(c) or {}).get("scope")
+        if got is None:
+            return (f"consumer {c} is reachable through the graph "
+                    f"({v['reason'] if isinstance(v['reason'], str) else v['scope']}) but was skipped")
+        if got is not None and got != "suite" and (v["scope"] == "suite" or not set(v["scope"]) <= set(got)):
+            return f"consumer {c} needs {v['scope']}, the record ran {got}"
+    m = rec.get("matrix") or {}
+    if m.get("retired_guard_full_suite") == "SUITE_OK":
+        ran = set(m.get("consumer_suites") or {})
+        if ran != set(sel["run"]):
+            return f"the full-suite cell ran consumers {sorted(ran)}, the selection names {sorted(sel['run'])}"
+    return None
 
 
 CONSUMER_BASELINE = {}
@@ -176,6 +269,67 @@ CELL_SKIPS = {}
 # way inside the harness, which read as SUITE_BROKEN for rows it says nothing
 # about (C9 round 2).
 CONSUMER_FLAGS = "-- --test-threads=1"
+
+# Clean baselines persisted per COMMIT (amendment 67): a suite's verdict on the
+# clean tree is a function of (commit, package, cargo flags, environment, the
+# interpreter consumers are handed), so a shard -- or a later --only run at the
+# same commit -- reuses it instead of re-running the suite. Never across
+# commits (the file is named by the commit) and never from or into a dirty tree
+# (main refuses one; load/store re-check). --baseline-cache=DIR shares a cache
+# between shard clones of one commit.
+BASELINE_CACHE = {}
+
+
+def _baseline_key(pkg, flags, env):
+    tgt = cargo_target_dir()
+    return json.dumps([pkg, flags, env.replace(tgt, "<target>"), os.geteuid(),
+                       os.path.isdir("/etc/axon"), INTERP.get("sha256")])
+
+
+def _cache_file():
+    d = BASELINE_CACHE.get("dir") or os.path.join(cargo_target_dir(), "v022-pd-baselines")
+    return os.path.join(d, f"{BASELINE_CACHE['commit']}.json")
+
+
+def cached_baseline(pkg, flags, env=""):
+    """(state, failing tests, source): the suite's verdict on the CLEAN tree,
+    computed once per (commit, package, flags, environment). A reused verdict
+    is used only after this target dir has built the suite from the clean
+    tree, so the mutated cell meets build-script outputs of the clean tree."""
+    key = _baseline_key(pkg, flags, env)
+    if key in CONSUMER_BASELINE:
+        return CONSUMER_BASELINE[key]
+    # main refused a dirty tree before any cell, and every cell restores what
+    # it edits; the cache is keyed by the commit the run started at.
+    if sh("git rev-parse HEAD").stdout.strip() != BASELINE_CACHE.get("commit"):
+        sys.exit("refused: a clean baseline is computed and reused only at the run's commit")
+    try:
+        stored = json.load(open(_cache_file())).get(key)
+    except (OSError, ValueError):
+        stored = None
+    if stored and stored[0] == "SUITE_OK":
+        built, bout = build_tests(pkg, flags, env)
+        if built:
+            CONSUMER_BASELINE[key] = (stored[0], stored[1], "reused:" + _cache_file())
+            return CONSUMER_BASELINE[key]
+        mut.keep_output(f"pd-baseline-build-{pkg}", bout)
+    ok, fails = full_suite_ok(pkg, flags, env)
+    state = "SUITE_OK" if ok else ("COMPILE_ERROR" if ok is None else "SUITE_BROKEN")
+    fails = [] if ok is None else list(fails)
+    CONSUMER_BASELINE[key] = (state, fails, "computed")
+    if state == "SUITE_OK":
+        path = _cache_file()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        try:
+            doc = json.load(open(path))
+        except (OSError, ValueError):
+            doc = {}
+        doc[key] = [state, fails]
+        tmp = path + f".{os.getpid()}"
+        with open(tmp, "w") as f:
+            json.dump(doc, f)
+        os.replace(tmp, path)
+    return CONSUMER_BASELINE[key]
 
 
 def interpreter_env():
@@ -358,7 +512,14 @@ def stale_reasons(record, guard_sets):
     # derivation): any change in those packages makes it stale (C9 round 4).
     row = BY_ID[ids[-1] if rid in mut.STALE_REFACTORED else rid]
     owner = row[2].split("/")[1] if row[2].startswith("crates/") else row[5]
-    pkgs = sorted({owner, row[5], *consumer_packages(owner)})
+    # The consumers its full-suite cell RAN (amendment 67), and the selection
+    # must still be what the rule selects here: a consumer that has come to
+    # reach the guard since makes the record stale.
+    why = selection_problem(record)
+    if why:
+        out.append(f"its consumer selection is not this tree's ({why})")
+    ran = sorted((record.get("consumer_selection") or {}).get("run") or {})
+    pkgs = sorted({owner, row[5], *ran})
     changed = sh(f"git diff --name-only {commit} -- " + " ".join(f"crates/{p}" for p in pkgs)).stdout.split()
     if changed:
         out.append(f"{len(changed)} file(s) of the owner/consumer packages {pkgs} changed since "
@@ -417,13 +578,19 @@ def prereq_artifacts():
     cortex = [t["name"] for p in meta.get("packages", []) if p["name"] == "axon-cortex"
               for t in p["targets"] if "bin" in t["kind"]]
     return [
-        ("axon", "cargo build -q -p axon-core --no-default-features --bin axon",
-         [os.path.join(tgt, "debug", "axon")]),
-        ("cortex bins", "cargo build -q -p axon-cortex --bins",
-         [os.path.join(tgt, "debug", n) for n in cortex]),
-        ("psv_dev", "cargo build -q -p axon-psv --example psv_dev",
-         [os.path.join(tgt, "debug", "examples", "psv_dev")]),
+        ("axon", PREREQ_COMMANDS[0], [os.path.join(tgt, "debug", "axon")]),
+        ("cortex bins", PREREQ_COMMANDS[1], [os.path.join(tgt, "debug", n) for n in cortex]),
+        ("psv_dev", PREREQ_COMMANDS[2], [os.path.join(tgt, "debug", "examples", "psv_dev")]),
     ]
+
+
+# The commands that build the run's prerequisites (one place: the
+# consumers' configuration is read from it too).
+PREREQ_COMMANDS = (
+    "cargo build -q -p axon-core --no-default-features --bin axon",
+    "cargo build -q -p axon-cortex --bins",
+    "cargo build -q -p axon-psv --example psv_dev",
+)
 
 
 # Every prerequisite and the sha256 of each file the clean build left.
@@ -507,6 +674,12 @@ def join_shards(argv, commit, universe):
             if r.get("edits_sha256") != current_edits_digest(r["mutation"]):
                 sys.exit(f"refused: shard {k}/{n} executed {r['mutation']} with edits that are not "
                          "this registry's")
+            # Amendment 67: every record names the consumers its full-suite
+            # cell ran and skipped, with the graph reason, and that selection
+            # is the rule's at this commit -- a reachable consumer never skipped.
+            why = selection_problem(r)
+            if why:
+                sys.exit(f"refused: shard {k}/{n} record {r['mutation']}: {why}")
         records += d["records"]
         seen += got
     dup = sorted({r for r in seen if seen.count(r) > 1})
@@ -780,7 +953,10 @@ def main():
     commit = sh("git rev-parse HEAD").stdout.strip()
     flags = {"--reexecute-stale", "--check-stale"}
     argv = [a for a in sys.argv[1:]
-            if not a.startswith(("--only=", "--shard=")) and a not in flags and a != "--join"]
+            if not a.startswith(("--only=", "--shard=", "--baseline-cache=")) and a not in flags and a != "--join"]
+    BASELINE_CACHE["commit"] = commit
+    BASELINE_CACHE["dir"] = next((os.path.abspath(a.split("=", 1)[1]) for a in sys.argv[1:]
+                                  if a.startswith("--baseline-cache=")), None)
     join = "--join" in sys.argv[1:]
     shard_arg = next((a.split("=", 1)[1] for a in sys.argv[1:] if a.startswith("--shard=")), None)
     reexecute_stale = "--reexecute-stale" in sys.argv[1:]
@@ -877,17 +1053,31 @@ def main():
         sibs = gs["siblings"]
         b = [edit_of(s) for s in sibs]
 
-        def phase(edits):
-            rest = apply_edits(edits) if edits else (lambda: None)
-            if edits and rest is None:
-                return "EDIT_NOT_APPLICABLE"
+        owner_crate = owner_of(row)
+        own_pkgs = pkg if owner_crate == pkg else f"{pkg} -p {owner_crate}"
+        # Amendment 67: the consumers whose outcome edit A can change, from the
+        # build graph and the tree's text (scripts/v022_pd_consumers.py); each
+        # one runs its whole suite or exactly the test targets that can observe
+        # the retired guard's file. The record names every consumer run and
+        # every one skipped, with the graph reason.
+        t0 = time.time()
+        csel = consumer_selection(rid)
+        runs = consumer_runs(csel)
+        consumers = [c for c, _ in runs]
+        timing = {"selection": round(time.time() - t0, 1)}
+
+        def timed(name, fn, *args):
+            t = time.time()
             try:
-                if any(e[0].startswith("crates/axon-core/") for e in edits) and not build_axon():
-                    return "BUILD_FAILED"
-                passed, out = run_test(pkg, target, test)
+                return fn(*args)
             finally:
-                rest()
-                after_cell(edits, mut.spawns_scripts(pkg, target))
+                timing[name] = round(timing.get(name, 0) + time.time() - t, 1)
+
+        def suites_spawn():
+            return (any(mut.package_spawns_scripts(p)
+                                      for p in [pkg, owner_crate, *consumers]))
+
+        def judge(passed, out):
             if passed is None:
                 return "COMPILE_ERROR"
             if passed:
@@ -903,83 +1093,91 @@ def main():
                 return "OTHER_FAILURE"
             return "ATTACK_SUCCEEDS"
 
-        baseline = phase([])
-        retired_only = phase(a)          # removing the retired guard alone
-        joint = phase(a + b)             # retired + its subsuming siblings
+        def phase(edits, then=None):
+            """One cell: the row's test on the tree with `edits` applied. With
+            `then`, the full-suite cell runs on the SAME application of the
+            edit (amendment 67: the retired-guard cell and the full-suite cell
+            both judge edit A, so A is applied and built once)."""
+            rest = apply_edits(edits) if edits else (lambda: None)
+            if edits and rest is None:
+                return "EDIT_NOT_APPLICABLE", None
+            extra = None
+            try:
+                if any(e[0].startswith("crates/axon-core/") for e in edits) and not build_axon():
+                    return "BUILD_FAILED", None
+                passed, out = run_test(pkg, target, test)
+                if then is not None:
+                    extra = then()
+            finally:
+                rest()
+                after_cell(edits, mut.spawns_scripts(pkg, target) or (then is not None and suites_spawn()))
+            return judge(passed, out), extra
 
         # Full-suite check (methodology fix, C8 review wf_bff9835f-4a0): the
         # retired guard removed ALONE must not break ANY test in the package,
         # not merely its own --exact test. M254 passed its assigned relabel
         # test with its guard removed yet broke three OTHER protected-class
         # tests — a load-bearing guard the old single-test matrix hid.
-        def full_after(edits):
-            rest = apply_edits(edits)
-            if rest is None:
-                return "EDIT_NOT_APPLICABLE", []
-            try:
-                if any(e[0].startswith("crates/axon-core/") for e in edits) and not build_axon():
-                    return "BUILD_FAILED", []
-                # The row's package AND the crate that owns the guard: a
-                # loop-contracts guard tested through axon-loop must leave
-                # loop-contracts' own suite green too.
-                owner = row[2].split("/")[1] if row[2].startswith("crates/") else pkg
-                pkgs = pkg if owner == pkg else f"{pkg} -p {owner}"
-                fok, fails = full_suite_ok(pkgs, row_flags(target))
-                # ...and every CONSUMER of the owner crate, each in its own
-                # default configuration (C9 round 2: the row's flags, e.g.
-                # axon-core's --no-default-features, are not theirs).
-                states = {}
-                for c in consumers:
-                    cok, cfails = full_suite_ok(c, CONSUMER_FLAGS, env=interpreter_env())
-                    states[c] = "COMPILE_ERROR" if cok is None else ("SUITE_OK" if cok else "SUITE_BROKEN")
-                    if cok is False:
-                        # Named per consumer, ahead of the owner's (the record
-                        # keeps the first 12).
-                        fails = [f"{c}: {t}" for t in cfails][:6] + [f"{c}: (suite failed)"] + fails
-            finally:
-                rest()
-                after_cell(edits, any(mut.package_spawns_scripts(p)
-                                      for p in [pkg, owner_crate, *consumers]))
+        def full_suites():
+            # The row's package AND the crate that owns the guard: a
+            # loop-contracts guard tested through axon-loop must leave
+            # loop-contracts' own suite green too.
+            fok, fails = timed("full_suite_own", full_suite_ok, own_pkgs, row_flags(target))
+            # ...and every selected CONSUMER, each in its own default
+            # configuration (C9 round 2: the row's flags, e.g. axon-core's
+            # --no-default-features, are not theirs).
+            states = {}
+            for c, scope in runs:
+                cok, cfails = timed(f"full_suite_{c}", full_suite_ok, c, f"{scope} {CONSUMER_FLAGS}".strip(),
+                                    interpreter_env())
+                states[c] = "COMPILE_ERROR" if cok is None else ("SUITE_OK" if cok else "SUITE_BROKEN")
+                if cok is False:
+                    # Named per consumer, ahead of the owner's (the record
+                    # keeps the first 12).
+                    fails = [f"{c}: {t}" for t in cfails][:6] + [f"{c}: (suite failed)"] + fails
             if fok is None or "COMPILE_ERROR" in states.values():
                 return "COMPILE_ERROR", [], states
             ok_all = fok and all(v == "SUITE_OK" for v in states.values())
             return ("SUITE_OK" if ok_all else "SUITE_BROKEN"), fails, states
-        owner_crate = row[2].split("/")[1] if row[2].startswith("crates/") else pkg
-        consumers = [c for c in consumer_packages(owner_crate) if c != pkg]
-        # A consumer suite that is red on the CLEAN tree says nothing about the
-        # guard (an environment failure must not read as evidence, and must
-        # not read as a pass either): it makes the cell CONSUMER_BASELINE_BROKEN.
-        cons_base = {}
-        for c in consumers:
-            if c not in CONSUMER_BASELINE:  # the clean tree is the same for every row
-                cok, _ = full_suite_ok(c, CONSUMER_FLAGS, env=interpreter_env())
-                CONSUMER_BASELINE[c] = "SUITE_OK" if cok else ("COMPILE_ERROR" if cok is None else "SUITE_BROKEN")
-            cons_base[c] = CONSUMER_BASELINE[c]
+
+        baseline, _ = timed("cell_baseline", phase, [])
+        # Clean baselines, before any edit (amendment 67: once per commit,
+        # package, flags and environment; reused across records and shards).
         # The row's own package set too (C9 round 2): axon-core's native-parity
         # harnesses read `target/debug/axon` under the WORKSPACE, whatever
         # CARGO_TARGET_DIR says, so under a private target dir they fail on
         # the clean tree, and that read as SUITE_BROKEN for M58/M60/M89.
-        own_pkgs = pkg if owner_crate == pkg else f"{pkg} -p {owner_crate}"
-        own_key = (own_pkgs, row_flags(target))
-        if own_key not in CONSUMER_BASELINE:
-            ook, ofails = full_suite_ok(own_pkgs, row_flags(target))
-            CONSUMER_BASELINE[own_key] = ("SUITE_OK" if ook else
-                                          ("COMPILE_ERROR" if ook is None else "SUITE_BROKEN"), ofails)
-        own_base, own_base_fails = CONSUMER_BASELINE[own_key]
+        own_base, own_base_fails, own_src = timed("baseline_own", cached_baseline, own_pkgs, row_flags(target))
+        # A consumer suite that is red on the CLEAN tree says nothing about the
+        # guard (an environment failure must not read as evidence, and must
+        # not read as a pass either): it makes the cell CONSUMER_BASELINE_BROKEN.
+        cons_base, base_src = {}, {own_pkgs: own_src}
+        for c, scope in runs:
+            st, _, src = timed(f"baseline_{c}", cached_baseline, c, f"{scope} {CONSUMER_FLAGS}".strip(),
+                               interpreter_env())
+            cons_base[c], base_src[c] = st, src
         if own_base != "SUITE_OK":
+            retired_only, _ = timed("cell_retired_off", phase, a)
             full_state, full_fails, cons_states = "BASELINE_BROKEN", [
                 f"{own_pkgs}: {own_base} on the clean tree"] + list(own_base_fails)[:11], {}
         elif any(v != "SUITE_OK" for v in cons_base.values()):
+            retired_only, _ = timed("cell_retired_off", phase, a)
             full_state, full_fails, cons_states = "CONSUMER_BASELINE_BROKEN", [
                 f"{c}: {v} on the clean tree" for c, v in cons_base.items() if v != "SUITE_OK"], {}
         else:
-            full_state, full_fails, cons_states = full_after(a)
+            # Removing the retired guard alone: its own test, then every suite.
+            retired_only, full = timed("cell_retired_off_and_full_suites", phase, a, full_suites)
+            full_state, full_fails, cons_states = full or (retired_only, [], {})
+        joint, _ = timed("cell_set_off", phase, a + b)    # retired + its subsuming siblings
 
         matrix = {"baseline": baseline, "retired_guard_disabled": retired_only,
                   "guard_set_disabled": joint, "guard_set": [rid] + sibs,
                   "retired_guard_full_suite": full_state,
                   "full_suite_packages": [pkg] + ([owner_crate] if owner_crate != pkg else []) + consumers,
-                  "consumer_suites": cons_states}
+                  "consumer_suites": {c: {"state": v, "scope": csel["run"][c]["scope"],
+                                          "cargo": f"-p {c} {dict(runs)[c]} {CONSUMER_FLAGS}".strip()}
+                                      for c, v in cons_states.items()},
+                  "clean_baselines": base_src}
         if full_fails:
             matrix["retired_guard_full_suite_failures"] = full_fails[:12]
         # Root-only tests that returned early are SKIPS, never passes: named
@@ -987,7 +1185,7 @@ def main():
         matrix["retired_guard_full_suite_skipped"] = {
             f"{k[0]}{(' ' + k[1]) if k[1] else ''}": v
             for k, v in CELL_SKIPS.items() if v and (k[0] in (own_pkgs, *consumers))}
-        sib_only = phase(b)              # B removed, A present
+        sib_only, _ = timed("cell_sibling_off", phase, b)    # B removed, A present
         matrix["sibling_set_disabled"] = sib_only
         faults = INTERP_FAULTS[faults_before:]
         if faults:
@@ -996,6 +1194,7 @@ def main():
                 and sib_only == "ATTACK_REFUSED" and joint == "ATTACK_SUCCEEDS"
                 and full_state == "SUITE_OK" and not faults)
         ok &= good
+        timing["record"] = round(time.time() - t0, 1)
         records.append({
             "mutation": rid, "status": "EQUIVALENT_DID", "kind": gs["kind"],
             "property": rec["property"], "original_guard": {"file": row[2]},
@@ -1003,9 +1202,11 @@ def main():
             "all_paths": rec.get("all_paths"),
             "matrix": matrix, "holds": good, "commit": commit,
             "edits_sha256": edits_digest(rid, sibs), "environment": environment(),
+            "consumer_selection": csel, "timing_seconds": timing,
         })
         print(f"{'OK ' if good else 'BAD'} {rid} [{gs['kind']}]: base={baseline} "
-              f"retired_off={retired_only} sib_off={sib_only} set_off={joint} full_suite={full_state}"
+              f"retired_off={retired_only} sib_off={sib_only} set_off={joint} full_suite={full_state} "
+              f"consumers={consumers} skipped={sorted(csel['skipped'])} ({timing['record']}s)"
               + (f"  INTERPRETER NOT RESTORED: {faults}" if faults else ""),
               flush=True)
         if faults:
@@ -1061,6 +1262,7 @@ def main():
             "matrix": None, "holds": holds, "commit": commit,
             "edits_sha256": edits_digest(rep, []) if rep in BY_ID else None,
             "environment": environment(),
+            "consumer_selection": {"not_applicable": "a stale record's replacement cell runs no full suite"},
         })
         print(f"{'OK ' if holds else 'BAD'} {rid}: stale ({rec['how']}); replacement {rep}: {rep_state}",
               flush=True)
