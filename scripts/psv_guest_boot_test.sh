@@ -22,10 +22,11 @@
 #                (C9 round 2: rows M493-M496 pin only the script's text)
 #   trust-probe  amendment 65: scripts/trust_root_guest_probe.sh (the trust
 #                preflight's guest check, until now run only through an
-#                operator-supplied --guest-cmd) runs INSIDE the real guest, from
-#                the suite drive, under an Exec grant: it reports the operator
-#                trust root unaddressable there, and (control) addressable for
-#                a path the guest does have (/in/suite)
+#                operator-supplied --guest-cmd) runs INSIDE the real guest (the
+#                launcher's plain mode under an Exec grant; the PSV runner strips
+#                Exec from test children): it reports the operator trust root
+#                unaddressable there, and (control) addressable for a path the
+#                guest does have (/work)
 #   policy-*     PSV-6 (C9 round 4, A87): the guest runs only the policy the
 #                launch manifest names. The launcher refuses a --policy the
 #                manifest does not name (nothing acquired); a guest booted
@@ -285,33 +286,34 @@ else
     bad reach "rc=$RC stdout=$(head -c 400 <<<"$SO")"
 fi
 
-# Amendment 65: the trust preflight's guest probe, run in the REAL guest by the
-# operator's suite (suite code may spawn under an Exec grant; candidate code
-# may not, see "reach"). The probe is POSIX sh for the guest's busybox.
-mkdir -p "$W/suite-probe"; cp -r "$W/suite/." "$W/suite-probe/"
-cp "$REPO/scripts/trust_root_guest_probe.sh" "$W/suite-probe/trust_probe.sh"
-cat >> "$W/suite-probe/accept.ax" <<'AX'
-
-@[test]
-fn t_trust_probe() {
-    match exec("/bin/sh", ["/in/suite/trust_probe.sh", "/etc/axon/trust"]) {
+# Amendment 65: the trust preflight's guest probe, run in the REAL guest. Not
+# through the PSV runner: it strips Exec from every test child (A27), so no
+# suite or candidate code may spawn there. This is the same image, kernel and
+# launcher in plain mode (as B263's x1e), with an Exec grant: the probe is put
+# on the workspace drive and run by busybox sh (it is POSIX sh for the guest).
+mkdir -p "$W/trust-probe"
+cat > "$W/trust-probe/probe.ax" <<'AX'
+fn main() {
+    match exec("/bin/sh", ["/work/job/trust_probe.sh", "/etc/axon/trust"]) {
         Ok(o) => print("TRUST-PROBE:{o}")
         Err(e) => println("TRUST-PROBE-ERR:{e}")
     }
-    match exec("/bin/sh", ["/in/suite/trust_probe.sh", "/in/suite"]) {
+    match exec("/bin/sh", ["/work/job/trust_probe.sh", "/work"]) {
         Ok(o) => print("TRUST-CONTROL:{o}")
         Err(e) => println("TRUST-CONTROL-ERR:{e}")
     }
-    assert_eq(double(2), 4)
 }
 AX
-POLICY_FOR="$REPO/profiles/linux-microvm/fixtures/policy-io-exec.json" SUITE_SRC="$W/suite-probe" \
-    run trust-probe accept.ax t_trust_probe
-SO="$(cat "$W/trust-probe/out/out/test-stdout" 2>/dev/null)"
-TP="$(python3 - "$W/trust-probe/out/out/test-stdout" <<'PY'
+"$LAUNCH" --program "$W/trust-probe/probe.ax" \
+    --policy "$REPO/profiles/linux-microvm/fixtures/policy-io-exec.json" \
+    --put "$REPO/scripts/trust_root_guest_probe.sh:job/trust_probe.sh" \
+    --out "$W/trust-probe/out" --timeout-s 90 > "$W/trust-probe/launch.log" 2>&1
+RC=$?
+SO="$(cat "$W/trust-probe/out/out/stdout" 2>/dev/null)"
+TP="$(python3 - "$W/trust-probe/out/out/stdout" <<'PY'
 import json, sys
 try: t = open(sys.argv[1]).read()
-except OSError: print("no test-stdout"); sys.exit()
+except OSError: print("no stdout"); sys.exit()
 def probe(tag):
     for l in t.splitlines():
         if l.startswith(tag):
@@ -322,15 +324,15 @@ p, c = probe("TRUST-PROBE:"), probe("TRUST-CONTROL:")
 bad = []
 if not p or p.get("schema") != "axon-trust-guest-probe/1" or p.get("root") != "/etc/axon/trust" or p.get("addressable") is not False:
     bad.append(f"probe {p}")
-if not c or c.get("addressable") is not True or "mount:/in/suite" not in (c.get("found") or ""):
+if not c or c.get("addressable") is not True or "mount:/work" not in (c.get("found") or ""):
     bad.append(f"control {c}")
 print("; ".join(bad))
 PY
 )"
 if [[ $RC == 0 && -z "$TP" ]]; then
-    ok "trust-probe: trust_root_guest_probe.sh ran in the real guest: the operator trust root is unaddressable there; control: /in/suite is addressable (a mount)"
+    ok "trust-probe: trust_root_guest_probe.sh ran in the real guest: the operator trust root is unaddressable there; control: /work is addressable (a mount)"
 else
-    bad trust-probe "rc=$RC $TP stdout=$(head -c 400 <<<"$SO")"
+    bad trust-probe "rc=$RC $TP stdout=$(head -c 400 <<<"$SO") log=$(tail -c 300 "$W/trust-probe/launch.log")"
 fi
 
 # A28: a suite module that exists but cannot be read (one Latin-1 byte) never

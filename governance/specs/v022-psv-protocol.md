@@ -2568,10 +2568,13 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
         WARNING. A pin that exists is always judged. The freeze tests now run the freeze in a
         private mount namespace whose `/etc/axon` holds only the test's pin (root required; the
         host's /etc is never read or written).
-      - (5) `psv_guest_boot_test.sh` case `trust-probe`: the operator suite runs
-        `trust_root_guest_probe.sh` from the suite drive inside the REAL guest under an Exec grant
-        (suite code may spawn; candidate code may not, case `reach`): the operator trust root is
-        unaddressable; control: `/in/suite` is addressable (a mount). No guest change.
+      - (5) `psv_guest_boot_test.sh` case `trust-probe`: `trust_root_guest_probe.sh` runs inside
+        the REAL guest (the pinned image, kernel and launcher) in the launcher's plain mode under
+        an Exec grant, put on the workspace drive and run by busybox sh: the operator trust root
+        is unaddressable; control: `/work` is addressable (a mount). Not through the PSV runner,
+        which strips Exec from every test child (A27: measured, a suite test's `exec` is refused
+        `requires effect Exec`, so case `reach` is refused by that ceiling, not by provenance). No
+        guest change.
       - (6) The helper refuses, in EVERY build, when its own executable is setuid-root but its euid
         is not 0, naming NoNewPrivileges (`PR_GET_NO_NEW_PRIVS`) or else nosuid/user namespace
         (`setuid_honoured`). `--probe` reports `no_new_privs` and `cgroup`. The preflight takes
