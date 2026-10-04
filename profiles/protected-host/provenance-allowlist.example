@@ -1,0 +1,12 @@
+axon-provenance-allowlist/1
+# EXAMPLE of /etc/axon/provenance-allowlist (amendment 44, decision C).
+# Install as root, mode 0644, every directory above it root-owned and not
+# group/other-writable; scripts/operator_deploy_protected_host.sh writes exactly
+# this. An entry is an exact relative path or a directory prefix ending in "/";
+# no globs, ".", "..", ".git", leading "/" or whitespace. An entry that names or
+# holds a tracked path refuses the whole list.
+#
+# target/: cargo's in-tree output (a certified build may set CARGO_TARGET_DIR
+#          outside the tree instead). dist/: the guest image build's output.
+target/
+dist/

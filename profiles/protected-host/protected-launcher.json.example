@@ -1,0 +1,20 @@
+{
+  "schema": "axon-protected-launcher/2",
+  "fabric_uid": 991,
+  "interpreter": {"path": "/usr/bin/bash", "sha256": "0000000000000000000000000000000000000000000000000000000000000000"},
+  "launcher": {"path": "/usr/local/libexec/axon/fc_linux_profile.sh", "sha256": "0000000000000000000000000000000000000000000000000000000000000000"},
+  "profile_manifest": {"path": "/usr/local/lib/axon/guest-linux/manifest.json", "sha256": "0000000000000000000000000000000000000000000000000000000000000000"},
+  "artifacts_dir": "/usr/local/lib/axon/guest-linux",
+  "firecracker": "/usr/local/bin/firecracker",
+  "jailer": "/usr/local/bin/jailer",
+  "out_root": "/var/lib/axon-fabric/runs",
+  "staging_root": "/var/lib/axon-protected-launcher",
+  "max_timeout_s": 900,
+  "max_input_bytes": 268435456,
+  "observer": {
+    "root": "/etc/axon/trust/observer",
+    "max_age_s": 300,
+    "host_signer_public_key": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "custodian": {"socket": "/run/axon-custodian/custodian.sock", "uid": 993}
+}

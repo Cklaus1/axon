@@ -1,0 +1,27 @@
+{
+  "schema": "axon-protected-host/1",
+  "launcher": {"path": "/usr/local/libexec/axon/fc_linux_profile.sh", "sha256": "0000000000000000000000000000000000000000000000000000000000000000"},
+  "privileged_launcher": {"path": "/usr/local/libexec/axon/axon-protected-launcher", "sha256": "0000000000000000000000000000000000000000000000000000000000000000"},
+  "profile_manifest": {"path": "/usr/local/lib/axon/guest-linux/manifest.json", "sha256": "0000000000000000000000000000000000000000000000000000000000000000"},
+  "artifacts_dir": "/usr/local/lib/axon/guest-linux",
+  "qualification": {
+    "record": "/etc/axon/qualification/b263.json",
+    "signature": "/etc/axon/qualification/b263.json.sig",
+    "waivers": null,
+    "max_age_s": 2592000
+  },
+  "suite_registry": {"path": "/etc/axon/suites/registry.json", "sha256": "0000000000000000000000000000000000000000000000000000000000000000"},
+  "signer": {
+    "issuer_ref": "verifier:fabric",
+    "public_key": "0000000000000000000000000000000000000000000000000000000000000000",
+    "key_path": "/etc/axon/keys/fabric-attest.pk8"
+  },
+  "out_root": "/var/lib/axon-fabric/runs",
+  "observer": {
+    "command": {"path": "/usr/local/libexec/axon/axon-observer", "sha256": "0000000000000000000000000000000000000000000000000000000000000000"},
+    "custodian": {"socket": "/run/axon-custodian/custodian.sock", "uid": 993},
+    "max_age_s": 300
+  },
+  "grant_registry": {"path": "/etc/axon/grants/grants.json", "sha256": "0000000000000000000000000000000000000000000000000000000000000000"},
+  "authority_store": "/var/lib/axon-loop/store"
+}
