@@ -1481,4 +1481,5 @@ ATTACK_MARKERS.update({
 # clear, on the route where it is the only guard.
 ATTACK_MARKERS.update({
     'M1487': r'ATTACK: the root helper printed its stack, with addresses, to its caller',
+    'M1488': r'ATTACK: a wrapped script that guesses its binary ran',
 })

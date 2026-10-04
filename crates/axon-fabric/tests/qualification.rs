@@ -7,6 +7,7 @@
 //! run. The keys are generated here, per test; none is in the repository.
 
 mod common;
+use common::script_spawn::{self, Bins};
 use common::*;
 
 use axon_fabric::backend::{self, LinuxProfileConfig};
@@ -861,9 +862,14 @@ fn a_record_from_the_future_never_qualifies_even_with_no_maximum_age() {
 fn the_b263_record_states_the_host_it_ran_on() {
     let scripts = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scripts");
     let ident = |label: Option<&str>| -> Value {
-        let mut c = std::process::Command::new("python3");
-        c.arg("-B").arg(scripts.join("b263_host.py"));
-        c.env_remove("B263_HOST_LABEL").env_remove("B263_CAVEAT");
+        let mut c = script_spawn::script(
+            "python3",
+            scripts.join("b263_host.py"),
+            Bins::NoWorkspaceBinary,
+        );
+        c.env("PYTHONDONTWRITEBYTECODE", "1")
+            .env_remove("B263_HOST_LABEL")
+            .env_remove("B263_CAVEAT");
         if let Some(l) = label {
             c.env("B263_HOST_LABEL", l);
         }

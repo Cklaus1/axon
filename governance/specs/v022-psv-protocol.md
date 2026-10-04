@@ -2914,6 +2914,21 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       Killed by its own attack. The end-to-end environment assertion in
       `a_callers_process_state_never_reaches_the_root_helper_or_its_launcher` stays (M228 is its
       row). `PR_SET_DUMPABLE 0` remains amendment 65's measured exemption, not counted killed.
-    - **Rows.** M1487 (PSV; from the gaps assignment M1450-M1499, unused M1488-M1499 remain).
-    - **Matrix.** None (an existing A of amendment 65, harden()).
+    - **Harness defect found by the final paired-disable (fixed at the source).** At d39ab3ad the
+      CLEAN axon-core baseline failed `harness_binaries.rs::every_script_spawn_in_the_workspace_goes_through_the_helper`:
+      amendment 65's freeze tests ran `v022_freeze_manifest.py` in a private mount namespace by
+      taking the spawn helper's command apart (`inner.get_program()` / `get_args()` handed to
+      `unshare`), and `the_b263_record_states_the_host_it_ran_on` ran `b263_host.py` with a bare
+      `python3`. The gaps workstream ran only axon-fabric's suite. Every paired-disable record whose
+      full-suite set includes axon-core would read BASELINE_BROKEN. Fix: the helper owns the
+      wrapped form, `script_spawn::script_under(wrapper, interpreter, script, bins)` (the checked,
+      stripped command of `script()` with the wrapper's argv in front; a wrapper naming a
+      repository script is refused); both sites go through it / `script()`. The drift gate is
+      unchanged (no call site is whitelisted). New test
+      `a_wrapped_script_is_checked_and_stripped_like_any_other` (ATTACK: a guessing script under a
+      wrapper is refused and never runs; every binary-naming variable is removed; control: an
+      honest wrapped script runs with exactly the named binary), row M1488.
+    - **Rows.** M1487, M1488 (PSV; from the gaps assignment M1450-M1499, unused M1489-M1499
+      remain).
+    - **Matrix.** None (an existing A of amendment 65, harden(); the harness's EQUIVALENCE (6)).
     - **Operator deployment.** None.

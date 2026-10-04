@@ -105,6 +105,44 @@ pub fn script(interpreter: &str, path: impl AsRef<Path>, bins: Bins<'_>) -> Comm
     c
 }
 
+/// [`script`] run as the trailing arguments of a WRAPPER that execs them
+/// unchanged (`unshare -m ... sh -c '...; exec "$@"' sh ...`, `setpriv ...`):
+/// `wrapper[0] wrapper[1..] interpreter <script>`. The script is checked and
+/// the environment built exactly as [`script`] does (it IS that command, with
+/// the wrapper's argv in front), so a namespace or credential wrapper never
+/// becomes a route around this helper. The wrapper itself must not be a
+/// repository script.
+pub fn script_under(
+    wrapper: &[&std::ffi::OsStr],
+    interpreter: &str,
+    path: impl AsRef<Path>,
+    bins: Bins<'_>,
+) -> Command {
+    let inner = script(interpreter, path, bins);
+    let (prog, rest) = wrapper
+        .split_first()
+        .expect("script_under: an empty wrapper (use script)");
+    assert!(
+        !rest
+            .iter()
+            .chain([prog])
+            .any(|a| a.to_string_lossy().contains("scripts/")),
+        "script_under: the wrapper {wrapper:?} names a repository script; a script runs only \
+         as the helper's own script"
+    );
+    let mut c = Command::new(prog);
+    c.args(rest);
+    c.arg(inner.get_program());
+    c.args(inner.get_args());
+    for (k, v) in inner.get_envs() {
+        match v {
+            Some(v) => c.env(k, v),
+            None => c.env_remove(k),
+        };
+    }
+    c
+}
+
 // ── what a script may not do ────────────────────────────────────────────────
 
 /// Words that begin a line printing a MESSAGE (a path in prose is not a choice

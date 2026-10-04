@@ -482,6 +482,70 @@ fn the_spawn_helper_refuses_a_script_that_guesses_its_binary() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// A script run under a WRAPPER (`script_under`: a private mount namespace,
+/// a credential change) is the same checked command with the wrapper's argv
+/// in front: a guessing script is refused and never runs, and every
+/// binary-naming variable is removed from what the wrapper (and so the
+/// script) inherits. Control: an honest wrapped script runs with exactly the
+/// binary the test names.
+#[test]
+fn a_wrapped_script_is_checked_and_stripped_like_any_other() {
+    let root = scratch("wrapped");
+    let ran = root.join("guess-ran");
+    let guess = root.join("scripts/guess.sh");
+    write(
+        &guess,
+        &format!(
+            "#!/bin/sh\n: > '{}'\nAXON=\"${{AXON:-./target/{}/axon}}\"\n",
+            ran.display(),
+            "debug"
+        ),
+    );
+    let g = guess.clone();
+    let got = std::panic::catch_unwind(move || {
+        script_spawn::script_under(&["env".as_ref()], "sh", &g, Bins::BuildsItsOwn)
+            .output()
+            .unwrap()
+    });
+    assert!(
+        got.is_err() && !ran.exists(),
+        "ATTACK: a wrapped script that guesses its binary ran"
+    );
+    let probe = root.join("scripts/probe.sh");
+    write(
+        &probe,
+        "#!/bin/sh\necho \"AXON=${AXON:-unset} AXON_BIN=${AXON_BIN:-unset}\"\n",
+    );
+    let mut c = script_spawn::script_under(
+        &["env".as_ref()],
+        "sh",
+        &probe,
+        Bins::Named(&[("AXON", "/the/named/axon")]),
+    );
+    let removed: Vec<String> = c
+        .get_envs()
+        .filter(|(_, v)| v.is_none())
+        .map(|(k, _)| k.to_string_lossy().to_string())
+        .collect();
+    let kept: Vec<&&str> = BINARY_VARS
+        .iter()
+        .filter(|v| **v != "AXON" && !removed.iter().any(|r| r == **v))
+        .collect();
+    assert!(
+        kept.is_empty() && removed.iter().any(|r| r == "CARGO_TARGET_DIR"),
+        "ATTACK: a wrapped script inherits a binary-naming variable: {kept:?} (removed {removed:?})"
+    );
+    let o = c.output().unwrap();
+    let out = String::from_utf8_lossy(&o.stdout).to_string();
+    assert!(
+        o.status.success()
+            && out.contains("AXON=/the/named/axon")
+            && out.contains("AXON_BIN=unset"),
+        "control: an honest wrapped script runs with exactly the named binary: {out}"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 /// A binary a harness names for a test to exec is refused when it is older
 /// than the sources cargo would rebuild it from: the PSV-1 attack test PASSED
 /// its attack on a `debug/axon` that predated the fix (C9 round 4,

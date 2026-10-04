@@ -268,31 +268,30 @@ fn freeze_cmd(root: &Path) -> Command {
         "setup: the freeze tests need root and an /etc/axon mount point (a private mount \
          namespace holds the operator's toolchain pin; /etc is never written)"
     );
-    // The freeze runs git, never a binary this workspace builds.
-    let inner = script_spawn::script(
-        "python3",
-        root.join("scripts/v022_freeze_manifest.py"),
-        Bins::NoWorkspaceBinary,
-    );
-    let mut c = Command::new("unshare");
-    c.args(["-m", "--propagation", "private", "sh", "-c"])
-        .arg(
+    // The freeze runs git, never a binary this workspace builds. The private
+    // namespace is a wrapper the spawn helper puts in front of the script.
+    let pin = pin_file(root);
+    let mut c = script_spawn::script_under(
+        &[
+            "unshare".as_ref(),
+            "-m".as_ref(),
+            "--propagation".as_ref(),
+            "private".as_ref(),
+            "sh".as_ref(),
+            "-c".as_ref(),
             "set -e; mount -t tmpfs -o mode=0755 tmpfs /etc/axon; \
              if [ -e \"$1\" ]; then cp \"$1\" /etc/axon/host-toolchain-pin.json; \
              chown \"${PIN_OWNER:-0}\" /etc/axon/host-toolchain-pin.json; \
              chmod \"${PIN_MODE:-0644}\" /etc/axon/host-toolchain-pin.json; fi; \
-             shift; exec \"$@\"",
-        )
-        .arg("sh")
-        .arg(pin_file(root))
-        .arg(inner.get_program())
-        .args(inner.get_args());
-    for (k, v) in inner.get_envs() {
-        match v {
-            Some(v) => c.env(k, v),
-            None => c.env_remove(k),
-        };
-    }
+             shift; exec \"$@\""
+                .as_ref(),
+            "sh".as_ref(),
+            pin.as_os_str(),
+        ],
+        "python3",
+        root.join("scripts/v022_freeze_manifest.py"),
+        Bins::NoWorkspaceBinary,
+    );
     c.arg("freeze.json")
         .arg(root.join("no-micode"))
         .current_dir(root)

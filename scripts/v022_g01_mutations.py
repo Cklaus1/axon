@@ -5681,6 +5681,16 @@ MUTATIONS += [
     ('M1487', "A/harden (final): the caller's environment never reaches the root helper's own runtime (RUST_BACKTRACE: no address layout to the caller)", _PL,
      '        std::env::remove_var(k);', '        let _ = k;',
      'axon-fabric', '--test privileged_launcher', 'the_root_helpers_address_layout_never_reaches_its_caller'),
+    # The gaps workstream ran the freeze in a private mount namespace by taking
+    # the helper's command APART (get_program/get_args) and b263_host.py with a
+    # bare python3: axon-core's workspace drift gate failed at d39ab3ad (found
+    # by the final paired-disable's clean baseline). The helper now owns the
+    # wrapped form (script_under); this row: the wrapped form is the checked
+    # command, never a rebuilt one.
+    ('M1488', "EQUIVALENCE (6, final): a script run under a wrapper (script_under) is checked and stripped by the helper", 'crates/axon-core/tests/script_spawn/mod.rs',
+     '    let inner = script(interpreter, path, bins);\n',
+     '    let inner = {\n        let _ = bins;\n        let mut c = Command::new(interpreter);\n        c.arg(path.as_ref());\n        c\n    };\n',
+     'axon-core', '--no-default-features --test harness_binaries', 'a_wrapped_script_is_checked_and_stripped_like_any_other'),
 ]
 
 
