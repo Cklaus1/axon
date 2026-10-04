@@ -1053,9 +1053,14 @@ fn ab9_ab10_one_evaluation_per_experiment_the_reject_stands() {
         &w,
         &evl_request("exp", &w.inc, &w.cand, &cherry, &EvlOpts::default()),
     );
+    // Refused by the one-evaluation rule and, the subset not being the
+    // journalled population, by the population join (M108), each alone
+    // (M956 retired, amendment 61): which one refuses is not the property.
     assert!(
         e.to_string()
-            .contains("one evaluation per frozen experiment"),
+            .contains("one evaluation per frozen experiment")
+            || e.to_string()
+                .contains("is not the one journalled before execution"),
         "{e}"
     );
     // AB10: the full manifest again, fresh trial ids, candidate now 4/4

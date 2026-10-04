@@ -7,6 +7,7 @@
 //! run. The keys are generated here, per test; none is in the repository.
 
 mod common;
+use common::script_spawn::{self, Bins};
 use common::*;
 
 use axon_fabric::backend::{self, LinuxProfileConfig};
@@ -847,5 +848,68 @@ fn a_record_from_the_future_never_qualifies_even_with_no_maximum_age() {
         lx,
         "a record whose end is after the decision time, under no maximum age",
         "in the future",
+    );
+}
+
+/// Amendment 65 (M1486): the B263 record states the host the run was MEASURED
+/// on. Every protected receipt carries `qualification-host:<host>` verbatim,
+/// and the qualification harness wrote the constant "WSL2-nested" whatever
+/// host it ran on. The record's identity comes from scripts/b263_host.py,
+/// which b263_qualify.sh's record writer calls: its `host` must name this
+/// host's hostname and machine-id (read here independently), and an operator
+/// label is a prefix to the measurement, never a replacement for it.
+#[test]
+fn the_b263_record_states_the_host_it_ran_on() {
+    let scripts = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scripts");
+    let ident = |label: Option<&str>| -> Value {
+        let mut c = script_spawn::script(
+            "python3",
+            scripts.join("b263_host.py"),
+            Bins::NoWorkspaceBinary,
+        );
+        c.env("PYTHONDONTWRITEBYTECODE", "1")
+            .env_remove("B263_HOST_LABEL")
+            .env_remove("B263_CAVEAT");
+        if let Some(l) = label {
+            c.env("B263_HOST_LABEL", l);
+        }
+        let o = c.output().unwrap();
+        assert!(o.status.success(), "setup: b263_host.py: {o:?}");
+        serde_json::from_slice(&o.stdout).unwrap()
+    };
+    let hostname = std::fs::read_to_string("/proc/sys/kernel/hostname")
+        .unwrap()
+        .trim()
+        .to_string();
+    let machine_id = std::fs::read_to_string("/etc/machine-id")
+        .map(|s| s.trim().to_string())
+        .unwrap_or_else(|_| "unreadable".into());
+    for (label, v) in [(None, ident(None)), (Some("lab-7"), ident(Some("lab-7")))] {
+        let host = v["host"].as_str().unwrap_or("");
+        assert!(
+            host.contains(&format!("hostname {hostname}"))
+                && host.contains(&format!("machine-id {machine_id}")),
+            "ATTACK: the B263 record states a host it did not measure ({host:?}; this host is \
+             {hostname}, machine-id {machine_id}), label {label:?}"
+        );
+        assert_eq!(
+            v["facts"]["machine_id"].as_str(),
+            Some(machine_id.as_str()).filter(|m| *m != "unreadable")
+        );
+        if let Some(l) = label {
+            assert!(
+                host.starts_with(l),
+                "the operator's label prefixes it: {host}"
+            );
+        }
+        assert!(!v["caveat"].as_str().unwrap_or("").is_empty(), "{v}");
+    }
+    // The record writer takes both from it (not a constant of its own).
+    let harness = std::fs::read_to_string(scripts.join("b263_qualify.sh")).unwrap();
+    assert!(
+        harness.contains("\"host\": hi[\"host\"]")
+            && harness.contains("\"caveat\": hi[\"caveat\"]")
+            && !harness.contains("WSL2-nested"),
+        "ATTACK: b263_qualify.sh writes a host or caveat that b263_host.py did not measure"
     );
 }

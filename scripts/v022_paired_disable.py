@@ -229,10 +229,22 @@ def full_suite_ok(pkg, flags="", env=""):
     if not built:
         mut.keep_output(f"pd-suite-build-{pkg}", bout)
         return None, bout
+    # The bound is for the WHOLE package suite (C9 round 4b, final): at 2400 s
+    # the axon-fabric suite (~21 min idle, --test-threads=1) was cut mid-binary
+    # under a 6-shard load (M214's full-suite cell at 78832d1b: readiness_attribution
+    # stopped after 38 of 40 tests, no failure printed) and read SUITE_BROKEN.
     cmd = (f"source scripts/lib_bounded_run.sh && {mut.UNSET_AMBIENT}"
-           f"{env}bounded_run 12G 2400 cargo test -q -p {pkg} {show} 2>&1")
+           f"{env}bounded_run 12G {SUITE_BOUND_S} cargo test -q -p {pkg} {show} 2>&1")
     r = sh(cmd)
     out = r.stdout + r.stderr
+    if r.returncode in (124, 137):
+        # A suite cut by its wall-clock or memory bound proves nothing about
+        # any test: it is named as such, never left to read as a failure.
+        what = "TIMEOUT" if r.returncode == 124 else "RESOURCE_EXHAUSTED"
+        out += f"\n[paired-disable] the suite was cut by bounded_run ({what}, {SUITE_BOUND_S} s / 12G)\n"
+        mut.keep_output(f"pd-suite-{pkg}", out)
+        CELL_SKIPS.update({(pkg, flags, env): skipped_tests(out)})
+        return False, [f"<{what}: the whole suite exceeded bounded_run {SUITE_BOUND_S} s / 12G>"]
     # The tests are built: compiler text in this output is a TEST's (a nested
     # build it ran, or a diagnostic it printed), judged as that test's result.
     # Both libtest formats: `name ... FAILED` and, under -q, `name --- FAILED`.
@@ -244,6 +256,10 @@ def full_suite_ok(pkg, flags="", env=""):
         # reproduce is diagnosable only from the panic it actually printed.
         mut.keep_output(f"pd-suite-{pkg}", out)
     return ok, fails
+
+
+# Wall-clock bound for one whole-package suite cell (full_suite_ok).
+SUITE_BOUND_S = 7200
 
 
 def apply_edits(edits):
@@ -605,7 +621,10 @@ GUARD_SETS = {
     "M286": {"siblings": ["M581"], "kind": "pair"},
     "M453": {"siblings": ["M580"], "kind": "pair"},
     "M459": {"siblings": ["M581"], "kind": "pair"},
-    "M602": {"siblings": ["M628"], "kind": "pair"},
+    # C9 round 4b, final (amendment 66): a non-root helper also cannot verify
+    # the pinned custodian program (it cannot open another uid's
+    # /proc/<pid>/exe), so the pin verification (M1489) is in M602's set.
+    "M602": {"siblings": ["M628", "M1489"], "kind": "set"},
     # C9 round 4 (rows, EQUIVALENCE): the two rule functions whose one
     # production caller is ProtectedHost::operator(), where each is
     # dominated; executed with the production axon-fabric.
@@ -644,7 +663,106 @@ GUARD_SETS = {
     "M1095": {"siblings": ["M1054"], "kind": "pair"},
     "M1096": {"siblings": ["M1054"], "kind": "pair"},
     "M1097": {"siblings": ["M1071"], "kind": "pair"},
+    # C9 round 4b fix wave, rows4a (amendment 61; EQUIV_RECORD in the registry).
+    "M948": {"siblings": ["M950"], "kind": "pair"},
+    "M954": {"siblings": ["M955"], "kind": "pair"},
+    "M955": {"siblings": ["M954"], "kind": "pair"},
+    "M956": {"siblings": ["M957"], "kind": "pair"},
+    "M957": {"siblings": ["M956"], "kind": "pair"},
+    "M962": {"siblings": ["M15", "M963"], "kind": "set"},
+    "M964": {"siblings": ["M965"], "kind": "pair"},
+    "M970": {"siblings": ["M971"], "kind": "pair"},
+    "M971": {"siblings": ["M970"], "kind": "pair"},
+    "M972": {"siblings": ["M973"], "kind": "pair"},
+    "M973": {"siblings": ["M972"], "kind": "pair"},
+    "M974": {"siblings": ["M972", "M973"], "kind": "set"},
+    "M979": {"siblings": ["M980", "M998"], "kind": "set"},
+    "M980": {"siblings": ["M979", "M998"], "kind": "set"},
+    "M998": {"siblings": ["M979", "M980"], "kind": "set"},
+    "M981": {"siblings": ["M819"], "kind": "pair"},
 }
+# C9 round 4b, INTEGRATE-A (amendment 64; EQUIV_RECORD in the registry).
+GUARD_SETS.update({
+    'M1202': {"siblings": ['M1201'], "kind": "pair"},
+    'M1203': {"siblings": ['M1202', 'M1201'], "kind": "set"},
+    'M1207': {"siblings": ['M1200'], "kind": "pair"},
+    'M1219': {"siblings": ['M1204', 'M1240'], "kind": "set"},
+    'M1220': {"siblings": ['M1238'], "kind": "pair"},
+    'M1225': {"siblings": ['M1223'], "kind": "pair"},
+    'M1226': {"siblings": ['M1224'], "kind": "pair"},
+    'M1237': {"siblings": ['M1212'], "kind": "pair"},
+    'M1238': {"siblings": ['M1220'], "kind": "pair"},
+    'M1239': {"siblings": ['M1222'], "kind": "pair"},
+    'M1240': {"siblings": ['M1218'], "kind": "pair"},
+    'M1242': {"siblings": ['M1221'], "kind": "pair"},
+    'M1243': {"siblings": ['M1216'], "kind": "pair"},
+    'M1245': {"siblings": ['M1210'], "kind": "pair"},
+    'M1246': {"siblings": ['M1210'], "kind": "pair"},
+    'M1247': {"siblings": ['M1208'], "kind": "pair"},
+    'M1248': {"siblings": ['M1209'], "kind": "pair"},
+    'M1249': {"siblings": ['M1218'], "kind": "pair"},
+    'M1250': {"siblings": ['M1269'], "kind": "pair"},
+    'M1251': {"siblings": ['M1220'], "kind": "pair"},
+    'M1252': {"siblings": ['M1211'], "kind": "pair"},
+    'M1254': {"siblings": ['M1221'], "kind": "pair"},
+    'M1255': {"siblings": ['M1227'], "kind": "pair"},
+    'M1256': {"siblings": ['M1236'], "kind": "pair"},
+    'M1257': {"siblings": ['M1218'], "kind": "pair"},
+    'M1258': {"siblings": ['M1241'], "kind": "pair"},
+    'M1259': {"siblings": ['M1220'], "kind": "pair"},
+    'M1260': {"siblings": ['M1211'], "kind": "pair"},
+    'M1261': {"siblings": ['M1244'], "kind": "pair"},
+    'M1262': {"siblings": ['M1253'], "kind": "pair"},
+    'M1265': {"siblings": ['M1263'], "kind": "pair"},
+    'M1266': {"siblings": ['M1330'], "kind": "pair"},
+    'M1267': {"siblings": ['M1218', 'M1266', 'M1330'], "kind": "set"},
+})
+
+# C9 round 4b, INTEGRATE-B (amendment 64; EQUIV_RECORD in the registry).
+GUARD_SETS.update({
+    "M1294": {"siblings": ["M1295"], "kind": "pair"},
+    "M1296": {"siblings": ["M34", "M1291"], "kind": "set"},
+})
+# ── C9 round 4b, INTEGRATE-C (amendment 64) ──
+GUARD_SETS.update({
+    'M1309': {"siblings": ['M1310', 'M1311'], "kind": 'set'},
+    'M1310': {"siblings": ['M1312'], "kind": 'pair'},
+    'M1314': {"siblings": ['M979'], "kind": 'pair'},
+    'M1329': {"siblings": ['M1330'], "kind": 'pair'},
+    'M1330': {"siblings": ['M1329'], "kind": 'pair'},
+    'M1334': {"siblings": ['M1322'], "kind": 'pair'},
+})
+# ── end INTEGRATE-C ──
+# C9 round 4b, INTEGRATE-D (amendment 64; EQUIV_RECORD in the registry).
+GUARD_SETS.update({
+    "M1346": {"siblings": ["M1345"], "kind": "pair"},
+    "M1360": {"siblings": ["M1362", "M1363"], "kind": "set"},
+    "M1361": {"siblings": ["M1362", "M1363"], "kind": "set"},
+    "M1365": {"siblings": ["M1011"], "kind": "pair"},
+    "M1366": {"siblings": ["M1011"], "kind": "pair"},
+    "M1367": {"siblings": ["M1011"], "kind": "pair"},
+    "M1368": {"siblings": ["M1369", "M1362", "M1011"], "kind": "set"},
+    "M1370": {"siblings": ["M1006"], "kind": "pair"},
+    "M1371": {"siblings": ["M1008"], "kind": "pair"},
+})
+
+# C9 round 4b, INTEGRATE-2 (amendment 64; EQUIV_RECORD in the registry).
+GUARD_SETS.update({
+    "M1364": {"siblings": ["M1012"], "kind": "pair"},
+    "M1372": {"siblings": ["M1249", "M1257", "M1218"], "kind": "set"},
+    "M1400": {"siblings": ["M1220", "M1238"], "kind": "set"},
+    "M1402": {"siblings": ["M45"], "kind": "pair"},
+    "M1387": {"siblings": ["M1388", "M1334"], "kind": "set"},
+})
+
+# C9 round 4b, INTEGRATE-E (amendment 64; EQUIV_RECORD in the registry).
+GUARD_SETS.update({
+    "M1375": {"siblings": ["M108"], "kind": "pair"},
+    "M1377": {"siblings": ["M978"], "kind": "pair"},
+    "M1378": {"siblings": ["M1379", "M978", "M965"], "kind": "set"},
+    "M1379": {"siblings": ["M1378", "M978", "M965"], "kind": "set"},
+    "M1380": {"siblings": ["M02"], "kind": "pair"},
+})
 
 
 def current_edits_digest(rid):
@@ -672,6 +790,12 @@ def main():
     # Every retired row has a matrix and no active row has one.
     if set(GUARD_SETS) != set(mut.EQUIVALENT_DID):
         sys.exit(f"refused: GUARD_SETS {sorted(GUARD_SETS)} != EQUIVALENT_DID {sorted(mut.EQUIVALENT_DID)}")
+    # Amendment 64: a SIBLING-ONLY edit exists only as a member of retired
+    # rows' guard sets -- exactly the sets its record names.
+    for sid, srec in sorted(mut.SIBLING_RECORD.items()):
+        users = sorted(r for r, g in GUARD_SETS.items() if sid in g["siblings"])
+        if users != sorted(srec["member_of"]):
+            sys.exit(f"refused: SIBLING_ONLY {sid} is a member of {users}, its record says {srec['member_of']}")
     universe = sorted(set(GUARD_SETS) | set(mut.STALE_REFACTORED), key=lambda r: int(r[1:]))
     if join:
         join_shards(argv, commit, universe)

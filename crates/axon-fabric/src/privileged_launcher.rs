@@ -416,6 +416,21 @@ pub fn load_config(path: &Path, a: &Authority) -> Result<HelperConfig, String> {
             c.custodian.uid
         )));
     }
+    // Amendment 65: the custodian is the PROGRAM the operator pinned, checked
+    // against the process that answers (custodian::check_sender_program).
+    // Unpinned, any program bound on the socket as the custodian uid (or
+    // systemd's socket activation of whatever ExecStart names) spends nonces.
+    match &c.custodian.sha256 {
+        Some(pin) if is_hex64(pin) => {}
+        None if a.test => {}
+        _ => {
+            return Err(bad(
+                "custodian.sha256 must pin the axon-custodian program (a lowercase sha256): \
+                 an unpinned custodian is any program its socket's listener runs"
+                    .into(),
+            ))
+        }
+    }
     Ok(c)
 }
 
@@ -1155,10 +1170,53 @@ fn run(c: &HelperConfig, p: Prepared) -> (LaunchReport, i32) {
 }
 
 /// `--probe`: what the kernel made of this exec (the trust preflight runs it
-/// as each actor). It reads nothing and launches nothing.
+/// as each actor). It reads nothing and launches nothing. `no_new_privs`:
+/// the caller's NoNewPrivileges, which makes the kernel ignore the set-id
+/// bit; `cgroup`: the cgroup the helper (and so the launcher it runs) is in,
+/// which is the caller's (amendment 65).
 pub fn probe(ruid: u32, euid: u32) -> String {
-    serde_json::json!({"schema": PROBE_SCHEMA, "build": build_name(), "ruid": ruid, "euid": euid})
-        .to_string()
+    let cgroup = std::fs::read_to_string("/proc/self/cgroup")
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default();
+    serde_json::json!({"schema": PROBE_SCHEMA, "build": build_name(), "ruid": ruid, "euid": euid,
+                       "no_new_privs": no_new_privs(), "cgroup": cgroup})
+    .to_string()
+}
+
+/// Whether this process runs with NoNewPrivileges (`PR_GET_NO_NEW_PRIVS`).
+pub fn no_new_privs() -> bool {
+    // SAFETY: a query with no pointer arguments.
+    unsafe { libc::prctl(libc::PR_GET_NO_NEW_PRIVS, 0, 0, 0, 0) == 1 }
+}
+
+/// Amendment 65: the helper's own executable (by `/proc/self/exe`, the file
+/// the kernel executed) is setuid-root, so the kernel granted euid 0 unless
+/// it ignored the bit. Not granted: refused, saying why. A helper not
+/// installed setuid (a test-trust build run as its own uid) passes: whether
+/// that may launch is the caller's rule (`euid != 0 && !test`).
+pub fn setuid_honoured(euid: u32) -> Result<(), String> {
+    use std::os::unix::fs::MetadataExt;
+    if euid == 0 {
+        return Ok(());
+    }
+    let m = std::fs::metadata("/proc/self/exe")
+        .map_err(|e| format!("the helper cannot stat its own executable: {e}"))?;
+    if m.uid() != 0 || m.mode() & libc::S_ISUID == 0 {
+        return Ok(());
+    }
+    Err(if no_new_privs() {
+        format!(
+            "the helper is installed setuid-root but runs with effective uid {euid}: its caller \
+             runs with NoNewPrivileges (systemd NoNewPrivileges=yes or a hardening preset, \
+             setpriv --no-new-privs, a container's no-new-privileges), so the kernel ignored \
+             the set-id bit. The Fabric service must not run with NoNewPrivileges (amendment 65)"
+        )
+    } else {
+        format!(
+            "the helper is installed setuid-root but runs with effective uid {euid}: the kernel \
+             ignored the set-id bit (a nosuid mount, or a user namespace)"
+        )
+    })
 }
 
 /// Reset everything a setuid program inherits from its caller that could
@@ -1276,6 +1334,7 @@ mod tests {
             custodian: crate::custodian::CustodianRef {
                 socket: "/run/axon-custodian/custodian.sock".into(),
                 uid: 993,
+                sha256: Some("d".repeat(64)),
             },
         }
     }
@@ -1403,7 +1462,8 @@ mod tests {
             "max_timeout_s": 60, "max_input_bytes": 1,
             "observer": {"root": "/etc/axon/trust/observer", "max_age_s": 300,
                          "host_signer_public_key": "c".repeat(64)},
-            "custodian": {"socket": "/run/axon-custodian/custodian.sock", "uid": 993},
+            "custodian": {"socket": "/run/axon-custodian/custodian.sock", "uid": 993,
+                          "sha256": "d".repeat(64)},
         });
         let a = Authority {
             // SAFETY: geteuid cannot fail.

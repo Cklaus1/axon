@@ -8,6 +8,9 @@
     guest_build_env.py rootfs  RECORD.json OUT.sqfs
     guest_build_env.py discard RECORD.json
     guest_build_env.py kernel  KERNEL-RECORD.json DIST-DIR PROFILE-DIR
+    guest_build_env.py toolchain-pin MANIFEST.json   (amendment 65: the image's
+                       recorded host tools against the operator's pin; a
+                       missing pin is a WARNING here and a refusal at the freeze)
 
 WHY (C9 round 4, FIELD-ORIGIN / PSV-2 / EQUIVALENCE, executed by two
 reviewers): build-guest-image.sh refused a compiler wrapper by LISTING four
@@ -140,6 +143,11 @@ KERNEL_TOOLS = KERNEL_TOOLS_REQUIRED + ["cc", "ar", "nm", "objcopy", "objdump", 
                                         "xz", "openssl", "pahole", "python3"]
 # The linker cargo's musl builds invoke.
 CARGO_HOST_TOOLS = ["cc", "ld"]
+# Amendment 65: the operator's host-toolchain pin (written by the deployment
+# kit, scripts/operator_deploy_protected_host.sh, from the deployed image's own
+# build records). A fixed path: a caller never chooses which pin judges it.
+TOOLCHAIN_PIN = "/etc/axon/host-toolchain-pin.json"
+TOOLCHAIN_PIN_SCHEMA = "axon-host-toolchain-pin/1"
 
 
 def sha256(path):
@@ -786,11 +794,86 @@ def rootfs_problems(rec, man):
     return ""
 
 
-def image_problems(man):
+def recorded_host_tools(man):
+    """Every host tool the image's build records name, by name: the kernel
+    build's tools, cargo's host tools (linker), the rootfs's mksquashfs, and
+    the toolchain's rustc and cargo. The same extraction the deployment kit
+    pins from (operator_deploy_protected_host.sh, step `toolchain`)."""
+    src = (man.get("source") or {}).get("build_environment") or {}
+    tc = src.get("toolchain") or {}
+    tools = {}
+    for name, t in sorted((((man.get("kernel") or {}).get("build_environment") or {}).get("tools") or {}).items()):
+        tools[name] = t
+    for name, t in sorted((tc.get("host_tools") or {}).items()):
+        tools.setdefault(name, t)
+    rt = (src.get("rootfs") or {}).get("tool")
+    if rt:
+        tools["mksquashfs"] = rt
+    tools["rustc"] = {"path": tc.get("rustc"), "sha256": tc.get("rustc_sha256")}
+    tools["cargo"] = {"path": tc.get("cargo"), "sha256": tc.get("cargo_sha256")}
+    return {n: {"path": (t or {}).get("path"), "sha256": (t or {}).get("sha256")} for n, t in tools.items()}
+
+
+def operator_file_problem(path):
+    """Why `path` is not an operator file: the file and every directory above
+    it real (no symlink), root-owned and not group/other-writable."""
+    import stat as st_
+    parts = os.path.abspath(path).split("/")[1:]
+    cur = "/"
+    for i, part in enumerate([""] + parts):
+        cur = os.path.join(cur, part) if part else "/"
+        try:
+            st = os.lstat(cur)
+        except OSError as e:
+            return f"{cur}: {e.strerror}"
+        last = i == len(parts)
+        if st_.S_ISLNK(st.st_mode) or (last and not st_.S_ISREG(st.st_mode)) or (not last and not st_.S_ISDIR(st.st_mode)):
+            return f"{cur} is not a real {'file' if last else 'directory'} (a symlink is never followed)"
+        if st.st_uid != 0 or st.st_mode & 0o022:
+            return (f"{cur} (uid {st.st_uid}, mode {oct(st.st_mode & 0o7777)}) is not root-owned and "
+                    "closed to group/other writes: whoever writes it chooses the pin")
+    return ""
+
+
+def toolchain_pin_problems(man, required, pin_path=TOOLCHAIN_PIN):
+    """Why the image's recorded host tools are not the operator's pin (empty:
+    they are, or there is no pin and none is `required`). A pin that exists
+    is judged whether or not it is required: owner and mode first, then every
+    recorded tool must be a pinned one, at the pinned path, with the pinned
+    digest, and every pinned tool must be recorded."""
+    if not os.path.lexists(pin_path):
+        return (f"there is no operator host-toolchain pin at {pin_path} (the deployment kit writes it; "
+                "a freeze binds only a build made with the operator's pinned tools)") if required else ""
+    why = operator_file_problem(pin_path)
+    if why:
+        return f"the host-toolchain pin {pin_path} is not the operator's: {why}"
+    try:
+        with open(pin_path, "rb") as f:
+            pin = json.loads(f.read(1 << 20))
+    except (OSError, ValueError) as e:
+        return f"the host-toolchain pin {pin_path} is unreadable: {e}"
+    want = pin.get("tools") if isinstance(pin, dict) and pin.get("schema") == TOOLCHAIN_PIN_SCHEMA else None
+    if not isinstance(want, dict) or not want:
+        return f"the host-toolchain pin {pin_path} is not a {TOOLCHAIN_PIN_SCHEMA} naming tools"
+    got = recorded_host_tools(man)
+    for name in sorted(set(got) | set(want)):
+        g, w = got.get(name), want.get(name)
+        if not isinstance(w, dict):
+            return f"the build recorded host tool {name} {g}, which the operator's pin does not name"
+        if g is None or g.get("path") != w.get("path") or not g.get("sha256") or g.get("sha256") != w.get("sha256"):
+            return (f"host tool {name}: the build recorded {g}, not the operator's pin "
+                    f"{ {'path': w.get('path'), 'sha256': w.get('sha256')} }")
+    return ""
+
+
+def image_problems(man, pin_required=False):
     """Why a guest manifest has a component produced outside the controlled
     build (empty: none). The judge the freeze applies to the WHOLE image,
     after the record's own judge (shape_problems) and its binding of the three
-    binaries; it does not repeat those, so each refusal has one owner."""
+    binaries; it does not repeat those, so each refusal has one owner.
+    Amendment 65: last, the recorded host tools against the operator's
+    toolchain pin (`pin_required`: the freeze; absent pin otherwise passes
+    here and is a warning from `toolchain-pin`)."""
     rec = (man.get("source") or {}).get("build_environment")
     if not isinstance(rec, dict):
         return "it records no build environment"
@@ -800,7 +883,10 @@ def image_problems(man):
     why = rootfs_problems(rec, man)
     if why:
         return why
-    return kernel_problems((man.get("kernel") or {}).get("build_environment"), man)
+    why = kernel_problems((man.get("kernel") or {}).get("build_environment"), man)
+    if why:
+        return why
+    return toolchain_pin_problems(man, pin_required)
 
 
 def discard(record_path):
@@ -829,6 +915,16 @@ def main():
         kernel(a[1], a[2], a[3])
     elif a[:1] == ["discard"] and len(a) == 2:
         discard(a[1])
+    elif a[:1] == ["toolchain-pin"] and len(a) == 2:
+        with open(a[1]) as f:
+            man = json.load(f)
+        why = toolchain_pin_problems(man, False)
+        if why:
+            fail(why)
+        if not os.path.lexists(TOOLCHAIN_PIN):
+            print(f"WARNING: no operator host-toolchain pin at {TOOLCHAIN_PIN}: this build's tools "
+                  "are judged by nothing but its own record (development); a freeze refuses it",
+                  file=sys.stderr)
     else:
         sys.exit(__doc__)
 

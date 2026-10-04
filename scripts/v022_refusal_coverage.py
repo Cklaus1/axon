@@ -8,7 +8,7 @@ found ten guards in the decision-A/D files with no row, and the whole
 axon-fabric suite green with each of them removed. This check derives the
 guards from the CODE instead of trusting the list.
 
-A refusal site is a non-test line in a PROTECTED file matching SITE
+A refusal site is a non-test line in an in-scope file (see SCOPE_DIRS) matching SITE
 (`return Err(`, `Err(format!`, `refuse(`, `Err(bad(`, or a read of
 `TEST_TRUST_BUILD`; a `use` declaration is not a read). Its guard block runs from the nearest opening
 condition above it (`if` / `else if` / `match` / a match arm), at most
@@ -24,10 +24,14 @@ block. The check fails on:
   * a row for a protected file whose `old` text is not present exactly once
     (it covers nothing).
 
-    python3 scripts/v022_refusal_coverage.py [--without=M1,M2]
+    python3 scripts/v022_refusal_coverage.py [--without=M1,M2] [--freeze]
 
 --without drops rows before checking: the check must then name their sites
-(a gate that cannot speak proves nothing).
+(a gate that cannot speak proves nothing). --freeze also fails while any
+in-scope file is NOT_YET_SCANNED (amendment 61); v022_freeze_manifest.py runs
+the check that way and refuses to bind a freeze otherwise.
+
+The FILE SET is a rule (amendment 61), not a list: see SCOPE_DIRS below.
 """
 import importlib.util
 import os
@@ -35,29 +39,74 @@ import re
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-PROTECTED = [
-    "crates/axon-fabric/src/privileged_launcher.rs",
-    "crates/axon-fabric/src/sealed_exec.rs",
-    "crates/axon-fabric/src/bin/axon-protected-launcher.rs",
-    # C9 round 4 fix wave, rows2 (amendment 58): the custodian, its binary,
-    # readiness, the protected host config and the observer's nonce store.
-    "crates/axon-fabric/src/custodian.rs",
-    "crates/axon-fabric/src/bin/axon-custodian.rs",
-    "crates/axon-fabric/src/readiness.rs",
-    "crates/axon-fabric/src/protected_host.rs",
-    "crates/axon-fabric/src/observer.rs",
-    "crates/axon-psv/src/lib.rs",
-    "crates/axon-fabric/src/psv.rs",
-    "crates/axon-psv/src/runner.rs",
-    "crates/axon-loop-contracts/src/protected_evidence.rs",
-    "crates/axon-loop/src/admission.rs",
-    "crates/axon-loop/src/intake.rs",
-]
-# Protected decision files NOT yet scanned, with the refusal sites that had
-# neither a row nor an exemption when they were last measured (amendment 58).
-# Printed on every run so the gap is visible; moving a file into PROTECTED is
-# how it closes.
-NOT_YET_SCANNED = {}
+# Amendment 61 (C9 round 4b, rows4a): the file set is a RULE, not a list.
+# Round 4b (EQUIVALENCE) found whole protected decision files unscanned while
+# a hand-kept PROTECTED list said otherwise and NOT_YET_SCANNED was {}: the
+# list stood in for the set (class a). The scope is now derived from the tree:
+#
+#   IN SCOPE = every non-test .rs file under SCOPE_DIRS (recursively: the
+#   protected crates' whole sources, bins included), every file in
+#   SCOPE_FILES, and, in each SCOPE_FN_REGIONS file, the non-test functions
+#   whose name matches its pattern (the interpreter's seal edges);
+#
+# and each in-scope file is exactly one of: SCANNED (every refusal site has a
+# row or a reasoned exemption, BAD otherwise), OUT_OF_SCOPE (named with a
+# reason a reviewer can check), or NOT_YET_SCANNED (named with the number of
+# its sites that have neither a row nor an exemption, which the gate
+# re-measures and refuses if it differs). An in-scope file in none of these is
+# SCANNED, so a new file is checked the day it appears. NOT_YET_SCANNED is
+# shown on every run; under --freeze (and in v022_freeze_manifest.py, which
+# calls check(freeze=True)) a non-empty NOT_YET_SCANNED fails: no freeze binds
+# evidence over a decision file nobody scanned.
+SCOPE_DIRS = (
+    "crates/axon-fabric/src",
+    "crates/axon-loop/src",
+    "crates/axon-loop-contracts/src",
+    "crates/axon-psv/src",
+)
+SCOPE_FILES = (
+    "crates/axon-core/src/interp/conform.rs",
+)
+# The interpreter's seal edges: the functions that decide what a sealed
+# (candidate) frame may reach. A site outside such a function in these files
+# is not in scope (the rest of the interpreter is the language, not a
+# protected decision).
+SEAL_FN = r"seal|conform|cast"
+SCOPE_FN_REGIONS = {
+    "crates/axon-core/src/interp.rs": SEAL_FN,
+    "crates/axon-core/src/interp/eval.rs": SEAL_FN,
+}
+# Amendment 60 (core2) + 64 (integration): the seal edges are ALSO selected by
+# an anchored span (the first anchor's line to the second's, each once in the
+# file): the region core2 rowed, which holds the sealed-provenance helpers
+# whose names need not match SEAL_FN. A file's scanned lines are the UNION of
+# its SCOPE_FN_REGIONS functions and its REGIONS span, so neither selection can
+# drop a site the other names; an anchor that is missing or not unique is BAD.
+REGIONS = {"crates/axon-core/src/interp.rs": (
+    "    /// Whether `f` was defined in a sealed (candidate) module.",
+    "    /// Run `g` with the frame's provenance set to `sealed`, restoring it after.")}
+# (file -> reason). A file here is in scope by the rule and judged not to be a
+# decision path; the reason names what makes that checkable.
+OUT_OF_SCOPE = {
+    "crates/axon-loop/src/evo.rs":
+        "EVO proposes candidates (B273/B281); no count, admission or activation is decided by its "
+        "refusals: the decision code reads only evo::proposer_in (the recorded proposer), and only to "
+        "EXCLUDE that principal (subjects, self-promotion, assignment), so a proposal it should have "
+        "refused can only narrow what counts; the freeze's candidate check (plan.rs) re-judges every "
+        "candidate it would let through",
+    "crates/axon-loop-contracts/src/profile.rs":
+        "bridge-profile negotiation (B256): which wire versions MiCode and Axon speak; it authorizes "
+        "nothing: every document is still parsed by its own contract and judged by the scanned "
+        "decision code",
+    "crates/axon-loop/src/bin/axon-loop.rs":
+        "the CLI front end: argument and request parsing; every verb hands its one document to a "
+        "library function in a scanned file, which decides; its refusals are usage errors before "
+        "any decision",
+}
+# (file -> sites with neither a row nor an exemption, as last measured). The
+# gate re-measures each count and refuses a stale one, in both directions.
+NOT_YET_SCANNED = {
+}
 SITE = re.compile(r"return Err\(|\bErr\(format!|\brefuse\(|\bErr\(bad\(|TEST_TRUST_BUILD")
 OPENER = re.compile(r"^\s*(\}\s*else\s+if\b|if\b|match\b|let\s+\w+\s*=\s*if\b)|=>")
 MAX_UP = 10
@@ -343,14 +392,6 @@ EXEMPT += [
     (LI, "        Refusal::Semantic(s) => refused(format!(\"{what}: {s}\")),",
      "NOT A SITE: the body of the `semantic` converter; every use is `parse(..).map_err(semantic(..))?`, "
      "its own site with no parsed value on Err"),
-    (LI, "    if ep.policy_ref.scheme() != RefScheme::Cl22 {",
-     "UNREACHABLE ALONE (flagged for the integrator: the strict reading may require a four-cell "
-     "record, which cannot be built): no stored record is named other than by the cl22 digest of "
-     "its content: Store::cas_path refuses any other scheme and check_name requires the name to "
-     "equal digest(content), always cl22; so with this check removed the next statement's policy "
-     "lookup refuses the same reference, and with that lookup's scheme check also removed "
-     "check_name, then bind_episode's policy digest, still refuse it. Measured: the row (former "
-     "M833) is REFUSED_ELSEWHERE ('not a policy this store knows')"),
     (LI, "        Err(LoopError::Refused(_)) => {\n            return Err(refused(format!(",
      "NOTHING TO ADMIT: the store holds no such policy, so there is no PolicyEnvelope to bind"),
     (LI, "        Err(e) => return Err(e),\n    };\n    if tx.is_revoked",
@@ -393,18 +434,168 @@ EXEMPT += [
 ]
 
 
+# C9 round 4b fix wave, rows4a (amendment 61): the LOOP side's files the rule
+# brings in. Kinds, as before: NOTHING TO ADMIT (the refusal holds an error and
+# no value the code after it could run on), SELECTS NOTHING (the refused field
+# decides nothing the code reads: named), NAMED ROW (a registry row mutates the
+# same removal at another line), OPERATOR-AUTHORED (a field of an operator-owned
+# file or of the operator's environment: only the operator chooses it, and the
+# refusal only fails closed), OS ERROR, NON-UNIX (compiled out), UNREACHABLE
+# (no input reaches it; the fact is named).
+AT = "crates/axon-loop-contracts/src/attestation.rs"
+OT = "crates/axon-loop-contracts/src/operator_trust.rs"
+EXEMPT += [
+    (AT, '            shape(format!(\n                "the key registered for verifier {issuer_ref} is not a 64-hex Ed25519 public key"',
+     "NOTHING TO ADMIT: the registered key is not a key, so there is nothing to verify under; it "
+     "comes from Config::rooted_key (an operator-rooted key, M207/M206)"),
+    (AT, '.ok_or_else(|| shape("attestation: not a JSON object"))?;',
+     "NOTHING TO ADMIT: a non-object carries no binding or signature to verify"),
+    (AT, '.ok_or_else(|| shape("attestation: no issued_ms (the issuer\'s signing time)"))?;',
+     "NOTHING TO ADMIT: no signing time to bind (the binding needs one) or to compare with the "
+     "plan's freeze; any value substituted is then compared with the document's (M03) and signed "
+     "over (M02)"),
+    (AT, 'return Err(shape(format!("attestation: unknown field {k:?}")));',
+     "SELECTS NOTHING: an unbound field is neither signed nor read; every consumer reads only bound "
+     "fields (compared by M03, signed by M02) and issued_ms through issued_ms(), which the binding "
+     "signs"),
+    (AT, '        return Err(shape(format!(\n            "attestation: not {ATTESTATION_SCHEMA} with alg ed25519"',
+     "SELECTS NOTHING: `schema` is a bound field (M03 compares it with ATTESTATION_SCHEMA, M02 "
+     "signs it) and `alg` chooses nothing: verification is always Ed25519"),
+    (AT, '.ok_or_else(|| shape("attestation: no 32-byte public_key"))?;',
+     "SELECTS NOTHING: the presented key is only compared; the signature is always verified under "
+     "the REGISTERED key (M02)"),
+    (AT, '        return Err(shape(format!(\n            "attestation is signed by {}, not by {key_id}',
+     "SELECTS NOTHING: the presented key is never used to verify; the signature is verified under "
+     "the registered key (M02), so a document presenting another key is accepted only if the "
+     "registered key signed it"),
+    (AT, '.ok_or_else(|| shape("attestation: no 64-byte signature"))?;',
+     "NOTHING TO ADMIT: no signature to verify"),
+    (AT, '            shape(format!(\n                "attestation signature does not verify under {key_id}',
+     "NAMED ROW: M02 mutates the verification this refusal reports (the same removal)"),
+    (AT, '            shape(format!(\n                "the key registered for {issuer_ref} is not a 64-hex',
+     "NOTHING TO ADMIT: the registered key is not a key; every caller passes an operator-rooted "
+     "key (Config::rooted_key, M207/M257)"),
+    (AT, '.ok_or_else(|| shape("signature: not a JSON object"))?;',
+     "NOTHING TO ADMIT: a non-object carries no binding or signature"),
+    (AT, 'return Err(shape(format!("signature: unknown field {k:?}")));',
+     "SELECTS NOTHING: an unbound field is neither signed nor read; callers take the domain, the "
+     "issuer and the document from their own inputs (document_binding), never from the signature"),
+    (AT, 'return Err(shape("signature: alg is not ed25519"));',
+     "SELECTS NOTHING: verification is always Ed25519 under the registered key"),
+    (AT, '.ok_or_else(|| shape("signature: no 32-byte public_key"))?;',
+     "SELECTS NOTHING: the presented key is only compared, never used to verify"),
+    (AT, '        return Err(shape(format!(\n            "signed by {}, not by {key_id}',
+     "SELECTS NOTHING: the signature is verified under the registered key (M951), never the "
+     "presented one"),
+    (AT, '            return Err(shape(format!(\n                "signature: {field} is {} but',
+     "SELECTS NOTHING: the signature is verified over the binding built from the CALLER's domain, "
+     "issuer, key id and document (M951), and no caller reads a field of the signature document, "
+     "so a displayed field that differs changes nothing that is read"),
+    (AT, '.ok_or_else(|| shape("signature: no 64-byte signature"))?;',
+     "NOTHING TO ADMIT: no signature to verify"),
+    (OT, '        Err(e) => {\n            return Err(format!(\n                "trust root {} cannot be read',
+     "NAMED ROW: M460 mutates the arm above it to read every listing failure as NotFound, the same "
+     "removal"),
+    (OT, "            if t.len() != 64 || !t.bytes().all(|b| b.is_ascii_hexdigit()) {",
+     "OPERATOR-AUTHORED: a key file in a root the ownership walk holds root-owned and unwritable by "
+     "others (M948-M950); a malformed entry, kept, equals no presented key (keys are compared as "
+     "64-hex strings or 32-byte values), so it only fails closed"),
+    (OT, 'return Err("operator ownership cannot be checked on this platform".into());',
+     "NON-UNIX: compiled out on the only supported platform (cfg(not(unix)))"),
+    (OT, '    if sv["schema"] != EVIDENCE_SIGNATURE_SCHEMA || sv["alg"] != "ed25519" {',
+     "SELECTS NOTHING: the signed message always begins with EVIDENCE_SIGNATURE_SCHEMA "
+     "(evidence_signing_message) and verification is always Ed25519, so neither field chooses what "
+     "is verified"),
+]
+EV = "crates/axon-loop/src/evl.rs"
+EXEMPT += [
+    (EV, '        refused(format!(\n            "experiment {} has no assignment journalled before execution',
+     "NOTHING TO ADMIT: with no journalled assignment there is no population to judge the request "
+     "against (ADR-001 §3.6)"),
+    (EV, '                    unknown(\n                        UnknownKind::Unbound,\n                        format!(\n                            "unbound: attempt {} is not this trial\'s issued attempt',
+     "NAMED ROW: M107 mutates this arm's condition (`&d.ep.identity.attempt_id != issued_attempt`), "
+     "the same removal"),
+    (EV, "        if arm.assigned != arm.verified_pass + arm.fail + kinds + arm.missing",
+     "UNREACHABLE: every assigned trial increments `assigned` and exactly one counter: a missing one "
+     "`missing` and `unknown` (no kind); a delivered one is VerifiedPass or Fail with no kind, or "
+     "Unknown through `unknown()`, which always gives a kind; so both sums hold by construction"),
+    (EV, "    if intaken.contains_key(&d.ep_ref) {",
+     "NAMED ROW: M15 mutates the call `intake_join(&intaken, d)` to Ok, the same removal as this "
+     "function's Err arm"),
+    (EV, "            _ => Err((\n                UnknownKind::MissingEvidence,",
+     "NOTHING TO ADMIT: without the check's request and receipt there is nothing to authenticate"),
+    (EV, "        VerificationResult::NotRun => unknown(",
+     "NOTHING TO ADMIT: a check that did not run has no verdict; this arm only names the Unknown's "
+     "kind (rowed: M133-M136)"),
+    (EV, "            Some(rc) => unknown(",
+     "NOTHING TO ADMIT: the signed check reached no verdict; this arm only names the Unknown's kind "
+     "(rowed: M127, M128)"),
+    (EV, "            None => unknown(\n                run_end.or(stated).unwrap_or(UnknownKind::MissingEvidence),",
+     "NOTHING TO ADMIT: an uncited unknown has no verdict; this arm only names the Unknown's kind "
+     "(rowed: M126, M136)"),
+    (EV, '.ok_or_else(|| refused(format!("evaluation has no arm for policy {p}")))?;',
+     "NOTHING TO ADMIT: no arm ran the policy, so there is no arm to return"),
+]
+ST = "crates/axon-loop/src/store.rs"
+EXEMPT += [
+    (ST, "        if operator_key.len() < 16 {",
+     "OPERATOR-AUTHORED: AXON_ATTEST_KEY is the operator's environment for the loop process; the "
+     "refusal only fails closed (the store does not open)"),
+    (ST, "            Err(std::env::VarError::NotUnicode(_)) => Err(LoopError::Usage(format!(",
+     "OPERATOR-AUTHORED: the operator's environment; the refusal only fails closed (the store does "
+     "not open, never falls back to unkeyed)"),
+    (ST, '                    return Err(LoopError::Io(format!(\n                        "non-normal store path {}",',
+     "UNREACHABLE: every store path is built by the store from its root joined with segments "
+     "validated by check_segment or the ids.rs newtypes (charset [A-Za-z0-9._:-], first character "
+     "alphanumeric) or with digest hex, so no component is `..`, `.` or a root"),
+    (ST, "                Err(e) => return Err(e.into()),\n            }\n        }\n        Ok(())",
+     "OS ERROR: lstat failing for a reason other than NotFound; the path is refused (fails closed)"),
+    (ST, "                Err(e) => return Err(e.into()),\n            }\n            let m = fs::symlink_metadata(&cur)?;",
+     "OS ERROR: create_dir failing for a reason other than AlreadyExists; nothing is written"),
+    (ST, "            Err(e) => Err(map_open(p, e)),",
+     "OS ERROR: the open failed (an O_NOFOLLOW refusal of a final-component symlink is the kernel's "
+     "ELOOP, which map_open only names); nothing is read"),
+    (ST, '            .ok_or_else(|| crate::error::refused(format!("no {kind} record {r}")))',
+     "NOTHING TO ADMIT: no such record, so there are no bytes to return"),
+]
+SA = "crates/axon-loop/src/safety.rs"
+EXEMPT += [
+    (SA, "    if (r.finding == Finding::Violation) != r.code.is_some() {",
+     "SELECTS NOTHING: only `finding` decides (safety::states): a clearance's code is never read, "
+     "and a violation with no code is never a veto (states keeps the prior state), so admitting "
+     "either changes no safety state"),
+    (SA, '            refused(format!(\n                "no intaken trial {:?} in this scope',
+     "NOTHING TO ADMIT: no intaken trial to attach the finding to; its subjects come from that "
+     "intake record"),
+    (SA, '                refused("a clearance is not authenticated: no monitor signature was presented")',
+     "NOTHING TO ADMIT: no signature to verify (M984 rows the verification)"),
+]
+RU = "crates/axon-loop/src/rules.rs"
+EP = "crates/axon-loop/src/epoch.rs"
+LL = "crates/axon-loop/src/lib.rs"
+EXEMPT += [
+    (EP, "    if now != claimed {",
+     "UNREACHABLE: require_current has no production caller (only crates/axon-loop/tests/pointer.rs); "
+     "Fabric's launch-time epoch check reads epoch::current and compares itself (submit.rs)"),
+    (LL, '                    Err(serde::de::Error::custom(format!(\n                        "schema must be {:?}, got {:?}",',
+     "SELECTS NOTHING: a record's schema tag is a version label; every record type is "
+     "deny_unknown_fields with its own field set, and every stored record is read back through its "
+     "digest name (M978) or the ledger chain, so the tag chooses no field and no code path"),
+]
+PLN = "crates/axon-loop/src/plan.rs"
+EXEMPT += [
+    (PLN, '        _ => return Err(refused(format!("no registered plan {id}"))),',
+     "NOTHING TO ADMIT: no registered plan, so there is no plan to load"),
+    (PLN, '        return Err(LoopError::NotReady(format!("plan {id} is not frozen")));',
+     "NOTHING TO ADMIT: no frozen plan, so nothing to judge the experiment by"),
+]
+
 # ── C9 round 4b, CORE2 (amendment 60): the interpreter's declared-type cast
-# (conform.rs, every refusal arm) and its seal edges. The seal edges live in
-# interp.rs among refusals that are not protected decisions, so that file is
-# scanned only between two anchors (REGIONS; each once in the file); a row
-# for interp.rs whose text lies outside the region is not this scan's. The
-# interpreter refuses with `return panic(` as well as `Err(`.
+# (conform.rs, every refusal arm, in scope by SCOPE_FILES) and its seal edges
+# (interp.rs, scanned in the union of SCOPE_FN_REGIONS' functions and the
+# anchored REGIONS span above). The interpreter refuses with `return panic(`
+# as well as `Err(`; CTOR's `panic(` is that site.
 CF = "crates/axon-core/src/interp/conform.rs"
-REGIONS = {"crates/axon-core/src/interp.rs": (
-    "    /// Whether `f` was defined in a sealed (candidate) module.",
-    "    /// Run `g` with the frame's provenance set to `sealed`, restoring it after.")}
-PROTECTED += [CF, *REGIONS]
-SITE = re.compile(SITE.pattern + r"|\breturn panic\(")
 EXEMPT += [
     (CF, '            return Err("the value is nested too deeply to check against its declared type".into());',
      "NO INPUT REACHES IT: a value nested 1,000,000 deep cannot be built in a run (each "
@@ -429,19 +620,6 @@ EXEMPT += [
 # signed (M01, M402)); USAGE (a missing or malformed argument: the command
 # runs, signs and writes nothing). FLAGGED marks a reason the integrator must
 # accept or replace.
-PROTECTED += [
-    "crates/axon-fabric/src/backend.rs",
-    "crates/axon-fabric/src/submit.rs",
-    "crates/axon-fabric/src/git_data.rs",
-    "crates/axon-fabric/src/provenance.rs",
-    "crates/axon-fabric/src/bin/axon-fabric.rs",
-    "crates/axon-fabric/src/bin/axon-provenance.rs",
-    "crates/axon-fabric/src/signing.rs",
-    "crates/axon-fabric/src/workspace.rs",
-    "crates/axon-fabric/src/journal.rs",
-    "crates/axon-fabric/src/branches.rs",
-    "crates/axon-fabric/src/grants.rs",
-]
 FB = "crates/axon-fabric/src/backend.rs"
 FS = "crates/axon-fabric/src/submit.rs"
 FG = "crates/axon-fabric/src/git_data.rs"
@@ -792,6 +970,202 @@ EXEMPT += [
      "it with the request's program"),
 ]
 
+
+
+# C9 round 4b, INTEGRATE-A (amendment 64): the contract crate's remaining
+# sites. Kinds, as above, plus: COMPILED-IN (an arm that refuses only a
+# malformed SCHEMA, never a document: the schemas `validate_against` walks are
+# include_str! constants -- crates/axon-loop-contracts/schemas/*.json via
+# schema_text!, and crates/axon-loop/schemas/closed-loop-pilot.schema.json --
+# and redteam.rs every_checked_in_schema_is_within_the_supported_subset asserts
+# over every one of them that each schema position is an object, every keyword,
+# `type` and pattern is in the walker's subset and additionalProperties is a
+# boolean, so no input reaches these arms).
+CT = "crates/axon-loop-contracts/src/canonical.rs"
+CI = "crates/axon-loop-contracts/src/ids.rs"
+CP = "crates/axon-loop-contracts/src/policy.rs"
+CS = "crates/axon-loop-contracts/src/schema.rs"
+_COMPILED = ("COMPILED-IN: refuses only a malformed checked-in schema (see the block comment); "
+             "redteam.rs every_checked_in_schema_is_within_the_supported_subset holds the fact")
+EXEMPT += [
+    (CT, "            shape(m)\n",
+     "NOTHING TO ADMIT: typed serde refused the value, so there is no typed document; the arm "
+     "only classifies the refusal (unknown field/variant vs shape), both arms refuse"),
+    (CT, "        return Err(Refusal::TooLarge(bytes.len()));",
+     "OPERATOR-SIGNED: parse_bytes's only production caller (grep `parse_bytes(` in crates/*/src) "
+     "is readiness.rs's read of the certified compute request, bytes the operator-signed "
+     "evidence bundle pins by sha256 (M691/M335); and parse_bytes hands the same text to "
+     "parse_value, whose byte limit is M1200"),
+    (CT, "    let text = std::str::from_utf8(bytes).map_err(|e| shape(format!(\"invalid UTF-8: {e}\")))?;",
+     "NOTHING TO ADMIT: bytes that are not UTF-8 have no text to parse; the only production "
+     "caller reads operator-signed bytes (as above)"),
+    (CI, 'return Err(shape(format!("authority epoch {v} exceeds 2^53-1")));',
+     "UNREACHABLE BY CONSTRUCTION (FLAGGED: no four-cell can be built): a pointer epoch starts at "
+     "0 and an applied transition raises it by exactly one (pointer.rs CAS, M1266/M1330), so "
+     "next() never leaves the range; every epoch READ from a document is refused past 2^53-1 by "
+     "parse_value first (M1204) and then by the schema maximum (M1219), and even with all three "
+     "removed it is joined to the scope's current epoch (intake's epoch join, the pointer's "
+     "expected_epoch CAS), which a value past 2^53-1 never equals"),
+    (CP, "        if self.pinned_at_ms < 0 {",
+     "NO PRODUCTION PARSE (checkable): PolicyPin is MiCode's local document; Axon never parses one "
+     "(no parse/contract_from_value/from_value of PolicyPin in crates/*/src) and builds one only "
+     "in pointer.rs::resolve, with pinned_at_ms = now_ms(), which is >= 0"),
+    (CP, '                    return Err(semantic(format!(\n                        "{:?} requires target_policy_ref",',
+     "UNREACHABLE TO ADMIT (FLAGGED: no four-cell can be built): the schema's conditional also "
+     "requires a string target (M1210), and with both removed pointer.rs's activate/rollback "
+     "arm still applies nothing: `t.target_policy_ref.clone().expect(\"validated by parse\")` "
+     "panics before any write, and a target is accepted only when an admission record names it "
+     "(pointer.rs `adm.target_policy_ref != target`)"),
+    (CP, '                    return Err(semantic(format!("{:?} requires admission_ref", self.kind)));',
+     "UNREACHABLE TO ADMIT (FLAGGED: no four-cell can be built): as above: the schema's "
+     "conditional requires a string admission_ref (M1210), and pointer.rs's `t.admission_ref"
+     ".clone().expect(\"validated by parse\")` then the admission lookup by that ref refuse it"),
+    (CS, '    shape(format!("{path}: {msg}"))',
+     "NOT A SITE: the body of the walker's `fail` constructor; each use is its own site"),
+    (CS, 'Value::Bool(false) => return Err(fail(path, "schema `false` admits nothing")),', _COMPILED),
+    (CS, '_ => return Err(fail(path, "malformed schema node")),', _COMPILED),
+    (CS, "            return Err(fail(path, format!(\"unsupported schema keyword {k:?}\")));", _COMPILED),
+    (CS, 'other => return Err(format!("unsupported type {other:?}")),', _COMPILED),
+    (CS, '_ => return Err(fail(path, "malformed `type`")),', _COMPILED),
+    (CS, "        let matched = type_matches(n, v).map_err(|e| fail(path, e))?;",
+     _COMPILED + " (type_matches errs only on an unsupported type name)"),
+    (CS, 'let p = p.as_str().ok_or_else(|| fail(path, "malformed pattern"))?;', _COMPILED),
+    (CS, "let ok = pattern_matches(p, st).map_err(|e| fail(path, e))?;",
+     _COMPILED + " (pattern_matches errs only on an unsupported pattern)"),
+    (CS, 'other => return Err(format!("unsupported pattern {other:?}")),', _COMPILED),
+    (CS, 'Some(_) => return Err(fail(path, "unsupported additionalProperties form")),', _COMPILED),
+    (CS, 'serde_json::from_str(text).map_err(|e| shape(format!("checked-in schema unreadable: {e}")))',
+     "COMPILED-IN: schema::load reads only Contract::SCHEMA, the schema_text! include_str! "
+     "constants, each parsed by redteam.rs every_checked_in_schema_is_within_the_supported_subset"),
+    (CS, '        return Err(fail(path, "non-integer number"));',
+     "UNREACHABLE (FLAGGED: no four-cell can be built): a non-integer Number is refused by "
+     "parse_value before any walk (M1206); every schema node carrying minimum/maximum declares "
+     "a type, and no type name admits a float (asserted by redteam.rs every_checked_in_schema_is_within_the_supported_subset), "
+     "whose check refuses it first (M1210); and with both removed the typed layer still refuses a "
+     "float in an integer field (serde, no mutable site), so no input reaches this arm"),
+]
+
+# C9 round 4b, INTEGRATE-C (amendment 64)
+# Kinds as above. NOTHING TO ADMIT: the arm holds no value the code after it
+# could continue with.
+PTR = "crates/axon-loop/src/pointer.rs"
+EXEMPT += [
+    (PTR, '            refused(format!(\n                "rollback target {target} was never an active predecessor in this scope"',
+     "NOTHING TO ADMIT: no history entry names the target, so there is no predecessor (its "
+     "admission, label and authority) for the rollback rules below to judge; the arm is the "
+     "ok_or_else of that lookup"),
+]
+# ── end INTEGRATE-C ──
+
+
+# C9 round 4b, INTEGRATE-D (amendment 64): price.rs, tel.rs, the psv runner.
+# Kinds as above, plus NO PRODUCTION CALLER (the function's callers are named
+# by a grep; none is outside tests).
+PRC = "crates/axon-loop/src/price.rs"
+TEL = "crates/axon-loop/src/tel.rs"
+PRN = "crates/axon-psv/src/bin/axon-psv-runner.rs"
+_COHORT = ("NO PRODUCTION CALLER (checkable): `grep -rn 'cohort_cost' crates/*/src` finds only tel.rs's "
+           "own definition and doc comment; it is called only from crates/axon-loop/tests/tel_price.rs. "
+           "evl/admission build economics through summarize_with_missing/summarize_with_execution, "
+           "and the tel CLI through summarize/join, none of which reaches it")
+EXEMPT += [
+    (PRC, '        refused(format!(\n            "price_schedule_ref {o} is not a content Ref',
+     "NOTHING TO ADMIT: the request's opaque string is not a Ref at all, so there is no ref to compare "
+     "with the pinned schedule (the comparison is M1351)"),
+    (TEL, '        return Err(refused("a cohort with no assigned trials has no cost"));', _COHORT),
+    (TEL, '        return Err(refused(format!(\n            "{} missing records exceed {assigned} assigned trials",', _COHORT),
+    (TEL, '            return Err(refused("no usage records: the cohort\'s cost is unknown"))', _COHORT),
+    (TEL, '        _ => return Err(refused("currencies are never mixed in one cohort cost")),', _COHORT),
+    (PRN, '        return Err("axon-psv-runner takes no arguments".into());',
+     "SELECTS NOTHING (checkable): main passes start() only std::env::args().len(); no argument is "
+     "ever read, every path is a compiled-in guest path and the manifest digest comes from "
+     "/proc/cmdline (run_guest), so an extra argument changes nothing the runner does"),
+    (PRN, '        Err(e) => Err(format!("could not write the verdict: {e}")),',
+     "NOTHING TO ADMIT: run_and_emit failed to write /out/verdict.json, so there is no verdict or "
+     "digest to print; the runner exits 3 and the host reads no verdict (psv.rs 'no guest verdict', "
+     "an Unknown)"),
+]
+
+
+
+# C9 round 4b, INTEGRATE-E (amendment 64): the strict rework. The sites below
+# were exempted as RE-REPORTED / UNREACHABLE (another check refuses first).
+# Each was driven on its production route with the check that refuses first
+# ALSO removed, and the input was still refused: the site reads a value the
+# input does not have, and every later statement needs that value too
+# (logs: the integrate-E report). That is NOTHING TO ADMIT, executed, not a
+# dominance argument; the cells are named in each reason.
+EXEMPT += [
+    (EV, '        return Err("no Fabric execution attestation was delivered".into());',
+     "NOTHING TO ADMIT (executed, integrate-E): a null attestation holds no issuer, key or signature. "
+     "A protected trial delivered with none, through evaluate: this check removed -> refused \"names no "
+     "issuer\"; that also bypassed (issuer substituted) -> refused \"signature: not a JSON object\"; "
+     "every later step of verify_document reads a field a null lacks"),
+    (EV, "    if d.ctx_sig.is_null() {",
+     "NOTHING TO ADMIT (executed, integrate-E): no context signature was presented. Through evaluate on a "
+     "protected plan: this check removed -> \"signature: not a JSON object\"; that also bypassed (an empty "
+     "map) -> \"alg is not ed25519\"; every later field (public_key, signature) is equally absent"),
+    (EV, '.ok_or_else(|| refused("an authenticated attestation states no issued_ms"))?;',
+     "NOTHING TO ADMIT (executed, integrate-E): issued_ms is a SIGNED field of the attestation the "
+     "statement before verified; an attestation without it has no signed time. Through intake+evaluate: "
+     "this arm substituted (u64::MAX) -> intake refuses \"no issued_ms\"; attestation::verify's own "
+     "refusal also substituted (0) -> refused by the bound-field comparison (\"issued_ms is null but the "
+     "evidence it must vouch for has 0\", M03): no input reaches this arm with the time absent"),
+    (EV, '.ok_or_else(|| refused("an authenticated verdict names no issuer"))?,',
+     "NOTHING TO ADMIT (executed, integrate-E): a verdict with no issuer has no key to be verified under "
+     "(verify_check_evidence looks the key up by the issuer). Through intake+evaluate on failed verdicts "
+     "with issuer_ref null: this arm substituted -> intake refuses (\"not a trusted verifier independent "
+     "of the subject\"); that refusal also removed -> verify_check_evidence's issuer lookup panics "
+     "(intake.rs `expect(\"checked just above\")`): fails closed, never admits"),
+]
+# C9 round 4b, INTEGRATE-2 (amendment 64). FLAGGED for the integrator (ruling
+# R2's form: the measured experiment is stated).
+EXEMPT += [
+    (OT, "    if !dir.is_absolute() {",
+     "NO RELATIVE INPUT (checkable; FLAGGED): every production caller passes an absolute base and an "
+     "absolute dir: the bases are the literal `/` (root_keys_hex, check_operator_chain, trusted_issuers' "
+     "`operator_owned.then_some(Path::new(\"/\"))`, readiness's production `ownership_base`, the protected "
+     "host's `Some(Path::new(\"/\"))`), and the dirs are compiled-in constants (OPERATOR_TRUST_ROOT's "
+     "operator_dir, PROTECTED_HOST_CONFIG) or paths of the root-owned protected-host and custodian configs, "
+     "whose loaders refuse a relative path (protected_host.rs `is not absolute: a protected path is a fixed "
+     "host path`, `{ptr} is not absolute`; custodian.rs `is not an absolute plain path`); the verify CLI's "
+     "caller-chosen --issuers is authoritative only when it IS the operator root (verify_evidence_authority). "
+     "Measured (integrate-2): with this check removed, check_owned_chain(\"/\", d) for d in \"etc\", "
+     "\"etc/axon/trust\", \"./etc\", \"\" still refuses each (`is not below /`, strip_prefix): no four "
+     "cells exist because that refusal is not a refusal site of its own"),
+]
+
+
+
+# C9 round 4b, workstream GAPS (amendment 65): the custodian program pin's
+# OS-error and defence-in-depth sites, and the NoNewPrivileges diagnostic.
+EXEMPT += [
+    (PL, "    Err(if no_new_privs() {",
+     "DIAGNOSTIC, dominated (measured, amendment 65): a setuid-installed helper whose euid is not 0 is "
+     "refused on the production route by the euid rule (M602) and on a test-trust route by the "
+     "operator-file owner rule (read_operator_file: its config is root's, not the caller's); this "
+     "site only names the cause (NoNewPrivileges or nosuid) before them"),
+    (BIN, "    if let Err(why) = pl::setuid_honoured(euid) {",
+     "DIAGNOSTIC, dominated: the caller of setuid_honoured, exempt for the same reason (M602; the "
+     "test-trust owner rule)"),
+    (CU, "    if r != 0 {\n        return Err(format!(\n            \"SO_PASSPIDFD:",
+     "OS error from setsockopt: a kernel that cannot name a reply's sender refuses the call (fails "
+     "closed); no sender is assumed"),
+    (CU, "            if e.kind() == std::io::ErrorKind::Interrupted {",
+     "OS error from recvmsg: the call is refused; EINTR is retried"),
+    (CU, "        if msg.msg_flags & libc::MSG_CTRUNC != 0 || other {",
+     "defence in depth, dominated by the per-message pin check (M1483): every descriptor received "
+     "is owned and closed, and a truncated control buffer has no SCM_PIDFD, which the next line "
+     "refuses (the kernel named no sender)"),
+    (CU, "        if text.len() as u64 > MAX_MESSAGE {",
+     "a memory bound on the reply, not an authority decision: every byte under it was already "
+     "attributed to the pinned program"),
+    (CU, "    if pidfd_pid(pidfd) != Some(pid) {",
+     "a race that fails closed (the sender exited between naming it and opening its executable); "
+     "not deterministically reachable, and its absence would still hash an executable the pinned "
+     "check must match"),
+]
+
 def load_rows():
     spec = importlib.util.spec_from_file_location("mut", os.path.join(ROOT, "scripts/v022_g01_mutations.py"))
     mut = importlib.util.module_from_spec(spec)
@@ -819,9 +1193,11 @@ def line_of(text, offset):
 # an arm's or a block's value, no `return`) and a call of a refusal
 # constructor (`refused(`, `fail(`, `shape(` in the loop, the runner's
 # `refused(`, the verdict's `unknown(`). A definition of one is not a site.
+# Amendment 61: and the interpreter's `panic(` (a Flow refusal: the seal
+# edges and conform.rs refuse that way; `panic!(` is not it).
 ERR = re.compile(r"\bErr\(")
-CTOR = re.compile(r"\b(refused|fail|shape|unknown)\(")
-CTOR_DEF = re.compile(r"\bfn\s+(refused|fail|shape|unknown)\b|\blet\s+(refused|fail|shape|unknown)\s*=")
+CTOR = re.compile(r"\b(refused|fail|shape|unknown|panic)\(")
+CTOR_DEF = re.compile(r"\bfn\s+(refused|fail|shape|unknown|panic)\b|\blet\s+(refused|fail|shape|unknown|panic)\s*=")
 
 
 def err_is_expression(l, at):
@@ -859,13 +1235,51 @@ def is_site(l):
     return bool(CTOR.search(l)) and not CTOR_DEF.search(l)
 
 
-def sites(text):
+def fn_regions(lines, pattern):
+    """(first, last) line spans of the functions in `lines` whose name matches
+    `pattern`. A function ends at the first later line that is its own
+    indentation followed by `}` (rustfmt's layout, which cargo fmt --check
+    holds every file to)."""
+    out = []
+    head = re.compile(r"^(\s*)(pub(\([a-z]+\))?\s+)?fn\s+(\w+)")
+    for i, l in enumerate(lines):
+        m = head.match(l)
+        if not m or not re.search(pattern, m.group(4)):
+            continue
+        close = m.group(1) + "}"
+        for j in range(i + 1, len(lines)):
+            if lines[j] == close:
+                out.append((i, j))
+                break
+    return out
+
+
+def anchor_region(lines, text, f, bad):
+    """The REGIONS span of `f` as (first, last) line, or None (BAD) when an
+    anchor is not in the file exactly once."""
+    a, b = REGIONS[f]
+    if text.count(a) != 1 or text.count(b) != 1:
+        bad.append(f"{f}: a REGIONS anchor is not in the file exactly once: the region scans nothing")
+        return None
+    return (line_of(text, text.index(a)), line_of(text, text.index(b)))
+
+
+def sites(text, f=None, bad=None):
     lines = code_lines(text)
+    regions = None
+    if f in SCOPE_FN_REGIONS or f in REGIONS:
+        regions = fn_regions(lines, SCOPE_FN_REGIONS[f]) if f in SCOPE_FN_REGIONS else []
+        if f in REGIONS:
+            r = anchor_region(lines, text, f, bad if bad is not None else [])
+            if r:
+                regions.append(r)
     out = []
     for i, l in enumerate(lines):
         s = l.strip()
         # A `use` declaration names TEST_TRUST_BUILD; it reads nothing.
         if s.startswith("//") or s.startswith("use ") or not is_site(l):
+            continue
+        if regions is not None and not any(a <= i <= b for a, b in regions):
             continue
         g = i
         for j in range(i, max(-1, i - MAX_UP - 1), -1):
@@ -876,70 +1290,118 @@ def sites(text):
     return out
 
 
+def in_scope_files():
+    """The rule's file set (amendment 61), sorted: every .rs under SCOPE_DIRS,
+    SCOPE_FILES, and the SCOPE_FN_REGIONS files."""
+    found = set(SCOPE_FILES) | set(SCOPE_FN_REGIONS) | set(REGIONS)
+    for d in SCOPE_DIRS:
+        for dirpath, _, names in os.walk(os.path.join(ROOT, d)):
+            for n in names:
+                if n.endswith(".rs"):
+                    found.add(os.path.relpath(os.path.join(dirpath, n), ROOT))
+    return sorted(found)
+
+
+def judge_file(f, rows, bad):
+    """Judge one in-scope file: (covered, exempt, uncovered sites). Problems
+    with the registry or the exemptions go to `bad` whatever the file's state;
+    uncovered sites are returned, and reported by the caller."""
+    text = open(os.path.join(ROOT, f)).read()
+    lines = text.split("\n")
+    spans = []
+    for r in rows:
+        if r[2] != f:
+            continue
+        n = text.count(r[3])
+        if n != 1:
+            bad.append(f"{r[0]}: its old text occurs {n} times in {f} (covers nothing)")
+            continue
+        a = line_of(text, text.index(r[3]))
+        spans.append((r[0], a, a + r[3].count("\n")))
+    ex = []
+    for ef, anchor, reason in EXEMPT:
+        if ef != f:
+            continue
+        n = text.count(anchor)
+        if n != 1:
+            bad.append(f"exemption anchor occurs {n} times in {f}: {anchor!r}")
+            continue
+        ex.append([line_of(text, text.index(anchor)), anchor, reason, 0])
+    covered = exempt = 0
+    uncovered = []
+    for g, i in sites(text, f, bad):
+        by = [rid for rid, a, b in spans if a <= i and b >= g]
+        ex_hit = [e for e in ex if g <= e[0] <= i]
+        for e in ex_hit:
+            e[3] += 1
+        if by:
+            covered += 1
+            for e in ex_hit:
+                bad.append(f"{f}:{i + 1}: exempt ({e[1]!r}) yet covered by {by}: drop the exemption")
+        elif ex_hit:
+            exempt += 1
+        else:
+            uncovered.append(f"{f}:{i + 1}: refusal site with no row and no exemption: "
+                             f"{lines[g].strip()} ... {lines[i].strip()}")
+    for line, anchor, _, hits in ex:
+        if hits == 0:
+            bad.append(f"{f}:{line + 1}: exemption matches no refusal site: {anchor!r}")
+    return covered, exempt, uncovered
+
+
+def check(without=(), freeze=False, out=print):
+    """Run the gate. Returns the list of problems (empty: it holds). With
+    `freeze`, a non-empty NOT_YET_SCANNED is itself a problem."""
+    rows = [r for r in load_rows() if r[0] not in set(without)]
+    bad = []
+    scope = in_scope_files()
+    for f in sorted(set(OUT_OF_SCOPE) | set(NOT_YET_SCANNED)):
+        if f not in scope:
+            bad.append(f"{f}: named in OUT_OF_SCOPE/NOT_YET_SCANNED but not in scope by the rule "
+                       "(or gone): the table must not outlive its file")
+        if f in OUT_OF_SCOPE and f in NOT_YET_SCANNED:
+            bad.append(f"{f}: both OUT_OF_SCOPE and NOT_YET_SCANNED")
+    for f in scope:
+        if f in OUT_OF_SCOPE:
+            out(f"{f}: OUT OF SCOPE ({OUT_OF_SCOPE[f]})")
+            continue
+        covered, exempt, uncovered = judge_file(f, rows, bad)
+        if f in NOT_YET_SCANNED:
+            listed = NOT_YET_SCANNED[f]
+            out(f"{f}: NOT YET SCANNED: {len(uncovered)} of {covered + exempt + len(uncovered)} "
+                f"refusal sites have neither a row nor an exemption")
+            if len(uncovered) != listed:
+                bad.append(f"{f}: NOT_YET_SCANNED says {listed} uncovered sites, measured "
+                           f"{len(uncovered)}: update the count (or, at 0, scan the file)")
+            if freeze:
+                bad.append(f"{f}: NOT YET SCANNED at a freeze ({len(uncovered)} uncovered sites)")
+            continue
+        out(f"{f}: {covered} covered by a row, {exempt} exempt")
+        bad.extend(uncovered)
+    for b in bad:
+        out(f"BAD {b}")
+    return bad
+
+
 def main():
     without = set()
+    freeze = False
     for a in sys.argv[1:]:
         if a.startswith("--without="):
             without = set(a.split("=", 1)[1].split(","))
+        elif a == "--freeze":
+            freeze = True
         else:
             sys.exit(__doc__)
-    rows = [r for r in load_rows() if r[0] not in without]
-    bad = []
-    for f in PROTECTED:
-        text = open(os.path.join(ROOT, f)).read()
-        whole = text
-        if f in REGIONS:  # amendment 60: only the region is scanned (blank elsewhere)
-            a, b = (text.index(x) for x in REGIONS[f])
-            text = re.sub(r"[^\n]", "", text[:a]) + text[a:b] + re.sub(r"[^\n]", "", text[b:])
-        spans = []
-        for r in rows:
-            if r[2] != f:
-                continue
-            n = text.count(r[3])
-            if f in REGIONS and n == 0 and whole.count(r[3]) == 1:
-                continue  # amendment 60: a row outside the scanned region
-            if n != 1:
-                bad.append(f"{r[0]}: its old text occurs {n} times in {f} (covers nothing)")
-                continue
-            a = line_of(text, text.index(r[3]))
-            spans.append((r[0], a, a + r[3].count("\n")))
-        ex = []
-        for ef, anchor, reason in EXEMPT:
-            if ef != f:
-                continue
-            n = text.count(anchor)
-            if n != 1:
-                bad.append(f"exemption anchor occurs {n} times in {f}: {anchor!r}")
-                continue
-            ex.append([line_of(text, text.index(anchor)), anchor, reason, 0])
-        covered = exempt = 0
-        for g, i in sites(text):
-            by = [rid for rid, a, b in spans if a <= i and b >= g]
-            ex_hit = [e for e in ex if g <= e[0] <= i]
-            for e in ex_hit:
-                e[3] += 1
-            if by:
-                covered += 1
-                for e in ex_hit:
-                    bad.append(f"{f}:{i + 1}: exempt ({e[1]!r}) yet covered by {by}: drop the exemption")
-            elif ex_hit:
-                exempt += 1
-            else:
-                lines = text.split("\n")
-                bad.append(f"{f}:{i + 1}: refusal site with no row and no exemption: "
-                           f"{lines[g].strip()} ... {lines[i].strip()}")
-        for line, anchor, _, hits in ex:
-            if hits == 0:
-                bad.append(f"{f}:{line + 1}: exemption matches no refusal site: {anchor!r}")
-        print(f"{f}: {covered} covered by a row, {exempt} exempt")
-    for f, n in NOT_YET_SCANNED.items():
-        print(f"{f}: NOT YET SCANNED ({n} refusal sites had neither a row nor an exemption "
-              f"when measured; amendment 58)")
-    for b in bad:
-        print(f"BAD {b}")
-    if bad:
+    if check(without, freeze):
         sys.exit(1)
-    print("refusal coverage: every refusal site in the protected files has a row or a reasoned exemption")
+    if NOT_YET_SCANNED:
+        print(f"refusal coverage: every refusal site in the scanned files has a row or a reasoned "
+              f"exemption; {len(NOT_YET_SCANNED)} in-scope file(s) NOT YET SCANNED (a freeze "
+              f"refuses until none is)")
+    else:
+        print("refusal coverage: every refusal site in every in-scope file has a row or a reasoned "
+              "exemption")
 
 
 if __name__ == "__main__":

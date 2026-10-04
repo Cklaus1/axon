@@ -839,6 +839,39 @@ fn a_tag_chain_deeper_than_the_peel_limit_is_no_lineage() {
 #[test]
 fn an_ambiguous_abbreviation_is_no_lineage() {
     let f = fixture(true);
+    // The control's premise -- no other object of the fixture begins like
+    // HEAD -- is made a FACT here rather than left to chance: a fresh fixture
+    // holds 19 objects, each of the other 18 sharing HEAD's 16-bit prefix
+    // with p = 1/65536, so about one fixture in 3600 made this control fail.
+    // Once in the 6-shard paired-disable at 1cf94ffc it did (M346's cell;
+    // 150 runs clean and 150 with M346 removed all passed; C9 round 4b,
+    // integrate-3). An empty commit re-rolls HEAD until git itself names
+    // exactly one object for the prefix.
+    let mut n = 0;
+    while git_out(
+        &f.repo,
+        &[
+            "rev-parse",
+            &format!("--disambiguate={}", &f.rev("HEAD")[..4]),
+        ],
+        None,
+    )
+    .lines()
+    .count()
+        != 1
+    {
+        git(
+            &f.repo,
+            &[
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                &format!("re-roll {n}"),
+            ],
+        );
+        n += 1;
+    }
     let head = f.rev("HEAD");
     let short = &head[..4];
     // The development check resolves a unique abbreviation (the protected

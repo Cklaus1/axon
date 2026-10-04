@@ -184,6 +184,25 @@ fn populate(root: &Path) {
         &root.join("rust-toolchain.toml"),
         "[toolchain]\nchannel = \"nightly\"\n",
     );
+    coverage_gate(root, "[]");
+}
+
+/// The refusal-site coverage gate the freeze consults (amendment 61). The
+/// scratch repository holds no protected sources, so the real gate (run by
+/// gate.sh over this tree) is stood in for by one whose verdict the test
+/// chooses: `problems` is what `check(freeze=True)` returns, and a call
+/// without freeze=True returns a problem, so a freeze that does not ask for
+/// the freeze reading never passes.
+fn coverage_gate(root: &Path, problems: &str) {
+    write(
+        &root.join("scripts/v022_refusal_coverage.py"),
+        &format!(
+            "OUT_OF_SCOPE = {{}}\n\
+             def in_scope_files():\n    return []\n\
+             def check(without=(), freeze=False, out=print):\n\
+             \x20   return {problems} if freeze else ['the freeze did not ask for --freeze']\n"
+        ),
+    );
 }
 
 /// A committed standalone clone holding the freeze inputs.
@@ -194,6 +213,11 @@ fn clone(d: &Path) -> PathBuf {
     populate(&r);
     git(&r, &["add", "-A"]);
     git(&r, &["commit", "-q", "-m", "candidate"]);
+    // Amendment 65: the operator pinned the clean fixture's host tools.
+    write(
+        &pin_file(&r),
+        &operator_pin_of(&manifest_value(clean_source())).to_string(),
+    );
     r
 }
 
@@ -207,10 +231,63 @@ const WRAPPERS: [&str; 4] = [
     "CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER",
 ];
 
+/// Where a test puts the operator's host-toolchain pin it wants installed
+/// (outside the clone): beside it. Absent: no pin is installed.
+fn pin_file(root: &Path) -> PathBuf {
+    root.parent().unwrap().join("host-toolchain-pin.json")
+}
+
+/// The operator's pin of the clean fixture's host tools, as the deployment
+/// kit writes it (scripts/guest_build_env.py's own extraction, from this tree).
+fn operator_pin_of(m: &serde_json::Value) -> serde_json::Value {
+    let src = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../scripts");
+    let o = Command::new("python3")
+        .arg("-B")
+        .arg("-c")
+        .arg(
+            "import json,sys; sys.path.insert(0, sys.argv[1]); import guest_build_env as g; \
+             print(json.dumps(g.recorded_host_tools(json.loads(sys.argv[2]))))",
+        )
+        .arg(&src)
+        .arg(m.to_string())
+        .output()
+        .unwrap();
+    assert!(o.status.success(), "setup: {o:?}");
+    let tools: serde_json::Value = serde_json::from_slice(&o.stdout).unwrap();
+    json!({"schema": "axon-host-toolchain-pin/1", "status": "test", "tools": tools})
+}
+
 /// The freeze command from `root`, with no compiler wrapper in its env.
+/// Amendment 65: it runs in a private mount namespace whose /etc/axon is an
+/// empty root-owned tmpfs holding only [`pin_file`] (root-owned 0644) when
+/// the test placed one, so the operator pin the freeze REQUIRES is the
+/// test's, and the host's /etc is never written or read.
 fn freeze_cmd(root: &Path) -> Command {
-    // The freeze runs git, never a binary this workspace builds.
-    let mut c = script_spawn::script(
+    assert!(
+        unsafe { libc::geteuid() } == 0 && Path::new("/etc/axon").is_dir(),
+        "setup: the freeze tests need root and an /etc/axon mount point (a private mount \
+         namespace holds the operator's toolchain pin; /etc is never written)"
+    );
+    // The freeze runs git, never a binary this workspace builds. The private
+    // namespace is a wrapper the spawn helper puts in front of the script.
+    let pin = pin_file(root);
+    let mut c = script_spawn::script_under(
+        &[
+            "unshare".as_ref(),
+            "-m".as_ref(),
+            "--propagation".as_ref(),
+            "private".as_ref(),
+            "sh".as_ref(),
+            "-c".as_ref(),
+            "set -e; mount -t tmpfs -o mode=0755 tmpfs /etc/axon; \
+             if [ -e \"$1\" ]; then cp \"$1\" /etc/axon/host-toolchain-pin.json; \
+             chown \"${PIN_OWNER:-0}\" /etc/axon/host-toolchain-pin.json; \
+             chmod \"${PIN_MODE:-0644}\" /etc/axon/host-toolchain-pin.json; fi; \
+             shift; exec \"$@\""
+                .as_ref(),
+            "sh".as_ref(),
+            pin.as_os_str(),
+        ],
         "python3",
         root.join("scripts/v022_freeze_manifest.py"),
         Bins::NoWorkspaceBinary,
@@ -801,5 +878,134 @@ fn a_guest_component_built_outside_the_controlled_environment_does_not_freeze() 
                 Box::new(|m| rootfs(m)["env"]["LD_PRELOAD"] = json!("/var/tmp/evil.so")),
             ),
         ],
+    );
+}
+
+/// Amendment 61: a freeze is refused while the refusal-site coverage gate does
+/// not hold at a freeze (an in-scope protected file NOT YET SCANNED), so no
+/// freeze binds evidence over a decision file nobody scanned. Control: the
+/// same clone with the gate holding freezes
+/// (a_standalone_clone_with_a_clean_guest_manifest_freezes).
+#[test]
+fn a_freeze_is_refused_while_a_protected_file_is_not_yet_scanned() {
+    let d = tempfile::tempdir().unwrap();
+    let r = clone(d.path());
+    coverage_gate(
+        &r,
+        "['crates/axon-loop/src/ledger.rs: NOT YET SCANNED at a freeze (18 uncovered sites)']",
+    );
+    git(&r, &["commit", "-q", "-am", "gate"]);
+    refused(
+        &r,
+        "a tree whose refusal-site coverage does not hold at a freeze",
+        "refusal-site coverage gate does not hold at a freeze",
+    );
+}
+
+/// Amendment 64: the freeze asks the gate for its FREEZE reading. A gate that
+/// holds day to day but not at a freeze (a protected file NOT YET SCANNED is
+/// fine between freezes, never at one) refuses the freeze; a freeze that asked
+/// for the ordinary reading would bind it. Control: the same clone with the
+/// gate holding at a freeze freezes
+/// (a_standalone_clone_with_a_clean_guest_manifest_freezes).
+#[test]
+fn a_freeze_asks_the_gate_for_its_freeze_reading() {
+    let d = tempfile::tempdir().unwrap();
+    let r = clone(d.path());
+    write(
+        &r.join("scripts/v022_refusal_coverage.py"),
+        "OUT_OF_SCOPE = {}\n\
+         def in_scope_files():\n    return []\n\
+         def check(without=(), freeze=False, out=print):\n\
+         \x20   return ['crates/axon-loop/src/tel.rs: NOT YET SCANNED at a freeze (1 uncovered sites)'] \
+         if freeze else []\n",
+    );
+    git(&r, &["commit", "-q", "-am", "gate"]);
+    refused(
+        &r,
+        "a tree whose refusal-site coverage holds only outside a freeze",
+        "refusal-site coverage gate does not hold at a freeze",
+    );
+}
+
+/// Amendment 65 (M1470-M1473): the freeze binds only a guest image whose
+/// recorded host tools are the OPERATOR's pin (/etc/axon/host-toolchain-pin.json,
+/// written by the deployment kit), which it requires. Each case is refused:
+/// a build whose rustc is not the pinned one (M1470); a build that recorded a
+/// tool the pin does not name (M1471); no pin at all (M1472); and a pin that
+/// matches a tampered build but is written by another uid, or writable by
+/// one (M1473). Control: the operator's pin of the clean build freezes.
+#[test]
+fn a_guest_image_not_built_with_the_operators_pinned_tools_does_not_freeze() {
+    let d = tempfile::tempdir().unwrap();
+    let r = clone(d.path());
+    let pin = pin_file(&r);
+    let clean_pin = std::fs::read_to_string(&pin).unwrap();
+    let tampered = |m: &mut serde_json::Value| {
+        m["source"]["build_environment"]["toolchain"]["rustc_sha256"] = json!("d".repeat(64));
+    };
+    // M1470: the build ran another rustc than the operator pinned.
+    let mut m = manifest_value(clean_source());
+    tampered(&mut m);
+    write(&r.join(MANIFEST), &m.to_string());
+    let got = freeze(&r);
+    assert!(
+        got.is_err(),
+        "ATTACK: the freeze bound a guest image built with a rustc other than the operator's \
+         pinned one: {got:?}"
+    );
+    assert!(got.unwrap_err().contains("not the operator's pin"));
+    // M1471: the build recorded a host tool the operator never pinned.
+    let mut m = manifest_value(clean_source());
+    m["kernel"]["build_environment"]["tools"]["flex"] = json!({"path": "/var/tmp/flex",
+        "realpath": "/var/tmp/flex", "sha256": "f".repeat(64), "version": "x"});
+    write(&r.join(MANIFEST), &m.to_string());
+    let got = freeze(&r);
+    assert!(
+        got.is_err(),
+        "ATTACK: the freeze bound a guest image whose build recorded a host tool the operator's \
+         pin does not name: {got:?}"
+    );
+    assert!(got.unwrap_err().contains("does not name"));
+    write(&r.join(MANIFEST), &manifest(clean_source()));
+    // M1472: no operator pin.
+    std::fs::remove_file(&pin).unwrap();
+    let got = freeze(&r);
+    assert!(
+        got.is_err(),
+        "ATTACK: the freeze bound a guest image with no operator host-toolchain pin to judge its \
+         tools: {got:?}"
+    );
+    assert!(got.unwrap_err().contains("no operator host-toolchain pin"));
+    // M1473: a pin naming the tampered build's rustc, written by another uid
+    // (or writable by one).
+    let mut m = manifest_value(clean_source());
+    tampered(&mut m);
+    write(&r.join(MANIFEST), &m.to_string());
+    write(&pin, &operator_pin_of(&m).to_string());
+    for (owner, mode) in [("4242", "0644"), ("0", "0666")] {
+        let o = freeze_cmd(&r)
+            .env("PIN_OWNER", owner)
+            .env("PIN_MODE", mode)
+            .output()
+            .unwrap();
+        assert!(
+            !o.status.success(),
+            "ATTACK: the freeze accepted a host-toolchain pin owned by uid {owner} with mode \
+             {mode} (whoever writes it chooses the tools a freeze binds)"
+        );
+        assert!(
+            String::from_utf8_lossy(&o.stderr).contains("is not the operator's"),
+            "{}",
+            String::from_utf8_lossy(&o.stderr)
+        );
+    }
+    // Control: the operator's pin of the clean build.
+    write(&pin, &clean_pin);
+    write(&r.join(MANIFEST), &manifest(clean_source()));
+    let got = freeze(&r);
+    assert!(
+        got.is_ok(),
+        "control: the operator's pin of the clean build freezes: {got:?}"
     );
 }

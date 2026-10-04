@@ -250,6 +250,65 @@ fn kill_never_claims_tripped_for_a_run_that_was_not_live() {
     );
 }
 
+/// A kill ARMED before its run starts stops that run (C9 round 4b,
+/// integrate-3). `kill` on a run id with no live latch writes the latch and
+/// promises "a run starting with this id will pick it up"; `run` used to
+/// reset every latch to clear as it started, so the armed kill was discarded
+/// and the job ran to its timeout (exit 8). That is the race behind
+/// acc_a1_smoke_kill_journey's exit 8 under load: its kill landed before the
+/// loaded `run` reached the latch. Control: the same run, not armed, is
+/// stopped only by its timeout (exit 8, never 4), so the 4 below is the
+/// armed latch's doing.
+#[test]
+fn a_kill_armed_before_its_run_starts_stops_the_run() {
+    let Some(axon) = axon_bin() else { return };
+    let store = tmp("kill-armed-first");
+    let run = |rid: &str, timeout_ms: &str| {
+        Command::new(axon_os_bin())
+            .args([
+                "run",
+                "examples/r27/killable_agent.axjob",
+                "--killable",
+                "--run-id",
+                rid,
+                "--out",
+                store.to_str().unwrap(),
+            ])
+            .env("AXON_BIN", &axon)
+            .env("AXON_OS_TIMEOUT_MS", timeout_ms)
+            .current_dir(workspace_root())
+            .output()
+            .expect("spawn axon-os run")
+    };
+    let control = run("not-armed", "1500");
+    assert_eq!(
+        control.status.code(),
+        Some(8),
+        "control: an un-armed killable run is stopped only by its timeout: {}",
+        String::from_utf8_lossy(&control.stdout)
+    );
+    let armed = os(
+        &[
+            "kill",
+            "armed-first",
+            "--store",
+            store.to_str().unwrap(),
+            "--reason",
+            "armed before start",
+        ],
+        &axon,
+    );
+    assert_eq!(armed.code, 0, "pre-arming is allowed: {}", armed.stdout);
+    assert!(armed.stdout.contains("ARMED"), "{}", armed.stdout);
+    let o = run("armed-first", "20000");
+    assert_eq!(
+        o.status.code(),
+        Some(4),
+        "ATTACK: a run started after its kill was armed cleared the latch and ran: {}",
+        String::from_utf8_lossy(&o.stdout)
+    );
+}
+
 #[test]
 fn acc_a1_smoke_kill_journey() {
     // R27 §5.5 / §7: run --killable, kill, job stops with exit 4, verify passes.

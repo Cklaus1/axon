@@ -64,10 +64,12 @@ fn an_agent_writable_root_authorizes_nothing() {
         .contains("not root"));
     std::os::unix::fs::chown(&key, Some(0), None).unwrap();
 
+    // A symlink is refused by the symlink check and, its lstat mode being
+    // 0777 on Linux, by the mode check, each alone (M948 retired against
+    // M950, amendment 61): either reason.
     std::os::unix::fs::symlink(&key, root.join("alias.pub")).unwrap();
-    assert!(check_operator_owned_below(d.path(), &root)
-        .unwrap_err()
-        .contains("symlink"));
+    let e = check_operator_owned_below(d.path(), &root).unwrap_err();
+    assert!(e.contains("symlink") || e.contains("writable"), "{e}");
 }
 
 #[test]

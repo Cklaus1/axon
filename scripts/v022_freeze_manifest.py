@@ -18,6 +18,9 @@ names another repository: C9 round 3, A79), asked of the operator's git the
 way axon-fabric's git_data::discover asks it; and so is a guest manifest that
 is not clean with no reasons. The clean flag and its reasons are bound.
 
+C9 round 4b (amendment 61): the refusal-site coverage gate must hold under
+--freeze (no in-scope file NOT YET SCANNED); its digest and file count are bound.
+
 C9 round 4 (amendment 56): the guest manifest must also carry the record of the
 controlled build environment its binaries were built in
 (scripts/guest_build_env.py): exactly the constructed environment, fresh
@@ -102,10 +105,27 @@ def main():
     # mutation targets or how a row is classified changes this digest.
     reg = [[r[0], r[2], r[3], r[4], r[7]] for r in mut.MUTATIONS]
     registry_digest = sha_str(json.dumps(reg, sort_keys=True))
+    # Amendment 64: the LIBRARY_PRIMITIVE and SIBLING_ONLY classes are bound
+    # too, and neither is an active (killed-counted) row.
     equiv = {"EQUIV_RECORD": mut.EQUIV_RECORD, "STALE_REFACTORED": mut.STALE_REFACTORED,
-             "LEGACY_EQUIV": sorted(mut.LEGACY_EQUIV)}
+             "LEGACY_EQUIV": sorted(mut.LEGACY_EQUIV), "LIB_RECORD": mut.LIB_RECORD,
+             "SIBLING_RECORD": mut.SIBLING_RECORD}
     equivalence_digest = sha_str(json.dumps(equiv, sort_keys=True))
-    active = [r[0] for r in mut.MUTATIONS if r[0] not in mut.RETIRED]
+    active = [r[0] for r in mut.MUTATIONS
+              if r[0] not in mut.RETIRED | mut.LIBRARY_PRIMITIVE | mut.SIBLING_ONLY]
+
+    # Amendment 61: no freeze binds evidence over a protected decision file
+    # nobody scanned. The refusal-site gate's file set is a rule (every source
+    # of the protected crates, plus the interpreter's seal edges), and under
+    # freeze=True a non-empty NOT_YET_SCANNED is itself a failure.
+    cspec = importlib.util.spec_from_file_location("cov", os.path.join(ROOT, "scripts/v022_refusal_coverage.py"))
+    cov = importlib.util.module_from_spec(cspec)
+    cspec.loader.exec_module(cov)
+    coverage_problems = cov.check(freeze=True, out=lambda *_: None)
+    if coverage_problems:
+        sys.exit(f"refused: the refusal-site coverage gate does not hold at a freeze "
+                 f"({len(coverage_problems)} problem(s), first: {coverage_problems[0]}); "
+                 "run scripts/v022_refusal_coverage.py --freeze (amendment 61)")
 
     why = not_standalone(ROOT)
     if why:
@@ -146,7 +166,11 @@ def main():
     # controlled step, each cargo invocation is exactly its table entry with
     # the effective config checked before and after it, and the toolchain is
     # the pinned channel's. One judge for the whole image.
-    outside = gbe.image_problems(img)
+    # Amendment 65: and the host tools those steps recorded are the
+    # operator's pin (/etc/axon/host-toolchain-pin.json), which a freeze
+    # REQUIRES: without it the toolchain is attested only by the build's own
+    # record, and the freeze is what binds evidence for certification.
+    outside = gbe.image_problems(img, pin_required=True)
     if outside:
         sys.exit("refused: a guest image component was produced outside the controlled build "
                  f"(scripts/guest_build_env.py): {outside}")
@@ -169,9 +193,14 @@ def main():
         "retired_equivalent": len(mut.EQUIVALENT_DID),
         "retired_stale_refactored": len(mut.STALE_REFACTORED),
         "retired_legacy": len(mut.LEGACY_EQUIV),
+        "library_primitive": len(mut.LIBRARY_PRIMITIVE),
+        "sibling_only": len(mut.SIBLING_ONLY),
         "mutation_registry_digest": registry_digest,
         "equivalence_record_digest": equivalence_digest,
         "paired_disable_digest": sha_file("governance/status/v022-psv-paired-disable.json"),
+        "refusal_coverage": {"gate_sha256": sha_file("scripts/v022_refusal_coverage.py"),
+                             "in_scope_files": len(cov.in_scope_files()),
+                             "out_of_scope": sorted(cov.OUT_OF_SCOPE)},
         "spec_hashes": {
             "protocol": sha_file("governance/specs/v022-psv-protocol.md"),
             "gap_map": sha_file("governance/specs/v022-psv-gap-map.md"),

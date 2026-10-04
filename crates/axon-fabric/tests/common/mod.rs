@@ -797,7 +797,8 @@ pub fn write_helper_config(
         // and spends its nonce through this custodian ([`start_custodian`]).
         "observer": {"root": observer_root(dir), "max_age_s": 300,
                      "host_signer_public_key": TEST_HOST_SIGNER},
-        "custodian": {"socket": custodian_socket(dir), "uid": unsafe { libc::geteuid() }},
+        "custodian": {"socket": custodian_socket(dir), "uid": unsafe { libc::geteuid() },
+                      "sha256": custodian_program_sha256()},
     });
     let p = dir.join(name);
     std::fs::write(&p, cfg.to_string()).unwrap();
@@ -851,12 +852,20 @@ impl TestCustodian {
         axon_fabric::custodian::CustodianRef {
             socket: self.socket.clone(),
             uid: self.uid,
+            // Amendment 65: every test client authenticates the program too.
+            sha256: Some(custodian_program_sha256()),
         }
     }
     /// A nonce for `epoch`, issued to this process.
     pub fn issue(&self, epoch: u64) -> String {
         self.client().issue(epoch).unwrap().0
     }
+}
+
+/// The sha256 of the `axon-custodian` this build produced: the program pin a
+/// helper config names (amendment 65).
+pub fn custodian_program_sha256() -> String {
+    sha256_file(Path::new(env!("CARGO_BIN_EXE_axon-custodian")))
 }
 
 /// How to start a custodian.

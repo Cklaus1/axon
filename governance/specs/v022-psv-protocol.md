@@ -2235,6 +2235,95 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
     - **Operator deployment.** The guest image must be REBUILT to carry the new interpreter; its
       scripts and runner are unchanged.
 
+61. **The refusal-site gate's file set is a rule, not a list; the loop side's refusal sites are
+    rowed or exempt; an execution is attested only by a verifier the operator qualified for its
+    profile (C9 round 4b fix wave, rows4a workstream; rows M940-M1019; matrix A92).**
+    - **Before.** Round 4b (EQUIVALENCE) found the refusal-site gate's `PROTECTED` list omitting
+      whole protected decision files (`evl.rs`, `store.rs`, `attestation.rs`, `operator_trust.rs`,
+      the Fabric backend, submit and binary) while `NOT_YET_SCANNED` was `{}`: a hand-kept list
+      standing in for the real set (class a). Two guards had no row: `evl::verify_execution`'s
+      check that the execution attestation's signer is a trusted verifier (with it removed, a
+      revoked verifier's attestation counted and the owner and consumer suites stayed green), and
+      `operator_trust::verify_evidence_signature`'s RULE:issuer-trusted.
+    - **Found and fixed (A92).** `verify_execution` checked that the signer is trusted and that its
+      key is operator-rooted, but not that the operator QUALIFIED it for the profile it attests.
+      The operator's `verifier_pins[...].backend_profiles` bounded only verdicts
+      (`intake::check_pins`). A verifier the operator trusts but pinned only for development
+      backends attested a protected execution, and the trial counted in EVL and re-verified at
+      admission (failing reproduction: `an_execution_attested_by_a_verifier_not_qualified_for_its_profile_counts_nothing`,
+      `verified_pass` 2). `verify_execution`, the one primitive both doors call, now also
+      requires the signer's operator pin to name the receipt's backend profile, read as it is now.
+      The execution attester is deliberately NOT joined to the verdict's verifier: each is
+      operator-trusted and qualified for the profile, and each signs its own documents, which the
+      episode binds by digest; requiring one identity would add no authority.
+    - **The rule (`scripts/v022_refusal_coverage.py`).** In scope: every `.rs` file under
+      `crates/axon-fabric/src`, `crates/axon-loop/src`, `crates/axon-loop-contracts/src` and
+      `crates/axon-psv/src` (recursively, bins included), `crates/axon-core/src/interp/conform.rs`,
+      and in `interp.rs` and `interp/eval.rs` the non-test functions whose name matches
+      `seal|conform|cast` (the seal edges; the interpreter's `panic(` refusal constructor is now
+      a site). Each in-scope file is exactly one of: SCANNED (every site rowed or exempt with a
+      reason, else BAD), `OUT_OF_SCOPE` (named with a checkable reason: `evo.rs`, `profile.rs`,
+      `bin/axon-loop.rs`), or `NOT_YET_SCANNED` (named with its measured count of uncovered
+      sites, which the gate re-measures and refuses when it differs). An in-scope file in none of
+      the tables is SCANNED, so a new file is judged the day it appears; a table entry naming a
+      file outside the rule is refused. `--freeze` fails while `NOT_YET_SCANNED` is non-empty, and
+      `v022_freeze_manifest.py` runs the gate that way and refuses to bind a freeze otherwise
+      (test: `freeze_manifest.rs::a_freeze_is_refused_while_a_protected_file_is_not_yet_scanned`);
+      the gate's digest and file count are bound into the freeze manifest.
+    - **Loop side, per file (sites: rowed / exempt).** `evl.rs` 64: 49 / 15 (RE-REPORTED 2,
+      NOTHING TO ADMIT 6, UNREACHABLE 5, NAMED ROW 2); `store.rs` 17: 6 / 11 (OPERATOR-AUTHORED 2,
+      UNREACHABLE 1, OS ERROR 3, SELECTS NOTHING 4, NOTHING TO ADMIT 1); `attestation.rs` 19:
+      2 / 17 (NOTHING TO ADMIT 7, SELECTS NOTHING 9, NAMED ROW 1); `operator_trust.rs` 13: 8 / 5;
+      `safety.rs` 8: 5 / 3; `tasks.rs` 5: 5 / 0; `candidates.rs` 5: 5 / 0; `rules.rs` 4: 3 / 1;
+      `epoch.rs` 1: 0 / 1; loop `lib.rs` 1: 0 / 1. `plan.rs` 26: 18 / 4, with 4 left NOT YET
+      SCANNED (below). Admission's execution leg is `verify_execution` (M941, M943).
+    - **Rows.** ACTIVE, each killed by its own attack on the production route: M940-M947,
+      M949-M953, M958-M961, M963, M965-M969, M975-M978, M982-M997, M999-M1019. M965 (the
+      policy half of `bind_episode`'s byte binding) is the library primitive's own contract,
+      killed by its crate's test of it (`fixtures.rs::bind_episode_refuses_mismatches`): every
+      production caller decides the predicate first (EVL's M964; intake fetches the policy by the
+      episode's own ref), and the four-cell run showed the primitive's suite needs it, so it is not
+      retired. Retired EQUIVALENT_DID with four-cell records (never counted): M948 (vs M950: a
+      symlink's lstat mode is 0777 on Linux), M954/M955, M956/M957, M962 (vs M15 + M963), M964
+      (vs M965), M970/M971, M972/M973, M974 (vs M972 + M973), M979/M980/M998 (the three lstat
+      checks of the store path), M981 (vs M819). Tests that pinned WHICH of two independent
+      refusals answered were widened to accept either (the precedent of M487):
+      `trust_root.rs`, `readiness.rs`, `protected_host.rs` (symlink or mode) and `redteam.rs`'s
+      AB9 cherry-pick (one evaluation per experiment, or the population join). The
+      RULE:issuer-trusted row (M944) is killed through readiness (an agent-signed B263 record),
+      the production decision.
+    - **Not done here.** `NOT_YET_SCANNED` lists, with counts: the Fabric files (rows4b:
+      `backend.rs`, `submit.rs`, `git_data.rs`, `provenance.rs`, `bin/axon-fabric.rs`; unassigned:
+      `branches.rs`, `grants.rs`, `journal.rs`, `signing.rs`, `workspace.rs`, `axon-psv-runner`),
+      the interpreter's (core2: `conform.rs`, `interp.rs`'s seal edges), and on the loop side
+      `ledger.rs`, `pointer.rs`, `price.rs`, `tel.rs`, the contract layer (`canonical.rs`,
+      `checks.rs`, `compute.rs`, `episode.rs`, `ids.rs`, contracts `lib.rs`, `policy.rs`,
+      `receipt.rs`, `schema.rs`) and `plan.rs`'s four dominated sites (incumbent equals candidate;
+      the candidate's scope, candidate view, and an added tool), whose four-cell attacks are written
+      (`tests/plan_sites.rs`) but whose rows need ids past M1019. A freeze refuses until the list is
+      empty. The two new script guards (the freeze's coverage refusal; the gate's re-measured
+      count) have tests but no mutation row: the id range is exhausted.
+    - **Evidence.**
+      - `v022_g01_mutations.py --scope=all --only=<the 63 ACTIVE rows above but M965>` at
+        698d4912: 63/63 KILLED by their own attack, none refused elsewhere, no survivor
+        (`/var/tmp/c9r4b-rows4a-mut-final3.json`); M965 (with M951, M963) at 9ad610fb: KILLED
+        (`/var/tmp/c9r4b-rows4a-mut-M965.json`).
+      - `v022_paired_disable.py --only=...`: all four cells and the full-suite condition hold for
+        M954-M957, M962, M964, M970-M974, M979-M981, M998 at 698d4912
+        (`/var/tmp/c9r4b-rows4a-pd{A,B,C}.json`; pdB also holds the superseded M965 attempt,
+        whose full suite was red, which is why M965 is ACTIVE) and for M948 at 9ad610fb
+        (`/var/tmp/c9r4b-rows4a-pdD.json`).
+      - Full suites (rc 0): axon-loop and axon-loop-contracts (381), axon-reflex and
+        cortex-policy-adapter (38), axon-fabric single-threaded (553); `cargo build -p
+        axon-fabric --bins`; fmt; clippy -D warnings on axon-loop, axon-loop-contracts and
+        axon-fabric. `v022_refusal_coverage.py` passes, `--freeze` refuses (27 files NOT YET
+        SCANNED); the paired-disable join self-test passes. `psv_matrix_check.py` reports only
+        A91 missing, a row another workstream holds.
+    - **Operator deployment.** A verifier whose execution attestations a protected evaluation is
+      to count must be pinned for `linux-microvm-protected` in the loop store's `verifier_pins`.
+      The Fabric verifier that already signs the protected verdicts is pinned so; nothing else
+      changes.
+
 62. **The refusal-site gate covers the Fabric decision files; the root helper's report, the protected
     executable and every B263 qualification rule have rows; the protected PCI lineage names the
     certified revision by its whole hash (C9 round 4b, EQUIVALENCE (4), Fabric side; rows4b
@@ -2501,3 +2590,372 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       the FULL build (`AXON_KERNEL_BACKEND=linux scripts/build-guest-image.sh`, kernel included:
       a `--rootfs-only` build needs a `kernel-build.json` from a controlled kernel build) from a
       standalone clone and re-pins; the operator item above stands.
+
+64. **Every in-scope refusal site is rowed, retired four-cell, or exempt by a checkable fact; the
+    refusal-site gate holds at a freeze; a guard killed only by its library test is a separate,
+    never-killed class; the final paired-disable's eleven full-suite failures are triaged (C9 round
+    4b, integration of integrate-A..E, integrate-2 and integrate-3; rows M1200-M1403, M1450; no
+    matrix row).**
+    - **Before.** Amendment 61 left `NOT_YET_SCANNED` non-empty, so `v022_refusal_coverage.py
+      --freeze` (and with it every freeze) refused: the whole contract layer (`canonical.rs`,
+      `checks.rs`, `compute.rs`, `episode.rs`, `ids.rs`, contracts `lib.rs`, `policy.rs`,
+      `receipt.rs`, `schema.rs`), `ledger.rs`, `pointer.rs`, `price.rs`, `tel.rs`, `plan.rs`'s four
+      dominated sites and the psv runner; and several exemptions on `evl.rs`, `store.rs`,
+      `intake.rs`, `operator_trust.rs` rested only on "another check refuses first". The gate's
+      own guards (the re-measured count, the freeze reading, the interp region union, anchor
+      uniqueness, the freeze's consultation) had no rows. Rows whose only kill was a direct test of
+      a public library function had no honest class: neither ACTIVE (no production attack reaches
+      them alone) nor EQUIVALENT_DID (the full-suite condition fails on the library test).
+    - **After (the gate rule).** Unchanged from amendment 61: every `.rs` under the protected
+      crates' `src` plus the interpreter's seal regions is SCANNED, OUT_OF_SCOPE with a checkable
+      reason, or NOT_YET_SCANNED with a re-measured count, and `--freeze` fails while the last is
+      non-empty. `NOT_YET_SCANNED` is now EMPTY: `v022_refusal_coverage.py` and `--freeze` both
+      pass (rc 0), so the freeze manifest's coverage refusal (M1396/M1397) no longer fires.
+    - **Per file (rowed / exempt; 0 uncovered).** canonical.rs 9/3; checks.rs 37/0; compute.rs
+      2/0; episode.rs 8/0; ids.rs 8/1; contracts lib.rs 4/0; operator_trust.rs 8/5; policy.rs
+      4/3; receipt.rs 9/0; schema.rs 15/13; ledger.rs 18/0; pointer.rs 41/1; plan.rs 24/2;
+      price.rs 11/1; tel.rs 6/4; rules.rs 4/0; evl.rs 51/13; store.rs 10/7; intake.rs 44/19;
+      axon-psv-runner.rs 1/2.
+    - **Rows (by workstream).** integrate (gate guards): M1392-M1397 ACTIVE. integrate-A
+      (contract crate, `tests/contract_sites.rs`): ACTIVE M1200, M1201, M1204-M1206, M1210-M1213,
+      M1215, M1216, M1218, M1221, M1222, M1228-M1231, M1234, M1235; ACTIVE again (integrate-3, below) M1232; retired
+      EQUIVALENT_DID M1202, M1203, M1207, M1219, M1220, M1225, M1226, M1237-M1240, M1242, M1243,
+      M1245-M1252, M1254-M1262, M1265-M1267; LIBRARY_PRIMITIVE (integrate-3, below) M1214, M1217,
+      M1223, M1224, M1233. integrate-B (`checks.rs`,
+      `tests/checks_sites.rs`): ACTIVE M1270-M1293; retired M1294 (vs M1295), M1296 (vs
+      M34+M1291). integrate-C (`ledger.rs`, `pointer.rs`): ACTIVE M1300-M1308, M1311-M1313,
+      M1315-M1328, M1331-M1333, M1335-M1344; retired M1309, M1310, M1314, M1329, M1330, M1334.
+      integrate-D (price, tel, plan, rules, runner): ACTIVE M1345, M1347-M1351, M1353-M1359,
+      M1362; retired M1346, M1360, M1361, M1365-M1368, M1370, M1371, M1364 (below).
+      integrate-E (strict rework): ACTIVE M1376; retired M1375, M1377-M1380; the four evl
+      null/absent-value arms are NOTHING TO ADMIT with their executed cells named in the reasons.
+      integrate-2: `pointer.rs` check_activate's admission route (`tests/activation_sites.rs`,
+      genuine admissions through `pointer::transition`): ACTIVE M1386 (target), M1388 (H1), M1389
+      (K1), M1390 (mechanism-test label), M1391 (deployment_enabled); retired M1387 (the
+      admission's scope, set vs M1388+M1334: a cross-scope admission; each alone refuses, all
+      three removed scope B serves scope A's candidate). `checks.rs`
+      (`tests/checks_rest_sites.rs`): retired M1400 (empty shortlist, vs M1220+M1238), M1402 (role
+      upgrade, vs intake's M45: a check request doubling as the execution request counts with
+      both removed). `evl.rs` `matched_checks == 0`: retired M1372 (below). Harness rows M1373,
+      M1374 (below).
+    - **De-duplication.** One row per guard: integrate-A's M1268 duplicated C's M1330
+      (`pointer.rs` next_epoch) and A's M1264 duplicated D's M1369 (`policy.rs`
+      authority_expansion); M1268 and M1264 are removed (row, marker, record), M1266/M1267's sets
+      now name M1330. D's and A's parse-layer rows are different sites (M1362/M1363 are parse's
+      calls; A's are the walker's and the typed rules' own checks), so none was dropped.
+    - **Ruling R1: LIBRARY_PRIMITIVE.** A guard of a public primitive that is dominated on every
+      production route (every production input it refuses is refused on that route by another
+      named guard, earlier or later to the same outcome) and whose retirement fails only because a
+      direct library test needs it. `LIB_RECORD` in the registry names, per production route, the
+      dominating guard and the library test; the mutation harness RUNS the row (its library-test
+      kill is required) but reports it in its own class and NEVER counts it killed; the freeze
+      manifest binds `LIB_RECORD` in its equivalence digest and counts the class separately from
+      the active rows. Members: M965, M1295, M1297, M1298, M1299, M1352, M1363, M1369 (ruling R1's
+      list, each verified against the code), and M1401 (`check_shortlist`'s scope/view,
+      dominated by `bind_episode`'s M963/M1294 at intake and identity arguments elsewhere) and
+      M1403 (`bind_acf`'s verified-bytes rule, dominated by M1296+M1291 on its one production
+      caller), which meet the same definition; integrate-3 adds M1214, M1217, M1223, M1224 and
+      M1233 (below). The class is now FIFTEEN rows: M965, M1214, M1217, M1223, M1224, M1233,
+      M1295, M1297, M1298, M1299, M1352, M1363, M1369, M1401, M1403. Verified, and recorded honestly in the routes: for
+      M1297, M1298 (evl), M1299, M1352 and M1363 the dominating guard runs LATER on the same route,
+      not earlier (M857, M1281, M10, M1351, the pointer's fence / profile negotiation); M1299's
+      Unknown kind and M1363's transition exit code (Conflict vs Refused) differ, the outcome
+      (not counted / not applied) does not. Harness row M1373 (the class is never counted killed;
+      `harness_integrity.rs::a_library_primitive_row_is_never_reported_as_killed`).
+    - **Integrator ruling on E's flag (`evl.rs` `matched_checks == 0`).** Retired the EVL site,
+      M1372, vs the contract code (episode.rs M1249, receipt.rs M1257) and the schema walker's
+      minimum check (schema.rs M1218), which is the code that enforces the schemas' `minimum: 1`:
+      no schema byte is a set member. The full-suite condition applies to the retired guard alone.
+    - **SIBLING_ONLY (the same ruling, applied to integrate-A).** A's nine schema-JSON rows
+      (M1208, M1209, M1227, M1236, M1241, M1244, M1253, M1263, M1269) were retired mutually with
+      their code rows, and their own full-suite cells could only fail on
+      `fixtures.rs::checked_in_schemas_are_the_package_bytes` (the MiCode package bytes are
+      digest-pinned). They are now SIBLING_ONLY edits: members of exactly the code rows' sets
+      `SIBLING_RECORD` names (M1247, M1248, M1255, M1256, M1258, M1261, M1262, M1265, M1250 are
+      the retired rows), never active, never retired, never counted killed; paired-disable refuses
+      a sibling-only edit used by a set its record does not name. Harness row M1374
+      (`harness_integrity.rs::a_sibling_only_edit_is_never_an_active_row`).
+    - **Ruling R3.** `plan_evo_tel.rs::freeze_refuses_candidate_equal_incumbent` requires that the
+      freeze is refused (NotReady from `inc == cand`, or Refused from the candidate-provenance
+      check M1011), not which answers (precedent M487); M1364 is then retired vs M1012.
+      integrate-3 applies it once more: `axon-loop/tests/cli.rs::
+      cli_pointer_baseline_resolve_transition_show_revoke` pinned exit 4 for a transition whose
+      fence skips an epoch; on that CLI route (`parse` then `pointer::transition`, nothing written
+      between) the two independent refusals are parse's typed rule M1266 (Refused, 4) and the
+      pointer's `next_epoch == current + 1`, M1330 (Conflict, 5). The test now requires a refusal
+      (4 or 5) with the store unchanged; M1266 stays retired vs M1330 and its record says so.
+    - **Ruling R2 (FLAGGED exemptions).** integrate-A's four (ids.rs authority epoch, policy.rs
+      target/admission refs, schema.rs non-integer number) state the experiment in their reasons.
+      integrate-2 adds one, `operator_trust.rs` `!dir.is_absolute()`: NO RELATIVE INPUT (every
+      production base is `/` and every dir a compiled-in constant or a loader-checked absolute
+      config path); measured: with the check removed, `check_owned_chain("/", d)` for `etc`,
+      `etc/axon/trust`, `./etc` and `` still refuses (`is not below /`).
+    - **Also fixed.** `crates/axon-core/tests/refusal_coverage_gate.rs` (from the integrate
+      commit) spawned the gate outside the script helper, which
+      `harness_binaries::every_script_spawn_in_the_workspace_goes_through_the_helper` refuses; it
+      now uses `script_spawn::script(.., Bins::NoWorkspaceBinary)`. PSV_IDS covers M1400-M1469 (integrate-3: M1450-M1469).
+    - **Triage of the final paired-disable (integrate-3).** The 6-shard run at 1cf94ffc held for
+      144 of 155 records. Every one of the eleven failures had its four cells and failed ONLY the
+      full-suite cell (the retired guard removed alone, the owner's and consumers' whole suites).
+      Each was reproduced through its exact path; none was called a flake without a measurement.
+      - *M1214, M1217, M1223, M1224, M1233 -> LIBRARY_PRIMITIVE.* The failing tests were the
+        primitives' own unit tests (`schema::tests::structural_rules` for the oneOf / required /
+        additionalProperties rules, `schema::tests::profile_id_pattern_is_exact` for the pattern
+        rule, `ids::tests::deserialize_validates_too` for the acf1 scheme). The all-paths claim was
+        re-verified against the code: `validate_against`'s only callers are `canonical::parse`
+        (every Contract document) and `PilotPlan::from_value`; on the first, typed serde refuses
+        the same values later in the same parse (non-defaulted fields, deny_unknown_fields, the
+        id/ref/acf1/currency newtypes, `ProfileId`/`PeerId` calling `pattern_matches` directly,
+        `PinAck`); on the second, `strict_record` with its canonical round-trip and the
+        experiment id's `TaskId::new`. The checked-in oneOfs never overlap, so `n == 2` occurs on
+        no production document. Two record texts were wrong and are corrected in `LIB_RECORD`:
+        M1214's said every oneOf member was a bounded string or null (the policy pin's `ack` is two
+        closed objects; `PinAck` refuses them, redteam a4/s07 passed with M1214 removed), and
+        M1233's said Acf1Ref is never read outside contract documents (evl's protected-evidence
+        join reads one with plain serde, dominated LATER by `verify_check_evidence`'s schema
+        parse; fabric holds only digests it computed or journalled). M1217 and M1233 dominate
+        each other on the contract route (their four-cell pair held at 1cf94ffc); neither is
+        counted killed. Each library test now prints an ATTACK marker.
+      - *M1232 -> ACTIVE (a false retirement).* Its record said every Ref outside a contract
+        document is compared with a computed digest or names a CAS file. `axon-loop pointer
+        revoke --policy` does neither: the flag becomes a `Ref` (`Ref::new`, i.e. `check_hex64`)
+        and `pointer::revoke` appends it to the authority ledger unread; no schema walk sees a CLI
+        flag. With the hex rule removed a revocation naming `cl22:<HEAD's digest in uppercase>`
+        is recorded (exit 0). M1232 is ACTIVE, killed on that route by
+        `tests/cli.rs::a_revocation_naming_a_reference_that_is_not_a_digest_is_never_recorded`
+        (control: the real digest is recorded).
+      - *M1266 -> stays retired* (ruling R3, above).
+      - *M346 -> stays retired; the control is made deterministic.* 150 runs clean and 150 with
+        M346 removed: all pass. M346's edit reaches the test only as the bytes of the copied
+        `provenance.rs` blob, i.e. different random object ids. The control ("a unique
+        abbreviation of HEAD") used HEAD's first 4 hex digits in a fixture of 19 objects, so it
+        held by chance (each other object shares the prefix with p = 1/65536: about one fixture in
+        3600; over the 154 fabric full-suite cells of the 1cf94ffc run, about 4%). The test now
+        re-rolls HEAD (an empty commit) until `git rev-parse --disambiguate` names one object;
+        the attack (a colliding blob) is unchanged. 40/40 and the whole file pass.
+      - *M1095, M1043 -> stay retired; the custodian tests' waits are fixed at the source.* The
+        mutations change nothing: the four tests pass clean, with M1095 and with M1043 removed,
+        alone, three-way concurrent, and under 40 CPU spinners. The cell signatures ("No such
+        file or directory" for the custodian socket; "Listening ... Terminated" with no
+        request served, or no refusal written) are reproduced EXACTLY on a clean tree by delaying
+        the socket activation 12 s: the namespace helpers waited 200 x 50 ms for the socket and
+        the Python clients 20 s, which the 6-shard host exceeded. The bounds are now >= 180 s
+        (`ACTIVATION_POLLS`, `CLIENT_TIMEOUT_S`), and a socket that never appears exits the
+        namespace script non-zero -- a SETUP failure, never a verdict; before, the attack
+        assertions (`!reply.contains("ok":true)`) could pass on a custodian that never ran. With
+        the 12 s delay all four now pass; `privileged_launcher.rs` passes whole (58).
+      - *M58 -> stays retired; a real axon-os defect fixed.* `acc_a1_smoke_kill_journey`: 10/10
+        exit 4 clean, with M58 removed and with M58+M59 removed. The 8 was the job's TIMEOUT
+        (Denied, axis time): `axon-os run` reset `<run>.kill` to `{"latch":"clear"}`
+        unconditionally as it started, so a kill landing before the loaded `run` reached that
+        line -- which `axon-os kill` accepts as a pre-arm and promises "a run starting with this
+        id will pick it up" -- was discarded and the job ran out its 10 s. Reproduced by arming
+        first: exit 8 after 10 s. The latch is now created clear only when absent
+        (`create_new`), so an armed kill stops the run at its first poll (exit 4, 0 s). New row
+        M1450 (`r27_acceptance.rs::a_kill_armed_before_its_run_starts_stops_the_run`; control: an
+        un-armed run is stopped only by its timeout). acc_a1 stays strict (exit 4). No other
+        interpreter retirement is on this route: the killable agent has no loop control, and the
+        exit code is decided by `run_bounded`'s latch poll versus the timeout, not by the
+        interpreter.
+    - **Evidence.** Mutation: integrate-2's new rows 121/121 KILLED at 8640d94f and 6/6 at
+      b1c0a3a3; integrate-3's changed and new rows (M1214, M1217, M1223, M1224, M1232, M1233,
+      M1450) each KILLED by its own attack at the integrate-3 fix commit. Paired-disable: one
+      joined record set at the commit carrying this amendment, every record re-executed under the
+      currency rule (the five LIBRARY_PRIMITIVE rows and M1232 leave the retired set: 149
+      records), all holding. Refusal coverage plain and `--freeze`: rc 0.
+    - **Matrix.** No row. No PSV production hole was found: M1232's guard was present and
+      refusing (its EVIDENCE claim was false, not the code), and the kill-latch defect is in the
+      axon-os supervisor's R27 kill switch, outside the PSV negative matrix (it is rowed, M1450).
+    - **Operator deployment.** None.
+
+65. **The setuid helper's inherited-state resets are evidenced; the custodian is the program the
+    operator pinned; the B263 record names the host it ran on; the host-toolchain pin has a
+    reader; NoNewPrivileges is named and checked (C9 round 4b, gaps: the operator deployment kit,
+    c9r4b/opkit a24e170a, found these code gaps).** No counting rule is relaxed.
+    - **Before.** (1) `privileged_launcher::harden()` (the setuid helper's reset of signal
+      dispositions and mask, umask, working directory, inherited descriptors, environment,
+      dumpable flag and resource limits) had no test and no row: each reset could be deleted with
+      the whole suite green. (2) The custodian was authenticated only by the uid that bound its
+      socket (or root, systemd's activation); its PROGRAM was pinned nowhere, so any program
+      serving the socket as the custodian uid could answer every spend `ok` (negative matrix A93).
+      (3) `scripts/b263_qualify.sh` wrote `"host": "WSL2-nested"` and a fixed Hyper-V caveat
+      whatever host it ran on; every protected receipt carries `qualification-host:<host>` and
+      `qualification-caveat:` verbatim. (4) The kit's `/etc/axon/host-toolchain-pin.json`
+      (`axon-host-toolchain-pin/1`) had no reader. (5) No harness ran
+      `scripts/trust_root_guest_probe.sh` in a real guest (the preflight runs whatever
+      `--guest-cmd` the operator supplies; its own test uses a mount-namespace stand-in). (6) A
+      Fabric under NoNewPrivileges makes the kernel ignore the helper's set-id bit: measured, the
+      production helper then runs as the Fabric uid and refuses every launch (euid rule, M602),
+      with a reason naming a missing setuid bit or a nosuid mount; the preflight probes through
+      `setpriv` without NoNewPrivileges and cannot see how the service is really started.
+    - **After.**
+      - (1) `a_callers_process_state_never_reaches_the_root_helper_or_its_launcher`: the
+        setuid-root (test-trust) helper is executed by a hostile Fabric-uid caller (python3 as
+        the Fabric uid) that ignores SIGTERM/SIGHUP/SIGINT, blocks SIGUSR1/SIGALRM/SIGTERM, sets
+        umask 0, lowers FSIZE/CPU/NOFILE, raises CORE, leaves fd 9 open on its own file, works in
+        its own directory and sets BASH_ENV/ENV/LD_PRELOAD/PATH. The stand-in launcher records,
+        from /proc as root, its own state and its parent's (the helper's). One assertion per
+        property, each its own row. Two resets have NO row, by a stated dominance:
+        the environment clear (the launcher's environment is built from nothing by
+        `sealed_exec::command`'s explicit envp, and no code on the helper's path reads a variable;
+        the test still asserts the end-to-end property) and `PR_SET_DUMPABLE 0` (the kernel
+        already makes a set-id exec non-dumpable at `fs.suid_dumpable` 0, measured on this host,
+        and at 2 the difference is only a root-owned core file; not observable without crashing
+        the helper). Neither is counted killed.
+      - (2) `CustodianRef` gains `sha256` (the program pin). The helper config requires it in
+        production (`load_config`; a test config may omit it); every test fixture pins the built
+        `axon-custodian`. With a pin, `CustodianRef::call` sets `SO_PASSPIDFD` before sending the
+        request, reads the reply with `recvmsg`, and for EVERY message takes the kernel's
+        `SCM_PIDFD` of its sender; `check_sender_program` reads the pid from the pidfd's fdinfo,
+        opens `/proc/<pid>/exe`, asks the pidfd again (alive then means alive at the open, so the
+        pid was not recycled), refuses an executable not owned by root (or this uid) or writable
+        by group/other, and hashes the OPEN descriptor against the pin. This is the source: the
+        one call every issue and spend goes through. It is checked where the nonce is SPENT (the
+        helper's config); Fabric's own issue call carries no pin (`protected_host.rs`), and
+        `helper_agrees` now compares the custodian's socket and uid only (M636 re-anchored, same
+        guard). A kernel without `SO_PASSPIDFD` (Linux < 6.5) refuses every pinned call.
+      - (3) `scripts/b263_host.py` measures the identity (hostname, `/etc/machine-id`,
+        `systemd-detect-virt`, kernel), prefixed by the operator's `--host-label`; the caveat is
+        the operator's `--caveat`, else derived from the measured virtualization.
+        `b263_qualify.sh` takes both from it and records `host_facts.{hostname, machine_id, virt,
+        wsl, host_label}` and `source.host_identity_sha256`. Readers: `accept_b263` requires a
+        non-empty host and carries it into the qualification; `submit.rs` writes it into every
+        protected receipt as evidence. Nothing compares it to the running host (A89: the host is
+        joined through the qualification digest the host config pins); a host-binding rule
+        (the record's machine-id against the running host's) is a possible follow-up, not a
+        current counting rule.
+      - (4) `guest_build_env.toolchain_pin_problems`: the pin must be an operator file (the file
+        and every directory above it real, root-owned, not group/other-writable); every host tool
+        the image's build records name (kernel tools, cargo's linker, mksquashfs, rustc, cargo:
+        `recorded_host_tools`, the kit's own extraction) must be pinned at the same path and
+        digest, and every pinned tool recorded. `image_problems` applies it last. ABSENT pin:
+        the FREEZE refuses (`image_problems(img, pin_required=True)`: a freeze binds evidence for
+        certification, and without the operator's pin the toolchain is attested only by the
+        build's own record); in development (`guest_build_env.py toolchain-pin MANIFEST`) it is a
+        WARNING. A pin that exists is always judged. The freeze tests now run the freeze in a
+        private mount namespace whose `/etc/axon` holds only the test's pin (root required; the
+        host's /etc is never read or written).
+      - (5) `psv_guest_boot_test.sh` case `trust-probe`: `trust_root_guest_probe.sh` runs inside
+        the REAL guest (the pinned image, kernel and launcher) in the launcher's plain mode under
+        an Exec grant, put on the workspace drive and run by busybox sh: the operator trust root
+        is unaddressable; control: `/work` is addressable (a mount). Not through the PSV runner,
+        which strips Exec from every test child (A27: measured, a suite test's `exec` is refused
+        `requires effect Exec`, so case `reach` is refused by that ceiling, not by provenance). No
+        guest change.
+      - (6) The helper refuses, in EVERY build, when its own executable is setuid-root but its euid
+        is not 0, naming NoNewPrivileges (`PR_GET_NO_NEW_PRIVS`) or else nosuid/user namespace
+        (`setuid_honoured`). `--probe` reports `no_new_privs` and `cgroup`. The preflight takes
+        `--fabric-pid PID` (REQUIRED in protected mode) and FAILS unless `/proc/PID/status` shows
+        the Fabric uid and `NoNewPrivs: 0`. No row: on the production route the euid rule (M602)
+        refuses the same launch, and on a test-trust route the operator-file owner rule; this is a
+        diagnostic (refusal-site gate exemption).
+      - **Cgroup decision (memo condition C3): the root launch stays in Fabric's cgroup, by
+        design, and is recorded.** The VMM is NOT in it: the jailer places firecracker in its own
+        cgroup (`/sys/fs/cgroup/<parent>/<id>`, with memory.max, pids.max and cpu.max set per
+        launch by `fc_linux_profile.sh`). What inherits Fabric's limits is the helper, the pinned
+        bash launcher and the host tools it runs before the jail. A Fabric OOM, TasksMax or stop
+        that kills them mid-launch ends the launch without a report (or with exit 31): it is a
+        failure/unknown attempt under the strict counting rules, never a protected verdict (the
+        out dir stays root's until the hand-over, and the verdict needs the helper's report);
+        `fc_linux_profile.sh --reap ID` cleans what it left. The operator sizes Fabric's
+        MemoryMax/TasksMax for helper + launcher + tools; the probe's `cgroup` field shows where
+        the helper runs. Moving the root side to its own cgroup is the D2 (per-connection socket
+        service) follow-up of the setuid-vs-daemon memo, not done here.
+    - **Rows** (all PSV; M1470-M1486; M1487-M1499 unused; the assigned M1450-M1469 are
+      integrate-3's, amendment 64):
+      - M1474-M1482 (`harden()`): ignored signals reset (M1474), mask cleared (M1475), umask
+        (M1476), cwd (M1477), inherited descriptors (M1478), RLIMIT_CORE 0 (M1479), lowered
+        CPU/FSIZE/DATA/AS/NPROC reset (M1480), SIGPIPE ignored (M1481), NOFILE (M1482).
+      - M1483: the reply's sender executes the pinned program (attack: an impostor on the socket,
+        test-trust route). M1484: an executable another uid can rewrite is refused. M1485: a
+        production helper config must pin the custodian (production route, the setuid production
+        helper in a private /etc/axon).
+      - M1486: the B263 identity is measured (attack: the constant).
+      - M1470-M1473: the freeze binds only the operator-pinned tools (another rustc; an unpinned
+        recorded tool; no pin; a pin matching a tampered build but owned by another uid or
+        writable).
+      - M636 re-anchored to the socket/uid comparison (same guard, same test).
+    - **Matrix.** A93 (the custodian program).
+    - **Tests.** `privileged_launcher.rs`: five new tests (harden; impostor custodian; rewritable
+      custodian executable; production pin required + production impostor + control; production
+      helper under `--no-new-privs`). `qualification.rs`:
+      `the_b263_record_states_the_host_it_ran_on`. `freeze_manifest.rs`:
+      `a_guest_image_not_built_with_the_operators_pinned_tools_does_not_freeze`.
+      `test_trust_root_preflight.sh`: a Fabric process under NoNewPrivileges FAILS the new check;
+      control passes. `psv_guest_boot_test.sh`: case `trust-probe`.
+    - **Operator deployment (kit changes, c9r4b/opkit).** `protected-launcher.json` gains
+      `custodian.sha256` = the sha256 of the INSTALLED `axon-custodian` (`gen_configs`;
+      `protected-launcher.json.example`), and the helper refuses a production config without it;
+      run `trust_root_preflight.sh` with `--fabric-pid $(systemctl show -p MainPID --value
+      <fabric unit>)`; run `b263_qualify.sh --host-label <operator name> [--caveat <text>]`;
+      the toolchain pin's status line ("no reader") is now false: the freeze reads it, and refuses
+      without it. The Fabric unit must not set `NoNewPrivileges=yes` (or a preset that implies it).
+
+66. **harden()'s environment clear is an ACTIVE row on the route where it is the only guard (C9
+    round 4b, final; supersedes amendment 65's "dominated" exemption for the environment clear).**
+    No counting rule is relaxed.
+    - **Before.** Amendment 65 gave `privileged_launcher::harden()`'s environment clear no row,
+      as dominated: the launcher's environment is built from nothing by `sealed_exec::command`'s
+      explicit envp (M228) and "no code on the helper's path reads a variable". The second half
+      is false. The helper's OWN Rust runtime reads `RUST_BACKTRACE` when it panics, and the
+      caller can make it panic after `harden()`: `--probe` writes its report with `println!`,
+      SIGPIPE is ignored (M1481), so a report pipe whose read end the caller has already closed
+      fails EPIPE and the write panics. Measured with the clear removed: the setuid-root helper,
+      executed by the Fabric uid with `RUST_BACKTRACE=full`, printed its full stack to the
+      caller's stderr, every frame with its address (the helper binary's and libc's): the root
+      process's address layout handed to its unprivileged caller. `sealed_exec` is not on that
+      route, so the clear is the only guard there and is not dominated.
+    - **After.** Row M1487 (`std::env::remove_var(k)` in `harden()` removed): attack
+      `the_root_helpers_address_layout_never_reaches_its_caller` (`privileged_launcher.rs`, root
+      only): the installed setuid-root (test-trust) helper is executed by python3 as the Fabric
+      uid with `RUST_BACKTRACE=full` and `--probe` on a closed pipe. Setup asserts the panic
+      happened ("failed printing to stdout"); ATTACK: no `stack backtrace`, no address in the
+      caller's stderr. Control: the same caller on an open pipe reads the probe's JSON, exit 0.
+      Killed by its own attack. The end-to-end environment assertion in
+      `a_callers_process_state_never_reaches_the_root_helper_or_its_launcher` stays (M228 is its
+      row). `PR_SET_DUMPABLE 0` remains amendment 65's measured exemption, not counted killed.
+    - **Setup race found by the final paired-disable (fixed).** The first version of the attack's
+      caller closed the report pipe's read end in the parent AFTER the fork; under load the
+      helper's write could land in the pipe first and the probe exited 0 (the setup assertion
+      failed: 11 of 40 runs under 40 CPU spinners; the clean axon-fabric baseline of one shard read
+      BASELINE_BROKEN). The read end is now closed before the fork and a one-byte write confirms
+      no reader exists before the helper starts: 0 of 60 under the same load, 0 of 40 idle; with
+      the clear removed the attack succeeded 15 of 15 under load.
+    - **Harness defect found by the final paired-disable (fixed at the source).** At d39ab3ad the
+      CLEAN axon-core baseline failed `harness_binaries.rs::every_script_spawn_in_the_workspace_goes_through_the_helper`:
+      amendment 65's freeze tests ran `v022_freeze_manifest.py` in a private mount namespace by
+      taking the spawn helper's command apart (`inner.get_program()` / `get_args()` handed to
+      `unshare`), and `the_b263_record_states_the_host_it_ran_on` ran `b263_host.py` with a bare
+      `python3`. The gaps workstream ran only axon-fabric's suite. Every paired-disable record whose
+      full-suite set includes axon-core would read BASELINE_BROKEN. Fix: the helper owns the
+      wrapped form, `script_spawn::script_under(wrapper, interpreter, script, bins)` (the checked,
+      stripped command of `script()` with the wrapper's argv in front; a wrapper naming a
+      repository script is refused); both sites go through it / `script()`. The drift gate is
+      unchanged (no call site is whitelisted). New test
+      `a_wrapped_script_is_checked_and_stripped_like_any_other` (ATTACK: a guessing script under a
+      wrapper is refused and never runs; every binary-naming variable is removed; control: an
+      honest wrapped script runs with exactly the named binary), row M1488.
+    - **M602's guard set (found by the final paired-disable at 78832d1b, BAD M602).** Amendment 65
+      made every production helper verify the custodian PROGRAM on each reply (M1485 requires the
+      pin; M1483 is the comparison). A helper whose euid is not 0 cannot open the custodian's
+      `/proc/<pid>/exe` (another uid's process; ptrace read access), so with M602 removed the
+      launch is refused by the pin verification before the custodian's spend rule (M628) is
+      reached: the retired_off and set_off cells read OTHER_FAILURE and the full-suite cell
+      failed `a_production_helper_that_is_not_root_launches_nothing` (its reason assertion named
+      only the euid and M628 refusals). Not a false retirement: no route reaches M602 alone. The
+      set is now {M628, M1489}; M1489 (new, ACTIVE) removes the verification as a whole
+      (`check_sender_program` returns the pid unchecked) and is killed by the impostor attack;
+      the test accepts the pin verification's refusal as the third reason. Executed by hand at
+      the fix: base / M602 off / M628+M1489 off refused, M602+M628+M1489 off ATTACK_SUCCEEDS;
+      the whole axon-fabric suite with M602 removed rc 0.
+    - **Paired-disable suite bound (found by the same run, BAD M214 and M89).** Their four cells
+      held; the full-suite cell read SUITE_BROKEN with no failure printed: the whole
+      `cargo test -p axon-fabric` was cut by `bounded_run 12G 2400` (completed binaries summed to
+      ~2040-2060 s, psv_dispatch 925-1319 s under the 6-shard load against 466 s idle; the cut
+      landed 33-38 tests into a 40-test readiness binary still making progress). Not a hang. The
+      bound is now 7200 s (`SUITE_BOUND_S`), and a suite cut by its time or memory bound is
+      recorded as `<TIMEOUT|RESOURCE_EXHAUSTED: ...>` in the failures, never as an unnamed break.
+    - **Rows.** M1487, M1488, M1489 (PSV; from the gaps assignment M1450-M1499, unused
+      M1490-M1499 remain).
+    - **Matrix.** None (an existing A of amendment 65, harden(); the harness's EQUIVALENCE (6)).
+    - **Operator deployment.** None.

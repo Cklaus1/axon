@@ -70,6 +70,13 @@ fn main() {
             pl::EXIT_REFUSED,
         )
     };
+    // Amendment 65: installed setuid-root but not granted euid 0 is the kernel
+    // ignoring the set-id bit (the caller runs with NoNewPrivileges, or the
+    // filesystem is nosuid). Refused in EVERY build: a test-trust helper,
+    // which otherwise runs unprivileged by design, would launch as its caller.
+    if let Err(why) = pl::setuid_honoured(euid) {
+        refuse(why);
+    }
     if euid != 0 && !authority.test {
         refuse(format!(
             "effective uid is {euid}, not 0: the helper is not installed setuid-root (or its \

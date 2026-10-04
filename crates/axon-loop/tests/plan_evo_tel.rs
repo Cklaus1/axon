@@ -112,10 +112,18 @@ fn freeze_refuses_candidate_equal_incumbent() {
     let w = world();
     let v = complete_plan("same", &w.inc_ref, &w.inc_ref);
     plan::register(&w.s, &PilotPlan::from_value(&v).unwrap()).unwrap();
-    assert!(matches!(
-        plan::freeze(&w.s, "same"),
-        Err(LoopError::NotReady(_))
-    ));
+    // Two independent refusals answer this plan: `inc == cand` (NotReady) and
+    // the candidate-provenance check (the incumbent has no EVO proposer:
+    // Refused). Which one answers is not the property (precedent M487;
+    // amendment 64, ruling R3) -- that the freeze is refused is.
+    match plan::freeze(&w.s, "same") {
+        Err(LoopError::NotReady(_)) | Err(LoopError::Refused(_)) => {}
+        o => panic!("ATTACK: a plan comparing a policy with itself froze: {o:?}"),
+    }
+    assert!(
+        plan::ready(&w.s, "same").is_err(),
+        "the refused plan is not ready"
+    );
 }
 
 fn propose_eps(

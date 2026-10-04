@@ -185,7 +185,9 @@ if [ $BUILD_EXIT -ne 0 ]; then
   # Probe the REAL build's refusal text rather than a --help flag check: the
   # `build` verb is registered regardless of the codegen feature, so a
   # flag-presence probe never skips. (Learned twice in this repo.)
-  if echo "$BUILD_OUT" | grep -q "requires building axon with the .codegen. feature"; then
+  # One in-shell match of the refusal text this invocation printed (no pipe,
+  # no forked grep that load can kill or a pipefail race can fail).
+  if [[ "$BUILD_OUT" == *"requires building axon with the \`codegen\` feature"* ]]; then
     echo "clock_parity: $pass passed, $fail failed (interp only)"
     # An interp failure is still a FAILURE — only the native half is unavailable.
     [ "$fail" -eq 0 ] || exit 1
