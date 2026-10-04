@@ -792,6 +792,38 @@ EXEMPT += [
      "it with the request's program"),
 ]
 
+# C9 round 4b, workstream GAPS (amendment 65): the custodian program pin's
+# OS-error and defence-in-depth sites, and the NoNewPrivileges diagnostic.
+EXEMPT += [
+    (PL, "    Err(if no_new_privs() {",
+     "DIAGNOSTIC, dominated (measured, amendment 65): a setuid-installed helper whose euid is not 0 is "
+     "refused on the production route by the euid rule (M602) and on a test-trust route by the "
+     "operator-file owner rule (read_operator_file: its config is root's, not the caller's); this "
+     "site only names the cause (NoNewPrivileges or nosuid) before them"),
+    (BIN, "    if let Err(why) = pl::setuid_honoured(euid) {",
+     "DIAGNOSTIC, dominated: the caller of setuid_honoured, exempt for the same reason (M602; the "
+     "test-trust owner rule)"),
+    (CU, "    if r != 0 {\n        return Err(format!(\n            \"SO_PASSPIDFD:",
+     "OS error from setsockopt: a kernel that cannot name a reply's sender refuses the call (fails "
+     "closed); no sender is assumed"),
+    (CU, "            if e.kind() == std::io::ErrorKind::Interrupted {",
+     "OS error from recvmsg: the call is refused; EINTR is retried"),
+    (CU, "        if msg.msg_flags & libc::MSG_CTRUNC != 0 || other {",
+     "defence in depth, dominated by the per-message pin check (M1483): every descriptor received "
+     "is owned and closed, and a truncated control buffer has no SCM_PIDFD, which the next line "
+     "refuses (the kernel named no sender)"),
+    (CU, "        if text.len() as u64 > MAX_MESSAGE {",
+     "a memory bound on the reply, not an authority decision: every byte under it was already "
+     "attributed to the pinned program"),
+    (CU, "    if seen.is_some_and(|s| s != pid) {",
+     "defence in depth, dominated: each message's sender is hashed against the pin on its own "
+     "(M1483), so a second process is refused unless it too executes the pinned program"),
+    (CU, "    if pidfd_pid(pidfd) != Some(pid) {",
+     "a race that fails closed (the sender exited between naming it and opening its executable); "
+     "not deterministically reachable, and its absence would still hash an executable the pinned "
+     "check must match"),
+]
+
 def load_rows():
     spec = importlib.util.spec_from_file_location("mut", os.path.join(ROOT, "scripts/v022_g01_mutations.py"))
     mut = importlib.util.module_from_spec(spec)

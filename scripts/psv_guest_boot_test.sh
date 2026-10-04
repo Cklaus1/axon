@@ -20,6 +20,12 @@
 #                child sees them: /in/{candidate,suite,job} ro,nodev,nosuid,
 #                noexec; /work nodev,nosuid
 #                (C9 round 2: rows M493-M496 pin only the script's text)
+#   trust-probe  amendment 65: scripts/trust_root_guest_probe.sh (the trust
+#                preflight's guest check, until now run only through an
+#                operator-supplied --guest-cmd) runs INSIDE the real guest, from
+#                the suite drive, under an Exec grant: it reports the operator
+#                trust root unaddressable there, and (control) addressable for
+#                a path the guest does have (/in/suite)
 #   policy-*     PSV-6 (C9 round 4, A87): the guest runs only the policy the
 #                launch manifest names. The launcher refuses a --policy the
 #                manifest does not name (nothing acquired); a guest booted
@@ -279,6 +285,54 @@ else
     bad reach "rc=$RC stdout=$(head -c 400 <<<"$SO")"
 fi
 
+# Amendment 65: the trust preflight's guest probe, run in the REAL guest by the
+# operator's suite (suite code may spawn under an Exec grant; candidate code
+# may not, see "reach"). The probe is POSIX sh for the guest's busybox.
+mkdir -p "$W/suite-probe"; cp -r "$W/suite/." "$W/suite-probe/"
+cp "$REPO/scripts/trust_root_guest_probe.sh" "$W/suite-probe/trust_probe.sh"
+cat >> "$W/suite-probe/accept.ax" <<'AX'
+
+@[test]
+fn t_trust_probe() {
+    match exec("/bin/sh", ["/in/suite/trust_probe.sh", "/etc/axon/trust"]) {
+        Ok(o) => print("TRUST-PROBE:{o}")
+        Err(e) => println("TRUST-PROBE-ERR:{e}")
+    }
+    match exec("/bin/sh", ["/in/suite/trust_probe.sh", "/in/suite"]) {
+        Ok(o) => print("TRUST-CONTROL:{o}")
+        Err(e) => println("TRUST-CONTROL-ERR:{e}")
+    }
+    assert_eq(double(2), 4)
+}
+AX
+POLICY_FOR="$REPO/profiles/linux-microvm/fixtures/policy-io-exec.json" SUITE_SRC="$W/suite-probe" \
+    run trust-probe accept.ax t_trust_probe
+SO="$(cat "$W/trust-probe/out/out/test-stdout" 2>/dev/null)"
+TP="$(python3 - "$W/trust-probe/out/out/test-stdout" <<'PY'
+import json, sys
+try: t = open(sys.argv[1]).read()
+except OSError: print("no test-stdout"); sys.exit()
+def probe(tag):
+    for l in t.splitlines():
+        if l.startswith(tag):
+            try: return json.loads(l[len(tag):])
+            except ValueError: return None
+    return None
+p, c = probe("TRUST-PROBE:"), probe("TRUST-CONTROL:")
+bad = []
+if not p or p.get("schema") != "axon-trust-guest-probe/1" or p.get("root") != "/etc/axon/trust" or p.get("addressable") is not False:
+    bad.append(f"probe {p}")
+if not c or c.get("addressable") is not True or "mount:/in/suite" not in (c.get("found") or ""):
+    bad.append(f"control {c}")
+print("; ".join(bad))
+PY
+)"
+if [[ $RC == 0 && -z "$TP" ]]; then
+    ok "trust-probe: trust_root_guest_probe.sh ran in the real guest: the operator trust root is unaddressable there; control: /in/suite is addressable (a mount)"
+else
+    bad trust-probe "rc=$RC $TP stdout=$(head -c 400 <<<"$SO")"
+fi
+
 # A28: a suite module that exists but cannot be read (one Latin-1 byte) never
 # falls through to the candidate's same-named module (review wf_293dfdb6-9d8,
 # PSV-1, executed there to a keyed PASS). The operator's `want` (7) can never
@@ -375,9 +429,9 @@ json.dump({"schema": "axon-preflight-observation/1", "observer_key_id": kid,
 PY
     "$TD/axon-fabric" sign-evidence --record "$H/observation.json" --key "$H/obs.pk8" \
         --authority observer >/dev/null || bad helper "sign-evidence (observer)"
-    python3 - "$H" "$FU" "$REPO/dist/guest-linux/manifest.json" "${POLICY}" "$MSHA" <<'PY'
+    python3 - "$H" "$FU" "$REPO/dist/guest-linux/manifest.json" "${POLICY}" "$MSHA" "$TD/axon-custodian" <<'PY'
 import hashlib, json, sys
-h, fu, man, pol, msha = sys.argv[1:]
+h, fu, man, pol, msha, cust = sys.argv[1:]
 sha = lambda p: hashlib.sha256(open(p, "rb").read()).hexdigest()
 json.dump({"schema": "axon-protected-launcher/2", "fabric_uid": int(fu),
            "interpreter": {"path": "/bin/bash", "sha256": sha("/bin/bash")},
@@ -387,7 +441,10 @@ json.dump({"schema": "axon-protected-launcher/2", "fabric_uid": int(fu),
            "jailer": "/usr/local/bin/jailer", "out_root": f"{h}/runs", "staging_root": f"{h}/staging",
            "max_timeout_s": 300, "max_input_bytes": 1 << 30,
            "observer": {"root": f"{h}/observer", "max_age_s": 300, "host_signer_public_key": "0" * 64},
-           "custodian": {"socket": f"{h}/cust/custodian.sock", "uid": 0}},
+           # Amendment 65: the custodian PROGRAM is pinned too (checked
+           # against the process that answers each spend).
+           "custodian": {"socket": f"{h}/cust/custodian.sock", "uid": 0,
+                         "sha256": sha(cust)}},
           open(f"{h}/protected-launcher.json", "w"))
 i = f"{h}/runs/fab-boot.psv-inputs"
 for name, out in (("op-boot", "request.json"), ("op-boot-again", "request-again.json"),

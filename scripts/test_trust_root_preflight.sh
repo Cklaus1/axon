@@ -100,7 +100,7 @@ run() { # guest-cmd → sets OUT, RC
   OUT=$("$PF" --root "$ROOT" --host-config "$BASE/o1/protected-host.json" \
     --launcher-config "$BASE/o1/protected-launcher.json" \
     --custodian-config "$BASE/o1/custodian.json" --fabric-bin "$FABRIC_BIN" --verifier $V \
-    --custodian $C --fabric $F --agent $A1 --agent $A2 --guest-cmd "$1")
+    --custodian $C --fabric $F --agent $A1 --agent $A2 --guest-cmd "$1" ${EXTRA:-})
   RC=$?
 }
 failed_on() { # expected RC 1 and a failing check matching python predicate
@@ -189,6 +189,19 @@ HELPER_FABRIC=$A2 fixture; run "$GUEST_OK"
 failed_on "helper admits another uid than the Fabric" "c['action']=='helper-admits'"
 fixture; chmod 0666 "$BASE/o1/engine/jailer"; run "$GUEST_OK"
 failed_on "agent-writable engine the helper pins" "c['action']=='open-write' and c['actor'].startswith('agent') and c['target'].endswith('/engine/jailer')"
+
+# Amendment 65: the RUNNING Fabric (--fabric-pid) must not be under
+# NoNewPrivileges, which makes the kernel ignore the helper's set-id bit.
+setpriv --reuid=$F --regid=$F --clear-groups --no-new-privs -- sleep 120 & NNP_PID=$!
+setpriv --reuid=$F --regid=$F --clear-groups -- sleep 120 & OK_PID=$!
+sleep 0.3
+fixture; EXTRA="--fabric-pid $NNP_PID" run "$GUEST_OK"
+failed_on "Fabric service under NoNewPrivileges" "c['action']=='no-new-privs' and 'NoNewPrivs' in c['observed']"
+fixture; EXTRA="--fabric-pid $OK_PID" run "$GUEST_OK"
+[ "$RC" = 0 ] && printf '%s' "$OUT" | python3 -c "import json,sys; r=json.load(sys.stdin); assert any(c['action']=='no-new-privs' and c['ok'] for c in r['checks'])" \
+  || fail "control: a Fabric service without NoNewPrivileges passes: $OUT"
+echo "ok: control: a Fabric service without NoNewPrivileges passes the nnp check"
+kill $NNP_PID $OK_PID 2>/dev/null; wait $NNP_PID $OK_PID 2>/dev/null
 
 # u:$A1:rw as a POSIX access ACL, written as its xattr (no setfacl needed):
 # version 2, then (tag u16, perm u16, id u32) entries in tag order.

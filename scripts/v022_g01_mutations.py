@@ -1867,7 +1867,9 @@ MUTATIONS += [
      '                if false && ob.get("nonce_store").is_some() {',
      'axon-fabric', '--test protected_host', 'a_host_config_giving_fabric_a_nonce_store_is_refused'),
     ('M636', 'A83: the helper spends through the custodian the host config names', _PH,
-     '        !matches!(&o.custodian, crate::custodian::Custodian::Service(r) if *r == helper.custodian)',
+     # Re-anchored (gaps, amendment 65): the comparison is the socket and uid; the
+     # program pin is the helper's own, checked where the nonce is spent (M1483).
+     '        !matches!(&o.custodian, crate::custodian::Custodian::Service(r)\n            if r.socket == helper.custodian.socket && r.uid == helper.custodian.uid)',
      '        { let _ = o; false }',
      'axon-fabric', '--test protected_host', 'the_helper_config_must_agree_with_the_host_config'),
     ('M637', 'A83/ADR-002: the helper config names the host\'s signer (kept out of its observer root)', _PH,
@@ -3958,6 +3960,82 @@ EQUIV_RECORD["M1097"] = {
 # removal still refused (UNREACHABLE, see v022_refusal_coverage.py).
 EQUIVALENT_DID |= {"M1086", "M1087", "M1089", "M1091", "M1095", "M1096", "M1097"}
 RETIRED |= {"M1086", "M1087", "M1089", "M1091", "M1095", "M1096", "M1097"}
+
+# ── C9 round 4b, workstream GAPS (M1470-M1499; amendment 65) ──────────────────
+# (Assigned M1450-M1499; M1450-M1469 are integrate-3's, so these use M1470 up.)
+# The operator deployment kit (c9r4b/opkit) found code gaps: the setuid
+# helper's harden() had no test and no row (each inherited-state reset below
+# was removable with the suite green); the axon-custodian PROGRAM was pinned
+# nowhere (the helper trusted any program serving its socket as the custodian
+# uid); the B263 record stated a constant host; the operator's host-toolchain
+# pin had no reader. Each row is killed by its OWN attack through the real
+# binary or script: the setuid-root helper driven by a hostile Fabric caller,
+# an impostor custodian on the socket (test-trust and production routes),
+# b263_host.py, and the freeze run with the operator pin in a private mount
+# namespace.
+PSV_IDS |= {f"M{n}" for n in range(1470, 1500)}
+_PL = 'crates/axon-fabric/src/privileged_launcher.rs'
+_CU = 'crates/axon-fabric/src/custodian.rs'
+_GB = 'scripts/guest_build_env.py'
+_HARDEN = 'a_callers_process_state_never_reaches_the_root_helper_or_its_launcher'
+_FRZ = 'a_guest_image_not_built_with_the_operators_pinned_tools_does_not_freeze'
+MUTATIONS += [
+    ('M1474', "A/harden (gaps): a caller's ignored signals are reset before the root launch", _PL,
+     '                libc::signal(sig, libc::SIG_DFL);', '                let _ = sig;',
+     'axon-fabric', '--test privileged_launcher', _HARDEN),
+    ('M1475', "A/harden (gaps): a caller's blocked signal mask is cleared in the root helper", _PL,
+     '        libc::sigprocmask(libc::SIG_SETMASK, &set, std::ptr::null_mut());', '        let _ = &set;',
+     'axon-fabric', '--test privileged_launcher', _HARDEN),
+    ('M1476', "A/harden (gaps): the root launcher never runs under its caller's umask", _PL,
+     '        libc::umask(0o022);', '        let _ = 0o022;',
+     'axon-fabric', '--test privileged_launcher', _HARDEN),
+    ('M1477', "A/harden (gaps): the root helper never keeps its caller's working directory", _PL,
+     '        libc::chdir(c"/".as_ptr());', '        let _ = c"/";',
+     'axon-fabric', '--test privileged_launcher', _HARDEN),
+    ('M1478', "A/harden (gaps): no descriptor the caller left open reaches the root helper or launcher", _PL,
+     '        libc::syscall(libc::SYS_close_range, 3u32, u32::MAX, 0u32);', '        let _ = libc::SYS_close_range;',
+     'axon-fabric', '--test privileged_launcher', _HARDEN),
+    ('M1479', "A/harden (gaps): the root launch cannot dump core (RLIMIT_CORE 0)", _PL,
+     '        lim(libc::RLIMIT_CORE, 0);', '        let _ = libc::RLIMIT_CORE;',
+     'axon-fabric', '--test privileged_launcher', _HARDEN),
+    ('M1480', "A/harden (gaps): limits a caller lowered (CPU, FSIZE, DATA, AS, NPROC) are reset", _PL,
+     '            lim(r, libc::RLIM_INFINITY);', '            let _ = r;',
+     'axon-fabric', '--test privileged_launcher', _HARDEN),
+    ('M1481', "A/harden (gaps): the root helper ignores SIGPIPE whatever its caller left", _PL,
+     '        libc::signal(libc::SIGPIPE, libc::SIG_IGN);', '        let _ = libc::SIGPIPE;',
+     'axon-fabric', '--test privileged_launcher', _HARDEN),
+    ('M1482', "A/harden (gaps): the open-file limit is the helper's, not its caller's", _PL,
+     '        lim(libc::RLIMIT_NOFILE, 65536);', '        let _ = libc::RLIMIT_NOFILE;',
+     'axon-fabric', '--test privileged_launcher', _HARDEN),
+    ('M1483', "FIELD-ORIGIN (gaps): a nonce is spent only through the custodian PROGRAM the operator pinned", _CU,
+     '    if got != pin {', '    if false && got != pin {',
+     'axon-fabric', '--test privileged_launcher', 'a_custodian_program_the_operator_never_pinned_spends_nothing'),
+    ('M1484', "FIELD-ORIGIN (gaps): a custodian executable another uid can rewrite is never the pinned program", _CU,
+     '    if !m.is_file() || (m.uid() != 0 && m.uid() != me) || m.mode() & 0o022 != 0 {',
+     '    if !m.is_file() || (m.uid() != 0 && m.uid() != me) {',
+     'axon-fabric', '--test privileged_launcher', 'a_custodian_executable_another_uid_can_rewrite_is_refused'),
+    ('M1485', "FIELD-ORIGIN (gaps): a production helper config must pin the custodian program", _PL,
+     '        None if a.test => {}\n        _ => {', '        None => {}\n        _ => {',
+     'axon-fabric', '--test privileged_launcher', 'a_production_helper_spends_only_through_the_pinned_custodian_program'),
+    ('M1486', "FIELD-ORIGIN (gaps): the B263 record states the host it was measured on", 'scripts/b263_host.py',
+     '    host = f"{label} ({measured})" if label else measured', '    host = "WSL2-nested"',
+     'axon-fabric', '--test qualification', 'the_b263_record_states_the_host_it_ran_on'),
+    ('M1470', "FIELD-ORIGIN (gaps): a freeze binds only host tools at the operator's pinned path and digest", _GB,
+     '        if g is None or g.get("path") != w.get("path") or not g.get("sha256") or g.get("sha256") != w.get("sha256"):',
+     '        if g is None:',
+     'axon-fabric', '--test freeze_manifest', _FRZ),
+    ('M1471', "FIELD-ORIGIN (gaps): a freeze refuses a recorded host tool the operator's pin does not name", _GB,
+     '            return f"the build recorded host tool {name} {g}, which the operator\'s pin does not name"',
+     '            continue',
+     'axon-fabric', '--test freeze_manifest', _FRZ),
+    ('M1472', "FIELD-ORIGIN (gaps): a freeze requires the operator's host-toolchain pin", _GB,
+     '                "a freeze binds only a build made with the operator\'s pinned tools)") if required else ""',
+     '                "a freeze binds only a build made with the operator\'s pinned tools)") if False else ""',
+     'axon-fabric', '--test freeze_manifest', _FRZ),
+    ('M1473', "FIELD-ORIGIN (gaps): the host-toolchain pin is read only as a root-owned, unwritable file", _GB,
+     '        if st.st_uid != 0 or st.st_mode & 0o022:', '        if False:',
+     'axon-fabric', '--test freeze_manifest', _FRZ),
+]
 
 
 def in_scope(mid, scope):

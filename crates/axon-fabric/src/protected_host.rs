@@ -429,6 +429,10 @@ impl ProtectedHost {
                         crate::custodian::CustodianRef {
                             socket,
                             uid: custodian_uid,
+                            // Fabric's own nonce request: the program is
+                            // authenticated where the nonce is SPENT (the
+                            // helper's pinned custodian.sha256).
+                            sha256: None,
                         },
                     ),
                     max_age_s: match ob.get("max_age_s") {
@@ -706,7 +710,10 @@ pub fn helper_agrees(
 ) -> Result<(), String> {
     // Amendment 50: the custodian the host's observer is issued by.
     let custodian_differs = host.observer.as_ref().is_some_and(|o| {
-        !matches!(&o.custodian, crate::custodian::Custodian::Service(r) if *r == helper.custodian)
+        // The socket and uid: the PROGRAM pin is the helper's alone (it is
+        // checked where the nonce is spent; Fabric's host config has none).
+        !matches!(&o.custodian, crate::custodian::Custodian::Service(r)
+            if r.socket == helper.custodian.socket && r.uid == helper.custodian.uid)
     });
     let why = if helper.fabric_uid != euid {
         format!(

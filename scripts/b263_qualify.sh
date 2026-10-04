@@ -49,6 +49,15 @@ while [[ $# -gt 0 ]]; do
         # under: Fabric accepts a record only under the issuer it names
         # (RULE:issuer-claimed). The key itself never touches this host.
         --issuer-key-id) export B263_ISSUER_KEY_ID="$2"; shift 2 ;;
+        # Amendment 65: the record states the host it RAN on. `host` is the
+        # measured identity (hostname, /etc/machine-id, systemd-detect-virt,
+        # kernel), prefixed by the operator's own name for the host when
+        # given; the caveat is the operator's statement of what the boundary
+        # excludes, else one derived from the measured virtualization. Both
+        # used to be constants (a fixed host name and Hyper-V caveat), so a record
+        # made on any host claimed to be from that one.
+        --host-label) export B263_HOST_LABEL="$2"; shift 2 ;;
+        --caveat) export B263_CAVEAT="$2"; shift 2 ;;
         *) echo "unknown arg $1" >&2; exit 2 ;;
     esac
 done
@@ -616,13 +625,17 @@ import linux_profile_manifest as lpm  # noqa: E402  (the one provenance implemen
 prov = lpm.provenance()
 counts = {s: sum(1 for r in rows if r["status"] == s) for s in ("PASS", "FAIL", "BLOCKED")}
 cgc = open("/sys/fs/cgroup/cgroup.controllers").read().split()
+# Amendment 65: the host this run measured, never a constant (b263_host.py).
+import b263_host  # noqa: E402
+hi = b263_host.identity()
 ev = {
   "schema": "axon-b263-evidence/1",
   "work_package": "B263", "fabric_task": "ACF-T06",
   "issuer_key_id": os.environ.get("B263_ISSUER_KEY_ID"),
-  "host": "WSL2-nested",
-  "caveat": "Nested virtualization under Hyper-V; the L0 hypervisor is outside the qualified boundary. (operator decision D2, .axon-v022/coordination/operator_decisions.json)",
+  "host": hi["host"],
+  "caveat": hi["caveat"],
   "host_facts": {
+    **hi["facts"],
     "uname": run(["uname", "-a"]), "kernel": platform.release(),
     "kvm": {"dev_kvm": os.path.exists("/dev/kvm"),
             "nested": run(["sh", "-c", "cat /sys/module/kvm_intel/parameters/nested /sys/module/kvm_amd/parameters/nested 2>/dev/null"]) or "unreadable"},
@@ -639,6 +652,7 @@ ev = {
              "tree_dirty": bool(prov["dirty"]) or prov["revision"] == "unknown",
              "tree_dirty_reasons": prov["dirty"],
              "harness_sha256": sha(os.path.join(repo, "scripts/b263_qualify.sh")),
+             "host_identity_sha256": sha(os.path.join(repo, "scripts/b263_host.py")),
              "launcher_sha256": sha(os.path.join(repo, "scripts/fc_linux_profile.sh")),
              "guest_init_sha256": sha(os.path.join(repo, "profiles/linux-microvm/guest-init.sh"))},
   "engine": {"firecracker": run(["/usr/local/bin/firecracker", "--version"]).splitlines()[0],

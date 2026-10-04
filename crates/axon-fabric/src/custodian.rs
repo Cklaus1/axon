@@ -248,6 +248,14 @@ pub struct Reply {
 pub struct CustodianRef {
     pub socket: PathBuf,
     pub uid: u32,
+    /// The custodian PROGRAM's sha256, the operator's pin (the helper's
+    /// config; required there on a protected host). With a pin, every byte
+    /// of a reply must come from a process executing exactly that program:
+    /// the kernel names the sender of each message (`SCM_PIDFD`), and its
+    /// executable is opened and hashed by descriptor
+    /// ([`check_sender_program`]). Without it the custodian is only a uid.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sha256: Option<String>,
 }
 
 impl CustodianRef {
@@ -269,15 +277,26 @@ impl CustodianRef {
         }
         let _ = s.set_read_timeout(Some(IO_TIMEOUT));
         let _ = s.set_write_timeout(Some(IO_TIMEOUT));
+        if self.sha256.is_some() {
+            // Before the request goes out, so the kernel names the sender of
+            // every byte of the reply.
+            pass_pidfd(s.as_raw_fd())?;
+        }
         let mut body = serde_json::to_vec(req).map_err(|e| e.to_string())?;
         body.push(b'\n');
         (&s).write_all(&body)
             .map_err(|e| format!("custodian: {e}"))?;
         let _ = s.shutdown(std::net::Shutdown::Write);
-        let mut text = Vec::new();
-        (&s).take(MAX_MESSAGE)
-            .read_to_end(&mut text)
-            .map_err(|e| format!("custodian: {e}"))?;
+        let text = match &self.sha256 {
+            Some(pin) => read_from_pinned(&s, pin, &self.socket)?,
+            None => {
+                let mut text = Vec::new();
+                (&s).take(MAX_MESSAGE)
+                    .read_to_end(&mut text)
+                    .map_err(|e| format!("custodian: {e}"))?;
+                text
+            }
+        };
         let r: Reply =
             serde_json::from_slice(&text).map_err(|e| format!("custodian gave no reply: {e}"))?;
         if r.schema != REPLY_SCHEMA || Mode::parse(&r.mode).is_none() {
@@ -319,6 +338,184 @@ impl CustodianRef {
         })?;
         Ok(Mode::parse(&r.mode).unwrap_or(Mode::Dev))
     }
+}
+
+/// `SCM_PIDFD` (linux/socket.h): a pidfd of the process that sent a message.
+const SCM_PIDFD: libc::c_int = 4;
+
+/// Ask the kernel to attach, to every message received on `fd`, a pidfd of
+/// the process that sent it (`SO_PASSPIDFD`, Linux 6.5). A kernel without it
+/// cannot authenticate a pinned custodian, and the call is refused.
+fn pass_pidfd(fd: RawFd) -> Result<(), String> {
+    let one: libc::c_int = 1;
+    // SAFETY: setsockopt with a c_int of the size passed.
+    let r = unsafe {
+        libc::setsockopt(
+            fd,
+            libc::SOL_SOCKET,
+            libc::SO_PASSPIDFD,
+            &one as *const libc::c_int as *const libc::c_void,
+            std::mem::size_of::<libc::c_int>() as libc::socklen_t,
+        )
+    };
+    if r != 0 {
+        return Err(format!(
+            "SO_PASSPIDFD: {} (a pinned custodian is authenticated by the kernel naming the \
+             sender of its reply; this kernel cannot)",
+            std::io::Error::last_os_error()
+        ));
+    }
+    Ok(())
+}
+
+/// Read a reply (bounded) whose every message the kernel attributes, by a
+/// pidfd, to one process executing the program pinned by `pin`.
+fn read_from_pinned(s: &UnixStream, pin: &str, socket: &Path) -> Result<Vec<u8>, String> {
+    use std::os::fd::{FromRawFd, OwnedFd};
+    let fd = s.as_raw_fd();
+    let mut text = Vec::new();
+    let mut sender: Option<i64> = None;
+    loop {
+        let mut buf = [0u8; 1024];
+        // Room for one SCM_PIDFD (and nothing truncates it silently: MSG_CTRUNC).
+        let mut ctl = [0u64; 8];
+        let mut iov = libc::iovec {
+            iov_base: buf.as_mut_ptr() as *mut libc::c_void,
+            iov_len: buf.len(),
+        };
+        // SAFETY: a zeroed msghdr pointing at the buffers above.
+        let mut msg: libc::msghdr = unsafe { std::mem::zeroed() };
+        msg.msg_iov = &mut iov;
+        msg.msg_iovlen = 1;
+        msg.msg_control = ctl.as_mut_ptr() as *mut libc::c_void;
+        msg.msg_controllen = std::mem::size_of_val(&ctl) as _;
+        // SAFETY: recvmsg into the buffers described by msg.
+        let n = unsafe { libc::recvmsg(fd, &mut msg, libc::MSG_CMSG_CLOEXEC) };
+        if n < 0 {
+            let e = std::io::Error::last_os_error();
+            if e.kind() == std::io::ErrorKind::Interrupted {
+                continue;
+            }
+            return Err(format!("custodian: {e}"));
+        }
+        // Every received descriptor is owned (closed on drop), whatever happens.
+        let mut pidfd: Option<OwnedFd> = None;
+        let mut other = false;
+        // SAFETY: walking the control buffer the kernel filled, with its macros.
+        unsafe {
+            let mut c = libc::CMSG_FIRSTHDR(&msg);
+            while !c.is_null() {
+                if (*c).cmsg_level == libc::SOL_SOCKET
+                    && ((*c).cmsg_type == SCM_PIDFD || (*c).cmsg_type == libc::SCM_RIGHTS)
+                {
+                    let data = libc::CMSG_DATA(c) as *const libc::c_int;
+                    let count = ((*c).cmsg_len as usize - libc::CMSG_LEN(0) as usize)
+                        / std::mem::size_of::<libc::c_int>();
+                    for i in 0..count {
+                        let f = OwnedFd::from_raw_fd(std::ptr::read_unaligned(data.add(i)));
+                        if (*c).cmsg_type == SCM_PIDFD && pidfd.is_none() {
+                            pidfd = Some(f);
+                        } else {
+                            other = true;
+                        }
+                    }
+                }
+                c = libc::CMSG_NXTHDR(&msg, c);
+            }
+        }
+        if n == 0 {
+            break;
+        }
+        if msg.msg_flags & libc::MSG_CTRUNC != 0 || other {
+            return Err("the custodian's reply carried unexpected control data".into());
+        }
+        let pidfd = pidfd.ok_or_else(|| {
+            format!(
+                "the kernel named no sender for the reply on {} (SCM_PIDFD)",
+                socket.display()
+            )
+        })?;
+        let pid = check_sender_program(&pidfd, pin, sender).map_err(|why| {
+            format!(
+                "the custodian socket {} is not served by the pinned custodian program: {why}",
+                socket.display()
+            )
+        })?;
+        sender = Some(pid);
+        text.extend_from_slice(&buf[..n as usize]);
+        if text.len() as u64 > MAX_MESSAGE {
+            return Err("custodian reply is over its bound".into());
+        }
+    }
+    Ok(text)
+}
+
+/// The pid a pidfd refers to, from the kernel's own record of it (`Pid:` in
+/// its fdinfo); `None` once that process has exited.
+fn pidfd_pid(pidfd: &std::os::fd::OwnedFd) -> Option<i64> {
+    let info = std::fs::read_to_string(format!("/proc/self/fdinfo/{}", pidfd.as_raw_fd())).ok()?;
+    let pid: i64 = info
+        .lines()
+        .find_map(|l| l.strip_prefix("Pid:"))?
+        .trim()
+        .parse()
+        .ok()?;
+    (pid > 0).then_some(pid)
+}
+
+/// The process `pidfd` names executes the program whose sha256 is `pin`
+/// (and, after its first message, it is the same process as before: `seen`).
+///
+/// Race-free: the pidfd pins the process, not a pid number. Its executable is
+/// opened through /proc/<pid>/exe and the pidfd is asked again AFTER the open;
+/// a process alive then was alive at the open, so the pid named it and no
+/// recycled one. The bytes hashed are the open descriptor's: an executable
+/// another uid could rewrite is refused first.
+pub fn check_sender_program(
+    pidfd: &std::os::fd::OwnedFd,
+    pin: &str,
+    seen: Option<i64>,
+) -> Result<i64, String> {
+    use sha2::{Digest, Sha256};
+    use std::os::unix::fs::MetadataExt;
+    let pid = pidfd_pid(pidfd).ok_or("its sender has exited")?;
+    if seen.is_some_and(|s| s != pid) {
+        return Err(format!(
+            "its reply came from two processes ({seen:?}, {pid})"
+        ));
+    }
+    let mut exe = std::fs::File::open(format!("/proc/{pid}/exe"))
+        .map_err(|e| format!("the sender's executable (pid {pid}): {e}"))?;
+    if pidfd_pid(pidfd) != Some(pid) {
+        return Err(format!(
+            "its sender (pid {pid}) exited while it was identified"
+        ));
+    }
+    let m = exe.metadata().map_err(|e| e.to_string())?;
+    // SAFETY: geteuid cannot fail.
+    let me = unsafe { libc::geteuid() };
+    if !m.is_file() || (m.uid() != 0 && m.uid() != me) || m.mode() & 0o022 != 0 {
+        return Err(format!(
+            "the sender's executable (pid {pid}) is owned by uid {} with mode {:o}: only a \
+             program root (or this uid) owns and no other uid can write is hashed",
+            m.uid(),
+            m.mode() & 0o7777
+        ));
+    }
+    let mut h = Sha256::new();
+    std::io::copy(&mut exe, &mut h).map_err(|e| e.to_string())?;
+    let got = h
+        .finalize()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect::<String>();
+    if got != pin {
+        return Err(format!(
+            "the sender (pid {pid}) executes a program with sha256 {got}, not the operator's \
+             pin {pin}"
+        ));
+    }
+    Ok(pid)
 }
 
 /// Where Fabric gets its nonce.
