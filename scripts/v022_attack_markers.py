@@ -1442,3 +1442,16 @@ ATTACK_MARKERS.update({
     'M1390': 'ATTACK: mechanism-test evidence activated a policy as a real one',
     'M1391': 'ATTACK: a plan with deployment disabled made its candidate active',
 })
+
+# C9 round 4b, INTEGRATE-3 (amendment 64): the five LIBRARY_PRIMITIVE rows are
+# killed by their library tests, M1232 is ACTIVE again on the CLI revoke route,
+# M1450 is the armed-kill latch.
+ATTACK_MARKERS.update({
+    'M1214': 'ATTACK: validate_against admitted a value matching two oneOf branches',
+    'M1217': 'ATTACK: validate_against admitted .*, which its pattern does not match',
+    'M1223': 'ATTACK: validate_against admitted an object missing a required field',
+    'M1224': 'ATTACK: validate_against admitted a field additionalProperties:false closes',
+    'M1232': 'ATTACK: a revocation naming a reference that is not 64 lowercase hex was recorded',
+    'M1233': 'ATTACK: an Acf1Ref deserialized from a reference of another scheme',
+    'M1450': 'ATTACK: a run started after its kill was armed cleared the latch and ran',
+})

@@ -5005,6 +5005,137 @@ assert not _lib_bad, f"a row in two classes: {sorted(_lib_bad)}"
 assert all({"property", "routes", "library_test"} <= set(v) for v in LIB_RECORD.values())
 # ── end INTEGRATE-2 ──
 
+# ── C9 round 4b, INTEGRATE-3 (amendment 64) ── triage of the final 6-shard
+# paired-disable at 1cf94ffc (144/155 held; each of the 11 failures had its
+# four cells and failed only the full-suite cell).
+#
+# Five retirements fail ONLY on a direct library test of the primitive (the
+# walker's keyword rules, the id newtypes' own tests) and are dominated on
+# every production route: they become LIBRARY_PRIMITIVE (ruling R1), killed
+# by that library test, never counted killed. M1232's retirement was FALSE:
+# `axon-loop pointer revoke --policy` takes a Ref from a CLI flag, which no
+# schema walk sees, and records it without comparing it with any digest, so
+# check_hex64 is the only refusal on that route. It is ACTIVE again, killed
+# on that route (tests/cli.rs).
+_I3_PARSE = ("canonical::parse, the one entry of every Contract document (CLI --in documents, "
+             "Store::get_contract, store::contract_from_value, intake/evl parse, fabric readiness "
+             "parse_bytes)")
+_I3_PILOT = "plan::PilotPlan::from_value (the only other caller of validate_against)"
+_I3_ROWS = {
+    "M1214": ("EVIDENCE (4b, integrate-A): a value matching no oneOf branch is refused (LIBRARY_PRIMITIVE, integrate-3)",
+              "axon-loop-contracts", "--lib", "schema::tests::structural_rules"),
+    "M1217": ("EVIDENCE (4b, integrate-A): a string not matching its pattern is refused (LIBRARY_PRIMITIVE, integrate-3)",
+              "axon-loop-contracts", "--lib", "schema::tests::profile_id_pattern_is_exact"),
+    "M1223": ("EVIDENCE (4b, integrate-A): a missing required field is refused by the schema (LIBRARY_PRIMITIVE, integrate-3)",
+              "axon-loop-contracts", "--lib", "schema::tests::structural_rules"),
+    "M1224": ("EVIDENCE (4b, integrate-A): a field no schema names is refused by the schema (LIBRARY_PRIMITIVE, integrate-3)",
+              "axon-loop-contracts", "--lib", "schema::tests::structural_rules"),
+    "M1233": ("EVIDENCE (4b, integrate-A): an ACF reference is acf1: (LIBRARY_PRIMITIVE, integrate-3)",
+              "axon-loop-contracts", "--lib", "ids::tests::deserialize_validates_too"),
+    "M1232": ("EVIDENCE (4b, integrate-A): a digest is 64 lowercase hex (ACTIVE, integrate-3: its retirement vs M1213 "
+              "was false on the CLI revoke route)",
+              "axon-loop", "--test cli", "a_revocation_naming_a_reference_that_is_not_a_digest_is_never_recorded"),
+}
+MUTATIONS = [(r[0], _I3_ROWS[r[0]][0]) + tuple(r[2:5]) + _I3_ROWS[r[0]][1:] if r[0] in _I3_ROWS else r
+             for r in MUTATIONS]
+for _r in _I3_ROWS:
+    EQUIVALENT_DID.discard(_r)
+    RETIRED.discard(_r)
+    EQUIV_RECORD.pop(_r)
+LIB_RECORD.update({
+    "M1214": {
+        "property": "a value matching no oneOf branch is refused",
+        "routes": {
+            _I3_PARSE: "typed serde, LATER in the same parse and on the same value: the checked-in oneOfs "
+                       "are acf-compute-request approval_ref/semantic_state_ref (1..=512 string | null: "
+                       "Option<OpaqueRef>, check_opaque M1234), acf-execution-receipt output_workspace_ref "
+                       "(acf1 | null: Option<Acf1Ref>, check_acf1/check_hex64) and matched_checks/cost_micro "
+                       "(integer 0..=2^53-1 | null: Option<u64> under parse_value's integer bound M1204), and "
+                       "local-policy-pin ack (two closed objects: PinAck, internally tagged with "
+                       "deny_unknown_fields; redteam a4/s07 passed in the 1cf94ffc full-suite cell with M1214 "
+                       "removed). No checked-in oneOf has overlapping branches, so `n == 2` never occurs on a "
+                       "production document",
+            _I3_PILOT: "impossible: the pilot schema has no oneOf"},
+        "library_test": "axon-loop-contracts --lib schema::tests::structural_rules (a two-branch overlap no "
+                        "checked-in schema has)"},
+    "M1217": {
+        "property": "a string not matching its schema pattern is refused",
+        "routes": {
+            _I3_PARSE: "the typed newtype of the same field, LATER in the same parse: the id pattern -> "
+                       "check_id (TaskId/ArmId/TrialId/AttemptId/OperationId/ExecutionId/CandidateId/PolicyId/"
+                       "ContextId/TransitionId/TenantId/TaskFamily/RepoId/WorktreeId), the ref pattern -> "
+                       "check_ref (Ref), ^acf1: -> check_acf1 (Acf1Ref, M1233), ^[A-Z]{3}$ -> check_currency "
+                       "(Currency), the profile/peer patterns -> ProfileId/PeerId::new, which call "
+                       "schema::pattern_matches directly, never this `if !ok`",
+            _I3_PILOT: "strict_record's typed serde (Scope ids, Vec<Ref>/Option<Ref>) and, for experiment_id "
+                       "(a String field), the TaskId::new check that follows in from_value"},
+        "library_test": "axon-loop-contracts --lib schema::tests::profile_id_pattern_is_exact. M1217 and "
+                        "M1233 dominate each other on the contract route (the pd6 four-cell pair at 1cf94ffc: "
+                        "each removed alone refused, both removed admitted a cl22: workspace ref); neither is "
+                        "counted killed"},
+    "M1223": {
+        "property": "a missing required field is refused",
+        "routes": {
+            _I3_PARSE: "typed serde, LATER in the same parse: every required field of every checked-in "
+                       "schema (top level, nested objects, the profile `then` lists, the pin ack branches) is "
+                       "a non-defaulted field of its contract type -- crates/axon-loop-contracts/src has no "
+                       "#[serde(default)], and a nullable field is `deserialize_with = nullable` without "
+                       "`default`, which serde requires present; M1225 (retired, joint with M1223) is the "
+                       "defaulted-field row. A `required` inside an `if` only selects a `then`; the field it "
+                       "names is required at top level too",
+            _I3_PILOT: "strict_record: PilotPlan has no defaulted field (every nullable field is "
+                       "`deserialize_with`), and the canonical round-trip refuses a defaulted one"},
+        "library_test": "axon-loop-contracts --lib schema::tests::structural_rules"},
+    "M1224": {
+        "property": "a field no schema names is refused",
+        "routes": {
+            _I3_PARSE: "typed serde, LATER in the same parse: every additionalProperties:false object of the "
+                       "checked-in schemas is a deny_unknown_fields struct or enum of its contract type "
+                       "(PinAck's acknowledged-with-extra-field case: redteam s07/a4 passed in the 1cf94ffc "
+                       "full-suite cell with M1224 removed); M1226 (retired, joint with M1224) is the "
+                       "dropped-deny_unknown_fields row",
+            _I3_PILOT: "strict_record: PilotPlan and Scope are deny_unknown_fields, and the canonical "
+                       "round-trip refuses any field the typed value does not re-emit"},
+        "library_test": "axon-loop-contracts --lib schema::tests::structural_rules"},
+    "M1233": {
+        "property": "an ACF reference is acf1:",
+        "routes": {
+            _I3_PARSE: "the schema pattern ^acf1: (M1217) EARLIER in the same parse, on every Acf1Ref field "
+                       "(output_workspace_ref's oneOf/anyOf branches carry the same pattern)",
+            "evl::judge's protected-evidence join (serde_json::from_value of the verification request and "
+            "receipt)": "LATER on the same documents: verify_check_evidence parses both through "
+                        "canonical::parse (M1217), same outcome (Unknown)",
+            "axon-fabric (workspace.rs reference, submit.rs fabric_*_digest, branches.rs/submit.rs journal "
+            "reads)": "impossible: every Acf1Ref it holds is a digest it computed, or one it wrote to its own "
+                      "journal or state"},
+        "library_test": "axon-loop-contracts --lib ids::tests::deserialize_validates_too"},
+})
+LIBRARY_PRIMITIVE = set(LIB_RECORD)
+EQUIV_RECORD["M1266"]["all_paths"] += (
+    "; the CLI route (bin axon-loop pointer transition) is parse then pointer::transition with nothing "
+    "written between, so tests/cli.rs pins only that the transition is REFUSED with the store unchanged, "
+    "exit 4 or 5 (ruling R3, precedent M487; integrate-3)")
+
+# A real defect found by the M58 triage (it is NOT M58's): `axon-os run`
+# reset every kill latch to clear as it started, so a kill ARMED before the
+# run (which `axon-os kill` promises "a run starting with this id will pick
+# it up") was discarded and the job ran to its timeout, exit 8. That was
+# acc_a1_smoke_kill_journey's exit 8 under load; reproduced by arming first.
+MUTATIONS += [
+    ("M1450", "axon-os (4b, integrate-3): a kill armed before its run starts stops the run (the latch is "
+              "created clear only when absent)",
+     "crates/axon-os/src/cli.rs",
+     "            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}\n",
+     "            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {\n"
+     "                let _ = std::fs::write(&kf, r#\"{\"latch\":\"clear\"}\"#);\n"
+     "            }\n",
+     "axon-os", "--test r27_acceptance", "a_kill_armed_before_its_run_starts_stops_the_run"),
+]
+_lib_bad = (LIBRARY_PRIMITIVE & (RETIRED | SIBLING_ONLY)) | (SIBLING_ONLY & RETIRED)
+assert not _lib_bad, f"a row in two classes: {sorted(_lib_bad)}"
+assert set(_I3_ROWS) - {"M1232"} <= LIBRARY_PRIMITIVE and not set(_I3_ROWS) & (RETIRED | EQUIVALENT_DID)
+# ── end INTEGRATE-3 ──
+
 PSV_IDS = {f"M{n}" for n in range(137, 550)}
 # C9 round 3: rows M560-M649 are PSV rows (workstream ranges).
 PSV_IDS |= {f"M{n}" for n in range(550, 650)}
@@ -5455,6 +5586,8 @@ PSV_IDS |= {f"M{n}" for n in range(940, 1020)}
 PSV_IDS |= {f"M{n}" for n in range(1200, 1400)}
 # C9 round 4b, integrate-2 (amendment 64): M1400-M1449.
 PSV_IDS |= {f"M{n}" for n in range(1400, 1450)}
+# C9 round 4b, integrate-3 (amendment 64): M1450-M1469.
+PSV_IDS |= {f"M{n}" for n in range(1450, 1470)}
 
 
 def in_scope(mid, scope):

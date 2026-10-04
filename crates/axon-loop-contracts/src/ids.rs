@@ -313,8 +313,14 @@ mod tests {
     fn deserialize_validates_too() {
         assert!(serde_json::from_str::<TrialId>("\"ok-1\"").is_ok());
         assert!(serde_json::from_str::<TrialId>("\"bad id\"").is_err());
-        assert!(serde_json::from_str::<Ref>(&format!("\"cl22:{}\"", "A".repeat(64))).is_err());
-        assert!(serde_json::from_str::<Acf1Ref>(&format!("\"cl22:{}\"", "a".repeat(64))).is_err());
+        assert!(
+            serde_json::from_str::<Ref>(&format!("\"cl22:{}\"", "A".repeat(64))).is_err(),
+            "ATTACK: a Ref deserialized from a digest that is not lowercase hex"
+        );
+        assert!(
+            serde_json::from_str::<Acf1Ref>(&format!("\"cl22:{}\"", "a".repeat(64))).is_err(),
+            "ATTACK: an Acf1Ref deserialized from a reference of another scheme"
+        );
         assert!(serde_json::from_str::<AuthorityEpoch>("9007199254740992").is_err());
         assert!(serde_json::from_str::<AuthorityEpoch>("true").is_err());
     }

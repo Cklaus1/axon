@@ -335,8 +335,17 @@ mod tests {
             "properties":{"a":{"type":"string"}},"required":["a"]});
         assert!(validate_against(&obj, &json!({"a":"x"})).is_ok());
         assert!(validate_against(&obj, &json!(["x"])).is_err());
-        assert!(validate_against(&obj, &json!({})).is_err());
-        assert!(validate_against(&obj, &json!({"a":"x","b":1})).is_err());
+        // The walker's own keyword rules (LIBRARY_PRIMITIVE M1223, M1224,
+        // M1214, amendment 64): every production document is also refused by
+        // the typed layer, so only this direct test needs each rule.
+        assert!(
+            validate_against(&obj, &json!({})).is_err(),
+            "ATTACK: validate_against admitted an object missing a required field"
+        );
+        assert!(
+            validate_against(&obj, &json!({"a":"x","b":1})).is_err(),
+            "ATTACK: validate_against admitted a field additionalProperties:false closes"
+        );
         let e = json!({"enum":["a","b"]});
         assert!(validate_against(&e, &json!("a")).is_ok());
         assert!(validate_against(&e, &json!({"a":null})).is_err());
@@ -344,7 +353,10 @@ mod tests {
         assert!(validate_against(&i, &json!(true)).is_err());
         assert!(validate_against(&i, &json!(-1)).is_err());
         let one = json!({"oneOf":[{"type":"integer"},{"type":"integer","minimum":5}]});
-        assert!(validate_against(&one, &json!(7)).is_err());
+        assert!(
+            validate_against(&one, &json!(7)).is_err(),
+            "ATTACK: validate_against admitted a value matching two oneOf branches"
+        );
         assert!(validate_against(&one, &json!(1)).is_ok());
     }
 
@@ -374,7 +386,10 @@ mod tests {
             "usage/2/3",
             "usage/-1",
         ] {
-            assert!(validate_against(&s, &json!(bad)).is_err(), "{bad:?}");
+            assert!(
+                validate_against(&s, &json!(bad)).is_err(),
+                "ATTACK: validate_against admitted {bad:?}, which its pattern does not match"
+            );
         }
         let long_ok = format!("{}/1", "a".repeat(96));
         let too_long = format!("{}/1", "a".repeat(97));

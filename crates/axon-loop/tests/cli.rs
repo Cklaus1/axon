@@ -94,7 +94,17 @@ fn cli_pointer_baseline_resolve_transition_show_revoke() {
         false,
     );
     bad["next_epoch"] = json!(5);
-    assert_eq!(run(d.path(), &["pointer", "transition"], Some(&bad)).0, 4);
+    // A fence that skips an epoch meets two independent refusals on this
+    // route: parse's typed rule (M1266, Refused, 4) and, if that were gone,
+    // pointer::transition's `next_epoch == current + 1` (M1330, Conflict, 5),
+    // before anything is written. This pins that it is REFUSED with the
+    // store unchanged, not which of the two answers (ruling R3, precedent
+    // M487; integrate-3, amendment 64).
+    let c = run(d.path(), &["pointer", "transition"], Some(&bad)).0;
+    assert!(
+        c == 4 || c == 5,
+        "ATTACK: a transition whose fence skips an epoch was not refused (exit {c})"
+    );
     bad["unknown"] = json!(1);
     assert_eq!(run(d.path(), &["pointer", "transition"], Some(&bad)).0, 3);
     assert_eq!(snapshot(d.path()), before);
@@ -583,4 +593,40 @@ fn cli_safety_report_records_and_refuses() {
     let (c, out, e) = run(w.dir.path(), &["safety", "report"], Some(&own));
     assert_eq!(c, 0, "{e}");
     assert_eq!(out["report"]["finding"], "violation");
+}
+
+/// M1232 on its production route (integrate-3, amendment 64): a reference a
+/// caller names on the command line is a digest only if it is 64 lowercase
+/// hex. `pointer revoke` records the reference it is given -- it never looks
+/// the policy up and compares nothing with a computed digest -- so the hex
+/// rule in `Ref::new` (ids.rs check_hex64) is the only refusal on this route:
+/// without it a revocation naming a non-digest is appended to the authority
+/// ledger. (Its retirement against the schema's anyOf, M1213, was false: the
+/// schema walk never sees a CLI flag.) Control: the same revocation naming
+/// the real digest is recorded.
+#[test]
+fn a_revocation_naming_a_reference_that_is_not_a_digest_is_never_recorded() {
+    let (d, _s, _p, pr) = fresh();
+    let reason = r('e').to_string();
+    let revoke = |policy: &str| {
+        let rv = args(
+            &["pointer", "revoke"],
+            &[
+                SC[0], SC[1], SC[2], SC[3], "--policy", policy, "--reason", &reason, "--issuer",
+                ADMITTER,
+            ],
+        );
+        run(d.path(), &rv, None)
+    };
+    let before = snapshot(d.path());
+    let upper = format!("cl22:{}", pr.hex().to_ascii_uppercase());
+    let (c, v, _) = revoke(&upper);
+    assert!(
+        c != 0 && snapshot(d.path()) == before,
+        "ATTACK: a revocation naming a reference that is not 64 lowercase hex was recorded: {v}"
+    );
+    assert_eq!(c, 2, "a malformed --policy is a usage error");
+    let (c, v, e) = revoke(&pr.to_string());
+    assert_eq!(c, 0, "control: the revocation naming the real digest: {e}");
+    assert_eq!(v["revoked"][0]["policy_ref"], json!(pr), "{v}");
 }

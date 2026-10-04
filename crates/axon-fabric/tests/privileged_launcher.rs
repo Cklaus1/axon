@@ -1031,6 +1031,19 @@ fn production_etc(s: &Path, store_parent: &str) {
     .unwrap();
 }
 
+/// How long a namespace script waits for the custodian's activation socket
+/// (polls of 50 ms; >= 180 s), and how long a client waits for its reply.
+/// They were 10 s and 20 s, which a loaded host exceeded: under the 6-shard
+/// paired-disable the socket appeared after the wait (the helper then found
+/// no custodian, "No such file or directory") or the custodian was stopped
+/// before it answered ("Terminated", no refusal written), failing CONTROLS
+/// and leaving the attack assertions able to pass on a custodian that never
+/// ran. Reproduced by delaying the activation 12 s (C9 round 4b,
+/// integrate-3). A socket that never appears is now a SETUP failure, never a
+/// verdict; a healthy run pays nothing for the longer bounds.
+const ACTIVATION_POLLS: u32 = 3600;
+const CLIENT_TIMEOUT_S: u32 = 180;
+
 /// Run `body` (sh, `$1` = `s`) in a private mount namespace where `s/etc` is
 /// /etc/axon (root-owned; runs the Fabric uid's, the custodian's store its
 /// uid's, 0700) and the PROTECTED custodian runs as its unit would start it:
@@ -1063,7 +1076,9 @@ fn in_production_etc_with(s: &Path, store_parent: &str, sock: &str, prefix: &str
          echo $? > \"$1/custodian.code\"; }} 2> \"$1/custodian.err\" &\n\
          C=$!\n\
          set +e\n\
-         n=0; while [ ! -S {sock} ] && [ $n -lt 200 ]; do sleep 0.05; n=$((n+1)); done\n\
+         n=0; while [ ! -S {sock} ] && [ $n -lt {ACTIVATION_POLLS} ]; do sleep 0.05; n=$((n+1)); done\n\
+         [ -S {sock} ] || {{ echo \"setup: the activation socket {sock} never appeared\" >&2; \
+         pkill -f \"$1/axon-custodian\" 2>/dev/null; exit 3; }}\n\
          chmod 0666 {sock}\n\
          {body}\n\
          pkill -f \"$1/axon-custodian\" 2>/dev/null; wait $C 2>/dev/null\n\
@@ -1179,7 +1194,7 @@ fn a_protected_custodian_serves_only_from_a_store_the_operator_placed() {
             "setpriv --reuid={FABRIC} --regid={FABRIC} --clear-groups -- python3 -c '\n\
              import socket, sys\n\
              s = socket.socket(socket.AF_UNIX)\n\
-             s.settimeout(20)\n\
+             s.settimeout({CLIENT_TIMEOUT_S})\n\
              s.connect(\"/etc/axon/run/custodian.sock\")\n\
              s.sendall(b\"{{\\\"schema\\\":\\\"axon-custodian-request/1\\\",\\\"op\\\":\\\"issue\\\",\\\"epoch\\\":0}}\\n\")\n\
              sys.stdout.write(s.recv(4096).decode())\n\
@@ -1600,7 +1615,7 @@ fn ask_issue(uid: u32, sock: &str, out: &str) -> String {
         "setpriv --reuid={uid} --regid={uid} --clear-groups -- python3 -c '\n\
          import socket, sys\n\
          s = socket.socket(socket.AF_UNIX)\n\
-         s.settimeout(20)\n\
+         s.settimeout({CLIENT_TIMEOUT_S})\n\
          s.connect(\"{sock}\")\n\
          s.sendall(b\"{{\\\"schema\\\":\\\"axon-custodian-request/1\\\",\\\"op\\\":\\\"issue\\\",\\\"epoch\\\":0}}\\n\")\n\
          sys.stdout.write(s.recv(4096).decode())\n\
@@ -2597,7 +2612,7 @@ fn ask_custodian(uid: u32, sock: &str, body: &str, out: &str) -> String {
         "setpriv --reuid={uid} --regid={uid} --clear-groups -- python3 -c '\n\
          import socket, sys\n\
          s = socket.socket(socket.AF_UNIX)\n\
-         s.settimeout(20)\n\
+         s.settimeout({CLIENT_TIMEOUT_S})\n\
          s.connect(\"{sock}\")\n\
          s.sendall(b\"{body}\\n\")\n\
          sys.stdout.write(s.recv(4096).decode())\n\
@@ -2755,7 +2770,9 @@ fn in_production_etc_before_custodian(s: &Path, store_parent: &str, body: &str) 
          echo $? > \"$1/custodian.code\"; }} 2> \"$1/custodian.err\" &\n\
          C=$!\n\
          set +e\n\
-         n=0; while [ ! -S {sock} ] && [ $n -lt 200 ]; do sleep 0.05; n=$((n+1)); done\n\
+         n=0; while [ ! -S {sock} ] && [ $n -lt {ACTIVATION_POLLS} ]; do sleep 0.05; n=$((n+1)); done\n\
+         [ -S {sock} ] || {{ echo \"setup: the activation socket {sock} never appeared\" >&2; \
+         pkill -f \"$1/axon-custodian\" 2>/dev/null; exit 3; }}\n\
          chmod 0666 {sock}\n\
          {rest}\n\
          pkill -f \"$1/axon-custodian\" 2>/dev/null; wait $C 2>/dev/null\n\
