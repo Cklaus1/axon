@@ -1455,3 +1455,24 @@ ATTACK_MARKERS.update({
     'M1233': 'ATTACK: an Acf1Ref deserialized from a reference of another scheme',
     'M1450': 'ATTACK: a run started after its kill was armed cleared the latch and ran',
 })
+
+# C9 round 4b, workstream GAPS (M1470-M1486; amendment 65).
+ATTACK_MARKERS.update({
+    'M1474': r'ATTACK: the root launcher inherited signal dispositions its caller set',
+    'M1475': r'ATTACK: the root helper ran with signals its caller blocked',
+    'M1476': r"ATTACK: the root launcher ran under its caller's umask",
+    'M1477': r"ATTACK: the root helper kept its caller's working directory",
+    'M1478': r'ATTACK: a descriptor the caller left open reached the root',
+    'M1479': r'ATTACK: the root launcher may dump core',
+    'M1480': r'ATTACK: the root launcher ran under resource limits its caller lowered',
+    'M1481': r'ATTACK: the root helper runs with SIGPIPE at its default action',
+    'M1482': r"ATTACK: the root launcher ran under its caller's open-file limit",
+    'M1483': r'ATTACK: the root helper spent the nonce through a custodian program the operator\s+never pinned',
+    'M1484': r'ATTACK: a custodian whose executable another uid can rewrite \(mode 0775\) was trusted',
+    'M1485': r'ATTACK: a production helper launched with no custodian program pin',
+    'M1486': r'ATTACK: the B263 record states a host it did not measure',
+    'M1470': r"ATTACK: the freeze bound a guest image built with a rustc other than the operator's",
+    'M1471': r"ATTACK: the freeze bound a guest image whose build recorded a host tool the operator's",
+    'M1472': r'ATTACK: the freeze bound a guest image with no operator host-toolchain pin',
+    'M1473': r'ATTACK: the freeze accepted a host-toolchain pin owned by uid',
+})

@@ -166,7 +166,11 @@ def main():
     # controlled step, each cargo invocation is exactly its table entry with
     # the effective config checked before and after it, and the toolchain is
     # the pinned channel's. One judge for the whole image.
-    outside = gbe.image_problems(img)
+    # Amendment 65: and the host tools those steps recorded are the
+    # operator's pin (/etc/axon/host-toolchain-pin.json), which a freeze
+    # REQUIRES: without it the toolchain is attested only by the build's own
+    # record, and the freeze is what binds evidence for certification.
+    outside = gbe.image_problems(img, pin_required=True)
     if outside:
         sys.exit("refused: a guest image component was produced outside the controlled build "
                  f"(scripts/guest_build_env.py): {outside}")

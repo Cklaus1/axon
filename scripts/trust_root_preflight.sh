@@ -41,6 +41,11 @@
 #              every other actor the kernel must refuse the exec
 #   guest      cannot even ADDRESS the root (--guest-cmd runs
 #              trust_root_guest_probe.sh inside the candidate guest)
+#   nnp        (amendment 65) the RUNNING Fabric service (--fabric-pid; required
+#              in protected mode) is the --fabric uid and has NoNewPrivs 0. Under
+#              NoNewPrivileges the kernel ignores the helper's set-id bit, so
+#              every launch is refused; the probe above runs through setpriv
+#              without it and cannot see how the service is really started
 #
 # Every write attempt is NON-DESTRUCTIVE if it unexpectedly succeeds: a probe
 # directory is created and removed, a file is opened read-write without being
@@ -58,7 +63,7 @@
 #
 # Usage (as root, which is needed to switch UID — never as the actors):
 #   trust_root_preflight.sh --verifier UID[:GID] --custodian UID[:GID] --fabric UID[:GID] \
-#       --agent UID[:GID] [--agent …] --guest-cmd 'CMD' \
+#       --agent UID[:GID] [--agent …] --guest-cmd 'CMD' [--fabric-pid PID] \
 #       [--root DIR --host-config FILE --launcher-config FILE --custodian-config FILE --fabric-bin FILE] [--out FILE]
 #
 # Exit 0 = PASS, 1 = FAIL (a refusal did not happen), 2 = cannot run (usage,
@@ -68,6 +73,7 @@ set -uo pipefail
 OPERATOR_TRUST_ROOT=/etc/axon/trust
 SCHEMA=axon-trust-preflight/1
 ROOT="" OUT="" GUEST="" VERIFIER="" CUSTODIAN="" FABRIC="" HOST_CONFIG="" SIGNING_KEY="" FABRIC_BIN=""
+FABRIC_PID=""
 LAUNCHER_CONFIG="" HELPER="" HELPER_FABRIC_UID=""
 CUSTODIAN_CONFIG="" CUSTODIAN_STORE="" CUSTODIAN_UID="" CUSTODIAN_FABRIC_UID="" CUSTODIAN_LAUNCHER_UID=""
 O1=() O1_DIRS=() SERVICE_DIRS=() SOCKET_DIRS=() AUTHORITY_STORES=()
@@ -81,6 +87,7 @@ while [ $# -gt 0 ]; do
     --verifier) VERIFIER="$2"; shift 2 ;;
     --custodian) CUSTODIAN="$2"; shift 2 ;;
     --fabric) FABRIC="$2"; shift 2 ;;
+    --fabric-pid) FABRIC_PID="$2"; shift 2 ;;
     --host-config) HOST_CONFIG="$2"; shift 2 ;;
     --fabric-bin) FABRIC_BIN="$2"; shift 2 ;;
     --launcher-config) LAUNCHER_CONFIG="$2"; shift 2 ;;
@@ -94,6 +101,10 @@ command -v setpriv >/dev/null || die "setpriv is required"
 [ -n "$VERIFIER" ] && [ -n "$CUSTODIAN" ] && [ -n "$FABRIC" ] && [ ${#AGENTS[@]} -gt 0 ] && [ -n "$GUEST" ] \
   || die "--verifier, --custodian, --fabric, at least one --agent and --guest-cmd are required"
 if [ -n "$ROOT" ]; then MODE=dev; else MODE=protected; ROOT=$OPERATOR_TRUST_ROOT; fi
+# Amendment 65: protected mode judges the Fabric service as it really runs.
+[ "$MODE" = dev ] || [ -n "$FABRIC_PID" ] \
+  || die "--fabric-pid PID (the running Fabric service's main pid, e.g. systemctl show -p MainPID) is required in protected mode"
+case "$FABRIC_PID" in ""|*[!0-9]*) [ -z "$FABRIC_PID" ] || die "--fabric-pid must be a pid" ;; esac
 # O1 (v022-psv-protocol.md §2): the protected-host config and every path it
 # pins are operator authority too, and its signing key is the Fabric UID's
 # alone. Protected mode reads the fixed file; dev mode needs --host-config.
@@ -301,6 +312,19 @@ if str(p.get("ruid")) != uid: bad.append("ruid %s" % p.get("ruid"))
 if want != "any" and p.get("build") != want: bad.append("build %s" % p.get("build"))
 print("; ".join(bad) or "root-through-helper")' "$want_build" "${F%%:*}" 2>/dev/null)
 record fabric "$F" exec-helper "$HELPER" root-through-helper "${pv:-no probe result}"
+# Amendment 65: the RUNNING Fabric is the --fabric uid and not under
+# NoNewPrivileges (the kernel would ignore the helper's set-id bit for it and
+# every launch would be refused). Read from the kernel's own record of it.
+if [ -n "$FABRIC_PID" ]; then
+  nst=$(cat "/proc/$FABRIC_PID/status" 2>/dev/null)
+  nruid=$(awk '/^Uid:/{print $2}' <<<"$nst"); nnp=$(awk '/^NoNewPrivs:/{print $2}' <<<"$nst")
+  nobs=ok
+  if [ -z "$nst" ]; then nobs="no process $FABRIC_PID"
+  elif [ "$nruid" != "${F%%:*}" ]; then nobs="pid $FABRIC_PID runs as uid $nruid, not the Fabric's ${F%%:*}"
+  elif [ "$nnp" != 0 ]; then nobs="NoNewPrivs ${nnp:-unknown}: the kernel ignores the helper's set-id bit for this Fabric"
+  fi
+  record fabric "$F" no-new-privs "/proc/$FABRIC_PID" ok "$nobs"
+fi
 for who in "verifier:$V" "custodian:$C"; do
   if probe "${who#*:}" >/dev/null; then record "${who%%:*}" "${who#*:}" exec-helper "$HELPER" refused SUCCEEDED
   else record "${who%%:*}" "${who#*:}" exec-helper "$HELPER" refused refused; fi

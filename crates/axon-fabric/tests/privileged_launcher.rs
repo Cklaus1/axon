@@ -1003,7 +1003,8 @@ fn production_etc(s: &Path, store_parent: &str) {
             "max_input_bytes": 1u64 << 30,
             "observer": {"root": e.join("observer"), "max_age_s": 300,
                          "host_signer_public_key": TEST_HOST_SIGNER},
-            "custodian": {"socket": socket, "uid": CUSTODIAN},
+            "custodian": {"socket": socket, "uid": CUSTODIAN,
+                          "sha256": sha256_file(&bin.join("axon-custodian"))},
         })
         .to_string(),
     )
@@ -2838,4 +2839,511 @@ fn the_probe_list_is_refused_for_a_host_config_load_refuses() {
         );
         assert!(format!("{out}{err}").contains(why), "{why}: {out} {err}");
     }
+}
+
+// ── C9 round 4b, workstream GAPS (amendment 65; rows M1470-M1486). ─────────
+// The operator kit found three helper gaps: `harden()` had no test and no row
+// (the setuid helper's inherited-state resets), the custodian PROGRAM was
+// pinned nowhere (the helper trusted whatever its socket's listener ran), and
+// a Fabric under NoNewPrivileges made the helper refuse with a misleading
+// reason. Each test below drives the real binary.
+
+/// What the stand-in launcher records about ITSELF and about its parent, the
+/// root helper (`$PPID`), for the harden tests. Read as root, by the launcher.
+const RECORD_STATE: &str = r#"P=$PPID
+grep -E '^(SigIgn|SigBlk)' /proc/$P/status > "$OUT/helper-status"
+readlink /proc/$P/cwd > "$OUT/helper-cwd"
+for f in /proc/$P/fd/*; do readlink "$f"; done > "$OUT/helper-fds" 2>/dev/null
+grep -E '^(SigIgn|SigBlk)' /proc/$$/status > "$OUT/launcher-status"
+umask > "$OUT/launcher-umask"
+cat /proc/$$/limits > "$OUT/launcher-limits"
+for f in /proc/$$/fd/*; do readlink "$f"; done > "$OUT/launcher-fds" 2>/dev/null
+env > "$OUT/launcher-env"
+"#;
+
+/// The hostile caller: as the Fabric uid, set every piece of process state a
+/// setuid program inherits, then exec the helper (a process RUNNING as the
+/// actor makes the exec, as in [`Fx::run`]).
+const HOSTILE_CALLER: &str = r#"
+import os, resource, signal, sys
+helper, cfg, held, cwd, bash_env = sys.argv[1:6]
+for s in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
+    signal.signal(s, signal.SIG_IGN)
+signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGUSR1, signal.SIGALRM, signal.SIGTERM})
+os.umask(0)
+resource.setrlimit(resource.RLIMIT_FSIZE, (4 << 20, 4 << 20))
+resource.setrlimit(resource.RLIMIT_CPU, (3000, 3000))
+resource.setrlimit(resource.RLIMIT_NOFILE, (256, 256))
+hard = resource.getrlimit(resource.RLIMIT_CORE)[1]
+resource.setrlimit(resource.RLIMIT_CORE, (hard, hard))
+fd = os.open(held, os.O_RDONLY)
+os.dup2(fd, 9, inheritable=True)
+os.close(fd)
+os.chdir(cwd)
+env = {"PATH": cwd, "BASH_ENV": bash_env, "ENV": bash_env, "LD_PRELOAD": "/nonexistent/x.so",
+       "HOSTILE_CALLER": "1"}
+os.execve(helper, [helper, "--test-config", cfg], env)
+"#;
+
+/// A `/proc/<pid>/status` mask line's value.
+fn mask(status: &str, field: &str) -> u64 {
+    status
+        .lines()
+        .find_map(|l| l.strip_prefix(field))
+        .map(|v| u64::from_str_radix(v.trim(), 16).unwrap())
+        .unwrap_or_else(|| panic!("setup: no {field} in {status:?}"))
+}
+
+/// A `/proc/<pid>/limits` row's (soft, hard), as written there.
+fn limit(limits: &str, row: &str) -> (String, String) {
+    let l = limits
+        .lines()
+        .find(|l| l.starts_with(row))
+        .unwrap_or_else(|| panic!("setup: no {row} in {limits:?}"));
+    let mut w = l[row.len()..].split_whitespace();
+    (w.next().unwrap().into(), w.next().unwrap().into())
+}
+
+/// A (amendment 65; M1474-M1482), ROOT ONLY: `harden()` resets, before the
+/// config or the request is read, every piece of process state a setuid
+/// program inherits from its caller. The caller here is the Fabric uid
+/// itself, setting all of it at once: ignored SIGTERM/SIGHUP/SIGINT, a
+/// blocked mask, umask 0, lowered FSIZE/CPU/NOFILE limits, a raised core
+/// limit, an inherited descriptor, a working directory of its own and a
+/// hostile environment. The stand-in launcher records its own state and its
+/// parent's (the root helper's) from /proc. Each property is a separate
+/// assertion with its own marker; with all resets in place the launch runs
+/// (the control: the honest launch still works from a hostile caller).
+#[test]
+fn a_callers_process_state_never_reaches_the_root_helper_or_its_launcher() {
+    if skip_unless_root() {
+        return;
+    }
+    let f = fx(Some(FABRIC), RECORD_STATE, |_| {});
+    // What the caller holds open, works in, and points BASH_ENV at: all the
+    // Fabric uid's own.
+    let held = f.base.join("held-by-caller");
+    std::fs::write(&held, "the caller's descriptor\n").unwrap();
+    let cwd = f.base.join("caller-cwd");
+    std::fs::create_dir(&cwd).unwrap();
+    let bash_env = cwd.join("bash_env.sh");
+    let bash_env_ran = f.base.join("bash-env-ran");
+    std::fs::write(&bash_env, format!("touch {}\n", bash_env_ran.display())).unwrap();
+    for p in [&held, &cwd, &bash_env] {
+        chown(p, FABRIC);
+    }
+    let mut child = Command::new("setpriv")
+        .args([
+            &format!("--reuid={FABRIC}"),
+            &format!("--regid={FABRIC}"),
+            "--clear-groups",
+            "--",
+            "python3",
+            "-c",
+            HOSTILE_CALLER,
+        ])
+        .arg(f.installed.as_ref().unwrap())
+        .arg(&f.cfg)
+        .arg(&held)
+        .arg(&cwd)
+        .arg(&bash_env)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    {
+        use std::io::Write;
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(f.request("op-1").to_string().as_bytes())
+            .unwrap();
+    }
+    let o = child.wait_with_output().unwrap();
+    let rep = String::from_utf8_lossy(&o.stdout).to_string();
+    let out = f.out_root.join("op-1");
+    let read = |n: &str| {
+        std::fs::read_to_string(out.join(n)).unwrap_or_else(|e| {
+            panic!(
+                "setup: the launch from a hostile caller did not record {n} ({e}): exit {:?} \
+                 {rep} {}",
+                o.status.code(),
+                String::from_utf8_lossy(&o.stderr)
+            )
+        })
+    };
+    assert_eq!(
+        read("ruid").trim(),
+        "0",
+        "control: the launcher ran as root"
+    );
+    let (helper, launcher) = (read("helper-status"), read("launcher-status"));
+    let caller_ignored =
+        (1u64 << (libc::SIGTERM - 1)) | (1u64 << (libc::SIGHUP - 1)) | (1u64 << (libc::SIGINT - 1));
+    // M1474: dispositions. An ignored signal survives exec, so the root
+    // launcher (and the jailer, firecracker) would keep ignoring SIGTERM.
+    assert!(
+        mask(&launcher, "SigIgn:") & caller_ignored == 0
+            && mask(&helper, "SigIgn:") & caller_ignored == 0,
+        "ATTACK: the root launcher inherited signal dispositions its caller set (SIGTERM/SIGHUP/\
+         SIGINT ignored): launcher {launcher:?} helper {helper:?}"
+    );
+    // M1481: the helper's own SIGPIPE is ignored (a closed report pipe must
+    // not kill it mid-cleanup), whatever the caller left it as.
+    assert!(
+        mask(&helper, "SigIgn:") & (1u64 << (libc::SIGPIPE - 1)) != 0,
+        "ATTACK: the root helper runs with SIGPIPE at its default action: a caller that closes \
+         the report pipe kills it between the launch and the hand-over: {helper:?}"
+    );
+    // M1475: the mask. Blocked signals survive exec; the root helper must
+    // answer SIGTERM (a service stop) rather than run on until SIGKILL.
+    assert_eq!(
+        mask(&helper, "SigBlk:"),
+        0,
+        "ATTACK: the root helper ran with signals its caller blocked: {helper:?}"
+    );
+    // M1476: umask. What the root launcher creates would be world-writable.
+    assert_eq!(
+        read("launcher-umask").trim(),
+        "0022",
+        "ATTACK: the root launcher ran under its caller's umask (0): what it creates as root \
+         would be writable by every uid"
+    );
+    // M1477: the root helper holds no reference into a directory its caller
+    // chose, and resolves nothing relative to one.
+    assert_eq!(
+        read("helper-cwd").trim(),
+        "/",
+        "ATTACK: the root helper kept its caller's working directory"
+    );
+    // M1478: an inherited descriptor (fd 9, the caller's file).
+    let held_s = held.display().to_string();
+    for who in ["launcher-fds", "helper-fds"] {
+        assert!(
+            !read(who).lines().any(|l| l == held_s),
+            "ATTACK: a descriptor the caller left open reached the root ({who}): {}",
+            read(who)
+        );
+    }
+    let limits = read("launcher-limits");
+    // M1479: a core dump of the root launcher (or what it runs) writes its
+    // memory to disk.
+    assert_eq!(
+        limit(&limits, "Max core file size").0,
+        "0",
+        "ATTACK: the root launcher may dump core (its caller raised RLIMIT_CORE): {limits}"
+    );
+    // M1480: lowered limits make the root launch fail where its caller chose
+    // (SIGXFSZ mid-write, SIGXCPU mid-boot).
+    assert!(
+        limit(&limits, "Max file size").0 == "unlimited"
+            && limit(&limits, "Max cpu time").0 == "unlimited",
+        "ATTACK: the root launcher ran under resource limits its caller lowered (FSIZE/CPU): \
+         {limits}"
+    );
+    // M1482: the open-file limit is the helper's own.
+    assert_eq!(
+        limit(&limits, "Max open files"),
+        ("65536".to_string(), "65536".to_string()),
+        "ATTACK: the root launcher ran under its caller's open-file limit: {limits}"
+    );
+    // The environment (no row: the launcher's environment is built from
+    // nothing by sealed_exec::command, and the helper reads no variable;
+    // amendment 65 records harden()'s clear as dominated there).
+    let env = read("launcher-env");
+    assert!(
+        !env.contains("HOSTILE_CALLER") && !env.contains("LD_PRELOAD") && !bash_env_ran.exists(),
+        "ATTACK: the caller's environment reached the root launcher: {env}"
+    );
+    assert_eq!(o.status.code(), Some(0), "control: the launch ran: {rep}");
+}
+
+/// The impostor custodian: bound on `argv[1]` (or, with `fd`, serving
+/// systemd's fd 3), it answers every request `ok` in `argv[2]`'s mode,
+/// spending any nonce it is shown. The program is python3, not the pinned
+/// `axon-custodian`.
+const IMPOSTOR: &str = r#"
+import os, socket, sys
+where, mode = sys.argv[1], sys.argv[2]
+if where == "fd":
+    s = socket.socket(fileno=3)
+else:
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    s.bind(where)
+    s.listen(8)
+    open(where + ".ready", "w").close()
+while True:
+    c, _ = s.accept()
+    c.recv(4096)
+    c.sendall(('{"schema":"axon-custodian-reply/1","ok":true,"mode":"%s","nonce":null,'
+               '"error":null}\n' % mode).encode())
+    c.close()
+"#;
+
+struct Impostor(std::process::Child);
+impl Drop for Impostor {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+fn start_impostor(sock: &Path) -> Impostor {
+    let c = Command::new("python3")
+        .args(["-c", IMPOSTOR])
+        .arg(sock)
+        .arg("test")
+        .spawn()
+        .unwrap();
+    let ready = PathBuf::from(format!("{}.ready", sock.display()));
+    for _ in 0..200 {
+        if ready.exists() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+    assert!(
+        ready.exists(),
+        "setup: the impostor custodian never listened"
+    );
+    Impostor(c)
+}
+
+/// A (amendment 65; M1483): the helper spends a nonce only through the
+/// custodian PROGRAM its operator pinned. An impostor bound on the socket the
+/// config names, running as the custodian uid, answers every spend "ok"
+/// (here: a nonce it never issued). The kernel names the process that sent
+/// the reply (SCM_PIDFD); its executable, opened by descriptor, is python3,
+/// not the pinned axon-custodian. Control: the fixture's genuine custodian,
+/// pinned, launches (`the_helper_launches_a_well_formed_request…`).
+#[test]
+fn a_custodian_program_the_operator_never_pinned_spends_nothing() {
+    let imp_dir = tempfile::tempdir().unwrap();
+    let sock = imp_dir.path().join("impostor.sock");
+    let _imp = start_impostor(&sock);
+    let f = fx(None, "", |v| v["custodian"]["socket"] = json!(sock));
+    let (code, rep) = f.run(&f.request("op-1"), None);
+    assert!(
+        code == Some(30) && !f.launched(),
+        "ATTACK: the root helper spent the nonce through a custodian program the operator \
+         never pinned (an impostor on the custodian socket): {code:?} {rep}"
+    );
+    assert!(
+        rep["error"]
+            .as_str()
+            .unwrap_or("")
+            .contains("not served by the pinned custodian program"),
+        "{rep}"
+    );
+    // Control on the same fixture: the genuine custodian's socket, pinned.
+    f.edit_config(|v| v["custodian"]["socket"] = json!(custodian_socket(&f.base)));
+    f.put_inputs();
+    let (code, rep) = f.run(&f.request("op-2"), None);
+    assert_eq!(code, Some(0), "control: the pinned custodian spends: {rep}");
+}
+
+/// A (amendment 65; M1484): the bytes hashed are the ones that ran only if no
+/// other uid can rewrite the executable; one group- or other-writable is
+/// refused even when its bytes are, at this moment, the pinned ones.
+#[test]
+fn a_custodian_executable_another_uid_can_rewrite_is_refused() {
+    let d = tempfile::tempdir().unwrap();
+    std::fs::set_permissions(d.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
+    let copy = d.path().join("axon-custodian");
+    copy_executable(env!("CARGO_BIN_EXE_axon-custodian"), &copy, 0o775);
+    let store = d.path().join("custodian-nonces");
+    std::fs::create_dir(&store).unwrap();
+    std::fs::set_permissions(&store, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let me = euid();
+    let sock = d.path().join("rw.sock");
+    let cfg = d.path().join("custodian.json");
+    std::fs::write(
+        &cfg,
+        json!({"schema": "axon-custodian/1", "custodian_uid": me, "fabric_uid": me,
+               "launcher_uid": me, "socket": sock, "store": store, "max_age_s": 300})
+        .to_string(),
+    )
+    .unwrap();
+    std::fs::set_permissions(&cfg, std::fs::Permissions::from_mode(0o644)).unwrap();
+    let child = Command::new(&copy)
+        .arg("--test-config")
+        .arg(&cfg)
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let _guard = Impostor(child);
+    for _ in 0..200 {
+        if sock.exists() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+    let client = |pin: String| axon_fabric::custodian::CustodianRef {
+        socket: sock.clone(),
+        uid: me,
+        sha256: Some(pin),
+    };
+    let got = client(custodian_program_sha256()).issue(0);
+    assert!(
+        got.is_err(),
+        "ATTACK: a custodian whose executable another uid can rewrite (mode 0775) was trusted \
+         as the pinned program: {got:?}"
+    );
+    assert!(
+        format!("{got:?}").contains("no other uid can write"),
+        "{got:?}"
+    );
+    // Control: the same copy, not writable by others, is the pinned program.
+    std::fs::set_permissions(&copy, std::fs::Permissions::from_mode(0o755)).unwrap();
+    client(custodian_program_sha256())
+        .issue(0)
+        .expect("control: the pinned program, owned and not writable by others");
+}
+
+/// Run the setuid-root PRODUCTION helper as the Fabric uid in the production
+/// namespace of `s` (custodian started with `prefix`), with `wrap` before the
+/// exec (e.g. `setpriv --no-new-privs`). Returns (exit, report, launcher ruid).
+fn production_helper_as_fabric(s: &Path, prefix: &str, wrap: &str) -> (String, String, String) {
+    in_production_etc_with(
+        s,
+        "custodian",
+        "/etc/axon/run/custodian.sock",
+        prefix,
+        &format!(
+            "cp \"$1/axon-protected-launcher\" /etc/axon/h\n\
+             chown 0:{FABRIC} /etc/axon/h\n\
+             chmod 04750 /etc/axon/h\n\
+             setpriv --reuid={FABRIC} --regid={FABRIC} --clear-groups {wrap} -- \
+             sh -c 'exec /etc/axon/h' < \"$1/request.json\" > \"$1/report.json\"\n\
+             echo $? > \"$1/code\"\n\
+             cp -a /etc/axon/runs/op-1 \"$1/result\" 2>/dev/null"
+        ),
+    );
+    let read = |n: &str| {
+        std::fs::read_to_string(s.join(n))
+            .unwrap_or_default()
+            .trim()
+            .to_string()
+    };
+    (read("code"), read("report.json"), read("result/ruid"))
+}
+
+fn production_fixture() -> Option<tempfile::TempDir> {
+    if skip_unless_root() {
+        return None;
+    }
+    if !Path::new("/etc/axon").is_dir() {
+        eprintln!("skipped: no /etc/axon mount point (this test never creates one)");
+        return None;
+    }
+    let d = tempfile::tempdir_in("/var/tmp").unwrap();
+    set_mode(d.path(), 0o755);
+    production_etc(d.path(), "custodian");
+    Some(d)
+}
+
+fn edit_production_helper_config(s: &Path, edit: impl FnOnce(&mut Value)) {
+    let p = s.join("etc/protected-launcher.json");
+    let mut v: Value = serde_json::from_str(&std::fs::read_to_string(&p).unwrap()).unwrap();
+    edit(&mut v);
+    std::fs::write(&p, v.to_string()).unwrap();
+}
+
+/// A (amendment 65; M1483, M1485), ROOT ONLY, PRODUCTION BUILD: on a
+/// protected host the custodian is the program the operator pinned. (1) A
+/// helper config with no `custodian.sha256` is refused and nothing launches
+/// (M1485): unpinned, whatever program the custodian socket's unit runs
+/// spends nonces. (2) Pinned, an impostor socket-activated in the
+/// custodian's place (its unit's ExecStart swapped for a program that answers
+/// every spend "ok") spends nothing (M1483). Control: the genuine production
+/// custodian, pinned, launches as root.
+#[test]
+fn a_production_helper_spends_only_through_the_pinned_custodian_program() {
+    let Some(d) = production_fixture() else {
+        return;
+    };
+    let s = d.path();
+    edit_production_helper_config(s, |v| {
+        v["custodian"].as_object_mut().unwrap().remove("sha256");
+    });
+    let (code, rep, ruid) = production_helper_as_fabric(s, "", "");
+    assert!(
+        code == "30" && ruid.is_empty(),
+        "ATTACK: a production helper launched with no custodian program pin (any program on the \
+         custodian socket spends): exit {code} ruid {ruid:?} {rep}"
+    );
+    assert!(rep.contains("custodian.sha256"), "{rep}");
+
+    let Some(d) = production_fixture() else {
+        return;
+    };
+    let s = d.path();
+    std::fs::write(s.join("impostor.py"), IMPOSTOR).unwrap();
+    let (code, rep, ruid) =
+        production_helper_as_fabric(s, "python3 \"$1/impostor.py\" fd protected", "");
+    assert!(
+        code == "30" && ruid.is_empty(),
+        "ATTACK: a production helper spent the nonce through an impostor socket-activated as the \
+         custodian (a program the operator never pinned): exit {code} ruid {ruid:?} {rep}"
+    );
+    assert!(
+        rep.contains("not served by the pinned custodian program"),
+        "{rep}"
+    );
+
+    let Some(d) = production_fixture() else {
+        return;
+    };
+    let s = d.path();
+    let (code, rep, ruid) = production_helper_as_fabric(s, "", "");
+    assert_eq!(
+        (code.as_str(), ruid.as_str()),
+        ("0", "0"),
+        "control: the pinned production custodian spends and the helper launches as root: {rep} \
+         (custodian: {})",
+        std::fs::read_to_string(s.join("custodian.err")).unwrap_or_default()
+    );
+}
+
+/// A (amendment 65), ROOT ONLY, PRODUCTION BUILD: a Fabric running under
+/// NoNewPrivileges (systemd `NoNewPrivileges=yes`, `setpriv --no-new-privs`)
+/// makes the kernel ignore the helper's set-id bit. Measured: the helper then
+/// runs as the Fabric uid; it launches nothing, and now SAYS why (the euid
+/// refusal alone named a missing setuid bit or a nosuid mount, which is how
+/// this misconfiguration was misdiagnosed). No row: on every route the euid
+/// rule (M602) and, for a test-trust build, the operator-file owner rule
+/// refuse the same launch (amendment 65 records it as a diagnostic).
+#[test]
+fn a_fabric_under_no_new_privileges_is_told_why_the_helper_launches_nothing() {
+    let Some(d) = production_fixture() else {
+        return;
+    };
+    let s = d.path();
+    let (code, rep, ruid) = production_helper_as_fabric(s, "", "--no-new-privs");
+    assert!(
+        code == "30" && ruid.is_empty(),
+        "ATTACK: a production helper launched under its caller's NoNewPrivileges: exit {code} \
+         ruid {ruid:?} {rep}"
+    );
+    assert!(
+        rep.contains("NoNewPrivileges"),
+        "the refusal names NoNewPrivileges: {rep}"
+    );
+    // The probe reports it, for the preflight.
+    let p = Command::new("setpriv")
+        .args([
+            &format!("--reuid={FABRIC}"),
+            &format!("--regid={FABRIC}"),
+            "--clear-groups",
+            "--no-new-privs",
+            "--",
+        ])
+        .arg(helper_pin().path)
+        .arg("--probe")
+        .output()
+        .unwrap();
+    let v: Value = serde_json::from_slice(&p.stdout).unwrap();
+    assert_eq!(v["no_new_privs"], true, "{v}");
 }

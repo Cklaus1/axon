@@ -2767,3 +2767,126 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       refusing (its EVIDENCE claim was false, not the code), and the kill-latch defect is in the
       axon-os supervisor's R27 kill switch, outside the PSV negative matrix (it is rowed, M1450).
     - **Operator deployment.** None.
+
+65. **The setuid helper's inherited-state resets are evidenced; the custodian is the program the
+    operator pinned; the B263 record names the host it ran on; the host-toolchain pin has a
+    reader; NoNewPrivileges is named and checked (C9 round 4b, gaps: the operator deployment kit,
+    c9r4b/opkit a24e170a, found these code gaps).** No counting rule is relaxed.
+    - **Before.** (1) `privileged_launcher::harden()` (the setuid helper's reset of signal
+      dispositions and mask, umask, working directory, inherited descriptors, environment,
+      dumpable flag and resource limits) had no test and no row: each reset could be deleted with
+      the whole suite green. (2) The custodian was authenticated only by the uid that bound its
+      socket (or root, systemd's activation); its PROGRAM was pinned nowhere, so any program
+      serving the socket as the custodian uid could answer every spend `ok` (negative matrix A93).
+      (3) `scripts/b263_qualify.sh` wrote `"host": "WSL2-nested"` and a fixed Hyper-V caveat
+      whatever host it ran on; every protected receipt carries `qualification-host:<host>` and
+      `qualification-caveat:` verbatim. (4) The kit's `/etc/axon/host-toolchain-pin.json`
+      (`axon-host-toolchain-pin/1`) had no reader. (5) No harness ran
+      `scripts/trust_root_guest_probe.sh` in a real guest (the preflight runs whatever
+      `--guest-cmd` the operator supplies; its own test uses a mount-namespace stand-in). (6) A
+      Fabric under NoNewPrivileges makes the kernel ignore the helper's set-id bit: measured, the
+      production helper then runs as the Fabric uid and refuses every launch (euid rule, M602),
+      with a reason naming a missing setuid bit or a nosuid mount; the preflight probes through
+      `setpriv` without NoNewPrivileges and cannot see how the service is really started.
+    - **After.**
+      - (1) `a_callers_process_state_never_reaches_the_root_helper_or_its_launcher`: the
+        setuid-root (test-trust) helper is executed by a hostile Fabric-uid caller (python3 as
+        the Fabric uid) that ignores SIGTERM/SIGHUP/SIGINT, blocks SIGUSR1/SIGALRM/SIGTERM, sets
+        umask 0, lowers FSIZE/CPU/NOFILE, raises CORE, leaves fd 9 open on its own file, works in
+        its own directory and sets BASH_ENV/ENV/LD_PRELOAD/PATH. The stand-in launcher records,
+        from /proc as root, its own state and its parent's (the helper's). One assertion per
+        property, each its own row. Two resets have NO row, by a stated dominance:
+        the environment clear (the launcher's environment is built from nothing by
+        `sealed_exec::command`'s explicit envp, and no code on the helper's path reads a variable;
+        the test still asserts the end-to-end property) and `PR_SET_DUMPABLE 0` (the kernel
+        already makes a set-id exec non-dumpable at `fs.suid_dumpable` 0, measured on this host,
+        and at 2 the difference is only a root-owned core file; not observable without crashing
+        the helper). Neither is counted killed.
+      - (2) `CustodianRef` gains `sha256` (the program pin). The helper config requires it in
+        production (`load_config`; a test config may omit it); every test fixture pins the built
+        `axon-custodian`. With a pin, `CustodianRef::call` sets `SO_PASSPIDFD` before sending the
+        request, reads the reply with `recvmsg`, and for EVERY message takes the kernel's
+        `SCM_PIDFD` of its sender; `check_sender_program` reads the pid from the pidfd's fdinfo,
+        opens `/proc/<pid>/exe`, asks the pidfd again (alive then means alive at the open, so the
+        pid was not recycled), refuses an executable not owned by root (or this uid) or writable
+        by group/other, and hashes the OPEN descriptor against the pin. This is the source: the
+        one call every issue and spend goes through. It is checked where the nonce is SPENT (the
+        helper's config); Fabric's own issue call carries no pin (`protected_host.rs`), and
+        `helper_agrees` now compares the custodian's socket and uid only (M636 re-anchored, same
+        guard). A kernel without `SO_PASSPIDFD` (Linux < 6.5) refuses every pinned call.
+      - (3) `scripts/b263_host.py` measures the identity (hostname, `/etc/machine-id`,
+        `systemd-detect-virt`, kernel), prefixed by the operator's `--host-label`; the caveat is
+        the operator's `--caveat`, else derived from the measured virtualization.
+        `b263_qualify.sh` takes both from it and records `host_facts.{hostname, machine_id, virt,
+        wsl, host_label}` and `source.host_identity_sha256`. Readers: `accept_b263` requires a
+        non-empty host and carries it into the qualification; `submit.rs` writes it into every
+        protected receipt as evidence. Nothing compares it to the running host (A89: the host is
+        joined through the qualification digest the host config pins); a host-binding rule
+        (the record's machine-id against the running host's) is a possible follow-up, not a
+        current counting rule.
+      - (4) `guest_build_env.toolchain_pin_problems`: the pin must be an operator file (the file
+        and every directory above it real, root-owned, not group/other-writable); every host tool
+        the image's build records name (kernel tools, cargo's linker, mksquashfs, rustc, cargo:
+        `recorded_host_tools`, the kit's own extraction) must be pinned at the same path and
+        digest, and every pinned tool recorded. `image_problems` applies it last. ABSENT pin:
+        the FREEZE refuses (`image_problems(img, pin_required=True)`: a freeze binds evidence for
+        certification, and without the operator's pin the toolchain is attested only by the
+        build's own record); in development (`guest_build_env.py toolchain-pin MANIFEST`) it is a
+        WARNING. A pin that exists is always judged. The freeze tests now run the freeze in a
+        private mount namespace whose `/etc/axon` holds only the test's pin (root required; the
+        host's /etc is never read or written).
+      - (5) `psv_guest_boot_test.sh` case `trust-probe`: `trust_root_guest_probe.sh` runs inside
+        the REAL guest (the pinned image, kernel and launcher) in the launcher's plain mode under
+        an Exec grant, put on the workspace drive and run by busybox sh: the operator trust root
+        is unaddressable; control: `/work` is addressable (a mount). Not through the PSV runner,
+        which strips Exec from every test child (A27: measured, a suite test's `exec` is refused
+        `requires effect Exec`, so case `reach` is refused by that ceiling, not by provenance). No
+        guest change.
+      - (6) The helper refuses, in EVERY build, when its own executable is setuid-root but its euid
+        is not 0, naming NoNewPrivileges (`PR_GET_NO_NEW_PRIVS`) or else nosuid/user namespace
+        (`setuid_honoured`). `--probe` reports `no_new_privs` and `cgroup`. The preflight takes
+        `--fabric-pid PID` (REQUIRED in protected mode) and FAILS unless `/proc/PID/status` shows
+        the Fabric uid and `NoNewPrivs: 0`. No row: on the production route the euid rule (M602)
+        refuses the same launch, and on a test-trust route the operator-file owner rule; this is a
+        diagnostic (refusal-site gate exemption).
+      - **Cgroup decision (memo condition C3): the root launch stays in Fabric's cgroup, by
+        design, and is recorded.** The VMM is NOT in it: the jailer places firecracker in its own
+        cgroup (`/sys/fs/cgroup/<parent>/<id>`, with memory.max, pids.max and cpu.max set per
+        launch by `fc_linux_profile.sh`). What inherits Fabric's limits is the helper, the pinned
+        bash launcher and the host tools it runs before the jail. A Fabric OOM, TasksMax or stop
+        that kills them mid-launch ends the launch without a report (or with exit 31): it is a
+        failure/unknown attempt under the strict counting rules, never a protected verdict (the
+        out dir stays root's until the hand-over, and the verdict needs the helper's report);
+        `fc_linux_profile.sh --reap ID` cleans what it left. The operator sizes Fabric's
+        MemoryMax/TasksMax for helper + launcher + tools; the probe's `cgroup` field shows where
+        the helper runs. Moving the root side to its own cgroup is the D2 (per-connection socket
+        service) follow-up of the setuid-vs-daemon memo, not done here.
+    - **Rows** (all PSV; M1470-M1486; M1487-M1499 unused; the assigned M1450-M1469 are
+      integrate-3's, amendment 64):
+      - M1474-M1482 (`harden()`): ignored signals reset (M1474), mask cleared (M1475), umask
+        (M1476), cwd (M1477), inherited descriptors (M1478), RLIMIT_CORE 0 (M1479), lowered
+        CPU/FSIZE/DATA/AS/NPROC reset (M1480), SIGPIPE ignored (M1481), NOFILE (M1482).
+      - M1483: the reply's sender executes the pinned program (attack: an impostor on the socket,
+        test-trust route). M1484: an executable another uid can rewrite is refused. M1485: a
+        production helper config must pin the custodian (production route, the setuid production
+        helper in a private /etc/axon).
+      - M1486: the B263 identity is measured (attack: the constant).
+      - M1470-M1473: the freeze binds only the operator-pinned tools (another rustc; an unpinned
+        recorded tool; no pin; a pin matching a tampered build but owned by another uid or
+        writable).
+      - M636 re-anchored to the socket/uid comparison (same guard, same test).
+    - **Matrix.** A93 (the custodian program).
+    - **Tests.** `privileged_launcher.rs`: five new tests (harden; impostor custodian; rewritable
+      custodian executable; production pin required + production impostor + control; production
+      helper under `--no-new-privs`). `qualification.rs`:
+      `the_b263_record_states_the_host_it_ran_on`. `freeze_manifest.rs`:
+      `a_guest_image_not_built_with_the_operators_pinned_tools_does_not_freeze`.
+      `test_trust_root_preflight.sh`: a Fabric process under NoNewPrivileges FAILS the new check;
+      control passes. `psv_guest_boot_test.sh`: case `trust-probe`.
+    - **Operator deployment (kit changes, c9r4b/opkit).** `protected-launcher.json` gains
+      `custodian.sha256` = the sha256 of the INSTALLED `axon-custodian` (`gen_configs`;
+      `protected-launcher.json.example`), and the helper refuses a production config without it;
+      run `trust_root_preflight.sh` with `--fabric-pid $(systemctl show -p MainPID --value
+      <fabric unit>)`; run `b263_qualify.sh --host-label <operator name> [--caveat <text>]`;
+      the toolchain pin's status line ("no reader") is now false: the freeze reads it, and refuses
+      without it. The Fabric unit must not set `NoNewPrivileges=yes` (or a preset that implies it).
