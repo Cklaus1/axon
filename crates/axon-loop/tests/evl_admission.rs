@@ -1154,3 +1154,75 @@ fn a_trial_delivered_with_a_context_other_than_its_episodes_counts_nothing() {
         "control: the genuine request counts both candidate passes"
     );
 }
+
+/// Amendment 70 (M1582): a registered public key has ONE canonical form, 64
+/// lowercase hex — the only form `attestation::verify` / `verify_document`
+/// read. The operator-root lookup (`operator_trust::rooted`) lowercases what it
+/// is given, so a store key spelled in uppercase PASSED the trust-root lookup
+/// and then failed every verification: two readings of one key. The store
+/// refuses it where it reads its keys, on write and on every read, for every
+/// role (verifier, safety monitor, preflight observer). Control: the same key
+/// in lowercase is written, read back, and IS the operator root's key.
+#[test]
+fn an_uppercase_public_key_is_refused_where_the_store_reads_it() {
+    let w = world();
+    operator_root();
+    let base = w.s.config().unwrap();
+    let ver = OpaqueRef::new(VERIFIER).unwrap();
+    let up = |k: &str| k.to_ascii_uppercase();
+    let fresh = || axon_loop_contracts::attestation::generate().unwrap().1;
+    let mut cases = vec![];
+    let mut v = base.clone();
+    v.verifier_keys.insert(ver.clone(), up(&verifier_key().1));
+    cases.push(("verifier", v));
+    let mut m = base.clone();
+    m.monitor_keys
+        .insert(OpaqueRef::new("fixture:monitor-up").unwrap(), up(&fresh()));
+    cases.push(("safety monitor", m));
+    let mut o = base.clone();
+    o.observer_keys
+        .insert(OpaqueRef::new("fixture:observer-up").unwrap(), up(&fresh()));
+    cases.push(("preflight observer", o));
+    for (role, bad) in &cases {
+        // Written behind the store's back: the read path refuses it.
+        std::fs::write(
+            w.dir.path().join("config.json"),
+            serde_json::to_vec(bad).unwrap(),
+        )
+        .unwrap();
+        match w.s.config() {
+            Err(LoopError::Refused(m)) => assert!(m.contains("64 lowercase hex"), "{m}"),
+            Ok(c) => {
+                let looked_up = (*role == "verifier").then(|| {
+                    axon_loop::store::Config::rooted_key(
+                        &c.verifier_keys,
+                        &ver,
+                        axon_loop_contracts::operator_trust::TrustAuthority::Verifier,
+                    )
+                    .is_ok()
+                });
+                panic!(
+                    "ATTACK: an uppercase-hex {role} key is accepted by the lookup (read back; \
+                     operator-root lookup ok: {looked_up:?})"
+                )
+            }
+            Err(e) => panic!("{role}: refused for another reason: {e:?}"),
+        }
+        // And the store never writes it.
+        match w.s.write_config(bad) {
+            Err(LoopError::Refused(m)) => assert!(m.contains("64 lowercase hex"), "{m}"),
+            other => panic!(
+                "ATTACK: an uppercase-hex {role} key is accepted by the store (written): {other:?}"
+            ),
+        }
+    }
+    // Control: the canonical spelling is written, read, and rooted.
+    w.s.write_config(&base).unwrap();
+    let c = w.s.config().unwrap();
+    axon_loop::store::Config::rooted_key(
+        &c.verifier_keys,
+        &ver,
+        axon_loop_contracts::operator_trust::TrustAuthority::Verifier,
+    )
+    .expect("control: the lowercase verifier key is the operator root's");
+}

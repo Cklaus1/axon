@@ -2959,3 +2959,48 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       M1490-M1499 remain).
     - **Matrix.** None (an existing A of amendment 65, harden(); the harness's EQUIVALENCE (6)).
     - **Operator deployment.** None.
+70. **A signed qualification states only measured host facts; a store key has one canonical form
+    (C9 round 4b, smallfix; operator-kit review).** No counting rule is relaxed.
+    - **Before.** (1) `b263_qualify.sh` recorded `x3_l0_hypervisor_boundary` BLOCKED with a
+      constant reason, "Host is WSL2 with nested KVM under Hyper-V (operator decision D2) ...".
+      That reason is inside the record the operator SIGNS, so a qualification run on bare metal or
+      under another hypervisor asserted, under the operator's signature, a false fact about its
+      host (amendment 65 derived `host` and `caveat` from the measurement but left this row's
+      text constant). (2) A public key in the loop store's `verifier_keys` / `monitor_keys` /
+      `observer_keys` was read two ways: `operator_trust::rooted` / `exclusive` lowercase the key
+      they are given, while `attestation::verify` / `verify_document` / `key_id_of_hex` accept
+      only lowercase hex (`unhex`). An uppercase store key therefore PASSED the operator-root
+      lookup and then failed every verification. (3) `axon-fabric keygen`'s doc comment said the
+      key is written 0600; it is written 0400, the only mode the signing-key loader accepts.
+      (4) The `--authority` usage refusal listed four authorities and omitted `monitor`.
+    - **After.** (1) `b263_host.py` separates measurement (`measure()`: hostname, machine-id,
+      `systemd-detect-virt`, kernel, WSL) from derivation; `x3_reason(facts)` names WSL2/Hyper-V
+      (and D2) only for a host measured as WSL, and otherwise states what was measured (bare
+      metal: the host kernel's KVM; another hypervisor: nested under it; unmeasurable: unknown).
+      `b263_qualify.sh` takes the row's reason from `b263_host.py --x3-reason` at pre-flight,
+      before anything launches; a host that cannot be stated exits 2 (host-state error). The row
+      stays BLOCKED on every host. (2) The canonical form is 64 LOWERCASE hex, as every other
+      reader enforces: `attestation::unhex` (verify, verify_document, key_id_of_hex),
+      `privileged_launcher::is_hex64` (`observer.host_signer_public_key`), the `Ref` digest
+      (`ids.rs`, "digest must be 64 lowercase hex"). `Config::check_separation` — the one place the
+      store reads every registered key, on `write_config` and on every `config()` read — now
+      refuses a key not in that form (`attestation::is_canonical_public_key_hex`), naming the role
+      and identity; it never normalises. (3) Comment corrected. (4) The usage text is derived from
+      `TrustAuthority::ALL`.
+    - **Rows.** M1580 (b263_qualify.sh records the constant again) and M1581 (`x3_reason`'s WSL
+      branch taken for every host), attack `the_x3_reason_states_only_what_the_host_measured`
+      (`qualification.rs`): the reason for bare-metal, kvm, vmware and unmeasured fact sets makes
+      no WSL/Hyper-V/D2 claim and states its measurement; control: the WSL fact set names WSL2 and
+      Hyper-V, and this host's reason through the production CLI agrees with its kernel. M1580 is
+      judged by the harness's text (b263_qualify.sh needs root and KVM end to end); the reason it
+      reads is the script's own output. M1582 (the canonical-form refusal disabled), attack
+      `an_uppercase_public_key_is_refused_where_the_store_reads_it` (`evl_admission.rs`): for each
+      role an uppercase key written behind the store's back is refused by `config()` (the attack
+      reports that the operator-root lookup accepts it), and `write_config` refuses it; control:
+      the lowercase key is written, read and rooted. The new refusal site is covered by M1582 in
+      `v022_refusal_coverage.py`. The `--authority` usage refusal stays exempt (USAGE); its anchor
+      moved with the text. Test `the_authority_usage_names_every_authority` (`verify_evidence.rs`).
+    - **Matrix.** None (no A id assigned to this workstream).
+    - **Operator deployment.** A store config holding an uppercase key now fails to load with a
+      reason naming the role; re-register the key in lowercase (`axon-fabric keygen` prints
+      lowercase). Nothing else.

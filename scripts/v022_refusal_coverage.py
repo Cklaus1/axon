@@ -808,7 +808,7 @@ EXEMPT += [
      "the operator config is read; in a test-trust build it never fires"),
     (FC, '                    .unwrap_or_else(|e| refuse("unregistered", &format!("protected host: {e}"), 4)),',
      "cfg: compiled only in a test-trust build (#[cfg(feature = \"test-trust-root\")])"),
-    (FC, '        refuse(\n            "usage",\n            "--authority must be', _USE),
+    (FC, '        refuse(\n            "usage",\n            &format!("--authority must be one of', _USE),
     (FC, '    let key = std::fs::read(a.req("--key")).unwrap_or_else(|e| refuse("io", &e.to_string(), 2));',
      _IO + " (sign-evidence, an operator tool)"),
     (FC, '        .unwrap_or_else(|_| refuse("usage", "--key is not an Ed25519 PKCS#8 key", 2));',
