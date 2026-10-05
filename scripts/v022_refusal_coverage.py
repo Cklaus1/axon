@@ -324,24 +324,12 @@ OUT_OF_SCOPE = {
 # (file -> sites with neither a row nor an exemption, as last measured). The
 # gate re-measures each count and refuses a stale one, in both directions.
 NOT_YET_SCANNED = {
-    "crates/axon-os/src/grant.rs": 3,
-    "crates/axon-os/src/runtime.rs": 25,
-    # Amendment 71 (r4c-fixes part 2): brought in by the crate rule, NOT YET
-    # SCANNED (every site measured; neither rowed nor exempted yet). A freeze
-    # refuses while any is listed. The libraries the protected crates link:
-    # Integration of amendments 74 and 75: the axon-os ADMISSION chain the predicate-primitive
-    # rule exposes. These decide on the protected route (supervise_requiring ->
-    # run_requiring: `Grant::intersect` -> intersect_prefixes/intersect_hosts use is_ancestor,
-    # host_allows, host_matches; `IsolationRequirement::satisfied_by`; `scan_effects` ->
-    # calls_name), have no row, and need route tests through `submit` before a disposition
-    # (handed back). A freeze refuses while they are listed.
     "crates/axon-cortex/src/runner.rs": 22,
     "crates/axon-cortex/src/select.rs": 6,
     "crates/axon-fabric/src/backend.rs": 17,
     "crates/axon-fabric/src/bin/axon-fabric.rs": 1,
     "crates/axon-fabric/src/custodian.rs": 1,
     "crates/axon-fabric/src/git_data.rs": 2,
-    "crates/axon-fabric/src/journal.rs": 4,
     "crates/axon-fabric/src/observer.rs": 1,
     "crates/axon-fabric/src/observer_service.rs": 1,
     "crates/axon-fabric/src/protected_host.rs": 1,
@@ -354,16 +342,9 @@ NOT_YET_SCANNED = {
     "crates/axon-loop/src/intake.rs": 2,
     "crates/axon-loop/src/safety.rs": 1,
     "crates/axon-loop/src/tel.rs": 1,
-    "crates/axon-os/src/cli.rs": 2,
-    "crates/axon-os/src/corrigible.rs": 1,
-    "crates/axon-os/src/gate.rs": 3,
-    "crates/axon-os/src/killchan.rs": 7,
-    "crates/axon-os/src/latch.rs": 2,
-    "crates/axon-os/src/manifest.rs": 16,
-    "crates/axon-os/src/monitor.rs": 3,
-    "crates/axon-os/src/supervisor.rs": 4,
+    "crates/axon-os/src/runtime.rs": 1,
+    "crates/axon-os/src/supervisor.rs": 1,
     "crates/axon-psv/src/runner.rs": 5,
-    "crates/axon-vm/src/firecracker.rs": 2,
 }
 SITE = re.compile(r"return Err\(|\bErr\(format!|\brefuse\(|\bErr\(bad\(|TEST_TRUST_BUILD")
 # Amendment 74: a `let .. else {` is the opener of its refusal too.
@@ -2571,6 +2552,232 @@ EXEMPT += [
      'fn bind_vsock_uds(uds_path: &Path) -> Option<std::os::unix::net::UnixListener> {',
      _VM + "; bind_vsock_uds"),
 ]
+
+# ── Amendment 76 (C9 round 4c, admit): the verdict-form sites in axon-os and the
+# files the integrator's round 2 left. Each carries the call-graph fact that
+# makes it not a decision on the protected route; the ones that DO decide are
+# rows (M1770-M1829, v022_g01_mutations.py "ADMIT").
+_KIL = ("NOT ON THE PROTECTED ROUTE (checkable): axon-os's kill channel, latch, corrigibility and "
+        "compliance-monitor modules have no caller on the supervise_requiring path or in any "
+        "protected crate: `grep -rn 'killchan::\\|latch::\\|corrigible::\\|monitor::\\|FileKillChannel\\|"
+        "ComplianceMonitor\\|LatchState' crates/*/src` outside axon-core's interpreter finds only "
+        "these modules' own files and axon-os cli.rs (the `axon-os run` command's monitor thread); "
+        "supervisor.rs and gate.rs name none of them, and the AdmissionProbe Fabric supplies has no "
+        "latch. `axon_os::cli` is named by no other crate")
+_GRN = ("DOMINATED BY CONSTRUCTION (checkable): on the protected route Grant::intersect runs once, "
+        "supervisor.rs `manifest.grant.intersect(supervisor_grant)`, where `supervisor_grant` is "
+        "submit.rs `grant.grant()` and `manifest.grant` is `grant.manifest_for(..).grant`, a clone "
+        "of that same grant (tests/admit_route.rs admission_intersects_the_resolved_grant_with_"
+        "itself). Every element intersect_prefixes/intersect_hosts emit is a clone of an input "
+        "element, so the result is a subset of the job's own grant whatever these predicates "
+        "answer: they can only NARROW, and a withheld axis is a denial (fail closed). The result's "
+        "only consumers are gate::admit's effect_set() (an axis is present iff its list is "
+        "non-empty) and max_label, and a self-intersection keeps every non-empty list non-empty "
+        "(is_ancestor(p, p), host_matches(h, h) and `b.contains(h)` hold for every entry), so "
+        "nothing widens and nothing narrows. `is_subset_of` and `allows` are called by no "
+        "protected crate (`grep -rn 'is_subset_of\\|\\.allows(' crates/*/src` finds only axon-os "
+        "and axon-intent)")
+_ACR = ("NOT ON THE PROTECTED ROUTE (checkable): AxonCoreRuntime is axon-os's own subprocess "
+        "Runtime for `axon-os run`/`replay` (its only constructions are cli.rs "
+        "`AxonCoreRuntime::from_env()`: `grep -rn AxonCoreRuntime crates/*/src`), and MockRuntime "
+        "exists only under `#[cfg(any(test, feature = \"mock\"))]`, a feature no dependent turns "
+        "on (axon-fabric and axon-intent depend on axon-os by bare path). Fabric supplies its own "
+        "AdmissionProbe (submit.rs), which performs no effect and returns Completed{0}; the "
+        "verdicts here are what a RUN produced, and no protected run is executed by these")
+_GRB = (_GRA + " refuses a malformed grant file here (a missing or ill-typed key); the file is "
+        "never caller-supplied, and nothing chooses success: the manifest is not produced")
+EXEMPT += [
+    ('crates/axon-os/src/killchan.rs',
+     '            LatchState::Tripped\n        } else {\n            LatchState::Clear\n        }\n    }\n}\n\n// ── Test implementation ────────────────────────────────────────────────────────',
+     _KIL),
+    ('crates/axon-os/src/killchan.rs',
+     '            LatchState::Tripped\n        } else {\n            LatchState::Clear\n        }\n    }\n}\n\n// ── File-backed kill channel (for cross-process kill) ─────────────────────────',
+     _KIL),
+    ('crates/axon-os/src/killchan.rs',
+     '                LatchState::Tripped',
+     _KIL),
+    ('crates/axon-os/src/killchan.rs',
+     '            Err(_) => LatchState::Tripped,',
+     _KIL),
+    ('crates/axon-os/src/killchan.rs',
+     '    fn poll(&self) -> LatchState {\n        if self.flag.load(Ordering::SeqCst) {\n            LatchState::Tripped\n        } else {\n            LatchState::Clear\n        }\n    }\n}\n\n// ── Test implementation ────────────────────────────────────────────────────────',
+     _KIL),
+    ('crates/axon-os/src/killchan.rs',
+     '    fn poll(&self) -> LatchState {\n        if self.flag.load(Ordering::SeqCst) {\n            LatchState::Tripped\n        } else {\n            LatchState::Clear\n        }\n    }\n}\n\n// ── File-backed kill channel (for cross-process kill) ─────────────────────────',
+     _KIL),
+    ('crates/axon-os/src/killchan.rs',
+     '    fn poll(&self) -> LatchState {\n        match std::fs::read_to_string(&self.path) {',
+     _KIL),
+    ('crates/axon-os/src/latch.rs',
+     '            state: LatchState::Tripped,',
+     _KIL),
+    ('crates/axon-os/src/latch.rs',
+     '    pub fn poll(&self) -> LatchState {',
+     _KIL),
+    ('crates/axon-os/src/corrigible.rs',
+     '        LatchState::Tripped => Some(Verdict::Halted {',
+     _KIL),
+    ('crates/axon-os/src/monitor.rs',
+     '                            return MonitorResult::ViolationDetected {',
+     _KIL),
+    ('crates/axon-os/src/monitor.rs',
+     '                        return MonitorResult::ViolationDetected {\n                            effect,',
+     _KIL),
+    ('crates/axon-os/src/monitor.rs',
+     '    pub fn run(self) -> MonitorResult {',
+     _KIL),
+    ('crates/axon-os/src/cli.rs',
+     '                crate::verdict::Verdict::VerifyMismatch { detail: e.detail }.exit_code() as u8,\n            )\n        }\n    }\n}\n\nfn cmd_replay(rest: &[&str]) -> ExitCode {',
+     _KIL),
+    ('crates/axon-os/src/cli.rs',
+     '                crate::verdict::Verdict::VerifyMismatch { detail: e.detail }.exit_code() as u8,\n            )\n        }\n    }\n}\n\n// ── R27: kill / status ───────────────────────────────────────────────────────',
+     _KIL),
+    ('crates/axon-os/src/grant.rs',
+     'fn is_ancestor(prefix: &str, path: &str) -> bool {',
+     _GRN),
+    ('crates/axon-os/src/grant.rs',
+     'fn host_allows(list: &[String], host: &str) -> bool {',
+     _GRN),
+    ('crates/axon-os/src/grant.rs',
+     'fn host_matches(pat: &str, host: &str) -> bool {',
+     _GRN),
+    ('crates/axon-os/src/runtime.rs',
+     '                    verdict: Verdict::Denied {\n                        reason: format!("cannot read program: {e}"),',
+     _ACR),
+    ('crates/axon-os/src/runtime.rs',
+     '                    verdict: Verdict::Denied {\n                        reason: format!("cannot create private staging dir: {e}"),',
+     _ACR),
+    ('crates/axon-os/src/runtime.rs',
+     '                        verdict: Verdict::Denied {',
+     _ACR),
+    ('crates/axon-os/src/runtime.rs',
+     '                    verdict: Verdict::Denied {\n                        reason: format!("could not launch interpreter: {e}"),',
+     _ACR),
+    ('crates/axon-os/src/runtime.rs',
+     '            Verdict::Halted {',
+     _ACR),
+    ('crates/axon-os/src/runtime.rs',
+     '            Verdict::Denied {\n                reason: format!("timed out after {} ms", self.timeout.as_millis()),',
+     _ACR),
+    ('crates/axon-os/src/runtime.rs',
+     '            Verdict::Denied {\n                reason: first_axon_line(err, "runtime capability/sandbox violation"),',
+     _ACR),
+    ('crates/axon-os/src/runtime.rs',
+     '            Verdict::BudgetExhausted {',
+     _ACR),
+    ('crates/axon-os/src/runtime.rs',
+     '            Verdict::RefineViolation {',
+     _ACR),
+    ('crates/axon-os/src/runtime.rs',
+     '            Verdict::Denied {\n                reason: first_axon_line(err, "interpreter panic"),',
+     _ACR),
+    ('crates/axon-os/src/runtime.rs',
+     '            Verdict::Denied {\n                reason: first_axon_line(err, "AI policy refused the call"),',
+     _ACR),
+    ('crates/axon-os/src/runtime.rs',
+     '            Verdict::Malformed {',
+     _ACR),
+    ('crates/axon-os/src/runtime.rs',
+     '                    0 => Verdict::Denied {',
+     _ACR),
+    ('crates/axon-os/src/runtime.rs',
+     '                    2 => Verdict::Malformed {',
+     _ACR),
+    ('crates/axon-os/src/runtime.rs',
+     '                    3 => Verdict::Denied {',
+     _ACR),
+    ('crates/axon-os/src/runtime.rs',
+     '                    4 => Verdict::Halted {',
+     _ACR),
+    ('crates/axon-os/src/runtime.rs',
+     '                    5 => Verdict::Denied {',
+     _ACR),
+    ('crates/axon-os/src/runtime.rs',
+     '                    6 => Verdict::RefineViolation {',
+     _ACR),
+    ('crates/axon-os/src/runtime.rs',
+     '                    7 => Verdict::BudgetExhausted {',
+     _ACR),
+    ('crates/axon-os/src/runtime.rs',
+     '                    8 => Verdict::Denied {',
+     _ACR),
+    ('crates/axon-os/src/runtime.rs',
+     '                    other => Verdict::Denied {',
+     _ACR),
+    ('crates/axon-os/src/runtime.rs',
+     '    fn run_sandboxed(\n        &self,\n        program: &Path,\n        _principal: &PrincipalHandle,',
+     _ACR),
+    ('crates/axon-os/src/runtime.rs',
+     '    fn run_sandboxed(\n        &self,\n        _program: &Path,',
+     _ACR),
+    ('crates/axon-fabric/src/journal.rs',
+     '                v.state = OpState::Failed;',
+     _JNV),
+    ('crates/axon-fabric/src/journal.rs',
+     '            self.append(Rec::OutcomeUnknown {',
+     _JNV),
+    ('crates/axon-fabric/src/journal.rs',
+     '        self.append(Rec::Failed {',
+     _JNV),
+    ('crates/axon-fabric/src/journal.rs',
+     '        self.append(Rec::Cancelled {',
+     _JNV),
+    ('crates/axon-vm/src/firecracker.rs',
+     '        return Some(GuestOutcome::Violation);',
+     _VM),
+    ('crates/axon-vm/src/firecracker.rs',
+     '                Some(GuestOutcome::Violation) => (8, GuestOutcome::Violation),',
+     _VM),
+    ('crates/axon-os/src/manifest.rs',
+     '            .ok_or_else(|| bad(format!("line {}: expected `key = value`", lineno + 1)))?;',
+     _GRB),
+    ('crates/axon-os/src/manifest.rs',
+     '            ("", "program") => program = Some(parse_str(val).ok_or_else(|| bad(where_()))?),',
+     _GRB),
+    ('crates/axon-os/src/manifest.rs',
+     '            ("", "intent") => intent = Some(parse_str(val).ok_or_else(|| bad(where_()))?),',
+     _GRB),
+    ('crates/axon-os/src/manifest.rs',
+     '                        .ok_or_else(|| bad(where_()))?',
+     _GRB),
+    ('crates/axon-os/src/manifest.rs',
+     '                            bad(format!("{}: seed must be a non-negative u64", where_()))',
+     _GRB),
+    ('crates/axon-os/src/manifest.rs',
+     '            ("grant", "fs_read") => fs_read = Some(parse_arr(val).ok_or_else(|| bad(where_()))?),',
+     _GRB),
+    ('crates/axon-os/src/manifest.rs',
+     '            ("grant", "fs_write") => fs_write = Some(parse_arr(val).ok_or_else(|| bad(where_()))?),',
+     _GRB),
+    ('crates/axon-os/src/manifest.rs',
+     '            ("grant", "net") => net = Some(parse_arr(val).ok_or_else(|| bad(where_()))?),',
+     _GRB),
+    ('crates/axon-os/src/manifest.rs',
+     '                let s = parse_str(val).ok_or_else(|| bad(where_()))?;\n                exec = Some(ExecPolicy::parse(&s).ok_or_else(|| {',
+     _GRB),
+    ('crates/axon-os/src/manifest.rs',
+     '                    bad(format!("{}: exec must be \\"none\\" or \\"any\\"", where_()))',
+     _GRB),
+    ('crates/axon-os/src/manifest.rs',
+     '                let s = parse_str(val).ok_or_else(|| bad(where_()))?;\n                max_label = Some(Label::parse(&s).ok_or_else(|| {',
+     _GRB),
+    ('crates/axon-os/src/manifest.rs',
+     '                    bad(format!(\n                        "{}: max_label must be public|internal|secret",',
+     _GRB),
+    ('crates/axon-os/src/manifest.rs',
+     '            ("grant.budget", "calls") => calls = Some(parse_int(val).ok_or_else(|| bad(where_()))?),',
+     _GRB),
+    ('crates/axon-os/src/manifest.rs',
+     '                tokens = Some(parse_int(val).ok_or_else(|| bad(where_()))?)',
+     _GRB),
+    ('crates/axon-os/src/manifest.rs',
+     '                cost_micro = Some(parse_int(val).ok_or_else(|| bad(where_()))?)',
+     _GRB),
+    ('crates/axon-os/src/manifest.rs',
+     '    let max_label = max_label.ok_or_else(|| bad("missing `grant.max_label`"))?;',
+     _GRB),
+]
+
 
 def load_rows():
     spec = importlib.util.spec_from_file_location("mut", os.path.join(ROOT, "scripts/v022_g01_mutations.py"))

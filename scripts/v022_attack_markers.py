@@ -1709,3 +1709,16 @@ ATTACK_MARKERS.update({
     'M1783': r'ATTACK: a verifier-reported FAILURE was counted as a verified pass',
     'M1784': r'ATTACK: a trial no episode was delivered for was counted as a verified pass',
 })
+ATTACK_MARKERS.update({
+    'M1785': r'ATTACK: a program using fs_read ran under a grant withholding fs_read',
+    'M1786': r'ATTACK: a program using fs_write ran under a grant withholding fs_write',
+    'M1787': r'ATTACK: a program using net ran under a grant withholding net',
+    'M1788': r'ATTACK: a program using exec ran under a grant withholding exec',
+    'M1789': r'ATTACK: a program using fs_read ran under a grant withholding fs_read',
+    'M1790': r'ATTACK: a program handling internal data ran under a grant whose confidentiality ceiling is public',
+    'M1791': r'ATTACK: a program using fs_read ran under a grant withholding fs_read',
+    'M1792': r'ATTACK: a job requiring approval ran with no approval token\s*\n\s*left: \w+\s*\n\s*right: Denied',
+    'M1793': r'ATTACK: a spaced call write_file \( evaded the effects scan',
+    'M1794': r'ATTACK: a plain call write_file\( was not seen by the effects scan',
+    'M1795': r'ATTACK: an indented `mod` import \(effects in a file the scan cannot read\) was declared effect-free',
+})

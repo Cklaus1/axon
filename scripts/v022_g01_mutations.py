@@ -6390,6 +6390,50 @@ MUTATIONS += [
      '                (\n                    Outcome::VerifiedPass,\n                    "missing: no episode delivered".to_string(),',
      'axon-loop', _AV, 'a_trial_with_no_delivered_episode_is_never_a_pass'),
 ]
+_GA = 'crates/axon-os/src/gate.rs'
+_SUP = 'crates/axon-os/src/supervisor.rs'
+_RT = 'crates/axon-os/src/runtime.rs'
+_AR = '--test admit_route'
+_AXES = 'a_program_using_an_axis_the_grant_withholds_is_denied_on_every_axis'
+_SCAN = 'the_effects_scan_is_not_evaded_by_spacing_or_an_import'
+MUTATIONS += [
+    ('M1785', "ADMISSION (admit): a program using fs_read is denied under a grant withholding fs_read (the axis row)", _GA,
+     '        (declared.row.fs_read, permitted.fs_read, "fs_read"),', '        (declared.row.fs_read, true, "fs_read"),',
+     'axon-fabric', _AR, _AXES),
+    ('M1786', "ADMISSION (admit): a program using fs_write is denied under a grant withholding fs_write (the axis row)", _GA,
+     '        (declared.row.fs_write, permitted.fs_write, "fs_write"),', '        (declared.row.fs_write, true, "fs_write"),',
+     'axon-fabric', _AR, _AXES),
+    ('M1787', "ADMISSION (admit): a program using net is denied under a grant withholding net (the axis row)", _GA,
+     '        (declared.row.net, permitted.net, "net"),', '        (declared.row.net, true, "net"),',
+     'axon-fabric', _AR, _AXES),
+    ('M1788', "ADMISSION (admit): a program using exec is denied under a grant withholding exec (the axis row)", _GA,
+     '        (declared.row.exec, permitted.exec, "exec"),', '        (declared.row.exec, true, "exec"),',
+     'axon-fabric', _AR, _AXES),
+    ('M1789', "ADMISSION (admit): gate::admit denies on the first effect axis the grant withholds", _GA,
+     '        if needs && !has {\n            return Admission::Deny {', '        if false && needs && !has {\n            return Admission::Deny {',
+     'axon-fabric', _AR, _AXES),
+    ('M1790', "ADMISSION (admit): gate::admit denies a program above the grant's confidentiality ceiling", _GA,
+     '    if declared.max_label > grant.max_label {', '    if false && declared.max_label > grant.max_label {',
+     'axon-fabric', _AR, 'a_program_above_the_grants_confidentiality_ceiling_is_denied'),
+    ('M1791', "ADMISSION (admit): the supervisor honours gate::admit's denial", _SUP,
+     '    if let Admission::Deny { reason, axis } = admit(&declared, &eff) {',
+     '    if let Admission::Deny { reason, axis } = Admission::Admit {',
+     'axon-fabric', _AR, _AXES),
+    ('M1792', "ADMISSION (admit): the supervisor honours approval::authorize's denial", _SUP,
+     '        Err(reason) => {\n            let denial = RawEvent::new("denied", "approval", EffectSet::default(), "");\n            let mut rec = build(\n                run_id,\n                manifest,\n                manifest.seed,\n                std::slice::from_ref(&denial),\n                Verdict::Denied {\n                    reason,\n                    axis: "approval".to_string(),\n                },\n            );\n            rec.approval = crate::approval::ApprovalStatus::Denied.as_str().to_string();\n            return rec;\n        }',
+     '        Err(_reason) => crate::approval::ApprovalStatus::NotRequired,',
+     'axon-fabric', '--test grant_authority', 'the_grants_require_approval_policy_is_enforced'),
+    ('M1793', "ADMISSION (admit): the effects scan sees a call with whitespace before its parenthesis", _RT,
+     '        while i < bytes.len() && (bytes[i] as char).is_whitespace() {\n            i += 1;\n        }\n', '',
+     'axon-fabric', _AR, _SCAN),
+    ('M1794', "ADMISSION (admit): the effects scan sees a call of a name", _RT,
+     "        if i < bytes.len() && bytes[i] == b'(' {\n            return true;\n        }",
+     "        if false && i < bytes.len() && bytes[i] == b'(' {\n            return true;\n        }",
+     'axon-fabric', _AR, _SCAN),
+    ('M1795', "ADMISSION (admit): the effects scan sees a bare `mod` declaration (effects in a file it cannot read)", _RT,
+     '        if name == "mod" {\n            return true;\n        }', '        if false && name == "mod" {\n            return true;\n        }',
+     'axon-fabric', _AR, _SCAN),
+]
 
 
 def in_scope(mid, scope):
