@@ -32111,7 +32111,7 @@ fn a_method_call_on_unit_without_an_impl_is_e0403() {
     };
     let judge = "trait Judge {\n  fn ok(self) -> bool\n}\nimpl Judge for i64 {\n  fn ok(self: i64) -> bool { self == 9 }\n}\n";
     let bad = format!(
-        "{judge}fn solve(n: i64) {{\n  n * n\n}}\nfn main() {{\n  assert(solve(3).ok())\n}}\n"
+        "{judge}fn solve(n: i64) {{\n  println(to_str(n))\n}}\nfn main() {{\n  assert(solve(3).ok())\n}}\n"
     );
     let (code, msg) = run(&bad, "check");
     assert!(

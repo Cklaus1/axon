@@ -6106,13 +6106,15 @@ mod tests {
             "ATTACK: a confused variant field crossed a declared `-> Wr<i64>`: {out:?}"
         );
 
-        // A channel's QUEUED values: filled before it crossed `Chan<i64>`.
+        // A channel's QUEUED values: filled before it crossed `Chan<i64>`. The
+        // channel is `Chan::new` (unstamped): a `chan<i64>()` refuses the send
+        // itself (amendment 72) and never reaches the queued-value cast.
         let suite = "@[test]\nfn t() {\n    let c = solve(3)\n    assert(c.recv().ok())\n}\n";
         let chan_run = |v: &str| {
             sealed_outcome(
                 "a4queue",
                 &format!("{JUDGE}{suite}"),
-                &format!("{LAUNDER}fn solve(n: i64) -> Chan<i64> {{\n    let c = chan<i64>()\n    c.send({v})\n    c\n}}\n"),
+                &format!("{LAUNDER}fn solve(n: i64) -> Chan<i64> {{\n    let c = Chan::new(1)\n    c.send({v})\n    c\n}}\n"),
                 "t",
             )
         };
