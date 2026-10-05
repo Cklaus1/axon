@@ -4028,14 +4028,18 @@ if pid1 == 0:
     os.close(master)
     os.setsid()
     fcntl.ioctl(slave, termios.TIOCSCTTY, 0)
-    signal.signal(signal.SIGINT, signal.SIG_IGN)
     witness = os.fork()
     if witness == 0:
-        signal.signal(signal.SIGINT, signal.SIG_DFL)
         dn = os.open("/dev/null", os.O_RDWR)
         for fd in (0, 1, 2):
             os.dup2(dn, fd)
         os.execv("/usr/bin/sleep", ["sleep", "30"])
+    # AFTER the witness forked: a child forked while this was ignored inherits
+    # the ignore until it resets it, and on a loaded host the ^C (written once
+    # the helper is up) could land in that window, so the witness survived it
+    # ("setup: the ^C did not reach the witness"; C9 shardflake). The witness
+    # is forked with the default disposition and keeps it through its exec.
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
     h = os.fork()
     if h == 0:
         os.setgroups([])
