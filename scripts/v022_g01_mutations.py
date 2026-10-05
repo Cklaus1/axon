@@ -5886,6 +5886,22 @@ MUTATIONS += [
 ]
 PSV_IDS |= {f"M{n}" for n in range(1500, 1520)}
 
+# ── C9 round 4c, r4c-fixes part 1 (M1655-M1659; amendment 71) ───────────────
+# SENTINEL MINOR: submit's RunDir is created NEW (create_dir, C9 round 4b),
+# named <op16>-<pid>-<seq>. After a crash, a restarted Fabric with the same
+# pid (PID 1 in a container) met its predecessor's leftover at the same name
+# and refused every retry of the operation. The name now carries 64 random
+# bits; create_dir (the refusal of an existing dir) is unchanged. Killed by
+# the retry run over every leftover name the crashed process could have left.
+PSV_IDS |= {f"M{n}" for n in range(1655, 1660)}
+MUTATIONS += [
+    ('M1655', "availability (r4c-fixes): a run dir name never meets a crashed same-pid predecessor's leftover",
+     'crates/axon-fabric/src/submit.rs',
+     '        let suffix = format!(\n            "-{}",\n            rnd.iter().map(|b| format!("{b:02x}")).collect::<String>()\n        );\n',
+     '        let suffix = {\n            let _ = rnd;\n            String::new()\n        };\n',
+     'axon-fabric', '--test check_effects',
+     'a_leftover_run_dir_of_a_crashed_process_with_the_same_pid_does_not_refuse_the_retry'),
+]
 
 def in_scope(mid, scope):
     # A SIBLING-ONLY edit exists only as a member of a retired row's guard set

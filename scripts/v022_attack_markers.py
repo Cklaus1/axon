@@ -1537,3 +1537,8 @@ ATTACK_MARKERS.update({
     'M1581': r'ATTACK: the signed x3 reason asserts WSL2/Hyper-V of a host measured as virt',
     'M1582': r'ATTACK: an uppercase-hex verifier key is accepted by the lookup',
 })
+
+# C9 round 4c, r4c-fixes part 1 (M1655; amendment 71).
+ATTACK_MARKERS.update({
+    'M1655': r'ATTACK: a leftover run dir of a crashed process with the same pid refused the\s+retry',
+})

@@ -3320,3 +3320,77 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
     - **Operator deployment.** A store config holding an uppercase key now fails to load with a
       reason naming the role; re-register the key in lowercase (`axon-fabric keygen` prints
       lowercase). Nothing else.
+
+71. **(Part 1, C9 round 4c, r4c-fixes.) A run dir name never meets a crashed same-pid
+    predecessor's leftover; the custodian program pin is stated at the strength it has; the
+    SENTINEL harden() finding is recorded OPEN.** No counting rule is relaxed. (Part 2, the
+    refusal-coverage rule, is a separate section of this amendment from c9r4c/fixes-rc.)
+    - **RunDir retry (SENTINEL MINOR).** *Before:* `submit.rs` `RunDir::new` created the run's
+      dir NEW (`create_dir`, C9 round 4b) at `<op-hash16>-<pid>-<seq>`. After a crash, a
+      restarted Fabric with the same pid (PID 1 in a container) met its predecessor's leftover
+      at the same name and refused every retry of that operation until `seq` passed the
+      leftovers (fails closed; availability only). *After:* the name carries 64 bits from the OS
+      RNG (`ring::SystemRandom`): `<op-hash16>-<pid>-<seq>-<16 hex>`. `create_dir` is kept
+      unchanged: it is the guard that nothing materialized into the run dir meets stale files,
+      and any existing dir at the name (leftover or planted) is still refused, never reused.
+      The random component makes that refusal a 2^-64 collision rather than a retry's fate, and
+      no other uid can aim a planted dir at a name it cannot predict. No reaping was added: it
+      would delete under `<state>/runs` on startup, and the leftovers are inert. The exemption
+      that cites this property (refusal coverage, `StoreError::DestinationExists`, "a leftover
+      run dir is refused, never reused") stays true. *Test:*
+      `crates/axon-fabric/tests/check_effects.rs::a_leftover_run_dir_of_a_crashed_process_with_the_same_pid_does_not_refuse_the_retry`
+      plants every name the crashed process could have left for this pid (seq 0..4096, each
+      holding a stale file; setup asserts all 4096 exist), submits a retry through `submit`
+      (ATTACK: the retry is refused; control: it runs and passes), and asserts no leftover was
+      reused (each still holds exactly its stale file). *Row:* M1655 (removes the random
+      component). *Matrix:* none (an availability property, not a negative verdict case).
+    - **The custodian program pin, at its real strength (SENTINEL MAJOR-ADJACENT 2; amendment
+      65(2), A93).** Amendment 65 stated the custodian as "the PROGRAM the operator pinned", read
+      as "every byte of a reply comes from a process executing exactly that program". The
+      mechanism (`custodian::check_sender_program`) establishes less, and this is the property
+      it has: *for each message of a reply, the kernel names the sending process (`SCM_PIDFD`);
+      the helper opens the file behind that process's `/proc/<pid>/exe` at the time it reads the
+      message, re-checks the pidfd after the open, refuses a file another uid can write, and
+      hashes that open file against the operator's pin.* It identifies the executable the sender
+      was started from, as of the read. It does NOT cover the code mapped into that process
+      (a library, an `LD_*`-loaded object, memory written through `/proc/<pid>/mem` or ptrace by
+      a process with access to it), nor what the process executed when it sent. An actor able to
+      exploit the difference must already run as the custodian uid (or root), which A93 treats as
+      in scope; so against that actor the pin is a check on the custodian's started program, not
+      on the author of the reply bytes. Not demonstrated in this round (it needs operator
+      authorization). *Follow-up (recorded, not implemented):* reply signing: the custodian
+      signs each reply with a key only the operator-installed custodian holds (readable by the
+      custodian uid alone, provisioned by the operator kit), and the helper verifies the
+      signature under an operator-pinned public key, binding the reply bytes to the key holder
+      rather than to an executable path. A93's row should carry this residual.
+    - **harden() inherited state (SENTINEL MAJOR-ADJACENT 1): OPEN, parked pending the user's
+      decision; not yet implemented.** The finding stands as filed: `harden()` resets neither
+      interval timers nor the caller's terminal session. Nothing below is implemented, and no row
+      exists for it. The analysis done before the item was parked, recorded so the work can
+      resume:
+      - Fabric spawns the helper via `sealed_exec::command` in Fabric's own process group
+        (`backend.rs`), reads its stdout to EOF and then waits; `setsid()` in `harden()` is
+        compatible with that. `setsid()` fails when the caller made the helper a process-group or
+        session leader; that case must refuse the launch (a flag set by `harden()`, checked
+        beside `setuid_honoured` in the binary, keeps `harden()`'s signature for the
+        observer-branch merge).
+      - Not reset today, each to be reset to a stated value with its own row and attack: the
+        interval timers ITIMER_REAL, ITIMER_VIRTUAL, ITIMER_PROF (POSIX timers are deleted by
+        execve and need nothing); the controlling terminal / session (`setsid`); rlimits STACK,
+        RSS, MEMLOCK, LOCKS, SIGPENDING, MSGQUEUE, NICE, RTPRIO, RTTIME (CORE, CPU, FSIZE, DATA,
+        AS, NPROC, NOFILE are reset, M1479/M1480/M1482); nice; ioprio; oom_score_adj; scheduling
+        policy; timer slack (`PR_SET_TIMERSLACK` 0 restores an inherited default, so an explicit
+        value is needed); personality; `PR_SET_TSC` (x86).
+      - Candidates to record as harmless or already covered, each with its checkable reason when
+        the item resumes: pending signals (delivered at `harden()`'s unblock, before anything is
+        read or launched); seccomp, Landlock, user/pid namespaces and ptrace (each needs
+        NoNewPrivileges or makes the kernel ignore the set-id bit, so `setuid_honoured`
+        refuses); cgroup (amendment 65); SIGIO via `F_SETOWN` (not permitted against the helper
+        once `become_root` has run); keyrings (nothing on the launch path calls `request_key`);
+        THP disable; MDWE; CPU affinity; root directory; securebits and the capability bounding
+        set (each can only make a launch fail).
+      - The existing harden() rows (M1474-M1482, M1487) are unchanged.
+    - **Rows.** M1655 (PSV; from the assignment M1600-M1659: M1600-M1629 were reserved for the
+      parked harden() item and are unused; M1630-M1654 belong to part 2; M1656-M1659 unused).
+    - **Matrix.** None.
+    - **Operator deployment.** None.

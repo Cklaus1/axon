@@ -1481,3 +1481,60 @@ cost_micro = 1000
         );
     }
 }
+
+/// C9 round 4c, amendment 71 (M1655): a run dir left by a crashed Fabric
+/// whose restart has the SAME pid (PID 1 in a container) does not refuse the
+/// retry. The crashed process's names were `<op16>-<pid>-<seq>`; every one
+/// of them for this pid, sequence 0..4096, is planted here holding a stale
+/// file, as a crash would leave them. The retry runs, and none of the
+/// leftovers is reused (each still holds its stale file and nothing else).
+#[test]
+fn a_leftover_run_dir_of_a_crashed_process_with_the_same_pid_does_not_refuse_the_retry() {
+    let s = with_suite(&hidden_suite_src(), "hidden");
+    let cfg = s.env.cfg(0);
+    let op = "op-crashed";
+    let runs = cfg.state_dir.join("runs");
+    let op16 = &axon_psv::sha256_hex(op.as_bytes())[..16];
+    let pid = std::process::id();
+    for seq in 0..4096u32 {
+        let d = runs.join(format!("{op16}-{pid}-{seq}"));
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::write(d.join("stale"), "left by the crashed process").unwrap();
+    }
+    assert_eq!(
+        std::fs::read_dir(&runs).unwrap().count(),
+        4096,
+        "setup: the crashed process's run dirs are in place"
+    );
+    let sub = submit(&suite_request(&s, op).to_string(), &cfg);
+    let sub = sub.unwrap_or_else(|e| {
+        panic!(
+            "ATTACK: a leftover run dir of a crashed process with the same pid refused the \
+             retry: {e}"
+        )
+    });
+    assert_eq!(
+        sub.receipt.verification,
+        ReceiptVerification::Passed,
+        "control: the retry ran: {:?}",
+        sub.reason
+    );
+    let left: Vec<_> = std::fs::read_dir(&runs).unwrap().flatten().collect();
+    assert_eq!(
+        left.len(),
+        4096,
+        "the run's own dir is gone, the leftovers untouched"
+    );
+    for e in left {
+        let names: Vec<_> = std::fs::read_dir(e.path())
+            .unwrap()
+            .flatten()
+            .map(|x| x.file_name())
+            .collect();
+        assert_eq!(
+            names,
+            vec![std::ffi::OsString::from("stale")],
+            "a leftover was reused"
+        );
+    }
+}

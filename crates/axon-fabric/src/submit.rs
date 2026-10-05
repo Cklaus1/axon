@@ -434,17 +434,31 @@ struct RunDir(PathBuf);
 impl RunDir {
     fn new(state: &Path, op: &str) -> Result<RunDir, SubmitError> {
         static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        // A random component (C9 round 4c, amendment 71): pid and sequence
+        // alone repeat after a crash and restart with the same pid (PID 1 in
+        // a container), and the leftover dir of the crashed process then
+        // refused every retry of the same operation until the sequence
+        // number passed it. With 64 random bits a name never meets a
+        // leftover, and no other uid can aim a planted dir at it.
+        let mut rnd = [0u8; 8];
+        ring::rand::SecureRandom::fill(&ring::rand::SystemRandom::new(), &mut rnd)
+            .map_err(|_| SubmitError::Workspace("no randomness for the run dir name".into()))?;
+        let suffix = format!(
+            "-{}",
+            rnd.iter().map(|b| format!("{b:02x}")).collect::<String>()
+        );
         let key = format!(
-            "{}-{}-{}",
+            "{}-{}-{}{suffix}",
             &sha256_hex(op.as_bytes())[..16],
             std::process::id(),
             SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         );
         let runs = state.join("runs");
         std::fs::create_dir_all(&runs).map_err(|e| SubmitError::Workspace(e.to_string()))?;
-        // The run's own dir is created NEW (C9 round 4b): a leftover of an
-        // earlier process with the same pid and sequence number is never
-        // reused, so nothing materialized into it meets stale files.
+        // The run's own dir is created NEW (C9 round 4b): an existing dir at
+        // the name, a leftover or one planted there, is never reused, so
+        // nothing materialized into it meets stale files. The random
+        // component above makes that refusal a collision, not a retry's fate.
         let p = runs.join(key);
         std::fs::create_dir(&p)
             .map_err(|e| SubmitError::Workspace(format!("{}: {e}", p.display())))?;
