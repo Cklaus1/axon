@@ -331,22 +331,6 @@ NOT_YET_SCANNED = {
     # Amendment 71 (r4c-fixes part 2): brought in by the crate rule, NOT YET
     # SCANNED (every site measured; neither rowed nor exempted yet). A freeze
     # refuses while any is listed. The libraries the protected crates link:
-    "crates/axon-attest/src/lib.rs": 18,
-    "crates/axon-audit/src/lib.rs": 10,
-    "crates/axon-core/src/main.rs": 1,
-    "crates/axon-cortex/src/generate.rs": 6,
-    "crates/axon-cortex/src/runner.rs": 27,
-    "crates/axon-fabric/src/bin/axon-custodian.rs": 1,
-    "crates/axon-os/src/coalition.rs": 5,
-    "crates/axon-os/src/ledger.rs": 3,
-    "crates/axon-os/src/manifest.rs": 9,
-    "crates/axon-os/src/profile.rs": 1,
-    "crates/axon-os/src/record.rs": 5,
-    "crates/axon-os/src/replay.rs": 1,
-    "crates/axon-os/src/runtime.rs": 3,
-    "crates/axon-psv/src/bin/axon-psv-runner.rs": 1,
-    "crates/axon-vm/src/admit.rs": 6,
-    "crates/axon-vm/src/firecracker.rs": 5,
 }
 SITE = re.compile(r"return Err\(|\bErr\(format!|\brefuse\(|\bErr\(bad\(|TEST_TRUST_BUILD")
 OPENER = re.compile(r"^\s*(\}\s*else\s+if\b|if\b|match\b|let\s+\w+\s*=\s*if\b)|=>")
@@ -1544,6 +1528,309 @@ EXEMPT += [
      "--descends, \"the build's early development check [that] makes nothing clean\"; the "
      "protected lineage is the --snapshot record's descends_from_protected answer (M505)"),
 ]
+
+# C9 round 4c, workstream SITES (amendment 75): the dependency sites the crate
+# rule brought in (NOT_YET_SCANNED at 64d9f436), judged one by one by their
+# callers on the protected route; the ledger of every disposition is
+# governance/notes/v022-dependency-sites.md. The sites that DECIDE there are
+# rows M1760-M1769. The rest are below, each with the call-graph fact that
+# makes its reason checkable (a grep over the protected crates' sources:
+# axon-fabric, axon-loop, axon-loop-contracts, axon-psv, axon-guest-init,
+# axon-workspace-recipe, and the axon-core `axon test` entry).
+_SA = "crates/axon-attest/src/lib.rs"
+_SU = "crates/axon-audit/src/lib.rs"
+_SG = "crates/axon-cortex/src/generate.rs"
+_SR = "crates/axon-cortex/src/runner.rs"
+_SOC = "crates/axon-os/src/coalition.rs"
+_SOL = "crates/axon-os/src/ledger.rs"
+_SOM = "crates/axon-os/src/manifest.rs"
+_SOP = "crates/axon-os/src/profile.rs"
+_SOR = "crates/axon-os/src/record.rs"
+_SORP = "crates/axon-os/src/replay.rs"
+_SOT = "crates/axon-os/src/runtime.rs"
+_SPR = "crates/axon-psv/src/bin/axon-psv-runner.rs"
+_SVA = "crates/axon-vm/src/admit.rs"
+_SVF = "crates/axon-vm/src/firecracker.rs"
+_VMUSE = ("the protected crates use axon-vm for exactly axon_vm::BACKEND_PROFILE and "
+          "axon_vm::firecracker::{MmdsPayload, embed_policy_in_cmdline} (axon-fabric backend.rs; "
+          "embed_policy_in_cmdline is one format! with no site), and the protected guest is "
+          "launched by scripts/fc_linux_profile.sh through the root helper, not by axon-vm")
+_VM = "NOT ON THE PROTECTED ROUTE (checkable): " + _VMUSE
+_ATT = ("NOT ON THE PROTECTED ROUTE (checkable): the protected crates call one axon-attest "
+        "function, hmac_sha256 (axon-loop store.rs), which holds no site; the function here is "
+        "reached only from axon-attest's own measure/verify functions and from axon-vm (admit.rs, "
+        "main.rs), and " + _VMUSE)
+_AUD = ("NOT ON THE PROTECTED ROUTE (checkable): no protected crate names axon_audit; it is linked "
+        "through axon-os, whose one caller is cli.rs (axon_audit::Ledger::open, the `axon-os` "
+        "binary's ledger verbs), and Fabric uses only axon_os::{supervise_requiring, "
+        "parse_manifest, canonical_grant, runtime::scan_effects, ledger::{Carve, ResourceLedger}} and "
+        "its types (submit.rs, grants.rs, journal.rs, backend.rs), none of which reaches cli.rs")
+_CTX = ("NOT ON THE PROTECTED ROUTE (checkable): the Cortex repair loop's own code. The protected "
+        "crates use from axon-cortex only parse_strict and ContractError (axon-loop-contracts) and, "
+        "from runner, CheckRegistry, LocalInterpreterExecutor (the local route), the CheckExecutor "
+        "types, parse_axon_test_json, completion_token, the suite-reference functions and the "
+        "workspace/executable digest functions (axon-fabric submit.rs, psv.rs, workspace.rs, "
+        "backend.rs, bin/axon-fabric.rs); nothing below is among them")
+_EXE = ("NOT ON THE PROTECTED ROUTE (checkable): a registered EXECUTOR. A protected request's "
+        "executable is the qualified guest interpreter (submit.rs: LINUX_GUEST_AXON_ID, pinned by "
+        "the qualification's guest_axon_sha256); the registry's executors are read only by "
+        "submit.rs resolve_executable and host_executor, in the non-protected branch, and a "
+        "protected host runs nothing outside the protected profile (M265)")
+_REG = ("OPERATOR-AUTHORED on the protected route (checkable): a field of the suite registry "
+        "file, which a protected host reads only from its own config (M141: never a caller's "
+        "--check-registry), at its pinned sha256 (M142), operator-owned (M143)")
+_LOC = ("NOT ON THE PROTECTED ROUTE (checkable): the LOCAL interpreter executor (the development "
+        "route, process_scoped/local-interpreter); submit.rs builds it only when the profile is "
+        "not the protected one (`let local = if is_linux { None } else { .. host_executor .. }`), "
+        "and a protected host runs nothing outside the protected profile (M265); the guest runs "
+        "`axon test` from axon-psv's runner (exec_axon_test), not this executor")
+_COA = ("NOT ON THE PROTECTED ROUTE (checkable): coalition.rs's Coalition is constructed by no "
+        "non-test code in the workspace (grep `Coalition::new|carve_for_member|propose_vote`: "
+        "coalition.rs's own tests only); corrigible.rs uses only the CoalitionBound type")
+_LED = ("NOT A VERDICT PROPERTY (checkable): ResourceLedger::carve is called on the protected "
+        "route only by journal.rs ResourceVector::carve_within (grep `\\.carve(` outside axon-os's "
+        "tests)")
+_GRA = ("OPERATOR-AUTHORED on the protected route (checkable): axon_os::parse_manifest's only "
+        "protected caller is axon-fabric grants.rs (GrantRegistry resolution), parsing a grant "
+        "file the registry names; on a protected host that registry is the operator's "
+        "(protected_host grants(); a caller's registry is refused, D1), parsed only at its pin "
+        "(M277), each grant file used only at the bytes it pins (M1098) and operator-owned (M278). "
+        "The check")
+_OSO = ("NOT ON THE PROTECTED ROUTE (checkable): Fabric enters axon-os only through "
+        "supervise_requiring (= supervisor::run_requiring: approval::authorize, the AdmissionProbe "
+        "runtime Fabric supplies, gate::admit, record::build), parse_manifest, scan_effects and "
+        "ledger (submit.rs, grants.rs, journal.rs)")
+EXEMPT += [
+    # axon-attest/src/lib.rs
+    (_SA, '            return Err("DeviceSet missing required device: vsock (job channel)".to_string());',
+     _ATT + "; DeviceSet::validate (the VM device set axon-vm admits)"),
+    (_SA, '            return Err("DeviceSet missing required device: serial (diagnostics)".to_string());',
+     _ATT + "; DeviceSet::validate (the VM device set axon-vm admits)"),
+    (_SA, '            return Err("DeviceSet missing required device: timer (scheduler)".to_string());',
+     _ATT + "; DeviceSet::validate (the VM device set axon-vm admits)"),
+    (_SA, '            other => Err(format!(',
+     _ATT + "; DeviceSet::validate_manifest_extra_device"),
+    (_SA, '        return Err("no attestation signature present — report is unsigned; \\',
+     _ATT + "; verify_report (axon-vm's attestation report check, also behind verify_and_admit)"),
+    (_SA, '    if report.measurement.digest != *expected_digest {',
+     _ATT + "; verify_report (axon-vm's attestation report check, also behind verify_and_admit)"),
+    (_SA, '    if report.measurement.axtcb1 != expected_axtcb1 {',
+     _ATT + "; verify_report (axon-vm's attestation report check, also behind verify_and_admit)"),
+    (_SA, '    if report.hw_root != SOFTWARE_TPM_HW_ROOT {',
+     _ATT + "; verify_report (axon-vm's attestation report check, also behind verify_and_admit)"),
+    (_SA, '        return Err(\n            "no verification key supplied — refusing to verify a signature this \\',
+     _ATT + "; verify_report (axon-vm's attestation report check, also behind verify_and_admit)"),
+    (_SA, '    if !constant_time_eq(&report.signature, &expected_sig) {',
+     _ATT + "; verify_report (axon-vm's attestation report check, also behind verify_and_admit)"),
+    (_SA, '        return Err(ComponentReadError::Missing);',
+     _ATT + "; read_component_file, read only by measure_host_stack/measure_extended (axon-vm admit.rs, main.rs)"),
+    (_SA, '        return Err(ComponentReadError::NotRegularFile);',
+     _ATT + "; read_component_file, read only by measure_host_stack/measure_extended (axon-vm admit.rs, main.rs)"),
+    (_SA, '    if !expected_axtcb1_ext.starts_with(AXTCB_EXT_PREFIX) {',
+     _ATT + "; verify_extended (axon-vm admit.rs check_extended_tcb, main.rs)"),
+    (_SA, '    if !measured.axtcb1_ext.starts_with(AXTCB_EXT_PREFIX) {',
+     _ATT + "; verify_extended (axon-vm admit.rs check_extended_tcb, main.rs)"),
+    (_SA, '    if measured.components.len() != 4 {',
+     _ATT + "; verify_extended (axon-vm admit.rs check_extended_tcb, main.rs)"),
+    (_SA, '            return Err(VerifyError::Malformed(format!(',
+     _ATT + "; verify_extended (axon-vm admit.rs check_extended_tcb, main.rs)"),
+    (_SA, '        return Err(VerifyError::MonitorSlotMismatch);',
+     _ATT + "; verify_extended (axon-vm admit.rs check_extended_tcb, main.rs)"),
+    (_SA, '        return Err(VerifyError::DigestMismatch {',
+     _ATT + "; verify_extended (axon-vm admit.rs check_extended_tcb, main.rs)"),
+    # axon-audit/src/lib.rs
+    (_SU, '        return Err(format!("expected 64 hex chars, got {}", s.len()));',
+     _AUD + "; the ledger key's hex decoding"),
+    (_SU, '        _ => Err(format!("not a hex digit: {b:#x}")),',
+     _AUD + "; the ledger key's hex decoding"),
+    (_SU, '                    Ok(_) => {',
+     _AUD + "; Ledger::open_keyed"),
+    (_SU, '                    Err(e) => {',
+     _AUD + "; Ledger::open_keyed"),
+    (_SU, '            Err(e) => {\n                return Err(format!(',
+     _AUD + "; Ledger::verify_against_file"),
+    (_SU, '        if on_disk < expected {',
+     _AUD + "; Ledger::verify_against_file"),
+    (_SU, '        if on_disk > expected {',
+     _AUD + "; Ledger::verify_against_file"),
+    (_SU, '        if entry.seq != i as u64 {',
+     _AUD + "; verify_chain_keyed"),
+    (_SU, '        if entry.prev_hash != expected_prev {',
+     _AUD + "; verify_chain_keyed"),
+    (_SU, '        if entry.entry_hash != expected_hash {',
+     _AUD + "; verify_chain_keyed"),
+    # axon-core/src/main.rs
+    (CMN, '        process::exit(2);\n    }\n\n    // A test run that passes against bytes nobody locked',
+     ("OPERATOR-AUTHORED on the protected route (checkable): `axon test` merges only the files on its command "
+     "line, and the runner passes exactly ONE, the suite entry (axon-psv runner.rs exec_axon_test: "
+     "`.arg(cfg.suite.join(&m.suite.entry))`; submit's host route likewise one file); the candidate is "
+     "reached by `mod` through AXON_PATH and never merged, so a merge error (E0903) is a duplicate "
+     "top-level name inside the operator's suite file, pinned at its registered version (M1061)")),
+    # axon-cortex/src/generate.rs
+    (_SG, '    if patch.generator_id.trim().is_empty() {',
+     _CTX + "; generate::validate, the Cortex patch generators' output check (bin/cortex.rs, ai.rs)"),
+    (_SG, '        return Err(GenerationFailure::Invalid(format!(\n            "empty body proposed for `{}`",',
+     _CTX + "; generate::validate, the Cortex patch generators' output check (bin/cortex.rs, ai.rs)"),
+    (_SG, '    if patch.body.len() > constraints.max_bytes {',
+     _CTX + "; generate::validate, the Cortex patch generators' output check (bin/cortex.rs, ai.rs)"),
+    (_SG, '                Err(e) => {',
+     _CTX + "; CommandGenerator::propose (bin/cortex.rs `cmd:` generators)"),
+    (_SG, '                        return Err(GenerationFailure::Unavailable(format!(',
+     _CTX + "; CommandGenerator::propose (bin/cortex.rs `cmd:` generators)"),
+    (_SG, '            return Err(GenerationFailure::Declined(format!(',
+     _CTX + "; CommandGenerator::propose (bin/cortex.rs `cmd:` generators)"),
+    # axon-cortex/src/runner.rs
+    (_SR, '                        Observed::unknown("warnings present but none carried a `code` field")',
+     _CTX + "; Runner::observe, the Cortex repair loop's observation (Runner is built by bin/cortex.rs and cortex-policy-adapter, neither a protected crate)"),
+    (_SR, '                        Observed::unknown("program does not type-check; types unresolved"),',
+     _CTX + "; Runner::observe, the Cortex repair loop's observation (Runner is built by bin/cortex.rs and cortex-policy-adapter, neither a protected crate)"),
+    (_SR, '                    Observed::unknown(format!("checker could not run: {e}")),',
+     _CTX + "; Runner::observe, the Cortex repair loop's observation (Runner is built by bin/cortex.rs and cortex-policy-adapter, neither a protected crate)"),
+    (_SR, '            Err(why) => {\n                self.episode.push(EpisodeEvent::ActionDenied {',
+     _CTX + "; Runner::authorize_action (the Cortex loop's typed action authority)"),
+    (_SR, '            return Err(Refusal::WrongPrincipal {',
+     _CTX + "; Runner::check_typed_authority, under authorize_action"),
+    (_SR, '            return Err(Refusal::StaleSnapshot {',
+     _CTX + "; Runner::check_typed_authority, under authorize_action"),
+    (_SR, '            return Err(Refusal::PathTraversal(target_path.to_string()));',
+     _CTX + "; Runner::check_typed_authority, under authorize_action"),
+    (_SR, '            return Err(Refusal::PolicyFile(target_path.to_string()));',
+     _CTX + "; Runner::check_typed_authority, under authorize_action"),
+    (_SR, '            return Err(Refusal::PathOutsideGrant(target_path.to_string()));',
+     _CTX + "; Runner::check_typed_authority, under authorize_action"),
+    (_SR, '        return Err(unresolvable("not a regular file".into()));',
+     _EXE + "; resolve_executable, under register_pinned/register_expected/verified_path"),
+    (_SR, '        if found != want {',
+     _EXE + "; register_expected, from the registry's `executors` (load) and host_executor (the local route)"),
+    (_SR, '        if v.get("schema").and_then(|s| s.as_str()) != Some("cortex-check-registry/1") {',
+     _REG + "; the registry's version tag"),
+    (_SR, '                    return Err(format!(',
+     _REG + "; a check's `visibility` (who may SEE its source; Fabric materializes the suite the same way either way)"),
+    (_SR, "            if hex.len() != 64 || !hex.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')) {",
+     _REG + "; and dominated: the registered workspace_version_ref is compared for equality with the reference Fabric computes by importing the suite (submit.rs check_target, M1061), which a string that is not acf1:<64 hex> never equals"),
+    (_SR, '                return Err(format!("check id `{id}` registered twice"));',
+     _REG + "; a repeated id in the operator's own registry (register_check keeps the later entry, the operator's choice either way)"),
+    (_SR, '            Pin::Failed(r) => Err(r.clone()),',
+     _LOC + "; LocalInterpreterExecutor::verified_path"),
+    (_SR, '                    return Err(CheckRefusal::DigestChanged {',
+     _LOC + "; LocalInterpreterExecutor::verified_path"),
+    (_SR, '        if truncated {',
+     _LOC + "; LocalInterpreterExecutor::run_checks' output bound"),
+    (_SR, '                    return Err(std::io::Error::last_os_error());',
+     _LOC + "; run_limited's PR_SET_PDEATHSIG in the local child (also an OS ERROR: the child is not exec'd)"),
+    (_SR, '        return Err(std::io::Error::new(',
+     _LOC + "; run_limited's wall-clock kill (a RESOURCE BOUND: no status, no report)"),
+    (_SR, '                return Err(format!("fabric dispatch needs a non-empty {name}"));',
+     _CTX + "; FabricSubmitExecutor::new, Cortex's client of `axon-fabric submit` (bin/cortex.rs); its operator fields are what Cortex sends, and Fabric judges the request itself"),
+    (_SR, "        if hex.len() != 64 || !hex.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')) {\n            return Err(format!(",
+     _CTX + "; FabricSubmitExecutor::new, Cortex's client of `axon-fabric submit` (bin/cortex.rs); its operator fields are what Cortex sends, and Fabric judges the request itself"),
+    (_SR, "        if hex.bytes().all(|b| b == b'0') {",
+     _CTX + "; FabricSubmitExecutor::new, Cortex's client of `axon-fabric submit` (bin/cortex.rs); its operator fields are what Cortex sends, and Fabric judges the request itself"),
+    (_SR, '        if found != e.sha256 {\n            return Err(CheckRefusal::DigestChanged {',
+     _CTX + "; FabricSubmitExecutor::submit_path (the pin on the axon-fabric binary Cortex runs)"),
+    (_SR, '        if v.get("schema").and_then(|s| s.as_str()) != Some("axon-fabric-submit/1") {',
+     _CTX + "; FabricSubmitExecutor::run_checks, Cortex's reading of a receipt Fabric already decided; the loop takes Fabric's receipt through intake, never Cortex's reading of it"),
+    (_SR, '        if &rc["input_workspace_ref"] != sent || &rc["output_workspace_ref"] != sent {',
+     _CTX + "; FabricSubmitExecutor::run_checks, Cortex's reading of a receipt Fabric already decided; the loop takes Fabric's receipt through intake, never Cortex's reading of it"),
+    (_SR, '                return Err(std::io::Error::other(format!(',
+     "NAMED ROW: M84 mutates the arm above it to `Some(_) | None => {}`, which is the removal of this arm; " + _CTX),
+    # axon-fabric/src/bin/axon-custodian.rs
+    (CUB, '        _ => die("usage: axon-custodian [--dev --socket P --store D | --test-config FILE]"),',
+     _USE + "; no mode, so no config to serve under (the `_` arm of the mode match; M631's check_store follows the match, after a mode is chosen)"),
+    # axon-os/src/coalition.rs
+    (_SOC, '        if r.total_compute.saturating_add(c.compute) > self.ceiling.total_compute {',
+     _COA),
+    (_SOC, '        if r.total_budget.saturating_add(c.budget) > self.ceiling.total_budget {',
+     _COA),
+    (_SOC, '        let Some(ledger) = self.ledgers.get_mut(slot) else {',
+     _COA),
+    (_SOC, '        if bound_pid != claimed_pid {',
+     _COA),
+    (_SOC, '        if self.quorum_power_used.saturating_add(power) > self.ceiling.max_quorum_power {',
+     _COA),
+    # axon-os/src/ledger.rs
+    (_SOL, '        if self.compute_used.saturating_add(c.compute) > self.compute_cap {',
+     _LED + "; the compute axis, the one carve_within carves (its refusal is the journal's BudgetExceeded, exempt above as NOT A VERDICT PROPERTY)"),
+    (_SOL, '        if self.budget_used.saturating_add(c.budget) > self.budget_cap {',
+     _LED + "; and SELECTS NOTHING there: carve_within builds every ledger with this cap 0 and carves 0 on it (`ResourceLedger::new(lineage, cap, 0, 0)`, `budget: 0, persist_bytes: 0`), and 0 + 0 > 0 is false"),
+    (_SOL, '        if self.persist_bytes_used.saturating_add(c.persist_bytes) > self.persist_bytes_cap {',
+     _LED + "; and SELECTS NOTHING there: carve_within builds every ledger with this cap 0 and carves 0 on it (`ResourceLedger::new(lineage, cap, 0, 0)`, `budget: 0, persist_bytes: 0`), and 0 + 0 > 0 is false"),
+    # axon-os/src/manifest.rs
+    (_SOM, '                    other => {\n                        return Err(bad(format!(\n                            "{}: reproducible must be true or false, got `{other}`",',
+     _GRA + ": `reproducible` must be true/false"),
+    (_SOM, '                    other => {\n                        return Err(bad(format!(\n                            "{}: require_approval must be true or false, got `{other}`",',
+     _GRA + ": `require_approval` must be true/false"),
+    (_SOM, '                if profile.is_some() {',
+     _GRA + ": one `profile` line"),
+    (_SOM, '            (sec, k) => {',
+     _GRA + ": an unknown key"),
+    (_SOM, '        return Err(bad("`program` must be a .ax file"));',
+     _GRA + ": `program` names a .ax file (and Fabric replaces it: grants.rs manifest_for sets the program to the request's target)"),
+    (_SOM, '        if pf.is_reproducible() {',
+     _GRA + ": a reproducible profile contradicted by `reproducible = false` (and Fabric refuses every reproducible grant as unsupported: grant_authority grants_no_backend_can_enforce_are_unsupported_not_weakened)"),
+    (_SOM, '            return Err(bad(format!("{axis}: empty path prefix")));',
+     _GRA + ": a grant path prefix (validate_prefixes)"),
+    (_SOM, '        if p.split([\'/\', \'\\\\\']).any(|c| c == "..") {',
+     _GRA + ": a grant path prefix (validate_prefixes)"),
+    (_SOM, '        Err(bad(format!("{what} must be \\u{2265} 0")))',
+     _GRA + ": a budget field is non-negative (nonneg)"),
+    # axon-os/src/profile.rs
+    (_SOP, '            other => Err(format!(',
+     _GRA + ": an unknown profile name (Profile::parse, called from manifest::parse on that file)"),
+    # axon-os/src/record.rs
+    (_SOR, '        if ev.seq != i as u64 {',
+     _OSO + "; record::verify (a stored RunRecord's chain), whose callers are replay::replay and the `axon-os` CLI; supervise_requiring builds a record (record::build) and verifies none"),
+    (_SOR, '        if ev.prev_hash != prev {',
+     _OSO + "; record::verify (a stored RunRecord's chain), whose callers are replay::replay and the `axon-os` CLI; supervise_requiring builds a record (record::build) and verifies none"),
+    (_SOR, '        if ev.hash != expect {',
+     _OSO + "; record::verify (a stored RunRecord's chain), whose callers are replay::replay and the `axon-os` CLI; supervise_requiring builds a record (record::build) and verifies none"),
+    (_SOR, '    if rec.record_digest.starts_with("axrec1:") {',
+     _OSO + "; record::verify (a stored RunRecord's chain), whose callers are replay::replay and the `axon-os` CLI; supervise_requiring builds a record (record::build) and verifies none"),
+    (_SOR, '    if rec.record_digest != format!("axrec2:{expect_seal}") {',
+     _OSO + "; record::verify (a stored RunRecord's chain), whose callers are replay::replay and the `axon-os` CLI; supervise_requiring builds a record (record::build) and verifies none"),
+    # axon-os/src/replay.rs
+    (_SORP, '        Err(VerifyMismatch {',
+     _OSO + "; replay::replay, called only by cli.rs cmd_replay"),
+    # axon-os/src/runtime.rs
+    (_SOT, '                Err(e) => return Err(e),',
+     _OSO + "; StagingDir::create, used by AxonCoreRuntime (the `axon-os` binary's runtime: cli.rs); Fabric admits through its own AdmissionProbe (submit.rs), which stages nothing"),
+    (_SOT, '        Err(last.unwrap_or_else(|| std::io::Error::other("staging dir collision")))',
+     _OSO + "; StagingDir::create, used by AxonCoreRuntime (the `axon-os` binary's runtime: cli.rs); Fabric admits through its own AdmissionProbe (submit.rs), which stages nothing"),
+    (_SOT, '            Err(_) => DeclaredEffects::unknown(), // deny-by-default',
+     _OSO + "; AxonCoreRuntime::declared_effects; Fabric's AdmissionProbe implements declared_effects itself (submit.rs, the same deny-by-default unknown())"),
+    # axon-psv/src/bin/axon-psv-runner.rs
+    (_SPR, '        std::process::exit(3);',
+     ("NOTHING TO ADMIT (checkable): start() fails either BEFORE proceed (an argument; the prctl, M313), when "
+     "no verdict.json was written, so /init prints `PSV-VERDICT-INIT none` and the launcher binds no verdict "
+     "(fc_linux_profile.sh: verdict-unbound, 27; Fabric M241), or when run_and_emit's ONE write of "
+     "verdict.json failed, leaving no file or a strict prefix of canonical JSON, which derive refuses as "
+     "malformed (psv.rs, exempt above). The exit code is a report; the verdict file is the evidence")),
+    # axon-vm/src/admit.rs
+    (_SVA, '                return Err(AdmitError::OverrideWidens {',
+     _VM + "; resolve_effect_grant, under admit_job"),
+    (_SVA, '        return Err(AdmitError::ExtendedTcbUnpinned {',
+     _VM + "; check_extended_tcb, under admit_job"),
+    (_SVA, '        Err(e) => Err(AdmitError::ExtendedTcbMismatch {',
+     _VM + "; check_extended_tcb, under admit_job"),
+    (_SVA, '        return Err(format!("kernel not found: {}", kernel_path.display()).into());',
+     _VM + "; measure_and_attest_inner (admit_job, and the `axon-vm` binary's run path)"),
+    (_SVA, '                return Err(\n                    "attestation failed: no pinned baseline (refusing to trust on first use)"',
+     _VM + "; measure_and_attest_inner (admit_job, and the `axon-vm` binary's run path)"),
+    (_SVA, '        return Err("attestation failed: kernel tampered".into());',
+     _VM + "; measure_and_attest_inner (admit_job, and the `axon-vm` binary's run path)"),
+    # axon-vm/src/firecracker.rs
+    (_SVF, '    Err(format!(',
+     _VM + "; wait_for_socket (axon-vm's own VMM driver)"),
+    (_SVF, '    if !(200..300).contains(&status_code) {',
+     _VM + "; fc_put (axon-vm's Firecracker API client)"),
+    (_SVF, '        Err("firecracker not found in PATH or /usr/local/bin; install from github.com/firecracker-microvm/firecracker".into())',
+     _VM + "; FirecrackerBin::resolve/at (axon-vm's VMM lookup)"),
+    (_SVF, '        if !path.is_absolute() {',
+     _VM + "; FirecrackerBin::resolve/at (axon-vm's VMM lookup)"),
+    (_SVF, '            return Err(format!("firecracker not a regular file: {}", path.display()).into());',
+     _VM + "; FirecrackerBin::resolve/at (axon-vm's VMM lookup)"),
+]
+
 
 def load_rows():
     spec = importlib.util.spec_from_file_location("mut", os.path.join(ROOT, "scripts/v022_g01_mutations.py"))

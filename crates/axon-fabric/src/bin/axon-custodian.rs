@@ -121,7 +121,9 @@ fn main() {
     };
     // Every mode: the store is ours, and private — checked before a single
     // connection is accepted.
-    cu::check_store(&cfg.store, euid()).unwrap_or_else(|e| die(&e));
+    if let Err(e) = cu::check_store(&cfg.store, euid()) {
+        die(&e);
+    }
     let listener = match mode {
         Mode::Protected => cu::activated_listener(&cfg.socket).unwrap_or_else(|e| die(&e)),
         Mode::Test | Mode::Dev => bind(&cfg.socket),

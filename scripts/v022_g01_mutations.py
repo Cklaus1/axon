@@ -1847,7 +1847,10 @@ MUTATIONS += [
      '    if false && m.uid() != euid {',
      'axon-fabric', '--lib', 'custodian::tests::a_nonce_store_others_can_reach_is_refused'),
     ('M631', 'A83: the custodian checks its store before serving any request', _CB,
-     '    cu::check_store(&cfg.store, euid()).unwrap_or_else(|e| die(&e));',
+     # C9 r4c (sites, amendment 75): re-anchored. The check is its own `if`, so
+     # the refusal gate's block for it starts there and no longer swallows the
+     # usage arm four lines above (whose exemption it made "covered by M631").
+     '    if let Err(e) = cu::check_store(&cfg.store, euid()) {\n        die(&e);\n    }',
      '    let _ = cu::check_store(&cfg.store, euid());',
      'axon-fabric', '--test custodian', 'a_custodian_refuses_a_store_others_can_reach'),
     ('M632', 'A83: the custodian runs only as its configured custodian uid', _CB,
