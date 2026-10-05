@@ -6266,14 +6266,14 @@ MUTATIONS += [
      '        _a = line_of(text, text.index(r[3]))\n        spans.append((r[0], set(range(_a, _a + r[3].count("\\n") + 1))))',
      'axon-core', _GT, 'a_row_covers_only_what_its_edit_changes'),
     ('M1740', "COVERAGE GATE (gate): a predicate function is exempted only at its head line", _RCG,
-     '        ex_hit = [e for e in ex if ((g <= e[0] <= i) if at == i else e[0] == g)]',
+     '        ex_hit = [e for e in ex if ((g <= e[0] <= i) if kind == "line" else e[0] == g)]',
      '        ex_hit = [e for e in ex if g <= e[0] <= i]',
      'axon-core', _GT, 'an_exemption_in_a_predicate_fns_body_does_not_exempt_the_fn'),
     ('M1741', "COVERAGE GATE (gate): a let-else is the opener of its refusal", _RCG,
      '|let\\b.*\\belse\\s*\\{\\s*$)|=>")', ')|=>")',
      'axon-core', _GT, 'a_let_else_is_the_opener_of_its_refusal'),
     ('M1742', "COVERAGE GATE (gate): a guard block never crosses a function boundary", _RCG,
-     '            if j < i and FN_HEAD.match(lines[j]):\n                break\n', '',
+     '        if j < i and FN_HEAD.match(lines[j]):\n            break\n', '',
      'axon-core', _GT, 'a_guard_block_does_not_cross_a_function_boundary'),
     ('M1743', "HARNESS (gate): --join derives HOLDS from the recorded cells, not the label", 'scripts/v022_paired_disable.py',
      '            if bool(r.get("holds")) != want and not (r.get("status") == "STALE_REFACTORED" and not r.get("holds")):',
@@ -6318,6 +6318,62 @@ EQUIV_RECORD["M1726"] = {
                  "removed and with only the siblings removed, and counts with all three removed"}
 EQUIVALENT_DID |= {"M1726"}
 RETIRED |= {"M1726"}
+
+# ── C9 round 4c, workstream ADMIT (M1770-M1829; amendment 76) ────────────────
+# The refusal-site gate could not SEE a refusal expressed as a returned verdict
+# (`Admission::Deny {..}`, `Verdict::Denied {..}`): axon-os's admission chain
+# (gate::admit and the supervisor around it) had no site and no row. The gate
+# now derives the verdict types from the in-scope code and reads five forms of
+# them (v022_refusal_coverage.py, "Amendment 76"); the rows below are the gate's
+# own guards, each killed by a planted production-shaped refusal it must name.
+PSV_IDS |= {f"M{n}" for n in range(1770, 1830)}
+MUTATIONS += [
+    ('M1770', "COVERAGE GATE (admit): a built negative verdict variant is a site", _RCG,
+     '    for _, i in verdict_constructions(clean, enums):\n        if not in_helper(i) and in_region(i):',
+     '    for _, i in []:\n        if not in_helper(i) and in_region(i):',
+     'axon-core', _GT, 'a_built_negative_verdict_variant_is_a_site'),
+    ('M1771', "COVERAGE GATE (admit): `Self::Variant` in the verdict enum's own impl is the same construction", _RCG,
+     '            enum = next((n for a, b, n in selfmap if a <= m.start() < b), enum)',
+     '            enum = enum',
+     'axon-core', _GT, 'a_self_variant_in_the_verdicts_own_impl_is_a_site'),
+    ('M1772', "COVERAGE GATE (admit): a function returning a verdict is a site", _RCG,
+     '    for a, b, n in decides:', '    for a, b, n in []:',
+     'axon-core', _GT, 'a_function_that_returns_a_verdict_is_a_site'),
+    ('M1773', "COVERAGE GATE (admit): a verdict inside a tuple return is a verdict return", _RCG,
+     '        return any(_decides_return(x, enums, structs) for x in parts + [cur])',
+     '        return False',
+     'axon-core', _GT, 'a_function_that_returns_a_verdict_is_a_site'),
+    ('M1774', "COVERAGE GATE (admit): a verdict inside a Result/Option return is a verdict return", _RCG,
+     '    m = re.match(r"(?:Result|Option|Vec|Box)\\s*<(.*)>\\s*$", t, re.S)',
+     '    m = re.match(r"(?:NoSuchWrapper)\\s*<(.*)>\\s*$", t, re.S)',
+     'axon-core', _GT, 'a_function_that_returns_a_verdict_is_a_site'),
+    ('M1775', "COVERAGE GATE (admit): a call of a verdict helper constructor is a site", _RCG,
+     '                if built and all(m.group(2) in enums[m.group(1)] for m in built):',
+     '                if False and built and all(m.group(2) in enums[m.group(1)] for m in built):',
+     'axon-core', _GT, 'a_call_of_a_verdict_helper_constructor_is_a_site'),
+    ('M1776', "COVERAGE GATE (admit): a call of an Err helper constructor is a site", _RCG,
+     '            elif (re.search(r"\\bErr\\(", body)',
+     '            elif (False and re.search(r"\\bErr\\(", body)',
+     'axon-core', _GT, 'a_call_of_an_err_helper_constructor_is_a_site'),
+    ('M1777', "COVERAGE GATE (admit): a closure predicate refused through ok_or is a site", _RCG,
+     '    for a, b in inline_predicate_sites(cl):', '    for a, b in []:',
+     'axon-core', _GT, 'an_inline_predicate_refused_through_ok_or_is_a_site'),
+    ('M1778', "COVERAGE GATE (admit): an enum named for deciding is a verdict enum", _RCG,
+     '            if strong or VERDICT_NAME.search(name):', '            if strong:',
+     'axon-core', _GT, 'a_built_negative_verdict_variant_is_a_site'),
+    ('M1779', "COVERAGE GATE (admit): a variant in a match arm's pattern (a tuple pattern too) is matched, not built", _RCG,
+     '    if any(a <= p < b for a, b in arms):\n        return True',
+     '    if False:\n        return True',
+     'axon-core', _GT, 'a_built_negative_verdict_variant_is_a_site'),
+    ('M1780', "COVERAGE GATE (admit): a variant inside matches!(..) is matched, not built", _RCG,
+     '    if k >= 0 and ";" not in clean[k:p] and _match_close(clean, k + len("matches!")) > p:',
+     '    if False and k >= 0 and ";" not in clean[k:p] and _match_close(clean, k + len("matches!")) > p:',
+     'axon-core', _GT, 'a_built_negative_verdict_variant_is_a_site'),
+    ('M1781', "COVERAGE GATE (admit): a cfg(all(test, ..)) item is test code", _RCG,
+     'CFG_TEST = re.compile(r"^[ \\t]*#\\[cfg\\((?:test|all\\(test,[^\\]\\n]*\\))\\)\\][ \\t]*$", re.M)',
+     'CFG_TEST = re.compile(r"^[ \\t]*#\\[cfg\\((?:test)\\)\\][ \\t]*$", re.M)',
+     'axon-core', _GT, 'a_cfg_all_test_item_is_test_code_and_a_cfg_any_test_item_is_not'),
+]
 
 
 def in_scope(mid, scope):

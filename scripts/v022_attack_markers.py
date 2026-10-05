@@ -1686,3 +1686,21 @@ ATTACK_MARKERS.update({
     'M1746': r'ATTACK: a job requiring approval ran with no approval token\s*\n\s*left: \w+\s*\n\s*right: Denied',
     'M1747': r'ATTACK: a production refusal (below an empty|after a real test module)',
 })
+
+# C9 round 4c, workstream ADMIT (M1770-M1829; amendment 76): the gate's own
+# verdict forms. Each is the test's own "the gate did not name it" panic for the
+# planted production-shaped refusal.
+ATTACK_MARKERS.update({
+    'M1770': r'ATTACK: a built negative verdict variant \(Verdict::Denied \{\.\.\}\) with no row and no exemption was not a site: the gate did not name it',
+    'M1771': r"ATTACK: a negative variant built through `Self::` inside the verdict enum's impl was not a site: the gate did not name it",
+    'M1772': r'ATTACK: a function returning a struct named for deciding \(data-flow refusal\) with no row and no exemption was not a site: the gate did not name it',
+    'M1773': r'ATTACK: a function returning a verdict inside a tuple was not a site: the gate did not name it',
+    'M1774': r'ATTACK: a function returning a verdict inside a Result was not a site: the gate did not name it',
+    'M1775': r'ATTACK: a call of a helper that only builds a negative verdict, with no row and no exemption, was not a site: the gate did not name it',
+    'M1776': r'ATTACK: a call of a function whose whole body is an Err\(\.\.\), with no row and no exemption, was not a site: the gate did not name it',
+    'M1777': r'ATTACK: a closure predicate refused through ok_or, with no row and no exemption, was not a site: the gate did not name it',
+    'M1778': r'ATTACK: a built `Unknown` of an enum named for deciding \(an Outcome\) with no row and no exemption was not a site: the gate did not name it',
+    'M1779': r'ATTACK: a TUPLE pattern in a match arm was read as a decision: the gate named it as a refusal site',
+    'M1780': r'ATTACK: a `matches!` pattern was read as a decision: the gate named it as a refusal site',
+    'M1781': r'ATTACK: a `cfg\(all\(test, \.\.\)\)` item \(compiled only in a test build\) was read as production: the gate named it as a refusal site',
+})

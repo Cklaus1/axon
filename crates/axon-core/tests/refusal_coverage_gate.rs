@@ -643,3 +643,268 @@ fn production_code_after_a_test_module_is_scanned() {
     let _ = std::fs::remove_dir_all(&r2);
     let _ = std::fs::remove_dir_all(&r);
 }
+
+// ── C9 round 4c, ADMIT (amendment 76): a VERDICT is a decision. The rule used
+// to see `Err(`, a bool/Option return and the named constructors; the axon-os
+// admission chain refuses by RETURNING an enum value (`Admission::Deny {..}`,
+// `Verdict::Denied {..}`) and the gate could not see it. The forms below are
+// derived from the in-scope code (every enum with a refusal-named variant or a
+// deciding name), never from a list of today's names.
+
+/// The gate does NOT name `site` as a refusal site (a pattern, a comparison, a
+/// test, a data enum): a rule that over-reads makes every exemption noise.
+fn not_named(r: &Path, site: &str, what: &str) {
+    let t = text(&gate(r, &[]));
+    if t.lines()
+        .any(|l| l.contains("refusal site with no row and no exemption") && l.contains(site))
+    {
+        panic!("ATTACK: {what}: the gate named it as a refusal site: {t}");
+    }
+}
+
+const PROBE_ENUM: &str = "pub enum GateProbeVerdict {\n    Allowed,\n    Denied { why: String },\n}\n\npub enum GateProbeBilling {\n    Known(u64),\n    Unknown,\n}\n\npub enum GateProbeOutcome {\n    Granted,\n    Unknown,\n}\n\npub enum GateProbeError {\n    Denied(String),\n}\n";
+
+/// Amendment 76: a NEGATIVE variant of a verdict enum, built, is a site: in a
+/// `return`, in a binding, as an arm's value. The enum is a verdict enum
+/// because the code says so (a refusal-named variant, or a deciding name with
+/// a "no verdict" variant); a data enum with an `Unknown` variant (a billing
+/// state) and an `*Error` enum (whose refusals travel in `Err(` and are sites
+/// already) are not. Matching a verdict is not deciding one.
+#[test]
+fn a_built_negative_verdict_variant_is_a_site() {
+    let r = tree("verdict-variant");
+    add_code(
+        &r,
+        SCANNED,
+        &format!(
+            "{PROBE_ENUM}\npub fn gate_probe_stamp(x: u64) -> String {{\n    let v = if x > 7 {{\n        GateProbeVerdict::Denied {{ why: format!(\"stamp {{x}}\") }}\n    }} else {{\n        GateProbeVerdict::Allowed\n    }};\n    let o = if x > 9 {{ GateProbeOutcome::Unknown }} else {{ GateProbeOutcome::Granted }};\n    let b = if x > 11 {{ GateProbeBilling::Unknown }} else {{ GateProbeBilling::Known(x) }};\n    let _ = (o, b);\n    format!(\"{{}}\", matches!(v, GateProbeVerdict::Allowed))\n}}\n\npub fn gate_probe_reads(v: &GateProbeVerdict, o: GateProbeOutcome) -> u64 {{\n    if let GateProbeVerdict::Denied {{ why }} = v {{\n        return why.len() as u64;\n    }}\n    let n = match v {{\n        GateProbeVerdict::Denied {{ .. }} => 1,\n        GateProbeVerdict::Allowed => 2,\n    }};\n    let m = matches!(v, GateProbeVerdict::Denied {{ .. }});\n    if m || o == GateProbeOutcome::Unknown {{\n        return n + 1;\n    }}\n    n\n}}\n\npub fn gate_probe_tuple_pattern(v: &GateProbeVerdict, n: u64) -> u64 {{\n    match (v, n) {{\n        (GateProbeVerdict::Denied {{ .. }}, 0) => 3,\n        _ => 4,\n    }}\n}}\n\npub fn gate_probe_err_enum(x: u64) -> u64 {{\n    let e = GateProbeError::Denied(format!(\"as data {{x}}\"));\n    let _ = e;\n    0\n}}\n"
+        ),
+    );
+    names(
+        &r,
+        "GateProbeVerdict::Denied { why: format!(\"stamp {x}\") }",
+        "a built negative verdict variant (Verdict::Denied {..}) with no row and no exemption was not a site",
+    );
+    names(
+        &r,
+        "GateProbeOutcome::Unknown",
+        "a built `Unknown` of an enum named for deciding (an Outcome) with no row and no exemption was not a site",
+    );
+    not_named(
+        &r,
+        "GateProbeBilling::Unknown",
+        "a data enum's `Unknown` (a billing state, no deciding name, no refusal variant) was read as a verdict",
+    );
+    not_named(
+        &r,
+        "GateProbeError::Denied(format!",
+        "an `*Error` enum's variant (its refusals travel inside Err( and are sites there) was read as a verdict",
+    );
+    not_named(
+        &r,
+        "if let GateProbeVerdict::Denied",
+        "a PATTERN (`if let Verdict::Denied {..} = v`) was read as a decision",
+    );
+    not_named(
+        &r,
+        "GateProbeVerdict::Denied { .. } => 1",
+        "a match ARM pattern was read as a decision",
+    );
+    not_named(
+        &r,
+        "let m = matches!(v, GateProbeVerdict::Denied",
+        "a `matches!` pattern was read as a decision",
+    );
+    not_named(
+        &r,
+        "(GateProbeVerdict::Denied { .. }, 0) => 3",
+        "a TUPLE pattern in a match arm was read as a decision",
+    );
+    let c = tree("verdict-variant-control");
+    holds(&c, &[], "the unedited copy");
+    let _ = std::fs::remove_dir_all(&c);
+    let _ = std::fs::remove_dir_all(&r);
+}
+
+/// Amendment 76: `Self::Variant` inside the enum's own `impl` is the same
+/// construction (axon-loop and axon-os build their verdicts that way).
+#[test]
+fn a_self_variant_in_the_verdicts_own_impl_is_a_site() {
+    let r = tree("verdict-self");
+    add_code(
+        &r,
+        SCANNED,
+        &format!(
+            "{PROBE_ENUM}\nimpl GateProbeVerdict {{\n    pub fn gate_probe_describe(&self, x: u64) -> String {{\n        let v = if x > 3 {{ Self::Denied {{ why: \"self-built\".into() }} }} else {{ Self::Allowed }};\n        format!(\"{{}}\", matches!(v, Self::Allowed))\n    }}\n}}\n"
+        ),
+    );
+    names(
+        &r,
+        "Self::Denied { why: \"self-built\".into() }",
+        "a negative variant built through `Self::` inside the verdict enum's impl was not a site",
+    );
+    let _ = std::fs::remove_dir_all(&r);
+}
+
+/// Amendment 76: a function whose declared return type is a verdict (an enum
+/// the code derives, or a struct named for deciding), also through one
+/// Result/Option or a tuple, DECIDES, and is one site of its own: its "no"
+/// may be data flow (`let status = f(); Verdict { status }`), not a built
+/// variant. Exempt on its HEAD line, like a predicate primitive.
+#[test]
+fn a_function_that_returns_a_verdict_is_a_site() {
+    let r = tree("verdict-fn");
+    add_code(
+        &r,
+        SCANNED,
+        &format!(
+            "{PROBE_ENUM}\npub struct GateProbeDecision {{\n    pub ok: bool,\n}}\n\npub fn gate_probe_flow(x: u64) -> GateProbeDecision {{\n    let ok = x % 2 == 0;\n    GateProbeDecision {{ ok }}\n}}\n\npub fn gate_probe_tuple(x: u64) -> (GateProbeVerdict, u64) {{\n    (GateProbeVerdict::Allowed, x)\n}}\n\npub fn gate_probe_wrapped(x: u64) -> Result<GateProbeOutcome, String> {{\n    Ok(if x > 1 {{ GateProbeOutcome::Granted }} else {{ GateProbeOutcome::Granted }})\n}}\n"
+        ),
+    );
+    names(
+        &r,
+        "fn gate_probe_flow(x: u64) -> GateProbeDecision",
+        "a function returning a struct named for deciding (data-flow refusal) with no row and no exemption was not a site",
+    );
+    names(
+        &r,
+        "fn gate_probe_tuple(x: u64) -> (GateProbeVerdict, u64)",
+        "a function returning a verdict inside a tuple was not a site",
+    );
+    names(
+        &r,
+        "fn gate_probe_wrapped(x: u64) -> Result<GateProbeOutcome, String>",
+        "a function returning a verdict inside a Result was not a site",
+    );
+    // Exempting on the head line exempts the function, and only it.
+    exempt(
+        &r,
+        SCANNED,
+        "pub fn gate_probe_flow(x: u64) -> GateProbeDecision {",
+        "probe: the function",
+    );
+    not_named(
+        &r,
+        "fn gate_probe_flow(x: u64)",
+        "a head-line exemption did not exempt a verdict function",
+    );
+    let _ = std::fs::remove_dir_all(&r);
+}
+
+/// Amendment 76: a call of a HELPER CONSTRUCTOR is the site, its definition is
+/// not (`fn deny(..) -> Verdict { Verdict::Denied {..} }`, the verdict
+/// analogue of `refused(`). A same-named function in ANOTHER file is another
+/// function.
+#[test]
+fn a_call_of_a_verdict_helper_constructor_is_a_site() {
+    let r = tree("verdict-helper");
+    add_code(
+        &r,
+        SCANNED,
+        &format!(
+            "{PROBE_ENUM}\nfn gate_probe_deny(why: &str) -> GateProbeVerdict {{\n    GateProbeVerdict::Denied {{ why: why.into() }}\n}}\n\npub fn gate_probe_caller(x: u64) -> u64 {{\n    if x > 7 {{\n        let _d = gate_probe_deny(\"helper call\");\n        return 1;\n    }}\n    0\n}}\n"
+        ),
+    );
+    names(
+        &r,
+        "let _d = gate_probe_deny(\"helper call\");",
+        "a call of a helper that only builds a negative verdict, with no row and no exemption, was not a site",
+    );
+    not_named(
+        &r,
+        "GateProbeVerdict::Denied { why: why.into() }",
+        "the helper constructor's own body was named instead of its calls",
+    );
+    let _ = std::fs::remove_dir_all(&r);
+}
+
+/// Amendment 76: the same for a helper that builds an `Err(..)` and nothing
+/// else (`fn check_operator_owned(..)`, `fn no_xattr(..)`): a call is a site.
+#[test]
+fn a_call_of_an_err_helper_constructor_is_a_site() {
+    let r = tree("err-helper");
+    add_code(
+        &r,
+        SCANNED,
+        "fn gate_probe_refuse(m: &str) -> Result<(), String> {\n    Err(m.to_string())\n}\n\npub fn gate_probe_calls_refuse(x: u64) -> Result<u64, String> {\n    if x > 7 {\n        gate_probe_refuse(\"err helper call\")?;\n    }\n    Ok(x)\n}\n",
+    );
+    names(
+        &r,
+        "gate_probe_refuse(\"err helper call\")?;",
+        "a call of a function whose whole body is an Err(..), with no row and no exemption, was not a site",
+    );
+    let _ = std::fs::remove_dir_all(&r);
+}
+
+/// Amendment 76: `.ok_or(..)` converts an absence some other decision made,
+/// and is no site; with a predicate INLINE before it (`.filter(|k| k.len() ==
+/// 32).ok_or(..)?`) the predicate IS the decision and nothing else scans it.
+#[test]
+fn an_inline_predicate_refused_through_ok_or_is_a_site() {
+    let r = tree("inline-pred");
+    add_code(
+        &r,
+        SCANNED,
+        "pub fn gate_probe_key(k: Option<Vec<u8>>) -> Result<Vec<u8>, String> {\n    let key = k\n        .filter(|k| k.len() == 32)\n        .ok_or(\"not a 32-byte key\")?;\n    Ok(key)\n}\n\npub fn gate_probe_lookup(k: Option<Vec<u8>>) -> Result<Vec<u8>, String> {\n    let key = k.ok_or(\"absent lookup\")?;\n    Ok(key)\n}\n",
+    );
+    names(
+        &r,
+        ".filter(|k| k.len() == 32)",
+        "a closure predicate refused through ok_or, with no row and no exemption, was not a site",
+    );
+    not_named(
+        &r,
+        "k.ok_or(\"absent lookup\")",
+        "a bare ok_or (an absence some other decision made) was read as a decision",
+    );
+    let _ = std::fs::remove_dir_all(&r);
+}
+
+/// Amendment 76: a refusal guarded by `matches!` (`if !matches!(..) { return
+/// Err(..) }`, the condition over several lines) is a site whose block starts
+/// at the `if`.
+#[test]
+fn a_matches_guard_opens_its_refusal() {
+    let r = tree("matches-guard");
+    add_code(
+        &r,
+        SCANNED,
+        "pub fn gate_probe_matches(x: Option<u64>) -> Result<(), String> {\n    if !matches!(\n        x,\n        Some(1) | Some(2)\n    ) {\n        return Err(format!(\"matches guard\"));\n    }\n    Ok(())\n}\n",
+    );
+    exempt(
+        &r,
+        SCANNED,
+        "    if !matches!(",
+        "probe: the matches! guard line",
+    );
+    must_hold(
+        &r,
+        &[],
+        "an exemption anchored on a `if !matches!(` line did not reach the refusal in its block",
+    );
+    let _ = std::fs::remove_dir_all(&r);
+}
+
+/// Amendment 76: `#[cfg(all(test, ..))]` compiles only in a test build, so its
+/// item is test code (the psv crate's xattr module read as production);
+/// `#[cfg(any(test, feature = ..))]` and `#[cfg(not(test))]` are production.
+#[test]
+fn a_cfg_all_test_item_is_test_code_and_a_cfg_any_test_item_is_not() {
+    let r = tree("cfg-all");
+    add_code(
+        &r,
+        SCANNED,
+        "#[cfg(all(test, target_os = \"linux\"))]\nmod gate_probe_linux_tests {\n    pub fn t() -> Result<(), String> {\n        Err(format!(\"inside the all-test module\"))\n    }\n}\n\n#[cfg(any(test, feature = \"gate-probe\"))]\npub fn gate_probe_any() -> Result<(), String> {\n    Err(format!(\"inside the any-test fn\"))\n}\n",
+    );
+    names(
+        &r,
+        "inside the any-test fn",
+        "a `cfg(any(test, feature))` item (production code under the feature) was hidden as test code",
+    );
+    not_named(
+        &r,
+        "inside the all-test module",
+        "a `cfg(all(test, ..))` item (compiled only in a test build) was read as production",
+    );
+    let _ = std::fs::remove_dir_all(&r);
+}
