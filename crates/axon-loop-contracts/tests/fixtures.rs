@@ -402,12 +402,15 @@ fn shortlist_non_empty_and_unique() {
 #[test]
 fn transition_epoch_must_be_contiguous() {
     let j = edit("transition", |v| v["next_epoch"] = 9.into());
-    assert!(matches!(
-        parse::<PolicyTransition>(&j),
-        Err(Refusal::Semantic(_))
-    ));
+    assert!(
+        matches!(parse::<PolicyTransition>(&j), Err(Refusal::Semantic(_))),
+        "ATTACK: a transition whose next_epoch skips an epoch was parsed"
+    );
     let j = edit("transition", |v| v["next_epoch"] = 7.into());
-    assert!(parse::<PolicyTransition>(&j).is_err());
+    assert!(
+        parse::<PolicyTransition>(&j).is_err(),
+        "ATTACK: a transition whose next_epoch skips an epoch was parsed"
+    );
 }
 
 #[test]

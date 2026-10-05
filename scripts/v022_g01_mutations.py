@@ -5120,10 +5120,32 @@ LIB_RECORD.update({
         "library_test": "axon-loop-contracts --lib ids::tests::deserialize_validates_too"},
 })
 LIBRARY_PRIMITIVE = set(LIB_RECORD)
-EQUIV_RECORD["M1266"]["all_paths"] += (
-    "; the CLI route (bin axon-loop pointer transition) is parse then pointer::transition with nothing "
-    "written between, so tests/cli.rs pins only that the transition is REFUSED with the store unchanged, "
-    "exit 4 or 5 (ruling R3, precedent M487; integrate-3)")
+# C9 round 4c triage (gpumaster paired-disable at 16500980): M1266's retirement claimed the
+# full package suite stays green with the guard removed. It does not: fixtures.rs
+# transition_epoch_must_be_contiguous and parse_validate_sites.rs
+# parse_never_admits_a_noncontiguous_fence both go red (each calls parse directly). Dominated on
+# the ONE production route (bin axon-loop pointer transition: parse, then pointer::transition,
+# whose CAS M1329 and next == current + 1 rule M1330 imply this one), so it is a library
+# primitive (ruling R1, as M1214/M1217/M1223/M1224/M1233), not a retirement.
+MUTATIONS = [r if r[0] != 'M1266' else
+             ('M1266', "EVIDENCE (4b, integrate-A): a transition's fence is contiguous (next = expected + 1) (LIBRARY_PRIMITIVE, triage)")
+             + tuple(r[2:5]) + ('axon-loop-contracts', '--test fixtures', 'transition_epoch_must_be_contiguous')
+             for r in MUTATIONS]
+EQUIVALENT_DID.discard('M1266')
+RETIRED.discard('M1266')
+EQUIV_RECORD.pop('M1266')
+LIB_RECORD['M1266'] = {
+    "property": "a transition's fence is contiguous (next = expected + 1)",
+    "routes": {
+        "every parse caller (the only one is bin axon-loop pointer transition)":
+            "LATER on the same route: pointer::transition requires expected_epoch == current (M1329) and "
+            "next_epoch == current + 1 (M1330), nothing written between; Conflict (exit 5) where parse "
+            "gives Refused (4)",
+        "any other route": "impossible: no other code constructs, parses or reads a PolicyTransition "
+                           "(grep crates/*/src)"},
+    "library_test": "axon-loop-contracts --test fixtures transition_epoch_must_be_contiguous (also "
+                    "parse_validate_sites parse_never_admits_a_noncontiguous_fence)"}
+LIBRARY_PRIMITIVE = set(LIB_RECORD)
 
 # A real defect found by the M58 triage (it is NOT M58's): `axon-os run`
 # reset every kill latch to clear as it started, so a kill ARMED before the
@@ -5913,6 +5935,13 @@ MUTATIONS += [
      # its own source must not contain the guard's text a second time.
      '        if d["all_killed"] and' + ' notgood:', '        if False and d["all_killed"] and' + ' notgood:',
      'axon-core', _HI, 'a_merge_refuses_a_shard_claiming_all_killed_over_a_survivor'),
+]
+MUTATIONS += [
+    ('M1745', "JOURNAL (triage): a contended journal lock is retried long enough to outlast a loaded host's fork-to-exec window",
+     'crates/axon-fabric/src/journal.rs',
+     'const LOCK_RETRY_WINDOW: std::time::Duration = std::time::Duration::from_millis(5000);',
+     'const LOCK_RETRY_WINDOW: std::time::Duration = std::time::Duration::from_millis(1);',
+     'axon-fabric', '--test journal', 'a_lock_held_only_by_a_forks_inherited_description_is_waited_out'),
 ]
 EQUIV_RECORD["M1726"] = {
     "property": "a pass counts only when a trusted verifier independent of the subject verified it",

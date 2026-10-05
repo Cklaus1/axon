@@ -2681,9 +2681,9 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       integrate-3 applies it once more: `axon-loop/tests/cli.rs::
       cli_pointer_baseline_resolve_transition_show_revoke` pinned exit 4 for a transition whose
       fence skips an epoch; on that CLI route (`parse` then `pointer::transition`, nothing written
-      between) the two independent refusals are parse's typed rule M1266 (Refused, 4) and the
+      between) the two refusals are parse's typed rule M1266 (Refused, 4; library primitive) and the
       pointer's `next_epoch == current + 1`, M1330 (Conflict, 5). The test now requires a refusal
-      (4 or 5) with the store unchanged; M1266 stays retired vs M1330 and its record says so.
+      (4 or 5) with the store unchanged; M1266 is LIBRARY_PRIMITIVE (round 4c triage: dominated on the one production route by M1329+M1330, and its removal alone fails fixtures.rs and parse_validate_sites; the earlier retirement claimed a green suite).
     - **Ruling R2 (FLAGGED exemptions).** integrate-A's four (ids.rs authority epoch, policy.rs
       target/admission refs, schema.rs non-integer number) state the experiment in their reasons.
       integrate-2 adds one, `operator_trust.rs` `!dir.is_absolute()`: NO RELATIVE INPUT (every
@@ -2724,7 +2724,7 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
         is recorded (exit 0). M1232 is ACTIVE, killed on that route by
         `tests/cli.rs::a_revocation_naming_a_reference_that_is_not_a_digest_is_never_recorded`
         (control: the real digest is recorded).
-      - *M1266 -> stays retired* (ruling R3, above).
+      - *M1266 -> LIBRARY_PRIMITIVE*: its guard is dominated on the one production route by M1329+M1330, and its removal alone fails fixtures.rs and parse_validate_sites.
       - *M346 -> stays retired; the control is made deterministic.* 150 runs clean and 150 with
         M346 removed: all pass. M346's edit reaches the test only as the bytes of the copied
         `provenance.rs` blob, i.e. different random object ids. The control ("a unique
@@ -3064,3 +3064,11 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       not exempted in bulk. `python3 scripts/v022_refusal_coverage.py` holds (rc 0) and
       `--freeze` FAILS (rc 1) on exactly these 18 files.
     - **Matrix.** None. **Operator deployment.** None.
+
+## Amendment 74: predicate primitives are refusal sites, a row covers only what its edit changes, and the evidence harness stops trusting labels (C9 round 4c, gate)
+
+- **Before.** Round 4c (EQUIVALENCE) found (B1) `axon_psv::keyed_outcome`, the one function that decides whether a result line carries K's token, with no row and invisible to the refusal gate (it refuses by `return None` / `.then_some`); (B2) a site counted covered by a row whose edit never touches it (`judge_file` spanned `old.count('\n')` lines, so an `old` ending in a newline covered the next line: evl.rs `!issuer_ok` and custodian.rs `seen != pid`); (B4) `psv_guest_boot_test.sh` exec'd its helper, custodian and fabric from a guessed `${CARGO_TARGET_DIR:-$REPO/target}/debug`, which the harness_binaries scan did not flag; and join/merge took a shard's `holds`/`all_killed` label on trust.
+- **After (gate).** A function declared `-> bool` or `-> Option<..>` is ONE site (its body is the guard block; exempt by an anchor on its HEAD line); `.then(`/`.then_some(` is a line site; `let .. else {` opens its block; a guard block stops at its function head; a row covers a site only when a line its edit CHANGES (difflib over old/new, leading/trailing newlines not lines) lies in the block. `.ok_or(` is not a site (it converts an absence a scanned decision already made). bin/axon-loop.rs is scanned (its OUT_OF_SCOPE reason was false: it decides G10 and the request schema itself, M1736, M1737). Rows M1720-M1745: keyed_outcome's token comparison (M1720 guest, M1721 Fabric) and one-line rule (M1722); EVL `!issuer_ok` (M1726, retired EQUIVALENT_DID: four cells against M10 + M1299, argument in EQUIV_RECORD); the custodian one-process rule (M1727); the PCI provenance predicates (M1730, M1731, M1734), the reference scheme rule (M1732), the guest's production no-bypass constant (M1733), a freeze's class read back from the ledger (M1735); the gate's own logic (M1738-M1742); join/merge recompute (M1743, M1744); the journal lock window (M1745). Every newly visible site in the current in-scope files has a row or a reasoned exemption (PREDICATE OF NAMED ROWS, LOOKUP, RECORDED FACT and the existing kinds); dependency-crate sites stay NOT YET SCANNED (the sites branch).
+- **After (harness).** `script_spawn::binary_choice_violations` flags a slash-less `.../debug` assignment and `$VAR/<bin>` uses of it (the boot test's exact line is an attack case); the boot test resolves with `use_built`. `join_shards` recomputes HOLDS from the recorded cells with the run's own predicate and refuses a mismatch; `merge` recomputes all_killed from the rows. 15 generic markers became ATTACK texts.
+- **Triage items.** M1266 is LIBRARY_PRIMITIVE (its retirement claimed a green suite; fixtures.rs and parse_validate_sites go red), its GUARD_SETS entry removed. `claims_gate.sh`: `echo | grep -q` under pipefail gave false "missing verb" failures under load (13 misses in 300 loops, 0 with a here-string); fixed, with a drift check. Journal `lock_exclusive`: the retry window widened from 500 ms to 5 s (the fd is already O_CLOEXEC; the flock lingers in a fork's child until its exec); M813 is neither retired nor reclassified.
+- **Matrix.** A94-A99 (numbered after A93: the assigned A130-A139 would leave a gap the checker rejects; the integrator renumbers). **Operator deployment.** None.

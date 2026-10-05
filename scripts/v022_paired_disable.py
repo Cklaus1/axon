@@ -761,7 +761,6 @@ GUARD_SETS.update({
     'M1261': {"siblings": ['M1244'], "kind": "pair"},
     'M1262': {"siblings": ['M1253'], "kind": "pair"},
     'M1265': {"siblings": ['M1263'], "kind": "pair"},
-    'M1266': {"siblings": ['M1330'], "kind": "pair"},
     'M1267': {"siblings": ['M1218', 'M1266', 'M1330'], "kind": "set"},
 })
 

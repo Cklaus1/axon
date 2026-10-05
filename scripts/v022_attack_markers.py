@@ -1290,7 +1290,6 @@ ATTACK_MARKERS.update({
     'M1261': 'ATTACK: an outcome_unknown receipt with an exit code: ',
     'M1262': 'ATTACK: a receipt with unknown usage and a cost: ',
     'M1265': 'ATTACK: a pause naming a target policy: ',
-    'M1266': 'ATTACK: a transition from epoch 1 to epoch 3: ',
     'M1267': 'ATTACK: a transition from epoch 1 to epoch 0: ',
     'M1208': 'ATTACK: an episode with final usage and unresolved liability: ',
     'M1209': 'ATTACK: a passed episode whose run failed: ',
@@ -1539,4 +1538,10 @@ ATTACK_MARKERS.update({
     'M1742': r'ATTACK: an exemption in the function above exempted the refusal of the function below it',
     'M1743': r'ATTACK: --join accepted a record whose holds label its recorded cells do not support',
     'M1744': r'ATTACK: --merge accepted a shard that claimed all_killed over a row that survived',
+})
+ATTACK_MARKERS.update({
+    'M1266': 'ATTACK: a transition whose next_epoch skips an epoch was parsed',
+})
+ATTACK_MARKERS.update({
+    'M1745': r"ATTACK: a reopen was refused Locked by a holder that lasted only a loaded host's fork-to-exec window",
 })

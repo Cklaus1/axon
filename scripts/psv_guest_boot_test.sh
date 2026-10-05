@@ -372,11 +372,10 @@ else
     # directory made that run whatever sat under $REPO/target; C9 round 4c).
     # Cleared first: a variable in the caller's environment never names a
     # binary this leg runs.
-    HB=""; CUB=""; FAB=""
     pushd "$REPO" >/dev/null || bad helper "cannot enter $REPO"
-    use_built HB axon-protected-launcher
-    use_built CUB axon-custodian
-    use_built FAB axon-fabric
+    HB=""; use_built HB axon-protected-launcher
+    CUB=""; use_built CUB axon-custodian
+    FAB=""; use_built FAB axon-fabric
     popd >/dev/null
     H="$W/helper"; mkdir -p "$H/runs" "$H/staging" "$H/cust/nonces" "$H/observer"; chmod 0755 "$H"
     chmod 0700 "$H/cust/nonces"
