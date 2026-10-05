@@ -3151,7 +3151,7 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
     - **Rows.** M1671 (bound), M1672 (retype check), M1673 (operator closure replaced), M1674
       (dirty marking), M1675 (snapshot at a candidate fn's arguments), M1676 (verify at a candidate
       fn's return), M1677-M1680 (the walk descends into a nested dict, `Option`/`Result`, struct
-      and enum fields, array and tuple elements). Matrix A106-A109. The call_closure and channel
+      and enum fields, array and tuple elements), M1681 (the verdict is acted on). Matrix A106-A109. The call_closure and channel
       hooks have no row: the return edge of the enclosing candidate fn re-checks the same dirty
       dict, so removing one of them alone changes no outcome (an attack through it is refused
       elsewhere, and a row there would score REFUSED_ELSEWHERE, never a kill).
