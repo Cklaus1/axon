@@ -2987,8 +2987,14 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       shard must report `running <its count> tests`), runs every shard after a failure, and kills
       and names every unfinished shard on its bound's SIGTERM. `full_suite_ok` uses it for
       `SHARDED_PACKAGES` = {axon-fabric}, the package audited to share no state across processes
-      (note §2); the one cross-process collision found (readiness's fixed production-verifier
-      build dir) is now under an exclusive flock with per-process copies. Measured: serial 218 s
+      (note §2). Two cross-process collisions were found and fixed at their primitive: readiness's
+      fixed production-verifier build dir (an exclusive flock, per-process copies), and
+      `script_spawn::workspace_bin`, whose shared target dir cargo relinks on every build of the
+      interpreter in a git worktree (axon-core's build script watches `.git/HEAD`/`.git/index`
+      paths that do not exist where `.git` is a file), so one process's build removed the binary
+      another had just been handed (M482's sharded own-package baseline, "No such file or
+      directory"); it now builds under an exclusive lock and hands each process its own copy.
+      That race predates sharding wherever two harness cells share a target dir. Measured: serial 218 s
       idle; sharded 38 s idle, 61 s under 32 busy loops.
     - **Rows.** None new (M1560-M1579 unused). The rows whose attack lives in a changed test were
       re-run and each is KILLED by its own attack: M253, M482, M631, M632, M763, M767, M770, M771,
