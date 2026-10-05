@@ -3880,6 +3880,18 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       `running_image_sha256`; `verifier_identity_replaced the_identity_survives_replacement_of_the_executable_file`
       starts a copy of its own binary, unlinks the copy (what a relink does) and asks the child for
       its identity: old code reports `"unknown"`.
-    - **Not fixed.** Tests that run `env!("CARGO_BIN_EXE_*")` paths of the shared target dir can
-      still see a binary relinked under them (production code refuses it: "changed after it was
-      hashed"); that needs a tree change during the run, which a clean sharded run does not make.
+    - **Part 2: the class is removed at the runner.** `scripts/cargo_test_shards.py` no longer
+      runs `cargo test` per shard. It builds ONCE (`--no-run`), then runs the same `cargo test`
+      once more with a stub runner that records, per test binary, the environment and working
+      directory cargo itself gives a test process (nothing is guessed: `CARGO_MANIFEST_DIR`,
+      `CARGO_PKG_*`, `CARGO`, library paths, cwd = the package root), and every shard execs the
+      already-built binary with that environment, `-q` forwarded as cargo forwards it, and
+      `--exact <its tests>`. No shard can relink anything, so `env!("CARGO_BIN_EXE_*")` paths and
+      every `current_exe()` stay valid for the whole run. Measured parity: a test's environment
+      under `cargo test` and under a shard differs only in the invoking shell's own `_`/`OLDPWD`.
+      Counts, per-binary order, `test result:` lines, the lost-test rule, the SIGTERM cut and
+      build failure (cargo's output, its status) are unchanged; the doc-test unit still goes
+      through cargo (it builds no test binary). A binary whose environment was not captured fails
+      the run. Test: `harness_integrity a_sharded_run_survives_a_source_change_made_while_it_runs`
+      plants the relink (one shard rewrites the package source while another is mid-test and a
+      third starts afterwards): the previous runner fails it (`... (deleted)`), this one passes.

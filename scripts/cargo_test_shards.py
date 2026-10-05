@@ -8,9 +8,14 @@
 `cargo test -p P -- --test-threads=1` runs P's test binaries one after
 another and each binary's tests one after another: the axon-fabric suite took
 ~21 min idle that way. Here every test binary is listed (`--list`), its tests
-are split into shards of at most K, and each shard is one `cargo test -p P
-<target> -- <libtest args> --exact <its tests>` PROCESS; up to N shards run at
-once. Inside a process nothing changes (the libtest args, --test-threads=1
+are split into shards of at most K, and each shard is one PROCESS of the
+ALREADY-BUILT test binary, `<exe> <libtest args> --exact <its tests>`; up to N
+shards run at once. Cargo runs ONCE, up front, to build (`--no-run`) and to
+record, per test binary, the environment and working directory cargo itself
+gives a test process (a stub runner dumps them; nothing is guessed), so no
+shard can re-invoke cargo and RELINK a binary its siblings are running
+(C9 shardflake, amendment 77: a touched `.git/index` made a later shard's
+cargo replace the file under running shards, and tests read `... (deleted)`). Inside a process nothing changes (the libtest args, --test-threads=1
 included, are passed through), so what a test shares with a sibling in its
 own process is exactly what it shared before. What changes is that tests in
 DIFFERENT processes now overlap in time: a package is sharded only if its
@@ -38,9 +43,11 @@ import json
 import math
 import os
 import re
+import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 
@@ -108,33 +115,85 @@ def targets(cargo):
     return out, has_lib
 
 
-def listed(exe, cwd):
+STUB = "env -0 > $1/${2##*/}.env; pwd > $1/${2##*/}.cwd"
+SELECTORS = {"--lib", "--bin", "--bins", "--test", "--tests", "--bench", "--benches",
+             "--example", "--examples", "--all-targets", "--doc"}
+
+
+def captured_environments(cargo, tgts, outdir):
+    """{executable: (env dict, cwd)}: what `cargo test` gives each test binary
+    at RUNTIME (CARGO_MANIFEST_DIR, CARGO_PKG_*, CARGO_PRIMARY_PACKAGE,
+    CARGO_CRATE_NAME, CARGO, library paths, ...), read from cargo itself by
+    running the same cargo test with a runner that records its environment
+    instead of running the binary. Nothing is rebuilt (it was just built). A
+    binary whose environment was not captured is a failure of this run."""
+    sel = cargo if any(a.split("=", 1)[0] in SELECTORS for a in cargo) \
+        else [*cargo, "--lib", "--bins", "--tests"]
+    runner = json.dumps(["sh", "-c", STUB, "x", outdir])
+    r = subprocess.run(["cargo", "test", *sel, "--no-fail-fast", "--config",
+                        f"target.'cfg(all())'.runner={runner}"],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        sys.stdout.write(r.stdout)
+        sys.stdout.write(r.stderr)
+        sys.exit(r.returncode or 101)
+    got = {}
+    for _, exe, _ in tgts:
+        base = os.path.join(outdir, os.path.basename(exe))
+        try:
+            raw = open(base + ".env", "rb").read()
+            cwd = open(base + ".cwd").read().strip()
+        except OSError:
+            sys.exit(f"cargo_test_shards: no cargo environment captured for {exe}: "
+                     "a binary run without cargo's environment is not the same test run")
+        env = {}
+        for kv in raw.split(b"\0"):
+            if b"=" in kv:
+                k, v = kv.split(b"=", 1)
+                env[os.fsdecode(k)] = os.fsdecode(v)
+        # The stub is a shell started in the package root: it rewrote PWD and
+        # `_`. Cargo leaves both as its own parent had them.
+        for k in ("PWD", "_", "OLDPWD", "SHLVL"):
+            if k in os.environ:
+                env[k] = os.environ[k]
+            else:
+                env.pop(k, None)
+        got[exe] = (env, cwd)
+    return got
+
+
+def listed(exe, cwd, env=None):
     """The test names a libtest binary lists, or None if it cannot list."""
-    r = subprocess.run([exe, "--list", "--format", "terse"], cwd=cwd, capture_output=True, text=True)
+    r = subprocess.run([exe, "--list", "--format", "terse"], cwd=cwd, env=env, capture_output=True, text=True)
     if r.returncode != 0:
         return None
     return [ln[: -len(": test")] for ln in r.stdout.splitlines() if ln.endswith(": test")]
 
 
-def plan(cargo, libtest, shard):
-    """Units: (label, argv, expected test count or None)."""
+def plan(cargo, libtest, shard, outdir):
+    """Units: (label, argv, expected test count or None, env, cwd). The test
+    units exec the built binary; only the doc-test unit goes through cargo."""
     tgts, has_lib = targets(cargo)
+    envs = captured_environments(cargo, tgts, outdir)
+    # What cargo itself forwards to libtest: `-q` makes the test binary quiet.
+    quiet = ["-q"] if any(a in ("-q", "--quiet") for a in cargo) else []
     units = []
-    for sel, exe, cwd in tgts:
-        names = listed(exe, cwd)
-        base = ["cargo", "test", *cargo, *sel, "--", *libtest]
+    for sel, exe, _ in tgts:
+        env, cwd = envs[exe]
+        names = listed(exe, cwd, env)
+        base = [exe, *quiet, *libtest]
         label = " ".join(sel)
         if not names:
             # Nothing listed (or no libtest list): one unit, as cargo runs it.
-            units.append((label, base, None if names is None else 0))
+            units.append((label, base, None if names is None else 0, env, cwd))
             continue
         k = math.ceil(len(names) / shard)
         per = math.ceil(len(names) / k)
         for i in range(k):
             part = names[i * per:(i + 1) * per]
-            units.append((f"{label} [{i + 1}/{k}]", base + ["--exact", *part], len(part)))
+            units.append((f"{label} [{i + 1}/{k}]", base + ["--exact", *part], len(part), env, cwd))
     if has_lib:
-        units.append(("--doc", ["cargo", "test", *cargo, "--doc", "--", *libtest], None))
+        units.append(("--doc", ["cargo", "test", *cargo, "--doc", "--", *libtest], None, None, None))
     return units
 
 
@@ -143,7 +202,11 @@ RUNNING = re.compile(r"^running (\d+) tests?$", re.M)
 
 def main():
     jobs, shard, cargo, libtest = split_args(sys.argv[1:])
-    units = plan(cargo, libtest, shard)
+    outdir = tempfile.mkdtemp(prefix="cargo-test-shards-env-")
+    try:
+        units = plan(cargo, libtest, shard, outdir)
+    finally:
+        shutil.rmtree(outdir, ignore_errors=True)
     results = [None] * len(units)
     live = {}
     lock = threading.Lock()
@@ -152,10 +215,11 @@ def main():
     def run(i):
         if cut.is_set():
             return
-        label, argv, _ = units[i]
+        label, argv, _, env, cwd = units[i]
         t0 = time.monotonic()
         p = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                             text=True, errors="replace", start_new_session=True)
+                             text=True, errors="replace", start_new_session=True,
+                             env=env, cwd=cwd)
         with lock:
             live[i] = p
         out, _ = p.communicate()
@@ -181,7 +245,7 @@ def main():
         list(ex.map(run, order))
 
     ok = not cut.is_set()
-    for i, (label, argv, want) in enumerate(units):
+    for i, (label, argv, want, _env, _cwd) in enumerate(units):
         res = results[i]
         if res is None:
             sys.stdout.write(f"\n[cargo_test_shards] {label}: CUT before it finished (not run or killed)\n")
