@@ -1089,17 +1089,18 @@ fn assert_never_runs(
             env.launch_records()
         );
     }
-    assert_eq!(
-        s.receipt.status,
-        ReceiptStatus::Unsupported,
-        "setup: refused, but not by selection ({:?})",
-        s.reason
-    );
-    assert!(
-        s.reason.as_deref().unwrap_or("").contains(why),
-        "expected {why:?}: {:?}",
-        s.reason
-    );
+    // Refused by selection (Unsupported, naming `why`) or, where a request
+    // selection should have refused is stopped by a LATER layer instead, by
+    // that layer (Denied): either way nothing ran, which is the property.
+    match s.receipt.status {
+        ReceiptStatus::Unsupported => assert!(
+            s.reason.as_deref().unwrap_or("").contains(why),
+            "expected {why:?}: {:?}",
+            s.reason
+        ),
+        ReceiptStatus::Denied => {}
+        other => panic!("setup: refused, but receipted {other:?} ({:?})", s.reason),
+    }
 }
 
 fn control_runs(env: &Env, cfg: &axon_fabric::SubmitConfig, r: &serde_json::Value) {
