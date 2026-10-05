@@ -3868,8 +3868,8 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       read fails, the identity becomes `"unknown"`, and `readiness_fixture`'s positive control
       failed with "readiness_verifier_sha256 is not a sha256" (gpumaster, integration round 2:
       a sharded run failed, serial passed). Reproduced by touching `Cargo.toml` every two seconds
-      during a sharded `--test readiness` run (same message); a clean sharded suite passed 30 of
-      30, so the trigger is a tree change during the run, not load.
+      during a sharded `--test readiness` run (same message); a clean sharded suite passed 10 of
+      10 on the old code, so the trigger is a tree change during the run, not load.
     - **After.** The identity is the digest of the image the process RUNS (`/proc/self/exe`,
       `readiness::running_image()`), which survives replacement of its file. The test binaries'
       re-executions of themselves (`journal`, `trust_root`, `restart_matrix`) and the observer
