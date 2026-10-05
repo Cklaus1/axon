@@ -591,3 +591,51 @@ fn a_guard_block_does_not_cross_a_function_boundary() {
     );
     let _ = std::fs::remove_dir_all(&r);
 }
+
+/// Amendment 74: only a `#[cfg(test)]` item's own extent is hidden. The rule
+/// used to drop everything after the FIRST `#[cfg(test)] mod tests`: production
+/// code after the test module (axon-os approval.rs's `authorize`) and anything
+/// below an EMPTY stub module were never scanned. Attack (a): an empty test
+/// module above a production refusal. Attack (b): a real test module (with
+/// braces in strings, chars and comments) with production code after it.
+/// Control: the unedited copy holds, and a refusal INSIDE the test module is
+/// still not a site.
+#[test]
+fn production_code_after_a_test_module_is_scanned() {
+    let probe = "pub fn gate_probe_hidden(x: u64) -> Result<(), String> {\n    Err(format!(\"hidden production refusal {x}\"))\n}\n";
+    let r = tree("cfg-empty");
+    add_code(
+        &r,
+        SCANNED,
+        &format!("#[cfg(test)]\nmod tests {{}}\n\n{probe}"),
+    );
+    names(
+        &r,
+        "hidden production refusal",
+        "a production refusal below an empty `#[cfg(test)] mod tests` was not scanned",
+    );
+    let r2 = tree("cfg-after");
+    add_code(
+        &r2,
+        SCANNED,
+        &format!(
+            "#[cfg(test)]\nmod tests {{\n    fn t() -> Result<(), String> {{\n        let _s = \"}}{{\"; let _c = '}}'; /* }} */\n        Err(format!(\"inside the test module\"))\n    }}\n}}\n\n{probe}"
+        ),
+    );
+    names(
+        &r2,
+        "hidden production refusal",
+        "a production refusal after a real test module (braces in strings, chars, comments) was not scanned",
+    );
+    let o = gate(&r2, &[]);
+    assert!(
+        !text(&o).contains("inside the test module"),
+        "control: a refusal inside the test module is not a site: {}",
+        text(&o)
+    );
+    let c = tree("cfg-control");
+    holds(&c, &[], "the unedited copy");
+    let _ = std::fs::remove_dir_all(&c);
+    let _ = std::fs::remove_dir_all(&r2);
+    let _ = std::fs::remove_dir_all(&r);
+}

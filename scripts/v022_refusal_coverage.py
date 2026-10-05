@@ -331,7 +331,7 @@ NOT_YET_SCANNED = {
     "crates/axon-audit/src/lib.rs": 12,
     "crates/axon-core/src/main.rs": 3,
     "crates/axon-cortex/src/generate.rs": 6,
-    "crates/axon-cortex/src/lib.rs": 9,
+    "crates/axon-cortex/src/lib.rs": 3,
     "crates/axon-cortex/src/runner.rs": 35,
     "crates/axon-fabric/src/bin/axon-custodian.rs": 1,
     "crates/axon-os/src/approval.rs": 4,
@@ -2088,13 +2088,111 @@ def load_rows():
     return [r for r in mut.MUTATIONS if r[0] not in stale]
 
 
+def _skip_rust_token(t, i):
+    """The index after the Rust lexical unit at t[i] when it is a comment, a
+    string (incl. raw and byte strings) or a char literal, else None."""
+    n = len(t)
+    c = t[i]
+    if t.startswith("//", i):
+        j = t.find("\n", i)
+        return n if j < 0 else j
+    if t.startswith("/*", i):
+        depth, j = 1, i + 2
+        while j < n and depth:
+            if t.startswith("/*", j):
+                depth, j = depth + 1, j + 2
+            elif t.startswith("*/", j):
+                depth, j = depth - 1, j + 2
+            else:
+                j += 1
+        return j
+    m = re.compile(r'(?:b?r(#*)")').match(t, i) if c in "br" else None
+    if m:
+        end = '"' + m.group(1)
+        j = t.find(end, m.end())
+        return n if j < 0 else j + len(end)
+    if c == '"' or (c == "b" and t.startswith('b"', i)):
+        j = i + (2 if c == "b" else 1)
+        while j < n and t[j] != '"':
+            j += 2 if t[j] == "\\" else 1
+        return min(j + 1, n)
+    if c == "'":
+        if t.startswith("'\\", i):
+            j = t.find("'", i + 3)
+            return n if j < 0 else j + 1
+        if i + 2 < n and t[i + 2] == "'":
+            return i + 3
+        return i + 1  # a lifetime
+    return None
+
+
+def _cfg_test_extent(t, i):
+    """The end offset of the item (or statement) an attribute at t[i] governs:
+    its brace extent when it has a body, else its terminating `;`. A real
+    matcher: braces inside strings, chars and comments do not count
+    (amendment 74)."""
+    n, depth, j = len(t), 0, i
+    while j < n:
+        k = _skip_rust_token(t, j)
+        if k is not None:
+            j = max(k, j + 1)
+            continue
+        c = t[j]
+        if c in "([{":
+            depth += 1
+        elif c in ")]":
+            depth -= 1
+        elif c == "}":
+            depth -= 1
+            if depth <= 0:
+                return j + 1
+        elif c == ";" and depth <= 0:
+            return j + 1
+        j += 1
+    return n
+
+
+CFG_TEST = re.compile(r"^[ \t]*#\[cfg\(test\)\][ \t]*$", re.M)
+
+
 def code_lines(text):
-    """The file's lines up to its unit-test module (tests are not guards)."""
+    """The file's lines with every `#[cfg(test)]` item BLANKED (its attribute
+    through its brace extent, or its `;` for `mod tests;`): tests are not
+    guards, and nothing else is dropped. Line numbers are preserved.
+    Amendment 74: this used to return `lines[:i]` at the FIRST cfg(test) line
+    followed by `mod tests`, discarding everything after it to the end of the
+    file: production code after the test module (axon-os approval.rs's
+    `authorize`) and anything placed below an empty `#[cfg(test)] mod tests`
+    was invisible."""
+    out = text
+    pieces = []
+    pos = 0
+    for m in CFG_TEST.finditer(text):
+        if m.start() < pos:
+            continue
+        end = _cfg_test_extent(text, m.end())
+        pieces.append((m.start(), end))
+        pos = end
     lines = text.split("\n")
-    for i, l in enumerate(lines):
-        if l.startswith("#[cfg(test)]") and i + 1 < len(lines) and lines[i + 1].startswith("mod tests"):
-            return lines[:i]
-    return lines
+    hidden = set()
+    for a, b in pieces:
+        first, last = text.count("\n", 0, a), text.count("\n", 0, b)
+        hidden.update(range(first, last + 1))
+    return ["" if i in hidden else l for i, l in enumerate(lines)]
+
+
+def cfg_test_only_files(dirs):
+    """Source files only a test build compiles: declared `#[cfg(test)] mod X;`
+    in a sibling file (the module file is test code, not a protected path)."""
+    out = set()
+    pat = re.compile(r"#\[cfg\(test\)\]\s*(?:pub(?:\([a-z]+\))?\s+)?mod\s+(\w+)\s*;")
+    for d in dirs:
+        for f in _rs_under(d):
+            base = os.path.dirname(f)
+            for name in pat.findall(open(os.path.join(ROOT, f)).read()):
+                out.add(os.path.normpath(os.path.join(base, f"{name}.rs")))
+                out.add(os.path.normpath(os.path.join(base, name, "mod.rs")))
+    return out
 
 
 def line_of(text, offset):
@@ -2340,7 +2438,7 @@ def in_scope_files():
     found = set(SCOPE_FILES) | set(SCOPE_FN_REGIONS) | set(REGIONS)
     for d in SCOPE_DIRS:
         found.update(_rs_under(d))
-    return sorted(found - linked_only_as_library())
+    return sorted(found - linked_only_as_library() - cfg_test_only_files(SCOPE_DIRS))
 
 
 def judge_file(f, rows, bad):

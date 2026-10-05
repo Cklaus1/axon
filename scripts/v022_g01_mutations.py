@@ -5943,6 +5943,16 @@ MUTATIONS += [
      'const LOCK_RETRY_WINDOW: std::time::Duration = std::time::Duration::from_millis(1);',
      'axon-fabric', '--test journal', 'a_lock_held_only_by_a_forks_inherited_description_is_waited_out'),
 ]
+MUTATIONS += [
+    ('M1746', "APPROVAL (gate): a job whose policy requires approval does not run without a token", 'crates/axon-os/src/approval.rs',
+     '    } else if manifest.require_approval {\n        Err(format!(\n            "approval required but missing',
+     '    } else if false && manifest.require_approval {\n        Err(format!(\n            "approval required but missing',
+     'axon-fabric', '--test grant_authority', 'the_grants_require_approval_policy_is_enforced'),
+    ('M1747', "COVERAGE GATE (gate): only a cfg(test) item's own extent is hidden, never the code after it", _RCG,
+     '    return ["" if i in hidden else l for i, l in enumerate(lines)]',
+     '    return lines[:min(hidden)] if hidden else lines',
+     'axon-core', _GT, 'production_code_after_a_test_module_is_scanned'),
+]
 EQUIV_RECORD["M1726"] = {
     "property": "a pass counts only when a trusted verifier independent of the subject verified it",
     "subsumed_by": ["M10", "M1299"], "killer": "joint:M1726+M10+M1299",

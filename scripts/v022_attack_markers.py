@@ -1545,3 +1545,7 @@ ATTACK_MARKERS.update({
 ATTACK_MARKERS.update({
     'M1745': r"ATTACK: a reopen was refused Locked by a holder that lasted only a loaded host's fork-to-exec window",
 })
+ATTACK_MARKERS.update({
+    'M1746': r'ATTACK: a job requiring approval ran with no approval token\s*\n\s*left: \w+\s*\n\s*right: Denied',
+    'M1747': r'ATTACK: a production refusal (below an empty|after a real test module)',
+})
