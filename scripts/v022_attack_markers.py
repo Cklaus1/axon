@@ -1525,7 +1525,7 @@ ATTACK_MARKERS.update({
     'M1600': r'ATTACK: the root helper died of SIGALRM',
     'M1601': r'ATTACK: the root helper died of SIGVTALRM',
     'M1602': r'ATTACK: the root helper died of SIGPROF',
-    'M1603': r'ATTACK: a \\^C written to a terminal its caller owns killed the root helper',
+    'M1603': r'ATTACK: a \^C written to a terminal its caller owns killed the root helper',
     'M1604': r"ATTACK: a helper that stayed in its caller's session",
     'M1605': r"ATTACK: the root helper ran under its caller's RLIMIT_STACK:",
     'M1606': r"ATTACK: the root helper ran under its caller's RLIMIT_RSS:",

@@ -4025,7 +4025,7 @@ fn a_callers_other_resource_limits_never_reach_the_root_launch() {
         assert_eq!(
             limit(&cl, row),
             (reset.0.to_string(), reset.1.to_string()),
-            "control: the helper's {name} with nothing armed: {cl}"
+            "ATTACK: the root helper ran under its caller's {name}: (the ambient value reached it even with nothing armed; the control reads the helper's own): {cl}"
         );
     }
     let a = launch_armed("limits", HARDEN_RECORD);
