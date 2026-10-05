@@ -2062,8 +2062,9 @@ MUTATIONS += [
      '        let _ = crossing;',
      'axon-core', _CL, _T4 + 'a_closures_confused_result_never_crosses_its_declared_type'),
     ('M662', "PSV-1 (A86): a closure's arguments are cast to every fn type it crossed", _CI,
-     '        self.closure_args_check(&contract, &mut args)?;',
-     '        let _ = &contract;',
+     # C9 r4c (psv1, amendment 72): re-anchored; the call now passes `entering`.
+     '        self.closure_args_check(&contract, &mut args, entering)?;',
+     '        let _ = (&contract, entering);',
      'axon-core', _CL, _T4 + 'a_closures_confused_argument_never_crosses_its_declared_type'),
     ('M663', 'PSV-1 (A86): a value sent on a channel is cast to every element type the channel crossed', _CE,
      '                            self.chan_send_check(q, &mut v)?;',
@@ -3388,8 +3389,9 @@ MUTATIONS += [
      '            } = v\n            else {\n                return Ok(());',
      'axon-core', _CL, _EV),
     ('M1145', 'PSV-1 (A86): a value at a type parameter the arguments bound is cast to the binding', _CC,
-     '            Some(t) => self.cast_at(v, &t, &Cx::default(), d),',
-     '            Some(_) => Ok(()),',
+     # C9 r4c (psv1, amendment 72): re-anchored; the binding is read in binding_cx().
+     '                self.cast_at(v, &t, &cx.binding_cx(), d)?;',
+     '                let _ = (&t, d);',
      'axon-core', _CL, _RA),
     ('M1146', 'PSV-1 (A86): a value at a declared dyn Trait implements the trait', _CC,
      '            T::DynTrait(tr) => self.check_impl(v, tr),',
@@ -3400,7 +3402,8 @@ MUTATIONS += [
      '                    self.cast_at(fv, &any(), &fcx, d)\n                        .map_err(|e| format!("field `{}` of `{n}::{variant}`: {e}", tf.name))?;',
      'axon-core', _CL, _RA),
     ('M1148', 'PSV-1 (A86): a channel crossing Chan<T> casts the values already queued', _CC,
-     '        for x in q.borrow_mut().iter_mut() {\n            self.cast(x, &elem, &ecx)?;',
+     # C9 r4c (psv1, amendment 72): re-anchored; the queued values keep the crossing's strictness.
+     '        for x in q.borrow_mut().iter_mut() {\n            self.cast(x, &elem, &ecx.strict(cx.strict))?;',
      '        for x in q.borrow_mut().iter_mut() {\n            let _ = (x, &ecx);',
      'axon-core', _CL, _RA),
     ('M1149', "PSV-1 (A86): a declared refinement casts to its base type", _CC,
@@ -3416,11 +3419,13 @@ MUTATIONS += [
      '        let kind_ok = |ok: bool| if ok || true { Ok(()) } else { Err(mismatch(ty, v)) };',
      'axon-core', _CL, _T4 + 'a_confused_scalar_never_crosses_a_declared_return'),
     ('M1152', 'PSV-1 (A86): a send is refused when the value does not cast to the channel element type', _CC,
-     '            if let Err(why) = self.cast(v, &c.ret, &c.cx) {',
+     # C9 r4c (psv1, amendment 72): re-anchored; each element type is cast with its strictness.
+     '            if let Err(why) = self.cast(v, &c.ret, &c.cx.strict(strict)) {',
      '            if let Err(why) = Ok::<(), String>(()) {',
      'axon-core', _CL, _T4 + 'a_confused_value_is_never_sent_on_a_declared_channel'),
     ('M1153', "PSV-1 (A86): a closure call is refused when an argument does not cast to a fn type it crossed", _CC,
-     '                if let Err(why) = self.cast(a, t, &k.cx) {',
+     # C9 r4c (psv1, amendment 72): re-anchored; each layer is cast with its strictness.
+     '                if let Err(why) = self.cast(a, t, &k.cx.strict(strict)) {',
      '                if let Err(why) = Ok::<(), String>(()) {',
      'axon-core', _CL, _T4 + 'a_closures_confused_argument_never_crosses_its_declared_type'),
     ('M1154', "PSV-1 (A86): a closure's result is refused when it does not cast to a fn type it crossed", _CC,
@@ -6312,6 +6317,78 @@ def keep_output(kind, out):
     print(f"    output kept: {path}", flush=True)
     return path
 
+
+
+# ── C9 round 4c, workstream r4c-psv1 (M1660-M1719; amendment 72) ──
+# PSV-1: at a seal crossing every position of the type a value is cast to is
+# determined from the operator side, or the crossing is refused. Each row's
+# attack is the review's (or a variant's) laundered u8 reaching the operator's
+# lenient `impl Judge for u8`; each marker is that attack COMPLETING.
+_CK = 'crates/axon-core/src/checker.rs'
+_T72 = 'interp::tests::'
+MUTATIONS += [
+    ('M1660', 'PSV-1 (A96): a channel is stamped at creation with the element type its chan<T>() states', _CC,
+     '        if let Some(t) = stamp {\n            entry.1.push(Rc::new(Contract {',
+     '        if let Some(t) = stamp.filter(|_| false) {\n            entry.1.push(Rc::new(Contract {',
+     'axon-core', _CL, _T72 + 'a_channel_carries_the_element_type_its_creation_states'),
+    ('M1661', "PSV-1 (A97): a sealed send on an operator-created channel needs an operator-determined element type", _CC,
+     '        if sealed && operator_side && !contracts.iter().any(|c| determined(&c.ret, &c.cx)) {',
+     '        if false && sealed && operator_side && !contracts.iter().any(|c| determined(&c.ret, &c.cx)) {',
+     'axon-core', _CL, _T72 + 'a_sealed_send_on_an_operator_channel_needs_a_determined_element_type'),
+    ('M1662', 'PSV-1 (A98): a channel crossing Chan<T> at a strict crossing with T undetermined is refused', _CC,
+     '        if mentions_tparam(&elem, &root) {\n            if cx.strict {',
+     '        if mentions_tparam(&elem, &root) {\n            if false && cx.strict {',
+     'axon-core', _CL, _T72 + 'a_channel_returned_at_an_undetermined_element_type_is_refused'),
+    ('M1663', "PSV-1 (A99): a generic struct/enum's type argument is never erased in the field environment", _CC,
+     '        .map(|(i, g)| (g.clone(), args.get(i).cloned().unwrap_or_else(undet)))',
+     '        .map(|(i, g)| (g.clone(), args.get(i).map(|a| subst(a, outer, true)).unwrap_or_else(undet)))',
+     'axon-core', _CL, _T72 + 'a_generic_struct_or_enum_argument_binds_its_type_parameter'),
+    ('M1664', 'PSV-1 (A100): a value at a position nothing determined is refused at a strict crossing', _CC,
+     '            UNDET if cx.strict => {',
+     '            UNDET if false && cx.strict => {',
+     'axon-core', _CL, _T72 + 'a_value_at_an_undetermined_position_never_crosses_a_seal'),
+    ('M1665', "PSV-1 (A100): a strict crossing stays strict through a type parameter's binding", _CC,
+     '            None => Cx::default().strict(self.strict),',
+     '            None => Cx::default(),',
+     'axon-core', _CL, _T72 + 'a_value_at_an_undetermined_position_never_crosses_a_seal'),
+    ('M1666', 'PSV-1 (A101): a fn with no declared return type hands operator code () at a seal crossing', _CI,
+     '                None if crossing => {\n                    result = Value::Unit;',
+     '                None if false && crossing => {\n                    result = Value::Unit;',
+     'axon-core', _CL, _T72 + 'a_fn_with_no_declared_return_type_hands_the_operator_unit'),
+    ('M1667', 'PSV-1 (A102): a sealed frame calls an operator closure only with arguments at determined positions', _CC,
+     '                if !ok {\n                    return panic(format!(\n                        "sealed code called an operator closure',
+     '                if false && !ok {\n                    return panic(format!(\n                        "sealed code called an operator closure',
+     'axon-core', _CL, _T72 + 'an_operator_closure_called_from_sealed_code_takes_only_determined_arguments'),
+    ('M1668', 'PSV-1 (A103): a type parameter bound to a native handle admits only that handle', _CC,
+     '            return if matches!(v, Value::Handle { .. }) && v.type_name() == h {',
+     '            return if matches!(v, Value::Handle { .. }) || v.type_name() != h {',
+     'axon-core', _CL, _T72 + 'a_handle_binding_admits_only_that_handle'),
+    ('M1669', 'PSV-1 (A104, checker): a method call on () with no impl for () is refused (E0403)', _CK,
+     '        Type::Unit => Some("()"),',
+     '        Type::Unit => None,',
+     'axon-core', '--no-default-features --test cli_run', 'a_method_call_on_unit_without_an_impl_is_e0403'),
+    ('M1670', 'PSV-1 (A105, checker): an impl for f32/isize/usize, which never runs, is refused (E0505)', _CK,
+     '                        self.errors.push(\n                            CheckError::new(\n                                E0505,',
+     '                        drop(\n                            CheckError::new(\n                                E0505,',
+     'axon-core', '--no-default-features --test cli_run', 'an_impl_for_a_type_the_runtime_represents_as_another_is_e0505'),
+]
+MUTATIONS += [
+    ('M1671', 'PSV-1 (A109): a dict over the snapshot bound is refused at the crossing, never skipped', _CC, '        if len > DICT_SNAP_MAX {', '        if false && len > DICT_SNAP_MAX {', 'axon-core', _CL, _T72 + 'a_dict_over_the_snapshot_bound_is_refused_not_skipped'),
+    ('M1672', 'PSV-1 (A106): a key the operator held may not come back with a value of another type', _CC, '                    if let Err(why) = self.cast(&mut c, t, &Cx::default()) {', '                    if let Err(why) = Ok::<(), String>(()) {', 'axon-core', _CL, _T72 + 'sealed_code_cannot_retype_a_dict_entry_the_operator_held'),
+    ('M1673', "PSV-1 (A108): a candidate closure may not replace an operator closure in the operator's dict", _CC, '                            if captured.borrow().contains_key(SEALED_CLOSURE_MARK) {', '                            if false && captured.borrow().contains_key(SEALED_CLOSURE_MARK) {', 'axon-core', _CL, _T72 + 'a_dict_the_candidate_mutated_is_verified_at_every_edge_back'),
+    ('M1674', "PSV-1 (A106): a mutation by sealed code marks the operator's dict for verification", _CC, '                s.dirty = true;', '                s.dirty = false;', 'axon-core', _CL, _T72 + 'sealed_code_cannot_retype_a_dict_entry_the_operator_held'),
+    ('M1675', "PSV-1 (A106): the dicts in a candidate fn's arguments are snapshotted when the operator hands them over", _CI, '        if crossing {\n            for a in &args {\n                self.dict_edge_in(a)?;\n            }\n        }\n        let r = self.with_frame(callee', '        if false && crossing {\n            for a in &args {\n                self.dict_edge_in(a)?;\n            }\n        }\n        let r = self.with_frame(callee', 'axon-core', _CL, _T72 + 'sealed_code_cannot_retype_a_dict_entry_the_operator_held'),
+    ('M1676', 'PSV-1 (A106): a candidate fn returning to operator code has its mutated dicts verified', _CI, '        if crossing && r.is_ok() {\n            self.dict_edge_out()?;', '        if false && crossing && r.is_ok() {\n            self.dict_edge_out()?;', 'axon-core', _CL, _T72 + 'sealed_code_cannot_retype_a_dict_entry_the_operator_held'),
+    ('M1677', 'PSV-1 (A107): a dict nested in a handed dict is snapshotted too', _CC, '                out.push(m.clone());\n                for x in m.borrow().values() {\n                    self.walk_fresh(x, seen, out, d + 1);\n                }', '                out.push(m.clone());\n                for _x in m.borrow().values() {}', 'axon-core', _CL, _T72 + 'sealed_code_cannot_retype_a_dict_entry_the_operator_held'),
+    ('M1678', 'PSV-1 (A107): a dict inside an Option/Result handed over is snapshotted', _CC, '            Value::Some(x) | Value::Ok(x) | Value::Err(x) => self.walk_fresh(x, seen, out, d + 1),', '            Value::Some(_) | Value::Ok(_) | Value::Err(_) => {}', 'axon-core', _CL, _T72 + 'sealed_code_cannot_retype_a_dict_entry_the_operator_held'),
+    ('M1679', 'PSV-1 (A107): a dict in a struct or enum field handed over is snapshotted', _CC, '            Value::Struct { fields, .. } | Value::Enum { fields, .. } => {\n                for x in fields.values() {\n                    self.walk_fresh(x, seen, out, d + 1);\n                }\n            }', '            Value::Struct { .. } | Value::Enum { .. } => {}', 'axon-core', _CL, _T72 + 'sealed_code_cannot_retype_a_dict_entry_the_operator_held'),
+    ('M1680', 'PSV-1 (A107): a dict in an array or tuple handed over is snapshotted', _CC, '            Value::Array(xs) | Value::Tuple(xs) => {\n                for x in xs {\n                    self.walk_fresh(x, seen, out, d + 1);\n                }\n            }', '            Value::Array(_) | Value::Tuple(_) => {}', 'axon-core', _CL, _T72 + 'sealed_code_cannot_retype_a_dict_entry_the_operator_held'),
+]
+MUTATIONS += [
+    ('M1681', 'PSV-1 (A106): a dict entry sealed code retyped is refused at the edge back (the verdict is acted on)', _CC, '            if let Some(why) = verdict {', '            if let Some(why) = verdict.filter(|_| false) {', 'axon-core', _CL, _T72 + 'sealed_code_cannot_retype_a_dict_entry_the_operator_held'),
+]
+PSV_IDS |= {f"M{n}" for n in range(1660, 1720)}
+# ── end r4c-psv1 ──
 
 def cargo_build_tests(package, target, env=""):
     """Build the tests a cell will run, ALONE: (ok, output). A compile error is

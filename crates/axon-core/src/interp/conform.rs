@@ -66,6 +66,12 @@ pub(crate) struct Cx {
     self_ty: Option<Rc<T>>,
     /// A value at an unbound type parameter is refused (seal crossing).
     strict: bool,
+    /// For the FIELD environment of a generic struct or enum: the environment
+    /// its type arguments are read in. A type argument that is the caller's
+    /// own (possibly still unbound) type parameter is resolved THERE, so it is
+    /// bound by the field's value or refused at a strict crossing — never
+    /// erased (C9 round 4c, amendment 72).
+    parent: Option<Rc<Cx>>,
 }
 
 impl Cx {
@@ -89,6 +95,26 @@ impl Cx {
             binds,
             self_ty: imp.map(|b| Rc::new(b.for_type.clone())),
             strict: false,
+            parent: None,
+        }
+    }
+
+    /// The environment a bound type parameter's binding is read in: the
+    /// parent's for a field environment, otherwise the empty one — with this
+    /// environment's strictness either way.
+    fn binding_cx(&self) -> Cx {
+        match &self.parent {
+            Some(p) => p.strict(self.strict),
+            None => Cx::default().strict(self.strict),
+        }
+    }
+
+    /// The outermost environment (where a type that [`resolve`] leaves free
+    /// has its parameters).
+    fn root(&self) -> Cx {
+        match &self.parent {
+            Some(p) => p.root(),
+            None => self.clone(),
         }
     }
 
@@ -132,33 +158,155 @@ fn any() -> T {
     T::Named("?".into())
 }
 
-/// The declared type a runtime value is evidence of — what a type parameter
-/// binds to. Unknown parts are `?`.
-fn type_of_value(v: &Value) -> T {
-    match v {
-        Value::Int(_) => T::Named("i64".into()),
-        Value::SizedInt { ty, .. } => T::Named(ty.display()),
-        Value::Float(_) => T::Named("f64".into()),
-        Value::Decimal(_) => T::Named("Decimal".into()),
-        Value::Bool(_) => T::Named("bool".into()),
-        Value::Str(_) => T::Named("str".into()),
-        Value::Unit => T::Named("()".into()),
-        Value::Array(xs) => T::Slice(Box::new(xs.first().map(type_of_value).unwrap_or_else(any))),
-        Value::Struct { name, .. } => T::Named(name.clone()),
-        Value::Enum { enum_name, .. } => T::Named(enum_name.clone()),
-        Value::Some(x) => T::Option(Box::new(type_of_value(x))),
-        Value::None => T::Option(Box::new(any())),
-        Value::Ok(x) => T::Result {
-            ok: Box::new(type_of_value(x)),
-            err: Box::new(any()),
+/// A position of a type NOTHING determined — a part of a binding the value
+/// it was taken from did not show (an empty array's element, `None`'s
+/// payload), or a generic struct's missing type argument. Unlike `?` (a
+/// position whose type is not stated, e.g. an unannotated lambda parameter),
+/// a value here is refused at a strict (seal) crossing: no operator-side
+/// value stated its type, so its runtime type would be the candidate's
+/// choice (C9 round 4c, amendment 72).
+const UNDET: &str = "?undetermined";
+
+fn undet() -> T {
+    T::Named(UNDET.into())
+}
+
+/// The prefix of the type a native handle value is evidence of.
+const HANDLE: &str = "handle:";
+
+/// Whether `t` has a position nothing determined.
+fn has_undet(t: &T) -> bool {
+    match t {
+        T::Named(n) => n == UNDET,
+        T::TypeParam(_) | T::DynTrait(_) => false,
+        T::Result { ok, err } => has_undet(ok) || has_undet(err),
+        T::Option(x) | T::Chan(x) | T::Slice(x) | T::Ref(x) | T::RawPtr(x) => has_undet(x),
+        T::Generic { args, .. } => args.iter().any(has_undet),
+        T::Fn { params, ret } => params.iter().any(has_undet) || has_undet(ret),
+        T::Tuple(xs) | T::Union(xs) => xs.iter().any(has_undet),
+    }
+}
+
+/// `Option<x>`/`Result<o, e>` spelled as a generic, as their own forms.
+fn norm(t: &T) -> T {
+    match t {
+        T::Generic { base, args } if base == "Option" && args.len() == 1 => {
+            T::Option(Box::new(args[0].clone()))
+        }
+        T::Generic { base, args } if base == "Result" && args.len() == 2 => T::Result {
+            ok: Box::new(args[0].clone()),
+            err: Box::new(args[1].clone()),
         },
-        Value::Err(x) => T::Result {
-            ok: Box::new(any()),
-            err: Box::new(type_of_value(x)),
+        _ => t.clone(),
+    }
+}
+
+/// `a` with each position nothing determined filled from `b`.
+fn merge(a: &T, b: &T) -> T {
+    if matches!(a, T::Named(n) if n == UNDET) {
+        return b.clone();
+    }
+    if !has_undet(a) {
+        return a.clone();
+    }
+    let m = |x: &T, y: &T| Box::new(merge(x, y));
+    match (&norm(a), &norm(b)) {
+        (T::Option(x), T::Option(y)) => T::Option(m(x, y)),
+        (T::Slice(x), T::Slice(y)) => T::Slice(m(x, y)),
+        (T::Chan(x), T::Chan(y)) => T::Chan(m(x, y)),
+        (T::Result { ok: o1, err: e1 }, T::Result { ok: o2, err: e2 }) => T::Result {
+            ok: m(o1, o2),
+            err: m(e1, e2),
         },
-        Value::Tuple(xs) => T::Tuple(xs.iter().map(type_of_value).collect()),
-        Value::Chan(_) => T::Chan(Box::new(any())),
-        Value::Closure { .. } | Value::Dict(_) | Value::Handle { .. } => any(),
+        (T::Tuple(xs), T::Tuple(ys)) if xs.len() == ys.len() => {
+            T::Tuple(xs.iter().zip(ys).map(|(x, y)| merge(x, y)).collect())
+        }
+        (T::Generic { base: b1, args: a1 }, T::Generic { base: b2, args: a2 })
+            if b1 == b2 && a1.len() == a2.len() =>
+        {
+            T::Generic {
+                base: b1.clone(),
+                args: a1.iter().zip(a2).map(|(x, y)| merge(x, y)).collect(),
+            }
+        }
+        (
+            T::Fn {
+                params: p1,
+                ret: r1,
+            },
+            T::Fn {
+                params: p2,
+                ret: r2,
+            },
+        ) if p1.len() == p2.len() => T::Fn {
+            params: p1.iter().zip(p2).map(|(x, y)| merge(x, y)).collect(),
+            ret: m(r1, r2),
+        },
+        _ => a.clone(),
+    }
+}
+
+/// Bind the type parameters of `cx` that the declared type `decl` mentions
+/// from the type `actual` occupying it (structurally). A parameter already
+/// bound only has its undetermined positions filled.
+fn bind_from(decl: &T, actual: &T, cx: &Cx) {
+    let Some(binds) = &cx.binds else { return };
+    match (&norm(decl), &norm(actual)) {
+        (T::Named(n) | T::TypeParam(n), a) if cx.is_tparam(n) => {
+            let cur = binds.borrow().get(n).cloned();
+            let next = match cur {
+                None => a.clone(),
+                Some(b) => merge(&b, a),
+            };
+            binds.borrow_mut().insert(n.clone(), next);
+        }
+        (T::Ref(x), a) => bind_from(x, a, cx),
+        (T::Option(x), T::Option(y)) | (T::Slice(x), T::Slice(y)) | (T::Chan(x), T::Chan(y)) => {
+            bind_from(x, y, cx)
+        }
+        (T::Result { ok: o1, err: e1 }, T::Result { ok: o2, err: e2 }) => {
+            bind_from(o1, o2, cx);
+            bind_from(e1, e2, cx);
+        }
+        (T::Tuple(xs), T::Tuple(ys)) if xs.len() == ys.len() => {
+            for (x, y) in xs.iter().zip(ys) {
+                bind_from(x, y, cx);
+            }
+        }
+        (T::Generic { base: b1, args: a1 }, T::Generic { base: b2, args: a2 })
+            if b1 == b2 && a1.len() == a2.len() =>
+        {
+            for (x, y) in a1.iter().zip(a2) {
+                bind_from(x, y, cx);
+            }
+        }
+        (
+            T::Fn {
+                params: p1,
+                ret: r1,
+            },
+            T::Fn {
+                params: p2,
+                ret: r2,
+            },
+        ) if p1.len() == p2.len() => {
+            for (x, y) in p1.iter().zip(p2) {
+                bind_from(x, y, cx);
+            }
+            bind_from(r1, r2, cx);
+        }
+        _ => {}
+    }
+}
+
+/// `t` with every type parameter of `cx` (and, for a field environment, of
+/// each enclosing environment in turn) replaced by its binding. What is left
+/// free is a parameter of `cx.root()`.
+fn resolve(t: &T, cx: &Cx) -> T {
+    let t = subst(t, cx, false);
+    match &cx.parent {
+        Some(p) => resolve(&t, p),
+        None => t,
     }
 }
 
@@ -213,24 +361,28 @@ fn mentions_tparam(t: &T, cx: &Cx) -> bool {
 }
 
 /// The FIELD environment of a struct/enum definition read at `args`.
+///
+/// Each of the definition's type parameters is bound to its type ARGUMENT as
+/// written, read in `outer` (the parent): an argument that is the caller's own
+/// type parameter stays that parameter, so a field's value binds it (an
+/// argument determines it) or, at a strict crossing, is refused when nothing
+/// did. It was erased to `?` here, which waved every such field through (C9
+/// round 4c, amendment 72). A MISSING argument is a position nothing
+/// determined.
 fn field_cx(generics: &[String], args: &[T], outer: &Cx) -> Cx {
     if generics.is_empty() {
-        return Cx::default();
+        return Cx::default().strict(outer.strict);
     }
     let map: HashMap<String, T> = generics
         .iter()
         .enumerate()
-        .map(|(i, g)| {
-            let a = args
-                .get(i)
-                .map(|a| subst(a, outer, true))
-                .unwrap_or_else(any);
-            (g.clone(), a)
-        })
+        .map(|(i, g)| (g.clone(), args.get(i).cloned().unwrap_or_else(undet)))
         .collect();
     Cx {
         tparams: Some(Rc::new(generics.to_vec())),
         binds: Some(Rc::new(RefCell::new(map))),
+        strict: outer.strict,
+        parent: Some(Rc::new(outer.clone())),
         ..Cx::default()
     }
 }
@@ -333,11 +485,13 @@ impl<'p> Interp<'p> {
                         ));
                     }
                     // Bound parameters are fixed now; free ones stay free
-                    // and bind through the SHARED activation cell.
-                    let params: Vec<T> = params.iter().map(|t| subst(t, cx, false)).collect();
-                    let ret = subst(ret, cx, false);
-                    let free =
-                        params.iter().any(|t| mentions_tparam(t, cx)) || mentions_tparam(&ret, cx);
+                    // and bind through the SHARED activation cell (read
+                    // through a field environment to the activation's own).
+                    let root = cx.root();
+                    let params: Vec<T> = params.iter().map(|t| resolve(t, cx)).collect();
+                    let ret = resolve(ret, cx);
+                    let free = params.iter().any(|t| mentions_tparam(t, &root))
+                        || mentions_tparam(&ret, &root);
                     // A closure crossing the same closed type again (a
                     // recursive helper handing it down) is not re-wrapped.
                     if !free {
@@ -349,7 +503,7 @@ impl<'p> Interp<'p> {
                         }
                     }
                     let cx = if free {
-                        cx.strict(false)
+                        root.strict(false)
                     } else {
                         Cx::default()
                     };
@@ -420,9 +574,18 @@ impl<'p> Interp<'p> {
         let kind_ok = |ok: bool| if ok { Ok(()) } else { Err(mismatch(ty, v)) };
         match n {
             "?" => return Ok(()),
+            // A position nothing determined: at a seal crossing the value's
+            // runtime type would be the candidate's choice (amendment 72).
+            UNDET if cx.strict => {
+                return Err(format!(
+                    "a value of type `{}` at a position no operator-side value determined",
+                    v.type_name()
+                ))
+            }
+            UNDET => return Ok(()),
             "Self" => {
                 return match cx.self_ty.clone() {
-                    Some(s) => self.cast_at(v, &s, &Cx::default(), d),
+                    Some(s) => self.cast_at(v, &s, &Cx::default().strict(cx.strict), d),
                     None => Ok(()),
                 }
             }
@@ -504,6 +667,14 @@ impl<'p> Interp<'p> {
         if let Some(base) = self.refine_bases.get(n).copied() {
             return self.cast_at(v, base, cx, d);
         }
+        // A binding taken from a native handle: only a handle of that kind.
+        if let Some(h) = n.strip_prefix(HANDLE) {
+            return if matches!(v, Value::Handle { .. }) && v.type_name() == h {
+                Ok(())
+            } else {
+                Err(mismatch(ty, v))
+            };
+        }
         // A name the interpreter does not know (a builtin handle, `Dict`, a
         // type from outside this program): nothing to show it is different.
         Ok(())
@@ -542,7 +713,23 @@ impl<'p> Interp<'p> {
     /// a value cast to it — a concrete type, not `?`, an unbound type
     /// parameter, or a name the interpreter does not know.
     fn pins_runtime_type(&self, ty: &T, cx: &Cx) -> bool {
-        match subst(ty, cx, false) {
+        match ty {
+            T::Named(n) | T::TypeParam(n) if cx.is_tparam(n) => {
+                match cx.binds.as_ref().and_then(|b| b.borrow().get(n).cloned()) {
+                    Some(b) => self.pins_runtime_type(&b, &cx.binding_cx()),
+                    None => false,
+                }
+            }
+            T::Named(n) if n == "Self" => cx
+                .self_ty
+                .as_deref()
+                .is_some_and(|s| self.pins_runtime_type(s, &Cx::default())),
+            _ => self.pins_concrete(ty, cx),
+        }
+    }
+
+    fn pins_concrete(&self, ty: &T, cx: &Cx) -> bool {
+        match ty.clone() {
             T::Named(n) | T::Generic { base: n, .. } => {
                 !cx.is_tparam(&n)
                     && (matches!(
@@ -587,7 +774,21 @@ impl<'p> Interp<'p> {
     fn cast_tparam(&self, v: &mut Value, n: &str, cx: &Cx, d: usize) -> Result<(), String> {
         let bound = cx.binds.as_ref().and_then(|b| b.borrow().get(n).cloned());
         match bound {
-            Some(t) => self.cast_at(v, &t, &Cx::default(), d),
+            Some(t) => {
+                // Read in the environment the binding was written in, with
+                // THIS cast's strictness: a strict crossing stays strict
+                // through a binding (amendment 72).
+                self.cast_at(v, &t, &cx.binding_cx(), d)?;
+                // An operator-side value fills what the binding left
+                // undetermined (`[]` then `[1]` at the same `T`).
+                if !cx.strict && cx.parent.is_none() && has_undet(&t) {
+                    if let Some(b) = &cx.binds {
+                        let next = merge(&t, &self.value_type(v, 0));
+                        b.borrow_mut().insert(n.to_string(), next);
+                    }
+                }
+                Ok(())
+            }
             None if cx.strict => Err(format!(
                 "a value at the type parameter `{n}`, which no argument determined — \
                  no honest body can produce one"
@@ -601,7 +802,8 @@ impl<'p> Interp<'p> {
                     }
                 }
                 if let Some(b) = &cx.binds {
-                    b.borrow_mut().insert(n.to_string(), type_of_value(v));
+                    let t = self.value_type(v, 0);
+                    b.borrow_mut().insert(n.to_string(), t);
                 }
                 Ok(())
             }
@@ -623,34 +825,246 @@ impl<'p> Interp<'p> {
         Ok(())
     }
 
+    /// The declared type a runtime value is evidence of — what a type
+    /// parameter binds to. Parts the value does not show (an empty array's
+    /// element, `None`'s payload, a generic struct's argument no field
+    /// shows) are UNDETERMINED, never `?` (amendment 72).
+    pub(crate) fn value_type(&self, v: &Value, depth: usize) -> T {
+        if depth > MAX_CAST_DEPTH {
+            return undet();
+        }
+        let d = depth + 1;
+        let named = |n: &str| T::Named(n.into());
+        match v {
+            Value::Int(_) => named("i64"),
+            Value::SizedInt { ty, .. } => T::Named(ty.display()),
+            Value::Float(_) => named("f64"),
+            Value::Decimal(_) => named("Decimal"),
+            Value::Bool(_) => named("bool"),
+            Value::Str(_) => named("str"),
+            Value::Unit => named("()"),
+            Value::Dict(_) => named("Dict"),
+            Value::Handle { .. } => T::Named(format!("{HANDLE}{}", v.type_name())),
+            Value::Array(xs) => {
+                let mut t = undet();
+                for x in xs {
+                    if !has_undet(&t) {
+                        break;
+                    }
+                    t = merge(&t, &self.value_type(x, d));
+                }
+                T::Slice(Box::new(t))
+            }
+            Value::Struct { name, fields } => match self.structs.get(name.as_str()) {
+                Some(td) if !td.generic_params.is_empty() => {
+                    let decls = fields.iter().filter_map(|(f, fv)| {
+                        td.fields.iter().find(|x| x.name == *f).map(|x| (&x.ty, fv))
+                    });
+                    self.generic_type(name, &td.generic_params, decls, d)
+                }
+                _ => T::Named(name.clone()),
+            },
+            Value::Enum {
+                enum_name,
+                variant,
+                fields,
+            } => match self.enums.get(enum_name.as_str()) {
+                Some(ed) if !ed.generic_params.is_empty() => {
+                    let vd = ed.variants.iter().find(|x| x.name == *variant);
+                    let decls = fields.iter().filter_map(|(f, fv)| {
+                        vd.and_then(|vd| vd.fields.iter().find(|x| x.name == *f))
+                            .map(|x| (&x.ty, fv))
+                    });
+                    self.generic_type(enum_name, &ed.generic_params, decls, d)
+                }
+                _ => T::Named(enum_name.clone()),
+            },
+            Value::Some(x) => T::Option(Box::new(self.value_type(x, d))),
+            Value::None => T::Option(Box::new(undet())),
+            Value::Ok(x) => T::Result {
+                ok: Box::new(self.value_type(x, d)),
+                err: Box::new(undet()),
+            },
+            Value::Err(x) => T::Result {
+                ok: Box::new(undet()),
+                err: Box::new(self.value_type(x, d)),
+            },
+            Value::Tuple(xs) => T::Tuple(xs.iter().map(|x| self.value_type(x, d)).collect()),
+            Value::Chan(q) => T::Chan(Box::new(self.chan_stamp(q).unwrap_or_else(undet))),
+            Value::Closure { params, .. } => T::Fn {
+                params: params.iter().map(|_| undet()).collect(),
+                ret: Box::new(undet()),
+            },
+        }
+    }
+
+    /// A generic struct's or enum's type, its arguments read off the fields
+    /// that show them.
+    fn generic_type<'a>(
+        &self,
+        name: &str,
+        generics: &[String],
+        fields: impl Iterator<Item = (&'a T, &'a Value)>,
+        d: usize,
+    ) -> T {
+        let cx = Cx {
+            tparams: Some(Rc::new(generics.to_vec())),
+            binds: Some(Rc::new(RefCell::new(HashMap::new()))),
+            ..Cx::default()
+        };
+        for (decl, fv) in fields {
+            bind_from(decl, &self.value_type(fv, d), &cx);
+        }
+        let binds = cx
+            .binds
+            .as_ref()
+            .map(|b| b.borrow().clone())
+            .unwrap_or_default();
+        T::Generic {
+            base: name.to_string(),
+            args: generics
+                .iter()
+                .map(|g| binds.get(g).cloned().unwrap_or_else(undet))
+                .collect(),
+        }
+    }
+
+    /// The element type a channel was stamped with that fixes its elements:
+    /// the first closed, fully determined one.
+    fn chan_stamp(&self, q: &Rc<RefCell<VecDeque<Value>>>) -> Option<T> {
+        let tab = self.chan_contracts.borrow();
+        let entry = tab.get(&(Rc::as_ptr(q) as usize))?;
+        entry.1.iter().find_map(|c| {
+            let t = resolve(&c.ret, &c.cx);
+            (!mentions_tparam(&t, &c.cx) && !has_undet(&t) && !is_unstated(&t)).then_some(t)
+        })
+    }
+
+    /// The channel table entry for `q`, made fresh when the address belonged
+    /// to a channel that no longer exists.
+    fn chan_entry<'t>(
+        tab: &'t mut super::ChanContracts,
+        q: &Rc<RefCell<VecDeque<Value>>>,
+    ) -> &'t mut super::ChanEntry {
+        let key = Rc::as_ptr(q) as usize;
+        if tab.len() > 64 && tab.len().is_power_of_two() {
+            tab.retain(|_, e| e.0.strong_count() > 0);
+        }
+        let stale = tab.get(&key).is_some_and(|e| e.0.upgrade().is_none());
+        if stale {
+            tab.remove(&key);
+        }
+        tab.entry(key)
+            .or_insert_with(|| (Rc::downgrade(q), Vec::new(), false))
+    }
+
+    /// A channel is CREATED: record which side made it, and stamp it with the
+    /// element type its `chan<T>()` states when that type is closed — so a
+    /// generic `Chan<T>` it later crosses binds `T` from it, and a send of
+    /// another type is refused (C9 round 4c, amendment 72). The text is the
+    /// type rendered into the lowered callee name (`chan::<T>`).
+    pub(crate) fn chan_created(&self, q: &Rc<RefCell<VecDeque<Value>>>, elem: Option<&str>) {
+        let stamp = elem
+            .and_then(crate::parser::parse_type_text)
+            .filter(|t| self.is_known_closed(t));
+        let operator_side = !(self.seal.active && self.frame_sealed.get());
+        let mut tab = self.chan_contracts.borrow_mut();
+        let key = Rc::as_ptr(q) as usize;
+        tab.remove(&key);
+        let entry = Self::chan_entry(&mut tab, q);
+        entry.2 = operator_side;
+        if let Some(t) = stamp {
+            entry.1.push(Rc::new(Contract {
+                params: Vec::new(),
+                ret: t,
+                cx: Cx::default(),
+                next: None,
+            }));
+        }
+    }
+
+    /// Every name in `t` is a type this program (or the language) defines —
+    /// no type parameter, no unknown name.
+    fn is_known_closed(&self, t: &T) -> bool {
+        let known = |n: &str| {
+            matches!(
+                n,
+                "i64"
+                    | "i32"
+                    | "i16"
+                    | "i8"
+                    | "u64"
+                    | "u32"
+                    | "u16"
+                    | "u8"
+                    | "isize"
+                    | "usize"
+                    | "f64"
+                    | "f32"
+                    | "bool"
+                    | "str"
+                    | "String"
+                    | "()"
+                    | "Decimal"
+                    | "Dict"
+                    | "Option"
+                    | "Result"
+            ) || self.structs.contains_key(n)
+                || self.enums.contains_key(n)
+                || self.refine_bases.contains_key(n)
+        };
+        let go = |t: &T| self.is_known_closed(t);
+        match t {
+            T::Named(n) => known(n),
+            T::TypeParam(_) | T::RawPtr(_) => false,
+            T::DynTrait(_) => true,
+            T::Generic { base, args } => known(base) && args.iter().all(go),
+            T::Result { ok, err } => go(ok) && go(err),
+            T::Option(x) | T::Chan(x) | T::Slice(x) | T::Ref(x) => go(x),
+            T::Fn { params, ret } => params.iter().all(go) && go(ret),
+            T::Tuple(xs) | T::Union(xs) => xs.iter().all(go),
+        }
+    }
+
     /// A channel is ONE invariant object: the element type it crossed is
     /// stamped on the object, the values already queued are cast now, and
-    /// every later send is cast ([`Interp::chan_send_check`]).
+    /// every later send is cast ([`Interp::chan_send_check`]). At `Chan<T>`
+    /// with `T` unbound, `T` is bound from the channel's own stamp (the type
+    /// it was created or first declared with); at a strict crossing a `T`
+    /// nothing determined is refused (amendment 72).
     fn stamp_chan(
         &self,
         q: &Rc<RefCell<VecDeque<Value>>>,
         elem: &T,
         cx: &Cx,
     ) -> Result<(), String> {
-        let elem = subst(elem, cx, false);
-        let ecx = if mentions_tparam(&elem, cx) {
-            cx.strict(false)
-        } else {
+        let root = cx.root();
+        let mut elem = resolve(elem, cx);
+        if mentions_tparam(&elem, &root) {
+            if cx.strict {
+                return Err(format!(
+                    "a channel at the element type `{}`, which no argument determined — \
+                     no honest body can produce one",
+                    crate::doc::render_type(&elem)
+                ));
+            }
+            if let Some(stamp) = self.chan_stamp(q) {
+                bind_from(&elem, &stamp, &root);
+                elem = subst(&elem, &root, false);
+            }
+        }
+        let closed = !mentions_tparam(&elem, &root);
+        let ecx = if closed {
             Cx::default()
+        } else {
+            root.strict(false)
         };
         for x in q.borrow_mut().iter_mut() {
-            self.cast(x, &elem, &ecx)?;
+            self.cast(x, &elem, &ecx.strict(cx.strict))?;
         }
-        let key = Rc::as_ptr(q) as usize;
         let mut tab = self.chan_contracts.borrow_mut();
-        if tab.len() > 64 && tab.len().is_power_of_two() {
-            tab.retain(|_, (w, _)| w.strong_count() > 0);
-        }
-        let entry = tab
-            .entry(key)
-            .or_insert_with(|| (Rc::downgrade(q), Vec::new()));
+        let entry = Self::chan_entry(&mut tab, q);
         let rendered = crate::doc::render_type(&elem);
-        let closed = !mentions_tparam(&elem, cx);
         let dup = closed
             && entry
                 .1
@@ -668,19 +1082,39 @@ impl<'p> Interp<'p> {
     }
 
     /// Cast a value about to be sent on `q` to every element type the
-    /// channel crossed.
+    /// channel crossed. A SEALED frame's send is a seal crossing: it is cast
+    /// strictly, and on a channel the operator created it needs an element
+    /// type some operator-side value determined (amendment 72).
     pub(crate) fn chan_send_check(
         &self,
         q: &Rc<RefCell<VecDeque<Value>>>,
         v: &mut Value,
     ) -> Result<(), Flow> {
-        let contracts: Vec<Rc<Contract>> =
+        let sealed = self.seal.active && self.frame_sealed.get();
+        let (contracts, operator_side): (Vec<Rc<Contract>>, bool) =
             match self.chan_contracts.borrow().get(&(Rc::as_ptr(q) as usize)) {
-                Some((_, cs)) => cs.clone(),
-                None => return Ok(()),
+                Some((_, cs, op)) => (cs.clone(), *op),
+                None => (Vec::new(), false),
             };
-        for c in contracts {
-            if let Err(why) = self.cast(v, &c.ret, &c.cx) {
+        if sealed && operator_side && !contracts.iter().any(|c| determined(&c.ret, &c.cx)) {
+            return panic(format!(
+                "sealed code sent {} on a channel the operator created, whose element type \
+                 nothing on the operator side determined — a runtime type confusion",
+                value::display(v)
+            ));
+        }
+        // Determined element types first, strictly; then the rest (a type
+        // the channel crossed whose parameter is still free), which the
+        // value — already pinned to a determined type — may bind.
+        let (det, rest): (Vec<_>, Vec<_>) = contracts
+            .into_iter()
+            .partition(|c| determined(&c.ret, &c.cx));
+        for (c, strict) in det
+            .into_iter()
+            .map(|c| (c, sealed))
+            .chain(rest.into_iter().map(|c| (c, false)))
+        {
+            if let Err(why) = self.cast(v, &c.ret, &c.cx.strict(strict)) {
                 return panic(format!(
                     "a channel declared `Chan<{}>` was sent {} — a runtime type confusion ({why})",
                     crate::doc::render_type(&c.ret),
@@ -692,16 +1126,64 @@ impl<'p> Interp<'p> {
     }
 
     /// Cast a closure call's arguments to every `fn` type the closure
-    /// crossed, outermost (latest) first.
+    /// crossed, outermost (latest) first. `crossing`: a SEALED frame calls an
+    /// OPERATOR closure — a seal crossing, so each argument is cast strictly
+    /// and must meet a position some contract determined (amendment 72; the
+    /// return direction's parametricity rule, applied to arguments).
     pub(crate) fn closure_args_check(
         &self,
         contract: &Option<Rc<Contract>>,
         args: &mut [Value],
+        crossing: bool,
     ) -> Result<(), Flow> {
+        if crossing {
+            for (i, a) in args.iter().enumerate() {
+                let mut c = contract.as_ref();
+                let mut ok = false;
+                while let Some(k) = c {
+                    if k.params.get(i).is_some_and(|t| determined(t, &k.cx)) {
+                        ok = true;
+                        break;
+                    }
+                    c = k.next.as_ref();
+                }
+                if !ok {
+                    return panic(format!(
+                        "sealed code called an operator closure with {} as argument {}, a \
+                         position nothing on the operator side determined — a runtime type \
+                         confusion",
+                        value::display(a),
+                        i + 1
+                    ));
+                }
+            }
+        }
+        // Outermost first. At a crossing, each argument meets the layers that
+        // determine its position first, strictly; then the others (a type
+        // the closure crossed whose parameter is still free, e.g. the
+        // operator's own generic struct literal), which the argument —
+        // already pinned to a determined type — may bind.
+        let mut chain = Vec::new();
         let mut c = contract.as_ref();
         while let Some(k) = c {
-            for (i, (a, t)) in args.iter_mut().zip(&k.params).enumerate() {
-                if let Err(why) = self.cast(a, t, &k.cx) {
+            chain.push(k.clone());
+            c = k.next.as_ref();
+        }
+        for (i, a) in args.iter_mut().enumerate() {
+            let det = |k: &Rc<Contract>| k.params.get(i).is_some_and(|t| determined(t, &k.cx));
+            let order = chain
+                .iter()
+                .filter(|k| !crossing || det(k))
+                .map(|k| (k, crossing))
+                .chain(
+                    chain
+                        .iter()
+                        .filter(|k| crossing && !det(k))
+                        .map(|k| (k, false)),
+                );
+            for (k, strict) in order {
+                let Some(t) = k.params.get(i) else { continue };
+                if let Err(why) = self.cast(a, t, &k.cx.strict(strict)) {
                     return panic(format!(
                         "argument {} of a closure declared `{}` — a runtime type confusion ({why})",
                         i + 1,
@@ -709,7 +1191,6 @@ impl<'p> Interp<'p> {
                     ));
                 }
             }
-            c = k.next.as_ref();
         }
         Ok(())
     }
@@ -807,6 +1288,26 @@ fn sized_width(n: &str) -> crate::types::Type {
     }
 }
 
+/// `t` (read in `cx`) states a type for every position: no type parameter
+/// left unbound, nothing undetermined, nothing unstated.
+fn determined(t: &T, cx: &Cx) -> bool {
+    let t = resolve(t, cx);
+    !mentions_tparam(&t, &cx.root()) && !has_undet(&t) && !is_unstated(&t)
+}
+
+/// Whether `t` has a position whose type is not stated (`?`).
+fn is_unstated(t: &T) -> bool {
+    match t {
+        T::Named(n) => n == "?",
+        T::TypeParam(_) | T::DynTrait(_) => false,
+        T::Result { ok, err } => is_unstated(ok) || is_unstated(err),
+        T::Option(x) | T::Chan(x) | T::Slice(x) | T::Ref(x) | T::RawPtr(x) => is_unstated(x),
+        T::Generic { args, .. } => args.iter().any(is_unstated),
+        T::Fn { params, ret } => params.iter().any(is_unstated) || is_unstated(ret),
+        T::Tuple(xs) | T::Union(xs) => xs.iter().any(is_unstated),
+    }
+}
+
 fn mentions_tparam_any(c: &Contract) -> bool {
     c.params.iter().any(|t| mentions_tparam(t, &c.cx)) || mentions_tparam(&c.ret, &c.cx)
 }
@@ -821,4 +1322,245 @@ fn render_fn(c: &Contract) -> String {
         params: c.params.clone(),
         ret: Box::new(c.ret.clone()),
     })
+}
+
+// ── The operator's dicts (C9 round 4c, amendment 72 part 2) ─────────────────
+//
+// A `Dict` carries no element types, so a value the candidate stores in one
+// the OPERATOR handed it meets no declared type on its way back, and the
+// operator's untyped `dict_get(d, "k").ok()` ran the impl of whatever type the
+// candidate chose. The position IS determined, though: by what the operator
+// put there. So every dict the operator hands into sealed code is SNAPSHOTTED
+// (the type of each value it holds, by `value_type`), and at every edge back
+// to operator code a dict sealed code MUTATED is checked against it: a key the
+// operator held may not now hold a value of another type. Keys the candidate
+// ADDS are not constrained (nothing operator-side determined them — the same
+// as a candidate-built dict, which operator code reads and compares like any
+// other candidate output; an operator that needs a type pins it with
+// `let x: T`).
+
+/// The most entries one dict may have to cross a seal. Refused above this
+/// (never skipped): the snapshot is one type per entry, taken once per dict
+/// and refreshed only after an operator-side mutation.
+pub(crate) const DICT_SNAP_MAX: usize = 1_000_000;
+
+type DictRc = Rc<RefCell<std::collections::BTreeMap<String, Value>>>;
+
+/// What the operator held in one dict when it handed it to sealed code.
+pub(crate) struct DictSnap {
+    weak: std::rc::Weak<RefCell<std::collections::BTreeMap<String, Value>>>,
+    /// The type of the value at each key.
+    types: std::collections::BTreeMap<String, T>,
+    /// Keys that held an OPERATOR closure (a candidate closure may not replace
+    /// one: its result would reach the operator at an undetermined type).
+    op_closures: std::collections::BTreeSet<String>,
+    /// Sealed code mutated the dict since it was last verified.
+    dirty: bool,
+    /// [`Interp::dict_epoch`] when the snapshot was taken.
+    epoch: u64,
+}
+
+impl<'p> Interp<'p> {
+    /// OPERATOR code hands `v` to sealed code (call arguments, a candidate
+    /// closure's arguments, an operator closure's result, a channel send):
+    /// every dict in it is snapshotted. A snapshot taken since the last
+    /// operator-side mutation, and not dirtied, is kept (O(1) per dict).
+    pub(crate) fn dict_edge_in(&self, v: &Value) -> Result<(), Flow> {
+        if !self.seal.active {
+            return Ok(());
+        }
+        let mut found = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        self.walk_fresh(v, &mut seen, &mut found, 0);
+        for m in found {
+            self.dict_snapshot(&m)?;
+        }
+        Ok(())
+    }
+
+    /// The dicts of `v` that need a (re)snapshot: walks into a dict's values
+    /// only when the dict itself does.
+    fn walk_fresh(
+        &self,
+        v: &Value,
+        seen: &mut std::collections::HashSet<usize>,
+        out: &mut Vec<DictRc>,
+        d: usize,
+    ) {
+        if d > MAX_CAST_DEPTH {
+            return;
+        }
+        match v {
+            Value::Dict(m) => {
+                let key = Rc::as_ptr(m) as *const () as usize;
+                if !seen.insert(key) {
+                    return;
+                }
+                let fresh = self.dict_snaps.borrow().get(&key).is_some_and(|s| {
+                    !s.dirty
+                        && s.epoch == self.dict_epoch.get()
+                        && s.weak.upgrade().is_some_and(|w| Rc::ptr_eq(&w, m))
+                });
+                if fresh {
+                    return;
+                }
+                out.push(m.clone());
+                for x in m.borrow().values() {
+                    self.walk_fresh(x, seen, out, d + 1);
+                }
+            }
+            Value::Array(xs) | Value::Tuple(xs) => {
+                for x in xs {
+                    self.walk_fresh(x, seen, out, d + 1);
+                }
+            }
+            Value::Struct { fields, .. } | Value::Enum { fields, .. } => {
+                for x in fields.values() {
+                    self.walk_fresh(x, seen, out, d + 1);
+                }
+            }
+            Value::Some(x) | Value::Ok(x) | Value::Err(x) => self.walk_fresh(x, seen, out, d + 1),
+            Value::Chan(q) => {
+                for x in q.borrow().iter() {
+                    self.walk_fresh(x, seen, out, d + 1);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn dict_snapshot(&self, m: &DictRc) -> Result<(), Flow> {
+        let len = m.borrow().len();
+        if len > DICT_SNAP_MAX {
+            return panic(format!(
+                "a dict of {len} entries cannot cross a seal (more than {DICT_SNAP_MAX}): its \
+                 values' types could not be recorded, so the candidate could retype them"
+            ));
+        }
+        let mut types = std::collections::BTreeMap::new();
+        let mut op_closures = std::collections::BTreeSet::new();
+        for (k, x) in m.borrow().iter() {
+            types.insert(k.clone(), self.value_type(x, 0));
+            if let Value::Closure { captured, .. } = x {
+                if !captured.borrow().contains_key(SEALED_CLOSURE_MARK) {
+                    op_closures.insert(k.clone());
+                }
+            }
+        }
+        let key = Rc::as_ptr(m) as *const () as usize;
+        let mut tab = self.dict_snaps.borrow_mut();
+        if tab.len() > 64 && tab.len().is_power_of_two() {
+            tab.retain(|_, s| s.weak.strong_count() > 0);
+        }
+        tab.insert(
+            key,
+            DictSnap {
+                weak: Rc::downgrade(m),
+                types,
+                op_closures,
+                dirty: false,
+                epoch: self.dict_epoch.get(),
+            },
+        );
+        Ok(())
+    }
+
+    /// A dict was mutated (`dict_set`, `dict_remove`, `dict_inc`). By sealed
+    /// code: if the operator handed it over, it is dirty until verified. By
+    /// operator code: every snapshot is out of date (the next hand-over
+    /// re-takes it).
+    pub(crate) fn dict_mutated(&self, m: &DictRc) {
+        if !self.seal.active {
+            return;
+        }
+        if !self.frame_sealed.get() {
+            self.dict_epoch.set(self.dict_epoch.get() + 1);
+            return;
+        }
+        let key = Rc::as_ptr(m) as *const () as usize;
+        if let Some(s) = self.dict_snaps.borrow_mut().get_mut(&key) {
+            if s.weak.upgrade().is_some_and(|w| Rc::ptr_eq(&w, m)) {
+                s.dirty = true;
+            }
+        }
+    }
+
+    /// SEALED code returns control to OPERATOR code (a candidate fn or closure
+    /// returns, sealed code calls an operator closure or an effect-handler
+    /// arm): every dict sealed code mutated is checked against what the
+    /// operator held — a key it held keeps a value of that type.
+    pub(crate) fn dict_edge_out(&self) -> Result<(), Flow> {
+        if !self.seal.active {
+            return Ok(());
+        }
+        let dirty: Vec<(usize, DictRc)> = self
+            .dict_snaps
+            .borrow()
+            .iter()
+            .filter(|(_, s)| s.dirty)
+            .filter_map(|(k, s)| s.weak.upgrade().map(|m| (*k, m)))
+            .collect();
+        for (key, m) in dirty {
+            let verdict = {
+                let tab = self.dict_snaps.borrow();
+                let Some(s) = tab.get(&key) else { continue };
+                let cur = m.borrow();
+                let mut bad = None;
+                for (k, t) in &s.types {
+                    let Some(now) = cur.get(k) else { continue };
+                    if s.op_closures.contains(k) {
+                        if let Value::Closure { captured, .. } = now {
+                            if captured.borrow().contains_key(SEALED_CLOSURE_MARK) {
+                                bad = Some(format!(
+                                    "key `{k}` held an operator closure and now holds the \
+                                     candidate's"
+                                ));
+                                break;
+                            }
+                        }
+                    }
+                    // A copy: the cast may wrap a closure in a contract.
+                    let mut c = now.clone();
+                    if let Err(why) = self.cast(&mut c, t, &Cx::default()) {
+                        bad = Some(format!(
+                            "key `{k}` held a value of type `{}` and now holds {} ({why})",
+                            crate::doc::render_type(t),
+                            value::display(now)
+                        ));
+                        break;
+                    }
+                }
+                bad
+            };
+            if let Some(why) = verdict {
+                return panic(format!(
+                    "sealed code retyped a dict entry the operator handed it — a runtime type \
+                     confusion ({why})"
+                ));
+            }
+            if let Some(s) = self.dict_snaps.borrow_mut().get_mut(&key) {
+                s.dirty = false;
+            }
+        }
+        Ok(())
+    }
+
+    /// An effect-handler arm of provenance `arm_sealed` is about to run for an
+    /// operation the running frame performed with `payload`: the edge between
+    /// the two provenances.
+    pub(crate) fn handler_edge_into(&self, arm_sealed: bool, payload: &Value) -> Result<(), Flow> {
+        match (self.frame_sealed.get(), arm_sealed) {
+            (true, false) => self.dict_edge_out(),
+            (false, true) => self.dict_edge_in(payload),
+            _ => Ok(()),
+        }
+    }
+
+    /// The arm resumed the operation with `v`: back across the same edge.
+    pub(crate) fn handler_edge_back(&self, arm_sealed: bool, v: &Value) -> Result<(), Flow> {
+        match (self.frame_sealed.get(), arm_sealed) {
+            (true, false) => self.dict_edge_in(v),
+            _ => Ok(()),
+        }
+    }
 }

@@ -1472,7 +1472,9 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       element type) and an unannotated module-level `let` of the candidate. The dispatch edge
       still keeps the candidate's methods from running under an operator method name there; a
       suite that relies on such a value's TYPE pins it with an annotation (`let r: i64 = X`),
-      which is cast. (2) The candidate chooses its own declared types. If the suite dispatches a
+      which is cast. **Narrowed by amendment 72 part 2:** a `Dict` KEY the operator held is no longer
+      open — sealed code cannot retype it; what stays open is a value at a key the operator
+      never held. (2) The candidate chooses its own declared types. If the suite dispatches a
       method on a value whose type is the candidate's declaration, the operator's impl FOR THAT
       TYPE runs (e.g. a lenient `impl Judge for bool` when the candidate declares `-> bool`): that
       is the operator's own rubric, and a suite pins the type by annotation. (3) A closure that
@@ -3518,6 +3520,204 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       M1652-M1654 and M1656-M1659 are unused.
     - **Matrix.** None.
     - **Operator deployment.** None.
+
+72. **At a seal crossing every position of the type a value is cast to is determined from the
+    operator side, or the crossing is refused (C9 round 4c, workstream r4c-psv1, PSV-1; matrix
+    A96-A105).**
+    - **Before.** Review round 4c (findings `/var/tmp/c9r4c-findings-PSV-1.json`, cases
+      `/var/tmp/c9r4c-psv1-logs/w/`) executed three BLOCKERS of one class to a keyed PASS for a
+      wrong candidate, through the exact runner invocation and through `axon_psv::runner::run`:
+      at a seal crossing a type position could be left UNDETERMINED, and an undetermined position
+      admitted any value non-strictly, so the candidate chose the runtime type there and with it
+      the operator's impl (a lenient `impl Judge for u8`). (B1) A generic `Chan<T>` parameter
+      never bound `T`: `chan<i64>()` created an unstamped channel (its turbofish was no cast
+      point), `type_of_value(Chan)` was `Chan<?>`, and the candidate's first send bound `T := u8`.
+      (B2) A fn with no declared return type had no return cast (`return_type: None` → nothing),
+      though the checker types its call `()`; the checker also accepted `.ok()` on that `()`.
+      (B3) `field_cx` substituted an unbound outer type parameter with erase=true, so a
+      `Wrap<T>` field was never checked, and a `Wrap<T>` argument never bound `T`. The
+      MAJOR-ADJACENT: a sealed frame calling an operator closure cast its arguments
+      non-strictly, so `apply<T>(f: fn(T) -> bool)` handed the operator's unannotated
+      `|x| x.ok()` a `u8`. The MINOR: an impl for `f32`/`isize`/`usize` is keyed by the declared
+      name but such values dispatch as `f64`/`i64`, so it never ran.
+    - **The invariant.** At every value crossing of a seal edge — fn and method arguments and
+      results (including an ABSENT return type), closure arguments and results, channel sends,
+      struct and enum fields at any depth, collection elements — the value is cast against a
+      type that is fully determined from the operator side, or, where a position is a type
+      parameter (or a part of one) that no operator-side value determined, the crossing is
+      refused. "Determined" has one representation: a binding records the parts the binding
+      value did not show (an empty array's element, `None`'s payload, a generic struct's
+      argument no field shows, a channel with no closed stamp, a closure's signature) as
+      UNDETERMINED (`?undetermined`), distinct from `?` (a position whose type is not stated,
+      e.g. an unannotated lambda parameter), and a strict cast refuses a value there exactly as
+      it refuses one at an unbound type parameter (`cast_tparam`, M660).
+    - **After (`interp/conform.rs`).** (1) `Interp::value_type` replaces `type_of_value`: what a
+      type parameter binds to, with undetermined parts marked; a generic struct's or enum's
+      type arguments are read off its fields (`generic_type`, `bind_from`); a channel yields its
+      stamp; a handle yields `handle:<kind>`, which then admits only that kind of handle (it was
+      `?`, admitting anything). A binding with undetermined parts is FILLED by a later non-strict
+      (operator-side) value at the same parameter (`merge`), so `pick(None, Some(9))` binds
+      `Option<i64>`. (2) `field_cx` binds each definition parameter to its argument AS WRITTEN,
+      read in the caller's environment through a `parent` link (never erased); a missing
+      argument is undetermined. Closure and channel element types are resolved through that
+      chain (`resolve`) to the activation's own parameters, so a field binds the caller's `T`,
+      or is refused at a strict crossing. (3) A bound parameter's binding is cast in
+      `Cx::binding_cx()`, which carries the crossing's strictness (it was `Cx::default()`,
+      dropping it). (4) Channels: `Interp::chan_created` stamps a channel at creation with the
+      element type its `chan<T>()` states when that type is closed over known names
+      (`parser::parse_type_text` reads the lowered `chan::<T>` name back), and records whether
+      operator code created it. `stamp_chan` binds `T` at `Chan<T>` from the existing stamp
+      (non-strict) and REFUSES an element type with a parameter nothing determined at a strict
+      crossing (a candidate returning its own `Chan<u8>` at `Chan<T>`). `chan_send_check`: a
+      sealed frame's send is a seal crossing; on an operator-created channel it needs an element
+      type something on the operator side determined (`Chan::new(4)` or an operator generic
+      `chan<T>()` handed to the candidate's free `U` is refused); determined element types are
+      cast first, the rest may be bound by the (already pinned) value. A stale channel-table
+      entry (address reuse) is replaced, never inherited. (5) `closure_args_check` takes
+      `entering` (a sealed frame calling an OPERATOR closure): each argument must meet a position
+      some contract in the chain determined, and is cast against those first, strictly; layers
+      whose parameter is still free (e.g. the operator's own generic struct literal's
+      `fn(T)`) are cast after, non-strictly — so an honest program whose operator annotation
+      `|r: i64|` determines the argument still runs (`a_lambdas_annotated_parameter_is_cast`).
+    - **After (`interp.rs`).** `call_fn_frame`: at a seal crossing a fn (or impl method) with no
+      declared return type hands operator code `()` — the type the checker gave the call. Not a
+      refusal: an honest unit fn whose body ends on a value keeps running; only what reaches the
+      operator changes. Inside operator code, and between candidate fns, the behaviour is
+      unchanged (an operator `@[test]` fn returning `Err` still does not complete, PSV-3).
+    - **After (the checker, defence in depth).** `method_lookup_key` keys `Type::Unit` as `()`,
+      so a method call on `()` with no impl for `()` is E0403. A new diagnostic E0505 refuses an
+      impl for `f32`, `isize` or `usize` (the MINOR; no `.ax` in the repository had one).
+      `AXON_REFERENCE.md` regenerated (143 codes, 130 live).
+    - **Native codegen.** Unchanged, and this is stated rather than implied: the seal is
+      interpreter-only. `--seal` is an option of `axon test` (the PSV runner's
+      `exec_axon_test` path, which runs the tree-walking interpreter); `axon build` has no
+      `--seal` (measured: `axon build b.ax --seal DIR` is a usage error), so no native binary
+      ever runs sealed code and there is no native crossing to cast. Non-claim (4) of amendment
+      53 stands.
+    - **What is NOT claimed.** Non-claims (1)-(3) of amendment 53 as restated by amendment 60
+      stand, narrowed (and non-claim (1) further by part 2): a closure that reaches the candidate with no contract (through a `Dict`)
+      can no longer be CALLED by sealed code with arguments (A102). Still open by design: the
+      candidate's own declared types (non-claim (2)); a value that meets no declared type on its
+      way to operator code (non-claim (1)), e.g. an operator `dict_get` on a `Dict` the
+      candidate filled at a key the operator never held (part 2: the rule for new keys);
+      `host_await_val` (non-claim (3)). A generic impl whose methods name the
+      impl's type parameter is refused by the checker (E0308 'unknown type T'), so that variant
+      is unreachable.
+    - **Variants hunted (each executed through the exact runner invocation; baseline at
+      2a66eb0b → after).** Keyed PASS → refused: generic enum variant field, nested
+      `Wrap<Wrap<T>>`, a generic struct through a plain `T`, `T` bound from an empty `[i64]`,
+      a candidate `Chan<T>` return, a generic struct's `fn` field, an operator generic
+      `chan<T>()`, `Chan::new(4)`, a closure in a dict, an impl method with no return type,
+      `pick(None, ·)`. Already refused at baseline and still refused: tuple, array,
+      `Option<T>` and `Result<T, E>` of a parameter. Honest controls (identity and relay
+      programs over each shape) pass before and after.
+      Pinned together in `a_type_parameter_inside_any_shape_is_never_filled_by_the_candidate`
+      (tuple, array, `Option`, `Result`, each of those around a `Wrap<T>`, `Wrap<T> -> T`, two
+      parameters, a returned closure, a generic impl's method).
+      `host_await_val` crossings: unreachable inside a seal — a sealed `axon test` has no host
+      driver, so the call returns its refusal (`a_host_await_crossing_is_unavailable_…`).
+      Trait-bounded `T: Judge` is unreachable for a candidate (a sealed module cannot name an
+      operator trait). **Was open, now closed by part 2 (below)**: a `Dict` the
+      operator hands a sealed frame — the candidate overwrote an existing key with a `u8` and
+      the operator's `x.ok()` on its untyped `dict_get` ran the `u8` impl (keyed pass). It was
+      pinned as RECORDED by `an_untyped_dict_value_the_candidate_filled_is_a_recorded_open_position`,
+      which part 2 replaces with refusal tests.
+    - **Rows.** M1660 (creation stamp; attack: the candidate re-declares the operator's
+      `chan<i64>()` as `Chan<u8>` through a dict hop, which the send-side rule alone accepts),
+      M1661 (sealed send on an operator channel), M1662 (channel at a strict crossing), M1663
+      (field type arguments not erased), M1664 (undetermined position at a strict crossing),
+      M1665 (strictness through a binding), M1666 (no declared return type at a crossing), M1667
+      (operator closure arguments from sealed code), M1668 (handle binding), M1669 (E0403 on
+      `()`), M1670 (E0505). Re-anchored in place (same guard, same test, new text): M662,
+      M1145, M1148, M1152, M1153. Every new refusal site in `conform.rs` has its row (refusal
+      coverage).
+    - **Tests.** Interpreter (`crates/axon-core/src/interp.rs`):
+      `a_channel_carries_the_element_type_its_creation_states`,
+      `a_sealed_send_on_an_operator_channel_needs_a_determined_element_type`,
+      `a_channel_returned_at_an_undetermined_element_type_is_refused`,
+      `a_generic_struct_or_enum_argument_binds_its_type_parameter`,
+      `a_value_at_an_undetermined_position_never_crosses_a_seal`,
+      `a_fn_with_no_declared_return_type_hands_the_operator_unit`,
+      `an_operator_closure_called_from_sealed_code_takes_only_determined_arguments`,
+      `a_handle_binding_admits_only_that_handle`,
+      `a_type_parameter_inside_any_shape_is_never_filled_by_the_candidate`,
+      `a_host_await_crossing_is_unavailable_inside_a_sealed_test_run`,
+      `an_untyped_dict_value_the_candidate_filled_is_a_recorded_open_position` (REPLACED by part 2's
+      tests). M1148's test now reaches the queued-value cast through a `Chan::new` channel
+      (a stamped `chan<i64>()` refuses the send first). CLI (`crates/axon-core/tests/cli_run.rs`):
+      `a_method_call_on_unit_without_an_impl_is_e0403`,
+      `an_impl_for_a_type_the_runtime_represents_as_another_is_e0505`. Real runner
+      (`crates/axon-psv/tests/sealed_frames.rs`):
+      `an_undetermined_type_position_never_selects_the_operators_impl` (the review's four
+      candidates: GOOD a keyed pass, WRONG a keyed failure, every attack refused unkeyed).
+    - **Operator deployment.** The guest image must be REBUILT to carry the new interpreter;
+      its scripts and runner are unchanged.
+
+    - **Part 2 (same workstream, operator decision): the operator's dicts.** `Dict` has no element
+      types, so for a dict the operator hands sealed code, the position of each value is
+      determined by what the OPERATOR PUT THERE, and by nothing else.
+    - **Rule.** (1) *Snapshot.* At every edge where operator code hands a value to sealed code —
+      a candidate fn's arguments, a candidate closure's arguments, an operator closure's result
+      returning into sealed code, a value the operator sends on a channel, an effect-handler arm's
+      payload — `Interp::dict_edge_in` finds every dict reachable from the value (array and tuple
+      elements, struct and enum fields at any depth, `Option`/`Result` payloads, channel queues,
+      dict values; each dict once, cycles safe) and records the type (`value_type`, with
+      `?undetermined` where the value does not show it) of each value it holds, and which keys
+      hold an OPERATOR closure. (2) *Dirty.* `dict_set`, `dict_remove` and `dict_inc` by SEALED
+      code mark the dict's snapshot dirty (the mutation primitives are those three; the dict is
+      an `Rc`, so every alias — an array, a struct field, a candidate closure's capture — shares
+      the one snapshot, which is how aliasing is covered). A mutation by OPERATOR code instead
+      bumps `dict_epoch`: every snapshot from an older epoch is retaken at the next hand-over, so
+      an operator that retypes its own dict between two calls is not blamed. (3) *Verify.* At
+      every edge back to operator code — a candidate fn returns, a candidate closure returns,
+      sealed code calls an operator closure, an effect-handler arm of operator provenance runs —
+      `Interp::dict_edge_out` checks every dirty dict: each key the operator held that is still
+      present must cast (non-strictly: undetermined parts stay free) to its recorded type, and a
+      key that held an operator closure may not now hold a candidate closure. A removed key is
+      not checked (the operator then reads `None`); remove-then-re-add with another type is
+      refused (the check is on the final state).
+    - **Keys the candidate ADDS, and dicts the candidate BUILDS (decided, justified).** They are
+      NOT constrained. Nothing operator-side determined those positions: the operator reads them
+      as it reads any candidate output with no declared type, and the repository's own GOOD
+      control (`SUITE_FNTABLE`: the candidate builds and returns a dict of closures that the
+      operator reads) requires it. Refusing additions or non-empty candidate dicts would reject
+      honest suites; the alternative of refusing the operator's untyped READ of an un-snapshotted
+      key would reject every `dict_get` of candidate-built data. The invariant's wording for this
+      position is therefore: a Dict value is determined from the operator side exactly where the
+      operator put it; a value at a key the operator never held is candidate output, which a suite
+      that dispatches on its type pins with an annotation (`let r: i64 = X`, cast). Stated, not
+      implied: a candidate-built dict whose value the operator calls a method on UNPINNED still
+      selects the operator's impl by the candidate's chosen type (the `f64`/`str`/width choice) —
+      non-claim (1), unchanged for that position.
+    - **Cost bound.** One type per entry, taken ONCE per dict per epoch: O(entries) at the first
+      hand-over and after an operator-side dict mutation, O(1) per dict at a later hand-over of
+      an unchanged dict (the walk does not descend into a still-fresh dict). Verification costs
+      O(entries) only for a dict sealed code mutated since the last verification. A dict of more
+      than `DICT_SNAP_MAX` = 1,000,000 entries is REFUSED at the crossing, never skipped (a
+      skipped dict is one the candidate could retype). The honest-program sweeps (352 `.ax` files'
+      diagnostics, 55 `@[test]` files, the examples' exit codes) are unchanged by it, and no
+      example comes within three orders of magnitude of the bound.
+    - **Tests.** `sealed_code_cannot_retype_a_dict_entry_the_operator_held` (the review's
+      overwrite, remove-then-re-add, an alias in an array, a nested dict, `Wrap<Dict>`,
+      `Option<Dict>`, `[Dict]`, a generic `T` bound to the dict — each with its GOOD and WRONG
+      controls), `a_dict_the_candidate_mutated_is_verified_at_every_edge_back` (an operator
+      closure the candidate calls, a channel, a replaced operator closure),
+      `a_dict_the_candidate_adds_to_or_builds_still_crosses` (new keys, a candidate-built dict,
+      the operator retyping its own dict), `a_dict_over_the_snapshot_bound_is_refused_not_skipped`,
+      and through the real runner `a_dict_entry_the_operator_held_is_never_retyped_by_the_candidate`.
+      The effect-handler arm edge is hooked (`handler_edge_into`/`handler_edge_back`) and covered
+      only structurally by the verification primitive (no handler-specific attack test; no row).
+    - **Rows.** M1671 (bound), M1672 (retype check), M1673 (operator closure replaced), M1674
+      (dirty marking), M1675 (snapshot at a candidate fn's arguments), M1676 (verify at a candidate
+      fn's return), M1677-M1680 (the walk descends into a nested dict, `Option`/`Result`, struct
+      and enum fields, array and tuple elements), M1681 (the verdict is acted on). Matrix A106-A109. The call_closure and channel
+      hooks have no row: the return edge of the enclosing candidate fn re-checks the same dirty
+      dict, so removing one of them alone changes no outcome (an attack through it is refused
+      elsewhere, and a row there would score REFUSED_ELSEWHERE, never a kill).
+    - **Native codegen.** Unchanged: the seal is interpreter-only (part 1).
+    - **Operator deployment.** The guest image must be rebuilt (part 1 already requires it).
+    - **Matrix check.** `psv_matrix_check.py` FAILs on this branch only because A94 and A95 live
+      on other branches; FLOOR is 109 and it will pass once integrated.
 
 73. **`harden()` resets the process attributes a set-id exec preserves, derived from the full
     enumeration (C9 round 4c, workstream HARDEN; matrix A120-A127; rows M1600-M1620, M1622;

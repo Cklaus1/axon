@@ -379,7 +379,12 @@ impl<'p> Interp<'p> {
                     // same as `chan<T>()`. Its BUILTINS doc said "bounded
                     // channel with the given capacity" and now says what it does.
                     if name.starts_with("chan::<") || name == "Chan::new" {
-                        return Ok(Value::Chan(Rc::new(RefCell::new(VecDeque::new()))));
+                        let q = Rc::new(RefCell::new(VecDeque::new()));
+                        // Stamped with its stated element type, and its
+                        // creating side recorded (amendment 72).
+                        let elem = name.strip_prefix("chan::<").and_then(|s| s.strip_suffix('>'));
+                        self.chan_created(&q, elem);
+                        return Ok(Value::Chan(q));
                     }
                     // R13 native FFI: a native `M::fn(...)` call dispatches to the
                     // in-process mock shim (one impl, two engines — I-2).
@@ -404,6 +409,11 @@ impl<'p> Interp<'p> {
                             let mut v = self.eval(&args[0], env)?;
                             // Cast to every element type the channel crossed.
                             self.chan_send_check(q, &mut v)?;
+                            // The operator sends sealed code a value: dicts in
+                            // it are snapshotted (amendment 72 part 2).
+                            if !self.frame_sealed.get() {
+                                self.dict_edge_in(&v)?;
+                            }
                             q.borrow_mut().push_back(v);
                             Ok(Value::Unit)
                         }
@@ -1265,6 +1275,7 @@ impl<'p> Interp<'p> {
             arm_env.push();
             let bound = self.match_pattern(&binding, &payload, &mut arm_env);
             // The arm runs under the provenance of the `with` that installed it.
+            self.handler_edge_into(arm_sealed, &payload)?;
             let outcome = self.with_frame(arm_sealed, || {
                 crate::interp::contain_loop_control(
                     bound.and_then(|_| self.eval(&arm_body, &mut arm_env)),
@@ -1273,7 +1284,10 @@ impl<'p> Interp<'p> {
             });
             self.handlers.borrow_mut().extend(suspended);
             return match outcome {
-                Err(Flow::Resume(v)) => Ok(Some(v)),
+                Err(Flow::Resume(v)) => {
+                    self.handler_edge_back(arm_sealed, &v)?;
+                    Ok(Some(v))
+                }
                 Ok(v) => Err(Flow::Return(v)),
                 Err(other) => Err(other),
             };
@@ -1292,6 +1306,7 @@ impl<'p> Interp<'p> {
         let mut arm_env = Env::from_snapshot(captured);
         arm_env.push();
         let bound = self.match_pattern(&binding, &payload, &mut arm_env);
+        self.handler_edge_into(arm_sealed, &payload)?;
         let outcome = self.with_frame(arm_sealed, || {
             crate::interp::contain_loop_control(
                 bound.and_then(|_| self.eval(&arm_body, &mut arm_env)),

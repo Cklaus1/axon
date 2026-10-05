@@ -3357,6 +3357,21 @@ impl Parser {
 }
 
 /// Convert an `AxonType` to its canonical string form for encoding in synthetic names.
+/// Read back a type rendered by [`axon_type_to_str`] (the element type a
+/// `chan<T>()` call carries in its callee name). `None` when the text is not
+/// exactly one type.
+pub(crate) fn parse_type_text(s: &str) -> Option<AxonType> {
+    let tokens: Vec<Token> = crate::lexer::Lexer::tokenize(s)
+        .ok()?
+        .into_iter()
+        .map(|(t, _)| t)
+        .collect();
+    let n = tokens.len();
+    let mut p = Parser::new(tokens);
+    let ty = p.parse_type().ok()?;
+    (p.pos == n).then_some(ty)
+}
+
 fn axon_type_to_str(ty: &AxonType) -> String {
     match ty {
         AxonType::Named(n) => n.clone(),
