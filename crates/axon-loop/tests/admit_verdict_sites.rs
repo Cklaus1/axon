@@ -43,7 +43,11 @@ fn a_verifier_reported_failure_is_a_fail_never_a_pass() {
         "control: a genuine pass counts"
     );
     let (c0, c1) = challenger(Out::Fail, true);
-    assert_eq!(c1, Outcome::VerifiedPass, "control: the sibling still counts");
+    assert_eq!(
+        c1,
+        Outcome::VerifiedPass,
+        "control: the sibling still counts"
+    );
     if c0 == Some(Outcome::VerifiedPass) {
         panic!("ATTACK: a verifier-reported FAILURE was counted as a verified pass");
     }
@@ -55,9 +59,17 @@ fn a_verifier_reported_failure_is_a_fail_never_a_pass() {
 #[test]
 fn a_trial_with_no_delivered_episode_is_never_a_pass() {
     let (c0, _) = challenger(Out::Pass, true);
-    assert_eq!(c0, Some(Outcome::VerifiedPass), "control: delivered, it counts");
+    assert_eq!(
+        c0,
+        Some(Outcome::VerifiedPass),
+        "control: delivered, it counts"
+    );
     let (c0, c1) = challenger(Out::Pass, false);
-    assert_eq!(c1, Outcome::VerifiedPass, "control: the sibling still counts");
+    assert_eq!(
+        c1,
+        Outcome::VerifiedPass,
+        "control: the sibling still counts"
+    );
     if c0 == Some(Outcome::VerifiedPass) {
         panic!("ATTACK: a trial no episode was delivered for was counted as a verified pass");
     }
