@@ -327,3 +327,81 @@ fn grants_no_backend_can_enforce_are_unsupported_not_weakened() {
         assert_eq!(env.launch_records(), 0, "{name}: no launch record");
     }
 }
+
+/// An `axon-approval/1` token over (program, grant, decision), with its
+/// `approved_by` replaced AFTER its own digest was taken when `edited`.
+fn token_as(program_src: &str, g: &axon_os::Grant, decision: &str, edited: bool) -> String {
+    const U: char = '\u{1f}';
+    let pd = format!("axsha256:{}", sha256_hex(program_src.as_bytes()));
+    let gd = format!(
+        "axsha256:{}",
+        sha256_hex(axon_os::canonical_grant(g).as_bytes())
+    );
+    let td = format!(
+        "axtok1:{}",
+        sha256_hex(format!("{pd}{U}{gd}{U}alice{U}{decision}{U}low").as_bytes())
+    );
+    let by = if edited { "mallory" } else { "alice" };
+    json!({"schema":"axon-approval/1","program_digest":pd,"grant_digest":gd,
+           "approved_by":by,"decision":decision,"risk":"low","token_digest":td})
+    .to_string()
+}
+
+/// Amendment 75: each binding of an approval token, on the production route
+/// (submit → supervisor_admits → axon-os `authorize`, the step every profile
+/// takes before the profile split), each ALONE: under a grant that requires
+/// sign-off, a token approving ANOTHER program, ANOTHER grant, a decision
+/// other than `approved`, or metadata edited after its own digest admits
+/// nothing. Control: the token over exactly this program and grant runs.
+#[test]
+fn an_approval_token_admits_only_what_it_approved() {
+    let gated = format!("require_approval = true\n{GRANT_FS}");
+    // (attack, token builder over the program source and the resolved grant)
+    type Tok = fn(&str, &axon_os::Grant) -> String;
+    let cases: [(&str, Tok); 5] = [
+        ("control", |s, g| token_as(s, g, "approved", false)),
+        ("for another program", |_, g| {
+            token_as("fn main() { 1 }", g, "approved", false)
+        }),
+        ("for another grant", |s, g| {
+            let mut other = g.clone();
+            other.budget.cost_micro += 1;
+            token_as(s, &other, "approved", false)
+        }),
+        ("whose decision is not `approved`", |s, g| {
+            token_as(s, g, "rejected", false)
+        }),
+        ("whose metadata was edited after its digest", |s, g| {
+            token_as(s, g, "approved", true)
+        }),
+    ];
+    for (what, tok) in cases {
+        let env = Env::new();
+        let cfg = with_grants(&env, &[("grant:test", PRINCIPAL, &gated)]);
+        let g = cfg.grants.resolve("grant:test", PRINCIPAL).unwrap();
+        let src = std::fs::read_to_string(env.ws.join("f.ax")).unwrap();
+        std::fs::write(
+            env.grant_registry
+                .parent()
+                .unwrap()
+                .join("grant_test.approval"),
+            tok(&src, g.grant()),
+        )
+        .unwrap();
+        let s = submit(&request(&env, "op-tok", "t_ok").to_string(), &cfg).unwrap();
+        if what == "control" {
+            assert_eq!(
+                s.receipt.verification,
+                ReceiptVerification::Passed,
+                "control: the token over this program and grant: {s:?}"
+            );
+            continue;
+        }
+        assert!(
+            s.receipt.status == ReceiptStatus::Denied && spawn_count(&env.spawns) == 0,
+            "ATTACK: an approval token {what} admitted the job: {:?}",
+            s.receipt.status
+        );
+        assert_eq!(env.launch_records(), 0, "{what}: no launch record");
+    }
+}

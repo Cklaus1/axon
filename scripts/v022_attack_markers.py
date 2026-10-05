@@ -1633,3 +1633,17 @@ ATTACK_MARKERS.update({
 ATTACK_MARKERS.update({
     'M1681': r"ATTACK: sealed code retyped the operator's dict entry to a u8 \(the review's overwrite\): Ok\(Completed\)",
 })
+
+# C9 round 4c, workstream SITES (M1760-M1999; amendment 75).
+ATTACK_MARKERS.update({
+    'M1760': r'ATTACK: an output with no summary \(the run did not complete\) was counted as a pass',
+    'M1761': r'ATTACK: a registry file registered the suite id',
+    'M1762': r'ATTACK: a pinned suite reference with a second reading was WRITTEN to the config',
+    'M1763': r'ATTACK: an episode holding `corpus_role` twice \(two readings\) was recorded',
+    'M1764': r"ATTACK: a candidate that does not type-check passed the operator's test",
+    'M1765': r'ATTACK: a run whose registered test FAILED exited',
+    'M1766': r'ATTACK: an approval token whose decision is not `approved` admitted the job',
+    'M1767': r'ATTACK: an approval token for another program admitted the job',
+    'M1768': r'ATTACK: an approval token for another grant admitted the job',
+    'M1769': r'ATTACK: an approval token whose metadata was edited after its digest admitted the job',
+})

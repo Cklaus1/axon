@@ -1015,3 +1015,92 @@ fn t_solve() -> Result<i64, str> {
         "control: an honest Err is not a completed pass: {out}"
     );
 }
+
+// ── C9 round 4c, sites (amendment 75): `axon test`'s own refusals ──
+
+const ACCEPT: &str = "mod f\nuse f.{double}\n\n@[test]\nfn t_ok() { assert_eq(double(21), 42) }\n\n@[test]\nfn t_bad() { assert_eq(double(1), 3) }\n";
+
+/// [`run_sealed`]'s exact invocation, keeping the process's exit code.
+fn run_sealed_exit(tag: &str, cand: &str, test: &str) -> (String, Option<i32>) {
+    use std::io::Write;
+    let d = fresh(tag);
+    std::fs::create_dir_all(d.join("cand")).unwrap();
+    std::fs::create_dir_all(d.join("suite")).unwrap();
+    std::fs::write(d.join("suite/accept.ax"), ACCEPT).unwrap();
+    std::fs::write(d.join("cand/f.ax"), cand).unwrap();
+    let mut c = Command::new(env!("CARGO_BIN_EXE_axon"))
+        .current_dir(d.join("suite"))
+        .arg("test")
+        .arg(d.join("suite/accept.ax"))
+        .args([
+            "--json",
+            "--filter",
+            test,
+            "--exact",
+            "--completion-key-stdin",
+        ])
+        .arg("--seal")
+        .arg(d.join("cand"))
+        .env_clear()
+        .env("PATH", "/usr/bin:/bin")
+        .env("AXON_ALLOWED_EFFECTS", "IO")
+        .env(
+            "AXON_PATH",
+            format!("{}:{}", d.join("suite").display(), d.join("cand").display()),
+        )
+        .env("AXON_PATH_EXCLUSIVE", "1")
+        .env("XDG_CACHE_HOME", d.join("cache"))
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    writeln!(c.stdin.take().unwrap(), "{}", "0b".repeat(32)).unwrap();
+    let out = c.wait_with_output().unwrap();
+    (
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        out.status.code(),
+    )
+}
+
+/// A candidate that does not type-check is never tested: `axon test` aborts
+/// before running any test (exit 2, no result line), so a candidate whose
+/// body is ill-typed but would RUN to the right value (`let s: str = 5`
+/// never read) earns no pass and no completion token for the operator's
+/// test. Control: the well-typed candidate passes.
+#[test]
+fn a_candidate_that_does_not_type_check_is_never_tested() {
+    let ill = "fn double(x: i64) -> i64 {\n    let _s: str = 5\n    x * 2\n}\n";
+    let (out, code) = run_sealed_exit("ill-typed", ill, "t_ok");
+    assert!(
+        !out.contains("\"status\":\"ok\"") && !out.contains("\"completion\""),
+        "ATTACK: a candidate that does not type-check passed the operator's test: {out}"
+    );
+    assert_eq!(code, Some(2), "{out}");
+    let (out, code) = run_sealed_exit("well-typed", "fn double(x: i64) -> i64 { x * 2 }\n", "t_ok");
+    assert!(out.contains("\"status\":\"ok\""), "control: {out}");
+    assert_eq!(code, Some(0), "control: {out}");
+}
+
+/// A run whose registered test FAILED exits non-zero (3). The Fabric's
+/// verdict reads a failure only with a failing exit (psv.rs: "failed but the
+/// run exited"), so a failing run that exited 0 would be NO verdict: the
+/// failure suppressed. Control: a passing run exits 0.
+#[test]
+fn a_run_whose_test_failed_exits_nonzero() {
+    let honest = "fn double(x: i64) -> i64 { x * 2 }\n";
+    let (out, code) = run_sealed_exit("fail-exit", honest, "t_bad");
+    assert!(
+        out.contains("\"status\":\"failed\""),
+        "precondition: the test failed: {out}"
+    );
+    assert!(
+        code.is_some_and(|c| c != 0),
+        "ATTACK: a run whose registered test FAILED exited {code:?} (its failure would be read as \
+         no verdict): {out}"
+    );
+    assert_eq!(code, Some(3), "{out}");
+    let (out, code) = run_sealed_exit("pass-exit", honest, "t_ok");
+    assert!(out.contains("\"status\":\"ok\""), "control: {out}");
+    assert_eq!(code, Some(0), "control: a passing run exits 0: {out}");
+}

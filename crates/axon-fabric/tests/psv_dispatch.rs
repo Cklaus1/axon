@@ -2164,3 +2164,34 @@ fn a_protected_check_with_an_extra_argument_is_refused() {
         Err(e) => assert_eq!(e.kind(), "malformed", "{e}"),
     }
 }
+
+// ── C9 round 4c, sites (amendment 75): the certified parser's own refusal ──
+
+/// A run whose output has NO summary did not complete (a crash, a cut
+/// stream): the certified parser (`parse_axon_test_json`) gives no report, so
+/// even a genuine keyed pass line in that output is never a pass. The guest
+/// stand-in returns this launch's genuine pass (keyed, exit 0, its own
+/// inputs) with only the summary line removed and the output digest
+/// consistent. Control: the same launch with its summary is a pass.
+#[test]
+fn an_output_with_no_summary_is_no_verdict() {
+    let w = World::new();
+    let s = w.submit_with(w.lx("", ""), "op-psv-sum-ctl", "t_psv_ok");
+    assert_eq!(
+        s.receipt.verification,
+        ReceiptVerification::Passed,
+        "control: the genuine run with its summary: {:?}",
+        s.reason
+    );
+    let s = w.submit_with(w.lx("no-summary", ""), "op-psv-no-sum", "t_psv_ok");
+    assert!(
+        s.receipt.verification != ReceiptVerification::Passed && class(&s) != "protected",
+        "ATTACK: an output with no summary (the run did not complete) was counted as a pass: \
+         {:?} class {}",
+        s.receipt.verification,
+        class(&s)
+    );
+    assert_eq!(s.receipt.verification, ReceiptVerification::Unknown);
+    let why = s.reason.unwrap_or_default();
+    assert!(why.contains("produced no summary"), "{why}");
+}

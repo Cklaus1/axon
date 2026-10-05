@@ -577,6 +577,22 @@ fn psv_host_guest() {
         }
         // A failure, reported with a clean exit.
         "exit0" => v["exit_code"] = serde_json::json!(0),
+        // A GENUINE keyed pass whose output then lost its summary line (the
+        // run did not complete: amendment 75), consistently rehashed.
+        "no-summary" => {
+            let b = std::fs::read_to_string(od.join("test-stdout")).unwrap();
+            let kept: String = b
+                .lines()
+                .filter(|l| !l.contains("\"type\":\"summary\""))
+                .map(|l| format!("{l}\n"))
+                .collect();
+            assert_ne!(
+                kept, b,
+                "__psv-host-guest: the run printed no summary to drop"
+            );
+            std::fs::write(od.join("test-stdout"), kept).unwrap();
+            rehash(&od, &mut v);
+        }
         // The guest REFUSED, but everything else is a genuine pass (keyed
         // output, its digest, exit 0, this launch's inputs and test): the
         // guest's refusal alone must stand (M180).

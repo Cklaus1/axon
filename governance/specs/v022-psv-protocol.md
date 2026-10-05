@@ -3797,3 +3797,50 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       them missing on this branch alone.)
     - **Operator deployment.** None required. The helper must not be started by a process that
       made it a process-group leader (interactive job control); Fabric does not.
+
+
+## Amendment 75: the 118 dependency refusal sites are judged by their protected-route callers (C9 round 4c, sites)
+
+75. **NOT_YET_SCANNED is empty: `v022_refusal_coverage.py --freeze` holds.**
+    - **Before.** Amendment 71 brought the closure of the protected roots' normal workspace
+      dependencies into the refusal gate and listed 118 sites in 18 files as NOT YET SCANNED
+      (a freeze refused while any was listed).
+    - **After.** Every site was judged by reading its function and its callers on the protected
+      route (Fabric, root helper, launcher script, guest, runner, `psv::derive`; loop intake and
+      readiness), never by file. The ledger of every disposition, with its call-graph fact, is
+      `governance/notes/v022-dependency-sites.md`: 10 ROWS (M1760-M1769), 102 exemptions each
+      stating a checkable fact (81 not on the protected route, 15 operator-authored on it, 3 the
+      journal budget already exempt as not a verdict property, 1 named row, 1 nothing to admit,
+      1 usage) and 6 non-sites (test assertions of axon-cortex `lib.rs`, whose test module is
+      renamed `contract_tests` to `tests` so the gate's test-module rule applies). No bulk
+      exemption, no retirement record (nothing was retired).
+    - **Rows (each KILLED by its own attack on the production route).** M1760 the certified
+      verdict parser's no-summary refusal, through `submit` on the helper route
+      (`psv_dispatch an_output_with_no_summary_is_no_verdict`: a genuine keyed pass whose output
+      lost only its summary line, digest consistent; new stand-in tamper `no-summary`; control:
+      the same launch with its summary passes). M1761 the one suite-id rule, through the registry
+      FILE the `axon-fabric` binary loads (`CheckRegistry::load`); M1762 the suite-reference
+      parser's version and entry rule (the loop config writer); M1763 the strict parser's
+      duplicate-key refusal (intake of an episode holding `corpus_role` twice). M1764/M1765
+      `axon test` in the runner's exact invocation: the type-check abort (an ill-typed candidate
+      that would run to the right value earns no pass) and the failing exit (`3`, which `derive`
+      cross-checks against the verdict). M1766-M1769 the approval token's four bindings (decision,
+      program, grant, its own digest) through `submit`'s axon-os admission, each alone.
+    - **Custodian usage-die anchor overlap.** The usage arm could not be exempted: M631's guarded
+      statement (`cu::check_store(..).unwrap_or_else(die)`) sat four lines below, so the gate's
+      guard block for it reached up to the `_ =>` arm and every anchor for the usage arm was
+      "exempt yet covered by M631". The store check is now its own `if let Err(e) = .. { die(&e) }`
+      (behaviour unchanged), M631 is re-anchored on it and re-run, and the usage arm carries its
+      own USAGE exemption.
+    - **Audit follow-ups (applied at integration).** (F2) The ledger's claim that axon-audit is
+      "reached only via axon-os cli.rs" was textually wrong: axon-core, the `axon` binary the guest
+      execs, links it (preflight.rs; main.rs `set_ledger_path`, `flush_ledger`;
+      interp/builtins.rs `append_global`, `append_ai_call`). The ten axon-audit exemptions now
+      carry the reason that holds: the psv runner execs `axon test` with `env_clear()` and sets no
+      `AXON_AUDIT_LEDGER`, and every audit failure in axon-core is only printed or discarded
+      (`let _ =`), never an exit code or a verdict (category NOT A VERDICT PROPERTY). (F3)
+      `Coalition::new` is `pub`; the checkable fact is that it has no non-test CALLER (only
+      `axon-os/tests/r27_acceptance.rs`), and the five coalition exemptions say so. `ledger.rs:74`
+      is the journal's real spend check (the admission budget guard); its exemption says so and
+      stays "not a verdict property" because its refusal is the journal's `BudgetExceeded`.
+    - **Matrix.** None. **Operator deployment.** None.

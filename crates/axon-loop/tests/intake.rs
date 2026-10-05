@@ -3553,3 +3553,47 @@ fn an_ack_of_another_schema_or_view_is_never_joined() {
         }
     }
 }
+
+// ── C9 round 4c, sites (amendment 75): one key, one reading ──
+
+/// A loop document holding one key twice has two readings: a first-wins
+/// reader sees `discovery`, a last-wins one `mechanism_test`. Every loop
+/// document passes the strict parser (`axon_cortex::parse_strict`, through
+/// `canonical::parse_value`) on its raw bytes, which refuses the second
+/// spelling instead of letting it replace the first. Driven through intake,
+/// the route that records an episode. Control: the episode with the key once
+/// is recorded.
+#[test]
+fn an_episode_holding_one_key_twice_is_never_recorded() {
+    let c = case(Some(500));
+    let raw = c.ep.to_string().replacen(
+        "\"corpus_role\":\"mechanism_test\"",
+        "\"corpus_role\":\"discovery\",\"corpus_role\":\"mechanism_test\"",
+        1,
+    );
+    assert_ne!(raw, c.ep.to_string(), "precondition: the key is doubled");
+    let intake = |episode: &str| {
+        intake_episode(
+            &c.s,
+            &IntakeInput {
+                episode,
+                context: &c.ctx.to_string(),
+                acks: &[c.ack.to_string()],
+                projection: None,
+                source_episode: None,
+                verification_request: None,
+                verification_receipt: None,
+                verification_attestation: None,
+                verification_psv_evidence: None,
+            },
+        )
+    };
+    if let Ok(out) = intake(&raw) {
+        panic!(
+            "ATTACK: an episode holding `corpus_role` twice (two readings) was recorded, as {:?}",
+            out.record.corpus_role
+        );
+    }
+    let out = intake(&c.ep.to_string()).expect("control: the episode with the key once");
+    assert_eq!(out.record.corpus_role, CorpusRole::MechanismTest);
+}
