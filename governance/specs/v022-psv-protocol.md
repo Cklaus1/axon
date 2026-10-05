@@ -3049,6 +3049,19 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       `pick(None, ·)`. Already refused at baseline and still refused: tuple, array,
       `Option<T>` and `Result<T, E>` of a parameter. Honest controls (identity and relay
       programs over each shape) pass before and after.
+      Pinned together in `a_type_parameter_inside_any_shape_is_never_filled_by_the_candidate`
+      (tuple, array, `Option`, `Result`, each of those around a `Wrap<T>`, `Wrap<T> -> T`, two
+      parameters, a returned closure, a generic impl's method).
+      `host_await_val` crossings: unreachable inside a seal — a sealed `axon test` has no host
+      driver, so the call returns its refusal (`a_host_await_crossing_is_unavailable_…`).
+      Trait-bounded `T: Judge` is unreachable for a candidate (a sealed module cannot name an
+      operator trait). **STILL OPEN, measured**: a `Dict` the operator hands a sealed frame —
+      `Dict` carries no element types, so the candidate overwrites an existing key with a
+      `u8` and the operator's `x.ok()` on its untyped `dict_get` runs the `u8` impl (keyed
+      pass). Pinned as RECORDED by
+      `an_untyped_dict_value_the_candidate_filled_is_a_recorded_open_position`; closing it
+      needs `Dict` element types (or a snapshot of the operator's key types checked at the
+      return edge), a language change, and is non-claim (1).
     - **Rows.** M1660 (creation stamp; attack: the candidate re-declares the operator's
       `chan<i64>()` as `Chan<u8>` through a dict hop, which the send-side rule alone accepts),
       M1661 (sealed send on an operator channel), M1662 (channel at a strict crossing), M1663
@@ -3066,7 +3079,12 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       `a_value_at_an_undetermined_position_never_crosses_a_seal`,
       `a_fn_with_no_declared_return_type_hands_the_operator_unit`,
       `an_operator_closure_called_from_sealed_code_takes_only_determined_arguments`,
-      `a_handle_binding_admits_only_that_handle`. CLI (`crates/axon-core/tests/cli_run.rs`):
+      `a_handle_binding_admits_only_that_handle`,
+      `a_type_parameter_inside_any_shape_is_never_filled_by_the_candidate`,
+      `a_host_await_crossing_is_unavailable_inside_a_sealed_test_run`,
+      `an_untyped_dict_value_the_candidate_filled_is_a_recorded_open_position` (recorded, not a
+      refusal). M1148's test now reaches the queued-value cast through a `Chan::new` channel
+      (a stamped `chan<i64>()` refuses the send first). CLI (`crates/axon-core/tests/cli_run.rs`):
       `a_method_call_on_unit_without_an_impl_is_e0403`,
       `an_impl_for_a_type_the_runtime_represents_as_another_is_e0505`. Real runner
       (`crates/axon-psv/tests/sealed_frames.rs`):
