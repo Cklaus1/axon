@@ -1074,13 +1074,25 @@ fn assert_never_runs(
     why: &str,
 ) {
     let s = submit(&r.to_string(), cfg).unwrap();
-    assert!(
-        s.receipt.status == ReceiptStatus::Unsupported
-            && spawn_count(&env.spawns) == 0
-            && env.launch_records() == 0,
-        "ATTACK: {what}, and it ran: {:?} on {:?} ({:?})",
+    // The attack is that the request RAN: a process was spawned or a launch
+    // was recorded. A refusal by a LATER layer (axon-os admission denying what
+    // selection let through) is not the attack succeeding: it used to read as
+    // one, so a request refused by the supervisor's isolation guard counted as
+    // "ran" for the selection row that had been removed.
+    if spawn_count(&env.spawns) != 0 || env.launch_records() != 0 {
+        panic!(
+            "ATTACK: {what}, and it ran: {:?} on {:?} ({:?}), {} spawns, {} launch records",
+            s.receipt.status,
+            s.backend,
+            s.reason,
+            spawn_count(&env.spawns),
+            env.launch_records()
+        );
+    }
+    assert_eq!(
         s.receipt.status,
-        s.backend,
+        ReceiptStatus::Unsupported,
+        "setup: refused, but not by selection ({:?})",
         s.reason
     );
     assert!(
