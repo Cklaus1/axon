@@ -75,7 +75,7 @@ fn restart_child() {
 /// Run a real submitting process that dies at `boundary`. Returns its exit status.
 fn crash_submit_at(env: &Env, req: &serde_json::Value, boundary: Boundary) {
     std::fs::write(env.dir.path().join("req.json"), req.to_string()).unwrap();
-    let st = Command::new(std::env::current_exe().unwrap())
+    let st = Command::new(axon_fabric::readiness::running_image())
         .args(["restart_child", "--exact", "--ignored", "--test-threads=1"])
         .env("FABRIC_RESTART_ROOT", env.dir.path())
         .env("FABRIC_RESTART_AT", boundary.name())

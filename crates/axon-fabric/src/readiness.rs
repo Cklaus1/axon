@@ -1133,15 +1133,47 @@ fn certified_waivers(
 /// Schema of `scripts/trust_root_preflight.sh`'s report.
 pub const TRUST_PREFLIGHT_SCHEMA: &str = "axon-trust-preflight/1";
 
+/// The path that names THIS PROCESS'S executable image, not whatever file
+/// happens to sit at its install path now. `std::env::current_exe()` is a
+/// PATH: when another process replaces the file (cargo relinking a test binary
+/// for a sibling shard, an installer swapping the verifier) it reads
+/// `".../name (deleted)"`, which neither opens nor spawns. `/proc/self/exe`
+/// keeps naming the image that is running. (Sharded suite, C9 shardflake: a
+/// touched git index made the next shard's `cargo test` relink the binary
+/// under running siblings, whose digest then read "unknown".)
+pub fn running_image() -> PathBuf {
+    #[cfg(target_os = "linux")]
+    {
+        PathBuf::from("/proc/self/exe")
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        std::env::current_exe().unwrap_or_default()
+    }
+}
+
+/// sha256 of the image this process is running ([`running_image`]), read
+/// through one descriptor and bounded like every other evidence read; `None`
+/// when it cannot be read.
+fn running_image_sha256() -> Option<String> {
+    use std::io::Read;
+    const MAX: u64 = 256 << 20;
+    // NOT `read_regular`: that refuses a symlink, and /proc/self/exe is one.
+    let f = std::fs::File::open(running_image()).ok()?;
+    if !f.metadata().ok()?.is_file() {
+        return None;
+    }
+    let mut b = Vec::new();
+    f.take(MAX + 1).read_to_end(&mut b).ok()?;
+    (b.len() as u64 <= MAX).then(|| sha256_hex(&b))
+}
+
 /// WHAT is deciding: this binary's own digest and build provenance (build.rs).
 /// Recorded in every verdict, and bound by a certification
 /// (`readiness_verifier_sha256`), so replacing the installed verifier is a
 /// visible change of authority, never a silent one.
 pub fn verifier_identity() -> Value {
-    let sha = std::env::current_exe()
-        .ok()
-        .and_then(|p| sha256_file(&p).ok())
-        .unwrap_or_else(|| "unknown".into());
+    let sha = running_image_sha256().unwrap_or_else(|| "unknown".into());
     json!({
         "sha256": sha,
         "build": if TEST_TRUST_BUILD { "test-trust" } else { "production" },
