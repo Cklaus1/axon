@@ -6386,8 +6386,8 @@ MUTATIONS += [
      '        VerificationResult::Failed => (\n            Outcome::VerifiedPass,\n            "verifier reported failure".into(),\n            None,\n        ),',
      'axon-loop', _AV, 'a_verifier_reported_failure_is_a_fail_never_a_pass'),
     ('M1784', "EVL (admit): a trial no episode was delivered for is Unknown, never a pass", 'crates/axon-loop/src/evl.rs',
-     '                    Outcome::Unknown,\n                    "missing: no episode delivered".to_string(),',
-     '                    Outcome::VerifiedPass,\n                    "missing: no episode delivered".to_string(),',
+     '                arm.missing += 1;\n                (\n                    Outcome::Unknown,\n                    "missing: no episode delivered".to_string(),',
+     '                (\n                    Outcome::VerifiedPass,\n                    "missing: no episode delivered".to_string(),',
      'axon-loop', _AV, 'a_trial_with_no_delivered_episode_is_never_a_pass'),
 ]
 
