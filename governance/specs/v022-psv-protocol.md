@@ -3002,48 +3002,79 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       environment, interpreter digest) and persisted (`<target>/v022-pd-baselines/<commit>.json`,
       or `--baseline-cache=DIR` shared by the shard clones of one commit); a reused verdict is
       used only after this target dir builds the suite from the clean tree; never across commits.
-    - **Measured consequence.** The sound selection removes NO consumer the previous rule ran (148
+    - **Measured consequence (before the narrowing below).** The sound selection removes NO consumer the previous rule ran (148
       records); it adds about 20 test targets to every non-core record and ten whole suites to the
       three axon-core records. Clean-tree run time of the added targets (this host, under the
       concurrent final run): axon-core six targets 1094 s, axon-psv three 713 s, axon-cortex four
       246 s, axon-os four 13 s, intent/ledger/guest-init/loop-contracts under 10 s each. A full
       run is therefore SLOWER than before, not faster: the previous consumer set under-tested.
-    - **One record end to end (M400, fabric-owned, at f6c20335; host load 10-30 from the
-      concurrent final run, so only the step durations WITHIN this run compare).** Cells identical
-      to the previous harness's record of M400 (baseline / retired-off / sibling-off REFUSED,
-      set-off SUCCEEDS, full suite SUITE_OK). Selected: axon-core, axon-cortex, axon-guest-init,
-      axon-intent, axon-ledger, axon-os, axon-psv (targets); skipped 19 packages with reasons.
-      Steps (s): own fabric suite clean 402 / mutated 362; consumers mutated: axon-core 955,
-      axon-psv 573, axon-cortex 270, axon-os 13, the rest under 2 each (clean baselines 1341, 649,
-      343, 14); cells 30 / 23 / 17; record 5035, of which 2752 are clean baselines a later record
-      or shard reuses. Steady state for a fabric record: about 2250 s against about 430 s for the
-      same steps under the previous selection.
-    - **Defect found by that run (fixed).** The record failed CLOSED on the interpreter check:
-      axon-core's consumer targets, built in their default (codegen) configuration, wrote
-      `debug/axon`, and cargo does not re-copy the fresh `--no-default-features` build over it,
-      so the following cells met another interpreter. A package whose binary the run pins (the
+    - **Defect found end to end (fixed).** M400's first run (f6c20335) failed CLOSED on the
+      interpreter check: axon-core's consumer targets, built in their default (codegen)
+      configuration, wrote `debug/axon`, and cargo does not re-copy the fresh
+      `--no-default-features` build over it. A package whose binary the run pins (the
       prerequisite commands, one list) now runs as a consumer in that pinned configuration; each
       consumer's cargo command is recorded in `matrix.consumer_suites`.
-    - **Estimate.** Previous full run (pd6, 6 shards, 148 records): about 8.5 h wall per shard,
-      about 21 min per record. Under this rule: about +30 min per non-core record in the added
-      consumer targets (dominated by axon-core `cli_run`/`harness_integrity`, axon-psv `runner`,
-      axon-cortex `cli`), minus one shared build of edit A (seconds) and minus each shard's
-      repeated clean baselines when shards share `--baseline-cache` (about 45 min per shard):
-      about 50 min per record, about 20 h wall on 6 shards. The over-inclusion that costs most is
-      the walker clause applied to `script_spawn`'s freshness check (it lists only the package it
-      builds and that package's path dependencies, which E already covers); narrowing it needs a
-      rule for a listing whose base is computed, and is left to review, not done here.
+    - **Base derivation (narrowing, provable).** The walker clause made `script_spawn`'s
+      freshness walk a whole-tree listing, selecting every unit that includes it. A computed
+      listing base is now resolved by how it is derived (scripts/v022_pd_consumers.py,
+      `listing_base`): a function whose only base is crates/ joined with a PARAMETER, whose
+      worklist grows only from the `path = "..."` entries of the Cargo.toml files it reads, and
+      whose root value is joined only to crates/ or files or handed to a same-file function that
+      only anchors a listing at it (`git -C root ls-files -- dir`, rebasing that output), lists
+      exactly the manifest closure (every dependency edge) of the package passed in. Proof: its
+      worklist starts at one package directory and grows only by that package's manifest path
+      dependencies; nothing else is listed. The package passed in is one the unit names as a
+      literal cargo `-p` (the only place a unit takes a package from: a listing that chose one
+      would itself be a whole-tree listing, an environment value is doubt); the unit is relevant
+      iff X is in the manifest closure of such a package. A `-p` followed by an expression, no
+      `-p` at all, crates/ or the root listed, a relative root literal: whole tree (selection-suite
+      controls for each). Second narrowing, same discipline: a `<NAME>_BIN` in a `const`/`static`
+      `&[&str]` list never used in a function that reads the environment is a variable NAME (the
+      list `script_spawn` strips from a child), not a binary the unit locates; a list read from
+      the environment stays an exec (control). Effect: axon-psv's three targets, axon-os's four,
+      axon-intent's and axon-cortex's `check_executor`/`cli` leave every non-core record (they
+      reach none of loop, loop-contracts, fabric); nothing a record ran under the previous
+      harness is removed (148 records).
+    - **Measured, M400 end to end (fabric-owned), host load 2-8.** Cells identical in every run to
+      the previous harness's record (baseline / retired-off / sibling-off REFUSED, set-off
+      SUCCEEDS, full suite SUITE_OK), interpreter restored. Per-step seconds:
+
+      | step | 1466b89a cold | 1466b89a warm cache | narrowed cold |
+      |---|---|---|---|
+      | clean baselines (all suites) | 1313 | 4 (reused) | 975 |
+      | own fabric suite, A applied | 231 | 209 | 207 |
+      | axon-core 6 targets | 785 | 761 | 680 |
+      | axon-psv 3 targets | 203 | 185 | -- |
+      | axon-cortex targets | 110 (4) | 97 (4) | 33 (2) |
+      | os / intent / ledger / guest-init | 15 | 14 | 1 |
+      | cells (baseline, set-off, sibling-off) | 24 | 23 | 24 |
+      | record | 2691 | 1301 | 1928 |
+
+      Steady state (baselines reused) for a fabric record: about 960 s under the narrowed rule,
+      against about 230 s for the same steps under the previous selection.
+    - **Estimate.** Per record the sound selection adds about 12 min (axon-core's targets
+      dominate: `cli_run`, `harness_integrity`) over the previous harness, after the narrowing
+      (about 18.5 min before it). For 148 records on 6 shards sharing `--baseline-cache`: about
+      +5 h over the previous run's ~8.5 h, i.e. about 13-14 h wall at pd6's load. The remaining
+      whole-tree units are genuine readers (refusal gate, harness_binaries scanning every spawn
+      site, ledger authority_reachability, cli_run's corpus and crate-list walks, the guest-image
+      script) or doubt, and stay.
+    - **Hosts (amendment 67, second part).** Every record's `environment.host` names hostname,
+      kernel, cores, memory and the toolchain (`rustc -vV`, `cargo -V`, system LLVM). --join
+      refuses a record without it and records from different toolchains (row M1505); shards from
+      several hosts with one toolchain join, and the joined file lists the hosts.
     - **Rows.** M1500 (--join's selection check), M1501 (a skipped consumer needs its reason),
       M1502 (a reachable consumer is never skipped), M1503 (a passing cell ran its selected
-      consumers), M1504 (currency: a selection no longer the rule's is stale); attacks
+      consumers), M1504 (currency: a selection no longer the rule's is stale), M1505 (--join
+      refuses two toolchains; attack `a_join_refuses_records_from_two_toolchains`); attacks
       `a_join_refuses_a_record_without_a_consumer_selection`,
       `a_join_refuses_a_skipped_consumer_without_a_reason`,
       `a_join_refuses_a_record_that_skips_a_reachable_consumer` (control: the rule's selection
       joins), `a_join_refuses_a_passing_cell_that_ran_none_of_its_consumers`,
-      `a_kept_record_is_stale_once_a_new_consumer_reaches_it` (harness_integrity). All five
+      `a_kept_record_is_stale_once_a_new_consumer_reaches_it` (harness_integrity). All six
       KILLED by their own attack. The rule's clauses are judged by
       `scripts/test_v022_paired_disable_selection.py` (synthetic workspaces, one ATTACK or
       CONTROL per inclusion case and a 200-graph property); each of its 18 clauses removed fails
-      that suite. Unused M1505-M1519.
+      that suite, as does each base-derivation and names-only clause. Unused M1506-M1519.
     - **Matrix.** None. **Operator deployment.** None. Every existing paired-disable record is
       stale under this amendment (it carries no selection) and is re-executed.
