@@ -1484,3 +1484,8 @@ ATTACK_MARKERS.update({
     'M1488': r'ATTACK: a wrapped script that guesses its binary ran',
     'M1489': r'ATTACK: the root helper spent the nonce through a custodian program the operator\s+never pinned',
 })
+
+# C9 round 4c, r4c-fixes part 1 (M1655; amendment 71).
+ATTACK_MARKERS.update({
+    'M1655': r'ATTACK: a leftover run dir of a crashed process with the same pid refused the\s+retry',
+})
