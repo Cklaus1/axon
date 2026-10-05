@@ -907,6 +907,20 @@ fn a_suite_entry_outside_the_suite_tree_never_runs() {
     assert_eq!(run(&fx.cfg).status, GuestStatus::Passed, "control");
 }
 
+/// C9 round 4c, ADMIT (amendment 76): a refusal is a verdict of its own
+/// (`refused` builds it), and a refusal reported as a pass would launder what
+/// the runner declined to run. Same attack as
+/// `a_suite_entry_outside_the_suite_tree_never_runs`, judged on the status.
+#[test]
+fn a_refusal_is_never_reported_as_a_pass() {
+    let fx = fixture_at("../candidate/f.ax", "t_cand_probe", false);
+    let v = run(&fx.cfg);
+    if v.status == GuestStatus::Passed {
+        panic!("ATTACK: a refused run (a suite entry outside the suite tree) was reported as a PASS: {v:?}");
+    }
+    assert_eq!(v.status, GuestStatus::Refused, "{v:?}");
+}
+
 /// A candidate that floods stderr past the manifest's output limit while the
 /// registered test genuinely passes. The limit is part of the launch: a run
 /// that exceeded it was truncated, and a truncated run yields no verdict.

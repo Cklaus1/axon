@@ -1068,3 +1068,24 @@ fn a_blob_planted_before_publication_never_materializes() {
         "ATTACK: a blob planted under another content's name before publication was materialized"
     );
 }
+
+/// C9 round 4c, ADMIT (amendment 76): the receipt is the verdict, so a verdict
+/// over bytes the run did not judge is a false verdict. The same attack as
+/// `a_legacy_single_file_swapped_before_launch_never_yields_a_verdict_on_the_original`
+/// (the file is swapped under the run), judged on what the RECEIPT claims: not
+/// passed and not failed, whichever way the swapped file's own test went.
+#[test]
+fn a_verdict_over_bytes_the_run_did_not_judge_is_never_receipted() {
+    use axon_loop_contracts::ReceiptVerification as V;
+    let env = Env::new();
+    let mut cfg = env.cfg(0);
+    cfg.pre_launch_hook = Some(swap_workspace_file);
+    let s = submit(&request(&env, "op-swap-v", "t_ok").to_string(), &cfg).unwrap();
+    if matches!(s.receipt.verification, V::Passed | V::Failed) {
+        panic!(
+            "ATTACK: a {:?} verdict was receipted over bytes the run did not judge ({:?})",
+            s.receipt.verification, s.reason
+        );
+    }
+    assert_eq!(s.receipt.verification, V::Unknown, "{:?}", s.reason);
+}

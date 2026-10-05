@@ -325,12 +325,12 @@ OUT_OF_SCOPE = {
 # (file -> sites with neither a row nor an exemption, as last measured). The
 # gate re-measures each count and refuses a stale one, in both directions.
 NOT_YET_SCANNED = {
-    "crates/axon-fabric/src/backend.rs": 13,
+    "crates/axon-fabric/src/backend.rs": 8,
     "crates/axon-fabric/src/custodian.rs": 1,
     "crates/axon-fabric/src/git_data.rs": 2,
     "crates/axon-fabric/src/protected_host.rs": 1,
-    "crates/axon-fabric/src/submit.rs": 20,
-    "crates/axon-psv/src/runner.rs": 5,
+    "crates/axon-fabric/src/submit.rs": 11,
+    "crates/axon-psv/src/runner.rs": 2,
 }
 SITE = re.compile(r"return Err\(|\bErr\(format!|\brefuse\(|\bErr\(bad\(|TEST_TRUST_BUILD")
 # Amendment 74: a `let .. else {` is the opener of its refusal too.

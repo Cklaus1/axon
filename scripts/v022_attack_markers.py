@@ -1745,3 +1745,19 @@ ATTACK_MARKERS.update({
     'M1811': r'ATTACK: a completed episode whose execution receipt records an unsupported request: the trial counted',
     'M1812': r'ATTACK: a completed episode whose execution receipt records an? (unknown outcome|timeout): the trial counted',
 })
+ATTACK_MARKERS.update({
+    'M1813': r"ATTACK: a lone failure line without K's failure token was recorded as a failure \(keyed=false\)",
+    'M1814': r'ATTACK: a refused run \(a suite entry outside the suite tree\) was reported as a PASS',
+    'M1815': r'ATTACK: a result\.json of another schema was receipted as a COMPLETED run',
+    'M1816': r'ATTACK: a cleanup not confirmed complete was receipted as a COMPLETED run',
+    'M1817': r'ATTACK: an output the result says is not bound was receipted as a COMPLETED run',
+    'M1818': r'ATTACK: an output --verify-result did not re-bind was receipted as a COMPLETED run',
+    'M1819': r'ATTACK: a result with no workload_exit was receipted as a COMPLETED run',
+    'M1820': r'ATTACK: a launcher exit 0 over a workload that exited 5 was receipted as a COMPLETED run',
+    'M1821': r'ATTACK: a result\.json of another schema was receipted as a COMPLETED run',
+    'M1822': r'ATTACK: a launch the launcher refused \(exit 22\) was receipted as a COMPLETED run',
+    'M1823': r'ATTACK: a run that timed out \(exit 20\) was receipted as a COMPLETED run',
+    'M1824': r'ATTACK: a failing NAMED check was receipted with a Passed verification',
+    'M1825': r'ATTACK: a run with a failing check \(no name given\) was receipted Passed',
+    'M1826': r'ATTACK: a (Passed|Failed) verdict was receipted over bytes the run did not judge',
+})
