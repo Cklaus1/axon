@@ -440,7 +440,6 @@ fn must_hold(r: &Path, args: &[&str], attack: &str) {
 #[test]
 fn a_function_that_decides_by_bool_or_option_is_a_site() {
     let r = tree("pred");
-    holds(&r, &[], "the unedited copy");
     add_code(
         &r,
         SCANNED,
@@ -456,6 +455,9 @@ fn a_function_that_decides_by_bool_or_option_is_a_site() {
         "fn gate_probe_option(x: u64) -> Option<u64>",
         "a function deciding by Option (a `return None` refusal), with no row and no exemption, was not a site",
     );
+    let c = tree("pred-control");
+    holds(&c, &[], "the unedited copy");
+    let _ = std::fs::remove_dir_all(&c);
     let _ = std::fs::remove_dir_all(&r);
 }
 
@@ -469,7 +471,6 @@ fn a_function_that_decides_by_bool_or_option_is_a_site() {
 #[test]
 fn a_row_covers_only_what_its_edit_changes() {
     let r = tree("changed");
-    holds(&r, &[], "the unedited copy");
     let o = gate(&r, &["--without=M1726"]);
     let t = text(&o);
     if o.status.success()
@@ -497,6 +498,9 @@ fn a_row_covers_only_what_its_edit_changes() {
     }) {
         panic!("ATTACK: a row whose edit changes nothing covered a refusal site: {t}");
     }
+    let c = tree("changed-control");
+    holds(&c, &[], "the unedited copy");
+    let _ = std::fs::remove_dir_all(&c);
     let _ = std::fs::remove_dir_all(&r);
 }
 
