@@ -3097,3 +3097,82 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       WITHOUT `command` (the observer program the runbook installed is no longer used); the
       preflight probes that the Fabric uid (and every agent) cannot read the key or connect to the
       observer socket.
+
+73. **`harden()` resets the process attributes a set-id exec preserves, derived from the full
+    enumeration (C9 round 4c, workstream HARDEN; matrix A120-A127; rows M1600-M1620, M1622;
+    M1621 and M1623-M1629 unused).** No counting rule is relaxed.
+    - **Before.** Round 4c's SENTINEL review (MAJOR-ADJACENT): `harden()` reset signals, mask,
+      umask, cwd, descriptors, environment and seven limits, and nothing else. A caller that armed
+      `ITIMER_REAL` before exec made the setuid helper die of SIGALRM (exit 142); ^C written to a
+      pty the caller owns killed it with SIGINT (the helper sat in the caller's foreground process
+      group). Both reproduced; the enumeration below is the single source for what else a caller
+      hands down (execve(2) "preserved across execve", credentials(7), prctl(2)).
+    - **After.** `harden()`: disarms ITIMER_REAL/VIRTUAL/PROF (M1600-M1602; POSIX timers are
+      deleted by execve and need nothing) FIRST, so a timer cannot fire between the disposition
+      reset and the disarm; `setsid()` (M1603), whose failure (EPERM: the helper is a process
+      group leader) sets a flag that `session_left()` reports and the helper binary refuses the
+      launch on (exit 30, `could not leave its caller's session`), checked beside
+      `setuid_honoured` so `harden()`'s signature is unchanged (M1604; the check is not on
+      `--probe`, which launches nothing). Fabric spawns the helper as an ordinary child and
+      reads stdout to EOF then `wait()`s (backend.rs), so `setsid` is compatible; an operator who
+      runs the helper from an interactive shell's job control gets the refusal. Limits: STACK
+      8 MiB soft/unlimited hard, RSS and LOCKS unlimited, MEMLOCK 8 MiB, SIGPENDING unlimited,
+      MSGQUEUE 819200, NICE 0, RTPRIO 0, RTTIME unlimited (M1605-M1613); with the earlier seven
+      that is all sixteen, and `every_resource_limit_the_kernel_lists_is_one_harden_resets` (A126)
+      fails if `/proc/self/limits` lists another. Scheduling: nice 0 (M1614), I/O class none
+      (M1615), SCHED_OTHER (M1616, which also clears reset-on-fork), every CPU (M1617). Kernel
+      state: oom_score_adj 0 (M1618), timer slack 50000 ns (M1619; an explicit value, because
+      `PR_SET_TIMERSLACK 0` restores the INHERITED default, i.e. the caller's), personality
+      PER_LINUX (M1620), child-subreaper cleared (M1622). Every reset is best effort for a
+      test-trust helper that is not root (limits fall back to what the hard limit allows).
+    - **Operator-visible change.** The helper and the launcher it runs now run at nice 0, I/O
+      class none, SCHED_OTHER, oom_score_adj 0 and every CPU whatever the Fabric unit set
+      (`Nice=`, `OOMScoreAdjust=`, `CPUAffinity=`, `IOSchedulingClass=`): those are caller state,
+      not the helper's. A unit that wants a different policy for the root side needs the D2
+      follow-up (the helper in its own unit).
+    - **Disposition of every preserved attribute.** R = reset in `harden()` (row); H = harmless
+      because; C = covered by a named guard.
+      | Attribute | Disposition |
+      |---|---|
+      | real/saved uid and gid, supplementary groups | C: `become_root` (`setgroups(0)`, `setresgid`, `setresuid`) before any act as root; M-row: the become_root attack |
+      | capabilities (inheritable, bounding set), securebits | H: only a caller holding CAP_SETPCAP can change them, and a lowered bounding set or NOROOT leaves a euid-0 helper WITHOUT the capability, which `become_root` refuses (fail closed) |
+      | NoNewPrivileges, nosuid, user namespace, ptrace-tracing (set-id ignored) | C: `setuid_honoured` / euid rule (amendment 65, M602) |
+      | seccomp filters, Landlock domains | C: both need NoNewPrivileges for an unprivileged caller, which makes the kernel ignore the set-id bit (as above) |
+      | dumpable | R before: `PR_SET_DUMPABLE 0` (amendment 65 exemption); set-id exec also resets it |
+      | core limit, CPU, FSIZE, DATA, AS, NPROC, NOFILE | R: M1479, M1480, M1482 |
+      | STACK, RSS, MEMLOCK, LOCKS, SIGPENDING, MSGQUEUE, NICE, RTPRIO, RTTIME | R: M1605-M1613 |
+      | signal dispositions, mask | R: M1474, M1475, M1481 |
+      | pending signals | H: the caller can `kill` the helper at any moment before `become_root` makes the real uid 0, so a pending one adds nothing; after it only root can signal |
+      | umask, cwd, root directory | R: M1476, M1477; chroot needs CAP_SYS_CHROOT (the caller has none) |
+      | open descriptors above stderr, file locks on them | R: M1478 (`close_range`) |
+      | descriptors 0-2 closed or hostile | H: Rust's std reopens a closed 0-2 to /dev/null before `main` (measured: `--probe` with all three closed exits 0); what the caller put there is the caller's own file |
+      | environment | R: M1487 (and `sealed_exec::command` for children, M228) |
+      | process group, session, controlling terminal | R: M1603, M1604 |
+      | interval timers | R: M1600-M1602 (POSIX timers: deleted by execve) |
+      | nice value, I/O priority, scheduling policy, CPU affinity | R: M1614-M1617 |
+      | oom_score_adj, timer slack, personality, child subreaper | R: M1618, M1619, M1620, M1622 |
+      | PR_SET_TSC | H, measured: a faulting TSC kills every program of this libc in the loader, before `main` (even `true`), so the helper dies at its first instruction having acted on nothing and no reset in `harden()` could run; none was written (it would be a guard no attack distinguishes). `a_callers_timestamp_counter_trap_launches_nothing_it_cannot_finish` pins the fail-closed shape (no row) |
+      | PR_SET_PDEATHSIG | H: prctl(2): cleared by the kernel on a set-id exec |
+      | PR_SET_KEEPCAPS, signal alt stack, mlockall, robust list, io_uring/AIO | H: cleared by execve |
+      | ADDR_NO_RANDOMIZE and the other PER_CLEAR_ON_SETID personality bits | H: cleared by the kernel on a set-id exec; the rest of the personality is M1620 |
+      | PR_SET_PTRACER (Yama) | C: dumpable 0 and the real uid 0 after `become_root` |
+      | coredump_filter | C: RLIMIT_CORE 0 (M1479) and dumpable 0 |
+      | THP-disable, speculation-control, MDWE, mempolicy, MCE-kill, name, CPU time counters, uclamp | H: performance, tightening-only (unclearable) or hardware-error behaviour, none grant or withhold authority |
+      | session keyring | H: nothing in the helper or its launcher tree calls keyctl |
+      | audit loginuid | H: it attributes the CALLER, which is the correct attribution |
+      | cgroup | amendment 65 (the helper is in the caller's cgroup, documented) |
+    - **Rows.** M1600-M1602 timers, M1603 setsid, M1604 the refusal, M1605-M1613 limits,
+      M1614-M1617 scheduling, M1618/M1619/M1622 kernel state, M1620 personality. Each is killed by
+      its own attack: the caller (root, then dropped to a non-root uid; the NICE/RTPRIO ceilings
+      are raised before the drop, as a service manager's `LimitNICE=` does) arms the state, a
+      WITNESS (an ordinary exec of python3) shows the state survived, a CONTROL launch with
+      nothing armed reads the reset values through the same observation, and the setuid helper
+      run under the armed state must report the control's values (or, for timers, live). Tests:
+      `crates/axon-fabric/tests/privileged_launcher.rs` (8 root-only) and one unit test in
+      `privileged_launcher.rs`. Refusal coverage: the new refusal site in `session_left` is covered
+      by M1604; its caller in the binary is exempted as a diagnostic. M1474-M1482, M1487 and the
+      observer rows are unchanged.
+    - **Matrix.** A120-A127. (A95-A119 belong to other workstreams; `psv_matrix_check.py` reports
+      them missing on this branch alone.)
+    - **Operator deployment.** None required. The helper must not be started by a process that
+      made it a process-group leader (interactive job control); Fabric does not.

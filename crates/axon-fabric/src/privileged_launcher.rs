@@ -1417,13 +1417,60 @@ pub fn setuid_honoured(euid: u32) -> Result<(), String> {
     })
 }
 
+const PR_SET_TIMERSLACK: libc::c_int = 29;
+
+/// Set by `harden()` when `setsid()` failed (the helper is a process-group
+/// leader): it is still in its caller's session.
+static SESSION_NOT_LEFT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Amendment 73: the helper left its caller's session (and so its controlling
+/// terminal) in `harden()`, or it refuses to launch. Checked next to
+/// `setuid_honoured`, so `harden()`'s signature is unchanged.
+pub fn session_left() -> Result<(), String> {
+    if SESSION_NOT_LEFT.load(std::sync::atomic::Ordering::SeqCst) {
+        return Err(
+            "the helper could not leave its caller's session (setsid failed: it was started as a \
+             process-group leader), so a terminal its caller controls could still signal it; \
+             start it as an ordinary child (no job control, no setpgid)"
+                .into(),
+        );
+    }
+    Ok(())
+}
+
 /// Reset everything a setuid program inherits from its caller that could
 /// steer it or its children: signal dispositions and mask, umask, working
 /// directory, every descriptor above stderr, the environment, resource limits.
 /// Called first, before the config or the request is read.
+///
+/// Amendment 73: the list is derived from the attributes execve(2),
+/// credentials(7) and prctl(2) say a set-id exec PRESERVES, each recorded as
+/// reset here, harmless, or covered elsewhere (the amendment's table).
 pub fn harden() {
     // SAFETY: plain libc calls on process state, single-threaded at startup.
     unsafe {
+        // Interval timers survive the exec (POSIX timers do not): a caller's
+        // armed timer would deliver its signal to the root helper.
+        let off = libc::itimerval {
+            it_interval: libc::timeval {
+                tv_sec: 0,
+                tv_usec: 0,
+            },
+            it_value: libc::timeval {
+                tv_sec: 0,
+                tv_usec: 0,
+            },
+        };
+        libc::setitimer(libc::ITIMER_REAL, &off, std::ptr::null_mut());
+        libc::setitimer(libc::ITIMER_VIRTUAL, &off, std::ptr::null_mut());
+        libc::setitimer(libc::ITIMER_PROF, &off, std::ptr::null_mut());
+        // A new session: no controlling terminal, so a terminal its caller
+        // owns cannot write ^C/^\ into the helper's process group. It fails
+        // for a process-group leader; that is recorded and refused by
+        // `session_left` (the launch does not run in its caller's session).
+        if libc::setsid() < 0 {
+            SESSION_NOT_LEFT.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
         for sig in 1..=libc::SIGRTMAX() {
             if sig != libc::SIGKILL && sig != libc::SIGSTOP {
                 libc::signal(sig, libc::SIG_DFL);
@@ -1473,6 +1520,68 @@ pub fn harden() {
             lim(r, libc::RLIM_INFINITY);
         }
         lim(libc::RLIMIT_NOFILE, 65536);
+        // The rest of the sixteen (amendment 73): the kernel's defaults.
+        let lim2 = |r, soft: libc::rlim_t, hard: libc::rlim_t| {
+            let l = libc::rlimit {
+                rlim_cur: soft,
+                rlim_max: hard,
+            };
+            if libc::setrlimit(r, &l) != 0 {
+                let mut cur: libc::rlimit = std::mem::zeroed();
+                if libc::getrlimit(r, &mut cur) == 0 {
+                    cur.rlim_cur = soft.min(cur.rlim_max);
+                    libc::setrlimit(r, &cur);
+                }
+            }
+        };
+        lim2(libc::RLIMIT_STACK, 8 << 20, libc::RLIM_INFINITY);
+        lim2(libc::RLIMIT_RSS, libc::RLIM_INFINITY, libc::RLIM_INFINITY);
+        lim2(libc::RLIMIT_MEMLOCK, 8 << 20, 8 << 20);
+        lim2(libc::RLIMIT_LOCKS, libc::RLIM_INFINITY, libc::RLIM_INFINITY);
+        lim2(
+            libc::RLIMIT_SIGPENDING,
+            libc::RLIM_INFINITY,
+            libc::RLIM_INFINITY,
+        );
+        lim2(libc::RLIMIT_MSGQUEUE, 819200, 819200);
+        lim2(libc::RLIMIT_NICE, 0, 0);
+        lim2(libc::RLIMIT_RTPRIO, 0, 0);
+        lim2(
+            libc::RLIMIT_RTTIME,
+            libc::RLIM_INFINITY,
+            libc::RLIM_INFINITY,
+        );
+        // Scheduling and accounting attributes a fork and an exec keep.
+        libc::setpriority(libc::PRIO_PROCESS, 0, 0);
+        libc::syscall(
+            libc::SYS_ioprio_set,
+            1 as libc::c_long,
+            0 as libc::c_long,
+            0 as libc::c_long,
+        );
+        let sp = libc::sched_param { sched_priority: 0 };
+        libc::sched_setscheduler(0, libc::SCHED_OTHER, &sp);
+        let mut all: libc::cpu_set_t = std::mem::zeroed();
+        for cpu in 0..libc::CPU_SETSIZE as usize {
+            libc::CPU_SET(cpu, &mut all);
+        }
+        libc::sched_setaffinity(0, std::mem::size_of::<libc::cpu_set_t>(), &all);
+        let _ = std::fs::write("/proc/self/oom_score_adj", "0");
+        libc::prctl(
+            PR_SET_TIMERSLACK,
+            50_000 as libc::c_ulong,
+            0 as libc::c_ulong,
+            0 as libc::c_ulong,
+            0 as libc::c_ulong,
+        );
+        libc::personality(0);
+        libc::prctl(
+            libc::PR_SET_CHILD_SUBREAPER,
+            0 as libc::c_ulong,
+            0 as libc::c_ulong,
+            0 as libc::c_ulong,
+            0 as libc::c_ulong,
+        );
     }
     let keys: Vec<OsString> = std::env::vars_os().map(|(k, _)| k).collect();
     for k in keys {
@@ -1753,6 +1862,54 @@ mod tests {
             let mut r = req();
             edit(&mut r);
             assert!(validate_request(&r, &c).is_err(), "{r:?}");
+        }
+    }
+
+    /// A126 (amendment 73): every resource limit the kernel lists in
+    /// `/proc/self/limits` is one `harden()` resets. A kernel that adds a
+    /// seventeenth row fails here, until someone decides what the helper's
+    /// value is.
+    #[test]
+    fn every_resource_limit_the_kernel_lists_is_one_harden_resets() {
+        const ROWS: [(&str, &str); 16] = [
+            ("Max cpu time", "RLIMIT_CPU"),
+            ("Max file size", "RLIMIT_FSIZE"),
+            ("Max data size", "RLIMIT_DATA"),
+            ("Max stack size", "RLIMIT_STACK"),
+            ("Max core file size", "RLIMIT_CORE"),
+            ("Max resident set", "RLIMIT_RSS"),
+            ("Max processes", "RLIMIT_NPROC"),
+            ("Max open files", "RLIMIT_NOFILE"),
+            ("Max locked memory", "RLIMIT_MEMLOCK"),
+            ("Max address space", "RLIMIT_AS"),
+            ("Max file locks", "RLIMIT_LOCKS"),
+            ("Max pending signals", "RLIMIT_SIGPENDING"),
+            ("Max msgqueue size", "RLIMIT_MSGQUEUE"),
+            ("Max nice priority", "RLIMIT_NICE"),
+            ("Max realtime priority", "RLIMIT_RTPRIO"),
+            ("Max realtime timeout", "RLIMIT_RTTIME"),
+        ];
+        let limits = std::fs::read_to_string("/proc/self/limits").expect("procfs");
+        let mut listed: Vec<String> = limits
+            .lines()
+            .skip(1)
+            .map(|l| l.split("  ").next().unwrap().trim().to_string())
+            .collect();
+        listed.sort();
+        let mut known: Vec<String> = ROWS.iter().map(|r| r.0.to_string()).collect();
+        known.sort();
+        assert_eq!(
+            listed, known,
+            "the kernel lists a limit harden() has not decided"
+        );
+        let src = include_str!("privileged_launcher.rs");
+        let body =
+            &src[src.find("pub fn harden()").unwrap()..src.find("pub fn become_root").unwrap()];
+        for (row, name) in ROWS {
+            assert!(
+                body.contains(&format!("libc::{name}")),
+                "harden() never resets {name} ({row})"
+            );
         }
     }
 }

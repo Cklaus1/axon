@@ -1147,6 +1147,9 @@ EXEMPT += [
     (BIN, "    if let Err(why) = pl::setuid_honoured(euid) {",
      "DIAGNOSTIC, dominated: the caller of setuid_honoured, exempt for the same reason (M602; the "
      "test-trust owner rule)"),
+    (BIN, "    if let Err(why) = pl::session_left() {",
+     "DIAGNOSTIC: the caller of session_left, whose own guard is M1604 (its attack: a process-group "
+     "leader's helper launching anyway)"),
     (CU, "    if r != 0 {\n        return Err(format!(\n            \"SO_PASSPIDFD:",
      "OS error from setsockopt: a kernel that cannot name a reply's sender refuses the call (fails "
      "closed); no sender is assumed"),

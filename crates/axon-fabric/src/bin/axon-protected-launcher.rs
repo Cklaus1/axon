@@ -97,6 +97,11 @@ fn main() {
     if let Err(why) = pl::setuid_honoured(euid) {
         refuse(why);
     }
+    // Amendment 73: a helper that stayed in its caller's session launches
+    // nothing (every build, like the check above).
+    if let Err(why) = pl::session_left() {
+        refuse(why);
+    }
     if euid != 0 && !authority.test {
         refuse(format!(
             "effective uid is {euid}, not 0: the helper is not installed setuid-root (or its \
