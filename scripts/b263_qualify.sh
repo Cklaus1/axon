@@ -116,6 +116,12 @@ residue() {  # residue ID -> prints space-separated leftovers (empty = clean)
 MANIFEST="$REPO/dist/guest-linux/manifest.json"
 [[ -f "$MANIFEST" ]] || skip "no built guest artifacts at $MANIFEST (build first: AXON_KERNEL_BACKEND=linux scripts/build-guest-image.sh)"
 pgrep -u axonb263 >/dev/null && { echo "stale axonb263 processes exist; reap them first" >&2; exit 2; }
+# Amendment 70: x3's BLOCKED reason is derived from the MEASURED host
+# (b263_host.py), never a constant: the operator signs it, and the fixed
+# WSL2/Hyper-V sentence it replaced asserted that of every host. Measured here,
+# before anything launches; a host that cannot be stated is a host-state error.
+X3_REASON="$(PYTHONDONTWRITEBYTECODE=1 python3 "$REPO/scripts/b263_host.py" --x3-reason)" && [[ -n "$X3_REASON" ]] \
+    || { echo "b263_host.py --x3-reason failed: the host this run measured cannot be stated" >&2; exit 2; }
 
 HOSTIP="$(ip -4 route get 1.1.1.1 2>/dev/null | sed -n 's/.* src \([0-9.]*\).*/\1/p')"
 [[ -z "$HOSTIP" ]] && HOSTIP="$(hostname -I | cut -d' ' -f1)"
@@ -601,7 +607,7 @@ else
 fi
 
 # ── BLOCKED: required by the gates, not testable honestly here ───────────────
-record x3_l0_hypervisor_boundary BLOCKED "Host is WSL2 with nested KVM under Hyper-V (operator decision D2). The L0 hypervisor and the WSL2 utility VM are outside the qualified boundary; no assertion here covers a guest escape through L0/L1." "G03-r22-physical-isolation"
+record x3_l0_hypervisor_boundary BLOCKED "$X3_REASON" "G03-r22-physical-isolation"
 record x4_trusted_evidence_issuer BLOCKED "G13-r22-profile-qualification requires binding to a TRUSTED evidence issuer. This evidence is produced and signed by nobody but the invoking root shell; no issuer key exists in this repo. The record is unsigned." "G13-r22-profile-qualification"
 
 # ── evidence ──────────────────────────────────────────────────────────────────

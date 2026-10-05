@@ -1484,3 +1484,10 @@ ATTACK_MARKERS.update({
     'M1488': r'ATTACK: a wrapped script that guesses its binary ran',
     'M1489': r'ATTACK: the root helper spent the nonce through a custodian program the operator\s+never pinned',
 })
+
+# C9 round 4b, workstream SMALLFIX (M1580-M1582; amendment 70).
+ATTACK_MARKERS.update({
+    'M1580': r'ATTACK: b263_qualify.sh records an x3 reason that b263_host.py did not derive',
+    'M1581': r'ATTACK: the signed x3 reason asserts WSL2/Hyper-V of a host measured as virt',
+    'M1582': r'ATTACK: an uppercase-hex verifier key is accepted by the lookup',
+})

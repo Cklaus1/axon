@@ -176,3 +176,21 @@ fn an_unrelabelled_signature_for_another_authority_verifies_nowhere_else() {
         }
     }
 }
+
+/// The `--authority` usage refusal names EVERY authority the tool accepts
+/// (it omitted `monitor`). Derived from `TrustAuthority::ALL`, so a new
+/// authority cannot be accepted and left out of the usage text.
+#[test]
+fn the_authority_usage_names_every_authority() {
+    let d = tempfile::tempdir().unwrap();
+    let (c, v) = verify_as(&d.path().join("r.json"), d.path(), "bogus");
+    assert_eq!(c, 2, "{v}");
+    let reason = v["reason"].as_str().unwrap_or_default();
+    for a in axon_fabric::backend::TrustAuthority::ALL {
+        assert!(
+            reason.contains(a.dir_name()),
+            "the --authority usage omits {}: {v}",
+            a.dir_name()
+        );
+    }
+}

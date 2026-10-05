@@ -197,8 +197,9 @@ impl Config {
     /// boundaries. No public key is registered for two roles (verifier,
     /// safety monitor, preflight observer), and a preflight OBSERVER holds no
     /// verifier, admitter or monitor identity: Fabric (the verifier) consumes
-    /// an observation and must not be able to mint one. Checked when the
-    /// config is written and whenever it is read.
+    /// an observation and must not be able to mint one. Every registered key
+    /// is also in its one canonical form, 64 lowercase hex (amendment 70).
+    /// Checked when the config is written and whenever it is read.
     pub fn check_separation(&self) -> std::result::Result<(), String> {
         let mut seen: std::collections::BTreeMap<String, &'static str> = Default::default();
         for (role, keys) in [
@@ -206,8 +207,23 @@ impl Config {
             ("safety monitor", &self.monitor_keys),
             ("preflight observer", &self.observer_keys),
         ] {
-            for k in keys.values() {
-                let k = k.to_ascii_lowercase();
+            for (who, k) in keys {
+                // Amendment 70: ONE canonical form, lowercase 64-hex — the
+                // form attestation::verify / verify_document accept, and the
+                // privileged launcher's host_signer_public_key and every
+                // `Ref` digest require. The operator-root lookup
+                // (operator_trust::rooted) lowercases what it is given, so an
+                // uppercase key here PASSED the lookup and then failed every
+                // verification. Refused where the store reads its keys (on
+                // write and on every read), never normalised.
+                if !axon_loop_contracts::attestation::is_canonical_public_key_hex(k) {
+                    return Err(format!(
+                        "config: the {role} key registered for {who} ({}…) is not a public key in \
+                         its canonical form, 64 lowercase hex digits; every verifier reads only \
+                         that form, so a key in any other spelling is refused, not normalised",
+                        k.get(..16).unwrap_or(k.as_str())
+                    ));
+                }
                 if let Some(prev) = seen.insert(k.clone(), role) {
                     if prev != role {
                         return Err(format!(

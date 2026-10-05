@@ -76,6 +76,14 @@ pub fn key_id_of_hex(public_key_hex: &str) -> Option<String> {
         .map(|k| key_fingerprint(&k))
 }
 
+/// Whether `s` is a registered public key in its ONE canonical form: exactly
+/// 64 LOWERCASE hex digits (32 bytes). This is the form [`verify`],
+/// [`verify_document`] and [`key_id_of_hex`] accept (through `unhex`), so a key
+/// a store holds in any other spelling is one no signature can verify under.
+pub fn is_canonical_public_key_hex(s: &str) -> bool {
+    s.len() == 64 && unhex(s).is_some()
+}
+
 /// A fresh Ed25519 key: `(PKCS#8 private key, 64-hex public key)`. For key
 /// provisioning (`axon-fabric keygen`) and test fixtures.
 pub fn generate() -> Result<(Vec<u8>, String), String> {

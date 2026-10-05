@@ -913,3 +913,101 @@ fn the_b263_record_states_the_host_it_ran_on() {
         "ATTACK: b263_qualify.sh writes a host or caveat that b263_host.py did not measure"
     );
 }
+
+/// Amendment 70 (M1580, M1581): the reason the B263 record gives for its
+/// BLOCKED `x3_l0_hypervisor_boundary` row is inside the bytes the operator
+/// SIGNS, and it was a constant ("Host is WSL2 with nested KVM under
+/// Hyper-V"): a record made on bare metal or under another hypervisor
+/// asserted, under the operator's signature, a false fact about its host. The
+/// reason is now `b263_host.x3_reason(facts)`, which b263_qualify.sh records
+/// from `b263_host.py --x3-reason` (`x3_reason(measure())`). Attack: the
+/// reason derived for each non-WSL fact set (bare metal, another hypervisor,
+/// an unmeasurable host) must make no WSL or Hyper-V claim; control: the WSL
+/// fact set still names WSL2, and this host's own reason, through the
+/// production CLI, agrees with what this host measures.
+#[test]
+fn the_x3_reason_states_only_what_the_host_measured() {
+    let scripts = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scripts");
+    let reason_for = |facts: Value| -> String {
+        let o = std::process::Command::new("python3")
+            .arg("-c")
+            .arg(
+                "import json, os, sys; sys.dont_write_bytecode = True; \
+                 sys.path.insert(0, os.environ['B263_SCRIPTS']); import b263_host; \
+                 print(b263_host.x3_reason(json.loads(sys.argv[1])))",
+            )
+            .arg(facts.to_string())
+            .env("B263_SCRIPTS", &scripts)
+            .output()
+            .unwrap();
+        assert!(o.status.success(), "setup: x3_reason: {o:?}");
+        String::from_utf8(o.stdout).unwrap().trim().to_string()
+    };
+    let claims_wsl = |r: &str| {
+        let l = r.to_ascii_lowercase();
+        l.contains("wsl") || l.contains("hyper-v") || l.contains("operator decision d2")
+    };
+    for (virt, kernel) in [
+        ("none", "6.8.0-45-generic"),
+        ("kvm", "6.1.0-25-amd64"),
+        ("vmware", "5.15.0-1-generic"),
+        ("unknown", "6.8.0-45-generic"),
+    ] {
+        let facts = json!({"hostname": "metal-1", "machine_id": "0123", "virt": virt,
+                           "kernel": kernel, "wsl": false});
+        let r = reason_for(facts);
+        assert!(
+            !claims_wsl(&r),
+            "ATTACK: the signed x3 reason asserts WSL2/Hyper-V of a host measured as virt {virt} \
+             (kernel {kernel}): {r:?}"
+        );
+        assert!(
+            r.contains(&format!("systemd-detect-virt: {virt}")) && r.contains(kernel),
+            "the reason states the measurement it was derived from: {r:?}"
+        );
+    }
+    let wsl = reason_for(
+        json!({"hostname": "evo", "machine_id": "0123", "virt": "wsl",
+                                "kernel": "6.6.36.6-microsoft-standard-WSL2", "wsl": true}),
+    );
+    assert!(
+        wsl.contains("WSL2") && wsl.contains("Hyper-V"),
+        "control: a WSL2 host's reason names it: {wsl:?}"
+    );
+    // This host, through the production CLI the harness calls.
+    let o = script_spawn::script(
+        "python3",
+        scripts.join("b263_host.py"),
+        Bins::NoWorkspaceBinary,
+    )
+    .env("PYTHONDONTWRITEBYTECODE", "1")
+    .arg("--x3-reason")
+    .output()
+    .unwrap();
+    assert!(o.status.success(), "setup: b263_host.py --x3-reason: {o:?}");
+    let here = String::from_utf8(o.stdout).unwrap().trim().to_string();
+    let kernel = std::fs::read_to_string("/proc/sys/kernel/osrelease")
+        .unwrap()
+        .trim()
+        .to_string();
+    let on_wsl = kernel.to_ascii_lowercase().contains("microsoft");
+    assert!(
+        here.contains(&kernel)
+            && if on_wsl {
+                here.contains("WSL2")
+            } else {
+                !claims_wsl(&here)
+            },
+        "ATTACK: the signed x3 reason on this host (kernel {kernel}, WSL {on_wsl}) states \
+         something it did not measure: {here:?}"
+    );
+    // The record writer takes the reason from it, never a constant of its own.
+    let harness = std::fs::read_to_string(scripts.join("b263_qualify.sh")).unwrap();
+    assert!(
+        harness.contains("b263_host.py\" --x3-reason)\"")
+            && harness.contains("record x3_l0_hypervisor_boundary BLOCKED \"$X3_REASON\"")
+            && !harness.contains("Host is WSL2"),
+        "ATTACK: b263_qualify.sh records an x3 reason that b263_host.py did not derive from \
+         the measured host"
+    );
+}

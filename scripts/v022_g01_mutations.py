@@ -5709,6 +5709,30 @@ MUTATIONS += [
 ]
 
 
+# ── C9 round 4b, workstream SMALLFIX (M1580-M1599; amendment 70) ─────────────
+# The operator-kit review: (1) the B263 record's x3 reason, inside the bytes
+# the operator SIGNS, was a constant asserting WSL2/Hyper-V of every host; it
+# is now derived from the measured host (b263_host.x3_reason). (2) A loop-store
+# public key in uppercase passed the operator-root lookup (which lowercases)
+# and failed every verification (which reads lowercase only); the store now
+# refuses any key not in the canonical 64-lowercase-hex form where it reads
+# its keys (Config::check_separation, on write and on every read).
+PSV_IDS |= {f"M{n}" for n in range(1580, 1600)}
+_X3 = 'the_x3_reason_states_only_what_the_host_measured'
+MUTATIONS += [
+    ('M1580', "FIELD-ORIGIN (smallfix): the signed x3 reason is the one b263_host.py derived from the measured host", 'scripts/b263_qualify.sh',
+     'record x3_l0_hypervisor_boundary BLOCKED "$X3_REASON" "G03-r22-physical-isolation"',
+     'record x3_l0_hypervisor_boundary BLOCKED "Host is WSL2 with nested KVM under Hyper-V (operator decision D2). The L0 hypervisor and the WSL2 utility VM are outside the qualified boundary; no assertion here covers a guest escape through L0/L1." "G03-r22-physical-isolation"',
+     'axon-fabric', '--test qualification', _X3),
+    ('M1581', "FIELD-ORIGIN (smallfix): the x3 reason makes no WSL2/Hyper-V claim of a host not measured as WSL", 'scripts/b263_host.py',
+     '    if facts.get("wsl"):', '    if True:',
+     'axon-fabric', '--test qualification', _X3),
+    ('M1582', "ADR-002 (smallfix): a store public key is refused unless in its canonical form (64 lowercase hex)", 'crates/axon-loop/src/store.rs',
+     '                if !axon_loop_contracts::attestation::is_canonical_public_key_hex(k) {',
+     '                if false && !axon_loop_contracts::attestation::is_canonical_public_key_hex(k) {',
+     'axon-loop', '--test evl_admission', 'an_uppercase_public_key_is_refused_where_the_store_reads_it'),
+]
+
 def in_scope(mid, scope):
     # A SIBLING-ONLY edit exists only as a member of a retired row's guard set
     # (amendment 64): it is never an active row of any scope.

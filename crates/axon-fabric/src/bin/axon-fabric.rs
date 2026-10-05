@@ -98,7 +98,9 @@
 //! read, so any IO would reach the key file), or it ran in the protected
 //! microVM. Otherwise `"receipt_attestation"` is `null` with
 //! `"attestation_withheld"` saying why. `axon-fabric keygen --out PATH`
-//! provisions a key (0600, never over an existing file) and prints the public
+//! provisions a key (0400 — owner read-only, the mode the signing-key loader
+//! requires; it refuses anything wider, 0600 included — never over an
+//! existing file) and prints the public
 //! key to pin here and to register in the loop store's `verifier_keys`.
 //!
 //! Every executable comes from the `--check-registry` file (path + sha256),
@@ -360,9 +362,15 @@ fn protected_host(a: &Args) -> Option<axon_fabric::protected_host::ProtectedHost
 fn authority_flag(a: &Args) -> axon_fabric::backend::TrustAuthority {
     let v = a.req("--authority");
     axon_fabric::backend::TrustAuthority::parse(&v).unwrap_or_else(|| {
+        // Derived from the one list of authorities, so a new one is never
+        // missing here (`monitor` was).
+        let names: Vec<&str> = axon_fabric::backend::TrustAuthority::ALL
+            .iter()
+            .map(|a| a.dir_name())
+            .collect();
         refuse(
             "usage",
-            "--authority must be qualification, observer, verifier or admission",
+            &format!("--authority must be one of: {}", names.join(", ")),
             2,
         )
     })
