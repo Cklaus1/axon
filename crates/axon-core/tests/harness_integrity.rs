@@ -19,11 +19,12 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-const HARNESS: [&str; 4] = [
+const HARNESS: [&str; 5] = [
     "scripts/v022_g01_mutations.py",
     "scripts/v022_attack_markers.py",
     "scripts/v022_paired_disable.py",
     "scripts/lib_bounded_run.sh",
+    "scripts/cargo_test_shards.py",
 ];
 
 fn scratch(tag: &str) -> PathBuf {
@@ -1144,4 +1145,90 @@ fn a_sibling_only_edit_is_never_an_active_row() {
         );
     }
     let _ = std::fs::remove_dir_all(&r);
+}
+
+// ── the sharded suite runner (governance/notes/v022-fabric-suite-time.md) ───
+
+/// A whole-package suite run as concurrent shard PROCESSES
+/// (scripts/cargo_test_shards.py) is judged exactly as the serial
+/// `cargo test` run it replaces: every test runs once, by name; a failing
+/// test is reported in libtest's own `name --- FAILED` form, in a binary that
+/// is NOT the first (a serial run would have stopped before it); a test that
+/// printed a skip is still visible to the cell's skip accounting; and the run
+/// exits non-zero. Control: the same suite without its failing test exits 0
+/// and reports every test passed.
+#[test]
+fn a_sharded_suite_run_reports_every_test_as_a_serial_run_does() {
+    let r = repo("shards");
+    write(
+        &r.join("Cargo.toml"),
+        "[workspace]\nmembers = [\"crates/p\"]\nresolver = \"2\"\n",
+    );
+    package(&r, "p", "");
+    let mut a = String::new();
+    for i in 1..=5 {
+        a.push_str(&format!("#[test]\nfn a{i}() {{}}\n"));
+    }
+    a.push_str("#[test]\nfn a_skip() { eprintln!(\"skipped: needs root (fixture)\"); }\n");
+    write(&r.join("crates/p/tests/a.rs"), &a);
+    let b = "#[test]\nfn b1() {}\n#[test]\nfn b2() {}\n\
+             #[test]\nfn b_fail() { if std::env::var_os(\"SHARD_CONTROL\").is_none() \
+             { panic!(\"the failing test\") } }\n";
+    write(&r.join("crates/p/tests/b.rs"), b);
+    let tgt = scratch("shards-tgt");
+    let run = |control: bool| -> Output {
+        let mut c = harness_cmd(
+            &r,
+            "scripts/cargo_test_shards.py",
+            &[
+                "--shard-tests=2",
+                "--jobs=3",
+                "-q",
+                "-p",
+                "p",
+                "--",
+                "--test-threads=1",
+                "--show-output",
+            ],
+        );
+        c.env("CARGO_TARGET_DIR", &tgt);
+        if control {
+            c.env("SHARD_CONTROL", "1");
+        }
+        c.output().unwrap()
+    };
+    let passed = |out: &str| -> usize {
+        out.lines()
+            .filter_map(|l| l.strip_prefix("test result: "))
+            .filter_map(|l| l.split("; ").find_map(|f| f.strip_suffix(" passed")))
+            .filter_map(|n| n.rsplit(' ').next()?.parse::<usize>().ok())
+            .sum()
+    };
+    let o = run(false);
+    let out = text(&o);
+    assert!(
+        out.contains("9 listed tests"),
+        "setup: the runner did not list the suite: {out}"
+    );
+    if o.status.success() || !out.contains("b_fail --- FAILED") {
+        panic!("ATTACK: a sharded suite run hid a failing test: {out}");
+    }
+    let lines: Vec<&str> = out.lines().collect();
+    let skip_seen = lines
+        .windows(2)
+        .any(|w| w[0].starts_with("---- a_skip std") && w[1].trim().starts_with("skipped:"))
+        || out.contains("---- a_skip stderr ----\nskipped:");
+    assert!(
+        skip_seen,
+        "ATTACK: a sharded suite run lost a skipped test's output: {out}"
+    );
+    assert_eq!(passed(&out), 8, "every other test ran and passed: {out}");
+    let o = run(true);
+    let out = text(&o);
+    assert!(
+        o.status.success() && passed(&out) == 9,
+        "control: the suite without its failure passes, every test once: {out}"
+    );
+    let _ = std::fs::remove_dir_all(&r);
+    let _ = std::fs::remove_dir_all(&tgt);
 }

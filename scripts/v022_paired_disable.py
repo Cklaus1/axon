@@ -233,8 +233,13 @@ def full_suite_ok(pkg, flags="", env=""):
     # the axon-fabric suite (~21 min idle, --test-threads=1) was cut mid-binary
     # under a 6-shard load (M214's full-suite cell at 78832d1b: readiness_attribution
     # stopped after 38 of 40 tests, no failure printed) and read SUITE_BROKEN.
+    # A package whose tests share no state across PROCESSES runs as concurrent
+    # shard processes (scripts/cargo_test_shards.py): the same tests, each run
+    # once by name with the same libtest args, every shard's whole output
+    # printed in cargo's order, a lost test a failure.
+    runner = "python3 scripts/cargo_test_shards.py" if pkg in SHARDED_PACKAGES else "cargo test"
     cmd = (f"source scripts/lib_bounded_run.sh && {mut.UNSET_AMBIENT}"
-           f"{env}bounded_run 12G {SUITE_BOUND_S} cargo test -q -p {pkg} {show} 2>&1")
+           f"{env}bounded_run 12G {SUITE_BOUND_S} {runner} -q -p {pkg} {show} 2>&1")
     r = sh(cmd)
     out = r.stdout + r.stderr
     if r.returncode in (124, 137):
@@ -260,6 +265,14 @@ def full_suite_ok(pkg, flags="", env=""):
 
 # Wall-clock bound for one whole-package suite cell (full_suite_ok).
 SUITE_BOUND_S = 7200
+
+# Packages whose whole suite runs as concurrent shard PROCESSES (each keeping
+# the cell's libtest args, --test-threads=1 included). Only a package audited
+# to share no state across processes belongs here: governance/notes/
+# v022-fabric-suite-time.md lists what axon-fabric's tests share (fixed uids,
+# the private-mount /etc/axon, the production build dirs, the cwd) and why
+# none of it is shared across processes.
+SHARDED_PACKAGES = {"axon-fabric"}
 
 
 def apply_edits(edits):

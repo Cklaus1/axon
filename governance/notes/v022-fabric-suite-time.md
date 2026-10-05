@@ -173,6 +173,57 @@ The production builds the tests make themselves (privileged_launcher's
 production helper, readiness's production verifiers) use the same workspace
 profile and get the same speed-up.
 
-## 4. Next
+## 4. Process-level parallelism (stage iii)
 
-Process-level parallelism (stage iii).
+`scripts/cargo_test_shards.py`: builds with `cargo test --no-run
+--message-format=json`, lists every test binary (`--list`), splits each into
+shards of at most K tests, and runs each shard as `cargo test -q -p
+axon-fabric <target> -- --test-threads=1 --show-output --exact <its tests>`,
+up to N at once. Inside a shard nothing changes. The evidence it prints is the
+evidence a serial run prints:
+
+* every listed test runs once, by name; a shard whose libtest did not report
+  `running <its count> tests` and a `test result:` is a FAILURE of the run (a
+  lost test is never a pass);
+* every shard's whole output is printed in cargo's target order, so
+  `---- name stdout ----` (skip accounting), `name --- FAILED` and
+  `test result: FAILED` read as before;
+* exit status 0 only if every shard exited 0 and every count held; every
+  shard runs even after one fails (a serial `cargo test` stops at the first
+  failing binary, so a failing cell now names at least as much);
+* on SIGTERM (the cell's `bounded_run` bound) every running shard's process
+  group is killed and each unfinished shard is named as CUT.
+
+`full_suite_ok` uses it for the packages in `SHARDED_PACKAGES` = {axon-fabric}
+(the package audited in §2); every other package runs as before. The harness's
+parsing is unchanged. Pinned by axon-core `harness_integrity`
+`a_sharded_suite_run_reports_every_test_as_a_serial_run_does`.
+
+## 5. Results
+
+Same host; the "under load" runs had 32 busy loops (`sh -c 'while :; do :; done'`,
+killed by PID after) on the 31 cores; load averages as recorded.
+
+| configuration | idle | under load |
+|---|---|---|
+| BEFORE (16500980): serial, as the harness ran it | **1440-1472 s** (load 3-6; m1, m2) | not re-measured here: amendment 66 recorded the suite past 2400 s and psv_dispatch at 925-1319 s under the 6-shard paired-disable |
+| waits (stage ii) + sharded runner (stage iii), WITHOUT the sha2 profile | 223 s (sh2; load 3 -> 9) | 376 s (sh3; load ~38) |
+| AFTER: serial (stage ii + ii-b), as `cargo test -- --test-threads=1` | **218 s** (m3; load 2.8 -> 2.4; psv_dispatch 495 -> 46 s) | see §6 |
+| AFTER: sharded (stage ii + ii-b + iii), as `full_suite_ok` now runs it | **38 s** (sh4; load 2.4 -> 5.8) | **61 s** (sh5; load 12 -> 33, 32 busy loops) |
+
+The largest single factor is the digest cost (6.6x serially). Sharding then
+divides what is left by the concurrency the host gives it (8 jobs; the
+longest shard is ~17 s idle, guest_provenance, whose tests are git-bound).
+Every run above listed and ran the same 645 tests (643 passed + 2 ignored),
+0 failed, 0 skipped, except sh1 (an earlier sharded run, rc 101): its only
+failures were the four cortex_via_fabric tests, whose nested `cargo build -p
+axon-cortex` found a `workspace-bins` dir polluted by a mis-configured first
+measurement of mine (a stable-toolchain build); the SERIAL run on the same
+target failed identically, and removing that dir fixed both.
+
+## 6. Evidence
+
+See the commit messages of the stage commits for the exact commands and rcs
+(changed tests 20/20 idle and 20/20 under load, mutation rows killed by their
+own attacks, clippy/fmt/suites, harness_integrity and the refusal-coverage
+gate).

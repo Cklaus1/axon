@@ -2959,3 +2959,43 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       M1490-M1499 remain).
     - **Matrix.** None (an existing A of amendment 65, harden(); the harness's EQUIVALENCE (6)).
     - **Operator deployment.** None.
+
+69. **The axon-fabric suite's cost is its digests and its serial runner, not its waits; setup waits
+    end on readiness and only fail (C9 round 4b, fabricfast; governance/notes/v022-fabric-suite-time.md).**
+    No counting rule is relaxed; no bound that is the property under test is shortened.
+    - **Before.** The axon-fabric suite, run as the harness runs it (`cargo test -q -p axon-fabric
+      -- --test-threads=1 --show-output`), took 1440-1472 s idle at 16500980 (psv_dispatch 495-529 s)
+      and passed 2400 s under the 6-shard paired-disable (amendment 66). Per-test timing shows no
+      test above 40 s and no healthy-path timeout; the time is real work, most of it SHA-256 of
+      ~35-80 MB debug binaries at opt-level 0 (1.03 s per 80 MB; the helper re-verifies every
+      pinned artifact, the custodian client verifies the custodian program per reply, the fixtures
+      pin every binary). Setup waits were short fixed polls: the observer hold point (20 s) failed
+      the CLEAN baseline at load ~100 (gpumaster), the custodian start (10 s) returned the same
+      `Err` a refusing custodian returns, the FIFO feeder (5 s) was paid by every honest run, and
+      the copied-custodian test proceeded after 5 s without asserting the socket existed.
+    - **After.** (ii) Every setup wait ends on its readiness signal OR on the fixture process
+      exiting (reported at once with its reason), bounded by `SETUP_BOUND` (600 s), which only
+      fails; a custodian that neither listens nor exits is a setup panic, never a refusal; the
+      observer in `wait` mode makes no observation unless told to go; the FIFO feeder serves until
+      the decision under test has returned. Sites and old/new bounds: the note, §3 (12 sites in
+      axon-fabric, axon-cortex `cli.rs`, axon-core `cli_run.rs`); the timing-SLA bounds of axon-os,
+      axon-vm and axon-intent are the properties and are unchanged. (ii-b) `[profile.dev.package.sha2]
+      opt-level = 3`: the same digests ~30x faster; no workspace crate's codegen changes. (iii)
+      `scripts/cargo_test_shards.py` runs one package's suite as concurrent shard PROCESSES (each
+      `cargo test -p P <target> -- <the cell's libtest args> --exact <its tests>`, --test-threads=1
+      kept inside), prints every shard's whole output in cargo's order, fails on any test lost (a
+      shard must report `running <its count> tests`), runs every shard after a failure, and kills
+      and names every unfinished shard on its bound's SIGTERM. `full_suite_ok` uses it for
+      `SHARDED_PACKAGES` = {axon-fabric}, the package audited to share no state across processes
+      (note §2); the one cross-process collision found (readiness's fixed production-verifier
+      build dir) is now under an exclusive flock with per-process copies. Measured: serial 218 s
+      idle; sharded 38 s idle, 61 s under 32 busy loops.
+    - **Rows.** None new (M1560-M1579 unused). The rows whose attack lives in a changed test were
+      re-run and each is KILLED by its own attack: M253, M482, M631, M632, M763, M767, M770, M771,
+      M1483, M1484, M1489.
+    - **Tests.** axon-core `harness_integrity`
+      `a_sharded_suite_run_reports_every_test_as_a_serial_run_does` (ATTACK: a sharded run hides a
+      failing test in a later binary, or loses a skipped test's output; control: without the
+      failure every test passes once).
+    - **Matrix.** None.
+    - **Operator deployment.** None.
