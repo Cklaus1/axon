@@ -1152,20 +1152,14 @@ pub fn running_image() -> PathBuf {
     }
 }
 
-/// sha256 of the image this process is running ([`running_image`]), read
-/// through one descriptor and bounded like every other evidence read; `None`
-/// when it cannot be read.
+/// sha256 of the image this process is running ([`running_image`]); `None`
+/// when it cannot be read. `/proc/self/exe` is this process's own image, never
+/// a path another party names, so there is nothing to bound or refuse here
+/// beyond "could it be read at all" -- and an unreadable image is `"unknown"`
+/// in the identity, which no certification can bind (`is not a sha256`).
 fn running_image_sha256() -> Option<String> {
-    use std::io::Read;
-    const MAX: u64 = 256 << 20;
-    // NOT `read_regular`: that refuses a symlink, and /proc/self/exe is one.
-    let f = std::fs::File::open(running_image()).ok()?;
-    if !f.metadata().ok()?.is_file() {
-        return None;
-    }
-    let mut b = Vec::new();
-    f.take(MAX + 1).read_to_end(&mut b).ok()?;
-    (b.len() as u64 <= MAX).then(|| sha256_hex(&b))
+    let bytes = std::fs::read(running_image()).ok()?;
+    Some(sha256_hex(&bytes))
 }
 
 /// WHAT is deciding: this binary's own digest and build provenance (build.rs).

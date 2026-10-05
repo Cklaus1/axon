@@ -3856,3 +3856,30 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       is the journal's real spend check (the admission budget guard); its exemption says so and
       stays "not a verdict property" because its refusal is the journal's `BudgetExceeded`.
     - **Matrix.** None. **Operator deployment.** None.
+
+## Amendment 77: the verifier's identity is the image it runs, and a sharded suite's relink cannot unmake it (C9 round 4c, shardflake)
+
+77. **`readiness_verifier_sha256 is not a sha256` under `scripts/cargo_test_shards.py`.**
+    - **Before.** `verifier_identity()` hashed the file at `std::env::current_exe()`'s PATH. A
+      sharded suite runs several `cargo test` processes at once on one target dir; any of them that
+      finds the tree changed (a touched `.git/index` or any tracked file: `build.rs` watches the
+      whole tree) RELINKS the test binary, replacing the file under the siblings still running it.
+      A running sibling's `current_exe()` then reads `.../readiness-HASH (deleted)`, the digest
+      read fails, the identity becomes `"unknown"`, and `readiness_fixture`'s positive control
+      failed with "readiness_verifier_sha256 is not a sha256" (gpumaster, integration round 2:
+      a sharded run failed, serial passed). Reproduced by touching `Cargo.toml` every two seconds
+      during a sharded `--test readiness` run (same message); a clean sharded suite passed 30 of
+      30, so the trigger is a tree change during the run, not load.
+    - **After.** The identity is the digest of the image the process RUNS (`/proc/self/exe`,
+      `readiness::running_image()`), which survives replacement of its file. The test binaries'
+      re-executions of themselves (`journal`, `trust_root`, `restart_matrix`) and the observer
+      test's own digest use the same path. `privileged_launcher`'s production build, shared by
+      every shard, is built under an exclusive lock and each process runs private copies
+      (the `workspace_bin` pattern).
+    - **Row (killed by its own attack).** M1830 puts `current_exe()`'s path back in
+      `running_image_sha256`; `verifier_identity_replaced the_identity_survives_replacement_of_the_executable_file`
+      starts a copy of its own binary, unlinks the copy (what a relink does) and asks the child for
+      its identity: old code reports `"unknown"`.
+    - **Not fixed.** Tests that run `env!("CARGO_BIN_EXE_*")` paths of the shared target dir can
+      still see a binary relinked under them (production code refuses it: "changed after it was
+      hashed"); that needs a tree change during the run, which a clean sharded run does not make.

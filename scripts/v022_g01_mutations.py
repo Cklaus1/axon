@@ -7057,3 +7057,19 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+# ── C9 round 4c, workstream SHARDFLAKE (amendment 77; M1830-M1849) ───────────
+# A sharded suite relinks a test binary under running siblings; the verifier's
+# identity was the digest of the file at `current_exe()`'s PATH, which then
+# names "... (deleted)", so it read "unknown" and a certification could not
+# bind it. The identity is now the digest of the image the process RUNS
+# (`/proc/self/exe`). M1830 puts the path back; the test unlinks a copy of its
+# own binary and asks for the identity.
+PSV_IDS |= {f"M{n}" for n in range(1830, 1850)}
+MUTATIONS += [
+    ('M1830', "PSV-7 (shardflake): the verifier's identity is the image it RUNS, not the path it started from",
+     'crates/axon-fabric/src/readiness.rs',
+     '    let bytes = std::fs::read(running_image()).ok()?;',
+     '    let bytes = std::fs::read(std::env::current_exe().ok()?).ok()?;',
+     'axon-fabric', '--test verifier_identity_replaced', 'the_identity_survives_replacement_of_the_executable_file'),
+]
