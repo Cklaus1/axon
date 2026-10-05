@@ -347,12 +347,10 @@ NOT_YET_SCANNED = {
     "crates/axon-fabric/src/protected_host.rs": 1,
     "crates/axon-fabric/src/psv.rs": 1,
     "crates/axon-fabric/src/submit.rs": 20,
-    "crates/axon-guest-init/src/main.rs": 2,
     "crates/axon-loop-contracts/src/attestation.rs": 2,
     "crates/axon-loop-contracts/src/checks.rs": 6,
     "crates/axon-loop-contracts/src/operator_trust.rs": 2,
     "crates/axon-loop/src/admission.rs": 8,
-    "crates/axon-loop/src/evl.rs": 3,
     "crates/axon-loop/src/intake.rs": 2,
     "crates/axon-loop/src/safety.rs": 1,
     "crates/axon-loop/src/tel.rs": 1,
@@ -3062,6 +3060,20 @@ def verdict_types():
             if VERDICT_NAME.search(m.group(1)):
                 structs.add(m.group(1))
     enums = {k: v for k, v in enums.items() if v}
+    # A `type Judged = (Outcome, String, ..);` alias of a verdict is one (a
+    # function returning it decides): resolved to a fixpoint over every file.
+    aliases = {}
+    for f in in_scope_files():
+        clean = blank_non_code("\n".join(code_lines(open(os.path.join(ROOT, f)).read())))
+        for m in re.finditer(r"^[ \t]*(?:pub(?:\([a-z]+\))?\s+)?type\s+(\w+)\s*=\s*([^;]+);", clean, re.M):
+            aliases[m.group(1)] = m.group(2)
+    grew = True
+    while grew:
+        grew = False
+        for name, rhs in aliases.items():
+            if name not in structs and _decides_return(rhs, enums, structs):
+                structs.add(name)
+                grew = True
     _VERDICTS = (enums, structs)
     return _VERDICTS
 

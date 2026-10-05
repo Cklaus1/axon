@@ -6374,6 +6374,22 @@ MUTATIONS += [
      'CFG_TEST = re.compile(r"^[ \\t]*#\\[cfg\\((?:test)\\)\\][ \\t]*$", re.M)',
      'axon-core', _GT, 'a_cfg_all_test_item_is_test_code_and_a_cfg_any_test_item_is_not'),
 ]
+_AV = '--test admit_verdict_sites'
+MUTATIONS += [
+    ('M1782', "GUEST PID 1 (admit): a guest with no policy and no bypass refuses to start (the decision arm)",
+     'crates/axon-guest-init/src/main.rs',
+     '        (false, false) => PolicyDecision::Refuse,',
+     '        (false, false) => PolicyDecision::ProceedUnpoliced,',
+     'axon-guest-init', '--test policy_refusals', 'an_untrustworthy_cmdline_policy_starts_no_workload'),
+    ('M1783', "EVL (admit): a verifier-reported failure is a Fail, never a pass", 'crates/axon-loop/src/evl.rs',
+     '        VerificationResult::Failed => (Outcome::Fail, "verifier reported failure".into(), None),',
+     '        VerificationResult::Failed => (\n            Outcome::VerifiedPass,\n            "verifier reported failure".into(),\n            None,\n        ),',
+     'axon-loop', _AV, 'a_verifier_reported_failure_is_a_fail_never_a_pass'),
+    ('M1784', "EVL (admit): a trial no episode was delivered for is Unknown, never a pass", 'crates/axon-loop/src/evl.rs',
+     '                    Outcome::Unknown,\n                    "missing: no episode delivered".to_string(),',
+     '                    Outcome::VerifiedPass,\n                    "missing: no episode delivered".to_string(),',
+     'axon-loop', _AV, 'a_trial_with_no_delivered_episode_is_never_a_pass'),
+]
 
 
 def in_scope(mid, scope):

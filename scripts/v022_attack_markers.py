@@ -1704,3 +1704,8 @@ ATTACK_MARKERS.update({
     'M1780': r'ATTACK: a `matches!` pattern was read as a decision: the gate named it as a refusal site',
     'M1781': r'ATTACK: a `cfg\(all\(test, \.\.\)\)` item \(compiled only in a test build\) was read as production: the gate named it as a refusal site',
 })
+ATTACK_MARKERS.update({
+    'M1782': r'ATTACK: the guest started under a POSSIBLY TRUNCATED cmdline policy',
+    'M1783': r'ATTACK: a verifier-reported FAILURE was counted as a verified pass',
+    'M1784': r'ATTACK: a trial no episode was delivered for was counted as a verified pass',
+})
