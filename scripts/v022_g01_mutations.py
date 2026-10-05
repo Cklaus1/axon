@@ -5710,6 +5710,82 @@ MUTATIONS += [
      'axon-fabric', '--test privileged_launcher', 'a_custodian_program_the_operator_never_pinned_spends_nothing'),
 ]
 
+# ── C9 round 4c, workstream HARDEN (M1600-M1629; amendment 73; matrix A120-A127):
+# harden() resets every process attribute a set-id exec preserves (credentials(7),
+# execve(2), prctl(2)). Each row removes ONE reset and is killed by its own attack
+# (tests/privileged_launcher.rs: the state armed by a non-root caller, a witness
+# proving it survived an ordinary exec, a control launch, the setuid helper).
+PSV_IDS |= {f"M{n}" for n in range(1600, 1630)}
+_H_TIMERS = 'a_callers_interval_timers_never_signal_the_root_helper'
+_H_LIMITS = 'a_callers_other_resource_limits_never_reach_the_root_launch'
+_H_SCHED = 'a_callers_scheduling_state_never_reaches_the_root_launch'
+_H_KERNEL = 'a_callers_oom_slack_and_subreaper_state_never_reaches_the_root_launch'
+_H_SETSID = 'a_terminal_its_caller_owns_never_signals_the_root_helper'
+_H_LEADER = 'a_helper_that_could_not_leave_its_callers_session_launches_nothing'
+_H_PERSONA = 'a_callers_personality_never_reaches_the_root_launch'
+def _hrow(mid, what, old, new, test):
+    return (mid, "A/harden (c4c): " + what, _PL, old, new, 'axon-fabric', '--test privileged_launcher', test)
+MUTATIONS += [
+    _hrow('M1600', "a caller's ITIMER_REAL is disarmed before the root helper runs",
+          '        libc::setitimer(libc::ITIMER_REAL, &off, std::ptr::null_mut());',
+          '        let _ = libc::ITIMER_REAL;', _H_TIMERS),
+    _hrow('M1601', "a caller's ITIMER_VIRTUAL is disarmed",
+          '        libc::setitimer(libc::ITIMER_VIRTUAL, &off, std::ptr::null_mut());',
+          '        let _ = libc::ITIMER_VIRTUAL;', _H_TIMERS),
+    _hrow('M1602', "a caller's ITIMER_PROF is disarmed",
+          '        libc::setitimer(libc::ITIMER_PROF, &off, std::ptr::null_mut());',
+          '        let _ = libc::ITIMER_PROF;', _H_TIMERS),
+    _hrow('M1603', "the helper leaves its caller's session (setsid): no terminal signals it",
+          '        if libc::setsid() < 0 {', '        if false {', _H_SETSID),
+    _hrow('M1604', "a helper that could not leave its caller's session launches nothing",
+          '    if SESSION_NOT_LEFT.load(std::sync::atomic::Ordering::SeqCst) {', '    if false {', _H_LEADER),
+    _hrow('M1605', "RLIMIT_STACK is the helper's",
+          '        lim2(libc::RLIMIT_STACK, 8 << 20, libc::RLIM_INFINITY);',
+          '        let _ = libc::RLIMIT_STACK;', _H_LIMITS),
+    _hrow('M1606', "RLIMIT_RSS is the helper's",
+          '        lim2(libc::RLIMIT_RSS, libc::RLIM_INFINITY, libc::RLIM_INFINITY);',
+          '        let _ = libc::RLIMIT_RSS;', _H_LIMITS),
+    _hrow('M1607', "RLIMIT_MEMLOCK is the helper's",
+          '        lim2(libc::RLIMIT_MEMLOCK, 8 << 20, 8 << 20);',
+          '        let _ = libc::RLIMIT_MEMLOCK;', _H_LIMITS),
+    _hrow('M1608', "RLIMIT_LOCKS is the helper's",
+          '        lim2(libc::RLIMIT_LOCKS, libc::RLIM_INFINITY, libc::RLIM_INFINITY);',
+          '        let _ = libc::RLIMIT_LOCKS;', _H_LIMITS),
+    _hrow('M1609', "RLIMIT_SIGPENDING is the helper's",
+          '        lim2(\n            libc::RLIMIT_SIGPENDING,\n            libc::RLIM_INFINITY,\n            libc::RLIM_INFINITY,\n        );',
+          '        let _ = libc::RLIMIT_SIGPENDING;', _H_LIMITS),
+    _hrow('M1610', "RLIMIT_MSGQUEUE is the helper's",
+          '        lim2(libc::RLIMIT_MSGQUEUE, 819200, 819200);',
+          '        let _ = libc::RLIMIT_MSGQUEUE;', _H_LIMITS),
+    _hrow('M1611', "RLIMIT_NICE is the helper's",
+          '        lim2(libc::RLIMIT_NICE, 0, 0);', '        let _ = libc::RLIMIT_NICE;', _H_LIMITS),
+    _hrow('M1612', "RLIMIT_RTPRIO is the helper's",
+          '        lim2(libc::RLIMIT_RTPRIO, 0, 0);', '        let _ = libc::RLIMIT_RTPRIO;', _H_LIMITS),
+    _hrow('M1613', "RLIMIT_RTTIME is the helper's",
+          '        lim2(\n            libc::RLIMIT_RTTIME,\n            libc::RLIM_INFINITY,\n            libc::RLIM_INFINITY,\n        );',
+          '        let _ = libc::RLIMIT_RTTIME;', _H_LIMITS),
+    _hrow('M1614', "the nice value is the kernel default, not the caller's",
+          '        libc::setpriority(libc::PRIO_PROCESS, 0, 0);', '        let _ = libc::PRIO_PROCESS;', _H_SCHED),
+    _hrow('M1615', "the I/O scheduling class is the default, not the caller's",
+          '        libc::syscall(\n            libc::SYS_ioprio_set,\n            1 as libc::c_long,\n            0 as libc::c_long,\n            0 as libc::c_long,\n        );',
+          '        let _ = libc::SYS_ioprio_set;', _H_SCHED),
+    _hrow('M1616', "the scheduling policy is SCHED_OTHER, not the caller's",
+          '        libc::sched_setscheduler(0, libc::SCHED_OTHER, &sp);', '        let _ = &sp;', _H_SCHED),
+    _hrow('M1617', "the CPU affinity is every CPU, not the caller's pinning",
+          '        libc::sched_setaffinity(0, std::mem::size_of::<libc::cpu_set_t>(), &all);',
+          '        let _ = &all;', _H_SCHED),
+    _hrow('M1618', "oom_score_adj is the default, not the caller's",
+          '        let _ = std::fs::write("/proc/self/oom_score_adj", "0");', '        let _ = "0";', _H_KERNEL),
+    _hrow('M1619', "the timer slack is the default value, not the caller's",
+          '        libc::prctl(\n            PR_SET_TIMERSLACK,\n            50_000 as libc::c_ulong,\n            0 as libc::c_ulong,\n            0 as libc::c_ulong,\n            0 as libc::c_ulong,\n        );',
+          '        let _ = PR_SET_TIMERSLACK;', _H_KERNEL),
+    _hrow('M1620', "the personality is PER_LINUX, not the caller's",
+          '        libc::personality(0);', '        let _ = 0;', _H_PERSONA),
+    _hrow('M1622', "the helper is not its caller's child subreaper",
+          '        libc::prctl(\n            libc::PR_SET_CHILD_SUBREAPER,\n            0 as libc::c_ulong,\n            0 as libc::c_ulong,\n            0 as libc::c_ulong,\n            0 as libc::c_ulong,\n        );',
+          '        let _ = libc::PR_SET_CHILD_SUBREAPER;', _H_KERNEL),
+]
+
 # ── C9 round 4b, OBSERVER workstream (M1520-M1559; amendment 68; matrix A94):
 # operator decisions G and G1 = A. The observer is its own-uid SERVICE
 # (`axon-observer`, observer_service.rs); Fabric obtains an observation only

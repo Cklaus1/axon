@@ -3635,3 +3635,679 @@ fn a_fabric_under_no_new_privileges_is_told_why_the_helper_launches_nothing() {
     let v: Value = serde_json::from_slice(&p.stdout).unwrap();
     assert_eq!(v["no_new_privs"], true, "{v}");
 }
+
+// ── C9 round 4c, workstream HARDEN (amendment 73; rows M1600-M1622, matrix
+// A120-A127). A reviewer's reproductions: an interval timer the caller armed
+// before exec killed the setuid helper with SIGALRM, and a ^C written to a
+// pty the caller owns killed it with SIGINT. `harden()` is now derived from
+// the full list of what a set-id exec preserves. Each test below arms the
+// state as a NON-ROOT caller would hand it over (a few limits are raised by
+// the service manager first, as root, then the uid is dropped), shows by a
+// WITNESS (an ordinary exec of python3, no helper) that the state really
+// survived the exec, runs a CONTROL launch with nothing armed, and then
+// attacks: the setuid-root helper must be unaffected.
+
+/// The caller. Run as root; arms `argv[2]`'s groups, drops to the Fabric uid
+/// and execs the helper (mode `helper`) or a witness that reports its own
+/// state (mode `witness`). The TSC trap is set last, through a pre-built
+/// ctypes execve: any python run after it would fault on the clock.
+const ARMING_CALLER: &str = r#"
+import ctypes, json, os, platform, resource, signal, sys
+F = int(sys.argv[1])
+arms = set(a for a in sys.argv[2].split(",") if a)
+mode, helper, cfg = sys.argv[3], sys.argv[4], sys.argv[5]
+libc = ctypes.CDLL(None, use_errno=True)
+IOPRIO_SET = {"x86_64": 251, "aarch64": 30}[platform.machine()]
+IOPRIO_GET = {"x86_64": 252, "aarch64": 31}[platform.machine()]
+WITNESS = r'''
+import ctypes, json, os, platform, signal
+libc = ctypes.CDLL(None)
+get = @GET@
+sub = ctypes.c_int(-1)
+libc.prctl(37, ctypes.byref(sub), 0, 0, 0)
+print(json.dumps({
+    "itimers": [signal.getitimer(w)[1] for w in
+                (signal.ITIMER_REAL, signal.ITIMER_VIRTUAL, signal.ITIMER_PROF)],
+    "limits": open("/proc/self/limits").read(),
+    "nice": os.getpriority(os.PRIO_PROCESS, 0),
+    "ioprio_class": libc.syscall(get, 1, 0) >> 13,
+    "sched": os.sched_getscheduler(0),
+    "cpus": len(os.sched_getaffinity(0)),
+    "oom": int(open("/proc/self/oom_score_adj").read()),
+    "slack": int(open("/proc/self/timerslack_ns").read()),
+    "persona": open("/proc/self/personality").read().strip(),
+    "subreaper": sub.value,
+}))
+'''
+def ok(r, what):
+    if r == -1:
+        raise OSError(ctypes.get_errno(), what)
+if "timers" in arms:
+    for s in (signal.SIGALRM, signal.SIGVTALRM, signal.SIGPROF):
+        signal.signal(s, signal.SIG_IGN)
+    signal.setitimer(signal.ITIMER_REAL, 0.02, 0.02)
+    signal.setitimer(signal.ITIMER_VIRTUAL, 0.001, 0.001)
+    signal.setitimer(signal.ITIMER_PROF, 0.001, 0.001)
+if "limits" in arms:
+    for r, v in [(resource.RLIMIT_STACK, 1 << 20), (resource.RLIMIT_RSS, 1 << 20),
+                 (resource.RLIMIT_MEMLOCK, 0), (10, 7),   # RLIMIT_LOCKS
+                 (11, 0), (12, 0),        # RLIMIT_SIGPENDING, RLIMIT_MSGQUEUE
+                 (15, 1000000),           # RLIMIT_RTTIME
+                 # What a service manager (LimitNICE=, LimitRTPRIO=) hands down:
+                 # raised as root, before the uid drops.
+                 (13, 40), (14, 50)]:  # RLIMIT_NICE, RLIMIT_RTPRIO
+        resource.setrlimit(r, (v, v))
+if "sched" in arms:
+    os.setpriority(os.PRIO_PROCESS, 0, 19)
+    ok(libc.syscall(IOPRIO_SET, 1, 0, 3 << 13), "ioprio_set")
+    os.sched_setscheduler(0, os.SCHED_IDLE, os.sched_param(0))
+    cpus = sorted(os.sched_getaffinity(0))
+    os.sched_setaffinity(0, {cpus[0]})
+if "kernel" in arms:
+    open("/proc/self/oom_score_adj", "w").write("1000")
+    ok(libc.prctl(29, 100000000, 0, 0, 0), "PR_SET_TIMERSLACK")
+    ok(libc.prctl(36, 1, 0, 0, 0), "PR_SET_CHILD_SUBREAPER")
+if "persona" in arms:
+    ok(libc.personality(0x0008 | 0x20000), "personality")
+if "leader" in arms:
+    os.setpgid(0, 0)
+os.setgroups([])
+os.setresgid(F, F, F)
+os.setresuid(F, F, F)
+if mode == "witness":
+    path, argv = sys.executable, [sys.executable, "-c", WITNESS.replace("@GET@", str(IOPRIO_GET))]
+else:
+    path, argv = helper, [helper, "--test-config", cfg]
+if "tsc" in arms:
+    c = ctypes.c_char_p
+    av = (c * (len(argv) + 1))(*[a.encode() for a in argv], None)
+    ev = (c * 2)(b"PATH=/usr/bin:/bin", None)
+    pb = path.encode()
+    libc.prctl(26, 2, 0, 0, 0)
+    libc.execve(pb, av, ev)
+    os._exit(127)
+os.execve(path, argv, {"PATH": "/usr/bin:/bin"})
+"#;
+
+/// What the stand-in launcher records about its parent, the root helper
+/// (`$PPID`), and itself.
+const HARDEN_RECORD: &str = r#"P=$PPID
+echo $P > "$OUT/h-pid"
+cp /proc/$P/limits "$OUT/h-limits"
+sed 's/^.*) //' /proc/$P/stat | cut -d' ' -f17 > "$OUT/h-nice"
+cat /proc/$P/oom_score_adj > "$OUT/h-oom"
+cat /proc/$P/timerslack_ns > "$OUT/h-slack"
+cat /proc/$P/personality > "$OUT/h-persona"
+grep '^Cpus_allowed_list' /proc/$P/status > "$OUT/h-cpus"
+ionice -p $P > "$OUT/h-ionice" 2>&1
+chrt -p $P > "$OUT/h-sched" 2>&1
+uname -m > "$OUT/l-uname-m"
+( sleep 5 & echo $! > "$OUT/orphan-pid" )
+sleep 0.2
+sed 's/^.*) //' /proc/$(cat "$OUT/orphan-pid")/stat | cut -d' ' -f2 > "$OUT/orphan-ppid"
+kill $(cat "$OUT/orphan-pid") 2>/dev/null
+"#;
+
+fn died_of(o: &std::process::Output) -> Option<i32> {
+    use std::os::unix::process::ExitStatusExt;
+    o.status.signal()
+}
+
+/// One launch of the setuid helper by the arming caller (a fresh fixture).
+struct Armed {
+    o: std::process::Output,
+    out: PathBuf,
+    _f: Fx,
+}
+
+fn launch_armed(arms: &str, extra: &str) -> Armed {
+    let f = fx(Some(FABRIC), extra, |_| {});
+    let mut child = Command::new("python3")
+        .args(["-c", ARMING_CALLER])
+        .arg(FABRIC.to_string())
+        .arg(arms)
+        .arg("helper")
+        .arg(f.installed.as_ref().unwrap())
+        .arg(&f.cfg)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    {
+        use std::io::Write;
+        // A helper killed before it reads the request closes the pipe.
+        let _ = child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(f.request("op-1").to_string().as_bytes());
+    }
+    let o = child.wait_with_output().unwrap();
+    let out = f.out_root.join("op-1");
+    Armed { o, out, _f: f }
+}
+
+impl Armed {
+    fn rep(&self) -> String {
+        format!(
+            "exit {:?} signal {:?} stdout {} stderr {}",
+            self.o.status.code(),
+            died_of(&self.o),
+            String::from_utf8_lossy(&self.o.stdout),
+            String::from_utf8_lossy(&self.o.stderr)
+        )
+    }
+    /// A file the launcher recorded; a launch that did not get that far is a
+    /// setup failure (the attack checks run before any read).
+    fn read(&self, n: &str) -> String {
+        std::fs::read_to_string(self.out.join(n))
+            .unwrap_or_else(|e| {
+                panic!("setup: the launch did not record {n} ({e}): {}", self.rep())
+            })
+            .trim()
+            .to_string()
+    }
+    fn launched_ok(&self) -> bool {
+        self.o.status.code() == Some(0) && self.out.join("h-pid").exists()
+    }
+}
+
+/// The caller's own view of the armed state (an ordinary exec, no helper).
+fn witness(arms: &str) -> (std::process::Output, Value) {
+    let o = Command::new("python3")
+        .args(["-c", ARMING_CALLER])
+        .arg(FABRIC.to_string())
+        .arg(arms)
+        .args(["witness", "-", "-"])
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    let v = serde_json::from_slice(&o.stdout).unwrap_or(Value::Null);
+    (o, v)
+}
+
+/// The control: nothing armed, the helper launches and the launcher records
+/// the helper's state.
+fn control() -> Armed {
+    let c = launch_armed("", HARDEN_RECORD);
+    assert!(
+        c.launched_ok(),
+        "control: a launch with nothing armed did not run: {}",
+        c.rep()
+    );
+    c
+}
+
+/// A (amendment 73; M1600-M1602), ROOT ONLY: interval timers survive exec.
+/// The caller arms ITIMER_REAL, ITIMER_VIRTUAL and ITIMER_PROF (with the
+/// signals ignored, so the caller itself lives to exec); `harden()` resets the
+/// dispositions to default, so a timer left armed kills the setuid-root helper
+/// (exit 142 for SIGALRM, the reviewer's reproduction). The signal that killed
+/// it names the row.
+#[test]
+fn a_callers_interval_timers_never_signal_the_root_helper() {
+    if skip_unless_root() {
+        return;
+    }
+    let (w, v) = witness("timers");
+    assert!(
+        w.status.success()
+            && v["itimers"]
+                .as_array()
+                .map(|a| a.len() == 3 && a.iter().all(|t| t.as_f64().unwrap_or(0.0) > 0.0))
+                .unwrap_or(false),
+        "setup: the three interval timers did not survive an ordinary exec: {w:?} {v}"
+    );
+    control();
+    let a = launch_armed("timers", HARDEN_RECORD);
+    match died_of(&a.o) {
+        Some(s) if s == libc::SIGALRM => panic!(
+            "ATTACK: the root helper died of SIGALRM (its caller's ITIMER_REAL survived the \
+             exec): {}",
+            a.rep()
+        ),
+        Some(s) if s == libc::SIGVTALRM => panic!(
+            "ATTACK: the root helper died of SIGVTALRM (its caller's ITIMER_VIRTUAL survived \
+             the exec): {}",
+            a.rep()
+        ),
+        Some(s) if s == libc::SIGPROF => panic!(
+            "ATTACK: the root helper died of SIGPROF (its caller's ITIMER_PROF survived the \
+             exec): {}",
+            a.rep()
+        ),
+        Some(s) => panic!("setup: the helper died of signal {s}: {}", a.rep()),
+        None => {}
+    }
+    assert!(a.launched_ok(), "control: the launch ran: {}", a.rep());
+}
+
+/// The pty caller (root): a pty whose master it holds, a session whose
+/// controlling terminal it is, and in that session's foreground process group
+/// the WITNESS (`sleep`, signals at default) and the HELPER (the Fabric uid;
+/// SIGINT ignored, as its caller left it, so only `harden()` makes it
+/// killable). Once the stand-in launcher reports it is waiting, the caller
+/// writes ^C to the master. It then releases the launcher and writes the
+/// outcomes to `result`.
+const PTY_CALLER: &str = r#"
+import fcntl, os, signal, sys, termios, time
+F, helper, cfg, waiting, go, result, ctrlc = int(sys.argv[1]), *sys.argv[2:8]
+master, slave = os.openpty()
+pid1 = os.fork()
+if pid1 == 0:
+    os.close(master)
+    os.setsid()
+    fcntl.ioctl(slave, termios.TIOCSCTTY, 0)
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+    witness = os.fork()
+    if witness == 0:
+        signal.signal(signal.SIGINT, signal.SIG_DFL)
+        dn = os.open("/dev/null", os.O_RDWR)
+        for fd in (0, 1, 2):
+            os.dup2(dn, fd)
+        os.execv("/usr/bin/sleep", ["sleep", "30"])
+    h = os.fork()
+    if h == 0:
+        os.setgroups([])
+        os.setresgid(F, F, F)
+        os.setresuid(F, F, F)
+        os.execve(helper, [helper, "--test-config", cfg], {"PATH": "/usr/bin:/bin"})
+    _, hs = os.waitpid(h, 0)
+    os.kill(witness, signal.SIGTERM)
+    _, ws = os.waitpid(witness, 0)
+    def fmt(s):
+        return "sig=%d" % os.WTERMSIG(s) if os.WIFSIGNALED(s) else "exit=%d" % os.WEXITSTATUS(s)
+    open(result, "w").write("helper %s\nwitness %s\n" % (fmt(hs), fmt(ws)))
+    os._exit(0)
+for _ in range(600):
+    if os.path.exists(waiting):
+        break
+    time.sleep(0.05)
+else:
+    os.kill(pid1, signal.SIGKILL)
+    sys.exit("setup: the helper never reached its launcher")
+if ctrlc == "1":
+    os.write(master, b"\x03")
+time.sleep(0.5)
+open(go, "w").close()
+os.waitpid(pid1, 0)
+"#;
+
+/// A (amendment 73; M1603), ROOT ONLY: terminal-generated signals. The caller
+/// owns a pty, is the session's controlling process, and the helper starts in
+/// its foreground process group; ^C written to the master is SIGINT to that
+/// whole group. `harden()` starts a new session (`setsid`), so the helper has
+/// no controlling terminal and the group the terminal signals is not its own.
+/// Setup: the witness `sleep` in the same group dies of that ^C, so the ^C
+/// really was delivered. Control: the same launch without a ^C.
+#[test]
+fn a_terminal_its_caller_owns_never_signals_the_root_helper() {
+    if skip_unless_root() {
+        return;
+    }
+    let launch = |ctrl_c: bool| -> (Fx, String, std::process::Output) {
+        // The launcher waits (in its own process, below the helper) until the
+        // caller has written ^C and released it.
+        let extra = "touch \"$OUT/waiting\"\ni=0\nwhile [ ! -e \"$OUT/../../go\" ] && [ $i -lt 200 ]; do sleep 0.05; i=$((i+1)); done\n";
+        let f = fx(Some(FABRIC), extra, |_| {});
+        let result = f.base.join("result");
+        let mut child = Command::new("python3")
+            .args(["-c", PTY_CALLER])
+            .arg(FABRIC.to_string())
+            .arg(f.installed.as_ref().unwrap())
+            .arg(&f.cfg)
+            .arg(f.out_root.join("op-1/waiting"))
+            .arg(f.base.join("go"))
+            .arg(&result)
+            .arg(if ctrl_c { "1" } else { "0" })
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        {
+            use std::io::Write;
+            let _ = child
+                .stdin
+                .take()
+                .unwrap()
+                .write_all(f.request("op-1").to_string().as_bytes());
+        }
+        let o = child.wait_with_output().unwrap();
+        let r = std::fs::read_to_string(&result).unwrap_or_else(|e| {
+            panic!(
+                "setup: the pty caller recorded no result ({e}): {:?} {}",
+                o.status,
+                String::from_utf8_lossy(&o.stderr)
+            )
+        });
+        (f, r, o)
+    };
+    let (_f, r, o) = launch(false);
+    assert!(
+        r.contains("helper exit=0"),
+        "control: without a ^C the helper launches: {r} {}",
+        String::from_utf8_lossy(&o.stdout)
+    );
+    let (_f, r, o) = launch(true);
+    assert!(
+        r.contains(&format!("witness sig={}", libc::SIGINT)),
+        "setup: the ^C did not reach the witness in the caller's foreground group: {r}"
+    );
+    assert!(
+        !r.contains(&format!("helper sig={}", libc::SIGINT)),
+        "ATTACK: a ^C written to a terminal its caller owns killed the root helper (SIGINT): \
+         {r} {}",
+        String::from_utf8_lossy(&o.stdout)
+    );
+    assert!(
+        r.contains("helper exit=0"),
+        "control: the helper launched under the ^C: {r} {}",
+        String::from_utf8_lossy(&o.stdout)
+    );
+}
+
+/// A (amendment 73; M1604), ROOT ONLY: `setsid` fails for a process-group
+/// leader, which would leave the helper in its caller's session and under its
+/// terminal's signals. The launch is then refused (exit 30, nothing ran).
+/// Control: the same caller as an ordinary child launches.
+#[test]
+fn a_helper_that_could_not_leave_its_callers_session_launches_nothing() {
+    if skip_unless_root() {
+        return;
+    }
+    control();
+    let a = launch_armed("leader", HARDEN_RECORD);
+    assert!(
+        a.o.status.code() != Some(0) && !a.out.join("h-pid").exists(),
+        "ATTACK: a helper that stayed in its caller's session (a process-group leader, setsid \
+         failed) launched anyway: {}",
+        a.rep()
+    );
+    let rep: Value = serde_json::from_slice(&a.o.stdout).unwrap_or(Value::Null);
+    assert_eq!(
+        a.o.status.code(),
+        Some(30),
+        "refused, not unknown: {}",
+        a.rep()
+    );
+    assert!(
+        rep["error"]
+            .as_str()
+            .is_some_and(|e| e.contains("could not leave its caller's session")),
+        "the refusal names its cause: {}",
+        a.rep()
+    );
+    assert_eq!(rep["launched"], json!(false), "{}", a.rep());
+}
+
+/// The nine limits the first harden() left to the caller, as the helper's
+/// launcher sees them: (the /proc row, what armed it, what harden() sets,
+/// the marker's name).
+type Pair = (&'static str, &'static str);
+const NEW_LIMITS: [(&str, Pair, Pair, &str); 9] = [
+    (
+        "Max stack size",
+        ("1048576", "1048576"),
+        ("8388608", "unlimited"),
+        "RLIMIT_STACK",
+    ),
+    (
+        "Max resident set",
+        ("1048576", "1048576"),
+        ("unlimited", "unlimited"),
+        "RLIMIT_RSS",
+    ),
+    (
+        "Max locked memory",
+        ("0", "0"),
+        ("8388608", "8388608"),
+        "RLIMIT_MEMLOCK",
+    ),
+    (
+        "Max file locks",
+        ("7", "7"),
+        ("unlimited", "unlimited"),
+        "RLIMIT_LOCKS",
+    ),
+    (
+        "Max pending signals",
+        ("0", "0"),
+        ("unlimited", "unlimited"),
+        "RLIMIT_SIGPENDING",
+    ),
+    (
+        "Max msgqueue size",
+        ("0", "0"),
+        ("819200", "819200"),
+        "RLIMIT_MSGQUEUE",
+    ),
+    ("Max nice priority", ("40", "40"), ("0", "0"), "RLIMIT_NICE"),
+    (
+        "Max realtime priority",
+        ("50", "50"),
+        ("0", "0"),
+        "RLIMIT_RTPRIO",
+    ),
+    (
+        "Max realtime timeout",
+        ("1000000", "1000000"),
+        ("unlimited", "unlimited"),
+        "RLIMIT_RTTIME",
+    ),
+];
+
+/// A (amendment 73; M1605-M1613), ROOT ONLY: the other nine of the sixteen
+/// resource limits. The caller lowers STACK, RSS, MEMLOCK, LOCKS, SIGPENDING,
+/// MSGQUEUE and RTTIME and hands down a raised NICE and RTPRIO ceiling (what
+/// a service manager's `LimitNICE=`/`LimitRTPRIO=` does), and the root
+/// launcher must run under the helper's own values. Each row is a separate
+/// assertion with its own marker; the control reads the same values with
+/// nothing armed.
+#[test]
+fn a_callers_other_resource_limits_never_reach_the_root_launch() {
+    if skip_unless_root() {
+        return;
+    }
+    let (w, v) = witness("limits");
+    let wl = v["limits"].as_str().unwrap_or("").to_string();
+    for (row, armed, _, name) in NEW_LIMITS {
+        assert_eq!(
+            limit(&wl, row),
+            (armed.0.to_string(), armed.1.to_string()),
+            "setup: {name} did not survive an ordinary exec: {w:?} {wl}"
+        );
+    }
+    let c = control();
+    let cl = c.read("h-limits");
+    for (row, _, reset, name) in NEW_LIMITS {
+        assert_eq!(
+            limit(&cl, row),
+            (reset.0.to_string(), reset.1.to_string()),
+            "ATTACK: the root helper ran under its caller's {name}: (the ambient value reached it even with nothing armed; the control reads the helper's own): {cl}"
+        );
+    }
+    let a = launch_armed("limits", HARDEN_RECORD);
+    assert!(
+        a.launched_ok(),
+        "setup: the launch under lowered limits did not run: {}",
+        a.rep()
+    );
+    let al = a.read("h-limits");
+    for (row, _, reset, name) in NEW_LIMITS {
+        assert_eq!(
+            limit(&al, row),
+            (reset.0.to_string(), reset.1.to_string()),
+            "ATTACK: the root helper ran under its caller's {name}: {al}"
+        );
+    }
+}
+
+/// How many CPUs a `Cpus_allowed_list: 0-3,8` names.
+fn cpu_count(line: &str) -> usize {
+    line.split(':')
+        .nth(1)
+        .unwrap_or("")
+        .trim()
+        .split(',')
+        .map(|r| match r.split_once('-') {
+            Some((a, b)) => b.parse::<usize>().unwrap() - a.parse::<usize>().unwrap() + 1,
+            None => 1,
+        })
+        .sum()
+}
+
+/// A (amendment 73; M1614-M1617), ROOT ONLY: scheduling attributes a fork and
+/// an exec keep. The caller runs at nice 19, in the idle I/O class, under
+/// SCHED_IDLE and pinned to one CPU; the root launcher must run at the
+/// kernel's defaults, as the control does.
+#[test]
+fn a_callers_scheduling_state_never_reaches_the_root_launch() {
+    if skip_unless_root() {
+        return;
+    }
+    let (w, v) = witness("sched");
+    let (_, base) = witness("");
+    assert!(
+        v["nice"] == json!(19)
+            && v["ioprio_class"] == json!(3)
+            && v["sched"] == json!(5)
+            && v["cpus"] == json!(1)
+            && base["cpus"].as_u64().unwrap_or(0) > 1,
+        "setup: the scheduling state did not survive an ordinary exec (or this host has one \
+         CPU): {w:?} {v} baseline {base}"
+    );
+    let c = control();
+    let a = launch_armed("sched", HARDEN_RECORD);
+    assert!(
+        a.launched_ok(),
+        "setup: the armed launch did not run: {}",
+        a.rep()
+    );
+    assert_eq!(
+        a.read("h-nice"),
+        c.read("h-nice"),
+        "ATTACK: the root helper kept its caller's nice value"
+    );
+    assert_eq!(
+        a.read("h-ionice"),
+        c.read("h-ionice"),
+        "ATTACK: the root helper kept its caller's I/O scheduling class"
+    );
+    assert_eq!(
+        a.read("h-sched").replace(&a.read("h-pid"), "P"),
+        c.read("h-sched").replace(&c.read("h-pid"), "P"),
+        "ATTACK: the root helper kept its caller's scheduling policy"
+    );
+    assert_eq!(
+        cpu_count(&a.read("h-cpus")),
+        cpu_count(&c.read("h-cpus")),
+        "ATTACK: the root helper kept the CPU affinity its caller set: {} vs {}",
+        a.read("h-cpus"),
+        c.read("h-cpus")
+    );
+}
+
+/// A (amendment 73; M1618, M1619, M1622), ROOT ONLY: the caller raises its
+/// oom_score_adj to 1000 (first victim of the OOM killer), sets a 100 ms
+/// timer slack and makes itself a child subreaper. The root launcher runs
+/// with the control's values, and an orphan of the launcher is not adopted by
+/// the helper.
+#[test]
+fn a_callers_oom_slack_and_subreaper_state_never_reaches_the_root_launch() {
+    if skip_unless_root() {
+        return;
+    }
+    let (w, v) = witness("kernel");
+    assert!(
+        v["oom"] == json!(1000) && v["slack"] == json!(100_000_000) && v["subreaper"] == json!(1),
+        "setup: the state did not survive an ordinary exec: {w:?} {v}"
+    );
+    let c = control();
+    assert_ne!(
+        c.read("orphan-ppid"),
+        c.read("h-pid"),
+        "control: with nothing armed, an orphan is not adopted by the helper"
+    );
+    let a = launch_armed("kernel", HARDEN_RECORD);
+    assert!(
+        a.launched_ok(),
+        "setup: the armed launch did not run: {}",
+        a.rep()
+    );
+    assert_eq!(
+        a.read("h-oom"),
+        c.read("h-oom"),
+        "ATTACK: the root helper kept its caller's oom_score_adj"
+    );
+    assert_eq!(
+        a.read("h-slack"),
+        c.read("h-slack"),
+        "ATTACK: the root helper kept its caller's timer slack"
+    );
+    assert_ne!(
+        a.read("orphan-ppid"),
+        a.read("h-pid"),
+        "ATTACK: the root helper is still its caller's child subreaper (it adopted an orphan of \
+         its launcher)"
+    );
+}
+
+/// A (amendment 73; M1620), ROOT ONLY: the personality survives exec (a
+/// set-id exec clears only PER_CLEAR_ON_SETID). The caller sets PER_LINUX32
+/// and UNAME26, which make `uname` of the root launcher lie about the
+/// machine and the kernel release.
+#[test]
+fn a_callers_personality_never_reaches_the_root_launch() {
+    if skip_unless_root() {
+        return;
+    }
+    let (w, v) = witness("persona");
+    assert_eq!(
+        v["persona"],
+        json!("00020008"),
+        "setup: the personality did not survive an ordinary exec: {w:?} {v}"
+    );
+    let c = control();
+    let a = launch_armed("persona", HARDEN_RECORD);
+    assert!(
+        a.launched_ok(),
+        "setup: the armed launch did not run: {}",
+        a.rep()
+    );
+    assert_eq!(
+        a.read("h-persona"),
+        c.read("h-persona"),
+        "ATTACK: the root helper kept its caller's personality (uname: {})",
+        a.read("l-uname-m")
+    );
+}
+
+/// A (amendment 73; NO ROW, measured), ROOT ONLY: PR_SET_TSC survives exec,
+/// but a caller that makes the timestamp counter fault (PR_TSC_SIGSEGV) kills
+/// every program of this host's libc before its `main` (an ordinary exec of
+/// python3, and of `true`, dies of SIGSEGV in the loader), so no reset inside
+/// `harden()` can ever run and none is written: it would be a guard no attack
+/// can distinguish from its absence. What is asserted is the fail-closed
+/// shape: the helper either launches normally or dies before it has done
+/// anything (no out dir, nothing launched).
+#[test]
+fn a_callers_timestamp_counter_trap_launches_nothing_it_cannot_finish() {
+    if skip_unless_root() {
+        return;
+    }
+    let (w, _) = witness("tsc");
+    assert_eq!(
+        died_of(&w),
+        Some(libc::SIGSEGV),
+        "setup: PR_TSC_SIGSEGV did not survive an ordinary exec: {w:?}"
+    );
+    control();
+    let a = launch_armed("tsc", HARDEN_RECORD);
+    assert!(
+        a.launched_ok() || (died_of(&a.o) == Some(libc::SIGSEGV) && !a.out.exists()),
+        "a helper under its caller's PR_TSC_SIGSEGV neither launched nor died before acting: {}",
+        a.rep()
+    );
+}

@@ -1574,3 +1574,29 @@ ATTACK_MARKERS.update({
 ATTACK_MARKERS.update({
     'M1550': r'ATTACK: a protected observer served from a store whose parent the Fabric uid\s+owns',
 })
+
+# C9 round 4c, workstream HARDEN (M1600-M1622; amendment 73).
+ATTACK_MARKERS.update({
+    'M1600': r'ATTACK: the root helper died of SIGALRM',
+    'M1601': r'ATTACK: the root helper died of SIGVTALRM',
+    'M1602': r'ATTACK: the root helper died of SIGPROF',
+    'M1603': r'ATTACK: a \^C written to a terminal its caller owns killed the root helper',
+    'M1604': r"ATTACK: a helper that stayed in its caller's session",
+    'M1605': r"ATTACK: the root helper ran under its caller's RLIMIT_STACK:",
+    'M1606': r"ATTACK: the root helper ran under its caller's RLIMIT_RSS:",
+    'M1607': r"ATTACK: the root helper ran under its caller's RLIMIT_MEMLOCK:",
+    'M1608': r"ATTACK: the root helper ran under its caller's RLIMIT_LOCKS:",
+    'M1609': r"ATTACK: the root helper ran under its caller's RLIMIT_SIGPENDING:",
+    'M1610': r"ATTACK: the root helper ran under its caller's RLIMIT_MSGQUEUE:",
+    'M1611': r"ATTACK: the root helper ran under its caller's RLIMIT_NICE:",
+    'M1612': r"ATTACK: the root helper ran under its caller's RLIMIT_RTPRIO:",
+    'M1613': r"ATTACK: the root helper ran under its caller's RLIMIT_RTTIME:",
+    'M1614': r"ATTACK: the root helper kept its caller's nice value",
+    'M1615': r"ATTACK: the root helper kept its caller's I/O scheduling class",
+    'M1616': r"ATTACK: the root helper kept its caller's scheduling policy",
+    'M1617': r'ATTACK: the root helper kept the CPU affinity its caller set',
+    'M1618': r"ATTACK: the root helper kept its caller's oom_score_adj",
+    'M1619': r"ATTACK: the root helper kept its caller's timer slack",
+    'M1620': r"ATTACK: the root helper kept its caller's personality",
+    'M1622': r"ATTACK: the root helper is still its caller's child subreaper",
+})
