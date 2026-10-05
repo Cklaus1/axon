@@ -463,6 +463,37 @@ def build_prereqs():
             sys.exit(f"refused: could not build {what} ({cmd}); no cell runs without it")
 
 
+def matrix_holds(m):
+    """Whether a four-cell matrix holds (amendment 74): base, A-off and B-off
+    refuse the attack, A+B-off lets it succeed, the whole suite stays green, no
+    interpreter fault. ONE definition: the run that writes a record and the
+    join that reads it judge by it, so a shard's `holds` label is never taken
+    on trust."""
+    return (isinstance(m, dict)
+            and m.get("baseline") == "ATTACK_REFUSED"
+            and m.get("retired_guard_disabled") == "ATTACK_REFUSED"
+            and m.get("sibling_set_disabled") == "ATTACK_REFUSED"
+            and m.get("guard_set_disabled") == "ATTACK_SUCCEEDS"
+            and m.get("retired_guard_full_suite") == "SUITE_OK"
+            and not m.get("interpreter_not_restored"))
+
+
+def stale_holds(rec):
+    """A STALE_REFACTORED record holds when its old text is gone and its named
+    replacement was killed by its own attack (the run adds: no interpreter
+    fault, which a record does not carry)."""
+    return rec.get("old_string_present") is False and rec.get("replacement_state") == "REPLACEMENT_KILLED"
+
+
+def record_derivable_holds(r):
+    """What a record's own evidence supports. None: not derivable."""
+    if r.get("status") == "STALE_REFACTORED":
+        return stale_holds(r)
+    if r.get("status") == "EQUIVALENT_DID":
+        return matrix_holds(r.get("matrix"))
+    return None
+
+
 def join_shards(argv, commit, universe):
     """`--join OUT S0.json S1.json ...`: the status file from shard runs. It
     refuses unless every shard was executed at THIS commit (the registry the
@@ -507,6 +538,18 @@ def join_shards(argv, commit, universe):
             if r.get("edits_sha256") != current_edits_digest(r["mutation"]):
                 sys.exit(f"refused: shard {k}/{n} executed {r['mutation']} with edits that are not "
                          "this registry's")
+            # Amendment 74: HOLDS is recomputed from the recorded cells with
+            # the run's own predicate, never taken from the label. A record
+            # whose evidence cannot be derived is refused. A stale record that
+            # says it does not hold is allowed to (the run also counts an
+            # interpreter fault, which a record does not carry).
+            want = record_derivable_holds(r)
+            if want is None:
+                sys.exit(f"refused: shard {k}/{n}: {r['mutation']} carries no matrix or replacement "
+                         "state to derive its verdict from")
+            if bool(r.get("holds")) != want and not (r.get("status") == "STALE_REFACTORED" and not r.get("holds")):
+                sys.exit(f"refused: shard {k}/{n}: {r['mutation']} claims holds={bool(r.get('holds'))} "
+                         f"but its recorded cells give {want}")
         records += d["records"]
         seen += got
     dup = sorted({r for r in seen if seen.count(r) > 1})
@@ -625,6 +668,10 @@ GUARD_SETS = {
     # the pinned custodian program (it cannot open another uid's
     # /proc/<pid>/exe), so the pin verification (M1489) is in M602's set.
     "M602": {"siblings": ["M628", "M1489"], "kind": "set"},
+    # C9 round 4c, GATE (amendment 74): EVL's `!issuer_ok` arm vs the same
+    # predicate applied first by verify_check_evidence (M10) and bind_episode
+    # (M1299, a library primitive whose production route this is).
+    "M1726": {"siblings": ["M10", "M1299"], "kind": "set"},
     # C9 round 4 (rows, EQUIVALENCE): the two rule functions whose one
     # production caller is ProtectedHost::operator(), where each is
     # dominated; executed with the production axon-fabric.
@@ -992,9 +1039,7 @@ def main():
         faults = INTERP_FAULTS[faults_before:]
         if faults:
             matrix["interpreter_not_restored"] = faults
-        good = (baseline == "ATTACK_REFUSED" and retired_only == "ATTACK_REFUSED"
-                and sib_only == "ATTACK_REFUSED" and joint == "ATTACK_SUCCEEDS"
-                and full_state == "SUITE_OK" and not faults)
+        good = matrix_holds(matrix)
         ok &= good
         records.append({
             "mutation": rid, "status": "EQUIVALENT_DID", "kind": gs["kind"],
@@ -1052,7 +1097,8 @@ def main():
                     rep_state = "REPLACEMENT_REFUSED_ELSEWHERE"
         elif rep in BY_ID:
             rep_state = "REPLACEMENT_RETIRED"
-        holds = (not old_present) and rep_state == "REPLACEMENT_KILLED" and not INTERP_FAULTS
+        holds = stale_holds({"old_string_present": old_present, "replacement_state": rep_state}) \
+            and not INTERP_FAULTS
         ok &= holds
         records.append({
             "mutation": rid, "status": "STALE_REFACTORED", "property": rec["property"],

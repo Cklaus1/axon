@@ -6287,7 +6287,7 @@ mod tests {
             let out = run(&cand, test);
             assert!(
                 matches!(&out, Err(m) if m.contains("sealed code") || m.contains("is the candidate's")),
-                "{why}: {out:?}"
+                "ATTACK: sealed code reached the operator ({why}): {out:?}"
             );
         }
         // Honest, and the interface: the operator calls the candidate, and a
@@ -6334,7 +6334,10 @@ mod tests {
             ),
         ] {
             let out = run(&with_base(cand), test);
-            assert!(out.is_err(), "{why}: {out:?}");
+            assert!(
+                out.is_err(),
+                "ATTACK: a sealed frame reached the operator's kernel state ({why}): {out:?}"
+            );
         }
     }
 

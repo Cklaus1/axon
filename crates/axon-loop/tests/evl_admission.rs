@@ -56,6 +56,45 @@ fn evl_rejects_subject_or_untrusted_verifier_and_stale_epoch() {
     assert_eq!((i.verified_pass, i.unknown), (1, 1));
 }
 
+/// EVL's own independence rule for a PASS (evl.rs `} else if !issuer_ok`,
+/// amendment 74): a pass verified by an issuer the evaluation names as a
+/// SUBJECT never counts, even when the operator trusts that verifier and its
+/// signature holds. Here the request lists the fixture's trusted VERIFIER
+/// among its subject issuers; every pass it verified must stay Unknown.
+/// (Dominated: bind_episode, M1299, and verify_check_evidence, M10, apply the
+/// same rule with the same sets first; four cells, EQUIV_RECORD["M1726"].)
+/// Control: the same request without the verifier as a subject counts.
+#[test]
+fn a_pass_verified_by_a_subject_issuer_never_counts() {
+    let run = |verifier_is_subject: bool| {
+        let w = world();
+        freeze_plan(&w.s, "exp", &w.inc_ref, &w.cand_ref, |_| {}).unwrap();
+        let specs = pair(&w.inc, &w.cand, 2, 2, 2, Some(100), Some(50));
+        let mut v = evl_request("exp", &w.inc, &w.cand, &specs, &EvlOpts::default());
+        if verifier_is_subject {
+            v["subject_issuers"]
+                .as_array_mut()
+                .unwrap()
+                .push(json!(VERIFIER));
+        }
+        let (rec, _) = evaluate(&w.s, &v).unwrap();
+        let c = rec.arm_for_policy(&w.cand_ref).unwrap();
+        let i = rec.arm_for_policy(&w.inc_ref).unwrap();
+        (c.verified_pass, i.verified_pass)
+    };
+    let got = run(true);
+    assert_eq!(
+        got,
+        (0, 0),
+        "ATTACK: a pass verified by a subject issuer was counted (candidate, incumbent)"
+    );
+    assert_eq!(
+        run(false),
+        (2, 2),
+        "control: an independent verifier's passes count"
+    );
+}
+
 #[test]
 fn evl_refusals_write_nothing() {
     let w = world();

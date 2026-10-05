@@ -174,13 +174,26 @@ fn path_char(c: char) -> bool {
 }
 
 /// The directories whose `debug/` or `release/` profile output `line` names.
+/// A profile segment is `/debug/` or `/release/`, OR the line's last path
+/// segment with no trailing slash (`TD="${CARGO_TARGET_DIR:-$REPO/target}/debug"`:
+/// the directory a later `$TD/<bin>` is run from; amendment 74).
 fn profile_dirs(line: &str) -> Vec<String> {
     let mut out = vec![];
-    for marker in ["/debug/", "/release/"] {
+    for marker in ["/debug/", "/release/", "/debug", "/release"] {
         let mut from = 0;
         while let Some(i) = line[from..].find(marker) {
             let at = from + i;
             from = at + marker.len();
+            // The slash-less forms count only where the segment ENDS the path
+            // (a quote, whitespace, or the end of the line follows).
+            if !marker.ends_with('/')
+                && line[from..]
+                    .chars()
+                    .next()
+                    .is_some_and(|c| !(c == '"' || c == '\'' || c.is_whitespace() || c == ')'))
+            {
+                continue;
+            }
             let start = line[..at]
                 .char_indices()
                 .rev()
@@ -217,6 +230,9 @@ pub fn binary_choice_violations(text: &str) -> Vec<String> {
         .collect();
     let resolves_via_cargo = text.contains("target_directory");
     let mut out = vec![];
+    // Variables assigned a guessed profile directory (`TD="${...}/debug"`):
+    // each later `$TD/<bin>` or `${TD}/<bin>` runs a binary from that guess.
+    let mut guessed: Vec<String> = vec![];
     for (n, raw) in text.lines().enumerate() {
         let l = raw.trim_start();
         if l.starts_with('#') || l.starts_with("//") {
@@ -231,6 +247,25 @@ pub fn binary_choice_violations(text: &str) -> Vec<String> {
                 out.push(format!(
                     "line {}: names a binary under {dir}/ that the script did not build into a \
                      directory it chose: {}",
+                    n + 1,
+                    raw.trim()
+                ));
+                if let Some((var, _)) = l.split_once('=') {
+                    let var = var
+                        .trim_start_matches("export ")
+                        .trim_start_matches("local ");
+                    if !var.is_empty() && var.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+                    {
+                        guessed.push(var.to_string());
+                    }
+                }
+            }
+        }
+        for var in &guessed {
+            if l.contains(&format!("${var}/")) || l.contains(&format!("${{{var}}}/")) {
+                out.push(format!(
+                    "line {}: runs a binary from ${var}, a profile directory the script guessed \
+                     (resolve it with use_built / built_bin): {}",
                     n + 1,
                     raw.trim()
                 ));

@@ -216,6 +216,8 @@ for k in (0, 1):
         d["tree_clean"] = False
     if k == 1 and mode == "edits":
         d["mutations"][0]["old_sha256"] = "0" * 64
+    if k == 1 and mode == "claim":
+        d["mutations"][0]["result"] = "survived"
     json.dump(d, open(f"{out}/s{k}.json", "w"))
 "#;
 
@@ -269,14 +271,29 @@ for k in (0, 1):
     if alt and k == 1:
         blobs = {f: "0" * 40 for f in blobs}
     sel = [x for i, x in enumerate(u) if i % 2 == k]
+    def rec(x):
+        if x in m.STALE_REFACTORED:
+            r = {"status": "STALE_REFACTORED", "old_string_present": False,
+                 "replacement_state": "REPLACEMENT_KILLED", "matrix": None}
+        else:
+            r = {"status": "EQUIVALENT_DID",
+                 "matrix": {"baseline": "ATTACK_REFUSED", "retired_guard_disabled": "ATTACK_REFUSED",
+                            "sibling_set_disabled": "ATTACK_REFUSED",
+                            "guard_set_disabled": "ATTACK_SUCCEEDS",
+                            "retired_guard_full_suite": "SUITE_OK"}}
+        return {"mutation": x, "holds": True, "commit": head,
+                "edits_sha256": pd.current_edits_digest(x), **r}
     d = {"schema": "axon-v022-paired-disable/2", "commit": head, "all_hold": True,
          "shard": f"{k}/2", "selected": sel, "registry_blobs": blobs, "tree_clean": True,
-         "records": [{"mutation": x, "holds": True, "commit": head,
-                      "edits_sha256": pd.current_edits_digest(x)} for x in sel]}
+         "records": [rec(x) for x in sel]}
     if k == 1 and mode == "dirty":
         d["tree_clean"] = False
     if k == 1 and mode == "edits":
         d["records"][0]["edits_sha256"] = "0" * 64
+    if k == 1 and mode == "cells":
+        # An edited shard: the label still says holds, a cell says it did not.
+        r = next(r for r in d["records"] if r["matrix"])
+        r["matrix"]["guard_set_disabled"] = "OTHER_FAILURE"
     json.dump(d, open(f"{out}/j{k}.json", "w"))
 "#;
 
@@ -392,6 +409,32 @@ fn a_join_refuses_a_record_run_with_other_edits() {
     assert!(
         !written && text(&o).contains("with edits that are not"),
         "ATTACK: --join accepted a record executed with other edits:\n{}",
+        text(&o)
+    );
+}
+
+/// --join recomputes HOLDS from the recorded cells (amendment 74): an edited
+/// shard whose record still says `holds` over a cell that shows the joint
+/// attack was NOT reopened is refused. Control: the unedited shards join
+/// (a_join_refuses_a_shard_made_from_another_registry's).
+#[test]
+fn a_join_refuses_a_record_whose_label_is_not_its_cells() {
+    let (o, written) = combine("join-cells", JOIN_SHARDS, true, "cells");
+    assert!(
+        !written && text(&o).contains("but its recorded cells give"),
+        "ATTACK: --join accepted a record whose holds label its recorded cells do not support:\n{}",
+        text(&o)
+    );
+}
+
+/// --merge recomputes all_killed from the recorded rows (amendment 74): a
+/// shard claiming all_killed over a row that survived is refused.
+#[test]
+fn a_merge_refuses_a_shard_claiming_all_killed_over_a_survivor() {
+    let (o, written) = combine("merge-claim", MERGE_SHARDS, false, "claim");
+    assert!(
+        !written && text(&o).contains("claims all_killed but its recorded rows"),
+        "ATTACK: --merge accepted a shard that claimed all_killed over a row that survived:\n{}",
         text(&o)
     );
 }

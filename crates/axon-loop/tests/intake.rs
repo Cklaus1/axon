@@ -704,7 +704,8 @@ fn a_fabric_check_on_the_output_tree_is_recorded_as_the_verification() {
     let att_ref = digest_value(&att).unwrap();
     assert_eq!(
         out.record.verification_attestation_ref,
-        Some(att_ref.clone())
+        Some(att_ref.clone()),
+        "ATTACK: the record did not name the attestation that authenticated it"
     );
     assert_eq!(out.record.verification_key_id, out.verification_key_id);
     assert_eq!(
@@ -1719,7 +1720,11 @@ fn the_proposer_of_the_policy_cannot_verify_its_episodes() {
     drop(tx);
     let before = snapshot(c.s.root());
     let ep = verified(&c.ep, &req, &rc, "passed");
-    let err = run_v(&c, &ep, Some(&req), Some(&rc)).unwrap_err();
+    let err = run_v(&c, &ep, Some(&req), Some(&rc))
+        .err()
+        .unwrap_or_else(|| {
+            panic!("ATTACK: a verdict verified by the policy's own proposer was intaken")
+        });
     assert!(
         err.to_string().contains("subject or unknown verifier"),
         "{err}"
@@ -1782,7 +1787,9 @@ fn a_verdict_on_one_tasks_check_cannot_decide_another_task() {
 
     let (ctx, ep, req, rc) = for_task(&c, "task-2", check_receipt("passed", 1));
     let before = snapshot(c.s.root());
-    let e = run_ctx(&c, &ctx, &ep, &req, &rc).unwrap_err();
+    let e = run_ctx(&c, &ctx, &ep, &req, &rc)
+        .err()
+        .unwrap_or_else(|| panic!("ATTACK: a verdict on one task's check decided another task"));
     assert!(
         matches!(e, LoopError::Refused(ref m) if m.contains("not task task-2's registered acceptance check t_other")),
         "{e}"
@@ -1820,7 +1827,9 @@ fn a_verdict_from_another_pinned_version_of_the_suite_does_not_decide_the_task()
 
     let (ctx, ep, req, rc) = for_task(&c, "task-1", check_receipt("passed", 1));
     let before = snapshot(c.s.root());
-    let e = run_ctx(&c, &ctx, &ep, &req, &rc).unwrap_err();
+    let e = run_ctx(&c, &ctx, &ep, &req, &rc).err().unwrap_or_else(|| {
+        panic!("ATTACK: a verdict from another pinned version of the suite decided the task")
+    });
     assert!(
         matches!(e, LoopError::Refused(ref m) if m.contains("not task task-1's registered acceptance check")),
         "{e}"
@@ -1891,7 +1900,8 @@ fn one_verdict_decides_one_trial_in_one_scope() {
             verification_psv_evidence: None,
         },
     )
-    .unwrap_err();
+    .err()
+    .unwrap_or_else(|| panic!("ATTACK: one verdict decided a trial in a second scope"));
     assert!(
         matches!(e, LoopError::Refused(ref m) if m.contains("already recorded in scope")),
         "{e}"

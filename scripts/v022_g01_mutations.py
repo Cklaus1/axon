@@ -5801,6 +5801,137 @@ MUTATIONS += [
 ]
 
 
+# ── C9 round 4c, workstream GATE (amendment 74; M1720-M1759) ─────────────────
+# Round 4c (EQUIVALENCE) found the PSV-4 keyed-evidence primitive
+# axon_psv::keyed_outcome with no row and invisible to the refusal gate (it
+# refuses by `return None` / `.then_some`), and the gate counting a site
+# covered by a row whose edit never touched it (an `old` text ending in a
+# newline reached the next line). The gate now judges a function that decides
+# by bool/Option as a site of its own and covers a site only by a row whose
+# edit CHANGES a line of its guard block; the rows below are the guards that
+# exposed, each killed by its own attack on the production route.
+PSV_IDS |= {f"M{n}" for n in range(1720, 1760)}
+_PSL = 'crates/axon-psv/src/lib.rs'
+_KEYED_CMP = '    (v["completion"].as_str() == Some(outcome_token(key, test, passed).as_str())).then_some(passed)'
+MUTATIONS += [
+    # The token comparison, judged on the guest runner (the verdict the guest
+    # writes) and on Fabric's derive (the only keyed check of a FAILURE there).
+    ('M1720', "PSV-4 (gate): a result line counts only with the token K issues for its outcome (guest runner)", _PSL,
+     _KEYED_CMP, '    Some(passed)',
+     'axon-psv', '--test runner', 'a_lone_unkeyed_failure_line_is_not_a_verdict'),
+    ('M1721', "PSV-4 (gate): a result line counts only with the token K issues for its outcome (Fabric derive)", _PSL,
+     _KEYED_CMP, '    Some(passed)',
+     'axon-fabric', '--test psv_dispatch', 'every_forgery_of_the_returned_evidence_is_unknown_for_its_own_reason'),
+    # The exactly-one-line rule: the attack is a candidate's line printed
+    # before the interpreter's own; "the last line counts" is the removal it
+    # would exploit (the first line is the candidate's, never keyed).
+    ('M1722', "PSV-3/4 (gate): exactly one result line names the test, or there is no keyed outcome", _PSL,
+     '    let (Some(v), None) = (lines.next(), lines.next()) else {',
+     '    let (Some(v), None) = (lines.last(), None::<serde_json::Value>) else {',
+     'axon-fabric', '--test psv_dispatch', 'a_second_pass_line_over_a_genuine_pass_is_not_a_pass'),
+    # EVL's own independence rule for a pass. Retired EQUIVALENT_DID below
+    # (four cells against M10 + M1299): a ROW, so the gate sees it is judged.
+    ('M1726', "EVL (gate): an untrusted or subject verifier cannot establish a pass", 'crates/axon-loop/src/evl.rs',
+     '            } else if !issuer_ok {', '            } else if false && !issuer_ok {',
+     'axon-loop', '--test evl_admission', 'a_pass_verified_by_a_subject_issuer_never_counts'),
+    # The one-process rule of a pinned custodian's reply (M1489 removes the
+    # whole verification; its kill evidences the pin comparison only).
+    ('M1727', "A (gate): a custodian reply two processes wrote is refused even when both run the pinned program",
+     'crates/axon-fabric/src/custodian.rs',
+     '    if seen.is_some_and(|s| s != pid) {', '    if false && seen.is_some_and(|s| s != pid) {',
+     'axon-fabric', '--test privileged_launcher',
+     'a_reply_two_processes_wrote_is_refused_even_when_both_run_the_pinned_program'),
+]
+# The predicate primitives the per-function rule exposed whose removal no row
+# made: the PCI provenance rule itself (span_in_sealed: the ONE rule the
+# static check and the runtime edge share; fn_is_sealed: the runtime's), the
+# operator-global table of the static check, the guest's production "no
+# bypass" constant, the reference grammar's scheme rule, and the class a
+# freeze keeps when it is read back from the ledger.
+_CLS = 'interp::tests::runtime_sealing_holds_without_the_static_check'
+MUTATIONS += [
+    ('M1730', "PCI (gate): a definition in a sealed module's file is sealed (the one provenance rule)",
+     'crates/axon-core/src/resolver.rs',
+     '        sealed.iter().any(|d| p.starts_with(d))', '        sealed.iter().any(|d| p.starts_with(d)) && false',
+     'axon-core', '--no-default-features --lib', _CLS),
+    ('M1731', "PCI (gate): a function defined in a sealed module runs sealed", 'crates/axon-core/src/interp.rs',
+     '        self.seal.active && self.seal.fns.contains(&(f as *const FnDef as usize))',
+     '        false && self.seal.active && self.seal.fns.contains(&(f as *const FnDef as usize))',
+     'axon-core', '--no-default-features --lib', _CLS),
+    ('M1732', "REF (gate): a reference names content only under the cl22/acf1/sha256 schemes",
+     'crates/axon-loop-contracts/src/ids.rs',
+     '            _ => None,\n        }\n    }\n}\n\nimpl Ref {',
+     '            _ => Some(RefScheme::Cl22),\n        }\n    }\n}\n\nimpl Ref {',
+     'axon-loop', '--test cli', 'a_reference_of_an_unknown_scheme_is_never_recorded'),
+    ('M1733', "GUEST PID 1 (gate): a production guest has no unpoliced bypass", 'crates/axon-guest-init/src/main.rs',
+     'fn allow_unpoliced() -> bool {\n    false\n}', 'fn allow_unpoliced() -> bool {\n    true\n}',
+     'axon-guest-init', '--test policy_refusals', 'an_untrustworthy_cmdline_policy_starts_no_workload'),
+    ('M1734', "PCI (gate): an operator constant is an operator global the sealed module cannot name",
+     'crates/axon-core/src/resolver.rs',
+     '                Item::LetDef { name, .. } => Some(name.as_str()),', '                Item::LetDef { .. } => None,',
+     'axon-core', '--no-default-features --lib', 'resolver::tests::a_sealed_module_cannot_reach_the_operators_names'),
+    ('M1735', "D3 (gate): a protected freeze reads back from the ledger as protected", 'crates/axon-loop/src/plan.rs',
+     '        *self == EvaluationClass::Development', '        true',
+     'axon-loop', '--test protected_class', 'a_protected_plan_counts_only_protected_backends'),
+]
+_ALB = 'crates/axon-loop/src/bin/axon-loop.rs'
+MUTATIONS += [
+    ('M1736', "TEL CLI (gate): a telemetry request of another schema is refused", _ALB,
+     '            if req.schema != "axon.loop.tel-request/1" {', '            if false && req.schema != "axon.loop.tel-request/1" {',
+     'axon-loop', '--test price_tel_sites', 'a_request_of_another_schema_is_never_summarized'),
+    ('M1737', "TEL CLI / G10 (gate): Fabric attempts need a pinned price schedule", _ALB,
+     '                (None, Some(_)) => Err(LoopError::Refused(\n                    "fabric_attempts require a pinned price_schedule (G10)".into(),\n                )),',
+     '                (None, Some(_)) => Ok(json!({"schema":"axon.loop.tel-summary/1"})),',
+     'axon-loop', '--test price_tel_sites', 'fabric_attempts_without_a_pinned_schedule_are_never_summarized'),
+]
+_GT = '--no-default-features --test refusal_coverage_gate'
+_HI = '--no-default-features --test harness_integrity'
+MUTATIONS += [
+    ('M1738', "COVERAGE GATE (gate): a function that decides by bool/Option is a site", _RCG,
+     '    for a, b in predicate_fns(lines):', '    for a, b in []:',
+     'axon-core', _GT, 'a_function_that_decides_by_bool_or_option_is_a_site'),
+    ('M1739', "COVERAGE GATE (gate): a row covers only the lines its edit changes", _RCG,
+     '        spans.append((r[0], changed_lines(text, r[3], r[4])))',
+     '        _a = line_of(text, text.index(r[3]))\n        spans.append((r[0], set(range(_a, _a + r[3].count("\\n") + 1))))',
+     'axon-core', _GT, 'a_row_covers_only_what_its_edit_changes'),
+    ('M1740', "COVERAGE GATE (gate): a predicate function is exempted only at its head line", _RCG,
+     '        ex_hit = [e for e in ex if ((g <= e[0] <= i) if at == i else e[0] == g)]',
+     '        ex_hit = [e for e in ex if g <= e[0] <= i]',
+     'axon-core', _GT, 'an_exemption_in_a_predicate_fns_body_does_not_exempt_the_fn'),
+    ('M1741', "COVERAGE GATE (gate): a let-else is the opener of its refusal", _RCG,
+     '|let\\b.*\\belse\\s*\\{\\s*$)|=>")', ')|=>")',
+     'axon-core', _GT, 'a_let_else_is_the_opener_of_its_refusal'),
+    ('M1742', "COVERAGE GATE (gate): a guard block never crosses a function boundary", _RCG,
+     '            if j < i and FN_HEAD.match(lines[j]):\n                break\n', '',
+     'axon-core', _GT, 'a_guard_block_does_not_cross_a_function_boundary'),
+    ('M1743', "HARNESS (gate): --join derives HOLDS from the recorded cells, not the label", 'scripts/v022_paired_disable.py',
+     '            if bool(r.get("holds")) != want and not (r.get("status") == "STALE_REFACTORED" and not r.get("holds")):',
+     '            if False:',
+     'axon-core', _HI, 'a_join_refuses_a_record_whose_label_is_not_its_cells'),
+    ('M1744', "HARNESS (gate): --merge derives all_killed from the recorded rows, not the label", 'scripts/v022_g01_mutations.py',
+     # The old text is built from two pieces: this registry is the file the row edits, and
+     # its own source must not contain the guard's text a second time.
+     '        if d["all_killed"] and' + ' notgood:', '        if False and d["all_killed"] and' + ' notgood:',
+     'axon-core', _HI, 'a_merge_refuses_a_shard_claiming_all_killed_over_a_survivor'),
+]
+EQUIV_RECORD["M1726"] = {
+    "property": "a pass counts only when a trusted verifier independent of the subject verified it",
+    "subsumed_by": ["M10", "M1299"], "killer": "joint:M1726+M10+M1299",
+    "all_paths": "evl::judge is the one place a Passed verification becomes VerifiedPass. Before the "
+                 "`!issuer_ok` arm, on every path that reaches it: bind_episode (checks.rs, M1299) "
+                 "refuses a passed episode whose issuer is not in `verifiers` or is in `subjects`, and "
+                 "the Passed arm is entered only after verify_check_evidence (intake.rs, M10) returned "
+                 "Ok, which refuses ANY cited result whose issuer is not trusted_verifiers "
+                 "(config.verifiers(), the same set judge's Bench carries) or is in `subject` (judge "
+                 "passes its own per-trial `subjects`). issuer_ok is the same predicate over the same "
+                 "issuer (`v.issuer_ref`, the episode's verification) and the same two sets, so it is "
+                 "true whenever either sibling held. Measured by hand before the harness run: the "
+                 "attack (a trusted verifier listed as a subject issuer) is refused with only the arm "
+                 "removed and with only the siblings removed, and counts with all three removed"}
+EQUIVALENT_DID |= {"M1726"}
+RETIRED |= {"M1726"}
+
+
 def in_scope(mid, scope):
     # A SIBLING-ONLY edit exists only as a member of a retired row's guard set
     # (amendment 64): it is never an active row of any scope.
@@ -6139,6 +6270,13 @@ def in_shard(i, shard):
     return shard is None or i % shard[1] == shard[0]
 
 
+def row_good(baseline, result, unrestored=None):
+    """A row is good when its baseline passed, it was KILLED by its own attack,
+    and the interpreter was restored (amendment 74: the one definition the run
+    and --merge share)."""
+    return baseline == "passed" and result == "killed" and not unrestored
+
+
 def merge(out, parts):
     """Combine shard runs of ONE commit and scope into one run. Refuses shards
     that disagree on commit, scope or shard count, that overlap, or that leave
@@ -6182,6 +6320,15 @@ def merge(out, parts):
         sys.exit(f"refused: shards cover the scope wrongly; missing {missing}, duplicate/extra {extra}")
     order = {m: n for n, m in enumerate(want)}
     rows.sort(key=lambda r: order[r["id"]])
+    # Amendment 74: a shard's `all_killed` is recomputed from its recorded rows
+    # with the run's own predicate (row_good), never taken from the label. A
+    # shard claiming all_killed over a row that is not killed is refused.
+    for p, d in zip(parts, docs):
+        notgood = [r["id"] for r in d["mutations"]
+                   if not row_good(r.get("baseline"), r.get("result"), r.get("interpreter_not_restored"))]
+        if d["all_killed"] and notgood:
+            sys.exit(f"refused: shard {p} claims all_killed but its recorded rows {notgood} are not "
+                     "killed from a passing baseline")
     ok = all(d["all_killed"] for d in docs)
     doc = {"schema": "axon-v022-mutation-run/3", "gate": base["gate"], "scope": base["scope"],
            "commit": base["commit"], "registry_blobs": here, "tree_clean": True,
@@ -6411,7 +6558,7 @@ def main():
         # 59). One that cannot be restored is THIS row's failure, and no later
         # row is judged on another interpreter: the run stops here.
         unrestored = restore_interpreter(axon_bin, toolchain["axon_bin_sha256"])
-        good = base == "passed" and result == "killed" and unrestored is None
+        good = row_good(base, result, unrestored)
         ok &= good
         results.append({"id": mid, "guard": guard, "file": rel, "package": pkg,
                         **({"status": "LIBRARY_PRIMITIVE"} if mid in LIBRARY_PRIMITIVE else {}),

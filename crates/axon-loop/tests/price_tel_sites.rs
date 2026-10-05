@@ -110,6 +110,32 @@ fn the_honest_request_is_summarized() {
     assert_eq!(code, 0, "{err}");
 }
 
+/// The verb's own two refusals (amendment 74: the CLI decides them itself, so
+/// each has a row): a request of another schema, and Fabric attempts with no
+/// pinned schedule (G10: an attempt cannot be priced by a schedule nobody
+/// pinned, and a summary that silently priced nothing would read as free).
+#[test]
+fn a_request_of_another_schema_is_never_summarized() {
+    let mut q = honest();
+    q["schema"] = json!("axon.loop.tel-request/2");
+    never_summarized(
+        &q,
+        &["axon.loop.tel-request/1"],
+        "a telemetry request of another schema was summarized",
+    );
+}
+
+#[test]
+fn fabric_attempts_without_a_pinned_schedule_are_never_summarized() {
+    let mut q = honest();
+    q.as_object_mut().unwrap().remove("price_schedule");
+    never_summarized(
+        &q,
+        &["require a pinned price_schedule"],
+        "Fabric attempts with no pinned price schedule were summarized (G10)",
+    );
+}
+
 // ── PinnedSchedule::pin ─────────────────────────────────────────────────────
 
 #[test]

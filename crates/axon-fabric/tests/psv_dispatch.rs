@@ -353,7 +353,7 @@ fn every_forgery_of_the_returned_evidence_is_unknown_for_its_own_reason() {
         assert_eq!(
             s.receipt.verification,
             ReceiptVerification::Unknown,
-            "{tamper}"
+            "ATTACK: forged returned evidence ({tamper}) reached a verdict"
         );
         let reason = s.reason.clone().unwrap_or_default();
         // "forge" is a single pass line whose token is not K's. The completion
@@ -1609,7 +1609,7 @@ fn a_second_pass_line_over_a_genuine_pass_is_not_a_pass() {
     assert_eq!(
         s.receipt.verification,
         ReceiptVerification::Unknown,
-        "{:?}",
+        "ATTACK: a second result line beside a genuine keyed pass reached a verdict: {:?}",
         s.reason
     );
     assert_eq!(

@@ -3247,6 +3247,96 @@ fn a_custodian_program_the_operator_never_pinned_spends_nothing() {
     assert_eq!(code, Some(0), "control: the pinned custodian spends: {rep}");
 }
 
+/// A custodian stand-in that writes ONE reply from TWO processes: the first
+/// half from the accepting process, the second from a child it forks after
+/// (both execute the same program, python3). The child stays alive until the
+/// client has read its half, so the kernel still names it (SCM_PIDFD).
+const TWO_SENDERS: &str = r#"
+import os, socket, sys, time
+where, mode = sys.argv[1], sys.argv[2]
+s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+s.bind(where)
+s.listen(8)
+open(where + ".ready", "w").close()
+reply = ('{"schema":"axon-custodian-reply/1","ok":true,"mode":"%s","nonce":null,'
+         '"error":null}\n' % mode).encode()
+while True:
+    c, _ = s.accept()
+    c.recv(4096)
+    c.sendall(reply[:20])
+    time.sleep(0.3)
+    pid = os.fork()
+    if pid == 0:
+        c.sendall(reply[20:])
+        time.sleep(2)
+        os._exit(0)
+    os.waitpid(pid, 0)
+    c.close()
+"#;
+
+/// A (amendment 74; custodian.rs `seen != pid`): a custodian reply is ONE
+/// process's. The program pin is checked per message, so a reply whose bytes
+/// two processes wrote is refused even when BOTH execute the pinned program:
+/// otherwise a process the custodian program let hold its connection (a fork)
+/// could complete or rewrite a reply the identified sender began. Here the
+/// operator pins the stand-in's own program (python3), so every message
+/// passes the pin and only the one-process rule can refuse. Control: the same
+/// pinned program answering from ONE process is accepted.
+#[test]
+fn a_reply_two_processes_wrote_is_refused_even_when_both_run_the_pinned_program() {
+    use sha2::{Digest, Sha256};
+    let me = euid();
+    let run = |script: &str, tag: &str| -> Result<axon_fabric::custodian::Mode, String> {
+        let d = tempfile::tempdir().unwrap();
+        let sock = d.path().join(format!("{tag}.sock"));
+        let c = Command::new("python3")
+            .args(["-c", script])
+            .arg(&sock)
+            .arg("test")
+            .spawn()
+            .unwrap();
+        let pid = c.id();
+        let _guard = Impostor(c);
+        let ready = PathBuf::from(format!("{}.ready", sock.display()));
+        for _ in 0..200 {
+            if ready.exists() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+        assert!(
+            ready.exists(),
+            "setup: the stand-in custodian never listened"
+        );
+        let exe = std::fs::read(format!("/proc/{pid}/exe")).expect("setup: python3's executable");
+        let pin = Sha256::digest(&exe)
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<String>();
+        axon_fabric::custodian::CustodianRef {
+            socket: sock,
+            uid: me,
+            sha256: Some(pin),
+        }
+        .spend(&"ab".repeat(16), 0, &"cd".repeat(32))
+    };
+    let got = run(TWO_SENDERS, "two");
+    assert!(
+        got.is_err(),
+        "ATTACK: a custodian reply that two processes wrote was accepted as the pinned \
+         custodian's: {got:?}"
+    );
+    assert!(
+        format!("{got:?}").contains("two processes"),
+        "refused for another reason: {got:?}"
+    );
+    let one = run(IMPOSTOR, "one");
+    assert!(
+        one.is_ok(),
+        "control: the pinned program answering from one process: {one:?}"
+    );
+}
+
 /// A (amendment 65; M1484): the bytes hashed are the ones that ran only if no
 /// other uid can rewrite the executable; one group- or other-writable is
 /// refused even when its bytes are, at this moment, the pinned ones.

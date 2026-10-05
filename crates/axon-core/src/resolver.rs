@@ -3203,7 +3203,10 @@ mod tests {
             ),
         ] {
             let e = errors_with_code(&sealed_merge(suite, cand), E0004);
-            assert!(e.iter().any(|m| m.contains(&format!("`{name}`"))), "{why}: {e:?}");
+            assert!(
+                e.iter().any(|m| m.contains(&format!("`{name}`"))),
+                "ATTACK: a sealed module reached the operator's `{name}` ({why}): {e:?}"
+            );
         }
         // Honest: builtins and its own names only. The operator's suite may
         // still use the candidate's names (the interface), and an inline

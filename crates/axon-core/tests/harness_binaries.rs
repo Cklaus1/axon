@@ -270,6 +270,16 @@ fn no_script_picks_a_binary_it_neither_built_nor_was_given() {
             "AXON = Path(__file__).parent / \"target",
             "\" / \"debug\" / \"axon\"\n"
         ),
+        // Amendment 74: the exact shape of psv_guest_boot_test.sh's helper leg
+        // (a profile directory with no trailing slash, then `$VAR/<bin>`).
+        concat!(
+            "TD=\"${CARGO_TARGET_DIR:-$REPO/target}/",
+            "debug\"\nHB=\"$TD/axon-protected-launcher\"\n\"$TD/axon-custodian\" &\n"
+        ),
+        concat!(
+            "TD=\"${CARGO_TARGET_DIR:-$REPO/target}/",
+            "release\"\n\"$TD/axon-fabric\" keygen\n"
+        ),
     ];
     for a in attacks {
         assert!(
@@ -287,6 +297,13 @@ fn no_script_picks_a_binary_it_neither_built_nor_was_given() {
         ),
         concat!("echo \"build it: target/", "debug/axon is stale\"\n"),
         concat!("# old: AXON=target/", "debug/axon\n"),
+        // A directory the script chose and built into, in the slash-less form.
+        concat!(
+            "CARGO_TARGET_DIR=\"$WORK/t\" cargo build -q -p axon-fabric --bin axon-fabric\n",
+            "TD=\"$WORK/t/",
+            "debug\"\n\"$TD/axon-fabric\" keygen\n"
+        ),
+        ". scripts/lib/axon_bin.sh\nuse_built HB axon-protected-launcher\n\"$HB\" < req\n",
     ];
     for h in honest {
         let v = binary_choice_violations(h);
