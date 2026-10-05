@@ -5800,6 +5800,60 @@ MUTATIONS += [
      'axon-fabric', '--test recipe_refusals', 'an_import_root_that_is_a_symlink_is_refused'),
 ]
 
+# ── C9 round 4c, workstream SITES (M1760-M1999; amendment 75) ───────────────
+# The crate rule (amendment 71) brought 118 refusal sites in 18 dependency
+# files into scope, NOT YET SCANNED. Each was judged by reading its callers on
+# the protected route (governance/notes/v022-dependency-sites.md). These rows
+# are the sites that DECIDE something there; each is killed by its OWN attack
+# on the production route: Fabric's psv::derive through submit on the helper
+# route (the certified parser's no-summary refusal); the registry file the
+# axon-fabric binary loads (CheckRegistry::load); the loop's config writer
+# and intake (one suite reading, one key reading); the `axon test` binary in
+# the runner's exact invocation (type-check abort, failing exit); and
+# submit's axon-os admission (the approval token's four bindings).
+PSV_IDS |= {f"M{n}" for n in range(1760, 2000)}
+_CR = 'crates/axon-cortex/src/runner.rs'
+_CL = 'crates/axon-cortex/src/lib.rs'
+_CM = 'crates/axon-core/src/main.rs'
+_OA = 'crates/axon-os/src/approval.rs'
+_PSEL = '--no-default-features --test psv_test_selection'
+_APPR = 'an_approval_token_admits_only_what_it_approved'
+MUTATIONS += [
+    ('M1760', "PSV-4 (sites): an output with no summary is no report (the certified parser)", _CR,
+     '    let Some(total) = total else {', '    let Some(total) = total.or(Some(0)) else {',
+     'axon-fabric', '--test psv_dispatch', 'an_output_with_no_summary_is_no_verdict'),
+    ('M1761', "PSV-5 (sites): a suite id holding a separator is not an id (the one id rule)", _CR,
+     "    if id.is_empty()\n        || id\n            .chars()\n            .any(|c| matches!(c, '@' | '#' | ':' | '/') || c.is_whitespace() || c.is_control())\n    {",
+     "    if false {",
+     'axon-cortex', '--test check_executor', 'a_registry_file_never_registers_a_suite_id_the_id_rule_refuses'),
+    ('M1762', "PSV-5 (sites): a suite reference whose version holds a separator, or whose version or entry is empty, has no reading", _CR,
+     "    if version.is_empty() || version.contains(['@', '#']) || entry.is_empty() {",
+     "    if false && (version.is_empty() || version.contains(['@', '#']) || entry.is_empty()) {",
+     'axon-loop', '--test intake', 'a_suite_reference_with_a_second_reading_is_never_pinned'),
+    ('M1763', "LOOP (sites): a document holding one key twice is refused on its raw bytes (parse_strict)", _CL,
+     '                    if out.contains_key(&k) {', '                    if false && out.contains_key(&k) {',
+     'axon-loop', '--test intake', 'an_episode_holding_one_key_twice_is_never_recorded'),
+    ('M1764', "PSV-3 (sites): `axon test` runs no test of a program that does not type-check", _CM,
+     '        eprintln!("error: {} type error(s); tests aborted", type_errors.len());\n        process::exit(2);',
+     '        eprintln!("error: {} type error(s); tests aborted", type_errors.len());',
+     'axon-core', _PSEL, 'a_candidate_that_does_not_type_check_is_never_tested'),
+    ('M1765', "PSV-4 (sites): `axon test` exits non-zero when a test failed (a failure is never read as no verdict)", _CM,
+     '    process::exit(if failed == 0 { 0 } else { 3 });', '    process::exit(0);',
+     'axon-core', _PSEL, 'a_run_whose_test_failed_exits_nonzero'),
+    ('M1766', "ADMISSION (sites): an approval token admits only a decision of `approved`", _OA,
+     '    if t.decision != "approved" {', '    if false && t.decision != "approved" {',
+     'axon-fabric', '--test grant_authority', _APPR),
+    ('M1767', "ADMISSION (sites): an approval token admits only the program it approved", _OA,
+     '    if pd != t.program_digest {', '    if false && pd != t.program_digest {',
+     'axon-fabric', '--test grant_authority', _APPR),
+    ('M1768', "ADMISSION (sites): an approval token admits only under the grant it approved", _OA,
+     '    if gd != t.grant_digest {', '    if false && gd != t.grant_digest {',
+     'axon-fabric', '--test grant_authority', _APPR),
+    ('M1769', "ADMISSION (sites): an approval token whose metadata changed after its digest admits nothing", _OA,
+     '    if td != t.token_digest {', '    if false && td != t.token_digest {',
+     'axon-fabric', '--test grant_authority', _APPR),
+]
+
 
 def in_scope(mid, scope):
     # A SIBLING-ONLY edit exists only as a member of a retired row's guard set

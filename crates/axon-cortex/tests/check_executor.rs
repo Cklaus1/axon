@@ -470,3 +470,48 @@ fn a_suite_version_holding_a_reference_separator_is_never_registered() {
         }
     }
 }
+
+/// Amendment 75: the registry FILE route. `CheckRegistry::load` is what the
+/// `axon-fabric` binary calls for its suites (the operator's suite registry
+/// on a protected host, M141), and it registers no suite id the one id rule
+/// (`check_suite_id`) refuses: each separator on its own, including the ones
+/// a reference written from the id would still read back (`#`, `:`, `/`,
+/// whitespace, empty), so only the id rule stands between them and the
+/// registry. Control: a plain id loads.
+#[test]
+fn a_registry_file_never_registers_a_suite_id_the_id_rule_refuses() {
+    let dir = std::env::temp_dir().join(format!("c9r4c-suite-id-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let load = |id: &str| {
+        let f = dir.join("registry.json");
+        std::fs::write(
+            &f,
+            serde_json::json!({"schema":"cortex-check-registry/1","executors":[],"checks":[{
+                "id": id, "visibility":"hidden","root":"/r","entry":"accept.ax",
+                "workspace_version_ref": format!("acf1:{}", "1".repeat(64))}]})
+            .to_string(),
+        )
+        .unwrap();
+        CheckRegistry::load(&f)
+    };
+    let control = load("acceptance");
+    let attacks: Vec<_> = ["acc#e", "a:b", "a/b", "a b", "a\tb", ""]
+        .into_iter()
+        .map(|id| (id, load(id)))
+        .collect();
+    let _ = std::fs::remove_dir_all(&dir);
+    let reg = control.expect("control: a plain suite id loads");
+    assert!(
+        reg.check("acceptance").is_some(),
+        "control: and is registered"
+    );
+    for (id, r) in attacks {
+        if let Ok(reg) = r {
+            panic!(
+                "ATTACK: a registry file registered the suite id {id:?}, which the id rule \
+                 refuses (registered: {})",
+                reg.check(id).is_some()
+            );
+        }
+    }
+}
