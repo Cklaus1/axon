@@ -3945,7 +3945,8 @@ fn a_helper_that_could_not_leave_its_callers_session_launches_nothing() {
 /// The nine limits the first harden() left to the caller, as the helper's
 /// launcher sees them: (the /proc row, what armed it, what harden() sets,
 /// the marker's name).
-const NEW_LIMITS: [(&str, (&str, &str), (&str, &str), &str); 9] = [
+type Pair = (&'static str, &'static str);
+const NEW_LIMITS: [(&str, Pair, Pair, &str); 9] = [
     (
         "Max stack size",
         ("1048576", "1048576"),
