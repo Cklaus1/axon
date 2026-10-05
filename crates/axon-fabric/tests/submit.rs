@@ -525,11 +525,12 @@ fn sigkill_after_launch_reconciles_to_outcome_unknown_with_liability() {
         .stderr(std::process::Stdio::null())
         .spawn()
         .unwrap();
-    let t0 = std::time::Instant::now();
-    while !started.exists() {
-        assert!(t0.elapsed().as_secs() < 30, "the effect never started");
-        std::thread::sleep(std::time::Duration::from_millis(20));
-    }
+    // Started, or the Fabric exited without starting it (a setup failure,
+    // reported at once). SETUP_BOUND (was 30 s) only fails.
+    wait_until(SETUP_BOUND, || {
+        started.exists() || child.try_wait().unwrap().is_some()
+    });
+    assert!(started.exists(), "setup: the effect never started");
     child.kill().unwrap(); // SIGKILL
     let st = child.wait().unwrap();
     use std::os::unix::process::ExitStatusExt;
@@ -573,7 +574,10 @@ fn sigkill_after_launch_reconciles_to_outcome_unknown_with_liability() {
             .map(|s| s.split_whitespace().nth(2) == Some("Z"))
             .unwrap_or(true)
     {
-        if t0.elapsed().as_secs() >= 10 {
+        // A bound on the kernel delivering the death, not the property: an
+        // unowned worker never dies, so any bound finds it. 10 s was a bound a
+        // loaded host could exceed for a worker that WAS dying.
+        if t0.elapsed().as_secs() >= 120 {
             let _ = std::process::Command::new("kill")
                 .arg("-9")
                 .arg(pid.to_string())

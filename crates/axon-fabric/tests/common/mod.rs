@@ -16,6 +16,34 @@ pub use exec::{copy_executable, write_executable};
 
 pub const ADMITTER: &str = "admitter:fabric-test";
 
+/// The upper bound on a SETUP wait (a fixture process becoming ready: a
+/// socket listening, an observer reaching its hold point). It is never the
+/// property under test and it never PASSES anything: a wait that reaches it
+/// fails the test as a setup failure. It used to be 10-20 s per site, which a
+/// loaded host exceeded (the clean axon-fabric baseline failed at load ~100,
+/// "the observer started"); every such wait now ends on the readiness signal
+/// itself, or on the fixture process EXITING (a refused start is reported at
+/// once, with its reason), so a healthy run pays nothing for the bound.
+pub const SETUP_BOUND: std::time::Duration = std::time::Duration::from_secs(600);
+
+/// Poll `ready` (every 10-50 ms) until it holds or `bound` passes: whether it
+/// held. Callers that can also observe the fixture ending check that in
+/// `ready` too, so a refusal is seen at once rather than at the bound.
+pub fn wait_until(bound: std::time::Duration, mut ready: impl FnMut() -> bool) -> bool {
+    let end = std::time::Instant::now() + bound;
+    let mut pause = std::time::Duration::from_millis(10);
+    loop {
+        if ready() {
+            return true;
+        }
+        if std::time::Instant::now() >= end {
+            return ready();
+        }
+        std::thread::sleep(pause);
+        pause = (pause * 2).min(std::time::Duration::from_millis(50));
+    }
+}
+
 /// A workspace binary these tests drive but cargo does not build for this
 /// crate, as cargo has made it current for THIS tree (built by `build`, or
 /// named in `env_var` and no older than its sources): never a stale file that
@@ -637,8 +665,11 @@ while [ $# -gt 0 ]; do case "$1" in --manifest) M="$2"; shift 2;; --out) O="$2";
 [ "{mode}" = exit ] && exit 1
 if [ "{mode}" = wait ]; then
 # Hold the observation open until the test says go (the epoch moves meanwhile).
+# The bound (12000 x 50 ms, SETUP_BOUND) only FAILS: an observer never told
+# to go makes no observation (it used to sign one after 20 s anyway).
 touch "{d}/observer-waiting"; i=0
-while [ ! -f "{d}/observer-go" ] && [ $i -lt 400 ]; do sleep 0.05; i=$((i+1)); done
+while [ ! -f "{d}/observer-go" ] && [ $i -lt 12000 ]; do sleep 0.05; i=$((i+1)); done
+[ -f "{d}/observer-go" ] || {{ echo "setup: the observer was never told to go" >&2; exit 1; }}
 fi
 if [ "{mode}" = replay ]; then
 cp "{prev}" "$O/observation.json" && cp "{prev}.sig" "$O/observation.json.sig"; exit $?
@@ -949,25 +980,32 @@ pub fn try_start_custodian(
         .stderr(std::process::Stdio::piped())
         .spawn()
         .unwrap();
-    for _ in 0..400 {
-        if child.try_wait().unwrap().is_some() {
-            let mut e = String::new();
-            use std::io::Read;
-            let _ = child.stderr.take().unwrap().read_to_string(&mut e);
-            return Err(e);
-        }
-        if std::os::unix::net::UnixStream::connect(&socket).is_ok() {
-            return Ok(TestCustodian {
-                child,
-                socket,
-                store,
-                uid,
-            });
-        }
-        std::thread::sleep(std::time::Duration::from_millis(25));
+    // Ready when it listens; done (refused) when it exits. Only the bound
+    // fails, and it is a setup bound (SETUP_BOUND), never the property.
+    let mut exited = false;
+    let listening = wait_until(SETUP_BOUND, || {
+        exited = child.try_wait().unwrap().is_some();
+        exited || std::os::unix::net::UnixStream::connect(&socket).is_ok()
+    });
+    if exited {
+        let mut e = String::new();
+        use std::io::Read;
+        let _ = child.stderr.take().unwrap().read_to_string(&mut e);
+        return Err(e);
     }
+    if listening {
+        return Ok(TestCustodian {
+            child,
+            socket,
+            store,
+            uid,
+        });
+    }
+    // Neither listening nor refused: a SETUP failure, never an `Err` (a
+    // refusal test reads `Err` as the custodian refusing to start, so a
+    // custodian that merely hung must not read as one).
     let _ = child.kill();
-    Err("the custodian did not start listening".into())
+    panic!("setup: the custodian neither listened nor exited within {SETUP_BOUND:?}")
 }
 
 /// [`try_start_custodian`], which must start (a test-trust custodian as this

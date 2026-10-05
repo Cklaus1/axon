@@ -22403,14 +22403,16 @@ fn r42_smoke_scenario_runs_end_to_end() {
         .spawn()
         .expect("spawn axon");
 
-    let deadline = Instant::now() + Duration::from_secs(30);
+    // A hang bound, not a speed bound: 30 s was exceeded by an honest run on
+    // a loaded host.
+    let deadline = Instant::now() + Duration::from_secs(300);
     let status = loop {
         match child.try_wait().expect("try_wait") {
             Some(s) => break s,
             None => {
                 if Instant::now() > deadline {
                     let _ = child.kill();
-                    panic!("r42_smoke.ax did not finish within 30s — a hang is a failure");
+                    panic!("r42_smoke.ax did not finish within 300s — a hang is a failure");
                 }
                 std::thread::sleep(Duration::from_millis(50));
             }

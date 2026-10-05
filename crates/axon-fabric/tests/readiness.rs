@@ -1035,17 +1035,18 @@ fn production_verifiers() -> &'static (std::path::PathBuf, std::path::PathBuf) {
             std::fs::copy(target.join("debug/axon-fabric"), &bin).unwrap();
             // Just written: a test thread forking meanwhile may still hold a
             // write descriptor to it (ETXTBSY), so the first exec is retried.
-            let m = (0..50)
-                .find_map(
-                    |_| match Command::new(&bin).arg("verifier-manifest").output() {
-                        Err(e) if e.kind() == std::io::ErrorKind::ExecutableFileBusy => {
-                            std::thread::sleep(std::time::Duration::from_millis(100));
-                            None
-                        }
-                        r => Some(r.unwrap()),
-                    },
-                )
-                .expect("setup: the copied verifier stayed busy");
+            // Retried until it is not busy; SETUP_BOUND (was 5 s) only fails.
+            let mut m = None;
+            wait_until(SETUP_BOUND, || {
+                match Command::new(&bin).arg("verifier-manifest").output() {
+                    Err(e) if e.kind() == std::io::ErrorKind::ExecutableFileBusy => false,
+                    r => {
+                        m = Some(r.unwrap());
+                        true
+                    }
+                }
+            });
+            let m = m.expect("setup: the copied verifier stayed busy");
             let v: Value = serde_json::from_slice(&m.stdout).unwrap();
             assert!(
                 v["build"] == "production" && v["source_dirty"] == dirty,

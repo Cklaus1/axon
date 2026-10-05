@@ -762,17 +762,35 @@ fn an_epoch_that_moves_while_the_observer_runs_refuses_the_launch() {
     let w = World::new();
     let key = observer_key(w.env.dir.path(), "obs", &[&w.observer_roots()]);
     let d = w.env.dir.path().to_path_buf();
+    // The observer is told to go on EVERY path out of the scope (a setup
+    // panic included), so it never holds the submission to its own bound.
+    struct Go(PathBuf);
+    impl Drop for Go {
+        fn drop(&mut self) {
+            let _ = std::fs::write(&self.0, "");
+        }
+    }
     let s = std::thread::scope(|sc| {
+        let go = Go(d.join("observer-go"));
         let h =
             sc.spawn(|| w.submit_observed(w.observer("wait", &key, "observer"), "op-obs-epoch"));
-        let mut n = 0;
-        while !d.join("observer-waiting").exists() && n < 400 {
-            std::thread::sleep(std::time::Duration::from_millis(50));
-            n += 1;
+        // Ready when the observer reaches its hold point; a submission that
+        // ENDS first never reached it (a setup failure, reported at once with
+        // its reason). The bound only fails (SETUP_BOUND; it was 20 s, which a
+        // loaded host exceeded).
+        let waiting = || d.join("observer-waiting").exists();
+        wait_until(SETUP_BOUND, || waiting() || h.is_finished());
+        if !waiting() {
+            drop(go);
+            let why = if h.is_finished() {
+                format!("{:?}", h.join().map(|s| s.reason))
+            } else {
+                format!("not within {SETUP_BOUND:?}")
+            };
+            panic!("setup: the observer never reached its hold point: {why}");
         }
-        assert!(d.join("observer-waiting").exists(), "the observer started");
         w.env.bump_epoch();
-        std::fs::write(d.join("observer-go"), "").unwrap();
+        drop(go);
         h.join().unwrap()
     });
     assert_ne!(

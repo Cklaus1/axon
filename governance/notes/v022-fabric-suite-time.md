@@ -123,8 +123,43 @@ that (it runs binaries one after another), and cargo-nextest is not installed
 here and would change the output format the harness parses.
 `scripts/cargo_test_shards.py` does it with cargo itself (§4).
 
-## 3. Next
+## 3. Waits (stage ii)
 
-Stage (ii) replaces the setup waits with readiness signals and removes the
-digest cost; stage (iii) runs the suite's test processes concurrently. Both
-are recorded here as they land.
+Each fixed wait was replaced by the positive signal the code under test (or
+the fixture) emits, with a long bound kept only as an upper bound that FAILS:
+`SETUP_BOUND` (600 s) in `tests/common/mod.rs`, polled by `wait_until`
+(10 ms, backing off to 50 ms).
+
+| site | old | new |
+|---|---|---|
+| `psv_dispatch.rs` `an_epoch_that_moves_while_the_observer_runs_refuses_the_launch` (coordinator priority: failed the CLEAN baseline at load ~100 on gpumaster, "the observer started") | poll 400 x 50 ms = 20 s for `observer-waiting`; then assert | ready on `observer-waiting`, or the submission thread FINISHING (a setup failure reported at once with its reason); SETUP_BOUND fails; `observer-go` is written on every path out (a drop guard), so a setup panic never holds the observer |
+| `common/mod.rs` observer script, mode `wait` | waited 400 x 50 ms = 20 s for `observer-go`, then SIGNED AN OBSERVATION ANYWAY | waits 12000 x 50 ms (SETUP_BOUND), and an observer never told to go exits 1 (makes no observation) |
+| `common/mod.rs` `try_start_custodian` | 400 x 25 ms = 10 s for the socket, then `Err("did not start listening")` -- which the refusal tests in `custodian.rs` read as the custodian REFUSING | ready when it listens, done when it EXITS (the refusal, at once, with its stderr); a custodian that does neither within SETUP_BOUND is a setup PANIC, never an `Err` |
+| `one_read.rs` `fifo_serving` (3 tests) | the feeder gave up after 5 s with no reader -- paid by EVERY honest run (an honest reader opens once, so the second serve never pairs) and missed by a slow reader | the feeder serves until the test is done reading (`Feeder::join` after the decision returns; `Drop` too); SETUP_BOUND only stops a feeder whose test never finished. Saves ~5 s per test |
+| `privileged_launcher.rs` `a_production_custodian_never_takes_its_config_from_a_path_its_caller_names` (`serves`) | 200 x 25 ms = 5 s; the control then read as "did not serve" | ends on the socket, or on the custodian exiting; SETUP_BOUND |
+| `privileged_launcher.rs` `start_impostor` | 200 x 25 ms = 5 s | ready file, or the impostor exiting; SETUP_BOUND; setup assert kept |
+| `privileged_launcher.rs` `a_custodian_executable_another_uid_can_rewrite_is_refused` | 200 x 25 ms = 5 s, NO assert: on expiry the client's connect error stood in for the pin refusal | socket, or exit; then a setup assert that it listens |
+| `submit.rs` `sigkill_after_launch_reconciles_to_outcome_unknown_with_liability` (effect started) | 30 s | the start marker, or the Fabric exiting; SETUP_BOUND |
+| `submit.rs` same test, the worker dying with its SIGKILLed supervisor | 10 s | 120 s. The bound is on the kernel delivering a death, not the property: an unowned worker never dies, so any bound finds it |
+| `readiness.rs` production verifier's ETXTBSY retry | 50 x 100 ms = 5 s | SETUP_BOUND |
+| `axon-cortex/tests/cli.rs` `cli_survives_a_generator_that_misbehaves` | ONE generator deadline (700 ms) for every case; elapsed < 30 s / < 10 s | the hang case keeps 700 ms (firing it IS the property; elapsed bound 300 s, far below the generator's 600 s sleep); the flood and silent cases, judged on their merits, get 120 s (a slow honest generator on a loaded host read as "did not answer"); the flood's no-deadlock bound is 100 s, below its own 120 s deadline so a deadlock still fails twice |
+| `axon-core/tests/cli_run.rs` `r42_smoke_scenario_runs_end_to_end` | 30 s hang bound | 300 s |
+
+Left unchanged, with the reason:
+
+* `one_read.rs` `a_signature_fifo_with_no_writer_does_not_hang_readiness`:
+  `recv_timeout(60 s)` IS the attack ("readiness hung"); it is already a
+  fail-only bound far above the run's own time (~1 s).
+* `privileged_launcher.rs` `ACTIVATION_POLLS`/`CLIENT_TIMEOUT_S` (180 s):
+  already positive-signal polls with fail-only bounds (raised in round 4b).
+* `axon-os` `r29_compliance.rs` (`< 2 s` violation detection), `r27_acceptance.rs`
+  (`< 5 s` prompt return), `axon-vm` quorum `elapsed < deadline * 3`,
+  `axon-intent` `synth.rs` (`< 2 s`): these bounds ARE the properties (a
+  latency SLA, a deadline that must fire). They are load-sensitive; they are
+  not shortened or removed here. If they must be made load-robust, it is by a
+  design decision on what latency the product promises, not by a test edit.
+* `journal.rs` child `sleep(120 s)`: the child waits to be killed; never paid.
+
+## 4. Next
+
+The digest cost (stage ii-b) and process-level parallelism (stage iii).
