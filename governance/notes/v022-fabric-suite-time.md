@@ -208,8 +208,10 @@ killed by PID after) on the 31 cores; load averages as recorded.
 |---|---|---|
 | BEFORE (16500980): serial, as the harness ran it | **1440-1472 s** (load 3-6; m1, m2) | not re-measured here: amendment 66 recorded the suite past 2400 s and psv_dispatch at 925-1319 s under the 6-shard paired-disable |
 | waits (stage ii) + sharded runner (stage iii), WITHOUT the sha2 profile | 223 s (sh2; load 3 -> 9) | 376 s (sh3; load ~38) |
-| AFTER: serial (stage ii + ii-b), as `cargo test -- --test-threads=1` | **218 s** (m3; load 2.8 -> 2.4; psv_dispatch 495 -> 46 s) | see §6 |
-| AFTER: sharded (stage ii + ii-b + iii), as `full_suite_ok` now runs it | **38 s** (sh4; load 2.4 -> 5.8) | **61 s** (sh5; load 12 -> 33, 32 busy loops) |
+| AFTER: serial (stage ii + ii-b), as `cargo test -- --test-threads=1` | **218 s** (m3; load 2.8 -> 2.4; psv_dispatch 495 -> 46 s) | **332 s** (m4; load 14 -> 35, 32 busy loops; psv_dispatch 73 s) |
+| AFTER: sharded (stage ii + ii-b + iii), as `full_suite_ok` now runs it (consumer cell: `AXON_BIN` given) | **36-38 s** (sh4; load 2.4 -> 5.8; and after the workspace_bin fix) | **61 s** (sh5; load 12 -> 33, 32 busy loops) |
+| AFTER: sharded, own-package cell shape (`AXON_BIN` unset: every shard process rebuilds the interpreter in a worktree, serialized under the workspace_bin lock) | 82-99 s | |
+| `full_suite_ok("axon-fabric", CONSUMER_FLAGS, interpreter_env())` called through the harness itself | 38 s, `(True, [])`, no skips | |
 
 The largest single factor is the digest cost (6.6x serially). Sharding then
 divides what is left by the concurrency the host gives it (8 jobs; the
@@ -223,7 +225,31 @@ target failed identically, and removing that dir fixed both.
 
 ## 6. Evidence
 
-See the commit messages of the stage commits for the exact commands and rcs
-(changed tests 20/20 idle and 20/20 under load, mutation rows killed by their
-own attacks, clippy/fmt/suites, harness_integrity and the refusal-coverage
-gate).
+* Changed tests, 20/20 idle (load 2.6-4.8) and 20/20 under 32 busy loops (four
+  parallel streams of 5, load ~35), each run a separate `cargo test` process:
+  psv_dispatch `an_epoch_that_moves_while_the_observer_runs_refuses_the_launch`;
+  one_read's three FIFO tests; privileged_launcher
+  `a_production_custodian_never_takes_its_config_from_a_path_its_caller_names`,
+  `a_custodian_program_the_operator_never_pinned_spends_nothing`,
+  `a_custodian_executable_another_uid_can_rewrite_is_refused`; submit
+  `sigkill_after_launch_reconciles_to_outcome_unknown_with_liability`; all of
+  custodian.rs; readiness `a_production_verifier_built_from_a_dirty_tree_certifies_nothing`;
+  axon-cortex `cli_survives_a_generator_that_misbehaves`; axon-core
+  `r42_smoke_scenario_runs_end_to_end`.
+* Mutation rows whose attack lives in a changed test or helper, each KILLED by
+  its own attack (`v022_g01_mutations.py --scope=all --only=...`, 18/18, 0
+  REFUSED_ELSEWHERE): M253, M631, M632, M763, M767, M770, M771, M1483, M1484,
+  M1489 (fabric) and M722, M723, M724, M725, M860, M861, M894, M1488
+  (script_spawn). M482 is retired EQUIVALENT_DID (its test, one_read's FIFO
+  attack, changed): its paired-disable record was re-executed through the
+  sharded harness and holds, all four cells and `retired_guard_full_suite`
+  SUITE_OK, in 195 s for the whole record.
+* Whole suites rc 0 on the final tree: axon-fabric (serial
+  `--no-fail-fast -- --test-threads=1`, and sharded in both cell shapes),
+  axon-cortex, axon-psv (`--test-threads=1`), axon-os, axon-loop +
+  axon-loop-contracts (`test-trust-root`), axon-core `--no-default-features`
+  (harness_integrity 20/20 incl. the new runner test, harness_binaries 10/10,
+  refusal_coverage_gate 4/4). `scripts/v022_refusal_coverage.py` rc 0. clippy
+  `--all-targets -D warnings` rc 0 for axon-core (`--no-default-features`),
+  axon-cortex, axon-fabric, axon-psv, axon-os. `cargo build -p axon-fabric
+  --bins` rc 0. `cargo fmt --all -- --check` rc 0.
