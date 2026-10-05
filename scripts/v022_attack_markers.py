@@ -1485,6 +1485,17 @@ ATTACK_MARKERS.update({
     'M1489': r'ATTACK: the root helper spent the nonce through a custodian program the operator\s+never pinned',
 })
 
+# C9 round 4b, workstream PDFAST (M1500-M1519; amendment 67): the consumer
+# selection of a paired-disable record.
+ATTACK_MARKERS.update({
+    'M1500': r'ATTACK: --join accepted a record that names no consumer selection',
+    'M1501': r'ATTACK: --join accepted a consumer skipped without a reason',
+    'M1502': r'ATTACK: --join accepted a record that skipped a consumer the graph reaches',
+    'M1503': r'ATTACK: --join accepted a passing full-suite cell that ran none of its consumers',
+    'M1504': r'ATTACK: a kept paired-disable record stayed current after a package it never ran',
+    'M1505': r'ATTACK: --join accepted records run on two different toolchains',
+})
+
 # C9 round 4b, workstream OBSERVER (M1520-M1548; amendment 68; matrix A94):
 # the observer service and the helper's --observe relay.
 ATTACK_MARKERS.update({

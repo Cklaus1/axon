@@ -5850,6 +5850,43 @@ MUTATIONS += [
      'axon-loop', '--test evl_admission', 'an_uppercase_public_key_is_refused_where_the_store_reads_it'),
 ]
 
+# ── C9 round 4b, workstream PDFAST (M1500-M1519; amendment 67) ──────────────
+# Paired-disable selects the consumers of a record's full-suite cell from the
+# build graph and the tree's text (scripts/v022_pd_consumers.py), and the
+# record names every consumer it ran and skipped. --join and the currency rule
+# accept a record only with that selection, and only when it is the rule's at
+# this commit: a consumer the graph reaches is never skipped.
+_PDC = 'scripts/v022_pd_consumers.py'
+_PDH = 'scripts/v022_paired_disable.py'
+MUTATIONS += [
+    ('M1500', 'EQUIVALENCE (pdfast): --join refuses a record that does not carry the rule\'s consumer selection', _PDH,
+     "            why = selection_problem(r)\n            if why:\n                sys.exit(f\"refused: shard {k}/{n} record {r['mutation']}: {why}\")\n",
+     "            why = selection_problem(r)\n            if False:\n                sys.exit(f\"refused: shard {k}/{n} record {r['mutation']}: {why}\")\n",
+     'axon-core', _HI2, 'a_join_refuses_a_record_without_a_consumer_selection'),
+    ('M1501', 'EQUIVALENCE (pdfast): a skipped consumer must carry its graph reason', _PDC,
+     '        if not isinstance(v, str) or not v:\n            return f"skipped consumer {c} has no graph reason"\n',
+     '        if False:\n            return f"skipped consumer {c} has no graph reason"\n',
+     'axon-core', _HI2, 'a_join_refuses_a_skipped_consumer_without_a_reason'),
+    ('M1502', 'EQUIVALENCE (pdfast): a consumer the build graph reaches is never skipped', _PDH,
+     '        if got is None:\n            return (f"consumer {c} is reachable through the graph "\n',
+     '        if False:\n            return (f"consumer {c} is reachable through the graph "\n',
+     'axon-core', _HI2, 'a_join_refuses_a_record_that_skips_a_reachable_consumer'),
+    ('M1503', 'EQUIVALENCE (pdfast): a passing full-suite cell ran exactly the consumers it selected', _PDH,
+     '        if ran != set(sel["run"]):\n',
+     '        if False:\n',
+     'axon-core', _HI2, 'a_join_refuses_a_passing_cell_that_ran_none_of_its_consumers'),
+    ('M1504', 'EQUIVALENCE (pdfast, currency): a kept record is stale once its consumer selection is not the rule\'s', _PDH,
+     '    why = selection_problem(record)\n    if why:\n        out.append(',
+     '    why = selection_problem(record)\n    if False:\n        out.append(',
+     'axon-core', _HI2, 'a_kept_record_is_stale_once_a_new_consumer_reaches_it'),
+    ('M1505', 'EQUIVALENCE (pdfast): --join refuses records run on different toolchains', _PDH,
+     '    if len(toolchains) > 1:\n',
+     '    if False:\n',
+     'axon-core', _HI2, 'a_join_refuses_records_from_two_toolchains'),
+]
+PSV_IDS |= {f"M{n}" for n in range(1500, 1520)}
+
+
 def in_scope(mid, scope):
     # A SIBLING-ONLY edit exists only as a member of a retired row's guard set
     # (amendment 64): it is never an active row of any scope.
