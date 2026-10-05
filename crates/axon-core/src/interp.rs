@@ -149,14 +149,15 @@ impl Value {
     }
 }
 
-/// Channel address → (the channel, the element contracts it was stamped with).
-type ChanContracts = HashMap<
-    usize,
-    (
-        std::rc::Weak<RefCell<VecDeque<Value>>>,
-        Vec<Rc<conform::Contract>>,
-    ),
->;
+/// One channel's entry: the channel, the element contracts it was stamped
+/// with, and whether OPERATOR code created it (amendment 72).
+type ChanEntry = (
+    std::rc::Weak<RefCell<VecDeque<Value>>>,
+    Vec<Rc<conform::Contract>>,
+    bool,
+);
+/// Channel address → its entry.
+type ChanContracts = HashMap<usize, ChanEntry>;
 
 // ── Non-local control flow ──────────────────────────────────────────────────
 
@@ -3733,6 +3734,15 @@ impl<'p> Interp<'p> {
         {
             let mismatch = match f.return_type.as_ref() {
                 Some(rt) => self.cast(&mut result, rt, &cx.strict(crossing)).err(),
+                // No declared return type: the checker types the call `()`,
+                // so at a seal crossing the operator receives exactly `()`.
+                // The body's last value was handed out uncast, and an
+                // operator method call on it ran the impl for whatever type
+                // the candidate chose (C9 round 4c, amendment 72).
+                None if crossing => {
+                    result = Value::Unit;
+                    None
+                }
                 None => None,
             };
             let confused = mismatch.is_some();
@@ -4059,8 +4069,13 @@ impl<'p> Interp<'p> {
             ));
         }
         let mut args = args;
-        // The arguments are cast to every `fn` type this reference crossed.
-        self.closure_args_check(&contract, &mut args)?;
+        // A closure runs under the provenance of the frame that CREATED it.
+        let origin = self.seal.active && captured.borrow().contains_key(SEALED_CLOSURE_MARK);
+        // The arguments are cast to every `fn` type this reference crossed. A
+        // sealed frame calling an OPERATOR closure is a seal crossing: the
+        // arguments are cast strictly (amendment 72).
+        let entering = self.seal.active && self.frame_sealed.get() && !origin;
+        self.closure_args_check(&contract, &mut args, entering)?;
         let mut env = Env::new();
         // Base scope = captured bindings; a fresh scope holds the parameters.
         // The base scope is a CLONE of the shared cell's contents so the body
@@ -4073,8 +4088,6 @@ impl<'p> Interp<'p> {
         }
         // A closure's own `return` ends the closure; every other transfer is
         // refused at its edge, as for a named fn (`contain_frame`).
-        // A closure runs under the provenance of the frame that CREATED it.
-        let origin = self.seal.active && captured.borrow().contains_key(SEALED_CLOSURE_MARK);
         // A candidate closure returning to operator code is a seal crossing.
         let crossing = origin && !self.frame_sealed.get();
         let out = self.with_frame(origin, || {
@@ -7552,6 +7565,455 @@ fn main() { }
         // so unix_socket_roundtrip is never invoked.
         let code = super::run_suspendable_hypercall(&prog);
         assert_eq!(code, 0);
+    }
+    // ── C9 round 4c, PSV-1 (amendment 72): an undetermined type position ──
+    //
+    // At a seal crossing, every position of the type a value is cast to is
+    // determined from the operator side, or the crossing is refused. The
+    // review's class: a free type parameter, an erased type argument or an
+    // absent declaration left a position open, and the candidate chose the
+    // runtime type there — and with it the operator's impl. The operator's
+    // `u8` impl is the lenient one, so a laundered `u8` is a keyed pass.
+
+    const JUDGE8: &str = "trait Judge {\n    fn ok(self) -> bool\n}\nimpl Judge for i64 {\n    fn ok(self: i64) -> bool { self == 9 }\n}\nimpl Judge for u8 {\n    fn ok(self: u8) -> bool { true }\n}\n";
+    const LAUNDER8: &str = "fn narrow(n: i64) -> u8 { n as u8 }\nfn stash(v: u8) -> Dict {\n    let d = dict_new()\n    dict_set(d, \"k\", v)\n    d\n}\n";
+
+    /// `match dict_get(stash(narrow(4)), "k") { Some(v) => {some}  None => {none} }`
+    fn u8_or(some: &str, none: &str) -> String {
+        format!("match dict_get(stash(narrow(4)), \"k\") {{ Some(v) => {some}  None => {none} }}")
+    }
+
+    fn judged8(tag: &str, suite: &str, cand: &str) -> Result<TestEnd, String> {
+        sealed_outcome(
+            tag,
+            &format!("{JUDGE8}{suite}"),
+            &format!("{LAUNDER8}{cand}"),
+            "t",
+        )
+    }
+
+    fn live8(tag: &str, suite: &str, good: &str, wrong: &str) {
+        assert_eq!(
+            judged8(tag, suite, good),
+            Ok(TestEnd::Completed),
+            "control: the right answer"
+        );
+        assert!(
+            judged8(tag, suite, wrong).is_err(),
+            "control: the wrong answer fails"
+        );
+    }
+
+    fn honest8(tag: &str, suite: &str, cand: &str) {
+        assert_eq!(
+            judged8(tag, suite, cand),
+            Ok(TestEnd::Completed),
+            "control: an honest program crosses"
+        );
+    }
+
+    /// B1. The operator's `chan<i64>()` STATES its element type: the channel
+    /// is stamped with it at creation, so a candidate's generic `Chan<T>`
+    /// binds `T` from it, and a value of another type is never sent. The
+    /// second attack reaches the stamp alone: through a dict hop the
+    /// candidate re-declares the channel `Chan<u8>` (a determined type of its
+    /// OWN choosing), which the send-side rule accepts.
+    #[test]
+    fn a_channel_carries_the_element_type_its_creation_states() {
+        let suite = "@[test]\nfn t() {\n    let c = chan<i64>()\n    fill(c)\n    assert(c.recv().ok())\n}\n";
+        live8(
+            "r4c-chan",
+            suite,
+            "fn fill(c: Chan<i64>) { c.send(9) }\n",
+            "fn fill(c: Chan<i64>) { c.send(4) }\n",
+        );
+        honest8(
+            "r4c-chan",
+            suite,
+            "fn fill<T>(c: Chan<T>) {\n    let d: Chan<T> = c\n    put(d)\n}\nfn put(c: Chan<i64>) { c.send(9) }\n",
+        );
+        let out = judged8(
+            "r4c-chan",
+            suite,
+            &format!(
+                "fn fill<T>(c: Chan<T>) {{\n    {}\n}}\n",
+                u8_or("c.send(v)", "{}")
+            ),
+        );
+        assert!(
+            out != Ok(TestEnd::Completed) && confusion_refused(&out),
+            "ATTACK: a u8 was sent on the operator's chan<i64>() through a generic Chan<T>: {out:?}"
+        );
+        let hop = "fn fill<T>(c: Chan<T>) {\n    let d = dict_new()\n    dict_set(d, \"c\", c)\n    match dict_get(d, \"c\") { Some(x) => put(x)  None => {} }\n}\nfn put(c: Chan<u8>) { c.send(narrow(4)) }\n";
+        let out = judged8("r4c-chan", suite, hop);
+        assert!(
+            out != Ok(TestEnd::Completed) && confusion_refused(&out),
+            "ATTACK: the candidate re-declared the operator's chan<i64>() as Chan<u8> and sent a u8: {out:?}"
+        );
+    }
+
+    /// B1, the channel the operator created WITHOUT a closed element type
+    /// (`Chan::new`, or `chan<T>()` in its own generic code): a sealed send
+    /// on it needs an element type something on the operator side
+    /// determined. A free `T` of the candidate's never counts.
+    #[test]
+    fn a_sealed_send_on_an_operator_channel_needs_a_determined_element_type() {
+        let suite = "@[test]\nfn t() {\n    assert(run(9))\n}\nfn run<T: Judge>(x: T) -> bool {\n    let c = chan<T>()\n    c.send(x)\n    fill(c)\n    c.recv().ok()\n}\n";
+        // Control: an honest generic relay — `U` is bound from the value the
+        // operator queued, so the send meets a determined type.
+        honest8(
+            "r4c-opchan",
+            suite,
+            "fn fill<U>(c: Chan<U>) {\n    let v = c.recv()\n    c.send(v)\n}\n",
+        );
+        // Control: the candidate's OWN unstamped channel is its business.
+        honest8(
+            "r4c-opchan",
+            "@[test]\nfn t() {\n    assert(mine())\n}\n",
+            "fn mine() -> bool {\n    let c = Chan::new(2)\n    c.send(9)\n    c.recv() == 9\n}\n",
+        );
+        // The attack: nothing queued, so nothing binds the candidate's `U`.
+        let empty = "@[test]\nfn t() {\n    assert(run(9))\n}\nfn run<T: Judge>(x: T) -> bool {\n    let c = chan<T>()\n    fill(c)\n    c.recv().ok()\n}\n";
+        let cand = format!(
+            "fn fill<U>(c: Chan<U>) {{\n    {}\n}}\n",
+            u8_or("c.send(v)", "{}")
+        );
+        let out = judged8("r4c-opchan", empty, &cand);
+        assert!(
+            out != Ok(TestEnd::Completed)
+                && matches!(&out, Err(m) if m.contains("nothing on the operator side determined")),
+            "ATTACK: a u8 was sent on the operator's unstamped chan<T>() at the candidate's free U: {out:?}"
+        );
+        let suite_new = "@[test]\nfn t() {\n    let c = Chan::new(4)\n    fill(c)\n    assert(c.recv().ok())\n}\n";
+        let out = judged8(
+            "r4c-opchan",
+            suite_new,
+            &format!(
+                "fn fill<U>(c: Chan<U>) {{\n    {}\n}}\n",
+                u8_or("c.send(v)", "{}")
+            ),
+        );
+        assert!(
+            out != Ok(TestEnd::Completed)
+                && matches!(&out, Err(m) if m.contains("nothing on the operator side determined")),
+            "ATTACK: a u8 was sent on the operator's Chan::new(4) at the candidate's free U: {out:?}"
+        );
+    }
+
+    /// B1, the return direction: a candidate returning `Chan<T>` at a `T`
+    /// nothing determined is refused — even with values queued, which the
+    /// candidate chose.
+    #[test]
+    fn a_channel_returned_at_an_undetermined_element_type_is_refused() {
+        let suite = "@[test]\nfn t() {\n    let c = mk(9)\n    assert(c.recv().ok())\n}\n";
+        honest8(
+            "r4c-chanret",
+            suite,
+            "fn mk<T>(x: T) -> Chan<T> {\n    let c = Chan::new(1)\n    c.send(x)\n    c\n}\n",
+        );
+        let out = judged8(
+            "r4c-chanret",
+            suite,
+            "fn mk<T>(n: i64) -> Chan<T> {\n    let c = chan<u8>()\n    c.send(narrow(4))\n    c\n}\n",
+        );
+        assert!(
+            out != Ok(TestEnd::Completed) && confusion_refused(&out),
+            "ATTACK: the candidate returned its own Chan<u8> at a Chan<T> nothing determined: {out:?}"
+        );
+    }
+
+    /// B3. A generic struct's or enum's type argument is never erased: the
+    /// caller's `T` stays `T`, so the operator's argument binds it and the
+    /// candidate's field of another type is refused at the return.
+    #[test]
+    fn a_generic_struct_or_enum_argument_binds_its_type_parameter() {
+        let wrap = "type Wrap<T> = { v: T }\n";
+        let suite =
+            "@[test]\nfn t() {\n    let w = solve(Wrap { v: 3 })\n    assert(w.v.ok())\n}\n";
+        live8(
+            "r4c-wrap",
+            suite,
+            &format!("{wrap}fn solve(w: Wrap<i64>) -> Wrap<i64> {{ Wrap {{ v: w.v * w.v }} }}\n"),
+            &format!("{wrap}fn solve(w: Wrap<i64>) -> Wrap<i64> {{ Wrap {{ v: w.v + 1 }} }}\n"),
+        );
+        honest8(
+            "r4c-wrap",
+            "@[test]\nfn t() {\n    let w = solve(Wrap { v: Wrap { v: 9 } })\n    assert(w.v.v.ok())\n}\n",
+            &format!("{wrap}fn solve<T>(w: Wrap<Wrap<T>>) -> Wrap<Wrap<T>> {{ Wrap {{ v: Wrap {{ v: w.v.v }} }} }}\n"),
+        );
+        let cases = [
+            (
+                "a Wrap<T> field (the review's candidate)",
+                suite.to_string(),
+                format!("{wrap}fn solve<T>(w: Wrap<T>) -> Wrap<T> {{\n    {}\n}}\n", u8_or("Wrap { v: v }", "w")),
+            ),
+            (
+                "a nested Wrap<Wrap<T>> field",
+                "@[test]\nfn t() {\n    let w = solve(Wrap { v: Wrap { v: 3 } })\n    assert(w.v.v.ok())\n}\n".to_string(),
+                format!(
+                    "{wrap}fn solve<T>(w: Wrap<Wrap<T>>) -> Wrap<Wrap<T>> {{\n    {}\n}}\n",
+                    u8_or("Wrap { v: Wrap { v: v } }", "w")
+                ),
+            ),
+            (
+                "a generic enum variant's field",
+                "@[test]\nfn t() {\n    match solve(Opt::Has { v: 3 }) {\n        Opt::Has { v } => assert(v.ok())\n        Opt::Nada => assert(false)\n    }\n}\n".to_string(),
+                format!(
+                    "type Opt<T> = Has {{ v: T }} | Nada\nfn solve<T>(o: Opt<T>) -> Opt<T> {{\n    {}\n}}\n",
+                    u8_or("Opt::Has { v: v }", "o")
+                ),
+            ),
+        ];
+        for (why, suite, cand) in cases {
+            let out = judged8("r4c-wrap", &suite, &cand);
+            assert!(
+                out != Ok(TestEnd::Completed) && confusion_refused(&out),
+                "ATTACK: a u8 crossed a generic type argument the operator fixed to i64 ({why}): {out:?}"
+            );
+        }
+    }
+
+    /// A position NOTHING determined — an empty array's element type bound
+    /// through `T`, or a generic struct handed through a plain `T` — is
+    /// refused at the crossing; a later operator-side value fills it (the
+    /// pair binding), and an honest pass-through crosses.
+    #[test]
+    fn a_value_at_an_undetermined_position_never_crosses_a_seal() {
+        let wrap = "type Wrap<T> = { v: T }\n";
+        honest8(
+            "r4c-undet",
+            "@[test]\nfn t() {\n    let e: [i64] = []\n    let xs = solve(e)\n    assert(len(xs) == 0)\n}\n",
+            "fn solve<T>(x: T) -> T { x }\n",
+        );
+        honest8(
+            "r4c-undet",
+            "@[test]\nfn t() {\n    let e: Option<i64> = None\n    match pick(e, Some(9)) {\n        Some(v) => assert(v.ok())\n        None => assert(false)\n    }\n}\n",
+            "fn pick<T>(a: T, b: T) -> T { b }\n",
+        );
+        honest8(
+            "r4c-undet",
+            "@[test]\nfn t() {\n    let w = solve(Wrap { v: 9 })\n    assert(w.v.ok())\n}\n",
+            &format!("{wrap}fn solve<T>(x: T) -> T {{ x }}\n"),
+        );
+        let out = judged8(
+            "r4c-undet",
+            "@[test]\nfn t() {\n    let e: [i64] = []\n    let xs = solve(e)\n    assert(xs[0].ok())\n}\n",
+            &format!("fn solve<T>(x: T) -> T {{\n    {}\n}}\n", u8_or("[v]", "x")),
+        );
+        assert!(
+            out != Ok(TestEnd::Completed) && confusion_refused(&out),
+            "ATTACK: a u8 filled the element type of the operator's empty [i64] through T: {out:?}"
+        );
+        let out = judged8(
+            "r4c-undet",
+            "@[test]\nfn t() {\n    let w = solve(Wrap { v: 3 })\n    assert(w.v.ok())\n}\n",
+            &format!(
+                "{wrap}fn solve<T>(x: T) -> T {{\n    {}\n}}\n",
+                u8_or("Wrap { v: v }", "x")
+            ),
+        );
+        assert!(
+            out != Ok(TestEnd::Completed) && confusion_refused(&out),
+            "ATTACK: a Wrap of u8 crossed a T the operator bound to Wrap<i64>: {out:?}"
+        );
+    }
+
+    /// B2. A fn with NO declared return type: the checker types its call
+    /// `()`, so at the seal crossing the operator receives `()` — never the
+    /// value the body ended on, which the operator's method call would
+    /// dispatch on. (The checker now also refuses `.ok()` on `()` with no
+    /// impl; this test reaches the runtime rule without the checker.)
+    #[test]
+    fn a_fn_with_no_declared_return_type_hands_the_operator_unit() {
+        let suite = "@[test]\nfn t() {\n    assert(solve(3).ok())\n}\n";
+        live8(
+            "r4c-noret",
+            suite,
+            "fn solve(n: i64) -> i64 { n * n }\n",
+            "fn solve(n: i64) -> i64 { n + 1 }\n",
+        );
+        // Control: an honest unit fn whose body ends on a value still runs.
+        honest8(
+            "r4c-noret",
+            "@[test]\nfn t() {\n    note(3)\n    assert(true)\n}\n",
+            "fn note(n: i64) {\n    let d = dict_new()\n    dict_set(d, \"n\", n)\n    d\n}\n",
+        );
+        for (why, suite, cand) in [
+            ("a fn", suite.to_string(), format!("fn solve(n: i64) {{\n    {}\n}}\n", u8_or("v", "0"))),
+            (
+                "an impl method",
+                "@[test]\nfn t() {\n    assert(mk(3).val().ok())\n}\n".to_string(),
+                format!(
+                    "type Sq = {{ n: i64 }}\ntrait Api {{\n    fn val(self)\n}}\nimpl Api for Sq {{\n    fn val(self: Sq) {{\n        {}\n    }}\n}}\nfn mk(n: i64) -> Sq {{ Sq {{ n: n }} }}\n",
+                    u8_or("v", "0")
+                ),
+            ),
+        ] {
+            let out = judged8("r4c-noret", &suite, &cand);
+            assert!(
+                out != Ok(TestEnd::Completed)
+                    && matches!(&out, Err(m) if m.contains("no method `ok` on type `()`")),
+                "ATTACK: the u8 a unit {why} ended on reached the operator's method call: {out:?}"
+            );
+        }
+    }
+
+    /// MAJOR-ADJACENT. A sealed frame calling an OPERATOR closure: each
+    /// argument must meet a position some declared type determined, and is
+    /// cast strictly — the return direction's parametricity rule, applied to
+    /// arguments. The operator's unannotated `|x| x.ok()` reached through a
+    /// free `fn(T)`, a struct field or a dict.
+    #[test]
+    fn an_operator_closure_called_from_sealed_code_takes_only_determined_arguments() {
+        let suite = "@[test]\nfn t() {\n    assert(apply(|x| x.ok()))\n}\n";
+        live8(
+            "r4c-clos",
+            suite,
+            "fn apply(f: fn(i64) -> bool) -> bool { f(9) }\n",
+            "fn apply(f: fn(i64) -> bool) -> bool { f(4) }\n",
+        );
+        honest8(
+            "r4c-clos",
+            "@[test]\nfn t() {\n    assert(apply(Fx { f: |x| x.ok() }, 9))\n}\n",
+            "type Fx<T> = { f: fn(T) -> bool }\nfn apply<T>(b: Fx<T>, x: T) -> bool {\n    let f = b.f\n    f(x)\n}\n",
+        );
+        honest8(
+            "r4c-clos",
+            "@[test]\nfn t() {\n    visit(|r: i64| assert(r.ok()))\n}\n",
+            "fn visit<T>(cb: fn(T) -> ()) { cb(9) }\n",
+        );
+        for (why, suite, cand) in [
+            (
+                "a free fn(T) (the review's candidate)",
+                suite.to_string(),
+                format!("fn apply<T>(f: fn(T) -> bool) -> bool {{\n    {}\n}}\n", u8_or("f(v)", "false")),
+            ),
+            (
+                "a generic struct's fn field",
+                "@[test]\nfn t() {\n    assert(apply(Fx { f: |x| x.ok() }))\n}\n".to_string(),
+                format!(
+                    "type Fx<T> = {{ f: fn(T) -> bool }}\nfn apply<T>(b: Fx<T>) -> bool {{\n    let f = b.f\n    {}\n}}\n",
+                    u8_or("f(v)", "false")
+                ),
+            ),
+            (
+                "a dict entry",
+                "@[test]\nfn t() {\n    let d = dict_new()\n    dict_set(d, \"f\", |x| x.ok())\n    assert(apply(d))\n}\n".to_string(),
+                format!(
+                    "fn apply(d: Dict) -> bool {{\n    match dict_get(d, \"f\") {{\n        Some(f) => {}\n        None => false\n    }}\n}}\n",
+                    u8_or("f(v)", "false")
+                ),
+            ),
+        ] {
+            let out = judged8("r4c-clos", &suite, &cand);
+            assert!(
+                out != Ok(TestEnd::Completed)
+                    && matches!(&out, Err(m) if m.contains("a position nothing on the operator side determined")),
+                "ATTACK: the candidate called the operator's unannotated closure with a u8 ({why}): {out:?}"
+            );
+        }
+    }
+
+    /// A native handle bound to a type parameter: only a handle of that kind
+    /// crosses back at it.
+    #[test]
+    fn a_handle_binding_admits_only_that_handle() {
+        let suite = "@[test]\nfn t() {\n    let w = gfx::window_open(8, 8, \"x\")\n    let r = pass(w)\n    assert(r.ok())\n}\n";
+        let ok = judged8("r4c-handle", "@[test]\nfn t() {\n    let w = gfx::window_open(8, 8, \"x\")\n    let r = pass(w)\n    assert(true)\n}\n", "fn pass<T>(x: T) -> T { x }\n");
+        assert_eq!(
+            ok,
+            Ok(TestEnd::Completed),
+            "control: the handle crosses back"
+        );
+        let out = judged8(
+            "r4c-handle",
+            suite,
+            &format!("fn pass<T>(x: T) -> T {{\n    {}\n}}\n", u8_or("v", "x")),
+        );
+        assert!(
+            out != Ok(TestEnd::Completed) && confusion_refused(&out),
+            "ATTACK: a u8 crossed a T the operator bound to a native handle: {out:?}"
+        );
+    }
+
+    /// The shapes a type parameter can sit inside — tuple, array, `Option`,
+    /// `Result`, generic struct in each, two parameters, a returned closure —
+    /// each with the operator's i64 binding `T` and the candidate answering
+    /// with a laundered `u8`. All were refused before amendment 72 except the
+    /// generic-struct ones; pinned together so none regresses.
+    #[test]
+    fn a_type_parameter_inside_any_shape_is_never_filled_by_the_candidate() {
+        let wrap = "type Wrap<T> = { v: T }\n";
+        let cases: Vec<(&str, &str, String)> = vec![
+            ("tuple", "let r = solve((3, 4))\n    assert(r.0.ok())",
+             format!("fn solve<T>(p: (T, T)) -> (T, T) {{\n    {}\n}}\n", u8_or("(v, v)", "p"))),
+            ("array", "let r = solve([3])\n    assert(r[0].ok())",
+             format!("fn solve<T>(p: [T]) -> [T] {{\n    {}\n}}\n", u8_or("[v]", "p"))),
+            ("Option", "match solve(Some(3)) {\n        Some(v) => assert(v.ok())\n        None => assert(false)\n    }",
+             format!("fn solve<T>(p: Option<T>) -> Option<T> {{\n    {}\n}}\n", u8_or("Some(v)", "p"))),
+            ("Result", "match solve(Ok(3)) {\n        Ok(v) => assert(v.ok())\n        Err(e) => assert(false)\n    }",
+             format!("fn solve<T>(p: Result<T, str>) -> Result<T, str> {{\n    {}\n}}\n", u8_or("Ok(v)", "p"))),
+            ("Option<Wrap<T>>", "match solve(Some(Wrap { v: 3 })) {\n        Some(w) => assert(w.v.ok())\n        None => assert(false)\n    }",
+             format!("{wrap}fn solve<T>(o: Option<Wrap<T>>) -> Option<Wrap<T>> {{\n    {}\n}}\n", u8_or("Some(Wrap { v: v })", "o"))),
+            ("[Wrap<T>]", "let r = solve([Wrap { v: 3 }])\n    assert(r[0].v.ok())",
+             format!("{wrap}fn solve<T>(o: [Wrap<T>]) -> [Wrap<T>] {{\n    {}\n}}\n", u8_or("[Wrap { v: v }]", "o"))),
+            ("(Wrap<T>, i64)", "let r = solve((Wrap { v: 3 }, 1))\n    assert(r.0.v.ok())",
+             format!("{wrap}fn solve<T>(p: (Wrap<T>, i64)) -> (Wrap<T>, i64) {{\n    {}\n}}\n", u8_or("(Wrap { v: v }, 1)", "p"))),
+            ("Wrap<T> -> T", "let r = solve(Wrap { v: 3 })\n    assert(r.ok())",
+             format!("{wrap}fn solve<T>(w: Wrap<T>) -> T {{\n    {}\n}}\n", u8_or("v", "w.v"))),
+            ("two parameters", "let w = solve(P { a: 3, b: 3 })\n    assert(w.a.ok())",
+             format!("type P<A, B> = {{ a: A, b: B }}\nfn solve<A, B>(w: P<A, B>) -> P<A, B> {{\n    {}\n}}\n", u8_or("P { a: v, b: w.b }", "w"))),
+            ("a returned closure", "let f = solve(|x| x)\n    assert(f(3).ok())",
+             format!("fn solve<T>(f: fn(T) -> T) -> fn(T) -> T {{\n    {}\n}}\n", u8_or("|y| v", "f"))),
+            ("a generic impl's method", "let b = mk(3)\n    assert(b.get().ok())",
+             format!("{wrap}fn mk(n: i64) -> Wrap<i64> {{ Wrap {{ v: n }} }}\ntrait Get {{\n    fn get(self) -> i64\n}}\nimpl Get for Wrap<i64> {{\n    fn get(self: Wrap<i64>) -> i64 {{\n        {}\n    }}\n}}\n", u8_or("v", "self.v"))),
+        ];
+        for (why, body, cand) in cases {
+            let suite = format!("@[test]\nfn t() {{\n    {body}\n}}\n");
+            let out = judged8("r4c-shapes", &suite, &cand);
+            assert!(
+                out != Ok(TestEnd::Completed) && confusion_refused(&out),
+                "ATTACK: a u8 filled the operator's i64 inside {why}: {out:?}"
+            );
+        }
+    }
+
+    /// `host_await_val` is unavailable to a run with no host driver (every
+    /// sealed `axon test`), so no payload crosses a suspend inside a seal.
+    #[test]
+    fn a_host_await_crossing_is_unavailable_inside_a_sealed_test_run() {
+        let out = judged8(
+            "r4c-await",
+            "@[test]\nfn t() {\n    assert(solve(3).ok())\n}\n",
+            "fn solve<T>(x: T) -> T {\n    host_await_val(x)\n}\n",
+        );
+        assert!(
+            out != Ok(TestEnd::Completed)
+                && matches!(&out, Err(m) if m.contains("outside a suspendable run")),
+            "ATTACK: a host_await_val payload came back inside a sealed test run: {out:?}"
+        );
+    }
+
+    /// RECORDED, not fixed: `Dict` carries no element types, so a value the
+    /// candidate puts in a dict the operator handed it meets no declared type
+    /// on its way back — non-claim (1) of amendment 53, restated by amendment
+    /// 72. The operator's own typed reads (`let x: i64 = …`) are cast; its
+    /// method call on an untyped `dict_get` result is not.
+    #[test]
+    fn an_untyped_dict_value_the_candidate_filled_is_a_recorded_open_position() {
+        let out = judged8(
+            "r4c-dict",
+            "@[test]\nfn t() {\n    let d = dict_new()\n    dict_set(d, \"a\", 3)\n    let r = solve(d)\n    match dict_get(r, \"a\") {\n        Some(x) => assert(x.ok())\n        None => assert(false)\n    }\n}\n",
+            &format!(
+                "fn put(d: Dict, v: u8) -> Dict {{\n    dict_set(d, \"a\", v)\n    d\n}}\nfn solve(d: Dict) -> Dict {{\n    {}\n}}\n",
+                u8_or("put(d, v)", "d")
+            ),
+        );
+        assert_eq!(
+            out,
+            Ok(TestEnd::Completed),
+            "RECORDED: this stays open until Dict carries element types: {out:?}"
+        );
     }
 }
 

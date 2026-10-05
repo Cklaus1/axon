@@ -1484,3 +1484,19 @@ ATTACK_MARKERS.update({
     'M1488': r'ATTACK: a wrapped script that guesses its binary ran',
     'M1489': r'ATTACK: the root helper spent the nonce through a custodian program the operator\s+never pinned',
 })
+
+# C9 round 4c, workstream r4c-psv1 (M1660-M1670; amendment 72): an undetermined
+# type position at a seal crossing. Each marker is the attack COMPLETING.
+ATTACK_MARKERS.update({
+    'M1660': r"ATTACK: the candidate re-declared the operator's chan<i64>\(\) as Chan<u8> and sent a u8: Ok\(Completed\)",
+    'M1661': r"ATTACK: a u8 was sent on the operator's unstamped chan<T>\(\) at the candidate's free U: Ok\(Completed\)",
+    'M1662': r"ATTACK: the candidate returned its own Chan<u8> at a Chan<T> nothing determined: Ok\(Completed\)",
+    'M1663': r"ATTACK: a u8 crossed a generic type argument the operator fixed to i64 \(a Wrap<T> field \(the review's candidate\)\): Ok\(Completed\)",
+    'M1664': r"ATTACK: a u8 filled the element type of the operator's empty \[i64\] through T: Ok\(Completed\)",
+    'M1665': r"ATTACK: a u8 filled the element type of the operator's empty \[i64\] through T: Ok\(Completed\)",
+    'M1666': r"ATTACK: the u8 a unit a fn ended on reached the operator's method call: Ok\(Completed\)",
+    'M1667': r"ATTACK: the candidate called the operator's unannotated closure with a u8 \(a free fn\(T\) \(the review's candidate\)\): Ok\(Completed\)",
+    'M1668': r"ATTACK: a u8 crossed a T the operator bound to a native handle: Ok\(Completed\)",
+    'M1669': r"ATTACK: a method call on a unit fn's result passed the checker: Some\(0\)",
+    'M1670': r"ATTACK: a dead impl for `f32` passed the checker",
+})

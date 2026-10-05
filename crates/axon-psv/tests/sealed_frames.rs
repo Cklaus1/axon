@@ -572,3 +572,90 @@ fn the_candidate_never_selects_the_operators_code_by_width_or_by_name() {
         assert_eq!(s.host, Some(false), "a keyed FAILURE ({why}): {}", s.stdout);
     }
 }
+
+/// C9 round 4c, PSV-1 (amendment 72): the review's four candidates through
+/// the real runner. Each left a type position at a seal crossing
+/// undetermined — a free `T` of a generic `Chan<T>`, a fn with no declared
+/// return type, a `Wrap<T>` whose argument was erased, a free `fn(T)` the
+/// candidate calls the operator's closure through — and chose the runtime
+/// type there, so the operator's lenient `u8` impl gave a keyed pass. GOOD
+/// stays a keyed pass and WRONG a keyed failure on every suite; every attack
+/// is refused without a keyed pass.
+#[test]
+fn an_undetermined_type_position_never_selects_the_operators_impl() {
+    const J: &str = "trait Judge {\n    fn ok(self) -> bool\n}\nimpl Judge for i64 {\n    fn ok(self: i64) -> bool { self == 9 }\n}\nimpl Judge for u8 {\n    fn ok(self: u8) -> bool { true }\n}\n";
+    const L: &str = "fn narrow(n: i64) -> u8 { n as u8 }\nfn stash(v: u8) -> Dict {\n    let d = dict_new()\n    dict_set(d, \"k\", v)\n    d\n}\n";
+    let suite = |uses: &str, body: &str| {
+        format!("mod sol\nuse sol.{{{uses}}}\n{J}@[test]\nfn accept() {{\n{body}\n}}\n")
+    };
+    let launder = |some: &str, none: &str| {
+        format!("match dict_get(stash(narrow(4)), \"k\") {{\n        Some(v) => {some}\n        None => {none}\n    }}")
+    };
+    let chan = suite(
+        "fill",
+        "    let c = chan<i64>()\n    fill(c)\n    assert(c.recv().ok())",
+    );
+    let noret = suite("solve", "    assert(solve(3).ok())");
+    let wrap = suite(
+        "solve, Wrap",
+        "    let w = solve(Wrap { v: 3 })\n    assert(w.v.ok())",
+    );
+    let clos = suite("apply", "    assert(apply(|x| x.ok()))");
+    let cases: [(&str, &String, String, String, String); 4] = [
+        (
+            "a generic Chan<T> (B1)",
+            &chan,
+            "pub fn fill(c: Chan<i64>) { c.send(9) }\n".into(),
+            "pub fn fill(c: Chan<i64>) { c.send(4) }\n".into(),
+            format!("{L}pub fn fill<T>(c: Chan<T>) {{\n    {}\n}}\n", launder("c.send(v)", "{}")),
+        ),
+        (
+            "no declared return type (B2)",
+            &noret,
+            "pub fn solve(n: i64) -> i64 { n * n }\n".into(),
+            "pub fn solve(n: i64) -> i64 { n + 1 }\n".into(),
+            format!("{L}pub fn solve(n: i64) {{\n    {}\n}}\n", launder("v", "0")),
+        ),
+        (
+            "an erased Wrap<T> argument (B3)",
+            &wrap,
+            "pub type Wrap<T> = { v: T }\npub fn solve(w: Wrap<i64>) -> Wrap<i64> { Wrap { v: w.v * w.v } }\n".into(),
+            "pub type Wrap<T> = { v: T }\npub fn solve(w: Wrap<i64>) -> Wrap<i64> { Wrap { v: w.v + 1 } }\n".into(),
+            format!(
+                "{L}pub type Wrap<T> = {{ v: T }}\npub fn solve<T>(w: Wrap<T>) -> Wrap<T> {{\n    {}\n}}\n",
+                launder("Wrap { v: v }", "w")
+            ),
+        ),
+        (
+            "the operator's closure through a free fn(T)",
+            &clos,
+            "pub fn apply(f: fn(i64) -> bool) -> bool { f(9) }\n".into(),
+            "pub fn apply(f: fn(i64) -> bool) -> bool { f(4) }\n".into(),
+            format!("{L}pub fn apply<T>(f: fn(T) -> bool) -> bool {{\n    {}\n}}\n", launder("f(v)", "false")),
+        ),
+    ];
+    for (why, suite, good, wrong, attack) in cases {
+        let s = check(suite, &[], &good, "accept");
+        assert_eq!(
+            (s.status, s.host),
+            (GuestStatus::Passed, Some(true)),
+            "control ({why}): {}",
+            s.stdout
+        );
+        let s = check(suite, &[], &wrong, "accept");
+        assert_eq!(
+            (s.status, s.host),
+            (GuestStatus::Failed, Some(false)),
+            "control ({why}): {}",
+            s.stdout
+        );
+        let s = check(suite, &[], &attack, "accept");
+        assert!(
+            refused_unkeyed(&s),
+            "ATTACK: the candidate chose the operator's impl at an undetermined position ({why}) and got a keyed pass: {:?} {:?} {}",
+            s.status,
+            s.host,
+            s.stdout
+        );
+    }
+}

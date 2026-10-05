@@ -379,7 +379,12 @@ impl<'p> Interp<'p> {
                     // same as `chan<T>()`. Its BUILTINS doc said "bounded
                     // channel with the given capacity" and now says what it does.
                     if name.starts_with("chan::<") || name == "Chan::new" {
-                        return Ok(Value::Chan(Rc::new(RefCell::new(VecDeque::new()))));
+                        let q = Rc::new(RefCell::new(VecDeque::new()));
+                        // Stamped with its stated element type, and its
+                        // creating side recorded (amendment 72).
+                        let elem = name.strip_prefix("chan::<").and_then(|s| s.strip_suffix('>'));
+                        self.chan_created(&q, elem);
+                        return Ok(Value::Chan(q));
                     }
                     // R13 native FFI: a native `M::fn(...)` call dispatches to the
                     // in-process mock shim (one impl, two engines — I-2).

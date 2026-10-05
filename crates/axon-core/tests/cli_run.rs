@@ -32084,3 +32084,82 @@ fn ai_extract_uncertain_is_stamped_ai_sourced_on_mock_and_replay_paths() {
         String::from_utf8_lossy(&run.stderr)
     );
 }
+
+/// C9 round 4c, PSV-1 (amendment 72), defence in depth for B2: a method call
+/// on `()` (a call of a fn with no declared return type) needs an impl for
+/// `()`; it is refused at check time, not dispatched at runtime on whatever
+/// the body ended on. Control: with `impl … for ()` it checks and runs.
+#[test]
+fn a_method_call_on_unit_without_an_impl_is_e0403() {
+    let run = |src: &str, verb: &str| {
+        let f = std::env::temp_dir().join(format!(
+            "axon_unitcall_{}_{}.ax",
+            std::process::id(),
+            src.len()
+        ));
+        std::fs::write(&f, src).unwrap();
+        let out = axon().args([verb, f.to_str().unwrap()]).output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        (
+            out.status.code(),
+            format!(
+                "{}{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            ),
+        )
+    };
+    let judge = "trait Judge {\n  fn ok(self) -> bool\n}\nimpl Judge for i64 {\n  fn ok(self: i64) -> bool { self == 9 }\n}\n";
+    let bad = format!(
+        "{judge}fn solve(n: i64) {{\n  n * n\n}}\nfn main() {{\n  assert(solve(3).ok())\n}}\n"
+    );
+    let (code, msg) = run(&bad, "check");
+    assert!(
+        code == Some(2) && msg.contains("E0403") && msg.contains("on type `()`"),
+        "ATTACK: a method call on a unit fn's result passed the checker: {code:?} {msg}"
+    );
+    let good = format!(
+        "{judge}impl Judge for () {{\n  fn ok(self: ()) -> bool {{ true }}\n}}\nfn note(n: i64) {{\n  println(to_str(n))\n}}\nfn main() {{\n  assert(note(3).ok())\n}}\n"
+    );
+    let (code, msg) = run(&good, "run");
+    assert_eq!(code, Some(0), "control: an impl for () is called: {msg}");
+}
+
+/// C9 round 4c, PSV-1 (amendment 72), the MINOR: an impl for `f32`, `isize`
+/// or `usize` never runs (a method call dispatches on the value's runtime
+/// representation, `f64`/`i64`), so it is refused (E0505). Control: the same
+/// impl for `f64`/`i64` checks.
+#[test]
+fn an_impl_for_a_type_the_runtime_represents_as_another_is_e0505() {
+    for (alias, rep) in [("f32", "f64"), ("isize", "i64"), ("usize", "i64")] {
+        let src = |t: &str| {
+            format!("trait Judge {{\n  fn ok(self) -> bool\n}}\nimpl Judge for {t} {{\n  fn ok(self: {t}) -> bool {{ true }}\n}}\nfn main() {{\n}}\n")
+        };
+        for (t, refused) in [(alias, true), (rep, false)] {
+            let f = std::env::temp_dir().join(format!("axon_e0505_{}_{t}.ax", std::process::id()));
+            std::fs::write(&f, src(t)).unwrap();
+            let out = axon()
+                .args(["check", f.to_str().unwrap()])
+                .output()
+                .unwrap();
+            let _ = std::fs::remove_file(&f);
+            let msg = format!(
+                "{}{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            );
+            if refused {
+                assert!(
+                    out.status.code() == Some(2) && msg.contains("E0505"),
+                    "ATTACK: a dead impl for `{t}` passed the checker: {msg}"
+                );
+            } else {
+                assert_eq!(
+                    out.status.code(),
+                    Some(0),
+                    "control: an impl for `{t}` checks: {msg}"
+                );
+            }
+        }
+    }
+}

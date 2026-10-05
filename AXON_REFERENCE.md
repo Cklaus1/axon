@@ -5,7 +5,7 @@
 
 # Axon Reference
 
-The complete surface of this build — 25 CLI verbs, 343 builtins, 24 attributes, 142 diagnostic codes (129 live, 13 reserved), 55 environment variables.
+The complete surface of this build — 25 CLI verbs, 343 builtins, 24 attributes, 143 diagnostic codes (130 live, 13 reserved), 55 environment variables.
 
 Generated from the compiler's own tables (`BUILTINS`, `DEFERRED_ATTRS`, the clap subcommand list), so it cannot describe a language this binary does not implement. `CLAUDE.md` is a curated selection and says so; this is the exhaustive counterpart.
 
@@ -130,7 +130,7 @@ Every `AXON_*` variable the SHIPPED code reads — gated in both directions, so 
 | `AXON_TEE_ENCLAVE` | R24 TEE: set to 1 by the gramine-direct manifest to signal the workload is executing inside an enclave; this is what makes `tee_in_enclave()` return true. Read through the host seam, so it is recorded and replayed |
 | `AXON_TEE_MEASUREMENT` | R24 TEE: the simulated enclave launch measurement returned by `tee_attest_measurement()` when set, a stub otherwise. A genuine hardware-rooted quote comes only from confidential hardware. Read through the host seam |
 
-## Diagnostic codes (142, of which 129 live)
+## Diagnostic codes (143, of which 130 live)
 
 A code marked **reserved** is declared but emitted nowhere in this build. Listing those as if they were live would be the same defect this reference exists to fix.
 
@@ -169,6 +169,7 @@ A code marked **reserved** is declared but emitted nowhere in this build. Listin
 | `E0502` | impl block missing method |
 | `E0503` | dyn trait cannot be used as value type |
 | `E0504` | trait bound not satisfied |
+| `E0505` | an impl for `f32`, `isize` or `usize` — the runtime represents those values as `f64`/`i64`, so the impl would never run |
 | `E0601` | use of moved value |
 | `E0602` | cannot move borrowed value |
 | `E0603` | borrow conflict |
