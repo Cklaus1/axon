@@ -18,7 +18,6 @@
   },
   "out_root": "/var/lib/axon-fabric/runs",
   "observer": {
-    "command": {"path": "/usr/local/libexec/axon/axon-observer", "sha256": "0000000000000000000000000000000000000000000000000000000000000000"},
     "custodian": {"socket": "/run/axon-custodian/custodian.sock", "uid": 993},
     "max_age_s": 300
   },

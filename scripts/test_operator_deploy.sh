@@ -92,7 +92,6 @@ mkdir -p "$CLONE/dist" && cp -a "$DIST" "$CLONE/dist/guest-linux"
 OP=$WORK/op
 mkdir -p "$OP/suites/bin" "$OP/suites/checks/c1" "$OP/grants"
 cp /usr/bin/true "$OP/suites/bin/axon"; echo '// fixture' >"$OP/suites/checks/c1/t.ax"
-cp /usr/bin/true "$OP/observer"
 printf 'profile = "restricted"\n' >"$OP/grants/ci.axgrant"
 python3 - "$OP" <<'PY'
 import hashlib, json, sys
@@ -110,16 +109,18 @@ PY
 chmod -R a+rX "$WORK"
 SIGNER_PUB=$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')
 KIT=$CLONE/scripts/operator_deploy_protected_host.sh
-ARGS=(--from "$CLONE" --bin-dir "$BIN" --observer-bin "$OP/observer" --suite-registry "$OP/suites/registry.json"
+ARGS=(--from "$CLONE" --bin-dir "$BIN" --suite-registry "$OP/suites/registry.json"
       --grant-registry "$OP/grants/grants.json" --signer-public-key "$SIGNER_PUB")
 
 # ══ 1. DRY RUN ═══════════════════════════════════════════════════════════════
 snapshot() {
   { for p in /etc/axon /usr/local/libexec/axon /usr/local/lib/axon /var/lib/axon-fabric /var/lib/axon-custodian \
-             /var/lib/axon-protected-launcher /var/lib/axon-loop /var/lib/axon-deploy \
-             /etc/systemd/system/axon-custodian.socket /etc/systemd/system/axon-custodian.service; do
+             /var/lib/axon-observer /var/lib/axon-protected-launcher /var/lib/axon-loop /var/lib/axon-deploy \
+             /etc/systemd/system/axon-custodian.socket /etc/systemd/system/axon-custodian.service \
+             /etc/systemd/system/axon-observer.socket /etc/systemd/system/axon-observer.service; do
       [ -e "$p" ] && find "$p" -printf '%p %u:%g %m %s %T@\n'; done
-    getent passwd axon-fabric axon-custodian axon-verifier; getent group axon-fabric axon-custodian axon-verifier
+    getent passwd axon-fabric axon-custodian axon-observer axon-verifier
+    getent group axon-fabric axon-custodian axon-observer axon-verifier
   } 2>/dev/null | sort
 }
 before=$(snapshot)
@@ -132,6 +133,10 @@ want=(
   'PLAN\[allowlist\] install /etc/axon/provenance-allowlist root:root 644'
   '\| axon-provenance-allowlist/1$' '\| target/$' '\| dist/$'
   '(PLAN|OK)\[users\] .*axon-fabric' '(PLAN|OK)\[users\] .*axon-custodian' '(PLAN|OK)\[users\] .*axon-verifier'
+  '(PLAN|OK)\[users\] .*axon-observer'
+  '\[dirs\] dir /var/lib/axon-observer root:root 755'
+  '\[dirs\] dir /var/lib/axon-observer/observed axon-observer:axon-observer 700'
+  '\[dirs\] dir /var/lib/axon-observer/key axon-observer:axon-observer 700'
   '(PLAN|OK)\[users\] .*axonb263'
   '\[dirs\] dir /var/lib/axon-fabric/runs axon-fabric:axon-fabric 700'
   '\[dirs\] dir /var/lib/axon-protected-launcher root:root 700'
@@ -149,6 +154,9 @@ want=(
   'PLAN\[data\] install /etc/axon/suites/checks/c1/t.ax' 'PLAN\[data\] install /etc/axon/grants/ci.axgrant'
   'PENDING\[data\] no B263 qualification record'
   'PLAN\[configs\] install /etc/axon/custodian.json root:root 644'
+  'PLAN\[configs\] install /etc/axon/observer.json root:root 644' '"schema": "axon-observer/1"' '"caller_uid": 0'
+  '"socket": "/run/axon-observer/observer.sock"' '"store": "/var/lib/axon-observer/observed"'
+  '"key_path": "/var/lib/axon-observer/key/observer.pk8"'
   'PLAN\[configs\] install /etc/axon/protected-launcher.json root:root 644'
   'PLAN\[configs\] install /etc/axon/protected-host.json root:root 644'
   '"schema": "axon-custodian/1"' '"schema": "axon-protected-launcher/2"' '"schema": "axon-protected-host/1"'
@@ -157,12 +165,20 @@ want=(
   'PLAN\[loader\] setpriv --reuid axon-fabric'
   'PLAN\[systemd\] install /etc/systemd/system/axon-custodian.socket root:root 644'
   'PLAN\[systemd\] install /etc/systemd/system/axon-custodian.service root:root 644'
+  'PLAN\[systemd\] install /etc/systemd/system/axon-observer.socket root:root 644'
+  'PLAN\[systemd\] install /etc/systemd/system/axon-observer.service root:root 644'
+  '\| SocketMode=0600' '\| SocketUser=root' '\| ListenStream=/run/axon-observer/observer.sock' '\| User=axon-observer'
+  '\| ExecStart=/usr/local/libexec/axon/axon-observer'
+  'PLAN\[systemd\] systemctl enable --now axon-observer.socket'
   '\| SocketMode=0660' '\| SocketGroup=axon-fabric' '\| User=axon-custodian'
   '\| ExecStart=/usr/local/libexec/axon/axon-custodian'
   'PLAN\[systemd\] systemctl enable --now axon-custodian.socket'
   'PLAN\[toolchain\] install /etc/axon/host-toolchain-pin.json root:root 644' '"schema": "axon-host-toolchain-pin/1"'
   'PLAN\[preflight\] bash .*trust_root_preflight.sh --verifier axon-verifier --custodian axon-custodian --fabric axon-fabric'
   'PLAN\[preflight\] bash .*trust_root_preflight.sh .* --fabric-pid '
+  'PLAN\[preflight\] bash .*trust_root_preflight.sh .*--observer axon-observer'
+  'BLOCKED\[check\] the observer key /var/lib/axon-observer/key/observer.pk8 is absent'
+  'OK\[check\] observer.service in .* pins .*axon-observer.*the host config names no observer program'
   'PENDING\[fabric-unit\] --fabric-unit UNIT is required'
   'OK\[check\] custodian.sha256 in .* is the sha256 of .*axon-custodian, the program the custodian unit starts'
   '"status": "READ by the freeze \(amendment 65\)'
@@ -173,7 +189,7 @@ ok "the dry run plans every required action (${#want[@]} assertions: allowlist, 
 # Pins in the planned configs are the bytes that would be installed.
 python3 - "$OUT" "$(sha256sum "$CLONE/scripts/fc_linux_profile.sh" | cut -c1-64)" \
   "$(sha256sum "$BIN/axon-protected-launcher" | cut -c1-64)" "$(sha256sum "$CLONE/dist/guest-linux/manifest.json" | cut -c1-64)" \
-  "$(sha256sum "$OP/observer" | cut -c1-64)" "$SIGNER_PUB" "$(sha256sum "$BIN/axon-custodian" | cut -c1-64)" <<'PY' || fail "a planned pin is not the source bytes' digest"
+  "$(sha256sum "$BIN/axon-observer" | cut -c1-64)" "$SIGNER_PUB" "$(sha256sum "$BIN/axon-custodian" | cut -c1-64)" <<'PY' || fail "a planned pin is not the source bytes' digest"
 import json, re, sys
 out, launcher, helper, manifest, observer, signer, custodian = sys.argv[1:8]
 def doc(path):
@@ -183,7 +199,14 @@ h, l = doc("/etc/axon/protected-host.json"), doc("/etc/axon/protected-launcher.j
 assert h["launcher"]["sha256"] == launcher == l["launcher"]["sha256"], "launcher pin"
 assert h["privileged_launcher"]["sha256"] == helper, "helper pin"
 assert h["profile_manifest"]["sha256"] == manifest == l["profile_manifest"]["sha256"], "manifest pin"
-assert h["observer"]["command"]["sha256"] == observer, "observer pin"
+# Amendment 68: the observer is a SERVICE the helper pins by PROGRAM; the host
+# config names no observer program (a production Fabric refuses one).
+assert l["observer"]["service"] == {"socket": "/run/axon-observer/observer.sock",
+                                    "uid": l["observer"]["service"]["uid"], "sha256": observer}, "observer service pin"
+assert "command" not in h["observer"] and "interpreter" not in h["observer"], "the host config names an observer program"
+o = doc("/etc/axon/observer.json")
+assert o["observer_uid"] == l["observer"]["service"]["uid"] != o["fabric_uid"] == l["fabric_uid"], "observer uid"
+assert o["caller_uid"] == 0 and o["socket"] == l["observer"]["service"]["socket"] and "test_paths" not in o, "observer config"
 assert h["signer"]["public_key"] == signer == l["observer"]["host_signer_public_key"], "signer"
 # Amendment 65: the helper pins the custodian PROGRAM; the host config names
 # the same socket and uid (helper_agrees compares those two only).
@@ -192,7 +215,7 @@ assert h["observer"]["custodian"] == {k: l["custodian"][k] for k in ("socket", "
 assert h["out_root"] == l["out_root"] == "/var/lib/axon-fabric/runs"
 assert h["qualification"]["max_age_s"] == 2592000
 PY
-ok "planned pins: launcher, helper, profile manifest, observer, custodian program and host signer are the installed bytes' (and agree across host and helper configs)"
+ok "planned pins: launcher, helper, profile manifest, observer service program, custodian program and host signer are the installed bytes' (and agree across host, helper and observer configs; no observer.command)"
 
 refused() { # label pattern cmd...
   local label=$1 pat=$2; shift 2
@@ -219,8 +242,13 @@ refused "a symlinked .git" "not a real directory" bash "$WORK/symgit/scripts/ope
   --from "$WORK/symgit" --bin-dir "$BIN"
 cp "$KIT" "$WORK/other-kit.sh"; echo "# not the clone's" >>"$WORK/other-kit.sh"
 refused "a kit that is not the clone's own copy" "not the clone's own" bash "$WORK/other-kit.sh" "${ARGS[@]}"
+# Amendment 68: no observer PROGRAM, and the observer is its own principal.
+refused "ATTACK: --observer-bin (an in-uid observer program)" "since amendment 68" bash "$KIT" "${ARGS[@]}" --observer-bin /usr/bin/true
+refused "ATTACK: --observer-interpreter" "since amendment 68" bash "$KIT" "${ARGS[@]}" --observer-interpreter /usr/bin/true
+refused "ATTACK: an observer user that is the Fabric user" "five different users" bash "$KIT" "${ARGS[@]}" --observer-user axon-fabric
+refused "ATTACK: an observer user that is the custodian user" "five different users" bash "$KIT" "${ARGS[@]}" --observer-user axon-custodian
 mkdir "$WORK/fakebin"
-for b in axon-fabric axon-protected-launcher axon-custodian; do cp "$BIN/$b" "$WORK/fakebin/$b"; done
+for b in axon-fabric axon-protected-launcher axon-custodian axon-observer; do cp "$BIN/$b" "$WORK/fakebin/$b"; done
 printf '#!/bin/sh\necho %s\n' "'{\"build\":\"production\",\"profile\":\"release\",\"source_dirty\":false,\"fabric_revision\":\"0000000000000000000000000000000000000000\"}'" \
   >"$WORK/fakebin/axon-fabric"; chmod 0755 "$WORK/fakebin/axon-fabric"
 refused "a verifier built from another commit" "not a clean production release build" \
@@ -310,20 +338,33 @@ done
 [ -L /var/mail ] || mount -t tmpfs -o mode=0755 tmpfs /var/mail || fail "cannot shadow /var/mail"
 mkdir -p /usr/local/bin && install -m 0755 "$W/firecracker" "$W/jailer" /usr/local/bin/
 grep -q axon-fabric /etc/passwd && fail "the shadow /etc already has axon users"
-ARGS=(--from "$CLONE" --bin-dir "$BIN" --observer-bin "$OP/observer" --suite-registry "$OP/suites/registry.json"
+ARGS=(--from "$CLONE" --bin-dir "$BIN" --suite-registry "$OP/suites/registry.json"
       --grant-registry "$OP/grants/grants.json" --signer-public-key "$SIGNER_PUB" --no-systemctl)
 # Runbook order: allowlist, users and directories, THEN the operator provisions
 # keys (here: inert fixtures), THEN the whole kit.
 bash "$KIT" "${ARGS[@]}" --only allowlist,users,dirs --apply >"$W/apply1.out" 2>&1 \
   || { r=$?; [ $r = 3 ] && grep -q 'authority store' "$W/apply1.out" || { cat "$W/apply1.out"; fail "first apply exited $r"; }; }
 FU=$(id -u axon-fabric) || fail "axon-fabric was not created"
-id -u axon-custodian >/dev/null && id -u axon-verifier >/dev/null || fail "users not created"
+id -u axon-custodian >/dev/null && id -u axon-verifier >/dev/null && id -u axon-observer >/dev/null || fail "users not created"
+OU=$(id -u axon-observer); OG=$(id -g axon-observer)
+[ "$(getent passwd axon-observer | cut -d: -f7)" = /usr/sbin/nologin ] || fail "observer has a login shell"
+[ "$OU" != "$FU" ] && [ "$OU" != "$(id -u axon-custodian)" ] || fail "the observer user shares a uid"
+id -nG axon-observer | tr ' ' '\n' | grep -qx axon-fabric && fail "the observer user is in the Fabric group"
 [ "$(getent passwd axon-custodian | cut -d: -f7)" = /usr/sbin/nologin ] || fail "custodian has a login shell"
 for a in qualification observer verifier; do install -d -o root -g root -m 0755 "/etc/axon/trust/$a"; done
 rnd() { head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n'; }
-rnd >/etc/axon/trust/qualification/operator.pub; rnd >/etc/axon/trust/observer/observer.pub
+rnd >/etc/axon/trust/qualification/operator.pub
 echo "$SIGNER_PUB" >/etc/axon/trust/verifier/host-signer.pub
 chmod 0644 /etc/axon/trust/*/*.pub
+# Amendment 68: the observer's key is generated by the OPERATOR, AS the observer
+# uid, on the host (the kit never makes it): axon-fabric keygen writes it 0400.
+# A fixture that vanishes with the namespace; nothing is signed with it.
+cp "$BIN/axon-fabric" "$W/keygen" && chmod 0755 "$W/keygen" || fail "cannot stage keygen"
+OBS_KEY=/var/lib/axon-observer/key/observer.pk8
+okg=$(setpriv --reuid="$OU" --regid="$OG" --clear-groups -- "$W/keygen" keygen --out "$OBS_KEY") || fail "observer keygen"
+python3 -c 'import json,sys; print(json.loads(sys.argv[1])["public_key"])' "$okg" >/etc/axon/trust/observer/observer.pub
+chmod 0644 /etc/axon/trust/observer/observer.pub
+[ "$(stat -c '%U:%G %a' "$OBS_KEY")" = "axon-observer:axon-observer 400" ] || fail "keygen did not write the observer key 0400 as the observer"
 printf 'x' >/etc/axon/keys/fabric-attest.pk8   # one byte: a fixture, never a key
 chown axon-fabric:axon-fabric /etc/axon/keys/fabric-attest.pk8; chmod 0400 /etc/axon/keys/fabric-attest.pk8
 mkdir -p /var/lib/axon-loop/store
@@ -342,6 +383,16 @@ PY
 echo '{"fixture":"not a signature"}' >"$W/b263.json.sig"
 # What systemd does when the socket unit starts (no systemctl in here).
 install -d -o root -g root -m 0755 /run/axon-custodian
+# ...and the observer's socket, root-only (SocketMode=0600 root:root, the
+# installed socket unit's): a bound socket the preflight can really try to
+# connect to. No service runs behind it; nothing here is the observer.
+install -d -o root -g root -m 0755 /run/axon-observer
+python3 -I -c 'import os, socket, time
+p = "/run/axon-observer/observer.sock"
+s = socket.socket(socket.AF_UNIX); s.bind(p); os.chmod(p, 0o600); s.listen(8); time.sleep(3600)' &
+OSPID=$!
+for _ in $(seq 50); do [ -S /run/axon-observer/observer.sock ] && break; sleep 0.1; done
+[ -S /run/axon-observer/observer.sock ] || fail "the observer socket fixture did not bind"
 # The Fabric service: its unit (judged as a file: no systemd in here) and a
 # running process as the Fabric uid WITHOUT NoNewPrivileges, as that unit
 # would start it. Its pid is the preflight's --fabric-pid (amendment 65).
@@ -349,7 +400,7 @@ printf '[Service]\nUser=axon-fabric\nGroup=axon-fabric\nExecStart=/usr/local/lib
 FG=$(id -g axon-fabric)
 setpriv --reuid="$FU" --regid="$FG" --clear-groups -- sleep 3600 & FPID=$!
 setpriv --reuid="$FU" --regid="$FG" --clear-groups --no-new-privs -- sleep 3600 & NNP_PID=$!
-trap 'kill $FPID $NNP_PID 2>/dev/null' EXIT
+trap 'kill $FPID $NNP_PID $OSPID 2>/dev/null' EXIT
 ARGS+=(--fabric-unit "$W/fabric.service")
 GUEST="unshare --mount --propagation private sh -c 'mount -t tmpfs none /etc/axon && sh $CLONE/scripts/trust_root_guest_probe.sh /etc/axon/trust'"
 bash "$KIT" "${ARGS[@]}" --fabric-pid "$FPID" --b263-record "$W/b263.json" --agent 40003 --agent 40004 --guest-cmd "$GUEST" --apply >"$W/apply2.out" 2>&1
@@ -361,10 +412,20 @@ grep -q 'OK\[toolchain\] guest_build_env.toolchain_pin_problems accepts the inst
   || fail "the freeze's own reader did not accept the installed toolchain pin"
 grep -q 'OK\[check\] custodian.sha256 in /etc/axon/protected-launcher.json is the sha256 of /usr/local/libexec/axon/axon-custodian' "$W/apply2.out" \
   || fail "the installed custodian program pin was not verified"
+grep -q 'OK\[check\] observer.service in /etc/axon/protected-launcher.json pins /usr/local/libexec/axon/axon-observer' "$W/apply2.out" \
+  || fail "the installed observer program pin was not verified"
+grep -q -- "--observer axon-observer" "$W/apply2.out" || fail "the preflight was not given the observer uid"
 grep -q -- "--fabric-pid $FPID" "$W/apply2.out" || fail "the preflight was not given the Fabric pid"
 rep=$(sed -n 's/^PREFLIGHT verdict PASS mode protected report \([^ ]*\) .*/\1/p' "$W/apply2.out")
-python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); assert r["mode"]=="protected" and r["verdict"]=="PASS" and r["root"]=="/etc/axon/trust" and len(r["checks"])>40, r["verdict"]; assert [c for c in r["checks"] if c["action"]=="no-new-privs" and c["ok"]], "no NoNewPrivs check"' "$rep" \
-  || fail "the preflight report is not a protected PASS"
+python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); assert r["mode"]=="protected" and r["verdict"]=="PASS" and r["root"]=="/etc/axon/trust" and len(r["checks"])>40, r["verdict"]; assert [c for c in r["checks"] if c["action"]=="no-new-privs" and c["ok"]], "no NoNewPrivs check"
+ob = [c for c in r["checks"] if c["action"] in ("read-observer-key", "connect-observer", "observer-key-mode", "observer-separate", "observer-config-uid")]
+assert all(c["ok"] for c in ob), ob
+# Amendment 68: every actor but the observer FAILED to open its key and to connect to its socket, by a real attempt.
+for who in ("fabric", "verifier", "custodian", "agent:40003", "agent:40004"):
+    assert [c for c in ob if c["actor"] == who and c["action"] == "read-observer-key" and c["observed"] == "refused"], ("key", who)
+    assert [c for c in ob if c["actor"] == who and c["action"] == "connect-observer" and c["observed"] == "denied"], ("socket", who)
+assert [c for c in ob if c["actor"] == "observer" and c["action"] == "read-observer-key" and c["observed"] == "read"], "the observer cannot read its key"' "$rep" \
+  || fail "the preflight report is not a protected PASS (with the observer service's checks)"
 echo "ok(ns): full apply: production loader accepts, protected-mode trust preflight PASS ($(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))["checks"]))' "$rep") checks)"
 m() { stat -c '%U:%G %a' "$1"; }
 [ "$(m /usr/local/libexec/axon/axon-protected-launcher)" = "root:axon-fabric 4750" ] || fail "helper mode $(m /usr/local/libexec/axon/axon-protected-launcher)"
@@ -374,14 +435,31 @@ done
 [ "$(m /var/lib/axon-fabric/runs)" = "axon-fabric:axon-fabric 700" ] || fail "out root"
 [ "$(m /var/lib/axon-protected-launcher)" = "root:root 700" ] || fail "staging root"
 [ "$(m /var/lib/axon-custodian/nonces)" = "axon-custodian:axon-custodian 700" ] || fail "store"
+# Amendment 68: the observer's uid, key, directories, config, binary and units.
+[ "$(m /var/lib/axon-observer/observed)" = "axon-observer:axon-observer 700" ] || fail "observer store"
+[ "$(m /var/lib/axon-observer/key)" = "axon-observer:axon-observer 700" ] || fail "observer key directory"
+[ "$(m /var/lib/axon-observer/key/observer.pk8)" = "axon-observer:axon-observer 400" ] || fail "observer key"
+[ "$(m /var/lib/axon-observer)" = "root:root 755" ] || fail "observer state directory"
+[ "$(m /usr/local/libexec/axon/axon-observer)" = "root:root 755" ] || fail "observer program"
+for f in /etc/axon/observer.json /etc/systemd/system/axon-observer.socket /etc/systemd/system/axon-observer.service; do
+  [ "$(m "$f")" = "root:root 644" ] || fail "$f is $(m "$f")"
+done
+grep -qx 'SocketMode=0600' /etc/systemd/system/axon-observer.socket && grep -qx 'SocketGroup=root' /etc/systemd/system/axon-observer.socket \
+  || fail "the installed observer socket is not root-only"
+grep -qx 'User=axon-observer' /etc/systemd/system/axon-observer.service && grep -qx 'ExecStart=/usr/local/libexec/axon/axon-observer' /etc/systemd/system/axon-observer.service \
+  || fail "the installed observer unit does not run the installed axon-observer as its user"
 python3 - <<'PY' || fail "a config pin is not its installed file's digest"
 import hashlib, json
 def sha(p): return hashlib.sha256(open(p, "rb").read()).hexdigest()
 h = json.load(open("/etc/axon/protected-host.json")); l = json.load(open("/etc/axon/protected-launcher.json"))
 for d in (h["launcher"], h["privileged_launcher"], h["profile_manifest"], h["suite_registry"], h["grant_registry"],
-          h["observer"]["command"], l["interpreter"], l["launcher"], l["profile_manifest"]):
+          l["interpreter"], l["launcher"], l["profile_manifest"]):
     assert sha(d["path"]) == d["sha256"], d
 assert l["custodian"]["sha256"] == sha("/usr/local/libexec/axon/axon-custodian"), "custodian program pin"
+assert l["observer"]["service"]["sha256"] == sha("/usr/local/libexec/axon/axon-observer"), "observer program pin"
+assert "command" not in h["observer"], "the host config names an observer program"
+o = json.load(open("/etc/axon/observer.json"))
+assert o["observer_uid"] == l["observer"]["service"]["uid"] and o["fabric_uid"] == l["fabric_uid"] and o["caller_uid"] == 0, o
 assert json.load(open("/etc/axon/host-toolchain-pin.json"))["status"].startswith("READ by the freeze")
 v = json.load(open("/etc/axon/trust/verifier.json"))
 assert v["path"] == "/usr/local/libexec/axon/axon-fabric" and v["sha256"] == sha(v["path"]), v
@@ -422,6 +500,107 @@ chmod 0400 /etc/axon/keys/fabric-attest.pk8
 [ $r = 3 ] && grep -Eq 'BLOCKED\[(configs|check)\] /etc/axon/keys/fabric-attest.pk8 must be owned by axon-fabric, readable by it alone and writable by no one' "$W/key.out" \
   || fail "ATTACK: a 0600 signing key passed the kit's check (exit $r): $(grep -E '^(BLOCKED|FAIL|PENDING)' "$W/key.out" | tr '\n' '|')"
 echo "ok(ns): a signing key its owner can write (0600) is BLOCKED, as Fabric's loader refuses it"
+# ── Amendment 68: the observer SERVICE. Each attack breaks ONE fact and must be
+# refused for that reason; the control (the full apply above) held them all.
+check_run() { bash "$KIT" "${ARGS[@]}" --only check >"$W/obs.out" 2>&1; echo $?; }
+# (1) a key another uid can read (0440 here, so the group reads it).
+chmod 0440 "$OBS_KEY"; r=$(check_run); chmod 0400 "$OBS_KEY"
+[ $r = 3 ] && grep -Eq 'BLOCKED\[check\] the observer key /var/lib/axon-observer/key/observer.pk8 must be owned by axon-observer, readable by it alone and writable by no one' "$W/obs.out" \
+  || { cat "$W/obs.out"; fail "ATTACK: an observer key another uid can read (0440) passed the kit's check (exit $r)"; }
+# (2) a key the FABRIC uid owns (its key would be the Fabric's to read).
+chown "$FU" "$OBS_KEY"; r=$(check_run); chown "$OU" "$OBS_KEY"
+[ $r = 3 ] && grep -Eq 'BLOCKED\[check\] the observer key .* must be owned by axon-observer' "$W/obs.out" \
+  || { cat "$W/obs.out"; fail "ATTACK: an observer key the Fabric uid owns passed the kit's check (exit $r)"; }
+# (3) a key directory the group can enter.
+chmod 0750 /var/lib/axon-observer/key; r=$(check_run); chmod 0700 /var/lib/axon-observer/key
+[ $r = 3 ] && grep -Eq 'BLOCKED\[check\] the observer key directory /var/lib/axon-observer/key must be axon-observer.s, mode 0700' "$W/obs.out" \
+  || { cat "$W/obs.out"; fail "ATTACK: an observer key directory the group can enter passed the kit's check (exit $r)"; }
+# (4) an absent key.
+mv "$OBS_KEY" "$W/observer.pk8.away"; r=$(check_run); mv "$W/observer.pk8.away" "$OBS_KEY"
+[ $r = 3 ] && grep -Eq 'BLOCKED\[check\] the observer key /var/lib/axon-observer/key/observer.pk8 is absent' "$W/obs.out" \
+  || { cat "$W/obs.out"; fail "ATTACK: an absent observer key passed the kit's check (exit $r)"; }
+[ "$(check_run)" = 0 ] && grep -q 'OK\[check\] observer.service in' "$W/obs.out" \
+  || { cat "$W/obs.out"; fail "control: the restored observer key and configs no longer pass the kit's check"; }
+echo "ok(ns): an observer key another uid can read, one the Fabric owns, a group-enterable key directory and an absent key are each BLOCKED (control: the restored state passes)"
+# (5) the helper config pins another observer program, or none, or another socket/uid.
+cp -a /etc/axon/protected-launcher.json "$W/launcher.good2"
+helper_edit() { python3 -c 'import json,sys; p="/etc/axon/protected-launcher.json"; c=json.load(open(p)); exec(sys.argv[1]); json.dump(c, open(p,"w"), indent=2)' "$1"; }
+for case in 'c["observer"]["service"]["sha256"]="f"*64|observer.service.sha256 ffff' \
+            'del c["observer"]["service"]|observer.service is absent' \
+            'c["observer"]["service"]["socket"]="/run/axon-observer/other.sock"|is not the observer.s socket' \
+            'c["observer"]["service"]["uid"]=int(c["fabric_uid"])|is not the observer.s uid'; do
+  helper_edit "${case%%|*}"; r=$(check_run); cp -a "$W/launcher.good2" /etc/axon/protected-launcher.json
+  [ $r = 1 ] && grep -Eq "FAIL\[check\] observer service: /etc/axon/protected-launcher.json: .*${case#*|}" "$W/obs.out" \
+    || { cat "$W/obs.out"; fail "ATTACK: a helper config with (${case#*|}) was not refused by the kit (exit $r)"; }
+done
+# ...and the production helper's own loader refuses a service that is the Fabric's uid.
+helper_edit 'c["observer"]["service"]["uid"]=int(c["fabric_uid"])'
+lo=$(setpriv --reuid="$FU" --regid="$FG" --clear-groups -- /usr/local/libexec/axon/axon-protected-launcher --observe </dev/null 2>&1 | head -c 600)
+cp -a "$W/launcher.good2" /etc/axon/protected-launcher.json
+grep -Eqi 'observer|fabric' <<<"$lo" && ! grep -q '"ok":true' <<<"$lo" \
+  || fail "ATTACK: the production helper accepted an observer service whose uid is the Fabric's: $lo"
+echo "ok(ns): a helper config with the wrong observer program pin, no observer.service, another socket, or the Fabric's uid FAILS the kit's check (the helper refuses the last itself)"
+# (6) the host config names an observer PROGRAM: the kit fails it, and the PRODUCTION loader refuses it.
+cp -a /etc/axon/protected-host.json "$W/host.good"
+python3 -c 'import json; p="/etc/axon/protected-host.json"; c=json.load(open(p)); c["observer"]["command"]={"path":"/usr/local/libexec/axon/axon-observer","sha256":"0"*64}; json.dump(c, open(p,"w"), indent=2)'
+r=$(check_run)
+lo=$(setpriv --reuid="$FU" --regid="$FG" --clear-groups -- /usr/local/libexec/axon/axon-fabric submit --request /nonexistent/x.json 2>/dev/null)
+cp -a "$W/host.good" /etc/axon/protected-host.json
+[ $r = 1 ] && grep -q 'FAIL\[check\] observer service: .*observer.command names an observer PROGRAM run as the Fabric uid' "$W/obs.out" \
+  || { cat "$W/obs.out"; fail "ATTACK: a host config naming observer.command passed the kit's check (exit $r)"; }
+grep -q 'observer.command: an observer program runs as the Fabric uid' <<<"$lo" \
+  || fail "ATTACK: the production loader accepted a host config naming observer.command: $lo"
+echo "ok(ns): a host config naming observer.command FAILS the kit's check and is refused by the production loader"
+# (7) the observer's own config: the observer is the Fabric's uid; a caller that is not root; the wrong store.
+cp -a /etc/axon/observer.json "$W/observer.good"
+obs_edit() { python3 -c 'import json,sys; p="/etc/axon/observer.json"; c=json.load(open(p)); exec(sys.argv[1]); json.dump(c, open(p,"w"), indent=2)' "$1"; }
+for case in 'c["observer_uid"]=c["fabric_uid"]|neither the Fabric nor root' \
+            'c["caller_uid"]=c["fabric_uid"]|caller_uid is .*not 0' \
+            'c["store"]="/var/lib/axon-fabric/runs/observed"|store is .*not /var/lib/axon-observer/observed'; do
+  obs_edit "${case%%|*}"; r=$(check_run); cp -a "$W/observer.good" /etc/axon/observer.json
+  [ $r = 1 ] && grep -Eq "FAIL\[check\] observer service: /etc/axon/observer.json: .*${case#*|}" "$W/obs.out" \
+    || { cat "$W/obs.out"; fail "ATTACK: an observer config with (${case#*|}) was not refused by the kit (exit $r)"; }
+done
+echo "ok(ns): an observer config naming the Fabric uid as the observer, a non-root caller, or another store FAILS the kit's check"
+# (8) the installed socket unit lets another uid connect.
+cp -a /etc/systemd/system/axon-observer.socket "$W/obs.socket.good"
+sed -i 's/^SocketMode=0600/SocketMode=0660/;s/^SocketGroup=root/SocketGroup=axon-fabric/' /etc/systemd/system/axon-observer.socket
+r=$(check_run); cp -a "$W/obs.socket.good" /etc/systemd/system/axon-observer.socket
+[ $r = 1 ] && grep -Eq 'FAIL\[check\] observer service: .*axon-observer.socket: SocketMode=.0660., not 0600: only root' "$W/obs.out" \
+  || { cat "$W/obs.out"; fail "ATTACK: an observer socket unit the Fabric group can connect to passed the kit's check (exit $r)"; }
+echo "ok(ns): an observer socket unit that admits the Fabric group FAILS the kit's check"
+# (9) the PREFLIGHT, run for real: each attack breaks one fact and its check must FAIL.
+PF() { bash "$CLONE/scripts/trust_root_preflight.sh" --verifier axon-verifier --custodian axon-custodian --fabric axon-fabric \
+         --observer axon-observer --agent 40003 --agent 40004 --guest-cmd "$GUEST" --fabric-pid "$FPID" --out "$W/pf.json" "$@" >"$W/pf.out" 2>&1; }
+pf_has() { python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); a,t,e,o=sys.argv[2:6]; sys.exit(0 if [c for c in r["checks"] if c["actor"]==a and c["action"]==t and c["expected"]==e and c["observed"]==o and not c["ok"]] else 1)' "$W/pf.json" "$@"; }
+PF || { cat "$W/pf.out" | tail -n 20; fail "control: the preflight does not pass on the deployed observer service"; }
+rc=0; bash "$CLONE/scripts/trust_root_preflight.sh" --verifier axon-verifier --custodian axon-custodian --fabric axon-fabric \
+  --agent 40003 --guest-cmd "$GUEST" --fabric-pid "$FPID" >"$W/pf2.out" 2>&1 || rc=$?
+[ $rc = 2 ] && grep -q '"verdict":"NOT_RUN"' "$W/pf2.out" && grep -q -- '--observer UID' "$W/pf2.out" \
+  || fail "ATTACK: the protected-mode preflight ran without --observer (exit $rc)"
+# The key's own 0700 directory already shields a 0444 key from other uids, so the
+# mode is caught by observer-key-mode alone; with the directory opened too, the
+# real open attempts by the Fabric and an agent SUCCEED and fail the preflight.
+chmod 0444 "$OBS_KEY"; PF; rc=$?
+[ $rc = 1 ] && pf_has operator observer-key-mode ok "mode 444: not 0400" \
+  || { chmod 0400 "$OBS_KEY"; fail "ATTACK: an observer key readable by every uid passed the preflight (exit $rc)"; }
+chmod 0755 /var/lib/axon-observer/key; PF; rc=$?; chmod 0400 "$OBS_KEY"; chmod 0700 /var/lib/axon-observer/key
+[ $rc = 1 ] && pf_has fabric read-observer-key refused SUCCEEDED && pf_has "agent:40003" read-observer-key refused SUCCEEDED \
+  || fail "ATTACK: an observer key every uid can open passed the preflight (exit $rc)"
+chmod 0666 /run/axon-observer/observer.sock; PF; rc=$?; chmod 0600 /run/axon-observer/observer.sock
+[ $rc = 1 ] && pf_has fabric connect-observer denied connected && pf_has "agent:40004" connect-observer denied connected \
+  || fail "ATTACK: an observer socket every uid can connect to passed the preflight (exit $rc)"
+chown "$FU" /var/lib/axon-observer/observed; PF; rc=$?
+chown "$OU" /var/lib/axon-observer/observed
+[ $rc = 1 ] && pf_has operator observer-dir-mode ok "owner $FU, not the observer $OU" \
+  || fail "ATTACK: an observer record store the Fabric uid owns passed the preflight (exit $rc)"
+cp -a /etc/axon/observer.json "$W/observer.good"
+python3 -c 'import json; p="/etc/axon/observer.json"; c=json.load(open(p)); c["observer_uid"]=c["fabric_uid"]; json.dump(c, open(p,"w"), indent=2)'
+PF; rc=$?; cp -a "$W/observer.good" /etc/axon/observer.json
+[ $rc = 1 ] && pf_has operator observer-config-uid "$OU" "$FU" \
+  || fail "ATTACK: an observer config naming the Fabric uid as the observer passed the preflight (exit $rc)"
+PF || fail "control: the preflight no longer passes after the observer attacks were undone"
+echo "ok(ns): the preflight REQUIRES --observer in protected mode, and FAILS (by real attempts) an observer key every uid can open, a socket every uid can connect to, a store the Fabric owns, and a config naming the Fabric as the observer (control: it PASSES on the deployment)"
 # The example configs match the code's schemas (serde, unknown fields denied).
 "$BIN/axon-fabric" protected-host-paths --config "$CLONE/profiles/protected-host/protected-host.json.example" \
   --launcher-config "$CLONE/profiles/protected-host/protected-launcher.json.example" \
@@ -437,7 +616,8 @@ def keys(v, p=""):
     return out
 for ex, live in (("protected-host.json.example", "/etc/axon/protected-host.json"),
                  ("protected-launcher.json.example", "/etc/axon/protected-launcher.json"),
-                 ("custodian.json.example", "/etc/axon/custodian.json")):
+                 ("custodian.json.example", "/etc/axon/custodian.json"),
+                 ("observer.json.example", "/etc/axon/observer.json")):
     a, b = keys(json.load(open(f"{d}/{ex}"))), keys(json.load(open(live)))
     assert a == b, (ex, sorted(a ^ b))
 assert open(f"{d}/provenance-allowlist.example").read().splitlines()[0] == "axon-provenance-allowlist/1"

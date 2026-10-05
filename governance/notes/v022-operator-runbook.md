@@ -15,29 +15,41 @@ setuid-vs-daemon decision is in `governance/notes/v022-setuid-vs-daemon.md`.
 It installs, from one standalone clone at one commit:
 
 - the provenance allowlist;
-- the Fabric, custodian, verifier and launch-profile users (`axonb263`);
-- the directories;
+- the Fabric, custodian, observer, verifier and launch-profile users (`axonb263`), five
+  different uids (the observer is its own principal, amendment 68);
+- the directories, including the observer's record store and key directory
+  (`/var/lib/axon-observer/{observed,key}`, its own, 0700);
 - `axon-fabric`, the setuid-root `axon-protected-launcher` (04750 root:axon-fabric),
-  `axon-custodian`, `fc_linux_profile.sh` and the operator's observer program, under
+  `axon-custodian`, `axon-observer` (the observer SERVICE) and `fc_linux_profile.sh`, under
   `/usr/local/libexec/axon/`;
 - the guest image under `/usr/local/lib/axon/guest-linux/`;
 - the suite and grant registries;
 - the signed B263 record and waivers, once the operator hands them over;
-- `/etc/axon/custodian.json`, `/etc/axon/protected-launcher.json` and
-  `/etc/axon/protected-host.json`, every pin computed from the INSTALLED bytes. That includes
-  the helper config's `custodian.sha256`, the sha256 of the installed `axon-custodian`
-  (amendment 65). The helper refuses a production config without it, and on every reply it
-  checks that the sending process executes exactly that program;
+- `/etc/axon/custodian.json`, `/etc/axon/observer.json`, `/etc/axon/protected-launcher.json`
+  and `/etc/axon/protected-host.json`, every pin computed from the INSTALLED bytes. That
+  includes the helper config's `custodian.sha256`, the sha256 of the installed
+  `axon-custodian` (amendment 65), and its `observer.service {socket, uid, sha256}`, the
+  installed `axon-observer` (amendment 68). The helper refuses a production config without
+  the first, relays an observation only from the second, and on every reply it checks that
+  the sending process executes exactly that program. The host config's `observer` section
+  names NO `command`: a production Fabric refuses one;
 - `/etc/axon/trust/verifier.json`;
-- the custodian's systemd units, with the socket enabled;
+- the custodian's and the observer's systemd units, with both sockets enabled;
 - `/etc/axon/host-toolchain-pin.json`, which the freeze reads (amendment 65).
 
 Then it runs the production `ProtectedHost::operator()` as the Fabric uid against the result.
 It judges the operator's Fabric unit (`--fabric-unit`) for `NoNewPrivileges` and for anything
 that implies it. It verifies that the helper config's custodian pin is the installed
 `axon-custodian`, which is also the program the custodian unit starts; a mismatch FAILS (exit
-1). It checks that the kernel has `SO_PASSPIDFD` (Linux 6.5 or later). Finally it runs
-`trust_root_preflight.sh` in protected mode with `--fabric-pid`.
+1). It does the same for the observer: `observer.service` must pin the installed
+`axon-observer`, name the socket and uid of `observer.json` and of the installed units, the
+unit must start that program as the observer user, and the observer's socket must be root's
+alone (`SocketMode=0600`); a host config naming `observer.command`, an observer config naming
+the Fabric as the observer or a caller other than root FAIL. It BLOCKS an observer key that
+is absent, not owned by the observer uid, readable by another uid, or in a directory that is
+not the observer's 0700. It checks that the kernel has `SO_PASSPIDFD` (Linux 6.5 or later).
+Finally it runs `trust_root_preflight.sh` in protected mode with `--fabric-pid` and
+`--observer`.
 
 It **never** generates a key, reads a private key, or signs anything. A missing key, trust
 root or signed record is reported as `BLOCKED` or `PENDING`, with the command that fixes it.
@@ -50,7 +62,16 @@ through the production loaders, so the examples cannot drift from the code. The 
 inside a private mount namespace with a shadow `/etc`. Its namespace run passes the production
 loader, the freeze's toolchain-pin reader and the protected-mode preflight. It also shows that
 a Fabric process under `NoNewPrivileges` fails the preflight, and that a wrong custodian pin
-fails the kit's check.
+fails the kit's check. For the observer service (amendment 68) it holds a control (the full
+deployment passes, every actor but the observer FAILS to open the key and to connect to the
+socket by a real attempt) against attacks that each break one fact: `--observer-bin`, an
+observer user that is the Fabric's or the custodian's, a key another uid can read or the
+Fabric owns, a key directory the group can enter, an absent key, a wrong or missing program
+pin, another socket or uid in the helper config, `observer.command` in the host config
+(refused by the production loader as well), an observer config naming the Fabric as the
+observer, a caller that is not root, or another store, a socket unit the Fabric group can
+connect to, and, in the preflight itself, an observer key or socket every uid can reach and a
+record store the Fabric owns.
 
 ## 0. Before you start (OPERATOR decisions)
 
@@ -65,10 +86,18 @@ fails the kit's check.
     VMM gets its own jailer cgroup. **OPERATOR**: size the Fabric unit's `MemoryMax=` and
     `TasksMax=` for the helper, the launcher and the host tools it runs. A launch killed by
     those limits is a failure or unknown attempt, never a verdict.
-- **The observer: DECIDED (operator decision G).** The observer will be a separate,
-  socket-activated observer service, built on another branch. Kit support lands with that
-  branch. Until then the kit still takes `--observer-bin` (the current code runs the observer
-  as the Fabric uid), and that observer must not hold a key the Fabric uid can read.
+- **The observer: DECIDED (operator decisions G and G1 = A; amendment 68).** The observer is the
+  `axon-observer` SERVICE: its own uid (default user `axon-observer`, never the Fabric's, the
+  custodian's, the verifier's, an agent's or root; no login shell, no home), socket-activated by
+  a root-only socket, reached only through the setuid-root helper's `--observe` relay. It
+  signs only what it MEASURED (the installed launcher, firecracker, guest image, suite
+  registry, B263 record, profile manifest and host config, and the running Fabric the helper
+  measured from its parent's pidfd), once per nonce. Your decisions: the observer uid, the key
+  (step 5: generated AS that uid on the host, never copied off, never in a group the Fabric is
+  in) and the unit installation (the kit installs `axon-observer.socket` and `.service` from
+  `profiles/protected-host/systemd/`, enabled). `--observer-bin` and `--observer-interpreter`
+  no longer exist: the kit REFUSES them, because an observer PROGRAM runs as the Fabric uid
+  and a production Fabric refuses a host config that names one.
 - **Out root and staging root placement** (amendment 45). The kit places them at
   `/var/lib/axon-fabric/runs` (Fabric's, 0700) and `/var/lib/axon-protected-launcher`
   (root, 0700). Decide whether they may share a filesystem with anything else.
@@ -152,14 +181,13 @@ through the verifier's own report:
 
 - `axon-fabric` is a clean production release build of the clone's HEAD;
 - `axon-protected-launcher --probe` reports `build: production`;
-- `axon-custodian` refuses `--test-config`, as a production build does.
+- `axon-custodian` and `axon-observer` refuse `--test-config`, as production builds do.
 
 ## 4. Dry run, review, apply
 
 ```bash
 K=/srv/axon-freeze/scripts/operator_deploy_protected_host.sh
 ARGS=(--from /srv/axon-freeze --expect-commit <FREEZE_SHA> --bin-dir /var/lib/axon-build/target/release
-      --observer-bin /path/to/operator-observer        # [--observer-interpreter FILE] if it is a script
       --suite-registry /path/to/suites/registry.json    # cortex-check-registry/1; relative paths come along
       --grant-registry /path/to/grants/grants.json      # axon-fabric-grant-registry/1 + its grant files
       --signer-public-key <64 hex>                       # from step 5; omit on the first pass
@@ -171,11 +199,15 @@ sudo bash "$K" "${ARGS[@]}" --apply
 
 Read the dry run, and check these in particular:
 
-- the three configs, including `custodian.sha256` in `protected-launcher.json`, which must be
-  the sha256 the `BINARIES` line prints for the custodian;
+- the four configs, including `custodian.sha256` and `observer.service.sha256` in
+  `protected-launcher.json`, which must be the sha256 the `BINARIES` line prints for the
+  custodian and the observer, and `observer.json` (`observer_uid` the observer user's,
+  `fabric_uid` the Fabric's, `caller_uid` 0); `protected-host.json`'s `observer` section must
+  have no `command`;
 - `OK[fabric-unit]`, or the `BLOCKED[fabric-unit]` reasons;
 - the helper's line `install /usr/local/libexec/axon/axon-protected-launcher root:axon-fabric 4750`;
-- the units (`SocketMode=0660`, `SocketGroup=axon-fabric`);
+- the units (the custodian's `SocketMode=0660`, `SocketGroup=axon-fabric`; the observer's
+  `SocketMode=0600`, `SocketGroup=root`, `User=axon-observer`);
 - `PENDING` and `BLOCKED` at the end.
 
 The first `--apply` creates the users, directories, binaries, image, data, units and
@@ -224,18 +256,22 @@ the repository, the clone, or an agent-writable path.
 | Fabric attestation key (host signer) | `/etc/axon/keys/fabric-attest.pk8` | `axon-fabric:axon-fabric 0400`; `/etc/axon/keys` root 0755 | on the host, readable by the Fabric uid only (A20) |
 | its public half | `/etc/axon/trust/verifier/host-signer.pub` | root 0644, dir root 0755 | — |
 | B263/certification issuer (qualification) | `/etc/axon/trust/qualification/operator.pub` | root 0644, dir root 0755 | **offline**, operator only |
-| observer key | `/etc/axon/trust/observer/observer.pub` | root 0644, dir root 0755 | the observer's own custody (see step 0) |
+| observer key (public) | `/etc/axon/trust/observer/observer.pub` | root 0644, dir root 0755 | see the next row |
+| observer key (private) | `/var/lib/axon-observer/key/observer.pk8` | `axon-observer:axon-observer 0400`; the directory `axon-observer` 0700, `/var/lib/axon-observer` root 0755 | generated AS the observer uid on the host (`sudo -u axon-observer … axon-fabric keygen`), readable by that uid alone; in no other trust root |
 | admission, monitor | `/etc/axon/trust/{admission,monitor}/` | optional here | loop-side |
 
 ```bash
 sudo /usr/local/libexec/axon/axon-fabric keygen --out /etc/axon/keys/fabric-attest.pk8   # prints public_key, fingerprint
 sudo chown axon-fabric:axon-fabric /etc/axon/keys/fabric-attest.pk8                      # keygen writes it 0400
 sudo install -d -o root -g root -m 0755 /etc/axon/trust/{qualification,observer,verifier}
+# The observer key, AS the observer uid (the kit creates the user and its 0700 key directory
+# first; keygen writes the key 0400 and prints public_key):
+sudo -u axon-observer /usr/local/libexec/axon/axon-fabric keygen --out /var/lib/axon-observer/key/observer.pk8
 echo <public_key> | sudo tee /etc/axon/trust/verifier/host-signer.pub >/dev/null
 # On the OFFLINE operator machine:  axon-fabric keygen --out op-qualification.pk8
 # then copy ONLY its public_key here:
 echo <operator public_key> | sudo tee /etc/axon/trust/qualification/operator.pub >/dev/null
-echo <observer public_key> | sudo tee /etc/axon/trust/observer/observer.pub >/dev/null
+echo <the observer key's public_key> | sudo tee /etc/axon/trust/observer/observer.pub >/dev/null
 sudo chmod 0644 /etc/axon/trust/*/*.pub
 ```
 
@@ -364,7 +400,7 @@ Fabric pid are available:
 
 ```bash
 bash /srv/axon-freeze/scripts/trust_root_preflight.sh --verifier axon-verifier --custodian axon-custodian \
-  --fabric axon-fabric --agent <uid> [--agent <uid> …] --guest-cmd '<step 6>' \
+  --fabric axon-fabric --observer axon-observer --agent <uid> [--agent <uid> …] --guest-cmd '<step 6>' \
   --fabric-pid "$(systemctl show -p MainPID --value <fabric unit>)" \
   --out /var/lib/axon-deploy/trust-preflight-<UTC>.json
 ```
@@ -372,6 +408,15 @@ bash /srv/axon-freeze/scripts/trust_root_preflight.sh --verifier axon-verifier -
 Since amendment 65, protected mode requires `--fabric-pid` and refuses to run without it. Its
 `no-new-privs` check FAILS unless that process runs as the Fabric uid with `NoNewPrivs: 0`.
 The Fabric unit must be running when the preflight runs.
+
+Since amendment 68, protected mode also requires `--observer` (the observer uid) and judges the
+observer service by real attempts under each actor: the observer opens its key and creates in
+its record store; the Fabric, the verifier, the custodian and every agent FAIL to open the
+key, FAIL to create in or chmod the key directory or the store, and FAIL to connect to the
+observer's socket (mode 0600 root:root: the helper, as root, is its only client). The
+observer's config must name exactly that uid, the Fabric's uid and caller 0, and the helper
+config's `observer.service` the same socket and uid; the observer must not be the Fabric, the
+custodian, the verifier, an agent or root.
 
 The verdict line reads `PREFLIGHT verdict PASS mode protected report …`. Keep that report: it
 is certified evidence (`trust_preflight_sha256`).
@@ -494,8 +539,10 @@ Closed by amendments 65 and 66 (the gaps workstream), with the kit updated to ma
 
 Still open:
 
-1. **The observer service** (decision G) is being built on another branch. Kit support lands
-   with it. Until then the observer runs as the Fabric uid.
+1. **The observer service** is built and the kit deploys and checks it (amendment 68). What the
+   observer MEASURES is the installed files and the running Fabric. The guest policy, nonce,
+   epoch, the init and axon digests inside the measured rootfs and the Fabric revision are
+   TOLD to it, not measured (amendment 68).
 2. **The deployable `--guest-cmd`** (decision H, step 6). The preflight stays `PENDING` until it
    exists.
 3. **`x3_l0_hypervisor_boundary`'s reason text** in `b263_qualify.sh` is still the WSL2/Hyper-V

@@ -6,24 +6,31 @@
 # protected host needs that is not a key or a signature:
 #
 #   allowlist  /etc/axon/provenance-allowlist (amendment 44, decision C)
-#   users      the Fabric, custodian, verifier and launch-profile system users
-#              (own uid and group each, no login; amendments 45, 50)
-#   dirs       out root, root-private staging root, custodian store, authority
-#              store parent, /etc/axon layout, install dirs
+#   users      the Fabric, custodian, observer, verifier and launch-profile
+#              system users (own uid and group each, no login; amendments 45,
+#              50, 68)
+#   dirs       out root, root-private staging root, custodian store, observer
+#              record store and key directory (the observer uid's, 0700),
+#              authority store parent, /etc/axon layout, install dirs
 #   binaries   axon-fabric (the readiness verifier and Fabric), the setuid-root
 #              axon-protected-launcher (04750 root:<fabric group>), axon-custodian,
-#              fc_linux_profile.sh, the operator's observer program
+#              axon-observer (the observer SERVICE, amendment 68), fc_linux_profile.sh
 #   guest      vmlinux, rootfs.sqfs and the profile manifest (amendments 54, 56, 63)
 #   data       the operator suite registry, grant registry and grant files; the
 #              signed B263 record and waivers, when the operator hands them over
 #   configs    /etc/axon/custodian.json (axon-custodian/1),
+#              /etc/axon/observer.json (axon-observer/1, amendment 68),
 #              /etc/axon/protected-launcher.json (axon-protected-launcher/2),
 #              /etc/axon/protected-host.json (axon-protected-host/1), every pin
 #              computed from the INSTALLED bytes — including the helper config's
-#              custodian.sha256, the axon-custodian PROGRAM pin (amendment 65)
+#              custodian.sha256, the axon-custodian PROGRAM pin (amendment 65),
+#              and its observer.service {socket, uid, sha256}, the axon-observer
+#              PROGRAM pin (amendment 68). The host config's observer section
+#              names NO command: a production Fabric refuses one
 #   verifier   /etc/axon/trust/verifier.json from the installed verifier's own
 #              `verifier-manifest`
-#   systemd    axon-custodian.socket + .service, socket enabled
+#   systemd    axon-custodian.socket + .service and axon-observer.socket +
+#              .service, sockets enabled
 #   loader     the production ProtectedHost::operator() run as the Fabric uid
 #              against what was just deployed (a read; it launches nothing)
 #   toolchain  /etc/axon/host-toolchain-pin.json: the host tool identities the
@@ -35,12 +42,17 @@
 #              not set NoNewPrivileges or anything that implies it or otherwise
 #              keeps the setuid helper from becoming root (amendment 65); its
 #              MainPID is what the preflight's --fabric-pid judges
-#   check      the trust roots and the attestation key: present, owned, moded,
-#              separated — CHECKED, never created; the helper config's custodian
-#              program pin against the INSTALLED axon-custodian (a mismatch
-#              FAILS); a kernel with SO_PASSPIDFD (Linux >= 6.5)
+#   check      the trust roots, the attestation key and the observer's key:
+#              present, owned, moded, separated — CHECKED, never created; the
+#              helper config's custodian and observer program pins against the
+#              INSTALLED axon-custodian and axon-observer, and the observer's
+#              socket, uid and config agreeing across observer.json, the helper
+#              config and the units (a mismatch FAILS); a kernel with
+#              SO_PASSPIDFD (Linux >= 6.5)
 #   preflight  scripts/trust_root_preflight.sh in protected mode, with
-#              --fabric-pid (the running Fabric's pid); its verdict
+#              --fabric-pid (the running Fabric's pid) and --observer (the
+#              observer uid: its key readable by it alone, its socket
+#              connectable by no actor); its verdict
 #
 # It NEVER generates, reads the private half of, or signs with any key. Where a
 # key or trust root must be provisioned it checks it and stops with the exact
@@ -56,12 +68,12 @@
 #   --expect-commit SHA     refuse unless the clone's HEAD is exactly SHA (40 hex)
 #   --bin-dir DIR           where `cargo build --release --locked -p axon-fabric --bins`
 #                           (production: no test-trust feature) put axon-fabric,
-#                           axon-protected-launcher and axon-custodian, built FROM
-#                           CLONE at its HEAD (checked through the verifier's
-#                           own report)
-#   --observer-bin FILE     the operator's observer program (no production
-#                           observer ships in this repository)
-#   --observer-interpreter FILE   its interpreter, if it is a #! script
+#                           axon-protected-launcher, axon-custodian and
+#                           axon-observer, built FROM CLONE at its HEAD (checked
+#                           through the verifier's own report)
+#   --observer-bin, --observer-interpreter   REFUSED since amendment 68: the
+#                           observer is the axon-observer service from --bin-dir;
+#                           a production Fabric refuses an in-uid observer program
 #   --suite-registry FILE   the operator suite registry (cortex-check-registry/1);
 #                           every relative path it names is installed beside it
 #   --grant-registry FILE   the operator grant registry (axon-fabric-grant-registry/1)
@@ -78,8 +90,9 @@
 #   --qualification-max-age-s N   default 2592000 (Fabric's own default, materialised)
 #   --max-timeout-s N       helper launch timeout ceiling (default 900)
 #   --max-input-bytes N     helper input snapshot ceiling (default 268435456)
-#   --fabric-user U --custodian-user U --verifier-user U --profile-user U
-#                           defaults axon-fabric, axon-custodian, axon-verifier, axonb263
+#   --fabric-user U --custodian-user U --observer-user U --verifier-user U --profile-user U
+#                           defaults axon-fabric, axon-custodian, axon-observer,
+#                           axon-verifier, axonb263 (five different users)
 #   --agent U               an agent uid/user for the preflight (repeatable)
 #   --guest-cmd CMD         the preflight's in-guest probe command
 #   --fabric-unit UNIT      the systemd unit that runs Fabric as the Fabric uid
@@ -119,6 +132,15 @@ CUST_STATE=/var/lib/axon-custodian
 STORE=$CUST_STATE/nonces
 SOCKET_DIR=/run/axon-custodian
 SOCKET=$SOCKET_DIR/custodian.sock
+# The observer service (amendment 68; profiles/protected-host/observer.json.example
+# and systemd/axon-observer.*): its own uid, key, record store and socket.
+OBSERVER_CONFIG=$ETC/observer.json
+OBS_STATE=/var/lib/axon-observer
+OBS_STORE=$OBS_STATE/observed
+OBS_KEY_DIR=$OBS_STATE/key
+OBS_KEY=$OBS_KEY_DIR/observer.pk8
+OBS_SOCKET_DIR=/run/axon-observer
+OBS_SOCKET=$OBS_SOCKET_DIR/observer.sock
 QUAL_DIR=$ETC/qualification
 KEYS_DIR=$ETC/keys
 SUITES_DIR=$ETC/suites
@@ -130,11 +152,11 @@ OBS_MAX_AGE_S=300
 NONCE_MAX_AGE_S=300
 
 STEPS="allowlist users dirs binaries guest data configs verifier systemd loader toolchain fabric-unit check preflight"
-CLONE="" EXPECT="" BIN_DIR="" OBSERVER_BIN="" OBSERVER_INTERP="" SUITE_REG="" GRANT_REG=""
+CLONE="" EXPECT="" BIN_DIR="" SUITE_REG="" GRANT_REG=""
 SIGNER_PUB="" SIGNER_KEY=$KEYS_DIR/fabric-attest.pk8 ISSUER_REF="verifier:fabric"
 AUTH_STORE=/var/lib/axon-loop/store B263_RECORD="" B263_WAIVERS=""
 QUAL_MAX_AGE=2592000 MAX_TIMEOUT=900 MAX_INPUT=268435456
-FABRIC_USER=axon-fabric CUSTODIAN_USER=axon-custodian VERIFIER_USER=axon-verifier PROFILE_USER=axonb263
+FABRIC_USER=axon-fabric CUSTODIAN_USER=axon-custodian OBSERVER_USER=axon-observer VERIFIER_USER=axon-verifier PROFILE_USER=axonb263
 AGENTS=() GUEST_CMD="" ONLY="" NO_SYSTEMCTL=0 APPLY=0 FABRIC_UNIT="" FABRIC_PID=""
 
 refuse() { echo "REFUSED: $*" >&2; echo "operator_deploy: REFUSED — $*"; exit 2; }
@@ -144,8 +166,8 @@ while [ $# -gt 0 ]; do
     --from) need_arg "$@"; CLONE=$2; shift 2 ;;
     --expect-commit) need_arg "$@"; EXPECT=$2; shift 2 ;;
     --bin-dir) need_arg "$@"; BIN_DIR=$2; shift 2 ;;
-    --observer-bin) need_arg "$@"; OBSERVER_BIN=$2; shift 2 ;;
-    --observer-interpreter) need_arg "$@"; OBSERVER_INTERP=$2; shift 2 ;;
+    --observer-bin|--observer-interpreter)
+      refuse "$1: since amendment 68 the observer is the axon-observer SERVICE (its own uid and key, socket-activated, reached only through the root helper's --observe relay), installed from --bin-dir; an observer PROGRAM runs as the Fabric uid, which could read its key, and a production Fabric refuses a host config naming one (observer.command)" ;;
     --suite-registry) need_arg "$@"; SUITE_REG=$2; shift 2 ;;
     --grant-registry) need_arg "$@"; GRANT_REG=$2; shift 2 ;;
     --signer-public-key) need_arg "$@"; SIGNER_PUB=$2; shift 2 ;;
@@ -159,6 +181,7 @@ while [ $# -gt 0 ]; do
     --max-input-bytes) need_arg "$@"; MAX_INPUT=$2; shift 2 ;;
     --fabric-user) need_arg "$@"; FABRIC_USER=$2; shift 2 ;;
     --custodian-user) need_arg "$@"; CUSTODIAN_USER=$2; shift 2 ;;
+    --observer-user) need_arg "$@"; OBSERVER_USER=$2; shift 2 ;;
     --verifier-user) need_arg "$@"; VERIFIER_USER=$2; shift 2 ;;
     --profile-user) need_arg "$@"; PROFILE_USER=$2; shift 2 ;;
     --agent) need_arg "$@"; AGENTS+=("$2"); shift 2 ;;
@@ -177,11 +200,13 @@ selected() { [ -z "$ONLY" ] || case " $ONLY " in *" $1 "*) return 0 ;; *) return
 for n in "$QUAL_MAX_AGE" "$MAX_TIMEOUT" "$MAX_INPUT"; do
   case "$n" in ''|*[!0-9]*|0) refuse "a numeric option is not a positive integer: $n" ;; esac
 done
-for u in "$FABRIC_USER" "$CUSTODIAN_USER" "$VERIFIER_USER" "$PROFILE_USER"; do
+for u in "$FABRIC_USER" "$CUSTODIAN_USER" "$OBSERVER_USER" "$VERIFIER_USER" "$PROFILE_USER"; do
   case "$u" in ''|*[!a-z0-9_-]*|[!a-z_]*) refuse "user name $u is not a plain system user name" ;; esac
 done
-[ "$(printf '%s\n' "$FABRIC_USER" "$CUSTODIAN_USER" "$VERIFIER_USER" "$PROFILE_USER" | sort -u | wc -l)" = 4 ] \
-  || refuse "the Fabric, custodian, verifier and profile users must be four different users"
+# Amendment 68: the observer is its own principal; its key must not be
+# readable by the Fabric (or the custodian whose nonces it observes).
+[ "$(printf '%s\n' "$FABRIC_USER" "$CUSTODIAN_USER" "$OBSERVER_USER" "$VERIFIER_USER" "$PROFILE_USER" | sort -u | wc -l)" = 5 ] \
+  || refuse "the Fabric, custodian, observer, verifier and profile users must be five different users"
 if [ -n "$SIGNER_PUB" ]; then
   SIGNER_PUB=$(printf '%s' "$SIGNER_PUB" | tr 'A-F' 'a-f')
   [[ "$SIGNER_PUB" =~ ^[0-9a-f]{64}$ ]] || refuse "--signer-public-key is not 64 hex characters"
@@ -251,14 +276,15 @@ cmp -s "$SELF" "$CLONE/scripts/operator_deploy_protected_host.sh" \
 echo "CLONE $CLONE commit $COMMIT (standalone, clean)"
 
 # ── the binaries: production release builds of THIS commit ───────────────────
-FABRIC_SRC="" HELPER_SRC="" CUST_SRC=""
+FABRIC_SRC="" HELPER_SRC="" CUST_SRC="" OBS_SRC=""
 need_bins=0
 for s in binaries configs verifier loader check preflight; do selected "$s" && need_bins=1; done
 if [ $need_bins = 1 ]; then
   [ -n "$BIN_DIR" ] || refuse "--bin-dir DIR is required (the release build of axon-fabric's bins from $CLONE)"
   BIN_DIR=$(cd "$BIN_DIR" 2>/dev/null && pwd -P) || refuse "--bin-dir: not a directory"
   FABRIC_SRC=$BIN_DIR/axon-fabric HELPER_SRC=$BIN_DIR/axon-protected-launcher CUST_SRC=$BIN_DIR/axon-custodian
-  for b in "$FABRIC_SRC" "$HELPER_SRC" "$CUST_SRC"; do
+  OBS_SRC=$BIN_DIR/axon-observer
+  for b in "$FABRIC_SRC" "$HELPER_SRC" "$CUST_SRC" "$OBS_SRC"; do
     [ -f "$b" ] && [ -x "$b" ] || refuse "$b is not an executable file"
   done
   vm=$("$FABRIC_SRC" verifier-manifest 2>/dev/null) || refuse "$FABRIC_SRC verifier-manifest failed"
@@ -274,7 +300,10 @@ print("; ".join(bad))' "$COMMIT") || refuse "cannot read $FABRIC_SRC's verifier-
   # A production custodian has no --test-config (it answers with its usage).
   co=$("$CUST_SRC" --test-config /nonexistent 2>&1)
   case "$co" in *"usage: axon-custodian"*) ;; *) refuse "$CUST_SRC accepts --test-config: a test-trust build ($co)" ;; esac
-  echo "BINARIES $BIN_DIR: axon-fabric $(sha "$FABRIC_SRC"), helper $(sha "$HELPER_SRC"), custodian $(sha "$CUST_SRC") (production release of $COMMIT)"
+  # Nor has a production observer (M1548: it reads only /etc/axon/observer.json).
+  oo=$("$OBS_SRC" --test-config /nonexistent 2>&1)
+  case "$oo" in *"usage: axon-observer"*) ;; *) refuse "$OBS_SRC accepts --test-config: a test-trust build ($oo)" ;; esac
+  echo "BINARIES $BIN_DIR: axon-fabric $(sha "$FABRIC_SRC"), helper $(sha "$HELPER_SRC"), custodian $(sha "$CUST_SRC"), observer $(sha "$OBS_SRC") (production release of $COMMIT)"
 fi
 MANIFEST_SRC=$CLONE/dist/guest-linux/manifest.json
 LAUNCHER_SRC=$CLONE/scripts/fc_linux_profile.sh
@@ -384,15 +413,16 @@ if selected users; then
   echo "== users (own uid and group each, no login)"
   act_group "$FABRIC_USER"; act_user "$FABRIC_USER" "Axon Fabric service (non-root; amendment 45)"
   act_group "$CUSTODIAN_USER"; act_user "$CUSTODIAN_USER" "Axon observation-nonce custodian (amendment 50)"
+  act_group "$OBSERVER_USER"; act_user "$OBSERVER_USER" "Axon preflight observer service (amendment 68)"
   act_group "$VERIFIER_USER"; act_user "$VERIFIER_USER" "Axon readiness verifier actor (trust preflight)"
   act_group "$PROFILE_USER"; act_user "$PROFILE_USER" "Axon B263 launch profile (jailer uid)"
 fi
-FU=$(ph_uid "$FABRIC_USER") CU=$(ph_uid "$CUSTODIAN_USER")
+FU=$(ph_uid "$FABRIC_USER") CU=$(ph_uid "$CUSTODIAN_USER") OU=$(ph_uid "$OBSERVER_USER")
 
 STEP=dirs
 if selected dirs; then
   echo "== directories"
-  for p in "$ETC" "$LIBEXEC" "$GUEST_DIR" "$OUT_ROOT" "$STAGING" "$STORE" "$AUTH_STORE" "$UNIT_DIR/x"; do
+  for p in "$ETC" "$LIBEXEC" "$GUEST_DIR" "$OUT_ROOT" "$STAGING" "$STORE" "$OBS_STORE" "$OBS_KEY_DIR" "$AUTH_STORE" "$UNIT_DIR/x"; do
     operator_chain "$p"
   done
   act_dir "$ETC" root root 0755
@@ -403,6 +433,11 @@ if selected dirs; then
   act_dir "$STAGING" root root 0700
   act_dir "$CUST_STATE" root root 0755
   act_dir "$STORE" "$CUSTODIAN_USER" "$CUSTODIAN_USER" 0700
+  # Amendment 68: the observer's record store and key directory are its own
+  # (0700); their parent is the operator's (axon-observer checks the chain).
+  act_dir "$OBS_STATE" root root 0755
+  act_dir "$OBS_STORE" "$OBSERVER_USER" "$OBSERVER_USER" 0700
+  act_dir "$OBS_KEY_DIR" "$OBSERVER_USER" "$OBSERVER_USER" 0700
   act_dir "$(dirname "$AUTH_STORE")" root root 0755
   [ -d "$AUTH_STORE" ] || pending "authority store $AUTH_STORE does not exist: the axon-loop that owns it creates it (Fabric reads its epoch; the kit places only its root-owned parent)"
   act_dir "$DEPLOY_LOG" root root 0755
@@ -416,25 +451,14 @@ if selected binaries; then
   echo "== binaries (root-owned, not group/other-writable; each pinned by digest where the code pins it)"
   act_install "$FABRIC_SRC" "$LIBEXEC/axon-fabric" root root 0755
   act_install "$CUST_SRC" "$LIBEXEC/axon-custodian" root root 0755
+  # Amendment 68: the observer SERVICE, pinned in the helper config.
+  act_install "$OBS_SRC" "$LIBEXEC/axon-observer" root root 0755
   # A (amendment 45): setuid-root, executable only by the Fabric group.
   act_install "$HELPER_SRC" "$LIBEXEC/axon-protected-launcher" root "$FABRIC_USER" 4750
   act_install "$LAUNCHER_SRC" "$LIBEXEC/fc_linux_profile.sh" root root 0755
   note "launcher interpreter pinned: $BASH_PIN sha256 $(sha "$BASH_PIN") (the system bash; not installed by the kit)"
   [ "$(stat -c '%u %a' "$BASH_PIN")" != "" ] && [ "$(stat -c %u "$BASH_PIN")" = 0 ] \
     || blocked "$BASH_PIN is not root-owned"
-  if [ -z "$OBSERVER_BIN" ]; then
-    blocked "--observer-bin FILE is required: the operator's observer program (PROGRAM --manifest FILE --out DIR writes observation.json + .sig under its OWN key). No production observer ships in this repository; the tests' stand-in proves only the protocol"
-  else
-    [ -f "$OBSERVER_BIN" ] || refuse "--observer-bin $OBSERVER_BIN is not a file"
-    act_install "$OBSERVER_BIN" "$LIBEXEC/axon-observer" root root 0755
-    if [ "$(head -c2 "$OBSERVER_BIN")" = '#!' ] && [ -z "$OBSERVER_INTERP" ]; then
-      blocked "the observer is a #! script: sealed_exec never runs a script through its #! line; pass --observer-interpreter FILE (it is pinned too)"
-    fi
-    if [ -n "$OBSERVER_INTERP" ]; then
-      [ -f "$OBSERVER_INTERP" ] && [ "$(stat -c %u "$OBSERVER_INTERP")" = 0 ] \
-        || blocked "--observer-interpreter $OBSERVER_INTERP is not a root-owned file"
-    fi
-  fi
   for e in "$FIRECRACKER" "$JAILER"; do
     if [ ! -f "$e" ]; then blocked "$e is absent: install the pinned Firecracker release (the manifest's engine pins)"; continue; fi
     st=$(stat -c '%u %a' "$e")
@@ -648,7 +672,7 @@ else
     fi
   fi
 fi
-gen_configs() { # writes $WORK/{custodian,launcher,host}.json from the pins
+gen_configs() { # writes $WORK/{custodian,observer,launcher,host}.json from the pins
   python3 -I - "$WORK" <<'PY'
 import json, os, sys
 w = sys.argv[1]; e = os.environ
@@ -671,11 +695,16 @@ launcher = {"schema": "axon-protected-launcher/2", "fabric_uid": num(e["K_FU"]),
             # reply (SCM_PIDFD -> /proc/<pid>/exe hashed by descriptor);
             # load_config refuses a production helper config without it.
             "custodian": {"socket": e["K_SOCKET"], "uid": num(e["K_CU"]), "sha256": e["K_CUST_SHA"]}}
-observer = {"command": pin(e["K_OBSERVER"], e["K_OBSERVER_SHA"])}
-if e.get("K_OBS_INTERP"):
-    observer["interpreter"] = pin(e["K_OBS_INTERP"], e["K_OBS_INTERP_SHA"])
-observer["custodian"] = {"socket": e["K_SOCKET"], "uid": num(e["K_CU"])}
-observer["max_age_s"] = int(e["K_OBS_AGE"])
+# Amendment 68: the helper relays from the observer SERVICE, pinned by
+# program; the host config names no observer program (a production Fabric
+# refuses observer.command) and keeps only the custodian and the max age.
+launcher["observer"]["service"] = {"socket": e["K_OBS_SOCKET"], "uid": num(e["K_OU"]),
+                                   "sha256": e["K_OBS_SHA"]}
+observer = {"custodian": {"socket": e["K_SOCKET"], "uid": num(e["K_CU"])},
+            "max_age_s": int(e["K_OBS_AGE"])}
+observer_service = {"schema": "axon-observer/1", "observer_uid": num(e["K_OU"]), "fabric_uid": num(e["K_FU"]),
+                    "caller_uid": 0, "socket": e["K_OBS_SOCKET"], "store": e["K_OBS_STORE"],
+                    "key_path": e["K_OBS_KEY"]}
 host = {"schema": "axon-protected-host/1",
         "launcher": pin(e["K_LAUNCHER"], e["K_LAUNCHER_SHA"]),
         "privileged_launcher": pin(e["K_HELPER"], e["K_HELPER_SHA"]),
@@ -689,23 +718,22 @@ host = {"schema": "axon-protected-host/1",
         "observer": observer,
         "grant_registry": pin(e["K_GRANTS"], e["K_GRANTS_SHA"]),
         "authority_store": e["K_AUTH"]}
-for name, doc in (("custodian", custodian), ("launcher", launcher), ("host", host)):
+for name, doc in (("custodian", custodian), ("observer", observer_service), ("launcher", launcher), ("host", host)):
     with open(os.path.join(w, name + ".json"), "w") as f:
         json.dump(doc, f, indent=2); f.write("\n")
 PY
 }
 if selected configs; then
   echo "== configs (root-owned 0644; every pin from the INSTALLED bytes)"
-  for p in "$CUSTODIAN_CONFIG" "$HELPER_CONFIG" "$HOST_CONFIG"; do operator_chain "$p"; done
+  for p in "$CUSTODIAN_CONFIG" "$OBSERVER_CONFIG" "$HELPER_CONFIG" "$HOST_CONFIG"; do operator_chain "$p"; done
   suite_dst=$SUITES_DIR/$(basename "${SUITE_REG:-registry.json}")
   grant_dst=$GRANTS_DIR/$(basename "${GRANT_REG:-grants.json}")
   stop=0
   [ $signer_ok = 1 ] || stop=1
-  [ -n "$OBSERVER_BIN" ] || stop=1
   [ -n "$SUITE_REG" ] && [ -n "$GRANT_REG" ] || stop=1
   [ $GUEST_OK = 1 ] || stop=1
   if [ $stop = 1 ] && [ $APPLY = 1 ]; then
-    blocked "configs not written: a signer, observer, registry or guest item above is BLOCKED (the host config would name what is not there)"
+    blocked "configs not written: a signer, registry or guest item above is BLOCKED (the host config would name what is not there)"
   else
     [ $stop = 0 ] || note "dry run: the configs below carry placeholders for the BLOCKED items"
     ph() { [ -n "$1" ] && [ -f "$1" ] && pin_of "$2" "$1" || printf '<sha256 of %s>' "$2"; }
@@ -720,9 +748,10 @@ if selected configs; then
     # The custodian PROGRAM pin (amendment 65): the installed axon-custodian's
     # bytes, the file the custodian unit's ExecStart names.
     K_CUST_SHA=$(pin_of "$LIBEXEC/axon-custodian" "$CUST_SRC")
-    K_OBSERVER=$LIBEXEC/axon-observer; K_OBSERVER_SHA=$(ph "$OBSERVER_BIN" "$K_OBSERVER")
-    K_OBS_INTERP=$OBSERVER_INTERP; K_OBS_INTERP_SHA=""
-    [ -z "$OBSERVER_INTERP" ] || K_OBS_INTERP_SHA=$(sha "$OBSERVER_INTERP")
+    # The observer PROGRAM pin (amendment 68): the installed axon-observer's
+    # bytes, the file the observer unit's ExecStart names.
+    K_OBS_SHA=$(pin_of "$LIBEXEC/axon-observer" "$OBS_SRC")
+    K_OU=$OU K_OBS_SOCKET=$OBS_SOCKET K_OBS_STORE=$OBS_STORE K_OBS_KEY=$OBS_KEY
     K_B263=$QUAL_DIR/b263.json; K_WAIVERS=""
     [ -z "$WAIVERS_SRC" ] || K_WAIVERS=$QUAL_DIR/b263-waivers.json
     K_QUAL_AGE=$QUAL_MAX_AGE K_SUITES=$suite_dst; K_SUITES_SHA=$(ph "$SUITE_REG" "$suite_dst")
@@ -730,10 +759,11 @@ if selected configs; then
     K_AUTH=$AUTH_STORE
     export K_CU K_FU K_SOCKET K_STORE K_NONCE_AGE K_BASH K_BASH_SHA K_LAUNCHER K_LAUNCHER_SHA K_MANIFEST \
       K_MANIFEST_SHA K_GUEST K_FC K_JL K_OUT K_STAGING K_MAX_TIMEOUT K_MAX_INPUT K_OBS_ROOT K_OBS_AGE \
-      K_SIGNER_PUB K_HELPER K_HELPER_SHA K_CUST_SHA K_OBSERVER K_OBSERVER_SHA K_OBS_INTERP K_OBS_INTERP_SHA K_B263 \
+      K_SIGNER_PUB K_HELPER K_HELPER_SHA K_CUST_SHA K_OBS_SHA K_OU K_OBS_SOCKET K_OBS_STORE K_OBS_KEY K_B263 \
       K_WAIVERS K_QUAL_AGE K_SUITES K_SUITES_SHA K_ISSUER K_KEY K_GRANTS K_GRANTS_SHA K_AUTH
     gen_configs || { echo "FAIL[$STEP] generating the configs"; FAILED=1; }
     act_install "$WORK/custodian.json" "$CUSTODIAN_CONFIG" root root 0644 show
+    act_install "$WORK/observer.json" "$OBSERVER_CONFIG" root root 0644 show
     act_install "$WORK/launcher.json" "$HELPER_CONFIG" root root 0644 show
     act_install "$WORK/host.json" "$HOST_CONFIG" root root 0644 show
     [ -n "$WAIVERS_SRC" ] || note "qualification.waivers is null: b263_qualify.sh records x3/x4 BLOCKED on this host, so a PASS_WITH_BLOCKED record needs a waiver file; re-run with --b263-waivers once it is signed"
@@ -770,7 +800,23 @@ if selected systemd; then
   grep -qx 'SocketMode=0660' "$WORK/axon-custodian.socket" || blocked "the socket unit template no longer says SocketMode=0660 (the Fabric group must connect, nobody else)"
   act_install "$WORK/axon-custodian.socket" "$UNIT_DIR/axon-custodian.socket" root root 0644 show
   act_install "$WORK/axon-custodian.service" "$UNIT_DIR/axon-custodian.service" root root 0644 show
-  for c in "systemctl daemon-reload" "systemctl enable --now axon-custodian.socket"; do
+  # Amendment 68: the observer service. Its socket is root's alone (0600):
+  # the setuid-root helper is its only client; neither the Fabric nor any
+  # agent can connect (the observer also refuses them by SO_PEERCRED).
+  echo "== systemd: axon-observer.socket + axon-observer.service (amendment 68)"
+  operator_chain "$UNIT_DIR/axon-observer.socket"
+  sed -e "s|^ListenStream=.*|ListenStream=$OBS_SOCKET|" \
+    "$CLONE/profiles/protected-host/systemd/axon-observer.socket" >"$WORK/axon-observer.socket"
+  sed -e "s|^User=.*|User=$OBSERVER_USER|" -e "s|^Group=.*|Group=$OBSERVER_USER|" \
+    -e "s|^ExecStart=.*|ExecStart=$LIBEXEC/axon-observer|" \
+    -e "s|^StateDirectory=.*|StateDirectory=${OBS_STORE#/var/lib/} ${OBS_KEY_DIR#/var/lib/}|" \
+    "$CLONE/profiles/protected-host/systemd/axon-observer.service" >"$WORK/axon-observer.service"
+  for d in SocketMode=0600 SocketUser=root SocketGroup=root; do
+    grep -qx "$d" "$WORK/axon-observer.socket" || blocked "the observer socket unit template no longer says $d (only root, the helper, may connect)"
+  done
+  act_install "$WORK/axon-observer.socket" "$UNIT_DIR/axon-observer.socket" root root 0644 show
+  act_install "$WORK/axon-observer.service" "$UNIT_DIR/axon-observer.service" root root 0644 show
+  for c in "systemctl daemon-reload" "systemctl enable --now axon-custodian.socket" "systemctl enable --now axon-observer.socket"; do
     if [ $APPLY = 1 ] && [ $NO_SYSTEMCTL = 0 ]; then
       echo "DO[$STEP] $c"; $c || { echo "FAIL[$STEP] $c"; FAILED=1; }
     else
@@ -984,7 +1030,7 @@ for a, required in (("qualification", True), ("observer", True), ("verifier", Tr
         if required:
             out.append(f"BLOCKED {d} is absent: install -d -o root -g root -m 0755 {d}; then install -o root -g root -m 0644 <key>.pub {d}/ "
                        + {"qualification": "(the operator's B263/certification signing key's public half; private half offline)",
-                          "observer": "(the observer program's signing key's public half)",
+                          "observer": "(the axon-observer service key's public half: amendment 68; generated AS the observer uid on this host)",
                           "verifier": "(the Fabric attestation key's public half: host-signer.pub)"}[a])
         continue
     if not chain_ok(d) or not stat.S_ISDIR(os.lstat(d).st_mode):
@@ -1022,6 +1068,23 @@ PY
     echo "OK[$STEP] trust roots qualification/observer/verifier present, operator-owned, keys well-formed and separated; host signer only in verifier"
   fi
   [ $signer_ok = 1 ] || TRUST_OK=0
+  # Amendment 68: the observer's signing key is its OWN uid's alone (0400, in
+  # its own 0700 directory). The kit never reads or makes it; axon-observer
+  # refuses to start on anything else, and the preflight probes it per actor.
+  if [ ! -f "$OBS_KEY" ] || [ -L "$OBS_KEY" ]; then
+    TRUST_OK=0
+    blocked "the observer key $OBS_KEY is absent: the operator generates it AS the observer uid, on this host (the kit never makes keys): sudo -u $OBSERVER_USER $LIBEXEC/axon-fabric keygen --out $OBS_KEY; then install its public_key as $TRUST/observer/observer.pub (root 0644), in no other $TRUST root"
+  else
+    oks=$(stat -c '%u %a' -- "$OBS_KEY") okd=$(stat -c '%u %a' -- "$OBS_KEY_DIR")
+    if [ "${oks%% *}" != "$(uid_of "$OBSERVER_USER")" ] || [ $(( 8#${oks#* } & 8#277 )) -ne 0 ]; then
+      TRUST_OK=0
+      blocked "the observer key $OBS_KEY must be owned by $OBSERVER_USER, readable by it alone and writable by no one (mode 0400; is uid ${oks%% *} mode ${oks#* }): a key another uid can read lets that uid mint observations (amendment 68): sudo chown $OBSERVER_USER:$OBSERVER_USER $OBS_KEY; sudo chmod 0400 $OBS_KEY"
+    fi
+    if [ "${okd%% *}" != "$(uid_of "$OBSERVER_USER")" ] || [ $(( 8#${okd#* } & 8#077 )) -ne 0 ]; then
+      TRUST_OK=0
+      blocked "the observer key directory $OBS_KEY_DIR must be $OBSERVER_USER's, mode 0700 (is uid ${okd%% *} mode ${okd#* })"
+    fi
+  fi
   [ -f "$TRUST/verifier.json" ] || { [ $APPLY = 0 ] && selected verifier; } || { TRUST_OK=0; blocked "$TRUST/verifier.json is absent (verifier step)"; }
 fi
 
@@ -1070,6 +1133,107 @@ PY
       echo "OK[$STEP] custodian.sha256 in $cfg is the sha256 of $cust_now, the program the custodian unit starts"
     fi
   fi
+  # Amendment 68: the observer SERVICE. The helper relays an observation only
+  # from the socket, uid and PROGRAM its config names (observer.service); the
+  # observer runs as the uid its own config names, from its socket unit. Every
+  # one of those must be the same fact, and the host config names no observer
+  # program (a production Fabric refuses observer.command).
+  echo "== observer service pins (amendment 68)"
+  ocfg=$OBSERVER_CONFIG hcfg=$HOST_CONFIG obs_now=$LIBEXEC/axon-observer
+  if [ $APPLY = 0 ] && selected configs; then
+    [ -f "$WORK/observer.json" ] && ocfg=$WORK/observer.json
+    [ -f "$WORK/host.json" ] && hcfg=$WORK/host.json
+  fi
+  [ $APPLY = 1 ] || [ -z "$OBS_SRC" ] || obs_now=$OBS_SRC
+  osvc=$UNIT_DIR/axon-observer.service osock=$UNIT_DIR/axon-observer.socket
+  if [ $APPLY = 0 ] && selected systemd; then
+    [ -f "$WORK/axon-observer.service" ] && osvc=$WORK/axon-observer.service
+    [ -f "$WORK/axon-observer.socket" ] && osock=$WORK/axon-observer.socket
+  fi
+  if [ ! -f "$cfg" ] || [ ! -f "$ocfg" ] || [ ! -f "$hcfg" ]; then
+    pending "no helper, observer or host config to judge the observer service against yet (configs step)"
+  elif [ ! -f "$obs_now" ]; then
+    pending "no axon-observer at $obs_now to judge the pin against (binaries step)"
+  else
+    op_why=$(python3 -I - "$cfg" "$ocfg" "$hcfg" "$obs_now" "$osvc" "$osock" "$LIBEXEC/axon-observer" \
+      "$OBS_SOCKET" "$OBS_STORE" "$OBS_KEY" "$OBSERVER_USER" "$(uid_of "$OBSERVER_USER")" "$(uid_of "$FABRIC_USER")" <<'PY'
+import hashlib, json, os, sys
+(cfg, ocfg, hcfg, prog, svc, sock, want_exec, want_sock, want_store, want_key,
+ obs_user, obs_uid, fab_uid) = sys.argv[1:14]
+l, o, h = (json.load(open(p)) for p in (cfg, ocfg, hcfg))
+have = hashlib.sha256(open(prog, "rb").read()).hexdigest()
+out = []
+srv = (l.get("observer") or {}).get("service")
+if not isinstance(srv, dict):
+    out.append(f"{cfg}: observer.service is absent: the helper relays no observation, so no protected launch can be observed")
+    srv = {}
+pin = srv.get("sha256")
+if not isinstance(pin, str) or len(pin) != 64 or any(x not in "0123456789abcdef" for x in pin):
+    out.append(f"{cfg}: observer.service.sha256 is {pin!r}, not a lowercase sha256 (the helper refuses it)")
+elif pin != have:
+    out.append(f"{cfg}: observer.service.sha256 {pin} is not the sha256 of {prog} ({have}): every observation would be refused")
+if o.get("schema") != "axon-observer/1":
+    out.append(f"{ocfg}: schema is {o.get('schema')!r}, not axon-observer/1")
+for k, want in (("socket", want_sock), ("store", want_store), ("key_path", want_key)):
+    if o.get(k) != want:
+        out.append(f"{ocfg}: {k} is {o.get(k)!r}, not {want}")
+if srv.get("socket") != o.get("socket"):
+    out.append(f"{cfg}: observer.service.socket {srv.get('socket')!r} is not the observer's socket {o.get('socket')!r}")
+if srv.get("uid") != o.get("observer_uid"):
+    out.append(f"{cfg}: observer.service.uid {srv.get('uid')!r} is not the observer's uid {o.get('observer_uid')!r}")
+if obs_uid and str(o.get("observer_uid")) != obs_uid:
+    out.append(f"{ocfg}: observer_uid {o.get('observer_uid')!r} is not {obs_user}'s uid {obs_uid}")
+if fab_uid and str(o.get("fabric_uid")) != fab_uid:
+    out.append(f"{ocfg}: fabric_uid {o.get('fabric_uid')!r} is not the Fabric's uid {fab_uid}")
+if o.get("observer_uid") in (0, o.get("fabric_uid")) or o.get("fabric_uid") == 0:
+    out.append(f"{ocfg}: observer_uid {o.get('observer_uid')!r} / fabric_uid {o.get('fabric_uid')!r}: the observer is neither the Fabric nor root (amendment 68)")
+if o.get("caller_uid") != 0:
+    out.append(f"{ocfg}: caller_uid is {o.get('caller_uid')!r}, not 0 (only the root helper's relay asks)")
+if "test_paths" in o:
+    out.append(f"{ocfg}: test_paths is a test-config key")
+ob = h.get("observer") or {}
+for k in ("command", "interpreter"):
+    if k in ob:
+        out.append(f"{hcfg}: observer.{k} names an observer PROGRAM run as the Fabric uid; a production Fabric refuses it (amendment 68)")
+def unit(p):
+    v = {}
+    if os.path.isfile(p):
+        for line in open(p):
+            if "=" in line and not line.lstrip().startswith(("#", ";")):
+                k, x = line.split("=", 1); v[k.strip()] = x.strip()
+    return v
+u, s = unit(svc), unit(sock)
+if os.path.isfile(svc):
+    if not u.get("ExecStart") or u["ExecStart"].split()[0] != want_exec:
+        out.append(f"{svc}: ExecStart={u.get('ExecStart')!r} does not start {want_exec}, the program the pin names")
+    if u.get("User") != obs_user:
+        out.append(f"{svc}: User={u.get('User')!r}, not {obs_user}")
+if os.path.isfile(sock):
+    if s.get("ListenStream") != o.get("socket"):
+        out.append(f"{sock}: ListenStream={s.get('ListenStream')!r} is not the observer's socket {o.get('socket')!r}")
+    for k, want in (("SocketMode", "0600"), ("SocketUser", "root"), ("SocketGroup", "root")):
+        if s.get(k) != want:
+            out.append(f"{sock}: {k}={s.get(k)!r}, not {want}: only root (the helper) may connect")
+print("\n".join(out))
+PY
+)
+    if [ -n "$op_why" ]; then
+      while IFS= read -r l; do echo "FAIL[$STEP] observer service: $l"; done <<<"$op_why"; FAILED=1
+    else
+      echo "OK[$STEP] observer.service in $cfg pins $obs_now (sha256 $(sha "$obs_now")), its socket and uid are observer.json's and the units'; the host config names no observer program"
+    fi
+  fi
+  # The RUNNING observer (once its socket has activated it) is the pinned program.
+  if [ $APPLY = 1 ] && [ $NO_SYSTEMCTL = 0 ] && command -v systemctl >/dev/null; then
+    opid=$(systemctl show -p MainPID --value axon-observer.service 2>/dev/null)
+    if [ -n "$opid" ] && [ "$opid" != 0 ]; then
+      opin=$(python3 -I -c 'import json,sys; print((json.load(open(sys.argv[1])).get("observer") or {}).get("service",{}).get("sha256",""))' "$cfg" 2>/dev/null)
+      if [ "$(sha "/proc/$opid/exe" 2>/dev/null)" = "$opin" ]; then echo "OK[$STEP] the running axon-observer (pid $opid) is the pinned program"
+      else echo "FAIL[$STEP] the running axon-observer (pid $opid) is not the program observer.service.sha256 pins"; FAILED=1; fi
+    else
+      note "axon-observer.service is not running yet (its socket starts it at the helper's first --observe); the helper checks the program on every reply"
+    fi
+  fi
   # SO_PASSPIDFD / SCM_PIDFD: Linux 6.5. Without it every pinned call is refused.
   kv=$(uname -r); kmaj=${kv%%.*}; kmin=${kv#*.}; kmin=${kmin%%[!0-9]*}
   if [ "${kmaj:-0}" -lt 6 ] || { [ "$kmaj" = 6 ] && [ "${kmin:-0}" -lt 5 ]; }; then
@@ -1083,7 +1247,8 @@ STEP=preflight
 PF_VERDICT=NOT_RUN PF_REPORT=""
 if selected preflight; then
   echo "== trust preflight: scripts/trust_root_preflight.sh in PROTECTED mode"
-  pf=("$CLONE/scripts/trust_root_preflight.sh" --verifier "$VERIFIER_USER" --custodian "$CUSTODIAN_USER" --fabric "$FABRIC_USER")
+  pf=("$CLONE/scripts/trust_root_preflight.sh" --verifier "$VERIFIER_USER" --custodian "$CUSTODIAN_USER" --fabric "$FABRIC_USER"
+      --observer "$OBSERVER_USER")
   for a in "${AGENTS[@]}"; do pf+=(--agent "$a"); done
   PF_REPORT=$DEPLOY_LOG/trust-preflight-$(date -u +%Y%m%dT%H%M%SZ).json
   # Amendment 65: protected mode requires --fabric-pid and FAILS unless that
@@ -1124,13 +1289,15 @@ if [ $APPLY = 1 ] && [ -d "$DEPLOY_LOG" ]; then
 import hashlib, json, os, sys
 rec, commit, clone, verdict, report, failed, *rest = sys.argv[1:]
 i = rest.index("--"); blocked, pending = rest[:i], rest[i + 1:]
-paths = ["/etc/axon/provenance-allowlist", "/etc/axon/custodian.json", "/etc/axon/protected-launcher.json",
+paths = ["/etc/axon/provenance-allowlist", "/etc/axon/custodian.json", "/etc/axon/observer.json",
+         "/etc/axon/protected-launcher.json",
          "/etc/axon/protected-host.json", "/etc/axon/trust/verifier.json", "/etc/axon/host-toolchain-pin.json",
          "/usr/local/libexec/axon/axon-fabric", "/usr/local/libexec/axon/axon-protected-launcher",
          "/usr/local/libexec/axon/axon-custodian", "/usr/local/libexec/axon/fc_linux_profile.sh",
          "/usr/local/libexec/axon/axon-observer", "/usr/local/lib/axon/guest-linux/vmlinux",
          "/usr/local/lib/axon/guest-linux/rootfs.sqfs", "/usr/local/lib/axon/guest-linux/manifest.json",
-         "/etc/systemd/system/axon-custodian.socket", "/etc/systemd/system/axon-custodian.service"]
+         "/etc/systemd/system/axon-custodian.socket", "/etc/systemd/system/axon-custodian.service",
+         "/etc/systemd/system/axon-observer.socket", "/etc/systemd/system/axon-observer.service"]
 def entry(p):
     st = os.lstat(p)
     return {"sha256": hashlib.sha256(open(p, "rb").read()).hexdigest(), "uid": st.st_uid,

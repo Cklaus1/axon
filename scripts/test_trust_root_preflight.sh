@@ -26,9 +26,10 @@ FABRIC_BIN=$AXON_FABRIC_BIN
 # A (amendment 45): the privileged launcher helper, built beside axon-fabric.
 HELPER_BIN=${AXON_PROTECTED_LAUNCHER_BIN:-$(dirname "$FABRIC_BIN")/axon-protected-launcher}
 [ -x "$HELPER_BIN" ] || fail "needs the axon-protected-launcher binary at $HELPER_BIN (cargo build -p axon-fabric)"
-V=40001 C=40002 A1=40003 A2=40004 F=40005
+V=40001 C=40002 A1=40003 A2=40004 F=40005 O=40006
 BASE=$(mktemp -d /var/tmp/axon-preflight.XXXXXX); chmod 0755 "$BASE"
-trap 'rm -rf "$BASE"' EXIT
+SOCKPID=""
+trap 'kill $SOCKPID 2>/dev/null; rm -rf "$BASE"' EXIT
 ROOT=$BASE/trust
 fixture() {
   rm -rf "$ROOT"; mkdir -p "$ROOT"/{qualification,observer,verifier,admission}
@@ -54,7 +55,19 @@ fixture() {
   chmod 4750 "$O1D/protected-launcher"
   mkdir -p "$O1D/staging" "$O1D/engine"; chmod 0700 "$O1D/staging"; chmod 0755 "$O1D/engine"
   for f in engine/firecracker engine/jailer dist/rootfs.sqfs; do echo x >"$O1D/$f"; chmod 0644 "$O1D/$f"; done
-  python3 - "$O1D" "${HELPER_FABRIC:-$F}" "${CUSTODIAN_AS:-$C}" "$F" <<'PY'
+  # Amendment 68: the observer SERVICE: its own uid, its 0400 key in its own 0700
+  # directory, its own 0700 record store, and a root-only socket (a real bound
+  # socket, so the preflight's connect attempts have something to refuse).
+  mkdir -p "$O1D/obs/key" "$O1D/obs/observed"; chmod 0755 "$O1D/obs"
+  echo k >"$O1D/obs/key/observer.pk8"
+  chown -R $O:$O "$O1D/obs/key" "$O1D/obs/observed"; chmod 0700 "$O1D/obs/key" "$O1D/obs/observed"
+  chmod 0400 "$O1D/obs/key/observer.pk8"
+  kill $SOCKPID 2>/dev/null; wait $SOCKPID 2>/dev/null
+  python3 -I -c 'import os, socket, sys, time
+p = sys.argv[1]; s = socket.socket(socket.AF_UNIX); s.bind(p); os.chmod(p, 0o600); s.listen(8); time.sleep(600)' "$O1D/run/observer.sock" &
+  SOCKPID=$!
+  for _ in $(seq 50); do [ -S "$O1D/run/observer.sock" ] && break; sleep 0.1; done
+  python3 - "$O1D" "${HELPER_FABRIC:-$F}" "${CUSTODIAN_AS:-$C}" "$F" "${OBSERVER_AS:-$O}" <<'PY'
 import json, sys
 d = sys.argv[1]
 json.dump({"schema": "axon-custodian/1", "custodian_uid": int(sys.argv[3]),
@@ -85,12 +98,16 @@ json.dump({"schema": "axon-protected-launcher/2", "fabric_uid": int(sys.argv[2])
            "jailer": f"{d}/engine/jailer", "out_root": f"{d}/svc/runs",
            "staging_root": f"{d}/staging", "max_timeout_s": 60, "max_input_bytes": 1,
            "observer": {"root": "/etc/axon/trust/observer", "max_age_s": 300,
-                        "host_signer_public_key": "0" * 64},
+                        "host_signer_public_key": "0" * 64,
+                        "service": {"socket": f"{d}/run/observer.sock", "uid": int(sys.argv[5]), "sha256": z}},
            "custodian": {"socket": f"{d}/run/custodian.sock", "uid": int(sys.argv[3])}},
           open(f"{d}/protected-launcher.json", "w"))
+json.dump({"schema": "axon-observer/1", "observer_uid": int(sys.argv[5]), "fabric_uid": int(sys.argv[4]),
+           "caller_uid": 0, "socket": f"{d}/run/observer.sock", "store": f"{d}/obs/observed",
+           "key_path": f"{d}/obs/key/observer.pk8"}, open(f"{d}/observer.json", "w"))
 PY
   chmod 0644 "$O1D/protected-host.json" "$O1D/grants/grants.json" "$O1D/protected-launcher.json" \
-    "$O1D/custodian.json"
+    "$O1D/custodian.json" "$O1D/observer.json"
 }
 # A guest's view: the root's parent hidden behind an empty mount (dev stand-in
 # for a Firecracker guest, whose image never contains the host path).
@@ -100,7 +117,8 @@ run() { # guest-cmd → sets OUT, RC
   OUT=$("$PF" --root "$ROOT" --host-config "$BASE/o1/protected-host.json" \
     --launcher-config "$BASE/o1/protected-launcher.json" \
     --custodian-config "$BASE/o1/custodian.json" --fabric-bin "$FABRIC_BIN" --verifier $V \
-    --custodian $C --fabric $F --agent $A1 --agent $A2 --guest-cmd "$1" ${EXTRA:-})
+    --custodian $C --fabric $F --agent $A1 --agent $A2 --guest-cmd "$1" \
+    --observer ${OBSERVER_ACTOR:-$O} --observer-config "$BASE/o1/observer.json" ${EXTRA:-})
   RC=$?
 }
 failed_on() { # expected RC 1 and a failing check matching python predicate
@@ -175,6 +193,45 @@ fixture; chown $A1 "$BASE/o1/run"; run "$GUEST_OK"
 failed_on "agent-owned custodian socket directory" "c['action']=='create' and c['actor']=='agent:$A1' and c['target'].endswith('/o1/run')"
 fixture; chmod 0666 "$BASE/o1/custodian.json"; run "$GUEST_OK"
 failed_on "agent-writable custodian config" "c['action']=='open-write' and c['actor'].startswith('agent') and c['target'].endswith('/custodian.json')"
+
+# Amendment 68: the observer service. The clean fixture above already passed
+# WITH the observer checks (control); each defect FAILS on its own check.
+fixture; run "$GUEST_OK"
+[ "$RC" = 0 ] && printf '%s' "$OUT" | python3 -c "
+import json,sys; r=json.load(sys.stdin)
+ob=[c for c in r['checks'] if c['action'] in ('read-observer-key','connect-observer','observer-key-mode','observer-dir-mode','observer-separate')]
+assert ob and all(c['ok'] for c in ob)
+for who in ('fabric','verifier','custodian','agent:$A1','agent:$A2'):
+    assert any(c['actor']==who and c['action']=='read-observer-key' and c['observed']=='refused' for c in ob), who
+    assert any(c['actor']==who and c['action']=='connect-observer' and c['observed']=='denied' for c in ob), who
+assert any(c['actor']=='observer' and c['action']=='read-observer-key' and c['observed']=='read' for c in ob)" \
+  || fail "control: the observer service's checks do not all pass on a clean fixture: $OUT"
+echo "ok: control: every actor but the observer fails to open its key and to connect to its socket (real attempts)"
+fixture; chmod 0444 "$BASE/o1/obs/key/observer.pk8"; run "$GUEST_OK"
+failed_on "observer key mode 0444 (its 0700 directory still shields it)" "c['action']=='observer-key-mode'"
+fixture; chmod 0444 "$BASE/o1/obs/key/observer.pk8"; chmod 0755 "$BASE/o1/obs/key"; run "$GUEST_OK"
+failed_on "observer key every uid can open" "c['action']=='read-observer-key' and c['actor']=='fabric' and c['observed']=='SUCCEEDED'"
+fixture; chown $F "$BASE/o1/obs/key/observer.pk8"; run "$GUEST_OK"
+failed_on "observer key owned by the Fabric" "c['action']=='observer-key-mode'"
+fixture; chmod 0666 "$BASE/o1/run/observer.sock"; run "$GUEST_OK"
+failed_on "observer socket every uid can connect to" "c['action']=='connect-observer' and c['actor']=='agent:$A1' and c['observed']=='connected'"
+fixture; chown $F "$BASE/o1/obs/observed"; run "$GUEST_OK"
+failed_on "observer record store owned by the Fabric" "c['action']=='observer-dir-mode' and c['target'].endswith('/obs/observed')"
+fixture; chmod 0777 "$BASE/o1/obs/key"; run "$GUEST_OK"
+failed_on "observer key directory every uid can write" "c['action']=='create' and c['actor']=='fabric' and c['target'].endswith('/obs/key')"
+fixture; chown $A1 "$BASE/o1/obs"; run "$GUEST_OK"
+failed_on "agent-owned directory above the observer's key" "c['action']=='create' and c['actor']=='agent:$A1' and c['target'].endswith('/o1/obs')"
+fixture; chmod 0666 "$BASE/o1/observer.json"; run "$GUEST_OK"
+failed_on "agent-writable observer config" "c['action']=='open-write' and c['actor'].startswith('agent') and c['target'].endswith('/observer.json')"
+OBSERVER_AS=$F fixture; OBSERVER_ACTOR=$F run "$GUEST_OK"
+failed_on "observer running as the Fabric uid" "c['action']=='observer-separate'"
+fixture; OBSERVER_ACTOR=$C run "$GUEST_OK"
+failed_on "observer actor that is not the config's observer uid" "c['action']=='observer-config-uid'"
+fixture; python3 -c 'import json,sys; p=sys.argv[1]; c=json.load(open(p)); c["observer"]["service"]["socket"]="/elsewhere.sock"; json.dump(c, open(p,"w"))' "$BASE/o1/protected-launcher.json"; run "$GUEST_OK"
+failed_on "helper config naming another observer socket" "c['action']=='helper-observer-socket'"
+fixture; out=$("$PF" --root "$ROOT" --host-config "$BASE/o1/protected-host.json" --launcher-config "$BASE/o1/protected-launcher.json" --custodian-config "$BASE/o1/custodian.json" --fabric-bin "$FABRIC_BIN" --verifier $V --custodian $C --fabric $F --observer $O --agent $A1 --guest-cmd true); rc=$?
+[ $rc = 2 ] && printf '%s' "$out" | grep -q -- '--observer-config\|observer config' || fail "an observer without its config must be NOT_RUN (2): $rc $out"
+echo "ok: --observer without --observer-config in dev mode is NOT_RUN, never a pass"
 
 # A (amendment 45): the privileged helper. Each defect FAILS on its own check.
 fixture; chmod 0750 "$BASE/o1/protected-launcher"; run "$GUEST_OK"

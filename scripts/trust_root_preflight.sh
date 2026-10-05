@@ -41,6 +41,18 @@
 #              every other actor the kernel must refuse the exec
 #   guest      cannot even ADDRESS the root (--guest-cmd runs
 #              trust_root_guest_probe.sh inside the candidate guest)
+#   observer   (amendment 68, decisions G/G1) the observer is a SERVICE with its
+#              own uid (--observer; required in protected mode): its config
+#              (/etc/axon/observer.json) is an operator file naming exactly that
+#              uid, the --fabric uid and caller 0, and the helper config's
+#              observer.service names the same socket and uid; it is neither the
+#              Fabric, the custodian, the verifier, an agent nor root; its key is
+#              a 0400 file it owns that IT can open and the Fabric, the
+#              verifier, the custodian and every agent cannot; nobody but it
+#              creates in (or chmods) its key directory or record store; its
+#              socket's directory and its state directory are the operator's;
+#              and no actor but root can even CONNECT to its socket (mode 0600
+#              root:root — the setuid-root helper is its only client)
 #   nnp        (amendment 65) the RUNNING Fabric service (--fabric-pid; required
 #              in protected mode) is the --fabric uid and has NoNewPrivs 0. Under
 #              NoNewPrivileges the kernel ignores the helper's set-id bit, so
@@ -63,8 +75,10 @@
 #
 # Usage (as root, which is needed to switch UID — never as the actors):
 #   trust_root_preflight.sh --verifier UID[:GID] --custodian UID[:GID] --fabric UID[:GID] \
-#       --agent UID[:GID] [--agent …] --guest-cmd 'CMD' [--fabric-pid PID] \
-#       [--root DIR --host-config FILE --launcher-config FILE --custodian-config FILE --fabric-bin FILE] [--out FILE]
+#       --observer UID[:GID] --agent UID[:GID] [--agent …] --guest-cmd 'CMD' [--fabric-pid PID] \
+#       [--root DIR --host-config FILE --launcher-config FILE --custodian-config FILE --fabric-bin FILE
+#        [--observer-config FILE]] [--out FILE]
+# (dev mode: --observer is optional and needs --observer-config and --launcher-config.)
 #
 # Exit 0 = PASS, 1 = FAIL (a refusal did not happen), 2 = cannot run (usage,
 # not root, root missing) — never a pass.
@@ -73,7 +87,7 @@ set -uo pipefail
 OPERATOR_TRUST_ROOT=/etc/axon/trust
 SCHEMA=axon-trust-preflight/1
 ROOT="" OUT="" GUEST="" VERIFIER="" CUSTODIAN="" FABRIC="" HOST_CONFIG="" SIGNING_KEY="" FABRIC_BIN=""
-FABRIC_PID=""
+FABRIC_PID="" OBSERVER="" OBSERVER_CONFIG="" HELPER_CONFIG_FILE=""
 LAUNCHER_CONFIG="" HELPER="" HELPER_FABRIC_UID=""
 CUSTODIAN_CONFIG="" CUSTODIAN_STORE="" CUSTODIAN_UID="" CUSTODIAN_FABRIC_UID="" CUSTODIAN_LAUNCHER_UID=""
 O1=() O1_DIRS=() SERVICE_DIRS=() SOCKET_DIRS=() AUTHORITY_STORES=()
@@ -88,6 +102,8 @@ while [ $# -gt 0 ]; do
     --custodian) CUSTODIAN="$2"; shift 2 ;;
     --fabric) FABRIC="$2"; shift 2 ;;
     --fabric-pid) FABRIC_PID="$2"; shift 2 ;;
+    --observer) OBSERVER="$2"; shift 2 ;;
+    --observer-config) OBSERVER_CONFIG="$2"; shift 2 ;;
     --host-config) HOST_CONFIG="$2"; shift 2 ;;
     --fabric-bin) FABRIC_BIN="$2"; shift 2 ;;
     --launcher-config) LAUNCHER_CONFIG="$2"; shift 2 ;;
@@ -105,6 +121,9 @@ if [ -n "$ROOT" ]; then MODE=dev; else MODE=protected; ROOT=$OPERATOR_TRUST_ROOT
 [ "$MODE" = dev ] || [ -n "$FABRIC_PID" ] \
   || die "--fabric-pid PID (the running Fabric service's main pid, e.g. systemctl show -p MainPID) is required in protected mode"
 case "$FABRIC_PID" in ""|*[!0-9]*) [ -z "$FABRIC_PID" ] || die "--fabric-pid must be a pid" ;; esac
+# Amendment 68: protected mode judges the observer SERVICE too.
+[ "$MODE" = dev ] || [ -n "$OBSERVER" ] \
+  || die "--observer UID (the axon-observer service's uid, observer.json's observer_uid) is required in protected mode"
 # O1 (v022-psv-protocol.md §2): the protected-host config and every path it
 # pins are operator authority too, and its signing key is the Fabric UID's
 # alone. Protected mode reads the fixed file; dev mode needs --host-config.
@@ -113,11 +132,35 @@ if [ "$MODE" = protected ]; then
   [ -z "$FABRIC_BIN" ] || die "--fabric-bin is dev-only: protected mode runs the installed verifier named by $ROOT/verifier.json"
   [ -z "$LAUNCHER_CONFIG" ] || die "--launcher-config is dev-only: protected mode reads /etc/axon/protected-launcher.json"
   [ -z "$CUSTODIAN_CONFIG" ] || die "--custodian-config is dev-only: protected mode reads /etc/axon/custodian.json"
+  [ -z "$OBSERVER_CONFIG" ] || die "--observer-config is dev-only: protected mode reads /etc/axon/observer.json"
   HOST_CONFIG=/etc/axon/protected-host.json
+  OBSERVER_CONFIG=/etc/axon/observer.json
+  HELPER_CONFIG_FILE=/etc/axon/protected-launcher.json
   FABRIC_BIN=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["path"])' "$ROOT/verifier.json" 2>/dev/null) \
     || die "$ROOT/verifier.json names no installed verifier path"
 fi
 [ -n "$HOST_CONFIG" ] && [ -f "$HOST_CONFIG" ] || die "protected-host config ${HOST_CONFIG:-(none)} does not exist"
+[ "$MODE" = protected ] || HELPER_CONFIG_FILE=$LAUNCHER_CONFIG
+# The observer service's facts (amendment 68): its own config and the helper
+# config's observer.service, read by the same fields axon-observer and the
+# helper read.
+OBS_UID="" OBS_FABRIC_UID="" OBS_CALLER_UID="" OBS_SOCKET="" OBS_STORE="" OBS_KEY="" OBS_SVC_SOCKET="" OBS_SVC_UID=""
+if [ -n "$OBSERVER" ]; then
+  [ -n "$OBSERVER_CONFIG" ] && [ -f "$OBSERVER_CONFIG" ] || die "observer config ${OBSERVER_CONFIG:-(none)} does not exist (dev mode: --observer-config)"
+  [ -n "$HELPER_CONFIG_FILE" ] && [ -f "$HELPER_CONFIG_FILE" ] || die "the helper config ${HELPER_CONFIG_FILE:-(none)} does not exist (dev mode: --launcher-config)"
+  ofacts=$(python3 -I - "$OBSERVER_CONFIG" "$HELPER_CONFIG_FILE" <<'PY'
+import json, sys
+o = json.load(open(sys.argv[1])); l = json.load(open(sys.argv[2]))
+if o.get("schema") != "axon-observer/1": sys.exit("schema")
+s = (l.get("observer") or {}).get("service") or {}
+for v in (o.get("observer_uid"), o.get("fabric_uid"), o.get("caller_uid"), o.get("socket"), o.get("store"),
+          o.get("key_path"), s.get("socket", "-"), s.get("uid", "-")):
+    print("-" if v is None else v)
+PY
+) || die "the observer config $OBSERVER_CONFIG is not an axon-observer/1 config (or the helper config is unreadable)"
+  { read -r OBS_UID; read -r OBS_FABRIC_UID; read -r OBS_CALLER_UID; read -r OBS_SOCKET; read -r OBS_STORE
+    read -r OBS_KEY; read -r OBS_SVC_SOCKET; read -r OBS_SVC_UID; } <<<"$ofacts"
+fi
 [ -n "$FABRIC_BIN" ] && [ -x "$FABRIC_BIN" ] || die "axon-fabric ${FABRIC_BIN:-(none)} is not executable (dev mode: --fabric-bin)"
 # The pinned paths, from the SAME list ProtectedHost::load walks.
 PATHS=$(mktemp); trap 'rm -f "$PATHS"' EXIT
@@ -192,8 +235,18 @@ done
 # The custodian's socket directory is the operator's (nobody may bind there);
 # the directory ABOVE the custodian's store too.
 DIRS+=("${SOCKET_DIRS[@]}")
+# Amendment 68: the observer's config is an operator file, its socket's
+# directory the operator's, and the directories above its key directory and
+# record store too (axon-observer walks its store's parent chain, M1550).
+OBS_DIRS=() OBS_CHAIN=()
+if [ -n "$OBSERVER" ]; then
+  FILES+=("$OBSERVER_CONFIG")
+  DIRS+=("$(dirname "$OBS_SOCKET")")
+  OBS_DIRS=("$(dirname "$OBS_KEY")" "$OBS_STORE")
+  OBS_CHAIN=("$OBSERVER_CONFIG" "${OBS_DIRS[@]}")
+fi
 for f in "${O1[@]}" "${O1_DIRS[@]}" "$SIGNING_KEY" "${SERVICE_DIRS[@]}" "$CUSTODIAN_STORE" \
-  "${AUTHORITY_STORES[@]}"; do
+  "${AUTHORITY_STORES[@]}" "${OBS_CHAIN[@]}"; do
   d=$(dirname "$f"); DIRS+=("$d")
   if [ "$MODE" = protected ]; then
     while [ "$d" != / ]; do d=$(dirname "$d"); DIRS+=("$d"); done
@@ -346,6 +399,74 @@ for a in "${AGENTS[@]}"; do
   if reads "$A"; then record "agent:$a" "$A" read-key "$SIGNING_KEY" refused SUCCEEDED
   else record "agent:$a" "$A" read-key "$SIGNING_KEY" refused refused; fi
 done
+
+# Amendment 68: the observer SERVICE.
+if [ -n "$OBSERVER" ]; then
+  O=$(resolve "$OBSERVER") || die "observer: not a non-root user: $OBSERVER"
+  record operator - observer-config-uid "$OBSERVER_CONFIG" "${O%%:*}" "$OBS_UID"
+  record operator - observer-config-fabric "$OBSERVER_CONFIG" "${F%%:*}" "$OBS_FABRIC_UID"
+  record operator - observer-config-caller "$OBSERVER_CONFIG" 0 "$OBS_CALLER_UID"
+  record operator - helper-observer-socket "$HELPER_CONFIG_FILE" "$OBS_SOCKET" "$OBS_SVC_SOCKET"
+  record operator - helper-observer-uid "$HELPER_CONFIG_FILE" "${O%%:*}" "$OBS_SVC_UID"
+  ostate=separate
+  [ "${O%%:*}" != "${F%%:*}" ] || ostate="the Fabric's uid"
+  [ "${O%%:*}" != "${C%%:*}" ] || ostate="the custodian's uid"
+  [ "${O%%:*}" != "${V%%:*}" ] || ostate="the verifier's uid"
+  for a in "${AGENTS[@]}"; do
+    A=$(resolve "$a") || die "agent: not a non-root user: $a"
+    [ "${O%%:*}" != "${A%%:*}" ] || ostate="agent $a's uid"
+  done
+  record operator - observer-separate "${O%%:*}" separate "$ostate"
+  # The key: a regular file the observer owns, 0400, in its own 0700 directory.
+  kst=$(stat -c '%u %a %F' -- "$OBS_KEY" 2>/dev/null); read -r ku ka kf <<<"$kst"
+  kstate=ok
+  [ ! -L "$OBS_KEY" ] || kf="symbolic link"
+  [ "$kf" = "regular file" ] || kstate="not a regular file (${kf:-missing})"
+  [ "$ku" = "${O%%:*}" ] || kstate="owner ${ku:-?}, not the observer ${O%%:*}"
+  [ $(( 8#${ka:-777} & 8#0277 )) -eq 0 ] || kstate="mode $ka: not 0400"
+  record operator - observer-key-mode "$OBS_KEY" ok "$kstate"
+  for d in "${OBS_DIRS[@]}"; do
+    dst=$(stat -c '%u %a %F' -- "$d" 2>/dev/null); read -r du da df <<<"$dst"
+    dstate=ok
+    [ "$df" = directory ] || dstate="not a directory (${df:-missing})"
+    [ "$du" = "${O%%:*}" ] || dstate="owner ${du:-?}, not the observer ${O%%:*}"
+    [ $(( 8#${da:-777} & 8#0077 )) -eq 0 ] || dstate="mode $da: group/other access"
+    record operator - observer-dir-mode "$d" ok "$dstate"
+  done
+  # Real attempts: the observer CAN open its key and create in its store;
+  # every other actor can do neither, and cannot connect to its socket.
+  okey() { as "$1" sh -c 'exec 3<"$1"' _ "$OBS_KEY"; }
+  oconnect() { # uid:gid -> denied | connected | missing | error:<kind>
+    setpriv --reuid="${1%%:*}" --regid="${1#*:}" --clear-groups --inh-caps=-all -- python3 -I -c '
+import socket, sys
+s = socket.socket(socket.AF_UNIX); s.settimeout(5)
+try:
+    s.connect(sys.argv[1]); print("connected")
+except PermissionError: print("denied")
+except FileNotFoundError: print("missing")
+except Exception as e: print("error:" + type(e).__name__)' "$OBS_SOCKET" 2>/dev/null
+  }
+  if okey "$O"; then record observer "$O" read-observer-key "$OBS_KEY" read read
+  else record observer "$O" read-observer-key "$OBS_KEY" read refused; fi
+  probe="$OBS_STORE/.axon-preflight-probe-$$"
+  if as "$O" mkdir "$probe"; then rmdir "$probe"; record observer "$O" create "$OBS_STORE" created created
+  else record observer "$O" create "$OBS_STORE" created refused; fi
+  onames=(fabric verifier custodian) ougs=("$F" "$V" "$C")
+  for a in "${AGENTS[@]}"; do onames+=("agent:$a"); ougs+=("$(resolve "$a")"); done
+  for i in "${!onames[@]}"; do
+    n=${onames[$i]} ug=${ougs[$i]}
+    if okey "$ug"; then record "$n" "$ug" read-observer-key "$OBS_KEY" refused SUCCEEDED
+    else record "$n" "$ug" read-observer-key "$OBS_KEY" refused refused; fi
+    for d in "${OBS_DIRS[@]}"; do
+      probe="$d/.axon-preflight-probe-$$"
+      if as "$ug" mkdir "$probe"; then rmdir "$probe"; record "$n" "$ug" create "$d" refused SUCCEEDED
+      else record "$n" "$ug" create "$d" refused refused; fi
+      if as "$ug" python3 -c 'import os,sys; p=sys.argv[1]; os.chmod(p, os.stat(p).st_mode & 0o7777)' "$d"; then record "$n" "$ug" chmod "$d" refused SUCCEEDED
+      else record "$n" "$ug" chmod "$d" refused refused; fi
+    done
+    record "$n" "$ug" connect-observer "$OBS_SOCKET" denied "$(oconnect "$ug")"
+  done
+fi
 
 # The candidate guest: the probe runs INSIDE it and must find nothing to address.
 g=$(bash -c "$GUEST" 2>/dev/null | tail -n 1)

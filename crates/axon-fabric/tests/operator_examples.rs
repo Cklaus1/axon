@@ -106,4 +106,43 @@ fn the_operator_examples_load_through_the_production_loaders() {
         host["observer"]["max_age_s"],
         serde_json::json!(helper.observer.max_age_s)
     );
+
+    // Amendment 68: the host example names NO observer program (a production
+    // Fabric refuses `observer.command`); the observation comes from the
+    // observer SERVICE the helper example pins, whose own example loads under
+    // the production rules and names the same socket, uid and Fabric.
+    assert!(
+        host["observer"].get("command").is_none() && host["observer"].get("interpreter").is_none(),
+        "the host example names an observer program: {}",
+        host["observer"]
+    );
+    let obytes = std::fs::read(example("observer.json.example")).unwrap();
+    let d4 = tempfile::tempdir().unwrap();
+    let (p4, a4) = operator_copy(d4.path(), "observer.json", &obytes);
+    let obs = axon_fabric::observer_service::load_config(&p4, &a4)
+        .unwrap_or_else(|e| panic!("observer.json.example is refused by load_config: {e}"));
+    let svc = helper
+        .observer
+        .service
+        .as_ref()
+        .expect("the helper example pins the observer service (observer.service)");
+    assert_eq!(svc.socket, obs.socket);
+    assert_eq!(svc.uid, obs.observer_uid);
+    assert_eq!(obs.fabric_uid, helper.fabric_uid);
+    assert_ne!(obs.observer_uid, cust.custodian_uid);
+    // ATTACK (A94): the example with the observer running as the Fabric uid
+    // is what an in-uid observer amounts to; the production rule refuses it.
+    let mut ov: serde_json::Value = serde_json::from_slice(&obytes).unwrap();
+    ov["observer_uid"] = serde_json::json!(helper.fabric_uid);
+    let d5 = tempfile::tempdir().unwrap();
+    let (p5, a5) = operator_copy(
+        d5.path(),
+        "observer.json",
+        &serde_json::to_vec_pretty(&ov).unwrap(),
+    );
+    let got = axon_fabric::observer_service::load_config(&p5, &a5);
+    assert!(
+        matches!(&got, Err(e) if e.contains("the observer runs as its own uid")),
+        "ATTACK: an observer config naming the Fabric uid as the observer was accepted under production rules: {got:?}"
+    );
 }
