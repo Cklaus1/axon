@@ -6006,6 +6006,9 @@ MUTATIONS += [
     ('M1679', 'PSV-1 (A107): a dict in a struct or enum field handed over is snapshotted', _CC, '            Value::Struct { fields, .. } | Value::Enum { fields, .. } => {\n                for x in fields.values() {\n                    self.walk_fresh(x, seen, out, d + 1);\n                }\n            }', '            Value::Struct { .. } | Value::Enum { .. } => {}', 'axon-core', _CL, _T72 + 'sealed_code_cannot_retype_a_dict_entry_the_operator_held'),
     ('M1680', 'PSV-1 (A107): a dict in an array or tuple handed over is snapshotted', _CC, '            Value::Array(xs) | Value::Tuple(xs) => {\n                for x in xs {\n                    self.walk_fresh(x, seen, out, d + 1);\n                }\n            }', '            Value::Array(_) | Value::Tuple(_) => {}', 'axon-core', _CL, _T72 + 'sealed_code_cannot_retype_a_dict_entry_the_operator_held'),
 ]
+MUTATIONS += [
+    ('M1681', 'PSV-1 (A106): a dict entry sealed code retyped is refused at the edge back (the verdict is acted on)', _CC, '            if let Some(why) = verdict {', '            if let Some(why) = verdict.filter(|_| false) {', 'axon-core', _CL, _T72 + 'sealed_code_cannot_retype_a_dict_entry_the_operator_held'),
+]
 PSV_IDS |= {f"M{n}" for n in range(1660, 1720)}
 # ── end r4c-psv1 ──
 

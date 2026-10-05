@@ -1514,3 +1514,6 @@ ATTACK_MARKERS.update({
     'M1679': r"ATTACK: sealed code retyped the operator's dict entry to a u8 \(Wrap<Dict>\): Ok\(Completed\)",
     'M1680': r"ATTACK: sealed code retyped the operator's dict entry to a u8 \(\[Dict\]\): Ok\(Completed\)",
 })
+ATTACK_MARKERS.update({
+    'M1681': r"ATTACK: sealed code retyped the operator's dict entry to a u8 \(the review's overwrite\): Ok\(Completed\)",
+})
