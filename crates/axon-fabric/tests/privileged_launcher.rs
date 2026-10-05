@@ -841,6 +841,8 @@ fn production_build() -> &'static Path {
                 "axon-fabric",
                 "--bin",
                 "axon-custodian",
+                "--bin",
+                "axon-observer",
                 "--target-dir",
             ])
             .arg(&target)
@@ -1815,8 +1817,9 @@ fn production_host_etc(
         "signer": {"issuer_ref": "verifier:fabric", "public_key": TEST_HOST_SIGNER,
                    "key_path": e.join("keys/attest.pk8")},
         "out_root": e.join("runs"),
-        "observer": {"command": pin("observer.sh"),
-                     "custodian": {"socket": e.join("run/custodian.sock"), "uid": CUSTODIAN}},
+        // Amendment 68: a production host observes through the observer
+        // service (the helper's relay); it names no observer program.
+        "observer": {"custodian": {"socket": e.join("run/custodian.sock"), "uid": CUSTODIAN}},
     });
     host(&mut v);
     std::fs::write(t.join("protected-host.json"), v.to_string()).unwrap();
@@ -1856,6 +1859,88 @@ fn a_conforming_production_host_is_accepted() {
         code == "2" && rep.contains("\"kind\":\"io\""),
         "control: a conforming protected host is accepted (the run reaches its request): \
          exit {code} {rep}"
+    );
+}
+
+/// A94 on `ProtectedHost::operator()` (amendment 68, M1547), ROOT ONLY: a
+/// production Fabric refuses a protected host config naming an observer
+/// PROGRAM. Fabric would run it as its own uid, so its signing key would be
+/// readable by the principal the observation constrains. Only this rule
+/// refuses it (the program is pinned, operator-owned and present). Control:
+/// the conforming host, which observes through the service.
+#[test]
+fn a_production_fabric_refuses_an_observer_program_on_a_protected_host() {
+    if !root_with_etc_axon() {
+        return;
+    }
+    a_conforming_production_host_is_accepted();
+    let d = production_host_etc(
+        |v| {
+            v["observer"]["command"] = json!({"path": "/etc/axon/observer.sh",
+                                              "sha256": axon_psv::sha256_hex(b"#!/bin/sh\n")})
+        },
+        |_| {},
+    );
+    let (code, rep) = fabric_on_production_host(d.path(), FABRIC);
+    assert!(
+        code == "4",
+        "ATTACK: a production Fabric accepted a protected host whose observer is a program run \
+         as the Fabric uid: exit {code} {rep}"
+    );
+    assert!(rep.contains("observer.command"), "{rep}");
+}
+
+/// A94 (amendment 68, M1548), PRODUCTION BUILD: the production observer
+/// reads its config only from the operator's fixed path; `--test-config`
+/// exists in test-trust builds alone. Offered a complete, valid test config
+/// (its key, store and trust root in place), it refuses and never listens.
+#[test]
+fn a_production_observer_never_takes_its_config_from_a_path_its_caller_names() {
+    let bin = production_build().join("axon-observer");
+    let d = tempfile::tempdir().unwrap();
+    let base = d.path();
+    let store = base.join("records");
+    std::fs::create_dir(&store).unwrap();
+    set_mode(&store, 0o700);
+    let key = observer_key(base, "observer", &[&observer_root(base)]);
+    set_mode(&key.pk8, 0o400);
+    let sock = base.join("observer.sock");
+    let cfg = base.join("observer.json");
+    let me = euid();
+    std::fs::write(
+        &cfg,
+        json!({"schema": "axon-observer/1", "observer_uid": me, "fabric_uid": me,
+               "caller_uid": me, "socket": sock, "store": store, "key_path": key.pk8,
+               "test_paths": {"trust_root": observer_root(base),
+                              "host_config": base.join("h.json"),
+                              "helper_config": base.join("l.json")}})
+        .to_string(),
+    )
+    .unwrap();
+    let mut child = Command::new(&bin)
+        .arg("--test-config")
+        .arg(&cfg)
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut code = None;
+    for _ in 0..400 {
+        if let Some(s) = child.try_wait().unwrap() {
+            code = s.code();
+            break;
+        }
+        if sock.exists() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+    let listening = sock.exists();
+    let _ = child.kill();
+    let _ = child.wait();
+    assert!(
+        code == Some(2) && !listening,
+        "ATTACK: a production observer took its config from a path its caller named \
+         (--test-config) and served: exit {code:?}, listening {listening}"
     );
 }
 

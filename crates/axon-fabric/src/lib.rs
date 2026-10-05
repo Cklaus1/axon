@@ -23,6 +23,7 @@ pub mod git_data;
 pub mod grants;
 pub mod journal;
 pub mod observer;
+pub mod observer_service;
 pub mod privileged_launcher;
 pub mod protected_host;
 pub mod provenance;

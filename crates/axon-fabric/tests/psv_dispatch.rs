@@ -739,6 +739,8 @@ impl World {
             custodian: Custodian::Service(self.custodian.client()),
             max_age_s: 300,
             clock: Clock::System,
+            // The in-uid program route: a test-trust stand-in (amendment 68).
+            relay: None,
         }
     }
     fn submit_observed(&self, ob: ObserverConfig, op: &str) -> axon_fabric::Submission {

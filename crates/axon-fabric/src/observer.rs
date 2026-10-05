@@ -182,6 +182,13 @@ pub struct ObserverConfig {
     pub custodian: crate::custodian::Custodian,
     pub max_age_s: u64,
     pub clock: Clock,
+    /// Amendment 68 (decision G1 = A): `Some` on a protected host. The
+    /// observation is then asked of the operator's observer SERVICE through
+    /// the privileged helper's `--observe` relay (this route), and the
+    /// in-uid `command` above is not used. A production host config naming a
+    /// `command` is refused (`ProtectedHost::load`): an observer run as the
+    /// Fabric uid signs with a key the Fabric uid can read.
+    pub relay: Option<crate::backend::PrivilegedRoute>,
 }
 
 /// What an observation is verified against. ONE implementation
@@ -258,6 +265,111 @@ pub fn observe(
     epoch: u64,
     work: &Path,
 ) -> Result<VerifiedObservation, String> {
+    let (bytes, signature) = match &cfg.relay {
+        Some(h) => relayed(h, manifest_file)?,
+        None => run_program(cfg, manifest_file, work)?,
+    };
+    let o = verify_observation(
+        &ObservationRules {
+            trust: cfg.trust.clone(),
+            max_age_s: cfg.max_age_s,
+            clock: cfg.clock,
+        },
+        &bytes,
+        &signature,
+        m,
+        manifest_digest,
+    )?;
+    if o.epoch != epoch {
+        return Err(format!("observation is for epoch {}, not {epoch}", o.epoch));
+    }
+    Ok(VerifiedObservation {
+        sha256: axon_psv::sha256_hex(&bytes),
+        bytes,
+        signature,
+    })
+}
+
+/// Amendment 68: the observation, from the operator's observer service
+/// through the privileged helper's `--observe` relay (executed from its
+/// verified descriptor, as for a launch). The helper authenticates the
+/// observer program and measures this running Fabric for it; Fabric holds no
+/// observer key and never talks to the observer itself. Returns the exact
+/// observation bytes and their signature, which [`observe`] verifies.
+fn relayed(
+    h: &crate::backend::PrivilegedRoute,
+    manifest_file: &Path,
+) -> Result<(Vec<u8>, String), String> {
+    use crate::privileged_launcher as pl;
+    use std::io::{Read, Write};
+    let manifest =
+        crate::backend::read_regular(manifest_file).map_err(|e| format!("launch manifest: {e}"))?;
+    let helper = crate::sealed_exec::open_verified(
+        &h.helper,
+        Some(h.owner),
+        crate::sealed_exec::Lease::IfGranted,
+    )
+    .map_err(|e| format!("privileged launcher {e}"))?;
+    let mut args: Vec<std::ffi::OsString> = vec!["--observe".into()];
+    if let Some(t) = &h.test_config {
+        args.push("--test-config".into());
+        args.push(t.clone().into_os_string());
+    }
+    let mut child = crate::sealed_exec::command(
+        &helper,
+        None,
+        &args,
+        &[("PATH", "/usr/sbin:/usr/bin:/sbin:/bin")],
+        &[],
+    )
+    .and_then(|mut c| {
+        c.stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .map_err(|e| e.to_string())
+    })
+    .map_err(|e| format!("privileged launcher did not start: {e}"))?;
+    let body = serde_json::to_vec(&pl::ObserveRequest {
+        schema: pl::OBSERVE_REQUEST_SCHEMA.into(),
+        manifest: String::from_utf8_lossy(&manifest).into_owned(),
+    })
+    .map_err(|e| e.to_string())?;
+    if let Some(mut i) = child.stdin.take() {
+        let _ = i.write_all(&body);
+    }
+    let mut text = Vec::new();
+    if let Some(o) = child.stdout.take() {
+        let _ = o
+            .take(crate::observer_service::MAX_REPLY + 4096)
+            .read_to_end(&mut text);
+    }
+    let status = child.wait().ok().and_then(|s| s.code());
+    let r: pl::ObserveReport = serde_json::from_slice(&text)
+        .map_err(|e| format!("the privileged launcher (exit {status:?}) gave no report: {e}"))?;
+    if r.schema != pl::OBSERVE_REPORT_SCHEMA {
+        return Err(format!(
+            "the privileged launcher's report is not {}",
+            pl::OBSERVE_REPORT_SCHEMA
+        ));
+    }
+    match (r.ok, r.observation, r.observation_signature) {
+        (true, Some(o), Some(sig)) => Ok((o.into_bytes(), sig)),
+        _ => Err(format!(
+            "the privileged launcher relayed no observation: {}",
+            r.error.unwrap_or_default()
+        )),
+    }
+}
+
+/// The in-uid observer PROGRAM: test-trust builds only (a production host
+/// config naming one is refused at load, amendment 68). Returns the exact
+/// observation bytes and their signature.
+fn run_program(
+    cfg: &ObserverConfig,
+    manifest_file: &Path,
+    work: &Path,
+) -> Result<(Vec<u8>, String), String> {
     // The observer program is an authority: exactly its pinned bytes, and
     // (D) those bytes are the ones executed: hashed on the open descriptor,
     // which is then executed itself (a script through its pinned interpreter,
@@ -309,23 +421,5 @@ pub fn observe(
     // and to the privileged launcher.
     let signature =
         crate::backend::read_signature("observation", &work.join("observation.json.sig"))?;
-    let o = verify_observation(
-        &ObservationRules {
-            trust: cfg.trust.clone(),
-            max_age_s: cfg.max_age_s,
-            clock: cfg.clock,
-        },
-        &bytes,
-        &signature,
-        m,
-        manifest_digest,
-    )?;
-    if o.epoch != epoch {
-        return Err(format!("observation is for epoch {}, not {epoch}", o.epoch));
-    }
-    Ok(VerifiedObservation {
-        sha256: axon_psv::sha256_hex(&bytes),
-        bytes,
-        signature,
-    })
+    Ok((bytes, signature))
 }

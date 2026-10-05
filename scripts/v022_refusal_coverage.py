@@ -274,12 +274,11 @@ PSVF = "crates/axon-fabric/src/psv.rs"
 RUN = "crates/axon-psv/src/runner.rs"
 PEV = "crates/axon-loop-contracts/src/protected_evidence.rs"
 EXEMPT += [
-    (PL, "        Err(why) => return (LaunchReport::refused(why), EXIT_REFUSED),\n    };\n    if caller_uid",
-     "NOTHING TO ADMIT: load_config failed, so there is no config to launch under"),
-    (PL, "    if let Err(why) = become_root() {",
-     "OS ERROR: setresgid/setgroups/setresuid failing leaves the process not root in every id; "
-     "the helper then launches nothing (the refusal). It can fail only without CAP_SETUID/SETGID, "
-     "and the binary refuses before this unless its euid is 0 (M602)"),
+    (PL, "        Err(why) => return (LaunchReport::refused(why), EXIT_REFUSED),\n    };\n    match prepare(",
+     "NOTHING TO ADMIT: authenticated() refused (load_config failed, the caller is not the "
+     "Fabric uid (M531), or becoming root in every id failed: an OS error that leaves the "
+     "process not root, possible only without CAP_SETUID/SETGID, and the binary refuses before "
+     "this unless its euid is 0, M602); re-reported, nothing launched"),
     (PL, "        Err(why) => (LaunchReport::refused(why), EXIT_REFUSED),\n        Ok(p) => run(&c, p),",
      "NOTHING TO ADMIT: prepare failed, so there is no Prepared (verified programs, staged "
      "snapshot, out dir) to run"),
@@ -1157,7 +1156,7 @@ EXEMPT += [
      "defence in depth, dominated by the per-message pin check (M1483): every descriptor received "
      "is owned and closed, and a truncated control buffer has no SCM_PIDFD, which the next line "
      "refuses (the kernel named no sender)"),
-    (CU, "        if text.len() as u64 > MAX_MESSAGE {",
+    (CU, "        if text.len() as u64 > max {",
      "a memory bound on the reply, not an authority decision: every byte under it was already "
      "attributed to the pinned program"),
     (CU, "    if pidfd_pid(pidfd) != Some(pid) {",
@@ -1195,6 +1194,74 @@ def line_of(text, offset):
 # `refused(`, the verdict's `unknown(`). A definition of one is not a site.
 # Amendment 61: and the interpreter's `panic(` (a Flow refusal: the seal
 # edges and conform.rs refuse that way; `panic!(` is not it).
+# C9 round 4b, OBSERVER workstream (amendment 68): the observer service, the
+# helper's --observe relay and Fabric's relay client. Every decision has a row
+# (M1520-M1549, M531 for the shared caller gate); these sites are named below.
+OSV = "crates/axon-fabric/src/observer_service.rs"
+OBS = "crates/axon-fabric/src/observer.rs"
+PHC = "crates/axon-fabric/src/protected_host.rs"
+EXEMPT += [
+    (OSV, "        if self.schema != CONFIG_SCHEMA {",
+     "operator-authored field of the operator-owned /etc/axon/observer.json (read through "
+     "read_operator_file, the helper config's walk, M585-M589): a version tag"),
+    (OSV, "            if !plain_absolute(p) {",
+     "operator-authored fields of the operator-owned /etc/axon/observer.json (M585-M589); on the "
+     "protected route the socket must EQUAL the path systemd bound (activated_listener, M703)"),
+    (OSV, "        if self.test_paths.is_some() {",
+     "operator-authored field of the operator-owned config; a protected observer never reads it "
+     "(Sources::operator() is the fixed operator paths, chosen by the binary's protected arm)"),
+    (OSV, "        if r.schema != REPLY_SCHEMA {",
+     "authored by the pinned axon-observer: every byte of the reply is attributed by the kernel "
+     "to a process executing the operator's pin (M1542, M1483/M1489), which writes REPLY_SCHEMA "
+     "only; the relayed observation is then verified at Fabric and at the root spend"),
+    (OSV, "        if !r.ok {",
+     "RE-REPORTED: the pinned observer's own refusal (each of its decisions is its own row), "
+     "carried to the relay's report; nothing is relayed"),
+    (OSV, "    if !f.metadata().map(|m| m.is_file()).unwrap_or(false) {",
+     "fails closed: a measurement that cannot be taken (the operator's file is not a regular "
+     "file) signs nothing; no input chooses success (the paths come from operator files)"),
+    (OSV, "            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {",
+     "NAMED ROW M1540: the decision is create_new on the record (a second observation of one "
+     "nonce meets AlreadyExists); removing create_new is M1540, killed by the replay attack"),
+    (OSV, '            Err(e) => return Err(format!("observation record: {e}")),',
+     "OS error creating the record in the observer's own 0700 store: nothing is signed (fails "
+     "closed)"),
+    (OSV, "            Err(e) => self.reply(Err(e)),",
+     "NOTHING TO ADMIT: SO_PEERCRED failed, so there is no peer uid for decide() to judge"),
+    (OBS, "    if r.schema != pl::OBSERVE_REPORT_SCHEMA {",
+     "authored by the pinned helper Fabric executed from its verified descriptor (open_verified, "
+     "the host config's privileged_launcher pin): a version tag; whatever it relays is verified "
+     "next by verify_observation (M192, M193, M195, M329) and again at the root spend"),
+    (OBS, '        _ => Err(format!(\n            "the privileged launcher relayed no observation: {}",',
+     "RE-REPORTED: the helper's own refusal (each of its decisions is its own row); no "
+     "observation, so nothing is launched"),
+    (PL, "        if !plain || !is_hex64(&s.sha256) {",
+     "operator-authored fields of the operator-owned helper config (M585-M589); a pin that is not "
+     "a sha256 matches no program, and every reply is compared with it (M1483, M1542)"),
+    (PL, "        Err(why) => (ObserveReport::refused(why), EXIT_REFUSED),",
+     "RE-REPORTED: authenticated() or the relay refused (each decision its own row: M531, M1543, "
+     "M1544, M1545, the observer's M1520-M1549); nothing is relayed"),
+    (PL, "    if raw < 0 {",
+     "OS error from pidfd_open (the parent is gone, or the kernel has no pidfds): the running "
+     "Fabric cannot be measured, so nothing is relayed (fails closed)"),
+    (PL, '    if !still_parent() {\n        return Err(format!(\n            "the helper\'s parent (pid {ppid}) exited: the running',
+     "a race that fails closed (the parent exited before the pidfd named it, and this process was "
+     "reparented); not deterministically reachable, and a reparented helper's new parent (init or "
+     "a subreaper) is refused by the uid rule (M1544) unless it is the Fabric uid's own"),
+    (PL, '    if !still_parent() {\n        return Err(format!(\n            "the helper\'s parent (pid {ppid}) exited while',
+     "a race that fails closed (the parent exited between naming it and reading its status and "
+     "executable); not deterministically reachable; the pidfd pins the process, so a recycled pid "
+     "cannot answer"),
+    (PHC, '                    Some(_) => {\n                        return Err(bad(\n                            "observer.command:',
+     "NAMED ROW M1547: the arm above decides (a TEST-TRUST build alone takes the in-uid program); "
+     "this is its other branch, and making that arm match in a production build is M1547, killed "
+     "by the production Fabric attack"),
+    (BIN, "                serde_json::to_string(&pl::ObserveReport::refused(why)).unwrap_or_default(),",
+     "NOT A SITE: the body of the binary's `refuse` constructor in observe mode; each use of "
+     "refuse( is its own site"),
+]
+
+
 ERR = re.compile(r"\bErr\(")
 CTOR = re.compile(r"\b(refused|fail|shape|unknown|panic)\(")
 CTOR_DEF = re.compile(r"\bfn\s+(refused|fail|shape|unknown|panic)\b|\blet\s+(refused|fail|shape|unknown|panic)\s*=")

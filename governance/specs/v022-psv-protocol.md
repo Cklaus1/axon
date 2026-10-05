@@ -2959,6 +2959,144 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       M1490-M1499 remain).
     - **Matrix.** None (an existing A of amendment 65, harden(); the harness's EQUIVALENCE (6)).
     - **Operator deployment.** None.
+68. **The observer is a SERVICE with its own uid and key, reached only through the root helper's
+    relay; it signs only what it measured, once per nonce (operator decisions G and G1 = A,
+    2026-10-04; C9 round 4b, observer workstream; matrix A94).** (Amendment 67 is reserved by the
+    pdfast branch.) No counting rule is relaxed.
+    - **Before.** `observer::observe` executed the operator-pinned observer PROGRAM (`--manifest
+      FILE --out DIR`) through `sealed_exec`, AS THE FABRIC UID, and verified the
+      `observation.json` + `.sig` it wrote. Whatever that program measured, its signing key had to
+      be readable by the uid that ran it, i.e. by Fabric: Fabric could sign any observation itself.
+      ADR-002's "Fabric holds no observer key" held only for the key ROOT (the public halves), not
+      for the private key (runbook step 0, "recorded follow-up"; §5's follow-up "the observer runs
+      as Fabric's UID"). The repository shipped no measuring observer: the stand-in copied the
+      manifest's facts.
+    - **Decision G1 = A, and the departure from G's wording.** Decision G asked for an observer
+      service with "an SO_PEERCRED caller check (only the Fabric uid)" and a client-side program
+      pin mirroring M1489. The pin cannot be checked by Fabric: Fabric is non-root (decision A) and
+      the kernel denies `/proc/<pid>/exe` across uids without `CAP_SYS_PTRACE` (measured on this
+      host: uid 4302 opening uid 4301's `/proc/<pid>/exe` → EACCES), so a fail-closed check would
+      refuse every launch; `CAP_SYS_PTRACE` for Fabric was rejected (it would let Fabric read the
+      observer's memory, i.e. its key). G1 = A: the setuid-root helper relays. The observer's
+      caller rule is therefore **uid 0 (the helper), not the Fabric uid**. That is the realisation
+      of G's "own boundary", not a weakening: the helper admits only the Fabric uid (M531, the same
+      gate as a launch), and between Fabric and the observer it adds what Fabric could not do —
+      the per-reply program check (M1489's function) and a measurement of the RUNNING Fabric.
+      Fabric cannot connect to the observer at all (socket `0600 root:root`).
+    - **The service (`axon-observer`, a bin of `axon-fabric`; `observer_service.rs`).** Custodian
+      shape (amendment 50): its own system uid, socket-activated (`custodian::activated_listener`:
+      an activation at another path or none is refused), config only at `/etc/axon/observer.json`
+      (`axon-observer/1`: `observer_uid`, `fabric_uid`, `caller_uid`, `socket`, `store`,
+      `key_path`), read by `privileged_launcher::read_operator_file` from `/`. A protected config
+      must name three principals (`observer_uid` ≠ `fabric_uid`, neither 0; M1520) and
+      `caller_uid` 0 (M1521); `test_paths` is a test-config key. It runs only as `observer_uid`
+      (M1526). Modes as for the custodian, stated in every reply: `protected`; `test`
+      (`--test-config`, test-trust builds only, M1548); `dev` (`--dev --test-config`, test-trust
+      only), which the helper never relays.
+      - **The key** (`load_key`, ONE `O_NOFOLLOW` open): a regular file owned by the observer's
+        euid (M1523), mode 0400 (`& 0o277 == 0`, M1522). So no other non-root uid can read it,
+        the Fabric's included. A POSIX ACL granting another uid read needs a mask granting it, and
+        the mask IS the group bits of `st_mode` (POSIX.1e), so an ACL grant is refused by the same
+        check (tested on ext4 with an `system.posix_acl_access` naming the Fabric uid); no separate
+        xattr rule is added (it would be an equivalent mutant). Its public half must be in the
+        operator observer root and in no other root (`key_in_root`, `exclusive_root_keys`; M1524).
+      - **The store**: its own 0700 directory (`custodian::check_store`, M1525), whose parent
+        chain is the operator's. One record per nonce, created `create_new` BEFORE signing
+        (M1540); the nonce must be 32 lowercase hex, or it would name a path (M1530).
+      - **The request** (`axon-observer-request/1`: `manifest`, `caller_sha256`; fixed schema,
+        M1528) is answered only for `caller_uid` by `SO_PEERCRED` (M1527). The manifest must pass
+        `LaunchManifest::verify` against its own digest (canonical, `/2`, protected profile,
+        completion scheme; M1529); the service computes `intended_launch_manifest_sha256` itself.
+    - **What the service MEASURES vs what it is TOLD.** It refuses to sign unless every measured
+      value EQUALS the manifest's claim (M1549; one row per measured field, M1531-M1539, each
+      replacing that measurement by the claim). Measured from operator files (the host config
+      `/etc/axon/protected-host.json` and the helper config `/etc/axon/protected-launcher.json`,
+      both read through the operator walk, kit-installed root 0644), never from the request:
+
+      | observation / manifest field | source | class |
+      |---|---|---|
+      | `host_config_sha256` | sha256 of `/etc/axon/protected-host.json` | MEASURED (M1531) |
+      | `launcher_sha256` | the host config's `launcher.path` | MEASURED (M1532) |
+      | `firecracker_sha256` | the helper config's `firecracker` | MEASURED (M1533) |
+      | `guest.kernel_sha256`, `guest.rootfs_sha256` | `vmlinux`, `rootfs.sqfs` in the host config's `artifacts_dir` (streamed) | MEASURED (M1534, M1535) |
+      | `suite_registry_sha256` | the host config's `suite_registry.path` | MEASURED (M1536) |
+      | `qualification_sha256` (manifest only) | the host config's `qualification.record` | MEASURED (M1537) |
+      | `profile_manifest_sha256` (manifest only) | the host config's `profile_manifest.path` | MEASURED (M1538) |
+      | `verifier_sha256` | the RUNNING Fabric's executable, hashed by the root helper from its parent's pidfd | MEASURED by root (M1539, M1544) |
+      | `observed_at` | the service's clock | MEASURED |
+      | `intended_launch_manifest_sha256` | sha256 of the bytes received | DERIVED over told bytes |
+      | `host_profile` | the manifest's, required protected (M1529) | CONSTANT |
+      | `observer_key_id` | the service's own key | OWN |
+      | `guest.init_sha256`, `guest.axon_sha256` | the manifest's (both live INSIDE the measured `rootfs.sqfs`) | TOLD, covered by the measured rootfs bytes |
+      | `fabric_revision` | the manifest's (`env!` in the Fabric binary) | TOLD, determined by the measured running binary |
+      | `policy_sha256` | the manifest's (built in Fabric's private 0700 job dir) | TOLD |
+      | `nonce`, `epoch` | the manifest's | TOLD; nonce bound once here and spent once at the root (custodian); epoch joined at the spend and by the loop |
+
+    - **Strength against today.** Against the Fabric uid: today ZERO (Fabric could hold the key);
+      after, STRONGER for every MEASURED row (a principal Fabric cannot impersonate read those
+      installed bytes and found the manifest's digests), and for `verifier_sha256` stronger than
+      the design draft (the RUNNING Fabric, not the installed file). EQUAL to today for every TOLD
+      row (Fabric's word), except that an observation is made at most once per nonce. An
+      observation is a measurement at one instant; the window to the launch is bounded by
+      `max_age_s` and by the helper's own pins of launcher, firecracker and profile manifest.
+    - **The helper's `--observe` (setuid-root; `privileged_launcher::serve_observe`).** The same
+      entry: `harden()` first, the same `setuid_honoured`/euid rules, the same bounded stdin read.
+      `--observe` leads and leaves the rest of the command line to the launch's own parse (so the
+      `--test-config` rule, M601, is the same code). Then: `authenticated()` — the ONE caller gate
+      now shared by a launch and a relay (load the operator config; the caller's REAL uid must be
+      `fabric_uid`, M531; become root in every id); `axon-protected-observe-request/1` (`schema`,
+      `manifest`; unknown fields denied; fixed schema, M1545); `running_caller`: `pidfd_open` of
+      the parent, which must still be the parent (`getppid`) and alive (the pidfd's own pid) both
+      before and after `/proc/<ppid>/status` and `/proc/<ppid>/exe` are read, with every uid
+      (real, effective, saved, fs) the Fabric uid (M1544), then the open executable hashed; the
+      observer named by the helper config's `observer.service {socket, uid, sha256}` (a production
+      config: absolute plain socket, a sha256 pin, a uid neither the Fabric's nor 0, M1546);
+      `ObserverRef::observe`: the listener's `SO_PEERCRED` uid must be the observer uid or root
+      (M1541), `SO_PASSPIDFD` is set and every reply message's sender is checked by
+      `custodian::check_sender_program` against the pin (`read_from_pinned`, now shared by the
+      custodian and observer clients; M1542, and M1483/M1489 for its comparison and verification
+      as a whole); finally the observer's mode must be protected (a test observer's only in a
+      test-trust helper; `custodian_mode_launches`, M1543). Report
+      `axon-protected-observe-report/1`; exit 0 with an observation, 30 without. Nothing is
+      launched; the launch path is unchanged and still verifies the observation itself and spends
+      the nonce (amendment 50).
+    - **Fabric's client.** `ObserverConfig` gains `relay`. `ProtectedHost::load`: an `observer`
+      section WITHOUT `command` is the relay route (through the host's pinned privileged helper);
+      WITH `command`, a production build refuses the host config (M1547) and only a test-trust
+      build runs the in-uid stand-in. `observer::observe` on the relay route executes the helper
+      `--observe` from its verified descriptor, and verifies the relayed bytes with the unchanged
+      `verify_observation` and epoch rule. `pinned_paths` lists `observer.command` only when
+      present. DEV (ADR-001 D1): unchanged; a development Fabric has no host config and so no
+      observer.
+    - **Failure modes (all fail closed).** No socket, a refused connect, a timeout, an over-bound
+      or malformed reply, `ok:false`, a dev observer, a sender that is not the pinned program, a
+      listener of another uid, a parent that is not the Fabric uid or has exited (`pidfd_open`
+      failing, or the pidfd/getppid re-check), an unreadable or unequal measurement, an existing
+      nonce record, a failing signature/join/freshness check at Fabric: no observation, so nothing
+      reaches the launch. Service side: a config, key, store, uid or activation check failing →
+      exit 2, nothing served.
+    - **Rows** (PSV; M1520-M1549, all ACTIVE, each killed by its own attack; M1550-M1559 unused).
+      Tests: `crates/axon-fabric/tests/observer_service.rs` (17, three root-only), two production-
+      build tests in `privileged_launcher.rs`, and unit tests in `observer_service.rs` and
+      `privileged_launcher.rs`. M531 (the shared caller gate) also has an observe-route attack
+      (`an_observe_relay_for_a_caller_that_is_not_the_fabric_relays_nothing`); it stays one row.
+      `read_from_pinned` gained the service name and a bound (the custodian passes "custodian" and
+      `MAX_MESSAGE`: its messages are unchanged); the refusal-site gate's exemption anchor for the
+      bound moved with it. New exemptions (operator-authored fields, OS errors, races that fail
+      closed, re-reported refusals, named rows) are listed in `v022_refusal_coverage.py`.
+    - **Matrix.** A94.
+    - **Operator deployment (PROTECTED_ONLY; kit delta in
+      `governance/notes/v022-observer-service-kit-delta.md`).** A system user `axon-observer`; the
+      key generated by the operator AS that user (`/var/lib/axon-observer/key/observer.pk8`, 0400,
+      directory 0700) and its public half at `/etc/axon/trust/observer/observer.pub`;
+      `/etc/axon/observer.json` (root 0644; example `profiles/protected-host/observer.json.example`);
+      the production `axon-observer` (root-owned, pinned); `axon-observer.socket` +
+      `axon-observer.service` (examples in `profiles/protected-host/systemd/`); the helper
+      config's `observer.service {socket, uid, sha256}`; the host config's `observer` section
+      WITHOUT `command` (the observer program the runbook installed is no longer used); the
+      preflight probes that the Fabric uid (and every agent) cannot read the key or connect to the
+      observer socket.
+
 70. **A signed qualification states only measured host facts; a store key has one canonical form
     (C9 round 4b, smallfix; operator-kit review).** No counting rule is relaxed.
     - **Before.** (1) `b263_qualify.sh` recorded `x3_l0_hypervisor_boundary` BLOCKED with a

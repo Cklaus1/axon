@@ -288,7 +288,7 @@ impl CustodianRef {
             .map_err(|e| format!("custodian: {e}"))?;
         let _ = s.shutdown(std::net::Shutdown::Write);
         let text = match &self.sha256 {
-            Some(pin) => read_from_pinned(&s, pin, &self.socket)?,
+            Some(pin) => read_from_pinned(&s, pin, &self.socket, "custodian", MAX_MESSAGE)?,
             None => {
                 let mut text = Vec::new();
                 (&s).take(MAX_MESSAGE)
@@ -346,7 +346,7 @@ const SCM_PIDFD: libc::c_int = 4;
 /// Ask the kernel to attach, to every message received on `fd`, a pidfd of
 /// the process that sent it (`SO_PASSPIDFD`, Linux 6.5). A kernel without it
 /// cannot authenticate a pinned custodian, and the call is refused.
-fn pass_pidfd(fd: RawFd) -> Result<(), String> {
+pub(crate) fn pass_pidfd(fd: RawFd) -> Result<(), String> {
     let one: libc::c_int = 1;
     // SAFETY: setsockopt with a c_int of the size passed.
     let r = unsafe {
@@ -360,17 +360,26 @@ fn pass_pidfd(fd: RawFd) -> Result<(), String> {
     };
     if r != 0 {
         return Err(format!(
-            "SO_PASSPIDFD: {} (a pinned custodian is authenticated by the kernel naming the \
-             sender of its reply; this kernel cannot)",
+            "SO_PASSPIDFD: {} (a pinned custodian or observer is authenticated by the kernel \
+             naming the sender of its reply; this kernel cannot)",
             std::io::Error::last_os_error()
         ));
     }
     Ok(())
 }
 
-/// Read a reply (bounded) whose every message the kernel attributes, by a
-/// pidfd, to one process executing the program pinned by `pin`.
-fn read_from_pinned(s: &UnixStream, pin: &str, socket: &Path) -> Result<Vec<u8>, String> {
+/// Read a reply (at most `max` bytes) whose every message the kernel
+/// attributes, by a pidfd, to one process executing the program pinned by
+/// `pin`. `what` names the service (`custodian`, `observer`) in refusals. ONE
+/// implementation for every pinned service the helper calls (amendments 65,
+/// 68).
+pub(crate) fn read_from_pinned(
+    s: &UnixStream,
+    pin: &str,
+    socket: &Path,
+    what: &str,
+    max: u64,
+) -> Result<Vec<u8>, String> {
     use std::os::fd::{FromRawFd, OwnedFd};
     let fd = s.as_raw_fd();
     let mut text = Vec::new();
@@ -396,7 +405,7 @@ fn read_from_pinned(s: &UnixStream, pin: &str, socket: &Path) -> Result<Vec<u8>,
             if e.kind() == std::io::ErrorKind::Interrupted {
                 continue;
             }
-            return Err(format!("custodian: {e}"));
+            return Err(format!("{what}: {e}"));
         }
         // Every received descriptor is owned (closed on drop), whatever happens.
         let mut pidfd: Option<OwnedFd> = None;
@@ -427,7 +436,9 @@ fn read_from_pinned(s: &UnixStream, pin: &str, socket: &Path) -> Result<Vec<u8>,
             break;
         }
         if msg.msg_flags & libc::MSG_CTRUNC != 0 || other {
-            return Err("the custodian's reply carried unexpected control data".into());
+            return Err(format!(
+                "the {what}'s reply carried unexpected control data"
+            ));
         }
         let pidfd = pidfd.ok_or_else(|| {
             format!(
@@ -437,14 +448,14 @@ fn read_from_pinned(s: &UnixStream, pin: &str, socket: &Path) -> Result<Vec<u8>,
         })?;
         let pid = check_sender_program(&pidfd, pin, sender).map_err(|why| {
             format!(
-                "the custodian socket {} is not served by the pinned custodian program: {why}",
+                "the {what} socket {} is not served by the pinned {what} program: {why}",
                 socket.display()
             )
         })?;
         sender = Some(pid);
         text.extend_from_slice(&buf[..n as usize]);
-        if text.len() as u64 > MAX_MESSAGE {
-            return Err("custodian reply is over its bound".into());
+        if text.len() as u64 > max {
+            return Err(format!("{what} reply is over its bound"));
         }
     }
     Ok(text)
@@ -452,7 +463,7 @@ fn read_from_pinned(s: &UnixStream, pin: &str, socket: &Path) -> Result<Vec<u8>,
 
 /// The pid a pidfd refers to, from the kernel's own record of it (`Pid:` in
 /// its fdinfo); `None` once that process has exited.
-fn pidfd_pid(pidfd: &std::os::fd::OwnedFd) -> Option<i64> {
+pub(crate) fn pidfd_pid(pidfd: &std::os::fd::OwnedFd) -> Option<i64> {
     let info = std::fs::read_to_string(format!("/proc/self/fdinfo/{}", pidfd.as_raw_fd())).ok()?;
     let pid: i64 = info
         .lines()

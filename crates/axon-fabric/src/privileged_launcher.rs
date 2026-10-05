@@ -55,6 +55,9 @@ pub const CONFIG_SCHEMA: &str = "axon-protected-launcher/2";
 pub const REQUEST_SCHEMA: &str = "axon-protected-launch-request/3";
 pub const REPORT_SCHEMA: &str = "axon-protected-launch-report/1";
 pub const PROBE_SCHEMA: &str = "axon-protected-launcher-probe/1";
+/// Amendment 68: `--observe`, the relay to the observer service.
+pub const OBSERVE_REQUEST_SCHEMA: &str = "axon-protected-observe-request/1";
+pub const OBSERVE_REPORT_SCHEMA: &str = "axon-protected-observe-report/1";
 
 /// Exit when the helper launched (the report says how it went).
 pub const EXIT_LAUNCHED: i32 = 0;
@@ -116,6 +119,11 @@ pub struct HelperObserver {
     /// the observer root must not hold it (ADR-002; the host config's
     /// `signer.public_key`, held equal by `helper_agrees`).
     pub host_signer_public_key: String,
+    /// Amendment 68 (decision G1 = A): the observer SERVICE the helper's
+    /// `--observe` relay asks, with its program pin. Absent: the helper
+    /// relays no observation (and so no protected launch can be observed).
+    #[serde(default)]
+    pub service: Option<crate::observer_service::ObserverRef>,
 }
 
 /// `axon-protected-launch-request/3`: per-launch data only.
@@ -429,6 +437,28 @@ pub fn load_config(path: &Path, a: &Authority) -> Result<HelperConfig, String> {
                  an unpinned custodian is any program its socket's listener runs"
                     .into(),
             ))
+        }
+    }
+    // Amendment 68 (A94): the observer service is its own uid, and the
+    // PROGRAM the operator pinned (checked against every reply's sender).
+    if let Some(s) = &c.observer.service {
+        let plain = s.socket.is_absolute()
+            && s.socket
+                .components()
+                .all(|c| matches!(c, Component::RootDir | Component::Normal(_)));
+        if !plain || !is_hex64(&s.sha256) {
+            return Err(bad(
+                "observer.service names an absolute plain socket and pins the axon-observer \
+                 program (a lowercase sha256)"
+                    .into(),
+            ));
+        }
+        if !a.test && (s.uid == c.fabric_uid || s.uid == 0) {
+            return Err(bad(format!(
+                "observer.service.uid {} is the Fabric uid or root: the observer is its own uid, \
+                 or the Fabric could read its key and mint observations (amendment 68)",
+                s.uid
+            )));
         }
     }
     Ok(c)
@@ -881,26 +911,194 @@ pub fn serve_as(
     caller_uid: u32,
     request: &[u8],
 ) -> (LaunchReport, i32) {
-    let c = match load_config(config, a) {
+    let c = match authenticated(config, a, caller_uid) {
         Ok(c) => c,
         Err(why) => return (LaunchReport::refused(why), EXIT_REFUSED),
     };
-    if caller_uid != c.fabric_uid {
-        return (
-            LaunchReport::refused(format!(
-                "caller uid {caller_uid} is not the configured Fabric uid {}",
-                c.fabric_uid
-            )),
-            EXIT_REFUSED,
-        );
-    }
-    if let Err(why) = become_root() {
-        return (LaunchReport::refused(why), EXIT_REFUSED);
-    }
     match prepare(&c, a, request) {
         Err(why) => (LaunchReport::refused(why), EXIT_REFUSED),
         Ok(p) => run(&c, p),
     }
+}
+
+/// The operator's config, once the caller is authenticated: its REAL uid (the
+/// kernel's, never anything it says) is the configured Fabric uid. Only then
+/// does the helper become root in every id. ONE gate for every operation the
+/// helper performs (a launch, an observe relay).
+fn authenticated(config: &Path, a: &Authority, caller_uid: u32) -> Result<HelperConfig, String> {
+    let c = load_config(config, a)?;
+    if caller_uid != c.fabric_uid {
+        return Err(format!(
+            "caller uid {caller_uid} is not the configured Fabric uid {}",
+            c.fabric_uid
+        ));
+    }
+    become_root()?;
+    Ok(c)
+}
+
+/// `axon-protected-observe-request/1` (amendment 68): the launch manifest
+/// Fabric built, and nothing else. Which observer, and its program pin, are
+/// the operator's (`observer.service`); what the running Fabric is, the
+/// helper measures ([`running_caller`]).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ObserveRequest {
+    pub schema: String,
+    /// The launch manifest's canonical text.
+    pub manifest: String,
+}
+
+/// `axon-protected-observe-report/1`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ObserveReport {
+    pub schema: String,
+    /// `production` or `test-trust`.
+    pub build: String,
+    pub ok: bool,
+    pub error: Option<String>,
+    /// The observation's exact bytes and its observer signature.
+    pub observation: Option<String>,
+    pub observation_signature: Option<String>,
+}
+
+impl ObserveReport {
+    pub fn refused(why: String) -> ObserveReport {
+        ObserveReport {
+            schema: OBSERVE_REPORT_SCHEMA.into(),
+            build: build_name().into(),
+            ok: false,
+            error: Some(why),
+            observation: None,
+            observation_signature: None,
+        }
+    }
+}
+
+/// `--observe`: relay ONE observation request from `caller_uid` to the
+/// operator's observer service (amendment 68, decision G1 = A). The caller is
+/// authenticated exactly as for a launch ([`authenticated`]); the running
+/// Fabric is measured from this process's parent ([`running_caller`]); the
+/// observer is authenticated by the kernel's sender of every reply message
+/// against the operator's program pin ([`crate::custodian::check_sender_program`]);
+/// and only a protected observer's observation (a test observer's, in a
+/// test-trust helper) is relayed. Nothing is launched.
+pub fn serve_observe(
+    config: &Path,
+    a: &Authority,
+    caller_uid: u32,
+    request: &[u8],
+) -> (ObserveReport, i32) {
+    match authenticated(config, a, caller_uid).and_then(|c| observe_relay(&c, a, request)) {
+        Ok((observation, signature)) => (
+            ObserveReport {
+                schema: OBSERVE_REPORT_SCHEMA.into(),
+                build: build_name().into(),
+                ok: true,
+                error: None,
+                observation: Some(observation),
+                observation_signature: Some(signature),
+            },
+            EXIT_LAUNCHED,
+        ),
+        Err(why) => (ObserveReport::refused(why), EXIT_REFUSED),
+    }
+}
+
+fn observe_relay(
+    c: &HelperConfig,
+    a: &Authority,
+    request: &[u8],
+) -> Result<(String, String), String> {
+    let r: ObserveRequest =
+        serde_json::from_slice(request).map_err(|e| format!("malformed observe request: {e}"))?;
+    if r.schema != OBSERVE_REQUEST_SCHEMA {
+        return Err(format!(
+            "observe request schema is not {OBSERVE_REQUEST_SCHEMA}"
+        ));
+    }
+    let service = c
+        .observer
+        .service
+        .as_ref()
+        .ok_or("this helper's config names no observer.service: no observation is relayed")?;
+    let caller_sha256 = running_caller(c.fabric_uid)?;
+    let got = service
+        .observe(&r.manifest, &caller_sha256)
+        .map_err(|e| format!("no observation: {e}"))?;
+    if !custodian_mode_launches(got.mode, a.test) {
+        return Err(format!(
+            "the observation was made by a {} observer: never relayed for a protected launch",
+            got.mode.as_str()
+        ));
+    }
+    Ok((got.observation, got.signature))
+}
+
+/// The RUNNING Fabric (amendment 68): this helper's parent, identified by a
+/// pidfd, never by a bare pid. Its every uid must be the Fabric uid, and the
+/// sha256 of the executable it is running (opened through
+/// `/proc/<pid>/exe`, which only root may open across uids) is returned for
+/// the observer to join to the manifest's `verifier_sha256`. Fails closed if
+/// the parent cannot be identified, has exited (this process was
+/// reparented), or is not the Fabric uid.
+pub fn running_caller(fabric_uid: u32) -> Result<String, String> {
+    use sha2::{Digest, Sha256};
+    // SAFETY: getppid cannot fail.
+    let ppid = unsafe { libc::getppid() };
+    // SAFETY: pidfd_open with a pid and no flags; the result is checked.
+    let raw = unsafe { libc::syscall(libc::SYS_pidfd_open, ppid, 0) } as RawFd;
+    if raw < 0 {
+        return Err(format!(
+            "the helper's parent (pid {ppid}) cannot be identified: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    // SAFETY: a new descriptor this process owns from here on.
+    let pidfd = unsafe { OwnedFd::from_raw_fd(raw) };
+    let still_parent = || {
+        // SAFETY: getppid cannot fail.
+        crate::custodian::pidfd_pid(&pidfd) == Some(i64::from(ppid))
+            && unsafe { libc::getppid() } == ppid
+    };
+    // A parent that exited before the pidfd was opened left this process
+    // reparented: the pid no longer names the process that ran the helper.
+    if !still_parent() {
+        return Err(format!(
+            "the helper's parent (pid {ppid}) exited: the running Fabric cannot be measured"
+        ));
+    }
+    let status = std::fs::read_to_string(format!("/proc/{ppid}/status"))
+        .map_err(|e| format!("the helper's parent (pid {ppid}): {e}"))?;
+    let uids: Vec<u32> = status
+        .lines()
+        .find_map(|l| l.strip_prefix("Uid:"))
+        .map(|v| {
+            v.split_whitespace()
+                .filter_map(|u| u.parse().ok())
+                .collect()
+        })
+        .unwrap_or_default();
+    let mut exe = std::fs::File::open(format!("/proc/{ppid}/exe"))
+        .map_err(|e| format!("the helper's parent's executable (pid {ppid}): {e}"))?;
+    // Asked again AFTER the reads: alive and still the parent then means it
+    // was the same process at the reads (the pidfd pins it, not the number).
+    if !still_parent() {
+        return Err(format!(
+            "the helper's parent (pid {ppid}) exited while it was measured"
+        ));
+    }
+    if uids.len() != 4 || uids.iter().any(|u| *u != fabric_uid) {
+        return Err(format!(
+            "the helper's parent (pid {ppid}) runs as uids {uids:?}, not the Fabric uid \
+             {fabric_uid}: the running Fabric is what the observation measures"
+        ));
+    }
+    let mut h = Sha256::new();
+    std::io::copy(&mut exe, &mut h)
+        .map_err(|e| format!("the helper's parent's executable: {e}"))?;
+    Ok(format!("{:x}", h.finalize()))
 }
 
 /// Everything verified and staged; nothing launched yet.
@@ -1330,6 +1528,7 @@ mod tests {
                 root: "/etc/axon/trust/observer".into(),
                 max_age_s: 300,
                 host_signer_public_key: "c".repeat(64),
+                service: None,
             },
             custodian: crate::custodian::CustodianRef {
                 socket: "/run/axon-custodian/custodian.sock".into(),
@@ -1490,6 +1689,49 @@ mod tests {
                 got.is_err(),
                 "ATTACK: a helper config spending through a custodian of uid {uid} (the Fabric's \
                  or root) was accepted"
+            );
+        }
+    }
+
+    /// A94 (amendment 68): the observer service the helper relays from is
+    /// its own uid. A production helper config naming the Fabric uid (whose
+    /// observer key the Fabric could then read) or root as the observer is
+    /// refused. Control: a third uid.
+    #[test]
+    fn a_helper_config_whose_observer_service_is_the_fabric_is_refused() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("protected-launcher.json");
+        let mut v = serde_json::json!({
+            "schema": CONFIG_SCHEMA, "fabric_uid": 991,
+            "interpreter": {"path": "/bin/bash", "sha256": "a".repeat(64)},
+            "launcher": {"path": "/opt/l.sh", "sha256": "a".repeat(64)},
+            "profile_manifest": {"path": "/opt/m.json", "sha256": "a".repeat(64)},
+            "artifacts_dir": "/opt/dist", "firecracker": "/opt/firecracker",
+            "jailer": "/opt/jailer", "out_root": "/var/runs", "staging_root": "/var/st",
+            "max_timeout_s": 60, "max_input_bytes": 1,
+            "observer": {"root": "/etc/axon/trust/observer", "max_age_s": 300,
+                         "host_signer_public_key": "c".repeat(64),
+                         "service": {"socket": "/run/axon-observer/observer.sock", "uid": 994,
+                                     "sha256": "e".repeat(64)}},
+            "custodian": {"socket": "/run/axon-custodian/custodian.sock", "uid": 993,
+                          "sha256": "d".repeat(64)},
+        });
+        let a = Authority {
+            // SAFETY: geteuid cannot fail.
+            operator_uid: unsafe { libc::geteuid() },
+            walk_base: d.path().to_path_buf(),
+            test: false,
+        };
+        std::fs::write(&p, v.to_string()).unwrap();
+        load_config(&p, &a).expect("control: an observer of its own uid");
+        for uid in [991, 0] {
+            v["observer"]["service"]["uid"] = serde_json::json!(uid);
+            std::fs::write(&p, v.to_string()).unwrap();
+            let got = load_config(&p, &a);
+            assert!(
+                got.is_err(),
+                "ATTACK: a production helper config relaying from an observer service of uid \
+                 {uid} (the Fabric's or root) was accepted"
             );
         }
     }

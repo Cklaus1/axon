@@ -383,10 +383,42 @@ impl ProtectedHost {
             crate::backend::exclusive_root_keys(*a, dir, &roots, None, Some(&signer.public_key))
                 .map_err(bad)?;
         }
+        // The privileged route, built once: the launch AND (amendment 68) the
+        // observe relay go through the same pinned helper.
+        let privileged = crate::backend::PrivilegedRoute {
+            helper: crate::sealed_exec::Pinned {
+                path: helper,
+                sha256: helper_sha256,
+            },
+            owner: exec_owner,
+            test_config: helper_test_config,
+        };
         let observer = match v.get("observer") {
             None | Some(Value::Null) => None,
             Some(ob) => {
-                let (command, command_sha256) = pinned("observer/command")?;
+                // Amendment 68 (A94): the observation comes from the
+                // operator's observer SERVICE through the helper's relay. An
+                // in-uid observer PROGRAM runs as the Fabric uid and signs
+                // with a key that uid can read; a production host config
+                // naming one is refused, never run.
+                let (command, command_sha256, relay) = match ob.get("command") {
+                    None | Some(Value::Null) => {
+                        (PathBuf::new(), String::new(), Some(privileged.clone()))
+                    }
+                    // TEST-TRUST builds only: the in-uid stand-in.
+                    Some(_) if crate::backend::TEST_TRUST_BUILD => {
+                        let (c, pin) = pinned("observer/command")?;
+                        (c, pin, None)
+                    }
+                    Some(_) => {
+                        return Err(bad(
+                            "observer.command: an observer program runs as the Fabric uid, so \
+                             the Fabric could read its key and mint observations; a protected \
+                             host observes through the observer service (amendment 68)"
+                                .into(),
+                        ))
+                    }
+                };
                 // Amendment 50 (A83): the nonce store is the CUSTODIAN's, kept
                 // as its own uid; Fabric holds only a client connection. A
                 // host config giving Fabric a store (A56's old shape) is
@@ -442,6 +474,7 @@ impl ProtectedHost {
                             .ok_or_else(|| bad("observer.max_age_s is not a number".into()))?,
                     },
                     clock: crate::backend::Clock::System,
+                    relay,
                 })
             }
         };
@@ -487,14 +520,7 @@ impl ProtectedHost {
                 out_root,
                 exec_owner: Some(exec_owner),
                 interpreter: None,
-                privileged: Some(crate::backend::PrivilegedRoute {
-                    helper: crate::sealed_exec::Pinned {
-                        path: helper,
-                        sha256: helper_sha256,
-                    },
-                    owner: exec_owner,
-                    test_config: helper_test_config,
-                }),
+                privileged: Some(privileged),
             },
             suite_registry,
             suite_registry_sha256,
@@ -599,7 +625,9 @@ pub fn pinned_paths(config: &Path) -> Result<Vec<(PinnedKind, PathBuf)>, String>
     out.push((SigningKey, path_at("/signer/key_path")?));
     out.push((ServiceDir, path_at("/out_root")?));
     if present("/observer") {
-        out.push((OperatorFile, path_at("/observer/command/path")?));
+        if present("/observer/command") {
+            out.push((OperatorFile, path_at("/observer/command/path")?));
+        }
         if present("/observer/interpreter") {
             out.push((OperatorFile, path_at("/observer/interpreter/path")?));
         }
