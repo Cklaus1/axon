@@ -1740,7 +1740,7 @@ ATTACK_MARKERS.update({
     'M1806': r'ATTACK: a cost total beyond 2\^53-1 was summarized',
     'M1807': r'ATTACK: a candidate with an unsafe attempt was ACCEPTED',
     'M1808': r'ATTACK: a completed episode whose execution receipt records a failure: the trial counted',
-    'M1809': r'ATTACK: a completed episode whose execution receipt records a cancellation: the trial counted',
+    'M1809': r'ATTACK: a canceled execution receipt projected to a completed episode status',
     'M1810': r'ATTACK: a completed episode whose execution receipt records a denial: the trial counted',
     'M1811': r'ATTACK: a completed episode whose execution receipt records an unsupported request: the trial counted',
     'M1812': r'ATTACK: a completed episode whose execution receipt records an? (unknown outcome|timeout): the trial counted',

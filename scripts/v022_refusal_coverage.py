@@ -33,6 +33,7 @@ the check that way and refuses to bind a freeze otherwise.
 
 The FILE SET is a rule (amendment 61), not a list: see SCOPE_DIRS below.
 """
+import collections
 import importlib.util
 import os
 import re
@@ -324,16 +325,10 @@ OUT_OF_SCOPE = {
 # (file -> sites with neither a row nor an exemption, as last measured). The
 # gate re-measures each count and refuses a stale one, in both directions.
 NOT_YET_SCANNED = {
-    "crates/axon-cortex/src/runner.rs": 22,
-    "crates/axon-cortex/src/select.rs": 6,
-    "crates/axon-fabric/src/backend.rs": 17,
-    "crates/axon-fabric/src/bin/axon-fabric.rs": 1,
+    "crates/axon-fabric/src/backend.rs": 13,
     "crates/axon-fabric/src/custodian.rs": 1,
     "crates/axon-fabric/src/git_data.rs": 2,
-    "crates/axon-fabric/src/observer.rs": 1,
-    "crates/axon-fabric/src/observer_service.rs": 1,
     "crates/axon-fabric/src/protected_host.rs": 1,
-    "crates/axon-fabric/src/psv.rs": 1,
     "crates/axon-fabric/src/submit.rs": 20,
     "crates/axon-psv/src/runner.rs": 5,
 }
@@ -2797,6 +2792,102 @@ EXEMPT += [
      _ALD),
 ]
 
+_VRD = ("PREDICATE OF NAMED ROWS (checkable): CheckReport::verdict's one protected consumer is "
+        "axon-fabric psv.rs `derive` (`match report.verdict(test)`; grep `\\.verdict(` crates/*/src), "
+        "which takes a Passed only after the completion token under the launch's key (M183) and "
+        "exactly one keyed result line (M312, M1720-M1722), a Failed only with keyed failure "
+        "evidence and a non-zero exit (M239, M1721), and refuses NotRun (M775). Whatever "
+        "`verdict` answers, a count needs those, so it can only relabel one fail-closed refusal "
+        "as another: a failing or absent test read as Passed has no completion token, and a "
+        "passing one read as Failed or NotRun is not a pass (cortex tests/ and psv_dispatch "
+        "a_failing_test_is_failed_whatever_the_guest_claims, M185)")
+EXEMPT += [
+    ('crates/axon-cortex/src/runner.rs',
+     '                        return ExecOutcome::Failed(format!("cannot read {}: {e}", target.path))',
+     _CTX),
+    ('crates/axon-cortex/src/runner.rs',
+     '                    Err(e) => ExecOutcome::Failed(format!("check could not run: {e}")),',
+     _CTX),
+    ('crates/axon-cortex/src/runner.rs',
+     '                        return ExecOutcome::Failed(format!("cannot read {}: {e}", symbol.path))',
+     _CTX),
+    ('crates/axon-cortex/src/runner.rs',
+     '                    return ExecOutcome::Failed(format!("cannot write {}: {e}", symbol.path));',
+     _CTX),
+    ('crates/axon-cortex/src/runner.rs',
+     '                    return EpisodeOutcome::Blocked {\n                        steps: step,\n                        reason: format!("cannot snapshot {}: {e}", target.path),',
+     _CTX),
+    ('crates/axon-cortex/src/runner.rs',
+     '                    return EpisodeOutcome::Blocked {\n                        steps: step,\n                        reason,',
+     _CTX),
+    ('crates/axon-cortex/src/runner.rs',
+     '                        return EpisodeOutcome::Refused {',
+     _CTX),
+    ('crates/axon-cortex/src/runner.rs',
+     '                    return EpisodeOutcome::Refused {\n                        steps: step,\n                        reason: format!(',
+     _CTX),
+    ('crates/axon-cortex/src/runner.rs',
+     '                    return EpisodeOutcome::Refused {\n                        steps: step,\n                        reason: why.to_string(),',
+     _CTX),
+    ('crates/axon-cortex/src/runner.rs',
+     '                    (true, false) => VisibleCheck::Failed,',
+     _CTX),
+    ('crates/axon-cortex/src/runner.rs',
+     '                            return EpisodeOutcome::Blocked {\n                                steps: step,\n                                reason: format!(\n                                    "a rejected patch could not be undone in {}",',
+     _CTX),
+    ('crates/axon-cortex/src/runner.rs',
+     '                    return EpisodeOutcome::Blocked {\n                        steps: step,\n                        reason: format!("the action could not be carried out: {why}"),',
+     _CTX),
+    ('crates/axon-cortex/src/runner.rs',
+     '                        return EpisodeOutcome::Blocked {\n                            steps: step,\n                            reason: format!(\n                                "a patch broke the build and {} could not be restored: {e}",',
+     _CTX),
+    ('crates/axon-cortex/src/runner.rs',
+     '                            return EpisodeOutcome::Blocked {\n                                steps: step,\n                                reason: format!("the file could not be re-checked: {e}"),',
+     _CTX),
+    ('crates/axon-cortex/src/runner.rs',
+     '                        return EpisodeOutcome::Blocked {\n                            steps: step,\n                            reason: format!(\n                                "a rejected patch could not be undone in {}",',
+     _CTX),
+    ('crates/axon-cortex/src/runner.rs',
+     '        EpisodeOutcome::BudgetExhausted { steps: budget }',
+     _CTX),
+    ('crates/axon-cortex/src/runner.rs',
+     '            .ok_or_else(|| {',
+     _CTX),
+    ('crates/axon-cortex/src/runner.rs',
+     "    pub fn execute(&mut self, auth: Authorized<'_>) -> ExecOutcome {",
+     _CTX),
+    ('crates/axon-cortex/src/runner.rs',
+     '    pub fn run_episode(',
+     _CTX),
+    ('crates/axon-cortex/src/runner.rs',
+     '            CheckVerdict::Failed',
+     _VRD),
+    ('crates/axon-cortex/src/runner.rs',
+     '    pub fn verdict(&self, name: &str) -> CheckVerdict {',
+     _VRD),
+    ('crates/axon-cortex/src/runner.rs',
+     '                Err(r) => Pin::Failed(r),',
+     _LOC),
+    ('crates/axon-cortex/src/select.rs',
+     '            return Selection::Blocked(format!(',
+     _CTX),
+    ('crates/axon-cortex/src/select.rs',
+     '            return Selection::Blocked(\n                "cannot choose an action: the observation carries no `compiles` fact".to_string(),',
+     _CTX),
+    ('crates/axon-cortex/src/select.rs',
+     '        Some(Observed::Unknown { reason }) => Selection::Blocked(format!(',
+     _CTX),
+    ('crates/axon-cortex/src/select.rs',
+     '        None => Selection::Blocked(',
+     _CTX),
+    ('crates/axon-cortex/src/select.rs',
+     'pub fn select_action(obs: &Observation, target: &SymbolRef) -> Selection {',
+     _CTX),
+    ('crates/axon-cortex/src/select.rs',
+     'pub fn select_action_with(',
+     _CTX),
+]
+
 
 def load_rows():
     spec = importlib.util.spec_from_file_location("mut", os.path.join(ROOT, "scripts/v022_g01_mutations.py"))
@@ -3482,8 +3573,14 @@ def refusal_helpers():
         offs = [0]
         for l in cl:
             offs.append(offs[-1] + len(l) + 1)
-        for a, b, n, rt in _fn_spans(cl):
-            if any(x <= offs[a] < y for x, y in traits):
+        spans = _fn_spans(cl)
+        defined = collections.Counter(n for _, _, n, _ in spans)
+        for a, b, n, rt in spans:
+            # A name defined twice in one file is a platform/feature variant
+            # (`#[cfg(not(unix))] fn check_operator_owned` beside the real
+            # one): which one a call reaches is not the text's to say, so
+            # neither is a helper.
+            if any(x <= offs[a] < y for x, y in traits) or defined[n] > 1:
                 continue
             body = "\n".join(cl[a:b + 1])
             if b - a > HELPER_BODY:
@@ -3531,6 +3628,18 @@ def verdict_sites(lines, regions=None, f=None):
     fns = _fn_spans(cl)
     decides = [(a, b, n) for a, b, n, rt in fns if _decides_return(rt, enums, structs)]
     helper_def = [(a, b) for a, b, n, rt in fns if n in vh or n in eh]
+    # A LOCAL closure that builds a refusal (`let refused = |why| LinuxRun {
+    # outcome: LinuxOutcome::Refused, .. };`) is a helper constructor too: its
+    # body is the definition, its calls are the sites.
+    closure_names = set()
+    for m in re.finditer(r"\blet\s+(\w+)\s*=\s*(?:move\s+)?\|[^|\n]*\|\s*(?:-> \w+\s*)?(?=\w+\s*\{|\{)", clean):
+        k = clean.index("{", m.end())
+        end = _match_close(clean, k)
+        body = clean[k:end]
+        if any(x.group(2) in enums.get(x.group(1), ()) for x in re.finditer(r"\b(\w+)::(\w+)\b", body)):
+            a, b = clean.count("\n", 0, m.start()), clean.count("\n", 0, end)
+            helper_def.append((a, b))
+            closure_names.add(m.group(1))
     in_helper = lambda i: any(a <= i <= b for a, b in helper_def)
     in_region = lambda i: regions is None or any(x <= i <= y for x, y in regions)
     out = []
@@ -3541,8 +3650,8 @@ def verdict_sites(lines, regions=None, f=None):
     # file's `bad` is another function) and, anywhere, through its module path
     # (`backend::check_operator_owned(`).
     calls = []
-    if vh | eh:
-        calls.append(re.compile(r"(?<![\w.:])(" + "|".join(sorted(map(re.escape, vh | eh))) + r")\("))
+    if vh | eh | closure_names:
+        calls.append(re.compile(r"(?<![\w.:])(" + "|".join(sorted(map(re.escape, vh | eh | closure_names))) + r")\("))
     for g, (v2, e2) in refusal_helpers().items():
         if g != f and v2 | e2:
             stem = os.path.splitext(os.path.basename(g))[0]

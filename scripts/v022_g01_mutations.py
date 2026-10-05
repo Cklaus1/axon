@@ -6518,7 +6518,7 @@ MUTATIONS += [
      'axon-loop', _CS, 'a_pass_whose_execution_failed_never_counts'),
     ('M1809', "CHECKS (admit): a Canceled execution receipt projects to a Cancelled episode status", _CK,
      '        ReceiptStatus::Canceled => EpisodeStatus::Cancelled,', '        ReceiptStatus::Canceled => EpisodeStatus::Completed,',
-     'axon-loop', _CS, 'a_pass_whose_execution_was_canceled_never_counts'),
+     'axon-loop-contracts', '--test admit_verdict_sites', 'a_canceled_execution_receipt_never_projects_to_a_completed_episode'),
     ('M1810', "CHECKS (admit): a Denied execution receipt projects to a Refused episode status", _CK,
      '        ReceiptStatus::Denied => EpisodeStatus::Refused,', '        ReceiptStatus::Denied => EpisodeStatus::Completed,',
      'axon-loop', _CS, 'a_pass_whose_execution_was_denied_never_counts'),
@@ -6530,6 +6530,19 @@ MUTATIONS += [
      '        ReceiptStatus::OutcomeUnknown | ReceiptStatus::TimedOut => EpisodeStatus::Completed,',
      'axon-loop', _CS, 'a_pass_whose_execution_outcome_is_unknown_never_counts'),
 ]
+LIB_RECORD["M1809"] = {
+    "property": "a canceled execution receipt projects to a Cancelled episode status, never a Completed one",
+    "routes": {
+        "evl::evaluate (judge, bind_acf's only production caller)": "M131 (evl.rs `run_end`): a receipt "
+            "that ended Canceled makes a Passed or Failed verdict Unknown (\"the run ended Cancelled\"), "
+            "whatever the episode says, before any count; measured: with the arm mapped to Completed, "
+            "tests/checks_sites.rs a_pass_whose_execution_was_canceled_never_counts still reads the trial "
+            "Unknown (reason: the run ended Cancelled)",
+        "tel::join (project_receipt_status for the usage's episode status)": "decides no verdict: the status "
+            "only counts `non_completed_records` in a cost summary"},
+    "library_test": "axon-loop-contracts --test admit_verdict_sites "
+                    "a_canceled_execution_receipt_never_projects_to_a_completed_episode"}
+LIBRARY_PRIMITIVE |= {"M1809"}
 
 
 def in_scope(mid, scope):

@@ -534,7 +534,10 @@ fn a_pass_whose_execution_outcome_is_unknown_never_counts() {
         Out::Pass,
         Refs::Bind,
         "a completed episode whose execution receipt records an unknown outcome",
-        |d| d.rc.status = ReceiptStatus::OutcomeUnknown,
+        |d| {
+            d.rc.status = ReceiptStatus::OutcomeUnknown;
+            d.rc.process_exit_code = None;
+        },
     );
     never_counts(
         "ba-timeout",
