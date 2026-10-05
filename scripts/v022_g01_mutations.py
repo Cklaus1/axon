@@ -6475,6 +6475,61 @@ EQUIV_RECORD["M1797"] = {
     "subsumed_by": ["M1052"], "killer": "joint:M1052+M1797", "all_paths": _ISO_ALL}
 EQUIVALENT_DID |= {"M1052", "M1796", "M1797"}
 RETIRED |= {"M1052", "M1796", "M1797"}
+_LA = 'crates/axon-loop/src/admission.rs'
+MUTATIONS += [
+    ('M1798', "ADMISSION (admit): a candidate with an unsafe attempt is vetoed, never accepted", _LA,
+     '        return (Decision::Vetoed, vetoes);', '        return (Decision::Accept, vetoes);',
+     'axon-loop', _AV, 'a_candidate_with_an_unsafe_attempt_is_never_accepted'),
+    ('M1799', "ADMISSION (admit): a candidate established inferior is rejected, never accepted", _LA,
+     '        (Decision::Reject, reject)', '        (Decision::Accept, reject)',
+     'axon-loop', _AV, 'a_candidate_inferior_on_quality_is_never_accepted'),
+    ('M1800', "ADMISSION (admit): a candidate that cannot be established is inconclusive, never accepted", _LA,
+     '        (Decision::Inconclusive, inconclusive)', '        (Decision::Accept, inconclusive)',
+     'axon-loop', _AV, 'a_candidate_whose_noninferiority_cannot_be_established_is_never_accepted'),
+    ('M1801', "ADMISSION (admit): a REJECT is recorded as a REJECT verdict", _LA,
+     '            Decision::Reject => Verdict::Reject,', '            Decision::Reject => Verdict::Accept,',
+     'axon-loop', _AV, 'each_admission_disposition_is_recorded_as_its_own_verdict'),
+    ('M1802', "ADMISSION (admit): an INCONCLUSIVE is recorded as an INCONCLUSIVE verdict", _LA,
+     '            Decision::Inconclusive => Verdict::Inconclusive,', '            Decision::Inconclusive => Verdict::Accept,',
+     'axon-loop', _AV, 'each_admission_disposition_is_recorded_as_its_own_verdict'),
+    ('M1803', "ADMISSION (admit): a VETO is recorded as a VETOED verdict", _LA,
+     '            Decision::Vetoed => Verdict::Vetoed,', '            Decision::Vetoed => Verdict::Accept,',
+     'axon-loop', _AV, 'each_admission_disposition_is_recorded_as_its_own_verdict'),
+]
+_CK = 'crates/axon-loop-contracts/src/checks.rs'
+_CS = '--test checks_sites'
+MUTATIONS += [
+    ('M1804', "INTAKE (admit): a failed check receipt is read as a failed verification, never a pass", 'crates/axon-loop/src/intake.rs',
+     '        (ReceiptStatus::Completed, ReceiptVerification::Failed) => VerificationResult::Failed,',
+     '        (ReceiptStatus::Completed, ReceiptVerification::Failed) => VerificationResult::Passed,',
+     'axon-loop', '--test intake', 'verification_that_does_not_join_is_refused_with_the_store_unchanged'),
+    ('M1805', "INTAKE (admit): a check receipt that reached no verdict is read as an unknown verification, never a pass", 'crates/axon-loop/src/intake.rs',
+     '        ) => VerificationResult::Unknown,', '        ) => VerificationResult::Passed,',
+     'axon-loop', '--test intake', 'verification_that_does_not_join_is_refused_with_the_store_unchanged'),
+    ('M1806', "TEL (admit): a cost total beyond 2^53-1 is refused, never summarized", _TL,
+     '        .filter(|s| *s <= MAX_INTEGER)', '        .filter(|_s| true)',
+     'axon-loop', _PTS, 'a_cost_total_beyond_2_53_is_never_summarized'),
+    ('M1807', "SAFETY (admit): a reported violation marks the trial a Violation", 'crates/axon-loop/src/safety.rs',
+     '            (_, Finding::Violation, Some(code)) => SafetyState::Violation { code },',
+     '            (_, Finding::Violation, Some(_code)) => SafetyState::Clear,',
+     'axon-loop', _AV, 'a_candidate_with_an_unsafe_attempt_is_never_accepted'),
+    ('M1808', "CHECKS (admit): a Failed execution receipt projects to a Failed episode status", _CK,
+     '        ReceiptStatus::Failed => EpisodeStatus::Failed,', '        ReceiptStatus::Failed => EpisodeStatus::Completed,',
+     'axon-loop', _CS, 'a_pass_whose_execution_failed_never_counts'),
+    ('M1809', "CHECKS (admit): a Canceled execution receipt projects to a Cancelled episode status", _CK,
+     '        ReceiptStatus::Canceled => EpisodeStatus::Cancelled,', '        ReceiptStatus::Canceled => EpisodeStatus::Completed,',
+     'axon-loop', _CS, 'a_pass_whose_execution_was_canceled_never_counts'),
+    ('M1810', "CHECKS (admit): a Denied execution receipt projects to a Refused episode status", _CK,
+     '        ReceiptStatus::Denied => EpisodeStatus::Refused,', '        ReceiptStatus::Denied => EpisodeStatus::Completed,',
+     'axon-loop', _CS, 'a_pass_whose_execution_was_denied_never_counts'),
+    ('M1811', "CHECKS (admit): an Unsupported execution receipt projects to an Unsupported episode status", _CK,
+     '        ReceiptStatus::Unsupported => EpisodeStatus::Unsupported,', '        ReceiptStatus::Unsupported => EpisodeStatus::Completed,',
+     'axon-loop', _CS, 'a_pass_whose_execution_was_unsupported_never_counts'),
+    ('M1812', "CHECKS (admit): an unknown or timed-out execution receipt projects to an OutcomeUnknown episode status", _CK,
+     '        ReceiptStatus::OutcomeUnknown | ReceiptStatus::TimedOut => EpisodeStatus::OutcomeUnknown,',
+     '        ReceiptStatus::OutcomeUnknown | ReceiptStatus::TimedOut => EpisodeStatus::Completed,',
+     'axon-loop', _CS, 'a_pass_whose_execution_outcome_is_unknown_never_counts'),
+]
 
 
 def in_scope(mid, scope):

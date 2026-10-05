@@ -1726,3 +1726,22 @@ ATTACK_MARKERS.update({
     'M1796': r'ATTACK: a request requiring hardware isolation \(os=none\), and it ran',
     'M1797': r'ATTACK: a request requiring hardware isolation \(os=none\), and it ran',
 })
+ATTACK_MARKERS.update({
+    'M1798': r'ATTACK: a candidate with an unsafe attempt was ACCEPTED',
+    'M1799': r'ATTACK: a candidate established inferior on quality was ACCEPTED',
+    'M1800': r'ATTACK: a candidate whose noninferiority could not be established was ACCEPTED',
+    'M1801': r'ATTACK: a REJECTED admission was recorded as an ACCEPT verdict',
+    'M1802': r'ATTACK: an INCONCLUSIVE admission was recorded as an ACCEPT verdict',
+    'M1803': r'ATTACK: a VETOED admission was recorded as an ACCEPT verdict',
+})
+ATTACK_MARKERS.update({
+    'M1804': 'sidecar upgrades a failed check to passed: IntakeOutcome',
+    'M1805': 'sidecar claims a pass the check never reached: IntakeOutcome',
+    'M1806': r'ATTACK: a cost total beyond 2\^53-1 was summarized',
+    'M1807': r'ATTACK: a candidate with an unsafe attempt was ACCEPTED',
+    'M1808': r'ATTACK: a completed episode whose execution receipt records a failure: the trial counted',
+    'M1809': r'ATTACK: a completed episode whose execution receipt records a cancellation: the trial counted',
+    'M1810': r'ATTACK: a completed episode whose execution receipt records a denial: the trial counted',
+    'M1811': r'ATTACK: a completed episode whose execution receipt records an unsupported request: the trial counted',
+    'M1812': r'ATTACK: a completed episode whose execution receipt records an? (unknown outcome|timeout): the trial counted',
+})

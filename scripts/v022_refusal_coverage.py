@@ -335,13 +335,6 @@ NOT_YET_SCANNED = {
     "crates/axon-fabric/src/protected_host.rs": 1,
     "crates/axon-fabric/src/psv.rs": 1,
     "crates/axon-fabric/src/submit.rs": 20,
-    "crates/axon-loop-contracts/src/attestation.rs": 2,
-    "crates/axon-loop-contracts/src/checks.rs": 6,
-    "crates/axon-loop-contracts/src/operator_trust.rs": 2,
-    "crates/axon-loop/src/admission.rs": 8,
-    "crates/axon-loop/src/intake.rs": 2,
-    "crates/axon-loop/src/safety.rs": 1,
-    "crates/axon-loop/src/tel.rs": 1,
     "crates/axon-psv/src/runner.rs": 5,
 }
 SITE = re.compile(r"return Err\(|\bErr\(format!|\brefuse\(|\bErr\(bad\(|TEST_TRUST_BUILD")
@@ -2774,6 +2767,34 @@ EXEMPT += [
     ('crates/axon-os/src/manifest.rs',
      '    let max_label = max_label.ok_or_else(|| bad("missing `grant.max_label`"))?;',
      _GRB),
+]
+
+_RING = ("DOMINATED BY THE VERIFIER (checkable): the 32-byte key / 64-byte signature filter only "
+         "pre-screens what ring's Ed25519 `UnparsedPublicKey::verify` refuses anyway: a key or "
+         "signature of any other length is an Err there (tests/ring_length_facts.rs "
+         "ring_refuses_a_key_or_signature_of_any_other_length), and every caller reaches that "
+         "verify, or the registered-key equality (`presented != registered`) and, in "
+         "operator_trust, the trusted-issuer membership, before it can return Ok. Removing the "
+         "filter changes the refusal's REASON, never the verdict")
+_ALD = ("NO PRODUCTION CALLER (checkable): `grep -rn 'admission::load' crates/*/src` finds no caller; "
+        "`load` is `store.get_record(\"admissions\", r)`, a lookup that decides nothing (every "
+        "consumer of a stored admission re-derives it: admission::rederive)")
+EXEMPT += [
+    ('crates/axon-loop-contracts/src/attestation.rs',
+     '        .ok_or_else(|| {\n            shape(format!(\n                "the key registered for verifier {issuer_ref} is not a 64-hex Ed25519 public key"',
+     _RING),
+    ('crates/axon-loop-contracts/src/attestation.rs',
+     '        .ok_or_else(|| {\n            shape(format!(\n                "the key registered for {issuer_ref} is not a 64-hex Ed25519 public key"',
+     _RING),
+    ('crates/axon-loop-contracts/src/operator_trust.rs',
+     '        .ok_or(format!("{what} signature has no 32-byte public_key"))?;',
+     _RING),
+    ('crates/axon-loop-contracts/src/operator_trust.rs',
+     '        .ok_or(format!("{what} signature has no 64-byte signature"))?;',
+     _RING),
+    ('crates/axon-loop/src/admission.rs',
+     'pub fn load(store: &Store, r: &Ref) -> Result<AdmissionRecord> {',
+     _ALD),
 ]
 
 
