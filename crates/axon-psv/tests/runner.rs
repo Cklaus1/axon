@@ -585,7 +585,15 @@ fn a_lone_unkeyed_failure_line_is_not_a_verdict() {
         );
         fx.cfg.axon = script;
         let v = run(&fx.cfg);
-        assert_eq!(v.status, want, "keyed={keyed}: {v:?}");
+        if keyed {
+            assert_eq!(v.status, want, "control: keyed={keyed}: {v:?}");
+        } else {
+            assert_eq!(
+                v.status, want,
+                "ATTACK: a lone failure line without K's failure token was recorded as a \
+                 failure (keyed={keyed}): {v:?}"
+            );
+        }
     }
 }
 

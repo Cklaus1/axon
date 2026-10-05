@@ -336,6 +336,40 @@ fn a_second_writer_is_locked_out() {
     }
 }
 
+/// The flock belongs to the open file description, which a fork shares with its
+/// child until that child execs. Here a forked child holds the lock's
+/// description for 1.5 s (a loaded host's fork-to-exec window, longer than the
+/// old 500 ms retry) after the parent dropped its journal: reopening must wait
+/// the holder out, not report `Locked` for a holder that is about to let go.
+/// Control: `a_second_writer_is_locked_out` (a holder that persists).
+#[test]
+fn a_lock_held_only_by_a_forks_inherited_description_is_waited_out() {
+    let dir = tempfile::tempdir().unwrap();
+    let j = fresh(dir.path());
+    let path = j.path().to_path_buf();
+    // SAFETY: the child calls only async-signal-safe functions (usleep, _exit).
+    let pid = unsafe { libc::fork() };
+    if pid == 0 {
+        unsafe {
+            libc::usleep(1_500_000);
+            libc::_exit(0);
+        }
+    }
+    assert!(pid > 0, "setup: fork failed");
+    drop(j);
+    let r = Journal::open(&path);
+    unsafe {
+        libc::waitpid(pid, std::ptr::null_mut(), 0);
+    }
+    if let Err(JournalError::Locked(_)) = r {
+        panic!(
+            "ATTACK: a reopen was refused Locked by a holder that lasted only a loaded host's \
+             fork-to-exec window"
+        );
+    }
+    assert!(r.is_ok(), "setup: the reopen failed for another reason");
+}
+
 // ── identity / conflict ─────────────────────────────────────────────────────
 
 #[test]

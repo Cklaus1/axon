@@ -402,3 +402,244 @@ fn a_call_of_a_local_refusal_constructor_is_a_site() {
     holds(&c, &[], "the unedited copy");
     let _ = std::fs::remove_dir_all(&c);
 }
+
+// ── C9 round 4c, GATE (amendment 74): a predicate primitive is a site, a row
+// covers only what its edit CHANGES, and the guard block of a site stays inside
+// its own function.
+
+/// Append `code` to `f` before its test module (code the gate reads).
+fn add_code(r: &Path, f: &str, code: &str) {
+    let p = r.join(f);
+    let s = std::fs::read_to_string(&p).unwrap();
+    let at = s.find("\n#[cfg(test)]\nmod tests").unwrap_or(s.len());
+    std::fs::write(&p, format!("{}\n{code}{}", &s[..at], &s[at..])).unwrap();
+}
+
+/// Give the copy of the gate one more exemption.
+fn exempt(r: &Path, f: &str, anchor: &str, reason: &str) {
+    edit(
+        r,
+        GATE,
+        "\n\ndef load_rows():",
+        &format!("\nEXEMPT.append(({f:?}, {anchor:?}, {reason:?}))\n\n\ndef load_rows():"),
+    );
+}
+
+/// The gate holds on `r`; ATTACK (the gate's own failure) if it does not.
+fn must_hold(r: &Path, args: &[&str], attack: &str) {
+    let o = gate(r, args);
+    if !o.status.success() {
+        panic!("ATTACK: {attack}: the gate refused: {}", text(&o));
+    }
+}
+
+/// Amendment 74: a function whose declared return type is `bool` or
+/// `Option<..>` DECIDES, and is one site (round 4c found `keyed_outcome`, which
+/// refuses by `return None` / `.then_some`, invisible to the gate). Control:
+/// the unedited copy holds.
+#[test]
+fn a_function_that_decides_by_bool_or_option_is_a_site() {
+    let r = tree("pred");
+    add_code(
+        &r,
+        SCANNED,
+        "pub fn gate_probe_decides(x: u64) -> bool {\n    x % 7 == 0\n}\n\npub fn gate_probe_option(x: u64) -> Option<u64> {\n    if x > 9 {\n        return None;\n    }\n    Some(x)\n}\n",
+    );
+    names(
+        &r,
+        "fn gate_probe_decides(x: u64) -> bool",
+        "a function deciding by bool, with no row and no exemption, was not a site",
+    );
+    names(
+        &r,
+        "fn gate_probe_option(x: u64) -> Option<u64>",
+        "a function deciding by Option (a `return None` refusal), with no row and no exemption, was not a site",
+    );
+    let c = tree("pred-control");
+    holds(&c, &[], "the unedited copy");
+    let _ = std::fs::remove_dir_all(&c);
+    let _ = std::fs::remove_dir_all(&r);
+}
+
+/// Amendment 74: a row covers a site only when a line its edit CHANGES lies in
+/// the site's guard block. Round 4c: M123's `old` ended in a newline, so it
+/// also "covered" the next line (evl.rs `else if !issuer_ok`), which its edit
+/// never touches. Attack 1: with the row that really edits that site removed,
+/// the gate must name it although M123's old text overlaps it. Attack 2: a row
+/// whose new text equals its old (an edit that changes nothing) covers
+/// nothing.
+#[test]
+fn a_row_covers_only_what_its_edit_changes() {
+    let r = tree("changed");
+    let o = gate(&r, &["--without=M1726"]);
+    let t = text(&o);
+    if o.status.success()
+        || !t.lines().any(|l| {
+            l.contains("refusal site with no row and no exemption")
+                && l.contains("crates/axon-loop/src/evl.rs")
+                && l.contains("!issuer_ok")
+        })
+    {
+        panic!(
+            "ATTACK: a row whose old text merely overlaps a site (M123's trailing newline) covered \
+             evl.rs's `!issuer_ok` refusal: {t}"
+        );
+    }
+    edit(
+        &r,
+        "scripts/v022_g01_mutations.py",
+        "'            } else if false && !issuer_ok {',",
+        "'            } else if !issuer_ok {',",
+    );
+    let o = gate(&r, &[]);
+    let t = text(&o);
+    if !t.lines().any(|l| {
+        l.contains("refusal site with no row and no exemption") && l.contains("!issuer_ok")
+    }) {
+        panic!("ATTACK: a row whose edit changes nothing covered a refusal site: {t}");
+    }
+    let c = tree("changed-control");
+    holds(&c, &[], "the unedited copy");
+    let _ = std::fs::remove_dir_all(&c);
+    let _ = std::fs::remove_dir_all(&r);
+}
+
+/// Amendment 74: an exemption of a predicate primitive is anchored on its HEAD
+/// line. One anchored in its body is a line site's, and must not exempt the
+/// function. Control: the head-line anchor does.
+#[test]
+fn an_exemption_in_a_predicate_fns_body_does_not_exempt_the_fn() {
+    let code = "pub fn gate_probe_body(x: u64) -> Option<u64> {\n    (x > 7).then_some(x)\n}\n";
+    let r = tree("exbody");
+    add_code(&r, SCANNED, code);
+    exempt(
+        &r,
+        SCANNED,
+        "    (x > 7).then_some(x)",
+        "probe: the line site in the body",
+    );
+    names(
+        &r,
+        "fn gate_probe_body(x: u64) -> Option<u64>",
+        "an exemption anchored in a predicate function's body exempted the function itself",
+    );
+    let c = tree("exhead");
+    add_code(&c, SCANNED, code);
+    exempt(
+        &c,
+        SCANNED,
+        "pub fn gate_probe_body(x: u64) -> Option<u64> {",
+        "probe: the function",
+    );
+    exempt(
+        &c,
+        SCANNED,
+        "    (x > 7).then_some(x)",
+        "probe: the line site in the body",
+    );
+    holds(
+        &c,
+        &[],
+        "a head-line exemption of the function plus the body's own",
+    );
+    let _ = std::fs::remove_dir_all(&c);
+    let _ = std::fs::remove_dir_all(&r);
+}
+
+/// Amendment 74: a `let .. else {` is the opener of its refusal, so a site in
+/// its block is exempted by an anchor on the `let` line. Control: the same
+/// probe with its anchor holds.
+#[test]
+fn a_let_else_is_the_opener_of_its_refusal() {
+    let r = tree("letelse");
+    add_code(
+        &r,
+        SCANNED,
+        "pub fn gate_probe_le(x: Option<u64>) -> Result<u64, String> {\n    let Some(v) = x else {\n        return Err(format!(\"probe\"));\n    };\n    Ok(v)\n}\n",
+    );
+    exempt(
+        &r,
+        SCANNED,
+        "    let Some(v) = x else {",
+        "probe: the let-else line",
+    );
+    must_hold(
+        &r,
+        &[],
+        "an exemption anchored on a `let .. else {` line did not reach the refusal in its block",
+    );
+    let _ = std::fs::remove_dir_all(&r);
+}
+
+/// Amendment 74: a site's guard block never reaches into the function above
+/// (the nearest opener used to be found across a function boundary, so an
+/// exemption in the PREVIOUS function exempted this one's refusal).
+#[test]
+fn a_guard_block_does_not_cross_a_function_boundary() {
+    let r = tree("fnstop");
+    add_code(
+        &r,
+        SCANNED,
+        "pub fn gate_probe_above(x: u64) -> Result<(), String> {\n    if x > 5 {\n        return Err(format!(\"above {x}\"));\n    }\n    Ok(())\n}\n\npub fn gate_probe_below(x: u64) -> Result<(), String> {\n    Err(format!(\"below {x}\"))\n}\n",
+    );
+    exempt(
+        &r,
+        SCANNED,
+        "    if x > 5 {",
+        "probe: the function above's own refusal",
+    );
+    names(
+        &r,
+        "Err(format!(\"below {x}\"))",
+        "an exemption in the function above exempted the refusal of the function below it",
+    );
+    let _ = std::fs::remove_dir_all(&r);
+}
+
+/// Amendment 74: only a `#[cfg(test)]` item's own extent is hidden. The rule
+/// used to drop everything after the FIRST `#[cfg(test)] mod tests`: production
+/// code after the test module (axon-os approval.rs's `authorize`) and anything
+/// below an EMPTY stub module were never scanned. Attack (a): an empty test
+/// module above a production refusal. Attack (b): a real test module (with
+/// braces in strings, chars and comments) with production code after it.
+/// Control: the unedited copy holds, and a refusal INSIDE the test module is
+/// still not a site.
+#[test]
+fn production_code_after_a_test_module_is_scanned() {
+    let probe = "pub fn gate_probe_hidden(x: u64) -> Result<(), String> {\n    Err(format!(\"hidden production refusal {x}\"))\n}\n";
+    let r = tree("cfg-empty");
+    add_code(
+        &r,
+        SCANNED,
+        &format!("#[cfg(test)]\nmod tests {{}}\n\n{probe}"),
+    );
+    names(
+        &r,
+        "hidden production refusal",
+        "a production refusal below an empty `#[cfg(test)] mod tests` was not scanned",
+    );
+    let r2 = tree("cfg-after");
+    add_code(
+        &r2,
+        SCANNED,
+        &format!(
+            "#[cfg(test)]\nmod tests {{\n    fn t() -> Result<(), String> {{\n        let _s = \"}}{{\"; let _c = '}}'; /* }} */\n        Err(format!(\"inside the test module\"))\n    }}\n}}\n\n{probe}"
+        ),
+    );
+    names(
+        &r2,
+        "hidden production refusal",
+        "a production refusal after a real test module (braces in strings, chars, comments) was not scanned",
+    );
+    let o = gate(&r2, &[]);
+    assert!(
+        !text(&o).contains("inside the test module"),
+        "control: a refusal inside the test module is not a site: {}",
+        text(&o)
+    );
+    let c = tree("cfg-control");
+    holds(&c, &[], "the unedited copy");
+    let _ = std::fs::remove_dir_all(&c);
+    let _ = std::fs::remove_dir_all(&r2);
+    let _ = std::fs::remove_dir_all(&r);
+}

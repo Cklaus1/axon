@@ -825,15 +825,25 @@ pub struct Journal {
     inner: Mutex<Inner>,
 }
 
+/// How long a contended journal lock is retried before it is `Locked`.
+#[cfg(unix)]
+const LOCK_RETRY_WINDOW: std::time::Duration = std::time::Duration::from_millis(5000);
+
 #[cfg(unix)]
 fn lock_exclusive(f: &File, path: &Path) -> Result<(), JournalError> {
     use std::os::unix::io::AsRawFd;
     // A flock belongs to the open file DESCRIPTION, and a fork shares it with
-    // the child until that child execs (the fd is O_CLOEXEC). So after a
-    // same-process drop, any thread's concurrent fork can keep the lock
+    // the child until that child execs (the fd is already O_CLOEXEC: Rust opens
+    // every file so, but the close happens AT the exec, not at the fork). So
+    // after a same-process drop, any thread's concurrent fork can keep the lock
     // apparently held for the fork→exec window. Measured in this crate's own
-    // tests. Retry briefly so `Locked` means a holder that persists.
-    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(500);
+    // tests, and under load: the window stretched past the old 500 ms retry on
+    // a host running eight paired-disable shards (a full psv_dispatch run at
+    // twice its time returned `Locked` for a per-test tempdir journal; C9
+    // round 4c triage, M813). Retry long enough to outlast a loaded host's
+    // fork→exec latency, so `Locked` means a holder that persists: a real second
+    // writer holds the lock for its whole life, not for seconds.
+    let deadline = std::time::Instant::now() + LOCK_RETRY_WINDOW;
     loop {
         // SAFETY: flock on a valid, owned fd; no memory is shared with the kernel.
         let rc = unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };

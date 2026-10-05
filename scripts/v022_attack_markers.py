@@ -29,20 +29,20 @@ ATTACK_MARKERS = {
     'M02': 'must be refused',
     'M03': 'altered, still verified',
     'M04': r"ATTACK: the candidate's helper\.ax judged its own broken double",
-    'M05': 'unwrap_err\\(\\)` on an `Ok` value',
-    'M06': 'unwrap_err\\(\\)` on an `Ok` value',
-    'M07': 'unwrap_err\\(\\)` on an `Ok` value',
+    'M05': r"ATTACK: a verdict verified by the policy's own proposer was intaken",
+    'M06': r'ATTACK: a verdict from another pinned version of the suite decided the task',
+    'M07': r"ATTACK: a verdict on one task's check decided another task",
     'M08': 'corrupted signature: IntakeOutcome',
     'M09': "another trial's evidence: IntakeOutcome",
     'M10': 'unwrap_err\\(\\)` on an `Ok` value: IntakeOutcome',
-    'M11': 'ArmResult .*left: [1-9]\\d*\\s+right: 0',
+    'M11': r'ATTACK: a development-backend verdict counted in a protected evaluation: ArmResult .*left: [1-9]\d*\s+right: 0',
     'M12': 'unwrap_err\\(\\)` on an `Ok` value: PointerRecord',
-    'M13': 'ArmResult .*left: [1-9]\\d*\\s+right: 0',
+    'M13': r'ATTACK: a development-backend verdict counted in a protected evaluation: ArmResult .*left: [1-9]\d*\s+right: 0',
     'M14': 'a counted verdict cites',
     'M15': 'ArmResult .*left: [1-9]\\d*\\s+right: 0',
     'M16': 'TrialResult .*left: [1-9]\\d*\\s+right: 0',
-    'M17': 'unwrap_err\\(\\)` on an `Ok` value',
-    'M18': 'unwrap_err\\(\\)` on an `Ok` value',
+    'M17': r'ATTACK: a protected scope served a mechanism-test fixture',
+    'M18': r'ATTACK: a rollback in a protected scope took a development-class admission',
     # C9 round 1b (LOOP): EQUIVALENT with M428 (verify_execution's backend
     # join); this is the four-cell attack's own marker.
     'M19': r'ATTACK: an attested execution on a development backend was counted as protected',
@@ -80,14 +80,14 @@ ATTACK_MARKERS = {
     'M45': "execution refs are the check's own documents: IntakeOutcome",
     'M46': 'check ran as the subject: IntakeOutcome',
     'M47': r'ATTACK: another verifier revision: the verdict was ACCEPTED',
-    'M48': 'left: None\\s+right: Some\\(',
+    'M48': r'ATTACK: the record did not name the attestation that authenticated it\s*\n\s*left: None\s*\n\s*right: Some\(',
     'M49': 'left: Passed\\s+right: Unknown',
     'M50': 'unwrap_err\\(\\)` on an `Ok` value: PointerRecord',
     'M51': 'unwrap_err\\(\\)` on an `Ok` value: Some\\(Ref',
     # C9 round 1b (fabric): only-guard: the candidate is published under the colon state dir
     'M52': r"ATTACK: a check ran under a state dir containing ':'",
     'M53': 'a module from the trial cache judged the candidate.*left: Passed',
-    'M54': 'unwrap_err\\(\\)` on an `Ok` value',
+    'M54': r'ATTACK: one verdict decided a trial in a second scope',
     'M55': 'the check workload copied the signing key',
     'M57': 'unwrap_err\\(\\)` on an `Ok` value: Submission',
     'M59': 'these escapes passed the test',
@@ -112,7 +112,7 @@ ATTACK_MARKERS = {
     'M76': 'NaN passed an f64 assertion',
     'M77': 'an exit\\(0\\) property case passed',
     'M78': 'expected exactly one E0002\\s+left: 0',
-    'M79': 'mutate a suite constant: \\[\\]',
+    'M79': r"ATTACK: a sealed module reached the operator's `TABLE` \(mutate a suite constant\): \[\]",
     'M80': 'reads the answer key: .*left: true\\s+right: false',
     'M81': 'reads the answer key: .*left: true\\s+right: false',
     'M82': 'failed: refinement named after a generic parameter: \\[\\]',
@@ -121,20 +121,20 @@ ATTACK_MARKERS = {
     'M83': r"ATTACK: the candidate's inline refinement took the operator's synthetic name `__refine_\d+`",
     'M84': 'unwrap_err\\(\\)` on an `Ok` value: CheckReport',
     'M85': 'the ambient module resolved',
-    'M86': 'direct call: Ok\\(Completed\\)',
-    'M87': 'global read: Ok\\(Completed\\)',
-    'M88': 'refinement attaching to an operator annotation: Ok\\(Completed\\)',
+    'M86': r"ATTACK: sealed code reached the operator \(direct call\): Ok\(Completed\)",
+    'M87': r"ATTACK: sealed code reached the operator \(global read\): Ok\(Completed\)",
+    'M88': r"ATTACK: sealed code reached the operator \(refinement attaching to an operator annotation\): Ok\(Completed\)",
     # WEAK@a3db33bd: out is Err('assertion failed: 0 != 42'): the by-name call did not deliver the operator's answer (another mechanism, likely the per-provenance kernel M96 or a run-time seal, stopped it); the candidate's own assert failed
     # core r1b: EQUIVALENT_DID vs {M86, M96}; the joint cell's attack is an operator fn run through a fiber.
     'M89': r"ATTACK: (a sealed frame ran the operator's `expected` as a fiber and returned its answer|the operator's scheduler ran an operator function a sealed frame queued): Ok\(Completed\)",
-    'M90': 'a candidate closure called by the operator: Ok\\(Completed\\)',
-    'M91': 'a candidate closure called by the operator: Ok\\(Completed\\)',
-    'M92': 'a candidate handler arm: Ok\\(Completed\\)',
-    'M93': 'match guard: \\[\\]',
+    'M90': r"ATTACK: sealed code reached the operator \(a candidate closure called by the operator\): Ok\(Completed\)",
+    'M91': r"ATTACK: sealed code reached the operator \(a candidate closure called by the operator\): Ok\(Completed\)",
+    'M92': r"ATTACK: sealed code reached the operator \(a candidate handler arm\): Ok\(Completed\)",
+    'M93': r"ATTACK: a sealed module reached the operator's `TABLE` \(match guard\): \[\]",
     'M94': 'failed: refinement named after a deferred-prefix type: \\[\\]',
-    'M95': 'module-level initializer: Ok\\(Completed\\)',
-    'M96': "reads the operator's fiber result by id: Ok\\(Completed\\)",
-    'M97': "a candidate struct's where, built by the operator: Ok\\(Completed\\)",
+    'M95': r"ATTACK: sealed code reached the operator \(module-level initializer\): Ok\(Completed\)",
+    'M96': r"ATTACK: a sealed frame reached the operator's kernel state \(reads the operator's fiber result by id\): Ok\(Completed\)",
+    'M97': r"ATTACK: sealed code reached the operator \(a candidate struct's where, built by the operator\): Ok\(Completed\)",
     'M98': 'a pre-freeze verdict counted',
     'M99': 'failed: unsigned: \\[TrialResult',
     'M100': 'an episode with another input workspace was recorded',
@@ -225,11 +225,11 @@ ATTACK_MARKERS = {
     'M175': 'left: Passed\\s*\\n\\s*right: Unknown',
     'M177': 'left: (Failed|Unknown|Refused|NotRun)\\s*\\n\\s*right: Passed',
     'M178': 'left: Passed\\s*\\n\\s*right: Passed',
-    'M179': 'failed: other-manifest\\s*\\n\\s*left: (Passed|Failed)',
+    'M179': r'ATTACK: forged returned evidence \(other-manifest\) reached a verdict\s*\n\s*left: (Passed|Failed)',
     # C9 r1b psv: a Refused verdict over a genuine pass; nothing after the check reads the status
     'M180': 'ATTACK: the guest refused, and the Fabric counted its run as Passed',
-    'M181': 'failed: inputs\\s*\\n\\s*left: (Passed|Failed)',
-    'M182': 'failed: stdout\\s*\\n\\s*left: (Passed|Failed)',
+    'M181': r'ATTACK: forged returned evidence \(inputs\) reached a verdict\s*\n\s*left: (Passed|Failed)',
+    'M182': r'ATTACK: forged returned evidence \(stdout\) reached a verdict\s*\n\s*left: (Passed|Failed)',
     # C9 round 1b (fabric): EQUIVALENT (four-cell with M312)
     'M183': r"ATTACK: a previous attempt's genuine pass was counted",
     'M184': 'left: (Passed|Failed)\\s*\\n\\s*right: Unknown',
@@ -303,10 +303,10 @@ ATTACK_MARKERS = {
     'M236': 'manifest\\ for\\ another\\ trial: ACCEPTED',
     'M237': 'manifest\\ for\\ another\\ suite\\ version: ACCEPTED',
     'M238': 'unwrap_err\\(\\)` on an `Ok` value: IntakeOutcome',
-    'M239': 'failed: forge-fail\\n\\s*left: (?!Unknown)\\w+\\n\\s*right: Unknown',
+    'M239': r'ATTACK: forged returned evidence \(forge-fail\) reached a verdict\n\s*left: (?!Unknown)\w+\n\s*right: Unknown',
     'M240': '\\n\\s*left: Failed\\n\\s*right: Unknown',
-    'M241': 'failed: swap-after\\n\\s*left: (?!Unknown)\\w+\\n\\s*right: Unknown',
-    'M242': 'keyed=false: GuestVerdict.*\\n\\s*left: Failed\\n\\s*right: Unknown',
+    'M241': r'ATTACK: forged returned evidence \(swap-after\) reached a verdict\n\s*left: (?!Unknown)\w+\n\s*right: Unknown',
+    'M242': r'ATTACK: a lone failure line without K.s failure token was recorded as a failure \(keyed=false\).*\n\s*left: Failed\n\s*right: Unknown',
     'M243': '\\"status\\":\\"failed\\"\\}\\n\\s*left: Some\\(\\"[0-9a-f]{64}\\"\\)\\n\\s*right: Some\\(\\"[0-9a-f]{64}\\"\\)',
     'M244': 'unwrap_err\\(\\)` on an `Ok` value: \\(SafetyReport',
     'M246': 'assertion `left == right` failed\\n\\s*left: \\"OPENED\\"\\n\\s*right: \\"DENIED\\"',
@@ -382,7 +382,7 @@ ATTACK_MARKERS = {
     'M305': 'the loop joins what Fabric launched and observed: .*missing field `guest_verdict`',
     'M310': 'failed: Some\\(\\"ok\\"\\)\\n\\s*left: (?!Unsupported)\\w+\\n\\s*right: Unsupported',
     'M311': 'a bundle travels with a verdict that is not protected',
-    'M312': '\\n\\s*left: Passed\\n\\s*right: Unknown',
+    'M312': r'ATTACK: a second result line beside a genuine keyed pass reached a verdict.*\n\s*left: Passed\n\s*right: Unknown',
     'M313': 'the prctl failed and the runner proceeded to read S',
     'M314': 'accepted, but must refuse with',
     'M315': 'accepted, but must refuse with \\"candidate input holds an empty directory \\(g\\.ax\\)',
@@ -608,8 +608,8 @@ ATTACK_MARKERS.update({
     'M227': r'failed: op-obs-verifier-[\w-]+\n\s*left: (Passed|Failed|Unknown)\n\s*right: NotRun',
     # A forgery ACCEPTED is a verdict (Passed/Failed); any other non-Unknown
     # would be another refusal.
-    'M239': r'failed: forge-fail\n\s*left: (Passed|Failed)\n\s*right: Unknown',
-    'M241': r'failed: swap-after\n\s*left: (Passed|Failed)\n\s*right: Unknown',
+    'M239': r'ATTACK: forged returned evidence \(forge-fail\) reached a verdict\n\s*left: (Passed|Failed)\n\s*right: Unknown',
+    'M241': r'ATTACK: forged returned evidence \(swap-after\) reached a verdict\n\s*left: (Passed|Failed)\n\s*right: Unknown',
     # It RAN (a run's status), not Denied/Canceled by another check.
     'M265': r'failed: None\n\s*left: (Completed|Failed|TimedOut|OutcomeUnknown)\n\s*right: Unsupported',
     'M310': r'failed: Some\(\"ok\"\)\n\s*left: (Completed|Failed|TimedOut|OutcomeUnknown)\n\s*right: Unsupported',
@@ -1106,7 +1106,7 @@ ATTACK_MARKERS.update({
     'M1153': r"ATTACK: the operator's listener was called with a confused bool: Ok\(Completed\)",
     'M1154': r"ATTACK: a closure declared `fn\(i64\) -> i64` returned a confused bool: Ok\(Completed\)",
     'M1155': r"ATTACK: a confused bool crossed a declared `-> i64` return: Ok\(Completed\)",
-    'M1156': r"direct call: Ok\(Completed\)",
+    'M1156': r"ATTACK: sealed code reached the operator \(direct call\): Ok\(Completed\)",
     'M1157': r"ATTACK: a bool crossed a declared `u8`: Ok\(Completed\)",
 })
 
@@ -1290,7 +1290,6 @@ ATTACK_MARKERS.update({
     'M1261': 'ATTACK: an outcome_unknown receipt with an exit code: ',
     'M1262': 'ATTACK: a receipt with unknown usage and a cost: ',
     'M1265': 'ATTACK: a pause naming a target policy: ',
-    'M1266': 'ATTACK: a transition from epoch 1 to epoch 3: ',
     'M1267': 'ATTACK: a transition from epoch 1 to epoch 0: ',
     'M1208': 'ATTACK: an episode with final usage and unresolved liability: ',
     'M1209': 'ATTACK: a passed episode whose run failed: ',
@@ -1646,4 +1645,44 @@ ATTACK_MARKERS.update({
     'M1767': r'ATTACK: an approval token for another program admitted the job',
     'M1768': r'ATTACK: an approval token for another grant admitted the job',
     'M1769': r'ATTACK: an approval token whose metadata was edited after its digest admitted the job',
+})
+
+# C9 round 4c, workstream GATE (amendment 74): M1720-M1759.
+ATTACK_MARKERS.update({
+    'M1720': r'ATTACK: a lone failure line without K.s failure token was recorded as a failure \(keyed=false\).*\n\s*left: Failed\n\s*right: Unknown',
+    'M1721': r'ATTACK: forged returned evidence \(forge-fail\) reached a verdict\n\s*left: (?!Unknown)\w+\n\s*right: Unknown',
+    'M1722': r'ATTACK: a second result line beside a genuine keyed pass reached a verdict.*\n\s*left: Passed\n\s*right: Unknown',
+    'M1726': r'ATTACK: a pass verified by a subject issuer was counted',
+    'M1727': r'ATTACK: a custodian reply that two processes wrote was accepted',
+})
+ATTACK_MARKERS.update({
+    'M1730': r"ATTACK: sealed code reached the operator \(direct call\): Ok\(Completed\)",
+    'M1731': r"ATTACK: sealed code reached the operator \(direct call\): Ok\(Completed\)",
+    'M1732': r'ATTACK: a policy reference of an unknown scheme was recorded as a name for the stored policy',
+    'M1733': r'ATTACK: the guest started (although its policy was refused|under a POSSIBLY TRUNCATED cmdline policy)',
+    'M1734': r"ATTACK: a sealed module reached the operator's `TABLE` \(mutate a suite constant\): \[\]",
+    'M1735': r'ATTACK: a development-backend verdict counted in a protected evaluation: ArmResult .*left: [1-9]\d*\s+right: 0',
+})
+ATTACK_MARKERS.update({
+    'M1736': r'ATTACK: a telemetry request of another schema was summarized: the cost summary was produced',
+    'M1737': r'ATTACK: Fabric attempts with no pinned price schedule were summarized \(G10\): the cost summary was produced',
+})
+ATTACK_MARKERS.update({
+    'M1738': r'ATTACK: a function deciding by (bool|Option).*was not a site',
+    'M1739': r'ATTACK: a row whose (old text merely overlaps a site|edit changes nothing)',
+    'M1740': r'ATTACK: an exemption anchored in a predicate function.s body exempted the function itself',
+    'M1741': r'ATTACK: an exemption anchored on a `let \.\. else \{` line did not reach the refusal in its block',
+    'M1742': r'ATTACK: an exemption in the function above exempted the refusal of the function below it',
+    'M1743': r'ATTACK: --join accepted a record whose holds label its recorded cells do not support',
+    'M1744': r'ATTACK: --merge accepted a shard that claimed all_killed over a row that survived',
+})
+ATTACK_MARKERS.update({
+    'M1266': 'ATTACK: a transition whose next_epoch skips an epoch was parsed',
+})
+ATTACK_MARKERS.update({
+    'M1745': r"ATTACK: a reopen was refused Locked by a holder that lasted only a loaded host's fork-to-exec window",
+})
+ATTACK_MARKERS.update({
+    'M1746': r'ATTACK: a job requiring approval ran with no approval token\s*\n\s*left: \w+\s*\n\s*right: Denied',
+    'M1747': r'ATTACK: a production refusal (below an empty|after a real test module)',
 })

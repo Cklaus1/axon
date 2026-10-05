@@ -630,3 +630,39 @@ fn a_revocation_naming_a_reference_that_is_not_a_digest_is_never_recorded() {
     assert_eq!(c, 0, "control: the revocation naming the real digest: {e}");
     assert_eq!(v["revoked"][0]["policy_ref"], json!(pr), "{v}");
 }
+
+/// A content reference names content only under its own scheme
+/// (`RefScheme::from_prefix`, amendment 74). The store reads a policy by its
+/// hex alone, so a reference whose scheme is not cl22/acf1/sha256 but whose
+/// hex is a stored policy's would otherwise be a second NAME for that policy:
+/// a revocation recorded under it, an activation pinned to it, and every
+/// string comparison (is_revoked, the pointer's pin) would disagree about
+/// which policy is meant. Through the binary: such a reference is a usage
+/// error and the store is unchanged. Control: the policy's own cl22 name is
+/// accepted.
+#[test]
+fn a_reference_of_an_unknown_scheme_is_never_recorded() {
+    let (d, _s, _p, pr) = fresh();
+    let reason = r('e').to_string();
+    let revoke = |policy: &str| {
+        let argv = args(
+            &["pointer", "revoke"],
+            &[
+                SC[0], SC[1], SC[2], SC[3], "--policy", policy, "--reason", &reason, "--issuer",
+                ADMITTER,
+            ],
+        );
+        run(d.path(), &argv, None)
+    };
+    let before = snapshot(d.path());
+    let alias = format!("xyz:{}", pr.hex());
+    let (code, _, err) = revoke(&alias);
+    assert!(
+        code == 2 && snapshot(d.path()) == before,
+        "ATTACK: a policy reference of an unknown scheme was recorded as a name for the stored \
+         policy (exit {code}): {err}"
+    );
+    assert!(err.contains("bad --policy"), "{err}");
+    let (code, _, err) = revoke(pr.as_str());
+    assert_eq!(code, 0, "control: the policy's own cl22 name: {err}");
+}

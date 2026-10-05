@@ -320,10 +320,6 @@ OUT_OF_SCOPE = {
         "bridge-profile negotiation (B256): which wire versions MiCode and Axon speak; it authorizes "
         "nothing: every document is still parsed by its own contract and judged by the scanned "
         "decision code",
-    "crates/axon-loop/src/bin/axon-loop.rs":
-        "the CLI front end: argument and request parsing; every verb hands its one document to a "
-        "library function in a scanned file, which decides; its refusals are usage errors before "
-        "any decision",
 }
 # (file -> sites with neither a row nor an exemption, as last measured). The
 # gate re-measures each count and refuses a stale one, in both directions.
@@ -331,9 +327,18 @@ NOT_YET_SCANNED = {
     # Amendment 71 (r4c-fixes part 2): brought in by the crate rule, NOT YET
     # SCANNED (every site measured; neither rowed nor exempted yet). A freeze
     # refuses while any is listed. The libraries the protected crates link:
+    # Integration of amendments 74 and 75: the axon-os ADMISSION chain the predicate-primitive
+    # rule exposes. These decide on the protected route (supervise_requiring ->
+    # run_requiring: `Grant::intersect` -> intersect_prefixes/intersect_hosts use is_ancestor,
+    # host_allows, host_matches; `IsolationRequirement::satisfied_by`; `scan_effects` ->
+    # calls_name), have no row, and need route tests through `submit` before a disposition
+    # (handed back). A freeze refuses while they are listed.
+    "crates/axon-os/src/grant.rs": 3,
+    "crates/axon-os/src/runtime.rs": 2,
 }
 SITE = re.compile(r"return Err\(|\bErr\(format!|\brefuse\(|\bErr\(bad\(|TEST_TRUST_BUILD")
-OPENER = re.compile(r"^\s*(\}\s*else\s+if\b|if\b|match\b|let\s+\w+\s*=\s*if\b)|=>")
+# Amendment 74: a `let .. else {` is the opener of its refusal too.
+OPENER = re.compile(r"^\s*(\}\s*else\s+if\b|if\b|match\b|let\s+\w+\s*=\s*if\b|let\b.*\belse\s*\{\s*$)|=>")
 MAX_UP = 10
 
 # (file, anchor, reason). The anchor is a substring that occurs ONCE in the
@@ -644,8 +649,6 @@ EXEMPT += [
      "NOTHING TO ADMIT: no attestation text to verify"),
     (LI, "        refused(format!(\n            \"verifier {issuer} has no operator pin",
      "NOTHING TO ADMIT: no operator pin for the verifier to compare the check with"),
-    (LI, "        return Err(refused(format!(\n            \"rubric: the check ran {entry:?}, a file",
-     "NOTHING TO ADMIT: the check names no registered suite id to join to the pin"),
     (LI, "        refused(format!(\n            \"acceptance: task {} has no operator-registered",
      "NOTHING TO ADMIT: the task has no registered acceptance check to compare with"),
     (LI, "            Some(x) => x.as_u64().map(|n| Some(Some(n))).ok_or_else(|| {\n                shape(format!(",
@@ -1058,8 +1061,6 @@ EXEMPT += [
     (FC, '            .unwrap_or_else(|e| refuse("unauthorized", &e, 7)),',
      "NOTHING TO ADMIT: the development registry does not load (no protected host), so there are "
      "no grants to resolve"),
-    (FC, 'fn refuse_caller_grant_registry() -> ! {',
-     "NOT A SITE: the body of refuse_caller_grant_registry; its uses are M274 (and M273, retired)"),
     (FC, '            .read_to_string(&mut s)', _IO + " (the request)"),
     (FC, '        std::fs::read_to_string(&req_src).unwrap_or_else(|e| refuse("io", &e.to_string(), 2))', _IO),
     (FC, '    let registry = axon_cortex::runner::CheckRegistry::load(&registry_path)',
@@ -1859,8 +1860,688 @@ EXEMPT += [
      _VM + "; FirecrackerBin::resolve/at (axon-vm's VMM lookup)"),
     (_SVF, '            return Err(format!("firecracker not a regular file: {}", path.display()).into());',
      _VM + "; FirecrackerBin::resolve/at (axon-vm's VMM lookup)"),
+
 ]
 
+# ── C9 round 4c, workstream GATE (amendment 74): the sites the predicate-
+# primitive rule (a function that decides by bool/Option is a site), the
+# changed-lines coverage rule, the `let .. else` opener and the function-
+# boundary stop expose in the scanned files. Kinds as above, plus: PREDICATE OF
+# NAMED ROWS (every production caller of the predicate is a refusal whose
+# condition a named row disables WHOLE, a superset of weakening the
+# predicate), LOOKUP (returns what a record holds under a key; every consumer's
+# refusal on presence or absence is its own site, judged there), RECORDED
+# FACT (the answer is a property of the input the recipe records, which the
+# digest covers).
+# ── amendment 74 (the Fabric side) ──
+# Fork A (C9 round 4c, gate workstream): axon-fabric sites (custodian.rs excluded)
+# exposed by amendment 74's rules (predicate primitives, changed-lines coverage,
+# let-else opener, fn-boundary stop). Kinds as in v022_refusal_coverage.py, plus
+# PREDICATE OF NAMED ROWS: every production caller of the predicate is a refusal
+# whose condition a named row (or a named exemption) disables WHOLE; disabling
+# the call admits everything a weakened predicate could, so that row is a
+# superset of this removal.
+FB = "crates/axon-fabric/src/backend.rs"
+FC = "crates/axon-fabric/src/bin/axon-fabric.rs"
+FR = "crates/axon-fabric/src/branches.rs"
+FG = "crates/axon-fabric/src/git_data.rs"
+FA = "crates/axon-fabric/src/grants.rs"
+FJ = "crates/axon-fabric/src/journal.rs"
+OB = "crates/axon-fabric/src/observer.rs"
+PL = "crates/axon-fabric/src/privileged_launcher.rs"
+PH = "crates/axon-fabric/src/protected_host.rs"
+FP = "crates/axon-fabric/src/provenance.rs"
+PSVF = "crates/axon-fabric/src/psv.rs"
+RD = "crates/axon-fabric/src/readiness.rs"
+SE = "crates/axon-fabric/src/sealed_exec.rs"
+FN = "crates/axon-fabric/src/signing.rs"
+FS = "crates/axon-fabric/src/submit.rs"
+FW = "crates/axon-fabric/src/workspace.rs"
+
+_USE = "USAGE: a missing or malformed argument; the command runs, signs and writes nothing"
+_JNV_SHORT = ("NOT A VERDICT PROPERTY (checkable): a journal state transition, budget, settlement or "
+              "recovery rule; the journal's intent and outcome are read back only by submit::replayed "
+              "(never signed: M01/M402), the status CLI (prints) and status/cancel's registry-sha check "
+              "(M279); a fresh run's receipt, class and ran_under are built in memory in submit")
+_WALK = ("PREDICATE OF NAMED ROWS: it selects only the BASE a peer authority root's ownership walk "
+         "starts from (`owned_from` of exclusive_root_keys); its `None` skips that walk, and M466 "
+         "(`check_owned_chain(base, peer, true)?` -> `let _ = ...`, ACTIVE, killed) removes the walk "
+         "for every caller, a superset of this removal. The root itself is walked by the caller "
+         "(check_operator_owned when operator_owned)")
+EXEMPT += [
+    # ── backend.rs ──
+    (FB, "            self.operator_owned.then_some(Path::new(\"/\")),", _WALK),
+    (FB, "fn operator_walk(a: TrustAuthority, dir: &Path) -> Option<&'static Path> {", _WALK),
+    (FB, "    (dir == a.operator_dir()).then_some(Path::new(\"/\"))", _WALK),
+    (FB, "pub(crate) fn hex_decode(s: &str) -> Option<Vec<u8>> {",
+     "FAILS CLOSED: its `None` drops a trust-root key (`filter_map` in trusted_issuers, readiness's "
+     "root read) or only changes a displayed fingerprint (exclusive_root_keys' `fp`); a decode that "
+     "admitted a malformed string would add bytes no signature verifies under. keys_in admits only "
+     "64-hex entries (operator_trust exemption)"),
+    (FB, "fn is_hex64(v: &serde_json::Value) -> bool {",
+     "PREDICATE OF NAMED ROWS: its only callers are RULE:engine-digests (M1032, ACTIVE) and "
+     "RULE:engine-pin (M1038, retired with its four-cell record), each of which disables the whole "
+     "condition this predicate feeds"),
+    (FB, "fn non_empty(v: &serde_json::Value) -> Option<String> {",
+     "PREDICATE OF NAMED ROWS: its value feeds RULE:waiver-reason (M1029), RULE:host (M574) and "
+     "RULE:caveat (M1033), each of which removes the whole emptiness refusal; for a waiver's "
+     "assertion name, a blank name excuses no BLOCKED assertion (names are matched exactly)"),
+    (FB, "pub fn parse_utc(s: &str) -> Option<i64> {",
+     "OPERATOR-AUTHORED (signed): every string it reads is a field of a document whose signature "
+     "under an operator-rooted key the caller verified first (the observation's observed_at: "
+     "verify_observation; the B263 record's end and its waivers' expires: verify_detached / the "
+     "verified waiver file; the certification record's certified_at: M335), and its `None` is "
+     "NOTHING TO ADMIT (no time to judge freshness or order with)"),
+    (FB, "            .then(|| t.parse().ok())",
+     "as parse_utc above (this is its digit check, inside it)"),
+    # ── bin/axon-fabric.rs ──
+    (FC, '    refuse(\n        "usage",\n        &format!(\n            "--grant-registry is not accepted',
+     "NOT A SITE: the body of refuse_caller_grant_registry; its uses are M274 (and M273, retired)"),
+    (FC, '    let op = OperationId::new(a.req("--op")).unwrap_or_else(|e| refuse("usage", &e.to_string(), 2));',
+     _USE),
+    (FC, "    fn opt(&self, flag: &str) -> Option<String> {",
+     "USAGE (argv lookup): it returns the caller's own argument; any answer it could give is an "
+     "argv the caller could have passed, and every flag's value is judged by the code after it "
+     "(a test-trust flag is refused in a production build, the protected-host config is the "
+     "operator's)"),
+    (FC, "    fn has(&self, flag: &str) -> bool {", "as `opt` above (argv lookup)"),
+    (FC, "fn signer(registry: &std::path::Path) -> Option<(axon_loop_contracts::OpaqueRef, Vec<u8>)> {",
+     "DEVELOPMENT ROUTE (checkable): its only call is the no-protected-host arm (`None => "
+     "signer(&registry_path)`); a protected host's signer is host_signer, from the operator's host "
+     "config (O1). Its `None` (the registry names no signer) signs nothing"),
+    # ── branches.rs ──
+    (FR, "    pub fn is_cancelled(&self, exp: &TaskId, arm: &ArmId) -> bool {",
+     "PREDICATE OF NAMED ROWS: its production callers are submit's cancelled-branch refusal (M1066, "
+     "ACTIVE, which disables the whole condition) and Branches' own approve, which is not on the "
+     "protected route (`grep -rn 'Branches' crates/*/src`: submit calls only open, branch_of_run "
+     "and is_cancelled)"),
+    # ── git_data.rs ──
+    (FG, "fn allowed_key(key: &str) -> bool {",
+     "PREDICATE OF NAMED ROWS: its only caller is the repository-config refusal M450 (ACTIVE), "
+     "which disables the whole condition"),
+    (FG, "pub fn worktree_differs(top: &Path, tree: &Entries) -> Option<String> {",
+     "PREDICATE OF NAMED ROWS: its only caller is tree_differs, whose two production results are "
+     "dropped whole by M290 (readiness, ACTIVE) and M451 (provenance's head_bytes_differ, which "
+     "calls tree_differs), each a superset of this removal"),
+    (FG, "    pub fn covers_tracked(&self, tree: &Entries) -> Option<String> {",
+     "PREDICATE OF NAMED ROWS: its only caller is tree_differs's allowlist refusal, which M503 "
+     "(`.filter(|_| false)` on this call, ACTIVE) removes whole"),
+    (FG, "pub fn is_oid(s: &str) -> bool {",
+     "PREDICATE OF NAMED ROWS / FAILS CLOSED: on the protected lineage its call is M1084's "
+     "(provenance.rs, ACTIVE); in git_data its uses only select an object NAME that is then read by "
+     "hash from the object store (a name that is not 40 hex names no object, so the read refuses), "
+     "or are exempt sites of their own (the parent walk: NO OUTCOME; the disambiguation filter: "
+     "NOTHING TO ADMIT)"),
+    # ── grants.rs ──
+    (FA, "    pub fn require_approval(&self) -> bool {",
+     "NO PRODUCTION CALLER (checkable): `grep -rn 'require_approval()' crates/` finds no call; "
+     "axon-os reads the manifest field itself"),
+    (FA, "pub fn restricts_effects(g: &Grant) -> bool {",
+     "PREDICATE OF NAMED ROWS: its only caller sets AuthorityNeeds::guest_policy_channel "
+     "(submit.rs), consumed only by select's x1 refusal M1049 (ACTIVE), which disables the whole "
+     "condition"),
+    (FA, "pub fn is_path_scoped(g: &Grant) -> bool {",
+     "PREDICATE OF NAMED ROWS: its only caller sets AuthorityNeeds::path_scoped_grant (submit.rs), "
+     "consumed only by select's x2 refusals M1050 and M1053 (ACTIVE), each removing the whole "
+     "condition"),
+    # ── journal.rs ──
+    (FJ, "        let torn_at = (report.torn_tail_bytes > 0).then_some(good_len);", _JNV_SHORT),
+    (FJ, "    pub fn is_terminal(self) -> bool {", _JNV_SHORT),
+    (FJ, "    pub fn disputed(&self) -> bool {", _JNV_SHORT + " (a disputed op's held liability)"),
+    (FJ, "    pub fn view(&self, op: &OperationId) -> Option<OpView> {",
+     "NOTHING TO ADMIT: a lookup; `None` is the operation being absent from the journal (status / "
+     "cancel then refuse unknown_op; submit takes a fresh run)"),
+    (FJ, "    pub fn is_empty(&self) -> bool {",
+     "NO PRODUCTION CALLER (checkable): clippy's len_without_is_empty companion of len(); `grep -rn "
+     "'journal.*is_empty()\\|j\\.is_empty()' crates/*/src` finds no call on a Journal"),
+    # ── observer.rs ──
+    (OB, "            self.operator_owned.then_some(Path::new(\"/\")),", _WALK),
+    # ── privileged_launcher.rs ──
+    (PL, '            return Err(bad(\n                "custodian.sha256 must pin the axon-custodian program',
+     "A CONDITION A NAMED ROW MUTATES: this arm is the complement of the two above; M1485 (`None if "
+     "a.test` -> `None`, ACTIVE) is the removal for an unpinned custodian, and a pin that is not 64 "
+     "hex is OPERATOR-AUTHORED (a field of the operator-owned helper config, M585/M586)"),
+    (PL, "        ok.then_some(())",
+     "OS ERROR during the hand-over (fchmod/fchown of the out dir): reported as the helper's error, "
+     "fails closed"),
+    (PL, "fn is_hex64(s: &str) -> bool {",
+     "PREDICATE OF NAMED ROWS / OPERATOR-AUTHORED: its callers judge fields of the operator-owned "
+     "helper config (program pins, the observer key: exempt, M585/M586; the custodian pin: M1485), "
+     "pins of the operator-owned profile manifest that verify_inputs then hashes against (M590), "
+     "and the request's manifest digest (M796, retired with its four-cell record)"),
+    (PL, "fn is_dir(st: &libc::stat) -> bool {",
+     "UNREACHABLE (checkable): both callers stat a descriptor opened with DIR_FLAGS (O_DIRECTORY): "
+     "operator_dir's (walk_open, load_config's parent, new_staging's leaf; the existing exemption) "
+     "and open_out_root's (walk_open), so the answer is always true; the rest of open_out_root's "
+     "condition is rowed (M537)"),
+    (PL, "fn plain_name(s: &OsStr) -> bool {",
+     "PREDICATE OF NAMED ROWS: its only caller is the out-path refusal M532 (ACTIVE), which "
+     "removes the whole condition"),
+    (PL, "fn exit_code(s: std::io::Result<std::process::ExitStatus>) -> Option<i32> {",
+     "NOTHING TO ADMIT: `None` is a child that could not be waited for or was killed by a signal, "
+     "so there is no exit status; every consumer (interpret_linux_result) reads None as Unknown, and "
+     "a mutation could only invent a status the child never returned"),
+    (PL, "pub fn no_new_privs() -> bool {",
+     "SELECTS NOTHING: it chooses only which message setuid_honoured's refusal gives (it refuses in "
+     "both branches) and a diagnostic field of the probe report"),
+    # ── protected_host.rs ──
+    (PH, '        Err(e) => Err(format!(\n            "{}: {e}: cannot tell whether this is a protected host',
+     "NAMED ROW: M766 widens the NotFound arm above to every Err (`Err(_) => Ok(false)`, ACTIVE), "
+     "which makes this arm unreachable: the same removal"),
+    # ── provenance.rs ──
+    (FP, '                .then(|| format!("{g} rewrites ancestry"))',
+     "NAMED ROW: M413 (ACTIVE) mutates the condition this `.then` converts (`.is_ok()` on the line "
+     "above -> `.is_ok_and(|_| false)`), the same removal"),
+    # ── psv.rs ──
+    (PSVF, "    pub fn of_receipt(r: &axon_loop_contracts::ExecutionReceipt) -> Option<EvidenceClass> {",
+     "PREDICATE OF NAMED ROWS: at signing its only use is observed_launch, whose call is M320 "
+     "(ACTIVE); at submit it decides only whether Fabric attaches a psv bundle to its own derived "
+     "receipt, and the loop's intake judges the receipt's class itself (protected_evidence: one "
+     "class ref, M212's arm)"),
+    # ── readiness.rs ──
+    (RD, "fn is_hex(v: &Value, n: usize) -> bool {",
+     "OPERATOR-AUTHORED (signed): its only callers are the format checks on the operator-signed "
+     "record (exempt: each field is also compared for equality with a computed digest or resolved, "
+     "M335 signs the bytes)"),
+    (RD, "fn one_ref<'a>(rc: &'a axon_loop_contracts::ExecutionReceipt, prefix: &str) -> Option<&'a str> {",
+     "PREDICATE OF NAMED ROWS: its only caller is the receipt-to-record join M742 (ACTIVE), which "
+     "removes the whole join (the other use only formats the refusal)"),
+    # ── sealed_exec.rs ──
+    (SE, '    if Path::new("/etc/axon/TEST-no-read-lease").exists() {',
+     "NON-PRODUCTION: compiled only under cfg(feature = \"test-trust-root\") (the line above); M709 "
+     "(ACTIVE) is the row that compiles it into a production build"),
+    (SE, "    pub fn leased(&self) -> bool {",
+     "NO PRODUCTION CALLER (checkable): `grep -rn '\\.leased()' crates/*/src` finds only "
+     "sealed_exec.rs's unit tests"),
+    # ── signing.rs ──
+    (FN, "    let Some(r) = ran_under else {\n        return Err(KEY_REACHABLE);",
+     "NOTHING TO ADMIT: no RanUnder, so there is no backend, class or effect ceiling to judge the "
+     "signature by"),
+    (FN, "fn observed_launch(r: &ExecutionReceipt) -> bool {",
+     "PREDICATE OF NAMED ROWS: its only caller is execution_attestation_decision's refusal M320 "
+     "(ACTIVE), which removes the whole condition"),
+    # ── submit.rs ──
+    (FS, "            if resume.is_some() {\n                journal.cancel(",
+     "NAMED ROW: M1066 (ACTIVE) mutates this refusal's condition (`if branches.is_cancelled(..)`, "
+     "the enclosing `if` above the inner one), the same removal"),
+    (FS, "                ran_under: v.launched.then(|| ran_under_of(&v.intent)).flatten(),", _JNV_SHORT),
+    (FS, "fn ran_under_of(intent: &crate::journal::Intent) -> Option<RanUnder> {", _JNV_SHORT),
+    (FS, "    fn scan_source(&self) -> Option<String> {",
+     "FLAGGED, DEFENCE IN DEPTH: the source axon-os's admission probe scans for declared effects "
+     "(its `None` makes the probe scan the entry file alone); the program's effects are bounded at "
+     "run time by the same grant's ceiling (guest policy: protected_policy_ceiling M671-M675; host "
+     "AXON_ALLOWED_EFFECTS), and the verdict does not rest on the scan. No test drives a candidate "
+     "module's effect through the admission scan"),
+    (FS, "    fn candidate_dir(&self) -> Option<PathBuf> {",
+     "PREDICATE OF NAMED ROWS: its `None` drops the candidate from sealing (submit's "
+     "`with_sealed_dir`, whose removal is M80, ACTIVE) and from the admission scan (scan_source, "
+     "FLAGGED above); module_path uses it only for a Legacy bound (no suite)"),
+    # ── workspace.rs ──
+    (FW, "    pub fn contains(&self, r: &Acf1Ref) -> bool {",
+     "SELECTS NOTHING THE LOAD DOES NOT RE-DECIDE: a `true` for an unpublished ref leads to load(r), "
+     "which refuses NotPublished, a manifest that does not hash to r (M1083) and a tree that does not "
+     "re-derive to r (M1082); a `false` only refuses (submit) or imports bytes whose ref is "
+     "re-derived from what was stored"),
+    (FW, "fn parse_manifest(m: &[u8]) -> Option<Vec<WorkspaceManifestEntry>> {",
+     "NOTHING TO ADMIT / NAMED ROWS: the bytes it parses already hash to the requested reference "
+     "(M1083), and tree() re-verifies every blob against its entry and the tree against r (M1082); a "
+     "malformed manifest has no entries to materialize"),
+    (FW, "    (workspace_manifest_bytes(&out) == m).then_some(out)", "as parse_manifest above"),
+]
+
+# ── amendment 74 (the loop and its contracts) ──
+# Fork B (C9 round 4c, gate, amendment 74): coverage decisions for the loop and
+# loop-contracts sites the new rule exposes. Kinds as in the gate, plus:
+# PREDICATE OF NAMED ROWS (every production caller of the predicate is a
+# refusal a named row removes, or a site the gate judges on its own), LOOKUP
+# (returns the event/field the record holds under a key; None = nothing is
+# recorded; every consumer's refusal on presence or absence is its own site in
+# a scanned file, judged there).
+LA = "crates/axon-loop/src/admission.rs"
+LI = "crates/axon-loop/src/intake.rs"
+EV = "crates/axon-loop/src/evl.rs"
+EVO = "crates/axon-loop/src/evo.rs"
+LG = "crates/axon-loop/src/ledger.rs"
+PLN = "crates/axon-loop/src/plan.rs"
+PTR = "crates/axon-loop/src/pointer.rs"
+PRC = "crates/axon-loop/src/price.rs"
+RU = "crates/axon-loop/src/rules.rs"
+SA = "crates/axon-loop/src/safety.rs"
+ST = "crates/axon-loop/src/store.rs"
+TEL = "crates/axon-loop/src/tel.rs"
+AT = "crates/axon-loop-contracts/src/attestation.rs"
+CT = "crates/axon-loop-contracts/src/canonical.rs"
+CI = "crates/axon-loop-contracts/src/ids.rs"
+OT = "crates/axon-loop-contracts/src/operator_trust.rs"
+PEV = "crates/axon-loop-contracts/src/protected_evidence.rs"
+CS = "crates/axon-loop-contracts/src/schema.rs"
+_LOOKUP = ("LOOKUP: returns what the ledger recorded under this key (None = nothing recorded); it "
+           "decides nothing itself: every consumer's refusal on presence or absence is a refusal "
+           "site of its own in a scanned file, judged there. Consumers (grep `{name}(` in "
+           "crates/*/src): {callers}")
+_NPC = ("NO PRODUCTION CALLER (checkable): `grep -rn '{pat}' crates/*/src` finds no caller outside "
+        "{where}")
+EXEMPT += [
+    # ── contracts ──
+    (AT, "pub fn key_id_of_hex(public_key_hex: &str) -> Option<String> {",
+     "OPERATOR-AUTHORED, FAILS CLOSED: the fingerprint of an operator-registered key (config "
+     "verifier/observer/monitor keys, an operator root); None when the text is not a 32-byte hex "
+     "key. Every consumer either compares `key_id_of_hex(k) == Some(id)` (admission.rs key_now, "
+     "protected_evidence.rs's observer filter M470, readiness.rs's verifier root) or records the id of "
+     "a key a signature was just verified under (safety.rs, evl.rs); a None matches no id. A signature "
+     "is always verified under the key bytes decoded again by verify/verify_document (M02/M951)"),
+    (AT, "pub fn issued_ms(doc: &Value) -> Option<u64> {",
+     _LOOKUP.format(name="issued_ms", callers="attestation.rs verify (exempt: NOTHING TO ADMIT, no "
+                    "signing time) and evl.rs's `an authenticated attestation states no issued_ms` "
+                    "(NOTHING TO ADMIT); the value read is signed over (M02) and compared (M03)")),
+    (AT, "fn unhex(s: &str) -> Option<Vec<u8>> {",
+     "NOTHING TO ADMIT: decodes an operator-registered key; its callers (key_id_of_hex, verify, "
+     "verify_document) refuse a None (exempt there: the registered key is not a key, nothing to verify "
+     "under); bytes it decoded wrongly are a key the signature must verify under (M02/M951), so a "
+     "mis-decode only fails closed"),
+    (CT, "fn negative_zero_to_zero(text: &str) -> Option<String> {",
+     "SELECTS NOTHING: None means there is no `-0` to rewrite, and its one caller (parse_value) then "
+     "parses the text as given (`normalized.as_deref().unwrap_or(json)`); it refuses nothing, and what "
+     "it returns is parsed strictly and checked by json_tree like any input"),
+    (CT, "    let value = serde_json::to_value(v).map_err(|e| shape(e.to_string()))?;",
+     "NOTHING TO ADMIT: the contract value does not serialize, so there are no canonical bytes to "
+     "digest"),
+    (CI, '                    shape(format!(concat!(stringify!($name), " {:?}: {}"), s, why))',
+     "NAMED ROW: M1228 discards this map_err's Err and its `?` (`let _ = $check(&s)...`, the lines "
+     "around it), the same removal: every validated string is then admitted unchecked"),
+    (CI, "    fn eq(&self, other: &Acf1Ref) -> bool {",
+     "NOT A DECISION OF ITS OWN: the string equality of two validated references (what a derived "
+     "PartialEq is); each comparison's refusal is a site of its own where it is made"),
+    (OT, "    pub fn parse(s: &str) -> Option<TrustAuthority> {",
+     "USAGE: its one production caller is axon-fabric's `--authority` argument "
+     "(bin/axon-fabric.rs authority_flag), which refuses a None with exit 2 (a usage refusal, a site "
+     "of its own); it names which operator root a keygen/sign command addresses, and that root is "
+     "still owner-checked (M948-M950)"),
+    (OT, "fn hex_bytes(s: &str) -> Option<Vec<u8>> {",
+     "OPERATOR-AUTHORED: decodes a key file of an operator root the ownership walk holds root-owned "
+     "and unwritable (M948-M950); a malformed entry is dropped and equals no presented key, so it only "
+     "fails closed (as the malformed-entry exemption in root_keys_hex)"),
+    (PEV, "pub fn claims_protected(rc: &ExecutionReceipt) -> bool {",
+     "PREDICATE OF NAMED ROWS: its production callers are admission.rs reverify_protected "
+     "(`if !claims_protected(rc)` refusal, M255, ACTIVE) and intake.rs's operator-rooted key "
+     "requirement (`if claims_protected(&rc)`, M205, ACTIVE); each row removes the decision this "
+     "predicate feeds"),
+    (PEV, "pub fn is_sha256_hex(d: &str) -> bool {",
+     "PREDICATE OF NAMED ROWS: its production callers are names_every_digest (`if !is_sha256_hex(&d)`, "
+     "M473, ACTIVE) and fabric psv.rs's digest check (a site of its own in a scanned file)"),
+    (PEV, "fn one_ref<'a>(rc: &'a ExecutionReceipt, prefix: &str) -> Option<&'a str> {",
+     _LOOKUP.format(name="one_ref", callers="check_bundle's `want` (`no single {p} ref`, then compared "
+                    "by M232/M233/M299/M296-M298/M381/M382)") .replace("the ledger", "the receipt")),
+    (PEV, "        (counted, claimed) => {\n            return Err(format!(\n                \"the guest verdict claims",
+     "NAMED ROW: M304 (`(RV::Passed, _)`) and M779 (`(RV::Failed, _)`) widen the accepting arm on the "
+     "line above, which makes this arm unreachable for each counted outcome: the same removal"),
+    (CS, "fn usize_kw(s: &Map<String, Value>, k: &str) -> Option<usize> {",
+     "COMPILED-IN: reads a keyword of a checked-in schema (minLength/maxLength/minItems/maxItems); "
+     "redteam.rs every_checked_in_schema_is_within_the_supported_subset asserts each schema's "
+     "keywords; a None only means the schema states no such bound"),
+    (CS, "fn as_i128(n: &serde_json::Number) -> Option<i128> {",
+     "NOTHING TO ADMIT: a number that is no integer has no integer value; its caller number_rules "
+     "refuses it (`non-integer number`) and the schema bounds read through it are compiled in"),
+    # ── loop ──
+    (LA, "pub(crate) fn other_loop_role(",
+     "PREDICATE OF NAMED ROWS: every production caller is a refusal a row removes: admission.rs "
+     "(M113), pointer.rs revocation (M121), baseline issue (M102), transition (M1328), baseline "
+     "designation (M1335), plan.rs assignment issue (M111), all ACTIVE"),
+    (LA, "fn clearance_verifies(",
+     "PREDICATE OF NAMED ROWS: its one caller is the clearance condition at admission (M264 replaces "
+     "the call with `signature_ref.is_some() | true`, ACTIVE; M245 the rooted-key leg)"),
+    (EV, "fn is_d12(ep: &LoopEpisode) -> bool {",
+     "SELECTS ONLY WHICH REFUSAL: its one caller (evaluate) routes a D12 episode (MiCode's not-produced "
+     "markers) to the D12 branch, which refuses delivered execution documents (M129) and is never "
+     "counted (M123, the d12 arm), and every other episode to the branch that requires its execution "
+     "documents; a non-D12 episode cannot carry the markers' digests as its execution refs and also "
+     "deliver documents digesting to them, so neither route can be entered wrongly to count"),
+    (EV, '            return Err(refused(format!("trials[{i}]: trial delivered twice")));',
+     "NAMED ROW: M961 inserts `&& false` into this refusal's condition on the line above (`.is_some()` "
+     "... `{`), the same removal"),
+    (EV, "                    refused(format!(\n                        \"trial {} was delivered and requested but never issued",
+     "NAMED ROW: M1375 replaces the `ok_or_else` this refusal is the body of with a fallback to the "
+     "delivered attempt (the line above), the same removal"),
+    (EV, "                        Err(e) => unknown(\n                            UnknownKind::Unbound,\n                            format!(\n                            \"context not admissible",
+     "NAMED ROW: M1000 makes the matched value `ctx_check.or(Ok(()))` on the line above, so this arm is "
+     "never taken: the same removal"),
+    (EV, "        let Some((areq, rcpt, _)) = &d.acf else {",
+     "NOTHING TO ADMIT: a D12 trial has no execution request or receipt, and every protected leg after "
+     "this reads them; the kind it reports is M130's and the protected branch's condition M11's"),
+    (EVO, "pub(crate) fn proposer_in(tx: &Tx, scope: &Scope, candidate: &Ref) -> Option<OpaqueRef> {",
+     _LOOKUP.format(name="proposer_in", callers="pointer.rs (M1323), intake.rs subjects (M05), "
+                    "plan.rs freeze (M1011), evl.rs subjects (M37/M38), admission.rs proposer (M114), "
+                    "safety.rs subjects").replace("the ledger", "the EVO hypothesis record")),
+    (LI, "pub fn cost_micro_from_micro_cents(micro_cents: Option<u64>) -> Option<u64> {",
+     "SELECTS NOTHING: a unit conversion that is None exactly when its input is None (unknown stays "
+     "unknown); its one production caller compares the result with the episode's cost (`c != want`, "
+     "M846)"),
+    (LI, "pub fn micode_not_run_reason(v: &axon_loop_contracts::EpisodeVerification) -> Option<&'static str> {",
+     "PREDICATE OF NAMED ROWS: its callers are intake's uncited-verification refusal (M132 replaces "
+     "the call with `false`, ACTIVE) and EVL's Unknown kind (M133-M136), which only name the kind of a "
+     "non-success"),
+    (LG, "fn mac_eq(a: &str, b: &str) -> bool {",
+     "PREDICATE OF NAMED ROWS: its callers are the keyed entry and head authentication; M1300 (entry) "
+     "and M1302 (head) make the arm a wrong MAC falls to `Ok(())`, the same removal (both ACTIVE)"),
+    (LG, "pub fn set_fault_hook(h: fn(&'static str)) -> bool {",
+     _NPC.format(pat="set_fault_hook", where="its definition (its one caller is tests/pointer.rs, a "
+                 "fault-injection hook; the bool says only whether the hook was installed)")),
+    (LG, "    fn last_transition(&self, scope: &Scope) -> Option<(u64, PointerRecord)> {",
+     _LOOKUP.format(name="last_transition", callers="the projection consistency check in load "
+                    "(M1315/M1316) and the pointer of record")),
+    (LG, "    pub fn is_revoked(&self, scope: &Scope, policy: &Ref) -> bool {",
+     "PREDICATE OF NAMED ROWS: its refusing callers are rowed: pointer.rs incumbent-of-record (M1324), "
+     "resolve (M1325), activation (M1333), intake.rs (M848), all ACTIVE; its remaining caller "
+     "(pointer.rs revoke, `if !is_revoked`) is idempotence: a revocation is not appended twice"),
+    (LG, "    pub fn freeze_of(&self, experiment_id: &str) -> Option<(u64, &Event)> {",
+     _LOOKUP.format(name="freeze_of", callers="plan.rs register (M1006) and plan.rs's frozen-plan read")),
+    (LG, "    pub fn latest_registration(&self, experiment_id: &str) -> Option<&Event> {",
+     _LOOKUP.format(name="latest_registration", callers="plan.rs register and freeze")),
+    (LG, "    pub fn admission_event(&self, admission_ref: &Ref) -> Option<(u64, &Event)> {",
+     _LOOKUP.format(name="admission_event", callers="admission.rs (M826) and admission.rs's journalled "
+                    "check")),
+    (LG, "    pub fn evaluation_event(&self, evaluation_ref: &Ref) -> Option<(u64, &Event)> {",
+     _LOOKUP.format(name="evaluation_event", callers="evl.rs (M975) and evl.rs's journalled check")),
+    (LG, "    pub fn assignment_of(&self, experiment_id: &str) -> Option<(u64, Ref)> {",
+     _LOOKUP.format(name="assignment_of", callers="evl.rs evaluate (exempt: NOTHING TO ADMIT) and "
+                    "plan.rs assignment issue (M1018)")),
+    (LG, "    pub fn baseline_of(&self, scope: &Scope) -> Option<(Ref, Ref)> {",
+     _LOOKUP.format(name="baseline_of", callers="pointer.rs designation (M1321) and activation "
+                    "(M1340/M1341)")),
+    (LG, "    pub fn candidate_set_event(&self, scope: &Scope, r: &Ref) -> bool {",
+     "PREDICATE OF NAMED ROWS: its refusing caller is candidates.rs resolve (M993, ACTIVE); its other "
+     "caller (register) only skips a repeat registration whose resolve also succeeds"),
+    (LG, "    pub fn task_manifest_event(&self, scope: &Scope, r: &Ref) -> bool {",
+     "PREDICATE OF NAMED ROWS: its refusing caller is tasks.rs resolve (M988, ACTIVE); its other "
+     "caller (register) only skips a repeat registration whose resolve also succeeds"),
+    (PLN, "        if existing == r {\n            return Ok(r);\n        }\n        return Err(refused(format!(\n            \"experiment {} already has its assignment",
+     "NAMED ROW: M1018 filters a differing journalled assignment out of the `if let` above "
+     "(`.filter(|(_, e)| e == &r)`), so this refusal is never reached: the same removal"),
+    (PTR, "                let hint = if t.kind == TransitionKind::Rollback {",
+     "NAMED ROW: M1333 disables this refusal's condition (`if false && tx.is_revoked(scope, &target)`) "
+     "on the line above; the `if` here only chooses the message"),
+    (PRC, "    pub fn covers(&self, c: Coverage) -> bool {",
+     _NPC.format(pat=r"\.covers(", where="its definition")),
+    (RU, "fn canonical_u64(s: &str) -> Option<u64> {",
+     _NPC.format(pat="canonical_u64(", where="rules.rs's own unit tests")),
+    (SA, "    pub fn is_unknown(&self) -> bool {",
+     _NPC.format(pat="is_unknown()", where="other types' methods of the same name (axon-core Span "
+                 "sources, axon-cortex); no SafetyState value calls it in crates/*/src")),
+    (ST, "pub(crate) fn decode_hex(s: &str) -> Option<Vec<u8>> {",
+     "OPERATOR-AUTHORED: its one caller decodes AXON_LOOP_LEDGER_KEY from the operator's environment "
+     "(LedgerKey::from_env), which refuses a None (usage, exit 2), never a fall back to unkeyed"),
+    (ST, "    pub fn ledger_key(&self) -> Option<&LedgerKey> {",
+     "ACCESSOR of the operator-configured key (from_env); None means unkeyed. Its consumers are the "
+     "ledger's authentication (M1300-M1303: a keyed ledger is never read without its key)"),
+    (TEL, "    pub fn single_total(&self) -> Option<&Total> {",
+     "NAMED ROW: M117 (ACTIVE) makes every arm whose by_currency is not exactly one INCONCLUSIVE at "
+     "admission whatever total is stated; its one caller (admission.rs facts) reads None as an "
+     "Unresolved total holding every currency's liability"),
+]
+
+# ── amendment 74 (the custodian, the interpreter seal edges, the guest, the PSV crate and the recipe) ──
+CU = "crates/axon-fabric/src/custodian.rs"
+CINT = "crates/axon-core/src/interp.rs"
+CRS = "crates/axon-core/src/resolver.rs"
+CF = "crates/axon-core/src/interp/conform.rs"
+GIN = "crates/axon-guest-init/src/main.rs"
+GKM = "crates/axon-guest-kernel/src/mmds.rs"
+GKP = "crates/axon-guest-kernel/src/mmds_parse.rs"
+PS = "crates/axon-psv/src/lib.rs"
+RUN = "crates/axon-psv/src/runner.rs"
+WRC = "crates/axon-workspace-recipe/src/lib.rs"
+_BAREMETAL = ("NOT ON THE PROTECTED ROUTE (checkable): the bare-metal guest kernel is the `axon` backend of "
+              "scripts/build-guest-image.sh (AXON_KERNEL_BACKEND=axon, the default of a DEMO image) and "
+              "Fabric's AXON_KERNEL profile (backend.rs: guest_kind axon_kernel_demo, `job_kinds: &[]`, it "
+              "runs no program). The protected profile, linux-microvm-protected, boots the Linux backend "
+              "(vmlinux + rootfs.sqfs, /init = axon-guest-init), whose policy decisions are scanned in "
+              "crates/axon-guest-init and crates/axon-psv")
+EXEMPT += [
+    # ── custodian.rs ──
+    (CU, "    pub fn parse(s: &str) -> Option<Mode> {",
+     "SELECTS NOTHING: its callers are the reply check (exempt above: a reply authored by the "
+     "operator-installed custodian, authenticated by uid, M626, and program pin, M1483) and issue/spend's "
+     "`unwrap_or(Mode::Dev)`: a mode that does not parse is Dev, which launches nothing protected "
+     "(custodian_mode_launches accepts Protected, or Test in a test authority)"),
+    (CU, "fn plain_absolute(p: &Path) -> bool {",
+     "PREDICATE OF AN EXEMPT SITE: its one caller is CustodianConfig::check's path rule, exempt above as "
+     "OPERATOR-AUTHORED (the operator-owned custodian.json; on the protected route the socket must EQUAL "
+     "the path systemd bound, M703)"),
+    (CU, "fn is_hex(s: &str, n: usize) -> bool {",
+     "SELECTS NOTHING: a shape check of (a) the nonce the authenticated custodian issued (Fabric only "
+     "hands it back to the same custodian, whose store spends only a nonce it recorded as issued: the "
+     "atomic rename of its `.issued` record, observer.rs exemptions) and (b) the manifest digest a "
+     "spend names, which is written to the `.used` audit record only (it decides nothing)"),
+    (CU, "fn pidfd_pid(pidfd: &std::os::fd::OwnedFd) -> Option<i64> {",
+     "NOTHING TO ADMIT: its `None` is a sender that has exited (the kernel reports Pid: -1 for a dead "
+     "pidfd, and no fdinfo for a closed one): there is no process to identify, and the open of "
+     "/proc/<pid>/exe for a pid that is no process fails (OS ERROR) before any hash"),
+    (CU, "    (pid > 0).then_some(pid)", "as pidfd_pid above (its last line)"),
+    # ── core ──
+    (CINT, "    pub(crate) fn seal_type(&self, name: &str) -> bool {",
+     "PREDICATE OF A NAMED ROW: its one caller is eval.rs's struct-construction provenance "
+     "(`self.frame_sealed.get() || self.seal_type(name)`), which M97 (ACTIVE) mutates to drop this call, "
+     "the same removal"),
+    (CF, "            let Some(vd) = ed.variants.iter().find(|x| x.name == *variant) else {",
+     "NOTHING TO ADMIT: the declared enum has no such variant, so there are no declared field types to "
+     "cast the payload's fields at (the casts below read `vd`)"),
+    (CF, "            tparams: (!generics.is_empty()).then(|| Rc::new(generics.clone())),",
+     "SELECTS NOTHING: an owner with no type parameters gets no type-parameter table; the field is then "
+     "cast at its declared type exactly as with an empty one"),
+    # ── guest-init ──
+    (GIN, "    fn constrains_anything(&self) -> bool {",
+     "PREDICATE OF NAMED ROWS: its refusing caller on the protected (cmdline) route is the "
+     "constrains-nothing refusal M1640 (ACTIVE, which disables the whole condition); its other caller is "
+     "the MMDS arm (NOT ON THE PROTECTED ROUTE: the protected VM has no network)"),
+    (GIN, "    fn has_labels(&self) -> bool {",
+     "SELECTS NOTHING: it chooses only which message the constrains-nothing refusal gives; both arms "
+     "refuse (M1640)"),
+    (GIN, 'fn allow_unpoliced() -> bool {\n    env::var(',
+     "NON-PRODUCTION: compiled only with the non-default cargo feature `dev-allow-no-policy`, which "
+     "build-guest-image.sh never enables (DEFAULT FEATURES ONLY, and it checks the image's init with "
+     "`strings` for the variable's name); the production body is the constant rowed by M1733"),
+    # ── guest-kernel (the bare-metal demo backend) ──
+    (GKM, "    pub fn contains(self, other: EffectSet) -> bool {", _BAREMETAL),
+    (GKP, "fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {", _BAREMETAL),
+    (GKP, "fn json_str_field<'a>(json: &'a [u8], key: &[u8]) -> Option<&'a [u8]> {", _BAREMETAL),
+    (GKP, "fn json_u64_field(json: &[u8], key: &[u8]) -> Option<u64> {", _BAREMETAL),
+    # ── psv ──
+    (PS, "fn mode_is_normalised(dir: bool, exec: bool, mode: u32) -> bool {",
+     "PREDICATE OF NAMED ROWS: its two callers are the directory and file mode refusals M317 and M318 "
+     "(ACTIVE), each disabling the whole condition"),
+    (RUN, "pub fn policy_from_cmdline(cmdline: &str) -> Option<Vec<u8>> {",
+     "PREDICATE OF NAMED ROWS: its value is the policy the runner holds, whose digest is joined to the "
+     "launch manifest's policy_sha256 before anything runs (M671, ACTIVE) and recorded in the verdict, "
+     "where Fabric (M676) and the loop (M677) join it again; a None is the digest of no policy, which no "
+     "manifest names"),
+    (RUN, "fn is_identifier(s: &str) -> bool {",
+     "PREDICATE OF A NAMED ROW: its one caller is the test-name refusal M169 (ACTIVE), which disables "
+     "the whole condition"),
+    # ── workspace-recipe ──
+    (WRC, "    pub fn from_mode(m: &str) -> Option<EntryKind> {",
+     "PREDICATE OF NAMED ROWS: its callers are Fabric's workspace parse_manifest (exempt: the bytes it "
+     "parses hash to the requested reference, M1083, and tree() re-derives the reference from every "
+     "entry, M1082) and an `expect` on a manifest that already parsed"),
+    (WRC, "pub fn is_exec(m: &std::fs::Metadata) -> bool {",
+     "RECORDED FACT: it reads the file's own exec bit, which the recipe RECORDS (the version digest "
+     "covers it); no input chooses the answer but the file's mode, and the guest's mode rule (M318) "
+     "compares that mode with the recorded bit"),
+    (WRC, "pub fn is_exec(_m: &std::fs::Metadata) -> bool {",
+     "NON-UNIX: compiled out on the only supported platform (cfg(not(unix)))"),
+]
+
+# Amendment 74: bin/axon-loop.rs is SCANNED, no longer OUT_OF_SCOPE. Its reason
+# ("every verb hands its one document to a library function ... refusals are
+# usage errors") was false: `tel summarize` decides two things in the CLI
+# itself (the request schema, and G10: Fabric attempts need a pinned price
+# schedule: M1736, M1737). Its other sites are usage errors and the exit.
+ALB = "crates/axon-loop/src/bin/axon-loop.rs"
+EXEMPT += [
+    (ALB, '                return Err(LoopError::Usage(format!("--{k} given twice")));',
+     "USAGE: a flag given twice; the verb runs, signs and writes nothing"),
+    (ALB, '            Some(k) => Err(LoopError::Usage(format!("unexpected --{k}"))),',
+     "USAGE: a flag the verb does not take; the verb runs, signs and writes nothing"),
+    (ALB, '        _ => Err(LoopError::Usage(format!(\n            "unknown verb {:?}',
+     "USAGE: an unknown verb; nothing runs"),
+    (ALB, '            std::process::exit(e.exit_code());',
+     "RELAY: exits with the code of the error the verb already returned; it decides nothing"),
+]
+
+
+# ── C9 round 4c, INTEGRATE (amendment 74 x 75): the sites amendment 74's rules (predicate
+# primitives, the whole-file test-module fix) newly expose in files the crate rule brought in
+# or the observer added. Each is judged by its callers on the protected route; the five
+# that decide on the route and carry no row are NOT_YET_SCANNED, handed back (see
+# amendment 74's integration note).
+EXEMPT += [
+    ('crates/axon-attest/src/lib.rs',
+     'fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {',
+     _ATT + "; constant_time_eq, used only by axon-attest's own verify functions"),
+    ('crates/axon-audit/src/lib.rs',
+     '    fn from_str(s: &str) -> Option<EffectKind> {',
+     _AUD + "; from_str (a ledger-file reader/helper)"),
+    ('crates/axon-audit/src/lib.rs',
+     '    pub fn is_empty(&self) -> bool {',
+     _AUD + "; is_empty (a ledger-file reader/helper)"),
+    ('crates/axon-cortex/src/action.rs',
+     '    pub fn write_target(&self) -> Option<&str> {',
+     _CTX + "; write_target"),
+    ('crates/axon-cortex/src/action.rs',
+     '    pub fn requires_write_authority(&self) -> bool {',
+     _CTX + "; requires_write_authority"),
+    ('crates/axon-cortex/src/episode.rs',
+     '    pub fn verified_ok(&self) -> bool {',
+     _CTX + "; verified_ok"),
+    ('crates/axon-cortex/src/lib.rs',
+     '    pub fn value(&self) -> Option<&T> {',
+     _CTX + "; value"),
+    ('crates/axon-cortex/src/lib.rs',
+     '    pub fn is_unknown(&self) -> bool {',
+     _CTX + "; is_unknown"),
+    ('crates/axon-cortex/src/locate.rs',
+     '                .then(|| name.to_string())',
+     _CTX + "; defined_fns"),
+    ('crates/axon-cortex/src/locate.rs',
+     "fn fn_body<'a>(src: &'a str, name: &str) -> Option<&'a str> {",
+     _CTX + "; fn_body"),
+    ('crates/axon-cortex/src/runner.rs',
+     'fn symbol_body(src: &str, symbol: &str) -> Option<(usize, usize)> {',
+     _CTX + "; symbol_body"),
+    ('crates/axon-cortex/src/runner.rs',
+     '    pub fn verify(&mut self, claimed_done: bool, hidden_check: &str, rel_path: &str) -> bool {',
+     _CTX + "; verify"),
+    ('crates/axon-cortex/src/runner.rs',
+     'fn verdict_for(name: &str, failed: &[String], passed: &[String]) -> bool {',
+     _CTX + "; verdict_for"),
+    ('crates/axon-cortex/src/runner.rs',
+     'fn observed_compiles(obs: &Observation) -> Option<bool> {',
+     _CTX + "; observed_compiles"),
+    ('crates/axon-cortex/src/runner.rs',
+     '    pub fn check(&self, id: &str) -> Option<&RegisteredCheck> {',
+     "LOOKUP: CheckRegistry::check returns the registered check for an id (None = unregistered); its one protected caller is submit.rs `cfg.registry.check(id).ok_or_else(Unregistered)`, whose refusal on absence is that site's own, judged there"),
+    ('crates/axon-cortex/src/select.rs',
+     '    pub fn action(&self) -> Option<&CortexAction> {',
+     _CTX + "; action"),
+    ('crates/axon-cortex/src/select.rs',
+     "fn fact<'a>(obs: &'a Observation, key: &str) -> Option<&'a Observed<String>> {",
+     _CTX + "; fact"),
+    ('crates/axon-fabric/src/observer_service.rs',
+     '        operator.then_some(Path::new("/")),',
+     "NON-PRODUCTION (checkable): `operator.then_some(Path::new(\"/\"))` picks the base of the peer-root ownership walk; the protected observer passes `operator = true` (`mode == Mode::Protected`), and Mode::Test/Dev are reached only through the TEST_TRUST_BUILD-gated `--test-config` arm (M1548); the walk itself is M466's"),
+    ('crates/axon-fabric/src/observer_service.rs',
+     'fn plain_absolute(p: &Path) -> bool {',
+     "OPERATOR-AUTHORED on the protected route (checkable): plain_absolute judges the socket, store and key paths of /etc/axon/observer.json, an operator-owned file read through the walked operator route (load_config); a path it wrongly accepts is the operator's own"),
+    ('crates/axon-fabric/src/observer_service.rs',
+     'fn is_hex(s: &str, n: usize) -> bool {',
+     "NOT A VERDICT PROPERTY (checkable): is_hex judges the observation nonce's shape before the observer records it; a nonce it wrongly accepts is only recorded, and the nonce is spent by the custodian (M628/M640), never decided here; the observation itself is signed only over what the observer measured (M1531-M1539)"),
+    ('crates/axon-loop-contracts/src/attestation.rs',
+     'pub fn is_canonical_public_key_hex(s: &str) -> bool {',
+     "PREDICATE OF NAMED ROWS: its one production caller is axon-loop store.rs `if !..is_canonical_public_key_hex(k)`, a refusal whose condition M1582 disables whole, a superset of weakening this predicate"),
+    ('crates/axon-os/src/cli.rs',
+     'fn profile_divergence_note(job: &Path, m: &crate::manifest::JobManifest) -> Option<String> {',
+     _OSO + "; profile_divergence_note, called only by cli.rs cmd_run (the `axon-os` binary)"),
+    ('crates/axon-os/src/coalition.rs',
+     '    pub fn member_pid(&self, slot: usize) -> Option<&str> {',
+     _COA + "; Coalition::member_pid has no caller at all"),
+    ('crates/axon-os/src/corrigible.rs',
+     'pub fn check_kill(state: LatchState, reason: &str) -> Option<Verdict> {',
+     _OSO + "; corrigible::check_kill has no non-test caller (grep `check_kill(`: corrigible.rs's own tests only)"),
+    ('crates/axon-os/src/corrigible.rs',
+     'pub fn r27_tcb_modules_present() -> bool {',
+     _OSO + "; corrigible::r27_tcb_modules_present has no non-test caller (grep: corrigible.rs's own tests only)"),
+    ('crates/axon-os/src/grant.rs',
+     '    pub fn parse(s: &str) -> Option<ExecPolicy> {',
+     _OSO + "; parse"),
+    ('crates/axon-os/src/grant.rs',
+     '    pub fn parse(s: &str) -> Option<Label> {',
+     _OSO + "; parse"),
+    ('crates/axon-os/src/grant.rs',
+     '    pub fn allows(&self, needed: &EffectSet) -> bool {',
+     _OSO + "; Grant::allows has no non-test caller (grep `\\.allows(`: grant.rs's own tests only)"),
+    ('crates/axon-os/src/grant.rs',
+     '    pub fn is_subset_of(&self, other: &Grant) -> bool {',
+     _OSO + "; Grant::is_subset_of has no non-test caller (grep `is_subset_of(`: tests in grant.rs and cli.rs only)"),
+    ('crates/axon-os/src/grant.rs',
+     '    pub fn subset_of(&self, other: &EffectSet) -> bool {',
+     _OSO + "; EffectSet::subset_of is called only by Grant::allows (no non-test caller)"),
+    ('crates/axon-os/src/grant.rs',
+     'fn prefixes_within(a: &[String], b: &[String]) -> bool {',
+     _OSO + "; called only by Grant::is_subset_of (no non-test caller)"),
+    ('crates/axon-os/src/grant.rs',
+     'fn hosts_within(a: &[String], b: &[String]) -> bool {',
+     _OSO + "; called only by Grant::is_subset_of (no non-test caller)"),
+    ('crates/axon-os/src/killchan.rs',
+     '    pub fn is_tripped(&self) -> bool {',
+     _OSO + "; is_tripped has no non-test caller (grep `is_tripped(`: latch.rs's own test only)"),
+    ('crates/axon-os/src/latch.rs',
+     '    pub fn is_tripped(&self) -> bool {',
+     _OSO + "; is_tripped has no non-test caller (grep `is_tripped(`: latch.rs's own test only)"),
+    ('crates/axon-os/src/ledger.rs',
+     '    pub fn would_exceed(&self, c: Carve) -> bool {',
+     _OSO + "; ResourceLedger::would_exceed has no caller at all (carve does its own comparison, ledger.rs:74-90)"),
+    ('crates/axon-os/src/manifest.rs',
+     'fn parse_str(val: &str) -> Option<String> {',
+     _GRA + "; a scalar of the grant file's string syntax"),
+    ('crates/axon-os/src/manifest.rs',
+     'fn parse_int(val: &str) -> Option<i64> {',
+     _GRA + "; a scalar of the grant file's integer syntax"),
+    ('crates/axon-os/src/manifest.rs',
+     'fn parse_arr(val: &str) -> Option<Vec<String>> {',
+     _GRA + "; a scalar of the grant file's array syntax"),
+    ('crates/axon-os/src/monitor.rs',
+     '    fn is_allowed(&self, effect: &str) -> bool {',
+     _OSO + "; Monitor::is_allowed, called only inside monitor.rs's own R29 compliance monitor, which Fabric never constructs (the axon_os names Fabric uses are listed above)"),
+    ('crates/axon-os/src/profile.rs',
+     '        self.is_reproducible().then_some("0:1")',
+     _OSO + "; Profile::virtual_clock, called only by AxonCoreRuntime (runtime.rs: the `axon-os` binary's runtime)"),
+    ('crates/axon-os/src/profile.rs',
+     '    pub fn is_reproducible(self) -> bool {',
+     _GRA + "; Profile::is_reproducible, read by parse_manifest for the `profile` line of the operator's grant file"),
+    ('crates/axon-os/src/profile.rs',
+     "    pub fn virtual_clock(self) -> Option<&'static str> {",
+     _OSO + "; Profile::virtual_clock, called only by AxonCoreRuntime (runtime.rs: the `axon-os` binary's runtime)"),
+    ('crates/axon-os/src/runtime.rs',
+     'fn is_kill_file_tripped(path: &std::path::Path) -> bool {',
+     _OSO + "; called only by AxonCoreRuntime (the `axon-os` binary's runtime; Fabric supplies its own AdmissionProbe)"),
+    ('crates/axon-os/src/runtime.rs',
+     'fn ran_to_completion(stdout: &str, nonce: &str) -> bool {',
+     _OSO + "; called only by AxonCoreRuntime (the `axon-os` binary's runtime; Fabric supplies its own AdmissionProbe)"),
+    ('crates/axon-vm/src/firecracker.rs',
+     '    pub fn satisfies_protected_linux_microvm(&self) -> bool {',
+     _VM + "; satisfies_protected_linux_microvm"),
+    ('crates/axon-vm/src/firecracker.rs',
+     '    pub fn ok(&self) -> bool {',
+     _VM + "; ok"),
+    ('crates/axon-vm/src/firecracker.rs',
+     'pub fn parse_guest_sentinel(line: &str) -> Option<GuestOutcome> {',
+     _VM + "; parse_guest_sentinel"),
+    ('crates/axon-vm/src/firecracker.rs',
+     '    fn handle(&self, request: &str) -> Option<String> {',
+     _VM + "; handle"),
+    ('crates/axon-vm/src/firecracker.rs',
+     'fn bind_vsock_uds(uds_path: &Path) -> Option<std::os::unix::net::UnixListener> {',
+     _VM + "; bind_vsock_uds"),
+]
 
 def load_rows():
     spec = importlib.util.spec_from_file_location("mut", os.path.join(ROOT, "scripts/v022_g01_mutations.py"))
@@ -1872,13 +2553,111 @@ def load_rows():
     return [r for r in mut.MUTATIONS if r[0] not in stale]
 
 
+def _skip_rust_token(t, i):
+    """The index after the Rust lexical unit at t[i] when it is a comment, a
+    string (incl. raw and byte strings) or a char literal, else None."""
+    n = len(t)
+    c = t[i]
+    if t.startswith("//", i):
+        j = t.find("\n", i)
+        return n if j < 0 else j
+    if t.startswith("/*", i):
+        depth, j = 1, i + 2
+        while j < n and depth:
+            if t.startswith("/*", j):
+                depth, j = depth + 1, j + 2
+            elif t.startswith("*/", j):
+                depth, j = depth - 1, j + 2
+            else:
+                j += 1
+        return j
+    m = re.compile(r'(?:b?r(#*)")').match(t, i) if c in "br" else None
+    if m:
+        end = '"' + m.group(1)
+        j = t.find(end, m.end())
+        return n if j < 0 else j + len(end)
+    if c == '"' or (c == "b" and t.startswith('b"', i)):
+        j = i + (2 if c == "b" else 1)
+        while j < n and t[j] != '"':
+            j += 2 if t[j] == "\\" else 1
+        return min(j + 1, n)
+    if c == "'":
+        if t.startswith("'\\", i):
+            j = t.find("'", i + 3)
+            return n if j < 0 else j + 1
+        if i + 2 < n and t[i + 2] == "'":
+            return i + 3
+        return i + 1  # a lifetime
+    return None
+
+
+def _cfg_test_extent(t, i):
+    """The end offset of the item (or statement) an attribute at t[i] governs:
+    its brace extent when it has a body, else its terminating `;`. A real
+    matcher: braces inside strings, chars and comments do not count
+    (amendment 74)."""
+    n, depth, j = len(t), 0, i
+    while j < n:
+        k = _skip_rust_token(t, j)
+        if k is not None:
+            j = max(k, j + 1)
+            continue
+        c = t[j]
+        if c in "([{":
+            depth += 1
+        elif c in ")]":
+            depth -= 1
+        elif c == "}":
+            depth -= 1
+            if depth <= 0:
+                return j + 1
+        elif c == ";" and depth <= 0:
+            return j + 1
+        j += 1
+    return n
+
+
+CFG_TEST = re.compile(r"^[ \t]*#\[cfg\(test\)\][ \t]*$", re.M)
+
+
 def code_lines(text):
-    """The file's lines up to its unit-test module (tests are not guards)."""
+    """The file's lines with every `#[cfg(test)]` item BLANKED (its attribute
+    through its brace extent, or its `;` for `mod tests;`): tests are not
+    guards, and nothing else is dropped. Line numbers are preserved.
+    Amendment 74: this used to return `lines[:i]` at the FIRST cfg(test) line
+    followed by `mod tests`, discarding everything after it to the end of the
+    file: production code after the test module (axon-os approval.rs's
+    `authorize`) and anything placed below an empty `#[cfg(test)] mod tests`
+    was invisible."""
+    out = text
+    pieces = []
+    pos = 0
+    for m in CFG_TEST.finditer(text):
+        if m.start() < pos:
+            continue
+        end = _cfg_test_extent(text, m.end())
+        pieces.append((m.start(), end))
+        pos = end
     lines = text.split("\n")
-    for i, l in enumerate(lines):
-        if l.startswith("#[cfg(test)]") and i + 1 < len(lines) and lines[i + 1].startswith("mod tests"):
-            return lines[:i]
-    return lines
+    hidden = set()
+    for a, b in pieces:
+        first, last = text.count("\n", 0, a), text.count("\n", 0, b)
+        hidden.update(range(first, last + 1))
+    return ["" if i in hidden else l for i, l in enumerate(lines)]
+
+
+def cfg_test_only_files(dirs):
+    """Source files only a test build compiles: declared `#[cfg(test)] mod X;`
+    in a sibling file (the module file is test code, not a protected path)."""
+    out = set()
+    pat = re.compile(r"#\[cfg\(test\)\]\s*(?:pub(?:\([a-z]+\))?\s+)?mod\s+(\w+)\s*;")
+    for d in dirs:
+        for f in _rs_under(d):
+            base = os.path.dirname(f)
+            for name in pat.findall(open(os.path.join(ROOT, f)).read()):
+                out.add(os.path.normpath(os.path.join(base, f"{name}.rs")))
+                out.add(os.path.normpath(os.path.join(base, name, "mod.rs")))
+    return out
 
 
 def line_of(text, offset):
@@ -2059,7 +2838,75 @@ def anchor_region(lines, text, f, bad):
     return (line_of(text, text.index(a)), line_of(text, text.index(b)))
 
 
+# Amendment 74 (C9 round 4c, gate): a PREDICATE PRIMITIVE is a decision too.
+# Round 4c (EQUIVALENCE) found axon_psv::keyed_outcome -- the one function
+# that decides whether a result line carries K's token -- with no row and no
+# exemption, invisible to the gate: it refuses by `return None` and
+# `.then_some(`, and SITE matched neither. A list of more forms would miss the
+# next one (a tail `a == b`, a `.filter(`), so the rule is per FUNCTION: every
+# in-scope function whose declared return type is `bool` or `Option<..>`
+# DECIDES (its "no" is `false` / `None`, in whatever form) and is one site
+# whose guard block is its whole body. It is covered by a row whose edit
+# changes a line of that body, or exempt by an anchor in it (by convention its
+# head line). A bool -> Option conversion inside any other function
+# (`.then_some(` / `.then(`) is a line site of its own. `.ok_or(` /
+# `.ok_or_else(` is NOT a site: it converts an absence some other code
+# decided (a predicate primitive, scanned by this rule, or a lookup, where the
+# absent value is nothing to admit) into the refusal, and decides nothing.
+FN_HEAD = re.compile(r"^(\s*)(?:pub(?:\([a-z]+\))?\s+)?(?:const\s+)?(?:unsafe\s+)?(?:extern\s+\"C\"\s+)?fn\s+(\w+)")
+PRED_RET = re.compile(r"^(bool|Option\s*<)")
+PRED_LINE = re.compile(r"\.then_some\(|\.then\(")
+
+
+def _return_type(sig):
+    """The declared return type of a signature (the text after the `->` at
+    parenthesis depth 0), or ''."""
+    depth = 0
+    for k, c in enumerate(sig):
+        if c in "([":
+            depth += 1
+        elif c in ")]":
+            depth -= 1
+        elif c == "-" and depth == 0 and sig[k + 1:k + 2] == ">":
+            return sig[k + 2:].strip()
+    return ""
+
+
+def predicate_fns(lines):
+    """(head, last) line spans of the functions in `lines` that decide by
+    `bool` or `Option<..>` (amendment 74). A declaration without a body (a
+    trait item) is not one."""
+    out = []
+    for i, l in enumerate(lines):
+        m = FN_HEAD.match(l)
+        if not m:
+            continue
+        sig, j = "", i
+        while j < len(lines) and j < i + 16:
+            sig += lines[j] + " "
+            if "{" in lines[j] or lines[j].rstrip().endswith(";"):
+                break
+            j += 1
+        if "{" not in sig:
+            continue
+        if not PRED_RET.match(_return_type(sig.split("{")[0])):
+            continue
+        body = sig[sig.index("{"):]
+        if body.count("{") == body.count("}") and lines[j].rstrip().endswith("}"):
+            out.append((i, j))
+            continue
+        close = m.group(1) + "}"
+        for k in range(j + 1, len(lines)):
+            if lines[k] == close:
+                out.append((i, k))
+                break
+    return out
+
+
 def sites(text, f=None, bad=None):
+    """The refusal sites of `f` as (first, last, reported) lines: `first` to
+    `last` is the guard block a row or an exemption must reach, `reported` the
+    line the report names."""
     lines = code_lines(text)
     regions = None
     if f in SCOPE_FN_REGIONS or f in REGIONS:
@@ -2073,16 +2920,48 @@ def sites(text, f=None, bad=None):
     for i, l in enumerate(lines):
         s = l.strip()
         # A `use` declaration names TEST_TRUST_BUILD; it reads nothing.
-        if s.startswith("//") or s.startswith("use ") or not is_site(l, ctors):
+        if s.startswith("//") or s.startswith("use ") or not (is_site(l, ctors) or PRED_LINE.search(l)):
             continue
         if regions is not None and not any(a <= i <= b for a, b in regions):
             continue
         g = i
         for j in range(i, max(-1, i - MAX_UP - 1), -1):
+            # Amendment 74: a guard block never reaches into the function
+            # above (it used to: the nearest opener could be another fn's).
+            if j < i and FN_HEAD.match(lines[j]):
+                break
             if OPENER.search(lines[j]):
                 g = j
                 break
-        out.append((g, i))
+        out.append((g, i, i))
+    for a, b in predicate_fns(lines):
+        if regions is not None and not any(x <= a <= y for x, y in regions):
+            continue
+        out.append((a, b, a))
+    return out
+
+
+def changed_lines(text, old, new):
+    """The file lines (0-based) a row's edit CHANGES (amendment 74), from a
+    line diff of `old` and `new` placed where `old` is in `text`: a replaced or
+    deleted old line, and for an insertion the old line it is inserted before
+    (the last line when it is appended). Leading and trailing newlines of
+    `old` are not lines of the edit: an `old` that ends in a newline used to
+    reach the NEXT line, and so covered a site the edit never touched."""
+    import difflib
+    lead = len(old) - len(old.lstrip("\n"))
+    a0 = line_of(text, text.index(old) + lead)
+    o = old.strip("\n").split("\n")
+    nn = new[lead:] if new[:lead] == "\n" * lead else new
+    n = nn.rstrip("\n").split("\n")
+    out = set()
+    for tag, i1, i2, _, _ in difflib.SequenceMatcher(None, o, n, autojunk=False).get_opcodes():
+        if tag == "equal":
+            continue
+        if i1 == i2:
+            out.add(a0 + min(i1, len(o) - 1))
+        else:
+            out.update(range(a0 + i1, a0 + i2))
     return out
 
 
@@ -2092,7 +2971,7 @@ def in_scope_files():
     found = set(SCOPE_FILES) | set(SCOPE_FN_REGIONS) | set(REGIONS)
     for d in SCOPE_DIRS:
         found.update(_rs_under(d))
-    return sorted(found - linked_only_as_library())
+    return sorted(found - linked_only_as_library() - cfg_test_only_files(SCOPE_DIRS))
 
 
 def judge_file(f, rows, bad):
@@ -2109,8 +2988,7 @@ def judge_file(f, rows, bad):
         if n != 1:
             bad.append(f"{r[0]}: its old text occurs {n} times in {f} (covers nothing)")
             continue
-        a = line_of(text, text.index(r[3]))
-        spans.append((r[0], a, a + r[3].count("\n")))
+        spans.append((r[0], changed_lines(text, r[3], r[4])))
     ex = []
     for ef, anchor, reason in EXEMPT:
         if ef != f:
@@ -2122,9 +3000,14 @@ def judge_file(f, rows, bad):
         ex.append([line_of(text, text.index(anchor)), anchor, reason, 0])
     covered = exempt = 0
     uncovered = []
-    for g, i in sites(text, f, bad):
-        by = [rid for rid, a, b in spans if a <= i and b >= g]
-        ex_hit = [e for e in ex if g <= e[0] <= i]
+    for g, i, at in sites(text, f, bad):
+        # Amendment 74: a row covers a site only when a line its edit CHANGES
+        # lies in the site's guard block (it used to be enough that the row's
+        # OLD text overlapped the block, plus the line after it).
+        by = [rid for rid, ch in spans if any(g <= c <= i for c in ch)]
+        # A predicate primitive's exemption is anchored on its HEAD line
+        # (amendment 74): an anchor in its body belongs to a line site there.
+        ex_hit = [e for e in ex if ((g <= e[0] <= i) if at == i else e[0] == g)]
         for e in ex_hit:
             e[3] += 1
         if by:
@@ -2134,8 +3017,9 @@ def judge_file(f, rows, bad):
         elif ex_hit:
             exempt += 1
         else:
-            uncovered.append(f"{f}:{i + 1}: refusal site with no row and no exemption: "
-                             f"{lines[g].strip()} ... {lines[i].strip()}")
+            what = (f"{lines[g].strip()} ... {lines[i].strip()}" if at == i else
+                    f"{lines[g].strip()} (a predicate primitive: it decides by bool/Option)")
+            uncovered.append(f"{f}:{at + 1}: refusal site with no row and no exemption: {what}")
     for line, anchor, _, hits in ex:
         if hits == 0:
             bad.append(f"{f}:{line + 1}: exemption matches no refusal site: {anchor!r}")

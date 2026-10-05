@@ -50,6 +50,22 @@ def selection(r, drop_sel=None, skip_one=None):
     return {"consumer_selection": sel}
 
 
+def record(r, holds):
+    """A record whose label and cells agree (holds, or one failed cell)."""
+    if r in mut.STALE_REFACTORED:
+        return {"mutation": r, "status": "STALE_REFACTORED", "holds": holds, "matrix": None,
+                "old_string_present": False,
+                "replacement_state": "REPLACEMENT_KILLED" if holds else "REPLACEMENT_SURVIVES"}
+    return {"mutation": r, "status": "EQUIVALENT_DID", "holds": holds,
+            "matrix": {"baseline": "ATTACK_REFUSED", "retired_guard_disabled": "ATTACK_REFUSED",
+                       "sibling_set_disabled": "ATTACK_REFUSED",
+                       "guard_set_disabled": "ATTACK_SUCCEEDS" if holds else "OTHER_FAILURE",
+                       "retired_guard_full_suite": "SUITE_OK",
+                       # what the real run records: every consumer its cell ran
+                       "consumer_suites": {c: {"state": "SUITE_OK", "scope": v["scope"]}
+                                           for c, v in SELECTION[r]["run"].items()}}}
+
+
 def shard(k, n, commit=COMMIT, drop=None, add=None, holds=True, rec_commit=None,
           blobs=None, clean=True, bad_edits=None, drop_sel=None, skip_one=None, hostname="host-a",
           toolchain=None, no_host=False):
@@ -58,11 +74,18 @@ def shard(k, n, commit=COMMIT, drop=None, add=None, holds=True, rec_commit=None,
     return {"schema": "axon-v022-paired-disable/2", "commit": commit, "all_hold": holds,
             "shard": f"{k}/{n}", "selected": sel,
             "registry_blobs": blobs or BLOBS, "tree_clean": clean,
-            "records": [{"mutation": r, "holds": holds, "commit": rec_commit or commit,
+            "records": [{**record(r, holds), "commit": rec_commit or commit,
                          "edits_sha256": "0" * 64 if r == bad_edits else pd.current_edits_digest(r),
                          **selection(r, drop_sel, skip_one),
                          **({} if no_host else host(hostname, toolchain))}
                         for r in recs]}
+
+
+def edited_cells(doc):
+    """The shard with one record's label left `holds` and a cell edited."""
+    r = next(r for r in doc["records"] if r.get("matrix"))
+    r["matrix"]["guard_set_disabled"] = "OTHER_FAILURE"
+    return doc
 
 
 def join(tmp, docs):
@@ -114,6 +137,9 @@ def main():
              [shard(0, 2), shard(1, 2, hostname="host-b",
                                  toolchain={**TOOLCHAIN, "rustc": "rustc 2.0.0\nLLVM version: 21"})]),
             ("a record that names no host", [shard(0, 2), shard(1, 2, no_host=True)]),
+            # Amendment 74: the label is recomputed from the recorded cells.
+            ("a record labelled holds over a cell that shows it does not",
+             [shard(0, 2), edited_cells(shard(1, 2))]),
         ]
         for name, docs in cases:
             code, out, path = join(tmp, docs)

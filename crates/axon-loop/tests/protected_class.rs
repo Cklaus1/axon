@@ -100,7 +100,10 @@ fn a_protected_plan_counts_only_protected_backends() {
     )
     .unwrap();
     for arm in &rec.arms {
-        assert_eq!(arm.verified_pass, 0, "{arm:?}");
+        assert_eq!(
+            arm.verified_pass, 0,
+            "ATTACK: a development-backend verdict counted in a protected evaluation: {arm:?}"
+        );
         assert!(
             arm.trials.iter().all(|t| t.outcome == Outcome::Unknown
                 && t.reason.contains("ineligible for a protected evaluation")),
@@ -318,7 +321,9 @@ fn a_rollback_in_a_protected_scope_needs_a_protected_admission() {
             ),
         );
         if protected {
-            let e = r.unwrap_err();
+            let e = r.err().unwrap_or_else(|| {
+                panic!("ATTACK: a rollback in a protected scope took a development-class admission")
+            });
             assert!(
                 matches!(e, LoopError::Refused(ref m) if m.contains("development-class evaluation")),
                 "{e}"
@@ -533,7 +538,8 @@ fn a_protected_class_mechanism_test_is_still_not_served() {
             true,
         ),
     )
-    .unwrap_err();
+    .err()
+    .unwrap_or_else(|| panic!("ATTACK: a protected scope served a mechanism-test fixture"));
     assert!(
         matches!(e, LoopError::Refused(ref m) if m.contains("serves no mechanism-test")),
         "{e}"

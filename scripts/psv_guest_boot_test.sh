@@ -367,8 +367,16 @@ else
     (cd "$REPO" && cargo build -q -p axon-fabric --features test-trust-root \
         --bin axon-protected-launcher --bin axon-custodian --bin axon-fabric) \
         || bad helper "cargo build -p axon-fabric --features test-trust-root --bin axon-protected-launcher --bin axon-custodian --bin axon-fabric"
-    TD="${CARGO_TARGET_DIR:-$REPO/target}/debug"
-    HB="$TD/axon-protected-launcher"
+    # The binaries cargo JUST built, at the path cargo built them to (not a
+    # guessed ${CARGO_TARGET_DIR:-...}/debug: a config file naming the target
+    # directory made that run whatever sat under $REPO/target; C9 round 4c).
+    # Cleared first: a variable in the caller's environment never names a
+    # binary this leg runs.
+    pushd "$REPO" >/dev/null || bad helper "cannot enter $REPO"
+    HB=""; use_built HB axon-protected-launcher
+    CUB=""; use_built CUB axon-custodian
+    FAB=""; use_built FAB axon-fabric
+    popd >/dev/null
     H="$W/helper"; mkdir -p "$H/runs" "$H/staging" "$H/cust/nonces" "$H/observer"; chmod 0755 "$H"
     chmod 0700 "$H/cust/nonces"
     cp -r "$REPO/dist/guest-linux" "$H/dist"; chmod -R go-w "$H/dist"
@@ -383,7 +391,7 @@ json.dump({"schema": "axon-custodian/1", "custodian_uid": 0, "fabric_uid": 0, "l
            "socket": f"{h}/cust/custodian.sock", "store": f"{h}/cust/nonces", "max_age_s": 300},
           open(f"{h}/cust/custodian.json", "w"))
 PY
-    "$TD/axon-custodian" --test-config "$H/cust/custodian.json" 2>"$H/cust/log" &
+    "$CUB" --test-config "$H/cust/custodian.json" 2>"$H/cust/log" &
     CUST_PID=$!
     for _ in $(seq 100); do [[ -S "$H/cust/custodian.sock" ]] && break; sleep 0.05; done
     ask() { python3 - "$H/cust/custodian.sock" "$1" <<'PY'
@@ -412,7 +420,7 @@ PY
     chown -R "$FU:$FU" "$I"
     # The observer: a key in the helper's observer root, and the observation of
     # this manifest signed with it (observer domain).
-    KEYJ="$("$TD/axon-fabric" keygen --out "$H/obs.pk8")"
+    KEYJ="$("$FAB" keygen --out "$H/obs.pk8")"
     printf '%s' "$KEYJ" | python3 -c 'import json,sys; print(json.load(sys.stdin)["public_key"])' >"$H/observer/obs.pub"
     python3 - "$I/job/launch-manifest.json" "$H/observation.json" \
         "$(printf '%s' "$KEYJ" | python3 -c 'import json,sys; print(json.load(sys.stdin)["fingerprint"])')" <<'PY'
@@ -429,9 +437,9 @@ json.dump({"schema": "axon-preflight-observation/1", "observer_key_id": kid,
  "suite_registry_sha256": m["suite"]["registry_sha256"], "policy_sha256": m["policy_sha256"],
  "intended_launch_manifest_sha256": hashlib.sha256(raw).hexdigest()}, open(out, "w"))
 PY
-    "$TD/axon-fabric" sign-evidence --record "$H/observation.json" --key "$H/obs.pk8" \
+    "$FAB" sign-evidence --record "$H/observation.json" --key "$H/obs.pk8" \
         --authority observer >/dev/null || bad helper "sign-evidence (observer)"
-    python3 - "$H" "$FU" "$REPO/dist/guest-linux/manifest.json" "${POLICY}" "$MSHA" "$TD/axon-custodian" <<'PY'
+    python3 - "$H" "$FU" "$REPO/dist/guest-linux/manifest.json" "${POLICY}" "$MSHA" "$CUB" <<'PY'
 import hashlib, json, sys
 h, fu, man, pol, msha, cust = sys.argv[1:]
 sha = lambda p: hashlib.sha256(open(p, "rb").read()).hexdigest()

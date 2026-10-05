@@ -252,7 +252,11 @@ fn the_grants_require_approval_policy_is_enforced() {
 
     // required + absent
     let s = submit(&request(&env, "op-noapp", "t_ok").to_string(), &cfg).unwrap();
-    assert_eq!(s.receipt.status, ReceiptStatus::Denied);
+    assert_eq!(
+        s.receipt.status,
+        ReceiptStatus::Denied,
+        "ATTACK: a job requiring approval ran with no approval token"
+    );
     assert!(
         s.reason
             .as_deref()
