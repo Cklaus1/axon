@@ -16,5 +16,5 @@
     "max_age_s": 300,
     "host_signer_public_key": "0000000000000000000000000000000000000000000000000000000000000000"
   },
-  "custodian": {"socket": "/run/axon-custodian/custodian.sock", "uid": 993}
+  "custodian": {"socket": "/run/axon-custodian/custodian.sock", "uid": 993, "sha256": "0000000000000000000000000000000000000000000000000000000000000000"}
 }

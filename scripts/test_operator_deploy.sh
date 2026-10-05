@@ -162,6 +162,10 @@ want=(
   'PLAN\[systemd\] systemctl enable --now axon-custodian.socket'
   'PLAN\[toolchain\] install /etc/axon/host-toolchain-pin.json root:root 644' '"schema": "axon-host-toolchain-pin/1"'
   'PLAN\[preflight\] bash .*trust_root_preflight.sh --verifier axon-verifier --custodian axon-custodian --fabric axon-fabric'
+  'PLAN\[preflight\] bash .*trust_root_preflight.sh .* --fabric-pid '
+  'PENDING\[fabric-unit\] --fabric-unit UNIT is required'
+  'OK\[check\] custodian.sha256 in .* is the sha256 of .*axon-custodian, the program the custodian unit starts'
+  '"status": "READ by the freeze \(amendment 65\)'
 )
 for w in "${want[@]}"; do grep -Eq -- "$w" <<<"$OUT" || fail "the plan lacks /$w/:
 $OUT"; done
@@ -169,9 +173,9 @@ ok "the dry run plans every required action (${#want[@]} assertions: allowlist, 
 # Pins in the planned configs are the bytes that would be installed.
 python3 - "$OUT" "$(sha256sum "$CLONE/scripts/fc_linux_profile.sh" | cut -c1-64)" \
   "$(sha256sum "$BIN/axon-protected-launcher" | cut -c1-64)" "$(sha256sum "$CLONE/dist/guest-linux/manifest.json" | cut -c1-64)" \
-  "$(sha256sum "$OP/observer" | cut -c1-64)" "$SIGNER_PUB" <<'PY' || fail "a planned pin is not the source bytes' digest"
+  "$(sha256sum "$OP/observer" | cut -c1-64)" "$SIGNER_PUB" "$(sha256sum "$BIN/axon-custodian" | cut -c1-64)" <<'PY' || fail "a planned pin is not the source bytes' digest"
 import json, re, sys
-out, launcher, helper, manifest, observer, signer = sys.argv[1:7]
+out, launcher, helper, manifest, observer, signer, custodian = sys.argv[1:8]
 def doc(path):
     m = re.search(r"  ---- %s \(root:root 644\) ----\n(.*?)\n  ---- end %s ----" % (re.escape(path), re.escape(path)), out, re.S)
     return json.loads("\n".join(l[4:] for l in m.group(1).splitlines()))
@@ -181,11 +185,14 @@ assert h["privileged_launcher"]["sha256"] == helper, "helper pin"
 assert h["profile_manifest"]["sha256"] == manifest == l["profile_manifest"]["sha256"], "manifest pin"
 assert h["observer"]["command"]["sha256"] == observer, "observer pin"
 assert h["signer"]["public_key"] == signer == l["observer"]["host_signer_public_key"], "signer"
-assert h["observer"]["custodian"] == l["custodian"], "one custodian"
+# Amendment 65: the helper pins the custodian PROGRAM; the host config names
+# the same socket and uid (helper_agrees compares those two only).
+assert l["custodian"]["sha256"] == custodian, "custodian program pin"
+assert h["observer"]["custodian"] == {k: l["custodian"][k] for k in ("socket", "uid")}, "one custodian"
 assert h["out_root"] == l["out_root"] == "/var/lib/axon-fabric/runs"
 assert h["qualification"]["max_age_s"] == 2592000
 PY
-ok "planned pins: launcher, helper, profile manifest, observer and host signer are the installed bytes' (and agree across host and helper configs)"
+ok "planned pins: launcher, helper, profile manifest, observer, custodian program and host signer are the installed bytes' (and agree across host and helper configs)"
 
 refused() { # label pattern cmd...
   local label=$1 pat=$2; shift 2
@@ -222,6 +229,67 @@ if [ "$(id -u)" = 0 ]; then
   refused "--apply as a non-root uid" "must run as root" setpriv --reuid=65534 --regid=65534 --clear-groups -- \
     bash "$KIT" "${ARGS[@]}" --apply
 fi
+
+# ── the Fabric unit (amendment 65 / memo C2): no NoNewPrivileges, nothing implying it ──
+UNITS=$WORK/units; mkdir -p "$UNITS"
+mkunit() { # NAME LINE... : a [Service] unit for the Fabric user plus LINEs
+  local n=$1; shift
+  { printf '[Unit]\nDescription=opkit test Fabric runner\n\n[Service]\nUser=axon-fabric\nGroup=axon-fabric\n'
+    printf 'ExecStart=/usr/local/libexec/axon/axon-fabric status\nProtectSystem=strict\nPrivateTmp=yes\n'
+    for l in "$@"; do printf '%s\n' "$l"; done; } >"$UNITS/$n.service"
+}
+unit_blocked() { # LABEL PATTERN UNITFILE : the kit must BLOCK the unit (exit 3) for that reason
+  local o rc; o=$(bash "$KIT" --from "$CLONE" --only fabric-unit --fabric-unit "$3" --fabric-pid 1 2>&1); rc=$?
+  [ $rc = 3 ] || fail "ATTACK: a Fabric unit with $1 was not refused (exit $rc): $o"
+  grep -Eq -- "BLOCKED\[fabric-unit\] Fabric unit .*$2" <<<"$o" || fail "ATTACK: a Fabric unit with $1 was refused for another reason: $o"
+}
+mkunit clean
+o=$(bash "$KIT" --from "$CLONE" --only fabric-unit --fabric-unit "$UNITS/clean.service" --fabric-pid 1 2>&1); rc=$?
+[ $rc = 0 ] && grep -q 'OK\[fabric-unit\] Fabric unit .*no NoNewPrivileges' <<<"$o" \
+  || fail "control: a Fabric unit with no NoNewPrivileges was not accepted (exit $rc): $o"
+mkunit nnp 'NoNewPrivileges=yes'; unit_blocked "NoNewPrivileges=yes" 'NoNewPrivileges=yes' "$UNITS/nnp.service"
+mkunit dyn 'DynamicUser=yes'; unit_blocked "DynamicUser=yes" 'DynamicUser=yes implies NoNewPrivileges' "$UNITS/dyn.service"
+n=0
+for d in SystemCallFilter=@system-service SystemCallLog=@privileged SystemCallArchitectures=native \
+         RestrictAddressFamilies=AF_UNIX RestrictNamespaces=yes PrivateDevices=yes ProtectKernelTunables=yes \
+         ProtectKernelModules=yes ProtectKernelLogs=yes ProtectClock=yes ProtectHostname=yes \
+         MemoryDenyWriteExecute=yes RestrictRealtime=yes RestrictSUIDSGID=yes LockPersonality=yes; do
+  mkunit "imp$n" "$d"; unit_blocked "$d" "${d%%=*}=.* implies NoNewPrivileges" "$UNITS/imp$n.service"; n=$((n + 1))
+done
+mkunit pu 'PrivateUsers=yes'; unit_blocked "PrivateUsers=yes" 'PrivateUsers=yes: in a user namespace' "$UNITS/pu.service"
+mkunit sb 'SecureBits=noroot'; unit_blocked "SecureBits=noroot" 'SecureBits=noroot' "$UNITS/sb.service"
+mkunit cbs 'CapabilityBoundingSet=CAP_NET_ADMIN'; unit_blocked "a capability bounding set" 'CapabilityBoundingSet=' "$UNITS/cbs.service"
+printf '[Service]\nExecStart=/usr/local/libexec/axon/axon-fabric status\n' >"$UNITS/root.service"
+unit_blocked "no User= (root)" 'User=\(unset: root\)' "$UNITS/root.service"
+# A drop-in after the unit wins (systemctl cat prints them in that order).
+mkunit dropin 'NoNewPrivileges=yes' '' '[Service]' 'NoNewPrivileges=no' 'SystemCallFilter=@system-service' 'SystemCallFilter='
+o=$(bash "$KIT" --from "$CLONE" --only fabric-unit --fabric-unit "$UNITS/dropin.service" --fabric-pid 1 2>&1); rc=$?
+[ $rc = 0 ] || fail "control: a drop-in that resets NoNewPrivileges and SystemCallFilter was not honoured (exit $rc): $o"
+mkunit dropin2 'NoNewPrivileges=no' '' '[Service]' 'NoNewPrivileges=yes'
+unit_blocked "NoNewPrivileges=yes in a drop-in" 'NoNewPrivileges=yes' "$UNITS/dropin2.service"
+ok "the Fabric unit: NoNewPrivileges, DynamicUser, the $n settings that imply it, PrivateUsers, SecureBits, a bounding set and a root unit are each BLOCKED; a clean unit and a drop-in reset are accepted"
+
+# ── a B263 record measured on another host (amendment 65: b263_host.py) ─────
+b263_fixture() { # FILE MACHINE_ID LABEL
+  python3 - "$1" "$2" "$3" "$CLONE/dist/guest-linux/manifest.json" <<'PY'
+import hashlib, json, sys
+out, mid, label, man = sys.argv[1:5]
+json.dump({"schema": "axon-b263-evidence/1", "issuer_key_id": "ed25519:0000000000000000", "result": "PASS",
+           "host": f"{label} (fixture)", "host_facts": {"machine_id": mid, "host_label": label or None},
+           "profile": {"manifest_sha256": hashlib.sha256(open(man, "rb").read()).hexdigest()},
+           "source": {"tree_dirty": False, "host_identity_sha256": "a" * 64}, "fixture": "never signed"},
+          open(out, "w"))
+PY
+  echo '{"fixture":"not a signature"}' >"$1.sig"
+}
+b263_fixture "$WORK/b263-other.json" 0123456789abcdef0123456789abcdef opkit-host
+o=$(bash "$KIT" "${ARGS[@]}" --only data --b263-record "$WORK/b263-other.json" 2>&1)
+grep -q 'PENDING\[data\] B263: the B263 record was measured on machine-id 0123456789abcdef0123456789abcdef, not this host' <<<"$o" \
+  || fail "ATTACK: a B263 record measured on another machine was not held back: $o"
+b263_fixture "$WORK/b263-here.json" "$(head -n1 /etc/machine-id)" opkit-host
+o=$(bash "$KIT" "${ARGS[@]}" --only data --b263-record "$WORK/b263-here.json" 2>&1)
+grep -q 'PENDING\[data\] B263' <<<"$o" && fail "control: a B263 record measured on this host was held back: $o"
+ok "a B263 record measured on another machine is PENDING; one measured here is not"
 
 # ══ 2. APPLY in a private mount namespace ════════════════════════════════════
 if [ "$(id -u)" != 0 ] || ! command -v unshare >/dev/null; then
@@ -264,21 +332,38 @@ mkdir -p /var/lib/axon-loop/store
 python3 - "$W/b263.json" /dev/stdin <<PY
 import hashlib, json, sys
 man = hashlib.sha256(open("$CLONE/dist/guest-linux/manifest.json", "rb").read()).hexdigest()
+mid = open("/etc/machine-id").readline().strip()
 json.dump({"schema": "axon-b263-evidence/1", "issuer_key_id": "ed25519:0000000000000000", "result": "PASS",
-           "profile": {"manifest_sha256": man}, "source": {"tree_dirty": False}, "fixture": "never signed"},
+           "host": "opkit-ns (fixture)", "host_facts": {"machine_id": mid, "host_label": "opkit-ns"},
+           "profile": {"manifest_sha256": man}, "source": {"tree_dirty": False, "host_identity_sha256": "a" * 64},
+           "fixture": "never signed"},
           open(sys.argv[1], "w"))
 PY
 echo '{"fixture":"not a signature"}' >"$W/b263.json.sig"
 # What systemd does when the socket unit starts (no systemctl in here).
 install -d -o root -g root -m 0755 /run/axon-custodian
+# The Fabric service: its unit (judged as a file: no systemd in here) and a
+# running process as the Fabric uid WITHOUT NoNewPrivileges, as that unit
+# would start it. Its pid is the preflight's --fabric-pid (amendment 65).
+printf '[Service]\nUser=axon-fabric\nGroup=axon-fabric\nExecStart=/usr/local/libexec/axon/axon-fabric status\nProtectSystem=strict\n' >"$W/fabric.service"
+FG=$(id -g axon-fabric)
+setpriv --reuid="$FU" --regid="$FG" --clear-groups -- sleep 3600 & FPID=$!
+setpriv --reuid="$FU" --regid="$FG" --clear-groups --no-new-privs -- sleep 3600 & NNP_PID=$!
+trap 'kill $FPID $NNP_PID 2>/dev/null' EXIT
+ARGS+=(--fabric-unit "$W/fabric.service")
 GUEST="unshare --mount --propagation private sh -c 'mount -t tmpfs none /etc/axon && sh $CLONE/scripts/trust_root_guest_probe.sh /etc/axon/trust'"
-bash "$KIT" "${ARGS[@]}" --b263-record "$W/b263.json" --agent 40003 --agent 40004 --guest-cmd "$GUEST" --apply >"$W/apply2.out" 2>&1
+bash "$KIT" "${ARGS[@]}" --fabric-pid "$FPID" --b263-record "$W/b263.json" --agent 40003 --agent 40004 --guest-cmd "$GUEST" --apply >"$W/apply2.out" 2>&1
 r=$?; cat "$W/apply2.out" >&2
 [ $r = 0 ] || fail "the full apply exited $r"
 grep -q 'OK\[loader\] ProtectedHost::operator() accepted' "$W/apply2.out" || fail "the production loader did not accept the deployment"
 grep -q 'PREFLIGHT verdict PASS mode protected' "$W/apply2.out" || fail "the protected-mode preflight did not PASS"
+grep -q 'OK\[toolchain\] guest_build_env.toolchain_pin_problems accepts the installed pin' "$W/apply2.out" \
+  || fail "the freeze's own reader did not accept the installed toolchain pin"
+grep -q 'OK\[check\] custodian.sha256 in /etc/axon/protected-launcher.json is the sha256 of /usr/local/libexec/axon/axon-custodian' "$W/apply2.out" \
+  || fail "the installed custodian program pin was not verified"
+grep -q -- "--fabric-pid $FPID" "$W/apply2.out" || fail "the preflight was not given the Fabric pid"
 rep=$(sed -n 's/^PREFLIGHT verdict PASS mode protected report \([^ ]*\) .*/\1/p' "$W/apply2.out")
-python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); assert r["mode"]=="protected" and r["verdict"]=="PASS" and r["root"]=="/etc/axon/trust" and len(r["checks"])>40, r["verdict"]' "$rep" \
+python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); assert r["mode"]=="protected" and r["verdict"]=="PASS" and r["root"]=="/etc/axon/trust" and len(r["checks"])>40, r["verdict"]; assert [c for c in r["checks"] if c["action"]=="no-new-privs" and c["ok"]], "no NoNewPrivs check"' "$rep" \
   || fail "the preflight report is not a protected PASS"
 echo "ok(ns): full apply: production loader accepts, protected-mode trust preflight PASS ($(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))["checks"]))' "$rep") checks)"
 m() { stat -c '%U:%G %a' "$1"; }
@@ -296,15 +381,47 @@ h = json.load(open("/etc/axon/protected-host.json")); l = json.load(open("/etc/a
 for d in (h["launcher"], h["privileged_launcher"], h["profile_manifest"], h["suite_registry"], h["grant_registry"],
           h["observer"]["command"], l["interpreter"], l["launcher"], l["profile_manifest"]):
     assert sha(d["path"]) == d["sha256"], d
+assert l["custodian"]["sha256"] == sha("/usr/local/libexec/axon/axon-custodian"), "custodian program pin"
+assert json.load(open("/etc/axon/host-toolchain-pin.json"))["status"].startswith("READ by the freeze")
 v = json.load(open("/etc/axon/trust/verifier.json"))
 assert v["path"] == "/usr/local/libexec/axon/axon-fabric" and v["sha256"] == sha(v["path"]), v
 PY
 echo "ok(ns): modes and owners as the code requires; every pin is its INSTALLED file's digest"
 # Idempotent: a second apply plans nothing.
-bash "$KIT" "${ARGS[@]}" --b263-record "$W/b263.json" --agent 40003 --guest-cmd "$GUEST" --apply >"$W/apply3.out" 2>&1 \
-  || { cat "$W/apply3.out"; fail "the second apply failed"; }
+bash "$KIT" "${ARGS[@]}" --fabric-pid "$FPID" --b263-record "$W/b263.json" --agent 40003 --guest-cmd "$GUEST" --apply >"$W/apply3.out" 2>&1 \
+  || fail "the second apply failed: $(grep -E '^(FAIL|BLOCKED|PENDING|REFUSED|operator_deploy)' "$W/apply3.out" | tr '\n' '|')"
 if grep -E 'PLAN\[[a-z]+\] (install|dir|useradd|groupadd)' "$W/apply3.out"; then fail "the second apply changed something"; fi
 echo "ok(ns): a second --apply changes nothing (idempotent)"
+# ATTACK (amendment 65): a Fabric under NoNewPrivileges. The kernel would
+# ignore the helper's set-id bit; the kit's preflight must FAIL, not pass.
+bash "$KIT" "${ARGS[@]}" --fabric-pid "$NNP_PID" --b263-record "$W/b263.json" --agent 40003 --guest-cmd "$GUEST" \
+  --only check,preflight --apply >"$W/nnp.out" 2>&1; r=$?
+[ $r = 1 ] && grep -q 'FAIL\[preflight\] trust preflight verdict FAIL' "$W/nnp.out" \
+  && grep -q "no-new-privs .*NoNewPrivs 1" "$W/nnp.out" \
+  || { cat "$W/nnp.out"; fail "ATTACK: a Fabric process under NoNewPrivileges passed the kit's preflight (exit $r)"; }
+echo "ok(ns): a Fabric process under NoNewPrivileges FAILS the kit's preflight (control: the same uid without it PASSED above)"
+# ATTACK (amendment 65): the helper config pins another custodian program.
+cp -a /etc/axon/protected-launcher.json "$W/launcher.good"
+python3 -c 'import json; p="/etc/axon/protected-launcher.json"; c=json.load(open(p)); c["custodian"]["sha256"]="f"*64; json.dump(c, open(p,"w"), indent=2)'
+bash "$KIT" "${ARGS[@]}" --only check >"$W/pin.out" 2>&1; r=$?
+cp -a "$W/launcher.good" /etc/axon/protected-launcher.json
+[ $r = 1 ] && grep -q "FAIL\[check\] custodian program pin: /etc/axon/protected-launcher.json: custodian.sha256 ffff" "$W/pin.out" \
+  || { cat "$W/pin.out"; fail "ATTACK: a helper config pinning another custodian program was not refused (exit $r)"; }
+# The production loader refuses it too (load_config, M1485's rule: no pin).
+python3 -c 'import json; p="/etc/axon/protected-launcher.json"; c=json.load(open(p)); del c["custodian"]["sha256"]; json.dump(c, open(p,"w"), indent=2)'
+lo=$(setpriv --reuid="$FU" --regid="$FG" --clear-groups -- /usr/local/libexec/axon/axon-fabric submit --request /nonexistent/x.json 2>/dev/null)
+cp -a "$W/launcher.good" /etc/axon/protected-launcher.json
+grep -q 'custodian.sha256 must pin the axon-custodian program' <<<"$lo" \
+  || fail "ATTACK: the production loader accepted a helper config with no custodian program pin: $lo"
+echo "ok(ns): a helper config pinning another custodian program FAILS the kit's check; one with no pin is refused by the production loader"
+# ATTACK: a signing key its owner can write (0600). Fabric's loader requires
+# mode & 0277 == 0 (0400); the kit must not pass what Fabric refuses.
+chmod 0600 /etc/axon/keys/fabric-attest.pk8
+bash "$KIT" "${ARGS[@]}" --only check >"$W/key.out" 2>&1; r=$?
+chmod 0400 /etc/axon/keys/fabric-attest.pk8
+[ $r = 3 ] && grep -Eq 'BLOCKED\[(configs|check)\] /etc/axon/keys/fabric-attest.pk8 must be owned by axon-fabric, readable by it alone and writable by no one' "$W/key.out" \
+  || fail "ATTACK: a 0600 signing key passed the kit's check (exit $r): $(grep -E '^(BLOCKED|FAIL|PENDING)' "$W/key.out" | tr '\n' '|')"
+echo "ok(ns): a signing key its owner can write (0600) is BLOCKED, as Fabric's loader refuses it"
 # The example configs match the code's schemas (serde, unknown fields denied).
 "$BIN/axon-fabric" protected-host-paths --config "$CLONE/profiles/protected-host/protected-host.json.example" \
   --launcher-config "$CLONE/profiles/protected-host/protected-launcher.json.example" \

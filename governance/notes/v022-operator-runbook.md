@@ -6,7 +6,7 @@ and no script does them. Everything else is done by `scripts/operator_deploy_pro
 (called "the kit" below), which is dry-run by default.
 
 Ground truth: `governance/specs/v022-psv-protocol.md` amendments 44, 45, 50, 54, 56, 57 and
-61-63 ("Operator deployment"); `governance/status/v022-psv-protocol.json`
+61-66 ("Operator deployment"); `governance/status/v022-psv-protocol.json`
 (`candidate_9.operator_items_before_protected_deployment`); the code named in each step. The
 setuid-vs-daemon decision is in `governance/notes/v022-setuid-vs-daemon.md`.
 
@@ -24,40 +24,62 @@ It installs, from one standalone clone at one commit:
 - the suite and grant registries;
 - the signed B263 record and waivers, once the operator hands them over;
 - `/etc/axon/custodian.json`, `/etc/axon/protected-launcher.json` and
-  `/etc/axon/protected-host.json`, every pin computed from the INSTALLED bytes;
+  `/etc/axon/protected-host.json`, every pin computed from the INSTALLED bytes. That includes
+  the helper config's `custodian.sha256`, the sha256 of the installed `axon-custodian`
+  (amendment 65). The helper refuses a production config without it, and on every reply it
+  checks that the sending process executes exactly that program;
 - `/etc/axon/trust/verifier.json`;
 - the custodian's systemd units, with the socket enabled;
-- `/etc/axon/host-toolchain-pin.json`.
+- `/etc/axon/host-toolchain-pin.json`, which the freeze reads (amendment 65).
 
-Then it runs the production `ProtectedHost::operator()` as the Fabric uid against the result,
-and finally `trust_root_preflight.sh` in protected mode.
+Then it runs the production `ProtectedHost::operator()` as the Fabric uid against the result.
+It judges the operator's Fabric unit (`--fabric-unit`) for `NoNewPrivileges` and for anything
+that implies it. It verifies that the helper config's custodian pin is the installed
+`axon-custodian`, which is also the program the custodian unit starts; a mismatch FAILS (exit
+1). It checks that the kernel has `SO_PASSPIDFD` (Linux 6.5 or later). Finally it runs
+`trust_root_preflight.sh` in protected mode with `--fabric-pid`.
 
 It **never** generates a key, reads a private key, or signs anything. A missing key, trust
 root or signed record is reported as `BLOCKED` or `PENDING`, with the command that fixes it.
 The kit is idempotent: re-run it after each operator step. It exits 3 until nothing is left.
 
-Example configs matching what it writes are in `profiles/protected-host/*.example`. The test
-is `scripts/test_operator_deploy.sh`. It covers the dry run on the real host and a full
-`--apply` inside a private mount namespace with a shadow `/etc`. Its namespace run passes the
-production loader and the protected-mode preflight.
+Example configs matching what it writes are in `profiles/protected-host/*.example`.
+`crates/axon-fabric/tests/operator_examples.rs` loads the launcher and custodian examples
+through the production loaders, so the examples cannot drift from the code. The kit's test is
+`scripts/test_operator_deploy.sh`. It covers the dry run on the real host and a full `--apply`
+inside a private mount namespace with a shadow `/etc`. Its namespace run passes the production
+loader, the freeze's toolchain-pin reader and the protected-mode preflight. It also shows that
+a Fabric process under `NoNewPrivileges` fails the preflight, and that a wrong custodian pin
+fails the kit's check.
 
 ## 0. Before you start (OPERATOR decisions)
 
-- **Setuid helper or daemon** (memo). The kit deploys what the code implements: the setuid
-  helper. If you keep it, meet the memo's conditions C1-C3. In particular, the process that
-  runs Fabric must not have `NoNewPrivileges`. With it, the helper refuses every launch.
-- **The observer program and its key custody.** No production observer ships in this
-  repository. Fabric runs the observer **as the Fabric uid**, so an observer that holds its
-  signing key where the Fabric uid can read it lets Fabric mint observations. This is a
-  recorded follow-up. Decide the observer's boundary: a setuid observer helper or an
-  observer service.
+- **Setuid helper or daemon: DECIDED (operator decision F, 2026-10-04).** Keep the setuid
+  helper for C9, under the memo's conditions C1-C3. Where they stand:
+  - C1 (`harden()` evidenced) is met in code: amendment 65 rows M1474-M1482, and amendment 66
+    row M1487 (the environment clear).
+  - C2 (no `NoNewPrivileges` on Fabric) is the operator's, checked twice. The kit judges the
+    Fabric unit's text (step 4a). The preflight judges the running process through
+    `--fabric-pid` (step 8).
+  - C3 (cgroup) is decided in amendment 65: the root launch stays in Fabric's cgroup, and the
+    VMM gets its own jailer cgroup. **OPERATOR**: size the Fabric unit's `MemoryMax=` and
+    `TasksMax=` for the helper, the launcher and the host tools it runs. A launch killed by
+    those limits is a failure or unknown attempt, never a verdict.
+- **The observer: DECIDED (operator decision G).** The observer will be a separate,
+  socket-activated observer service, built on another branch. Kit support lands with that
+  branch. Until then the kit still takes `--observer-bin` (the current code runs the observer
+  as the Fabric uid), and that observer must not hold a key the Fabric uid can read.
 - **Out root and staging root placement** (amendment 45). The kit places them at
   `/var/lib/axon-fabric/runs` (Fabric's, 0700) and `/var/lib/axon-protected-launcher`
   (root, 0700). Decide whether they may share a filesystem with anything else.
 - **The compiled-launcher follow-up** (amendment 45): whether the launcher script's
   unpinned host tools may stay in the root TCB.
 - **The root-owned listener** (status item): the custodian's clients accept a listener bound
-  by the custodian uid or by root (PID 1, socket activation). Review that.
+  by the custodian uid or by root (PID 1, socket activation). Since amendment 65 the helper
+  also checks the PROGRAM that sends each reply against `custodian.sha256`, so only the
+  pinned `axon-custodian` can spend a nonce, whoever bound the socket. Fabric's own
+  issue call is still authenticated by uid only, because the pin is checked where the nonce
+  is spent. Review that.
 - **Which uids are agents.** You need every uid MiCode or Claude runs as. The preflight
   probes them.
 
@@ -102,6 +124,18 @@ AXON_KERNEL_BACKEND=linux scripts/build-guest-image.sh
   install them.
 - `scripts/v022_freeze_manifest.py` remains the judge of the whole image (`shape_problems`,
   `image_problems`). Run it as the freeze procedure says.
+- **The freeze needs the host-toolchain pin (amendment 65).** The freeze refuses without
+  `/etc/axon/host-toolchain-pin.json` on the host that runs it. It also refuses when the pin
+  is not root-owned and closed to group/other writes along its whole path, and when any host
+  tool the image's build records name is not pinned at the same path and digest. Once the
+  re-pin is committed, write the pin with the kit before freezing:
+  `sudo bash scripts/operator_deploy_protected_host.sh --from /srv/axon-freeze --only toolchain --apply`.
+  The kit computes the pin with the freeze's own extraction
+  (`guest_build_env.recorded_host_tools`). After installing it, the kit runs the freeze's
+  reader (`guest_build_env.py toolchain-pin`), which must accept it. If the freeze runs on
+  another host, install the same file there. **OPERATOR**: these digests are what the build
+  recorded. Before you pin them, check them against your distribution's packages (the kit
+  prints any `DRIFT` since the build).
 
 ## 3. Release binaries from the same clone
 
@@ -129,6 +163,7 @@ ARGS=(--from /srv/axon-freeze --expect-commit <FREEZE_SHA> --bin-dir /var/lib/ax
       --suite-registry /path/to/suites/registry.json    # cortex-check-registry/1; relative paths come along
       --grant-registry /path/to/grants/grants.json      # axon-fabric-grant-registry/1 + its grant files
       --signer-public-key <64 hex>                       # from step 5; omit on the first pass
+      --fabric-unit <the unit that runs Fabric>.service  # step 4a; its MainPID is the preflight's --fabric-pid
       --agent <micode uid> --agent <claude uid> --guest-cmd '<in-guest probe, see step 6>')
 bash "$K" "${ARGS[@]}"            # DRY RUN: every action, every file's exact bytes, owner and mode
 sudo bash "$K" "${ARGS[@]}" --apply
@@ -136,7 +171,9 @@ sudo bash "$K" "${ARGS[@]}" --apply
 
 Read the dry run, and check these in particular:
 
-- the three configs;
+- the three configs, including `custodian.sha256` in `protected-launcher.json`, which must be
+  the sha256 the `BINARIES` line prints for the custodian;
+- `OK[fabric-unit]`, or the `BLOCKED[fabric-unit]` reasons;
 - the helper's line `install /usr/local/libexec/axon/axon-protected-launcher root:axon-fabric 4750`;
 - the units (`SocketMode=0660`, `SocketGroup=axon-fabric`);
 - `PENDING` and `BLOCKED` at the end.
@@ -144,6 +181,38 @@ Read the dry run, and check these in particular:
 The first `--apply` creates the users, directories, binaries, image, data, units and
 toolchain pin. It does **not** write the host and helper configs until the signer key exists:
 those configs would name a key that is not there.
+
+### 4a. The Fabric service unit (amendment 65; memo condition C2)
+
+Fabric runs as `axon-fabric` (decision A) under a unit you own, the one that runs
+`axon-fabric submit` for MiCode. Under `NoNewPrivileges` the kernel ignores the helper's
+set-id bit. The helper then runs as the Fabric uid, and it refuses every launch, naming
+NoNewPrivileges. Give the kit the unit with `--fabric-unit NAME.service`, which it reads
+through `systemctl cat`, drop-ins included. Before installing the unit, you can instead pass
+`--fabric-unit /path/to/file`. The kit BLOCKS a unit that has any of the following in
+`[Service]`:
+
+- `NoNewPrivileges=yes`, or `DynamicUser=yes` (which implies it);
+- any of `SystemCallFilter=`, `SystemCallLog=`, `SystemCallArchitectures=`,
+  `RestrictAddressFamilies=`, `RestrictNamespaces=`, `PrivateDevices=`,
+  `ProtectKernelTunables=`, `ProtectKernelModules=`, `ProtectKernelLogs=`, `ProtectClock=`,
+  `ProtectHostname=`, `MemoryDenyWriteExecute=`, `RestrictRealtime=`, `RestrictSUIDSGID=`,
+  `LockPersonality=`. The classic `systemd.exec` rule makes each of these imply
+  `NoNewPrivileges` for a non-root `User=`. Measured on this host's systemd 259 with
+  `User=nobody`: only `NoNewPrivileges=yes` and `DynamicUser=yes` set `NoNewPrivs: 1`, and none
+  of these do. The kit cannot know which systemd the unit will run under, so it refuses them
+  all. Leave them out of the Fabric unit; most hardening presets set them;
+- `PrivateUsers=` (in a user namespace the set-id bit does not make the helper the host's
+  root), `SecureBits=noroot` or `no-setuid-fixup`, and any `CapabilityBoundingSet=` (it also
+  bounds the root launch);
+- a `User=` other than the Fabric user.
+
+The ground truth is the running process. The preflight (step 8) reads
+`/proc/<MainPID>/status` and FAILS unless it shows the Fabric uid and `NoNewPrivs: 0`. The
+kit takes that pid from `systemctl show -p MainPID --value <unit>`, or from `--fabric-pid`.
+Start the unit before the last pass. `setpriv --no-new-privs` and a container's
+`no-new-privileges` have the same effect as the systemd setting, and only the pid check sees
+them.
 
 ## 5. Provision trust roots and keys (OPERATOR custody; the kit only checks them)
 
@@ -170,6 +239,11 @@ echo <observer public_key> | sudo tee /etc/axon/trust/observer/observer.pub >/de
 sudo chmod 0644 /etc/axon/trust/*/*.pub
 ```
 
+Every key's algorithm, file format, encoding rule, signed bytes and accepting loader is in
+`governance/notes/v022-key-formats.md`, derived from the code. In short: write each public
+key as exactly 64 lowercase hex characters. The `ed25519:<16 hex>` fingerprint is a label,
+never a key. Keep the signing key at mode `0400`; Fabric refuses `0600`.
+
 Rules the code enforces (ADR-002):
 
 - One key serves one authority. A key present in two roots refuses both.
@@ -187,32 +261,46 @@ Re-run the kit with `--signer-public-key <64 hex>` and `--apply`. It writes the 
 ## 6. The trust preflight's guest probe
 
 `trust_root_preflight.sh` needs a `--guest-cmd` that runs `scripts/trust_root_guest_probe.sh`
-**inside a candidate guest** and prints its one JSON line.
+**inside a candidate guest** and prints its one JSON line. The preflight requires
+`"addressable": false`.
 
-**There is no ready-made harness for this in the repository.** The guest runs Axon programs
-(`fc_linux_profile.sh --program`), not shell scripts.
-
-**OPERATOR**: supply a command that boots the pinned image with the probe and prints its last
-line. One possible shape, unverified: an Exec-granted Axon program put on the workspace drive
-with `--put` that runs `/bin/sh probe.sh /etc/axon/trust`, launched through
-`fc_linux_profile.sh` with `profiles/linux-microvm/fixtures/policy-io-exec.json`. The
-preflight requires `"addressable": false`.
-
-Until a command exists, the kit reports the preflight as `PENDING`. A preflight that has not
-run is not a pass, and readiness needs its protected-mode PASS report as certified evidence.
+**Decided (operator decision H): the project builds and boot-tests this command.** The probe
+already runs in the real guest in `psv_guest_boot_test.sh` case `trust-probe` (amendment 65).
+That case uses the launcher's plain mode under an Exec grant, with the probe put on the
+workspace drive and run by busybox sh. The deployable `--guest-cmd` wrapper is not in this
+tree yet. Until it lands, the kit reports the preflight as `PENDING`. A preflight that has
+not run is not a pass, and readiness needs its protected-mode PASS report as certified
+evidence.
 
 ## 7. B263 re-qualification and the operator's signature
 
 The image changed, so qualification is PROTECTED_ONLY-open (amendments 54 and 63).
 
+Run it **on the protected host itself**:
+
 ```bash
 cd /srv/axon-freeze            # clean: the allowlist excuses dist/ and target/
 sudo env -u RUSTC_WRAPPER CARGO_TARGET_DIR=/var/lib/axon-build/target \
-  scripts/b263_qualify.sh --issuer-key-id ed25519:<16 hex fingerprint of the OPERATOR qualification key>
+  scripts/b263_qualify.sh --issuer-key-id ed25519:<16 hex fingerprint of the OPERATOR qualification key> \
+    --host-label <your name for this host> [--caveat '<what the boundary excludes>']
 # exit 3 = PASS_WITH_BLOCKED (expected: x3_l0_hypervisor_boundary and x4_trusted_evidence_issuer
-#          are recorded BLOCKED unconditionally on this host); 0 = PASS; 1 = FAIL; 4 = SKIP (not a result)
+#          are recorded BLOCKED unconditionally); 0 = PASS; 1 = FAIL; 4 = SKIP (not a result)
 # evidence: /var/lib/axon-build/target/b263-evidence/<UTC>.json
 ```
+
+- **The host is measured (amendment 65).** `scripts/b263_host.py` writes the record's
+  `host`: your `--host-label`, then the measured hostname, `/etc/machine-id`,
+  `systemd-detect-virt` and kernel. It also writes `host_facts.{hostname, machine_id, virt,
+  wsl, host_label}` and binds `source.host_identity_sha256`. The `caveat` is your
+  `--caveat`, or else one derived from the measured virtualization. Both go verbatim into
+  every protected receipt (`qualification-host:`, `qualification-caveat:`), so state them as
+  you want them read. Fabric requires a non-empty host and compares it to nothing. The kit
+  holds the record's `machine_id` to this host's `/etc/machine-id`, and it reports `PENDING`
+  for a record without the measured host or without a host label.
+- `x3_l0_hypervisor_boundary`'s **reason text** in `b263_qualify.sh` still describes WSL2
+  with nested KVM under Hyper-V, whatever host it runs on. Amendment 65 measured `host` and
+  `caveat`, but not that assertion's reason. The text is part of the bytes you sign, so read
+  it, and write the waiver's `reason` for your real host. This is a code follow-up (below).
 
 - **What is signed:** the EXACT bytes of that evidence file. Do not reformat it.
 - **Which key:** the operator's qualification key, the one whose public half is in
@@ -230,9 +318,6 @@ sudo env -u RUSTC_WRAPPER CARGO_TARGET_DIR=/var/lib/axon-build/target \
   `sudo bash "$K" "${ARGS[@]}" --b263-record <UTC>.json --b263-waivers b263-waivers.json --apply`.
   The kit copies each file with its `.sig` to `/etc/axon/qualification/` and points
   `qualification.waivers` at the waivers. The loader check then reads `OK`.
-- `b263_qualify.sh` hard-codes `"host": "WSL2-nested"` and a Hyper-V caveat. On any other
-  host the record would misstate where it ran. Fabric accepts any non-empty host, so nothing
-  refuses it. Fix the script before qualifying a non-WSL2 host.
 - Freshness: the record's `end` must be within `qualification.max_age_s` (the kit
   materialises 2592000 s, Fabric's default) both at each launch and at readiness. For
   readiness the record must also predate the protected run's observation (amendment 57).
@@ -274,14 +359,19 @@ Rules:
 
 ## 8. The trust preflight (protected mode)
 
-The kit runs it as its last step, once nothing is `BLOCKED` and `--agent` and `--guest-cmd`
-are given:
+The kit runs it as its last step, once nothing is `BLOCKED` and `--agent`, `--guest-cmd` and a
+Fabric pid are available:
 
 ```bash
 bash /srv/axon-freeze/scripts/trust_root_preflight.sh --verifier axon-verifier --custodian axon-custodian \
   --fabric axon-fabric --agent <uid> [--agent <uid> …] --guest-cmd '<step 6>' \
+  --fabric-pid "$(systemctl show -p MainPID --value <fabric unit>)" \
   --out /var/lib/axon-deploy/trust-preflight-<UTC>.json
 ```
+
+Since amendment 65, protected mode requires `--fabric-pid` and refuses to run without it. Its
+`no-new-privs` check FAILS unless that process runs as the Fabric uid with `NoNewPrivs: 0`.
+The Fabric unit must be running when the preflight runs.
 
 The verdict line reads `PREFLIGHT verdict PASS mode protected report …`. Keep that report: it
 is certified evidence (`trust_preflight_sha256`).
@@ -388,28 +478,31 @@ verification_binding, no_open_blocking_false_greens; `PASS` today) stay `PASS`.
 Operator decision B still holds. Zero protected trials COUNT in the loop until an observed
 execution path exists (amendment 44). Readiness and counting are separate questions.
 
-## Follow-ups this deployment surfaced (not done by the kit)
+## Follow-ups this deployment surfaced
 
-1. **No reader for the host-toolchain pin.** The kit writes `/etc/axon/host-toolchain-pin.json`
-   (`axon-host-toolchain-pin/1`, marked PROPOSED). It records rustc, cargo, make, gcc, cc1,
-   as, ld, mksquashfs, the other recorded kernel tools, and the cargo host linker, as the
-   image's build records state them, plus any drift on this host now. Nothing reads it.
-   Proposed reader: `v022_freeze_manifest.py` (and `guest_build_env.py`'s `image_problems`)
-   walk the pin from `/` operator-owned, like the allowlist, and refuse a manifest whose
-   `source.build_environment.toolchain`, `host_tools`, `rootfs.tool` or
-   `kernel.build_environment.tools` digests differ from it. A missing pin refuses in protected
-   mode. This is protected code with its own rows. Busybox is guest-side and already pinned by
-   `kernel.pin`.
-2. **Nothing pins `axon-custodian`'s bytes.** The unit starts it by path. `custodian.json`
-   cannot carry a digest (unknown fields are denied). Only root ownership protects it. The kit
-   records its sha256 in `/var/lib/axon-deploy/deploy-*.json`. A reader would need a code
-   change, for example the helper verifying the custodian's executable through
-   `/proc/<peer pid>/exe` against a pin in its own config.
-3. **The observer runs as the Fabric uid** (recorded follow-up; step 0). A production observer
-   with a separate key boundary is needed.
-4. **No in-guest harness for `--guest-cmd`** (step 6).
-5. **`b263_qualify.sh` hard-codes the host string** (step 7).
-6. **`harden()` has no tests or rows, and the preflight does not see `NoNewPrivileges` on the
-   Fabric service** (memo C1, C2).
-7. **Gate rows and proof documents** for the three protected components are not registered or
+Closed by amendments 65 and 66 (the gaps workstream), with the kit updated to match:
+
+- The host-toolchain pin has a reader: the freeze requires it (step 2).
+- `axon-custodian`'s bytes are pinned: `custodian.sha256` in the helper config, verified per
+  reply message. A kernel without `SO_PASSPIDFD` (older than Linux 6.5) refuses every pinned
+  call, and the kit BLOCKS such a kernel.
+- `b263_qualify.sh` measures the host (step 7).
+- `harden()` has rows (M1474-M1482, M1487), and the preflight sees `NoNewPrivileges` on the
+  Fabric service (`--fabric-pid`; step 4a).
+- Setuid or daemon: decided (F). The observer's boundary: decided (G). The guest probe
+  command: ours (H).
+
+Still open:
+
+1. **The observer service** (decision G) is being built on another branch. Kit support lands
+   with it. Until then the observer runs as the Fabric uid.
+2. **The deployable `--guest-cmd`** (decision H, step 6). The preflight stays `PENDING` until it
+   exists.
+3. **`x3_l0_hypervisor_boundary`'s reason text** in `b263_qualify.sh` is still the WSL2/Hyper-V
+   constant (step 7).
+4. **Gate rows and proof documents** for the three protected components are not registered or
    written (step 9).
+5. **Toolchain digests**: the pin attests what the build recorded. Nothing independent says
+   those are the distribution's binaries (step 2).
+6. **The root launch shares Fabric's cgroup** (C3, decided). Size `MemoryMax=`/`TasksMax=`
+   accordingly. Moving it out is the memo's D2 follow-up.

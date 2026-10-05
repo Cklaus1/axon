@@ -19,17 +19,28 @@
 #   configs    /etc/axon/custodian.json (axon-custodian/1),
 #              /etc/axon/protected-launcher.json (axon-protected-launcher/2),
 #              /etc/axon/protected-host.json (axon-protected-host/1), every pin
-#              computed from the INSTALLED bytes
+#              computed from the INSTALLED bytes — including the helper config's
+#              custodian.sha256, the axon-custodian PROGRAM pin (amendment 65)
 #   verifier   /etc/axon/trust/verifier.json from the installed verifier's own
 #              `verifier-manifest`
 #   systemd    axon-custodian.socket + .service, socket enabled
 #   loader     the production ProtectedHost::operator() run as the Fabric uid
 #              against what was just deployed (a read; it launches nothing)
 #   toolchain  /etc/axon/host-toolchain-pin.json: the host tool identities the
-#              guest build recorded (amendment 63's operator item; NO READER yet)
+#              guest build recorded (amendment 63's operator item). READ by the
+#              freeze since amendment 65: v022_freeze_manifest.py refuses without
+#              it (guest_build_env.image_problems, pin_required=True); the kit
+#              judges what it installed with the same reader
+#   fabric-unit the operator's unit that runs Fabric (--fabric-unit): it must
+#              not set NoNewPrivileges or anything that implies it or otherwise
+#              keeps the setuid helper from becoming root (amendment 65); its
+#              MainPID is what the preflight's --fabric-pid judges
 #   check      the trust roots and the attestation key: present, owned, moded,
-#              separated — CHECKED, never created
-#   preflight  scripts/trust_root_preflight.sh in protected mode; its verdict
+#              separated — CHECKED, never created; the helper config's custodian
+#              program pin against the INSTALLED axon-custodian (a mismatch
+#              FAILS); a kernel with SO_PASSPIDFD (Linux >= 6.5)
+#   preflight  scripts/trust_root_preflight.sh in protected mode, with
+#              --fabric-pid (the running Fabric's pid); its verdict
 #
 # It NEVER generates, reads the private half of, or signs with any key. Where a
 # key or trust root must be provisioned it checks it and stops with the exact
@@ -71,6 +82,11 @@
 #                           defaults axon-fabric, axon-custodian, axon-verifier, axonb263
 #   --agent U               an agent uid/user for the preflight (repeatable)
 #   --guest-cmd CMD         the preflight's in-guest probe command
+#   --fabric-unit UNIT      the systemd unit that runs Fabric as the Fabric uid
+#                           (a unit name, judged through `systemctl cat`, or an
+#                           absolute path to a unit file, judged as written)
+#   --fabric-pid PID        the running Fabric's pid for the preflight (default:
+#                           `systemctl show -p MainPID --value UNIT`)
 #   --only STEP[,STEP]      run only these steps (names above)
 #   --no-systemctl          print the systemctl commands instead of running them
 #   --apply                 perform the plan (root only)
@@ -113,13 +129,13 @@ UNIT_DIR=/etc/systemd/system
 OBS_MAX_AGE_S=300
 NONCE_MAX_AGE_S=300
 
-STEPS="allowlist users dirs binaries guest data configs verifier systemd loader toolchain check preflight"
+STEPS="allowlist users dirs binaries guest data configs verifier systemd loader toolchain fabric-unit check preflight"
 CLONE="" EXPECT="" BIN_DIR="" OBSERVER_BIN="" OBSERVER_INTERP="" SUITE_REG="" GRANT_REG=""
 SIGNER_PUB="" SIGNER_KEY=$KEYS_DIR/fabric-attest.pk8 ISSUER_REF="verifier:fabric"
 AUTH_STORE=/var/lib/axon-loop/store B263_RECORD="" B263_WAIVERS=""
 QUAL_MAX_AGE=2592000 MAX_TIMEOUT=900 MAX_INPUT=268435456
 FABRIC_USER=axon-fabric CUSTODIAN_USER=axon-custodian VERIFIER_USER=axon-verifier PROFILE_USER=axonb263
-AGENTS=() GUEST_CMD="" ONLY="" NO_SYSTEMCTL=0 APPLY=0
+AGENTS=() GUEST_CMD="" ONLY="" NO_SYSTEMCTL=0 APPLY=0 FABRIC_UNIT="" FABRIC_PID=""
 
 refuse() { echo "REFUSED: $*" >&2; echo "operator_deploy: REFUSED — $*"; exit 2; }
 need_arg() { [ $# -ge 2 ] && [ -n "$2" ] || refuse "$1 needs a value"; }
@@ -147,6 +163,8 @@ while [ $# -gt 0 ]; do
     --profile-user) need_arg "$@"; PROFILE_USER=$2; shift 2 ;;
     --agent) need_arg "$@"; AGENTS+=("$2"); shift 2 ;;
     --guest-cmd) need_arg "$@"; GUEST_CMD=$2; shift 2 ;;
+    --fabric-unit) need_arg "$@"; FABRIC_UNIT=$2; shift 2 ;;
+    --fabric-pid) need_arg "$@"; FABRIC_PID=$2; shift 2 ;;
     --only) need_arg "$@"; ONLY=${2//,/ }; shift 2 ;;
     --no-systemctl) NO_SYSTEMCTL=1; shift ;;
     --apply) APPLY=1; shift ;;
@@ -170,6 +188,14 @@ if [ -n "$SIGNER_PUB" ]; then
 fi
 case "$ISSUER_REF" in *[[:space:]]*|'') refuse "--signer-issuer-ref must be one word" ;; esac
 case "$AUTH_STORE" in /*) ;; *) refuse "--authority-store must be absolute" ;; esac
+case "$FABRIC_PID" in ''|[1-9]|[1-9]*[0-9]) ;; *) refuse "--fabric-pid must be a pid" ;; esac
+case "$FABRIC_PID" in *[!0-9]*) refuse "--fabric-pid must be a pid" ;; esac
+case "$FABRIC_UNIT" in
+  ''|/*) ;;
+  *[!A-Za-z0-9_.@:-]*|.*) refuse "--fabric-unit must be a unit name (NAME.service) or an absolute unit file path" ;;
+  *.service) ;;
+  *) refuse "--fabric-unit must be a unit name (NAME.service) or an absolute unit file path" ;;
+esac
 case "$SIGNER_KEY" in /*) ;; *) refuse "--signer-key must be absolute" ;; esac
 [ $APPLY = 0 ] || [ "$(id -u)" = 0 ] || refuse "--apply must run as root (it installs root-owned and setuid files)"
 
@@ -551,7 +577,7 @@ WAIVERS_SRC=""; [ -f "$QUAL_DIR/b263-waivers.json" ] && WAIVERS_SRC=$QUAL_DIR/b2
 if selected data || selected configs; then
   STEP=data
   if [ ! -f "$B263_SRC" ]; then
-    pending "no B263 qualification record at $QUAL_DIR/b263.json: run scripts/b263_qualify.sh from the clone, have the operator sign it, re-run with --b263-record (Fabric refuses every protected launch until then)"
+    pending "no B263 qualification record at $QUAL_DIR/b263.json: run scripts/b263_qualify.sh --host-label NAME --issuer-key-id ed25519:<16hex> from the clone ON THIS HOST, have the operator sign it, re-run with --b263-record (Fabric refuses every protected launch until then)"
   else
     bw=$(python3 -I - "$B263_SRC" "$MANIFEST_SRC" "${WAIVERS_SRC:-}" <<'PY'
 import hashlib, json, os, sys
@@ -562,6 +588,25 @@ if os.path.isfile(man) and (r.get("profile") or {}).get("manifest_sha256") != ha
     out.append("the B263 record qualified another profile manifest than the one deployed (re-run B263 on this image)")
 if (r.get("source") or {}).get("tree_dirty") is not False: out.append("the B263 record was produced from a dirty tree")
 if not r.get("issuer_key_id"): out.append("the B263 record names no issuer_key_id (run b263_qualify.sh --issuer-key-id ed25519:<16hex>)")
+# Amendment 65: the record states the host it RAN on (scripts/b263_host.py).
+# Fabric requires only a non-empty host and compares it to nothing; the kit
+# holds the measured machine-id to this host's, so a record qualified
+# elsewhere is not installed here unnoticed.
+facts = r.get("host_facts") or {}
+if not r.get("host") or "machine_id" not in facts or not (r.get("source") or {}).get("host_identity_sha256"):
+    out.append("the B263 record does not carry the measured host (amendment 65: host_facts.machine_id, "
+               "source.host_identity_sha256): re-qualify with the current b263_qualify.sh --host-label NAME")
+else:
+    try:
+        here = open("/etc/machine-id").readline().strip() or None
+    except OSError:
+        here = None
+    if facts.get("machine_id") != here:
+        out.append(f"the B263 record was measured on machine-id {facts.get('machine_id')}, not this host's {here}: "
+                   "qualify THIS host (b263_qualify.sh --host-label NAME)")
+    if not facts.get("host_label"):
+        out.append("the B263 record has no operator host label: re-run b263_qualify.sh with --host-label NAME "
+                   "(every protected receipt carries qualification-host:<host> verbatim)")
 if r.get("result") == "PASS_WITH_BLOCKED":
     if not wv: out.append("result PASS_WITH_BLOCKED: every BLOCKED assertion needs an operator-signed axon-b263-waiver/1 (--b263-waivers)")
     else:
@@ -594,10 +639,12 @@ if [ ! -f "$SIGNER_KEY" ] || [ -L "$SIGNER_KEY" ]; then
   fi
 else
   ks=$(stat -c '%u %a' "$SIGNER_KEY")
-  if [ "${ks%% *}" != "$(uid_of "$FABRIC_USER")" ] || [ $(( 8#${ks#* } & 8#077 )) -ne 0 ]; then
+  # Fabric's key loader (axon-fabric.rs, spec §2 rule 1) requires mode & 0277
+  # == 0: readable by its owner alone and writable by no one, so 0600 refuses.
+  if [ "${ks%% *}" != "$(uid_of "$FABRIC_USER")" ] || [ $(( 8#${ks#* } & 8#277 )) -ne 0 ]; then
     signer_ok=0
     if selected configs || selected check; then
-      blocked "$SIGNER_KEY must be owned by $FABRIC_USER and readable by it alone (A20; is uid ${ks%% *} mode ${ks#* }): sudo chown $FABRIC_USER:$FABRIC_USER $SIGNER_KEY; sudo chmod 0400 $SIGNER_KEY"
+      blocked "$SIGNER_KEY must be owned by $FABRIC_USER, readable by it alone and writable by no one (A20, mode 0400; is uid ${ks%% *} mode ${ks#* }): sudo chown $FABRIC_USER:$FABRIC_USER $SIGNER_KEY; sudo chmod 0400 $SIGNER_KEY"
     fi
   fi
 fi
@@ -620,7 +667,10 @@ launcher = {"schema": "axon-protected-launcher/2", "fabric_uid": num(e["K_FU"]),
             "max_timeout_s": int(e["K_MAX_TIMEOUT"]), "max_input_bytes": int(e["K_MAX_INPUT"]),
             "observer": {"root": e["K_OBS_ROOT"], "max_age_s": int(e["K_OBS_AGE"]),
                          "host_signer_public_key": e["K_SIGNER_PUB"]},
-            "custodian": {"socket": e["K_SOCKET"], "uid": num(e["K_CU"])}}
+            # Amendment 65: the custodian PROGRAM the helper verifies on every
+            # reply (SCM_PIDFD -> /proc/<pid>/exe hashed by descriptor);
+            # load_config refuses a production helper config without it.
+            "custodian": {"socket": e["K_SOCKET"], "uid": num(e["K_CU"]), "sha256": e["K_CUST_SHA"]}}
 observer = {"command": pin(e["K_OBSERVER"], e["K_OBSERVER_SHA"])}
 if e.get("K_OBS_INTERP"):
     observer["interpreter"] = pin(e["K_OBS_INTERP"], e["K_OBS_INTERP_SHA"])
@@ -667,6 +717,9 @@ if selected configs; then
     K_MAX_TIMEOUT=$MAX_TIMEOUT K_MAX_INPUT=$MAX_INPUT K_OBS_ROOT=$TRUST/observer K_OBS_AGE=$OBS_MAX_AGE_S
     K_SIGNER_PUB=${SIGNER_PUB:-"<64-hex public key of $SIGNER_KEY>"}
     K_HELPER=$LIBEXEC/axon-protected-launcher; K_HELPER_SHA=$(pin_of "$K_HELPER" "$HELPER_SRC")
+    # The custodian PROGRAM pin (amendment 65): the installed axon-custodian's
+    # bytes, the file the custodian unit's ExecStart names.
+    K_CUST_SHA=$(pin_of "$LIBEXEC/axon-custodian" "$CUST_SRC")
     K_OBSERVER=$LIBEXEC/axon-observer; K_OBSERVER_SHA=$(ph "$OBSERVER_BIN" "$K_OBSERVER")
     K_OBS_INTERP=$OBSERVER_INTERP; K_OBS_INTERP_SHA=""
     [ -z "$OBSERVER_INTERP" ] || K_OBS_INTERP_SHA=$(sha "$OBSERVER_INTERP")
@@ -677,7 +730,7 @@ if selected configs; then
     K_AUTH=$AUTH_STORE
     export K_CU K_FU K_SOCKET K_STORE K_NONCE_AGE K_BASH K_BASH_SHA K_LAUNCHER K_LAUNCHER_SHA K_MANIFEST \
       K_MANIFEST_SHA K_GUEST K_FC K_JL K_OUT K_STAGING K_MAX_TIMEOUT K_MAX_INPUT K_OBS_ROOT K_OBS_AGE \
-      K_SIGNER_PUB K_HELPER K_HELPER_SHA K_OBSERVER K_OBSERVER_SHA K_OBS_INTERP K_OBS_INTERP_SHA K_B263 \
+      K_SIGNER_PUB K_HELPER K_HELPER_SHA K_CUST_SHA K_OBSERVER K_OBSERVER_SHA K_OBS_INTERP K_OBS_INTERP_SHA K_B263 \
       K_WAIVERS K_QUAL_AGE K_SUITES K_SUITES_SHA K_ISSUER K_KEY K_GRANTS K_GRANTS_SHA K_AUTH
     gen_configs || { echo "FAIL[$STEP] generating the configs"; FAILED=1; }
     act_install "$WORK/custodian.json" "$CUSTODIAN_CONFIG" root root 0644 show
@@ -751,11 +804,17 @@ fi
 
 STEP=toolchain
 if selected toolchain; then
-  echo "== host toolchain pin: $TOOLCHAIN_PIN (amendment 63 operator item)"
+  echo "== host toolchain pin: $TOOLCHAIN_PIN (amendment 63 operator item; read by the freeze since amendment 65)"
   if [ $GUEST_OK = 1 ]; then
-    python3 -I - "$MANIFEST_SRC" "$COMMIT" "$WORK/toolchain.json" <<'PY' || { echo "FAIL[$STEP] cannot compute the toolchain pin"; FAILED=1; }
-import hashlib, json, os, sys
-man, commit, out = sys.argv[1:4]
+    # ONE extraction: the reader's own (guest_build_env.recorded_host_tools,
+    # imported from the clone), so the pin names exactly the tools the freeze
+    # compares — path and sha256 — and nothing the reader would not.
+    python3 -I -B - "$CLONE/scripts" "$MANIFEST_SRC" "$COMMIT" "$WORK/toolchain.json" <<'PY' || { echo "FAIL[$STEP] cannot compute the toolchain pin"; FAILED=1; }
+import hashlib, json, sys
+scripts, man, commit, out = sys.argv[1:5]
+sys.dont_write_bytecode = True  # never a __pycache__ in the clone (it would be dirty)
+sys.path.insert(0, scripts)
+import guest_build_env as gbe  # noqa: E402  (the reader the freeze uses)
 mb = open(man, "rb").read(); m = json.loads(mb)
 def sha(p):
     try:
@@ -763,27 +822,18 @@ def sha(p):
         with open(p, "rb") as f:
             for b in iter(lambda: f.read(1 << 20), b""): h.update(b)
         return h.hexdigest()
-    except OSError:
+    except (OSError, TypeError):
         return None
-src = m["source"]["build_environment"]; tc = src["toolchain"]
-tools = {}
-for name, t in sorted((m["kernel"]["build_environment"].get("tools") or {}).items()):
-    tools[name] = dict(t, recorded_by="kernel.build_environment.tools")
-for name, t in sorted((tc.get("host_tools") or {}).items()):
-    tools.setdefault(name, dict(t, recorded_by="source.build_environment.toolchain.host_tools"))
-rt = (src.get("rootfs") or {}).get("tool")
-if rt: tools["mksquashfs"] = dict(rt, recorded_by="source.build_environment.rootfs.tool")
-tools["rustc"] = {"path": tc["rustc"], "sha256": tc["rustc_sha256"], "version": tc["rustc_vV"].splitlines()[0],
-                  "recorded_by": "source.build_environment.toolchain"}
-tools["cargo"] = {"path": tc["cargo"], "sha256": tc["cargo_sha256"], "version": tc["cargo_version"],
-                  "recorded_by": "source.build_environment.toolchain"}
-drift = {}
-for name, t in tools.items():
-    now = sha(t["path"])
-    if now != t["sha256"]:
-        drift[name] = {"recorded": t["sha256"], "now": now}
-doc = {"schema": "axon-host-toolchain-pin/1",
-       "status": "PROPOSED: no Axon code reads this file yet (see governance/notes/v022-operator-runbook.md)",
+tools = gbe.recorded_host_tools(m)
+bad = sorted(n for n, t in tools.items() if not t.get("path") or not t.get("sha256"))
+if bad:
+    sys.exit(f"the build records name tools without a path or digest: {bad}")
+drift = {n: {"recorded": t["sha256"], "now": sha(t["path"])} for n, t in tools.items() if sha(t["path"]) != t["sha256"]}
+tc = m["source"]["build_environment"]["toolchain"]
+doc = {"schema": gbe.TOOLCHAIN_PIN_SCHEMA,
+       "status": ("READ by the freeze (amendment 65): scripts/v022_freeze_manifest.py refuses without this "
+                  "file, and guest_build_env.toolchain_pin_problems holds every host tool the image's build "
+                  "records name to this pin (path and sha256), and every pinned tool to a record"),
        "commit": commit, "profile_manifest_sha256": hashlib.sha256(mb).hexdigest(),
        "toolchain_channel": tc.get("channel"), "rustc_vV": tc.get("rustc_vV"),
        "tools": tools,
@@ -795,9 +845,124 @@ for name, d in sorted(drift.items()):
     print(f"DRIFT {name}: recorded {d['recorded']} now {d['now']}")
 PY
     act_install "$WORK/toolchain.json" "$TOOLCHAIN_PIN" root root 0644 show
-    note "no reader: nothing in the code verifies a build against this pin yet (follow-up in the runbook)"
+    if [ $APPLY = 1 ] && [ -f "$GUEST_DIR/manifest.json" ]; then
+      # The freeze's own reader on what was installed: owner and mode of the
+      # pin and of every directory above it, then every recorded tool.
+      if tp=$(python3 -I -B "$CLONE/scripts/guest_build_env.py" toolchain-pin "$GUEST_DIR/manifest.json" 2>&1); then
+        echo "OK[$STEP] guest_build_env.toolchain_pin_problems accepts the installed pin for the deployed image"
+      else
+        echo "FAIL[$STEP] the freeze's reader refuses the installed pin: $tp"; FAILED=1
+      fi
+    else
+      note "--apply judges the installed pin with the freeze's own reader (guest_build_env.py toolchain-pin)"
+    fi
+    note "the freeze reads $TOOLCHAIN_PIN on the host that RUNS the freeze: install the same pin there (or freeze on this host)"
   else
     blocked "the toolchain pin needs the deployed guest manifest's build records (guest step)"
+  fi
+fi
+
+STEP=fabric-unit
+# Amendment 65 / memo condition C2: under NoNewPrivileges the kernel ignores
+# the helper's set-id bit, the helper runs as the Fabric uid and refuses every
+# launch. The kit judges the unit's TEXT (the unit and its drop-ins, as
+# `systemctl cat` prints them; or an operator's file before it is installed);
+# the preflight judges the RUNNING process (/proc/<MainPID>/status NoNewPrivs).
+if selected fabric-unit || selected preflight; then
+  echo "== the Fabric service unit (amendment 65: no NoNewPrivileges, nothing that implies it)"
+  unit_txt=""
+  if [ -z "$FABRIC_UNIT" ]; then
+    pending "--fabric-unit UNIT is required: the systemd unit that runs Fabric (axon-fabric submit) as $FABRIC_USER. The kit judges it for NoNewPrivileges, and its MainPID is the preflight's --fabric-pid"
+  elif [ "${FABRIC_UNIT#/}" != "$FABRIC_UNIT" ]; then
+    [ -f "$FABRIC_UNIT" ] || refuse "--fabric-unit $FABRIC_UNIT is not a file"
+    unit_txt=$(cat -- "$FABRIC_UNIT")
+    note "judging the unit file $FABRIC_UNIT as written (drop-ins installed beside it later are not seen: re-run with the unit's NAME once it is installed)"
+  elif command -v systemctl >/dev/null && unit_txt=$(systemctl cat -- "$FABRIC_UNIT" 2>/dev/null) && [ -n "$unit_txt" ]; then
+    :
+  else
+    unit_txt=""
+    blocked "systemctl cat $FABRIC_UNIT failed: the Fabric unit is not installed (or systemd is not running); install it, or pass its file with --fabric-unit /path/to/unit"
+  fi
+  if [ -n "$unit_txt" ]; then
+    printf '%s\n' "$unit_txt" >"$WORK/fabric-unit.txt"
+    uj=$(python3 -I - "$FABRIC_USER" "$WORK/fabric-unit.txt" <<'PY'
+import sys
+fabric_user, unit_file = sys.argv[1:3]
+# Directives in [Service]; a later assignment wins, an empty one resets
+# (systemd's own rule for the list-valued settings; for a boolean the last one
+# wins anyway). Drop-ins follow the unit in `systemctl cat`'s output.
+vals, section = {}, None
+lines = open(unit_file).read().splitlines()
+i = 0
+while i < len(lines):
+    raw = lines[i]; i += 1
+    while raw.endswith("\\") and i < len(lines):
+        raw = raw[:-1] + " " + lines[i]; i += 1
+    l = raw.strip()
+    if not l or l[0] in "#;":
+        continue
+    if l.startswith("[") and l.endswith("]"):
+        section = l[1:-1]; continue
+    if section != "Service" or "=" not in l:
+        continue
+    k, v = (x.strip() for x in l.split("=", 1))
+    if v == "":
+        vals.pop(k, None)
+    elif k in vals and k in ("SystemCallFilter", "SystemCallLog", "SystemCallArchitectures", "RestrictAddressFamilies",
+                             "RestrictNamespaces", "SecureBits", "CapabilityBoundingSet"):
+        vals[k] = vals[k] + " " + v
+    else:
+        vals[k] = v
+def true(k):
+    return vals.get(k, "").lower() in ("1", "yes", "true", "on")
+def set_(k):
+    return k in vals and vals[k].lower() not in ("0", "no", "false", "off")
+out = []
+if true("NoNewPrivileges"):
+    out.append("NoNewPrivileges=yes: the kernel then ignores the helper's set-id bit and every launch is refused")
+if true("DynamicUser"):
+    out.append("DynamicUser=yes implies NoNewPrivileges (systemd.exec; measured on systemd 259)")
+# The seccomp-class settings: on systemd versions that install the filter after
+# the switch to User=, an unprivileged service gets NoNewPrivileges implied by
+# each of these (the classic systemd.exec rule). Measured NOT implied on
+# systemd 259; refused anyway: the kit cannot know the version the unit will
+# run under, and the cost of omitting them from Fabric's unit is hardening,
+# while the cost of keeping them is a host that refuses every launch.
+implied = ["SystemCallFilter", "SystemCallLog", "SystemCallArchitectures", "RestrictAddressFamilies",
+           "RestrictNamespaces", "PrivateDevices", "ProtectKernelTunables", "ProtectKernelModules",
+           "ProtectKernelLogs", "ProtectClock", "ProtectHostname", "MemoryDenyWriteExecute",
+           "RestrictRealtime", "RestrictSUIDSGID", "LockPersonality"]
+for k in implied:
+    if set_(k):
+        out.append(f"{k}={vals[k]} implies NoNewPrivileges for a non-root service on systemd versions that "
+                   "apply it after the user switch (the classic systemd.exec rule): remove it from Fabric's unit")
+if set_("PrivateUsers"):
+    out.append(f"PrivateUsers={vals['PrivateUsers']}: in a user namespace the helper's set-id bit does not make it the host's root")
+sb = vals.get("SecureBits", "")
+if any(b in sb.split() for b in ("noroot", "noroot-locked", "no-setuid-fixup", "no-setuid-fixup-locked")):
+    out.append(f"SecureBits={sb}: the set-id exec of the helper would not grant root's capabilities")
+if "CapabilityBoundingSet" in vals:
+    out.append(f"CapabilityBoundingSet={vals['CapabilityBoundingSet']}: the bounding set also bounds the setuid-root "
+               "helper and the launch it runs (jailer, cgroups, network namespace); remove it from Fabric's unit")
+u = vals.get("User", "")
+if u != fabric_user:
+    out.append(f"User={u or '(unset: root)'}, not {fabric_user}: Fabric runs as its own non-root uid (decision A)")
+print("\n".join(out))
+PY
+)
+    if [ -n "$uj" ]; then
+      while IFS= read -r l; do blocked "Fabric unit $FABRIC_UNIT: $l"; done <<<"$uj"
+    else
+      echo "OK[$STEP] Fabric unit $FABRIC_UNIT: User=$FABRIC_USER, no NoNewPrivileges and nothing that implies it"
+    fi
+  fi
+  if [ -z "$FABRIC_PID" ] && [ -n "$FABRIC_UNIT" ] && [ "${FABRIC_UNIT#/}" = "$FABRIC_UNIT" ] && command -v systemctl >/dev/null; then
+    FABRIC_PID=$(systemctl show -p MainPID --value -- "$FABRIC_UNIT" 2>/dev/null)
+    [ "$FABRIC_PID" != 0 ] || FABRIC_PID=""
+    [ -n "$FABRIC_PID" ] && note "Fabric's pid for the preflight: $FABRIC_PID (MainPID of $FABRIC_UNIT)"
+  fi
+  if [ -z "$FABRIC_PID" ]; then
+    pending "no running Fabric pid: start the Fabric unit (its MainPID), or pass --fabric-pid PID; the protected-mode preflight requires it"
   fi
 fi
 
@@ -860,6 +1025,60 @@ PY
   [ -f "$TRUST/verifier.json" ] || { [ $APPLY = 0 ] && selected verifier; } || { TRUST_OK=0; blocked "$TRUST/verifier.json is absent (verifier step)"; }
 fi
 
+STEP=check
+if selected check || selected preflight; then
+  # Amendment 65: the helper spends each nonce only with a custodian whose
+  # PROGRAM is the pin in its config; it checks the sender of every reply
+  # message (SO_PASSPIDFD / SCM_PIDFD, then /proc/<pid>/exe hashed by
+  # descriptor). A pin that is not the installed axon-custodian's bytes refuses
+  # every launch; one that is not the program the custodian unit starts, too.
+  echo "== custodian program pin (amendment 65)"
+  cfg=$HELPER_CONFIG
+  # --apply judges what is INSTALLED; a dry run what the plan would install.
+  if [ $APPLY = 0 ] && selected configs && [ -f "$WORK/launcher.json" ]; then cfg=$WORK/launcher.json; fi
+  cust_now=$LIBEXEC/axon-custodian
+  # In a dry run the bytes that WOULD be installed are the source's.
+  [ $APPLY = 1 ] || [ -z "$CUST_SRC" ] || cust_now=$CUST_SRC
+  unit_now=$UNIT_DIR/axon-custodian.service
+  if [ $APPLY = 0 ] && selected systemd && [ -f "$WORK/axon-custodian.service" ]; then unit_now=$WORK/axon-custodian.service; fi
+  if [ ! -f "$cfg" ]; then
+    pending "no helper config to judge yet ($HELPER_CONFIG; configs step)"
+  elif [ ! -f "$cust_now" ]; then
+    pending "no axon-custodian at $cust_now to judge the pin against (binaries step)"
+  else
+    cp_why=$(python3 -I - "$cfg" "$cust_now" "$unit_now" "$LIBEXEC/axon-custodian" <<'PY'
+import hashlib, json, os, sys
+cfg, prog, unit, want_exec = sys.argv[1:5]
+c = json.load(open(cfg)).get("custodian") or {}
+pin = c.get("sha256")
+have = hashlib.sha256(open(prog, "rb").read()).hexdigest()
+out = []
+if not isinstance(pin, str) or len(pin) != 64 or any(x not in "0123456789abcdef" for x in pin):
+    out.append(f"{cfg}: custodian.sha256 is {pin!r}, not a lowercase sha256 (the helper refuses a production config without it)")
+elif pin != have:
+    out.append(f"{cfg}: custodian.sha256 {pin} is not the sha256 of {prog} ({have}): every spend would be refused")
+if os.path.isfile(unit):
+    ex = [l.split("=", 1)[1].strip() for l in open(unit) if l.startswith("ExecStart=")]
+    if not ex or not ex[-1].split() or ex[-1].split()[0] != want_exec:
+        out.append(f"{unit}: ExecStart={ex[-1] if ex else '(none)'} does not start {want_exec}, the program the pin names")
+print("\n".join(out))
+PY
+)
+    if [ -n "$cp_why" ]; then
+      while IFS= read -r l; do echo "FAIL[$STEP] custodian program pin: $l"; done <<<"$cp_why"; FAILED=1
+    else
+      echo "OK[$STEP] custodian.sha256 in $cfg is the sha256 of $cust_now, the program the custodian unit starts"
+    fi
+  fi
+  # SO_PASSPIDFD / SCM_PIDFD: Linux 6.5. Without it every pinned call is refused.
+  kv=$(uname -r); kmaj=${kv%%.*}; kmin=${kv#*.}; kmin=${kmin%%[!0-9]*}
+  if [ "${kmaj:-0}" -lt 6 ] || { [ "$kmaj" = 6 ] && [ "${kmin:-0}" -lt 5 ]; }; then
+    blocked "kernel $kv has no SO_PASSPIDFD/SCM_PIDFD (Linux >= 6.5): the helper refuses every pinned custodian call (amendment 65)"
+  else
+    echo "OK[$STEP] kernel $kv has SO_PASSPIDFD/SCM_PIDFD (>= 6.5): the custodian program check can run"
+  fi
+fi
+
 STEP=preflight
 PF_VERDICT=NOT_RUN PF_REPORT=""
 if selected preflight; then
@@ -867,13 +1086,16 @@ if selected preflight; then
   pf=("$CLONE/scripts/trust_root_preflight.sh" --verifier "$VERIFIER_USER" --custodian "$CUSTODIAN_USER" --fabric "$FABRIC_USER")
   for a in "${AGENTS[@]}"; do pf+=(--agent "$a"); done
   PF_REPORT=$DEPLOY_LOG/trust-preflight-$(date -u +%Y%m%dT%H%M%SZ).json
+  # Amendment 65: protected mode requires --fabric-pid and FAILS unless that
+  # process is the Fabric uid with NoNewPrivs 0 (the fabric-unit step finds it).
+  pf+=(--fabric-pid "${FABRIC_PID:-<--fabric-pid>}")
   pf+=(--guest-cmd "${GUEST_CMD:-<--guest-cmd>}" --out "$PF_REPORT")
   if [ ${#AGENTS[@]} = 0 ] || [ -z "$GUEST_CMD" ]; then
     pending "the preflight needs --agent U (every uid an agent runs as: MiCode, Claude) and --guest-cmd CMD (runs scripts/trust_root_guest_probe.sh INSIDE a candidate guest and prints its JSON line)"
   fi
   if [ $APPLY = 0 ]; then
     echo "PLAN[$STEP] bash ${pf[*]}"
-  elif [ $TRUST_OK = 0 ] || [ ${#AGENTS[@]} = 0 ] || [ -z "$GUEST_CMD" ] || [ ${#BLOCKED[@]} -gt 0 ]; then
+  elif [ $TRUST_OK = 0 ] || [ ${#AGENTS[@]} = 0 ] || [ -z "$GUEST_CMD" ] || [ -z "$FABRIC_PID" ] || [ ${#BLOCKED[@]} -gt 0 ]; then
     pending "preflight not run: provision the BLOCKED items above, then re-run (the kit is idempotent)"
   else
     echo "DO[$STEP] bash ${pf[*]}"

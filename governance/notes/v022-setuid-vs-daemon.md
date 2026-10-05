@@ -1,7 +1,11 @@
 # Decision memo: setuid-root helper or root daemon for the protected launch
 
-Status: **for the operator's decision.** This memo answers amendment 45's open review item
-("review setuid-root helper vs daemon"). It changes no code and decides nothing.
+Status: **DECIDED, operator decision F (2026-10-04): keep the setuid-root helper (S) for C9,
+under conditions C1-C3 below.** The per-connection service (D2) remains the planned
+replacement. This memo answers amendment 45's open review item ("review setuid-root helper vs
+daemon"). It changes no code. Since it was written, amendments 65 and 66 have met C1 in code
+and added C2's checks, and amendment 65 decided C3. The sections below are updated where
+those facts changed. Elsewhere, line references are to the dev head it was written against.
 
 Sources: `governance/specs/v022-psv-protocol.md` amendments 45, 50 and 54;
 `crates/axon-fabric/src/privileged_launcher.rs`, `bin/axon-protected-launcher.rs`,
@@ -97,11 +101,26 @@ This is S's inherent cost, and the one place the designs really differ. `harden(
 the classic vectors: environment (`BASH_ENV`, `PATH` and `LD_*` reaching the root bash),
 inherited descriptors, umask, cwd, signals and core dumps. Two facts matter here:
 
-1. **Nothing tests `harden()`.** No test in `tests/privileged_launcher.rs` and no mutation
-   row asserts that an inherited environment variable, descriptor, ignored signal or lowered
-   limit is reset. `harden()` is mentioned only inside M596's equivalence argument (its
-   umask). M549 covers `become_root()`, not `harden()`. If someone deleted the environment
-   clear or the `close_range`, the suite would stay green.
+1. **`harden()` is now evidenced (amendments 65 and 66).** When this memo was written,
+   nothing tested it: deleting the environment clear or the `close_range` left the suite
+   green. Now `a_callers_process_state_never_reaches_the_root_helper_or_its_launcher` runs the
+   real setuid-root helper from a hostile Fabric-uid caller, with one row per reset:
+   - ignored signals (M1474) and the signal mask (M1475);
+   - umask (M1476) and cwd (M1477);
+   - inherited descriptors (M1478);
+   - `RLIMIT_CORE` (M1479), the lowered CPU/FSIZE/DATA/AS/NPROC limits (M1480) and NOFILE
+     (M1482);
+   - SIGPIPE ignored (M1481).
+
+   The environment clear was first exempted as dominated by `sealed_exec`'s explicit envp.
+   Amendment 66 found that false. A caller can make the helper panic after `harden()`, by
+   running `--probe` on a closed pipe. With the clear removed, the helper's own Rust runtime
+   then read `RUST_BACKTRACE` and printed the root process's stack, with every frame's
+   address, to the caller's stderr. The clear is the only guard on that route, and it is now
+   an active row (M1487, attack
+   `the_root_helpers_address_layout_never_reaches_its_caller`). `PR_SET_DUMPABLE 0` remains
+   a measured exemption, not counted as killed: the kernel already makes a set-id exec
+   non-dumpable at `fs.suid_dumpable` 0.
 2. **`harden()`'s list is an enumeration of hazards, not a primitive.** The
    fix-at-the-source rule this project applies elsewhere argues against relying on such a
    list. D2 removes the class rather than enumerating it.
@@ -117,10 +136,15 @@ Fabric's uid and outside the helper. D1 gives one unit for all launches.
 
 S has the fewest moving parts: one file 04750, one group. But it needs a non-`nosuid`
 filesystem, and Fabric's service manager must not set `NoNewPrivileges`. Most systemd
-hardening presets set it. With it set, the helper reports euid ≠ 0 and refuses every launch.
-That failure is safe, but it is easy to misdiagnose. The trust preflight runs its probe
-through `setpriv` without `--no-new-privs`, so it **does not** catch a Fabric service unit
-that sets `NoNewPrivileges=yes`. D1 and D2 need a socket unit and a service unit (D2: a
+hardening presets set it. With it set, the helper's euid is not 0 and it refuses every launch.
+That failure is safe. Since amendment 65 it is no longer easy to misdiagnose:
+- the helper's refusal names NoNewPrivileges (`PR_GET_NO_NEW_PRIVS`), or else nosuid or a user
+  namespace (`setuid_honoured`);
+- `--probe` reports `no_new_privs`;
+- the trust preflight takes `--fabric-pid` (required in protected mode) and FAILS unless the
+  running Fabric has `NoNewPrivs: 0`;
+- the deployment kit refuses a Fabric unit that sets `NoNewPrivileges`, or anything that
+  implies it on some systemd version. D1 and D2 need a socket unit and a service unit (D2: a
 template). That is the custodian's shape, which the operator deploys anyway.
 
 ### What the current code and tests already enforce (S)
@@ -138,7 +162,17 @@ template). That is the custodian's shape, which the operator deploys anyway.
 - Every authority program is executed same-byte from the descriptor that was hashed
   (M520-M530).
 - One verified observation authorizes one launch, spent at the root boundary through the
-  custodian (M620-M639).
+  custodian (M620-M639). Since amendment 65 the custodian is also the PROGRAM the operator
+  pinned. The helper config's `custodian.sha256` is required in production (M1485). On every
+  reply message the helper takes the kernel's `SCM_PIDFD` for the sender. It hashes the
+  sender's `/proc/<pid>/exe` through an open descriptor, re-checking the pidfd after the open,
+  and refuses an impostor (M1483) or an executable another uid can rewrite (M1484).
+  Amendment 66 (M1489) adds the verification as a whole to M602's guard set. A helper whose
+  euid is not 0 cannot open another uid's `/proc/<pid>/exe`, so it is refused there before
+  the spend rule (M628). This needs Linux 6.5 or later (`SO_PASSPIDFD`); an older kernel
+  refuses every pinned call.
+- `harden()`'s resets (M1474-M1482, M1487; see above). A setuid-root helper whose euid is not
+  0 refuses in every build, naming the cause (amendment 65).
 - The guest runs the policy the manifest names (amendment 54, M670-M672).
 - Special files are removed and set-id bits cleared at the hand-over (M540).
 - The trust preflight checks the installed helper: root-owned, setuid, group = Fabric's, no
@@ -149,10 +183,13 @@ template). That is the custodian's shape, which the operator deploys anyway.
 
 Not enforced, or not evidenced:
 
-- `harden()`'s resets have no test and no row.
-- The `NoNewPrivileges` interaction is not covered by the preflight.
+- ~~`harden()`'s resets have no test and no row.~~ Done (amendments 65 and 66).
+- ~~The `NoNewPrivileges` interaction is not covered by the preflight.~~ Done (`--fabric-pid`,
+  amendment 65).
 - The production helper build has never been exercised in a real guest boot. The boot test
-  uses a test-trust helper. Amendment 45 lists this as a deployment item.
+  uses a test-trust helper, and the `trust-probe` case runs the launcher's plain mode.
+  Amendment 45 lists this as a deployment item.
+- `PR_SET_DUMPABLE 0` has no row (measured exemption, amendment 65).
 
 ## A related item the same decision touches: the observer
 
@@ -166,7 +203,11 @@ the launch: a setuid observer helper (S) or an observer service reached over a s
 the observer at the same time. **No production observer ships in this repository**, so the
 deployment kit takes the observer program from the operator.
 
-## Recommendation
+**Decided (operator decision G):** the observer will be a separate, socket-activated observer
+service (D2-shaped, like the custodian). It is being built on another branch, and the kit's
+support for it lands with that branch.
+
+## Recommendation (adopted as operator decision F)
 
 **Keep the setuid-root helper (S) for the C9 protected deployment, under three conditions.
 Plan the per-connection socket-activated service (D2) as the replacement, landing with the
@@ -188,20 +229,24 @@ Reasons to keep S now:
 
 Conditions for keeping S:
 
-- **C1: evidence for `harden()`.** Before the protected deployment, add attack tests with
+- **C1: evidence for `harden()`. MET** (amendments 65 and 66; see above). As written: before the protected deployment, add attack tests with
   rows that run the real helper with a planted environment (`BASH_ENV`, `PATH`,
   `LD_PRELOAD`), an inherited descriptor, an ignored `SIGTERM`/`SIGCHLD`, a lowered
   `RLIMIT_NOFILE`/`RLIMIT_FSIZE` and a hostile cwd and umask. Each must show that the
   launcher it starts sees none of it. This is protected code and evidence work for the
   candidate's own process; the kit does not do it.
-- **C2: no `NoNewPrivileges` on Fabric.** The Fabric service (however MiCode runs it) must
-  not run under `NoNewPrivileges=yes`, `setpriv --no-new-privs`, or a container's
-  `no-new-privileges`. The preflight should gain a check that runs the probe the way the
-  Fabric service is actually started. That is a follow-up to `trust_root_preflight.sh`.
-- **C3: give the root side its own cgroup.** Decide whether a Fabric memory limit may kill
-  a root launch mid-flight. If not, raise Fabric's limits to cover the helper and launcher,
-  or move to D2, where the launch has its own cgroup. Whatever a killed launch leaves behind
-  is cleaned up by `fc_linux_profile.sh --reap ID`.
+- **C2: no `NoNewPrivileges` on Fabric. Checked; the operator's to keep.** The Fabric
+  service (however MiCode runs it) must not run under `NoNewPrivileges=yes`,
+  `setpriv --no-new-privs`, or a container's `no-new-privileges`. Two checks now exist. The
+  preflight's `--fabric-pid` reads the running process's `NoNewPrivs` (amendment 65). The
+  kit's `fabric-unit` step judges the unit's text, including the settings that imply it on
+  some systemd versions (runbook step 4a).
+- **C3: give the root side its own cgroup. DECIDED in amendment 65:** the helper, the
+  launcher and its host tools stay in Fabric's cgroup by design. The VMM is in the jailer's
+  own cgroup, with limits set per launch. A launch that Fabric's limits kill is a failure or
+  unknown attempt, never a verdict. The operator sizes Fabric's `MemoryMax=`/`TasksMax=`.
+  Moving the root side out is the D2 follow-up. Whatever a killed launch leaves behind is
+  cleaned up by `fc_linux_profile.sh --reap ID`.
 
 Why D2 rather than D1 as the target: D2 keeps S's best property (the root side exists only
 for one launch), removes S's inherited-state class wholesale, lets Fabric run
