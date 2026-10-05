@@ -6434,6 +6434,47 @@ MUTATIONS += [
      '        if name == "mod" {\n            return true;\n        }', '        if false && name == "mod" {\n            return true;\n        }',
      'axon-fabric', _AR, _SCAN),
 ]
+_HWTEST = 'hardware_isolation_is_never_dropped_to_the_host_interpreter'
+MUTATIONS += [
+    ('M1796', "ADMISSION (admit): the supervisor refuses a request whose required isolation the runtime does not provide (retired vs select, M1052)", _SUP,
+     '    if !required.satisfied_by(iso) {', '    if false && !required.satisfied_by(iso) {',
+     'axon-fabric', '--test submit', _HWTEST),
+    ('M1797', "ADMISSION (admit): a process-scoped runtime does not satisfy a hardware-isolation requirement (retired vs select, M1052)", _RT,
+     '            (IsolationRequirement::HardwareIsolated, Isolation::ProcessScoped) => false,',
+     '            (IsolationRequirement::HardwareIsolated, Isolation::ProcessScoped) => true,',
+     'axon-fabric', '--test submit', _HWTEST),
+]
+# The isolation requirement is checked twice on Fabric's route: backend::select
+# refuses a request for hardware isolation with os=none before anything is
+# admitted (M1052), and supervise_requiring refuses it again on the isolation
+# axis (M1796, M1797). Each layer dominates the other: removing select's arm
+# lets the request through to the supervisor, which refuses it; removing the
+# supervisor's guard changes nothing while select holds. M1052's recorded kill
+# was the refusal of the SUPERVISOR (the test read any non-Unsupported receipt
+# as "it ran"); assert_never_runs now judges the attack by effect, and M1052 is
+# REFUSED_ELSEWHERE with the supervisor guard present. All three are retired
+# against each other (four cells: v022_paired_disable.py --only=M1052,M1796,M1797).
+_ISO_ALL = ("submit.rs calls supervisor_admits once, after backend::select, with `profile` the "
+            "SELECTED profile; the requirement it derives is HardwareIsolated exactly for a request with "
+            "hardware_isolation and os != linux, MicroVm for hardware_isolation and os = linux. "
+            "backend::select returns no profile for the first (M1052) and refuses every os=linux request "
+            "without hardware isolation (M1051); for hardware_isolation+linux it returns only "
+            "LINUX_MICROVM_PROTECTED, whose isolation satisfies MicroVm. So the supervisor's isolation "
+            "guard and its predicate refuse only what select would already have refused, and select's "
+            "refusal is the only one that leaves a request unrun without reaching the supervisor; the "
+            "executed attack is the request running (a spawn or a launch record), refused by whichever "
+            "layer is present")
+EQUIV_RECORD["M1052"] = {
+    "property": "a request requiring hardware isolation (os=none) never runs on the host interpreter",
+    "subsumed_by": ["M1796"], "killer": "joint:M1052+M1796", "all_paths": _ISO_ALL}
+EQUIV_RECORD["M1796"] = {
+    "property": "a request requiring hardware isolation (os=none) never runs on the host interpreter",
+    "subsumed_by": ["M1052"], "killer": "joint:M1052+M1796", "all_paths": _ISO_ALL}
+EQUIV_RECORD["M1797"] = {
+    "property": "a request requiring hardware isolation (os=none) never runs on the host interpreter",
+    "subsumed_by": ["M1052"], "killer": "joint:M1052+M1797", "all_paths": _ISO_ALL}
+EQUIVALENT_DID |= {"M1052", "M1796", "M1797"}
+RETIRED |= {"M1052", "M1796", "M1797"}
 
 
 def in_scope(mid, scope):

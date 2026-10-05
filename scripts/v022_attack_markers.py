@@ -1722,3 +1722,7 @@ ATTACK_MARKERS.update({
     'M1794': r'ATTACK: a plain call write_file\( was not seen by the effects scan',
     'M1795': r'ATTACK: an indented `mod` import \(effects in a file the scan cannot read\) was declared effect-free',
 })
+ATTACK_MARKERS.update({
+    'M1796': r'ATTACK: a request requiring hardware isolation \(os=none\), and it ran',
+    'M1797': r'ATTACK: a request requiring hardware isolation \(os=none\), and it ran',
+})

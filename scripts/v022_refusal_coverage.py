@@ -342,8 +342,6 @@ NOT_YET_SCANNED = {
     "crates/axon-loop/src/intake.rs": 2,
     "crates/axon-loop/src/safety.rs": 1,
     "crates/axon-loop/src/tel.rs": 1,
-    "crates/axon-os/src/runtime.rs": 1,
-    "crates/axon-os/src/supervisor.rs": 1,
     "crates/axon-psv/src/runner.rs": 5,
 }
 SITE = re.compile(r"return Err\(|\bErr\(format!|\brefuse\(|\bErr\(bad\(|TEST_TRUST_BUILD")
