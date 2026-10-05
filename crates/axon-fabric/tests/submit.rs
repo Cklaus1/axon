@@ -291,7 +291,16 @@ fn hardware_isolation_linux_is_refused_without_a_qualified_profile() {
     let mut r = request(&env, "op-hw", "t_ok");
     r["required"]["hardware_isolation"] = json!(true);
     let s = submit(&r.to_string(), &env.cfg(0)).unwrap();
-    assert_eq!(s.receipt.status, ReceiptStatus::Unsupported);
+    // The receipt's contract: UNSUPPORTED (selection refused, nothing reserved
+    // or launched), never another status. Selection's guard is dominated for
+    // the question "did it run" by the supervisor's isolation check (M1796,
+    // M1797), so this contract is what selection's own guard (M1052) answers.
+    if s.receipt.status != ReceiptStatus::Unsupported {
+        panic!(
+            "ATTACK: a request for hardware isolation (os=none) was receipted {:?}, not Unsupported: selection did not refuse it ({:?})",
+            s.receipt.status, s.reason
+        );
+    }
     assert!(s.reason.unwrap().contains("axon-metal-fc-nojailer"));
     assert_eq!(spawn_count(&env.spawns), 0);
 }

@@ -5341,7 +5341,7 @@ MUTATIONS += [
     ('M1052', "select (rows4b): hardware isolation is never dropped to the host interpreter", _FB,
      '    if r.hardware_isolation {\n        let p = FIRECRACKER_AXON_KERNEL;',
      '    if false && r.hardware_isolation {\n        let p = FIRECRACKER_AXON_KERNEL;',
-     'axon-fabric', _TS, 'hardware_isolation_is_never_dropped_to_the_host_interpreter'),
+     'axon-fabric', _TS, 'hardware_isolation_linux_is_refused_without_a_qualified_profile'),
     ('M1053', "select (rows4b): a path-scoped grant never runs under the host's coarse ceiling", _FB,
      '    if needs.path_scoped_grant {\n        // The host interpreter',
      '    if false && needs.path_scoped_grant {\n        // The host interpreter',
@@ -6447,13 +6447,16 @@ MUTATIONS += [
 # The isolation requirement is checked twice on Fabric's route: backend::select
 # refuses a request for hardware isolation with os=none before anything is
 # admitted (M1052), and supervise_requiring refuses it again on the isolation
-# axis (M1796, M1797). Each layer dominates the other: removing select's arm
-# lets the request through to the supervisor, which refuses it; removing the
-# supervisor's guard changes nothing while select holds. M1052's recorded kill
-# was the refusal of the SUPERVISOR (the test read any non-Unsupported receipt
-# as "it ran"); assert_never_runs now judges the attack by effect, and M1052 is
-# REFUSED_ELSEWHERE with the supervisor guard present. All three are retired
-# against each other (four cells: v022_paired_disable.py --only=M1052,M1796,M1797).
+# axis (M1796, M1797). For the question "did it run" each dominates the other:
+# removing select's arm lets the request through to the supervisor, which refuses
+# it; removing the supervisor's guard changes nothing while select holds. M1052's
+# recorded kill was the SUPERVISOR's refusal (assert_never_runs read any receipt
+# that was not Unsupported as "it ran"). assert_never_runs now judges the attack
+# by effect (a spawn or a launch record). M1052 stays ACTIVE on what only
+# selection answers, the receipt contract (Unsupported, never another status:
+# hardware_isolation_linux_is_refused_without_a_qualified_profile); the two
+# supervisor rows are retired against it (four cells:
+# v022_paired_disable.py --only=M1796,M1797).
 _ISO_ALL = ("submit.rs calls supervisor_admits once, after backend::select, with `profile` the "
             "SELECTED profile; the requirement it derives is HardwareIsolated exactly for a request with "
             "hardware_isolation and os != linux, MicroVm for hardware_isolation and os = linux. "
@@ -6464,17 +6467,14 @@ _ISO_ALL = ("submit.rs calls supervisor_admits once, after backend::select, with
             "refusal is the only one that leaves a request unrun without reaching the supervisor; the "
             "executed attack is the request running (a spawn or a launch record), refused by whichever "
             "layer is present")
-EQUIV_RECORD["M1052"] = {
-    "property": "a request requiring hardware isolation (os=none) never runs on the host interpreter",
-    "subsumed_by": ["M1796"], "killer": "joint:M1052+M1796", "all_paths": _ISO_ALL}
 EQUIV_RECORD["M1796"] = {
     "property": "a request requiring hardware isolation (os=none) never runs on the host interpreter",
     "subsumed_by": ["M1052"], "killer": "joint:M1052+M1796", "all_paths": _ISO_ALL}
 EQUIV_RECORD["M1797"] = {
     "property": "a request requiring hardware isolation (os=none) never runs on the host interpreter",
     "subsumed_by": ["M1052"], "killer": "joint:M1052+M1797", "all_paths": _ISO_ALL}
-EQUIVALENT_DID |= {"M1052", "M1796", "M1797"}
-RETIRED |= {"M1052", "M1796", "M1797"}
+EQUIVALENT_DID |= {"M1796", "M1797"}
+RETIRED |= {"M1796", "M1797"}
 _LA = 'crates/axon-loop/src/admission.rs'
 MUTATIONS += [
     ('M1798', "ADMISSION (admit): a candidate with an unsafe attempt is vetoed, never accepted", _LA,

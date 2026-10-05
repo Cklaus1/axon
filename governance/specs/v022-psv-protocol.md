@@ -3903,8 +3903,11 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       guard, M1797 predicate arm), and each dominates the other: M1052's recorded kill was the
       SUPERVISOR's refusal (`assert_never_runs` read any receipt that was not `Unsupported` as "it ran",
       so a `Denied` receipt of a request that never spawned counted as the attack getting through). The
-      helper now judges by effect; M1052 became REFUSED_ELSEWHERE; M1052/M1796/M1797 are retired against
-      each other (`GUARD_SETS`, `EQUIV_RECORD`, four cells by `v022_paired_disable.py`).
+      helper now judges by effect, so M1052 as then written became REFUSED_ELSEWHERE. It stays ACTIVE on what only
+      selection answers, the receipt contract (`Unsupported`, never another status;
+      `hardware_isolation_linux_is_refused_without_a_qualified_profile`, which also keeps the full suite red with
+      M1052 off, so a retirement of M1052 would be false); M1796 and M1797 are retired against it (`GUARD_SETS`,
+      `EQUIV_RECORD`, four cells by `v022_paired_disable.py`).
     - **After (the verdicts the loop and Fabric produce).** EVL (M1783 a verifier-reported failure, M1784
       an undelivered trial, each counted as a pass), admission (M1798-M1800 the Vetoed/Reject/Inconclusive
       constructions, M1801-M1803 `Verdict::from`), intake's receipt-to-verification map (M1804, M1805), `tel`'s
@@ -3915,8 +3918,8 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       (M1821-M1823), submit's verdict over unjudged bytes (M1826). Two rows written for submit's
       `Failed`/`Passed` relabel (M1824, M1825) were REFUSED_ELSEWHERE by the completion check after them
       (M63, M64) and are not kept: their lines are exempt as dominated, with the measurement in the reason.
-    - **Dispositions.** 55 rows (M1770-M1826 less M1824/M1825; M1827-M1829 unused), 3 retired against
-      each other (M1052, M1796, M1797), 1 LIBRARY_PRIMITIVE (M1809), and 123 exemptions each stating a checkable fact
+    - **Dispositions.** 55 rows (M1770-M1826 less M1824/M1825; M1827-M1829 unused), 2 retired against
+      M1052 (M1796, M1797), 1 LIBRARY_PRIMITIVE (M1809), and 123 exemptions each stating a checkable fact
       (`governance/notes/v022-dependency-sites.md`, "Amendment 76 addendum"; no bulk exemption).
       NOT_YET_SCANNED is empty and `--freeze` holds.
     - **Matrix.** A123-A126 (the matrix is one contiguous run A1-A126, `psv_matrix_check.py` FLOOR 126).

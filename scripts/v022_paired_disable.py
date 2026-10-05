@@ -1038,7 +1038,6 @@ GUARD_SETS.update({
 # requirement is checked by select (M1052) and again by the supervisor (M1796,
 # M1797); each dominates the other.
 GUARD_SETS.update({
-    "M1052": {"siblings": ["M1796"], "kind": "pair"},
     "M1796": {"siblings": ["M1052"], "kind": "pair"},
     "M1797": {"siblings": ["M1052"], "kind": "pair"},
 })

@@ -1167,7 +1167,7 @@ ATTACK_MARKERS.update({
     'M1049': r'ATTACK: a deny-all grant on evidence that does not show x1 PASS',
     'M1050': r'ATTACK: a path-scoped grant on a profile that does not preserve path scopes',
     'M1051': r'ATTACK: a request requiring os=linux, and it ran',
-    'M1052': r'ATTACK: a request requiring hardware isolation \(os=none\), and it ran',
+    'M1052': r'ATTACK: a request for hardware isolation \(os=none\) was receipted',
     'M1053': r'ATTACK: a path-scoped grant on the host interpreter, and it ran',
     'M1054': r'ATTACK: an interpreter_run on the host backend, and it ran',
     'M1055': r'ATTACK: a guest policy longer than the guest cmdline budget',
