@@ -1865,7 +1865,7 @@ mod tests {
         }
     }
 
-    /// A126 (amendment 73): every resource limit the kernel lists in
+    /// A116 (amendment 73): every resource limit the kernel lists in
     /// `/proc/self/limits` is one `harden()` resets. A kernel that adds a
     /// seventeenth row fails here, until someone decides what the helper's
     /// value is.

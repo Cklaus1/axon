@@ -5740,7 +5740,7 @@ MUTATIONS += [
      'axon-fabric', '--test privileged_launcher', 'a_custodian_program_the_operator_never_pinned_spends_nothing'),
 ]
 
-# ── C9 round 4c, workstream HARDEN (M1600-M1629; amendment 73; matrix A120-A127):
+# ── C9 round 4c, workstream HARDEN (M1600-M1629; amendment 73; matrix A110-A117):
 # harden() resets every process attribute a set-id exec preserves (credentials(7),
 # execve(2), prctl(2)). Each row removes ONE reset and is killed by its own attack
 # (tests/privileged_launcher.rs: the state armed by a non-root caller, a witness

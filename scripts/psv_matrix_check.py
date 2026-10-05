@@ -30,20 +30,12 @@ def main():
     # Require A1..A_FLOOR at minimum (a known count, so a truncation below it is
     # caught), and every row up to the highest present (so a gap above the floor
     # is caught too). Bump FLOOR when a row is added.
-    FLOOR = 134
-    # Ranges assigned to workstreams but holding no row (C9 round 4c register:
-    # A94 observer, A96-A109 PSV-1, A120-A127 harden, A130-A139 gate; the rest
-    # were never written). A range listed here may be empty; it may not hide a
-    # row that exists (a row present is always checked) and a gap OUTSIDE these
-    # ranges is still a missing row.
-    RESERVED = [(110, 119), (128, 129), (135, 139)]
+    FLOOR = 122
     present = [int(k[1:]) for k in rows]
     hi = max([FLOOR] + present)
     for n in range(1, hi + 1):
         k = f"A{n}"
         if k not in rows:
-            if any(a <= n <= b for a, b in RESERVED):
-                continue
             bad.append(f"{k}: row missing")
             continue
         cells = [c.strip() for c in rows[k].strip().strip("|").split("|")]

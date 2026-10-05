@@ -3727,7 +3727,7 @@ fn a_fabric_under_no_new_privileges_is_told_why_the_helper_launches_nothing() {
 }
 
 // ── C9 round 4c, workstream HARDEN (amendment 73; rows M1600-M1622, matrix
-// A120-A127). A reviewer's reproductions: an interval timer the caller armed
+// A110-A117). A reviewer's reproductions: an interval timer the caller armed
 // before exec killed the setuid helper with SIGALRM, and a ^C written to a
 // pty the caller owns killed it with SIGINT. `harden()` is now derived from
 // the full list of what a set-id exec preserves. Each test below arms the
