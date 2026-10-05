@@ -160,6 +160,19 @@ Left unchanged, with the reason:
   design decision on what latency the product promises, not by a test edit.
 * `journal.rs` child `sleep(120 s)`: the child waits to be killed; never paid.
 
+## 3b. The digest cost (stage ii-b): `sha2` optimized in the dev profile
+
+`Cargo.toml`: `[profile.dev.package.sha2] opt-level = 3`. Only that
+dependency's codegen changes: the same code computes the same digest of the
+same bytes (checked: the interpreter's sha256 is identical at both levels), no
+workspace crate is optimized, so every guard a test or a mutation exercises is
+compiled exactly as before, and the release profile (the guest image, the
+operator's binaries) is untouched. Nothing in the tree inspects cargo profiles
+(the guest-build checks read `.cargo/config*`, not `Cargo.toml` profiles).
+The production builds the tests make themselves (privileged_launcher's
+production helper, readiness's production verifiers) use the same workspace
+profile and get the same speed-up.
+
 ## 4. Next
 
-The digest cost (stage ii-b) and process-level parallelism (stage iii).
+Process-level parallelism (stage iii).

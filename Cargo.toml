@@ -58,3 +58,13 @@ opt-level = "s"
 opt-level = 0
 debug = 1
 codegen-units = 16
+
+# SHA-256 at opt-level 0 hashes ~80 MB/s: every digest a debug Fabric, its
+# helper or a test takes of a debug binary (the interpreter is ~80 MB) cost
+# ~1 s, and the axon-fabric suite takes hundreds of them
+# (governance/notes/v022-fabric-suite-time.md). Optimized, the same code
+# hashes the same bytes to the same digest ~30x faster. Only the dependency's
+# codegen changes; no workspace crate is optimized, so what a test or a
+# mutation exercises is compiled exactly as before.
+[profile.dev.package.sha2]
+opt-level = 3
