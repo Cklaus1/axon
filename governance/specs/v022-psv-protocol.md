@@ -2959,3 +2959,108 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       M1490-M1499 remain).
     - **Matrix.** None (an existing A of amendment 65, harden(); the harness's EQUIVALENCE (6)).
     - **Operator deployment.** None.
+
+## Amendment 71 (part 2): the refusal-site gate's CRATE set is a rule, evo.rs is in scope, and the gate sees the refusal forms the protected path uses (C9 round 4c, r4c-fixes)
+
+71. (part 2) **Decision code on the protected path is in scope by rule, not by a directory list.**
+    - **Before.** `scripts/v022_refusal_coverage.py` scanned four hand-named `SCOPE_DIRS`
+      (axon-fabric, axon-loop, axon-loop-contracts, axon-psv), conform.rs, and the interpreter's
+      seal functions in two named files. The round-4c SENTINEL review found protected decision
+      code outside it: axon-guest-init (PID 1 of the protected guest, 18 sites, 0 rows),
+      axon-workspace-recipe (the one walker and path rule host and guest digest trees with,
+      11 sites), the `axon test` entry (`cmd_test`, PSV-3) and the resolver's sealed-module
+      refusal (E0004). evo.rs was OUT_OF_SCOPE with a reason the code contradicts: verified,
+      `discovery_evidence_refs` is read nowhere outside evo.rs and its type (policy.rs only
+      bounds its length; axon-reflex/shortlist.rs only builds one), `plan::check_candidate`
+      re-judges the shortlist, parent and scope, never the evidence roles, and admission
+      (admission.rs, the `want = Confirmation` loop) counts Confirmation trials for the same
+      candidate. So evo::propose's role refusal is the ONLY B281 holdout guard on that path,
+      and a proposal it should have refused WIDENS what counts. The SITE pattern also missed
+      `Diagnostic::error(` (resolver), `process::exit(<non-zero>)` (guest PID 1, `axon test`,
+      every CLI) and calls of file-local refusal constructors. (The reviewer's note that SITE
+      misses conform.rs's `Err(mismatch(..))` arms is true of the SITE regex alone; `is_site`'s
+      tail-`Err(` path does see them — measured, 23 conform.rs sites, all rowed or exempt — but
+      it did not see the `kind_ok(..)` calls of conform.rs's local refusal closure; it does now.)
+    - **After (the rule).** PROTECTED CRATES = `ROOT_CRATES` (axon-fabric, axon-loop,
+      axon-loop-contracts, axon-psv) + every package `scripts/build-guest-image.sh` builds
+      (`-p NAME`: axon-guest-init, axon-psv, axon-core, axon-guest-kernel) + the transitive
+      closure of their NORMAL workspace dependencies, read from each Cargo.toml
+      (`[dependencies]` and `[target.*.dependencies]` entries with a `path`; an OPTIONAL one only
+      when a feature the build enables turns it on — default features for the host crates;
+      dev- and build-dependencies are not linked into a shipped binary). Every non-test .rs under
+      a protected crate's src/ is in scope, except (i) a dependency's own BINARY sources
+      (src/main.rs, src/bin/**, `[[bin]]` paths, and modules only a binary root declares —
+      axon-vm's chain/quorum): a dependency is linked as its library; (ii) modules lib.rs gates
+      behind a feature the build leaves off (axon-cortex `ai`). The LANGUAGE crate (axon-core)
+      and what it alone links (axon-certcheck, axon-domain, axon-gfx-mock, axon-surface) are
+      scoped by function region: `SEAL_FN` = `(?<!un)seal|conform|cast` over every source
+      compiled into the guest's `--no-default-features` build (`unseal` is the TEE builtin, not
+      Protected Check Isolation), plus `CORE_ENTRY_FN` in main.rs (`cmd_test`,
+      `read_completion_key`, `completion_token`, `failure_token`), plus the existing REGIONS and
+      conform.rs. A new dependency of a protected crate, or a new package the guest builds, is in
+      scope the day it appears. Measured at this commit: 12 whole crates (axon-attest,
+      axon-audit, axon-cortex, axon-fabric, axon-guest-init, axon-guest-kernel, axon-loop,
+      axon-loop-contracts, axon-os, axon-psv, axon-vm, axon-workspace-recipe), 5 language crates.
+    - **After (the forms).** A site is also a `Diagnostic::error(` (DIAG), a
+      `process::exit(` whose argument is not the literal `0` (EXIT), a call of a file-local
+      refusal closure (`let NAME = |..| .. Err(..)` on one line), and a call of a file-local
+      DIVERGING refusal constructor (`fn NAME(..) -> !` or `let NAME = |..| -> !` whose first 8
+      lines exit with a non-zero literal: axon-custodian's `die`, the key reader's `fail`). The
+      definitions themselves are not sites.
+    - **Rows (PSV, M1630-M1651; each killed by its OWN attack on the production route).**
+      evo::propose (the `evo propose` verb's function), `crates/axon-loop/tests/evo_b281.rs`:
+      M1630 a Confirmation/Reporting-role episode never reaches the proposer; M1631 an episode
+      of another scope never feeds it; M1632 no proposal from no eligible evidence. The REAL
+      gate over a scratch tree (`refusal_coverage_gate.rs`, which now extracts HEAD's
+      `crates/*/Cargo.toml`, `crates/*/src/**` and the guest build script with `git archive`):
+      M1633 a crate a protected crate links is scanned; M1634 a package the guest builds is
+      scanned; M1635 a non-zero exit and a compile refusal are sites; M1636 a call of a local
+      refusal constructor is a site (each attack asserts the gate NAMES the planted site, so a
+      mutant that stops scanning a form — and thereby orphans that form's exemptions — cannot
+      pass for naming it; each control runs after its attack). The REAL axon-guest-init binary
+      as root in a private mount namespace whose /proc/cmdline the test wrote
+      (`crates/axon-guest-init/tests/policy_refusals.rs`): M1637 a refused policy starts no
+      workload (the Refuse arm acts), M1638 possibly-truncated cmdline, M1639 repeated policy
+      word, M1640 constrains nothing, M1641 wrong schema, M1642 duplicate key (no last-wins),
+      M1643 a seccomp filter that failed to apply is never followed by the workload, M1644 a
+      program that is not whole instructions is never installed in part (nine bytes: an ALLOW
+      instruction and a stray byte), M1645 a filter the kernel rejects is a refusal, not a
+      skipped filter. The production workspace store (`crates/axon-fabric/tests/recipe_refusals.rs`,
+      `WorkspaceStore::import_dir` / `materialize`): M1646 a stored version naming `../escape`
+      never materializes (a version well-formed in every other way, planted in the store),
+      M1647 a name with a control character (the manifest is line-based), M1648 an absolute
+      symlink target, M1649 a non-UTF-8 name refuses the tree and is never silently dropped,
+      M1650 likewise a special file, M1651 an import root that is a symlink is never followed.
+    - **Exemptions (checkable facts, per site).** evo.rs: SELECTS NOTHING (duplicate eligible id;
+      the caller's eligible set vs the registered list — the candidate is a remove/swap of the
+      incumbent, which require_shortlist checks against the registered list), NAMED CHECK
+      (>256 evidence: candidate.validate's check_array bound), NOTHING TO ADMIT (mutation space
+      exhausted). Guest PID 1: OS ERROR (fork, execvp, PR_SET_NO_NEW_PRIVS), NOTHING TO ADMIT
+      (empty value: zero bytes are refused as BadJson; the cmdline Err arm; MMDS returned
+      nothing / failed), NAMED ROW (empty BPF: the kernel refuses len 0, M1645), SELECTS NOTHING
+      (a non-object payload is still held to M1640/M1641), UNREACHABLE (a NUL in an argv
+      string), RELAY (the supervisor's exit code is its child's), NOT ON THE PROTECTED ROUTE
+      (MMDS: the protected VM has `"network-interfaces": []` and an empty network namespace).
+      Recipe: NAMED ROW (an absolute path's first component is empty: the Traversal arm, M1646),
+      RESOURCE BOUND (depth, byte and entry quotas). axon-core main.rs: NOT A SITE (`fail`'s
+      body), NOTHING TO ADMIT (no key read; sources that do not parse), UNREACHABLE on the
+      protected route (a short key: the runner writes a 32-byte HMAC as 64 hex), USAGE. Resolver:
+      NAMED ROW (check_sealed's only emit; M79 removes the call). axon-custodian: NOT A SITE
+      (`die`'s body), OS ERROR (bind), NOTHING TO ADMIT (load_config refused; no listener),
+      DEVELOPMENT ROUTE (`--dev`). axon-fabric.rs: NOT A SITE (`refuse`'s body), NON-PRODUCTION
+      (psv_host_guest is `#[cfg(feature = "test-trust-root")]`). Launcher: USAGE, RELAY (the
+      report writer). axon-provenance: DEVELOPMENT ROUTE (`--descends` is the build's early
+      check; the protected lineage is the snapshot's descends_from_protected, M505).
+    - **NOT YET SCANNED (honest count; a freeze REFUSES while any is listed).** 118 sites in 18
+      files: axon-cortex runner.rs 30 (incl. parse_axon_test_json, the verdict parser Fabric
+      reads protected results with), lib.rs 7, generate.rs 6; axon-attest lib.rs 18; axon-audit
+      lib.rs 10 (the interpreter's effect ledger); axon-os manifest.rs 9, coalition.rs 5,
+      record.rs 5, approval.rs 4, ledger.rs 3, runtime.rs 3, profile.rs 1, replay.rs 1; axon-vm
+      admit.rs 6, firecracker.rs 5; axon-core main.rs 3 (cmd_test's merge-error and type-error
+      aborts and its pass/fail exit code, which psv.rs cross-checks against the verdict);
+      axon-psv-runner 1 (`exit(3)` after start() refuses); axon-custodian 1 (the usage `die`,
+      whose only possible anchor also lies in the guard block of a site M631 covers). With 25
+      ids (M1630-M1654) the rows above went to the guards that carry PSV properties; these were
+      not exempted in bulk. `python3 scripts/v022_refusal_coverage.py` holds (rc 0) and
+      `--freeze` FAILS (rc 1) on exactly these 18 files.
+    - **Matrix.** None. **Operator deployment.** None.

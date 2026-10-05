@@ -58,24 +58,252 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # shown on every run; under --freeze (and in v022_freeze_manifest.py, which
 # calls check(freeze=True)) a non-empty NOT_YET_SCANNED fails: no freeze binds
 # evidence over a decision file nobody scanned.
-SCOPE_DIRS = (
-    "crates/axon-fabric/src",
-    "crates/axon-loop/src",
-    "crates/axon-loop-contracts/src",
-    "crates/axon-psv/src",
-)
+# Amendment 71 (C9 round 4c, r4c-fixes part 2): the CRATE set is a rule too.
+# Round 4c (SENTINEL) found decision code on the protected path outside the
+# four hand-named SCOPE_DIRS: the guest's PID-1 supervisor (axon-guest-init),
+# the workspace recipe every snapshot is judged by (axon-workspace-recipe),
+# the `axon test` entry that issues the completion evidence (PSV-3) and the
+# resolver's sealed-module refusal (E0004). A directory list stood in for "the
+# protected path" exactly as the file list had (class a). The rule:
+#
+#   PROTECTED CRATES = ROOT_CRATES (the host side: Fabric, the PSV crate, the
+#   loop and its contracts) + every package GUEST_BUILD builds (`-p NAME`:
+#   what runs inside the protected guest) + the transitive closure of their
+#   NORMAL workspace dependencies ([dependencies] and
+#   [target.*.dependencies] entries with a `path`, read from each crate's
+#   Cargo.toml; dev- and build-dependencies are not linked into the shipped
+#   binaries). Every non-test .rs under a protected crate's src/ is in scope,
+#   EXCEPT LANGUAGE_CRATE (the interpreter: the language, not a decision),
+#   whose scope is by function region (below).
+#
+# A new dependency of a protected crate, or a new package the guest image
+# builds, is in scope the day it appears.
+ROOT_CRATES = ("axon-fabric", "axon-loop", "axon-loop-contracts", "axon-psv")
+GUEST_BUILD = "scripts/build-guest-image.sh"
+LANGUAGE_CRATE = "axon-core"
 SCOPE_FILES = (
     "crates/axon-core/src/interp/conform.rs",
 )
 # The interpreter's seal edges: the functions that decide what a sealed
 # (candidate) frame may reach. A site outside such a function in these files
 # is not in scope (the rest of the interpreter is the language, not a
-# protected decision).
-SEAL_FN = r"seal|conform|cast"
-SCOPE_FN_REGIONS = {
-    "crates/axon-core/src/interp.rs": SEAL_FN,
-    "crates/axon-core/src/interp/eval.rs": SEAL_FN,
-}
+# protected decision). Amendment 71: selected in EVERY LANGUAGE_CRATE source
+# compiled into the guest's `--no-default-features` build (a module lib.rs
+# gates behind a feature is not: codegen, smt, lsp), so the resolver's
+# sealed-module refusal (check_sealed) is in scope by the same rule as the
+# interpreter's. `unseal` is the TEE enclave builtin (checker.rs), not
+# Protected Check Isolation.
+SEAL_FN = r"(?<!un)seal|conform|cast"
+# Amendment 71: the `axon test` verb inside the guest is the PSV-3 entry: it
+# reads the completion key, makes the process non-dumpable, drops the Exec
+# effect, excludes a sealed module's tests and issues the completion and
+# failure tokens. Its function and the main.rs functions it uses for that
+# evidence are in scope.
+CORE_ENTRY = "crates/axon-core/src/main.rs"
+CORE_ENTRY_FN = r"^(cmd_test|read_completion_key|completion_token|failure_token)$"
+
+
+def _crate_dirs():
+    """package name -> crate directory (relative), for every crates/*/Cargo.toml."""
+    import tomllib
+    out = {}
+    base = os.path.join(ROOT, "crates")
+    for d in sorted(os.listdir(base)) if os.path.isdir(base) else []:
+        t = os.path.join(base, d, "Cargo.toml")
+        if os.path.isfile(t):
+            with open(t, "rb") as f:
+                name = tomllib.load(f).get("package", {}).get("name")
+            if name:
+                out[name] = f"crates/{d}"
+    return out
+
+
+def _normal_path_deps(crate_dir, dirs, default_features=True):
+    """The workspace crates `crate_dir` links: [dependencies] and
+    [target.*.dependencies] entries that are a `path` (dev/build excluded).
+    An OPTIONAL one counts only when a feature the build enables turns it on:
+    the crate's `default` features (expanded through [features]) when
+    `default_features`, none otherwise (a `--no-default-features` build)."""
+    import tomllib
+    with open(os.path.join(ROOT, crate_dir, "Cargo.toml"), "rb") as f:
+        t = tomllib.load(f)
+    feats = t.get("features", {})
+    on, todo = set(), list(feats.get("default", [])) if default_features else []
+    while todo:
+        x = todo.pop()
+        if x in on:
+            continue
+        on.add(x)
+        todo.extend(feats.get(x, []))
+    enabled = {x.removeprefix("dep:").split("/")[0].rstrip("?") for x in on}
+    tables = [t.get("dependencies", {})]
+    tables += [v.get("dependencies", {}) for v in t.get("target", {}).values()]
+    out = set()
+    for tab in tables:
+        for key, spec in tab.items():
+            if not (isinstance(spec, dict) and "path" in spec):
+                continue
+            if spec.get("optional") and key not in enabled:
+                continue
+            out.add(spec.get("package", key))
+    return out
+
+
+def guest_packages():
+    """Every package GUEST_BUILD builds (`-p NAME`)."""
+    p = os.path.join(ROOT, GUEST_BUILD)
+    if not os.path.isfile(p):
+        return set()
+    return set(re.findall(r"\s-p\s+([A-Za-z0-9_-]+)", open(p).read()))
+
+
+def _closure(start, dirs, stop, default_features, bad):
+    seen = {}
+    todo = list(start)
+    while todo:
+        n = todo.pop()
+        if n in seen or n in stop:
+            continue
+        if n not in dirs:
+            if bad is not None:
+                bad.append(f"{n}: a protected crate (by the rule) with no crates/*/Cargo.toml")
+            continue
+        seen[n] = dirs[n]
+        todo.extend(_normal_path_deps(dirs[n], dirs, default_features))
+    return seen
+
+
+def protected_crates(bad=None):
+    """The rule's WHOLE-CRATE set (name -> dir): ROOT_CRATES and the guest's
+    packages but LANGUAGE_CRATE, closed over their normal dependencies (default
+    features), never through LANGUAGE_CRATE. A crate the rule names but the
+    tree does not have is BAD (it would scan nothing)."""
+    dirs = _crate_dirs()
+    start = list(ROOT_CRATES) + sorted(guest_packages() - {LANGUAGE_CRATE})
+    return dict(sorted(_closure(start, dirs, {LANGUAGE_CRATE}, True, bad).items()))
+
+
+def language_crates(bad=None):
+    """LANGUAGE_CRATE and what it links in the guest's `--no-default-features`
+    build that is not already a whole protected crate: the language and its
+    libraries, scoped by function region."""
+    dirs = _crate_dirs()
+    whole = protected_crates()
+    if LANGUAGE_CRATE not in guest_packages():
+        return {}
+    lang = _closure([LANGUAGE_CRATE], dirs, set(whole), False, bad)
+    return dict(sorted(lang.items()))
+
+
+def _enabled_features(crate_dir, default_features):
+    """The features a build of `crate_dir` turns on: its `default` set expanded
+    through [features] when `default_features`, none otherwise."""
+    import tomllib
+    with open(os.path.join(ROOT, crate_dir, "Cargo.toml"), "rb") as f:
+        feats = tomllib.load(f).get("features", {})
+    on, todo = set(), list(feats.get("default", [])) if default_features else []
+    while todo:
+        x = todo.pop()
+        if x not in on:
+            on.add(x)
+            todo.extend(feats.get(x, []))
+    return on
+
+
+def _feature_gated_modules(crate_dir, default_features=False):
+    """Modules lib.rs declares under `#[cfg(feature = F)]` for an F the build
+    does not enable: not compiled, so not scanned."""
+    lib = os.path.join(ROOT, crate_dir, "src/lib.rs")
+    if not os.path.isfile(lib):
+        return set()
+    on = _enabled_features(crate_dir, default_features)
+    found = re.findall(r'#\[cfg\(feature\s*=\s*"([^"]+)"\)\]\s*\n\s*(?:pub(?:\([a-z]+\))?\s+)?mod\s+(\w+)\s*;',
+                       open(lib).read())
+    return {m for f, m in found if f not in on}
+
+
+def _feature_gated_files(crate_dir, default_features):
+    out = set()
+    for m in _feature_gated_modules(crate_dir, default_features):
+        out.add(f"{crate_dir}/src/{m}.rs")
+        out.update(_rs_under(f"{crate_dir}/src/{m}"))
+    return out
+
+
+def _rs_under(d):
+    out = []
+    for dirpath, _, names in os.walk(os.path.join(ROOT, d)):
+        for n in names:
+            if n.endswith(".rs"):
+                out.append(os.path.relpath(os.path.join(dirpath, n), ROOT))
+    return out
+
+
+def scope_dirs():
+    """src/ of every whole protected crate."""
+    return tuple(f"{d}/src" for d in protected_crates().values())
+
+
+def _bin_sources(crate_dir):
+    """A crate's binary targets: src/main.rs, src/bin/**, and every [[bin]]
+    path (relative to ROOT)."""
+    import tomllib
+    with open(os.path.join(ROOT, crate_dir, "Cargo.toml"), "rb") as f:
+        t = tomllib.load(f)
+    out = {f"{crate_dir}/src/main.rs"} | set(_rs_under(f"{crate_dir}/src/bin"))
+    for b in t.get("bin", []):
+        if "path" in b:
+            out.add(os.path.normpath(f"{crate_dir}/{b['path']}"))
+    lib = t.get("lib", {}).get("path")
+    if lib:
+        out.discard(os.path.normpath(f"{crate_dir}/{lib}"))
+    # A module a binary root declares (`mod X;` in src/main.rs) that the
+    # library does not is the binary's own (axon-vm's chain, quorum).
+    decl = re.compile(r"^\s*(?:pub(?:\([a-z]+\))?\s+)?mod\s+(\w+)\s*;", re.M)
+    librs = os.path.join(ROOT, crate_dir, "src/lib.rs")
+    in_lib = set(decl.findall(open(librs).read())) if os.path.isfile(librs) else set()
+    mainrs = os.path.join(ROOT, crate_dir, "src/main.rs")
+    if os.path.isfile(mainrs):
+        for m in set(decl.findall(open(mainrs).read())) - in_lib:
+            out.add(f"{crate_dir}/src/{m}.rs")
+            out.update(_rs_under(f"{crate_dir}/src/{m}"))
+    return out
+
+
+def linked_only_as_library():
+    """Binary sources of the crates in the rule only as a DEPENDENCY (not a
+    root, not a package the guest builds): a dependency is linked as its
+    library; its own binaries are not part of any protected binary."""
+    shipped = set(ROOT_CRATES) | guest_packages()
+    out = set()
+    for n, d in protected_crates().items():
+        if n not in shipped:
+            out |= _bin_sources(d)
+        # A module behind a feature the (default-feature) build leaves off
+        # is not compiled into any protected binary.
+        out |= _feature_gated_files(d, True)
+    return out
+
+
+def language_regions():
+    """file -> fn-name pattern, over the language crates' guest-build sources
+    (LANGUAGE_CRATE's own bins other than main.rs are not in the guest)."""
+    out = {}
+    for n, d in language_crates().items():
+        gated = _feature_gated_modules(d)
+        for f in _rs_under(f"{d}/src"):
+            rel = os.path.relpath(f, f"{d}/src")
+            top = rel.split(os.sep)[0].removesuffix(".rs")
+            if top in gated or rel.startswith("bin" + os.sep):
+                continue
+            out[f] = SEAL_FN
+    if CORE_ENTRY in out:
+        out[CORE_ENTRY] = f"{SEAL_FN}|{CORE_ENTRY_FN}"
+    return out
+
+
+SCOPE_DIRS = scope_dirs()
+SCOPE_FN_REGIONS = language_regions()
 # Amendment 60 (core2) + 64 (integration): the seal edges are ALSO selected by
 # an anchored span (the first anchor's line to the second's, each once in the
 # file): the region core2 rowed, which holds the sealed-provenance helpers
@@ -88,12 +316,6 @@ REGIONS = {"crates/axon-core/src/interp.rs": (
 # (file -> reason). A file here is in scope by the rule and judged not to be a
 # decision path; the reason names what makes that checkable.
 OUT_OF_SCOPE = {
-    "crates/axon-loop/src/evo.rs":
-        "EVO proposes candidates (B273/B281); no count, admission or activation is decided by its "
-        "refusals: the decision code reads only evo::proposer_in (the recorded proposer), and only to "
-        "EXCLUDE that principal (subjects, self-promotion, assignment), so a proposal it should have "
-        "refused can only narrow what counts; the freeze's candidate check (plan.rs) re-judges every "
-        "candidate it would let through",
     "crates/axon-loop-contracts/src/profile.rs":
         "bridge-profile negotiation (B256): which wire versions MiCode and Axon speak; it authorizes "
         "nothing: every document is still parsed by its own contract and judged by the scanned "
@@ -106,6 +328,27 @@ OUT_OF_SCOPE = {
 # (file -> sites with neither a row nor an exemption, as last measured). The
 # gate re-measures each count and refuses a stale one, in both directions.
 NOT_YET_SCANNED = {
+    # Amendment 71 (r4c-fixes part 2): brought in by the crate rule, NOT YET
+    # SCANNED (every site measured; neither rowed nor exempted yet). A freeze
+    # refuses while any is listed. The libraries the protected crates link:
+    "crates/axon-attest/src/lib.rs": 18,
+    "crates/axon-audit/src/lib.rs": 10,
+    "crates/axon-core/src/main.rs": 3,
+    "crates/axon-cortex/src/generate.rs": 6,
+    "crates/axon-cortex/src/lib.rs": 7,
+    "crates/axon-cortex/src/runner.rs": 30,
+    "crates/axon-fabric/src/bin/axon-custodian.rs": 1,
+    "crates/axon-os/src/approval.rs": 4,
+    "crates/axon-os/src/coalition.rs": 5,
+    "crates/axon-os/src/ledger.rs": 3,
+    "crates/axon-os/src/manifest.rs": 9,
+    "crates/axon-os/src/profile.rs": 1,
+    "crates/axon-os/src/record.rs": 5,
+    "crates/axon-os/src/replay.rs": 1,
+    "crates/axon-os/src/runtime.rs": 3,
+    "crates/axon-psv/src/bin/axon-psv-runner.rs": 1,
+    "crates/axon-vm/src/admit.rs": 6,
+    "crates/axon-vm/src/firecracker.rs": 5,
 }
 SITE = re.compile(r"return Err\(|\bErr\(format!|\brefuse\(|\bErr\(bad\(|TEST_TRUST_BUILD")
 OPENER = re.compile(r"^\s*(\}\s*else\s+if\b|if\b|match\b|let\s+\w+\s*=\s*if\b)|=>")
@@ -1166,6 +1409,144 @@ EXEMPT += [
      "check must match"),
 ]
 
+# C9 round 4c, r4c-fixes part 2 (amendment 71): the sites the crate rule and
+# the broadened forms bring in, outside the rows M1630-M1651. Kinds as above,
+# plus: RESOURCE BOUND (a quota that bounds memory/time; the reference still
+# covers exactly the bytes admitted), RELAY (the site exits with a code it was
+# handed; it decides nothing), NOT A SITE (the body of a refusal constructor,
+# each call of which is a site of its own), NON-PRODUCTION (compiled out of
+# the production build by a named cfg).
+EVO = "crates/axon-loop/src/evo.rs"
+GIN = "crates/axon-guest-init/src/main.rs"
+WRC = "crates/axon-workspace-recipe/src/lib.rs"
+CMN = "crates/axon-core/src/main.rs"
+CRS = "crates/axon-core/src/resolver.rs"
+CUB = "crates/axon-fabric/src/bin/axon-custodian.rs"
+FPB = "crates/axon-fabric/src/bin/axon-provenance.rs"
+_MMDS = ("NOT ON THE PROTECTED ROUTE (checkable): the protected profile's VM has no network "
+         "device (scripts/fc_linux_profile.sh writes `\"network-interfaces\": []`; "
+         "profiles/linux-microvm/README.md: the VMM joins an empty network namespace), so "
+         "read_mmds cannot connect and only its Err arm is reachable there, which refuses")
+EXEMPT += [
+    # evo.rs (in scope again: amendment 71)
+    (EVO, "    if eligible.len() != req.eligible.len() {",
+     "SELECTS NOTHING (checkable): after this line `req.eligible` is never read again "
+     "(grep `req.eligible` in evo.rs: lines 190-191 only); the code reads the deduplicated set "
+     "`eligible`, so a duplicate id changes nothing the proposal is built from"),
+    (EVO, "    if evidence.len() > 256 {",
+     "NAMED CHECK: `evidence` is exactly the candidate's discovery_evidence_refs, and "
+     "candidate.validate() (policy.rs: check_array(\"discovery_evidence_refs\", .., 0, 256, "
+     "true)) refuses more than 256 before anything is written (put_cas follows it)"),
+    (EVO, "    if registered.eligible() != eligible {",
+     "SELECTS NOTHING (checkable): the caller's `eligible` set only feeds check_shortlist; the "
+     "candidate's shortlist is a remove/swap of incumbent.shortlist (mutation_space/apply: never "
+     "an added id), and require_shortlist (the next statement) checks the incumbent against the "
+     "REGISTERED list, so no caller set can widen what is proposed"),
+    (EVO, '            refused("mutation space exhausted: every one-edit shortlist was already tried")',
+     "NOTHING TO ADMIT: no untried shortlist exists to build a candidate from"),
+    # axon-guest-init (PID 1 in the protected guest)
+    (GIN, '                "[axon-guest-init] fork failed: {}",',
+     "OS ERROR: fork failed; nothing is exec'd (fails closed)"),
+    (GIN, "    if b64.is_empty() {",
+     "NOTHING TO ADMIT: an empty value decodes to zero bytes, which parse_policy_json_strict "
+     "refuses as BadJson (serde_json: EOF while parsing), and that refusal reaches the "
+     "Refuse arm (M1637)"),
+    (GIN, "    if !v.is_object() {",
+     "SELECTS NOTHING beyond the rows: a non-object that deserializes into MmdsPayload (a "
+     "sequence) is still held to constrains_anything (M1640) and the schema check (M1641), so "
+     "admitting it admits only a policy that passes both"),
+    (GIN, "        Err(e) => Err(e.to_string()),",
+     "NOTHING TO ADMIT: the cmdline arm holds an error and no payload"),
+    (GIN, "            Ok(Some(_)) => Err(", _MMDS + "; the cmdline arm of the same rule is M1640"),
+    (GIN, "            Ok(None) => Err(", "NOTHING TO ADMIT: MMDS returned no payload"),
+    (GIN, "            Err(e) => Err(format!(\n", "NOTHING TO ADMIT: MMDS failed; no payload"),
+    (GIN, '        return Err("MMDS returned empty token".to_string());', _MMDS),
+    (GIN, "            Err(e)\n                if e.kind() == std::io::ErrorKind::WouldBlock", _MMDS),
+    (GIN, '            Err(e) => return Err(format!("read response: {e}")),', _MMDS),
+    (GIN, '        return Err("BPF bytecode is empty".to_string());',
+     "NAMED ROW: an empty program is a zero-length sock_fprog, which the kernel refuses "
+     "(seccomp_prepare_filter: len 0 is EINVAL), and that refusal is M1645"),
+    (GIN, '        if r != 0 {\n            return Err(format!(\n                "PR_SET_NO_NEW_PRIVS failed: {}",',
+     "OS ERROR: prctl(PR_SET_NO_NEW_PRIVS, 1) fails only on invalid arguments (prctl(2)); the "
+     "workload is not started (fails closed)"),
+    (GIN, '        process::exit(1);\n    });\n    let c_args',
+     "UNREACHABLE: the path is an argv string, and execve's argv entries are NUL-terminated C "
+     "strings that cannot contain a NUL"),
+    (GIN, '                process::exit(1);\n            })\n        })\n        .collect();',
+     "UNREACHABLE: as above (argv strings cannot contain a NUL)"),
+    (GIN, "    process::exit(127);",
+     "OS ERROR: execvp failed; nothing ran (the shell convention 127)"),
+    (GIN, "    process::exit(exit_code);",
+     "RELAY: the supervisor exits with its first child's own status (WEXITSTATUS, or 128 + the "
+     "signal); no branch here chooses the code"),
+    # axon-workspace-recipe (the one walker and path rule, host and guest)
+    (WRC, "        return Err(ImportRefusal::Absolute(path.into()));",
+     "NAMED ROW: an absolute path's first `/`-component is empty, which the next statement's "
+     "Traversal arm refuses (M1646)"),
+    (WRC, "    if path.split('/').count() > quota.depth {",
+     "RESOURCE BOUND: depth bounds the walk; a deeper path admitted is still exactly in the "
+     "reference (as workspace.rs's quota exemptions)"),
+    (WRC, "            if bytes.saturating_add(meta.len()) > quota.bytes {",
+     "RESOURCE BOUND: refuses before reading a file that alone breaks the quota; without it the "
+     "file is read and the next check (bytes > quota.bytes) refuses the same tree"),
+    (WRC, "        if *bytes > quota.bytes {", "RESOURCE BOUND: as above"),
+    (WRC, "        if entries.len() > quota.entries {", "RESOURCE BOUND: as above"),
+    # axon-core main.rs (the PSV entry: cmd_test and its key reader)
+    (CMN, "        std::process::exit(2)\n    };",
+     "NOT A SITE: the body of the key reader's refusal constructor `fail`; each call is a site"),
+    (CMN, '            Err(_) => fail("could not read the key from stdin"),',
+     "NOTHING TO ADMIT: no key was read"),
+    (CMN, '    key.unwrap_or_else(|| fail("the key must be at least 16 bytes of hex"))',
+     "UNREACHABLE on the protected route (checkable): the runner writes completion_key(), an "
+     "HMAC-SHA256 output (axon-psv lib.rs: [u8; 32]), as 64 hex digits (runner.rs: one line, then "
+     "EOF); NOTHING TO ADMIT otherwise (no key)"),
+    (CMN, '    if files.is_empty() {\n        eprintln!("error: no source files specified");\n        process::exit(1);\n    }\n    for f in &files {\n        validate_ax_extension(f);\n    }\n\n    // Parse and merge all source files.', _USE),
+    (CMN, "        Err(errs) => {\n            for e in &errs {\n                eprintln!(\"error: {e}\");\n            }\n            process::exit(2);\n        }\n    };\n    let (mut program, merge_errors) = axon_core::merge_programs(file_programs);",
+     "NOTHING TO ADMIT: the sources did not parse; there is no program"),
+    # resolver.rs (the sealed-module refusal, E0004)
+    (CRS, "            for n in reached {\n                self.emit_error(",
+     "NAMED ROW: this is check_sealed's only emit; M79 removes the check_sealed call, the same "
+     "removal"),
+    # axon-custodian (the nonce custodian's CLI)
+    (CUB, "    std::process::exit(2);\n}\n\nfn euid()",
+     "NOT A SITE: the body of the refusal constructor `die`; each call is a site"),
+    (CUB, "        die(&format!(\n            \"bind {}: {e} (it must not exist)\",",
+     "OS ERROR: the socket could not be bound; the custodian serves nothing"),
+    (CUB, "            .unwrap_or_else(|e| die(&e));\n            must_run_as(&c);\n            // WHERE",
+     "NOTHING TO ADMIT: load_config refused (its refusals are rowed in custodian.rs); there is "
+     "no config"),
+    (CUB, '                v.map(|s| s.parse().unwrap_or_else(|_| die("a uid is a number")))',
+     "DEVELOPMENT ROUTE: --dev (Mode::Dev); a dev custodian's reply launches nothing protected "
+     "(custodian_mode_launches accepts Protected, or Test in a test authority)"),
+    (CUB, '                PathBuf::from(opt("--socket").unwrap_or_else(|| die("--dev needs --socket P")));',
+     "DEVELOPMENT ROUTE: as above"),
+    (CUB, '                PathBuf::from(opt("--store").unwrap_or_else(|| die("--dev needs --store D")));',
+     "DEVELOPMENT ROUTE: as above"),
+    (CUB, '                    .map(|s| s.parse().unwrap_or_else(|_| die("--max-age-s is a number")))',
+     "DEVELOPMENT ROUTE: as above"),
+    (CUB, "            c.check(false).unwrap_or_else(|e| die(&e));\n            use std::os::unix::fs::DirBuilderExt;",
+     "DEVELOPMENT ROUTE: as above"),
+    (CUB, "        Mode::Protected => cu::activated_listener(&cfg.socket).unwrap_or_else(|e| die(&e)),",
+     "NOTHING TO ADMIT: no listener (activated_listener's own refusals, the socket systemd bound, "
+     "are rowed in custodian.rs: M703)"),
+    # axon-fabric.rs, the launcher and provenance CLIs
+    (FC, "    std::process::exit(code)\n}",
+     "NOT A SITE: the body of the refusal constructor `refuse`; each call is a site"),
+    (FC, "        std::process::exit(code);\n    };\n    if tamper == \"vmm-died\" {",
+     "NON-PRODUCTION: inside psv_host_guest, `#[cfg(feature = \"test-trust-root\")]` (the guest "
+     "emulator a production build does not contain)"),
+    (FC, "        std::process::exit(code);\n    }\n    write_result(\"ok\", 0);",
+     "NON-PRODUCTION: as above"),
+    (BIN, '            eprintln!("usage: axon-protected-launcher [--probe] < request.json");', _USE),
+    (BIN, "        let _ = out.flush();\n        std::process::exit(code);",
+     "RELAY: the report writer exits with the code serve_as decided; each refusal there is a "
+     "site of its own"),
+    (FPB, '            eprintln!("axon-provenance: {e}");',
+     "DEVELOPMENT ROUTE (checkable): `--descends` is called only by linux_profile_manifest.py "
+     "--descends, \"the build's early development check [that] makes nothing clean\"; the "
+     "protected lineage is the --snapshot record's descends_from_protected answer (M505)"),
+]
+
 def load_rows():
     spec = importlib.util.spec_from_file_location("mut", os.path.join(ROOT, "scripts/v022_g01_mutations.py"))
     mut = importlib.util.module_from_spec(spec)
@@ -1227,10 +1608,41 @@ def err_is_expression(l, at):
     return True
 
 
-def is_site(l):
-    if SITE.search(l):
+# Amendment 71: the refusal forms the files the crate rule brings in use. A
+# compile refusal (`Diagnostic::error(`: the resolver's sealed-module E0004),
+# a process exit with a code that is not the literal 0 (the guest's PID 1 and
+# the `axon test` entry refuse that way), and a call of a FILE-LOCAL refusal
+# closure: `let NAME = |..| .. Err(..)` on one line makes every later `NAME(`
+# in that file a site (conform.rs's `kind_ok`), the definition itself not;
+# and so is a call of a file-local DIVERGING refusal constructor: a `fn NAME(..)
+# -> !` or `let NAME = |..| -> !` whose first lines exit with a non-zero
+# literal code (axon-custodian's `die`, the `axon test` key reader's `fail`).
+DIAG = re.compile(r"\bDiagnostic::error\(")
+EXIT = re.compile(r"\bprocess::exit\((?!\s*0\s*\))")
+LOCAL_CTOR_DEF = re.compile(r"\blet\s+(\w+)\s*=\s*(move\s+)?\|[^|]*\|.*\bErr\(")
+DIVERGING_DEF = re.compile(r"(?:\bfn\s+(\w+)\s*(?:<[^>]*>)?\s*\([^)]*\)|\blet\s+(\w+)\s*=\s*(?:move\s+)?\|[^|]*\|)\s*->\s*!")
+EXIT_NONZERO = re.compile(r"\bexit\(\s*[1-9]")
+DIVERGING_BODY = 8
+
+
+def local_ctors(lines):
+    """Names of the file-local refusal constructors (amendment 71): one-line
+    `Err` closures, and diverging fns/closures that exit non-zero."""
+    out = {m.group(1) for l in lines for m in [LOCAL_CTOR_DEF.search(l)] if m}
+    for i, l in enumerate(lines):
+        m = DIVERGING_DEF.search(l)
+        if m and any(EXIT_NONZERO.search(x) for x in lines[i:i + DIVERGING_BODY]):
+            out.add(m.group(1) or m.group(2))
+    return out
+
+
+def is_site(l, ctors=()):
+    if SITE.search(l) or DIAG.search(l) or EXIT.search(l):
         return True
     if any(err_is_expression(l, m.start()) for m in ERR.finditer(l)):
+        return True
+    if (any(re.search(rf"(?<![\w.]){re.escape(c)}\(", l) for c in ctors)
+            and not LOCAL_CTOR_DEF.search(l) and not DIVERGING_DEF.search(l)):
         return True
     return bool(CTOR.search(l)) and not CTOR_DEF.search(l)
 
@@ -1274,10 +1686,11 @@ def sites(text, f=None, bad=None):
             if r:
                 regions.append(r)
     out = []
+    ctors = local_ctors(lines)
     for i, l in enumerate(lines):
         s = l.strip()
         # A `use` declaration names TEST_TRUST_BUILD; it reads nothing.
-        if s.startswith("//") or s.startswith("use ") or not is_site(l):
+        if s.startswith("//") or s.startswith("use ") or not is_site(l, ctors):
             continue
         if regions is not None and not any(a <= i <= b for a, b in regions):
             continue
@@ -1295,11 +1708,8 @@ def in_scope_files():
     SCOPE_FILES, and the SCOPE_FN_REGIONS files."""
     found = set(SCOPE_FILES) | set(SCOPE_FN_REGIONS) | set(REGIONS)
     for d in SCOPE_DIRS:
-        for dirpath, _, names in os.walk(os.path.join(ROOT, d)):
-            for n in names:
-                if n.endswith(".rs"):
-                    found.add(os.path.relpath(os.path.join(dirpath, n), ROOT))
-    return sorted(found)
+        found.update(_rs_under(d))
+    return sorted(found - linked_only_as_library())
 
 
 def judge_file(f, rows, bad):

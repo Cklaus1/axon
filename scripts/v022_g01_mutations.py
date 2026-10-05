@@ -5708,6 +5708,98 @@ MUTATIONS += [
      'axon-fabric', '--test privileged_launcher', 'a_custodian_program_the_operator_never_pinned_spends_nothing'),
 ]
 
+# ── C9 round 4c, r4c-fixes part 2 (amendment 71) ────────────────────────────
+# Round 4c (SENTINEL) found decision code on the protected path the refusal
+# gate could not see: evo.rs OUT_OF_SCOPE with a reason the code contradicts
+# (evo::propose's role refusal is the ONLY reader of the discovery evidence's
+# corpus role), the guest's PID-1 supervisor, the workspace recipe, and refusal
+# forms the SITE pattern missed. The gate's crate set is now a rule (amendment
+# 71) and these rows are the guards it brought in that carry the property.
+# Each is killed by its OWN attack on the production route: evo::propose (the
+# `evo propose` verb's function); the real axon-guest-init binary under a
+# replaced /proc/cmdline (root); the store's import_dir / materialize; and the
+# real gate over a scratch tree.
+PSV_IDS |= {f"M{n}" for n in range(1630, 1655)}
+_EVO = 'crates/axon-loop/src/evo.rs'
+_GI = 'crates/axon-guest-init/src/main.rs'
+_WR = 'crates/axon-workspace-recipe/src/lib.rs'
+_RCG = 'scripts/v022_refusal_coverage.py'
+_RCT = '--no-default-features --test refusal_coverage_gate'
+_GIT = 'an_untrustworthy_cmdline_policy_starts_no_workload'
+_GIS = 'a_seccomp_filter_that_does_not_apply_starts_no_workload'
+MUTATIONS += [
+    ('M1630', "B281 (r4c part 2): a Confirmation/Reporting-role episode never reaches the EVO proposer", _EVO,
+     '        if matches!(\n            ep.corpus_role,\n            CorpusRole::Confirmation | CorpusRole::Reporting\n        ) {',
+     '        if false && matches!(\n            ep.corpus_role,\n            CorpusRole::Confirmation | CorpusRole::Reporting\n        ) {',
+     'axon-loop', '--test evo_b281', 'a_protected_role_episode_never_reaches_the_proposer'),
+    ('M1631', "B281 (r4c part 2): an episode of another scope or candidate view never feeds the proposer", _EVO,
+     '        if ep.scope != scope || ep.candidate_set_ref != incumbent.candidate_set_ref {',
+     '        if false && (ep.scope != scope || ep.candidate_set_ref != incumbent.candidate_set_ref) {',
+     'axon-loop', '--test evo_b281', 'an_episode_of_another_scope_never_reaches_the_proposer'),
+    ('M1632', "B281 (r4c part 2): EVO proposes only from learning-eligible discovery evidence", _EVO,
+     '    if evidence.is_empty() {', '    if false && evidence.is_empty() {',
+     'axon-loop', '--test evo_b281', 'a_proposal_needs_eligible_discovery_evidence'),
+    ('M1633', "COVERAGE GATE (r4c part 2): a crate a protected crate links is in scope (dependency closure)", _RCG,
+     '        todo.extend(_normal_path_deps(dirs[n], dirs, default_features))', '        todo.extend(())',
+     'axon-core', _RCT, 'a_crate_a_protected_crate_links_is_scanned'),
+    ('M1634', "COVERAGE GATE (r4c part 2): a package the guest image builds is in scope", _RCG,
+     '    return set(re.findall(r"\\s-p\\s+([A-Za-z0-9_-]+)", open(p).read()))', '    return {"axon-guest-init", "axon-psv", "axon-core", "axon-guest-kernel"}',
+     'axon-core', _RCT, 'a_package_the_guest_image_builds_is_scanned'),
+    ('M1635', "COVERAGE GATE (r4c part 2): a non-zero process exit and a compile refusal are refusal sites", _RCG,
+     '    if SITE.search(l) or DIAG.search(l) or EXIT.search(l):', '    if SITE.search(l):',
+     'axon-core', _RCT, 'an_exit_or_a_compile_refusal_is_a_site'),
+    ('M1636', "COVERAGE GATE (r4c part 2): a call of a file-local refusal constructor is a site", _RCG,
+     '    ctors = local_ctors(lines)\n', '    ctors = set()\n',
+     'axon-core', _RCT, 'a_call_of_a_local_refusal_constructor_is_a_site'),
+    ('M1637', "GUEST PID 1 (r4c part 2): a refused cmdline policy starts no workload", _GI,
+     '            process::exit(1);\n        }\n    };\n\n    // 3. Fork.', '            None\n        }\n    };\n\n    // 3. Fork.',
+     'axon-guest-init', '--test policy_refusals', _GIT),
+    ('M1638', "GUEST PID 1 (r4c part 2): a cmdline that may have been truncated is not a policy", _GI,
+     '    if cmdline.len() > CMDLINE_MAX_SAFE {', '    if false && cmdline.len() > CMDLINE_MAX_SAFE {',
+     'axon-guest-init', '--test policy_refusals', _GIT),
+    ('M1639', "GUEST PID 1 (r4c part 2): two policy words are ambiguous, neither is used", _GI,
+     '    if values.next().is_some() {', '    if false && values.next().is_some() {',
+     'axon-guest-init', '--test policy_refusals', _GIT),
+    ('M1640', "GUEST PID 1 (r4c part 2): a policy that constrains nothing is not a policy", _GI,
+     '    if !payload.constrains_anything() {', '    if false && !payload.constrains_anything() {',
+     'axon-guest-init', '--test policy_refusals', _GIT),
+    ('M1641', "GUEST PID 1 (r4c part 2): a cmdline policy of another schema is refused", _GI,
+     '    if payload.schema.as_deref() != Some(POLICY_SCHEMA) {', '    if false && payload.schema.as_deref() != Some(POLICY_SCHEMA) {',
+     'axon-guest-init', '--test policy_refusals', _GIT),
+    ('M1642', "GUEST PID 1 (r4c part 2): a policy with a repeated key is refused (no last-wins)", _GI,
+     '                    if out.contains_key(&k) {', '                    if false && out.contains_key(&k) {',
+     'axon-guest-init', '--test policy_refusals', _GIT),
+    ('M1643', "GUEST PID 1 (r4c part 2): a seccomp filter that fails to apply starts no workload", _GI,
+     '                eprintln!("[axon-guest-init] seccomp apply failed: {e}");\n                process::exit(1);',
+     '                eprintln!("[axon-guest-init] seccomp apply failed: {e}");',
+     'axon-guest-init', '--test policy_refusals', _GIS),
+    ('M1644', "GUEST PID 1 (r4c part 2): a seccomp program that is not whole instructions is never installed in part", _GI,
+     '    if bpf_bytes.len() % 8 != 0 {', '    if false && bpf_bytes.len() % 8 != 0 {',
+     'axon-guest-init', '--test policy_refusals', _GIS),
+    ('M1645', "GUEST PID 1 (r4c part 2): a seccomp filter the kernel rejects is a refusal, not a skipped filter", _GI,
+     '            0usize,\n        );\n        if r != 0 {', '            0usize,\n        );\n        if false && r != 0 {',
+     'axon-guest-init', '--test policy_refusals', _GIS),
+    ('M1646', "RECIPE (r4c part 2): a path that climbs out of the tree is refused (materialize)", _WR,
+     '        .any(|c| c.is_empty() || c == "." || c == "..")', '        .any(|c| c.is_empty() || c == ".")',
+     'axon-fabric', '--test recipe_refusals', 'a_stored_version_that_climbs_out_never_materializes'),
+    ('M1647', "RECIPE (r4c part 2): a name with a control character is refused (line-based manifest)", _WR,
+     '    if path.chars().any(char::is_control) {', '    if false && path.chars().any(char::is_control) {',
+     'axon-fabric', '--test recipe_refusals', 'a_name_with_a_control_character_is_refused'),
+    ('M1648', "RECIPE (r4c part 2): a symlink to an absolute target is refused", _WR,
+     "    if t.is_empty() || t.starts_with('/') {", "    if t.is_empty() {",
+     'axon-fabric', '--test recipe_refusals', 'an_absolute_symlink_target_is_refused'),
+    ('M1649', "RECIPE (r4c part 2): a non-UTF-8 name refuses the tree, never silently dropped", _WR,
+     '        let Some(name) = name.to_str() else {\n            return Err(ImportRefusal::NonUtf8(if prefix.is_empty() {',
+     '        let Some(name) = name.to_str() else {\n            if true {\n                continue;\n            }\n            return Err(ImportRefusal::NonUtf8(if prefix.is_empty() {',
+     'axon-fabric', '--test recipe_refusals', 'a_non_utf8_name_is_refused_not_dropped'),
+    ('M1650', "RECIPE (r4c part 2): a special file refuses the tree, never silently dropped", _WR,
+     '            return Err(ImportRefusal::SpecialFile(path));', '            continue;',
+     'axon-fabric', '--test recipe_refusals', 'a_special_file_is_refused_not_dropped'),
+    ('M1651', "RECIPE (r4c part 2): an import root that is a symlink is never followed", _WR,
+     '    if !meta.is_dir() {', '    if false && !meta.is_dir() {',
+     'axon-fabric', '--test recipe_refusals', 'an_import_root_that_is_a_symlink_is_refused'),
+]
+
 
 def in_scope(mid, scope):
     # A SIBLING-ONLY edit exists only as a member of a retired row's guard set
