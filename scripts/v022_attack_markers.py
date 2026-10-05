@@ -1542,3 +1542,35 @@ ATTACK_MARKERS.update({
 ATTACK_MARKERS.update({
     'M1655': r'ATTACK: a leftover run dir of a crashed process with the same pid refused the\s+retry',
 })
+
+# C9 round 4c, r4c-fixes part 2 (M1630-M1651; amendment 71).
+ATTACK_MARKERS.update({
+    'M1630': r'ATTACK: a (Confirmation|Reporting)-role episode reached the proposer as discovery evidence',
+    'M1631': r'ATTACK: an episode of another scope fed this scope\'s proposer',
+    'M1632': r'ATTACK: EVO proposed a candidate from no learning-eligible evidence',
+    'M1633': r'ATTACK: a refusal site in a crate the PSV crate links was not scanned',
+    'M1634': r'ATTACK: a refusal site in a package the guest image builds was not scanned',
+    'M1635': r'ATTACK: a non-zero process exit in a protected binary was not a refusal site',
+    'M1636': r'ATTACK: a call of a diverging refusal constructor \(`exec_process`\) was not a refusal site',
+    'M1637': r'ATTACK: the guest started although its policy was refused',
+    'M1638': r'ATTACK: the guest started under a POSSIBLY TRUNCATED cmdline policy',
+    'M1639': r'ATTACK: the guest started under a AMBIGUOUS \(repeated\) cmdline policy',
+    'M1640': r'ATTACK: the guest started under a CONSTRAINS NOTHING cmdline policy',
+    'M1641': r'ATTACK: the guest started under a WRONG SCHEMA cmdline policy',
+    'M1642': r'ATTACK: the guest started under a DUPLICATE KEY cmdline policy',
+    'M1643': r'ATTACK: the guest started after its seccomp filter failed to apply',
+    'M1644': r'ATTACK: the guest started under a seccomp program that is not whole instructions',
+    'M1645': r'ATTACK: the guest started under a seccomp program the kernel rejects',
+    'M1646': r'ATTACK: a stored version naming \.\./escape materialized',
+    'M1647': r'ATTACK: a name holding a newline was imported into a line-based manifest',
+    'M1648': r'ATTACK: a symlink to an absolute target was imported',
+    'M1649': r'ATTACK: a file whose name is not UTF-8 was silently left out of the version',
+    'M1650': r'ATTACK: a FIFO was silently left out of the version',
+    'M1651': r'ATTACK: an import root that is a symlink was followed',
+})
+
+# C9 round 4c, INTEGRATE (M1550; amendment 71, integration): the protected
+# observer's store-parent chain.
+ATTACK_MARKERS.update({
+    'M1550': r'ATTACK: a protected observer served from a store whose parent the Fabric uid\s+owns',
+})

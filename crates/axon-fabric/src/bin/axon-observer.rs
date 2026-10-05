@@ -65,9 +65,6 @@ fn main() {
                 &axon_fabric::privileged_launcher::Authority::production(),
             )
             .unwrap_or_else(|e| die(&e));
-            // WHERE the store sits is the operator's; the store itself is ours.
-            let parent = c.store.parent().unwrap_or(std::path::Path::new("/"));
-            axon_fabric::backend::check_operator_chain(parent).unwrap_or_else(|e| die(&e));
             (
                 c,
                 Sources::operator(),
@@ -88,6 +85,13 @@ fn main() {
             euid(),
             cfg.observer_uid
         ));
+    }
+    // Protected: WHERE the store sits is the operator's; the store itself is
+    // ours (check_store below). The chain only: the parent's entries include
+    // the store, which is the observer uid's by design.
+    if mode == Mode::Protected {
+        let parent = cfg.store.parent().unwrap_or(std::path::Path::new("/"));
+        axon_fabric::backend::check_operator_chain(parent).unwrap_or_else(|e| die(&e));
     }
     // Every mode: the key is ours alone and trusted where it must be; the
     // store is ours and private. Checked before a single connection.

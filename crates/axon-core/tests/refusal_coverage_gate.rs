@@ -17,19 +17,19 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 const GATE: &str = "scripts/v022_refusal_coverage.py";
 /// What the gate reads: its registry, the markers the registry imports, and
-/// every in-scope source (the rule's SCOPE_DIRS, SCOPE_FILES, and the files
-/// of SCOPE_FN_REGIONS / REGIONS).
-const COPY: [&str; 10] = [
+/// what its RULE reads (amendment 71): every crate's Cargo.toml (the
+/// dependency closure), every crate's sources (the protected crates' and the
+/// language region's), and the guest image build script (the packages the
+/// guest builds).
+const SCRIPTS: [&str; 3] = [
     GATE,
     "scripts/v022_g01_mutations.py",
     "scripts/v022_attack_markers.py",
-    "crates/axon-fabric/src",
-    "crates/axon-loop/src",
-    "crates/axon-loop-contracts/src",
-    "crates/axon-psv/src",
-    "crates/axon-core/src/interp.rs",
-    "crates/axon-core/src/interp/conform.rs",
-    "crates/axon-core/src/interp/eval.rs",
+];
+const SOURCES: [&str; 3] = [
+    ":(glob)crates/*/Cargo.toml",
+    ":(glob)crates/*/src/**",
+    "scripts/build-guest-image.sh",
 ];
 /// A scanned file every refusal site of which has a row (tasks.rs).
 const SCANNED: &str = "crates/axon-loop/src/tasks.rs";
@@ -80,20 +80,26 @@ fn tree(tag: &str) -> PathBuf {
         N.fetch_add(1, Ordering::Relaxed)
     ));
     let _ = std::fs::remove_dir_all(&d);
-    for f in COPY {
-        if f.starts_with("scripts/") {
-            copy(&repo_root().join(f), &d.join(f));
-            continue;
-        }
-        let listed =
-            String::from_utf8(git(&["ls-tree", "-r", "--name-only", "HEAD", "--", f])).unwrap();
-        assert!(!listed.trim().is_empty(), "setup: {f} is not in HEAD");
-        for p in listed.lines() {
-            let to = d.join(p);
-            std::fs::create_dir_all(to.parent().unwrap()).unwrap();
-            std::fs::write(&to, git(&["show", &format!("HEAD:{p}")])).unwrap();
-        }
+    for f in SCRIPTS {
+        copy(&repo_root().join(f), &d.join(f));
     }
+    std::fs::create_dir_all(&d).unwrap();
+    let tar = git(&[&["archive", "--format=tar", "HEAD", "--"][..], &SOURCES[..]].concat());
+    let mut x = std::process::Command::new("/usr/bin/tar")
+        .arg("-x")
+        .arg("-C")
+        .arg(&d)
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    {
+        use std::io::Write;
+        x.stdin.take().unwrap().write_all(&tar).unwrap();
+    }
+    assert!(
+        x.wait().unwrap().success(),
+        "setup: tar -x of HEAD's sources"
+    );
     d
 }
 
@@ -250,4 +256,149 @@ fn a_region_anchor_that_is_not_unique_is_refused() {
         "a REGIONS anchor that is not unique was accepted",
     );
     let _ = std::fs::remove_dir_all(&r);
+}
+
+// ── C9 round 4c, r4c-fixes part 2 (amendment 71): the CRATE rule and the
+// broadened refusal forms. Each attack adds decision code the old rule could
+// not see; the gate must name it.
+
+/// The gate names `site` in a refusal; ATTACK if its report does not name it
+/// (whether it held or failed on something else: a gate that stops scanning a
+/// form also orphans the exemptions of that form, and that failure must not
+/// pass for naming the site).
+fn names(r: &Path, site: &str, attack: &str) {
+    let o = gate(r, &[]);
+    let t = text(&o);
+    if !t
+        .lines()
+        .any(|l| l.contains("refusal site with no row and no exemption") && l.contains(site))
+    {
+        panic!("ATTACK: {attack}: the gate did not name it: {t}");
+    }
+    assert!(!o.status.success(), "{attack}: named but held: {t}");
+}
+
+/// A new workspace crate `name` whose library holds one unrowed refusal site.
+fn add_crate(r: &Path, name: &str) {
+    let d = r.join("crates").join(name);
+    std::fs::create_dir_all(d.join("src")).unwrap();
+    std::fs::write(
+        d.join("Cargo.toml"),
+        format!("[package]\nname = \"{name}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n"),
+    )
+    .unwrap();
+    std::fs::write(d.join("src/lib.rs"), NEW_SITE).unwrap();
+}
+
+/// Amendment 71: a crate a protected crate LINKS (a normal `path`
+/// dependency) is in scope the day it appears, whatever its directory.
+/// Control: the same new crate, linked by nothing, is not scanned.
+#[test]
+fn a_crate_a_protected_crate_links_is_scanned() {
+    let r = tree("closure");
+    add_crate(&r, "axon-gate-probe-dep");
+    edit(
+        &r,
+        "crates/axon-psv/Cargo.toml",
+        "[dependencies]\n",
+        "[dependencies]\naxon-gate-probe-dep = { path = \"../axon-gate-probe-dep\" }\n",
+    );
+    names(
+        &r,
+        "crates/axon-gate-probe-dep/src/lib.rs:",
+        "a refusal site in a crate the PSV crate links was not scanned",
+    );
+    let c = tree("axon-gate-probe-dep-control");
+    add_crate(&c, "axon-gate-probe-dep");
+    holds(&c, &[], "a new crate nothing protected links");
+    let _ = std::fs::remove_dir_all(&c);
+    let _ = std::fs::remove_dir_all(&r);
+}
+
+/// Amendment 71: a package the guest image builds is protected code. Control:
+/// the crate exists, unbuilt, and is not scanned.
+#[test]
+fn a_package_the_guest_image_builds_is_scanned() {
+    let r = tree("guestpkg");
+    add_crate(&r, "axon-gate-probe-guest");
+    edit(
+        &r,
+        "scripts/build-guest-image.sh",
+        "build_initramfs() {\n",
+        "build_initramfs() {\n    gcargo -- build -p axon-gate-probe-guest --release || exit 1\n",
+    );
+    names(
+        &r,
+        "crates/axon-gate-probe-guest/src/lib.rs:",
+        "a refusal site in a package the guest image builds was not scanned",
+    );
+    let c = tree("axon-gate-probe-guest-control");
+    add_crate(&c, "axon-gate-probe-guest");
+    holds(&c, &[], "a new crate the guest does not build");
+    let _ = std::fs::remove_dir_all(&c);
+    let _ = std::fs::remove_dir_all(&r);
+}
+
+/// A fully scanned protected binary (the guest's PID 1) and the start of its
+/// `main`, where the probes below are planted.
+const GUEST_INIT: &str = "crates/axon-guest-init/src/main.rs";
+const GUEST_MAIN: &str = "fn main() {\n    let args: Vec<String> = env::args().collect();\n";
+
+/// Amendment 71: a process exit with a non-zero code and a compile refusal
+/// (`Diagnostic::error`) are refusal sites. Control: the unedited copy holds.
+#[test]
+fn an_exit_or_a_compile_refusal_is_a_site() {
+    let r = tree("forms");
+    edit(
+        &r,
+        GUEST_INIT,
+        GUEST_MAIN,
+        &format!("{GUEST_MAIN}    if args.len() > 98 {{\n        std::process::exit(4);\n    }}\n"),
+    );
+    names(
+        &r,
+        "std::process::exit(4)",
+        "a non-zero process exit in a protected binary was not a refusal site",
+    );
+    let r2 = tree("forms-diag");
+    edit(
+        &r2,
+        "crates/axon-core/src/resolver.rs",
+        "        let is_sealed = |span: crate::span::Span| span_in_sealed(span, sealed);\n",
+        "        let is_sealed = |span: crate::span::Span| span_in_sealed(span, sealed);\n        if program.items.len() > 99_999 {\n            self.emit_error(Diagnostic::error(E0004, \"gate probe\"));\n        }\n",
+    );
+    names(
+        &r2,
+        "Diagnostic::error(E0004, \"gate probe\")",
+        "a compile refusal in the resolver's seal edge was not a refusal site",
+    );
+    let _ = std::fs::remove_dir_all(&r);
+    let _ = std::fs::remove_dir_all(&r2);
+    let c = tree("forms-control");
+    holds(&c, &[], "the unedited copy");
+    let _ = std::fs::remove_dir_all(&c);
+}
+
+/// Amendment 71: a call of a file-local refusal constructor (here the
+/// guest PID 1's diverging `exec_process`, which exits non-zero) is a site. Control: the unedited copy holds.
+#[test]
+fn a_call_of_a_local_refusal_constructor_is_a_site() {
+    let r = tree("ctor");
+    edit(
+        &r,
+        GUEST_INIT,
+        GUEST_MAIN,
+        &format!(
+            "{GUEST_MAIN}    if args.len() > 97 {{\n        exec_process(\"/gate/probe\", &[]);\n    }}\n"
+        ),
+    );
+    names(
+        &r,
+        "exec_process(\"/gate/probe\", &[])",
+        "a call of a diverging refusal constructor (`exec_process`) was not a refusal site",
+    );
+    let _ = std::fs::remove_dir_all(&r);
+    let c = tree("ctor-control");
+    holds(&c, &[], "the unedited copy");
+    let _ = std::fs::remove_dir_all(&c);
 }

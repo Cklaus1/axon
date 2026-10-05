@@ -1944,6 +1944,111 @@ fn a_production_observer_never_takes_its_config_from_a_path_its_caller_names() {
     );
 }
 
+/// A94 (amendment 68, M1550; integration of amendments 68 and 71), ROOT ONLY,
+/// PRODUCTION BUILD: the protected observer serves only from a record store
+/// whose PARENT chain is the operator's, as the custodian does (M641). The
+/// store itself is the observer's own 0700 directory (M1525), so a store
+/// placed under a directory the Fabric uid owns passes that check, and the
+/// Fabric uid could rename the store away and put back one of its own (an
+/// empty record set, so a nonce observes twice). `axon-observer` with no
+/// arguments reads /etc/axon/observer.json, runs socket-activated as its own
+/// uid with its 0400 key trusted in the operator observer root; asked by
+/// root (its only caller), it must answer nothing when the store's parent is
+/// the Fabric uid's. Control: the same observer with the store under an
+/// operator-owned parent answers (here, a refusal of a request of another
+/// schema, which proves it served).
+#[test]
+fn a_protected_observer_serves_only_from_a_store_the_operator_placed() {
+    if !root_with_etc_axon() {
+        return;
+    }
+    const OBSERVER: u32 = 4245;
+    let bin = production_build();
+    for (parent, agent_owned) in [("agent", true), ("observer-state", false)] {
+        let d = tempfile::tempdir_in("/var/tmp").unwrap();
+        let s = d.path();
+        set_mode(s, 0o755);
+        copy_executable(bin.join("axon-observer"), s.join("axon-observer"), 0o755);
+        let t = s.join("etc");
+        std::fs::create_dir_all(t.join(parent).join("records")).unwrap();
+        std::fs::create_dir_all(t.join("run")).unwrap();
+        std::fs::create_dir_all(t.join("observer-key")).unwrap();
+        let key = observer_key(
+            &t.join("observer-key"),
+            "observer",
+            &[&t.join("trust/observer")],
+        );
+        let e = Path::new("/etc/axon");
+        std::fs::write(
+            t.join("observer.json"),
+            json!({
+                "schema": "axon-observer/1", "observer_uid": OBSERVER, "fabric_uid": FABRIC,
+                "caller_uid": 0, "socket": e.join("run/observer.sock"),
+                "store": e.join(parent).join("records"),
+                "key_path": e.join("observer-key").join(key.pk8.file_name().unwrap()),
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let own = if agent_owned {
+            format!("chown {FABRIC}:{FABRIC} /etc/axon/{parent}\n")
+        } else {
+            String::new()
+        };
+        let script = format!(
+            "set -e\n\
+             mount -t tmpfs -o mode=0755 tmpfs /etc/axon\n\
+             cp -a \"$1/etc/.\" /etc/axon/\n\
+             chown -R 0:0 /etc/axon\n\
+             chmod -R go-w /etc/axon\n\
+             chown {OBSERVER}:{OBSERVER} /etc/axon/{parent}/records /etc/axon/observer-key/observer.pk8\n\
+             chmod 0700 /etc/axon/{parent}/records\n\
+             chmod 0400 /etc/axon/observer-key/observer.pk8\n\
+             {own}\
+             {{ systemd-socket-activate -l /etc/axon/run/observer.sock setpriv --reuid={OBSERVER} \
+             --regid={OBSERVER} --clear-groups -- \"$1/axon-observer\"; \
+             echo $? > \"$1/observer.code\"; }} 2> \"$1/observer.err\" &\n\
+             C=$!\n\
+             set +e\n\
+             n=0; while [ ! -S /etc/axon/run/observer.sock ] && [ $n -lt {ACTIVATION_POLLS} ]; do sleep 0.05; n=$((n+1)); done\n\
+             [ -S /etc/axon/run/observer.sock ] || {{ echo \"setup: the activation socket never appeared\" >&2; \
+             pkill -f \"$1/axon-observer\" 2>/dev/null; exit 3; }}\n\
+             python3 -c '\n\
+             import socket, sys\n\
+             s = socket.socket(socket.AF_UNIX)\n\
+             s.settimeout({CLIENT_TIMEOUT_S})\n\
+             s.connect(\"/etc/axon/run/observer.sock\")\n\
+             s.sendall(b\"{{\\\"schema\\\":\\\"not-an-observer-request\\\"}}\\n\")\n\
+             sys.stdout.write(s.recv(65536).decode())\n\
+             ' > \"$1/reply.json\" 2>/dev/null\n\
+             pkill -f \"$1/axon-observer\" 2>/dev/null; wait $C 2>/dev/null\n\
+             exit 0\n"
+        );
+        let st = Command::new("unshare")
+            .args(["-m", "--propagation", "private", "sh", "-c", &script, "sh"])
+            .arg(s)
+            .status()
+            .unwrap();
+        assert!(st.success(), "setup: the namespace script failed");
+        let reply = std::fs::read_to_string(s.join("reply.json")).unwrap_or_default();
+        let err = std::fs::read_to_string(s.join("observer.err")).unwrap_or_default();
+        if agent_owned {
+            assert!(
+                !reply.contains("axon-observer-reply/1"),
+                "ATTACK: a protected observer served from a store whose parent the Fabric uid \
+                 owns: {reply}"
+            );
+            assert!(err.contains("not root"), "{err}");
+        } else {
+            assert!(
+                reply.contains("axon-observer-reply/1") && reply.contains("\"mode\":\"protected\""),
+                "control: the protected observer serves from an operator-placed store: {reply} \
+                 ({err})"
+            );
+        }
+    }
+}
+
 /// A on `ProtectedHost::operator()` (M704, M546; four-cell records against
 /// M548), ROOT ONLY: a production `axon-fabric` running as ROOT on a host
 /// whose /etc/axon/protected-host.json exists is refused. Two rules refuse
