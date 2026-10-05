@@ -325,12 +325,6 @@ OUT_OF_SCOPE = {
 # (file -> sites with neither a row nor an exemption, as last measured). The
 # gate re-measures each count and refuses a stale one, in both directions.
 NOT_YET_SCANNED = {
-    "crates/axon-fabric/src/backend.rs": 8,
-    "crates/axon-fabric/src/custodian.rs": 1,
-    "crates/axon-fabric/src/git_data.rs": 2,
-    "crates/axon-fabric/src/protected_host.rs": 1,
-    "crates/axon-fabric/src/submit.rs": 11,
-    "crates/axon-psv/src/runner.rs": 2,
 }
 SITE = re.compile(r"return Err\(|\bErr\(format!|\brefuse\(|\bErr\(bad\(|TEST_TRUST_BUILD")
 # Amendment 74: a `let .. else {` is the opener of its refusal too.
@@ -2886,6 +2880,137 @@ EXEMPT += [
     ('crates/axon-cortex/src/select.rs',
      'pub fn select_action_with(',
      _CTX),
+]
+
+_DFL = ("COMPLEMENT (checkable): the default arm of interpret_linux_result's final `match exit`; the "
+        "only arm that can return Ok is `Some(0) | Some(10)`, entered through the guards rowed as "
+        "M1815-M1820 (schema, cleanup, output_bound, --verify-result, workload_exit, exit/workload "
+        "agreement), so every other exit is no success by the match's exhaustiveness: this arm is "
+        "what is left when no guarded arm applies")
+_KND = ("REFINES THE KIND OF A NON-SUCCESS (checkable): removing this arm sends the exit to the "
+        "match's default arm, which is no success either (only exit 0 or 10 reach the Ok-capable "
+        "arm, guarded by M1815-M1820); what the arm decides is WHICH non-success (Refused, TimedOut, "
+        "WorkloadFailed or OutcomeUnknown), and linux_receipt journals every one of them "
+        "`journal.fail(.., Billing::Unknown)` with the launch's liability kept, so no input chooses "
+        "success. The mapping of each kind to a receipt status is rowed (M1821-M1823)")
+_RPT = ("RE-REPORTED (checkable): the receipt records a refusal another site decided (backend::select "
+        "for Unsupported, rows M1044-M1054; supervisor_admits for Denied, rows M1785-M1797; the launch "
+        "manifest builder; the executor's own Err); this line only writes it into the receipt of a "
+        "run that never produced a verdict, and nothing after it can read a success from it "
+        "(the arm returns the receipt it builds)")
+_RCP = ("DOMINATED BY NAMED ROWS (checkable): a Failed read as Passed at this line is demoted to "
+        "Unknown by the completion check that follows (submit.rs `passed without completion "
+        "evidence`, rows M63, M64): a failing test body never returns, so it holds no token under "
+        "the run's key, and the key is always Some on this route (`with_completion_key` at the one "
+        "call site). Measured at this commit: the edit that reads a failing named check as Passed "
+        "(and the unnamed one) was REFUSED_ELSEWHERE by that demotion, verification Unknown, never "
+        "Passed; those two rows are therefore not kept (tests/submit.rs "
+        "a_failing_check_is_never_receipted_passed pins the receipt)")
+_APR = ("NOT A REFUSAL (checkable): AdmissionProbe::run_sandboxed is reached only after gate::admit "
+        "admitted (supervisor.rs step 5) and states success by construction, so that "
+        "`supervisor_admits` reads Completed; any other value could only refuse. It performs no "
+        "effect")
+_CNO = ("DOMINATED BY NAMED ROWS (checkable): the nonce is read from the custodian's reply, whose "
+        "writer is one process (M1727), and the custodian issues 32-hex nonces; its spend then goes "
+        "through the custodian again, which spends only a nonce recorded as issued (M196, M622), so "
+        "a malformed nonce could not authorize a launch whatever this filter says")
+_GIT1 = ("RESOURCE BOUND (checkable): a 2^30-byte cap on a git object's declared size; removing it "
+         "only lets a larger object be read, whose bytes are then re-hashed to the name it was asked "
+         "for (the one-read digest check, M289), so it decides no verdict")
+_GIT2 = ("DOMINATED (checkable): the value is used as the NEXT object's name (`o.read(&target, ..)?` "
+         "on the following loop iteration), and a git read of a name that is not an object id is "
+         "refused there; the filter only moves that refusal one step earlier")
+_PHP = ("OPERATOR-AUTHORED on the protected route (checkable): a pin field of the operator-owned host "
+        "config (protected_host::load, read only from the operator's path, operator-owned: M141-M143); "
+        "a malformed pin equals no digest, so every comparison with it refuses")
+_RPF = ("PREDICATE OF NAMED ROWS (checkable): report_for's first reading of the guest's output is "
+        "re-decided by the next statement in `run` (runner.rs `match (status, keyed_outcome, "
+        "exit_code)`), which maps everything but (Passed, Some(true), Some(0)) and (Failed, "
+        "Some(false), non-zero) to Unknown (M1813, with keyed_outcome M1720-M1722); report_for is "
+        "called by no other production code (`grep -rn report_for crates/*/src`), so its mapping can "
+        "only choose which fail-closed value precedes that re-check")
+EXEMPT += [
+    ('crates/axon-fabric/src/backend.rs',
+     '            LinuxOutcome::Unknown,\n            format!("launcher exited {exit:?} with no readable result.json"),',
+     _NTA),
+    ('crates/axon-fabric/src/backend.rs',
+     '                outcome: LinuxOutcome::Unknown,',
+     _NTA),
+    ('crates/axon-fabric/src/backend.rs',
+     '            LinuxOutcome::Unknown,\n            format!("launcher exit {other:?} ({status}): the VMM ended without a bound result"),',
+     _DFL),
+    ('crates/axon-fabric/src/backend.rs',
+     '                LinuxOutcome::Refused,',
+     _KND),
+    ('crates/axon-fabric/src/backend.rs',
+     '                LinuxOutcome::Unknown,\n                format!(',
+     _KND),
+    ('crates/axon-fabric/src/backend.rs',
+     '            LinuxOutcome::TimedOut,',
+     _KND),
+    ('crates/axon-fabric/src/backend.rs',
+     '                    LinuxOutcome::Unknown,\n                    format!("launcher exit {exit:?} disagrees with workload_exit {w}"),',
+     _KND),
+    ('crates/axon-fabric/src/backend.rs',
+     '                outcome: LinuxOutcome::Refused,',
+     _KND),
+    ('crates/axon-fabric/src/submit.rs',
+     '                    status: ReceiptStatus::Unsupported,',
+     _RPT),
+    ('crates/axon-fabric/src/submit.rs',
+     '                    status: ReceiptStatus::Denied,',
+     _RPT),
+    ('crates/axon-fabric/src/submit.rs',
+     '                                status: ReceiptStatus::Failed,',
+     _RPT),
+    ('crates/axon-fabric/src/submit.rs',
+     '                        verification: ReceiptVerification::Unknown,\n                        matched: None,\n                        // The suite that was running is still recorded: an\n                        // honest "unknown" names what it was unknown about.\n                        evidence: suite.clone().map(opaque).into_iter().collect(),\n                        liability_micro: liability,\n                        output,',
+     _RPT),
+    ('crates/axon-fabric/src/submit.rs',
+     '                        ReceiptVerification::Failed\n                    } else {',
+     _RCP),
+    ('crates/axon-fabric/src/submit.rs',
+     '                        ReceiptVerification::Failed\n                    };',
+     _RCP),
+    ('crates/axon-fabric/src/submit.rs',
+     '            ReceiptStatus::OutcomeUnknown,\n            "reconciled after restart: launched with no terminal record",',
+     _JNV),
+    ('crates/axon-fabric/src/submit.rs',
+     '        OpState::Cancelled => (ReceiptStatus::Canceled, "cancelled"),',
+     _JNV),
+    ('crates/axon-fabric/src/submit.rs',
+     '        OpState::Failed => (ReceiptStatus::Failed, "failed"),',
+     _JNV),
+    ('crates/axon-fabric/src/submit.rs',
+     '            ReceiptStatus::OutcomeUnknown,\n            "completed but no receipt recorded",',
+     _JNV),
+    ('crates/axon-fabric/src/submit.rs',
+     '            ReceiptStatus::OutcomeUnknown,\n            "in flight (another submit owns it)",',
+     _JNV),
+    ('crates/axon-fabric/src/submit.rs',
+     '                ReceiptVerification::Unknown',
+     _JNV),
+    ('crates/axon-fabric/src/submit.rs',
+     '    fn run_sandboxed(',
+     _APR),
+    ('crates/axon-fabric/src/custodian.rs',
+     '            .ok_or("custodian issued no well-formed nonce")?;',
+     _CNO),
+    ('crates/axon-fabric/src/git_data.rs',
+     '        .ok_or(format!(\n            "object {oid} is not a {want} in this repository\'s object store (a missing object \\',
+     _GIT1),
+    ('crates/axon-fabric/src/git_data.rs',
+     '                    .ok_or(format!("tag {target} names no object"))?;',
+     _GIT2),
+    ('crates/axon-fabric/src/protected_host.rs',
+     '                .ok_or_else(|| bad(format!("{ptr} is not a sha256")))',
+     _PHP),
+    ('crates/axon-psv/src/runner.rs',
+     '        (1, 0, 1) => GuestStatus::Failed,',
+     _RPF),
+    ('crates/axon-psv/src/runner.rs',
+     '        _ => GuestStatus::Unknown,\n    };\n    (status, report)',
+     _RPF),
 ]
 
 

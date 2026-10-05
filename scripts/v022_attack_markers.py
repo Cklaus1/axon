@@ -1757,7 +1757,5 @@ ATTACK_MARKERS.update({
     'M1821': r'ATTACK: a result\.json of another schema was receipted as a COMPLETED run',
     'M1822': r'ATTACK: a launch the launcher refused \(exit 22\) was receipted as a COMPLETED run',
     'M1823': r'ATTACK: a run that timed out \(exit 20\) was receipted as a COMPLETED run',
-    'M1824': r'ATTACK: a failing NAMED check was receipted with a Passed verification',
-    'M1825': r'ATTACK: a run with a failing check \(no name given\) was receipted Passed',
     'M1826': r'ATTACK: a (Passed|Failed) verdict was receipted over bytes the run did not judge',
 })
