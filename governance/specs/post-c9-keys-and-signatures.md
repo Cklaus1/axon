@@ -1,4 +1,4 @@
-# Post-C9: key formats, signature format and key endorsement
+# Post-C9: key formats, signature format, key endorsement, LLVM backend upgrade
 
 Status: **DRAFT, not normative, not in C9 scope.** Recorded 2026-10-04 at the operator's request
 (decision I and its two companions J and K). Nothing here changes what C9 accepts. C9 keeps
@@ -98,8 +98,37 @@ keys to the operator except where the files happen to sit.
 a non-root key, a revoked key, and a role key with no endorsement, plus a negative-matrix row
 for "an unendorsed key is accepted".
 
+## L. Native codegen backend: LLVM 17 → LLVM 21
+
+**Problem.** Native codegen is `inkwell 0.4` with `llvm17-0` (`crates/axon-core/Cargo.toml`),
+linked through `llvm-sys 170` against the SYSTEM LLVM 17.0.6. LLVM 17 is past upstream support,
+so it gets no bug or security fixes. inkwell 0.4 cannot drive any newer LLVM. LLVM 21 support
+begins at inkwell 0.7.1 (`llvm21-1`). Nothing records or checks which LLVM a build linked, so a
+host with a different system LLVM would build differently with no check failing.
+
+**Proposal.**
+- Bump inkwell to the release that pairs with LLVM 21 (`llvm21-1`). Port `codegen/` across the
+  breaking API changes since 0.4, along with LLVM's own changes since 17 (opaque pointers
+  throughout, the pass-manager API, and renamed or retyped intrinsics).
+- Pin the LLVM major the same way the Rust nightly is pinned. The toolchain pin the freeze
+  already reads gains an `llvm` entry, and the build refuses any other major. The paired-disable
+  and other evidence records carry the LLVM version, and `--join` refuses records whose LLVM
+  versions differ.
+- Re-establish every native result: interpreter/native parity (`fuzz_parity.sh`), exit-code
+  parity, clock and seed parity, the native refusal of `AXON_RECORD`/`AXON_REPLAY`/
+  `AXON_ALLOWED_EFFECTS`/`AXON_AI_REPLAY`, refinement-contract enforcement, the BPF/wasm
+  targets, and the build-time measurement in `BUILD_RESOLVED.md`. Keep the `codegen` ×
+  `serde-json` caveat under review, since a new inkwell may change it.
+
+**Open decisions (operator):**
+- whether to support 17 and 21 side by side for a period, or cut over;
+- whether the pin is to the major version only or to the exact version.
+
+**Evidence needed:** green parity gates on 21; a row and a test where a build against an
+unpinned LLVM major is refused; a matrix row if native evidence enters any protected claim.
+
 ## Ordering
 
-I, then J, then K. K's endorsements are typed records (I) in a standard container (J). Each item
-is its own branch, amendment and review round after the C9 certification. None of it may start
-in the C9 freeze window.
+I, then J, then K. K's endorsements are typed records (I) in a standard container (J). L is
+independent of I/J/K and may go first. Each item is its own branch, amendment and review round
+after the C9 certification. None of it may start in the C9 freeze window.
