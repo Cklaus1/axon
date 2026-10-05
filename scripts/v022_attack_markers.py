@@ -1493,4 +1493,5 @@ ATTACK_MARKERS.update({
     'M1502': r'ATTACK: --join accepted a record that skipped a consumer the graph reaches',
     'M1503': r'ATTACK: --join accepted a passing full-suite cell that ran none of its consumers',
     'M1504': r'ATTACK: a kept paired-disable record stayed current after a package it never ran',
+    'M1505': r'ATTACK: --join accepted records run on two different toolchains',
 })

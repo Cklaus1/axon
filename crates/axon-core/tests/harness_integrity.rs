@@ -271,7 +271,8 @@ fn a_merge_refuses_a_shard_made_from_another_registry() {
 /// breaks one thing: the registry (`alt`), the tree (`dirty`), a record's
 /// edits (`edits`), or M245's selection -- removed (`nosel`), a reachable
 /// consumer skipped (`skip`), a skipped consumer with no reason (`noreason`),
-/// a passing full-suite cell that ran none of its consumers (`unran`).
+/// a passing full-suite cell that ran none of its consumers (`unran`), or one
+/// record run on another toolchain (`toolchain`).
 const JOIN_SHARDS: &str = r#"
 import json, sys, v022_g01_mutations as m, v022_paired_disable as pd
 head = sys.argv[1]; mode = sys.argv[2]; alt = mode == "alt"; out = sys.argv[3]
@@ -289,11 +290,16 @@ for k in (0, 1):
          "shard": f"{k}/2", "selected": s, "registry_blobs": blobs, "tree_clean": True,
          "records": [{"mutation": x, "holds": True, "commit": head,
                       "edits_sha256": pd.current_edits_digest(x),
-                      "consumer_selection": sel(x)} for x in s]}
+                      "consumer_selection": sel(x),
+                      "environment": {"host": pd.host_identity()}} for x in s]}
     if k == 1 and mode == "dirty":
         d["tree_clean"] = False
     if k == 1 and mode == "edits":
         d["records"][0]["edits_sha256"] = "0" * 64
+    if k == 1 and mode == "toolchain":
+        h = dict(pd.host_identity(), hostname="another-host")
+        h["toolchain"] = dict(h["toolchain"], rustc="rustc 0.0.0 (another toolchain)")
+        d["records"][0]["environment"] = {"host": h}
     for r in d["records"]:
         if r["mutation"] != "M245":
             continue
@@ -469,6 +475,20 @@ fn a_join_refuses_a_passing_cell_that_ran_none_of_its_consumers() {
     assert!(
         !written && text(&o).contains("the full-suite cell ran consumers"),
         "ATTACK: --join accepted a passing full-suite cell that ran none of its consumers:\n{}",
+        text(&o)
+    );
+}
+
+/// --join refuses shards whose records ran on different toolchains (rustc,
+/// cargo, system LLVM); another host with the same toolchain is allowed
+/// (amendment 67). Control: a_join_refuses_a_shard_made_from_another_registry's
+/// "same" join, every record on this host.
+#[test]
+fn a_join_refuses_records_from_two_toolchains() {
+    let (o, written) = combine("join-toolchain", JOIN_SHARDS, true, "toolchain");
+    assert!(
+        !written && text(&o).contains("records ran on different toolchains"),
+        "ATTACK: --join accepted records run on two different toolchains:\n{}",
         text(&o)
     );
 }

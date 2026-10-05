@@ -170,6 +170,74 @@ def main():
     expect_run("D a test enumerating the workspace", s, "r", "D", ["walk"])
     expect_run("D a test enumerating what a root helper returns", s, "rh", "D", ["t"])
 
+    # Base derivation (amendment 67): a listing whose base is computed is
+    # resolved by how the base is derived. A freshness walk that starts at
+    # crates/<parameter> and grows only by the Cargo.toml `path =` entries it
+    # reads lists the manifest closure of the package the unit passes in (a
+    # literal cargo `-p`). Here the unit passes `a`, which does not reach x.
+    walker = (
+        "pub fn stale(bin: &Path, pkg: &str) -> bool {\n"
+        "    let root = repo_root();\n"
+        "    let mut todo = vec![root.join(\"crates\").join(pkg)];\n"
+        "    let lock = root.join(\"Cargo.lock\");\n"
+        "    while let Some(dir) = todo.pop() {\n"
+        "        if let Ok(m) = std::fs::read_to_string(dir.join(\"Cargo.toml\")) {\n"
+        "            for line in m.lines() { if let Some(i) = line.find(\"path = \\\"\") { todo.push(dir.join(&line[i..])); } }\n"
+        "        }\n"
+        "        if let Some(fs) = tree_files(&root, &dir) { continue; }\n"
+        "        for e in std::fs::read_dir(&dir).unwrap() {}\n"
+        "    }\n"
+        "    false\n}\n"
+        "fn tree_files(root: &Path, dir: &Path) -> Option<Vec<PathBuf>> {\n"
+        "    let o = Command::new(\"git\").arg(\"-C\").arg(root).args([\"ls-files\", \"--\"]).arg(dir).output().ok()?;\n"
+        "    Some(o.stdout.split(|b| *b == 0).map(|f| root.join(String::from_utf8_lossy(f).as_ref())).collect())\n}\n")
+    def bd(test_text, helper=walker):
+        pk = [pkg("x"), pkg("a"), pkg("q", tests=["t"])]
+        return selector(pk, base_files({"crates/q/tests/common/mod.rs": helper,
+                                        "crates/q/tests/t.rs": "mod common;\n" + test_text})).select(F, {"x"})
+    use_a = 'fn t() { common::stale(&p, "a"); let b = ["build", "-p", "a"]; }\n'
+    expect_skip("a freshness walk of the manifest closure of a package that does not reach x",
+                bd(use_a), "q")
+    pk_dep = [pkg("x"), pkg("a", [("x", "dev")]), pkg("q", tests=["t"])]
+    s = selector(pk_dep, base_files({"crates/q/tests/common/mod.rs": walker,
+                                     "crates/q/tests/t.rs": "mod common;\n" + use_a})).select(F, {"x"})
+    expect_run("D a freshness walk of a closure that reaches x (through a dev dependency)", s, "q", "D", ["t"])
+    # CONTROLS: the base is genuinely arbitrary -> whole tree.
+    expect_run("D a package directory passed as a run-time `-p` value",
+               bd('fn t() { common::stale(&p, name); let b = ["build", "-p", name];\n'
+                  '    let c = ["build", "-p", "a"]; }\n'), "q", "D", ["t"])
+    expect_run("D a walk that also names the root by a relative literal", bd(use_a, walker.replace(
+        "    let lock = root.join(\"Cargo.lock\");\n",
+        "    let up = Path::new(env!(\"CARGO_MANIFEST_DIR\")).join(\"../..\");\n")),
+        "q", "D", ["t"])
+    expect_run("D no cargo `-p` names the package handed to the walk",
+               bd('fn t() { common::stale(&p, &name); }\n'), "q", "D", ["t"])
+    expect_run("D a package directory chosen by listing crates/", bd(use_a, walker.replace(
+        'vec![root.join(\"crates\").join(pkg)]',
+        'std::fs::read_dir(root.join(\"crates\")).unwrap().map(|e| e.unwrap().path()).collect::<Vec<_>>()')),
+        "q", "D", ["t"])
+    expect_run("D the root itself listed", bd(use_a, walker.replace(
+        "    let lock = root.join(\"Cargo.lock\");\n", "    for e in std::fs::read_dir(&root).unwrap() {}\n")),
+        "q", "D", ["t"])
+    expect_run("D the root handed to a function that lists it", bd(use_a, walker.replace(
+        ".arg(\"-C\").arg(root)", ".arg(\"-C\").arg(\"x\")").replace(
+        "    let o = Command::new", "    for e in std::fs::read_dir(root).unwrap() {}\n    let o = Command::new")),
+        "q", "D", ["t"])
+    expect_run("D a walk that does not follow manifests only", bd(use_a, walker.replace(
+        "dir.join(\"Cargo.toml\")", "dir.join(\"NOTES\")")), "q", "D", ["t"])
+
+    # A list of variable NAMES (to strip from a child's environment) is not
+    # a binary the unit locates; the same list read from the environment is.
+    pk = [pkg("x", bins=["xbin"]), pkg("nv", tests=["t"]), pkg("rv", tests=["t"])]
+    lst = 'pub const VARS: &[&str] = &[\n    "XBIN_BIN",\n];\n'
+    files = base_files({
+        "crates/nv/tests/t.rs": lst + "fn t(c: &mut Command) { for v in VARS { c.env_remove(v); } }\n",
+        "crates/rv/tests/t.rs": lst + "fn t() { for v in VARS { let p = std::env::var(v); } }\n",
+    })
+    s = selector(pk, files).select(F, {"x"})
+    expect_skip("variable names listed to be stripped", s, "nv")
+    expect_run("E the same names read from the environment", s, "rv", "E", ["t"])
+
     # B: a build script that watches a computed path (the whole tree) makes
     # its package and everything linking it relevant; a literal re-run path
     # covers only that path; no re-run set covers its own package only.

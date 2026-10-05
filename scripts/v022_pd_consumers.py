@@ -33,7 +33,20 @@ THE RULE. A unit is RELEVANT to F when any of these holds.
      ENUMERATES the root or crates/ (read_dir/WalkDir/os.walk/glob/ls-files/
      find, in the same function as a literal resolving to the root or
      crates/, a root helper, or CARGO_MANIFEST_DIR walked up; any enumeration
-     in a script, which runs at the root) -- such a unit can read every file.
+     in a script, which runs at the root) -- such a unit can read every file,
+     UNLESS the listing's base is DERIVED as below.
+     BASE DERIVATION. A listing function whose only base is crates/, used only
+     as `.join("crates").join(P)` with P a parameter, whose worklist grows only
+     from the `path = "..."` entries of the Cargo.toml files it reads, and
+     whose root value is joined only to crates/ or to a file, or handed to a
+     function of the same file that uses it only to anchor a listing (`git -C
+     root ... -- dir`, rebasing that listing's output), lists exactly the
+     MANIFEST CLOSURE of the package the caller passes in (every dependency
+     edge, dev included). The package passed in is one the unit names as a
+     literal cargo `-p P`; the unit is relevant iff X is in manifest_closure(P)
+     for such a P. A `-p` followed by an expression, or no `-p` at all, is
+     doubt: the whole tree. Anything else -- the root listed, a package
+     directory chosen by listing crates/, a relative root literal -- is whole.
   E  EXEC. Its text names a binary built from the tree -- `CARGO_BIN_EXE_<n>`,
      a path ending in a binary's name (`debug/axon`), a `<NAME>_BIN` variable,
      a cargo command line, a package name in a file that runs cargo
@@ -41,6 +54,10 @@ THE RULE. A unit is RELEVANT to F when any of these holds.
      that locates programs that way or puts a target dir on PATH -- of a
      package P whose binaries are relevant to F: by L/B/D over P's own files
      and closure, or because they exec one that is (a least fixed point).
+     A `<NAME>_BIN` that sits in a `const`/`static` `&[&str]` list never used
+     in a function that READS the environment (env::var/var_os/getenv) is a
+     variable NAME (a list to strip from a child's environment), not a binary
+     the unit locates; a list used near an environment read stays an exec.
 
 The TEXT of a unit is its files, the src/** and build.rs of every package in
 its link closure (a linked library's code runs inside the unit: axon-psv's
@@ -278,6 +295,11 @@ ENUMERATES = re.compile(r"read_dir\s*\(|WalkDir::|walkdir::|os\.walk\(|os\.listd
 # FABRIC_SUBMIT_ID map key).
 EXEC_CONTEXT = re.compile(r"CARGO_BIN_EXE|_BIN\b|workspace_bin|script_spawn|\bcargo\b|\"CARGO\"|"
                           r"\"debug\"|\"release\"|target_dir|\"target\"|\"PATH\"")
+# A cargo package argument: `"-p", "P"` in a Rust argument list (group 1 is
+# None when what follows `-p` is not a string literal), `-p P` on a script's
+# cargo line (`$P`: chosen at run time).
+CARGO_P_RS = re.compile(r'"(?:-p|--package)"\s*,\s*(?:"([\w-]+)"|(?=[^"\s]))')
+CARGO_P_SH = re.compile(r'(?<![\w-])(?:-p|--package)[\s=]+([$\w{}-]+)')
 # A function that finds the workspace root without a literal: a root helper,
 # or CARGO_MANIFEST_DIR walked up.
 ROOT_HELPER = re.compile(r"\brepo_root\b|\bworkspace_root\b|\btoplevel\b|show-toplevel")
@@ -287,6 +309,30 @@ _FN = re.compile(r"^\s*(?:pub(?:\([^)]*\))?\s+)?(?:const\s+|async\s+|unsafe\s+)*
 def fn_chunks(text):
     starts = [m.start() for m in _FN.finditer(text)] + [len(text)]
     return [text[:starts[0]]] + [text[a:b] for a, b in zip(starts, starts[1:])]
+
+
+_CONST_LIST = re.compile(r"(?:const|static)\s+(\w+)\s*:\s*&(?:'static\s+)?\[&(?:'static\s+)?str\]\s*=\s*&\[(.*?)\];",
+                         re.S)
+_ENV_READ = re.compile(r"env::var(?:_os)?\s*\(|\bvar_os\s*\(|\bgetenv\s*\(|env::vars\s*\(")
+
+
+def names_only_constants(text):
+    """String literals that sit in a `const`/`static` `&[&str]` list whose
+    name is never used, in this file's CODE (string literals and comments
+    removed), in a function that READS the environment (env::var, var_os,
+    getenv). Such a list names variables -- to strip them from a child's
+    environment, to check membership -- and reads none: a `<NAME>_BIN` in it
+    locates no binary. A list used anywhere near an environment read keeps
+    every member an exec name (doubt)."""
+    out = set()
+    code_all = re.sub(r'"(?:[^"\\\n]|\\.)*"', '""', re.sub(r"(?m)//.*$", "", text))
+    chunks = fn_chunks(code_all)
+    for m in _CONST_LIST.finditer(text):
+        name = m.group(1)
+        if any(re.search(rf"\b{name}\b", c) and _ENV_READ.search(c) for c in chunks):
+            continue
+        out |= set(_STR.findall(m.group(2)))
+    return out
 
 
 def literals(path, text):
@@ -434,10 +480,13 @@ class Selector:
             walks = self.walks_base(f, text, pdir)
             runs_cargo = re.search(r"\bcargo\b|\"CARGO\"", text) is not None
             if rust:
+                names_only = names_only_constants(text)
                 for chunk in fn_chunks(text):
                     code = re.sub(r"(?m)^\s*//.*$", "", chunk)  # comments are not code
                     ctx = EXEC_CONTEXT.search(code) is not None
                     for lit in _STR.findall(chunk):
+                        if lit in names_only:
+                            continue
                         bins |= self.binaries_named(f, lit, runs_cargo, ctx)
             for lit in literals(f, text):
                 if not rust:
@@ -453,7 +502,24 @@ class Selector:
             for x in self.ws.pkgs:
                 if x not in named and self.in_package(pat, x):
                     named[x] = pat
-        res = (paths, bins, walks, scripts, named)
+        cargo_pkgs, dyn_cargo = set(), False
+        if text is not None and (rust or is_script(tree, f)):
+            if rust:
+                for m in CARGO_P_RS.finditer(text):
+                    if m.group(1) is None:
+                        dyn_cargo = True  # `"-p", <expression>`: a package chosen at run time
+                    elif m.group(1) in self.ws.pkgs:
+                        cargo_pkgs.add(m.group(1))
+            else:
+                for line in text.splitlines():
+                    if not re.search(r"\bcargo\b", line):
+                        continue
+                    for m in CARGO_P_SH.finditer(line):
+                        if m.group(1).startswith("$"):
+                            dyn_cargo = True
+                        elif m.group(1) in self.ws.pkgs:
+                            cargo_pkgs.add(m.group(1))
+        res = (paths, bins, walks, scripts, named, cargo_pkgs, dyn_cargo)
         self._refs[f] = res
         return res
 
@@ -465,21 +531,24 @@ class Selector:
         if key in self._units:
             return self._units[key]
         paths, bins, walkers, seen, named = set(), set(), [], set(), {}
+        cargo_pkgs, dyn_cargo = set(), False
         todo = list(files)
         while todo:
             f = todo.pop()
             if f in seen:
                 continue
             seen.add(f)
-            p, b, w, sc, nm = self.file_refs(f)
+            p, b, w, sc, nm, cp, dc = self.file_refs(f)
+            cargo_pkgs |= cp
+            dyn_cargo = dyn_cargo or dc
             paths |= p
             bins |= b
             for x, pat in nm.items():
                 named.setdefault(x, pat)
             if w:
-                walkers.append(f)
+                walkers.append((f, w))
             todo += sorted(sc - seen)
-        res = (paths, bins, sorted(walkers), named)
+        res = (paths, bins, sorted(walkers), named, cargo_pkgs, dyn_cargo)
         self._units[key] = res
         return res
 
@@ -524,21 +593,102 @@ class Selector:
         return pat == "" or any(d.startswith(pat + "/") for d in dirs)
 
     def walks_base(self, f, text, pdir):
-        """Does this file ENUMERATE the root or crates/? A script runs at the
-        root, so any enumeration in it does. In Rust, a function that
-        enumerates and, in the same function, names the root or crates/ (a
-        literal resolving there, a root helper, CARGO_MANIFEST_DIR walked up)."""
+        """Does this file ENUMERATE the root or crates/? False, "whole" (it can
+        read every file), or "closure" (every listing in it is of a package
+        directory and that package's manifest path dependencies: see
+        `listing_base`). A script runs at the root, so any enumeration in it
+        is "whole". In Rust, a function that enumerates and, in the same
+        function, names the root or crates/ (a literal resolving there, a root
+        helper, CARGO_MANIFEST_DIR walked up) is classified by listing_base."""
         if not f.endswith(".rs"):
-            return bool(ENUMERATES.search(text))
+            return "whole" if ENUMERATES.search(text) else False
+        found = False
         for c in fn_chunks(text):
             if not ENUMERATES.search(c):
                 continue
-            if ROOT_HELPER.search(c) or ("CARGO_MANIFEST_DIR" in c and re.search(r"\.ancestors\(|\.parent\(", c)):
-                return True
+            bases = set()
             for lit in _STR.findall(c):
-                if any(self.is_base(pat) for pat in resolve(lit, f, pdir, self.top)):
-                    return True
-        return False
+                bases |= {pat for pat in resolve(lit, f, pdir, self.top) if self.is_base(pat)}
+            helper = ROOT_HELPER.search(c) or ("CARGO_MANIFEST_DIR" in c and
+                                               re.search(r"\.ancestors\(|\.parent\(", c))
+            if not bases and not helper:
+                continue
+            kind = self.listing_base(c, bases, text)
+            if kind == "whole":
+                return "whole"
+            found = "closure"
+        return found
+
+    def listing_base(self, c, bases, file_text=""):
+        """How the base of a computed listing in function `c` is DERIVED
+        (amendment 67, base-derivation rule). "closure" only when all of:
+
+          (a) the only base directory the function names is crates/ (the
+              root, if found, is joined only to crates/ or to files);
+          (b) every use of crates/ is `.join("crates").join(P)` with P a
+              PARAMETER of the function: the listing starts at ONE package
+              directory chosen by the caller;
+          (c) the function grows its worklist only from `path = "..."`
+              entries of the Cargo.toml files it reads: what it adds is that
+              package's manifest path dependencies, transitively.
+
+        Then the function lists exactly the manifest closure of the package
+        its caller names, and a unit calling it observes F only if X is in
+        manifest_closure(P) for a package P the unit passes in (the unit's
+        text names it; see `direct`). Anything else -- the root listed, a
+        package directory chosen by a listing, an env var, a loop over
+        crates/ -- is "whole"."""
+        if bases - {"crates"}:
+            return "whole"
+        sig = re.match(r"\s*(?:pub(?:\([^)]*\))?\s+)?(?:const\s+|async\s+|unsafe\s+)*fn\s+\w+\s*"
+                       r"(?:<[^>]*>)?\s*\(([^)]*)\)", c)
+        params = set(re.findall(r"(\w+)\s*:", sig.group(1))) if sig else set()
+        uses = [m.start() for m in re.finditer(r'"crates/?"', c)]
+        joined = re.findall(r'\.join\(\s*"crates"\s*\)\s*\.join\(\s*&?(\w+)\s*\)', c)
+        if not uses or len(joined) != len(uses) or not set(joined) <= params:
+            return "whole"
+        if '"Cargo.toml"' not in c or not re.search(r'"path = ', c):
+            return "whole"
+        # (a): a root helper's value is joined only to crates/ or to a file
+        # literal (one with an extension), or handed to a function of this
+        # file that only ANCHORS a listing at it (see root_only_anchors).
+        for m in re.finditer(r"\b(\w+)\s*=\s*(?:repo_root|workspace_root)\(\)", c):
+            v = m.group(1)
+            rest = c[m.end():]
+            for j in re.finditer(rf"\b{v}\b", rest):
+                after = rest[j.end():j.end() + 80]
+                lit = re.match(r'\s*\.join\(\s*"([^"]*)"\s*\)', after)
+                if lit and (lit.group(1) == "crates" or re.search(r"\.\w+$", lit.group(1))):
+                    continue
+                call = re.search(r"(\w+)\s*\(\s*&?$", rest[max(0, j.start() - 60):j.start()])
+                if call and re.match(r"\s*,", after) and self._anchor_only(call.group(1), file_text):
+                    continue
+                return "whole"
+        return "closure"
+
+    def _anchor_only(self, g, text):
+        """Is `g` a function of this file whose FIRST parameter is used only
+        to anchor a listing -- `.arg("-C").arg(p)` for git, or rebasing the
+        listing's output (`p.join(<output>)`) -- never as a listing's operand?
+        Then what it lists is its other arguments (a git pathspec, a
+        read_dir operand), which are the caller's worklist entries."""
+        m = re.search(rf"^\s*(?:pub(?:\([^)]*\))?\s+)?fn\s+{g}\s*\(\s*(\w+)\s*:", text, re.M)
+        if not m:
+            return False
+        body = next((ch for ch in fn_chunks(text) if re.match(rf"\s*(?:pub(?:\([^)]*\))?\s+)?fn\s+{g}\b", ch)), None)
+        if body is None:
+            return False
+        p = m.group(1)
+        sigend = body.index(")")
+        for u in re.finditer(rf"\b{p}\b", body[sigend:]):
+            ctx_before = body[sigend:][max(0, u.start() - 30):u.start()]
+            ctx_after = body[sigend:][u.end():u.end() + 40]
+            if re.search(r'\.arg\(\s*"-C"\s*\)\s*\.arg\(\s*&?$', ctx_before) and ctx_after.lstrip().startswith(")"):
+                continue
+            if re.match(r"\.join\(\s*String::from_utf8", ctx_after):
+                continue
+            return False
+        return True
 
     def in_package(self, pat, x):
         """Does a path pattern name something inside package X's directory?"""
@@ -588,10 +738,31 @@ class Selector:
             for p in link:
                 text |= set(self.ws.lib_files(p))
             self._unit_text[ukey] = self.refs(sorted(text))
-        paths, bins, walkers, named = self._unit_text[ukey]
-        if walkers:
-            return (f"D: {walkers[0]} enumerates the workspace root or crates/ "
+        paths, bins, walkers, named, cargo_pkgs, dyn_cargo = self._unit_text[ukey]
+        whole = [w for w, k in walkers if k == "whole"]
+        if whole:
+            return (f"D: {whole[0]} enumerates the workspace root or crates/ "
                     f"(it can read every file of the tree)"), set()
+        closure = [w for w, k in walkers if k == "closure"]
+        if closure:
+            # Base-derivation rule: these listings cover the manifest closure
+            # of the package the unit hands them, which the unit names (a
+            # cargo `-p`, a binary). A unit that names none: doubt, whole tree.
+            # The package handed to such a listing is the one the unit
+            # builds: a literal `-p P` of a cargo argument list in its text. A
+            # `-p` followed by anything but a package literal, or no `-p` at
+            # all, is doubt: the whole tree.
+            passed = cargo_pkgs
+            if dyn_cargo or not passed:
+                return (f"D: {closure[0]} lists a package directory chosen at run time and the unit "
+                        f"does not name it as a literal cargo `-p` (it can read every file of the "
+                        f"tree)"), set()
+            if x is not None:
+                for p in sorted(passed):
+                    if x in self.ws.manifest_closure(p):
+                        return (f"D: {closure[0]} lists the manifest closure of {p}, which holds {x}"), set()
+            elif any(names_path(self.ws.pkgs[p]["dir"], f) for p in passed):
+                return f"D: {closure[0]} lists a package directory holding {f}", set()
         if x is not None and x in named:
             return f"D: names `{named[x]}`, a path in {x}", set()
         if x is None:

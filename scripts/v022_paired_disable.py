@@ -612,11 +612,34 @@ def edits_digest(rid, siblings):
         sort_keys=True).encode()).hexdigest()
 
 
+_HOST = {}
+
+
+def host_identity():
+    """The machine and toolchain the cells ran on (amendment 67): shards may
+    run on more than one host. `toolchain` is what must agree for records to
+    join -- rustc and cargo (with their LLVM) and the system LLVM inkwell
+    links; hostname, kernel, cores and memory are recorded, not compared."""
+    if not _HOST:
+        def out(cmd):
+            r = subprocess.run(cmd, shell=True, cwd=ROOT, capture_output=True, text=True)
+            return r.stdout.strip() if r.returncode == 0 else f"unavailable ({cmd})"
+        mem = out("awk '/MemTotal/ {print $2 \" kB\"}' /proc/meminfo")
+        _HOST.update({
+            "hostname": os.uname().nodename, "kernel": f"{os.uname().sysname} {os.uname().release}",
+            "nproc": os.cpu_count(), "mem_total": mem,
+            "toolchain": {"rustc": out("rustc -vV"), "cargo": out("cargo -V"),
+                          "llvm_system": out("llvm-config-17 --version || llvm-config --version")},
+        })
+    return dict(_HOST)
+
+
 def environment():
     """Who and where the cells ran: a full-suite cell with root-only tests
     means something different as root, and with or without /etc/axon."""
     return {"euid": os.geteuid(), "etc_axon_present": os.path.isdir("/etc/axon"),
-            "unset": list(mut.AMBIENT_BINARY_VARS), "consumer_axon_bin": interpreter_env().strip()}
+            "unset": list(mut.AMBIENT_BINARY_VARS), "consumer_axon_bin": interpreter_env().strip(),
+            "host": host_identity()}
 
 
 def build_prereqs():
@@ -682,6 +705,18 @@ def join_shards(argv, commit, universe):
                 sys.exit(f"refused: shard {k}/{n} record {r['mutation']}: {why}")
         records += d["records"]
         seen += got
+    # Amendment 67: shards may run on several hosts, never on several
+    # toolchains. Every record names its host; all records' toolchains agree.
+    toolchains, hosts = {}, {}
+    for r in records:
+        h = (r.get("environment") or {}).get("host")
+        if not isinstance(h, dict) or not isinstance(h.get("toolchain"), dict):
+            sys.exit(f"refused: record {r['mutation']} does not record the host and toolchain it ran on")
+        toolchains.setdefault(json.dumps(h["toolchain"], sort_keys=True), []).append(r["mutation"])
+        hosts.setdefault(h.get("hostname"), {k: h.get(k) for k in ("kernel", "nproc", "mem_total")})
+    if len(toolchains) > 1:
+        sys.exit("refused: records ran on different toolchains: " + "; ".join(
+            f"{json.loads(t)} for {sorted(ms)[:5]}" for t, ms in toolchains.items()))
     dup = sorted({r for r in seen if seen.count(r) > 1})
     if dup or sorted(seen) != sorted(universe):
         sys.exit(f"refused: coverage is not every record exactly once (duplicates {dup}, "
@@ -692,11 +727,14 @@ def join_shards(argv, commit, universe):
     records.sort(key=lambda r: int(r["mutation"][1:]))
     doc = {"schema": "axon-v022-paired-disable/2", "commit": commit, "all_hold": ok,
            "registry_blobs": here, "tree_clean": True,
-           "environment": [d.get("environment") for d in docs], "records": records}
+           "environment": [d.get("environment") for d in docs],
+           "hosts": hosts, "toolchain": json.loads(next(iter(toolchains))) if toolchains else None,
+           "records": records}
     with open(os.path.join(ROOT, argv[0]), "w") as f:
         json.dump(doc, f, indent=2)
         f.write("\n")
-    print(f"paired-disable (joined {len(docs)} shards): {sum(r['holds'] for r in records)}/{len(records)} hold -> {argv[0]}")
+    print(f"paired-disable (joined {len(docs)} shards on {sorted(hosts)}): "
+          f"{sum(r['holds'] for r in records)}/{len(records)} hold -> {argv[0]}")
     sys.exit(0 if ok else 1)
 
 

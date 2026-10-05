@@ -5738,6 +5738,10 @@ MUTATIONS += [
      '    why = selection_problem(record)\n    if why:\n        out.append(',
      '    why = selection_problem(record)\n    if False:\n        out.append(',
      'axon-core', _HI2, 'a_kept_record_is_stale_once_a_new_consumer_reaches_it'),
+    ('M1505', 'EQUIVALENCE (pdfast): --join refuses records run on different toolchains', _PDH,
+     '    if len(toolchains) > 1:\n',
+     '    if False:\n',
+     'axon-core', _HI2, 'a_join_refuses_records_from_two_toolchains'),
 ]
 PSV_IDS |= {f"M{n}" for n in range(1500, 1520)}
 
