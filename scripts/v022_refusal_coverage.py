@@ -32,6 +32,11 @@ in-scope file is NOT_YET_SCANNED (amendment 61); v022_freeze_manifest.py runs
 the check that way and refuses to bind a freeze otherwise.
 
 The FILE SET is a rule (amendment 61), not a list: see SCOPE_DIRS below.
+
+Amendment 76: a refusal that is a RETURNED VERDICT is a site too (a built
+negative variant of a verdict enum, a function returning a verdict, a call of a
+helper constructor, a closure predicate refused through `ok_or`); the verdict
+types are derived from the in-scope enums. See "Amendment 76" below.
 """
 import collections
 import importlib.util
@@ -324,6 +329,8 @@ OUT_OF_SCOPE = {
 }
 # (file -> sites with neither a row nor an exemption, as last measured). The
 # gate re-measures each count and refuses a stale one, in both directions.
+# Amendment 76: EMPTY. Every site amendments 71-76 exposed has a row or an exemption
+# stating a checkable fact; a new unscanned file is listed here again, never exempted in bulk.
 NOT_YET_SCANNED = {
 }
 SITE = re.compile(r"return Err\(|\bErr\(format!|\brefuse\(|\bErr\(bad\(|TEST_TRUST_BUILD")
