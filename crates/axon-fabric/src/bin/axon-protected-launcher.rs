@@ -3,6 +3,7 @@
 //!
 //! ```text
 //! axon-protected-launcher            < request.json   (as the Fabric uid)
+//! axon-protected-launcher --observe  < observe.json   (as the Fabric uid; amendment 68)
 //! axon-protected-launcher --probe                     (trust preflight)
 //! axon-protected-launcher --test-config FILE < request.json   (test-trust builds ONLY)
 //! ```
@@ -13,6 +14,12 @@
 //! uid, and writes one `axon-protected-launch-report/1` to stdout. Exit 0: it
 //! launched; 30: it refused and nothing was launched; 31: something failed
 //! after the launch began; 2: usage.
+//!
+//! `--observe` (amendment 68, decision G1 = A): the same hardening and caller
+//! rule, then ONE relay to the operator's observer service (its program
+//! authenticated by the kernel's sender of every reply message, the running
+//! Fabric measured from the parent's pidfd). Writes one
+//! `axon-protected-observe-report/1`; exit 0 with an observation, 30 without.
 
 use axon_fabric::privileged_launcher as pl;
 use std::io::{Read, Write};
@@ -24,7 +31,13 @@ fn main() {
     // Read the arguments, then reset everything the caller could have set.
     let args: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
     pl::harden();
-    let (config, authority) = match args.as_slice() {
+    // `--observe` leads, and leaves the rest of the command line to the SAME
+    // parse a launch has (one config path rule for both operations).
+    let (observe, args) = match args.split_first() {
+        Some((f, rest)) if f == "--observe" => (true, rest),
+        _ => (false, args.as_slice()),
+    };
+    let (config, authority) = match args {
         [] => (PathBuf::from(pl::CONFIG_PATH), pl::Authority::production()),
         [p] if p == "--probe" => {
             println!("{}", pl::probe(ruid, euid));
@@ -44,19 +57,26 @@ fn main() {
             )
         }
         _ => {
-            eprintln!("usage: axon-protected-launcher [--probe] < request.json");
+            eprintln!("usage: axon-protected-launcher [--observe] [--probe] < request.json");
             std::process::exit(2);
         }
     };
-    let finish = |r: pl::LaunchReport, code: i32| -> ! {
+    let finish = |r: String, code: i32| -> ! {
         let mut out = std::io::stdout().lock();
-        let _ = writeln!(out, "{}", serde_json::to_string(&r).unwrap_or_default());
+        let _ = writeln!(out, "{r}");
         let _ = out.flush();
         std::process::exit(code);
     };
+    let report = |r: pl::LaunchReport| serde_json::to_string(&r).unwrap_or_default();
     let refuse = |why: String| -> ! {
+        if observe {
+            finish(
+                serde_json::to_string(&pl::ObserveReport::refused(why)).unwrap_or_default(),
+                pl::EXIT_REFUSED,
+            )
+        }
         finish(
-            pl::LaunchReport {
+            report(pl::LaunchReport {
                 schema: pl::REPORT_SCHEMA.into(),
                 build: pl::build_name().into(),
                 launched: false,
@@ -66,7 +86,7 @@ fn main() {
                 launcher_exit: None,
                 verify_exit: None,
                 unchanged: false,
-            },
+            }),
             pl::EXIT_REFUSED,
         )
     };
@@ -95,6 +115,10 @@ fn main() {
     // Authenticate first (inside serve: the real uid against the operator's
     // fabric_uid), and only then act as root in every id. The config is read
     // with the effective uid the kernel granted.
-    let (report, code) = pl::serve_as(&config, &authority, ruid, &request);
-    finish(report, code)
+    if observe {
+        let (r, code) = pl::serve_observe(&config, &authority, ruid, &request);
+        finish(serde_json::to_string(&r).unwrap_or_default(), code)
+    }
+    let (r, code) = pl::serve_as(&config, &authority, ruid, &request);
+    finish(report(r), code)
 }

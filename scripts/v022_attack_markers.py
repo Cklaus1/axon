@@ -1484,3 +1484,38 @@ ATTACK_MARKERS.update({
     'M1488': r'ATTACK: a wrapped script that guesses its binary ran',
     'M1489': r'ATTACK: the root helper spent the nonce through a custodian program the operator\s+never pinned',
 })
+
+# C9 round 4b, workstream OBSERVER (M1520-M1548; amendment 68; matrix A94):
+# the observer service and the helper's --observe relay.
+ATTACK_MARKERS.update({
+    'M1520': r'ATTACK: a protected observer running as the Fabric uid was accepted',
+    'M1521': r'ATTACK: a protected observer config admitting the Fabric uid as its caller was\s+accepted',
+    'M1522': r'ATTACK: the observer started with a key another uid can read \(mode 440\)',
+    'M1523': r'ATTACK: the observer started with a key the Fabric uid owns',
+    'M1524': r'ATTACK: the observer started with a key the observer root does not hold',
+    'M1525': r'ATTACK: the observer served from a store its group can write',
+    'M1526': r'ATTACK: the observer ran as a uid its config does not name',
+    'M1527': r'ATTACK: the observer observed for a uid that is not its caller',
+    'M1528': r'ATTACK: the observer answered a request of another schema',
+    'M1529': r'ATTACK: the observer signed a manifest for another profile than the protected one',
+    'M1530': r'ATTACK: the observer recorded and signed a nonce that names a path',
+    'M1531': r'ATTACK: the observer signed a launch manifest naming another host_config_sha256 than it\s+measured',
+    'M1532': r'ATTACK: the observer signed a launch manifest naming another launcher_sha256 than it\s+measured',
+    'M1533': r'ATTACK: the observer signed a launch manifest naming another firecracker_sha256 than it\s+measured',
+    'M1534': r'ATTACK: the observer signed a launch manifest naming another guest\.kernel_sha256 than it\s+measured',
+    'M1535': r'ATTACK: the observer signed a launch manifest naming another guest\.rootfs_sha256 than it\s+measured',
+    'M1536': r'ATTACK: the observer signed a launch manifest naming another suite\.registry_sha256 than it\s+measured',
+    'M1537': r'ATTACK: the observer signed a launch manifest naming another qualification_sha256 than it\s+measured',
+    'M1538': r'ATTACK: the observer signed a launch manifest naming another profile_manifest_sha256 than it\s+measured',
+    'M1539': r'ATTACK: the observer signed a launch manifest naming another verifier_sha256 than it\s+measured',
+    'M1540': r'ATTACK: the observer signed a second observation for one nonce',
+    'M1541': r'ATTACK: the helper relayed an observation from a socket a uid other than the observer.s\s+serves',
+    'M1542': r'ATTACK: the helper relayed an observation from an observer program the operator\s+never pinned',
+    'M1543': r"ATTACK: the helper relayed a dev observer's observation",
+    'M1544': r'ATTACK: the helper relayed an observation for a parent that is not the Fabric uid',
+    'M1545': r'ATTACK: the helper relayed an observe request of another schema',
+    'M1546': r'ATTACK: a production helper config relaying from an observer service of uid\s+991',
+    'M1547': r'ATTACK: a production Fabric accepted a protected host whose observer is a program run\s+as the Fabric uid',
+    'M1548': r'ATTACK: a production observer took its config from a path its caller named',
+    'M1549': r'ATTACK: the observer signed a launch manifest naming another \S+ than it\s+measured',
+})

@@ -5611,6 +5611,8 @@ PSV_IDS |= {f"M{n}" for n in range(1450, 1470)}
 # b263_host.py, and the freeze run with the operator pin in a private mount
 # namespace.
 PSV_IDS |= {f"M{n}" for n in range(1470, 1500)}
+# C9 round 4b (observer, amendment 68): M1520-M1559.
+PSV_IDS |= {f"M{n}" for n in range(1520, 1560)}
 _PL = 'crates/axon-fabric/src/privileged_launcher.rs'
 _CU = 'crates/axon-fabric/src/custodian.rs'
 _GB = 'scripts/guest_build_env.py'
@@ -5706,6 +5708,121 @@ MUTATIONS += [
      '    let pid = pidfd_pid(pidfd).ok_or("its sender has exited")?;\n',
      '    let pid = pidfd_pid(pidfd).ok_or("its sender has exited")?;\n    if true {\n        let _ = (pin, seen);\n        return Ok(pid);\n    }\n',
      'axon-fabric', '--test privileged_launcher', 'a_custodian_program_the_operator_never_pinned_spends_nothing'),
+]
+
+# ── C9 round 4b, OBSERVER workstream (M1520-M1559; amendment 68; matrix A94):
+# operator decisions G and G1 = A. The observer is its own-uid SERVICE
+# (`axon-observer`, observer_service.rs); Fabric obtains an observation only
+# through the setuid-root helper's `--observe` relay, which authenticates the
+# observer PROGRAM per reply message and measures the running Fabric. Each row
+# is killed by its own attack (tests/observer_service.rs unless named).
+_OS = 'crates/axon-fabric/src/observer_service.rs'
+_OB = 'crates/axon-fabric/src/bin/axon-observer.rs'
+_TO = '--test observer_service'
+_TOM = 'the_observer_signs_nothing_it_did_not_measure'
+MUTATIONS += [
+    ('M1520', "A94 (observer): a protected observer config is three principals (observer != Fabric, neither root)", _OS,
+     '        if self.observer_uid == self.fabric_uid || self.observer_uid == 0 || self.fabric_uid == 0 {',
+     '        if false {',
+     'axon-fabric', '--lib', 'observer_service::tests::an_observer_that_is_the_fabric_is_refused'),
+    ('M1521', "A94 (observer): a protected observer observes only for uid 0 (the root helper's relay)", _OS,
+     '        if self.caller_uid != 0 {', '        if false && self.caller_uid != 0 {',
+     'axon-fabric', '--lib', 'observer_service::tests::a_protected_observer_observes_only_for_the_root_helper'),
+    ('M1522', "A94 (observer): the observer key is readable by no other uid (mode 0400; an ACL's mask is the group bits)", _OS,
+     '    if !meta.file_type().is_file() || meta.uid() != euid || meta.mode() & 0o277 != 0 {',
+     '    if !meta.file_type().is_file() || meta.uid() != euid {',
+     'axon-fabric', _TO, 'an_observer_key_another_uid_can_read_is_refused'),
+    ('M1523', "A94 (observer): the observer key is owned by the observer uid", _OS,
+     '    if !meta.file_type().is_file() || meta.uid() != euid || meta.mode() & 0o277 != 0 {',
+     '    if !meta.file_type().is_file() || meta.mode() & 0o277 != 0 {',
+     'axon-fabric', _TO, 'an_observer_key_owned_by_another_uid_is_refused'),
+    ('M1524', "A94 (observer): the observer key is one the operator observer root trusts", _OS,
+     '    if !keys.iter().any(|k| k == public) {', '    if false && !keys.iter().any(|k| k == public) {',
+     'axon-fabric', _TO, 'an_observer_key_the_observer_root_does_not_hold_is_refused'),
+    ('M1525', "A94 (observer): the observer serves only from its own private record store", _OB,
+     '    cu::check_store(&cfg.store, euid()).unwrap_or_else(|e| die(&e));',
+     '    let _ = cu::check_store(&cfg.store, euid());',
+     'axon-fabric', _TO, 'an_observer_refuses_a_store_others_can_reach'),
+    ('M1526', "A94 (observer): the observer runs only as its configured uid", _OB,
+     '    if euid() != cfg.observer_uid {', '    if false && euid() != cfg.observer_uid {',
+     'axon-fabric', _TO, 'an_observer_runs_only_as_its_configured_uid'),
+    ('M1527', "A94 (observer): the observer observes only for its configured caller uid (SO_PEERCRED)", _OS,
+     '        if peer != self.cfg.caller_uid {', '        if false && peer != self.cfg.caller_uid {',
+     'axon-fabric', _TO, 'an_observer_observes_only_for_its_caller_uid'),
+    ('M1528', "A94 (observer): the observer's request is one fixed schema", _OS,
+     '        if r.schema != REQUEST_SCHEMA {', '        if false && r.schema != REQUEST_SCHEMA {',
+     'axon-fabric', _TO, 'an_observer_request_of_another_schema_is_refused'),
+    ('M1529', "A94 (observer): the observer signs only a canonical protected launch manifest", _OS,
+     '        let m = axon_psv::LaunchManifest::verify(bytes, &digest)\n            .map_err(|e| format!("not a protected launch manifest: {e}"))?;',
+     '        let m: axon_psv::LaunchManifest =\n            serde_json::from_slice(bytes).map_err(|e| format!("not a launch manifest: {e}"))?;',
+     'axon-fabric', _TO, 'an_observer_never_observes_a_manifest_that_is_not_a_protected_launch'),
+    ('M1530', "A94 (observer): the nonce naming the observer's record is a custodian nonce, never a path", _OS,
+     '        if !is_hex(&m.observation_nonce, 32) {', '        if false && !is_hex(&m.observation_nonce, 32) {',
+     'axon-fabric', _TO, 'an_observer_never_records_a_nonce_that_names_a_path'),
+    # The nine MEASURED rows: each replaces one measurement by the manifest's
+    # own claim (what a signing oracle does); the field-named attack kills it.
+    ('M1531', "A94 (observer): host_config_sha256 is measured, not told", _OS,
+     '                axon_psv::sha256_hex(&host),\n', '                m.host_config_sha256.clone(),\n',
+     'axon-fabric', _TO, _TOM),
+    ('M1532', "A94 (observer): launcher_sha256 is measured, not told", _OS,
+     '                file(&hv, "/launcher/path")?,\n', '                m.launcher_sha256.clone(),\n',
+     'axon-fabric', _TO, _TOM),
+    ('M1533', "A94 (observer): firecracker_sha256 is measured, not told", _OS,
+     '                file(&lv, "/firecracker")?,\n', '                m.firecracker_sha256.clone(),\n',
+     'axon-fabric', _TO, _TOM),
+    ('M1534', "A94 (observer): guest.kernel_sha256 is measured, not told", _OS,
+     '                digest_of(&artifacts.join("vmlinux"))?,\n', '                m.guest.kernel_sha256.clone(),\n',
+     'axon-fabric', _TO, _TOM),
+    ('M1535', "A94 (observer): guest.rootfs_sha256 is measured, not told", _OS,
+     '                digest_of(&artifacts.join("rootfs.sqfs"))?,\n', '                m.guest.rootfs_sha256.clone(),\n',
+     'axon-fabric', _TO, _TOM),
+    ('M1536', "A94 (observer): suite.registry_sha256 is measured, not told", _OS,
+     '                file(&hv, "/suite_registry/path")?,\n', '                m.suite.registry_sha256.clone(),\n',
+     'axon-fabric', _TO, _TOM),
+    ('M1537', "A94 (observer): qualification_sha256 is measured, not told", _OS,
+     '                file(&hv, "/qualification/record")?,\n', '                m.qualification_sha256.clone(),\n',
+     'axon-fabric', _TO, _TOM),
+    ('M1538', "A94 (observer): profile_manifest_sha256 is measured, not told", _OS,
+     '                file(&hv, "/profile_manifest/path")?,\n', '                m.profile_manifest_sha256.clone(),\n',
+     'axon-fabric', _TO, _TOM),
+    ('M1539', "A94 (observer): verifier_sha256 is the running Fabric the root helper measured, not told", _OS,
+     '                caller_sha256.to_string(),\n', '                m.verifier_sha256.clone(),\n',
+     'axon-fabric', _TO, _TOM),
+    ('M1540', "A94 (observer): one observation per nonce (the record is created, never replaced)", _OS,
+     '            .create_new(true)\n', '            .create(true)\n            .truncate(true)\n',
+     'axon-fabric', _TO, 'the_observer_service_observes_through_the_helper_once_per_nonce'),
+    ('M1541', "A94 (observer): the helper relays only from a socket the observer uid (or root's activation) serves", _OS,
+     '        if peer != self.uid && peer != 0 {', '        if false && peer != self.uid && peer != 0 {',
+     'axon-fabric', _TO, 'an_observer_socket_another_uid_serves_is_never_relayed'),
+    ('M1542', "A94 (observer): every relayed reply's sender is the observer PROGRAM the operator pinned", _OS,
+     '        let text = crate::custodian::read_from_pinned(\n            &s,\n            &self.sha256,\n            &self.socket,\n            "observer",\n            MAX_REPLY,\n        )?;',
+     '        let text = {\n            let mut t = Vec::new();\n            (&s).take(MAX_REPLY)\n                .read_to_end(&mut t)\n                .map_err(|e| e.to_string())?;\n            t\n        };',
+     'axon-fabric', _TO, 'an_observer_program_the_operator_never_pinned_is_never_relayed'),
+    ('M1543', "A94/D6 (observer): only a protected observer's observation is relayed (a test one by a test-trust helper)", _PL,
+     '    if !custodian_mode_launches(got.mode, a.test) {', '    if false && !custodian_mode_launches(got.mode, a.test) {',
+     'axon-fabric', _TO, 'a_dev_observer_is_never_relayed'),
+    ('M1544', "A94 (observer): the helper measures the RUNNING Fabric: its parent (by pidfd) runs as the Fabric uid", _PL,
+     '    if uids.len() != 4 || uids.iter().any(|u| *u != fabric_uid) {', '    if false {',
+     'axon-fabric', _TO, 'an_observe_relay_whose_parent_is_not_the_fabric_relays_nothing'),
+    ('M1545', "A94 (observer): the helper's observe request is one fixed schema", _PL,
+     '    if r.schema != OBSERVE_REQUEST_SCHEMA {', '    if false && r.schema != OBSERVE_REQUEST_SCHEMA {',
+     'axon-fabric', _TO, 'an_observe_request_of_another_schema_relays_nothing'),
+    ('M1546', "A94 (observer): a production helper config's observer service is neither the Fabric uid nor root", _PL,
+     '        if !a.test && (s.uid == c.fabric_uid || s.uid == 0) {', '        if false {',
+     'axon-fabric', '--lib', 'privileged_launcher::tests::a_helper_config_whose_observer_service_is_the_fabric_is_refused'),
+    ('M1547', "A94 (observer): a production Fabric refuses a host config naming an in-uid observer program", _PH,
+     '                    Some(_) if crate::backend::TEST_TRUST_BUILD => {',
+     '                    Some(_) if true => {',
+     'axon-fabric', '--test privileged_launcher', 'a_production_fabric_refuses_an_observer_program_on_a_protected_host'),
+    ('M1548', "A94 (observer): a production observer never takes its config from a caller-named path", _OB,
+     '        ["--test-config", _] if axon_fabric::backend::TEST_TRUST_BUILD => {',
+     '        ["--test-config", _] if true => {',
+     'axon-fabric', '--test privileged_launcher', 'a_production_observer_never_takes_its_config_from_a_path_its_caller_names'),
+    # The comparison every MEASURED row (M1531-M1539) feeds: removed, the
+    # observer signs whatever the manifest claims (a signing oracle).
+    ('M1549', "A94 (observer): every measured digest must EQUAL the manifest's claim before anything is signed", _OS,
+     '            if got != claimed {', '            if false && got != claimed {',
+     'axon-fabric', _TO, _TOM),
 ]
 
 

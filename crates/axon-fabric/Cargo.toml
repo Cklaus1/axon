@@ -23,6 +23,13 @@ path = "src/bin/axon-protected-launcher.rs"
 name = "axon-custodian"
 path = "src/bin/axon-custodian.rs"
 
+# Operator decisions G / G1, amendment 68: the preflight observer, its own uid
+# on a protected host (systemd socket-activated), answering only the root
+# helper's `--observe` relay and signing only what it measured.
+[[bin]]
+name = "axon-observer"
+path = "src/bin/axon-observer.rs"
+
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }
