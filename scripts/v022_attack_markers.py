@@ -1500,3 +1500,17 @@ ATTACK_MARKERS.update({
     'M1669': r"ATTACK: a method call on a unit fn's result passed the checker: Some\(0\)",
     'M1670': r"ATTACK: a dead impl for `f32` passed the checker",
 })
+
+# C9 round 4c, r4c-psv1 part 2 (M1671-M1680; amendment 72): the operator's dicts.
+ATTACK_MARKERS.update({
+    'M1671': r"ATTACK: a dict past the snapshot bound crossed unrecorded: Ok\(Completed\)",
+    'M1672': r"ATTACK: sealed code retyped the operator's dict entry to a u8 \(the review's overwrite\): Ok\(Completed\)",
+    'M1673': r"ATTACK: the candidate's closure replaced the operator's in its dict: Ok\(Completed\)",
+    'M1674': r"ATTACK: sealed code retyped the operator's dict entry to a u8 \(the review's overwrite\): Ok\(Completed\)",
+    'M1675': r"ATTACK: sealed code retyped the operator's dict entry to a u8 \(the review's overwrite\): Ok\(Completed\)",
+    'M1676': r"ATTACK: sealed code retyped the operator's dict entry to a u8 \(the review's overwrite\): Ok\(Completed\)",
+    'M1677': r"ATTACK: sealed code retyped the operator's dict entry to a u8 \(a dict nested in the handed dict\): Ok\(Completed\)",
+    'M1678': r"ATTACK: sealed code retyped the operator's dict entry to a u8 \(Option<Dict>\): Ok\(Completed\)",
+    'M1679': r"ATTACK: sealed code retyped the operator's dict entry to a u8 \(Wrap<Dict>\): Ok\(Completed\)",
+    'M1680': r"ATTACK: sealed code retyped the operator's dict entry to a u8 \(\[Dict\]\): Ok\(Completed\)",
+})

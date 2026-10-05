@@ -754,6 +754,12 @@ pub struct Interp<'p> {
     /// The element types each channel OBJECT crossed (by address; the weak
     /// handle keeps the address from being reused while the entry exists).
     chan_contracts: RefCell<ChanContracts>,
+    /// The dicts the operator handed sealed code (by address): what each held
+    /// (amendment 72 part 2, `interp/conform.rs`).
+    dict_snaps: RefCell<HashMap<usize, conform::DictSnap>>,
+    /// Bumped by every operator-side dict mutation: a snapshot from an older
+    /// epoch is retaken at the next hand-over.
+    dict_epoch: std::cell::Cell<u64>,
     /// [`Interp::fn_cx`]'s per-fn signature environments.
     fn_cx_cache: RefCell<HashMap<usize, conform::Cx>>,
     /// Module-level `let NAME = …` constant definitions, in source order.
@@ -3037,6 +3043,8 @@ impl<'p> Interp<'p> {
             trait_impls,
             refine_bases,
             chan_contracts: RefCell::new(HashMap::new()),
+            dict_snaps: RefCell::new(HashMap::new()),
+            dict_epoch: std::cell::Cell::new(0),
             fn_cx_cache: RefCell::new(HashMap::new()),
             global_defs,
             globals: HashMap::new(),
@@ -3271,12 +3279,24 @@ impl<'p> Interp<'p> {
         // A candidate fn returning to operator code: the seal crossing where
         // a value at an undetermined type parameter is refused (amendment 53).
         let crossing = self.seal.active && callee && !self.frame_sealed.get();
-        self.with_frame(callee, || {
+        // The operator hands the candidate its arguments: every dict in them
+        // is snapshotted; at the return every dict sealed code mutated is
+        // checked against it (amendment 72 part 2).
+        if crossing {
+            for a in &args {
+                self.dict_edge_in(a)?;
+            }
+        }
+        let r = self.with_frame(callee, || {
             contain_frame(
                 self.call_fn_frame(f, args, crossing),
                 &format!("`{}`", f.name),
             )
-        })
+        });
+        if crossing && r.is_ok() {
+            self.dict_edge_out()?;
+        }
+        r
     }
 
     /// The type environment of `f`'s signature for ONE activation: the
@@ -4075,6 +4095,17 @@ impl<'p> Interp<'p> {
         // sealed frame calling an OPERATOR closure is a seal crossing: the
         // arguments are cast strictly (amendment 72).
         let entering = self.seal.active && self.frame_sealed.get() && !origin;
+        // A candidate closure called by operator code: the operator hands it
+        // the arguments (snapshot). A sealed frame calling an operator closure
+        // returns control to operator code (verify what it mutated).
+        if origin && !self.frame_sealed.get() {
+            for a in &args {
+                self.dict_edge_in(a)?;
+            }
+        }
+        if entering {
+            self.dict_edge_out()?;
+        }
         self.closure_args_check(&contract, &mut args, entering)?;
         let mut env = Env::new();
         // Base scope = captured bindings; a fresh scope holds the parameters.
@@ -4115,6 +4146,13 @@ impl<'p> Interp<'p> {
         // The result is cast to every `fn` type this reference crossed.
         let mut v = out?;
         self.closure_ret_check(&contract, &mut v, crossing)?;
+        // A candidate closure returns to operator code: verify. An operator
+        // closure returns into sealed code: its result is handed over.
+        if crossing {
+            self.dict_edge_out()?;
+        } else if entering {
+            self.dict_edge_in(&v)?;
+        }
         Ok(v)
     }
 
@@ -7996,25 +8034,199 @@ fn main() { }
         );
     }
 
-    /// RECORDED, not fixed: `Dict` carries no element types, so a value the
-    /// candidate puts in a dict the operator handed it meets no declared type
-    /// on its way back — non-claim (1) of amendment 53, restated by amendment
-    /// 72. The operator's own typed reads (`let x: i64 = …`) are cast; its
-    /// method call on an untyped `dict_get` result is not.
+    /// The suite for the dict tests: the operator's dict holds an i64 at
+    /// "a"; `body` hands it to the candidate; the operator then reads "a"
+    /// UNTYPED and calls the judge on it (amendment 72 part 2).
+    fn dict_suite(body: &str) -> String {
+        format!("@[test]\nfn t() {{\n    let d = dict_new()\n    dict_set(d, \"a\", 3)\n    {body}\n    match dict_get(d, \"a\") {{\n        Some(x) => assert(x.ok())\n        None => assert(false)\n    }}\n}}\n")
+    }
+
+    fn dict_refused(why: &str, suite: &str, cand: &str) {
+        let out = judged8("r4c-dict", suite, cand);
+        assert!(
+            out != Ok(TestEnd::Completed)
+                && matches!(&out, Err(m) if m.contains("retyped a dict entry")),
+            "ATTACK: sealed code retyped the operator's dict entry to a u8 ({why}): {out:?}"
+        );
+    }
+
+    /// `match <laundered u8> { Some(v) => { act } None => {} }`
+    fn put_u8(act: &str) -> String {
+        u8_or(&format!("{{ {act} }}"), "{}")
+    }
+
+    /// The reviewer's remaining attack: the candidate overwrites a key the
+    /// operator held with a laundered `u8`, and the operator's untyped
+    /// `dict_get(..).ok()` ran the lenient `u8` impl. The operator's dict is
+    /// SNAPSHOTTED when it is handed over and verified at every edge back.
     #[test]
-    fn an_untyped_dict_value_the_candidate_filled_is_a_recorded_open_position() {
-        let out = judged8(
+    fn sealed_code_cannot_retype_a_dict_entry_the_operator_held() {
+        let suite = dict_suite("solve(d)");
+        live8(
             "r4c-dict",
-            "@[test]\nfn t() {\n    let d = dict_new()\n    dict_set(d, \"a\", 3)\n    let r = solve(d)\n    match dict_get(r, \"a\") {\n        Some(x) => assert(x.ok())\n        None => assert(false)\n    }\n}\n",
+            &suite,
+            "fn solve(d: Dict) { dict_set(d, \"a\", 9) }\n",
+            "fn solve(d: Dict) { dict_set(d, \"a\", 4) }\n",
+        );
+        dict_refused(
+            "the review's overwrite",
+            &suite,
             &format!(
-                "fn put(d: Dict, v: u8) -> Dict {{\n    dict_set(d, \"a\", v)\n    d\n}}\nfn solve(d: Dict) -> Dict {{\n    {}\n}}\n",
-                u8_or("put(d, v)", "d")
+                "fn solve(d: Dict) {{\n    {}\n}}\n",
+                put_u8("dict_set(d, \"a\", v)")
             ),
         );
-        assert_eq!(
-            out,
-            Ok(TestEnd::Completed),
-            "RECORDED: this stays open until Dict carries element types: {out:?}"
+        dict_refused(
+            "remove, then add the key back",
+            &suite,
+            &format!(
+                "fn solve(d: Dict) {{\n    {}\n}}\n",
+                put_u8("dict_remove(d, \"a\")\n        dict_set(d, \"a\", v)")
+            ),
+        );
+        dict_refused(
+            "through an alias in an array",
+            &suite,
+            &format!(
+                "fn solve(d: Dict) {{\n    let held = [d]\n    {}\n}}\n",
+                put_u8("dict_set(held[0], \"a\", v)")
+            ),
+        );
+        // A dict nested in the one handed over.
+        dict_refused(
+            "a dict nested in the handed dict",
+            "@[test]\nfn t() {\n    let d = dict_new()\n    let inner = dict_new()\n    dict_set(inner, \"a\", 3)\n    dict_set(d, \"in\", inner)\n    solve(d)\n    match dict_get(inner, \"a\") {\n        Some(x) => assert(x.ok())\n        None => assert(false)\n    }\n}\n",
+            &format!(
+                "fn solve(d: Dict) {{\n    match dict_get(d, \"in\") {{\n        Some(i) => {}\n        None => {{}}\n    }}\n}}\n",
+                put_u8("dict_set(i, \"a\", v)")
+            ),
+        );
+        // Dict reached through generic positions.
+        let wrap = "type Wrap<T> = { v: T }\n";
+        dict_refused(
+            "Wrap<Dict>",
+            &dict_suite("solve(Wrap { v: d })"),
+            &format!(
+                "{wrap}fn solve(w: Wrap<Dict>) {{\n    {}\n}}\n",
+                put_u8("dict_set(w.v, \"a\", v)")
+            ),
+        );
+        dict_refused(
+            "Option<Dict>",
+            &dict_suite("solve(Some(d))"),
+            &format!(
+                "fn solve(o: Option<Dict>) {{\n    match o {{\n        Some(x) => {}\n        None => {{}}\n    }}\n}}\n",
+                put_u8("dict_set(x, \"a\", v)")
+            ),
+        );
+        dict_refused(
+            "[Dict]",
+            &dict_suite("solve([d])"),
+            &format!(
+                "fn solve(xs: [Dict]) {{\n    {}\n}}\n",
+                put_u8("dict_set(xs[0], \"a\", v)")
+            ),
+        );
+        dict_refused(
+            "a generic fn's T bound to the dict",
+            &dict_suite("solve(d)"),
+            &format!(
+                "fn solve<T>(x: T) {{\n    {}\n}}\nfn put(d: Dict, v: u8) {{ dict_set(d, \"a\", v) }}\n",
+                u8_or("{ put(x, v) }", "{}")
+            ),
+        );
+    }
+
+    /// The other edges: a dict handed to an operator CLOSURE the candidate
+    /// calls (the operator's `|x| …` reads it untyped), over a channel, and
+    /// through the candidate's own closure the operator calls.
+    #[test]
+    fn a_dict_the_candidate_mutated_is_verified_at_every_edge_back() {
+        let closure_suite = "@[test]\nfn t() {\n    let d = dict_new()\n    dict_set(d, \"a\", 3)\n    assert(run(d, |x| {\n        match dict_get(x, \"a\") {\n            Some(y) => y.ok()\n            None => false\n        }\n    }))\n}\n";
+        honest8(
+            "r4c-dict",
+            closure_suite,
+            "fn run(d: Dict, f: fn(Dict) -> bool) -> bool {\n    dict_set(d, \"a\", 9)\n    f(d)\n}\n",
+        );
+        let out = judged8(
+            "r4c-dict",
+            closure_suite,
+            &format!(
+                "fn run(d: Dict, f: fn(Dict) -> bool) -> bool {{\n    {}\n    f(d)\n}}\n",
+                put_u8("dict_set(d, \"a\", v)")
+            ),
+        );
+        assert!(
+            out != Ok(TestEnd::Completed)
+                && matches!(&out, Err(m) if m.contains("retyped a dict entry")),
+            "ATTACK: the operator's closure read a dict entry the candidate retyped: {out:?}"
+        );
+        // Over a channel the operator filled.
+        let chan_suite = dict_suite("let c = chan<Dict>()\n    c.send(d)\n    solve(c)");
+        honest8(
+            "r4c-dict",
+            &chan_suite,
+            "fn solve(c: Chan<Dict>) {\n    let d = c.recv()\n    dict_set(d, \"a\", 9)\n}\n",
+        );
+        dict_refused(
+            "received from the operator's channel",
+            &chan_suite,
+            &format!(
+                "fn solve(c: Chan<Dict>) {{\n    let d = c.recv()\n    {}\n}}\n",
+                put_u8("dict_set(d, \"a\", v)")
+            ),
+        );
+        // The candidate's closure, stored where the operator held its own.
+        let fsuite = "@[test]\nfn t() {\n    let d = dict_new()\n    dict_set(d, \"f\", |n: i64| n * n)\n    solve(d)\n    match dict_get(d, \"f\") {\n        Some(f) => assert(f(3).ok())\n        None => assert(false)\n    }\n}\n";
+        honest8(
+            "r4c-dict",
+            fsuite,
+            "fn solve(d: Dict) { dict_set(d, \"g\", 1) }\n",
+        );
+        let out = judged8(
+            "r4c-dict",
+            fsuite,
+            "fn solve(d: Dict) { dict_set(d, \"f\", |n: i64| narrow(n)) }\n",
+        );
+        assert!(
+            out != Ok(TestEnd::Completed)
+                && matches!(&out, Err(m) if m.contains("retyped a dict entry")),
+            "ATTACK: the candidate's closure replaced the operator's in its dict: {out:?}"
+        );
+    }
+
+    /// What the rule does NOT touch: keys the candidate ADDS, a dict the
+    /// candidate builds, the same type written again, and a dict the operator
+    /// itself retypes between two calls (the snapshot is retaken).
+    #[test]
+    fn a_dict_the_candidate_adds_to_or_builds_still_crosses() {
+        let suite = dict_suite("solve(d)");
+        honest8(
+            "r4c-dict",
+            &suite,
+            "fn solve(d: Dict) {\n    dict_set(d, \"a\", 9)\n    dict_set(d, \"b\", narrow(4))\n}\n",
+        );
+        honest8(
+            "r4c-dict",
+            "@[test]\nfn t() {\n    let d = dict_new()\n    dict_set(d, \"a\", 3)\n    solve(d)\n    dict_set(d, \"a\", 7.5)\n    touch(d)\n    assert(true)\n}\n",
+            "fn solve(d: Dict) { dict_set(d, \"a\", 9) }\nfn touch(d: Dict) { dict_set(d, \"a\", 8.5) }\n",
+        );
+        honest8(
+            "r4c-dict",
+            "@[test]\nfn t() {\n    match dict_get(make(), \"a\") {\n        Some(x) => assert(x.ok())\n        None => assert(false)\n    }\n}\n",
+            "fn make() -> Dict {\n    let d = dict_new()\n    dict_set(d, \"a\", 9)\n    d\n}\n",
+        );
+    }
+
+    /// A dict too big to snapshot is REFUSED at the crossing, never skipped.
+    #[test]
+    fn a_dict_over_the_snapshot_bound_is_refused_not_skipped() {
+        let suite = "@[test]\nfn t() {\n    let d = dict_new()\n    let i = 0\n    while i <= 1000000 {\n        dict_set(d, to_str(i), i)\n        i = i + 1\n    }\n    solve(d)\n    assert(true)\n}\n";
+        let out = judged8("r4c-dict", suite, "fn solve(d: Dict) { }\n");
+        assert!(
+            out != Ok(TestEnd::Completed)
+                && matches!(&out, Err(m) if m.contains("cannot cross a seal")),
+            "ATTACK: a dict past the snapshot bound crossed unrecorded: {out:?}"
         );
     }
 }

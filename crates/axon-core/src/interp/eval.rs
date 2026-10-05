@@ -409,6 +409,11 @@ impl<'p> Interp<'p> {
                             let mut v = self.eval(&args[0], env)?;
                             // Cast to every element type the channel crossed.
                             self.chan_send_check(q, &mut v)?;
+                            // The operator sends sealed code a value: dicts in
+                            // it are snapshotted (amendment 72 part 2).
+                            if !self.frame_sealed.get() {
+                                self.dict_edge_in(&v)?;
+                            }
                             q.borrow_mut().push_back(v);
                             Ok(Value::Unit)
                         }
@@ -1270,6 +1275,7 @@ impl<'p> Interp<'p> {
             arm_env.push();
             let bound = self.match_pattern(&binding, &payload, &mut arm_env);
             // The arm runs under the provenance of the `with` that installed it.
+            self.handler_edge_into(arm_sealed, &payload)?;
             let outcome = self.with_frame(arm_sealed, || {
                 crate::interp::contain_loop_control(
                     bound.and_then(|_| self.eval(&arm_body, &mut arm_env)),
@@ -1278,7 +1284,10 @@ impl<'p> Interp<'p> {
             });
             self.handlers.borrow_mut().extend(suspended);
             return match outcome {
-                Err(Flow::Resume(v)) => Ok(Some(v)),
+                Err(Flow::Resume(v)) => {
+                    self.handler_edge_back(arm_sealed, &v)?;
+                    Ok(Some(v))
+                }
                 Ok(v) => Err(Flow::Return(v)),
                 Err(other) => Err(other),
             };
@@ -1297,6 +1306,7 @@ impl<'p> Interp<'p> {
         let mut arm_env = Env::from_snapshot(captured);
         arm_env.push();
         let bound = self.match_pattern(&binding, &payload, &mut arm_env);
+        self.handler_edge_into(arm_sealed, &payload)?;
         let outcome = self.with_frame(arm_sealed, || {
             crate::interp::contain_loop_control(
                 bound.and_then(|_| self.eval(&arm_body, &mut arm_env)),

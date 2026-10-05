@@ -659,3 +659,44 @@ fn an_undetermined_type_position_never_selects_the_operators_impl() {
         );
     }
 }
+
+/// C9 round 4c, PSV-1 (amendment 72 part 2): a `Dict` carries no element
+/// types, so a candidate overwrote the key the operator held with a laundered
+/// `u8` and the operator's untyped `dict_get(..).ok()` ran its lenient `u8`
+/// impl. The operator's dict is snapshotted when handed over; a key it held
+/// may not come back with a value of another type. Through the real runner.
+#[test]
+fn a_dict_entry_the_operator_held_is_never_retyped_by_the_candidate() {
+    const J: &str = "trait Judge {\n    fn ok(self) -> bool\n}\nimpl Judge for i64 {\n    fn ok(self: i64) -> bool { self == 9 }\n}\nimpl Judge for u8 {\n    fn ok(self: u8) -> bool { true }\n}\n";
+    const L: &str = "fn narrow(n: i64) -> u8 { n as u8 }\nfn stash(v: u8) -> Dict {\n    let d = dict_new()\n    dict_set(d, \"k\", v)\n    d\n}\n";
+    let suite = format!(
+        "mod sol\nuse sol.{{solve}}\n{J}@[test]\nfn accept() {{\n    let d = dict_new()\n    dict_set(d, \"a\", 3)\n    solve(d)\n    match dict_get(d, \"a\") {{\n        Some(x) => assert(x.ok())\n        None => assert(false)\n    }}\n}}\n"
+    );
+    let good = "pub fn solve(d: Dict) { dict_set(d, \"a\", 9) }\n".to_string();
+    let wrong = "pub fn solve(d: Dict) { dict_set(d, \"a\", 4) }\n".to_string();
+    let attack = format!(
+        "{L}pub fn solve(d: Dict) {{\n    match dict_get(stash(narrow(4)), \"k\") {{\n        Some(v) => {{ dict_set(d, \"a\", v) }}\n        None => {{}}\n    }}\n}}\n"
+    );
+    let s = check(&suite, &[], &good, "accept");
+    assert_eq!(
+        (s.status, s.host),
+        (GuestStatus::Passed, Some(true)),
+        "control: {}",
+        s.stdout
+    );
+    let s = check(&suite, &[], &wrong, "accept");
+    assert_eq!(
+        (s.status, s.host),
+        (GuestStatus::Failed, Some(false)),
+        "control: {}",
+        s.stdout
+    );
+    let s = check(&suite, &[], &attack, "accept");
+    assert!(
+        refused_unkeyed(&s),
+        "ATTACK: the candidate retyped the operator's dict entry to a u8 and got a keyed pass: {:?} {:?} {}",
+        s.status,
+        s.host,
+        s.stdout
+    );
+}

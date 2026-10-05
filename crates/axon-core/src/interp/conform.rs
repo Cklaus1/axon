@@ -1323,3 +1323,244 @@ fn render_fn(c: &Contract) -> String {
         ret: Box::new(c.ret.clone()),
     })
 }
+
+// ── The operator's dicts (C9 round 4c, amendment 72 part 2) ─────────────────
+//
+// A `Dict` carries no element types, so a value the candidate stores in one
+// the OPERATOR handed it meets no declared type on its way back, and the
+// operator's untyped `dict_get(d, "k").ok()` ran the impl of whatever type the
+// candidate chose. The position IS determined, though: by what the operator
+// put there. So every dict the operator hands into sealed code is SNAPSHOTTED
+// (the type of each value it holds, by `value_type`), and at every edge back
+// to operator code a dict sealed code MUTATED is checked against it: a key the
+// operator held may not now hold a value of another type. Keys the candidate
+// ADDS are not constrained (nothing operator-side determined them — the same
+// as a candidate-built dict, which operator code reads and compares like any
+// other candidate output; an operator that needs a type pins it with
+// `let x: T`).
+
+/// The most entries one dict may have to cross a seal. Refused above this
+/// (never skipped): the snapshot is one type per entry, taken once per dict
+/// and refreshed only after an operator-side mutation.
+pub(crate) const DICT_SNAP_MAX: usize = 1_000_000;
+
+type DictRc = Rc<RefCell<std::collections::BTreeMap<String, Value>>>;
+
+/// What the operator held in one dict when it handed it to sealed code.
+pub(crate) struct DictSnap {
+    weak: std::rc::Weak<RefCell<std::collections::BTreeMap<String, Value>>>,
+    /// The type of the value at each key.
+    types: std::collections::BTreeMap<String, T>,
+    /// Keys that held an OPERATOR closure (a candidate closure may not replace
+    /// one: its result would reach the operator at an undetermined type).
+    op_closures: std::collections::BTreeSet<String>,
+    /// Sealed code mutated the dict since it was last verified.
+    dirty: bool,
+    /// [`Interp::dict_epoch`] when the snapshot was taken.
+    epoch: u64,
+}
+
+impl<'p> Interp<'p> {
+    /// OPERATOR code hands `v` to sealed code (call arguments, a candidate
+    /// closure's arguments, an operator closure's result, a channel send):
+    /// every dict in it is snapshotted. A snapshot taken since the last
+    /// operator-side mutation, and not dirtied, is kept (O(1) per dict).
+    pub(crate) fn dict_edge_in(&self, v: &Value) -> Result<(), Flow> {
+        if !self.seal.active {
+            return Ok(());
+        }
+        let mut found = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        self.walk_fresh(v, &mut seen, &mut found, 0);
+        for m in found {
+            self.dict_snapshot(&m)?;
+        }
+        Ok(())
+    }
+
+    /// The dicts of `v` that need a (re)snapshot: walks into a dict's values
+    /// only when the dict itself does.
+    fn walk_fresh(
+        &self,
+        v: &Value,
+        seen: &mut std::collections::HashSet<usize>,
+        out: &mut Vec<DictRc>,
+        d: usize,
+    ) {
+        if d > MAX_CAST_DEPTH {
+            return;
+        }
+        match v {
+            Value::Dict(m) => {
+                let key = Rc::as_ptr(m) as *const () as usize;
+                if !seen.insert(key) {
+                    return;
+                }
+                let fresh = self.dict_snaps.borrow().get(&key).is_some_and(|s| {
+                    !s.dirty
+                        && s.epoch == self.dict_epoch.get()
+                        && s.weak.upgrade().is_some_and(|w| Rc::ptr_eq(&w, m))
+                });
+                if fresh {
+                    return;
+                }
+                out.push(m.clone());
+                for x in m.borrow().values() {
+                    self.walk_fresh(x, seen, out, d + 1);
+                }
+            }
+            Value::Array(xs) | Value::Tuple(xs) => {
+                for x in xs {
+                    self.walk_fresh(x, seen, out, d + 1);
+                }
+            }
+            Value::Struct { fields, .. } | Value::Enum { fields, .. } => {
+                for x in fields.values() {
+                    self.walk_fresh(x, seen, out, d + 1);
+                }
+            }
+            Value::Some(x) | Value::Ok(x) | Value::Err(x) => self.walk_fresh(x, seen, out, d + 1),
+            Value::Chan(q) => {
+                for x in q.borrow().iter() {
+                    self.walk_fresh(x, seen, out, d + 1);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn dict_snapshot(&self, m: &DictRc) -> Result<(), Flow> {
+        let len = m.borrow().len();
+        if len > DICT_SNAP_MAX {
+            return panic(format!(
+                "a dict of {len} entries cannot cross a seal (more than {DICT_SNAP_MAX}): its \
+                 values' types could not be recorded, so the candidate could retype them"
+            ));
+        }
+        let mut types = std::collections::BTreeMap::new();
+        let mut op_closures = std::collections::BTreeSet::new();
+        for (k, x) in m.borrow().iter() {
+            types.insert(k.clone(), self.value_type(x, 0));
+            if let Value::Closure { captured, .. } = x {
+                if !captured.borrow().contains_key(SEALED_CLOSURE_MARK) {
+                    op_closures.insert(k.clone());
+                }
+            }
+        }
+        let key = Rc::as_ptr(m) as *const () as usize;
+        let mut tab = self.dict_snaps.borrow_mut();
+        if tab.len() > 64 && tab.len().is_power_of_two() {
+            tab.retain(|_, s| s.weak.strong_count() > 0);
+        }
+        tab.insert(
+            key,
+            DictSnap {
+                weak: Rc::downgrade(m),
+                types,
+                op_closures,
+                dirty: false,
+                epoch: self.dict_epoch.get(),
+            },
+        );
+        Ok(())
+    }
+
+    /// A dict was mutated (`dict_set`, `dict_remove`, `dict_inc`). By sealed
+    /// code: if the operator handed it over, it is dirty until verified. By
+    /// operator code: every snapshot is out of date (the next hand-over
+    /// re-takes it).
+    pub(crate) fn dict_mutated(&self, m: &DictRc) {
+        if !self.seal.active {
+            return;
+        }
+        if !self.frame_sealed.get() {
+            self.dict_epoch.set(self.dict_epoch.get() + 1);
+            return;
+        }
+        let key = Rc::as_ptr(m) as *const () as usize;
+        if let Some(s) = self.dict_snaps.borrow_mut().get_mut(&key) {
+            if s.weak.upgrade().is_some_and(|w| Rc::ptr_eq(&w, m)) {
+                s.dirty = true;
+            }
+        }
+    }
+
+    /// SEALED code returns control to OPERATOR code (a candidate fn or closure
+    /// returns, sealed code calls an operator closure or an effect-handler
+    /// arm): every dict sealed code mutated is checked against what the
+    /// operator held — a key it held keeps a value of that type.
+    pub(crate) fn dict_edge_out(&self) -> Result<(), Flow> {
+        if !self.seal.active {
+            return Ok(());
+        }
+        let dirty: Vec<(usize, DictRc)> = self
+            .dict_snaps
+            .borrow()
+            .iter()
+            .filter(|(_, s)| s.dirty)
+            .filter_map(|(k, s)| s.weak.upgrade().map(|m| (*k, m)))
+            .collect();
+        for (key, m) in dirty {
+            let verdict = {
+                let tab = self.dict_snaps.borrow();
+                let Some(s) = tab.get(&key) else { continue };
+                let cur = m.borrow();
+                let mut bad = None;
+                for (k, t) in &s.types {
+                    let Some(now) = cur.get(k) else { continue };
+                    if s.op_closures.contains(k) {
+                        if let Value::Closure { captured, .. } = now {
+                            if captured.borrow().contains_key(SEALED_CLOSURE_MARK) {
+                                bad = Some(format!(
+                                    "key `{k}` held an operator closure and now holds the \
+                                     candidate's"
+                                ));
+                                break;
+                            }
+                        }
+                    }
+                    // A copy: the cast may wrap a closure in a contract.
+                    let mut c = now.clone();
+                    if let Err(why) = self.cast(&mut c, t, &Cx::default()) {
+                        bad = Some(format!(
+                            "key `{k}` held a value of type `{}` and now holds {} ({why})",
+                            crate::doc::render_type(t),
+                            value::display(now)
+                        ));
+                        break;
+                    }
+                }
+                bad
+            };
+            if let Some(why) = verdict {
+                return panic(format!(
+                    "sealed code retyped a dict entry the operator handed it — a runtime type \
+                     confusion ({why})"
+                ));
+            }
+            if let Some(s) = self.dict_snaps.borrow_mut().get_mut(&key) {
+                s.dirty = false;
+            }
+        }
+        Ok(())
+    }
+
+    /// An effect-handler arm of provenance `arm_sealed` is about to run for an
+    /// operation the running frame performed with `payload`: the edge between
+    /// the two provenances.
+    pub(crate) fn handler_edge_into(&self, arm_sealed: bool, payload: &Value) -> Result<(), Flow> {
+        match (self.frame_sealed.get(), arm_sealed) {
+            (true, false) => self.dict_edge_out(),
+            (false, true) => self.dict_edge_in(payload),
+            _ => Ok(()),
+        }
+    }
+
+    /// The arm resumed the operation with `v`: back across the same edge.
+    pub(crate) fn handler_edge_back(&self, arm_sealed: bool, v: &Value) -> Result<(), Flow> {
+        match (self.frame_sealed.get(), arm_sealed) {
+            (true, false) => self.dict_edge_in(v),
+            _ => Ok(()),
+        }
+    }
+}
