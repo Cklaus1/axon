@@ -2249,17 +2249,13 @@ fn a_production_custodian_never_takes_its_config_from_a_path_its_caller_names() 
             .stderr(Stdio::piped())
             .spawn()
             .unwrap();
-        let mut bound = false;
-        for _ in 0..200 {
-            if sock.exists() {
-                bound = true;
-                break;
-            }
-            if child.try_wait().unwrap().is_some() {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(25));
-        }
+        // Ends when it binds or EXITS (a refused start, at once); the bound
+        // is a setup bound only (it was 5 s, which a loaded host exceeded:
+        // the control then read as "did not serve").
+        wait_until(SETUP_BOUND, || {
+            sock.exists() || child.try_wait().unwrap().is_some()
+        });
+        let bound = sock.exists();
         let _ = child.kill();
         let out = child.wait_with_output().unwrap();
         (bound, String::from_utf8_lossy(&out.stderr).to_string())
@@ -3279,19 +3275,17 @@ impl Drop for Impostor {
 }
 
 fn start_impostor(sock: &Path) -> Impostor {
-    let c = Command::new("python3")
+    let mut c = Command::new("python3")
         .args(["-c", IMPOSTOR])
         .arg(sock)
         .arg("test")
         .spawn()
         .unwrap();
     let ready = PathBuf::from(format!("{}.ready", sock.display()));
-    for _ in 0..200 {
-        if ready.exists() {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(25));
-    }
+    // Ready, or exited (never will be); SETUP_BOUND (was 5 s) only fails.
+    wait_until(SETUP_BOUND, || {
+        ready.exists() || c.try_wait().unwrap().is_some()
+    });
     assert!(
         ready.exists(),
         "setup: the impostor custodian never listened"
@@ -3361,13 +3355,14 @@ fn a_custodian_executable_another_uid_can_rewrite_is_refused() {
         .stderr(Stdio::null())
         .spawn()
         .unwrap();
-    let _guard = Impostor(child);
-    for _ in 0..200 {
-        if sock.exists() {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(25));
-    }
+    let mut guard = Impostor(child);
+    // It listens (the pin check is then what answers), or it exited; a
+    // socket that never appeared is a SETUP failure, never the refusal (it
+    // was a 5 s wait whose expiry let the client's connect error stand in).
+    wait_until(SETUP_BOUND, || {
+        sock.exists() || guard.0.try_wait().unwrap().is_some()
+    });
+    assert!(sock.exists(), "setup: the copied custodian never listened");
     let client = |pin: String| axon_fabric::custodian::CustodianRef {
         socket: sock.clone(),
         uid: me,

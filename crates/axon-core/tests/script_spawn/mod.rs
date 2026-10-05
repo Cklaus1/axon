@@ -569,6 +569,19 @@ pub fn workspace_bin(var: &str, build: &[&str], name: &str) -> PathBuf {
         .nth(3)
         .expect("this test's target dir")
         .join("workspace-bins");
+    // Test PROCESSES running at once (a sharded suite, concurrent harness
+    // cells) share `target`, and cargo REPLACES an uplifted binary whenever it
+    // relinks it -- in a git worktree on EVERY build of the interpreter, since
+    // axon-core's build script watches `.git/HEAD` and `.git/index` paths that
+    // do not exist there (`.git` is a file), and a missing rerun-if path
+    // reruns it. One process's build then removed the `debug/axon` another
+    // had just been handed ("No such file or directory"). So the build runs
+    // under an exclusive lock on `target`, and each process gets its OWN copy
+    // of what cargo just built (copied by a child `cp`, so this process holds
+    // no write descriptor to it), which no later build touches.
+    std::fs::create_dir_all(&target).unwrap();
+    let lock = std::fs::File::create(target.join(".workspace-bins.lock")).unwrap();
+    lock.lock().unwrap();
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
     let o = Command::new(&cargo)
         .args(build)
@@ -595,8 +608,42 @@ pub fn workspace_bin(var: &str, build: &[&str], name: &str) -> PathBuf {
         build.join(" "),
         p.display()
     );
-    built.as_mut().unwrap().insert(key, p.clone());
-    p
+    let mine = per_process_copy(&target, &p, name);
+    drop(lock);
+    built.as_mut().unwrap().insert(key, mine.clone());
+    mine
+}
+
+/// `built` copied to `<target>/per-process/<this pid>/<name>` (mode kept), by
+/// a child `cp`. Copies of processes that have exited are removed first.
+/// Called holding the `target` lock.
+fn per_process_copy(target: &Path, built: &Path, name: &str) -> PathBuf {
+    let base = target.join("per-process");
+    if let Ok(entries) = std::fs::read_dir(&base) {
+        for e in entries.flatten() {
+            let pid = e.file_name().to_string_lossy().into_owned();
+            if !Path::new("/proc").join(&pid).exists() {
+                let _ = std::fs::remove_dir_all(e.path());
+            }
+        }
+    }
+    let dir = base.join(std::process::id().to_string());
+    std::fs::create_dir_all(&dir).unwrap();
+    let mine = dir.join(name);
+    let st = Command::new("cp")
+        .arg("--preserve=mode,timestamps")
+        .arg("--")
+        .arg(built)
+        .arg(&mine)
+        .status()
+        .unwrap();
+    assert!(
+        st.success(),
+        "could not copy {} to {}",
+        built.display(),
+        mine.display()
+    );
+    mine
 }
 
 /// The newest source file cargo would rebuild `pkg`'s binaries from, when it

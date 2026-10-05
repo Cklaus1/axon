@@ -29,18 +29,26 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 /// Replace `path` with a FIFO that serves each of `reads` to one opener, in
-/// order. The feeder opens without blocking (so it gives up, rather than
-/// hanging the test, when nobody reads) and ignores a reader that goes away.
-fn fifo_serving(path: &Path, reads: Vec<Vec<u8>>) -> std::thread::JoinHandle<usize> {
+/// order. The feeder opens without blocking and ignores a reader that goes
+/// away. It serves until the test is DONE reading ([`Feeder::join`], called
+/// once the decision under test has returned), not until a fixed deadline:
+/// the 5 s it used to give up after was both paid by every honest run (an
+/// honest reader opens once, so the second serve never pairs) and missed by a
+/// slow reader on a loaded host. SETUP_BOUND only stops a feeder whose test
+/// never finished.
+fn fifo_serving(path: &Path, reads: Vec<Vec<u8>>) -> Feeder {
     use std::os::unix::fs::OpenOptionsExt;
+    use std::sync::atomic::Ordering::SeqCst;
     let _ = std::fs::remove_file(path);
     let c = std::ffi::CString::new(path.to_str().unwrap()).unwrap();
     assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o644) }, 0, "mkfifo");
     let path = path.to_path_buf();
-    std::thread::spawn(move || {
+    let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let stop = done.clone();
+    let thread = std::thread::spawn(move || {
         let mut served = 0;
+        let end = Instant::now() + SETUP_BOUND;
         for bytes in reads {
-            let deadline = Instant::now() + Duration::from_secs(5);
             let f = loop {
                 match std::fs::OpenOptions::new()
                     .write(true)
@@ -48,7 +56,7 @@ fn fifo_serving(path: &Path, reads: Vec<Vec<u8>>) -> std::thread::JoinHandle<usi
                     .open(&path)
                 {
                     Ok(f) => break Some(f),
-                    Err(_) if Instant::now() < deadline => {
+                    Err(_) if !stop.load(SeqCst) && Instant::now() < end => {
                         std::thread::sleep(Duration::from_millis(5))
                     }
                     Err(_) => break None,
@@ -62,7 +70,32 @@ fn fifo_serving(path: &Path, reads: Vec<Vec<u8>>) -> std::thread::JoinHandle<usi
             std::thread::sleep(Duration::from_millis(300));
         }
         served
-    })
+    });
+    Feeder {
+        done,
+        thread: Some(thread),
+    }
+}
+
+/// A [`fifo_serving`] feeder: it stops once the test says it is done.
+struct Feeder {
+    done: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    thread: Option<std::thread::JoinHandle<usize>>,
+}
+
+impl Feeder {
+    /// The test has read what it will read: stop serving; how many reads
+    /// were served.
+    fn join(mut self) -> std::thread::Result<usize> {
+        self.done.store(true, std::sync::atomic::Ordering::SeqCst);
+        self.thread.take().unwrap().join()
+    }
+}
+
+impl Drop for Feeder {
+    fn drop(&mut self) {
+        self.done.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
 }
 
 /// An open of `path` that the test holds (fanotify FAN_OPEN_PERM) until this

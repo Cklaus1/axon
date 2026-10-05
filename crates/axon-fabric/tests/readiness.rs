@@ -977,6 +977,34 @@ fn production_verifiers() -> &'static (std::path::PathBuf, std::path::PathBuf) {
             .unwrap()
             .join("rows2-production-verifier");
         let (src, target) = (base.join("src"), base.join("target"));
+        // One builder at a time across PROCESSES: `base` is fixed (so a later
+        // process rebuilds only what changed), and two suite processes on one
+        // target dir (concurrent shards or runs) would otherwise delete each
+        // other's sources mid-build. Held until this process's copies of the
+        // two verifiers are made; the copies are per process.
+        std::fs::create_dir_all(&base).unwrap();
+        let lock = std::fs::File::create(base.join(".lock")).unwrap();
+        {
+            use std::os::unix::io::AsRawFd;
+            assert_eq!(
+                unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX) },
+                0,
+                "setup: lock {}",
+                base.display()
+            );
+        }
+        // Copies left by processes that have exited are nobody's now.
+        for e in std::fs::read_dir(&base).unwrap().flatten() {
+            let name = e.file_name().to_string_lossy().into_owned();
+            if let Some(pid) = name
+                .strip_prefix("clean-axon-fabric-")
+                .or(name.strip_prefix("dirty-axon-fabric-"))
+            {
+                if !Path::new(&format!("/proc/{pid}")).exists() {
+                    let _ = std::fs::remove_file(e.path());
+                }
+            }
+        }
         let _ = std::fs::remove_dir_all(&src);
         std::fs::create_dir_all(&src).unwrap();
         let ws = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
@@ -1031,21 +1059,22 @@ fn production_verifiers() -> &'static (std::path::PathBuf, std::path::PathBuf) {
                 "setup: the production build failed: {}",
                 String::from_utf8_lossy(&out.stderr)
             );
-            let bin = base.join(name);
+            let bin = base.join(format!("{name}-{}", std::process::id()));
             std::fs::copy(target.join("debug/axon-fabric"), &bin).unwrap();
             // Just written: a test thread forking meanwhile may still hold a
             // write descriptor to it (ETXTBSY), so the first exec is retried.
-            let m = (0..50)
-                .find_map(
-                    |_| match Command::new(&bin).arg("verifier-manifest").output() {
-                        Err(e) if e.kind() == std::io::ErrorKind::ExecutableFileBusy => {
-                            std::thread::sleep(std::time::Duration::from_millis(100));
-                            None
-                        }
-                        r => Some(r.unwrap()),
-                    },
-                )
-                .expect("setup: the copied verifier stayed busy");
+            // Retried until it is not busy; SETUP_BOUND (was 5 s) only fails.
+            let mut m = None;
+            wait_until(SETUP_BOUND, || {
+                match Command::new(&bin).arg("verifier-manifest").output() {
+                    Err(e) if e.kind() == std::io::ErrorKind::ExecutableFileBusy => false,
+                    r => {
+                        m = Some(r.unwrap());
+                        true
+                    }
+                }
+            });
+            let m = m.expect("setup: the copied verifier stayed busy");
             let v: Value = serde_json::from_slice(&m.stdout).unwrap();
             assert!(
                 v["build"] == "production" && v["source_dirty"] == dirty,
@@ -1060,6 +1089,7 @@ fn production_verifiers() -> &'static (std::path::PathBuf, std::path::PathBuf) {
             "a change nobody committed\n",
         );
         let dirty = build("dirty-axon-fabric", true);
+        drop(lock);
         (clean, dirty)
     })
 }

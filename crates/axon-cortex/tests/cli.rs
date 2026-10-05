@@ -1031,7 +1031,11 @@ fn cli_survives_a_generator_that_misbehaves() {
         common::write_executable(&p, body, 0o755);
         p
     };
-    let run = |gen: &std::path::PathBuf| -> (i32, String) {
+    // The generator deadline: short only where firing it is the property
+    // (case 1); every other case is judged on its merits, so its deadline is
+    // a generous upper bound that only FAILS (a 700 ms deadline there read a
+    // slow-but-honest generator on a loaded host as "did not answer").
+    let run = |gen: &std::path::PathBuf, timeout_ms: &str| -> (i32, String) {
         std::fs::copy(fixtures.join("broken.ax"), ws.join("broken.ax")).unwrap();
         let out = Command::new(env!("CARGO_BIN_EXE_cortex"))
             .args(["repair", "--workspace"])
@@ -1049,7 +1053,7 @@ fn cli_survives_a_generator_that_misbehaves() {
             // Seconds are not something a suite can wait for, and an untested
             // deadline is exactly the kind of check that turns out never to
             // fire.
-            .env("AXON_CORTEX_GENERATOR_TIMEOUT_MS", "700")
+            .env("AXON_CORTEX_GENERATOR_TIMEOUT_MS", timeout_ms)
             .output()
             .unwrap();
         (
@@ -1064,14 +1068,16 @@ fn cli_survives_a_generator_that_misbehaves() {
 
     // 1. Never exits. Must hit the deadline, not block.
     let began = std::time::Instant::now();
-    let (code, said) = run(&script("hang.sh", "#!/bin/sh\nsleep 600\n"));
+    let (code, said) = run(&script("hang.sh", "#!/bin/sh\nsleep 600\n"), "700");
     assert_eq!(
         code, 24,
         "a generator that never answers is missing CONTENT: {said}"
     );
     assert!(said.contains("did not answer within"), "{said}");
     assert!(
-        began.elapsed() < std::time::Duration::from_secs(30),
+        // Far below the generator's 600 s: a deadline that did not fire is
+        // still caught, and a loaded host's slow start is not (was 30 s).
+        began.elapsed() < std::time::Duration::from_secs(300),
         "the deadline must actually bound the wait, took {:?}",
         began.elapsed()
     );
@@ -1080,24 +1086,32 @@ fn cli_survives_a_generator_that_misbehaves() {
     //    a loop that writes the whole prompt before reading deadlocks. It must
     //    be read and then rejected on its merits, not time out.
     let began2 = std::time::Instant::now();
-    let (code2, said2) = run(&script(
-        "flood.sh",
-        "#!/bin/sh\nhead -c 200000 /dev/zero | tr '\\0' 'x'\ncat >/dev/null\n",
-    ));
+    let (code2, said2) = run(
+        &script(
+            "flood.sh",
+            "#!/bin/sh\nhead -c 200000 /dev/zero | tr '\\0' 'x'\ncat >/dev/null\n",
+        ),
+        "120000",
+    );
     assert_eq!(code2, 24, "{said2}");
     assert!(
         said2.contains("bytes, limit is"),
         "it must be rejected for its SIZE, not for timing out: {said2}"
     );
     assert!(
-        began2.elapsed() < std::time::Duration::from_secs(10),
+        // Below its 120 s deadline, so a deadlock that only that deadline
+        // ended still fails here (as well as on the reason above).
+        began2.elapsed() < std::time::Duration::from_secs(100),
         "no deadlock: {:?}",
         began2.elapsed()
     );
 
     // 3. Exits 0 having written nothing. An empty body would delete the
     //    function while looking like a proposal.
-    let (code3, said3) = run(&script("silent.sh", "#!/bin/sh\ncat >/dev/null\n"));
+    let (code3, said3) = run(
+        &script("silent.sh", "#!/bin/sh\ncat >/dev/null\n"),
+        "120000",
+    );
     assert_eq!(code3, 24, "{said3}");
     assert!(said3.contains("empty body"), "{said3}");
 
