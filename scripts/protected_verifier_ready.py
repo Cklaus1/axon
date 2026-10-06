@@ -124,7 +124,8 @@ VERIFIER_MANIFEST = os.path.join(OPERATOR_TRUST_ROOT, "verifier.json")
 VERIFIER_MANIFEST_SCHEMA = "axon-verifier-manifest/1"
 # What the installed verifier must report about ITSELF, and the manifest must
 # pin, field for field (`axon-fabric verifier-manifest` prints it).
-VERIFIER_IDENTITY = ("sha256", "build", "fabric_revision", "source_dirty", "rustc", "profile", "target")
+VERIFIER_IDENTITY = ("sha256", "build", "fabric_revision", "source_dirty", "rustc", "profile", "target",
+                     "build_state")
 
 
 def verifier_mismatch(manifest, out):
@@ -135,7 +136,8 @@ def verifier_mismatch(manifest, out):
     for k in VERIFIER_IDENTITY:
         if me.get(k) != manifest.get(k):
             return f"verifier reports {k}={me.get(k)!r}, manifest pins {manifest.get(k)!r}"
-    if me.get("build") != "production" or me.get("source_dirty") is not False or me.get("profile") != "release":
+    if (me.get("build") != "production" or me.get("source_dirty") is not False
+            or me.get("profile") != "release" or me.get("build_state") != ""):
         return "operator verifier is not a clean production release build"
     if out.get("trust_root") != QUALIFICATION_ROOT or manifest["trust_roots"].get("qualification") != QUALIFICATION_ROOT:
         return f"operator verifier is not deciding over {QUALIFICATION_ROOT}"

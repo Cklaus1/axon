@@ -845,3 +845,530 @@ fn a_kernel_from_sources_that_are_not_the_pinned_ones_is_refused() {
         );
     }
 }
+
+// ── C9 round 5, FIELD-ORIGIN (amendment 80) ──────────────────────────────────
+
+/// The triple the toolchain the build resolves says it runs on.
+fn host_triple(repo: &Path) -> String {
+    let o = Command::new("rustc")
+        .arg("-vV")
+        .current_dir(repo)
+        .output()
+        .unwrap();
+    String::from_utf8_lossy(&o.stdout)
+        .lines()
+        .find_map(|l| l.strip_prefix("host: ").map(str::to_string))
+        .expect("setup: rustc -vV names no host")
+}
+
+/// `python3 -c CODE SCRIPTS-DIR ARGS...` with guest_build_env imported as `g`.
+fn gpy(repo: &Path, code: &str, args: &[&str]) -> Output {
+    Command::new("python3")
+        .arg("-B")
+        .arg("-c")
+        .arg(format!(
+            "import json, sys\nsys.path.insert(0, sys.argv[1])\nimport guest_build_env as g\n{code}"
+        ))
+        .arg(repo.join("scripts"))
+        .args(args)
+        .output()
+        .unwrap()
+}
+
+/// Round 5, BLOCKER: cargo's effective config is judged by its STRUCTURED key
+/// path against the tree's committed keys, not by splitting the text cargo
+/// prints. Cargo prints a `cfg(...)` target whose expression holds double quotes
+/// with SINGLE quotes; the old split left a stray quote, read the table as a
+/// harmless triple, and a committed `linker` under it linked the guest binaries
+/// (a probe linker ran) while the record said foreign=[]. Each committed form
+/// below must be refused by `begin`, and so must an ancestor's. Control: the
+/// tree's own committed config (the two wasm rustflags) begins, foreign=[].
+#[test]
+fn a_committed_cargo_config_cannot_name_a_program_in_any_spelling() {
+    let host = {
+        let d = tempfile::tempdir().unwrap();
+        host_triple(&checkout(d.path()))
+    };
+    let single = "\n[target.'cfg(all(target_os=\"linux\", target_env=\"musl\"))']\n\
+                  linker = \"/tmp/evil-ld\"\n";
+    let double = "\n[target.\"cfg(unix)\"]\nlinker = \"/tmp/evil-ld\"\n";
+    let cases: Vec<(String, String, bool)> = vec![
+        (
+            "a single-quoted cfg(all(..=\"..\")) target (the form cargo prints with single quotes)"
+                .into(),
+            single.into(),
+            true,
+        ),
+        ("a double-quoted cfg target".into(), double.into(), true),
+        (
+            "a cfg target's rustflags".into(),
+            "\n[target.'cfg(unix)']\nrustflags = [\"--cfg\", \"evil\"]\n".into(),
+            true,
+        ),
+        (
+            "the host triple's linker".into(),
+            format!("\n[target.{host}]\nlinker = \"/tmp/evil-ld\"\n"),
+            true,
+        ),
+        (
+            "the musl triple's linker".into(),
+            "\n[target.x86_64-unknown-linux-musl]\nlinker = \"/tmp/evil-ld\"\n".into(),
+            true,
+        ),
+        (
+            "a wasm triple's linker (a committed key, but not an allowed one)".into(),
+            "\n[target.wasm32-wasip1]\nlinker = \"/tmp/evil-ld\"\n".into(),
+            true,
+        ),
+        (
+            "a triple this host never builds, other than the committed ones".into(),
+            "\n[target.aarch64-unknown-linux-gnu]\nlinker = \"/tmp/evil-ld\"\n".into(),
+            true,
+        ),
+        (
+            "[env]".into(),
+            "\n[env]\nLD_PRELOAD = \"/tmp/evil.so\"\n".into(),
+            true,
+        ),
+        (
+            "[build] rustc".into(),
+            "\n[build]\nrustc = \"/tmp/evil-rustc\"\n".into(),
+            true,
+        ),
+        (
+            "[build] rustflags".into(),
+            "\n[build]\nrustflags = [\"--cfg\", \"evil\"]\n".into(),
+            true,
+        ),
+        (
+            "[build] target-dir".into(),
+            "\n[build]\ntarget-dir = \"/tmp/reused\"\n".into(),
+            true,
+        ),
+        (
+            "[source] replacement".into(),
+            "\n[source.crates-io]\nreplace-with = \"v\"\n[source.v]\ndirectory = \"/tmp/vendor\"\n"
+                .into(),
+            true,
+        ),
+        (
+            "[patch]".into(),
+            "\n[patch.crates-io]\nserde = { path = \"/tmp/serde\" }\n".into(),
+            true,
+        ),
+        (
+            "[registries]".into(),
+            "\n[registries.x]\nindex = \"https://example.invalid/index\"\n".into(),
+            true,
+        ),
+        ("[net]".into(), "\n[net]\noffline = true\n".into(), true),
+        (
+            "[http]".into(),
+            "\n[http]\nproxy = \"http://example.invalid:1\"\n".into(),
+            true,
+        ),
+        (
+            "[profile]".into(),
+            "\n[profile.release]\nopt-level = 1\n".into(),
+            true,
+        ),
+        (
+            "[unstable]".into(),
+            "\n[unstable]\nbuild-std = [\"core\"]\n".into(),
+            true,
+        ),
+        (
+            "an ancestor's single-quoted cfg target".into(),
+            single.into(),
+            false,
+        ),
+        (
+            "an ancestor's [env]".into(),
+            "[env]\nLD_PRELOAD = \"/tmp/evil.so\"\n".into(),
+            false,
+        ),
+        (
+            "an ancestor's [source] replacement".into(),
+            "[source.crates-io]\nreplace-with = \"v\"\n[source.v]\ndirectory = \"/tmp/vendor\"\n"
+                .into(),
+            false,
+        ),
+    ];
+    for (attack, cfg, own) in &cases {
+        let d = tempfile::tempdir().unwrap();
+        let r = checkout(d.path());
+        let scratch = private_scratch();
+        let parent = scratch.path().join("parent");
+        if *own {
+            let p = r.join(".cargo/config.toml");
+            let s = std::fs::read_to_string(&p).unwrap();
+            write(&p, &format!("{s}{cfg}"));
+            git(&r, &["add", "-A"]);
+        } else {
+            write(&scratch.path().join(".cargo/config.toml"), cfg);
+        }
+        let out = d.path().join("out");
+        let o = build_env_only(
+            &r,
+            &out,
+            &[("AXON_GUEST_BUILD_PARENT", parent.display().to_string())],
+        );
+        let rec = if o.status.success() {
+            record(&out)
+        } else {
+            Value::Null
+        };
+        discard(&rec);
+        assert!(
+            !o.status.success(),
+            "ATTACK: a cargo config the guest build would use was accepted ({attack}); the \
+             record says foreign={}:\n{}",
+            rec["effective_config"]["foreign"],
+            text(&o)
+        );
+        assert!(
+            text(&o).contains("effective configuration"),
+            "{attack}: {}",
+            text(&o)
+        );
+    }
+    let d = tempfile::tempdir().unwrap();
+    let r = checkout(d.path());
+    let out = d.path().join("out");
+    let o = build_env_only(&r, &out, &[]);
+    assert!(
+        o.status.success(),
+        "control: the tree's own committed config begins: {}",
+        text(&o)
+    );
+    let rec = record(&out);
+    discard(&rec);
+    assert_eq!(rec["effective_config"]["foreign"], serde_json::json!([]));
+}
+
+/// The classifier itself, on the structured key path, for the spellings cargo
+/// prints: it never splits text. A key is tolerated only when it is exactly one
+/// of the committed keys AND its triple is neither a `cfg(...)` table nor one
+/// the build compiles for (the host triple comes from `rustc -vV`).
+#[test]
+fn a_config_key_is_judged_by_its_structured_path_not_by_the_text_cargo_prints() {
+    let d = tempfile::tempdir().unwrap();
+    let r = checkout(d.path());
+    let host = host_triple(&r);
+    let code = "\
+triples = g.GUEST_TRIPLES | {sys.argv[2]}\n\
+def p(*k): return g.key_problem(tuple(k), triples)\n\
+out = {\n\
+ 'wasip1': p('target', 'wasm32-wasip1', 'rustflags'),\n\
+ 'unknown': p('target', 'wasm32-unknown-unknown', 'rustflags'),\n\
+ 'sq': p('target', 'cfg(all(target_os=\"linux\", target_env=\"musl\"))', 'linker'),\n\
+ 'sqflags': p('target', 'cfg(all(target_os=\"linux\", target_env=\"musl\"))', 'rustflags'),\n\
+ 'dq': p('target', 'cfg(unix)', 'linker'),\n\
+ 'host': p('target', sys.argv[2], 'rustflags'),\n\
+ 'musl': p('target', 'x86_64-unknown-linux-musl', 'rustflags'),\n\
+ 'other': p('target', 'aarch64-unknown-linux-gnu', 'rustflags'),\n\
+ 'wasmlinker': p('target', 'wasm32-wasip1', 'linker'),\n\
+ 'dotted': p('target', 'wasm32-wasip1.rustflags'),\n\
+ 'env': p('env', 'X'), 'build': p('build', 'rustc'), 'src': p('source', 'v', 'directory'),\n\
+ 'leaves': sorted(map(list, g.config_leaves({'a': {'b': [1]}, 'c': {}, 'd': 3}))),\n\
+}\n\
+print(json.dumps(out))";
+    let o = gpy(&r, code, &[&host]);
+    assert!(o.status.success(), "setup: {}", text(&o));
+    let v: Value = serde_json::from_slice(&o.stdout).unwrap();
+    // Control: exactly the committed keys are tolerated.
+    assert!(
+        v["wasip1"].is_null() && v["unknown"].is_null(),
+        "control: the committed keys pass: {v}"
+    );
+    for k in [
+        "sq",
+        "sqflags",
+        "dq",
+        "host",
+        "musl",
+        "other",
+        "wasmlinker",
+        "dotted",
+        "env",
+        "build",
+        "src",
+    ] {
+        assert!(
+            v[k].is_string(),
+            "ATTACK: the config key {k} was judged unable to reach the guest build: {v}"
+        );
+    }
+    assert_eq!(
+        v["leaves"],
+        serde_json::json!([["a", "b"], ["c"], ["d"]]),
+        "an empty table is a key somebody wrote"
+    );
+}
+
+/// Round 5: the host binaries are built by the operator's own cargo; the kit's
+/// `check-host-build` judges the ambient build with the guest's classifier --
+/// any variable that names a compiler, wrapper, flags, linker or registry, an
+/// ancestor or CARGO_HOME config, a replaced source. Control: a clean
+/// environment, an empty CARGO_HOME and the tree's committed config pass.
+#[test]
+fn an_ambient_host_build_under_a_wrapper_flag_or_config_is_refused() {
+    let d = tempfile::tempdir().unwrap();
+    let r = checkout(d.path());
+    let empty_home = d.path().join("cargo-home");
+    std::fs::create_dir_all(&empty_home).unwrap();
+    let check = |extra: &[(&str, String)], repo: &Path| -> Output {
+        let mut c = gbe(repo);
+        c.arg("check-host-build").arg(repo).env_clear();
+        c.env("PATH", "/usr/bin:/bin")
+            .env("HOME", std::env::var("HOME").unwrap())
+            .env("CARGO_HOME", &empty_home);
+        for (k, v) in extra {
+            c.env(k, v);
+        }
+        c.output().unwrap()
+    };
+    let o = check(&[], &r);
+    assert!(
+        o.status.success(),
+        "control: a clean ambient build is accepted: {}",
+        text(&o)
+    );
+    let w = d.path().join("w");
+    let attacks: [(&str, &str); 14] = [
+        ("RUSTC_WRAPPER", "/tmp/w"),
+        ("RUSTC_WORKSPACE_WRAPPER", "/tmp/w"),
+        ("RUSTFLAGS", "--cfg evil"),
+        ("CARGO_ENCODED_RUSTFLAGS", "--cfg\x1fevil"),
+        ("CARGO_BUILD_RUSTC_WRAPPER", "/tmp/w"),
+        ("CARGO_BUILD_RUSTFLAGS", "--cfg evil"),
+        (
+            "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER",
+            "/tmp/evil-ld",
+        ),
+        ("CARGO_BUILD_RUSTC", "/tmp/evil-rustc"),
+        ("RUSTC", "/tmp/evil-rustc"),
+        ("CARGO_REGISTRIES_X_INDEX", "https://example.invalid/i"),
+        ("CARGO_SOURCE_CRATES_IO_REPLACE_WITH", "v"),
+        ("CC", "/tmp/evil-cc"),
+        ("CFLAGS", "-DEVIL"),
+        ("RUSTUP_TOOLCHAIN", "stable"),
+    ];
+    for (var, val) in attacks {
+        let o = check(&[(var, val.replace("/tmp/w", w.to_str().unwrap()))], &r);
+        assert!(
+            !o.status.success(),
+            "ATTACK: an ambient host build with {var} set was accepted:\n{}",
+            text(&o)
+        );
+        assert!(text(&o).contains(var), "{var}: {}", text(&o));
+    }
+    // A config in CARGO_HOME, and one in an ancestor of the clone.
+    let ch = d.path().join("cargo-home-with-config");
+    write(
+        &ch.join("config.toml"),
+        "[source.crates-io]\nreplace-with = \"v\"\n[source.v]\ndirectory = \"/tmp/vendor\"\n",
+    );
+    let mut c = gbe(&r);
+    c.arg("check-host-build").arg(&r).env_clear();
+    c.env("PATH", "/usr/bin:/bin")
+        .env("HOME", std::env::var("HOME").unwrap())
+        .env("CARGO_HOME", &ch);
+    let o = c.output().unwrap();
+    assert!(
+        !o.status.success(),
+        "ATTACK: an ambient host build with a replaced registry source in CARGO_HOME was accepted:\n{}",
+        text(&o)
+    );
+    let scratch = private_scratch();
+    write(
+        &scratch.path().join(".cargo/config.toml"),
+        "[build]\nrustc-wrapper = \"/usr/bin/sccache\"\n",
+    );
+    let inner = checkout(&scratch.path().join("deeper"));
+    let o = check(&[], &inner);
+    assert!(
+        !o.status.success(),
+        "ATTACK: an ambient host build under an ancestor config naming a wrapper was accepted:\n{}",
+        text(&o)
+    );
+}
+
+/// Round 5, major-adjacent 2: the controlled record is the RUNNER's. Each
+/// record below carries every field the structural judge reads and is refused
+/// by the proof alone: no proof, a field edited after signing, a proof under a
+/// key the builder did not make, a key file another uid could read, a key
+/// that is a symlink, a key that is gone. Control: the record `begin` wrote.
+#[test]
+fn a_build_record_its_runner_did_not_sign_is_refused() {
+    let d = tempfile::tempdir().unwrap();
+    let (r, rec_path, rec) = begun(d.path());
+    let key = Path::new(rec["build_parent"].as_str().unwrap())
+        .join("keys")
+        .join(format!("{}.key", rec["proof"]["id"].as_str().unwrap()));
+    let code = "\
+rec = json.load(open(sys.argv[2]))\n\
+mode = sys.argv[3]\n\
+if mode == 'none': rec.pop('proof')\n\
+elif mode == 'edit': rec['artifacts']['axon'] = 'f' * 64\n\
+elif mode == 'forged': import hmac as h; rec['proof']['hmac'] = h.new(b'x' * 32, g.proof_payload(rec), 'sha256').hexdigest()\n\
+elif mode == 'otherparent': rec['build_parent'] = '/var/tmp'\n\
+print(json.dumps(g.proof_problems(rec, 'build')))";
+    let judge = |mode: &str| -> String {
+        let o = gpy(&r, code, &[rec_path.to_str().unwrap(), mode]);
+        assert!(o.status.success(), "setup: {mode}: {}", text(&o));
+        serde_json::from_slice::<String>(&o.stdout).unwrap()
+    };
+    let mut failures = vec![];
+    assert_eq!(
+        judge("same"),
+        "",
+        "control: the record the runner wrote holds"
+    );
+    for (mode, why) in [
+        ("none", "no builder proof"),
+        ("edit", "does not hold"),
+        ("forged", "does not hold"),
+        ("otherparent", "cannot be checked"),
+    ] {
+        let got = judge(mode);
+        if !got.contains(why) {
+            failures.push(format!("{mode}: {got:?}"));
+        }
+    }
+    // The key's own protection.
+    let saved = std::fs::read(&key).unwrap();
+    chmod(&key, 0o644);
+    let open = judge("same");
+    chmod(&key, 0o400);
+    std::fs::remove_file(&key).unwrap();
+    std::os::unix::fs::symlink("/etc/hostname", &key).unwrap();
+    let linked = judge("same");
+    std::fs::remove_file(&key).unwrap();
+    let gone = judge("same");
+    std::fs::write(&key, saved).unwrap();
+    chmod(&key, 0o400);
+    discard(&rec);
+    for (what, got) in [
+        ("a key another uid can read", open),
+        ("a key that is a symlink", linked),
+        ("a key that is gone", gone),
+    ] {
+        if !got.contains("cannot be checked") {
+            failures.push(format!("{what}: {got:?}"));
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "ATTACK: a guest build record its runner did not sign passed the proof: {failures:?}"
+    );
+}
+
+/// Round 5: `dist` records the digest of EVERY artifact of the image and
+/// refuses a copy that is not the controlled step's output; the manifest and
+/// the freeze take digests from the record (`dist_problems`), refuse a dist
+/// file that differs, and refuse a record without the runner's proof. Control:
+/// the honest dist is accepted.
+#[test]
+fn a_dist_file_the_controlled_runner_did_not_produce_is_refused() {
+    let d = tempfile::tempdir().unwrap();
+    let (r, rec_path, _) = begun(d.path());
+    finished(&r, &rec_path);
+    let sq = d.path().join("rootfs.sqfs");
+    let o = gbe(&r)
+        .arg("rootfs")
+        .arg(&rec_path)
+        .arg(&sq)
+        .output()
+        .unwrap();
+    assert!(o.status.success(), "setup: rootfs: {}", text(&o));
+    let dist = d.path().join("dist");
+    std::fs::create_dir_all(&dist).unwrap();
+    std::fs::copy(&sq, dist.join("rootfs.sqfs")).unwrap();
+    for n in ["axon", "axon-guest-init", "axon-psv-runner"] {
+        std::fs::copy(gpath(&r, &rec_path, n), dist.join(n)).unwrap();
+    }
+    let honest = std::fs::read(dist.join("axon")).unwrap();
+    // A binary built elsewhere, copied over the controlled one.
+    std::fs::write(dist.join("axon"), b"#!/bin/sh\necho built elsewhere\n").unwrap();
+    let o = gbe(&r)
+        .arg("dist")
+        .arg(&rec_path)
+        .arg(&dist)
+        .output()
+        .unwrap();
+    let swapped_recorded = o.status.success();
+    std::fs::write(dist.join("axon"), &honest).unwrap();
+    let c = gbe(&r)
+        .arg("dist")
+        .arg(&rec_path)
+        .arg(&dist)
+        .output()
+        .unwrap();
+    let rec: Value = serde_json::from_slice(&std::fs::read(&rec_path).unwrap()).unwrap();
+    let code = "\
+rec = json.load(open(sys.argv[2]))\n\
+if sys.argv[4] == 'handwritten': rec.pop('proof')\n\
+print(json.dumps(g.dist_problems(sys.argv[3], rec, None)))";
+    let judge = |mode: &str| -> String {
+        let o = gpy(
+            &r,
+            code,
+            &[rec_path.to_str().unwrap(), dist.to_str().unwrap(), mode],
+        );
+        assert!(o.status.success(), "setup: {mode}: {}", text(&o));
+        serde_json::from_slice::<String>(&o.stdout).unwrap()
+    };
+    let control = judge("same");
+    let hand = judge("handwritten");
+    std::fs::write(dist.join("rootfs.sqfs"), b"squashed elsewhere").unwrap();
+    let swapped = judge("same");
+    discard(&rec);
+    assert!(
+        !swapped_recorded,
+        "ATTACK: a dist binary the controlled build did not produce was recorded:\n{}",
+        text(&o)
+    );
+    assert!(text(&o).contains("is not the bytes"), "{}", text(&o));
+    assert!(c.status.success(), "control: dist records: {}", text(&c));
+    assert_eq!(control, "", "control: the honest dist is accepted");
+    assert!(
+        hand.contains("no builder proof"),
+        "ATTACK: a hand-written record named dist digests and was accepted: {hand:?}"
+    );
+    assert!(
+        swapped.contains("rootfs.sqfs is not the bytes"),
+        "ATTACK: a dist file that differs from the record was accepted: {swapped:?}"
+    );
+    assert_eq!(rec["dist"]["axon"], sha(&dist.join("axon")));
+}
+
+/// Round 5: the kernel build's record is signed by its runner too, and a field
+/// edited afterwards (the digest of a vmlinux built elsewhere) breaks it.
+#[test]
+fn a_kernel_build_record_edited_after_its_runner_signed_it_is_refused() {
+    let d = tempfile::tempdir().unwrap();
+    let r = checkout(d.path());
+    let (dist, prof) = kernel_fixture(d.path());
+    let o = kernel_step(&r, &dist, &prof, &[]);
+    assert!(o.status.success(), "setup: kernel: {}", text(&o));
+    let kpath = dist.join("kernel-build.json");
+    let code = "\
+rec = json.load(open(sys.argv[2]))\n\
+if sys.argv[3] == 'edit': rec['vmlinux_sha256'] = 'f' * 64\n\
+print(json.dumps(g.proof_problems(rec, 'kernel build')))";
+    let judge = |mode: &str| -> String {
+        let o = gpy(&r, code, &[kpath.to_str().unwrap(), mode]);
+        assert!(o.status.success(), "setup: {mode}: {}", text(&o));
+        serde_json::from_slice::<String>(&o.stdout).unwrap()
+    };
+    let (control, edited) = (judge("same"), judge("edit"));
+    assert_eq!(
+        control, "",
+        "control: the kernel record the runner wrote holds"
+    );
+    assert!(
+        edited.contains("does not hold"),
+        "ATTACK: a kernel record edited after signing was accepted: {edited:?}"
+    );
+}

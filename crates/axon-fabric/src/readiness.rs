@@ -1176,6 +1176,9 @@ pub fn verifier_identity() -> Value {
         "rustc": env!("AXON_FABRIC_RUSTC"),
         "profile": env!("AXON_FABRIC_PROFILE"),
         "target": env!("AXON_FABRIC_TARGET"),
+        // Any compiler wrapper, rustflags or linker cargo showed the build
+        // script ("" when none; a production build refuses to exist otherwise).
+        "build_state": env!("AXON_FABRIC_BUILD_STATE"),
     })
 }
 

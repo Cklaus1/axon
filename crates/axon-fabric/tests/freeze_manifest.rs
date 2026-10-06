@@ -59,9 +59,53 @@ fn tool(path: &str) -> serde_json::Value {
     json!({"path": path, "realpath": path, "sha256": "7".repeat(64), "version": "t 1"})
 }
 
+/// The per-build key the fixture's runner "made": under the builder-private
+/// parent, 0400 in a 0700 `keys` directory, root's (the tests run as root, so
+/// the fixture builder_uid 0 is the real owner). Written once per process.
+const KEY_HEX: &str = "6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b";
+
+fn fixture_key(id: &str) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    // One writer at a time: the tests share the process and the directory.
+    static ONE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _one = ONE.lock().unwrap_or_else(|e| e.into_inner());
+    let kd = Path::new(PARENT).join("keys");
+    std::fs::create_dir_all(&kd).unwrap();
+    std::fs::set_permissions(PARENT, std::fs::Permissions::from_mode(0o700)).unwrap();
+    std::fs::set_permissions(&kd, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let p = kd.join(format!("{id}.key"));
+    let tmp = kd.join(format!("{id}.{}.tmp", std::process::id()));
+    std::fs::write(&tmp, KEY_HEX).unwrap();
+    std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o400)).unwrap();
+    std::fs::rename(&tmp, &p).unwrap();
+    p
+}
+
+/// `rec` with the proof the runner would have written: HMAC-SHA256, under the
+/// build's key, of the compact sorted-key JSON of the record with the proof's
+/// own schema and id (scripts/guest_build_env.py `proof_payload`).
+fn signed(mut rec: serde_json::Value, id: &str) -> serde_json::Value {
+    fixture_key(id);
+    sign_with(&mut rec, id, KEY_HEX.as_bytes());
+    rec
+}
+
+fn sign_with(rec: &mut serde_json::Value, id: &str, key: &[u8]) {
+    rec["proof"] = json!({"schema": "axon-guest-build-proof/1", "id": id});
+    let payload = rec.to_string();
+    let k = ring::hmac::Key::new(ring::hmac::HMAC_SHA256, key);
+    let tag = ring::hmac::sign(&k, payload.as_bytes());
+    let hex: String = tag.as_ref().iter().map(|b| format!("{b:02x}")).collect();
+    rec["proof"]["hmac"] = json!(hex);
+}
+
 /// The record scripts/guest_build_env.py `kernel` writes for a controlled
 /// build of the fixture manifest's vmlinux from its pins.
 fn controlled_kernel() -> serde_json::Value {
+    signed(controlled_kernel_unsigned(), "axon-kernel-build-x")
+}
+
+fn controlled_kernel_unsigned() -> serde_json::Value {
     json!({
         "schema": "axon-guest-kernel-build/1", "controlled": true, "builder_uid": 0,
         "build_parent": PARENT, "build_parent_ancestors": ancestors(), "base": KBASE,
@@ -104,6 +148,10 @@ fn manifest_value(source: serde_json::Value) -> serde_json::Value {
 /// The record scripts/guest_build_env.py writes for a controlled build of
 /// exactly the fixture manifest's three binaries and its rootfs.
 fn controlled_build() -> serde_json::Value {
+    signed(controlled_build_unsigned(), "axon-guest-build-x")
+}
+
+fn controlled_build_unsigned() -> serde_json::Value {
     let tc = "/root/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/bin";
     let check = json!({"origins": [], "foreign": []});
     let musl = "x86_64-unknown-linux-musl";
@@ -567,6 +615,95 @@ fn a_guest_artifact_the_controlled_build_did_not_produce_does_not_freeze() {
             .unwrap_err()
             .contains("not the bytes its controlled build"));
     }
+}
+
+/// C9 round 5 (FIELD-ORIGIN, major-adjacent 2): the record the freeze judges
+/// is the controlled RUNNER's, not a file anybody can write. Each record below
+/// is structurally a controlled build's (every field the other judges read
+/// holds, digests consistent between the record and the manifest) and is
+/// refused by the builder's proof alone: no proof at all, the digests of a
+/// binary built elsewhere written into a signed record, a proof under a key the
+/// builder did not make, a kernel record edited after signing, a proof naming a
+/// key that is not there. Control: the signed fixture freezes.
+#[test]
+fn a_guest_build_record_its_runner_did_not_sign_does_not_freeze() {
+    let d = tempfile::tempdir().unwrap();
+    let r = clone(d.path());
+    let elsewhere = "e".repeat(64);
+    type Edit = Box<dyn Fn(&mut serde_json::Value)>;
+    let cases: Vec<(&str, &str, Edit)> = vec![
+        (
+            "a hand-written record with no proof",
+            "carries no builder proof",
+            Box::new(|m| {
+                m["source"]["build_environment"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("proof");
+            }),
+        ),
+        (
+            "a signed record whose axon digest was rewritten to a binary built elsewhere",
+            "does not hold",
+            Box::new({
+                let e = elsewhere.clone();
+                move |m| {
+                    m["artifacts"]["axon"]["sha256"] = json!(e);
+                    m["source"]["build_environment"]["artifacts"]["axon"] = json!(e);
+                    m["source"]["build_environment"]["rootfs"]["inputs"]["axon"] = json!(e);
+                }
+            }),
+        ),
+        (
+            "a record signed under a key the builder did not make",
+            "does not hold",
+            Box::new(|m| {
+                sign_with(
+                    &mut m["source"]["build_environment"],
+                    "axon-guest-build-x",
+                    b"not the builders key",
+                );
+            }),
+        ),
+        (
+            "a proof naming a key that is not there",
+            "cannot be checked",
+            Box::new(|m| {
+                sign_with(
+                    &mut m["source"]["build_environment"],
+                    "no-such-build",
+                    KEY_HEX.as_bytes(),
+                );
+            }),
+        ),
+        (
+            "a signed kernel record whose vmlinux digest was rewritten",
+            "kernel build record's proof does not hold",
+            Box::new({
+                let e = elsewhere.clone();
+                move |m| {
+                    m["artifacts"]["vmlinux"]["sha256"] = json!(e);
+                    m["kernel"]["build_environment"]["vmlinux_sha256"] = json!(e);
+                }
+            }),
+        ),
+    ];
+    fixture_key("axon-guest-build-x");
+    for (attack, why, edit) in cases {
+        let mut m = manifest_value(clean_source());
+        edit(&mut m);
+        write(&r.join(MANIFEST), &m.to_string());
+        let got = freeze(&r);
+        assert!(
+            got.is_err(),
+            "ATTACK: the freeze bound a guest image whose build record its runner did not sign \
+             ({attack}): {got:?}"
+        );
+        let e = got.unwrap_err();
+        assert!(e.contains(why), "{attack}: expected {why:?}: {e}");
+    }
+    write(&r.join(MANIFEST), &manifest(clean_source()));
+    assert!(freeze(&r).is_ok(), "control: the signed image freezes");
 }
 
 type ManifestEdit = Box<dyn Fn(&mut serde_json::Value)>;

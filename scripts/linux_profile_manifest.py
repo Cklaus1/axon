@@ -72,6 +72,17 @@ def cannot_tell(why):
     return {"revision": "unknown", "dirty": [f"cannot tell: {why}"]}
 
 
+def guest_build_env():
+    """scripts/guest_build_env.py, loaded without writing bytecode (a
+    scripts/__pycache__/ would make the tree this manifest describes dirty)."""
+    sys.dont_write_bytecode = True
+    spec = importlib.util.spec_from_file_location(
+        "guest_build_env", os.path.join(ROOT, "scripts", "guest_build_env.py"))
+    gbe = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(gbe)
+    return gbe
+
+
 def pinned_rustc():
     """The pinned toolchain's own rustc, resolved the way the guest build
     resolves it (scripts/guest_build_env.py: rustup under a cleared
@@ -81,10 +92,7 @@ def pinned_rustc():
     # No bytecode cache: a scripts/__pycache__/ written here would itself make
     # the tree this manifest describes dirty.
     sys.dont_write_bytecode = True
-    spec = importlib.util.spec_from_file_location(
-        "guest_build_env", os.path.join(ROOT, "scripts", "guest_build_env.py"))
-    gbe = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(gbe)
+    gbe = guest_build_env()
     try:
         return gbe.toolchain()[2]
     except SystemExit as e:
@@ -209,6 +217,15 @@ def main():
     dirty = bool(reasons)
     benv = build_environment(dist)
     kbuild = kernel_build(dist)
+    # Round 5 (amendment 80): the records are the controlled runner's own and
+    # name the digest of every file in dist/. A binary built elsewhere, with a
+    # record somebody wrote to name its digests, stops here: the digests come
+    # from the RECORD (and its builder proof), and a dist file that differs is
+    # refused -- never hashed into a manifest as if it were the build's.
+    if benv is not None:
+        why = guest_build_env().dist_problems(dist, benv, kbuild)
+        if why:
+            sys.exit(f"refused: dist/ is not what the controlled guest build produced: {why}")
     manifest = {
         "schema": "axon-linux-microvm-profile/1",
         "profile": "linux-microvm-protected",

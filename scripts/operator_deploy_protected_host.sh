@@ -292,9 +292,16 @@ if [ $need_bins = 1 ]; then
 import json, sys
 m, want = json.load(sys.stdin), sys.argv[1]
 bad = [f"{k}={m.get(k)!r}" for k, v in (("build", "production"), ("profile", "release"),
-       ("source_dirty", False), ("fabric_revision", want)) if m.get(k) != v]
+       ("source_dirty", False), ("fabric_revision", want), ("build_state", "")) if m.get(k) != v]
 print("; ".join(bad))' "$COMMIT") || refuse "cannot read $FABRIC_SRC's verifier-manifest"
   [ -z "$why" ] || refuse "$FABRIC_SRC is not a clean production release build of $COMMIT ($why)"
+  # Round 5 (amendment 80, FIELD-ORIGIN): the host binaries have no constructed
+  # build environment, so the ambient one is judged by the guest build's own
+  # classifier -- no compiler/wrapper/flag/linker variable, and an effective cargo
+  # config from the clone that is only its committed one -- and the verifier's
+  # self-report above says build.rs saw no wrapper, rustflags or linker.
+  hb=$(python3 -I -B "$CLONE/scripts/guest_build_env.py" check-host-build "$CLONE" 2>&1) \
+    || refuse "the host binaries' ambient build environment is not the tree's own: $hb"
   pb=$("$HELPER_SRC" --probe 2>/dev/null | python3 -I -c 'import json,sys; print(json.load(sys.stdin).get("build"))' 2>/dev/null)
   [ "$pb" = production ] || refuse "$HELPER_SRC --probe reports build ${pb:-none}, not production (a test-trust helper accepts a caller's --test-config)"
   # A production custodian has no --test-config (it answers with its usage).
@@ -475,9 +482,10 @@ if selected guest || selected configs || selected toolchain; then
   elif ! cmp -s "$MANIFEST_SRC" "$CLONE/profiles/linux-microvm/manifest.json"; then
     blocked "dist/guest-linux/manifest.json is not the committed profiles/linux-microvm/manifest.json: commit the re-pin, then deploy from that commit"
   else
-    gw=$(python3 -I - "$MANIFEST_SRC" "$CLONE/dist/guest-linux" "$FIRECRACKER" "$JAILER" <<'PY'
-import hashlib, json, os, sys
-man, dist, fc, jl = sys.argv[1:5]
+    gw=$(python3 -I - "$MANIFEST_SRC" "$CLONE/dist/guest-linux" "$FIRECRACKER" "$JAILER" "$CLONE" <<'PY'
+import hashlib, importlib.util, json, os, sys
+man, dist, fc, jl, clone = sys.argv[1:6]
+sys.dont_write_bytecode = True
 m = json.load(open(man))
 def sha(p):
     h = hashlib.sha256()
@@ -497,6 +505,18 @@ if src.get("axon_tree_dirty_at_build") is not False or src.get("axon_tree_dirty_
 if not src.get("build_environment"): bad.append("no source.build_environment (built before amendment 56: it does not freeze)")
 if not (m.get("kernel") or {}).get("build_environment"):
     bad.append("no kernel.build_environment (built before amendment 63, or --rootfs-only: it does not freeze; run the FULL build)")
+# Round 5 (amendment 80): the records are judged HERE, before anything is
+# installed, by the freeze's own judge (the clone's guest_build_env.py): the
+# structure, every host tool the build recorded, and the builder's proof -- so a
+# binary built elsewhere with a hand-written record naming its digests is
+# refused at install, not only at the freeze.
+if not bad:
+    gs = importlib.util.spec_from_file_location("guest_build_env", os.path.join(clone, "scripts", "guest_build_env.py"))
+    g = importlib.util.module_from_spec(gs)
+    gs.loader.exec_module(g)
+    why = g.shape_problems(src["build_environment"]) or g.image_problems(m, pin_required=False)
+    if why:
+        bad.append(f"the guest build records are not a controlled build's: {why}")
 eng = m.get("engine") or {}
 for p, k in ((fc, "firecracker_sha256"), (jl, "jailer_sha256")):
     if os.path.isfile(p) and sha(p) != eng.get(k):
