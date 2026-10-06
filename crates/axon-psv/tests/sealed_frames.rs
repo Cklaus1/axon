@@ -700,3 +700,80 @@ fn a_dict_entry_the_operator_held_is_never_retyped_by_the_candidate() {
         s.stdout
     );
 }
+
+/// C9 round 5, PSV-1 (amendment 78), through the real runner: a candidate
+/// REPLACES a dict the operator held with its own carrying a laundered `u8`
+/// (the round-5 BLOCKER, case c1), and fills a `None` the operator held
+/// (case c4). GOOD stays a keyed pass and WRONG a keyed failure.
+#[test]
+fn a_replaced_or_filled_position_is_judged_by_what_the_operator_held() {
+    const J: &str = "trait Judge {\n    fn ok(self) -> bool\n}\nimpl Judge for i64 {\n    fn ok(self: i64) -> bool { self == 9 }\n}\nimpl Judge for u8 {\n    fn ok(self: u8) -> bool { true }\n}\n";
+    let suite = |body: &str| {
+        format!("mod sol\nuse sol.{{solve}}\n{J}@[test]\nfn accept() {{\n{body}\n}}\n")
+    };
+    let replace = suite("    let inner = dict_new()\n    dict_set(inner, \"x\", 3)\n    let d = dict_new()\n    dict_set(d, \"inner\", inner)\n    solve(d)\n    match dict_get(d, \"inner\") {\n        Some(i) => match dict_get(i, \"x\") {\n            Some(v) => assert(v.ok())\n            None => assert(false)\n        }\n        None => assert(false)\n    }");
+    let fill = suite("    let d = dict_new()\n    dict_set(d, \"best\", Some(0))\n    solve(d)\n    match dict_get(d, \"best\") {\n        Some(o) => match o {\n            Some(v) => assert(v.ok())\n            None => assert(false)\n        }\n        None => assert(false)\n    }");
+    let hold = suite("    let d = dict_new()\n    dict_set(d, \"best\", None)\n    solve(d)\n    match dict_get(d, \"best\") {\n        Some(o) => match o {\n            Some(v) => assert(v.ok())\n            None => assert(false)\n        }\n        None => assert(false)\n    }");
+    let mk = |x: &str| {
+        format!("pub fn solve(d: Dict) {{\n    let n = dict_new()\n    dict_set(n, \"x\", {x})\n    dict_set(d, \"inner\", n)\n}}\n")
+    };
+    let put = |x: &str| format!("pub fn solve(d: Dict) {{ dict_set(d, \"best\", Some({x})) }}\n");
+    let cases: [(&str, &String, String, String, String); 2] = [
+        (
+            "a candidate-built dict at a held key (c1)",
+            &replace,
+            mk("9"),
+            mk("4"),
+            mk("4 as u8"),
+        ),
+        (
+            "None filled with a u8 (c4)",
+            &hold,
+            put("9"),
+            put("4"),
+            put("4 as u8"),
+        ),
+    ];
+    for (why, suite, good, wrong, attack) in cases {
+        if why.contains("c4") {
+            // The honest control for a placeholder is a TYPED one.
+            let s = check(&fill, &[], &put("9"), "accept");
+            assert_eq!(
+                (s.status, s.host),
+                (GuestStatus::Passed, Some(true)),
+                "control ({why}): {}",
+                s.stdout
+            );
+            let s = check(&fill, &[], &put("4"), "accept");
+            assert_eq!(
+                (s.status, s.host),
+                (GuestStatus::Failed, Some(false)),
+                "control ({why}): {}",
+                s.stdout
+            );
+        } else {
+            let s = check(suite, &[], &good, "accept");
+            assert_eq!(
+                (s.status, s.host),
+                (GuestStatus::Passed, Some(true)),
+                "control ({why}): {}",
+                s.stdout
+            );
+            let s = check(suite, &[], &wrong, "accept");
+            assert_eq!(
+                (s.status, s.host),
+                (GuestStatus::Failed, Some(false)),
+                "control ({why}): {}",
+                s.stdout
+            );
+        }
+        let s = check(suite, &[], &attack, "accept");
+        assert!(
+            refused_unkeyed(&s),
+            "ATTACK: the candidate chose a runtime type at a position the operator held ({why}) and got a keyed pass: {:?} {:?} {}",
+            s.status,
+            s.host,
+            s.stdout
+        );
+    }
+}

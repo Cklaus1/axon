@@ -8179,6 +8179,24 @@ fn main() { }
                 put_u8("dict_set(d, \"a\", v)")
             ),
         );
+        // A closure replaced by a non-closure: refused where it is stored, not
+        // only when the operator later calls it.
+        let fnonc = "@[test]\nfn t() {\n    let d = dict_new()\n    dict_set(d, \"f\", |n: i64| n * n)\n    solve(d)\n    match dict_get(d, \"f\") {\n        Some(f) => assert(true)\n        None => assert(false)\n    }\n}\n";
+        honest8(
+            "r4c-dict",
+            fnonc,
+            "fn solve(d: Dict) { dict_set(d, \"g\", 1) }\n",
+        );
+        let out = judged8(
+            "r4c-dict",
+            fnonc,
+            "fn solve(d: Dict) { dict_set(d, \"f\", 0) }\n",
+        );
+        assert!(
+            out != Ok(TestEnd::Completed)
+                && matches!(&out, Err(m) if m.contains("retyped a dict entry")),
+            "ATTACK: a closure the operator held was replaced by a non-closure: {out:?}"
+        );
         // The candidate's closure, stored where the operator held its own.
         let fsuite = "@[test]\nfn t() {\n    let d = dict_new()\n    dict_set(d, \"f\", |n: i64| n * n)\n    solve(d)\n    match dict_get(d, \"f\") {\n        Some(f) => assert(f(3).ok())\n        None => assert(false)\n    }\n}\n";
         honest8(
@@ -8218,6 +8236,186 @@ fn main() { }
             "r4c-dict",
             "@[test]\nfn t() {\n    match dict_get(make(), \"a\") {\n        Some(x) => assert(x.ok())\n        None => assert(false)\n    }\n}\n",
             "fn make() -> Dict {\n    let d = dict_new()\n    dict_set(d, \"a\", 9)\n    d\n}\n",
+        );
+    }
+
+    /// Round 5 BLOCKER (amendment 78): the candidate REPLACES a position the
+    /// operator held with a candidate-built value carrying a retyped element.
+    /// A held dict's recorded type is just `Dict`, so the replacement used to
+    /// pass and its nested values were never cast. A replacement is judged by
+    /// what the operator held at that position, deeply — through nested
+    /// dicts, arrays, structs, `Option`s — and a key only the replacement has
+    /// is free (exactly as part 2's new keys).
+    #[test]
+    fn a_position_the_operator_held_is_judged_by_what_it_held_when_replaced() {
+        // The operator's `d` holds `inner = {x: 3}` at "inner"; it reads
+        // d.inner.x untyped afterwards.
+        let nested = |held: &str, read: &str, call: &str| {
+            format!("@[test]\nfn t() {{\n    let inner = dict_new()\n    dict_set(inner, \"x\", 3)\n    let d = dict_new()\n    dict_set(d, \"inner\", {held})\n    {call}\n    match dict_get(d, \"inner\") {{\n        Some(h) => {read}\n        None => assert(false)\n    }}\n}}\n")
+        };
+        let wrap = "type Wrap<T> = { v: T }\n";
+        let build = |x: &str| {
+            format!(
+                "let n = dict_new()\n    dict_set(n, \"x\", {x})\n    dict_set(d, \"inner\", n)"
+            )
+        };
+        let read_dict = "match dict_get(h, \"x\") {\n            Some(v) => assert(v.ok())\n            None => assert(false)\n        }";
+        let suite = nested("inner", read_dict, "solve(d)");
+        live8(
+            "r4c-repl",
+            &suite,
+            &format!("fn solve(d: Dict) {{\n    {}\n}}\n", build("9")),
+            &format!("fn solve(d: Dict) {{\n    {}\n}}\n", build("4")),
+        );
+        dict_refused(
+            "the review's candidate-built dict at the held key",
+            &suite,
+            &format!(
+                "fn solve(d: Dict) {{\n    {}\n}}\n",
+                put_u8("let n = dict_new()\n        dict_set(n, \"x\", v)\n        dict_set(d, \"inner\", n)")
+            ),
+        );
+        // A key only the replacement has is free; the key both have is checked.
+        honest8(
+            "r4c-repl",
+            &suite,
+            "fn solve(d: Dict) {\n    let n = dict_new()\n    dict_set(n, \"x\", 9)\n    dict_set(n, \"y\", narrow(4))\n    dict_set(d, \"inner\", n)\n}\n",
+        );
+        // Two levels down.
+        dict_refused(
+            "a dict nested in the replacing dict",
+            "@[test]\nfn t() {\n    let leaf = dict_new()\n    dict_set(leaf, \"x\", 3)\n    let mid = dict_new()\n    dict_set(mid, \"leaf\", leaf)\n    let d = dict_new()\n    dict_set(d, \"mid\", mid)\n    solve(d)\n    match dict_get(d, \"mid\") {\n        Some(m) => match dict_get(m, \"leaf\") {\n            Some(l) => match dict_get(l, \"x\") {\n                Some(v) => assert(v.ok())\n                None => assert(false)\n            }\n            None => assert(false)\n        }\n        None => assert(false)\n    }\n}\n",
+            &format!(
+                "fn solve(d: Dict) {{\n    {}\n}}\n",
+                put_u8("let leaf = dict_new()\n        dict_set(leaf, \"x\", v)\n        let mid = dict_new()\n        dict_set(mid, \"leaf\", leaf)\n        dict_set(d, \"mid\", mid)")
+            ),
+        );
+        // The family: an array, a struct, an Option or a tuple carrying a dict,
+        // and an array or struct carrying scalars, replaced by the candidate's.
+        let repl = |held: &str, read: &str, cand: String| {
+            dict_refused(held, &nested(held, read, "solve(d)"), &cand);
+        };
+        repl(
+            "[inner]",
+            "match dict_get(h[0], \"x\") {\n            Some(v) => assert(v.ok())\n            None => assert(false)\n        }",
+            format!(
+                "fn solve(d: Dict) {{\n    {}\n}}\n",
+                put_u8("let n = dict_new()\n        dict_set(n, \"x\", v)\n        dict_set(d, \"inner\", [n])")
+            ),
+        );
+        repl(
+            "Some(inner)",
+            "match h {\n            Some(i) => match dict_get(i, \"x\") {\n                Some(v) => assert(v.ok())\n                None => assert(false)\n            }\n            None => assert(false)\n        }",
+            format!(
+                "fn solve(d: Dict) {{\n    {}\n}}\n",
+                put_u8("let n = dict_new()\n        dict_set(n, \"x\", v)\n        dict_set(d, \"inner\", Some(n))")
+            ),
+        );
+        repl(
+            "(inner, 1)",
+            "match dict_get(h.0, \"x\") {\n            Some(v) => assert(v.ok())\n            None => assert(false)\n        }",
+            format!(
+                "fn solve(d: Dict) {{\n    {}\n}}\n",
+                put_u8("let n = dict_new()\n        dict_set(n, \"x\", v)\n        dict_set(d, \"inner\", (n, 1))")
+            ),
+        );
+        let wsuite = format!(
+            "{wrap}{}",
+            nested(
+                "Wrap { v: inner }",
+                "match dict_get(h.v, \"x\") {\n            Some(v) => assert(v.ok())\n            None => assert(false)\n        }",
+                "solve(d)"
+            )
+        );
+        dict_refused(
+            "Wrap { v: inner }",
+            &wsuite,
+            &format!(
+                "fn solve(d: Dict) {{\n    {}\n}}\n",
+                put_u8("let n = dict_new()\n        dict_set(n, \"x\", v)\n        dict_set(d, \"inner\", Wrap { v: n })")
+            ),
+        );
+        honest8(
+            "r4c-repl",
+            &wsuite,
+            "fn solve(d: Dict) {\n    let n = dict_new()\n    dict_set(n, \"x\", 9)\n    dict_set(d, \"inner\", Wrap { v: n })\n}\n",
+        );
+        // Scalars in containers: the leaf rule.
+        for (held, read, newv) in [
+            ("[3]", "assert(h[0].ok())", "[v]"),
+            ("Wrap { v: 3 }", "assert(h.v.ok())", "Wrap { v: v }"),
+            ("(3, 1)", "assert(h.0.ok())", "(v, 1)"),
+            ("Some(3)", "match h {\n            Some(x) => assert(x.ok())\n            None => assert(false)\n        }", "Some(v)"),
+        ] {
+            let suite = format!("{wrap}{}", nested(held, read, "solve(d)"));
+            dict_refused(
+                held,
+                &suite,
+                &format!(
+                    "{wrap}fn solve(d: Dict) {{\n    {}\n}}\n",
+                    put_u8(&format!("dict_set(d, \"inner\", {newv})"))
+                ),
+            );
+        }
+        // Over a channel: the dict the candidate received.
+        dict_refused(
+            "a held dict received on the operator's channel",
+            &format!(
+                "@[test]\nfn t() {{\n    let inner = dict_new()\n    dict_set(inner, \"x\", 3)\n    let d = dict_new()\n    dict_set(d, \"inner\", inner)\n    let c = chan<Dict>()\n    c.send(d)\n    solve(c)\n    match dict_get(d, \"inner\") {{\n        Some(h) => {read_dict}\n        None => assert(false)\n    }}\n}}\n"
+            ),
+            &format!(
+                "fn solve(c: Chan<Dict>) {{\n    let d = c.recv()\n    {}\n}}\n",
+                put_u8("let n = dict_new()\n        dict_set(n, \"x\", v)\n        dict_set(d, \"inner\", n)")
+            ),
+        );
+    }
+
+    /// Round 5 MAJOR-ADJACENT (amendment 78): a position the operator held at
+    /// an UNDETERMINED type (`None`, an empty array) is refused to the
+    /// candidate — a strict store, as at a strict crossing — instead of left
+    /// free. An operator that wants the candidate to fill a slot holds a
+    /// typed placeholder (`Some(0)`, `[0]`).
+    #[test]
+    fn a_placeholder_the_operator_held_is_not_filled_by_the_candidate() {
+        let suite = |held: &str, read: &str| {
+            format!("@[test]\nfn t() {{\n    let d = dict_new()\n    dict_set(d, \"best\", {held})\n    solve(d)\n    match dict_get(d, \"best\") {{\n        Some(o) => {read}\n        None => assert(false)\n    }}\n}}\n")
+        };
+        let some = "match o {\n            Some(v) => assert(v.ok())\n            None => assert(false)\n        }";
+        let some_suite = suite("None", some);
+        let fill = |x: &str| format!("fn solve(d: Dict) {{ dict_set(d, \"best\", Some({x})) }}\n");
+        // A typed placeholder is filled by the candidate, and judged.
+        live8("r4c-hold", &suite("Some(0)", some), &fill("9"), &fill("4"));
+        dict_refused(
+            "None filled with a u8",
+            &some_suite,
+            &format!(
+                "fn solve(d: Dict) {{\n    {}\n}}\n",
+                put_u8("dict_set(d, \"best\", Some(v))")
+            ),
+        );
+        dict_refused(
+            "None filled with an i64 (no position was determined)",
+            &some_suite,
+            &fill("9"),
+        );
+        dict_refused(
+            "an empty array filled",
+            &suite("[]", "assert(o[0].ok())"),
+            &format!(
+                "fn solve(d: Dict) {{\n    {}\n}}\n",
+                put_u8("dict_set(d, \"best\", [v])")
+            ),
+        );
+        // Leaving the placeholder alone, or emptying a typed slot, is fine.
+        honest8(
+            "r4c-hold",
+            "@[test]\nfn t() {\n    let d = dict_new()\n    dict_set(d, \"best\", None)\n    dict_set(d, \"n\", 1)\n    solve(d)\n    assert(true)\n}\n",
+            "fn solve(d: Dict) { dict_set(d, \"n\", 2) }\n",
+        );
+        honest8(
+            "r4c-hold",
+            "@[test]\nfn t() {\n    let d = dict_new()\n    dict_set(d, \"best\", Some(3))\n    solve(d)\n    assert(true)\n}\n",
+            "fn solve(d: Dict) { dict_set(d, \"best\", None) }\n",
         );
     }
 

@@ -3672,7 +3672,7 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       every edge back to operator code — a candidate fn returns, a candidate closure returns,
       sealed code calls an operator closure, an effect-handler arm of operator provenance runs —
       `Interp::dict_edge_out` checks every dirty dict: each key the operator held that is still
-      present must cast (non-strictly: undetermined parts stay free) to its recorded type, and a
+      present must cast (round 5, amendment 78: STRICTLY, against the HELD VALUE, deeply — see 78) to what it held, and a
       key that held an operator closure may not now hold a candidate closure. A removed key is
       not checked (the operator then reads `None`); remove-then-re-add with another type is
       refused (the check is on the final state).
@@ -3966,3 +3966,71 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       the run. Test: `harness_integrity a_sharded_run_survives_a_source_change_made_while_it_runs`
       plants the relink (one shard rewrites the package source while another is mid-test and a
       third starts afterwards): the previous runner fails it (`... (deleted)`), this one passes.
+
+78. **A position the operator held is judged by what it held — deeply, and strictly (C9 round 5,
+    workstream r4c-psv1b, PSV-1; matrix A127-A130; M1840-M1848; amends 72 part 2).**
+    - **Findings** (`/var/tmp/c9r5-findings-PSV-1.json`, cases `/var/tmp/c9r5-psv1-logs/w/c0..c6`).
+      (1) BLOCKER, executed (c1): the candidate REPLACED a dict key the operator held with a
+      candidate-built dict carrying a `u8`. Part 2 cast each held key against its recorded
+      `value_type`, which for a held dict is only `Dict`; the replacing dict is another `Rc` with
+      no snapshot, so its values were unconstrained (the in-place `dict_set(inner, "x", u8)` was
+      refused; the replacement was a keyed pass). (2) MAJOR-ADJACENT, executed (c4): the operator
+      held `None` at "best" (recorded `Option<?undetermined>`); the candidate stored
+      `Some(4 as u8)`, and part 2's non-strict cast let it through — against amendment 72's
+      invariant ("a position nothing on the operator side determined is refused"). (3) FUTURE:
+      `walk_fresh` returned silently past `MAX_CAST_DEPTH`, leaving the dicts below unrecorded.
+    - **After.** The snapshot keeps the HELD VALUE at each key (`DictSnap::held`, a clone: a
+      nested dict is the same `Rc`, with its own snapshot) instead of a type. `Interp::replaced_ok`
+      judges the value now at a held key against the held one: (a) a dict that is NOT the same
+      `Rc` is judged against the held dict's entries (its own snapshot) — a key present in both
+      keeps its type, recursively; keys only the replacement has are free, exactly as part 2's new
+      keys (stated there, unchanged); (b) arrays and tuples element by element, structs and enum
+      variants field by field, `Option`/`Result` through the payload — so a container carrying a
+      dict is never judged by its bare type; (c) the LEAF rule: the replacement casts STRICTLY to
+      the type the held value showed, so an undetermined position (a `None`'s payload, an empty
+      array's element, a `Result`'s other arm) REFUSES a value instead of staying free; a held
+      closure's signature is not shown, so it is exempt from the strict cast, but an operator
+      closure may not be replaced by a candidate's closure or by a non-closure; (d) cycles are
+      handled by a visited set of (held, replacing) pairs, and a depth past the cast's bound is
+      refused. `dict_edge_out` calls it for every held key of a dirty dict.
+    - **Placeholder-then-fill (item 2) — adopted, measured.** Honest-program impact: the sweeps
+      are identical (352 `.ax` files' diagnostics, 55 `@[test]` files green, example run exit
+      codes) and no `.ax` in the repository stores a `None` or `[]` placeholder in a dict or runs
+      under `--seal` at all (seals are made only by the PSV runner), so no repository program
+      breaks. The cost is real and stated: an operator that hands the candidate a `None`/`[]`
+      slot to FILL, then reads it untyped, now gets a refusal — it holds a TYPED placeholder
+      instead (`Some(0)`, `[0]`), which the candidate may then replace with a value of that
+      type (`a_placeholder_the_operator_held_is_not_filled_by_the_candidate`: GOOD `Some(0)` ->
+      `Some(9)` passes, WRONG `Some(4)` fails). Leaving a placeholder untouched, or emptying a
+      typed slot (`Some(3)` -> `None`), is unaffected.
+    - **Walk bound (item 3).** `walk_fresh` returns `Result` and calls `walk_depth_ok`, which
+      REFUSES a value nested deeper than `MAX_CAST_DEPTH` (the same bound the cast uses) —
+      consistent with the entry-count rule. A real value that deep overflows the thread stack
+      first, so it is tested directly (`walk_bound_tests::a_value_nested_past_the_bound_is_refused_not_left_unvisited`).
+    - **Replacement family, hunted.** Replaced at a held key and refused: a candidate-built dict,
+      a dict two levels down, `[inner]`, `Some(inner)`, `(inner, 1)`, `Wrap { v: inner }`, a dict
+      received on the operator's channel; scalars in containers (`[3]`, `Wrap { v: 3 }`, `(3, 1)`,
+      `Some(3)`); a closure replaced by a non-closure (and by the candidate's). Accepted by design
+      (a position the operator never determined): keys only the replacement has, and a
+      candidate-built dict RETURNED to the operator (e.g. `fn f(inner: Dict) -> Dict { fresh }`,
+      `Wrap<Dict>` returns) — the operator's argument is not at that position; the return is
+      candidate output, part 2's non-claim. Not covered, stated: a generic enum variant's fields
+      are judged by the same rule but have no dedicated attack test.
+    - **Non-claim text updated** (amendment 53 (1), amendment 72 part 2): what stays open for a
+      `Dict` is exactly (i) a key the operator never held, (ii) a dict the candidate builds and
+      returns, (iii) an operator-held dict whose snapshot an operator-side mutation made stale
+      WHILE sealed code ran (the epoch retakes it at the next hand-over only). Everything the
+      operator put in a dict, at any depth, is judged.
+    - **Rows.** M1840 (a replacing dict judged against the held entries), M1841 (array/tuple),
+      M1842 (struct), M1843 (`Option`/`Result`), M1844 (a store at an undetermined position is
+      strict), M1845 (the leaf rule refuses), M1847 (the walk bound), M1848 (a held closure is not
+      replaced by a non-closure). Re-anchored in place (same guard, same test, new text): M1672,
+      M1673 (the closure check moved into `replaced_ok`), M1677-M1680 (the walk now returns
+      `Result`). Matrix A127-A130; the matrix check passes (130 rows).
+    - **Tests.** `a_position_the_operator_held_is_judged_by_what_it_held_when_replaced`,
+      `a_placeholder_the_operator_held_is_not_filled_by_the_candidate`, the closure-to-non-closure
+      case in `a_dict_the_candidate_mutated_is_verified_at_every_edge_back`, the bound test, and
+      through the real runner `a_replaced_or_filled_position_is_judged_by_what_the_operator_held`
+      (c1 and c4, with GOOD and WRONG controls).
+    - **Native codegen.** Unchanged: the seal is interpreter-only (amendment 72).
+    - **Operator deployment.** The guest image must be rebuilt.
