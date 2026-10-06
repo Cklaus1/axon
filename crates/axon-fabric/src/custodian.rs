@@ -1066,7 +1066,7 @@ mod tests {
         assert!(issue().ok, "a spend frees a slot");
     }
 
-    /// A152 (M2052, amendment 85): one connection has an ABSOLUTE deadline for
+    /// A150 (M2052, amendment 85): one connection has an ABSOLUTE deadline for
     /// its request, as the observer's does. A peer that sends a byte and goes
     /// silent is answered (refused as malformed) within the deadline, not held
     /// for 30 s per read. Control: a complete request is answered at once.

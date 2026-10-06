@@ -1217,7 +1217,7 @@ p = subprocess.run([h, '--observe', '--test-config', cfg], stdin=open(req, 'rb')
 open(out, 'wb').write(p.stdout)
 "#;
 
-/// A151 (M2050, M2052; amendment 85), ROOT ONLY. EXECUTED by the round-6
+/// A149 (M2050, M2052; amendment 85), ROOT ONLY. EXECUTED by the round-6
 /// reviewer: 18 of 20 attempts of the exec race got an observer-signed
 /// observation naming the pinned verifier. The helper now serves a request only
 /// when no process but itself and its parent holds the pipe the reply is

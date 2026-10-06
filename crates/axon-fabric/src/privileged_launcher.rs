@@ -2172,7 +2172,7 @@ mod tests {
         );
     }
 
-    /// A151 (M2050/M2051, amendment 85): the reply pipe has no holder but the helper
+    /// A149 (M2050/M2051, amendment 85): the reply pipe has no holder but the helper
     /// and its parent; a production helper's stdout must be a pipe. ATTACKS: a
     /// third process holding the pipe (the exec-race worker); a production
     /// stdout that is a file or a terminal. Controls: parent and helper only.

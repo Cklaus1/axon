@@ -4524,7 +4524,7 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
     - **Rows.** M1990 (the refusal), M1991 (the two-impl scope), M1992-M1995 (the analysis: a
       receiver the analysis cannot determine, a type-variable builtin, an unannotated lambda
       parameter, a match binding), M1996 (arithmetic), M1997 (the snapshot retake). Matrix A145-A148
-      (A149 and A150 unused; FLOOR 148). Tests: `operator_code_never_dispatches_on_a_value_read_untyped_from_a_dict`,
+      (A149 and A150 were unused here; at integration obsbind2's rows took them, so the matrix is contiguous A1-A161 and FLOOR is 161). Tests: `operator_code_never_dispatches_on_a_value_read_untyped_from_a_dict`,
       `operator_code_never_dispatches_on_a_value_from_any_untyped_position`,
       `a_determined_receiver_dispatches_and_so_does_an_unambiguous_method`,
       `operator_arithmetic_never_runs_at_a_width_the_candidate_chose`,
@@ -4619,7 +4619,7 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       (the launch and the relay) use pipes and are both the parent and the reader.
     - **Rows (killed by their own attacks):** M2050 (the rule), M2051 (a production stdout must be a
       pipe), M2053 (the scan finds every holder), M2054 (the gate applies the rule to every request).
-      Matrix A151, A153.
+      Matrix A149, A151.
     - **What this does NOT close, and why that is inherent.** A same-uid process can always obtain
       what a same-uid process holds: it can reopen the pipe's other end through
       `/proc/<pid>/fd/N` of the parent (a pipe can be reopened that way), receive the descriptor in
@@ -4641,7 +4641,7 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
     - **Major-adjacent: the custodian's absolute deadline.** EXECUTED: a Fabric-uid peer dripping one
       byte every 20 s held the single-threaded custodian for 131 s (bound 4096 x 29 s), stalling every
       issue, check and spend. `Server::serve_one` now reads under the observer's absolute-deadline
-      loop (`REQUEST_DEADLINE`, 30 s, `serve_one_within`; M2052; matrix A152).
+      loop (`REQUEST_DEADLINE`, 30 s, `serve_one_within`; M2052; matrix A150).
     - **Minor: what the revision is.** `fabric_revision` was classed PINNED. It is the build revision
       the installed binary states about itself (`axon-fabric verifier-manifest`), run as root by the
       kit from a caller-supplied `--bin-dir` and written into the helper config: the operator's
@@ -4736,7 +4736,7 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       refusal fails `ATTACK: an ancestor cargo config naming a compiler wrapper` (got 3). The kit's
       required `--builder-uid` is DOMINATED (without it the next step still refuses an empty uid): stated,
       not claimed as a kill.
-    - **Matrix.** A154-A157 (the integrator renumbers). **Operator deployment.** Install the builder pin (the
+    - **Matrix.** A152-A155 (assigned A154-A157; renumbered at integration). **Operator deployment.** Install the builder pin (the
       kit's `toolchain` step does, from `--builder-uid/--builder-parent`); build the host binaries with
       `host-build` as the builder and pass THAT directory as `--bin-dir` (a plain `cargo build` output is
       refused); re-pin `verifier.json`; the guest image records are unchanged in format (the builder pin is
@@ -4745,8 +4745,8 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
 ## Amendment 87: guards expressed as a permission mode or a process flag are sites, and the freeze judges the mutation run (C9 round 6, eqgate2)
 
 87. **Source: the round-6 EQUIVALENCE review (`DO_NOT_REGISTER`).** One BLOCKER and one MAJOR-ADJACENT,
-    executed. Mutation ids M2120-M2169 (M2151 withdrawn, see below), matrix rows A158-A163 (the integrator
-    renumbers).
+    executed. Mutation ids M2120-M2169 (M2151 withdrawn, see below), matrix rows A156-A161 (assigned A158-A163; renumbered at
+    integration).
     - **BLOCKER: a guard expressed as a permission MODE or a prctl FLAG was invisible to the gate.** The
       review weakened four, one at a time, as root, with the full suites green: the completion secret's
       `0o400` -> `0o644` (743 passed), the trial-cache root's `0o700` -> `0o755` (743), the child's
@@ -4806,6 +4806,6 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       exists without a key: a per-row digest or a nonce chain over fields the same account writes proves
       nothing the account cannot also forge. A strengthening that is sound needs a signature by a key the
       freeze account does not hold (the operator qualification key, which no agent signs with); it is left
-      stated, not implemented (matrix row A163).
+      stated, not implemented (matrix row A161).
     - **MINOR: no joined paired-disable record at this head.** Unchanged and expected until the final evidence
       run; the paired-disable validator (amendment 81) refuses a freeze until it exists.
