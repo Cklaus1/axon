@@ -2017,8 +2017,8 @@ ATTACK_MARKERS.update({
     'M2272': 'ATTACK: a use of Stdio::null with no row',
     'M2273': 'ATTACK: a use of a git -c option with no row',
     'M2274': 'ATTACK: a use of a GIT_\\* variable with no row',
-    'M2275': 'ATTACK: a use of a process-state libc call with no row',
-    'M2276': 'ATTACK: a use of O_CLOEXEC with no row',
+    'M2275': 'ATTACK: a use of (a process-state libc call|O_CLOEXEC) with no row',
+    'M2276': r"ATTACK: the root helper ran under its caller's RLIMIT_\w+:",
     'M2277': 'ATTACK: a use of `\\.min\\(room\\)` with no row',
     'M2278': 'ATTACK: a use of `\\.take\\(MAX_\\*\\)` with no row',
     'M2279': 'ATTACK: a call of a diverging closure that delegates',
@@ -2075,4 +2075,13 @@ ATTACK_MARKERS.update({
     'M2330': 'ATTACK: apply_seccomp installed no filter|setup: apply_seccomp refused',
     'M2331': 'ATTACK: the supervisor did not forward signal',
     'M2332': 'ATTACK: the supervisor (died of signal|did not forward)',
+})
+ATTACK_MARKERS.update({
+    'M2333': 'ATTACK: the supervisor (died of signal|did not forward)',
+    'M2334': 'ATTACK: is_dir took a regular file for a directory|control: a directory is one',
+    'M2335': 'ATTACK: the helper printed no reply',
+    'M2336': 'ATTACK: pass_pidfd did not arm SO_PASSPIDFD',
+    'M2337': 'two writers on one journal',
+    'M2338': "ATTACK: the interpreter child's stdin is not /dev/null",
+    'M2339': 'ATTACK: the check child lacks AXON_PATH:',
 })

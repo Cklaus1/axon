@@ -1146,6 +1146,40 @@ mod tests {
         );
     }
 
+    /// C9 round 7, EQGATE3 (amendment 91): `pass_pidfd` asks the kernel to
+    /// attach the SENDER's pidfd to every message received on the socket
+    /// (`SO_PASSPIDFD`): a pinned custodian or observer is authenticated by
+    /// the kernel naming who wrote its reply. The setsockopt builds no `Err`
+    /// when it is the wrong option; read the option back.
+    #[test]
+    fn pass_pidfd_arms_so_passpidfd_on_the_socket() {
+        let (a, _b) = UnixStream::pair().unwrap();
+        let get = |fd: RawFd| -> libc::c_int {
+            let mut v: libc::c_int = -1;
+            let mut len = std::mem::size_of::<libc::c_int>() as libc::socklen_t;
+            // SAFETY: getsockopt into a c_int of the length passed.
+            let r = unsafe {
+                libc::getsockopt(
+                    fd,
+                    libc::SOL_SOCKET,
+                    libc::SO_PASSPIDFD,
+                    &mut v as *mut libc::c_int as *mut libc::c_void,
+                    &mut len,
+                )
+            };
+            assert_eq!(r, 0, "setup: this kernel has SO_PASSPIDFD (Linux 6.5)");
+            v
+        };
+        assert_eq!(get(a.as_raw_fd()), 0, "setup: the option starts off");
+        pass_pidfd(a.as_raw_fd()).expect("the call succeeds");
+        assert_eq!(
+            get(a.as_raw_fd()),
+            1,
+            "ATTACK: pass_pidfd did not arm SO_PASSPIDFD: the reply's sender is not named by the \
+             kernel"
+        );
+    }
+
     /// The store is the custodian's own and private.
     #[test]
     fn a_nonce_store_others_can_reach_is_refused() {

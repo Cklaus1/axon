@@ -999,7 +999,8 @@ fn the_check_child_cannot_gain_privilege_and_dies_with_the_runner() {
 /// all, which is a different failure from one call missing from it.
 #[test]
 fn the_check_childs_pre_exec_hook_runs() {
-    let st = child_state(false).expect("setup: the stand-in interpreter ran and recorded its state");
+    let st =
+        child_state(false).expect("setup: the stand-in interpreter ran and recorded its state");
     assert!(
         st.contains("NoNewPrivs:\t1") || st.contains("Pdeathsig: 9"),
         "ATTACK: the check child's pre_exec hook did not run at all (neither no_new_privs nor the \
