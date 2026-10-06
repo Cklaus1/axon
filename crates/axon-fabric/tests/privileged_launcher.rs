@@ -4116,6 +4116,12 @@ if pid1 == 0:
     fcntl.ioctl(slave, termios.TIOCSCTTY, 0)
     witness = os.fork()
     if witness == 0:
+        # A caller started detached (`setsid nohup cmd < /dev/null &`, a
+        # non-interactive shell's `&`) hands down SIGINT IGNORED, and python
+        # keeps an inherited ignore: the witness then survived the ^C and the
+        # setup check failed (both the base and this branch, detached only).
+        # The witness must have the disposition a terminal job has.
+        signal.signal(signal.SIGINT, signal.SIG_DFL)
         dn = os.open("/dev/null", os.O_RDWR)
         for fd in (0, 1, 2):
             os.dup2(dn, fd)
@@ -4182,7 +4188,18 @@ fn a_terminal_its_caller_owns_never_signals_the_root_helper() {
         let extra = "touch \"$OUT/waiting\"\ni=0\nwhile [ ! -e \"$OUT/../../go\" ] && [ $i -lt 200 ]; do sleep 0.05; i=$((i+1)); done\n";
         let f = fx(Some(FABRIC), extra, |v| v["fabric"] = python_fabric_pin());
         let result = f.base.join("result");
-        let mut child = Command::new("python3")
+        let mut pty = Command::new("python3");
+        // ALWAYS as a detached caller would start it: SIGINT ignored in the
+        // environment this fixture inherits (the regression for the
+        // detached-only failure; the fixture must not depend on it).
+        // SAFETY: signal(2) between fork and exec, async-signal-safe.
+        unsafe {
+            std::os::unix::process::CommandExt::pre_exec(&mut pty, || {
+                libc::signal(libc::SIGINT, libc::SIG_IGN);
+                Ok(())
+            });
+        }
+        let mut child = pty
             .args(["-c", PTY_CALLER])
             .arg(FABRIC.to_string())
             .arg(f.installed.as_ref().unwrap())
