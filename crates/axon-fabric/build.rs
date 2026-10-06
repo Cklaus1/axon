@@ -21,6 +21,9 @@
 //! in-tree `target/`) or `CARGO_TARGET_DIR` outside the tree. The allowlist
 //! is not watched below: a changed allowlist is seen at the next re-run.
 
+#[path = "src/build_state.rs"]
+#[allow(dead_code)]
+mod build_state;
 #[path = "src/git_data.rs"]
 #[allow(dead_code)]
 mod git_data;
@@ -48,6 +51,23 @@ fn main() {
             println!("cargo:warning=axon-fabric source_dirty: {why}");
         }
     }
+    // What stands between the sources and the bytes (round 5): recorded in the
+    // identity, and a production build under any of it does not happen.
+    let profile = std::env::var("PROFILE").unwrap_or_default();
+    let bstate = build_state::state(&|n| std::env::var(n).ok());
+    for n in build_state::WATCHED {
+        println!("cargo:rerun-if-env-changed={n}");
+    }
+    println!("cargo:rerun-if-env-changed=CARGO_FEATURE_TEST_TRUST_ROOT");
+    if let Some(why) = build_state::refusal(
+        &bstate,
+        &profile,
+        std::env::var_os("CARGO_FEATURE_TEST_TRUST_ROOT").is_some(),
+    ) {
+        eprintln!("error: {why}");
+        std::process::exit(1);
+    }
+    println!("cargo:rustc-env=AXON_FABRIC_BUILD_STATE={bstate}");
     let rustc = std::env::var("RUSTC").unwrap_or_else(|_| "rustc".into());
     let rustc_v = out(&rustc, &["-V"]).unwrap_or_else(|| "unknown".into());
     println!("cargo:rustc-env=AXON_FABRIC_GIT_SHA={}", p.revision);

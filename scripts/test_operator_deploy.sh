@@ -49,28 +49,77 @@ DIST=$WORK/dist-staging/guest-linux
 mkdir -p "$DIST"
 head -c 4096 /dev/urandom >"$DIST/vmlinux"
 head -c 4096 /dev/urandom >"$DIST/rootfs.sqfs"
-python3 - "$CLONE" "$DIST" <<'PY' || { echo "cannot write the synthetic manifest"; exit 2; }
-import hashlib, json, os, shutil, sys
-c, d = sys.argv[1:3]
+# Round 5 (amendment 80): the kit judges the guest build records with the
+# freeze's own judge, so the synthetic image carries records that judge accepts:
+# built from the clone's own guest_build_env.py (the pinned toolchain, the real
+# host tools, a builder-private parent under this user's home) and SIGNED by it
+# with a key made for the fixture. Only the artifacts' bytes are synthetic.
+KEYPARENT=$(mktemp -d "${HOME:-/root}/.cache/axon-opkit-keys.XXXXXX" 2>/dev/null) \
+  || { mkdir -p "${HOME:-/root}/.cache" && KEYPARENT=$(mktemp -d "${HOME:-/root}/.cache/axon-opkit-keys.XXXXXX"); } \
+  || { echo "cannot make a builder-private parent under \$HOME/.cache"; exit 2; }
+chmod 0700 "$KEYPARENT"
+trap 'rm -rf "$WORK" "$KEYPARENT"' EXIT
+python3 - "$CLONE" "$DIST" "$KEYPARENT" <<'PY' || { echo "cannot write the synthetic manifest"; exit 2; }
+import hashlib, importlib.util, json, os, sys
+c, d, parent = sys.argv[1:4]
+sys.dont_write_bytecode = True
+spec = importlib.util.spec_from_file_location("guest_build_env", os.path.join(c, "scripts", "guest_build_env.py"))
+g = importlib.util.module_from_spec(spec); spec.loader.exec_module(g)
 def sha(p): return hashlib.sha256(open(p, "rb").read()).hexdigest()
-def tool(p): return {"path": p, "realpath": os.path.realpath(p), "sha256": sha(p), "version": "fixture"}
 m = json.load(open(os.path.join(c, "profiles/linux-microvm/manifest.json")))
 for n in ("vmlinux", "rootfs.sqfs"):
     m["artifacts"][n]["sha256"] = sha(os.path.join(d, n))
 for k, p in (("firecracker_sha256", "/usr/local/bin/firecracker"), ("jailer_sha256", "/usr/local/bin/jailer")):
     if os.path.isfile(p): m["engine"][k] = sha(p)
-host = [p for p in ("/usr/bin/make", "/usr/bin/gcc", "/usr/bin/as", "/usr/bin/ld") if os.path.isfile(p)]
-rustc = shutil.which("rustc") or "/usr/bin/env"
-cargo = shutil.which("cargo") or "/usr/bin/env"
-m["source"].update({"axon_tree_dirty_at_build": False, "axon_tree_dirty_reasons": [],
-    "build_environment": {"schema": "axon-guest-build-env/2", "fixture": True,
-        "toolchain": {"channel": "fixture", "rustc": rustc, "rustc_sha256": sha(rustc),
-                      "rustc_vV": "rustc fixture", "cargo": cargo, "cargo_sha256": sha(cargo),
-                      "cargo_version": "cargo fixture",
-                      "host_tools": {os.path.basename(p): tool(p) for p in host[-1:]}},
-        "rootfs": {"tool": tool("/usr/bin/env")}}})
-m["kernel"]["build_environment"] = {"schema": "axon-guest-kernel-build/1", "fixture": True,
-                                    "tools": {os.path.basename(p): tool(p) for p in host}}
+chan, cargo, rustc = g.toolchain()
+anc, why = g.ancestors_of(parent)
+assert not why, why
+ids = {"build": "axon-guest-build-fixture", "kernel": "axon-kernel-build-fixture"}
+def key(i):
+    os.makedirs(os.path.join(parent, "keys"), mode=0o700, exist_ok=True)
+    with open(os.path.join(parent, "keys", i + ".key"), "w") as f: f.write(os.urandom(32).hex())
+    os.chmod(os.path.join(parent, "keys", i + ".key"), 0o400)
+for i in ids.values(): key(i)
+base = os.path.join(parent, ids["build"])
+env = g.constructed_env(base, cargo, rustc, {})
+art = {n: m["artifacts"][n]["sha256"] for n in g.DIST_BINARIES}
+check = {"origins": [], "foreign": []}
+mks = "/usr/bin/mksquashfs"
+rec = {"schema": g.SCHEMA, "controlled": True,
+       "toolchain": {"channel": chan, "cargo": cargo, "cargo_sha256": sha(cargo), "cargo_version": "cargo fixture",
+                     "rustc": rustc, "rustc_sha256": sha(rustc), "rustc_vV": "rustc fixture\nhost: x86_64-unknown-linux-gnu",
+                     "host_tools": g.host_tools(g.CARGO_HOST_TOOLS)},
+       "env": env, "env_allowlist": g.ENV_ALLOWLIST, "proxy_vars": [], "builder_uid": os.geteuid(),
+       "build_parent": parent, "build_parent_ancestors": anc, "src_dir": os.path.join(base, "src"), "src_files": 1,
+       "cargo_home": env["CARGO_HOME"], "cargo_home_created_empty": True,
+       "target_dir": env["CARGO_TARGET_DIR"], "target_dir_created_empty": True,
+       "effective_config": {"origins": [], "foreign": [], "own_config": ".cargo/config.toml"},
+       "builds": [{"name": n, "args": a, "rustflags": rf, "config_before": check, "config_after": check}
+                  for n, a, rf in g.PROTECTED_BUILDS],
+       "artifacts": art,
+       "rootfs": {"tool": g.tool_identity(mks, "-version"),
+                  "argv": [mks, os.path.join(base, "rootfs-x"), os.path.join(d, "rootfs.sqfs"), *g.MKSQUASHFS_FLAGS],
+                  "env": {"HOME": base, "LC_ALL": "C", "PATH": g.TOOL_PATH},
+                  "inputs": {**art, "busybox": m["busybox"]["sha256"], "guest-init.sh": m["guest_init"]["sha256"]},
+                  "sha256": m["artifacts"]["rootfs.sqfs"]["sha256"]},
+       "proof": {"schema": g.PROOF_SCHEMA, "id": ids["build"], "hmac": ""}}
+kbase = os.path.join(parent, ids["kernel"])
+mk = m["kernel"]
+tools = g.host_tools(g.KERNEL_TOOLS)
+make = tools["make"]["path"]
+krec = {"schema": g.KERNEL_SCHEMA, "controlled": True, "builder_uid": os.geteuid(), "build_parent": parent,
+        "build_parent_ancestors": anc, "base": kbase,
+        "pin": {"version": mk["version"], "tarball_sha256": mk["tarball_sha256"],
+                "config_sha256": mk["config_sha256"], "overlay_sha256": mk["overlay_sha256"]},
+        "env": g.kernel_env(kbase), "make": [[make, "ARCH=x86_64", "olddefconfig"], [make, "ARCH=x86_64", "-j8", "vmlinux"]],
+        "tools": tools, "effective_config_sha256": mk["effective_config_sha256"],
+        "vmlinux_sha256": m["artifacts"]["vmlinux"]["sha256"],
+        "proof": {"schema": g.PROOF_SCHEMA, "id": ids["kernel"], "hmac": ""}}
+g.write("/dev/null", rec); g.write("/dev/null", krec)  # signs in place
+m["source"].update({"axon_tree_dirty_at_build": False, "axon_tree_dirty_reasons": [], "build_environment": rec})
+m["kernel"]["build_environment"] = krec
+assert not g.shape_problems(rec), g.shape_problems(rec)
+assert not g.image_problems(m, pin_required=False), g.image_problems(m, pin_required=False)
 for out in (os.path.join(d, "manifest.json"), os.path.join(c, "profiles/linux-microvm/manifest.json")):
     with open(out, "w") as f:
         json.dump(m, f, indent=2); f.write("\n")
@@ -263,6 +312,47 @@ printf '#!/bin/sh\necho %s\n' "'{\"build\":\"production\",\"profile\":\"release\
   >"$WORK/fakebin/axon-fabric"; chmod 0755 "$WORK/fakebin/axon-fabric"
 refused "a verifier built from another commit" "not a clean production release build" \
   bash "$KIT" --from "$CLONE" --bin-dir "$WORK/fakebin"
+# Round 5 (amendment 80): the verifier says build.rs saw a wrapper, flags or a
+# linker (the real verifier says "" -- every pass above is the control).
+printf '#!/bin/sh\necho %s\n' "'{\"build\":\"production\",\"profile\":\"release\",\"source_dirty\":false,\"fabric_revision\":\"$COMMIT\",\"build_state\":\"RUSTC_WRAPPER=/w\"}'" \
+  >"$WORK/fakebin/axon-fabric"; chmod 0755 "$WORK/fakebin/axon-fabric"
+refused "ATTACK: a verifier built under a compiler wrapper" "build_state=" \
+  bash "$KIT" --from "$CLONE" --bin-dir "$WORK/fakebin"
+# ... and the AMBIENT build environment of the host binaries is judged with the
+# guest build's classifier: a wrapper or flags in the kit's own environment.
+refused "ATTACK: a host build under RUSTC_WRAPPER" "ambient build environment" \
+  env RUSTC_WRAPPER=/usr/bin/true bash "$KIT" "${ARGS[@]}"
+refused "ATTACK: a host build under RUSTFLAGS" "ambient build environment" \
+  env RUSTFLAGS="--cfg evil" bash "$KIT" "${ARGS[@]}"
+refused "ATTACK: a host build under CARGO_BUILD_RUSTC_WRAPPER" "ambient build environment" \
+  env CARGO_BUILD_RUSTC_WRAPPER=/usr/bin/true bash "$KIT" "${ARGS[@]}"
+# The guest build records are judged BEFORE anything is installed, by the
+# freeze's own judge: a record without its runner's proof, or edited after it,
+# is not a controlled build's (the control is every guest step above).
+tamper_guest() { # LABEL PYTHON-EDIT-OF-m
+  local label=$1 edit=$2 T="$WORK/tampered" o rc
+  rm -rf "$T"; cp -a "$CLONE" "$T"
+  python3 - "$T" "$edit" <<'PY' || fail "cannot tamper the guest manifest"
+import json, sys
+t, edit = sys.argv[1:3]
+for rel in ("dist/guest-linux/manifest.json", "profiles/linux-microvm/manifest.json"):
+    p = f"{t}/{rel}"
+    m = json.load(open(p))
+    exec(edit)
+    json.dump(m, open(p, "w"), indent=2)
+    open(p, "a").write("\n")
+PY
+  (cd "$T" && G add -A && G commit -q -m "tampered guest record") || fail "cannot commit the tampered clone"
+  o=$(bash "$T/scripts/operator_deploy_protected_host.sh" --from "$T" --bin-dir "$BIN" --only guest 2>&1); rc=$?
+  [ $rc != 0 ] || fail "ATTACK: a guest image whose build record is $label was accepted by the kit: $o"
+  grep -q "guest build records are not a controlled build's" <<<"$o" \
+    || fail "$label: refused for another reason: $o"
+  ok "a guest image whose build record is $label is refused at install"
+  rm -rf "$T"
+}
+tamper_guest "a hand-written one (no builder proof)" "m['source']['build_environment'].pop('proof')"
+tamper_guest "edited after its runner signed it" "m['source']['build_environment']['src_files'] = 99"
+tamper_guest "a kernel record edited after signing" "m['kernel']['build_environment']['make'][1][2] = '-j1'"
 if [ "$(id -u)" = 0 ]; then
   refused "--apply as a non-root uid" "must run as root" setpriv --reuid=65534 --regid=65534 --clear-groups -- \
     bash "$KIT" "${ARGS[@]}" --apply

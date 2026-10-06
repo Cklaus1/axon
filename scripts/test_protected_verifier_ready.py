@@ -23,7 +23,7 @@ spec.loader.exec_module(pvr)
 
 IDENT = {"sha256": "a" * 64, "build": "production", "fabric_revision": "b" * 40,
          "source_dirty": False, "rustc": "rustc 1.99.0-nightly", "profile": "release",
-         "target": "x86_64-unknown-linux-gnu"}
+         "target": "x86_64-unknown-linux-gnu", "build_state": ""}
 PASS = {"status": "PASS"}
 
 

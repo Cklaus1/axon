@@ -1801,3 +1801,27 @@ ATTACK_MARKERS.update({
     'M1847': r"ATTACK: a value nested past the walk bound crossed unvisited",
     'M1848': r"ATTACK: a closure the operator held was replaced by a non-closure: Ok\(Completed\)",
 })
+
+# C9 round 4c, workstream BUILDENV (M1880-M1899; amendment 80).
+ATTACK_MARKERS.update({
+    'M1880': r'ATTACK: a cargo config the guest build would use was accepted \(a single-quoted cfg',
+    'M1881': r'ATTACK: a committed key for a triple the build compiles for was tolerated \((host|cfg|musl)\)',
+    'M1882': r'ATTACK: an ambient host build with RUSTC_WRAPPER set was accepted',
+    'M1883': r'ATTACK: the host triple is not rustc\'s own',
+    'M1884': r'ATTACK: an ambient host build with CARGO_ENCODED_RUSTFLAGS set was accepted',
+    'M1885': r'ATTACK: a cargo that cannot print its config was read as having none',
+    'M1886': r'ATTACK: a guest build record its runner did not sign passed the proof: \["edit:',
+    'M1887': r'ATTACK: a guest build record its runner did not sign passed the proof: \["a key another uid can read',
+    'M1888': r'ATTACK: a guest build record its runner did not sign passed the proof: \["a key that is a symlink',
+    'M1889': r'ATTACK: a guest build record its runner did not sign passed the proof: \["a key in a directory others can enter',
+    'M1890': r'ATTACK: a guest build record its runner did not sign passed the proof: \["a hand-signed record in a world-writable parent',
+    'M1891': r'ATTACK: a dist binary the controlled build did not produce was recorded',
+    'M1892': r'ATTACK: a dist file that differs from the record was accepted',
+    'M1893': r'ATTACK: a hand-written record named dist digests and was accepted',
+    'M1894': r'ATTACK: the freeze bound a guest image whose build record its runner did not sign \(a hand-written record with no proof\)',
+    'M1895': r'ATTACK: the freeze bound a guest image whose build record its runner did not sign \(a signed kernel record whose vmlinux digest was rewritten\)',
+    'M1896': r'ATTACK: a guest build record its runner did not sign passed the proof: \["edit:',
+    'M1897': r'ATTACK: a production build ran under RUSTC_WRAPPER',
+    'M1898': r'ATTACK: a production build ran under RUSTC_WORKSPACE_WRAPPER',
+    'M1899': r'ATTACK: a production build ran under RUSTC_WRAPPER',
+})

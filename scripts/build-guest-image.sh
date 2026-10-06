@@ -244,6 +244,10 @@ build_rootfs_linux() {
     cp "$AXON_BIN" "$LDIST/axon"
     cp "$INIT_BIN" "$LDIST/axon-guest-init"
     cp "$RUNNER_BIN" "$LDIST/axon-psv-runner"
+    # Round 5 (amendment 80): what sits in dist/ is byte for byte what the
+    # controlled steps produced, and the record carries each digest (the manifest
+    # and the freeze read artifact digests from the RECORD, not from the files).
+    python3 scripts/guest_build_env.py dist "$BUILD_ENV" "$LDIST" || exit 1
     python3 scripts/guest_build_env.py discard "$BUILD_ENV"
     # The image's root must be traversable by the unprivileged test uid.
     local ROOTMODE

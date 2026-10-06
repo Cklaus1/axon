@@ -42,32 +42,151 @@ fn write(p: &Path, s: &str) {
     std::fs::write(p, s).unwrap();
 }
 
-const PARENT: &str = "/root/.cache/axon-guest-build";
-const BASE: &str = "/root/.cache/axon-guest-build/axon-guest-build-x";
-const KBASE: &str = "/root/.cache/axon-guest-build/axon-kernel-build-x";
+/// Where the fixture's builder-private build parent lives: a directory made
+/// for THIS test process under the builder's home, removed at exit. Never
+/// `~/.cache/axon-guest-build`: that is where a real controlled build keeps its
+/// private directories and its proof keys, and a test must not write there.
+fn parent() -> &'static str {
+    use std::os::unix::fs::PermissionsExt;
+    static P: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    static CLEAN: std::sync::OnceLock<std::ffi::CString> = std::sync::OnceLock::new();
+    P.get_or_init(|| {
+        let home = std::env::var("HOME").unwrap();
+        let d = Path::new(&home)
+            .join(".cache")
+            .join(format!("axon-freeze-fixture-{}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::set_permissions(&d, std::fs::Permissions::from_mode(0o700)).unwrap();
+        assert_not_real_parent(&d);
+        extern "C" fn clean() {
+            if let Some(p) = CLEAN.get() {
+                let _ = std::fs::remove_dir_all(p.to_str().unwrap());
+            }
+        }
+        CLEAN
+            .set(std::ffi::CString::new(d.to_str().unwrap()).unwrap())
+            .unwrap();
+        unsafe { libc::atexit(clean) };
+        d.to_str().unwrap().to_string()
+    })
+}
+
+/// A test that would write the real builder-private parent fails here.
+fn assert_not_real_parent(p: &Path) {
+    let real = Path::new(&std::env::var("HOME").unwrap())
+        .join(".cache")
+        .join("axon-guest-build");
+    assert!(
+        !p.starts_with(&real) && !real.starts_with(p),
+        "ATTACK: a test would write the real builder-private build parent {}",
+        real.display()
+    );
+}
+
+fn base() -> String {
+    format!("{}/axon-guest-build-x", parent())
+}
+
+fn kbase() -> String {
+    format!("{}/axon-kernel-build-x", parent())
+}
+
 const CRT: &str = "-C target-feature=+crt-static";
 
-/// The recorded ancestors of PARENT: each only root's.
+/// The recorded ancestors of the fixture parent, as the filesystem has them
+/// (the tests run as root: each only root's).
 fn ancestors() -> serde_json::Value {
-    json!([{"path": "/", "uid": 0, "mode": "0o755"},
-           {"path": "/root", "uid": 0, "mode": "0o700"},
-           {"path": "/root/.cache", "uid": 0, "mode": "0o755"},
-           {"path": PARENT, "uid": 0, "mode": "0o700"}])
+    use std::os::unix::fs::MetadataExt;
+    let mut out = vec![];
+    let mut cur = PathBuf::from("/");
+    let mut parts = vec![cur.clone()];
+    for c in Path::new(parent()).components().skip(1) {
+        cur.push(c);
+        parts.push(cur.clone());
+    }
+    for p in parts {
+        let m = std::fs::symlink_metadata(&p).unwrap();
+        out.push(json!({"path": p.to_str().unwrap(), "uid": m.uid(),
+                        "mode": format!("0o{:o}", m.mode() & 0o7777)}));
+    }
+    json!(out)
 }
 
 fn tool(path: &str) -> serde_json::Value {
     json!({"path": path, "realpath": path, "sha256": "7".repeat(64), "version": "t 1"})
 }
 
+/// The per-build key the fixture's runner "made": under the builder-private
+/// parent, 0400 in a 0700 `keys` directory, root's (the tests run as root, so
+/// the fixture builder_uid 0 is the real owner). Written once per process.
+const KEY_HEX: &str = "6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b";
+
+fn fixture_key(id: &str) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    // One writer at a time: the tests share the process and the directory.
+    static ONE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _one = ONE.lock().unwrap_or_else(|e| e.into_inner());
+    let kd = Path::new(parent()).join("keys");
+    assert_not_real_parent(&kd);
+    std::fs::create_dir_all(&kd).unwrap();
+    std::fs::set_permissions(parent(), std::fs::Permissions::from_mode(0o700)).unwrap();
+    std::fs::set_permissions(&kd, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let p = kd.join(format!("{id}.key"));
+    let tmp = kd.join(format!("{id}.{}.tmp", std::process::id()));
+    std::fs::write(&tmp, KEY_HEX).unwrap();
+    std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o400)).unwrap();
+    std::fs::rename(&tmp, &p).unwrap();
+    p
+}
+
+/// `rec` with the proof the runner would have written: HMAC-SHA256, under the
+/// build's key, of the compact sorted-key JSON of the record with the proof's
+/// own schema and id (scripts/guest_build_env.py `proof_payload`).
+fn signed(mut rec: serde_json::Value, id: &str) -> serde_json::Value {
+    fixture_key(id);
+    sign_with(&mut rec, id, KEY_HEX.as_bytes());
+    rec
+}
+
+fn sign_with(rec: &mut serde_json::Value, id: &str, key: &[u8]) {
+    rec["proof"] = json!({"schema": "axon-guest-build-proof/1", "id": id});
+    let payload = rec.to_string();
+    let k = ring::hmac::Key::new(ring::hmac::HMAC_SHA256, key);
+    let tag = ring::hmac::sign(&k, payload.as_bytes());
+    let hex: String = tag.as_ref().iter().map(|b| format!("{b:02x}")).collect();
+    rec["proof"]["hmac"] = json!(hex);
+}
+
+/// Sign both build records of `m` as their runner would after the edit a test
+/// just made: a row that lets an edited record through the STRUCTURAL judge
+/// must reach the verdict, not be refused by the proof the edit broke (that
+/// would be REFUSED_ELSEWHERE). Only the proof's own test writes edits unsigned.
+fn resign(m: &mut serde_json::Value) {
+    for (part, id) in [
+        ("source", "axon-guest-build-x"),
+        ("kernel", "axon-kernel-build-x"),
+    ] {
+        let be = &mut m[part]["build_environment"];
+        if be.is_object() {
+            fixture_key(id);
+            sign_with(be, id, KEY_HEX.as_bytes());
+        }
+    }
+}
+
 /// The record scripts/guest_build_env.py `kernel` writes for a controlled
 /// build of the fixture manifest's vmlinux from its pins.
 fn controlled_kernel() -> serde_json::Value {
+    signed(controlled_kernel_unsigned(), "axon-kernel-build-x")
+}
+
+fn controlled_kernel_unsigned() -> serde_json::Value {
     json!({
         "schema": "axon-guest-kernel-build/1", "controlled": true, "builder_uid": 0,
-        "build_parent": PARENT, "build_parent_ancestors": ancestors(), "base": KBASE,
+        "build_parent": parent(), "build_parent_ancestors": ancestors(), "base": kbase(),
         "pin": {"version": "6.1.188", "tarball_sha256": "3".repeat(64),
                 "config_sha256": "4".repeat(64), "overlay_sha256": "5".repeat(64)},
-        "env": {"HOME": KBASE, "LC_ALL": "C", "PATH": "/usr/bin:/bin",
+        "env": {"HOME": kbase(), "LC_ALL": "C", "PATH": "/usr/bin:/bin",
                 "KBUILD_BUILD_TIMESTAMP": "1970-01-01", "KBUILD_BUILD_USER": "axon",
                 "KBUILD_BUILD_HOST": "b263", "KBUILD_BUILD_VERSION": "1"},
         "make": [["/usr/bin/make", "ARCH=x86_64", "olddefconfig"],
@@ -87,6 +206,12 @@ fn manifest(source: serde_json::Value) -> String {
 }
 
 fn manifest_value(source: serde_json::Value) -> serde_json::Value {
+    let mut m = manifest_value_unsigned(source);
+    resign(&mut m);
+    m
+}
+
+fn manifest_value_unsigned(source: serde_json::Value) -> serde_json::Value {
     json!({"artifacts": {"vmlinux": {"sha256": "1".repeat(64)},
                          "rootfs.sqfs": {"sha256": "2".repeat(64)},
                          "axon": {"sha256": "a".repeat(64)},
@@ -104,6 +229,11 @@ fn manifest_value(source: serde_json::Value) -> serde_json::Value {
 /// The record scripts/guest_build_env.py writes for a controlled build of
 /// exactly the fixture manifest's three binaries and its rootfs.
 fn controlled_build() -> serde_json::Value {
+    signed(controlled_build_unsigned(), "axon-guest-build-x")
+}
+
+fn controlled_build_unsigned() -> serde_json::Value {
+    let base = base();
     let tc = "/root/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/bin";
     let check = json!({"origins": [], "foreign": []});
     let musl = "x86_64-unknown-linux-musl";
@@ -119,16 +249,16 @@ fn controlled_build() -> serde_json::Value {
                       "rustc": format!("{tc}/rustc"), "rustc_sha256": "e".repeat(64),
                       "rustc_vV": "rustc 1\nhost: x86_64-unknown-linux-gnu",
                       "host_tools": {"cc": tool("/usr/bin/cc"), "ld": tool("/usr/bin/ld")}},
-        "env": {"CARGO_HOME": format!("{BASE}/cargo-home"),
-                "CARGO_TARGET_DIR": format!("{BASE}/target"), "HOME": BASE,
+        "env": {"CARGO_HOME": format!("{base}/cargo-home"),
+                "CARGO_TARGET_DIR": format!("{base}/target"), "HOME": base,
                 "LC_ALL": "C", "PATH": format!("{tc}:/usr/bin:/bin"),
                 "RUSTC": format!("{tc}/rustc")},
         "env_allowlist": ["CARGO_HOME", "CARGO_TARGET_DIR", "HOME", "LC_ALL", "PATH", "RUSTC"],
         "proxy_vars": [],
-        "builder_uid": 0, "build_parent": PARENT, "build_parent_ancestors": ancestors(),
-        "src_dir": format!("{BASE}/src"), "src_files": 1,
-        "cargo_home": format!("{BASE}/cargo-home"), "cargo_home_created_empty": true,
-        "target_dir": format!("{BASE}/target"), "target_dir_created_empty": true,
+        "builder_uid": 0, "build_parent": parent(), "build_parent_ancestors": ancestors(),
+        "src_dir": format!("{base}/src"), "src_files": 1,
+        "cargo_home": format!("{base}/cargo-home"), "cargo_home_created_empty": true,
+        "target_dir": format!("{base}/target"), "target_dir_created_empty": true,
         "effective_config": {"origins": [], "foreign": [], "own_config": ".cargo/config.toml"},
         "builds": [
             build("axon", vec!["build", "--locked", "-p", "axon-core", "--target", musl,
@@ -143,10 +273,10 @@ fn controlled_build() -> serde_json::Value {
                       "axon-psv-runner": "c".repeat(64)},
         "rootfs": {
             "tool": tool("/usr/bin/mksquashfs"),
-            "argv": ["/usr/bin/mksquashfs", format!("{BASE}/rootfs-x"), "/r/dist/rootfs.sqfs",
+            "argv": ["/usr/bin/mksquashfs", format!("{base}/rootfs-x"), "/r/dist/rootfs.sqfs",
                      "-noappend", "-all-root", "-no-xattrs", "-mkfs-time", "0", "-all-time", "0",
                      "-comp", "gzip", "-quiet"],
-            "env": {"HOME": BASE, "LC_ALL": "C", "PATH": "/usr/bin:/bin"},
+            "env": {"HOME": base, "LC_ALL": "C", "PATH": "/usr/bin:/bin"},
             "inputs": {"axon": "a".repeat(64), "axon-guest-init": "b".repeat(64),
                        "axon-psv-runner": "c".repeat(64), "busybox": "9".repeat(64),
                        "guest-init.sh": "8".repeat(64)},
@@ -569,6 +699,95 @@ fn a_guest_artifact_the_controlled_build_did_not_produce_does_not_freeze() {
     }
 }
 
+/// C9 round 5 (FIELD-ORIGIN, major-adjacent 2): the record the freeze judges
+/// is the controlled RUNNER's, not a file anybody can write. Each record below
+/// is structurally a controlled build's (every field the other judges read
+/// holds, digests consistent between the record and the manifest) and is
+/// refused by the builder's proof alone: no proof at all, the digests of a
+/// binary built elsewhere written into a signed record, a proof under a key the
+/// builder did not make, a kernel record edited after signing, a proof naming a
+/// key that is not there. Control: the signed fixture freezes.
+#[test]
+fn a_guest_build_record_its_runner_did_not_sign_does_not_freeze() {
+    let d = tempfile::tempdir().unwrap();
+    let r = clone(d.path());
+    let elsewhere = "e".repeat(64);
+    type Edit = Box<dyn Fn(&mut serde_json::Value)>;
+    let cases: Vec<(&str, &str, Edit)> = vec![
+        (
+            "a hand-written record with no proof",
+            "carries no builder proof",
+            Box::new(|m| {
+                m["source"]["build_environment"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("proof");
+            }),
+        ),
+        (
+            "a signed record whose axon digest was rewritten to a binary built elsewhere",
+            "does not hold",
+            Box::new({
+                let e = elsewhere.clone();
+                move |m| {
+                    m["artifacts"]["axon"]["sha256"] = json!(e);
+                    m["source"]["build_environment"]["artifacts"]["axon"] = json!(e);
+                    m["source"]["build_environment"]["rootfs"]["inputs"]["axon"] = json!(e);
+                }
+            }),
+        ),
+        (
+            "a record signed under a key the builder did not make",
+            "does not hold",
+            Box::new(|m| {
+                sign_with(
+                    &mut m["source"]["build_environment"],
+                    "axon-guest-build-x",
+                    b"not the builders key",
+                );
+            }),
+        ),
+        (
+            "a proof naming a key that is not there",
+            "cannot be checked",
+            Box::new(|m| {
+                sign_with(
+                    &mut m["source"]["build_environment"],
+                    "no-such-build",
+                    KEY_HEX.as_bytes(),
+                );
+            }),
+        ),
+        (
+            "a signed kernel record whose vmlinux digest was rewritten",
+            "kernel build record's proof does not hold",
+            Box::new({
+                let e = elsewhere.clone();
+                move |m| {
+                    m["artifacts"]["vmlinux"]["sha256"] = json!(e);
+                    m["kernel"]["build_environment"]["vmlinux_sha256"] = json!(e);
+                }
+            }),
+        ),
+    ];
+    fixture_key("axon-guest-build-x");
+    for (attack, why, edit) in cases {
+        let mut m = manifest_value(clean_source());
+        edit(&mut m);
+        write(&r.join(MANIFEST), &m.to_string());
+        let got = freeze(&r);
+        assert!(
+            got.is_err(),
+            "ATTACK: the freeze bound a guest image whose build record its runner did not sign \
+             ({attack}): {got:?}"
+        );
+        let e = got.unwrap_err();
+        assert!(e.contains(why), "{attack}: expected {why:?}: {e}");
+    }
+    write(&r.join(MANIFEST), &manifest(clean_source()));
+    assert!(freeze(&r).is_ok(), "control: the signed image freezes");
+}
+
 type ManifestEdit = Box<dyn Fn(&mut serde_json::Value)>;
 
 /// Each edit of the controlled manifest is refused by the freeze with `why`
@@ -580,6 +799,7 @@ fn each_refused(claim: &str, why: &str, cases: Vec<(&str, ManifestEdit)>) {
     for (attack, edit) in cases {
         let mut m = manifest_value(clean_source());
         edit(&mut m);
+        resign(&mut m);
         write(&r.join(MANIFEST), &m.to_string());
         let got = freeze(&r);
         assert!(
@@ -947,6 +1167,7 @@ fn a_guest_image_not_built_with_the_operators_pinned_tools_does_not_freeze() {
     // M1470: the build ran another rustc than the operator pinned.
     let mut m = manifest_value(clean_source());
     tampered(&mut m);
+    resign(&mut m);
     write(&r.join(MANIFEST), &m.to_string());
     let got = freeze(&r);
     assert!(
@@ -959,6 +1180,7 @@ fn a_guest_image_not_built_with_the_operators_pinned_tools_does_not_freeze() {
     let mut m = manifest_value(clean_source());
     m["kernel"]["build_environment"]["tools"]["flex"] = json!({"path": "/var/tmp/flex",
         "realpath": "/var/tmp/flex", "sha256": "f".repeat(64), "version": "x"});
+    resign(&mut m);
     write(&r.join(MANIFEST), &m.to_string());
     let got = freeze(&r);
     assert!(
@@ -981,6 +1203,7 @@ fn a_guest_image_not_built_with_the_operators_pinned_tools_does_not_freeze() {
     // (or writable by one).
     let mut m = manifest_value(clean_source());
     tampered(&mut m);
+    resign(&mut m);
     write(&r.join(MANIFEST), &m.to_string());
     write(&pin, &operator_pin_of(&m).to_string());
     for (owner, mode) in [("4242", "0644"), ("0", "0666")] {
