@@ -4677,7 +4677,7 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       account that built) uses the judging process's own euid and `AXON_GUEST_BUILD_PARENT`. A pin file, not
       the judge's euid, because freeze, kit and build need not be one account (the freeze runs as root in a
       private mount namespace in the tests, and the operator's builder is an unprivileged account).
-      **Residual trust, stated correctly:** the proof is exactly as strong as the pin: whoever can act as the
+      **CORRECTED by amendment 90:** the proof's key was readable by every process the build ran (any build script could mint a proof), and "a planted `cc` never exists" (below) did not hold: the planted `cc` was written into the builder-owned toolchain directory that was first on the build's `PATH`. **Residual trust, stated correctly (as of amendment 86; see 90):** the proof is exactly as strong as the pin: whoever can act as the
       pinned account, or write into its private parent, can sign any record; and root on the judging host.
     - **Blocker 2: the host-binary refusal was defeated by a retry in the same target dir.** `build_state`
       is read only by axon-fabric's `build.rs`, which exits 1 under `RUSTC_WRAPPER` after cargo has compiled
@@ -4809,3 +4809,103 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       stated, not implemented (matrix row A161).
     - **MINOR: no joined paired-disable record at this head.** Unchanged and expected until the final evidence
       run; the paired-disable validator (amendment 81) refuses a freeze until it exists.
+
+## Amendment 90: what the build processes can and cannot touch (C9 round 7, buildenv3)
+
+90. **FIELD-ORIGIN, one executed BLOCKER and majors.** (Round 6's blockers 1 and 2 are closed, verified.)
+    - **Blocker (executed at 1204a925).** `constructed_env` put the BUILDER-OWNED toolchain bin directory first
+      on `PATH`; `host_tools()` recorded `cc`/`ld` by searching `/usr/bin:/bin` before the build, a lookup the build
+      does not perform. A `build.rs` (repository code or any locked dependency's) wrote an executable `cc` into
+      that directory; all four host binaries were linked through it (5 planted-cc link lines); the signed record
+      still named `/usr/bin/cc`, `host_record_problems` returned `''`, the kit's cc/ld comparison passed and
+      `verifier-manifest` said production, `build_state ''`. The same code READ the 0400 proof key, so any build
+      script or proc macro could mint a valid proof for any record body. The guest build had the same shape.
+      Amendment 86's "a planted `cc` never exists" and row M2090 did not hold (the planted `cc` was in the
+      toolchain directory, not the caller's PATH).
+    - **The model: three principals, said once.**
+      1. The OPERATOR: root-owned tools (`/usr/bin`, `/bin`), the pins in `/etc/axon`.
+      2. The RUNNER: root, which is the pinned builder. It creates the build directories, holds the proof keys
+         (`<parent>/keys`, root's 0700), re-measures and signs. It is the only reader of the keys.
+      3. The BUILD PROCESSES: cargo and everything it spawns (build scripts, proc macros, `make`, the kernel
+         tree's own scripts). Each is started by the runner through `setpriv --reuid=U --regid=U --clear-groups
+         --no-new-privs` as an UNPRIVILEGED uid (`AXON_GUEST_BUILD_UID`, default 65534; the operator's pin names
+         the one the freeze expects). They write ONLY their own source copy, `CARGO_HOME` and target dir (the only
+         directories the runner chowns to U), and `/tmp`. They cannot read the keys directory, write the
+         toolchain, the system tool directories, the base directory or the record.
+    - **Why a different uid and not "create the key after the last step".** A key that exists only after the
+      last cargo step still persists afterwards, readable by the NEXT build's code if it runs as the same
+      account (a later build's dependency `build.rs` reads the earlier build's key and forges a record under
+      its id); and a build running as root can ptrace, remount or `nsenter` its way to anything. A uid
+      boundary is the only thing that holds for both. The cost: the controlled build runs as root (the builder
+      pin's uid is root in practice) and the build parent must be traversable by the build uid
+      (`/var/lib/axon-guest-build` by default, never under root's 0700 home). Stated residuals: a build that
+      starts a background process outliving its step still runs as the build uid and can touch the build uid's
+      own directories (not the keys, the toolchain or the record); the artifacts are digested after the step;
+      a build uid shared with another service on the host shares that service's files, so give the build
+      its own uid.
+    - **(1) PATH and the toolchain.** `PATH` is the FIXED SYSTEM directories only (`/usr/bin:/bin`); `cargo` and
+      `rustc` are invoked by absolute path and `RUSTC` is set. `cc` and `ld` are recorded by the SAME lookup the
+      build performs on that PATH (absolute path, realpath, digest). The pinned toolchain is a private,
+      ROOT-OWNED copy under the build's base (`<base>/toolchains/<channel>-<triple>`, hard links where the
+      filesystem allows, a copy otherwise): the build uid cannot traverse root's home, so it needs the copy,
+      and the copy is something it cannot write. The SOURCE tree must itself be root-owned and closed to
+      group/other writes entry by entry, else the build is refused (`install the pinned toolchain as root`).
+      The record names the copy's paths and the stable source paths (`toolchain.source`); the toolchain pin
+      compares rustc and cargo by their STABLE source path and digest (the copy's path changes with every build).
+    - **(2) Re-measure.** `measured` = digests of cargo and rustc, a listing-with-digests of the toolchain bin
+      directory, and `cc`/`ld` as the PATH resolves them, taken at `begin`. `write` (the one place a record is
+      signed) re-measures and REFUSES to sign over any difference (`nothing is signed`); `cargo_step`
+      re-measures before it starts a step too (dominated by the write after the step's first record entry).
+      The judge requires `measured` to equal the record's toolchain digests and host tools.
+    - **(3) The key.** Not reachable by build processes (see the model). Proved by the reviewer's attack as a
+      regression test, on BOTH builds: a probe build script that writes an executable `cc` next to `RUSTC`,
+      lists and reads every file in the keys directory, and writes into the base directory. Result: it ran as
+      65534, `own OUT_DIR: writable` (the control: the probe works), every attempt denied; the record names
+      `/usr/bin/cc` and the fixed PATH. A second, read-only probe judges the uid alone (so a build that wrongly
+      runs as root still completes and the uid is what fails).
+    - **(4) The kit compared only `cc` and `ld`.** It now compares the host build's `cc`, `ld`, `rustc`, `cargo`
+      (path and digest) and `rustc -vV` to BOTH the guest build and the operator's pin; a pin with rustc/cargo
+      digests `00..00`/`11..11` is refused (tested in the namespace phase of `test_operator_deploy.sh`).
+    - **(5) The kit judged in the builder-owned clone.** After the clean-clone check and the kit-equals-clone
+      `cmp`, the committed tree is exported from git's object database into a root-owned private copy
+      (`$WORK/tree`) and the three guest files are copied (`$WORK/guest-stage`); EVERY later read, root-run
+      script (the judge, `trust_root_preflight.sh`), install source (`fc_linux_profile.sh`, the units, the
+      guest files) and pin computation comes from the copy. A drift test on the kit's own text fails if any
+      `$CLONE/scripts|profiles|dist` read remains besides the copy-aside itself.
+    - **(6) Minor.** `GIT_CEILING_DIRECTORIES=<base>` is part of the constructed environment (the guest
+      `axon-core/build.rs` ran git and stamped the HEAD of whatever repository enclosed the builder's
+      parent); the judge's environment equality includes it. `check-host-record` takes `--builder-uid`,
+      `--builder-parent`, `--build-uid` together as plain ASCII decimal uids and an absolute parent, or none
+      (then the pin): a partial or malformed set is refused (it silently fell back to the pin).
+    - **(7) Origins the tables omitted, and `--expect-commit`.** `--apply` now REQUIRES `--expect-commit SHA`:
+      the judge, the launcher script, the units and the host-build script all come from the commit being
+      deployed, so the operator must name it (a commit that names itself vouches for itself). Origin table
+      (trust statement per row):
+
+      | field | origin | class |
+      |---|---|---|
+      | the builder uid, parent, build uid | `/etc/axon/builder-pin.json` (operator, installed by the kit from the flags) | the OPERATOR's word |
+      | proof keys | the root runner, `<parent>/keys`, root 0700 | the builder's (root) |
+      | host binaries' digests, `source_revision` | the signed `host-build.json` of a controlled build | SIGNED by the pinned builder |
+      | helper config `fabric.revision` | the installed binary's own `verifier-manifest`, run as root by the kit, cross-checked against the signed record's `source_revision` through `check-host-record --commit` | TOLD by the binary; the commit is the operator's (`--expect-commit`) |
+      | guest kernel tarball, config, overlay and busybox digests | the COMMITTED `profiles/linux-microvm/kernel.pin`, checked only against the pin file of the same commit | TRUSTS the commit the operator named; NOT independently pinned. The kit prints these digests in the dry run (`NOTE[guest]`) so the operator can compare them to the upstream release (kernel.org's `sha256sums.asc`) and to its own records |
+      | the root judge, launcher script, units, host-build script | the commit named by `--expect-commit`, exported from git to a root-owned copy | the OPERATOR's commit |
+      | the Fabric's authority-store epoch ledger key | the caller's `AXON_ATTEST_KEY` environment (`axon_loop::Store` `LedgerKey::from_env`; unset means unkeyed) | the caller's (accepted store-config limitation, ADR-001) |
+
+    - **Rows (killed by their own attack).** M2220 (PATH is the fixed system dirs), M2221 (build processes run
+      as the unprivileged uid), M2222-M2224 (the toolchain tree check and its call), M2225-M2227 (re-measure:
+      sign refusal, bin listing, live linker), M2228 (git ceiling), M2229 (the proof is for the pinned build
+      uid), M2231-M2233 (the judge: private toolchain copy, measured compiler, measured linker), M2235-M2236 (builder flags), M2237 (the kernel's make as the build
+      uid), M2238 (the judge's environment equality). Retargeted: M1181, M1196, M2090; M1188 now kills (its test
+      keeps the retooled toolchain a private-copy path, so only the channel judge can refuse it). NOT rows
+      (dominated, stated): the judge's `build_uid` clauses (M2230 and M2234 as first written, root as the
+      build uid, were REFUSED_ELSEWHERE by the pin-versus-record comparison and are NOT kept), measured cargo/rustc digests (the bin listing's file digests refuse the same swap
+      first), the pin's `build_uid` shape clauses (the pin-versus-record comparison refuses the same inputs
+      first), `bu <= 0` against `bu == builder_uid` (both fire for root), `cargo_step`'s pre-step measure (the
+      write after the entry refuses it), `require_runner` (not testable without a non-root runner), the kit
+      guards (not cargo tests; each removed alone by hand, see the report).
+    - **Matrix.** A168-A171. **Operator deployment.** The controlled build now REQUIRES root and an unprivileged
+      build uid; install the toolchain as root; use a build parent every uid can traverse; the kit takes
+      `--build-uid N` and `--expect-commit SHA` (for `--apply`); the builder pin gains `build_uid`; a guest
+      image and host build made before this amendment are refused (records lack `build_uid` and `measured`).
+

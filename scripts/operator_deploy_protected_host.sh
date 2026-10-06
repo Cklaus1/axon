@@ -619,6 +619,11 @@ PY
     else
       GUEST_OK=1
       echo "GUEST manifest $(sha "$MANIFEST_SRC") clean, controlled build records present, artifacts and engine match their pins"
+      # Amendment 90 (origin): the kernel tarball, config, overlay and busybox
+      # digests come from the COMMITTED kernel.pin of the commit you named, checked
+      # only against that same tree. Compare them to the upstream release (the
+      # kernel.org sha256sums for the tarball) and your own records.
+      note "guest inputs from the committed kernel.pin (NOT independently pinned; compare with upstream): $(python3 -I -B -c 'import json,sys; m=json.load(open(sys.argv[1])); k=m.get("kernel") or {}; print("kernel", k.get("version"), "tarball", k.get("tarball_sha256"), "config", k.get("config_sha256"), "overlay", k.get("overlay_sha256"), "busybox", (m.get("busybox") or {}).get("sha256"))' "$MANIFEST_SRC")"
     fi
   fi
   if selected guest && [ $GUEST_OK = 1 ]; then

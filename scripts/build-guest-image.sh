@@ -36,6 +36,10 @@ cd "$(dirname "$0")/.."
 # wrapper variables and four config files; cargo resolves far more (ancestor
 # configs, dotted keys, RUSTC, RUSTFLAGS, linkers, RUSTUP_TOOLCHAIN, a reused
 # target dir), and two C9 round-4 reviewers built through each of them. So
+# Round 7 (amendment 90): the controlled steps RUN AS ROOT and start every build
+# process (cargo, build scripts, make) as an unprivileged uid; the build parent
+# (AXON_GUEST_BUILD_PARENT, default /var/lib/axon-guest-build) must be traversable
+# by that uid, and the pinned toolchain must be root-owned.
 # every cargo run here goes through scripts/guest_build_env.py, which builds in
 # an environment it CONSTRUCTS (caller env dropped; the pinned toolchain; a
 # fresh CARGO_HOME and target dir; a private copy of the tracked tree under a

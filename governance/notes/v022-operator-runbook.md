@@ -179,9 +179,9 @@ AXON_KERNEL_BACKEND=linux scripts/build-guest-image.sh
 
 ```bash
 cd /srv/axon-freeze
-# as the BUILDER account (the one the kit is told with --builder-uid; AXON_GUEST_BUILD_PARENT must be
+# as ROOT, the builder (the kit is told with --builder-uid 0 --build-uid N; AXON_GUEST_BUILD_PARENT must be
 # the --builder-parent, the same private directory the guest build records live under)
-AXON_GUEST_BUILD_PARENT=/home/builder/.cache/axon-guest-build \
+sudo env AXON_GUEST_BUILD_PARENT=/var/lib/axon-guest-build \
   python3 scripts/guest_build_env.py host-build /var/lib/axon-build/host
 ```
 
@@ -191,6 +191,17 @@ constructed environment (your `RUSTC_WRAPPER`, flags, `PATH` and the like are dr
 refused), and writes `host-build.json` beside the four binaries, signed by the builder. It
 builds from nothing every time (minutes; the network for crates). The output directory must
 not exist.
+
+**Amendment 90 (round 7): the controlled builds run as ROOT and start every build process
+as an unprivileged uid.** Run `host-build` and `build-guest-image.sh` with `sudo`. Install
+the pinned toolchain as root (every file root-owned, none group/other-writable: the build
+refuses otherwise). Use a build parent every uid can traverse
+(`AXON_GUEST_BUILD_PARENT`, default `/var/lib/axon-guest-build`; never under root's
+`0700` home) and give the build its own unprivileged uid (`AXON_GUEST_BUILD_UID`, default
+65534; do not share it with another service). Tell the kit the same three facts with
+`--builder-uid 0 --builder-parent DIR --build-uid N`, and name the commit to deploy with
+`--expect-commit SHA` (required for `--apply`). Images and host builds made before this
+amendment are refused: rebuild them.
 
 **Migration.** A `--bin-dir` that is the output of a plain `cargo build` (no
 `host-build.json`) is REFUSED. Pass `--builder-uid N --builder-parent DIR` to every kit run
@@ -210,7 +221,7 @@ is judged against them, never against what it says. The kit checks:
 
 ```bash
 K=/srv/axon-freeze/scripts/operator_deploy_protected_host.sh
-ARGS=(--from /srv/axon-freeze --expect-commit <FREEZE_SHA> --bin-dir /var/lib/axon-build/host --builder-uid <builder uid> --builder-parent <builder private parent>
+ARGS=(--from /srv/axon-freeze --expect-commit <FREEZE_SHA> --bin-dir /var/lib/axon-build/host --builder-uid 0 --builder-parent /var/lib/axon-guest-build --build-uid 65534
       --suite-registry /path/to/suites/registry.json    # cortex-check-registry/1; relative paths come along
       --grant-registry /path/to/grants/grants.json      # axon-fabric-grant-registry/1 + its grant files
       --signer-public-key <64 hex>                       # from step 5; omit on the first pass

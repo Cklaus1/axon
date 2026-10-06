@@ -1134,12 +1134,20 @@ fn a_guest_image_whose_binaries_were_not_exactly_the_protected_builds_does_not_f
 /// pins, and the record names the host linker's identity.
 #[test]
 fn a_guest_build_record_not_of_the_pinned_toolchain_does_not_freeze() {
-    fn retool(m: &mut serde_json::Value, chan: &str, dir: &str) {
+    // The toolchain moves to ANOTHER directory name under the build's own
+    // `toolchains/` (so the private-copy and measurement judges are satisfied and
+    // only the channel judge can refuse it).
+    fn retool(m: &mut serde_json::Value, chan: &str, name: &str) {
         let b = &mut m["source"]["build_environment"];
+        let base = std::path::Path::new(b["target_dir"].as_str().unwrap())
+            .parent()
+            .unwrap()
+            .display()
+            .to_string();
+        let dir = format!("{base}/toolchains/{name}/bin");
         b["toolchain"]["channel"] = json!(chan);
         b["toolchain"]["cargo"] = json!(format!("{dir}/cargo"));
         b["toolchain"]["rustc"] = json!(format!("{dir}/rustc"));
-        b["env"]["PATH"] = json!("/usr/bin:/bin");
         b["env"]["RUSTC"] = json!(format!("{dir}/rustc"));
     }
     each_refused_with(
@@ -1148,17 +1156,11 @@ fn a_guest_build_record_not_of_the_pinned_toolchain_does_not_freeze() {
         vec![
             (
                 "another channel's toolchain",
-                Box::new(|m| {
-                    retool(
-                        m,
-                        "stable",
-                        "/root/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin",
-                    )
-                }),
+                Box::new(|m| retool(m, "stable", "stable-x86_64-unknown-linux-gnu")),
             ),
             (
                 "the pinned channel's name on another toolchain directory",
-                Box::new(|m| retool(m, "nightly", "/var/tmp/evil/bin")),
+                Box::new(|m| retool(m, "nightly", "evil")),
             ),
             (
                 "no linker identity",
