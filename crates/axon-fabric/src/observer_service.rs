@@ -22,9 +22,13 @@
 //!   nothing is signed ([`Server::measure`]); and it signs at most ONE
 //!   observation per nonce, recorded in its own 0700 store.
 //!
-//! What it is TOLD and cannot measure (the guest policy, the nonce and epoch,
-//! the init and axon digests inside the measured rootfs, the Fabric revision)
-//! is stated in amendment 68.
+//! What it is TOLD and cannot measure (the guest policy and the epoch) is
+//! stated in amendment 68 and, after the review that found the observer
+//! countersigning Fabric-authored values, amendment 79: the Fabric program's
+//! digest and build revision are the operator's PIN in the helper config
+//! ([`crate::privileged_launcher::FabricPin`]), the guest's init and axon
+//! digests are what the measured profile manifest names, and a nonce is
+//! observed only if the custodian issued it for that epoch.
 
 use crate::backend::{Clock, TrustAuthority};
 use crate::custodian::{peer_uid, Mode};
@@ -46,6 +50,25 @@ pub const MAX_REQUEST: u64 = 64 << 10;
 /// An observation and its signature, JSON-escaped in the reply.
 pub const MAX_REPLY: u64 = 64 << 10;
 const IO_TIMEOUT: Duration = Duration::from_secs(30);
+/// Amendment 79: the whole of one connection's request must arrive within
+/// this, not each read within it (a peer dripping a byte per read held the
+/// single-threaded service for as long as it liked).
+pub const REQUEST_DEADLINE: Duration = Duration::from_secs(30);
+/// The slowest SHA-256 rate the read timeout allows for, in bytes per second.
+/// Far below any measured rate (1 GB/s with SHA extensions, 0.2 GB/s without),
+/// so a timeout derived from it is not the property under test.
+const MIN_HASH_RATE: u64 = 25 << 20;
+/// A profile manifest is a few KiB of JSON; the bound is generous and fixed.
+const MAX_PROFILE_MANIFEST: u64 = 1 << 20;
+
+/// Amendment 79: how long the helper waits for the observer's reply, given
+/// the bytes the observer streams through SHA-256 for it (the guest kernel and
+/// rootfs). It was a fixed 30 s: a large image on a cold cache could take
+/// longer, the client gave up, and the observer, which creates the nonce's
+/// record before it signs, had burned the nonce.
+pub fn observe_timeout(artifact_bytes: u64) -> Duration {
+    IO_TIMEOUT + Duration::from_secs(artifact_bytes / MIN_HASH_RATE)
+}
 
 /// Where a TEST observer measures (a test-trust `--test-config` only; a
 /// protected observer measures the fixed operator paths).
@@ -306,7 +329,12 @@ impl ObserverRef {
     /// observer uid's (or root's: systemd binds an activated socket), and
     /// every byte of the reply must come from ONE process executing the pinned
     /// program.
-    pub fn observe(&self, manifest: &str, caller_sha256: &str) -> Result<Observed, String> {
+    pub fn observe(
+        &self,
+        manifest: &str,
+        caller_sha256: &str,
+        timeout: Duration,
+    ) -> Result<Observed, String> {
         let s = UnixStream::connect(&self.socket)
             .map_err(|e| format!("observer {}: {e}", self.socket.display()))?;
         let peer = peer_uid(s.as_raw_fd())?;
@@ -318,7 +346,7 @@ impl ObserverRef {
                 self.uid
             ));
         }
-        let _ = s.set_read_timeout(Some(IO_TIMEOUT));
+        let _ = s.set_read_timeout(Some(timeout));
         let _ = s.set_write_timeout(Some(IO_TIMEOUT));
         // Before the request goes out, so the kernel names the sender of every
         // byte of the reply.
@@ -392,12 +420,11 @@ impl Sources {
     }
 }
 
-/// sha256 of the regular file at `p`, streamed from ONE `O_NOFOLLOW` open (a
-/// rootfs is larger than any bound a whole read could take).
-fn digest_of(p: &Path) -> Result<String, String> {
-    use sha2::{Digest, Sha256};
+/// The regular file at `p`, opened through ONE `O_NOFOLLOW` open: what the
+/// observer measures is the file it opened, never one a path was swapped to.
+fn open_measured(p: &Path) -> Result<std::fs::File, String> {
     use std::os::unix::fs::OpenOptionsExt;
-    let mut f = std::fs::OpenOptions::new()
+    let f = std::fs::OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC)
         .open(p)
@@ -408,9 +435,31 @@ fn digest_of(p: &Path) -> Result<String, String> {
             p.display()
         ));
     }
+    Ok(f)
+}
+
+/// sha256 of the regular file at `p`, streamed (a rootfs is larger than any
+/// bound a whole read could take).
+fn digest_of(p: &Path) -> Result<String, String> {
+    use sha2::{Digest, Sha256};
+    let mut f = open_measured(p)?;
     let mut h = Sha256::new();
     std::io::copy(&mut f, &mut h).map_err(|e| format!("cannot measure {}: {e}", p.display()))?;
     Ok(format!("{:x}", h.finalize()))
+}
+
+/// The regular file at `p` (at most `max` bytes): its bytes and their sha256.
+fn read_measured(p: &Path, max: u64) -> Result<(Vec<u8>, String), String> {
+    let f = open_measured(p)?;
+    let mut bytes = Vec::new();
+    f.take(max + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| format!("cannot measure {}: {e}", p.display()))?;
+    if bytes.len() as u64 > max {
+        return Err(format!("cannot measure {}: over {max} bytes", p.display()));
+    }
+    let digest = axon_psv::sha256_hex(&bytes);
+    Ok((bytes, digest))
 }
 
 /// An observer serving requests.
@@ -423,6 +472,25 @@ pub struct Server {
     pub public_hex: String,
     pub sources: Sources,
     pub clock: Clock,
+    /// How long one connection has to deliver its whole request
+    /// ([`REQUEST_DEADLINE`]).
+    pub request_deadline: Duration,
+}
+
+/// The operator's two configs as the observer reads them for one request.
+struct Operator {
+    host: Vec<u8>,
+    hv: serde_json::Value,
+    lv: serde_json::Value,
+}
+
+/// Amendment 79: whether a nonce from a custodian in mode `custodian` may be
+/// observed by an observer in mode `observer`. A protected observer takes a
+/// protected custodian's nonce only (a test or dev custodian is a process its
+/// operator did not install); a non-protected observer takes any but a dev
+/// custodian's.
+fn custodian_admissible(observer: Mode, custodian: Mode) -> bool {
+    crate::privileged_launcher::custodian_mode_launches(custodian, observer != Mode::Protected)
 }
 
 impl Server {
@@ -446,11 +514,7 @@ impl Server {
         self.reply(self.decide(peer, request))
     }
 
-    /// Every installed digest the manifest names, measured here from the
-    /// operator's files, must be the manifest's: the observer signs only what
-    /// it measured. `caller_sha256` is the running Fabric's executable,
-    /// measured by the root helper (this observer's only caller).
-    fn measure(&self, m: &axon_psv::LaunchManifest, caller_sha256: &str) -> Result<(), String> {
+    fn operator(&self) -> Result<Operator, String> {
         use serde_json::Value;
         let host = self.sources.config(&self.sources.host_config)?;
         let hv: Value = serde_json::from_slice(&host)
@@ -458,28 +522,74 @@ impl Server {
         let helper = self.sources.config(&self.sources.helper_config)?;
         let lv: Value = serde_json::from_slice(&helper)
             .map_err(|e| format!("{}: {e}", self.sources.helper_config.display()))?;
+        Ok(Operator { host, hv, lv })
+    }
+
+    /// Every digest or identity the manifest names that the observer can learn
+    /// from an operator-held source, learned there, must be the manifest's:
+    /// the observer signs only what it measured or the operator pinned.
+    /// `caller_sha256` is the running Fabric's executable, measured by the
+    /// root helper (this observer's only caller); the pin in the helper config
+    /// is the Fabric program, and its build revision, by the operator's word
+    /// (amendment 79). What stays the principal's word is stated in
+    /// amendment 79: the guest policy digest and the authority epoch.
+    fn measure(
+        &self,
+        m: &axon_psv::LaunchManifest,
+        op: &Operator,
+        caller_sha256: &str,
+    ) -> Result<(), String> {
+        use serde_json::Value;
+        let (hv, lv) = (&op.hv, &op.lv);
         let path = |v: &Value, ptr: &str| -> Result<PathBuf, String> {
             v.pointer(ptr)
                 .and_then(Value::as_str)
                 .map(PathBuf::from)
                 .ok_or_else(|| format!("the operator config names no {ptr}"))
         };
+        let text = |v: &Value, ptr: &str| -> Result<String, String> {
+            v.pointer(ptr)
+                .and_then(Value::as_str)
+                .map(String::from)
+                .ok_or_else(|| format!("the operator config names no {ptr}"))
+        };
         let file = |v: &Value, ptr: &str| path(v, ptr).and_then(|p| digest_of(&p));
-        let artifacts = path(&hv, "/artifacts_dir")?;
-        let measured: [(&str, String, &str); 9] = [
+        let artifacts = path(hv, "/artifacts_dir")?;
+        // The profile manifest, read ONCE: its digest is the measurement, and
+        // the digests it NAMES for the guest's init and axon are the ones the
+        // manifest's claims are held to (they live inside the measured rootfs).
+        let (pm_bytes, pm_digest) =
+            read_measured(&path(hv, "/profile_manifest/path")?, MAX_PROFILE_MANIFEST)?;
+        let pm: Value = serde_json::from_slice(&pm_bytes)
+            .map_err(|e| format!("the profile manifest is not JSON: {e}"))?;
+        let named = |name: &str| -> Result<String, String> {
+            pm.pointer(&format!("/artifacts/{name}/sha256"))
+                .and_then(Value::as_str)
+                .map(String::from)
+                .ok_or_else(|| format!("the profile manifest pins no {name}"))
+        };
+        // The running Fabric must be the program the operator pinned.
+        let pinned = text(lv, "/fabric/sha256")?;
+        if caller_sha256 != pinned {
+            return Err(format!(
+                "the running Fabric has sha256 {caller_sha256}, not the operator's pinned \
+                 program {pinned}: an observation names the installed Fabric only"
+            ));
+        }
+        let measured: [(&str, String, &str); 12] = [
             (
                 "host_config_sha256",
-                axon_psv::sha256_hex(&host),
+                axon_psv::sha256_hex(&op.host),
                 &m.host_config_sha256,
             ),
             (
                 "launcher_sha256",
-                file(&hv, "/launcher/path")?,
+                file(hv, "/launcher/path")?,
                 &m.launcher_sha256,
             ),
             (
                 "firecracker_sha256",
-                file(&lv, "/firecracker")?,
+                file(lv, "/firecracker")?,
                 &m.firecracker_sha256,
             ),
             (
@@ -494,23 +604,30 @@ impl Server {
             ),
             (
                 "suite.registry_sha256",
-                file(&hv, "/suite_registry/path")?,
+                file(hv, "/suite_registry/path")?,
                 &m.suite.registry_sha256,
             ),
             (
                 "qualification_sha256",
-                file(&hv, "/qualification/record")?,
+                file(hv, "/qualification/record")?,
                 &m.qualification_sha256,
             ),
             (
                 "profile_manifest_sha256",
-                file(&hv, "/profile_manifest/path")?,
+                pm_digest,
                 &m.profile_manifest_sha256,
             ),
+            ("verifier_sha256", pinned.clone(), &m.verifier_sha256),
             (
-                "verifier_sha256",
-                caller_sha256.to_string(),
-                &m.verifier_sha256,
+                "fabric_revision",
+                text(lv, "/fabric/revision")?,
+                &m.fabric_revision,
+            ),
+            ("guest.axon_sha256", named("axon")?, &m.guest.axon_sha256),
+            (
+                "guest.init_sha256",
+                named("axon-guest-init")?,
+                &m.guest.init_sha256,
             ),
         ];
         for (field, got, claimed) in measured {
@@ -522,6 +639,37 @@ impl Server {
             }
         }
         Ok(())
+    }
+
+    /// Amendment 79: drop the records of nonces the custodian no longer
+    /// honours (each carries the time it expires), so the store a Fabric-driven
+    /// request stream writes to is bounded by what the custodian holds
+    /// outstanding. A record that does not parse (a crash between its creation
+    /// and its write) is dropped a day after its mtime.
+    fn prune(&self) {
+        let now = self.clock.now_unix();
+        let Ok(dir) = std::fs::read_dir(&self.cfg.store) else {
+            return;
+        };
+        for e in dir.flatten() {
+            if !e.file_name().to_string_lossy().ends_with(".observed") {
+                continue;
+            }
+            let expires = std::fs::read(e.path())
+                .ok()
+                .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
+                .and_then(|r| r["expires_unix"].as_i64())
+                .or_else(|| {
+                    e.metadata()
+                        .and_then(|m| m.modified())
+                        .ok()
+                        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                        .map(|d| d.as_secs() as i64 + 86_400)
+                });
+            if expires.is_none_or(|t| t < now) {
+                let _ = std::fs::remove_file(e.path());
+            }
+        }
     }
 
     fn decide(&self, peer: u32, request: &[u8]) -> Result<(String, String), String> {
@@ -550,7 +698,43 @@ impl Server {
                 m.observation_nonce
             ));
         }
-        self.measure(&m, &r.caller_sha256)?;
+        let op = self.operator()?;
+        // Amendment 79: only a nonce the custodian issued for this epoch, and
+        // BEFORE anything is hashed or recorded: the observer never asks the
+        // Fabric (which writes the manifest) whether its nonce is real, and a
+        // request stream of invented nonces costs a custodian round trip, not a
+        // rootfs hash and a record each.
+        let custodian: crate::custodian::CustodianRef = serde_json::from_value(
+            op.lv
+                .get("custodian")
+                .cloned()
+                .ok_or("the helper config names no custodian")?,
+        )
+        .map_err(|e| format!("the helper config's custodian: {e}"))?;
+        // The custodian is authenticated by its UID here (the kernel's
+        // SO_PEERCRED of whoever bound the socket: the custodian's, or root's
+        // activation), not by its program pin: this service runs as its own
+        // uid and cannot open another uid's /proc/<pid>/exe, which is how a
+        // pinned program is measured. The PROGRAM is authenticated where it
+        // matters, by the root helper at the spend (amendment 65). A custodian
+        // impostor of the custodian uid could say yes to a nonce nobody issued,
+        // and then fail every spend: an observation nothing launches on.
+        let custodian = crate::custodian::CustodianRef {
+            sha256: None,
+            ..custodian
+        };
+        let (cmode, expires) = custodian
+            .check(&m.observation_nonce, m.authority.epoch)
+            .map_err(|e| format!("the custodian does not honour this nonce: {e}"))?;
+        if !custodian_admissible(self.mode, cmode) {
+            return Err(format!(
+                "the nonce comes from a {} custodian, which a {} observer does not take",
+                cmode.as_str(),
+                self.mode.as_str()
+            ));
+        }
+        self.measure(&m, &op, &r.caller_sha256)?;
+        self.prune();
         // One observation per nonce: the record is created, never replaced,
         // BEFORE anything is signed.
         match std::fs::OpenOptions::new()
@@ -562,7 +746,11 @@ impl Server {
                     .join(format!("{}.observed", m.observation_nonce)),
             ) {
             Ok(mut f) => {
-                let _ = f.write_all(digest.as_bytes());
+                let _ = f.write_all(
+                    serde_json::json!({"manifest_sha256": digest, "expires_unix": expires})
+                        .to_string()
+                        .as_bytes(),
+                );
             }
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
                 return Err(format!(
@@ -604,9 +792,10 @@ impl Server {
     }
 
     /// Serve one connection: authenticate the caller by `SO_PEERCRED`, read
-    /// one bounded request line, write one reply.
+    /// one bounded request line, write one reply. The request must be COMPLETE
+    /// within [`Server::request_deadline`] of the accept (amendment 79): each
+    /// read waits only for what is left of it, so a slow drip is cut off.
     pub fn serve_one(&self, s: UnixStream) {
-        let _ = s.set_read_timeout(Some(IO_TIMEOUT));
         let _ = s.set_write_timeout(Some(IO_TIMEOUT));
         let reply = match peer_uid(s.as_raw_fd()) {
             Err(e) => self.reply(Err(e)),
@@ -614,12 +803,20 @@ impl Server {
                 let mut line = Vec::new();
                 let mut r = (&s).take(MAX_REQUEST);
                 let mut byte = [0u8; 1];
-                while let Ok(1) = r.read(&mut byte) {
-                    if byte[0] == b'\n' {
+                let started = std::time::Instant::now();
+                loop {
+                    let left = self.request_deadline.saturating_sub(started.elapsed());
+                    if left.is_zero() {
                         break;
                     }
-                    line.push(byte[0]);
+                    let _ = s.set_read_timeout(Some(left));
+                    match r.read(&mut byte) {
+                        Ok(1) if byte[0] == b'\n' => break,
+                        Ok(1) => line.push(byte[0]),
+                        _ => break,
+                    }
                 }
+                // An incomplete line is a malformed request.
                 self.answer(peer, &line)
             }
         };
@@ -694,6 +891,93 @@ mod tests {
             got.is_err(),
             "ATTACK: a protected observer config admitting the Fabric uid as its caller was \
              accepted"
+        );
+    }
+
+    /// A133 (M1864): a protected observer takes a nonce only from a PROTECTED
+    /// custodian (a test or dev custodian is not a program its operator
+    /// installed); a test observer takes a test or protected one; nobody takes
+    /// a dev custodian's.
+    #[test]
+    fn a_protected_observer_takes_only_a_protected_custodians_nonce() {
+        assert!(
+            custodian_admissible(Mode::Protected, Mode::Protected),
+            "control"
+        );
+        assert!(custodian_admissible(Mode::Test, Mode::Test), "control");
+        assert!(custodian_admissible(Mode::Test, Mode::Protected), "control");
+        assert!(
+            !custodian_admissible(Mode::Protected, Mode::Test),
+            "ATTACK: a protected observer observed a nonce a test custodian issued"
+        );
+        for o in [Mode::Protected, Mode::Test] {
+            assert!(
+                !custodian_admissible(o, Mode::Dev),
+                "ATTACK: a {} observer observed a nonce a dev custodian issued",
+                o.as_str()
+            );
+        }
+    }
+
+    /// A134 (M1869): one connection has an ABSOLUTE deadline for its request.
+    /// A peer that sends a byte and then nothing (or a byte per read, forever)
+    /// held the single-threaded service for as long as it liked; each read's
+    /// timeout was all there was. Here the deadline is 500 ms and the peer
+    /// goes silent for 3 s: the connection is answered (refused as malformed)
+    /// within 2 s. Control: a request that arrives in time is read to its end.
+    #[test]
+    fn a_connection_that_does_not_finish_its_request_is_cut_off() {
+        use ring::signature::KeyPair;
+        let pkcs8 =
+            ring::signature::Ed25519KeyPair::generate_pkcs8(&ring::rand::SystemRandom::new())
+                .unwrap();
+        let key = ring::signature::Ed25519KeyPair::from_pkcs8(pkcs8.as_ref()).unwrap();
+        let public_hex = key
+            .public_key()
+            .as_ref()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        let server = Server {
+            cfg: cfg(),
+            mode: Mode::Test,
+            key,
+            key_id: "k".into(),
+            public_hex,
+            sources: Sources {
+                host_config: "/nonexistent/host.json".into(),
+                helper_config: "/nonexistent/helper.json".into(),
+                authority: None,
+            },
+            clock: Clock::System,
+            request_deadline: Duration::from_millis(500),
+        };
+        let run = |send: &'static [u8], then_silent: Duration| -> (Duration, String) {
+            let (a, b) = UnixStream::pair().unwrap();
+            let peer = std::thread::spawn(move || {
+                let mut a = a;
+                let _ = a.write_all(send);
+                std::thread::sleep(then_silent);
+                let _ = a.shutdown(std::net::Shutdown::Write);
+                let mut reply = String::new();
+                let _ = a.read_to_string(&mut reply);
+                reply
+            });
+            let started = std::time::Instant::now();
+            server.serve_one(b);
+            let took = started.elapsed();
+            (took, peer.join().unwrap())
+        };
+        let (took, reply) = run(b"{\"sche", Duration::from_secs(3));
+        assert!(
+            took < Duration::from_secs(2),
+            "ATTACK: a connection that stopped sending held the observer for {took:?} (deadline \
+             500 ms): {reply}"
+        );
+        let (took, reply) = run(b"{}\n", Duration::from_millis(0));
+        assert!(
+            took < Duration::from_secs(2) && reply.contains("axon-observer-reply/1"),
+            "control: a complete request is answered at once: {took:?} {reply}"
         );
     }
 

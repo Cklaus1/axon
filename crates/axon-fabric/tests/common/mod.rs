@@ -792,6 +792,33 @@ pub fn helper_pin() -> axon_fabric::sealed_exec::Pinned {
     }
 }
 
+/// The build revision a test helper config pins for the Fabric program
+/// (amendment 79). Test launch manifests name the same revision.
+pub const TEST_FABRIC_REVISION: &str = "rev";
+
+/// Amendment 79: the Fabric program a test helper config pins is THIS test
+/// process's own executable, because it is the process that runs the helper
+/// (the helper's parent) in every test. The digest is taken once per process.
+pub fn this_process_fabric_pin() -> Value {
+    static SHA: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    let sha = SHA.get_or_init(|| sha256_file(&axon_fabric::readiness::running_image()));
+    json!({"path": std::fs::read_link("/proc/self/exe").unwrap_or_default(),
+           "sha256": sha, "revision": TEST_FABRIC_REVISION})
+}
+
+/// A Fabric program pin (amendment 79) for the executable file at `p`
+/// (symlinks resolved: `/proc/<pid>/exe` names the file, not a link to it).
+pub fn program_pin(p: &Path, revision: &str) -> Value {
+    let real = std::fs::canonicalize(p).unwrap();
+    json!({"path": real, "sha256": sha256_file(&real), "revision": revision})
+}
+
+/// The pin for a test whose Fabric is a shell (`sh`) running as the Fabric
+/// uid, which makes the helper's exec as a CHILD so the shell is its parent.
+pub fn shell_fabric_pin(revision: &str) -> Value {
+    program_pin(Path::new("/bin/sh"), revision)
+}
+
 /// Write the helper's `axon-protected-launcher/1` config at `dir/name` for `launcher` / `manifest` / `out_root`
 /// (made the service's private 0700 dir), with a private staging root; the
 /// Fabric uid is this uid. Returns the config path.
@@ -814,6 +841,7 @@ pub fn write_helper_config(
     let cfg = json!({
         "schema": "axon-protected-launcher/2",
         "fabric_uid": unsafe { libc::getuid() },
+        "fabric": this_process_fabric_pin(),
         "interpreter": {"path": bash.path, "sha256": bash.sha256},
         "launcher": pin(launcher),
         "profile_manifest": pin(manifest),
@@ -925,6 +953,9 @@ pub fn try_start_custodian(
     let mut cfg = json!({
         "schema": "axon-custodian/1",
         "custodian_uid": me, "fabric_uid": me, "launcher_uid": me,
+        // Amendment 79: the observer service (a test's observer runs as this
+        // uid) may ask whether a nonce was issued.
+        "observer_uid": me,
         "socket": socket, "store": store, "max_age_s": 300,
     });
     if !store.exists() {
@@ -967,6 +998,7 @@ pub fn try_start_custodian(
             for (k, f) in [
                 ("fabric_uid", "--fabric-uid"),
                 ("launcher_uid", "--launcher-uid"),
+                ("observer_uid", "--observer-uid"),
             ] {
                 c.arg(f).arg(cfg[k].to_string());
             }

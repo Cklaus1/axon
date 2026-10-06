@@ -104,6 +104,7 @@ fn main() {
                 max_age_s: opt("--max-age-s")
                     .map(|s| s.parse().unwrap_or_else(|_| die("--max-age-s is a number")))
                     .unwrap_or(300),
+                observer_uid: opt("--observer-uid").map(|v| uid(Some(v))),
             };
             c.check(false).unwrap_or_else(|e| die(&e));
             use std::os::unix::fs::DirBuilderExt;

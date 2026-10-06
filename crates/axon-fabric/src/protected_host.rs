@@ -649,20 +649,33 @@ pub fn pinned_paths(config: &Path) -> Result<Vec<(PinnedKind, PathBuf)>, String>
     Ok(out)
 }
 
+/// What the helper's operator config pins, for the trust preflight: the Fabric
+/// uid it admits, the Fabric program it serves (amendment 79) and the paths it
+/// names.
+pub type HelperPins = (
+    u32,
+    crate::privileged_launcher::FabricPin,
+    Vec<(PinnedKind, PathBuf)>,
+);
+
 /// Every path the privileged helper's OWN config pins (it is read by the
 /// helper, not by `load`), for the trust preflight: the config itself, the
 /// interpreter, launcher, profile manifest, firecracker and jailer, the
 /// artifacts dir and the root-private staging root. Also the Fabric uid the
 /// helper admits, which the preflight holds to its `--fabric` actor.
-pub fn helper_pinned_paths(config: &Path) -> Result<(u32, Vec<(PinnedKind, PathBuf)>), String> {
+pub fn helper_pinned_paths(config: &Path) -> Result<HelperPins, String> {
     let bytes = std::fs::read(config).map_err(|e| format!("{}: {e}", config.display()))?;
     let c: crate::privileged_launcher::HelperConfig =
         serde_json::from_slice(&bytes).map_err(|e| format!("{}: {e}", config.display()))?;
     use PinnedKind::*;
     Ok((
         c.fabric_uid,
+        // Amendment 79: the Fabric program the helper pins (the preflight holds
+        // it to the installed one).
+        c.fabric.clone(),
         vec![
             (OperatorFile, config.to_path_buf()),
+            (OperatorFile, c.fabric.path),
             (OperatorFile, c.interpreter.path),
             (OperatorFile, c.launcher.path),
             (OperatorFile, c.profile_manifest.path),

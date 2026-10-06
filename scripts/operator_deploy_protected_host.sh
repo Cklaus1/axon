@@ -25,8 +25,12 @@
 #              computed from the INSTALLED bytes — including the helper config's
 #              custodian.sha256, the axon-custodian PROGRAM pin (amendment 65),
 #              and its observer.service {socket, uid, sha256}, the axon-observer
-#              PROGRAM pin (amendment 68). The host config's observer section
-#              names NO command: a production Fabric refuses one
+#              PROGRAM pin (amendment 68), and its fabric {path, sha256,
+#              revision}, the installed axon-fabric PROGRAM pin (amendment 79:
+#              the helper serves, and the observer names, only that program;
+#              the revision is READ FROM THE INSTALLED FILE by running its own
+#              `verifier-manifest`, never typed). The host config's observer
+#              section names NO command: a production Fabric refuses one
 #   verifier   /etc/axon/trust/verifier.json from the installed verifier's own
 #              `verifier-manifest`
 #   systemd    axon-custodian.socket + .service and axon-observer.socket +
@@ -681,8 +685,14 @@ def num(v):
 def pin(p, s): return {"path": p, "sha256": s}
 custodian = {"schema": "axon-custodian/1", "custodian_uid": num(e["K_CU"]), "fabric_uid": num(e["K_FU"]),
              "launcher_uid": 0, "socket": e["K_SOCKET"], "store": e["K_STORE"],
-             "max_age_s": int(e["K_NONCE_AGE"])}
+             "max_age_s": int(e["K_NONCE_AGE"]),
+             # Amendment 79: the observer service's uid, the only one the custodian
+             # answers `check` (is this nonce outstanding?) for.
+             "observer_uid": num(e["K_OU"])}
 launcher = {"schema": "axon-protected-launcher/2", "fabric_uid": num(e["K_FU"]),
+            # Amendment 79: the installed axon-fabric, by path, sha256 and the
+            # build revision its own verifier-manifest states.
+            "fabric": {"path": e["K_FABRIC"], "sha256": e["K_FABRIC_SHA"], "revision": e["K_FABRIC_REV"]},
             "interpreter": pin(e["K_BASH"], e["K_BASH_SHA"]),
             "launcher": pin(e["K_LAUNCHER"], e["K_LAUNCHER_SHA"]),
             "profile_manifest": pin(e["K_MANIFEST"], e["K_MANIFEST_SHA"]),
@@ -752,6 +762,17 @@ if selected configs; then
     # bytes, the file the observer unit's ExecStart names.
     K_OBS_SHA=$(pin_of "$LIBEXEC/axon-observer" "$OBS_SRC")
     K_OU=$OU K_OBS_SOCKET=$OBS_SOCKET K_OBS_STORE=$OBS_STORE K_OBS_KEY=$OBS_KEY
+    # The Fabric PROGRAM pin (amendment 79): the installed axon-fabric's bytes
+    # and the build revision IT states (its own `verifier-manifest`, whose
+    # self-reported sha256 must be its bytes'): never a value the operator types.
+    K_FABRIC=$LIBEXEC/axon-fabric; K_FABRIC_SHA=$(pin_of "$K_FABRIC" "$FABRIC_SRC")
+    fab_vm=$K_FABRIC; { [ $APPLY = 1 ] && [ -x "$K_FABRIC" ]; } || fab_vm=$FABRIC_SRC
+    K_FABRIC_REV=$("$fab_vm" verifier-manifest 2>/dev/null | python3 -I -c '
+import json, sys
+m = json.load(sys.stdin)
+if m.get("sha256") != sys.argv[1]:
+    sys.exit("verifier-manifest names another sha256 than the bytes pinned")
+print(m["fabric_revision"])' "$K_FABRIC_SHA") || { echo "FAIL[$STEP] reading the build revision of $fab_vm (its verifier-manifest must state this binary's own sha256)"; FAILED=1; K_FABRIC_REV="<40-hex fabric_revision of $fab_vm>"; }
     K_B263=$QUAL_DIR/b263.json; K_WAIVERS=""
     [ -z "$WAIVERS_SRC" ] || K_WAIVERS=$QUAL_DIR/b263-waivers.json
     K_QUAL_AGE=$QUAL_MAX_AGE K_SUITES=$suite_dst; K_SUITES_SHA=$(ph "$SUITE_REG" "$suite_dst")
@@ -759,7 +780,7 @@ if selected configs; then
     K_AUTH=$AUTH_STORE
     export K_CU K_FU K_SOCKET K_STORE K_NONCE_AGE K_BASH K_BASH_SHA K_LAUNCHER K_LAUNCHER_SHA K_MANIFEST \
       K_MANIFEST_SHA K_GUEST K_FC K_JL K_OUT K_STAGING K_MAX_TIMEOUT K_MAX_INPUT K_OBS_ROOT K_OBS_AGE \
-      K_SIGNER_PUB K_HELPER K_HELPER_SHA K_CUST_SHA K_OBS_SHA K_OU K_OBS_SOCKET K_OBS_STORE K_OBS_KEY K_B263 \
+      K_SIGNER_PUB K_HELPER K_HELPER_SHA K_CUST_SHA K_OBS_SHA K_FABRIC K_FABRIC_SHA K_FABRIC_REV K_OU K_OBS_SOCKET K_OBS_STORE K_OBS_KEY K_B263 \
       K_WAIVERS K_QUAL_AGE K_SUITES K_SUITES_SHA K_ISSUER K_KEY K_GRANTS K_GRANTS_SHA K_AUTH
     gen_configs || { echo "FAIL[$STEP] generating the configs"; FAILED=1; }
     act_install "$WORK/custodian.json" "$CUSTODIAN_CONFIG" root root 0644 show
@@ -798,6 +819,13 @@ if selected systemd; then
     -e "s|^ExecStart=.*|ExecStart=$LIBEXEC/axon-custodian|" -e "s|^StateDirectory=.*|StateDirectory=${STORE#/var/lib/}|" \
     "$CLONE/profiles/protected-host/systemd/axon-custodian.service" >"$WORK/axon-custodian.service"
   grep -qx 'SocketMode=0660' "$WORK/axon-custodian.socket" || blocked "the socket unit template no longer says SocketMode=0660 (the Fabric group must connect, nobody else)"
+  # Amendment 79: the observer service asks the custodian whether a nonce is
+  # outstanding, as its own uid: one named ACL entry on the socket, granted when
+  # systemd creates it (the file mode and group stay the Fabric's).
+  command -v setfacl >/dev/null 2>&1 || blocked "setfacl (the acl package) is required: the observer's uid is granted the custodian socket by ACL"
+  sed -i -e "s|^ExecStartPost=.*|ExecStartPost=/usr/bin/setfacl -m u:$OBSERVER_USER:rw $SOCKET|" "$WORK/axon-custodian.socket"
+  grep -qx "ExecStartPost=/usr/bin/setfacl -m u:$OBSERVER_USER:rw $SOCKET" "$WORK/axon-custodian.socket" \
+    || blocked "the custodian socket unit template has no ExecStartPost= line for the observer's ACL (amendment 79)"
   act_install "$WORK/axon-custodian.socket" "$UNIT_DIR/axon-custodian.socket" root root 0644 show
   act_install "$WORK/axon-custodian.service" "$UNIT_DIR/axon-custodian.service" root root 0644 show
   # Amendment 68: the observer service. Its socket is root's alone (0600):
@@ -1131,6 +1159,59 @@ PY
       while IFS= read -r l; do echo "FAIL[$STEP] custodian program pin: $l"; done <<<"$cp_why"; FAILED=1
     else
       echo "OK[$STEP] custodian.sha256 in $cfg is the sha256 of $cust_now, the program the custodian unit starts"
+    fi
+  fi
+  # Amendment 79: the helper serves, and the observer names as the verifier,
+  # only the Fabric PROGRAM pinned in its config. The pin must be the installed
+  # axon-fabric's bytes, its path, and the build revision the INSTALLED file
+  # states when it describes itself; the custodian answers the observer's
+  # `check` for the observer's uid. A mismatch FAILS: the helper would refuse
+  # every launch, or (revision) the observer every observation.
+  echo "== fabric program pin (amendment 79)"
+  fab_now=$LIBEXEC/axon-fabric
+  [ $APPLY = 1 ] || [ -z "$FABRIC_SRC" ] || fab_now=$FABRIC_SRC
+  ccfg=$CUSTODIAN_CONFIG
+  if [ $APPLY = 0 ] && selected configs && [ -f "$WORK/custodian.json" ]; then ccfg=$WORK/custodian.json; fi
+  if [ ! -f "$cfg" ]; then
+    pending "no helper config to judge the Fabric pin against yet ($HELPER_CONFIG; configs step)"
+  elif [ ! -f "$fab_now" ]; then
+    pending "no axon-fabric at $fab_now to judge the pin against (binaries step)"
+  else
+    fp_why=$(python3 -I - "$cfg" "$fab_now" "$LIBEXEC/axon-fabric" "$ccfg" "$(uid_of "$OBSERVER_USER")" <<'PY'
+import hashlib, json, os, subprocess, sys
+cfg, prog, want_path, ccfg, obs_uid = sys.argv[1:6]
+f = json.load(open(cfg)).get("fabric")
+out = []
+have = hashlib.sha256(open(prog, "rb").read()).hexdigest()
+if not isinstance(f, dict):
+    out.append(f"{cfg}: fabric is absent: the helper would serve any program of the Fabric uid")
+else:
+    pin = f.get("sha256")
+    if not isinstance(pin, str) or len(pin) != 64 or any(x not in "0123456789abcdef" for x in pin):
+        out.append(f"{cfg}: fabric.sha256 is {pin!r}, not a lowercase sha256 (the helper refuses a production config without it)")
+    elif pin != have:
+        out.append(f"{cfg}: fabric.sha256 {pin} is not the sha256 of {prog} ({have}): every launch and observation would be refused")
+    if f.get("path") != want_path:
+        out.append(f"{cfg}: fabric.path is {f.get('path')!r}, not the installed {want_path}")
+    try:
+        vm = json.loads(subprocess.run([prog, "verifier-manifest"], capture_output=True, check=True, timeout=60).stdout)
+        if vm.get("sha256") != have:
+            out.append(f"{prog} describes itself as sha256 {vm.get('sha256')}, not its bytes' {have}")
+        elif f.get("revision") != vm.get("fabric_revision"):
+            out.append(f"{cfg}: fabric.revision {f.get('revision')!r} is not the {vm.get('fabric_revision')!r} {prog} states: the observer would sign no manifest of this Fabric")
+    except Exception as e:
+        out.append(f"cannot read the build revision {prog} states: {e}")
+if os.path.isfile(ccfg):
+    c = json.load(open(ccfg))
+    if str(c.get("observer_uid")) != obs_uid:
+        out.append(f"{ccfg}: observer_uid is {c.get('observer_uid')!r}, not the observer user's uid {obs_uid}: the custodian would answer the observer's check for no one")
+print("\n".join(out))
+PY
+)
+    if [ -n "$fp_why" ]; then
+      while IFS= read -r l; do echo "FAIL[$STEP] fabric program pin: $l"; done <<<"$fp_why"; FAILED=1
+    else
+      echo "OK[$STEP] fabric.{path,sha256,revision} in $cfg are the installed axon-fabric's, and the custodian answers check for uid $(uid_of "$OBSERVER_USER") ($fab_now)"
     fi
   fi
   # Amendment 68: the observer SERVICE. The helper relays an observation only

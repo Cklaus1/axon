@@ -128,6 +128,26 @@ fn the_operator_examples_load_through_the_production_loaders() {
         .expect("the helper example pins the observer service (observer.service)");
     assert_eq!(svc.socket, obs.socket);
     assert_eq!(svc.uid, obs.observer_uid);
+    // Amendment 79: the custodian example answers `check` for the observer's
+    // uid, and the helper example pins the Fabric program it serves.
+    assert_eq!(cust.observer_uid, Some(obs.observer_uid));
+    assert!(
+        helper.fabric.path.is_absolute() && helper.fabric.revision.len() == 40,
+        "the helper example pins the Fabric program: {:?}",
+        helper.fabric
+    );
+    let mut nofab: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    nofab.as_object_mut().unwrap().remove("fabric");
+    let d5 = tempfile::tempdir().unwrap();
+    let (p5, a5) = operator_copy(
+        d5.path(),
+        "protected-launcher.json",
+        &serde_json::to_vec_pretty(&nofab).unwrap(),
+    );
+    assert!(
+        privileged_launcher::load_config(&p5, &a5).is_err(),
+        "ATTACK: a helper config with no Fabric program pin was accepted under production rules"
+    );
     assert_eq!(obs.fabric_uid, helper.fabric_uid);
     assert_ne!(obs.observer_uid, cust.custodian_uid);
     // ATTACK (A94): the example with the observer running as the Fabric uid

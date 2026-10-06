@@ -67,12 +67,13 @@ fixture() {
 p = sys.argv[1]; s = socket.socket(socket.AF_UNIX); s.bind(p); os.chmod(p, 0o600); s.listen(8); time.sleep(600)' "$O1D/run/observer.sock" &
   SOCKPID=$!
   for _ in $(seq 50); do [ -S "$O1D/run/observer.sock" ] && break; sleep 0.1; done
-  python3 - "$O1D" "${HELPER_FABRIC:-$F}" "${CUSTODIAN_AS:-$C}" "$F" "${OBSERVER_AS:-$O}" <<'PY'
+  python3 - "$O1D" "${HELPER_FABRIC:-$F}" "${CUSTODIAN_AS:-$C}" "$F" "${OBSERVER_AS:-$O}" "$FABRIC_BIN" "${FABRIC_PIN_SHA:-$(sha256sum "$FABRIC_BIN" | cut -d' ' -f1)}" "${CUSTODIAN_OBSERVER_AS:-${OBSERVER_AS:-$O}}" <<'PY'
 import json, sys
 d = sys.argv[1]
 json.dump({"schema": "axon-custodian/1", "custodian_uid": int(sys.argv[3]),
            "fabric_uid": int(sys.argv[4]), "launcher_uid": 0,
-           "socket": f"{d}/run/custodian.sock", "store": f"{d}/cust/nonces", "max_age_s": 300},
+           "socket": f"{d}/run/custodian.sock", "store": f"{d}/cust/nonces", "max_age_s": 300,
+           "observer_uid": int(sys.argv[8])},
           open(f"{d}/custodian.json", "w"))
 json.dump({"schema": "axon-fabric-grant-registry/1",
            "grants": [{"grant_ref": "grant:g", "principal_ref": "principal:p", "path": "g.axgrant",
@@ -91,6 +92,7 @@ json.dump({"schema": "axon-protected-host/1",
           open(f"{d}/protected-host.json", "w"))
 z = "0" * 64
 json.dump({"schema": "axon-protected-launcher/2", "fabric_uid": int(sys.argv[2]),
+           "fabric": {"path": sys.argv[6], "sha256": sys.argv[7], "revision": "0" * 40},
            "interpreter": {"path": "/bin/bash", "sha256": z},
            "launcher": {"path": f"{d}/launcher.sh", "sha256": z},
            "profile_manifest": {"path": f"{d}/manifest.json", "sha256": z},
@@ -189,6 +191,12 @@ fixture; chgrp $F "$BASE/o1/cust/nonces"; chmod 0770 "$BASE/o1/cust/nonces"; run
 failed_on "custodian store the Fabric group can write" "c['action']=='create' and c['actor']=='fabric' and c['target'].endswith('/cust/nonces')"
 CUSTODIAN_AS=$F fixture; run "$GUEST_OK"
 failed_on "custodian running as the Fabric uid" "c['action']=='custodian-separate'"
+# Amendment 79: the helper's Fabric pin is the installed verifier; the custodian
+# answers the observer's `check` for the observer's uid.
+FABRIC_PIN_SHA=$(printf '9%.0s' $(seq 64)) fixture; run "$GUEST_OK"
+failed_on "helper pinning a Fabric program that is not the installed one (A132)" "c['action']=='helper-fabric-pin-sha256'"
+CUSTODIAN_OBSERVER_AS=$F fixture; run "$GUEST_OK"
+failed_on "custodian answering check for a uid that is not the observer's (A133)" "c['action']=='custodian-observer-uid'"
 fixture; chown $A1 "$BASE/o1/run"; run "$GUEST_OK"
 failed_on "agent-owned custodian socket directory" "c['action']=='create' and c['actor']=='agent:$A1' and c['target'].endswith('/o1/run')"
 fixture; chmod 0666 "$BASE/o1/custodian.json"; run "$GUEST_OK"

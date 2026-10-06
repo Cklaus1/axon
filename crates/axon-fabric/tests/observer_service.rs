@@ -80,9 +80,23 @@ struct Obs {
     observer: Option<Running>,
     /// Facts the honest manifest names (what an honest observer measures).
     facts: Value,
+    /// Amendment 79: the custodian whose nonces the observer accepts (the
+    /// observer asks it over the helper config's custodian section).
+    cust: TestCustodian,
 }
 
 fn obs() -> Obs {
+    obs_with(euid(), CustodianRun::Test)
+}
+
+/// [`obs`], the custodian answering `check` for `observer_uid` (the uid the
+/// observer service runs as).
+fn obs_as(observer_uid: u32) -> Obs {
+    obs_with(observer_uid, CustodianRun::Test)
+}
+
+/// [`obs`], with a custodian of mode `run` answering `check` for `observer_uid`.
+fn obs_with(observer_uid: u32, run: CustodianRun) -> Obs {
     let d = tempfile::tempdir_in("/var/tmp").unwrap();
     let base = d.path().to_path_buf();
     set_mode(&base, 0o755);
@@ -141,6 +155,8 @@ fn obs() -> Obs {
     )
     .unwrap();
     set_mode(&obs_cfg, 0o644);
+    let cust = try_start_custodian(&base, run, |c| c["observer_uid"] = json!(observer_uid))
+        .expect("setup: the custodian starts");
     let facts = json!({
         "host_config_sha256": sha256_file(&host_cfg),
         "launcher_sha256": sha256_file(&launcher),
@@ -151,6 +167,11 @@ fn obs() -> Obs {
         "qualification_sha256": sha256_file(&record),
         "profile_manifest_sha256": sha256_file(&manifest),
         "verifier_sha256": this_exe_sha256(),
+        // Amendment 79: the pinned program's build revision, and the digests
+        // the measured profile manifest names for the guest's axon and init.
+        "fabric_revision": TEST_FABRIC_REVISION,
+        "guest.axon_sha256": "cd".repeat(32),
+        "guest.init_sha256": "3".repeat(64),
     });
     let o = Obs {
         _d: d,
@@ -162,6 +183,7 @@ fn obs() -> Obs {
         key,
         observer: None,
         facts,
+        cust,
     };
     o.edit_helper(|v| {
         v["observer"]["service"] =
@@ -346,8 +368,12 @@ fn ok(r: &Value) -> bool {
     r["ok"] == true
 }
 
-fn nonce(n: u8) -> String {
-    format!("{n:02x}").repeat(16)
+impl Obs {
+    /// A nonce the fixture's custodian issues now, for epoch 0 (the epoch the
+    /// fixture's manifests name).
+    fn nonce(&self) -> String {
+        self.cust.issue(0)
+    }
 }
 
 /// Amendment 68, the CONTROL every observer test stands on, and A94's replay
@@ -359,7 +385,7 @@ fn nonce(n: u8) -> String {
 fn the_observer_service_observes_through_the_helper_once_per_nonce() {
     let mut o = obs();
     o.start();
-    let m = o.manifest(&nonce(1), |_| {});
+    let m = o.manifest(&o.nonce(), |_| {});
     let v = o
         .fabric_observe(&m, "w1")
         .expect("control: the relayed observation verifies at Fabric");
@@ -392,13 +418,11 @@ fn the_observer_service_observes_through_the_helper_once_per_nonce() {
 fn the_observer_signs_nothing_it_did_not_measure() {
     let mut o = obs();
     o.start();
-    let (code, rep) = o.relay(&o.manifest(&nonce(2), |_| {}));
+    let (code, rep) = o.relay(&o.manifest(&o.nonce(), |_| {}));
     assert!(code == Some(0) && ok(&rep), "control: {code:?} {rep}");
     let fields: Vec<String> = o.facts.as_object().unwrap().keys().cloned().collect();
-    for (i, field) in fields.iter().enumerate() {
-        let m = o.manifest(&nonce(16 + i as u8), |m| {
-            set_field(m, field, json!("9".repeat(64)))
-        });
+    for field in fields.iter() {
+        let m = o.manifest(&o.nonce(), |m| set_field(m, field, json!("9".repeat(64))));
         let (code, rep) = o.relay(&m);
         assert!(
             code == Some(30) && !ok(&rep),
@@ -423,7 +447,7 @@ fn an_observer_observes_only_for_its_caller_uid() {
     let mut o = obs();
     o.edit_observer(|v| v["caller_uid"] = json!(euid().wrapping_add(7)));
     o.start();
-    let (code, rep) = o.relay(&o.manifest(&nonce(3), |_| {}));
+    let (code, rep) = o.relay(&o.manifest(&o.nonce(), |_| {}));
     assert!(
         code == Some(30) && !ok(&rep),
         "ATTACK: the observer observed for a uid that is not its caller: {code:?} {rep}"
@@ -439,7 +463,7 @@ fn an_observer_observes_only_for_its_caller_uid() {
     let _ = std::fs::remove_file(&o.socket);
     o.edit_observer(|v| v["caller_uid"] = json!(euid()));
     o.start();
-    let (code, rep) = o.relay(&o.manifest(&nonce(3), |_| {}));
+    let (code, rep) = o.relay(&o.manifest(&o.nonce(), |_| {}));
     assert_eq!(code, Some(0), "control: {rep}");
 }
 
@@ -449,7 +473,7 @@ fn an_observer_observes_only_for_its_caller_uid() {
 fn an_observer_request_of_another_schema_is_refused() {
     let mut o = obs();
     o.start();
-    let m = o.manifest(&nonce(4), |_| {});
+    let m = o.manifest(&o.nonce(), |_| {});
     let mut body = json!({
         "schema": "axon-observer-request/0",
         "manifest": String::from_utf8(m.clone()).unwrap(),
@@ -472,14 +496,16 @@ fn an_observer_request_of_another_schema_is_refused() {
 fn an_observer_never_observes_a_manifest_that_is_not_a_protected_launch() {
     let mut o = obs();
     o.start();
-    let m = o.manifest(&nonce(5), |m| m["backend_profile"] = json!("linux-microvm"));
+    let m = o.manifest(&o.nonce(), |m| {
+        m["backend_profile"] = json!("linux-microvm")
+    });
     let r = o.ask_manifest(&m);
     assert!(
         !ok(&r),
         "ATTACK: the observer signed a manifest for another profile than the protected one: {r}"
     );
     assert!(
-        ok(&o.ask_manifest(&o.manifest(&nonce(5), |_| {}))),
+        ok(&o.ask_manifest(&o.manifest(&o.nonce(), |_| {}))),
         "control"
     );
 }
@@ -501,7 +527,7 @@ fn an_observer_never_records_a_nonce_that_names_a_path() {
         escaped.exists()
     );
     assert!(
-        ok(&o.ask_manifest(&o.manifest(&nonce(6), |_| {}))),
+        ok(&o.ask_manifest(&o.manifest(&o.nonce(), |_| {}))),
         "control"
     );
 }
@@ -666,7 +692,7 @@ fn an_observer_program_the_operator_never_pinned_is_never_relayed() {
         std::thread::sleep(std::time::Duration::from_millis(25));
     }
     assert!(ready.exists(), "setup: the impostor never listened");
-    let (code, rep) = o.relay(&o.manifest(&nonce(7), |_| {}));
+    let (code, rep) = o.relay(&o.manifest(&o.nonce(), |_| {}));
     assert!(
         code == Some(30) && !ok(&rep),
         "ATTACK: the helper relayed an observation from an observer program the operator \
@@ -689,7 +715,7 @@ fn a_dev_observer_is_never_relayed() {
     let mut o = obs();
     o.try_start(&["--dev"], None)
         .expect("setup: a dev observer");
-    let (code, rep) = o.relay(&o.manifest(&nonce(8), |_| {}));
+    let (code, rep) = o.relay(&o.manifest(&o.nonce(), |_| {}));
     assert!(
         code == Some(30) && !ok(&rep),
         "ATTACK: the helper relayed a dev observer's observation: {code:?} {rep}"
@@ -701,7 +727,7 @@ fn a_dev_observer_is_never_relayed() {
     drop(o.observer.take());
     let _ = std::fs::remove_file(&o.socket);
     o.start();
-    let (code, rep) = o.relay(&o.manifest(&nonce(9), |_| {}));
+    let (code, rep) = o.relay(&o.manifest(&o.nonce(), |_| {}));
     assert_eq!(code, Some(0), "control: the test observer: {rep}");
 }
 
@@ -711,7 +737,7 @@ fn a_dev_observer_is_never_relayed() {
 fn an_observe_request_of_another_schema_relays_nothing() {
     let mut o = obs();
     o.start();
-    let m = String::from_utf8(o.manifest(&nonce(10), |_| {})).unwrap();
+    let m = String::from_utf8(o.manifest(&o.nonce(), |_| {})).unwrap();
     let (code, rep) =
         o.relay_request(&json!({"schema": "axon-protected-observe-request/0", "manifest": m}));
     assert!(
@@ -731,7 +757,7 @@ fn an_observe_relay_for_a_caller_that_is_not_the_fabric_relays_nothing() {
     let mut o = obs();
     o.start();
     o.edit_helper(|v| v["fabric_uid"] = json!(euid().wrapping_add(7)));
-    let (code, rep) = o.relay(&o.manifest(&nonce(11), |_| {}));
+    let (code, rep) = o.relay(&o.manifest(&o.nonce(), |_| {}));
     assert!(
         code == Some(30) && !ok(&rep),
         "ATTACK: the helper relayed an observation for a caller that is not the Fabric uid: \
@@ -745,7 +771,7 @@ fn an_observe_relay_for_a_caller_that_is_not_the_fabric_relays_nothing() {
         "{rep}"
     );
     o.edit_helper(|v| v["fabric_uid"] = json!(unsafe { libc::getuid() }));
-    let (code, rep) = o.relay(&o.manifest(&nonce(11), |_| {}));
+    let (code, rep) = o.relay(&o.manifest(&o.nonce(), |_| {}));
     assert_eq!(code, Some(0), "control: {rep}");
 }
 
@@ -759,7 +785,9 @@ fn an_observer_socket_another_uid_serves_is_never_relayed() {
     if skip_unless_root() {
         return;
     }
-    let mut o = obs();
+    // The observer runs as OTHER here, so it is OTHER the custodian answers.
+    let mut o = obs_as(OTHER);
+    set_mode(&o.cust.socket, 0o666);
     for p in [&o.obs_dir, &o.obs_dir.join("records"), &o.key.pk8] {
         chown(p, OTHER);
     }
@@ -770,7 +798,7 @@ fn an_observer_socket_another_uid_serves_is_never_relayed() {
     o.try_start(&[], Some(OTHER))
         .expect("setup: the observer runs as its own uid");
     o.edit_helper(|v| v["observer"]["service"]["uid"] = json!(NOT_OTHER));
-    let (code, rep) = o.relay(&o.manifest(&nonce(12), |_| {}));
+    let (code, rep) = o.relay(&o.manifest(&o.nonce(), |_| {}));
     assert!(
         code == Some(30) && !ok(&rep),
         "ATTACK: the helper relayed an observation from a socket a uid other than the observer's \
@@ -784,7 +812,7 @@ fn an_observer_socket_another_uid_serves_is_never_relayed() {
         "{rep}"
     );
     o.edit_helper(|v| v["observer"]["service"]["uid"] = json!(OTHER));
-    let (code, rep) = o.relay(&o.manifest(&nonce(13), |_| {}));
+    let (code, rep) = o.relay(&o.manifest(&o.nonce(), |_| {}));
     assert_eq!(code, Some(0), "control: the observer uid's socket: {rep}");
 }
 
@@ -802,6 +830,8 @@ fn an_observe_relay_whose_parent_is_not_the_fabric_relays_nothing() {
     let mut o = obs();
     o.edit_helper(|v| v["fabric_uid"] = json!(FABRIC));
     o.edit_observer(|v| v["caller_uid"] = json!(0));
+    // The custodian the observer asks is reached through this socket, and the
+    // observer runs as this (root) uid: nothing else changes here.
     o.start();
     let h = o.base.join("axon-protected-launcher");
     copy_executable(helper_pin().path, &h, 0o755);
@@ -824,7 +854,7 @@ fn an_observe_relay_whose_parent_is_not_the_fabric_relays_nothing() {
         std::fs::write(
             &p,
             json!({"schema": "axon-protected-observe-request/1",
-                   "manifest": String::from_utf8(o.manifest(&nonce(n), |m| {
+                   "manifest": String::from_utf8(o.manifest(&o.nonce(), |m| {
                        m["verifier_sha256"] = json!(verifier)
                    })).unwrap()})
             .to_string(),
@@ -863,6 +893,9 @@ fn an_observe_relay_whose_parent_is_not_the_fabric_relays_nothing() {
             .contains("not the Fabric uid"),
         "{rep}"
     );
+    // Amendment 79: the control Fabric is the python3 that runs the helper,
+    // which the operator pins (the attack above is refused before any pin).
+    o.edit_helper(|v| v["fabric"] = program_pin(&python, TEST_FABRIC_REVISION));
     let rep = run(
         "exec python3 -c 'import subprocess,sys; \
          p=subprocess.run([sys.argv[1],\"--observe\",\"--test-config\",sys.argv[2]], \
@@ -873,5 +906,228 @@ fn an_observe_relay_whose_parent_is_not_the_fabric_relays_nothing() {
     assert!(
         ok(&rep),
         "control: the Fabric-uid parent is measured: {rep}"
+    );
+}
+
+// ── Amendment 79 (C9 round 5, PSV-6): what the observer countersigns ─────────
+
+/// A131 (M1853-M1855 by the field loop above; the reviewer's reproduction):
+/// a manifest naming a Fabric revision, a guest init digest and a guest axon
+/// digest that are not the operator's was relayed and SIGNED, because the
+/// observer copied those three from the manifest. They are now the pinned
+/// program's revision and the digests the measured profile manifest names.
+/// Control: the honest manifest. The same manifest's `policy_sha256` and
+/// authority epoch are still the principal's word, and this test pins that
+/// (the stated non-claim of amendment 79: policy is bound at the root helper
+/// to the bytes it boots, the epoch to the loop's scope pointer at intake).
+#[test]
+fn the_observer_signs_the_operators_values_for_fabric_revision_and_guest_digests() {
+    let mut o = obs();
+    o.start();
+    let h = "9".repeat(64);
+    let m = o.manifest(&o.nonce(), |m| {
+        set_field(m, "guest.init_sha256", json!(h.clone()));
+        set_field(m, "guest.axon_sha256", json!(h.clone()));
+        set_field(m, "fabric_revision", json!("not-the-running-revision"));
+    });
+    let (code, rep) = o.relay(&m);
+    assert!(
+        code == Some(30) && !ok(&rep),
+        "ATTACK: the observer signed a launch manifest naming a Fabric revision and guest \
+         digests that are not the operator's: {code:?} {rep}"
+    );
+    let (code, rep) = o.relay(&o.manifest(&o.nonce(), |_| {}));
+    assert!(code == Some(0) && ok(&rep), "control: {code:?} {rep}");
+    // The stated non-claim: the policy digest and the epoch are told.
+    let told = "8".repeat(64);
+    let epoch = 987_654_321u64;
+    let n = o.cust.issue(epoch);
+    let m = o.manifest(&n, |m| {
+        set_field(m, "policy_sha256", json!(told.clone()));
+        set_field(m, "authority.epoch", json!(epoch));
+    });
+    let (code, rep) = o.relay(&m);
+    assert!(
+        code == Some(0) && ok(&rep),
+        "the policy digest and the epoch are the principal's word (amendment 79): {code:?} {rep}"
+    );
+    let obs: Value = serde_json::from_str(rep["observation"].as_str().unwrap()).unwrap();
+    assert_eq!(obs["policy_sha256"], json!(told), "signed as told: {obs}");
+    assert_eq!(obs["epoch"], json!(epoch), "signed as told: {obs}");
+}
+
+/// A131 (M1853): the observer names only the Fabric program the operator
+/// pinned. Asked directly (as the caller uid) with a `caller_sha256` that is
+/// not the pin while the manifest claims the pinned program, it signs nothing:
+/// the observer does not rest on the manifest's word that its caller is the
+/// pinned Fabric. Control: the pinned program's digest.
+#[test]
+fn an_observer_names_only_the_fabric_program_the_operator_pinned() {
+    let mut o = obs();
+    o.start();
+    let other = "9".repeat(64);
+    let m = o.manifest(&o.nonce(), |_| {});
+    let r = o.ask(&json!({
+        "schema": "axon-observer-request/1",
+        "manifest": String::from_utf8(m).unwrap(),
+        "caller_sha256": other,
+    }));
+    assert!(
+        !ok(&r),
+        "ATTACK: the observer signed an observation naming a Fabric program the operator never \
+         pinned as the verifier: {r}"
+    );
+    assert!(
+        r["error"].as_str().unwrap_or("").contains("pinned program"),
+        "{r}"
+    );
+    assert!(
+        ok(&o.ask_manifest(&o.manifest(&o.nonce(), |_| {}))),
+        "control"
+    );
+}
+
+/// A132 (the same gate as M1851, on the observe route): the helper relays an
+/// observation only for the Fabric program the operator pinned. The only
+/// process that can ask here is this test process; its pin is changed to
+/// another digest. Control: the pin put back.
+#[test]
+fn an_observe_relay_for_a_program_the_operator_never_pinned_relays_nothing() {
+    let mut o = obs();
+    o.start();
+    let real = o.helper_fabric_sha();
+    o.edit_helper(|v| v["fabric"]["sha256"] = json!("9".repeat(64)));
+    let (code, rep) = o.relay(&o.manifest(&o.nonce(), |_| {}));
+    assert!(
+        code == Some(30) && !ok(&rep),
+        "ATTACK: the helper relayed an observation for a caller that is not the pinned Fabric \
+         program: {code:?} {rep}"
+    );
+    assert!(
+        rep["error"]
+            .as_str()
+            .unwrap_or("")
+            .contains("pinned Fabric"),
+        "{rep}"
+    );
+    o.edit_helper(|v| v["fabric"]["sha256"] = json!(real));
+    let (code, rep) = o.relay(&o.manifest(&o.nonce(), |_| {}));
+    assert_eq!(code, Some(0), "control: {rep}");
+}
+
+impl Obs {
+    fn helper_fabric_sha(&self) -> String {
+        let v: Value = serde_json::from_slice(&std::fs::read(&self.helper_cfg).unwrap()).unwrap();
+        v["fabric"]["sha256"].as_str().unwrap().to_string()
+    }
+}
+
+/// A133 (M1860): the observer observes only a nonce the custodian issued.
+/// Before, any 32-hex string in a manifest got a rootfs hash, a record and a
+/// signature, and Fabric could fill the observer's store with them. A nonce
+/// the custodian never issued is refused with no record written and nothing
+/// signed. Control: an issued nonce.
+#[test]
+fn an_observer_signs_nothing_for_a_nonce_the_custodian_never_issued() {
+    let mut o = obs();
+    o.start();
+    let invented = "ab".repeat(16);
+    let r = o.ask_manifest(&o.manifest(&invented, |_| {}));
+    let record = o
+        .obs_dir
+        .join("records")
+        .join(format!("{invented}.observed"));
+    assert!(
+        !ok(&r) && !record.exists(),
+        "ATTACK: the observer observed a nonce the custodian never issued (record exists: {}): {r}",
+        record.exists()
+    );
+    assert!(
+        r["error"]
+            .as_str()
+            .unwrap_or("")
+            .contains("does not honour this nonce"),
+        "{r}"
+    );
+    assert!(
+        ok(&o.ask_manifest(&o.manifest(&o.nonce(), |_| {}))),
+        "control: an issued nonce"
+    );
+}
+
+/// A133 (M1861): and for the epoch it was issued for. A nonce issued for
+/// epoch 0, in a manifest naming authority epoch 5, is not observed.
+/// Control: the same nonce in a manifest naming epoch 0.
+#[test]
+fn an_observer_signs_nothing_for_a_nonce_issued_for_another_epoch() {
+    let mut o = obs();
+    o.start();
+    let n = o.nonce();
+    let r = o.ask_manifest(&o.manifest(&n, |m| set_field(m, "authority.epoch", json!(5))));
+    assert!(
+        !ok(&r),
+        "ATTACK: the observer observed a nonce for an epoch other than the one it was issued \
+         for: {r}"
+    );
+    assert!(r["error"].as_str().unwrap_or("").contains("epoch"), "{r}");
+    assert!(ok(&o.ask_manifest(&o.manifest(&n, |_| {}))), "control");
+}
+
+/// A133 (M1863): a nonce a DEV custodian issued is not observed by a test or
+/// protected observer (the same rule the helper applies at the spend). The
+/// fixture's custodian is a dev one here. Control: the same flow against a
+/// test custodian (`the_observer_service_observes_through_the_helper_once_per_nonce`).
+#[test]
+fn an_observer_takes_no_nonce_from_a_dev_custodian() {
+    let mut o = obs_with(euid(), CustodianRun::Dev);
+    o.start();
+    let r = o.ask_manifest(&o.manifest(&o.nonce(), |_| {}));
+    assert!(
+        !ok(&r),
+        "ATTACK: the observer observed a nonce a dev custodian issued: {r}"
+    );
+    assert!(
+        r["error"].as_str().unwrap_or("").contains("dev custodian"),
+        "{r}"
+    );
+}
+
+/// A134 (M1865): the observer's store holds a record only as long as the
+/// custodian honours the nonce. A record whose nonce has expired is dropped at
+/// the next observation; one still honoured stays; the new one carries the
+/// custodian's expiry. Control: the fresh record stays.
+#[test]
+fn an_observer_drops_the_records_of_nonces_the_custodian_no_longer_honours() {
+    let mut o = obs();
+    o.start();
+    let store = o.obs_dir.join("records");
+    let stale = store.join(format!("{}.observed", "cd".repeat(16)));
+    let fresh = store.join(format!("{}.observed", "ef".repeat(16)));
+    std::fs::write(
+        &stale,
+        json!({"manifest_sha256": "a", "expires_unix": 1}).to_string(),
+    )
+    .unwrap();
+    std::fs::write(
+        &fresh,
+        json!({"manifest_sha256": "a", "expires_unix": 4_000_000_000i64}).to_string(),
+    )
+    .unwrap();
+    let n = o.nonce();
+    let r = o.ask_manifest(&o.manifest(&n, |_| {}));
+    assert!(ok(&r), "setup: an honest observation: {r}");
+    assert!(
+        !stale.exists(),
+        "ATTACK: the observer kept the record of a nonce the custodian no longer honours"
+    );
+    assert!(fresh.exists(), "control: a record still honoured stays");
+    let mine: Value =
+        serde_json::from_slice(&std::fs::read(store.join(format!("{n}.observed"))).unwrap())
+            .unwrap();
+    let now = axon_fabric::backend::Clock::System.now_unix();
+    let expires = mine["expires_unix"].as_i64().unwrap();
+    assert!(
+        expires > now && expires <= now + 300,
+        "the record carries the custodian's expiry (300 s from issue): {mine}"
     );
 }

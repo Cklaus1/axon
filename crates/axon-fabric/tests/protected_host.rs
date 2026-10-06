@@ -1041,6 +1041,8 @@ fn the_helper_config_must_agree_with_the_host_config() {
     let host = h.load().unwrap();
     let good = json!({
         "schema": "axon-protected-launcher/2", "fabric_uid": euid,
+        "fabric": {"path": "/usr/local/bin/axon-fabric", "sha256": "f".repeat(64),
+                   "revision": "0".repeat(40)},
         "interpreter": {"path": "/bin/bash", "sha256": "a".repeat(64)},
         "launcher": {"path": h.p("launcher.sh"), "sha256": sha256_file(&h.p("launcher.sh"))},
         "profile_manifest": {"path": h.p("manifest.json"),

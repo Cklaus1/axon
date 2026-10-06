@@ -179,9 +179,27 @@ Each clause names what must hold. The negative matrix below names how each one f
   - Fabric and Firecracker revisions;
   - guest image, kernel, verifier, suite and policy digests;
   - the intended launch manifest digest.
-- Fabric consumes it and cannot mint it.
-- Intake rejects a receipt whose observation digest or launch manifest digest does not join, or
-  whose observation is stale, replayed or from another launch.
+- Fabric consumes it and cannot mint it: it holds no observer key, so it cannot forge the
+  SIGNATURE. What the signature attests is stated per field (amendment 79, which replaced the
+  claim that every field was measured):
+  - MEASURED by the observer from the operator's installed files: host config, launcher,
+    Firecracker, guest kernel and rootfs, suite registry, qualification record and profile
+    manifest digests;
+  - PINNED by the operator (the helper config's `fabric {path, sha256, revision}`), which the root
+    helper holds the caller's executable to on every launch and relay: the verifier digest and
+    the Fabric revision;
+  - NAMED by the measured profile manifest: the guest init and axon digests;
+  - the custodian's: the nonce, issued for that epoch, observed once;
+  - the principal's word, NOT measured: the guest policy digest (the root helper binds the policy
+    it boots to it) and the authority epoch (the loop's scope pointer, joined at intake).
+  The verifier digest is the digest of the executable file the Fabric process was started from; it
+  does not bind the instructions the process runs (`LD_PRELOAD`, ptrace of a same-uid process).
+- Freshness and one-use are enforced where the launch happens, not at intake: Fabric's early
+  check and the root helper verify the observation's age and epoch and the custodian spends its
+  nonce once. Intake rejects a receipt whose observation digest or launch manifest digest does
+  not join, or whose observation is from another launch or another epoch; it does not re-check
+  age and keeps no nonce registry, so a genuine verdict is not expired by the passing of time
+  (protocol §9, C9 correction).
 
 **PSV-7 — Development cannot pass as protected.**
 - The local interpreter backend, a development-class evaluation, and a receipt from any host

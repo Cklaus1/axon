@@ -143,6 +143,10 @@ fn fx_with(
     let mut v: Value = serde_json::from_str(&std::fs::read_to_string(&cfg).unwrap()).unwrap();
     if let Some(u) = fabric {
         v["fabric_uid"] = json!(u);
+        // Amendment 79: the helper serves only the pinned Fabric program. A
+        // non-self Fabric runs the helper from a shell AS its uid (`run`), so
+        // that shell is the program.
+        v["fabric"] = shell_fabric_pin(TEST_FABRIC_REVISION);
     }
     v["custodian"]["socket"] = json!(cust.socket);
     edit(&mut v);
@@ -259,7 +263,9 @@ impl Fx {
                 }
                 // A shell running AS the actor makes the exec: setpriv's own
                 // exec still holds root's DAC override (measured).
-                c.args(["--", "sh", "-c", "exec \"$0\" \"$@\""])
+                // Not `exec`: the shell stays as the helper's PARENT, the
+                // Fabric program the helper measures (amendment 79).
+                c.args(["--", "sh", "-c", "\"$0\" \"$@\"; exit $?"])
                     .arg(self.installed.as_ref().expect("root fixture"));
                 c
             }
@@ -311,6 +317,30 @@ fn the_helper_launches_a_well_formed_request_and_hands_the_out_dir_over() {
     assert!(out.join("result.json").is_file());
     // The job's source (the secret) was consumed before the launcher ran.
     assert!(!f.out_root.join(INPUTS).join("job").exists());
+}
+
+/// A132 (M1851, amendment 79): the helper launches only for the Fabric
+/// program the operator pinned. The pin is the digest of the executable the
+/// caller's pidfd names; a caller running another program (here: the pin names
+/// a digest this process is not) gets nothing launched, though its uid is the
+/// Fabric's. Before, any program of the Fabric uid launched. Control: the pin
+/// naming this process launches.
+#[test]
+fn a_helper_launches_only_for_the_fabric_program_the_operator_pinned() {
+    let f = fx(None, "", |v| v["fabric"]["sha256"] = json!("9".repeat(64)));
+    let (code, r) = f.run(&f.request("op-1"), None);
+    assert!(
+        code == Some(30) && !f.launched(),
+        "ATTACK: a helper launched for a caller that is not the pinned Fabric program: {code:?} {r}"
+    );
+    assert!(
+        r["error"].as_str().unwrap_or("").contains("pinned Fabric"),
+        "{r}"
+    );
+    let f = fx(None, "", |_| {});
+    let (code, r) = f.run(&f.request("op-1"), None);
+    assert_eq!(code, Some(0), "control: the pinned program launches: {r}");
+    assert!(f.launched());
 }
 
 /// A: every path in a request is a plainly spelled child of the operator's
@@ -1020,6 +1050,8 @@ fn production_etc(s: &Path, store_parent: &str) {
         json!({
             "schema": "axon-custodian/1",
             "custodian_uid": CUSTODIAN, "fabric_uid": FABRIC, "launcher_uid": 0,
+            // Amendment 79: a protected custodian names the observer's own uid.
+            "observer_uid": OBSERVER,
             "socket": socket, "store": e.join(store_parent).join("nonces"), "max_age_s": 300,
         })
         .to_string(),
@@ -1032,6 +1064,10 @@ fn production_etc(s: &Path, store_parent: &str) {
         json!({
             "schema": "axon-protected-launcher/2",
             "fabric_uid": FABRIC,
+            // Amendment 79: the Fabric program is the shell that runs the
+            // helper as the Fabric uid (every production helper run below
+            // goes through `sh -c`, which stays the helper's parent).
+            "fabric": shell_fabric_pin(&"0".repeat(40)),
             "interpreter": {"path": bash.path, "sha256": bash.sha256},
             "launcher": pin("launcher.sh"),
             "profile_manifest": pin("manifest.json"),
@@ -1168,7 +1204,8 @@ fn a_production_helper_that_is_not_root_launches_nothing() {
         "custodian",
         &format!(
             "setpriv --reuid={FABRIC} --regid={FABRIC} --clear-groups --inh-caps={caps} \
-             --ambient-caps={caps} -- \"$1/axon-protected-launcher\" \
+             --ambient-caps={caps} -- sh -c '\"$0\"; c=$?; exit $c' \
+             \"$1/axon-protected-launcher\" \
              < \"$1/request.json\" > \"$1/report.json\"\n\
              echo $? > \"$1/code\"\n\
              cp -a /etc/axon/runs/op-1 \"$1/result\" 2>/dev/null\n\
@@ -1179,7 +1216,7 @@ fn a_production_helper_that_is_not_root_launches_nothing() {
              chown 0:{FABRIC} /etc/axon/h\n\
              chmod 04750 /etc/axon/h\n\
              setpriv --reuid={FABRIC} --regid={FABRIC} --clear-groups -- \
-             sh -c 'exec /etc/axon/h' < \"$1/request.json\" > \"$1/control.json\"\n\
+             sh -c '/etc/axon/h; c=$?; exit $c' < \"$1/request.json\" > \"$1/control.json\"\n\
              echo $? > \"$1/control.code\"\n\
              cp -a /etc/axon/runs/op-1 \"$1/control\" 2>/dev/null"
         ),
@@ -1428,6 +1465,8 @@ fn a_dev_custodian_never_yields_a_protected_launch() {
 }
 
 const CUSTODIAN: u32 = 4244;
+/// The observer service's uid in a protected custodian config (amendment 79).
+const OBSERVER: u32 = 4245;
 
 /// A83, ROOT ONLY: the helper authenticates the custodian by the kernel. The
 /// Fabric uid runs a custodian of its own at the configured socket (a full
@@ -2236,7 +2275,7 @@ fn production_launch(helper: &str, no_lease: bool) -> (String, String, Option<St
              chown 0:{FABRIC} /etc/axon/h\n\
              chmod 04750 /etc/axon/h\n\
              setpriv --reuid={FABRIC} --regid={FABRIC} --clear-groups -- \
-             sh -c 'exec /etc/axon/h' < \"$1/request.json\" > \"$1/report.json\"\n\
+             sh -c '/etc/axon/h; c=$?; exit $c' < \"$1/request.json\" > \"$1/report.json\"\n\
              echo $? > \"$1/code\"\n\
              cp -a /etc/axon/runs/op-1 \"$1/result\" 2>/dev/null"
         ),
@@ -3098,6 +3137,19 @@ env > "$OUT/launcher-env"
 const HOSTILE_CALLER: &str = r#"
 import os, resource, signal, sys
 helper, cfg, held, cwd, bash_env = sys.argv[1:6]
+# The helper's PARENT is this process, the pinned Fabric program running as the
+# Fabric uid (amendment 79); the hostile state is set in the child that execs
+# the helper (everything below is inherited across fork, so it is the helper's
+# state all the same).
+pid = os.fork()
+if pid:
+    _, st = os.waitpid(pid, 0)
+    if os.WIFSIGNALED(st):
+        sig = os.WTERMSIG(st)
+        signal.signal(sig, signal.SIG_DFL)
+        os.kill(os.getpid(), sig)
+        signal.pause()
+    sys.exit(os.WEXITSTATUS(st))
 for s in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
     signal.signal(s, signal.SIG_IGN)
 signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGUSR1, signal.SIGALRM, signal.SIGTERM})
@@ -3150,7 +3202,9 @@ fn a_callers_process_state_never_reaches_the_root_helper_or_its_launcher() {
     if skip_unless_root() {
         return;
     }
-    let f = fx(Some(FABRIC), RECORD_STATE, |_| {});
+    let f = fx(Some(FABRIC), RECORD_STATE, |v| {
+        v["fabric"] = python_fabric_pin()
+    });
     // What the caller holds open, works in, and points BASH_ENV at: all the
     // Fabric uid's own.
     let held = f.base.join("held-by-caller");
@@ -3633,7 +3687,7 @@ fn production_helper_as_fabric(s: &Path, prefix: &str, wrap: &str) -> (String, S
              chown 0:{FABRIC} /etc/axon/h\n\
              chmod 04750 /etc/axon/h\n\
              setpriv --reuid={FABRIC} --regid={FABRIC} --clear-groups {wrap} -- \
-             sh -c 'exec /etc/axon/h' < \"$1/request.json\" > \"$1/report.json\"\n\
+             sh -c '/etc/axon/h; c=$?; exit $c' < \"$1/request.json\" > \"$1/report.json\"\n\
              echo $? > \"$1/code\"\n\
              cp -a /etc/axon/runs/op-1 \"$1/result\" 2>/dev/null"
         ),
@@ -3811,12 +3865,19 @@ print(json.dumps({
 def ok(r, what):
     if r == -1:
         raise OSError(ctypes.get_errno(), what)
-if "timers" in arms:
-    for s in (signal.SIGALRM, signal.SIGVTALRM, signal.SIGPROF):
-        signal.signal(s, signal.SIG_IGN)
-    signal.setitimer(signal.ITIMER_REAL, 0.02, 0.02)
-    signal.setitimer(signal.ITIMER_VIRTUAL, 0.001, 0.001)
-    signal.setitimer(signal.ITIMER_PROF, 0.001, 0.001)
+def arm_late():
+    # What a fork does not carry to a child (interval timers, the subreaper
+    # flag) or what must be the exec'ing process's own (its process group).
+    if "timers" in arms:
+        for s in (signal.SIGALRM, signal.SIGVTALRM, signal.SIGPROF):
+            signal.signal(s, signal.SIG_IGN)
+        signal.setitimer(signal.ITIMER_REAL, 0.02, 0.02)
+        signal.setitimer(signal.ITIMER_VIRTUAL, 0.001, 0.001)
+        signal.setitimer(signal.ITIMER_PROF, 0.001, 0.001)
+    if "kernel" in arms:
+        ok(libc.prctl(36, 1, 0, 0, 0), "PR_SET_CHILD_SUBREAPER")
+    if "leader" in arms:
+        os.setpgid(0, 0)
 if "limits" in arms:
     for r, v in [(resource.RLIMIT_STACK, 1 << 20), (resource.RLIMIT_RSS, 1 << 20),
                  (resource.RLIMIT_MEMLOCK, 0), (10, 7),   # RLIMIT_LOCKS
@@ -3835,18 +3896,29 @@ if "sched" in arms:
 if "kernel" in arms:
     open("/proc/self/oom_score_adj", "w").write("1000")
     ok(libc.prctl(29, 100000000, 0, 0, 0), "PR_SET_TIMERSLACK")
-    ok(libc.prctl(36, 1, 0, 0, 0), "PR_SET_CHILD_SUBREAPER")
 if "persona" in arms:
     ok(libc.personality(0x0008 | 0x20000), "personality")
-if "leader" in arms:
-    os.setpgid(0, 0)
 os.setgroups([])
 os.setresgid(F, F, F)
 os.setresuid(F, F, F)
 if mode == "witness":
+    arm_late()
     path, argv = sys.executable, [sys.executable, "-c", WITNESS.replace("@GET@", str(IOPRIO_GET))]
 else:
     path, argv = helper, [helper, "--test-config", cfg]
+    # The helper's PARENT is this process, the Fabric program, running as the
+    # Fabric uid (amendment 79: the helper serves only its pinned program).
+    # What it is handed is armed in the CHILD that execs it.
+    pid = os.fork()
+    if pid:
+        _, st = os.waitpid(pid, 0)
+        if os.WIFSIGNALED(st):
+            sig = os.WTERMSIG(st)
+            signal.signal(sig, signal.SIG_DFL)
+            os.kill(os.getpid(), sig)
+            signal.pause()
+        sys.exit(os.WEXITSTATUS(st))
+    arm_late()
 if "tsc" in arms:
     c = ctypes.c_char_p
     av = (c * (len(argv) + 1))(*[a.encode() for a in argv], None)
@@ -3889,8 +3961,22 @@ struct Armed {
     _f: Fx,
 }
 
+/// Amendment 79: the Fabric program of a test whose caller is a python3
+/// process (as the Fabric uid) that runs the helper as its child.
+fn python_fabric_pin() -> Value {
+    let python = String::from_utf8(
+        Command::new("python3")
+            .args(["-c", "import sys; print(sys.executable)"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap();
+    program_pin(Path::new(python.trim()), TEST_FABRIC_REVISION)
+}
+
 fn launch_armed(arms: &str, extra: &str) -> Armed {
-    let f = fx(Some(FABRIC), extra, |_| {});
+    let f = fx(Some(FABRIC), extra, |v| v["fabric"] = python_fabric_pin());
     let mut child = Command::new("python3")
         .args(["-c", ARMING_CALLER])
         .arg(FABRIC.to_string())
@@ -4045,6 +4131,17 @@ if pid1 == 0:
         os.setgroups([])
         os.setresgid(F, F, F)
         os.setresuid(F, F, F)
+        # The helper's PARENT is this process, the pinned Fabric program as
+        # the Fabric uid (amendment 79); it reports the helper's own status.
+        g = os.fork()
+        if g:
+            _, st = os.waitpid(g, 0)
+            if os.WIFSIGNALED(st):
+                sig = os.WTERMSIG(st)
+                signal.signal(sig, signal.SIG_DFL)
+                os.kill(os.getpid(), sig)
+                signal.pause()
+            os._exit(os.WEXITSTATUS(st))
         os.execve(helper, [helper, "--test-config", cfg], {"PATH": "/usr/bin:/bin"})
     _, hs = os.waitpid(h, 0)
     os.kill(witness, signal.SIGTERM)
@@ -4083,7 +4180,7 @@ fn a_terminal_its_caller_owns_never_signals_the_root_helper() {
         // The launcher waits (in its own process, below the helper) until the
         // caller has written ^C and released it.
         let extra = "touch \"$OUT/waiting\"\ni=0\nwhile [ ! -e \"$OUT/../../go\" ] && [ $i -lt 200 ]; do sleep 0.05; i=$((i+1)); done\n";
-        let f = fx(Some(FABRIC), extra, |_| {});
+        let f = fx(Some(FABRIC), extra, |v| v["fabric"] = python_fabric_pin());
         let result = f.base.join("result");
         let mut child = Command::new("python3")
             .args(["-c", PTY_CALLER])
