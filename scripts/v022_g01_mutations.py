@@ -3258,7 +3258,7 @@ MUTATIONS += [
     ('M889', "EQUIVALENCE (rows3): restoring the interpreter re-runs axon-core's build script on the restored tree",
      'scripts/v022_g01_mutations.py', '            rerun_core_build_script()\n        built = build_interpreter()\n        if built.returncode != 0:\n            return f"the restored tree\'s interpreter did not build', '            pass\n        built = build_interpreter()\n        if built.returncode != 0:\n            return f"the restored tree\'s interpreter did not build', 'axon-core', _HI2, _HR_MUT),
     ('M890', "EQUIVALENCE (rows3): the restored interpreter is compared to the run's, never assumed",
-     'scripts/v022_g01_mutations.py', '        if os.path.exists(path) and sha(path) == expected:\n            return None', '        if True:\n            return None', 'axon-core', _HI2, _HR_MUT),
+     'scripts/v022_g01_mutations.py', '        if os.path.exists(path) and sha(path) == expected:\n            return None', '        if True:\n            return None', 'axon-core', _HI2, 'a_mutation_run_fails_the_row_whose_cell_left_a_foreign_interpreter'),
     ('M891', "EVIDENCE (rows3): a paired-disable cell's changed prerequisite is rebuilt and byte-compared",
      'scripts/v022_paired_disable.py',
      '        if what == "axon" or all(\n',

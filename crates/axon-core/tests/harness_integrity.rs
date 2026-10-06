@@ -1417,6 +1417,56 @@ fn a_mutation_run_restores_the_interpreter_after_every_row() {
     let _ = std::fs::remove_dir_all(&tgt);
 }
 
+/// C9 round 4c (eqgate): the restoring build is judged by COMPARING the
+/// rebuilt interpreter with the run's (`restore_interpreter`), not by it having
+/// built. The first test above only exercises that when the first rebuild
+/// happens to come out dirty, which depends on timing and on the host's
+/// filesystem (M890 survived on gpumaster). Here the cell leaves a FOREIGN
+/// interpreter that cargo regards as fresh (newer mtime), so no rebuild can fix
+/// it and only the comparison notices: the row must fail itself.
+#[test]
+fn a_mutation_run_fails_the_row_whose_cell_left_a_foreign_interpreter() {
+    let r = miniature("mut-foreign");
+    real_build_script(&r);
+    recommit(&r, "crates/axon-core/tests/harness_binaries.rs", |s| {
+        format!(
+            "fn clobber() {{\n    if !include_str!(\"script_spawn/mod.rs\").contains(\"let _ = v;\") {{\n        \
+             let p = std::path::Path::new(&std::env::var(\"CARGO_TARGET_DIR\").unwrap()).join(\"debug/axon\");\n        \
+             std::fs::remove_file(&p).unwrap();\n        std::fs::write(&p, b\"a foreign interpreter\").unwrap();\n        \
+             let f = std::fs::OpenOptions::new().write(true).open(&p).unwrap();\n        \
+             f.set_modified(std::time::SystemTime::now() + std::time::Duration::from_secs(3600)).unwrap();\n    }}\n}}\n{}",
+            s.replace("probe();", "probe(); clobber();")
+        )
+    });
+    let out = scratch("mut-foreign-out").join("run.json");
+    let tgt = scratch("mut-foreign-tgt");
+    let o = run_cells_in(
+        &r,
+        &tgt,
+        HARNESS[0],
+        &["--scope=all", "--only=M722", out.to_str().unwrap()],
+    );
+    let doc: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&out).unwrap_or_else(|_| "{}".into()))
+            .unwrap_or_default();
+    let row = doc["mutations"][0].clone();
+    assert_eq!(
+        row["result"].as_str(),
+        Some("killed"),
+        "setup: the miniature row was not run and killed: {}\n{doc}",
+        text(&o)
+    );
+    assert!(
+        row.get("interpreter_not_restored").is_some(),
+        "ATTACK: a mutated cell left a foreign interpreter in place and the row was judged \
+         good, the rows after it running on it: {}",
+        text(&o)
+    );
+    let _ = std::fs::remove_dir_all(&r);
+    let _ = std::fs::remove_dir_all(out.parent().unwrap());
+    let _ = std::fs::remove_dir_all(&tgt);
+}
+
 /// paired-disable rebuilds a prerequisite only when it is missing or is not
 /// the clean build's bytes (amendment 59: rebuilding all of them after every
 /// cell cost ~45 min per record) -- and then it must. Every cell here
