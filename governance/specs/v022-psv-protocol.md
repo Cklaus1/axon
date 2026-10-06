@@ -4447,7 +4447,7 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       naming a member of every group and refusing to name a mode READ, a definition or a comment. The sweep found
       no `unshare`, `clone`, `mount`, `capset` or `chroot` call in scope today; those alternatives exist for the
       day one appears.
-    - **Exposed: 59 line sites.** ROWED, each killed by a test whose attack is the weaker mode or the missing
+    - **Exposed: 41 uncovered sites, plus 7 that only a weak "OS error" exemption covered. ROWED, each killed by a test whose attack is the weaker mode or the missing
       call, observed through `stat` or `/proc`: the completion secret 0400 (M2144), the Fabric-private inputs
       dir 0700 (M2145), the keygen key 0400 (M2146), the trial-cache root 0700 (M2147), a read-only
       materialization's directory and file modes (M2148-M2150), the check child's pre_exec hook,
