@@ -47,10 +47,12 @@ ROWS=(
   "am60 dispatch-key cast|axon-psv|sealed_frames|the_candidate_never_selects_the_operators_code_by_width_or_by_name"
   "am72 seal-crossing positions|axon-core|lib|interp::tests::a_value_at_an_undetermined_type_parameter_never_crosses_the_seal interp::tests::a_type_parameter_inside_any_shape_is_never_filled_by_the_candidate"
   "am72 seal-crossing positions|axon-psv|sealed_frames|an_undetermined_type_position_never_selects_the_operators_impl"
-  "am72 dict snapshot (psv1d may replace)|axon-core|lib|interp::tests::a_dict_the_candidate_mutated_is_verified_at_every_edge_back"
-  "am72 dict snapshot (psv1d may replace)|axon-psv|sealed_frames|a_dict_entry_the_operator_held_is_never_retyped_by_the_candidate"
+  "am72 dict snapshot|axon-core|lib|interp::tests::a_dict_the_candidate_mutated_is_verified_at_every_edge_back"
+  "am72 dict snapshot|axon-psv|sealed_frames|a_dict_entry_the_operator_held_is_never_retyped_by_the_candidate"
   "am78 held-value judgement|axon-core|lib|interp::tests::a_position_the_operator_held_is_judged_by_what_it_held_when_replaced interp::tests::a_placeholder_the_operator_held_is_not_filled_by_the_candidate interp::conform::walk_bound_tests::a_value_nested_past_the_bound_is_refused_not_left_unvisited"
   "am78 held-value judgement|axon-psv|sealed_frames|a_replaced_or_filled_position_is_judged_by_what_the_operator_held"
+  "am83 dispatch rule|axon-core|lib|interp::tests::operator_code_never_dispatches_on_a_value_read_untyped_from_a_dict interp::tests::operator_code_never_dispatches_on_a_value_from_any_untyped_position"
+  "am83 dispatch rule|axon-psv|sealed_frames|operator_code_never_dispatches_on_an_untyped_read_and_a_pinned_suite_passes"
 )
 
 for row in "${ROWS[@]}"; do

@@ -2006,3 +2006,6 @@ ATTACK_MARKERS.update({
     'M1996': r"ATTACK: a u8 the candidate chose truncated the operator's arithmetic into a pass: Ok\(Completed\)",
     'M1997': r"ATTACK: a captured-dict closure retyped an entry against a stale snapshot: Ok\(Completed\)",
 })
+
+# C9 round 6, INTEGRATE: the dispatch rule's off switch (M1975).
+ATTACK_MARKERS['M1975'] = r'ATTACK: the dispatch rule.s off switch is reachable from a production build'

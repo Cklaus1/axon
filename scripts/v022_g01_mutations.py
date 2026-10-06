@@ -6665,6 +6665,18 @@ MUTATIONS += [
      'axon-core', '--no-default-features --test harness_integrity', 'a_status_file_is_accepted_only_as_the_joined_evidence_for_the_freeze_commit'),
 ]
 
+# ── C9 round 6, INTEGRATE (amendment 83 review): the dispatch rule's OFF switch must stay a unit-test
+# facility. Removing #[cfg(test)] from its declaration makes it a production static, which the test
+# (a scan of interp.rs) refuses. (Rows M1975-M1989 are free.)
+MUTATIONS += [
+    ('M1975', "PSV-1 (integrate): the dispatch rule's off switch is compiled only into unit tests",
+     'crates/axon-core/src/interp.rs',
+     '#[cfg(test)]\npub(crate) static DISPATCH_RULE_OFF: std::sync::atomic::AtomicBool =',
+     'pub(crate) static DISPATCH_RULE_OFF: std::sync::atomic::AtomicBool =',
+     'axon-core', '--no-default-features --test dispatch_rule_switch_is_test_only',
+     'the_dispatch_rule_off_switch_is_compiled_only_into_unit_tests'),
+]
+
 def in_scope(mid, scope):
     # A SIBLING-ONLY edit exists only as a member of a retired row's guard set
     # (amendment 64): it is never an active row of any scope.
