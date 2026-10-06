@@ -8,8 +8,13 @@
     guest_build_env.py rootfs  RECORD.json OUT.sqfs
     guest_build_env.py dist    RECORD.json DIST-DIR   (digest of every artifact in dist,
                        refused unless it is what the controlled steps produced)
-    guest_build_env.py check-host-build CLONE [--cargo PATH]   (round 5: the AMBIENT
-                       build of the host binaries, judged by the guest's classifier)
+    guest_build_env.py host-build OUTDIR   (round 6: the CONTROLLED build of the host
+                       binaries -- fresh clone, fresh empty target, constructed
+                       environment, one fixed invocation -- and a signed record)
+    guest_build_env.py check-host-record DIR [--commit SHA] --builder-uid N --builder-parent P
+                       (judge a host-build output against the PINNED builder)
+    guest_build_env.py check-host-build CLONE [--cargo PATH]   (cargo's effective config
+                       for the clone, judged in a constructed environment)
     guest_build_env.py discard RECORD.json
     guest_build_env.py kernel  KERNEL-RECORD.json DIST-DIR PROFILE-DIR
     guest_build_env.py toolchain-pin MANIFEST.json   (amendment 65: the image's
@@ -89,6 +94,13 @@ C9 round 5 (FIELD-ORIGIN, amendment 80):
    the manifest and the freeze read digests from the record and refuse a
    record whose proof does not hold. Residual trust: the builder account; the
    key files must travel if the freeze runs elsewhere.
+
+C9 round 6 (FIELD-ORIGIN, amendment 86): the proof's builder is the OPERATOR's
+(`/etc/axon/builder-pin.json`: uid and private parent), never the record's own
+-- the key is looked up under the pinned parent, owned by the pinned uid, so a
+record naming another account and its own directory finds no key. The host
+binaries are built by `host-build` (a retry in a reused target dir had linked
+dependencies a wrapper compiled) and installed only from its signed record.
 
 What is recorded, not independently verified: the identity of the host tools
 (and of the toolchain) is their sha256 at build time; nothing pins the
@@ -170,6 +182,21 @@ CARGO_HOST_TOOLS = ["cc", "ld"]
 # build records). A fixed path: a caller never chooses which pin judges it.
 TOOLCHAIN_PIN = "/etc/axon/host-toolchain-pin.json"
 TOOLCHAIN_PIN_SCHEMA = "axon-host-toolchain-pin/1"
+# Round 6 (amendment 86): WHO the builder is and WHERE its private parent lives
+# are the OPERATOR's word (read through the same root-owned-chain walk as the
+# toolchain pin), never a field of the record being judged: a record naming its
+# own uid and its own private directory proves nothing.
+BUILDER_PIN = "/etc/axon/builder-pin.json"
+BUILDER_PIN_SCHEMA = "axon-builder-pin/1"
+# The host binaries (the setuid launcher, the verifier, the custodian, the
+# observer) are built by a controlled step too: one fixed invocation, in a fresh
+# empty target dir, from a fresh standalone clone, recorded and SIGNED.
+HOST_SCHEMA = "axon-host-build/1"
+HOST_BINARIES = ("axon-fabric", "axon-protected-launcher", "axon-custodian", "axon-observer")
+HOST_INVOCATIONS = [
+    ("axon-fabric-host", ["build", "--release", "--locked", "-p", "axon-fabric", "--bins", "--quiet"], None),
+]
+HOST_RECORD = "host-build.json"
 
 
 def sha256(path):
@@ -344,38 +371,24 @@ def effective_config(cargo, env, cwd, env_ok=None):
     return sorted(origins), sorted(set(foreign))
 
 
-# What an AMBIENT (host-side) build may inherit. The host binaries (the setuid
-# launcher, the verifier, the custodian, the observer) are built by the
-# operator's own cargo; nothing constructs that environment, so what can be
-# done is to refuse the ambient state that could steer it: any variable cargo or
-# rustc reads for the compiler, wrapper, flags, linker, registry or profile, and
-# the C toolchain variables the `cc` crate honours (ring compiles C).
-HOST_ENV_OK = {"CARGO_HOME", "CARGO_TARGET_DIR"}
-HOST_ENV_PREFIXES = ("CARGO_", "RUSTC", "RUSTFLAGS", "RUSTDOC", "RUSTUP_TOOLCHAIN", "SCCACHE",
-                     "CC_", "CXX_", "CFLAGS", "CXXFLAGS", "CPPFLAGS", "LDFLAGS", "TARGET_", "HOST_",
-                     "LD_", "BINDGEN_", "PKG_CONFIG")
-HOST_ENV_NAMES = {"CC", "CXX", "AR", "CPP", "LD", "RANLIB", "NM", "STRIP", "OBJCOPY"}
-
-
-def host_env_ok(name):
-    """May this variable be present in an ambient host build's environment?"""
-    if name in HOST_ENV_OK:
-        return True
-    return not (name in HOST_ENV_NAMES or name.startswith(HOST_ENV_PREFIXES))
-
-
-def host_build_problems(clone, cargo=None, env=None):
-    """Why an ambient host-binary build of `clone` is not one that only the
-    tree's own sources and committed config steer (empty: it is). The same
-    classifier the guest build applies (effective_config), over the caller's
-    OWN environment, from the clone, reading every ancestor config and
-    CARGO_HOME's. A check made at deploy time: it cannot see what existed when
-    the binaries were built -- the build's own record of that is
-    crates/axon-fabric/src/build_state.rs."""
-    env = dict(os.environ if env is None else env)
-    if cargo is None:
-        _chan, cargo, _rustc = toolchain()
-    return effective_config(cargo, env, clone, env_ok=host_env_ok)[1]
+def host_config_problems(clone, cargo=None):
+    """Why cargo's effective config for the host build of `clone` is not the
+    tree's own (empty: it is). Judged in a CONSTRUCTED environment -- the one
+    the controlled host build runs in (fixed PATH, fresh empty CARGO_HOME, the
+    pinned rustc) -- never over the caller's ambient variables: the host build
+    drops every one of them, so a list of the ones to refuse could only miss
+    some (round 6: AR_*, RANLIB_*, a PATH-planted `cc` and a retried target dir
+    all passed the list). What it still reads from the filesystem: every
+    ancestor `.cargo/config.toml` of the clone."""
+    chan, cargo_p, rustc = toolchain()
+    cargo = cargo or cargo_p
+    base = tempfile.mkdtemp(prefix="axon-host-config-")
+    try:
+        env = constructed_env(base, cargo, os.path.join(os.path.dirname(cargo), "rustc"), {})
+        os.mkdir(env["CARGO_HOME"])
+        return effective_config(cargo, env, clone)[1]
+    finally:
+        subprocess.run(["rm", "-rf", "--", base], check=False)
 
 
 def constructed_env(base, cargo, rustc, proxies):
@@ -527,17 +540,47 @@ def host_tools(names):
     return out
 
 
-def begin(record_path):
+def git_clone(dst):
+    """A fresh STANDALONE clone of this tree's HEAD at `dst` (hardened git, no
+    alternates, no hardlinks): what the host binaries are built from, so the
+    build's own provenance (revision, dirty) is measured on a real clone, and
+    nothing untracked or ignored in the caller's tree reaches it. Returns the
+    HEAD revision."""
+    r = subprocess.run([GIT, "--no-replace-objects", "-c", "safe.directory=*", "clone", "-q",
+                        "--no-hardlinks", "--no-local", "--", ROOT, dst],
+                       env=GIT_ENV, capture_output=True, text=True)
+    if r.returncode != 0:
+        fail(f"cannot clone the tree: {r.stderr.strip()[-300:]}")
+    h = subprocess.run([GIT, "--no-replace-objects", "-c", "safe.directory=*", "-C", ROOT, "rev-parse", "HEAD"],
+                       env=GIT_ENV, capture_output=True, text=True)
+    c = subprocess.run([GIT, "--no-replace-objects", "-c", "safe.directory=*", "-C", dst, "rev-parse", "HEAD"],
+                       env=GIT_ENV, capture_output=True, text=True)
+    rev = h.stdout.strip()
+    if h.returncode != 0 or c.returncode != 0 or rev != c.stdout.strip() or not re.fullmatch(r"[0-9a-f]{40}", rev):
+        fail("the clone is not at the tree's HEAD")
+    return rev
+
+
+def begin(record_path, host=False):
     chan, cargo, rustc = toolchain()
-    parent, ancestors, base = private_base("axon-guest-build-")
+    parent, ancestors, base = private_base("axon-host-build-" if host else "axon-guest-build-")
     proxies = {k: os.environ[k] for k in PROXY_VARS if os.environ.get(k)}
     env = constructed_env(base, cargo, rustc, proxies)
     cargo_home, target = env["CARGO_HOME"], env["CARGO_TARGET_DIR"]
     os.mkdir(cargo_home)
     os.mkdir(target)
     src = os.path.join(base, "src")
-    os.mkdir(src)
-    files = copy_tracked_tree(src)
+    if host:
+        revision = git_clone(src)
+        files = len(subprocess.run([GIT, "-C", src, "ls-files", "-z"], env=GIT_ENV, capture_output=True)
+                    .stdout.split(b"\0")) - 1
+    else:
+        os.mkdir(src)
+        revision = None
+        files = copy_tracked_tree(src)
+    # Fresh: both directories were just created by os.mkdir (it fails on an
+    # existing one), so a retry never links an earlier -- possibly wrapped --
+    # build's artifacts (round 6).
     origins, foreign = effective_config(cargo, env, src)
     if foreign:
         subprocess.run(["rm", "-rf", "--", base], check=False)
@@ -552,7 +595,7 @@ def begin(record_path):
             fail(f"{' '.join(cmd)} failed: {r.stderr.strip()[-300:]}")
         return r.stdout.strip()
     rec = {
-        "schema": SCHEMA,
+        "schema": HOST_SCHEMA if host else SCHEMA,
         "controlled": True,
         "toolchain": {"channel": chan, "cargo": cargo, "cargo_sha256": sha256(cargo),
                       "cargo_version": first([cargo, "-V"]), "rustc": rustc,
@@ -576,9 +619,11 @@ def begin(record_path):
         "artifacts": {},
         "proof": new_proof(parent, base),
     }
+    if host:
+        rec["source_revision"] = revision
     write(record_path, rec)
     print(f"[guest-build-env] controlled: toolchain {chan} "
-          f"({rec['toolchain']['rustc_vV'].splitlines()[0]}), a private copy of the tree's "
+          f"({rec['toolchain']['rustc_vV'].splitlines()[0]}), {"a fresh clone" if host else "a private copy"} of the tree's "
           f"{files} tracked files, fresh CARGO_HOME and target dir under {base}, effective "
           f"config only from {origins or ['(none)']}")
 
@@ -644,18 +689,52 @@ def new_proof(parent, base):
     return {"schema": PROOF_SCHEMA, "id": pid, "hmac": ""}
 
 
-def proof_problems(rec, what):
+def own_builder():
+    """(uid, parent) of the process running: the builder identity a RUNNER-side
+    judge (the manifest step, run by the account that built) expects."""
+    parent = os.environ.get("AXON_GUEST_BUILD_PARENT") or os.path.join(
+        builder_home(), ".cache", "axon-guest-build")
+    return os.geteuid(), parent
+
+
+def builder_pin(path=BUILDER_PIN):
+    """((uid, parent), why-not): the operator's pin of who builds and where the
+    builder-private parent is. An operator file (root-owned chain, no symlink,
+    not group/other-writable), schema-checked, absolute clean parent."""
+    why = operator_file_problem(path)
+    if why:
+        return None, f"the builder pin {path} is not the operator's: {why}"
+    try:
+        with open(path, "rb") as f:
+            pin = json.loads(f.read(1 << 16))
+    except (OSError, ValueError) as e:
+        return None, f"the builder pin {path} is unreadable: {e}"
+    uid, parent = (pin.get("uid"), pin.get("parent")) if isinstance(pin, dict) else (None, None)
+    if (not isinstance(pin, dict) or pin.get("schema") != BUILDER_PIN_SCHEMA or not isinstance(uid, int)
+            or isinstance(uid, bool) or uid < 0 or not isinstance(parent, str) or not os.path.isabs(parent)
+            or os.path.normpath(parent) != parent):
+        return None, f"the builder pin {path} is not a {BUILDER_PIN_SCHEMA} naming a uid and an absolute parent"
+    return (uid, parent), ""
+
+
+def proof_problems(rec, what, builder=None):
     """Why `rec` (a controlled-build record, `what` names it) is not the one
-    this build's runner wrote: no proof, a proof under another key, or any
-    field edited after the runner signed it (empty: it holds). A hand-written
-    record, or the record of a build made elsewhere, cannot carry it: the key
-    never leaves the builder-private parent. Residual: whoever holds the
-    builder account can sign anything."""
+    the PINNED builder's runner wrote: no proof, a proof under another key, or
+    any field edited after the runner signed it (empty: it holds). `builder` is
+    (uid, parent) from the operator's pin (or the judging process's own
+    identity). The key is looked up under THAT parent and must be owned by
+    THAT uid: the record's own `builder_uid` and `build_parent` are never read
+    to find it, so a record naming another account and its own private
+    directory (round 6: uid 65534, a directory only it could write) finds no
+    key at the pinned place and is refused. Residual: whoever can act as the
+    pinned builder account (or write into its private parent) can sign anything."""
     pr = rec.get("proof") if isinstance(rec, dict) else None
     if (not isinstance(pr, dict) or pr.get("schema") != PROOF_SCHEMA
             or not isinstance(pr.get("hmac"), str) or not re.fullmatch(r"[0-9a-f]{64}", pr["hmac"])):
         return f"the {what} record carries no builder proof (a record the controlled runner did not write)"
-    key, why = proof_key(rec.get("build_parent"), pr.get("id"), rec.get("builder_uid"))
+    if not (isinstance(builder, tuple) and len(builder) == 2):
+        return "no operator builder identity to judge the proof against (the builder pin is absent)"
+    key, why = proof_key(builder[1], pr.get("id"), builder[0])
     if why:
         return f"the {what} record's proof cannot be checked: {why}"
     if not hmac.compare_digest(hmac.new(key, proof_payload(rec), "sha256").hexdigest(), pr["hmac"]):
@@ -684,12 +763,16 @@ def load(path):
     return rec
 
 
-def invocation(args, rustflags):
-    """The INVOCATIONS entry these exact args and RUSTFLAGS are, or None."""
-    for name, a, rf in INVOCATIONS:
+def invocation(args, rustflags, table=None):
+    """The table entry these exact args and RUSTFLAGS are, or None."""
+    for name, a, rf in (INVOCATIONS if table is None else table):
         if a == args and rf == rustflags:
             return name
     return None
+
+
+def table_of(rec):
+    return HOST_INVOCATIONS if isinstance(rec, dict) and rec.get("schema") == HOST_SCHEMA else INVOCATIONS
 
 
 def config_now(rec):
@@ -702,19 +785,15 @@ def config_at_begin(rec):
     return {"origins": ec.get("origins"), "foreign": ec.get("foreign")}
 
 
-def run_cargo(record_path, argv):
-    rustflags = None
-    if argv[:1] == ["--rustflags"]:
-        rustflags, argv = argv[1], argv[2:]
-    if argv[:1] != ["--"]:
-        fail("usage: cargo RECORD [--rustflags FLAGS] -- CARGO-ARGS...")
-    args = argv[1:]
-    name = invocation(args, rustflags)
-    if name is None:
-        fail(f"cargo {args} with RUSTFLAGS {rustflags!r} is not a controlled guest build "
-             "invocation (scripts/guest_build_env.py INVOCATIONS): extra arguments or flags "
-             "could put a wrapper, linker or config between the sources and the bytes")
+def cargo_step(record_path, args, rustflags):
+    """One controlled cargo invocation; returns cargo's exit code."""
     rec = load(record_path)
+    name = invocation(args, rustflags, table_of(rec))
+    if name is None:
+        kind = "host" if rec.get("schema") == HOST_SCHEMA else "guest"
+        fail(f"cargo {args} with RUSTFLAGS {rustflags!r} is not a controlled {kind} build "
+             "invocation (scripts/guest_build_env.py INVOCATIONS / HOST_INVOCATIONS): extra arguments or "
+             "flags could put a wrapper, linker or config between the sources and the bytes")
     env = controlled_env(rec, rustflags)
     # Cargo re-reads its config on EVERY invocation: hold it to begin's before
     # this one starts and after it ends (round 4b, finding 1).
@@ -729,7 +808,89 @@ def run_cargo(record_path, argv):
     write(record_path, rec)
     if after != config_at_begin(rec):
         fail(f"cargo's effective configuration changed DURING `{name}`: {after}")
-    sys.exit(r.returncode)
+    return r.returncode
+
+
+def run_cargo(record_path, argv):
+    rustflags = None
+    if argv[:1] == ["--rustflags"]:
+        rustflags, argv = argv[1], argv[2:]
+    if argv[:1] != ["--"]:
+        fail("usage: cargo RECORD [--rustflags FLAGS] -- CARGO-ARGS...")
+    sys.exit(cargo_step(record_path, argv[1:], rustflags))
+
+
+def host_build(outdir):
+    """The controlled build of the host binaries: a fresh standalone clone of
+    the tree's HEAD, a fresh EMPTY target dir and CARGO_HOME, the constructed
+    environment (fixed PATH, the pinned rustc, no inherited variable), cargo's
+    effective config held to begin's, the one HOST_INVOCATIONS entry. Writes the
+    binaries and a SIGNED record naming each digest, the clone's revision and
+    the linker's identity to `outdir` (which must not exist)."""
+    if os.path.lexists(outdir):
+        fail(f"{outdir} exists: the host build writes a new directory")
+    os.makedirs(outdir, mode=0o755)
+    rec_path = os.path.join(outdir, HOST_RECORD)
+    begin(rec_path, host=True)
+    name, args, rf = HOST_INVOCATIONS[0]
+    rc = cargo_step(rec_path, args, rf)
+    rec = load(rec_path)
+    if rc != 0:
+        fail(f"the controlled host build failed (cargo exit {rc}); its record is {rec_path}")
+    arts = {}
+    for n in HOST_BINARIES:
+        src = os.path.join(rec["target_dir"], "release", n)
+        if not os.path.isfile(src):
+            fail(f"the controlled host build produced no {n}")
+        dst = os.path.join(outdir, n)
+        shutil.copyfile(src, dst)
+        os.chmod(dst, 0o755)
+        arts[n] = sha256(dst)
+    rec["artifacts"] = arts
+    write(rec_path, rec)
+    base = os.path.dirname(rec["target_dir"])
+    if os.path.basename(base).startswith("axon-host-build-") and os.path.dirname(base) == rec["build_parent"]:
+        subprocess.run(["rm", "-rf", "--", base], check=False)
+    print(f"[guest-build-env] host build: {', '.join(HOST_BINARIES)} at revision {rec['source_revision']} -> {outdir}")
+
+
+def host_record_problems(outdir, builder, commit=None):
+    """Why `outdir` is not the output of a controlled host build by the pinned
+    builder (empty: it is): the record's structure (one fixed invocation, a
+    constructed environment, a fresh clone), the pinned builder's proof, each
+    binary's digest FROM THE RECORD against the file, and (when given) the
+    revision the kit deploys."""
+    try:
+        with open(os.path.join(outdir, HOST_RECORD)) as f:
+            rec = json.load(f)
+    except (OSError, ValueError) as e:
+        return (f"{outdir} holds no readable {HOST_RECORD} ({e}): the host binaries come from "
+                "`guest_build_env.py host-build`, never from a directory somebody names")
+    if not isinstance(rec, dict) or rec.get("schema") != HOST_SCHEMA:
+        return f"{HOST_RECORD} is not a {HOST_SCHEMA} record"
+    why = shape_problems(rec)
+    if why:
+        return f"the host build record is not a controlled build's: {why}"
+    if [b.get("name") for b in rec.get("builds") or []] != [n for n, _, _ in HOST_INVOCATIONS]:
+        return "the host build record is not exactly the one controlled host invocation"
+    rev = rec.get("source_revision")
+    if not isinstance(rev, str) or not re.fullmatch(r"[0-9a-f]{40}", rev) or (commit and rev != commit):
+        return f"the host build was made from revision {rev!r}, not {commit}"
+    arts = rec.get("artifacts")
+    if (not isinstance(arts, dict) or sorted(arts) != sorted(HOST_BINARIES)
+            or not all(isinstance(v, str) and re.fullmatch(r"[0-9a-f]{64}", v) for v in arts.values())):
+        return f"the host build record names no digest for exactly {list(HOST_BINARIES)}"
+    why = proof_problems(rec, "host build", builder)
+    if why:
+        return why
+    for n, d in arts.items():
+        p = os.path.join(outdir, n)
+        if not os.path.isfile(p) or os.path.islink(p) or sha256(p) != d:
+            return f"{n} is not the bytes the controlled host build recorded ({d})"
+    extra = sorted(set(os.listdir(outdir)) - set(HOST_BINARIES) - {HOST_RECORD})
+    if extra:
+        return f"{outdir} holds files the controlled host build did not make: {extra}"
+    return ""
 
 
 def built_path(rec, triple, profile, name):
@@ -767,12 +928,13 @@ def dist_record(record_path, dist):
     write(record_path, rec)
 
 
-def dist_problems(dist, benv, kbuild):
+def dist_problems(dist, benv, kbuild, builder=None):
     """Why a dist directory is not what the build records say their runner
     produced (empty: it is): each file's digest from the RECORD, never from
     the file, and both records' proofs. `kbuild` may be None (a rootfs-only
     build has no kernel record: the freeze refuses it later)."""
-    why = proof_problems(benv, "build")
+    builder = own_builder() if builder is None else builder
+    why = proof_problems(benv, "build", builder)
     if why:
         return why
     want = dict(benv.get("dist") or {})
@@ -780,7 +942,7 @@ def dist_problems(dist, benv, kbuild):
         return "the build record names no digest for every dist artifact (`guest_build_env.py dist` was not run)"
     pairs = list(want.items())
     if kbuild is not None:
-        why = proof_problems(kbuild, "kernel build")
+        why = proof_problems(kbuild, "kernel build", builder)
         if why:
             return why
         pairs += [("vmlinux", kbuild.get("vmlinux_sha256")),
@@ -927,7 +1089,7 @@ def entry_problems(rec, b):
     """Why one recorded cargo invocation is not a controlled one."""
     if not isinstance(b, dict):
         return "a recorded build is not an object"
-    if b.get("name") is None or invocation(b.get("args"), b.get("rustflags")) != b.get("name"):
+    if b.get("name") is None or invocation(b.get("args"), b.get("rustflags"), table_of(rec)) != b.get("name"):
         return (f"recorded build {b.get('name')!r} ran cargo {b.get('args')} with RUSTFLAGS "
                 f"{b.get('rustflags')!r}, not its controlled invocation")
     if b.get("config_before") != config_at_begin(rec) or b.get("config_after") != config_at_begin(rec):
@@ -939,8 +1101,9 @@ def entry_problems(rec, b):
 def shape_problems(rec):
     """Why `rec` is not a controlled-build record (empty: it is one). The
     judgement the freeze applies; the manifest embeds the record verbatim."""
-    if not isinstance(rec, dict) or rec.get("schema") != SCHEMA or rec.get("controlled") is not True:
-        return f"it is not a {SCHEMA} record of a controlled build"
+    if (not isinstance(rec, dict) or rec.get("schema") not in (SCHEMA, HOST_SCHEMA)
+            or rec.get("controlled") is not True):
+        return f"it is not a {SCHEMA} or {HOST_SCHEMA} record of a controlled build"
     tc = rec.get("toolchain")
     env = rec.get("env")
     if (not isinstance(tc, dict) or not isinstance(env, dict) or not tc.get("rustc_vV")
@@ -1103,7 +1266,7 @@ def toolchain_pin_problems(man, required, pin_path=TOOLCHAIN_PIN):
     return ""
 
 
-def image_problems(man, pin_required=False):
+def image_problems(man, pin_required=False, builder=None):
     """Why a guest manifest has a component produced outside the controlled
     build (empty: none). The judge the freeze applies to the WHOLE image,
     after the record's own judge (shape_problems) and its binding of the three
@@ -1114,6 +1277,10 @@ def image_problems(man, pin_required=False):
     rec = (man.get("source") or {}).get("build_environment")
     if not isinstance(rec, dict):
         return "it records no build environment"
+    if builder is None:
+        builder, why = builder_pin()
+        if why:
+            return why
     names = [b.get("name") for b in rec.get("builds") or []]
     if names != [n for n, _, _ in PROTECTED_BUILDS]:
         return f"its binaries were built by {names}, not exactly the protected builds in order"
@@ -1129,8 +1296,8 @@ def image_problems(man, pin_required=False):
     # Last: the records are the runner's own. A structure that holds is not
     # authorship -- a hand-written record naming a foreign binary's digests has
     # every field the judges above read.
-    return (proof_problems(rec, "build")
-            or proof_problems((man.get("kernel") or {}).get("build_environment"), "kernel build"))
+    return (proof_problems(rec, "build", builder)
+            or proof_problems((man.get("kernel") or {}).get("build_environment"), "kernel build", builder))
 
 
 def discard(record_path):
@@ -1159,14 +1326,31 @@ def main():
         kernel(a[1], a[2], a[3])
     elif a[:1] == ["dist"] and len(a) == 3:
         dist_record(a[1], a[2])
-    elif a[:1] == ["check-host-build"] and len(a) in (2, 4) and (len(a) == 2 or a[2] == "--cargo"):
-        why = host_build_problems(os.path.realpath(a[1]), a[3] if len(a) == 4 else None)
+    elif a[:1] == ["host-build"] and len(a) == 2:
+        host_build(a[1])
+    elif a[:1] == ["check-host-record"] and len(a) >= 2:
+        # check-host-record DIR [--commit SHA] (--builder-uid N --builder-parent P | --builder-pin)
+        opts = dict(zip(a[2::2], a[3::2]))
+        if len(a) % 2 != 0 or set(opts) - {"--commit", "--builder-uid", "--builder-parent"}:
+            sys.exit(__doc__)
+        if "--builder-uid" in opts and "--builder-parent" in opts and opts["--builder-uid"].isdigit():
+            builder = (int(opts["--builder-uid"]), opts["--builder-parent"])
+        else:
+            builder, why = builder_pin()
+            if why:
+                fail(why)
+        why = host_record_problems(os.path.realpath(a[1]), builder, opts.get("--commit"))
         if why:
-            fail("the host binaries' build environment is not the tree's own (a wrapper, rustc, "
-                 "rustflags, linker, replaced source or ambient config could stand between the "
-                 "sources and the bytes):\n  " + "\n  ".join(why))
-        print("[guest-build-env] host build environment: cargo's effective config for the clone is "
-              "only its own committed config, and no compiler, wrapper, flag or linker variable is set")
+            fail(why)
+        print(f"[guest-build-env] host binaries in {a[1]} are the controlled host build's")
+    elif a[:1] == ["check-host-build"] and len(a) in (2, 4) and (len(a) == 2 or a[2] == "--cargo"):
+        why = host_config_problems(os.path.realpath(a[1]), a[3] if len(a) == 4 else None)
+        if why:
+            fail("the host binaries' build configuration is not the tree's own (a wrapper, rustc, "
+                 "rustflags, linker or replaced source in an ancestor or CARGO_HOME config could stand "
+                 "between the sources and the bytes):\n  " + "\n  ".join(why))
+        print("[guest-build-env] host build configuration: cargo's effective config for the clone, in "
+              "the constructed environment, is only its own committed config")
     elif a[:1] == ["discard"] and len(a) == 2:
         discard(a[1])
     elif a[:1] == ["toolchain-pin"] and len(a) == 2:

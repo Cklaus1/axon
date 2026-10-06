@@ -96,11 +96,15 @@ const CRT: &str = "-C target-feature=+crt-static";
 /// The recorded ancestors of the fixture parent, as the filesystem has them
 /// (the tests run as root: each only root's).
 fn ancestors() -> serde_json::Value {
+    ancestors_for(parent())
+}
+
+fn ancestors_for(path: &str) -> serde_json::Value {
     use std::os::unix::fs::MetadataExt;
     let mut out = vec![];
     let mut cur = PathBuf::from("/");
     let mut parts = vec![cur.clone()];
-    for c in Path::new(parent()).components().skip(1) {
+    for c in Path::new(path).components().skip(1) {
         cur.push(c);
         parts.push(cur.clone());
     }
@@ -367,6 +371,7 @@ fn clone(d: &Path) -> PathBuf {
         &pin_file(&r),
         &operator_pin_of(&manifest_value(clean_source())).to_string(),
     );
+    write(&builder_pin_file(&r), &builder_pin_doc(0, parent()));
     r
 }
 
@@ -384,6 +389,18 @@ const WRAPPERS: [&str; 4] = [
 /// (outside the clone): beside it. Absent: no pin is installed.
 fn pin_file(root: &Path) -> PathBuf {
     root.parent().unwrap().join("host-toolchain-pin.json")
+}
+
+/// Where a test puts the operator's BUILDER pin (round 6, amendment 86: who
+/// builds and where its proof keys live), beside the clone. Absent: none.
+fn builder_pin_file(root: &Path) -> PathBuf {
+    root.parent().unwrap().join("builder-pin.json")
+}
+
+/// The builder pin naming this fixture's builder: uid 0 (the tests run as root)
+/// and the per-process fixture parent.
+fn builder_pin_doc(uid: u64, parent: &str) -> String {
+    json!({"schema": "axon-builder-pin/1", "uid": uid, "parent": parent}).to_string()
 }
 
 /// The operator's pin of the clean fixture's host tools, as the deployment
@@ -432,10 +449,14 @@ fn freeze_cmd(root: &Path) -> Command {
              if [ -e \"$1\" ]; then cp \"$1\" /etc/axon/host-toolchain-pin.json; \
              chown \"${PIN_OWNER:-0}\" /etc/axon/host-toolchain-pin.json; \
              chmod \"${PIN_MODE:-0644}\" /etc/axon/host-toolchain-pin.json; fi; \
-             shift; exec \"$@\""
+             if [ -e \"$2\" ]; then cp \"$2\" /etc/axon/builder-pin.json; \
+             chown \"${BPIN_OWNER:-0}\" /etc/axon/builder-pin.json; \
+             chmod \"${BPIN_MODE:-0644}\" /etc/axon/builder-pin.json; fi; \
+             shift 2; exec \"$@\""
                 .as_ref(),
             "sh".as_ref(),
             pin.as_os_str(),
+            builder_pin_file(root).as_os_str(),
         ],
         "python3",
         root.join("scripts/v022_freeze_manifest.py"),
@@ -805,6 +826,118 @@ fn a_guest_build_record_its_runner_did_not_sign_does_not_freeze() {
     }
     write(&r.join(MANIFEST), &manifest(clean_source()));
     assert!(freeze(&r).is_ok(), "control: the signed image freezes");
+}
+
+/// C9 round 6 (FIELD-ORIGIN, blocker 1; amendment 86). The proof used to take
+/// the builder's uid and key directory from the record being judged, so anyone
+/// with ANY private directory signed a record the freeze accepted (executed by
+/// the reviewer as 65534 under its own directory). The judge now takes both
+/// from the operator's builder pin. Each case below is a record or a pin the
+/// freeze must refuse, by that and nothing else; control: the honest fixture
+/// freezes under its own pin.
+#[test]
+fn a_guest_build_record_of_another_account_or_a_wrong_pin_does_not_freeze() {
+    use std::os::unix::fs::PermissionsExt;
+    let d = tempfile::tempdir().unwrap();
+    let r = clone(d.path());
+    // The forger: uid 65534 and a private directory of its own, key included.
+    let forge = format!("{}/forge", parent());
+    std::fs::create_dir_all(format!("{forge}/keys")).unwrap();
+    assert_not_real_parent(Path::new(&forge));
+    let fkey = "f".repeat(64);
+    for (path, mode) in [(forge.clone(), 0o700), (format!("{forge}/keys"), 0o700)] {
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).unwrap();
+        std::os::unix::fs::chown(&path, Some(65534), Some(65534)).unwrap();
+    }
+    for id in ["axon-guest-build-x", "axon-kernel-build-x"] {
+        let k = format!("{forge}/keys/{id}.key");
+        let _ = std::fs::remove_file(&k);
+        std::fs::write(&k, &fkey).unwrap();
+        std::fs::set_permissions(&k, std::fs::Permissions::from_mode(0o400)).unwrap();
+        std::os::unix::fs::chown(&k, Some(65534), Some(65534)).unwrap();
+    }
+    let forged = |rec: serde_json::Value, id: &str| {
+        let mut v: serde_json::Value =
+            serde_json::from_str(&rec.to_string().replace(parent(), &forge)).unwrap();
+        v["builder_uid"] = json!(65534);
+        v["build_parent_ancestors"] = ancestors_for(&forge);
+        sign_with(&mut v, id, fkey.as_bytes());
+        v
+    };
+    let mut m = manifest_value(clean_source());
+    m["source"]["build_environment"] = forged(
+        m["source"]["build_environment"].clone(),
+        "axon-guest-build-x",
+    );
+    m["kernel"]["build_environment"] = forged(
+        m["kernel"]["build_environment"].clone(),
+        "axon-kernel-build-x",
+    );
+    write(&r.join(MANIFEST), &m.to_string());
+    let got = freeze(&r);
+    assert!(
+        got.is_err(),
+        "ATTACK: the freeze bound a guest image whose build record was signed by another account \
+         under its own private directory: {got:?}"
+    );
+    assert!(got.unwrap_err().contains("does not hold"));
+    // ... and the pin is the ONLY barrier: a pin naming the forger accepts it.
+    write(&builder_pin_file(&r), &builder_pin_doc(65534, &forge));
+    let pinned = freeze(&r);
+    assert!(
+        pinned.is_ok(),
+        "control: a judge pinned to the forger accepts its record (the operator's pin is what matters): {pinned:?}"
+    );
+    // The honest record under pins that are not the builder's.
+    write(&r.join(MANIFEST), &manifest(clean_source()));
+    for (attack, doc, why) in [
+        (
+            "a pin naming another uid",
+            builder_pin_doc(4242, parent()),
+            "cannot be checked",
+        ),
+        (
+            "a pin naming another parent",
+            builder_pin_doc(0, &forge),
+            "cannot be checked",
+        ),
+        (
+            "a pin that is not a builder pin",
+            "{\"uid\": 0}".to_string(),
+            "is not a axon-builder-pin/1",
+        ),
+    ] {
+        write(&builder_pin_file(&r), &doc);
+        let got = freeze(&r);
+        assert!(
+            got.is_err(),
+            "ATTACK: the freeze bound the image under {attack}: {got:?}"
+        );
+        assert!(got.as_ref().unwrap_err().contains(why), "{attack}: {got:?}");
+    }
+    // No pin at all; one owned by another uid; one anyone can write.
+    write(&builder_pin_file(&r), &builder_pin_doc(0, parent()));
+    std::fs::remove_file(builder_pin_file(&r)).unwrap();
+    let got = freeze(&r);
+    assert!(
+        got.is_err() && got.as_ref().unwrap_err().contains("builder pin"),
+        "ATTACK: the freeze bound a guest image with no operator builder pin: {got:?}"
+    );
+    write(&builder_pin_file(&r), &builder_pin_doc(0, parent()));
+    for (owner, mode) in [("4242", "0644"), ("0", "0666")] {
+        let o = freeze_cmd(&r)
+            .env("BPIN_OWNER", owner)
+            .env("BPIN_MODE", mode)
+            .output()
+            .unwrap();
+        assert!(
+            !o.status.success()
+                && String::from_utf8_lossy(&o.stderr).contains("is not the operator's"),
+            "ATTACK: the freeze accepted a builder pin owned by uid {owner} with mode {mode}: {}",
+            String::from_utf8_lossy(&o.stderr)
+        );
+    }
+    assert!(freeze(&r).is_ok(), "control: the honest pin freezes");
 }
 
 type ManifestEdit = Box<dyn Fn(&mut serde_json::Value)>;

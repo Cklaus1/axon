@@ -3483,10 +3483,10 @@ MUTATIONS += [
      '    if after != config_at_begin(rec):\n', '    if False:\n',
      'axon-fabric', _GBT, 'a_cargo_config_written_during_a_guest_build_step_fails_that_step'),
     ('M1184', 'FIELD-ORIGIN (4b-2): a guest cargo step runs only an invocation of the table, exactly (args and RUSTFLAGS)', _GE,
-     '    if name is None:\n        fail(f"cargo {args}', '    if False:\n        fail(f"cargo {args}',
+     '    if name is None:\n        kind = "host"', '    if False:\n        kind = "host"',
      'axon-fabric', _GBT, 'a_guest_cargo_step_with_extra_flags_or_args_is_refused'),
     ('M1185', "EVIDENCE (4b-2): the judge holds every recorded cargo invocation to its table entry", _GE,
-     '    if b.get("name") is None or invocation(b.get("args"), b.get("rustflags")) != b.get("name"):\n',
+     '    if b.get("name") is None or invocation(b.get("args"), b.get("rustflags"), table_of(rec)) != b.get("name"):\n',
      '    if False:\n',
      'axon-fabric', _FMT, 'a_recorded_guest_build_with_other_args_or_flags_does_not_freeze'),
     ('M1186', "EVIDENCE (4b-1): the judge requires each invocation's config check before AND after, equal to begin's", _GE,
@@ -7092,7 +7092,7 @@ _BE = '--test guest_build_env'
 _BS = 'crates/axon-fabric/src/build_state.rs'
 _RP = 'a_build_record_its_runner_did_not_sign_is_refused'
 _CFG = 'a_config_key_is_judged_by_its_structured_path_not_by_the_text_cargo_prints'
-_HOST = 'an_ambient_host_build_under_a_wrapper_flag_or_config_is_refused'
+_HOST = 'the_host_build_configuration_is_judged_in_a_constructed_environment'
 _DIST = 'a_dist_file_the_controlled_runner_did_not_produce_is_refused'
 _FSG = 'a_guest_build_record_its_runner_did_not_sign_does_not_freeze'
 _PRODB = 'a_production_build_under_a_wrapper_rustflags_or_linker_does_not_happen'
@@ -7108,13 +7108,13 @@ MUTATIONS += [
     ('M1882', 'FIELD-ORIGIN (5): a variable that names a compiler, wrapper, flags or linker in the build environment is refused', _GE,
      '    foreign = [f"environment variable {n} is set: it could stand between the sources and the bytes"\n               for n in sorted(env) if not env_ok(n)]\n',
      '    foreign = []\n',
-     'axon-fabric', _BE, _HOST),
+     'axon-fabric', _BE, _CFG),
     ('M1883', 'FIELD-ORIGIN (5): the host triple is the one `rustc -vV` reports, not a constant', _GE,
      '            return line[len("host: "):].strip() or None\n',
      '            return "x86_64-unknown-linux-gnu"\n',
      'axon-fabric', _BE, _CFG),
-    ('M1884', 'FIELD-ORIGIN (5): an ambient host build refuses every CARGO_* variable but CARGO_HOME and CARGO_TARGET_DIR', _GE,
-     'HOST_ENV_PREFIXES = ("CARGO_", "RUSTC",', 'HOST_ENV_PREFIXES = ("CARGO_X", "RUSTC",',
+    ('M1884', 'FIELD-ORIGIN (5, retargeted in round 6): the host build\'s config check applies the effective-config classifier, in a constructed environment', _GE,
+     '        return effective_config(cargo, env, clone)[1]\n', '        return []\n',
      'axon-fabric', _BE, _HOST),
     ('M1885', 'FIELD-ORIGIN (5): a cargo that cannot print its config refuses the build (never reads as no config)', _GE,
      '    if not isinstance(tree, dict):\n        return [], sorted(set(foreign + [f"cargo config get --format json failed: {j.stderr.strip()[-300:]}"]))\n',
@@ -7149,16 +7149,16 @@ MUTATIONS += [
      '        if not os.path.isfile(p):\n',
      'axon-fabric', _BE, _DIST),
     ('M1893', 'BUILD-RECORD (5): the manifest takes dist digests only from a record carrying its runner\'s proof', _GE,
-     '    why = proof_problems(benv, "build")\n    if why:\n        return why\n    want = dict(benv.get("dist") or {})\n',
+     '    why = proof_problems(benv, "build", builder)\n    if why:\n        return why\n    want = dict(benv.get("dist") or {})\n',
      '    want = dict(benv.get("dist") or {})\n',
      'axon-fabric', _BE, _DIST),
     ('M1894', 'BUILD-RECORD (5): the freeze refuses a build record its runner did not sign', _GE,
-     '    return (proof_problems(rec, "build")\n            or proof_problems((man.get("kernel") or {}).get("build_environment"), "kernel build"))\n',
-     '    return proof_problems((man.get("kernel") or {}).get("build_environment"), "kernel build")\n',
+     '    return (proof_problems(rec, "build", builder)\n            or proof_problems((man.get("kernel") or {}).get("build_environment"), "kernel build", builder))\n',
+     '    return proof_problems((man.get("kernel") or {}).get("build_environment"), "kernel build", builder)\n',
      'axon-fabric', '--test freeze_manifest', _FSG),
     ('M1895', 'BUILD-RECORD (5): the freeze refuses a kernel build record its runner did not sign', _GE,
-     '    return (proof_problems(rec, "build")\n            or proof_problems((man.get("kernel") or {}).get("build_environment"), "kernel build"))\n',
-     '    return proof_problems(rec, "build")\n',
+     '    return (proof_problems(rec, "build", builder)\n            or proof_problems((man.get("kernel") or {}).get("build_environment"), "kernel build", builder))\n',
+     '    return proof_problems(rec, "build", builder)\n',
      'axon-fabric', '--test freeze_manifest', _FSG),
     ('M1896', 'BUILD-RECORD (5): the proof covers every field of the record', _GE,
      '    body = {k: v for k, v in rec.items() if k != "proof"}\n',
@@ -7470,6 +7470,73 @@ MUTATIONS += [
      '    if !a.test || c.private_reply_channel {\n', '    if false {\n',
      'axon-fabric', '--test observer_service', _RACE),
 ]
+
+
+# ── C9 round 6, workstream BUILDENV2 (amendment 86; M2080-M2119) ─────────────
+# The build-record proof took the builder's uid and key directory FROM THE
+# RECORD it judged (a record naming uid 65534 and its own private directory
+# passed); the judge now looks the key up under the OPERATOR's pinned parent,
+# owned by the pinned uid. The host binaries are built by a controlled step
+# (a retry in the same target dir used to link dependencies a wrapper had
+# compiled) and judged through a signed host-build record.
+PSV_IDS |= {f"M{n}" for n in range(2080, 2120)}
+_HF = 'a_host_build_directory_the_pinned_builder_did_not_make_is_refused'
+_HE = 'a_callers_wrapper_flags_or_planted_cc_never_reach_the_controlled_host_build'
+_FA = 'a_guest_build_record_of_another_account_or_a_wrong_pin_does_not_freeze'
+MUTATIONS += [
+    ('M2080', 'BUILD-RECORD (6): the proof key is looked up under the PINNED parent and uid, never the record\'s own', _GE,
+     '    key, why = proof_key(builder[1], pr.get("id"), builder[0])\n',
+     '    key, why = proof_key(rec.get("build_parent"), pr.get("id"), rec.get("builder_uid"))\n',
+     'axon-fabric', _BE, _RP),
+    ('M2081', 'BUILD-RECORD (6): the builder pin is an operator file (root-owned chain, not group/other-writable)', _GE,
+     '    why = operator_file_problem(path)\n    if why:\n        return None, f"the builder pin {path} is not the operator\'s: {why}"\n',
+     '    why = ""\n    if why:\n        return None, f"the builder pin {path} is not the operator\'s: {why}"\n',
+     'axon-fabric', '--test freeze_manifest', _FA),
+    ('M2082', 'HOST-BUILD (6): a host build record is exactly the one controlled invocation', _GE,
+     '    if [b.get("name") for b in rec.get("builds") or []] != [n for n, _, _ in HOST_INVOCATIONS]:\n',
+     '    if False:\n',
+     'axon-fabric', _BE, _HF),
+    ('M2083', 'HOST-BUILD (6): the host build is of the revision the kit deploys', _GE,
+     '    if not isinstance(rev, str) or not re.fullmatch(r"[0-9a-f]{40}", rev) or (commit and rev != commit):\n',
+     '    if not isinstance(rev, str) or not re.fullmatch(r"[0-9a-f]{40}", rev):\n',
+     'axon-fabric', _BE, _HF),
+    ('M2084', 'HOST-BUILD (6): the host record names a digest for exactly the four binaries', _GE,
+     '    if (not isinstance(arts, dict) or sorted(arts) != sorted(HOST_BINARIES)\n',
+     '    if (not isinstance(arts, dict) or False\n',
+     'axon-fabric', _BE, _HF),
+    ('M2085', 'HOST-BUILD (6): each host binary is the bytes the record names', _GE,
+     '        if not os.path.isfile(p) or os.path.islink(p) or sha256(p) != d:\n',
+     '        if not os.path.isfile(p) or os.path.islink(p):\n',
+     'axon-fabric', _BE, _HF),
+    ('M2086', 'HOST-BUILD (6): a host binary is a regular file, never a symlink', _GE,
+     '        if not os.path.isfile(p) or os.path.islink(p) or sha256(p) != d:\n',
+     '        if not os.path.isfile(p) or sha256(p) != d:\n',
+     'axon-fabric', _BE, _HF),
+    ('M2087', 'HOST-BUILD (6): a host build directory holds only the binaries and the record', _GE,
+     '    if extra:\n        return f"{outdir} holds files the controlled host build did not make: {extra}"\n',
+     '    if False:\n        return f"{outdir} holds files the controlled host build did not make: {extra}"\n',
+     'axon-fabric', _BE, _HF),
+    ('M2088', 'HOST-BUILD (6): the host record carries the pinned builder\'s proof', _GE,
+     '    why = proof_problems(rec, "host build", builder)\n    if why:\n        return why\n',
+     '    why = ""\n    if why:\n        return why\n',
+     'axon-fabric', _BE, _HF),
+    ('M2089', 'HOST-BUILD (6): cargo runs in the environment the build constructs, never the caller\'s (host build)', _GE,
+     '    env = dict(rec["env"])\n', '    env = {**os.environ, **rec["env"]}\n',
+     'axon-fabric', _BE, _HE),
+    ('M2090', 'HOST-BUILD (6): the linker is found on a FIXED PATH, never the caller\'s (a planted cc)', _GE,
+     '"PATH": f"{os.path.dirname(cargo)}:/usr/bin:/bin", "RUSTC": rustc}',
+     '"PATH": f"{os.path.dirname(cargo)}:{os.environ.get(\'PATH\', \'\')}", "RUSTC": rustc}',
+     'axon-fabric', _BE, _HE),
+    ('M2091', 'BUILD-RECORD (6): the proof key must be owned by the pinned builder', _GE,
+     '                or not stat.S_ISREG(st.st_mode) or st.st_uid != builder_uid or st.st_mode & 0o177):\n',
+     '                or not stat.S_ISREG(st.st_mode) or st.st_mode & 0o177):\n',
+     'axon-fabric', _BE, _RP),
+    ('M2092', 'BUILD-RECORD (6): the proof key\'s directory must be owned by the pinned builder', _GE,
+     '        if (not stat.S_ISDIR(dst.st_mode) or dst.st_uid != builder_uid or dst.st_mode & 0o077\n',
+     '        if (not stat.S_ISDIR(dst.st_mode) or dst.st_mode & 0o077\n',
+     'axon-fabric', _BE, _RP),
+]
+# ── end buildenv2 ──
 
 
 def cargo_build_tests(package, target, env=""):

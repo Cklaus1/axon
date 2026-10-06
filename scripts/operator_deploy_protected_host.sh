@@ -70,11 +70,19 @@
 #                           worktree), clean except target/ and dist/, at the commit
 #                           to deploy. Its HEAD is recorded.
 #   --expect-commit SHA     refuse unless the clone's HEAD is exactly SHA (40 hex)
-#   --bin-dir DIR           where `cargo build --release --locked -p axon-fabric --bins`
-#                           (production: no test-trust feature) put axon-fabric,
-#                           axon-protected-launcher, axon-custodian and
-#                           axon-observer, built FROM CLONE at its HEAD (checked
-#                           through the verifier's own report)
+#   --bin-dir DIR           the output directory of the CONTROLLED host build,
+#                           `python3 scripts/guest_build_env.py host-build DIR` run
+#                           from CLONE (amendment 86): axon-fabric,
+#                           axon-protected-launcher, axon-custodian, axon-observer
+#                           and host-build.json, a record SIGNED by the pinned
+#                           builder. A directory without such a record, or one
+#                           whose binaries differ from it, is REFUSED -- however
+#                           clean the binaries' own report looks.
+#   --builder-uid N --builder-parent DIR
+#                           WHO builds (the operator's word, installed as
+#                           /etc/axon/builder-pin.json) and the builder-private
+#                           parent its build records' proof keys live under.
+#                           Required whenever binaries or the guest are judged.
 #   --observer-bin, --observer-interpreter   REFUSED since amendment 68: the
 #                           observer is the axon-observer service from --bin-dir;
 #                           a production Fabric refuses an in-uid observer program
@@ -150,13 +158,14 @@ KEYS_DIR=$ETC/keys
 SUITES_DIR=$ETC/suites
 GRANTS_DIR=$ETC/grants
 TOOLCHAIN_PIN=$ETC/host-toolchain-pin.json
+BUILDER_PIN=$ETC/builder-pin.json
 DEPLOY_LOG=/var/lib/axon-deploy
 UNIT_DIR=/etc/systemd/system
 OBS_MAX_AGE_S=300
 NONCE_MAX_AGE_S=300
 
 STEPS="allowlist users dirs binaries guest data configs verifier systemd loader toolchain fabric-unit check preflight"
-CLONE="" EXPECT="" BIN_DIR="" SUITE_REG="" GRANT_REG=""
+CLONE="" EXPECT="" BIN_DIR="" SUITE_REG="" GRANT_REG="" BUILDER_UID="" BUILDER_PARENT=""
 SIGNER_PUB="" SIGNER_KEY=$KEYS_DIR/fabric-attest.pk8 ISSUER_REF="verifier:fabric"
 AUTH_STORE=/var/lib/axon-loop/store B263_RECORD="" B263_WAIVERS=""
 QUAL_MAX_AGE=2592000 MAX_TIMEOUT=900 MAX_INPUT=268435456
@@ -170,6 +179,8 @@ while [ $# -gt 0 ]; do
     --from) need_arg "$@"; CLONE=$2; shift 2 ;;
     --expect-commit) need_arg "$@"; EXPECT=$2; shift 2 ;;
     --bin-dir) need_arg "$@"; BIN_DIR=$2; shift 2 ;;
+    --builder-uid) need_arg "$@"; BUILDER_UID=$2; shift 2 ;;
+    --builder-parent) need_arg "$@"; BUILDER_PARENT=$2; shift 2 ;;
     --observer-bin|--observer-interpreter)
       refuse "$1: since amendment 68 the observer is the axon-observer SERVICE (its own uid and key, socket-activated, reached only through the root helper's --observe relay), installed from --bin-dir; an observer PROGRAM runs as the Fabric uid, which could read its key, and a production Fabric refuses a host config naming one (observer.command)" ;;
     --suite-registry) need_arg "$@"; SUITE_REG=$2; shift 2 ;;
@@ -279,13 +290,32 @@ cmp -s "$SELF" "$CLONE/scripts/operator_deploy_protected_host.sh" \
   || refuse "this kit ($SELF) is not the clone's own scripts/operator_deploy_protected_host.sh: run the kit at the commit you deploy"
 echo "CLONE $CLONE commit $COMMIT (standalone, clean)"
 
+if { selected binaries || selected guest || selected configs || selected toolchain || selected verifier \
+     || selected loader || selected check || selected preflight; }; then
+  case "$BUILDER_UID" in ''|*[!0-9]*) refuse "--builder-uid N is required (the account that builds the host binaries and the guest image: the operator's word, installed as $BUILDER_PIN; a build record is judged against it, never against what the record says)" ;; esac
+  case "$BUILDER_PARENT" in /*) ;; *) refuse "--builder-parent DIR (absolute) is required: the builder-private directory the build records' proof keys live under" ;; esac
+  [ "$(realpath -m -- "$BUILDER_PARENT")" = "$BUILDER_PARENT" ] || refuse "--builder-parent $BUILDER_PARENT is not a clean absolute path"
+fi
 # ── the binaries: production release builds of THIS commit ───────────────────
 FABRIC_SRC="" HELPER_SRC="" CUST_SRC="" OBS_SRC=""
 need_bins=0
 for s in binaries configs verifier loader check preflight; do selected "$s" && need_bins=1; done
 if [ $need_bins = 1 ]; then
-  [ -n "$BIN_DIR" ] || refuse "--bin-dir DIR is required (the release build of axon-fabric's bins from $CLONE)"
+  [ -n "$BIN_DIR" ] || refuse "--bin-dir DIR is required (the output of \`guest_build_env.py host-build DIR\`, run from $CLONE)"
   BIN_DIR=$(cd "$BIN_DIR" 2>/dev/null && pwd -P) || refuse "--bin-dir: not a directory"
+  # Amendment 86: the binaries are the CONTROLLED host build's, never whatever a
+  # directory holds. Copy the directory aside first (what is judged is what is
+  # installed), then judge the copy: the signed record, the pinned builder, each
+  # binary's digest from the record, the revision.
+  mkdir "$WORK/hostbins" || refuse "cannot create a work directory"
+  for f in "$BIN_DIR"/*; do
+    [ -f "$f" ] && [ ! -L "$f" ] || refuse "$f is not a regular file: a host build directory holds only the binaries and host-build.json"
+    cp -- "$f" "$WORK/hostbins/" || refuse "cannot copy $f"
+  done
+  BIN_DIR=$WORK/hostbins
+  hr=$(python3 -I -B "$CLONE/scripts/guest_build_env.py" check-host-record "$BIN_DIR" --commit "$COMMIT" \
+         --builder-uid "$BUILDER_UID" --builder-parent "$BUILDER_PARENT" 2>&1) \
+    || refuse "the host binaries are not a controlled host build by the pinned builder: $hr"
   FABRIC_SRC=$BIN_DIR/axon-fabric HELPER_SRC=$BIN_DIR/axon-protected-launcher CUST_SRC=$BIN_DIR/axon-custodian
   OBS_SRC=$BIN_DIR/axon-observer
   for b in "$FABRIC_SRC" "$HELPER_SRC" "$CUST_SRC" "$OBS_SRC"; do
@@ -305,7 +335,26 @@ print("; ".join(bad))' "$COMMIT") || refuse "cannot read $FABRIC_SRC's verifier-
   # config from the clone that is only its committed one -- and the verifier's
   # self-report above says build.rs saw no wrapper, rustflags or linker.
   hb=$(python3 -I -B "$CLONE/scripts/guest_build_env.py" check-host-build "$CLONE" 2>&1) \
-    || refuse "the host binaries' ambient build environment is not the tree's own: $hb"
+    || refuse "the host binaries' build configuration is not the tree's own: $hb"
+  # The linker the host build recorded (cc, ld) is the one the guest build
+  # recorded and, once installed, the operator's toolchain pin.
+  ht=$(python3 -I -B - "$BIN_DIR/host-build.json" "$CLONE/dist/guest-linux/manifest.json" "$TOOLCHAIN_PIN" <<'PY'
+import json, os, sys
+rec, man, pin = sys.argv[1:4]
+hb = {n: (t.get("path"), t.get("sha256")) for n, t in (json.load(open(rec)).get("toolchain", {}).get("host_tools") or {}).items()}
+want = {}
+if os.path.isfile(man):
+    tools = (((json.load(open(man)).get("source") or {}).get("build_environment") or {}).get("toolchain") or {}).get("host_tools") or {}
+    want.update({n: (t.get("path"), t.get("sha256")) for n, t in tools.items()})
+if os.path.isfile(pin):
+    want.update({n: (t.get("path"), t.get("sha256")) for n, t in (json.load(open(pin)).get("tools") or {}).items()})
+bad = [f"{n}: the host build recorded {hb.get(n)}, the guest build / toolchain pin has {want[n]}"
+       for n in ("cc", "ld") if n in want and hb.get(n) != want[n]]
+bad += [f"the host build records no {n}" for n in ("cc", "ld") if not hb.get(n, (None, None))[1]]
+print("; ".join(bad))
+PY
+  ) || refuse "cannot compare the host build's linker identity"
+  [ -z "$ht" ] || refuse "the host build's linker is not the one the guest build / operator pin recorded ($ht)"
   pb=$("$HELPER_SRC" --probe 2>/dev/null | python3 -I -c 'import json,sys; print(json.load(sys.stdin).get("build"))' 2>/dev/null)
   [ "$pb" = production ] || refuse "$HELPER_SRC --probe reports build ${pb:-none}, not production (a test-trust helper accepts a caller's --test-config)"
   # A production custodian has no --test-config (it answers with its usage).
@@ -486,9 +535,9 @@ if selected guest || selected configs || selected toolchain; then
   elif ! cmp -s "$MANIFEST_SRC" "$CLONE/profiles/linux-microvm/manifest.json"; then
     blocked "dist/guest-linux/manifest.json is not the committed profiles/linux-microvm/manifest.json: commit the re-pin, then deploy from that commit"
   else
-    gw=$(python3 -I - "$MANIFEST_SRC" "$CLONE/dist/guest-linux" "$FIRECRACKER" "$JAILER" "$CLONE" <<'PY'
+    gw=$(python3 -I - "$MANIFEST_SRC" "$CLONE/dist/guest-linux" "$FIRECRACKER" "$JAILER" "$CLONE" "$BUILDER_UID" "$BUILDER_PARENT" <<'PY'
 import hashlib, importlib.util, json, os, sys
-man, dist, fc, jl, clone = sys.argv[1:6]
+man, dist, fc, jl, clone, buid, bpar = sys.argv[1:8]
 sys.dont_write_bytecode = True
 m = json.load(open(man))
 def sha(p):
@@ -518,7 +567,7 @@ if not bad:
     gs = importlib.util.spec_from_file_location("guest_build_env", os.path.join(clone, "scripts", "guest_build_env.py"))
     g = importlib.util.module_from_spec(gs)
     gs.loader.exec_module(g)
-    why = g.shape_problems(src["build_environment"]) or g.image_problems(m, pin_required=False)
+    why = g.shape_problems(src["build_environment"]) or g.image_problems(m, pin_required=False, builder=(int(buid), bpar))
     if why:
         bad.append(f"the guest build records are not a controlled build's: {why}")
 eng = m.get("engine") or {}
@@ -902,6 +951,20 @@ fi
 
 STEP=toolchain
 if selected toolchain; then
+  echo "== builder pin: $BUILDER_PIN (amendment 86: who builds, and where its proof keys live; read by the freeze)"
+  python3 -I -B - "$CLONE/scripts" "$BUILDER_UID" "$BUILDER_PARENT" "$WORK/builder.json" <<'PY' || { echo "FAIL[$STEP] cannot compute the builder pin"; FAILED=1; }
+import json, sys
+scripts, uid, parent, out = sys.argv[1:5]
+sys.dont_write_bytecode = True
+sys.path.insert(0, scripts)
+import guest_build_env as gbe  # noqa: E402
+json.dump({"schema": gbe.BUILDER_PIN_SCHEMA, "uid": int(uid), "parent": parent,
+           "status": "the OPERATOR's word on who builds the guest image and the host binaries: a build record is "
+                     "judged against this uid and parent (and its proof key must live under this parent), never "
+                     "against what the record says"}, open(out, "w"), indent=2, sort_keys=True)
+open(out, "a").write("\n")
+PY
+  act_install "$WORK/builder.json" "$BUILDER_PIN" root root 0644 show
   echo "== host toolchain pin: $TOOLCHAIN_PIN (amendment 63 operator item; read by the freeze since amendment 65)"
   if [ $GUEST_OK = 1 ]; then
     # ONE extraction: the reader's own (guest_build_env.recorded_host_tools,

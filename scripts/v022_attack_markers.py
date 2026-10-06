@@ -1873,9 +1873,9 @@ ATTACK_MARKERS.update({
 ATTACK_MARKERS.update({
     'M1880': r'ATTACK: a cargo config the guest build would use was accepted \(a single-quoted cfg',
     'M1881': r'ATTACK: a committed key for a triple the build compiles for was tolerated \((host|cfg|musl)\)',
-    'M1882': r'ATTACK: an ambient host build with RUSTC_WRAPPER set was accepted',
+    'M1882': r'ATTACK: a CARGO_\*/RUSTFLAGS variable in the constructed environment was accepted',
     'M1883': r'ATTACK: the host triple is not rustc\'s own',
-    'M1884': r'ATTACK: an ambient host build with CARGO_ENCODED_RUSTFLAGS set was accepted',
+    'M1884': r"ATTACK: a committed cfg target naming a linker passed the host build's config check",
     'M1885': r'ATTACK: a cargo that cannot print its config was read as having none',
     'M1886': r'ATTACK: a guest build record its runner did not sign passed the proof: \["edit:',
     'M1887': r'ATTACK: a guest build record its runner did not sign passed the proof: \["a key another uid can read',
@@ -1922,4 +1922,21 @@ ATTACK_MARKERS.update({
     'M2052': r'ATTACK: a custodian connection that stopped sending held the custodian',
     'M2053': r'ATTACK: \d+ of 20 observations were relayed to a program that is not the pinned one',
     'M2054': r'ATTACK: \d+ of 20 observations were relayed to a program that is not the pinned one',
+})
+
+# C9 round 6, workstream BUILDENV2 (M2080-M2119; amendment 86).
+ATTACK_MARKERS.update({
+    'M2080': r'ATTACK: a guest build record its runner did not sign passed the proof: \[".*forgedaccount',
+    'M2081': r'ATTACK: the freeze accepted a builder pin owned by uid',
+    'M2082': r'ATTACK: a host build directory the pinned builder did not make was accepted: \["nobuild',
+    'M2083': r'ATTACK: a host build directory the pinned builder did not make was accepted: \["revision',
+    'M2084': r'ATTACK: a host build directory the pinned builder did not make was accepted: \["dropped',
+    'M2085': r'ATTACK: a host build directory the pinned builder did not make was accepted: \["binary',
+    'M2086': r'ATTACK: a host build directory the pinned builder did not make was accepted: \["symlink',
+    'M2087': r'ATTACK: a host build directory the pinned builder did not make was accepted: \["extra',
+    'M2088': r'ATTACK: a host build directory the pinned builder did not make was accepted: \["edit',
+    'M2089': r"ATTACK: a caller's RUSTC_WRAPPER reached the controlled host build",
+    'M2090': r"ATTACK: a cc planted on the caller's PATH linked the controlled host build",
+    'M2091': r'ATTACK: a guest build record its runner did not sign passed the proof: \[.*a key owned by another account',
+    'M2092': r'ATTACK: a guest build record its runner did not sign passed the proof: \[.*a key directory owned by another account',
 })

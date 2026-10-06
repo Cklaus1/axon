@@ -19,8 +19,9 @@
 #     key" one byte: fixtures that are never keys, never signed with, and
 #     vanish with the namespace. Nothing is signed.
 #
-# It builds the release binaries itself from a scratch clone (into
-# OPKIT_TEST_BUILD_DIR if set, so a re-run is incremental). Without root or
+# It builds the host binaries itself with the CONTROLLED host build
+# (guest_build_env.py host-build: fresh clone, fresh empty target, from scratch
+# every run -- minutes, and the network for crates). Without root or
 # unshare part 2 is reported NOT_RUN (not a pass).
 #
 # Exit 0 = every assertion held; 1 = an assertion failed; 2 = could not run.
@@ -119,7 +120,8 @@ g.write("/dev/null", rec); g.write("/dev/null", krec)  # signs in place
 m["source"].update({"axon_tree_dirty_at_build": False, "axon_tree_dirty_reasons": [], "build_environment": rec})
 m["kernel"]["build_environment"] = krec
 assert not g.shape_problems(rec), g.shape_problems(rec)
-assert not g.image_problems(m, pin_required=False), g.image_problems(m, pin_required=False)
+bld = (os.geteuid(), parent)
+assert not g.image_problems(m, pin_required=False, builder=bld), g.image_problems(m, pin_required=False, builder=bld)
 for out in (os.path.join(d, "manifest.json"), os.path.join(c, "profiles/linux-microvm/manifest.json")):
     with open(out, "w") as f:
         json.dump(m, f, indent=2); f.write("\n")
@@ -128,12 +130,19 @@ PY
   || { echo "cannot commit in the scratch clone"; exit 2; }
 COMMIT=$(git -C "$CLONE" rev-parse HEAD)
 
-# ── release binaries built from the clone (production: no test-trust) ───────
-BUILD_DIR=${OPKIT_TEST_BUILD_DIR:-$WORK/build}
-(cd "$CLONE" && env -u RUSTC_WRAPPER CARGO_TARGET_DIR="$BUILD_DIR" cargo build -q --release --locked -p axon-fabric --bins) \
-  || { echo "cargo build --release -p axon-fabric --bins failed"; exit 2; }
-BIN=$BUILD_DIR/release
-python3 -c 'import json,sys; m=json.load(sys.stdin); sys.exit(0 if m["fabric_revision"]==sys.argv[1] and m["source_dirty"] is False else 1)' \
+# ── the host binaries: the CONTROLLED host build of the clone (amendment 86) ──
+# A fresh standalone clone, a fresh EMPTY target dir and CARGO_HOME, the
+# constructed environment, one fixed invocation, and a record SIGNED by the
+# builder (this user, under $KEYPARENT, which the kit is told is the pinned
+# builder). It builds axon-fabric and its dependencies from nothing every run.
+HOSTOUT=$WORK/hostbuild
+BUILDER_UID=$(id -u)
+(cd "$CLONE" && env -i HOME="$HOME" PATH=/usr/bin:/bin AXON_GUEST_BUILD_PARENT="$KEYPARENT" \
+    ${http_proxy:+http_proxy="$http_proxy"} ${https_proxy:+https_proxy="$https_proxy"} \
+    python3 -B scripts/guest_build_env.py host-build "$HOSTOUT") \
+  || { echo "the controlled host build failed"; exit 2; }
+BIN=$HOSTOUT
+python3 -c 'import json,sys; m=json.load(sys.stdin); sys.exit(0 if m["fabric_revision"]==sys.argv[1] and m["source_dirty"] is False and m["build_state"]=="" else 1)' \
   "$COMMIT" < <("$BIN/axon-fabric" verifier-manifest) || { echo "the build is not a clean build of $COMMIT"; exit 2; }
 mkdir -p "$CLONE/dist" && cp -a "$DIST" "$CLONE/dist/guest-linux"
 
@@ -159,7 +168,8 @@ chmod -R a+rX "$WORK"
 SIGNER_PUB=$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')
 KIT=$CLONE/scripts/operator_deploy_protected_host.sh
 ARGS=(--from "$CLONE" --bin-dir "$BIN" --suite-registry "$OP/suites/registry.json"
-      --grant-registry "$OP/grants/grants.json" --signer-public-key "$SIGNER_PUB")
+      --grant-registry "$OP/grants/grants.json" --signer-public-key "$SIGNER_PUB"
+      --builder-uid "$BUILDER_UID" --builder-parent "$KEYPARENT")
 
 # ══ 1. DRY RUN ═══════════════════════════════════════════════════════════════
 snapshot() {
@@ -306,26 +316,85 @@ refused "ATTACK: --observer-bin (an in-uid observer program)" "since amendment 6
 refused "ATTACK: --observer-interpreter" "since amendment 68" bash "$KIT" "${ARGS[@]}" --observer-interpreter /usr/bin/true
 refused "ATTACK: an observer user that is the Fabric user" "five different users" bash "$KIT" "${ARGS[@]}" --observer-user axon-fabric
 refused "ATTACK: an observer user that is the custodian user" "five different users" bash "$KIT" "${ARGS[@]}" --observer-user axon-custodian
-mkdir "$WORK/fakebin"
-for b in axon-fabric axon-protected-launcher axon-custodian axon-observer; do cp "$BIN/$b" "$WORK/fakebin/$b"; done
-printf '#!/bin/sh\necho %s\n' "'{\"build\":\"production\",\"profile\":\"release\",\"source_dirty\":false,\"fabric_revision\":\"0000000000000000000000000000000000000000\"}'" \
-  >"$WORK/fakebin/axon-fabric"; chmod 0755 "$WORK/fakebin/axon-fabric"
-refused "a verifier built from another commit" "not a clean production release build" \
-  bash "$KIT" --from "$CLONE" --bin-dir "$WORK/fakebin"
-# Round 5 (amendment 80): the verifier says build.rs saw a wrapper, flags or a
-# linker (the real verifier says "" -- every pass above is the control).
-printf '#!/bin/sh\necho %s\n' "'{\"build\":\"production\",\"profile\":\"release\",\"source_dirty\":false,\"fabric_revision\":\"$COMMIT\",\"build_state\":\"RUSTC_WRAPPER=/w\"}'" \
-  >"$WORK/fakebin/axon-fabric"; chmod 0755 "$WORK/fakebin/axon-fabric"
-refused "ATTACK: a verifier built under a compiler wrapper" "build_state=" \
-  bash "$KIT" --from "$CLONE" --bin-dir "$WORK/fakebin"
-# ... and the AMBIENT build environment of the host binaries is judged with the
-# guest build's classifier: a wrapper or flags in the kit's own environment.
-refused "ATTACK: a host build under RUSTC_WRAPPER" "ambient build environment" \
-  env RUSTC_WRAPPER=/usr/bin/true bash "$KIT" "${ARGS[@]}"
-refused "ATTACK: a host build under RUSTFLAGS" "ambient build environment" \
-  env RUSTFLAGS="--cfg evil" bash "$KIT" "${ARGS[@]}"
-refused "ATTACK: a host build under CARGO_BUILD_RUSTC_WRAPPER" "ambient build environment" \
-  env CARGO_BUILD_RUSTC_WRAPPER=/usr/bin/true bash "$KIT" "${ARGS[@]}"
+# Amendment 86 (round 6): the host binaries are the CONTROLLED host build's. The
+# kit installs a --bin-dir only if its host-build.json is signed by the PINNED
+# builder (--builder-uid / --builder-parent: the operator's word) and every
+# binary is what the record names. Control: every pass above and below is the
+# honest directory.
+KB="--builder-uid $BUILDER_UID --builder-parent $KEYPARENT"
+copybin() { rm -rf "$WORK/fakebin"; mkdir "$WORK/fakebin"; cp -p "$BIN"/* "$WORK/fakebin/"; }
+# (the attacks only the record check catches come first: honest binaries, a bad record;
+# the ones a sibling check would also refuse -- no record, a replaced binary -- follow)
+copybin; python3 - "$WORK/fakebin/host-build.json" <<'PY'
+import json, sys
+p = sys.argv[1]; r = json.load(open(p)); r["src_files"] = 99; json.dump(r, open(p, "w"))
+PY
+refused "ATTACK: a host build record edited after its builder signed it" "does not hold" \
+  bash "$KIT" --from "$CLONE" --bin-dir "$WORK/fakebin" $KB
+copybin; python3 - "$WORK/fakebin/host-build.json" <<'PY'
+import json, sys
+p = sys.argv[1]; r = json.load(open(p)); r.pop("proof"); json.dump(r, open(p, "w"))
+PY
+refused "ATTACK: a hand-written host build record (no builder proof)" "no builder proof" \
+  bash "$KIT" --from "$CLONE" --bin-dir "$WORK/fakebin" $KB
+# The reviewer's forge: another account, with its own private directory and key.
+copybin; FORGE=$(mktemp -d "${HOME:-/root}/.cache/axon-opkit-forge.XXXXXX")
+python3 - "$WORK/fakebin/host-build.json" "$FORGE" "$KEYPARENT" "$CLONE" <<'PY' || fail "cannot forge the host record"
+import hmac, importlib.util, json, os, sys
+p, forge, parent, clone = sys.argv[1:5]
+sys.dont_write_bytecode = True
+sp = importlib.util.spec_from_file_location("g", os.path.join(clone, "scripts", "guest_build_env.py"))
+g = importlib.util.module_from_spec(sp); sp.loader.exec_module(g)
+os.chmod(forge, 0o700); os.chown(forge, 65534, 65534)
+os.mkdir(forge + "/keys", 0o700); os.chown(forge + "/keys", 65534, 65534)
+k = forge + "/keys/f.key"; open(k, "w").write("f" * 64); os.chown(k, 65534, 65534); os.chmod(k, 0o400)
+anc, why = g.ancestors_of(forge, 65534); assert not why, why
+r = json.loads(json.dumps(json.load(open(p))).replace(parent, forge))
+r["builder_uid"] = 65534; r["build_parent_ancestors"] = anc; r["proof"]["id"] = "f"
+r["proof"]["hmac"] = hmac.new(b"f" * 64, g.proof_payload(r), "sha256").hexdigest()
+json.dump(r, open(p, "w"))
+PY
+refused "ATTACK: a host build record signed by another account under its own directory" "cannot be checked" \
+  bash "$KIT" --from "$CLONE" --bin-dir "$WORK/fakebin" $KB
+rm -rf "$FORGE"
+copybin; rm -f "$WORK/fakebin/host-build.json"
+refused "ATTACK: binaries with no host-build record (a plain cargo build)" "holds no readable host-build.json" \
+  bash "$KIT" --from "$CLONE" --bin-dir "$WORK/fakebin" $KB
+copybin; printf 'built elsewhere' >"$WORK/fakebin/axon-observer"
+refused "ATTACK: a binary replaced after the controlled build" "is not the bytes the controlled host build recorded" \
+  bash "$KIT" --from "$CLONE" --bin-dir "$WORK/fakebin" $KB
+refused "ATTACK: a judge told another builder uid" "cannot be checked" \
+  bash "$KIT" --from "$CLONE" --bin-dir "$BIN" --builder-uid $((BUILDER_UID + 1)) --builder-parent "$KEYPARENT"
+refused "ATTACK: no --builder-uid at all (the record's own word is never taken)" "--builder-uid N is required" \
+  bash "$KIT" --from "$CLONE" --bin-dir "$BIN"
+copybin; : >"$WORK/fakebin/extra-file"
+refused "ATTACK: a host build directory with a file the build did not make" "files the controlled host build did not make" \
+  bash "$KIT" --from "$CLONE" --bin-dir "$WORK/fakebin" $KB
+# The linker the host build recorded must be the one the guest build recorded
+# (and, once installed, the operator's pin): the deployed image's manifest names
+# another cc digest. (dist/ is excused from the clean-clone rule, so the same
+# commit is judged.)
+rm -rf "$WORK/linker"; cp -a "$CLONE" "$WORK/linker"
+python3 - "$WORK/linker/dist/guest-linux/manifest.json" <<'PY' || fail "cannot edit the dist manifest"
+import json, sys
+p = sys.argv[1]; m = json.load(open(p))
+m["source"]["build_environment"]["toolchain"]["host_tools"]["cc"]["sha256"] = "9" * 64
+json.dump(m, open(p, "w"))
+PY
+refused "ATTACK: a host build whose linker is not the one the guest build recorded" "linker is not the one" \
+  bash "$WORK/linker/scripts/operator_deploy_protected_host.sh" --from "$WORK/linker" --bin-dir "$BIN" --only binaries $KB
+rm -rf "$WORK/linker"
+# An ancestor config of the clone naming a compiler wrapper: the kit's own
+# config check (in a constructed environment) sees every ancestor.
+mkdir -p "$WORK/.cargo"; printf '[build]\nrustc-wrapper = "/usr/bin/sccache"\n' >"$WORK/.cargo/config.toml"
+refused "ATTACK: an ancestor cargo config naming a compiler wrapper" "build configuration is not the tree's own" \
+  bash "$KIT" "${ARGS[@]}"
+rm -rf "$WORK/.cargo"
+# A wrapper or flags in the kit's own environment are not what the binaries
+# were built under (the host build constructs its environment and drops them);
+# the kit's own config check runs in a constructed one too: control, it passes.
+RUSTC_WRAPPER=/usr/bin/true RUSTFLAGS="--cfg evil" PATH_EVIL=1 bash "$KIT" "${ARGS[@]}" >/dev/null 2>&1; rc=$?
+case $rc in 0|3) ok "the caller's wrapper and flags do not reach the kit's judgement (the host build dropped them; control)" ;; *) fail "ambient variables changed the kit's verdict (rc $rc)" ;; esac
 # The guest build records are judged BEFORE anything is installed, by the
 # freeze's own judge: a record without its runner's proof, or edited after it,
 # is not a controlled build's (the control is every guest step above).
@@ -343,7 +412,7 @@ for rel in ("dist/guest-linux/manifest.json", "profiles/linux-microvm/manifest.j
     open(p, "a").write("\n")
 PY
   (cd "$T" && G add -A && G commit -q -m "tampered guest record") || fail "cannot commit the tampered clone"
-  o=$(bash "$T/scripts/operator_deploy_protected_host.sh" --from "$T" --bin-dir "$BIN" --only guest 2>&1); rc=$?
+  o=$(bash "$T/scripts/operator_deploy_protected_host.sh" --from "$T" --bin-dir "$BIN" --only guest $KB 2>&1); rc=$?
   [ $rc != 0 ] || fail "ATTACK: a guest image whose build record is $label was accepted by the kit: $o"
   grep -q "guest build records are not a controlled build's" <<<"$o" \
     || fail "$label: refused for another reason: $o"
@@ -427,7 +496,7 @@ fi
 cp /usr/local/bin/firecracker /usr/local/bin/jailer "$WORK/" 2>/dev/null || { echo "NOT_RUN: no /usr/local/bin/firecracker+jailer to deploy against"; exit 0; }
 cat >"$WORK/ns.sh" <<'NS'
 set -uo pipefail
-W=$1 KIT=$2 BIN=$3 OP=$4 SIGNER_PUB=$5 CLONE=$6
+W=$1 KIT=$2 BIN=$3 OP=$4 SIGNER_PUB=$5 CLONE=$6 BUID=$7 BPAR=$8
 fail() { echo "FAIL(ns): $*"; exit 1; }
 # Isolation first: nothing below may reach the host.
 mkdir "$W/etc"; mount -t tmpfs -o mode=0755 tmpfs "$W/etc" && cp -a /etc/. "$W/etc/" && mount --bind "$W/etc" /etc \
@@ -439,7 +508,8 @@ done
 mkdir -p /usr/local/bin && install -m 0755 "$W/firecracker" "$W/jailer" /usr/local/bin/
 grep -q axon-fabric /etc/passwd && fail "the shadow /etc already has axon users"
 ARGS=(--from "$CLONE" --bin-dir "$BIN" --suite-registry "$OP/suites/registry.json"
-      --grant-registry "$OP/grants/grants.json" --signer-public-key "$SIGNER_PUB" --no-systemctl)
+      --grant-registry "$OP/grants/grants.json" --signer-public-key "$SIGNER_PUB" --no-systemctl
+      --builder-uid "$BUID" --builder-parent "$BPAR")
 # Amendment 79: the custodian socket unit grants the observer's uid by
 # `ExecStartPost=setfacl`, so the kit BLOCKS where `setfacl` (the acl package) is
 # absent and systemd would start the unit (not under --no-systemctl, which only
@@ -787,7 +857,7 @@ else
   echo "NOT_RUN(ns): systemd-socket-activate absent; the custodian start was not exercised"
 fi
 NS
-unshare -m --propagation private bash "$WORK/ns.sh" "$WORK" "$KIT" "$BIN" "$OP" "$SIGNER_PUB" "$CLONE" \
+unshare -m --propagation private bash "$WORK/ns.sh" "$WORK" "$KIT" "$BIN" "$OP" "$SIGNER_PUB" "$CLONE" "$BUILDER_UID" "$KEYPARENT" \
   >"$WORK/ns.out" 2>"$WORK/ns.err"
 NSRC=$?
 grep -E '^(ok|NOT_RUN|FAIL)\(ns\)' "$WORK/ns.out"
