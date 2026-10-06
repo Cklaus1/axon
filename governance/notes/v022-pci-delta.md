@@ -15,30 +15,30 @@ later commit touches `crates/axon-core/src` (the note is then stale: `python3 sc
 --emit HEAD`, paste between the markers).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: 1900f86aef4f35b005d007cf21694770f379b6b9
+generated-at: d74601e7121a83ec7218659dacd797c1ec1dc7bb
 
-`git diff --numstat 31413ca7..1900f86a -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..d74601e7 -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
 | `crates/axon-core/src/ast.rs` | 36 | 2 |
 | `crates/axon-core/src/checker.rs` | 27 | 0 |
 | `crates/axon-core/src/error.rs` | 12 | 10 |
-| `crates/axon-core/src/interp.rs` | 4361 | 1124 |
+| `crates/axon-core/src/interp.rs` | 4349 | 1125 |
 | `crates/axon-core/src/interp/builtins.rs` | 38 | 20 |
 | `crates/axon-core/src/interp/conform.rs` | 1746 | 0 |
 | `crates/axon-core/src/interp/eval.rs` | 91 | 23 |
 | `crates/axon-core/src/interp/goal.rs` | 15 | 14 |
-| `crates/axon-core/src/interp/pin.rs` | 593 | 0 |
+| `crates/axon-core/src/interp/pin.rs` | 585 | 0 |
 | `crates/axon-core/src/interp/proptest.rs` | 30 | 12 |
 | `crates/axon-core/src/kernel.rs` | 2 | 2 |
 | `crates/axon-core/src/lib.rs` | 77 | 6 |
 | `crates/axon-core/src/main.rs` | 108 | 23 |
 | `crates/axon-core/src/parser.rs` | 15 | 0 |
 | `crates/axon-core/src/resolver.rs` | 171 | 16 |
-| total | 7322 | 1252 |
+| total | 7302 | 1253 |
 
-`git log --reverse 31413ca7..1900f86a -- crates/axon-core/src`:
+`git log --reverse 31413ca7..d74601e7 -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -79,7 +79,9 @@ generated-at: 1900f86aef4f35b005d007cf21694770f379b6b9
 | 70692659 | amendment 83 | unit-test attack text only (M1996: a shift truncates where + and * panic): no production change |
 | dab96417 | amendment 88 | the dispatch analysis trusts only what the operator chose: candidate fns/types/lets, local-name shadowing and trait names no longer determine a receiver; keys carry the owning fn; fail-closed lookup; operator-defined runtime values dispatch; the address cache is removed (pin.rs, interp.rs, eval.rs): narrowing on candidate-influenced receivers, widening only for operator-only polymorphism |
 | edde3d5d | amendment 88 | clippy: an unused `mut` removed in pin.rs; no change in what is refused |
-| 37 commits | | |
+| b024c06e | amendment 88 | pin.rs: a redundant sealed-let filter removed (the push guard is the one rule); test-only otherwise; no change in what is refused |
+| 38 commits | | |
+<!-- END MECHANICAL -->
 <!-- END MECHANICAL -->
 
 
