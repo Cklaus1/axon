@@ -61,10 +61,10 @@ THEMES = {
     "2bf1d9d0": ("amendment 82", "comment-only (TestEnd doc)"),
     "40ca1092": ("amendment 82", "merge of c9r4c/claims; comment-only in this path"),
     "12c6685e": ("amendment 83", "the dispatch rule: operator code never selects an operator impl by a type nothing on the operator side determined (untyped dict/channel/lambda reads must be annotated; pin.rs): narrowing"),
-    "554951b6": ("amendment 83", "rows M1990-M1997 and a real-runner test: a cfg(test)-only hook line in interp.rs, no production semantics"),
-    "9e19e961": ("amendment 83", "interpolation/comparison test and the non-claim text: test code and comments in interp.rs"),
-    "b971194c": ("amendment 83", "clippy: the arithmetic arm of the pin walk collapsed into a guard: no change in what is refused"),
-    "70692659": ("amendment 83", "M1996's attack: a shift truncates where + and * panic (test-side attack text and a narrowing of the pinned arithmetic)"),
+    "554951b6": ("amendment 83", "unit-test case only (an unannotated lambda parameter case in interp.rs tests): no production change"),
+    "9e19e961": ("amendment 83", "unit test and comments only (interpolation/comparison of an untyped read select no operator impl): no production change"),
+    "b971194c": ("amendment 83", "clippy: the arithmetic arm of the pin walk (interp/pin.rs) collapsed into a guard: no change in what is refused"),
+    "70692659": ("amendment 83", "unit-test attack text only (M1996: a shift truncates where + and * panic): no production change"),
 }
 
 

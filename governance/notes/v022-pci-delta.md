@@ -15,29 +15,30 @@ later commit touches `crates/axon-core/src` (the note is then stale: `python3 sc
 --emit HEAD`, paste between the markers).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: cdc39fc6b1c8a51334ac4ff404070aae86cf3659
+generated-at: 31c4fdbedff95cfe39633703932ca9ba99b10288
 
-`git diff --numstat 31413ca7..cdc39fc6 -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..31c4fdbe -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
-| `crates/axon-core/src/ast.rs` | 34 | 0 |
+| `crates/axon-core/src/ast.rs` | 36 | 2 |
 | `crates/axon-core/src/checker.rs` | 27 | 0 |
 | `crates/axon-core/src/error.rs` | 12 | 10 |
-| `crates/axon-core/src/interp.rs` | 2822 | 203 |
+| `crates/axon-core/src/interp.rs` | 4146 | 1126 |
 | `crates/axon-core/src/interp/builtins.rs` | 38 | 20 |
-| `crates/axon-core/src/interp/conform.rs` | 1732 | 0 |
-| `crates/axon-core/src/interp/eval.rs` | 83 | 23 |
+| `crates/axon-core/src/interp/conform.rs` | 1746 | 0 |
+| `crates/axon-core/src/interp/eval.rs` | 85 | 23 |
 | `crates/axon-core/src/interp/goal.rs` | 15 | 14 |
+| `crates/axon-core/src/interp/pin.rs` | 396 | 0 |
 | `crates/axon-core/src/interp/proptest.rs` | 30 | 12 |
 | `crates/axon-core/src/kernel.rs` | 2 | 2 |
 | `crates/axon-core/src/lib.rs` | 77 | 6 |
 | `crates/axon-core/src/main.rs` | 108 | 23 |
 | `crates/axon-core/src/parser.rs` | 15 | 0 |
 | `crates/axon-core/src/resolver.rs` | 171 | 16 |
-| total | 5166 | 329 |
+| total | 6904 | 1254 |
 
-`git log --reverse 31413ca7..cdc39fc6 -- crates/axon-core/src`:
+`git log --reverse 31413ca7..31c4fdbe -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -71,7 +72,12 @@ generated-at: cdc39fc6b1c8a51334ac4ff404070aae86cf3659
 | d29d4ef6 | amendment 78 | row repairs (M1672, M1843, M1845) |
 | 2bf1d9d0 | amendment 82 | comment-only (TestEnd doc) |
 | 40ca1092 | amendment 82 | merge of c9r4c/claims; comment-only in this path |
-| 30 commits | | |
+| 12c6685e | amendment 83 | the dispatch rule: operator code never selects an operator impl by a type nothing on the operator side determined (untyped dict/channel/lambda reads must be annotated; pin.rs): narrowing |
+| 554951b6 | amendment 83 | unit-test case only (an unannotated lambda parameter case in interp.rs tests): no production change |
+| 9e19e961 | amendment 83 | unit test and comments only (interpolation/comparison of an untyped read select no operator impl): no production change |
+| b971194c | amendment 83 | clippy: the arithmetic arm of the pin walk (interp/pin.rs) collapsed into a guard: no change in what is refused |
+| 70692659 | amendment 83 | unit-test attack text only (M1996: a shift truncates where + and * panic): no production change |
+| 35 commits | | |
 <!-- END MECHANICAL -->
 
 What is BY THEME (the `theme` and `what it does` columns; these are the commit messages' own
@@ -95,17 +101,18 @@ account and are NOT mechanically verified; the files and commits above are):
 
 ## (b) Coverage: PCI gate rows, and the mutation rows
 
-`scripts/v022_pci_gates.sh` has 28 rows at this head: the original 18 (surfaces 1-21) and ten
-added by amendment 84, one group per delta amendment (53, 60, 72 incl. its dict snapshot, 78), each with
+`scripts/v022_pci_gates.sh` has 30 rows at this head: the original 18 (surfaces 1-21), ten
+added by amendment 84, one group per delta amendment (53, 60, 72 incl. its dict snapshot, 78), and two for
+amendment 83's dispatch rule (integration), each with
 unit tests in `interp.rs`/`conform.rs` AND a real-runner test (`axon_psv::runner::run`, in
 `crates/axon-psv/tests/sealed_frames.rs`). The gate fails if a named test is absent (grep), renamed,
 filtered out or `#[ignore]`d (the passed count must equal the named count). Verified to discriminate:
 renaming one named test in a copy of the script made it FAIL ("test ... not found" and "ran 0 test(s)").
-Amendment 83's replacement of the dict snapshot (parallel branch psv1d) is NOT here: the dict rows are
-written against the CURRENT tests and labelled "psv1d may replace"; extend them when it lands.
+Amendment 83's dispatch rule (psv1d) landed after amendment 84: its tests are the two `am83 dispatch rule`
+rows; the dict-snapshot rows still name tests that exist after psv1d (their label "psv1d may replace" is dropped).
 
-Run at `c9r4c/claims2` (veto `cdc39fc6` plus this amendment's script/doc changes), interpreter build,
-exit 0, `v022_pci_gates: PASS — 28 rows`:
+Run at `c9r4c/claims2` (veto `cdc39fc6` plus this amendment's script/doc changes; the rows through am78 were first run there at 28 rows), interpreter build,
+exit 0, `v022_pci_gates: PASS — 30 rows` (re-run at integration, c9r4c/integrate5 after the psv1d merge):
 
 | row | package/target | result |
 |---|---|---|
@@ -133,15 +140,17 @@ exit 0, `v022_pci_gates: PASS — 28 rows`:
 | am60 dispatch-key cast | axon-psv/sealed_frames | PASS 1/1 |
 | am72 seal-crossing positions | axon-core/lib | PASS 2/2 |
 | am72 seal-crossing positions | axon-psv/sealed_frames | PASS 1/1 |
-| am72 dict snapshot (psv1d may replace) | axon-core/lib | PASS 1/1 |
-| am72 dict snapshot (psv1d may replace) | axon-psv/sealed_frames | PASS 1/1 |
+| am72 dict snapshot | axon-core/lib | PASS 1/1 |
+| am72 dict snapshot | axon-psv/sealed_frames | PASS 1/1 |
 | am78 held-value judgement | axon-core/lib | PASS 3/3 |
 | am78 held-value judgement | axon-psv/sealed_frames | PASS 1/1 |
+| am83 dispatch rule | axon-core/lib | PASS 2/2 |
+| am83 dispatch rule | axon-psv/sealed_frames | PASS 1/1 |
 
-Mutation rows whose target is `crates/axon-core/src` (`MUTATIONS`, 145 rows at this head): M58-M62,
+Mutation rows whose target is `crates/axon-core/src` (`MUTATIONS`, 154 rows at this head): M58-M62,
 M65, M67-M70, M72-M79, M82-M83, M85-M97, M219, M243, M246-M248, M250-M251, M260, M270-M272, M436,
 M560-M566, M651-M667, M920-M939, M1140-M1157, M1660-M1681, M1730-M1731, M1734, M1764-M1765,
-M1840-M1845, M1847-M1848, M1936-M1938. There is no M1846. Per delta:
+M1840-M1845, M1847-M1848, M1936-M1938, M1990-M1997. There is no M1846. Per delta:
 
 | delta | rows (named in the amendment's own text) |
 |---|---|
@@ -151,11 +160,12 @@ M1840-M1845, M1847-M1848, M1936-M1938. There is no M1846. Per delta:
 | amendment 72 | M1660-M1681, matrix A96-A109 |
 | amendment 74 | M1730-M1731, M1734, M1764-M1765 |
 | amendment 78 | M1840-M1845, M1847-M1848, matrix A127-A130 |
+| amendment 83 | M1990-M1997, M1975 (the off switch is cfg(test)-only), matrix A145-A148 |
 
 FREEZE OBLIGATION, not a present fact: the claims spec says these rows are re-run at the frozen head.
 What the freeze procedure must show is a joined paired-disable run at the frozen head in which each of
 the rows above is killed by its own attack (or retired with its four cells). This task and note have
-re-run nothing but the 28 gate rows; per-amendment kill evidence is in each amendment's text.
+re-run nothing but the 30 gate rows; per-amendment kill evidence is in each amendment's text.
 
 ## (c) Surfaces 18 and 19, and what the protected profile does with a non-empty ceiling
 
