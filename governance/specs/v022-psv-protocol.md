@@ -4835,8 +4835,8 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       A call of a FREE fn: only an operator fn, only when it is not shadowed by a local binding of
       the same name, and only when its declared return is closed. A method call: only a method
       name every definition of which is the OPERATOR's (`impls` already was) and closed, and never
-      a channel method name. Module-level lets: operator lets only, and a name a sealed module also
-      defines is never determined. A `match`/`while let` binding and an assignment target: as their
+      a channel method name. Module-level lets: operator lets only (a sealed `let` is never admitted, so a
+      candidate global is undetermined). A `match`/`while let` binding and an assignment target: as their
       source. A lambda parameter: only a closed annotation. A `for` variable: `i64`.
       Cast (`as T`) and builtin returns: the operator named the type.
     - **Fixes at the source.** `Pins::build` takes the sealed-span predicate and builds from

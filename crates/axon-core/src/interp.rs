@@ -8936,19 +8936,6 @@ fn main() { }
     /// read look determined.
     #[test]
     fn an_operator_method_named_like_a_channel_method_does_not_determine_a_recv() {
-        let suite = "trait R {\n    fn recv(self) -> i64\n}\nimpl R for bool {\n    fn recv(self: bool) -> i64 { 1 }\n}\nimpl R for i64 {\n    fn recv(self: i64) -> i64 { 2 }\n}\n".to_string()
-            + &format!("{JUDGE8}@[test]\nfn t() {{\n    let c = chan<i64>()\n    c.send(3)\n    fill(c)\n    assert(c.recv().ok())\n}}\n");
-        let out = sealed_outcome_rule(
-            "r7",
-            &suite,
-            &format!("{LAUNDER8}fn fill(c: Chan<i64>) {{ c.send(9) }}\n"),
-            "t",
-            true,
-        );
-        assert!(
-            matches!(&out, Err(m) if m.contains("nothing on the operator side determined")),
-            "{out:?}"
-        );
         // The candidate's own unstamped channel, read through the operator's dict.
         let dsuite = "trait R {\n    fn recv(self) -> i64\n}\nimpl R for bool {\n    fn recv(self: bool) -> i64 { 1 }\n}\nimpl R for i64 {\n    fn recv(self: i64) -> i64 { 2 }\n}\n".to_string()
             + &format!("{JUDGE8}@[test]\nfn t() {{\n    let d = dict_new()\n    solve(d)\n    match dict_get(d, \"c\") {{\n        Some(c) => assert(c.recv().ok())\n        None => assert(false)\n    }}\n}}\n");

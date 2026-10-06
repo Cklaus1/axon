@@ -291,7 +291,6 @@ impl Pins {
         let mut cand_types: HashSet<String> = HashSet::new();
         let mut op_fns: Vec<(&FnDef, Vec<String>)> = Vec::new();
         let mut lets: Vec<(&str, &Expr)> = Vec::new();
-        let mut sealed_lets: HashSet<&str> = HashSet::new();
         // Pass 1: provenance of every named thing.
         for item in &prog.items {
             match item {
@@ -330,9 +329,6 @@ impl Pins {
                 }
                 Item::RefineDef(r) => {
                     tys.refines.insert(r.name.clone());
-                }
-                Item::LetDef { name, span, .. } if sealed(*span) => {
-                    sealed_lets.insert(name);
                 }
                 _ => {}
             }
@@ -403,13 +399,9 @@ impl Pins {
                 .collect(),
             globals: HashSet::new(),
         };
-        // Module-level lets: a greatest fixpoint over their initializers. A
-        // name a sealed module also defines is never determined.
-        ctx.globals = lets
-            .iter()
-            .filter(|(n, _)| !sealed_lets.contains(n))
-            .map(|(n, _)| n.to_string())
-            .collect();
+        // Module-level lets (the operator's only: a sealed let is not pushed): a
+        // greatest fixpoint over their initializers.
+        ctx.globals = lets.iter().map(|(n, _)| n.to_string()).collect();
         loop {
             let none = HashSet::new();
             let next: HashSet<String> = lets
