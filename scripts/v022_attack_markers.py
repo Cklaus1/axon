@@ -1130,7 +1130,7 @@ ATTACK_MARKERS.update({
     'M1195': r"ATTACK: the freeze bound a guest image component built outside the controlled environment \(a vmlinux other than the controlled kernel build's\)",
     'M1196': r"ATTACK: the freeze bound a guest image component built outside the controlled environment \(a kernel make run with the caller's KCFLAGS\)",
     'M1197': r"ATTACK: the freeze bound a guest image component built outside the controlled environment \(a rootfs\.sqfs other than the controlled assembly's\)",
-    'M1198': r"ATTACK: the freeze bound a guest image component built outside the controlled environment \(a rootfs made by a mksquashfs on the caller's PATH\)",
+    'M1198': r"ATTACK: the freeze bound a guest image component built outside the controlled environment \(a rootfs made (with other mksquashfs flags|in the caller's environment)\)",
 })
 
 # C9 round 4b, workstream ROWS4B (M1020-M1139; amendment 62).

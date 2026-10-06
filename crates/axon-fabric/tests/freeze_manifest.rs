@@ -594,12 +594,25 @@ type ManifestEdit = Box<dyn Fn(&mut serde_json::Value)>;
 /// in its message; `claim` names what the freeze would have bound. Control:
 /// the unedited manifest freezes.
 fn each_refused(claim: &str, why: &str, cases: Vec<(&str, ManifestEdit)>) {
+    each_refused_with(claim, why, cases, false)
+}
+
+/// As [`each_refused`]; with `repin`, the operator's host-tool pin is rewritten
+/// from each EDITED record, so the pin agrees with what the record says and the
+/// guard under test is the only one that can refuse it (C9 round 4c, eqgate:
+/// a retooled cargo was refused by the pin before the channel guard ran, and
+/// the row for that guard, M1188, was never killed by its own attack).
+fn each_refused_with(claim: &str, why: &str, cases: Vec<(&str, ManifestEdit)>, repin: bool) {
     let d = tempfile::tempdir().unwrap();
     let r = clone(d.path());
+    let clean_pin = std::fs::read_to_string(pin_file(&r)).unwrap();
     for (attack, edit) in cases {
         let mut m = manifest_value(clean_source());
         edit(&mut m);
         write(&r.join(MANIFEST), &m.to_string());
+        if repin {
+            write(&pin_file(&r), &operator_pin_of(&m).to_string());
+        }
         let got = freeze(&r);
         assert!(
             got.is_err(),
@@ -609,6 +622,7 @@ fn each_refused(claim: &str, why: &str, cases: Vec<(&str, ManifestEdit)>) {
         assert!(e.contains(why), "{attack}: {e}");
     }
     write(&r.join(MANIFEST), &manifest(clean_source()));
+    write(&pin_file(&r), &clean_pin);
     assert!(freeze(&r).is_ok(), "control: the controlled image freezes");
 }
 
@@ -745,7 +759,7 @@ fn a_guest_build_record_not_of_the_pinned_toolchain_does_not_freeze() {
         b["env"]["PATH"] = json!(format!("{dir}:/usr/bin:/bin"));
         b["env"]["RUSTC"] = json!(format!("{dir}/rustc"));
     }
-    each_refused(
+    each_refused_with(
         "a guest build not of the pinned toolchain",
         "not the pinned channel",
         vec![
@@ -770,6 +784,7 @@ fn a_guest_build_record_not_of_the_pinned_toolchain_does_not_freeze() {
                 }),
             ),
         ],
+        true,
     );
 }
 
