@@ -562,6 +562,17 @@ and its outputs, so they are as sensitive as the run). There is no automatic cle
 Only the leftover directory is affected: a new run never reuses a name, so a stale directory cannot
 change a later result (amendment 71). This is an availability and disk-space matter, not a trust one.
 
+## Operational friction (not weakenings; all fail closed)
+
+- The host build (`guest_build_env.py`, a fresh empty `CARGO_HOME` and `cargo build --locked`) needs
+  crates.io access, or a committed source replacement, on the deploy host.
+- Record keys and their directory must be owned by the pinned builder uid. A key tree copied to the
+  deploy host must be `chown`ed to an account that exists there.
+- Any commit that changes a file outside `governance/status/` after the mutation run makes the run
+  stale (docs included) and forces a full rerun. Sequence: make the last doc change first, then run.
+- A later commit under `crates/axon-core/src` fails the PCI drift test until it has a `THEMES` line
+  in `scripts/pci_delta.py` and the note is regenerated (`python3 scripts/pci_delta.py --emit HEAD`).
+
 ## Follow-ups this deployment surfaced
 
 Closed by amendments 65 and 66 (the gaps workstream), with the kit updated to match:
@@ -579,14 +590,17 @@ Closed by amendments 65 and 66 (the gaps workstream), with the kit updated to ma
 Still open:
 
 1. **The observer service** is built and the kit deploys and checks it (amendments 68, 79). What
-   the observer MEASURES is the installed files; the Fabric program and revision are your pin
+   the observer MEASURES is the installed files; the Fabric program is your pin and its revision is the kit's word
    (the helper holds every caller to it); the guest's init and axon digests are what the
    measured profile manifest names; the nonce is the custodian's. The guest policy digest and
    the authority epoch are the principal's word (amendment 79). The verifier digest names the
    executable file the Fabric-uid caller had when the helper opened `/proc/<ppid>/exe`, not the
-   instructions it runs and not that it was started from that file: any Fabric-uid code can exec
-   the pinned file after spawning the helper (no `LD_PRELOAD` or ptrace needed; Yama does not touch
-   that route), or use `LD_PRELOAD` or ptrace (amendment 84; see amendment 85 for any later change).
+   instructions it runs. The plain exec-after-spawn route (executed 18 of 20 by the round-6
+   reviewer) is refused since amendment 85: no process but the helper and its parent may hold the
+   reply pipe, and a production helper refuses a non-pipe stdout. That is a configuration and
+   mistake guard, not a defence against malicious same-uid code: reopening the pipe via
+   `/proc/<pid>/fd/N` of the parent, `SCM_RIGHTS`, `pidfd_getfd`, `ptrace` and `LD_PRELOAD` remain.
+   The Fabric revision in the helper config is told by the kit, not pinned (amendment 85).
 2. **The deployable `--guest-cmd`** (decision H, step 6). The preflight stays `PENDING` until it
    exists.
 3. **`x3_l0_hypervisor_boundary`'s reason text** in `b263_qualify.sh` is still the WSL2/Hyper-V

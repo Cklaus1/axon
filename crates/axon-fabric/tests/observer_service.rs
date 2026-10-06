@@ -1140,7 +1140,7 @@ fn an_observer_takes_no_nonce_from_a_dev_custodian() {
     );
 }
 
-/// A134 (M1865): the observer's store holds a record only as long as the
+/// A134 (M1864): the observer's store holds a record only as long as the
 /// custodian honours the nonce. A record whose nonce has expired is dropped at
 /// the next observation; one still honoured stays; the new one carries the
 /// custodian's expiry. Control: the fresh record stays.

@@ -894,7 +894,7 @@ mod tests {
         );
     }
 
-    /// A133 (M1864): a protected observer takes a nonce only from a PROTECTED
+    /// A133 (M1862, M1863): a protected observer takes a nonce only from a PROTECTED
     /// custodian (a test or dev custodian is not a program its operator
     /// installed); a test observer takes a test or protected one; nobody takes
     /// a dev custodian's.
@@ -919,7 +919,7 @@ mod tests {
         }
     }
 
-    /// A134 (M1869): one connection has an ABSOLUTE deadline for its request.
+    /// A134 (M1867): one connection has an ABSOLUTE deadline for its request.
     /// A peer that sends a byte and then nothing (or a byte per read, forever)
     /// held the single-threaded service for as long as it liked; each read's
     /// timeout was all there was. Here the deadline is 500 ms and the peer

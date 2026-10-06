@@ -51,6 +51,10 @@ ROWS=(
   "am72 dict snapshot|axon-psv|sealed_frames|a_dict_entry_the_operator_held_is_never_retyped_by_the_candidate"
   "am78 held-value judgement|axon-core|lib|interp::tests::a_position_the_operator_held_is_judged_by_what_it_held_when_replaced interp::tests::a_placeholder_the_operator_held_is_not_filled_by_the_candidate interp::conform::walk_bound_tests::a_value_nested_past_the_bound_is_refused_not_left_unvisited"
   "am78 held-value judgement|axon-psv|sealed_frames|a_replaced_or_filled_position_is_judged_by_what_the_operator_held"
+  "am72 absent return type is ()|axon-core|lib|interp::tests::a_fn_with_no_declared_return_type_hands_the_operator_unit"
+  "am72 channel stamped at creation|axon-core|lib|interp::tests::a_channel_carries_the_element_type_its_creation_states"
+  "am72 closure args strict at a crossing|axon-core|lib|interp::tests::an_operator_closure_called_from_sealed_code_takes_only_determined_arguments"
+  "am83 arithmetic width arm|axon-core|lib|interp::tests::operator_arithmetic_never_runs_at_a_width_the_candidate_chose"
   "am83 dispatch rule|axon-core|lib|interp::tests::operator_code_never_dispatches_on_a_value_read_untyped_from_a_dict interp::tests::operator_code_never_dispatches_on_a_value_from_any_untyped_position"
   "am83 dispatch rule|axon-psv|sealed_frames|operator_code_never_dispatches_on_an_untyped_read_and_a_pinned_suite_passes"
 )
