@@ -1203,7 +1203,9 @@ else:
         out.append(f"cannot read the build revision {prog} states: {e}")
 if os.path.isfile(ccfg):
     c = json.load(open(ccfg))
-    if str(c.get("observer_uid")) != obs_uid:
+    # In a dry run the observer user does not exist yet (obs_uid is empty) and the
+    # planned config carries a placeholder: there is no uid to judge it against.
+    if obs_uid and str(c.get("observer_uid")) != obs_uid:
         out.append(f"{ccfg}: observer_uid is {c.get('observer_uid')!r}, not the observer user's uid {obs_uid}: the custodian would answer the observer's check for no one")
 print("\n".join(out))
 PY
