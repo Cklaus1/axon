@@ -1167,7 +1167,7 @@ ATTACK_MARKERS.update({
     'M1049': r'ATTACK: a deny-all grant on evidence that does not show x1 PASS',
     'M1050': r'ATTACK: a path-scoped grant on a profile that does not preserve path scopes',
     'M1051': r'ATTACK: a request requiring os=linux, and it ran',
-    'M1052': r'ATTACK: a request requiring hardware isolation \(os=none\), and it ran',
+    'M1052': r'ATTACK: a request for hardware isolation \(os=none\) was receipted',
     'M1053': r'ATTACK: a path-scoped grant on the host interpreter, and it ran',
     'M1054': r'ATTACK: an interpreter_run on the host backend, and it ran',
     'M1055': r'ATTACK: a guest policy longer than the guest cmdline budget',
@@ -1690,4 +1690,77 @@ ATTACK_MARKERS.update({
 ATTACK_MARKERS.update({
     'M1746': r'ATTACK: a job requiring approval ran with no approval token\s*\n\s*left: \w+\s*\n\s*right: Denied',
     'M1747': r'ATTACK: a production refusal (below an empty|after a real test module)',
+})
+
+# C9 round 4c, workstream ADMIT (M1770-M1829; amendment 76): the gate's own
+# verdict forms. Each is the test's own "the gate did not name it" panic for the
+# planted production-shaped refusal.
+ATTACK_MARKERS.update({
+    'M1770': r'ATTACK: a built negative verdict variant \(Verdict::Denied \{\.\.\}\) with no row and no exemption was not a site: the gate did not name it',
+    'M1771': r"ATTACK: a negative variant built through `Self::` inside the verdict enum's impl was not a site: the gate did not name it",
+    'M1772': r'ATTACK: a function returning a struct named for deciding \(data-flow refusal\) with no row and no exemption was not a site: the gate did not name it',
+    'M1773': r'ATTACK: a function returning a verdict inside a tuple was not a site: the gate did not name it',
+    'M1774': r'ATTACK: a function returning a verdict inside a Result was not a site: the gate did not name it',
+    'M1775': r'ATTACK: a call of a helper that only builds a negative verdict, with no row and no exemption, was not a site: the gate did not name it',
+    'M1776': r'ATTACK: a call of a function whose whole body is an Err\(\.\.\), with no row and no exemption, was not a site: the gate did not name it',
+    'M1777': r'ATTACK: a closure predicate refused through ok_or, with no row and no exemption, was not a site: the gate did not name it',
+    'M1778': r'ATTACK: a built `Unknown` of an enum named for deciding \(an Outcome\) with no row and no exemption was not a site: the gate did not name it',
+    'M1779': r'ATTACK: a TUPLE pattern in a match arm was read as a decision: the gate named it as a refusal site',
+    'M1780': r'ATTACK: a `matches!` pattern was read as a decision: the gate named it as a refusal site',
+    'M1781': r'ATTACK: a `cfg\(all\(test, \.\.\)\)` item \(compiled only in a test build\) was read as production: the gate named it as a refusal site',
+})
+ATTACK_MARKERS.update({
+    'M1782': r'ATTACK: the guest started under a POSSIBLY TRUNCATED cmdline policy',
+    'M1783': r'ATTACK: a verifier-reported FAILURE was counted as a verified pass',
+    'M1784': r'ATTACK: a trial no episode was delivered for was counted as a verified pass',
+})
+ATTACK_MARKERS.update({
+    'M1785': r'ATTACK: a program using fs_read ran under a grant withholding fs_read',
+    'M1786': r'ATTACK: a program using fs_write ran under a grant withholding fs_write',
+    'M1787': r'ATTACK: a program using net ran under a grant withholding net',
+    'M1788': r'ATTACK: a program using exec ran under a grant withholding exec',
+    'M1789': r'ATTACK: a program using fs_read ran under a grant withholding fs_read',
+    'M1790': r'ATTACK: a program handling internal data ran under a grant whose confidentiality ceiling is public',
+    'M1791': r'ATTACK: a program using fs_read ran under a grant withholding fs_read',
+    'M1792': r'ATTACK: a job requiring approval ran with no approval token\s*\n\s*left: \w+\s*\n\s*right: Denied',
+    'M1793': r'ATTACK: a spaced call write_file \( evaded the effects scan',
+    'M1794': r'ATTACK: a plain call write_file\( was not seen by the effects scan',
+    'M1795': r'ATTACK: an indented `mod` import \(effects in a file the scan cannot read\) was declared effect-free',
+})
+ATTACK_MARKERS.update({
+    'M1796': r'ATTACK: a request requiring (HardwareIsolated|MicroVm) ran on a process-scoped runtime',
+    'M1797': r'ATTACK: a request requiring (HardwareIsolated|MicroVm) ran on a process-scoped runtime',
+})
+ATTACK_MARKERS.update({
+    'M1798': r'ATTACK: a candidate with an unsafe attempt was ACCEPTED',
+    'M1799': r'ATTACK: a candidate established inferior on quality was ACCEPTED',
+    'M1800': r'ATTACK: a candidate whose noninferiority could not be established was ACCEPTED',
+    'M1801': r'ATTACK: a REJECTED admission was recorded as an ACCEPT verdict',
+    'M1802': r'ATTACK: an INCONCLUSIVE admission was recorded as an ACCEPT verdict',
+    'M1803': r'ATTACK: a VETOED admission was recorded as an ACCEPT verdict',
+})
+ATTACK_MARKERS.update({
+    'M1804': 'sidecar upgrades a failed check to passed: IntakeOutcome',
+    'M1805': 'sidecar claims a pass the check never reached: IntakeOutcome',
+    'M1806': r'ATTACK: a cost total beyond 2\^53-1 was summarized',
+    'M1807': r'ATTACK: a candidate with an unsafe attempt was ACCEPTED',
+    'M1808': r'ATTACK: a completed episode whose execution receipt records a failure: the trial counted',
+    'M1809': r'ATTACK: a canceled execution receipt projected to a completed episode status',
+    'M1810': r'ATTACK: a completed episode whose execution receipt records a denial: the trial counted',
+    'M1811': r'ATTACK: a completed episode whose execution receipt records an unsupported request: the trial counted',
+    'M1812': r'ATTACK: a completed episode whose execution receipt records an? (unknown outcome|timeout): the trial counted',
+})
+ATTACK_MARKERS.update({
+    'M1813': r"ATTACK: a lone failure line without K's failure token was recorded as a failure \(keyed=false\)",
+    'M1814': r'ATTACK: a refused run \(a suite entry outside the suite tree\) was reported as a PASS',
+    'M1815': r'ATTACK: a result\.json of another schema was receipted as a COMPLETED run',
+    'M1816': r'ATTACK: a cleanup not confirmed complete was receipted as a COMPLETED run',
+    'M1817': r'ATTACK: an output the result says is not bound was receipted as a COMPLETED run',
+    'M1818': r'ATTACK: an output --verify-result did not re-bind was receipted as a COMPLETED run',
+    'M1819': r'ATTACK: a result with no workload_exit was receipted as a COMPLETED run',
+    'M1820': r'ATTACK: a launcher exit 0 over a workload that exited 5 was receipted as a COMPLETED run',
+    'M1821': r'ATTACK: a result\.json of another schema was receipted as a COMPLETED run',
+    'M1822': r'ATTACK: a launch the launcher refused \(exit 22\) was receipted as a COMPLETED run',
+    'M1823': r'ATTACK: a run that timed out \(exit 20\) was receipted as a COMPLETED run',
+    'M1826': r'ATTACK: a (Passed|Failed) verdict was receipted over bytes the run did not judge',
 })

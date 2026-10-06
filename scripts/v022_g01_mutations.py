@@ -5341,7 +5341,7 @@ MUTATIONS += [
     ('M1052', "select (rows4b): hardware isolation is never dropped to the host interpreter", _FB,
      '    if r.hardware_isolation {\n        let p = FIRECRACKER_AXON_KERNEL;',
      '    if false && r.hardware_isolation {\n        let p = FIRECRACKER_AXON_KERNEL;',
-     'axon-fabric', _TS, 'hardware_isolation_is_never_dropped_to_the_host_interpreter'),
+     'axon-fabric', _TS, 'hardware_isolation_linux_is_refused_without_a_qualified_profile'),
     ('M1053', "select (rows4b): a path-scoped grant never runs under the host's coarse ceiling", _FB,
      '    if needs.path_scoped_grant {\n        // The host interpreter',
      '    if false && needs.path_scoped_grant {\n        // The host interpreter',
@@ -6266,14 +6266,14 @@ MUTATIONS += [
      '        _a = line_of(text, text.index(r[3]))\n        spans.append((r[0], set(range(_a, _a + r[3].count("\\n") + 1))))',
      'axon-core', _GT, 'a_row_covers_only_what_its_edit_changes'),
     ('M1740', "COVERAGE GATE (gate): a predicate function is exempted only at its head line", _RCG,
-     '        ex_hit = [e for e in ex if ((g <= e[0] <= i) if at == i else e[0] == g)]',
+     '        ex_hit = [e for e in ex if ((g <= e[0] <= i) if kind == "line" else e[0] == g)]',
      '        ex_hit = [e for e in ex if g <= e[0] <= i]',
      'axon-core', _GT, 'an_exemption_in_a_predicate_fns_body_does_not_exempt_the_fn'),
     ('M1741', "COVERAGE GATE (gate): a let-else is the opener of its refusal", _RCG,
      '|let\\b.*\\belse\\s*\\{\\s*$)|=>")', ')|=>")',
      'axon-core', _GT, 'a_let_else_is_the_opener_of_its_refusal'),
     ('M1742', "COVERAGE GATE (gate): a guard block never crosses a function boundary", _RCG,
-     '            if j < i and FN_HEAD.match(lines[j]):\n                break\n', '',
+     '        if j < i and FN_HEAD.match(lines[j]):\n            break\n', '',
      'axon-core', _GT, 'a_guard_block_does_not_cross_a_function_boundary'),
     ('M1743', "HARNESS (gate): --join derives HOLDS from the recorded cells, not the label", 'scripts/v022_paired_disable.py',
      '            if bool(r.get("holds")) != want and not (r.get("status") == "STALE_REFACTORED" and not r.get("holds")):',
@@ -6318,6 +6318,276 @@ EQUIV_RECORD["M1726"] = {
                  "removed and with only the siblings removed, and counts with all three removed"}
 EQUIVALENT_DID |= {"M1726"}
 RETIRED |= {"M1726"}
+
+# ── C9 round 4c, workstream ADMIT (M1770-M1829; amendment 76) ────────────────
+# The refusal-site gate could not SEE a refusal expressed as a returned verdict
+# (`Admission::Deny {..}`, `Verdict::Denied {..}`): axon-os's admission chain
+# (gate::admit and the supervisor around it) had no site and no row. The gate
+# now derives the verdict types from the in-scope code and reads five forms of
+# them (v022_refusal_coverage.py, "Amendment 76"); the rows below are the gate's
+# own guards, each killed by a planted production-shaped refusal it must name.
+PSV_IDS |= {f"M{n}" for n in range(1770, 1830)}
+MUTATIONS += [
+    ('M1770', "COVERAGE GATE (admit): a built negative verdict variant is a site", _RCG,
+     '    for _, i in verdict_constructions(clean, enums):\n        if not in_helper(i) and in_region(i):',
+     '    for _, i in []:\n        if not in_helper(i) and in_region(i):',
+     'axon-core', _GT, 'a_built_negative_verdict_variant_is_a_site'),
+    ('M1771', "COVERAGE GATE (admit): `Self::Variant` in the verdict enum's own impl is the same construction", _RCG,
+     '            enum = next((n for a, b, n in selfmap if a <= m.start() < b), enum)',
+     '            enum = enum',
+     'axon-core', _GT, 'a_self_variant_in_the_verdicts_own_impl_is_a_site'),
+    ('M1772', "COVERAGE GATE (admit): a function returning a verdict is a site", _RCG,
+     '    for a, b, n in decides:', '    for a, b, n in []:',
+     'axon-core', _GT, 'a_function_that_returns_a_verdict_is_a_site'),
+    ('M1773', "COVERAGE GATE (admit): a verdict inside a tuple return is a verdict return", _RCG,
+     '        return any(_decides_return(x, enums, structs) for x in parts + [cur])',
+     '        return False',
+     'axon-core', _GT, 'a_function_that_returns_a_verdict_is_a_site'),
+    ('M1774', "COVERAGE GATE (admit): a verdict inside a Result/Option return is a verdict return", _RCG,
+     '    m = re.match(r"(?:Result|Option|Vec|Box)\\s*<(.*)>\\s*$", t, re.S)',
+     '    m = re.match(r"(?:NoSuchWrapper)\\s*<(.*)>\\s*$", t, re.S)',
+     'axon-core', _GT, 'a_function_that_returns_a_verdict_is_a_site'),
+    ('M1775', "COVERAGE GATE (admit): a call of a verdict helper constructor is a site", _RCG,
+     '                if built and all(m.group(2) in enums[m.group(1)] for m in built):',
+     '                if False and built and all(m.group(2) in enums[m.group(1)] for m in built):',
+     'axon-core', _GT, 'a_call_of_a_verdict_helper_constructor_is_a_site'),
+    ('M1776', "COVERAGE GATE (admit): a call of an Err helper constructor is a site", _RCG,
+     '            elif (re.search(r"\\bErr\\(", body)',
+     '            elif (False and re.search(r"\\bErr\\(", body)',
+     'axon-core', _GT, 'a_call_of_an_err_helper_constructor_is_a_site'),
+    ('M1777', "COVERAGE GATE (admit): a closure predicate refused through ok_or is a site", _RCG,
+     '    for a, b in inline_predicate_sites(cl):', '    for a, b in []:',
+     'axon-core', _GT, 'an_inline_predicate_refused_through_ok_or_is_a_site'),
+    ('M1778', "COVERAGE GATE (admit): an enum named for deciding is a verdict enum", _RCG,
+     '            if strong or VERDICT_NAME.search(name):', '            if strong:',
+     'axon-core', _GT, 'a_built_negative_verdict_variant_is_a_site'),
+    ('M1779', "COVERAGE GATE (admit): a variant in a match arm's pattern (a tuple pattern too) is matched, not built", _RCG,
+     '    if any(a <= p < b for a, b in arms):\n        return True',
+     '    if False:\n        return True',
+     'axon-core', _GT, 'a_built_negative_verdict_variant_is_a_site'),
+    ('M1780', "COVERAGE GATE (admit): a variant inside matches!(..) is matched, not built", _RCG,
+     '    if k >= 0 and ";" not in clean[k:p] and _match_close(clean, k + len("matches!")) > p:',
+     '    if False and k >= 0 and ";" not in clean[k:p] and _match_close(clean, k + len("matches!")) > p:',
+     'axon-core', _GT, 'a_built_negative_verdict_variant_is_a_site'),
+    ('M1781', "COVERAGE GATE (admit): a cfg(all(test, ..)) item is test code", _RCG,
+     'CFG_TEST = re.compile(r"^[ \\t]*#\\[cfg\\((?:test|all\\(test,[^\\]\\n]*\\))\\)\\][ \\t]*$", re.M)',
+     'CFG_TEST = re.compile(r"^[ \\t]*#\\[cfg\\((?:test)\\)\\][ \\t]*$", re.M)',
+     'axon-core', _GT, 'a_cfg_all_test_item_is_test_code_and_a_cfg_any_test_item_is_not'),
+]
+_AV = '--test admit_verdict_sites'
+MUTATIONS += [
+    ('M1782', "GUEST PID 1 (admit): a guest with no policy and no bypass refuses to start (the decision arm)",
+     'crates/axon-guest-init/src/main.rs',
+     '        (false, false) => PolicyDecision::Refuse,',
+     '        (false, false) => PolicyDecision::ProceedUnpoliced,',
+     'axon-guest-init', '--test policy_refusals', 'an_untrustworthy_cmdline_policy_starts_no_workload'),
+    ('M1783', "EVL (admit): a verifier-reported failure is a Fail, never a pass", 'crates/axon-loop/src/evl.rs',
+     '        VerificationResult::Failed => (Outcome::Fail, "verifier reported failure".into(), None),',
+     '        VerificationResult::Failed => (\n            Outcome::VerifiedPass,\n            "verifier reported failure".into(),\n            None,\n        ),',
+     'axon-loop', _AV, 'a_verifier_reported_failure_is_a_fail_never_a_pass'),
+    ('M1784', "EVL (admit): a trial no episode was delivered for is Unknown, never a pass", 'crates/axon-loop/src/evl.rs',
+     '                arm.missing += 1;\n                (\n                    Outcome::Unknown,\n                    "missing: no episode delivered".to_string(),',
+     '                (\n                    Outcome::VerifiedPass,\n                    "missing: no episode delivered".to_string(),',
+     'axon-loop', _AV, 'a_trial_with_no_delivered_episode_is_never_a_pass'),
+]
+_GA = 'crates/axon-os/src/gate.rs'
+_SUP = 'crates/axon-os/src/supervisor.rs'
+_RT = 'crates/axon-os/src/runtime.rs'
+_AR = '--test admit_route'
+_AXES = 'a_program_using_an_axis_the_grant_withholds_is_denied_on_every_axis'
+_SCAN = 'the_effects_scan_is_not_evaded_by_spacing_or_an_import'
+MUTATIONS += [
+    ('M1785', "ADMISSION (admit): a program using fs_read is denied under a grant withholding fs_read (the axis row)", _GA,
+     '        (declared.row.fs_read, permitted.fs_read, "fs_read"),', '        (declared.row.fs_read, true, "fs_read"),',
+     'axon-fabric', _AR, _AXES),
+    ('M1786', "ADMISSION (admit): a program using fs_write is denied under a grant withholding fs_write (the axis row)", _GA,
+     '        (declared.row.fs_write, permitted.fs_write, "fs_write"),', '        (declared.row.fs_write, true, "fs_write"),',
+     'axon-fabric', _AR, _AXES),
+    ('M1787', "ADMISSION (admit): a program using net is denied under a grant withholding net (the axis row)", _GA,
+     '        (declared.row.net, permitted.net, "net"),', '        (declared.row.net, true, "net"),',
+     'axon-fabric', _AR, _AXES),
+    ('M1788', "ADMISSION (admit): a program using exec is denied under a grant withholding exec (the axis row)", _GA,
+     '        (declared.row.exec, permitted.exec, "exec"),', '        (declared.row.exec, true, "exec"),',
+     'axon-fabric', _AR, _AXES),
+    ('M1789', "ADMISSION (admit): gate::admit denies on the first effect axis the grant withholds", _GA,
+     '        if needs && !has {\n            return Admission::Deny {', '        if false && needs && !has {\n            return Admission::Deny {',
+     'axon-fabric', _AR, _AXES),
+    ('M1790', "ADMISSION (admit): gate::admit denies a program above the grant's confidentiality ceiling", _GA,
+     '    if declared.max_label > grant.max_label {', '    if false && declared.max_label > grant.max_label {',
+     'axon-fabric', _AR, 'a_program_above_the_grants_confidentiality_ceiling_is_denied'),
+    ('M1791', "ADMISSION (admit): the supervisor honours gate::admit's denial", _SUP,
+     '    if let Admission::Deny { reason, axis } = admit(&declared, &eff) {',
+     '    if let Admission::Deny { reason, axis } = Admission::Admit {',
+     'axon-fabric', _AR, _AXES),
+    ('M1792', "ADMISSION (admit): the supervisor honours approval::authorize's denial", _SUP,
+     '        Err(reason) => {\n            let denial = RawEvent::new("denied", "approval", EffectSet::default(), "");\n            let mut rec = build(\n                run_id,\n                manifest,\n                manifest.seed,\n                std::slice::from_ref(&denial),\n                Verdict::Denied {\n                    reason,\n                    axis: "approval".to_string(),\n                },\n            );\n            rec.approval = crate::approval::ApprovalStatus::Denied.as_str().to_string();\n            return rec;\n        }',
+     '        Err(_reason) => crate::approval::ApprovalStatus::NotRequired,',
+     'axon-fabric', '--test grant_authority', 'the_grants_require_approval_policy_is_enforced'),
+    ('M1793', "ADMISSION (admit): the effects scan sees a call with whitespace before its parenthesis", _RT,
+     '        while i < bytes.len() && (bytes[i] as char).is_whitespace() {\n            i += 1;\n        }\n', '',
+     'axon-fabric', _AR, _SCAN),
+    ('M1794', "ADMISSION (admit): the effects scan sees a call of a name", _RT,
+     "        if i < bytes.len() && bytes[i] == b'(' {\n            return true;\n        }",
+     "        if false && i < bytes.len() && bytes[i] == b'(' {\n            return true;\n        }",
+     'axon-fabric', _AR, _SCAN),
+    ('M1795', "ADMISSION (admit): the effects scan sees a bare `mod` declaration (effects in a file it cannot read)", _RT,
+     '        if name == "mod" {\n            return true;\n        }', '        if false && name == "mod" {\n            return true;\n        }',
+     'axon-fabric', _AR, _SCAN),
+]
+_HWTEST = 'hardware_isolation_is_never_dropped_to_the_host_interpreter'
+_HWTEST2 = 'a_hardware_isolation_requirement_is_never_met_by_a_process_scoped_runtime'
+MUTATIONS += [
+    ('M1796', "ADMISSION (admit): the supervisor refuses a request whose required isolation the runtime does not provide (library-tested; select dominates it on the route, M1052)", _SUP,
+     '    if !required.satisfied_by(iso) {', '    if false && !required.satisfied_by(iso) {',
+     'axon-os', '--test admit_isolation', _HWTEST2),
+    ('M1797', "ADMISSION (admit): a process-scoped runtime does not satisfy a hardware-isolation requirement (library-tested; select dominates it on the route, M1052)", _RT,
+     '            (IsolationRequirement::HardwareIsolated, Isolation::ProcessScoped) => false,',
+     '            (IsolationRequirement::HardwareIsolated, Isolation::ProcessScoped) => true,',
+     'axon-os', '--test admit_isolation', _HWTEST2),
+]
+# The isolation requirement is checked twice on Fabric's route: backend::select
+# refuses a request for hardware isolation with os=none before anything is
+# admitted (M1052), and supervise_requiring refuses it again on the isolation
+# axis (M1796 the guard, M1797 the predicate's ProcessScoped arm). For the
+# question "did it run" select dominates them on every route Fabric has, so they
+# are LIBRARY_PRIMITIVE (ruling R1): killed only by a direct call of
+# supervise_requiring (axon-os tests/admit_isolation.rs), never counted killed.
+# M1052's recorded kill was the SUPERVISOR's refusal (assert_never_runs read any
+# receipt that was not Unsupported as "it ran"); assert_never_runs now judges the
+# attack by effect, and M1052 stays ACTIVE on what only selection answers, the
+# receipt contract (Unsupported, never another status:
+# hardware_isolation_linux_is_refused_without_a_qualified_profile). A four-cell
+# retirement of the pair was executed and REFUSED: the supervisor's rows are
+# pinned by axon-os's own suite (a retirement needs the full suite green).
+_ISO_ROUTES = {
+    "submit::supervisor_admits (the one production caller of supervise_requiring)": "backend::select, M1052: it "
+        "returns no profile for hardware isolation with os=none and refuses every os=linux request without it "
+        "(M1051), and for hardware_isolation+linux returns only LINUX_MICROVM_PROTECTED, whose isolation "
+        "satisfies MicroVm; supervisor_admits runs after select with the SELECTED profile, so the requirement "
+        "it derives is always satisfied by the runtime it is given",
+}
+for _m, _what in (("M1796", "the supervisor's isolation guard"), ("M1797", "satisfied_by's ProcessScoped arm")):
+    LIB_RECORD[_m] = {
+        "property": "a request requiring hardware isolation is never run on a process-scoped runtime (" + _what + ")",
+        "routes": _ISO_ROUTES,
+        "library_test": "axon-os --test admit_isolation " + _HWTEST2}
+LIBRARY_PRIMITIVE |= {"M1796", "M1797"}
+_LA = 'crates/axon-loop/src/admission.rs'
+MUTATIONS += [
+    ('M1798', "ADMISSION (admit): a candidate with an unsafe attempt is vetoed, never accepted", _LA,
+     '        return (Decision::Vetoed, vetoes);', '        return (Decision::Accept, vetoes);',
+     'axon-loop', _AV, 'a_candidate_with_an_unsafe_attempt_is_never_accepted'),
+    ('M1799', "ADMISSION (admit): a candidate established inferior is rejected, never accepted", _LA,
+     '        (Decision::Reject, reject)', '        (Decision::Accept, reject)',
+     'axon-loop', _AV, 'a_candidate_inferior_on_quality_is_never_accepted'),
+    ('M1800', "ADMISSION (admit): a candidate that cannot be established is inconclusive, never accepted", _LA,
+     '        (Decision::Inconclusive, inconclusive)', '        (Decision::Accept, inconclusive)',
+     'axon-loop', _AV, 'a_candidate_whose_noninferiority_cannot_be_established_is_never_accepted'),
+    ('M1801', "ADMISSION (admit): a REJECT is recorded as a REJECT verdict", _LA,
+     '            Decision::Reject => Verdict::Reject,', '            Decision::Reject => Verdict::Accept,',
+     'axon-loop', _AV, 'each_admission_disposition_is_recorded_as_its_own_verdict'),
+    ('M1802', "ADMISSION (admit): an INCONCLUSIVE is recorded as an INCONCLUSIVE verdict", _LA,
+     '            Decision::Inconclusive => Verdict::Inconclusive,', '            Decision::Inconclusive => Verdict::Accept,',
+     'axon-loop', _AV, 'each_admission_disposition_is_recorded_as_its_own_verdict'),
+    ('M1803', "ADMISSION (admit): a VETO is recorded as a VETOED verdict", _LA,
+     '            Decision::Vetoed => Verdict::Vetoed,', '            Decision::Vetoed => Verdict::Accept,',
+     'axon-loop', _AV, 'each_admission_disposition_is_recorded_as_its_own_verdict'),
+]
+_CK = 'crates/axon-loop-contracts/src/checks.rs'
+_CS = '--test checks_sites'
+MUTATIONS += [
+    ('M1804', "INTAKE (admit): a failed check receipt is read as a failed verification, never a pass", 'crates/axon-loop/src/intake.rs',
+     '        (ReceiptStatus::Completed, ReceiptVerification::Failed) => VerificationResult::Failed,',
+     '        (ReceiptStatus::Completed, ReceiptVerification::Failed) => VerificationResult::Passed,',
+     'axon-loop', '--test intake', 'verification_that_does_not_join_is_refused_with_the_store_unchanged'),
+    ('M1805', "INTAKE (admit): a check receipt that reached no verdict is read as an unknown verification, never a pass", 'crates/axon-loop/src/intake.rs',
+     '        ) => VerificationResult::Unknown,', '        ) => VerificationResult::Passed,',
+     'axon-loop', '--test intake', 'verification_that_does_not_join_is_refused_with_the_store_unchanged'),
+    ('M1806', "TEL (admit): a cost total beyond 2^53-1 is refused, never summarized", _TL,
+     '        .filter(|s| *s <= MAX_INTEGER)', '        .filter(|_s| true)',
+     'axon-loop', _PTS, 'a_cost_total_beyond_2_53_is_never_summarized'),
+    ('M1807', "SAFETY (admit): a reported violation marks the trial a Violation", 'crates/axon-loop/src/safety.rs',
+     '            (_, Finding::Violation, Some(code)) => SafetyState::Violation { code },',
+     '            (_, Finding::Violation, Some(_code)) => SafetyState::Clear,',
+     'axon-loop', _AV, 'a_candidate_with_an_unsafe_attempt_is_never_accepted'),
+    ('M1808', "CHECKS (admit): a Failed execution receipt projects to a Failed episode status", _CK,
+     '        ReceiptStatus::Failed => EpisodeStatus::Failed,', '        ReceiptStatus::Failed => EpisodeStatus::Completed,',
+     'axon-loop', _CS, 'a_pass_whose_execution_failed_never_counts'),
+    ('M1809', "CHECKS (admit): a Canceled execution receipt projects to a Cancelled episode status", _CK,
+     '        ReceiptStatus::Canceled => EpisodeStatus::Cancelled,', '        ReceiptStatus::Canceled => EpisodeStatus::Completed,',
+     'axon-loop-contracts', '--test admit_verdict_sites', 'a_canceled_execution_receipt_never_projects_to_a_completed_episode'),
+    ('M1810', "CHECKS (admit): a Denied execution receipt projects to a Refused episode status", _CK,
+     '        ReceiptStatus::Denied => EpisodeStatus::Refused,', '        ReceiptStatus::Denied => EpisodeStatus::Completed,',
+     'axon-loop', _CS, 'a_pass_whose_execution_was_denied_never_counts'),
+    ('M1811', "CHECKS (admit): an Unsupported execution receipt projects to an Unsupported episode status", _CK,
+     '        ReceiptStatus::Unsupported => EpisodeStatus::Unsupported,', '        ReceiptStatus::Unsupported => EpisodeStatus::Completed,',
+     'axon-loop', _CS, 'a_pass_whose_execution_was_unsupported_never_counts'),
+    ('M1812', "CHECKS (admit): an unknown or timed-out execution receipt projects to an OutcomeUnknown episode status", _CK,
+     '        ReceiptStatus::OutcomeUnknown | ReceiptStatus::TimedOut => EpisodeStatus::OutcomeUnknown,',
+     '        ReceiptStatus::OutcomeUnknown | ReceiptStatus::TimedOut => EpisodeStatus::Completed,',
+     'axon-loop', _CS, 'a_pass_whose_execution_outcome_is_unknown_never_counts'),
+]
+_PR2 = 'crates/axon-psv/src/runner.rs'
+_BK = 'crates/axon-fabric/src/backend.rs'
+_SB = 'crates/axon-fabric/src/submit.rs'
+_LRN = 'a_launcher_result_that_is_not_a_clean_bound_success_is_never_receipted_completed'
+MUTATIONS += [
+    ('M1813', "GUEST RUNNER (admit): a result without K's keyed token for its outcome is Unknown, whatever the first reading said", _PR2,
+     '        (GuestStatus::Failed, Some(false), Some(c)) if c != 0 => GuestStatus::Failed,\n        _ => GuestStatus::Unknown,',
+     '        (GuestStatus::Failed, Some(false), Some(c)) if c != 0 => GuestStatus::Failed,\n        _ => status,',
+     'axon-psv', '--test runner', 'a_lone_unkeyed_failure_line_is_not_a_verdict'),
+    ('M1814', "GUEST RUNNER (admit): a refusal is reported as a refusal, never a pass", _PR2,
+     '        status: GuestStatus::Refused,', '        status: GuestStatus::Passed,',
+     'axon-psv', '--test runner', 'a_refusal_is_never_reported_as_a_pass'),
+    ('M1815', "LINUX RESULT (admit): a result.json of another schema is no result", _BK,
+     '    if r["schema"] != "axon-linux-microvm-result/1" {', '    if false && r["schema"] != "axon-linux-microvm-result/1" {',
+     'axon-fabric', '--test submit', _LRN),
+    ('M1816', "LINUX RESULT (admit): a cleanup not confirmed complete leaves the outcome unknown", _BK,
+     '    if cleanup_complete != Some(true) {', '    if false && cleanup_complete != Some(true) {',
+     'axon-fabric', '--test submit', _LRN),
+    ('M1817', "LINUX RESULT (admit): an output the result says is not bound is no success", _BK,
+     '            if r["output_bound"].as_bool() != Some(true) {', '            if false && r["output_bound"].as_bool() != Some(true) {',
+     'axon-fabric', '--test submit', _LRN),
+    ('M1818', "LINUX RESULT (admit): an output --verify-result did not re-bind is no success", _BK,
+     '                other => {\n                    return (\n                        LinuxOutcome::Unknown,\n                        format!("--verify-result did not re-bind the output (exit {other:?})"),\n                        evidence,\n                    )\n                }',
+     '                other => {\n                    let _ = other;\n                }',
+     'axon-fabric', '--test submit', _LRN),
+    ('M1819', "LINUX RESULT (admit): a result with no workload_exit is no success", _BK,
+     '            let Some(w) = r["workload_exit"].as_i64() else {\n                return (LinuxOutcome::Unknown, "no workload_exit".into(), evidence);\n            };',
+     '            let w = r["workload_exit"].as_i64().unwrap_or(0);',
+     'axon-fabric', '--test submit', _LRN),
+    ('M1820', "LINUX RESULT (admit): a launcher exit 0 over a workload that did not exit 0 is no success", _BK,
+     '            if exit == Some(0) && w == 0 {', '            if exit == Some(0) {',
+     'axon-fabric', '--test submit', _LRN),
+    ('M1821', "RECEIPT (admit): an unknown launcher outcome is receipted OutcomeUnknown, never completed", _SB,
+     '        backend::LinuxOutcome::Unknown => (\n            ReceiptStatus::OutcomeUnknown,\n            None,\n            ReceiptVerification::Unknown,\n        ),',
+     '        backend::LinuxOutcome::Unknown => (\n            ReceiptStatus::Completed,\n            Some(0),\n            ReceiptVerification::NotRequested,\n        ),',
+     'axon-fabric', '--test submit', _LRN),
+    ('M1822', "RECEIPT (admit): a refused launch is receipted Denied, never completed", _SB,
+     '        backend::LinuxOutcome::Refused => {\n            (ReceiptStatus::Denied, None, ReceiptVerification::NotRun)\n        }',
+     '        backend::LinuxOutcome::Refused => {\n            (ReceiptStatus::Completed, Some(0), ReceiptVerification::NotRequested)\n        }',
+     'axon-fabric', '--test submit', _LRN),
+    ('M1823', "RECEIPT (admit): a timed-out launch is receipted TimedOut, never completed", _SB,
+     '        backend::LinuxOutcome::TimedOut => {\n            (ReceiptStatus::TimedOut, None, ReceiptVerification::Unknown)\n        }',
+     '        backend::LinuxOutcome::TimedOut => {\n            (ReceiptStatus::Completed, Some(0), ReceiptVerification::NotRequested)\n        }',
+     'axon-fabric', '--test submit', _LRN),
+    ('M1826', "RECEIPT (admit): a verdict over bytes the run did not judge is no verdict", _SB,
+     '            if problem.is_some()\n                && matches!(', '            if false\n                && matches!(',
+     'axon-fabric', '--test workspace', 'a_verdict_over_bytes_the_run_did_not_judge_is_never_receipted'),
+]
+LIB_RECORD["M1809"] = {
+    "property": "a canceled execution receipt projects to a Cancelled episode status, never a Completed one",
+    "routes": {
+        "evl::evaluate (judge, bind_acf's only production caller)": "M131 (evl.rs `run_end`): a receipt "
+            "that ended Canceled makes a Passed or Failed verdict Unknown (\"the run ended Cancelled\"), "
+            "whatever the episode says, before any count; measured: with the arm mapped to Completed, "
+            "tests/checks_sites.rs a_pass_whose_execution_was_canceled_never_counts still reads the trial "
+            "Unknown (reason: the run ended Cancelled)",
+        "tel::join (project_receipt_status for the usage's episode status)": "decides no verdict: the status "
+            "only counts `non_completed_records` in a cost summary"},
+    "library_test": "axon-loop-contracts --test admit_verdict_sites "
+                    "a_canceled_execution_receipt_never_projects_to_a_completed_episode"}
+LIBRARY_PRIMITIVE |= {"M1809"}
 
 
 def in_scope(mid, scope):

@@ -488,6 +488,66 @@ fn a_pass_whose_execution_failed_never_counts() {
     );
 }
 
+/// C9 round 4c, ADMIT (amendment 76): `project_receipt_status` is the one map
+/// from an execution receipt's status to the episode status the join compares
+/// (checks.rs `Fabric outcome semantics lost`). Each arm is a verdict of its
+/// own: a completed episode over a receipt that records a cancellation, a
+/// denial, an unsupported request or an unknown outcome never counts. (The
+/// Failed arm is `a_pass_whose_execution_failed_never_counts`.)
+#[test]
+fn a_pass_whose_execution_was_canceled_never_counts() {
+    never_counts(
+        "ba-cancel",
+        Out::Pass,
+        Refs::Bind,
+        "a completed episode whose execution receipt records a cancellation",
+        |d| d.rc.status = ReceiptStatus::Canceled,
+    );
+}
+
+#[test]
+fn a_pass_whose_execution_was_denied_never_counts() {
+    never_counts(
+        "ba-denied",
+        Out::Pass,
+        Refs::Bind,
+        "a completed episode whose execution receipt records a denial",
+        |d| d.rc.status = ReceiptStatus::Denied,
+    );
+}
+
+#[test]
+fn a_pass_whose_execution_was_unsupported_never_counts() {
+    never_counts(
+        "ba-unsupported",
+        Out::Pass,
+        Refs::Bind,
+        "a completed episode whose execution receipt records an unsupported request",
+        |d| d.rc.status = ReceiptStatus::Unsupported,
+    );
+}
+
+#[test]
+fn a_pass_whose_execution_outcome_is_unknown_never_counts() {
+    never_counts(
+        "ba-unknown",
+        Out::Pass,
+        Refs::Bind,
+        "a completed episode whose execution receipt records an unknown outcome",
+        |d| {
+            d.rc.status = ReceiptStatus::OutcomeUnknown;
+            d.rc.process_exit_code = None;
+        },
+    );
+    never_counts(
+        "ba-timeout",
+        Out::Pass,
+        Refs::Bind,
+        "a completed episode whose execution receipt records a timeout",
+        |d| d.rc.status = ReceiptStatus::TimedOut,
+    );
+}
+
 #[test]
 fn a_completion_resting_on_a_worker_report_never_counts() {
     never_counts(

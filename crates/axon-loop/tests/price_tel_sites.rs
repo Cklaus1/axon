@@ -393,3 +393,34 @@ fn resolve_opaque_never_reads_another_scheme_as_a_content_ref() {
         panic!("ATTACK: resolve_opaque read a sha256 ref as the content ref {r}");
     }
 }
+
+/// tel `add`: a sum of final costs beyond 2^53-1 is refused, never wrapped into
+/// a smaller number the wire could not carry (C9 round 4c, admit: the checked,
+/// bounded add is the verdict `Refused` produced by `summarize`). Control: the
+/// same two episodes with costs that fit are summarized.
+#[test]
+fn a_cost_total_beyond_2_53_is_never_summarized() {
+    let build = |cost: u64| {
+        let a1 = attempt("fixture-attempt-1");
+        let a2 = attempt("fixture-attempt-2");
+        let mut e1 = episode(&[receipt_ref(&a1)]);
+        let mut e2 = episode(&[receipt_ref(&a2)]);
+        e2["identity"]["attempt_id"] = json!("fixture-attempt-2");
+        for e in [&mut e1, &mut e2] {
+            e["usage"]["state"] = json!("final");
+            e["usage"]["cost_micro"] = json!(cost);
+            e["usage"]["unresolved_liability_micro"] = json!(0);
+        }
+        json!({"schema":"axon.loop.tel-request/1",
+               "episodes":[e1, e2],
+               "price_schedule": pinned(schedule_doc(&["model"])),
+               "fabric_attempts":[a1, a2]})
+    };
+    let (code, err) = tel(&build(100));
+    assert_eq!(code, 0, "control: costs that fit are summarized: {err}");
+    never_summarized(
+        &build(9_007_199_254_740_991),
+        &["exceeds 2^53-1"],
+        "a cost total beyond 2^53-1 was summarized",
+    );
+}

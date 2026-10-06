@@ -291,7 +291,16 @@ fn hardware_isolation_linux_is_refused_without_a_qualified_profile() {
     let mut r = request(&env, "op-hw", "t_ok");
     r["required"]["hardware_isolation"] = json!(true);
     let s = submit(&r.to_string(), &env.cfg(0)).unwrap();
-    assert_eq!(s.receipt.status, ReceiptStatus::Unsupported);
+    // The receipt's contract: UNSUPPORTED (selection refused, nothing reserved
+    // or launched), never another status. Selection's guard is dominated for
+    // the question "did it run" by the supervisor's isolation check (M1796,
+    // M1797), so this contract is what selection's own guard (M1052) answers.
+    if s.receipt.status != ReceiptStatus::Unsupported {
+        panic!(
+            "ATTACK: a request for hardware isolation (os=none) was receipted {:?}, not Unsupported: selection did not refuse it ({:?})",
+            s.receipt.status, s.reason
+        );
+    }
     assert!(s.reason.unwrap().contains("axon-metal-fc-nojailer"));
     assert_eq!(spawn_count(&env.spawns), 0);
 }
@@ -1074,20 +1083,33 @@ fn assert_never_runs(
     why: &str,
 ) {
     let s = submit(&r.to_string(), cfg).unwrap();
-    assert!(
-        s.receipt.status == ReceiptStatus::Unsupported
-            && spawn_count(&env.spawns) == 0
-            && env.launch_records() == 0,
-        "ATTACK: {what}, and it ran: {:?} on {:?} ({:?})",
-        s.receipt.status,
-        s.backend,
-        s.reason
-    );
-    assert!(
-        s.reason.as_deref().unwrap_or("").contains(why),
-        "expected {why:?}: {:?}",
-        s.reason
-    );
+    // The attack is that the request RAN: a process was spawned or a launch
+    // was recorded. A refusal by a LATER layer (axon-os admission denying what
+    // selection let through) is not the attack succeeding: it used to read as
+    // one, so a request refused by the supervisor's isolation guard counted as
+    // "ran" for the selection row that had been removed.
+    if spawn_count(&env.spawns) != 0 || env.launch_records() != 0 {
+        panic!(
+            "ATTACK: {what}, and it ran: {:?} on {:?} ({:?}), {} spawns, {} launch records",
+            s.receipt.status,
+            s.backend,
+            s.reason,
+            spawn_count(&env.spawns),
+            env.launch_records()
+        );
+    }
+    // Refused by selection (Unsupported, naming `why`) or, where a request
+    // selection should have refused is stopped by a LATER layer instead, by
+    // that layer (Denied): either way nothing ran, which is the property.
+    match s.receipt.status {
+        ReceiptStatus::Unsupported => assert!(
+            s.reason.as_deref().unwrap_or("").contains(why),
+            "expected {why:?}: {:?}",
+            s.reason
+        ),
+        ReceiptStatus::Denied => {}
+        other => panic!("setup: refused, but receipted {other:?} ({:?})", s.reason),
+    }
 }
 
 fn control_runs(env: &Env, cfg: &axon_fabric::SubmitConfig, r: &serde_json::Value) {
@@ -1307,4 +1329,176 @@ fn refused_wherever(env: &Env, r: &serde_json::Value, what: &str) {
         !ran && spawn_count(&env.spawns) == 0 && env.launch_records() == 0,
         "ATTACK: {what}, and it ran"
     );
+}
+
+// ── C9 round 4c, ADMIT (amendment 76): the receipts Fabric WRITES are verdicts
+// too. Each attack below is a result no honest run produces, with every other
+// guard genuine; a panic that starts `ATTACK:` is the receipt claiming a
+// success (or a pass) the evidence does not support.
+
+/// A stand-in launcher that writes `result` (nothing when `None`) as
+/// `result.json`, exits `exit`, and answers `--verify-result` with
+/// `verify_exit`. `stand_in_launcher` fixes the result's shape; these attacks
+/// each edit one field of it.
+fn custom_launcher(
+    env: &Env,
+    tag: &str,
+    exit: i32,
+    result: Option<&str>,
+    verify_exit: i32,
+) -> std::path::PathBuf {
+    let p = env.dir.path().join(format!("custom-launcher-{tag}.sh"));
+    let write = result
+        .map(|r| format!("cat > \"$OUT/result.json\" <<'J'\n{r}\nJ\n"))
+        .unwrap_or_default();
+    let body = format!(
+        r#"#!/bin/sh
+if [ "$1" = "--verify-result" ]; then exit {verify_exit}; fi
+OUT=""
+while [ $# -gt 0 ]; do case "$1" in --out) OUT="$2"; shift 2;; *) shift;; esac; done
+mkdir -p "$OUT/out"
+echo launched >> "$OUT/../launches"
+{write}exit {exit}
+"#
+    );
+    write_executable(&p, body, 0o755);
+    p
+}
+
+/// The honest `axon-linux-microvm-result/1` the stand-in writes, as JSON text,
+/// with `edit` applied to the parsed value.
+fn lx_result(edit: impl FnOnce(&mut serde_json::Value)) -> String {
+    let mut v = json!({
+        "schema": "axon-linux-microvm-result/1", "status": "ok", "workload_exit": 0,
+        "output_bound": true, "outputs": {"stdout": {"sha256": "ab", "bytes": 1}},
+        "cleanup": {"complete": true, "left_behind": []}
+    });
+    edit(&mut v);
+    v.to_string()
+}
+
+/// Each launcher result below falls short of a clean, bound, cleaned-up exit-0
+/// success, and is receipted as the specific non-success it is, NEVER as a
+/// completed run and never with a passed verification. Control: the honest
+/// result (`linux_profile_ok_run_maps_to_a_completed_receipt`).
+#[test]
+fn a_launcher_result_that_is_not_a_clean_bound_success_is_never_receipted_completed() {
+    use ReceiptStatus::{Denied, OutcomeUnknown, TimedOut};
+    let honest = lx_result(|_| {});
+    #[allow(clippy::type_complexity)]
+    let cases: Vec<(&str, i32, Option<String>, i32, ReceiptStatus)> = vec![
+        (
+            "a result.json of another schema",
+            0,
+            Some(lx_result(|v| {
+                v["schema"] = json!("axon-linux-microvm-result/2")
+            })),
+            0,
+            OutcomeUnknown,
+        ),
+        (
+            "a launch the launcher refused (exit 22)",
+            22,
+            Some(honest.clone()),
+            0,
+            Denied,
+        ),
+        (
+            "a cleanup the launcher reported incomplete (exit 24)",
+            24,
+            Some(honest.clone()),
+            0,
+            OutcomeUnknown,
+        ),
+        (
+            "a cleanup not confirmed complete",
+            0,
+            Some(lx_result(|v| v["cleanup"]["complete"] = json!(false))),
+            0,
+            OutcomeUnknown,
+        ),
+        (
+            "a run that timed out (exit 20)",
+            20,
+            Some(honest.clone()),
+            0,
+            TimedOut,
+        ),
+        (
+            "an output the result says is not bound",
+            0,
+            Some(lx_result(|v| v["output_bound"] = json!(false))),
+            0,
+            OutcomeUnknown,
+        ),
+        (
+            "an output --verify-result did not re-bind",
+            0,
+            Some(honest.clone()),
+            23,
+            OutcomeUnknown,
+        ),
+        (
+            "a result with no workload_exit",
+            0,
+            Some(lx_result(|v| {
+                v.as_object_mut().unwrap().remove("workload_exit");
+            })),
+            0,
+            OutcomeUnknown,
+        ),
+        (
+            "a launcher exit 0 over a workload that exited 5",
+            0,
+            Some(lx_result(|v| v["workload_exit"] = json!(5))),
+            0,
+            OutcomeUnknown,
+        ),
+        (
+            "a VMM that died (exit 21)",
+            21,
+            Some(honest.clone()),
+            0,
+            OutcomeUnknown,
+        ),
+        ("no result.json at all", 0, None, 0, OutcomeUnknown),
+    ];
+    for (i, (name, exit, result, verify, want)) in cases.into_iter().enumerate() {
+        let env = Env::new();
+        let launcher = custom_launcher(&env, &format!("c{i}"), exit, result.as_deref(), verify);
+        let s = linux_submit(&env, &format!("op-lxa-{i}"), launcher);
+        if s.receipt.status == ReceiptStatus::Completed {
+            panic!(
+                "ATTACK: {name} was receipted as a COMPLETED run ({:?}, verification {:?})",
+                s.reason, s.receipt.verification
+            );
+        }
+        if s.receipt.verification == ReceiptVerification::Passed {
+            panic!(
+                "ATTACK: {name} was receipted with a PASSED verification ({:?}, status {:?})",
+                s.reason, s.receipt.status
+            );
+        }
+        assert_eq!(s.receipt.status, want, "{name}: {:?}", s.reason);
+    }
+}
+
+/// submit's receipt of a host-route check: the verification is judged for the
+/// NAMED check (a failing one is Failed, never Passed), and for an unnamed run
+/// a single failure fails the run.
+#[test]
+fn a_failing_check_is_never_receipted_passed() {
+    let env = Env::new();
+    let s = submit(&request(&env, "op-ap1", "t_bad").to_string(), &env.cfg(0)).unwrap();
+    if s.receipt.verification == ReceiptVerification::Passed {
+        panic!("ATTACK: a failing NAMED check was receipted with a Passed verification");
+    }
+    assert_eq!(s.receipt.verification, ReceiptVerification::Failed);
+    let mut r = request(&env, "op-ap2", "t_bad");
+    r["argv"] = json!(["f.ax"]);
+    let s = submit(&r.to_string(), &env.cfg(0)).unwrap();
+    if s.receipt.verification == ReceiptVerification::Passed {
+        panic!("ATTACK: a run with a failing check (no name given) was receipted Passed");
+    }
+    assert_eq!(s.receipt.verification, ReceiptVerification::Failed);
 }

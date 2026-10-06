@@ -32,7 +32,13 @@ in-scope file is NOT_YET_SCANNED (amendment 61); v022_freeze_manifest.py runs
 the check that way and refuses to bind a freeze otherwise.
 
 The FILE SET is a rule (amendment 61), not a list: see SCOPE_DIRS below.
+
+Amendment 76: a refusal that is a RETURNED VERDICT is a site too (a built
+negative variant of a verdict enum, a function returning a verdict, a call of a
+helper constructor, a closure predicate refused through `ok_or`); the verdict
+types are derived from the in-scope enums. See "Amendment 76" below.
 """
+import collections
 import importlib.util
 import os
 import re
@@ -323,18 +329,9 @@ OUT_OF_SCOPE = {
 }
 # (file -> sites with neither a row nor an exemption, as last measured). The
 # gate re-measures each count and refuses a stale one, in both directions.
+# Amendment 76: EMPTY. Every site amendments 71-76 exposed has a row or an exemption
+# stating a checkable fact; a new unscanned file is listed here again, never exempted in bulk.
 NOT_YET_SCANNED = {
-    # Amendment 71 (r4c-fixes part 2): brought in by the crate rule, NOT YET
-    # SCANNED (every site measured; neither rowed nor exempted yet). A freeze
-    # refuses while any is listed. The libraries the protected crates link:
-    # Integration of amendments 74 and 75: the axon-os ADMISSION chain the predicate-primitive
-    # rule exposes. These decide on the protected route (supervise_requiring ->
-    # run_requiring: `Grant::intersect` -> intersect_prefixes/intersect_hosts use is_ancestor,
-    # host_allows, host_matches; `IsolationRequirement::satisfied_by`; `scan_effects` ->
-    # calls_name), have no row, and need route tests through `submit` before a disposition
-    # (handed back). A freeze refuses while they are listed.
-    "crates/axon-os/src/grant.rs": 3,
-    "crates/axon-os/src/runtime.rs": 2,
 }
 SITE = re.compile(r"return Err\(|\bErr\(format!|\brefuse\(|\bErr\(bad\(|TEST_TRUST_BUILD")
 # Amendment 74: a `let .. else {` is the opener of its refusal too.
@@ -2543,6 +2540,487 @@ EXEMPT += [
      _VM + "; bind_vsock_uds"),
 ]
 
+# ── Amendment 76 (C9 round 4c, admit): the verdict-form sites in axon-os and the
+# files the integrator's round 2 left. Each carries the call-graph fact that
+# makes it not a decision on the protected route; the ones that DO decide are
+# rows (M1770-M1829, v022_g01_mutations.py "ADMIT").
+_KIL = ("NOT ON THE PROTECTED ROUTE (checkable): axon-os's kill channel, latch, corrigibility and "
+        "compliance-monitor modules have no caller on the supervise_requiring path or in any "
+        "protected crate: `grep -rn 'killchan::\\|latch::\\|corrigible::\\|monitor::\\|FileKillChannel\\|"
+        "ComplianceMonitor\\|LatchState' crates/*/src` outside axon-core's interpreter finds only "
+        "these modules' own files and axon-os cli.rs (the `axon-os run` command's monitor thread); "
+        "supervisor.rs and gate.rs name none of them, and the AdmissionProbe Fabric supplies has no "
+        "latch. `axon_os::cli` is named by no other crate")
+_GRN = ("DOMINATED BY CONSTRUCTION (checkable): on the protected route Grant::intersect runs once, "
+        "supervisor.rs `manifest.grant.intersect(supervisor_grant)`, where `supervisor_grant` is "
+        "submit.rs `grant.grant()` and `manifest.grant` is `grant.manifest_for(..).grant`, a clone "
+        "of that same grant (tests/admit_route.rs admission_intersects_the_resolved_grant_with_"
+        "itself). Every element intersect_prefixes/intersect_hosts emit is a clone of an input "
+        "element, so the result is a subset of the job's own grant whatever these predicates "
+        "answer: they can only NARROW, and a withheld axis is a denial (fail closed). The result's "
+        "only consumers are gate::admit's effect_set() (an axis is present iff its list is "
+        "non-empty) and max_label, and a self-intersection keeps every non-empty list non-empty "
+        "(is_ancestor(p, p), host_matches(h, h) and `b.contains(h)` hold for every entry), so "
+        "nothing widens and nothing narrows. `is_subset_of` and `allows` are called by no "
+        "protected crate (`grep -rn 'is_subset_of\\|\\.allows(' crates/*/src` finds only axon-os "
+        "and axon-intent)")
+_ACR = ("NOT ON THE PROTECTED ROUTE (checkable): AxonCoreRuntime is axon-os's own subprocess "
+        "Runtime for `axon-os run`/`replay` (its only constructions are cli.rs "
+        "`AxonCoreRuntime::from_env()`: `grep -rn AxonCoreRuntime crates/*/src`), and MockRuntime "
+        "exists only under `#[cfg(any(test, feature = \"mock\"))]`, a feature no dependent turns "
+        "on (axon-fabric and axon-intent depend on axon-os by bare path). Fabric supplies its own "
+        "AdmissionProbe (submit.rs), which performs no effect and returns Completed{0}; the "
+        "verdicts here are what a RUN produced, and no protected run is executed by these")
+_GRB = (_GRA + " refuses a malformed grant file here (a missing or ill-typed key); the file is "
+        "never caller-supplied, and nothing chooses success: the manifest is not produced")
+EXEMPT += [
+    ('crates/axon-os/src/killchan.rs',
+     '            LatchState::Tripped\n        } else {\n            LatchState::Clear\n        }\n    }\n}\n\n// ── Test implementation ────────────────────────────────────────────────────────',
+     _KIL),
+    ('crates/axon-os/src/killchan.rs',
+     '            LatchState::Tripped\n        } else {\n            LatchState::Clear\n        }\n    }\n}\n\n// ── File-backed kill channel (for cross-process kill) ─────────────────────────',
+     _KIL),
+    ('crates/axon-os/src/killchan.rs',
+     '                LatchState::Tripped',
+     _KIL),
+    ('crates/axon-os/src/killchan.rs',
+     '            Err(_) => LatchState::Tripped,',
+     _KIL),
+    ('crates/axon-os/src/killchan.rs',
+     '    fn poll(&self) -> LatchState {\n        if self.flag.load(Ordering::SeqCst) {\n            LatchState::Tripped\n        } else {\n            LatchState::Clear\n        }\n    }\n}\n\n// ── Test implementation ────────────────────────────────────────────────────────',
+     _KIL),
+    ('crates/axon-os/src/killchan.rs',
+     '    fn poll(&self) -> LatchState {\n        if self.flag.load(Ordering::SeqCst) {\n            LatchState::Tripped\n        } else {\n            LatchState::Clear\n        }\n    }\n}\n\n// ── File-backed kill channel (for cross-process kill) ─────────────────────────',
+     _KIL),
+    ('crates/axon-os/src/killchan.rs',
+     '    fn poll(&self) -> LatchState {\n        match std::fs::read_to_string(&self.path) {',
+     _KIL),
+    ('crates/axon-os/src/latch.rs',
+     '            state: LatchState::Tripped,',
+     _KIL),
+    ('crates/axon-os/src/latch.rs',
+     '    pub fn poll(&self) -> LatchState {',
+     _KIL),
+    ('crates/axon-os/src/corrigible.rs',
+     '        LatchState::Tripped => Some(Verdict::Halted {',
+     _KIL),
+    ('crates/axon-os/src/monitor.rs',
+     '                            return MonitorResult::ViolationDetected {',
+     _KIL),
+    ('crates/axon-os/src/monitor.rs',
+     '                        return MonitorResult::ViolationDetected {\n                            effect,',
+     _KIL),
+    ('crates/axon-os/src/monitor.rs',
+     '    pub fn run(self) -> MonitorResult {',
+     _KIL),
+    ('crates/axon-os/src/cli.rs',
+     '                crate::verdict::Verdict::VerifyMismatch { detail: e.detail }.exit_code() as u8,\n            )\n        }\n    }\n}\n\nfn cmd_replay(rest: &[&str]) -> ExitCode {',
+     _KIL),
+    ('crates/axon-os/src/cli.rs',
+     '                crate::verdict::Verdict::VerifyMismatch { detail: e.detail }.exit_code() as u8,\n            )\n        }\n    }\n}\n\n// ── R27: kill / status ───────────────────────────────────────────────────────',
+     _KIL),
+    ('crates/axon-os/src/grant.rs',
+     'fn is_ancestor(prefix: &str, path: &str) -> bool {',
+     _GRN),
+    ('crates/axon-os/src/grant.rs',
+     'fn host_allows(list: &[String], host: &str) -> bool {',
+     _GRN),
+    ('crates/axon-os/src/grant.rs',
+     'fn host_matches(pat: &str, host: &str) -> bool {',
+     _GRN),
+    ('crates/axon-os/src/runtime.rs',
+     '                    verdict: Verdict::Denied {\n                        reason: format!("cannot read program: {e}"),',
+     _ACR),
+    ('crates/axon-os/src/runtime.rs',
+     '                    verdict: Verdict::Denied {\n                        reason: format!("cannot create private staging dir: {e}"),',
+     _ACR),
+    ('crates/axon-os/src/runtime.rs',
+     '                        verdict: Verdict::Denied {',
+     _ACR),
+    ('crates/axon-os/src/runtime.rs',
+     '                    verdict: Verdict::Denied {\n                        reason: format!("could not launch interpreter: {e}"),',
+     _ACR),
+    ('crates/axon-os/src/runtime.rs',
+     '            Verdict::Halted {',
+     _ACR),
+    ('crates/axon-os/src/runtime.rs',
+     '            Verdict::Denied {\n                reason: format!("timed out after {} ms", self.timeout.as_millis()),',
+     _ACR),
+    ('crates/axon-os/src/runtime.rs',
+     '            Verdict::Denied {\n                reason: first_axon_line(err, "runtime capability/sandbox violation"),',
+     _ACR),
+    ('crates/axon-os/src/runtime.rs',
+     '            Verdict::BudgetExhausted {',
+     _ACR),
+    ('crates/axon-os/src/runtime.rs',
+     '            Verdict::RefineViolation {',
+     _ACR),
+    ('crates/axon-os/src/runtime.rs',
+     '            Verdict::Denied {\n                reason: first_axon_line(err, "interpreter panic"),',
+     _ACR),
+    ('crates/axon-os/src/runtime.rs',
+     '            Verdict::Denied {\n                reason: first_axon_line(err, "AI policy refused the call"),',
+     _ACR),
+    ('crates/axon-os/src/runtime.rs',
+     '            Verdict::Malformed {',
+     _ACR),
+    ('crates/axon-os/src/runtime.rs',
+     '                    0 => Verdict::Denied {',
+     _ACR),
+    ('crates/axon-os/src/runtime.rs',
+     '                    2 => Verdict::Malformed {',
+     _ACR),
+    ('crates/axon-os/src/runtime.rs',
+     '                    3 => Verdict::Denied {',
+     _ACR),
+    ('crates/axon-os/src/runtime.rs',
+     '                    4 => Verdict::Halted {',
+     _ACR),
+    ('crates/axon-os/src/runtime.rs',
+     '                    5 => Verdict::Denied {',
+     _ACR),
+    ('crates/axon-os/src/runtime.rs',
+     '                    6 => Verdict::RefineViolation {',
+     _ACR),
+    ('crates/axon-os/src/runtime.rs',
+     '                    7 => Verdict::BudgetExhausted {',
+     _ACR),
+    ('crates/axon-os/src/runtime.rs',
+     '                    8 => Verdict::Denied {',
+     _ACR),
+    ('crates/axon-os/src/runtime.rs',
+     '                    other => Verdict::Denied {',
+     _ACR),
+    ('crates/axon-os/src/runtime.rs',
+     '    fn run_sandboxed(\n        &self,\n        program: &Path,\n        _principal: &PrincipalHandle,',
+     _ACR),
+    ('crates/axon-os/src/runtime.rs',
+     '    fn run_sandboxed(\n        &self,\n        _program: &Path,',
+     _ACR),
+    ('crates/axon-fabric/src/journal.rs',
+     '                v.state = OpState::Failed;',
+     _JNV),
+    ('crates/axon-fabric/src/journal.rs',
+     '            self.append(Rec::OutcomeUnknown {',
+     _JNV),
+    ('crates/axon-fabric/src/journal.rs',
+     '        self.append(Rec::Failed {',
+     _JNV),
+    ('crates/axon-fabric/src/journal.rs',
+     '        self.append(Rec::Cancelled {',
+     _JNV),
+    ('crates/axon-vm/src/firecracker.rs',
+     '        return Some(GuestOutcome::Violation);',
+     _VM),
+    ('crates/axon-vm/src/firecracker.rs',
+     '                Some(GuestOutcome::Violation) => (8, GuestOutcome::Violation),',
+     _VM),
+    ('crates/axon-os/src/manifest.rs',
+     '            .ok_or_else(|| bad(format!("line {}: expected `key = value`", lineno + 1)))?;',
+     _GRB),
+    ('crates/axon-os/src/manifest.rs',
+     '            ("", "program") => program = Some(parse_str(val).ok_or_else(|| bad(where_()))?),',
+     _GRB),
+    ('crates/axon-os/src/manifest.rs',
+     '            ("", "intent") => intent = Some(parse_str(val).ok_or_else(|| bad(where_()))?),',
+     _GRB),
+    ('crates/axon-os/src/manifest.rs',
+     '                        .ok_or_else(|| bad(where_()))?',
+     _GRB),
+    ('crates/axon-os/src/manifest.rs',
+     '                            bad(format!("{}: seed must be a non-negative u64", where_()))',
+     _GRB),
+    ('crates/axon-os/src/manifest.rs',
+     '            ("grant", "fs_read") => fs_read = Some(parse_arr(val).ok_or_else(|| bad(where_()))?),',
+     _GRB),
+    ('crates/axon-os/src/manifest.rs',
+     '            ("grant", "fs_write") => fs_write = Some(parse_arr(val).ok_or_else(|| bad(where_()))?),',
+     _GRB),
+    ('crates/axon-os/src/manifest.rs',
+     '            ("grant", "net") => net = Some(parse_arr(val).ok_or_else(|| bad(where_()))?),',
+     _GRB),
+    ('crates/axon-os/src/manifest.rs',
+     '                let s = parse_str(val).ok_or_else(|| bad(where_()))?;\n                exec = Some(ExecPolicy::parse(&s).ok_or_else(|| {',
+     _GRB),
+    ('crates/axon-os/src/manifest.rs',
+     '                    bad(format!("{}: exec must be \\"none\\" or \\"any\\"", where_()))',
+     _GRB),
+    ('crates/axon-os/src/manifest.rs',
+     '                let s = parse_str(val).ok_or_else(|| bad(where_()))?;\n                max_label = Some(Label::parse(&s).ok_or_else(|| {',
+     _GRB),
+    ('crates/axon-os/src/manifest.rs',
+     '                    bad(format!(\n                        "{}: max_label must be public|internal|secret",',
+     _GRB),
+    ('crates/axon-os/src/manifest.rs',
+     '            ("grant.budget", "calls") => calls = Some(parse_int(val).ok_or_else(|| bad(where_()))?),',
+     _GRB),
+    ('crates/axon-os/src/manifest.rs',
+     '                tokens = Some(parse_int(val).ok_or_else(|| bad(where_()))?)',
+     _GRB),
+    ('crates/axon-os/src/manifest.rs',
+     '                cost_micro = Some(parse_int(val).ok_or_else(|| bad(where_()))?)',
+     _GRB),
+    ('crates/axon-os/src/manifest.rs',
+     '    let max_label = max_label.ok_or_else(|| bad("missing `grant.max_label`"))?;',
+     _GRB),
+]
+
+_RING = ("DOMINATED BY THE VERIFIER (checkable): the 32-byte key / 64-byte signature filter only "
+         "pre-screens what ring's Ed25519 `UnparsedPublicKey::verify` refuses anyway: a key or "
+         "signature of any other length is an Err there (tests/ring_length_facts.rs "
+         "ring_refuses_a_key_or_signature_of_any_other_length), and every caller reaches that "
+         "verify, or the registered-key equality (`presented != registered`) and, in "
+         "operator_trust, the trusted-issuer membership, before it can return Ok. Removing the "
+         "filter changes the refusal's REASON, never the verdict")
+_ALD = ("NO PRODUCTION CALLER (checkable): `grep -rn 'admission::load' crates/*/src` finds no caller; "
+        "`load` is `store.get_record(\"admissions\", r)`, a lookup that decides nothing (every "
+        "consumer of a stored admission re-derives it: admission::rederive)")
+EXEMPT += [
+    ('crates/axon-loop-contracts/src/attestation.rs',
+     '        .ok_or_else(|| {\n            shape(format!(\n                "the key registered for verifier {issuer_ref} is not a 64-hex Ed25519 public key"',
+     _RING),
+    ('crates/axon-loop-contracts/src/attestation.rs',
+     '        .ok_or_else(|| {\n            shape(format!(\n                "the key registered for {issuer_ref} is not a 64-hex Ed25519 public key"',
+     _RING),
+    ('crates/axon-loop-contracts/src/operator_trust.rs',
+     '        .ok_or(format!("{what} signature has no 32-byte public_key"))?;',
+     _RING),
+    ('crates/axon-loop-contracts/src/operator_trust.rs',
+     '        .ok_or(format!("{what} signature has no 64-byte signature"))?;',
+     _RING),
+    ('crates/axon-loop/src/admission.rs',
+     'pub fn load(store: &Store, r: &Ref) -> Result<AdmissionRecord> {',
+     _ALD),
+]
+
+_VRD = ("PREDICATE OF NAMED ROWS (checkable): CheckReport::verdict's one protected consumer is "
+        "axon-fabric psv.rs `derive` (`match report.verdict(test)`; grep `\\.verdict(` crates/*/src), "
+        "which takes a Passed only after the completion token under the launch's key (M183) and "
+        "exactly one keyed result line (M312, M1720-M1722), a Failed only with keyed failure "
+        "evidence and a non-zero exit (M239, M1721), and refuses NotRun (M775). Whatever "
+        "`verdict` answers, a count needs those, so it can only relabel one fail-closed refusal "
+        "as another: a failing or absent test read as Passed has no completion token, and a "
+        "passing one read as Failed or NotRun is not a pass (cortex tests/ and psv_dispatch "
+        "a_failing_test_is_failed_whatever_the_guest_claims, M185)")
+EXEMPT += [
+    ('crates/axon-cortex/src/runner.rs',
+     '                        return ExecOutcome::Failed(format!("cannot read {}: {e}", target.path))',
+     _CTX),
+    ('crates/axon-cortex/src/runner.rs',
+     '                    Err(e) => ExecOutcome::Failed(format!("check could not run: {e}")),',
+     _CTX),
+    ('crates/axon-cortex/src/runner.rs',
+     '                        return ExecOutcome::Failed(format!("cannot read {}: {e}", symbol.path))',
+     _CTX),
+    ('crates/axon-cortex/src/runner.rs',
+     '                    return ExecOutcome::Failed(format!("cannot write {}: {e}", symbol.path));',
+     _CTX),
+    ('crates/axon-cortex/src/runner.rs',
+     '                    return EpisodeOutcome::Blocked {\n                        steps: step,\n                        reason: format!("cannot snapshot {}: {e}", target.path),',
+     _CTX),
+    ('crates/axon-cortex/src/runner.rs',
+     '                    return EpisodeOutcome::Blocked {\n                        steps: step,\n                        reason,',
+     _CTX),
+    ('crates/axon-cortex/src/runner.rs',
+     '                        return EpisodeOutcome::Refused {',
+     _CTX),
+    ('crates/axon-cortex/src/runner.rs',
+     '                    return EpisodeOutcome::Refused {\n                        steps: step,\n                        reason: format!(',
+     _CTX),
+    ('crates/axon-cortex/src/runner.rs',
+     '                    return EpisodeOutcome::Refused {\n                        steps: step,\n                        reason: why.to_string(),',
+     _CTX),
+    ('crates/axon-cortex/src/runner.rs',
+     '                    (true, false) => VisibleCheck::Failed,',
+     _CTX),
+    ('crates/axon-cortex/src/runner.rs',
+     '                            return EpisodeOutcome::Blocked {\n                                steps: step,\n                                reason: format!(\n                                    "a rejected patch could not be undone in {}",',
+     _CTX),
+    ('crates/axon-cortex/src/runner.rs',
+     '                    return EpisodeOutcome::Blocked {\n                        steps: step,\n                        reason: format!("the action could not be carried out: {why}"),',
+     _CTX),
+    ('crates/axon-cortex/src/runner.rs',
+     '                        return EpisodeOutcome::Blocked {\n                            steps: step,\n                            reason: format!(\n                                "a patch broke the build and {} could not be restored: {e}",',
+     _CTX),
+    ('crates/axon-cortex/src/runner.rs',
+     '                            return EpisodeOutcome::Blocked {\n                                steps: step,\n                                reason: format!("the file could not be re-checked: {e}"),',
+     _CTX),
+    ('crates/axon-cortex/src/runner.rs',
+     '                        return EpisodeOutcome::Blocked {\n                            steps: step,\n                            reason: format!(\n                                "a rejected patch could not be undone in {}",',
+     _CTX),
+    ('crates/axon-cortex/src/runner.rs',
+     '        EpisodeOutcome::BudgetExhausted { steps: budget }',
+     _CTX),
+    ('crates/axon-cortex/src/runner.rs',
+     '            .ok_or_else(|| {',
+     _CTX),
+    ('crates/axon-cortex/src/runner.rs',
+     "    pub fn execute(&mut self, auth: Authorized<'_>) -> ExecOutcome {",
+     _CTX),
+    ('crates/axon-cortex/src/runner.rs',
+     '    pub fn run_episode(',
+     _CTX),
+    ('crates/axon-cortex/src/runner.rs',
+     '            CheckVerdict::Failed',
+     _VRD),
+    ('crates/axon-cortex/src/runner.rs',
+     '    pub fn verdict(&self, name: &str) -> CheckVerdict {',
+     _VRD),
+    ('crates/axon-cortex/src/runner.rs',
+     '                Err(r) => Pin::Failed(r),',
+     _LOC),
+    ('crates/axon-cortex/src/select.rs',
+     '            return Selection::Blocked(format!(',
+     _CTX),
+    ('crates/axon-cortex/src/select.rs',
+     '            return Selection::Blocked(\n                "cannot choose an action: the observation carries no `compiles` fact".to_string(),',
+     _CTX),
+    ('crates/axon-cortex/src/select.rs',
+     '        Some(Observed::Unknown { reason }) => Selection::Blocked(format!(',
+     _CTX),
+    ('crates/axon-cortex/src/select.rs',
+     '        None => Selection::Blocked(',
+     _CTX),
+    ('crates/axon-cortex/src/select.rs',
+     'pub fn select_action(obs: &Observation, target: &SymbolRef) -> Selection {',
+     _CTX),
+    ('crates/axon-cortex/src/select.rs',
+     'pub fn select_action_with(',
+     _CTX),
+]
+
+_DFL = ("COMPLEMENT (checkable): the default arm of interpret_linux_result's final `match exit`; the "
+        "only arm that can return Ok is `Some(0) | Some(10)`, entered through the guards rowed as "
+        "M1815-M1820 (schema, cleanup, output_bound, --verify-result, workload_exit, exit/workload "
+        "agreement), so every other exit is no success by the match's exhaustiveness: this arm is "
+        "what is left when no guarded arm applies")
+_KND = ("REFINES THE KIND OF A NON-SUCCESS (checkable): removing this arm sends the exit to the "
+        "match's default arm, which is no success either (only exit 0 or 10 reach the Ok-capable "
+        "arm, guarded by M1815-M1820); what the arm decides is WHICH non-success (Refused, TimedOut, "
+        "WorkloadFailed or OutcomeUnknown), and linux_receipt journals every one of them "
+        "`journal.fail(.., Billing::Unknown)` with the launch's liability kept, so no input chooses "
+        "success. The mapping of each kind to a receipt status is rowed (M1821-M1823)")
+_RPT = ("RE-REPORTED (checkable): the receipt records a refusal another site decided (backend::select "
+        "for Unsupported, rows M1044-M1054; supervisor_admits for Denied, rows M1785-M1797; the launch "
+        "manifest builder; the executor's own Err); this line only writes it into the receipt of a "
+        "run that never produced a verdict, and nothing after it can read a success from it "
+        "(the arm returns the receipt it builds)")
+_RCP = ("DOMINATED BY NAMED ROWS (checkable): a Failed read as Passed at this line is demoted to "
+        "Unknown by the completion check that follows (submit.rs `passed without completion "
+        "evidence`, rows M63, M64): a failing test body never returns, so it holds no token under "
+        "the run's key, and the key is always Some on this route (`with_completion_key` at the one "
+        "call site). Measured at this commit: the edit that reads a failing named check as Passed "
+        "(and the unnamed one) was REFUSED_ELSEWHERE by that demotion, verification Unknown, never "
+        "Passed; those two rows are therefore not kept (tests/submit.rs "
+        "a_failing_check_is_never_receipted_passed pins the receipt)")
+_APR = ("NOT A REFUSAL (checkable): AdmissionProbe::run_sandboxed is reached only after gate::admit "
+        "admitted (supervisor.rs step 5) and states success by construction, so that "
+        "`supervisor_admits` reads Completed; any other value could only refuse. It performs no "
+        "effect")
+_CNO = ("DOMINATED BY NAMED ROWS (checkable): the nonce is read from the custodian's reply, whose "
+        "writer is one process (M1727), and the custodian issues 32-hex nonces; its spend then goes "
+        "through the custodian again, which spends only a nonce recorded as issued (M196, M622), so "
+        "a malformed nonce could not authorize a launch whatever this filter says")
+_GIT1 = ("RESOURCE BOUND (checkable): a 2^30-byte cap on a git object's declared size; removing it "
+         "only lets a larger object be read, whose bytes are then re-hashed to the name it was asked "
+         "for (the one-read digest check, M289), so it decides no verdict")
+_GIT2 = ("DOMINATED (checkable): the value is used as the NEXT object's name (`o.read(&target, ..)?` "
+         "on the following loop iteration), and a git read of a name that is not an object id is "
+         "refused there; the filter only moves that refusal one step earlier")
+_PHP = ("OPERATOR-AUTHORED on the protected route (checkable): a pin field of the operator-owned host "
+        "config (protected_host::load, read only from the operator's path, operator-owned: M141-M143); "
+        "a malformed pin equals no digest, so every comparison with it refuses")
+_RPF = ("PREDICATE OF NAMED ROWS (checkable): report_for's first reading of the guest's output is "
+        "re-decided by the next statement in `run` (runner.rs `match (status, keyed_outcome, "
+        "exit_code)`), which maps everything but (Passed, Some(true), Some(0)) and (Failed, "
+        "Some(false), non-zero) to Unknown (M1813, with keyed_outcome M1720-M1722); report_for is "
+        "called by no other production code (`grep -rn report_for crates/*/src`), so its mapping can "
+        "only choose which fail-closed value precedes that re-check")
+EXEMPT += [
+    ('crates/axon-fabric/src/backend.rs',
+     '            LinuxOutcome::Unknown,\n            format!("launcher exited {exit:?} with no readable result.json"),',
+     _NTA),
+    ('crates/axon-fabric/src/backend.rs',
+     '                outcome: LinuxOutcome::Unknown,',
+     _NTA),
+    ('crates/axon-fabric/src/backend.rs',
+     '            LinuxOutcome::Unknown,\n            format!("launcher exit {other:?} ({status}): the VMM ended without a bound result"),',
+     _DFL),
+    ('crates/axon-fabric/src/backend.rs',
+     '                LinuxOutcome::Refused,',
+     _KND),
+    ('crates/axon-fabric/src/backend.rs',
+     '                LinuxOutcome::Unknown,\n                format!(',
+     _KND),
+    ('crates/axon-fabric/src/backend.rs',
+     '            LinuxOutcome::TimedOut,',
+     _KND),
+    ('crates/axon-fabric/src/backend.rs',
+     '                    LinuxOutcome::Unknown,\n                    format!("launcher exit {exit:?} disagrees with workload_exit {w}"),',
+     _KND),
+    ('crates/axon-fabric/src/backend.rs',
+     '                outcome: LinuxOutcome::Refused,',
+     _KND),
+    ('crates/axon-fabric/src/submit.rs',
+     '                    status: ReceiptStatus::Unsupported,',
+     _RPT),
+    ('crates/axon-fabric/src/submit.rs',
+     '                    status: ReceiptStatus::Denied,',
+     _RPT),
+    ('crates/axon-fabric/src/submit.rs',
+     '                                status: ReceiptStatus::Failed,',
+     _RPT),
+    ('crates/axon-fabric/src/submit.rs',
+     '                        verification: ReceiptVerification::Unknown,\n                        matched: None,\n                        // The suite that was running is still recorded: an\n                        // honest "unknown" names what it was unknown about.\n                        evidence: suite.clone().map(opaque).into_iter().collect(),\n                        liability_micro: liability,\n                        output,',
+     _RPT),
+    ('crates/axon-fabric/src/submit.rs',
+     '                        ReceiptVerification::Failed\n                    } else {',
+     _RCP),
+    ('crates/axon-fabric/src/submit.rs',
+     '                        ReceiptVerification::Failed\n                    };',
+     _RCP),
+    ('crates/axon-fabric/src/submit.rs',
+     '            ReceiptStatus::OutcomeUnknown,\n            "reconciled after restart: launched with no terminal record",',
+     _JNV),
+    ('crates/axon-fabric/src/submit.rs',
+     '        OpState::Cancelled => (ReceiptStatus::Canceled, "cancelled"),',
+     _JNV),
+    ('crates/axon-fabric/src/submit.rs',
+     '        OpState::Failed => (ReceiptStatus::Failed, "failed"),',
+     _JNV),
+    ('crates/axon-fabric/src/submit.rs',
+     '            ReceiptStatus::OutcomeUnknown,\n            "completed but no receipt recorded",',
+     _JNV),
+    ('crates/axon-fabric/src/submit.rs',
+     '            ReceiptStatus::OutcomeUnknown,\n            "in flight (another submit owns it)",',
+     _JNV),
+    ('crates/axon-fabric/src/submit.rs',
+     '                ReceiptVerification::Unknown',
+     _JNV),
+    ('crates/axon-fabric/src/submit.rs',
+     '    fn run_sandboxed(',
+     _APR),
+    ('crates/axon-fabric/src/custodian.rs',
+     '            .ok_or("custodian issued no well-formed nonce")?;',
+     _CNO),
+    ('crates/axon-fabric/src/git_data.rs',
+     '        .ok_or(format!(\n            "object {oid} is not a {want} in this repository\'s object store (a missing object \\',
+     _GIT1),
+    ('crates/axon-fabric/src/git_data.rs',
+     '                    .ok_or(format!("tag {target} names no object"))?;',
+     _GIT2),
+    ('crates/axon-fabric/src/protected_host.rs',
+     '                .ok_or_else(|| bad(format!("{ptr} is not a sha256")))',
+     _PHP),
+    ('crates/axon-psv/src/runner.rs',
+     '        (1, 0, 1) => GuestStatus::Failed,',
+     _RPF),
+    ('crates/axon-psv/src/runner.rs',
+     '        _ => GuestStatus::Unknown,\n    };\n    (status, report)',
+     _RPF),
+]
+
+
 def load_rows():
     spec = importlib.util.spec_from_file_location("mut", os.path.join(ROOT, "scripts/v022_g01_mutations.py"))
     mut = importlib.util.module_from_spec(spec)
@@ -2617,7 +3095,10 @@ def _cfg_test_extent(t, i):
     return n
 
 
-CFG_TEST = re.compile(r"^[ \t]*#\[cfg\(test\)\][ \t]*$", re.M)
+# `cfg(all(test, ..))` compiles only in a test build too (amendment 76: the psv
+# crate's xattr test module, whose helper calls were read as production);
+# `cfg(any(test, feature = ..))` and `cfg(not(test))` are production code.
+CFG_TEST = re.compile(r"^[ \t]*#\[cfg\((?:test|all\(test,[^\]\n]*\))\)\][ \t]*$", re.M)
 
 
 def code_lines(text):
@@ -2903,6 +3384,423 @@ def predicate_fns(lines):
     return out
 
 
+# Amendment 76 (C9 round 4c, admit): a VERDICT is a decision too.
+# Round 4c integration found the axon-os admission chain (`gate::admit`, the
+# supervisor's isolation guard, the grant algebra it intersects) with no row
+# and no site: it refuses by RETURNING an enum value (`Admission::Deny {..}`,
+# `Verdict::Denied {..}`), and neither `Err(` nor a `bool`/`Option` return
+# type is in that. The refusal vocabulary is not a list this script keeps, it
+# is DERIVED from the in-scope code: every enum (not an `*Error`, whose
+# refusals travel inside `Err(` and are sites already) that has a variant named
+# for refusing (STRONG_NEG) or is itself named for deciding (VERDICT_NAME) is a
+# VERDICT TYPE, its NEGATIVE variants being the refusal-named ones plus the
+# "no verdict" ones (WEAK_NEG: Unknown, TimedOut, ...). Forms:
+#
+#   * a CONSTRUCTION of a negative variant (`Verdict::Denied {..}`,
+#     `return Verdict::Denied..`, a match arm's value, `Self::Deny` inside the
+#     enum's own impl) is a line site, guard block as for `Err(`. A pattern is
+#     not one (`Admission::Deny { .. } = admit(..)`, a match arm, `matches!`,
+#     `==`): that READS a verdict somebody else decided;
+#   * a function whose declared return type is a verdict type, or a struct named
+#     for deciding (`*Verdict`, `*Decision`, `*Outcome`, `*Admission`), also
+#     through one `Result<..>`/`Option<..>`/`Vec<..>`, DECIDES by data flow as
+#     well as by constructor (`let status = f(); Verdict { status }`) and is a
+#     site of its own, its body the guard block (exempt by an anchor on its
+#     head line, like a predicate primitive);
+#   * a call of a HELPER CONSTRUCTOR is a site and its definition is not: a
+#     function returning a verdict type whose every construction is negative
+#     (`fn deny(..) -> Admission { Admission::Deny {..} }`), the verdict
+#     analogue of `refused(` / `fail(`.
+#
+# `?` and `.ok_or(` stay non-sites: they convert an absence or an error some
+# other scanned decision already made (this script says why at the `ok_or`
+# paragraph above); an INLINE decision before an `ok_or` is a predicate in a
+# closure (`.filter(`, `.take_if(`, `.is_some_and(`, `.then(`) and is a site by
+# INLINE_PRED below.
+STRONG_NEG = re.compile(
+    r"^(Den(y|ied)|Refus\w*|Reject\w*|Veto\w*|Blocked|\w*Violation\w*|Invalid\w*|Unauthori[sz]ed|"
+    r"Unverified|\w*Mismatch|Tamper\w*|Forbid\w*|Halted|Unsupported|FailClosed|Fail(ed|ure)?|"
+    r"Malformed|\w*Exhausted|\w*Bound|Corrupt\w*|Tripped|Flagged)$")
+WEAK_NEG = re.compile(r"^(Unknown|OutcomeUnknown|Inconclusive|TimedOut|Cancel(l)?ed|Conflict|Stale\w*|Unresolved)$")
+VERDICT_NAME = re.compile(r"Verdict|Decision|Outcome|Admission")
+INLINE_PRED = re.compile(r"\.(filter|take_if|is_some_and|is_ok_and|is_none_or)\(")
+
+
+def blank_non_code(text):
+    """`text` with comments and string/char literal CONTENTS blanked (same
+    length, newlines kept): what is left is code to match on."""
+    out, i, n = [], 0, len(text)
+    while i < n:
+        j = _skip_rust_token(text, i)
+        if j is None:
+            out.append(text[i])
+            i += 1
+            continue
+        j = max(j, i + 1)
+        seg = text[i:j]
+        if seg.startswith("//") or seg.startswith("/*"):
+            out.append(re.sub(r"[^\n]", " ", seg))
+        elif seg[0] in "\"'br" and len(seg) > 2:
+            out.append(seg[0] + re.sub(r"[^\n]", " ", seg[1:-1]) + seg[-1])
+        else:
+            out.append(seg)
+        i = j
+    return "".join(out)
+
+
+def _match_close(t, i):
+    """Index just past the group opened at t[i] (one of `(` `[` `{`), or len(t)."""
+    depth, j, n = 0, i, len(t)
+    while j < n:
+        if t[j] in "([{":
+            depth += 1
+        elif t[j] in ")]}":
+            depth -= 1
+            if depth == 0:
+                return j + 1
+        j += 1
+    return n
+
+
+def _enum_variants(clean):
+    """(name, [variant names]) for each `enum` item of already-blanked code."""
+    for m in re.finditer(r"^[ \t]*(?:pub(?:\([a-z]+\))?\s+)?enum\s+(\w+)[^{;]*\{", clean, re.M):
+        end = _match_close(clean, m.end() - 1)
+        body, parts, depth, cur = clean[m.end():end - 1], [], 0, ""
+        for ch in body:
+            if ch in "{([<":
+                depth += 1
+            elif ch in "})]>":
+                depth -= 1
+            if depth == 0 and ch == ",":
+                parts.append(cur)
+                cur = ""
+            else:
+                cur += ch
+        parts.append(cur)
+        names = []
+        for v in parts:
+            v = re.sub(r"#\[[^\]]*\]", "", v)
+            mm = re.match(r"\s*(\w+)", v)
+            if mm:
+                names.append(mm.group(1))
+        yield m.group(1), names
+
+
+_VERDICTS = None
+
+
+def verdict_types():
+    """(enums, structs): verdict enum -> its NEGATIVE variants, and the struct
+    names that decide. Derived once from every in-scope file's non-test code."""
+    global _VERDICTS
+    if _VERDICTS is not None:
+        return _VERDICTS
+    enums, structs = {}, set()
+    for f in in_scope_files():
+        clean = blank_non_code("\n".join(code_lines(open(os.path.join(ROOT, f)).read())))
+        for name, vs in _enum_variants(clean):
+            if name.endswith("Error"):
+                continue
+            strong = {v for v in vs if STRONG_NEG.match(v)}
+            if strong or VERDICT_NAME.search(name):
+                enums.setdefault(name, set()).update(strong | {v for v in vs if WEAK_NEG.match(v)})
+        for m in re.finditer(r"^[ \t]*(?:pub(?:\([a-z]+\))?\s+)?struct\s+(\w+)", clean, re.M):
+            if VERDICT_NAME.search(m.group(1)):
+                structs.add(m.group(1))
+    enums = {k: v for k, v in enums.items() if v}
+    # A `type Judged = (Outcome, String, ..);` alias of a verdict is one (a
+    # function returning it decides): resolved to a fixpoint over every file.
+    aliases = {}
+    for f in in_scope_files():
+        clean = blank_non_code("\n".join(code_lines(open(os.path.join(ROOT, f)).read())))
+        for m in re.finditer(r"^[ \t]*(?:pub(?:\([a-z]+\))?\s+)?type\s+(\w+)\s*=\s*([^;]+);", clean, re.M):
+            aliases[m.group(1)] = m.group(2)
+    grew = True
+    while grew:
+        grew = False
+        for name, rhs in aliases.items():
+            if name not in structs and _decides_return(rhs, enums, structs):
+                structs.add(name)
+                grew = True
+    _VERDICTS = (enums, structs)
+    return _VERDICTS
+
+
+def _impl_self_map(clean):
+    """[(first, last, Name)] character extents of `impl .. Name {`: what `Self` means there."""
+    out = []
+    for m in re.finditer(r"^[ \t]*impl\b(?:<[^>{]*>)?\s+(?:[\w:<>, ]+?\s+for\s+)?(\w+)[^{;]*\{", clean, re.M):
+        out.append((m.start(), _match_close(clean, m.end() - 1), m.group(1)))
+    return out
+
+
+def arm_lhs_ranges(clean):
+    """(first, last) character extents of every match ARM's left side (pattern
+    and guard): from the arm's separator back to its `=>`. A variant inside one
+    is matched, not built, whatever else shares the pattern (a tuple pattern
+    `(SafetyState::Violation { .. }, _, _) =>` is one)."""
+    out = []
+    for m in re.finditer(r"=>", clean):
+        j, depth, k = m.start(), 0, m.start() - 1
+        while k >= 0 and clean[k] in " \t\n":
+            k -= 1
+        first_closer = k
+        while k >= 0:
+            c = clean[k]
+            if c in ")]}":
+                if c == "}" and depth == 0 and k != first_closer:
+                    break
+                depth += 1
+            elif c in "([{":
+                if depth == 0:
+                    break
+                depth -= 1
+            elif c in ",;" and depth == 0:
+                break
+            k -= 1
+        out.append((k + 1, j))
+    return out
+
+
+def _is_pattern(clean, p, q, arms=()):
+    """Whether the variant path at clean[p:q] is matched, not built: inside an
+    arm's left side, a `let`/`matches!`/alternative pattern, an `if let`
+    scrutinee pattern, or a `==` comparison."""
+    if any(a <= p < b for a, b in arms):
+        return True
+    ls = clean.rfind("\n", 0, p) + 1
+    before = clean[ls:p]
+    if re.search(r"\b(let|ref|mut)\s*$", before) or re.search(r"(==|!=|\|)\s*$", before):
+        return True
+    k = clean.rfind("matches!(", max(0, p - 400), p)
+    if k >= 0 and ";" not in clean[k:p] and _match_close(clean, k + len("matches!")) > p:
+        return True
+    r = q
+    while r < len(clean) and clean[r] in " \t":
+        r += 1
+    if r < len(clean) and clean[r] in "({":
+        r = _match_close(clean, r)
+    rest = clean[r:r + 12]
+    rest = re.sub(r"^[\s)]+", "", rest)
+    return bool(re.match(r"(=>|\||if\b|=(?!=)|==|!=)", rest))
+
+
+def verdict_constructions(clean, enums):
+    """Line numbers (0-based) at which a NEGATIVE variant of a verdict enum is
+    built (amendment 76)."""
+    selfmap = _impl_self_map(clean)
+    arms = arm_lhs_ranges(clean)
+    out = []
+    for m in re.finditer(r"\b(\w+)::(\w+)\b", clean):
+        enum, var = m.group(1), m.group(2)
+        if enum == "Self":
+            enum = next((n for a, b, n in selfmap if a <= m.start() < b), enum)
+        if var not in enums.get(enum, ()):
+            continue
+        if _is_pattern(clean, m.start(), m.end(), arms):
+            continue
+        out.append((m.start(), clean.count("\n", 0, m.start())))
+    return out
+
+
+def _decides_return(ret, enums, structs):
+    """Whether a declared return type `ret` is a verdict (amendment 76),
+    looking through one Result/Option/Vec."""
+    t = ret.strip()
+    if t.startswith("("):
+        parts, depth, cur = [], 0, ""
+        for c in t[1:-1]:
+            depth += c in "<(["
+            depth -= c in ">)]"
+            if c == "," and depth == 0:
+                parts.append(cur)
+                cur = ""
+            else:
+                cur += c
+        return any(_decides_return(x, enums, structs) for x in parts + [cur])
+    m = re.match(r"(?:Result|Option|Vec|Box)\s*<(.*)>\s*$", t, re.S)
+    if m:
+        inner, depth, cut = m.group(1), 0, len(m.group(1))
+        for k, c in enumerate(inner):
+            depth += c in "<(["
+            depth -= c in ">)]"
+            if c == "," and depth == 0:
+                cut = k
+                break
+        t = inner[:cut].strip()
+    t = re.sub(r"^&\s*(mut\s+)?(\'\w+\s+)?", "", t)
+    name = re.match(r"(?:\w+::)*(\w+)", t)
+    return bool(name) and (name.group(1) in enums or name.group(1) in structs)
+
+
+def _guard_start(lines, i):
+    """The first line of the guard block of a line site at `i`: the nearest
+    opener above it, at most MAX_UP lines up. Amendment 74: a guard block never
+    reaches into the function above (it used to: the nearest opener could be
+    another fn's)."""
+    for j in range(i, max(-1, i - MAX_UP - 1), -1):
+        if j < i and FN_HEAD.match(lines[j]):
+            break
+        if OPENER.search(lines[j]):
+            return j
+    return i
+
+
+def _fn_spans(cl):
+    """(head, last, name, return type) for each fn with a body in blanked lines."""
+    out = []
+    for i, l in enumerate(cl):
+        m = FN_HEAD.match(l)
+        if not m:
+            continue
+        sig, j = "", i
+        while j < len(cl) and j < i + 16:
+            sig += cl[j] + " "
+            if "{" in cl[j] or cl[j].rstrip().endswith(";"):
+                break
+            j += 1
+        if "{" not in sig:
+            continue
+        end = j
+        if not (sig.count("{") == sig.count("}") and cl[j].rstrip().endswith("}")):
+            close = m.group(1) + "}"
+            end = next((k for k in range(j + 1, len(cl)) if cl[k] == close), None)
+            if end is None:
+                continue
+        out.append((i, end, m.group(2), _return_type(sig.split("{")[0])))
+    return out
+
+
+def _trait_extents(clean):
+    """Character extents of `trait X { .. }`: a default method there is not a
+    free helper (its callers are methods)."""
+    return [(m.start(), _match_close(clean, m.end() - 1))
+            for m in re.finditer(r"^[ \t]*(?:pub(?:\([a-z]+\))?\s+)?trait\s+\w+[^{;]*\{", clean, re.M)]
+
+
+_HELPERS = None
+HELPER_BODY = 8  # a helper constructor is a SHORT fn: a function that decides is a site of its own
+
+
+def refusal_helpers():
+    """{file: (verdict helpers, Err helpers)}: names of the free functions, per
+    in-scope file, that only REFUSE: a verdict-typed fn every construction in
+    whose body is a negative variant (`fn bad(..) -> Verdict { Verdict::Malformed {..} }`),
+    and a short fn whose body builds an `Err(..)` and has no `Ok`/`?`/branch.
+    A call of one is a refusal site; its definition is not (the verdict
+    analogue of `refused(`/`fail(`, which this script names, and of
+    `local_ctors`, which is per file)."""
+    global _HELPERS
+    if _HELPERS is not None:
+        return _HELPERS
+    enums, structs = verdict_types()
+    out = {}
+    for f in in_scope_files():
+        vh, eh = set(), set()
+        text = "\n".join(code_lines(open(os.path.join(ROOT, f)).read()))
+        clean = blank_non_code(text)
+        cl = clean.split("\n")
+        traits = _trait_extents(clean)
+        offs = [0]
+        for l in cl:
+            offs.append(offs[-1] + len(l) + 1)
+        spans = _fn_spans(cl)
+        defined = collections.Counter(n for _, _, n, _ in spans)
+        for a, b, n, rt in spans:
+            # A name defined twice in one file is a platform/feature variant
+            # (`#[cfg(not(unix))] fn check_operator_owned` beside the real
+            # one): which one a call reaches is not the text's to say, so
+            # neither is a helper.
+            if any(x <= offs[a] < y for x, y in traits) or defined[n] > 1:
+                continue
+            body = "\n".join(cl[a:b + 1])
+            if b - a > HELPER_BODY:
+                continue
+            if _decides_return(rt, enums, structs):
+                built = [m for m in re.finditer(r"\b(\w+)::(\w+)\b", body) if m.group(1) in enums]
+                if built and all(m.group(2) in enums[m.group(1)] for m in built):
+                    vh.add(n)
+            elif (re.search(r"\bErr\(", body)
+                  and not re.search(r"\bOk\(|\?|\bSome\(|\bif\b|\bmatch\b|\bfor\b|\bwhile\b", body[body.index("{"):])):
+                eh.add(n)
+        if vh or eh:
+            out[f] = (vh, eh)
+    _HELPERS = out
+    return _HELPERS
+
+
+def inline_predicate_sites(cl):
+    """(first, last) lines of a statement that DECIDES in a closure and then
+    refuses on the result: `x.filter(|k| k.len() == 32).ok_or(..)?`. `.ok_or(`
+    alone converts an absence some scanned decision made; with an inline
+    predicate before it, the predicate IS the decision and nothing else scans
+    it. The statement runs from the previous `;`/`{`/`}` to the `ok_or`."""
+    clean = "\n".join(cl)
+    out = []
+    for m in re.finditer(r"\.(ok_or|ok_or_else)\(", clean):
+        st = max(clean.rfind(";", 0, m.start()), clean.rfind("{", 0, m.start()), clean.rfind("}", 0, m.start()))
+        seg = clean[st + 1:m.start()]
+        p = INLINE_PRED.search(seg)
+        if p:
+            out.append((clean.count("\n", 0, st + 1 + p.start()), clean.count("\n", 0, m.start())))
+    return out
+
+
+def verdict_sites(lines, regions=None, f=None):
+    """The amendment-76 sites of a file: (guard first, last, reported) lines.
+    Constructions of a negative verdict variant, calls of a helper
+    constructor and an inline predicate refused through `ok_or` are line
+    sites; a function deciding by a verdict return type is a block site (head
+    reported, like a predicate primitive)."""
+    enums, structs = verdict_types()
+    vh, eh = refusal_helpers().get(f, (set(), set()))
+    clean = blank_non_code("\n".join(lines))
+    cl = clean.split("\n")
+    fns = _fn_spans(cl)
+    decides = [(a, b, n) for a, b, n, rt in fns if _decides_return(rt, enums, structs)]
+    helper_def = [(a, b) for a, b, n, rt in fns if n in vh or n in eh]
+    # A LOCAL closure that builds a refusal (`let refused = |why| LinuxRun {
+    # outcome: LinuxOutcome::Refused, .. };`) is a helper constructor too: its
+    # body is the definition, its calls are the sites.
+    closure_names = set()
+    for m in re.finditer(r"\blet\s+(\w+)\s*=\s*(?:move\s+)?\|[^|\n]*\|\s*(?:-> \w+\s*)?(?=\w+\s*\{|\{)", clean):
+        k = clean.index("{", m.end())
+        end = _match_close(clean, k)
+        body = clean[k:end]
+        if any(x.group(2) in enums.get(x.group(1), ()) for x in re.finditer(r"\b(\w+)::(\w+)\b", body)):
+            a, b = clean.count("\n", 0, m.start()), clean.count("\n", 0, end)
+            helper_def.append((a, b))
+            closure_names.add(m.group(1))
+    in_helper = lambda i: any(a <= i <= b for a, b in helper_def)
+    in_region = lambda i: regions is None or any(x <= i <= y for x, y in regions)
+    out = []
+    for _, i in verdict_constructions(clean, enums):
+        if not in_helper(i) and in_region(i):
+            out.append((_guard_start(lines, i), i, i, "line"))
+    # A call is a site in the file that defines the helper (a bare name: another
+    # file's `bad` is another function) and, anywhere, through its module path
+    # (`backend::check_operator_owned(`).
+    calls = []
+    if vh | eh | closure_names:
+        calls.append(re.compile(r"(?<![\w.:])(" + "|".join(sorted(map(re.escape, vh | eh | closure_names))) + r")\("))
+    for g, (v2, e2) in refusal_helpers().items():
+        if g != f and v2 | e2:
+            stem = os.path.splitext(os.path.basename(g))[0]
+            calls.append(re.compile(rf"\b{re.escape(stem)}::(" + "|".join(sorted(map(re.escape, v2 | e2))) + r")\("))
+    for i, l in enumerate(cl):
+        if (any(c.search(l) for c in calls) and not FN_HEAD.match(l) and not in_helper(i) and in_region(i)
+                and not l.strip().startswith("//")):
+            out.append((_guard_start(lines, i), i, i, "line"))
+    for a, b in inline_predicate_sites(cl):
+        if in_region(a) and not in_helper(a):
+            out.append((min(_guard_start(lines, b), a), b, b, "line"))
+    for a, b, n in decides:
+        if n not in vh and in_region(a):
+            out.append((a, b, a, "verdict"))
+    return out
+
+
 def sites(text, f=None, bad=None):
     """The refusal sites of `f` as (first, last, reported) lines: `first` to
     `last` is the guard block a row or an exemption must reach, `reported` the
@@ -2924,20 +3822,12 @@ def sites(text, f=None, bad=None):
             continue
         if regions is not None and not any(a <= i <= b for a, b in regions):
             continue
-        g = i
-        for j in range(i, max(-1, i - MAX_UP - 1), -1):
-            # Amendment 74: a guard block never reaches into the function
-            # above (it used to: the nearest opener could be another fn's).
-            if j < i and FN_HEAD.match(lines[j]):
-                break
-            if OPENER.search(lines[j]):
-                g = j
-                break
-        out.append((g, i, i))
+        out.append((_guard_start(lines, i), i, i, "line"))
     for a, b in predicate_fns(lines):
         if regions is not None and not any(x <= a <= y for x, y in regions):
             continue
-        out.append((a, b, a))
+        out.append((a, b, a, "predicate"))
+    out.extend(verdict_sites(lines, regions, f))
     return out
 
 
@@ -3000,14 +3890,14 @@ def judge_file(f, rows, bad):
         ex.append([line_of(text, text.index(anchor)), anchor, reason, 0])
     covered = exempt = 0
     uncovered = []
-    for g, i, at in sites(text, f, bad):
+    for g, i, at, kind in sites(text, f, bad):
         # Amendment 74: a row covers a site only when a line its edit CHANGES
         # lies in the site's guard block (it used to be enough that the row's
         # OLD text overlapped the block, plus the line after it).
         by = [rid for rid, ch in spans if any(g <= c <= i for c in ch)]
         # A predicate primitive's exemption is anchored on its HEAD line
         # (amendment 74): an anchor in its body belongs to a line site there.
-        ex_hit = [e for e in ex if ((g <= e[0] <= i) if at == i else e[0] == g)]
+        ex_hit = [e for e in ex if ((g <= e[0] <= i) if kind == "line" else e[0] == g)]
         for e in ex_hit:
             e[3] += 1
         if by:
@@ -3017,8 +3907,9 @@ def judge_file(f, rows, bad):
         elif ex_hit:
             exempt += 1
         else:
-            what = (f"{lines[g].strip()} ... {lines[i].strip()}" if at == i else
-                    f"{lines[g].strip()} (a predicate primitive: it decides by bool/Option)")
+            what = {"line": f"{lines[g].strip()} ... {lines[i].strip()}",
+                    "predicate": f"{lines[g].strip()} (a predicate primitive: it decides by bool/Option)",
+                    "verdict": f"{lines[g].strip()} (a function deciding by a verdict return type)"}[kind]
             uncovered.append(f"{f}:{at + 1}: refusal site with no row and no exemption: {what}")
     for line, anchor, _, hits in ex:
         if hits == 0:

@@ -1035,6 +1035,7 @@ GUARD_SETS.update({
 })
 
 
+
 def current_edits_digest(rid):
     """What executing record `rid` NOW would run (its edits and marker)."""
     if rid in GUARD_SETS:

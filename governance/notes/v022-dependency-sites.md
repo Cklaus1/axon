@@ -249,3 +249,172 @@ The 49 exempted:
 | axon-vm/src/firecracker.rs | 132 | parse_guest_sentinel | NOT ON THE PROTECTED ROUTE | NOT ON THE PROTECTED ROUTE (checkable): the protected crates use axon-vm for exactly axon_vm::BACKEND_PROFILE and axon_vm::firecracker::{MmdsPayload, embed_policy_in_cmdline} (axon-fabric backend.rs; embed_policy_in_cmdline is one format! with no site), and... |
 | axon-vm/src/firecracker.rs | 672 | handle | NOT ON THE PROTECTED ROUTE | NOT ON THE PROTECTED ROUTE (checkable): the protected crates use axon-vm for exactly axon_vm::BACKEND_PROFILE and axon_vm::firecracker::{MmdsPayload, embed_policy_in_cmdline} (axon-fabric backend.rs; embed_policy_in_cmdline is one format! with no site), and... |
 | axon-vm/src/firecracker.rs | 694 | bind_vsock_uds | NOT ON THE PROTECTED ROUTE | NOT ON THE PROTECTED ROUTE (checkable): the protected crates use axon-vm for exactly axon_vm::BACKEND_PROFILE and axon_vm::firecracker::{MmdsPayload, embed_policy_in_cmdline} (axon-fabric backend.rs; embed_policy_in_cmdline is one format! with no site), and... |
+
+## Amendment 76 addendum: the verdict-form sites (C9 round 4c, admit)
+
+Base: `c9r4c/integrate` round-2 head 91ca83be. Amendment 76 teaches the refusal-site gate the
+forms a refusal takes when it is a RETURNED VERDICT (`v022_refusal_coverage.py`, "Amendment 76"). Over the
+in-scope files the forms see 274 sites in 35 files; 152 of them had neither a row nor an exemption.
+Each is judged here by its callers on the protected route, like amendment 75's. The sites that
+DECIDE there are rows (M1770-M1826, `v022_g01_mutations.py` "ADMIT", each killed by its own attack
+through `submit` or the loop's own CLI/tests); the ones that do not carry an exemption stating the
+checkable fact. NOT_YET_SCANNED is empty.
+
+### Facts the exemptions rest on (each a grep or a test)
+
+* **axon-os admission is a self-intersection on Fabric's route.** `supervisor_admits` passes `grant.grant()` as
+  the supervisor grant and builds the manifest with `grant.manifest_for(..)`, which clones the same grant
+  (`tests/admit_route.rs admission_intersects_the_resolved_grant_with_itself` pins it). `Grant::intersect`
+  only emits clones of input elements, so `is_ancestor`, `host_allows` and `host_matches` can only narrow,
+  and a self-intersection keeps every non-empty list non-empty; the result is read only through
+  `effect_set()` and `max_label`. They are exempt (DOMINATED BY CONSTRUCTION), not rowed: no edit of them
+  widens anything on the route.
+* **The isolation requirement is checked twice and each check dominates the other.** `backend::select`
+  refuses hardware isolation with os=none (M1052) before admission; `supervise_requiring` refuses it again
+  (`if !required.satisfied_by(iso)`, M1796; the HardwareIsolated/ProcessScoped arm, M1797). M1052's recorded
+  kill was the SUPERVISOR's refusal: `assert_never_runs` read any receipt that was not `Unsupported` as "it ran".
+  It now judges the attack by effect (a spawn or a launch record); M1052 stays ACTIVE on the receipt contract only
+  selection answers (Unsupported), and M1796/M1797 are LIBRARY_PRIMITIVE (a direct `supervise_requiring` test, axon-os
+  `tests/admit_isolation.rs`); a four-cell retirement was executed and refused (axon-os's own suite pins them).
+* **kill channel, latch, corrigibility, monitor, `AxonCoreRuntime`, `MockRuntime`** have no caller on the
+  supervise_requiring path (`grep -rn 'killchan::\\|latch::\\|corrigible::\\|monitor::' crates/*/src`, `grep -rn
+  AxonCoreRuntime crates/*/src`: axon-os cli.rs only); `mock` is a feature no dependent enables.
+* **Ed25519 length filters** (attestation.rs, operator_trust.rs) only pre-screen what ring refuses itself
+  (`axon-loop-contracts/tests/ring_length_facts.rs`).
+* **`CheckReport::verdict`** is read by psv.rs `derive`, whose Passed needs the completion token and the keyed
+  one-line check and whose Failed needs keyed failure evidence and a non-zero exit (M183, M312, M1720-M1722, M239,
+  M775): it can only relabel one fail-closed refusal as another.
+* **A failing named check read as Passed in submit.rs** (`rep.failed.iter().any(..)`, `rep.failed.is_empty()`)
+  is demoted to Unknown by the completion check that follows (M63, M64). The two rows written for it were
+  REFUSED_ELSEWHERE and are not kept; `a_failing_check_is_never_receipted_passed` pins the receipt.
+* **`report_for`** (axon-psv runner.rs) is re-decided by the next statement (M1813); no other caller.
+* **Canceled arm of `project_receipt_status`** (M1809, LIBRARY_PRIMITIVE): its one production caller, EVL, refuses
+  a canceled run's verdict itself (M131); the other arms are rows on the route (M1808, M1810-M1812).
+
+### The exemptions added (123: file, line, anchor, kind)
+
+| file | line | anchor | kind |
+|---|---|---|---|
+| axon-cortex/src/runner.rs | 535 | `pub fn execute(&mut self, auth: Authorized<'_>) -> ExecOutco` | NOT ON THE PROTECTED ROUTE |
+| axon-cortex/src/runner.rs | 542 | `return ExecOutcome::Failed(format!("cannot read {}: {e}", ta` | NOT ON THE PROTECTED ROUTE |
+| axon-cortex/src/runner.rs | 563 | `Err(e) => ExecOutcome::Failed(format!("check could not run: ` | NOT ON THE PROTECTED ROUTE |
+| axon-cortex/src/runner.rs | 574 | `return ExecOutcome::Failed(format!("cannot read {}: {e}", sy` | NOT ON THE PROTECTED ROUTE |
+| axon-cortex/src/runner.rs | 588 | `return ExecOutcome::Failed(format!("cannot write {}: {e}", s` | NOT ON THE PROTECTED ROUTE |
+| axon-cortex/src/runner.rs | 632 | `pub fn run_episode(` | NOT ON THE PROTECTED ROUTE |
+| axon-cortex/src/runner.rs | 717 | `return EpisodeOutcome::Blocked {` | NOT ON THE PROTECTED ROUTE |
+| axon-cortex/src/runner.rs | 727 | `return EpisodeOutcome::Blocked {` | NOT ON THE PROTECTED ROUTE |
+| axon-cortex/src/runner.rs | 785 | `return EpisodeOutcome::Refused {` | NOT ON THE PROTECTED ROUTE |
+| axon-cortex/src/runner.rs | 876 | `return EpisodeOutcome::Refused {` | NOT ON THE PROTECTED ROUTE |
+| axon-cortex/src/runner.rs | 891 | `return EpisodeOutcome::Refused {` | NOT ON THE PROTECTED ROUTE |
+| axon-cortex/src/runner.rs | 945 | `(true, false) => VisibleCheck::Failed,` | NOT ON THE PROTECTED ROUTE |
+| axon-cortex/src/runner.rs | 970 | `return EpisodeOutcome::Blocked {` | NOT ON THE PROTECTED ROUTE |
+| axon-cortex/src/runner.rs | 990 | `return EpisodeOutcome::Blocked {` | NOT ON THE PROTECTED ROUTE |
+| axon-cortex/src/runner.rs | 1035 | `return EpisodeOutcome::Blocked {` | NOT ON THE PROTECTED ROUTE |
+| axon-cortex/src/runner.rs | 1134 | `return EpisodeOutcome::Blocked {` | NOT ON THE PROTECTED ROUTE |
+| axon-cortex/src/runner.rs | 1214 | `return EpisodeOutcome::Blocked {` | NOT ON THE PROTECTED ROUTE |
+| axon-cortex/src/runner.rs | 1243 | `EpisodeOutcome::BudgetExhausted { steps: budget }` | NOT ON THE PROTECTED ROUTE |
+| axon-cortex/src/runner.rs | 1635 | `pub fn verdict(&self, name: &str) -> CheckVerdict {` | PREDICATE OF NAMED ROWS |
+| axon-cortex/src/runner.rs | 1637 | `CheckVerdict::Failed` | PREDICATE OF NAMED ROWS |
+| axon-cortex/src/runner.rs | 2204 | `Err(r) => Pin::Failed(r),` | NOT ON THE PROTECTED ROUTE |
+| axon-cortex/src/runner.rs | 2777 | `.ok_or_else(// {` | NOT ON THE PROTECTED ROUTE |
+| axon-cortex/src/select.rs | 106 | `pub fn select_action(obs: &Observation, target: &SymbolRef) ` | NOT ON THE PROTECTED ROUTE |
+| axon-cortex/src/select.rs | 111 | `pub fn select_action_with(` | NOT ON THE PROTECTED ROUTE |
+| axon-cortex/src/select.rs | 119 | `return Selection::Blocked(format!(` | NOT ON THE PROTECTED ROUTE |
+| axon-cortex/src/select.rs | 124 | `return Selection::Blocked(` | NOT ON THE PROTECTED ROUTE |
+| axon-cortex/src/select.rs | 208 | `Some(Observed::Unknown { reason }) => Selection::Blocked(for` | NOT ON THE PROTECTED ROUTE |
+| axon-cortex/src/select.rs | 212 | `None => Selection::Blocked(` | NOT ON THE PROTECTED ROUTE |
+| axon-fabric/src/backend.rs | 1314 | `LinuxOutcome::Unknown,` | NOTHING TO ADMIT |
+| axon-fabric/src/backend.rs | 1335 | `LinuxOutcome::Refused,` | REFINES THE KIND OF A NON-SUCCESS |
+| axon-fabric/src/backend.rs | 1342 | `LinuxOutcome::Unknown,` | REFINES THE KIND OF A NON-SUCCESS |
+| axon-fabric/src/backend.rs | 1361 | `LinuxOutcome::TimedOut,` | REFINES THE KIND OF A NON-SUCCESS |
+| axon-fabric/src/backend.rs | 1397 | `LinuxOutcome::Unknown,` | REFINES THE KIND OF A NON-SUCCESS |
+| axon-fabric/src/backend.rs | 1404 | `LinuxOutcome::Unknown,` | COMPLEMENT |
+| axon-fabric/src/backend.rs | 1605 | `outcome: LinuxOutcome::Refused,` | REFINES THE KIND OF A NON-SUCCESS |
+| axon-fabric/src/backend.rs | 1765 | `outcome: LinuxOutcome::Unknown,` | NOTHING TO ADMIT |
+| axon-fabric/src/custodian.rs | 326 | `.ok_or("custodian issued no well-formed nonce")?;` | DOMINATED BY NAMED ROWS |
+| axon-fabric/src/git_data.rs | 299 | `.ok_or(format!(` | RESOURCE BOUND |
+| axon-fabric/src/git_data.rs | 864 | `.ok_or(format!("tag {target} names no object"))?;` | DOMINATED |
+| axon-fabric/src/journal.rs | 599 | `v.state = OpState::Failed;` | NOT A VERDICT PROPERTY |
+| axon-fabric/src/journal.rs | 1036 | `self.append(Rec::OutcomeUnknown {` | NOT A VERDICT PROPERTY |
+| axon-fabric/src/journal.rs | 1218 | `self.append(Rec::Failed {` | NOT A VERDICT PROPERTY |
+| axon-fabric/src/journal.rs | 1233 | `self.append(Rec::Cancelled {` | NOT A VERDICT PROPERTY |
+| axon-fabric/src/protected_host.rs | 267 | `.ok_or_else(// bad(format!("{ptr} is not a sha256")))` | OPERATOR-AUTHORED on the protected route |
+| axon-fabric/src/submit.rs | 907 | `fn run_sandboxed(` | NOT A REFUSAL |
+| axon-fabric/src/submit.rs | 1190 | `status: ReceiptStatus::Unsupported,` | RE-REPORTED |
+| axon-fabric/src/submit.rs | 1266 | `status: ReceiptStatus::Denied,` | RE-REPORTED |
+| axon-fabric/src/submit.rs | 1619 | `status: ReceiptStatus::Failed,` | RE-REPORTED |
+| axon-fabric/src/submit.rs | 1711 | `ReceiptVerification::Failed` | DOMINATED BY NAMED ROWS |
+| axon-fabric/src/submit.rs | 1724 | `ReceiptVerification::Failed` | DOMINATED BY NAMED ROWS |
+| axon-fabric/src/submit.rs | 1841 | `verification: ReceiptVerification::Unknown,` | RE-REPORTED |
+| axon-fabric/src/submit.rs | 2050 | `ReceiptStatus::OutcomeUnknown,` | NOT A VERDICT PROPERTY |
+| axon-fabric/src/submit.rs | 2053 | `OpState::Cancelled => (ReceiptStatus::Canceled, "cancelled")` | NOT A VERDICT PROPERTY |
+| axon-fabric/src/submit.rs | 2054 | `OpState::Failed => (ReceiptStatus::Failed, "failed"),` | NOT A VERDICT PROPERTY |
+| axon-fabric/src/submit.rs | 2056 | `ReceiptStatus::OutcomeUnknown,` | NOT A VERDICT PROPERTY |
+| axon-fabric/src/submit.rs | 2060 | `ReceiptStatus::OutcomeUnknown,` | NOT A VERDICT PROPERTY |
+| axon-fabric/src/submit.rs | 2076 | `ReceiptVerification::Unknown` | NOT A VERDICT PROPERTY |
+| axon-loop-contracts/src/attestation.rs | 145 | `.ok_or_else(// {` | DOMINATED BY THE VERIFIER |
+| axon-loop-contracts/src/attestation.rs | 284 | `.ok_or_else(// {` | DOMINATED BY THE VERIFIER |
+| axon-loop-contracts/src/operator_trust.rs | 310 | `.ok_or(format!("{what} signature has no 32-byte public_key")` | DOMINATED BY THE VERIFIER |
+| axon-loop-contracts/src/operator_trust.rs | 315 | `.ok_or(format!("{what} signature has no 64-byte signature"))` | DOMINATED BY THE VERIFIER |
+| axon-loop/src/admission.rs | 1027 | `pub fn load(store: &Store, r: &Ref) -> Result<AdmissionRecor` | NO PRODUCTION CALLER |
+| axon-os/src/cli.rs | 617 | `crate::verdict::Verdict::VerifyMismatch { detail: e.detail }` | NOT ON THE PROTECTED ROUTE |
+| axon-os/src/cli.rs | 684 | `crate::verdict::Verdict::VerifyMismatch { detail: e.detail }` | NOT ON THE PROTECTED ROUTE |
+| axon-os/src/corrigible.rs | 20 | `LatchState::Tripped => Some(Verdict::Halted {` | NOT ON THE PROTECTED ROUTE |
+| axon-os/src/grant.rs | 185 | `fn is_ancestor(prefix: &str, path: &str) -> bool {` | DOMINATED BY CONSTRUCTION |
+| axon-os/src/grant.rs | 190 | `fn host_allows(list: &[String], host: &str) -> bool {` | DOMINATED BY CONSTRUCTION |
+| axon-os/src/grant.rs | 193 | `fn host_matches(pat: &str, host: &str) -> bool {` | DOMINATED BY CONSTRUCTION |
+| axon-os/src/killchan.rs | 77 | `fn poll(&self) -> LatchState {` | NOT ON THE PROTECTED ROUTE |
+| axon-os/src/killchan.rs | 79 | `LatchState::Tripped` | NOT ON THE PROTECTED ROUTE |
+| axon-os/src/killchan.rs | 113 | `fn poll(&self) -> LatchState {` | NOT ON THE PROTECTED ROUTE |
+| axon-os/src/killchan.rs | 115 | `LatchState::Tripped` | NOT ON THE PROTECTED ROUTE |
+| axon-os/src/killchan.rs | 138 | `fn poll(&self) -> LatchState {` | NOT ON THE PROTECTED ROUTE |
+| axon-os/src/killchan.rs | 143 | `LatchState::Tripped` | NOT ON THE PROTECTED ROUTE |
+| axon-os/src/killchan.rs | 154 | `Err(_) => LatchState::Tripped,` | NOT ON THE PROTECTED ROUTE |
+| axon-os/src/latch.rs | 37 | `state: LatchState::Tripped,` | NOT ON THE PROTECTED ROUTE |
+| axon-os/src/latch.rs | 43 | `pub fn poll(&self) -> LatchState {` | NOT ON THE PROTECTED ROUTE |
+| axon-os/src/manifest.rs | 72 | `.ok_or_else(// bad(format!("line {}: expected `key = value`"` | OPERATOR-AUTHORED on the protected route |
+| axon-os/src/manifest.rs | 77 | `("", "program") => program = Some(parse_str(val).ok_or_else(` | OPERATOR-AUTHORED on the protected route |
+| axon-os/src/manifest.rs | 78 | `("", "intent") => intent = Some(parse_str(val).ok_or_else(//` | OPERATOR-AUTHORED on the protected route |
+| axon-os/src/manifest.rs | 82 | `.ok_or_else(// bad(where_()))?` | OPERATOR-AUTHORED on the protected route |
+| axon-os/src/manifest.rs | 85 | `bad(format!("{}: seed must be a non-negative u64", where_())` | OPERATOR-AUTHORED on the protected route |
+| axon-os/src/manifest.rs | 124 | `("grant", "fs_read") => fs_read = Some(parse_arr(val).ok_or_` | OPERATOR-AUTHORED on the protected route |
+| axon-os/src/manifest.rs | 125 | `("grant", "fs_write") => fs_write = Some(parse_arr(val).ok_o` | OPERATOR-AUTHORED on the protected route |
+| axon-os/src/manifest.rs | 126 | `("grant", "net") => net = Some(parse_arr(val).ok_or_else(// ` | OPERATOR-AUTHORED on the protected route |
+| axon-os/src/manifest.rs | 154 | `let s = parse_str(val).ok_or_else(// bad(where_()))?;` | OPERATOR-AUTHORED on the protected route |
+| axon-os/src/manifest.rs | 156 | `bad(format!("{}: exec must be \"none\" or \"any\"", where_()` | OPERATOR-AUTHORED on the protected route |
+| axon-os/src/manifest.rs | 160 | `let s = parse_str(val).ok_or_else(// bad(where_()))?;` | OPERATOR-AUTHORED on the protected route |
+| axon-os/src/manifest.rs | 162 | `bad(format!(` | OPERATOR-AUTHORED on the protected route |
+| axon-os/src/manifest.rs | 168 | `("grant.budget", "calls") => calls = Some(parse_int(val).ok_` | OPERATOR-AUTHORED on the protected route |
+| axon-os/src/manifest.rs | 170 | `tokens = Some(parse_int(val).ok_or_else(// bad(where_()))?)` | OPERATOR-AUTHORED on the protected route |
+| axon-os/src/manifest.rs | 173 | `cost_micro = Some(parse_int(val).ok_or_else(// bad(where_())` | OPERATOR-AUTHORED on the protected route |
+| axon-os/src/manifest.rs | 219 | `let max_label = max_label.ok_or_else(// bad("missing `grant.` | OPERATOR-AUTHORED on the protected route |
+| axon-os/src/monitor.rs | 90 | `pub fn run(self) -> MonitorResult {` | NOT ON THE PROTECTED ROUTE |
+| axon-os/src/monitor.rs | 190 | `return MonitorResult::ViolationDetected {` | NOT ON THE PROTECTED ROUTE |
+| axon-os/src/monitor.rs | 207 | `return MonitorResult::ViolationDetected {` | NOT ON THE PROTECTED ROUTE |
+| axon-os/src/runtime.rs | 730 | `fn run_sandboxed(` | NOT ON THE PROTECTED ROUTE |
+| axon-os/src/runtime.rs | 751 | `verdict: Verdict::Denied {` | NOT ON THE PROTECTED ROUTE |
+| axon-os/src/runtime.rs | 776 | `verdict: Verdict::Denied {` | NOT ON THE PROTECTED ROUTE |
+| axon-os/src/runtime.rs | 789 | `verdict: Verdict::Denied {` | NOT ON THE PROTECTED ROUTE |
+| axon-os/src/runtime.rs | 872 | `verdict: Verdict::Denied {` | NOT ON THE PROTECTED ROUTE |
+| axon-os/src/runtime.rs | 890 | `Verdict::Halted {` | NOT ON THE PROTECTED ROUTE |
+| axon-os/src/runtime.rs | 894 | `Verdict::Denied {` | NOT ON THE PROTECTED ROUTE |
+| axon-os/src/runtime.rs | 903 | `Verdict::Denied {` | NOT ON THE PROTECTED ROUTE |
+| axon-os/src/runtime.rs | 908 | `Verdict::BudgetExhausted {` | NOT ON THE PROTECTED ROUTE |
+| axon-os/src/runtime.rs | 912 | `Verdict::RefineViolation {` | NOT ON THE PROTECTED ROUTE |
+| axon-os/src/runtime.rs | 916 | `Verdict::Denied {` | NOT ON THE PROTECTED ROUTE |
+| axon-os/src/runtime.rs | 926 | `Verdict::Denied {` | NOT ON THE PROTECTED ROUTE |
+| axon-os/src/runtime.rs | 937 | `Verdict::Malformed {` | NOT ON THE PROTECTED ROUTE |
+| axon-os/src/runtime.rs | 975 | `0 => Verdict::Denied {` | NOT ON THE PROTECTED ROUTE |
+| axon-os/src/runtime.rs | 983 | `2 => Verdict::Malformed {` | NOT ON THE PROTECTED ROUTE |
+| axon-os/src/runtime.rs | 986 | `3 => Verdict::Denied {` | NOT ON THE PROTECTED ROUTE |
+| axon-os/src/runtime.rs | 990 | `4 => Verdict::Halted {` | NOT ON THE PROTECTED ROUTE |
+| axon-os/src/runtime.rs | 993 | `5 => Verdict::Denied {` | NOT ON THE PROTECTED ROUTE |
+| axon-os/src/runtime.rs | 997 | `6 => Verdict::RefineViolation {` | NOT ON THE PROTECTED ROUTE |
+| axon-os/src/runtime.rs | 1000 | `7 => Verdict::BudgetExhausted {` | NOT ON THE PROTECTED ROUTE |
+| axon-os/src/runtime.rs | 1003 | `8 => Verdict::Denied {` | NOT ON THE PROTECTED ROUTE |
+| axon-os/src/runtime.rs | 1009 | `other => Verdict::Denied {` | NOT ON THE PROTECTED ROUTE |
+| axon-os/src/runtime.rs | 1061 | `fn run_sandboxed(` | NOT ON THE PROTECTED ROUTE |
+| axon-psv/src/runner.rs | 158 | `(1, 0, 1) => GuestStatus::Failed,` | PREDICATE OF NAMED ROWS |
+| axon-psv/src/runner.rs | 159 | `_ => GuestStatus::Unknown,` | PREDICATE OF NAMED ROWS |
+| axon-vm/src/firecracker.rs | 136 | `return Some(GuestOutcome::Violation);` | NOT ON THE PROTECTED ROUTE |
+| axon-vm/src/firecracker.rs | 434 | `Some(GuestOutcome::Violation) => (8, GuestOutcome::Violation` | NOT ON THE PROTECTED ROUTE |

@@ -3857,6 +3857,77 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       stays "not a verdict property" because its refusal is the journal's `BudgetExceeded`.
     - **Matrix.** None. **Operator deployment.** None.
 
+## Amendment 76: a verdict is a refusal site (C9 round 4c, admit)
+
+76. **The refusal-site gate reads refusals that are RETURNED VERDICTS; the axon-os admission chain and
+    the verdicts the loop and Fabric produce are rowed or exempted by their protected-route callers.**
+    - **Before.** Integration round 2 passed everything except `v022_refusal_coverage.py --freeze`, which
+      failed on five axon-os sites that decide on the protected route and had no row (`is_ancestor`,
+      `host_allows`, `host_matches` behind `Grant::intersect`; `IsolationRequirement::satisfied_by`;
+      `calls_name` behind `scan_effects`). The class under them: `gate::admit` and `supervisor.rs`
+      refuse by RETURNING an enum value (`Admission::Deny {..}`, `Verdict::Denied {..}`), a shape none
+      of the gate's site forms (`Err(`, a bool/Option return, the named constructors) matched, so the
+      whole admission chain was invisible, not only the five.
+    - **After (gate).** The gate DERIVES the verdict types from the in-scope code: every enum that is
+      not an `*Error` (whose refusals travel inside `Err(` and are sites already) and has a refusal-named
+      variant (`STRONG_NEG`: Deny/Refus/Reject/Veto/Blocked/*Violation/Invalid/Unauthorized/Unverified/
+      *Mismatch/Tamper/Forbid/Halted/Unsupported/FailClosed/Fail/Malformed/*Exhausted/*Bound/Corrupt/
+      Tripped/Flagged) or a deciding name (`Verdict|Decision|Outcome|Admission`), its NEGATIVE variants
+      being those plus the "no verdict" ones (`WEAK_NEG`: Unknown, TimedOut, Cancelled, ...). Forms:
+      (a) a built negative variant (`Enum::Variant`, `Self::Variant` in the enum's own impl) is a line
+      site, a pattern (arm left side incl. tuple patterns, `let`/`if let`, `matches!`, `==`) is not;
+      (b) a function whose return type is a verdict (also through Result/Option/Vec/Box, a tuple, a type
+      alias) is a block site, exempt on its head line like a predicate primitive; (c) a call of a HELPER
+      CONSTRUCTOR (a short fn whose every construction is negative, or whose body is one `Err(..)`, or a
+      local closure building a refusal) is a site and its definition is not (a name defined twice in one
+      file is a platform variant and no helper); (d) a closure predicate refused through `ok_or`
+      (`.filter(|k| k.len() == 32).ok_or(..)?`) is a site: with the predicate inline nothing else scans
+      it; (e) `#[cfg(all(test, ..))]` is test code (the psv xattr module read as production). `?`,
+      bare `ok_or` and `matches!` guards stay what they were: a `matches!` condition is in its
+      refusal's guard block already (`a_matches_guard_opens_its_refusal`). Over the in-scope files the
+      forms see 274 sites in 35 files; 152 had neither a row nor an exemption. `sites()` now returns the
+      site's kind (line / predicate / verdict) and one `_guard_start` serves every form. Rows M1770-M1781
+      are the gate's own guards, each killed by a planted production-shaped refusal it must name
+      (`refusal_coverage_gate.rs`, 8 new tests); the gate tests also require `evl.rs` and
+      `axon-guest-init` to be fully scanned (they plant sites there), which is why those two are rowed
+      first.
+    - **After (the five, and the chain).** Through `submit` -> `supervise_requiring` (tests in
+      `axon-fabric/tests/admit_route.rs`): M1785-M1788 each effect axis of `gate::admit`'s table, M1789
+      its denial, M1790 the confidentiality ceiling, M1791 the supervisor honouring `admit`, M1792 honouring
+      `approval::authorize`, M1793-M1795 `calls_name` (whitespace before the parenthesis, the call test,
+      a bare `mod`). `is_ancestor`, `host_allows`, `host_matches` are EXEMPT with a checkable fact and a
+      drift test: on the route the supervisor grant and the manifest's grant are the same grant
+      (`admission_intersects_the_resolved_grant_with_itself`), `intersect` emits only clones of its inputs,
+      so no edit of those predicates widens anything and the narrowing direction is a denial. The
+      isolation requirement is checked twice, by `backend::select` (M1052) and by the supervisor (M1796
+      guard, M1797 predicate arm), and each dominates the other: M1052's recorded kill was the
+      SUPERVISOR's refusal (`assert_never_runs` read any receipt that was not `Unsupported` as "it ran",
+      so a `Denied` receipt of a request that never spawned counted as the attack getting through). The
+      helper now judges by effect, so M1052 as then written became REFUSED_ELSEWHERE. It stays ACTIVE on what only
+      selection answers, the receipt contract (`Unsupported`, never another status;
+      `hardware_isolation_linux_is_refused_without_a_qualified_profile`, which also keeps the full suite red with
+      M1052 off, so a retirement of M1052 would be false); M1796 (the supervisor's guard) and M1797 (`satisfied_by`'s
+      ProcessScoped arm) are LIBRARY_PRIMITIVE, killed by a direct `supervise_requiring` test
+      (`axon-os/tests/admit_isolation.rs`). A four-cell retirement of them against M1052 was executed and
+      REFUSED: the four cells held, but axon-os's own suite pins both (`hardware_isolation.rs`,
+      `runtime_tests::only_the_protected_linux_profile_satisfies_a_microvm_requirement`), and a retirement
+      needs the full suite green.
+    - **After (the verdicts the loop and Fabric produce).** EVL (M1783 a verifier-reported failure, M1784
+      an undelivered trial, each counted as a pass), admission (M1798-M1800 the Vetoed/Reject/Inconclusive
+      constructions, M1801-M1803 `Verdict::from`), intake's receipt-to-verification map (M1804, M1805), `tel`'s
+      bounded add (M1806), safety's violation state (M1807), `project_receipt_status` (M1808, M1810-M1812;
+      M1809, the Canceled arm, is LIBRARY_PRIMITIVE: EVL's `run_end` M131 dominates it on every route),
+      the guest runner (M1813 the keyed fallback, M1814 a refusal reported as a pass; the guest's no-policy
+      decision M1782), `interpret_linux_result`'s guards (M1815-M1820) and `linux_receipt`'s outcome map
+      (M1821-M1823), submit's verdict over unjudged bytes (M1826). Two rows written for submit's
+      `Failed`/`Passed` relabel (M1824, M1825) were REFUSED_ELSEWHERE by the completion check after them
+      (M63, M64) and are not kept: their lines are exempt as dominated, with the measurement in the reason.
+    - **Dispositions.** 55 rows (M1770-M1826 less M1824/M1825; M1827-M1829 unused), 0 retired, 3 LIBRARY_PRIMITIVE (M1796, M1797, M1809), and 123 exemptions each stating a checkable fact
+      (`governance/notes/v022-dependency-sites.md`, "Amendment 76 addendum"; no bulk exemption).
+      NOT_YET_SCANNED is empty and `--freeze` holds.
+    - **Matrix.** A123-A126 (the matrix is one contiguous run A1-A126, `psv_matrix_check.py` FLOOR 126).
+      **Operator deployment.** None.
+
 ## Amendment 77: the verifier's identity is the image it runs, and a sharded suite's relink cannot unmake it (C9 round 4c, shardflake)
 
 77. **`readiness_verifier_sha256 is not a sha256` under `scripts/cargo_test_shards.py`.**
