@@ -2018,6 +2018,6 @@ ATTACK_MARKERS.update({
     'M2174': r"ATTACK: the operator's analysis trusted a type the candidate chose \(a trait name\): Ok\(Completed\)",
     'M2175': r"ATTACK: the operator's analysis trusted a type the candidate chose \(dyn Judge\): Ok\(Completed\)",
     'M2176': r"ATTACK: the operator's analysis trusted a type the candidate chose \(the same receiver text as a sibling fn's pinned one\): Ok\(Completed\)",
-    'M2177': r"ATTACK: an operator method named recv made a channel read look determined: Ok\(Completed\)",
+    'M2177': r"ATTACK: an operator method named recv made a dict-read channel's value look determined: Ok\(Completed\)",
     'M2178': r"ATTACK: the operator's analysis trusted a type the candidate chose \(a candidate global `let X = 4 as u8`\): Ok\(Completed\)",
 })
