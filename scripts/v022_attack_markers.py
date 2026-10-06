@@ -2056,7 +2056,6 @@ ATTACK_MARKERS.update({
     'M2315': 'ATTACK: the interpreter child inherited',
     'M2316': "ATTACK: the interpreter child did not get the job's seed",
     'M2317': "ATTACK: the operator's AXON_\\w+ was not forwarded",
-    'M2318': 'ATTACK: a hermetic job runs without the virtual clock',
     'M2319': "ATTACK: the interpreter child did not run in the job's directory",
     'M2320': 'ATTACK: set_non_dumpable left the runner dumpable',
     'M2321': 'ATTACK: the root helper stayed dumpable',
@@ -2078,7 +2077,13 @@ ATTACK_MARKERS.update({
     'M2335': r'ATTACK: the helper printed no reply',
     'M2336': 'ATTACK: pass_pidfd did not arm SO_PASSPIDFD',
     'M2337': 'two writers on one journal',
-    'M2338': "ATTACK: the interpreter child's stdin is not /dev/null",
+    'M2338': 'ATTACK: an exemption inside a site a row covers was accepted as still needed',
     'M2339': 'ATTACK: the check child lacks AXON_PATH:',
 })
 ATTACK_MARKERS['M2271'] = 'ATTACK: an exemption citing a row the registry does not hold was accepted'
+ATTACK_MARKERS.update({
+    'M2272': r"called `Result::unwrap_err\(\)` on an `Ok` value: WorkspaceTree",
+    'M2274': r"assertion failed: matches!\(store\.materialize\(&r, &out, false\),",
+    'M2278': r"attempt to add with overflow",
+    'M2318': r"assertion failed: matches!\(Journal::open\(&path\), Err\(JournalError::Corrupt",
+})

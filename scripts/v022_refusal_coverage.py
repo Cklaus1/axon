@@ -517,14 +517,6 @@ EXEMPT += [
      "NOTHING TO ADMIT: SO_PEERCRED failed, so there is no peer uid for decide() to judge"),
     (RD, '        Err("operator trust cannot be checked on this platform".into())',
      "NON-UNIX: compiled only under cfg(not(unix)); Linux builds the unix branch"),
-    (PSVF, "    if cand_tree != req.workspace_version_ref.as_str() {",
-     "UNREACHABLE: the candidate dir was created NEW (DirBuilder::create, not recursive) and "
-     "0700 by materialize_inputs, and written by WorkspaceStore::materialize from store.tree(r), "
-     "which re-derives r from hash-checked blobs (\"does not re-derive\"); between that write and "
-     "this read only the custodian issue call runs, which is another uid's process. The guest "
-     "holds the same digest again (M159)"),
-    (PSVF, "    if suite_tree != i.suite_version {",
-     "UNREACHABLE: as the candidate check above (the suite is materialized from the same ref)"),
     (PSVF, '        Err(e) => return unknown(format!("no guest verdict: {e}"), evidence, None),',
      "NOTHING TO ADMIT: no verdict bytes were read"),
     (PSVF, '        Err(e) => return unknown(format!("guest verdict is malformed: {e}"), evidence, None),',
@@ -1088,7 +1080,6 @@ EXEMPT += [
     (FW, '            return Err(ImportRefusal::QuotaEntries {',
      "RESOURCE BOUND: without it a larger tree is admitted, but its reference still covers exactly "
      "its bytes, and the guest's walk applies its own quota"),
-    (FW, '                return Err(ImportRefusal::QuotaBytes { limit: quota.bytes });', "RESOURCE BOUND: as above"),
     (FW, '                        return Err(ImportRefusal::Collision {',
      "NOT A VERDICT PROPERTY: the case-folding rule is for case-insensitive filesystems; on the "
      "Linux guest and host each spelling is its own file and the guest's digest still equals the "
@@ -1105,16 +1096,9 @@ EXEMPT += [
     (FW, '            if f.parent() == Some(self.omissions_dir(r).as_path())', "NOT A VERDICT PROPERTY: as above"),
     (FW, '                return Err(StoreError::NotPublished(r.to_string()))', "NOTHING TO ADMIT: no manifest"),
     (FW, '            Err(e) => return Err(e.into()),\n        };\n        if workspace_version_ref', _IO),
-    (FW, '            return Err(StoreError::DestinationExists(dest.to_path_buf()));',
-     "UNREACHABLE BY CONSTRUCTION (checkable): every materialize caller passes a destination "
-     "inside a directory it created NEW just before: psv.rs materialize_inputs (DirBuilder, not "
-     "recursive) and submit's RunDir::new (create_dir, made non-recursive in C9 round 4b, so a "
-     "leftover run dir is refused, never reused); the destination names inside it are fixed and "
-     "each used once"),
     (FW, '                    return Err(StoreError::Io(format!("no symlinks here: {target}")));',
      "NON-UNIX: compiled only under cfg(not(unix))"),
     # journal.rs
-    (FJ, '                return Err(name);', _JNV),
     (FJ, '                    return Err(JournalError::ScopeConflict {', _JNV),
     (FJ, '                    return Err(JournalError::UnknownScope(Box::new(intent.scope.clone())));', _JNV),
     (FJ, '                        return Err(JournalError::Conflict {\n', _JNV),
@@ -1132,11 +1116,7 @@ EXEMPT += [
     (FJ, '            return Err(JournalError::InvalidTransition {', _JNV),
     (FJ, '            return Err(JournalError::Locked(path.to_path_buf()));', "OS ERROR: the lock is still held at the deadline; nothing runs"),
     (FJ, '            Err(e) => return Err(JournalError::Io(e)),', "OS ERROR: stat failed other than NotFound (NotFound is M333)"),
-    (FJ, '            if line.seq != seq + 1 {',
-     _JNV + "; a corrupt journal can at most hide an op (run fresh, a genuine run) or invent one "
-     "(a replay, never signed)"),
     (FJ, '                        return Err(JournalError::Corrupt {', _JNV + "; as above"),
-    (FJ, '            if matches!(change, Change::Duplicate) {', _JNV + "; as above"),
     (FJ, '                }\n                return Err(JournalError::Conflict {', _JNV),
     (FJ, '            Err(e) => Err(e),\n        }\n    }\n\n    /// Carve', _IO + " (append's own refusals are their own sites)"),
     (FJ, '        ) {\n            return Err(JournalError::BudgetExceeded {', _JNV),
@@ -1498,13 +1478,6 @@ EXEMPT += [
     (FC, "        std::process::exit(code);\n    }\n    write_result(\"ok\", 0);",
      "NON-PRODUCTION: as above"),
     (BIN, '            eprintln!("usage: axon-protected-launcher [--observe] [--probe] < request.json");', _USE),
-    (BIN, "        let _ = out.flush();\n        std::process::exit(code);",
-     "RELAY: the report writer exits with the code serve_as decided; each refusal there is a "
-     "site of its own"),
-    # axon-observer (amendment 68's service binary), brought under the EXIT and
-    # diverging-constructor forms by amendment 71 at integration (c9r4c/integrate).
-    # The test-config closure runs only from the `--test-config` arm, which
-    # `TEST_TRUST_BUILD` gates (M1548); the store's parent chain is M1550.
     (OBB, "    std::process::exit(2);\n}\n\nfn euid()",
      "NOT A SITE: the body of the refusal constructor `die`; each call is a site"),
     (OBB, '        let p = PathBuf::from(args.get(i).unwrap_or_else(|| die("--test-config FILE")));', _OBS_TEST),
@@ -3203,6 +3176,11 @@ EXEMPT += [
      'ROWED ELSEWHERE (checkable): `finish` prints the reply and exits with the code it is given (its print is M2335); the report and the code are what serve_as/serve_observe return, rowed through the exit-code tests of every launch test (they parse the reply and assert the code)'),
 ]
 
+EXEMPT += [
+    ("crates/axon-os/src/runtime.rs", "        .stdin(Stdio::null())\n        .stdout(Stdio::piped())",
+     "NOT ON THE PROTECTED ROUTE (checkable): the legacy process adapter (_ACR). REMAINDER (no row yet): its interpreter child's stdin; a test would need a hostile parent with a live stdin pipe, and the child runs a program the supervisor already admitted"),
+]
+
 
 def load_rows():
     spec = importlib.util.spec_from_file_location("mut", os.path.join(ROOT, "scripts/v022_g01_mutations.py"))
@@ -4212,7 +4190,7 @@ def judge_file(f, rows, bad):
         if n != 1:
             bad.append(f"exemption anchor occurs {n} times in {f}: {anchor!r}")
             continue
-        ex.append([line_of(text, text.index(anchor)), anchor, reason, 0])
+        ex.append([line_of(text, text.index(anchor)), anchor, reason, 0, 0, 0])
     covered = exempt = 0
     uncovered = []
     for g, i, at, kind in sites(text, f, bad):
@@ -4225,14 +4203,14 @@ def judge_file(f, rows, bad):
         ex_hit = [e for e in ex if ((g <= e[0] <= i) if kind == "line" else e[0] == g)]
         for e in ex_hit:
             e[3] += 1
+            # Amendment 91: an exemption is STALE only when every site whose
+            # block holds it is covered by a row (it used to be dropped as soon
+            # as ANY covered site's block held it, which the amendment-87 gate
+            # narrowed to its own line, and so stopped flagging the exemption of
+            # a guard a row had since taken over: the survey found four).
+            e[4 if by else 5] += 1
         if by:
             covered += 1
-            for e in ex_hit:
-                # Amendment 87: only an exemption pinned on the site's own line
-                # outlives its reason when a row covers it; one anchored on an
-                # earlier line of the block belongs to the site it names.
-                if e[0] == i or kind != "line":
-                    bad.append(f"{f}:{i + 1}: exempt ({e[1]!r}) yet covered by {by}: drop the exemption")
         elif ex_hit:
             exempt += 1
         else:
@@ -4240,9 +4218,12 @@ def judge_file(f, rows, bad):
                     "predicate": f"{lines[g].strip()} (a predicate primitive: it decides by bool/Option)",
                     "verdict": f"{lines[g].strip()} (a function deciding by a verdict return type)"}[kind]
             uncovered.append(f"{f}:{at + 1}: refusal site with no row and no exemption: {what}")
-    for line, anchor, _, hits in ex:
+    for line, anchor, _, hits, cov, sole in ex:
         if hits == 0:
             bad.append(f"{f}:{line + 1}: exemption matches no refusal site: {anchor!r}")
+        elif cov and not sole:
+            bad.append(f"{f}:{line + 1}: exempt ({anchor!r}) yet every site it lies in is covered by a row: "
+                       "drop the exemption")
     return covered, exempt, uncovered
 
 

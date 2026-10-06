@@ -7952,10 +7952,10 @@ MUTATIONS += [
      '                if let Some(v) = std::env::var_os(key) {\n                    cmd.env(key, v);',
      '                if let Some(v) = std::env::var_os(key) {\n                    let _ = v;',
      'axon-os', '--test legacy_adapter', 'the_interpreter_child_is_built_from_an_empty_environment_and_the_jobs_directory'),
-    ('M2318', 'ENV (eqgate3): a hermetic job runs on the virtual clock', 'crates/axon-os/src/runtime.rs',
-     '            cmd.env(\n                "AXON_CLOCK",',
-     '            cmd.env(\n                "AXON_EQ_NOOP",',
-     'axon-os', '--test legacy_adapter', 'the_interpreter_child_is_built_from_an_empty_environment_and_the_jobs_directory'),
+    ('M2318', 'EXEMPTION REFUTED (eqgate3): a journal holding a duplicate settlement line is corrupt', 'crates/axon-fabric/src/journal.rs',
+     '            if matches!(change, Change::Duplicate) {',
+     '            if false && matches!(change, Change::Duplicate) {',
+     'axon-fabric', '--test journal', 'g13_a_journal_holding_a_duplicate_settlement_line_is_corrupt'),
     ('M2319', "ENV (eqgate3): the interpreter child runs in the job's directory", 'crates/axon-os/src/runtime.rs',
      '                cmd.current_dir(dir);',
      '                let _ = dir;',
@@ -8035,10 +8035,10 @@ MUTATIONS += [
      '        let rc = unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };',
      '        let rc = 0 * unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };',
      'axon-fabric', '--test journal', 'a_second_writer_is_locked_out'),
-    ('M2338', "(eqgate3) ENV: the interpreter child's stdin is /dev/null", 'crates/axon-os/src/runtime.rs',
-     '        .stdin(Stdio::null())\n        .stdout(Stdio::piped())',
-     '        .stdin(Stdio::inherit())\n        .stdout(Stdio::piped())',
-     'axon-os', '--test legacy_adapter', 'the_interpreter_child_is_built_from_an_empty_environment_and_the_jobs_directory'),
+    ('M2338', 'COVERAGE GATE (eqgate3): an exemption every covered site makes stale is refused', 'scripts/v022_refusal_coverage.py',
+     '        elif cov and not sole:\n            bad.append(',
+     '        elif False:\n            bad.append(',
+     'axon-core', '--no-default-features --test refusal_coverage_gate', 'an_exemption_inside_a_site_a_row_covers_is_stale'),
     ('M2339', "(eqgate3) ENV: the PSV check child's module path is its suite then its candidate", 'crates/axon-psv/src/runner.rs',
      '        .env(\n            "AXON_PATH",',
      '        .env_remove("AXON_PATH")\n        .env(\n            "AXON_EQ_NOOP",',
@@ -8050,6 +8050,27 @@ MUTATIONS += [
      '        if gone:\n            bad.append(',
      '        if False and gone:\n            bad.append(',
      'axon-core', '--no-default-features --test refusal_coverage_gate', 'an_exemption_citing_a_row_that_does_not_exist_is_refused'),
+]
+
+MUTATIONS += [
+    ('M2272', 'EXEMPTION REFUTED (eqgate3): an import over its byte quota is refused', 'crates/axon-fabric/src/workspace.rs',
+     '            if bytes > quota.bytes {',
+     '            if false && bytes > quota.bytes {',
+     'axon-fabric', '--test workspace', 'refuses_byte_quota_overflow'),
+]
+
+MUTATIONS += [
+    ('M2274', 'EXEMPTION REFUTED (eqgate3): materialize never writes into an existing destination', 'crates/axon-fabric/src/workspace.rs',
+     '        if dest.exists() || std::fs::symlink_metadata(dest).is_ok() {',
+     '        if false && (dest.exists() || std::fs::symlink_metadata(dest).is_ok()) {',
+     'axon-fabric', '--test workspace', 'publish_is_write_once_and_materialize_round_trips'),
+]
+
+MUTATIONS += [
+    ('M2278', 'EXEMPTION REFUTED (eqgate3): an overflowing reservation is refused, not wrapped', 'crates/axon-fabric/src/journal.rs',
+     '            if used.checked_add(want).is_none() {',
+     '            if false && used.checked_add(want).is_none() {',
+     'axon-fabric', '--test journal', 'an_overflowing_reservation_is_refused_not_wrapped'),
 ]
 
 

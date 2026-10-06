@@ -599,8 +599,34 @@ fn peak_rss_kb() -> u64 {
         .expect("VmHWM")
 }
 
+/// C9 round 7 (eqgate3): run `test` again ALONE in a child of this test binary
+/// and say whether THIS process is that child. Peak RSS (`VmHWM`) is a property
+/// of the whole process, and a sibling test thread that allocates would be read
+/// as the growth under test: a suite run found the flood test failing on a
+/// neighbour's memory. Usage: `if !alone("name") { return; }` first.
+fn alone(test: &str) -> bool {
+    if std::env::var("AXON_EQ_ALONE").as_deref() == Ok(test) {
+        return true;
+    }
+    let o = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", test, "--test-threads=1", "--nocapture"])
+        .env("AXON_EQ_ALONE", test)
+        .output()
+        .unwrap();
+    assert!(
+        o.status.success() && String::from_utf8_lossy(&o.stdout).contains("1 passed"),
+        "{test} failed when run alone:\n{}\n{}",
+        String::from_utf8_lossy(&o.stdout),
+        String::from_utf8_lossy(&o.stderr)
+    );
+    false
+}
+
 #[test]
 fn the_local_check_child_cannot_make_the_launcher_buffer_its_whole_output() {
+    if !alone("the_local_check_child_cannot_make_the_launcher_buffer_its_whole_output") {
+        return;
+    }
     let dir = tmpdir("cap");
     let ws = dir.join("ws");
     std::fs::create_dir_all(&ws).unwrap();

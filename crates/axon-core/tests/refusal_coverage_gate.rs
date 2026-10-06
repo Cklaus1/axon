@@ -1200,3 +1200,29 @@ fn an_exemption_citing_a_row_that_does_not_exist_is_refused() {
     let _ = std::fs::remove_dir_all(&c);
     let _ = std::fs::remove_dir_all(&r);
 }
+
+/// Amendment 91: an exemption is STALE when every site whose block holds it is
+/// covered by a row: the guard was exempted, a row later took it over, and the
+/// exemption now claims a reason nobody maintains (the survey found four). The
+/// planted exemption sits inside a site `tasks.rs` already rows (M986).
+/// Control: the unedited copy holds.
+#[test]
+fn an_exemption_inside_a_site_a_row_covers_is_stale() {
+    let r = tree("stale-exempt");
+    exempt(
+        &r,
+        SCANNED,
+        "        if !self.tasks.windows(2).all(|w| w[0] < w[1]) {",
+        "probe: a guard a row already covers",
+    );
+    refuses(
+        &r,
+        &[],
+        "yet every site it lies in is covered by a row",
+        "an exemption inside a site a row covers was accepted as still needed",
+    );
+    let c = tree("stale-exempt-control");
+    holds(&c, &[], "the unedited copy");
+    let _ = std::fs::remove_dir_all(&c);
+    let _ = std::fs::remove_dir_all(&r);
+}
