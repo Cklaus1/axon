@@ -1,5 +1,22 @@
 # R1 native build — RESOLVED. Root cause: serde × codegen feature collision.
 
+> **Correction (2026-10-05, AX-10).** The cause below is mis-attributed: it is
+> not a collision with `codegen`. Re-measured on rustc 1.99.0-nightly
+> (2026-07-10): a `--no-default-features --features serde-json` lib build (NO
+> codegen) of the pre-fix tree was still compiling at a 420 s timeout, while
+> removing `serde(tag = "kind")` or stubbing out `program_to_json` each let
+> `--features codegen,serde-json` finish in ~25 s. Internally-tagged serde
+> serializes a newtype variant's payload through `TaggedSerializer<S>`, so a
+> variant holding the same enum (`Expr::Spawn(Box<Expr>)`) instantiates
+> `TaggedSerializer<TaggedSerializer<S>>`, … without bound — polymorphic
+> recursion the collector never escapes. It also could not serialize a
+> string-payload variant (`Expr::Ident(String)`) at runtime. Fix: the AST
+> enums are adjacently tagged (`serde(tag = "kind", content = "value")`);
+> `cargo build -p axon-core --features serde-json` (codegen + serde-json) now
+> builds in ~17-26 s and `axon parse` emits `{"kind": …, "value": …}` JSON.
+> `gate.sh` builds and runs `program_json_tests` with both features, because
+> `cargo check` never reaches the monomorphization collector.
+
 **Date:** 2026-06-01
 **Status:** ✅ **The native codegen build finishes in ~4 seconds.** The blocker is gone.
 

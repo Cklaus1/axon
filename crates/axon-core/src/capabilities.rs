@@ -1313,7 +1313,24 @@ fn check_expr<'a>(expr: &'a Expr, ctx: &mut CapCtx<'a, '_>) {
         // A capability-bearing builtin referenced as a VALUE (not called) —
         // `let f = read_file; f(p)`. Closes the builtin-aliasing route
         // (THREAT_MODEL.md §8); permitted only if the spec grants the category.
-        Expr::Ident(name) => check_builtin_value_ref(name, ctx.spec, ctx.errors),
+        Expr::Ident(name) => {
+            check_builtin_value_ref(name, ctx.spec, ctx.errors);
+            // AX-25: a USER fn referenced as a value (`let g = helper; g(p)`)
+            // can be called through that value, so it inherits the caller's
+            // containment exactly as a direct call does (the helper-follow in the
+            // `Call` arm). Without this the value route launders the sandbox.
+            if classify_call(name).is_none() {
+                if let Some(helper) = ctx.fn_map.get(name.as_str()) {
+                    if ctx.visited.insert(name) {
+                        let outer = ctx.site;
+                        ctx.site = helper.span;
+                        check_expr(&helper.body, ctx);
+                        ctx.site = outer;
+                        ctx.visited.remove(name.as_str());
+                    }
+                }
+            }
+        }
         // Leaf nodes — no recursion needed.
         Expr::Literal(_) | Expr::None | Expr::Break | Expr::Continue | Expr::InlineAsm { .. } => {}
     }

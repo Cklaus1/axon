@@ -119,9 +119,20 @@ enum Command {
         #[arg(long, short, help = "Output binary path")]
         out: Option<PathBuf>,
 
-        /// Enable O2 optimizations (default: O0 / debug).
-        #[arg(long, help = "Optimized release build")]
+        /// Optimised release build: `--opt-level 2` unless `--opt-level` is
+        /// given (default without either: O0 / debug).
+        #[arg(long, help = "Optimized release build (= --opt-level 2)")]
         release: bool,
+
+        /// Optimisation level: runs LLVM's `default<O0|O1|O2|O3|Os|Oz>` IR
+        /// pipeline and sets the matching backend level. Overrides `--release`.
+        #[arg(
+            long,
+            value_name = "LEVEL",
+            value_parser = ["0", "1", "2", "3", "s", "z"],
+            help = "Optimization level: 0|1|2|3|s|z (overrides --release)"
+        )]
+        opt_level: Option<String>,
 
         /// Cross-compile for the given LLVM target triple
         /// (e.g. `x86_64-unknown-linux-gnu`, `aarch64-apple-darwin`).
@@ -148,10 +159,11 @@ enum Command {
         #[arg(long, help = "Linker script path (R17 Slice 1)")]
         linker_script: Option<PathBuf>,
 
-        /// Emit just the object file (.o) without linking.
-        /// Useful when linking a boot stub alongside the kernel object.
-        /// The output path is used as-is (e.g. --out kernel.o).
-        #[arg(long, help = "Emit .o only, skip link step (R17 Slice 1)")]
+        /// Emit just the program's object file (.o) without linking.
+        /// Hosted builds write the object that would be linked against
+        /// axon-rt; freestanding builds use it to link a boot stub alongside
+        /// the kernel object. The output path is used as-is (e.g. --out kernel.o).
+        #[arg(long, help = "Emit .o only, skip link step")]
         emit_obj: bool,
 
         /// Emit the LLVM IR as text to the --out path (or stdout) and stop.
@@ -253,14 +265,10 @@ enum Command {
         iterate: Option<usize>,
     },
 
-    /// Compile a .ax file and execute it, forwarding remaining arguments.
+    /// Type-check a .ax file and interpret it.
     Run {
         #[arg(help = "Path to .ax source file")]
         file: PathBuf,
-
-        /// Enable O2 optimizations (default: O0 / debug).
-        #[arg(long, short = 'r', help = "Optimized release build")]
-        release: bool,
 
         /// R45 — hold `main` to a deny-all capability grant unless it declares
         /// one, so containment is a GRANT rather than an opt-in.
@@ -277,7 +285,7 @@ enum Command {
         )]
         require_contained: bool,
 
-        /// Arguments forwarded to the compiled binary.
+        /// Extra arguments. Not forwarded to the program yet: `axon run` warns and ignores them.
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
@@ -848,6 +856,7 @@ fn dispatch(command: Command) {
             files,
             out,
             release,
+            opt_level,
             target,
             no_cache,
             cache_dir,
@@ -861,6 +870,7 @@ fn dispatch(command: Command) {
             files,
             out,
             release,
+            opt_level,
             target,
             no_cache,
             cache_dir,
@@ -878,12 +888,11 @@ fn dispatch(command: Command) {
         } => cmd_goal(file, emit, iterate),
         Command::Run {
             file,
-            release,
             require_contained,
             args,
         } => {
             axon_core::capabilities::set_require_contained(require_contained);
-            cmd_run(file, release, args)
+            cmd_run(file, args)
         }
         Command::Fmt { files, check } => cmd_fmt(files, check),
         Command::Doc { files, out } => cmd_doc(files, out),
@@ -2808,7 +2817,7 @@ fn mobile_emit_object(
     let app = file.file_stem().unwrap_or_default().to_string_lossy();
     let obj = out_dir.join(format!("lib{app}.o"));
     let obj_str = obj.to_string_lossy().to_string();
-    cg.compile_to_object_for_triple(&obj_str, false, triple)?;
+    cg.compile_to_object_for_triple(&obj_str, axon_core::codegen::OptLevel::O0, triple)?;
     Ok(obj_str)
 }
 
@@ -2903,7 +2912,7 @@ fn build_wasm_object_cli(file: &Path, triple: &str) {
 
     let out = file.with_extension("wasm");
     let out_str = out.to_string_lossy().to_string();
-    match cg.compile_to_wasm_object(&out_str, false, llvm_triple) {
+    match cg.compile_to_wasm_object(&out_str, axon_core::codegen::OptLevel::O0, llvm_triple) {
         Ok(()) => {
             // Verify the emitted file is genuine wasm (magic `\0asm`).
             let magic_ok = std::fs::read(&out)
@@ -3146,6 +3155,7 @@ fn cmd_build(
     _files: Vec<PathBuf>,
     _out: Option<PathBuf>,
     _release: bool,
+    _opt_level: Option<String>,
     _target: Option<String>,
     _no_cache: bool,
     _cache_dir: Option<PathBuf>,
@@ -3175,6 +3185,7 @@ fn cmd_build(
     files: Vec<PathBuf>,
     out: Option<PathBuf>,
     release: bool,
+    opt_level: Option<String>,
     target: Option<String>,
     no_cache: bool,
     cache_dir: Option<PathBuf>,
@@ -3192,6 +3203,14 @@ fn cmd_build(
     for f in &files {
         validate_ax_extension(f);
     }
+    // AX-17: `--opt-level` wins; otherwise `--release` = O2, debug = O0.
+    let opt = match opt_level.as_deref() {
+        Some(level) => axon_core::codegen::OptLevel::parse(level).unwrap_or_else(|e| {
+            eprintln!("error: --opt-level: {e}");
+            process::exit(1);
+        }),
+        None => axon_core::codegen::OptLevel::from_release(release),
+    };
 
     // NATIVE EFFECT-CEILING PARITY: refuse to emit an artifact that would
     // silently drop an active ambient ceiling.
@@ -3347,7 +3366,7 @@ fn cmd_build(
     };
 
     let opts = BuildOptions {
-        release,
+        opt,
         target_triple: effective_target,
         no_cache,
         cache_dir,
@@ -3389,7 +3408,8 @@ fn cmd_build(
     match run_build_pipeline(&mut program, first, &output, &opts) {
         Ok(()) => {
             let elapsed = start.elapsed().as_millis();
-            eprintln!("Binary: {} ({elapsed}ms)", output.display());
+            let artifact = if emit_obj { "Object" } else { "Binary" };
+            eprintln!("{artifact}: {} ({elapsed}ms)", output.display());
             // R14: --host mobile also emits the deterministic Kotlin wrapper next
             // to the jniLibs/ tree (out/android/Axon.kt).
             if mobile {
@@ -3476,7 +3496,8 @@ fn cmd_build_bpf(
 
 #[cfg(feature = "codegen")]
 struct BuildOptions {
-    release: bool,
+    /// AX-17: optimisation level (`--opt-level`, or `--release` → O2).
+    opt: axon_core::codegen::OptLevel,
     target_triple: Option<String>,
     no_cache: bool,
     cache_dir: Option<PathBuf>,
@@ -4138,7 +4159,7 @@ fn cmd_trace_replay(run_id: String, path: Option<PathBuf>) {
         axon_core::clock::set(rec.ts_ms as i64, 1);
     }
     let source_path = PathBuf::from(&rec.src);
-    cmd_run(source_path, false, vec![]);
+    cmd_run(source_path, vec![]);
 }
 
 // ── Phase 9: run-id + seed helpers ───────────────────────────────────────────
@@ -5491,7 +5512,7 @@ fn render_cell_jsonl(sess: &Session, r: &CellResult) -> String {
     )
 }
 
-fn cmd_run(file: PathBuf, _release: bool, args: Vec<String>) {
+fn cmd_run(file: PathBuf, args: Vec<String>) {
     // Fix 5: validate .ax extension.
     validate_ax_extension(&file);
 
@@ -6708,21 +6729,33 @@ fn run_build_pipeline(
         return Err(format!("{} error(s); build aborted", errors.len()));
     }
 
-    // Cache key MUST include the git SHA, not just the semver: two builds of the
-    // compiler at the same 0.1.0 version but different commits emit different IR
-    // (e.g. the #36 random_i64 guard), and keying on semver alone served a stale
-    // pre-fix binary on rebuild — a silent-wrong-artifact footgun. VERSION is
-    // `<semver> (<git-sha>)`, captured by build.rs; a dirty tree appends nothing
-    // here, so a `--no-cache` build is still the escape hatch mid-edit.
-    let compiler_version = VERSION;
+    // The cache key MUST identify the compiler BUILD, not its version: two
+    // builds at the same `0.1.0 (<git-sha>)` emit different IR whenever the
+    // tree is dirty, and keying on the version (plus, later, the executable's
+    // path/size/mtime) let a rebuilt compiler serve the previous compiler's
+    // bitcode (#36, AUDIT T38, AX-15). The identity is the version plus a
+    // digest of the compiler executable's bytes (`compiler_digest`). If the
+    // executable cannot be read no key can tell this compiler apart from
+    // another, so the cache is not used at all rather than guessed at.
     let cache_dir = opts
         .cache_dir
         .clone()
         .unwrap_or_else(axon_core::default_cache_dir);
+    let compiler_identity = if opts.no_cache {
+        None
+    } else if let Some(digest) = axon_core::compiler_digest(&cache_dir) {
+        Some(format!("{VERSION}+{digest}"))
+    } else {
+        eprintln!(
+            "warning: the compiler executable could not be read to identify this \
+             build; compiling without the build cache"
+        );
+        None
+    };
     let target_triple = opts.target_triple.as_deref();
 
     // ── Cache lookup ──────────────────────────────────────────────────────
-    if !opts.no_cache {
+    if let Some(compiler_version) = compiler_identity.as_deref() {
         // Hash all source files to form the cache key.
         let mut hasher_input = Vec::new();
         // Include the source path stem as a namespace separator.
@@ -6764,36 +6797,25 @@ fn run_build_pipeline(
         if let Some(triple) = target_triple {
             hasher_input.extend_from_slice(triple.as_bytes());
         }
-
-        // AUDIT T38. Belt-and-braces on top of the `-dirty` fix in build.rs: mix
-        // the COMPILER EXECUTABLE's own identity (path + size + mtime) into the
-        // key, so a rebuilt compiler can never serve the previous compiler's
-        // cached object even if the embedded version string is somehow stale.
-        // The version string is a claim about the build; this is the build.
-        if let Ok(exe) = std::env::current_exe() {
-            hasher_input.extend_from_slice(exe.to_string_lossy().as_bytes());
-            if let Ok(md) = std::fs::metadata(&exe) {
-                hasher_input.extend_from_slice(&md.len().to_le_bytes());
-                if let Ok(mtime) = md.modified() {
-                    if let Ok(d) = mtime.duration_since(std::time::UNIX_EPOCH) {
-                        hasher_input.extend_from_slice(&d.as_nanos().to_le_bytes());
-                    }
-                }
-            }
-        }
+        // AX-17: the opt level selects the pass pipeline and the runtime
+        // staticlib profile, so builds at different levels are separate
+        // entries.
+        hasher_input.extend_from_slice(b"opt-level=");
+        hasher_input.extend_from_slice(opts.opt.as_str().as_bytes());
 
         let key = axon_core::cache_key(&hasher_input, compiler_version);
         let cache_path = axon_core::cache_path(&key, &cache_dir);
 
         // Freestanding and shared (`--host mobile`) builds bypass the cache:
-        // their linker args differ from the hosted-binary path.
-        if !opts.freestanding && !opts.shared {
+        // their linker args differ from the hosted-binary path. A hit links a
+        // binary, so `--emit-obj` / `--emit-llvm` (which must not) skip it too.
+        if !opts.freestanding && !opts.shared && !opts.emit_obj && !opts.emit_llvm {
             if let Some(bitcode) = axon_core::read_axc(&cache_path, compiler_version) {
                 // Cache hit — skip IR emission, link from stored bitcode.
                 match axon_core::compile_bitcode_to_binary(
                     &bitcode,
                     &output.to_string_lossy(),
-                    opts.release,
+                    opts.opt,
                     target_triple,
                 ) {
                     Ok(()) => return Ok(()),
@@ -6826,7 +6848,7 @@ fn run_build_pipeline(
             program,
             source_path,
             output,
-            opts.release,
+            opts.opt,
             target_triple,
             opts.freestanding,
             opts.entry_fn.as_deref(),
@@ -6840,12 +6862,12 @@ fn run_build_pipeline(
         return result;
     }
 
-    // --no-cache: full compilation, no read or write.
+    // --no-cache (or no compiler identity): full compilation, no read or write.
     build_ir_and_link(
         program,
         source_path,
         output,
-        opts.release,
+        opts.opt,
         target_triple,
         opts.freestanding,
         opts.entry_fn.as_deref(),
@@ -6865,7 +6887,7 @@ fn build_ir_and_link(
     program: &mut axon_core::ast::Program,
     source_path: &std::path::Path,
     output: &std::path::Path,
-    release: bool,
+    opt: axon_core::codegen::OptLevel,
     target_triple: Option<&str>,
     freestanding: bool,
     entry_fn: Option<&str>,
@@ -6936,8 +6958,10 @@ fn build_ir_and_link(
     }
 
     // R17 Slice 2/3: --emit-llvm dumps the IR text and stops (golden-IR tests).
+    // Above O0 it is the IR after the optimisation pipeline, i.e. what the
+    // backend would compile.
     if emit_llvm {
-        let ir = cg.emit_llvm_ir();
+        let ir = cg.emit_optimized_llvm_ir(opt, target_triple, freestanding, shared)?;
         // Heuristic: if --out names a real file path (not the default ./stem),
         // write there; otherwise print to stdout.
         let out_str = output.to_string_lossy();
@@ -6957,28 +6981,28 @@ fn build_ir_and_link(
         let _ = axon_core::write_axc(cache_path, &bitcode, compiler_version);
     }
 
+    let out = output.to_string_lossy();
     if freestanding {
         if emit_obj {
-            cg.compile_to_freestanding_obj(
-                &output.to_string_lossy(),
-                release,
-                target_triple,
-                entry_fn,
-            )
+            cg.compile_to_freestanding_obj(&out, opt, target_triple, entry_fn)
         } else {
-            cg.compile_to_freestanding_binary(
-                &output.to_string_lossy(),
-                release,
-                target_triple,
-                entry_fn,
-                linker_script,
-            )
+            cg.compile_to_freestanding_binary(&out, opt, target_triple, entry_fn, linker_script)
         }
     } else if shared {
-        // R14: --host mobile → a loadable shared library (.so).
-        cg.compile_to_shared_lib(&output.to_string_lossy(), release, target_triple)
+        if emit_obj {
+            // `--host mobile` validated an Android `--target` before we got here.
+            let triple = target_triple
+                .ok_or_else(|| "--host mobile --emit-obj requires --target".to_string())?;
+            cg.compile_to_object_for_triple(&out, opt, triple)
+        } else {
+            // R14: --host mobile → a loadable shared library (.so).
+            cg.compile_to_shared_lib(&out, opt, target_triple)
+        }
+    } else if emit_obj {
+        // AX-23: hosted `--emit-obj` writes the program object, no link.
+        cg.compile_to_object(&out, opt, target_triple)
     } else {
-        cg.compile_to_binary_target(&output.to_string_lossy(), release, target_triple)
+        cg.compile_to_binary_target(&out, opt, target_triple)
     }
 }
 

@@ -195,6 +195,7 @@ fn ty_cost(t: &AxonType, acc: &mut Acc) {
         | AxonType::Chan(i)
         | AxonType::Slice(i)
         | AxonType::Ref(i)
+        | AxonType::RefMut(i)
         | AxonType::RawPtr(i) => {
             acc.add("Type", KIND_BITS);
             ty_cost(i, acc);

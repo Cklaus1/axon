@@ -49,6 +49,7 @@ fn subst_type(ty: &AxonType, subst: &TypeSubst) -> AxonType {
             ret: Box::new(subst_type(ret, subst)),
         },
         AxonType::Ref(inner) => AxonType::Ref(Box::new(subst_type(inner, subst))),
+        AxonType::RefMut(inner) => AxonType::RefMut(Box::new(subst_type(inner, subst))),
         AxonType::RawPtr(inner) => AxonType::RawPtr(Box::new(subst_type(inner, subst))),
         AxonType::DynTrait(name) => AxonType::DynTrait(name.clone()),
         AxonType::Tuple(elems) => {
@@ -310,6 +311,7 @@ pub fn mangle_type(ty: &AxonType) -> String {
             format!("Fn__{}__{}", ps.join("__"), mangle_type(ret))
         }
         AxonType::Ref(t) => format!("Ref__{}", mangle_type(t)),
+        AxonType::RefMut(t) => format!("RefMut__{}", mangle_type(t)),
         AxonType::RawPtr(t) => format!("RawPtr__{}", mangle_type(t)),
         AxonType::DynTrait(n) => format!("dyn__{}", n),
         AxonType::Tuple(elems) => {

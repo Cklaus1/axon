@@ -581,7 +581,10 @@ pub(super) fn eval_binop_vals(op: &BinOp, l: Value, r: Value) -> R {
     // `emit_binop_uncertain`; before this, an `Uncertain + Uncertain` fell
     // through to the `unsupported binary op` arm and panicked, so confidence-
     // propagating code could be compiled but not interpreted (PRD gap).
-    {
+    // Both soft wrappers are structs, so scalar operands (the hot case) skip
+    // the probing entirely.
+    let soft_operand = matches!(l, Value::Struct { .. }) || matches!(r, Value::Struct { .. });
+    if soft_operand {
         let lu = uncertain_parts(&l);
         let ru = uncertain_parts(&r);
         if lu.is_some() || ru.is_some() {
@@ -601,7 +604,7 @@ pub(super) fn eval_binop_vals(op: &BinOp, l: Value, r: Value) -> R {
     // carry confidence). Lets `if t > 5` / `t + n` work instead of panicking
     // "cannot apply Gt to Temporal". Matched by codegen's Temporal-binop path so
     // native==interp. The decayed value at a time is read via `temporal_at`.
-    {
+    if soft_operand {
         let lt = soft_temporal_inner(&l);
         let rt = soft_temporal_inner(&r);
         if lt.is_some() || rt.is_some() {
@@ -698,15 +701,20 @@ pub(super) fn eval_binop_vals(op: &BinOp, l: Value, r: Value) -> R {
         (LtEq, Value::Decimal(a), Value::Decimal(b)) => Ok(Bool(a <= b)),
         (GtEq, Value::Decimal(a), Value::Decimal(b)) => Ok(Bool(a >= b)),
 
-        // String concat
-        (Add, Str(a), Str(b)) => Ok(Str(a + &b)),
+        // String concat. Appends in place when `a` is the only reference (a
+        // temporary, as in `s + t + u`); a shared `a` is copied first, so no
+        // other binding sees the write. `s = s + t` is `Interp::assign_in_place`.
+        (Add, Str(mut a), Str(b)) => {
+            Rc::make_mut(&mut a).push_str(&b);
+            Ok(Str(a))
+        }
         // N2b: `[T] + [T]` is concatenation. Unlike the string arm above — which
         // existed all along and was only refused by the checker — this had no
         // implementation anywhere. Copy semantics, matching `arr_push`: the
         // operands are unaffected and a fresh array is returned.
         (Add, Value::Array(a), Value::Array(b)) => {
             let mut out = a;
-            out.extend(b);
+            Rc::make_mut(&mut out).extend(b.iter().cloned());
             Ok(Value::Array(out))
         }
         // Integer comparisons
@@ -837,7 +845,7 @@ pub(super) fn values_equal(a: &Value, b: &Value) -> bool {
         (None, None) => true,
         (Some(x), Some(y)) | (Ok(x), Ok(y)) | (Err(x), Err(y)) => values_equal(x, y),
         (Array(x), Array(y)) => {
-            x.len() == y.len() && x.iter().zip(y).all(|(p, q)| values_equal(p, q))
+            x.len() == y.len() && x.iter().zip(y.iter()).all(|(p, q)| values_equal(p, q))
         }
         (
             Struct {
@@ -890,7 +898,7 @@ pub(super) fn fields_equal(a: &HashMap<String, Value>, b: &HashMap<String, Value
 /// as its raw contents (no quotes); everything else gets a reasonable form.
 pub(super) fn display(v: &Value) -> String {
     match v {
-        Value::Str(s) => s.clone(),
+        Value::Str(s) => String::clone(s),
         Value::Int(n) => n.to_string(),
         Value::SizedInt { val, ty } => display_sized(*val, ty),
         Value::Float(f) => fmt_g(*f),

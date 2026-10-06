@@ -31,6 +31,16 @@ use crate::types::Type;
 
 use super::build_wrappers;
 
+/// Where an array place expression is flowing; decides whether
+/// `emit_expr_owned` must snapshot it (see "Array value semantics").
+#[derive(Clone, Copy)]
+pub(super) enum CopySink<'a> {
+    /// Into an aggregate or an unknown owner: always copy.
+    Always,
+    /// Into the named local: copy only if this fn writes it or the source.
+    Local(&'a str),
+}
+
 /// Reduction kind for `emit_arr_f64_loop` — a counted loop over an f64 slice.
 enum ArrReduceF64 {
     /// Σ of all elements (f64 result).
@@ -158,10 +168,17 @@ impl<'ctx> super::Codegen<'ctx> {
                 if let Some(cv) = self.comptime_env.get(name).cloned() {
                     return Some(self.comptime_val_to_llvm(&cv));
                 }
-                // Fall back to checking for a function (first-class fn value).
-                if let Some(fn_v) = self.functions.get(name).copied() {
-                    let ptr: PointerValue = fn_v.as_global_value().as_pointer_value();
-                    return Some(ptr.into());
+                // AX-25: a top-level, non-generic user fn named as a VALUE is a
+                // capture-free closure (see `emit_fn_value`). Builtins and generic
+                // fns are not values (resolver E0306), so no other function name
+                // is lowered here.
+                if self
+                    .fndefs
+                    .get(name)
+                    .is_some_and(|f| f.generic_params.is_empty())
+                    && self.functions.contains_key(name)
+                {
+                    return self.emit_fn_value(name);
                 }
                 // Closure-env fallback: if we're emitting a lambda body and the
                 // resolver listed `name` as a capture, load it from the env
@@ -220,7 +237,7 @@ impl<'ctx> super::Codegen<'ctx> {
                 let sem_ty = ty
                     .as_ref()
                     .map(|t| self.axon_type_to_semantic(t))
-                    .or_else(|| self.infer_expr_sem_type(value));
+                    .or_else(|| self.let_value_sem_type(value));
                 // When the annotation is a Result<T,E>, set current_result_types
                 // around the VALUE emission so `emit_result` allocates the full
                 // canonical union layout `{ i1, [max(sizeof T, sizeof E)] }`
@@ -247,9 +264,29 @@ impl<'ctx> super::Codegen<'ctx> {
                 if let Some(Type::Option(inner)) = &target {
                     self.current_option_inner = Some(*inner.clone());
                 }
-                let val = self.emit_expr(value, fn_val)?;
+                let errors_before = self.codegen_errors.len();
+                let val = self.emit_expr_owned(value, fn_val, CopySink::Local(name.as_str()));
                 self.current_result_types = saved_rt;
                 self.current_option_inner = saved_oi;
+                // A Unit value binds nothing, and a later use of a never-bound
+                // name is refused (E0701). But if `name` SHADOWS an existing
+                // local, later reads would silently see the OLD value (AX-24):
+                // refuse that unless the value already reported its own error.
+                let Some(val) = val else {
+                    if self.locals.contains_key(name) && self.codegen_errors.len() == errors_before {
+                        let msg = format!(
+                            "codegen error [E0910]: native codegen could not lower the value \
+                             bound to `{name}`, which shadows an earlier `{name}`. The \
+                             interpreter supports it; run under `axon run`. Emitting nothing \
+                             would leave later reads seeing the old value."
+                        );
+                        if !self.codegen_errors.iter().any(|e| e == &msg) {
+                            eprintln!("{msg}");
+                            self.codegen_errors.push(msg);
+                        }
+                    }
+                    return None;
+                };
                 // R19 Slice C: when the annotation is a fixed-width integer type
                 // (i8/i16/i32/u8/u16/u32), coerce the emitted LLVM value (which
                 // `emit_literal` always produces as i64) to the correct narrow LLVM
@@ -280,6 +317,11 @@ impl<'ctx> super::Codegen<'ctx> {
                         .collect();
                     let ret_ty = self.lambda_body_sem_type(params, body);
                     self.closure_sigs.insert(name.clone(), (param_tys, ret_ty));
+                } else {
+                    // A rebinding of the name to a non-lambda value (`let f = f0`,
+                    // `let f = table[0]`) must not inherit an earlier lambda's
+                    // signature; its `Type::Fn` (if any) is in `local_types`.
+                    self.closure_sigs.remove(name.as_str());
                 }
                 // Phase 5: a `let p: T where P = …` annotation carries a refinement
                 // obligation — check the bound value at runtime (the codegen dual
@@ -377,6 +419,16 @@ impl<'ctx> super::Codegen<'ctx> {
                     }
                 }
                 let lhs = self.emit_expr(left, fn_val)?;
+                // `&&` / `||` on a bool SHORT-CIRCUIT (interp `eval_binop`
+                // returns on a decided left before evaluating the right). Both
+                // operands used to be emitted unconditionally, so
+                // `i > 0 && ys[i - 1] > ys[i]` bounds-panicked at `i = 0` and
+                // `false && f()` ran `f`'s side effects.
+                if let (ast::BinOp::And | ast::BinOp::Or, BasicValueEnum::IntValue(l)) = (op, lhs) {
+                    if l.get_type().get_bit_width() == 1 {
+                        return self.emit_short_circuit(matches!(op, ast::BinOp::And), l, right, fn_val);
+                    }
+                }
                 let rhs = self.emit_expr(right, fn_val)?;
                 // A NARROW int beside a 64-bit literal must be brought to one
                 // width before the op. Inference already permits this pairing
@@ -412,9 +464,21 @@ impl<'ctx> super::Codegen<'ctx> {
                     }
                     other => other,
                 };
+                // `[T] + [T]` is concatenation into a fresh array (interp
+                // `eval_binop_vals`: `(Add, Array(a), Array(b))`). Any element
+                // type with a layout lowers; the `emit_binop` refusal remains
+                // for one without.
+                if matches!(op, ast::BinOp::Add) {
+                    if let Some(Type::Slice(inner)) = lt_sem.as_ref().or(rt_sem.as_ref()) {
+                        let inner = (**inner).clone();
+                        if let Some(v) = self.emit_arr_concat_any(lhs, rhs, &inner, fn_val) {
+                            return Some(v);
+                        }
+                    }
+                }
                 // Prefer the semantic type from inference (distinguishes u32/u64
                 // from i32/i64) then fall back to the LLVM-level value hint.
-                let ty = lt_sem.unwrap_or_else(|| self.value_type_hint(&lhs));
+                let ty = lt_sem.or(rt_sem).unwrap_or_else(|| self.value_type_hint(&lhs));
                 Some(self.emit_binop(op, lhs, rhs, &ty))
             }
 
@@ -448,6 +512,21 @@ impl<'ctx> super::Codegen<'ctx> {
                         // ABI (alloca-everywhere or escape analysis) — tracked
                         // for a future phase rather than emitted as a stub here.
                         Some(val)
+                    }
+                    ast::UnaryOp::RefMut => {
+                        // AX-08: `&mut a` is lowered only as the argument of a
+                        // `&mut [T]` parameter (`emit_call`, which passes the
+                        // slot's address). The checker (E0605) rejects every
+                        // other position, so reaching here is a refusal, never
+                        // a silent by-value copy.
+                        let msg = "codegen error [E0910]: `&mut` outside the argument of a \
+                                   `&mut [T]` parameter cannot be lowered natively."
+                            .to_string();
+                        if !self.codegen_errors.iter().any(|e| e == &msg) {
+                            eprintln!("{msg}");
+                            self.codegen_errors.push(msg);
+                        }
+                        None
                     }
                     ast::UnaryOp::BitNot => match val {
                         BasicValueEnum::IntValue(i) => {
@@ -519,22 +598,32 @@ impl<'ctx> super::Codegen<'ctx> {
             // ── ? operator ────────────────────────────────────────────────────
             ast::Expr::Question(inner) => {
                 let val = self.emit_expr(inner, fn_val)?;
-                Some(self.emit_question(val, fn_val))
+                // The Ok payload has the OPERAND's Ok type, not the enclosing
+                // fn's: `let r = ai_extract_uncertain_i64(s)?` inside a
+                // `-> Result<i64, str>` fn yields an `Uncertain<i64>`.
+                let inner_ok = match self
+                    .sem_type_of_expr(inner)
+                    .or_else(|| self.infer_expr_sem_type(inner))
+                {
+                    Some(Type::Result(ok, _)) => Some(*ok),
+                    _ => None,
+                };
+                Some(self.emit_question(val, inner_ok, fn_val))
             }
 
             // ── Ok / Err wrappers ─────────────────────────────────────────────
             ast::Expr::Ok(inner) => {
-                let val = self.emit_expr(inner, fn_val)?;
+                let val = self.emit_expr_owned(inner, fn_val, CopySink::Always)?;
                 Some(self.emit_result(true, val))
             }
             ast::Expr::Err(inner) => {
-                let val = self.emit_expr(inner, fn_val)?;
+                let val = self.emit_expr_owned(inner, fn_val, CopySink::Always)?;
                 Some(self.emit_result(false, val))
             }
 
             // ── Some / None wrappers ──────────────────────────────────────────
             ast::Expr::Some(inner) => {
-                let val = self.emit_expr(inner, fn_val)?;
+                let val = self.emit_expr_owned(inner, fn_val, CopySink::Always)?;
                 let ty = self.value_type_hint(&val);
                 Some(self.emit_option(std::option::Option::Some(val), &ty))
             }
@@ -653,51 +742,56 @@ impl<'ctx> super::Codegen<'ctx> {
                     }
                     _ => {}
                 }
-                let emitted = self.emit_expr(value, fn_val);
+                let errors_before = self.codegen_errors.len();
+                let emitted = self.emit_expr_owned(value, fn_val, CopySink::Local(name.as_str()));
                 self.current_result_types = saved_rt;
                 self.current_option_inner = saved_oi;
-                if let Some(val) = emitted {
-                    if let Some((ptr, _llvm_ty)) = self.locals.get(name).copied() {
+                // Every way this can fail to store is REFUSED (E0910, I-2), never
+                // skipped: a skipped store leaves the old value in place and the
+                // build "succeeds" with a wrong answer (AX-24). A value that
+                // reported its own error is not reported twice.
+                let reason = match (emitted, self.locals.get(name).copied()) {
+                    (Some(val), Some((ptr, _))) => {
                         build_wrappers::w_store(&self.ir.builder, ptr, val);
+                        None
+                    }
+                    // A Unit value rebinding a Unit binding: nothing to store.
+                    (None, None) if self.codegen_errors.len() == errors_before => None,
+                    (Some(_), None) => Some("a binding with no native storage"),
+                    (None, _) if self.codegen_errors.len() == errors_before => {
+                        Some("a value that produced no result")
+                    }
+                    (None, _) => None,
+                };
+                if let Some(reason) = reason {
+                    let msg = format!(
+                        "codegen error [E0910]: native codegen does not lower assignment of \
+                         {reason} to `{name}`. The interpreter supports it; run under `axon \
+                         run`. Emitting nothing would silently discard the write."
+                    );
+                    if !self.codegen_errors.iter().any(|e| e == &msg) {
+                        eprintln!("{msg}");
+                        self.codegen_errors.push(msg);
                     }
                 }
                 None
             }
 
-            // Place assignment (`xs[i] = v`, `s.field = v`) is not lowered
-            // natively — and returning `None` here DROPPED IT SILENTLY.
-            //
-            // The comment already said the interpreter was the supported path.
-            // What it did was emit nothing and carry on, so every write vanished
-            // and the program computed a wrong answer with no error:
-            //
-            //     let xs = [1,2,3]   xs[1] = 99   println(to_str(xs[1]))
-            //     axon run  -> 99          ./prog -> 2
-            //
-            // Two shipped examples were wrong because of it. `examples/asi/rank.ax`
-            // sorts by swapping in place, so native printed an UNSORTED ranking;
-            // `examples/asi/local_search.ax` hill-climbs in place, so native
-            // reported "score 2 -> 2" against an optimum of 6 — a search that
-            // silently finds nothing.
-            //
-            // Sound-by-refusal (I-2) is the rule this violated: codegen must
-            // refuse what it cannot faithfully lower, never mis-lower it. E0910
-            // says so at build time, which is where an unsupported construct is
-            // supposed to stop.
-            ast::Expr::AssignTo { place, .. } => {
-                let what = match place.as_ref() {
-                    ast::Expr::Index { .. } => "an indexed element (`xs[i] = v`)",
-                    ast::Expr::FieldAccess { .. } => "a struct field (`s.field = v`)",
-                    _ => "a place expression",
-                };
-                let msg = format!(
-                    "codegen error [E0910]: native codegen does not lower assignment to {what}. \
-                     The interpreter supports it; run under `axon run`. Emitting nothing would \
-                     silently discard the write."
-                );
-                if !self.codegen_errors.iter().any(|e| e == &msg) {
-                    eprintln!("{msg}");
-                    self.codegen_errors.push(msg);
+            // Place assignment (`xs[i] = v`, `s.field = v`, and chains of both).
+            // Anything `lower_assign_to` cannot lower faithfully is REFUSED with
+            // E0910 (I-2) - never dropped: a silently discarded write computes a
+            // wrong answer with no error (`examples/asi/rank.ax` sorted nothing).
+            ast::Expr::AssignTo { place, value } => {
+                if let Err(Some(reason)) = self.lower_assign_to(place, value, fn_val) {
+                    let msg = format!(
+                        "codegen error [E0910]: native codegen does not lower assignment to \
+                         {reason}. The interpreter supports it; run under `axon run`. Emitting \
+                         nothing would silently discard the write."
+                    );
+                    if !self.codegen_errors.iter().any(|e| e == &msg) {
+                        eprintln!("{msg}");
+                        self.codegen_errors.push(msg);
+                    }
                 }
                 None
             }
@@ -715,6 +809,74 @@ impl<'ctx> super::Codegen<'ctx> {
                 self.emit_inline_asm(template, outputs, inputs, clobbers);
                 None
             }
+        }
+    }
+
+    /// `l && right` (`is_and`) / `l || right` with the interpreter's
+    /// short-circuit: `right` is emitted in its own block, reached only when
+    /// `l` does not already decide the result, and a phi joins the two paths.
+    fn emit_short_circuit(
+        &mut self,
+        is_and: bool,
+        l: inkwell::values::IntValue<'ctx>,
+        right: &ast::Expr,
+        fn_val: FunctionValue<'ctx>,
+    ) -> Option<BasicValueEnum<'ctx>> {
+        let bool_ty = self.ir.context.bool_type();
+        let lhs_bb = self.ir.builder.get_insert_block()?;
+        let rhs_bb = self.ir.context.append_basic_block(fn_val, "sc.rhs");
+        let end_bb = self.ir.context.append_basic_block(fn_val, "sc.end");
+        // `&&`: a true left needs the right; `||`: a false left does.
+        let (on_true, on_false) = if is_and { (rhs_bb, end_bb) } else { (end_bb, rhs_bb) };
+        build_wrappers::w_cond_br(&self.ir.builder, l, on_true, on_false);
+
+        self.ir.builder.position_at_end(rhs_bb);
+        let r = match self.emit_expr(right, fn_val)? {
+            BasicValueEnum::IntValue(r) if r.get_type().get_bit_width() == 1 => r,
+            BasicValueEnum::IntValue(r) => build_wrappers::w_int_compare(
+                &self.ir.builder,
+                IntPredicate::NE,
+                r,
+                r.get_type().const_zero(),
+                "sc.rb",
+            ),
+            _ => {
+                let msg = "codegen error [E0910]: native codegen does not lower `&&`/`||` with a non-boolean right operand. The interpreter supports it; run under `axon run`.".to_string();
+                if !self.codegen_errors.iter().any(|e| e == &msg) {
+                    eprintln!("{msg}");
+                    self.codegen_errors.push(msg);
+                }
+                return None;
+            }
+        };
+        let rhs_end = self.ir.builder.get_insert_block()?;
+        let rhs_falls_through = rhs_end.get_terminator().is_none();
+        if rhs_falls_through {
+            build_wrappers::w_br(&self.ir.builder, end_bb);
+        }
+
+        self.ir.builder.position_at_end(end_bb);
+        let phi = self.ir.builder.build_phi(bool_ty, "sc").unwrap();
+        // The left alone decided: `false` for `&&`, `true` for `||`.
+        let decided = bool_ty.const_int(u64::from(!is_and), false);
+        phi.add_incoming(&[(&decided, lhs_bb)]);
+        if rhs_falls_through {
+            phi.add_incoming(&[(&r, rhs_end)]);
+        }
+        Some(phi.as_basic_value())
+    }
+
+    /// Record E0910 for a sub-expression whose `None` would otherwise be
+    /// skipped (an argument dropped from a call, a field left uninitialised,
+    /// a guard ignored): the build must refuse, never emit a wrong program.
+    pub(super) fn refuse_unlowered(&mut self, what: &str) {
+        let msg = format!(
+            "codegen error [E0910]: native codegen could not lower {what}. The interpreter \
+             supports it; run under `axon run`. Skipping it would silently compute a wrong answer."
+        );
+        if !self.codegen_errors.iter().any(|e| e == &msg) {
+            eprintln!("{msg}");
+            self.codegen_errors.push(msg);
         }
     }
 
@@ -1781,26 +1943,33 @@ impl<'ctx> super::Codegen<'ctx> {
         rhs: BasicValueEnum<'ctx>,
         ty: &Type,
     ) -> BasicValueEnum<'ctx> {
-        // N2a/N2b: `str + str` and `[T] + [T]` are CONCATENATION, and this
-        // function cannot lower either — the value arms below match on integer
-        // and float kinds, and a str/slice operand falls through to a path that
-        // silently yields the LEFT operand.
+        // `str + str` is CONCATENATION: lowered to the same `axon_concat`
+        // (malloc + memcpy) that string interpolation uses, so native and the
+        // interpreter agree byte-for-byte.
         //
-        // Measured before this guard existed: `"a" + "b"` built and printed `a`,
-        // and `[1,2] + [3]` built and printed length 2. Both are WRONG ANSWERS
-        // from a successful build — an I-2 violation, and the worst possible
-        // failure mode, because nothing tells the caller. Refuse instead: an
-        // honest E0910 is what `arr_push` and the effect-handler shapes above
-        // already do when native cannot reproduce the interpreter.
-        if matches!(op, ast::BinOp::Add) && matches!(ty, Type::Str | Type::Slice(_)) {
-            let what = if matches!(ty, Type::Str) {
-                "string"
-            } else {
-                "array"
-            };
-            let msg = format!(
-                "codegen error [E0910]: native codegen does not lower {what} concatenation (`+`). The interpreter supports it; run under `axon run`, or use str_join/arr_concat which do lower."
-            );
+        // `[T] + [T]` is lowered by the `BinOp` arm of `emit_expr`
+        // (`emit_arr_concat_any`). Reaching here with a slice means its element
+        // has no layout; the value arms below would silently yield the LEFT
+        // operand (`[1,2] + [3]` printed length 2) — an I-2 violation. Refuse.
+        if matches!(op, ast::BinOp::Add) && matches!(ty, Type::Str) {
+            if let (BasicValueEnum::StructValue(_), BasicValueEnum::StructValue(_)) = (lhs, rhs) {
+                if let Some(concat_fn) = self.functions.get("axon_concat").copied() {
+                    if let Some(v) = build_wrappers::w_call(
+                        &self.ir.builder,
+                        concat_fn,
+                        &[lhs.into(), rhs.into()],
+                        "strcat",
+                    )
+                    .try_as_basic_value()
+                    .left()
+                    {
+                        return v;
+                    }
+                }
+            }
+        }
+        if matches!(op, ast::BinOp::Add) && matches!(ty, Type::Slice(_)) {
+            let msg = "codegen error [E0910]: native codegen does not lower array concatenation (`+`) for this element type (it has no native layout). The interpreter supports it; run under `axon run`.".to_string();
             if !self.codegen_errors.iter().any(|e| e == &msg) {
                 eprintln!("{msg}");
                 self.codegen_errors.push(msg);
@@ -2216,8 +2385,19 @@ impl<'ctx> super::Codegen<'ctx> {
                 }
             }
 
-            // Mismatched or unsupported — return lhs unchanged.
-            (l, _) => l,
+            // Mismatched or unsupported operands. This returned `lhs`
+            // unchanged — a successful build printing the left operand as
+            // the result. Refuse instead (AX-24 audit).
+            (l, _) => {
+                let msg = format!(
+                    "codegen error [E0910]: native codegen does not lower the binary operator `{op:?}` on operands of type `{ty:?}`. The interpreter supports it; run under `axon run`. Returning the left operand would silently produce a wrong answer."
+                );
+                if !self.codegen_errors.iter().any(|e| e == &msg) {
+                    eprintln!("{msg}");
+                    self.codegen_errors.push(msg);
+                }
+                l
+            }
         }
     }
 
@@ -2532,6 +2712,10 @@ impl<'ctx> super::Codegen<'ctx> {
         // Register the variable so body statements can read it.
         self.locals
             .insert(var.to_string(), (var_ptr, i64_ty.into()));
+        // ...and its type: without it `let v = [i, i + 1]` in the body had no
+        // element type, so `v[0]` lowered to nothing and the enclosing `s = s +
+        // v[0]` was silently dropped (native printed 0).
+        let saved_var_type = self.local_types.insert(var.to_string(), Type::I64);
 
         let cond_bb = self.ir.context.append_basic_block(fn_val, "for.cond");
         let body_bb = self.ir.context.append_basic_block(fn_val, "for.body");
@@ -2596,6 +2780,10 @@ impl<'ctx> super::Codegen<'ctx> {
 
         self.loop_stack.pop();
         self.locals.remove(var);
+        match saved_var_type {
+            Some(t) => self.local_types.insert(var.to_string(), t),
+            None => self.local_types.remove(var),
+        };
 
         self.ir.builder.position_at_end(exit_bb);
         Some(i64_ty.const_zero().into())
@@ -2880,6 +3068,323 @@ impl<'ctx> super::Codegen<'ctx> {
         None
     }
 
+    /// The `Type::Fn` of a lambda: annotated param types (`Unknown` for an
+    /// unannotated `|x|`) and the body's inferred return type.
+    fn lambda_sem_type(&mut self, params: &[ast::LambdaParam], body: &ast::Expr) -> Type {
+        let ps = params
+            .iter()
+            .map(|p| {
+                p.ty.as_ref()
+                    .map(|t| self.axon_type_to_semantic(t))
+                    .unwrap_or(Type::Unknown)
+            })
+            .collect();
+        let ret = self.lambda_body_sem_type(params, body).unwrap_or(Type::Unknown);
+        Type::Fn(ps, Box::new(ret))
+    }
+
+    /// The semantic type an unannotated `let` binds. Lambdas (and arrays of
+    /// them) need `&mut self` to type their bodies, so they are handled here
+    /// rather than in `infer_expr_sem_type`: `let table = [|x: i64| x + 1, ..]`
+    /// is a `[fn(i64) -> i64]`, so `table[0]` indexes with the closure layout
+    /// and `let f = table[0]` is a callable `fn(i64) -> i64` (AX-24 / AX-25).
+    fn let_value_sem_type(&mut self, value: &ast::Expr) -> Option<Type> {
+        match value {
+            ast::Expr::Lambda { params, body, .. } => Some(self.lambda_sem_type(params, body)),
+            ast::Expr::Array(elems) => match elems.first() {
+                Some(ast::Expr::Lambda { params, body, .. }) => {
+                    Some(Type::Slice(Box::new(self.lambda_sem_type(params, body))))
+                }
+                _ => self.infer_expr_sem_type(value),
+            },
+            _ => self.infer_expr_sem_type(value),
+        }
+    }
+
+    /// AX-25: the closure value of the top-level fn `name` named in VALUE
+    /// position: the fat pointer `{__axon_fnval_<name>, null}`, exactly the
+    /// shape a capture-free lambda has, so every closure consumer (a call
+    /// through a local or an array element, `spawn`, a higher-order builtin)
+    /// takes it unchanged. The interpreter's value is the forwarding lambda
+    /// `|a0, ..| name(a0, ..)`; the thunk is that lambda's native form.
+    fn emit_fn_value(&mut self, name: &str) -> Option<BasicValueEnum<'ctx>> {
+        let thunk = self.fn_value_thunk(name)?;
+        let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+        let closure_ty = self
+            .ir
+            .context
+            .struct_type(&[ptr_ty.into(), ptr_ty.into()], false);
+        let fn_ptr = build_wrappers::w_pointer_cast(
+            &self.ir.builder,
+            thunk.as_global_value().as_pointer_value(),
+            ptr_ty,
+            "fnval_fp",
+        );
+        let fat = closure_ty.const_zero();
+        let fat = build_wrappers::w_insert_value(&self.ir.builder, fat, fn_ptr.into(), 0, "fnval0")
+            .into_struct_value();
+        let fat = build_wrappers::w_insert_value(
+            &self.ir.builder,
+            fat,
+            ptr_ty.const_null().into(),
+            1,
+            "fnval1",
+        )
+        .into_struct_value();
+        Some(fat.into())
+    }
+
+    /// The closure-ABI thunk `i64 __axon_fnval_<name>(ptr env, params..)` of the
+    /// top-level fn `name`: it ignores `env`, calls `name` directly (so the
+    /// fn's own contracts, refinement checks and `@[adaptive]` logging run as
+    /// for any direct call) and returns the result through the closure ABI
+    /// exactly as `emit_lambda`'s return site does — bool zero-extended, other
+    /// narrow ints sign- or zero-extended by signedness, f64 bitcast, unit as 0.
+    /// A return type that ABI cannot carry (str, slice, tuple, struct,
+    /// Option/Result, ...) is refused with E0910 — the same limit, for the same
+    /// reason, that `emit_lambda` enforces. Built once per fn.
+    fn fn_value_thunk(&mut self, name: &str) -> Option<FunctionValue<'ctx>> {
+        if let Some(t) = self.fn_value_thunks.get(name) {
+            return Some(*t);
+        }
+        let target = *self.functions.get(name)?;
+        let ret_sem = self
+            .fn_return_types
+            .get(name)
+            .cloned()
+            .unwrap_or(Type::Unit);
+        let ret_fits = matches!(
+            ret_sem,
+            Type::I8
+                | Type::I16
+                | Type::I32
+                | Type::I64
+                | Type::U8
+                | Type::U16
+                | Type::U32
+                | Type::U64
+                | Type::Bool
+                | Type::F64
+                | Type::Unit
+                | Type::Never
+        );
+        let has_dyn_param = self.fndefs.get(name).is_some_and(|f| {
+            f.params
+                .iter()
+                .any(|p| matches!(p.ty, ast::AxonType::DynTrait(_)))
+        });
+        if !ret_fits || has_dyn_param {
+            let why = if has_dyn_param {
+                "a `dyn` parameter (a closure call passes its argument unconverted)".to_string()
+            } else {
+                format!(
+                    "a {} return — the closure ABI is i64-return (a closure value carries no \
+                     return-type tag), the same limit lambdas have",
+                    crate::doc::render_type(
+                        self.fndefs
+                            .get(name)
+                            .and_then(|f| f.return_type.as_ref())
+                            .expect("a non-unit return has a declared type")
+                    )
+                )
+            };
+            let msg = format!(
+                "codegen error [E0910]: native codegen does not yet support using fn `{name}` as \
+                 a value: it has {why}. Wrap the use in a lambda that returns a supported type, or \
+                 run under the interpreter (`axon run`)."
+            );
+            if !self.codegen_errors.iter().any(|e| e == &msg) {
+                eprintln!("{msg}");
+                self.codegen_errors.push(msg);
+            }
+            return None;
+        }
+
+        let i64_ty = self.ir.context.i64_type();
+        let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+        let target_params = target.get_type().get_param_types();
+        let mut thunk_params: Vec<BasicMetadataTypeEnum<'ctx>> = vec![ptr_ty.into()];
+        thunk_params.extend(target_params.iter().map(|t| BasicMetadataTypeEnum::from(*t)));
+        let thunk = self.ir.module.add_function(
+            &format!("__axon_fnval_{name}"),
+            i64_ty.fn_type(&thunk_params, false),
+            Some(inkwell::module::Linkage::Internal),
+        );
+        let saved_ip = self.ir.builder.get_insert_block();
+        let entry = self.ir.context.append_basic_block(thunk, "entry");
+        self.ir.builder.position_at_end(entry);
+        let fwd: Vec<BasicMetadataValueEnum<'ctx>> = (1..=target_params.len() as u32)
+            .map(|i| thunk.get_nth_param(i).expect("thunk param").into())
+            .collect();
+        let call = build_wrappers::w_call(&self.ir.builder, target, &fwd, "fnval_call");
+        call.set_call_convention(target.get_call_conventions());
+        let unsigned = matches!(ret_sem, Type::U8 | Type::U16 | Type::U32 | Type::U64);
+        let ret: BasicValueEnum<'ctx> = match call.try_as_basic_value().left() {
+            None => i64_ty.const_zero().into(),
+            Some(BasicValueEnum::IntValue(iv)) => match iv.get_type().get_bit_width() {
+                64 => iv.into(),
+                1 => build_wrappers::w_int_z_extend(&self.ir.builder, iv, i64_ty, "fnval_zext")
+                    .into(),
+                _ if unsigned => {
+                    build_wrappers::w_int_z_extend(&self.ir.builder, iv, i64_ty, "fnval_zext")
+                        .into()
+                }
+                _ => build_wrappers::w_int_s_extend(&self.ir.builder, iv, i64_ty, "fnval_sext")
+                    .into(),
+            },
+            Some(BasicValueEnum::FloatValue(fv)) => self
+                .ir
+                .builder
+                .build_bitcast(fv, i64_ty, "fnval_f2i")
+                .unwrap(),
+            Some(other) => unreachable!(
+                "fn `{name}` returns {ret_sem:?} (checked closure-ABI-representable) but lowered \
+                 to {other:?}"
+            ),
+        };
+        build_wrappers::w_ret(&self.ir.builder, ret);
+        if let Some(b) = saved_ip {
+            self.ir.builder.position_at_end(b);
+        }
+        self.fn_value_thunks.insert(name.to_string(), thunk);
+        Some(thunk)
+    }
+
+    /// Call the closure `fat` (`{fn_ptr, env_ptr}`) with `args`. `sig` is the
+    /// closure's declared signature when known (see `closure_call_sig`): each
+    /// argument is coerced to its declared parameter type and built against it
+    /// (a bare `None`/`Ok(..)` gets the param's full layout, as on the direct
+    /// call path), and the i64-ABI result is converted back to the declared
+    /// return type.
+    fn emit_closure_call(
+        &mut self,
+        fat: inkwell::values::StructValue<'ctx>,
+        sig: Option<(Vec<Option<Type>>, Option<Type>)>,
+        args: &[ast::Expr],
+        fn_val: FunctionValue<'ctx>,
+    ) -> Option<BasicValueEnum<'ctx>> {
+        let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+        let i64_ty = self.ir.context.i64_type();
+        let fp = build_wrappers::w_extract_value(&self.ir.builder, fat, 0, "cfp");
+        let ep = build_wrappers::w_extract_value(&self.ir.builder, fat, 1, "cep");
+        // Build arg list: env_ptr first, then explicit args.
+        // Track each arg's ACTUAL LLVM type so the indirect-call
+        // signature matches the value passed (a str arg is a
+        // {i64,ptr} struct, not an i64) — and emit_lambda declares
+        // its params from the same annotation, so the two agree.
+        //
+        // AUDIT T37 (finding F061). Using the ARGUMENT's own LLVM
+        // type here is wrong whenever the lambda declared something
+        // narrower: `let g = |x: i32| …; g(0-3)` emitted
+        // `call i64 %cfp(ptr, i64 -3)` against a function declared
+        // `(ptr, i32)`. That mismatch is UB, and it showed: the same
+        // lambda printed -5 or 4294967291 depending purely on
+        // whether an unrelated f64 lambda had been emitted first.
+        // Coerce each argument to the lambda's DECLARED parameter
+        // type when we know it.
+        let mut call_args: Vec<BasicMetadataValueEnum<'ctx>> = vec![ep.into()];
+        let mut arg_tys: Vec<BasicMetadataTypeEnum<'ctx>> = vec![ptr_ty.into()];
+        for (i, a) in args.iter().enumerate() {
+            let declared = sig
+                .as_ref()
+                .and_then(|(ps, _)| ps.get(i))
+                .and_then(|t| t.clone());
+            let saved_oi = self.current_option_inner.clone();
+            let saved_rt = self.current_result_types.clone();
+            match &declared {
+                Some(Type::Option(inner)) => self.current_option_inner = Some((**inner).clone()),
+                Some(Type::Result(ok, err)) => {
+                    self.current_result_types = Some(((**ok).clone(), (**err).clone()))
+                }
+                _ => {}
+            }
+            let emitted = self.emit_expr(a, fn_val);
+            self.current_option_inner = saved_oi;
+            self.current_result_types = saved_rt;
+            // An argument that fails to lower must sink the call, not shorten
+            // its argument list (the direct-call path's rule).
+            let Some(v) = emitted else {
+                let msg = format!(
+                    "codegen error [E0910]: argument {} of a call through a closure value could \
+                     not be lowered by native codegen, so the call cannot be emitted. The \
+                     interpreter supports it; run under `axon run`.",
+                    i + 1
+                );
+                if !self.codegen_errors.iter().any(|e| e == &msg) {
+                    eprintln!("{msg}");
+                    self.codegen_errors.push(msg);
+                }
+                return None;
+            };
+            let v = match declared {
+                Some(t) => self.coerce_to_fixed_width(v, &t),
+                None => v,
+            };
+            call_args.push(v.into());
+            arg_tys.push(v.get_type().into());
+        }
+        // Build an indirect call via fn pointer.
+        let fn_ptr = self
+            .ir
+            .builder
+            .build_pointer_cast(fp.into_pointer_value(), ptr_ty, "fp_cast")
+            .unwrap();
+        let indirect_ty = i64_ty.fn_type(&arg_tys, false);
+        let call = self
+            .ir
+            .builder
+            .build_indirect_call(indirect_ty, fn_ptr, &call_args, "icall")
+            .unwrap();
+        let raw = call.try_as_basic_value().left();
+        // The closure ABI returns i64 for every lambda. An f64 body
+        // is TRANSPORTED as its bit pattern (see the return site in
+        // emit_lambda), so the caller must bitcast it back — reading
+        // it as an i64 printed 4618441417868443648 for 6.0, silently,
+        // at exit 0.
+        match (raw, sig.and_then(|(_, r)| r)) {
+            (Some(v), Some(Type::F64)) => Some(
+                self.ir
+                    .builder
+                    .build_bitcast(v.into_int_value(), self.ir.context.f64_type(), "lam_ret_i2f")
+                    .unwrap(),
+            ),
+            // A bool body rides the i64 ABI as 0/1. Read back as
+            // i64 it reached `to_str` as an integer and printed
+            // "1"/"0" where the interpreter prints "true"/"false"
+            // — found by the very harness written for this fix,
+            // not by the finding. Narrow it back to i1 so the
+            // call-site to_str dispatch picks to_str_bool.
+            (Some(v), Some(Type::Bool)) => Some(
+                build_wrappers::w_int_truncate(
+                    &self.ir.builder,
+                    v.into_int_value(),
+                    self.ir.context.bool_type(),
+                    "lam_ret_i2b",
+                )
+                .into(),
+            ),
+            // A narrower int rides the ABI sign/zero-extended (emit_lambda's and
+            // fn_value_thunk's return sites); narrow it back to the declared
+            // width so `fn apply(f: fn(i32) -> i32, ..) -> i32 { f(x) }` returns
+            // an i32, not the i64 transport value.
+            (Some(BasicValueEnum::IntValue(iv)), Some(t))
+                if matches!(
+                    t,
+                    Type::I8 | Type::I16 | Type::I32 | Type::U8 | Type::U16 | Type::U32
+                ) =>
+            {
+                match self.llvm_type(&t) {
+                    Some(BasicTypeEnum::IntType(nt)) => Some(
+                        build_wrappers::w_int_truncate(&self.ir.builder, iv, nt, "lam_ret_narrow")
+                            .into(),
+                    ),
+                    _ => Some(iv.into()),
+                }
+            }
+            (raw, _) => raw,
+        }
+    }
+
     /// Auto-extracted from `emit_expr` (Phase 3 decomposition).
     /// The semantic type a lambda body yields, inferred with the lambda's own
     /// declared parameters temporarily in scope (T37 / F061). Without the params
@@ -2917,7 +3422,7 @@ impl<'ctx> super::Codegen<'ctx> {
         params: &[ast::LambdaParam],
         body: &ast::Expr,
         captures: &[(String, Option<crate::types::Type>)],
-        _fn_val: FunctionValue<'ctx>,
+        fn_val: FunctionValue<'ctx>,
     ) -> Option<BasicValueEnum<'ctx>> {
         let lambda_name = format!("__lambda_{}", self.lambda_counter);
         self.lambda_counter += 1;
@@ -3021,6 +3526,14 @@ impl<'ctx> super::Codegen<'ctx> {
         let saved_ip = self.ir.builder.get_insert_block();
         let saved_locals = std::mem::take(&mut self.locals);
         let saved_local_types = std::mem::take(&mut self.local_types);
+        // A capture keeps the semantic type it has in the enclosing scope, so a
+        // captured dispatch table `t` still indexes and calls as a
+        // `[fn(i64) -> i64]` inside the body (`|x| t[0](x)`, AX-25).
+        for (cap_name, _) in captures {
+            if let Some(t) = saved_local_types.get(cap_name) {
+                self.local_types.insert(cap_name.clone(), t.clone());
+            }
+        }
         let saved_lambda_env = self.current_lambda_env.take();
 
         self.ir.builder.position_at_end(entry_bb);
@@ -3041,6 +3554,11 @@ impl<'ctx> super::Codegen<'ctx> {
                     .unwrap();
                 self.locals
                     .insert(cap_name.clone(), (field_ptr, capture_llvm_tys[idx]));
+                // The capture keeps its semantic type, so the body can index /
+                // field-access / match it exactly like the enclosing scope can.
+                if let Some(t) = saved_local_types.get(cap_name.as_str()) {
+                    self.local_types.insert(cap_name.clone(), t.clone());
+                }
                 capture_idx_map.insert(cap_name.clone(), idx as u32);
             }
         }
@@ -3225,11 +3743,30 @@ impl<'ctx> super::Codegen<'ctx> {
             for (idx, (cap_name, _)) in captures.iter().enumerate() {
                 // Load current value of the captured variable from caller scope
                 // (self.locals has been restored to the caller's locals at this point).
-                let cap_val = if let Some(&(alloca, ty)) = self.locals.get(cap_name.as_str()) {
-                    build_wrappers::w_load(&self.ir.builder, ty, alloca, cap_name)
-                } else {
-                    i64_ty.const_zero().into()
+                let Some(&(alloca, ty)) = self.locals.get(cap_name.as_str()) else {
+                    // Storing a placeholder would hand the closure a fabricated
+                    // value; refuse instead (I-2).
+                    let msg = format!(
+                        "codegen error [E0701]: identifier '{cap_name}' captured by \
+                         `{lambda_name}` not found in current scope"
+                    );
+                    if !self.codegen_errors.iter().any(|e| e == &msg) {
+                        self.codegen_errors.push(msg);
+                    }
+                    continue;
                 };
+                let mut cap_val = build_wrappers::w_load(&self.ir.builder, ty, alloca, cap_name);
+                // The interpreter snapshots the environment when the closure is
+                // created, so an array captured here must not observe later
+                // writes through the outer binding (or leak the closure's own
+                // writes back out). Copy it when this fn writes into it.
+                if self.cur_written_roots.contains(cap_name.as_str()) {
+                    if let Some(sem) = self.local_types.get(cap_name.as_str()).cloned() {
+                        if self.type_needs_deep_clone(&sem, 0) {
+                            cap_val = self.emit_clone_value(cap_val, &sem, fn_val);
+                        }
+                    }
+                }
                 let field_ptr = self
                     .ir
                     .builder
@@ -3427,6 +3964,411 @@ impl<'ctx> super::Codegen<'ctx> {
         };
         let elem = build_wrappers::w_load(&self.ir.builder, elem_ty, elem_ptr, "elemval");
         Some(elem)
+    }
+
+    // -- Array value semantics ------------------------------------------------
+    //
+    // The interpreter gives arrays COPY semantics: every read of an array
+    // value clones it, so `let b = a; b[0] = 9` leaves `a` untouched and a
+    // callee's writes to its array param never reach the caller. Native arrays
+    // are `{len, data*}` headers, so a plain copy of the header SHARES the
+    // buffer. Before in-place writes were lowered that was invisible; with
+    // them it is a wrong answer. We therefore snapshot the buffer wherever a
+    // place expression flows into a new owner AND a write could observe the
+    // sharing (the function writes the destination or the source), plus
+    // unconditionally into aggregates; params are snapshotted at fn entry.
+
+    /// Root identifier of a place expression chain (`a`, `a.f`, `a[i].f[j]`).
+    fn place_root(e: &ast::Expr) -> Option<&str> {
+        match e {
+            ast::Expr::Ident(n) => Some(n.as_str()),
+            ast::Expr::FieldAccess { receiver, .. } => Self::place_root(receiver),
+            ast::Expr::Index { receiver, .. } => Self::place_root(receiver),
+            _ => None,
+        }
+    }
+
+    /// Root names of every place assignment inside `body` (lambdas included),
+    /// plus every local lent out as `&mut a` (AX-08): the callee writes it
+    /// in place, so a copy of `a` taken in this function must not share its
+    /// buffer either.
+    pub(super) fn written_place_roots(body: &ast::Expr) -> std::collections::HashSet<String> {
+        let mut roots = std::collections::HashSet::new();
+        ast::walk_expr(body, &mut |e| {
+            let place = match e {
+                ast::Expr::AssignTo { place, .. } => place.as_ref(),
+                ast::Expr::UnaryOp {
+                    op: ast::UnaryOp::RefMut,
+                    operand,
+                } => operand.as_ref(),
+                _ => return,
+            };
+            if let Some(r) = Self::place_root(place) {
+                roots.insert(r.to_string());
+            }
+        });
+        roots
+    }
+
+    /// AX-08: does `e` evaluate to (a part of) a `&mut` param's value, i.e.
+    /// a header sharing the CALLER's buffer? Follows block/if/match tails.
+    pub(super) fn yields_mut_param(&self, e: &ast::Expr) -> bool {
+        if self.cur_mut_params.is_empty() {
+            return false;
+        }
+        match e {
+            ast::Expr::Block(stmts) => stmts.last().is_some_and(|s| self.yields_mut_param(&s.expr)),
+            ast::Expr::If { then, else_, .. } => {
+                self.yields_mut_param(then)
+                    || else_.as_ref().is_some_and(|x| self.yields_mut_param(x))
+            }
+            ast::Expr::Match { arms, .. } => arms.iter().any(|a| self.yields_mut_param(&a.body)),
+            ast::Expr::UnaryOp {
+                op: ast::UnaryOp::Ref,
+                operand,
+            } => self.yields_mut_param(operand),
+            other => Self::place_root(other).is_some_and(|r| self.cur_mut_params.contains(r)),
+        }
+    }
+
+    /// Does a value of this type own (transitively) an array buffer?
+    pub(super) fn type_has_slice(&self, ty: &Type, depth: u8) -> bool {
+        if depth > 8 {
+            return false;
+        }
+        match ty {
+            Type::Slice(_) => true,
+            Type::Struct(n) => self
+                .struct_field_sem_types
+                .get(n.as_str())
+                .is_some_and(|fs| fs.iter().any(|f| self.type_has_slice(f, depth + 1))),
+            Type::Tuple(xs) => xs.iter().any(|x| self.type_has_slice(x, depth + 1)),
+            Type::Option(i) => self.type_has_slice(i, depth + 1),
+            Type::Result(a, b) => {
+                self.type_has_slice(a, depth + 1) || self.type_has_slice(b, depth + 1)
+            }
+            _ => false,
+        }
+    }
+
+    /// Does cloning a value of this type need more than one memcpy? Only
+    /// `Slice` and `Struct` are walked: those are the only containers a place
+    /// write can traverse, so they are the only ones whose buffers can be
+    /// observed through a second path.
+    fn type_needs_deep_clone(&self, ty: &Type, depth: u8) -> bool {
+        if depth > 8 {
+            return false;
+        }
+        match ty {
+            Type::Slice(_) => true,
+            Type::Struct(n) => self
+                .struct_field_sem_types
+                .get(n.as_str())
+                .is_some_and(|fs| fs.iter().any(|f| self.type_needs_deep_clone(f, depth + 1))),
+            _ => false,
+        }
+    }
+
+    /// Deep-copy `val` of semantic type `ty`: a fresh buffer per array
+    /// (recursively through arrays-of-arrays and structs that own arrays).
+    /// Types holding no array buffer are returned unchanged.
+    pub(super) fn emit_clone_value(
+        &mut self,
+        val: BasicValueEnum<'ctx>,
+        ty: &Type,
+        fn_val: FunctionValue<'ctx>,
+    ) -> BasicValueEnum<'ctx> {
+        match ty {
+            Type::Slice(inner) => {
+                let (BasicValueEnum::StructValue(sv), Some(elem_ty)) = (val, self.llvm_type(inner))
+                else {
+                    return val;
+                };
+                let Some(elem_size) = elem_ty.size_of() else {
+                    return val;
+                };
+                let i64_ty = self.ir.context.i64_type();
+                let b = &self.ir.builder;
+                let len = b.build_extract_value(sv, 0, "cl_len").unwrap().into_int_value();
+                let src = b.build_extract_value(sv, 1, "cl_src").unwrap().into_pointer_value();
+                let bytes = b.build_int_mul(len, elem_size, "cl_bytes").unwrap();
+                let dst = self.emit_malloc(bytes, "cl_dst");
+                let _ = self.ir.builder.build_memcpy(dst, 1, src, 1, bytes);
+                if self.type_needs_deep_clone(inner, 0) {
+                    // for i in 0..len { dst[i] = clone(dst[i]) }
+                    let pre = self.ir.builder.get_insert_block().unwrap();
+                    let f = pre.get_parent().unwrap_or(fn_val);
+                    let hdr = self.ir.context.append_basic_block(f, "cl_hdr");
+                    let body = self.ir.context.append_basic_block(f, "cl_body");
+                    let exit = self.ir.context.append_basic_block(f, "cl_exit");
+                    self.ir.builder.build_unconditional_branch(hdr).unwrap();
+                    self.ir.builder.position_at_end(hdr);
+                    let i = self.ir.builder.build_phi(i64_ty, "cl_i").unwrap();
+                    i.add_incoming(&[(&i64_ty.const_zero(), pre)]);
+                    let iv = i.as_basic_value().into_int_value();
+                    let more = self
+                        .ir
+                        .builder
+                        .build_int_compare(IntPredicate::ULT, iv, len, "cl_more")
+                        .unwrap();
+                    self.ir
+                        .builder
+                        .build_conditional_branch(more, body, exit)
+                        .unwrap();
+                    self.ir.builder.position_at_end(body);
+                    let sp = unsafe {
+                        self.ir.builder.build_gep(elem_ty, dst, &[iv], "cl_sp").unwrap()
+                    };
+                    let elem = build_wrappers::w_load(&self.ir.builder, elem_ty, sp, "cl_elem");
+                    let cloned = self.emit_clone_value(elem, inner, fn_val);
+                    build_wrappers::w_store(&self.ir.builder, sp, cloned);
+                    let next = self
+                        .ir
+                        .builder
+                        .build_int_add(iv, i64_ty.const_int(1, false), "cl_next")
+                        .unwrap();
+                    let end = self.ir.builder.get_insert_block().unwrap();
+                    self.ir.builder.build_unconditional_branch(hdr).unwrap();
+                    i.add_incoming(&[(&next, end)]);
+                    self.ir.builder.position_at_end(exit);
+                }
+                let b = &self.ir.builder;
+                let mut out = sv.get_type().get_undef();
+                out = b.build_insert_value(out, len, 0, "cl_o0").unwrap().into_struct_value();
+                out = b.build_insert_value(out, dst, 1, "cl_o1").unwrap().into_struct_value();
+                out.into()
+            }
+            Type::Struct(n) => {
+                let (BasicValueEnum::StructValue(mut sv), Some(fields)) =
+                    (val, self.struct_field_sem_types.get(n.as_str()).cloned())
+                else {
+                    return val;
+                };
+                for (idx, fty) in fields.iter().enumerate() {
+                    if !self.type_needs_deep_clone(fty, 0) {
+                        continue;
+                    }
+                    let f = self
+                        .ir
+                        .builder
+                        .build_extract_value(sv, idx as u32, "cl_f")
+                        .unwrap();
+                    let c = self.emit_clone_value(f, fty, fn_val);
+                    sv = self
+                        .ir
+                        .builder
+                        .build_insert_value(sv, c, idx as u32, "cl_fs")
+                        .unwrap()
+                        .into_struct_value();
+                }
+                sv.into()
+            }
+            _ => val,
+        }
+    }
+
+    /// `emit_expr`, then snapshot the result when it is an array PLACE
+    /// expression (`a`, `s.xs`, `g[i]`, or `&` of one) flowing into a new
+    /// owner and the sharing could be observed. Fresh values (literals, call
+    /// results, builtins) already own their buffer and are never copied.
+    pub(super) fn emit_expr_owned(
+        &mut self,
+        expr: &ast::Expr,
+        fn_val: FunctionValue<'ctx>,
+        sink: CopySink<'_>,
+    ) -> Option<BasicValueEnum<'ctx>> {
+        let val = self.emit_expr(expr, fn_val)?;
+        let mut place = expr;
+        while let ast::Expr::UnaryOp {
+            op: ast::UnaryOp::Ref,
+            operand,
+        } = place
+        {
+            place = operand;
+        }
+        let Some(root) = Self::place_root(place) else {
+            return Some(val);
+        };
+        let Some(owned_ty) = self.sem_type_of_expr(place) else {
+            return Some(val);
+        };
+        if !self.type_needs_deep_clone(&owned_ty, 0) {
+            return Some(val);
+        }
+        let observable = match sink {
+            CopySink::Always => true,
+            CopySink::Local(dest) => {
+                // AX-08: a `&mut` param's buffer belongs to the caller, who can
+                // write it after this fn returns - always observable.
+                self.cur_written_roots.contains(dest)
+                    || self.cur_written_roots.contains(root)
+                    || self.cur_mut_params.contains(root)
+            }
+        };
+        if !observable {
+            return Some(val);
+        }
+        Some(self.emit_clone_value(val, &owned_ty, fn_val))
+    }
+
+    /// Lower `place = value` where `place` is a chain of field accesses and
+    /// indexings rooted at a local (`xs[i] = v`, `p.x = v`, `a[i].f[j] = v`).
+    ///
+    /// Mirrors the interpreter (`Expr::AssignTo` in `interp/eval.rs`): the VALUE
+    /// is evaluated first, then the place is walked; every index is
+    /// bounds-checked with the same `__axon_bounds_panic` as the read path; no
+    /// refinement re-check happens on the write.
+    ///
+    /// `Err(Some(reason))` = shape not lowerable, caller reports E0910 (I-2:
+    /// refuse, never drop the write). `Err(None)` = a sub-expression already
+    /// reported its own error.
+    fn lower_assign_to(
+        &mut self,
+        place: &ast::Expr,
+        value: &ast::Expr,
+        fn_val: FunctionValue<'ctx>,
+    ) -> Result<(), Option<&'static str>> {
+        // A `Result`/`Option` slot has a canonical union layout; the value must
+        // be built against it (same reason as `Expr::Assign`).
+        let saved_rt = self.current_result_types.clone();
+        let saved_oi = self.current_option_inner.clone();
+        match self.sem_type_of_expr(place) {
+            Some(Type::Result(ok_ty, err_ty)) => self.current_result_types = Some((*ok_ty, *err_ty)),
+            Some(Type::Option(inner)) => self.current_option_inner = Some(*inner),
+            _ => {}
+        }
+        let errors_before = self.codegen_errors.len();
+        let emitted = self.emit_expr_owned(value, fn_val, CopySink::Always);
+        self.current_result_types = saved_rt;
+        self.current_option_inner = saved_oi;
+        let Some(val) = emitted else {
+            return if self.codegen_errors.len() == errors_before {
+                Err(Some("a value that produced no result"))
+            } else {
+                Err(None)
+            };
+        };
+
+        let (ptr, slot_ty, slot_sem) = self.emit_place_ptr(place, fn_val)?;
+        let val = match &slot_sem {
+            Some(t) => self.coerce_to_fixed_width(val, t),
+            None => val,
+        };
+        if val.get_type() != slot_ty {
+            return Err(Some(
+                "a place whose layout differs from the assigned value (narrow-int, \
+                 Result/Option or nested-container slot)",
+            ));
+        }
+        build_wrappers::w_store(&self.ir.builder, ptr, val);
+        Ok(())
+    }
+
+    /// Address of an assignable place: `(pointer, pointee LLVM type, semantic type)`.
+    fn emit_place_ptr(
+        &mut self,
+        place: &ast::Expr,
+        fn_val: FunctionValue<'ctx>,
+    ) -> Result<
+        (
+            inkwell::values::PointerValue<'ctx>,
+            BasicTypeEnum<'ctx>,
+            Option<Type>,
+        ),
+        Option<&'static str>,
+    > {
+        match place {
+            ast::Expr::Ident(name) => {
+                let (ptr, ty) = self
+                    .locals
+                    .get(name)
+                    .copied()
+                    .ok_or(Some("a place whose base is not a local variable"))?;
+                Ok((ptr, ty, self.local_types.get(name).cloned()))
+            }
+            ast::Expr::FieldAccess { receiver, field } => {
+                let (rptr, rty, rsem) = self.emit_place_ptr(receiver, fn_val)?;
+                const NOT_STRUCT: &str =
+                    "a field of a value that is not a record struct (tuple, enum and \
+                     Uncertain/Temporal fields are interpreter-only)";
+                let Some(Type::Struct(sname)) = rsem else {
+                    return Err(Some(NOT_STRUCT));
+                };
+                let names = self.struct_fields.get(sname.as_str()).cloned();
+                let idx = names
+                    .and_then(|ns| ns.iter().position(|n| n == field))
+                    .ok_or(Some(NOT_STRUCT))?;
+                let struct_ty = self
+                    .ir
+                    .module
+                    .get_struct_type(&sname)
+                    .ok_or(Some(NOT_STRUCT))?;
+                if rty != BasicTypeEnum::StructType(struct_ty) {
+                    return Err(Some(NOT_STRUCT));
+                }
+                let fty = struct_ty
+                    .get_field_type_at_index(idx as u32)
+                    .ok_or(Some(NOT_STRUCT))?;
+                let fptr = self
+                    .ir
+                    .builder
+                    .build_struct_gep(struct_ty, rptr, idx as u32, field)
+                    .unwrap();
+                let fsem = self
+                    .struct_field_sem_types
+                    .get(sname.as_str())
+                    .and_then(|v| v.get(idx))
+                    .cloned();
+                Ok((fptr, fty, fsem))
+            }
+            ast::Expr::Index { receiver, index } => {
+                let (rptr, rty, rsem) = self.emit_place_ptr(receiver, fn_val)?;
+                const NOT_ARRAY: &str = "an indexed element of a non-array value";
+                let Some(Type::Slice(inner)) = rsem else {
+                    return Err(Some(NOT_ARRAY));
+                };
+                let elem_ty = self.llvm_type(&inner).ok_or(Some(NOT_ARRAY))?;
+                let i64_ty = self.ir.context.i64_type();
+                let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+                let slice_ty = self
+                    .ir
+                    .context
+                    .struct_type(&[i64_ty.into(), ptr_ty.into()], false);
+                if rty != BasicTypeEnum::StructType(slice_ty) {
+                    return Err(Some(NOT_ARRAY));
+                }
+                let idx_int = match self.emit_expr(index, fn_val) {
+                    Some(BasicValueEnum::IntValue(i)) if i.get_type().get_bit_width() == 64 => i,
+                    Some(_) => return Err(Some("an index that is not a 64-bit integer")),
+                    None => return Err(None),
+                };
+                let len_ptr = self
+                    .ir
+                    .builder
+                    .build_struct_gep(slice_ty, rptr, 0, "wlenptr")
+                    .unwrap();
+                let len = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), len_ptr, "wlen")
+                    .into_int_value();
+                // Same trap as the read path (interp: "index {i} out of bounds").
+                self.emit_bounds_guard(idx_int, len);
+                let data_field_ptr = self
+                    .ir
+                    .builder
+                    .build_struct_gep(slice_ty, rptr, 1, "wdataptr")
+                    .unwrap();
+                let data_ptr =
+                    build_wrappers::w_load(&self.ir.builder, ptr_ty.into(), data_field_ptr, "wdata")
+                        .into_pointer_value();
+                let elem_ptr = unsafe {
+                    self.ir
+                        .builder
+                        .build_gep(elem_ty, data_ptr, &[idx_int], "welemptr")
+                        .unwrap()
+                };
+                Ok((elem_ptr, elem_ty, Some(*inner)))
+            }
+            _ => Err(Some("a place expression")),
+        }
     }
 
     /// Emit a counted loop over an i64 slice `{i64 len, i8* data}` performing a
@@ -6419,6 +7361,24 @@ impl<'ctx> super::Codegen<'ctx> {
         &mut self,
         count: inkwell::values::IntValue<'ctx>,
         fn_val: FunctionValue<'ctx>,
+        fill: impl FnMut(
+            &mut Self,
+            inkwell::values::PointerValue<'ctx>,
+            inkwell::values::IntValue<'ctx>,
+        ),
+    ) -> Option<BasicValueEnum<'ctx>> {
+        let i64_ty = self.ir.context.i64_type();
+        self.emit_arr_build_elem(i64_ty.into(), count, fn_val, fill)
+    }
+
+    /// Same as `emit_arr_i64_build` for an arbitrary element type: `dp` points
+    /// at element `i` with the stride the READ path (`emit_index`, which GEPs
+    /// on the semantic element type) uses, so bool arrays are 1 byte/element.
+    fn emit_arr_build_elem(
+        &mut self,
+        elem_ty: BasicTypeEnum<'ctx>,
+        count: inkwell::values::IntValue<'ctx>,
+        fn_val: FunctionValue<'ctx>,
         mut fill: impl FnMut(
             &mut Self,
             inkwell::values::PointerValue<'ctx>,
@@ -6431,13 +7391,13 @@ impl<'ctx> super::Codegen<'ctx> {
             .ir
             .context
             .struct_type(&[i64_ty.into(), ptr_ty.into()], false);
-        let eight = i64_ty.const_int(8, false);
-        let total = build_wrappers::w_int_mul(&self.ir.builder, count, eight, "ab_bytes");
+        let elem_size = elem_ty.size_of()?;
+        let total = build_wrappers::w_int_mul(&self.ir.builder, count, elem_size, "ab_bytes");
         let dst_raw = self.emit_malloc(total, "ab_dst");
         let dst = build_wrappers::w_pointer_cast(
             &self.ir.builder,
             dst_raw,
-            i64_ty.ptr_type(AddressSpace::default()),
+            elem_ty.ptr_type(AddressSpace::default()),
             "ab_di",
         );
 
@@ -6464,7 +7424,7 @@ impl<'ctx> super::Codegen<'ctx> {
         let dp = unsafe {
             self.ir
                 .builder
-                .build_gep(i64_ty, dst, &[i_cur], "ab_dp")
+                .build_gep(elem_ty, dst, &[i_cur], "ab_dp")
                 .unwrap()
         };
         fill(self, dp, i_cur);
@@ -6550,110 +7510,60 @@ impl<'ctx> super::Codegen<'ctx> {
             .build_select(pos, n, i64_ty.const_zero(), "rp_cnt")
             .unwrap()
             .into_int_value();
-        self.emit_arr_i64_build(count, fn_val, move |slf, dp, _i| {
+        // A bool value (i1) builds a `[bool]` (1-byte stride, matching the
+        // `Slice(Bool)` that inference reports); everything else keeps the
+        // 8-byte i64 layout.
+        let elem_ty: BasicTypeEnum<'ctx> = if v.get_type().get_bit_width() == 1 {
+            v.get_type().into()
+        } else {
+            i64_ty.into()
+        };
+        self.emit_arr_build_elem(elem_ty, count, fn_val, move |slf, dp, _i| {
             build_wrappers::w_store(&slf.ir.builder, dp, v.into());
         })
     }
 
-    /// arr_concat(a, b) → a ++ b. count = a_len + b_len; dst[i] = i < a_len ?
-    /// a[i] : b[i - a_len].
-    fn emit_arr_i64_concat(
+    /// `a + b` on arrays of any element type with a layout → a fresh array
+    /// holding `a`'s elements then `b`'s (interp: `(Add, Array(a), Array(b))`).
+    /// Two memcpys into one malloc'd buffer. Elements that themselves own an
+    /// array buffer are deep-cloned, so a later place write through the result
+    /// cannot reach `a` or `b` (the interpreter's value semantics).
+    pub(super) fn emit_arr_concat_any(
         &mut self,
-        a_slice: BasicValueEnum<'ctx>,
-        b_slice: BasicValueEnum<'ctx>,
+        lhs: BasicValueEnum<'ctx>,
+        rhs: BasicValueEnum<'ctx>,
+        inner: &Type,
         fn_val: FunctionValue<'ctx>,
     ) -> Option<BasicValueEnum<'ctx>> {
-        let i64_ty = self.ir.context.i64_type();
-        let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
-        let slice_ty = self
-            .ir
-            .context
-            .struct_type(&[i64_ty.into(), ptr_ty.into()], false);
-        let unpack = |slf: &mut Self, sv: BasicValueEnum<'ctx>, tag: &str| {
-            let al = build_wrappers::w_alloca(&slf.ir.builder, slice_ty.into(), tag);
-            build_wrappers::w_store(&slf.ir.builder, al, sv);
-            let l = build_wrappers::w_load(
-                &slf.ir.builder,
-                i64_ty.into(),
-                slf.ir
-                    .builder
-                    .build_struct_gep(slice_ty, al, 0, "ct_lp")
-                    .unwrap(),
-                "ct_l",
-            )
-            .into_int_value();
-            let d = build_wrappers::w_load(
-                &slf.ir.builder,
-                ptr_ty.into(),
-                slf.ir
-                    .builder
-                    .build_struct_gep(slice_ty, al, 1, "ct_dp")
-                    .unwrap(),
-                "ct_d",
-            )
-            .into_pointer_value();
-            let di = build_wrappers::w_pointer_cast(
-                &slf.ir.builder,
-                d,
-                i64_ty.ptr_type(AddressSpace::default()),
-                "ct_di",
-            );
-            (l, di)
+        let (BasicValueEnum::StructValue(l), BasicValueEnum::StructValue(r)) = (lhs, rhs) else {
+            return None;
         };
-        let (a_len, a_data) = unpack(self, a_slice, "ct_a");
-        let (b_len, b_data) = unpack(self, b_slice, "ct_b");
-        let count = build_wrappers::w_int_add(&self.ir.builder, a_len, b_len, "ct_cnt");
-        self.emit_arr_i64_build(count, fn_val, move |slf, dp, i| {
-            // v = i < a_len ? a[i] : b[i - a_len]. Both GEPs are emitted, so the
-            // indices must stay in-bounds for the UNTAKEN branch too: clamp a's
-            // index to a_len-1 and b's to 0 on the wrong side (the select then
-            // discards that load's value).
-            let in_a = build_wrappers::w_int_compare(
-                &slf.ir.builder,
-                inkwell::IntPredicate::SLT,
-                i,
-                a_len,
-                "ct_ina",
-            );
-            // a index: i if in_a else 0
-            let a_idx = slf
-                .ir
-                .builder
-                .build_select(in_a, i, i64_ty.const_zero(), "ct_aidx")
-                .unwrap()
-                .into_int_value();
-            let ai = unsafe {
-                slf.ir
-                    .builder
-                    .build_gep(i64_ty, a_data, &[a_idx], "ct_ai")
-                    .unwrap()
-            };
-            let av = build_wrappers::w_load(&slf.ir.builder, i64_ty.into(), ai, "ct_av")
-                .into_int_value();
-            // b index: 0 if in_a else (i - a_len)
-            let bsub = build_wrappers::w_int_sub(&slf.ir.builder, i, a_len, "ct_bsub");
-            let b_idx = slf
-                .ir
-                .builder
-                .build_select(in_a, i64_ty.const_zero(), bsub, "ct_bidx")
-                .unwrap()
-                .into_int_value();
-            let bi = unsafe {
-                slf.ir
-                    .builder
-                    .build_gep(i64_ty, b_data, &[b_idx], "ct_bi")
-                    .unwrap()
-            };
-            let bv = build_wrappers::w_load(&slf.ir.builder, i64_ty.into(), bi, "ct_bv")
-                .into_int_value();
-            let v = slf
-                .ir
-                .builder
-                .build_select(in_a, av, bv, "ct_v")
-                .unwrap()
-                .into_int_value();
-            build_wrappers::w_store(&slf.ir.builder, dp, v.into());
-        })
+        let elem_size = self.llvm_type(inner)?.size_of()?;
+        let i8_ty = self.ir.context.i8_type();
+        let b = &self.ir.builder;
+        let l_len = b.build_extract_value(l, 0, "acat_ll").ok()?.into_int_value();
+        let l_src = b.build_extract_value(l, 1, "acat_ls").ok()?.into_pointer_value();
+        let r_len = b.build_extract_value(r, 0, "acat_rl").ok()?.into_int_value();
+        let r_src = b.build_extract_value(r, 1, "acat_rs").ok()?.into_pointer_value();
+        let len = b.build_int_add(l_len, r_len, "acat_len").ok()?;
+        let l_bytes = b.build_int_mul(l_len, elem_size, "acat_lb").ok()?;
+        let r_bytes = b.build_int_mul(r_len, elem_size, "acat_rb").ok()?;
+        let bytes = b.build_int_add(l_bytes, r_bytes, "acat_b").ok()?;
+        let dst = self.emit_malloc(bytes, "acat_dst");
+        let b = &self.ir.builder;
+        b.build_memcpy(dst, 1, l_src, 1, l_bytes).ok()?;
+        let dst_r = unsafe { b.build_gep(i8_ty, dst, &[l_bytes], "acat_dr").ok()? };
+        b.build_memcpy(dst_r, 1, r_src, 1, r_bytes).ok()?;
+        let out = b.build_insert_value(l, len, 0, "acat_o0").ok()?;
+        let out = b.build_insert_value(out, dst, 1, "acat_o1").ok()?;
+        let out: BasicValueEnum<'ctx> = out.into_struct_value().into();
+        if self.type_needs_deep_clone(inner, 0) {
+            // Shallow copies of `a`'s and `b`'s element headers share their
+            // buffers; clone the result once so it owns every level.
+            let slice_ty = Type::Slice(Box::new(inner.clone()));
+            return Some(self.emit_clone_value(out, &slice_ty, fn_val));
+        }
+        Some(out)
     }
 
     /// arr_std_f64(&a) → sample standard deviation. <2 elements → 0.0 (no
@@ -7225,11 +8135,15 @@ impl<'ctx> super::Codegen<'ctx> {
         }
     }
 
-    /// arr_sort_by(&a, cmp) — stable insertion sort of an i64 slice using an
-    /// i64-comparator lambda (cmp(x, y) < 0 ⇒ x before y). Builds a fresh sorted
-    /// buffer: for each element x, find lo = first index where cmp(x, dst[lo])<0,
-    /// shift dst[lo..cnt] right, write dst[lo]=x. Matches the interpreter's
-    /// insertion sort (stable). Pure IR + malloc (native AND wasm).
+    /// arr_sort_by(&a, cmp) — stable bottom-up merge sort of an i64 slice using
+    /// an i64-comparator lambda (cmp(x, y) < 0 ⇒ x before y). O(n log n)
+    /// comparisons. Copies src into a fresh buffer, then merges runs of width
+    /// 1, 2, 4, … ping-ponging with one scratch buffer. When merging, the right
+    /// run's head `r` is taken before the left head `l` only if cmp(r, l) < 0,
+    /// so equal elements keep input order — the same contract (and argument
+    /// orientation: later element first) as the interpreter's merge sort.
+    /// Pure IR + malloc (native AND wasm). The spare buffer is not freed:
+    /// codegen never emits `free` (wasm's runtime `free` is a no-op).
     fn emit_arr_i64_sort_by(
         &mut self,
         slice_val: BasicValueEnum<'ctx>,
@@ -7238,11 +8152,13 @@ impl<'ctx> super::Codegen<'ctx> {
     ) -> Option<BasicValueEnum<'ctx>> {
         let i64_ty = self.ir.context.i64_type();
         let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+        let i64_ptr_ty = i64_ty.ptr_type(AddressSpace::default());
         let slice_ty = self
             .ir
             .context
             .struct_type(&[i64_ty.into(), ptr_ty.into()], false);
         let one = i64_ty.const_int(1, false);
+        let zero = i64_ty.const_zero();
 
         let fn_raw =
             build_wrappers::w_extract_value(&self.ir.builder, lam, 0, "so_fn").into_pointer_value();
@@ -7274,86 +8190,158 @@ impl<'ctx> super::Codegen<'ctx> {
             "so_dat",
         )
         .into_pointer_value();
-        let src_i64 = build_wrappers::w_pointer_cast(
-            &self.ir.builder,
-            src_raw,
-            i64_ty.ptr_type(AddressSpace::default()),
-            "so_si",
-        );
 
-        // dst buffer (len*8) and a running count.
+        // Two len*8 buffers: `a` holds the current runs (seeded with a copy of
+        // src), `b` receives the merged runs; swapped after every pass.
         let eight = i64_ty.const_int(8, false);
         let total = build_wrappers::w_int_mul(&self.ir.builder, len, eight, "so_bytes");
-        let dst_raw = self.emit_malloc(total, "so_dst");
-        let dst = build_wrappers::w_pointer_cast(
-            &self.ir.builder,
-            dst_raw,
-            i64_ty.ptr_type(AddressSpace::default()),
-            "so_di",
-        );
-        let cnt_slot = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "so_cnt");
-        build_wrappers::w_store(&self.ir.builder, cnt_slot, i64_ty.const_zero().into());
-
-        // Outer loop: i in 0..len.
+        let buf0 = self.emit_malloc(total, "so_buf0");
+        let buf1 = self.emit_malloc(total, "so_buf1");
+        let _ = self.ir.builder.build_memcpy(buf0, 1, src_raw, 1, total);
+        let a_slot = build_wrappers::w_alloca(&self.ir.builder, ptr_ty.into(), "so_a");
+        let b_slot = build_wrappers::w_alloca(&self.ir.builder, ptr_ty.into(), "so_b");
+        build_wrappers::w_store(&self.ir.builder, a_slot, buf0.into());
+        build_wrappers::w_store(&self.ir.builder, b_slot, buf1.into());
+        let w_slot = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "so_w");
+        let lo_slot = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "so_lo");
         let i_slot = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "so_i");
-        build_wrappers::w_store(&self.ir.builder, i_slot, i64_ty.const_zero().into());
-        let o_cond = self.ir.context.append_basic_block(fn_val, "so.ocond");
-        let o_body = self.ir.context.append_basic_block(fn_val, "so.obody");
-        let o_exit = self.ir.context.append_basic_block(fn_val, "so.oexit");
-        build_wrappers::w_br(&self.ir.builder, o_cond);
+        let j_slot = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "so_j");
+        let k_slot = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "so_k");
+        build_wrappers::w_store(&self.ir.builder, w_slot, one.into());
 
-        self.ir.builder.position_at_end(o_cond);
-        let i_cur = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), i_slot, "so_ic")
-            .into_int_value();
-        let o_go = build_wrappers::w_int_compare(
+        let w_cond = self.ir.context.append_basic_block(fn_val, "so.wcond");
+        let w_body = self.ir.context.append_basic_block(fn_val, "so.wbody");
+        let l_cond = self.ir.context.append_basic_block(fn_val, "so.lcond");
+        let l_body = self.ir.context.append_basic_block(fn_val, "so.lbody");
+        let m_cond = self.ir.context.append_basic_block(fn_val, "so.mcond");
+        let m_body = self.ir.context.append_basic_block(fn_val, "so.mbody");
+        let m_chkj = self.ir.context.append_basic_block(fn_val, "so.mchkj");
+        let m_cmp = self.ir.context.append_basic_block(fn_val, "so.mcmp");
+        let take_l = self.ir.context.append_basic_block(fn_val, "so.takel");
+        let take_r = self.ir.context.append_basic_block(fn_val, "so.taker");
+        let l_next = self.ir.context.append_basic_block(fn_val, "so.lnext");
+        let w_next = self.ir.context.append_basic_block(fn_val, "so.wnext");
+        let done = self.ir.context.append_basic_block(fn_val, "so.done");
+        build_wrappers::w_br(&self.ir.builder, w_cond);
+
+        // while w < len
+        self.ir.builder.position_at_end(w_cond);
+        let w_cur =
+            build_wrappers::w_load(&self.ir.builder, i64_ty.into(), w_slot, "so_wc").into_int_value();
+        let w_go = build_wrappers::w_int_compare(
             &self.ir.builder,
             inkwell::IntPredicate::SLT,
-            i_cur,
+            w_cur,
             len,
-            "so_og",
+            "so_wg",
         );
-        build_wrappers::w_cond_br(&self.ir.builder, o_go, o_body, o_exit);
+        build_wrappers::w_cond_br(&self.ir.builder, w_go, w_body, done);
 
-        self.ir.builder.position_at_end(o_body);
-        let xp = unsafe {
-            self.ir
-                .builder
-                .build_gep(i64_ty, src_i64, &[i_cur], "so_xp")
-                .unwrap()
-        };
-        let x =
-            build_wrappers::w_load(&self.ir.builder, i64_ty.into(), xp, "so_x").into_int_value();
-        let cnt = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), cnt_slot, "so_c")
-            .into_int_value();
+        self.ir.builder.position_at_end(w_body);
+        build_wrappers::w_store(&self.ir.builder, lo_slot, zero.into());
+        build_wrappers::w_br(&self.ir.builder, l_cond);
 
-        // Find lo: first index in 0..cnt where cmp(x, dst[lo]) < 0. Probe loop.
-        let lo_slot = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "so_lo");
-        build_wrappers::w_store(&self.ir.builder, lo_slot, i64_ty.const_zero().into());
-        let p_cond = self.ir.context.append_basic_block(fn_val, "so.pcond");
-        let p_body = self.ir.context.append_basic_block(fn_val, "so.pbody");
-        let p_exit = self.ir.context.append_basic_block(fn_val, "so.pexit");
-        build_wrappers::w_br(&self.ir.builder, p_cond);
-
-        self.ir.builder.position_at_end(p_cond);
+        // while lo < len: merge a[lo..mid] and a[mid..hi] into b[lo..hi].
+        self.ir.builder.position_at_end(l_cond);
         let lo_cur = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), lo_slot, "so_loc")
             .into_int_value();
-        let p_go = build_wrappers::w_int_compare(
+        let l_go = build_wrappers::w_int_compare(
             &self.ir.builder,
             inkwell::IntPredicate::SLT,
             lo_cur,
-            cnt,
-            "so_pg",
+            len,
+            "so_lg",
         );
-        build_wrappers::w_cond_br(&self.ir.builder, p_go, p_body, p_exit);
+        build_wrappers::w_cond_br(&self.ir.builder, l_go, l_body, w_next);
 
-        self.ir.builder.position_at_end(p_body);
-        let dlo_p = unsafe {
+        self.ir.builder.position_at_end(l_body);
+        let w_l =
+            build_wrappers::w_load(&self.ir.builder, i64_ty.into(), w_slot, "so_wl").into_int_value();
+        let clamp = |this: &Self, v: inkwell::values::IntValue<'ctx>, nm: &str| {
+            let lt = build_wrappers::w_int_compare(
+                &this.ir.builder,
+                inkwell::IntPredicate::SLT,
+                v,
+                len,
+                "so_clt",
+            );
+            this.ir
+                .builder
+                .build_select(lt, v, len, nm)
+                .unwrap()
+                .into_int_value()
+        };
+        let mid_raw = build_wrappers::w_int_add(&self.ir.builder, lo_cur, w_l, "so_midr");
+        let mid = clamp(self, mid_raw, "so_mid");
+        let hi_raw = build_wrappers::w_int_add(&self.ir.builder, mid, w_l, "so_hir");
+        let hi = clamp(self, hi_raw, "so_hi");
+        build_wrappers::w_store(&self.ir.builder, i_slot, lo_cur.into());
+        build_wrappers::w_store(&self.ir.builder, j_slot, mid.into());
+        build_wrappers::w_store(&self.ir.builder, k_slot, lo_cur.into());
+        let a_cur = build_wrappers::w_load(&self.ir.builder, ptr_ty.into(), a_slot, "so_ac")
+            .into_pointer_value();
+        let b_cur = build_wrappers::w_load(&self.ir.builder, ptr_ty.into(), b_slot, "so_bc")
+            .into_pointer_value();
+        let a_i64 = build_wrappers::w_pointer_cast(&self.ir.builder, a_cur, i64_ptr_ty, "so_ai");
+        let b_i64 = build_wrappers::w_pointer_cast(&self.ir.builder, b_cur, i64_ptr_ty, "so_bi");
+        build_wrappers::w_br(&self.ir.builder, m_cond);
+
+        // while k < hi
+        self.ir.builder.position_at_end(m_cond);
+        let k_cur =
+            build_wrappers::w_load(&self.ir.builder, i64_ty.into(), k_slot, "so_kc").into_int_value();
+        let m_go = build_wrappers::w_int_compare(
+            &self.ir.builder,
+            inkwell::IntPredicate::SLT,
+            k_cur,
+            hi,
+            "so_mg",
+        );
+        build_wrappers::w_cond_br(&self.ir.builder, m_go, m_body, l_next);
+
+        // Left exhausted → take right.
+        self.ir.builder.position_at_end(m_body);
+        let i_cur =
+            build_wrappers::w_load(&self.ir.builder, i64_ty.into(), i_slot, "so_ic").into_int_value();
+        let i_ok = build_wrappers::w_int_compare(
+            &self.ir.builder,
+            inkwell::IntPredicate::SLT,
+            i_cur,
+            mid,
+            "so_iok",
+        );
+        build_wrappers::w_cond_br(&self.ir.builder, i_ok, m_chkj, take_r);
+
+        // Right exhausted → take left.
+        self.ir.builder.position_at_end(m_chkj);
+        let j_cur =
+            build_wrappers::w_load(&self.ir.builder, i64_ty.into(), j_slot, "so_jc").into_int_value();
+        let j_ok = build_wrappers::w_int_compare(
+            &self.ir.builder,
+            inkwell::IntPredicate::SLT,
+            j_cur,
+            hi,
+            "so_jok",
+        );
+        build_wrappers::w_cond_br(&self.ir.builder, j_ok, m_cmp, take_l);
+
+        // Both live: take right iff cmp(a[j], a[i]) < 0 (stability).
+        self.ir.builder.position_at_end(m_cmp);
+        let ai_p = unsafe {
             self.ir
                 .builder
-                .build_gep(i64_ty, dst, &[lo_cur], "so_dlop")
+                .build_gep(i64_ty, a_i64, &[i_cur], "so_aip")
                 .unwrap()
         };
-        let dlo = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), dlo_p, "so_dlo")
+        let ai = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), ai_p, "so_av")
+            .into_int_value();
+        let aj_p = unsafe {
+            self.ir
+                .builder
+                .build_gep(i64_ty, a_i64, &[j_cur], "so_ajp")
+                .unwrap()
+        };
+        let aj = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), aj_p, "so_bv")
             .into_int_value();
         let cmp_r = self
             .ir
@@ -7361,87 +8349,70 @@ impl<'ctx> super::Codegen<'ctx> {
             .build_indirect_call(
                 indirect_ty,
                 fn_ptr,
-                &[env_ptr.into(), x.into(), dlo.into()],
+                &[env_ptr.into(), aj.into(), ai.into()],
                 "so_cmp",
             )
             .unwrap()
             .try_as_basic_value()
             .left()?
             .into_int_value();
-        // if cmp_r < 0 → break (found position); else lo++.
         let neg = build_wrappers::w_int_compare(
             &self.ir.builder,
             inkwell::IntPredicate::SLT,
             cmp_r,
-            i64_ty.const_zero(),
+            zero,
             "so_neg",
         );
-        let p_inc = self.ir.context.append_basic_block(fn_val, "so.pinc");
-        build_wrappers::w_cond_br(&self.ir.builder, neg, p_exit, p_inc);
-        self.ir.builder.position_at_end(p_inc);
-        let lo_next = build_wrappers::w_int_add(&self.ir.builder, lo_cur, one, "so_lon");
-        build_wrappers::w_store(&self.ir.builder, lo_slot, lo_next.into());
-        build_wrappers::w_br(&self.ir.builder, p_cond);
+        build_wrappers::w_cond_br(&self.ir.builder, neg, take_r, take_l);
 
-        // Shift dst[lo..cnt] right by one: for j = cnt; j > lo; j-- : dst[j]=dst[j-1].
-        self.ir.builder.position_at_end(p_exit);
-        let lo_final = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), lo_slot, "so_lof")
-            .into_int_value();
-        let j_slot = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "so_j");
-        build_wrappers::w_store(&self.ir.builder, j_slot, cnt.into());
-        let s_cond = self.ir.context.append_basic_block(fn_val, "so.scond");
-        let s_body = self.ir.context.append_basic_block(fn_val, "so.sbody");
-        let s_exit = self.ir.context.append_basic_block(fn_val, "so.sexit");
-        build_wrappers::w_br(&self.ir.builder, s_cond);
+        // b[k] = a[idx]; idx++; k++.
+        for (blk, slot, tag) in [(take_l, i_slot, "l"), (take_r, j_slot, "r")] {
+            self.ir.builder.position_at_end(blk);
+            let idx = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), slot, "so_tx")
+                .into_int_value();
+            let k = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), k_slot, "so_tk")
+                .into_int_value();
+            let from_p = unsafe {
+                self.ir
+                    .builder
+                    .build_gep(i64_ty, a_i64, &[idx], &format!("so_f{tag}"))
+                    .unwrap()
+            };
+            let v = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), from_p, "so_tv");
+            let to_p = unsafe {
+                self.ir
+                    .builder
+                    .build_gep(i64_ty, b_i64, &[k], &format!("so_t{tag}"))
+                    .unwrap()
+            };
+            build_wrappers::w_store(&self.ir.builder, to_p, v);
+            let idx2 = build_wrappers::w_int_add(&self.ir.builder, idx, one, "so_tx2");
+            build_wrappers::w_store(&self.ir.builder, slot, idx2.into());
+            let k2 = build_wrappers::w_int_add(&self.ir.builder, k, one, "so_tk2");
+            build_wrappers::w_store(&self.ir.builder, k_slot, k2.into());
+            build_wrappers::w_br(&self.ir.builder, m_cond);
+        }
 
-        self.ir.builder.position_at_end(s_cond);
-        let j_cur = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), j_slot, "so_jc")
-            .into_int_value();
-        let s_go = build_wrappers::w_int_compare(
-            &self.ir.builder,
-            inkwell::IntPredicate::SGT,
-            j_cur,
-            lo_final,
-            "so_sg",
-        );
-        build_wrappers::w_cond_br(&self.ir.builder, s_go, s_body, s_exit);
+        // lo = hi (next run pair).
+        self.ir.builder.position_at_end(l_next);
+        build_wrappers::w_store(&self.ir.builder, lo_slot, hi.into());
+        build_wrappers::w_br(&self.ir.builder, l_cond);
 
-        self.ir.builder.position_at_end(s_body);
-        let j_prev = build_wrappers::w_int_sub(&self.ir.builder, j_cur, one, "so_jp");
-        let from_p = unsafe {
-            self.ir
-                .builder
-                .build_gep(i64_ty, dst, &[j_prev], "so_fp2")
-                .unwrap()
-        };
-        let from_v = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), from_p, "so_fv");
-        let to_p = unsafe {
-            self.ir
-                .builder
-                .build_gep(i64_ty, dst, &[j_cur], "so_tp")
-                .unwrap()
-        };
-        build_wrappers::w_store(&self.ir.builder, to_p, from_v);
-        build_wrappers::w_store(&self.ir.builder, j_slot, j_prev.into());
-        build_wrappers::w_br(&self.ir.builder, s_cond);
+        // Swap a/b, w *= 2.
+        self.ir.builder.position_at_end(w_next);
+        let a_s = build_wrappers::w_load(&self.ir.builder, ptr_ty.into(), a_slot, "so_as");
+        let b_s = build_wrappers::w_load(&self.ir.builder, ptr_ty.into(), b_slot, "so_bs");
+        build_wrappers::w_store(&self.ir.builder, a_slot, b_s);
+        build_wrappers::w_store(&self.ir.builder, b_slot, a_s);
+        let w_n =
+            build_wrappers::w_load(&self.ir.builder, i64_ty.into(), w_slot, "so_wn").into_int_value();
+        let w2 = build_wrappers::w_int_add(&self.ir.builder, w_n, w_n, "so_w2");
+        build_wrappers::w_store(&self.ir.builder, w_slot, w2.into());
+        build_wrappers::w_br(&self.ir.builder, w_cond);
 
-        // Insert x at lo, cnt++, i++.
-        self.ir.builder.position_at_end(s_exit);
-        let ins_p = unsafe {
-            self.ir
-                .builder
-                .build_gep(i64_ty, dst, &[lo_final], "so_insp")
-                .unwrap()
-        };
-        build_wrappers::w_store(&self.ir.builder, ins_p, x.into());
-        let cnt2 = build_wrappers::w_int_add(&self.ir.builder, cnt, one, "so_c2");
-        build_wrappers::w_store(&self.ir.builder, cnt_slot, cnt2.into());
-        let i_next = build_wrappers::w_int_add(&self.ir.builder, i_cur, one, "so_in");
-        build_wrappers::w_store(&self.ir.builder, i_slot, i_next.into());
-        build_wrappers::w_br(&self.ir.builder, o_cond);
-
-        // Result slice { len, dst }.
-        self.ir.builder.position_at_end(o_exit);
+        // Result slice { len, a }.
+        self.ir.builder.position_at_end(done);
+        let res_ptr = build_wrappers::w_load(&self.ir.builder, ptr_ty.into(), a_slot, "so_rp");
         let out = build_wrappers::w_alloca(&self.ir.builder, slice_ty.into(), "so_out");
         build_wrappers::w_store(
             &self.ir.builder,
@@ -7451,14 +8422,13 @@ impl<'ctx> super::Codegen<'ctx> {
                 .unwrap(),
             len.into(),
         );
-        let dst_i8 = build_wrappers::w_pointer_cast(&self.ir.builder, dst_raw, ptr_ty, "so_di8");
         build_wrappers::w_store(
             &self.ir.builder,
             self.ir
                 .builder
                 .build_struct_gep(slice_ty, out, 1, "so_optr")
                 .unwrap(),
-            dst_i8.into(),
+            res_ptr,
         );
         Some(build_wrappers::w_load(
             &self.ir.builder,
@@ -7495,11 +8465,8 @@ impl<'ctx> super::Codegen<'ctx> {
                 (idx_opt, self.llvm_type(&ty))
             {
                 let recv_val = self.emit_expr(receiver, fn_val)?;
-                let recv_alloca = self
-                    .ir
-                    .builder
-                    .build_alloca(struct_ty, "asi_recv_tmp")
-                    .unwrap();
+                let recv_alloca =
+                    build_wrappers::w_alloca(&self.ir.builder, struct_ty.into(), "asi_recv_tmp");
                 build_wrappers::w_store(&self.ir.builder, recv_alloca, recv_val);
                 let fptr = self
                     .ir
@@ -7530,7 +8497,8 @@ impl<'ctx> super::Codegen<'ctx> {
             ) {
                 if let Some(idx) = field_names.iter().position(|n| n == field) {
                     let recv_val = self.emit_expr(receiver, fn_val)?;
-                    let recv_alloca = self.ir.builder.build_alloca(struct_ty, "recv_tmp").unwrap();
+                    let recv_alloca =
+                        build_wrappers::w_alloca(&self.ir.builder, struct_ty.into(), "recv_tmp");
                     build_wrappers::w_store(&self.ir.builder, recv_alloca, recv_val);
                     let fptr = self
                         .ir
@@ -7572,11 +8540,8 @@ impl<'ctx> super::Codegen<'ctx> {
                     BasicValueEnum::StructValue(s) => s.get_type(),
                     _ => return None,
                 };
-                let recv_alloca = self
-                    .ir
-                    .builder
-                    .build_alloca(struct_ty, "tup_recv_tmp")
-                    .unwrap();
+                let recv_alloca =
+                    build_wrappers::w_alloca(&self.ir.builder, struct_ty.into(), "tup_recv_tmp");
                 build_wrappers::w_store(&self.ir.builder, recv_alloca, recv_val);
                 let fptr = self
                     .ir
@@ -7602,7 +8567,7 @@ impl<'ctx> super::Codegen<'ctx> {
     ) -> Option<BasicValueEnum<'ctx>> {
         let elem_vals: Vec<BasicValueEnum<'ctx>> = elems
             .iter()
-            .map(|e| self.emit_expr(e, fn_val))
+            .map(|e| self.emit_expr_owned(e, fn_val, CopySink::Always))
             .collect::<Option<_>>()?;
 
         // Build the struct type from the element LLVM types.
@@ -7610,7 +8575,7 @@ impl<'ctx> super::Codegen<'ctx> {
         let struct_ty = self.ir.context.struct_type(&elem_types, false);
 
         // Allocate stack slot, store each field, load back for callers to use.
-        let alloca = self.ir.builder.build_alloca(struct_ty, "tup_lit").unwrap();
+        let alloca = build_wrappers::w_alloca(&self.ir.builder, struct_ty.into(), "tup_lit");
         for (i, elem_val) in elem_vals.iter().enumerate() {
             let fptr = self
                 .ir
@@ -7686,7 +8651,7 @@ impl<'ctx> super::Codegen<'ctx> {
 
                 let mut byte_offset: u64 = 0;
                 for (fi, (fname, fexpr)) in fields.iter().enumerate() {
-                    if let Some(fval) = self.emit_expr(fexpr, fn_val) {
+                    if let Some(fval) = self.emit_expr_owned(fexpr, fn_val, CopySink::Always) {
                         let fty = field_types.get(fi).cloned().unwrap_or(Type::Unknown);
                         let fsize = self.llvm_sizeof(&fty).unwrap_or(8);
                         // GEP into the payload at the current byte offset.
@@ -7706,6 +8671,8 @@ impl<'ctx> super::Codegen<'ctx> {
                             .unwrap();
                         build_wrappers::w_store(&self.ir.builder, typed_ptr, fval);
                         byte_offset += fsize;
+                    } else {
+                        self.refuse_unlowered(&format!("payload field `{fname}` of an enum variant"));
                     }
                 }
             }
@@ -7763,7 +8730,7 @@ impl<'ctx> super::Codegen<'ctx> {
                     }
                     _ => {}
                 }
-                let emitted = self.emit_expr(fexpr, fn_val);
+                let emitted = self.emit_expr_owned(fexpr, fn_val, CopySink::Always);
                 self.current_option_inner = saved_oi;
                 self.current_result_types = saved_rt;
                 if let Some(fval) = emitted {
@@ -7790,6 +8757,8 @@ impl<'ctx> super::Codegen<'ctx> {
                         .build_struct_gep(struct_ty, alloca, idx, fname)
                         .unwrap();
                     build_wrappers::w_store(&self.ir.builder, fptr, fval);
+                } else {
+                    self.refuse_unlowered(&format!("the value of field `{fname}` of a struct literal"));
                 }
             }
             // Phase 5: refinement obligations at construction — per-field
@@ -7838,7 +8807,7 @@ impl<'ctx> super::Codegen<'ctx> {
         // the symptom is a wrong answer rather than a refusal.
         let mut vals: Vec<BasicValueEnum<'ctx>> = Vec::with_capacity(elems.len());
         for e in elems {
-            vals.push(self.emit_expr(e, fn_val)?);
+            vals.push(self.emit_expr_owned(e, fn_val, CopySink::Always)?);
         }
         if vals.is_empty() {
             return None;
@@ -7847,25 +8816,35 @@ impl<'ctx> super::Codegen<'ctx> {
         let elem_ty = vals[0].get_type();
         let n = vals.len() as u32;
 
-        // Use malloc for the array backing store so the slice remains
-        // valid if returned from a function (no dangling stack pointer).
         let i64_ty = self.ir.context.i64_type();
         let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
-        // Element size: use the type's REAL ABI size via LLVM `size_of()`, not a
-        // hardcoded guess. The old code used 8 bytes for ANY struct, which
-        // under-allocated an array of enums (`{i32 tag, [N x i8]}`, often 16-24
-        // bytes): the GEP stores then wrote past the buffer → heap corruption
-        // (`malloc(): corrupted top size`, BUG_HUNT #42). `size_of()` returns an
-        // i64 LLVM constant that is exact for every element type (int/float/
-        // struct/array/ptr), so `n * size_of` is the correct malloc size and
-        // matches the GEP stride below.
-        let elem_size = elem_ty
-            .size_of()
-            .unwrap_or_else(|| i64_ty.const_int(8, false));
-        let n_val = i64_ty.const_int(n as u64, false);
-        let total_bytes = build_wrappers::w_int_mul(&self.ir.builder, elem_size, n_val, "arrbytes");
-        // R7: target-aware malloc (i32 size on wasm32, i64 on native).
-        let raw_ptr = self.emit_malloc(total_bytes, "arrdata");
+        // AX-12: a site the escape analysis proved frame-local with a single
+        // live value (`escape.rs`, spec/runtime.md §3) gets a fixed entry-block
+        // slot that every evaluation of this emission reuses - nothing to free,
+        // RSS stays flat in loops. Every other literal keeps a heap buffer,
+        // because its value may outlive the frame or the site's next evaluation.
+        let raw_ptr = if self.stack_array_sites.contains(&(elems.as_ptr() as usize))
+            && super::escape::fits_stack_slot(elem_ty, n)
+        {
+            build_wrappers::w_alloca(&self.ir.builder, elem_ty.array_type(n).into(), "arrlit")
+        } else {
+            // Element size: use the type's REAL ABI size via LLVM `size_of()`, not a
+            // hardcoded guess. The old code used 8 bytes for ANY struct, which
+            // under-allocated an array of enums (`{i32 tag, [N x i8]}`, often 16-24
+            // bytes): the GEP stores then wrote past the buffer → heap corruption
+            // (`malloc(): corrupted top size`, BUG_HUNT #42). `size_of()` returns an
+            // i64 LLVM constant that is exact for every element type (int/float/
+            // struct/array/ptr), so `n * size_of` is the correct malloc size and
+            // matches the GEP stride below.
+            let elem_size = elem_ty
+                .size_of()
+                .unwrap_or_else(|| i64_ty.const_int(8, false));
+            let n_val = i64_ty.const_int(n as u64, false);
+            let total_bytes =
+                build_wrappers::w_int_mul(&self.ir.builder, elem_size, n_val, "arrbytes");
+            // R7: target-aware malloc (i32 size on wasm32, i64 on native).
+            self.emit_malloc(total_bytes, "arrdata")
+        };
         // Cast to typed element pointer for GEP.
         let elem_ptr_ty = elem_ty.ptr_type(AddressSpace::default());
         let elem_data_ptr = self
@@ -7927,7 +8906,27 @@ impl<'ctx> super::Codegen<'ctx> {
     ) -> Option<BasicValueEnum<'ctx>> {
         match maybe_val {
             std::option::Option::Some(e) => {
-                if let Some(v) = self.emit_expr(e, fn_val) {
+                // A bare local is the fn's own array (params are snapshotted at
+                // entry); a place INTO a param/struct must not leak the shared buffer.
+                let returned = if self.yields_mut_param(e) {
+                    // AX-08: a `&mut` param shares the CALLER's buffer; the
+                    // returned value must be a copy, as in the interpreter.
+                    let ret_ty = fn_val
+                        .get_name()
+                        .to_str()
+                        .ok()
+                        .and_then(|n| self.fn_return_types.get(n).cloned());
+                    let v = self.emit_expr(e, fn_val);
+                    match (v, ret_ty) {
+                        (Some(v), Some(t)) => Some(self.emit_clone_value(v, &t, fn_val)),
+                        (v, _) => v,
+                    }
+                } else if matches!(**e, ast::Expr::Ident(_)) {
+                    self.emit_expr(e, fn_val)
+                } else {
+                    self.emit_expr_owned(e, fn_val, CopySink::Always)
+                };
+                if let Some(v) = returned {
                     self.log_return_if_adaptive_val(v);
                     self.emit_verify_check_if_needed(v, fn_val);
                     self.emit_refine_return_check_if_needed(v, fn_val);
@@ -7998,6 +8997,8 @@ impl<'ctx> super::Codegen<'ctx> {
             for a in args {
                 if let Some(v) = self.emit_expr(a, fn_val) {
                     call_args.push(v.into());
+                } else {
+                    self.refuse_unlowered(&format!("an argument of the `dyn` method call `.{method}`"));
                 }
             }
 
@@ -8049,10 +9050,14 @@ impl<'ctx> super::Codegen<'ctx> {
                     rv
                 };
                 arg_vals.push(rv.into());
+            } else {
+                self.refuse_unlowered(&format!("the receiver of the method call `.{method}`"));
             }
             for a in args {
                 if let Some(v) = self.emit_expr(a, fn_val) {
                     arg_vals.push(v.into());
+                } else {
+                    self.refuse_unlowered(&format!("an argument of the method call `.{method}`"));
                 }
             }
             let call = self
@@ -8202,7 +9207,6 @@ impl<'ctx> super::Codegen<'ctx> {
         args: &[ast::Expr],
         fn_val: FunctionValue<'ctx>,
     ) -> Option<BasicValueEnum<'ctx>> {
-        let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
         let i64_ty = self.ir.context.i64_type();
 
         // Phase 6 handler lowering. `resume(v)` inside a (lowered) handler arm
@@ -8298,101 +9302,53 @@ impl<'ctx> super::Codegen<'ctx> {
             _ => None,
         };
 
-        // Try closure call: callee is a local holding a {fn_ptr, env_ptr} struct.
+        // Closure call. A local holding a `{fn_ptr, env_ptr}` value (a lambda,
+        // a fn value, a `fn(..)` param), or ANY other callee expression that
+        // yields one: `t[i](x)`, `g()(x)`, `(p.f)(x)` (AX-25). A `StructLit`
+        // callee is a `Type::fn` path call, resolved above or not at all.
         if maybe_fn_v.is_none() {
             if let ast::Expr::Ident(name) = callee {
                 if let Some(&(alloca, ty)) = self.locals.get(name.as_str()) {
                     let fat = build_wrappers::w_load(&self.ir.builder, ty, alloca, "closure");
                     if let BasicValueEnum::StructValue(sv) = fat {
-                        let fp = build_wrappers::w_extract_value(&self.ir.builder, sv, 0, "cfp");
-                        let ep = build_wrappers::w_extract_value(&self.ir.builder, sv, 1, "cep");
-                        // Build arg list: env_ptr first, then explicit args.
-                        // Track each arg's ACTUAL LLVM type so the indirect-call
-                        // signature matches the value passed (a str arg is a
-                        // {i64,ptr} struct, not an i64) — and emit_lambda declares
-                        // its params from the same annotation, so the two agree.
-                        //
-                        // AUDIT T37 (finding F061). Using the ARGUMENT's own LLVM
-                        // type here is wrong whenever the lambda declared something
-                        // narrower: `let g = |x: i32| …; g(0-3)` emitted
-                        // `call i64 %cfp(ptr, i64 -3)` against a function declared
-                        // `(ptr, i32)`. That mismatch is UB, and it showed: the same
-                        // lambda printed -5 or 4294967291 depending purely on
-                        // whether an unrelated f64 lambda had been emitted first.
-                        // Coerce each argument to the lambda's DECLARED parameter
-                        // type when we know it.
-                        let sig = if let ast::Expr::Ident(cn) = callee {
-                            self.closure_sigs.get(cn.as_str()).cloned()
-                        } else {
-                            None
-                        };
-                        let mut call_args: Vec<BasicMetadataValueEnum<'ctx>> = vec![ep.into()];
-                        let mut arg_tys: Vec<BasicMetadataTypeEnum<'ctx>> = vec![ptr_ty.into()];
-                        for (i, a) in args.iter().enumerate() {
-                            if let Some(v) = self.emit_expr(a, fn_val) {
-                                let declared = sig
-                                    .as_ref()
-                                    .and_then(|(ps, _)| ps.get(i))
-                                    .and_then(|t| t.clone());
-                                let v = match declared {
-                                    Some(t) => self.coerce_to_fixed_width(v, &t),
-                                    None => v,
-                                };
-                                call_args.push(v.into());
-                                arg_tys.push(v.get_type().into());
-                            }
-                        }
-                        // Build an indirect call via fn pointer.
-                        let fn_ptr = self
-                            .ir
-                            .builder
-                            .build_pointer_cast(fp.into_pointer_value(), ptr_ty, "fp_cast")
-                            .unwrap();
-                        let indirect_ty = i64_ty.fn_type(&arg_tys, false);
-                        let call = self
-                            .ir
-                            .builder
-                            .build_indirect_call(indirect_ty, fn_ptr, &call_args, "icall")
-                            .unwrap();
-                        let raw = call.try_as_basic_value().left();
-                        // The closure ABI returns i64 for every lambda. An f64 body
-                        // is TRANSPORTED as its bit pattern (see the return site in
-                        // emit_lambda), so the caller must bitcast it back — reading
-                        // it as an i64 printed 4618441417868443648 for 6.0, silently,
-                        // at exit 0.
-                        match (raw, sig.as_ref().and_then(|(_, r)| r.clone())) {
-                            (Some(v), Some(Type::F64)) => {
-                                let back = self
-                                    .ir
-                                    .builder
-                                    .build_bitcast(
-                                        v.into_int_value(),
-                                        self.ir.context.f64_type(),
-                                        "lam_ret_i2f",
-                                    )
-                                    .unwrap();
-                                return Some(back);
-                            }
-                            // A bool body rides the i64 ABI as 0/1. Read back as
-                            // i64 it reached `to_str` as an integer and printed
-                            // "1"/"0" where the interpreter prints "true"/"false"
-                            // — found by the very harness written for this fix,
-                            // not by the finding. Narrow it back to i1 so the
-                            // call-site to_str dispatch picks to_str_bool.
-                            (Some(v), Some(Type::Bool)) => {
-                                let back = build_wrappers::w_int_truncate(
-                                    &self.ir.builder,
-                                    v.into_int_value(),
-                                    self.ir.context.bool_type(),
-                                    "lam_ret_i2b",
-                                );
-                                return Some(back.into());
-                            }
-                            _ => {}
-                        }
-                        return raw;
+                        let sig = self.closure_call_sig(callee);
+                        return self.emit_closure_call(sv, sig, args, fn_val);
                     }
                 }
+            } else if !matches!(callee, ast::Expr::StructLit { .. }) {
+                let sig = self.closure_call_sig(callee);
+                let errors_before = self.codegen_errors.len();
+                let closure = match self.emit_expr(callee, fn_val) {
+                    Some(BasicValueEnum::StructValue(sv))
+                        if sv.get_type().count_fields() == 2
+                            && sv
+                                .get_type()
+                                .get_field_types()
+                                .iter()
+                                .all(|t| t.is_pointer_type()) =>
+                    {
+                        Some(sv)
+                    }
+                    _ => None,
+                };
+                let Some(sv) = closure else {
+                    // The checker typed this callee as a function, so a callee
+                    // that did not lower to a closure is a codegen gap — refuse
+                    // rather than drop the call (the AX-24 silent-assign class).
+                    if self.codegen_errors.len() == errors_before {
+                        let msg = "codegen error [E0910]: native codegen could not lower this \
+                                   call's callee expression to a closure value, so the call \
+                                   cannot be emitted. The interpreter supports it; run under \
+                                   `axon run`."
+                            .to_string();
+                        if !self.codegen_errors.iter().any(|e| e == &msg) {
+                            eprintln!("{msg}");
+                            self.codegen_errors.push(msg);
+                        }
+                    }
+                    return None;
+                };
+                return self.emit_closure_call(sv, sig, args, fn_val);
             }
         }
 
@@ -9818,9 +10774,8 @@ impl<'ctx> super::Codegen<'ctx> {
                     }
                 }
             }
-            // arr_sort_by(&a, |x, y| cmp) — stable insertion sort with an i64
-            // comparator (negative ⇒ x sorts before y). Builds a fresh sorted
-            // slice by inserting each element at its position.
+            // arr_sort_by(&a, |x, y| cmp) — stable merge sort with an i64
+            // comparator (negative ⇒ x sorts before y) into a fresh slice.
             if name == "arr_sort_by" && args.len() == 2 && self.arr_arg_elem_is_i64(&args[0]) {
                 if let (Some(slice_val), Some(BasicValueEnum::StructValue(lam))) = (
                     self.emit_expr(&args[0], fn_val),
@@ -9853,17 +10808,24 @@ impl<'ctx> super::Codegen<'ctx> {
                     return self.emit_arr_i64_repeat(v, n, fn_val);
                 }
             }
-            // arr_concat(a, b) → a ++ b (two i64 slices into one fresh slice).
-            if name == "arr_concat"
-                && args.len() == 2
-                && self.arr_arg_elem_is_i64(&args[0])
-                && self.arr_arg_elem_is_i64(&args[1])
-            {
-                if let (Some(a_slice), Some(b_slice)) = (
-                    self.emit_expr(&args[0], fn_val),
-                    self.emit_expr(&args[1], fn_val),
-                ) {
-                    return self.emit_arr_i64_concat(a_slice, b_slice, fn_val);
+            // arr_concat(a, b) → a ++ b: the same lowering as array `+`, for
+            // any element type with a native layout.
+            if name == "arr_concat" && args.len() == 2 {
+                let slice_ty = self
+                    .arr_arg_slice_ty(&args[0])
+                    .or_else(|| self.arr_arg_slice_ty(&args[1]))
+                    .or_else(|| self.infer_expr_sem_type(&args[0]))
+                    .or_else(|| self.infer_expr_sem_type(&args[1]));
+                if let Some(Type::Slice(inner)) = slice_ty {
+                    if let (Some(a_slice), Some(b_slice)) = (
+                        self.emit_expr(&args[0], fn_val),
+                        self.emit_expr(&args[1], fn_val),
+                    ) {
+                        if let Some(v) = self.emit_arr_concat_any(a_slice, b_slice, &inner, fn_val)
+                        {
+                            return Some(v);
+                        }
+                    }
                 }
             }
             // arr_unique(&a) → first occurrence of each value (O(n²) seen-scan).
@@ -10523,6 +11485,37 @@ impl<'ctx> super::Codegen<'ctx> {
                 continue;
             }
 
+            // AX-08: a `&mut [T]` parameter receives the ADDRESS of the
+            // caller's slot, so the callee's writes (and reborrows) land in it.
+            if matches!(axon_param_ty, Some(ast::AxonType::RefMut(_))) {
+                let slot = match a {
+                    ast::Expr::UnaryOp {
+                        op: ast::UnaryOp::RefMut,
+                        operand,
+                    } => match operand.as_ref() {
+                        ast::Expr::Ident(n) => self.locals.get(n).map(|(p, _)| *p),
+                        _ => None,
+                    },
+                    _ => None,
+                };
+                let Some(slot) = slot else {
+                    let msg = format!(
+                        "codegen error [E0910]: argument {} of the call to `{}` must be \
+                         `&mut` of a local variable to bind a `&mut [T]` parameter natively.",
+                        i + 1,
+                        fn_v.get_name().to_string_lossy()
+                    );
+                    if !self.codegen_errors.iter().any(|e| e == &msg) {
+                        eprintln!("{msg}");
+                        self.codegen_errors.push(msg);
+                    }
+                    return None;
+                };
+                arg_vals.push(slot.into());
+                self.current_option_inner = saved_oi_arg;
+                self.current_result_types = saved_rt_arg;
+                continue;
+            }
             let val = match self.emit_expr(a, fn_val) {
                 Some(v) => v,
                 // `continue` DROPPED the argument and emitted the call with a

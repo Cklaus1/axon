@@ -476,6 +476,10 @@ impl Formatter {
                 self.write("&");
                 self.emit_axon_type(inner);
             }
+            AxonType::RefMut(inner) => {
+                self.write("&mut ");
+                self.emit_axon_type(inner);
+            }
             AxonType::RawPtr(inner) => {
                 self.write("*");
                 self.emit_axon_type(inner);
@@ -1066,6 +1070,7 @@ fn unaryop_str(op: &UnaryOp) -> &'static str {
         UnaryOp::Neg => "-",
         UnaryOp::Not => "!",
         UnaryOp::Ref => "&",
+        UnaryOp::RefMut => "&mut ",
         UnaryOp::BitNot => "~",
     }
 }

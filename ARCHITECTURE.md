@@ -119,6 +119,7 @@ codegen-disagrees-with-HM bug is a live category.
 | `axon-core` | the compiler: lexer → codegen, the interpreter, the CLI (all 25 verbs) |
 | `axon-rt` | C-ABI runtime the native binaries link against (`__axon_*` externs) |
 | `axon-ai` | live model routing — provider codecs, gateway URL, keys, tiers |
+| `axon-rt-ai` | `axon-rt` + `axon-ai` as ONE staticlib (one copy of std), linked only into native binaries that can reach an AI builtin |
 | `axon-audit` | the capability audit ledger (append-only, integrity-checked) |
 | `axon-web` | the approval-flow UI: a thin JSON proxy over the Phase-10 CLI verbs |
 | `axon-cortex` | the Cortex control-plane slice: typed contracts, an authority-checked repair episode, and its conformance run. A library plus its gates — **no CLI verb calls it yet**, so nothing here is on a user's path |

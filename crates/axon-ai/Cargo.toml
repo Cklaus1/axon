@@ -4,7 +4,10 @@ version = "0.1.0"
 edition = "2021"
 
 [lib]
-crate-type = ["staticlib", "rlib"]
+# `rlib` only. Native binaries get the AI symbols from `libaxon_rt_ai.a`
+# (crates/axon-rt-ai), which bundles this crate with axon-rt over one std; a
+# standalone `libaxon_ai.a` is no longer linked anywhere.
+crate-type = ["rlib"]
 
 [dependencies]
 reqwest = { version = "0.12", features = ["json", "blocking", "rustls-tls"], default-features = false }

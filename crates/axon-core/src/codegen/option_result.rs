@@ -192,6 +192,7 @@ impl<'ctx> super::Codegen<'ctx> {
     pub(super) fn emit_question(
         &mut self,
         result_val: BasicValueEnum<'ctx>,
+        inner_ok_ty: Option<Type>,
         fn_val: FunctionValue<'ctx>,
     ) -> BasicValueEnum<'ctx> {
         let _result_ty = match result_val.get_type() {
@@ -250,12 +251,16 @@ impl<'ctx> super::Codegen<'ctx> {
             1,
             "qpayload",
         );
-        // Use extract_result_payload to get the properly typed Ok value.
-        let payload = if let Some((ok_ty, _)) = self.current_result_types.clone() {
-            self.extract_result_payload(raw_payload, &ok_ty)
-                .unwrap_or(raw_payload)
-        } else {
-            raw_payload
+        // Cast to the operand's Ok type. The enclosing fn's Ok type is only a
+        // fallback when the operand's type is unknown: casting to it read the
+        // first 8 bytes of a wider payload (`Uncertain<i64>`) and left the
+        // rest of the bound value as whatever the stack last held.
+        let ok_ty = inner_ok_ty.or_else(|| self.current_result_types.clone().map(|(ok, _)| ok));
+        let payload = match ok_ty {
+            Some(ok_ty) => self
+                .extract_result_payload(raw_payload, &ok_ty)
+                .unwrap_or(raw_payload),
+            None => raw_payload,
         };
 
         payload

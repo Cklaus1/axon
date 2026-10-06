@@ -182,13 +182,92 @@ Field indices:
 
 An array literal `[a, b, c]` is lowered to:
 
-1. Alloca a fixed-size LLVM array `[N x T]` on the stack.
-2. Store each element via GEP indices `[0, i]`.
-3. Cast the alloca pointer to `ptr`.
-4. Build and return a `{ i64, ptr }` struct with `len = N` and `data = cast_ptr`.
+1. Evaluate every element (all of them, before any store).
+2. Obtain backing storage for `N` elements (see "Array literal storage" below).
+3. Store each element via GEP indices `[i]` at the element type's ABI stride.
+4. Build and return a `{ i64, ptr }` struct with `len = N` and `data = storage`.
 
-The backing storage lives on the **stack** (the alloca). Callers must not store the slice pointer
-beyond the lifetime of the enclosing stack frame.
+The empty literal `[]` is the constant `{ 0, null }` and has no storage.
+
+### Array literal storage
+
+Native code has no garbage collector and no array refcount, and no runtime or
+codegen path ever frees or reallocates an array buffer (`arr_push`, `arr_concat`,
+COW snapshots etc. always build a fresh buffer). A literal therefore gets one of
+two kinds of storage, chosen per literal site by escape analysis
+(`codegen/escape.rs`):
+
+| Storage | When | Lifetime |
+|---|---|---|
+| **Stack slot**: one `[N x T]` alloca in the function's entry block, reused by every evaluation of that site | The site is proven frame-local with a single live value (rules below) and the slot is at most 1 KiB (conservative size estimate) | The function activation; nothing to free |
+| **Heap**: `malloc(N * sizeof(T))` per evaluation | Every other site | Never freed (see §10) |
+
+A NAME is **local** when every occurrence of it in the function body is one of:
+
+* an index read `n[i]` (it copies an element out; no sub-slice syntax exists);
+* the root of a place write `n[i] = x` / `n[i].f = x` (written in place);
+* a direct argument (`n` or `&n`) of a callee parameter that does **not retain**;
+* the initializer of another binding `let m = n` (then `n` escapes iff `m` does).
+
+Any other occurrence - returned, a block's or `if`/`match` arm's value, an
+element/field of an array/tuple/struct/`Some`/`Ok`/`Err` literal, the value of an
+assignment to any variable, a `match` subject, an operator operand, a method-call
+receiver, an interpolated value, a call through a non-whitelisted builtin or an
+unknown callee - makes the name **escape**. So does **every** occurrence inside a
+lambda (captures included), `spawn`, `select`, `comptime` block or effect-handler
+arm: that code may run in another frame or thread, or be emitted more than once.
+Analysis is by name, not by binding, so shadowing only makes it more
+conservative (an escape of any binding of `n` counts for all of them).
+
+A callee parameter **does not retain** its argument when it is
+
+* the array parameter of a read-only builtin that returns a scalar and is lowered
+  as an inline loop with no runtime call (`len`, `arr_sum_*`, `arr_mean_*`,
+  `arr_std_f64`, `arr_max_*`, `arr_min_*`, `arr_argmax_*`, `arr_argmin_*`,
+  `arr_contains`, `arr_index_of`, `arr_count_if`, `arr_all`, `arr_any`), or
+* a parameter of a user function whose name is local in that function's body.
+  This is a least fixpoint over the whole call graph (start from "nothing
+  retains", flip a parameter to "retains" when its name escapes), so a recursive
+  function that only reads its parameter stays non-retaining.
+
+Calls are only trusted when the callee is a direct call by name to exactly one
+user function (not a name bound in the caller, which may hold a closure; not a
+name defined twice; not a name that is also a builtin, since codegen may lower
+either one) with matching arity. Everything else retains.
+
+A literal site gets a stack slot when it is
+
+* `let n = [..]` (or `own`/`ref`) with `n` local;
+* `n = [..]` with `n` local, bound by `let` in this function (not a parameter),
+  and never the initializer of another binding;
+* `[..]` passed directly to a non-retaining parameter; or
+* `[..][i]`, consumed on the spot.
+
+**Soundness.** (1) *No dangling pointer.* A stack-slot buffer is reachable only
+through the literal's own value. Each rule above keeps that value out of every
+location that can outlive the activation: it is never returned, never stored into
+an aggregate, never assigned to a pre-existing variable, never captured, and only
+lent to callees that provably neither return nor store it (and those calls finish
+before the activation does). Element values are copied into the slot; nested
+array elements are separate (heap) literals because a literal inside a literal is
+never a site. (2) *No observable reuse.* The slot is overwritten only when the
+same site is evaluated again, so it suffices that no earlier value of the site is
+still reachable then. For `let n = [..]`, the earlier value was reachable only from
+`n` and its `let m = n` aliases, all bindings of the block that is being
+re-entered, so they are out of scope (a value carried out of the block would have
+to be assigned to an outer variable or stored somewhere, which makes `n` escape).
+For `n = [..]`, the earlier value was reachable only from `n` itself (no alias is
+ever made from `n`), and `n` is being overwritten; all elements are evaluated
+before the first store, so `n = [n[1], n[0]]` reads the old value correctly. A
+copy-on-write snapshot (`let m = n; m[0] = 9`) is a fresh heap buffer, and a
+recursive call has its own frame and slot.
+
+Effect: `let v = [i, i + 1, i + 2, i + 3]` summed in a 50,000,000-iteration loop
+went from 2.3 GB max RSS to about 2 MB, and passing a literal to a helper per
+iteration (`total([i, i + 1])`) likewise stays flat. Literals that do escape
+still leak one `malloc` per evaluation. Read-only global backing for constant
+literals is not implemented, because native array writes go in place to the
+buffer and a `.rodata` buffer would fault on the first write.
 
 ### Index expression `receiver[index]`
 
@@ -690,9 +769,9 @@ returning it from a function produced a dangling pointer after the frame was rel
 elements into the heap buffer. The returned slice struct's `data` pointer is a stable heap
 pointer that outlives the creating stack frame.
 
-**Performance note**: heap allocation for every array literal is more expensive than stack
-allocation. A future optimisation pass (escape analysis) will move allocations back to the stack
-when the slice is proven not to escape. For Phase 2 this is the correct-by-default choice.
+**Performance note**: heap allocation for every array literal leaked one buffer per evaluation
+(AX-12). Escape analysis now moves provably non-escaping literals back to a per-site stack slot;
+see §3 "Array literal storage" for the rules and the soundness argument.
 
 ---
 
@@ -705,7 +784,7 @@ Phase 1 and 2: it avoids the complexity of a garbage collector or explicit drop 
 language semantics are still being defined. The trade-off is that long-running programs leak
 memory.
 
-The following values are heap-allocated and never freed:
+Where each value's storage comes from (no heap allocation in this table is ever freed):
 
 | Value | Allocation site | Notes |
 |-------|----------------|-------|
@@ -713,7 +792,8 @@ The following values are heap-allocated and never freed:
 | `axon_concat` result | `malloc` in `axon_concat` body | Leaks in Phase 1/2 |
 | `to_str` result (Phase 2+) | `malloc` per call | Leaks in Phase 2 |
 | `to_str_f64` result (Phase 2+) | `malloc` per call | Leaks in Phase 2 |
-| Array literals (Phase 2+) | `malloc` per literal | Leaks in Phase 2 |
+| Array literals, non-escaping (escape analysis, §3 "Array literal storage") | One entry-block stack slot per literal site, reused by every evaluation | No heap use; flat RSS in loops |
+| Array literals, escaping (returned, stored, captured, retained by a callee) | `malloc` per evaluation | Leaks |
 | Closure environments | `malloc` at closure creation | Leaks in Phase 3 |
 | Channel handles | `malloc` in `__axon_chan_new` | Freed via `__axon_chan_drop` (ref-counted) |
 

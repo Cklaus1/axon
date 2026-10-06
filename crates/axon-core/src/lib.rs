@@ -51,6 +51,8 @@ pub mod token;
 pub mod types;
 // Phase 3
 pub mod borrow;
+/// `&mut [T]` parameter mode: the static rules (E0604/E0605/E0606).
+pub mod mut_borrow;
 pub mod comptime;
 /// Codegen-free tree-walking interpreter (`axon run` without LLVM).
 pub mod interp;
@@ -184,14 +186,40 @@ pub fn parse_source_with_spans(src: &str) -> Result<(ast::Program, Vec<TokenSpan
     Ok((program, token_spans))
 }
 
-/// Serialize a `Program` to pretty-printed JSON.
+/// Serialize a `Program` to pretty-printed JSON (`axon parse`).
 ///
-/// This function lives in the lib (not the binary) to avoid serde_json pulling
-/// in trait impls that overflow the compiler's recursion limit when combined
-/// with inkwell's large type universe in the binary crate.
+/// The AST enums are adjacently tagged (`{"kind", "value"}`, see `ast.rs`);
+/// the internally-tagged form this replaced could neither be monomorphized
+/// (the build never finished) nor represent an identifier (AX-10).
 #[cfg(feature = "serde-json")]
 pub fn program_to_json(program: &ast::Program) -> Result<String, String> {
     serde_json::to_string_pretty(program).map_err(|e| e.to_string())
+}
+
+#[cfg(all(test, feature = "serde-json"))]
+mod program_json_tests {
+    /// AX-10. Every AST shape must serialize - identifiers (a newtype variant
+    /// holding a string), nested expressions (a variant holding the same
+    /// enum), patterns, literals, types and format strings - and the JSON must
+    /// load back into an AST that serializes identically.
+    #[test]
+    fn program_json_covers_every_ast_enum_and_round_trips() {
+        let src = "fn f(x: Option<i64>) -> str {\n    match x {\n        Some(n) => \"n={n + 1}\",\n        None => \"none\",\n    }\n}\nfn main() {\n    let y = f(Some(2))\n    println(y)\n}\n";
+        let program = crate::parse_source(src).expect("parse");
+        let json = crate::program_to_json(&program).expect("an AST with identifiers serializes");
+        for needle in [
+            r#""kind": "FnDef""#,
+            r#""kind": "Ident""#,
+            r#""kind": "Match""#,
+            r#""kind": "Some""#,
+            r#""kind": "Option""#,
+            r#""kind": "Int""#,
+        ] {
+            assert!(json.contains(needle), "missing {needle} in:\n{json}");
+        }
+        let back: crate::ast::Program = serde_json::from_str(&json).expect("AST JSON loads");
+        assert_eq!(crate::program_to_json(&back).unwrap(), json);
+    }
 }
 
 /// A single structured diagnostic from any pipeline stage.
@@ -393,10 +421,10 @@ pub fn generate_docs(program: &ast::Program, source: &str, filename: &str) -> St
 pub fn compile_bitcode_to_binary(
     bitcode: &[u8],
     output_path: &str,
-    release: bool,
+    opt: codegen::OptLevel,
     target_triple: Option<&str>,
 ) -> Result<(), String> {
-    codegen::compile_bitcode_to_binary(bitcode, output_path, release, target_triple)
+    codegen::compile_bitcode_to_binary(bitcode, output_path, opt, target_triple)
 }
 
 /// Result of running the full analysis pipeline on a source text.
@@ -479,7 +507,9 @@ pub fn parse_source_files(paths: &[std::path::PathBuf]) -> Result<Vec<NamedProgr
 
 // ── Cache re-exports (Phase 4 §4) ────────────────────────────────────────────
 
-pub use cache::{cache_key, cache_path, clean_cache, default_cache_dir, read_axc, write_axc};
+pub use cache::{
+    cache_key, cache_path, clean_cache, compiler_digest, default_cache_dir, read_axc, write_axc,
+};
 
 // ── AXON_PATH module loading (Phase 4 §6) ────────────────────────────────────
 

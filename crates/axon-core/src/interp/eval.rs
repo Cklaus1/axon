@@ -61,6 +61,51 @@ fn native_ledger_kind(effects: &[&str]) -> Option<axon_audit::EffectKind> {
     })
 }
 
+/// Whether `e` reads, assigns or rebinds the variable `name` anywhere.
+fn mentions_var(e: &Expr, name: &str) -> bool {
+    let mut hit = false;
+    crate::ast::walk_expr(e, &mut |x| {
+        hit |= match x {
+            Expr::Ident(n)
+            | Expr::Assign { name: n, .. }
+            | Expr::Let { name: n, .. }
+            | Expr::Own { name: n, .. }
+            | Expr::RefBind { name: n, .. } => n == name,
+            _ => false,
+        }
+    });
+    hit
+}
+
+/// The appending updates `assign_in_place` performs on a variable's buffer.
+#[derive(Clone, Copy)]
+enum AppendOp {
+    /// `x = arr_push(x, v)`
+    Push,
+    /// `x = arr_concat(x, ys)`
+    Concat,
+    /// `x = x + y` (str or array)
+    Add,
+}
+
+/// AX-25: the closure value of the top-level fn `name` (arity `arity`): the
+/// capture-free forwarding lambda `|#0, #1, ..| name(#0, #1, ..)`. The `#n`
+/// parameter names cannot be written in source, so they never shadow a name the
+/// callee's body or arguments could refer to.
+fn fn_value(name: &str, arity: usize) -> Value {
+    let params: Vec<String> = (0..arity).map(|i| format!("#{i}")).collect();
+    let args = params.iter().map(|p| Expr::Ident(p.clone())).collect();
+    Value::Closure {
+        params,
+        body: Box::new(Expr::Call {
+            callee: Box::new(Expr::Ident(name.to_string())),
+            args,
+            tier: None,
+        }),
+        captured: std::rc::Rc::new(std::cell::RefCell::new(HashMap::new())),
+    }
+}
+
 impl<'p> Interp<'p> {
     // ── Core evaluator ───────────────────────────────────────────────────────
 
@@ -73,6 +118,15 @@ impl<'p> Interp<'p> {
                     Ok(v.clone())
                 } else if let Some(v) = self.globals.get(name) {
                     Ok(v.clone())
+                } else if let Some(f) = self.fns.get(name.as_str()) {
+                    // AX-25: a top-level fn named in VALUE position (`let g = f`,
+                    // `[f, h]`, `apply(f, x)`) is a first-class closure. It is the
+                    // forwarding lambda `|a0, ..| f(a0, ..)` with no captures, so a
+                    // call through the value re-enters `eval_call` by NAME and takes
+                    // exactly the path a direct `f(..)` call takes — contracts,
+                    // `@[verify]` gates, effect/capability gates and provenance
+                    // included. The resolver refuses builtins and generic fns here.
+                    Ok(fn_value(name, f.params.len()))
                 } else {
                     panic(format!("undefined identifier `{name}`"))
                 }
@@ -136,6 +190,9 @@ impl<'p> Interp<'p> {
             }
 
             Expr::Assign { name, value } => {
+                if self.assign_in_place(name, value, env)? {
+                    return Ok(Value::Unit);
+                }
                 let v = self.eval(value, env)?;
                 if env.assign(name, v) {
                     Ok(Value::Unit)
@@ -165,7 +222,10 @@ impl<'p> Interp<'p> {
                             .ok_or_else(|| Flow::Panic(format!("no field `{f}`")))?,
                         (PlaceStep::Index(i), Value::Array(items)) => {
                             let n = items.len();
-                            items.get_mut(*i).ok_or_else(|| {
+                            // Copy-on-write: copies only if this array is shared
+                            // with another binding; a uniquely owned one is
+                            // written in place.
+                            Rc::make_mut(items).get_mut(*i).ok_or_else(|| {
                                 Flow::Panic(format!("index {i} out of bounds (len {n})"))
                             })?
                         }
@@ -185,7 +245,7 @@ impl<'p> Interp<'p> {
                         if *i >= items.len() {
                             return panic(format!("index {i} out of bounds (len {})", items.len()));
                         }
-                        items[*i] = v;
+                        Rc::make_mut(items)[*i] = v;
                     }
                     (_, other) => {
                         return panic(format!(
@@ -431,32 +491,21 @@ impl<'p> Interp<'p> {
             }
 
             Expr::FieldAccess { receiver, field } => {
-                let v = self.eval(receiver, env)?;
-                match v {
-                    Value::Struct { fields, .. } | Value::Enum { fields, .. } => fields
-                        .get(field)
-                        .cloned()
-                        .ok_or_else(|| Flow::Panic(format!("no field `{field}`"))),
-                    Value::Tuple(items) => {
-                        // `t.0`, `t.1`, … : the parser stores the digit as the
-                        // field name, and the interpreter reads it as the index.
-                        let i: usize = field.parse().map_err(|_| {
-                            Flow::Panic(format!(
-                                "tuple access expects a numeric index, got `.{field}`"
-                            ))
-                        })?;
-                        items.get(i).cloned().ok_or_else(|| {
-                            Flow::Panic(format!(
-                                "tuple index {i} out of bounds (len {})",
-                                items.len()
-                            ))
-                        })
-                    }
-                    other => panic(format!(
-                        "field access on non-struct ({})",
-                        other.type_name()
-                    )),
+                // A variable receiver (`p.x`, the common case) is read in
+                // place: only the field is cloned, not the whole record. The
+                // lookup is the `Expr::Ident` arm's, verbatim.
+                if let Expr::Ident(name) = receiver.as_ref() {
+                    let v = match env.get(name) {
+                        Some(v) => v,
+                        None => match self.globals.get(name) {
+                            Some(v) => v,
+                            None => return panic(format!("undefined identifier `{name}`")),
+                        },
+                    };
+                    return field_of(v, field);
                 }
+                let v = self.eval(receiver, env)?;
+                field_of(&v, field)
             }
 
             Expr::Tuple(elems) => {
@@ -478,6 +527,29 @@ impl<'p> Interp<'p> {
                         }
                     }
                 }
+                // `xs[i]` on a variable reads the element in place: evaluating
+                // `xs` first would copy the whole array per element read, which
+                // makes in-place algorithms over `&mut [T]` (AX-08) quadratic.
+                if let Expr::Ident(name) = receiver.as_ref() {
+                    if env.get(name).is_some() || self.globals.contains_key(name) {
+                        let idx = self.eval_int(index, env)?;
+                        let arr = env.get(name).or_else(|| self.globals.get(name));
+                        return match arr {
+                            Some(Value::Array(items)) => {
+                                items.get(idx as usize).cloned().ok_or_else(|| {
+                                    Flow::Panic(format!(
+                                        "index {idx} out of bounds (len {})",
+                                        items.len()
+                                    ))
+                                })
+                            }
+                            Some(other) => {
+                                panic(format!("indexing non-array ({})", other.type_name()))
+                            }
+                            None => panic(format!("undefined identifier `{name}`")),
+                        };
+                    }
+                }
                 let arr = self.eval(receiver, env)?;
                 let idx = self.eval_int(index, env)?;
                 match arr {
@@ -493,7 +565,7 @@ impl<'p> Interp<'p> {
                 for e in elems {
                     out.push(self.eval(e, env)?);
                 }
-                Ok(Value::Array(out))
+                Ok(Value::Array(Rc::new(out)))
             }
 
             Expr::StructLit { name, fields } => {
@@ -604,7 +676,7 @@ impl<'p> Interp<'p> {
                         }
                     }
                 }
-                Ok(Value::Str(s))
+                Ok(Value::Str(Rc::new(s)))
             }
 
             Expr::Lambda { params, body, .. } => Ok(Value::Closure {
@@ -739,8 +811,8 @@ impl<'p> Interp<'p> {
             .map(|idx| {
                 let mut v = vec![Value::Unit; idx + 1];
                 v[idx] = match args.get(idx) {
-                    Some(Expr::Literal(crate::ast::Literal::Str(sl))) => Value::Str(sl.clone()),
-                    _ => Value::Str(String::from("<dynamic>")),
+                    Some(Expr::Literal(crate::ast::Literal::Str(sl))) => Value::Str(Rc::new(sl.clone())),
+                    _ => Value::Str(Rc::new(String::from("<dynamic>"))),
                 };
                 v
             });
@@ -785,7 +857,7 @@ impl<'p> Interp<'p> {
                 Value::Int(n) => crate::native::GfxArg::Int(*n),
                 Value::SizedInt { val, .. } => crate::native::GfxArg::Int(*val),
                 Value::Float(f) => crate::native::GfxArg::Float(*f),
-                Value::Str(s) => crate::native::GfxArg::Str(s.clone()),
+                Value::Str(s) => crate::native::GfxArg::Str(String::clone(s)),
                 Value::Handle {
                     module: hm,
                     name: hn,
@@ -888,11 +960,11 @@ impl<'p> Interp<'p> {
                 Value::Int(n) => DomainArg::Int(*n),
                 Value::SizedInt { val, .. } => DomainArg::Int(*val),
                 Value::Float(f) => DomainArg::Float(*f),
-                Value::Str(s) => DomainArg::Str(s.clone()),
+                Value::Str(s) => DomainArg::Str(String::clone(s)),
                 Value::Array(items) => {
                     // Only `[i64]` is representable at the boundary.
                     let mut ints = Vec::with_capacity(items.len());
-                    for it in items {
+                    for it in items.iter() {
                         match it {
                             Value::Int(n) => ints.push(*n),
                             Value::SizedInt { val, .. } => ints.push(*val),
@@ -945,9 +1017,9 @@ impl<'p> Interp<'p> {
         match result {
             Ok(DomainValue::Unit) => Ok(Value::Unit),
             Ok(DomainValue::Int(n)) => Ok(Value::Int(n)),
-            Ok(DomainValue::Str(s)) => Ok(Value::Str(s)),
+            Ok(DomainValue::Str(s)) => Ok(Value::Str(Rc::new(s))),
             Ok(DomainValue::IntArray(ns)) => {
-                Ok(Value::Array(ns.into_iter().map(Value::Int).collect()))
+                Ok(Value::Array(Rc::new(ns.into_iter().map(Value::Int).collect())))
             }
             Ok(DomainValue::Handle { name, payload }) => Ok(Value::Handle {
                 module: module.name.to_string(),
@@ -980,6 +1052,15 @@ impl<'p> Interp<'p> {
                 // If we can't recognize the pattern, fall through to "undefined P"
                 // which will surface as a meaningful error rather than a type error.
             }
+        }
+
+        // AX-08: a call passing `&mut a` moves each borrowed value out of the
+        // caller's binding into the callee and back on return (O(1), no copy).
+        if args
+            .iter()
+            .any(|a| matches!(a, Expr::UnaryOp { op: UnaryOp::RefMut, .. }))
+        {
+            return self.eval_call_mut(callee, args, tier, env);
         }
 
         // Evaluate arguments left-to-right.
@@ -1024,14 +1105,26 @@ impl<'p> Interp<'p> {
             // 1. A local/captured variable holding a closure.
             if let Some(Value::Closure { .. }) = env.get(name) {
                 let c = env.get(name).unwrap().clone();
-                return self.call_closure(c, argv);
+                return self.call_local_closure(c, argv);
             }
-            // 2. A builtin.
-            if let Some(v) = self.call_builtin(name, &argv)? {
-                return Ok(v);
-            }
+            // 2. A builtin — skipped for a name already proven not to be one
+            //    (see `resolved_callees`), which also caches step 3's lookup.
+            let known = self.resolved_callees.borrow().get(name.as_str()).copied();
+            let user_fn = match known {
+                Some(f) => f,
+                None => {
+                    if let Some(v) = self.call_builtin(name, &argv)? {
+                        return Ok(v);
+                    }
+                    let f = self.fns.get(name.as_str()).copied();
+                    if super::builtins::builtin_dispatch_is_inert(name) {
+                        self.resolved_callees.borrow_mut().insert(name.clone(), f);
+                    }
+                    f
+                }
+            };
             // 3. A user-defined function.
-            if let Some(f) = self.fns.get(name) {
+            if let Some(f) = user_fn {
                 return self.call_fn(f, argv);
             }
             // 4. A module-level closure constant.
@@ -1046,6 +1139,63 @@ impl<'p> Interp<'p> {
         // (e.g. `make_adder(1)(2)` or an array element).
         let c = self.eval(callee, env)?;
         self.call_closure(c, argv)
+    }
+
+    /// AX-08: `f(.., &mut a, ..)`. The checker (E0605/E0606) guarantees the
+    /// callee is a free fn whose matching params are `&mut [T]`, every `&mut`
+    /// operand is a whole local, and no other argument mentions it.
+    fn eval_call_mut(
+        &self,
+        callee: &Expr,
+        args: &[Expr],
+        tier: Option<&str>,
+        env: &mut Env,
+    ) -> R {
+        let f = match callee {
+            Expr::Ident(name) => match self.fns.get(name) {
+                Some(f) => *f,
+                None => return panic(format!("`&mut` argument passed to `{name}`, which is not a function taking `&mut` parameters")),
+            },
+            _ => return panic("`&mut` argument passed to a computed callee".to_string()),
+        };
+        // Plain arguments first, left to right: they cannot mention a
+        // borrowed variable (E0606), so this order is unobservable — and if
+        // one unwinds (`?`, panic) nothing has been moved out yet.
+        let mut argv = Vec::with_capacity(args.len());
+        for a in args {
+            argv.push(match a {
+                Expr::UnaryOp {
+                    op: UnaryOp::RefMut,
+                    ..
+                } => Value::Unit,
+                _ => self.eval(a, env)?,
+            });
+        }
+        let mut borrowed: Vec<(usize, &str)> = Vec::new();
+        for (i, a) in args.iter().enumerate() {
+            if let Expr::UnaryOp {
+                op: UnaryOp::RefMut,
+                operand,
+            } = a
+            {
+                let Expr::Ident(name) = operand.as_ref() else {
+                    return panic("`&mut` of something other than a local variable".to_string());
+                };
+                let Some(slot) = env.get_mut(name) else {
+                    return panic(format!("`&mut {name}`: `{name}` is not a local variable"));
+                };
+                argv[i] = std::mem::replace(slot, Value::Unit);
+                borrowed.push((i, name.as_str()));
+            }
+        }
+        *self.current_call_tier.borrow_mut() = tier.map(|t| t.to_string());
+        let (result, mut outs) = self.call_fn_mut(f, argv);
+        for (i, name) in borrowed {
+            if let Some(slot) = env.get_mut(name) {
+                *slot = std::mem::replace(&mut outs[i], Value::Unit);
+            }
+        }
+        result
     }
 
     /// Phase 6: evaluate `with handler { … } { body }`. Installs the inline
@@ -1282,6 +1432,100 @@ impl<'p> Interp<'p> {
         eval_binop_vals(op, l, r)
     }
 
+    /// AX-31: `x = arr_push(x, v)`, `x = arr_concat(x, ys)` and `x = x + y` on a
+    /// str or array local append to `x`'s buffer instead of rebuilding it.
+    ///
+    /// Evaluated the ordinary way, the right-hand side first reads `x` — a
+    /// refcount bump — so the builtin or `+` sees a shared buffer and copies
+    /// all of it, which makes a builder loop quadratic. Here the other operand
+    /// is evaluated first and `x`'s binding is then appended to through
+    /// `Rc::make_mut`: in place when the binding is the only owner, copied
+    /// first (the old cost) when another binding, element or capture still
+    /// holds the old value — which therefore never sees the append.
+    ///
+    /// Evaluating the operand before reading `x` is unobservable: the operand
+    /// cannot mention `x` (checked syntactically), and no code it runs can
+    /// reach a local binding — closures, fns, handler arms and continuation
+    /// replays run on their own envs. `arr_push`/`arr_concat` are pure
+    /// builtins (empty effect row, no capability), so not going through
+    /// `call_builtin` skips no gate, audit row or handler. Returns `Ok(false)`,
+    /// having evaluated nothing, for any other statement shape or when `x` is
+    /// not a str/array local.
+    fn assign_in_place(&self, name: &str, value: &Expr, env: &mut Env) -> Result<bool, Flow> {
+        let (op, operand, call) = match value {
+            Expr::BinOp {
+                op: BinOp::Add,
+                left,
+                right,
+            } => match left.as_ref() {
+                Expr::Ident(x) if x == name => (AppendOp::Add, right.as_ref(), None),
+                _ => return Ok(false),
+            },
+            Expr::Call { callee, args, tier } => {
+                let Expr::Ident(f) = callee.as_ref() else {
+                    return Ok(false);
+                };
+                let op = match f.as_str() {
+                    "arr_push" => AppendOp::Push,
+                    "arr_concat" => AppendOp::Concat,
+                    _ => return Ok(false),
+                };
+                match args.as_slice() {
+                    [Expr::Ident(x), operand] if x == name => (op, operand, Some((f, tier))),
+                    _ => return Ok(false),
+                }
+            }
+            _ => return Ok(false),
+        };
+        if !matches!(env.get(name), Some(Value::Str(_) | Value::Array(_)))
+            || mentions_var(operand, name)
+        {
+            return Ok(false);
+        }
+        if let Some((f, _)) = call {
+            // `eval_call` would run a local closure of that name instead, or take
+            // the `&mut` path; the operand must not be able to change which.
+            if matches!(env.get(f), Some(Value::Closure { .. }))
+                || matches!(
+                    operand,
+                    Expr::UnaryOp {
+                        op: UnaryOp::RefMut,
+                        ..
+                    }
+                )
+                || mentions_var(operand, f)
+            {
+                return Ok(false);
+            }
+        }
+        let y = self.eval(operand, env)?;
+        if let Some((_, tier)) = call {
+            *self.current_call_tier.borrow_mut() = tier.clone();
+        }
+        let Some(slot) = env.get_mut(name) else {
+            unreachable!("the operand does not mention `{name}`, so it is still bound")
+        };
+        match (op, slot, y) {
+            (AppendOp::Push, Value::Array(xs), y) => Rc::make_mut(xs).push(y),
+            (AppendOp::Concat | AppendOp::Add, Value::Array(xs), Value::Array(ys)) => {
+                Rc::make_mut(xs).extend(ys.iter().cloned())
+            }
+            (AppendOp::Add, Value::Str(s), Value::Str(t)) => Rc::make_mut(s).push_str(&t),
+            // An operand of another type (`Uncertain`, a type error): the
+            // ordinary evaluation, on the operands already evaluated.
+            (op, slot, y) => {
+                let x = slot.clone();
+                *slot = match (op, call) {
+                    (AppendOp::Push | AppendOp::Concat, Some((f, _))) => self
+                        .call_builtin(f, &[x, y])?
+                        .expect("arr_push/arr_concat are builtins"),
+                    _ => eval_binop_vals(&BinOp::Add, x, y)?,
+                };
+            }
+        }
+        Ok(true)
+    }
+
     pub(super) fn eval_int(&self, expr: &Expr, env: &mut Env) -> Result<i64, Flow> {
         match self.eval(expr, env)? {
             Value::Int(n) => Ok(n),
@@ -1499,6 +1743,36 @@ fn eval_dist_cdf(dist: &Value, k: f64) -> Option<f64> {
     }
 }
 
+/// `v.field` for a struct/enum field or a tuple's `.N`: clones only the
+/// selected component.
+fn field_of(v: &Value, field: &str) -> R {
+    match v {
+        Value::Struct { fields, .. } | Value::Enum { fields, .. } => fields
+            .get(field)
+            .cloned()
+            .ok_or_else(|| Flow::Panic(format!("no field `{field}`"))),
+        Value::Tuple(items) => {
+            // `t.0`, `t.1`, … : the parser stores the digit as the
+            // field name, and the interpreter reads it as the index.
+            let i: usize = field.parse().map_err(|_| {
+                Flow::Panic(format!(
+                    "tuple access expects a numeric index, got `.{field}`"
+                ))
+            })?;
+            items.get(i).cloned().ok_or_else(|| {
+                Flow::Panic(format!(
+                    "tuple index {i} out of bounds (len {})",
+                    items.len()
+                ))
+            })
+        }
+        other => panic(format!(
+            "field access on non-struct ({})",
+            other.type_name()
+        )),
+    }
+}
+
 fn get_f64_field(fields: &HashMap<String, Value>, key: &str) -> Option<f64> {
     match fields.get(key)? {
         Value::Float(f) => Some(*f),
@@ -1511,7 +1785,7 @@ fn get_f64_array_field(fields: &HashMap<String, Value>, key: &str) -> Option<Vec
     match fields.get(key)? {
         Value::Array(items) => {
             let mut out = Vec::with_capacity(items.len());
-            for v in items {
+            for v in items.iter() {
                 match v {
                     Value::Float(f) => out.push(*f),
                     Value::Int(n) => out.push(*n as f64),

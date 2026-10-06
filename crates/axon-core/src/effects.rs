@@ -663,6 +663,20 @@ fn collect_called_names_ctx(
     handled: &HashSet<String>,
     out: &mut Vec<(String, HashSet<String>)>,
 ) {
+    // AX-25: a user fn named as a VALUE (`let g = f`, `[f, h]`, `mk(f)`) can be
+    // called later through that value, out of sight of this syntactic walk, so
+    // the reference counts as a call to it — over-approximating, which errs
+    // toward flagging rather than toward silence. A plain-ident CALLEE is also
+    // reached here (`for_each_child` visits it); pushing it a second time is
+    // harmless, every consumer folds these into sets. Builtins are excluded:
+    // the resolver refuses them in value position, so an `Ident` that spells a
+    // builtin's name here is a local shadowing it, not the builtin.
+    if let Expr::Ident(name) = e {
+        if !crate::builtins::is_known_builtin(name) {
+            out.push((name.clone(), handled.clone()));
+        }
+        return;
+    }
     if let Expr::Call { callee, .. } = e {
         match callee.as_ref() {
             Expr::Ident(name) => out.push((name.clone(), handled.clone())),
@@ -912,6 +926,20 @@ fn check_expr(
                     });
                 }
             }
+            // Recurse by hand: the plain-ident callee is a CALL, already
+            // reported above, not a value reference; and a bare fn name passed
+            // in a slot the forwarder invokes is exactly what E03 just reported.
+            // Every other argument is walked, so a fn named as a value there is
+            // caught by the `Ident` arm below.
+            let e03_slots = invoked.get(name);
+            for (i, a) in args.iter().enumerate() {
+                let e03_covered =
+                    matches!(a, Expr::Ident(_)) && e03_slots.is_some_and(|s| s.contains(&i));
+                if !e03_covered {
+                    check_expr(a, caller, allowed, handled, inferred, invoked, errors);
+                }
+            }
+            return;
         } else if let Expr::StructLit { name, fields } = callee.as_ref() {
             // R13: a native `M::fn(...)` call contributes module `M`'s declared
             // effects (e.g. gfx → IO) to the caller's required row — an
@@ -936,6 +964,29 @@ fn check_expr(
                 }
             }
         }
+    }
+    // AX-25: a user fn named as a VALUE (`let g = f`, `[f, h]`) may be called
+    // through that value anywhere, so referencing it counts as calling it — the
+    // same rule `collect_called_names_ctx` applies for inference. Builtins cannot
+    // be values (resolver E0306), so a builtin-named `Ident` is a local.
+    if let Expr::Ident(name) = e {
+        if !crate::builtins::is_known_builtin(name) && inferred.contains_key(name) {
+            for eff in callee_effects(name, inferred) {
+                if !allowed.admits(&eff) && !handled.contains(&eff) {
+                    errors.push(EffectError {
+                        code: E1310,
+                        message: format!(
+                            "`{caller}` uses the function `{name}` as a value, and `{name}` \
+                             performs effect `{eff}`, but `{caller}`'s declared effect row \
+                             does not include `{eff}` (add `{eff}` to the row, or handle the \
+                             effect)"
+                        ),
+                        span: Span::dummy(),
+                    });
+                }
+            }
+        }
+        return;
     }
     // A `with H { body }` discharges H's inline-handled effects FROM THE BODY
     // (E04). The handler's own arm bodies are checked WITHOUT that discharge —

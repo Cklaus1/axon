@@ -101,8 +101,8 @@ cargo build -p axon-core --no-default-features --bin axon
 # LLM-backed goals/demos run key-free with deterministic stubs:
 AXON_AI_MOCK=1 ./target/debug/axon goal examples/goals/hello-goal.md
 
-# `axon build` (native binary) and `axon parse --json` / `axon lsp` need extra
-# features: --features codegen and --features serde-json respectively.
+# `axon build` (native binary) needs the default `codegen` feature;
+# `axon parse --json` / `axon lsp` need --features serde-json (combinable).
 ```
 
 ## Language Tour

@@ -41,6 +41,7 @@ pub mod bpf;
 pub mod build_wrappers;
 pub mod builtin_externs;
 pub mod builtins;
+pub mod escape;
 pub mod expr;
 pub mod ir_inkwell;
 pub mod link;
@@ -55,7 +56,7 @@ pub use output::TestResult;
 
 // Re-export the public path that lib.rs / main.rs expect: callers reach
 // `compile_bitcode_to_binary` via `axon_core::codegen::compile_bitcode_to_binary`.
-pub use link::compile_bitcode_to_binary;
+pub use link::{compile_bitcode_to_binary, OptLevel};
 
 /// Phase 4 `@[adaptive]`: returns true if the attribute list contains an
 /// `adaptive` annotation (regardless of its argument list).  Used by
@@ -151,6 +152,22 @@ pub struct Codegen<'ctx> {
     /// Used so a sum-type field initializer (`Box { r: Err("x") }`) builds the
     /// field's full canonical layout, not a value-only one.
     struct_field_sem_types: HashMap<String, Vec<Type>>,
+    /// Roots of every place assignment (`xs[i] = v`, `p.f.xs[j] = v`) in the
+    /// function being emitted. Arrays have COPY semantics in the interpreter
+    /// but share one buffer natively, so a copy is only needed where a write
+    /// could make the sharing observable - see `emit_expr_owned`.
+    cur_written_roots: std::collections::HashSet<String>,
+    /// AX-12: program-wide "does this fn param retain its array argument"
+    /// summaries, computed once in `emit_program` (see `escape.rs`).
+    array_escape: escape::ArrayEscape,
+    /// AX-12: array-literal sites of the fn being emitted whose buffer lives in
+    /// a per-site entry-block stack slot instead of the heap (`emit_array_lit`).
+    stack_array_sites: std::collections::HashSet<usize>,
+    /// AX-08: the `&mut [T]` params of the function being emitted. Their local
+    /// slot IS the caller's slot (a pointer passed in), so any copy of their
+    /// value that outlives a later write must be snapshotted - see
+    /// `emit_expr_owned` and `yields_mut_param`.
+    cur_mut_params: std::collections::HashSet<String>,
     /// Phase 5: named refinement types → their (erased) base AxonType. A
     /// refinement is transparent at the value/layout level, so codegen lowers
     /// `Positive` (and a synthetic inline `__refine_N`) to its base `i64`. Without
@@ -191,6 +208,10 @@ pub struct Codegen<'ctx> {
     /// resulting mismatch is UB — the observed value depended on the order the
     /// lambdas happened to be emitted in.
     closure_sigs: HashMap<String, (Vec<Option<Type>>, Option<Type>)>,
+    /// AX-25: the closure-ABI thunk of each top-level fn named as a VALUE
+    /// (`let g = f0`, `[f0, f1]`, `apply(f0, x)`), keyed by fn name and built
+    /// once. See `fn_value_thunk` in `expr.rs`.
+    fn_value_thunks: HashMap<String, FunctionValue<'ctx>>,
     /// Set when inside a function returning `Result<T,E>`; drives canonical union layout.
     current_result_types: Option<(Type, Type)>,
     /// Set when emitting a value whose target type is `Option<T>`; lets a bare
@@ -423,6 +444,10 @@ impl<'ctx> Codegen<'ctx> {
             functions: HashMap::new(),
             struct_fields: HashMap::new(),
             struct_field_sem_types: HashMap::new(),
+            cur_written_roots: std::collections::HashSet::new(),
+            array_escape: escape::ArrayEscape::default(),
+            stack_array_sites: std::collections::HashSet::new(),
+            cur_mut_params: std::collections::HashSet::new(),
             refinement_base: HashMap::new(),
             refine_preds: HashMap::new(),
             discharged: crate::verify::Discharged::default(),
@@ -431,6 +456,7 @@ impl<'ctx> Codegen<'ctx> {
             fn_return_types: HashMap::new(),
             local_types: HashMap::new(),
             closure_sigs: HashMap::new(),
+            fn_value_thunks: HashMap::new(),
             current_result_types: None,
             current_option_inner: None,
             lambda_counter: 0,
@@ -903,6 +929,14 @@ impl<'ctx> Codegen<'ctx> {
         let mut param_tys: Vec<BasicMetadataTypeEnum<'ctx>> = Vec::with_capacity(f.params.len());
         for p in &f.params {
             match self.llvm_type_from_axon(&p.ty) {
+                // AX-08: a `&mut [T]` param is the address of the caller's slot.
+                Some(_) if matches!(p.ty, ast::AxonType::RefMut(_)) => param_tys.push(
+                    self.ir
+                        .context
+                        .i8_type()
+                        .ptr_type(AddressSpace::default())
+                        .into(),
+                ),
                 Some(t) => param_tys.push(t.into()),
                 None => {
                     let msg = format!(
@@ -1215,6 +1249,9 @@ impl<'ctx> Codegen<'ctx> {
         self.emit_vtable_thunks(program);
         // Emit vtable global constants.
         self.emit_vtable_globals(program);
+        // AX-12: which array-literal sites may live on the stack (per-fn query
+        // in `emit_fn` uses these parameter summaries).
+        self.array_escape = escape::ArrayEscape::analyze(&fn_work);
 
         for (name, f) in &fn_work {
             let llvm_fn = match self.functions.get(name.as_str()).copied() {
@@ -1410,6 +1447,20 @@ impl<'ctx> Codegen<'ctx> {
         let saved_locals = std::mem::take(&mut self.locals);
         let saved_local_types = std::mem::take(&mut self.local_types);
         let saved_result_types = self.current_result_types.take();
+        let saved_written_roots = std::mem::replace(
+            &mut self.cur_written_roots,
+            Self::written_place_roots(&f.body),
+        );
+        let stack_sites = self.array_escape.stack_sites(f);
+        let saved_stack_sites = std::mem::replace(&mut self.stack_array_sites, stack_sites);
+        let saved_mut_params = std::mem::replace(
+            &mut self.cur_mut_params,
+            f.params
+                .iter()
+                .filter(|p| matches!(p.ty, ast::AxonType::RefMut(_)))
+                .map(|p| p.name.clone())
+                .collect(),
+        );
         let saved_adaptive = self.current_adaptive_fn.take();
         let saved_adaptive_input = self.current_adaptive_input.take();
         let saved_agent = self.current_agent_fn.take();
@@ -1552,8 +1603,31 @@ impl<'ctx> Codegen<'ctx> {
         for (i, param) in f.params.iter().enumerate() {
             let sem_ty = self.axon_type_to_semantic(&param.ty);
             if let Some(llvm_ty) = self.llvm_type(&sem_ty) {
+                // AX-08: `xs: &mut [T]` - the arg is the caller's slot, so it
+                // becomes this local's slot: reads, element writes and whole
+                // reassignment all land in the caller's binding.
+                if matches!(param.ty, ast::AxonType::RefMut(_)) {
+                    if let Some(arg) = llvm_fn.get_nth_param(i as u32) {
+                        self.locals
+                            .insert(param.name.clone(), (arg.into_pointer_value(), llvm_ty));
+                        self.local_types.insert(param.name.clone(), sem_ty);
+                    }
+                    continue;
+                }
                 let alloca = build_wrappers::w_alloca(&self.ir.builder, llvm_ty, &param.name);
                 if let Some(arg) = llvm_fn.get_nth_param(i as u32) {
+                    // Array params have value semantics: the callee's writes must
+                    // not reach the caller's buffer, and a returned param must not
+                    // alias the caller's array. Snapshot at entry iff either can
+                    // happen (the param is written, or the fn returns an array).
+                    let arg = if matches!(sem_ty, Type::Slice(_))
+                        && (self.cur_written_roots.contains(&param.name)
+                            || self.type_has_slice(&ret_sem, 0))
+                    {
+                        self.emit_clone_value(arg, &sem_ty, llvm_fn)
+                    } else {
+                        arg
+                    };
                     build_wrappers::w_store(&self.ir.builder, alloca, arg);
                 }
                 self.locals.insert(param.name.clone(), (alloca, llvm_ty));
@@ -1574,6 +1648,14 @@ impl<'ctx> Codegen<'ctx> {
         }
 
         let body_val = self.emit_expr(&f.body, llvm_fn);
+        // AX-08: a value that IS a `&mut` param shares the caller's buffer;
+        // returned as-is, the caller would get a second name for its array.
+        let body_val = match body_val {
+            Some(v) if self.yields_mut_param(&f.body) => {
+                Some(self.emit_clone_value(v, &ret_sem, llvm_fn))
+            }
+            other => other,
+        };
 
         // Emit return if the builder is still on a live block.
         if self
@@ -1685,6 +1767,9 @@ impl<'ctx> Codegen<'ctx> {
         self.locals = saved_locals;
         self.local_types = saved_local_types;
         self.current_result_types = saved_result_types;
+        self.cur_written_roots = saved_written_roots;
+        self.stack_array_sites = saved_stack_sites;
+        self.cur_mut_params = saved_mut_params;
         self.current_adaptive_fn = saved_adaptive;
         self.current_adaptive_input = saved_adaptive_input;
         self.current_agent_fn = saved_agent;
@@ -1762,7 +1847,9 @@ impl<'ctx> Codegen<'ctx> {
                     .collect(),
                 Box::new(self.axon_type_to_semantic(ret)),
             ),
-            ast::AxonType::Ref(inner) => self.axon_type_to_semantic(inner),
+            ast::AxonType::Ref(inner) | ast::AxonType::RefMut(inner) => {
+                self.axon_type_to_semantic(inner)
+            }
             ast::AxonType::TypeParam(name) => Type::TypeParam(name.clone()),
             ast::AxonType::DynTrait(name) => Type::DynTrait(name.clone()),
             ast::AxonType::Tuple(elems) => Type::Tuple(
@@ -1810,7 +1897,7 @@ impl<'ctx> Codegen<'ctx> {
         for (decl, arg) in params.iter().zip(args.iter()) {
             let arg_inner = match arg {
                 ast::Expr::UnaryOp {
-                    op: ast::UnaryOp::Ref,
+                    op: ast::UnaryOp::Ref | ast::UnaryOp::RefMut,
                     operand,
                 } => operand.as_ref(),
                 other => other,
@@ -1845,6 +1932,22 @@ impl<'ctx> Codegen<'ctx> {
             Type::Fn(ps, r) => {
                 ps.iter().any(|p| Self::type_has_param(p, gp)) || Self::type_has_param(r, gp)
             }
+            _ => false,
+        }
+    }
+
+    /// Does `ty` contain `Type::Unknown` anywhere (an inference gap)?
+    fn type_has_unknown(ty: &Type) -> bool {
+        match ty {
+            Type::Unknown => true,
+            Type::Option(i)
+            | Type::Slice(i)
+            | Type::Chan(i)
+            | Type::Uncertain(i)
+            | Type::Temporal(i) => Self::type_has_unknown(i),
+            Type::Result(a, b) => Self::type_has_unknown(a) || Self::type_has_unknown(b),
+            Type::Tuple(es) => es.iter().any(Self::type_has_unknown),
+            Type::Fn(ps, r) => ps.iter().any(Self::type_has_unknown) || Self::type_has_unknown(r),
             _ => false,
         }
     }
@@ -2040,9 +2143,24 @@ impl<'ctx> Codegen<'ctx> {
                 ast::Literal::Bool(_) => Some(Type::Bool),
                 ast::Literal::Str(_) => Some(Type::Str),
             },
-            ast::Expr::Ident(name) => self.local_types.get(name).cloned(),
+            // AX-25: a top-level fn named as a VALUE is a closure of its own
+            // signature, so `[f0, f1]` is a `[fn(i64) -> i64]` whose elements
+            // index with the closure layout and call with the right ABI.
+            ast::Expr::Ident(name) => self
+                .local_types
+                .get(name)
+                .cloned()
+                .or_else(|| self.fn_value_sem_type(name)),
             ast::Expr::Call { callee, args, .. } => {
                 if let ast::Expr::Ident(name) = callee.as_ref() {
+                    // A call through a LOCAL closure (emit_call resolves global
+                    // fns first, so only a non-fn name reaches the closure path)
+                    // yields the closure's declared return type.
+                    if !self.functions.contains_key(name.as_str())
+                        && self.locals.contains_key(name.as_str())
+                    {
+                        return self.closure_call_sig(callee).and_then(|(_, r)| r);
+                    }
                     // arr_reverse/take/drop are lowered inline (not in
                     // fn_return_types) and return `[T]` — propagate the input
                     // arg's slice type so a `let b = arr_reverse(&a)` binding is
@@ -2052,6 +2170,13 @@ impl<'ctx> Codegen<'ctx> {
                     // dict_keys→[str], arr_chunk→[[i64]], …) are single-sourced in
                     // `fixed_collection_return_type` — registering one is a match
                     // arm there, not a new branch in this 160-line heuristic.
+                    // `arr_repeat(true, n)` is a `[bool]` (1-byte elements), not the
+                    // `[i64]` the constant table would claim.
+                    if name == "arr_repeat" && args.len() == 2 {
+                        if let Some(Type::Bool) = self.infer_expr_sem_type(&args[0]) {
+                            return Some(Type::Slice(Box::new(Type::Bool)));
+                        }
+                    }
                     if let Some(t) = Self::fixed_collection_return_type(name) {
                         return Some(t);
                     }
@@ -2104,7 +2229,8 @@ impl<'ctx> Codegen<'ctx> {
                     self.resolve_call_return_type(name, args)
                         .or_else(|| self.fn_return_types.get(name).cloned())
                 } else {
-                    None
+                    // `t[i](x)`, `g()(x)`, `(p.f)(x)`: the callee is a closure.
+                    self.closure_call_sig(callee).and_then(|(_, r)| r)
                 }
             }
             ast::Expr::Ok(_) | ast::Expr::Err(_) => self
@@ -2121,12 +2247,22 @@ impl<'ctx> Codegen<'ctx> {
                 }
             }
             ast::Expr::Array(elems) => {
-                let inner = elems
-                    .first()
-                    .and_then(|e| self.infer_expr_sem_type(e))
+                // The first element whose type is fully known decides: in
+                // `[None, Some(3)]` the leading `None` says nothing about T.
+                let tys: Vec<Option<Type>> =
+                    elems.iter().map(|e| self.infer_expr_sem_type(e)).collect();
+                let inner = tys
+                    .iter()
+                    .flatten()
+                    .find(|t| !Self::type_has_unknown(t))
+                    .or_else(|| tys.first().and_then(|t| t.as_ref()))
+                    .cloned()
                     .unwrap_or(Type::Unknown);
                 Some(Type::Slice(Box::new(inner)))
             }
+            ast::Expr::Some(inner) => self
+                .infer_expr_sem_type(inner)
+                .map(|t| Type::Option(Box::new(t))),
             ast::Expr::Tuple(elems) => {
                 let tys = elems
                     .iter()
@@ -2237,6 +2373,49 @@ impl<'ctx> Codegen<'ctx> {
         }
     }
 
+    /// AX-25: the `Type::Fn` of the top-level fn `name` used as a value, or
+    /// `None` if `name` is a local (which shadows it), not a fn, or generic (the
+    /// resolver refuses a generic fn as a value — it has no single instance).
+    fn fn_value_sem_type(&self, name: &str) -> Option<Type> {
+        if self.locals.contains_key(name) {
+            return None;
+        }
+        let f = self.fndefs.get(name)?;
+        if !f.generic_params.is_empty() {
+            return None;
+        }
+        let params = f
+            .params
+            .iter()
+            .map(|p| self.axon_type_to_semantic(&p.ty))
+            .collect();
+        let ret = f
+            .return_type
+            .as_ref()
+            .map(|t| self.axon_type_to_semantic(t))
+            .unwrap_or(Type::Unit);
+        Some(Type::Fn(params, Box::new(ret)))
+    }
+
+    /// The declared signature of the closure `callee` evaluates to: per-param
+    /// type (`None` = unannotated lambda param) and return type (`None` =
+    /// unknown). Prefers the callee's `Type::Fn` (scoped to the current fn via
+    /// `local_types`, and available for any callee expression — `t[i]`, `g()`,
+    /// a fn param), falling back to the lambda signature recorded by name.
+    pub(super) fn closure_call_sig(
+        &self,
+        callee: &ast::Expr,
+    ) -> Option<(Vec<Option<Type>>, Option<Type>)> {
+        let known = |t: Type| (!matches!(t, Type::Unknown)).then_some(t);
+        if let Some(Type::Fn(ps, r)) = self.infer_expr_sem_type(callee) {
+            return Some((ps.into_iter().map(known).collect(), known(*r)));
+        }
+        match callee {
+            ast::Expr::Ident(n) => self.closure_sigs.get(n.as_str()).cloned(),
+            _ => None,
+        }
+    }
+
     /// Infer the semantic type of an expression, including chained FieldAccess.
     /// Used by FieldAccess codegen to find the struct name of a receiver.
     fn sem_type_of_expr(&self, expr: &ast::Expr) -> Option<Type> {
@@ -2260,6 +2439,16 @@ impl<'ctx> Codegen<'ctx> {
                 };
                 let field_names = self.struct_fields.get(sname.as_str())?;
                 let idx = field_names.iter().position(|n| n == field)?;
+                // The declared semantic type keeps what the LLVM field type
+                // erases (Result/Option/[T] are anonymous structs below).
+                if let Some(t) = self
+                    .struct_field_sem_types
+                    .get(sname.as_str())
+                    .and_then(|fs| fs.get(idx))
+                    .filter(|t| !Self::type_has_unknown(t))
+                {
+                    return Some(t.clone());
+                }
                 let struct_ty = self.ir.module.get_struct_type(sname)?;
                 let field_llvm_ty = struct_ty.get_field_type_at_index(idx as u32)?;
                 match field_llvm_ty {

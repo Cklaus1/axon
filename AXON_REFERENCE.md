@@ -5,7 +5,7 @@
 
 # Axon Reference
 
-The complete surface of this build — 25 CLI verbs, 343 builtins, 24 attributes, 142 diagnostic codes (129 live, 13 reserved), 54 environment variables.
+The complete surface of this build — 25 CLI verbs, 343 builtins, 24 attributes, 145 diagnostic codes (132 live, 13 reserved), 55 environment variables.
 
 Generated from the compiler's own tables (`BUILTINS`, `DEFERRED_ATTRS`, the clap subcommand list), so it cannot describe a language this binary does not implement. `CLAUDE.md` is a curated selection and says so; this is the exhaustive counterpart.
 
@@ -31,7 +31,7 @@ Generated from the compiler's own tables (`BUILTINS`, `DEFERRED_ATTRS`, the clap
 | `axon redteam` | Run the red-team check on a .ax program |
 | `axon reference` | Emit the complete machine-readable reference for this build: every CLI verb, every builtin with its signature, every attribute |
 | `axon replay` | Read a host journal (`AXON_RECORD`) as a human-reviewable transcript, or diff two of them |
-| `axon run` | Compile a .ax file and execute it, forwarding remaining arguments |
+| `axon run` | Type-check a .ax file and interpret it |
 | `axon session` | R44 — an accumulating typed session: bind a name in one cell, read it in the next |
 | `axon target` | Cross-platform targets: list buildable targets / build for one (R7) |
 | `axon test` | Run all @[test]-tagged functions in one or more .ax files |
@@ -68,7 +68,7 @@ Run `axon <verb> --help` for flags and long-form help.
 - `@[bpf]`
 - `@[enclave]`
 
-## Environment variables (54)
+## Environment variables (55)
 
 Every `AXON_*` variable the SHIPPED code reads — gated in both directions, so a variable that quietly does nothing cannot appear here, and one that changes behaviour cannot be left out.
 
@@ -79,6 +79,7 @@ Every `AXON_*` variable the SHIPPED code reads — gated in both directions, so 
 | `AXON_CLOCK` | deterministic virtual clock `<start_ms>[:<tick_ms>]`; `sleep_ms` advances it without really sleeping |
 | `AXON_PATH` | colon-separated module search path for `mod`/`use` imports |
 | `AXON_STRICT` | promote advisory hazard diagnostics to errors (today E0302, an unused Result); `axon deploy` sets it itself |
+| `AXON_RUNTIME_DIR` | `axon build`: directory holding the prebuilt native runtime staticlibs (`libaxon_rt.a`, `libaxon_rt_ai.a`; `<dir>/<triple>/` for `--target`). When set it is the ONLY place searched; unset, the compiler builds the runtime in the Axon workspace it was compiled from, else uses one prebuilt beside the compiler, independent of the current directory and PATH |
 | `AXON_RECORD` | path to write a host journal: every call through the AxonHost seam, performed for real and appended with its outcome. As sensitive as the run it records |
 | `AXON_REPLAY` | serve a run from a host journal instead of the world; nothing is performed, and any miss is a divergence (exit 11). Mutually exclusive with AXON_RECORD |
 | `AXON_AI_REPLAY` | path to an LLM-call replay cache; memoizes `ai_complete` by (prompt, model) so an AI run reproduces with no live call |
@@ -129,7 +130,7 @@ Every `AXON_*` variable the SHIPPED code reads — gated in both directions, so 
 | `AXON_TEE_ENCLAVE` | R24 TEE: set to 1 by the gramine-direct manifest to signal the workload is executing inside an enclave; this is what makes `tee_in_enclave()` return true. Read through the host seam, so it is recorded and replayed |
 | `AXON_TEE_MEASUREMENT` | R24 TEE: the simulated enclave launch measurement returned by `tee_attest_measurement()` when set, a stub otherwise. A genuine hardware-rooted quote comes only from confidential hardware. Read through the host seam |
 
-## Diagnostic codes (142, of which 129 live)
+## Diagnostic codes (145, of which 132 live)
 
 A code marked **reserved** is declared but emitted nowhere in this build. Listing those as if they were live would be the same defect this reference exists to fix.
 
@@ -147,7 +148,7 @@ A code marked **reserved** is declared but emitted nowhere in this build. Listin
 | `E0303` | type-check rule violation (Phase-1 R03) |
 | `E0304` | non-exhaustive match — a variant has no arm |
 | `E0305` | wrong number of arguments supplied to a function |
-| `E0306` | cannot call a non-function value |
+| `E0306` | cannot call a non-function value; also a generic fn or a builtin used as a value (only a non-generic user `fn` is a first-class value — wrap the others in a lambda) |
 | `E0307` | return type mismatch between the declared type and the body |
 | `E0308` | unknown type named in a signature or annotation |
 | `E0309` | type-check rule violation (Phase-1 R08) |
@@ -171,6 +172,9 @@ A code marked **reserved** is declared but emitted nowhere in this build. Listin
 | `E0601` | use of moved value |
 | `E0602` | cannot move borrowed value |
 | `E0603` | borrow conflict |
+| `E0604` | write through a shared `&` parameter — the caller never sees it; declare the parameter `&mut [T]` and pass `&mut a` |
+| `E0605` | invalid `&mut` borrow — `&mut` of something other than a local variable, a `&mut` argument/parameter mode mismatch, or `&mut` in a position other than a free function's `[T]` parameter |
+| `E0606` | a call mutably borrows a variable that another argument of the same call also uses |
 | `E0701` | expression not comptime-evaluable |
 | `E0702` | comptime integer division by zero |
 | `E0703` | comptime integer overflow |
@@ -328,9 +332,9 @@ A code marked **reserved** is declared but emitted nowhere in this build. Listin
 | `arr_partition(xs: [T], pred: fn(T) -> bool) -> ([T], [T])` | Split into `(yes, no)` tuple — elements satisfying `pred` and the rest. One pass over the input; complement of `arr_filter`. |
 | `arr_push(xs: [T], x: T) -> [T]` | Return a fresh array with `x` appended. Copy semantics — the input is unaffected. Element type is deferred, so `arr_push(rows, Rec { .. })` builds a `[Rec]`; `T` must be consistent between the array and the pushed element (a mixed push is E0306). Native codegen lowers the `[i64]` case only — other element types are E0910-refused (interpreter-only). |
 | `arr_range(start: i64, end: i64) -> [i64]` | Return the half-open range `[start, end)` as a fresh i64 slice. Empty when `end <= start`. Useful for `for i in arr_range(0, n)` and as a seed for further array ops. |
-| `arr_repeat(v: T, n: i64) -> [T]` | Build an array of `n` copies of `v`. Useful to initialize a default-filled array before in-place mutation. Negative `n` returns empty; saturating cap at ~1M elements. |
+| `arr_repeat(v: T, n: i64) -> [T]` | Build an array of `n` copies of `v`. Useful to initialize a default-filled array before in-place mutation. Negative `n` returns empty; otherwise exactly `n` elements (no size cap) — a size the allocator cannot satisfy is a runtime error naming `n`. |
 | `arr_reverse(xs: [T]) -> [T]` | Return a fresh array with elements in reverse order. Works for any element type. |
-| `arr_sort_by(xs: [T], cmp: fn(T, T) -> i64) -> [T]` | Return a sorted copy of `xs` using the comparator (neg = a<b, 0 = eq, pos = a>b). Element type is deferred so any sortable domain works. Stable insertion sort; closure-dispatch dominates cost on ASI-scale arrays. Input untouched. |
+| `arr_sort_by(xs: [T], cmp: fn(T, T) -> i64) -> [T]` | Return a sorted copy of `xs` using the comparator (neg = a<b, 0 = eq, pos = a>b). Element type is deferred so any sortable domain works. Stable merge sort, O(n log n) comparator calls; equal elements keep input order. Input untouched. |
 | `arr_std_f64(xs: [f64]) -> f64` | Sample standard deviation: sqrt of (sum of squared deviations from mean) / (n - 1). Panics for arrays of length < 2. |
 | `arr_sum_by(xs: [T], key_fn: fn(T) -> i64) -> i64` | Sum a projected i64 field over `xs`. Equivalent to `arr_sum_i64(&arr_map(xs, key_fn))` but doesn't materialize the mapped array — the `_by` sibling of `arr_max_by`/`arr_min_by`. |
 | `arr_sum_by_f64(xs: [T], key_fn: fn(T) -> f64) -> f64` | Sum a projected f64 field over `xs`. The f64 counterpart of `arr_sum_by`. |

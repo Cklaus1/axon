@@ -1,5 +1,49 @@
 # Axon Changelog
 
+## Interpreter/native parity, `&mut [T]`, functions as values, native build and size (compilebench AX-01…AX-31)
+
+Fixes for the defects compilebench recorded in its `AXON_FINDINGS.md`.
+
+**Language**
+- **`&mut [T]` parameters write through to the caller** (AX-08). Declare `fn f(xs: &mut [i64])`, call `f(&mut a)`. A plain `&[T]` parameter is read-only: writing through it is E0604. A malformed `&mut` is E0605, and passing the same array as `&mut` and as another argument of one call is E0606. Previously the callee silently mutated a copy in both engines.
+- **Named functions are first-class values** (AX-25). `let f = f0`, `[f0, f1]` and `apply(f0, 41)` work in both engines, as do calls through any expression that yields a function: `t[i](x)`, `g()(x)`, `(p.f)(x)`. Generic functions and builtins used as values are refused at check time (E0306, with a lambda as the fix). Before, `let f = f0` passed `axon check` and then panicked in the interpreter.
+- `axon run --help` says it interprets, and the `-r/--release` flag, which did nothing, is gone (AX-26).
+
+**Interpreter**
+- **Arrays are shared copy-on-write buffers** (AX-06). `a[i]` is O(1) instead of a full copy of the array, and an array with only one owner is written in place. A 50M-element sieve runs in 30 s.
+- **Strings are shared too, and builder loops append in place** (AX-31). Reading a `str` variable, passing it or `len(s)` no longer copies it. `xs = arr_push(xs, v)`, `xs = arr_concat(xs, ys)` and `s = s + t` append to the variable's buffer when nothing else holds it, and a closure called by name writes its captured arrays in place. Building a 320k-char string and summing `len(t)` per char went from 1.4 s to 0.04 s; 100k `arr_push` calls from 48 s to 0.01 s.
+- **`arr_repeat` / `arr_range` build the requested length** (AX-05). They used to stop silently at 1,048,576 elements while native built the full array. A size that cannot be allocated is a runtime error.
+- **Faster calls** (AX-18, AX-27): a flat environment, remembered callee resolution, and no `getenv` or builtin effect gate on user-function calls. fib(30) went from 0.87 s to 0.43 s.
+- **`arr_sort_by` is a stable O(n log n) merge sort** in both engines (AX-07). It was an O(n²) insertion sort.
+
+**Native codegen: same answer as the interpreter, or a refusal**
+- An assignment whose value cannot be lowered is E0910 (AX-24). It used to be dropped silently, leaving the old value. The same applies to struct, enum and call arguments that fail to lower.
+- **`&&` / `||` short-circuit** natively. Both sides were evaluated, which caused bounds panics and duplicated side effects.
+- **Match guards can use the arm's pattern bindings.**
+- **Closures capture loop- and block-scoped bindings** (AX-19).
+- **Array `+`** lowers for any element type, as do writes into narrow-int, `Option`, `Result` and nested slots (AX-13).
+- `"err " + e` with `e` bound by a match arm type-checks in both engines (AX-14). It was refused with E0301, which made the `match parse_int(s) { … }` idiom look unsupported natively. `parse_int` itself always lowered.
+- **Non-escaping array literals live on the stack** (AX-12). A literal in a 50M-iteration loop went from 2.3 GB to 2.2 MB max RSS. Escaping literals keep their heap buffer (rules in `spec/runtime.md` §3).
+
+**Native build**
+- **Real optimisation levels** (AX-17, AX-21): `axon build --opt-level 0|1|2|3|s|z` runs the LLVM IR pass pipeline. `--release` means `-O2` and now optimises the IR, not just the backend. Generated functions get internal linkage, so self-calls are direct and dead helpers are dropped (AX-22).
+- **`--emit-obj` writes an object file** for hosted builds (AX-23). It used to link a full binary.
+- **`axon build` works from any directory without `cargo` on PATH** (AX-09). The runtime library is looked up in `AXON_RUNTIME_DIR`, then the compiler's own workspace, then next to the binary. A missing runtime is one error that lists every place searched.
+- **One runtime staticlib per binary** (AX-11). The AI runtime is linked only when an AI builtin is reachable, plus `--gc-sections`. A `--release` hello-world is 442 KB, down from 13.9 MB.
+- **The build cache keys on the SHA-256 of the compiler executable** (AX-15), so a rebuilt compiler never reuses another compiler's cached IR.
+- **`serde-json` builds alongside `codegen`** (AX-10). The stall came from internally-tagged serde derives on the recursive AST enums. They are now adjacently tagged (`{"kind", "value"}`), and `axon parse` can print programs that contain identifiers.
+- `spec/axon-for-llms.md` no longer says the two engines are identical. The interpreter is the reference: native must match it or refuse the program (AX-16).
+
+## Native codegen — `s + t`, `a[i] = v`, `s.field = v` lowered (E0910 gaps closed)
+
+- **`str + str`** lowers to `axon_concat`, the routine string interpolation already uses.
+- **Place assignment** (`xs[i] = v`, `p.x = v`, chains such as `a[i].f[j] = v`) lowers natively. Index writes go through the same `__axon_bounds_panic` guard as reads (exit 101, same message as the interpreter).
+- **Array value semantics** match the interpreter. Natively an array is a shared `{len, ptr}` buffer, so it is snapshotted only where sharing becomes observable: `let`/assign from a place the fn writes, params the callee writes or returns, and values flowing into aggregates or `Ok`/`Err`/`Some`/returns.
+- **`arr_repeat(bool, n)`** builds a 1-byte `[bool]` instead of an 8-byte-stride slice.
+- **Allocas are hoisted to the entry block.** A loop-body alloca grew the stack on every iteration: a 2M-iteration `a[i]` loop overflowed 8 MB.
+- **`?` casts the payload to the operand's Ok type**, not the enclosing fn's. The bug had been latent; the hoist exposed it. `let r = ai_extract_uncertain_i64(s)?` inside a `Result<i64, str>` fn read the `Uncertain` as an `i64`.
+- `examples/asi/rank.ax` and `local_search.ax` now print the interpreter's output natively. A sieve with n = 5M matches C.
+
 ## Gap closure — F1/F6/F10/F12/F13/F14/F15 closed, ROADMAP fully complete (iteration 16)
 
 All remaining open gap items in ROADMAP §9.5 are now closed:

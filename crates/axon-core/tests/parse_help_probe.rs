@@ -387,32 +387,54 @@ fn the_library_and_cli_check_pipelines_agree_on_a_corpus() {
 }
 
 #[test]
-fn a_named_fn_passed_to_a_higher_order_builtin_is_refused_at_check() {
-    // M4. `arr_map([1,2,3], double)` passed `axon check` and then PANICKED at
-    // run with "undefined identifier `double`" — a check/run soundness
-    // divergence, and the interpreter is this project's reference oracle, so the
-    // checker accepting it was the bug. Passing a named fn to a higher-order
-    // builtin is the first thing a model writes.
+fn a_named_fn_passed_to_a_higher_order_builtin_is_accepted() {
+    // M4 refused `arr_map([1,2,3], double)` at check time because the
+    // interpreter then PANICKED with "undefined identifier `double`". AX-25 made
+    // a non-generic user fn a first-class value in both engines, so the check/run
+    // divergence is closed the other way: the program is accepted (and runs —
+    // see cli_run's `named_fns_are_first_class_values_in_both_engines`).
     let src = "fn double(x: i64) -> i64 { x * 2 }\n\
                fn main() -> i64 {\n    let ys = arr_map([1, 2, 3], double)\n    \
                println(to_str(ys[0]))\n    0\n}\n";
-    let diags = check_pipeline(src, "probe.ax");
-    let d = diags
-        .iter()
-        .find(|d| d.code == "E0306")
-        .unwrap_or_else(|| panic!("must be refused at check time: {diags:?}"));
-    assert!(d.message.contains("passed by name"), "{}", d.message);
-    let help = d.help.as_ref().expect("must name the working form");
-    assert!(help.contains("|x| double(x)"), "{help}");
-    // A repair hint with nowhere to apply it is half a diagnostic. This site
-    // emitted `.at(&file, 0, 0)` and no span, and line 0 is the serializer's
-    // "no location" sentinel — so the reader got "wrap it in a lambda" without
-    // being told which call. Every sibling diagnostic in the same argument loop
-    // already carried the span.
-    assert!(
-        d.line > 0,
-        "the diagnostic must say WHERE, not just what to do: {d:?}"
-    );
+    let errs: Vec<_> = check_pipeline(src, "probe.ax")
+        .into_iter()
+        .filter(|d| d.severity == "error")
+        .collect();
+    assert!(errs.is_empty(), "a named fn is a value now: {errs:?}");
+}
+
+#[test]
+fn generic_fns_and_builtins_used_as_values_are_refused_with_the_lambda_fix() {
+    // What still has no single runtime value: a generic fn (no instantiation
+    // to hand out) and a builtin (no fn body to point at). Both are refused at
+    // check time, at the use's line, with the lambda form as the repair.
+    let cases = [
+        (
+            "fn id<T>(x: T) -> T { x }\nfn main() -> i64 {\n    let f = id\n    f(3)\n}\n",
+            "generic function",
+            "id(x)",
+        ),
+        (
+            "fn main() -> i64 {\n    let f = abs_i64\n    f(0 - 3)\n}\n",
+            "is a builtin",
+            "abs_i64(n)",
+        ),
+    ];
+    for (src, what, fix) in cases {
+        let diags = check_pipeline(src, "probe.ax");
+        let d = diags
+            .iter()
+            .find(|d| d.code == "E0306")
+            .unwrap_or_else(|| panic!("must be refused at check time: {diags:?}"));
+        assert!(d.message.contains(what), "{}", d.message);
+        let help = d.help.as_ref().expect("must name the working form");
+        assert!(help.contains("lambda") && help.contains(fix), "{help}");
+        // A repair hint with nowhere to apply it is half a diagnostic.
+        assert!(
+            d.line > 0,
+            "the diagnostic must say WHERE, not just what to do: {d:?}"
+        );
+    }
 }
 
 #[test]

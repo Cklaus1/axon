@@ -40,8 +40,9 @@ impl<'ctx> super::Codegen<'ctx> {
         let merge_bb = self.ir.context.append_basic_block(fn_val, "match_merge");
         let mut arm_results: Vec<(BasicValueEnum<'ctx>, inkwell::basic_block::BasicBlock<'ctx>)> =
             Vec::new();
-        // Track the last arm's test block so we can add the false-branch incoming to phi.
-        let mut last_test_bb: Option<inkwell::basic_block::BasicBlock<'ctx>> = None;
+        // Blocks whose "no arm matched" edge flows into merge_bb (the last
+        // arm's test, and its guard if it has one): each needs a phi incoming.
+        let mut miss_preds: Vec<inkwell::basic_block::BasicBlock<'ctx>> = Vec::new();
 
         for (i, arm) in arms.iter().enumerate() {
             let test_bb = self
@@ -57,45 +58,52 @@ impl<'ctx> super::Codegen<'ctx> {
                     .context
                     .append_basic_block(fn_val, &format!("arm{i}_next"))
             } else {
-                // Last arm: false branch goes to merge_bb. Track this test_bb.
-                last_test_bb = Some(test_bb);
                 merge_bb
             };
+            let is_last = i + 1 == arms.len();
 
             build_wrappers::w_br(&self.ir.builder, test_bb);
             self.ir.builder.position_at_end(test_bb);
 
             // Emit pattern test.
-            let matches = self.emit_pattern_test(&arm.pattern, subject);
-
-            // Apply guard if present.
-            let final_cond = if let Some(guard_expr) = &arm.guard {
-                if let Some(guard_val) = self.emit_expr(guard_expr, fn_val) {
-                    if let (BasicValueEnum::IntValue(m), BasicValueEnum::IntValue(g)) =
-                        (matches, guard_val)
-                    {
-                        build_wrappers::w_and(&self.ir.builder, m, g, "guarded").into()
-                    } else {
-                        matches
-                    }
-                } else {
-                    matches
-                }
-            } else {
-                matches
-            };
-
-            let cond_int = match final_cond {
+            let matches = match self.emit_pattern_test(&arm.pattern, subject) {
                 BasicValueEnum::IntValue(i) => i,
                 _ => self.ir.context.bool_type().const_int(1, false),
             };
+            if is_last {
+                miss_preds.push(self.ir.builder.get_insert_block().unwrap());
+            }
 
-            build_wrappers::w_cond_br(&self.ir.builder, cond_int, body_bb, next_bb);
-
-            // Emit body.
-            self.ir.builder.position_at_end(body_bb);
-            // Bind pattern variables.
-            self.emit_pattern_bindings(&arm.pattern, subject, subject_sem_ty);
+            if let Some(guard_expr) = &arm.guard {
+                // The guard sees the arm's bindings (`Some(v) if v > 2`), so it
+                // runs in its own block once the pattern has matched. It used
+                // to be emitted BEFORE the bindings: a guard naming one failed
+                // to lower and was silently dropped, taking the arm whenever
+                // the pattern matched.
+                let guard_bb = self
+                    .ir
+                    .context
+                    .append_basic_block(fn_val, &format!("arm{i}_guard"));
+                build_wrappers::w_cond_br(&self.ir.builder, matches, guard_bb, next_bb);
+                self.ir.builder.position_at_end(guard_bb);
+                self.emit_pattern_bindings(&arm.pattern, subject, subject_sem_ty);
+                let guard = match self.emit_expr(guard_expr, fn_val) {
+                    Some(BasicValueEnum::IntValue(g)) => g,
+                    _ => {
+                        self.refuse_unlowered("a `match` arm guard");
+                        self.ir.context.bool_type().const_int(1, false)
+                    }
+                };
+                if is_last {
+                    miss_preds.push(self.ir.builder.get_insert_block().unwrap());
+                }
+                build_wrappers::w_cond_br(&self.ir.builder, guard, body_bb, next_bb);
+                self.ir.builder.position_at_end(body_bb);
+            } else {
+                build_wrappers::w_cond_br(&self.ir.builder, matches, body_bb, next_bb);
+                self.ir.builder.position_at_end(body_bb);
+                self.emit_pattern_bindings(&arm.pattern, subject, subject_sem_ty);
+            }
             let body_val = self.emit_expr(&arm.body, fn_val);
 
             let current_bb = self.ir.builder.get_insert_block().unwrap();
@@ -152,12 +160,11 @@ impl<'ctx> super::Codegen<'ctx> {
             for (v, bb) in &arm_results {
                 phi.add_incoming(&[(v, *bb)]);
             }
-            // The last arm's test block (false branch) also flows to merge_bb.
-            // LLVM requires all predecessors to have an incoming in the phi.
-            // Add an undef value for that predecessor.
-            if let Some(last_test_bb) = last_test_bb {
-                let undef = val_ty.const_zero(); // Zero is safer than undef for debugging
-                phi.add_incoming(&[(&undef, last_test_bb)]);
+            // Every "no arm matched" edge also flows to merge_bb. LLVM
+            // requires an incoming per predecessor; the value is never used.
+            let zero = val_ty.const_zero();
+            for bb in &miss_preds {
+                phi.add_incoming(&[(&zero, *bb)]);
             }
             Some(phi.as_basic_value())
         } else {

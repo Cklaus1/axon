@@ -398,6 +398,18 @@ impl Parser {
         self.tokens.get(self.pos)
     }
 
+    /// True at the `mut` of `&mut T` / `&mut place` (the `&` already eaten).
+    /// `mut` is not a keyword, so it only counts when a type / place follows —
+    /// a binding literally named `mut` (`&mut` at end of an expression) still
+    /// parses as itself.
+    fn at_mut_borrow(&self) -> bool {
+        matches!(self.tokens.get(self.pos), Some(Token::Ident(s)) if s == "mut")
+            && matches!(
+                self.tokens.get(self.pos + 1),
+                Some(Token::Ident(_) | Token::LBracket | Token::LParen)
+            )
+    }
+
     fn advance(&mut self) -> Result<&Token> {
         let tok = self.tokens.get(self.pos).ok_or(ParseError::Eof)?;
         self.pos += 1;
@@ -1284,6 +1296,10 @@ impl Parser {
             return Ok(AxonType::DynTrait(name));
         }
         if self.eat(&Token::Ampersand) {
+            if self.at_mut_borrow() {
+                self.advance()?;
+                return Ok(AxonType::RefMut(Box::new(self.parse_type_atom()?)));
+            }
             return Ok(AxonType::Ref(Box::new(self.parse_type_atom()?)));
         }
         // R17 HAL: `*T` — raw pointer type, substrate-only.
@@ -3162,9 +3178,15 @@ impl Parser {
             }
             Some(Token::Ampersand) => {
                 self.advance()?;
+                let op = if self.at_mut_borrow() {
+                    self.advance()?;
+                    UnaryOp::RefMut
+                } else {
+                    UnaryOp::Ref
+                };
                 let operand = self.parse_postfix()?;
                 Ok(Expr::UnaryOp {
-                    op: UnaryOp::Ref,
+                    op,
                     operand: Box::new(operand),
                 })
             }
@@ -3359,6 +3381,7 @@ fn axon_type_to_str(ty: &AxonType) -> String {
             format!("Result<{},{}>", axon_type_to_str(ok), axon_type_to_str(err))
         }
         AxonType::Ref(inner) => format!("&{}", axon_type_to_str(inner)),
+        AxonType::RefMut(inner) => format!("&mut {}", axon_type_to_str(inner)),
         AxonType::RawPtr(inner) => format!("*{}", axon_type_to_str(inner)),
         AxonType::Fn { params, ret } => {
             let ps: Vec<String> = params.iter().map(axon_type_to_str).collect();

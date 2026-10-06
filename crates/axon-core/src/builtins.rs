@@ -636,7 +636,7 @@ pub const BUILTINS: &[BuiltinFn] = &[
         name: "arr_sort_by",
         params: &[("xs", "[T]"), ("cmp", "fn(T, T) -> i64")],
         ret: "[T]",
-        doc: "Return a sorted copy of `xs` using the comparator (neg = a<b, 0 = eq, pos = a>b). Element type is deferred so any sortable domain works. Stable insertion sort; closure-dispatch dominates cost on ASI-scale arrays. Input untouched.",
+        doc: "Return a sorted copy of `xs` using the comparator (neg = a<b, 0 = eq, pos = a>b). Element type is deferred so any sortable domain works. Stable merge sort, O(n log n) comparator calls; equal elements keep input order. Input untouched.",
     },
     BuiltinFn {
         name: "arr_zip",
@@ -720,7 +720,7 @@ pub const BUILTINS: &[BuiltinFn] = &[
         name: "arr_repeat",
         params: &[("v", "T"), ("n", "i64")],
         ret: "[T]",
-        doc: "Build an array of `n` copies of `v`. Useful to initialize a default-filled array before in-place mutation. Negative `n` returns empty; saturating cap at ~1M elements.",
+        doc: "Build an array of `n` copies of `v`. Useful to initialize a default-filled array before in-place mutation. Negative `n` returns empty; otherwise exactly `n` elements (no size cap) — a size the allocator cannot satisfy is a runtime error naming `n`.",
     },
     BuiltinFn {
         name: "arr_concat",

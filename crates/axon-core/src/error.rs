@@ -61,6 +61,10 @@ pub const E0504: &str = "E0504"; // trait bound not satisfied
 pub const E0601: &str = "E0601"; // use of moved value
 pub const E0602: &str = "E0602"; // cannot move borrowed value
 pub const E0603: &str = "E0603"; // borrow conflict
+// `&mut [T]` parameter mode (AX-08) — see `mut_borrow.rs`
+pub const E0604: &str = "E0604"; // write through a shared `&T` parameter
+pub const E0605: &str = "E0605"; // invalid `&mut` borrow / `&mut` type position
+pub const E0606: &str = "E0606"; // `&mut` argument aliased within one call
 
 // Comptime errors (Phase 3)
 pub const E0701: &str = "E0701"; // expression not comptime-evaluable
@@ -442,7 +446,7 @@ pub const ALL_CODES: &[(&str, &str)] = &[
     ("E0303", "type-check rule violation (Phase-1 R03)"),
     ("E0304", "non-exhaustive match — a variant has no arm"),
     ("E0305", "wrong number of arguments supplied to a function"),
-    ("E0306", "cannot call a non-function value"),
+    ("E0306", "cannot call a non-function value; also a generic fn or a builtin used as a value (only a non-generic user `fn` is a first-class value — wrap the others in a lambda)"),
     ("E0307", "return type mismatch between the declared type and the body"),
     ("E0308", "unknown type named in a signature or annotation"),
     ("E0309", "type-check rule violation (Phase-1 R08)"),
@@ -466,6 +470,9 @@ pub const ALL_CODES: &[(&str, &str)] = &[
     ("E0601", "use of moved value"),
     ("E0602", "cannot move borrowed value"),
     ("E0603", "borrow conflict"),
+    ("E0604", "write through a shared `&` parameter — the caller never sees it; declare the parameter `&mut [T]` and pass `&mut a`"),
+    ("E0605", "invalid `&mut` borrow — `&mut` of something other than a local variable, a `&mut` argument/parameter mode mismatch, or `&mut` in a position other than a free function's `[T]` parameter"),
+    ("E0606", "a call mutably borrows a variable that another argument of the same call also uses"),
     ("E0701", "expression not comptime-evaluable"),
     ("E0702", "comptime integer division by zero"),
     ("E0703", "comptime integer overflow"),
@@ -735,6 +742,7 @@ mod tests {
             E0000, E0001, E0002, E0003, E0004, E0101, E0102, E0301, E0302, E0303, E0304, E0305,
             E0306, E0307, E0308, E0309, E0310, E0311, E0312, E0313, E0314, E0315, E0401, E0402,
             E0403, E0404, E0405, E0406, E0407, E0501, E0502, E0503, E0504, E0601, E0602, E0603,
+            E0604, E0605, E0606,
             E0701, E0702, E0703, E0800, E0801, E0802, E0803, E0901, E0902, E0903, E0904, E0905,
             E0906, E0907, E0908, E0910, E0911, E0912, E1001, E1002, E1003, E1004, E1101, E1102,
             E1201, E1202, E1203, E1204, E1205, E1206, E1207, E1208, E1209, E1300, E1301, E1302,
