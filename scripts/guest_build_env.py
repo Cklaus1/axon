@@ -129,7 +129,7 @@ KERNEL_SCHEMA = "axon-guest-kernel-build/1"
 # Exactly the variables cargo sees. Values are chosen here, never inherited
 # (the proxy variables excepted: they choose how crates are FETCHED, and
 # `--locked` checks every fetched crate against Cargo.lock's checksum).
-ENV_ALLOWLIST = ["CARGO_HOME", "CARGO_TARGET_DIR", "HOME", "LC_ALL", "PATH", "RUSTC"]
+ENV_ALLOWLIST = ["CARGO_HOME", "CARGO_TARGET_DIR", "GIT_CEILING_DIRECTORIES", "HOME", "LC_ALL", "PATH", "RUSTC"]
 PROXY_VARS = ["http_proxy", "https_proxy", "no_proxy", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY"]
 # The only directories a host tool (linker, gcc, make, mksquashfs) is taken
 # from, and the PATH every non-cargo step runs under.
@@ -197,6 +197,17 @@ HOST_INVOCATIONS = [
     ("axon-fabric-host", ["build", "--release", "--locked", "-p", "axon-fabric", "--bins", "--quiet"], None),
 ]
 HOST_RECORD = "host-build.json"
+# Round 7 (amendment 90): WHAT THE BUILD PROCESSES CAN AND CANNOT TOUCH.
+# Every process that runs build code (cargo and everything it spawns: build.rs,
+# proc macros, make) runs as an UNPRIVILEGED uid (BUILD_UID, 65534 by default,
+# AXON_GUEST_BUILD_UID names another; the operator's pin says which the freeze
+# expects), started by the runner (root) through setpriv with no-new-privs. It
+# can write ONLY its own source copy, CARGO_HOME and target dir. It cannot read
+# the proof keys (root's 0700 directory), cannot write the toolchain (a
+# root-owned private copy), the system tool directories (root's) or the record.
+# The runner is therefore root, the pinned builder.
+BUILD_UID_DEFAULT = 65534
+DEFAULT_PARENT = "/var/lib/axon-guest-build"
 
 
 def sha256(path):
@@ -232,6 +243,30 @@ def pinned_channel():
 
 def builder_home():
     return pwd.getpwuid(os.geteuid()).pw_dir
+
+
+def build_ids():
+    """(uid, gid) every build process runs as. Not root, not the runner."""
+    raw = os.environ.get("AXON_GUEST_BUILD_UID") or str(BUILD_UID_DEFAULT)
+    if not re.fullmatch(r"[0-9]{1,9}", raw) or int(raw) == 0 or int(raw) == os.geteuid():
+        fail(f"AXON_GUEST_BUILD_UID {raw!r} is not an unprivileged uid other than the builder's own")
+    uid = int(raw)
+    return uid, uid
+
+
+def require_runner():
+    if os.geteuid() != 0:
+        fail("the controlled build runs as root: it starts every build process (cargo, build scripts, "
+             "proc macros, make) as another, unprivileged uid so that none of them can read the proof "
+             "key or write the toolchain; run it with sudo (the builder pin's uid is root)")
+
+
+def as_build_uid(argv):
+    """`argv` prefixed so it runs as the unprivileged build uid, with no way
+    to gain privilege (no-new-privs) and no supplementary groups."""
+    uid, gid = build_ids()
+    return ["/usr/bin/setpriv", f"--reuid={uid}", f"--regid={gid}", "--clear-groups", "--no-new-privs",
+            "--", *argv]
 
 
 def rustup():
@@ -394,10 +429,18 @@ def host_config_problems(clone, cargo=None):
 def constructed_env(base, cargo, rustc, proxies):
     """The WHOLE environment cargo runs in: built here from the fresh base dir
     and the pinned toolchain, never taken from the caller (the proxy variables
-    excepted, which choose how crates are fetched, not what is built)."""
+    excepted, which choose how crates are fetched, not what is built).
+
+    PATH is the FIXED SYSTEM directories only (round 7): the toolchain's own
+    directory is NOT on it (cargo and rustc are invoked by absolute path, RUSTC
+    is set), so a program a build script writes next to rustc is never found as
+    `cc`; and `cc`/`ld` resolve, on exactly this PATH, to the absolute paths
+    recorded in the build's host_tools. GIT_CEILING_DIRECTORIES stops a git
+    repository that happens to enclose the build directory from stamping its
+    HEAD into the artifacts (axon-core's build.rs runs git)."""
     env = {"CARGO_HOME": os.path.join(base, "cargo-home"),
-           "CARGO_TARGET_DIR": os.path.join(base, "target"), "HOME": base, "LC_ALL": "C",
-           "PATH": f"{os.path.dirname(cargo)}:/usr/bin:/bin", "RUSTC": rustc}
+           "CARGO_TARGET_DIR": os.path.join(base, "target"), "GIT_CEILING_DIRECTORIES": base,
+           "HOME": base, "LC_ALL": "C", "PATH": TOOL_PATH, "RUSTC": rustc}
     env.update(proxies)
     return env
 
@@ -459,9 +502,12 @@ def build_parent():
     """The private directory every guest build's workspace is created under:
     `<builder's home>/.cache/axon-guest-build` (AXON_GUEST_BUILD_PARENT names
     another), refused unless only root or the builder can write any ancestor."""
-    parent = os.environ.get("AXON_GUEST_BUILD_PARENT") or os.path.join(
-        builder_home(), ".cache", "axon-guest-build")
-    os.makedirs(parent, mode=0o700, exist_ok=True)
+    parent = os.environ.get("AXON_GUEST_BUILD_PARENT") or DEFAULT_PARENT
+    os.makedirs(parent, mode=0o711, exist_ok=True)
+    # `x` for others, no more: the build processes (another uid) must reach
+    # their own directories under it, and must not list or write it. The keys
+    # directory inside it stays 0700.
+    os.chmod(parent, 0o711)
     ancestors, why = ancestors_of(parent)
     if why:
         fail(f"the guest build's parent directory is not private to the builder: {why}")
@@ -540,6 +586,90 @@ def host_tools(names):
     return out
 
 
+def toolchain_tree_problem(root):
+    """Why the toolchain tree under `root` is not one no build process could
+    have changed (empty: it is): every entry root-owned and not writable by
+    group or other (symlinks aside)."""
+    for d, dirs, files in os.walk(root):
+        for n in dirs + files:
+            p = os.path.join(d, n)
+            st = os.lstat(p)
+            if stat.S_ISLNK(st.st_mode):
+                continue
+            if st.st_uid != 0 or st.st_mode & 0o022:
+                return (f"{p} (uid {st.st_uid}, mode {oct(st.st_mode & 0o7777)}) is not root-owned and "
+                        "closed to group/other writes: build code running as that owner or group could "
+                        "rewrite the compiler. Install the pinned toolchain as root")
+    return ""
+
+
+def private_toolchain(base, chan, cargo, rustc):
+    """The pinned toolchain as a PRIVATE, root-owned copy under `base`
+    (hard links where the filesystem allows, a copy otherwise): the build
+    processes reach it (their uid cannot traverse root's home) and cannot
+    write it. The source tree must itself be root-owned and closed to group/
+    other writes, else refused. Returns (cargo, rustc) inside the copy."""
+    src = os.path.dirname(os.path.dirname(cargo))
+    if os.path.dirname(os.path.dirname(rustc)) != src:
+        fail("cargo and rustc are not of one toolchain directory")
+    why = toolchain_tree_problem(src)
+    if why:
+        fail(f"the pinned toolchain {src} is not root's: {why}")
+    dst = os.path.join(base, "toolchains", os.path.basename(src))
+    os.makedirs(os.path.dirname(dst), mode=0o755)
+    r = subprocess.run(["/bin/cp", "-al", "--", src, dst], capture_output=True)
+    if r.returncode != 0:
+        subprocess.run(["rm", "-rf", "--", dst], check=False)
+        r = subprocess.run(["/bin/cp", "-a", "--", src, dst], capture_output=True)
+    if r.returncode != 0:
+        fail(f"cannot make the private toolchain copy: {r.stderr.decode(errors='replace').strip()[-300:]}")
+    os.chmod(os.path.dirname(dst), 0o755)
+    c, ru = (os.path.join(dst, "bin", "cargo"), os.path.join(dst, "bin", "rustc"))
+    if sha256(c) != sha256(cargo) or sha256(ru) != sha256(rustc):
+        fail("the private toolchain copy is not the pinned toolchain's bytes")
+    return c, ru
+
+
+def bin_listing_sha256(d):
+    """Digest of a directory's listing: each entry's name, type and (for a
+    file) content digest."""
+    h = hashlib.sha256()
+    for n in sorted(os.listdir(d)):
+        p = os.path.join(d, n)
+        st = os.lstat(p)
+        h.update(n.encode() + b"\0" + oct(st.st_mode).encode() + b"\0")
+        if stat.S_ISREG(st.st_mode):
+            h.update(sha256(p).encode())
+        elif stat.S_ISLNK(st.st_mode):
+            h.update(os.readlink(p).encode())
+    return h.hexdigest()
+
+
+def measure(rec):
+    """What stands between the sources and the bytes, measured now: cargo,
+    rustc, the linker tools exactly as the build's PATH resolves them, and the
+    toolchain bin directory's listing."""
+    tc = rec["toolchain"]
+    return {"cargo": sha256(tc["cargo"]), "rustc": sha256(tc["rustc"]),
+            "bin": bin_listing_sha256(os.path.dirname(tc["cargo"])),
+            "tools": {n: t["sha256"] for n, t in host_tools(CARGO_HOST_TOOLS).items()}}
+
+
+def measure_problem(rec):
+    """Why what the record measured at begin is not what is there now (empty:
+    unchanged). `write` refuses to sign over any difference."""
+    want = rec.get("measured")
+    if not isinstance(want, dict):
+        return ""
+    try:
+        got = measure(rec)
+    except OSError as e:
+        return f"cannot re-measure the build's tools: {e}"
+    diff = sorted(k for k in set(got) | set(want) if got.get(k) != want.get(k))
+    return ("the tools the build stands on changed since begin (" + ", ".join(diff) + "): a build step "
+            "replaced the compiler, a linker or the toolchain directory; nothing is signed") if diff else ""
+
+
 def git_clone(dst):
     """A fresh STANDALONE clone of this tree's HEAD at `dst` (hardened git, no
     alternates, no hardlinks): what the host binaries are built from, so the
@@ -561,14 +691,47 @@ def git_clone(dst):
     return rev
 
 
+def reach_problem(path, uid):
+    """Why `uid` cannot traverse every directory from / to `path` (empty: it
+    can): the build processes must reach their own directories."""
+    cur = "/"
+    for part in [""] + [p for p in path.split("/") if p]:
+        cur = os.path.join(cur, part) if part else "/"
+        st = os.stat(cur)
+        if not (st.st_mode & 0o001 or (st.st_uid == uid and st.st_mode & 0o100)):
+            return (f"{cur} (mode {oct(st.st_mode & 0o7777)}) cannot be traversed by uid {uid}: put the build "
+                    "parent (AXON_GUEST_BUILD_PARENT) under a path every uid can traverse, e.g. "
+                    f"{DEFAULT_PARENT}")
+    return ""
+
+
+def chown_tree(path, uid, gid):
+    subprocess.run(["/bin/chown", "-R", "--no-dereference", f"{uid}:{gid}", "--", path], check=True)
+
+
 def begin(record_path, host=False):
+    require_runner()
     chan, cargo, rustc = toolchain()
+    uid, gid = build_ids()
     parent, ancestors, base = private_base("axon-host-build-" if host else "axon-guest-build-")
+    os.chmod(base, 0o711)
+    why = reach_problem(base, uid)
+    if why:
+        subprocess.run(["rm", "-rf", "--", base], check=False)
+        fail(why)
+    try:
+        src_cargo, src_rustc = cargo, rustc
+        cargo, rustc = private_toolchain(base, chan, cargo, rustc)
+    except SystemExit:
+        subprocess.run(["rm", "-rf", "--", base], check=False)
+        raise
     proxies = {k: os.environ[k] for k in PROXY_VARS if os.environ.get(k)}
     env = constructed_env(base, cargo, rustc, proxies)
     cargo_home, target = env["CARGO_HOME"], env["CARGO_TARGET_DIR"]
     os.mkdir(cargo_home)
     os.mkdir(target)
+    for d in (cargo_home, target):
+        os.chown(d, uid, gid)
     src = os.path.join(base, "src")
     if host:
         revision = git_clone(src)
@@ -578,6 +741,8 @@ def begin(record_path, host=False):
         os.mkdir(src)
         revision = None
         files = copy_tracked_tree(src)
+    # The build processes own their source copy and nothing else.
+    chown_tree(src, uid, gid)
     # Fresh: both directories were just created by os.mkdir (it fails on an
     # existing one), so a retry never links an earlier -- possibly wrapped --
     # build's artifacts (round 6).
@@ -600,11 +765,13 @@ def begin(record_path, host=False):
         "toolchain": {"channel": chan, "cargo": cargo, "cargo_sha256": sha256(cargo),
                       "cargo_version": first([cargo, "-V"]), "rustc": rustc,
                       "rustc_sha256": sha256(rustc), "rustc_vV": first([rustc, "-vV"]),
-                      "host_tools": host_tools(CARGO_HOST_TOOLS)},
+                      "host_tools": host_tools(CARGO_HOST_TOOLS),
+                      "source": {"cargo": src_cargo, "rustc": src_rustc}},
         "env": env,
         "env_allowlist": ENV_ALLOWLIST,
         "proxy_vars": sorted(proxies),
         "builder_uid": os.geteuid(),
+        "build_uid": uid,
         "build_parent": parent,
         "build_parent_ancestors": ancestors,
         "src_dir": src,
@@ -621,6 +788,7 @@ def begin(record_path, host=False):
     }
     if host:
         rec["source_revision"] = revision
+    rec["measured"] = measure(rec)
     write(record_path, rec)
     print(f"[guest-build-env] controlled: toolchain {chan} "
           f"({rec['toolchain']['rustc_vV'].splitlines()[0]}), {"a fresh clone" if host else "a private copy"} of the tree's "
@@ -692,15 +860,16 @@ def new_proof(parent, base):
 def own_builder():
     """(uid, parent) of the process running: the builder identity a RUNNER-side
     judge (the manifest step, run by the account that built) expects."""
-    parent = os.environ.get("AXON_GUEST_BUILD_PARENT") or os.path.join(
-        builder_home(), ".cache", "axon-guest-build")
-    return os.geteuid(), parent
+    parent = os.environ.get("AXON_GUEST_BUILD_PARENT") or DEFAULT_PARENT
+    return os.geteuid(), parent, build_ids()[0]
 
 
 def builder_pin(path=BUILDER_PIN):
-    """((uid, parent), why-not): the operator's pin of who builds and where the
-    builder-private parent is. An operator file (root-owned chain, no symlink,
-    not group/other-writable), schema-checked, absolute clean parent."""
+    """((uid, parent, build_uid), why-not): the operator's pin of who builds,
+    where the builder-private parent is, and the unprivileged uid every build
+    PROCESS runs as. An operator file (root-owned chain, no symlink, not
+    group/other-writable), schema-checked, absolute clean parent, a build uid
+    that is neither root nor the builder."""
     why = operator_file_problem(path)
     if why:
         return None, f"the builder pin {path} is not the operator's: {why}"
@@ -709,12 +878,15 @@ def builder_pin(path=BUILDER_PIN):
             pin = json.loads(f.read(1 << 16))
     except (OSError, ValueError) as e:
         return None, f"the builder pin {path} is unreadable: {e}"
-    uid, parent = (pin.get("uid"), pin.get("parent")) if isinstance(pin, dict) else (None, None)
-    if (not isinstance(pin, dict) or pin.get("schema") != BUILDER_PIN_SCHEMA or not isinstance(uid, int)
-            or isinstance(uid, bool) or uid < 0 or not isinstance(parent, str) or not os.path.isabs(parent)
-            or os.path.normpath(parent) != parent):
-        return None, f"the builder pin {path} is not a {BUILDER_PIN_SCHEMA} naming a uid and an absolute parent"
-    return (uid, parent), ""
+    uid, parent, bu = ((pin.get("uid"), pin.get("parent"), pin.get("build_uid"))
+                       if isinstance(pin, dict) else (None, None, None))
+    isuid = lambda v: isinstance(v, int) and not isinstance(v, bool) and v >= 0  # noqa: E731
+    if (not isinstance(pin, dict) or pin.get("schema") != BUILDER_PIN_SCHEMA or not isuid(uid)
+            or not isuid(bu) or bu == 0 or bu == uid or not isinstance(parent, str)
+            or not os.path.isabs(parent) or os.path.normpath(parent) != parent):
+        return None, (f"the builder pin {path} is not a {BUILDER_PIN_SCHEMA} naming a uid, an absolute "
+                      "parent and an unprivileged build_uid other than the builder's")
+    return (uid, parent, bu), ""
 
 
 def proof_problems(rec, what, builder=None):
@@ -732,8 +904,11 @@ def proof_problems(rec, what, builder=None):
     if (not isinstance(pr, dict) or pr.get("schema") != PROOF_SCHEMA
             or not isinstance(pr.get("hmac"), str) or not re.fullmatch(r"[0-9a-f]{64}", pr["hmac"])):
         return f"the {what} record carries no builder proof (a record the controlled runner did not write)"
-    if not (isinstance(builder, tuple) and len(builder) == 2):
+    if not (isinstance(builder, tuple) and len(builder) in (2, 3)):
         return "no operator builder identity to judge the proof against (the builder pin is absent)"
+    if len(builder) == 3 and rec.get("build_uid") != builder[2]:
+        return (f"the {what} record's build processes ran as uid {rec.get('build_uid')!r}, not the pinned "
+                f"build uid {builder[2]}")
     key, why = proof_key(builder[1], pr.get("id"), builder[0])
     if why:
         return f"the {what} record's proof cannot be checked: {why}"
@@ -744,6 +919,9 @@ def proof_problems(rec, what, builder=None):
 
 def write(path, rec):
     if isinstance(rec.get("proof"), dict):
+        why = measure_problem(rec)
+        if why:
+            fail(why)
         key, why = proof_key(rec.get("build_parent"), rec["proof"].get("id"), rec.get("builder_uid"),
                              judging=False)
         if why:
@@ -795,6 +973,10 @@ def cargo_step(record_path, args, rustflags):
              "invocation (scripts/guest_build_env.py INVOCATIONS / HOST_INVOCATIONS): extra arguments or "
              "flags could put a wrapper, linker or config between the sources and the bytes")
     env = controlled_env(rec, rustflags)
+    require_runner()
+    why = measure_problem(rec)
+    if why:
+        fail(why)
     # Cargo re-reads its config on EVERY invocation: hold it to begin's before
     # this one starts and after it ends (round 4b, finding 1).
     before = config_now(rec)
@@ -803,8 +985,10 @@ def cargo_step(record_path, args, rustflags):
     entry = {"name": name, "args": args, "rustflags": rustflags, "config_before": before}
     rec["builds"].append(entry)
     write(record_path, rec)
-    r = subprocess.run([rec["toolchain"]["cargo"], *args], env=env, cwd=rec["src_dir"])
+    r = subprocess.run(as_build_uid([rec["toolchain"]["cargo"], *args]), env=env, cwd=rec["src_dir"])
     entry["config_after"] = after = config_now(rec)
+    # `write` re-measures cargo, rustc, the linker tools and the toolchain bin
+    # directory and refuses to sign over any change the step made.
     write(record_path, rec)
     if after != config_at_begin(rec):
         fail(f"cargo's effective configuration changed DURING `{name}`: {after}")
@@ -1032,8 +1216,14 @@ def kernel(record_path, dist, profile_dir):
     under a constructed environment in a private directory; record the host
     toolchain that produced it. Writes vmlinux and effective.config to `dist`."""
     pin = read_pin(profile_dir)
+    require_runner()
+    uid, gid = build_ids()
     parent, ancestors, base = private_base("axon-kernel-build-")
+    os.chmod(base, 0o711)
     try:
+        why = reach_problem(base, uid)
+        if why:
+            fail(why)
         ver = pin["KERNEL_VERSION"]
         tarball = os.path.join(base, f"linux-{ver}.tar.xz")
         pins = {"version": ver,
@@ -1054,6 +1244,9 @@ def kernel(record_path, dist, profile_dir):
         if r.returncode != 0:
             fail("the kernel tarball did not extract")
         ksrc = os.path.join(base, f"linux-{ver}")
+        # make (and the kernel tree's own scripts) run as the build uid, in a
+        # tree it owns and nothing else.
+        chown_tree(ksrc, uid, gid)
         with open(os.path.join(ksrc, ".config"), "wb") as f:
             f.write(open(os.path.join(base, "base.config"), "rb").read())
             for line in open(os.path.join(base, "overlay.config"), "rb"):
@@ -1063,7 +1256,7 @@ def kernel(record_path, dist, profile_dir):
         steps = [[make, "ARCH=x86_64", "olddefconfig"],
                  [make, "ARCH=x86_64", f"-j{os.cpu_count() or 1}", "vmlinux"]]
         for argv in steps:
-            r = subprocess.run(argv, env=kenv, cwd=ksrc, stdout=subprocess.DEVNULL)
+            r = subprocess.run(as_build_uid(argv), env=kenv, cwd=ksrc, stdout=subprocess.DEVNULL)
             if r.returncode != 0:
                 fail(f"{' '.join(argv)} failed ({r.returncode})")
         vml = os.path.join(ksrc, "vmlinux")
@@ -1074,7 +1267,7 @@ def kernel(record_path, dist, profile_dir):
             if os.path.lexists(dst):
                 os.unlink(dst)
             shutil.copyfile(src, dst)
-        rec = {"schema": KERNEL_SCHEMA, "controlled": True, "builder_uid": os.geteuid(),
+        rec = {"schema": KERNEL_SCHEMA, "controlled": True, "builder_uid": os.geteuid(), "build_uid": uid,
                "build_parent": parent, "build_parent_ancestors": ancestors, "base": base,
                "pin": pins, "env": kenv, "make": steps, "tools": tools,
                "effective_config_sha256": sha256(os.path.join(dist, "effective.config")),
@@ -1124,6 +1317,15 @@ def shape_problems(rec):
                 f"(extra {sorted(set(env) - set(want))}, differing "
                 f"{sorted(k for k in set(env) & set(want) if env[k] != want[k])}, "
                 f"missing {sorted(set(want) - set(env))})")
+    bu = rec.get("build_uid")
+    if (not isinstance(bu, int) or isinstance(bu, bool) or bu <= 0 or bu == rec.get("builder_uid")
+            or not str(tc["cargo"]).startswith(os.path.join(base, "toolchains") + "/")):
+        return (f"its build processes did not run as an unprivileged uid of their own (build_uid {bu!r}) "
+                "or its toolchain is not the private root-owned copy made for this build")
+    if (rec.get("measured") or {}).get("cargo") != tc.get("cargo_sha256") or (rec.get("measured") or {}).get("rustc") != tc.get("rustc_sha256") \
+            or not isinstance((rec.get("measured") or {}).get("tools"), dict) \
+            or {n: (tc.get("host_tools") or {}).get(n, {}).get("sha256") for n in CARGO_HOST_TOOLS} != {n: (rec["measured"]["tools"]).get(n) for n in CARGO_HOST_TOOLS}:
+        return "its measurement of the compiler and linker tools is not the one its toolchain records"
     if rec.get("target_dir_created_empty") is not True or rec.get("cargo_home_created_empty") is not True:
         return "its target dir or CARGO_HOME is not a fresh one the build created"
     if (rec.get("effective_config") or {}).get("foreign") != []:
@@ -1158,7 +1360,9 @@ def kernel_problems(k, man):
     tools = k.get("tools") or {}
     make = (tools.get("make") or {}).get("path")
     steps = k.get("make") or []
-    if (not isinstance(base, str) or os.path.dirname(base) != k.get("build_parent")
+    bu = k.get("build_uid")
+    if (not isinstance(bu, int) or isinstance(bu, bool) or bu <= 0 or bu == k.get("builder_uid")
+            or not isinstance(base, str) or os.path.dirname(base) != k.get("build_parent")
             or ancestors_problem(k.get("build_parent"), k.get("build_parent_ancestors"), k.get("builder_uid"))
             or k.get("env") != kernel_env(base) or make != host_tool_path("make") or len(steps) != 2
             or steps[0] != [make, "ARCH=x86_64", "olddefconfig"]
@@ -1209,8 +1413,11 @@ def recorded_host_tools(man):
     rt = (src.get("rootfs") or {}).get("tool")
     if rt:
         tools["mksquashfs"] = rt
-    tools["rustc"] = {"path": tc.get("rustc"), "sha256": tc.get("rustc_sha256")}
-    tools["cargo"] = {"path": tc.get("cargo"), "sha256": tc.get("cargo_sha256")}
+    # The toolchain's STABLE path (where the operator installed it), not the
+    # per-build private copy's: the copy's path changes with every build.
+    srcp = tc.get("source") if isinstance(tc.get("source"), dict) else {}
+    tools["rustc"] = {"path": srcp.get("rustc") or tc.get("rustc"), "sha256": tc.get("rustc_sha256")}
+    tools["cargo"] = {"path": srcp.get("cargo") or tc.get("cargo"), "sha256": tc.get("cargo_sha256")}
     return {n: {"path": (t or {}).get("path"), "sha256": (t or {}).get("sha256")} for n, t in tools.items()}
 
 
@@ -1331,10 +1538,18 @@ def main():
     elif a[:1] == ["check-host-record"] and len(a) >= 2:
         # check-host-record DIR [--commit SHA] (--builder-uid N --builder-parent P | --builder-pin)
         opts = dict(zip(a[2::2], a[3::2]))
-        if len(a) % 2 != 0 or set(opts) - {"--commit", "--builder-uid", "--builder-parent"}:
+        flags = ("--builder-uid", "--builder-parent", "--build-uid")
+        if len(a) % 2 != 0 or set(opts) - {"--commit", *flags}:
             sys.exit(__doc__)
-        if "--builder-uid" in opts and "--builder-parent" in opts and opts["--builder-uid"].isdigit():
-            builder = (int(opts["--builder-uid"]), opts["--builder-parent"])
+        given = [f for f in flags if f in opts]
+        if given and len(given) != 3:
+            fail(f"the builder flags come together ({', '.join(flags)}); got only {given}: a partial pair "
+                 "is never taken for the pin")
+        if given:
+            if (not re.fullmatch(r"[0-9]{1,9}", opts["--builder-uid"] + "") or not re.fullmatch(r"[0-9]{1,9}", opts["--build-uid"])
+                    or not os.path.isabs(opts["--builder-parent"])):
+                fail("--builder-uid and --build-uid are plain decimal uids and --builder-parent an absolute path")
+            builder = (int(opts["--builder-uid"]), opts["--builder-parent"], int(opts["--build-uid"]))
         else:
             builder, why = builder_pin()
             if why:

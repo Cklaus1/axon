@@ -138,12 +138,22 @@ fn build_env_only(repo: &Path, out: &Path, env: &[(&str, String)]) -> Output {
     c.output().unwrap()
 }
 
-/// Where a real controlled build keeps its private directories and proof keys.
+/// Where a real controlled build keeps its private directories and proof keys
+/// (the old default under the builder's home, and the system default): a test
+/// never writes either.
 fn real_parent() -> PathBuf {
+    PathBuf::from("/var/lib/axon-guest-build")
+}
+
+fn old_real_parent() -> PathBuf {
     PathBuf::from(std::env::var("HOME").unwrap())
         .join(".cache")
         .join("axon-guest-build")
 }
+
+/// The directory test builds live under: reachable by the unprivileged uid the
+/// build processes run as (a path under root's 0700 home is not), removed at exit.
+const TEST_ROOT: &str = "/var/lib";
 
 /// The build parent every build these tests start uses: a directory made for
 /// THIS test process under the builder's home (only root's or the builder's
@@ -154,13 +164,11 @@ fn test_parent() -> &'static Path {
     static P: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
     static CLEAN: std::sync::OnceLock<std::ffi::CString> = std::sync::OnceLock::new();
     P.get_or_init(|| {
-        let d = PathBuf::from(std::env::var("HOME").unwrap())
-            .join(".cache")
-            .join(format!("axon-gbe-test-{}", std::process::id()));
+        let d = PathBuf::from(TEST_ROOT).join(format!("axon-gbe-test-{}", std::process::id()));
         std::fs::create_dir_all(&d).unwrap();
-        std::fs::set_permissions(&d, std::fs::Permissions::from_mode(0o700)).unwrap();
+        std::fs::set_permissions(&d, std::fs::Permissions::from_mode(0o755)).unwrap();
         assert!(
-            !d.starts_with(real_parent()),
+            !d.starts_with(real_parent()) && !d.starts_with(old_real_parent()),
             "ATTACK: a test would build under the real builder-private parent"
         );
         extern "C" fn clean() {
@@ -204,7 +212,7 @@ fn record(out: &Path) -> Value {
         serde_json::from_slice(&std::fs::read(out.join("build-env.json")).unwrap()).unwrap();
     let parent = PathBuf::from(rec["build_parent"].as_str().unwrap_or("/"));
     assert!(
-        !parent.starts_with(real_parent()),
+        !parent.starts_with(real_parent()) && !parent.starts_with(old_real_parent()),
         "ATTACK: a test built under the real builder-private parent {}",
         parent.display()
     );
@@ -243,9 +251,13 @@ fn text(o: &Output) -> String {
 /// A scratch directory under the builder's home: its ancestors are only
 /// root's or the builder's, so it may hold a build parent.
 fn private_scratch() -> tempfile::TempDir {
-    let cache = PathBuf::from(std::env::var("HOME").unwrap()).join(".cache");
-    std::fs::create_dir_all(&cache).unwrap();
-    tempfile::tempdir_in(cache).unwrap()
+    use std::os::unix::fs::PermissionsExt;
+    let d = tempfile::Builder::new()
+        .prefix("axon-gbe-scratch-")
+        .tempdir_in(TEST_ROOT)
+        .unwrap();
+    std::fs::set_permissions(d.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
+    d
 }
 
 /// A rustc wrapper that leaves `marker` behind and runs the compiler.
@@ -441,7 +453,7 @@ fn a_callers_rustup_home_does_not_choose_the_guest_toolchain() {
         Value::Null
     };
     discard(&rec);
-    let rustc = rec["toolchain"]["rustc"].as_str().unwrap_or("");
+    let rustc = rec["toolchain"]["source"]["rustc"].as_str().unwrap_or("");
     assert!(
         !rustc.starts_with(fake_home.to_str().unwrap()),
         "ATTACK: a caller's RUSTUP_HOME chose the guest build's compiler ({rustc})"
@@ -556,8 +568,10 @@ fn a_cargo_config_written_during_a_guest_build_step_fails_that_step() {
         "use std::path::PathBuf;\nfn main() {\n    let mut p = \
          PathBuf::from(std::env::var(\"OUT_DIR\").unwrap());\n    while \
          !p.join(\"cargo-home\").is_dir() {\n        if !p.pop() {\n            return;\n        \
-         }\n    }\n    std::fs::create_dir_all(p.join(\".cargo\")).unwrap();\n    \
-         std::fs::write(p.join(\".cargo/config.toml\"), \"[build]\\njobs = 1\\n\").unwrap();\n}\n",
+         }\n    }\n    let cfg = \"[build]\\njobs = 1\\n\";\n    \
+         let _ = std::fs::create_dir_all(p.join(\".cargo\"));\n    \
+         let _ = std::fs::write(p.join(\".cargo/config.toml\"), cfg);\n    \
+         std::fs::write(p.join(\"src/.cargo/config.toml\"), cfg).unwrap();\n}\n",
     );
     git(&r, &["add", "-A"]);
     let out = d.path().join("out");
@@ -565,9 +579,21 @@ fn a_cargo_config_written_during_a_guest_build_step_fails_that_step() {
     assert!(o.status.success(), "setup: {}", text(&o));
     let rec = record(&out);
     let b = gcargo(&r, &out.join("build-env.json"), Some(CRT), &GUEST_INIT);
-    let written = base_of(&rec).join(".cargo/config.toml").exists();
+    let written = std::fs::read_to_string(base_of(&rec).join("src/.cargo/config.toml"))
+        .is_ok_and(|c| c.contains("jobs = 1"));
+    // Round 7: the build processes run as another uid, and the directory
+    // beside the private copy is root's, so the planting the round-4b test
+    // did there is no longer possible at all.
+    let beside = base_of(&rec).join(".cargo/config.toml").exists();
     discard(&rec);
-    assert!(written, "setup: the build script wrote the config");
+    assert!(
+        written,
+        "setup: the build script wrote the config into its own tree"
+    );
+    assert!(
+        !beside,
+        "ATTACK: a build script (running as the build uid) wrote a cargo config beside the private copy"
+    );
     assert!(
         !b.status.success(),
         "ATTACK: a cargo config written during a guest build step left that step succeeded:\n{}",
@@ -1333,12 +1359,12 @@ elif mode == 'plantedparent':\n\
 \x20exp = (os.geteuid(), par)\n\
 elif mode in ('forgedaccount', 'forgedpinned'):\n\
 \x20import hmac as h, tempfile\n\
-\x20par = tempfile.mkdtemp(dir=os.path.dirname(rec['build_parent']), prefix='axon-forge-'); os.chmod(par, 0o700); os.chown(par, 65534, 65534)\n\
-\x20os.mkdir(par + '/keys', 0o700); os.chown(par + '/keys', 65534, 65534)\n\
-\x20open(par + '/keys/forged.key', 'w').write('f' * 64); os.chown(par + '/keys/forged.key', 65534, 65534); os.chmod(par + '/keys/forged.key', 0o400)\n\
-\x20rec['builder_uid'] = 65534; rec['build_parent'] = par; rec['proof']['id'] = 'forged'\n\
+\x20par = tempfile.mkdtemp(dir=os.path.dirname(rec['build_parent']), prefix='axon-forge-'); os.chmod(par, 0o700); os.chown(par, 4242, 4242)\n\
+\x20os.mkdir(par + '/keys', 0o700); os.chown(par + '/keys', 4242, 4242)\n\
+\x20open(par + '/keys/forged.key', 'w').write('f' * 64); os.chown(par + '/keys/forged.key', 4242, 4242); os.chmod(par + '/keys/forged.key', 0o400)\n\
+\x20rec['builder_uid'] = 4242; rec['build_parent'] = par; rec['proof']['id'] = 'forged'\n\
 \x20rec['proof']['hmac'] = h.new(b'f' * 64, g.proof_payload(rec), 'sha256').hexdigest()\n\
-\x20if mode == 'forgedpinned': exp = (65534, par)\n\
+\x20if mode == 'forgedpinned': exp = (4242, par)\n\
 out = g.proof_problems(rec, 'build', exp)\n\
 import shutil\n\
 if mode in ('plantedparent', 'forgedaccount', 'forgedpinned'): shutil.rmtree(rec['build_parent'])\n\
@@ -1410,10 +1436,10 @@ print(json.dumps(out))";
     let chown = |p: &Path, uid: u32| {
         std::os::unix::fs::chown(p, Some(uid), None).unwrap();
     };
-    chown(&key, 65534);
+    chown(&key, 4242);
     let foreign_key = judge("same");
     chown(&key, 0);
-    chown(keys_dir, 65534);
+    chown(keys_dir, 4242);
     let foreign_dir = judge("same");
     chown(keys_dir, 0);
     discard(&rec);
@@ -1755,19 +1781,19 @@ elif mode == 'edit': rec['source_revision'] = 'a' * 40; save()\n\
 elif mode == 'noproof': rec.pop('proof'); save()\n\
 elif mode == 'norecord': os.remove(rp)\n\
 elif mode == 'extra': open(out + '/evil', 'w').write('x')\n\
-elif mode == 'nobuild': rec['builds'] = []; g.write(rp, rec)\n\
+elif mode == 'nobuild': rec['builds'] = []; save()\n\
 elif mode == 'dropped':\n\
-\x20del rec['artifacts']['axon-observer']; g.write(rp, rec); os.remove(out + '/axon-observer')\n\
+\x20del rec['artifacts']['axon-observer']; save(); os.remove(out + '/axon-observer')\n\
 elif mode == 'symlink':\n\
 \x20shutil.copy(out + '/axon-fabric', d + '/twin'); os.remove(out + '/axon-fabric'); os.symlink(d + '/twin', out + '/axon-fabric')\n\
 elif mode == 'builder': exp = (os.geteuid() + 1, parent)\n\
 elif mode == 'parent': exp = (os.geteuid(), '/var/tmp')\n\
 elif mode == 'forge':\n\
-\x20par = tempfile.mkdtemp(dir=os.path.dirname(parent), prefix='axon-forge-'); os.chmod(par, 0o700); os.chown(par, 65534, 65534)\n\
-\x20os.mkdir(par + '/keys', 0o700); os.chown(par + '/keys', 65534, 65534)\n\
-\x20open(par + '/keys/f.key', 'w').write('f' * 64); os.chown(par + '/keys/f.key', 65534, 65534); os.chmod(par + '/keys/f.key', 0o400)\n\
-\x20anc, why = g.ancestors_of(par, 65534); assert not why, why\n\
-\x20rec = json.loads(json.dumps(rec).replace(parent, par)); rec['builder_uid'] = 65534; rec['build_parent_ancestors'] = anc; rec['proof']['id'] = 'f'\n\
+\x20par = tempfile.mkdtemp(dir=os.path.dirname(parent), prefix='axon-forge-'); os.chmod(par, 0o700); os.chown(par, 4242, 4242)\n\
+\x20os.mkdir(par + '/keys', 0o700); os.chown(par + '/keys', 4242, 4242)\n\
+\x20open(par + '/keys/f.key', 'w').write('f' * 64); os.chown(par + '/keys/f.key', 4242, 4242); os.chmod(par + '/keys/f.key', 0o400)\n\
+\x20anc, why = g.ancestors_of(par, 4242); assert not why, why\n\
+\x20rec = json.loads(json.dumps(rec).replace(parent, par)); rec['builder_uid'] = 4242; rec['build_parent_ancestors'] = anc; rec['proof']['id'] = 'f'\n\
 \x20rec['proof']['hmac'] = h.new(b'f' * 64, g.proof_payload(rec), 'sha256').hexdigest(); save()\n\
 res = g.host_record_problems(out, exp, None if mode in ('nocommit', 'edit') else (('b' * 40) if mode == 'revision' else commit))\n\
 shutil.rmtree(d)\n\
@@ -1851,5 +1877,384 @@ fn the_host_build_runs_one_fixed_invocation_into_a_new_directory() {
         !o.status.success() && text(&o).contains("not a controlled guest build invocation"),
         "ATTACK: a guest build ran the host build's invocation: {}",
         text(&o)
+    );
+}
+
+// ── C9 round 7, FIELD-ORIGIN (amendment 90): what the build processes can touch ──
+
+/// A build script that does what the reviewer's probe did (plants an executable
+/// `cc` next to RUSTC, reads every file of the proof-key directory) and reports
+/// to `report`, plus a control: it can write inside its own OUT_DIR.
+fn probe_build_rs(report: &Path) -> String {
+    format!(
+        r##"use std::os::unix::fs::PermissionsExt;
+use std::{{env, fs, path::PathBuf}};
+fn main() {{
+    let mut out = String::new();
+    let uid = fs::read_to_string("/proc/self/status").unwrap_or_default()
+        .lines().find(|l| l.starts_with("Uid:")).unwrap_or("").to_string();
+    out += &format!("{{uid}}\n");
+    let rustc = PathBuf::from(env::var("RUSTC").unwrap());
+    let bin = rustc.parent().unwrap().to_path_buf();
+    let cc = bin.join("cc");
+    out += &format!("plant-toolchain: {{}}\n", match fs::write(&cc, "#!/bin/sh\nexec /usr/bin/cc \"$@\"\n")
+        .and_then(|_| fs::set_permissions(&cc, fs::Permissions::from_mode(0o755))) {{ Ok(_) => "WROTE".to_string(), Err(e) => format!("denied ({{e}})") }});
+    let _ = fs::write(rustc.with_file_name("rustc-extra"), "x");
+    let base = PathBuf::from(env::var("CARGO_HOME").unwrap()).parent().unwrap().to_path_buf();
+    let parent = base.parent().unwrap().to_path_buf();
+    out += &format!("keys-list: {{}}\n", match fs::read_dir(parent.join("keys")) {{
+        Ok(rd) => {{
+            let mut n = 0;
+            for e in rd.flatten() {{ if fs::read(e.path()).is_ok() {{ n += 1; }} }}
+            format!("READ {{n}} keys")
+        }}
+        Err(e) => format!("denied ({{e}})") }});
+    out += &format!("own-outdir: {{}}\n", match fs::write(PathBuf::from(env::var("OUT_DIR").unwrap()).join("probe"), "x") {{
+        Ok(_) => "writable", Err(_) => "NOT writable" }});
+    out += &format!("base-write: {{}}\n", match fs::write(base.join("planted"), "x") {{ Ok(_) => "WROTE", Err(_) => "denied" }});
+    fs::write("{}", out).unwrap();
+}}
+"##,
+        report.display()
+    )
+}
+
+/// Removes the probe reports whatever the test does.
+struct Reports(Vec<PathBuf>);
+impl Drop for Reports {
+    fn drop(&mut self) {
+        for p in &self.0 {
+            let _ = std::fs::remove_file(p);
+        }
+    }
+}
+
+fn assert_probe_contained(report: &Path, what: &str) {
+    let r = std::fs::read_to_string(report)
+        .unwrap_or_else(|e| panic!("setup: the probe wrote no report: {e}"));
+    let uid_line = r.lines().next().unwrap_or("");
+    assert!(
+        !uid_line.contains("\t0\t") && uid_line.contains("65534"),
+        "ATTACK: {what}: build code ran as root or an unexpected uid: {r}"
+    );
+    assert!(
+        r.contains("own-outdir: writable"),
+        "setup: the probe cannot even write its own OUT_DIR (a broken probe proves nothing): {r}"
+    );
+    assert!(
+        r.contains("plant-toolchain: denied"),
+        "ATTACK: {what}: a build script planted a `cc` in the toolchain directory: {r}"
+    );
+    assert!(
+        !r.contains("keys-list: READ"),
+        "ATTACK: {what}: a build script read the proof keys: {r}"
+    );
+    assert!(
+        r.contains("base-write: denied"),
+        "ATTACK: {what}: a build script wrote into the build's own base directory: {r}"
+    );
+}
+
+/// Round 7 BLOCKER (executed by the reviewer): the build's PATH put the
+/// builder-writable toolchain bin directory first, a build script planted `cc`
+/// there, every host binary was linked through it, the signed record still
+/// named /usr/bin/cc, and the same script read the 0400 proof key. Now every
+/// build process runs as an unprivileged uid under setpriv, the toolchain is a
+/// root-owned private copy it cannot write and is not on PATH, and the keys
+/// directory is root's 0700. Driven on BOTH builds (the guest's cargo step and
+/// the host build) with a probe build script; control: the probe runs, writes
+/// its OUT_DIR, the build succeeds, and the record names the system `cc`.
+#[test]
+fn a_build_script_cannot_plant_a_linker_or_read_the_proof_key() {
+    let d = tempfile::tempdir().unwrap();
+    // The host build.
+    let hr = host_checkout(d.path());
+    // Written by the build's unprivileged uid: /tmp, the one place it can.
+    let hreport = PathBuf::from(format!("/tmp/axon-probe-{}-host", std::process::id()));
+    let greport = PathBuf::from(format!("/tmp/axon-probe-{}-guest", std::process::id()));
+    let _clean = Reports(vec![hreport.clone(), greport.clone()]);
+    write(&hr.join("fabric/build.rs"), &probe_build_rs(&hreport));
+    git(&hr, &["add", "-A"]);
+    git(&hr, &["commit", "-q", "-m", "probe"]);
+    let out = d.path().join("host");
+    let o = host_build(&hr, &out, &[]);
+    assert!(
+        o.status.success(),
+        "control: the host build with the probe builds: {}",
+        text(&o)
+    );
+    assert_probe_contained(&hreport, "the host build");
+    let rec = host_record(&out);
+    assert_eq!(rec["toolchain"]["host_tools"]["cc"]["path"], "/usr/bin/cc");
+    assert_eq!(
+        rec["env"]["PATH"], "/usr/bin:/bin",
+        "fixed system PATH only"
+    );
+    assert_eq!(rec["build_uid"], 65534);
+    // The guest build's cargo step.
+    let r = checkout(d.path());
+    write(&r.join("guest/build.rs"), &probe_build_rs(&greport));
+    git(&r, &["add", "-A"]);
+    let gout = d.path().join("gout");
+    let o = build_env_only(&r, &gout, &[]);
+    assert!(o.status.success(), "setup: begin: {}", text(&o));
+    let grec = record(&gout);
+    let b = gcargo(&r, &gout.join("build-env.json"), Some(CRT), &GUEST_INIT);
+    discard(&grec);
+    assert!(
+        b.status.success(),
+        "control: the guest step with the probe builds: {}",
+        text(&b)
+    );
+    assert_probe_contained(&greport, "the guest build");
+    assert_eq!(grec["toolchain"]["host_tools"]["cc"]["path"], "/usr/bin/cc");
+}
+
+/// Round 7: the tools the build stands on are measured at begin, re-measured
+/// before every step and before every write that signs, and ANY change refuses
+/// (a build step cannot swap the compiler or add a linker and have the record
+/// signed). Each case is a change a root-level actor makes to the private copy
+/// (by unlinking and re-creating, never editing a hard-linked file in place).
+/// Control: the untouched build signs (every other build test).
+#[test]
+fn a_change_to_the_compiler_or_linker_tools_is_never_signed() {
+    let d = tempfile::tempdir().unwrap();
+    let (r, rec_path, rec) = begun(d.path());
+    let bin = Path::new(rec["toolchain"]["cargo"].as_str().unwrap())
+        .parent()
+        .unwrap()
+        .to_path_buf();
+    // A directory listing change: a `cc` appears next to rustc.
+    write(&bin.join("cc"), "#!/bin/sh\nexit 0\n");
+    chmod_x(&bin.join("cc"));
+    let a = gcargo(&r, &rec_path, Some(CRT), &GUEST_INIT);
+    std::fs::remove_file(bin.join("cc")).unwrap();
+    // The compiler swapped (unlink + create: the original inode is the real
+    // toolchain's, shared by hard link, and is never written).
+    let rustc = bin.join("rustc");
+    let real = std::fs::read(&rustc).unwrap();
+    std::fs::remove_file(&rustc).unwrap();
+    write(&rustc, "#!/bin/sh\nexit 0\n");
+    chmod_x(&rustc);
+    let b = gcargo(&r, &rec_path, Some(CRT), &GUEST_INIT);
+    std::fs::remove_file(&rustc).unwrap();
+    std::fs::write(&rustc, real).unwrap();
+    chmod_x(&rustc);
+    // And the signing choke point itself: a record whose tools drifted is not
+    // written (signed), whatever step led there.
+    let code = "\
+import os\n\
+rec = json.load(open(sys.argv[2]))\n\
+open(os.path.dirname(rec['toolchain']['cargo']) + '/cc', 'w').write('x')\n\
+try:\n\
+\x20   g.write(sys.argv[2], rec); res = 'SIGNED'\n\
+except SystemExit as e:\n\
+\x20   res = str(e)\n\
+os.remove(os.path.dirname(rec['toolchain']['cargo']) + '/cc')\n\
+print(json.dumps(res))";
+    let o = gpy(&r, code, &[rec_path.to_str().unwrap()]);
+    let signed: String = serde_json::from_slice(&o.stdout).unwrap_or_else(|_| text(&o));
+    discard(&rec);
+    for (what, o) in [("a cc beside rustc", &a), ("a swapped rustc", &b)] {
+        assert!(
+            !o.status.success() && text(o).contains("tools the build stands on changed"),
+            "ATTACK: a build step ran after {what} changed the toolchain: {}",
+            text(o)
+        );
+    }
+    assert!(
+        signed.contains("nothing is signed"),
+        "ATTACK: a record was signed over changed tools: {signed}"
+    );
+}
+
+/// Round 7: the toolchain tree must be one no build process could have written:
+/// every entry root-owned and closed to group/other writes, else the build is
+/// refused with the operator instruction.
+#[test]
+fn a_toolchain_tree_another_uid_or_group_can_write_is_refused() {
+    use std::os::unix::fs::PermissionsExt;
+    let d = tempfile::tempdir().unwrap();
+    let r = checkout(d.path());
+    let t = d.path().join("tc");
+    write(&t.join("bin/cargo"), "x");
+    chmod_x(&t.join("bin/cargo"));
+    let code = "print(json.dumps(g.toolchain_tree_problem(sys.argv[2])))";
+    let judge = || -> String {
+        let o = gpy(&r, code, &[t.to_str().unwrap()]);
+        serde_json::from_slice(&o.stdout).unwrap()
+    };
+    assert_eq!(
+        judge(),
+        "",
+        "control: a root-owned, closed tree is accepted"
+    );
+    chmod(&t.join("bin/cargo"), 0o775);
+    let group = judge();
+    chmod_x(&t.join("bin/cargo"));
+    std::os::unix::fs::chown(t.join("bin"), Some(4242), None).unwrap();
+    let owner = judge();
+    std::os::unix::fs::chown(t.join("bin"), Some(0), None).unwrap();
+    std::fs::set_permissions(t.join("bin"), std::fs::Permissions::from_mode(0o757)).unwrap();
+    let other = judge();
+    for (what, got) in [
+        ("a group-writable file", group),
+        ("a directory owned by another uid", owner),
+        ("a world-writable directory", other),
+    ] {
+        assert!(
+            got.contains("not root-owned and closed to group/other writes"),
+            "ATTACK: a toolchain tree with {what} was accepted: {got:?}"
+        );
+    }
+}
+
+/// Round 7 (minor): git must not see a repository that merely ENCLOSES the
+/// build directory (axon-core's build.rs would stamp its HEAD and dirty flag
+/// into the guest axon): the constructed environment sets
+/// GIT_CEILING_DIRECTORIES to the build's own base. Control: without it, git
+/// does find the enclosing repository.
+#[test]
+fn a_git_repository_enclosing_the_build_directory_is_invisible_to_the_build() {
+    let d = tempfile::tempdir().unwrap();
+    let enclosing = Path::new(TEST_ROOT).join(format!("axon-gbe-enclosing-{}", std::process::id()));
+    std::fs::create_dir_all(&enclosing).unwrap();
+    chmod(&enclosing, 0o755);
+    git(&enclosing, &["init", "-q", "-b", "main"]);
+    git(
+        &enclosing,
+        &["commit", "-q", "--allow-empty", "-m", "enclosing"],
+    );
+    let r = checkout(d.path());
+    let out = d.path().join("out");
+    let o = build_env_only(
+        &r,
+        &out,
+        &[(
+            "AXON_GUEST_BUILD_PARENT",
+            enclosing.join("parent").display().to_string(),
+        )],
+    );
+    assert!(o.status.success(), "setup: begin: {}", text(&o));
+    let rec = record(&out);
+    let git_in = |env: &Value| -> bool {
+        let mut c = Command::new("/usr/bin/git");
+        c.args(["rev-parse", "HEAD"])
+            .current_dir(rec["src_dir"].as_str().unwrap())
+            .env_clear();
+        for (k, v) in env.as_object().unwrap() {
+            c.env(k, v.as_str().unwrap());
+        }
+        c.env("GIT_CONFIG_NOSYSTEM", "1");
+        c.output().unwrap().status.success()
+    };
+    let with = git_in(&rec["env"]);
+    let mut loose = rec["env"].clone();
+    loose
+        .as_object_mut()
+        .unwrap()
+        .remove("GIT_CEILING_DIRECTORIES");
+    let without = git_in(&loose);
+    discard(&rec);
+    let _ = std::fs::remove_dir_all(&enclosing);
+    assert!(
+        without,
+        "setup: git finds the enclosing repository without the ceiling (a broken control proves nothing)"
+    );
+    assert!(
+        !with,
+        "ATTACK: an enclosing git repository is visible to the controlled build"
+    );
+}
+
+/// Round 7 (minor): `check-host-record` takes the builder flags together, as
+/// plain decimal uids and an absolute parent, or not at all (then the pin); a
+/// partial or malformed set is refused, never silently replaced by the pin.
+#[test]
+fn a_partial_or_malformed_builder_flag_set_is_refused() {
+    let d = tempfile::tempdir().unwrap();
+    let r = host_checkout(d.path());
+    let out = d.path().join("host");
+    let o = host_build(&r, &out, &[]);
+    assert!(o.status.success(), "setup: host build: {}", text(&o));
+    let rec = host_record(&out);
+    let parent = rec["build_parent"].as_str().unwrap().to_string();
+    let run = |args: &[&str]| -> Output {
+        gbe(&r)
+            .arg("check-host-record")
+            .arg(&out)
+            .args(args)
+            .output()
+            .unwrap()
+    };
+    let all = [
+        "--builder-uid",
+        "0",
+        "--builder-parent",
+        parent.as_str(),
+        "--build-uid",
+        "65534",
+    ];
+    let good = run(&all);
+    let cases: Vec<(&str, Vec<&str>)> = vec![
+        ("only the uid", vec!["--builder-uid", "0"]),
+        ("only the parent", vec!["--builder-parent", parent.as_str()]),
+        (
+            "no build uid",
+            vec!["--builder-uid", "0", "--builder-parent", parent.as_str()],
+        ),
+        (
+            "a non-digit uid",
+            vec![
+                "--builder-uid",
+                "root",
+                "--builder-parent",
+                parent.as_str(),
+                "--build-uid",
+                "65534",
+            ],
+        ),
+        (
+            "an Arabic-Indic digit uid (str.isdigit accepts it)",
+            vec![
+                "--builder-uid",
+                "\u{660}",
+                "--builder-parent",
+                parent.as_str(),
+                "--build-uid",
+                "65534",
+            ],
+        ),
+        (
+            "a relative parent",
+            vec![
+                "--builder-uid",
+                "0",
+                "--builder-parent",
+                "parent",
+                "--build-uid",
+                "65534",
+            ],
+        ),
+    ];
+    let mut failures = vec![];
+    for (what, args) in &cases {
+        let o = run(args);
+        if o.status.success()
+            || !(text(&o).contains("come together") || text(&o).contains("plain decimal"))
+        {
+            failures.push(format!("{what}: {}", text(&o)));
+        }
+    }
+    let rec_dir = base_of(&rec);
+    let _ = std::fs::remove_dir_all(rec_dir);
+    assert!(
+        good.status.success(),
+        "control: the full, well-formed flag set judges the honest record: {}",
+        text(&good)
+    );
+    assert!(
+        failures.is_empty(),
+        "ATTACK: a partial or malformed builder flag set was taken: {failures:?}"
     );
 }

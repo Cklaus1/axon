@@ -55,10 +55,16 @@ head -c 4096 /dev/urandom >"$DIST/rootfs.sqfs"
 # built from the clone's own guest_build_env.py (the pinned toolchain, the real
 # host tools, a builder-private parent under this user's home) and SIGNED by it
 # with a key made for the fixture. Only the artifacts' bytes are synthetic.
-KEYPARENT=$(mktemp -d "${HOME:-/root}/.cache/axon-opkit-keys.XXXXXX" 2>/dev/null) \
-  || { mkdir -p "${HOME:-/root}/.cache" && KEYPARENT=$(mktemp -d "${HOME:-/root}/.cache/axon-opkit-keys.XXXXXX"); } \
-  || { echo "cannot make a builder-private parent under \$HOME/.cache"; exit 2; }
-chmod 0700 "$KEYPARENT"
+# Round 7: the build processes run as an unprivileged uid, so the builder-private
+# parent lives where that uid can traverse (/var/lib), never under root's home;
+# and the controlled build needs root to start them. Not root: NOT_RUN.
+if [ "$(id -u)" != 0 ]; then
+  echo "NOT_RUN: the controlled host build starts its build processes as an unprivileged uid and needs root"
+  exit 0
+fi
+BUILD_UID=65534
+KEYPARENT=$(mktemp -d /var/lib/axon-opkit-keys.XXXXXX) || { echo "cannot make a builder-private parent under /var/lib"; exit 2; }
+chmod 0755 "$KEYPARENT"
 trap 'rm -rf "$WORK" "$KEYPARENT"' EXIT
 python3 - "$CLONE" "$DIST" "$KEYPARENT" <<'PY' || { echo "cannot write the synthetic manifest"; exit 2; }
 import hashlib, importlib.util, json, os, sys
@@ -66,13 +72,14 @@ c, d, parent = sys.argv[1:4]
 sys.dont_write_bytecode = True
 spec = importlib.util.spec_from_file_location("guest_build_env", os.path.join(c, "scripts", "guest_build_env.py"))
 g = importlib.util.module_from_spec(spec); spec.loader.exec_module(g)
+import hmac as hm
 def sha(p): return hashlib.sha256(open(p, "rb").read()).hexdigest()
 m = json.load(open(os.path.join(c, "profiles/linux-microvm/manifest.json")))
 for n in ("vmlinux", "rootfs.sqfs"):
     m["artifacts"][n]["sha256"] = sha(os.path.join(d, n))
 for k, p in (("firecracker_sha256", "/usr/local/bin/firecracker"), ("jailer_sha256", "/usr/local/bin/jailer")):
     if os.path.isfile(p): m["engine"][k] = sha(p)
-chan, cargo, rustc = g.toolchain()
+chan, cargo0, rustc0 = g.toolchain()
 anc, why = g.ancestors_of(parent)
 assert not why, why
 ids = {"build": "axon-guest-build-fixture", "kernel": "axon-kernel-build-fixture"}
@@ -82,15 +89,20 @@ def key(i):
     os.chmod(os.path.join(parent, "keys", i + ".key"), 0o400)
 for i in ids.values(): key(i)
 base = os.path.join(parent, ids["build"])
+tdir = os.path.join(base, "toolchains", os.path.basename(os.path.dirname(os.path.dirname(cargo0))), "bin")
+cargo, rustc = os.path.join(tdir, "cargo"), os.path.join(tdir, "rustc")  # the per-build private copy's paths (not made: judged only)
 env = g.constructed_env(base, cargo, rustc, {})
+hosts = g.host_tools(g.CARGO_HOST_TOOLS)
 art = {n: m["artifacts"][n]["sha256"] for n in g.DIST_BINARIES}
 check = {"origins": [], "foreign": []}
 mks = "/usr/bin/mksquashfs"
 rec = {"schema": g.SCHEMA, "controlled": True,
-       "toolchain": {"channel": chan, "cargo": cargo, "cargo_sha256": sha(cargo), "cargo_version": "cargo fixture",
-                     "rustc": rustc, "rustc_sha256": sha(rustc), "rustc_vV": "rustc fixture\nhost: x86_64-unknown-linux-gnu",
-                     "host_tools": g.host_tools(g.CARGO_HOST_TOOLS)},
-       "env": env, "env_allowlist": g.ENV_ALLOWLIST, "proxy_vars": [], "builder_uid": os.geteuid(),
+       "toolchain": {"channel": chan, "cargo": cargo, "cargo_sha256": sha(cargo0), "cargo_version": "cargo fixture",
+                     "rustc": rustc, "rustc_sha256": sha(rustc0), "rustc_vV": "rustc fixture\nhost: x86_64-unknown-linux-gnu",
+                     "host_tools": hosts, "source": {"cargo": cargo0, "rustc": rustc0}},
+       "measured": {"cargo": sha(cargo0), "rustc": sha(rustc0), "bin": "0" * 64,
+                    "tools": {n: t["sha256"] for n, t in hosts.items()}},
+       "env": env, "env_allowlist": g.ENV_ALLOWLIST, "proxy_vars": [], "builder_uid": os.geteuid(), "build_uid": 65534,
        "build_parent": parent, "build_parent_ancestors": anc, "src_dir": os.path.join(base, "src"), "src_files": 1,
        "cargo_home": env["CARGO_HOME"], "cargo_home_created_empty": True,
        "target_dir": env["CARGO_TARGET_DIR"], "target_dir_created_empty": True,
@@ -108,7 +120,7 @@ kbase = os.path.join(parent, ids["kernel"])
 mk = m["kernel"]
 tools = g.host_tools(g.KERNEL_TOOLS)
 make = tools["make"]["path"]
-krec = {"schema": g.KERNEL_SCHEMA, "controlled": True, "builder_uid": os.geteuid(), "build_parent": parent,
+krec = {"schema": g.KERNEL_SCHEMA, "controlled": True, "builder_uid": os.geteuid(), "build_uid": 65534, "build_parent": parent,
         "build_parent_ancestors": anc, "base": kbase,
         "pin": {"version": mk["version"], "tarball_sha256": mk["tarball_sha256"],
                 "config_sha256": mk["config_sha256"], "overlay_sha256": mk["overlay_sha256"]},
@@ -116,11 +128,13 @@ krec = {"schema": g.KERNEL_SCHEMA, "controlled": True, "builder_uid": os.geteuid
         "tools": tools, "effective_config_sha256": mk["effective_config_sha256"],
         "vmlinux_sha256": m["artifacts"]["vmlinux"]["sha256"],
         "proof": {"schema": g.PROOF_SCHEMA, "id": ids["kernel"], "hmac": ""}}
-g.write("/dev/null", rec); g.write("/dev/null", krec)  # signs in place
+for r_ in (rec, krec):  # signed as the runner would (the fixture's toolchain copy is not made, so not via g.write)
+    k_, why_ = g.proof_key(parent, r_["proof"]["id"], os.geteuid(), judging=False); assert not why_, why_
+    r_["proof"]["hmac"] = hm.new(k_, g.proof_payload(r_), "sha256").hexdigest()
 m["source"].update({"axon_tree_dirty_at_build": False, "axon_tree_dirty_reasons": [], "build_environment": rec})
 m["kernel"]["build_environment"] = krec
 assert not g.shape_problems(rec), g.shape_problems(rec)
-bld = (os.geteuid(), parent)
+bld = (os.geteuid(), parent, 65534)
 assert not g.image_problems(m, pin_required=False, builder=bld), g.image_problems(m, pin_required=False, builder=bld)
 for out in (os.path.join(d, "manifest.json"), os.path.join(c, "profiles/linux-microvm/manifest.json")):
     with open(out, "w") as f:
@@ -137,7 +151,7 @@ COMMIT=$(git -C "$CLONE" rev-parse HEAD)
 # builder). It builds axon-fabric and its dependencies from nothing every run.
 HOSTOUT=$WORK/hostbuild
 BUILDER_UID=$(id -u)
-(cd "$CLONE" && env -i HOME="$HOME" PATH=/usr/bin:/bin AXON_GUEST_BUILD_PARENT="$KEYPARENT" \
+(cd "$CLONE" && env -i HOME="$HOME" PATH=/usr/bin:/bin AXON_GUEST_BUILD_PARENT="$KEYPARENT" AXON_GUEST_BUILD_UID="$BUILD_UID" \
     ${http_proxy:+http_proxy="$http_proxy"} ${https_proxy:+https_proxy="$https_proxy"} \
     python3 -B scripts/guest_build_env.py host-build "$HOSTOUT") \
   || { echo "the controlled host build failed"; exit 2; }
@@ -169,7 +183,7 @@ SIGNER_PUB=$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')
 KIT=$CLONE/scripts/operator_deploy_protected_host.sh
 ARGS=(--from "$CLONE" --bin-dir "$BIN" --suite-registry "$OP/suites/registry.json"
       --grant-registry "$OP/grants/grants.json" --signer-public-key "$SIGNER_PUB"
-      --builder-uid "$BUILDER_UID" --builder-parent "$KEYPARENT")
+      --builder-uid "$BUILDER_UID" --builder-parent "$KEYPARENT" --build-uid "$BUILD_UID")
 
 # ══ 1. DRY RUN ═══════════════════════════════════════════════════════════════
 snapshot() {
@@ -321,7 +335,7 @@ refused "ATTACK: an observer user that is the custodian user" "five different us
 # builder (--builder-uid / --builder-parent: the operator's word) and every
 # binary is what the record names. Control: every pass above and below is the
 # honest directory.
-KB="--builder-uid $BUILDER_UID --builder-parent $KEYPARENT"
+KB="--builder-uid $BUILDER_UID --builder-parent $KEYPARENT --build-uid $BUILD_UID"
 copybin() { rm -rf "$WORK/fakebin"; mkdir "$WORK/fakebin"; cp -p "$BIN"/* "$WORK/fakebin/"; }
 # (the attacks only the record check catches come first: honest binaries, a bad record;
 # the ones a sibling check would also refuse -- no record, a replaced binary -- follow)
@@ -338,19 +352,19 @@ PY
 refused "ATTACK: a hand-written host build record (no builder proof)" "no builder proof" \
   bash "$KIT" --from "$CLONE" --bin-dir "$WORK/fakebin" $KB
 # The reviewer's forge: another account, with its own private directory and key.
-copybin; FORGE=$(mktemp -d "${HOME:-/root}/.cache/axon-opkit-forge.XXXXXX")
+copybin; FORGE=$(mktemp -d /var/lib/axon-opkit-forge.XXXXXX); chmod 0755 "$FORGE"
 python3 - "$WORK/fakebin/host-build.json" "$FORGE" "$KEYPARENT" "$CLONE" <<'PY' || fail "cannot forge the host record"
 import hmac, importlib.util, json, os, sys
 p, forge, parent, clone = sys.argv[1:5]
 sys.dont_write_bytecode = True
 sp = importlib.util.spec_from_file_location("g", os.path.join(clone, "scripts", "guest_build_env.py"))
 g = importlib.util.module_from_spec(sp); sp.loader.exec_module(g)
-os.chmod(forge, 0o700); os.chown(forge, 65534, 65534)
-os.mkdir(forge + "/keys", 0o700); os.chown(forge + "/keys", 65534, 65534)
-k = forge + "/keys/f.key"; open(k, "w").write("f" * 64); os.chown(k, 65534, 65534); os.chmod(k, 0o400)
-anc, why = g.ancestors_of(forge, 65534); assert not why, why
+os.chmod(forge, 0o700); os.chown(forge, 4242, 4242)
+os.mkdir(forge + "/keys", 0o700); os.chown(forge + "/keys", 4242, 4242)
+k = forge + "/keys/f.key"; open(k, "w").write("f" * 64); os.chown(k, 4242, 4242); os.chmod(k, 0o400)
+anc, why = g.ancestors_of(forge, 4242); assert not why, why
 r = json.loads(json.dumps(json.load(open(p))).replace(parent, forge))
-r["builder_uid"] = 65534; r["build_parent_ancestors"] = anc; r["proof"]["id"] = "f"
+r["builder_uid"] = 4242; r["build_parent_ancestors"] = anc; r["proof"]["id"] = "f"
 r["proof"]["hmac"] = hmac.new(b"f" * 64, g.proof_payload(r), "sha256").hexdigest()
 json.dump(r, open(p, "w"))
 PY
@@ -364,9 +378,17 @@ copybin; printf 'built elsewhere' >"$WORK/fakebin/axon-observer"
 refused "ATTACK: a binary replaced after the controlled build" "is not the bytes the controlled host build recorded" \
   bash "$KIT" --from "$CLONE" --bin-dir "$WORK/fakebin" $KB
 refused "ATTACK: a judge told another builder uid" "cannot be checked" \
-  bash "$KIT" --from "$CLONE" --bin-dir "$BIN" --builder-uid $((BUILDER_UID + 1)) --builder-parent "$KEYPARENT"
+  bash "$KIT" --from "$CLONE" --bin-dir "$BIN" --builder-uid $((BUILDER_UID + 1)) --builder-parent "$KEYPARENT" --build-uid "$BUILD_UID"
 refused "ATTACK: no --builder-uid at all (the record's own word is never taken)" "--builder-uid N is required" \
   bash "$KIT" --from "$CLONE" --bin-dir "$BIN"
+refused "ATTACK: no --build-uid (the uid the build ran as is the operator's word too)" "--build-uid N is required" \
+  bash "$KIT" --from "$CLONE" --bin-dir "$BIN" --builder-uid "$BUILDER_UID" --builder-parent "$KEYPARENT"
+refused "ATTACK: a build uid equal to the builder uid (build code as the key holder)" "must differ from --builder-uid" \
+  bash "$KIT" --from "$CLONE" --bin-dir "$BIN" --builder-uid "$BUILDER_UID" --builder-parent "$KEYPARENT" --build-uid "$BUILDER_UID"
+refused "ATTACK: a build uid other than the one the record was built under" "not the pinned build uid" \
+  bash "$KIT" --from "$CLONE" --bin-dir "$BIN" --builder-uid "$BUILDER_UID" --builder-parent "$KEYPARENT" --build-uid 4243
+refused "ATTACK: --apply without --expect-commit (the commit judges itself)" "--apply needs --expect-commit" \
+  bash "$KIT" "${ARGS[@]}" --apply
 copybin; : >"$WORK/fakebin/extra-file"
 refused "ATTACK: a host build directory with a file the build did not make" "files the controlled host build did not make" \
   bash "$KIT" --from "$CLONE" --bin-dir "$WORK/fakebin" $KB
@@ -374,6 +396,24 @@ refused "ATTACK: a host build directory with a file the build did not make" "fil
 # (and, once installed, the operator's pin): the deployed image's manifest names
 # another cc digest. (dist/ is excused from the clean-clone rule, so the same
 # commit is judged.)
+# Amendment 90: after the one copy-aside, the kit reads nothing of the clone's
+# WORKING TREE (the builder owns it and ran every build script): every
+# `$CLONE/scripts`, `$CLONE/profiles` and `$CLONE/dist` read is the copy-aside
+# itself or the cleanliness check. A drift test on the script's own text.
+python3 - "$KIT" <<'PY' || fail "ATTACK: the kit reads the clone's working tree after the copy-aside"
+import re, sys
+bad = []
+for n, line in enumerate(open(sys.argv[1]), 1):
+    if line.lstrip().startswith("#"):
+        continue
+    for m in re.finditer(r'\$\{?CLONE\}?/(scripts|profiles|dist)', line):
+        ok = ("cmp -s \"$SELF\"" in line) or ('cp -- "$CLONE/dist/guest-linux/$f"' in line) or ('[ -f "$CLONE/dist/guest-linux/$f" ]' in line)
+        if not ok:
+            bad.append(f"line {n}: {line.strip()[:120]}")
+if bad:
+    print("\n".join(bad)); sys.exit(1)
+PY
+ok "the kit judges, executes, installs and pins only the root-owned copy of what it takes from the clone"
 rm -rf "$WORK/linker"; cp -a "$CLONE" "$WORK/linker"
 python3 - "$WORK/linker/dist/guest-linux/manifest.json" <<'PY' || fail "cannot edit the dist manifest"
 import json, sys
@@ -381,7 +421,7 @@ p = sys.argv[1]; m = json.load(open(p))
 m["source"]["build_environment"]["toolchain"]["host_tools"]["cc"]["sha256"] = "9" * 64
 json.dump(m, open(p, "w"))
 PY
-refused "ATTACK: a host build whose linker is not the one the guest build recorded" "linker is not the one" \
+refused "ATTACK: a host build whose linker is not the one the guest build recorded" "compiler or linker is not the one" \
   bash "$WORK/linker/scripts/operator_deploy_protected_host.sh" --from "$WORK/linker" --bin-dir "$BIN" --only binaries $KB
 rm -rf "$WORK/linker"
 # An ancestor config of the clone naming a compiler wrapper: the kit's own
@@ -496,7 +536,7 @@ fi
 cp /usr/local/bin/firecracker /usr/local/bin/jailer "$WORK/" 2>/dev/null || { echo "NOT_RUN: no /usr/local/bin/firecracker+jailer to deploy against"; exit 0; }
 cat >"$WORK/ns.sh" <<'NS'
 set -uo pipefail
-W=$1 KIT=$2 BIN=$3 OP=$4 SIGNER_PUB=$5 CLONE=$6 BUID=$7 BPAR=$8
+W=$1 KIT=$2 BIN=$3 OP=$4 SIGNER_PUB=$5 CLONE=$6 BUID=$7 BPAR=$8 BBU=$9 CMT=${10}
 fail() { echo "FAIL(ns): $*"; exit 1; }
 # Isolation first: nothing below may reach the host.
 mkdir "$W/etc"; mount -t tmpfs -o mode=0755 tmpfs "$W/etc" && cp -a /etc/. "$W/etc/" && mount --bind "$W/etc" /etc \
@@ -509,7 +549,7 @@ mkdir -p /usr/local/bin && install -m 0755 "$W/firecracker" "$W/jailer" /usr/loc
 grep -q axon-fabric /etc/passwd && fail "the shadow /etc already has axon users"
 ARGS=(--from "$CLONE" --bin-dir "$BIN" --suite-registry "$OP/suites/registry.json"
       --grant-registry "$OP/grants/grants.json" --signer-public-key "$SIGNER_PUB" --no-systemctl
-      --builder-uid "$BUID" --builder-parent "$BPAR")
+      --builder-uid "$BUID" --builder-parent "$BPAR" --build-uid "$BBU" --expect-commit "$CMT")
 # Amendment 79: the custodian socket unit grants the observer's uid by
 # `ExecStartPost=setfacl`, so the kit BLOCKS where `setfacl` (the acl package) is
 # absent and systemd would start the unit (not under --no-systemctl, which only
@@ -660,6 +700,21 @@ bash "$KIT" "${ARGS[@]}" --fabric-pid "$FPID" --b263-record "$W/b263.json" --age
   || fail "the second apply failed: $(grep -E '^(FAIL|BLOCKED|PENDING|REFUSED|operator_deploy)' "$W/apply3.out" | tr '\n' '|')"
 if grep -E 'PLAN\[[a-z]+\] (install|dir|useradd|groupadd)' "$W/apply3.out"; then fail "the second apply changed something"; fi
 echo "ok(ns): a second --apply changes nothing (idempotent)"
+# ATTACK (round 7): the operator's toolchain pin names a rustc and a cargo that
+# are not the host build's (digests 00..00 and 11..11): the kit compared only cc
+# and ld and printed nothing. Control: the installed pin (every apply above).
+cp /etc/axon/host-toolchain-pin.json "$W/pin.good"
+python3 - <<'PY'
+import json
+p = "/etc/axon/host-toolchain-pin.json"; d = json.load(open(p))
+d["tools"]["rustc"]["sha256"] = "0" * 64; d["tools"]["cargo"]["sha256"] = "1" * 64
+json.dump(d, open(p, "w"))
+PY
+o=$(bash "$KIT" "${ARGS[@]}" --only binaries 2>&1); r=$?
+cp "$W/pin.good" /etc/axon/host-toolchain-pin.json
+[ $r = 2 ] && grep -q "compiler or linker is not the one" <<<"$o" && grep -q "rustc: the host build recorded" <<<"$o" \
+  || fail "ATTACK: a toolchain pin naming another rustc and cargo was accepted for the host build (rc $r): $(echo "$o" | tail -3)"
+echo "ok(ns): a toolchain pin whose rustc and cargo are not the host build's is REFUSED (control: the installed pin passes)"
 # ATTACK (amendment 65): a Fabric under NoNewPrivileges. The kernel would
 # ignore the helper's set-id bit; the kit's preflight must FAIL, not pass.
 bash "$KIT" "${ARGS[@]}" --fabric-pid "$NNP_PID" --b263-record "$W/b263.json" --agent 40003 --guest-cmd "$GUEST" \
@@ -857,7 +912,7 @@ else
   echo "NOT_RUN(ns): systemd-socket-activate absent; the custodian start was not exercised"
 fi
 NS
-unshare -m --propagation private bash "$WORK/ns.sh" "$WORK" "$KIT" "$BIN" "$OP" "$SIGNER_PUB" "$CLONE" "$BUILDER_UID" "$KEYPARENT" \
+unshare -m --propagation private bash "$WORK/ns.sh" "$WORK" "$KIT" "$BIN" "$OP" "$SIGNER_PUB" "$CLONE" "$BUILDER_UID" "$KEYPARENT" "$BUILD_UID" "$COMMIT" \
   >"$WORK/ns.out" 2>"$WORK/ns.err"
 NSRC=$?
 grep -E '^(ok|NOT_RUN|FAIL)\(ns\)' "$WORK/ns.out"
