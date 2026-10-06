@@ -19,7 +19,15 @@ use axon_loop::evo;
 use axon_loop_contracts::*;
 use common::*;
 
-fn excluded_with(s: &axon_loop::Store, extra: serde_json::Value, who: &str) -> Vec<String> {
+/// (evidence refs, recorded exclusion reasons) of one proposal over the eligible
+/// discovery episode `d1` and `extra`. The control (`d1` alone is the evidence)
+/// is asserted by each test AFTER its attack, so an attack that gets `extra`
+/// through is reported as the attack and not as a failed control.
+fn excluded_with(
+    s: &axon_loop::Store,
+    extra: serde_json::Value,
+    who: &str,
+) -> (usize, Vec<String>) {
     let inc = incumbent();
     let req = evo::parse_request(
         &evo_request(
@@ -32,17 +40,13 @@ fn excluded_with(s: &axon_loop::Store, extra: serde_json::Value, who: &str) -> V
     )
     .unwrap();
     let p = evo::propose(s, &req).unwrap_or_else(|e| panic!("setup ({who}): {e}"));
-    assert_eq!(
-        p.candidate.discovery_evidence_refs.len(),
-        1,
-        "control ({who}): the eligible episode is the only evidence"
-    );
-    match p.hypothesis {
+    let reasons = match p.hypothesis {
         evo::Hypothesis::Proposed { excluded, .. } => {
             excluded.into_iter().map(|e| e.reason).collect()
         }
         other => panic!("setup: {other:?}"),
-    }
+    };
+    (p.candidate.discovery_evidence_refs.len(), reasons)
 }
 
 fn trial_episode(edit: impl FnOnce(&mut Trial)) -> serde_json::Value {
@@ -59,7 +63,7 @@ fn a_mechanism_test_episode_is_excluded_as_one() {
     let d = tempfile::tempdir().unwrap();
     let s = store_with_config(d.path());
     let inc = incumbent();
-    let r = excluded_with(
+    let (n, r) = excluded_with(
         &s,
         episode_with_role(&inc, "m1", CorpusRole::MechanismTest),
         "mechanism",
@@ -69,22 +73,22 @@ fn a_mechanism_test_episode_is_excluded_as_one() {
             .any(|x| x.contains("mechanism_test episodes never feed learning")),
         "ATTACK: a mechanism_test episode was excluded under another reason, or not at all: {r:?}"
     );
+    assert_eq!(n, 1, "control: the eligible episode is the only evidence");
 }
-
 #[test]
 fn an_episode_that_is_not_learning_eligible_is_excluded_as_such() {
     let d = tempfile::tempdir().unwrap();
     let s = store_with_config(d.path());
     // A discovery episode whose verification FAILED: eligible by role, issuer
     // and verifier, ineligible only by the predicate.
-    let r = excluded_with(&s, trial_episode(|t| t.out = Out::Fail), "ineligible");
+    let (n, r) = excluded_with(&s, trial_episode(|t| t.out = Out::Fail), "ineligible");
     assert!(
         r.iter().any(|x| x.contains("not learning-eligible")),
         "ATTACK: a discovery episode that failed verification was not excluded as \
          learning-ineligible: {r:?}"
     );
+    assert_eq!(n, 1, "control: the eligible episode is the only evidence");
 }
-
 #[test]
 fn an_episode_the_proposer_verified_itself_is_excluded_even_if_it_is_a_trusted_verifier() {
     let d = tempfile::tempdir().unwrap();
@@ -93,7 +97,7 @@ fn an_episode_the_proposer_verified_itself_is_excluded_even_if_it_is_a_trusted_v
     cfg.trusted_verifiers
         .push(OpaqueRef::new(PROPOSER).unwrap());
     s.write_config(&cfg).unwrap();
-    let r = excluded_with(
+    let (n, r) = excluded_with(
         &s,
         trial_episode(|t| t.verifier = PROPOSER),
         "self-verified",
@@ -104,13 +108,13 @@ fn an_episode_the_proposer_verified_itself_is_excluded_even_if_it_is_a_trusted_v
         "ATTACK: an episode the proposer verified itself fed learning (or was excluded under \
          another reason): {r:?}"
     );
+    assert_eq!(n, 1, "control: the eligible episode is the only evidence");
 }
-
 #[test]
 fn an_episode_whose_verifier_is_not_trusted_is_excluded() {
     let d = tempfile::tempdir().unwrap();
     let s = store_with_config(d.path());
-    let r = excluded_with(
+    let (n, r) = excluded_with(
         &s,
         trial_episode(|t| t.verifier = "agent:stranger"),
         "untrusted",
@@ -121,4 +125,5 @@ fn an_episode_whose_verifier_is_not_trusted_is_excluded() {
         "ATTACK: an episode verified by an issuer the operator never trusted fed learning (or \
          was excluded under another reason): {r:?}"
     );
+    assert_eq!(n, 1, "control: the eligible episode is the only evidence");
 }
