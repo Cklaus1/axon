@@ -193,7 +193,7 @@ fn a_development_build_under_a_wrapper_records_it_in_its_identity() {
 /// pin read.
 #[test]
 fn the_build_state_is_recorded_in_the_verifier_identity() {
-    use axon_fabric::build_state::{is_production, refusal, state};
+    use axon_fabric::build_state::{refusal, state};
     let got = |pairs: &'static [(&'static str, &'static str)]| {
         state(&move |n| {
             pairs
@@ -208,8 +208,7 @@ fn the_build_state_is_recorded_in_the_verifier_identity() {
         got(&[("RUSTC_LINKER", "/l"), ("RUSTC_WRAPPER", "/w")]),
         "RUSTC_WRAPPER=/w;RUSTC_LINKER=/l"
     );
-    assert!(is_production("release", false));
-    assert!(!is_production("release", true) && !is_production("debug", false));
+    assert!(refusal("RUSTC_WRAPPER=/w", "release", true).is_none());
     assert!(refusal("RUSTC_WRAPPER=/w", "release", false).is_some());
     assert!(refusal("", "release", false).is_none());
     assert!(refusal("RUSTC_WRAPPER=/w", "debug", false).is_none());

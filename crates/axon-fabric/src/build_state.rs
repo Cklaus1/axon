@@ -42,15 +42,12 @@ pub fn state(get: &dyn Fn(&str) -> Option<String>) -> String {
         .join(";")
 }
 
-/// A production build: the release profile without the test-trust feature (the
-/// feature a development `cargo test` unifies in through dev-dependencies).
-pub fn is_production(profile: &str, test_trust_feature: bool) -> bool {
-    profile == "release" && !test_trust_feature
-}
-
 /// Why this build must not proceed (None: it may).
 pub fn refusal(state: &str, profile: &str, test_trust_feature: bool) -> Option<String> {
-    if state.is_empty() || !is_production(profile, test_trust_feature) {
+    // A production build: the release profile without the test-trust feature
+    // (the feature a development `cargo test` unifies in through dev-deps).
+    let production = profile == "release" && !test_trust_feature;
+    if state.is_empty() || !production {
         return None;
     }
     Some(format!(

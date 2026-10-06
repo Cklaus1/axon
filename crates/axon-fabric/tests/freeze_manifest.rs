@@ -99,6 +99,23 @@ fn sign_with(rec: &mut serde_json::Value, id: &str, key: &[u8]) {
     rec["proof"]["hmac"] = json!(hex);
 }
 
+/// Sign both build records of `m` as their runner would after the edit a test
+/// just made: a row that lets an edited record through the STRUCTURAL judge
+/// must reach the verdict, not be refused by the proof the edit broke (that
+/// would be REFUSED_ELSEWHERE). Only the proof's own test writes edits unsigned.
+fn resign(m: &mut serde_json::Value) {
+    for (part, id) in [
+        ("source", "axon-guest-build-x"),
+        ("kernel", "axon-kernel-build-x"),
+    ] {
+        let be = &mut m[part]["build_environment"];
+        if be.is_object() {
+            fixture_key(id);
+            sign_with(be, id, KEY_HEX.as_bytes());
+        }
+    }
+}
+
 /// The record scripts/guest_build_env.py `kernel` writes for a controlled
 /// build of the fixture manifest's vmlinux from its pins.
 fn controlled_kernel() -> serde_json::Value {
@@ -131,6 +148,12 @@ fn manifest(source: serde_json::Value) -> String {
 }
 
 fn manifest_value(source: serde_json::Value) -> serde_json::Value {
+    let mut m = manifest_value_unsigned(source);
+    resign(&mut m);
+    m
+}
+
+fn manifest_value_unsigned(source: serde_json::Value) -> serde_json::Value {
     json!({"artifacts": {"vmlinux": {"sha256": "1".repeat(64)},
                          "rootfs.sqfs": {"sha256": "2".repeat(64)},
                          "axon": {"sha256": "a".repeat(64)},
@@ -717,6 +740,7 @@ fn each_refused(claim: &str, why: &str, cases: Vec<(&str, ManifestEdit)>) {
     for (attack, edit) in cases {
         let mut m = manifest_value(clean_source());
         edit(&mut m);
+        resign(&mut m);
         write(&r.join(MANIFEST), &m.to_string());
         let got = freeze(&r);
         assert!(
@@ -1084,6 +1108,7 @@ fn a_guest_image_not_built_with_the_operators_pinned_tools_does_not_freeze() {
     // M1470: the build ran another rustc than the operator pinned.
     let mut m = manifest_value(clean_source());
     tampered(&mut m);
+    resign(&mut m);
     write(&r.join(MANIFEST), &m.to_string());
     let got = freeze(&r);
     assert!(
@@ -1096,6 +1121,7 @@ fn a_guest_image_not_built_with_the_operators_pinned_tools_does_not_freeze() {
     let mut m = manifest_value(clean_source());
     m["kernel"]["build_environment"]["tools"]["flex"] = json!({"path": "/var/tmp/flex",
         "realpath": "/var/tmp/flex", "sha256": "f".repeat(64), "version": "x"});
+    resign(&mut m);
     write(&r.join(MANIFEST), &m.to_string());
     let got = freeze(&r);
     assert!(
@@ -1118,6 +1144,7 @@ fn a_guest_image_not_built_with_the_operators_pinned_tools_does_not_freeze() {
     // (or writable by one).
     let mut m = manifest_value(clean_source());
     tampered(&mut m);
+    resign(&mut m);
     write(&r.join(MANIFEST), &m.to_string());
     write(&pin, &operator_pin_of(&m).to_string());
     for (owner, mode) in [("4242", "0644"), ("0", "0666")] {

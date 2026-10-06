@@ -581,14 +581,16 @@ def proof_payload(rec):
     return json.dumps(body, sort_keys=True, separators=(",", ":")).encode()
 
 
-def proof_key(parent, pid, builder_uid):
+def proof_key(parent, pid, builder_uid, judging=True):
     """(key bytes, why-not): the per-build key `new_proof` stored under the
     builder-private parent. Only a key that is a real file (no symlink), owned
     by the builder, closed to everyone else, in a directory likewise, in a
     parent only root or the builder can write, is a key at all."""
     if not isinstance(parent, str) or not isinstance(pid, str) or not PROOF_ID.fullmatch(pid):
         return None, "the record names no usable proof id or build parent"
-    _anc, why = ancestors_of(parent, builder_uid)
+    # The builder signing needs only its key; whoever JUDGES a record also needs
+    # the key's parent to be one nobody else could have written a key into.
+    _anc, why = ancestors_of(parent, builder_uid) if judging else ([], "")
     if why:
         return None, f"the proof's build parent is not private: {why}"
     kd = os.path.join(parent, "keys")
@@ -648,7 +650,8 @@ def proof_problems(rec, what):
 
 def write(path, rec):
     if isinstance(rec.get("proof"), dict):
-        key, why = proof_key(rec.get("build_parent"), rec["proof"].get("id"), rec.get("builder_uid"))
+        key, why = proof_key(rec.get("build_parent"), rec["proof"].get("id"), rec.get("builder_uid"),
+                             judging=False)
         if why:
             fail(why)
         rec["proof"]["hmac"] = hmac.new(key, proof_payload(rec), "sha256").hexdigest()
