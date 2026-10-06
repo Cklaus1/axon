@@ -2202,3 +2202,30 @@ fn an_output_with_no_summary_is_no_verdict() {
     let why = s.reason.unwrap_or_default();
     assert!(why.contains("produced no summary"), "{why}");
 }
+
+/// C9 round 7, EQGATE3 (amendment 91): the in-uid observer PROGRAM runs with
+/// /dev/null for stdin, stdout and stderr. One that inherits them writes into
+/// the Fabric's own streams. The builder calls build no `Err`; each was
+/// removable alone with every suite green.
+#[test]
+fn the_observer_program_runs_with_null_stdio() {
+    if !inner_with_piped_stdio("the_observer_program_runs_with_null_stdio") {
+        return;
+    }
+    let w = World::new();
+    let key = observer_key(w.env.dir.path(), "obs", &[&w.observer_roots()]);
+    let s = w.submit_observed(w.observer("fds", &key, "observer"), "op-obs-fds");
+    assert_eq!(
+        class(&s),
+        "protected",
+        "setup: the observed launch runs: {:?}",
+        s.reason
+    );
+    let fds = std::fs::read_to_string(w.env.dir.path().join("observer-fds"))
+        .unwrap_or_else(|e| panic!("setup: the observer recorded no descriptors: {e}"));
+    assert_eq!(
+        fds.lines().collect::<Vec<_>>(),
+        ["/dev/null", "/dev/null", "/dev/null"],
+        "ATTACK: the observer program inherited a descriptor of the Fabric's: {fds}"
+    );
+}

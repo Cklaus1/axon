@@ -1535,3 +1535,55 @@ fn the_private_inputs_dir_is_created_0700() {
          enterable by another uid"
     );
 }
+
+/// C9 round 7, EQGATE3 (amendment 91): the pinned launcher and its verify step
+/// run with /dev/null for stdin, stdout and stderr (`quiet`). A launcher that
+/// inherits them writes into the Fabric's own streams (the CLI's stdout is a
+/// JSON reply) and reads its stdin. The builder calls build no `Err`; each was
+/// removable alone with every suite green. The launcher records what its own
+/// descriptors point at, for the launch and for `--verify-result`.
+#[test]
+fn the_pinned_launcher_and_its_verify_step_run_with_null_stdio() {
+    if !inner_with_piped_stdio("the_pinned_launcher_and_its_verify_step_run_with_null_stdio") {
+        return;
+    }
+    let env = Env::new();
+    let rec = env.dir.path().join("fds");
+    let launcher = env.dir.path().join("fds-launcher.sh");
+    write_executable(
+        &launcher,
+        format!(
+            r#"#!/bin/sh
+FDS=$(for i in 0 1 2; do readlink "/proc/$$/fd/$i"; done)
+if [ "$1" = "--verify-result" ]; then echo "verify $FDS" | tr '\n' ' ' >> "{rec}"; echo >> "{rec}"; exit 0; fi
+OUT=""
+while [ $# -gt 0 ]; do case "$1" in --out) OUT="$2"; shift 2;; *) shift;; esac; done
+mkdir -p "$OUT/out"
+echo "launch $FDS" | tr '\n' ' ' >> "{rec}"; echo >> "{rec}"
+echo "launcher noise"; echo "launcher noise" >&2
+cat > "$OUT/result.json" <<J
+{{"schema":"axon-linux-microvm-result/1","status":"x","workload_exit":0,
+ "output_bound":true,"outputs":{{"stdout":{{"sha256":"ab","bytes":1}}}},
+ "cleanup":{{"complete":true,"left_behind":[]}}}}
+J
+exit 0
+"#,
+            rec = rec.display()
+        ),
+        0o755,
+    );
+    let _ = linux_submit(&env, "op-null-stdio", launcher);
+    let text = std::fs::read_to_string(&rec)
+        .unwrap_or_else(|e| panic!("setup: the launcher recorded nothing: {e}"));
+    for step in ["launch", "verify"] {
+        let line = text
+            .lines()
+            .find(|l| l.starts_with(step))
+            .unwrap_or_else(|| panic!("setup: no `{step}` record: {text}"));
+        assert_eq!(
+            line.split_whitespace().skip(1).collect::<Vec<_>>(),
+            ["/dev/null", "/dev/null", "/dev/null"],
+            "ATTACK: the pinned launcher's {step} step inherited a descriptor of the Fabric's: {line}"
+        );
+    }
+}

@@ -1014,3 +1014,116 @@ fn the_check_child_runs_as_the_check_uid_with_no_groups() {
         "ATTACK: the check child kept its supplementary groups: {st}"
     );
 }
+
+// ── C9 round 7, EQGATE3 (amendment 91): what the check child is built with ───
+//
+// The child's working directory, environment, stdio and the output the runner
+// buffers are builder calls and a size cap that build no `Err`; each was
+// removable alone with every suite green. A stand-in interpreter records them.
+
+/// Run the fixture with a stand-in interpreter `script`; (record text, the
+/// run's peak-RSS growth in kB).
+fn recorded(script: &str, rec_name: &str) -> (String, u64) {
+    use std::os::unix::fs::PermissionsExt;
+    let fx = fixture("t_ok", false);
+    let rec = fx.cfg.out.join(rec_name);
+    std::fs::write(
+        &fx.cfg.axon,
+        script.replace("@REC@", &rec.display().to_string()),
+    )
+    .unwrap();
+    std::fs::set_permissions(&fx.cfg.axon, std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::fs::set_permissions(&fx.cfg.out, std::fs::Permissions::from_mode(0o777)).unwrap();
+    let peak = || -> u64 {
+        std::fs::read_to_string("/proc/self/status")
+            .unwrap()
+            .lines()
+            .find_map(|l| l.strip_prefix("VmHWM:"))
+            .and_then(|v| v.split_whitespace().next()?.parse().ok())
+            .unwrap()
+    };
+    let before = peak();
+    let _ = run(&fx.cfg);
+    let grew = peak().saturating_sub(before);
+    (std::fs::read_to_string(&rec).unwrap_or_default(), grew)
+}
+
+#[test]
+fn the_check_child_runs_in_the_suite_with_only_its_own_environment_and_stdio() {
+    let (text, _) = recorded(
+        "#!/bin/sh\nFDS=$(for i in 0 1 2; do readlink \"/proc/$$/fd/$i\"; done)\n\
+         { pwd; echo \"FDS $FDS\" | tr '\\n' ' '; echo; env; } > @REC@\nexit 0\n",
+        "child-env",
+    );
+    let mut lines = text.lines();
+    let cwd = lines.next().unwrap_or("");
+    assert!(
+        cwd.ends_with("/suite"),
+        "ATTACK: the check child did not run in the suite directory: {cwd:?}"
+    );
+    let fds: Vec<&str> = lines
+        .next()
+        .unwrap_or("")
+        .trim_start_matches("FDS ")
+        .split_whitespace()
+        .collect();
+    let mine = |n: u32| {
+        std::fs::read_link(format!("/proc/self/fd/{n}"))
+            .map(|p| p.display().to_string())
+            .unwrap_or_default()
+    };
+    assert!(
+        fds.len() == 3
+            && fds.iter().all(|f| f.starts_with("pipe:"))
+            && fds[1] != mine(1)
+            && fds[2] != mine(2)
+            && fds[1] != fds[2],
+        "ATTACK: the check child's stdin/stdout/stderr are not the runner's own pipes (its stdout \
+         or stderr is the runner's inherited one): child {fds:?}, runner {:?} {:?}",
+        mine(1),
+        mine(2)
+    );
+    let vars: std::collections::BTreeMap<&str, &str> =
+        lines.filter_map(|l| l.split_once('=')).collect();
+    for want in [
+        "PATH",
+        "AXON_PATH",
+        "AXON_PATH_EXCLUSIVE",
+        "AXON_ALLOWED_EFFECTS",
+    ] {
+        assert!(
+            vars.contains_key(want),
+            "ATTACK: the check child lacks {want}: {vars:?}"
+        );
+    }
+    let stray: Vec<&&str> = vars
+        .keys()
+        .filter(|k| {
+            ![
+                "PATH",
+                "AXON_PATH",
+                "AXON_PATH_EXCLUSIVE",
+                "AXON_ALLOWED_EFFECTS",
+                "PWD",
+                "SHLVL",
+                "_",
+                "OLDPWD",
+            ]
+            .contains(k)
+        })
+        .collect();
+    assert!(
+        stray.is_empty(),
+        "ATTACK: the check child inherited the runner's environment: {stray:?}"
+    );
+}
+
+#[test]
+fn the_runner_never_buffers_more_than_the_manifests_output_bound() {
+    let (_, grew) = recorded("#!/bin/sh\nhead -c 400000000 /dev/zero\nexit 0\n", "unused");
+    assert!(
+        grew < 120_000,
+        "ATTACK: the runner buffered a candidate's flood ({grew} kB of peak growth for a bound of \
+         1 MiB): the in-guest runner's memory is the candidate's to exhaust"
+    );
+}

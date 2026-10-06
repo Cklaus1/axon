@@ -29,12 +29,18 @@ fn script(dir: &Path, body: &str) -> PathBuf {
 }
 
 fn job(dir: &Path) -> axon_os::JobManifest {
+    job_with(dir, "restricted")
+}
+
+fn job_with(dir: &Path, profile: &str) -> axon_os::JobManifest {
     std::fs::write(dir.join("prog.ax"), "fn main() -> i64 { 0 }\n").unwrap();
     std::fs::write(
         dir.join("job.axjob"),
-        "program = \"prog.ax\"\nintent = \"t\"\nseed = 1\nprofile = \"restricted\"\n\
-         [grant]\nmax_label = \"internal\"\n\
-         [grant.budget]\ncalls = 1\ntokens = 1\ncost_micro = 0\n",
+        format!(
+            "program = \"prog.ax\"\nintent = \"t\"\nseed = 1\nprofile = \"{profile}\"\n\
+             [grant]\nmax_label = \"internal\"\n\
+             [grant.budget]\ncalls = 1\ntokens = 1\ncost_micro = 0\n"
+        ),
     )
     .unwrap();
     parse(
@@ -155,4 +161,150 @@ fn captured_output_is_bounded_and_the_verdict_survives_it() {
         "the marker is in the retained tail"
     );
     let _ = std::fs::remove_dir_all(&d);
+}
+
+// ── C9 round 7, EQGATE3 (amendment 91): what the interpreter child is built with
+//
+// The child starts from an EMPTY environment and gets the seed, the PATH, the
+// operator's AXON_* controls (never under a hermetic profile: a virtual clock
+// instead), the job's directory as its working directory, /dev/null for stdin
+// and pipes for its output. Each is a builder call that builds no `Err`; each
+// was removable alone with every suite green. A stand-in interpreter records
+// its own state; the OUTER run poisons its own environment first, so a child
+// that inherits anything shows it.
+
+/// What the stand-in recorded when run for `profile` under a hostile
+/// environment: (cwd, fds, environment).
+fn child_state(
+    profile: &str,
+) -> (
+    String,
+    Vec<String>,
+    std::collections::BTreeMap<String, String>,
+) {
+    let d = tmp(&format!("state-{profile}"));
+    let m = job_with(&d, profile);
+    let rec = d.join("state.txt");
+    let bin = script(
+        &d,
+        &format!(
+            "FDS=$(for i in 0 1 2; do readlink \"/proc/$$/fd/$i\"; done)\n\
+             {{ pwd; echo \"FDS $FDS\" | tr '\\n' ' '; echo; env; }} > '{}'",
+            rec.display()
+        ),
+    );
+    let rt = AxonCoreRuntime::with_bin_and_timeout(bin, Duration::from_secs(5));
+    let _ = supervise(&m, &d.join("job.axjob"), &m.grant.clone(), "rid-state", &rt);
+    let text = std::fs::read_to_string(&rec).expect("the interpreter stand-in ran");
+    let mut lines = text.lines();
+    let cwd = lines.next().unwrap().to_string();
+    let fds = lines
+        .next()
+        .unwrap()
+        .trim_start_matches("FDS ")
+        .split_whitespace()
+        .map(String::from)
+        .collect();
+    let vars = lines
+        .filter_map(|l| l.split_once('='))
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+    let _ = std::fs::remove_dir_all(&d);
+    (cwd, fds, vars)
+}
+
+const HOSTILE: [(&str, &str); 7] = [
+    ("HOME", "/hostile-home"),
+    ("EQ_SECRET", "leak"),
+    ("AXON_AUDIT_LEDGER", "/hostile/ledger"),
+    ("AXON_AI_MOCK", "1"),
+    ("AXON_AI_REPLAY", "/hostile/replay"),
+    ("AXON_PATH", "/hostile/modules"),
+    ("AXON_MAX_DEPTH", "77"),
+];
+
+#[test]
+fn the_interpreter_child_is_built_from_an_empty_environment_and_the_jobs_directory() {
+    if std::env::var("AXON_EQ_OS_CHILD").is_err() {
+        // Re-run this test in a child whose environment is hostile.
+        let mut c = std::process::Command::new(std::env::current_exe().unwrap());
+        c.args([
+            "--exact",
+            "the_interpreter_child_is_built_from_an_empty_environment_and_the_jobs_directory",
+            "--test-threads=1",
+        ])
+        .env("AXON_EQ_OS_CHILD", "1");
+        for (k, v) in HOSTILE {
+            c.env(k, v);
+        }
+        let o = c.output().unwrap();
+        assert!(
+            o.status.success(),
+            "the inner run failed:\n{}\n{}",
+            String::from_utf8_lossy(&o.stdout),
+            String::from_utf8_lossy(&o.stderr)
+        );
+        return;
+    }
+    // restricted: the operator's controls are forwarded, nothing else.
+    let (cwd, fds, vars) = child_state("restricted");
+    assert!(
+        cwd.ends_with("-state-restricted"),
+        "ATTACK: the interpreter child did not run in the job's directory: {cwd}"
+    );
+    assert_eq!(
+        vars.get("AXON_SEED").map(String::as_str),
+        Some("1"),
+        "ATTACK: the interpreter child did not get the job's seed: {vars:?}"
+    );
+    assert!(
+        vars.contains_key("PATH"),
+        "ATTACK: no PATH reached the child: {vars:?}"
+    );
+    for (k, v) in [
+        ("AXON_AUDIT_LEDGER", "/hostile/ledger"),
+        ("AXON_AI_MOCK", "1"),
+        ("AXON_AI_REPLAY", "/hostile/replay"),
+        ("AXON_PATH", "/hostile/modules"),
+        ("AXON_MAX_DEPTH", "77"),
+    ] {
+        assert_eq!(
+            vars.get(k).map(String::as_str),
+            Some(v),
+            "ATTACK: the operator's {k} was not forwarded to a non-hermetic job: {vars:?}"
+        );
+    }
+    for k in ["HOME", "EQ_SECRET"] {
+        assert!(
+            !vars.contains_key(k),
+            "ATTACK: the interpreter child inherited {k} (the environment was not cleared): {vars:?}"
+        );
+    }
+    assert_eq!(
+        fds[0], "/dev/null",
+        "ATTACK: the interpreter child's stdin is not /dev/null: {fds:?}"
+    );
+    assert!(
+        fds[1].starts_with("pipe:") && fds[2].starts_with("pipe:") && fds[1] != fds[2],
+        "ATTACK: the interpreter child's output is not captured through pipes: {fds:?}"
+    );
+    // hermetic: none of them, and the virtual clock instead.
+    let (_, _, h) = child_state("hermetic");
+    for k in [
+        "AXON_AUDIT_LEDGER",
+        "AXON_AI_MOCK",
+        "AXON_AI_REPLAY",
+        "AXON_PATH",
+        "AXON_MAX_DEPTH",
+    ] {
+        assert!(
+            !h.contains_key(k),
+            "ATTACK: a hermetic job inherited the operator's {k}: {h:?}"
+        );
+    }
+    assert_eq!(
+        h.get("AXON_CLOCK").map(String::as_str),
+        Some("0:1"),
+        "ATTACK: a hermetic job runs without the virtual clock: {h:?}"
+    );
 }

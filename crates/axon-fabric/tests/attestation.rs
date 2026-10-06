@@ -533,3 +533,110 @@ fn keygen_writes_the_key_0400() {
         "ATTACK: keygen wrote the issuer's private key {mode:o}, readable beyond its owner"
     );
 }
+
+// ── C9 round 7, EQGATE3 (amendment 91): the signer loader's refusals ─────────
+//
+// `signer_from` refuses through a local `bad` closure that delegates to
+// `refuse`, which the gate did not follow: every one of its refusals was
+// invisible, and removing the `is_file` check left every suite green. Each case
+// below is a signer the operator's registry must not be able to name; every
+// one must refuse BEFORE any work with exit 4, naming its own reason.
+
+/// `submit` with `signer` in the registry: (exit code, the refusal's reason).
+fn signer_refusal(env: &Env, tag: &str, signer: Value) -> (i32, String) {
+    std::fs::create_dir_all(env.dir.path().join("grants-pure")).unwrap();
+    let pure = env.dir.path().join("grants-pure").join("grants.json");
+    write_grant_registry(&pure, &[("grant:test", PRINCIPAL, GRANT_PURE)]);
+    let reg = registry_with(env, &format!("reg-{tag}.json"), Some(signer));
+    let (c, out) = fabric(
+        &submit_args(env, &reg, &pure),
+        Some(&suite_request(env, &format!("op-{tag}")).to_string()),
+    );
+    (c, out["reason"].as_str().unwrap_or("").to_string())
+}
+
+#[test]
+fn a_signer_the_operator_did_not_provision_properly_signs_nothing() {
+    let env = Env::new();
+    let key = env.dir.path().join("issuer.pk8");
+    let pk = keygen(&key).1["public_key"].as_str().unwrap().to_string();
+    let good = |p: &Path| json!({"issuer_ref": "fabric:verifier", "key_path": p, "public_key": pk});
+    // Control: the provisioned signer is accepted.
+    let (c, why) = signer_refusal(&env, "control", good(&key));
+    assert_eq!(c, 0, "control: the provisioned signer signs: {why}");
+
+    let (c, why) = signer_refusal(&env, "notobj", json!("fabric:verifier"));
+    assert!(
+        c == 4 && why.contains("not an object"),
+        "ATTACK: a signer that is not an object was accepted ({c}): {why}"
+    );
+    let (c, why) = signer_refusal(
+        &env,
+        "extra",
+        json!({"issuer_ref": "fabric:verifier", "key_path": key, "public_key": pk, "note": "x"}),
+    );
+    assert!(
+        c == 4 && why.contains("must be exactly issuer_ref, key_path, public_key"),
+        "ATTACK: a signer with an extra field was accepted ({c}): {why}"
+    );
+    let (c, why) = signer_refusal(
+        &env,
+        "nonstr",
+        json!({"issuer_ref": 7, "key_path": key, "public_key": pk}),
+    );
+    assert!(
+        c == 4 && why.contains("is not a string"),
+        "ATTACK: a signer field that is not a string was accepted ({c}): {why}"
+    );
+    // A symlink to the genuine key.
+    let link = env.dir.path().join("issuer-link.pk8");
+    std::os::unix::fs::symlink(&key, &link).unwrap();
+    let (c, why) = signer_refusal(&env, "symlink", good(&link));
+    assert!(
+        c == 4 && why.contains("a symlink"),
+        "ATTACK: a signer key that is a symlink was followed ({c}): {why}"
+    );
+    // A FIFO an attacker feeds the genuine key bytes through: mode 0400 and the
+    // right owner, so only the regular-file check refuses it.
+    let fifo = env.dir.path().join("issuer-fifo.pk8");
+    let cpath = std::ffi::CString::new(fifo.to_str().unwrap()).unwrap();
+    assert_eq!(
+        unsafe { libc::mkfifo(cpath.as_ptr(), 0o400) },
+        0,
+        "setup: mkfifo"
+    );
+    let bytes = std::fs::read(&key).unwrap();
+    let feeder = {
+        let fifo = fifo.clone();
+        std::thread::spawn(move || {
+            use std::io::Write;
+            use std::os::unix::fs::OpenOptionsExt;
+            for _ in 0..200 {
+                if let Ok(mut f) = std::fs::OpenOptions::new()
+                    .write(true)
+                    .custom_flags(libc::O_NONBLOCK)
+                    .open(&fifo)
+                {
+                    let _ = f.write_all(&bytes);
+                    return;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(25));
+            }
+        })
+    };
+    let (c, why) = signer_refusal(&env, "fifo", good(&fifo));
+    let _ = feeder.join();
+    assert!(
+        c == 4 && why.contains("is not a regular file"),
+        "ATTACK: a signer key served through a FIFO was accepted ({c}): {why}"
+    );
+    let (c, why) = signer_refusal(
+        &env,
+        "wrongpk",
+        json!({"issuer_ref": "fabric:verifier", "key_path": key, "public_key": "0".repeat(64)}),
+    );
+    assert!(
+        c == 4 && why.contains("does not derive the pinned public_key"),
+        "ATTACK: a signer key that does not derive the pinned public key was accepted ({c}): {why}"
+    );
+}

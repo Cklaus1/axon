@@ -3461,6 +3461,31 @@ PRIV_FORM = re.compile(
     r"\.pre_exec\(|"
     r"\blibc::(?:unshare|setns|chroot|pivot_root|mount|umount2?|capset|seccomp)\(|\bSECCOMP_MODE_"
 )
+# Amendment 91 (C9 round 7, eqgate3): the same blindness for what a child is
+# BUILT with and what bounds a read. A child's environment, its stdio, the
+# option list handed to git, a size cap and a descriptor-inheritance flag build
+# no `Err` either, and each could be removed alone with every suite green
+# (round 7: the helper's `quiet` Stdio::null -> inherit, git's GIT_OPTIONAL_LOCKS,
+# core.hooksPath and --no-includes, the runner's `n.min(room)` output cap). The
+# forms were derived by sweeping every in-scope file for the builder and OS
+# boundary vocabulary: Command env/env_clear/envs/env_remove/current_dir/stdin/
+# stdout/stderr, the git `-c` option lists and GIT_* variables, process-state
+# libc calls (setitimer, chdir, close_range, setpriority, sched_*, personality,
+# flock, setsockopt, dup2/dup3, pipe2, socket/socketpair/accept4, unlink/rename/
+# link), descriptor flags (O_CLOEXEC, SOCK_CLOEXEC, O_NONBLOCK, FD_CLOEXEC),
+# and the cap forms (`.min(<bound>)` slices, `.take(<bound>)`, a MAX_* used as a
+# bound). One alternative per line: each group is its own gate row.
+BUILD_FORM = re.compile(
+    r"\.(?:env_clear|env_remove|envs)\(|(?<![\w:])(?:cmd|c|command)\.env\(|^\s*\.env\(|"
+    r"\.current_dir\(|"
+    r"\.(?:stdin|stdout|stderr)\(\s*(?:std::process::)?Stdio::|"
+    r"\"-c\"|\bcore\.(?:fsmonitor|hooksPath|excludesFile|attributesFile|checkStat|trustCtime)\b|"
+    r"\bprotocol\.allow\b|\bsafe\.directory\b|\"--no-includes\"|\"GIT_[A-Z_]+\"|"
+    r"\blibc::(?:setitimer|chdir|fchdir|close_range|setpriority|sched_\w+|personality|flock|setsockopt|dup[23]?|pipe2|socketpair|accept4|socket|unlinkat?|renameat2?|linkat?)\(|\bSYS_close_range\b|"
+    r"\b(?:O_CLOEXEC|SOCK_CLOEXEC|FD_CLOEXEC|SOCK_NONBLOCK)\b|"
+    r"\.min\(\s*(?:room|cap|limit|bound|max)\w*\s*\)|\.take\(\s*(?:MAX_|[a-z_]*(?:limit|cap|bound|max))\w*|"
+    r"[<>]=?\s*(?:\w+::)*MAX_[A-Z_]+|\.(?:min|take|truncate)\([^)]*\bMAX_[A-Z_]+"
+)
 # A decision expressed as `Some("reason")` / `Some(format!(..))` (evo::propose's
 # exclusion chain, submit's `problem = Some(..)`), as a VALUE: a pattern
 # (`Some("x") =>`, `== Some("x")`, `matches!(.., Some("x"))`) reads one.
@@ -3477,10 +3502,30 @@ def local_ctors(lines):
     """Names of the file-local refusal constructors (amendment 71): one-line
     `Err` closures, and diverging fns/closures that exit non-zero."""
     out = {m.group(1) for l in lines for m in [LOCAL_CTOR_DEF.search(l)] if m}
+    defs = []
     for i, l in enumerate(lines):
         m = DIVERGING_DEF.search(l)
-        if m and any(EXIT_NONZERO.search(x) for x in lines[i:i + DIVERGING_BODY]):
-            out.add(m.group(1) or m.group(2))
+        if m:
+            defs.append((m.group(1) or m.group(2), i))
+    for name, i in defs:
+        if any(EXIT_NONZERO.search(x) for x in lines[i:i + DIVERGING_BODY]):
+            out.add(name)
+    # Amendment 91: a diverging fn or closure whose body DELEGATES to a
+    # refusal (`refuse(..)`, `die(..)`, another registered diverging name) is a
+    # refusal constructor too, to a fixed point. Round 7: `let bad = |why|
+    # -> ! { refuse(..) }` delegates through `refuse`, whose own exit takes a
+    # variable code, so the 13 `bad(` calls of the signer loader were invisible.
+    changed = True
+    while changed:
+        changed = False
+        for name, i in defs:
+            if name in out:
+                continue
+            body = "\n".join(lines[i:i + DIVERGING_BODY])
+            calls = {m.group(0)[:-1] for m in re.finditer(r"(?<![\w.])\w+\(", body)} - {name}
+            if any(c in out or c == "refuse" for c in calls):
+                out.add(name)
+                changed = True
     return out
 
 
@@ -3512,7 +3557,7 @@ def _some_reason_is_value(l):
 def is_site(l, ctors=()):
     if SITE.search(l) or DIAG.search(l) or EXIT.search(l):
         return True
-    if PRIV_FORM.search(l.split("//")[0]) or OPEN_FLAG.search(l.split("//")[0]) or _some_reason_is_value(l.split("//")[0]):
+    if BUILD_FORM.search(l.split("//")[0]) or PRIV_FORM.search(l.split("//")[0]) or OPEN_FLAG.search(l.split("//")[0]) or _some_reason_is_value(l.split("//")[0]):
         return True
     if any(err_is_expression(l, m.start()) for m in ERR.finditer(l)):
         return True

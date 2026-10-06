@@ -663,6 +663,7 @@ pub fn observer_script(d: &Path, mode: &str, key: &ObserverKey, authority: &str)
             r#"#!/bin/sh
 while [ $# -gt 0 ]; do case "$1" in --manifest) M="$2"; shift 2;; --out) O="$2"; shift 2;; *) shift;; esac; done
 [ "{mode}" = exit ] && exit 1
+if [ "{mode}" = fds ]; then FDS=$(for i in 0 1 2; do readlink "/proc/$$/fd/$i"; done); echo "$FDS" > "{d}/observer-fds"; fi
 if [ "{mode}" = wait ]; then
 # Hold the observation open until the test says go (the epoch moves meanwhile).
 # The bound (12000 x 50 ms, SETUP_BOUND) only FAILS: an observer never told
@@ -1112,4 +1113,33 @@ pub fn utc(t: i64) -> String {
         secs % 3600 / 60,
         secs % 60
     )
+}
+
+/// C9 round 7, EQGATE3 (amendment 91): run the calling test again, in a child
+/// of this test binary whose stdin, stdout and stderr are PIPES (never
+/// /dev/null, whatever the harness gave this process), and say whether THIS
+/// process is that child. Usage: `if !inner_with_piped_stdio("name") { return; }`
+/// at the top of a test that asserts what a descendant's descriptors point at:
+/// the outer call asserts the inner run passed.
+pub fn inner_with_piped_stdio(test: &str) -> bool {
+    use std::process::{Command, Stdio};
+    if std::env::var("AXON_EQ_INNER").as_deref() == Ok(test) {
+        return true;
+    }
+    let child = Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", test, "--nocapture", "--test-threads=1"])
+        .env("AXON_EQ_INNER", test)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let o = child.wait_with_output().unwrap();
+    assert!(
+        o.status.success() && String::from_utf8_lossy(&o.stdout).contains("1 passed"),
+        "the inner run of {test} failed:\n{}\n{}",
+        String::from_utf8_lossy(&o.stdout),
+        String::from_utf8_lossy(&o.stderr)
+    );
+    false
 }

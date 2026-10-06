@@ -1197,4 +1197,213 @@ pub(crate) mod tests {
         assert!(Allowlist::parse(b"target/\n").is_err(), "no schema line");
         assert!(Allowlist::parse(format!("{ALLOWLIST_SCHEMA}\n").as_bytes()).is_ok());
     }
+
+    // ── C9 round 7, EQGATE3 (amendment 91): the options and environment git_cmd
+    // builds. Each is a builder call that builds no `Err`; each was removable
+    // alone with every suite green. The repository below is HOSTILE: its own
+    // config names code to run and files to trust.
+
+    /// A committed repository with `a.txt`, its config and files set by `setup`.
+    fn hostile_repo(setup: impl FnOnce(&Path)) -> (tempfile::TempDir, PathBuf) {
+        let d = tempfile::tempdir().unwrap();
+        let r = d.path().join("repo");
+        std::fs::create_dir_all(&r).unwrap();
+        git(&r, &["init", "-q", "-b", "main"]);
+        std::fs::write(r.join("a.txt"), "a\n").unwrap();
+        git(&r, &["add", "-A"]);
+        git(&r, &["commit", "-q", "-m", "c"]);
+        setup(&r);
+        (d, r)
+    }
+
+    fn marker_script(d: &Path, name: &str) -> (PathBuf, PathBuf) {
+        use std::os::unix::fs::PermissionsExt;
+        let marker = d.join(format!("{name}-ran"));
+        let script = d.join(format!("{name}.sh"));
+        std::fs::write(&script, format!("#!/bin/sh\ntouch {}\n", marker.display())).unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        (script, marker)
+    }
+
+    #[test]
+    fn git_runs_no_fsmonitor_or_hook_the_repository_configures() {
+        let d = tempfile::tempdir().unwrap();
+        let (fsm, fsm_ran) = marker_script(d.path(), "fsmonitor");
+        let hooks = d.path().join("hooks");
+        std::fs::create_dir_all(&hooks).unwrap();
+        let (hook, hook_ran) = marker_script(d.path(), "hook");
+        std::fs::copy(&hook, hooks.join("pre-commit")).unwrap();
+        let (_g, r) = hostile_repo(|r| {
+            git(r, &["config", "core.fsmonitor", fsm.to_str().unwrap()]);
+            git(r, &["config", "core.hooksPath", hooks.to_str().unwrap()]);
+            git(r, &["config", "user.name", "t"]);
+            git(r, &["config", "user.email", "t@example"]);
+        });
+        let st = git_cmd(&r)
+            .args(["status", "--porcelain"])
+            .output()
+            .unwrap();
+        assert!(st.status.success(), "control: git status runs: {st:?}");
+        let cm = git_cmd(&r)
+            .args(["commit", "-q", "--allow-empty", "-m", "x"])
+            .output()
+            .unwrap();
+        assert!(cm.status.success(), "control: git commit runs: {cm:?}");
+        assert!(
+            !fsm_ran.exists(),
+            "ATTACK: git ran the repository's core.fsmonitor program"
+        );
+        assert!(
+            !hook_ran.exists(),
+            "ATTACK: git ran a hook from the repository's core.hooksPath"
+        );
+    }
+
+    #[test]
+    fn git_does_not_write_the_index_of_the_tree_it_reads() {
+        let (_d, r) = hostile_repo(|_| {});
+        // A stat-dirty (but unchanged) file: an ordinary `git status` would
+        // refresh and WRITE the index.
+        std::fs::write(r.join("a.txt"), "a\n").unwrap();
+        let index = r.join(".git/index");
+        let before = std::fs::read(&index).unwrap();
+        let st = git_cmd(&r)
+            .args(["status", "--porcelain"])
+            .output()
+            .unwrap();
+        assert!(st.status.success(), "control: git status runs: {st:?}");
+        assert_eq!(
+            std::fs::read(&index).unwrap(),
+            before,
+            "ATTACK: a read-only git call wrote the index of the tree under test \
+             (GIT_OPTIONAL_LOCKS is not 0)"
+        );
+    }
+
+    #[test]
+    fn git_trusts_neither_the_repositorys_ignore_nor_attribute_files() {
+        let d = tempfile::tempdir().unwrap();
+        let ex = d.path().join("excludes");
+        std::fs::write(&ex, "hidden.txt\n").unwrap();
+        let at = d.path().join("attributes");
+        std::fs::write(&at, "a.txt export-ignore\n").unwrap();
+        let (_g, r) = hostile_repo(|r| {
+            git(r, &["config", "core.excludesFile", ex.to_str().unwrap()]);
+            git(r, &["config", "core.attributesFile", at.to_str().unwrap()]);
+            std::fs::write(r.join("hidden.txt"), "x\n").unwrap();
+        });
+        let st = git_cmd(&r)
+            .args(["status", "--porcelain", "--untracked-files=all"])
+            .output()
+            .unwrap();
+        assert!(
+            String::from_utf8_lossy(&st.stdout).contains("?? hidden.txt"),
+            "ATTACK: git hid an untracked file through the repository's core.excludesFile: {st:?}"
+        );
+        let ca = git_cmd(&r)
+            .args(["check-attr", "export-ignore", "a.txt"])
+            .output()
+            .unwrap();
+        assert!(
+            String::from_utf8_lossy(&ca.stdout).contains("unspecified"),
+            "ATTACK: git read attributes from the repository's core.attributesFile: {ca:?}"
+        );
+    }
+
+    #[test]
+    fn git_compares_every_stat_field_whatever_the_repository_says() {
+        use std::time::{Duration, SystemTime};
+        let old = SystemTime::now() - Duration::from_secs(7200);
+        let d = tempfile::tempdir().unwrap();
+        let r = d.path().join("repo");
+        std::fs::create_dir_all(&r).unwrap();
+        git(&r, &["init", "-q", "-b", "main"]);
+        let f = r.join("a.txt");
+        std::fs::write(&f, "aaaa\n").unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&f)
+            .unwrap()
+            .set_modified(old)
+            .unwrap();
+        git(&r, &["add", "-A"]);
+        git(&r, &["commit", "-q", "-m", "c"]);
+        git(&r, &["config", "core.checkStat", "minimal"]);
+        git(&r, &["config", "core.trustCtime", "false"]);
+        // Same size, same mtime, other bytes: only ctime differs (git compares
+        // whole seconds, so wait one out).
+        std::thread::sleep(Duration::from_millis(1200));
+        std::fs::write(&f, "bbbb\n").unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&f)
+            .unwrap()
+            .set_modified(old)
+            .unwrap();
+        let st = git_cmd(&r)
+            .args(["status", "--porcelain"])
+            .output()
+            .unwrap();
+        assert!(
+            String::from_utf8_lossy(&st.stdout).contains("M a.txt"),
+            "ATTACK: a changed file read as clean through the repository's own stat settings \
+             (core.checkStat / core.trustCtime): {st:?}"
+        );
+    }
+
+    #[test]
+    fn git_reads_a_repository_another_uid_owns() {
+        if unsafe { libc::geteuid() } != 0 {
+            eprintln!("skipped: needs root to make the repository another uid's");
+            return;
+        }
+        let (_d, r) = hostile_repo(|_| {});
+        let own = Command::new("chown")
+            .args(["-R", "12345:12345"])
+            .arg(&r)
+            .status()
+            .unwrap();
+        assert!(own.success(), "setup: chown");
+        let o = git_cmd(&r).args(["rev-parse", "HEAD"]).output().unwrap();
+        assert!(
+            o.status.success(),
+            "ATTACK: git refused a repository another uid owns (safe.directory is not *): {o:?}"
+        );
+    }
+
+    /// The caller's environment never reaches git: re-run this binary with a
+    /// hostile `GIT_DIR`, and let the inner test make the git call.
+    #[test]
+    fn the_callers_git_environment_does_not_steer_a_git_call() {
+        if let Ok(r) = std::env::var("AXON_EQ_GIT_ENV") {
+            let o = git_cmd(Path::new(&r))
+                .args(["rev-parse", "HEAD"])
+                .output()
+                .unwrap();
+            assert!(
+                o.status.success(),
+                "ATTACK: the caller's GIT_DIR steered a git call (the environment was not cleared): {o:?}"
+            );
+            return;
+        }
+        let (_d, r) = hostile_repo(|_| {});
+        let o = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "git_data::tests::the_callers_git_environment_does_not_steer_a_git_call",
+                "--test-threads=1",
+            ])
+            .env("AXON_EQ_GIT_ENV", &r)
+            .env("GIT_DIR", "/nonexistent-git-dir")
+            .env("GIT_WORK_TREE", "/nonexistent-work-tree")
+            .env("GIT_INDEX_FILE", "/nonexistent-index")
+            .output()
+            .unwrap();
+        assert!(
+            o.status.success(),
+            "the inner run failed:\n{}\n{}",
+            String::from_utf8_lossy(&o.stdout),
+            String::from_utf8_lossy(&o.stderr)
+        );
+    }
 }
