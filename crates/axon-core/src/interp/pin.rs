@@ -385,10 +385,10 @@ fn analyze(f: &FnDef, gp: &[String], ctx: &Ctx, out: &mut HashSet<u64>) {
             }
             // Arithmetic whose operand's WIDTH nothing determined: a `u8`
             // wraps where an `i64` does not.
-            Expr::BinOp { op, left, right } => {
-                if !ctx.det(left, &local, &bound) || !ctx.det(right, &local, &bound) {
-                    out.insert(binop_key(op, left, right));
-                }
+            Expr::BinOp { op, left, right }
+                if !ctx.det(left, &local, &bound) || !ctx.det(right, &local, &bound) =>
+            {
+                out.insert(binop_key(op, left, right));
             }
             _ => {}
         }
