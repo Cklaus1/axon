@@ -981,6 +981,89 @@ mod tests {
         );
     }
 
+    /// C9 round 7, EQGATE3 (amendment 91; M2291): one request line is read
+    /// through `take(MAX_REQUEST)`: a peer sending more than the bound without
+    /// a newline is answered AT the bound, not when the (here 5 s) deadline
+    /// runs out.
+    #[test]
+    fn an_observer_request_line_is_cut_off_at_its_size_bound() {
+        use ring::signature::KeyPair;
+        let pkcs8 =
+            ring::signature::Ed25519KeyPair::generate_pkcs8(&ring::rand::SystemRandom::new())
+                .unwrap();
+        let key = ring::signature::Ed25519KeyPair::from_pkcs8(pkcs8.as_ref()).unwrap();
+        let public_hex = key
+            .public_key()
+            .as_ref()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        let server = Server {
+            cfg: cfg(),
+            mode: Mode::Test,
+            key,
+            key_id: "k".into(),
+            public_hex,
+            sources: Sources {
+                host_config: "/nonexistent/host.json".into(),
+                helper_config: "/nonexistent/helper.json".into(),
+                authority: None,
+            },
+            clock: Clock::System,
+            request_deadline: Duration::from_secs(5),
+        };
+        let (a, b) = UnixStream::pair().unwrap();
+        let peer = std::thread::spawn(move || {
+            let mut a = a;
+            let _ = a.write_all(&vec![b'x'; 2 * MAX_REQUEST as usize]);
+            let mut reply = String::new();
+            let _ = a.set_read_timeout(Some(Duration::from_secs(8)));
+            let _ = a.read_to_string(&mut reply);
+            reply
+        });
+        let started = std::time::Instant::now();
+        server.serve_one(b);
+        let took = started.elapsed();
+        let reply = peer.join().unwrap();
+        assert!(
+            took < Duration::from_secs(2),
+            "ATTACK: an observer request line past the size bound was read until the deadline \
+             ({took:?}): {reply}"
+        );
+    }
+
+    /// C9 round 7, EQGATE3 (amendment 91; M2292): a measured file is read
+    /// through `take(max + 1)`: a file far past its bound is refused without
+    /// the service buffering it.
+    #[test]
+    fn a_measured_file_past_its_bound_is_never_buffered() {
+        let t = tempfile::tempdir().unwrap();
+        let p = t.path().join("manifest.json");
+        std::fs::File::create(&p)
+            .unwrap()
+            .set_len(300_000_000)
+            .unwrap();
+        let peak = || -> u64 {
+            std::fs::read_to_string("/proc/self/status")
+                .unwrap()
+                .lines()
+                .find_map(|l| l.strip_prefix("VmHWM:"))
+                .and_then(|v| v.split_whitespace().next()?.parse().ok())
+                .unwrap()
+        };
+        let before = peak();
+        let got = read_measured(&p, 1024);
+        assert!(
+            got.as_ref().is_err_and(|e| e.contains("over 1024 bytes")),
+            "setup: an oversized file is refused: {got:?}"
+        );
+        let grew = peak().saturating_sub(before);
+        assert!(
+            grew < 120_000,
+            "ATTACK: the observer buffered a 300 MB file for a 1 KiB bound ({grew} kB of peak growth)"
+        );
+    }
+
     #[test]
     fn utc_reads_back() {
         for t in [0i64, 1_790_000_000, 1_234_567_890] {

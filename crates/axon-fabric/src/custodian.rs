@@ -1109,6 +1109,43 @@ mod tests {
         );
     }
 
+    /// C9 round 7, EQGATE3 (amendment 91; M2290): one request line is read
+    /// through `take(MAX_MESSAGE)`. A peer that sends more than the bound
+    /// without a newline is answered (refused as malformed) AT the bound, not
+    /// when its deadline runs out: the single-threaded service is not held for
+    /// the deadline by a peer that only has to send enough bytes. The deadline
+    /// here is long (5 s) so only the size bound can answer sooner.
+    #[test]
+    fn a_custodian_request_line_is_cut_off_at_its_size_bound() {
+        let d = tempfile::tempdir().unwrap();
+        let s = Server {
+            cfg: cfg(),
+            mode: Mode::Test,
+            store: NonceStore {
+                dir: d.path().join("n"),
+            },
+            clock: Clock::FixedUnix(1_000_000),
+        };
+        let (a, b) = UnixStream::pair().unwrap();
+        let peer = std::thread::spawn(move || {
+            let mut a = a;
+            let _ = a.write_all(&vec![b'x'; 3 * MAX_MESSAGE as usize]);
+            let mut reply = String::new();
+            let _ = a.set_read_timeout(Some(Duration::from_secs(8)));
+            let _ = a.read_to_string(&mut reply);
+            reply
+        });
+        let started = std::time::Instant::now();
+        s.serve_one_within(b, Duration::from_secs(5));
+        let took = started.elapsed();
+        let reply = peer.join().unwrap();
+        assert!(
+            took < Duration::from_secs(2),
+            "ATTACK: a custodian request line past the size bound was read until the deadline \
+             ({took:?}): {reply}"
+        );
+    }
+
     /// The store is the custodian's own and private.
     #[test]
     fn a_nonce_store_others_can_reach_is_refused() {

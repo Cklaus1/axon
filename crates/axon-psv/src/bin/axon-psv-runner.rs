@@ -137,4 +137,26 @@ mod tests {
         assert_eq!(e, "axon-psv-runner takes no arguments");
         assert!(!reached.get());
     }
+
+    /// C9 round 7, EQGATE3 (amendment 91): the real `set_non_dumpable` makes the
+    /// runner non-dumpable (it protects the completion secret S). The
+    /// `start` test above stubs the call; nothing observed the call itself, and
+    /// replacing its body with `0` left every suite green. The process starts
+    /// dumpable here, so a no-op is visible in `PR_GET_DUMPABLE`.
+    #[test]
+    fn the_real_prctl_makes_the_runner_non_dumpable() {
+        let get = || unsafe { libc::prctl(libc::PR_GET_DUMPABLE, 0, 0, 0, 0) };
+        // SAFETY: prctl with no pointers.
+        unsafe { libc::prctl(libc::PR_SET_DUMPABLE, 1 as libc::c_ulong, 0, 0, 0) };
+        assert_eq!(get(), 1, "setup: the test process starts dumpable");
+        assert_eq!(set_non_dumpable(), 0, "the prctl reports success");
+        let after = get();
+        // SAFETY: restore for the rest of the test process.
+        unsafe { libc::prctl(libc::PR_SET_DUMPABLE, 1 as libc::c_ulong, 0, 0, 0) };
+        assert_eq!(
+            after, 0,
+            "ATTACK: set_non_dumpable left the runner dumpable (PR_GET_DUMPABLE = {after}): the \
+             completion secret's memory is readable by the candidate's uid"
+        );
+    }
 }

@@ -2499,4 +2499,46 @@ mod tests {
              Fabric uid"
         );
     }
+
+    /// C9 round 7, EQGATE3 (amendment 91): the root helper makes itself
+    /// NON-DUMPABLE at start (`harden`), so no unprivileged process can read
+    /// its memory or ptrace it. The call builds no `Err` and at the default
+    /// `fs.suid_dumpable=0` a setuid exec is already non-dumpable, which is why
+    /// no suite noticed it removed. `harden` runs in a FORKED child of this
+    /// test (it chdirs, closes descriptors and leaves the session), which
+    /// starts dumpable and reports what `PR_GET_DUMPABLE` says afterwards.
+    #[test]
+    fn harden_makes_the_helper_non_dumpable() {
+        // SAFETY: fork; the child calls only libc process-state functions
+        // (harden is plain libc calls) and `_exit`.
+        let pid = unsafe { libc::fork() };
+        if pid == 0 {
+            // SAFETY: as above.
+            let code = unsafe {
+                libc::prctl(libc::PR_SET_DUMPABLE, 1 as libc::c_ulong, 0, 0, 0);
+                if libc::prctl(libc::PR_GET_DUMPABLE, 0, 0, 0, 0) != 1 {
+                    libc::_exit(10);
+                }
+                harden();
+                if libc::prctl(libc::PR_GET_DUMPABLE, 0, 0, 0, 0) == 0 {
+                    0
+                } else {
+                    11
+                }
+            };
+            unsafe { libc::_exit(code) };
+        }
+        assert!(pid > 0, "setup: fork");
+        let mut status = 0;
+        // SAFETY: waitpid on our own child.
+        unsafe { libc::waitpid(pid, &mut status, 0) };
+        assert!(libc::WIFEXITED(status), "setup: the child exited");
+        let code = libc::WEXITSTATUS(status);
+        assert_ne!(code, 10, "setup: the child did not start dumpable");
+        assert_eq!(
+            code, 0,
+            "ATTACK: the root helper stayed dumpable after harden: its memory is readable and \
+             ptrace-attachable by the caller's uid (PR_GET_DUMPABLE != 0)"
+        );
+    }
 }

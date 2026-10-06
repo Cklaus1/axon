@@ -849,3 +849,36 @@ fn only_a_missing_journal_is_no_journal() {
             .is_none()
     );
 }
+
+/// C9 round 7, EQGATE3 (amendment 91): a journal whose sequence numbers skip
+/// is refused. The sibling check (a duplicate settlement) was killed; this one
+/// was exempted as "not a verdict property" and survived being removed: a gap
+/// is a line dropped from the middle (an op's reservation, a cancel), which
+/// would replay as a journal in which it never happened.
+#[test]
+fn g13_a_journal_with_a_gap_in_its_sequence_is_corrupt() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("ops.journal");
+    {
+        let j = fresh(dir.path());
+        let o = unknown_cost_op(&j, "op-a", 20);
+        j.settle(&o, receipt("meter-1", 7, res(3))).unwrap();
+    }
+    Journal::open(&path).expect("control: the journal opens");
+    let text = std::fs::read_to_string(&path).unwrap();
+    let mut lines: Vec<String> = text.lines().map(String::from).collect();
+    let last = lines.len() - 1;
+    let mut v: serde_json::Value = serde_json::from_str(&lines[last]).unwrap();
+    v["seq"] = serde_json::json!(v["seq"].as_u64().unwrap() + 5);
+    lines[last] = v.to_string();
+    std::fs::write(&path, lines.join("\n") + "\n").unwrap();
+    match Journal::open(&path) {
+        Err(JournalError::Corrupt { reason, .. }) => {
+            assert!(reason.contains("sequence"), "{reason}")
+        }
+        other => panic!(
+            "ATTACK: a journal whose sequence skips was opened: {:?}",
+            other.map(|_| ())
+        ),
+    }
+}
