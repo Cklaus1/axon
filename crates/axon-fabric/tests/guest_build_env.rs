@@ -1226,80 +1226,54 @@ print(json.dumps({'clean': g.effective_config(cargo, env, sys.argv[2])[1],\
     );
 }
 
-/// Round 5: the host binaries are built by the operator's own cargo; the kit's
-/// `check-host-build` judges the ambient build with the guest's classifier --
-/// any variable that names a compiler, wrapper, flags, linker or registry, an
-/// ancestor or CARGO_HOME config, a replaced source. Control: a clean
-/// environment, an empty CARGO_HOME and the tree's committed config pass.
+/// Round 6: the host binaries are built by a CONTROLLED step, so what the kit's
+/// `check-host-build` judges is a constructed environment, never the caller's
+/// ambient variables (round 5 listed some and missed AR_*, RANLIB_*, a planted
+/// PATH, RUSTUP_HOME, CARGO ...): the same config in the same constructed
+/// environment, from the clone, ancestors included. Control: junk in the
+/// caller's environment changes nothing (it is dropped), a clean tree passes.
 #[test]
-fn an_ambient_host_build_under_a_wrapper_flag_or_config_is_refused() {
+fn the_host_build_configuration_is_judged_in_a_constructed_environment() {
     let d = tempfile::tempdir().unwrap();
     let r = checkout(d.path());
-    let empty_home = d.path().join("cargo-home");
-    std::fs::create_dir_all(&empty_home).unwrap();
     let check = |extra: &[(&str, String)], repo: &Path| -> Output {
         let mut c = gbe(repo);
         c.arg("check-host-build").arg(repo).env_clear();
         c.env("PATH", "/usr/bin:/bin")
-            .env("HOME", std::env::var("HOME").unwrap())
-            .env("CARGO_HOME", &empty_home);
+            .env("HOME", std::env::var("HOME").unwrap());
         for (k, v) in extra {
             c.env(k, v);
         }
         c.output().unwrap()
     };
-    let o = check(&[], &r);
+    let junk: Vec<(&str, String)> = vec![
+        ("RUSTC_WRAPPER", "/tmp/w".into()),
+        ("RUSTFLAGS", "--cfg evil".into()),
+        ("AR_x86_64_unknown_linux_gnu", "/tmp/evil-ar".into()),
+        ("RANLIB_x86_64_unknown_linux_gnu", "/tmp/evil-ranlib".into()),
+        ("RUSTUP_HOME", "/tmp/evil-rustup".into()),
+        ("RUST_TARGET_PATH", "/tmp/evil".into()),
+        ("CRATE_CC_NO_DEFAULTS", "1".into()),
+        ("PATH", "/tmp/evil-bin:/usr/bin:/bin".into()),
+    ];
+    let o = check(&junk, &r);
     assert!(
         o.status.success(),
-        "control: a clean ambient build is accepted: {}",
+        "control: the caller's ambient variables are dropped, not judged: {}",
         text(&o)
     );
-    let w = d.path().join("w");
-    let attacks: [(&str, &str); 14] = [
-        ("RUSTC_WRAPPER", "/tmp/w"),
-        ("RUSTC_WORKSPACE_WRAPPER", "/tmp/w"),
-        ("RUSTFLAGS", "--cfg evil"),
-        ("CARGO_ENCODED_RUSTFLAGS", "--cfg\x1fevil"),
-        ("CARGO_BUILD_RUSTC_WRAPPER", "/tmp/w"),
-        ("CARGO_BUILD_RUSTFLAGS", "--cfg evil"),
-        (
-            "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER",
-            "/tmp/evil-ld",
-        ),
-        ("CARGO_BUILD_RUSTC", "/tmp/evil-rustc"),
-        ("RUSTC", "/tmp/evil-rustc"),
-        ("CARGO_REGISTRIES_X_INDEX", "https://example.invalid/i"),
-        ("CARGO_SOURCE_CRATES_IO_REPLACE_WITH", "v"),
-        ("CC", "/tmp/evil-cc"),
-        ("CFLAGS", "-DEVIL"),
-        ("RUSTUP_TOOLCHAIN", "stable"),
-    ];
-    for (var, val) in attacks {
-        let o = check(&[(var, val.replace("/tmp/w", w.to_str().unwrap()))], &r);
-        assert!(
-            !o.status.success(),
-            "ATTACK: an ambient host build with {var} set was accepted:\n{}",
-            text(&o)
-        );
-        assert!(text(&o).contains(var), "{var}: {}", text(&o));
-    }
-    // A config in CARGO_HOME, and one in an ancestor of the clone.
-    let ch = d.path().join("cargo-home-with-config");
-    write(
-        &ch.join("config.toml"),
-        "[source.crates-io]\nreplace-with = \"v\"\n[source.v]\ndirectory = \"/tmp/vendor\"\n",
-    );
-    let mut c = gbe(&r);
-    c.arg("check-host-build").arg(&r).env_clear();
-    c.env("PATH", "/usr/bin:/bin")
-        .env("HOME", std::env::var("HOME").unwrap())
-        .env("CARGO_HOME", &ch);
-    let o = c.output().unwrap();
+    // A committed config naming a program, and an ancestor's, are refused.
+    let single = "\n[target.'cfg(all(target_os=\"linux\", target_env=\"musl\"))']\nlinker = \"/tmp/evil-ld\"\n";
+    let p = r.join(".cargo/config.toml");
+    let orig = std::fs::read_to_string(&p).unwrap();
+    write(&p, &format!("{orig}{single}"));
+    let o = check(&[], &r);
     assert!(
         !o.status.success(),
-        "ATTACK: an ambient host build with a replaced registry source in CARGO_HOME was accepted:\n{}",
+        "ATTACK: a committed cfg target naming a linker passed the host build's config check:\n{}",
         text(&o)
     );
+    write(&p, &orig);
     let scratch = private_scratch();
     write(
         &scratch.path().join(".cargo/config.toml"),
@@ -1309,7 +1283,7 @@ fn an_ambient_host_build_under_a_wrapper_flag_or_config_is_refused() {
     let o = check(&[], &inner);
     assert!(
         !o.status.success(),
-        "ATTACK: an ambient host build under an ancestor config naming a wrapper was accepted:\n{}",
+        "ATTACK: an ancestor config naming a wrapper passed the host build's config check:\n{}",
         text(&o)
     );
 }
@@ -1344,6 +1318,8 @@ fn a_build_record_its_runner_did_not_sign_is_refused() {
     let code = "\
 rec = json.load(open(sys.argv[2]))\n\
 mode = sys.argv[3]\n\
+import os\n\
+exp = (os.geteuid(), rec['build_parent'])\n\
 if mode == 'none': rec.pop('proof')\n\
 elif mode == 'edit': rec['artifacts']['axon'] = 'f' * 64\n\
 elif mode == 'forged': import hmac as h; rec['proof']['hmac'] = h.new(b'x' * 32, g.proof_payload(rec), 'sha256').hexdigest()\n\
@@ -1354,9 +1330,18 @@ elif mode == 'plantedparent':\n\
 \x20open(par + '/keys/mine.key', 'w').write('k' * 64); os.chmod(par + '/keys/mine.key', 0o400)\n\
 \x20rec['build_parent'] = par; rec['proof']['id'] = 'mine'\n\
 \x20rec['proof']['hmac'] = h.new(b'k' * 64, g.proof_payload(rec), 'sha256').hexdigest()\n\
-out = g.proof_problems(rec, 'build')\n\
+\x20exp = (os.geteuid(), par)\n\
+elif mode in ('forgedaccount', 'forgedpinned'):\n\
+\x20import hmac as h, tempfile\n\
+\x20par = tempfile.mkdtemp(dir=os.path.dirname(rec['build_parent']), prefix='axon-forge-'); os.chmod(par, 0o700); os.chown(par, 65534, 65534)\n\
+\x20os.mkdir(par + '/keys', 0o700); os.chown(par + '/keys', 65534, 65534)\n\
+\x20open(par + '/keys/forged.key', 'w').write('f' * 64); os.chown(par + '/keys/forged.key', 65534, 65534); os.chmod(par + '/keys/forged.key', 0o400)\n\
+\x20rec['builder_uid'] = 65534; rec['build_parent'] = par; rec['proof']['id'] = 'forged'\n\
+\x20rec['proof']['hmac'] = h.new(b'f' * 64, g.proof_payload(rec), 'sha256').hexdigest()\n\
+\x20if mode == 'forgedpinned': exp = (65534, par)\n\
+out = g.proof_problems(rec, 'build', exp)\n\
 import shutil\n\
-if mode == 'plantedparent': shutil.rmtree(rec['build_parent'])\n\
+if mode in ('plantedparent', 'forgedaccount', 'forgedpinned'): shutil.rmtree(rec['build_parent'])\n\
 print(json.dumps(out))";
     let judge = |mode: &str| -> String {
         let o = gpy(&r, code, &[rec_path.to_str().unwrap(), mode]);
@@ -1364,16 +1349,29 @@ print(json.dumps(out))";
         serde_json::from_slice::<String>(&o.stdout).unwrap()
     };
     let mut failures = vec![];
+    assert!(
+        unsafe { libc::geteuid() } == 0,
+        "setup: the forge cases chown a directory to another account (run as root)"
+    );
     assert_eq!(
         judge("same"),
         "",
         "control: the record the runner wrote holds"
     );
+    assert_eq!(
+        judge("forgedpinned"),
+        "",
+        "control: the forged record IS accepted by a judge whose pin names the forger (the pin is the barrier)"
+    );
     for (mode, why) in [
         ("none", "no builder proof"),
         ("edit", "does not hold"),
         ("forged", "does not hold"),
-        ("otherparent", "cannot be checked"),
+        ("otherparent", "not the pinned builder"),
+        // The reviewer's forge (round 6): a record naming ANOTHER account and
+        // that account's own private directory, signed under its own key. Only
+        // the judge's expectation of who builds refuses it.
+        ("forgedaccount", "not the pinned builder"),
     ] {
         let got = judge(mode);
         if !got.contains(why) {
@@ -1469,9 +1467,10 @@ fn a_dist_file_the_controlled_runner_did_not_produce_is_refused() {
         .unwrap();
     let rec: Value = serde_json::from_slice(&std::fs::read(&rec_path).unwrap()).unwrap();
     let code = "\
+import os\n\
 rec = json.load(open(sys.argv[2]))\n\
 if sys.argv[4] == 'handwritten': rec.pop('proof')\n\
-print(json.dumps(g.dist_problems(sys.argv[3], rec, None)))";
+print(json.dumps(g.dist_problems(sys.argv[3], rec, None, (os.geteuid(), rec['build_parent']))))";
     let judge = |mode: &str| -> String {
         let o = gpy(
             &r,
@@ -1521,9 +1520,10 @@ fn a_kernel_build_record_edited_after_its_runner_signed_it_is_refused() {
         "ATTACK: a test built a kernel under the real builder-private parent"
     );
     let code = "\
+import os\n\
 rec = json.load(open(sys.argv[2]))\n\
 if sys.argv[3] == 'edit': rec['vmlinux_sha256'] = 'f' * 64\n\
-print(json.dumps(g.proof_problems(rec, 'kernel build')))";
+print(json.dumps(g.proof_problems(rec, 'kernel build', (os.geteuid(), rec['build_parent']))))";
     let judge = |mode: &str| -> String {
         let o = gpy(&r, code, &[kpath.to_str().unwrap(), mode]);
         assert!(o.status.success(), "setup: {mode}: {}", text(&o));
@@ -1537,5 +1537,296 @@ print(json.dumps(g.proof_problems(rec, 'kernel build')))";
     assert!(
         edited.contains("does not hold"),
         "ATTACK: a kernel record edited after signing was accepted: {edited:?}"
+    );
+}
+
+// ── C9 round 6, FIELD-ORIGIN (amendment 86): the host binaries' controlled build ──
+
+const HOST_BINS: [&str; 4] = [
+    "axon-fabric",
+    "axon-protected-launcher",
+    "axon-custodian",
+    "axon-observer",
+];
+
+/// A committed checkout whose one package is named `axon-fabric` and has the
+/// four host binaries (no dependencies): what the fixed host invocation
+/// `cargo build --release --locked -p axon-fabric --bins` builds.
+fn host_checkout(parent: &Path) -> PathBuf {
+    let r = parent.join("hrepo");
+    for f in COPIED {
+        write(
+            &r.join(f),
+            &std::fs::read_to_string(repo_root().join(f)).unwrap(),
+        );
+    }
+    write(
+        &r.join("Cargo.toml"),
+        "[workspace]\nmembers = [\"fabric\"]\nresolver = \"2\"\n",
+    );
+    let mut bins = String::new();
+    for b in HOST_BINS {
+        bins.push_str(&format!(
+            "[[bin]]\nname = \"{b}\"\npath = \"src/bin/{b}.rs\"\n"
+        ));
+        write(&r.join(format!("fabric/src/bin/{b}.rs")), "fn main() {}\n");
+    }
+    write(
+        &r.join("fabric/Cargo.toml"),
+        &format!(
+            "[package]\nname = \"axon-fabric\"\nversion = \"0.0.0\"\nedition = \"2021\"\n{bins}"
+        ),
+    );
+    write(
+        &r.join("Cargo.lock"),
+        "# This file is automatically @generated by Cargo.\n# It is not intended for manual \
+         editing.\nversion = 4\n\n[[package]]\nname = \"axon-fabric\"\nversion = \"0.0.0\"\n",
+    );
+    git(&r, &["init", "-q", "-b", "main"]);
+    git(&r, &["add", "-A"]);
+    git(&r, &["commit", "-q", "-m", "host fixture"]);
+    r
+}
+
+fn head_of(r: &Path) -> String {
+    let o = Command::new("/usr/bin/git")
+        .arg("-C")
+        .arg(r)
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .unwrap();
+    String::from_utf8_lossy(&o.stdout).trim().to_string()
+}
+
+fn host_build(repo: &Path, out: &Path, env: &[(&str, String)]) -> Output {
+    let mut c = gbe(repo);
+    c.arg("host-build").arg(out);
+    for (k, v) in env {
+        c.env(k, v);
+    }
+    c.output().unwrap()
+}
+
+fn host_record(out: &Path) -> Value {
+    serde_json::from_slice(&std::fs::read(out.join("host-build.json")).unwrap()).unwrap()
+}
+
+/// Round 6, BLOCKER 2 (executed by the reviewer): `build_state` was read only by
+/// axon-fabric's build.rs, so a build under RUSTC_WRAPPER compiled every
+/// dependency wrapped before that build.rs refused, and an honest-looking retry
+/// in the same target dir linked them. The host binaries now come from a
+/// CONTROLLED build: a fresh clone, a fresh EMPTY target dir and CARGO_HOME every
+/// time, the constructed environment (fixed PATH, the pinned rustc, nothing
+/// inherited), one fixed invocation. The caller's wrapper, flags and a `cc`
+/// planted on its PATH never reach it; a second build shares nothing with the
+/// first. Control: the clean build succeeds, its binaries are what the signed
+/// record names, and the record names the clone's revision and the linker.
+#[test]
+fn a_callers_wrapper_flags_or_planted_cc_never_reach_the_controlled_host_build() {
+    let d = tempfile::tempdir().unwrap();
+    let r = host_checkout(d.path());
+    let out_a = d.path().join("host-a");
+    let a = host_build(&r, &out_a, &[]);
+    assert!(
+        a.status.success(),
+        "control: the host build builds: {}",
+        text(&a)
+    );
+    let rec_a = host_record(&out_a);
+    // The attack: every input the reviewer used, in the caller's environment.
+    let marker = d.path().join("wrapper-ran");
+    let w = wrapper(d.path(), &marker).display().to_string();
+    let evil = d.path().join("evil-bin");
+    let cc_marker = d.path().join("cc-ran");
+    write(
+        &evil.join("cc"),
+        &format!(
+            "#!/bin/sh\n: > '{}'\nexec /usr/bin/cc \"$@\"\n",
+            cc_marker.display()
+        ),
+    );
+    chmod_x(&evil.join("cc"));
+    let evil_path = format!("{}:{}", evil.display(), std::env::var("PATH").unwrap());
+    let out_b = d.path().join("host-b");
+    let b = host_build(
+        &r,
+        &out_b,
+        &[
+            ("RUSTC_WRAPPER", w.clone()),
+            ("RUSTC_WORKSPACE_WRAPPER", w.clone()),
+            ("CARGO_BUILD_RUSTC_WRAPPER", w),
+            ("RUSTFLAGS", "--cfg evil".into()),
+            ("PATH", evil_path),
+            ("CARGO", "/tmp/evil-cargo".into()),
+            ("AR_x86_64_unknown_linux_gnu", "/tmp/evil-ar".into()),
+        ],
+    );
+    let (wrapped, planted) = (marker.exists(), cc_marker.exists());
+    assert!(
+        !wrapped,
+        "ATTACK: a caller's RUSTC_WRAPPER reached the controlled host build:\n{}",
+        text(&b)
+    );
+    assert!(
+        !planted,
+        "ATTACK: a cc planted on the caller's PATH linked the controlled host build:\n{}",
+        text(&b)
+    );
+    assert!(
+        b.status.success(),
+        "control: the build with the junk environment still builds (it is dropped): {}",
+        text(&b)
+    );
+    let rec_b = host_record(&out_b);
+    // Nothing is shared between two builds: a different target dir each time,
+    // already removed, so a retry can never link an earlier build's artifacts.
+    assert_ne!(rec_a["target_dir"], rec_b["target_dir"]);
+    assert!(!Path::new(rec_b["target_dir"].as_str().unwrap()).exists());
+    assert_eq!(rec_b["target_dir_created_empty"], true);
+    assert_eq!(
+        rec_b["source_revision"],
+        head_of(&r),
+        "the clone's revision"
+    );
+    for n in HOST_BINS {
+        assert_eq!(rec_b["artifacts"][n], sha(&out_b.join(n)), "{n}");
+    }
+    for t in ["cc", "ld"] {
+        assert!(
+            rec_b["toolchain"]["host_tools"][t]["sha256"]
+                .as_str()
+                .is_some_and(|s| s.len() == 64)
+                && rec_b["toolchain"]["host_tools"][t]["path"]
+                    .as_str()
+                    .is_some_and(|p| p.starts_with("/usr/bin/") || p.starts_with("/bin/")),
+            "the record names the linker tool {t} by absolute path and digest: {}",
+            rec_b["toolchain"]["host_tools"]
+        );
+    }
+    // The planted cc was not the recorded linker.
+    assert!(!rec_b["toolchain"]["host_tools"]["cc"]["path"]
+        .as_str()
+        .unwrap()
+        .contains("evil"));
+}
+
+/// Round 6: the kit installs host binaries only from a directory whose
+/// `host-build.json` the PINNED builder signed. Each record below is refused by
+/// that and nothing else: binaries replaced, a record edited afterwards, no
+/// proof, no record, extra files, the wrong revision, a judge expecting another
+/// builder, and the reviewer's forge (a record naming another account and its
+/// own private directory, signed under its own key). Control: the honest
+/// directory is accepted by the judge that expects its builder.
+#[test]
+fn a_host_build_directory_the_pinned_builder_did_not_make_is_refused() {
+    let d = tempfile::tempdir().unwrap();
+    let r = host_checkout(d.path());
+    let out = d.path().join("host");
+    let o = host_build(&r, &out, &[]);
+    assert!(o.status.success(), "setup: host build: {}", text(&o));
+    assert!(
+        unsafe { libc::geteuid() } == 0,
+        "setup: the forge case chowns a directory to another account (run as root)"
+    );
+    let rec = host_record(&out);
+    let parent = rec["build_parent"].as_str().unwrap().to_string();
+    let head = head_of(&r);
+    let code = "\
+import os, shutil, hmac as h, tempfile\n\
+src, mode, commit, parent = sys.argv[2:6]\n\
+d = tempfile.mkdtemp(); out = d + '/o'; shutil.copytree(src, out)\n\
+rp = out + '/host-build.json'; rec = json.load(open(rp))\n\
+exp = (os.geteuid(), parent)\n\
+def save(): json.dump(rec, open(rp, 'w'))\n\
+if mode == 'binary': open(out + '/axon-observer', 'wb').write(b'built elsewhere')\n\
+elif mode == 'edit': rec['source_revision'] = 'a' * 40; save()\n\
+elif mode == 'noproof': rec.pop('proof'); save()\n\
+elif mode == 'norecord': os.remove(rp)\n\
+elif mode == 'extra': open(out + '/evil', 'w').write('x')\n\
+elif mode == 'builder': exp = (os.geteuid() + 1, parent)\n\
+elif mode == 'parent': exp = (os.geteuid(), '/var/tmp')\n\
+elif mode == 'forge':\n\
+\x20par = tempfile.mkdtemp(dir=os.path.dirname(parent), prefix='axon-forge-'); os.chmod(par, 0o700); os.chown(par, 65534, 65534)\n\
+\x20os.mkdir(par + '/keys', 0o700); os.chown(par + '/keys', 65534, 65534)\n\
+\x20open(par + '/keys/f.key', 'w').write('f' * 64); os.chown(par + '/keys/f.key', 65534, 65534); os.chmod(par + '/keys/f.key', 0o400)\n\
+\x20anc, why = g.ancestors_of(par, 65534); assert not why, why\n\
+\x20rec = json.loads(json.dumps(rec).replace(parent, par)); rec['builder_uid'] = 65534; rec['build_parent_ancestors'] = anc; rec['proof']['id'] = 'f'\n\
+\x20rec['proof']['hmac'] = h.new(b'f' * 64, g.proof_payload(rec), 'sha256').hexdigest(); save()\n\
+res = g.host_record_problems(out, exp, None if mode in ('nocommit', 'edit') else (('b' * 40) if mode == 'revision' else commit))\n\
+shutil.rmtree(d)\n\
+if mode == 'forge': shutil.rmtree(par)\n\
+print(json.dumps(res))";
+    let judge = |mode: &str| -> String {
+        let o = gpy(&r, code, &[out.to_str().unwrap(), mode, &head, &parent]);
+        assert!(o.status.success(), "setup: {mode}: {}", text(&o));
+        serde_json::from_slice::<String>(&o.stdout).unwrap()
+    };
+    assert_eq!(
+        judge("same"),
+        "",
+        "control: the honest host build is accepted"
+    );
+    let mut failures = vec![];
+    for (mode, why) in [
+        (
+            "binary",
+            "is not the bytes the controlled host build recorded",
+        ),
+        ("edit", "does not hold"),
+        ("noproof", "no builder proof"),
+        ("norecord", "holds no readable host-build.json"),
+        ("extra", "files the controlled host build did not make"),
+        ("revision", "was made from revision"),
+        ("builder", "not the pinned builder"),
+        ("parent", "not the pinned builder"),
+        ("forge", "not the pinned builder"),
+    ] {
+        let got = judge(mode);
+        if !got.contains(why) {
+            failures.push(format!("{mode}: {got:?}"));
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "ATTACK: a host build directory the pinned builder did not make was accepted: {failures:?}"
+    );
+}
+
+/// Round 6: the host build writes a NEW directory, and its cargo invocation is
+/// the one fixed entry: the guest table's invocations are not the host's, and
+/// the host's are not the guest's.
+#[test]
+fn the_host_build_runs_one_fixed_invocation_into_a_new_directory() {
+    let d = tempfile::tempdir().unwrap();
+    let r = host_checkout(d.path());
+    let out = d.path().join("host");
+    std::fs::create_dir_all(&out).unwrap();
+    let o = host_build(&r, &out, &[]);
+    assert!(
+        !o.status.success() && text(&o).contains("exists"),
+        "ATTACK: the host build wrote into an existing directory: {}",
+        text(&o)
+    );
+    // A guest record refuses the host's invocation (it is not in the guest table).
+    let (gr, rec_path, rec) = begun(d.path());
+    let o = gcargo(
+        &gr,
+        &rec_path,
+        None,
+        &[
+            "build",
+            "--release",
+            "--locked",
+            "-p",
+            "axon-fabric",
+            "--bins",
+            "--quiet",
+        ],
+    );
+    discard(&rec);
+    assert!(
+        !o.status.success() && text(&o).contains("not a controlled guest build invocation"),
+        "ATTACK: a guest build ran the host build's invocation: {}",
+        text(&o)
     );
 }
