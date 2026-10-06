@@ -2086,8 +2086,14 @@ MUTATIONS += [
      '                            let _ = tr;',
      'axon-core', _CL, _T4 + 'a_type_parameters_trait_bound_is_cast'),
     ('M667', "PSV-1 (A86): a lambda's own parameter annotations are its first contract", _CC,
-     '        if params.iter().all(|p| p.ty.is_none()) {',
-     '        if true {',
+     # C9 r4c (psv1c, amendments 72/78): re-anchored. The old edit (`if true`, no
+     # contract at all) now makes the operator's closure an UNDETERMINED position,
+     # and the strict closure-argument rule (A102) refuses even the honest control
+     # first (REFUSED_ELSEWHERE). The guard's job is that the annotation is
+     # ENFORCED, so the edit keeps the position determined but replaces the
+     # annotation by a type that admits the confused value.
+     '                .map(|p| p.ty.clone().unwrap_or_else(any))',
+     '                .map(|p| p.ty.clone().map(|_| T::Union(vec![T::Named("i64".into()), T::Named("bool".into())])).unwrap_or_else(any))',
      'axon-core', _CL, _T4 + 'a_lambdas_annotated_parameter_is_cast'),
 ]
 
