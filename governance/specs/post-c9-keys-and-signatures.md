@@ -127,8 +127,40 @@ host with a different system LLVM would build differently with no check failing.
 **Evidence needed:** green parity gates on 21; a row and a test where a build against an
 unpinned LLVM major is refused; a matrix row if native evidence enters any protected claim.
 
+## N. Host binding for the B263 qualification
+
+**Problem.** Fabric and readiness never compare a B263 record's measured host to the running host.
+`accept_b263` requires only a non-empty `host`; engine digests are compared with the manifest's own
+pins, not with anything measured on the running host. Only the operator deploy kit compares
+`host_facts.machine_id` with `/etc/machine-id`, once, at install. A current, operator-signed record
+from host A that the operator installs on host B makes B's protected launches pass in code and in
+readiness. No agent-reachable route to that install was found (PSV-7 review, amendment 82), so this
+is not a BLOCKER, but it is the nearest literal gap to "a receipt from any host without a current
+B263 qualification cannot satisfy the protected profile".
+
+**Proposal.**
+- Pin `machine_id`, kernel and virtualization type in the host config or the launch manifest.
+- Compare the record's `host_facts` to the pin in `LinuxProfileConfig::qualification()` and
+  `accept_b263` (so readiness inherits it).
+- Have the observer measure the running host's values, so the observation carries them and intake
+  joins them.
+
+**Evidence needed:** rows for a record from another machine-id, kernel and virt, plus a
+negative-matrix row for "a qualification from another host is accepted".
+
+**Related FUTURE items (recorded, not scheduled):**
+- The Stage 7 `b263_qualification` readiness component (`frozen_doc_component()` in
+  `scripts/protected_verifier_ready.py`) is a bare sha256 pin in the mutable
+  `governance/status/v022-experiments.json`: it checks no signature, currency or host. It cannot
+  make Stage 7 READY alone, because the operator verifier component verifies B263 currency, so it
+  is a redundant weak check. Drop it or derive it from the operator verifier's verdict.
+- The readiness relay (`protected_verdicts()` in the same script) runs the operator verifier with
+  no `env=`, so the invoking environment (`LD_PRELOAD` and the like) passes through. Scrub it. Any
+  future Stage 7 / CX-21 consumer should re-run the operator verifier itself instead of trusting a
+  repo-written readiness file.
+
 ## Ordering
 
-I, then J, then K. K's endorsements are typed records (I) in a standard container (J). L is
+I, then J, then K. N is independent of I/J/K. K's endorsements are typed records (I) in a standard container (J). L is
 independent of I/J/K and may go first. Each item is its own branch, amendment and review round
 after the C9 certification. None of it may start in the C9 freeze window.

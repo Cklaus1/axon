@@ -147,16 +147,25 @@ Each clause names what must hold. The negative matrix below names how each one f
 - The candidate reaches the suite only as a module path, and is sealed per PCI (E0004).
 
 **PSV-3 — PCI inside the guest.**
-- The affirmative completion token (a fresh per-run key and a token per completed test) is
-  produced and checked by the trusted runner INSIDE the guest.
-- Sealing, containment and per-provenance kernels run in the guest interpreter exactly as
-  certified for the local path (`governance/proofs/v022-pci/CERTIFICATION.md`).
-- A pass without completion evidence is Unknown.
+- The affirmative completion token (a per-run key and a token per completed test) is derived
+  from a host-generated per-run secret; tokens are issued by the guest interpreter and checked
+  by both the guest runner and Fabric. "Completed" means the test body returned normally. It is
+  not evidence that every assertion ran: an assertion inside a closure handed to the candidate
+  runs only if the candidate calls it, so a suite must assert after the call.
+- Sealing, containment and per-provenance kernels run in the guest interpreter as certified at
+  `31413ca7` (`governance/proofs/v022-pci/CERTIFICATION.md`, local backend, EMPTY effect ceiling)
+  plus amendments 53/60/72/78 (the delta), each covered by named PCI gate rows and mutation rows
+  re-run at the frozen head (`governance/notes/v022-pci-delta.md`). A non-empty guest effect
+  ceiling is OUTSIDE the PCI certification.
+- A pass without completion evidence is Unknown. A candidate that prints a second line naming a
+  test turns that test's genuine verdict into Unknown (fail-safe: never into a pass).
 
 **PSV-4 — Fabric signs only a guest-path verdict.**
-- Fabric attests (`acf-receipt-attestation/2`) a verdict only when it came from the protected
-  guest path.
-- Backend `linux-microvm-protected`, under a current B263 qualification.
+- Fabric attests (`acf-receipt-attestation/2`) a verdict as PROTECTED only when it came from the
+  protected guest path, and signs other classes under their own label (`development`,
+  `guest-unobserved`).
+- Backend `linux-microvm-protected`, under a current B263 qualification. Currency is judged at
+  dispatch and just before launch, not again at signing (a stated limit).
 - The verdict carries the guest runner's completion evidence.
 - A verdict from any other backend, or reconstructed outside the guest, is never attested as
   protected.
@@ -180,8 +189,10 @@ Each clause names what must hold. The negative matrix below names how each one f
   - guest image, kernel, verifier, suite and policy digests;
   - the intended launch manifest digest.
 - Fabric consumes it and cannot mint it.
-- Intake rejects a receipt whose observation digest or launch manifest digest does not join, or
-  whose observation is stale, replayed or from another launch.
+- Freshness (`max_age`) and one-use are enforced at LAUNCH (Fabric's early check, the root
+  helper, the custodian spend). Intake rejects a receipt whose observation digest does not join,
+  or whose launch (manifest digest, trial/attempt/operation, candidate) or epoch is not the
+  trial's. It deliberately does not expire a genuine verdict or keep a nonce registry.
 
 **PSV-7 — Development cannot pass as protected.**
 - The local interpreter backend, a development-class evaluation, and a receipt from any host
@@ -192,11 +203,11 @@ Each clause names what must hold. The negative matrix below names how each one f
 
 | Case | Expected refusal point |
 |---|---|
-| Replayed verdict or receipt (same operation, fresh journal) | Fabric withholds or intake refuses: nonce/observation not fresh (PSV-6) |
+| Replayed verdict or receipt (same operation, fresh journal) | Fabric withholds (replay is never signed), or launch refuses: nonce/observation not fresh or already spent (PSV-6). Intake does not re-check age or nonce |
 | Wrong guest image or kernel | Observer/launch-manifest join fails (PSV-5/6); Fabric refuses an unqualified profile |
 | Wrong suite, version or test | Guest runner refuses (PSV-2); intake refuses (registered acceptance, PSV-1) |
 | Candidate changed after sealing | Guest runner digest check (PSV-2); receipt input-tree join (PSV-5) |
-| Stale or replayed observer evidence | Intake: observation nonce/epoch/age (PSV-6) |
+| Stale or replayed observer evidence | Launch: age and one-use (Fabric early check, root helper, custodian spend). Intake: digest, launch and epoch joins only, no age or nonce check (PSV-6) |
 | Wrong verifier key | G01 authentication refuses (PSV-5) |
 | Missing completion evidence | Verdict Unknown (PSV-3) |
 | Mismatched trial/attempt/operation | Intake identity joins (PSV-5) |

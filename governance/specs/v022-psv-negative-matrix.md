@@ -119,6 +119,15 @@ depth, and each has its own test.
   follow-up in the protocol (after amendments 10 and 12; amendment 38). It is accepted, not
   overlooked.
 
+- **Candidate-printed duplicate result line: Failed or Passed becomes Unknown (fail-safe; PSV-3,
+  amendment 82).** A candidate that prints a second line naming the test makes `keyed_outcome`
+  return `None`, so Fabric reports Unknown. It never yields a pass; a candidate can equally fail
+  itself, so the only effect is Failed to Unknown, which the loop scores as no pass. Recorded as
+  a fail-safe, not a row: nothing here is refused, and an A-row needs a refusing guard.
+- **A closure the candidate never calls (PSV-3, amendment 82).** A completion token means the test
+  body returned normally. An assertion inside a closure handed to the candidate is not evidence
+  (executed: such a suite still earned a keyed PASS). Suites must assert after the call.
+
 ## What these rows do NOT prove (PROTECTED_ONLY)
 
 - A measuring observer ON A REAL HOST. The observer service (A94, amendment 68) measures the

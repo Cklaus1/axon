@@ -2780,7 +2780,10 @@ pub fn run_test_fn(program: &Program, name: &str) -> Result<(), String> {
 
 /// How a test that did not fail ENDED — the affirmative evidence Protected
 /// Check Isolation rests on. `Completed` means the test body itself returned
-/// normally, with a value that is not an `Err`: its every assertion ran. A
+/// normally, with a value that is not an `Err`. That is NOT evidence that every
+/// assertion ran: an assertion inside a closure handed to code that never calls
+/// it does not execute, and the test still completes (PSV-3; a suite must
+/// assert after the call). A
 /// test ended by `exit(0)` from below it, or one that returned `Err`, is
 /// `EndedEarly`: `axon test` still reports it as passing (unchanged
 /// semantics), but no completion evidence is issued for it, so a check that
