@@ -90,7 +90,7 @@ impl Tys {
     /// runtime type. `ok`: type parameters of the struct/enum being expanded,
     /// whose arguments were checked at the use site.
     fn closed(&self, t: &T, gp: &[String], ok: &[String], seen: &mut HashSet<String>) -> bool {
-        let mut go = |x: &T, seen: &mut HashSet<String>| self.closed(x, gp, ok, seen);
+        let go = |x: &T, seen: &mut HashSet<String>| self.closed(x, gp, ok, seen);
         match t {
             T::Named(n) => {
                 if n == "?" || gp.contains(n) || self.open.contains(n) {
