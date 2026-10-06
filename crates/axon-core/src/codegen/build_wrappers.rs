@@ -46,7 +46,21 @@ pub(crate) fn w_alloca<'ctx>(
     ty: BasicTypeEnum<'ctx>,
     name: &str,
 ) -> PointerValue<'ctx> {
-    b.build_alloca(ty, name).unwrap()
+    // Every alloca lands in the ENTRY block. An alloca emitted where the
+    // builder stands is a dynamic stack allocation: inside a loop body it
+    // grows the frame on every iteration (a 2M-iteration `a[i]` read loop
+    // overflowed the 8 MB stack on slicetmp temporaries alone), and LLVM's
+    // mem2reg/SROA only promote static (entry-block) allocas.
+    let func = b.get_insert_block().and_then(|bb| bb.get_parent());
+    let Some((func, entry)) = func.and_then(|f| f.get_first_basic_block().map(|e| (f, e))) else {
+        return b.build_alloca(ty, name).unwrap();
+    };
+    let eb = func.get_type().get_context().create_builder();
+    match entry.get_first_instruction() {
+        Some(first) => eb.position_before(&first),
+        None => eb.position_at_end(entry),
+    }
+    eb.build_alloca(ty, name).unwrap()
 }
 
 #[inline(never)]

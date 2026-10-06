@@ -31,6 +31,16 @@ use crate::types::Type;
 
 use super::build_wrappers;
 
+/// Where an array place expression is flowing; decides whether
+/// `emit_expr_owned` must snapshot it (see "Array value semantics").
+#[derive(Clone, Copy)]
+pub(super) enum CopySink<'a> {
+    /// Into an aggregate or an unknown owner: always copy.
+    Always,
+    /// Into the named local: copy only if this fn writes it or the source.
+    Local(&'a str),
+}
+
 /// Reduction kind for `emit_arr_f64_loop` — a counted loop over an f64 slice.
 enum ArrReduceF64 {
     /// Σ of all elements (f64 result).
@@ -247,7 +257,7 @@ impl<'ctx> super::Codegen<'ctx> {
                 if let Some(Type::Option(inner)) = &target {
                     self.current_option_inner = Some(*inner.clone());
                 }
-                let val = self.emit_expr(value, fn_val)?;
+                let val = self.emit_expr_owned(value, fn_val, CopySink::Local(name.as_str()))?;
                 self.current_result_types = saved_rt;
                 self.current_option_inner = saved_oi;
                 // R19 Slice C: when the annotation is a fixed-width integer type
@@ -519,22 +529,32 @@ impl<'ctx> super::Codegen<'ctx> {
             // ── ? operator ────────────────────────────────────────────────────
             ast::Expr::Question(inner) => {
                 let val = self.emit_expr(inner, fn_val)?;
-                Some(self.emit_question(val, fn_val))
+                // The Ok payload has the OPERAND's Ok type, not the enclosing
+                // fn's: `let r = ai_extract_uncertain_i64(s)?` inside a
+                // `-> Result<i64, str>` fn yields an `Uncertain<i64>`.
+                let inner_ok = match self
+                    .sem_type_of_expr(inner)
+                    .or_else(|| self.infer_expr_sem_type(inner))
+                {
+                    Some(Type::Result(ok, _)) => Some(*ok),
+                    _ => None,
+                };
+                Some(self.emit_question(val, inner_ok, fn_val))
             }
 
             // ── Ok / Err wrappers ─────────────────────────────────────────────
             ast::Expr::Ok(inner) => {
-                let val = self.emit_expr(inner, fn_val)?;
+                let val = self.emit_expr_owned(inner, fn_val, CopySink::Always)?;
                 Some(self.emit_result(true, val))
             }
             ast::Expr::Err(inner) => {
-                let val = self.emit_expr(inner, fn_val)?;
+                let val = self.emit_expr_owned(inner, fn_val, CopySink::Always)?;
                 Some(self.emit_result(false, val))
             }
 
             // ── Some / None wrappers ──────────────────────────────────────────
             ast::Expr::Some(inner) => {
-                let val = self.emit_expr(inner, fn_val)?;
+                let val = self.emit_expr_owned(inner, fn_val, CopySink::Always)?;
                 let ty = self.value_type_hint(&val);
                 Some(self.emit_option(std::option::Option::Some(val), &ty))
             }
@@ -653,7 +673,7 @@ impl<'ctx> super::Codegen<'ctx> {
                     }
                     _ => {}
                 }
-                let emitted = self.emit_expr(value, fn_val);
+                let emitted = self.emit_expr_owned(value, fn_val, CopySink::Local(name.as_str()));
                 self.current_result_types = saved_rt;
                 self.current_option_inner = saved_oi;
                 if let Some(val) = emitted {
@@ -664,40 +684,21 @@ impl<'ctx> super::Codegen<'ctx> {
                 None
             }
 
-            // Place assignment (`xs[i] = v`, `s.field = v`) is not lowered
-            // natively — and returning `None` here DROPPED IT SILENTLY.
-            //
-            // The comment already said the interpreter was the supported path.
-            // What it did was emit nothing and carry on, so every write vanished
-            // and the program computed a wrong answer with no error:
-            //
-            //     let xs = [1,2,3]   xs[1] = 99   println(to_str(xs[1]))
-            //     axon run  -> 99          ./prog -> 2
-            //
-            // Two shipped examples were wrong because of it. `examples/asi/rank.ax`
-            // sorts by swapping in place, so native printed an UNSORTED ranking;
-            // `examples/asi/local_search.ax` hill-climbs in place, so native
-            // reported "score 2 -> 2" against an optimum of 6 — a search that
-            // silently finds nothing.
-            //
-            // Sound-by-refusal (I-2) is the rule this violated: codegen must
-            // refuse what it cannot faithfully lower, never mis-lower it. E0910
-            // says so at build time, which is where an unsupported construct is
-            // supposed to stop.
-            ast::Expr::AssignTo { place, .. } => {
-                let what = match place.as_ref() {
-                    ast::Expr::Index { .. } => "an indexed element (`xs[i] = v`)",
-                    ast::Expr::FieldAccess { .. } => "a struct field (`s.field = v`)",
-                    _ => "a place expression",
-                };
-                let msg = format!(
-                    "codegen error [E0910]: native codegen does not lower assignment to {what}. \
-                     The interpreter supports it; run under `axon run`. Emitting nothing would \
-                     silently discard the write."
-                );
-                if !self.codegen_errors.iter().any(|e| e == &msg) {
-                    eprintln!("{msg}");
-                    self.codegen_errors.push(msg);
+            // Place assignment (`xs[i] = v`, `s.field = v`, and chains of both).
+            // Anything `lower_assign_to` cannot lower faithfully is REFUSED with
+            // E0910 (I-2) - never dropped: a silently discarded write computes a
+            // wrong answer with no error (`examples/asi/rank.ax` sorted nothing).
+            ast::Expr::AssignTo { place, value } => {
+                if let Err(Some(reason)) = self.lower_assign_to(place, value, fn_val) {
+                    let msg = format!(
+                        "codegen error [E0910]: native codegen does not lower assignment to \
+                         {reason}. The interpreter supports it; run under `axon run`. Emitting \
+                         nothing would silently discard the write."
+                    );
+                    if !self.codegen_errors.iter().any(|e| e == &msg) {
+                        eprintln!("{msg}");
+                        self.codegen_errors.push(msg);
+                    }
                 }
                 None
             }
@@ -1781,26 +1782,33 @@ impl<'ctx> super::Codegen<'ctx> {
         rhs: BasicValueEnum<'ctx>,
         ty: &Type,
     ) -> BasicValueEnum<'ctx> {
-        // N2a/N2b: `str + str` and `[T] + [T]` are CONCATENATION, and this
-        // function cannot lower either — the value arms below match on integer
-        // and float kinds, and a str/slice operand falls through to a path that
-        // silently yields the LEFT operand.
+        // `str + str` is CONCATENATION: lowered to the same `axon_concat`
+        // (malloc + memcpy) that string interpolation uses, so native and the
+        // interpreter agree byte-for-byte.
         //
-        // Measured before this guard existed: `"a" + "b"` built and printed `a`,
-        // and `[1,2] + [3]` built and printed length 2. Both are WRONG ANSWERS
-        // from a successful build — an I-2 violation, and the worst possible
-        // failure mode, because nothing tells the caller. Refuse instead: an
-        // honest E0910 is what `arr_push` and the effect-handler shapes above
-        // already do when native cannot reproduce the interpreter.
-        if matches!(op, ast::BinOp::Add) && matches!(ty, Type::Str | Type::Slice(_)) {
-            let what = if matches!(ty, Type::Str) {
-                "string"
-            } else {
-                "array"
-            };
-            let msg = format!(
-                "codegen error [E0910]: native codegen does not lower {what} concatenation (`+`). The interpreter supports it; run under `axon run`, or use str_join/arr_concat which do lower."
-            );
+        // `[T] + [T]` is still refused. The value arms below match on integer and
+        // float kinds, and a slice operand would fall through to a path that
+        // silently yields the LEFT operand (`[1,2] + [3]` printed length 2) — a
+        // wrong answer from a successful build, an I-2 violation. Refuse instead.
+        if matches!(op, ast::BinOp::Add) && matches!(ty, Type::Str) {
+            if let (BasicValueEnum::StructValue(_), BasicValueEnum::StructValue(_)) = (lhs, rhs) {
+                if let Some(concat_fn) = self.functions.get("axon_concat").copied() {
+                    if let Some(v) = build_wrappers::w_call(
+                        &self.ir.builder,
+                        concat_fn,
+                        &[lhs.into(), rhs.into()],
+                        "strcat",
+                    )
+                    .try_as_basic_value()
+                    .left()
+                    {
+                        return v;
+                    }
+                }
+            }
+        }
+        if matches!(op, ast::BinOp::Add) && matches!(ty, Type::Slice(_)) {
+            let msg = "codegen error [E0910]: native codegen does not lower array concatenation (`+`). The interpreter supports it; run under `axon run`, or use arr_concat which lowers.".to_string();
             if !self.codegen_errors.iter().any(|e| e == &msg) {
                 eprintln!("{msg}");
                 self.codegen_errors.push(msg);
@@ -3427,6 +3435,377 @@ impl<'ctx> super::Codegen<'ctx> {
         };
         let elem = build_wrappers::w_load(&self.ir.builder, elem_ty, elem_ptr, "elemval");
         Some(elem)
+    }
+
+    // -- Array value semantics ------------------------------------------------
+    //
+    // The interpreter gives arrays COPY semantics: every read of an array
+    // value clones it, so `let b = a; b[0] = 9` leaves `a` untouched and a
+    // callee's writes to its array param never reach the caller. Native arrays
+    // are `{len, data*}` headers, so a plain copy of the header SHARES the
+    // buffer. Before in-place writes were lowered that was invisible; with
+    // them it is a wrong answer. We therefore snapshot the buffer wherever a
+    // place expression flows into a new owner AND a write could observe the
+    // sharing (the function writes the destination or the source), plus
+    // unconditionally into aggregates; params are snapshotted at fn entry.
+
+    /// Root identifier of a place expression chain (`a`, `a.f`, `a[i].f[j]`).
+    fn place_root(e: &ast::Expr) -> Option<&str> {
+        match e {
+            ast::Expr::Ident(n) => Some(n.as_str()),
+            ast::Expr::FieldAccess { receiver, .. } => Self::place_root(receiver),
+            ast::Expr::Index { receiver, .. } => Self::place_root(receiver),
+            _ => None,
+        }
+    }
+
+    /// Root names of every place assignment inside `body` (lambdas included).
+    pub(super) fn written_place_roots(body: &ast::Expr) -> std::collections::HashSet<String> {
+        let mut roots = std::collections::HashSet::new();
+        ast::walk_expr(body, &mut |e| {
+            if let ast::Expr::AssignTo { place, .. } = e {
+                if let Some(r) = Self::place_root(place) {
+                    roots.insert(r.to_string());
+                }
+            }
+        });
+        roots
+    }
+
+    /// Does a value of this type own (transitively) an array buffer?
+    pub(super) fn type_has_slice(&self, ty: &Type, depth: u8) -> bool {
+        if depth > 8 {
+            return false;
+        }
+        match ty {
+            Type::Slice(_) => true,
+            Type::Struct(n) => self
+                .struct_field_sem_types
+                .get(n.as_str())
+                .is_some_and(|fs| fs.iter().any(|f| self.type_has_slice(f, depth + 1))),
+            Type::Tuple(xs) => xs.iter().any(|x| self.type_has_slice(x, depth + 1)),
+            Type::Option(i) => self.type_has_slice(i, depth + 1),
+            Type::Result(a, b) => {
+                self.type_has_slice(a, depth + 1) || self.type_has_slice(b, depth + 1)
+            }
+            _ => false,
+        }
+    }
+
+    /// Does cloning a value of this type need more than one memcpy? Only
+    /// `Slice` and `Struct` are walked: those are the only containers a place
+    /// write can traverse, so they are the only ones whose buffers can be
+    /// observed through a second path.
+    fn type_needs_deep_clone(&self, ty: &Type, depth: u8) -> bool {
+        if depth > 8 {
+            return false;
+        }
+        match ty {
+            Type::Slice(_) => true,
+            Type::Struct(n) => self
+                .struct_field_sem_types
+                .get(n.as_str())
+                .is_some_and(|fs| fs.iter().any(|f| self.type_needs_deep_clone(f, depth + 1))),
+            _ => false,
+        }
+    }
+
+    /// Deep-copy `val` of semantic type `ty`: a fresh buffer per array
+    /// (recursively through arrays-of-arrays and structs that own arrays).
+    /// Types holding no array buffer are returned unchanged.
+    pub(super) fn emit_clone_value(
+        &mut self,
+        val: BasicValueEnum<'ctx>,
+        ty: &Type,
+        fn_val: FunctionValue<'ctx>,
+    ) -> BasicValueEnum<'ctx> {
+        match ty {
+            Type::Slice(inner) => {
+                let (BasicValueEnum::StructValue(sv), Some(elem_ty)) = (val, self.llvm_type(inner))
+                else {
+                    return val;
+                };
+                let Some(elem_size) = elem_ty.size_of() else {
+                    return val;
+                };
+                let i64_ty = self.ir.context.i64_type();
+                let b = &self.ir.builder;
+                let len = b.build_extract_value(sv, 0, "cl_len").unwrap().into_int_value();
+                let src = b.build_extract_value(sv, 1, "cl_src").unwrap().into_pointer_value();
+                let bytes = b.build_int_mul(len, elem_size, "cl_bytes").unwrap();
+                let dst = self.emit_malloc(bytes, "cl_dst");
+                let _ = self.ir.builder.build_memcpy(dst, 1, src, 1, bytes);
+                if self.type_needs_deep_clone(inner, 0) {
+                    // for i in 0..len { dst[i] = clone(dst[i]) }
+                    let pre = self.ir.builder.get_insert_block().unwrap();
+                    let f = pre.get_parent().unwrap_or(fn_val);
+                    let hdr = self.ir.context.append_basic_block(f, "cl_hdr");
+                    let body = self.ir.context.append_basic_block(f, "cl_body");
+                    let exit = self.ir.context.append_basic_block(f, "cl_exit");
+                    self.ir.builder.build_unconditional_branch(hdr).unwrap();
+                    self.ir.builder.position_at_end(hdr);
+                    let i = self.ir.builder.build_phi(i64_ty, "cl_i").unwrap();
+                    i.add_incoming(&[(&i64_ty.const_zero(), pre)]);
+                    let iv = i.as_basic_value().into_int_value();
+                    let more = self
+                        .ir
+                        .builder
+                        .build_int_compare(IntPredicate::ULT, iv, len, "cl_more")
+                        .unwrap();
+                    self.ir
+                        .builder
+                        .build_conditional_branch(more, body, exit)
+                        .unwrap();
+                    self.ir.builder.position_at_end(body);
+                    let sp = unsafe {
+                        self.ir.builder.build_gep(elem_ty, dst, &[iv], "cl_sp").unwrap()
+                    };
+                    let elem = build_wrappers::w_load(&self.ir.builder, elem_ty, sp, "cl_elem");
+                    let cloned = self.emit_clone_value(elem, inner, fn_val);
+                    build_wrappers::w_store(&self.ir.builder, sp, cloned);
+                    let next = self
+                        .ir
+                        .builder
+                        .build_int_add(iv, i64_ty.const_int(1, false), "cl_next")
+                        .unwrap();
+                    let end = self.ir.builder.get_insert_block().unwrap();
+                    self.ir.builder.build_unconditional_branch(hdr).unwrap();
+                    i.add_incoming(&[(&next, end)]);
+                    self.ir.builder.position_at_end(exit);
+                }
+                let b = &self.ir.builder;
+                let mut out = sv.get_type().get_undef();
+                out = b.build_insert_value(out, len, 0, "cl_o0").unwrap().into_struct_value();
+                out = b.build_insert_value(out, dst, 1, "cl_o1").unwrap().into_struct_value();
+                out.into()
+            }
+            Type::Struct(n) => {
+                let (BasicValueEnum::StructValue(mut sv), Some(fields)) =
+                    (val, self.struct_field_sem_types.get(n.as_str()).cloned())
+                else {
+                    return val;
+                };
+                for (idx, fty) in fields.iter().enumerate() {
+                    if !self.type_needs_deep_clone(fty, 0) {
+                        continue;
+                    }
+                    let f = self
+                        .ir
+                        .builder
+                        .build_extract_value(sv, idx as u32, "cl_f")
+                        .unwrap();
+                    let c = self.emit_clone_value(f, fty, fn_val);
+                    sv = self
+                        .ir
+                        .builder
+                        .build_insert_value(sv, c, idx as u32, "cl_fs")
+                        .unwrap()
+                        .into_struct_value();
+                }
+                sv.into()
+            }
+            _ => val,
+        }
+    }
+
+    /// `emit_expr`, then snapshot the result when it is an array PLACE
+    /// expression (`a`, `s.xs`, `g[i]`, or `&` of one) flowing into a new
+    /// owner and the sharing could be observed. Fresh values (literals, call
+    /// results, builtins) already own their buffer and are never copied.
+    pub(super) fn emit_expr_owned(
+        &mut self,
+        expr: &ast::Expr,
+        fn_val: FunctionValue<'ctx>,
+        sink: CopySink<'_>,
+    ) -> Option<BasicValueEnum<'ctx>> {
+        let val = self.emit_expr(expr, fn_val)?;
+        let mut place = expr;
+        while let ast::Expr::UnaryOp {
+            op: ast::UnaryOp::Ref,
+            operand,
+        } = place
+        {
+            place = operand;
+        }
+        let Some(root) = Self::place_root(place) else {
+            return Some(val);
+        };
+        let Some(owned_ty) = self.sem_type_of_expr(place) else {
+            return Some(val);
+        };
+        if !self.type_needs_deep_clone(&owned_ty, 0) {
+            return Some(val);
+        }
+        let observable = match sink {
+            CopySink::Always => true,
+            CopySink::Local(dest) => {
+                self.cur_written_roots.contains(dest) || self.cur_written_roots.contains(root)
+            }
+        };
+        if !observable {
+            return Some(val);
+        }
+        Some(self.emit_clone_value(val, &owned_ty, fn_val))
+    }
+
+    /// Lower `place = value` where `place` is a chain of field accesses and
+    /// indexings rooted at a local (`xs[i] = v`, `p.x = v`, `a[i].f[j] = v`).
+    ///
+    /// Mirrors the interpreter (`Expr::AssignTo` in `interp/eval.rs`): the VALUE
+    /// is evaluated first, then the place is walked; every index is
+    /// bounds-checked with the same `__axon_bounds_panic` as the read path; no
+    /// refinement re-check happens on the write.
+    ///
+    /// `Err(Some(reason))` = shape not lowerable, caller reports E0910 (I-2:
+    /// refuse, never drop the write). `Err(None)` = a sub-expression already
+    /// reported its own error.
+    fn lower_assign_to(
+        &mut self,
+        place: &ast::Expr,
+        value: &ast::Expr,
+        fn_val: FunctionValue<'ctx>,
+    ) -> Result<(), Option<&'static str>> {
+        // A `Result`/`Option` slot has a canonical union layout; the value must
+        // be built against it (same reason as `Expr::Assign`).
+        let saved_rt = self.current_result_types.clone();
+        let saved_oi = self.current_option_inner.clone();
+        match self.sem_type_of_expr(place) {
+            Some(Type::Result(ok_ty, err_ty)) => self.current_result_types = Some((*ok_ty, *err_ty)),
+            Some(Type::Option(inner)) => self.current_option_inner = Some(*inner),
+            _ => {}
+        }
+        let errors_before = self.codegen_errors.len();
+        let emitted = self.emit_expr_owned(value, fn_val, CopySink::Always);
+        self.current_result_types = saved_rt;
+        self.current_option_inner = saved_oi;
+        let Some(val) = emitted else {
+            return if self.codegen_errors.len() == errors_before {
+                Err(Some("a value that produced no result"))
+            } else {
+                Err(None)
+            };
+        };
+
+        let (ptr, slot_ty, slot_sem) = self.emit_place_ptr(place, fn_val)?;
+        let val = match &slot_sem {
+            Some(t) => self.coerce_to_fixed_width(val, t),
+            None => val,
+        };
+        if val.get_type() != slot_ty {
+            return Err(Some(
+                "a place whose layout differs from the assigned value (narrow-int, \
+                 Result/Option or nested-container slot)",
+            ));
+        }
+        build_wrappers::w_store(&self.ir.builder, ptr, val);
+        Ok(())
+    }
+
+    /// Address of an assignable place: `(pointer, pointee LLVM type, semantic type)`.
+    fn emit_place_ptr(
+        &mut self,
+        place: &ast::Expr,
+        fn_val: FunctionValue<'ctx>,
+    ) -> Result<
+        (
+            inkwell::values::PointerValue<'ctx>,
+            BasicTypeEnum<'ctx>,
+            Option<Type>,
+        ),
+        Option<&'static str>,
+    > {
+        match place {
+            ast::Expr::Ident(name) => {
+                let (ptr, ty) = self
+                    .locals
+                    .get(name)
+                    .copied()
+                    .ok_or(Some("a place whose base is not a local variable"))?;
+                Ok((ptr, ty, self.local_types.get(name).cloned()))
+            }
+            ast::Expr::FieldAccess { receiver, field } => {
+                let (rptr, rty, rsem) = self.emit_place_ptr(receiver, fn_val)?;
+                const NOT_STRUCT: &str =
+                    "a field of a value that is not a record struct (tuple, enum and \
+                     Uncertain/Temporal fields are interpreter-only)";
+                let Some(Type::Struct(sname)) = rsem else {
+                    return Err(Some(NOT_STRUCT));
+                };
+                let names = self.struct_fields.get(sname.as_str()).cloned();
+                let idx = names
+                    .and_then(|ns| ns.iter().position(|n| n == field))
+                    .ok_or(Some(NOT_STRUCT))?;
+                let struct_ty = self
+                    .ir
+                    .module
+                    .get_struct_type(&sname)
+                    .ok_or(Some(NOT_STRUCT))?;
+                if rty != BasicTypeEnum::StructType(struct_ty) {
+                    return Err(Some(NOT_STRUCT));
+                }
+                let fty = struct_ty
+                    .get_field_type_at_index(idx as u32)
+                    .ok_or(Some(NOT_STRUCT))?;
+                let fptr = self
+                    .ir
+                    .builder
+                    .build_struct_gep(struct_ty, rptr, idx as u32, field)
+                    .unwrap();
+                let fsem = self
+                    .struct_field_sem_types
+                    .get(sname.as_str())
+                    .and_then(|v| v.get(idx))
+                    .cloned();
+                Ok((fptr, fty, fsem))
+            }
+            ast::Expr::Index { receiver, index } => {
+                let (rptr, rty, rsem) = self.emit_place_ptr(receiver, fn_val)?;
+                const NOT_ARRAY: &str = "an indexed element of a non-array value";
+                let Some(Type::Slice(inner)) = rsem else {
+                    return Err(Some(NOT_ARRAY));
+                };
+                let elem_ty = self.llvm_type(&inner).ok_or(Some(NOT_ARRAY))?;
+                let i64_ty = self.ir.context.i64_type();
+                let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+                let slice_ty = self
+                    .ir
+                    .context
+                    .struct_type(&[i64_ty.into(), ptr_ty.into()], false);
+                if rty != BasicTypeEnum::StructType(slice_ty) {
+                    return Err(Some(NOT_ARRAY));
+                }
+                let idx_int = match self.emit_expr(index, fn_val) {
+                    Some(BasicValueEnum::IntValue(i)) if i.get_type().get_bit_width() == 64 => i,
+                    Some(_) => return Err(Some("an index that is not a 64-bit integer")),
+                    None => return Err(None),
+                };
+                let len_ptr = self
+                    .ir
+                    .builder
+                    .build_struct_gep(slice_ty, rptr, 0, "wlenptr")
+                    .unwrap();
+                let len = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), len_ptr, "wlen")
+                    .into_int_value();
+                // Same trap as the read path (interp: "index {i} out of bounds").
+                self.emit_bounds_guard(idx_int, len);
+                let data_field_ptr = self
+                    .ir
+                    .builder
+                    .build_struct_gep(slice_ty, rptr, 1, "wdataptr")
+                    .unwrap();
+                let data_ptr =
+                    build_wrappers::w_load(&self.ir.builder, ptr_ty.into(), data_field_ptr, "wdata")
+                        .into_pointer_value();
+                let elem_ptr = unsafe {
+                    self.ir
+                        .builder
+                        .build_gep(elem_ty, data_ptr, &[idx_int], "welemptr")
+                        .unwrap()
+                };
+                Ok((elem_ptr, elem_ty, Some(*inner)))
+            }
+            _ => Err(Some("a place expression")),
+        }
     }
 
     /// Emit a counted loop over an i64 slice `{i64 len, i8* data}` performing a
@@ -6419,6 +6798,24 @@ impl<'ctx> super::Codegen<'ctx> {
         &mut self,
         count: inkwell::values::IntValue<'ctx>,
         fn_val: FunctionValue<'ctx>,
+        fill: impl FnMut(
+            &mut Self,
+            inkwell::values::PointerValue<'ctx>,
+            inkwell::values::IntValue<'ctx>,
+        ),
+    ) -> Option<BasicValueEnum<'ctx>> {
+        let i64_ty = self.ir.context.i64_type();
+        self.emit_arr_build_elem(i64_ty.into(), count, fn_val, fill)
+    }
+
+    /// Same as `emit_arr_i64_build` for an arbitrary element type: `dp` points
+    /// at element `i` with the stride the READ path (`emit_index`, which GEPs
+    /// on the semantic element type) uses, so bool arrays are 1 byte/element.
+    fn emit_arr_build_elem(
+        &mut self,
+        elem_ty: BasicTypeEnum<'ctx>,
+        count: inkwell::values::IntValue<'ctx>,
+        fn_val: FunctionValue<'ctx>,
         mut fill: impl FnMut(
             &mut Self,
             inkwell::values::PointerValue<'ctx>,
@@ -6431,13 +6828,13 @@ impl<'ctx> super::Codegen<'ctx> {
             .ir
             .context
             .struct_type(&[i64_ty.into(), ptr_ty.into()], false);
-        let eight = i64_ty.const_int(8, false);
-        let total = build_wrappers::w_int_mul(&self.ir.builder, count, eight, "ab_bytes");
+        let elem_size = elem_ty.size_of()?;
+        let total = build_wrappers::w_int_mul(&self.ir.builder, count, elem_size, "ab_bytes");
         let dst_raw = self.emit_malloc(total, "ab_dst");
         let dst = build_wrappers::w_pointer_cast(
             &self.ir.builder,
             dst_raw,
-            i64_ty.ptr_type(AddressSpace::default()),
+            elem_ty.ptr_type(AddressSpace::default()),
             "ab_di",
         );
 
@@ -6464,7 +6861,7 @@ impl<'ctx> super::Codegen<'ctx> {
         let dp = unsafe {
             self.ir
                 .builder
-                .build_gep(i64_ty, dst, &[i_cur], "ab_dp")
+                .build_gep(elem_ty, dst, &[i_cur], "ab_dp")
                 .unwrap()
         };
         fill(self, dp, i_cur);
@@ -6550,7 +6947,15 @@ impl<'ctx> super::Codegen<'ctx> {
             .build_select(pos, n, i64_ty.const_zero(), "rp_cnt")
             .unwrap()
             .into_int_value();
-        self.emit_arr_i64_build(count, fn_val, move |slf, dp, _i| {
+        // A bool value (i1) builds a `[bool]` (1-byte stride, matching the
+        // `Slice(Bool)` that inference reports); everything else keeps the
+        // 8-byte i64 layout.
+        let elem_ty: BasicTypeEnum<'ctx> = if v.get_type().get_bit_width() == 1 {
+            v.get_type().into()
+        } else {
+            i64_ty.into()
+        };
+        self.emit_arr_build_elem(elem_ty, count, fn_val, move |slf, dp, _i| {
             build_wrappers::w_store(&slf.ir.builder, dp, v.into());
         })
     }
@@ -7495,11 +7900,8 @@ impl<'ctx> super::Codegen<'ctx> {
                 (idx_opt, self.llvm_type(&ty))
             {
                 let recv_val = self.emit_expr(receiver, fn_val)?;
-                let recv_alloca = self
-                    .ir
-                    .builder
-                    .build_alloca(struct_ty, "asi_recv_tmp")
-                    .unwrap();
+                let recv_alloca =
+                    build_wrappers::w_alloca(&self.ir.builder, struct_ty.into(), "asi_recv_tmp");
                 build_wrappers::w_store(&self.ir.builder, recv_alloca, recv_val);
                 let fptr = self
                     .ir
@@ -7530,7 +7932,8 @@ impl<'ctx> super::Codegen<'ctx> {
             ) {
                 if let Some(idx) = field_names.iter().position(|n| n == field) {
                     let recv_val = self.emit_expr(receiver, fn_val)?;
-                    let recv_alloca = self.ir.builder.build_alloca(struct_ty, "recv_tmp").unwrap();
+                    let recv_alloca =
+                        build_wrappers::w_alloca(&self.ir.builder, struct_ty.into(), "recv_tmp");
                     build_wrappers::w_store(&self.ir.builder, recv_alloca, recv_val);
                     let fptr = self
                         .ir
@@ -7572,11 +7975,8 @@ impl<'ctx> super::Codegen<'ctx> {
                     BasicValueEnum::StructValue(s) => s.get_type(),
                     _ => return None,
                 };
-                let recv_alloca = self
-                    .ir
-                    .builder
-                    .build_alloca(struct_ty, "tup_recv_tmp")
-                    .unwrap();
+                let recv_alloca =
+                    build_wrappers::w_alloca(&self.ir.builder, struct_ty.into(), "tup_recv_tmp");
                 build_wrappers::w_store(&self.ir.builder, recv_alloca, recv_val);
                 let fptr = self
                     .ir
@@ -7602,7 +8002,7 @@ impl<'ctx> super::Codegen<'ctx> {
     ) -> Option<BasicValueEnum<'ctx>> {
         let elem_vals: Vec<BasicValueEnum<'ctx>> = elems
             .iter()
-            .map(|e| self.emit_expr(e, fn_val))
+            .map(|e| self.emit_expr_owned(e, fn_val, CopySink::Always))
             .collect::<Option<_>>()?;
 
         // Build the struct type from the element LLVM types.
@@ -7610,7 +8010,7 @@ impl<'ctx> super::Codegen<'ctx> {
         let struct_ty = self.ir.context.struct_type(&elem_types, false);
 
         // Allocate stack slot, store each field, load back for callers to use.
-        let alloca = self.ir.builder.build_alloca(struct_ty, "tup_lit").unwrap();
+        let alloca = build_wrappers::w_alloca(&self.ir.builder, struct_ty.into(), "tup_lit");
         for (i, elem_val) in elem_vals.iter().enumerate() {
             let fptr = self
                 .ir
@@ -7686,7 +8086,7 @@ impl<'ctx> super::Codegen<'ctx> {
 
                 let mut byte_offset: u64 = 0;
                 for (fi, (fname, fexpr)) in fields.iter().enumerate() {
-                    if let Some(fval) = self.emit_expr(fexpr, fn_val) {
+                    if let Some(fval) = self.emit_expr_owned(fexpr, fn_val, CopySink::Always) {
                         let fty = field_types.get(fi).cloned().unwrap_or(Type::Unknown);
                         let fsize = self.llvm_sizeof(&fty).unwrap_or(8);
                         // GEP into the payload at the current byte offset.
@@ -7763,7 +8163,7 @@ impl<'ctx> super::Codegen<'ctx> {
                     }
                     _ => {}
                 }
-                let emitted = self.emit_expr(fexpr, fn_val);
+                let emitted = self.emit_expr_owned(fexpr, fn_val, CopySink::Always);
                 self.current_option_inner = saved_oi;
                 self.current_result_types = saved_rt;
                 if let Some(fval) = emitted {
@@ -7838,7 +8238,7 @@ impl<'ctx> super::Codegen<'ctx> {
         // the symptom is a wrong answer rather than a refusal.
         let mut vals: Vec<BasicValueEnum<'ctx>> = Vec::with_capacity(elems.len());
         for e in elems {
-            vals.push(self.emit_expr(e, fn_val)?);
+            vals.push(self.emit_expr_owned(e, fn_val, CopySink::Always)?);
         }
         if vals.is_empty() {
             return None;
@@ -7927,7 +8327,14 @@ impl<'ctx> super::Codegen<'ctx> {
     ) -> Option<BasicValueEnum<'ctx>> {
         match maybe_val {
             std::option::Option::Some(e) => {
-                if let Some(v) = self.emit_expr(e, fn_val) {
+                // A bare local is the fn's own array (params are snapshotted at
+                // entry); a place INTO a param/struct must not leak the shared buffer.
+                let returned = if matches!(**e, ast::Expr::Ident(_)) {
+                    self.emit_expr(e, fn_val)
+                } else {
+                    self.emit_expr_owned(e, fn_val, CopySink::Always)
+                };
+                if let Some(v) = returned {
                     self.log_return_if_adaptive_val(v);
                     self.emit_verify_check_if_needed(v, fn_val);
                     self.emit_refine_return_check_if_needed(v, fn_val);

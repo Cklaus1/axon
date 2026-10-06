@@ -1,5 +1,15 @@
 # Axon Changelog
 
+## Native codegen — `s + t`, `a[i] = v`, `s.field = v` lowered (E0910 gaps closed)
+
+- **`str + str`** lowers to `axon_concat`, the routine string interpolation already uses. Array `+` is still E0910-refused; use `arr_concat`.
+- **Place assignment** (`xs[i] = v`, `p.x = v`, chains such as `a[i].f[j] = v`) lowers natively. Index writes go through the same `__axon_bounds_panic` guard as reads (exit 101, same message as the interpreter). A place whose layout differs from the assigned value (narrow int, Result/Option, nested container slot) is still E0910-refused rather than mis-stored.
+- **Array value semantics** match the interpreter. Natively an array is a shared `{len, ptr}` buffer, so it is snapshotted only where sharing becomes observable: `let`/assign from a place the fn writes, params the callee writes or returns, and values flowing into aggregates or `Ok`/`Err`/`Some`/returns.
+- **`arr_repeat(bool, n)`** builds a 1-byte `[bool]` instead of an 8-byte-stride slice.
+- **Allocas are hoisted to the entry block.** A loop-body alloca grew the stack on every iteration: a 2M-iteration `a[i]` loop overflowed 8 MB.
+- **`?` casts the payload to the operand's Ok type**, not the enclosing fn's. The bug had been latent; the hoist exposed it. `let r = ai_extract_uncertain_i64(s)?` inside a `Result<i64, str>` fn read the `Uncertain` as an `i64`.
+- `examples/asi/rank.ax` and `local_search.ax` now print the interpreter's output natively. A sieve with n = 5M matches C.
+
 ## Gap closure — F1/F6/F10/F12/F13/F14/F15 closed, ROADMAP fully complete (iteration 16)
 
 All remaining open gap items in ROADMAP §9.5 are now closed:

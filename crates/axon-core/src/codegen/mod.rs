@@ -151,6 +151,11 @@ pub struct Codegen<'ctx> {
     /// Used so a sum-type field initializer (`Box { r: Err("x") }`) builds the
     /// field's full canonical layout, not a value-only one.
     struct_field_sem_types: HashMap<String, Vec<Type>>,
+    /// Roots of every place assignment (`xs[i] = v`, `p.f.xs[j] = v`) in the
+    /// function being emitted. Arrays have COPY semantics in the interpreter
+    /// but share one buffer natively, so a copy is only needed where a write
+    /// could make the sharing observable - see `emit_expr_owned`.
+    cur_written_roots: std::collections::HashSet<String>,
     /// Phase 5: named refinement types → their (erased) base AxonType. A
     /// refinement is transparent at the value/layout level, so codegen lowers
     /// `Positive` (and a synthetic inline `__refine_N`) to its base `i64`. Without
@@ -423,6 +428,7 @@ impl<'ctx> Codegen<'ctx> {
             functions: HashMap::new(),
             struct_fields: HashMap::new(),
             struct_field_sem_types: HashMap::new(),
+            cur_written_roots: std::collections::HashSet::new(),
             refinement_base: HashMap::new(),
             refine_preds: HashMap::new(),
             discharged: crate::verify::Discharged::default(),
@@ -1410,6 +1416,10 @@ impl<'ctx> Codegen<'ctx> {
         let saved_locals = std::mem::take(&mut self.locals);
         let saved_local_types = std::mem::take(&mut self.local_types);
         let saved_result_types = self.current_result_types.take();
+        let saved_written_roots = std::mem::replace(
+            &mut self.cur_written_roots,
+            Self::written_place_roots(&f.body),
+        );
         let saved_adaptive = self.current_adaptive_fn.take();
         let saved_adaptive_input = self.current_adaptive_input.take();
         let saved_agent = self.current_agent_fn.take();
@@ -1554,6 +1564,18 @@ impl<'ctx> Codegen<'ctx> {
             if let Some(llvm_ty) = self.llvm_type(&sem_ty) {
                 let alloca = build_wrappers::w_alloca(&self.ir.builder, llvm_ty, &param.name);
                 if let Some(arg) = llvm_fn.get_nth_param(i as u32) {
+                    // Array params have value semantics: the callee's writes must
+                    // not reach the caller's buffer, and a returned param must not
+                    // alias the caller's array. Snapshot at entry iff either can
+                    // happen (the param is written, or the fn returns an array).
+                    let arg = if matches!(sem_ty, Type::Slice(_))
+                        && (self.cur_written_roots.contains(&param.name)
+                            || self.type_has_slice(&ret_sem, 0))
+                    {
+                        self.emit_clone_value(arg, &sem_ty, llvm_fn)
+                    } else {
+                        arg
+                    };
                     build_wrappers::w_store(&self.ir.builder, alloca, arg);
                 }
                 self.locals.insert(param.name.clone(), (alloca, llvm_ty));
@@ -1685,6 +1707,7 @@ impl<'ctx> Codegen<'ctx> {
         self.locals = saved_locals;
         self.local_types = saved_local_types;
         self.current_result_types = saved_result_types;
+        self.cur_written_roots = saved_written_roots;
         self.current_adaptive_fn = saved_adaptive;
         self.current_adaptive_input = saved_adaptive_input;
         self.current_agent_fn = saved_agent;
@@ -2052,6 +2075,13 @@ impl<'ctx> Codegen<'ctx> {
                     // dict_keys→[str], arr_chunk→[[i64]], …) are single-sourced in
                     // `fixed_collection_return_type` — registering one is a match
                     // arm there, not a new branch in this 160-line heuristic.
+                    // `arr_repeat(true, n)` is a `[bool]` (1-byte elements), not the
+                    // `[i64]` the constant table would claim.
+                    if name == "arr_repeat" && args.len() == 2 {
+                        if let Some(Type::Bool) = self.infer_expr_sem_type(&args[0]) {
+                            return Some(Type::Slice(Box::new(Type::Bool)));
+                        }
+                    }
                     if let Some(t) = Self::fixed_collection_return_type(name) {
                         return Some(t);
                     }

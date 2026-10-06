@@ -21715,28 +21715,20 @@ fn a_corrupt_cache_entry_does_not_fail_the_build() {
 }
 
 #[test]
-fn concat_plus_is_refused_natively_rather_than_miscompiled() {
-    // N2a/N2b, invariant I-2. `emit_binop` matches on integer/float value kinds;
-    // a str or slice operand fell through to a path that yields the LEFT
-    // operand. So before the guard, native BUILT these and printed the wrong
-    // answer: `"a" + "b"` → `a`, and `[1,2] + [3]` → length 2.
+fn array_concat_plus_is_refused_natively_rather_than_miscompiled() {
+    // N2b, invariant I-2. `emit_binop` matches on integer/float value kinds; a
+    // slice operand fell through to a path that yields the LEFT operand, so
+    // before the guard native BUILT `[1,2] + [3]` and printed length 2.
     //
     // A wrong answer from a successful build is the worst failure mode available
-    // — nothing tells the caller. Refusing is what arr_push and the
-    // effect-handler shapes already do when native cannot reproduce the
-    // interpreter, and it is what this asserts.
-    for (label, src, interp_expects) in [
-        (
-            "str",
-            "fn main() -> i64 {\n    println(\"a\" + \"b\")\n    0\n}\n",
-            "ab",
-        ),
-        (
-            "array",
-            "fn main() -> i64 {\n    let xs = [1, 2] + [3]\n    println(to_str(len(xs)))\n    0\n}\n",
-            "3",
-        ),
-    ] {
+    // — nothing tells the caller. `str + str` now lowers (see
+    // `native_lowers_string_concat_index_write_and_field_write_like_the_interpreter`);
+    // array `+` must still refuse.
+    for (label, src, interp_expects) in [(
+        "array",
+        "fn main() -> i64 {\n    let xs = [1, 2] + [3]\n    println(to_str(len(xs)))\n    0\n}\n",
+        "3",
+    )] {
         let f = tmp_ax(&format!("concat_native_{label}"), src);
         let out_bin = std::env::temp_dir()
             .join(format!("axon_concat_{label}_{}", std::process::id()));
@@ -27679,68 +27671,19 @@ fn struct_size_is_right_for_both_result_sides_and_nested_fields() {
 /// "score 2 -> 2" against an optimum of 6 — a search that silently finds
 /// nothing.
 ///
-/// Sound-by-refusal (I-2) is the rule: codegen refuses what it cannot lower
-/// faithfully, never mis-lowers it. This asserts the refusal, not the lowering
-/// — implementing place assignment natively would be a feature, and the test
-/// should then assert parity instead.
+/// Place assignment is now lowered natively, so the property is PARITY: both
+/// shipped examples that do in-place writes must print exactly what the
+/// interpreter prints (`local_search` must reach the optimum, 6).
 #[test]
-fn native_codegen_refuses_place_assignment_instead_of_dropping_it() {
-    let dir = std::env::temp_dir().join(format!("axon_placeasg_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-
-    for (name, src, want_interp, expect_in_msg) in [
-        (
-            "indexed",
-            "fn main() {\n  let xs = [1,2,3]\n  xs[1] = 99\n  println(to_str(xs[1]))\n}\n",
-            "99\n",
-            "xs[i] = v",
-        ),
-        (
-            "field",
-            "type P = { x: i64 }\nfn main() {\n  let p = P { x: 1 }\n  p.x = 5\n  \
-             println(to_str(p.x))\n}\n",
-            "5\n",
-            "s.field = v",
-        ),
-    ] {
-        let f = dir.join(format!("{name}.ax"));
-        std::fs::write(&f, src).unwrap();
-
-        // The interpreter is the reference and must still do the write.
-        let run = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
-        assert_eq!(
-            String::from_utf8_lossy(&run.stdout),
-            want_interp,
-            "`{name}`: the reference engine must perform the assignment"
-        );
-
-        // The build must REFUSE — not succeed and drop the write.
-        let bin = dir.join(format!("{name}.bin"));
-        let build = axon()
-            .args(["build", f.to_str().unwrap(), "-o", bin.to_str().unwrap()])
-            .output()
-            .unwrap();
-        let log = format!(
-            "{}{}",
-            String::from_utf8_lossy(&build.stdout),
-            String::from_utf8_lossy(&build.stderr)
-        );
-        if codegen_absent(&log) {
+fn native_place_assignment_examples_match_the_interpreter() {
+    for name in ["rank", "local_search"] {
+        let src = std::fs::read_to_string(ex(&format!("asi/{name}.ax"))).unwrap();
+        let Some(got) = native_stdout(name, &src) else {
             note_harness_skip("axon build (no codegen feature)");
-            continue;
-        }
-        assert!(
-            !build.status.success(),
-            "`{name}`: the build must not succeed while discarding the write: {log}"
-        );
-        assert!(
-            log.contains("E0910") && log.contains(expect_in_msg),
-            "`{name}`: the refusal must name the construct: {log}"
-        );
+            return;
+        };
+        assert_eq!(got, interp_stdout(name, &src), "`{name}`: native != interpreter");
     }
-
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// `axon fmt` silently rewrote scientific-notation float literals.
@@ -31926,4 +31869,159 @@ fn a_wasm_link_failure_reports_the_linkers_own_error() {
         "the linker's OWN error was not surfaced — the caller's stock ABI \
          sentence is not evidence about this failure. stderr:\n{err}"
     );
+}
+
+/// Build `src` natively and run it; `None` when this axon has no codegen.
+fn native_stdout(tag: &str, src: &str) -> Option<String> {
+    let f = tmp_ax(tag, src);
+    let bin = std::env::temp_dir().join(format!("axon_native_{tag}_{}", std::process::id()));
+    let _ = std::fs::remove_file(&bin);
+    let build = axon()
+        .arg("build")
+        .arg(&f)
+        .arg("-o")
+        .arg(&bin)
+        .arg("--no-cache")
+        .output()
+        .expect("spawn build");
+    let _ = std::fs::remove_file(&f);
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr)
+    );
+    if codegen_absent(&msg) {
+        return None;
+    }
+    assert_eq!(
+        build.status.code(),
+        Some(0),
+        "[{tag}] native build must succeed (no E0910 refusal):\n{msg}"
+    );
+    let run = Command::new(&bin).output().expect("run native");
+    let _ = std::fs::remove_file(&bin);
+    assert_eq!(run.status.code(), Some(0), "[{tag}] native exit status");
+    Some(String::from_utf8_lossy(&run.stdout).trim().to_string())
+}
+
+fn interp_stdout(tag: &str, src: &str) -> String {
+    let f = tmp_ax(tag, src);
+    let run = axon().arg("run").arg(&f).output().expect("spawn run");
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(run.status.code(), Some(0), "[{tag}] `axon run` must work");
+    String::from_utf8_lossy(&run.stdout).trim().to_string()
+}
+
+#[test]
+fn native_lowers_string_concat_index_write_and_field_write_like_the_interpreter() {
+    // The three constructs native codegen used to refuse with E0910. Each must
+    // now BUILD and print exactly what the interpreter prints; the bounds trap
+    // on a write is covered separately below.
+    let progs: [(&str, &str); 3] = [
+        (
+            "cat",
+            "fn main() -> i64 {\n let s = \"foo\"\n let t = s + \"bar\" + s\n println(t)\n println(to_str(len(t)))\n 0\n}\n",
+        ),
+        (
+            "idxw",
+            "fn main() -> i64 {\n let a = [1, 2, 3]\n a[1] = 40\n a[2] = a[0] + a[1]\n println(to_str(a[0]))\n println(to_str(a[1]))\n println(to_str(a[2]))\n 0\n}\n",
+        ),
+        (
+            "fldw",
+            "type P = { x: i64, y: i64 }\ntype B = { p: P, xs: [i64] }\nfn main() -> i64 {\n let b = B { p: P { x: 1, y: 2 }, xs: [7, 8] }\n b.p.x = 10\n b.xs[1] = b.p.x + b.p.y\n println(to_str(b.p.x))\n println(to_str(b.xs[1]))\n 0\n}\n",
+        ),
+    ];
+    for (tag, src) in progs {
+        let Some(got) = native_stdout(tag, src) else {
+            return;
+        };
+        assert_eq!(got, interp_stdout(tag, src), "[{tag}] native != interpreter");
+    }
+}
+
+#[test]
+fn native_arrays_have_value_semantics_like_the_interpreter() {
+    // In-place element writes made the sharing of a `{len, ptr}` array header
+    // observable. Each program writes through one name and reads another; the
+    // interpreter deep-copies, so native must snapshot too.
+    let progs: [(&str, &str); 5] = [
+        (
+            "alias_let",
+            "fn main() -> i64 {\n let a = [1, 2, 3]\n let b = a\n b[0] = 9\n println(to_str(a[0]))\n a[1] = 8\n println(to_str(b[1]))\n 0\n}\n",
+        ),
+        (
+            "alias_param",
+            "fn f(a: [i64]) -> i64 {\n a[0] = 9\n a[0]\n}\nfn main() -> i64 {\n let a = [1, 2, 3]\n println(to_str(f(a)))\n println(to_str(a[0]))\n 0\n}\n",
+        ),
+        (
+            "alias_ret",
+            "fn id(a: [i64]) -> [i64] {\n a\n}\nfn main() -> i64 {\n let a = [1, 2, 3]\n let b = id(a)\n b[0] = 9\n println(to_str(a[0]))\n 0\n}\n",
+        ),
+        (
+            "alias_field",
+            "type P = { xs: [i64] }\nfn main() -> i64 {\n let a = [1, 2, 3]\n let p = P { xs: a }\n p.xs[0] = 9\n println(to_str(a[0]))\n 0\n}\n",
+        ),
+        (
+            "alias_2d",
+            "fn main() -> i64 {\n let g = [[1, 2], [3, 4]]\n let row = g[0]\n row[0] = 9\n println(to_str(g[0][0]))\n let h = g\n h[1][1] = 8\n println(to_str(g[1][1]))\n 0\n}\n",
+        ),
+    ];
+    for (tag, src) in progs {
+        let Some(got) = native_stdout(tag, src) else {
+            return;
+        };
+        assert_eq!(got, interp_stdout(tag, src), "[{tag}] native != interpreter");
+    }
+}
+
+#[test]
+fn native_array_index_write_traps_out_of_bounds_like_the_interpreter() {
+    let src = "fn main() -> i64 {\n let a = [1, 2, 3]\n a[3] = 7\n println(\"unreachable\")\n 0\n}\n";
+    let f = tmp_ax("oob_write", src);
+    let bin = std::env::temp_dir().join(format!("axon_native_oobw_{}", std::process::id()));
+    let build = axon()
+        .arg("build")
+        .arg(&f)
+        .arg("-o")
+        .arg(&bin)
+        .arg("--no-cache")
+        .output()
+        .unwrap();
+    let interp = axon().arg("run").arg(&f).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    let msg = String::from_utf8_lossy(&build.stderr).to_string();
+    if codegen_absent(&format!("{}{}", String::from_utf8_lossy(&build.stdout), msg)) {
+        return;
+    }
+    assert_eq!(build.status.code(), Some(0), "build must succeed:\n{msg}");
+    let run = Command::new(&bin).output().unwrap();
+    let _ = std::fs::remove_file(&bin);
+    assert!(
+        !String::from_utf8_lossy(&run.stdout).contains("unreachable"),
+        "write past the end must trap, not continue"
+    );
+    assert_eq!(
+        run.status.code(),
+        interp.status.code(),
+        "native and interpreter must exit with the same status on an OOB write"
+    );
+    assert!(
+        String::from_utf8_lossy(&run.stderr).contains("index 3 out of bounds (len 3)"),
+        "same panic text as the interpreter: {}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+}
+
+#[test]
+fn native_loops_do_not_grow_the_stack_per_iteration() {
+    // Every `a[i]` read materialises a slice temporary; when its alloca sat in
+    // the loop body, a 2M-iteration loop leaked 32 MB of stack and died with a
+    // bogus "stack overflow". Locals and temporaries must be entry-block
+    // allocas. A bool array exercises the 1-byte-stride `arr_repeat(true, n)`
+    // layout in the same loop.
+    let src = "fn main() -> i64 {\n let n = 2000000\n let f = arr_repeat(true, n)\n f[0] = false\n let k = 0\n let c = 0\n while k < n {\n  if f[k] { c = c + 1 }\n  k = k + 1\n }\n println(to_str(c))\n 0\n}\n";
+    let Some(got) = native_stdout("loop_stack", src) else {
+        return;
+    };
+    assert_eq!(got, "1999999");
 }
