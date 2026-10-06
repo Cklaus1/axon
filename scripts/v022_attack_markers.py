@@ -1130,7 +1130,7 @@ ATTACK_MARKERS.update({
     'M1195': r"ATTACK: the freeze bound a guest image component built outside the controlled environment \(a vmlinux other than the controlled kernel build's\)",
     'M1196': r"ATTACK: the freeze bound a guest image component built outside the controlled environment \(a kernel make run with the caller's KCFLAGS\)",
     'M1197': r"ATTACK: the freeze bound a guest image component built outside the controlled environment \(a rootfs\.sqfs other than the controlled assembly's\)",
-    'M1198': r"ATTACK: the freeze bound a guest image component built outside the controlled environment \(a rootfs made by a mksquashfs on the caller's PATH\)",
+    'M1198': r"ATTACK: the freeze bound a guest image component built outside the controlled environment \(a rootfs made (with other mksquashfs flags|in the caller's environment)\)",
 })
 
 # C9 round 4b, workstream ROWS4B (M1020-M1139; amendment 62).
@@ -1788,6 +1788,74 @@ ATTACK_MARKERS.update({
     'M1822': r'ATTACK: a launch the launcher refused \(exit 22\) was receipted as a COMPLETED run',
     'M1823': r'ATTACK: a run that timed out \(exit 20\) was receipted as a COMPLETED run',
     'M1826': r'ATTACK: a (Passed|Failed) verdict was receipted over bytes the run did not judge',
+})
+
+# C9 round 4c, workstream EQGATE (M1900-M1959; amendment 81).
+ATTACK_MARKERS.update({
+    'M1900': r'ATTACK: --merge accepted shards run on two different toolchains',
+    'M1901': r'ATTACK: --join accepted records run on two different toolchains',
+    'M1902': r'ATTACK: --merge accepted a shard that recorded no host or toolchain',
+    'M1903': r'ATTACK: --merge accepted shards that ran two different interpreter binaries',
+    'M1904': r'ATTACK: --merge accepted shards that ran as different users',
+    'M1905': r'ATTACK: a partial write kept a record on its stored label over a failing cell',
+    'M1906': r'ATTACK: a partial write mixed a kept record from another toolchain with a new one',
+})
+ATTACK_MARKERS.update({
+    'M1907': 'ATTACK: the ownership walk started from a symlinked base',
+    'M1908': "ATTACK: the root helper's input snapshot followed a symlink",
+    'M1909': 'ATTACK: the snapshot wrote through a file that already existed',
+    'M1910': "ATTACK: the root helper's policy snapshot followed a symlink",
+    'M1911': 'ATTACK: the root helper read an operator file through a symlink',
+    'M1912': 'ATTACK: the out-dir hand-over refused a symlink',
+    'M1913': "ATTACK: the hand-over (chowned a symlink's target|followed a symlink)",
+    'M1914': 'ATTACK: the observer read its signing key through a symlink',
+    'M1915': 'ATTACK: the observer measured an installed artifact through a symlink',
+    'M1916': 'ATTACK: a write-once object was replaced by other bytes',
+    'M1917': 'ATTACK: a store write went through a file planted at its temporary name',
+    'M1918': 'ATTACK: prepare wrote the guest policy over a policy.json that already existed',
+    'M1919': 'ATTACK: keygen overwrote an existing key file',
+    'M1920': 'ATTACK: a trusted verifier was not recognised as holding a loop role',
+    'M1921': 'ATTACK: a context observer was not recognised as holding a loop role',
+    'M1922': 'ATTACK: a safety monitor was not recognised as holding a loop role',
+    'M1923': 'evl:evaluator issued the (activate|rollback): Ok',
+    'M1924': 'agent:worker issued the (activate|rollback): Ok',
+    'M1925': 'ATTACK: a candidate with an unsafe attempt was ACCEPTED',
+    'M1926': 'ATTACK: a (confirmation|reporting)-role episode was learning-eligible',
+    'M1927': 'ATTACK: a mechanism_test episode was learning-eligible',
+    'M1928': 'ATTACK: a discovery episode whose verification is `[a-z_]+` was learning-eligible',
+    'M1929': 'ATTACK: a discovery episode with `[a-z_]+` usage was learning-eligible',
+    'M1930': 'ATTACK: a mechanism_test episode was excluded under another reason',
+    'M1931': 'ATTACK: a discovery episode that failed verification was not excluded',
+    'M1932': 'ATTACK: an episode the proposer verified itself fed learning',
+    'M1933': 'ATTACK: an episode verified by an issuer the operator never trusted fed learning',
+    'M1934': 'ATTACK: a verdict was receipted Passed over a check suite that changed during the run',
+    'M1935': 'ATTACK: a verdict was receipted Passed over a check suite that could not be read',
+    'M1936': 'ATTACK: a should_fail property that held over every case was reported as passing',
+    'M1937': 'ATTACK: a property that failed on a counterexample was reported as passing',
+    'M1938': 'ATTACK: a should_fail test that completed without panicking was reported as passing',
+    'M1939': 'ATTACK: create_once replaced an existing branch record',
+    'M1940': "ATTACK: an orphan history holding the certified tree was certified as the certified\\s+revision's descendant",
+    'M1941': 'ATTACK: validate_against took a boolean for an integer',
+    'M1942': 'ATTACK: validate_against admitted a reference of a scheme the pattern does not name',
+    'M1943': 'ATTACK: a use of O_NOFOLLOW with no row',
+    'M1944': 'ATTACK: a use of O_EXCL with no row',
+    'M1945': 'ATTACK: a use of create_new\\(true\\) with no row',
+    'M1946': 'ATTACK: a use of RENAME_NOREPLACE with no row',
+    'M1947': 'ATTACK: a use of AT_SYMLINK_NOFOLLOW with no row',
+    'M1948': 'ATTACK: a use of O_DIRECTORY with no row',
+    'M1949': 'ATTACK: a use of MS_NOSUID \\(a mount flag\\) with no row',
+    'M1950': 'ATTACK: a decision returned as Some\\("reason"\\) with no row',
+    'M1951': 'ATTACK: a match arm on Some\\(".."\\) was read as a decision',
+    'M1952': 'ATTACK: a function deciding by Result<bool, _>',
+    'M1953': 'ATTACK: a function returning an i32 status',
+    'M1954': 'ATTACK: a function returning an ExitCode',
+})
+ATTACK_MARKERS.update({
+    'M1955': 'ATTACK: the freeze bound a paired-disable status file the harness did not join',
+    'M1956': 'ATTACK: a status file with the defect `missing` was accepted',
+    'M1957': 'ATTACK: a status file made before a source change was accepted',
+    'M1958': 'ATTACK: a status file with the defect `cells` was accepted',
+    'M1959': 'ATTACK: a status file with the defect `not-joined` was accepted',
 })
 
 # C9 round 5, r4c-psv1b (M1840-M1848; amendment 78): replacement, placeholders, the walk bound.

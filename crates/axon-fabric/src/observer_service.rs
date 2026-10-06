@@ -987,4 +987,51 @@ mod tests {
             assert_eq!(crate::backend::parse_utc(&utc(t)), Some(t));
         }
     }
+
+    // ── C9 round 4c, EQGATE (amendment 81; M1914-M1915): the observer reads
+    // its signing key and measures the installed kernel/rootfs through ONE
+    // `O_NOFOLLOW` open. Removed alone, the whole suite stayed green.
+
+    fn euid_() -> u32 {
+        // SAFETY: geteuid cannot fail.
+        unsafe { libc::geteuid() }
+    }
+
+    /// The observer's key is never read through a symlink: a link at the key
+    /// path (to a key the observer owns) is refused. Control: the real path loads.
+    #[test]
+    fn the_observer_key_is_never_read_through_a_symlink() {
+        use std::os::unix::fs::PermissionsExt;
+        let t = tempfile::tempdir().unwrap();
+        let pk8 = ring::signature::Ed25519KeyPair::generate_pkcs8(&ring::rand::SystemRandom::new())
+            .unwrap();
+        let real = t.path().join("real.pk8");
+        std::fs::write(&real, pk8.as_ref()).unwrap();
+        std::fs::set_permissions(&real, std::fs::Permissions::from_mode(0o400)).unwrap();
+        load_key(&real, euid_()).expect("control: the real key loads");
+        let link = t.path().join("link.pk8");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        let got = load_key(&link, euid_()).map(|(_, pk)| pk);
+        assert!(
+            got.is_err(),
+            "ATTACK: the observer read its signing key through a symlink: {got:?}"
+        );
+    }
+
+    /// The installed kernel/rootfs is measured without following a symlink:
+    /// a link (to a regular file) is not "the file", it is refused.
+    #[test]
+    fn an_installed_artifact_that_is_a_symlink_is_never_measured() {
+        let t = tempfile::tempdir().unwrap();
+        let real = t.path().join("rootfs.sqfs");
+        std::fs::write(&real, b"image").unwrap();
+        digest_of(&real).expect("control: the real file is measured");
+        let link = t.path().join("link.sqfs");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        let got = digest_of(&link);
+        assert!(
+            got.is_err(),
+            "ATTACK: the observer measured an installed artifact through a symlink: {got:?}"
+        );
+    }
 }

@@ -205,8 +205,12 @@ fn a_paired_disable_run_refuses_a_tree_with_an_uncommitted_change_outside_crates
     let _ = std::fs::remove_dir_all(&clean);
 }
 
-/// Mutation shards of the `binding` scope, as a run at HEAD writes them;
-/// shard 1 claims `blobs` as its registry when given.
+/// Mutation shards of the `binding` scope, as a run at HEAD writes them
+/// (each records the host and toolchain it ran on, amendment 81); `mode`
+/// breaks one thing: the registry (`alt`), the tree (`dirty`), an edit
+/// (`edits`), an all_killed claim (`claim`), or shard 1's toolchain
+/// (`toolchain`), interpreter binary (`bin`), uid (`uid`) or host record
+/// (`nohost`).
 const MERGE_SHARDS: &str = r#"
 import json, sys, v022_g01_mutations as m
 head = sys.argv[1]; mode = sys.argv[2]; alt = mode == "alt"; out = sys.argv[3]
@@ -216,7 +220,10 @@ for k in (0, 1):
     if alt and k == 1:
         blobs = {f: "0" * 40 for f in blobs}
     d = {"schema": "axon-v022-mutation-run/3", "gate": "binding", "scope": "binding",
-         "commit": head, "registry_blobs": blobs, "tree_clean": True, "toolchain": {},
+         "commit": head, "registry_blobs": blobs, "tree_clean": True,
+         "environment": {"euid": 0, "etc_axon_present": False, "unset": [],
+                         "host": m.host_identity()},
+         "toolchain": {"rustc": "rustc 1.0.0", "cargo": "cargo 1.0.0", "axon_bin_sha256": "a" * 64},
          "shard": {"index": k, "of": 2}, "only": None, "all_killed": True,
          "mutations": [{"id": r[0], **m.row_digest(r), "result": "killed", "baseline": "passed"}
                        for i, r in enumerate(rows) if i % 2 == k]}
@@ -226,6 +233,16 @@ for k in (0, 1):
         d["mutations"][0]["old_sha256"] = "0" * 64
     if k == 1 and mode == "claim":
         d["mutations"][0]["result"] = "survived"
+    if k == 1 and mode == "toolchain":
+        h = dict(m.host_identity(), hostname="another-host")
+        h["toolchain"] = dict(h["toolchain"], rustc="rustc 0.0.0 (another toolchain)")
+        d["environment"] = dict(d["environment"], host=h)
+    if k == 1 and mode == "bin":
+        d["toolchain"] = dict(d["toolchain"], axon_bin_sha256="b" * 64)
+    if k == 1 and mode == "uid":
+        d["environment"] = dict(d["environment"], euid=1000)
+    if k == 1 and mode == "nohost":
+        d["environment"] = {"euid": 0, "etc_axon_present": False}
     json.dump(d, open(f"{out}/s{k}.json", "w"))
 "#;
 
@@ -510,6 +527,132 @@ fn a_join_refuses_records_from_two_toolchains() {
         "ATTACK: --join accepted records run on two different toolchains:\n{}",
         text(&o)
     );
+}
+
+/// --merge refuses shards run on two toolchains (amendment 81; the same
+/// refusal --join makes, through ONE helper). Executed attack: two synthetic
+/// shards at a clean HEAD with different rustc merged to `all_killed: true`.
+/// Control: a_merge_refuses_a_shard_made_from_another_registry's same merge.
+#[test]
+fn a_merge_refuses_shards_from_two_toolchains() {
+    let (o, written) = combine("merge-toolchain", MERGE_SHARDS, false, "toolchain");
+    assert!(
+        !written && text(&o).contains("records ran on different toolchains"),
+        "ATTACK: --merge accepted shards run on two different toolchains:\n{}",
+        text(&o)
+    );
+}
+
+/// --merge refuses shards whose interpreter binaries differ (a run's kills
+/// are judged against ONE `axon`).
+#[test]
+fn a_merge_refuses_shards_run_on_two_interpreters() {
+    let (o, written) = combine("merge-bin", MERGE_SHARDS, false, "bin");
+    assert!(
+        !written && text(&o).contains("records ran on different toolchains"),
+        "ATTACK: --merge accepted shards that ran two different interpreter binaries:\n{}",
+        text(&o)
+    );
+}
+
+/// --merge refuses shards run under different uids (a root-only test is a
+/// skip as a user and a check as root).
+#[test]
+fn a_merge_refuses_shards_run_under_different_uids() {
+    let (o, written) = combine("merge-uid", MERGE_SHARDS, false, "uid");
+    assert!(
+        !written && text(&o).contains("records ran on different toolchains"),
+        "ATTACK: --merge accepted shards that ran as different users:\n{}",
+        text(&o)
+    );
+}
+
+/// --merge refuses a shard that does not record the host and toolchain it
+/// ran on (like --join: not recording where it ran is not evidence).
+#[test]
+fn a_merge_refuses_a_shard_that_does_not_record_its_host() {
+    let (o, written) = combine("merge-nohost", MERGE_SHARDS, false, "nohost");
+    assert!(
+        !written && text(&o).contains("does not record the host and toolchain it ran on"),
+        "ATTACK: --merge accepted a shard that recorded no host or toolchain:\n{}",
+        text(&o)
+    );
+}
+
+/// Drift: --merge and --join (and the partial --only write) refuse mixed
+/// toolchains through the ONE shared helper, so neither can drift to its own
+/// comparison again (amendment 81).
+#[test]
+fn merge_join_and_a_partial_write_share_one_toolchain_refusal() {
+    let src = |f: &str| std::fs::read_to_string(repo_root().join(f)).unwrap();
+    let (m, p) = (src(HARNESS[0]), src(HARNESS[2]));
+    let body = |s: &str, name: &str| {
+        let a = s
+            .find(&format!("def {name}("))
+            .unwrap_or_else(|| panic!("no def {name}"));
+        let rest = &s[a..];
+        let b = rest[1..].find("\ndef ").map_or(rest.len(), |i| i + 1);
+        rest[..b].to_string()
+    };
+    assert!(
+        body(&m, "merge").contains("shard_toolchain_problem("),
+        "DRIFT: --merge does not use the shared toolchain refusal"
+    );
+    assert!(
+        body(&p, "join_shards").contains("mut.shard_toolchain_problem("),
+        "DRIFT: --join does not use the shared toolchain refusal"
+    );
+    assert!(
+        body(&p, "kept_records_problem").contains("mut.shard_toolchain_problem("),
+        "DRIFT: the --only partial write does not use the shared toolchain refusal"
+    );
+    assert!(
+        body(&p, "host_identity").contains("mut.host_identity()"),
+        "DRIFT: the paired-disable host identity is not the mutation run's"
+    );
+    assert!(
+        !p.contains("toolchains.setdefault"),
+        "DRIFT: --join grew its own toolchain comparison again"
+    );
+}
+
+/// A partial (--only) paired-disable write judges its KEPT records as --join
+/// does (amendment 81): a kept record whose label says `holds` over a cell
+/// that says otherwise, or one that ran on another toolchain, is refused.
+/// Control: the same kept records, consistent, pass.
+#[test]
+fn a_partial_paired_disable_write_judges_its_kept_records() {
+    let r = repo("pd-kept");
+    let prog = r#"
+import json, v022_paired_disable as pd
+host = pd.host_identity()
+other = dict(host, toolchain=dict(host["toolchain"], rustc="rustc 0.0.0 (another)"))
+good = {"mutation": "M1", "status": "EQUIVALENT_DID", "holds": True,
+        "matrix": {"baseline": "ATTACK_REFUSED", "retired_guard_disabled": "ATTACK_REFUSED",
+                   "sibling_set_disabled": "ATTACK_REFUSED", "guard_set_disabled": "ATTACK_SUCCEEDS",
+                   "retired_guard_full_suite": "SUITE_OK"},
+        "environment": {"host": host}}
+new = dict(good, mutation="M2")
+label = json.loads(json.dumps(good)); label["matrix"]["guard_set_disabled"] = "OTHER_FAILURE"
+tool = json.loads(json.dumps(good)); tool["environment"] = {"host": other}
+print("CONTROL", pd.kept_records_problem([good], [good, new]))
+print("LABEL", pd.kept_records_problem([label], [label, new]))
+print("TOOLCHAIN", pd.kept_records_problem([tool], [tool, new]))
+"#;
+    let t = py(&r, prog);
+    assert!(
+        t.contains("CONTROL None"),
+        "control: consistent kept records pass: {t}"
+    );
+    assert!(
+        t.contains("LABEL kept record M1 claims holds=True but its recorded cells give False"),
+        "ATTACK: a partial write kept a record on its stored label over a failing cell: {t}"
+    );
+    assert!(
+        t.contains("TOOLCHAIN records ran on different toolchains"),
+        "ATTACK: a partial write mixed a kept record from another toolchain with a new one: {t}"
+    );
+    let _ = std::fs::remove_dir_all(&r);
 }
 
 /// --merge refuses a shard that does not record a clean tree. Control:
@@ -1555,4 +1698,190 @@ fn c_later() {}
     );
     let _ = std::fs::remove_dir_all(&r);
     let _ = std::fs::remove_dir_all(&tgt);
+}
+
+// ── C9 round 4c, EQGATE (amendment 81): the freeze judges the status file ────
+//
+// `v022_freeze_manifest.py` bound the paired-disable status file by digest and
+// read nothing in it: the in-tree file covered 59 of 148 retirements, 49 at one
+// commit and 10 at another, with `all_hold` true. `status_problems` is the
+// validator the freeze now asks (its wiring is freeze_manifest.rs's
+// a_paired_disable_status_that_is_not_the_joined_evidence_does_not_freeze);
+// `--check-status PATH` is the same function on a command line.
+
+/// The scratch repo `tag` with a status file `--join`ed from synthetic shards at
+/// its HEAD (every record held, one host): (repo, out dir, joined file).
+fn joined_status(tag: &str) -> (PathBuf, PathBuf, PathBuf) {
+    let r = repo(tag);
+    let out = scratch(&format!("{tag}-out"));
+    let head = git(&r, &["rev-parse", "HEAD"]);
+    let prog = format!(
+        "import sys; sys.argv = ['x', {head:?}, 'same', {:?}]\n{JOIN_SHARDS}",
+        out.display().to_string()
+    );
+    py(&r, &prog);
+    let joined = out.join("joined.json");
+    let o = harness(
+        &r,
+        HARNESS[2],
+        &[
+            "--join",
+            &joined.display().to_string(),
+            &out.join("j0.json").display().to_string(),
+            &out.join("j1.json").display().to_string(),
+        ],
+    );
+    assert!(
+        o.status.success() && joined.exists(),
+        "setup: the synthetic shards join: {}",
+        text(&o)
+    );
+    (r, out, joined)
+}
+
+fn check_status(r: &Path, file: &Path) -> Output {
+    harness(
+        r,
+        HARNESS[2],
+        &["--check-status", &file.display().to_string()],
+    )
+}
+
+/// Control and defects: a joined status file at the freeze commit is accepted;
+/// each way it can be short of that is refused with its own reason.
+#[test]
+fn a_status_file_is_accepted_only_as_the_joined_evidence_for_the_freeze_commit() {
+    let (r, out, joined) = joined_status("status");
+    let o = check_status(&r, &joined);
+    assert!(
+        o.status.success() && text(&o).contains("a joined, current, complete record set"),
+        "control: a joined status file at HEAD is accepted: {}",
+        text(&o)
+    );
+    // (name, python edit of the document `d`, a reason it must give)
+    let cases: [(&str, &str, &str); 12] = [
+        ("missing", "del d['records'][:3]", "retirement records are missing (first: "),
+        ("not-joined", "del d['hosts']", "not produced by `--join`"),
+        ("shard", "d['shard']='0/2'", "not produced by `--join`"),
+        ("schema", "d['schema']='axon-v022-paired-disable/1'", "not axon-v022-paired-disable/2"),
+        ("dirty", "d['tree_clean']=False", "does not record a clean tree"),
+        ("blobs", "d['registry_blobs']={}", "registry/marker blobs other than this tree's"),
+        ("all-hold", "d['all_hold']=False", "all_hold is not true"),
+        ("duplicate", "d['records'].append(dict(d['records'][0]))", "duplicate records"),
+        ("record-commit", "d['records'][0]['commit']='0'*40", "not all at the file's"),
+        ("edits", "d['records'][0]['edits_sha256']='0'*64", "executed edits that are not this registry's"),
+        ("cells", "r=next(r for r in d['records'] if r.get('matrix'))\nr['matrix']['guard_set_disabled']='OTHER_FAILURE'", "its recorded cells do not hold"),
+        ("selection", "r=next(r for r in d['records'] if r.get('matrix'))\ndel r['consumer_selection']", "it records no consumer_selection"),
+    ];
+    for (name, edit, why) in cases {
+        let prog = format!(
+            "import json\nd=json.load(open({:?}))\n{edit}\njson.dump(d,open({:?},'w'))",
+            joined.display().to_string(),
+            out.join(format!("v-{name}.json")).display().to_string()
+        );
+        py(&r, &prog);
+        let o = check_status(&r, &out.join(format!("v-{name}.json")));
+        assert!(
+            !o.status.success() && text(&o).contains(why),
+            "ATTACK: a status file with the defect `{name}` was accepted as the harness's joined \
+             evidence (wanted {why:?}):\n{}",
+            text(&o)
+        );
+    }
+    // Two toolchains: one record names another host toolchain.
+    let prog = format!(
+        "import json\nd=json.load(open({:?}))\nh=d['records'][0]['environment']['host']\n\
+         h['toolchain']=dict(h['toolchain'], rustc='rustc 0.0.0 (another)')\njson.dump(d,open({:?},'w'))",
+        joined.display().to_string(),
+        out.join("v-toolchain.json").display().to_string()
+    );
+    py(&r, &prog);
+    let o = check_status(&r, &out.join("v-toolchain.json"));
+    assert!(
+        !o.status.success() && text(&o).contains("records ran on different toolchains"),
+        "ATTACK: a status file whose records ran on two toolchains was accepted:\n{}",
+        text(&o)
+    );
+    let _ = std::fs::remove_dir_all(&r);
+    let _ = std::fs::remove_dir_all(&out);
+}
+
+/// The status file may live in the commit AFTER the one it describes (committing
+/// it is a commit), and only that: a source change since is not evidence.
+#[test]
+fn a_status_file_may_trail_the_freeze_commit_by_evidence_files_only() {
+    let (r, out, joined) = joined_status("status-trail");
+    // Evidence only: the status file committed under governance/status/.
+    write(
+        &r.join("governance/status/v022-psv-paired-disable.json"),
+        &std::fs::read_to_string(&joined).unwrap(),
+    );
+    git(&r, &["add", "-A"]);
+    git(&r, &["commit", "-q", "-m", "the status file"]);
+    let o = check_status(
+        &r,
+        &r.join("governance/status/v022-psv-paired-disable.json"),
+    );
+    assert!(
+        o.status.success(),
+        "control: a status file one evidence-only commit behind HEAD is accepted: {}",
+        text(&o)
+    );
+    // A guarded file changed after the evidence was made.
+    write(
+        &r.join("profiles/linux-microvm/guest-init.sh"),
+        "#!/bin/sh\necho changed after the run\n",
+    );
+    git(&r, &["add", "-A"]);
+    git(&r, &["commit", "-q", "-m", "a source change after the run"]);
+    let o = check_status(
+        &r,
+        &r.join("governance/status/v022-psv-paired-disable.json"),
+    );
+    assert!(
+        !o.status.success()
+            && text(&o).contains("file(s) other than governance/status/ changed since"),
+        "ATTACK: a status file made before a source change was accepted for the later commit:\n{}",
+        text(&o)
+    );
+    let _ = std::fs::remove_dir_all(&r);
+    let _ = std::fs::remove_dir_all(&out);
+}
+
+/// The status file that is in the tree at this commit's parent (59 of the
+/// retirements, at two older commits, `all_hold` true) is refused, one reason per
+/// defect. A snapshot is the fixture so that the day the real file is replaced by
+/// the joined one this test still says what the freeze refuses.
+#[test]
+fn the_partial_in_tree_status_file_is_refused() {
+    let r = repo("status-intree");
+    let o = check_status(
+        &r,
+        &repo_root().join("crates/axon-core/tests/fixtures/paired-disable-status-59-of-148.json"),
+    );
+    let t = text(&o);
+    assert!(
+        !o.status.success()
+            && t.contains("retirement records are missing")
+            && t.contains("not produced by `--join`")
+            && t.contains("is not in this repository"),
+        "ATTACK: the partial 59-of-148 status file (two older commits, all_hold true) was accepted:\n{t}"
+    );
+    let _ = std::fs::remove_dir_all(&r);
+}
+
+/// Drift: the freeze asks the validator the harness defines, and the harness's
+/// `--check-status` is that function.
+#[test]
+fn the_freeze_asks_the_harness_validator() {
+    let src = |f: &str| std::fs::read_to_string(repo_root().join(f)).unwrap();
+    let freeze = src("scripts/v022_freeze_manifest.py");
+    assert!(
+        freeze.contains("pd.status_problems(status,") && freeze.contains("if status_problems:"),
+        "DRIFT: the freeze no longer asks paired_disable.status_problems about the status file"
+    );
+    assert!(
+        src(HARNESS[2]).contains("problems = status_problems(json.load(open(path)))"),
+        "DRIFT: --check-status is not status_problems"
+    );
 }

@@ -598,3 +598,29 @@ pub struct Publication {
     pub approver: OpaqueRef,
     pub epoch: AuthorityEpoch,
 }
+
+#[cfg(test)]
+mod create_once_tests {
+    use super::*;
+
+    /// C9 round 4c, EQGATE (amendment 81; M1939): `create_once` is the no-clobber
+    /// write every branch record goes through (`hard_link` refuses an existing
+    /// name). It answers `Ok(false)` for a name already taken and must leave the
+    /// existing bytes alone: a plain rename would replace a branch head another
+    /// writer had just advanced.
+    #[test]
+    fn create_once_never_replaces_what_is_there() {
+        let t = tempfile::tempdir().unwrap();
+        let dest = t.path().join("d").join("head.json");
+        assert!(
+            create_once(&dest, b"first").unwrap(),
+            "control: a new name is created"
+        );
+        let again = create_once(&dest, b"second").unwrap();
+        assert!(
+            !again && std::fs::read(&dest).unwrap() == b"first",
+            "ATTACK: create_once replaced an existing branch record (returned {again}, now {:?})",
+            std::fs::read(&dest)
+        );
+    }
+}

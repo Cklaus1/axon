@@ -4239,6 +4239,112 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       re-pinned (the verifier identity gained `build_state`); the guest image must be rebuilt (records now carry
       a proof and `dist`).
 
+## Amendment 81: the evidence harness compares toolchains everywhere, the gate sees guards that are flags, and the freeze judges the status file (C9 round 4c, eqgate)
+
+81. **Source: the round-5 EQUIVALENCE review (`DO_NOT_REGISTER`).** Two BLOCKERS and four MAJOR-ADJACENT
+    findings, all executed. Mutation ids M1900-M1959 (60 of 60 used), matrix rows A138-A144 (the integrator
+    renumbers; A127-A137 belong to other workstreams, so this branch alone fails `psv_matrix_check.py`'s
+    contiguity rule, which was checked with placeholders for that gap: 144 rows, 538 citations, all resolve).
+    - **BLOCKER 1: `--merge` never compared the toolchain across shards.** Only `v022_paired_disable.py
+      --join` did. Two synthetic shards at a clean HEAD with different rustc and different interpreter
+      digests merged to `all_killed: true`. Now ONE helper (`v022_g01_mutations.shard_toolchain_problem`)
+      is the refusal, and `--merge`, `--join` and the partial `--only` write all call it (a drift test
+      reads the three call sites). `--merge` compares rustc, cargo, LLVM, the interpreter's sha256 and
+      the uid and `/etc/axon` presence the shard ran under; a mutation shard now records the host it ran
+      on (`host_identity`, the same function as the paired-disable record's) and a shard that records
+      none is refused, as a record was. Rows M1900-M1904; `a_merge_refuses_*` in `harness_integrity.rs`.
+      The interpreter digest is compared as the review asked; a build that is not byte-reproducible
+      across hosts will refuse a cross-host merge, which is the safe direction (state it, do not relax it).
+    - **MINOR: the paired-disable `--only` write.** It kept earlier records on their stored `holds` label
+      and never compared their toolchain. It now recomputes `holds` from each kept record's cells (the
+      join's `record_derivable_holds`) and applies the same toolchain refusal to kept and new records
+      together (`kept_records_problem`; M1905, M1906). A kept record from an older toolchain, or one
+      with no host, is refused with "re-execute it": exactly what the old `--only` quietly allowed.
+    - **BLOCKER 2: guards expressed as an OPEN FLAG had no row, no exemption and no test.** A refusal done
+      by the kernel (`O_NOFOLLOW`, `O_EXCL`/`create_new(true)`, `RENAME_NOREPLACE`, `AT_SYMLINK_NOFOLLOW`)
+      builds no `Err`, so no gate form saw it, and each could be removed alone with the root-run suite
+      green (the review ran the helper's input and policy snapshot, the observer's key and artifact
+      reads). **The class is fixed at the gate:** every use of such a flag in non-test in-scope code is a
+      site (`OPEN_FLAG`: `O_NOFOLLOW`, `O_EXCL`, `create_new(true)`, `RENAME_NOREPLACE`,
+      `AT_SYMLINK_NOFOLLOW`, `O_DIRECTORY`, `MS_NOSUID|NODEV|NOEXEC|RDONLY|BIND|PRIVATE|SLAVE|REC`),
+      one alternative per source line so each is its own row (M1943-M1949). The sweep that derived the
+      list covered every in-scope file for every `O_*`, `AT_*`, `MS_*`, `RENAME_*` and `create_new`
+      token: no `MS_*` flag is used in in-scope Rust today (the form is there for the day one is).
+      **Exposed: 19 uncovered flag sites** (of 32 flag lines swept; the others were already covered by an existing row; 56 new sites in all with forms (b)). Dispositions: 13 ROWED, each killed by its own attack (a
+      symlink or an existing file at the shape the flag defeats): the helper's ownership-walk base
+      (M1907), input snapshot symlink (M1908) and create_new (M1909), policy snapshot (M1910), operator
+      file leaf (M1911), the hand-over's `fstatat` (M1912) and `fchownat` (M1913), the observer's key
+      (M1914) and artifact measurement (M1915), the workspace store's no-clobber rename (M1916), the loop
+      store's temporary create (M1917), `psv::prepare`'s policy (M1918) and `keygen` (M1919); 6
+      carry a checkable exemption (counting the sites the dropped-or-covered lines share): the destination `O_NOFOLLOW` is dominated by the create_new on the line
+      above (and `a_symlink_at_a_snapshot_destination_is_refused_by_create_new_alone` pins that open(2)
+      fact), the hand-over's regular-file open is race-only in a root-private dir, a CSPRNG nonce
+      (2^-128), a completion secret created in a directory created three lines up, the loop store's
+      `nofollow()` (dominated by the `guard()` lstat walk M979/M980/M998; **classified explicitly, as the
+      brief asked: its removal alone leaves axon-loop green because it only closes the guard-to-open
+      window**), and two axon-os sites off the protected route (kill latch, staging dir); the other
+      sites were already covered by existing rows. One existing exemption was DROPPED, not kept: the
+      hand-over's `fstatat(.., AT_SYMLINK_NOFOLLOW)` had been exempted as "OS error", which hid the flag.
+    - **MAJOR-ADJACENT (a): learning eligibility.** `learning_eligible` returns `Result<bool, _>` and
+      `evo::propose` excludes by a `Some("reason")` chain, so neither was a site. Rows and attack tests:
+      the corpus-role term for Confirmation/Reporting (M1926) and for mechanism_test (M1927), the
+      verification-passed (M1928) and final-usage (M1929) conjuncts, and each of the four exclusion arms
+      (M1930-M1933). **Stated, not hidden:** the `status == Completed` conjunct is redundant while
+      `LoopEpisode::validate` refuses `verification passed` over another status; it is pinned by
+      `a_passed_verification_requires_a_completed_episode`, not rowed (removing it changes no
+      behaviour). The mechanism-test arm is dominated for the exclusion itself (the `!learning_eligible`
+      arm excludes a mechanism-test episode too); its row's attack is the wrong recorded REASON, and it is
+      counted as no more than that.
+    - **MAJOR-ADJACENT (b): the gate's site forms.** Derived by sweeping the in-scope crates: a `Some("..")`
+      or `Some(format!(..))` used as a value (not `== Some(..)`, `matches!`, an arm or `|`) is a site
+      (M1950, M1951); a function returning `Result<bool, _>`, an `i32` or an `ExitCode` is a site of its
+      own (M1952-M1954; `u8`, `u32` and `i64` returns found in scope are discriminants, a port read, uids and
+      clocks, not statuses, and are not a form). **Exposed: 37 sites** (19 `Some(reason)` value lines, 18 functions). ROWED with their own attacks: the three
+      `other_loop_role` arms (M1920-M1922) and the evaluator and subject arms of
+      `issuer_independent` (M1923, M1924), the safety veto (M1925), the post-run suite check
+      (changed, unreadable: M1934, M1935: no test touched them), `axon test`'s three failure arms
+      (M1936-M1938), `create_once` (M1939), `reaches` (M1940), `type_matches` and `pattern_matches` (M1941,
+      M1942). EXEMPT with a checkable fact: nine `axon-os` CLI functions returning `ExitCode` and its
+      `Verdict::exit_code` (no crate outside axon-os names `axon_os::cli`, or calls `exit_code()` on its
+      Verdict), `axon-vm`'s `exit_code`, the two `exit_code` mappings on the Err path (every arm a
+      literal non-zero), the proposer arm of `issuer_independent` (dominated: EVL adds every arm proposer to
+      `subject_issuers`, so the subject arm, M1924, refuses it first on any record the loop wrote), the
+      assume-unchanged arm of readiness (dominated by the byte comparison, M451), the `Profile:` text.
+      `schema.rs` `type_matches`/`pattern_matches` are covered at FUNCTION level by the rows on their
+      integer and scheme arms; the other arms (`object`, `array`, `string`, `boolean`, `null`; the
+      identifier, `acf1` and currency patterns) are exercised by the typed layer and are not individually
+      rowed (the typed layer refuses first, M1217/M1233).
+    - **MAJOR-ADJACENT (c): the freeze did not read the paired-disable status file.** It bound
+      `paired_disable_digest` and checked nothing about its content, and the in-tree file has 59 of
+      the retirement records, 49 at `aad46c05` and 10 at `c9647b35`, `all_hold` true: a freeze would have
+      bound it. `paired_disable.status_problems` is now what the freeze asks, with one reason per defect:
+      the file is the `--join`ed one (`hosts`, `toolchain`, no `shard`), schema, a clean tree, this tree's
+      registry blobs, every retirement record present exactly once (the universe is GUARD_SETS plus
+      STALE_REFACTORED), every record at the file's commit, `edits_sha256` the registry's, `holds`
+      recomputed from the four cells and the full-suite cell (never the label), host and toolchain recorded
+      and consistent, `consumer_selection` present and equal to what the rule selects now, `all_hold`.
+      **The "freeze commit" is read as the evidence commit**: a status file is committed AFTER the run
+      that made it, so equality with HEAD would refuse every real file; the file's commit must be HEAD, or an
+      ancestor of it with only `governance/status/` changed since (anything else is stale evidence). The
+      current in-tree file is refused: `the_partial_in_tree_status_file_is_refused` runs the validator
+      on a snapshot of it. **No status file was written or faked.** Rows M1955-M1959 (the freeze's call, the
+      missing-record, source-change, cells and not-joined arms); the other arms are tested over synthetic
+      joined files (`a_status_file_is_accepted_only_as_the_joined_evidence_for_the_freeze_commit`, twelve
+      defects and the toolchain mix) but not individually rowed, because the id range ran out.
+      **What the freeze binds as mutation evidence today:** the registry's digest and counts only; it binds
+      NO mutation-run status file, so a merged run's `all_killed` is not judged by it. The run's
+      `all_killed` (recomputed by `--merge`, amendment 74) has to be checked by the integrator's own gate.
+    - **MINOR: why 143 of 148 retirements have only a joint cell as evidence in the tree.** At this head only
+      M1726 and M1267 have records of their own. That is expected until the final joined run, and it is
+      the reason the freeze check above exists: a freeze made before that run is now refused rather than
+      binding a partial file.
+    - **MINOR: binary freshness is judged by file modification time** (`script_spawn::stale_against_sources`
+      compares a named binary's mtime with the newest source cargo would rebuild it from): a stale binary
+      touched newer passes. A size-and-digest comparison is NOT cheap here: it needs an expected value, and
+      the only authority for "the binary this tree builds" is building it. The guard that does hold a
+      digest is the harness's own: every mutation or paired-disable row ends on the interpreter the run
+      started with, rebuilt and byte-compared (M888-M890). Not changed; stated.
+
 ## Amendment 82: claim text states what the code does (C9 round 5, claims)
 
 82. **Wording and evidence accuracy; no code guard changes (operator decision 2026-10-05, PSV-3

@@ -498,3 +498,21 @@ fn the_empty_ceiling_is_applied_not_just_intended() {
     );
     assert_ne!(out["receipt"]["verification"], "passed", "{out}");
 }
+
+/// C9 round 4c, EQGATE (amendment 81; M1919): `keygen` CREATES the key file
+/// (`create_new`, mode 0400). A key already at `--out` is refused and left
+/// untouched: overwriting an issuer's signing key would silently replace the
+/// identity every attestation it signed was made under.
+#[test]
+fn keygen_never_overwrites_an_existing_key_file() {
+    let env = Env::new();
+    let out = env.dir.path().join("issuer.pk8");
+    let (code, _) = keygen(&out);
+    assert_eq!(code, 0, "control: a fresh path generates a key");
+    let first = std::fs::read(&out).unwrap();
+    let (code, _) = keygen(&out);
+    assert!(
+        code != 0 && std::fs::read(&out).unwrap() == first,
+        "ATTACK: keygen overwrote an existing key file (exit {code})"
+    );
+}

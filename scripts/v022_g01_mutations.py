@@ -5986,8 +5986,8 @@ MUTATIONS += [
      '    why = selection_problem(record)\n    if False:\n        out.append(',
      'axon-core', _HI2, 'a_kept_record_is_stale_once_a_new_consumer_reaches_it'),
     ('M1505', 'EQUIVALENCE (pdfast): --join refuses records run on different toolchains', _PDH,
-     '    if len(toolchains) > 1:\n',
-     '    if False:\n',
+     '    why = mut.shard_toolchain_problem([\n        (r["mutation"], (r.get("environment") or {}).get("host"), None) for r in records])\n    if why:\n        sys.exit("refused: " + why)\n    for r in records:\n        h = ',
+     '    why = mut.shard_toolchain_problem([\n        (r["mutation"], (r.get("environment") or {}).get("host"), None) for r in records])\n    if False:\n        sys.exit("refused: " + why)\n    for r in records:\n        h = ',
      'axon-core', _HI2, 'a_join_refuses_records_from_two_toolchains'),
 ]
 PSV_IDS |= {f"M{n}" for n in range(1500, 1520)}
@@ -7105,6 +7105,270 @@ MUTATIONS += [
 # ── end buildenv ──
 
 
+# ── C9 round 4c, workstream EQGATE (amendment 81; M1900-M1959) ───────────────
+# --merge never compared the toolchain across shards (only --join did); the
+# comparison is now ONE helper (shard_toolchain_problem) both call. Each row
+# below removes one arm of it or one call of it.
+_GM = 'scripts/v022_g01_mutations.py'
+PSV_IDS |= {f"M{n}" for n in range(1900, 1960)}
+MUTATIONS += [
+    ('M1900', "EQUIVALENCE (eqgate): --merge refuses shards run on different toolchains", _GM,
+     '    if why:\n        sys.exit("refused: " + why)\n    got = sorted(d["shard"]["index"]',
+     '    if False:\n        sys.exit("refused: " + why)\n    got = sorted(d["shard"]["index"]',
+     'axon-core', _HI2, 'a_merge_refuses_shards_from_two_toolchains'),
+    ('M1901', "EQUIVALENCE (eqgate): the shared helper refuses a second toolchain (--join side)", _GM,
+     '    if len(groups) > 1:\n        return "records ran on different toolchains: "',
+     '    if len(groups) > 99:\n        return "records ran on different toolchains: "',
+     'axon-core', _HI2, 'a_join_refuses_records_from_two_toolchains'),
+    ('M1902', "EQUIVALENCE (eqgate): a shard that does not record its host is no evidence", _GM,
+     '        if not isinstance(host, dict) or not isinstance(host.get("toolchain"), dict):\n            return f"record {label}',
+     '        if False:\n            return f"record {label}',
+     'axon-core', _HI2, 'a_merge_refuses_a_shard_that_does_not_record_its_host'),
+    ('M1903', "EQUIVALENCE (eqgate): --merge pins the interpreter binary's digest across shards", _GM,
+     '         {"axon_bin_sha256": (d.get("toolchain") or {}).get("axon_bin_sha256", "unrecorded"),\n',
+     '         {"axon_bin_sha256": None,\n',
+     'axon-core', _HI2, 'a_merge_refuses_shards_run_on_two_interpreters'),
+    ('M1904', "EQUIVALENCE (eqgate): --merge pins the uid the shards ran under", _GM,
+     '          "euid": (d.get("environment") or {}).get("euid"),\n',
+     '          "euid": None,\n',
+     'axon-core', _HI2, 'a_merge_refuses_shards_run_under_different_uids'),
+    ('M1905', "EQUIVALENCE (eqgate): a partial --only write recomputes a kept record's HOLDS from its cells", _PDH,
+     '        if bool(r.get("holds")) != want and not (r.get("status") == "STALE_REFACTORED" and not r.get("holds")):\n            return (f"kept record',
+     '        if False:\n            return (f"kept record',
+     'axon-core', _HI2, 'a_partial_paired_disable_write_judges_its_kept_records'),
+    ('M1906', "EQUIVALENCE (eqgate): a partial --only write compares the kept records' toolchain", _PDH,
+     '    if why:\n        return why + "; re-execute the kept records',
+     '    if False:\n        return why + "; re-execute the kept records',
+     'axon-core', _HI2, 'a_partial_paired_disable_write_judges_its_kept_records'),
+]
+
+
+# ── C9 round 4c, workstream EQGATE part 2 (amendment 81): guards expressed as an
+# OPEN FLAG, a decision returned as Some(reason), a status returned as a
+# Result<bool>/i32/ExitCode, and the gate forms that now see them. Each row is
+# killed by a test whose attack is the shape the guard defeats (a symlink or an
+# existing file for a flag; a wrong exclusion/promotion/verdict for the rest).
+MUTATIONS += [
+    ('M1907', "OPEN FLAG (eqgate): the ownership walk's base is opened without following a symlink", 'crates/axon-fabric/src/privileged_launcher.rs',
+     '        self.custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)',
+     '        self.custom_flags(libc::O_DIRECTORY | libc::O_CLOEXEC)',
+     'axon-fabric', '--lib', 'privileged_launcher::tests::a_walk_base_that_is_a_symlink_is_never_followed'),
+    ('M1908', "OPEN FLAG (eqgate): the root helper's input snapshot never follows a symlink", 'crates/axon-fabric/src/privileged_launcher.rs',
+     '            libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_NONBLOCK,\n        )\n        .map_err(|e| {\n            if e.raw_os_error() == Some(libc::ELOOP) {\n                format!(\n                    "{} is a symlink: an input',
+     '            libc::O_RDONLY | libc::O_NONBLOCK,\n        )\n        .map_err(|e| {\n            if e.raw_os_error() == Some(libc::ELOOP) {\n                format!(\n                    "{} is a symlink: an input',
+     'axon-fabric', '--lib', 'privileged_launcher::tests::the_inputs_snapshot_never_follows_a_symlink'),
+    ('M1909', 'OPEN FLAG (eqgate): every file of the input snapshot is created new, never written through', 'crates/axon-fabric/src/privileged_launcher.rs',
+     '                    .create_new(true)\n                    .mode(mode)',
+     '                    .create(true)\n                    .mode(mode)',
+     'axon-fabric', '--lib', 'privileged_launcher::tests::the_inputs_snapshot_never_writes_over_an_existing_file'),
+    ('M1910', 'OPEN FLAG (eqgate): the policy snapshot never follows a symlink', 'crates/axon-fabric/src/privileged_launcher.rs',
+     '        libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_NONBLOCK,\n    )\n    .map_err(|e| {\n        if e.raw_os_error() == Some(libc::ELOOP) {\n            "the psv policy',
+     '        libc::O_RDONLY | libc::O_NONBLOCK,\n    )\n    .map_err(|e| {\n        if e.raw_os_error() == Some(libc::ELOOP) {\n            "the psv policy',
+     'axon-fabric', '--lib', 'privileged_launcher::tests::the_policy_snapshot_never_follows_a_symlink'),
+    ('M1911', 'OPEN FLAG (eqgate): an operator file is read without following a symlink at its leaf', 'crates/axon-fabric/src/privileged_launcher.rs',
+     '        libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_NONBLOCK,\n    )\n    .map_err(|e| bad(e.to_string()))?;',
+     '        libc::O_RDONLY | libc::O_NONBLOCK,\n    )\n    .map_err(|e| bad(e.to_string()))?;',
+     'axon-fabric', '--lib', 'privileged_launcher::tests::an_operator_file_that_is_a_symlink_is_never_read'),
+    ('M1912', 'OPEN FLAG (eqgate): the out-dir hand-over classifies an entry without following it', 'crates/axon-fabric/src/privileged_launcher.rs',
+     'libc::fstatat(dir, cn.as_ptr(), &mut st, libc::AT_SYMLINK_NOFOLLOW)',
+     'libc::fstatat(dir, cn.as_ptr(), &mut st, 0)',
+     'axon-fabric', '--lib', 'privileged_launcher::tests::the_hand_over_never_follows_a_symlink'),
+    ('M1913', 'OPEN FLAG (eqgate): the out-dir hand-over chowns a symlink itself, never its target', 'crates/axon-fabric/src/privileged_launcher.rs',
+     'libc::fchownat(dir, cn.as_ptr(), uid, u32::MAX, libc::AT_SYMLINK_NOFOLLOW) == 0',
+     'libc::fchownat(dir, cn.as_ptr(), uid, u32::MAX, 0) == 0',
+     'axon-fabric', '--lib', 'privileged_launcher::tests::the_hand_over_never_follows_a_symlink'),
+    ('M1914', "OPEN FLAG (eqgate): the observer's signing key is read through one O_NOFOLLOW open", 'crates/axon-fabric/src/observer_service.rs',
+     '        .read(true)\n        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC)\n        .open(path)',
+     '        .read(true)\n        .custom_flags(libc::O_NONBLOCK | libc::O_CLOEXEC)\n        .open(path)',
+     'axon-fabric', '--lib', 'observer_service::tests::the_observer_key_is_never_read_through_a_symlink'),
+    ('M1915', 'OPEN FLAG (eqgate): the installed kernel/rootfs is measured through one O_NOFOLLOW open', 'crates/axon-fabric/src/observer_service.rs',
+     '        .read(true)\n        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC)\n        .open(p)',
+     '        .read(true)\n        .custom_flags(libc::O_NONBLOCK | libc::O_CLOEXEC)\n        .open(p)',
+     'axon-fabric', '--lib', 'observer_service::tests::an_installed_artifact_that_is_a_symlink_is_never_measured'),
+    ('M1916', 'OPEN FLAG (eqgate): a published workspace file is renamed in without replacing (RENAME_NOREPLACE)', 'crates/axon-fabric/src/workspace.rs',
+     '            libc::RENAME_NOREPLACE,',
+     '            0,',
+     'axon-fabric', '--lib', 'workspace::open_flag_tests::a_published_file_is_never_replaced_by_other_bytes'),
+    ('M1917', 'OPEN FLAG (eqgate): a store write is a create (create_new) at its temporary name', 'crates/axon-loop/src/store.rs',
+     '            let mut f = nofollow()\n                .create_new(true)',
+     '            let mut f = nofollow()\n                .create(true)',
+     'axon-loop', '--test open_flag_sites', 'a_store_write_never_writes_through_a_file_planted_at_its_temporary_name'),
+    ('M1918', 'OPEN FLAG (eqgate): prepare writes the guest policy exclusively (create_new)', 'crates/axon-fabric/src/psv.rs',
+     '        .create_new(true)\n        .open(i.job_dir.with_file_name("policy.json"))',
+     '        .create(true)\n        .open(i.job_dir.with_file_name("policy.json"))',
+     'axon-fabric', '--test one_read', 'prepare_never_writes_the_policy_over_a_file_already_there'),
+    ('M1919', 'OPEN FLAG (eqgate): keygen creates the key file (create_new), never overwrites one', 'crates/axon-fabric/src/bin/axon-fabric.rs',
+     '            .create_new(true)\n            .mode(0o400)\n            .open(&out)',
+     '            .create(true)\n            .mode(0o400)\n            .open(&out)',
+     'axon-fabric', '--test attestation', 'keygen_never_overwrites_an_existing_key_file'),
+    ('M1920', 'SOME(REASON) (eqgate): a trusted verifier holds another loop role', 'crates/axon-loop/src/admission.rs',
+     '    if config.verifiers().contains(who) {\n        Some(',
+     '    if false && config.verifiers().contains(who) {\n        Some(',
+     'axon-loop', '--lib', 'admission::role_arms::a_trusted_verifier_is_named_as_one'),
+    ('M1921', 'SOME(REASON) (eqgate): a context observer holds another loop role', 'crates/axon-loop/src/admission.rs',
+     '    } else if config.observers().contains(who) {',
+     '    } else if false && config.observers().contains(who) {',
+     'axon-loop', '--lib', 'admission::role_arms::a_context_observer_is_named_as_one'),
+    ('M1922', 'SOME(REASON) (eqgate): a safety monitor holds another loop role', 'crates/axon-loop/src/admission.rs',
+     '    } else if config.trusted_monitors.contains(who) {',
+     '    } else if false && config.trusted_monitors.contains(who) {',
+     'axon-loop', '--lib', 'admission::role_arms::a_safety_monitor_is_named_as_one'),
+    ('M1923', 'SOME(REASON) (eqgate): the evaluator cannot issue the promotion it evaluated', 'crates/axon-loop/src/admission.rs',
+     '    } else if &adm.evaluator_ref == who {',
+     '    } else if false && &adm.evaluator_ref == who {',
+     'axon-loop', '--test pointer', 'no_proposer_evaluator_or_subject_issues_a_promotion'),
+    ('M1924', 'SOME(REASON) (eqgate): a subject issuer cannot issue the promotion', 'crates/axon-loop/src/admission.rs',
+     '    } else if eval.subject_issuers.contains(who) {',
+     '    } else if false && eval.subject_issuers.contains(who) {',
+     'axon-loop', '--test pointer', 'no_proposer_evaluator_or_subject_issues_a_promotion'),
+    ('M1925', 'SOME(REASON) (eqgate): a candidate with an unsafe attempt is vetoed', 'crates/axon-loop/src/admission.rs',
+     '            crate::safety::SafetyState::Violation { code } => Some(format!(',
+     '            crate::safety::SafetyState::Violation { code } if { let _ = &code; false } => Some(format!(',
+     'axon-loop', '--test admit_verdict_sites', 'a_candidate_with_an_unsafe_attempt_is_never_accepted'),
+    ('M1926', 'RESULT<BOOL> (eqgate): only discovery/tuning episodes feed learning (Confirmation, Reporting)', 'crates/axon-loop-contracts/src/checks.rs',
+     'matches!(episode.corpus_role, Discovery | Tuning)',
+     'matches!(episode.corpus_role, Discovery | Tuning | Confirmation | Reporting)',
+     'axon-loop-contracts', '--test learning_eligible_conjuncts', 'only_discovery_and_tuning_episodes_feed_learning'),
+    ('M1927', 'RESULT<BOOL> (eqgate): a mechanism_test episode never feeds learning', 'crates/axon-loop-contracts/src/checks.rs',
+     'matches!(episode.corpus_role, Discovery | Tuning)',
+     'matches!(episode.corpus_role, Discovery | Tuning | MechanismTest)',
+     'axon-loop-contracts', '--test learning_eligible_conjuncts', 'a_mechanism_test_episode_never_feeds_learning'),
+    ('M1928', 'RESULT<BOOL> (eqgate): only a PASSED verification feeds learning', 'crates/axon-loop-contracts/src/checks.rs',
+     '        && episode.verification.result == VerificationResult::Passed\n',
+     '        && true\n',
+     'axon-loop-contracts', '--test learning_eligible_conjuncts', 'an_episode_that_did_not_pass_verification_never_feeds_learning'),
+    ('M1929', 'RESULT<BOOL> (eqgate): only FINAL usage feeds learning', 'crates/axon-loop-contracts/src/checks.rs',
+     '        && episode.usage.state == UsageState::Final)',
+     '        && true)',
+     'axon-loop-contracts', '--test learning_eligible_conjuncts', 'an_episode_with_estimated_usage_never_feeds_learning'),
+    ('M1930', 'SOME(REASON) (eqgate): evo excludes a mechanism_test episode under its own reason', 'crates/axon-loop/src/evo.rs',
+     '        let reason = if ep.corpus_role == CorpusRole::MechanismTest {',
+     '        let reason = if false && ep.corpus_role == CorpusRole::MechanismTest {',
+     'axon-loop', '--test evo_learning_arms', 'a_mechanism_test_episode_is_excluded_as_one'),
+    ('M1931', 'SOME(REASON) (eqgate): evo excludes an episode that is not learning-eligible', 'crates/axon-loop/src/evo.rs',
+     '        } else if !learning_eligible(&ep)? {',
+     '        } else if false && !learning_eligible(&ep)? {',
+     'axon-loop', '--test evo_learning_arms', 'an_episode_that_is_not_learning_eligible_is_excluded_as_such'),
+    ('M1932', 'SOME(REASON) (eqgate): evo excludes an episode the proposer verified itself', 'crates/axon-loop/src/evo.rs',
+     '        } else if issuer == Some(&req.proposer_ref) {',
+     '        } else if false && issuer == Some(&req.proposer_ref) {',
+     'axon-loop', '--test evo_learning_arms', 'an_episode_the_proposer_verified_itself_is_excluded_even_if_it_is_a_trusted_verifier'),
+    ('M1933', 'SOME(REASON) (eqgate): evo excludes an episode whose verifier is not trusted', 'crates/axon-loop/src/evo.rs',
+     '        } else if !issuer.is_some_and(|i| verifiers.contains(i)) {',
+     '        } else if false && !issuer.is_some_and(|i| verifiers.contains(i)) {',
+     'axon-loop', '--test evo_learning_arms', 'an_episode_whose_verifier_is_not_trusted_is_excluded'),
+    ('M1934', 'SOME(REASON) (eqgate): a check suite that changed during the run yields no verdict', 'crates/axon-fabric/src/submit.rs',
+     '            Ok(tr) => {\n                problem = Some(format!(\n                    "check suite `{}` changed',
+     '            Ok(tr) if tr.reference() != s.version => {}\n            Ok(tr) => {\n                problem = Some(format!(\n                    "check suite `{}` changed',
+     'axon-fabric', '--test check_effects', 'a_suite_that_changed_during_the_run_yields_no_verdict'),
+    ('M1935', 'SOME(REASON) (eqgate): a check suite unreadable after the run yields no verdict', 'crates/axon-fabric/src/submit.rs',
+     '            Err(e) => {\n                problem = Some(format!(\n                    "check suite `{}` unreadable',
+     '            Err(_) => {}\n            Err(e) => {\n                problem = Some(format!(\n                    "check suite `{}` unreadable',
+     'axon-fabric', '--test check_effects', 'a_suite_that_cannot_be_read_after_the_run_yields_no_verdict'),
+    ('M1936', 'SOME(REASON) (eqgate): `axon test` fails a should_fail property that held', 'crates/axon-core/src/main.rs',
+     '                    PropertyOutcome::Passed { cases } if *should_fail => (\n                        false,',
+     '                    PropertyOutcome::Passed { cases } if *should_fail => (\n                        true,',
+     'axon-core', '--no-default-features --test axon_test_outcomes', 'a_should_fail_property_that_holds_is_a_failure'),
+    ('M1937', 'SOME(REASON) (eqgate): `axon test` fails a property that failed', 'crates/axon-core/src/main.rs',
+     '                    PropertyOutcome::Failed { counterexample, message, seed } => (\n                        false,',
+     '                    PropertyOutcome::Failed { counterexample, message, seed } => (\n                        true,',
+     'axon-core', '--no-default-features --test axon_test_outcomes', 'a_property_that_fails_is_a_failure'),
+    ('M1938', 'SOME(REASON) (eqgate): `axon test` fails a should_fail test that did not panic', 'crates/axon-core/src/main.rs',
+     '                    Ok(_) if *should_fail => (\n                        false,',
+     '                    Ok(_) if *should_fail => (\n                        true,',
+     'axon-core', '--no-default-features --test axon_test_outcomes', 'a_should_fail_test_that_does_not_panic_is_a_failure'),
+    ('M1939', 'RESULT<BOOL> (eqgate): create_once never replaces an existing branch record', 'crates/axon-fabric/src/branches.rs',
+     '    let r = std::fs::hard_link(&tmp, dest);',
+     '    let r = std::fs::rename(&tmp, dest).map(|_| ());',
+     'axon-fabric', '--lib', 'branches::create_once_tests::create_once_never_replaces_what_is_there'),
+    ('M1940', 'RESULT<BOOL> (eqgate): `reaches` answers false for a commit its walk never meets', 'crates/axon-fabric/src/git_data.rs',
+     '        Ok(false)\n    }\n}\n\nimpl Drop for Objects {',
+     '        Ok(true)\n    }\n}\n\nimpl Drop for Objects {',
+     'axon-fabric', '--test readiness', 'a_history_not_descending_from_the_certified_revision_is_not_certified'),
+    ('M1941', 'RESULT<BOOL> (eqgate): the schema walker does not take a boolean for an integer', 'crates/axon-loop-contracts/src/schema.rs',
+     '        "integer" => v.is_i64() || v.is_u64(),',
+     '        "integer" => v.is_i64() || v.is_u64() || v.is_boolean(),',
+     'axon-loop-contracts', '--lib', 'schema::tests::structural_rules'),
+    ('M1942', 'RESULT<BOOL> (eqgate): the schema walker names the reference schemes exactly', 'crates/axon-loop-contracts/src/schema.rs',
+     '            .is_some_and(|(sch, h)| matches!(sch, "cl22" | "acf1" | "sha256") && hex64(h)),',
+     '            .is_some_and(|(_sch, h)| hex64(h)),',
+     'axon-loop-contracts', '--lib', 'schema::tests::reference_patterns_are_exact'),
+    ('M1943', 'COVERAGE GATE (eqgate): O_NOFOLLOW is a refusal site', 'scripts/v022_refusal_coverage.py',
+     '    r"\\bO_NOFOLLOW\\b|"\n',
+     '    r"\\bNO_SUCH_FLAG_O_N\\b|"\n',
+     'axon-core', '--no-default-features --test refusal_coverage_gate', 'an_open_flag_form_is_a_site'),
+    ('M1944', 'COVERAGE GATE (eqgate): O_EXCL is a refusal site', 'scripts/v022_refusal_coverage.py',
+     '    r"\\bO_EXCL\\b|"\n',
+     '    r"\\bNO_SUCH_FLAG_O_E\\b|"\n',
+     'axon-core', '--no-default-features --test refusal_coverage_gate', 'an_open_flag_form_is_a_site'),
+    ('M1945', 'COVERAGE GATE (eqgate): create_new(true) is a refusal site', 'scripts/v022_refusal_coverage.py',
+     '    r"\\bcreate_new\\(\\s*true\\s*\\)|"\n',
+     '    r"\\bNO_SUCH_FLAG_cre\\b|"\n',
+     'axon-core', '--no-default-features --test refusal_coverage_gate', 'an_open_flag_form_is_a_site'),
+    ('M1946', 'COVERAGE GATE (eqgate): RENAME_NOREPLACE is a refusal site', 'scripts/v022_refusal_coverage.py',
+     '    r"\\bRENAME_NOREPLACE\\b|"\n',
+     '    r"\\bNO_SUCH_FLAG_REN\\b|"\n',
+     'axon-core', '--no-default-features --test refusal_coverage_gate', 'an_open_flag_form_is_a_site'),
+    ('M1947', 'COVERAGE GATE (eqgate): AT_SYMLINK_NOFOLLOW is a refusal site', 'scripts/v022_refusal_coverage.py',
+     '    r"\\bAT_SYMLINK_NOFOLLOW\\b|"\n',
+     '    r"\\bNO_SUCH_FLAG_AT_\\b|"\n',
+     'axon-core', '--no-default-features --test refusal_coverage_gate', 'an_open_flag_form_is_a_site'),
+    ('M1948', 'COVERAGE GATE (eqgate): O_DIRECTORY is a refusal site', 'scripts/v022_refusal_coverage.py',
+     '    r"\\bO_DIRECTORY\\b|"\n',
+     '    r"\\bNO_SUCH_FLAG_O_D\\b|"\n',
+     'axon-core', '--no-default-features --test refusal_coverage_gate', 'an_open_flag_form_is_a_site'),
+    ('M1949', 'COVERAGE GATE (eqgate): a mount flag (MS_NOSUID ...) is a refusal site', 'scripts/v022_refusal_coverage.py',
+     '    r"\\bMS_(?:NOSUID|NODEV|NOEXEC|RDONLY|BIND|PRIVATE|SLAVE|REC)\\b"',
+     '    r"\\bMS_NO_SUCH_FLAG\\b"',
+     'axon-core', '--no-default-features --test refusal_coverage_gate', 'an_open_flag_form_is_a_site'),
+    ('M1950', 'COVERAGE GATE (eqgate): a decision returned as Some(reason) is a site', 'scripts/v022_refusal_coverage.py',
+     ' or _some_reason_is_value(l.split("//")[0]):',
+     ' or False:',
+     'axon-core', '--no-default-features --test refusal_coverage_gate', 'a_some_reason_value_is_a_site_and_a_pattern_is_not'),
+    ('M1951', 'COVERAGE GATE (eqgate): matching or comparing Some("..") is not a decision', 'scripts/v022_refusal_coverage.py',
+     '        if re.match(r"(=>|\\|)", rest):\n            continue\n',
+     '        if False:\n            continue\n',
+     'axon-core', '--no-default-features --test refusal_coverage_gate', 'a_some_reason_value_is_a_site_and_a_pattern_is_not'),
+    ('M1952', 'COVERAGE GATE (eqgate): a function deciding by Result<bool, _> is a site', 'scripts/v022_refusal_coverage.py',
+     'PRED_RET = re.compile(r"^(bool|Option\\s*<|Result\\s*<\\s*bool\\s*[,>]|i32\\b|(?:std::process::)?ExitCode\\b)")',
+     'PRED_RET = re.compile(r"^(bool|Option\\s*<|NoResultBool|i32\\b|(?:std::process::)?ExitCode\\b)")',
+     'axon-core', '--no-default-features --test refusal_coverage_gate', 'a_function_deciding_by_result_bool_i32_or_exitcode_is_a_site'),
+    ('M1953', 'COVERAGE GATE (eqgate): a function returning an i32 status is a site', 'scripts/v022_refusal_coverage.py',
+     'PRED_RET = re.compile(r"^(bool|Option\\s*<|Result\\s*<\\s*bool\\s*[,>]|i32\\b|(?:std::process::)?ExitCode\\b)")',
+     'PRED_RET = re.compile(r"^(bool|Option\\s*<|Result\\s*<\\s*bool\\s*[,>]|NoI32\\b|(?:std::process::)?ExitCode\\b)")',
+     'axon-core', '--no-default-features --test refusal_coverage_gate', 'a_function_deciding_by_result_bool_i32_or_exitcode_is_a_site'),
+    ('M1954', 'COVERAGE GATE (eqgate): a function returning an ExitCode is a site', 'scripts/v022_refusal_coverage.py',
+     'PRED_RET = re.compile(r"^(bool|Option\\s*<|Result\\s*<\\s*bool\\s*[,>]|i32\\b|(?:std::process::)?ExitCode\\b)")',
+     'PRED_RET = re.compile(r"^(bool|Option\\s*<|Result\\s*<\\s*bool\\s*[,>]|i32\\b|NoExitCode\\b)")',
+     'axon-core', '--no-default-features --test refusal_coverage_gate', 'a_function_deciding_by_result_bool_i32_or_exitcode_is_a_site'),
+]
+
+
+# EQGATE part 3 (amendment 81): the freeze judges the paired-disable status file.
+MUTATIONS += [
+    ('M1955', 'FREEZE (eqgate): the freeze refuses a paired-disable status file that is not the joined evidence', 'scripts/v022_freeze_manifest.py',
+     '    if status_problems:\n        shown = ',
+     '    if False:\n        shown = ',
+     'axon-fabric', '--test freeze_manifest', 'a_paired_disable_status_that_is_not_the_joined_evidence_does_not_freeze'),
+    ('M1956', 'FREEZE (eqgate): a status file that lacks retirement records is refused', 'scripts/v022_paired_disable.py',
+     '    if missing:\n        out.append(f"{len(missing)} of {len(universe)} retirement records are missing "',
+     '    if False:\n        out.append(f"{len(missing)} of {len(universe)} retirement records are missing "',
+     'axon-core', '--no-default-features --test harness_integrity', 'a_status_file_is_accepted_only_as_the_joined_evidence_for_the_freeze_commit'),
+    ('M1957', 'FREEZE (eqgate): a status file older than a source change is refused', 'scripts/v022_paired_disable.py',
+     '            if changed:\n                out.append(',
+     '            if False:\n                out.append(',
+     'axon-core', '--no-default-features --test harness_integrity', 'a_status_file_may_trail_the_freeze_commit_by_evidence_files_only'),
+    ('M1958', 'FREEZE (eqgate): a status record whose cells do not hold is refused whatever it says', 'scripts/v022_paired_disable.py',
+     '        elif not want:\n            out.append(f"{rid}: its recorded cells do not hold")',
+     '        elif False:\n            out.append(f"{rid}: its recorded cells do not hold")',
+     'axon-core', '--no-default-features --test harness_integrity', 'a_status_file_is_accepted_only_as_the_joined_evidence_for_the_freeze_commit'),
+    ('M1959', 'FREEZE (eqgate): a status file the harness did not --join is refused', 'scripts/v022_paired_disable.py',
+     '    if "shard" in doc or not isinstance(doc.get("hosts"), dict) or not isinstance(doc.get("toolchain"), dict):',
+     '    if False:',
+     'axon-core', '--no-default-features --test harness_integrity', 'a_status_file_is_accepted_only_as_the_joined_evidence_for_the_freeze_commit'),
+]
+
+
 def cargo_build_tests(package, target, env=""):
     """Build the tests a cell will run, ALONE: (ok, output). A compile error is
     the outcome of THIS cargo invocation, never a string found in a test's
@@ -7224,6 +7488,49 @@ def row_good(baseline, result, unrestored=None):
     return baseline == "passed" and result == "killed" and not unrestored
 
 
+_HOST = {}
+
+
+def host_identity():
+    """The machine and toolchain a run executed on (amendment 67/81). ONE
+    definition for the mutation run and the paired-disable run: `toolchain` is
+    what must agree for shards to combine -- rustc and cargo (with their LLVM)
+    and the system LLVM inkwell links; hostname, kernel, cores and memory are
+    recorded, not compared."""
+    if not _HOST:
+        def out(cmd):
+            r = subprocess.run(cmd, shell=True, cwd=ROOT, capture_output=True, text=True)
+            return r.stdout.strip() if r.returncode == 0 else f"unavailable ({cmd})"
+        mem = out("awk '/MemTotal/ {print $2 \" kB\"}' /proc/meminfo")
+        _HOST.update({
+            "hostname": os.uname().nodename, "kernel": f"{os.uname().sysname} {os.uname().release}",
+            "nproc": os.cpu_count(), "mem_total": mem,
+            "toolchain": {"rustc": out("rustc -vV"), "cargo": out("cargo -V"),
+                          "llvm_system": out("llvm-config-17 --version || llvm-config --version")},
+        })
+    return dict(_HOST)
+
+
+def shard_toolchain_problem(entries):
+    """Amendment 81: the ONE refusal both `--merge` (mutation shards) and
+    `--join` (paired-disable records) apply. `entries` is [(label, host,
+    pinned)]: `host` the record's environment.host (None/ill-formed is itself
+    refused: a shard that does not say where it ran is not evidence), `pinned`
+    extra facts that must agree too (the interpreter's digest, euid, ...).
+    Shards may run on several HOSTS, never on several toolchains. Returns the
+    refusal text, or None."""
+    groups = {}
+    for label, host, pinned in entries:
+        if not isinstance(host, dict) or not isinstance(host.get("toolchain"), dict):
+            return f"record {label} does not record the host and toolchain it ran on"
+        key = json.dumps({"toolchain": host["toolchain"], **(pinned or {})}, sort_keys=True)
+        groups.setdefault(key, []).append(label)
+    if len(groups) > 1:
+        return "records ran on different toolchains: " + "; ".join(
+            f"{json.loads(k)} for {sorted(v)[:5]}" for k, v in groups.items())
+    return None
+
+
 def merge(out, parts):
     """Combine shard runs of ONE commit and scope into one run. Refuses shards
     that disagree on commit, scope or shard count, that overlap, or that leave
@@ -7255,6 +7562,18 @@ def merge(out, parts):
             sys.exit(f"refused: {d['only']} is a sample (--only), not a shard")
         if (d.get("shard") or {}).get("of") != len(docs):
             sys.exit(f"refused: a shard of {(d.get('shard') or {}).get('of')} merged as one of {len(docs)}")
+    # Amendment 81: shards agree on the toolchain (rustc, cargo, LLVM), the
+    # interpreter binary's digest and the uid/etc-axon they ran under, and
+    # each records the host it ran on -- the same refusal --join applies.
+    why = shard_toolchain_problem([
+        (p, (d.get("environment") or {}).get("host"),
+         {"axon_bin_sha256": (d.get("toolchain") or {}).get("axon_bin_sha256", "unrecorded"),
+          "rustc": (d.get("toolchain") or {}).get("rustc"), "cargo": (d.get("toolchain") or {}).get("cargo"),
+          "euid": (d.get("environment") or {}).get("euid"),
+          "etc_axon_present": (d.get("environment") or {}).get("etc_axon_present")})
+        for p, d in zip(parts, docs)])
+    if why:
+        sys.exit("refused: " + why)
     got = sorted(d["shard"]["index"] for d in docs)
     if got != list(range(len(docs))):
         sys.exit(f"refused: shard indices {got}, not 0..{len(docs) - 1}")
@@ -7529,7 +7848,7 @@ def main():
            "scope": scope, "commit": commit, "registry_blobs": blobs,
            "tree_clean": True,  # refused at the start otherwise
            "environment": {"euid": os.geteuid(), "etc_axon_present": os.path.isdir("/etc/axon"),
-                           "unset": list(AMBIENT_BINARY_VARS)},
+                           "unset": list(AMBIENT_BINARY_VARS), "host": host_identity()},
            "toolchain": toolchain,
            "shard": None if shard is None else {"index": shard[0], "of": shard[1]},
            # A sample (--only) is not a run of the scope, and merge refuses it.

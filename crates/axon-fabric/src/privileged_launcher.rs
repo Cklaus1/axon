@@ -2151,4 +2151,205 @@ mod tests {
             );
         }
     }
+
+    // ── C9 round 4c, EQGATE (amendment 81; M1907-M1913): guards expressed as an
+    // OPEN FLAG. The root helper's snapshot of its inputs and its out-dir
+    // hand-over refuse a symlink / an existing file by the KERNEL (O_NOFOLLOW,
+    // O_EXCL, AT_SYMLINK_NOFOLLOW), so the refusal builds no Err the gate could
+    // see, and each flag removed alone left the root-run suite green. Each test
+    // below makes the attack the flag defeats and calls the real function.
+
+    fn euid_() -> u32 {
+        // SAFETY: geteuid cannot fail.
+        unsafe { libc::geteuid() }
+    }
+
+    fn dir_fd(p: &Path) -> OwnedFd {
+        std::fs::File::open(p).unwrap().into()
+    }
+
+    /// The root helper's snapshot copies a tree it owns the right to read and
+    /// nothing a symlink points at. A symlink among the inputs (here to a
+    /// directory of the same owner) is refused, never followed.
+    #[test]
+    fn the_inputs_snapshot_never_follows_a_symlink() {
+        let t = tempfile::tempdir().unwrap();
+        let (src, outside, dst) = (
+            t.path().join("src"),
+            t.path().join("outside"),
+            t.path().join("dst"),
+        );
+        for d in [&src, &outside, &dst] {
+            std::fs::create_dir(d).unwrap();
+        }
+        std::fs::write(src.join("f.ax"), "fn f() {}\n").unwrap();
+        std::fs::write(outside.join("secret"), "not an input\n").unwrap();
+        let mut budget = 1 << 20;
+        copy_tree(dir_fd(&src).as_raw_fd(), &dst, euid_(), &mut budget)
+            .expect("control: a tree without a symlink is copied");
+        let (src2, dst2) = (t.path().join("src2"), t.path().join("dst2"));
+        std::fs::create_dir(&src2).unwrap();
+        std::fs::create_dir(&dst2).unwrap();
+        std::os::unix::fs::symlink(&outside, src2.join("link")).unwrap();
+        let got = copy_tree(dir_fd(&src2).as_raw_fd(), &dst2, euid_(), &mut budget);
+        assert!(
+            matches!(&got, Err(e) if e.contains("is a symlink: an input is never followed")),
+            "ATTACK: the root helper's input snapshot followed a symlink among the inputs: {got:?}"
+        );
+        assert!(
+            !dst2.join("link").exists(),
+            "ATTACK: the symlink's target was copied into the snapshot"
+        );
+    }
+
+    /// Every file of the snapshot is CREATED: one already there (a leftover,
+    /// a planted hard link) is refused, never written through.
+    #[test]
+    fn the_inputs_snapshot_never_writes_over_an_existing_file() {
+        let t = tempfile::tempdir().unwrap();
+        let (src, dst) = (t.path().join("src"), t.path().join("dst"));
+        std::fs::create_dir(&src).unwrap();
+        std::fs::create_dir(&dst).unwrap();
+        std::fs::write(src.join("f.ax"), "fn f() {}\n").unwrap();
+        let victim = t.path().join("victim");
+        std::fs::write(&victim, "precious\n").unwrap();
+        std::fs::hard_link(&victim, dst.join("f.ax")).unwrap();
+        let mut budget = 1 << 20;
+        let got = copy_tree(dir_fd(&src).as_raw_fd(), &dst, euid_(), &mut budget);
+        assert!(
+            got.is_err() && std::fs::read_to_string(&victim).unwrap() == "precious\n",
+            "ATTACK: the snapshot wrote through a file that already existed at its destination: \
+             {got:?}, victim now {:?}",
+            std::fs::read_to_string(&victim)
+        );
+    }
+
+    /// The fact the O_NOFOLLOW on that create is DOMINATED by (the exemption's
+    /// anchor): O_CREAT|O_EXCL refuses a symlink at the destination whatever it
+    /// points at (open(2)), so `create_new` alone already refuses.
+    #[test]
+    fn a_symlink_at_a_snapshot_destination_is_refused_by_create_new_alone() {
+        let t = tempfile::tempdir().unwrap();
+        let victim = t.path().join("victim");
+        std::fs::write(&victim, "precious\n").unwrap();
+        let link = t.path().join("dest");
+        std::os::unix::fs::symlink(&victim, &link).unwrap();
+        let got = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&link);
+        assert!(
+            got.is_err(),
+            "O_EXCL no longer refuses a symlink: the exemption's fact is gone"
+        );
+        assert_eq!(std::fs::read_to_string(&victim).unwrap(), "precious\n");
+    }
+
+    /// The guest policy is read without following a symlink: a `policy.json`
+    /// that is one (to a file of the Fabric uid) is refused.
+    #[test]
+    fn the_policy_snapshot_never_follows_a_symlink() {
+        let t = tempfile::tempdir().unwrap();
+        let (inputs, dst) = (t.path().join("inputs"), t.path().join("policy.copy"));
+        std::fs::create_dir(&inputs).unwrap();
+        std::fs::write(t.path().join("other.json"), "{}").unwrap();
+        std::fs::write(inputs.join("policy.json"), "{}").unwrap();
+        snapshot_policy(dir_fd(&inputs).as_raw_fd(), &dst, euid_())
+            .expect("control: a regular policy.json is snapshotted");
+        std::fs::remove_file(inputs.join("policy.json")).unwrap();
+        std::os::unix::fs::symlink(t.path().join("other.json"), inputs.join("policy.json"))
+            .unwrap();
+        let got = snapshot_policy(dir_fd(&inputs).as_raw_fd(), &t.path().join("p2"), euid_());
+        assert!(
+            matches!(&got, Err(e) if e.contains("is a symlink: never followed")),
+            "ATTACK: the root helper's policy snapshot followed a symlink: {got:?}"
+        );
+    }
+
+    /// An operator file (the helper's config, the custodian's) is read without
+    /// following a symlink at its leaf. Control: the real file reads.
+    #[test]
+    fn an_operator_file_that_is_a_symlink_is_never_read() {
+        let t = tempfile::tempdir().unwrap();
+        let a = Authority {
+            operator_uid: euid_(),
+            walk_base: t.path().to_path_buf(),
+            test: true,
+        };
+        let d = t.path().join("d");
+        std::fs::create_dir(&d).unwrap();
+        std::fs::write(d.join("real"), "{}").unwrap();
+        std::os::unix::fs::symlink(d.join("real"), d.join("cfg")).unwrap();
+        read_operator_file(&d.join("real"), &a).expect("control: the real file reads");
+        let got = read_operator_file(&d.join("cfg"), &a);
+        assert!(
+            got.is_err(),
+            "ATTACK: the root helper read an operator file through a symlink: {got:?}"
+        );
+    }
+
+    /// The ownership walk's BASE is opened without following a symlink too: a
+    /// `walk_base` that is one is refused (its target would be a different
+    /// directory from the one whose owner the walk checks).
+    #[test]
+    fn a_walk_base_that_is_a_symlink_is_never_followed() {
+        let t = tempfile::tempdir().unwrap();
+        let real = t.path().join("real");
+        std::fs::create_dir_all(real.join("sub")).unwrap();
+        let ok = Authority {
+            operator_uid: euid_(),
+            walk_base: real.clone(),
+            test: true,
+        };
+        walk_open(&ok, &real.join("sub")).expect("control: a real base walks");
+        let link = t.path().join("linked");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        let a = Authority {
+            operator_uid: euid_(),
+            walk_base: link.clone(),
+            test: true,
+        };
+        let got = walk_open(&a, &link.join("sub")).map(|_| ());
+        assert!(
+            got.is_err(),
+            "ATTACK: the ownership walk started from a symlinked base: {got:?}"
+        );
+    }
+
+    /// The out dir is handed over without following a symlink (ROOT: the
+    /// hand-over is a chown, and following would chown the link's target, a
+    /// file outside the out dir, to the Fabric uid). Control: the link itself
+    /// changes hands and its target does not.
+    #[test]
+    fn the_hand_over_never_follows_a_symlink() {
+        if euid_() != 0 {
+            eprintln!("skipped: needs root to chown to another uid");
+            return;
+        }
+        let t = tempfile::tempdir().unwrap();
+        let out = t.path().join("out");
+        std::fs::create_dir(&out).unwrap();
+        let victim = t.path().join("victim");
+        std::fs::write(&victim, "root's\n").unwrap();
+        std::os::unix::fs::symlink(&victim, out.join("link")).unwrap();
+        std::fs::write(out.join("result.json"), "{}").unwrap();
+        let done = hand_over(dir_fd(&out).as_raw_fd(), 12345);
+        assert!(
+            done.is_ok(),
+            "ATTACK: the out-dir hand-over refused a symlink it hands over (its fstatat followed \
+             the link): {done:?}"
+        );
+        use std::os::unix::fs::MetadataExt;
+        assert_eq!(
+            std::fs::symlink_metadata(out.join("link")).unwrap().uid(),
+            12345,
+            "ATTACK: the hand-over chowned a symlink's target instead of the link itself"
+        );
+        assert_eq!(
+            std::fs::metadata(&victim).unwrap().uid(),
+            0,
+            "ATTACK: the hand-over followed a symlink and gave a file outside the out dir to the \
+             Fabric uid"
+        );
+    }
 }

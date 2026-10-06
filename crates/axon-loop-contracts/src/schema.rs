@@ -334,7 +334,10 @@ mod tests {
         let obj = json!({"type":"object","additionalProperties":false,
             "properties":{"a":{"type":"string"}},"required":["a"]});
         assert!(validate_against(&obj, &json!({"a":"x"})).is_ok());
-        assert!(validate_against(&obj, &json!(["x"])).is_err());
+        assert!(
+            validate_against(&obj, &json!(["x"])).is_err(),
+            "ATTACK: validate_against took an array for an object"
+        );
         // The walker's own keyword rules (LIBRARY_PRIMITIVE M1223, M1224,
         // M1214, amendment 64): every production document is also refused by
         // the typed layer, so only this direct test needs each rule.
@@ -350,7 +353,10 @@ mod tests {
         assert!(validate_against(&e, &json!("a")).is_ok());
         assert!(validate_against(&e, &json!({"a":null})).is_err());
         let i = json!({"type":"integer","minimum":0});
-        assert!(validate_against(&i, &json!(true)).is_err());
+        assert!(
+            validate_against(&i, &json!(true)).is_err(),
+            "ATTACK: validate_against took a boolean for an integer"
+        );
         assert!(validate_against(&i, &json!(-1)).is_err());
         let one = json!({"oneOf":[{"type":"integer"},{"type":"integer","minimum":5}]});
         assert!(
@@ -358,6 +364,30 @@ mod tests {
             "ATTACK: validate_against admitted a value matching two oneOf branches"
         );
         assert!(validate_against(&one, &json!(1)).is_ok());
+    }
+
+    /// C9 round 4c, EQGATE (amendment 81; M1941-M1942): the hand-written
+    /// matchers behind `pattern_matches`, the reference schemes among them.
+    #[test]
+    fn reference_patterns_are_exact() {
+        let hex = "a".repeat(64);
+        let any = json!({"type":"string","pattern":"^(cl22|acf1|sha256):[0-9a-f]{64}$"});
+        for ok in ["cl22", "acf1", "sha256"] {
+            assert!(
+                validate_against(&any, &json!(format!("{ok}:{hex}"))).is_ok(),
+                "{ok}"
+            );
+        }
+        assert!(
+            validate_against(&any, &json!(format!("md5:{hex}"))).is_err(),
+            "ATTACK: validate_against admitted a reference of a scheme the pattern does not name"
+        );
+        let acf = json!({"type":"string","pattern":"^acf1:[0-9a-f]{64}$"});
+        assert!(validate_against(&acf, &json!(format!("acf1:{hex}"))).is_ok());
+        assert!(
+            validate_against(&acf, &json!(format!("cl22:{hex}"))).is_err(),
+            "ATTACK: validate_against admitted a cl22 reference where only acf1 is named"
+        );
     }
 
     #[test]

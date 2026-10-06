@@ -1184,3 +1184,73 @@ mod decide_tests {
         assert!(r.iter().any(|x| x.contains("span 2 currencies")), "{r:?}");
     }
 }
+
+// C9 round 4c, EQGATE (amendment 81; M1920-M1922). `other_loop_role` decides by
+// `Some(role)`: the identities that produce or judge evidence (a trusted
+// verifier, a context observer, a safety monitor) may not also promote. The
+// callers' refusals are rowed (they replace the call); each ARM of the function
+// was not, so the monitor or observer arm could be dropped with every suite green.
+#[cfg(test)]
+mod role_arms {
+    use super::*;
+    use crate::store::{Config, ConfigSchema};
+
+    fn who(s: &str) -> OpaqueRef {
+        OpaqueRef::new(s).unwrap()
+    }
+
+    fn config() -> Config {
+        Config {
+            schema: ConfigSchema,
+            trusted_admitters: Vec::new(),
+            trusted_verifiers: vec![who("fixture:verifier")],
+            trusted_observers: vec![who("fixture:observer")],
+            verifier_keys: Default::default(),
+            verifier_pins: Default::default(),
+            task_acceptance: Default::default(),
+            protected_scopes: Vec::new(),
+            trusted_monitors: vec![who("fixture:monitor")],
+            monitor_keys: Default::default(),
+            observer_keys: Default::default(),
+        }
+    }
+
+    #[test]
+    fn an_independent_identity_holds_no_other_loop_role() {
+        assert_eq!(
+            other_loop_role(&config(), &who("op:admitter")),
+            None,
+            "control"
+        );
+    }
+
+    #[test]
+    fn a_trusted_verifier_is_named_as_one() {
+        let got = other_loop_role(&config(), &who("fixture:verifier"));
+        assert_eq!(
+            got,
+            Some("a trusted verifier (Compute Fabric)"),
+            "ATTACK: a trusted verifier was not recognised as holding a loop role"
+        );
+    }
+
+    #[test]
+    fn a_context_observer_is_named_as_one() {
+        let got = other_loop_role(&config(), &who("fixture:observer"));
+        assert_eq!(
+            got,
+            Some("a context observer"),
+            "ATTACK: a context observer was not recognised as holding a loop role"
+        );
+    }
+
+    #[test]
+    fn a_safety_monitor_is_named_as_one() {
+        let got = other_loop_role(&config(), &who("fixture:monitor"));
+        assert_eq!(
+            got,
+            Some("a safety monitor"),
+            "ATTACK: a safety monitor was not recognised as holding a loop role"
+        );
+    }
+}
