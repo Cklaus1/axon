@@ -994,6 +994,19 @@ fn the_check_child_cannot_gain_privilege_and_dies_with_the_runner() {
     );
 }
 
+/// The hook itself runs: a child with NEITHER hardening bit set (no
+/// `no_new_privs` and no parent-death signal) did not run the `pre_exec` hook at
+/// all, which is a different failure from one call missing from it.
+#[test]
+fn the_check_childs_pre_exec_hook_runs() {
+    let st = child_state(false).expect("setup: the stand-in interpreter ran and recorded its state");
+    assert!(
+        st.contains("NoNewPrivs:\t1") || st.contains("Pdeathsig: 9"),
+        "ATTACK: the check child's pre_exec hook did not run at all (neither no_new_privs nor the \
+         parent-death signal is set): {st}"
+    );
+}
+
 #[test]
 fn the_check_child_runs_as_the_check_uid_with_no_groups() {
     if unsafe { libc::geteuid() } != 0 {

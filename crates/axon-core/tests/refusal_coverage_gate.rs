@@ -1091,3 +1091,82 @@ fn a_permission_privilege_or_process_form_is_a_site() {
     let _ = std::fs::remove_dir_all(&c);
     let _ = std::fs::remove_dir_all(&r);
 }
+
+// ── C9 round 7, EQGATE3 (amendment 91): what a child is BUILT with, what bounds
+// a read, and refusals that delegate. Round 7 removed each of these with every
+// suite green (the helper's `quiet` Stdio::null, git's GIT_OPTIONAL_LOCKS, the
+// runner's `n.min(room)` cap, the signer loader's `bad(..)` refusals).
+
+const BUILD_PROBES: &str = "pub fn gate_probe_build(cmd: &mut std::process::Command, buf: &[u8], n: usize, room: usize, p: &std::path::Path) {\n    let gb_envclear = cmd.env_clear();\n    let gb_env = cmd.env(\"GATE_PROBE_VAR\", \"1\");\n    let gb_cwd = cmd.current_dir(p);\n    let gb_stdio = cmd.stdout(std::process::Stdio::null());\n    let gb_gitc = cmd.args([\"-c\", \"core.gateprobe=1\"]);\n    let gb_gitenv = cmd.env(\"GIT_GATE_PROBE\", \"1\");\n    let gb_oscall = unsafe { libc::chdir(c\"/\".as_ptr()) };\n    let gb_cloexec = libc::O_CLOEXEC;\n    let gb_cap = &buf[..n.min(room)];\n    let gb_take = std::io::Read::take(std::io::empty(), MAX_GATE_PROBE as u64);\n    let _ = (gb_envclear, gb_env, gb_cwd, gb_stdio, gb_gitc, gb_gitenv, gb_oscall, gb_cloexec, gb_cap, gb_take);\n}\n\nconst MAX_GATE_PROBE: usize = 7;\n\npub fn gate_probe_piped(cmd: &mut std::process::Command) {\n    let gp_piped = cmd.stdout(std::process::Stdio::piped());\n    let _ = gp_piped;\n}\n";
+
+/// Amendment 91: each group of builder and OS-boundary calls is a site: a
+/// Command's environment (env_clear, env), working directory, stdio redirection
+/// to null, the git `-c` options and GIT_* variables, a process-state libc call,
+/// a close-on-exec flag, and a size cap (`.min(room)`, `.take(MAX_*)`).
+/// A `Stdio::piped()` capture is NOT one (its absence breaks the handle the
+/// caller takes) and a MAX_* definition is not a use.
+#[test]
+fn a_child_build_and_a_size_cap_are_sites() {
+    let r = tree("build-forms");
+    add_code(&r, SCANNED, BUILD_PROBES);
+    for (site, form) in [
+        ("gb_envclear", "env_clear"),
+        ("gb_env", "Command::env"),
+        ("gb_cwd", "current_dir"),
+        ("gb_stdio", "Stdio::null"),
+        ("gb_gitc", "a git -c option"),
+        ("gb_gitenv", "a GIT_* variable"),
+        ("gb_oscall", "a process-state libc call"),
+        ("gb_cloexec", "O_CLOEXEC"),
+        ("gb_cap", "`.min(room)`"),
+        ("gb_take", "`.take(MAX_*)`"),
+    ] {
+        names(
+            &r,
+            site,
+            &format!("a use of {form} with no row and no exemption was not a refusal site"),
+        );
+    }
+    not_named(
+        &r,
+        "gp_piped",
+        "a Stdio::piped() capture was read as a redirection that removes a guard",
+    );
+    not_named(
+        &r,
+        "const MAX_GATE_PROBE: usize",
+        "the definition of a MAX_* constant was read as a use",
+    );
+    let c = tree("build-forms-control");
+    holds(&c, &[], "the unedited copy");
+    let _ = std::fs::remove_dir_all(&c);
+    let _ = std::fs::remove_dir_all(&r);
+}
+
+/// Amendment 91: a diverging closure or fn whose body DELEGATES to a refusal
+/// (here `refuse`, which exits with a variable code) is a refusal constructor
+/// too, transitively to a fixed point: the signer loader's `bad(..)` closure
+/// calls `refuse`, so its 13 calls were invisible.
+#[test]
+fn a_diverging_closure_that_delegates_to_a_refusal_is_a_constructor() {
+    let r = tree("diverging");
+    add_code(
+        &r,
+        SCANNED,
+        "fn gate_probe_refuse(code: i32) -> ! {\n    std::process::exit(code)\n}\n\npub fn gate_probe_signer(x: u64) -> u64 {\n    let gd_bad = |why: String| -> ! { gate_probe_refuse(4) };\n    if x > 9 {\n        gd_bad(format!(\"gate probe {x}\"));\n    }\n    let gd_chain = |why: String| -> ! { gd_bad(why) };\n    if x > 11 {\n        gd_chain(String::from(\"chained\"));\n    }\n    x\n}\n",
+    );
+    names(
+        &r,
+        "gd_bad(format!(\"gate probe {x}\"))",
+        "a call of a diverging closure that delegates to a refusal was not a site",
+    );
+    names(
+        &r,
+        "gd_chain(String::from(\"chained\"))",
+        "a call of a diverging closure that delegates through another was not a site",
+    );
+    let c = tree("diverging-control");
+    holds(&c, &[], "the unedited copy");
+    let _ = std::fs::remove_dir_all(&c);
+    let _ = std::fs::remove_dir_all(&r);
+}

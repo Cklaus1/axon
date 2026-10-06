@@ -3479,7 +3479,7 @@ PRIV_FORM = re.compile(
 BUILD_FORM = re.compile(
     r"\.(?:env_clear|env_remove|envs)\(|(?<![\w:])(?:cmd|c|command)\.env\(|^\s*\.env\(|"
     r"\.current_dir\(|"
-    r"\.(?:stdin|stdout|stderr)\(\s*(?:std::process::)?Stdio::|"
+    r"\.(?:stdin|stdout|stderr)\(\s*(?:std::process::)?Stdio::(?:null|inherit)\(|"
     r"\"-c\"|\bcore\.(?:fsmonitor|hooksPath|excludesFile|attributesFile|checkStat|trustCtime)\b|"
     r"\bprotocol\.allow\b|\bsafe\.directory\b|\"--no-includes\"|\"GIT_[A-Z_]+\"|"
     r"\blibc::(?:setitimer|chdir|fchdir|close_range|setpriority|sched_\w+|personality|flock|setsockopt|dup[23]?|pipe2|socketpair|accept4|socket|unlinkat?|renameat2?|linkat?)\(|\bSYS_close_range\b|"
@@ -3496,6 +3496,10 @@ EXIT = re.compile(r"\bprocess::exit\((?!\s*0\s*\))")
 LOCAL_CTOR_DEF = re.compile(r"\blet\s+(\w+)\s*=\s*(move\s+)?\|[^|]*\|.*\bErr\(")
 DIVERGING_DEF = re.compile(r"(?:\bfn\s+(\w+)\s*(?:<[^>]*>)?\s*\([^)]*\)|\blet\s+(\w+)\s*=\s*(?:move\s+)?\|[^|]*\|)\s*->\s*!")
 EXIT_NONZERO = re.compile(r"\bexit\(\s*[1-9]")
+# Amendment 91: a diverging fn that exits with a COMPUTED code (`exit(code)`,
+# axon-fabric's `refuse`) is a refusal constructor as well: the code is the
+# refusal's kind, and no caller passes 0.
+EXIT_COMPUTED = re.compile(r"\bexit\(\s*[A-Za-z_]")
 DIVERGING_BODY = 8
 
 
@@ -3509,7 +3513,7 @@ def local_ctors(lines):
         if m:
             defs.append((m.group(1) or m.group(2), i))
     for name, i in defs:
-        if any(EXIT_NONZERO.search(x) for x in lines[i:i + DIVERGING_BODY]):
+        if any(EXIT_NONZERO.search(x) or EXIT_COMPUTED.search(x) for x in lines[i:i + DIVERGING_BODY]):
             out.add(name)
     # Amendment 91: a diverging fn or closure whose body DELEGATES to a
     # refusal (`refuse(..)`, `die(..)`, another registered diverging name) is a
@@ -3524,7 +3528,7 @@ def local_ctors(lines):
                 continue
             body = "\n".join(lines[i:i + DIVERGING_BODY])
             calls = {m.group(0)[:-1] for m in re.finditer(r"(?<![\w.])\w+\(", body)} - {name}
-            if any(c in out or c == "refuse" for c in calls):
+            if any(c in out for c in calls):
                 out.add(name)
                 changed = True
     return out

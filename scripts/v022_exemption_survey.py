@@ -54,7 +54,10 @@ def main():
         mutated = "\n".join(raw[:g] + [new] + raw[g + 1:])
         open(path, "w").write(mutated)
         try:
-            r = subprocess.run(["cargo", "test", "-q", *cargo], capture_output=True, text=True)
+            try:
+                r = subprocess.run(["cargo", "test", "-q", *cargo], capture_output=True, text=True, timeout=1200)
+            except subprocess.TimeoutExpired as e:
+                r = subprocess.CompletedProcess([], 124, (e.stdout or b"").decode() if isinstance(e.stdout, bytes) else (e.stdout or ""), "hung: the mutated build ran past its bound (a test waited for what the guard refused)")
         finally:
             open(path, "w").write(text)
         tail = (r.stdout + r.stderr)
