@@ -2329,6 +2329,7 @@ EXEMPT += [
     (GKP, "fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {", _BAREMETAL),
     (GKP, "fn json_str_field<'a>(json: &'a [u8], key: &[u8]) -> Option<&'a [u8]> {", _BAREMETAL),
     (GKP, "fn json_u64_field(json: &[u8], key: &[u8]) -> Option<u64> {", _BAREMETAL),
+    (GKP, "fn top_level_value<'a>(json: &'a [u8], key: &[u8]) -> Option<&'a [u8]> {", _BAREMETAL),
     # ── psv ──
     (PS, "fn mode_is_normalised(dir: bool, exec: bool, mode: u32) -> bool {",
      "PREDICATE OF NAMED ROWS: its two callers are the directory and file mode refusals M317 and M318 "

@@ -587,10 +587,12 @@ fn sigkill_after_launch_reconciles_to_outcome_unknown_with_liability() {
         // unowned worker never dies, so any bound finds it. 10 s was a bound a
         // loaded host could exceed for a worker that WAS dying.
         if t0.elapsed().as_secs() >= 120 {
-            let _ = std::process::Command::new("kill")
-                .arg("-9")
-                .arg(pid.to_string())
-                .status();
+            // A typed pid, never a shelled-out `kill` (a non-positive pid would
+            // signal a process group or every process); `pid` came from a file.
+            if pid > 1 {
+                // SAFETY: kill(2) with a positive pid and a constant signal.
+                unsafe { libc::kill(pid, libc::SIGKILL) };
+            }
             panic!("the check worker {pid} outlived its SIGKILLed supervisor (an unowned worker)");
         }
         std::thread::sleep(std::time::Duration::from_millis(20));

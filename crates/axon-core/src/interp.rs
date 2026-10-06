@@ -1072,8 +1072,12 @@ const MAX_DEPTH_CEILING: usize = 1_000_000;
 
 /// Native stack budget per interpreter call frame, used to size the thread
 /// stack so the [`resolve_max_depth`] guard always trips before a real
-/// overflow. Generous (2×) over the observed ~128 KB debug frame.
-const STACK_BYTES_PER_FRAME: usize = 256 * 1024;
+/// overflow. Generous (2×) over the observed debug frame: ~265 KB per
+/// interpreted call in the v0.22 build (measured 2026-10-06 as the deepest
+/// `c(n) = 1 + c(n-1)` that fits a 1 GiB stack, ~4070), which grew from the
+/// ~128 KB this budget was first sized against when the PCI seal edges
+/// (`call_fn_sealed`) and the shared-string/lent-capture work (AX-31) landed.
+const STACK_BYTES_PER_FRAME: usize = 512 * 1024;
 
 /// Minimum interpreter thread stack — the historical 1 GiB floor, so shallow
 /// runs keep their previous generous headroom regardless of the depth setting.
@@ -3765,7 +3769,10 @@ impl<'p> Interp<'p> {
         };
         // First dim, for back-compat with the verify-panic enrichment that
         // reports a single "input N" suffix.
-        let input_arg: Option<i64> = input_args.first().copied();
+        let input_arg: Option<i64> = match args.first() {
+            Some(Value::Int(n)) => Some(*n),
+            _ => None,
+        };
         // The signature's type environment for this activation: every
         // argument and the result are CAST to the declared types in it
         // (amendment 53, `interp/conform.rs`).
