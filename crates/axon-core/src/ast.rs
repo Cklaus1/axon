@@ -690,10 +690,10 @@ pub fn walk_type_names<'a>(t: &'a AxonType, f: &mut dyn FnMut(&'a str)) {
     }
 }
 
-pub fn walk_expr(e: &Expr, f: &mut dyn FnMut(&Expr)) {
+pub fn walk_expr<'a>(e: &'a Expr, f: &mut dyn FnMut(&'a Expr)) {
     use Expr;
     f(e);
-    fn walk_stmts(ss: &[Stmt], f: &mut dyn FnMut(&Expr)) {
+    fn walk_stmts<'a>(ss: &'a [Stmt], f: &mut dyn FnMut(&'a Expr)) {
         for s in ss {
             walk_expr(&s.expr, f);
         }

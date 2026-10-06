@@ -450,6 +450,7 @@ impl<'p> Interp<'p> {
                 let tn = argv[0].type_name();
                 if let Some(f) = self.methods.get(&(tn.clone(), method.clone())) {
                     self.seal_method(f, &tn)?;
+                    self.seal_dispatch(expr, receiver, f, &tn)?;
                     self.call_fn(f, argv)
                 } else {
                     panic(format!("no method `{method}` on type `{tn}`"))
@@ -1377,6 +1378,7 @@ impl<'p> Interp<'p> {
 
         let l = self.eval(left, env)?;
         let r = self.eval(right, env)?;
+        self.seal_width(op, left, right, &l, &r)?;
         eval_binop_vals(op, l, r)
     }
 
