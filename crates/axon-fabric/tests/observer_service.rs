@@ -510,13 +510,53 @@ fn an_observer_never_observes_a_manifest_that_is_not_a_protected_launch() {
     );
 }
 
+/// A custodian impostor of the custodian uid (the observer authenticates the
+/// custodian by uid, not by program): bound on `argv[1]`, it answers every
+/// `check` "outstanding, expires far in the future", whatever the nonce.
+const AGREEABLE_CUSTODIAN: &str = r#"
+import socket, sys
+s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+s.bind(sys.argv[1]); s.listen(8)
+open(sys.argv[1] + ".ready", "w").close()
+while True:
+    c, _ = s.accept()
+    c.recv(65536)
+    c.sendall(b'{"schema":"axon-custodian-reply/1","ok":true,"mode":"test","nonce":null,'
+              b'"error":null,"expires_unix":4000000000}\n')
+    c.close()
+"#;
+
 /// M1530: the nonce names the observer's record, so it is a nonce or
 /// nothing: one that spells a path is refused before anything is written
-/// (else the record lands outside the store). Control: a nonce.
+/// (else the record lands outside the store). The custodian would refuse such
+/// a nonce too, but the observer does not rest on it: it authenticates the
+/// custodian by uid only, so a custodian impostor of that uid (here: one that
+/// says yes to anything) must not be able to name a path. Control: a nonce.
 #[test]
 fn an_observer_never_records_a_nonce_that_names_a_path() {
     let mut o = obs();
     o.start();
+    let sock = o.base.join("agreeable.sock");
+    let _imp = Running(
+        Command::new("python3")
+            .args(["-c", AGREEABLE_CUSTODIAN])
+            .arg(&sock)
+            .spawn()
+            .unwrap(),
+    );
+    let ready = PathBuf::from(format!("{}.ready", sock.display()));
+    for _ in 0..200 {
+        if ready.exists() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+    assert!(
+        ready.exists(),
+        "setup: the agreeable custodian never listened"
+    );
+    let real = o.cust.socket.clone();
+    o.edit_helper(|v| v["custodian"]["socket"] = json!(sock));
     let m = o.manifest("../../escaped", |_| {});
     let r = o.ask_manifest(&m);
     let escaped = o.obs_dir.parent().unwrap().join("escaped.observed");
@@ -526,6 +566,14 @@ fn an_observer_never_records_a_nonce_that_names_a_path() {
         escaped.display(),
         escaped.exists()
     );
+    assert!(
+        r["error"]
+            .as_str()
+            .unwrap_or("")
+            .contains("custodian issues"),
+        "{r}"
+    );
+    o.edit_helper(|v| v["custodian"]["socket"] = json!(real));
     assert!(
         ok(&o.ask_manifest(&o.manifest(&o.nonce(), |_| {}))),
         "control"
