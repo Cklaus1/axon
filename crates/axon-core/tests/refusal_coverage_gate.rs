@@ -1170,3 +1170,33 @@ fn a_diverging_closure_that_delegates_to_a_refusal_is_a_constructor() {
     let _ = std::fs::remove_dir_all(&c);
     let _ = std::fs::remove_dir_all(&r);
 }
+
+/// Amendment 91: an exemption whose reason cites a row must cite one that
+/// EXISTS. Three exemptions rested on rows nobody could run (M1088 never
+/// allocated, M1597 and M2151 misnumbered or withdrawn); the gate now refuses
+/// a citation of a row the registry does not hold. Control: the unedited copy.
+#[test]
+fn an_exemption_citing_a_row_that_does_not_exist_is_refused() {
+    let r = tree("cites-missing-row");
+    add_code(
+        &r,
+        SCANNED,
+        "pub fn gate_probe_cites(x: u64) -> Result<(), String> {\n    if x > 3 {\n        return Err(format!(\"cites {x}\"));\n    }\n    Ok(())\n}\n",
+    );
+    exempt(
+        &r,
+        SCANNED,
+        "        return Err(format!(\"cites {x}\"));",
+        "dominated by M99999 (a row that is not in the registry)",
+    );
+    refuses(
+        &r,
+        &[],
+        "which are not registry rows",
+        "an exemption citing a row the registry does not hold was accepted",
+    );
+    let c = tree("cites-missing-row-control");
+    holds(&c, &[], "the unedited copy");
+    let _ = std::fs::remove_dir_all(&c);
+    let _ = std::fs::remove_dir_all(&r);
+}

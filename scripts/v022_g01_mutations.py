@@ -8045,6 +8045,13 @@ MUTATIONS += [
      'axon-psv', '--test runner', 'the_check_child_runs_in_the_suite_with_only_its_own_environment_and_stdio'),
 ]
 
+MUTATIONS += [
+    ('M2271', 'COVERAGE GATE (eqgate3): an exemption may cite only a row the registry holds', 'scripts/v022_refusal_coverage.py',
+     '        if gone:\n            bad.append(',
+     '        if False and gone:\n            bad.append(',
+     'axon-core', '--no-default-features --test refusal_coverage_gate', 'an_exemption_citing_a_row_that_does_not_exist_is_refused'),
+]
+
 
 def cargo_build_tests(package, target, env=""):
     """Build the tests a cell will run, ALONE: (ok, output). A compile error is

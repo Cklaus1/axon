@@ -2081,3 +2081,4 @@ ATTACK_MARKERS.update({
     'M2338': "ATTACK: the interpreter child's stdin is not /dev/null",
     'M2339': 'ATTACK: the check child lacks AXON_PATH:',
 })
+ATTACK_MARKERS['M2271'] = 'ATTACK: an exemption citing a row the registry does not hold was accepted'

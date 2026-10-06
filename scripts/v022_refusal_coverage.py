@@ -981,7 +981,7 @@ EXEMPT += [
      "config file; a config `git config --list` cannot read (a bad line, a directory) is one "
      "rev-parse dies on too, so discover refuses before this line ('... --git-common-dir failed'). "
      "With run()'s status check (M1086) also removed, own_repository canonicalizes the empty "
-     "answer and fails: the four-cell run of this site (former M1088) read set_off=ATTACK_REFUSED. "
+     "answer and fails: the four-cell run of this site (its former row number was never allocated) read set_off=ATTACK_REFUSED. "
      "Test: provenance::tests::a_config_git_cannot_read_is_never_a_clean_tree"),
     # provenance.rs
     (FP, '        Err(e) => return unknown(e),\n    };\n    // The repository',
@@ -3074,7 +3074,7 @@ EXEMPT += [
      "REMAINDER (no row yet): unlocks a read-only tree's directories so it can be removed; only a "
      "NON-root remover is stopped by a mode (root bypasses it, and the suite runs as root where it "
      "matters), and a failure only leaves the tree behind (availability, never a verdict). The row "
-     "M2151 this would have carried survived as root and was withdrawn, not weakened"),
+     "this would have carried (amendment 87's withdrawn row) survived as root and was withdrawn, not weakened"),
     (PL, "                    libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_NONBLOCK,\n                )\n                .map_err(|e| e.to_string())?;\n                unsafe {",
      "RACE-ONLY (checkable): this open is reached only for an entry the fstatat above "
      "(AT_SYMLINK_NOFOLLOW, M1912) reported as a regular file, in a directory only "
@@ -3174,7 +3174,7 @@ EXEMPT += [
     ('crates/axon-os/src/runtime.rs', '            cmd.env("PATH", p); // cc/linker discovery for the interpreter',
      "NO EFFECT (checkable): the interpreter child's PATH is for `cc`/linker discovery by `axon run`, and the legacy process adapter is not on the protected route (_ACR); a missing PATH cannot widen what the child may do"),
     ('crates/axon-psv/src/runner.rs', '        .env("PATH", "/usr/bin:/bin")\n        // As on the host',
-     'NO EFFECT (checkable): the check child spawns nothing (`Exec` is removed from its ceiling by without_exec, rowed M1597-class `the_process_holding_k_is_given_no_exec`), so no PATH lookup happens; the value is the fixed guest PATH either way'),
+     'NO EFFECT (checkable): the check child spawns nothing (`Exec` is removed from its ceiling by without_exec, rowed M249, `the_process_holding_k_is_given_no_exec`), so no PATH lookup happens; the value is the fixed guest PATH either way'),
     ('crates/axon-vm/src/firecracker.rs', '        .stdin(Stdio::null())\n        .stdout(Stdio::piped())',
      "NOT ON THE PROTECTED ROUTE (checkable): axon-vm's firecracker spawn; the protected crates use axon_vm only for BACKEND_PROFILE and embed_policy_in_cmdline/MmdsPayload (grep `axon_vm::`), never the spawn"),
     ('crates/axon-fabric/src/bin/axon-fabric.rs', '    let text = std::fs::read_to_string(registry).unwrap_or_else(|e| bad(e.to_string()));',
@@ -4275,6 +4275,15 @@ def check(without=(), freeze=False, out=print):
             continue
         out(f"{f}: {covered} covered by a row, {exempt} exempt")
         bad.extend(uncovered)
+    # Amendment 91: an exemption that names a row must name one that EXISTS.
+    # 41 of 343 row-citing exemptions named a retired row (a four-cell record
+    # stands behind it) and three named a row that was never there (M1088,
+    # M1597, M2151): a reason resting on a row nobody can run is no reason.
+    known = {r[0] for r in rows} | {r[0] for r in load_rows()}
+    for ef, anchor, reason in EXEMPT:
+        gone = sorted({m for m in re.findall(r"\bM\d{1,4}\b", reason) if m not in known}, key=lambda x: int(x[1:]))
+        if gone:
+            bad.append(f"{ef}: exemption {anchor[:50]!r} cites {gone}, which are not registry rows")
     for b in bad:
         out(f"BAD {b}")
     return bad
