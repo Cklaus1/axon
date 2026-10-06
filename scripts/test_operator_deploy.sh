@@ -387,8 +387,10 @@ refused "ATTACK: a build uid equal to the builder uid (build code as the key hol
   bash "$KIT" --from "$CLONE" --bin-dir "$BIN" --builder-uid "$BUILD_UID" --builder-parent "$KEYPARENT" --build-uid "$BUILD_UID"
 refused "ATTACK: a build uid other than the one the record was built under" "not the pinned build uid" \
   bash "$KIT" --from "$CLONE" --bin-dir "$BIN" --builder-uid "$BUILDER_UID" --builder-parent "$KEYPARENT" --build-uid 4243
+# (Run as an unprivileged uid: were the guard ever missing, this must not become a REAL apply
+# on whatever host runs the test -- the next refusal is "must run as root".)
 refused "ATTACK: --apply without --expect-commit (the commit judges itself)" "--apply needs --expect-commit" \
-  bash "$KIT" "${ARGS[@]}" --apply
+  setpriv --reuid=65534 --regid=65534 --clear-groups -- bash "$KIT" "${ARGS[@]}" --apply
 copybin; : >"$WORK/fakebin/extra-file"
 refused "ATTACK: a host build directory with a file the build did not make" "files the controlled host build did not make" \
   bash "$KIT" --from "$CLONE" --bin-dir "$WORK/fakebin" $KB
