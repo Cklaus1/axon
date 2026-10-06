@@ -1777,7 +1777,7 @@ fn a_status_file_is_accepted_only_as_the_joined_evidence_for_the_freeze_commit()
         ("extra", "d['records'].append(dict(d['records'][0], mutation='M1'))", "records for rows that are not retirements here"),
         ("foreign-commit", "d['commit']='1'*40", "is not in this repository"),
         ("not-ancestor", "import subprocess\nc=subprocess.run(['git','commit-tree','HEAD^{tree}','-m','orphan'],capture_output=True,text=True,check=True).stdout.strip()\nd['commit']=c", "is not an ancestor of the freeze commit"),
-        ("no-matrix", "r=next(r for r in d['records'] if r.get('matrix'))\ndel r['matrix']", "carries no matrix or replacement state to derive its verdict from"),
+        ("no-matrix", "r=next(r for r in d['records'] if r.get('matrix'))\nr['status']='UNKNOWN'", "carries no matrix or replacement state to derive its verdict from"),
         ("label", "r=next(r for r in d['records'] if r.get('matrix'))\nr['holds']=False", "over cells that hold"),
         ("doc-toolchain", "d['toolchain']['rustc']='rustc 0.0.0 (the file)'", "the file's `toolchain` is not the one its records ran on"),
     ];
