@@ -105,12 +105,12 @@ impl<'ctx> super::Codegen<'ctx> {
         release: bool,
         target_triple: Option<&str>,
     ) -> Result<(), String> {
-        // NOTE: dead-function pruning is applied on the WASM object path
+        // NOTE: full dead-function pruning is applied on the WASM object path
         // (`compile_to_wasm_object`), where dropping the unused i64-ABI `__axon_*`
-        // helpers is the prerequisite for linking. It is intentionally NOT run
-        // here: the native link tolerates the unused helpers, and pruning them
-        // exposed a latent libm (`pow`) link-order fragility on the native path
-        // (axon-rt's f64::powf → undefined `pow`). Keeping native unchanged.
+        // helpers is the prerequisite for linking. Natively only the uncalled
+        // AI wrappers are pruned, so a program that makes no AI call links the
+        // AI-free runtime (`link::Runtime`, AX-11).
+        super::link::prune_unreachable_ai_callers(&self.ir.module);
         self.ir
             .module
             .verify()

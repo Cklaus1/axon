@@ -1,8 +1,10 @@
 //! Incremental compilation cache for the Axon compiler (`axon build`).
 //!
 //! Cache files (`.axc`) live in `~/.cache/axon/` by default.  Each entry is
-//! keyed by a SHA-256 digest over (source bytes, compiler version string) and
-//! stores the LLVM bitcode for the compiled module.
+//! keyed by a SHA-256 digest over (source bytes, compiler identity) and
+//! stores the LLVM bitcode for the compiled module.  The compiler identity
+//! ([`compiler_identity`]) is a digest of the running compiler EXECUTABLE, so
+//! any rebuilt compiler — committed or not — misses every older entry.
 //!
 //! Format of a `.axc` file:
 //! ```text
@@ -29,6 +31,72 @@ pub fn cache_key(source: &[u8], compiler_version: &str) -> String {
     h.update(source);
     h.update(compiler_version.as_bytes());
     format!("{:x}", h.finalize())
+}
+
+/// Hex SHA-256 of the running compiler EXECUTABLE: the compiler-identity half
+/// of the cache key.
+///
+/// The version string alone cannot tell two builds apart (its git SHA does not
+/// move for uncommitted edits), and the executable's path + size + mtime can
+/// collide for builds that differ only in a constant (same size) when the
+/// mtime is normalised (reproducible builds, copies that preserve it). The
+/// bytes of the executable are the build, so they are what gets hashed.
+///
+/// Hashing a dev-build compiler (~200 MB) costs ~0.2 s, more than a cache hit
+/// saves on a small program, so the digest is memoised in `memo_dir` under a
+/// fingerprint of the executable's inode metadata. On Unix that includes the
+/// device, inode and the CHANGE time (ctime), which no `touch`, mtime
+/// normalisation or copy can set back: replacing the executable's bytes in
+/// place moves ctime, and replacing the file moves the inode. Elsewhere the
+/// executable is hashed on every call.
+///
+/// Returns `None` if the executable cannot be located or read; the caller must
+/// then not use the cache at all, since no key could tell this compiler apart.
+pub fn compiler_digest(memo_dir: &Path) -> Option<String> {
+    let exe = std::env::current_exe().ok()?;
+    let md = std::fs::metadata(&exe).ok()?;
+    let memo = exe_fingerprint(&exe, &md).map(|fp| memo_dir.join(format!("compiler-{fp}.id")));
+    if let Some(memo) = &memo {
+        if let Ok(d) = std::fs::read_to_string(memo) {
+            if d.len() == 64 && d.bytes().all(|b| b.is_ascii_hexdigit()) {
+                return Some(d);
+            }
+        }
+    }
+    let mut h = Sha256::new();
+    std::io::copy(&mut std::fs::File::open(&exe).ok()?, &mut h).ok()?;
+    let digest = format!("{:x}", h.finalize());
+    if let Some(memo) = &memo {
+        // A memo that cannot be written only costs the next run a re-hash.
+        let _ = std::fs::create_dir_all(memo_dir).and_then(|()| std::fs::write(memo, &digest));
+    }
+    Some(digest)
+}
+
+/// Fingerprint of the executable file itself (path + inode metadata), the
+/// memo key for [`compiler_digest`]. `None` where ctime/inode are unavailable.
+#[cfg(unix)]
+fn exe_fingerprint(exe: &Path, md: &std::fs::Metadata) -> Option<String> {
+    use std::os::unix::fs::MetadataExt;
+    let mut h = Sha256::new();
+    h.update(exe.as_os_str().as_encoded_bytes());
+    for v in [
+        md.dev(),
+        md.ino(),
+        md.size(),
+        md.mtime() as u64,
+        md.mtime_nsec() as u64,
+        md.ctime() as u64,
+        md.ctime_nsec() as u64,
+    ] {
+        h.update(v.to_le_bytes());
+    }
+    Some(format!("{:x}", h.finalize()))
+}
+
+#[cfg(not(unix))]
+fn exe_fingerprint(_exe: &Path, _md: &std::fs::Metadata) -> Option<String> {
+    None
 }
 
 /// Return the default cache directory: `~/.cache/axon/`.

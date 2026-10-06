@@ -12,7 +12,17 @@ pub struct Program {
 
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde-json", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "serde-json", serde(tag = "kind"))]
+// AST JSON enums are ADJACENTLY tagged, `{"kind": "<Variant>", "value": ...}`
+// (unit variants carry no "value"). Internally tagged (`tag = "kind"` alone)
+// was two defects in one (AX-10): serde serializes an internally-tagged newtype
+// variant's payload through a `TaggedSerializer<S>` wrapper, so a variant
+// holding the same enum (`Expr::Spawn(Box<Expr>)`) asks for
+// `Expr::serialize::<TaggedSerializer<TaggedSerializer<S>>>` and so on without
+// end - rustc's monomorphization collector never finished any build that
+// instantiated `program_to_json` (`axon parse`); and a payload that is not a
+// map (`Expr::Ident(String)`) cannot be internally tagged at all, so the
+// JSON could not be produced for any program with an identifier in it.
+#[cfg_attr(feature = "serde-json", serde(tag = "kind", content = "value"))]
 // Boxing FnDef would change this enum's layout; the codegen path matches on it
 // by value, so keep the variants inline and accept the size difference.
 #[allow(clippy::large_enum_variant)]
@@ -209,7 +219,7 @@ pub struct Attr {
 
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde-json", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "serde-json", serde(tag = "kind"))]
+#[cfg_attr(feature = "serde-json", serde(tag = "kind", content = "value"))]
 pub enum AxonType {
     Named(String),
     Result {
@@ -250,7 +260,7 @@ pub enum AxonType {
 
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde-json", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "serde-json", serde(tag = "kind"))]
+#[cfg_attr(feature = "serde-json", serde(tag = "kind", content = "value"))]
 pub enum Expr {
     Block(Vec<Stmt>),
     /// `let name (: ty)? = value` — `ty` is an optional explicit type annotation.
@@ -506,7 +516,7 @@ pub struct SelectArm {
 
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde-json", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "serde-json", serde(tag = "kind"))]
+#[cfg_attr(feature = "serde-json", serde(tag = "kind", content = "value"))]
 pub enum Pattern {
     Wildcard,
     Ident(String),
@@ -527,7 +537,7 @@ pub enum Pattern {
 /// A single segment in a format-string expression.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde-json", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "serde-json", serde(tag = "kind"))]
+#[cfg_attr(feature = "serde-json", serde(tag = "kind", content = "value"))]
 pub enum FmtPart {
     /// A literal text fragment (no interpolation).
     Lit(String),
@@ -539,7 +549,7 @@ pub enum FmtPart {
 
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde-json", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "serde-json", serde(tag = "kind"))]
+#[cfg_attr(feature = "serde-json", serde(tag = "kind", content = "value"))]
 pub enum Literal {
     Int(i64),
     Float(f64),

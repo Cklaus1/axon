@@ -5,7 +5,7 @@
 
 # Axon Reference
 
-The complete surface of this build — 25 CLI verbs, 343 builtins, 24 attributes, 145 diagnostic codes (132 live, 13 reserved), 54 environment variables.
+The complete surface of this build — 25 CLI verbs, 343 builtins, 24 attributes, 145 diagnostic codes (132 live, 13 reserved), 55 environment variables.
 
 Generated from the compiler's own tables (`BUILTINS`, `DEFERRED_ATTRS`, the clap subcommand list), so it cannot describe a language this binary does not implement. `CLAUDE.md` is a curated selection and says so; this is the exhaustive counterpart.
 
@@ -68,7 +68,7 @@ Run `axon <verb> --help` for flags and long-form help.
 - `@[bpf]`
 - `@[enclave]`
 
-## Environment variables (54)
+## Environment variables (55)
 
 Every `AXON_*` variable the SHIPPED code reads — gated in both directions, so a variable that quietly does nothing cannot appear here, and one that changes behaviour cannot be left out.
 
@@ -79,6 +79,7 @@ Every `AXON_*` variable the SHIPPED code reads — gated in both directions, so 
 | `AXON_CLOCK` | deterministic virtual clock `<start_ms>[:<tick_ms>]`; `sleep_ms` advances it without really sleeping |
 | `AXON_PATH` | colon-separated module search path for `mod`/`use` imports |
 | `AXON_STRICT` | promote advisory hazard diagnostics to errors (today E0302, an unused Result); `axon deploy` sets it itself |
+| `AXON_RUNTIME_DIR` | `axon build`: directory holding the prebuilt native runtime staticlibs (`libaxon_rt.a`, `libaxon_rt_ai.a`; `<dir>/<triple>/` for `--target`). When set it is the ONLY place searched; unset, the compiler builds the runtime in the Axon workspace it was compiled from, else uses one prebuilt beside the compiler, independent of the current directory and PATH |
 | `AXON_RECORD` | path to write a host journal: every call through the AxonHost seam, performed for real and appended with its outcome. As sensitive as the run it records |
 | `AXON_REPLAY` | serve a run from a host journal instead of the world; nothing is performed, and any miss is a divergence (exit 11). Mutually exclusive with AXON_RECORD |
 | `AXON_AI_REPLAY` | path to an LLM-call replay cache; memoizes `ai_complete` by (prompt, model) so an AI run reproduces with no live call |

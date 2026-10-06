@@ -37,5 +37,5 @@ follows the interpreter, never the reverse.
 See [`CLAUDE.md`](CLAUDE.md) for the compiler-project conventions (pipeline, crate layout,
 how to add a builtin, phase status) and [`ROADMAP.md`](ROADMAP.md) for forward planning.
 
-Key constraint: **do not enable the `codegen` + `serde-json` features together** — it
-reintroduces a build stall (see `BUILD_RESOLVED.md`).
+`codegen` and `serde-json` combine freely (the old "collision" was the
+internally-tagged AST serde derive, fixed in AX-10; see `BUILD_RESOLVED.md`).

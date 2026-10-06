@@ -6708,21 +6708,33 @@ fn run_build_pipeline(
         return Err(format!("{} error(s); build aborted", errors.len()));
     }
 
-    // Cache key MUST include the git SHA, not just the semver: two builds of the
-    // compiler at the same 0.1.0 version but different commits emit different IR
-    // (e.g. the #36 random_i64 guard), and keying on semver alone served a stale
-    // pre-fix binary on rebuild — a silent-wrong-artifact footgun. VERSION is
-    // `<semver> (<git-sha>)`, captured by build.rs; a dirty tree appends nothing
-    // here, so a `--no-cache` build is still the escape hatch mid-edit.
-    let compiler_version = VERSION;
+    // The cache key MUST identify the compiler BUILD, not its version: two
+    // builds at the same `0.1.0 (<git-sha>)` emit different IR whenever the
+    // tree is dirty, and keying on the version (plus, later, the executable's
+    // path/size/mtime) let a rebuilt compiler serve the previous compiler's
+    // bitcode (#36, AUDIT T38, AX-15). The identity is the version plus a
+    // digest of the compiler executable's bytes (`compiler_digest`). If the
+    // executable cannot be read no key can tell this compiler apart from
+    // another, so the cache is not used at all rather than guessed at.
     let cache_dir = opts
         .cache_dir
         .clone()
         .unwrap_or_else(axon_core::default_cache_dir);
+    let compiler_identity = if opts.no_cache {
+        None
+    } else if let Some(digest) = axon_core::compiler_digest(&cache_dir) {
+        Some(format!("{VERSION}+{digest}"))
+    } else {
+        eprintln!(
+            "warning: the compiler executable could not be read to identify this \
+             build; compiling without the build cache"
+        );
+        None
+    };
     let target_triple = opts.target_triple.as_deref();
 
     // ── Cache lookup ──────────────────────────────────────────────────────
-    if !opts.no_cache {
+    if let Some(compiler_version) = compiler_identity.as_deref() {
         // Hash all source files to form the cache key.
         let mut hasher_input = Vec::new();
         // Include the source path stem as a namespace separator.
@@ -6764,23 +6776,10 @@ fn run_build_pipeline(
         if let Some(triple) = target_triple {
             hasher_input.extend_from_slice(triple.as_bytes());
         }
-
-        // AUDIT T38. Belt-and-braces on top of the `-dirty` fix in build.rs: mix
-        // the COMPILER EXECUTABLE's own identity (path + size + mtime) into the
-        // key, so a rebuilt compiler can never serve the previous compiler's
-        // cached object even if the embedded version string is somehow stale.
-        // The version string is a claim about the build; this is the build.
-        if let Ok(exe) = std::env::current_exe() {
-            hasher_input.extend_from_slice(exe.to_string_lossy().as_bytes());
-            if let Ok(md) = std::fs::metadata(&exe) {
-                hasher_input.extend_from_slice(&md.len().to_le_bytes());
-                if let Ok(mtime) = md.modified() {
-                    if let Ok(d) = mtime.duration_since(std::time::UNIX_EPOCH) {
-                        hasher_input.extend_from_slice(&d.as_nanos().to_le_bytes());
-                    }
-                }
-            }
-        }
+        // …and the optimisation profile, so a `--release` entry is never served
+        // to a debug build or the other way round, whatever stage of the
+        // pipeline comes to depend on it.
+        hasher_input.push(u8::from(opts.release));
 
         let key = axon_core::cache_key(&hasher_input, compiler_version);
         let cache_path = axon_core::cache_path(&key, &cache_dir);
@@ -6840,7 +6839,7 @@ fn run_build_pipeline(
         return result;
     }
 
-    // --no-cache: full compilation, no read or write.
+    // --no-cache (or no compiler identity): full compilation, no read or write.
     build_ir_and_link(
         program,
         source_path,

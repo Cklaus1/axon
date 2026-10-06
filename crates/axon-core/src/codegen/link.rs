@@ -16,8 +16,8 @@
 //!
 //! Crate-private surface (visible to `super::Codegen`):
 //!   * `emit_object_and_link` — IR module → object file → linked binary
-//!   * `build_axon_rt`        — build axon-rt staticlib for linking
-//!   * `build_axon_ai`        — build axon-ai staticlib for linking
+//!   * `prune_unreachable_ai_callers` / `Runtime` — pick the ONE runtime
+//!     staticlib a binary links (`libaxon_rt.a` or `libaxon_rt_ai.a`)
 //!   * `read_cross_linker`    — parse `~/.config/axon/cross.toml`
 
 use std::path::Path;
@@ -26,6 +26,7 @@ use std::process::Command;
 use inkwell::targets::{
     CodeModel, FileType, InitializationConfig, RelocMode, Target, TargetMachine, TargetTriple,
 };
+use inkwell::values::{AnyValueEnum, BasicValue, BasicValueEnum};
 use inkwell::OptimizationLevel;
 
 // ── R14 Android cross-link support ────────────────────────────────────────────
@@ -157,6 +158,7 @@ pub fn compile_bitcode_to_binary(
             e.to_string()
         )
     })?;
+    prune_unreachable_ai_callers(&module);
     emit_object_and_link(&module, output_path, release, target_triple)
 }
 
@@ -322,20 +324,28 @@ pub(super) fn emit_object_and_link(
     // link recipe below stays exactly as it was.
     if let Some(triple_str) = target_triple {
         if is_android_triple(triple_str) {
-            let res = android_link(&obj_path, output_path, release, triple_str, false);
+            let rt = Runtime::for_module(module);
+            let res = android_link(&obj_path, output_path, release, triple_str, false, rt);
             let _ = std::fs::remove_file(&obj_path);
             return res;
         }
     }
 
-    // Build axon-rt static library so channel/spawn builtins are available.
-    let rt_lib = build_axon_rt(release);
-    // Build axon-ai static library so ai_complete is available.
-    let ai_lib = build_axon_ai(release);
+    // The native runtime: ONE staticlib, the AI-capable one only when the
+    // program calls an AI builtin (`Runtime`). Resolved before the linker runs
+    // so a missing runtime is one clear error naming where it was looked for,
+    // not a page of `undefined reference to __axon_*` (AX-09).
+    let rt_lib = match runtime_staticlib(Runtime::for_module(module), release, None) {
+        Ok(lib) => lib,
+        Err(e) => {
+            let _ = std::fs::remove_file(&obj_path);
+            return Err(e);
+        }
+    };
 
     // Determine linker: prefer the cross.toml override, else probe the host.
     let linker_override = target_triple.and_then(read_cross_linker);
-    let linker = if let Some(ref l) = linker_override {
+    let linker = if let Some(l) = &linker_override {
         std::path::PathBuf::from(l)
     } else {
         which::which("cc")
@@ -346,33 +356,28 @@ pub(super) fn emit_object_and_link(
 
     // `-no-pie`: our emitted object uses non-PIC relocations (R_X86_64_32S),
     // so the default PIE link fails ("can not be used when making a PIE
-    // object"). Link non-PIE. (R1: surfaced once the native build actually
-    // produced objects — see BUILD_RESOLVED.md.)
-    // `-no-pie`: our emitted object uses non-PIC relocations (R_X86_64_32S),
-    // so the default PIE link fails. `-lm`: axon-rt's math builtins
-    // (`__axon_pow` etc.) reference libm. (R1: both surfaced once the native
-    // build actually produced objects — see BUILD_RESOLVED.md.)
-    // `-Wl,--allow-multiple-definition` (BUG_HUNT #43): both `libaxon_rt.a` and
-    // `libaxon_ai.a` are Rust `staticlib`s, so each embeds its own copy of the
-    // Rust `core`/`std` symbols (e.g. `core::fmt::builders`). In a release link
-    // the duplicate `core` symbols are a fatal "multiple definition" error
-    // (debug happens to dedup via weak/comdat). Both copies come from the SAME
-    // rustc `core`, so taking the first is safe — this is the standard remedy
-    // for linking two Rust staticlibs into one binary.
+    // object"). (R1: surfaced once the native build actually produced objects
+    // — see BUILD_RESOLVED.md.)
+    // `-lpthread -lm` AFTER the runtime: its threads and math builtins
+    // (`__axon_pow` → `pow`) are what reference them, and a static link
+    // resolves left to right.
+    // `-Wl,--gc-sections`: the runtime is compiled one section per function,
+    // so this keeps only what the program reaches instead of every builtin
+    // and all of std's formatting/unwinding machinery they could pull in.
+    // `--release` also drops debug info (`--strip-debug`, which keeps the
+    // symbol table for profilers and backtraces).
     let mut link_args: Vec<&str> = vec![
         &obj_path,
+        rt_lib.as_str(),
         "-o",
         output_path,
-        "-lpthread",
         "-no-pie",
+        "-Wl,--gc-sections",
+        "-lpthread",
         "-lm",
-        "-Wl,--allow-multiple-definition",
     ];
-    if let Some(ref lib) = rt_lib {
-        link_args.push(lib.as_str());
-    }
-    if let Some(ref lib) = ai_lib {
-        link_args.push(lib.as_str());
+    if release {
+        link_args.push("-Wl,--strip-debug");
     }
 
     let status = Command::new(&linker)
@@ -442,7 +447,10 @@ pub(super) fn emit_shared_lib(
         .write_to_file(module, FileType::Object, Path::new(&obj_path))
         .map_err(|e| format!("object emit: {e}"))?;
 
-    let res = android_link(&obj_path, output_path, release, triple_str, true);
+    // A shared library's entry points are called from outside the module, so
+    // nothing is pruned and an AI call anywhere in it is reachable.
+    let rt = Runtime::for_module(module);
+    let res = android_link(&obj_path, output_path, release, triple_str, true, rt);
     let _ = std::fs::remove_file(&obj_path);
     res
 }
@@ -634,77 +642,356 @@ pub(super) fn read_cross_linker(target: &str) -> Option<String> {
     None
 }
 
-// ── axon-rt build helper ─────────────────────────────────────────────────────
+// ── Native runtime staticlib ─────────────────────────────────────────────────
 
-/// Build `axon-rt` as a static library and return the path to `libaxon_rt.a`.
-///
-/// Silently returns `None` if cargo is not found or the build fails, so that
-/// the linker step still attempts to proceed (channel/spawn functions will
-/// simply be missing symbols if the rt wasn't linked).
-pub(super) fn build_axon_rt(release: bool) -> Option<String> {
-    build_crate_staticlib("axon-rt", "libaxon_rt.a", release, None)
+/// Prefix of every symbol `axon-ai` defines (`__axon_ai_complete`, …).
+const AI_SYMBOL_PREFIX: &[u8] = b"__axon_ai_";
+
+/// Directory of prebuilt runtime staticlibs; when set, nothing else is searched.
+const RUNTIME_DIR_VAR: &str = "AXON_RUNTIME_DIR";
+
+/// The native runtime a hosted binary links. Exactly ONE is linked: both are
+/// Rust staticlibs, each embedding its own copy of `std`, and linking two of
+/// them is what used to need `-Wl,--allow-multiple-definition` (BUG_HUNT #43)
+/// and doubled every binary's runtime (AX-11).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Runtime {
+    /// `libaxon_rt.a` (crates/axon-rt): every `__axon_*` builtin but the AI ones.
+    Base,
+    /// `libaxon_rt_ai.a` (crates/axon-rt-ai): axon-rt + axon-ai (reqwest,
+    /// rustls) over one std, for a program that calls an AI builtin.
+    WithAi,
 }
 
-/// Build a workspace staticlib crate (`axon-rt`/`axon-ai`) and return the path
-/// to the produced `.a`. When `target` is `Some(triple)` the crate is
-/// cross-built for that triple (R14: the Android cross-build of axon-rt) and the
-/// artifact is read from `target/<triple>/<profile>/`.
-/// AUDIT T11: absolute path to the workspace `Cargo.toml`, resolved without
-/// depending on the current working directory.
-///
-/// Order matters. `env!("CARGO_MANIFEST_DIR")` is baked in at compile time and
-/// is right for a binary run out of `target/`. For an installed/copied binary
-/// that directory may not exist, so fall back to walking up from the real
-/// executable. The literal relative `"Cargo.toml"` is the last resort only,
-/// because it is the one that silently produces a broken link from the wrong
-/// cwd — the defect this function exists to fix.
-fn workspace_manifest() -> String {
-    let baked = concat!(env!("CARGO_MANIFEST_DIR"), "/../../Cargo.toml");
-    if std::path::Path::new(baked).exists() {
-        return baked.to_string();
-    }
-    if let Ok(exe) = std::env::current_exe() {
-        let mut dir = exe.parent().map(|p| p.to_path_buf());
-        while let Some(d) = dir {
-            let candidate = d.join("Cargo.toml");
-            if candidate.exists() {
-                return candidate.display().to_string();
-            }
-            dir = d.parent().map(|p| p.to_path_buf());
+impl Runtime {
+    /// The runtime `module` needs: `WithAi` iff some `__axon_ai_*` extern is
+    /// still called. Run [`prune_unreachable_ai_callers`] first, or the AI
+    /// wrappers `declare_builtins` emits into every module count as calls.
+    pub(super) fn for_module(module: &inkwell::module::Module<'_>) -> Self {
+        let calls_ai = module
+            .get_functions()
+            .any(|f| is_ai_extern(f) && f.as_global_value().get_first_use().is_some());
+        if calls_ai {
+            Runtime::WithAi
+        } else {
+            Runtime::Base
         }
     }
-    "Cargo.toml".into()
+
+    fn package(self) -> &'static str {
+        match self {
+            Runtime::Base => "axon-rt",
+            Runtime::WithAi => "axon-rt-ai",
+        }
+    }
+
+    fn libname(self) -> &'static str {
+        match self {
+            Runtime::Base => "libaxon_rt.a",
+            Runtime::WithAi => "libaxon_rt_ai.a",
+        }
+    }
 }
 
-fn build_crate_staticlib(
-    pkg: &str,
-    libname: &str,
+fn is_ai_extern(f: inkwell::values::FunctionValue<'_>) -> bool {
+    f.count_basic_blocks() == 0 && f.get_name().to_bytes().starts_with(AI_SYMBOL_PREFIX)
+}
+
+/// Delete the definitions that reach an `__axon_ai_*` extern but are never
+/// called, to a fixpoint, so [`Runtime::for_module`] sees only real AI use.
+///
+/// `declare_builtins` emits the `ai_complete`/`ai_extract_*` wrappers into
+/// EVERY module, so without this even `hello` references `__axon_ai_complete`
+/// and must link the AI runtime. The criterion is the one
+/// `prune_dead_functions` uses on wasm (a body, zero uses, not `main`; an
+/// address-taken function has a use and is kept), narrowed to the functions
+/// that reach the AI externs so the rest of the native module is untouched.
+/// For executables only: a shared library's entry points have no in-module
+/// callers and must not be pruned.
+pub(super) fn prune_unreachable_ai_callers(module: &inkwell::module::Module<'_>) {
+    loop {
+        let dead: Vec<_> = functions_reaching_ai(module)
+            .into_iter()
+            .filter(|f| {
+                f.count_basic_blocks() > 0
+                    && f.get_name().to_bytes() != b"main"
+                    && f.as_global_value().get_first_use().is_none()
+            })
+            .collect();
+        if dead.is_empty() {
+            return;
+        }
+        for f in dead {
+            // SAFETY: `f` has no uses, so no instruction refers to it.
+            unsafe { f.delete() };
+        }
+    }
+}
+
+/// The `__axon_ai_*` externs plus every function that calls one, directly or
+/// through other functions. A use that is not an instruction (a constant
+/// expression) is not followed, which leaves its extern in use: conservative.
+fn functions_reaching_ai<'ctx>(
+    module: &inkwell::module::Module<'ctx>,
+) -> Vec<inkwell::values::FunctionValue<'ctx>> {
+    let mut reach: Vec<_> = module
+        .get_functions()
+        .filter(|f| is_ai_extern(*f))
+        .collect();
+    let mut i = 0;
+    while i < reach.len() {
+        let callee = reach[i].as_global_value();
+        let mut next_use = callee.get_first_use();
+        while let Some(u) = next_use {
+            // inkwell classifies a user by its TYPE, so a call returning i32 is
+            // an `IntValue`, not an `InstructionValue`; recover the instruction.
+            let inst = match u.get_user() {
+                AnyValueEnum::InstructionValue(inst) => Some(inst),
+                other => BasicValueEnum::try_from(other)
+                    .ok()
+                    .and_then(|v| v.as_instruction_value()),
+            };
+            // inkwell ties a use's lifetime to the borrowed callee, not to the
+            // context, so re-fetch the caller from the module by name.
+            let caller = inst
+                .and_then(|inst| inst.get_parent())
+                .and_then(|bb| bb.get_parent())
+                .and_then(|f| {
+                    f.get_name()
+                        .to_str()
+                        .ok()
+                        .and_then(|n| module.get_function(n))
+                });
+            if let Some(caller) = caller {
+                if !reach.contains(&caller) {
+                    reach.push(caller);
+                }
+            }
+            next_use = u.get_next_use();
+        }
+        i += 1;
+    }
+    reach
+}
+
+/// Path of the runtime staticlib for `rt`, built if needed. Independent of the
+/// current directory and of `PATH` (AX-09, AUDIT T11):
+///
+/// 1. `$AXON_RUNTIME_DIR/<lib>` (`<dir>/<triple>/<lib>` for a cross `target`).
+///    An explicit choice, so nothing else is tried.
+/// 2. The Axon source workspace this compiler was built from: `cargo build -p
+///    <pkg>` run FROM the workspace root, so its `rust-toolchain.toml` selects
+///    the toolchain (run from elsewhere, rustup picks another toolchain or
+///    none). Cargo is a no-op when the lib is fresh and rebuilds it when the
+///    runtime sources changed, so a dev compiler never links a stale runtime.
+///    Cargo is `$CARGO`, then `PATH`, then `$CARGO_HOME/bin`/`~/.cargo/bin`.
+/// 3. A prebuilt lib where a compiler is built or installed (see
+///    [`prebuilt_candidates`]) — when there is no workspace, no cargo, or the
+///    build failed (then with a warning, since that lib may be stale).
+///
+/// If none yields the lib, the error names every place searched; linking on
+/// without the runtime would only bury that under `undefined reference`s.
+fn runtime_staticlib(rt: Runtime, release: bool, target: Option<&str>) -> Result<String, String> {
+    let lib = rt.libname();
+    let profile = if release { "release" } else { "debug" };
+    let how_to_build = format!(
+        "build it in the Axon workspace with `cargo build -p {}{}{}`",
+        rt.package(),
+        if release { " --release" } else { "" },
+        target.map(|t| format!(" --target {t}")).unwrap_or_default()
+    );
+
+    if let Some(dir) = std::env::var_os(RUNTIME_DIR_VAR).filter(|d| !d.is_empty()) {
+        let dir = std::path::PathBuf::from(dir);
+        let path = match target {
+            Some(t) => dir.join(t).join(lib),
+            None => dir.join(lib),
+        };
+        return if path.is_file() {
+            Ok(path.display().to_string())
+        } else {
+            Err(format!(
+                "native runtime `{lib}` not found at {} ({RUNTIME_DIR_VAR}={}); \
+                 {how_to_build}, or unset {RUNTIME_DIR_VAR}",
+                path.display(),
+                dir.display()
+            ))
+        };
+    }
+
+    let root = workspace_root();
+    let build_failure = match (&root, find_cargo()) {
+        (Some(root), Some(cargo)) => match cargo_build_runtime(&cargo, root, rt, release, target) {
+            Ok(path) => return Ok(path),
+            Err(e) => Some(e),
+        },
+        _ => None,
+    };
+
+    let candidates = prebuilt_candidates(rt, profile, target, root.as_deref());
+    if let Some(found) = candidates.iter().find(|p| p.is_file()) {
+        if let Some(e) = &build_failure {
+            eprintln!(
+                "warning: could not rebuild the native runtime ({}); linking the prebuilt {}, \
+                 which may predate the runtime sources",
+                e.lines().next().unwrap_or_default(),
+                found.display()
+            );
+        }
+        return Ok(found.display().to_string());
+    }
+
+    let build_note = match (&root, &build_failure) {
+        (_, Some(e)) => format!("building it failed: {e}"),
+        (Some(r), None) => format!(
+            "the Axon workspace is at {}, but no `cargo` was found ($CARGO, PATH, \
+             $CARGO_HOME/bin, ~/.cargo/bin) to build it",
+            r.display()
+        ),
+        (None, None) => format!(
+            "no Axon source workspace to build it from (looked at {} and the \
+             directories above the axon executable)",
+            baked_workspace_dir().display()
+        ),
+    };
+    let searched: String = candidates
+        .iter()
+        .map(|p| format!("\n    {}", p.display()))
+        .collect();
+    Err(format!(
+        "native runtime `{lib}` (crate {}) not found, so the program cannot be linked.\n  \
+         {build_note}\n  searched:{searched}\n  \
+         Fix: {how_to_build}, or set {RUNTIME_DIR_VAR} to a directory containing {lib}.",
+        rt.package()
+    ))
+}
+
+/// The workspace directory baked in at compile time (`crates/axon-core/../..`).
+fn baked_workspace_dir() -> std::path::PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..")
+}
+
+/// Root of the Axon source workspace: the one this compiler was compiled from
+/// if it still exists, else the first directory above the executable that is
+/// one (an installed or copied binary). Never the current directory.
+fn workspace_root() -> Option<std::path::PathBuf> {
+    let is_axon_workspace = |d: &Path| {
+        d.join("Cargo.toml").is_file()
+            && d.join("crates")
+                .join("axon-rt")
+                .join("Cargo.toml")
+                .is_file()
+    };
+    let baked = baked_workspace_dir();
+    if is_axon_workspace(&baked) {
+        return Some(baked.canonicalize().unwrap_or(baked));
+    }
+    let exe = std::env::current_exe().ok()?;
+    exe.ancestors()
+        .skip(1)
+        .find(|d| is_axon_workspace(d))
+        .map(Path::to_path_buf)
+}
+
+/// `$CARGO` (set when run under cargo), then `cargo` on `PATH`, then the rustup
+/// install location — so a `PATH` without `~/.cargo/bin` still finds it.
+fn find_cargo() -> Option<std::path::PathBuf> {
+    if let Some(c) = std::env::var_os("CARGO").map(std::path::PathBuf::from) {
+        if c.is_file() {
+            return Some(c);
+        }
+    }
+    if let Ok(c) = which::which("cargo") {
+        return Some(c);
+    }
+    let cargo_home = std::env::var_os("CARGO_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".cargo")))?;
+    Some(cargo_home.join("bin").join("cargo")).filter(|c| c.is_file())
+}
+
+/// Places a prebuilt `rt` staticlib can sit, most specific first: the cargo
+/// target dirs (`$CARGO_TARGET_DIR`, `<workspace>/target`, and the one the
+/// running executable was built into, `<target>/<profile>/axon`) for the wanted
+/// profile; for a host build the executable's own directory and
+/// `<exe>/../lib/axon` (an install layout); then the other profile, whose
+/// runtime is functionally identical, only differently optimised.
+fn prebuilt_candidates(
+    rt: Runtime,
+    profile: &str,
+    target: Option<&str>,
+    root: Option<&Path>,
+) -> Vec<std::path::PathBuf> {
+    let exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|e| e.parent().map(Path::to_path_buf));
+    let mut target_dirs: Vec<std::path::PathBuf> = Vec::new();
+    if let Some(d) = std::env::var_os("CARGO_TARGET_DIR") {
+        target_dirs.push(d.into());
+    }
+    if let Some(r) = root {
+        target_dirs.push(r.join("target"));
+    }
+    if let Some(d) = exe_dir.as_deref().and_then(Path::parent) {
+        target_dirs.push(d.to_path_buf());
+    }
+    let in_profile = |p: &str| -> Vec<std::path::PathBuf> {
+        target_dirs
+            .iter()
+            .map(|t| match target {
+                Some(triple) => t.join(triple).join(p),
+                None => t.join(p),
+            })
+            .collect()
+    };
+
+    let mut dirs = in_profile(profile);
+    if target.is_none() {
+        if let Some(e) = &exe_dir {
+            dirs.push(e.clone());
+            dirs.push(e.join("..").join("lib").join("axon"));
+        }
+    }
+    dirs.extend(in_profile(if profile == "release" {
+        "debug"
+    } else {
+        "release"
+    }));
+
+    let mut out: Vec<std::path::PathBuf> = Vec::new();
+    for d in dirs {
+        let p = d.join(rt.libname());
+        if !out.contains(&p) {
+            out.push(p);
+        }
+    }
+    out
+}
+
+/// `cargo build -p <pkg>` in the workspace at `root`, returning the staticlib
+/// path cargo reports (so `CARGO_TARGET_DIR` and `.cargo/config` target dirs
+/// are honoured without guessing). When `target` is `Some(triple)` the crate is
+/// cross-built for it (R14: the Android cross-build).
+fn cargo_build_runtime(
+    cargo: &Path,
+    root: &Path,
+    rt: Runtime,
     release: bool,
     target: Option<&str>,
-) -> Option<String> {
-    let cargo = std::env::var("CARGO")
-        .ok()
-        .unwrap_or_else(|| "cargo".into());
-    let profile = if release { "release" } else { "debug" };
-
-    // AUDIT T11 (findings P5-15 / DOC-01, both reproduced). This read
-    // `std::env::var("CARGO_MANIFEST_DIR")` at RUNTIME. That variable is set by
-    // cargo only while COMPILING, so it is absent from every released binary's
-    // environment and the fallback — the RELATIVE path "Cargo.toml" — is
-    // correct only when the cwd happens to be the workspace root. From anywhere
-    // else, `axon build hello.ax` emitted ~100 `undefined reference to
-    // __axon_*` and failed at link, while the identical binary succeeded from
-    // the repo root.
-    //
-    // `env!` bakes the path at COMPILE time (correct for a dev build), and the
-    // fallback walks up from the actual executable to the first directory
-    // containing Cargo.toml (correct for an installed binary). Neither depends
-    // on the cwd.
-    let manifest = workspace_manifest();
-
-    let mut cmd = Command::new(&cargo);
-    cmd.args(["build", "-p", pkg, "--manifest-path", &manifest])
-        .args(if release { &["--release"][..] } else { &[][..] });
+) -> Result<String, String> {
+    let mut cmd = Command::new(cargo);
+    cmd.current_dir(root)
+        .args([
+            "build",
+            "-p",
+            rt.package(),
+            "--message-format=json-render-diagnostics",
+        ])
+        .arg("--manifest-path")
+        .arg(root.join("Cargo.toml"));
+    if release {
+        cmd.arg("--release");
+    }
     if let Some(t) = target {
         cmd.args(["--target", t]);
         // R14: when cross-building for Android, point cargo + cc-rs at the NDK
@@ -736,50 +1023,59 @@ fn build_crate_staticlib(
             }
         }
     }
-    let status = cmd
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .ok()?;
-
-    if !status.success() {
-        return None;
+    let out = cmd
+        .stdin(std::process::Stdio::null())
+        .output()
+        .map_err(|e| format!("could not run {}: {e}", cargo.display()))?;
+    let command = format!(
+        "`{} build -p {}` in {}",
+        cargo.display(),
+        rt.package(),
+        root.display()
+    );
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        let lines: Vec<&str> = stderr.lines().collect();
+        let tail = lines[lines.len().saturating_sub(15)..].join("\n      ");
+        return Err(format!(
+            "{command} exited with {}:\n      {tail}",
+            out.status
+        ));
     }
-
-    // Resolve the target directory from CARGO_TARGET_DIR or adjacent to manifest.
-    // AUDIT T11: same cwd-dependent bug as the manifest path above.
-    let target_dir = std::env::var("CARGO_TARGET_DIR").unwrap_or_else(|_| {
-        let m = workspace_manifest();
-        match std::path::Path::new(&m).parent() {
-            Some(root) => root.join("target").display().to_string(),
-            None => "target".into(),
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    for line in stdout.lines() {
+        let Ok(msg) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        if msg["reason"] != "compiler-artifact" {
+            continue;
         }
-    });
-
-    // Cross-built artifacts live under target/<triple>/<profile>/.
-    let lib_path = match target {
-        Some(t) => format!("{target_dir}/{t}/{profile}/{libname}"),
-        None => format!("{target_dir}/{profile}/{libname}"),
-    };
-    if std::path::Path::new(&lib_path).exists() {
-        Some(lib_path)
-    } else {
-        None
+        let files = msg["filenames"].as_array().into_iter().flatten();
+        for f in files.filter_map(|f| f.as_str()) {
+            if Path::new(f).file_name() == Some(std::ffi::OsStr::new(rt.libname())) {
+                return Ok(f.to_string());
+            }
+        }
     }
+    Err(format!(
+        "{command} succeeded but reported no {}",
+        rt.libname()
+    ))
 }
 
 /// R14 slice 1/2: link an Android object into a runnable bionic ELF executable.
 ///
 /// Uses the NDK clang as the linker (cross.toml override or NDK auto-detect),
-/// links the Android-triple cross-build of axon-rt, and produces a PIE ELF (the
-/// Android ABI requirement). Produces an E1710 if the NDK is absent and E1712
-/// if the link fails.
+/// links the Android-triple cross-build of the native runtime `rt`, and
+/// produces a PIE ELF (the Android ABI requirement). Produces an E1710 if the
+/// NDK is absent and E1712 if the runtime cannot be found or the link fails.
 fn android_link(
     obj_path: &str,
     output_path: &str,
     release: bool,
     triple: &str,
     shared: bool,
+    rt: Runtime,
 ) -> Result<(), String> {
     // Default NDK API level. The minSdk for Axon mobile artifacts; overridable
     // via $AXON_ANDROID_API.
@@ -790,38 +1086,29 @@ fn android_link(
 
     let linker = android_linker(triple, api)?;
 
-    // Cross-build axon-rt + axon-ai for the Android triple. Channel/spawn/
-    // gfx-mock builtins resolve to axon-rt; ai_complete/ai_extract_* resolve to
-    // axon-ai. Without them the link fails with a clear "undefined symbol
-    // __axon_*" rather than a silent wrong result.
-    let rt_lib = build_crate_staticlib("axon-rt", "libaxon_rt.a", release, Some(triple));
-    let ai_lib = build_crate_staticlib("axon-ai", "libaxon_ai.a", release, Some(triple));
+    // The Android-triple cross-build of the runtime. Channel/spawn/gfx-mock
+    // builtins resolve to axon-rt; ai_complete/ai_extract_* to the axon-ai half
+    // of `Runtime::WithAi`.
+    let rt_lib = runtime_staticlib(rt, release, Some(triple))
+        .map_err(|e| format!("[E1712] mobile link failed for '{triple}': {e}"))?;
 
     // The NDK clang already knows the bionic sysroot, PIE, and libm. We do NOT
-    // pass -no-pie (Android requires PIE) and let clang supply libc.
+    // pass -no-pie (Android requires PIE) and let clang supply libc. `-lm` goes
+    // after the runtime, which is what references it.
     let mut args: Vec<String> = vec![
         obj_path.to_string(),
         "-o".to_string(),
         output_path.to_string(),
-        "-lm".to_string(),
-        // Both axon-rt and axon-ai are Rust staticlibs that each embed their own
-        // copy of `core`; allow the duplicate to resolve to the first (same
-        // rustc core) — the host link uses the same remedy.
-        "-Wl,--allow-multiple-definition".to_string(),
     ];
     if shared {
         // R14: a loadable JNI shared object. Keep the Axon entry symbols
         // (`main`/on_start/…) globally visible so the Kotlin wrapper can bind
-        // them; the staticlibs are linked whole so __axon_* resolve.
+        // them; the staticlib is linked whole so __axon_* resolve.
         args.push("-shared".to_string());
         args.push("-Wl,--export-dynamic".to_string());
     }
-    if let Some(ref lib) = rt_lib {
-        args.push(lib.clone());
-    }
-    if let Some(ref lib) = ai_lib {
-        args.push(lib.clone());
-    }
+    args.push(rt_lib);
+    args.push("-lm".to_string());
 
     let status = Command::new(&linker)
         .args(&args)
@@ -836,15 +1123,4 @@ fn android_link(
             linker.display()
         ))
     }
-}
-
-// ── axon-ai build helper ─────────────────────────────────────────────────────
-
-/// Build `axon-ai` as a static library and return the path to `libaxon_ai.a`.
-///
-/// Silently returns `None` if cargo is not found or the build fails, so that
-/// the linker step still attempts to proceed (ai_complete will be a missing
-/// symbol only when actually called).
-pub(super) fn build_axon_ai(release: bool) -> Option<String> {
-    build_crate_staticlib("axon-ai", "libaxon_ai.a", release, None)
 }

@@ -287,6 +287,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "axon-rt-ai"
+version = "0.1.0"
+dependencies = [
+ "axon-ai",
+ "axon-rt",
+]
+
+[[package]]
 name = "axon-signal"
 version = "0.1.0"
 dependencies = [

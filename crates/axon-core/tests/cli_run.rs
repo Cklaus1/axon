@@ -27967,10 +27967,10 @@ fn editing_an_imported_module_invalidates_the_build_cache() {
     )
     .unwrap();
 
-    // PIN THE COMPILER. The cache key deliberately mixes the compiler
-    // executable's path, size and MTIME (main.rs, "AUDIT T38") so a rebuilt
-    // compiler can never serve the previous one's cached object. That is a
-    // soundness property and is correct.
+    // PIN THE COMPILER. The cache key deliberately includes a digest of the
+    // compiler executable (cache.rs `compiler_digest`, AUDIT T38, AX-15) so a
+    // rebuilt compiler can never serve the previous one's cached object. That
+    // is a soundness property and is correct.
     //
     // It also made this test flaky under `cargo test --workspace`: cargo can
     // rebuild `target/debug/axon` between the two builds below, which changes
@@ -28063,6 +28063,249 @@ fn editing_an_imported_module_invalidates_the_build_cache() {
         "an unchanged rebuild must reuse its key, not mint a new entry"
     );
 
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// AX-15. The build cache must key on the compiler BUILD, not on where the
+/// executable lives or when it was written. The key used to mix the compiler
+/// executable's path + size + mtime, so a rebuilt compiler whose codegen change
+/// kept the binary's size (a changed constant) and whose mtime matched the old
+/// one (an install that preserves mtime, a reproducible build) served the OLD
+/// compiler's cached bitcode. Measured: `main` changed to return 7, rebuilt,
+/// mtime restored -> cached build exited 0, `--no-cache` exited 7.
+///
+/// Here the second compiler is the first one with one byte of its `.comment`
+/// section (never loaded) changed, the same size, at the same path, with its
+/// mtime set back: a different executable that every metadata check calls
+/// identical. It must mint its own cache entry; and an untouched compiler
+/// must still hit (invalidation, not disablement).
+#[test]
+fn a_different_compiler_with_the_same_path_size_and_mtime_misses_the_build_cache() {
+    let dir = std::env::temp_dir().join(format!("axon_compiler_id_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let cache = dir.join("cache");
+    let app = dir.join("app.ax");
+    std::fs::write(&app, "fn main() { println(\"hi\") }\n").unwrap();
+    let compiler = dir.join("axon");
+    std::fs::copy(env!("CARGO_BIN_EXE_axon"), &compiler).unwrap();
+
+    let entries = || {
+        std::fs::read_dir(&cache)
+            .map(|d| {
+                d.filter_map(|e| e.ok())
+                    .filter(|e| e.path().extension().is_some_and(|x| x == "axc"))
+                    .count()
+            })
+            .unwrap_or(0)
+    };
+    let build = |tag: &str| -> Option<()> {
+        let bin = dir.join(format!("{tag}.bin"));
+        let o = Command::new(&compiler)
+            .args(["build", app.to_str().unwrap(), "-o", bin.to_str().unwrap()])
+            .args(["--cache-dir", cache.to_str().unwrap()])
+            .output()
+            .unwrap();
+        let log = format!(
+            "{}{}",
+            String::from_utf8_lossy(&o.stdout),
+            String::from_utf8_lossy(&o.stderr)
+        );
+        if !o.status.success() {
+            assert!(
+                codegen_absent(&log),
+                "build failed for a reason other than a missing backend: {log}"
+            );
+            return None;
+        }
+        let r = Command::new(&bin).output().unwrap();
+        assert_eq!(String::from_utf8_lossy(&r.stdout).trim(), "hi", "{log}");
+        Some(())
+    };
+
+    if build("a").is_none() {
+        eprintln!("SKIP a_different_compiler_with_the_same_path_size_and_mtime_misses_the_build_cache: no codegen");
+        let _ = std::fs::remove_dir_all(&dir);
+        return;
+    }
+    assert_eq!(entries(), 1);
+    build("a_again").unwrap();
+    assert_eq!(
+        entries(),
+        1,
+        "an unchanged compiler must reuse its cache entry"
+    );
+
+    // Same path, same size, same mtime, different bytes.
+    let mtime = std::fs::metadata(&compiler).unwrap().modified().unwrap();
+    let mut bytes = std::fs::read(&compiler).unwrap();
+    let len = bytes.len();
+    let needle = b"rustc version ";
+    let at = bytes
+        .windows(needle.len())
+        .rposition(|w| w == needle)
+        .expect("the compiler executable records its rustc version in `.comment`");
+    bytes[at] = b'R';
+    std::fs::write(&compiler, &bytes).unwrap();
+    let f = std::fs::File::options()
+        .write(true)
+        .open(&compiler)
+        .unwrap();
+    f.set_modified(mtime).unwrap();
+    drop(f);
+    let md = std::fs::metadata(&compiler).unwrap();
+    assert_eq!((md.len() as usize, md.modified().unwrap()), (len, mtime));
+
+    build("b").unwrap();
+    assert_eq!(
+        entries(),
+        2,
+        "a different compiler executable must not be served the previous compiler's cache entry"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// AX-11. A native binary links ONE runtime staticlib, the AI-capable one only
+/// when the program can actually call an AI builtin. Linking `libaxon_rt.a`
+/// AND `libaxon_ai.a` (two Rust staticlibs, two copies of std) made every
+/// `hello` 45.7 MB and needed `-Wl,--allow-multiple-definition`.
+///
+/// An AI call reached only through a helper must still link the AI runtime and
+/// answer like the interpreter; an AI call in a fn nothing calls must not drag
+/// the AI runtime into the binary, and the program must still run.
+#[test]
+fn native_binaries_link_the_ai_runtime_only_when_an_ai_builtin_is_reachable() {
+    let dir = std::env::temp_dir().join(format!("axon_rt_select_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let unused_ai = "fn unused() -> str {\n    match ai_complete(\"never called\") {\n        Ok(r) => r\n        Err(e) => e\n    }\n}\n";
+    let reached = format!(
+        "{unused_ai}fn ask(p: str) -> str {{\n    match ai_complete(p) {{\n        Ok(r) => r\n        Err(e) => e\n    }}\n}}\nfn main() {{\n    println(ask(\"Say hi.\"))\n}}\n"
+    );
+    let dead = format!("{unused_ai}fn main() {{\n    println(\"no ai\")\n}}\n");
+
+    // (native stdout, interpreter stdout, binary contains the AI runtime)
+    let run_both = |tag: &str, src: &str| -> Option<(String, String, bool)> {
+        let f = dir.join(format!("{tag}.ax"));
+        std::fs::write(&f, src).unwrap();
+        let bin = dir.join(tag);
+        let o = axon()
+            .args([
+                "build",
+                f.to_str().unwrap(),
+                "-o",
+                bin.to_str().unwrap(),
+                "--no-cache",
+            ])
+            .output()
+            .unwrap();
+        let log = format!(
+            "{}{}",
+            String::from_utf8_lossy(&o.stdout),
+            String::from_utf8_lossy(&o.stderr)
+        );
+        if !o.status.success() {
+            assert!(codegen_absent(&log), "build of {tag} failed: {log}");
+            return None;
+        }
+        let native = Command::new(&bin)
+            .env("AXON_AI_MOCK", "1")
+            .output()
+            .unwrap();
+        assert!(native.status.success(), "{tag} native run failed");
+        let interp = axon()
+            .arg("run")
+            .arg(&f)
+            .env("AXON_AI_MOCK", "1")
+            .output()
+            .unwrap();
+        let bytes = std::fs::read(&bin).unwrap();
+        let needle = b"__axon_ai_complete";
+        let has_ai = bytes.windows(needle.len()).any(|w| w == needle);
+        Some((
+            String::from_utf8_lossy(&native.stdout).into_owned(),
+            String::from_utf8_lossy(&interp.stdout).into_owned(),
+            has_ai,
+        ))
+    };
+
+    let Some((native, interp, has_ai)) = run_both("reached", &reached) else {
+        eprintln!("SKIP native_binaries_link_the_ai_runtime_only_when_an_ai_builtin_is_reachable: no codegen");
+        let _ = std::fs::remove_dir_all(&dir);
+        return;
+    };
+    assert!(!native.trim().is_empty());
+    assert_eq!(
+        native, interp,
+        "a native AI call must answer like the interpreter"
+    );
+    assert!(has_ai, "a reachable AI call must link the AI runtime");
+
+    let (native, interp, has_ai) = run_both("dead", &dead).unwrap();
+    assert_eq!(native.trim(), "no ai");
+    assert_eq!(native, interp);
+    assert!(
+        !has_ai,
+        "an AI call nothing reaches must not link the AI runtime"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// AX-09. `axon build` must find the native runtime wherever it is run from:
+/// it used to resolve the runtime through a RELATIVE `Cargo.toml` and shell out
+/// to `cargo` from `PATH`, so from any directory but the workspace root (or
+/// with no cargo on PATH) the link failed with ~100 `undefined reference to
+/// __axon_*`. Run here from a scratch directory with a PATH that holds no
+/// cargo and no `$CARGO`.
+#[test]
+fn native_build_links_from_any_directory_without_cargo_on_path() {
+    let dir = std::env::temp_dir().join(format!("axon_cwd_link_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("hello.ax"), "fn main() { println(\"hello\") }\n").unwrap();
+    let o = axon()
+        .current_dir(&dir)
+        .env_remove("CARGO")
+        .env("PATH", "/usr/bin:/bin")
+        .args(["build", "hello.ax", "-o", "hello", "--no-cache"])
+        .output()
+        .unwrap();
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&o.stdout),
+        String::from_utf8_lossy(&o.stderr)
+    );
+    if codegen_absent(&log) {
+        eprintln!("SKIP native_build_links_from_any_directory_without_cargo_on_path: no codegen");
+        let _ = std::fs::remove_dir_all(&dir);
+        return;
+    }
+    assert!(
+        o.status.success(),
+        "build from {} failed:\n{log}",
+        dir.display()
+    );
+    assert!(!log.contains("undefined reference"), "{log}");
+    let r = Command::new(dir.join("hello")).output().unwrap();
+    assert_eq!(String::from_utf8_lossy(&r.stdout).trim(), "hello");
+
+    // A runtime directory that does not hold the runtime is ONE clear error
+    // naming what was searched, never a flood of undefined references.
+    let o = axon()
+        .current_dir(&dir)
+        .env("AXON_RUNTIME_DIR", dir.join("no-such-dir"))
+        .args(["build", "hello.ax", "-o", "hello2", "--no-cache"])
+        .output()
+        .unwrap();
+    let err = String::from_utf8_lossy(&o.stderr);
+    assert!(!o.status.success());
+    assert!(
+        err.contains("native runtime `libaxon_rt.a` not found") && err.contains("no-such-dir"),
+        "{err}"
+    );
+    assert!(!err.contains("undefined reference"), "{err}");
     let _ = std::fs::remove_dir_all(&dir);
 }
 

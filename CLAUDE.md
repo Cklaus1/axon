@@ -199,14 +199,17 @@ the revert is RECORDED. See `crates/axon-cortex/README.md`.
 **Execution is interpreter-first.** `run`/`goal`/`test`/`check` work without the
 `codegen` feature via the tree-walking interpreter (`interp.rs`). The native
 LLVM/inkwell `codegen` feature is **on by default and now builds in ~3s** —
-the long-standing "build never finishes" stall was a `serde-json` × `codegen`
-default-feature collision (recursive AST serde derives × codegen
-monomorphization), fixed by dropping `serde-json` from `default`
+the long-standing "build never finishes" stall was the internally-tagged
+(`serde(tag = "kind")`) serde derive on the recursive AST enums, which sent
+rustc's monomorphization collector into unbounded recursion in ANY build that
+instantiated `program_to_json` (AX-10; long misread as a `serde-json` ×
+`codegen` collision). The enums are adjacently tagged now (`{"kind","value"}`,
+`ast.rs`), so `serde-json` and `codegen` combine freely
 (`BUILD_RESOLVED.md`). `cargo build -p axon-core` produces the native `axon`
-compiler; `axon build foo.ax` emits a native binary. **Do not enable
-`codegen` + `serde-json` together** until the AST derives are decoupled — that
-combo reintroduces the stall. `axon parse`/`lsp` (JSON) opt in with
-`--features serde-json` (interpreter build, no codegen). Add `--features
+compiler; `axon build foo.ax` emits a native binary, from any directory and
+without cargo on PATH (runtime staticlibs resolve from the compiler's own
+workspace/target dir or `AXON_RUNTIME_DIR`). `axon parse`/`lsp` (JSON) opt in
+with `--features serde-json`. Add `--features
 asi-runtime` to enable live `ai_complete`/`ai_extract_*` — **a feature NOTHING
 in `scripts/` or `.github/workflows/` compiles**, so the compiler-side AI
 integration (`main.rs` `cmd_intent_compile`, `interp.rs`'s live path) is
