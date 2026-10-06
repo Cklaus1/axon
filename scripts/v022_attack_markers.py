@@ -1914,3 +1914,16 @@ ATTACK_MARKERS.update({
 
 
 ATTACK_MARKERS['M890'] = r'ATTACK: a restore that left a foreign interpreter in place was reported as restored'
+
+# C9 round 6, r4c-psv1d (M1990-M1997; amendment 83): the dispatch rule.
+_D = r"ATTACK: operator code dispatched on a value of the candidate's chosen type \(an output dict the candidate fills\): Ok\(Completed\)"
+ATTACK_MARKERS.update({
+    'M1990': _D,
+    'M1991': _D,
+    'M1992': _D,
+    'M1993': _D,
+    'M1994': r"ATTACK: operator code dispatched on a value of the candidate's chosen type \(an unannotated lambda parameter\): Ok\(Completed\)",
+    'M1995': _D,
+    'M1996': r"ATTACK: a u8 the candidate chose wrapped the operator's arithmetic into a pass: Ok\(Completed\)",
+    'M1997': r"ATTACK: a captured-dict closure retyped an entry against a stale snapshot: Ok\(Completed\)",
+})

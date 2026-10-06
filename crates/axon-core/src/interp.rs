@@ -8695,6 +8695,11 @@ fn main() { }
                 "fn unused() {}\n".into(),
             ),
             (
+                "an unannotated lambda parameter",
+                "let f = |x| assert(x.ok())\n    let d = dict_new()\n    solve(d)\n    match dict_get(d, \"k\") {\n        Some(v) => f(v)\n        None => assert(false)\n    }".into(),
+                stash_in("narrow(4)"),
+            ),
+            (
                 "a match on the untyped value before the dispatch",
                 "let d = dict_new()\n    solve(d)\n    match dict_get(d, \"k\") {\n        Some(v) => match v {\n            w => assert(w.ok())\n        }\n        None => assert(false)\n    }".into(),
                 stash_in("narrow(4)"),
