@@ -13,21 +13,194 @@
 //!
 //! Public surface:
 //!   * `compile_bitcode_to_binary` — load LLVM bitcode + link to a binary
+//!   * `OptLevel`                  — `axon build --opt-level` (IR pipeline + backend level)
 //!
 //! Crate-private surface (visible to `super::Codegen`):
 //!   * `emit_object_and_link` — IR module → object file → linked binary
 //!   * `prune_unreachable_ai_callers` / `Runtime` — pick the ONE runtime
 //!     staticlib a binary links (`libaxon_rt.a` or `libaxon_rt_ai.a`)
+//!   * `emit_hosted_object`   — IR module → program object file (no link)
+//!   * `optimize_for_ir_dump` — run the build's optimisation on a module for `--emit-llvm`
 //!   * `read_cross_linker`    — parse `~/.config/axon/cross.toml`
 
 use std::path::Path;
 use std::process::Command;
 
+use inkwell::attributes::{Attribute, AttributeLoc};
+use inkwell::module::{Linkage, Module};
+use inkwell::passes::PassBuilderOptions;
 use inkwell::targets::{
     CodeModel, FileType, InitializationConfig, RelocMode, Target, TargetMachine, TargetTriple,
 };
 use inkwell::values::{AnyValueEnum, BasicValue, BasicValueEnum};
 use inkwell::OptimizationLevel;
+
+// ── Optimisation levels (AX-17 / AX-21) ──────────────────────────────────────
+
+/// Optimisation level of a native build (`axon build --opt-level`).
+///
+/// A level selects BOTH the LLVM new-pass-manager IR pipeline that runs before
+/// emission (`default<On>`: mem2reg/SROA, inlining, GVN, LICM, loop passes, …)
+/// and the `TargetMachine` backend level (instruction selection, scheduling,
+/// register allocation). The size levels pair their `default<Os>`/`default<Oz>`
+/// pipelines with the `Default` backend level, as clang does. `O0` runs no IR
+/// passes at all.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OptLevel {
+    O0,
+    O1,
+    O2,
+    O3,
+    Os,
+    Oz,
+}
+
+impl OptLevel {
+    /// Parse the `--opt-level` spelling: `0`, `1`, `2`, `3`, `s` or `z`.
+    pub fn parse(s: &str) -> Result<Self, String> {
+        match s {
+            "0" => Ok(Self::O0),
+            "1" => Ok(Self::O1),
+            "2" => Ok(Self::O2),
+            "3" => Ok(Self::O3),
+            "s" => Ok(Self::Os),
+            "z" => Ok(Self::Oz),
+            other => Err(format!(
+                "invalid opt level '{other}' (expected one of: 0, 1, 2, 3, s, z)"
+            )),
+        }
+    }
+
+    /// The level implied by `--release` alone: `O2` for a release build, `O0`
+    /// otherwise.
+    pub fn from_release(release: bool) -> Self {
+        if release {
+            Self::O2
+        } else {
+            Self::O0
+        }
+    }
+
+    /// The `--opt-level` spelling of this level (inverse of [`OptLevel::parse`]).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::O0 => "0",
+            Self::O1 => "1",
+            Self::O2 => "2",
+            Self::O3 => "3",
+            Self::Os => "s",
+            Self::Oz => "z",
+        }
+    }
+
+    /// Any level above `O0`. Optimised builds link the release-profile
+    /// axon-rt/axon-ai staticlibs; `O0` links the debug profile.
+    pub fn is_optimized(self) -> bool {
+        self != Self::O0
+    }
+
+    fn backend(self) -> OptimizationLevel {
+        match self {
+            Self::O0 => OptimizationLevel::None,
+            Self::O1 => OptimizationLevel::Less,
+            Self::O2 | Self::Os | Self::Oz => OptimizationLevel::Default,
+            Self::O3 => OptimizationLevel::Aggressive,
+        }
+    }
+
+    fn pipeline(self) -> Option<&'static str> {
+        match self {
+            Self::O0 => None,
+            Self::O1 => Some("default<O1>"),
+            Self::O2 => Some("default<O2>"),
+            Self::O3 => Some("default<O3>"),
+            Self::Os => Some("default<Os>"),
+            Self::Oz => Some("default<Oz>"),
+        }
+    }
+}
+
+/// AX-21: run the IR pass pipeline for `opt` on `module`, verifying the module
+/// before and after. The pipeline is target-aware, so the caller sets the
+/// module triple first; the data layout is taken from `machine` here (codegen
+/// emits none, and the passes would otherwise lay out types with LLVM's
+/// target-neutral default, e.g. 4-byte-aligned i64). No-op at `O0`.
+fn optimize_module(
+    module: &Module<'_>,
+    machine: &TargetMachine,
+    opt: OptLevel,
+) -> Result<(), String> {
+    let Some(pipeline) = opt.pipeline() else {
+        return Ok(());
+    };
+    module.set_data_layout(&machine.get_target_data().get_data_layout());
+    module.verify().map_err(|e| {
+        format!(
+            "IR verification failed before `{pipeline}`: {}",
+            e.to_string()
+        )
+    })?;
+    module
+        .run_passes(pipeline, machine, PassBuilderOptions::create())
+        .map_err(|e| format!("LLVM pass pipeline `{pipeline}` failed: {}", e.to_string()))?;
+    module.verify().map_err(|e| {
+        format!(
+            "IR verification failed after `{pipeline}`: {}",
+            e.to_string()
+        )
+    })
+}
+
+/// Freestanding output links no libc, so the optimiser must not synthesise
+/// libc calls (loop-idiom recognition turning a fill/copy loop into
+/// `memset`/`memcpy`, printf→puts, …). `"no-builtins"` on every definition is
+/// what clang's `-ffreestanding` emits for the same reason.
+fn mark_no_builtins(module: &Module<'_>) {
+    let attr = module
+        .get_context()
+        .create_string_attribute("no-builtins", "");
+    let mut next = module.get_first_function();
+    while let Some(func) = next {
+        next = func.get_next_function();
+        if func.count_basic_blocks() > 0 {
+            func.add_attribute(AttributeLoc::Function, attr);
+        }
+    }
+}
+
+/// AX-22: give every function DEFINITION except `main` internal linkage, for
+/// output that is a whole hosted program (executable, or its program object).
+///
+/// Such a program is one LLVM module; the only caller from outside it is the C
+/// runtime calling `main` (axon-rt/axon-ai import no program symbols). With
+/// default external linkage every call left the module's control — through the
+/// PLT under PIC — and the IPO passes could not specialise, merge or delete a
+/// function. Internal linkage is dso_local by construction, so calls (including
+/// self-recursion) are direct, and GlobalDCE drops the unused builtin helpers.
+/// Declarations (runtime/libc externs) are untouched. `naked` functions keep
+/// external linkage: their callers can be inline-asm text naming the symbol.
+///
+/// Not applied to freestanding, shared-lib, wasm or mobile-object output: their
+/// consumers (boot stubs, linker scripts, JNI, wasm exports) reach functions by
+/// name.
+fn internalize_program_functions(module: &Module<'_>) {
+    let naked = Attribute::get_named_enum_kind_id("naked");
+    let mut next = module.get_first_function();
+    while let Some(func) = next {
+        next = func.get_next_function();
+        let is_definition = func.count_basic_blocks() > 0;
+        if !is_definition
+            || func.get_linkage() != Linkage::External
+            || func.get_name().to_bytes() == b"main"
+            || func
+                .get_enum_attribute(AttributeLoc::Function, naked)
+                .is_some()
+        {
+            continue;
+        }
+        func.set_linkage(Linkage::Internal);
+    }
+}
 
 // ── R14 Android cross-link support ────────────────────────────────────────────
 
@@ -146,7 +319,7 @@ fn android_linker(triple: &str, api: u32) -> Result<std::path::PathBuf, String> 
 pub fn compile_bitcode_to_binary(
     bitcode: &[u8],
     output_path: &str,
-    release: bool,
+    opt: OptLevel,
     target_triple: Option<&str>,
 ) -> Result<(), String> {
     use inkwell::memory_buffer::MemoryBuffer;
@@ -159,7 +332,7 @@ pub fn compile_bitcode_to_binary(
         )
     })?;
     prune_unreachable_ai_callers(&module);
-    emit_object_and_link(&module, output_path, release, target_triple)
+    emit_object_and_link(&module, output_path, opt, target_triple)
 }
 
 /// R7 Slice B (AOT wasm, object half): emit a WebAssembly **object file** for
@@ -174,30 +347,12 @@ pub fn compile_bitcode_to_binary(
 pub fn emit_wasm_object(
     module: &inkwell::module::Module<'_>,
     output_path: &str,
-    release: bool,
+    opt: OptLevel,
     target_triple: &str,
 ) -> Result<(), String> {
-    let opt = if release {
-        OptimizationLevel::Default
-    } else {
-        OptimizationLevel::None
-    };
-    Target::initialize_all(&InitializationConfig::default());
-    let triple = TargetTriple::create(target_triple);
-    let target = Target::from_triple(&triple).map_err(|e| {
-        format!("[E0904] target '{target_triple}' not supported by this LLVM build: {e}")
-    })?;
-    let machine = target
-        .create_target_machine(
-            &triple,
-            "generic",
-            "",
-            opt,
-            RelocMode::PIC,
-            CodeModel::Default,
-        )
-        .ok_or_else(|| format!("[E0904] could not create target machine for '{target_triple}'"))?;
+    let (triple, machine) = pic_target_machine(target_triple, opt)?;
     module.set_triple(&triple);
+    optimize_module(module, &machine, opt)?;
     machine
         .write_to_file(module, FileType::Object, Path::new(output_path))
         .map_err(|e| format!("wasm object emit: {e}"))?;
@@ -214,108 +369,143 @@ pub fn emit_wasm_object(
 pub fn emit_object_for_triple(
     module: &inkwell::module::Module<'_>,
     output_path: &str,
-    release: bool,
+    opt: OptLevel,
     target_triple: &str,
 ) -> Result<(), String> {
-    let opt = if release {
-        OptimizationLevel::Default
-    } else {
-        OptimizationLevel::None
-    };
+    let (triple, machine) = pic_target_machine(target_triple, opt)?;
+    module.set_triple(&triple);
+    optimize_module(module, &machine, opt)?;
+    machine
+        .write_to_file(module, FileType::Object, Path::new(output_path))
+        .map_err(|e| format!("mobile object emit: {e}"))
+}
+
+/// `TargetMachine` for an explicit (cross/device) triple: all backends
+/// initialised, PIC relocations, default code model.
+fn pic_target_machine(
+    triple_str: &str,
+    opt: OptLevel,
+) -> Result<(TargetTriple, TargetMachine), String> {
     Target::initialize_all(&InitializationConfig::default());
-    let triple = TargetTriple::create(target_triple);
+    let triple = TargetTriple::create(triple_str);
     let target = Target::from_triple(&triple).map_err(|e| {
-        format!("[E0904] target '{target_triple}' not supported by this LLVM build: {e}")
+        format!("[E0904] target '{triple_str}' not supported by this LLVM build: {e}")
     })?;
     let machine = target
         .create_target_machine(
             &triple,
             "generic",
             "",
-            opt,
+            opt.backend(),
             RelocMode::PIC,
             CodeModel::Default,
         )
-        .ok_or_else(|| format!("[E0904] could not create target machine for '{target_triple}'"))?;
-    module.set_triple(&triple);
-    machine
-        .write_to_file(module, FileType::Object, Path::new(output_path))
-        .map_err(|e| format!("mobile object emit: {e}"))
+        .ok_or_else(|| format!("[E0904] could not create target machine for '{triple_str}'"))?;
+    Ok((triple, machine))
+}
+
+/// `TargetMachine` for a hosted program: the native host when `target_triple`
+/// is `None`, else the cross triple (PIC).
+fn hosted_target_machine(
+    target_triple: Option<&str>,
+    opt: OptLevel,
+) -> Result<(TargetTriple, TargetMachine), String> {
+    if let Some(triple_str) = target_triple {
+        return pic_target_machine(triple_str, opt);
+    }
+    Target::initialize_native(&InitializationConfig::default())
+        .map_err(|e| format!("LLVM native target init: {e}"))?;
+    let triple = TargetMachine::get_default_triple();
+    let target = Target::from_triple(&triple).map_err(|e| format!("get native target: {e}"))?;
+    let machine = target
+        .create_target_machine(
+            &triple,
+            "generic",
+            "",
+            opt.backend(),
+            RelocMode::Default,
+            CodeModel::Default,
+        )
+        .ok_or_else(|| "failed to create native target machine".to_string())?;
+    Ok((triple, machine))
 }
 
 // ── Crate-private surface (callable from super::Codegen) ─────────────────────
 
-/// Initialize LLVM targets, create a `TargetMachine`, emit an object file, and
-/// link it into a binary at `output_path`.
+/// Emit a hosted program's object file at `obj_path`, without linking.
+///
+/// This is exactly the object `emit_object_and_link` links: module triple set,
+/// program functions internalised (AX-22), the `opt` IR pipeline run (AX-21).
+/// `axon build --emit-obj` (AX-23) writes it to `--out` directly.
 ///
 /// When `target_triple` is `None` the native host triple is used.  When it is
 /// `Some(triple)` all LLVM backends are initialized and the specified triple is
 /// used (cross-compilation).
+pub(super) fn emit_hosted_object(
+    module: &inkwell::module::Module<'_>,
+    obj_path: &str,
+    opt: OptLevel,
+    target_triple: Option<&str>,
+) -> Result<(), String> {
+    let (triple, machine) = hosted_target_machine(target_triple, opt)?;
+    // Update the module's target triple so the emitted object is correct.
+    module.set_triple(&triple);
+    internalize_program_functions(module);
+    optimize_module(module, &machine, opt)?;
+    machine
+        .write_to_file(module, FileType::Object, Path::new(obj_path))
+        .map_err(|e| format!("object emit: {e}"))
+}
+
+/// `--emit-llvm`: apply to `module` the transformations the object-emitting
+/// path for this build would apply before code generation (target triple and
+/// data layout, internalisation for a hosted program, the `opt` IR pipeline),
+/// so the dumped IR is the IR that gets compiled. `O0` leaves the module as
+/// emitted.
+pub(super) fn optimize_for_ir_dump(
+    module: &inkwell::module::Module<'_>,
+    opt: OptLevel,
+    target_triple: Option<&str>,
+    freestanding: bool,
+    shared: bool,
+) -> Result<(), String> {
+    if !opt.is_optimized() {
+        return Ok(());
+    }
+    let (triple, machine) = if freestanding {
+        freestanding_target_machine(target_triple.unwrap_or("x86_64-unknown-none"), opt)?
+    } else if shared {
+        let triple_str = target_triple.ok_or_else(|| {
+            "[E1710] --host mobile requires an Android --target (e.g. aarch64-linux-android)"
+                .to_string()
+        })?;
+        pic_target_machine(triple_str, opt)?
+    } else {
+        hosted_target_machine(target_triple, opt)?
+    };
+    module.set_triple(&triple);
+    if freestanding {
+        mark_no_builtins(module);
+    } else if !shared {
+        internalize_program_functions(module);
+    }
+    optimize_module(module, &machine, opt)
+}
+
+/// Emit the hosted program's object (see `emit_hosted_object`) and link it
+/// into a binary at `output_path`.
 pub(super) fn emit_object_and_link(
     module: &inkwell::module::Module<'_>,
     output_path: &str,
-    release: bool,
+    opt: OptLevel,
     target_triple: Option<&str>,
 ) -> Result<(), String> {
-    let opt = if release {
-        OptimizationLevel::Default
-    } else {
-        OptimizationLevel::None
-    };
-
-    let (triple, machine) = if let Some(triple_str) = target_triple {
-        // Cross-compilation: initialise every backend so any target is reachable.
-        Target::initialize_all(&InitializationConfig::default());
-        let triple = TargetTriple::create(triple_str);
-        let target = Target::from_triple(&triple).map_err(|e| {
-            format!(
-                "[E0904] target '{}' not supported by this LLVM build: {}",
-                triple_str, e
-            )
-        })?;
-        let machine = target
-            .create_target_machine(
-                &triple,
-                "generic",
-                "",
-                opt,
-                RelocMode::PIC,
-                CodeModel::Default,
-            )
-            .ok_or_else(|| {
-                format!(
-                    "[E0904] could not create target machine for '{}'",
-                    triple_str
-                )
-            })?;
-        (triple, machine)
-    } else {
-        // Native compilation.
-        Target::initialize_native(&InitializationConfig::default())
-            .map_err(|e| format!("LLVM native target init: {e}"))?;
-        let triple = TargetMachine::get_default_triple();
-        let target = Target::from_triple(&triple).map_err(|e| format!("get native target: {e}"))?;
-        let machine = target
-            .create_target_machine(
-                &triple,
-                "generic",
-                "",
-                opt,
-                RelocMode::Default,
-                CodeModel::Default,
-            )
-            .ok_or_else(|| "failed to create native target machine".to_string())?;
-        (triple, machine)
-    };
-
-    // Update the module's target triple so the emitted object is correct.
-    module.set_triple(&triple);
+    // Optimised builds link the release-profile runtime staticlibs.
+    let release = opt.is_optimized();
 
     // Emit object file to a temporary path.
     let obj_path = format!("{output_path}.o");
-    machine
-        .write_to_file(module, FileType::Object, Path::new(&obj_path))
-        .map_err(|e| format!("object emit: {e}"))?;
+    emit_hosted_object(module, &obj_path, opt, target_triple)?;
 
     // R14 slice 1/2: Android (bionic) cross-link via the NDK clang. Android
     // ELFs are PIE and link bionic libc, not glibc — the host `-no-pie`/`-lm`
@@ -406,7 +596,7 @@ pub(super) fn emit_object_and_link(
 pub(super) fn emit_shared_lib(
     module: &inkwell::module::Module<'_>,
     output_path: &str,
-    release: bool,
+    opt: OptLevel,
     target_triple: Option<&str>,
 ) -> Result<(), String> {
     let triple_str = target_triple.ok_or_else(|| {
@@ -420,27 +610,9 @@ pub(super) fn emit_shared_lib(
         ));
     }
 
-    let opt = if release {
-        OptimizationLevel::Default
-    } else {
-        OptimizationLevel::None
-    };
-    Target::initialize_all(&InitializationConfig::default());
-    let triple = TargetTriple::create(triple_str);
-    let target = Target::from_triple(&triple).map_err(|e| {
-        format!("[E0904] target '{triple_str}' not supported by this LLVM build: {e}")
-    })?;
-    let machine = target
-        .create_target_machine(
-            &triple,
-            "generic",
-            "",
-            opt,
-            RelocMode::PIC,
-            CodeModel::Default,
-        )
-        .ok_or_else(|| format!("[E0904] could not create target machine for '{triple_str}'"))?;
+    let (triple, machine) = pic_target_machine(triple_str, opt)?;
     module.set_triple(&triple);
+    optimize_module(module, &machine, opt)?;
 
     let obj_path = format!("{output_path}.o");
     machine
@@ -450,6 +622,7 @@ pub(super) fn emit_shared_lib(
     // A shared library's entry points are called from outside the module, so
     // nothing is pruned and an AI call anywhere in it is reachable.
     let rt = Runtime::for_module(module);
+    let release = opt.is_optimized();
     let res = android_link(&obj_path, output_path, release, triple_str, true, rt);
     let _ = std::fs::remove_file(&obj_path);
     res
@@ -461,15 +634,24 @@ pub(super) fn emit_shared_lib(
 pub(super) fn emit_freestanding_obj(
     module: &inkwell::module::Module<'_>,
     output_path: &str,
-    release: bool,
+    opt: OptLevel,
     target_triple: Option<&str>,
 ) -> Result<(), String> {
     let triple_str = target_triple.unwrap_or("x86_64-unknown-none");
-    let opt = if release {
-        OptimizationLevel::Default
-    } else {
-        OptimizationLevel::None
-    };
+    let (triple, machine) = freestanding_target_machine(triple_str, opt)?;
+    module.set_triple(&triple);
+    mark_no_builtins(module);
+    optimize_module(module, &machine, opt)?;
+    machine
+        .write_to_file(module, FileType::Object, Path::new(output_path))
+        .map_err(|e| format!("freestanding object emit: {e}"))
+}
+
+/// `TargetMachine` for a freestanding (bare-metal) triple.
+fn freestanding_target_machine(
+    triple_str: &str,
+    opt: OptLevel,
+) -> Result<(TargetTriple, TargetMachine), String> {
     Target::initialize_all(&InitializationConfig::default());
     let triple = TargetTriple::create(triple_str);
     let target = Target::from_triple(&triple).map_err(|e| {
@@ -481,12 +663,9 @@ pub(super) fn emit_freestanding_obj(
     // code model by target architecture.
     let (reloc, code_model) = freestanding_reloc_codemodel(triple_str);
     let machine = target
-        .create_target_machine(&triple, "generic", "", opt, reloc, code_model)
+        .create_target_machine(&triple, "generic", "", opt.backend(), reloc, code_model)
         .ok_or_else(|| format!("[E0904] could not create target machine for '{triple_str}'"))?;
-    module.set_triple(&triple);
-    machine
-        .write_to_file(module, FileType::Object, Path::new(output_path))
-        .map_err(|e| format!("freestanding object emit: {e}"))
+    Ok((triple, machine))
 }
 
 /// R25: select `(RelocMode, CodeModel)` for a freestanding target by its triple.
@@ -517,29 +696,17 @@ fn freestanding_reloc_codemodel(triple_str: &str) -> (RelocMode, CodeModel) {
 pub(super) fn emit_freestanding_binary(
     module: &inkwell::module::Module<'_>,
     output_path: &str,
-    release: bool,
+    opt: OptLevel,
     target_triple: Option<&str>,
     entry_fn: Option<&str>,
     linker_script: Option<&str>,
 ) -> Result<(), String> {
     let triple_str = target_triple.unwrap_or("x86_64-unknown-none");
-    let opt = if release {
-        OptimizationLevel::Default
-    } else {
-        OptimizationLevel::None
-    };
-
-    Target::initialize_all(&InitializationConfig::default());
-    let triple = TargetTriple::create(triple_str);
-    let target = Target::from_triple(&triple).map_err(|e| {
-        format!("[E0904] target '{triple_str}' not supported by this LLVM build: {e}")
-    })?;
-    let (reloc, code_model) = freestanding_reloc_codemodel(triple_str);
-    let machine = target
-        .create_target_machine(&triple, "generic", "", opt, reloc, code_model)
-        .ok_or_else(|| format!("[E0904] could not create target machine for '{triple_str}'"))?;
+    let (triple, machine) = freestanding_target_machine(triple_str, opt)?;
 
     module.set_triple(&triple);
+    mark_no_builtins(module);
+    optimize_module(module, &machine, opt)?;
 
     let obj_path = format!("{output_path}.o");
     machine

@@ -421,10 +421,10 @@ pub fn generate_docs(program: &ast::Program, source: &str, filename: &str) -> St
 pub fn compile_bitcode_to_binary(
     bitcode: &[u8],
     output_path: &str,
-    release: bool,
+    opt: codegen::OptLevel,
     target_triple: Option<&str>,
 ) -> Result<(), String> {
-    codegen::compile_bitcode_to_binary(bitcode, output_path, release, target_triple)
+    codegen::compile_bitcode_to_binary(bitcode, output_path, opt, target_triple)
 }
 
 /// Result of running the full analysis pipeline on a source text.

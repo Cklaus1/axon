@@ -56,7 +56,7 @@ pub use output::TestResult;
 
 // Re-export the public path that lib.rs / main.rs expect: callers reach
 // `compile_bitcode_to_binary` via `axon_core::codegen::compile_bitcode_to_binary`.
-pub use link::compile_bitcode_to_binary;
+pub use link::{compile_bitcode_to_binary, OptLevel};
 
 /// Phase 4 `@[adaptive]`: returns true if the attribute list contains an
 /// `adaptive` annotation (regardless of its argument list).  Used by

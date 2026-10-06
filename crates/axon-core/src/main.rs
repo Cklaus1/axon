@@ -119,9 +119,20 @@ enum Command {
         #[arg(long, short, help = "Output binary path")]
         out: Option<PathBuf>,
 
-        /// Enable O2 optimizations (default: O0 / debug).
-        #[arg(long, help = "Optimized release build")]
+        /// Optimised release build: `--opt-level 2` unless `--opt-level` is
+        /// given (default without either: O0 / debug).
+        #[arg(long, help = "Optimized release build (= --opt-level 2)")]
         release: bool,
+
+        /// Optimisation level: runs LLVM's `default<O0|O1|O2|O3|Os|Oz>` IR
+        /// pipeline and sets the matching backend level. Overrides `--release`.
+        #[arg(
+            long,
+            value_name = "LEVEL",
+            value_parser = ["0", "1", "2", "3", "s", "z"],
+            help = "Optimization level: 0|1|2|3|s|z (overrides --release)"
+        )]
+        opt_level: Option<String>,
 
         /// Cross-compile for the given LLVM target triple
         /// (e.g. `x86_64-unknown-linux-gnu`, `aarch64-apple-darwin`).
@@ -148,10 +159,11 @@ enum Command {
         #[arg(long, help = "Linker script path (R17 Slice 1)")]
         linker_script: Option<PathBuf>,
 
-        /// Emit just the object file (.o) without linking.
-        /// Useful when linking a boot stub alongside the kernel object.
-        /// The output path is used as-is (e.g. --out kernel.o).
-        #[arg(long, help = "Emit .o only, skip link step (R17 Slice 1)")]
+        /// Emit just the program's object file (.o) without linking.
+        /// Hosted builds write the object that would be linked against
+        /// axon-rt; freestanding builds use it to link a boot stub alongside
+        /// the kernel object. The output path is used as-is (e.g. --out kernel.o).
+        #[arg(long, help = "Emit .o only, skip link step")]
         emit_obj: bool,
 
         /// Emit the LLVM IR as text to the --out path (or stdout) and stop.
@@ -844,6 +856,7 @@ fn dispatch(command: Command) {
             files,
             out,
             release,
+            opt_level,
             target,
             no_cache,
             cache_dir,
@@ -857,6 +870,7 @@ fn dispatch(command: Command) {
             files,
             out,
             release,
+            opt_level,
             target,
             no_cache,
             cache_dir,
@@ -2803,7 +2817,7 @@ fn mobile_emit_object(
     let app = file.file_stem().unwrap_or_default().to_string_lossy();
     let obj = out_dir.join(format!("lib{app}.o"));
     let obj_str = obj.to_string_lossy().to_string();
-    cg.compile_to_object_for_triple(&obj_str, false, triple)?;
+    cg.compile_to_object_for_triple(&obj_str, axon_core::codegen::OptLevel::O0, triple)?;
     Ok(obj_str)
 }
 
@@ -2898,7 +2912,7 @@ fn build_wasm_object_cli(file: &Path, triple: &str) {
 
     let out = file.with_extension("wasm");
     let out_str = out.to_string_lossy().to_string();
-    match cg.compile_to_wasm_object(&out_str, false, llvm_triple) {
+    match cg.compile_to_wasm_object(&out_str, axon_core::codegen::OptLevel::O0, llvm_triple) {
         Ok(()) => {
             // Verify the emitted file is genuine wasm (magic `\0asm`).
             let magic_ok = std::fs::read(&out)
@@ -3141,6 +3155,7 @@ fn cmd_build(
     _files: Vec<PathBuf>,
     _out: Option<PathBuf>,
     _release: bool,
+    _opt_level: Option<String>,
     _target: Option<String>,
     _no_cache: bool,
     _cache_dir: Option<PathBuf>,
@@ -3170,6 +3185,7 @@ fn cmd_build(
     files: Vec<PathBuf>,
     out: Option<PathBuf>,
     release: bool,
+    opt_level: Option<String>,
     target: Option<String>,
     no_cache: bool,
     cache_dir: Option<PathBuf>,
@@ -3187,6 +3203,14 @@ fn cmd_build(
     for f in &files {
         validate_ax_extension(f);
     }
+    // AX-17: `--opt-level` wins; otherwise `--release` = O2, debug = O0.
+    let opt = match opt_level.as_deref() {
+        Some(level) => axon_core::codegen::OptLevel::parse(level).unwrap_or_else(|e| {
+            eprintln!("error: --opt-level: {e}");
+            process::exit(1);
+        }),
+        None => axon_core::codegen::OptLevel::from_release(release),
+    };
 
     // NATIVE EFFECT-CEILING PARITY: refuse to emit an artifact that would
     // silently drop an active ambient ceiling.
@@ -3342,7 +3366,7 @@ fn cmd_build(
     };
 
     let opts = BuildOptions {
-        release,
+        opt,
         target_triple: effective_target,
         no_cache,
         cache_dir,
@@ -3384,7 +3408,8 @@ fn cmd_build(
     match run_build_pipeline(&mut program, first, &output, &opts) {
         Ok(()) => {
             let elapsed = start.elapsed().as_millis();
-            eprintln!("Binary: {} ({elapsed}ms)", output.display());
+            let artifact = if emit_obj { "Object" } else { "Binary" };
+            eprintln!("{artifact}: {} ({elapsed}ms)", output.display());
             // R14: --host mobile also emits the deterministic Kotlin wrapper next
             // to the jniLibs/ tree (out/android/Axon.kt).
             if mobile {
@@ -3471,7 +3496,8 @@ fn cmd_build_bpf(
 
 #[cfg(feature = "codegen")]
 struct BuildOptions {
-    release: bool,
+    /// AX-17: optimisation level (`--opt-level`, or `--release` → O2).
+    opt: axon_core::codegen::OptLevel,
     target_triple: Option<String>,
     no_cache: bool,
     cache_dir: Option<PathBuf>,
@@ -6771,23 +6797,25 @@ fn run_build_pipeline(
         if let Some(triple) = target_triple {
             hasher_input.extend_from_slice(triple.as_bytes());
         }
-        // …and the optimisation profile, so a `--release` entry is never served
-        // to a debug build or the other way round, whatever stage of the
-        // pipeline comes to depend on it.
-        hasher_input.push(u8::from(opts.release));
+        // AX-17: the opt level selects the pass pipeline and the runtime
+        // staticlib profile, so builds at different levels are separate
+        // entries.
+        hasher_input.extend_from_slice(b"opt-level=");
+        hasher_input.extend_from_slice(opts.opt.as_str().as_bytes());
 
         let key = axon_core::cache_key(&hasher_input, compiler_version);
         let cache_path = axon_core::cache_path(&key, &cache_dir);
 
         // Freestanding and shared (`--host mobile`) builds bypass the cache:
-        // their linker args differ from the hosted-binary path.
-        if !opts.freestanding && !opts.shared {
+        // their linker args differ from the hosted-binary path. A hit links a
+        // binary, so `--emit-obj` / `--emit-llvm` (which must not) skip it too.
+        if !opts.freestanding && !opts.shared && !opts.emit_obj && !opts.emit_llvm {
             if let Some(bitcode) = axon_core::read_axc(&cache_path, compiler_version) {
                 // Cache hit — skip IR emission, link from stored bitcode.
                 match axon_core::compile_bitcode_to_binary(
                     &bitcode,
                     &output.to_string_lossy(),
-                    opts.release,
+                    opts.opt,
                     target_triple,
                 ) {
                     Ok(()) => return Ok(()),
@@ -6820,7 +6848,7 @@ fn run_build_pipeline(
             program,
             source_path,
             output,
-            opts.release,
+            opts.opt,
             target_triple,
             opts.freestanding,
             opts.entry_fn.as_deref(),
@@ -6839,7 +6867,7 @@ fn run_build_pipeline(
         program,
         source_path,
         output,
-        opts.release,
+        opts.opt,
         target_triple,
         opts.freestanding,
         opts.entry_fn.as_deref(),
@@ -6859,7 +6887,7 @@ fn build_ir_and_link(
     program: &mut axon_core::ast::Program,
     source_path: &std::path::Path,
     output: &std::path::Path,
-    release: bool,
+    opt: axon_core::codegen::OptLevel,
     target_triple: Option<&str>,
     freestanding: bool,
     entry_fn: Option<&str>,
@@ -6930,8 +6958,10 @@ fn build_ir_and_link(
     }
 
     // R17 Slice 2/3: --emit-llvm dumps the IR text and stops (golden-IR tests).
+    // Above O0 it is the IR after the optimisation pipeline, i.e. what the
+    // backend would compile.
     if emit_llvm {
-        let ir = cg.emit_llvm_ir();
+        let ir = cg.emit_optimized_llvm_ir(opt, target_triple, freestanding, shared)?;
         // Heuristic: if --out names a real file path (not the default ./stem),
         // write there; otherwise print to stdout.
         let out_str = output.to_string_lossy();
@@ -6951,28 +6981,28 @@ fn build_ir_and_link(
         let _ = axon_core::write_axc(cache_path, &bitcode, compiler_version);
     }
 
+    let out = output.to_string_lossy();
     if freestanding {
         if emit_obj {
-            cg.compile_to_freestanding_obj(
-                &output.to_string_lossy(),
-                release,
-                target_triple,
-                entry_fn,
-            )
+            cg.compile_to_freestanding_obj(&out, opt, target_triple, entry_fn)
         } else {
-            cg.compile_to_freestanding_binary(
-                &output.to_string_lossy(),
-                release,
-                target_triple,
-                entry_fn,
-                linker_script,
-            )
+            cg.compile_to_freestanding_binary(&out, opt, target_triple, entry_fn, linker_script)
         }
     } else if shared {
-        // R14: --host mobile → a loadable shared library (.so).
-        cg.compile_to_shared_lib(&output.to_string_lossy(), release, target_triple)
+        if emit_obj {
+            // `--host mobile` validated an Android `--target` before we got here.
+            let triple = target_triple
+                .ok_or_else(|| "--host mobile --emit-obj requires --target".to_string())?;
+            cg.compile_to_object_for_triple(&out, opt, triple)
+        } else {
+            // R14: --host mobile → a loadable shared library (.so).
+            cg.compile_to_shared_lib(&out, opt, target_triple)
+        }
+    } else if emit_obj {
+        // AX-23: hosted `--emit-obj` writes the program object, no link.
+        cg.compile_to_object(&out, opt, target_triple)
     } else {
-        cg.compile_to_binary_target(&output.to_string_lossy(), release, target_triple)
+        cg.compile_to_binary_target(&out, opt, target_triple)
     }
 }
 
