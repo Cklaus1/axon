@@ -32122,3 +32122,117 @@ fn arr_sort_by_keeps_equal_struct_records_in_input_order() {
          println(to_str(out))\n 0\n}\n";
     assert_eq!(interp_stdout("sort_struct_stable", src), "524136");
 }
+
+#[test]
+fn interp_arr_repeat_and_arr_range_build_exactly_n_elements_past_1m_like_native() {
+    // AX-05: the interpreter silently capped both at 1 << 20 = 1,048,576
+    // elements while native allocated all of them, so the same source read
+    // past the end of a short array only under `axon run`.
+    let src = "fn main() -> i64 {\n let n = 1100000\n let f = arr_repeat(true, n)\n f[n - 1] = false\n println(to_str(len(f)))\n println(to_str(f[n - 2]) + \" \" + to_str(f[n - 1]))\n let r = arr_range(5, n + 5)\n println(to_str(len(r)) + \" \" + to_str(r[n - 1]))\n println(to_str(len(arr_repeat(0, 0 - 3))) + \" \" + to_str(len(arr_range(9, 2))))\n 0\n}\n";
+    let want = "1100000\ntrue false\n1100000 1100004\n0 0";
+    assert_eq!(interp_stdout("ax05_repeat", src), want);
+    if let Some(native) = native_stdout("ax05_repeat", src) {
+        assert_eq!(native, want, "native must agree with `axon run`");
+    }
+}
+
+#[test]
+fn interp_arr_repeat_unallocatable_size_is_a_runtime_error_naming_n() {
+    // AX-05: a size the allocator refuses fails loudly at the call, never a
+    // shorter array and never a process abort.
+    let src = "fn main() -> i64 {\n let f = arr_repeat(0, 9223372036854775807)\n println(to_str(len(f)))\n 0\n}\n";
+    let f = tmp_ax("ax05_oom", src);
+    let run = axon().arg("run").arg(&f).output().expect("spawn run");
+    let _ = std::fs::remove_file(&f);
+    let stderr = String::from_utf8_lossy(&run.stderr);
+    assert_eq!(run.status.code(), Some(101), "runtime panic exit; stderr:\n{stderr}");
+    assert!(
+        stderr.contains("arr_repeat: cannot allocate an array of 9223372036854775807 elements"),
+        "error must name arr_repeat and n: {stderr}"
+    );
+    assert!(String::from_utf8_lossy(&run.stdout).trim().is_empty());
+}
+
+#[test]
+fn interp_arrays_keep_value_semantics_under_shared_representation() {
+    // AX-06: arrays are shared copy-on-write in the interpreter. Every copy
+    // (let-binding, struct field, nested row, closure capture, fn argument,
+    // builtin result) must still behave as an independent value.
+    let src = r#"type Bag = { label: str, xs: [i64] }
+
+fn bump(xs: [i64]) -> i64 {
+    xs[0] = 99
+    xs[0] + len(xs)
+}
+
+fn main() -> i64 {
+    let a = [1, 2, 3]
+    let b = a
+    b[0] = 10
+    println(to_str(a[0]) + " " + to_str(b[0]))
+    a[1] = 20
+    println(to_str(a[1]) + " " + to_str(b[1]))
+
+    let xs = [5, 6]
+    let bag = Bag { label: "p", xs: xs }
+    xs[0] = 50
+    bag.xs[1] = 60
+    println(to_str(bag.xs[0]) + " " + to_str(xs[0]) + " " + to_str(bag.xs[1]) + " " + to_str(xs[1]))
+    let inner = bag.xs
+    inner[0] = 500
+    println(to_str(bag.xs[0]) + " " + to_str(inner[0]))
+
+    let g = [[1, 2], [3, 4]]
+    let row = g[0]
+    row[1] = 9
+    let g2 = g
+    g2[1][0] = 30
+    println(to_str(g[0][1]) + " " + to_str(row[1]) + " " + to_str(g[1][0]) + " " + to_str(g2[1][0]))
+
+    let c = [7, 8]
+    let read_c = |i: i64| c[i]
+    c[0] = 70
+    println(to_str(read_c(0)) + " " + to_str(c[0]))
+
+    let acc = [0, 0]
+    let inc = |k: i64| {
+        acc[0] = acc[0] + k
+        acc[0]
+    }
+    let x = inc(1)
+    let y = inc(2)
+    println(to_str(x) + " " + to_str(y) + " " + to_str(acc[0]))
+
+    let d = [1, 2, 3]
+    let r = bump(d)
+    println(to_str(r) + " " + to_str(d[0]))
+
+    let e = arr_push(d, 4)
+    e[1] = 200
+    println(to_str(len(d)) + " " + to_str(d[1]) + " " + to_str(e[1]))
+
+    let s = [0, 0, 0]
+    let snaps = []
+    let i = 0
+    while i < 3 {
+        s[i] = i + 1
+        snaps = arr_push(snaps, s)
+        i = i + 1
+    }
+    println(to_str(snaps[0][0]) + to_str(snaps[0][2]) + " " + to_str(snaps[1][1]) + to_str(snaps[1][2]) + " " + to_str(snaps[2][2]))
+    0
+}
+"#;
+    assert_eq!(
+        interp_stdout("ax06_values", src),
+        "1 10\n20 2\n5 50 60 6\n5 500\n2 9 3 30\n7 70\n1 3 0\n102 1\n3 2 200\n10 20 3"
+    );
+}
+
+#[test]
+fn interp_sieve_index_reads_and_writes_do_not_copy_the_array() {
+    // AX-06: an index read or write used to copy the whole array, so this
+    // 200k sieve (~0.1 s now) was quadratic and took minutes under `axon run`.
+    let src = "fn main() -> i64 {\n let n = 200000\n let p = arr_repeat(true, n + 1)\n p[0] = false\n p[1] = false\n let i = 2\n while i * i <= n {\n  if p[i] {\n   let j = i * i\n   while j <= n {\n    p[j] = false\n    j = j + i\n   }\n  }\n  i = i + 1\n }\n let c = 0\n let k = 0\n while k <= n {\n  if p[k] { c = c + 1 }\n  k = k + 1\n }\n println(to_str(c))\n 0\n}\n";
+    assert_eq!(interp_stdout("ax06_sieve", src), "17984");
+}

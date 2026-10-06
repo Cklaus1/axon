@@ -165,7 +165,10 @@ impl<'p> Interp<'p> {
                             .ok_or_else(|| Flow::Panic(format!("no field `{f}`")))?,
                         (PlaceStep::Index(i), Value::Array(items)) => {
                             let n = items.len();
-                            items.get_mut(*i).ok_or_else(|| {
+                            // Copy-on-write: copies only if this array is shared
+                            // with another binding; a uniquely owned one is
+                            // written in place.
+                            Rc::make_mut(items).get_mut(*i).ok_or_else(|| {
                                 Flow::Panic(format!("index {i} out of bounds (len {n})"))
                             })?
                         }
@@ -185,7 +188,7 @@ impl<'p> Interp<'p> {
                         if *i >= items.len() {
                             return panic(format!("index {i} out of bounds (len {})", items.len()));
                         }
-                        items[*i] = v;
+                        Rc::make_mut(items)[*i] = v;
                     }
                     (_, other) => {
                         return panic(format!(
@@ -431,32 +434,21 @@ impl<'p> Interp<'p> {
             }
 
             Expr::FieldAccess { receiver, field } => {
-                let v = self.eval(receiver, env)?;
-                match v {
-                    Value::Struct { fields, .. } | Value::Enum { fields, .. } => fields
-                        .get(field)
-                        .cloned()
-                        .ok_or_else(|| Flow::Panic(format!("no field `{field}`"))),
-                    Value::Tuple(items) => {
-                        // `t.0`, `t.1`, … : the parser stores the digit as the
-                        // field name, and the interpreter reads it as the index.
-                        let i: usize = field.parse().map_err(|_| {
-                            Flow::Panic(format!(
-                                "tuple access expects a numeric index, got `.{field}`"
-                            ))
-                        })?;
-                        items.get(i).cloned().ok_or_else(|| {
-                            Flow::Panic(format!(
-                                "tuple index {i} out of bounds (len {})",
-                                items.len()
-                            ))
-                        })
-                    }
-                    other => panic(format!(
-                        "field access on non-struct ({})",
-                        other.type_name()
-                    )),
+                // A variable receiver (`p.x`, the common case) is read in
+                // place: only the field is cloned, not the whole record. The
+                // lookup is the `Expr::Ident` arm's, verbatim.
+                if let Expr::Ident(name) = receiver.as_ref() {
+                    let v = match env.get(name) {
+                        Some(v) => v,
+                        None => match self.globals.get(name) {
+                            Some(v) => v,
+                            None => return panic(format!("undefined identifier `{name}`")),
+                        },
+                    };
+                    return field_of(v, field);
                 }
+                let v = self.eval(receiver, env)?;
+                field_of(&v, field)
             }
 
             Expr::Tuple(elems) => {
@@ -493,7 +485,7 @@ impl<'p> Interp<'p> {
                 for e in elems {
                     out.push(self.eval(e, env)?);
                 }
-                Ok(Value::Array(out))
+                Ok(Value::Array(Rc::new(out)))
             }
 
             Expr::StructLit { name, fields } => {
@@ -892,7 +884,7 @@ impl<'p> Interp<'p> {
                 Value::Array(items) => {
                     // Only `[i64]` is representable at the boundary.
                     let mut ints = Vec::with_capacity(items.len());
-                    for it in items {
+                    for it in items.iter() {
                         match it {
                             Value::Int(n) => ints.push(*n),
                             Value::SizedInt { val, .. } => ints.push(*val),
@@ -947,7 +939,7 @@ impl<'p> Interp<'p> {
             Ok(DomainValue::Int(n)) => Ok(Value::Int(n)),
             Ok(DomainValue::Str(s)) => Ok(Value::Str(s)),
             Ok(DomainValue::IntArray(ns)) => {
-                Ok(Value::Array(ns.into_iter().map(Value::Int).collect()))
+                Ok(Value::Array(Rc::new(ns.into_iter().map(Value::Int).collect())))
             }
             Ok(DomainValue::Handle { name, payload }) => Ok(Value::Handle {
                 module: module.name.to_string(),
@@ -1026,12 +1018,24 @@ impl<'p> Interp<'p> {
                 let c = env.get(name).unwrap().clone();
                 return self.call_closure(c, argv);
             }
-            // 2. A builtin.
-            if let Some(v) = self.call_builtin(name, &argv)? {
-                return Ok(v);
-            }
+            // 2. A builtin — skipped for a name already proven not to be one
+            //    (see `resolved_callees`), which also caches step 3's lookup.
+            let known = self.resolved_callees.borrow().get(name.as_str()).copied();
+            let user_fn = match known {
+                Some(f) => f,
+                None => {
+                    if let Some(v) = self.call_builtin(name, &argv)? {
+                        return Ok(v);
+                    }
+                    let f = self.fns.get(name.as_str()).copied();
+                    if super::builtins::builtin_dispatch_is_inert(name) {
+                        self.resolved_callees.borrow_mut().insert(name.clone(), f);
+                    }
+                    f
+                }
+            };
             // 3. A user-defined function.
-            if let Some(f) = self.fns.get(name) {
+            if let Some(f) = user_fn {
                 return self.call_fn(f, argv);
             }
             // 4. A module-level closure constant.
@@ -1499,6 +1503,36 @@ fn eval_dist_cdf(dist: &Value, k: f64) -> Option<f64> {
     }
 }
 
+/// `v.field` for a struct/enum field or a tuple's `.N`: clones only the
+/// selected component.
+fn field_of(v: &Value, field: &str) -> R {
+    match v {
+        Value::Struct { fields, .. } | Value::Enum { fields, .. } => fields
+            .get(field)
+            .cloned()
+            .ok_or_else(|| Flow::Panic(format!("no field `{field}`"))),
+        Value::Tuple(items) => {
+            // `t.0`, `t.1`, … : the parser stores the digit as the
+            // field name, and the interpreter reads it as the index.
+            let i: usize = field.parse().map_err(|_| {
+                Flow::Panic(format!(
+                    "tuple access expects a numeric index, got `.{field}`"
+                ))
+            })?;
+            items.get(i).cloned().ok_or_else(|| {
+                Flow::Panic(format!(
+                    "tuple index {i} out of bounds (len {})",
+                    items.len()
+                ))
+            })
+        }
+        other => panic(format!(
+            "field access on non-struct ({})",
+            other.type_name()
+        )),
+    }
+}
+
 fn get_f64_field(fields: &HashMap<String, Value>, key: &str) -> Option<f64> {
     match fields.get(key)? {
         Value::Float(f) => Some(*f),
@@ -1511,7 +1545,7 @@ fn get_f64_array_field(fields: &HashMap<String, Value>, key: &str) -> Option<Vec
     match fields.get(key)? {
         Value::Array(items) => {
             let mut out = Vec::with_capacity(items.len());
-            for v in items {
+            for v in items.iter() {
                 match v {
                     Value::Float(f) => out.push(*f),
                     Value::Int(n) => out.push(*n as f64),

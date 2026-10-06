@@ -326,6 +326,18 @@ fn audit_effect_kind(name: &str) -> Option<axon_audit::EffectKind> {
         })
 }
 
+/// Whether `call_builtin`'s pre-dispatch steps (effect gate, `@[agent]`
+/// action log, audit ledger, replay feed, handler interception) are provably
+/// inert for a callee called `name`: no effect row, no capability, no ledger
+/// class. All three are pure functions of the name, so for an inert name that
+/// `call_builtin` answered `Ok(None)` once, it always answers `Ok(None)` with
+/// no side effect — which is what lets `eval_call` memoize the miss.
+pub(super) fn builtin_dispatch_is_inert(name: &str) -> bool {
+    crate::builtins::builtin_effect_row(name).is_empty()
+        && crate::capabilities::capability_of_builtin_multi(name).is_none()
+        && audit_effect_kind(name).is_none()
+}
+
 /// Phase 7 (R12 Slice 4): the durable-store NDJSON log path for store `key`:
 /// `$XDG_CACHE_HOME/axon/stores/<key>.ndjson` (or under `$HOME/.cache`). Sibling
 /// of the provenance log dir, so it reuses the same cache-root discovery. The key
@@ -411,6 +423,22 @@ fn store_log_path(key: &str) -> Option<std::path::PathBuf> {
             .join("stores")
             .join(format!("{safe}.ndjson")),
     )
+}
+
+/// An empty element buffer with room for exactly `n` elements, for the
+/// builtins that size an array from a program-supplied count (`arr_repeat`,
+/// `arr_range`). The reservation is FALLIBLE: a count the allocator refuses is
+/// an ordinary runtime error naming the builtin and the count, instead of a
+/// process abort — and instead of the former silent cap at 1,048,576 elements,
+/// which made the same source produce a shorter array than native (AX-05).
+fn alloc_array_elems(builtin: &str, n: usize) -> Result<Vec<Value>, Flow> {
+    let mut out = Vec::new();
+    out.try_reserve_exact(n).map_err(|e| {
+        Flow::Panic(format!(
+            "{builtin}: cannot allocate an array of {n} elements ({e})"
+        ))
+    })?;
+    Ok(out)
 }
 
 impl<'p> Interp<'p> {
@@ -548,10 +576,13 @@ impl<'p> Interp<'p> {
         }
 
         // One writer for both verdicts, so a denial cannot be dropped by a
-        // path that simply returns earlier than the logger.
+        // path that simply returns earlier than the logger. `ledger_kind` is
+        // tested BEFORE the environment: most calls (every user fn, every pure
+        // builtin) have no ledger class, and reading `AXON_AUDIT_LEDGER` for
+        // them was a `getenv` per call that could never produce a row.
         let audit = |slf: &Self, denied: bool| {
-            if op_name != "ai_complete" && std::env::var_os("AXON_AUDIT_LEDGER").is_some() {
-                if let Some(kind) = ledger_kind {
+            if let Some(kind) = ledger_kind {
+                if op_name != "ai_complete" && std::env::var_os("AXON_AUDIT_LEDGER").is_some() {
                     let principal = slf.current_principal_name();
                     let op = if denied {
                         format!("denied:{op_name}")
@@ -873,9 +904,9 @@ impl<'p> Interp<'p> {
                                 for g in 0..=prog.groups {
                                     out.push(Value::Str(span(&sl, g)));
                                 }
-                                ok!(Value::Ok(Box::new(Value::Array(out))));
+                                ok!(Value::Ok(Box::new(Value::Array(out.into()))));
                             }
-                            None => ok!(Value::Ok(Box::new(Value::Array(Vec::new())))),
+                            None => ok!(Value::Ok(Box::new(Value::Array(Rc::default())))),
                         }
                     }
                     "re_find_all" => {
@@ -892,7 +923,7 @@ impl<'p> Interp<'p> {
                                 None => break,
                             }
                         }
-                        ok!(Value::Ok(Box::new(Value::Array(out))));
+                        ok!(Value::Ok(Box::new(Value::Array(out.into()))));
                     }
                     _ => {
                         // re_split
@@ -921,7 +952,7 @@ impl<'p> Interp<'p> {
                             }
                         }
                         out.push(Value::Str(subject[last..].iter().collect::<String>()));
-                        ok!(Value::Ok(Box::new(Value::Array(out))));
+                        ok!(Value::Ok(Box::new(Value::Array(out.into()))));
                     }
                 }
             }
@@ -1209,7 +1240,7 @@ impl<'p> Interp<'p> {
                 let path = as_str(&args[0])?.to_string();
                 match crate::host::with_host(|h| h.dir_list(&path)) {
                     Ok(names) => ok!(Value::Ok(Box::new(Value::Array(
-                        names.into_iter().map(Value::Str).collect()
+                        names.into_iter().map(Value::Str).collect::<Vec<_>>().into()
                     )))),
                     Err(e) => ok!(Value::Err(Box::new(Value::Str(e)))),
                 }
@@ -1236,7 +1267,7 @@ impl<'p> Interp<'p> {
                 let arg_list: Vec<String> = match &args[1] {
                     Value::Array(xs) => {
                         let mut out = Vec::with_capacity(xs.len());
-                        for x in xs {
+                        for x in xs.iter() {
                             out.push(as_str(x)?.to_string());
                         }
                         out
@@ -1337,7 +1368,7 @@ impl<'p> Interp<'p> {
                 let params: Vec<String> = match &args[1] {
                     Value::Array(xs) => {
                         let mut out = Vec::with_capacity(xs.len());
-                        for x in xs {
+                        for x in xs.iter() {
                             out.push(as_str(x)?.to_string());
                         }
                         out
@@ -1703,30 +1734,27 @@ impl<'p> Interp<'p> {
             // teaches the optimizer about user-defined domains.
 
             // Half-open range `[start, end)`. Returns an empty slice when
-            // `end <= start`. Saturates element count silently if asked for an
-            // implausibly large range — caller should size with awareness.
+            // `end <= start`. Produces exactly `end - start` elements, like
+            // native; a size the allocator refuses is a runtime error naming
+            // the count, never a silently shorter array (AX-05).
             "arr_range" => {
                 want(2)?;
                 let start = as_int(&args[0])?;
                 let end = as_int(&args[1])?;
                 if end <= start {
-                    ok!(Value::Array(Vec::new()));
+                    ok!(Value::Array(Rc::default()));
                 }
-                let len = (end - start) as usize;
-                let mut out = Vec::with_capacity(len.min(1 << 20));
-                let mut i = start;
-                while i < end && out.len() < (1 << 20) {
-                    out.push(Value::Int(i));
-                    i += 1;
-                }
-                ok!(Value::Array(out));
+                let len = (end as i128 - start as i128) as usize;
+                let mut out = alloc_array_elems("arr_range", len)?;
+                out.extend((start..end).map(Value::Int));
+                ok!(Value::Array(out.into()));
             }
             // Append: returns a fresh array with `x` at the end. Copy
             // semantics — the input array is unaffected.
             "arr_push" => {
                 want(2)?;
                 let mut xs = match &args[0] {
-                    Value::Array(v) => v.clone(),
+                    Value::Array(v) => Vec::clone(v),
                     other => {
                         return panic(format!(
                             "arr_push: expected array, got {}",
@@ -1735,7 +1763,7 @@ impl<'p> Interp<'p> {
                     }
                 };
                 xs.push(args[1].clone());
-                ok!(Value::Array(xs));
+                ok!(Value::Array(xs.into()));
             }
             // Sum of an i64 array. Empty → 0. Saturates on overflow.
             "arr_sum_i64" => {
@@ -1750,7 +1778,7 @@ impl<'p> Interp<'p> {
                     }
                 };
                 let mut s: i64 = 0;
-                for v in xs {
+                for v in xs.iter() {
                     let n = match v {
                         Value::Int(n) => *n,
                         other => {
@@ -1771,7 +1799,7 @@ impl<'p> Interp<'p> {
             "arr_map" => {
                 want(2)?;
                 let xs = match &args[0] {
-                    Value::Array(v) => v.clone(),
+                    Value::Array(v) => Rc::clone(v),
                     other => {
                         return panic(format!(
                             "arr_map: expected array, got {}",
@@ -1781,11 +1809,11 @@ impl<'p> Interp<'p> {
                 };
                 let f = args[1].clone();
                 let mut out = Vec::with_capacity(xs.len());
-                for x in xs {
-                    let mapped = self.call_closure(f.clone(), vec![x])?;
+                for x in xs.iter() {
+                    let mapped = self.call_closure(f.clone(), vec![x.clone()])?;
                     out.push(mapped);
                 }
-                ok!(Value::Array(out));
+                ok!(Value::Array(out.into()));
             }
             // Reduce an array to a single value via `f(acc, x) -> acc`.
             // The most general functional combinator — arr_sum_i64, arr_max,
@@ -1793,7 +1821,7 @@ impl<'p> Interp<'p> {
             "arr_fold" => {
                 want(3)?;
                 let xs = match &args[0] {
-                    Value::Array(v) => v.clone(),
+                    Value::Array(v) => Rc::clone(v),
                     other => {
                         return panic(format!(
                             "arr_fold: expected array, got {}",
@@ -1803,8 +1831,8 @@ impl<'p> Interp<'p> {
                 };
                 let mut acc = args[1].clone();
                 let f = args[2].clone();
-                for x in xs {
-                    acc = self.call_closure(f.clone(), vec![acc, x])?;
+                for x in xs.iter() {
+                    acc = self.call_closure(f.clone(), vec![acc, x.clone()])?;
                 }
                 ok!(acc);
             }
@@ -1815,7 +1843,7 @@ impl<'p> Interp<'p> {
             "arr_sort_by" => {
                 want(2)?;
                 let xs = match &args[0] {
-                    Value::Array(v) => v.clone(),
+                    Value::Array(v) => Rc::clone(v),
                     other => {
                         return panic(format!(
                             "arr_sort_by: expected array, got {}",
@@ -1829,7 +1857,7 @@ impl<'p> Interp<'p> {
                 // only when cmp(r, l) < 0, so equal elements keep input order.
                 // A comparator error or non-i64 result aborts via `?`/panic.
                 let n = xs.len();
-                let mut a: Vec<Value> = xs;
+                let mut a: Vec<Value> = Rc::try_unwrap(xs).unwrap_or_else(|rc| (*rc).clone());
                 let mut b: Vec<Value> = Vec::with_capacity(n);
                 let mut width = 1usize;
                 while width < n {
@@ -1865,17 +1893,20 @@ impl<'p> Interp<'p> {
                     std::mem::swap(&mut a, &mut b);
                     width *= 2;
                 }
-                let out = a;
-                ok!(Value::Array(out));
+                ok!(Value::Array(a.into()));
             }
             // Build an array by repeating `v` `n` times. Common need:
             // initialize a fresh array with a default value before mutating
-            // it in place. Polymorphic via `T`.
+            // it in place. Polymorphic via `T`. Exactly `max(n, 0)` elements,
+            // like native; a size the allocator refuses is a runtime error
+            // naming `n`, never a silently shorter array (AX-05).
             "arr_repeat" => {
                 want(2)?;
                 let v = args[0].clone();
                 let n = as_int(&args[1])?.max(0) as usize;
-                ok!(Value::Array(vec![v; n.min(1 << 20)]));
+                let mut out = alloc_array_elems("arr_repeat", n)?;
+                out.resize(n, v);
+                ok!(Value::Array(out.into()));
             }
             // Concatenate two arrays into a fresh one. Element types must
             // agree at the runtime — we don't do conversions here. The
@@ -1883,7 +1914,7 @@ impl<'p> Interp<'p> {
             "arr_concat" => {
                 want(2)?;
                 let mut out = match &args[0] {
-                    Value::Array(v) => v.clone(),
+                    Value::Array(v) => Vec::clone(v),
                     other => {
                         return panic(format!(
                             "arr_concat: expected array, got {}",
@@ -1901,10 +1932,10 @@ impl<'p> Interp<'p> {
                     }
                 };
                 out.reserve(ys.len());
-                for v in ys {
+                for v in ys.iter() {
                     out.push(v.clone());
                 }
-                ok!(Value::Array(out));
+                ok!(Value::Array(out.into()));
             }
             // Flatten `[[T]] -> [T]`. Each inner element must itself be an
             // array; mixed shapes panic. Useful after `arr_map` produces
@@ -1928,10 +1959,10 @@ impl<'p> Interp<'p> {
                     })
                     .sum();
                 let mut out = Vec::with_capacity(total);
-                for v in xss {
+                for v in xss.iter() {
                     match v {
                         Value::Array(inner) => {
-                            for x in inner {
+                            for x in inner.iter() {
                                 out.push(x.clone());
                             }
                         }
@@ -1943,7 +1974,7 @@ impl<'p> Interp<'p> {
                         }
                     }
                 }
-                ok!(Value::Array(out));
+                ok!(Value::Array(out.into()));
             }
 
             // Numeric `as`-style casts. Concrete builtins that work on
@@ -2057,7 +2088,7 @@ impl<'p> Interp<'p> {
             "arr_reverse" => {
                 want(1)?;
                 let mut xs = match &args[0] {
-                    Value::Array(v) => v.clone(),
+                    Value::Array(v) => Vec::clone(v),
                     other => {
                         return panic(format!(
                             "arr_reverse: expected array, got {}",
@@ -2066,7 +2097,7 @@ impl<'p> Interp<'p> {
                     }
                 };
                 xs.reverse();
-                ok!(Value::Array(xs));
+                ok!(Value::Array(xs.into()));
             }
             "arr_take" => {
                 want(2)?;
@@ -2081,7 +2112,7 @@ impl<'p> Interp<'p> {
                 };
                 let n = as_int(&args[1])?.max(0) as usize;
                 let take = n.min(xs.len());
-                ok!(Value::Array(xs[..take].to_vec()));
+                ok!(Value::Array(xs[..take].to_vec().into()));
             }
             "arr_drop" => {
                 want(2)?;
@@ -2096,7 +2127,7 @@ impl<'p> Interp<'p> {
                 };
                 let n = as_int(&args[1])?.max(0) as usize;
                 let skip = n.min(xs.len());
-                ok!(Value::Array(xs[skip..].to_vec()));
+                ok!(Value::Array(xs[skip..].to_vec().into()));
             }
 
             // ── f64 array reductions (mirrors arr_*_i64) ──────────────────
@@ -2112,7 +2143,7 @@ impl<'p> Interp<'p> {
                     }
                 };
                 let mut s = 0.0_f64;
-                for v in xs {
+                for v in xs.iter() {
                     let f = match v {
                         Value::Float(f) => *f,
                         Value::Int(n) => *n as f64,
@@ -2145,7 +2176,7 @@ impl<'p> Interp<'p> {
                     ok!(Value::Float(0.0));
                 }
                 let mut s: i64 = 0;
-                for v in xs {
+                for v in xs.iter() {
                     let n = match v {
                         Value::Int(n) => *n,
                         other => {
@@ -2175,7 +2206,7 @@ impl<'p> Interp<'p> {
                     ok!(Value::Float(0.0));
                 }
                 let mut s = 0.0_f64;
-                for v in xs {
+                for v in xs.iter() {
                     let f = match v {
                         Value::Float(f) => *f,
                         Value::Int(n) => *n as f64,
@@ -2213,7 +2244,7 @@ impl<'p> Interp<'p> {
                 }
                 let mut sum = 0.0_f64;
                 let mut fs: Vec<f64> = Vec::with_capacity(xs.len());
-                for v in xs {
+                for v in xs.iter() {
                     let f = match v {
                         Value::Float(f) => *f,
                         Value::Int(n) => *n as f64,
@@ -2316,7 +2347,7 @@ impl<'p> Interp<'p> {
                 } else {
                     s.split(sep).map(|p| Value::Str(p.to_string())).collect()
                 };
-                ok!(Value::Array(parts));
+                ok!(Value::Array(parts.into()));
             }
             // str_join(["a","b","c"], "-") → "a-b-c". Non-string elements
             // panic — caller should arr_map(to_str(x)) first if needed.
@@ -2333,7 +2364,7 @@ impl<'p> Interp<'p> {
                 };
                 let sep = as_str(&args[1])?.to_string();
                 let mut parts = Vec::with_capacity(xs.len());
-                for v in xs {
+                for v in xs.iter() {
                     match v {
                         Value::Str(s) => parts.push(s.clone()),
                         other => {
@@ -2375,7 +2406,7 @@ impl<'p> Interp<'p> {
                 for i in 0..n {
                     out.push(Value::Tuple(vec![xs[i].clone(), ys[i].clone()]));
                 }
-                ok!(Value::Array(out));
+                ok!(Value::Array(out.into()));
             }
             // Split an array into consecutive chunks of size `n`. The last
             // chunk may be shorter if `len(xs)` isn't a multiple of `n`.
@@ -2400,10 +2431,10 @@ impl<'p> Interp<'p> {
                 let mut start = 0;
                 while start < xs.len() {
                     let end = (start + n).min(xs.len());
-                    out.push(Value::Array(xs[start..end].to_vec()));
+                    out.push(Value::Array(xs[start..end].to_vec().into()));
                     start = end;
                 }
-                ok!(Value::Array(out));
+                ok!(Value::Array(out.into()));
             }
             // Dedupe an array, preserving first occurrence and order. Uses
             // structural equality so deeply-nested values dedupe correctly.
@@ -2421,12 +2452,12 @@ impl<'p> Interp<'p> {
                     }
                 };
                 let mut out: Vec<Value> = Vec::new();
-                for v in xs {
+                for v in xs.iter() {
                     if !out.iter().any(|seen| values_equal(seen, v)) {
                         out.push(v.clone());
                     }
                 }
-                ok!(Value::Array(out));
+                ok!(Value::Array(out.into()));
             }
             // First index where the element structurally equals `v`. Returns
             // `Some(i)` if found, `None` otherwise. Pairs with arr_contains
@@ -2472,7 +2503,7 @@ impl<'p> Interp<'p> {
                 };
                 let pred = args[1].clone();
                 let mut hit = false;
-                for x in xs {
+                for x in xs.iter().cloned() {
                     let r = self.call_closure(pred.clone(), vec![x])?;
                     match r {
                         Value::Bool(true) => {
@@ -2506,7 +2537,7 @@ impl<'p> Interp<'p> {
                 };
                 let pred = args[1].clone();
                 let mut all = true;
-                for x in xs {
+                for x in xs.iter().cloned() {
                     let r = self.call_closure(pred.clone(), vec![x])?;
                     match r {
                         Value::Bool(true) => {}
@@ -2548,7 +2579,7 @@ impl<'p> Interp<'p> {
                 let want_f64 = name == "arr_sum_by_f64";
                 let mut acc_i: i64 = 0;
                 let mut acc_f: f64 = 0.0;
-                for x in xs {
+                for x in xs.iter().cloned() {
                     let r = self.call_closure(key_fn.clone(), vec![x])?;
                     match r {
                         // Accept an Int for the f64 form: a projection like
@@ -2602,7 +2633,7 @@ impl<'p> Interp<'p> {
                 };
                 let pred = args[1].clone();
                 let mut n: i64 = 0;
-                for x in xs {
+                for x in xs.iter().cloned() {
                     let r = self.call_closure(pred.clone(), vec![x])?;
                     match r {
                         Value::Bool(true) => {
@@ -2651,7 +2682,7 @@ impl<'p> Interp<'p> {
                     let z = self.call_closure(f.clone(), vec![xs[i].clone(), ys[i].clone()])?;
                     out.push(z);
                 }
-                ok!(Value::Array(out));
+                ok!(Value::Array(out.into()));
             }
             // First element matching the predicate closure. Returns
             // `Some(v)` when one is found, `None` otherwise — the
@@ -2670,7 +2701,7 @@ impl<'p> Interp<'p> {
                 };
                 let pred = args[1].clone();
                 let mut hit: Option<Value> = None;
-                for x in xs {
+                for x in xs.iter().cloned() {
                     let keep = self.call_closure(pred.clone(), vec![x.clone()])?;
                     match keep {
                         Value::Bool(true) => {
@@ -2707,7 +2738,7 @@ impl<'p> Interp<'p> {
                 };
                 let needle = &args[1];
                 let mut found = false;
-                for v in xs {
+                for v in xs.iter() {
                     if values_equal(v, needle) {
                         found = true;
                         break;
@@ -2731,7 +2762,7 @@ impl<'p> Interp<'p> {
                 };
                 let f = args[1].clone();
                 let mut out = Vec::with_capacity(xs.len());
-                for x in xs {
+                for x in xs.iter().cloned() {
                     let keep = self.call_closure(f.clone(), vec![x.clone()])?;
                     match keep {
                         Value::Bool(true) => out.push(x),
@@ -2744,7 +2775,7 @@ impl<'p> Interp<'p> {
                         }
                     }
                 }
-                ok!(Value::Array(out));
+                ok!(Value::Array(out.into()));
             }
             // Max / min of an i64 array. Empty → panic (no sensible default
             // for an unbounded domain; caller should `if len(xs) > 0` first).
@@ -3190,7 +3221,7 @@ impl<'p> Interp<'p> {
                 want(1)?;
                 let s = as_str(&args[0])?;
                 ok!(Value::Array(
-                    s.chars().map(|c| Value::Str(c.to_string())).collect()
+                    s.chars().map(|c| Value::Str(c.to_string())).collect::<Vec<_>>().into()
                 ));
             }
             "str_len_chars" => {
@@ -3372,7 +3403,7 @@ impl<'p> Interp<'p> {
                     _ => ok!(Value::Str("{}".to_string())),
                 };
                 let mut parts: Vec<String> = Vec::with_capacity(pairs.len());
-                for p in &pairs {
+                for p in pairs.iter() {
                     if let Value::Tuple(kv) = p {
                         if kv.len() == 2 {
                             let k = match &kv[0] {
@@ -3434,7 +3465,7 @@ impl<'p> Interp<'p> {
                     _ => ok!(Value::Str("[]".to_string())),
                 };
                 let mut parts: Vec<String> = Vec::with_capacity(items.len());
-                for it in &items {
+                for it in items.iter() {
                     parts.push(match it {
                         Value::Int(n) => n.to_string(),
                         Value::SizedInt { val, .. } => val.to_string(),
@@ -3506,7 +3537,7 @@ impl<'p> Interp<'p> {
                 };
                 match &root {
                     serde_json::Value::Object(m) => ok!(Value::Ok(Box::new(Value::Array(
-                        m.keys().map(|k| Value::Str(k.clone())).collect()
+                        m.keys().map(|k| Value::Str(k.clone())).collect::<Vec<_>>().into()
                     )))),
                     _ => ok!(Value::Err(Box::new(Value::Str(
                         "json_keys: E2202 not an object".to_string()
@@ -3623,7 +3654,7 @@ impl<'p> Interp<'p> {
                         ))))),
                     }
                 }
-                ok!(Value::Ok(Box::new(Value::Array(out))));
+                ok!(Value::Ok(Box::new(Value::Array(out.into()))));
             }
 
             "json_path_str" => {
@@ -5211,7 +5242,7 @@ impl<'p> Interp<'p> {
                     }
                 };
                 let keys: Vec<Value> = d.borrow().keys().map(|k| Value::Str(k.clone())).collect();
-                ok!(Value::Array(keys));
+                ok!(Value::Array(keys.into()));
             }
             // `dict_map_values(d, f) -> Dict` — transform every value via
             // a closure, keys preserved. Returns a FRESH dict; the input
@@ -5259,7 +5290,7 @@ impl<'p> Interp<'p> {
                 for (i, v) in xs.iter().enumerate() {
                     out.push(Value::Tuple(vec![Value::Int(i as i64), v.clone()]));
                 }
-                ok!(Value::Array(out));
+                ok!(Value::Array(out.into()));
             }
             // `arr_partition(xs, pred)` — split into `(yes, no)` tuple
             // where `yes` is the elements satisfying `pred` and `no` is
@@ -5279,7 +5310,7 @@ impl<'p> Interp<'p> {
                 let pred = args[1].clone();
                 let mut yes = Vec::new();
                 let mut no = Vec::new();
-                for x in xs {
+                for x in xs.iter().cloned() {
                     let r = self.call_closure(pred.clone(), vec![x.clone()])?;
                     match r {
                         Value::Bool(true) => yes.push(x),
@@ -5292,7 +5323,7 @@ impl<'p> Interp<'p> {
                         }
                     }
                 }
-                ok!(Value::Tuple(vec![Value::Array(yes), Value::Array(no)]));
+                ok!(Value::Tuple(vec![Value::Array(yes.into()), Value::Array(no.into())]));
             }
             // `dict_get_or(d, k, default)` — get the value at `k`, or
             // return `default` if absent. Compresses the ubiquitous
@@ -5404,7 +5435,7 @@ impl<'p> Interp<'p> {
                     .iter()
                     .map(|(k, v)| Value::Tuple(vec![Value::Str(k.clone()), v.clone()]))
                     .collect();
-                ok!(Value::Array(pairs));
+                ok!(Value::Array(pairs.into()));
             }
             // `dict_from_pairs(xs) -> Dict` — inverse: build a Dict from
             // a slice of `(str, V)` tuples. Duplicate keys: the LAST
@@ -5422,7 +5453,7 @@ impl<'p> Interp<'p> {
                 };
                 let mut out: std::collections::BTreeMap<String, Value> =
                     std::collections::BTreeMap::new();
-                for v in xs {
+                for v in xs.iter() {
                     let pair = match v {
                         Value::Tuple(t) if t.len() == 2 => t,
                         other => {
@@ -5623,7 +5654,7 @@ impl<'p> Interp<'p> {
                 };
                 let pred = args[1].clone();
                 let mut out = Vec::new();
-                for x in xs {
+                for x in xs.iter().cloned() {
                     let r = self.call_closure(pred.clone(), vec![x.clone()])?;
                     match r {
                         Value::Bool(true) => out.push(x),
@@ -5636,7 +5667,7 @@ impl<'p> Interp<'p> {
                         }
                     }
                 }
-                ok!(Value::Array(out));
+                ok!(Value::Array(out.into()));
             }
             // `arr_drop_while(xs, pred)` — skip leading elements that
             // satisfy pred, keep the rest. Complement of arr_take_while.
@@ -5654,7 +5685,7 @@ impl<'p> Interp<'p> {
                 let pred = args[1].clone();
                 let mut still_dropping = true;
                 let mut out = Vec::new();
-                for x in xs {
+                for x in xs.iter().cloned() {
                     if still_dropping {
                         let r = self.call_closure(pred.clone(), vec![x.clone()])?;
                         match r {
@@ -5670,7 +5701,7 @@ impl<'p> Interp<'p> {
                     }
                     out.push(x);
                 }
-                ok!(Value::Array(out));
+                ok!(Value::Array(out.into()));
             }
             // `dict_each(d, f)` — iterate (k, v) pairs via a closure
             // for side effects. Closure takes (str, V); return is
@@ -5719,7 +5750,7 @@ impl<'p> Interp<'p> {
                 let key_fn = args[1].clone();
                 let mut out: std::collections::BTreeMap<String, Vec<Value>> =
                     std::collections::BTreeMap::new();
-                for x in xs {
+                for x in xs.iter().cloned() {
                     let k = self.call_closure(key_fn.clone(), vec![x.clone()])?;
                     let key = match k {
                         Value::Str(s) => s,
@@ -5732,7 +5763,7 @@ impl<'p> Interp<'p> {
                     };
                     out.entry(key).or_default().push(x);
                 }
-                let map = out.into_iter().map(|(k, v)| (k, Value::Array(v))).collect();
+                let map = out.into_iter().map(|(k, v)| (k, Value::Array(v.into()))).collect();
                 ok!(Value::Dict(Rc::new(RefCell::new(map))));
             }
             // `dict_values(d) -> [V]` — values in key-sorted order.
@@ -5748,7 +5779,7 @@ impl<'p> Interp<'p> {
                     }
                 };
                 let vals: Vec<Value> = d.borrow().values().cloned().collect();
-                ok!(Value::Array(vals));
+                ok!(Value::Array(vals.into()));
             }
 
             // ── ASI: live LLM calls (require `--features asi-runtime`) ───────

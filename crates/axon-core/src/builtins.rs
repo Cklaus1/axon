@@ -720,7 +720,7 @@ pub const BUILTINS: &[BuiltinFn] = &[
         name: "arr_repeat",
         params: &[("v", "T"), ("n", "i64")],
         ret: "[T]",
-        doc: "Build an array of `n` copies of `v`. Useful to initialize a default-filled array before in-place mutation. Negative `n` returns empty; saturating cap at ~1M elements.",
+        doc: "Build an array of `n` copies of `v`. Useful to initialize a default-filled array before in-place mutation. Negative `n` returns empty; otherwise exactly `n` elements (no size cap) — a size the allocator cannot satisfy is a runtime error naming `n`.",
     },
     BuiltinFn {
         name: "arr_concat",
