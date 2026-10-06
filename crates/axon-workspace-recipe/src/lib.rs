@@ -2,8 +2,9 @@
 //! every side that computes a tree digest:
 //! * the host: `axon-cortex` re-exports it, and `axon-fabric`'s importer walks
 //!   with it;
-//! * the protected guest's verdict runner (`axon-guest-init`), which re-digests
-//!   its read-only candidate and suite inputs before executing anything
+//! * the protected guest's verdict runner (`axon-psv-runner`, in `axon-psv`;
+//!   `axon-guest-init` does not link this crate), which re-digests its
+//!   read-only candidate and suite inputs before executing anything
 //!   (`governance/specs/v022-psv-protocol.md` §4).
 //!
 //! Recipe: MiCode `docs/axon-support/WORKSPACE_VERSION_RECIPE.md`, byte for
