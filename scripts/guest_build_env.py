@@ -291,10 +291,9 @@ def effective_config(cargo, env, cwd, env_ok=None):
     outside the tree between the sources and the bytes).
 
     Classification is on the STRUCTURED config (`--format json`: a nested
-    object keyed by the exact key names) against COMMITTED_KEYS. The text
-    form (`--show-origin`) is read only for ORIGINS: every value must come
-    from the tree's own config file, and a line that cannot be read is refused.
-    `env_ok(name)` says which variables of `env` may be present (default: the
+    object keyed by the exact key names) against COMMITTED_KEYS, whatever file
+    a key came from. The text form (`--show-origin`) is read only to record
+    ORIGINS. `env_ok(name)` says which variables of `env` may be present (default: the
     constructed ENV_ALLOWLIST and the proxies); any other is refused, since
     cargo's own list of environment variables that may affect the config does
     not name RUSTFLAGS, RUSTC_WRAPPER and the like."""
@@ -319,36 +318,14 @@ def effective_config(cargo, env, cwd, env_ok=None):
         why = key_problem(path, triples)
         if why:
             foreign.append(f"{key_text(path)}: {why}")
+    # The text form is read for ORIGINS only (recorded: where each value came
+    # from). It decides nothing: the structured config above is complete.
     r = subprocess.run(argv + ["--show-origin"], env=env, cwd=cwd, capture_output=True, text=True)
-    if r.returncode != 0:
-        return [], sorted(set(foreign + [f"cargo config get failed: {r.stderr.strip()[-300:]}"]))
-    own = os.path.realpath(os.path.join(cwd, ".cargo", "config.toml"))
     origins = set()
-    in_env_note = False
-    for line in (r.stdout + r.stderr).splitlines():
+    for line in r.stdout.splitlines():
         s = line.strip()
-        if not s:
-            continue
-        if s.startswith("# The following environment variables may affect"):
-            in_env_note = True
-            continue
-        if in_env_note:
-            # Variables the (checked) environment holds; named by `env_ok` above.
-            continue
-        if s.startswith("note:"):
-            in_env_note = in_env_note or "environment variables may affect" in s
-            continue
-        if s in ("]", "}", "],", "},"):
-            continue
-        if s.endswith("= [") or s.endswith("= {"):
-            continue
-        if " # " not in s:
-            foreign.append(f"a config value of unknown origin: {s}")
-            continue
-        origin = s.rsplit(" # ", 1)[1].strip()
-        origins.add(origin)
-        if os.path.realpath(origin) != own:
-            foreign.append(f"{s.split(' = ', 1)[0].strip()} (from {origin}): not the tree's own .cargo/config.toml")
+        if " # " in s and not s.startswith("#"):
+            origins.add(s.rsplit(" # ", 1)[1].strip())
     return sorted(origins), sorted(set(foreign))
 
 
@@ -760,10 +737,9 @@ def dist_record(record_path, dist):
     rec = load(record_path)
     out = {}
     for name in DIST_BINARIES:
-        got = sha256(os.path.join(dist, name))
-        if got != rec["artifacts"].get(name):
-            fail(f"dist/{name} ({got}) is not the bytes the controlled build produced "
-                 f"({rec['artifacts'].get(name)})")
+        got, want = sha256(os.path.join(dist, name)), rec["artifacts"].get(name)
+        if got != want:
+            fail(f"dist/{name} ({got}) is not the bytes the controlled build produced ({want})")
         out[name] = got
     got = sha256(os.path.join(dist, "rootfs.sqfs"))
     if got != (rec.get("rootfs") or {}).get("sha256"):

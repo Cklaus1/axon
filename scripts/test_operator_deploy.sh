@@ -302,6 +302,47 @@ printf '#!/bin/sh\necho %s\n' "'{\"build\":\"production\",\"profile\":\"release\
   >"$WORK/fakebin/axon-fabric"; chmod 0755 "$WORK/fakebin/axon-fabric"
 refused "a verifier built from another commit" "not a clean production release build" \
   bash "$KIT" --from "$CLONE" --bin-dir "$WORK/fakebin"
+# Round 5 (amendment 80): the verifier says build.rs saw a wrapper, flags or a
+# linker (the real verifier says "" -- every pass above is the control).
+printf '#!/bin/sh\necho %s\n' "'{\"build\":\"production\",\"profile\":\"release\",\"source_dirty\":false,\"fabric_revision\":\"$COMMIT\",\"build_state\":\"RUSTC_WRAPPER=/w\"}'" \
+  >"$WORK/fakebin/axon-fabric"; chmod 0755 "$WORK/fakebin/axon-fabric"
+refused "ATTACK: a verifier built under a compiler wrapper" "build_state=" \
+  bash "$KIT" --from "$CLONE" --bin-dir "$WORK/fakebin"
+# ... and the AMBIENT build environment of the host binaries is judged with the
+# guest build's classifier: a wrapper or flags in the kit's own environment.
+refused "ATTACK: a host build under RUSTC_WRAPPER" "ambient build environment" \
+  env RUSTC_WRAPPER=/usr/bin/true bash "$KIT" "${ARGS[@]}"
+refused "ATTACK: a host build under RUSTFLAGS" "ambient build environment" \
+  env RUSTFLAGS="--cfg evil" bash "$KIT" "${ARGS[@]}"
+refused "ATTACK: a host build under CARGO_BUILD_RUSTC_WRAPPER" "ambient build environment" \
+  env CARGO_BUILD_RUSTC_WRAPPER=/usr/bin/true bash "$KIT" "${ARGS[@]}"
+# The guest build records are judged BEFORE anything is installed, by the
+# freeze's own judge: a record without its runner's proof, or edited after it,
+# is not a controlled build's (the control is every guest step above).
+tamper_guest() { # LABEL PYTHON-EDIT-OF-m
+  local label=$1 edit=$2 T="$WORK/tampered" o rc
+  rm -rf "$T"; cp -a "$CLONE" "$T"
+  python3 - "$T" "$edit" <<'PY' || fail "cannot tamper the guest manifest"
+import json, sys
+t, edit = sys.argv[1:3]
+for rel in ("dist/guest-linux/manifest.json", "profiles/linux-microvm/manifest.json"):
+    p = f"{t}/{rel}"
+    m = json.load(open(p))
+    exec(edit)
+    json.dump(m, open(p, "w"), indent=2)
+    open(p, "a").write("\n")
+PY
+  (cd "$T" && G add -A && G commit -q -m "tampered guest record") || fail "cannot commit the tampered clone"
+  o=$(bash "$T/scripts/operator_deploy_protected_host.sh" --from "$T" --bin-dir "$BIN" --only guest 2>&1); rc=$?
+  [ $rc != 0 ] || fail "ATTACK: a guest image whose build record is $label was accepted by the kit: $o"
+  grep -q "guest build records are not a controlled build's" <<<"$o" \
+    || fail "$label: refused for another reason: $o"
+  ok "a guest image whose build record is $label is refused at install"
+  rm -rf "$T"
+}
+tamper_guest "a hand-written one (no builder proof)" "m['source']['build_environment'].pop('proof')"
+tamper_guest "edited after its runner signed it" "m['source']['build_environment']['src_files'] = 99"
+tamper_guest "a kernel record edited after signing" "m['kernel']['build_environment']['make'][1][2] = '-j1'"
 if [ "$(id -u)" = 0 ]; then
   refused "--apply as a non-root uid" "must run as root" setpriv --reuid=65534 --regid=65534 --clear-groups -- \
     bash "$KIT" "${ARGS[@]}" --apply

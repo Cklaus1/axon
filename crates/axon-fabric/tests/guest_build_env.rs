@@ -1076,6 +1076,76 @@ print(json.dumps(out))";
     let o = gpy(&r, code, &[&host]);
     assert!(o.status.success(), "setup: {}", text(&o));
     let v: Value = serde_json::from_slice(&o.stdout).unwrap();
+    // The triple guard, with an allowlist that (wrongly) names triples the build
+    // compiles for: each is still refused, and the committed wasm key is not.
+    let code_b = "\
+g.COMMITTED_KEYS = {('target', sys.argv[2], 'rustflags'), ('target', 'cfg(unix)', 'linker'),\
+ ('target', 'x86_64-unknown-linux-musl', 'rustflags'), ('target', 'wasm32-wasip1', 'rustflags')}\n\
+triples = g.GUEST_TRIPLES | {sys.argv[2]}\n\
+def p(*k): return g.key_problem(tuple(k), triples)\n\
+print(json.dumps({'host': p('target', sys.argv[2], 'rustflags'), 'cfg': p('target', 'cfg(unix)', 'linker'),\
+ 'musl': p('target', 'x86_64-unknown-linux-musl', 'rustflags'), 'wasm': p('target', 'wasm32-wasip1', 'rustflags')}))";
+    let o = gpy(&r, code_b, &[&host]);
+    assert!(o.status.success(), "setup: {}", text(&o));
+    let b: Value = serde_json::from_slice(&o.stdout).unwrap();
+    assert!(b["wasm"].is_null(), "control: the wasm key passes: {b}");
+    for k in ["host", "cfg", "musl"] {
+        assert!(
+            b[k].is_string(),
+            "ATTACK: a committed key for a triple the build compiles for was tolerated ({k}): {b}"
+        );
+    }
+    // The host triple is what `rustc -vV` says, not a constant; and a cargo that
+    // cannot print its config refuses the build (it never reads as "no config").
+    let fake = d.path().join("fake-bin");
+    write(
+        &fake.join("rustc"),
+        "#!/bin/sh\necho 'rustc fake'\necho 'host: riscv64-fake-linux-gnu'\n",
+    );
+    write(
+        &fake.join("cargo"),
+        "#!/bin/sh\necho 'error: boom' >&2\nexit 1\n",
+    );
+    chmod_x(&fake.join("rustc"));
+    chmod_x(&fake.join("cargo"));
+    let code_c = "\
+d = sys.argv[2]\n\
+print(json.dumps({'host': g.host_triple(d + '/rustc'),\
+ 'cfg': g.effective_config(d + '/cargo', {'PATH': '/usr/bin:/bin'}, d)[1]}))";
+    // A variable that survives into the constructed environment (cargo's own
+    // list of environment variables that may affect the config does not name
+    // RUSTFLAGS or RUSTC_WRAPPER) is refused; the constructed one is not.
+    let code_d = "\
+chan, cargo, rustc = g.toolchain()\n\
+env = g.constructed_env('/tmp/none', cargo, rustc, {})\n\
+bad = dict(env, CARGO_BUILD_RUSTC_WRAPPER='/w', RUSTFLAGS='-Cx', CARGO_ENCODED_RUSTFLAGS='x')\n\
+print(json.dumps({'clean': g.effective_config(cargo, env, sys.argv[2])[1],\
+ 'bad': g.effective_config(cargo, bad, sys.argv[2])[1]}))";
+    let o = gpy(&r, code_d, &[r.to_str().unwrap()]);
+    assert!(o.status.success(), "setup: {}", text(&o));
+    let e: Value = serde_json::from_slice(&o.stdout).unwrap();
+    assert_eq!(
+        e["clean"],
+        serde_json::json!([]),
+        "control: the constructed environment"
+    );
+    assert!(
+        e["bad"].as_array().is_some_and(|a| a.len() == 3),
+        "ATTACK: a CARGO_*/RUSTFLAGS variable in the constructed environment was accepted: {e}"
+    );
+    let o = gpy(&r, code_c, &[fake.to_str().unwrap()]);
+    assert!(o.status.success(), "setup: {}", text(&o));
+    let c: Value = serde_json::from_slice(&o.stdout).unwrap();
+    assert_eq!(
+        c["host"], "riscv64-fake-linux-gnu",
+        "ATTACK: the host triple is not rustc's own"
+    );
+    assert!(
+        c["cfg"]
+            .as_array()
+            .is_some_and(|a| a.iter().any(|x| x.as_str().unwrap().contains("failed"))),
+        "ATTACK: a cargo that cannot print its config was read as having none: {c}"
+    );
     // Control: exactly the committed keys are tolerated.
     assert!(
         v["wasip1"].is_null() && v["unknown"].is_null(),
@@ -1202,7 +1272,22 @@ fn an_ambient_host_build_under_a_wrapper_flag_or_config_is_refused() {
 #[test]
 fn a_build_record_its_runner_did_not_sign_is_refused() {
     let d = tempfile::tempdir().unwrap();
-    let (r, rec_path, rec) = begun(d.path());
+    // Its own build parent: this test changes its key's and its key directory's
+    // modes, which the default parent's concurrent builds must never see.
+    let scratch = private_scratch();
+    let r = checkout(d.path());
+    let out = d.path().join("out");
+    let o = build_env_only(
+        &r,
+        &out,
+        &[(
+            "AXON_GUEST_BUILD_PARENT",
+            scratch.path().join("parent").display().to_string(),
+        )],
+    );
+    assert!(o.status.success(), "setup: begin: {}", text(&o));
+    let rec = record(&out);
+    let rec_path = out.join("build-env.json");
     let key = Path::new(rec["build_parent"].as_str().unwrap())
         .join("keys")
         .join(format!("{}.key", rec["proof"]["id"].as_str().unwrap()));
@@ -1213,7 +1298,16 @@ if mode == 'none': rec.pop('proof')\n\
 elif mode == 'edit': rec['artifacts']['axon'] = 'f' * 64\n\
 elif mode == 'forged': import hmac as h; rec['proof']['hmac'] = h.new(b'x' * 32, g.proof_payload(rec), 'sha256').hexdigest()\n\
 elif mode == 'otherparent': rec['build_parent'] = '/var/tmp'\n\
-print(json.dumps(g.proof_problems(rec, 'build')))";
+elif mode == 'plantedparent':\n\
+\x20import hmac as h, tempfile, os\n\
+\x20par = tempfile.mkdtemp(); os.chmod(par, 0o1777); os.mkdir(par + '/keys', 0o700)\n\
+\x20open(par + '/keys/mine.key', 'w').write('k' * 64); os.chmod(par + '/keys/mine.key', 0o400)\n\
+\x20rec['build_parent'] = par; rec['proof']['id'] = 'mine'\n\
+\x20rec['proof']['hmac'] = h.new(b'k' * 64, g.proof_payload(rec), 'sha256').hexdigest()\n\
+out = g.proof_problems(rec, 'build')\n\
+import shutil\n\
+if mode == 'plantedparent': shutil.rmtree(rec['build_parent'])\n\
+print(json.dumps(out))";
     let judge = |mode: &str| -> String {
         let o = gpy(&r, code, &[rec_path.to_str().unwrap(), mode]);
         assert!(o.status.success(), "setup: {mode}: {}", text(&o));
@@ -1241,18 +1335,36 @@ print(json.dumps(g.proof_problems(rec, 'build')))";
     chmod(&key, 0o644);
     let open = judge("same");
     chmod(&key, 0o400);
+    // A symlink to a file that is otherwise a perfectly good key (0400, ours,
+    // the same bytes): only refusing to FOLLOW it refuses this.
+    let twin = d.path().join("twin.key");
+    std::fs::write(&twin, &saved).unwrap();
+    chmod(&twin, 0o400);
     std::fs::remove_file(&key).unwrap();
-    std::os::unix::fs::symlink("/etc/hostname", &key).unwrap();
+    std::os::unix::fs::symlink(&twin, &key).unwrap();
     let linked = judge("same");
+    std::fs::remove_file(&key).unwrap();
+    std::fs::write(&key, &saved).unwrap();
+    chmod(&key, 0o400);
+    let keys_dir = key.parent().unwrap();
+    chmod(keys_dir, 0o755);
+    let enterable = judge("same");
+    chmod(keys_dir, 0o700);
     std::fs::remove_file(&key).unwrap();
     let gone = judge("same");
     std::fs::write(&key, saved).unwrap();
     chmod(&key, 0o400);
+    // A record somebody wrote and signed under a key of their own in a parent
+    // they can write (a world-writable one): the key checks all pass; only the
+    // parent's privacy refuses it.
+    let planted = judge("plantedparent");
     discard(&rec);
     for (what, got) in [
         ("a key another uid can read", open),
         ("a key that is a symlink", linked),
+        ("a key in a directory others can enter", enterable),
         ("a key that is gone", gone),
+        ("a hand-signed record in a world-writable parent", planted),
     ] {
         if !got.contains("cannot be checked") {
             failures.push(format!("{what}: {got:?}"));
