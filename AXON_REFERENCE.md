@@ -31,7 +31,7 @@ Generated from the compiler's own tables (`BUILTINS`, `DEFERRED_ATTRS`, the clap
 | `axon redteam` | Run the red-team check on a .ax program |
 | `axon reference` | Emit the complete machine-readable reference for this build: every CLI verb, every builtin with its signature, every attribute |
 | `axon replay` | Read a host journal (`AXON_RECORD`) as a human-reviewable transcript, or diff two of them |
-| `axon run` | Compile a .ax file and execute it, forwarding remaining arguments |
+| `axon run` | Type-check a .ax file and interpret it |
 | `axon session` | R44 — an accumulating typed session: bind a name in one cell, read it in the next |
 | `axon target` | Cross-platform targets: list buildable targets / build for one (R7) |
 | `axon test` | Run all @[test]-tagged functions in one or more .ax files |

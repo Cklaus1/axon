@@ -253,14 +253,10 @@ enum Command {
         iterate: Option<usize>,
     },
 
-    /// Compile a .ax file and execute it, forwarding remaining arguments.
+    /// Type-check a .ax file and interpret it.
     Run {
         #[arg(help = "Path to .ax source file")]
         file: PathBuf,
-
-        /// Enable O2 optimizations (default: O0 / debug).
-        #[arg(long, short = 'r', help = "Optimized release build")]
-        release: bool,
 
         /// R45 — hold `main` to a deny-all capability grant unless it declares
         /// one, so containment is a GRANT rather than an opt-in.
@@ -277,7 +273,7 @@ enum Command {
         )]
         require_contained: bool,
 
-        /// Arguments forwarded to the compiled binary.
+        /// Extra arguments. Not forwarded to the program yet: `axon run` warns and ignores them.
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
@@ -878,12 +874,11 @@ fn dispatch(command: Command) {
         } => cmd_goal(file, emit, iterate),
         Command::Run {
             file,
-            release,
             require_contained,
             args,
         } => {
             axon_core::capabilities::set_require_contained(require_contained);
-            cmd_run(file, release, args)
+            cmd_run(file, args)
         }
         Command::Fmt { files, check } => cmd_fmt(files, check),
         Command::Doc { files, out } => cmd_doc(files, out),
@@ -4138,7 +4133,7 @@ fn cmd_trace_replay(run_id: String, path: Option<PathBuf>) {
         axon_core::clock::set(rec.ts_ms as i64, 1);
     }
     let source_path = PathBuf::from(&rec.src);
-    cmd_run(source_path, false, vec![]);
+    cmd_run(source_path, vec![]);
 }
 
 // ── Phase 9: run-id + seed helpers ───────────────────────────────────────────
@@ -5491,7 +5486,7 @@ fn render_cell_jsonl(sess: &Session, r: &CellResult) -> String {
     )
 }
 
-fn cmd_run(file: PathBuf, _release: bool, args: Vec<String>) {
+fn cmd_run(file: PathBuf, args: Vec<String>) {
     // Fix 5: validate .ax extension.
     validate_ax_extension(&file);
 
