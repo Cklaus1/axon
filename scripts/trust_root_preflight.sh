@@ -338,8 +338,9 @@ cannot_touch_store verifier "$V"
 # A (amendment 45): the Fabric actor is not root (resolve refuses uid 0 for
 # every actor), and its ONLY route to a root launch is the privileged helper.
 record operator - helper-admits "$HELPER" "${F%%:*}" "$HELPER_FABRIC_UID"
-# Amendment 79: the helper serves only the Fabric program its config pins, so
-# the pin must be the installed verifier (the program that runs as Fabric): its
+# Amendments 79, 85: the helper serves a caller whose executable at that instant is
+# the file its config pins (a guard against mistakes, not against same-uid code),
+# so the pin must be the installed verifier (the program that runs as Fabric): its
 # path, and the sha256 of its bytes.
 record operator - helper-fabric-pin-path "$HELPER_CONFIG_FILE" "$FABRIC_BIN" "$HELPER_FABRIC_PATH"
 record operator - helper-fabric-pin-sha256 "$HELPER_CONFIG_FILE" "$(sha256sum "$FABRIC_BIN" | cut -d' ' -f1)" "$HELPER_FABRIC_SHA"

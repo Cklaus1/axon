@@ -46,6 +46,9 @@ pub const REPLY_SCHEMA: &str = "axon-custodian-reply/1";
 
 const MAX_MESSAGE: u64 = 4096;
 const IO_TIMEOUT: Duration = Duration::from_secs(30);
+/// Amendment 85: the whole of one connection's request must arrive within
+/// this (the observer's rule, amendment 79).
+pub const REQUEST_DEADLINE: Duration = Duration::from_secs(30);
 
 /// Which custodian answered.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -710,9 +713,17 @@ impl Server {
     }
 
     /// Serve one connection: authenticate the caller by `SO_PEERCRED`, read
-    /// one bounded request line, write one reply.
+    /// one bounded request line, write one reply. The request must be complete
+    /// within [`REQUEST_DEADLINE`] of the accept (amendment 85).
     pub fn serve_one(&self, s: UnixStream) {
-        let _ = s.set_read_timeout(Some(IO_TIMEOUT));
+        self.serve_one_within(s, REQUEST_DEADLINE)
+    }
+
+    /// [`Self::serve_one`] with the request's absolute `deadline`: each read
+    /// waits only for what is left of it. A per-read timeout let a Fabric-uid
+    /// peer dripping a byte every 20 s hold this single-threaded service for
+    /// 131 s (bounded only by 4096 x 29 s), stalling every issue, check and spend.
+    pub fn serve_one_within(&self, s: UnixStream, deadline: Duration) {
         let _ = s.set_write_timeout(Some(IO_TIMEOUT));
         let reply = match peer_uid(s.as_raw_fd()) {
             Err(e) => self.reply(Err(e)),
@@ -720,12 +731,19 @@ impl Server {
                 let mut line = Vec::new();
                 let mut r = (&s).take(MAX_MESSAGE);
                 let mut byte = [0u8; 1];
+                let started = std::time::Instant::now();
                 // One line: stop at the newline, never wait for EOF.
-                while let Ok(1) = r.read(&mut byte) {
-                    if byte[0] == b'\n' {
+                loop {
+                    let left = deadline.saturating_sub(started.elapsed());
+                    if left.is_zero() {
                         break;
                     }
-                    line.push(byte[0]);
+                    let _ = s.set_read_timeout(Some(left));
+                    match r.read(&mut byte) {
+                        Ok(1) if byte[0] == b'\n' => break,
+                        Ok(1) => line.push(byte[0]),
+                        _ => break,
+                    }
                 }
                 self.answer(peer, &line)
             }
@@ -1046,6 +1064,49 @@ mod tests {
         );
         assert!(r.ok, "setup: a spend: {r:?}");
         assert!(issue().ok, "a spend frees a slot");
+    }
+
+    /// A152 (M2052, amendment 85): one connection has an ABSOLUTE deadline for
+    /// its request, as the observer's does. A peer that sends a byte and goes
+    /// silent is answered (refused as malformed) within the deadline, not held
+    /// for 30 s per read. Control: a complete request is answered at once.
+    #[test]
+    fn a_custodian_connection_that_does_not_finish_its_request_is_cut_off() {
+        let d = tempfile::tempdir().unwrap();
+        let s = Server {
+            cfg: cfg(),
+            mode: Mode::Test,
+            store: NonceStore {
+                dir: d.path().join("n"),
+            },
+            clock: Clock::FixedUnix(1_000_000),
+        };
+        let run = |send: &'static [u8], silent: Duration| -> (Duration, String) {
+            let (a, b) = UnixStream::pair().unwrap();
+            let peer = std::thread::spawn(move || {
+                let mut a = a;
+                let _ = a.write_all(send);
+                std::thread::sleep(silent);
+                let _ = a.shutdown(std::net::Shutdown::Write);
+                let mut reply = String::new();
+                let _ = a.read_to_string(&mut reply);
+                reply
+            });
+            let started = std::time::Instant::now();
+            s.serve_one_within(b, Duration::from_millis(500));
+            (started.elapsed(), peer.join().unwrap())
+        };
+        let (took, reply) = run(b"{\"sche", Duration::from_secs(3));
+        assert!(
+            took < Duration::from_secs(2),
+            "ATTACK: a custodian connection that stopped sending held the custodian for {took:?} \
+             (deadline 500 ms): {reply}"
+        );
+        let (took, reply) = run(b"{}\n", Duration::from_millis(0));
+        assert!(
+            took < Duration::from_secs(2) && reply.contains("axon-custodian-reply/1"),
+            "control: {took:?} {reply}"
+        );
     }
 
     /// The store is the custodian's own and private.

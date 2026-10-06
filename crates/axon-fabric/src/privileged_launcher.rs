@@ -121,6 +121,13 @@ pub struct HelperConfig {
     /// Amendment 79: the Fabric program the helper serves (path, sha256,
     /// build revision), the operator's pin.
     pub fabric: FabricPin,
+    /// Amendment 85, TEST-TRUST configs only: apply the private-reply-channel
+    /// rule ([`reply_channel_private`]) to a test helper too. A production
+    /// helper ALWAYS applies it (and refuses a stdout that is not a pipe); most
+    /// test fixtures put the helper under a shell or a harness whose reader is
+    /// not the helper's parent, so a test helper applies it only when asked.
+    #[serde(default)]
+    pub private_reply_channel: bool,
     /// The interpreter the launcher script runs under (bash).
     pub interpreter: PinnedJson,
     /// `fc_linux_profile.sh`.
@@ -1013,12 +1020,126 @@ fn authenticated(
     if running != c.fabric.sha256 {
         return Err(format!(
             "the caller runs a program with sha256 {running}, not the operator's pinned Fabric \
-             {} ({}): only the installed axon-fabric is served",
+             {} ({}): only a caller running the installed axon-fabric file is served",
             c.fabric.sha256,
             c.fabric.path.display()
         ));
     }
+    if !a.test || c.private_reply_channel {
+        reply_channel_private(!a.test)?;
+    }
     Ok((c, running))
+}
+
+/// Amendment 85: who can READ the reply. The helper answers on its stdout, and
+/// the digest of the parent's executable (`running_caller`) is a property of
+/// whatever image that pid has when `/proc/<ppid>/exe` is opened, not of how it
+/// got there. EXECUTED (round-6 reviewer, 18 of 20): a Fabric-uid program that
+/// is not the pinned one spawns the helper with a pipe it (or a forked worker)
+/// reads, and `execve`s the pinned file; the helper measures the pinned file
+/// and the reader gets a signed observation. A request is therefore served
+/// only when the reply pipe has no holder but this process and its parent: the
+/// worker of that attack holds the read end and is refused. A production
+/// helper also refuses a stdout that is not a pipe (a file or terminal is
+/// readable by every process of the uid, with no holder to count).
+/// What this does NOT close is stated in amendment 85: the same-uid ways to
+/// obtain the pipe afterwards (reopening `/proc/<pid>/fd/N` of the parent,
+/// fds in flight, `pidfd_getfd`, ptrace, `LD_PRELOAD`).
+pub fn reply_channel_private(production: bool) -> Result<(), String> {
+    // SAFETY: fstat of fd 1 into a zeroed stat; getpid/getppid cannot fail.
+    let (st, me, ppid) = unsafe {
+        let mut st: libc::stat = std::mem::zeroed();
+        if libc::fstat(1, &mut st) != 0 {
+            return Err(format!(
+                "the helper's stdout is not open: {}",
+                std::io::Error::last_os_error()
+            ));
+        }
+        (st, libc::getpid(), libc::getppid())
+    };
+    let mode = st.st_mode & libc::S_IFMT;
+    if mode != libc::S_IFIFO {
+        return channel_verdict(mode, &[], ppid, me, production);
+    }
+    // A holder that is another child of the parent mid-spawn (a pipe end not
+    // yet closed by its exec) goes away within milliseconds; the attack's
+    // worker does not. Judged repeatedly for a short while.
+    let mut last = Ok(());
+    for _ in 0..30 {
+        let holders = pipe_holders(st.st_dev, st.st_ino, production)?;
+        last = channel_verdict(mode, &holders, ppid, me, production);
+        if last.is_ok() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    last
+}
+
+/// The decision of [`reply_channel_private`], over what the scan found.
+fn channel_verdict(
+    mode: libc::mode_t,
+    holders: &[libc::pid_t],
+    ppid: libc::pid_t,
+    me: libc::pid_t,
+    production: bool,
+) -> Result<(), String> {
+    if mode != libc::S_IFIFO {
+        if production {
+            return Err(
+                "the helper's stdout is not a pipe: a file or terminal is readable by every \
+                 process of the Fabric uid, so nothing says who reads the reply (amendment 85)"
+                    .into(),
+            );
+        }
+        return Ok(());
+    }
+    if let Some(p) = holders.iter().find(|p| **p != ppid && **p != me) {
+        return Err(format!(
+            "pid {p}, which is neither the helper nor its parent (pid {ppid}), holds the pipe the \
+             reply would be written to: whoever holds it reads the observation, whatever program \
+             the parent is (amendment 85)"
+        ));
+    }
+    Ok(())
+}
+
+/// Every process with an open descriptor on the pipe (`dev`, `ino`), by
+/// walking `/proc/<pid>/fd`. A process that exits during the walk is skipped;
+/// one whose descriptors cannot be read is skipped by an unprivileged
+/// (test-trust) helper and refuses a production (root) one.
+fn pipe_holders(
+    dev: libc::dev_t,
+    ino: libc::ino_t,
+    production: bool,
+) -> Result<Vec<libc::pid_t>, String> {
+    use std::os::unix::fs::MetadataExt;
+    let mut out = Vec::new();
+    let procs = std::fs::read_dir("/proc").map_err(|e| format!("/proc: {e}"))?;
+    for e in procs.flatten() {
+        let Some(pid) = e
+            .file_name()
+            .to_str()
+            .and_then(|n| n.parse::<libc::pid_t>().ok())
+        else {
+            continue;
+        };
+        let fds = match std::fs::read_dir(format!("/proc/{pid}/fd")) {
+            Ok(f) => f,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(e) if !production && e.kind() == std::io::ErrorKind::PermissionDenied => continue,
+            Err(e) => return Err(format!("/proc/{pid}/fd: {e}")),
+        };
+        for fd in fds.flatten() {
+            if let Ok(m) = std::fs::metadata(fd.path()) {
+                if m.ino() == ino && m.dev() == dev {
+                    out.push(pid);
+                    break;
+                }
+            }
+        }
+    }
+    Ok(out)
 }
 
 /// `axon-protected-observe-request/1` (amendment 68): the launch manifest
@@ -1725,6 +1846,7 @@ mod tests {
         HelperConfig {
             schema: CONFIG_SCHEMA.into(),
             fabric_uid: 991,
+            private_reply_channel: false,
             fabric: FabricPin {
                 path: "/usr/local/bin/axon-fabric".into(),
                 sha256: "f".repeat(64),
@@ -1986,8 +2108,9 @@ mod tests {
         (p, v, a)
     }
 
-    /// A132 (amendment 79): the helper serves only the Fabric program the
-    /// operator pinned, so the config must pin it: a lowercase sha256 and the
+    /// A132 (amendments 79, 85): the helper serves a caller whose executable at
+    /// that instant is the file the operator pinned (a guard against mistakes,
+    /// not against same-uid code), so the config must pin it: a lowercase sha256 and the
     /// pinned binary's 40-hex build revision. A config with no pin, a pin that
     /// is not a digest, or a revision that is not a commit is refused.
     /// Control: the pinned config loads.
@@ -2047,6 +2170,30 @@ mod tests {
             "ATTACK: a production helper config whose observer service and custodian are one \
              uid (993) was accepted"
         );
+    }
+
+    /// A151 (M2050/M2051, amendment 85): the reply pipe has no holder but the helper
+    /// and its parent; a production helper's stdout must be a pipe. ATTACKS: a
+    /// third process holding the pipe (the exec-race worker); a production
+    /// stdout that is a file or a terminal. Controls: parent and helper only.
+    #[test]
+    fn a_reply_pipe_another_process_holds_is_refused() {
+        let (me, ppid) = (100, 50);
+        channel_verdict(libc::S_IFIFO, &[50, 100], ppid, me, true)
+            .expect("control: parent + helper");
+        channel_verdict(libc::S_IFIFO, &[], ppid, me, true).expect("control: no other holder");
+        let got = channel_verdict(libc::S_IFIFO, &[50, 100, 77], ppid, me, true);
+        assert!(
+            got.is_err(),
+            "ATTACK: a reply pipe a third process (the exec-race worker) holds was served"
+        );
+        for mode in [libc::S_IFREG, libc::S_IFCHR] {
+            assert!(
+                channel_verdict(mode, &[], ppid, me, true).is_err(),
+                "ATTACK: a production helper wrote its reply to a stdout that is not a pipe"
+            );
+            channel_verdict(mode, &[], ppid, me, false).expect("a test helper may use a file");
+        }
     }
 
     /// A134 (M1871): the helper sizes what the observer must hash from the

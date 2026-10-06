@@ -1914,3 +1914,12 @@ ATTACK_MARKERS.update({
 
 
 ATTACK_MARKERS['M890'] = r'ATTACK: a restore that left a foreign interpreter in place was reported as restored'
+
+# C9 round 6, workstream OBSBIND2 (M2050-M2079; amendment 85).
+ATTACK_MARKERS.update({
+    'M2050': r'ATTACK: a reply pipe a third process \(the exec-race worker\) holds was served',
+    'M2051': r'ATTACK: a production helper wrote its reply to a stdout that is not a pipe',
+    'M2052': r'ATTACK: a custodian connection that stopped sending held the custodian',
+    'M2053': r'ATTACK: \d+ of 20 observations were relayed to a program that is not the pinned one',
+    'M2054': r'ATTACK: \d+ of 20 observations were relayed to a program that is not the pinned one',
+})

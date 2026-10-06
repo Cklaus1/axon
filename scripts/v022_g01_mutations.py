@@ -7444,6 +7444,34 @@ MUTATIONS += [
 ]
 
 
+# ── C9 round 6, workstream OBSBIND2 (M2050-M2079; amendment 85; matrix A151-A153).
+# The exec race: a Fabric-uid program that is not the pinned one spawns the helper
+# with a pipe a worker reads and execs the pinned file; the helper measured the
+# pinned file. The reply pipe must have no holder but the helper and its parent.
+PSV_IDS |= {f"M{n}" for n in range(2050, 2080)}
+_PLS2 = 'crates/axon-fabric/src/privileged_launcher.rs'
+_CUS2 = 'crates/axon-fabric/src/custodian.rs'
+_RACE = 'a_program_that_execs_the_pinned_file_after_spawning_the_helper_gets_no_observation'
+MUTATIONS += [
+    ('M2050', "A151 (obsbind2): the reply pipe has no holder but the helper and its parent (the rule)", _PLS2,
+     '    if let Some(p) = holders.iter().find(|p| **p != ppid && **p != me) {\n',
+     '    if let Some(p) = holders.iter().find(|_| false) {\n',
+     'axon-fabric', '--lib', 'privileged_launcher::tests::a_reply_pipe_another_process_holds_is_refused'),
+    ('M2051', "A153 (obsbind2): a production helper's stdout must be a pipe", _PLS2,
+     '        if production {\n', '        if false && production {\n',
+     'axon-fabric', '--lib', 'privileged_launcher::tests::a_reply_pipe_another_process_holds_is_refused'),
+    ('M2052', "A152 (obsbind2): one custodian connection has an absolute deadline for its request", _CUS2,
+     '                    let _ = s.set_read_timeout(Some(left));\n', '                    let _ = s.set_read_timeout(Some(IO_TIMEOUT));\n',
+     'axon-fabric', '--lib', 'custodian::tests::a_custodian_connection_that_does_not_finish_its_request_is_cut_off'),
+    ('M2053', "A151 (obsbind2): the scan finds every process holding the reply pipe", _PLS2,
+     '            if let Ok(m) = std::fs::metadata(fd.path()) {\n', '            if let Ok(m) = std::fs::metadata("/nonexistent") {\n',
+     'axon-fabric', '--test observer_service', _RACE),
+    ('M2054', "A151 (obsbind2): the helper applies the reply-channel rule to every request it serves (the one caller gate)", _PLS2,
+     '    if !a.test || c.private_reply_channel {\n', '    if false {\n',
+     'axon-fabric', '--test observer_service', _RACE),
+]
+
+
 def cargo_build_tests(package, target, env=""):
     """Build the tests a cell will run, ALONE: (ok, output). A compile error is
     the outcome of THIS cargo invocation, never a string found in a test's

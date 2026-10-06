@@ -3278,6 +3278,13 @@ EXEMPT += [
     (PL, "        Err(why) => (ObserveReport::refused(why), EXIT_REFUSED),",
      "RE-REPORTED: authenticated() or the relay refused (each decision its own row: M531, M1543, "
      "M1544, M1545, the observer's M1520-M1549); nothing is relayed"),
+    (PL, "        if libc::fstat(1, &mut st) != 0 {",
+     "OS error: the helper's own stdout is not open, so there is no reply channel to judge and "
+     "nothing is served (fails closed); no input chooses success"),
+    (PL, '            Err(e) => return Err(format!("/proc/{pid}/fd: {e}")),',
+     "OS error reading another process's descriptor table (a root helper can read them all): the "
+     "holders of the reply pipe cannot be counted, so nothing is served (fails closed); the "
+     "decision over what the scan finds is M2050, the scan itself M2053"),
     (PL, "    if raw < 0 {",
      "OS error from pidfd_open (the parent is gone, or the kernel has no pidfds): the running "
      "Fabric cannot be measured, so nothing is relayed (fails closed)"),

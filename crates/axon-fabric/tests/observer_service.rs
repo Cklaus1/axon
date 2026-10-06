@@ -1179,3 +1179,146 @@ fn an_observer_drops_the_records_of_nonces_the_custodian_no_longer_honours() {
         "the record carries the custodian's expiry (300 s from issue): {mine}"
     );
 }
+
+// ── Amendment 85 (C9 round 6, PSV-6): the exec race ──────────────────────────
+
+/// The attacker: a Fabric-uid python that is NOT the pinned program. A forked
+/// worker holds the read end of a pipe; the parent spawns `helper --observe`
+/// with the pipe as its stdout and an attacker-authored manifest on stdin, then
+/// immediately `execv`s the pinned file. The helper measures /proc/<ppid>/exe
+/// AFTER the exec and sees the pinned file. The worker writes what it read.
+const EXEC_RACE_ATTACKER: &str = r#"
+import os, sys, subprocess
+h, cfg, req, out, pinned = sys.argv[1:6]
+r, w = os.pipe()
+pid = os.fork()
+if pid == 0:
+    os.close(w)
+    data = b''
+    while True:
+        b = os.read(r, 65536)
+        if not b:
+            break
+        data += b
+    open(out, 'wb').write(data)
+    os._exit(0)
+os.close(r)
+subprocess.Popen([h, '--observe', '--test-config', cfg], stdin=open(req, 'rb'), stdout=w)
+os.close(w)
+os.execv(pinned, [pinned, '1'])
+"#;
+
+/// The genuine caller: the pinned program (python3 here) runs the helper and
+/// reads the reply itself, the shape of the real Fabric.
+const GENUINE_CALLER: &str = r#"
+import subprocess, sys
+h, cfg, req, out = sys.argv[1:5]
+p = subprocess.run([h, '--observe', '--test-config', cfg], stdin=open(req, 'rb'), capture_output=True)
+open(out, 'wb').write(p.stdout)
+"#;
+
+/// A151 (M2050, M2052; amendment 85), ROOT ONLY. EXECUTED by the round-6
+/// reviewer: 18 of 20 attempts of the exec race got an observer-signed
+/// observation naming the pinned verifier. The helper now serves a request only
+/// when no process but itself and its parent holds the pipe the reply is
+/// written to: the worker is refused, 20 of 20. Control: the pinned program
+/// itself (python3), reading its own pipe, is served.
+#[test]
+fn a_program_that_execs_the_pinned_file_after_spawning_the_helper_gets_no_observation() {
+    if skip_unless_root() {
+        return;
+    }
+    let mut o = obs();
+    o.edit_helper(|v| {
+        v["fabric_uid"] = json!(FABRIC);
+        v["private_reply_channel"] = json!(true);
+    });
+    o.edit_observer(|v| v["caller_uid"] = json!(0));
+    o.start();
+    let h = o.base.join("axon-protected-launcher");
+    copy_executable(helper_pin().path, &h, 0o755);
+    std::os::unix::fs::chown(&h, Some(0), Some(FABRIC)).unwrap();
+    set_mode(&h, 0o4750);
+    let outd = o.base.join("outd");
+    std::fs::create_dir(&outd).unwrap();
+    std::os::unix::fs::chown(&outd, Some(FABRIC), Some(FABRIC)).unwrap();
+    let run = |script: &str, extra: &[&Path], verifier: &str, tag: &str| -> Value {
+        let s = o.base.join(format!("{tag}.py"));
+        std::fs::write(&s, script).unwrap();
+        set_mode(&s, 0o644);
+        let req = o.base.join(format!("{tag}-req.json"));
+        let man = String::from_utf8(o.manifest(&o.nonce(), |m| {
+            m["verifier_sha256"] = json!(verifier);
+        }))
+        .unwrap();
+        std::fs::write(
+            &req,
+            json!({"schema":"axon-protected-observe-request/1","manifest":man}).to_string(),
+        )
+        .unwrap();
+        set_mode(&req, 0o644);
+        let out = outd.join(format!("{tag}.out"));
+        let _ = std::fs::remove_file(&out);
+        let st = Command::new("setpriv")
+            .arg(format!("--reuid={FABRIC}"))
+            .arg(format!("--regid={FABRIC}"))
+            .arg("--clear-groups")
+            .args(["--", "python3"])
+            .arg(&s)
+            .arg(&h)
+            .arg(&o.helper_cfg)
+            .arg(&req)
+            .arg(&out)
+            .args(extra)
+            .stdin(Stdio::null())
+            .status()
+            .unwrap();
+        let _ = st;
+        // The worker writes after the helper's reply (or refusal) closes the pipe.
+        for _ in 0..200 {
+            if std::fs::metadata(&out)
+                .map(|m| m.len() > 0)
+                .unwrap_or(false)
+            {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+        serde_json::from_slice(&std::fs::read(&out).unwrap_or_default()).unwrap_or(Value::Null)
+    };
+    // Control: the genuine pinned program, reading its own pipe.
+    let python = std::fs::canonicalize(
+        String::from_utf8(
+            Command::new("sh")
+                .args(["-c", "command -v python3"])
+                .output()
+                .unwrap()
+                .stdout,
+        )
+        .unwrap()
+        .trim(),
+    )
+    .unwrap();
+    o.edit_helper(|v| v["fabric"] = program_pin(&python, TEST_FABRIC_REVISION));
+    let rep = run(GENUINE_CALLER, &[], &exe_sha256(&python), "genuine");
+    assert!(
+        ok(&rep),
+        "control: the pinned program reading its own pipe is served: {rep}"
+    );
+    // Attack: a non-pinned program that execs the pinned file (sleep).
+    let sleep = std::fs::canonicalize("/usr/bin/sleep").unwrap();
+    let pin = exe_sha256(&sleep);
+    o.edit_helper(|v| v["fabric"] = program_pin(&sleep, TEST_FABRIC_REVISION));
+    let mut got = 0;
+    for n in 0..20 {
+        let rep = run(EXEC_RACE_ATTACKER, &[&sleep], &pin, &format!("race{n}"));
+        if ok(&rep) {
+            got += 1;
+        }
+    }
+    assert!(
+        got == 0,
+        "ATTACK: {got} of 20 observations were relayed to a program that is not the pinned one and \
+         exec'd the pinned file after spawning the helper"
+    );
+}
