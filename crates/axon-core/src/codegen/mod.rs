@@ -41,6 +41,7 @@ pub mod bpf;
 pub mod build_wrappers;
 pub mod builtin_externs;
 pub mod builtins;
+pub mod escape;
 pub mod expr;
 pub mod ir_inkwell;
 pub mod link;
@@ -156,6 +157,12 @@ pub struct Codegen<'ctx> {
     /// but share one buffer natively, so a copy is only needed where a write
     /// could make the sharing observable - see `emit_expr_owned`.
     cur_written_roots: std::collections::HashSet<String>,
+    /// AX-12: program-wide "does this fn param retain its array argument"
+    /// summaries, computed once in `emit_program` (see `escape.rs`).
+    array_escape: escape::ArrayEscape,
+    /// AX-12: array-literal sites of the fn being emitted whose buffer lives in
+    /// a per-site entry-block stack slot instead of the heap (`emit_array_lit`).
+    stack_array_sites: std::collections::HashSet<usize>,
     /// Phase 5: named refinement types → their (erased) base AxonType. A
     /// refinement is transparent at the value/layout level, so codegen lowers
     /// `Positive` (and a synthetic inline `__refine_N`) to its base `i64`. Without
@@ -429,6 +436,8 @@ impl<'ctx> Codegen<'ctx> {
             struct_fields: HashMap::new(),
             struct_field_sem_types: HashMap::new(),
             cur_written_roots: std::collections::HashSet::new(),
+            array_escape: escape::ArrayEscape::default(),
+            stack_array_sites: std::collections::HashSet::new(),
             refinement_base: HashMap::new(),
             refine_preds: HashMap::new(),
             discharged: crate::verify::Discharged::default(),
@@ -1221,6 +1230,9 @@ impl<'ctx> Codegen<'ctx> {
         self.emit_vtable_thunks(program);
         // Emit vtable global constants.
         self.emit_vtable_globals(program);
+        // AX-12: which array-literal sites may live on the stack (per-fn query
+        // in `emit_fn` uses these parameter summaries).
+        self.array_escape = escape::ArrayEscape::analyze(&fn_work);
 
         for (name, f) in &fn_work {
             let llvm_fn = match self.functions.get(name.as_str()).copied() {
@@ -1420,6 +1432,8 @@ impl<'ctx> Codegen<'ctx> {
             &mut self.cur_written_roots,
             Self::written_place_roots(&f.body),
         );
+        let stack_sites = self.array_escape.stack_sites(f);
+        let saved_stack_sites = std::mem::replace(&mut self.stack_array_sites, stack_sites);
         let saved_adaptive = self.current_adaptive_fn.take();
         let saved_adaptive_input = self.current_adaptive_input.take();
         let saved_agent = self.current_agent_fn.take();
@@ -1708,6 +1722,7 @@ impl<'ctx> Codegen<'ctx> {
         self.local_types = saved_local_types;
         self.current_result_types = saved_result_types;
         self.cur_written_roots = saved_written_roots;
+        self.stack_array_sites = saved_stack_sites;
         self.current_adaptive_fn = saved_adaptive;
         self.current_adaptive_input = saved_adaptive_input;
         self.current_agent_fn = saved_agent;

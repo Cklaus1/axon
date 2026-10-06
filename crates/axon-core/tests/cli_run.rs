@@ -31873,6 +31873,16 @@ fn a_wasm_link_failure_reports_the_linkers_own_error() {
 
 /// Build `src` natively and run it; `None` when this axon has no codegen.
 fn native_stdout(tag: &str, src: &str) -> Option<String> {
+    let bin = native_bin(tag, src)?;
+    let run = Command::new(&bin).output().expect("run native");
+    let _ = std::fs::remove_file(&bin);
+    assert_eq!(run.status.code(), Some(0), "[{tag}] native exit status");
+    Some(String::from_utf8_lossy(&run.stdout).trim().to_string())
+}
+
+/// Build `src` natively; the binary's path, or `None` when this axon has no
+/// codegen. The caller runs and removes it.
+fn native_bin(tag: &str, src: &str) -> Option<std::path::PathBuf> {
     let f = tmp_ax(tag, src);
     let bin = std::env::temp_dir().join(format!("axon_native_{tag}_{}", std::process::id()));
     let _ = std::fs::remove_file(&bin);
@@ -31898,10 +31908,7 @@ fn native_stdout(tag: &str, src: &str) -> Option<String> {
         Some(0),
         "[{tag}] native build must succeed (no E0910 refusal):\n{msg}"
     );
-    let run = Command::new(&bin).output().expect("run native");
-    let _ = std::fs::remove_file(&bin);
-    assert_eq!(run.status.code(), Some(0), "[{tag}] native exit status");
-    Some(String::from_utf8_lossy(&run.stdout).trim().to_string())
+    Some(bin)
 }
 
 fn interp_stdout(tag: &str, src: &str) -> String {
@@ -32235,4 +32242,198 @@ fn interp_sieve_index_reads_and_writes_do_not_copy_the_array() {
     // 200k sieve (~0.1 s now) was quadratic and took minutes under `axon run`.
     let src = "fn main() -> i64 {\n let n = 200000\n let p = arr_repeat(true, n + 1)\n p[0] = false\n p[1] = false\n let i = 2\n while i * i <= n {\n  if p[i] {\n   let j = i * i\n   while j <= n {\n    p[j] = false\n    j = j + i\n   }\n  }\n  i = i + 1\n }\n let c = 0\n let k = 0\n while k <= n {\n  if p[k] { c = c + 1 }\n  k = k + 1\n }\n println(to_str(c))\n 0\n}\n";
     assert_eq!(interp_stdout("ax06_sieve", src), "17984");
+}
+
+#[test]
+fn native_array_literals_in_hot_loops_run_in_bounded_memory() {
+    // AX-12: every array-literal evaluation used to `malloc` a buffer that was
+    // never freed, so 50M iterations of a 4-element literal reached 2.3 GB RSS.
+    // Non-escaping literals now live in a per-site stack slot. The binary runs
+    // under a 256 MiB address-space cap: the leaking build dies on the first
+    // failed malloc, the fixed one finishes. Covers a literal bound and indexed
+    // in the loop body (which also needs the `for` variable's type to reach
+    // `v[0]`; native printed 0 without it) and a literal passed through two
+    // levels of user fns that only read it.
+    let cases = [
+        (
+            "lit_loop",
+            "fn main() {\n    let n = 50000000\n    let s = 0\n    for i in 0..n {\n        let v = [i, i + 1, i + 2, i + 3]\n        s = s + v[0] + v[1] + v[2] + v[3]\n    }\n    println(to_str(s))\n}\n",
+            "5000000200000000",
+        ),
+        (
+            "lit_call",
+            "fn sum4(a: [i64]) -> i64 {\n    let t = 0\n    for x in a {\n        t = t + x\n    }\n    t\n}\nfn total(a: [i64]) -> i64 {\n    sum4(a) + len(a)\n}\nfn main() {\n    let s = 0\n    for i in 0..50000000 {\n        s = s + total([i, i + 1, i + 2, i + 3])\n    }\n    println(to_str(s))\n}\n",
+            "5000000400000000",
+        ),
+    ];
+    for (tag, src, want) in cases {
+        // Same program, small trip count: the interpreter is the reference.
+        let small = src.replace("50000000", "1000");
+        let Some(native_small) = native_stdout(&format!("{tag}_small"), &small) else {
+            return;
+        };
+        assert_eq!(native_small, interp_stdout(&format!("{tag}_small"), &small), "[{tag}] parity");
+        let Some(bin) = native_bin(tag, src) else {
+            return;
+        };
+        let run = Command::new("sh")
+            .arg("-c")
+            .arg("ulimit -v 262144 && exec \"$0\"")
+            .arg(&bin)
+            .output()
+            .expect("run capped native");
+        let _ = std::fs::remove_file(&bin);
+        assert_eq!(
+            run.status.code(),
+            Some(0),
+            "[{tag}] must finish under a 256 MiB cap: {}",
+            String::from_utf8_lossy(&run.stderr)
+        );
+        assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), want, "[{tag}]");
+    }
+}
+
+#[test]
+fn native_escaping_array_literals_match_the_interpreter() {
+    // AX-12: a literal whose value can outlive its frame, or be observed after
+    // its site runs again, must keep a heap buffer. Each block keeps values
+    // from several evaluations of one site alive at once, so a wrongly shared
+    // stack slot shows up as repeated or garbage rows.
+    let src = r#"type Holder = { xs: [i64], tag: i64 }
+
+fn make(i: i64) -> [i64] {
+    let v = [i, i * 10, i * 100]
+    v
+}
+
+fn make_direct(i: i64) -> [i64] {
+    [i + 1, i + 2]
+}
+
+fn id(a: [i64]) -> [i64] {
+    a
+}
+
+fn wrap(a: [i64]) -> [i64] {
+    id(a)
+}
+
+fn hold(a: [i64], t: i64) -> Holder {
+    Holder { xs: a, tag: t }
+}
+
+fn first(a: [i64]) -> i64 {
+    a[0]
+}
+
+fn rsum(a: [i64], k: i64) -> i64 {
+    if k == len(a) {
+        0
+    } else {
+        a[k] + rsum(a, k + 1)
+    }
+}
+
+fn adder(i: i64) -> fn(i64) -> i64 {
+    let t = [i * 7, i]
+    |k| first(t) + arr_sum_i64(t) + k
+}
+
+fn show(a: [i64]) -> str {
+    let s = ""
+    for x in a {
+        s = s + to_str(x) + ","
+    }
+    s
+}
+
+fn main() {
+    let r0 = make(0)
+    let r1 = make(0)
+    let r2 = make(0)
+    let d0 = make_direct(0)
+    let d1 = make_direct(0)
+    for i in 1..5 {
+        r2 = r1
+        r1 = r0
+        r0 = make(i)
+        d1 = d0
+        d0 = make_direct(i)
+    }
+    println("returned: {show(r0)} {show(r1)} {show(r2)} {show(d0)} {show(d1)}")
+
+    let w0 = wrap([5, 6])
+    let w1 = wrap([7, 8])
+    println("wrapped: {show(w0)} {show(w1)}")
+
+    let h0 = hold([0], 0)
+    let h1 = hold([0], 0)
+    let g0 = hold([0], 0)
+    let g1 = hold([0], 0)
+    for i in 1..4 {
+        let v = [i, i + 1]
+        h1 = h0
+        h0 = Holder { xs: v, tag: i }
+        g1 = g0
+        g0 = hold([i * 3, i * 4], i)
+    }
+    println("structs: {show(h0.xs)} {show(h1.xs)} {show(g0.xs)} {show(g1.xs)} {to_str(h1.tag)}")
+
+    let flat = [0]
+    let rows = [[0]]
+    for i in 1..5 {
+        let row = [i, i * i]
+        flat = arr_concat(flat, row)
+        flat = arr_push(flat, row[1] + 1000)
+        rows = [row, rows[0]]
+    }
+    println("pushed: {show(flat)} {show(rows[0])} {show(rows[1])}")
+
+    let base = [100, 200, 300]
+    let pick = |k| first(base) * k + len(base)
+    let f1 = adder(1)
+    let f2 = adder(2)
+    let junk = [9, 9, 9, 9]
+    println("captured: {to_str(pick(2))} {to_str(f1(0))} {to_str(f2(0))} {to_str(f1(5))} {to_str(arr_sum_i64(junk))}")
+
+    let keep = [0, 0]
+    let prev = [0, 0]
+    for i in 1..6 {
+        let v = [i, i * 2]
+        prev = keep
+        keep = v
+    }
+    println("outer: {show(keep)} {show(prev)}")
+
+    let sw = [1, 2]
+    for i in 0..5 {
+        sw = [sw[1] + i, sw[0]]
+    }
+    println("swap: {show(sw)}")
+
+    let tot = 0
+    for i in 0..4 {
+        let v = [i, i + 1]
+        let u = v
+        u[0] = 99
+        tot = tot + v[0] + u[0] + first([i, 7]) + rsum([i, i, i], 0)
+    }
+    println("alias: {to_str(tot)}")
+
+    let kept = [0]
+    let kept2 = [0]
+    for i in 1..4 {
+        let grid = [[i, i + 1], [i * 10]]
+        kept2 = kept
+        kept = grid[0]
+    }
+    println("nested: {show(kept)} {show(kept2)}")
+}
+"#;
+    let Some(native) = native_stdout("lit_escape", src) else {
+        return;
+    };
+    let interp = interp_stdout("lit_escape", src);
+    assert!(interp.contains("returned: 4,40,400, 3,30,300, 2,20,200,"), "{interp}");
+    assert_eq!(native, interp);
 }

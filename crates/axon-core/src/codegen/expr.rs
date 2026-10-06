@@ -2540,6 +2540,10 @@ impl<'ctx> super::Codegen<'ctx> {
         // Register the variable so body statements can read it.
         self.locals
             .insert(var.to_string(), (var_ptr, i64_ty.into()));
+        // ...and its type: without it `let v = [i, i + 1]` in the body had no
+        // element type, so `v[0]` lowered to nothing and the enclosing `s = s +
+        // v[0]` was silently dropped (native printed 0).
+        let saved_var_type = self.local_types.insert(var.to_string(), Type::I64);
 
         let cond_bb = self.ir.context.append_basic_block(fn_val, "for.cond");
         let body_bb = self.ir.context.append_basic_block(fn_val, "for.body");
@@ -2604,6 +2608,10 @@ impl<'ctx> super::Codegen<'ctx> {
 
         self.loop_stack.pop();
         self.locals.remove(var);
+        match saved_var_type {
+            Some(t) => self.local_types.insert(var.to_string(), t),
+            None => self.local_types.remove(var),
+        };
 
         self.ir.builder.position_at_end(exit_bb);
         Some(i64_ty.const_zero().into())
@@ -8307,25 +8315,35 @@ impl<'ctx> super::Codegen<'ctx> {
         let elem_ty = vals[0].get_type();
         let n = vals.len() as u32;
 
-        // Use malloc for the array backing store so the slice remains
-        // valid if returned from a function (no dangling stack pointer).
         let i64_ty = self.ir.context.i64_type();
         let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
-        // Element size: use the type's REAL ABI size via LLVM `size_of()`, not a
-        // hardcoded guess. The old code used 8 bytes for ANY struct, which
-        // under-allocated an array of enums (`{i32 tag, [N x i8]}`, often 16-24
-        // bytes): the GEP stores then wrote past the buffer → heap corruption
-        // (`malloc(): corrupted top size`, BUG_HUNT #42). `size_of()` returns an
-        // i64 LLVM constant that is exact for every element type (int/float/
-        // struct/array/ptr), so `n * size_of` is the correct malloc size and
-        // matches the GEP stride below.
-        let elem_size = elem_ty
-            .size_of()
-            .unwrap_or_else(|| i64_ty.const_int(8, false));
-        let n_val = i64_ty.const_int(n as u64, false);
-        let total_bytes = build_wrappers::w_int_mul(&self.ir.builder, elem_size, n_val, "arrbytes");
-        // R7: target-aware malloc (i32 size on wasm32, i64 on native).
-        let raw_ptr = self.emit_malloc(total_bytes, "arrdata");
+        // AX-12: a site the escape analysis proved frame-local with a single
+        // live value (`escape.rs`, spec/runtime.md §3) gets a fixed entry-block
+        // slot that every evaluation of this emission reuses - nothing to free,
+        // RSS stays flat in loops. Every other literal keeps a heap buffer,
+        // because its value may outlive the frame or the site's next evaluation.
+        let raw_ptr = if self.stack_array_sites.contains(&(elems.as_ptr() as usize))
+            && super::escape::fits_stack_slot(elem_ty, n)
+        {
+            build_wrappers::w_alloca(&self.ir.builder, elem_ty.array_type(n).into(), "arrlit")
+        } else {
+            // Element size: use the type's REAL ABI size via LLVM `size_of()`, not a
+            // hardcoded guess. The old code used 8 bytes for ANY struct, which
+            // under-allocated an array of enums (`{i32 tag, [N x i8]}`, often 16-24
+            // bytes): the GEP stores then wrote past the buffer → heap corruption
+            // (`malloc(): corrupted top size`, BUG_HUNT #42). `size_of()` returns an
+            // i64 LLVM constant that is exact for every element type (int/float/
+            // struct/array/ptr), so `n * size_of` is the correct malloc size and
+            // matches the GEP stride below.
+            let elem_size = elem_ty
+                .size_of()
+                .unwrap_or_else(|| i64_ty.const_int(8, false));
+            let n_val = i64_ty.const_int(n as u64, false);
+            let total_bytes =
+                build_wrappers::w_int_mul(&self.ir.builder, elem_size, n_val, "arrbytes");
+            // R7: target-aware malloc (i32 size on wasm32, i64 on native).
+            self.emit_malloc(total_bytes, "arrdata")
+        };
         // Cast to typed element pointer for GEP.
         let elem_ptr_ty = elem_ty.ptr_type(AddressSpace::default());
         let elem_data_ptr = self
