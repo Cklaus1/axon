@@ -15,30 +15,30 @@ later commit touches `crates/axon-core/src` (the note is then stale: `python3 sc
 --emit HEAD`, paste between the markers).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: 31c4fdbedff95cfe39633703932ca9ba99b10288
+generated-at: fe1a3ec1244f71164a3454374fa60218db12fe7c
 
-`git diff --numstat 31413ca7..31c4fdbe -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..fe1a3ec1 -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
 | `crates/axon-core/src/ast.rs` | 36 | 2 |
 | `crates/axon-core/src/checker.rs` | 27 | 0 |
 | `crates/axon-core/src/error.rs` | 12 | 10 |
-| `crates/axon-core/src/interp.rs` | 4146 | 1126 |
+| `crates/axon-core/src/interp.rs` | 4361 | 1124 |
 | `crates/axon-core/src/interp/builtins.rs` | 38 | 20 |
 | `crates/axon-core/src/interp/conform.rs` | 1746 | 0 |
-| `crates/axon-core/src/interp/eval.rs` | 85 | 23 |
+| `crates/axon-core/src/interp/eval.rs` | 91 | 23 |
 | `crates/axon-core/src/interp/goal.rs` | 15 | 14 |
-| `crates/axon-core/src/interp/pin.rs` | 396 | 0 |
+| `crates/axon-core/src/interp/pin.rs` | 593 | 0 |
 | `crates/axon-core/src/interp/proptest.rs` | 30 | 12 |
 | `crates/axon-core/src/kernel.rs` | 2 | 2 |
 | `crates/axon-core/src/lib.rs` | 77 | 6 |
 | `crates/axon-core/src/main.rs` | 108 | 23 |
 | `crates/axon-core/src/parser.rs` | 15 | 0 |
 | `crates/axon-core/src/resolver.rs` | 171 | 16 |
-| total | 6904 | 1254 |
+| total | 7322 | 1252 |
 
-`git log --reverse 31413ca7..31c4fdbe -- crates/axon-core/src`:
+`git log --reverse 31413ca7..fe1a3ec1 -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -77,8 +77,10 @@ generated-at: 31c4fdbedff95cfe39633703932ca9ba99b10288
 | 9e19e961 | amendment 83 | unit test and comments only (interpolation/comparison of an untyped read select no operator impl): no production change |
 | b971194c | amendment 83 | clippy: the arithmetic arm of the pin walk (interp/pin.rs) collapsed into a guard: no change in what is refused |
 | 70692659 | amendment 83 | unit-test attack text only (M1996: a shift truncates where + and * panic): no production change |
-| 35 commits | | |
+| dab96417 | amendment 88 | the dispatch analysis trusts only what the operator chose: candidate fns/types/lets, local-name shadowing and trait names no longer determine a receiver; keys carry the owning fn; fail-closed lookup; operator-defined runtime values dispatch; the address cache is removed (pin.rs, interp.rs, eval.rs): narrowing on candidate-influenced receivers, widening only for operator-only polymorphism |
+| 36 commits | | |
 <!-- END MECHANICAL -->
+
 
 What is BY THEME (the `theme` and `what it does` columns; these are the commit messages' own
 account and are NOT mechanically verified; the files and commits above are):
