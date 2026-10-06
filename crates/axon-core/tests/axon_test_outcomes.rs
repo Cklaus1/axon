@@ -31,7 +31,15 @@ fn failing_property(x: i64) { assert(false) }
 "#;
 
 /// name -> (status, message), from `axon test --json`.
+/// ONE run per process: the four tests share it. Each used to make, run in and delete the same
+/// pid-named directory, so two tests in parallel deleted each other's cwd (NotFound, flaky).
 fn outcomes() -> std::collections::BTreeMap<String, (String, String)> {
+    static ONCE: std::sync::OnceLock<std::collections::BTreeMap<String, (String, String)>> =
+        std::sync::OnceLock::new();
+    ONCE.get_or_init(run_outcomes).clone()
+}
+
+fn run_outcomes() -> std::collections::BTreeMap<String, (String, String)> {
     let d = std::env::temp_dir().join(format!("axon-test-outcomes-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&d);
     std::fs::create_dir_all(&d).unwrap();
