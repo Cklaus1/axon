@@ -1931,6 +1931,22 @@ impl<'ctx> Codegen<'ctx> {
         }
     }
 
+    /// Does `ty` contain `Type::Unknown` anywhere (an inference gap)?
+    fn type_has_unknown(ty: &Type) -> bool {
+        match ty {
+            Type::Unknown => true,
+            Type::Option(i)
+            | Type::Slice(i)
+            | Type::Chan(i)
+            | Type::Uncertain(i)
+            | Type::Temporal(i) => Self::type_has_unknown(i),
+            Type::Result(a, b) => Self::type_has_unknown(a) || Self::type_has_unknown(b),
+            Type::Tuple(es) => es.iter().any(Self::type_has_unknown),
+            Type::Fn(ps, r) => ps.iter().any(Self::type_has_unknown) || Self::type_has_unknown(r),
+            _ => false,
+        }
+    }
+
     /// Unify a declared (possibly-generic) type against a concrete one, filling
     /// `out` with param-name -> concrete bindings. `gp` is the set of names that
     /// are type params (a bare `Struct(n)` whose n ∈ gp is a param, not a real
@@ -2210,12 +2226,22 @@ impl<'ctx> Codegen<'ctx> {
                 }
             }
             ast::Expr::Array(elems) => {
-                let inner = elems
-                    .first()
-                    .and_then(|e| self.infer_expr_sem_type(e))
+                // The first element whose type is fully known decides: in
+                // `[None, Some(3)]` the leading `None` says nothing about T.
+                let tys: Vec<Option<Type>> =
+                    elems.iter().map(|e| self.infer_expr_sem_type(e)).collect();
+                let inner = tys
+                    .iter()
+                    .flatten()
+                    .find(|t| !Self::type_has_unknown(t))
+                    .or_else(|| tys.first().and_then(|t| t.as_ref()))
+                    .cloned()
                     .unwrap_or(Type::Unknown);
                 Some(Type::Slice(Box::new(inner)))
             }
+            ast::Expr::Some(inner) => self
+                .infer_expr_sem_type(inner)
+                .map(|t| Type::Option(Box::new(t))),
             ast::Expr::Tuple(elems) => {
                 let tys = elems
                     .iter()
@@ -2349,6 +2375,16 @@ impl<'ctx> Codegen<'ctx> {
                 };
                 let field_names = self.struct_fields.get(sname.as_str())?;
                 let idx = field_names.iter().position(|n| n == field)?;
+                // The declared semantic type keeps what the LLVM field type
+                // erases (Result/Option/[T] are anonymous structs below).
+                if let Some(t) = self
+                    .struct_field_sem_types
+                    .get(sname.as_str())
+                    .and_then(|fs| fs.get(idx))
+                    .filter(|t| !Self::type_has_unknown(t))
+                {
+                    return Some(t.clone());
+                }
                 let struct_ty = self.ir.module.get_struct_type(sname)?;
                 let field_llvm_ty = struct_ty.get_field_type_at_index(idx as u32)?;
                 match field_llvm_ty {

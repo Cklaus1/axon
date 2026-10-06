@@ -257,9 +257,29 @@ impl<'ctx> super::Codegen<'ctx> {
                 if let Some(Type::Option(inner)) = &target {
                     self.current_option_inner = Some(*inner.clone());
                 }
-                let val = self.emit_expr_owned(value, fn_val, CopySink::Local(name.as_str()))?;
+                let errors_before = self.codegen_errors.len();
+                let val = self.emit_expr_owned(value, fn_val, CopySink::Local(name.as_str()));
                 self.current_result_types = saved_rt;
                 self.current_option_inner = saved_oi;
+                // A Unit value binds nothing, and a later use of a never-bound
+                // name is refused (E0701). But if `name` SHADOWS an existing
+                // local, later reads would silently see the OLD value (AX-24):
+                // refuse that unless the value already reported its own error.
+                let Some(val) = val else {
+                    if self.locals.contains_key(name) && self.codegen_errors.len() == errors_before {
+                        let msg = format!(
+                            "codegen error [E0910]: native codegen could not lower the value \
+                             bound to `{name}`, which shadows an earlier `{name}`. The \
+                             interpreter supports it; run under `axon run`. Emitting nothing \
+                             would leave later reads seeing the old value."
+                        );
+                        if !self.codegen_errors.iter().any(|e| e == &msg) {
+                            eprintln!("{msg}");
+                            self.codegen_errors.push(msg);
+                        }
+                    }
+                    return None;
+                };
                 // R19 Slice C: when the annotation is a fixed-width integer type
                 // (i8/i16/i32/u8/u16/u32), coerce the emitted LLVM value (which
                 // `emit_literal` always produces as i64) to the correct narrow LLVM
@@ -387,6 +407,16 @@ impl<'ctx> super::Codegen<'ctx> {
                     }
                 }
                 let lhs = self.emit_expr(left, fn_val)?;
+                // `&&` / `||` on a bool SHORT-CIRCUIT (interp `eval_binop`
+                // returns on a decided left before evaluating the right). Both
+                // operands used to be emitted unconditionally, so
+                // `i > 0 && ys[i - 1] > ys[i]` bounds-panicked at `i = 0` and
+                // `false && f()` ran `f`'s side effects.
+                if let (ast::BinOp::And | ast::BinOp::Or, BasicValueEnum::IntValue(l)) = (op, lhs) {
+                    if l.get_type().get_bit_width() == 1 {
+                        return self.emit_short_circuit(matches!(op, ast::BinOp::And), l, right, fn_val);
+                    }
+                }
                 let rhs = self.emit_expr(right, fn_val)?;
                 // A NARROW int beside a 64-bit literal must be brought to one
                 // width before the op. Inference already permits this pairing
@@ -422,9 +452,21 @@ impl<'ctx> super::Codegen<'ctx> {
                     }
                     other => other,
                 };
+                // `[T] + [T]` is concatenation into a fresh array (interp
+                // `eval_binop_vals`: `(Add, Array(a), Array(b))`). Any element
+                // type with a layout lowers; the `emit_binop` refusal remains
+                // for one without.
+                if matches!(op, ast::BinOp::Add) {
+                    if let Some(Type::Slice(inner)) = lt_sem.as_ref().or(rt_sem.as_ref()) {
+                        let inner = (**inner).clone();
+                        if let Some(v) = self.emit_arr_concat_any(lhs, rhs, &inner, fn_val) {
+                            return Some(v);
+                        }
+                    }
+                }
                 // Prefer the semantic type from inference (distinguishes u32/u64
                 // from i32/i64) then fall back to the LLVM-level value hint.
-                let ty = lt_sem.unwrap_or_else(|| self.value_type_hint(&lhs));
+                let ty = lt_sem.or(rt_sem).unwrap_or_else(|| self.value_type_hint(&lhs));
                 Some(self.emit_binop(op, lhs, rhs, &ty))
             }
 
@@ -688,12 +730,36 @@ impl<'ctx> super::Codegen<'ctx> {
                     }
                     _ => {}
                 }
+                let errors_before = self.codegen_errors.len();
                 let emitted = self.emit_expr_owned(value, fn_val, CopySink::Local(name.as_str()));
                 self.current_result_types = saved_rt;
                 self.current_option_inner = saved_oi;
-                if let Some(val) = emitted {
-                    if let Some((ptr, _llvm_ty)) = self.locals.get(name).copied() {
+                // Every way this can fail to store is REFUSED (E0910, I-2), never
+                // skipped: a skipped store leaves the old value in place and the
+                // build "succeeds" with a wrong answer (AX-24). A value that
+                // reported its own error is not reported twice.
+                let reason = match (emitted, self.locals.get(name).copied()) {
+                    (Some(val), Some((ptr, _))) => {
                         build_wrappers::w_store(&self.ir.builder, ptr, val);
+                        None
+                    }
+                    // A Unit value rebinding a Unit binding: nothing to store.
+                    (None, None) if self.codegen_errors.len() == errors_before => None,
+                    (Some(_), None) => Some("a binding with no native storage"),
+                    (None, _) if self.codegen_errors.len() == errors_before => {
+                        Some("a value that produced no result")
+                    }
+                    (None, _) => None,
+                };
+                if let Some(reason) = reason {
+                    let msg = format!(
+                        "codegen error [E0910]: native codegen does not lower assignment of \
+                         {reason} to `{name}`. The interpreter supports it; run under `axon \
+                         run`. Emitting nothing would silently discard the write."
+                    );
+                    if !self.codegen_errors.iter().any(|e| e == &msg) {
+                        eprintln!("{msg}");
+                        self.codegen_errors.push(msg);
                     }
                 }
                 None
@@ -731,6 +797,74 @@ impl<'ctx> super::Codegen<'ctx> {
                 self.emit_inline_asm(template, outputs, inputs, clobbers);
                 None
             }
+        }
+    }
+
+    /// `l && right` (`is_and`) / `l || right` with the interpreter's
+    /// short-circuit: `right` is emitted in its own block, reached only when
+    /// `l` does not already decide the result, and a phi joins the two paths.
+    fn emit_short_circuit(
+        &mut self,
+        is_and: bool,
+        l: inkwell::values::IntValue<'ctx>,
+        right: &ast::Expr,
+        fn_val: FunctionValue<'ctx>,
+    ) -> Option<BasicValueEnum<'ctx>> {
+        let bool_ty = self.ir.context.bool_type();
+        let lhs_bb = self.ir.builder.get_insert_block()?;
+        let rhs_bb = self.ir.context.append_basic_block(fn_val, "sc.rhs");
+        let end_bb = self.ir.context.append_basic_block(fn_val, "sc.end");
+        // `&&`: a true left needs the right; `||`: a false left does.
+        let (on_true, on_false) = if is_and { (rhs_bb, end_bb) } else { (end_bb, rhs_bb) };
+        build_wrappers::w_cond_br(&self.ir.builder, l, on_true, on_false);
+
+        self.ir.builder.position_at_end(rhs_bb);
+        let r = match self.emit_expr(right, fn_val)? {
+            BasicValueEnum::IntValue(r) if r.get_type().get_bit_width() == 1 => r,
+            BasicValueEnum::IntValue(r) => build_wrappers::w_int_compare(
+                &self.ir.builder,
+                IntPredicate::NE,
+                r,
+                r.get_type().const_zero(),
+                "sc.rb",
+            ),
+            _ => {
+                let msg = "codegen error [E0910]: native codegen does not lower `&&`/`||` with a non-boolean right operand. The interpreter supports it; run under `axon run`.".to_string();
+                if !self.codegen_errors.iter().any(|e| e == &msg) {
+                    eprintln!("{msg}");
+                    self.codegen_errors.push(msg);
+                }
+                return None;
+            }
+        };
+        let rhs_end = self.ir.builder.get_insert_block()?;
+        let rhs_falls_through = rhs_end.get_terminator().is_none();
+        if rhs_falls_through {
+            build_wrappers::w_br(&self.ir.builder, end_bb);
+        }
+
+        self.ir.builder.position_at_end(end_bb);
+        let phi = self.ir.builder.build_phi(bool_ty, "sc").unwrap();
+        // The left alone decided: `false` for `&&`, `true` for `||`.
+        let decided = bool_ty.const_int(u64::from(!is_and), false);
+        phi.add_incoming(&[(&decided, lhs_bb)]);
+        if rhs_falls_through {
+            phi.add_incoming(&[(&r, rhs_end)]);
+        }
+        Some(phi.as_basic_value())
+    }
+
+    /// Record E0910 for a sub-expression whose `None` would otherwise be
+    /// skipped (an argument dropped from a call, a field left uninitialised,
+    /// a guard ignored): the build must refuse, never emit a wrong program.
+    pub(super) fn refuse_unlowered(&mut self, what: &str) {
+        let msg = format!(
+            "codegen error [E0910]: native codegen could not lower {what}. The interpreter \
+             supports it; run under `axon run`. Skipping it would silently compute a wrong answer."
+        );
+        if !self.codegen_errors.iter().any(|e| e == &msg) {
+            eprintln!("{msg}");
+            self.codegen_errors.push(msg);
         }
     }
 
@@ -1801,10 +1935,10 @@ impl<'ctx> super::Codegen<'ctx> {
         // (malloc + memcpy) that string interpolation uses, so native and the
         // interpreter agree byte-for-byte.
         //
-        // `[T] + [T]` is still refused. The value arms below match on integer and
-        // float kinds, and a slice operand would fall through to a path that
-        // silently yields the LEFT operand (`[1,2] + [3]` printed length 2) — a
-        // wrong answer from a successful build, an I-2 violation. Refuse instead.
+        // `[T] + [T]` is lowered by the `BinOp` arm of `emit_expr`
+        // (`emit_arr_concat_any`). Reaching here with a slice means its element
+        // has no layout; the value arms below would silently yield the LEFT
+        // operand (`[1,2] + [3]` printed length 2) — an I-2 violation. Refuse.
         if matches!(op, ast::BinOp::Add) && matches!(ty, Type::Str) {
             if let (BasicValueEnum::StructValue(_), BasicValueEnum::StructValue(_)) = (lhs, rhs) {
                 if let Some(concat_fn) = self.functions.get("axon_concat").copied() {
@@ -1823,7 +1957,7 @@ impl<'ctx> super::Codegen<'ctx> {
             }
         }
         if matches!(op, ast::BinOp::Add) && matches!(ty, Type::Slice(_)) {
-            let msg = "codegen error [E0910]: native codegen does not lower array concatenation (`+`). The interpreter supports it; run under `axon run`, or use arr_concat which lowers.".to_string();
+            let msg = "codegen error [E0910]: native codegen does not lower array concatenation (`+`) for this element type (it has no native layout). The interpreter supports it; run under `axon run`.".to_string();
             if !self.codegen_errors.iter().any(|e| e == &msg) {
                 eprintln!("{msg}");
                 self.codegen_errors.push(msg);
@@ -2239,8 +2373,19 @@ impl<'ctx> super::Codegen<'ctx> {
                 }
             }
 
-            // Mismatched or unsupported — return lhs unchanged.
-            (l, _) => l,
+            // Mismatched or unsupported operands. This returned `lhs`
+            // unchanged — a successful build printing the left operand as
+            // the result. Refuse instead (AX-24 audit).
+            (l, _) => {
+                let msg = format!(
+                    "codegen error [E0910]: native codegen does not lower the binary operator `{op:?}` on operands of type `{ty:?}`. The interpreter supports it; run under `axon run`. Returning the left operand would silently produce a wrong answer."
+                );
+                if !self.codegen_errors.iter().any(|e| e == &msg) {
+                    eprintln!("{msg}");
+                    self.codegen_errors.push(msg);
+                }
+                l
+            }
         }
     }
 
@@ -2948,7 +3093,7 @@ impl<'ctx> super::Codegen<'ctx> {
         params: &[ast::LambdaParam],
         body: &ast::Expr,
         captures: &[(String, Option<crate::types::Type>)],
-        _fn_val: FunctionValue<'ctx>,
+        fn_val: FunctionValue<'ctx>,
     ) -> Option<BasicValueEnum<'ctx>> {
         let lambda_name = format!("__lambda_{}", self.lambda_counter);
         self.lambda_counter += 1;
@@ -3072,6 +3217,11 @@ impl<'ctx> super::Codegen<'ctx> {
                     .unwrap();
                 self.locals
                     .insert(cap_name.clone(), (field_ptr, capture_llvm_tys[idx]));
+                // The capture keeps its semantic type, so the body can index /
+                // field-access / match it exactly like the enclosing scope can.
+                if let Some(t) = saved_local_types.get(cap_name.as_str()) {
+                    self.local_types.insert(cap_name.clone(), t.clone());
+                }
                 capture_idx_map.insert(cap_name.clone(), idx as u32);
             }
         }
@@ -3256,11 +3406,30 @@ impl<'ctx> super::Codegen<'ctx> {
             for (idx, (cap_name, _)) in captures.iter().enumerate() {
                 // Load current value of the captured variable from caller scope
                 // (self.locals has been restored to the caller's locals at this point).
-                let cap_val = if let Some(&(alloca, ty)) = self.locals.get(cap_name.as_str()) {
-                    build_wrappers::w_load(&self.ir.builder, ty, alloca, cap_name)
-                } else {
-                    i64_ty.const_zero().into()
+                let Some(&(alloca, ty)) = self.locals.get(cap_name.as_str()) else {
+                    // Storing a placeholder would hand the closure a fabricated
+                    // value; refuse instead (I-2).
+                    let msg = format!(
+                        "codegen error [E0701]: identifier '{cap_name}' captured by \
+                         `{lambda_name}` not found in current scope"
+                    );
+                    if !self.codegen_errors.iter().any(|e| e == &msg) {
+                        self.codegen_errors.push(msg);
+                    }
+                    continue;
                 };
+                let mut cap_val = build_wrappers::w_load(&self.ir.builder, ty, alloca, cap_name);
+                // The interpreter snapshots the environment when the closure is
+                // created, so an array captured here must not observe later
+                // writes through the outer binding (or leak the closure's own
+                // writes back out). Copy it when this fn writes into it.
+                if self.cur_written_roots.contains(cap_name.as_str()) {
+                    if let Some(sem) = self.local_types.get(cap_name.as_str()).cloned() {
+                        if self.type_needs_deep_clone(&sem, 0) {
+                            cap_val = self.emit_clone_value(cap_val, &sem, fn_val);
+                        }
+                    }
+                }
                 let field_ptr = self
                     .ir
                     .builder
@@ -7017,105 +7186,47 @@ impl<'ctx> super::Codegen<'ctx> {
         })
     }
 
-    /// arr_concat(a, b) → a ++ b. count = a_len + b_len; dst[i] = i < a_len ?
-    /// a[i] : b[i - a_len].
-    fn emit_arr_i64_concat(
+    /// `a + b` on arrays of any element type with a layout → a fresh array
+    /// holding `a`'s elements then `b`'s (interp: `(Add, Array(a), Array(b))`).
+    /// Two memcpys into one malloc'd buffer. Elements that themselves own an
+    /// array buffer are deep-cloned, so a later place write through the result
+    /// cannot reach `a` or `b` (the interpreter's value semantics).
+    pub(super) fn emit_arr_concat_any(
         &mut self,
-        a_slice: BasicValueEnum<'ctx>,
-        b_slice: BasicValueEnum<'ctx>,
+        lhs: BasicValueEnum<'ctx>,
+        rhs: BasicValueEnum<'ctx>,
+        inner: &Type,
         fn_val: FunctionValue<'ctx>,
     ) -> Option<BasicValueEnum<'ctx>> {
-        let i64_ty = self.ir.context.i64_type();
-        let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
-        let slice_ty = self
-            .ir
-            .context
-            .struct_type(&[i64_ty.into(), ptr_ty.into()], false);
-        let unpack = |slf: &mut Self, sv: BasicValueEnum<'ctx>, tag: &str| {
-            let al = build_wrappers::w_alloca(&slf.ir.builder, slice_ty.into(), tag);
-            build_wrappers::w_store(&slf.ir.builder, al, sv);
-            let l = build_wrappers::w_load(
-                &slf.ir.builder,
-                i64_ty.into(),
-                slf.ir
-                    .builder
-                    .build_struct_gep(slice_ty, al, 0, "ct_lp")
-                    .unwrap(),
-                "ct_l",
-            )
-            .into_int_value();
-            let d = build_wrappers::w_load(
-                &slf.ir.builder,
-                ptr_ty.into(),
-                slf.ir
-                    .builder
-                    .build_struct_gep(slice_ty, al, 1, "ct_dp")
-                    .unwrap(),
-                "ct_d",
-            )
-            .into_pointer_value();
-            let di = build_wrappers::w_pointer_cast(
-                &slf.ir.builder,
-                d,
-                i64_ty.ptr_type(AddressSpace::default()),
-                "ct_di",
-            );
-            (l, di)
+        let (BasicValueEnum::StructValue(l), BasicValueEnum::StructValue(r)) = (lhs, rhs) else {
+            return None;
         };
-        let (a_len, a_data) = unpack(self, a_slice, "ct_a");
-        let (b_len, b_data) = unpack(self, b_slice, "ct_b");
-        let count = build_wrappers::w_int_add(&self.ir.builder, a_len, b_len, "ct_cnt");
-        self.emit_arr_i64_build(count, fn_val, move |slf, dp, i| {
-            // v = i < a_len ? a[i] : b[i - a_len]. Both GEPs are emitted, so the
-            // indices must stay in-bounds for the UNTAKEN branch too: clamp a's
-            // index to a_len-1 and b's to 0 on the wrong side (the select then
-            // discards that load's value).
-            let in_a = build_wrappers::w_int_compare(
-                &slf.ir.builder,
-                inkwell::IntPredicate::SLT,
-                i,
-                a_len,
-                "ct_ina",
-            );
-            // a index: i if in_a else 0
-            let a_idx = slf
-                .ir
-                .builder
-                .build_select(in_a, i, i64_ty.const_zero(), "ct_aidx")
-                .unwrap()
-                .into_int_value();
-            let ai = unsafe {
-                slf.ir
-                    .builder
-                    .build_gep(i64_ty, a_data, &[a_idx], "ct_ai")
-                    .unwrap()
-            };
-            let av = build_wrappers::w_load(&slf.ir.builder, i64_ty.into(), ai, "ct_av")
-                .into_int_value();
-            // b index: 0 if in_a else (i - a_len)
-            let bsub = build_wrappers::w_int_sub(&slf.ir.builder, i, a_len, "ct_bsub");
-            let b_idx = slf
-                .ir
-                .builder
-                .build_select(in_a, i64_ty.const_zero(), bsub, "ct_bidx")
-                .unwrap()
-                .into_int_value();
-            let bi = unsafe {
-                slf.ir
-                    .builder
-                    .build_gep(i64_ty, b_data, &[b_idx], "ct_bi")
-                    .unwrap()
-            };
-            let bv = build_wrappers::w_load(&slf.ir.builder, i64_ty.into(), bi, "ct_bv")
-                .into_int_value();
-            let v = slf
-                .ir
-                .builder
-                .build_select(in_a, av, bv, "ct_v")
-                .unwrap()
-                .into_int_value();
-            build_wrappers::w_store(&slf.ir.builder, dp, v.into());
-        })
+        let elem_size = self.llvm_type(inner)?.size_of()?;
+        let i8_ty = self.ir.context.i8_type();
+        let b = &self.ir.builder;
+        let l_len = b.build_extract_value(l, 0, "acat_ll").ok()?.into_int_value();
+        let l_src = b.build_extract_value(l, 1, "acat_ls").ok()?.into_pointer_value();
+        let r_len = b.build_extract_value(r, 0, "acat_rl").ok()?.into_int_value();
+        let r_src = b.build_extract_value(r, 1, "acat_rs").ok()?.into_pointer_value();
+        let len = b.build_int_add(l_len, r_len, "acat_len").ok()?;
+        let l_bytes = b.build_int_mul(l_len, elem_size, "acat_lb").ok()?;
+        let r_bytes = b.build_int_mul(r_len, elem_size, "acat_rb").ok()?;
+        let bytes = b.build_int_add(l_bytes, r_bytes, "acat_b").ok()?;
+        let dst = self.emit_malloc(bytes, "acat_dst");
+        let b = &self.ir.builder;
+        b.build_memcpy(dst, 1, l_src, 1, l_bytes).ok()?;
+        let dst_r = unsafe { b.build_gep(i8_ty, dst, &[l_bytes], "acat_dr").ok()? };
+        b.build_memcpy(dst_r, 1, r_src, 1, r_bytes).ok()?;
+        let out = b.build_insert_value(l, len, 0, "acat_o0").ok()?;
+        let out = b.build_insert_value(out, dst, 1, "acat_o1").ok()?;
+        let out: BasicValueEnum<'ctx> = out.into_struct_value().into();
+        if self.type_needs_deep_clone(inner, 0) {
+            // Shallow copies of `a`'s and `b`'s element headers share their
+            // buffers; clone the result once so it owns every level.
+            let slice_ty = Type::Slice(Box::new(inner.clone()));
+            return Some(self.emit_clone_value(out, &slice_ty, fn_val));
+        }
+        Some(out)
     }
 
     /// arr_std_f64(&a) → sample standard deviation. <2 elements → 0.0 (no
@@ -8223,6 +8334,8 @@ impl<'ctx> super::Codegen<'ctx> {
                             .unwrap();
                         build_wrappers::w_store(&self.ir.builder, typed_ptr, fval);
                         byte_offset += fsize;
+                    } else {
+                        self.refuse_unlowered(&format!("payload field `{fname}` of an enum variant"));
                     }
                 }
             }
@@ -8307,6 +8420,8 @@ impl<'ctx> super::Codegen<'ctx> {
                         .build_struct_gep(struct_ty, alloca, idx, fname)
                         .unwrap();
                     build_wrappers::w_store(&self.ir.builder, fptr, fval);
+                } else {
+                    self.refuse_unlowered(&format!("the value of field `{fname}` of a struct literal"));
                 }
             }
             // Phase 5: refinement obligations at construction — per-field
@@ -8545,6 +8660,8 @@ impl<'ctx> super::Codegen<'ctx> {
             for a in args {
                 if let Some(v) = self.emit_expr(a, fn_val) {
                     call_args.push(v.into());
+                } else {
+                    self.refuse_unlowered(&format!("an argument of the `dyn` method call `.{method}`"));
                 }
             }
 
@@ -8596,10 +8713,14 @@ impl<'ctx> super::Codegen<'ctx> {
                     rv
                 };
                 arg_vals.push(rv.into());
+            } else {
+                self.refuse_unlowered(&format!("the receiver of the method call `.{method}`"));
             }
             for a in args {
                 if let Some(v) = self.emit_expr(a, fn_val) {
                     arg_vals.push(v.into());
+                } else {
+                    self.refuse_unlowered(&format!("an argument of the method call `.{method}`"));
                 }
             }
             let call = self
@@ -8887,6 +9008,8 @@ impl<'ctx> super::Codegen<'ctx> {
                                 };
                                 call_args.push(v.into());
                                 arg_tys.push(v.get_type().into());
+                            } else {
+                                self.refuse_unlowered(&format!("argument {i} of a closure call"));
                             }
                         }
                         // Build an indirect call via fn pointer.
@@ -10399,17 +10522,24 @@ impl<'ctx> super::Codegen<'ctx> {
                     return self.emit_arr_i64_repeat(v, n, fn_val);
                 }
             }
-            // arr_concat(a, b) → a ++ b (two i64 slices into one fresh slice).
-            if name == "arr_concat"
-                && args.len() == 2
-                && self.arr_arg_elem_is_i64(&args[0])
-                && self.arr_arg_elem_is_i64(&args[1])
-            {
-                if let (Some(a_slice), Some(b_slice)) = (
-                    self.emit_expr(&args[0], fn_val),
-                    self.emit_expr(&args[1], fn_val),
-                ) {
-                    return self.emit_arr_i64_concat(a_slice, b_slice, fn_val);
+            // arr_concat(a, b) → a ++ b: the same lowering as array `+`, for
+            // any element type with a native layout.
+            if name == "arr_concat" && args.len() == 2 {
+                let slice_ty = self
+                    .arr_arg_slice_ty(&args[0])
+                    .or_else(|| self.arr_arg_slice_ty(&args[1]))
+                    .or_else(|| self.infer_expr_sem_type(&args[0]))
+                    .or_else(|| self.infer_expr_sem_type(&args[1]));
+                if let Some(Type::Slice(inner)) = slice_ty {
+                    if let (Some(a_slice), Some(b_slice)) = (
+                        self.emit_expr(&args[0], fn_val),
+                        self.emit_expr(&args[1], fn_val),
+                    ) {
+                        if let Some(v) = self.emit_arr_concat_any(a_slice, b_slice, &inner, fn_val)
+                        {
+                            return Some(v);
+                        }
+                    }
                 }
             }
             // arr_unique(&a) → first occurrence of each value (O(n²) seen-scan).

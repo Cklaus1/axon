@@ -3811,17 +3811,20 @@ impl CheckCtx {
                     // nothing else, so the `Uncertain`/`Temporal` hazard the
                     // note describes cannot arise — those never resolve to
                     // `Str`/`Slice`.
-                    let lcat = self.concat_chain_ty(left, &lpath, scope);
-                    let rcat = self.concat_chain_ty(right, &rpath, scope);
-                    let str_concat = matches!(op, BinOp::Add)
-                        && lcat.as_ref() == Some(&Type::Str)
-                        && rcat.as_ref() == Some(&Type::Str);
+                    //
+                    // A side the checker cannot type (a `match` arm binding
+                    // like `Err(e)`) joins the other side's kind — see
+                    // `concat_operands_kind`.
+                    let cat = if matches!(op, BinOp::Add) {
+                        self.concat_operands_kind(left, right, node_path, scope)
+                    } else {
+                        Option::None
+                    };
+                    let str_concat = cat.as_ref() == Some(&Type::Str);
                     // N2b: same permission for `[T] + [T]`. Element types must
                     // already agree — infer unifies them — so this only has to
                     // stop the numeric check from firing on two arrays.
-                    let arr_concat = matches!(op, BinOp::Add)
-                        && matches!(lcat, Option::Some(Type::Slice(_)))
-                        && matches!(rcat, Option::Some(Type::Slice(_)));
+                    let arr_concat = matches!(cat, Option::Some(Type::Slice(_)));
                     if !str_concat && !arr_concat {
                         self.check_numeric_operand(&lty, &lpath);
                         self.check_numeric_operand(&rty, &rpath);
@@ -6269,6 +6272,13 @@ impl CheckCtx {
     /// and `Temporal` operands resolve to neither `Str` nor `Slice`, so the
     /// hazard documented on `resolve_expr_type`'s missing `BinOp` arm does not
     /// apply here.
+    ///
+    /// A side this walk cannot type (`Unknown`/`Var`/deferred — e.g. a
+    /// `match` arm binding such as `Err(e)`, which the checker scope does not
+    /// carry) takes the kind of the other side: `"err " + e` was refused as
+    /// "arithmetic operand has non-numeric type str". Infer has already
+    /// unified both operands of the `+`, so a genuine `str + i64` never gets
+    /// here silently (it is infer's E0102).
     fn concat_chain_ty(
         &self,
         expr: &Expr,
@@ -6286,16 +6296,55 @@ impl CheckCtx {
             right,
         } = expr
         {
-            let l = self.concat_chain_ty(left, &format!("{node_path}.left"), scope)?;
-            let r = self.concat_chain_ty(right, &format!("{node_path}.right"), scope)?;
-            // Both sides must be the same KIND. `str + [T]` stays an error.
-            return match (&l, &r) {
-                (Type::Str, Type::Str) => Option::Some(Type::Str),
-                (Type::Slice(_), Type::Slice(_)) => Option::Some(l),
-                _ => Option::None,
-            };
+            return self.concat_operands_kind(left, right, node_path, scope);
         }
         Option::None
+    }
+
+    /// The concatenation kind (`Str` / `Slice`) of `left + right`, or `None`
+    /// if the two operands do not form one. Both sides must be the same KIND
+    /// (`str + [T]` stays an error); an untypable side adopts the other's.
+    fn concat_operands_kind(
+        &self,
+        left: &Expr,
+        right: &Expr,
+        node_path: &str,
+        scope: &HashMap<String, Type>,
+    ) -> Option<Type> {
+        let l = self.concat_chain_leaf(left, &format!("{node_path}.left"), scope)?;
+        let r = self.concat_chain_leaf(right, &format!("{node_path}.right"), scope)?;
+        match (l, r) {
+            (Option::Some(Type::Str), Option::Some(Type::Str))
+            | (Option::Some(Type::Str), Option::None)
+            | (Option::None, Option::Some(Type::Str)) => Option::Some(Type::Str),
+            (Option::Some(l @ Type::Slice(_)), Option::Some(Type::Slice(_)))
+            | (Option::Some(l @ Type::Slice(_)), Option::None)
+            | (Option::None, Option::Some(l @ Type::Slice(_))) => Option::Some(l),
+            _ => Option::None,
+        }
+    }
+
+    /// One operand of a concatenation `+`: `Some(Some(kind))` for a str/array
+    /// chain, `Some(None)` for an operand this walk cannot type (it adopts the
+    /// other side's kind), `None` for anything else (not a concat).
+    fn concat_chain_leaf(
+        &self,
+        expr: &Expr,
+        node_path: &str,
+        scope: &HashMap<String, Type>,
+    ) -> Option<Option<Type>> {
+        if let Option::Some(t) = self.concat_chain_ty(expr, node_path, scope) {
+            return Option::Some(Option::Some(t));
+        }
+        if matches!(expr, Expr::BinOp { .. }) {
+            return Option::None;
+        }
+        let ty = self.resolve_expr_type(expr, node_path, scope);
+        if ty.is_deferred() || matches!(ty, Type::Unknown | Type::Var(_)) {
+            Option::Some(Option::None)
+        } else {
+            Option::None
+        }
     }
 
     fn resolve_expr_type(

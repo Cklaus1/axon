@@ -21714,62 +21714,6 @@ fn a_corrupt_cache_entry_does_not_fail_the_build() {
     let _ = std::fs::remove_file(&out_bin);
 }
 
-#[test]
-fn array_concat_plus_is_refused_natively_rather_than_miscompiled() {
-    // N2b, invariant I-2. `emit_binop` matches on integer/float value kinds; a
-    // slice operand fell through to a path that yields the LEFT operand, so
-    // before the guard native BUILT `[1,2] + [3]` and printed length 2.
-    //
-    // A wrong answer from a successful build is the worst failure mode available
-    // — nothing tells the caller. `str + str` now lowers (see
-    // `native_lowers_string_concat_index_write_and_field_write_like_the_interpreter`);
-    // array `+` must still refuse.
-    for (label, src, interp_expects) in [(
-        "array",
-        "fn main() -> i64 {\n    let xs = [1, 2] + [3]\n    println(to_str(len(xs)))\n    0\n}\n",
-        "3",
-    )] {
-        let f = tmp_ax(&format!("concat_native_{label}"), src);
-        let out_bin = std::env::temp_dir()
-            .join(format!("axon_concat_{label}_{}", std::process::id()));
-        let _ = std::fs::remove_file(&out_bin);
-
-        // The interpreter is the oracle and must be right.
-        let run = axon().arg("run").arg(&f).output().expect("spawn run");
-        let stdout = String::from_utf8_lossy(&run.stdout);
-        assert_eq!(
-            stdout.lines().next_back().unwrap_or(""),
-            interp_expects,
-            "{label}: interpreter must concatenate"
-        );
-
-        // Native must refuse, and leave nothing behind.
-        let build = axon()
-            .arg("build")
-            .arg(&f)
-            .arg("-o")
-            .arg(&out_bin)
-            .output()
-            .expect("spawn build");
-        let msg = format!(
-            "{}{}",
-            String::from_utf8_lossy(&build.stdout),
-            String::from_utf8_lossy(&build.stderr)
-        );
-        let _ = std::fs::remove_file(&f);
-        if msg.contains("requires building axon with the `codegen` feature") {
-            continue; // codegen absent in this build — nothing to assert
-        }
-        assert_ne!(build.status.code(), Some(0), "{label}: must not build: {msg}");
-        assert!(msg.contains("E0910"), "{label}: must be the refusal class: {msg}");
-        assert!(
-            !out_bin.exists(),
-            "{label}: a refused build must leave no binary"
-        );
-        let _ = std::fs::remove_file(&out_bin);
-    }
-}
-
 /// `append_file` must EXTEND, and `file_size` must report BYTES.
 ///
 /// Behaviour, not just type-checking: an `append_file` that forwarded to
@@ -27684,6 +27628,220 @@ fn native_place_assignment_examples_match_the_interpreter() {
         };
         assert_eq!(got, interp_stdout(name, &src), "`{name}`: native != interpreter");
     }
+}
+
+/// AX-19: native closures could not capture loop-scoped bindings. Capture
+/// analysis treated `for`/`while`/`while let` bodies as if their `let`s and the
+/// loop variable did not exist, so `|acc, x| acc + x % (rep + 7)` inside
+/// `for rep in 0..2` failed natively with E0701 `identifier 'rep' not found`.
+/// Also covers what the same analysis missed elsewhere: a nested lambda's free
+/// variables (the outer closure must capture them), an identifier used only as
+/// an index, a captured array indexed in the body, and the interpreter's
+/// snapshot-at-creation semantics (later writes to the outer binding are not
+/// seen; the closure's own writes persist across its calls but don't leak out).
+#[test]
+fn native_closures_capture_any_enclosing_scope_like_the_interpreter() {
+    let progs: [(&str, &str); 5] = [
+        (
+            "ax19_for",
+            "fn main() -> i64 {\n    let xs = arr_range(0, 10)\n    let total = 0\n    for rep in 0..2 {\n        total = total + arr_fold(xs, 0, |acc: i64, x: i64| acc + x % (rep + 7))\n    }\n    println(to_str(total))\n    0\n}\n",
+        ),
+        (
+            "ax19_while_let",
+            "fn next(i: i64) -> Option<i64> {\n if i < 2 { Some(i + 3) } else { None }\n}\nfn main() -> i64 {\n let i = 0\n let total = 0\n while let Some(v) = next(i) {\n  total = total + arr_fold([1, 2], 0, |acc: i64, x: i64| acc + x * v)\n  i = i + 1\n }\n println(to_str(total))\n 0\n}\n",
+        ),
+        (
+            "ax19_scopes",
+            "fn main() -> i64 {\n let xs = arr_range(0, 10)\n let total = 0\n let i = 0\n while i < 3 {\n  let k = i * 2 + 1\n  total = total + arr_fold(xs, 0, |acc: i64, x: i64| acc + x * k)\n  if i > 0 {\n   let m = 100\n   total = total + arr_fold(xs, 0, |acc: i64, x: i64| acc + m + k)\n  }\n  i = i + 1\n }\n match Some(4) {\n  Some(v) => println(to_str(arr_fold([1, 1], 0, |acc: i64, x: i64| acc + x * v))),\n  None => println(\"none\"),\n }\n println(to_str(total))\n 0\n}\n",
+        ),
+        (
+            "ax19_nested_index",
+            "fn main() -> i64 {\n let xs = [10, 20, 30]\n let j = 2\n let g = |i: i64| xs[j] + i\n println(to_str(g(1)))\n let base = 100\n let mk = |a: i64| arr_fold([1, 2, 3], 0, |acc: i64, x: i64| acc + x * a + base)\n println(to_str(mk(2)))\n 0\n}\n",
+        ),
+        (
+            "ax19_snapshot",
+            "fn main() -> i64 {\n let k = 1\n let f = |x: i64| x + k\n k = 5\n println(to_str(f(0)))\n let xs = [1, 2, 3]\n let s = |x: i64| arr_sum_i64(&xs) + x\n xs[0] = 100\n println(to_str(s(0)))\n let ys = [5, 5]\n let g = |i: i64| {\n  ys[i] = ys[i] + 1\n  ys[i]\n }\n println(to_str(g(0)))\n println(to_str(g(0)))\n println(to_str(ys[0]))\n let counter = 0\n let inc = |d: i64| {\n  counter = counter + d\n  counter\n }\n println(to_str(inc(2)))\n println(to_str(inc(3)))\n println(to_str(counter))\n 0\n}\n",
+        ),
+    ];
+    for (tag, src) in progs {
+        let Some(got) = native_stdout(tag, src) else {
+            note_harness_skip("axon build (no codegen feature)");
+            return;
+        };
+        assert_eq!(got, interp_stdout(tag, src), "[{tag}] native != interpreter");
+    }
+}
+
+/// AX-13: native refused (E0910) array `+`, `arr_concat` on non-`i64`
+/// elements, and writes into `Option`/`Result` slots of an unannotated array
+/// or a struct field. Array `+` builds a fresh array (nested arrays deep-copied,
+/// so a write through the result never reaches an operand); slot writes take
+/// the slot's declared layout. Each must build and print what `axon run` prints.
+#[test]
+fn native_array_concat_and_sum_type_slot_writes_match_the_interpreter() {
+    let progs: [(&str, &str); 8] = [
+        (
+            "ax13_cat_i64",
+            "fn main() -> i64 {\n    let a = [1, 2]\n    let b = arr_range(5, 8)\n    let c = a + b\n    println(to_str(len(c)))\n    c[0] = 99\n    println(to_str(a[0]) + \" \" + to_str(c[0]) + \" \" + to_str(c[4]))\n    let e: [i64] = []\n    println(to_str(len(e + e)) + \" \" + to_str(len(e + a)))\n    0\n}\n",
+        ),
+        (
+            "ax13_cat_types",
+            "fn main() -> i64 {\n    let f = [1.5] + [2.25, 3.0]\n    println(to_str_f64(f[2]))\n    let s = [\"a\", \"b\"] + [\"c\"]\n    println(s[0] + s[2])\n    let bs = [true] + [false, true]\n    println(to_str_bool(bs[1]))\n    let n = [as_u8(1), as_u8(250)]\n    let m = n + n\n    println(to_str(len(m)) + \" \" + to_str(m[3]))\n    0\n}\n",
+        ),
+        (
+            "ax13_cat_nested",
+            "fn main() -> i64 {\n    let a = [[1, 2], [3]]\n    let b = [[4]]\n    let c = a + b\n    c[0][0] = 77\n    println(to_str(a[0][0]) + \" \" + to_str(c[0][0]) + \" \" + to_str(c[2][0]))\n    let t = [(1, \"x\")] + [(2, \"y\")]\n    println(t[1].1)\n    0\n}\n",
+        ),
+        (
+            "ax13_arr_concat_any",
+            "fn main() -> i64 {\n    let f = arr_concat([1.5], [2.25, 3.0])\n    println(to_str_f64(f[2]))\n    let s = arr_concat([\"a\", \"b\"], [\"c\"])\n    println(s[0] + s[2])\n    let xs = [1, 2, 3]\n    let ys = arr_concat(&xs, [4])\n    ys[0] = 50\n    println(to_str(xs[0]) + \" \" + to_str(ys[0]) + \" \" + to_str(ys[3]) + \" \" + to_str(len(ys)))\n    0\n}\n",
+        ),
+        (
+            "ax13_option_slot",
+            "fn main() -> i64 {\n    let xs = [Some(1), None]\n    xs[1] = Some(3)\n    xs[0] = None\n    match xs[1] { Some(v) => println(to_str(v)), None => println(\"none\") }\n    match xs[0] { Some(v) => println(to_str(v)), None => println(\"none\") }\n    let ys = [None, Some(2)]\n    ys[0] = Some(9)\n    match ys[0] { Some(v) => println(to_str(v)), None => println(\"none\") }\n    0\n}\n",
+        ),
+        (
+            "ax13_result_slot",
+            "fn main() -> i64 {\n    let rs = [parse_int(\"1\"), parse_int(\"x\")]\n    rs[1] = Ok(5)\n    rs[0] = Err(\"bad\")\n    match rs[1] { Ok(v) => println(to_str(v)), Err(e) => println(e) }\n    match rs[0] { Ok(v) => println(to_str(v)), Err(e) => println(e) }\n    0\n}\n",
+        ),
+        (
+            "ax13_field_slots",
+            "type T = { o: Option<i64>, r: Result<i64, str>, n: i32, xs: [i64], rs: [Result<i64, str>] }\nfn main() -> i64 {\n    let k: i32 = 4\n    let t = T { o: None, r: Err(\"e\"), n: k, xs: [1, 2], rs: [Ok(1)] }\n    t.r = Ok(6)\n    t.o = Some(5)\n    t.xs[1] = 40\n    t.rs[0] = Err(\"zz\")\n    match t.r { Ok(v) => println(to_str(v)), Err(e) => println(e) }\n    match t.o { Some(v) => println(to_str(v)), None => println(\"none\") }\n    println(to_str(t.xs[1]))\n    match t.rs[0] { Ok(v) => println(to_str(v)), Err(e) => println(e) }\n    t.r = Err(\"again\")\n    match t.r { Ok(v) => println(to_str(v)), Err(e) => println(e) }\n    0\n}\n",
+        ),
+        (
+            "ax13_narrow_nested",
+            "fn main() -> i64 {\n    let bytes = [as_u8(1), as_u8(2), as_u8(3)]\n    bytes[1] = as_u8(7)\n    bytes[2] = bytes[1] + bytes[0]\n    println(to_str(bytes[1]) + \" \" + to_str(bytes[2]))\n    let ns = [as_i32(5), as_i32(6)]\n    ns[0] = as_i32(-3)\n    println(to_str(ns[0]))\n    let g = [[1, 2], [3, 4]]\n    g[1][0] = 9\n    println(to_str(g[1][0]))\n    0\n}\n",
+        ),
+    ];
+    for (tag, src) in progs {
+        let Some(got) = native_stdout(tag, src) else {
+            note_harness_skip("axon build (no codegen feature)");
+            return;
+        };
+        assert_eq!(got, interp_stdout(tag, src), "[{tag}] native != interpreter");
+    }
+}
+
+/// AX-24: `x = <value>` whose value lowered to nothing natively skipped the
+/// store and BUILT: the repro printed `7` (interp `42`), the loop forms `7`/`0`.
+/// The `Assign` arm now refuses with E0910 instead. Today the trigger is a
+/// closure called out of an array element; once that call lowers, the build
+/// must print exactly what the interpreter prints. Either is acceptable - a
+/// successful build with a different answer is not.
+#[test]
+fn native_assign_of_unlowered_value_is_refused_not_dropped() {
+    let progs: [(&str, &str); 3] = [
+        ("ax24_let_f", "fn main() -> i64 {\n    let table = [|x: i64| x + 1, |x: i64| x * 2]\n    let f = table[0]\n    let acc = 7\n    acc = f(41)\n    println(to_str(acc))\n    0\n}\n"),
+        ("ax24_index_call", "fn main() -> i64 {\n    let table = [|x: i64| x + 1, |x: i64| x * 2]\n    let acc = 7\n    for k in 0..2 {\n        acc = table[k](41)\n    }\n    println(to_str(acc))\n    0\n}\n"),
+        ("ax24_accumulate", "fn main() -> i64 {\n    let table = [|x: i64| x + 1, |x: i64| x * 2]\n    let f = table[0]\n    let acc = 0\n    for k in 0..3 {\n        acc = acc + f(10 + k)\n    }\n    println(to_str(acc))\n    0\n}\n"),
+    ];
+    for (tag, src) in progs {
+        let expected = interp_stdout(tag, src);
+        let f = tmp_ax(tag, src);
+        let bin = std::env::temp_dir().join(format!("axon_ax24_{tag}_{}", std::process::id()));
+        let _ = std::fs::remove_file(&bin);
+        let build = axon()
+            .arg("build")
+            .arg(&f)
+            .arg("-o")
+            .arg(&bin)
+            .arg("--no-cache")
+            .output()
+            .expect("spawn build");
+        let _ = std::fs::remove_file(&f);
+        let msg = format!(
+            "{}{}",
+            String::from_utf8_lossy(&build.stdout),
+            String::from_utf8_lossy(&build.stderr)
+        );
+        if codegen_absent(&msg) {
+            note_harness_skip("axon build (no codegen feature)");
+            return;
+        }
+        if build.status.code() != Some(0) {
+            assert!(msg.contains("E0910"), "[{tag}] must refuse as E0910: {msg}");
+            assert!(!bin.exists(), "[{tag}] a refused build must leave no binary");
+            continue;
+        }
+        let run = std::process::Command::new(&bin).output().expect("run native");
+        let _ = std::fs::remove_file(&bin);
+        assert_eq!(
+            String::from_utf8_lossy(&run.stdout).trim(),
+            expected,
+            "[{tag}] native built and printed a different answer"
+        );
+    }
+}
+
+/// `&&` / `||` did not short-circuit natively: both operands were emitted
+/// unconditionally, so `i > 0 && ys[i - 1] > ys[i]` bounds-panicked (exit 101)
+/// at `i = 0` and `false && f()` ran `f`'s `println`. The interpreter
+/// evaluates the right side only when the left does not decide the result.
+#[test]
+fn native_and_or_short_circuit_like_the_interpreter() {
+    let progs: [(&str, &str); 3] = [
+        ("sc_guarded_index", "fn main() -> i64 {\n    let ys = [3, 1, 2]\n    let c = 0\n    for i in 0..3 {\n        if i > 0 && ys[i - 1] > ys[i] { c = c + 1 }\n    }\n    println(to_str(c))\n    0\n}\n"),
+        ("sc_side_effects", "fn f(x: bool) -> bool {\n    println(\"f called\")\n    x\n}\nfn main() -> i64 {\n    let a = false\n    let b = a && f(true)\n    let c = true || f(false)\n    let d = true && f(true)\n    println(to_str_bool(b))\n    println(to_str_bool(c))\n    println(to_str_bool(d))\n    let i = 0\n    let ys = [1, 2]\n    while i < 2 && ys[i] > 0 { i = i + 1 }\n    println(to_str(i))\n    0\n}\n"),
+        ("sc_nested", "fn hit(n: i64) -> bool {\n    println(\"hit \" + to_str(n))\n    n > 1\n}\nfn main() -> i64 {\n    let xs = [5, 0, 7]\n    let n = 0\n    for i in 0..4 {\n        if (i < 3 && xs[i] > 0) || (i == 3 && hit(i)) { n = n + 1 }\n        if !(i >= 3 || xs[i] == 0) && (hit(i) || hit(i + 10)) { n = n + 10 }\n    }\n    let z = false || (true && hit(99))\n    println(to_str_bool(z))\n    println(to_str(n))\n    0\n}\n"),
+    ];
+    for (tag, src) in progs {
+        let Some(got) = native_stdout(tag, src) else {
+            note_harness_skip("axon build (no codegen feature)");
+            return;
+        };
+        assert_eq!(got, interp_stdout(tag, src), "[{tag}] native != interpreter");
+    }
+}
+
+/// `match` guards ran BEFORE the arm's pattern bindings existed, so a guard
+/// naming one (`Some(v) if v > 2`) did not lower natively (E0701, and an
+/// unlowered guard was otherwise silently ignored, taking the arm whenever the
+/// pattern matched). The guard now runs after binding, in its own block.
+#[test]
+fn native_match_guards_see_pattern_bindings_like_the_interpreter() {
+    let progs: [(&str, &str); 2] = [
+        ("guard_binding", "fn main() -> i64 {\n    let n = 0\n    for i in 0..5 {\n        match Some(i) { Some(v) if v > 2 => { n = n + v }, Some(_) => {}, None => {} }\n    }\n    println(to_str(n))\n    0\n}\n"),
+        ("guard_value_arms", "fn cls(x: i64) -> str {\n    match x { n if n < 0 => \"neg\", 0 => \"zero\", n if n % 2 == 0 => \"even\", _ => \"odd\" }\n}\nfn main() -> i64 {\n    let r: Result<i64, str> = Ok(5)\n    let k = match r { Ok(v) if v > 9 => 1, Ok(v) => v * 10, Err(_) => 0 }\n    println(to_str(k))\n    println(cls(0 - 3) + \" \" + cls(0) + \" \" + cls(4) + \" \" + cls(7))\n    0\n}\n"),
+    ];
+    for (tag, src) in progs {
+        let Some(got) = native_stdout(tag, src) else {
+            note_harness_skip("axon build (no codegen feature)");
+            return;
+        };
+        assert_eq!(got, interp_stdout(tag, src), "[{tag}] native != interpreter");
+    }
+}
+
+/// AX-14: "native `parse_int` fails with E0306" was a probe that passed the
+/// `Result` straight to `to_str` — rejected identically by both engines. The
+/// natural way to consume it, `Err(e) => println("err " + e)`, WAS broken in
+/// both: a `match`-arm binding has no type in the checker's scope, so the
+/// concatenation was refused as "arithmetic operand has non-numeric type str".
+/// Pins: the parse/convert family prints the same natively as interpreted for
+/// valid, signed, empty, whitespace, overflow and non-decimal input; arm
+/// bindings concatenate; and `e + 1` on a `str` binding is still refused.
+#[test]
+fn native_parse_family_and_arm_binding_concat_match_the_interpreter() {
+    let progs: [(&str, &str); 2] = [
+        (
+            "ax14_parse",
+            "fn show(s: str) {\n    match parse_int(s) {\n        Ok(v) => println(\"ok \" + to_str(v)),\n        Err(e) => println(\"err \" + e),\n    }\n}\nfn showf(s: str) {\n    match parse_float(s) {\n        Ok(v) => println(\"ok \" + to_str_f64(v)),\n        Err(e) => println(\"err \" + e),\n    }\n}\nfn main() -> i64 {\n    show(\"42\")\n    show(\"-17\")\n    show(\"+5\")\n    show(\"abc\")\n    show(\"\")\n    show(\" 12\")\n    show(\"12 \")\n    show(\"9223372036854775807\")\n    show(\"9223372036854775808\")\n    show(\"-9223372036854775808\")\n    show(\"1.5\")\n    show(\"0x10\")\n    showf(\"1.5\")\n    showf(\"-2\")\n    showf(\"abc\")\n    showf(\" 3.0\")\n    showf(\"1e3\")\n    match parse_int_radix(\"ff\", 16) { Ok(v) => println(to_str(v)), Err(e) => println(e) }\n    match parse_int_radix(\"zz\", 10) { Ok(v) => println(to_str(v)), Err(e) => println(e) }\n    match parse_bool(\"true\") { Ok(v) => println(to_str_bool(v)), Err(e) => println(e) }\n    match parse_bool(\"yes\") { Ok(v) => println(to_str_bool(v)), Err(e) => println(e) }\n    println(to_str(parse_int_or(\"x\", 7)))\n    println(to_str(f64_to_i64(0.0 - 3.9)))\n    0\n}\n",
+        ),
+        (
+            "ax14_arm_concat",
+            "fn main() -> i64 {\n    match parse_int(\"x\") { Ok(w) => println(\"ok\"), Err(e) => println(\"[\" + e + \"]\" + e) }\n    match Some([1, 2]) {\n        Some(v) => {\n            let w = v + [3]\n            println(to_str(w[2]))\n        }\n        None => println(\"n\"),\n    }\n    0\n}\n",
+        ),
+    ];
+    for (tag, src) in progs {
+        let Some(got) = native_stdout(tag, src) else {
+            note_harness_skip("axon build (no codegen feature)");
+            return;
+        };
+        assert_eq!(got, interp_stdout(tag, src), "[{tag}] native != interpreter");
+    }
+    let (code, out) = run_verb(&["check"], "fn main() -> i64 {\n    match parse_int(\"x\") { Ok(w) => println(\"ok\"), Err(e) => println(to_str(e + 1)) }\n    0\n}\n");
+    assert_ne!(code, 0, "`str + i64` on an arm binding must stay refused:\n{out}");
+    assert!(out.contains("E0102"), "expected infer's E0102:\n{out}");
 }
 
 /// `axon fmt` silently rewrote scientific-notation float literals.
