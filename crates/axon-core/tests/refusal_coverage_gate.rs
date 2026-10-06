@@ -1187,7 +1187,7 @@ fn an_exemption_citing_a_row_that_does_not_exist_is_refused() {
         &r,
         SCANNED,
         "        return Err(format!(\"cites {x}\"));",
-        "dominated by M99999 (a row that is not in the registry)",
+        "dominated by M9999 (a row that is not in the registry)",
     );
     refuses(
         &r,

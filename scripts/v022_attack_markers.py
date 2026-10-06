@@ -2074,8 +2074,8 @@ ATTACK_MARKERS.update({
 })
 ATTACK_MARKERS.update({
     'M2333': 'ATTACK: the supervisor (died of signal|did not forward)',
-    'M2334': 'ATTACK: is_dir took a regular file for a directory|control: a directory is one',
-    'M2335': 'ATTACK: the helper printed no reply',
+    'M2334': r'ATTACK: (a regular file was accepted as an operator directory|is_dir took a regular file)|control: a directory is one',
+    'M2335': r'ATTACK: the helper printed no reply',
     'M2336': 'ATTACK: pass_pidfd did not arm SO_PASSPIDFD',
     'M2337': 'two writers on one journal',
     'M2338': "ATTACK: the interpreter child's stdin is not /dev/null",

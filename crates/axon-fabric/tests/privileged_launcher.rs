@@ -4706,6 +4706,10 @@ echo "launcher noise on stdout"; echo "launcher noise on stderr" >&2"#;
     );
     let reply = String::from_utf8_lossy(&o.stdout);
     assert!(
+        !reply.trim().is_empty(),
+        "ATTACK: the helper printed no reply (its report is the only thing the Fabric reads)"
+    );
+    assert!(
         serde_json::from_str::<serde_json::Value>(reply.trim()).is_ok(),
         "ATTACK: the launcher's output reached the helper's reply pipe: {reply:?}"
     );

@@ -237,7 +237,12 @@ fn the_interpreter_child_is_built_from_an_empty_environment_and_the_jobs_directo
         for (k, v) in HOSTILE {
             c.env(k, v);
         }
-        let o = c.output().unwrap();
+        // stdin is a PIPE, not the /dev/null `output()` gives by default, so a
+        // child that inherits it is told from one that is given /dev/null.
+        c.stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
+        let o = c.spawn().unwrap().wait_with_output().unwrap();
         assert!(
             o.status.success(),
             "the inner run failed:\n{}\n{}",
