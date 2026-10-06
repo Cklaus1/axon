@@ -323,12 +323,8 @@ refused "ATTACK: an observer user that is the custodian user" "five different us
 # honest directory.
 KB="--builder-uid $BUILDER_UID --builder-parent $KEYPARENT"
 copybin() { rm -rf "$WORK/fakebin"; mkdir "$WORK/fakebin"; cp -p "$BIN"/* "$WORK/fakebin/"; }
-copybin; rm -f "$WORK/fakebin/host-build.json"
-refused "ATTACK: binaries with no host-build record (a plain cargo build)" "holds no readable host-build.json" \
-  bash "$KIT" --from "$CLONE" --bin-dir "$WORK/fakebin" $KB
-copybin; printf 'built elsewhere' >"$WORK/fakebin/axon-observer"
-refused "ATTACK: a binary replaced after the controlled build" "is not the bytes the controlled host build recorded" \
-  bash "$KIT" --from "$CLONE" --bin-dir "$WORK/fakebin" $KB
+# (the attacks only the record check catches come first: honest binaries, a bad record;
+# the ones a sibling check would also refuse -- no record, a replaced binary -- follow)
 copybin; python3 - "$WORK/fakebin/host-build.json" <<'PY'
 import json, sys
 p = sys.argv[1]; r = json.load(open(p)); r["src_files"] = 99; json.dump(r, open(p, "w"))
@@ -361,6 +357,12 @@ PY
 refused "ATTACK: a host build record signed by another account under its own directory" "cannot be checked" \
   bash "$KIT" --from "$CLONE" --bin-dir "$WORK/fakebin" $KB
 rm -rf "$FORGE"
+copybin; rm -f "$WORK/fakebin/host-build.json"
+refused "ATTACK: binaries with no host-build record (a plain cargo build)" "holds no readable host-build.json" \
+  bash "$KIT" --from "$CLONE" --bin-dir "$WORK/fakebin" $KB
+copybin; printf 'built elsewhere' >"$WORK/fakebin/axon-observer"
+refused "ATTACK: a binary replaced after the controlled build" "is not the bytes the controlled host build recorded" \
+  bash "$KIT" --from "$CLONE" --bin-dir "$WORK/fakebin" $KB
 refused "ATTACK: a judge told another builder uid" "cannot be checked" \
   bash "$KIT" --from "$CLONE" --bin-dir "$BIN" --builder-uid $((BUILDER_UID + 1)) --builder-parent "$KEYPARENT"
 refused "ATTACK: no --builder-uid at all (the record's own word is never taken)" "--builder-uid N is required" \
