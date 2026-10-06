@@ -282,7 +282,9 @@ Per ADR-002, extended with the O1 digests:
 - The sequence is custodian nonce, then the manifest (which contains the nonce), then the
   observation of the manifest digest, then the launch. It is not circular: the manifest names the
   nonce, and the observation names the manifest.
-- Fabric verifies and consumes an observation. It holds no observer key and cannot mint one.
+- Fabric verifies and consumes an observation. It holds no observer key and cannot mint one
+  (cannot forge the signature; which fields the observer measured and which are the principal's
+  word is amendment 79's table).
 
 ## 8. O2 — loop key authority
 
@@ -3128,7 +3130,9 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
         M1528) is answered only for `caller_uid` by `SO_PEERCRED` (M1527). The manifest must pass
         `LaunchManifest::verify` against its own digest (canonical, `/2`, protected profile,
         completion scheme; M1529); the service computes `intended_launch_manifest_sha256` itself.
-    - **What the service MEASURES vs what it is TOLD.** It refuses to sign unless every measured
+    - **What the service MEASURES vs what it is TOLD (the table below is AMENDED by amendment 79:
+      the Fabric revision, the verifier digest and the init and axon digests are no longer told).**
+      It refuses to sign unless every measured
       value EQUALS the manifest's claim (M1549; one row per measured field, M1531-M1539, each
       replacing that measurement by the claim). Measured from operator files (the host config
       `/etc/axon/protected-host.json` and the helper config `/etc/axon/protected-launcher.json`,
@@ -4035,6 +4039,128 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
     - **Native codegen.** Unchanged: the seal is interpreter-only (amendment 72).
     - **Operator deployment.** The guest image must be rebuilt.
 
+## Amendment 79: the observation's fields are measured, pinned or the principal's word, said field by field (C9 round 5, obsbind)
+
+79. **The observer no longer countersigns Fabric-authored values, the helper serves only the Fabric
+    program the operator pinned, and the observer observes only a nonce the custodian issued.**
+    - **Before (reviewer findings PSV-6 and SENTINEL, round 5).** The PSV-6 claim said the
+      observation "names ... Fabric and Firecracker revisions; guest image, kernel, verifier, suite
+      and policy digests" and that "Fabric consumes it and cannot mint it". EXECUTED
+      (`probe_told_fields`, through the real helper `--observe` relay and the real observer): a
+      manifest with `policy_sha256`, `guest.init_sha256` and `guest.axon_sha256` of nine digits
+      each, `fabric_revision` `not-the-running-revision` and `authority.epoch` 987654321 was
+      relayed and SIGNED; `measure()` compared nine fields and copied the rest from the manifest.
+      And `verifier_sha256` was the digest of `/proc/<ppid>/exe` of whichever Fabric-uid program
+      called `--observe`: nothing operator-held pinned it (the existing control for
+      `an_observe_relay_whose_parent_is_not_the_fabric_relays_nothing` was a python3 process that got
+      an observer-signed observation naming python3 as the verifier). The observer's store and the
+      custodian's issue store grew without bound under Fabric-controlled requests, and the
+      observer never asked whether a nonce had been issued.
+    - **(a) The Fabric program is pinned.** The helper config gains `fabric {path, sha256,
+      revision}` (required; loaded with the strictness of the other pins: a lowercase sha256, an
+      absolute plain path, and a build revision that is 40 lowercase hex on a production host).
+      `authenticated()`, the ONE caller gate a launch and an `--observe` relay share, now also
+      requires that the digest of the caller's executable (hashed from its pidfd by
+      `running_caller`, after the helper is root in every id) equals `fabric.sha256`; otherwise
+      exit 30 and nothing is launched or relayed (M1857). The observer reads the same pin from the
+      helper config it already reads and measures: `verifier_sha256` and `fabric_revision` are the
+      PIN's, and the manifest's claims must equal them (M1539, M1850); the observer also refuses a
+      caller digest the root helper measured that is not the pin (M1853).
+      **How the revision is derived (the choice).** It is the operator's word in the helper
+      config, READ FROM THE INSTALLED BINARY by the operator's kit (`axon-fabric verifier-manifest`,
+      whose self-reported `sha256` must be the installed bytes') and checked again by the kit
+      (`check` step) and the trust preflight (`helper-fabric-pin-path`, `helper-fabric-pin-sha256`).
+      Neither the root helper nor the observer EXECUTES the pinned binary to learn it: running a
+      Fabric-uid-installed program as root, or as the observer, to ask it its own name would trust
+      the answer of the thing being measured. The alternative considered, embedding the revision
+      in the binary and having the observer scan the pinned file, was rejected: it adds a parser
+      over attacker-influenced bytes in the signing service to learn what the operator can state.
+    - **(b) The guest's init and axon digests are cross-checked.** The observer reads the profile
+      manifest ONCE (its digest is the measurement of `profile_manifest_sha256`) and requires the
+      manifest's `guest.init_sha256` and `guest.axon_sha256` to equal `artifacts.axon-guest-init.sha256`
+      and `artifacts.axon.sha256` there (M1851, M1852): the same two fields `psv::prepare` reads when
+      it builds the manifest.
+    - **(c) What the observer measures, what the pinned program supplies, what stays the principal's
+      word.**
+
+      | observation / manifest field | source after amendment 79 | class |
+      |---|---|---|
+      | `host_config_sha256`, `launcher_sha256`, `firecracker_sha256`, `guest.kernel_sha256`, `guest.rootfs_sha256`, `suite_registry_sha256`, `qualification_sha256`, `profile_manifest_sha256` | operator files, hashed by the observer | MEASURED (M1531-M1538) |
+      | `verifier_sha256` | helper config `fabric.sha256`; the helper holds the caller to it | PINNED, and the caller MEASURED to be it (M1539, M1853, M1857) |
+      | `fabric_revision` | helper config `fabric.revision`, read from the installed binary by the kit | PINNED (M1850) |
+      | `guest.axon_sha256`, `guest.init_sha256` | the measured profile manifest's `artifacts` | NAMED by a measured file (M1851, M1852) |
+      | `nonce` | the custodian: issued for that epoch, unspent, unexpired, observed once | CUSTODIAN's (M1858, M1859, M1540) |
+      | `policy_sha256` | the manifest's: built in Fabric's 0700 job dir | **THE PRINCIPAL'S WORD.** Not listed as measured. The root helper holds the policy it BOOTS to this digest (`policy_at_root`, A87), so a launch cannot run another policy than the observation names, but the observer cannot know what policy Fabric should have chosen |
+      | `epoch` | the manifest's `authority.epoch`; the custodian binds the nonce to the epoch FABRIC asked it to issue for | **THE PRINCIPAL'S WORD.** The epoch is the loop's scope pointer, which the observer cannot read; it is joined at INTAKE (`check_bundle`: observation epoch, manifest epoch and the loop's own epoch). The custodian holds no authoritative epoch either (it records the one in the issue request and compares the one the helper passes at the spend), so the launch-time epoch check is not independent evidence; intake's join is |
+      | `observed_at`, `intended_launch_manifest_sha256`, `host_profile`, `observer_key_id` | the observer's clock; derived over the bytes received; constant; its own key | as in amendment 68 |
+
+      `the_observer_signs_the_operators_values_for_fabric_revision_and_guest_digests` pins the
+      stated non-claim: a manifest whose policy digest and epoch are told is still signed as told.
+    - **(d) Stated non-claim: an executable-digest measurement does not bind the code that runs.**
+      `verifier_sha256` is the digest of the executable FILE the caller's process was started from
+      (`/proc/<pid>/exe`, hashed by descriptor, with the pidfd re-asked before and after). A process
+      of the Fabric uid that execs the genuine pinned binary with `LD_PRELOAD` (or `LD_AUDIT`), or
+      that `ptrace`s or `process_vm_writev`s a same-uid process running it, runs attacker code under
+      the genuine digest (reviewer demo `ldpreload_demo.c`: the helper-side `readlink` of its
+      parent's exe reports `/usr/bin/true` while the constructor is attacker code). Nothing here
+      narrows that. The helper's `harden()` clears ITS OWN environment (and its children's), not its
+      caller's. Fabric cannot run under `NoNewPrivileges` (the helper is setuid-root; amendment 65
+      refuses it), so that is no lever. `kernel.yama.ptrace_scope` >= 2 (attach only with
+      `CAP_SYS_PTRACE`) closes the ptrace half; it is a host setting the operator makes and the kit
+      does not verify (this development host reports 1, which still lets a process trace its own
+      descendants, the genuine binary it spawns included). So what the observation attests about the
+      verifier is "an observer-pinned program file was started by the Fabric uid", not "the pinned
+      program's instructions made this manifest". The guest verdict's integrity does not rest on it:
+      it rests on the hidden check, the signature chain and the loop's joins.
+    - **Major-adjacent: the observer accepts only a nonce the custodian issued.** The observer asks
+      the custodian (the helper config's `custodian` section, which it already reads; the custodian
+      gains a `check` op, answered ONLY to its configured `observer_uid`, M1860, which a protected
+      custodian config must name and which is neither root, the Fabric's nor the custodian's, M1861)
+      whether the nonce is outstanding for the manifest's epoch, BEFORE it hashes or records anything
+      (M1858, M1859). The observer authenticates the custodian by the uid of its socket's listener,
+      not by the program pin: it runs as its own uid and cannot open another uid's `/proc/<pid>/exe`,
+      which is how a pinned program is measured; the PROGRAM is authenticated where the nonce is
+      spent, by the root helper (amendment 65). A custodian impostor of the custodian uid could say
+      yes to a nonce nobody issued and then fail every spend: an observation nothing launches on.
+      A protected observer takes only a protected custodian's nonce (M1862, M1863). The kit grants the
+      observer's uid the custodian socket by ONE named ACL entry (`ExecStartPost=setfacl -m
+      u:<observer>:rw`), so the socket stays 0660 for the Fabric group.
+      **Bounds.** The custodian drops records past their max age at every issue (M1865) and holds at
+      most `MAX_OUTSTANDING` = 1024 issued-and-unspent nonces; the next issue is refused (M1866). The
+      observer's record carries the nonce's expiry (from the custodian's `check` reply) and every
+      request drops the records whose nonce the custodian no longer honours (M1864); an unparsable
+      record (a crash between its creation and its write) is dropped a day after its mtime. The
+      observer store is thereby bounded by what the custodian holds outstanding and spent records
+      live no longer than the custodian honours the nonce. Spent (`.used`) records are bounded the
+      same way (pruned a max age after the spend); the number of spends is the number of real
+      launches.
+    - **Minors.** A production helper config refuses `observer.service.uid == custodian.uid` (M1868;
+      the kit created five user NAMES, the code did not re-check the uids). One observer connection
+      has an ABSOLUTE deadline for its request (`REQUEST_DEADLINE`, 30 s; each read waits for what is
+      left of it, M1867), where each read had its own 30 s. The helper's reply timeout for the
+      observer was a fixed 30 s while the observer streams the guest kernel and rootfs through
+      SHA-256 (and creates the nonce's record before signing, so a timeout burned the nonce): it is
+      now 30 s plus the artifacts' size at a floor of 25 MiB/s (M1869, M1870), derived rather than
+      cached; a cache keyed by inode, mtime and size would be a measurement the observer did not
+      take. The call site passing the derived value is not a row (a source-level pass-through whose
+      kill would need a rootfs that really takes minutes to hash). The custodian's epoch is whatever
+      the caller says (above): authority is the loop's scope pointer joined at intake.
+    - **Rows (PSV; M1850-M1870, all ACTIVE, each killed by its own attack; M1871-M1879 unused).**
+      M1531, M1532, M1533, M1536, M1537, M1538 and M1539 keep their meaning; their `old` text moved
+      (the observer reads the profile manifest once and the pin) and was updated in the registry.
+      Tests: `crates/axon-fabric/tests/observer_service.rs`, `tests/privileged_launcher.rs`, and unit
+      tests in `custodian.rs`, `observer_service.rs` and `privileged_launcher.rs`. The fixtures that
+      run the helper now give it a parent that IS the pinned Fabric program (a shell or python3
+      running as the Fabric uid that forks the helper, or the test process itself): the old
+      `exec`-from-root launches had no Fabric parent at all, which the pin refuses.
+    - **Matrix.** A131-A134 (numbered after A126 here; A127-A130 are held by another branch, so
+      `psv_matrix_check.py` on this branch alone reports exactly those four missing).
+    - **Operator-visible change (PROTECTED_ONLY).** The helper config gains `fabric` (the kit
+      computes it from the installed `axon-fabric` and refuses a mismatch); the custodian config
+      gains `observer_uid`; the custodian socket unit gains `ExecStartPost=setfacl` (needs the `acl`
+      package); the preflight records `helper-fabric-pin-path`, `helper-fabric-pin-sha256` and
+      `custodian-observer-uid`. See `governance/notes/v022-observer-service-kit-delta.md`.
+
 ## Amendment 82: claim text states what the code does (C9 round 5, claims)
 
 82. **Wording and evidence accuracy; no code guard changes (operator decision 2026-10-05, PSV-3
@@ -4115,3 +4241,4 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       verifier with an unscrubbed environment.
     - **Rows.** None added: no code guard changed. The one added test is a drift test over two
       constants. M1960-M1969 are unused.
+

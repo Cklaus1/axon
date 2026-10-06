@@ -132,7 +132,7 @@ impl Host {
         // whose ownership is walked from its own base pins nothing outside it.
         copy_executable(helper_pin().path, root.join("protected-launcher"), 0o755);
         copy_executable("/bin/bash", root.join("bash"), 0o755);
-        write_helper_config(
+        let helper_cfg = write_helper_config(
             &root,
             &inputs,
             &root.join("launcher.sh"),
@@ -140,6 +140,14 @@ impl Host {
             &root.join("runs"),
             "protected-launcher.json",
         );
+        // Amendment 79: the helper's parent is the `axon-fabric` CLI this host
+        // runs, so that is the Fabric program the operator pins.
+        let mut hv: Value = serde_json::from_slice(&std::fs::read(&helper_cfg).unwrap()).unwrap();
+        hv["fabric"] = program_pin(
+            Path::new(env!("CARGO_BIN_EXE_axon-fabric")),
+            TEST_FABRIC_REVISION,
+        );
+        std::fs::write(&helper_cfg, hv.to_string()).unwrap();
         // The operator suite `acc` (the protected profile runs only an
         // operator-suite check, PSV-6 / A54) and the candidate, in the store
         // the CLI reads (`<journal>.state`).

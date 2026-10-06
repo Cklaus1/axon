@@ -94,6 +94,12 @@ pub struct CustodianConfig {
     pub store: PathBuf,
     /// How long an issued nonce stays spendable.
     pub max_age_s: u64,
+    /// Amendment 79: the only uid that may ASK whether a nonce was issued
+    /// (`check`): the observer service's, which refuses to observe a nonce this
+    /// custodian never issued for that epoch. Required on a protected host;
+    /// never the Fabric's, root or the custodian's own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observer_uid: Option<u32>,
 }
 
 impl CustodianConfig {
@@ -131,6 +137,19 @@ impl CustodianConfig {
                  privileged launcher",
                 self.launcher_uid
             ));
+        }
+        // Amendment 79: the observer asks whether a nonce was issued, as its own
+        // uid. Another uid's `check` would let that uid learn which nonces are
+        // outstanding; the Fabric's would make the answer Fabric's.
+        match self.observer_uid {
+            Some(o) if o != 0 && o != self.fabric_uid && o != self.custodian_uid => {}
+            _ => {
+                return Err(format!(
+                    "observer_uid {:?} must name the observer service's own uid: neither the \
+                     Fabric's ({}), root, nor the custodian's ({}) (amendment 79)",
+                    self.observer_uid, self.fabric_uid, self.custodian_uid
+                ))
+            }
         }
         Ok(())
     }
@@ -220,7 +239,7 @@ pub fn peer_uid(fd: RawFd) -> Result<u32, String> {
 #[serde(deny_unknown_fields)]
 pub struct Request {
     pub schema: String,
-    /// `issue` or `spend`.
+    /// `issue`, `spend` or `check` (amendment 79).
     pub op: String,
     pub epoch: u64,
     #[serde(default)]
@@ -239,6 +258,11 @@ pub struct Reply {
     pub mode: String,
     pub nonce: Option<String>,
     pub error: Option<String>,
+    /// `check`: the unix time after which the nonce is no longer spendable
+    /// (issue time + max age). Whatever a record keyed to the nonce is, it may
+    /// be dropped after this: the custodian refuses the nonce from then on.
+    #[serde(default)]
+    pub expires_unix: Option<i64>,
 }
 
 /// A custodian, as a client names it: its socket and its uid (from the host
@@ -325,6 +349,24 @@ impl CustodianRef {
             .filter(|n| is_hex(n, 32))
             .ok_or("custodian issued no well-formed nonce")?;
         Ok((nonce, Mode::parse(&r.mode).unwrap_or(Mode::Dev)))
+    }
+
+    /// Amendment 79: ask whether `nonce` is outstanding for `epoch` (issued by
+    /// this custodian for that epoch, unspent, unexpired). Only the observer's
+    /// uid is answered. Returns the custodian's mode and the unix time at which
+    /// the nonce expires.
+    pub fn check(&self, nonce: &str, epoch: u64) -> Result<(Mode, i64), String> {
+        let r = self.call(&Request {
+            schema: REQUEST_SCHEMA.into(),
+            op: "check".into(),
+            epoch,
+            nonce: Some(nonce.into()),
+            manifest_sha256: None,
+        })?;
+        let expires = r
+            .expires_unix
+            .ok_or("custodian's check names no expiry for the nonce")?;
+        Ok((Mode::parse(&r.mode).unwrap_or(Mode::Dev), expires))
     }
 
     /// Spend `nonce` (issued for `epoch`) on the launch of `manifest_sha256`.
@@ -550,6 +592,21 @@ impl Custodian {
     }
 }
 
+/// What one decided request answers with.
+enum Decided {
+    Nonce(String),
+    Expires(i64),
+    Done,
+}
+
+/// Amendment 79: the most nonces the custodian holds OUTSTANDING (issued, unspent,
+/// unexpired). Fabric can ask for a nonce as often as it likes; each is a file
+/// in the custodian's store, so without a bound Fabric fills the disk and every
+/// later issue (and so every launch) fails. A launch holds one nonce for the
+/// seconds between its issue and its spend: this is far above any honest
+/// number in flight.
+pub const MAX_OUTSTANDING: usize = 1024;
+
 /// A custodian serving requests.
 pub struct Server {
     pub cfg: CustodianConfig,
@@ -559,10 +616,12 @@ pub struct Server {
 }
 
 impl Server {
-    fn reply(&self, r: Result<Option<String>, String>) -> Reply {
-        let (ok, nonce, error) = match r {
-            Ok(n) => (true, n, None),
-            Err(e) => (false, None, Some(e)),
+    fn reply(&self, r: Result<Decided, String>) -> Reply {
+        let (ok, nonce, error, expires_unix) = match r {
+            Ok(Decided::Nonce(n)) => (true, Some(n), None, None),
+            Ok(Decided::Done) => (true, None, None, None),
+            Ok(Decided::Expires(t)) => (true, None, None, Some(t)),
+            Err(e) => (false, None, Some(e), None),
         };
         Reply {
             schema: REPLY_SCHEMA.into(),
@@ -570,6 +629,7 @@ impl Server {
             mode: self.mode.as_str().into(),
             nonce,
             error,
+            expires_unix,
         }
     }
 
@@ -578,7 +638,7 @@ impl Server {
         self.reply(self.decide(peer, request))
     }
 
-    fn decide(&self, peer: u32, request: &[u8]) -> Result<Option<String>, String> {
+    fn decide(&self, peer: u32, request: &[u8]) -> Result<Decided, String> {
         let r: Request =
             serde_json::from_slice(request).map_err(|e| format!("malformed request: {e}"))?;
         if r.schema != REQUEST_SCHEMA {
@@ -592,7 +652,22 @@ impl Server {
                         self.cfg.fabric_uid
                     ));
                 }
-                self.store.issue(r.epoch, &self.clock).map(Some)
+                self.store
+                    .issue_bounded(r.epoch, &self.clock, self.cfg.max_age_s, MAX_OUTSTANDING)
+                    .map(Decided::Nonce)
+            }
+            "check" => {
+                if self.cfg.observer_uid != Some(peer) {
+                    return Err(format!(
+                        "uid {peer} is not the observer's uid {:?}: only the observer asks \
+                         whether a nonce was issued",
+                        self.cfg.observer_uid
+                    ));
+                }
+                let nonce = r.nonce.as_deref().ok_or("check names no nonce")?;
+                self.store
+                    .check(nonce, r.epoch, &self.clock, self.cfg.max_age_s)
+                    .map(Decided::Expires)
             }
             "spend" => {
                 if peer != self.cfg.launcher_uid {
@@ -628,7 +703,7 @@ impl Server {
                             .as_bytes(),
                         )
                     });
-                Ok(None)
+                Ok(Decided::Done)
             }
             other => Err(format!("unknown op {other:?}")),
         }
@@ -717,6 +792,7 @@ mod tests {
             socket: "/run/axon-custodian/custodian.sock".into(),
             store: "/var/lib/axon-custodian/nonces".into(),
             max_age_s: 300,
+            observer_uid: Some(994),
         }
     }
 
@@ -807,6 +883,169 @@ mod tests {
         let r = spend(0);
         assert!(!r.ok, "a nonce spends once: {r:?}");
         assert_eq!(r.mode, "test");
+    }
+
+    /// A133 (M1862, amendment 79): only the observer's uid asks whether a nonce
+    /// was issued (and learns its expiry); the Fabric uid, root and a stranger
+    /// are refused. Control: the observer's uid is answered, the expiry is the
+    /// issue time plus the max age, and an invented nonce is refused.
+    #[test]
+    fn only_the_observer_checks_a_nonce() {
+        let d = tempfile::tempdir().unwrap();
+        let s = Server {
+            cfg: cfg(),
+            mode: Mode::Test,
+            store: NonceStore {
+                dir: d.path().join("n"),
+            },
+            clock: Clock::FixedUnix(1_000_000),
+        };
+        let n = s
+            .answer(
+                991,
+                br#"{"schema":"axon-custodian-request/1","op":"issue","epoch":3}"#,
+            )
+            .nonce
+            .unwrap();
+        let check = |uid, nonce: &str, epoch: u64| {
+            s.answer(
+                uid,
+                serde_json::json!({"schema": REQUEST_SCHEMA, "op": "check", "epoch": epoch,
+                                   "nonce": nonce})
+                .to_string()
+                .as_bytes(),
+            )
+        };
+        for uid in [991, 0, 4242] {
+            let r = check(uid, &n, 3);
+            assert!(
+                !r.ok && r.expires_unix.is_none(),
+                "ATTACK: uid {uid}, not the observer's, was told whether a nonce is outstanding: \
+                 {r:?}"
+            );
+        }
+        let r = check(994, &n, 3);
+        assert!(r.ok, "control: the observer's uid is answered: {r:?}");
+        assert_eq!(r.expires_unix, Some(1_000_300), "issue time + max age");
+        assert!(!check(994, &"ab".repeat(16), 3).ok, "an invented nonce");
+        assert!(!check(994, &n, 4).ok, "another epoch");
+    }
+
+    /// A133 (M1863): a protected custodian names the observer service's own
+    /// uid for `check`: absent, root, the Fabric's or the custodian's is
+    /// refused. Control: a fourth uid.
+    #[test]
+    fn a_protected_custodian_names_the_observer_as_its_own_uid() {
+        cfg().check(true).expect("control: four principals");
+        for (what, uid) in [
+            ("none", None),
+            ("root", Some(0)),
+            ("the Fabric", Some(991)),
+            ("the custodian", Some(993)),
+        ] {
+            let mut c = cfg();
+            c.observer_uid = uid;
+            assert!(
+                c.check(true).is_err(),
+                "ATTACK: a protected custodian config whose observer is {what} was accepted"
+            );
+        }
+    }
+
+    /// A134 (M1865): the custodian's store holds a record only while its nonce
+    /// can be spent. Issued, then the clock past the max age, then another
+    /// issue: the expired records are gone (Fabric can ask for nonces as often
+    /// as it likes, so what it asks for must not accumulate). Control: the
+    /// records still spendable stay.
+    #[test]
+    fn expired_nonce_records_do_not_accumulate() {
+        let d = tempfile::tempdir().unwrap();
+        let mut s = Server {
+            cfg: cfg(),
+            mode: Mode::Test,
+            store: NonceStore {
+                dir: d.path().join("n"),
+            },
+            clock: Clock::FixedUnix(1_000_000),
+        };
+        let issue = |s: &Server| {
+            s.answer(
+                991,
+                br#"{"schema":"axon-custodian-request/1","op":"issue","epoch":3}"#,
+            )
+        };
+        let spent = issue(&s).nonce.unwrap();
+        for _ in 0..4 {
+            assert!(issue(&s).ok);
+        }
+        let r = s.answer(
+            0,
+            serde_json::json!({"schema": REQUEST_SCHEMA, "op": "spend", "epoch": 3,
+                               "nonce": spent, "manifest_sha256": "a".repeat(64)})
+            .to_string()
+            .as_bytes(),
+        );
+        assert!(r.ok, "setup: one nonce spent: {r:?}");
+        let count = |s: &Server| std::fs::read_dir(&s.store.dir).unwrap().count();
+        assert_eq!(count(&s), 5, "setup: four issued, one spent");
+        s.clock = Clock::FixedUnix(1_000_000 + 100);
+        assert!(issue(&s).ok);
+        assert_eq!(
+            count(&s),
+            6,
+            "control: nothing is dropped while it can be spent"
+        );
+        s.clock = Clock::FixedUnix(1_000_000 + 301);
+        assert!(issue(&s).ok);
+        assert_eq!(
+            count(&s),
+            2,
+            "ATTACK: records of nonces past their max age (issued or spent) stay in the \
+             custodian's store ({} files)",
+            count(&s)
+        );
+    }
+
+    /// A134 (M1866): at most MAX_OUTSTANDING issued-and-unspent nonces; the
+    /// next issue is refused (Fabric cannot fill the custodian's disk), and a
+    /// spend frees a slot. Control: MAX_OUTSTANDING issues succeed.
+    #[test]
+    fn the_custodian_bounds_the_nonces_it_holds_outstanding() {
+        let d = tempfile::tempdir().unwrap();
+        let s = Server {
+            cfg: cfg(),
+            mode: Mode::Test,
+            store: NonceStore {
+                dir: d.path().join("n"),
+            },
+            clock: Clock::FixedUnix(1_000_000),
+        };
+        let issue = || {
+            s.answer(
+                991,
+                br#"{"schema":"axon-custodian-request/1","op":"issue","epoch":3}"#,
+            )
+        };
+        let mut first = None;
+        for i in 0..MAX_OUTSTANDING {
+            let r = issue();
+            assert!(r.ok, "control: issue {i} of {MAX_OUTSTANDING}: {r:?}");
+            first = first.or(r.nonce);
+        }
+        let r = issue();
+        assert!(
+            !r.ok,
+            "ATTACK: the custodian issued a nonce beyond {MAX_OUTSTANDING} outstanding: {r:?}"
+        );
+        let r = s.answer(
+            0,
+            serde_json::json!({"schema": REQUEST_SCHEMA, "op": "spend", "epoch": 3,
+                               "nonce": first.unwrap(), "manifest_sha256": "a".repeat(64)})
+            .to_string()
+            .as_bytes(),
+        );
+        assert!(r.ok, "setup: a spend: {r:?}");
+        assert!(issue().ok, "a spend frees a slot");
     }
 
     /// The store is the custodian's own and private.

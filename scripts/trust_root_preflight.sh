@@ -88,7 +88,7 @@ OPERATOR_TRUST_ROOT=/etc/axon/trust
 SCHEMA=axon-trust-preflight/1
 ROOT="" OUT="" GUEST="" VERIFIER="" CUSTODIAN="" FABRIC="" HOST_CONFIG="" SIGNING_KEY="" FABRIC_BIN=""
 FABRIC_PID="" OBSERVER="" OBSERVER_CONFIG="" HELPER_CONFIG_FILE=""
-LAUNCHER_CONFIG="" HELPER="" HELPER_FABRIC_UID=""
+LAUNCHER_CONFIG="" HELPER="" HELPER_FABRIC_UID="" HELPER_FABRIC_PATH="" HELPER_FABRIC_SHA="" CUSTODIAN_OBSERVER_UID="-"
 CUSTODIAN_CONFIG="" CUSTODIAN_STORE="" CUSTODIAN_UID="" CUSTODIAN_FABRIC_UID="" CUSTODIAN_LAUNCHER_UID=""
 O1=() O1_DIRS=() SERVICE_DIRS=() SOCKET_DIRS=() AUTHORITY_STORES=()
 AGENTS=()
@@ -177,11 +177,14 @@ while IFS=$'\t' read -r kind p; do
     authority-store) AUTHORITY_STORES+=("$p") ;;
     privileged-helper) [ -z "$HELPER" ] || die "two privileged helpers listed"; HELPER=$p; O1+=("$p") ;;
     helper-fabric-uid) HELPER_FABRIC_UID=$p ;;
+    helper-fabric-path) HELPER_FABRIC_PATH=$p ;;
+    helper-fabric-sha256) HELPER_FABRIC_SHA=$p ;;
     custodian-socket) SOCKET_DIRS+=("$(dirname "$p")") ;;
     custodian-store) [ -z "$CUSTODIAN_STORE" ] || die "two custodian stores listed"; CUSTODIAN_STORE=$p ;;
     custodian-uid) CUSTODIAN_UID=$p ;;
     custodian-fabric-uid) CUSTODIAN_FABRIC_UID=$p ;;
     custodian-launcher-uid) CUSTODIAN_LAUNCHER_UID=$p ;;
+    custodian-observer-uid) CUSTODIAN_OBSERVER_UID=$p ;;
     *) die "axon-fabric listed an unknown path kind $kind" ;;
   esac
 done <"$PATHS"
@@ -335,6 +338,11 @@ cannot_touch_store verifier "$V"
 # A (amendment 45): the Fabric actor is not root (resolve refuses uid 0 for
 # every actor), and its ONLY route to a root launch is the privileged helper.
 record operator - helper-admits "$HELPER" "${F%%:*}" "$HELPER_FABRIC_UID"
+# Amendment 79: the helper serves only the Fabric program its config pins, so
+# the pin must be the installed verifier (the program that runs as Fabric): its
+# path, and the sha256 of its bytes.
+record operator - helper-fabric-pin-path "$HELPER_CONFIG_FILE" "$FABRIC_BIN" "$HELPER_FABRIC_PATH"
+record operator - helper-fabric-pin-sha256 "$HELPER_CONFIG_FILE" "$(sha256sum "$FABRIC_BIN" | cut -d' ' -f1)" "$HELPER_FABRIC_SHA"
 hmode=$(stat -c '%u %g %a' "$HELPER" 2>/dev/null)
 read -r hu hg ha <<<"$hmode"
 hstate=ok
@@ -408,6 +416,9 @@ if [ -n "$OBSERVER" ]; then
   record operator - observer-config-caller "$OBSERVER_CONFIG" 0 "$OBS_CALLER_UID"
   record operator - helper-observer-socket "$HELPER_CONFIG_FILE" "$OBS_SOCKET" "$OBS_SVC_SOCKET"
   record operator - helper-observer-uid "$HELPER_CONFIG_FILE" "${O%%:*}" "$OBS_SVC_UID"
+  # Amendment 79: the custodian answers the observer's `check` for the
+  # observer's uid, and for no other.
+  record operator - custodian-observer-uid "${CUSTODIAN_CONFIG:-/etc/axon/custodian.json}" "${O%%:*}" "$CUSTODIAN_OBSERVER_UID"
   ostate=separate
   [ "${O%%:*}" != "${F%%:*}" ] || ostate="the Fabric's uid"
   [ "${O%%:*}" != "${C%%:*}" ] || ostate="the custodian's uid"

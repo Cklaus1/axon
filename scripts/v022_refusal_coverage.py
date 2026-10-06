@@ -3177,6 +3177,9 @@ EXEMPT += [
     (OSV, "    if !f.metadata().map(|m| m.is_file()).unwrap_or(false) {",
      "fails closed: a measurement that cannot be taken (the operator's file is not a regular "
      "file) signs nothing; no input chooses success (the paths come from operator files)"),
+    (OSV, "    if bytes.len() as u64 > max {",
+     "fails closed: an operator-owned file (the profile manifest) over the fixed bound is not "
+     "measured, so nothing is signed; the path comes from the operator's config, never a request"),
     (OSV, "            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {",
      "NAMED ROW M1540: the decision is create_new on the record (a second observation of one "
      "nonce meets AlreadyExists); removing create_new is M1540, killed by the replay attack"),

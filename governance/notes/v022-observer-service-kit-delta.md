@@ -136,3 +136,37 @@ connects as root. That `ListenStream` path must equal:
     owners and modes;
   - a host config with `observer.command` is never generated;
   - the helper config carries `observer.service` pinned to the installed `axon-observer`.
+
+## Amendment 79 addendum (C9 round 5, obsbind): what the kit and runbook now do
+
+Landed in `scripts/operator_deploy_protected_host.sh`, `scripts/test_operator_deploy.sh`,
+`scripts/trust_root_preflight.sh`, `scripts/test_trust_root_preflight.sh`, the examples and the
+runbook (this note's earlier sections were integrated before).
+
+- **Helper config `fabric {path, sha256, revision}`** (required; `protected-launcher.json.example`).
+  `gen_configs` computes it from the INSTALLED `axon-fabric`: the sha256 of its bytes, the path
+  `$LIBEXEC/axon-fabric`, and the `fabric_revision` the binary states in its own
+  `verifier-manifest` (whose `sha256` must be the bytes' digest; a dry run asks the source binary).
+  The kit's `check` step FAILS when the installed config's sha256 is not the installed file's, its
+  path is not `$LIBEXEC/axon-fabric`, or its revision is not the one the installed file states.
+- **`custodian.json` `observer_uid`** (required in a protected config; the observer user's uid).
+  The `check` step FAILS when it is not that uid.
+- **The custodian socket unit** gains `ExecStartPost=/usr/bin/setfacl -m u:<observer user>:rw
+  <socket>` (the kit writes the user name and path); it BLOCKS when `setfacl` is absent. The
+  socket stays `SocketMode=0660`, `SocketGroup=<Fabric user>`.
+- **Preflight** (`trust_root_preflight.sh`): `helper-fabric-pin-path` and
+  `helper-fabric-pin-sha256` (the helper config pins the installed verifier named by
+  `verifier.json`), `custodian-observer-uid` (the custodian config answers `check` for the
+  observer's uid). `axon-fabric protected-host-paths` lists the pinned Fabric path as an operator
+  file and prints the pin and the custodian's `observer_uid`.
+- **Kit test** (`test_operator_deploy.sh`): the plan and the applied configs carry the pin (bytes,
+  path, 40-hex revision) and the custodian's `observer_uid`; attacks, each refused for its own
+  reason, with the full apply as the control: another Fabric sha256, another revision, another
+  path, a custodian answering `check` for the Fabric uid; and the production loader refuses a
+  helper config with no `fabric`. `test_trust_root_preflight.sh`: a helper pinning a Fabric
+  program that is not the installed one, a custodian answering `check` for another uid.
+- **Runbook**: the configs list, the observer decision, the dry-run checklist and the known-gaps
+  item 1 say which fields are measured, pinned, named or the principal's word.
+- **The helper now requires its caller to be the pinned program on EVERY operation.** Anything
+  that runs the helper as the Fabric uid must be (or fork the helper from) that program:
+  `psv_guest_boot_test.sh` runs it from a shell that stays the parent and pins that shell.

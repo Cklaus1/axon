@@ -181,6 +181,9 @@ want=(
   'OK\[check\] observer.service in .* pins .*axon-observer.*the host config names no observer program'
   'PENDING\[fabric-unit\] --fabric-unit UNIT is required'
   'OK\[check\] custodian.sha256 in .* is the sha256 of .*axon-custodian, the program the custodian unit starts'
+  'OK\[check\] fabric.\{path,sha256,revision\} in .* are the installed axon-fabric.s, and the custodian answers check for uid'
+  '\| ExecStartPost=/usr/bin/setfacl -m u:axon-observer:rw /run/axon-custodian/custodian.sock'
+  '"observer_uid": '
   '"status": "READ by the freeze \(amendment 65\)'
 )
 for w in "${want[@]}"; do grep -Eq -- "$w" <<<"$OUT" || fail "the plan lacks /$w/:
@@ -189,9 +192,10 @@ ok "the dry run plans every required action (${#want[@]} assertions: allowlist, 
 # Pins in the planned configs are the bytes that would be installed.
 python3 - "$OUT" "$(sha256sum "$CLONE/scripts/fc_linux_profile.sh" | cut -c1-64)" \
   "$(sha256sum "$BIN/axon-protected-launcher" | cut -c1-64)" "$(sha256sum "$CLONE/dist/guest-linux/manifest.json" | cut -c1-64)" \
-  "$(sha256sum "$BIN/axon-observer" | cut -c1-64)" "$SIGNER_PUB" "$(sha256sum "$BIN/axon-custodian" | cut -c1-64)" <<'PY' || fail "a planned pin is not the source bytes' digest"
+  "$(sha256sum "$BIN/axon-observer" | cut -c1-64)" "$SIGNER_PUB" "$(sha256sum "$BIN/axon-custodian" | cut -c1-64)" \
+  "$(sha256sum "$BIN/axon-fabric" | cut -c1-64)" <<'PY' || fail "a planned pin is not the source bytes' digest"
 import json, re, sys
-out, launcher, helper, manifest, observer, signer, custodian = sys.argv[1:8]
+out, launcher, helper, manifest, observer, signer, custodian, fabric = sys.argv[1:9]
 def doc(path):
     m = re.search(r"  ---- %s \(root:root 644\) ----\n(.*?)\n  ---- end %s ----" % (re.escape(path), re.escape(path)), out, re.S)
     return json.loads("\n".join(l[4:] for l in m.group(1).splitlines()))
@@ -212,6 +216,12 @@ assert h["signer"]["public_key"] == signer == l["observer"]["host_signer_public_
 # the same socket and uid (helper_agrees compares those two only).
 assert l["custodian"]["sha256"] == custodian, "custodian program pin"
 assert h["observer"]["custodian"] == {k: l["custodian"][k] for k in ("socket", "uid")}, "one custodian"
+# Amendment 79: the helper pins the installed axon-fabric (its path, its bytes, and
+# the revision the binary itself states), and the custodian answers `check` for
+# the observer's uid.
+assert l["fabric"]["sha256"] == fabric and l["fabric"]["path"] == "/usr/local/libexec/axon/axon-fabric", l["fabric"]
+assert re.fullmatch("[0-9a-f]{40}", l["fabric"]["revision"]), l["fabric"]
+assert doc("/etc/axon/custodian.json")["observer_uid"] == o["observer_uid"], "custodian observer_uid"
 assert h["out_root"] == l["out_root"] == "/var/lib/axon-fabric/runs"
 assert h["qualification"]["max_age_s"] == 2592000
 PY
@@ -340,6 +350,20 @@ mkdir -p /usr/local/bin && install -m 0755 "$W/firecracker" "$W/jailer" /usr/loc
 grep -q axon-fabric /etc/passwd && fail "the shadow /etc already has axon users"
 ARGS=(--from "$CLONE" --bin-dir "$BIN" --suite-registry "$OP/suites/registry.json"
       --grant-registry "$OP/grants/grants.json" --signer-public-key "$SIGNER_PUB" --no-systemctl)
+# Amendment 79: the custodian socket unit grants the observer's uid by
+# `ExecStartPost=setfacl`, so the kit BLOCKS where `setfacl` (the acl package) is
+# absent and systemd would start the unit (not under --no-systemctl, which only
+# installs files). ATTACK: exercised where the host really lacks it. CONTROL: the
+# full apply below, under --no-systemctl, judges the unit's line as a file.
+if ! command -v setfacl >/dev/null 2>&1; then
+  SC_ARGS=(); for a in "${ARGS[@]}"; do [ "$a" = --no-systemctl ] || SC_ARGS+=("$a"); done
+  bash "$KIT" "${SC_ARGS[@]}" --only systemd >"$W/nofacl.out" 2>&1; r=$?
+  [ $r = 3 ] && grep -q 'BLOCKED\[systemd\] setfacl (the acl package) is required' "$W/nofacl.out" \
+    || { cat "$W/nofacl.out"; fail "ATTACK: the kit did not BLOCK a host with no setfacl (exit $r)"; }
+  echo "ok(ns): a host with no setfacl is BLOCKED where systemd would start the unit"
+else
+  echo "note(ns): this host has setfacl; the missing-setfacl attack was not exercised"
+fi
 # Runbook order: allowlist, users and directories, THEN the operator provisions
 # keys (here: inert fixtures), THEN the whole kit.
 bash "$KIT" "${ARGS[@]}" --only allowlist,users,dirs --apply >"$W/apply1.out" 2>&1 \
@@ -412,6 +436,10 @@ grep -q 'OK\[toolchain\] guest_build_env.toolchain_pin_problems accepts the inst
   || fail "the freeze's own reader did not accept the installed toolchain pin"
 grep -q 'OK\[check\] custodian.sha256 in /etc/axon/protected-launcher.json is the sha256 of /usr/local/libexec/axon/axon-custodian' "$W/apply2.out" \
   || fail "the installed custodian program pin was not verified"
+grep -q 'OK\[check\] fabric.{path,sha256,revision} in /etc/axon/protected-launcher.json are the installed axon-fabric' "$W/apply2.out" \
+  || fail "the installed Fabric program pin was not verified"
+grep -qx 'ExecStartPost=/usr/bin/setfacl -m u:axon-observer:rw /run/axon-custodian/custodian.sock' /etc/systemd/system/axon-custodian.socket \
+  || fail "the installed custodian socket unit does not grant the observer's uid by ACL"
 grep -q 'OK\[check\] observer.service in /etc/axon/protected-launcher.json pins /usr/local/libexec/axon/axon-observer' "$W/apply2.out" \
   || fail "the installed observer program pin was not verified"
 grep -q -- "--observer axon-observer" "$W/apply2.out" || fail "the preflight was not given the observer uid"
@@ -457,9 +485,11 @@ for d in (h["launcher"], h["privileged_launcher"], h["profile_manifest"], h["sui
     assert sha(d["path"]) == d["sha256"], d
 assert l["custodian"]["sha256"] == sha("/usr/local/libexec/axon/axon-custodian"), "custodian program pin"
 assert l["observer"]["service"]["sha256"] == sha("/usr/local/libexec/axon/axon-observer"), "observer program pin"
+assert l["fabric"]["sha256"] == sha("/usr/local/libexec/axon/axon-fabric") and l["fabric"]["path"] == "/usr/local/libexec/axon/axon-fabric", "fabric program pin"
 assert "command" not in h["observer"], "the host config names an observer program"
 o = json.load(open("/etc/axon/observer.json"))
 assert o["observer_uid"] == l["observer"]["service"]["uid"] and o["fabric_uid"] == l["fabric_uid"] and o["caller_uid"] == 0, o
+assert json.load(open("/etc/axon/custodian.json"))["observer_uid"] == o["observer_uid"], "custodian observer_uid"
 assert json.load(open("/etc/axon/host-toolchain-pin.json"))["status"].startswith("READ by the freeze")
 v = json.load(open("/etc/axon/trust/verifier.json"))
 assert v["path"] == "/usr/local/libexec/axon/axon-fabric" and v["sha256"] == sha(v["path"]), v
@@ -492,6 +522,35 @@ cp -a "$W/launcher.good" /etc/axon/protected-launcher.json
 grep -q 'custodian.sha256 must pin the axon-custodian program' <<<"$lo" \
   || fail "ATTACK: the production loader accepted a helper config with no custodian program pin: $lo"
 echo "ok(ns): a helper config pinning another custodian program FAILS the kit's check; one with no pin is refused by the production loader"
+# ATTACK (amendment 79): the helper config pins another Fabric program, another
+# revision than the installed binary states, or none; the custodian's config
+# names another uid for `check` than the observer's. Each is refused for its own
+# reason by the kit's check; control: the full apply above held them all.
+fabric_attack() { # label python-edit expected-pattern
+  python3 -c 'import json,sys; p="/etc/axon/protected-launcher.json"; c=json.load(open(p)); '"$2"'; json.dump(c, open(p,"w"), indent=2)'
+  bash "$KIT" "${ARGS[@]}" --only check >"$W/fab.out" 2>&1; r=$?
+  cp -a "$W/launcher.good" /etc/axon/protected-launcher.json
+  [ $r = 1 ] && grep -Eq -- "$3" "$W/fab.out" \
+    || { cat "$W/fab.out"; fail "ATTACK: $1 was not refused by the kit's check (exit $r)"; }
+}
+fabric_attack "a helper config pinning another Fabric program" 'c["fabric"]["sha256"]="f"*64' \
+  "FAIL\[check\] fabric program pin: /etc/axon/protected-launcher.json: fabric.sha256 ffff"
+fabric_attack "a helper config naming another revision than the installed Fabric states" 'c["fabric"]["revision"]="1"*40' \
+  "FAIL\[check\] fabric program pin: .*fabric.revision '1111111111111111111111111111111111111111' is not the"
+fabric_attack "a helper config naming the Fabric program at another path" 'c["fabric"]["path"]="/usr/bin/axon-fabric"' \
+  "FAIL\[check\] fabric program pin: .*fabric.path is '/usr/bin/axon-fabric'"
+cp -a /etc/axon/custodian.json "$W/custodian.good"
+python3 -c 'import json; p="/etc/axon/custodian.json"; c=json.load(open(p)); c["observer_uid"]=int(c["fabric_uid"]); json.dump(c, open(p,"w"), indent=2)'
+bash "$KIT" "${ARGS[@]}" --only check >"$W/fab.out" 2>&1; r=$?
+cp -a "$W/custodian.good" /etc/axon/custodian.json
+[ $r = 1 ] && grep -q "observer_uid is $FU, not the observer user's uid" "$W/fab.out" \
+  || { cat "$W/fab.out"; fail "ATTACK: a custodian config answering check for the Fabric uid was not refused by the kit's check (exit $r)"; }
+python3 -c 'import json; p="/etc/axon/protected-launcher.json"; c=json.load(open(p)); del c["fabric"]; json.dump(c, open(p,"w"), indent=2)'
+lo=$(setpriv --reuid="$FU" --regid="$FG" --clear-groups -- /usr/local/libexec/axon/axon-fabric submit --request /nonexistent/x.json 2>/dev/null)
+cp -a "$W/launcher.good" /etc/axon/protected-launcher.json
+grep -q 'missing field `fabric`' <<<"$lo" \
+  || fail "ATTACK: the production loader accepted a helper config with no Fabric program pin: $lo"
+echo "ok(ns): another Fabric pin, revision or path, or a custodian answering check for the wrong uid, FAILS the kit's check; no pin is refused by the production loader"
 # ATTACK: a signing key its owner can write (0600). Fabric's loader requires
 # mode & 0277 == 0 (0400); the kit must not pass what Fabric refuses.
 chmod 0600 /etc/axon/keys/fabric-attest.pk8

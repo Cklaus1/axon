@@ -67,15 +67,81 @@ impl NonceStore {
         Ok(nonce)
     }
 
-    /// Consume `nonce`: it must have been issued here, for `epoch`, no longer
-    /// than `max_age_s` ago, and never consumed. Exactly one caller wins.
-    pub fn consume(
+    /// [`Self::issue`] under the custodian's bounds (amendment 79): records older
+    /// than `max_age_s` are dropped first (an expired nonce is refused by
+    /// [`Self::consume`] whether its record exists or not), and no more than
+    /// `max_outstanding` issued-and-unspent nonces are held. The caller may be the
+    /// principal the nonces constrain, so an unbounded store is a disk it fills.
+    pub fn issue_bounded(
+        &self,
+        epoch: u64,
+        clock: &Clock,
+        max_age_s: u64,
+        max_outstanding: usize,
+    ) -> Result<String, String> {
+        let outstanding = self.prune(clock, max_age_s)?;
+        if outstanding >= max_outstanding {
+            return Err(format!(
+                "{outstanding} nonces are outstanding (at most {max_outstanding}): none is \
+                 issued until some are spent or expire"
+            ));
+        }
+        self.issue(epoch, clock)
+    }
+
+    /// Remove every record whose nonce can no longer be spent: an `.issued` older
+    /// than `max_age_s`, a `.used` spent longer ago than that. Returns how many
+    /// `.issued` records remain. A record that does not parse (a crash between its
+    /// creation and its write) ages by its file's mtime.
+    pub fn prune(&self, clock: &Clock, max_age_s: u64) -> Result<usize, String> {
+        let now = clock.now_unix();
+        let mut outstanding = 0usize;
+        let Ok(dir) = std::fs::read_dir(&self.dir) else {
+            return Ok(0);
+        };
+        for e in dir.flatten() {
+            let name = e.file_name().to_string_lossy().to_string();
+            let issued = name.ends_with(".issued");
+            if !issued && !name.ends_with(".used") {
+                continue;
+            }
+            let rec: Option<serde_json::Value> = std::fs::read(e.path())
+                .ok()
+                .and_then(|b| serde_json::from_slice(&b).ok());
+            let at = rec
+                .as_ref()
+                .and_then(|r| {
+                    r["spent_unix"]
+                        .as_i64()
+                        .or_else(|| r["issued_unix"].as_i64())
+                })
+                .or_else(|| {
+                    e.metadata()
+                        .and_then(|m| m.modified())
+                        .ok()
+                        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                        .map(|d| d.as_secs() as i64)
+                })
+                .unwrap_or(i64::MIN / 2);
+            if now - at > max_age_s as i64 {
+                let _ = std::fs::remove_file(e.path());
+            } else if issued {
+                outstanding += 1;
+            }
+        }
+        Ok(outstanding)
+    }
+
+    /// The record of `nonce` if it is outstanding for `epoch`: issued here, no
+    /// longer than `max_age_s` ago, never consumed. Returns the record's paths and
+    /// the unix time at which it expires.
+    fn outstanding(
         &self,
         nonce: &str,
         epoch: u64,
         clock: &Clock,
         max_age_s: u64,
-    ) -> Result<(), String> {
+    ) -> Result<(PathBuf, PathBuf, i64), String> {
         if nonce.len() != 32 || !nonce.bytes().all(|b| b.is_ascii_hexdigit()) {
             return Err(format!("nonce {nonce:?} is not one this custodian issues"));
         }
@@ -92,10 +158,37 @@ impl NonceStore {
                 rec["epoch"]
             ));
         }
-        let age = clock.now_unix() - rec["issued_unix"].as_i64().unwrap_or(i64::MIN / 2);
+        let issued_unix = rec["issued_unix"].as_i64().unwrap_or(i64::MIN / 2);
+        let age = clock.now_unix() - issued_unix;
         if age < 0 || age as u64 > max_age_s {
             return Err(format!("nonce {nonce} is {age}s old (max {max_age_s}s)"));
         }
+        Ok((issued, used, issued_unix + max_age_s as i64))
+    }
+
+    /// Amendment 79: whether `nonce` is outstanding for `epoch`, without
+    /// consuming it. Returns the unix time at which it expires.
+    pub fn check(
+        &self,
+        nonce: &str,
+        epoch: u64,
+        clock: &Clock,
+        max_age_s: u64,
+    ) -> Result<i64, String> {
+        self.outstanding(nonce, epoch, clock, max_age_s)
+            .map(|(_, _, expires)| expires)
+    }
+
+    /// Consume `nonce`: it must have been issued here, for `epoch`, no longer
+    /// than `max_age_s` ago, and never consumed. Exactly one caller wins.
+    pub fn consume(
+        &self,
+        nonce: &str,
+        epoch: u64,
+        clock: &Clock,
+        max_age_s: u64,
+    ) -> Result<(), String> {
+        let (issued, used, _) = self.outstanding(nonce, epoch, clock, max_age_s)?;
         // The atomic step: whoever renames it consumed it.
         std::fs::rename(&issued, &used).map_err(|_| format!("nonce {nonce} was already used"))
     }

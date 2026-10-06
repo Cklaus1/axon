@@ -443,7 +443,13 @@ PY
 import hashlib, json, sys
 h, fu, man, pol, msha, cust = sys.argv[1:]
 sha = lambda p: hashlib.sha256(open(p, "rb").read()).hexdigest()
+import os
+sh_real = os.path.realpath("/bin/sh")
 json.dump({"schema": "axon-protected-launcher/2", "fabric_uid": int(fu),
+           # Amendment 79: the helper serves only the pinned Fabric program. Here
+           # the Fabric is the shell that runs the helper as the Fabric uid (a
+           # child of it: see helper() below).
+           "fabric": {"path": sh_real, "sha256": sha(sh_real), "revision": "0" * 40},
            "interpreter": {"path": "/bin/bash", "sha256": sha("/bin/bash")},
            "launcher": {"path": f"{h}/fc_linux_profile.sh", "sha256": sha(f"{h}/fc_linux_profile.sh")},
            "profile_manifest": {"path": f"{h}/dist/manifest.json", "sha256": sha(f"{h}/dist/manifest.json")},
@@ -470,8 +476,9 @@ PY
     cp "$HB" "$H/axon-protected-launcher"; chown "0:$FU" "$H/axon-protected-launcher"
     chmod 4750 "$H/axon-protected-launcher"
     # A shell running AS the Fabric uid makes the exec (setpriv's own exec
-    # still holds root's DAC override).
-    helper() { setpriv --reuid="$FU" --regid="$FU" --clear-groups -- sh -c 'exec "$0" --test-config "$1"' \
+    # still holds root's DAC override) and STAYS the helper's parent (no
+    # `exec`): it is the Fabric program the helper's config pins (amendment 79).
+    helper() { setpriv --reuid="$FU" --regid="$FU" --clear-groups -- sh -c '"$0" --test-config "$1"; exit $?' \
         "$H/axon-protected-launcher" "$H/protected-launcher.json" <"$1" >"$2" 2>>"$H/helper.log"; }
     # A87 through the helper: the SAME genuine observation, with Fabric's
     # policy.json swapped for policy-io-exec. Refused before the spend, so the

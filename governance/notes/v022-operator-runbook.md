@@ -31,10 +31,17 @@ It installs, from one standalone clone at one commit:
   `axon-custodian` (amendment 65), and its `observer.service {socket, uid, sha256}`, the
   installed `axon-observer` (amendment 68). The helper refuses a production config without
   the first, relays an observation only from the second, and on every reply it checks that
-  the sending process executes exactly that program. The host config's `observer` section
-  names NO `command`: a production Fabric refuses one;
+  the sending process executes exactly that program. It also writes the helper config's
+  `fabric {path, sha256, revision}` (amendment 79): the installed `axon-fabric`, by path, sha256
+  and the build revision THAT FILE states when it describes itself (`verifier-manifest`), never a
+  value you type. The helper serves a launch or an observation only for a caller running that
+  program, and the observer names it (and that revision) as the verifier. `custodian.json` gains
+  `observer_uid`, the one uid the custodian tells whether a nonce was issued. The host config's
+  `observer` section names NO `command`: a production Fabric refuses one;
 - `/etc/axon/trust/verifier.json`;
-- the custodian's and the observer's systemd units, with both sockets enabled;
+- the custodian's and the observer's systemd units, with both sockets enabled (the custodian's
+  socket unit carries `ExecStartPost=setfacl -m u:axon-observer:rw`, which needs the `acl`
+  package: the observer service asks the custodian whether a nonce was issued, as its own uid);
 - `/etc/axon/host-toolchain-pin.json`, which the freeze reads (amendment 65).
 
 Then it runs the production `ProtectedHost::operator()` as the Fabric uid against the result.
@@ -91,8 +98,10 @@ record store the Fabric owns.
   custodian's, the verifier's, an agent's or root; no login shell, no home), socket-activated by
   a root-only socket, reached only through the setuid-root helper's `--observe` relay. It
   signs only what it MEASURED (the installed launcher, firecracker, guest image, suite
-  registry, B263 record, profile manifest and host config, and the running Fabric the helper
-  measured from its parent's pidfd), once per nonce. Your decisions: the observer uid, the key
+  registry, B263 record, profile manifest and host config), what you PINNED (the Fabric program
+  and its build revision, helper config `fabric`) and what the measured profile manifest names
+  (the guest's init and axon digests), for a nonce the custodian issued, once per nonce. The
+  guest policy digest and the authority epoch are the principal's word (amendment 79). Your decisions: the observer uid, the key
   (step 5: generated AS that uid on the host, never copied off, never in a group the Fabric is
   in) and the unit installation (the kit installs `axon-observer.socket` and `.service` from
   `profiles/protected-host/systemd/`, enabled). `--observer-bin` and `--observer-interpreter`
@@ -199,9 +208,9 @@ sudo bash "$K" "${ARGS[@]}" --apply
 
 Read the dry run, and check these in particular:
 
-- the four configs, including `custodian.sha256` and `observer.service.sha256` in
-  `protected-launcher.json`, which must be the sha256 the `BINARIES` line prints for the
-  custodian and the observer, and `observer.json` (`observer_uid` the observer user's,
+- the four configs, including `custodian.sha256`, `observer.service.sha256` and `fabric.sha256`
+  in `protected-launcher.json`, which must be the sha256 the `BINARIES` line prints for the
+  custodian, the observer and `axon-fabric` (and `fabric.revision` the commit you deploy), and `observer.json` (`observer_uid` the observer user's,
   `fabric_uid` the Fabric's, `caller_uid` 0); `protected-host.json`'s `observer` section must
   have no `command`;
 - `OK[fabric-unit]`, or the `BLOCKED[fabric-unit]` reasons;
@@ -539,10 +548,14 @@ Closed by amendments 65 and 66 (the gaps workstream), with the kit updated to ma
 
 Still open:
 
-1. **The observer service** is built and the kit deploys and checks it (amendment 68). What the
-   observer MEASURES is the installed files and the running Fabric. The guest policy, nonce,
-   epoch, the init and axon digests inside the measured rootfs and the Fabric revision are
-   TOLD to it, not measured (amendment 68).
+1. **The observer service** is built and the kit deploys and checks it (amendments 68, 79). What
+   the observer MEASURES is the installed files; the Fabric program and revision are your pin
+   (the helper holds every caller to it); the guest's init and axon digests are what the
+   measured profile manifest names; the nonce is the custodian's. The guest policy digest and
+   the authority epoch are the principal's word (amendment 79). The verifier digest names the
+   executable FILE the Fabric process started from, not the instructions it runs: `LD_PRELOAD`
+   or ptrace of a same-uid process defeats that, and `kernel.yama.ptrace_scope=2` closes only
+   the ptrace half (a host setting; the kit does not check it).
 2. **The deployable `--guest-cmd`** (decision H, step 6). The preflight stays `PENDING` until it
    exists.
 3. **`x3_l0_hypervisor_boundary`'s reason text** in `b263_qualify.sh` is still the WSL2/Hyper-V

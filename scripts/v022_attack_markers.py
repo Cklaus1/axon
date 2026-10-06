@@ -1647,6 +1647,31 @@ ATTACK_MARKERS.update({
     'M1769': r'ATTACK: an approval token whose metadata was edited after its digest admitted the job',
 })
 
+# C9 round 5, workstream OBSBIND (M1850-M1879; amendment 79).
+ATTACK_MARKERS.update({
+    'M1850': r'ATTACK: the observer signed a launch manifest naming another fabric_revision than it\s+measured',
+    'M1851': r'ATTACK: the observer signed a launch manifest naming another guest\.axon_sha256 than it\s+measured',
+    'M1852': r'ATTACK: the observer signed a launch manifest naming another guest\.init_sha256 than it\s+measured',
+    'M1853': r'ATTACK: the observer signed an observation naming a Fabric program the operator never\s+pinned as the verifier',
+    'M1854': r'ATTACK: a helper config whose Fabric pin is',
+    'M1855': r'ATTACK: a production helper config whose Fabric revision is',
+    'M1856': r'ATTACK: a production helper config whose Fabric revision is',
+    'M1857': r'ATTACK: a helper launched for a caller that is not the pinned Fabric program',
+    'M1858': r'ATTACK: the observer observed a nonce the custodian never issued',
+    'M1859': r'ATTACK: the observer observed a nonce for an epoch other than the one it was issued\s+for',
+    'M1860': r"ATTACK: uid \d+, not the observer's, was told whether a nonce is outstanding",
+    'M1861': r'ATTACK: a protected custodian config whose observer is none was accepted',
+    'M1862': r'ATTACK: the observer observed a nonce a dev custodian issued',
+    'M1863': r'ATTACK: a protected observer observed a nonce a test custodian issued',
+    'M1864': r'ATTACK: the observer kept the record of a nonce the custodian no longer honours',
+    'M1865': r'ATTACK: records of nonces past their max age',
+    'M1866': r'ATTACK: the custodian issued a nonce beyond \d+ outstanding',
+    'M1867': r'ATTACK: a connection that stopped sending held the observer',
+    'M1868': r'ATTACK: a production helper config whose observer service and custodian are one',
+    'M1869': r'ATTACK: an 8 GiB image is given',
+    'M1870': r'ATTACK: the helper sized a 3 GiB kernel and rootfs as',
+})
+
 # C9 round 4c, workstream SHARDFLAKE (M1830-M1849; amendment 77).
 ATTACK_MARKERS.update({
     'M1830': r'ATTACK: a verifier whose file was replaced under it reported "unknown", not the digest of the image it is running',

@@ -115,6 +115,7 @@ fn main() {
         public_hex,
         sources,
         clock: Clock::System,
+        request_deadline: os::REQUEST_DEADLINE,
     };
     server.serve(&listener)
 }

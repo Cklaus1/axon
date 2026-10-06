@@ -704,8 +704,9 @@ fn protected_host_paths(a: &Args) {
         .opt("--launcher-config")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(axon_fabric::privileged_launcher::CONFIG_PATH));
-    let (fabric_uid, helper_paths) = axon_fabric::protected_host::helper_pinned_paths(&helper_cfg)
-        .unwrap_or_else(|e| refuse("unregistered", &e, 4));
+    let (fabric_uid, pin, helper_paths) =
+        axon_fabric::protected_host::helper_pinned_paths(&helper_cfg)
+            .unwrap_or_else(|e| refuse("unregistered", &e, 4));
     for hp in helper_paths {
         if !paths.contains(&hp) {
             paths.push(hp);
@@ -727,11 +728,20 @@ fn protected_host_paths(a: &Args) {
     }
     // The uid the helper admits: the preflight holds it to its Fabric actor.
     println!("helper-fabric-uid\t{fabric_uid}");
+    // Amendment 79: the Fabric program the helper pins: the preflight holds
+    // it to the installed one.
+    println!("helper-fabric-path\t{}", pin.path.display());
+    println!("helper-fabric-sha256\t{}", pin.sha256);
     // The custodian's three roles: the preflight holds them to its actors and
     // requires the custodian to be neither the Fabric nor root.
     println!("custodian-uid\t{}", cust.custodian_uid);
     println!("custodian-fabric-uid\t{}", cust.fabric_uid);
     println!("custodian-launcher-uid\t{}", cust.launcher_uid);
+    // Amendment 79: the uid the custodian answers `check` for: the observer's.
+    println!(
+        "custodian-observer-uid\t{}",
+        cust.observer_uid.map_or("-".to_string(), |u| u.to_string())
+    );
     for (kind, p) in paths {
         let s = p.to_string_lossy();
         if s.contains(['\t', '\n']) || s != p.as_os_str().to_str().unwrap_or_default() {

@@ -77,6 +77,40 @@ pub struct PinnedJson {
     pub sha256: String,
 }
 
+/// Amendment 79: the installed Fabric program, as the operator pins it. The
+/// helper serves a launch or an `--observe` relay only for a caller whose
+/// executable (hashed from its pidfd, [`running_caller`]) has this digest, and
+/// the observer's `verifier_sha256` and `fabric_revision` are THESE values, not
+/// what a launch manifest says.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FabricPin {
+    /// Where the operator installed `axon-fabric` (informational for the
+    /// helper: what is measured is the RUNNING executable's digest).
+    pub path: PathBuf,
+    pub sha256: String,
+    /// The pinned binary's own build identity: the `fabric_revision` its
+    /// `axon-fabric verifier-manifest` states, which the operator's kit READS
+    /// FROM THE INSTALLED FILE at install time and the helper and observer then
+    /// treat as the operator's word. Neither executes the Fabric to learn it.
+    pub revision: String,
+}
+
+/// A build revision as a pin names it: the 40 hex a git commit is on a
+/// production host (`unknown`, a short name or an uppercase spelling is not a
+/// revision anything certified); any short printable name in a test config.
+fn revision_ok(rev: &str, test: bool) -> bool {
+    if test {
+        !rev.is_empty()
+            && rev.len() <= 64
+            && rev
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+    } else {
+        rev.len() == 40 && rev.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+    }
+}
+
 /// `axon-protected-launcher/1`, the operator's.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -84,6 +118,9 @@ pub struct HelperConfig {
     pub schema: String,
     /// The only real uid allowed to make a request. Never 0 in production.
     pub fabric_uid: u32,
+    /// Amendment 79: the Fabric program the helper serves (path, sha256,
+    /// build revision), the operator's pin.
+    pub fabric: FabricPin,
     /// The interpreter the launcher script runs under (bash).
     pub interpreter: PinnedJson,
     /// `fc_linux_profile.sh`.
@@ -379,7 +416,24 @@ pub fn load_config(path: &Path, a: &Authority) -> Result<HelperConfig, String> {
             )));
         }
     }
+    // Amendment 79: the Fabric program is pinned like every other program the
+    // helper trusts, and its build revision is the operator's word.
+    if !is_hex64(&c.fabric.sha256) {
+        return Err(bad(format!(
+            "fabric.sha256 must pin the installed axon-fabric program ({}): a lowercase sha256. \
+             Unpinned, any program of the Fabric uid is \"the running Fabric\"",
+            c.fabric.path.display()
+        )));
+    }
+    if !revision_ok(&c.fabric.revision, a.test) {
+        return Err(bad(format!(
+            "fabric.revision {:?} is not the pinned program's build revision (40 lowercase hex \
+             on a production host)",
+            c.fabric.revision
+        )));
+    }
     for p in [
+        &c.fabric.path,
         &c.interpreter.path,
         &c.launcher.path,
         &c.profile_manifest.path,
@@ -457,6 +511,17 @@ pub fn load_config(path: &Path, a: &Authority) -> Result<HelperConfig, String> {
             return Err(bad(format!(
                 "observer.service.uid {} is the Fabric uid or root: the observer is its own uid, \
                  or the Fabric could read its key and mint observations (amendment 68)",
+                s.uid
+            )));
+        }
+        // Amendment 79: the observer and the custodian are two principals. The
+        // observer's key is not the custodian's to read, and the custodian's
+        // store (the record of what was issued) is not the observer's to write.
+        if !a.test && s.uid == c.custodian.uid {
+            return Err(bad(format!(
+                "observer.service.uid {} is the custodian's uid: the observer and the custodian \
+                 are two principals, or either could read the other's key or store \
+                 (amendment 79)",
                 s.uid
             )));
         }
@@ -912,7 +977,7 @@ pub fn serve_as(
     request: &[u8],
 ) -> (LaunchReport, i32) {
     let c = match authenticated(config, a, caller_uid) {
-        Ok(c) => c,
+        Ok((c, _)) => c,
         Err(why) => return (LaunchReport::refused(why), EXIT_REFUSED),
     };
     match prepare(&c, a, request) {
@@ -925,7 +990,17 @@ pub fn serve_as(
 /// kernel's, never anything it says) is the configured Fabric uid. Only then
 /// does the helper become root in every id. ONE gate for every operation the
 /// helper performs (a launch, an observe relay).
-fn authenticated(config: &Path, a: &Authority, caller_uid: u32) -> Result<HelperConfig, String> {
+///
+/// Amendment 79: and the caller's PROGRAM is the one the operator pinned
+/// (`fabric.sha256`): the digest of the executable its pidfd names
+/// ([`running_caller`]). Before, any program of the Fabric uid was served and,
+/// for `--observe`, named as the verifier in an observer-signed observation.
+/// Returns the config and that digest.
+fn authenticated(
+    config: &Path,
+    a: &Authority,
+    caller_uid: u32,
+) -> Result<(HelperConfig, String), String> {
     let c = load_config(config, a)?;
     if caller_uid != c.fabric_uid {
         return Err(format!(
@@ -934,7 +1009,16 @@ fn authenticated(config: &Path, a: &Authority, caller_uid: u32) -> Result<Helper
         ));
     }
     become_root()?;
-    Ok(c)
+    let running = running_caller(c.fabric_uid)?;
+    if running != c.fabric.sha256 {
+        return Err(format!(
+            "the caller runs a program with sha256 {running}, not the operator's pinned Fabric \
+             {} ({}): only the installed axon-fabric is served",
+            c.fabric.sha256,
+            c.fabric.path.display()
+        ));
+    }
+    Ok((c, running))
 }
 
 /// `axon-protected-observe-request/1` (amendment 68): the launch manifest
@@ -990,7 +1074,9 @@ pub fn serve_observe(
     caller_uid: u32,
     request: &[u8],
 ) -> (ObserveReport, i32) {
-    match authenticated(config, a, caller_uid).and_then(|c| observe_relay(&c, a, request)) {
+    match authenticated(config, a, caller_uid)
+        .and_then(|(c, running)| observe_relay(&c, a, &running, request))
+    {
         Ok((observation, signature)) => (
             ObserveReport {
                 schema: OBSERVE_REPORT_SCHEMA.into(),
@@ -1009,6 +1095,7 @@ pub fn serve_observe(
 fn observe_relay(
     c: &HelperConfig,
     a: &Authority,
+    caller_sha256: &str,
     request: &[u8],
 ) -> Result<(String, String), String> {
     let r: ObserveRequest =
@@ -1023,9 +1110,12 @@ fn observe_relay(
         .service
         .as_ref()
         .ok_or("this helper's config names no observer.service: no observation is relayed")?;
-    let caller_sha256 = running_caller(c.fabric_uid)?;
     let got = service
-        .observe(&r.manifest, &caller_sha256)
+        .observe(
+            &r.manifest,
+            caller_sha256,
+            crate::observer_service::observe_timeout(artifact_bytes(c)),
+        )
         .map_err(|e| format!("no observation: {e}"))?;
     if !custodian_mode_launches(got.mode, a.test) {
         return Err(format!(
@@ -1034,6 +1124,18 @@ fn observe_relay(
         ));
     }
     Ok((got.observation, got.signature))
+}
+
+/// The bytes the observer streams through SHA-256 for one observation: the
+/// guest kernel and rootfs (the largest things it measures). A file that cannot
+/// be sized counts as nothing: the observer then fails to measure it, which
+/// refuses the observation whatever the timeout was.
+fn artifact_bytes(c: &HelperConfig) -> u64 {
+    ["vmlinux", "rootfs.sqfs"]
+        .iter()
+        .filter_map(|n| std::fs::symlink_metadata(c.artifacts_dir.join(n)).ok())
+        .map(|m| m.len())
+        .sum()
 }
 
 /// The RUNNING Fabric (amendment 68): this helper's parent, identified by a
@@ -1623,6 +1725,11 @@ mod tests {
         HelperConfig {
             schema: CONFIG_SCHEMA.into(),
             fabric_uid: 991,
+            fabric: FabricPin {
+                path: "/usr/local/bin/axon-fabric".into(),
+                sha256: "f".repeat(64),
+                revision: "0".repeat(40),
+            },
             interpreter: p("/usr/bin/bash"),
             launcher: p("/opt/axon/fc_linux_profile.sh"),
             profile_manifest: p("/opt/axon/manifest.json"),
@@ -1762,6 +1869,8 @@ mod tests {
         let p = d.path().join("protected-launcher.json");
         let mut v = serde_json::json!({
             "schema": CONFIG_SCHEMA, "fabric_uid": 0,
+            "fabric": {"path": "/usr/local/bin/axon-fabric", "sha256": "f".repeat(64),
+                       "revision": "0".repeat(40)},
             "interpreter": {"path": "/bin/bash", "sha256": "a".repeat(64)},
             "launcher": {"path": "/opt/l.sh", "sha256": "a".repeat(64)},
             "profile_manifest": {"path": "/opt/m.json", "sha256": "a".repeat(64)},
@@ -1812,6 +1921,8 @@ mod tests {
         let p = d.path().join("protected-launcher.json");
         let mut v = serde_json::json!({
             "schema": CONFIG_SCHEMA, "fabric_uid": 991,
+            "fabric": {"path": "/usr/local/bin/axon-fabric", "sha256": "f".repeat(64),
+                       "revision": "0".repeat(40)},
             "interpreter": {"path": "/bin/bash", "sha256": "a".repeat(64)},
             "launcher": {"path": "/opt/l.sh", "sha256": "a".repeat(64)},
             "profile_manifest": {"path": "/opt/m.json", "sha256": "a".repeat(64)},
@@ -1843,6 +1954,134 @@ mod tests {
                  {uid} (the Fabric's or root) was accepted"
             );
         }
+    }
+
+    /// The production-shaped helper config the pin tests edit.
+    fn prod_config(d: &Path) -> (PathBuf, serde_json::Value, Authority) {
+        let p = d.join("protected-launcher.json");
+        let v = serde_json::json!({
+            "schema": CONFIG_SCHEMA, "fabric_uid": 991,
+            "fabric": {"path": "/usr/local/bin/axon-fabric", "sha256": "f".repeat(64),
+                       "revision": "0".repeat(40)},
+            "interpreter": {"path": "/bin/bash", "sha256": "a".repeat(64)},
+            "launcher": {"path": "/opt/l.sh", "sha256": "a".repeat(64)},
+            "profile_manifest": {"path": "/opt/m.json", "sha256": "a".repeat(64)},
+            "artifacts_dir": "/opt/dist", "firecracker": "/opt/firecracker",
+            "jailer": "/opt/jailer", "out_root": "/var/runs", "staging_root": "/var/st",
+            "max_timeout_s": 60, "max_input_bytes": 1,
+            "observer": {"root": "/etc/axon/trust/observer", "max_age_s": 300,
+                         "host_signer_public_key": "c".repeat(64),
+                         "service": {"socket": "/run/axon-observer/observer.sock", "uid": 994,
+                                     "sha256": "e".repeat(64)}},
+            "custodian": {"socket": "/run/axon-custodian/custodian.sock", "uid": 993,
+                          "sha256": "d".repeat(64)},
+        });
+        let a = Authority {
+            // SAFETY: geteuid cannot fail.
+            operator_uid: unsafe { libc::geteuid() },
+            walk_base: d.to_path_buf(),
+            test: false,
+        };
+        std::fs::write(&p, v.to_string()).unwrap();
+        (p, v, a)
+    }
+
+    /// A132 (amendment 79): the helper serves only the Fabric program the
+    /// operator pinned, so the config must pin it: a lowercase sha256 and the
+    /// pinned binary's 40-hex build revision. A config with no pin, a pin that
+    /// is not a digest, or a revision that is not a commit is refused.
+    /// Control: the pinned config loads.
+    #[test]
+    fn a_helper_config_must_pin_the_fabric_program() {
+        let d = tempfile::tempdir().unwrap();
+        let (p, v, a) = prod_config(d.path());
+        load_config(&p, &a).expect("control: a pinned Fabric program");
+        let mut no_pin = v.clone();
+        no_pin.as_object_mut().unwrap().remove("fabric");
+        std::fs::write(&p, no_pin.to_string()).unwrap();
+        assert!(
+            load_config(&p, &a).is_err(),
+            "ATTACK: a helper config with no Fabric program pin was accepted: any Fabric-uid \
+             program is then the running Fabric"
+        );
+        for bad in ["", "F".repeat(64).as_str(), "abc", "g".repeat(64).as_str()] {
+            let mut w = v.clone();
+            w["fabric"]["sha256"] = serde_json::json!(bad);
+            std::fs::write(&p, w.to_string()).unwrap();
+            assert!(
+                load_config(&p, &a).is_err(),
+                "ATTACK: a helper config whose Fabric pin is {bad:?} was accepted"
+            );
+        }
+        for bad in [
+            "unknown",
+            "",
+            "rev",
+            &"A".repeat(40),
+            &"a".repeat(39),
+            &"a".repeat(41),
+        ] {
+            let mut w = v.clone();
+            w["fabric"]["revision"] = serde_json::json!(bad);
+            std::fs::write(&p, w.to_string()).unwrap();
+            assert!(
+                load_config(&p, &a).is_err(),
+                "ATTACK: a production helper config whose Fabric revision is {bad:?} was accepted"
+            );
+        }
+    }
+
+    /// A134 (amendment 79): the observer service and the custodian are two
+    /// principals. A production helper config naming one uid for both is
+    /// refused (the kit used five user NAMES; the code did not re-check the
+    /// uids). Control: distinct uids.
+    #[test]
+    fn a_helper_config_whose_observer_is_the_custodian_is_refused() {
+        let d = tempfile::tempdir().unwrap();
+        let (p, mut v, a) = prod_config(d.path());
+        load_config(&p, &a).expect("control: two uids");
+        v["observer"]["service"]["uid"] = serde_json::json!(993);
+        std::fs::write(&p, v.to_string()).unwrap();
+        assert!(
+            load_config(&p, &a).is_err(),
+            "ATTACK: a production helper config whose observer service and custodian are one \
+             uid (993) was accepted"
+        );
+    }
+
+    /// A134 (M1871): the helper sizes what the observer must hash from the
+    /// artifacts it pins: an image of 3 GiB (sparse here) counts as 3 GiB, not
+    /// as nothing (which would hand the observer the base timeout only).
+    #[test]
+    fn the_helper_sizes_what_the_observer_must_hash() {
+        let d = tempfile::tempdir().unwrap();
+        for (n, len) in [("vmlinux", 1u64 << 30), ("rootfs.sqfs", 2u64 << 30)] {
+            let f = std::fs::File::create(d.path().join(n)).unwrap();
+            f.set_len(len).unwrap();
+        }
+        let mut c = cfg();
+        c.artifacts_dir = d.path().to_path_buf();
+        let got = artifact_bytes(&c);
+        assert_eq!(
+            got,
+            3u64 << 30,
+            "ATTACK: the helper sized a 3 GiB kernel and rootfs as {got} bytes"
+        );
+    }
+
+    /// A134 (amendment 79): an observation's read timeout grows with what the
+    /// observer must hash. A fixed bound burned the nonce of a launch whose
+    /// rootfs took longer than it to stream.
+    #[test]
+    fn an_observation_waits_as_long_as_its_measurement_can_take() {
+        use crate::observer_service::observe_timeout;
+        let small = observe_timeout(0);
+        let big = observe_timeout(8 << 30);
+        assert!(
+            big > small + std::time::Duration::from_secs(60),
+            "ATTACK: an 8 GiB image is given {big:?}, no more than an empty one's {small:?}: a \
+             rootfs that takes longer than the base bound to hash burns its nonce"
+        );
     }
 
     #[test]

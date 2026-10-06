@@ -1859,6 +1859,13 @@ impl World {
     fn lx_helper(&self, helper: axon_fabric::sealed_exec::Pinned) -> LinuxProfileConfig {
         let mut lx = self.lx("", "");
         lx.privileged.as_mut().unwrap().helper = helper;
+        // Amendment 79: the stand-in helper runs the real helper from a shell
+        // (a child of it), so that shell is the Fabric program the operator
+        // pins in this world's helper config.
+        let cfg = lx.privileged.as_ref().unwrap().test_config.clone().unwrap();
+        let mut v: Value = serde_json::from_slice(&std::fs::read(&cfg).unwrap()).unwrap();
+        v["fabric"] = shell_fabric_pin(TEST_FABRIC_REVISION);
+        std::fs::write(&cfg, v.to_string()).unwrap();
         lx
     }
 }

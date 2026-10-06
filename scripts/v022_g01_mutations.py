@@ -5868,13 +5868,13 @@ MUTATIONS += [
     # The nine MEASURED rows: each replaces one measurement by the manifest's
     # own claim (what a signing oracle does); the field-named attack kills it.
     ('M1531', "A94 (observer): host_config_sha256 is measured, not told", _OS,
-     '                axon_psv::sha256_hex(&host),\n', '                m.host_config_sha256.clone(),\n',
+     '                axon_psv::sha256_hex(&op.host),\n', '                m.host_config_sha256.clone(),\n',
      'axon-fabric', _TO, _TOM),
     ('M1532', "A94 (observer): launcher_sha256 is measured, not told", _OS,
-     '                file(&hv, "/launcher/path")?,\n', '                m.launcher_sha256.clone(),\n',
+     '                file(hv, "/launcher/path")?,\n', '                m.launcher_sha256.clone(),\n',
      'axon-fabric', _TO, _TOM),
     ('M1533', "A94 (observer): firecracker_sha256 is measured, not told", _OS,
-     '                file(&lv, "/firecracker")?,\n', '                m.firecracker_sha256.clone(),\n',
+     '                file(lv, "/firecracker")?,\n', '                m.firecracker_sha256.clone(),\n',
      'axon-fabric', _TO, _TOM),
     ('M1534', "A94 (observer): guest.kernel_sha256 is measured, not told", _OS,
      '                digest_of(&artifacts.join("vmlinux"))?,\n', '                m.guest.kernel_sha256.clone(),\n',
@@ -5883,16 +5883,16 @@ MUTATIONS += [
      '                digest_of(&artifacts.join("rootfs.sqfs"))?,\n', '                m.guest.rootfs_sha256.clone(),\n',
      'axon-fabric', _TO, _TOM),
     ('M1536', "A94 (observer): suite.registry_sha256 is measured, not told", _OS,
-     '                file(&hv, "/suite_registry/path")?,\n', '                m.suite.registry_sha256.clone(),\n',
+     '                file(hv, "/suite_registry/path")?,\n', '                m.suite.registry_sha256.clone(),\n',
      'axon-fabric', _TO, _TOM),
     ('M1537', "A94 (observer): qualification_sha256 is measured, not told", _OS,
-     '                file(&hv, "/qualification/record")?,\n', '                m.qualification_sha256.clone(),\n',
+     '                file(hv, "/qualification/record")?,\n', '                m.qualification_sha256.clone(),\n',
      'axon-fabric', _TO, _TOM),
     ('M1538', "A94 (observer): profile_manifest_sha256 is measured, not told", _OS,
-     '                file(&hv, "/profile_manifest/path")?,\n', '                m.profile_manifest_sha256.clone(),\n',
+     '                pm_digest,\n', '                m.profile_manifest_sha256.clone(),\n',
      'axon-fabric', _TO, _TOM),
-    ('M1539', "A94 (observer): verifier_sha256 is the running Fabric the root helper measured, not told", _OS,
-     '                caller_sha256.to_string(),\n', '                m.verifier_sha256.clone(),\n',
+    ('M1539', "A94/A131 (observer): verifier_sha256 is the Fabric program the operator pinned, which the root helper measured the running Fabric to be (amendment 79), not told", _OS,
+     '            ("verifier_sha256", pinned.clone(), &m.verifier_sha256),\n', '            ("verifier_sha256", m.verifier_sha256.clone(), &m.verifier_sha256),\n',
      'axon-fabric', _TO, _TOM),
     ('M1540', "A94 (observer): one observation per nonce (the record is created, never replaced)", _OS,
      '            .create_new(true)\n', '            .create(true)\n            .truncate(true)\n',
@@ -6912,6 +6912,93 @@ MUTATIONS += [
      '    let bytes = std::fs::read(running_image()).ok()?;',
      '    let bytes = std::fs::read(std::env::current_exe().ok()?).ok()?;',
      'axon-fabric', '--test verifier_identity_replaced', 'the_identity_survives_replacement_of_the_executable_file'),
+]
+
+
+# ── C9 round 5, workstream OBSBIND (M1850-M1879; amendment 79; matrix A131-A134).
+# The reviewer's PSV-6 finding: the observer countersigned Fabric-authored values
+# (Fabric revision, init and axon digests, epoch, policy) and its `verifier_sha256`
+# was whatever Fabric-uid program called. Now: the helper config PINS the Fabric
+# program (path, sha256, build revision), the helper serves and the observer names
+# only it; the guest's init and axon digests are what the measured profile
+# manifest names; the observer observes only a nonce the custodian issued for that
+# epoch; the custodian and the observer's stores are bounded.
+PSV_IDS |= {f"M{n}" for n in range(1850, 1880)}
+_PLT = '--lib'
+_PLS = 'crates/axon-fabric/src/privileged_launcher.rs'
+_CUS = 'crates/axon-fabric/src/custodian.rs'
+_NS = 'crates/axon-fabric/src/observer.rs'
+MUTATIONS += [
+    # A131: what the observer signs is measured or the operator's, not told.
+    ('M1850', "A131 (obsbind): fabric_revision is the pinned program's build revision, not told", _OS,
+     '                text(lv, "/fabric/revision")?,\n', '                m.fabric_revision.clone(),\n',
+     'axon-fabric', _TO, _TOM),
+    ('M1851', "A131 (obsbind): guest.axon_sha256 is what the measured profile manifest names, not told", _OS,
+     '            ("guest.axon_sha256", named("axon")?, &m.guest.axon_sha256),\n',
+     '            ("guest.axon_sha256", m.guest.axon_sha256.clone(), &m.guest.axon_sha256),\n',
+     'axon-fabric', _TO, _TOM),
+    ('M1852', "A131 (obsbind): guest.init_sha256 is what the measured profile manifest names, not told", _OS,
+     '                named("axon-guest-init")?,\n', '                m.guest.init_sha256.clone(),\n',
+     'axon-fabric', _TO, _TOM),
+    ('M1853', "A131 (obsbind): the observer names only the Fabric program the operator pinned (the caller the helper measured must BE the pin)", _OS,
+     '        if caller_sha256 != pinned {\n', '        if false && caller_sha256 != pinned {\n',
+     'axon-fabric', _TO, 'an_observer_names_only_the_fabric_program_the_operator_pinned'),
+    # A132: the helper serves only the pinned Fabric program.
+    ('M1854', "A132 (obsbind): a helper config must pin the Fabric program (a lowercase sha256)", _PLS,
+     '    if !is_hex64(&c.fabric.sha256) {\n', '    if false && !is_hex64(&c.fabric.sha256) {\n',
+     'axon-fabric', _PLT, 'privileged_launcher::tests::a_helper_config_must_pin_the_fabric_program'),
+    ('M1855', "A132 (obsbind): a helper config's Fabric revision is a build revision", _PLS,
+     '    if !revision_ok(&c.fabric.revision, a.test) {\n', '    if false && !revision_ok(&c.fabric.revision, a.test) {\n',
+     'axon-fabric', _PLT, 'privileged_launcher::tests::a_helper_config_must_pin_the_fabric_program'),
+    ('M1856', "A132 (obsbind): on a production host that revision is the 40 hex of a commit", _PLS,
+     "        rev.len() == 40 && rev.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))\n",
+     '        !rev.is_empty()\n',
+     'axon-fabric', _PLT, 'privileged_launcher::tests::a_helper_config_must_pin_the_fabric_program'),
+    ('M1857', "A132 (obsbind): the helper serves a launch or a relay only for the Fabric program the operator pinned", _PLS,
+     '    if running != c.fabric.sha256 {\n', '    if false && running != c.fabric.sha256 {\n',
+     'axon-fabric', '--test privileged_launcher', 'a_helper_launches_only_for_the_fabric_program_the_operator_pinned'),
+    # A133: the observer observes only a nonce the custodian issued, for that epoch.
+    ('M1858', "A133 (obsbind): the observer observes only a nonce the custodian issued", _OS,
+     '        let (cmode, expires) = custodian\n            .check(&m.observation_nonce, m.authority.epoch)\n            .map_err(|e| format!("the custodian does not honour this nonce: {e}"))?;\n',
+     '        let (cmode, expires) = (Mode::Test, i64::MAX);\n',
+     'axon-fabric', _TO, 'an_observer_signs_nothing_for_a_nonce_the_custodian_never_issued'),
+    ('M1859', "A133 (obsbind): ... for the epoch the manifest names", _OS,
+     '            .check(&m.observation_nonce, m.authority.epoch)\n', '            .check(&m.observation_nonce, 0)\n',
+     'axon-fabric', _TO, 'an_observer_signs_nothing_for_a_nonce_issued_for_another_epoch'),
+    ('M1860', "A133 (obsbind): the custodian answers `check` only for the observer's uid", _CUS,
+     '                if self.cfg.observer_uid != Some(peer) {\n', '                if false && self.cfg.observer_uid != Some(peer) {\n',
+     'axon-fabric', _PLT, 'custodian::tests::only_the_observer_checks_a_nonce'),
+    ('M1861', "A133 (obsbind): a protected custodian config names the observer's own uid", _CUS,
+     '            _ => {\n                return Err(format!(\n                    "observer_uid {:?} must name', '            _ => {\n                return Ok(());\n                #[allow(unreachable_code)]\n                return Err(format!(\n                    "observer_uid {:?} must name',
+     'axon-fabric', _PLT, 'custodian::tests::a_protected_custodian_names_the_observer_as_its_own_uid'),
+    ('M1862', "A133 (obsbind): the observer takes no nonce from a custodian weaker than itself (call site)", _OS,
+     '        if !custodian_admissible(self.mode, cmode) {\n', '        if false && !custodian_admissible(self.mode, cmode) {\n',
+     'axon-fabric', _TO, 'an_observer_takes_no_nonce_from_a_dev_custodian'),
+    ('M1863', "A133 (obsbind): ... and the rule itself (a protected observer takes only a protected custodian's nonce)", _OS,
+     '    crate::privileged_launcher::custodian_mode_launches(custodian, observer != Mode::Protected)\n', '    true\n',
+     'axon-fabric', _PLT, 'observer_service::tests::a_protected_observer_takes_only_a_protected_custodians_nonce'),
+    # A134: availability bounds, uid separation, deadlines.
+    ('M1864', "A134 (obsbind): the observer drops the record of a nonce the custodian no longer honours", _OS,
+     '            if expires.is_none_or(|t| t < now) {\n', '            if false && expires.is_none_or(|t| t < now) {\n',
+     'axon-fabric', _TO, 'an_observer_drops_the_records_of_nonces_the_custodian_no_longer_honours'),
+    ('M1865', "A134 (obsbind): the custodian drops the records of nonces past their max age", _NS,
+     '            if now - at > max_age_s as i64 {\n', '            if false && now - at > max_age_s as i64 {\n',
+     'axon-fabric', _PLT, 'custodian::tests::expired_nonce_records_do_not_accumulate'),
+    ('M1866', "A134 (obsbind): the custodian holds at most MAX_OUTSTANDING nonces", _NS,
+     '        if outstanding >= max_outstanding {\n', '        if false && outstanding >= max_outstanding {\n',
+     'axon-fabric', _PLT, 'custodian::tests::the_custodian_bounds_the_nonces_it_holds_outstanding'),
+    ('M1867', "A134 (obsbind): one connection has an absolute deadline for its request", _OS,
+     '                    let _ = s.set_read_timeout(Some(left));\n', '                    let _ = s.set_read_timeout(Some(IO_TIMEOUT));\n',
+     'axon-fabric', _PLT, 'observer_service::tests::a_connection_that_does_not_finish_its_request_is_cut_off'),
+    ('M1868', "A134 (obsbind): the observer service and the custodian are two uids (helper config)", _PLS,
+     '        if !a.test && s.uid == c.custodian.uid {\n', '        if false {\n',
+     'axon-fabric', _PLT, 'privileged_launcher::tests::a_helper_config_whose_observer_is_the_custodian_is_refused'),
+    ('M1869', "A134 (obsbind): the observer's reply timeout grows with what it must hash", _OS,
+     '    IO_TIMEOUT + Duration::from_secs(artifact_bytes / MIN_HASH_RATE)\n', '    IO_TIMEOUT\n',
+     'axon-fabric', _PLT, 'privileged_launcher::tests::an_observation_waits_as_long_as_its_measurement_can_take'),
+    ('M1870', "A134 (obsbind): the helper sizes the artifacts the observer must hash", _PLS,
+     '        .map(|m| m.len())\n        .sum()\n', '        .map(|_| 0u64)\n        .sum()\n',
+     'axon-fabric', _PLT, 'privileged_launcher::tests::the_helper_sizes_what_the_observer_must_hash'),
 ]
 
 
