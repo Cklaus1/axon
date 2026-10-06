@@ -3972,7 +3972,7 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       third starts afterwards): the previous runner fails it (`... (deleted)`), this one passes.
 
 78. **A position the operator held is judged by what it held — deeply, and strictly (C9 round 5,
-    workstream r4c-psv1b, PSV-1; matrix A127-A130; M1840-M1848; amends 72 part 2).**
+    workstream r4c-psv1b, PSV-1; matrix A127-A130; M1840-M1845 and M1847-M1848 (there is no M1846); amends 72 part 2).**
     - **Findings** (`/var/tmp/c9r5-findings-PSV-1.json`, cases `/var/tmp/c9r5-psv1-logs/w/c0..c6`).
       (1) BLOCKER, executed (c1): the candidate REPLACED a dict key the operator held with a
       candidate-built dict carrying a `u8`. Part 2 cast each held key against its recorded
@@ -4043,7 +4043,7 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
 
 79. **The observer no longer countersigns Fabric-authored values, the helper serves only the Fabric
     program the operator pinned, and the observer observes only a nonce the custodian issued.**
-    - **Before (reviewer findings PSV-6 and SENTINEL, round 5).** The PSV-6 claim said the
+    - **Before (reviewer findings PSV-6 and SENTINEL, round 5).** (Wording corrected by amendment 84: the observation has a Firecracker DIGEST, `firecracker_sha256`, not a revision; and `observed once` is the observer's `.observed` record, while the custodian's state is issued/unspent/expired/spent.) The PSV-6 claim said the
       observation "names ... Fabric and Firecracker revisions; guest image, kernel, verifier, suite
       and policy digests" and that "Fabric consumes it and cannot mint it". EXECUTED
       (`probe_told_fields`, through the real helper `--observe` relay and the real observer): a
@@ -4089,28 +4089,31 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       | `verifier_sha256` | helper config `fabric.sha256`; the helper holds the caller to it | PINNED, and the caller MEASURED to be it (M1539, M1853, M1857) |
       | `fabric_revision` | helper config `fabric.revision`, read from the installed binary by the kit | PINNED (M1850) |
       | `guest.axon_sha256`, `guest.init_sha256` | the measured profile manifest's `artifacts` | NAMED by a measured file (M1851, M1852) |
-      | `nonce` | the custodian: issued for that epoch, unspent, unexpired, observed once | CUSTODIAN's (M1858, M1859, M1540) |
+      | `nonce` | issued for that epoch and unspent, unexpired (custodian); observed once (observer) | CUSTODIAN's (M1858, M1859, M1540) |
       | `policy_sha256` | the manifest's: built in Fabric's 0700 job dir | **THE PRINCIPAL'S WORD.** Not listed as measured. The root helper holds the policy it BOOTS to this digest (`policy_at_root`, A87), so a launch cannot run another policy than the observation names, but the observer cannot know what policy Fabric should have chosen |
       | `epoch` | the manifest's `authority.epoch`; the custodian binds the nonce to the epoch FABRIC asked it to issue for | **THE PRINCIPAL'S WORD.** The epoch is the loop's scope pointer, which the observer cannot read; it is joined at INTAKE (`check_bundle`: observation epoch, manifest epoch and the loop's own epoch). The custodian holds no authoritative epoch either (it records the one in the issue request and compares the one the helper passes at the spend), so the launch-time epoch check is not independent evidence; intake's join is |
       | `observed_at`, `intended_launch_manifest_sha256`, `host_profile`, `observer_key_id` | the observer's clock; derived over the bytes received; constant; its own key | as in amendment 68 |
 
       `the_observer_signs_the_operators_values_for_fabric_revision_and_guest_digests` pins the
       stated non-claim: a manifest whose policy digest and epoch are told is still signed as told.
-    - **(d) Stated non-claim: an executable-digest measurement does not bind the code that runs.**
-      `verifier_sha256` is the digest of the executable FILE the caller's process was started from
-      (`/proc/<pid>/exe`, hashed by descriptor, with the pidfd re-asked before and after). A process
-      of the Fabric uid that execs the genuine pinned binary with `LD_PRELOAD` (or `LD_AUDIT`), or
-      that `ptrace`s or `process_vm_writev`s a same-uid process running it, runs attacker code under
-      the genuine digest (reviewer demo `ldpreload_demo.c`: the helper-side `readlink` of its
+    - **(d) Stated non-claim: an executable-digest measurement does not bind the code that runs, nor
+      that the process was started from the pinned file (reworded by amendment 84).**
+      `verifier_sha256` is the digest of the executable file the Fabric-uid process HAD when the
+      helper opened `/proc/<ppid>/exe` (hashed by descriptor, with the pidfd re-asked for "still the
+      same pid and my parent", which does not detect an `execve` of that process). Any Fabric-uid
+      code can arrange that this is the pinned file: exec the pinned file after spawning the helper
+      (round-6 reviewer, executed: 18 of 20 attempts returned an observer-signed observation naming
+      the pinned verifier, the other 2 lost the race and were refused before any nonce record; no
+      `LD_PRELOAD` and no ptrace), `LD_PRELOAD` or `LD_AUDIT`, or `ptrace`/`process_vm_writev` of a
+      same-uid process running it. Attacker code then runs under the genuine digest (reviewer demo `ldpreload_demo.c`: the helper-side `readlink` of its
       parent's exe reports `/usr/bin/true` while the constructor is attacker code). Nothing here
       narrows that. The helper's `harden()` clears ITS OWN environment (and its children's), not its
       caller's. Fabric cannot run under `NoNewPrivileges` (the helper is setuid-root; amendment 65
-      refuses it), so that is no lever. `kernel.yama.ptrace_scope` >= 2 (attach only with
-      `CAP_SYS_PTRACE`) closes the ptrace half; it is a host setting the operator makes and the kit
-      does not verify (this development host reports 1, which still lets a process trace its own
-      descendants, the genuine binary it spawns included). So what the observation attests about the
-      verifier is "an observer-pinned program file was started by the Fabric uid", not "the pinned
-      program's instructions made this manifest". The guest verdict's integrity does not rest on it:
+      refuses it), so that is no lever. `kernel.yama.ptrace_scope` >= 2 affects only the ptrace route
+      and does not touch the exec route (a host setting the operator makes; the kit does not verify
+      it). So what the observation attests about the verifier is "at that instant the Fabric-uid
+      caller's executable was the pinned file", not "the pinned program's instructions made this
+      manifest". See amendment 85 for any later change to when the helper measures it. The guest verdict's integrity does not rest on it:
       it rests on the hidden check, the signature chain and the loop's joins.
     - **Major-adjacent: the observer accepts only a nonce the custodian issued.** The observer asks
       the custodian (the helper config's `custodian` section, which it already reads; the custodian
@@ -4355,10 +4358,11 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       (`governance/proofs/v022-pci/CERTIFICATION.md`)." After: "... as certified at `31413ca7`
       (local backend, EMPTY effect ceiling) plus amendments 53/60/72/78 (the delta), each covered
       by named PCI gate rows and mutation rows re-run at the frozen head. A non-empty guest effect
-      ceiling is OUTSIDE the PCI certification." The delta, the gate-row results and the exact
+      ceiling is OUTSIDE the PCI certification." (Amendment 84 replaced this "After": the gate
+      rows did not exist for the four amendments, and "re-run at the frozen head" is a freeze
+      obligation, not a present fact.) The delta, the gate-row results and the exact
       protected-profile behaviour under a non-empty ceiling are in
-      `governance/notes/v022-pci-delta.md` (mutable; CERTIFICATION.md is untouched). Amendment 78
-      is on `c9r4c/psv1b` and not in this branch's base.
+      `governance/notes/v022-pci-delta.md` (mutable; CERTIFICATION.md is untouched).
     - **PSV-3, completion.** Before: "a token per completed test", and the `interp::TestEnd` doc
       "Completed ... its every assertion ran". After: "completed" means the test body returned
       normally. An assertion inside a closure handed to the candidate runs only if the candidate
@@ -4426,4 +4430,58 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
     - **Rows.** None added: no code guard changed. The one added test is a drift test over two
       constants. M1960-M1969 are unused.
 
+## Amendment 84: the PCI delta is generated and gated, and four wordings that said more than the code (C9 round 6, claims2)
 
+84. **Wording and evidence accuracy; no code guard changes (round-6 findings
+    `/var/tmp/c9r6-findings-PSV-{3,4,5,6,7}.json`).** Every sentence changed, before and after:
+    - **PSV-3 BLOCKER, "each covered by named PCI gate rows".** Before: amendments 53/60/72/78 "each
+      covered by named PCI gate rows". False: `scripts/v022_pci_gates.sh` had 18 rows, all on surfaces
+      1-21, none naming a test of any of the four. After: ten rows added (28 in all), one group per
+      amendment (53, 60, 72 with its dict snapshot, 78), each with unit tests and a real-runner test
+      (`axon_psv::runner::run`); the gate fails on an absent, renamed, filtered or `#[ignore]`d test
+      (verified by renaming one). The dict rows are written against the current tests and labelled
+      "psv1d may replace"; amendment 83's replacement of the snapshot extends them.
+    - **PSV-3, the note was stale and hand-kept.** `governance/notes/v022-pci-delta.md` said amendment
+      78 was "NOT IN THIS BASE" and named M1846 (which does not exist: M1840-M1845 and M1847-M1848),
+      with totals measured at the old base and files and commits omitted (`lib.rs`, `parser.rs`,
+      `ast.rs`, `error.rs`/E0505, `bae904b8`'s keyed failure token, `abf72e0b`, `73834357`). It is now
+      GENERATED by `scripts/pci_delta.py` from `git log`/`git diff --numstat 31413ca7..<head>` over
+      `crates/axon-core/src`, and `crates/axon-core/tests/pci_delta_note.rs` fails if the block drifts,
+      if a commit is not classified, or if a later commit touches the interpreter. The phrase "not in
+      this base" is removed from the note and from amendment 82.
+    - **PSV-3, "re-run at the frozen head".** Now a FREEZE OBLIGATION: the freeze procedure must show a
+      joined paired-disable run at the frozen head in which each named mutation row is killed by its own
+      attack. It was never a present fact.
+    - **PSV-4 (non-empty ceiling).** Added to PSV-4: a protected receipt under a non-empty guest effect
+      ceiling is outside the PCI certification; the signed receipt names only the policy digest. The delta
+      note adds the `backend::select` precondition: any restricting grant needs the signed B263 to show
+      `x1_guest_policy_channel` PASS; a fully unrestricting grant needs no x1.
+    - **PSV-7.** Before: "a receipt from any host without a current B263 qualification cannot satisfy
+      the protected profile". After: "a receipt without a current operator-installed B263
+      qualification", with host identity checked at install by the operator kit and not by Fabric or
+      readiness (post-C9 item N). The Stage 7 `b263_qualification` bare-sha-pin note is in the claim.
+    - **PSV-6 (a), the exe digest.** Before (verdict spec, amendment 79 (d), runbook): the digest of "the
+      executable file the Fabric process was started from"; non-claim "`LD_PRELOAD`, ptrace";
+      "`ptrace_scope` >= 2 closes the ptrace half"; "the helper serves only the Fabric program the
+      operator pinned". After: the digest of the executable file the Fabric-uid process HAD when the
+      helper opened `/proc/<ppid>/exe`; any Fabric-uid code can arrange that this is the pinned file (exec
+      it after spawning the helper, `LD_PRELOAD`, ptrace). Round-6 reviewer, executed: a python3 Fabric-uid
+      script that spawned `helper --observe` and then `execv`'d the pinned file got an observer-signed
+      observation naming the pinned verifier in 18 of 20 attempts (the other 2 were refused before any
+      nonce record), with no `LD_PRELOAD` or ptrace; Yama does not touch the exec route (the comfort
+      sentence is dropped); the helper serves "a caller whose executable at that instant is the pinned
+      file". This describes the code at this head; amendment 85 describes any later change to when the
+      helper measures it, and the custodian's request deadline (the round-6 reviewer executed a drip
+      client holding the single-threaded custodian for 131 s; that is availability, fail-closed).
+    - **PSV-6 (b), (c).** "Fabric and Firecracker revisions" is "Fabric revision and Firecracker digest"
+      (`PreflightObservation` has `firecracker_sha256`). "The custodian's: the nonce, issued for that
+      epoch, observed once" is "issued for that epoch and unspent (custodian), observed once (observer)":
+      the one-observation record is the observer's `.observed` file. Also in amendment 79's table.
+    - **PSV-5 gap-map.** Rows 63 and 65 of `v022-psv-gap-map.md` are marked HISTORICAL (superseded by M4
+      row 96 and amendments 42 and 82).
+    - **PSV-4 minor, not done.** Passing the interpreted `result.json` bytes into `derive` (instead of a
+      second read) was not trivial and is left; the second read is defence in depth over an
+      operator-owned root-written directory.
+    - **Runbook.** Fabric's `<state>/runs/` leftovers after a crash are documented as operator cleanup
+      (no sweep exists).
+    - **Rows.** None added; no code guard changed. M2040-M2049 unused.
