@@ -4504,9 +4504,14 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       directory owned by the pinned uid), M1884 retargeted (the host config check applies the classifier),
       M1184/M1185/M1893-M1895 re-pointed at the changed text. Not rows (dominated by a sibling that also
       refuses, so a mutation is REFUSED_ELSEWHERE): the pin's schema/shape check, a fresh target dir (`mkdir`
-      refuses an existing one), an existing OUTDIR (`makedirs` refuses it too). Kit guards, each removed
-      alone by hand with the kit test run (see the report): the host-record check, the required
-      `--builder-uid`, the linker comparison, the config check.
+      refuses an existing one), an existing OUTDIR (`makedirs` refuses it too). Kit guards (not rows: the
+      harness drives cargo tests), each removed ALONE by hand and `test_operator_deploy.sh` run
+      (2026-10-06, tree restored after): the `check-host-record` call fails `ATTACK: a host build record
+      edited after its builder signed it` (expected REFUSED (2), got 3); the linker comparison fails `ATTACK:
+      a host build whose linker is not the one the guest build recorded` (got 0); the config-check
+      refusal fails `ATTACK: an ancestor cargo config naming a compiler wrapper` (got 3). The kit's
+      required `--builder-uid` is DOMINATED (without it the next step still refuses an empty uid): stated,
+      not claimed as a kill.
     - **Matrix.** A154-A157 (the integrator renumbers). **Operator deployment.** Install the builder pin (the
       kit's `toolchain` step does, from `--builder-uid/--builder-parent`); build the host binaries with
       `host-build` as the builder and pass THAT directory as `--bin-dir` (a plain `cargo build` output is
