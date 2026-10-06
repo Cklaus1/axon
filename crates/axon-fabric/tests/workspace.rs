@@ -1089,3 +1089,64 @@ fn a_verdict_over_bytes_the_run_did_not_judge_is_never_receipted() {
     }
     assert_eq!(s.receipt.verification, V::Unknown, "{:?}", s.reason);
 }
+
+// ── C9 round 6, EQGATE2 (amendment 87): permission modes of the store ────────
+
+/// A materialized tree carries the modes the version records (files 0644 /
+/// 0755, read-only 0444 / 0555, directories 0555 when read-only), a trial's
+/// cache root is 0700, and a read-only tree can still be removed. Each is a
+/// `set_permissions` / `set_mode` call that builds no `Err`; each was
+/// weakenable alone with the whole suite green (round 6: the cache root 0700
+/// -> 0755 left 743 tests passing).
+#[test]
+fn the_materialized_modes_and_the_trial_cache_root_are_what_the_store_says() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("tree");
+    materialize_vector(&root, &vector());
+    let store = WorkspaceStore::open(&dir.path().join("state"), &tenant()).unwrap();
+    let r = store.import_dir(&root, &Quota::default()).unwrap();
+    use std::os::unix::fs::MetadataExt as _;
+    let mode = |p: &Path| std::fs::metadata(p).unwrap().mode() & 0o777;
+    let rw = dir.path().join("rw");
+    store.materialize(&r, &rw, false).unwrap();
+    assert_eq!(
+        mode(&rw.join("README.md")),
+        0o644,
+        "ATTACK: a plain file of a writable materialization is not 0644"
+    );
+    assert_eq!(
+        mode(&rw.join("bin/run.sh")),
+        0o755,
+        "ATTACK: an executable file of a writable materialization is not 0755"
+    );
+    let ro = dir.path().join("ro");
+    store.materialize(&r, &ro, true).unwrap();
+    assert_eq!(
+        mode(&ro.join("README.md")),
+        0o444,
+        "ATTACK: a plain file of a read-only materialization is writable"
+    );
+    assert_eq!(
+        mode(&ro.join("bin/run.sh")),
+        0o555,
+        "ATTACK: an executable file of a read-only materialization is writable"
+    );
+    assert_eq!(
+        mode(&ro.join("src")),
+        0o555,
+        "ATTACK: a directory of a read-only materialization is writable"
+    );
+    let removed = axon_fabric::workspace::remove_tree(&ro);
+    assert!(
+        removed.is_ok() && !ro.exists(),
+        "ATTACK: a read-only materialized tree cannot be removed (its directories were not \
+         unlocked): {removed:?}"
+    );
+    let cache = TrialCache::for_trial(dir.path(), &tenant(), &TrialId::new("trial-modes").unwrap())
+        .unwrap();
+    assert_eq!(
+        mode(&cache.root),
+        0o700,
+        "ATTACK: a trial's cache root is not 0700: another uid can read or plant in it"
+    );
+}

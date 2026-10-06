@@ -4644,3 +4644,71 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       `host-build` as the builder and pass THAT directory as `--bin-dir` (a plain `cargo build` output is
       refused); re-pin `verifier.json`; the guest image records are unchanged in format (the builder pin is
       what they are judged against).
+
+## Amendment 87: guards expressed as a permission mode or a process flag are sites, and the freeze judges the mutation run (C9 round 6, eqgate2)
+
+87. **Source: the round-6 EQUIVALENCE review (`DO_NOT_REGISTER`).** One BLOCKER and one MAJOR-ADJACENT,
+    executed. Mutation ids M2120-M2169 (M2151 withdrawn, see below), matrix rows A158-A163 (the integrator
+    renumbers).
+    - **BLOCKER: a guard expressed as a permission MODE or a prctl FLAG was invisible to the gate.** The
+      review weakened four, one at a time, as root, with the full suites green: the completion secret's
+      `0o400` -> `0o644` (743 passed), the trial-cache root's `0o700` -> `0o755` (743), the child's
+      `PR_SET_NO_NEW_PRIVS` under `if false` (790), and `PR_SET_PDEATHSIG` deleted (790). The only exemptions
+      near the prctl calls covered the `!= 0` error branch, not the call.
+    - **The class is fixed at the gate (`PRIV_FORM`).** Derived by sweeping every in-scope file for the
+      permission and syscall vocabulary: mode literals (`.mode(0o..)`), `set_permissions`/`from_mode`/`set_mode`,
+      the chmod and chown families, `mkdirat`, `umask`, `prctl`, `setrlimit`, `setsid`/`setpgid`/`process_group`, the
+      setuid family and `setgroups`, `signal`/`sigaction`/`sigprocmask`/`kill`/`killpg`, `fcntl`, `pre_exec`, and
+      namespace/mount/capability/seccomp calls. A use in non-test code is a site unless a row's edit changes its
+      block. One source line per group, each its own gate row (M2120-M2131), with one planted-form test
+      naming a member of every group and refusing to name a mode READ, a definition or a comment. The sweep found
+      no `unshare`, `clone`, `mount`, `capset` or `chroot` call in scope today; those alternatives exist for the
+      day one appears.
+    - **Exposed: 41 uncovered sites, plus 7 that only a weak "OS error" exemption covered. ROWED, each killed by a test whose attack is the weaker mode or the missing
+      call, observed through `stat` or `/proc`: the completion secret 0400 (M2144), the Fabric-private inputs
+      dir 0700 (M2145), the keygen key 0400 (M2146), the trial-cache root 0700 (M2147), a read-only
+      materialization's directory and file modes (M2148-M2150), the check child's pre_exec hook,
+      `no_new_privs`, the parent-death signal, and the setgroups/setgid/setuid drop (M2152-M2157, observed in the
+      child's own `/proc/self/status`), the root helper's snapshot modes and out-tree hand-over (M2158-M2166),
+      the launcher's rlimits (M2167) and the helper's `setgroups`/`setresgid` (M2168, M2169).
+      One existing exemption was DROPPED, not kept: the runner's `prctl`/`setgroups` exemptions said "OS error"
+      and covered the calls. The gate rule "exempt yet covered" was narrowed to an exemption pinned on the
+      site's OWN line, so the hand-over's regular-file `openat` (race-only, exempt on its own line) can sit
+      beside the rowed `fchmod`/`fchown` of the same arm.
+    - **Remainder, stated (do not read as covered).** Every exemption that begins `REMAINDER` is a guard no
+      test observes yet, not a claim of domination: `grep -n REMAINDER scripts/v022_refusal_coverage.py`.
+      They are: the guest PID 1's `PR_SET_NO_NEW_PRIVS`, seccomp, signal forwarding (they need a real boot,
+      `psv_guest_boot_test.sh`, which this workstream did not run); the root helper's and the PSV runner's
+      `PR_SET_DUMPABLE` (not observable from outside on a default host: a setuid exec leaves the process
+      non-dumpable under `fs.suid_dumpable=0` and the next exec resets the bit; core dumps are also stopped by the
+      rowed `RLIMIT_CORE=0`); the unprivileged fallbacks and the kernel-default limits of `lim2`; `F_SETOWN`;
+      the read-only-tree unlock in `remove_tree` (row M2151 survived as root, which bypasses modes, and was
+      withdrawn rather than weakened); the `PR_GET_NO_NEW_PRIVS` query. Three more are dominated or off the
+      route and say so (the lease take, whose absence the `F_GETLEASE` re-read refuses; `pre_exec(exec.run())`,
+      whose closure is M527/M528; the axon-os and Cortex local-executor paths, `--dev` custodian).
+    - **MAJOR-ADJACENT: the freeze bound no mutation-run status file.** It bound the registry's digest and
+      counts, so a freeze could be cut with no merged run at HEAD and `all_killed` was never judged.
+      `v022_mutation_status.problems` is now what the freeze asks of
+      `governance/status/v022-psv-mutation-run.json` (the file `--merge` writes over `--scope=all`), one reason per
+      defect: absent; not `--merge`'s (`merged_from`, no `shard` or `only`); another scope; a commit that is neither
+      the freeze commit nor an ancestor with only `governance/status/` changed since (ONE rule, shared with
+      paired-disable's validator); a dirty tree; other registry blobs; shards that disagree on toolchain,
+      interpreter digest or uid, or record no host; any active row missing, duplicated or run with another edit;
+      any row not GOOD by `row_good` recomputed from its recorded baseline and result, named by class
+      (`REFUSED_ELSEWHERE`, `SURVIVED`, stale, baseline, interpreter); a LIBRARY_PRIMITIVE row not flagged as the
+      registry classifies it; and an `all_killed` label that is false or true over rows that are not. LIBRARY_PRIMITIVE
+      rows are counted apart (`counts()`; the freeze manifest records `killed_library_primitive_rows_not_counted`
+      beside `killed_active_rows`). `--check-status PATH` is the same function on a command line. Rows
+      M2132-M2143. **No status file was written or faked**; neither in-tree status file is accepted (the
+      paired-disable file is partial; the mutation run does not exist).
+    - **What the status files are, honestly (SENTINEL).** `status_problems` and `problems` are SELF-CONSISTENCY
+      checks. A forged joined file with every record fabricated passes with 0 defects, because nothing binds a file
+      to a run: the harness is run by the operator's own (freeze) account and its output is operator-attested. The
+      freeze check detects staleness, partial or mixed shards, a label contradicting its cells, and internal
+      inconsistency; it does NOT detect forgery by the account that runs the freeze. No cheap SOUND strengthening
+      exists without a key: a per-row digest or a nonce chain over fields the same account writes proves
+      nothing the account cannot also forge. A strengthening that is sound needs a signature by a key the
+      freeze account does not hold (the operator qualification key, which no agent signs with); it is left
+      stated, not implemented (matrix row A163).
+    - **MINOR: no joined paired-disable record at this head.** Unchanged and expected until the final evidence
+      run; the paired-disable validator (amendment 81) refuses a freeze until it exists.

@@ -949,3 +949,68 @@ fn a_run_that_exceeded_its_output_limit_yields_no_verdict() {
     let fx = fixture("t_ok", false);
     assert_eq!(run(&fx.cfg).status, GuestStatus::Passed, "control");
 }
+
+// ── C9 round 6, EQGATE2 (amendment 87): the child's hardening is observed ────
+//
+// The candidate-running child is made `no_new_privs`, given a parent-death
+// signal and (as root) dropped to the check uid in a `pre_exec` hook. Each was
+// removable alone with the whole suite green: the hook's calls build no `Err`
+// the gate could see and nothing observed the child's process state. The
+// interpreter is replaced by a stand-in that records its own `/proc` state,
+// so the test judges what the kernel made of the exec.
+
+/// What a stand-in interpreter, run as the check child, records of itself.
+fn child_state(drop: bool) -> Option<String> {
+    use std::os::unix::fs::PermissionsExt;
+    let fx = fixture("t_ok", drop);
+    let rec = fx.cfg.out.join("child-state");
+    // One process throughout: the stand-in execs python, whose own state is the
+    // child's (a forked grep would have a cleared parent-death signal).
+    let script = format!(
+        "#!/bin/sh\nexec python3 -c \"import ctypes\nv=ctypes.c_int()\nctypes.CDLL(None).prctl(2,ctypes.byref(v))\n\
+         out=[l for l in open('/proc/self/status') if l.split(':')[0] in ('NoNewPrivs','Uid','Gid','Groups')]\n\
+         out.append('Pdeathsig: %d\\\\n' % v.value)\nopen('{}','w').write(''.join(out))\"\n",
+        rec.display()
+    );
+    std::fs::write(&fx.cfg.axon, script).unwrap();
+    std::fs::set_permissions(&fx.cfg.axon, std::fs::Permissions::from_mode(0o755)).unwrap();
+    // The out dir must be writable by the dropped uid for the record.
+    std::fs::set_permissions(&fx.cfg.out, std::fs::Permissions::from_mode(0o777)).unwrap();
+    let _ = run(&fx.cfg);
+    std::fs::read_to_string(&rec).ok()
+}
+
+#[test]
+fn the_check_child_cannot_gain_privilege_and_dies_with_the_runner() {
+    let st =
+        child_state(false).expect("setup: the stand-in interpreter ran and recorded its state");
+    assert!(
+        st.contains("NoNewPrivs:\t1"),
+        "ATTACK: the check child runs without no_new_privs and can gain privilege: {st}"
+    );
+    assert!(
+        st.contains("Pdeathsig: 9"),
+        "ATTACK: the check child outlives the runner (no parent-death signal): {st}"
+    );
+}
+
+#[test]
+fn the_check_child_runs_as_the_check_uid_with_no_groups() {
+    if unsafe { libc::geteuid() } != 0 {
+        eprintln!("skipped: needs root to drop to the check uid");
+        return;
+    }
+    let st = child_state(true).expect("setup: the stand-in interpreter ran and recorded its state");
+    assert!(
+        st.contains("Uid:\t65534\t65534\t65534\t65534"),
+        "ATTACK: the check child did not drop to the check uid: {st}"
+    );
+    assert!(
+        st.contains("Gid:\t65534\t65534\t65534\t65534"),
+        "ATTACK: the check child did not drop to the check gid: {st}"
+    );
+    assert!(
+        st.lines().any(|l| l.trim_end() == "Groups:"),
+        "ATTACK: the check child kept its supplementary groups: {st}"
+    );
+}

@@ -1020,3 +1020,74 @@ fn a_function_deciding_by_result_bool_i32_or_exitcode_is_a_site() {
     );
     let _ = std::fs::remove_dir_all(&r);
 }
+
+// ── C9 round 6, EQGATE2 (amendment 87): guards expressed as a permission mode,
+// a prctl flag, a privilege drop, a limit, a signal disposition or a pre_exec
+// hook. Round 6 weakened four of them one at a time (the completion secret's
+// 0o400, the trial cache's 0o700, PR_SET_NO_NEW_PRIVS, PR_SET_PDEATHSIG) with
+// every suite green: none builds an `Err`, so no earlier form saw them. Each
+// group below is planted in a production-shaped line the gate must name; a
+// getter, a definition and a comment must not be.
+
+const PRIV_PROBES: &str = "pub fn gate_probe_priv(p: &std::path::Path, cmd: &mut std::process::Command) {\n    use std::os::unix::fs::OpenOptionsExt;\n    let gp_mode = std::fs::OpenOptions::new().write(true).mode(0o666).open(p);\n    let gp_perm = std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o777));\n    let gp_setmode = set_mode(p, 0o777);\n    let gp_chmod = unsafe { libc::fchmod(3, 0o777) };\n    let gp_chown = unsafe { libc::fchown(3, 0, 0) };\n    let gp_mkdirat = unsafe { libc::mkdirat(3, c\"x\".as_ptr(), 0o777) };\n    let gp_umask = unsafe { libc::umask(0) };\n    let gp_prctl = unsafe { libc::prctl(libc::PR_SET_DUMPABLE, 1, 0, 0, 0) };\n    let gp_rlimit = unsafe { libc::setrlimit(libc::RLIMIT_CORE, std::ptr::null()) };\n    let gp_setsid = unsafe { libc::setsid() };\n    let gp_pgroup = cmd.process_group(0);\n    let gp_setuid = unsafe { libc::setuid(0) };\n    let gp_setgroups = unsafe { libc::setgroups(0, std::ptr::null()) };\n    let gp_signal = unsafe { libc::signal(libc::SIGPIPE, libc::SIG_IGN) };\n    let gp_kill = unsafe { libc::kill(1, libc::SIGKILL) };\n    let gp_fcntl = unsafe { libc::fcntl(3, libc::F_SETFD, 0) };\n    let gp_preexec = unsafe { cmd.pre_exec(|| Ok(())) };\n    let gp_mount = unsafe { libc::mount(std::ptr::null(), c\"/\".as_ptr(), std::ptr::null(), 0, std::ptr::null()) };\n    let gp_caps = unsafe { libc::capset(std::ptr::null_mut(), std::ptr::null()) };\n    let _ = (gp_mode, gp_perm, gp_setmode, gp_chmod, gp_chown, gp_mkdirat, gp_umask, gp_prctl, gp_rlimit, gp_setsid, gp_pgroup, gp_setuid, gp_setgroups, gp_signal, gp_kill, gp_fcntl, gp_preexec, gp_mount, gp_caps);\n}\n\npub fn gate_probe_reads(m: &std::fs::Metadata) -> bool {\n    use std::os::unix::fs::PermissionsExt;\n    let gp_getter = m.permissions().mode() & 0o022 != 0;\n    gp_getter\n}\n\nfn set_mode(_p: &std::path::Path, _m: u32) {}\n";
+
+/// Amendment 87: every use of a permission, privilege, limit, signal or
+/// pre-exec call in production code is a site, by group (each group one row).
+/// Control: a mode READ (`.mode()` with no argument), a definition of
+/// `set_mode` and the unedited tree do not name one.
+#[test]
+fn a_permission_privilege_or_process_form_is_a_site() {
+    let r = tree("priv-forms");
+    add_code(&r, SCANNED, PRIV_PROBES);
+    for (site, group, form) in [
+        ("gp_mode", "a permission mode", ".mode(0o666)"),
+        (
+            "gp_perm",
+            "a set_permissions or set_mode call",
+            "set_permissions / from_mode",
+        ),
+        (
+            "gp_setmode",
+            "a set_permissions or set_mode call",
+            "set_mode",
+        ),
+        ("gp_chmod", "a chmod or chown", "fchmod"),
+        ("gp_chown", "a chmod or chown", "fchown"),
+        ("gp_mkdirat", "a mkdirat or umask", "mkdirat"),
+        ("gp_umask", "a mkdirat or umask", "umask"),
+        ("gp_prctl", "a prctl", "prctl"),
+        ("gp_rlimit", "a resource limit", "setrlimit"),
+        ("gp_setsid", "a session or process group", "setsid"),
+        ("gp_pgroup", "a session or process group", "process_group"),
+        ("gp_setuid", "a privilege drop", "setuid"),
+        ("gp_setgroups", "a privilege drop", "setgroups"),
+        ("gp_signal", "a signal disposition", "signal"),
+        ("gp_kill", "a signal disposition", "kill"),
+        ("gp_fcntl", "an fcntl", "fcntl"),
+        ("gp_preexec", "a pre_exec hook", "pre_exec"),
+        ("gp_mount", "a namespace, mount or capability call", "mount"),
+        ("gp_caps", "a namespace, mount or capability call", "capset"),
+    ] {
+        names(
+            &r,
+            site,
+            &format!(
+                "a use of {group} ({form}) with no row and no exemption was not a refusal site"
+            ),
+        );
+    }
+    not_named(
+        &r,
+        "gp_getter",
+        "a mode READ (`.permissions().mode()` with no argument) was read as setting a mode",
+    );
+    not_named(
+        &r,
+        "fn set_mode(_p",
+        "the definition of set_mode was read as a use",
+    );
+    let c = tree("priv-forms-control");
+    holds(&c, &[], "the unedited copy");
+    let _ = std::fs::remove_dir_all(&c);
+    let _ = std::fs::remove_dir_all(&r);
+}

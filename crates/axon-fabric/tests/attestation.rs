@@ -516,3 +516,20 @@ fn keygen_never_overwrites_an_existing_key_file() {
         "ATTACK: keygen overwrote an existing key file (exit {code})"
     );
 }
+
+/// C9 round 6, EQGATE2 (amendment 87): `keygen` writes the issuer's private key
+/// 0400. A mode readable beyond the owner leaks the key every attestation is
+/// signed under; the mode is a builder argument that builds no `Err`.
+#[test]
+fn keygen_writes_the_key_0400() {
+    use std::os::unix::fs::MetadataExt;
+    let env = Env::new();
+    let out = env.dir.path().join("issuer-mode.pk8");
+    let (code, _) = keygen(&out);
+    assert_eq!(code, 0, "control: a fresh path generates a key");
+    let mode = std::fs::metadata(&out).unwrap().mode() & 0o777;
+    assert_eq!(
+        mode, 0o400,
+        "ATTACK: keygen wrote the issuer's private key {mode:o}, readable beyond its owner"
+    );
+}

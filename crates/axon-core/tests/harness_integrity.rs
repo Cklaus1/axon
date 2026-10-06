@@ -19,13 +19,14 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-const HARNESS: [&str; 6] = [
+const HARNESS: [&str; 7] = [
     "scripts/v022_g01_mutations.py",
     "scripts/v022_attack_markers.py",
     "scripts/v022_paired_disable.py",
     "scripts/lib_bounded_run.sh",
     "scripts/v022_pd_consumers.py",
     "scripts/cargo_test_shards.py",
+    "scripts/v022_mutation_status.py",
 ];
 
 fn scratch(tag: &str) -> PathBuf {
@@ -1936,5 +1937,242 @@ fn the_freeze_asks_the_harness_validator() {
     assert!(
         src(HARNESS[2]).contains("problems = status_problems(json.load(open(path)))"),
         "DRIFT: --check-status is not status_problems"
+    );
+}
+
+// ── C9 round 6, EQGATE2 (amendment 87): the freeze judges the mutation run ───
+//
+// The freeze bound the registry's counts and nothing about the evidence that the
+// active rows are KILLED. `v022_mutation_status.problems` is what it now asks of
+// `governance/status/v022-psv-mutation-run.json`; `--check-status PATH` is the
+// same function on a command line. The merged run is made here by the REAL
+// `--merge` over synthetic all-killed shards of every active row.
+
+const ALL_SHARDS: &str = r#"
+import json, sys, v022_g01_mutations as m
+head = sys.argv[1]; out = sys.argv[3]
+rows = [r for r in m.MUTATIONS if m.in_scope(r[0], "all")]
+for k in (0, 1):
+    d = {"schema": "axon-v022-mutation-run/3", "gate": "all", "scope": "all",
+         "commit": head, "registry_blobs": m.registry_blobs(), "tree_clean": True,
+         "environment": {"euid": 0, "etc_axon_present": False, "unset": [], "host": m.host_identity()},
+         "toolchain": {"rustc": "rustc 1.0.0", "cargo": "cargo 1.0.0", "axon_bin_sha256": "a" * 64},
+         "shard": {"index": k, "of": 2}, "only": None, "all_killed": True,
+         "mutations": [{"id": r[0], **m.row_digest(r), "result": "killed", "baseline": "passed",
+                        **({"status": "LIBRARY_PRIMITIVE"} if r[0] in m.LIBRARY_PRIMITIVE else {})}
+                       for i, r in enumerate(rows) if i % 2 == k]}
+    json.dump(d, open(f"{out}/s{k}.json", "w"))
+"#;
+
+fn merged_run(tag: &str) -> (PathBuf, PathBuf, PathBuf) {
+    let r = repo(tag);
+    let out = scratch(&format!("{tag}-out"));
+    let head = git(&r, &["rev-parse", "HEAD"]);
+    py(
+        &r,
+        &format!(
+            "import sys; sys.argv = ['x', {head:?}, 'same', {:?}]\n{ALL_SHARDS}",
+            out.display().to_string()
+        ),
+    );
+    let merged = out.join("merged.json");
+    let _ = harness(
+        &r,
+        HARNESS[0],
+        &[
+            "--merge",
+            &merged.display().to_string(),
+            &out.join("s0.json").display().to_string(),
+            &out.join("s1.json").display().to_string(),
+        ],
+    );
+    assert!(
+        merged.exists(),
+        "setup: the real --merge wrote the merged run"
+    );
+    (r, out, merged)
+}
+
+fn check_run(r: &Path, file: &Path) -> Output {
+    harness(
+        r,
+        HARNESS[0],
+        &["--check-status", &file.display().to_string()],
+    )
+}
+
+/// Control and defects: a merged run at the freeze commit with every active row
+/// killed is accepted; each way it can be short of that is refused, naming it.
+#[test]
+fn a_mutation_run_is_accepted_only_as_the_merged_killed_run_for_the_freeze_commit() {
+    let (r, out, merged) = merged_run("run-status");
+    let o = check_run(&r, &merged);
+    assert!(
+        o.status.success() && text(&o).contains("a merged, current, complete run"),
+        "control: a merged all-killed run at HEAD is accepted: {}",
+        text(&o)
+    );
+    // (name, python edit of the document `d`, a reason it must give)
+    let cases: [(&str, &str, &str); 14] = [
+        (
+            "shard",
+            "d['shard']={'index':0,'of':2}\ndel d['merged_from']",
+            "not produced by `--merge`",
+        ),
+        ("sample", "d['only']=['M1']", "not produced by `--merge`"),
+        (
+            "scope",
+            "d['scope']='psv'",
+            "a freeze needs the run over `--scope=all`",
+        ),
+        ("commit", "d['commit']='0'*40", "is not in this repository"),
+        (
+            "dirty",
+            "d['tree_clean']=False",
+            "does not record a clean tree",
+        ),
+        (
+            "blobs",
+            "d['registry_blobs']={}",
+            "registry/marker blobs other than this tree's",
+        ),
+        (
+            "missing",
+            "del d['mutations'][:3]",
+            "active rows are missing (first: ",
+        ),
+        (
+            "duplicate",
+            "d['mutations'].append(dict(d['mutations'][0]))",
+            "duplicate rows",
+        ),
+        (
+            "elsewhere",
+            "d['mutations'][5]['result']='refused_elsewhere'",
+            "REFUSED_ELSEWHERE (never a kill)",
+        ),
+        (
+            "survived",
+            "d['mutations'][6]['result']='survived (passed)'",
+            "SURVIVED",
+        ),
+        (
+            "baseline",
+            "d['mutations'][7]['baseline']='failed'",
+            "baseline did not pass",
+        ),
+        (
+            "unrestored",
+            "d['mutations'][8]['interpreter_not_restored']='x'",
+            "interpreter not restored",
+        ),
+        (
+            "label",
+            "d['mutations'][9]['result']='survived (passed)'\nd['all_killed']=True",
+            "all_killed is true over rows that are not all killed",
+        ),
+        (
+            "edits",
+            "d['mutations'][10]['old_sha256']='0'*64",
+            "ran an edit that is not this registry's row",
+        ),
+    ];
+    for (name, edit, why) in cases {
+        let prog = format!(
+            "import json\nd=json.load(open({:?}))\n{edit}\njson.dump(d,open({:?},'w'))",
+            merged.display().to_string(),
+            out.join(format!("v-{name}.json")).display().to_string()
+        );
+        py(&r, &prog);
+        let o = check_run(&r, &out.join(format!("v-{name}.json")));
+        assert!(
+            !o.status.success() && text(&o).contains(why),
+            "ATTACK: a mutation-run status file with the defect `{name}` was accepted as the \
+             merged killed run (wanted {why:?}):\n{}",
+            text(&o)
+        );
+    }
+    // Toolchain: one shard on another toolchain.
+    let prog = format!(
+        "import json\nd=json.load(open({:?}))\nh=d['environment'][1]['host']\n\
+         h['toolchain']=dict(h['toolchain'], rustc='rustc 0.0.0 (another)')\njson.dump(d,open({:?},'w'))",
+        merged.display().to_string(),
+        out.join("v-toolchain.json").display().to_string()
+    );
+    py(&r, &prog);
+    let o = check_run(&r, &out.join("v-toolchain.json"));
+    assert!(
+        !o.status.success() && text(&o).contains("records ran on different toolchains"),
+        "ATTACK: a mutation run whose shards ran on two toolchains was accepted:\n{}",
+        text(&o)
+    );
+    // LIBRARY_PRIMITIVE rows are flagged as the registry classifies them, never
+    // silently counted as killed active rows.
+    let prog = format!(
+        "import json, v022_g01_mutations as m\nd=json.load(open({:?}))\n\
+         r=next(x for x in d['mutations'] if x['id'] in m.LIBRARY_PRIMITIVE)\ndel r['status']\njson.dump(d,open({:?},'w'))",
+        merged.display().to_string(),
+        out.join("v-library.json").display().to_string()
+    );
+    py(&r, &prog);
+    let o = check_run(&r, &out.join("v-library.json"));
+    assert!(
+        !o.status.success()
+            && text(&o).contains("a LIBRARY_PRIMITIVE row here and the file does not say so"),
+        "ATTACK: a LIBRARY_PRIMITIVE row was counted as an ordinary killed row:\n{}",
+        text(&o)
+    );
+    let _ = std::fs::remove_dir_all(&r);
+    let _ = std::fs::remove_dir_all(&out);
+}
+
+/// The evidence-commit rule is the one paired-disable uses (one helper): a run
+/// may trail the freeze commit by evidence files only.
+#[test]
+fn a_mutation_run_may_trail_the_freeze_commit_by_evidence_files_only() {
+    let (r, out, merged) = merged_run("run-trail");
+    write(
+        &r.join("governance/status/v022-psv-mutation-run.json"),
+        &std::fs::read_to_string(&merged).unwrap(),
+    );
+    git(&r, &["add", "-A"]);
+    git(&r, &["commit", "-q", "-m", "the mutation run"]);
+    let f = r.join("governance/status/v022-psv-mutation-run.json");
+    let o = check_run(&r, &f);
+    assert!(
+        o.status.success(),
+        "control: a run one evidence-only commit behind HEAD is accepted: {}",
+        text(&o)
+    );
+    write(
+        &r.join("profiles/linux-microvm/guest-init.sh"),
+        "#!/bin/sh\necho changed after the run\n",
+    );
+    git(&r, &["add", "-A"]);
+    git(&r, &["commit", "-q", "-m", "a source change after the run"]);
+    let o = check_run(&r, &f);
+    assert!(
+        !o.status.success()
+            && text(&o).contains("file(s) other than governance/status/ changed since"),
+        "ATTACK: a mutation run made before a source change was accepted for the later commit:\n{}",
+        text(&o)
+    );
+    let src = std::fs::read_to_string(repo_root().join(HARNESS[2])).unwrap();
+    assert!(
+        src.contains("mstat.evidence_commit_problems(commit, head, mut)"),
+        "DRIFT: paired-disable no longer uses the shared evidence-commit rule"
+    );
+    let _ = std::fs::remove_dir_all(&r);
+    let _ = std::fs::remove_dir_all(&out);
+}
+
+/// Drift: the freeze asks the mutation-run validator the harness defines.
+#[test]
+fn the_freeze_asks_the_mutation_validator() {
+    let freeze =
+        std::fs::read_to_string(repo_root().join("scripts/v022_freeze_manifest.py")).unwrap();
+    assert!(
+        freeze.contains("ms.problems(run_status,") && freeze.contains("if run_problems:"),
+        "DRIFT: the freeze no longer asks the mutation-run validator"
     );
 }

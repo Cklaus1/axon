@@ -132,8 +132,7 @@ def main():
     # binds: every retirement record, at that commit, holds recomputed from its
     # cells, one toolchain, the current consumer selection. A partial, stale or
     # hand-assembled file is refused with one reason per defect. (This freeze
-    # binds NO mutation-run status file today: it binds the registry's digest
-    # and counts; the merged run's `all_killed` is therefore not judged here.)
+    # also requires the merged mutation run, below, amendment 87.)
     pdspec = importlib.util.spec_from_file_location("pd", os.path.join(ROOT, "scripts/v022_paired_disable.py"))
     pd = importlib.util.module_from_spec(pdspec)
     pdspec.loader.exec_module(pd)
@@ -148,6 +147,30 @@ def main():
                  f"this commit ({len(status_problems)} defect(s)):\n  {shown}"
                  + ("\n  ..." if len(status_problems) > 12 else "")
                  + "\nrun scripts/v022_paired_disable.py --shard K/N ... then --join (amendment 81)")
+
+    # Amendment 87: and the MUTATION run. Before this the freeze bound the
+    # registry's digest and counts and nothing about the evidence that the
+    # active rows are killed: it could be cut with no merged run at HEAD. The
+    # merged run (`v022_g01_mutations.py --merge`, over `--scope=all`) must be
+    # present, current, complete and killed by the run's own predicate; its
+    # LIBRARY_PRIMITIVE rows are counted apart.
+    msspec = importlib.util.spec_from_file_location("ms", os.path.join(ROOT, "scripts/v022_mutation_status.py"))
+    ms = importlib.util.module_from_spec(msspec)
+    msspec.loader.exec_module(ms)
+    try:
+        run_status = json.load(open(os.path.join(ROOT, ms.STATUS_PATH)))
+    except FileNotFoundError:
+        sys.exit(f"refused: {ms.STATUS_PATH} is absent: a freeze needs the merged mutation run "
+                 "(v022_g01_mutations.py --scope=all --shard=K/N, then --merge) for this commit")
+    except (OSError, ValueError) as e:
+        sys.exit(f"refused: {ms.STATUS_PATH} cannot be read: {e}")
+    run_problems = ms.problems(run_status, git(["rev-parse", "HEAD"], ROOT), mut)
+    if run_problems:
+        shown = "\n  ".join(run_problems[:12])
+        sys.exit("refused: the mutation-run status file is not the merged run for this commit "
+                 f"({len(run_problems)} defect(s)):\n  {shown}"
+                 + ("\n  ..." if len(run_problems) > 12 else ""))
+    killed_active, killed_library = ms.counts(run_status, mut)
 
     why = not_standalone(ROOT)
     if why:
@@ -217,6 +240,9 @@ def main():
         "retired_legacy": len(mut.LEGACY_EQUIV),
         "library_primitive": len(mut.LIBRARY_PRIMITIVE),
         "sibling_only": len(mut.SIBLING_ONLY),
+        "mutation_run": {"commit": run_status["commit"], "killed_active_rows": killed_active,
+                         "killed_library_primitive_rows_not_counted": killed_library,
+                         "status_sha256": sha_file(ms.STATUS_PATH)},
         "mutation_registry_digest": registry_digest,
         "equivalence_record_digest": equivalence_digest,
         "paired_disable_digest": sha_file("governance/status/v022-psv-paired-disable.json"),
