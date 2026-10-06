@@ -15,9 +15,9 @@ later commit touches `crates/axon-core/src` (the note is then stale: `python3 sc
 --emit HEAD`, paste between the markers).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: fe1a3ec1244f71164a3454374fa60218db12fe7c
+generated-at: 1900f86aef4f35b005d007cf21694770f379b6b9
 
-`git diff --numstat 31413ca7..fe1a3ec1 -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..1900f86a -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -38,7 +38,7 @@ generated-at: fe1a3ec1244f71164a3454374fa60218db12fe7c
 | `crates/axon-core/src/resolver.rs` | 171 | 16 |
 | total | 7322 | 1252 |
 
-`git log --reverse 31413ca7..fe1a3ec1 -- crates/axon-core/src`:
+`git log --reverse 31413ca7..1900f86a -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -78,8 +78,10 @@ generated-at: fe1a3ec1244f71164a3454374fa60218db12fe7c
 | b971194c | amendment 83 | clippy: the arithmetic arm of the pin walk (interp/pin.rs) collapsed into a guard: no change in what is refused |
 | 70692659 | amendment 83 | unit-test attack text only (M1996: a shift truncates where + and * panic): no production change |
 | dab96417 | amendment 88 | the dispatch analysis trusts only what the operator chose: candidate fns/types/lets, local-name shadowing and trait names no longer determine a receiver; keys carry the owning fn; fail-closed lookup; operator-defined runtime values dispatch; the address cache is removed (pin.rs, interp.rs, eval.rs): narrowing on candidate-influenced receivers, widening only for operator-only polymorphism |
-| 36 commits | | |
+| edde3d5d | amendment 88 | clippy: an unused `mut` removed in pin.rs; no change in what is refused |
+| 37 commits | | |
 <!-- END MECHANICAL -->
+
 
 
 What is BY THEME (the `theme` and `what it does` columns; these are the commit messages' own
