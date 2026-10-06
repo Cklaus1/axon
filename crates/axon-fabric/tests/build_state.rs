@@ -113,7 +113,8 @@ fn a_production_build_under_a_wrapper_rustflags_or_linker_does_not_happen() {
     let p = package(d.path());
     let w = wrapper(d.path());
     let linker = format!("target.{}.linker=\"/usr/bin/cc\"", host());
-    let attacks: Vec<(&str, Vec<&str>, Vec<(&str, String)>)> = vec![
+    type Attack<'a> = (&'a str, Vec<&'a str>, Vec<(&'a str, String)>);
+    let attacks: Vec<Attack> = vec![
         ("RUSTC_WRAPPER", vec![], vec![("RUSTC_WRAPPER", w.clone())]),
         (
             "RUSTC_WORKSPACE_WRAPPER",
