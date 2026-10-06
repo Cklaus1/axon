@@ -58,11 +58,13 @@ def main():
         finally:
             open(path, "w").write(text)
         tail = (r.stdout + r.stderr)
+        failing = sorted(set(re.findall(r"^---- (\S+) stdout ----$", tail, re.M)))
+        binary = re.findall(r"Running (?:unittests )?(\S+)", tail)
         built = "could not compile" not in tail and "error[E" not in tail
         results.append({"file": f, "line": g + 1, "anchor": anchor[:60], "opener": raw[g].strip()[:80],
                         "result": ("KILLED (a test failed: the exemption is wrong)" if r.returncode != 0 and built
                                    else "build broke" if not built else "survived (the claim held)"),
-                        "reason_kind": reason[:40]})
+                        "failing_tests": failing[:6], "reason_kind": reason[:40]})
         print(results[-1]["result"], f, g + 1, flush=True)
     json.dump(results, open(out, "w"), indent=1)
 

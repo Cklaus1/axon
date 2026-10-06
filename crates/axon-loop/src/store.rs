@@ -401,16 +401,20 @@ impl Store {
         let rel = p
             .strip_prefix(&self.root)
             .map_err(|_| LoopError::Io(format!("{} is outside the store", p.display())))?;
+        // EVERY component is checked before any is looked up: the lookup below
+        // stops at the first component that does not exist yet, and a `..`
+        // after it must not escape the check (C9 round 7, eqgate3: found by the
+        // test that tried to reach this refusal, which the old loop skipped).
+        if rel.components().any(|c| !matches!(c, Component::Normal(_))) {
+            return Err(LoopError::Io(format!(
+                "non-normal store path {}",
+                p.display()
+            )));
+        }
         let mut cur = self.root.clone();
         for c in rel.components() {
-            match c {
-                Component::Normal(n) => cur.push(n),
-                _ => {
-                    return Err(LoopError::Io(format!(
-                        "non-normal store path {}",
-                        p.display()
-                    )))
-                }
+            if let Component::Normal(n) = c {
+                cur.push(n);
             }
             match fs::symlink_metadata(&cur) {
                 Ok(m) if m.file_type().is_symlink() => return Err(symlink_err(&cur)),

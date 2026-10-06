@@ -3473,8 +3473,9 @@ PRIV_FORM = re.compile(
 # libc calls (setitimer, chdir, close_range, setpriority, sched_*, personality,
 # flock, setsockopt, dup2/dup3, pipe2, socket/socketpair/accept4, unlink/rename/
 # link), descriptor flags (O_CLOEXEC, SOCK_CLOEXEC, O_NONBLOCK, FD_CLOEXEC),
-# and the cap forms (`.min(<bound>)` slices, `.take(<bound>)`, a MAX_* used as a
-# bound). One alternative per line: each group is its own gate row.
+# and the cap forms (`.min(<bound>)` slices, `.take(<bound>)`/`.truncate(..)` of a
+# MAX_* bound; a comparison `x > MAX_*` is not one: it is followed by its own
+# refusal, which the Err forms already see). One alternative per line: each group is its own gate row.
 BUILD_FORM = re.compile(
     r"\.(?:env_clear|env_remove|envs)\(|(?<![\w:])(?:cmd|c|command)\.env\(|^\s*\.env\(|"
     r"\.current_dir\(|"
@@ -3484,7 +3485,7 @@ BUILD_FORM = re.compile(
     r"\blibc::(?:setitimer|chdir|fchdir|close_range|setpriority|sched_\w+|personality|flock|setsockopt|dup[23]?|pipe2|socketpair|accept4|socket|unlinkat?|renameat2?|linkat?)\(|\bSYS_close_range\b|"
     r"\b(?:O_CLOEXEC|SOCK_CLOEXEC|FD_CLOEXEC|SOCK_NONBLOCK)\b|"
     r"\.min\(\s*(?:room|cap|limit|bound|max)\w*\s*\)|\.take\(\s*(?:MAX_|[a-z_]*(?:limit|cap|bound|max))\w*|"
-    r"[<>]=?\s*(?:\w+::)*MAX_[A-Z_]+|\.(?:min|take|truncate)\([^)]*\bMAX_[A-Z_]+"
+    r"\.(?:min|take|truncate)\([^)]*\bMAX_[A-Z_]+"
 )
 # A decision expressed as `Some("reason")` / `Some(format!(..))` (evo::propose's
 # exclusion chain, submit's `problem = Some(..)`), as a VALUE: a pattern

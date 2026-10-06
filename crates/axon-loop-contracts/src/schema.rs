@@ -390,6 +390,23 @@ mod tests {
         );
     }
 
+    /// C9 round 7, EQGATE3 (amendment 91): the walker's own refusal of a
+    /// non-integer number. It was exempted as UNREACHABLE (`parse_value` refuses
+    /// a float before any walk); the walker is `pub(crate)` and reached directly.
+    #[test]
+    fn the_walker_refuses_a_non_integer_number() {
+        let s = json!({"type": "number", "minimum": 0});
+        let float = serde_json::Number::from_f64(1.5).unwrap();
+        let got = number_rules(s.as_object().unwrap(), &float, "$.x");
+        assert!(
+            got.as_ref()
+                .is_err_and(|e| e.to_string().contains("non-integer number")),
+            "ATTACK: number_rules took a float for an integer: {got:?}"
+        );
+        number_rules(s.as_object().unwrap(), &serde_json::Number::from(3), "$.x")
+            .expect("control: an integer passes");
+    }
+
     #[test]
     fn profile_id_pattern_is_exact() {
         let s = json!({"type": "string", "pattern": crate::profile::PROFILE_ID_PATTERN});

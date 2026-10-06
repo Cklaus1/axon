@@ -2541,4 +2541,33 @@ mod tests {
              ptrace-attachable by the caller's uid (PR_GET_DUMPABLE != 0)"
         );
     }
+
+    /// C9 round 7, EQGATE3 (amendment 91): `operator_dir` refuses a descriptor
+    /// that is not a directory. The refusal was exempted as UNREACHABLE (every
+    /// descriptor it sees was opened O_DIRECTORY); the function is called here
+    /// with the stat of a regular file.
+    #[test]
+    fn an_operator_directory_that_is_a_file_is_refused() {
+        let t = tempfile::tempdir().unwrap();
+        let f = t.path().join("file");
+        std::fs::write(&f, "x").unwrap();
+        let st = fstat(std::fs::File::open(&f).unwrap().as_raw_fd()).unwrap();
+        let a = Authority {
+            operator_uid: euid_(),
+            walk_base: t.path().to_path_buf(),
+            test: true,
+        };
+        let got = operator_dir(&f, &st, &a);
+        assert!(
+            got.as_ref()
+                .is_err_and(|e| e.contains("is not a directory")),
+            "ATTACK: a regular file was accepted as an operator directory: {got:?}"
+        );
+        assert!(
+            !is_dir(&st),
+            "ATTACK: is_dir took a regular file for a directory"
+        );
+        let dst = fstat(std::fs::File::open(t.path()).unwrap().as_raw_fd()).unwrap();
+        assert!(is_dir(&dst), "control: a directory is one");
+    }
 }

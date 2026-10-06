@@ -868,7 +868,11 @@ fn prepare_refuses_a_tree_that_is_not_the_version_it_is_told_it_is() {
     let issuer = Issuer::generate();
     let lx = qualified_linux_cfg(d, &issuer, &good_evidence(&sha256_file(&manifest)));
     let q = lx.qualification().unwrap();
-    let (cand, suite, other) = (d.join("in/candidate"), d.join("in/check"), d.join("in/other"));
+    let (cand, suite, other) = (
+        d.join("in/candidate"),
+        d.join("in/check"),
+        d.join("in/other"),
+    );
     for (dir, name, body) in [
         (&cand, "f.ax", "fn main() {}\n"),
         (&suite, "accept.ax", "@[test] fn t_ok() {}\n"),
@@ -883,27 +887,28 @@ fn prepare_refuses_a_tree_that_is_not_the_version_it_is_told_it_is() {
     let mut rq = request(&env, "op-prepare-tree", "t_ok");
     rq["workspace_version_ref"] = json!(cand_ref);
     let rq: axon_loop_contracts::ComputeRequest = serde_json::from_value(rq).unwrap();
-    let prepare = |job: &str, candidate: &std::path::Path, suite_dir: &std::path::Path, ver: &str| {
-        axon_fabric::psv::prepare(
-            &rq,
-            &axon_fabric::psv::PrepareInputs {
-                qualification: &q,
-                profile_manifest: &lx.manifest,
-                host: None,
-                policy_json: r#"{"schema":"axon-vm-mmds/1","allowed_effects":[]}"#,
-                suite_id: "acc",
-                suite_version: ver,
-                entry: "accept.ax",
-                test: "t_ok",
-                candidate_dir: candidate,
-                suite_dir,
-                job_dir: &fresh_job_dir(d, job),
-                observation_nonce: "none",
-                authority_epoch: 0,
-                scope: &scope(),
-            },
-        )
-    };
+    let prepare =
+        |job: &str, candidate: &std::path::Path, suite_dir: &std::path::Path, ver: &str| {
+            axon_fabric::psv::prepare(
+                &rq,
+                &axon_fabric::psv::PrepareInputs {
+                    qualification: &q,
+                    profile_manifest: &lx.manifest,
+                    host: None,
+                    policy_json: r#"{"schema":"axon-vm-mmds/1","allowed_effects":[]}"#,
+                    suite_id: "acc",
+                    suite_version: ver,
+                    entry: "accept.ax",
+                    test: "t_ok",
+                    candidate_dir: candidate,
+                    suite_dir,
+                    job_dir: &fresh_job_dir(d, job),
+                    observation_nonce: "none",
+                    authority_epoch: 0,
+                    scope: &scope(),
+                },
+            )
+        };
     prepare("tree-control", &cand, &suite, &suite_ref)
         .expect("control: the matching trees prepare");
     match prepare("tree-cand", &other, &suite, &suite_ref) {
