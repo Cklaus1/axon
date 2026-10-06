@@ -824,6 +824,16 @@ fn production_build() -> &'static Path {
             .and_then(Path::parent)
             .unwrap()
             .join("production-build");
+        // Test PROCESSES running at once (a sharded suite) share `target`, and
+        // cargo REPLACES a binary whenever it relinks it -- which any change
+        // in the tree (even a touched `.git/index`) causes, because the
+        // build script watches the whole tree. A later process's build would
+        // then remove or swap what an earlier one is executing. So the build
+        // runs under an exclusive lock, and each process runs its OWN copies
+        // of what cargo just built, which no later build touches.
+        std::fs::create_dir_all(&target).unwrap();
+        let lock = std::fs::File::create(target.join(".build.lock")).unwrap();
+        lock.lock().unwrap();
         let ws = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
         let out = Command::new(cargo)
@@ -855,7 +865,36 @@ fn production_build() -> &'static Path {
             "setup: the production build failed: {}",
             String::from_utf8_lossy(&out.stderr)
         );
-        let bin = target.join("debug");
+        let built = target.join("debug");
+        let per_process = target.join("per-process");
+        if let Ok(entries) = std::fs::read_dir(&per_process) {
+            for e in entries.flatten() {
+                let pid = e.file_name().to_string_lossy().into_owned();
+                if !Path::new("/proc").join(&pid).exists() {
+                    let _ = std::fs::remove_dir_all(e.path());
+                }
+            }
+        }
+        let bin = per_process.join(std::process::id().to_string());
+        std::fs::create_dir_all(&bin).unwrap();
+        for name in [
+            "axon-protected-launcher",
+            "axon-fabric",
+            "axon-custodian",
+            "axon-observer",
+        ] {
+            // A child `cp`, so this process holds no write descriptor to the
+            // copy (ETXTBSY on a later exec).
+            let st = Command::new("cp")
+                .arg("--preserve=mode,timestamps")
+                .arg("--")
+                .arg(built.join(name))
+                .arg(bin.join(name))
+                .status()
+                .unwrap();
+            assert!(st.success(), "setup: copying {name} failed");
+        }
+        drop(lock);
         let probe = Command::new(bin.join("axon-protected-launcher"))
             .arg("--probe")
             .output()
@@ -3989,14 +4028,18 @@ if pid1 == 0:
     os.close(master)
     os.setsid()
     fcntl.ioctl(slave, termios.TIOCSCTTY, 0)
-    signal.signal(signal.SIGINT, signal.SIG_IGN)
     witness = os.fork()
     if witness == 0:
-        signal.signal(signal.SIGINT, signal.SIG_DFL)
         dn = os.open("/dev/null", os.O_RDWR)
         for fd in (0, 1, 2):
             os.dup2(dn, fd)
         os.execv("/usr/bin/sleep", ["sleep", "30"])
+    # AFTER the witness forked: a child forked while this was ignored inherits
+    # the ignore until it resets it, and on a loaded host the ^C (written once
+    # the helper is up) could land in that window, so the witness survived it
+    # ("setup: the ^C did not reach the witness"; C9 shardflake). The witness
+    # is forked with the default disposition and keeps it through its exec.
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
     h = os.fork()
     if h == 0:
         os.setgroups([])

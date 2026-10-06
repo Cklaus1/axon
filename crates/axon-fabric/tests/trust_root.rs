@@ -218,7 +218,7 @@ fn an_unreadable_authority_root_is_never_read_as_holding_no_key() {
     chmod(&shared.join("verifier"), 0o000);
     let out = if unsafe { libc::geteuid() } == 0 {
         use std::os::unix::process::CommandExt;
-        std::process::Command::new(std::env::current_exe().unwrap())
+        std::process::Command::new(axon_fabric::readiness::running_image())
             .args(["--exact", NAME, "--nocapture", "--test-threads=1"])
             .env(CHILD, d.path())
             .uid(65534)
@@ -226,7 +226,7 @@ fn an_unreadable_authority_root_is_never_read_as_holding_no_key() {
             .output()
             .unwrap()
     } else {
-        std::process::Command::new(std::env::current_exe().unwrap())
+        std::process::Command::new(axon_fabric::readiness::running_image())
             .args(["--exact", NAME, "--nocapture", "--test-threads=1"])
             .env(CHILD, d.path())
             .output()

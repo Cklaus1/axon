@@ -1647,6 +1647,11 @@ ATTACK_MARKERS.update({
     'M1769': r'ATTACK: an approval token whose metadata was edited after its digest admitted the job',
 })
 
+# C9 round 4c, workstream SHARDFLAKE (M1830-M1849; amendment 77).
+ATTACK_MARKERS.update({
+    'M1830': r'ATTACK: a verifier whose file was replaced under it reported "unknown", not the digest of the image it is running',
+})
+
 # C9 round 4c, workstream GATE (amendment 74): M1720-M1759.
 ATTACK_MARKERS.update({
     'M1720': r'ATTACK: a lone failure line without K.s failure token was recorded as a failure \(keyed=false\).*\n\s*left: Failed\n\s*right: Unknown',

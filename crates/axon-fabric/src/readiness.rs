@@ -1133,15 +1133,41 @@ fn certified_waivers(
 /// Schema of `scripts/trust_root_preflight.sh`'s report.
 pub const TRUST_PREFLIGHT_SCHEMA: &str = "axon-trust-preflight/1";
 
+/// The path that names THIS PROCESS'S executable image, not whatever file
+/// happens to sit at its install path now. `std::env::current_exe()` is a
+/// PATH: when another process replaces the file (cargo relinking a test binary
+/// for a sibling shard, an installer swapping the verifier) it reads
+/// `".../name (deleted)"`, which neither opens nor spawns. `/proc/self/exe`
+/// keeps naming the image that is running. (Sharded suite, C9 shardflake: a
+/// touched git index made the next shard's `cargo test` relink the binary
+/// under running siblings, whose digest then read "unknown".)
+pub fn running_image() -> PathBuf {
+    #[cfg(target_os = "linux")]
+    {
+        PathBuf::from("/proc/self/exe")
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        std::env::current_exe().unwrap_or_default()
+    }
+}
+
+/// sha256 of the image this process is running ([`running_image`]); `None`
+/// when it cannot be read. `/proc/self/exe` is this process's own image, never
+/// a path another party names, so there is nothing to bound or refuse here
+/// beyond "could it be read at all" -- and an unreadable image is `"unknown"`
+/// in the identity, which no certification can bind (`is not a sha256`).
+fn running_image_sha256() -> Option<String> {
+    let bytes = std::fs::read(running_image()).ok()?;
+    Some(sha256_hex(&bytes))
+}
+
 /// WHAT is deciding: this binary's own digest and build provenance (build.rs).
 /// Recorded in every verdict, and bound by a certification
 /// (`readiness_verifier_sha256`), so replacing the installed verifier is a
 /// visible change of authority, never a silent one.
 pub fn verifier_identity() -> Value {
-    let sha = std::env::current_exe()
-        .ok()
-        .and_then(|p| sha256_file(&p).ok())
-        .unwrap_or_else(|| "unknown".into());
+    let sha = running_image_sha256().unwrap_or_else(|| "unknown".into());
     json!({
         "sha256": sha,
         "build": if TEST_TRUST_BUILD { "test-trust" } else { "production" },

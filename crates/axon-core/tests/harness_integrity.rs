@@ -1483,3 +1483,76 @@ fn a_sharded_suite_run_reports_every_test_as_a_serial_run_does() {
     let _ = std::fs::remove_dir_all(&r);
     let _ = std::fs::remove_dir_all(&tgt);
 }
+
+/// The sharded runner builds ONCE and execs the built binaries: no shard
+/// re-invokes cargo, so a source change made while the suite runs cannot
+/// relink (replace) a binary a sibling shard is still running (C9 shardflake,
+/// amendment 77). The planted attack: shard `b_toucher` rewrites the package's
+/// source while shard `a_sleeper` is mid-test, and `c_later` starts afterwards. A runner that
+/// ran `cargo test` per shard rebuilt and relinked its binary under it at that
+/// point, and `a_sleeper` then saw `/proc/self/exe` read `... (deleted)`.
+/// `s` also pins the environment contract: what cargo gives a test process
+/// at runtime (the package root as cwd, CARGO_MANIFEST_DIR, CARGO_PKG_NAME,
+/// CARGO) reaches a shard exec'd directly.
+#[test]
+fn a_sharded_run_survives_a_source_change_made_while_it_runs() {
+    let r = repo("shards-relink");
+    write(
+        &r.join("Cargo.toml"),
+        "[workspace]\nmembers = [\"crates/p\"]\nresolver = \"2\"\n",
+    );
+    package(&r, "p", "");
+    write(
+        &r.join("crates/p/tests/s.rs"),
+        r#"#[test]
+fn a_sleeper() {
+    let m = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR");
+    assert_eq!(std::env::current_dir().unwrap().to_str().unwrap(), m, "cwd is the package root");
+    assert_eq!(std::env::var("CARGO_PKG_NAME").unwrap(), "p");
+    assert!(std::env::var_os("CARGO").is_some(), "CARGO");
+    std::thread::sleep(std::time::Duration::from_secs(8));
+    let exe = std::fs::read_link("/proc/self/exe").unwrap();
+    assert!(
+        !exe.to_string_lossy().ends_with(" (deleted)"),
+        "ATTACK: a sibling shard's cargo relinked this test binary under it: {}",
+        exe.display()
+    );
+}
+#[test]
+fn b_toucher() {
+    use std::io::Write;
+    let p = std::path::Path::new(&std::env::var("CARGO_MANIFEST_DIR").unwrap()).join("src/lib.rs");
+    std::fs::OpenOptions::new().append(true).open(p).unwrap().write_all(b"\n// touched\n").unwrap();
+}
+#[test]
+fn c_later() {}
+"#,
+    );
+    let tgt = scratch("shards-relink-tgt");
+    let mut c = harness_cmd(
+        &r,
+        "scripts/cargo_test_shards.py",
+        &[
+            "--shard-tests=1",
+            "--jobs=2",
+            "-q",
+            "-p",
+            "p",
+            "--",
+            "--test-threads=1",
+        ],
+    );
+    c.env("CARGO_TARGET_DIR", &tgt);
+    let o = c.output().unwrap();
+    let out = text(&o);
+    assert!(
+        out.contains("3 listed tests"),
+        "setup: the runner did not list the suite: {out}"
+    );
+    assert!(
+        o.status.success() && !out.contains("ATTACK"),
+        "ATTACK: a sharded run was broken by a source change made while it ran: {out}"
+    );
+    let _ = std::fs::remove_dir_all(&r);
+    let _ = std::fs::remove_dir_all(&tgt);
+}

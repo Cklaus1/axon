@@ -50,7 +50,9 @@ fn exe_sha256(p: &Path) -> String {
 }
 
 fn this_exe_sha256() -> String {
-    exe_sha256(&std::env::current_exe().unwrap())
+    // The running IMAGE, not the path it was started from (that can be
+    // relinked under a sharded run): `/proc/<pid>/exe` is what the helper measures.
+    sha256_file(&axon_fabric::readiness::running_image())
 }
 
 /// A running process, killed when dropped.

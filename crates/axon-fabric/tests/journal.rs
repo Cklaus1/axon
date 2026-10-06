@@ -121,7 +121,7 @@ fn crash_child() {
 /// Run `crash_child` in a real child process up to `stage`, then SIGKILL it.
 fn crash_at(dir: &Path, stage: &str) -> PathBuf {
     let path = dir.join("ops.journal");
-    let mut child = Command::new(std::env::current_exe().unwrap())
+    let mut child = Command::new(axon_fabric::readiness::running_image())
         .args([
             "crash_child",
             "--exact",
