@@ -1873,9 +1873,9 @@ ATTACK_MARKERS.update({
 ATTACK_MARKERS.update({
     'M1880': r'ATTACK: a cargo config the guest build would use was accepted \(a single-quoted cfg',
     'M1881': r'ATTACK: a committed key for a triple the build compiles for was tolerated \((host|cfg|musl)\)',
-    'M1882': r'ATTACK: an ambient host build with RUSTC_WRAPPER set was accepted',
+    'M1882': r'ATTACK: a CARGO_\*/RUSTFLAGS variable in the constructed environment was accepted',
     'M1883': r'ATTACK: the host triple is not rustc\'s own',
-    'M1884': r'ATTACK: an ambient host build with CARGO_ENCODED_RUSTFLAGS set was accepted',
+    'M1884': r"ATTACK: a committed cfg target naming a linker passed the host build's config check",
     'M1885': r'ATTACK: a cargo that cannot print its config was read as having none',
     'M1886': r'ATTACK: a guest build record its runner did not sign passed the proof: \["edit:',
     'M1887': r'ATTACK: a guest build record its runner did not sign passed the proof: \["a key another uid can read',

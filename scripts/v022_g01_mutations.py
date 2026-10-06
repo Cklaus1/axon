@@ -7092,7 +7092,7 @@ _BE = '--test guest_build_env'
 _BS = 'crates/axon-fabric/src/build_state.rs'
 _RP = 'a_build_record_its_runner_did_not_sign_is_refused'
 _CFG = 'a_config_key_is_judged_by_its_structured_path_not_by_the_text_cargo_prints'
-_HOST = 'an_ambient_host_build_under_a_wrapper_flag_or_config_is_refused'
+_HOST = 'the_host_build_configuration_is_judged_in_a_constructed_environment'
 _DIST = 'a_dist_file_the_controlled_runner_did_not_produce_is_refused'
 _FSG = 'a_guest_build_record_its_runner_did_not_sign_does_not_freeze'
 _PRODB = 'a_production_build_under_a_wrapper_rustflags_or_linker_does_not_happen'
@@ -7108,7 +7108,7 @@ MUTATIONS += [
     ('M1882', 'FIELD-ORIGIN (5): a variable that names a compiler, wrapper, flags or linker in the build environment is refused', _GE,
      '    foreign = [f"environment variable {n} is set: it could stand between the sources and the bytes"\n               for n in sorted(env) if not env_ok(n)]\n',
      '    foreign = []\n',
-     'axon-fabric', _BE, _HOST),
+     'axon-fabric', _BE, _CFG),
     ('M1883', 'FIELD-ORIGIN (5): the host triple is the one `rustc -vV` reports, not a constant', _GE,
      '            return line[len("host: "):].strip() or None\n',
      '            return "x86_64-unknown-linux-gnu"\n',
