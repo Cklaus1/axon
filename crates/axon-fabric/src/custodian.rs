@@ -1109,7 +1109,7 @@ mod tests {
         );
     }
 
-    /// C9 round 7, EQGATE3 (amendment 91; M2290): one request line is read
+    /// C9 round 7, EQGATE3 (amendment 91; M2305): one request line is read
     /// through `take(MAX_MESSAGE)`. A peer that sends more than the bound
     /// without a newline is answered (refused as malformed) AT the bound, not
     /// when its deadline runs out: the single-threaded service is not held for

@@ -525,7 +525,7 @@ fn a_registry_file_never_registers_a_suite_id_the_id_rule_refuses() {
 
 fn recording_exec(dir: &Path, script: &str) -> LocalInterpreterExecutor {
     let exe = dir.join("axon-recorder.sh");
-    common::write_executable(&exe, script.to_string(), 0o755);
+    common::write_executable(&exe, script, 0o755);
     LocalInterpreterExecutor::pin_on_first_use(exe)
 }
 

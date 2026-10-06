@@ -981,7 +981,7 @@ mod tests {
         );
     }
 
-    /// C9 round 7, EQGATE3 (amendment 91; M2291): one request line is read
+    /// C9 round 7, EQGATE3 (amendment 91; M2306): one request line is read
     /// through `take(MAX_REQUEST)`: a peer sending more than the bound without
     /// a newline is answered AT the bound, not when the (here 5 s) deadline
     /// runs out.
@@ -1032,7 +1032,7 @@ mod tests {
         );
     }
 
-    /// C9 round 7, EQGATE3 (amendment 91; M2292): a measured file is read
+    /// C9 round 7, EQGATE3 (amendment 91; M2307): a measured file is read
     /// through `take(max + 1)`: a file far past its bound is refused without
     /// the service buffering it.
     #[test]
