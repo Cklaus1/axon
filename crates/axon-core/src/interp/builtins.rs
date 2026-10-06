@@ -77,10 +77,10 @@ fn replay_uncertain(cached: &str, who: &str, as_float: bool) -> Value {
     });
     match parsed {
         Some((v, c)) => Value::Ok(Box::new(make_uncertain(v, c))),
-        None => Value::Err(Box::new(Value::Str(format!(
+        None => Value::Err(Box::new(Value::Str(Rc::new(format!(
             "{who}: malformed AXON_AI_REPLAY entry {cached:?} (expected \"<value>|<confidence>\") \
              — delete the cache to re-record rather than replaying a corrupt one"
-        )))),
+        ))))),
     }
 }
 
@@ -253,7 +253,7 @@ fn scope_violation(name: &str, args: &[Value], sb: &SandboxEntry) -> Option<Stri
             // same rule the net check above already applies. A dynamic path is
             // exactly the case a scope exists to stop.
             let path = match args.get(idx) {
-                Some(Value::Str(s)) => s.clone(),
+                Some(Value::Str(s)) => String::clone(s),
                 _ => String::from("<dynamic>"),
             };
             if !allow.iter().any(|p| caps::path_is_under(&path, p)) {
@@ -814,16 +814,16 @@ impl<'p> Interp<'p> {
                 // means a run that reads input cannot be recorded or replayed.
                 // The `<read error: …>` shape is preserved verbatim.
                 match crate::host::with_host(|h| h.read_line()) {
-                    Ok(line) => ok!(Value::Str(line)),
-                    Err(e) => ok!(Value::Str(format!("<read error: {e}>"))),
+                    Ok(line) => ok!(Value::Str(Rc::new(line))),
+                    Err(e) => ok!(Value::Str(Rc::new(format!("<read error: {e}>")))),
                 }
             }
             "read_file" => {
                 want(1)?;
                 let path = as_str(&args[0])?.to_string();
                 match crate::host::with_host(|h| h.read_file(&path)) {
-                    Ok(s) => ok!(Value::Ok(Box::new(Value::Str(s)))),
-                    Err(e) => ok!(Value::Err(Box::new(Value::Str(e)))),
+                    Ok(s) => ok!(Value::Ok(Box::new(Value::Str(Rc::new(s))))),
+                    Err(e) => ok!(Value::Err(Box::new(Value::Str(Rc::new(e))))),
                 }
             }
             "write_file" => {
@@ -832,7 +832,7 @@ impl<'p> Interp<'p> {
                 let data = as_str(&args[1])?.to_string();
                 match crate::host::with_host(|h| h.write_file(&path, &data)) {
                     Ok(()) => ok!(Value::Ok(Box::new(Value::Unit))),
-                    Err(e) => ok!(Value::Err(Box::new(Value::Str(e)))),
+                    Err(e) => ok!(Value::Err(Box::new(Value::Str(Rc::new(e))))),
                 }
             }
             // Both new fs builtins go through `crate::host` rather than `std::fs`,
@@ -852,7 +852,7 @@ impl<'p> Interp<'p> {
                 let merged = existing + &data;
                 match crate::host::with_host(|h| h.write_file(&path, &merged)) {
                     Ok(()) => ok!(Value::Ok(Box::new(Value::Unit))),
-                    Err(e) => ok!(Value::Err(Box::new(Value::Str(e)))),
+                    Err(e) => ok!(Value::Err(Box::new(Value::Str(Rc::new(e))))),
                 }
             }
             "file_size" => {
@@ -862,7 +862,7 @@ impl<'p> Interp<'p> {
                     // BYTES, not chars: `s.len()` on a Rust String is its UTF-8
                     // byte length, which is what a `stat` would report.
                     Ok(s) => ok!(Value::Ok(Box::new(Value::Int(s.len() as i64)))),
-                    Err(e) => ok!(Value::Err(Box::new(Value::Str(e)))),
+                    Err(e) => ok!(Value::Err(Box::new(Value::Str(Rc::new(e))))),
                 }
             }
             // ── R42 Slice 5: pattern matching (Pike VM, linear time) ─────────
@@ -872,7 +872,7 @@ impl<'p> Interp<'p> {
                 let subject: Vec<char> = as_str(&args[1])?.chars().collect();
                 let prog = match crate::interp::regex::compile(&pat) {
                     Ok(p) => p,
-                    Err(e) => ok!(Value::Err(Box::new(Value::Str(e)))),
+                    Err(e) => ok!(Value::Err(Box::new(Value::Str(Rc::new(e))))),
                 };
                 let span = |sl: &[usize], i: usize| -> String {
                     // A group that did not participate has usize::MAX slots; it
@@ -892,7 +892,7 @@ impl<'p> Interp<'p> {
                     "re_find" => {
                         match crate::interp::regex::find_from(&prog, &subject, 0) {
                             Some(sl) => ok!(Value::Ok(Box::new(Value::Some(Box::new(
-                                Value::Str(span(&sl, 0))
+                                Value::Str(Rc::new(span(&sl, 0)))
                             ))))),
                             None => ok!(Value::Ok(Box::new(Value::None))),
                         }
@@ -902,7 +902,7 @@ impl<'p> Interp<'p> {
                             Some(sl) => {
                                 let mut out = Vec::with_capacity(prog.groups + 1);
                                 for g in 0..=prog.groups {
-                                    out.push(Value::Str(span(&sl, g)));
+                                    out.push(Value::Str(Rc::new(span(&sl, g))));
                                 }
                                 ok!(Value::Ok(Box::new(Value::Array(out.into()))));
                             }
@@ -915,7 +915,7 @@ impl<'p> Interp<'p> {
                         while from <= subject.len() {
                             match crate::interp::regex::find_from(&prog, &subject, from) {
                                 Some(sl) => {
-                                    out.push(Value::Str(span(&sl, 0)));
+                                    out.push(Value::Str(Rc::new(span(&sl, 0))));
                                     // An EMPTY match must still advance, or this
                                     // loops forever on a pattern like `a*`.
                                     from = if sl[1] > sl[0] { sl[1] } else { sl[1] + 1 };
@@ -937,13 +937,13 @@ impl<'p> Interp<'p> {
                                         // A pattern matching empty would split
                                         // between every character forever; refuse
                                         // rather than emit an unbounded array.
-                                        ok!(Value::Err(Box::new(Value::Str(format!(
+                                        ok!(Value::Err(Box::new(Value::Str(Rc::new(format!(
                                             "re_split: E2203 pattern {pat:?} matches the empty \
                                              string, which has no well-defined split"
-                                        )))));
+                                        ))))));
                                     }
                                     out.push(Value::Str(
-                                        subject[last..sl[0]].iter().collect::<String>(),
+                                        Rc::new(subject[last..sl[0]].iter().collect::<String>(),)
                                     ));
                                     last = sl[1];
                                     from = sl[1];
@@ -951,7 +951,7 @@ impl<'p> Interp<'p> {
                                 None => break,
                             }
                         }
-                        out.push(Value::Str(subject[last..].iter().collect::<String>()));
+                        out.push(Value::Str(Rc::new(subject[last..].iter().collect::<String>())));
                         ok!(Value::Ok(Box::new(Value::Array(out.into()))));
                     }
                 }
@@ -963,7 +963,7 @@ impl<'p> Interp<'p> {
                 let with = as_str(&args[2])?.to_string();
                 let prog = match crate::interp::regex::compile(&pat) {
                     Ok(p) => p,
-                    Err(e) => ok!(Value::Err(Box::new(Value::Str(e)))),
+                    Err(e) => ok!(Value::Err(Box::new(Value::Str(Rc::new(e))))),
                 };
                 // A `$N` naming a group the PATTERN DOES NOT HAVE is an authoring
                 // error, and it is refused here rather than expanded to "".
@@ -1009,7 +1009,7 @@ impl<'p> Interp<'p> {
                                     && i + 2 < wc.len()
                                     && wc[i + 2].is_ascii_digit()
                                 {
-                                    ok!(Value::Err(Box::new(Value::Str(format!(
+                                    ok!(Value::Err(Box::new(Value::Str(Rc::new(format!(
                                         "re_replace_all: E2205 `${}{}` is ambiguous — a group \
                                          reference is a SINGLE digit, so this reads as group {} \
                                          followed by the literal {:?}, and pattern {pat:?} has {} \
@@ -1020,16 +1020,16 @@ impl<'p> Interp<'p> {
                                         g,
                                         wc[i + 2],
                                         prog.groups
-                                    )))));
+                                    ))))));
                                 }
                                 if g > prog.groups {
                                     let plural = if prog.groups == 1 { "" } else { "s" };
-                                    ok!(Value::Err(Box::new(Value::Str(format!(
+                                    ok!(Value::Err(Box::new(Value::Str(Rc::new(format!(
                                         "re_replace_all: E2205 replacement references ${g} but \
                                          pattern {pat:?} has {} capture group{plural} (use $$ for \
                                          a literal dollar sign)",
                                         prog.groups
-                                    )))));
+                                    ))))));
                                 }
                                 i += 2;
                                 continue;
@@ -1077,7 +1077,7 @@ impl<'p> Interp<'p> {
                     from = if sl[1] > sl[0] { sl[1] } else { sl[1] + 1 };
                 }
                 out.push_str(&subject[last.min(subject.len())..].iter().collect::<String>());
-                ok!(Value::Ok(Box::new(Value::Str(out))));
+                ok!(Value::Ok(Box::new(Value::Str(Rc::new(out)))));
             }
 
             // ── R42 Slice 6: encoding ────────────────────────────────────────
@@ -1093,7 +1093,7 @@ impl<'p> Interp<'p> {
                     for b in &bytes {
                         out.push_str(&format!("{b:02x}"));
                     }
-                    ok!(Value::Str(out));
+                    ok!(Value::Str(Rc::new(out)));
                 }
                 const A: &[u8; 64] =
                     b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -1111,7 +1111,7 @@ impl<'p> Interp<'p> {
                     out.push(if chunk.len() > 1 { A[(n >> 6) as usize & 63] as char } else { '=' });
                     out.push(if chunk.len() > 2 { A[n as usize & 63] as char } else { '=' });
                 }
-                ok!(Value::Str(out));
+                ok!(Value::Str(Rc::new(out)));
             }
             "base64_decode" | "hex_decode" => {
                 want(1)?;
@@ -1200,18 +1200,18 @@ impl<'p> Interp<'p> {
                     }
                 };
                 match bytes {
-                    Err(msg) => ok!(Value::Err(Box::new(Value::Str(msg)))),
+                    Err(msg) => ok!(Value::Err(Box::new(Value::Str(Rc::new(msg))))),
                     // THE limitation, made explicit: Axon has no bytes type, so
                     // binary that is not valid UTF-8 cannot be represented. Err
                     // rather than lossy replacement characters or a truncated
                     // prefix — a silently lossy decode in a primitive justified
                     // on "hand-rolling this goes wrong quietly" would be absurd.
                     Ok(b) => match String::from_utf8(b) {
-                        Ok(text) => ok!(Value::Ok(Box::new(Value::Str(text)))),
-                        Err(_) => ok!(Value::Err(Box::new(Value::Str(format!(
+                        Ok(text) => ok!(Value::Ok(Box::new(Value::Str(Rc::new(text))))),
+                        Err(_) => ok!(Value::Err(Box::new(Value::Str(Rc::new(format!(
                             "{name}: E2204 decoded bytes are not valid UTF-8 (Axon has no bytes \
                              type, so only text round-trips)"
-                        ))))),
+                        )))))),
                     },
                 }
             }
@@ -1232,7 +1232,7 @@ impl<'p> Interp<'p> {
                 let path = as_str(&args[0])?.to_string();
                 match crate::host::with_host(|h| h.dir_create(&path)) {
                     Ok(()) => ok!(Value::Ok(Box::new(Value::Unit))),
-                    Err(e) => ok!(Value::Err(Box::new(Value::Str(e)))),
+                    Err(e) => ok!(Value::Err(Box::new(Value::Str(Rc::new(e))))),
                 }
             }
             "dir_list" => {
@@ -1240,9 +1240,9 @@ impl<'p> Interp<'p> {
                 let path = as_str(&args[0])?.to_string();
                 match crate::host::with_host(|h| h.dir_list(&path)) {
                     Ok(names) => ok!(Value::Ok(Box::new(Value::Array(
-                        names.into_iter().map(Value::Str).collect::<Vec<_>>().into()
+                        names.into_iter().map(|n| Value::Str(Rc::new(n))).collect::<Vec<_>>().into()
                     )))),
-                    Err(e) => ok!(Value::Err(Box::new(Value::Str(e)))),
+                    Err(e) => ok!(Value::Err(Box::new(Value::Str(Rc::new(e))))),
                 }
             }
             "file_copy" | "file_rename" => {
@@ -1256,7 +1256,7 @@ impl<'p> Interp<'p> {
                 };
                 match r {
                     Ok(()) => ok!(Value::Ok(Box::new(Value::Unit))),
-                    Err(e) => ok!(Value::Err(Box::new(Value::Str(e)))),
+                    Err(e) => ok!(Value::Err(Box::new(Value::Str(Rc::new(e))))),
                 }
             }
             "exec" => {
@@ -1280,8 +1280,8 @@ impl<'p> Interp<'p> {
                     }
                 };
                 match crate::host::with_host(|h| h.exec(&cmd, &arg_list)) {
-                    Ok(s) => ok!(Value::Ok(Box::new(Value::Str(s)))),
-                    Err(e) => ok!(Value::Err(Box::new(Value::Str(e)))),
+                    Ok(s) => ok!(Value::Ok(Box::new(Value::Str(Rc::new(s))))),
+                    Err(e) => ok!(Value::Err(Box::new(Value::Str(Rc::new(e))))),
                 }
             }
             "http_get" => {
@@ -1289,8 +1289,8 @@ impl<'p> Interp<'p> {
                 let url = as_str(&args[0])?.to_string();
                 let headers = as_str(&args[1])?.to_string();
                 match crate::host::with_host(|h| h.http_get(&url, &headers)) {
-                    Ok(s) => ok!(Value::Ok(Box::new(Value::Str(s)))),
-                    Err(e) => ok!(Value::Err(Box::new(Value::Str(e)))),
+                    Ok(s) => ok!(Value::Ok(Box::new(Value::Str(Rc::new(s))))),
+                    Err(e) => ok!(Value::Err(Box::new(Value::Str(Rc::new(e))))),
                 }
             }
             "http_post" => {
@@ -1299,8 +1299,8 @@ impl<'p> Interp<'p> {
                 let headers = as_str(&args[1])?.to_string();
                 let body = as_str(&args[2])?.to_string();
                 match crate::host::with_host(|h| h.http_post(&url, &headers, &body)) {
-                    Ok(s) => ok!(Value::Ok(Box::new(Value::Str(s)))),
-                    Err(e) => ok!(Value::Err(Box::new(Value::Str(e)))),
+                    Ok(s) => ok!(Value::Ok(Box::new(Value::Str(Rc::new(s))))),
+                    Err(e) => ok!(Value::Err(Box::new(Value::Str(Rc::new(e))))),
                 }
             }
             "http_sse" => {
@@ -1311,12 +1311,12 @@ impl<'p> Interp<'p> {
                 let events = match crate::host::with_host(|h| h.http_sse(&url, &headers)) {
                     Ok(v) => v,
                     Err(e) => {
-                        ok!(Value::Err(Box::new(Value::Str(e))))
+                        ok!(Value::Err(Box::new(Value::Str(Rc::new(e)))))
                     }
                 };
                 let count = events.len() as i64;
                 for event in events {
-                    self.call_closure(callback.clone(), vec![Value::Str(event)])?;
+                    self.call_closure(callback.clone(), vec![Value::Str(Rc::new(event))])?;
                 }
                 ok!(Value::Ok(Box::new(Value::Int(count))))
             }
@@ -1330,12 +1330,12 @@ impl<'p> Interp<'p> {
                     match crate::host::with_host(|h| h.http_sse_post(&url, &headers, &body)) {
                         Ok(v) => v,
                         Err(e) => {
-                            ok!(Value::Err(Box::new(Value::Str(e))))
+                            ok!(Value::Err(Box::new(Value::Str(Rc::new(e)))))
                         }
                     };
                 let count = events.len() as i64;
                 for event in events {
-                    self.call_closure(callback.clone(), vec![Value::Str(event)])?;
+                    self.call_closure(callback.clone(), vec![Value::Str(Rc::new(event))])?;
                 }
                 ok!(Value::Ok(Box::new(Value::Int(count))))
             }
@@ -1398,7 +1398,7 @@ impl<'p> Interp<'p> {
                         rendered.push(ch);
                     }
                 }
-                ok!(Value::Str(rendered));
+                ok!(Value::Str(Rc::new(rendered)));
             }
 
             // ── Conversion / formatting ─────────────────────────────────────────
@@ -1409,12 +1409,12 @@ impl<'p> Interp<'p> {
                 // render identically to to_str / to_str_f64 / to_str_bool
                 // respectively (display() shares fmt_g + "true"/"false").
                 // R19 Slice B: SizedInt also renders via display().
-                ok!(Value::Str(match &args[0] {
+                ok!(match &args[0] {
                     Value::Int(_)
                     | Value::Float(_)
                     | Value::Bool(_)
                     | Value::SizedInt { .. }
-                    | Value::Decimal(_) => display(&args[0]),
+                    | Value::Decimal(_) => Value::Str(Rc::new(display(&args[0]))),
                     // A `str` is ALREADY a string — return it unchanged.
                     //
                     // Measured on the tasks_hard set: `to_str(s)` where `s` is a
@@ -1424,27 +1424,27 @@ impl<'p> Interp<'p> {
                     // identity call succeeding is what a reader expects. Refusing
                     // it fails a program for a reason that is not a bug, which is
                     // the opposite of what a diagnostic should do.
-                    Value::Str(existing) => existing.clone(),
+                    Value::Str(_) => args[0].clone(),
                     other =>
                         return panic(format!(
                             "to_str: expected a scalar (i64/f64/bool/Decimal) or a str, got {}",
                             other.type_name()
                         )),
-                }));
+                });
             }
             "to_str_f64" => {
                 want(1)?;
-                ok!(Value::Str(fmt_g(as_float(&args[0])?)));
+                ok!(Value::Str(Rc::new(fmt_g(as_float(&args[0])?))));
             }
             "to_str_bool" => {
                 want(1)?;
                 ok!(Value::Str(
-                    if as_bool(&args[0])? { "true" } else { "false" }.to_string()
+                    Rc::new(if as_bool(&args[0])? { "true" } else { "false" }.to_string())
                 ));
             }
             "i64_to_str" => {
                 want(1)?;
-                ok!(Value::Str(as_int(&args[0])?.to_string()));
+                ok!(Value::Str(Rc::new(as_int(&args[0])?.to_string())));
             }
             // ── R21 — Decimal builtins ────────────────────────────────────────
             "decimal_from_str" => {
@@ -1452,12 +1452,12 @@ impl<'p> Interp<'p> {
                 let s = as_str(&args[0])?;
                 ok!(match crate::decimal::parse_decimal(s) {
                     Ok(m) => Value::Ok(Box::new(Value::Decimal(m))),
-                    Err(e) => Value::Err(Box::new(Value::Str(e))),
+                    Err(e) => Value::Err(Box::new(Value::Str(Rc::new(e)))),
                 });
             }
             "decimal_to_str" => {
                 want(1)?;
-                ok!(Value::Str(crate::decimal::format_decimal(as_decimal(&args[0])?)));
+                ok!(Value::Str(Rc::new(crate::decimal::format_decimal(as_decimal(&args[0])?))));
             }
             "decimal_round" => {
                 want(3)?;
@@ -1506,7 +1506,7 @@ impl<'p> Interp<'p> {
                 want(1)?;
                 // Interpolation is lowered at parse time; `format` is the identity
                 // on an already-interpolated string.
-                ok!(Value::Str(as_str(&args[0])?.to_string()));
+                ok!(Value::Str(Rc::new(as_str(&args[0])?.to_string())));
             }
             "parse_int" => {
                 want(1)?;
@@ -1527,9 +1527,9 @@ impl<'p> Interp<'p> {
                         } else {
                             ""
                         };
-                        Value::Err(Box::new(Value::Str(format!(
+                        Value::Err(Box::new(Value::Str(Rc::new(format!(
                             "could not parse `{s}` as a base-10 integer{hint}"
-                        ))))
+                        )))))
                     }
                 });
             }
@@ -1542,9 +1542,9 @@ impl<'p> Interp<'p> {
                 let s = as_str(&args[0])?;
                 let base = as_int(&args[1])?;
                 if !(2..=36).contains(&base) {
-                    ok!(Value::Err(Box::new(Value::Str(format!(
+                    ok!(Value::Err(Box::new(Value::Str(Rc::new(format!(
                         "parse_int_radix: base must be 2..=36, got {base}"
-                    )))));
+                    ))))));
                 }
                 let t = s.trim();
                 // Accept and strip a radix prefix that matches `base`
@@ -1563,9 +1563,9 @@ impl<'p> Interp<'p> {
                 let normalized = format!("{sign}{digits}");
                 ok!(match i64::from_str_radix(&normalized, base as u32) {
                     Ok(n) => Value::Ok(Box::new(Value::Int(n))),
-                    Err(_) => Value::Err(Box::new(Value::Str(format!(
+                    Err(_) => Value::Err(Box::new(Value::Str(Rc::new(format!(
                         "could not parse `{s}` as a base-{base} integer"
-                    )))),
+                    ))))),
                 });
             }
             "parse_float" => {
@@ -1573,9 +1573,9 @@ impl<'p> Interp<'p> {
                 let s = as_str(&args[0])?;
                 ok!(match s.trim().parse::<f64>() {
                     Ok(f) => Value::Ok(Box::new(Value::Float(f))),
-                    Err(_) => Value::Err(Box::new(Value::Str(format!(
+                    Err(_) => Value::Err(Box::new(Value::Str(Rc::new(format!(
                         "could not parse `{s}` as a float"
-                    )))),
+                    ))))),
                 });
             }
             "parse_bool" => {
@@ -1584,9 +1584,9 @@ impl<'p> Interp<'p> {
                 ok!(match s.trim() {
                     "true" => Value::Ok(Box::new(Value::Bool(true))),
                     "false" => Value::Ok(Box::new(Value::Bool(false))),
-                    _ => Value::Err(Box::new(Value::Str(format!(
+                    _ => Value::Err(Box::new(Value::Str(Rc::new(format!(
                         "could not parse `{s}` as a bool (expected `true` or `false`)"
-                    )))),
+                    ))))),
                 });
             }
             // Parse-with-default variants that fold the Result-match
@@ -1634,7 +1634,7 @@ impl<'p> Interp<'p> {
                 want(1)?;
                 let s = as_str(&args[0])?;
                 let out: String = s.chars().filter(|c| c.is_ascii_digit()).collect();
-                ok!(Value::Str(out));
+                ok!(Value::Str(Rc::new(out)));
             }
             "len" => {
                 want(1)?;
@@ -2343,9 +2343,9 @@ impl<'p> Interp<'p> {
                 let s = as_str(&args[0])?;
                 let sep = as_str(&args[1])?;
                 let parts: Vec<Value> = if sep.is_empty() {
-                    vec![Value::Str(s.to_string())]
+                    vec![Value::Str(Rc::new(s.to_string()))]
                 } else {
-                    s.split(sep).map(|p| Value::Str(p.to_string())).collect()
+                    s.split(sep).map(|p| Value::Str(Rc::new(p.to_string()))).collect()
                 };
                 ok!(Value::Array(parts.into()));
             }
@@ -2366,7 +2366,7 @@ impl<'p> Interp<'p> {
                 let mut parts = Vec::with_capacity(xs.len());
                 for v in xs.iter() {
                     match v {
-                        Value::Str(s) => parts.push(s.clone()),
+                        Value::Str(s) => parts.push(s.as_str()),
                         other => {
                             return panic(format!(
                                 "str_join: element must be str, got {}",
@@ -2375,7 +2375,7 @@ impl<'p> Interp<'p> {
                         }
                     }
                 }
-                ok!(Value::Str(parts.join(&sep)));
+                ok!(Value::Str(Rc::new(parts.join(&sep))));
             }
 
             // Pair two arrays element-wise into a `[(a, b)]` slice; truncates
@@ -2952,22 +2952,22 @@ impl<'p> Interp<'p> {
                 let s = as_str(&args[0])?;
                 let width = as_int(&args[1])?.max(0) as usize;
                 let fill = as_str(&args[2])?.chars().next().unwrap_or(' ');
-                ok!(Value::Str(if s.len() >= width {
+                ok!(Value::Str(Rc::new(if s.len() >= width {
                     s.to_string()
                 } else {
                     format!("{}{}", fill.to_string().repeat(width - s.len()), s)
-                }));
+                })));
             }
             "str_pad_end" => {
                 want(3)?;
                 let s = as_str(&args[0])?;
                 let width = as_int(&args[1])?.max(0) as usize;
                 let fill = as_str(&args[2])?.chars().next().unwrap_or(' ');
-                ok!(Value::Str(if s.len() >= width {
+                ok!(Value::Str(Rc::new(if s.len() >= width {
                     s.to_string()
                 } else {
                     format!("{}{}", s, fill.to_string().repeat(width - s.len()))
-                }));
+                })));
             }
             "i64_to_str_radix" => {
                 want(2)?;
@@ -2978,7 +2978,7 @@ impl<'p> Interp<'p> {
                         "i64_to_str_radix: radix must be 2..=36, got {base}"
                     ));
                 }
-                ok!(Value::Str(i64_to_radix(n, base as u32)));
+                ok!(Value::Str(Rc::new(i64_to_radix(n, base as u32))));
             }
             "uncertain_new_f64" => {
                 want(2)?;
@@ -3025,11 +3025,11 @@ impl<'p> Interp<'p> {
             }
             "str_concat" | "axon_concat" => {
                 want(2)?;
-                ok!(Value::Str(format!(
+                ok!(Value::Str(Rc::new(format!(
                     "{}{}",
                     as_str(&args[0])?,
                     as_str(&args[1])?
-                )));
+                ))));
             }
             "str_eq" => {
                 want(2)?;
@@ -3063,7 +3063,7 @@ impl<'p> Interp<'p> {
             }
             "str_to_upper" => {
                 want(1)?;
-                ok!(Value::Str(as_str(&args[0])?.to_uppercase()));
+                ok!(Value::Str(Rc::new(as_str(&args[0])?.to_uppercase())));
             }
             // R15 resume runtime (v0): suspend, yield `req` to the host, resume
             // with the reply. The worker thread blocks on the reply channel
@@ -3075,7 +3075,7 @@ impl<'p> Interp<'p> {
                     // EOF (`Ok(None)`) collapses to "" for the simple str form. A
                     // non-str reply (a Value-host returning structured data to the str
                     // form) collapses to its display string — the str form's contract.
-                    Ok(reply) => ok!(Value::Str(send_reply_to_string(reply))),
+                    Ok(reply) => ok!(Value::Str(Rc::new(send_reply_to_string(reply)))),
                     Err(()) => Err(Flow::Panic(
                         "host_await: called outside a suspendable run (no host driver)".into(),
                     )),
@@ -3088,7 +3088,7 @@ impl<'p> Interp<'p> {
                 let req = crate::interp::SendValue::Str(as_str(&args[0])?.to_string());
                 match crate::interp::host_await_yield(req) {
                     Ok(Some(reply)) => ok!(Value::Some(Box::new(Value::Str(
-                        send_reply_to_string(Some(reply))
+                        Rc::new(send_reply_to_string(Some(reply)))
                     )))),
                     Ok(None) => ok!(Value::None),
                     Err(()) => Err(Flow::Panic(
@@ -3139,33 +3139,33 @@ impl<'p> Interp<'p> {
             }
             "str_to_lower" => {
                 want(1)?;
-                ok!(Value::Str(as_str(&args[0])?.to_lowercase()));
+                ok!(Value::Str(Rc::new(as_str(&args[0])?.to_lowercase())));
             }
             "str_trim" => {
                 want(1)?;
-                ok!(Value::Str(as_str(&args[0])?.trim().to_string()));
+                ok!(Value::Str(Rc::new(as_str(&args[0])?.trim().to_string())));
             }
             "str_trim_start" => {
                 want(1)?;
-                ok!(Value::Str(as_str(&args[0])?.trim_start().to_string()));
+                ok!(Value::Str(Rc::new(as_str(&args[0])?.trim_start().to_string())));
             }
             "str_trim_end" => {
                 want(1)?;
-                ok!(Value::Str(as_str(&args[0])?.trim_end().to_string()));
+                ok!(Value::Str(Rc::new(as_str(&args[0])?.trim_end().to_string())));
             }
             "str_reverse" => {
                 want(1)?;
-                ok!(Value::Str(as_str(&args[0])?.chars().rev().collect()));
+                ok!(Value::Str(Rc::new(as_str(&args[0])?.chars().rev().collect::<String>())));
             }
             "str_repeat" => {
                 want(2)?;
                 let n = as_int(&args[1])?.max(0) as usize;
-                ok!(Value::Str(as_str(&args[0])?.repeat(n)));
+                ok!(Value::Str(Rc::new(as_str(&args[0])?.repeat(n))));
             }
             "str_replace" => {
                 want(3)?;
                 ok!(Value::Str(
-                    as_str(&args[0])?.replace(as_str(&args[1])?, as_str(&args[2])?)
+                    Rc::new(as_str(&args[0])?.replace(as_str(&args[1])?, as_str(&args[2])?))
                 ));
             }
             "str_index_of" => {
@@ -3199,7 +3199,7 @@ impl<'p> Interp<'p> {
                          (slice on character boundaries, or use str_char_slice)"
                     ));
                 }
-                ok!(Value::Str(s[start..end].to_string()));
+                ok!(Value::Str(Rc::new(s[start..end].to_string())));
             }
             "char_at" => {
                 want(2)?;
@@ -3221,7 +3221,7 @@ impl<'p> Interp<'p> {
                 want(1)?;
                 let s = as_str(&args[0])?;
                 ok!(Value::Array(
-                    s.chars().map(|c| Value::Str(c.to_string())).collect::<Vec<_>>().into()
+                    s.chars().map(|c| Value::Str(Rc::new(c.to_string()))).collect::<Vec<_>>().into()
                 ));
             }
             "str_len_chars" => {
@@ -3233,10 +3233,10 @@ impl<'p> Interp<'p> {
                 let s = as_str(&args[0])?;
                 let i = as_int(&args[1])?;
                 if i < 0 {
-                    ok!(Value::Str(String::new()));
+                    ok!(Value::Str(Rc::new(String::new())));
                 }
                 ok!(Value::Str(
-                    s.chars().nth(i as usize).map(|c| c.to_string()).unwrap_or_default()
+                    Rc::new(s.chars().nth(i as usize).map(|c| c.to_string()).unwrap_or_default())
                 ));
             }
             "str_char_slice" => {
@@ -3248,7 +3248,7 @@ impl<'p> Interp<'p> {
                 let hi = hi.max(lo);
                 // Character-indexed, so this CANNOT split a character and never
                 // raises E2200 — the whole reason it exists beside `str_slice`.
-                ok!(Value::Str(s.chars().skip(lo).take(hi - lo).collect::<String>()));
+                ok!(Value::Str(Rc::new(s.chars().skip(lo).take(hi - lo).collect::<String>())));
             }
             "char_code" => {
                 want(1)?;
@@ -3257,12 +3257,12 @@ impl<'p> Interp<'p> {
                 match (it.next(), it.next()) {
                     (Some(c), None) => ok!(Value::Ok(Box::new(Value::Int(c as i64)))),
                     (None, _) => ok!(Value::Err(Box::new(Value::Str(
-                        "char_code: empty string has no code point".to_string()
+                        Rc::new("char_code: empty string has no code point".to_string())
                     )))),
-                    (Some(_), Some(_)) => ok!(Value::Err(Box::new(Value::Str(format!(
+                    (Some(_), Some(_)) => ok!(Value::Err(Box::new(Value::Str(Rc::new(format!(
                         "char_code: expected exactly one character, got {}",
                         s.chars().count()
-                    ))))),
+                    )))))),
                 }
             }
             "char_is_digit" | "char_is_alpha" | "char_is_space" => {
@@ -3291,7 +3291,7 @@ impl<'p> Interp<'p> {
                 want(1)?;
                 let n = as_int(&args[0])?;
                 match u32::try_from(n).ok().and_then(char::from_u32) {
-                    Some(c) => ok!(Value::Str(c.to_string())),
+                    Some(c) => ok!(Value::Str(Rc::new(c.to_string()))),
                     None => panic(format!("chr: {n} is not a valid Unicode code point")),
                 }
             }
@@ -3301,8 +3301,8 @@ impl<'p> Interp<'p> {
                 want(1)?;
                 let s = as_str(&args[0])?.to_string();
                 match serde_json::from_str::<serde_json::Value>(&s) {
-                    Ok(_) => ok!(Value::Ok(Box::new(Value::Str(s)))),
-                    Err(e) => ok!(Value::Err(Box::new(Value::Str(e.to_string())))),
+                    Ok(_) => ok!(Value::Ok(Box::new(Value::Str(Rc::new(s))))),
+                    Err(e) => ok!(Value::Err(Box::new(Value::Str(Rc::new(e.to_string()))))),
                 }
             }
             "json_stringify" => {
@@ -3324,7 +3324,7 @@ impl<'p> Interp<'p> {
                     }
                 }
                 out.push('"');
-                ok!(Value::Str(out))
+                ok!(Value::Str(Rc::new(out)))
             }
             "json_get_str" => {
                 want(2)?;
@@ -3333,24 +3333,24 @@ impl<'p> Interp<'p> {
                 match serde_json::from_str::<serde_json::Value>(json) {
                     Ok(serde_json::Value::Object(map)) => match map.get(key) {
                         Some(serde_json::Value::String(v)) => {
-                            ok!(Value::Ok(Box::new(Value::Str(v.clone()))))
+                            ok!(Value::Ok(Box::new(Value::Str(Rc::new(v.clone())))))
                         }
-                        Some(other) => ok!(Value::Err(Box::new(Value::Str(format!(
+                        Some(other) => ok!(Value::Err(Box::new(Value::Str(Rc::new(format!(
                             "key {key:?} is not a string (found {})",
                             if other.is_null() {
                                 "null"
                             } else {
                                 "other type"
                             }
-                        ))))),
-                        None => ok!(Value::Err(Box::new(Value::Str(format!(
+                        )))))),
+                        None => ok!(Value::Err(Box::new(Value::Str(Rc::new(format!(
                             "key {key:?} not found"
-                        ))))),
+                        )))))),
                     },
-                    Ok(_) => ok!(Value::Err(Box::new(Value::Str(
-                        "json_get_str: input is not a JSON object".into()
-                    )))),
-                    Err(e) => ok!(Value::Err(Box::new(Value::Str(e.to_string())))),
+                    Ok(_) => ok!(Value::Err(Box::new(Value::Str(Rc::new(
+                        "json_get_str: input is not a JSON object".to_string()
+                    ))))),
+                    Err(e) => ok!(Value::Err(Box::new(Value::Str(Rc::new(e.to_string()))))),
                 }
             }
             "json_get_i64" => {
@@ -3375,24 +3375,24 @@ impl<'p> Interp<'p> {
                                 let out_of_range = n.as_f64().is_some_and(|f| {
                                     f.fract() == 0.0 && f.abs() >= 9_223_372_036_854_775_808.0
                                 });
-                                ok!(Value::Err(Box::new(Value::Str(if out_of_range {
+                                ok!(Value::Err(Box::new(Value::Str(Rc::new(if out_of_range {
                                     format!("key {key:?} is an integer outside the i64 range")
                                 } else {
                                     format!("key {key:?} is a number but not an integer")
-                                }))))
+                                })))))
                             }
                         },
-                        Some(_) => ok!(Value::Err(Box::new(Value::Str(format!(
+                        Some(_) => ok!(Value::Err(Box::new(Value::Str(Rc::new(format!(
                             "key {key:?} is not a number"
-                        ))))),
-                        None => ok!(Value::Err(Box::new(Value::Str(format!(
+                        )))))),
+                        None => ok!(Value::Err(Box::new(Value::Str(Rc::new(format!(
                             "key {key:?} not found"
-                        ))))),
+                        )))))),
                     },
-                    Ok(_) => ok!(Value::Err(Box::new(Value::Str(
-                        "json_get_i64: input is not a JSON object".into()
-                    )))),
-                    Err(e) => ok!(Value::Err(Box::new(Value::Str(e.to_string())))),
+                    Ok(_) => ok!(Value::Err(Box::new(Value::Str(Rc::new(
+                        "json_get_i64: input is not a JSON object".to_string()
+                    ))))),
+                    Err(e) => ok!(Value::Err(Box::new(Value::Str(Rc::new(e.to_string()))))),
                 }
             }
             // ── R42 Slice 3.1: WRITE a JSON document ─────────────────────────
@@ -3400,18 +3400,18 @@ impl<'p> Interp<'p> {
                 want(1)?;
                 let pairs = match &args[0] {
                     Value::Array(items) => items.clone(),
-                    _ => ok!(Value::Str("{}".to_string())),
+                    _ => ok!(Value::Str(Rc::new("{}".to_string()))),
                 };
                 let mut parts: Vec<String> = Vec::with_capacity(pairs.len());
                 for p in pairs.iter() {
                     if let Value::Tuple(kv) = p {
                         if kv.len() == 2 {
                             let k = match &kv[0] {
-                                Value::Str(k) => k.clone(),
+                                Value::Str(k) => String::clone(k),
                                 other => value_type_tag(other).to_string(),
                             };
                             let v = match &kv[1] {
-                                Value::Str(v) => v.clone(),
+                                Value::Str(v) => String::clone(v),
                                 other => value_type_tag(other).to_string(),
                             };
                             // The KEY is escaped (serde_json does it correctly,
@@ -3423,14 +3423,14 @@ impl<'p> Interp<'p> {
                         }
                     }
                 }
-                ok!(Value::Str(format!("{{{}}}", parts.join(","))));
+                ok!(Value::Str(Rc::new(format!("{{{}}}", parts.join(",")))));
             }
             "dict_to_json" => {
                 want(1)?;
                 let d = match &args[0] {
                     Value::Dict(d) => d.clone(),
                     _ => ok!(Value::Err(Box::new(Value::Str(
-                        "dict_to_json: not a dict".to_string()
+                        Rc::new("dict_to_json: not a dict".to_string())
                     )))),
                 };
                 let map = d.borrow();
@@ -3444,25 +3444,25 @@ impl<'p> Interp<'p> {
                         Value::Float(f) if f.is_finite() => f.to_string(),
                         Value::Float(_) => "null".to_string(),
                         Value::Bool(b) => b.to_string(),
-                        Value::Str(sv) => serde_json::Value::String(sv.clone()).to_string(),
-                        other => ok!(Value::Err(Box::new(Value::Str(format!(
+                        Value::Str(sv) => serde_json::Value::String(String::clone(sv)).to_string(),
+                        other => ok!(Value::Err(Box::new(Value::Str(Rc::new(format!(
                             "dict_to_json: value at key {k:?} has no JSON form ({})",
                             value_type_tag(other)
-                        ))))),
+                        )))))),
                     };
                     let ke = serde_json::Value::String(k.clone()).to_string();
                     parts.push(format!("{ke}:{encoded}"));
                 }
-                ok!(Value::Ok(Box::new(Value::Str(format!(
+                ok!(Value::Ok(Box::new(Value::Str(Rc::new(format!(
                     "{{{}}}",
                     parts.join(",")
-                )))));
+                ))))));
             }
             "json_arr_from_i64" | "json_arr_from_f64" | "json_arr_from_str" => {
                 want(1)?;
                 let items = match &args[0] {
                     Value::Array(items) => items.clone(),
-                    _ => ok!(Value::Str("[]".to_string())),
+                    _ => ok!(Value::Str(Rc::new("[]".to_string()))),
                 };
                 let mut parts: Vec<String> = Vec::with_capacity(items.len());
                 for it in items.iter() {
@@ -3474,13 +3474,13 @@ impl<'p> Interp<'p> {
                         Value::Float(f) if f.is_finite() => f.to_string(),
                         Value::Float(_) => "null".to_string(),
                         Value::Bool(b) => b.to_string(),
-                        Value::Str(sv) => serde_json::Value::String(sv.clone()).to_string(),
+                        Value::Str(sv) => serde_json::Value::String(String::clone(sv)).to_string(),
                         // A tag, never a Debug rendering: see `value_type_tag`.
                         other => serde_json::Value::String(value_type_tag(other).to_string())
                             .to_string(),
                     });
                 }
-                ok!(Value::Str(format!("[{}]", parts.join(","))));
+                ok!(Value::Str(Rc::new(format!("[{}]", parts.join(",")))));
             }
 
             // ── R42 Slice 3: reach INTO a JSON document ──────────────────────
@@ -3495,13 +3495,13 @@ impl<'p> Interp<'p> {
                 let src = as_str(&args[0])?.to_string();
                 let root = match json_root(&src, "json_len") {
                     Ok(v) => v,
-                    Err(e) => ok!(Value::Err(Box::new(Value::Str(e)))),
+                    Err(e) => ok!(Value::Err(Box::new(Value::Str(Rc::new(e))))),
                 };
                 match &root {
                     serde_json::Value::Array(a) => ok!(Value::Ok(Box::new(Value::Int(a.len() as i64)))),
                     serde_json::Value::Object(m) => ok!(Value::Ok(Box::new(Value::Int(m.len() as i64)))),
                     _ => ok!(Value::Err(Box::new(Value::Str(
-                        "json_len: E2202 not an array or object".to_string()
+                        Rc::new("json_len: E2202 not an array or object".to_string())
                     )))),
                 }
             }
@@ -3511,20 +3511,20 @@ impl<'p> Interp<'p> {
                 let i = as_int(&args[1])?;
                 let root = match json_root(&src, "json_at") {
                     Ok(v) => v,
-                    Err(e) => ok!(Value::Err(Box::new(Value::Str(e)))),
+                    Err(e) => ok!(Value::Err(Box::new(Value::Str(Rc::new(e))))),
                 };
                 match &root {
                     serde_json::Value::Array(a) => {
                         if i < 0 || i as usize >= a.len() {
-                            ok!(Value::Err(Box::new(Value::Str(format!(
+                            ok!(Value::Err(Box::new(Value::Str(Rc::new(format!(
                                 "json_at: index {i} out of bounds (len {})",
                                 a.len()
-                            )))))
+                            ))))))
                         }
-                        ok!(Value::Ok(Box::new(Value::Str(a[i as usize].to_string()))))
+                        ok!(Value::Ok(Box::new(Value::Str(Rc::new(a[i as usize].to_string())))))
                     }
                     _ => ok!(Value::Err(Box::new(Value::Str(
-                        "json_at: E2202 not an array".to_string()
+                        Rc::new("json_at: E2202 not an array".to_string())
                     )))),
                 }
             }
@@ -3533,14 +3533,14 @@ impl<'p> Interp<'p> {
                 let src = as_str(&args[0])?.to_string();
                 let root = match json_root(&src, "json_keys") {
                     Ok(v) => v,
-                    Err(e) => ok!(Value::Err(Box::new(Value::Str(e)))),
+                    Err(e) => ok!(Value::Err(Box::new(Value::Str(Rc::new(e))))),
                 };
                 match &root {
                     serde_json::Value::Object(m) => ok!(Value::Ok(Box::new(Value::Array(
-                        m.keys().map(|k| Value::Str(k.clone())).collect::<Vec<_>>().into()
+                        m.keys().map(|k| Value::Str(Rc::new(k.clone()))).collect::<Vec<_>>().into()
                     )))),
                     _ => ok!(Value::Err(Box::new(Value::Str(
-                        "json_keys: E2202 not an object".to_string()
+                        Rc::new("json_keys: E2202 not an object".to_string())
                     )))),
                 }
             }
@@ -3550,7 +3550,7 @@ impl<'p> Interp<'p> {
                 let sel = as_str(&args[1])?.to_string();
                 let root = match json_root(&src, name) {
                     Ok(v) => v,
-                    Err(e) => ok!(Value::Err(Box::new(Value::Str(e)))),
+                    Err(e) => ok!(Value::Err(Box::new(Value::Str(Rc::new(e))))),
                 };
                 // `json_get_json` takes a single top-level KEY, so a key
                 // containing a dot must not be split; `json_path_json` takes a
@@ -3566,8 +3566,8 @@ impl<'p> Interp<'p> {
                     json_walk(&root, &sel, "json_path_json")
                 };
                 match found {
-                    Ok(v) => ok!(Value::Ok(Box::new(Value::Str(v.to_string())))),
-                    Err(e) => ok!(Value::Err(Box::new(Value::Str(e)))),
+                    Ok(v) => ok!(Value::Ok(Box::new(Value::Str(Rc::new(v.to_string()))))),
+                    Err(e) => ok!(Value::Err(Box::new(Value::Str(Rc::new(e))))),
                 }
             }
             "json_path_i64" | "json_path_f64" => {
@@ -3576,11 +3576,11 @@ impl<'p> Interp<'p> {
                 let path = as_str(&args[1])?.to_string();
                 let root = match json_root(&src, name) {
                     Ok(v) => v,
-                    Err(e) => ok!(Value::Err(Box::new(Value::Str(e)))),
+                    Err(e) => ok!(Value::Err(Box::new(Value::Str(Rc::new(e))))),
                 };
                 let leaf = match json_walk(&root, &path, name) {
                     Ok(v) => v,
-                    Err(e) => ok!(Value::Err(Box::new(Value::Str(e)))),
+                    Err(e) => ok!(Value::Err(Box::new(Value::Str(Rc::new(e))))),
                 };
                 if name == "json_path_i64" {
                     match leaf.as_i64() {
@@ -3606,9 +3606,9 @@ impl<'p> Interp<'p> {
                                 Some(_) => "is a number but not an integer",
                                 None => "is not a number",
                             };
-                            ok!(Value::Err(Box::new(Value::Str(format!(
+                            ok!(Value::Err(Box::new(Value::Str(Rc::new(format!(
                                 "json_path_i64: E2202 leaf at {path:?} {why}"
-                            )))))
+                            ))))))
                         }
                     }
                 } else {
@@ -3616,9 +3616,9 @@ impl<'p> Interp<'p> {
                     // widens rather than erroring.
                     match leaf.as_f64() {
                         Some(f) => ok!(Value::Ok(Box::new(Value::Float(f)))),
-                        None => ok!(Value::Err(Box::new(Value::Str(format!(
+                        None => ok!(Value::Err(Box::new(Value::Str(Rc::new(format!(
                             "json_path_f64: E2202 leaf at {path:?} is not a number"
-                        ))))),
+                        )))))),
                     }
                 }
             }
@@ -3627,13 +3627,13 @@ impl<'p> Interp<'p> {
                 let src = as_str(&args[0])?.to_string();
                 let root = match json_root(&src, name) {
                     Ok(v) => v,
-                    Err(e) => ok!(Value::Err(Box::new(Value::Str(e)))),
+                    Err(e) => ok!(Value::Err(Box::new(Value::Str(Rc::new(e))))),
                 };
                 let arr = match &root {
                     serde_json::Value::Array(a) => a,
-                    _ => ok!(Value::Err(Box::new(Value::Str(format!(
+                    _ => ok!(Value::Err(Box::new(Value::Str(Rc::new(format!(
                         "{name}: E2202 not an array"
-                    ))))),
+                    )))))),
                 };
                 // Parses the document ONCE — the whole point of these versus
                 // `json_at` in a loop, which re-parses per element (O(n^2)).
@@ -3642,16 +3642,16 @@ impl<'p> Interp<'p> {
                     let v = match name {
                         "json_arr_i64" => el.as_i64().map(Value::Int),
                         "json_arr_f64" => el.as_f64().map(Value::Float),
-                        _ => el.as_str().map(|s| Value::Str(s.to_string())),
+                        _ => el.as_str().map(|s| Value::Str(Rc::new(s.to_string()))),
                     };
                     match v {
                         Some(v) => out.push(v),
                         // Fail the whole call rather than skipping or defaulting
                         // the bad element: a silently shorter array is the class
                         // of wrong answer R42 exists to remove.
-                        None => ok!(Value::Err(Box::new(Value::Str(format!(
+                        None => ok!(Value::Err(Box::new(Value::Str(Rc::new(format!(
                             "{name}: E2202 element {i} has the wrong type"
-                        ))))),
+                        )))))),
                     }
                 }
                 ok!(Value::Ok(Box::new(Value::Array(out.into()))));
@@ -3663,17 +3663,17 @@ impl<'p> Interp<'p> {
                 let path = as_str(&args[1])?.to_string();
                 let root = match serde_json::from_str::<serde_json::Value>(&json_str) {
                     Ok(v) => v,
-                    Err(e) => ok!(Value::Err(Box::new(Value::Str(e.to_string())))),
+                    Err(e) => ok!(Value::Err(Box::new(Value::Str(Rc::new(e.to_string()))))),
                 };
                 match json_walk(&root, &path, "json_path_str") {
-                    Err(e) => ok!(Value::Err(Box::new(Value::Str(e)))),
+                    Err(e) => ok!(Value::Err(Box::new(Value::Str(Rc::new(e))))),
                     Ok(serde_json::Value::String(sv)) => {
-                        ok!(Value::Ok(Box::new(Value::Str(sv.clone()))))
+                        ok!(Value::Ok(Box::new(Value::Str(Rc::new(sv.clone())))))
                     }
-                    Ok(other) => ok!(Value::Err(Box::new(Value::Str(format!(
+                    Ok(other) => ok!(Value::Err(Box::new(Value::Str(Rc::new(format!(
                         "json_path_str: leaf is not a string (found {})",
                         if other.is_null() { "null" } else { "other type" }
-                    ))))),
+                    )))))),
                 }
             }
 
@@ -3722,8 +3722,8 @@ impl<'p> Interp<'p> {
                 want(1)?;
                 let key = as_str(&args[0])?.to_string();
                 ok!(match crate::host::with_host(|h| h.env_var(&key)) {
-                    Some(v) => Value::Ok(Box::new(Value::Str(v))),
-                    None => Value::Err(Box::new(Value::Str("not set".into()))),
+                    Some(v) => Value::Ok(Box::new(Value::Str(Rc::new(v)))),
+                    None => Value::Err(Box::new(Value::Str(Rc::new("not set".to_string())))),
                 });
             }
             "now_ms" => {
@@ -3785,7 +3785,7 @@ impl<'p> Interp<'p> {
                         // on confidential hardware.
                         "SIMULATED-MEASUREMENT-no-tee-hardware".to_string()
                     });
-                ok!(Value::Str(m));
+                ok!(Value::Str(Rc::new(m)));
             }
 
             // ── ASI: numeric conversions ────────────────────────────────────
@@ -4455,7 +4455,7 @@ impl<'p> Interp<'p> {
             // has been set via principal_activate. Useful for audit queries.
             "principal_current_name" => {
                 want(0)?;
-                ok!(Value::Str(self.current_principal_name()));
+                ok!(Value::Str(Rc::new(self.current_principal_name())));
             }
 
             // ── Phase 7 (R12 Slice 2): cooperative scheduler ────────────────────
@@ -5241,7 +5241,7 @@ impl<'p> Interp<'p> {
                         ))
                     }
                 };
-                let keys: Vec<Value> = d.borrow().keys().map(|k| Value::Str(k.clone())).collect();
+                let keys: Vec<Value> = d.borrow().keys().map(|k| Value::Str(Rc::new(k.clone()))).collect();
                 ok!(Value::Array(keys.into()));
             }
             // `dict_map_values(d, f) -> Dict` — transform every value via
@@ -5399,7 +5399,7 @@ impl<'p> Interp<'p> {
                     std::collections::BTreeMap::new();
                 for (k, v) in pairs {
                     let keep =
-                        self.call_closure(pred.clone(), vec![Value::Str(k.clone()), v.clone()])?;
+                        self.call_closure(pred.clone(), vec![Value::Str(Rc::new(k.clone())), v.clone()])?;
                     match keep {
                         Value::Bool(true) => {
                             out.insert(k, v);
@@ -5433,7 +5433,7 @@ impl<'p> Interp<'p> {
                 let pairs: Vec<Value> = d
                     .borrow()
                     .iter()
-                    .map(|(k, v)| Value::Tuple(vec![Value::Str(k.clone()), v.clone()]))
+                    .map(|(k, v)| Value::Tuple(vec![Value::Str(Rc::new(k.clone())), v.clone()]))
                     .collect();
                 ok!(Value::Array(pairs.into()));
             }
@@ -5464,7 +5464,7 @@ impl<'p> Interp<'p> {
                         }
                     };
                     let k = match &pair[0] {
-                        Value::Str(s) => s.clone(),
+                        Value::Str(s) => String::clone(s),
                         other => {
                             return panic(format!(
                                 "dict_from_pairs: tuple's first element must be str, got {}",
@@ -5500,22 +5500,22 @@ impl<'p> Interp<'p> {
                     // a host crash: return `Err(msg)` so the caller can react
                     // (BUG_HUNT #20). `no exceptions — Result everywhere`.
                     if k.contains('=') || k.contains('\n') {
-                        ok!(Value::Err(Box::new(Value::Str(format!(
+                        ok!(Value::Err(Box::new(Value::Str(Rc::new(format!(
                             "dict_to_str: key '{k}' contains an unrepresentable char (= or newline)"
-                        )))));
+                        ))))));
                     }
                     let vs = display(v);
                     if vs.contains('\n') {
-                        ok!(Value::Err(Box::new(Value::Str(format!(
+                        ok!(Value::Err(Box::new(Value::Str(Rc::new(format!(
                             "dict_to_str: value for key '{k}' contains a newline (unsupported)"
-                        )))));
+                        ))))));
                     }
                     out.push_str(k);
                     out.push('=');
                     out.push_str(&vs);
                     out.push('\n');
                 }
-                ok!(Value::Ok(Box::new(Value::Str(out))));
+                ok!(Value::Ok(Box::new(Value::Str(Rc::new(out)))));
             }
             // `dict_from_str(s) -> Dict` — inverse of `dict_to_str`.
             // Splits `s` into lines, each line at the FIRST `=` into
@@ -5538,7 +5538,7 @@ impl<'p> Interp<'p> {
                         continue;
                     }
                     if let Some((k, v)) = line.split_once('=') {
-                        out.insert(k.to_string(), Value::Str(v.to_string()));
+                        out.insert(k.to_string(), Value::Str(Rc::new(v.to_string())));
                     }
                     // malformed (no '=') → skipped (lenient).
                 }
@@ -5557,12 +5557,12 @@ impl<'p> Interp<'p> {
                     }
                     match line.split_once('=') {
                         Some((k, v)) => {
-                            out.insert(k.to_string(), Value::Str(v.to_string()));
+                            out.insert(k.to_string(), Value::Str(Rc::new(v.to_string())));
                         }
                         None => {
-                            ok!(Value::Err(Box::new(Value::Str(format!(
+                            ok!(Value::Err(Box::new(Value::Str(Rc::new(format!(
                                 "dict_try_from_str: malformed line '{line}' (expected key=value)"
-                            )))));
+                            ))))));
                         }
                     }
                 }
@@ -5726,7 +5726,7 @@ impl<'p> Interp<'p> {
                     .map(|(k, v)| (k.clone(), v.clone()))
                     .collect();
                 for (k, v) in pairs {
-                    let _ = self.call_closure(f.clone(), vec![Value::Str(k), v])?;
+                    let _ = self.call_closure(f.clone(), vec![Value::Str(Rc::new(k)), v])?;
                 }
                 ok!(Value::Unit);
             }
@@ -5753,7 +5753,7 @@ impl<'p> Interp<'p> {
                 for x in xs.iter().cloned() {
                     let k = self.call_closure(key_fn.clone(), vec![x.clone()])?;
                     let key = match k {
-                        Value::Str(s) => s,
+                        Value::Str(s) => Rc::unwrap_or_clone(s),
                         other => {
                             return panic(format!(
                                 "arr_group_by: key fn must return str, got {}",
@@ -5921,7 +5921,7 @@ impl<'p> Interp<'p> {
                             &principal,
                         );
                     }
-                    ok!(Value::Ok(Box::new(Value::Str(cached))));
+                    ok!(Value::Ok(Box::new(Value::Str(Rc::new(cached)))));
                 }
                 if ai_mock_enabled() {
                     // Deterministic stub — but a fully-stamped provenance record
@@ -5945,7 +5945,7 @@ impl<'p> Interp<'p> {
                     // Record so a re-run replays this exact response (under mock the
                     // recorded tokens are the deterministic estimate).
                     ai_replay_store(&prompt, &replay_model, &stub, est_tokens);
-                    ok!(Value::Ok(Box::new(Value::Str(stub))));
+                    ok!(Value::Ok(Box::new(Value::Str(Rc::new(stub)))));
                 }
                 #[cfg(feature = "asi-runtime")]
                 {
@@ -5979,9 +5979,9 @@ impl<'p> Interp<'p> {
                                 // re-run with the same AXON_AI_REPLAY file reproduces
                                 // this exact response AND cost — the F2 replay engine.
                                 ai_replay_store(&prompt, &replay_model, &s, real_tokens);
-                                Value::Ok(Box::new(Value::Str(s)))
+                                Value::Ok(Box::new(Value::Str(Rc::new(s))))
                             }
-                            Err(e) => Value::Err(Box::new(Value::Str(e))),
+                            Err(e) => Value::Err(Box::new(Value::Str(Rc::new(e)))),
                         }
                     );
                 }
@@ -6016,7 +6016,7 @@ impl<'p> Interp<'p> {
                                 &principal,
                             );
                         }
-                        ok!(Value::Ok(Box::new(Value::Str(fallback))));
+                        ok!(Value::Ok(Box::new(Value::Str(Rc::new(fallback)))));
                     }
                     ai_policy_err(format!(
                         "[{}] `ai_complete` cannot run: no model reachable and no \
@@ -6049,7 +6049,7 @@ impl<'p> Interp<'p> {
                                 ai_replay_store(as_str(&args[0])?, name, &format!("{v}|{c}"), 0);
                                 Value::Ok(Box::new(make_uncertain(Value::Int(v), c)))
                             }
-                            Err(e) => Value::Err(Box::new(Value::Str(e))),
+                            Err(e) => Value::Err(Box::new(Value::Str(Rc::new(e)))),
                         }
                     );
                 }
@@ -6075,7 +6075,7 @@ impl<'p> Interp<'p> {
                                 ai_replay_store(as_str(&args[0])?, name, &format!("{v}|{c}"), 0);
                                 Value::Ok(Box::new(make_uncertain(Value::Float(v), c)))
                             }
-                            Err(e) => Value::Err(Box::new(Value::Str(e))),
+                            Err(e) => Value::Err(Box::new(Value::Str(Rc::new(e)))),
                         }
                     );
                 }

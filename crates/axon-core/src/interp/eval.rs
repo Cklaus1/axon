@@ -61,6 +61,33 @@ fn native_ledger_kind(effects: &[&str]) -> Option<axon_audit::EffectKind> {
     })
 }
 
+/// Whether `e` reads, assigns or rebinds the variable `name` anywhere.
+fn mentions_var(e: &Expr, name: &str) -> bool {
+    let mut hit = false;
+    crate::ast::walk_expr(e, &mut |x| {
+        hit |= match x {
+            Expr::Ident(n)
+            | Expr::Assign { name: n, .. }
+            | Expr::Let { name: n, .. }
+            | Expr::Own { name: n, .. }
+            | Expr::RefBind { name: n, .. } => n == name,
+            _ => false,
+        }
+    });
+    hit
+}
+
+/// The appending updates `assign_in_place` performs on a variable's buffer.
+#[derive(Clone, Copy)]
+enum AppendOp {
+    /// `x = arr_push(x, v)`
+    Push,
+    /// `x = arr_concat(x, ys)`
+    Concat,
+    /// `x = x + y` (str or array)
+    Add,
+}
+
 /// AX-25: the closure value of the top-level fn `name` (arity `arity`): the
 /// capture-free forwarding lambda `|#0, #1, ..| name(#0, #1, ..)`. The `#n`
 /// parameter names cannot be written in source, so they never shadow a name the
@@ -163,6 +190,9 @@ impl<'p> Interp<'p> {
             }
 
             Expr::Assign { name, value } => {
+                if self.assign_in_place(name, value, env)? {
+                    return Ok(Value::Unit);
+                }
                 let v = self.eval(value, env)?;
                 if env.assign(name, v) {
                     Ok(Value::Unit)
@@ -646,7 +676,7 @@ impl<'p> Interp<'p> {
                         }
                     }
                 }
-                Ok(Value::Str(s))
+                Ok(Value::Str(Rc::new(s)))
             }
 
             Expr::Lambda { params, body, .. } => Ok(Value::Closure {
@@ -781,8 +811,8 @@ impl<'p> Interp<'p> {
             .map(|idx| {
                 let mut v = vec![Value::Unit; idx + 1];
                 v[idx] = match args.get(idx) {
-                    Some(Expr::Literal(crate::ast::Literal::Str(sl))) => Value::Str(sl.clone()),
-                    _ => Value::Str(String::from("<dynamic>")),
+                    Some(Expr::Literal(crate::ast::Literal::Str(sl))) => Value::Str(Rc::new(sl.clone())),
+                    _ => Value::Str(Rc::new(String::from("<dynamic>"))),
                 };
                 v
             });
@@ -827,7 +857,7 @@ impl<'p> Interp<'p> {
                 Value::Int(n) => crate::native::GfxArg::Int(*n),
                 Value::SizedInt { val, .. } => crate::native::GfxArg::Int(*val),
                 Value::Float(f) => crate::native::GfxArg::Float(*f),
-                Value::Str(s) => crate::native::GfxArg::Str(s.clone()),
+                Value::Str(s) => crate::native::GfxArg::Str(String::clone(s)),
                 Value::Handle {
                     module: hm,
                     name: hn,
@@ -930,7 +960,7 @@ impl<'p> Interp<'p> {
                 Value::Int(n) => DomainArg::Int(*n),
                 Value::SizedInt { val, .. } => DomainArg::Int(*val),
                 Value::Float(f) => DomainArg::Float(*f),
-                Value::Str(s) => DomainArg::Str(s.clone()),
+                Value::Str(s) => DomainArg::Str(String::clone(s)),
                 Value::Array(items) => {
                     // Only `[i64]` is representable at the boundary.
                     let mut ints = Vec::with_capacity(items.len());
@@ -987,7 +1017,7 @@ impl<'p> Interp<'p> {
         match result {
             Ok(DomainValue::Unit) => Ok(Value::Unit),
             Ok(DomainValue::Int(n)) => Ok(Value::Int(n)),
-            Ok(DomainValue::Str(s)) => Ok(Value::Str(s)),
+            Ok(DomainValue::Str(s)) => Ok(Value::Str(Rc::new(s))),
             Ok(DomainValue::IntArray(ns)) => {
                 Ok(Value::Array(Rc::new(ns.into_iter().map(Value::Int).collect())))
             }
@@ -1075,7 +1105,7 @@ impl<'p> Interp<'p> {
             // 1. A local/captured variable holding a closure.
             if let Some(Value::Closure { .. }) = env.get(name) {
                 let c = env.get(name).unwrap().clone();
-                return self.call_closure(c, argv);
+                return self.call_local_closure(c, argv);
             }
             // 2. A builtin — skipped for a name already proven not to be one
             //    (see `resolved_callees`), which also caches step 3's lookup.
@@ -1400,6 +1430,100 @@ impl<'p> Interp<'p> {
         let l = self.eval(left, env)?;
         let r = self.eval(right, env)?;
         eval_binop_vals(op, l, r)
+    }
+
+    /// AX-31: `x = arr_push(x, v)`, `x = arr_concat(x, ys)` and `x = x + y` on a
+    /// str or array local append to `x`'s buffer instead of rebuilding it.
+    ///
+    /// Evaluated the ordinary way, the right-hand side first reads `x` — a
+    /// refcount bump — so the builtin or `+` sees a shared buffer and copies
+    /// all of it, which makes a builder loop quadratic. Here the other operand
+    /// is evaluated first and `x`'s binding is then appended to through
+    /// `Rc::make_mut`: in place when the binding is the only owner, copied
+    /// first (the old cost) when another binding, element or capture still
+    /// holds the old value — which therefore never sees the append.
+    ///
+    /// Evaluating the operand before reading `x` is unobservable: the operand
+    /// cannot mention `x` (checked syntactically), and no code it runs can
+    /// reach a local binding — closures, fns, handler arms and continuation
+    /// replays run on their own envs. `arr_push`/`arr_concat` are pure
+    /// builtins (empty effect row, no capability), so not going through
+    /// `call_builtin` skips no gate, audit row or handler. Returns `Ok(false)`,
+    /// having evaluated nothing, for any other statement shape or when `x` is
+    /// not a str/array local.
+    fn assign_in_place(&self, name: &str, value: &Expr, env: &mut Env) -> Result<bool, Flow> {
+        let (op, operand, call) = match value {
+            Expr::BinOp {
+                op: BinOp::Add,
+                left,
+                right,
+            } => match left.as_ref() {
+                Expr::Ident(x) if x == name => (AppendOp::Add, right.as_ref(), None),
+                _ => return Ok(false),
+            },
+            Expr::Call { callee, args, tier } => {
+                let Expr::Ident(f) = callee.as_ref() else {
+                    return Ok(false);
+                };
+                let op = match f.as_str() {
+                    "arr_push" => AppendOp::Push,
+                    "arr_concat" => AppendOp::Concat,
+                    _ => return Ok(false),
+                };
+                match args.as_slice() {
+                    [Expr::Ident(x), operand] if x == name => (op, operand, Some((f, tier))),
+                    _ => return Ok(false),
+                }
+            }
+            _ => return Ok(false),
+        };
+        if !matches!(env.get(name), Some(Value::Str(_) | Value::Array(_)))
+            || mentions_var(operand, name)
+        {
+            return Ok(false);
+        }
+        if let Some((f, _)) = call {
+            // `eval_call` would run a local closure of that name instead, or take
+            // the `&mut` path; the operand must not be able to change which.
+            if matches!(env.get(f), Some(Value::Closure { .. }))
+                || matches!(
+                    operand,
+                    Expr::UnaryOp {
+                        op: UnaryOp::RefMut,
+                        ..
+                    }
+                )
+                || mentions_var(operand, f)
+            {
+                return Ok(false);
+            }
+        }
+        let y = self.eval(operand, env)?;
+        if let Some((_, tier)) = call {
+            *self.current_call_tier.borrow_mut() = tier.clone();
+        }
+        let Some(slot) = env.get_mut(name) else {
+            unreachable!("the operand does not mention `{name}`, so it is still bound")
+        };
+        match (op, slot, y) {
+            (AppendOp::Push, Value::Array(xs), y) => Rc::make_mut(xs).push(y),
+            (AppendOp::Concat | AppendOp::Add, Value::Array(xs), Value::Array(ys)) => {
+                Rc::make_mut(xs).extend(ys.iter().cloned())
+            }
+            (AppendOp::Add, Value::Str(s), Value::Str(t)) => Rc::make_mut(s).push_str(&t),
+            // An operand of another type (`Uncertain`, a type error): the
+            // ordinary evaluation, on the operands already evaluated.
+            (op, slot, y) => {
+                let x = slot.clone();
+                *slot = match (op, call) {
+                    (AppendOp::Push | AppendOp::Concat, Some((f, _))) => self
+                        .call_builtin(f, &[x, y])?
+                        .expect("arr_push/arr_concat are builtins"),
+                    _ => eval_binop_vals(&BinOp::Add, x, y)?,
+                };
+            }
+        }
+        Ok(true)
     }
 
     pub(super) fn eval_int(&self, expr: &Expr, env: &mut Env) -> Result<i64, Flow> {

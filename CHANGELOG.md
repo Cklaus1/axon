@@ -11,6 +11,7 @@ Fixes for the defects compilebench recorded in its `AXON_FINDINGS.md`.
 
 **Interpreter**
 - **Arrays are shared copy-on-write buffers** (AX-06). `a[i]` is O(1) instead of a full copy of the array, and an array with only one owner is written in place. A 50M-element sieve runs in 30 s.
+- **Strings are shared too, and builder loops append in place** (AX-31). Reading a `str` variable, passing it or `len(s)` no longer copies it. `xs = arr_push(xs, v)`, `xs = arr_concat(xs, ys)` and `s = s + t` append to the variable's buffer when nothing else holds it, and a closure called by name writes its captured arrays in place. Building a 320k-char string and summing `len(t)` per char went from 1.4 s to 0.04 s; 100k `arr_push` calls from 48 s to 0.01 s.
 - **`arr_repeat` / `arr_range` build the requested length** (AX-05). They used to stop silently at 1,048,576 elements while native built the full array. A size that cannot be allocated is a runtime error.
 - **Faster calls** (AX-18, AX-27): a flat environment, remembered callee resolution, and no `getenv` or builtin effect gate on user-function calls. fib(30) went from 0.87 s to 0.43 s.
 - **`arr_sort_by` is a stable O(n log n) merge sort** in both engines (AX-07). It was an O(n²) insertion sort.

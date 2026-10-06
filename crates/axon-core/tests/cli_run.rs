@@ -32660,6 +32660,110 @@ fn interp_sieve_index_reads_and_writes_do_not_copy_the_array() {
 }
 
 #[test]
+fn interp_strings_and_append_builders_keep_value_semantics() {
+    // AX-31: strings are shared copy-on-write like arrays (AX-06), and
+    // `x = arr_push(x, v)`, `x = arr_concat(x, ys)`, `x = x + y` append to
+    // `x`'s buffer in place. Every other holder of the old value (another
+    // binding, an array element, a struct field, a closure capture, a fn
+    // result) must keep seeing it unchanged, and a closure's writes to its
+    // captures must persist across calls through every alias exactly as before.
+    let src = r#"type Box = { s: str, xs: [i64] }
+
+fn keep(s: str) -> str {
+    s
+}
+
+fn main() -> i64 {
+    let a = [1, 2]
+    let b = a
+    a = arr_push(a, 3)
+    a = arr_concat(a, [4, 5])
+    a = a + [6]
+    println(to_str(len(a)) + " " + to_str(len(b)) + " " + to_str(a[5]))
+
+    let c = [9]
+    let rows = [c]
+    let bx = Box { s: "", xs: c }
+    let peek = || len(c)
+    c = arr_push(c, 8)
+    println(to_str(len(c)) + " " + to_str(len(rows[0])) + " " + to_str(len(bx.xs)) + " " + to_str(peek()))
+
+    let s = "ab"
+    let held = [s]
+    let field = Box { s: s, xs: [] }
+    let cap = || s
+    let ret = keep(s)
+    s = s + "c"
+    s = s + s
+    println(s + " " + held[0] + " " + field.s + " " + cap() + " " + ret)
+
+    let t = "x"
+    let u = t + "y"
+    t = t + "z"
+    let v = t + "w" + "!"
+    println(t + " " + u + " " + v)
+
+    let w = [0]
+    let i = 0
+    while i < 3 {
+        w = arr_push(w, len(w))
+        i = i + 1
+    }
+    let ws = arr_push(w, 99)
+    w = arr_push(w, 7)
+    println(to_str(len(w)) + " " + to_str(w[4]) + " " + to_str(ws[4]))
+
+    let acc = [0, 0]
+    let inc = |k: i64| {
+        acc[0] = acc[0] + k
+        acc[0]
+    }
+    let x = inc(1)
+    let y = inc(2)
+    let alias = inc
+    let z = alias(3)
+    let fs = [inc]
+    let q = fs[0](4)
+    let r = inc(5)
+    println(to_str(x) + " " + to_str(y) + " " + to_str(z) + " " + to_str(q) + " " + to_str(r) + " " + to_str(acc[0]))
+
+    let log = []
+    let rec = |k: i64| {
+        log = arr_push(log, k)
+        len(log)
+    }
+    let twice = |k: i64| rec(k) * 10 + rec(k + 1)
+    println(to_str(rec(1)) + " " + to_str(twice(5)) + " " + to_str(rec(9)) + " " + to_str(len(log)))
+
+    let txt = ""
+    let add = |p: str| {
+        txt = txt + p
+        len(txt)
+    }
+    add("ab")
+    println(to_str(add("cd")) + " [" + txt + "]")
+    0
+}
+"#;
+    assert_eq!(
+        interp_stdout("ax31_values", src),
+        "6 2 6\n2 1 1 1\nabcabc ab ab ab ab\nxz xy xzw!\n5 7 99\n1 3 6 10 15 0\n1 23 4 0\n4 []"
+    );
+}
+
+#[test]
+fn interp_string_and_array_builder_loops_are_linear() {
+    // AX-31: each of these loops copied its whole string or array per
+    // iteration (a `str` read, `arr_push`, `arr_concat`, a closure writing its
+    // captured array), so at n = 200k they took minutes under `axon run`.
+    let src = "fn main() -> i64 {\n let n = 200000\n let t = \"\"\n for i in 0..n { t = t + \"x\" }\n let m = 0\n for i in 0..len(t) { m = m + len(t) }\n let xs = []\n for i in 0..n { xs = arr_push(xs, i) }\n let ys = []\n for i in 0..n { ys = arr_concat(ys, [i]) }\n let zs = arr_repeat(0, n)\n let set = |i: i64| {\n  zs[i] = i + 1\n  zs[i] + zs[i / 2]\n }\n let k = 0\n for i in 0..n { k = k + set(i) }\n println(to_str(m) + \" \" + to_str(len(xs)) + \" \" + to_str(xs[n - 1]) + \" \" + to_str(ys[n - 1]) + \" \" + to_str(k) + \" \" + to_str(zs[n - 1]))\n 0\n}\n";
+    assert_eq!(
+        interp_stdout("ax31_builders", src),
+        "40000000000 200000 199999 199999 30000200000 0"
+    );
+}
+
+#[test]
 fn native_array_literals_in_hot_loops_run_in_bounded_memory() {
     // AX-12: every array-literal evaluation used to `malloc` a buffer that was
     // never freed, so 50M iterations of a 4-element literal reached 2.3 GB RSS.

@@ -701,8 +701,13 @@ pub(super) fn eval_binop_vals(op: &BinOp, l: Value, r: Value) -> R {
         (LtEq, Value::Decimal(a), Value::Decimal(b)) => Ok(Bool(a <= b)),
         (GtEq, Value::Decimal(a), Value::Decimal(b)) => Ok(Bool(a >= b)),
 
-        // String concat
-        (Add, Str(a), Str(b)) => Ok(Str(a + &b)),
+        // String concat. Appends in place when `a` is the only reference (a
+        // temporary, as in `s + t + u`); a shared `a` is copied first, so no
+        // other binding sees the write. `s = s + t` is `Interp::assign_in_place`.
+        (Add, Str(mut a), Str(b)) => {
+            Rc::make_mut(&mut a).push_str(&b);
+            Ok(Str(a))
+        }
         // N2b: `[T] + [T]` is concatenation. Unlike the string arm above — which
         // existed all along and was only refused by the checker — this had no
         // implementation anywhere. Copy semantics, matching `arr_push`: the
@@ -893,7 +898,7 @@ pub(super) fn fields_equal(a: &HashMap<String, Value>, b: &HashMap<String, Value
 /// as its raw contents (no quotes); everything else gets a reasonable form.
 pub(super) fn display(v: &Value) -> String {
     match v {
-        Value::Str(s) => s.clone(),
+        Value::Str(s) => String::clone(s),
         Value::Int(n) => n.to_string(),
         Value::SizedInt { val, ty } => display_sized(*val, ty),
         Value::Float(f) => fmt_g(*f),

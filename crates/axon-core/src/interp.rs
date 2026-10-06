@@ -51,7 +51,14 @@ pub enum Value {
     /// Money-safe: exact arithmetic, no binary floating error.
     Decimal(i128),
     Bool(bool),
-    Str(String),
+    /// String value. Same VALUE-semantics-over-shared-storage contract as
+    /// `Array`: cloning a `Value` (env lookup, argument passing, `len(s)`) bumps
+    /// a refcount instead of copying the bytes, and the only in-place write —
+    /// `s + t` appending to an operand nobody else holds — goes through
+    /// [`Rc::make_mut`]. `Rc<String>` rather than `Rc<str>` so that append can
+    /// grow the buffer in place (amortized O(len t)) instead of reallocating
+    /// (AX-31: a plain `String` made every string read O(len)).
+    Str(Rc<String>),
     Unit,
     /// Array value. VALUE semantics, shared representation: cloning a `Value`
     /// (env lookup, argument passing, a struct field read) bumps a refcount
@@ -455,6 +462,11 @@ impl Env {
     fn base_scope(&self) -> &[(String, Value)] {
         let end = self.marks.first().copied().unwrap_or(self.vars.len());
         &self.vars[..end]
+    }
+    /// Move the base scope's bindings out (see [`Env::base_scope`]).
+    fn drain_base_scope(&mut self) -> std::vec::Drain<'_, (String, Value)> {
+        let end = self.marks.first().copied().unwrap_or(self.vars.len());
+        self.vars.drain(..end)
     }
 }
 
@@ -1240,7 +1252,7 @@ pub fn value_as_literal(v: &Value) -> std::result::Result<String, String> {
             let mut parts = Vec::with_capacity(map.len());
             for (k, v) in map.iter() {
                 // The key goes through the same escaping as any str.
-                let kl = value_as_literal(&Value::Str(k.clone()))?;
+                let kl = value_as_literal(&Value::Str(Rc::new(k.clone())))?;
                 parts.push(format!("({kl}, {})", value_as_literal(v)?));
             }
             Ok(format!("dict_from_pairs([{}])", parts.join(", ")))
@@ -1502,7 +1514,7 @@ impl SendValue {
             Value::Float(f) => SendValue::Float(*f),
             Value::Decimal(m) => SendValue::Decimal(*m),
             Value::Bool(b) => SendValue::Bool(*b),
-            Value::Str(s) => SendValue::Str(s.clone()),
+            Value::Str(s) => SendValue::Str(String::clone(s)),
             Value::Unit => SendValue::Unit,
             Value::Array(xs) => SendValue::Array(arr(xs, &path)?),
             Value::Struct { name, fields: f } => SendValue::Struct {
@@ -1593,7 +1605,7 @@ impl SendValue {
             SendValue::Float(f) => Value::Float(f),
             SendValue::Decimal(m) => Value::Decimal(m),
             SendValue::Bool(b) => Value::Bool(b),
-            SendValue::Str(s) => Value::Str(s),
+            SendValue::Str(s) => Value::Str(Rc::new(s)),
             SendValue::Unit => Value::Unit,
             SendValue::Array(xs) => Value::Array(Rc::new(
                 xs.into_iter().map(Self::into_value).collect(),
@@ -3517,6 +3529,22 @@ impl<'p> Interp<'p> {
     }
 
     fn call_closure(&self, c: Value, args: Vec<Value>) -> R {
+        self.call_closure_owned_by(c, args, 1)
+    }
+
+    /// `f(..)` where `f` names a closure in the caller's env, `c` being a clone
+    /// of that binding: the binding is the one reference to the capture cell
+    /// besides `c` that the body can never reach (see `call_closure_owned_by`).
+    fn call_local_closure(&self, c: Value, args: Vec<Value>) -> R {
+        self.call_closure_owned_by(c, args, 2)
+    }
+
+    /// Run closure `c`. `private_refs` counts the references to its capture
+    /// cell that nothing the body runs can reach: `c` itself, plus the
+    /// caller's binding for a call by local name — an `Env` is only ever
+    /// visible to the frame evaluating it, since closures, fns, handler arms
+    /// and continuation replays all run on their own (snapshot) envs.
+    fn call_closure_owned_by(&self, c: Value, args: Vec<Value>, private_refs: usize) -> R {
         let Value::Closure {
             params,
             body,
@@ -3533,11 +3561,25 @@ impl<'p> Interp<'p> {
             ));
         }
         // Base scope = captured bindings; a fresh scope holds the parameters.
-        // The base scope is a CLONE of the shared cell's contents so the body
-        // sees plain Values; assignments land in this scope and are written back
-        // below, which is what makes them survive to the next call (T40).
+        // Assignments land in the base scope and are written back below, which
+        // is what makes them survive to the next call (T40).
+        //
+        // AX-31: if the cell has no owner besides the private ones, no call the
+        // body makes can re-enter this closure, so the bindings are MOVED out of
+        // the cell for the call and moved back after it. A captured array is then
+        // uniquely owned and `xs[i] = v` writes in place. Copying them instead
+        // (the general case) made every such write copy the whole array — but
+        // that copy is required when the closure is reachable (passed as an
+        // argument, stored in an array, dict or capture, or currently running):
+        // a re-entrant call must see the cell as it stood before this call, and
+        // this call's in-place writes would otherwise destroy that state.
+        let lend = Rc::strong_count(&captured) == private_refs;
         let mut env = Env::new();
-        env.vars.extend(captured.borrow().iter().map(|(k, v)| (k.clone(), v.clone())));
+        if lend {
+            env.vars.extend(captured.borrow_mut().drain());
+        } else {
+            env.vars.extend(captured.borrow().iter().map(|(k, v)| (k.clone(), v.clone())));
+        }
         env.push();
         for (p, a) in params.iter().zip(args) {
             env.define(p.clone(), a);
@@ -3553,9 +3595,14 @@ impl<'p> Interp<'p> {
         // either, which is why the params live in their own pushed scope above.
         {
             let mut cell = captured.borrow_mut();
-            for (k, v) in env.base_scope() {
-                if let Some(slot) = cell.get_mut(k) {
-                    *slot = v.clone();
+            if lend {
+                // The cell is empty and the base scope holds exactly its keys.
+                cell.extend(env.drain_base_scope());
+            } else {
+                for (k, v) in env.base_scope() {
+                    if let Some(slot) = cell.get_mut(k) {
+                        *slot = v.clone();
+                    }
                 }
             }
         }
@@ -3633,7 +3680,7 @@ fn lit_to_val(lit: &Literal) -> Value {
         Literal::Int(n) => Value::Int(*n),
         Literal::Float(f) => Value::Float(*f),
         Literal::Bool(b) => Value::Bool(*b),
-        Literal::Str(s) => Value::Str(s.clone()),
+        Literal::Str(s) => Value::Str(Rc::new(s.clone())),
         Literal::Decimal(m) => Value::Decimal(*m),
     }
 }
@@ -4619,7 +4666,7 @@ fn main() { }
             name: "S".to_string(),
             fields: sf,
         };
-        let v = Value::Array(Rc::new(vec![s, Value::Str("hi".to_string())]));
+        let v = Value::Array(Rc::new(vec![s, Value::Str(Rc::new("hi".to_string()))]));
         let sv = SendValue::from_value(&v).expect("Chan-free ⇒ sendable");
         let back = sv.into_value();
         // Spot-check the reconstructed shape.
@@ -5240,7 +5287,7 @@ mod literal_escape_tests {
     /// builds a JSON-ish string does this immediately.
     #[test]
     fn braces_in_a_dumped_string_are_escaped_for_re_parsing() {
-        let v = Value::Str("{\"a\": 1}".to_string());
+        let v = Value::Str(Rc::new("{\"a\": 1}".to_string()));
         let lit = value_as_literal(&v).expect("a string always has a literal form");
         assert!(
             lit.contains("{{") && lit.contains("}}"),
@@ -5259,7 +5306,7 @@ mod literal_escape_tests {
             (Value::None, "None"),
             (Value::Ok(Box::new(Value::Int(5))), "Ok(5)"),
             (
-                Value::Err(Box::new(Value::Str("bad".into()))),
+                Value::Err(Box::new(Value::Str(Rc::new("bad".to_string())))),
                 "Err(\"bad\")",
             ),
             (Value::Tuple(vec![Value::Int(1), Value::Int(2)]), "(1, 2)"),
@@ -5304,7 +5351,7 @@ mod literal_escape_tests {
             "{{already doubled}}",
             "quote\" and \\ and \ttab",
         ] {
-            let lit = value_as_literal(&Value::Str(original.to_string())).unwrap();
+            let lit = value_as_literal(&Value::Str(Rc::new(original.to_string()))).unwrap();
             let src = format!("let x = {lit}\nfn main() -> i64 {{ 0 }}\n");
             let prog = crate::parse_source(&src)
                 .unwrap_or_else(|e| panic!("dumped literal must re-parse ({original:?}): {e}"));
@@ -5314,7 +5361,7 @@ mod literal_escape_tests {
             // Value has no PartialEq; compare the rendered form, which is what
             // the session actually round-trips anyway.
             let got_s = match got {
-                Value::Str(t) => t.clone(),
+                Value::Str(t) => t.as_str(),
                 other => panic!("expected a Str, got {other:?}"),
             };
             assert_eq!(
