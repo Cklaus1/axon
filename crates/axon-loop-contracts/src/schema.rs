@@ -373,7 +373,10 @@ mod tests {
         let hex = "a".repeat(64);
         let any = json!({"type":"string","pattern":"^(cl22|acf1|sha256):[0-9a-f]{64}$"});
         for ok in ["cl22", "acf1", "sha256"] {
-            assert!(validate_against(&any, &json!(format!("{ok}:{hex}"))).is_ok(), "{ok}");
+            assert!(
+                validate_against(&any, &json!(format!("{ok}:{hex}"))).is_ok(),
+                "{ok}"
+            );
         }
         assert!(
             validate_against(&any, &json!(format!("md5:{hex}"))).is_err(),

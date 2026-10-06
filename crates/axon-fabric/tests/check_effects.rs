@@ -1557,7 +1557,11 @@ fn run_check_dir(cfg: &axon_fabric::SubmitConfig) -> PathBuf {
         .map(|e| e.path().join("check"))
         .filter(|p| p.is_dir())
         .collect();
-    assert_eq!(dirs.len(), 1, "setup: exactly one run dir has a check suite: {dirs:?}");
+    assert_eq!(
+        dirs.len(),
+        1,
+        "setup: exactly one run dir has a check suite: {dirs:?}"
+    );
     dirs.remove(0)
 }
 
@@ -1577,13 +1581,21 @@ fn make_the_suite_unreadable_after_the_run(cfg: &axon_fabric::SubmitConfig) {
     let _ = std::fs::set_permissions(&d, std::os::unix::fs::PermissionsExt::from_mode(0o755));
     let c = std::ffi::CString::new(d.join("pipe").to_str().unwrap()).unwrap();
     // SAFETY: mkfifo with a valid path.
-    assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0, "setup: mkfifo");
+    assert_eq!(
+        unsafe { libc::mkfifo(c.as_ptr(), 0o600) },
+        0,
+        "setup: mkfifo"
+    );
 }
 
 #[test]
 fn a_suite_that_changed_during_the_run_yields_no_verdict() {
     let s = with_suite(&hidden_suite_src(), "hidden");
-    let control = submit(&suite_request(&s, "op-suite-control").to_string(), &s.env.cfg(0)).unwrap();
+    let control = submit(
+        &suite_request(&s, "op-suite-control").to_string(),
+        &s.env.cfg(0),
+    )
+    .unwrap();
     assert_eq!(
         control.receipt.verification,
         ReceiptVerification::Passed,
@@ -1601,7 +1613,9 @@ fn a_suite_that_changed_during_the_run_yields_no_verdict() {
         );
     }
     assert!(
-        sub.reason.as_deref().is_some_and(|r| r.contains("changed during the run")),
+        sub.reason
+            .as_deref()
+            .is_some_and(|r| r.contains("changed during the run")),
         "{:?}",
         sub.reason
     );
@@ -1621,7 +1635,9 @@ fn a_suite_that_cannot_be_read_after_the_run_yields_no_verdict() {
         );
     }
     assert!(
-        sub.reason.as_deref().is_some_and(|r| r.contains("unreadable after the run")),
+        sub.reason
+            .as_deref()
+            .is_some_and(|r| r.contains("unreadable after the run")),
         "{:?}",
         sub.reason
     );

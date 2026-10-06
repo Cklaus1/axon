@@ -1935,7 +1935,11 @@ mod tests {
     #[test]
     fn the_inputs_snapshot_never_follows_a_symlink() {
         let t = tempfile::tempdir().unwrap();
-        let (src, outside, dst) = (t.path().join("src"), t.path().join("outside"), t.path().join("dst"));
+        let (src, outside, dst) = (
+            t.path().join("src"),
+            t.path().join("outside"),
+            t.path().join("dst"),
+        );
         for d in [&src, &outside, &dst] {
             std::fs::create_dir(d).unwrap();
         }
@@ -1991,8 +1995,14 @@ mod tests {
         std::fs::write(&victim, "precious\n").unwrap();
         let link = t.path().join("dest");
         std::os::unix::fs::symlink(&victim, &link).unwrap();
-        let got = std::fs::OpenOptions::new().write(true).create_new(true).open(&link);
-        assert!(got.is_err(), "O_EXCL no longer refuses a symlink: the exemption's fact is gone");
+        let got = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&link);
+        assert!(
+            got.is_err(),
+            "O_EXCL no longer refuses a symlink: the exemption's fact is gone"
+        );
         assert_eq!(std::fs::read_to_string(&victim).unwrap(), "precious\n");
     }
 
@@ -2008,7 +2018,8 @@ mod tests {
         snapshot_policy(dir_fd(&inputs).as_raw_fd(), &dst, euid_())
             .expect("control: a regular policy.json is snapshotted");
         std::fs::remove_file(inputs.join("policy.json")).unwrap();
-        std::os::unix::fs::symlink(t.path().join("other.json"), inputs.join("policy.json")).unwrap();
+        std::os::unix::fs::symlink(t.path().join("other.json"), inputs.join("policy.json"))
+            .unwrap();
         let got = snapshot_policy(dir_fd(&inputs).as_raw_fd(), &t.path().join("p2"), euid_());
         assert!(
             matches!(&got, Err(e) if e.contains("is a symlink: never followed")),
@@ -2021,7 +2032,11 @@ mod tests {
     #[test]
     fn an_operator_file_that_is_a_symlink_is_never_read() {
         let t = tempfile::tempdir().unwrap();
-        let a = Authority { operator_uid: euid_(), walk_base: t.path().to_path_buf(), test: true };
+        let a = Authority {
+            operator_uid: euid_(),
+            walk_base: t.path().to_path_buf(),
+            test: true,
+        };
         let d = t.path().join("d");
         std::fs::create_dir(&d).unwrap();
         std::fs::write(d.join("real"), "{}").unwrap();
@@ -2042,11 +2057,19 @@ mod tests {
         let t = tempfile::tempdir().unwrap();
         let real = t.path().join("real");
         std::fs::create_dir_all(real.join("sub")).unwrap();
-        let ok = Authority { operator_uid: euid_(), walk_base: real.clone(), test: true };
+        let ok = Authority {
+            operator_uid: euid_(),
+            walk_base: real.clone(),
+            test: true,
+        };
         walk_open(&ok, &real.join("sub")).expect("control: a real base walks");
         let link = t.path().join("linked");
         std::os::unix::fs::symlink(&real, &link).unwrap();
-        let a = Authority { operator_uid: euid_(), walk_base: link.clone(), test: true };
+        let a = Authority {
+            operator_uid: euid_(),
+            walk_base: link.clone(),
+            test: true,
+        };
         let got = walk_open(&a, &link.join("sub")).map(|_| ());
         assert!(
             got.is_err(),

@@ -1217,7 +1217,11 @@ mod role_arms {
 
     #[test]
     fn an_independent_identity_holds_no_other_loop_role() {
-        assert_eq!(other_loop_role(&config(), &who("op:admitter")), None, "control");
+        assert_eq!(
+            other_loop_role(&config(), &who("op:admitter")),
+            None,
+            "control"
+        );
     }
 
     #[test]

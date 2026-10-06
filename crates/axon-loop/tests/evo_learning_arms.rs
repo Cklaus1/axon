@@ -22,7 +22,13 @@ use common::*;
 fn excluded_with(s: &axon_loop::Store, extra: serde_json::Value, who: &str) -> Vec<String> {
     let inc = incumbent();
     let req = evo::parse_request(
-        &evo_request(&inc, 7, "cand-arms", vec![discovery_episode(&inc, "d1"), extra]).to_string(),
+        &evo_request(
+            &inc,
+            7,
+            "cand-arms",
+            vec![discovery_episode(&inc, "d1"), extra],
+        )
+        .to_string(),
     )
     .unwrap();
     let p = evo::propose(s, &req).unwrap_or_else(|e| panic!("setup ({who}): {e}"));
@@ -32,7 +38,9 @@ fn excluded_with(s: &axon_loop::Store, extra: serde_json::Value, who: &str) -> V
         "control ({who}): the eligible episode is the only evidence"
     );
     match p.hypothesis {
-        evo::Hypothesis::Proposed { excluded, .. } => excluded.into_iter().map(|e| e.reason).collect(),
+        evo::Hypothesis::Proposed { excluded, .. } => {
+            excluded.into_iter().map(|e| e.reason).collect()
+        }
         other => panic!("setup: {other:?}"),
     }
 }
@@ -51,9 +59,14 @@ fn a_mechanism_test_episode_is_excluded_as_one() {
     let d = tempfile::tempdir().unwrap();
     let s = store_with_config(d.path());
     let inc = incumbent();
-    let r = excluded_with(&s, episode_with_role(&inc, "m1", CorpusRole::MechanismTest), "mechanism");
+    let r = excluded_with(
+        &s,
+        episode_with_role(&inc, "m1", CorpusRole::MechanismTest),
+        "mechanism",
+    );
     assert!(
-        r.iter().any(|x| x.contains("mechanism_test episodes never feed learning")),
+        r.iter()
+            .any(|x| x.contains("mechanism_test episodes never feed learning")),
         "ATTACK: a mechanism_test episode was excluded under another reason, or not at all: {r:?}"
     );
 }
@@ -77,11 +90,17 @@ fn an_episode_the_proposer_verified_itself_is_excluded_even_if_it_is_a_trusted_v
     let d = tempfile::tempdir().unwrap();
     let s = store_with_config(d.path());
     let mut cfg = s.config().unwrap();
-    cfg.trusted_verifiers.push(OpaqueRef::new(PROPOSER).unwrap());
+    cfg.trusted_verifiers
+        .push(OpaqueRef::new(PROPOSER).unwrap());
     s.write_config(&cfg).unwrap();
-    let r = excluded_with(&s, trial_episode(|t| t.verifier = PROPOSER), "self-verified");
+    let r = excluded_with(
+        &s,
+        trial_episode(|t| t.verifier = PROPOSER),
+        "self-verified",
+    );
     assert!(
-        r.iter().any(|x| x.contains("verified by the proposer itself")),
+        r.iter()
+            .any(|x| x.contains("verified by the proposer itself")),
         "ATTACK: an episode the proposer verified itself fed learning (or was excluded under \
          another reason): {r:?}"
     );
@@ -91,9 +110,14 @@ fn an_episode_the_proposer_verified_itself_is_excluded_even_if_it_is_a_trusted_v
 fn an_episode_whose_verifier_is_not_trusted_is_excluded() {
     let d = tempfile::tempdir().unwrap();
     let s = store_with_config(d.path());
-    let r = excluded_with(&s, trial_episode(|t| t.verifier = "agent:stranger"), "untrusted");
+    let r = excluded_with(
+        &s,
+        trial_episode(|t| t.verifier = "agent:stranger"),
+        "untrusted",
+    );
     assert!(
-        r.iter().any(|x| x.contains("not a configured trusted verifier")),
+        r.iter()
+            .any(|x| x.contains("not a configured trusted verifier")),
         "ATTACK: an episode verified by an issuer the operator never trusted fed learning (or \
          was excluded under another reason): {r:?}"
     );

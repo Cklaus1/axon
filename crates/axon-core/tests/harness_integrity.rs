@@ -587,7 +587,9 @@ fn merge_join_and_a_partial_write_share_one_toolchain_refusal() {
     let src = |f: &str| std::fs::read_to_string(repo_root().join(f)).unwrap();
     let (m, p) = (src(HARNESS[0]), src(HARNESS[2]));
     let body = |s: &str, name: &str| {
-        let a = s.find(&format!("def {name}(")).unwrap_or_else(|| panic!("no def {name}"));
+        let a = s
+            .find(&format!("def {name}("))
+            .unwrap_or_else(|| panic!("no def {name}"));
         let rest = &s[a..];
         let b = rest[1..].find("\ndef ").map_or(rest.len(), |i| i + 1);
         rest[..b].to_string()
@@ -638,7 +640,10 @@ print("LABEL", pd.kept_records_problem([label], [label, new]))
 print("TOOLCHAIN", pd.kept_records_problem([tool], [tool, new]))
 "#;
     let t = py(&r, prog);
-    assert!(t.contains("CONTROL None"), "control: consistent kept records pass: {t}");
+    assert!(
+        t.contains("CONTROL None"),
+        "control: consistent kept records pass: {t}"
+    );
     assert!(
         t.contains("LABEL kept record M1 claims holds=True but its recorded cells give False"),
         "ATTACK: a partial write kept a record on its stored label over a failing cell: {t}"
@@ -1813,7 +1818,10 @@ fn a_status_file_may_trail_the_freeze_commit_by_evidence_files_only() {
     );
     git(&r, &["add", "-A"]);
     git(&r, &["commit", "-q", "-m", "the status file"]);
-    let o = check_status(&r, &r.join("governance/status/v022-psv-paired-disable.json"));
+    let o = check_status(
+        &r,
+        &r.join("governance/status/v022-psv-paired-disable.json"),
+    );
     assert!(
         o.status.success(),
         "control: a status file one evidence-only commit behind HEAD is accepted: {}",
@@ -1826,7 +1834,10 @@ fn a_status_file_may_trail_the_freeze_commit_by_evidence_files_only() {
     );
     git(&r, &["add", "-A"]);
     git(&r, &["commit", "-q", "-m", "a source change after the run"]);
-    let o = check_status(&r, &r.join("governance/status/v022-psv-paired-disable.json"));
+    let o = check_status(
+        &r,
+        &r.join("governance/status/v022-psv-paired-disable.json"),
+    );
     assert!(
         !o.status.success()
             && text(&o).contains("file(s) other than governance/status/ changed since"),

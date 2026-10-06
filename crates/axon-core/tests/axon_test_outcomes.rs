@@ -73,7 +73,11 @@ fn outcomes() -> std::collections::BTreeMap<String, (String, String)> {
 #[test]
 fn a_passing_test_is_reported_ok() {
     let m = outcomes();
-    assert_eq!(m.get("ok").map(|x| x.0.as_str()), Some("ok"), "control: {m:?}");
+    assert_eq!(
+        m.get("ok").map(|x| x.0.as_str()),
+        Some("ok"),
+        "control: {m:?}"
+    );
     assert_eq!(
         m.get("plain_failure").map(|x| x.0.as_str()),
         Some("failed"),

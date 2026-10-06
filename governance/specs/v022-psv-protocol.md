@@ -3998,13 +3998,13 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       one alternative per source line so each is its own row (M1943-M1949). The sweep that derived the
       list covered every in-scope file for every `O_*`, `AT_*`, `MS_*`, `RENAME_*` and `create_new`
       token: no `MS_*` flag is used in in-scope Rust today (the form is there for the day one is).
-      **Exposed: 32 flag lines in 27 sites.** Dispositions: 14 ROWED, each killed by its own attack (a
+      **Exposed: 19 uncovered flag sites** (of 32 flag lines swept; the others were already covered by an existing row; 56 new sites in all with forms (b)). Dispositions: 13 ROWED, each killed by its own attack (a
       symlink or an existing file at the shape the flag defeats): the helper's ownership-walk base
       (M1907), input snapshot symlink (M1908) and create_new (M1909), policy snapshot (M1910), operator
       file leaf (M1911), the hand-over's `fstatat` (M1912) and `fchownat` (M1913), the observer's key
       (M1914) and artifact measurement (M1915), the workspace store's no-clobber rename (M1916), the loop
       store's temporary create (M1917), `psv::prepare`'s policy (M1918) and `keygen` (M1919); 6
-      carry a checkable exemption: the destination `O_NOFOLLOW` is dominated by the create_new on the line
+      carry a checkable exemption (counting the sites the dropped-or-covered lines share): the destination `O_NOFOLLOW` is dominated by the create_new on the line
       above (and `a_symlink_at_a_snapshot_destination_is_refused_by_create_new_alone` pins that open(2)
       fact), the hand-over's regular-file open is race-only in a root-private dir, a CSPRNG nonce
       (2^-128), a completion secret created in a directory created three lines up, the loop store's
@@ -4027,7 +4027,7 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       or `Some(format!(..))` used as a value (not `== Some(..)`, `matches!`, an arm or `|`) is a site
       (M1950, M1951); a function returning `Result<bool, _>`, an `i32` or an `ExitCode` is a site of its
       own (M1952-M1954; `u8`, `u32` and `i64` returns found in scope are discriminants, a port read, uids and
-      clocks, not statuses, and are not a form). **Exposed: 33 sites.** ROWED with their own attacks: the three
+      clocks, not statuses, and are not a form). **Exposed: 37 sites** (19 `Some(reason)` value lines, 18 functions). ROWED with their own attacks: the three
       `other_loop_role` arms (M1920-M1922) and the evaluator and subject arms of
       `issuer_independent` (M1923, M1924), the safety veto (M1925), the post-run suite check
       (changed, unreadable: M1934, M1935: no test touched them), `axon test`'s three failure arms

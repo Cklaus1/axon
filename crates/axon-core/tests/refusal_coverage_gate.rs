@@ -974,9 +974,21 @@ fn a_some_reason_value_is_a_site_and_a_pattern_is_not() {
         "Some(\"gate probe: too big\")",
         "a decision returned as Some(\"reason\") with no row and no exemption was not a site",
     );
-    not_named(&r, "x == Some(\"gate-probe-eq\")", "a comparison with Some(\"..\") was read as a decision");
-    not_named(&r, "matches!(x, Some(\"gate-probe-matches\"))", "a matches! of Some(\"..\") was read as a decision");
-    not_named(&r, "Some(\"gate-probe-arm\") => 1", "a match arm on Some(\"..\") was read as a decision");
+    not_named(
+        &r,
+        "x == Some(\"gate-probe-eq\")",
+        "a comparison with Some(\"..\") was read as a decision",
+    );
+    not_named(
+        &r,
+        "matches!(x, Some(\"gate-probe-matches\"))",
+        "a matches! of Some(\"..\") was read as a decision",
+    );
+    not_named(
+        &r,
+        "Some(\"gate-probe-arm\") => 1",
+        "a match arm on Some(\"..\") was read as a decision",
+    );
     let _ = std::fs::remove_dir_all(&r);
 }
 

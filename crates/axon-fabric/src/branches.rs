@@ -612,7 +612,10 @@ mod create_once_tests {
     fn create_once_never_replaces_what_is_there() {
         let t = tempfile::tempdir().unwrap();
         let dest = t.path().join("d").join("head.json");
-        assert!(create_once(&dest, b"first").unwrap(), "control: a new name is created");
+        assert!(
+            create_once(&dest, b"first").unwrap(),
+            "control: a new name is created"
+        );
         let again = create_once(&dest, b"second").unwrap();
         assert!(
             !again && std::fs::read(&dest).unwrap() == b"first",

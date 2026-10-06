@@ -64,8 +64,8 @@ fn a_mechanism_test_episode_never_feeds_learning() {
 #[test]
 fn an_episode_that_did_not_pass_verification_never_feeds_learning() {
     for result in ["failed", "not_run", "unknown"] {
-        let got = learning_eligible(&episode(|e| e["verification"]["result"] = result.into()))
-            .unwrap();
+        let got =
+            learning_eligible(&episode(|e| e["verification"]["result"] = result.into())).unwrap();
         assert!(
             !got,
             "ATTACK: a discovery episode whose verification is `{result}` was learning-eligible"
