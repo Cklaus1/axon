@@ -1512,7 +1512,8 @@ impl<'p> Interp<'p> {
                 let Some(s) = tab.get(&key) else { continue };
                 let cur = m.borrow();
                 let mut bad = None;
-                let mut seen = std::collections::HashSet::new();
+                let mut seen: std::collections::HashSet<(usize, usize)> =
+                    std::collections::HashSet::new();
                 for (k, old) in &s.held {
                     let Some(now) = cur.get(k) else { continue };
                     if let Err(why) = self.replaced_ok(old, now, &mut seen, 0) {
