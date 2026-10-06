@@ -75,6 +75,21 @@ C9 round 4b (FIELD-ORIGIN, three major-adjacent findings; amendment 63):
    is the judge the freeze applies to the WHOLE image: every artifact the
    manifest pins must be the bytes one of these records produced.
 
+C9 round 5 (FIELD-ORIGIN, amendment 80):
+
+1. The effective config is judged by its STRUCTURED key path (`cargo config get
+   --format json`) against COMMITTED_KEYS, never by splitting the text cargo
+   prints (a single-quoted `cfg(all(..="..."))` target read as harmless and a
+   committed linker linked the guest binaries). Everything else is refused.
+2. `check-host-build` applies the same classifier to the ambient build of the
+   host binaries (the setuid launcher, verifier, custodian, observer).
+3. Each record carries a PROOF: an HMAC under a per-build key stored only in
+   the builder-private parent (`<parent>/keys`), re-signed by every write of the
+   runner, covering every field. `dist` records every dist artifact's digest;
+   the manifest and the freeze read digests from the record and refuse a
+   record whose proof does not hold. Residual trust: the builder account; the
+   key files must travel if the freeze runs elsewhere.
+
 What is recorded, not independently verified: the identity of the host tools
 (and of the toolchain) is their sha256 at build time; nothing pins the
 expected digests (operator item, as for rustc in round 4b's FUTURE finding),
