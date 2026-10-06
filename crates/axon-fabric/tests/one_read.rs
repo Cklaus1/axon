@@ -785,3 +785,69 @@ fn the_result_json_hashed_as_evidence_is_the_one_interpreted() {
         "{outcome:?} {why}"
     );
 }
+
+/// C9 round 4c, EQGATE (amendment 81; M1918): `prepare` writes the guest policy
+/// beside the job dir EXCLUSIVELY (`create_new`): a `policy.json` already there
+/// (a leftover, a file the Fabric uid planted to be the root helper's input) is
+/// refused, never overwritten or reused. The refusal is the kernel's (O_EXCL),
+/// so it builds no `Err` the coverage gate could see.
+#[test]
+fn prepare_never_writes_the_policy_over_a_file_already_there() {
+    use axon_workspace_recipe::{tree_version_ref, Quota};
+    let env = Env::new();
+    let d = env.dir.path();
+    let manifest = d.join("manifest.json");
+    std::fs::write(&manifest, full_lx_manifest(QUALIFIED_GUEST)).unwrap();
+    let issuer = Issuer::generate();
+    let lx = qualified_linux_cfg(d, &issuer, &good_evidence(&sha256_file(&manifest)));
+    let q = lx.qualification().unwrap();
+    let (cand, suite) = (d.join("in/candidate"), d.join("in/check"));
+    std::fs::create_dir_all(&cand).unwrap();
+    std::fs::create_dir_all(&suite).unwrap();
+    std::fs::write(cand.join("f.ax"), "fn main() {}\n").unwrap();
+    std::fs::write(suite.join("accept.ax"), "@[test] fn t_ok() {}\n").unwrap();
+    let quota = Quota::default();
+    let mut rq = request(&env, "op-prepare-policy", "t_ok");
+    rq["workspace_version_ref"] = json!(tree_version_ref(&cand, &quota).unwrap());
+    let suite_ref = tree_version_ref(&suite, &quota).unwrap();
+    let rq: axon_loop_contracts::ComputeRequest = serde_json::from_value(rq).unwrap();
+    let prepare = |job: &std::path::Path| {
+        axon_fabric::psv::prepare(
+            &rq,
+            &axon_fabric::psv::PrepareInputs {
+                qualification: &q,
+                profile_manifest: &lx.manifest,
+                host: None,
+                policy_json: r#"{"schema":"axon-vm-mmds/1","allowed_effects":[]}"#,
+                suite_id: "acc",
+                suite_version: &suite_ref,
+                entry: "accept.ax",
+                test: "t_ok",
+                candidate_dir: &cand,
+                suite_dir: &suite,
+                job_dir: job,
+                observation_nonce: "none",
+                authority_epoch: 0,
+                scope: &scope(),
+            },
+        )
+    };
+    prepare(&fresh_job_dir(d, "policy-control")).expect("control: a fresh inputs dir prepares");
+    let job = fresh_job_dir(d, "policy-planted");
+    let planted = job.with_file_name("policy.json");
+    std::fs::write(&planted, "planted by another uid\n").unwrap();
+    match prepare(&job) {
+        Ok(_) => panic!(
+            "ATTACK: prepare wrote the guest policy over a policy.json that already existed \
+             ({:?} now)",
+            std::fs::read_to_string(&planted)
+        ),
+        Err(e) => {
+            assert!(e.contains("guest policy"), "{e}");
+            assert_eq!(
+                std::fs::read_to_string(&planted).unwrap(),
+                "planted by another uid\n"
+            );
+        }
+    }
+}

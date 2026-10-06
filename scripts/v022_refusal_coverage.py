@@ -379,8 +379,6 @@ EXEMPT = [
     (PL, '            _ => {\n                return Err(format!(\n                    "{} is not a regular file or directory",',
      "fail-closed on an entry the snapshot cannot represent; skipping it (the only "
      "alternative) cannot add bytes to the guest image; symlinks are refused by O_NOFOLLOW"),
-    (PL, "        if unsafe { libc::fstatat(dir, cn.as_ptr(), &mut st, libc::AT_SYMLINK_NOFOLLOW) } != 0 {",
-     "OS error during the hand-over: reported as EXIT_UNKNOWN, fails closed"),
     (PL, '        if !ok {\n            return Err(format!(\n                "handing {name:?} to the Fabric uid: {}",',
      "OS error during the hand-over: reported as EXIT_UNKNOWN, fails closed"),
     (PL, '        return Err("the manifest changed while it was read".into());',
@@ -2180,10 +2178,6 @@ EXEMPT += [
      "NOTHING TO ADMIT: a number that is no integer has no integer value; its caller number_rules "
      "refuses it (`non-integer number`) and the schema bounds read through it are compiled in"),
     # ── loop ──
-    (LA, "pub(crate) fn other_loop_role(",
-     "PREDICATE OF NAMED ROWS: every production caller is a refusal a row removes: admission.rs "
-     "(M113), pointer.rs revocation (M121), baseline issue (M102), transition (M1328), baseline "
-     "designation (M1335), plan.rs assignment issue (M111), all ACTIVE"),
     (LA, "fn clearance_verifies(",
      "PREDICATE OF NAMED ROWS: its one caller is the clearance condition at admission (M264 replaces "
      "the call with `signature_ref.is_some() | true`, ACTIVE; M245 the rooted-key leg)"),
@@ -3021,6 +3015,89 @@ EXEMPT += [
 ]
 
 
+# ── Amendment 81 (C9 round 4c, eqgate): the sites the open-flag, Some(reason),
+# Result<bool>/i32/ExitCode forms expose. Every entry states a fact a reader can
+# check; the sites with an attack of their own are ROWED (M1907-M1954), not here.
+_PLX = PL
+EXEMPT += [
+    (PL, "            libc::S_IFREG => {\n                let fd = openat(\n                    dir,",
+     "RACE-ONLY (checkable): this open is reached only for an entry the fstatat above "
+     "(AT_SYMLINK_NOFOLLOW, M1912) reported as a regular file, in a directory only this process "
+     "can write until the hand-over gives it away (make_out: mkdirat 0700, owner re-checked), so "
+     "no other uid can swap the entry for a symlink between the two calls and no input drives "
+     "this; a symlink the launch leaves is classified S_IFLNK by the fstatat and never reaches "
+     "this arm"),
+    (LA, "    let role = if proposer {\n        Some(\"an EVO proposer (the ranker)\")",
+     "DOMINATED (checkable): evl.rs's evaluation adds every stored proposer of an arm policy to "
+     "the record's `subject_issuers` (`for pref in policies.keys() { .. subjects.insert(p) }`, "
+     "the lines above `the evaluator is a subject issuer`), so on any record the loop wrote the "
+     "proposer is ALSO refused by the subject-issuer arm below (that arm has its own row, "
+     "M1924); only a store writer who rewrote the record could "
+     "separate the two, and the admission route's own proposer check does carry that attack "
+     "(M114, `the_proposer_cannot_admit_its_own_candidate_whatever_the_record_lists`)"),
+    (OB, '            .create_new(true)\n            .open(self.dir.join(format!("{nonce}.issued")))',
+     "UNREACHABLE (checkable): the file name is 16 bytes of ring::rand::SystemRandom (the three "
+     "lines above), so an existing `<nonce>.issued` is a 2^-128 event no caller can aim at "
+     "(`issue` takes no name); create_new there only makes the impossible collision a refusal "
+     "instead of an overwrite"),
+    (PSVF, "        .create_new(true)\n        .mode(0o400)",
+     "UNREACHABLE (checkable): write_private's one caller writes `completion-secret` into "
+     "`job_dir`, created by `std::fs::create_dir(i.job_dir)` a few lines above in the same "
+     "function (which fails if it exists) and holding only launch-manifest.json, so nothing "
+     "can exist at the name; the dir is the helper's snapshot source, not a path a caller names"),
+    (ST, "    o.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);",
+     "DOMINATED (checkable): every open through nofollow() (`grep -n 'nofollow()' "
+     "crates/axon-loop/src/store.rs`: read_text, write_atomic, append_jsonl, lock_file) is "
+     "preceded in its function by self.guard(path), the lstat walk that refuses a symlink "
+     "anywhere below the root (rows M979, M980, M998); write_atomic's create_new is O_EXCL, which "
+     "refuses a symlink at the temporary name (M1917). The flag closes only the window between "
+     "the guard's lstat and the open, which needs a writer of the store directory, the "
+     "principal the store already trusts to be its owner"),
+    ("crates/axon-os/src/cli.rs", "            .create_new(true)\n            .open(&kf)", _KIL),
+    ("crates/axon-os/src/runtime.rs", "            .create_new(true)\n            .mode(0o600)", _ACR),
+    ("crates/axon-os/src/cli.rs", "    if widened.is_empty() {",
+     "NOT A DECISION (checkable): the `Profile:` line of `axon-os explain`, a human description "
+     "of a grant (`profile_line`); its only caller (cmd_explain) prints it and nothing branches "
+     "on it, and no crate outside axon-os names axon_os::cli"),
+    (FP, "            } else if tag.is_ascii_lowercase() {",
+     "DOMINATED (checkable): an assume-unchanged entry that differs from the committed tree is "
+     "also refused by the byte comparison against the tree's committed bytes (M451); this arm "
+     "supplies the reason's wording, and the first half of "
+     "`a_skip_worktree_or_assume_unchanged_change_is_dirty` shows either guard alone refuses "
+     "(the comment at its head)"),
+]
+_OSCLI = ("NOT ON THE PROTECTED ROUTE (checkable): the `axon-os` binary's own command functions: "
+          "`grep -rn 'axon_os::cli\\|cli::run' crates/*/src` finds no caller outside axon-os (the "
+          "protected crates name only supervise_requiring, parse_manifest, scan_effects, the ledger "
+          "and the Grant/Isolation/Verdict::Completed types); a returned ExitCode is the CLI "
+          "process's, never a Fabric verdict")
+EXEMPT += [
+    ("crates/axon-os/src/cli.rs", head, _OSCLI) for head in (
+        "pub fn run(args: Vec<String>) -> ExitCode {", "fn help(line: &str) -> ExitCode {",
+        "fn cmd_explain(job: &Path) -> ExitCode {", "fn cmd_verify(record: &Path) -> ExitCode {",
+        "fn cmd_replay(rest: &[&str]) -> ExitCode {", "fn cmd_kill(rest: &[&str]) -> ExitCode {",
+        "fn cmd_status(rest: &[&str]) -> ExitCode {",
+        "fn status_all(store: &Path, latest_only: bool, json_out: bool) -> ExitCode {",
+        "fn cmd_audit(rest: &[&str]) -> ExitCode {")
+]
+_EXITMAP = ("REFINES THE KIND OF A NON-SUCCESS (checkable): `{what}` maps an error variant to the "
+            "process exit code of the CLI that reports it; it is called only on the Err path ({where}) "
+            "and every arm is a literal non-zero code, so no variant can be reported as success; "
+            "which non-zero code names the kind of failure, not whether it failed")
+EXEMPT += [
+    ("crates/axon-loop/src/error.rs", "    pub fn exit_code(&self) -> i32 {",
+     _EXITMAP.format(what="LoopError::exit_code", where="axon-loop.rs's `Err(e)` arm, the only caller")),
+    (FS, "    pub fn exit_code(&self) -> i32 {",
+     _EXITMAP.format(what="SubmitError::exit_code", where="axon-fabric.rs's `Err(e) => refuse(..)` arm, the only caller")),
+    ("crates/axon-os/src/verdict.rs", "    pub fn exit_code(&self) -> i32 {",
+     "NOT ON THE PROTECTED ROUTE (checkable): Verdict::exit_code is called only by axon-os "
+     "(`grep -rn '\\.exit_code()' crates/*/src` outside axon-os names LoopError, SubmitError and "
+     "AdmitError, never axon_os::Verdict); Fabric consumes the Verdict by variant, not by code, and "
+     "the one variant mapped to 0 is Completed"),
+    ("crates/axon-vm/src/admit.rs", "    pub fn exit_code(&self) -> i32 {", _VM),
+]
+
+
 def load_rows():
     spec = importlib.util.spec_from_file_location("mut", os.path.join(ROOT, "scripts/v022_g01_mutations.py"))
     mut = importlib.util.module_from_spec(spec)
@@ -3260,6 +3337,32 @@ def err_is_expression(l, at):
 # and so is a call of a file-local DIVERGING refusal constructor: a `fn NAME(..)
 # -> !` or `let NAME = |..| -> !` whose first lines exit with a non-zero
 # literal code (axon-custodian's `die`, the `axon test` key reader's `fail`).
+# Amendment 81 (C9 round 4c, eqgate): a refusal done BY THE KERNEL through an
+# open flag constructs no Err and returns no verdict, so no form above saw it:
+# the root helper's snapshot of its inputs (`O_NOFOLLOW`), the observer's key
+# read ("a symlink is never followed"), `create_new(true)` /
+# `RENAME_NOREPLACE` (refuse an existing file), each removable alone with the
+# whole root-run suite green. Every USE of such a flag in non-test code is a
+# site (a line site, guard block as for `Err(`): the flags are an enumerated
+# family because the kernel's atomic-refusal vocabulary is (open(2), renameat2(2),
+# mount(2), the `*at` calls), and the sweep that derived this list
+# (every in-scope file, every `O_*` / `AT_*` / `MS_*` / `RENAME_*` / `create_new`
+# token) is repeated by `an_open_flag_form_is_a_site`'s control: the unedited
+# tree holds, so a flag nobody rows or exempts fails the gate.
+# One alternative per line: each is the target of its own gate row.
+OPEN_FLAG = re.compile(
+    r"\bO_NOFOLLOW\b|"
+    r"\bO_EXCL\b|"
+    r"\bcreate_new\(\s*true\s*\)|"
+    r"\bRENAME_NOREPLACE\b|"
+    r"\bAT_SYMLINK_NOFOLLOW\b|"
+    r"\bO_DIRECTORY\b|"
+    r"\bMS_(?:NOSUID|NODEV|NOEXEC|RDONLY|BIND|PRIVATE|SLAVE|REC)\b"
+)
+# A decision expressed as `Some("reason")` / `Some(format!(..))` (evo::propose's
+# exclusion chain, submit's `problem = Some(..)`), as a VALUE: a pattern
+# (`Some("x") =>`, `== Some("x")`, `matches!(.., Some("x"))`) reads one.
+SOME_REASON = re.compile(r"\bSome\(\s*(?:\"|format!\()")
 DIAG = re.compile(r"\bDiagnostic::error\(")
 EXIT = re.compile(r"\bprocess::exit\((?!\s*0\s*\))")
 LOCAL_CTOR_DEF = re.compile(r"\blet\s+(\w+)\s*=\s*(move\s+)?\|[^|]*\|.*\bErr\(")
@@ -3279,8 +3382,35 @@ def local_ctors(lines):
     return out
 
 
+def _some_reason_is_value(l):
+    """Whether a `Some("..")`/`Some(format!(..))` on `l` builds a value (a
+    reason a decision returns) rather than matching or comparing one."""
+    for m in SOME_REASON.finditer(l):
+        before = l[:m.start()]
+        if re.search(r"(==|!=|\bmatches!\(.*|\blet|\|)\s*$", before) or before.rstrip().endswith("|"):
+            continue
+        depth, j = 0, m.start() + 4
+        while j < len(l):
+            if l[j] == "(":
+                depth += 1
+            elif l[j] == ")":
+                depth -= 1
+                if depth == 0:
+                    break
+            j += 1
+        else:
+            return True
+        rest = l[j + 1:].lstrip()
+        if re.match(r"(=>|\|)", rest):
+            continue
+        return True
+    return False
+
+
 def is_site(l, ctors=()):
     if SITE.search(l) or DIAG.search(l) or EXIT.search(l):
+        return True
+    if OPEN_FLAG.search(l.split("//")[0]) or _some_reason_is_value(l.split("//")[0]):
         return True
     if any(err_is_expression(l, m.start()) for m in ERR.finditer(l)):
         return True
@@ -3335,7 +3465,14 @@ def anchor_region(lines, text, f, bad):
 # decided (a predicate primitive, scanned by this rule, or a lookup, where the
 # absent value is nothing to admit) into the refusal, and decides nothing.
 FN_HEAD = re.compile(r"^(\s*)(?:pub(?:\([a-z]+\))?\s+)?(?:const\s+)?(?:unsafe\s+)?(?:extern\s+\"C\"\s+)?fn\s+(\w+)")
-PRED_RET = re.compile(r"^(bool|Option\s*<)")
+# Amendment 81: a function DECIDES by `bool`/`Option<..>` (amendment 74) and
+# also by `Result<bool, _>` (`learning_eligible`, `git_data::reaches`,
+# schema `type_matches`), by an `i32` status (`sealed_exec::check_unchanged`,
+# the `exit_code` mappings) and by `ExitCode` (a CLI's `return
+# ExitCode::from(8)` refusals). Swept over the in-scope crates: the other
+# integer returns (`u8`, `u32`, `i64`) are data (a discriminant, a port read, a
+# uid, a clock), not a status.
+PRED_RET = re.compile(r"^(bool|Option\s*<|Result\s*<\s*bool\s*[,>]|i32\b|(?:std::process::)?ExitCode\b)")
 PRED_LINE = re.compile(r"\.then_some\(|\.then\(")
 
 

@@ -706,3 +706,26 @@ impl TrialCache {
         ]
     }
 }
+
+#[cfg(test)]
+mod open_flag_tests {
+    use super::*;
+
+    /// C9 round 4c, EQGATE (amendment 81; M1916): a published file is write-once.
+    /// The no-clobber rename (RENAME_NOREPLACE) refuses a destination that
+    /// already holds other bytes; without it a plain rename silently REPLACES
+    /// the immutable object. Control: the same bytes publish again.
+    #[test]
+    fn a_published_file_is_never_replaced_by_other_bytes() {
+        let t = tempfile::tempdir().unwrap();
+        let dest = t.path().join("objects").join("ab").join("blob");
+        publish_file(&dest, b"first").expect("control: a new file publishes");
+        publish_file(&dest, b"first").expect("control: the same bytes publish again");
+        let got = publish_file(&dest, b"other");
+        assert!(
+            got.is_err() && std::fs::read(&dest).unwrap() == b"first",
+            "ATTACK: a write-once object was replaced by other bytes: {got:?}, now {:?}",
+            std::fs::read(&dest)
+        );
+    }
+}

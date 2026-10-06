@@ -908,3 +908,103 @@ fn a_cfg_all_test_item_is_test_code_and_a_cfg_any_test_item_is_not() {
     );
     let _ = std::fs::remove_dir_all(&r);
 }
+
+// ── C9 round 4c, EQGATE (amendment 81): a refusal done by the KERNEL through an
+// open flag, a decision returned as `Some(reason)`, and a status returned as an
+// exit code, `Result<bool>` or `i32`. Each form below is planted in a
+// production-shaped line the gate must name; the flag forms are the ones the
+// round's EQUIVALENCE review found removable with every root-run suite green.
+
+const FLAG_PROBES: &str = "pub fn gate_probe_flags(p: &std::path::Path) {\n    use std::os::unix::fs::OpenOptionsExt;\n    let gate_probe_nofollow = std::fs::OpenOptions::new().custom_flags(libc::O_NOFOLLOW).open(p);\n    let gate_probe_excl = unsafe { libc::open(c\"/x\".as_ptr(), libc::O_CREAT | libc::O_EXCL, 0o600) };\n    let gate_probe_new = std::fs::OpenOptions::new().write(true).create_new(true).open(p);\n    let gate_probe_noreplace = unsafe { libc::renameat2(libc::AT_FDCWD, c\"/a\".as_ptr(), libc::AT_FDCWD, c\"/b\".as_ptr(), libc::RENAME_NOREPLACE) };\n    let gate_probe_atnofollow = unsafe { libc::fstatat(0, c\"/x\".as_ptr(), std::ptr::null_mut(), libc::AT_SYMLINK_NOFOLLOW) };\n    let gate_probe_dir = unsafe { libc::open(c\"/x\".as_ptr(), libc::O_RDONLY | libc::O_DIRECTORY) };\n    let gate_probe_mount = libc::MS_NOSUID | libc::MS_NODEV;\n    let _ = (gate_probe_nofollow, gate_probe_excl, gate_probe_new, gate_probe_noreplace, gate_probe_atnofollow, gate_probe_dir, gate_probe_mount);\n}\n";
+
+/// Amendment 81: every USE of an atomic-refusal flag in production code is a
+/// site: O_NOFOLLOW, O_EXCL (O_CREAT|O_EXCL), `create_new(true)`,
+/// RENAME_NOREPLACE, AT_SYMLINK_NOFOLLOW, O_DIRECTORY, and the mount flags
+/// (MS_NOSUID ...). Control: `create_new(false)` and a flag named in a comment
+/// are not.
+#[test]
+fn an_open_flag_form_is_a_site() {
+    let r = tree("open-flags");
+    add_code(&r, SCANNED, FLAG_PROBES);
+    add_code(
+        &r,
+        SCANNED,
+        "pub fn gate_probe_not_flags(p: &std::path::Path) {\n    let gate_probe_plain = std::fs::OpenOptions::new().write(true).create_new(false).open(p); // O_NOFOLLOW is the old way\n    let _ = gate_probe_plain;\n}\n",
+    );
+    for (site, form) in [
+        ("gate_probe_nofollow", "O_NOFOLLOW"),
+        ("gate_probe_excl", "O_EXCL"),
+        ("gate_probe_new", "create_new(true)"),
+        ("gate_probe_noreplace", "RENAME_NOREPLACE"),
+        ("gate_probe_atnofollow", "AT_SYMLINK_NOFOLLOW"),
+        ("gate_probe_dir", "O_DIRECTORY"),
+        ("gate_probe_mount", "MS_NOSUID (a mount flag)"),
+    ] {
+        names(
+            &r,
+            site,
+            &format!("a use of {form} with no row and no exemption was not a refusal site"),
+        );
+    }
+    not_named(
+        &r,
+        "gate_probe_plain",
+        "`create_new(false)` with a flag named only in a trailing comment was read as an atomic-refusal flag",
+    );
+    let c = tree("open-flags-control");
+    holds(&c, &[], "the unedited copy");
+    let _ = std::fs::remove_dir_all(&c);
+    let _ = std::fs::remove_dir_all(&r);
+}
+
+/// Amendment 81: a decision expressed as `Some("reason")` / `Some(format!(..))`
+/// is a site (evo::propose's exclusion chain, `problem = Some(..)`); matching
+/// or comparing one (`Some("x") =>`, `== Some("x")`, `matches!(.., Some("x"))`)
+/// reads a decision somebody else made.
+#[test]
+fn a_some_reason_value_is_a_site_and_a_pattern_is_not() {
+    let r = tree("some-reason");
+    add_code(
+        &r,
+        SCANNED,
+        "pub fn gate_probe_chain(x: u64) -> String {\n    let reason = if x > 3 {\n        Some(\"gate probe: too big\")\n    } else {\n        None\n    };\n    format!(\"{reason:?}\")\n}\n\npub fn gate_probe_reads(x: Option<&str>) -> u64 {\n    let a = x == Some(\"gate-probe-eq\");\n    let b = matches!(x, Some(\"gate-probe-matches\"));\n    let c = match x {\n        Some(\"gate-probe-arm\") => 1,\n        _ => 2,\n    };\n    u64::from(a) + u64::from(b) + c\n}\n",
+    );
+    names(
+        &r,
+        "Some(\"gate probe: too big\")",
+        "a decision returned as Some(\"reason\") with no row and no exemption was not a site",
+    );
+    not_named(&r, "x == Some(\"gate-probe-eq\")", "a comparison with Some(\"..\") was read as a decision");
+    not_named(&r, "matches!(x, Some(\"gate-probe-matches\"))", "a matches! of Some(\"..\") was read as a decision");
+    not_named(&r, "Some(\"gate-probe-arm\") => 1", "a match arm on Some(\"..\") was read as a decision");
+    let _ = std::fs::remove_dir_all(&r);
+}
+
+/// Amendment 81: a function that decides by `Result<bool, _>`, an `i32` status
+/// or an `ExitCode` is a site of its own (its body the guard block), like a
+/// `bool`/`Option` predicate.
+#[test]
+fn a_function_deciding_by_result_bool_i32_or_exitcode_is_a_site() {
+    let r = tree("status-fns");
+    add_code(
+        &r,
+        SCANNED,
+        "pub fn gate_probe_result_bool(x: u64) -> Result<bool, String> {\n    Ok(x > 3)\n}\n\npub fn gate_probe_status_i32(x: u64) -> i32 {\n    if x > 3 {\n        return 4;\n    }\n    0\n}\n\npub fn gate_probe_exit_code(x: u64) -> std::process::ExitCode {\n    if x > 3 {\n        return std::process::ExitCode::from(8);\n    }\n    std::process::ExitCode::SUCCESS\n}\n",
+    );
+    names(
+        &r,
+        "fn gate_probe_result_bool(x: u64) -> Result<bool, String>",
+        "a function deciding by Result<bool, _> with no row and no exemption was not a site",
+    );
+    names(
+        &r,
+        "fn gate_probe_status_i32(x: u64) -> i32",
+        "a function returning an i32 status with no row and no exemption was not a site",
+    );
+    names(
+        &r,
+        "fn gate_probe_exit_code(x: u64) -> std::process::ExitCode",
+        "a function returning an ExitCode (`return ExitCode::from(8)`) with no row and no exemption was not a site",
+    );
+    let _ = std::fs::remove_dir_all(&r);
+}

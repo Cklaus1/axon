@@ -1538,3 +1538,91 @@ fn a_leftover_run_dir_of_a_crashed_process_with_the_same_pid_does_not_refuse_the
         );
     }
 }
+
+// ── C9 round 4c, EQGATE (amendment 81; M1934-M1935): the post-run suite check ─
+//
+// `post_run` re-imports the operator suite's materialized copy after the run
+// and compares it with the version the registry pinned. A suite that CHANGED
+// during the run, or can no longer be read, demotes the verdict to "no verdict":
+// both arms build `problem = Some(..)` (not an `Err`), so the refusal-coverage
+// gate did not see them, and no test touched them. The `pre_launch_hook` runs
+// after the suite is materialized and before the launch, which is the same
+// state a run that rewrote its own check dir leaves behind.
+
+fn run_check_dir(cfg: &axon_fabric::SubmitConfig) -> PathBuf {
+    let runs = cfg.state_dir.join("runs");
+    let mut dirs: Vec<PathBuf> = std::fs::read_dir(&runs)
+        .unwrap()
+        .flatten()
+        .map(|e| e.path().join("check"))
+        .filter(|p| p.is_dir())
+        .collect();
+    assert_eq!(dirs.len(), 1, "setup: exactly one run dir has a check suite: {dirs:?}");
+    dirs.remove(0)
+}
+
+fn change_the_suite_during_the_run(cfg: &axon_fabric::SubmitConfig) {
+    let d = run_check_dir(cfg);
+    let p = d.join("h.ax");
+    let mut b = std::fs::read(&p).unwrap();
+    b.extend_from_slice(b"// changed while the run held it\n");
+    // The materialized copy is read-only; the run's own uid owns it.
+    let _ = std::fs::set_permissions(&d, std::os::unix::fs::PermissionsExt::from_mode(0o755));
+    let _ = std::fs::set_permissions(&p, std::os::unix::fs::PermissionsExt::from_mode(0o644));
+    std::fs::write(&p, b).unwrap();
+}
+
+fn make_the_suite_unreadable_after_the_run(cfg: &axon_fabric::SubmitConfig) {
+    let d = run_check_dir(cfg);
+    let _ = std::fs::set_permissions(&d, std::os::unix::fs::PermissionsExt::from_mode(0o755));
+    let c = std::ffi::CString::new(d.join("pipe").to_str().unwrap()).unwrap();
+    // SAFETY: mkfifo with a valid path.
+    assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0, "setup: mkfifo");
+}
+
+#[test]
+fn a_suite_that_changed_during_the_run_yields_no_verdict() {
+    let s = with_suite(&hidden_suite_src(), "hidden");
+    let control = submit(&suite_request(&s, "op-suite-control").to_string(), &s.env.cfg(0)).unwrap();
+    assert_eq!(
+        control.receipt.verification,
+        ReceiptVerification::Passed,
+        "control: {:?}",
+        control.reason
+    );
+    let mut cfg = s.env.cfg(0);
+    cfg.pre_launch_hook = Some(change_the_suite_during_the_run);
+    let sub = submit(&suite_request(&s, "op-suite-changed").to_string(), &cfg).unwrap();
+    if sub.receipt.verification == ReceiptVerification::Passed {
+        panic!(
+            "ATTACK: a verdict was receipted Passed over a check suite that changed during the \
+             run: {:?}",
+            sub.reason
+        );
+    }
+    assert!(
+        sub.reason.as_deref().is_some_and(|r| r.contains("changed during the run")),
+        "{:?}",
+        sub.reason
+    );
+}
+
+#[test]
+fn a_suite_that_cannot_be_read_after_the_run_yields_no_verdict() {
+    let s = with_suite(&hidden_suite_src(), "hidden");
+    let mut cfg = s.env.cfg(0);
+    cfg.pre_launch_hook = Some(make_the_suite_unreadable_after_the_run);
+    let sub = submit(&suite_request(&s, "op-suite-unreadable").to_string(), &cfg).unwrap();
+    if sub.receipt.verification == ReceiptVerification::Passed {
+        panic!(
+            "ATTACK: a verdict was receipted Passed over a check suite that could not be read \
+             after the run: {:?}",
+            sub.reason
+        );
+    }
+    assert!(
+        sub.reason.as_deref().is_some_and(|r| r.contains("unreadable after the run")),
+        "{:?}",
+        sub.reason
+    );
+}
