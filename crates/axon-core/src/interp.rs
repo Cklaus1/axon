@@ -8765,6 +8765,27 @@ fn main() { }
         assert_eq!(run_test_fn_outcome(&prog, "t"), Ok(TestEnd::Completed));
     }
 
+    /// What is NOT a dispatch, so the rule leaves it alone: interpolation and
+    /// `to_str` of an untyped read, and a comparison — none selects an
+    /// operator impl (the language has no operator overloading and no trait
+    /// default methods), so the candidate's type choice picks no operator code.
+    #[test]
+    fn interpolation_and_comparison_of_an_untyped_read_select_no_operator_impl() {
+        let suite = "@[test]\nfn t() {\n    let d = dict_new()\n    solve(d)\n    match dict_get(d, \"k\") {\n        Some(v) => {\n            assert(\"{v}\" == \"9\")\n            assert(to_str(v) == \"9\")\n            assert(v == 9)\n        }\n        None => assert(false)\n    }\n}\n";
+        let out = judged_on(
+            "r6-nd",
+            suite,
+            "fn solve(d: Dict) { dict_set(d, \"k\", 9) }\n",
+        );
+        assert_eq!(out, Ok(TestEnd::Completed), "control: {out:?}");
+        assert!(judged_on(
+            "r6-nd",
+            suite,
+            "fn solve(d: Dict) { dict_set(d, \"k\", 4) }\n"
+        )
+        .is_err());
+    }
+
     /// The arithmetic arm: the candidate stores `255 as u8` and the operator's
     /// untyped `v + 10 == 9` wraps to a pass (an `i64` 255 + 10 is 265).
     #[test]
