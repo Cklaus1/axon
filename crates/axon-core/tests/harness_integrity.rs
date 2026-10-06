@@ -1759,7 +1759,7 @@ fn a_status_file_is_accepted_only_as_the_joined_evidence_for_the_freeze_commit()
         text(&o)
     );
     // (name, python edit of the document `d`, a reason it must give)
-    let cases: [(&str, &str, &str); 12] = [
+    let cases: [(&str, &str, &str); 19] = [
         ("missing", "del d['records'][:3]", "retirement records are missing (first: "),
         ("not-joined", "del d['hosts']", "not produced by `--join`"),
         ("shard", "d['shard']='0/2'", "not produced by `--join`"),
@@ -1772,6 +1772,14 @@ fn a_status_file_is_accepted_only_as_the_joined_evidence_for_the_freeze_commit()
         ("edits", "d['records'][0]['edits_sha256']='0'*64", "executed edits that are not this registry's"),
         ("cells", "r=next(r for r in d['records'] if r.get('matrix'))\nr['matrix']['guard_set_disabled']='OTHER_FAILURE'", "its recorded cells do not hold"),
         ("selection", "r=next(r for r in d['records'] if r.get('matrix'))\ndel r['consumer_selection']", "it records no consumer_selection"),
+        // The remaining arms of status_problems (amendment 81, rowed M1960-M1976).
+        ("not-a-status", "del d['records']", "not a paired-disable status file (no `records` list)"),
+        ("extra", "d['records'].append(dict(d['records'][0], mutation='M1'))", "records for rows that are not retirements here"),
+        ("foreign-commit", "d['commit']='1'*40", "is not in this repository"),
+        ("not-ancestor", "import subprocess\nc=subprocess.run(['git','commit-tree','HEAD^{tree}','-m','orphan'],capture_output=True,text=True,check=True).stdout.strip()\nd['commit']=c", "is not an ancestor of the freeze commit"),
+        ("no-matrix", "r=next(r for r in d['records'] if r.get('matrix'))\ndel r['matrix']", "carries no matrix or replacement state to derive its verdict from"),
+        ("label", "r=next(r for r in d['records'] if r.get('matrix'))\nr['holds']=False", "over cells that hold"),
+        ("doc-toolchain", "d['toolchain']['rustc']='rustc 0.0.0 (the file)'", "the file's `toolchain` is not the one its records ran on"),
     ];
     for (name, edit, why) in cases {
         let prog = format!(

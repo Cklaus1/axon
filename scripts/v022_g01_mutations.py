@@ -6596,6 +6596,75 @@ LIB_RECORD["M1809"] = {
 LIBRARY_PRIMITIVE |= {"M1809"}
 
 
+# ── C9 round 5, INTEGRATE (amendment 81 follow-up): the arms of v022_paired_disable.status_problems
+# that eqgate's freeze test exercises but its id range could not row (M1900-M1959). Each is killed by
+# a defect case of harness_integrity::a_status_file_is_accepted_only_as_the_joined_evidence_for_the_
+# freeze_commit, which names the defect in its ATTACK text. M1969/M1972 edit the arm AND the arm it
+# would otherwise fall through to, so the attack is not refused by a sibling (REFUSED_ELSEWHERE).
+PSV_IDS |= {f"M{n}" for n in range(1960, 1990)}
+MUTATIONS += [
+    ('M1960', 'FREEZE (integrate): a status file with schema is refused', 'scripts/v022_paired_disable.py',
+     '    if doc.get("schema") != "axon-v022-paired-disable/2":',
+     '    if False:',
+     'axon-core', '--no-default-features --test harness_integrity', 'a_status_file_is_accepted_only_as_the_joined_evidence_for_the_freeze_commit'),
+    ('M1961', 'FREEZE (integrate): a status file with a tree that was not clean is refused', 'scripts/v022_paired_disable.py',
+     '    if doc.get("tree_clean") is not True:',
+     '    if False:',
+     'axon-core', '--no-default-features --test harness_integrity', 'a_status_file_is_accepted_only_as_the_joined_evidence_for_the_freeze_commit'),
+    ('M1962', "FREEZE (integrate): a status file with a registry other than this tree's is refused", 'scripts/v022_paired_disable.py',
+     '    if doc.get("registry_blobs") != mut.registry_blobs():',
+     '    if False:',
+     'axon-core', '--no-default-features --test harness_integrity', 'a_status_file_is_accepted_only_as_the_joined_evidence_for_the_freeze_commit'),
+    ('M1963', 'FREEZE (integrate): a status file with a file with no records list is refused', 'scripts/v022_paired_disable.py',
+     '    if not isinstance(doc, dict) or not isinstance(doc.get("records"), list):',
+     '    if False:',
+     'axon-core', '--no-default-features --test harness_integrity', 'a_status_file_is_accepted_only_as_the_joined_evidence_for_the_freeze_commit'),
+    ('M1964', 'FREEZE (integrate): a status file with records for rows that are not retirements is refused', 'scripts/v022_paired_disable.py',
+     '    if extra:\n        out.append(f"records for rows that are not retirements here',
+     '    if False:\n        out.append(f"records for rows that are not retirements here',
+     'axon-core', '--no-default-features --test harness_integrity', 'a_status_file_is_accepted_only_as_the_joined_evidence_for_the_freeze_commit'),
+    ('M1965', 'FREEZE (integrate): a status file with duplicate records is refused', 'scripts/v022_paired_disable.py',
+     '    if dup:\n        out.append(f"duplicate records',
+     '    if False:\n        out.append(f"duplicate records',
+     'axon-core', '--no-default-features --test harness_integrity', 'a_status_file_is_accepted_only_as_the_joined_evidence_for_the_freeze_commit'),
+    ('M1966', 'FREEZE (integrate): a status file with records stamped at another commit is refused', 'scripts/v022_paired_disable.py',
+     '    if stamped != {commit}:',
+     '    if False:',
+     'axon-core', '--no-default-features --test harness_integrity', 'a_status_file_is_accepted_only_as_the_joined_evidence_for_the_freeze_commit'),
+    ('M1967', 'FREEZE (integrate): a status file with records that executed other edits is refused', 'scripts/v022_paired_disable.py',
+     '        if r.get("edits_sha256") != current_edits_digest(rid):',
+     '        if False:',
+     'axon-core', '--no-default-features --test harness_integrity', 'a_status_file_is_accepted_only_as_the_joined_evidence_for_the_freeze_commit'),
+    ('M1968', 'FREEZE (integrate): a status file with a record that says holds over cells that hold is refused', 'scripts/v022_paired_disable.py',
+     '        elif r.get("holds") is not True:',
+     '        elif False:',
+     'axon-core', '--no-default-features --test harness_integrity', 'a_status_file_is_accepted_only_as_the_joined_evidence_for_the_freeze_commit'),
+    ('M1969', 'FREEZE (integrate): a status file with a record with no cells to derive a verdict from is refused', 'scripts/v022_paired_disable.py',
+     '        if want is None:\n            out.append(f"{rid}: carries no matrix or replacement state to derive its verdict from")\n        elif not want:',
+     '        if False:\n            out.append(f"{rid}: carries no matrix or replacement state to derive its verdict from")\n        elif want is False:',
+     'axon-core', '--no-default-features --test harness_integrity', 'a_status_file_is_accepted_only_as_the_joined_evidence_for_the_freeze_commit'),
+    ('M1970', 'FREEZE (integrate): a status file with a record that names no consumer_selection is refused', 'scripts/v022_paired_disable.py',
+     '        if why:\n            out.append(f"{rid}: {why}")',
+     '        if False:\n            out.append(f"{rid}: {why}")',
+     'axon-core', '--no-default-features --test harness_integrity', 'a_status_file_is_accepted_only_as_the_joined_evidence_for_the_freeze_commit'),
+    ('M1971', 'FREEZE (integrate): a status file with all_hold false is refused', 'scripts/v022_paired_disable.py',
+     '    if doc.get("all_hold") is not True:',
+     '    if False:',
+     'axon-core', '--no-default-features --test harness_integrity', 'a_status_file_is_accepted_only_as_the_joined_evidence_for_the_freeze_commit'),
+    ('M1972', 'FREEZE (integrate): a status file with a commit that is not in the repository is refused', 'scripts/v022_paired_disable.py',
+     '        if not isinstance(commit, str) or sh(f"git cat-file -e {commit}^{{commit}}").returncode != 0:\n            out.append(f"its commit {commit!r} is not in this repository")\n        elif sh(f"git merge-base --is-ancestor {commit} {head}").returncode != 0:',
+     '        if False:\n            out.append(f"its commit {commit!r} is not in this repository")\n        elif False:',
+     'axon-core', '--no-default-features --test harness_integrity', 'a_status_file_is_accepted_only_as_the_joined_evidence_for_the_freeze_commit'),
+    ('M1973', 'FREEZE (integrate): a status file with a commit that is not an ancestor of the freeze commit is refused', 'scripts/v022_paired_disable.py',
+     '        elif sh(f"git merge-base --is-ancestor {commit} {head}").returncode != 0:',
+     '        elif False:',
+     'axon-core', '--no-default-features --test harness_integrity', 'a_status_file_is_accepted_only_as_the_joined_evidence_for_the_freeze_commit'),
+    ('M1974', "FREEZE (integrate): a status file with a file whose toolchain is not its records' is refused", 'scripts/v022_paired_disable.py',
+     '    elif recs and (recs[0]["environment"]["host"]["toolchain"] != doc.get("toolchain")):',
+     '    elif False:',
+     'axon-core', '--no-default-features --test harness_integrity', 'a_status_file_is_accepted_only_as_the_joined_evidence_for_the_freeze_commit'),
+]
+
 def in_scope(mid, scope):
     # A SIBLING-ONLY edit exists only as a member of a retired row's guard set
     # (amendment 64): it is never an active row of any scope.

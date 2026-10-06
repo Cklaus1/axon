@@ -1893,3 +1893,22 @@ ATTACK_MARKERS.update({
     'M1898': r'ATTACK: a production build ran under RUSTC_WORKSPACE_WRAPPER',
     'M1899': r'ATTACK: a production build ran under RUSTC_WRAPPER',
 })
+
+# C9 round 5, INTEGRATE: status_problems arms (M1960-M1974).
+ATTACK_MARKERS.update({
+    'M1960': 'ATTACK: a status file with the defect `schema` was accepted',
+    'M1961': 'ATTACK: a status file with the defect `dirty` was accepted',
+    'M1962': 'ATTACK: a status file with the defect `blobs` was accepted',
+    'M1963': 'ATTACK: a status file with the defect `not-a-status` was accepted',
+    'M1964': 'ATTACK: a status file with the defect `extra` was accepted',
+    'M1965': 'ATTACK: a status file with the defect `duplicate` was accepted',
+    'M1966': 'ATTACK: a status file with the defect `record-commit` was accepted',
+    'M1967': 'ATTACK: a status file with the defect `edits` was accepted',
+    'M1968': 'ATTACK: a status file with the defect `label` was accepted',
+    'M1969': 'ATTACK: a status file with the defect `no-matrix` was accepted',
+    'M1970': 'ATTACK: a status file with the defect `selection` was accepted',
+    'M1971': 'ATTACK: a status file with the defect `all-hold` was accepted',
+    'M1972': 'ATTACK: a status file with the defect `foreign-commit` was accepted',
+    'M1973': 'ATTACK: a status file with the defect `not-ancestor` was accepted',
+    'M1974': 'ATTACK: a status file with the defect `doc-toolchain` was accepted',
+})
