@@ -1020,7 +1020,7 @@ fn authenticated(
     if running != c.fabric.sha256 {
         return Err(format!(
             "the caller runs a program with sha256 {running}, not the operator's pinned Fabric \
-             {} ({}): only the installed axon-fabric is served",
+             {} ({}): only a caller running the installed axon-fabric file is served",
             c.fabric.sha256,
             c.fabric.path.display()
         ));
@@ -2108,8 +2108,9 @@ mod tests {
         (p, v, a)
     }
 
-    /// A132 (amendment 79): the helper serves only the Fabric program the
-    /// operator pinned, so the config must pin it: a lowercase sha256 and the
+    /// A132 (amendments 79, 85): the helper serves a caller whose executable at
+    /// that instant is the file the operator pinned (a guard against mistakes,
+    /// not against same-uid code), so the config must pin it: a lowercase sha256 and the
     /// pinned binary's 40-hex build revision. A config with no pin, a pin that
     /// is not a digest, or a revision that is not a commit is refused.
     /// Control: the pinned config loads.
