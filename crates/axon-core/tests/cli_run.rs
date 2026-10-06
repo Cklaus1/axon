@@ -32025,3 +32025,100 @@ fn native_loops_do_not_grow_the_stack_per_iteration() {
     };
     assert_eq!(got, "1999999");
 }
+
+/// MINSTD (Park–Miller) stream starting after `seed`, as the sort tests'
+/// Axon programs generate it, so the Rust-side expectation sees the same data.
+fn minstd(seed: i64, n: usize) -> Vec<i64> {
+    let mut s = seed;
+    (0..n)
+        .map(|_| {
+            s = (s * 48271) % 2147483647;
+            s
+        })
+        .collect()
+}
+
+fn sort_program(n: usize, fill: &str, cmp: &str) -> String {
+    format!(
+        "fn main() -> i64 {{\n let n = {n}\n let xs = arr_repeat(0, n)\n let s = 7\n \
+         for i in 0..n {{\n  s = (s * 48271) % 2147483647\n  xs[i] = {fill}\n }}\n \
+         let ys = arr_sort_by(&xs, {cmp})\n println(to_str(len(ys)))\n \
+         for i in 0..len(ys) {{ println(to_str(ys[i])) }}\n 0\n}}\n"
+    )
+}
+
+/// The sort programs' stdout: the length, then one element per line.
+fn expected_sorted(v: Vec<i64>) -> String {
+    let mut out = vec![v.len().to_string()];
+    out.extend(v.iter().map(|x| x.to_string()));
+    out.join("\n")
+}
+
+#[test]
+fn arr_sort_by_is_stable_in_both_engines() {
+    // AX-07: arr_sort_by was an O(n²) insertion sort; its replacement merge
+    // sort must stay STABLE. Records are encoded as key*10000 + input position
+    // with 7 distinct keys, so every key repeats ~140 times; the comparator
+    // looks only at the key, so equal-key records must keep input order.
+    // n = 1000 is not a power of two: ragged final runs are merged too.
+    let n = 1000;
+    let src = sort_program(n, "(s % 7) * 10000 + i", "|a, b| a / 10000 - b / 10000");
+    let mut want: Vec<i64> = minstd(7, n)
+        .iter()
+        .enumerate()
+        .map(|(i, s)| (s % 7) * 10000 + i as i64)
+        .collect();
+    want.sort_by_key(|r| r / 10000); // std's sort_by_key is stable
+    let want = expected_sorted(want);
+    assert_eq!(interp_stdout("sort_stable", &src), want, "interpreter not stable");
+    if let Some(got) = native_stdout("sort_stable", &src) {
+        assert_eq!(got, want, "native not stable");
+    }
+}
+
+#[test]
+fn arr_sort_by_matches_a_reference_sort_in_both_engines() {
+    // AX-07: correctness of the merge sort on random data, ascending and
+    // descending comparators, against Rust's sort.
+    let n = 777;
+    for (tag, cmp, desc) in [("sort_asc", "|a, b| a - b", false), ("sort_desc", "|a, b| b - a", true)] {
+        let src = sort_program(n, "s", cmp);
+        let mut want = minstd(7, n);
+        want.sort();
+        if desc {
+            want.reverse();
+        }
+        let want = expected_sorted(want);
+        assert_eq!(interp_stdout(tag, &src), want, "[{tag}] interpreter");
+        if let Some(got) = native_stdout(tag, &src) {
+            assert_eq!(got, want, "[{tag}] native");
+        }
+    }
+}
+
+#[test]
+fn arr_sort_by_handles_empty_and_single_element_arrays_in_both_engines() {
+    for (tag, n) in [("sort_empty", 0usize), ("sort_one", 1)] {
+        let src = sort_program(n, "s", "|a, b| a - b");
+        let want = expected_sorted(minstd(7, n));
+        assert_eq!(interp_stdout(tag, &src), want, "[{tag}] interpreter");
+        if let Some(got) = native_stdout(tag, &src) {
+            assert_eq!(got, want, "[{tag}] native");
+        }
+    }
+}
+
+#[test]
+fn arr_sort_by_keeps_equal_struct_records_in_input_order() {
+    // AX-07, interpreter: stability over a non-i64 element type (native
+    // refuses `[Struct]` sorts with E0910, so this one is interpreter-only).
+    let src = "type R = { k: i64, tag: i64 }\n\
+        fn main() -> i64 {\n \
+         let rs = [R { k: 2, tag: 1 }, R { k: 1, tag: 2 }, R { k: 2, tag: 3 }, \
+         R { k: 1, tag: 4 }, R { k: 0, tag: 5 }, R { k: 2, tag: 6 }]\n \
+         let ys = arr_sort_by(&rs, |x, y| x.k - y.k)\n \
+         let out = 0\n \
+         for i in 0..len(ys) { out = out * 10 + ys[i].tag }\n \
+         println(to_str(out))\n 0\n}\n";
+    assert_eq!(interp_stdout("sort_struct_stable", src), "524136");
+}

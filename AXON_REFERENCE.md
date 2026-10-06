@@ -330,7 +330,7 @@ A code marked **reserved** is declared but emitted nowhere in this build. Listin
 | `arr_range(start: i64, end: i64) -> [i64]` | Return the half-open range `[start, end)` as a fresh i64 slice. Empty when `end <= start`. Useful for `for i in arr_range(0, n)` and as a seed for further array ops. |
 | `arr_repeat(v: T, n: i64) -> [T]` | Build an array of `n` copies of `v`. Useful to initialize a default-filled array before in-place mutation. Negative `n` returns empty; saturating cap at ~1M elements. |
 | `arr_reverse(xs: [T]) -> [T]` | Return a fresh array with elements in reverse order. Works for any element type. |
-| `arr_sort_by(xs: [T], cmp: fn(T, T) -> i64) -> [T]` | Return a sorted copy of `xs` using the comparator (neg = a<b, 0 = eq, pos = a>b). Element type is deferred so any sortable domain works. Stable insertion sort; closure-dispatch dominates cost on ASI-scale arrays. Input untouched. |
+| `arr_sort_by(xs: [T], cmp: fn(T, T) -> i64) -> [T]` | Return a sorted copy of `xs` using the comparator (neg = a<b, 0 = eq, pos = a>b). Element type is deferred so any sortable domain works. Stable merge sort, O(n log n) comparator calls; equal elements keep input order. Input untouched. |
 | `arr_std_f64(xs: [f64]) -> f64` | Sample standard deviation: sqrt of (sum of squared deviations from mean) / (n - 1). Panics for arrays of length < 2. |
 | `arr_sum_by(xs: [T], key_fn: fn(T) -> i64) -> i64` | Sum a projected i64 field over `xs`. Equivalent to `arr_sum_i64(&arr_map(xs, key_fn))` but doesn't materialize the mapped array — the `_by` sibling of `arr_max_by`/`arr_min_by`. |
 | `arr_sum_by_f64(xs: [T], key_fn: fn(T) -> f64) -> f64` | Sum a projected f64 field over `xs`. The f64 counterpart of `arr_sum_by`. |

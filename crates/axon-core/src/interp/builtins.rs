@@ -1810,9 +1810,8 @@ impl<'p> Interp<'p> {
             }
             // Sort an array via a comparator closure `(a, b) -> i64` with
             // standard cmp semantics (neg = a<b, 0 = eq, pos = a>b).
-            // Stable sort (insertion-sort under the hood for simplicity);
-            // not big-O optimal but plenty for ASI-scale arrays. Returns a
-            // fresh sorted array — input untouched.
+            // Stable bottom-up merge sort: O(n log n) comparator calls. Returns
+            // a fresh sorted array — input untouched.
             "arr_sort_by" => {
                 want(2)?;
                 let xs = match &args[0] {
@@ -1825,33 +1824,48 @@ impl<'p> Interp<'p> {
                     }
                 };
                 let cmp = args[1].clone();
-                // Insertion sort. Each comparison hits call_closure;
-                // O(n²) on length but the closure dispatch dominates so
-                // a fancier algorithm wouldn't move the needle here.
-                let mut out: Vec<Value> = Vec::with_capacity(xs.len());
-                for x in xs {
-                    let mut lo = 0;
-                    let hi = out.len();
-                    // Linear probe (binary search would re-run the cmp for
-                    // already-sorted items; for typical ASI use n is small).
-                    while lo < hi {
-                        let r = self.call_closure(cmp.clone(), vec![x.clone(), out[lo].clone()])?;
-                        let r = match r {
-                            Value::Int(n) => n,
-                            other => {
-                                return panic(format!(
-                                    "arr_sort_by: comparator must return i64, got {}",
-                                    other.type_name()
-                                ))
+                // Runs of width 1, 2, 4, … in `a` are merged into `b`, then the
+                // buffers swap. The right head `r` precedes the left head `l`
+                // only when cmp(r, l) < 0, so equal elements keep input order.
+                // A comparator error or non-i64 result aborts via `?`/panic.
+                let n = xs.len();
+                let mut a: Vec<Value> = xs;
+                let mut b: Vec<Value> = Vec::with_capacity(n);
+                let mut width = 1usize;
+                while width < n {
+                    b.clear();
+                    let mut lo = 0usize;
+                    while lo < n {
+                        let mid = (lo + width).min(n);
+                        let hi = (mid + width).min(n);
+                        let (mut i, mut j) = (lo, mid);
+                        while i < mid && j < hi {
+                            let r = self.call_closure(cmp.clone(), vec![a[j].clone(), a[i].clone()])?;
+                            let r = match r {
+                                Value::Int(n) => n,
+                                other => {
+                                    return panic(format!(
+                                        "arr_sort_by: comparator must return i64, got {}",
+                                        other.type_name()
+                                    ))
+                                }
+                            };
+                            if r < 0 {
+                                b.push(a[j].clone());
+                                j += 1;
+                            } else {
+                                b.push(a[i].clone());
+                                i += 1;
                             }
-                        };
-                        if r < 0 {
-                            break;
                         }
-                        lo += 1;
+                        b.extend_from_slice(&a[i..mid]);
+                        b.extend_from_slice(&a[j..hi]);
+                        lo = hi;
                     }
-                    out.insert(lo, x);
+                    std::mem::swap(&mut a, &mut b);
+                    width *= 2;
                 }
+                let out = a;
                 ok!(Value::Array(out));
             }
             // Build an array by repeating `v` `n` times. Common need:
