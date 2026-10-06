@@ -550,10 +550,6 @@ EXEMPT += [
     (RUN, '        Err(e) => return refused(cfg, &m_sha, inputs, &test, format!("axon test: {e}")),',
      "NOTHING TO ADMIT: the test did not run to an exit status and output (spawn failed, killed "
      "at the wall-clock limit, or over the output limit, M781)"),
-    (RUN, "                if libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0",
-     "OS ERROR: pre_exec failing makes spawn fail; the test does not run"),
-    (RUN, "                    if libc::setgroups(0, std::ptr::null()) != 0",
-     "OS ERROR: pre_exec failing makes spawn fail; the test does not run (the uid drop is M172)"),
     (RUN, "    let Some(status) = status else {",
      "NOTHING TO ADMIT: the child was killed at the wall-clock limit, so there is no exit status; "
      "a verdict needs Some(0) for a pass (M293) and Some(nonzero) for a failure (M242)"),
@@ -1996,9 +1992,6 @@ EXEMPT += [
      "A CONDITION A NAMED ROW MUTATES: this arm is the complement of the two above; M1485 (`None if "
      "a.test` -> `None`, ACTIVE) is the removal for an unpinned custodian, and a pin that is not 64 "
      "hex is OPERATOR-AUTHORED (a field of the operator-owned helper config, M585/M586)"),
-    (PL, "        ok.then_some(())",
-     "OS ERROR during the hand-over (fchmod/fchown of the out dir): reported as the helper's error, "
-     "fails closed"),
     (PL, "fn is_hex64(s: &str) -> bool {",
      "PREDICATE OF NAMED ROWS / OPERATOR-AUTHORED: its callers judge fields of the operator-owned "
      "helper config (program pins, the observer key: exempt, M585/M586; the custodian pin: M1485), "
@@ -3020,13 +3013,6 @@ EXEMPT += [
 # check; the sites with an attack of their own are ROWED (M1907-M1954), not here.
 _PLX = PL
 EXEMPT += [
-    (PL, "            libc::S_IFREG => {\n                let fd = openat(\n                    dir,",
-     "RACE-ONLY (checkable): this open is reached only for an entry the fstatat above "
-     "(AT_SYMLINK_NOFOLLOW, M1912) reported as a regular file, in a directory only this process "
-     "can write until the hand-over gives it away (make_out: mkdirat 0700, owner re-checked), so "
-     "no other uid can swap the entry for a symlink between the two calls and no input drives "
-     "this; a symlink the launch leaves is classified S_IFLNK by the fstatat and never reaches "
-     "this arm"),
     (LA, "    let role = if proposer {\n        Some(\"an EVO proposer (the ranker)\")",
      "DOMINATED (checkable): evl.rs's evaluation adds every stored proposer of an arm policy to "
      "the record's `subject_issuers` (`for pref in policies.keys() { .. subjects.insert(p) }`, "
@@ -3095,6 +3081,80 @@ EXEMPT += [
      "AdmitError, never axon_os::Verdict); Fabric consumes the Verdict by variant, not by code, and "
      "the one variant mapped to 0 is Completed"),
     ("crates/axon-vm/src/admit.rs", "    pub fn exit_code(&self) -> i32 {", _VM),
+]
+
+
+# ── Amendment 87 (C9 round 6, eqgate2): the sites the permission / privilege /
+# process forms expose. The sites with an attack of their own are ROWED
+# (M2144-M2169), not here. An entry that starts REMAINDER is NOT a claim that
+# the guard is dominated: it states that no test observes it yet (a guest-only
+# step, an unobservable bit, a fallback, a development-only path), so the list
+# of what is left is greppable, not hidden. An exemption pinned on the site's OWN
+# line does not conflict with a row on a LATER line of the same arm (the rows of
+# the arm's fchmod/fchown), which the block rule would otherwise count as
+# covering it.
+#   grep -n 'REMAINDER' scripts/v022_refusal_coverage.py
+_R87_GUEST = ("REMAINDER (no row yet): runs only as the guest's PID 1 inside the microVM; no host "
+              "test executes it, and a guest change needs a real boot (psv_guest_boot_test.sh), "
+              "which this workstream did not run")
+EXEMPT += [
+    (PL, "                    libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_NONBLOCK,\n                )\n                .map_err(|e| e.to_string())?;\n                unsafe {",
+     "RACE-ONLY (checkable): this open is reached only for an entry the fstatat above "
+     "(AT_SYMLINK_NOFOLLOW, M1912) reported as a regular file, in a directory only "
+     "this process can write until the hand-over gives it away (make_out: mkdirat 0700, owner "
+     "re-checked), so no other uid can swap the entry for a symlink between the two calls and no "
+     "input drives this; a symlink the launch leaves is classified S_IFLNK by the fstatat and never "
+     "reaches this arm. The fchmod and fchown after it are rowed (M2163, M2164)"),
+    ("crates/axon-cortex/src/runner.rs", "        cmd.pre_exec(move || {", _LOC),
+    ("crates/axon-cortex/src/runner.rs", "                if libc::prctl(", _LOC),
+    ("crates/axon-fabric/src/bin/axon-custodian.rs", "                .mode(0o700)\n                .recursive(true)",
+     "NOT ON THE PROTECTED ROUTE (checkable): this is the `--dev` branch of axon-custodian "
+     "(`DEV custodian ... (never protected)`, the line below): a development custodian never yields "
+     "a protected launch (a_dev_custodian_never_yields_a_protected_launch); the protected store is "
+     "the operator's, checked by custodian.rs's owner/mode refusal (0o077, rowed)"),
+    (PL, "    unsafe { libc::prctl(libc::PR_GET_NO_NEW_PRIVS, 0, 0, 0, 0) == 1 }",
+     "REMAINDER (no row yet): a QUERY of the caller's NoNewPrivileges (the trust preflight's `--probe` "
+     "and the production launch's refusal read it). Weakening the read to 0 is the attack of the test "
+     "`a_fabric_under_no_new_privs_is_told_why_the_helper_launches_nothing` (its ATTACK at 'under its "
+     "caller's NoNewPrivileges'), which would fail, but no row of its own carries that kill"),
+    (PL, "        libc::prctl(\n            libc::PR_SET_DUMPABLE,",
+     "REMAINDER (no row yet): PR_SET_DUMPABLE=0 on the root helper is not observable from outside "
+     "the process on a default host (exec of a setuid binary leaves it non-dumpable under "
+     "fs.suid_dumpable=0, and the next exec resets the bit), and RLIMIT_CORE=0 (rowed, M2167, the hostile-caller test) also stops a core dump; a host with "
+     "fs.suid_dumpable != 0 is where this call alone holds"),
+    (PL, "                if libc::getrlimit(r, &mut cur) == 0 {\n                    cur.rlim_cur = if v == 0",
+     "REMAINDER (no row yet): the fallback for a helper that is not root (a test-trust build run "
+     "unprivileged) lowering the soft limit to the hard one; the production helper is root and takes "
+     "the setrlimit above (rowed)"),
+    (PL, "            if libc::setrlimit(r, &l) != 0 {\n                let mut cur: libc::rlimit = std::mem::zeroed();",
+     "REMAINDER (no row yet): the limits beyond the ones the hostile-caller test observes (STACK, RSS, "
+     "MEMLOCK, LOCKS, SIGPENDING, MSGQUEUE, NICE, RTPRIO, RTTIME: kernel defaults, amendment 73); the "
+     "helper's own `lim2` closure, whose first-order effect is the rowed `lim`'s"),
+    (PL, "                if libc::getrlimit(r, &mut cur) == 0 {\n                    cur.rlim_cur = soft.min",
+     "REMAINDER (no row yet): the unprivileged fallback of `lim2` (see the entry above)"),
+    ("crates/axon-fabric/src/sealed_exec.rs", "    if unsafe { libc::fcntl(fd, libc::F_SETLEASE, libc::F_RDLCK) } == 0 {",
+     "DOMINATED (checkable): a lease that was not taken is refused by the F_GETLEASE re-read before the "
+     "exec (`leased` is judged under Lease::Required, rows M524 and M591); this call only takes it"),
+    ("crates/axon-fabric/src/sealed_exec.rs", "        unsafe { libc::fcntl(fd, libc::F_SETOWN, 0) };",
+     "REMAINDER (no row yet): clears the lease-break signal's owner after the lease is taken (hygiene, "
+     "so a break does not signal this process); no test observes it"),
+    ("crates/axon-fabric/src/sealed_exec.rs", "        cmd.pre_exec(move || exec.run());",
+     "ROWED ELSEWHERE (checkable): the closure `exec.run()` this pre_exec installs is the child's "
+     "re-check and execveat of the verified program (M527, M528); removing the hook is those rows' attack"),
+    ("crates/axon-guest-init/src/main.rs", "    let r = libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1usize", _R87_GUEST),
+    ("crates/axon-guest-init/src/main.rs", "        let r = libc::prctl(\n            libc::PR_SET_SECCOMP,", _R87_GUEST),
+    ("crates/axon-guest-init/src/main.rs", "        libc::SECCOMP_MODE_FILTER as libc::c_ulong,", _R87_GUEST),
+    ("crates/axon-guest-init/src/main.rs", "        unsafe { libc::kill(pid, sig) };", _R87_GUEST),
+    ("crates/axon-guest-init/src/main.rs", "        libc::signal(\n            libc::SIGTERM,", _R87_GUEST),
+    ("crates/axon-guest-init/src/main.rs", "        libc::signal(\n            libc::SIGINT,", _R87_GUEST),
+    ("crates/axon-psv/src/bin/axon-psv-runner.rs", "    unsafe { libc::prctl(libc::PR_SET_DUMPABLE, 0, 0, 0, 0) }",
+     "REMAINDER (no row yet): the runner makes itself non-dumpable before reading the completion secret; "
+     "the SEAM is tested (`start` refuses when the function returns non-zero: the runner binary's own "
+     "tests), the call itself is not observed from outside the process"),
+    ("crates/axon-os/src/runtime.rs", "match std::fs::DirBuilder::new().mode(0o700)", _ACR),
+    ("crates/axon-os/src/runtime.rs", "            .mode(0o600)", _ACR),
+    ("crates/axon-os/src/runtime.rs", "        let rc = unsafe { libc::killpg(pid, libc::SIGKILL) };", _ACR),
+    ("crates/axon-os/src/runtime.rs", "        .process_group(0)", _ACR),
 ]
 
 
@@ -4070,7 +4130,11 @@ def judge_file(f, rows, bad):
         if by:
             covered += 1
             for e in ex_hit:
-                bad.append(f"{f}:{i + 1}: exempt ({e[1]!r}) yet covered by {by}: drop the exemption")
+                # Amendment 87: only an exemption pinned on the site's own line
+                # outlives its reason when a row covers it; one anchored on an
+                # earlier line of the block belongs to the site it names.
+                if e[0] == i or kind != "line":
+                    bad.append(f"{f}:{i + 1}: exempt ({e[1]!r}) yet covered by {by}: drop the exemption")
         elif ex_hit:
             exempt += 1
         else:

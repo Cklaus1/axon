@@ -982,7 +982,8 @@ fn child_state(drop: bool) -> Option<String> {
 
 #[test]
 fn the_check_child_cannot_gain_privilege_and_dies_with_the_runner() {
-    let st = child_state(false).expect("setup: the stand-in interpreter ran and recorded its state");
+    let st =
+        child_state(false).expect("setup: the stand-in interpreter ran and recorded its state");
     assert!(
         st.contains("NoNewPrivs:\t1"),
         "ATTACK: the check child runs without no_new_privs and can gain privilege: {st}"
