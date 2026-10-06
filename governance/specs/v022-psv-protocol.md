@@ -3966,3 +3966,72 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       the run. Test: `harness_integrity a_sharded_run_survives_a_source_change_made_while_it_runs`
       plants the relink (one shard rewrites the package source while another is mid-test and a
       third starts afterwards): the previous runner fails it (`... (deleted)`), this one passes.
+
+## Amendment 80: the build's own configuration is judged by structure, the host binaries record what built them, and the build record is its runner's (C9 round 5, buildenv)
+
+80. **FIELD-ORIGIN BLOCKER (executed by the reviewer).** `scripts/guest_build_env.py` classified cargo's
+    effective config by splitting the text cargo PRINTS. Cargo prints a `cfg(...)` target whose expression holds
+    double quotes with SINGLE quotes (`target.'cfg(all(target_os="linux", target_env="musl"))'.linker`); the
+    `strip('"')` left a stray quote, the table read as a harmless triple, and a committed `linker` under it
+    linked the guest binaries (a probe linker ran) while the record said `foreign=[]`, `begin` accepted it and
+    `shape_problems` returned `''`.
+    - **After.** Classification is on the STRUCTURED config (`cargo config get --format json`, a nested object
+      keyed by the exact key names; no dotted-string splitting anywhere). `COMMITTED_KEYS` is an exact allowlist
+      (`target.wasm32-wasip1.rustflags`, `target.wasm32-unknown-unknown.rustflags`, the tree's own); every other
+      key, in any table (`[build]`, `[env]`, `[source]`, `[patch]`, `[registries]`, `[net]`, `[http]`, `[profile]`,
+      `[unstable]`, any `cfg(...)` or plain-triple target) and from any file, is refused. A tolerated key's triple
+      must also not be a `cfg(...)` table or a triple the build compiles for; the host triple is `rustc -vV`'s,
+      not a constant. A cargo that cannot print its config refuses the build. Any variable in the environment that
+      is not the constructed one is refused (cargo's own "environment variables that may affect" note does not
+      name `RUSTFLAGS` or `RUSTC_WRAPPER`). The `--show-origin` text is read only to record origins.
+    - **Rows (killed by their own attack).** M730 (retargeted: the classification call), M1880 (the exact
+      allowlist), M1881 (the cfg/compiled-triple guard), M1882 (environment refusal), M1883 (host triple),
+      M1885 (cargo that cannot print its config). The attack is the committed-config form driven through
+      `begin` (`a_committed_cargo_config_cannot_name_a_program_in_any_spelling`: the single-quoted and
+      double-quoted cfg forms, plain host and musl triples, `[env]`, `[build]`, `[source]`, `[patch]`,
+      `[registries]`, `[net]`, `[http]`, `[profile]`, `[unstable]`, a non-allowlisted wasm key, and an
+      ancestor's cfg / `[env]` / `[source]`; control: the tree's own config begins with `foreign == []`).
+    - **MAJOR-ADJACENT 1: host binaries (done).** The setuid `axon-protected-launcher`, the verifier, the
+      custodian and the observer had no controlled build environment. `crates/axon-fabric/src/build_state.rs`
+      (included by `build.rs`) reads what cargo hands the build script (`RUSTC_WRAPPER`,
+      `RUSTC_WORKSPACE_WRAPPER`, `CARGO_ENCODED_RUSTFLAGS`, `RUSTC_LINKER`): any non-empty is recorded in the
+      verifier identity (`build_state`, pinned field for field by `protected_verifier_ready.py`, which also
+      refuses a non-empty one) and REFUSES a production build (release profile, no `test-trust-root` feature).
+      The kit refuses a verifier whose `build_state` is non-empty and calls the new
+      `guest_build_env.py check-host-build CLONE`, the guest's classifier over the kit's OWN environment (no
+      `CARGO_*` but `CARGO_HOME`/`CARGO_TARGET_DIR`, no `RUSTC*`/`RUSTFLAGS`/`RUSTUP_TOOLCHAIN`, no C-toolchain
+      variable, and an effective config from the clone, its ancestors and `CARGO_HOME` that is only the committed
+      one). Rows M1884 (CARGO_* refusal), M1897-M1899 (`refusal`, the workspace wrapper, `build.rs` stopping
+      the build; tested through the REAL `build.rs` in a scratch package). **Operator-trusted, unchanged:** the
+      `cargo`/`rustc` binaries themselves (the `rust-toolchain.toml` pin), `--locked`'s check of each crate
+      against `Cargo.lock`, and a reused `CARGO_HOME`'s cached crates. `check-host-build` is made at DEPLOY time
+      and cannot see an ancestor config that existed only during the build; `build_state` covers only the four
+      variables above. The other three binaries are covered by the same `build.rs` run (one crate), but only
+      the verifier reports it.
+    - **MAJOR-ADJACENT 2: the build record is its runner's (done).** `begin` and `kernel` create a per-build
+      random key (0400) in `<build parent>/keys` (the builder-private parent, 0700, never removed with the
+      build directory), and every write of the record signs it: `proof = HMAC-SHA256(key, canonical record
+      without the hmac)`, covering every field including artifact digests. `dist RECORD DIST` records the digest
+      of every dist artifact and refuses a copy that is not the controlled step's output;
+      `linux_profile_manifest.py` takes dist digests FROM THE RECORD and refuses a differing dist file or a
+      record without the proof; `image_problems` (the freeze, and the kit before it installs anything) ends
+      with the proof of the build and kernel records, after every structural judge, so each structural row is
+      still killed by its own attack (the fixtures re-sign after an edit). The key must be a regular file
+      (no symlink) owned by the builder, closed to others, in a directory likewise, under a parent only root or
+      the builder can write. Rows M1886-M1896. **If the freeze runs in another process or host,** the
+      `<parent>/keys/<id>.key` files must travel (or the freeze runs as root/the builder on the build host);
+      otherwise it refuses ("cannot be checked"). **Residual trust: the builder account** (anyone who can
+      read the key can sign any record), and the toolchain pin for the binaries' own bytes.
+    - **Kit.** `operator_deploy_protected_host.sh` runs `shape_problems` and `image_problems` on the guest
+      records before installing. `test_operator_deploy.sh` builds its synthetic image from properly signed
+      records and refuses (by real kit runs) a verifier with a build state, `RUSTC_WRAPPER`/`RUSTFLAGS`/
+      `CARGO_BUILD_RUSTC_WRAPPER` in the kit's environment, and a hand-written, edited or kernel-edited record.
+      These three kit guards are not mutation rows (the harness drives cargo tests only); each was checked
+      by hand: the guard removed, the script fails.
+    - **FUTURE (not done).** `TrustAuthority::Admission` has no consumer (loop admitters come from store-config
+      identities); `helper_agrees` does not join `artifacts_dir`, `firecracker`, `jailer`, `observer.root`
+      and `observer.max_age_s` to the host config.
+    - **Matrix.** A135-A137 (the integrator renumbers). **Operator deployment.** The installed verifier.json must be
+      re-pinned (the verifier identity gained `build_state`); the guest image must be rebuilt (records now carry
+      a proof and `dist`).
+
