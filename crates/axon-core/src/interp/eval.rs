@@ -450,7 +450,7 @@ impl<'p> Interp<'p> {
                 let tn = argv[0].type_name();
                 if let Some(f) = self.methods.get(&(tn.clone(), method.clone())) {
                     self.seal_method(f, &tn)?;
-                    self.seal_dispatch(expr, receiver, f, &tn)?;
+                    self.seal_dispatch(receiver, f, &argv[0], &tn)?;
                     self.call_fn(f, argv)
                 } else {
                     panic(format!("no method `{method}` on type `{tn}`"))
@@ -659,6 +659,12 @@ impl<'p> Interp<'p> {
                 let mut cell = env.snapshot();
                 // PCI: a closure remembers that a SEALED frame created it, so it
                 // runs sealed wherever it is later called.
+                if self.seal.active {
+                    cell.insert(
+                        crate::interp::PIN_FN_MARK.to_string(),
+                        Value::Int(self.pin_fn.get() as i64),
+                    );
+                }
                 if self.frame_sealed.get() {
                     cell.insert(
                         crate::interp::SEALED_CLOSURE_MARK.to_string(),

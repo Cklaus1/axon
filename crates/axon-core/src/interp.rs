@@ -467,6 +467,9 @@ pub(crate) static DISPATCH_RULE_OFF: std::sync::atomic::AtomicBool =
 /// Capture-cell key marking a closure created in a SEALED frame. Starts with
 /// NUL, so no source identifier can name or shadow it.
 pub(crate) const SEALED_CLOSURE_MARK: &str = "\u{0}sealed";
+/// Capture-cell key holding the `FnDef` address of the fn that created a
+/// closure (the pin analysis owns a lambda body by its creator).
+pub(crate) const PIN_FN_MARK: &str = "\u{0}pinfn";
 
 pub(crate) fn contain_loop_control(r: R, site: &str) -> R {
     match r {
@@ -728,9 +731,9 @@ pub struct Interp<'p> {
     /// The method-call sites whose receiver's type nothing on the operator
     /// side determined (built only for a sealed run; amendment 83).
     pins: pin::Pins,
-    /// Address -> undetermined, a cache over [`pin::Pins`] (closure bodies are
-    /// cloned, so a miss recomputes the structural key).
-    pin_cache: RefCell<HashMap<usize, bool>>,
+    /// The fn whose body is running, for the pin analysis (its `FnDef`
+    /// address; a closure carries its creator's). 0 outside any fn.
+    pin_fn: Cell<usize>,
     frame_sealed: Cell<bool>,
     /// How many frames of each provenance are active (entered through
     /// [`Interp::with_frame`] and not yet left). `with_frame` is the ONLY
@@ -1062,6 +1065,17 @@ struct DepthGuard<'a>(&'a Cell<usize>);
 impl Drop for DepthGuard<'_> {
     fn drop(&mut self) {
         self.0.set(self.0.get().saturating_sub(1));
+    }
+}
+
+/// Restores the caller's `pin_fn` on drop.
+struct PinGuard<'a> {
+    cell: &'a Cell<usize>,
+    prev: usize,
+}
+impl Drop for PinGuard<'_> {
+    fn drop(&mut self) {
+        self.cell.set(self.prev);
     }
 }
 
@@ -3042,9 +3056,8 @@ impl<'p> Interp<'p> {
             }
         };
         let pins = if seal.active {
-            pin::Pins::build(program, &|f| {
-                seal.fns.contains(&(f as *const FnDef as usize))
-            })
+            let dirs = crate::resolver::sealed_module_dirs();
+            pin::Pins::build(program, &|sp| crate::resolver::span_in_sealed(sp, &dirs))
         } else {
             pin::Pins::default()
         };
@@ -3052,7 +3065,7 @@ impl<'p> Interp<'p> {
             kernels: [mk_kernel(false), mk_kernel(true)],
             seal,
             pins,
-            pin_cache: RefCell::new(HashMap::new()),
+            pin_fn: Cell::new(0),
             frame_sealed: Cell::new(false),
             sealed_frames: Cell::new(0),
             operator_frames: Cell::new(0),
@@ -3387,9 +3400,9 @@ impl<'p> Interp<'p> {
     /// between (two or more operator impl types define the method).
     pub(crate) fn seal_dispatch(
         &self,
-        site: &Expr,
         receiver: &Expr,
         f: &FnDef,
+        recv: &Value,
         tn: &str,
     ) -> Result<(), Flow> {
         if !self.seal.active || self.frame_sealed.get() || self.fn_is_sealed(f) {
@@ -3406,20 +3419,17 @@ impl<'p> Interp<'p> {
         if !self.pins.selects_between_impls(&f.name) {
             return Ok(());
         }
-        let addr = site as *const Expr as usize;
-        let cached = self.pin_cache.borrow().get(&addr).copied();
-        let undetermined = match cached {
-            Some(u) => u,
-            None => {
-                let u = self.pins.undetermined(receiver, &f.name);
-                let mut c = self.pin_cache.borrow_mut();
-                if c.len() < 65_536 {
-                    c.insert(addr, u);
-                }
-                u
-            }
+        // A receiver that is an operator-defined struct or enum selects an
+        // impl the operator chose: sealed code cannot build one (E0004).
+        let operator_value = match recv {
+            Value::Struct { name, .. } => self.pins.is_operator_type(name),
+            Value::Enum { enum_name, .. } => self.pins.is_operator_type(enum_name),
+            _ => false,
         };
-        if undetermined {
+        if operator_value {
+            return Ok(());
+        }
+        if !self.pins.determined(self.pin_fn.get(), receiver, &f.name) {
             return panic(format!(
                 "operator code dispatched `{}` on a value whose type nothing on the operator side \
                  determined (here `{tn}`) — the candidate would choose the impl; pin it with \
@@ -3459,7 +3469,10 @@ impl<'p> Interp<'p> {
         if DISPATCH_RULE_OFF.load(std::sync::atomic::Ordering::SeqCst) {
             return Ok(());
         }
-        if self.pins.undetermined_arith(op, left, right) {
+        if !self
+            .pins
+            .determined_arith(self.pin_fn.get(), op, left, right)
+        {
             return panic(format!(
                 "operator code did arithmetic on a fixed-width integer whose width nothing on the \
                  operator side determined ({} {:?} {}) — the candidate would choose the \
@@ -3597,6 +3610,10 @@ impl<'p> Interp<'p> {
         let _fn_guard = FnNameGuard {
             cell: &self.current_fn,
             prev: self.current_fn.replace(f.name.clone()),
+        };
+        let _pin_guard = PinGuard {
+            cell: &self.pin_fn,
+            prev: self.pin_fn.replace(f as *const FnDef as usize),
         };
         // R4/I-13: if THIS fn is an `@[agent]`, it becomes the enclosing agent for
         // everything it transitively calls; otherwise the caller's enclosing agent
@@ -4225,6 +4242,18 @@ impl<'p> Interp<'p> {
             self.dict_edge_out()?;
         }
         self.closure_args_check(&contract, &mut args, entering)?;
+        let _pin_guard = if self.seal.active {
+            let owner = match captured.borrow().get(PIN_FN_MARK) {
+                Some(Value::Int(n)) => *n as usize,
+                _ => 0,
+            };
+            Some(PinGuard {
+                cell: &self.pin_fn,
+                prev: self.pin_fn.replace(owner),
+            })
+        } else {
+            None
+        };
         let mut env = Env::new();
         // Base scope = captured bindings; a fresh scope holds the parameters.
         // The base scope is a CLONE of the shared cell's contents so the body
@@ -8719,13 +8748,11 @@ fn main() { }
     #[test]
     fn a_determined_receiver_dispatches_and_so_does_an_unambiguous_method() {
         let pinned = [
-            "assert(solve(3).ok())",
-            "let r = solve(3)\n    assert(r.ok())",
             "let r: i64 = solve(3)\n    assert(r.ok())",
-            "let r = solve(3) + 0\n    assert(r.ok())",
             "assert(9.ok())",
-            "let w = Wrap { v: solve(3) }\n    assert(w.v.ok())",
-            "let xs = [solve(3)]\n    assert(xs[0].ok())",
+            "let w = Wrap { v: 9 }\n    assert(w.v.ok())",
+            "let xs = [9]\n    assert(xs[0].ok())",
+            "let r: i64 = solve(3)\n    assert((r + 0).ok())",
             "assert((solve(3) as i64).ok())",
         ];
         for body in pinned {
@@ -8763,6 +8790,196 @@ fn main() { }
             .unwrap_or_else(|p| p.into_inner());
         crate::resolver::set_sealed_module_dirs(&[]);
         assert_eq!(run_test_fn_outcome(&prog, "t"), Ok(TestEnd::Completed));
+    }
+
+    // ── C9 round 7 (amendment 88): the analysis must only trust what the OPERATOR chose ──
+
+    /// A suite whose receiver is `read`, with the operator's `Judge` and a
+    /// candidate that supplies `cand`; GOOD/WRONG are checked for pinned
+    /// shapes by the callers.
+    fn r7_refused(why: &str, suite: &str, cand: &str) {
+        let out = judged_on("r7", suite, cand);
+        assert!(
+            out != Ok(TestEnd::Completed)
+                && matches!(&out, Err(m) if m.contains("whose type nothing on the operator side determined")
+                    || m.contains("whose width nothing on the operator side determined")
+                    || m.contains("runtime type confusion")),
+            "ATTACK: the operator's analysis trusted a type the candidate chose ({why}): {out:?}"
+        );
+    }
+
+    /// B1: a type the CANDIDATE declared pins nothing — its fn's declared
+    /// return, a type it defines, a candidate method's name.
+    #[test]
+    fn a_type_the_candidate_declared_does_not_determine_the_receiver() {
+        let t = |body: &str| format!("@[test]\nfn t() {{\n    {body}\n}}\n");
+        r7_refused(
+            "a candidate fn declared -> u8",
+            &t("assert(solve(3).ok())"),
+            "fn solve(n: i64) -> u8 { 255 as u8 }\n",
+        );
+        r7_refused(
+            "the same through an unannotated let",
+            &t("let r = solve(3)\n    assert(r.ok())"),
+            "fn solve(n: i64) -> u8 { 255 as u8 }\n",
+        );
+        r7_refused(
+            "a candidate-defined struct's u8 field",
+            &t("let p: P = solve()\n    assert(p.x.ok())"),
+            "type P = { x: u8 }\nfn solve() -> P { P { x: 4 as u8 } }\n",
+        );
+        r7_refused(
+            "arithmetic on a candidate fn declared -> u8",
+            &t("assert((solve(3) << 1) == 254)"),
+            "fn solve(n: i64) -> u8 { 255 as u8 }\n",
+        );
+        // The operator's own pin on the SAME call still determines: the cast
+        // to the operator's type is the operator's choice.
+        let pinned = t("let r: i64 = solve(3)\n    assert(r.ok())");
+        assert_eq!(
+            judged_on("r7", &pinned, "fn solve(n: i64) -> i64 { n * n }\n"),
+            Ok(TestEnd::Completed)
+        );
+        assert!(judged_on("r7", &pinned, "fn solve(n: i64) -> i64 { n + 1 }\n").is_err());
+        r7_refused(
+            "a u8 at the i64 pin",
+            &pinned,
+            "fn solve(n: i64) -> u8 { 255 as u8 }\n",
+        );
+    }
+
+    /// B2: a LOCAL binding named like an operator fn is not that fn.
+    #[test]
+    fn a_local_binding_named_like_an_operator_fn_is_not_judged_by_it() {
+        let suite = "fn f() -> i64 { 5 }\n@[test]\nfn t() {\n    let d = dict_new()\n    solve(d)\n    match dict_get(d, \"f\") {\n        Some(f) => assert(f().ok())\n        None => assert(false)\n    }\n}\n";
+        r7_refused(
+            "a closure stored under a new key, called through a local named f",
+            suite,
+            "fn solve(d: Dict) { dict_set(d, \"f\", || 4 as u8) }\n",
+        );
+    }
+
+    /// B3: a trait name, `dyn`, `Option<Trait>`, `[Trait]` and a fn type
+    /// returning one do not constrain the runtime type.
+    #[test]
+    fn a_trait_annotation_does_not_pin_the_runtime_type() {
+        let cand = "fn solve(d: Dict) { dict_set(d, \"k\", 4 as u8) }\n";
+        let read = |ann: &str, use_: &str| {
+            format!("@[test]\nfn t() {{\n    let d = dict_new()\n    solve(d)\n    match dict_get(d, \"k\") {{\n        Some(v) => {{\n            let y: {ann} = v\n            {use_}\n        }}\n        None => assert(false)\n    }}\n}}\n")
+        };
+        r7_refused("a trait name", &read("Judge", "assert(y.ok())"), cand);
+        r7_refused("dyn Judge", &read("dyn Judge", "assert(y.ok())"), cand);
+        let idj = "fn idj(x: Judge) -> Judge { x }\n@[test]\nfn t() {\n    let d = dict_new()\n    solve(d)\n    match dict_get(d, \"k\") {\n        Some(v) => {\n            let y = idj(v)\n            assert(y.ok())\n        }\n        None => assert(false)\n    }\n}\n";
+        r7_refused("a trait-typed fn and return", idj, cand);
+        r7_refused(
+            "Option<Judge>",
+            &read(
+                "Option<Judge>",
+                "match y { Some(z) => assert(z.ok())  None => assert(false) }",
+            ),
+            "fn solve(d: Dict) { dict_set(d, \"k\", Some(4 as u8)) }\n",
+        );
+    }
+
+    /// Adjacent (a)/(b): a verdict belongs to its own fn, and a candidate's
+    /// methods never steer an operator site.
+    #[test]
+    fn a_verdict_belongs_to_its_own_fn_and_the_candidate_steers_none() {
+        // An unrelated, never-called fn with `|p| p.ok()` does not refuse an
+        // honest fully annotated `check(p: i64)`.
+        let suite = "fn check(p: i64) -> bool { p.ok() }\nfn unrelated() { let f = |p| p.ok()\n    f(1) }\n@[test]\nfn t() {\n    let r: i64 = solve(3)\n    assert(check(r))\n}\n";
+        let out = judged_on("r7", suite, "fn solve(n: i64) -> i64 { n * n }\n");
+        assert_eq!(out, Ok(TestEnd::Completed), "control: {out:?}");
+        // A candidate method named like an operator method with an open return
+        // does not flip the operator's determined `let r = b.pick()`.
+        let suite = "type B = { v: i64 }\ntrait Pick {\n    fn pick(self) -> i64\n}\nimpl Pick for B {\n    fn pick(self: B) -> i64 { self.v }\n}\n@[test]\nfn t() {\n    let b = B { v: 9 }\n    let r = b.pick()\n    assert(r.ok())\n}\n";
+        let out = judged_on(
+            "r7",
+            suite,
+            "type CB = { w: i64 }\nfn pick<T>(self: CB) -> T { self.w }\n",
+        );
+        assert_eq!(
+            out,
+            Ok(TestEnd::Completed),
+            "control: a candidate method steers nothing: {out:?}"
+        );
+    }
+
+    /// Adjacent (d): operator-only polymorphic helpers pass (the receiver is
+    /// an operator struct), a candidate-influenced one is refused.
+    #[test]
+    fn operator_only_polymorphism_dispatches_and_a_candidate_influenced_one_does_not() {
+        let shapes = "trait Shape {\n    fn area(self) -> i64\n}\ntype Sq = { s: i64 }\ntype Rect = { w: i64, h: i64 }\nimpl Shape for Sq {\n    fn area(self: Sq) -> i64 { self.s * self.s }\n}\nimpl Shape for Rect {\n    fn area(self: Rect) -> i64 { self.w * self.h }\n}\nimpl Shape for u8 {\n    fn area(self: u8) -> i64 { 0 }\n}\n";
+        for helper in [
+            "fn total(a: dyn Shape, b: dyn Shape) -> i64 { a.area() + b.area() }",
+            "fn total<T: Shape, U: Shape>(a: T, b: U) -> i64 { a.area() + b.area() }",
+        ] {
+            let suite = format!("{shapes}{helper}\n@[test]\nfn t() {{\n    let r: i64 = solve(1)\n    assert_eq(total(Sq {{ s: 2 }}, Rect {{ w: 2, h: 3 }}), r)\n}}\n");
+            let good = judged_on("r7", &suite, "fn solve(n: i64) -> i64 { 10 }\n");
+            assert_eq!(
+                good,
+                Ok(TestEnd::Completed),
+                "control (honest): {helper}: {good:?}"
+            );
+            assert!(judged_on("r7", &suite, "fn solve(n: i64) -> i64 { 11 }\n").is_err());
+        }
+        // The candidate supplies a u8 to the generic helper.
+        let suite = format!("{shapes}fn one<T: Shape>(a: T) -> i64 {{ a.area() }}\n@[test]\nfn t() {{\n    let d = dict_new()\n    solve(d)\n    match dict_get(d, \"k\") {{\n        Some(v) => assert_eq(one(v), 0)\n        None => assert(false)\n    }}\n}}\n");
+        r7_refused(
+            "a candidate u8 handed to a generic helper",
+            &suite,
+            "fn solve(d: Dict) { dict_set(d, \"k\", 4 as u8) }\n",
+        );
+    }
+
+    /// Adjacent (e): an operator method named `recv` does not make a channel
+    /// read look determined.
+    #[test]
+    fn an_operator_method_named_like_a_channel_method_does_not_determine_a_recv() {
+        let suite = "trait R {\n    fn recv(self) -> i64\n}\nimpl R for bool {\n    fn recv(self: bool) -> i64 { 1 }\n}\nimpl R for i64 {\n    fn recv(self: i64) -> i64 { 2 }\n}\n".to_string()
+            + &format!("{JUDGE8}@[test]\nfn t() {{\n    let c = chan<i64>()\n    c.send(3)\n    fill(c)\n    assert(c.recv().ok())\n}}\n");
+        let out = sealed_outcome_rule(
+            "r7",
+            &suite,
+            &format!("{LAUNDER8}fn fill(c: Chan<i64>) {{ c.send(9) }}\n"),
+            "t",
+            true,
+        );
+        assert!(
+            matches!(&out, Err(m) if m.contains("nothing on the operator side determined")),
+            "{out:?}"
+        );
+        // The candidate's own unstamped channel, read through the operator's dict.
+        let dsuite = "trait R {\n    fn recv(self) -> i64\n}\nimpl R for bool {\n    fn recv(self: bool) -> i64 { 1 }\n}\nimpl R for i64 {\n    fn recv(self: i64) -> i64 { 2 }\n}\n".to_string()
+            + &format!("{JUDGE8}@[test]\nfn t() {{\n    let d = dict_new()\n    solve(d)\n    match dict_get(d, \"c\") {{\n        Some(c) => assert(c.recv().ok())\n        None => assert(false)\n    }}\n}}\n");
+        let out = sealed_outcome_rule(
+            "r7",
+            &dsuite,
+            &format!("{LAUNDER8}fn solve(d: Dict) {{\n    let c = Chan::new(2)\n    c.send(narrow(4))\n    dict_set(d, \"c\", c)\n}}\n"),
+            "t",
+            true,
+        );
+        assert!(
+            matches!(&out, Err(m) if m.contains("nothing on the operator side determined")),
+            "ATTACK: an operator method named recv made a dict-read channel's value look determined: {out:?}"
+        );
+    }
+
+    /// A candidate's module-level `let` is the candidate's value; the verdict
+    /// of one fn's site never decides another's (the key carries the owner).
+    #[test]
+    fn a_candidates_global_and_a_sibling_fns_site_determine_nothing() {
+        r7_refused(
+            "a candidate global `let X = 4 as u8`",
+            "@[test]\nfn t() {\n    assert(X.ok())\n}\n",
+            "let X = 4 as u8\n",
+        );
+        let suite = "fn check(p: i64) -> bool { p.ok() }\n@[test]\nfn t() {\n    let d = dict_new()\n    solve(d)\n    match dict_get(d, \"k\") {\n        Some(v) => {\n            let f = |p| p.ok()\n            assert(f(v))\n        }\n        None => assert(false)\n    }\n}\n";
+        r7_refused(
+            "the same receiver text as a sibling fn's pinned one",
+            suite,
+            "fn solve(d: Dict) { dict_set(d, \"k\", 4 as u8) }\n",
+        );
     }
 
     /// What is NOT a dispatch, so the rule leaves it alone: interpolation and

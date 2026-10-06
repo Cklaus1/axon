@@ -1,35 +1,47 @@
-//! The dispatch rule (C9 round 6, PSV-1, amendment 83).
+//! The dispatch rule (C9 round 6, PSV-1, amendment 83; rebuilt in round 7,
+//! amendment 88).
 //!
 //! In a SEALED run, operator code may not dispatch an operator impl's method
-//! on a receiver whose TYPE nothing on the operator side determined. The
-//! impl is selected by the receiver's runtime type; for a value read from a
-//! `Dict`, a channel, an unannotated lambda parameter or an unbound generic
-//! position that type is whatever the candidate chose to store there, and with
-//! it the operator's impl. This closes the class at the one place the key is
-//! computed (`Expr::MethodCall` in `eval.rs`), not per container.
+//! on a receiver whose TYPE the OPERATOR did not choose, unless the receiver's
+//! runtime value is an operator-defined struct or enum (which the candidate
+//! cannot construct: E0004). Every "determined" rule below is justified as
+//! "the operator chose this type", and the analysis is FAIL-CLOSED: a site the
+//! analysis did not record as determined is undetermined.
 //!
-//! A receiver is DETERMINED when its declared type is concrete at the call
-//! site: a literal, a binding with a closed `let`/parameter annotation (the
-//! value was cast to it), a call of a fn with a closed declared return type
-//! (cast at its return), a cast (`x as T`), arithmetic on determined
-//! operands, a struct/array/tuple/`Option`/`Result` whose parts are, a field
-//! or element of a determined value. It is NOT determined when it came from
-//! an untyped read (`dict_get`, `dict_values`, `recv`, …), an unannotated
-//! lambda parameter, a type-parameter position, or a name that is ever
-//! assigned such a value.
+//! DETERMINED: a literal; a binding with a closed `let`/parameter annotation
+//! (the value was cast to it); a binding every one of whose initialisers is
+//! determined; a call of an OPERATOR fn with a closed declared return (cast at
+//! its return) — never a candidate fn, whatever it declares, since the
+//! candidate chose that declaration; a builtin whose declared return names no
+//! type variable; `x as T`; arithmetic on determined operands; containers of
+//! determined parts; a field/element/match-binding of a determined value; a
+//! call of an operator METHOD name every definition of which is the
+//! operator's and closed.
+//!
+//! "Closed" (what an annotation can pin): scalars, `Dict`, `Option`/`Result`/
+//! `[T]`/tuples/`Chan` of closed, and OPERATOR-defined structs, enums and
+//! refinements whose fields are closed. NOT closed: a trait name, `dyn`, a
+//! type parameter, `Self`, any type a sealed module defines, any unknown
+//! name — none of which constrains the concrete runtime type to one the
+//! operator chose.
+//!
+//! NOT DETERMINED: an untyped read (`dict_get`, `recv`, ...), an unannotated
+//! lambda parameter, a call of a LOCAL binding (a closure value named like an
+//! operator fn), a call of a candidate fn, a channel method, anything open.
 //!
 //! The analysis is static and name-keyed per function (a name is determined
 //! only if EVERY binding of it, and every assignment to it, is — a greatest
-//! fixpoint), so it over-refuses rather than under-refuses. Its result is a
-//! set of call-site keys (a structural hash of receiver and method — closure
-//! bodies are cloned when a lambda is evaluated, so an address would not
-//! survive), consulted at dispatch.
+//! fixpoint). A site is keyed by (the fn that owns it, a structural hash of
+//! the site): within one fn, equal text means equal names and so an equal
+//! verdict, and across fns the keys never meet. A lambda body is owned by the
+//! fn that created it (the closure remembers it).
 
 use crate::ast::{AxonType as T, BinOp, Expr, FnDef, Item, Pattern, Program, UnaryOp};
+use crate::span::Span;
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 
-/// The key of one method-call site.
+/// The key of one method-call site (within its owning fn).
 pub(crate) fn call_key(receiver: &Expr, method: &str) -> u64 {
     let mut h = std::collections::hash_map::DefaultHasher::new();
     format!("{receiver:?}").hash(&mut h);
@@ -37,7 +49,7 @@ pub(crate) fn call_key(receiver: &Expr, method: &str) -> u64 {
     h.finish()
 }
 
-/// The key of one arithmetic site.
+/// The key of one arithmetic site (within its owning fn).
 pub(crate) fn binop_key(op: &BinOp, left: &Expr, right: &Expr) -> u64 {
     let mut h = std::collections::hash_map::DefaultHasher::new();
     format!("{op:?}|{left:?}|{right:?}").hash(&mut h);
@@ -46,23 +58,92 @@ pub(crate) fn binop_key(op: &BinOp, left: &Expr, right: &Expr) -> u64 {
 
 #[derive(Default)]
 pub(crate) struct Pins {
-    /// Keys of operator method-call sites whose receiver is NOT determined.
-    unpinned: HashSet<u64>,
-    /// Method name -> how many distinct operator impl types define it. With
-    /// fewer than two there is no impl to select between.
+    /// (owning fn, site key) of every site whose receiver/operands ARE
+    /// determined. Fail-closed: a site not here is undetermined.
+    determined: HashSet<(usize, u64)>,
+    /// Method name -> the operator impl types that define it. With fewer than
+    /// two there is no impl to select between.
     impls: HashMap<String, HashSet<String>>,
+    /// Struct and enum names the OPERATOR defines (and no sealed module does).
+    op_types: HashSet<String>,
 }
 
-/// Whether `t` names no type parameter, no trait object and no unstated part.
-fn closed(t: &T, gp: &[String]) -> bool {
-    match t {
-        T::Named(n) => n != "?" && !gp.contains(n),
-        T::TypeParam(_) | T::DynTrait(_) => false,
-        T::Result { ok, err } => closed(ok, gp) && closed(err, gp),
-        T::Option(x) | T::Chan(x) | T::Slice(x) | T::Ref(x) | T::RawPtr(x) => closed(x, gp),
-        T::Generic { base, args } => !gp.contains(base) && args.iter().all(|a| closed(a, gp)),
-        T::Fn { params, ret } => params.iter().all(|a| closed(a, gp)) && closed(ret, gp),
-        T::Tuple(xs) | T::Union(xs) => xs.iter().all(|a| closed(a, gp)),
+/// What an annotation can pin, and what the operator defines.
+#[derive(Default)]
+struct Tys {
+    /// Operator structs: generics and field types.
+    structs: HashMap<String, (Vec<String>, Vec<T>)>,
+    /// Operator enums: generics and every variant's field types.
+    enums: HashMap<String, (Vec<String>, Vec<T>)>,
+    refines: HashSet<String>,
+    /// Names that never pin: every trait, and every type a sealed module defines.
+    open: HashSet<String>,
+}
+
+const SCALARS: &[&str] = &[
+    "i64", "i32", "i16", "i8", "u64", "u32", "u16", "u8", "isize", "usize", "f64", "f32", "bool",
+    "str", "String", "()", "Decimal", "Dict",
+];
+
+impl Tys {
+    /// Whether `t` names only types the operator chose and that constrain the
+    /// runtime type. `ok`: type parameters of the struct/enum being expanded,
+    /// whose arguments were checked at the use site.
+    fn closed(&self, t: &T, gp: &[String], ok: &[String], seen: &mut HashSet<String>) -> bool {
+        let mut go = |x: &T, seen: &mut HashSet<String>| self.closed(x, gp, ok, seen);
+        match t {
+            T::Named(n) => {
+                if n == "?" || gp.contains(n) || self.open.contains(n) {
+                    return false;
+                }
+                if ok.contains(n) || SCALARS.contains(&n.as_str()) || self.refines.contains(n) {
+                    return true;
+                }
+                match self.structs.get(n).or_else(|| self.enums.get(n)) {
+                    Some((g, fields)) if g.is_empty() => self.fields_closed(n, fields, &[], seen),
+                    _ => false,
+                }
+            }
+            T::TypeParam(n) => ok.contains(n) && !gp.contains(n),
+            T::DynTrait(_) => false,
+            T::Result { ok: o, err } => go(o, seen) && go(err, seen),
+            T::Option(x) | T::Chan(x) | T::Slice(x) | T::Ref(x) | T::RawPtr(x) => go(x, seen),
+            T::Generic { base, args } => {
+                if gp.contains(base) || self.open.contains(base) {
+                    return false;
+                }
+                if !args.iter().all(|a| go(a, seen)) {
+                    return false;
+                }
+                match self.structs.get(base).or_else(|| self.enums.get(base)) {
+                    Some((g, fields)) if g.len() == args.len() => {
+                        self.fields_closed(base, fields, g, seen)
+                    }
+                    _ => matches!(base.as_str(), "Option" | "Result" | "Dict" | "Chan"),
+                }
+            }
+            T::Fn { params, ret } => params.iter().all(|a| go(a, seen)) && go(ret, seen),
+            T::Tuple(xs) | T::Union(xs) => xs.iter().all(|a| go(a, seen)),
+        }
+    }
+
+    fn fields_closed(
+        &self,
+        name: &str,
+        fields: &[T],
+        generics: &[String],
+        seen: &mut HashSet<String>,
+    ) -> bool {
+        if !seen.insert(name.to_string()) {
+            return true; // a recursive type: its other fields decide
+        }
+        let r = fields.iter().all(|f| self.closed(f, &[], generics, seen));
+        seen.remove(name);
+        r
+    }
+
+    fn is_closed(&self, t: &T, gp: &[String]) -> bool {
+        self.closed(t, gp, &[], &mut HashSet::new())
     }
 }
 
@@ -83,6 +164,10 @@ fn builtin_ret_open(ret: &str) -> bool {
     false
 }
 
+/// Method names a channel value answers itself (`eval.rs`, before any impl
+/// lookup): an operator method of the same name does not make them operator-typed.
+const CHAN_METHODS: &[&str] = &["send", "recv", "try_recv", "len", "clone"];
+
 enum Fact<'a> {
     Pinned,
     Unpinned,
@@ -91,10 +176,14 @@ enum Fact<'a> {
 }
 
 struct Ctx<'a> {
-    /// Fn name -> declared return type closed (`None` = no such fn).
-    ret_closed: HashMap<&'a str, bool>,
-    /// Method name -> every fn of that name declares a closed return type.
-    method_closed: HashMap<&'a str, bool>,
+    tys: Tys,
+    /// OPERATOR free fn name -> every definition declares a closed return.
+    op_ret: HashMap<&'a str, bool>,
+    /// OPERATOR method name -> every definition declares a closed return.
+    op_method: HashMap<&'a str, bool>,
+    /// Names of free fns a sealed module defines (a method call a sealed impl
+    /// would answer is refused by `seal_method`, not decided here).
+    sealed_names: HashSet<&'a str>,
     builtin_ret: HashMap<&'static str, &'static str>,
     globals: HashSet<String>,
 }
@@ -153,8 +242,13 @@ impl<'a> Ctx<'a> {
             Expr::Assign { value, .. } => d(value),
             Expr::Call { callee, .. } => match callee.as_ref() {
                 Expr::Ident(name) => {
-                    if let Some(c) = self.ret_closed.get(name.as_str()) {
-                        *c
+                    // A local binding (a closure value) is judged by ITS
+                    // initialiser, never by a global fn that shares its name,
+                    // and a closure's result is untyped: not determined.
+                    if bound.contains(name) || self.sealed_names.contains(name.as_str()) {
+                        false
+                    } else if let Some(c) = self.op_ret.get(name.as_str()) {
+                        *c && !self.builtin_ret.contains_key(name.as_str())
                     } else if let Some(r) = self.builtin_ret.get(name.as_str()) {
                         !builtin_ret_open(r)
                     } else {
@@ -163,11 +257,14 @@ impl<'a> Ctx<'a> {
                 }
                 _ => false,
             },
-            Expr::MethodCall { method, .. } => self
-                .method_closed
-                .get(method.as_str())
-                .copied()
-                .unwrap_or(false),
+            Expr::MethodCall { method, .. } => {
+                !CHAN_METHODS.contains(&method.as_str())
+                    && self
+                        .op_method
+                        .get(method.as_str())
+                        .copied()
+                        .unwrap_or(false)
+            }
             Expr::Let { .. }
             | Expr::Own { .. }
             | Expr::RefBind { .. }
@@ -187,66 +284,132 @@ impl<'a> Ctx<'a> {
 }
 
 impl Pins {
-    pub(crate) fn build(prog: &Program, skip: &dyn Fn(&FnDef) -> bool) -> Pins {
+    pub(crate) fn build(prog: &Program, sealed: &dyn Fn(Span) -> bool) -> Pins {
+        let mut tys = Tys::default();
         let mut impls: HashMap<String, HashSet<String>> = HashMap::new();
-        let mut ret_closed: HashMap<&str, bool> = HashMap::new();
-        let mut method_closed: HashMap<&str, bool> = HashMap::new();
-        let mut fns: Vec<(&FnDef, Vec<String>)> = Vec::new();
+        let mut sealed_names: HashSet<&str> = HashSet::new();
+        let mut cand_types: HashSet<String> = HashSet::new();
+        let mut op_fns: Vec<(&FnDef, Vec<String>)> = Vec::new();
         let mut lets: Vec<(&str, &Expr)> = Vec::new();
+        let mut sealed_lets: HashSet<&str> = HashSet::new();
+        // Pass 1: provenance of every named thing.
         for item in &prog.items {
             match item {
+                Item::TraitDef(t) => {
+                    tys.open.insert(t.name.clone());
+                }
+                Item::TypeDef(t) if sealed(t.span) => {
+                    cand_types.insert(t.name.clone());
+                }
+                Item::EnumDef(e) if sealed(e.span) => {
+                    cand_types.insert(e.name.clone());
+                }
+                Item::RefineDef(r) if sealed(r.span) => {
+                    cand_types.insert(r.name.clone());
+                }
+                Item::TypeDef(t) => {
+                    tys.structs.insert(
+                        t.name.clone(),
+                        (
+                            t.generic_params.clone(),
+                            t.fields.iter().map(|f| f.ty.clone()).collect(),
+                        ),
+                    );
+                }
+                Item::EnumDef(e) => {
+                    tys.enums.insert(
+                        e.name.clone(),
+                        (
+                            e.generic_params.clone(),
+                            e.variants
+                                .iter()
+                                .flat_map(|v| v.fields.iter().map(|f| f.ty.clone()))
+                                .collect(),
+                        ),
+                    );
+                }
+                Item::RefineDef(r) => {
+                    tys.refines.insert(r.name.clone());
+                }
+                Item::LetDef { name, span, .. } if sealed(*span) => {
+                    sealed_lets.insert(name);
+                }
+                _ => {}
+            }
+        }
+        for n in &cand_types {
+            tys.open.insert(n.clone());
+            tys.structs.remove(n);
+            tys.enums.remove(n);
+            tys.refines.remove(n);
+        }
+        let mut op_ret: HashMap<&str, bool> = HashMap::new();
+        let mut op_method: HashMap<&str, bool> = HashMap::new();
+        // Pass 2: fns and impls.
+        for item in &prog.items {
+            match item {
+                Item::FnDef(f) if sealed(f.span) => {
+                    sealed_names.insert(&f.name);
+                }
                 Item::FnDef(f) => {
                     let c = f
                         .return_type
                         .as_ref()
-                        .is_some_and(|t| closed(t, &f.generic_params));
-                    ret_closed
-                        .entry(&f.name)
-                        .and_modify(|x| *x &= c)
-                        .or_insert(c);
-                    fns.push((f, f.generic_params.clone()));
+                        .is_some_and(|t| tys.is_closed(t, &f.generic_params));
+                    op_ret.entry(&f.name).and_modify(|x| *x &= c).or_insert(c);
+                    op_fns.push((f, f.generic_params.clone()));
                 }
                 Item::ImplBlock(b) => {
                     let mut gp = b.generic_params.clone();
                     for m in &b.methods {
+                        if sealed(m.span) || sealed(b.span) {
+                            continue;
+                        }
                         gp.extend(m.generic_params.clone());
-                        let c = m.return_type.as_ref().is_some_and(|t| closed(t, &gp));
-                        method_closed
+                        let c = m
+                            .return_type
+                            .as_ref()
+                            .is_some_and(|t| tys.is_closed(t, &gp));
+                        op_method
                             .entry(&m.name)
                             .and_modify(|x| *x &= c)
                             .or_insert(c);
-                        if !skip(m) {
-                            impls
-                                .entry(m.name.clone())
-                                .or_default()
-                                .insert(crate::doc::render_type(&b.for_type));
-                        }
-                        fns.push((m, gp.clone()));
+                        impls
+                            .entry(m.name.clone())
+                            .or_default()
+                            .insert(crate::doc::render_type(&b.for_type));
+                        op_fns.push((m, gp.clone()));
                     }
                 }
-                Item::LetDef { name, value, .. } => lets.push((name, value)),
+                Item::LetDef { name, value, span } if !sealed(*span) => lets.push((name, value)),
                 _ => {}
             }
         }
-        // Free fns can also be called as methods only through impls, but a
-        // `Type::f(x)` path call names the fn: treat it as a method too.
-        for (name, c) in &ret_closed {
-            method_closed
-                .entry(name)
-                .and_modify(|x| *x &= *c)
-                .or_insert(*c);
-        }
+        let op_types: HashSet<String> = tys
+            .structs
+            .keys()
+            .chain(tys.enums.keys())
+            .filter(|n| !cand_types.contains(*n))
+            .cloned()
+            .collect();
         let mut ctx = Ctx {
-            ret_closed,
-            method_closed,
+            tys,
+            op_ret,
+            op_method,
+            sealed_names,
             builtin_ret: crate::builtins::BUILTINS
                 .iter()
                 .map(|b| (b.name, b.ret))
                 .collect(),
             globals: HashSet::new(),
         };
-        // Module-level lets: a greatest fixpoint over their initializers.
-        ctx.globals = lets.iter().map(|(n, _)| n.to_string()).collect();
+        // Module-level lets: a greatest fixpoint over their initializers. A
+        // name a sealed module also defines is never determined.
+        ctx.globals = lets
+            .iter()
+            .filter(|(n, _)| !sealed_lets.contains(n))
+            .map(|(n, _)| n.to_string())
+            .collect();
         loop {
             let none = HashSet::new();
             let next: HashSet<String> = lets
@@ -259,38 +422,73 @@ impl Pins {
             }
             ctx.globals = next;
         }
-        let mut unpinned = HashSet::new();
-        for (f, gp) in &fns {
-            if skip(f) {
-                continue;
-            }
-            analyze(f, gp, &ctx, &mut unpinned);
+        let mut determined = HashSet::new();
+        for (f, gp) in &op_fns {
+            let params: Vec<(&str, &T)> =
+                f.params.iter().map(|p| (p.name.as_str(), &p.ty)).collect();
+            analyze(
+                &f.body,
+                &params,
+                gp,
+                &ctx,
+                *f as *const FnDef as usize,
+                &mut determined,
+            );
         }
-        Pins { unpinned, impls }
+        for (_, e) in &lets {
+            analyze(e, &[], &[], &ctx, 0, &mut determined);
+        }
+        Pins {
+            determined,
+            impls,
+            op_types,
+        }
     }
 
-    /// Whether the method-call site is one whose receiver is not determined.
-    pub(crate) fn undetermined(&self, receiver: &Expr, method: &str) -> bool {
-        self.unpinned.contains(&call_key(receiver, method))
+    /// Whether the method-call site, owned by fn `owner`, has a determined receiver.
+    pub(crate) fn determined(&self, owner: usize, receiver: &Expr, method: &str) -> bool {
+        self.determined
+            .contains(&(owner, call_key(receiver, method)))
+    }
+
+    /// Whether the arithmetic site has only determined operands.
+    pub(crate) fn determined_arith(
+        &self,
+        owner: usize,
+        op: &BinOp,
+        left: &Expr,
+        right: &Expr,
+    ) -> bool {
+        self.determined
+            .contains(&(owner, binop_key(op, left, right)))
     }
 
     /// Whether `method` can select between operator impls (two or more types).
-    /// Whether the arithmetic site has an operand that is not determined.
-    pub(crate) fn undetermined_arith(&self, op: &BinOp, left: &Expr, right: &Expr) -> bool {
-        self.unpinned.contains(&binop_key(op, left, right))
-    }
-
     pub(crate) fn selects_between_impls(&self, method: &str) -> bool {
         self.impls.get(method).is_some_and(|s| s.len() >= 2)
     }
+
+    /// Whether `name` is a struct or enum only the operator defines — a value
+    /// of it cannot be built by sealed code (E0004), so its impl was chosen by
+    /// the operator whatever the static analysis says about the receiver.
+    pub(crate) fn is_operator_type(&self, name: &str) -> bool {
+        self.op_types.contains(name)
+    }
 }
 
-fn analyze(f: &FnDef, gp: &[String], ctx: &Ctx, out: &mut HashSet<u64>) {
+fn analyze(
+    body: &Expr,
+    params: &[(&str, &T)],
+    gp: &[String],
+    ctx: &Ctx,
+    owner: usize,
+    out: &mut HashSet<(usize, u64)>,
+) {
     let mut facts: Vec<(String, Fact)> = Vec::new();
-    for p in &f.params {
+    for (name, ty) in params {
         facts.push((
-            p.name.clone(),
-            if closed(&p.ty, gp) {
+            name.to_string(),
+            if ctx.tys.is_closed(ty, gp) {
                 Fact::Pinned
             } else {
                 Fact::Unpinned
@@ -301,6 +499,7 @@ fn analyze(f: &FnDef, gp: &[String], ctx: &Ctx, out: &mut HashSet<u64>) {
     fn collect<'a>(
         e: &'a Expr,
         gp: &[String],
+        tys: &Tys,
         facts: &mut Vec<(String, Fact<'a>)>,
         calls: &mut Vec<&'a Expr>,
     ) {
@@ -310,7 +509,7 @@ fn analyze(f: &FnDef, gp: &[String], ctx: &Ctx, out: &mut HashSet<u64>) {
             | Expr::RefBind { name, ty, value } => facts.push((
                 name.clone(),
                 match ty {
-                    Some(t) if closed(t, gp) => Fact::Pinned,
+                    Some(t) if tys.is_closed(t, gp) => Fact::Pinned,
                     Some(_) => Fact::Unpinned,
                     None => Fact::From(value),
                 },
@@ -343,7 +542,7 @@ fn analyze(f: &FnDef, gp: &[String], ctx: &Ctx, out: &mut HashSet<u64>) {
                     facts.push((
                         p.name.clone(),
                         match &p.ty {
-                            Some(t) if closed(t, gp) => Fact::Pinned,
+                            Some(t) if tys.is_closed(t, gp) => Fact::Pinned,
                             _ => Fact::Unpinned,
                         },
                     ));
@@ -354,7 +553,7 @@ fn analyze(f: &FnDef, gp: &[String], ctx: &Ctx, out: &mut HashSet<u64>) {
         };
         crate::ast::walk_expr(e, &mut visit);
     }
-    collect(&f.body, gp, &mut facts, &mut calls);
+    collect(body, gp, &ctx.tys, &mut facts, &mut calls);
     let bound: HashSet<String> = facts.iter().map(|(n, _)| n.clone()).collect();
     let mut local: HashSet<String> = bound.clone();
     loop {
@@ -379,16 +578,14 @@ fn analyze(f: &FnDef, gp: &[String], ctx: &Ctx, out: &mut HashSet<u64>) {
             Expr::MethodCall {
                 receiver, method, ..
             } => {
-                if !ctx.det(receiver, &local, &bound) {
-                    out.insert(call_key(receiver, method));
+                if ctx.det(receiver, &local, &bound) {
+                    out.insert((owner, call_key(receiver, method)));
                 }
             }
-            // Arithmetic whose operand's WIDTH nothing determined: a `u8`
-            // wraps where an `i64` does not.
             Expr::BinOp { op, left, right }
-                if !ctx.det(left, &local, &bound) || !ctx.det(right, &local, &bound) =>
+                if ctx.det(left, &local, &bound) && ctx.det(right, &local, &bound) =>
             {
-                out.insert(binop_key(op, left, right));
+                out.insert((owner, binop_key(op, left, right)));
             }
             _ => {}
         }
