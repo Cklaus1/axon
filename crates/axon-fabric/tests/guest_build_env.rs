@@ -128,11 +128,52 @@ fn build_env_only(repo: &Path, out: &Path, env: &[(&str, String)]) -> Output {
         repo.join("scripts/build-guest-image.sh"),
         Bins::BuildsItsOwn,
     );
-    c.arg("--build-env-only").arg(out).current_dir(repo);
+    c.arg("--build-env-only")
+        .arg(out)
+        .current_dir(repo)
+        .env("AXON_GUEST_BUILD_PARENT", test_parent());
     for (k, v) in env {
         c.env(k, v);
     }
     c.output().unwrap()
+}
+
+/// Where a real controlled build keeps its private directories and proof keys.
+fn real_parent() -> PathBuf {
+    PathBuf::from(std::env::var("HOME").unwrap())
+        .join(".cache")
+        .join("axon-guest-build")
+}
+
+/// The build parent every build these tests start uses: a directory made for
+/// THIS test process under the builder's home (only root's or the builder's
+/// ancestors), removed at exit. Never `~/.cache/axon-guest-build`: a test run
+/// must not leave keys or build directories in the real builder-private place.
+fn test_parent() -> &'static Path {
+    use std::os::unix::fs::PermissionsExt;
+    static P: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    static CLEAN: std::sync::OnceLock<std::ffi::CString> = std::sync::OnceLock::new();
+    P.get_or_init(|| {
+        let d = PathBuf::from(std::env::var("HOME").unwrap())
+            .join(".cache")
+            .join(format!("axon-gbe-test-{}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::set_permissions(&d, std::fs::Permissions::from_mode(0o700)).unwrap();
+        assert!(
+            !d.starts_with(real_parent()),
+            "ATTACK: a test would build under the real builder-private parent"
+        );
+        extern "C" fn clean() {
+            if let Some(p) = CLEAN.get() {
+                let _ = std::fs::remove_dir_all(p.to_str().unwrap());
+            }
+        }
+        CLEAN
+            .set(std::ffi::CString::new(d.to_str().unwrap()).unwrap())
+            .unwrap();
+        unsafe { libc::atexit(clean) };
+        d.join("parent")
+    })
 }
 
 /// `guest_build_env.py ...` from the checkout.
@@ -142,7 +183,8 @@ fn gbe(repo: &Path) -> Command {
         repo.join("scripts/guest_build_env.py"),
         Bins::BuildsItsOwn,
     );
-    c.current_dir(repo);
+    c.current_dir(repo)
+        .env("AXON_GUEST_BUILD_PARENT", test_parent());
     c
 }
 
@@ -158,7 +200,15 @@ fn gcargo(repo: &Path, rec: &Path, rustflags: Option<&str>, args: &[&str]) -> Ou
 }
 
 fn record(out: &Path) -> Value {
-    serde_json::from_slice(&std::fs::read(out.join("build-env.json")).unwrap()).unwrap()
+    let rec: Value =
+        serde_json::from_slice(&std::fs::read(out.join("build-env.json")).unwrap()).unwrap();
+    let parent = PathBuf::from(rec["build_parent"].as_str().unwrap_or("/"));
+    assert!(
+        !parent.starts_with(real_parent()),
+        "ATTACK: a test built under the real builder-private parent {}",
+        parent.display()
+    );
+    rec
 }
 
 /// The private build directory (the parent of the fresh target dir).
@@ -1465,6 +1515,11 @@ fn a_kernel_build_record_edited_after_its_runner_signed_it_is_refused() {
     let o = kernel_step(&r, &dist, &prof, &[]);
     assert!(o.status.success(), "setup: kernel: {}", text(&o));
     let kpath = dist.join("kernel-build.json");
+    let kparent: Value = serde_json::from_slice(&std::fs::read(&kpath).unwrap()).unwrap();
+    assert!(
+        !Path::new(kparent["build_parent"].as_str().unwrap()).starts_with(real_parent()),
+        "ATTACK: a test built a kernel under the real builder-private parent"
+    );
     let code = "\
 rec = json.load(open(sys.argv[2]))\n\
 if sys.argv[3] == 'edit': rec['vmlinux_sha256'] = 'f' * 64\n\

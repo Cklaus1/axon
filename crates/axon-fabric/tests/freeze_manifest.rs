@@ -42,17 +42,74 @@ fn write(p: &Path, s: &str) {
     std::fs::write(p, s).unwrap();
 }
 
-const PARENT: &str = "/root/.cache/axon-guest-build";
-const BASE: &str = "/root/.cache/axon-guest-build/axon-guest-build-x";
-const KBASE: &str = "/root/.cache/axon-guest-build/axon-kernel-build-x";
+/// Where the fixture's builder-private build parent lives: a directory made
+/// for THIS test process under the builder's home, removed at exit. Never
+/// `~/.cache/axon-guest-build`: that is where a real controlled build keeps its
+/// private directories and its proof keys, and a test must not write there.
+fn parent() -> &'static str {
+    use std::os::unix::fs::PermissionsExt;
+    static P: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    static CLEAN: std::sync::OnceLock<std::ffi::CString> = std::sync::OnceLock::new();
+    P.get_or_init(|| {
+        let home = std::env::var("HOME").unwrap();
+        let d = Path::new(&home)
+            .join(".cache")
+            .join(format!("axon-freeze-fixture-{}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::set_permissions(&d, std::fs::Permissions::from_mode(0o700)).unwrap();
+        assert_not_real_parent(&d);
+        extern "C" fn clean() {
+            if let Some(p) = CLEAN.get() {
+                let _ = std::fs::remove_dir_all(p.to_str().unwrap());
+            }
+        }
+        CLEAN
+            .set(std::ffi::CString::new(d.to_str().unwrap()).unwrap())
+            .unwrap();
+        unsafe { libc::atexit(clean) };
+        d.to_str().unwrap().to_string()
+    })
+}
+
+/// A test that would write the real builder-private parent fails here.
+fn assert_not_real_parent(p: &Path) {
+    let real = Path::new(&std::env::var("HOME").unwrap())
+        .join(".cache")
+        .join("axon-guest-build");
+    assert!(
+        !p.starts_with(&real) && !real.starts_with(p),
+        "ATTACK: a test would write the real builder-private build parent {}",
+        real.display()
+    );
+}
+
+fn base() -> String {
+    format!("{}/axon-guest-build-x", parent())
+}
+
+fn kbase() -> String {
+    format!("{}/axon-kernel-build-x", parent())
+}
+
 const CRT: &str = "-C target-feature=+crt-static";
 
-/// The recorded ancestors of PARENT: each only root's.
+/// The recorded ancestors of the fixture parent, as the filesystem has them
+/// (the tests run as root: each only root's).
 fn ancestors() -> serde_json::Value {
-    json!([{"path": "/", "uid": 0, "mode": "0o755"},
-           {"path": "/root", "uid": 0, "mode": "0o700"},
-           {"path": "/root/.cache", "uid": 0, "mode": "0o755"},
-           {"path": PARENT, "uid": 0, "mode": "0o700"}])
+    use std::os::unix::fs::MetadataExt;
+    let mut out = vec![];
+    let mut cur = PathBuf::from("/");
+    let mut parts = vec![cur.clone()];
+    for c in Path::new(parent()).components().skip(1) {
+        cur.push(c);
+        parts.push(cur.clone());
+    }
+    for p in parts {
+        let m = std::fs::symlink_metadata(&p).unwrap();
+        out.push(json!({"path": p.to_str().unwrap(), "uid": m.uid(),
+                        "mode": format!("0o{:o}", m.mode() & 0o7777)}));
+    }
+    json!(out)
 }
 
 fn tool(path: &str) -> serde_json::Value {
@@ -69,9 +126,10 @@ fn fixture_key(id: &str) -> PathBuf {
     // One writer at a time: the tests share the process and the directory.
     static ONE: std::sync::Mutex<()> = std::sync::Mutex::new(());
     let _one = ONE.lock().unwrap_or_else(|e| e.into_inner());
-    let kd = Path::new(PARENT).join("keys");
+    let kd = Path::new(parent()).join("keys");
+    assert_not_real_parent(&kd);
     std::fs::create_dir_all(&kd).unwrap();
-    std::fs::set_permissions(PARENT, std::fs::Permissions::from_mode(0o700)).unwrap();
+    std::fs::set_permissions(parent(), std::fs::Permissions::from_mode(0o700)).unwrap();
     std::fs::set_permissions(&kd, std::fs::Permissions::from_mode(0o700)).unwrap();
     let p = kd.join(format!("{id}.key"));
     let tmp = kd.join(format!("{id}.{}.tmp", std::process::id()));
@@ -125,10 +183,10 @@ fn controlled_kernel() -> serde_json::Value {
 fn controlled_kernel_unsigned() -> serde_json::Value {
     json!({
         "schema": "axon-guest-kernel-build/1", "controlled": true, "builder_uid": 0,
-        "build_parent": PARENT, "build_parent_ancestors": ancestors(), "base": KBASE,
+        "build_parent": parent(), "build_parent_ancestors": ancestors(), "base": kbase(),
         "pin": {"version": "6.1.188", "tarball_sha256": "3".repeat(64),
                 "config_sha256": "4".repeat(64), "overlay_sha256": "5".repeat(64)},
-        "env": {"HOME": KBASE, "LC_ALL": "C", "PATH": "/usr/bin:/bin",
+        "env": {"HOME": kbase(), "LC_ALL": "C", "PATH": "/usr/bin:/bin",
                 "KBUILD_BUILD_TIMESTAMP": "1970-01-01", "KBUILD_BUILD_USER": "axon",
                 "KBUILD_BUILD_HOST": "b263", "KBUILD_BUILD_VERSION": "1"},
         "make": [["/usr/bin/make", "ARCH=x86_64", "olddefconfig"],
@@ -175,6 +233,7 @@ fn controlled_build() -> serde_json::Value {
 }
 
 fn controlled_build_unsigned() -> serde_json::Value {
+    let base = base();
     let tc = "/root/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/bin";
     let check = json!({"origins": [], "foreign": []});
     let musl = "x86_64-unknown-linux-musl";
@@ -190,16 +249,16 @@ fn controlled_build_unsigned() -> serde_json::Value {
                       "rustc": format!("{tc}/rustc"), "rustc_sha256": "e".repeat(64),
                       "rustc_vV": "rustc 1\nhost: x86_64-unknown-linux-gnu",
                       "host_tools": {"cc": tool("/usr/bin/cc"), "ld": tool("/usr/bin/ld")}},
-        "env": {"CARGO_HOME": format!("{BASE}/cargo-home"),
-                "CARGO_TARGET_DIR": format!("{BASE}/target"), "HOME": BASE,
+        "env": {"CARGO_HOME": format!("{base}/cargo-home"),
+                "CARGO_TARGET_DIR": format!("{base}/target"), "HOME": base,
                 "LC_ALL": "C", "PATH": format!("{tc}:/usr/bin:/bin"),
                 "RUSTC": format!("{tc}/rustc")},
         "env_allowlist": ["CARGO_HOME", "CARGO_TARGET_DIR", "HOME", "LC_ALL", "PATH", "RUSTC"],
         "proxy_vars": [],
-        "builder_uid": 0, "build_parent": PARENT, "build_parent_ancestors": ancestors(),
-        "src_dir": format!("{BASE}/src"), "src_files": 1,
-        "cargo_home": format!("{BASE}/cargo-home"), "cargo_home_created_empty": true,
-        "target_dir": format!("{BASE}/target"), "target_dir_created_empty": true,
+        "builder_uid": 0, "build_parent": parent(), "build_parent_ancestors": ancestors(),
+        "src_dir": format!("{base}/src"), "src_files": 1,
+        "cargo_home": format!("{base}/cargo-home"), "cargo_home_created_empty": true,
+        "target_dir": format!("{base}/target"), "target_dir_created_empty": true,
         "effective_config": {"origins": [], "foreign": [], "own_config": ".cargo/config.toml"},
         "builds": [
             build("axon", vec!["build", "--locked", "-p", "axon-core", "--target", musl,
@@ -214,10 +273,10 @@ fn controlled_build_unsigned() -> serde_json::Value {
                       "axon-psv-runner": "c".repeat(64)},
         "rootfs": {
             "tool": tool("/usr/bin/mksquashfs"),
-            "argv": ["/usr/bin/mksquashfs", format!("{BASE}/rootfs-x"), "/r/dist/rootfs.sqfs",
+            "argv": ["/usr/bin/mksquashfs", format!("{base}/rootfs-x"), "/r/dist/rootfs.sqfs",
                      "-noappend", "-all-root", "-no-xattrs", "-mkfs-time", "0", "-all-time", "0",
                      "-comp", "gzip", "-quiet"],
-            "env": {"HOME": BASE, "LC_ALL": "C", "PATH": "/usr/bin:/bin"},
+            "env": {"HOME": base, "LC_ALL": "C", "PATH": "/usr/bin:/bin"},
             "inputs": {"axon": "a".repeat(64), "axon-guest-init": "b".repeat(64),
                        "axon-psv-runner": "c".repeat(64), "busybox": "9".repeat(64),
                        "guest-init.sh": "8".repeat(64)},
