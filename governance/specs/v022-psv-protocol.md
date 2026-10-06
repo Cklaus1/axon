@@ -3692,7 +3692,8 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       that dispatches on its type pins with an annotation (`let r: i64 = X`, cast). Stated, not
       implied: a candidate-built dict whose value the operator calls a method on UNPINNED still
       selects the operator's impl by the candidate's chosen type (the `f64`/`str`/width choice) —
-      non-claim (1), unchanged for that position.
+      non-claim (1), unchanged for that position. **Superseded by amendment 83:** an unpinned operator
+      dispatch on such a value is refused; the non-claim is output only.
     - **Cost bound.** One type per entry, taken ONCE per dict per epoch: O(entries) at the first
       hand-over and after an operator-side dict mutation, O(1) per dict at a later hand-over of
       an unchanged dict (the walk does not descend into a still-fresh dict). Verification costs
