@@ -1263,7 +1263,9 @@ pub(crate) mod tests {
     fn git_does_not_write_the_index_of_the_tree_it_reads() {
         let (_d, r) = hostile_repo(|_| {});
         // A stat-dirty (but unchanged) file: an ordinary `git status` would
-        // refresh and WRITE the index.
+        // refresh and WRITE the index. Git compares whole seconds, so wait
+        // one out after the commit before touching the file.
+        std::thread::sleep(std::time::Duration::from_millis(1200));
         std::fs::write(r.join("a.txt"), "a\n").unwrap();
         let index = r.join(".git/index");
         let before = std::fs::read(&index).unwrap();
@@ -1401,7 +1403,7 @@ pub(crate) mod tests {
             .unwrap();
         assert!(
             o.status.success(),
-            "the inner run failed:\n{}\n{}",
+            "ATTACK: the caller's environment steered a git call: the inner run failed:\n{}\n{}",
             String::from_utf8_lossy(&o.stdout),
             String::from_utf8_lossy(&o.stderr)
         );

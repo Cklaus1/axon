@@ -3524,7 +3524,7 @@ BUILD_FORM = re.compile(
     r"\"-c\"|\bcore\.(?:fsmonitor|hooksPath|excludesFile|attributesFile|checkStat|trustCtime)\b|"
     r"\bprotocol\.allow\b|\bsafe\.directory\b|\"--no-includes\"|\"GIT_[A-Z_]+\"|"
     r"\blibc::(?:setitimer|chdir|fchdir|close_range|setpriority|sched_\w+|personality|flock|setsockopt|dup[23]?|pipe2|socketpair|accept4|socket|unlinkat?|renameat2?|linkat?)\(|\bSYS_close_range\b|\b(?:O_CLOEXEC|SOCK_CLOEXEC|FD_CLOEXEC|SOCK_NONBLOCK)\b|"
-    r"\.min\(\s*(?:room|cap|limit|bound|max)\w*\s*\)|\.take\(\s*(?:MAX_|[a-z_]*(?:limit|cap|bound|max))\w*|"
+    r"\.min\(\s*(?:room|cap|limit|bound|max)\w*\s*\)|\.take\(\s*[a-z_]*(?:limit|cap|bound|max)\w*|"
     r"\.(?:min|take|truncate)\([^)]*\bMAX_[A-Z_]+"
 )
 # A decision expressed as `Some("reason")` / `Some(format!(..))` (evo::propose's

@@ -2025,7 +2025,7 @@ ATTACK_MARKERS.update({
     'M2280': 'ATTACK: a call of a diverging closure that delegates',
     'M2281': 'ATTACK: a signer key served through a FIFO was accepted',
     'M2282': 'ATTACK: a signer with an extra field was accepted',
-    'M2283': 'the inner run failed',
+    'M2283': "ATTACK: the caller's environment steered a git call",
     'M2284': 'ATTACK: a read-only git call wrote the index',
     'M2285': "ATTACK: git ran the repository's core.fsmonitor program",
     'M2286': "ATTACK: git ran a hook from the repository's core.hooksPath",

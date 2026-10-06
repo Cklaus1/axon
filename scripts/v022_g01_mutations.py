@@ -7805,7 +7805,7 @@ MUTATIONS += [
      '            };\n            if false && libc::setrlimit(r, &l) != 0 {\n                let mut cur: libc::rlimit = std::mem::zeroed();',
      'axon-fabric', '--test privileged_launcher', 'a_callers_other_resource_limits_never_reach_the_root_launch'),
     ('M2277', 'COVERAGE GATE (eqgate3): a `.min(room)` or `.take(bound)` cap is a site', 'scripts/v022_refusal_coverage.py',
-     '    r"\\.min\\(\\s*(?:room|cap|limit|bound|max)\\w*\\s*\\)|\\.take\\(\\s*(?:MAX_|[a-z_]*(?:limit|cap|bound|max))\\w*|"\n',
+     '    r"\\.min\\(\\s*(?:room|cap|limit|bound|max)\\w*\\s*\\)|\\.take\\(\\s*[a-z_]*(?:limit|cap|bound|max)\\w*|"\n',
      '    r"(?!x)x|"\n',
      'axon-core', '--no-default-features --test refusal_coverage_gate', 'a_child_build_and_a_size_cap_are_sites'),
     ('M2278', 'COVERAGE GATE (eqgate3): a `.take(MAX_*)` cap is a site', 'scripts/v022_refusal_coverage.py',
