@@ -1948,7 +1948,6 @@ ATTACK_MARKERS.update({
     'M2148': 'ATTACK: a directory of a read-only materialization is writable',
     'M2149': 'ATTACK: (a plain file|an executable file) of a read-only materialization is writable',
     'M2150': 'ATTACK: (a plain file|an executable file|a directory) of a (read-only|writable) materialization',
-    'M2151': 'ATTACK: a read-only materialized tree cannot be removed',
     'M2152': 'ATTACK: the check child runs without no_new_privs',
     'M2153': 'ATTACK: the check child runs without no_new_privs',
     'M2154': 'ATTACK: the check child outlives the runner',

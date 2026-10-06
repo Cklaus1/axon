@@ -3098,6 +3098,11 @@ _R87_GUEST = ("REMAINDER (no row yet): runs only as the guest's PID 1 inside the
               "test executes it, and a guest change needs a real boot (psv_guest_boot_test.sh), "
               "which this workstream did not run")
 EXEMPT += [
+    ("crates/axon-fabric/src/workspace.rs", "                let _ = set_mode(p, 0o755);",
+     "REMAINDER (no row yet): unlocks a read-only tree's directories so it can be removed; only a "
+     "NON-root remover is stopped by a mode (root bypasses it, and the suite runs as root where it "
+     "matters), and a failure only leaves the tree behind (availability, never a verdict). The row "
+     "M2151 this would have carried survived as root and was withdrawn, not weakened"),
     (PL, "                    libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_NONBLOCK,\n                )\n                .map_err(|e| e.to_string())?;\n                unsafe {",
      "RACE-ONLY (checkable): this open is reached only for an entry the fstatat above "
      "(AT_SYMLINK_NOFOLLOW, M1912) reported as a regular file, in a directory only "
