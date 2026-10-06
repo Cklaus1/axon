@@ -1417,6 +1417,51 @@ fn a_mutation_run_restores_the_interpreter_after_every_row() {
     let _ = std::fs::remove_dir_all(&tgt);
 }
 
+/// C9 round 4c (eqgate): the restoring build is judged by COMPARING the
+/// rebuilt interpreter with the run's (`restore_interpreter`), not by it having
+/// built. The test above reaches the comparison only when the first rebuild
+/// happens to come out dirty, which depends on timing and the host's filesystem
+/// (M890 survived on gpumaster), and cargo itself repairs a clobbered binary, so
+/// no run-level attack is deterministic. This drives `restore_interpreter` as
+/// the run calls it, with a build that succeeds and leaves a FOREIGN interpreter
+/// (what a build that does not rebuild leaves): it must say so. Control: the
+/// run's own bytes are restored (None).
+#[test]
+fn a_restore_that_leaves_a_foreign_interpreter_says_so() {
+    let r = repo("restore-foreign");
+    let prog = r#"
+import os, subprocess, tempfile, v022_g01_mutations as m
+d = tempfile.mkdtemp()
+p = os.path.join(d, "axon")
+calls = []
+m.build_interpreter = lambda: subprocess.CompletedProcess([], 0, "", "")
+m.rerun_core_build_script = lambda: calls.append("rerun")
+m.interpreter_version = lambda path: "axon test"
+open(p, "wb").write(b"the run's interpreter")
+mine = m.sha(p)
+print("CONTROL", m.restore_interpreter(p, mine), calls)
+open(p, "wb").write(b"a foreign interpreter")
+calls.clear()
+got = m.restore_interpreter(p, mine)
+print("FOREIGN", got is not None, calls)
+"#;
+    let t = py(&r, prog);
+    assert!(
+        t.contains("CONTROL None []"),
+        "control: a restored interpreter is accepted without a forced rebuild: {t}"
+    );
+    assert!(
+        t.contains("FOREIGN True"),
+        "ATTACK: a restore that left a foreign interpreter in place was reported as restored: {t}"
+    );
+    assert!(
+        t.contains("FOREIGN True ['rerun']"),
+        "ATTACK: a restore that left a foreign interpreter did not re-run the build script before \
+         giving up: {t}"
+    );
+    let _ = std::fs::remove_dir_all(&r);
+}
+
 /// paired-disable rebuilds a prerequisite only when it is missing or is not
 /// the clean build's bytes (amendment 59: rebuilding all of them after every
 /// cell cost ~45 min per record) -- and then it must. Every cell here

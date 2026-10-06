@@ -1869,7 +1869,6 @@ ATTACK_MARKERS.update({
     'M1847': r"ATTACK: a value nested past the walk bound crossed unvisited",
     'M1848': r"ATTACK: a closure the operator held was replaced by a non-closure: Ok\(Completed\)",
 })
-
 # C9 round 4c, workstream BUILDENV (M1880-M1899; amendment 80).
 ATTACK_MARKERS.update({
     'M1880': r'ATTACK: a cargo config the guest build would use was accepted \(a single-quoted cfg',
@@ -1912,3 +1911,6 @@ ATTACK_MARKERS.update({
     'M1973': 'ATTACK: a status file with the defect `not-ancestor` was accepted',
     'M1974': 'ATTACK: a status file with the defect `doc-toolchain` was accepted',
 })
+
+
+ATTACK_MARKERS['M890'] = r'ATTACK: a restore that left a foreign interpreter in place was reported as restored'
