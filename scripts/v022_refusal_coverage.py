@@ -3518,14 +3518,10 @@ PRIV_FORM = re.compile(
 # MAX_* bound; a comparison `x > MAX_*` is not one: it is followed by its own
 # refusal, which the Err forms already see). One alternative per line: each group is its own gate row.
 BUILD_FORM = re.compile(
-    r"\.(?:env_clear|env_remove|envs)\(|(?<![\w:])(?:cmd|c|command)\.env\(|^\s*\.env\(|"
-    r"\.current_dir\(|"
-    r"\.(?:stdin|stdout|stderr)\(\s*(?:std::process::)?Stdio::(?:null|inherit)\(|"
-    r"\"-c\"|\bcore\.(?:fsmonitor|hooksPath|excludesFile|attributesFile|checkStat|trustCtime)\b|"
-    r"\bprotocol\.allow\b|\bsafe\.directory\b|\"--no-includes\"|\"GIT_[A-Z_]+\"|"
+    r"\.(?:env_clear|env_remove|envs)\(|(?<![\w:])(?:cmd|c|command)\.env\(|^\s*\.env\(|\.current_dir\(|\.(?:stdin|stdout|stderr)\(\s*(?:std::process::)?Stdio::(?:null|inherit)\(|"
+    r"\"-c\"|\bcore\.(?:fsmonitor|hooksPath|excludesFile|attributesFile|checkStat|trustCtime)\b|\bprotocol\.allow\b|\bsafe\.directory\b|\"--no-includes\"|\"GIT_[A-Z_]+\"|"
     r"\blibc::(?:setitimer|chdir|fchdir|close_range|setpriority|sched_\w+|personality|flock|setsockopt|dup[23]?|pipe2|socketpair|accept4|socket|unlinkat?|renameat2?|linkat?)\(|\bSYS_close_range\b|\b(?:O_CLOEXEC|SOCK_CLOEXEC|FD_CLOEXEC|SOCK_NONBLOCK)\b|"
-    r"\.min\(\s*(?:room|cap|limit|bound|max)\w*\s*\)|\.take\(\s*[a-z_]*(?:limit|cap|bound|max)\w*|"
-    r"\.(?:min|take|truncate)\([^)]*\bMAX_[A-Z_]+"
+    r"\.min\(\s*(?:room|cap|limit|bound|max)\w*\s*\)|\.take\(\s*[a-z_]*(?:limit|cap|bound|max)\w*|\.(?:min|take|truncate)\([^)]*\bMAX_[A-Z_]+"
 )
 # A decision expressed as `Some("reason")` / `Some(format!(..))` (evo::propose's
 # exclusion chain, submit's `problem = Some(..)`), as a VALUE: a pattern

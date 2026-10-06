@@ -2012,15 +2012,11 @@ ATTACK_MARKERS['M1975'] = r'ATTACK: the dispatch rule.s off switch is reachable 
 
 # C9 round 7, EQGATE3 (M2270-M2339; amendment 91).
 ATTACK_MARKERS.update({
-    'M2270': 'ATTACK: a use of (env_clear|Command::env) with no row',
-    'M2271': 'ATTACK: a use of current_dir with no row',
-    'M2272': 'ATTACK: a use of Stdio::null with no row',
-    'M2273': 'ATTACK: a use of a git -c option with no row',
-    'M2274': 'ATTACK: a use of a GIT_\\* variable with no row',
+    'M2270': r'ATTACK: a use of (env_clear|Command::env|current_dir|Stdio::null) with no row',
+    'M2273': r'ATTACK: a use of (a git -c option|a GIT_\* variable) with no row',
     'M2275': 'ATTACK: a use of (a process-state libc call|O_CLOEXEC) with no row',
     'M2276': r"ATTACK: the root helper ran under its caller's RLIMIT_\w+:",
-    'M2277': 'ATTACK: a use of `\\.min\\(room\\)` with no row',
-    'M2278': 'ATTACK: a use of `\\.take\\(MAX_\\*\\)` with no row',
+    'M2277': r'ATTACK: a use of (`\.min\(room\)`|`\.take\(MAX_\*\)`) with no row',
     'M2279': 'ATTACK: a call of a diverging closure that delegates',
     'M2280': 'ATTACK: a call of a diverging closure that delegates',
     'M2281': 'ATTACK: a signer key served through a FIFO was accepted',
