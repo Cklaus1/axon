@@ -205,8 +205,12 @@ fn a_paired_disable_run_refuses_a_tree_with_an_uncommitted_change_outside_crates
     let _ = std::fs::remove_dir_all(&clean);
 }
 
-/// Mutation shards of the `binding` scope, as a run at HEAD writes them;
-/// shard 1 claims `blobs` as its registry when given.
+/// Mutation shards of the `binding` scope, as a run at HEAD writes them
+/// (each records the host and toolchain it ran on, amendment 81); `mode`
+/// breaks one thing: the registry (`alt`), the tree (`dirty`), an edit
+/// (`edits`), an all_killed claim (`claim`), or shard 1's toolchain
+/// (`toolchain`), interpreter binary (`bin`), uid (`uid`) or host record
+/// (`nohost`).
 const MERGE_SHARDS: &str = r#"
 import json, sys, v022_g01_mutations as m
 head = sys.argv[1]; mode = sys.argv[2]; alt = mode == "alt"; out = sys.argv[3]
@@ -216,7 +220,10 @@ for k in (0, 1):
     if alt and k == 1:
         blobs = {f: "0" * 40 for f in blobs}
     d = {"schema": "axon-v022-mutation-run/3", "gate": "binding", "scope": "binding",
-         "commit": head, "registry_blobs": blobs, "tree_clean": True, "toolchain": {},
+         "commit": head, "registry_blobs": blobs, "tree_clean": True,
+         "environment": {"euid": 0, "etc_axon_present": False, "unset": [],
+                         "host": m.host_identity()},
+         "toolchain": {"rustc": "rustc 1.0.0", "cargo": "cargo 1.0.0", "axon_bin_sha256": "a" * 64},
          "shard": {"index": k, "of": 2}, "only": None, "all_killed": True,
          "mutations": [{"id": r[0], **m.row_digest(r), "result": "killed", "baseline": "passed"}
                        for i, r in enumerate(rows) if i % 2 == k]}
@@ -226,6 +233,16 @@ for k in (0, 1):
         d["mutations"][0]["old_sha256"] = "0" * 64
     if k == 1 and mode == "claim":
         d["mutations"][0]["result"] = "survived"
+    if k == 1 and mode == "toolchain":
+        h = dict(m.host_identity(), hostname="another-host")
+        h["toolchain"] = dict(h["toolchain"], rustc="rustc 0.0.0 (another toolchain)")
+        d["environment"] = dict(d["environment"], host=h)
+    if k == 1 and mode == "bin":
+        d["toolchain"] = dict(d["toolchain"], axon_bin_sha256="b" * 64)
+    if k == 1 and mode == "uid":
+        d["environment"] = dict(d["environment"], euid=1000)
+    if k == 1 and mode == "nohost":
+        d["environment"] = {"euid": 0, "etc_axon_present": False}
     json.dump(d, open(f"{out}/s{k}.json", "w"))
 "#;
 
@@ -510,6 +527,127 @@ fn a_join_refuses_records_from_two_toolchains() {
         "ATTACK: --join accepted records run on two different toolchains:\n{}",
         text(&o)
     );
+}
+
+/// --merge refuses shards run on two toolchains (amendment 81; the same
+/// refusal --join makes, through ONE helper). Executed attack: two synthetic
+/// shards at a clean HEAD with different rustc merged to `all_killed: true`.
+/// Control: a_merge_refuses_a_shard_made_from_another_registry's same merge.
+#[test]
+fn a_merge_refuses_shards_from_two_toolchains() {
+    let (o, written) = combine("merge-toolchain", MERGE_SHARDS, false, "toolchain");
+    assert!(
+        !written && text(&o).contains("records ran on different toolchains"),
+        "ATTACK: --merge accepted shards run on two different toolchains:\n{}",
+        text(&o)
+    );
+}
+
+/// --merge refuses shards whose interpreter binaries differ (a run's kills
+/// are judged against ONE `axon`).
+#[test]
+fn a_merge_refuses_shards_run_on_two_interpreters() {
+    let (o, written) = combine("merge-bin", MERGE_SHARDS, false, "bin");
+    assert!(
+        !written && text(&o).contains("records ran on different toolchains"),
+        "ATTACK: --merge accepted shards that ran two different interpreter binaries:\n{}",
+        text(&o)
+    );
+}
+
+/// --merge refuses shards run under different uids (a root-only test is a
+/// skip as a user and a check as root).
+#[test]
+fn a_merge_refuses_shards_run_under_different_uids() {
+    let (o, written) = combine("merge-uid", MERGE_SHARDS, false, "uid");
+    assert!(
+        !written && text(&o).contains("records ran on different toolchains"),
+        "ATTACK: --merge accepted shards that ran as different users:\n{}",
+        text(&o)
+    );
+}
+
+/// --merge refuses a shard that does not record the host and toolchain it
+/// ran on (like --join: not recording where it ran is not evidence).
+#[test]
+fn a_merge_refuses_a_shard_that_does_not_record_its_host() {
+    let (o, written) = combine("merge-nohost", MERGE_SHARDS, false, "nohost");
+    assert!(
+        !written && text(&o).contains("does not record the host and toolchain it ran on"),
+        "ATTACK: --merge accepted a shard that recorded no host or toolchain:\n{}",
+        text(&o)
+    );
+}
+
+/// Drift: --merge and --join (and the partial --only write) refuse mixed
+/// toolchains through the ONE shared helper, so neither can drift to its own
+/// comparison again (amendment 81).
+#[test]
+fn merge_join_and_a_partial_write_share_one_toolchain_refusal() {
+    let src = |f: &str| std::fs::read_to_string(repo_root().join(f)).unwrap();
+    let (m, p) = (src(HARNESS[0]), src(HARNESS[2]));
+    let body = |s: &str, name: &str| {
+        let a = s.find(&format!("def {name}(")).unwrap_or_else(|| panic!("no def {name}"));
+        let rest = &s[a..];
+        let b = rest[1..].find("\ndef ").map_or(rest.len(), |i| i + 1);
+        rest[..b].to_string()
+    };
+    assert!(
+        body(&m, "merge").contains("shard_toolchain_problem("),
+        "DRIFT: --merge does not use the shared toolchain refusal"
+    );
+    assert!(
+        body(&p, "join_shards").contains("mut.shard_toolchain_problem("),
+        "DRIFT: --join does not use the shared toolchain refusal"
+    );
+    assert!(
+        body(&p, "kept_records_problem").contains("mut.shard_toolchain_problem("),
+        "DRIFT: the --only partial write does not use the shared toolchain refusal"
+    );
+    assert!(
+        body(&p, "host_identity").contains("mut.host_identity()"),
+        "DRIFT: the paired-disable host identity is not the mutation run's"
+    );
+    assert!(
+        !p.contains("toolchains.setdefault"),
+        "DRIFT: --join grew its own toolchain comparison again"
+    );
+}
+
+/// A partial (--only) paired-disable write judges its KEPT records as --join
+/// does (amendment 81): a kept record whose label says `holds` over a cell
+/// that says otherwise, or one that ran on another toolchain, is refused.
+/// Control: the same kept records, consistent, pass.
+#[test]
+fn a_partial_paired_disable_write_judges_its_kept_records() {
+    let r = repo("pd-kept");
+    let prog = r#"
+import json, v022_paired_disable as pd
+host = pd.host_identity()
+other = dict(host, toolchain=dict(host["toolchain"], rustc="rustc 0.0.0 (another)"))
+good = {"mutation": "M1", "status": "EQUIVALENT_DID", "holds": True,
+        "matrix": {"baseline": "ATTACK_REFUSED", "retired_guard_disabled": "ATTACK_REFUSED",
+                   "sibling_set_disabled": "ATTACK_REFUSED", "guard_set_disabled": "ATTACK_SUCCEEDS",
+                   "retired_guard_full_suite": "SUITE_OK"},
+        "environment": {"host": host}}
+new = dict(good, mutation="M2")
+label = json.loads(json.dumps(good)); label["matrix"]["guard_set_disabled"] = "OTHER_FAILURE"
+tool = json.loads(json.dumps(good)); tool["environment"] = {"host": other}
+print("CONTROL", pd.kept_records_problem([good], [good, new]))
+print("LABEL", pd.kept_records_problem([label], [label, new]))
+print("TOOLCHAIN", pd.kept_records_problem([tool], [tool, new]))
+"#;
+    let t = py(&r, prog);
+    assert!(t.contains("CONTROL None"), "control: consistent kept records pass: {t}");
+    assert!(
+        t.contains("LABEL kept record M1 claims holds=True but its recorded cells give False"),
+        "ATTACK: a partial write kept a record on its stored label over a failing cell: {t}"
+    );
+    assert!(
+        t.contains("TOOLCHAIN records ran on different toolchains"),
+        "ATTACK: a partial write mixed a kept record from another toolchain with a new one: {t}"
+    );
+    let _ = std::fs::remove_dir_all(&r);
 }
 
 /// --merge refuses a shard that does not record a clean tree. Control:

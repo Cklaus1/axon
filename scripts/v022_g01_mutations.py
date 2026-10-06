@@ -5986,8 +5986,8 @@ MUTATIONS += [
      '    why = selection_problem(record)\n    if False:\n        out.append(',
      'axon-core', _HI2, 'a_kept_record_is_stale_once_a_new_consumer_reaches_it'),
     ('M1505', 'EQUIVALENCE (pdfast): --join refuses records run on different toolchains', _PDH,
-     '    if len(toolchains) > 1:\n',
-     '    if False:\n',
+     '    why = mut.shard_toolchain_problem([\n        (r["mutation"], (r.get("environment") or {}).get("host"), None) for r in records])\n    if why:\n        sys.exit("refused: " + why)\n    for r in records:\n        h = ',
+     '    why = mut.shard_toolchain_problem([\n        (r["mutation"], (r.get("environment") or {}).get("host"), None) for r in records])\n    if False:\n        sys.exit("refused: " + why)\n    for r in records:\n        h = ',
      'axon-core', _HI2, 'a_join_refuses_records_from_two_toolchains'),
 ]
 PSV_IDS |= {f"M{n}" for n in range(1500, 1520)}
@@ -6905,6 +6905,44 @@ MUTATIONS += [
 ]
 
 
+# ── C9 round 4c, workstream EQGATE (amendment 81; M1900-M1959) ───────────────
+# --merge never compared the toolchain across shards (only --join did); the
+# comparison is now ONE helper (shard_toolchain_problem) both call. Each row
+# below removes one arm of it or one call of it.
+_GM = 'scripts/v022_g01_mutations.py'
+PSV_IDS |= {f"M{n}" for n in range(1900, 1960)}
+MUTATIONS += [
+    ('M1900', "EQUIVALENCE (eqgate): --merge refuses shards run on different toolchains", _GM,
+     '    if why:\n        sys.exit("refused: " + why)\n    got = sorted(d["shard"]["index"]',
+     '    if False:\n        sys.exit("refused: " + why)\n    got = sorted(d["shard"]["index"]',
+     'axon-core', _HI2, 'a_merge_refuses_shards_from_two_toolchains'),
+    ('M1901', "EQUIVALENCE (eqgate): the shared helper refuses a second toolchain (--join side)", _GM,
+     '    if len(groups) > 1:\n        return "records ran on different toolchains: "',
+     '    if len(groups) > 99:\n        return "records ran on different toolchains: "',
+     'axon-core', _HI2, 'a_join_refuses_records_from_two_toolchains'),
+    ('M1902', "EQUIVALENCE (eqgate): a shard that does not record its host is no evidence", _GM,
+     '        if not isinstance(host, dict) or not isinstance(host.get("toolchain"), dict):\n            return f"record {label}',
+     '        if False:\n            return f"record {label}',
+     'axon-core', _HI2, 'a_merge_refuses_a_shard_that_does_not_record_its_host'),
+    ('M1903', "EQUIVALENCE (eqgate): --merge pins the interpreter binary's digest across shards", _GM,
+     '{"axon_bin_sha256": (d.get("toolchain") or {}).get("axon_bin_sha256", "unrecorded"),',
+     '{"axon_bin_sha256": None,',
+     'axon-core', _HI2, 'a_merge_refuses_shards_run_on_two_interpreters'),
+    ('M1904', "EQUIVALENCE (eqgate): --merge pins the uid the shards ran under", _GM,
+     '          "euid": (d.get("environment") or {}).get("euid"),',
+     '          "euid": None,',
+     'axon-core', _HI2, 'a_merge_refuses_shards_run_under_different_uids'),
+    ('M1905', "EQUIVALENCE (eqgate): a partial --only write recomputes a kept record's HOLDS from its cells", _PDH,
+     '        if bool(r.get("holds")) != want and not (r.get("status") == "STALE_REFACTORED" and not r.get("holds")):\n            return (f"kept record',
+     '        if False:\n            return (f"kept record',
+     'axon-core', _HI2, 'a_partial_paired_disable_write_judges_its_kept_records'),
+    ('M1906', "EQUIVALENCE (eqgate): a partial --only write compares the kept records' toolchain", _PDH,
+     '    if why:\n        return why + "; re-execute the kept records',
+     '    if False:\n        return why + "; re-execute the kept records',
+     'axon-core', _HI2, 'a_partial_paired_disable_write_judges_its_kept_records'),
+]
+
+
 def cargo_build_tests(package, target, env=""):
     """Build the tests a cell will run, ALONE: (ok, output). A compile error is
     the outcome of THIS cargo invocation, never a string found in a test's
@@ -7024,6 +7062,49 @@ def row_good(baseline, result, unrestored=None):
     return baseline == "passed" and result == "killed" and not unrestored
 
 
+_HOST = {}
+
+
+def host_identity():
+    """The machine and toolchain a run executed on (amendment 67/81). ONE
+    definition for the mutation run and the paired-disable run: `toolchain` is
+    what must agree for shards to combine -- rustc and cargo (with their LLVM)
+    and the system LLVM inkwell links; hostname, kernel, cores and memory are
+    recorded, not compared."""
+    if not _HOST:
+        def out(cmd):
+            r = subprocess.run(cmd, shell=True, cwd=ROOT, capture_output=True, text=True)
+            return r.stdout.strip() if r.returncode == 0 else f"unavailable ({cmd})"
+        mem = out("awk '/MemTotal/ {print $2 \" kB\"}' /proc/meminfo")
+        _HOST.update({
+            "hostname": os.uname().nodename, "kernel": f"{os.uname().sysname} {os.uname().release}",
+            "nproc": os.cpu_count(), "mem_total": mem,
+            "toolchain": {"rustc": out("rustc -vV"), "cargo": out("cargo -V"),
+                          "llvm_system": out("llvm-config-17 --version || llvm-config --version")},
+        })
+    return dict(_HOST)
+
+
+def shard_toolchain_problem(entries):
+    """Amendment 81: the ONE refusal both `--merge` (mutation shards) and
+    `--join` (paired-disable records) apply. `entries` is [(label, host,
+    pinned)]: `host` the record's environment.host (None/ill-formed is itself
+    refused: a shard that does not say where it ran is not evidence), `pinned`
+    extra facts that must agree too (the interpreter's digest, euid, ...).
+    Shards may run on several HOSTS, never on several toolchains. Returns the
+    refusal text, or None."""
+    groups = {}
+    for label, host, pinned in entries:
+        if not isinstance(host, dict) or not isinstance(host.get("toolchain"), dict):
+            return f"record {label} does not record the host and toolchain it ran on"
+        key = json.dumps({"toolchain": host["toolchain"], **(pinned or {})}, sort_keys=True)
+        groups.setdefault(key, []).append(label)
+    if len(groups) > 1:
+        return "records ran on different toolchains: " + "; ".join(
+            f"{json.loads(k)} for {sorted(v)[:5]}" for k, v in groups.items())
+    return None
+
+
 def merge(out, parts):
     """Combine shard runs of ONE commit and scope into one run. Refuses shards
     that disagree on commit, scope or shard count, that overlap, or that leave
@@ -7055,6 +7136,18 @@ def merge(out, parts):
             sys.exit(f"refused: {d['only']} is a sample (--only), not a shard")
         if (d.get("shard") or {}).get("of") != len(docs):
             sys.exit(f"refused: a shard of {(d.get('shard') or {}).get('of')} merged as one of {len(docs)}")
+    # Amendment 81: shards agree on the toolchain (rustc, cargo, LLVM), the
+    # interpreter binary's digest and the uid/etc-axon they ran under, and
+    # each records the host it ran on -- the same refusal --join applies.
+    why = shard_toolchain_problem([
+        (p, (d.get("environment") or {}).get("host"),
+         {"axon_bin_sha256": (d.get("toolchain") or {}).get("axon_bin_sha256", "unrecorded"),
+          "rustc": (d.get("toolchain") or {}).get("rustc"), "cargo": (d.get("toolchain") or {}).get("cargo"),
+          "euid": (d.get("environment") or {}).get("euid"),
+          "etc_axon_present": (d.get("environment") or {}).get("etc_axon_present")})
+        for p, d in zip(parts, docs)])
+    if why:
+        sys.exit("refused: " + why)
     got = sorted(d["shard"]["index"] for d in docs)
     if got != list(range(len(docs))):
         sys.exit(f"refused: shard indices {got}, not 0..{len(docs) - 1}")
@@ -7329,7 +7422,7 @@ def main():
            "scope": scope, "commit": commit, "registry_blobs": blobs,
            "tree_clean": True,  # refused at the start otherwise
            "environment": {"euid": os.geteuid(), "etc_axon_present": os.path.isdir("/etc/axon"),
-                           "unset": list(AMBIENT_BINARY_VARS)},
+                           "unset": list(AMBIENT_BINARY_VARS), "host": host_identity()},
            "toolchain": toolchain,
            "shard": None if shard is None else {"index": shard[0], "of": shard[1]},
            # A sample (--only) is not a run of the scope, and merge refuses it.

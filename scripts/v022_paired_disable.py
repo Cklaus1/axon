@@ -625,26 +625,10 @@ def edits_digest(rid, siblings):
         sort_keys=True).encode()).hexdigest()
 
 
-_HOST = {}
-
-
 def host_identity():
-    """The machine and toolchain the cells ran on (amendment 67): shards may
-    run on more than one host. `toolchain` is what must agree for records to
-    join -- rustc and cargo (with their LLVM) and the system LLVM inkwell
-    links; hostname, kernel, cores and memory are recorded, not compared."""
-    if not _HOST:
-        def out(cmd):
-            r = subprocess.run(cmd, shell=True, cwd=ROOT, capture_output=True, text=True)
-            return r.stdout.strip() if r.returncode == 0 else f"unavailable ({cmd})"
-        mem = out("awk '/MemTotal/ {print $2 \" kB\"}' /proc/meminfo")
-        _HOST.update({
-            "hostname": os.uname().nodename, "kernel": f"{os.uname().sysname} {os.uname().release}",
-            "nproc": os.cpu_count(), "mem_total": mem,
-            "toolchain": {"rustc": out("rustc -vV"), "cargo": out("cargo -V"),
-                          "llvm_system": out("llvm-config-17 --version || llvm-config --version")},
-        })
-    return dict(_HOST)
+    """The machine and toolchain the cells ran on: ONE definition with the
+    mutation run's (v022_g01_mutations.host_identity, amendment 81)."""
+    return mut.host_identity()
 
 
 def environment():
@@ -694,6 +678,28 @@ def record_derivable_holds(r):
         return stale_holds(r)
     if r.get("status") == "EQUIVALENT_DID":
         return matrix_holds(r.get("matrix"))
+    return None
+
+
+def kept_records_problem(kept, records):
+    """Amendment 81: what a partial (`--only`) run must hold before it writes
+    the status file -- the same judgement `--join` makes, because a partial run
+    is a second way to write that file. Each KEPT record's HOLDS is recomputed
+    from its own cells (never read off the stored label), and the combined
+    `records` all ran on ONE toolchain, each naming its host. Returns the
+    refusal text or None."""
+    for r in kept:
+        want = record_derivable_holds(r)
+        if want is None:
+            return (f"kept record {r['mutation']} carries no matrix or replacement state to "
+                    "derive its verdict from; re-execute it (--only)")
+        if bool(r.get("holds")) != want and not (r.get("status") == "STALE_REFACTORED" and not r.get("holds")):
+            return (f"kept record {r['mutation']} claims holds={bool(r.get('holds'))} "
+                    f"but its recorded cells give {want}; re-execute it (--only)")
+    why = mut.shard_toolchain_problem([
+        (r["mutation"], (r.get("environment") or {}).get("host"), None) for r in records])
+    if why:
+        return why + "; re-execute the kept records on this toolchain (--only)"
     return None
 
 
@@ -763,16 +769,15 @@ def join_shards(argv, commit, universe):
         seen += got
     # Amendment 67: shards may run on several hosts, never on several
     # toolchains. Every record names its host; all records' toolchains agree.
-    toolchains, hosts = {}, {}
+    hosts = {}
+    why = mut.shard_toolchain_problem([
+        (r["mutation"], (r.get("environment") or {}).get("host"), None) for r in records])
+    if why:
+        sys.exit("refused: " + why)
     for r in records:
-        h = (r.get("environment") or {}).get("host")
-        if not isinstance(h, dict) or not isinstance(h.get("toolchain"), dict):
-            sys.exit(f"refused: record {r['mutation']} does not record the host and toolchain it ran on")
-        toolchains.setdefault(json.dumps(h["toolchain"], sort_keys=True), []).append(r["mutation"])
+        h = r["environment"]["host"]
         hosts.setdefault(h.get("hostname"), {k: h.get(k) for k in ("kernel", "nproc", "mem_total")})
-    if len(toolchains) > 1:
-        sys.exit("refused: records ran on different toolchains: " + "; ".join(
-            f"{json.loads(t)} for {sorted(ms)[:5]}" for t, ms in toolchains.items()))
+    toolchains = {json.dumps(records[0]["environment"]["host"]["toolchain"], sort_keys=True): 1} if records else {}
     dup = sorted({r for r in seen if seen.count(r) > 1})
     if dup or sorted(seen) != sorted(universe):
         sys.exit(f"refused: coverage is not every record exactly once (duplicates {dup}, "
@@ -1377,7 +1382,12 @@ def main():
             kept = []
         for r in kept:
             r.setdefault("commit", prev.get("commit"))
+        # Amendment 81: a kept record is judged again, not read off its stored
+        # label, and the combined set must have run on ONE toolchain.
         records = kept + records
+        why = kept_records_problem(kept, records)
+        if why:
+            sys.exit("refused: " + why)
         ok = all(r["holds"] for r in records)
     missing = sorted((sel if sel is not None else set(universe)) - {r["mutation"] for r in records})
     if missing:

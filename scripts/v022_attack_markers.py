@@ -1764,3 +1764,14 @@ ATTACK_MARKERS.update({
     'M1823': r'ATTACK: a run that timed out \(exit 20\) was receipted as a COMPLETED run',
     'M1826': r'ATTACK: a (Passed|Failed) verdict was receipted over bytes the run did not judge',
 })
+
+# C9 round 4c, workstream EQGATE (M1900-M1959; amendment 81).
+ATTACK_MARKERS.update({
+    'M1900': r'ATTACK: --merge accepted shards run on two different toolchains',
+    'M1901': r'ATTACK: --join accepted records run on two different toolchains',
+    'M1902': r'ATTACK: --merge accepted a shard that recorded no host or toolchain',
+    'M1903': r'ATTACK: --merge accepted shards that ran two different interpreter binaries',
+    'M1904': r'ATTACK: --merge accepted shards that ran as different users',
+    'M1905': r'ATTACK: a partial write kept a record on its stored label over a failing cell',
+    'M1906': r'ATTACK: a partial write mixed a kept record from another toolchain with a new one',
+})
