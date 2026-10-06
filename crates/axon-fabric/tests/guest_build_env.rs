@@ -1367,11 +1367,11 @@ print(json.dumps(out))";
         ("none", "no builder proof"),
         ("edit", "does not hold"),
         ("forged", "does not hold"),
-        ("otherparent", "not the pinned builder"),
+        ("otherparent", "does not hold"),
         // The reviewer's forge (round 6): a record naming ANOTHER account and
         // that account's own private directory, signed under its own key. Only
         // the judge's expectation of who builds refuses it.
-        ("forgedaccount", "not the pinned builder"),
+        ("forgedaccount", "cannot be checked"),
     ] {
         let got = judge(mode);
         if !got.contains(why) {
@@ -1406,6 +1406,16 @@ print(json.dumps(out))";
     // they can write (a world-writable one): the key checks all pass; only the
     // parent's privacy refuses it.
     let planted = judge("plantedparent");
+    // The key (and then its directory) belongs to ANOTHER account.
+    let chown = |p: &Path, uid: u32| {
+        std::os::unix::fs::chown(p, Some(uid), None).unwrap();
+    };
+    chown(&key, 65534);
+    let foreign_key = judge("same");
+    chown(&key, 0);
+    chown(keys_dir, 65534);
+    let foreign_dir = judge("same");
+    chown(keys_dir, 0);
     discard(&rec);
     for (what, got) in [
         ("a key another uid can read", open),
@@ -1413,6 +1423,8 @@ print(json.dumps(out))";
         ("a key in a directory others can enter", enterable),
         ("a key that is gone", gone),
         ("a hand-signed record in a world-writable parent", planted),
+        ("a key owned by another account", foreign_key),
+        ("a key directory owned by another account", foreign_dir),
     ] {
         if !got.contains("cannot be checked") {
             failures.push(format!("{what}: {got:?}"));
@@ -1743,6 +1755,11 @@ elif mode == 'edit': rec['source_revision'] = 'a' * 40; save()\n\
 elif mode == 'noproof': rec.pop('proof'); save()\n\
 elif mode == 'norecord': os.remove(rp)\n\
 elif mode == 'extra': open(out + '/evil', 'w').write('x')\n\
+elif mode == 'nobuild': rec['builds'] = []; g.write(rp, rec)\n\
+elif mode == 'dropped':\n\
+\x20del rec['artifacts']['axon-observer']; g.write(rp, rec); os.remove(out + '/axon-observer')\n\
+elif mode == 'symlink':\n\
+\x20shutil.copy(out + '/axon-fabric', d + '/twin'); os.remove(out + '/axon-fabric'); os.symlink(d + '/twin', out + '/axon-fabric')\n\
 elif mode == 'builder': exp = (os.geteuid() + 1, parent)\n\
 elif mode == 'parent': exp = (os.geteuid(), '/var/tmp')\n\
 elif mode == 'forge':\n\
@@ -1777,9 +1794,15 @@ print(json.dumps(res))";
         ("norecord", "holds no readable host-build.json"),
         ("extra", "files the controlled host build did not make"),
         ("revision", "was made from revision"),
-        ("builder", "not the pinned builder"),
-        ("parent", "not the pinned builder"),
-        ("forge", "not the pinned builder"),
+        ("nobuild", "not exactly the one controlled host invocation"),
+        ("dropped", "names no digest for exactly"),
+        (
+            "symlink",
+            "is not the bytes the controlled host build recorded",
+        ),
+        ("builder", "cannot be checked"),
+        ("parent", "cannot be checked"),
+        ("forge", "cannot be checked"),
     ] {
         let got = judge(mode);
         if !got.contains(why) {

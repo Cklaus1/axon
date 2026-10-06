@@ -880,7 +880,7 @@ fn a_guest_build_record_of_another_account_or_a_wrong_pin_does_not_freeze() {
         "ATTACK: the freeze bound a guest image whose build record was signed by another account \
          under its own private directory: {got:?}"
     );
-    assert!(got.unwrap_err().contains("not the pinned builder"));
+    assert!(got.unwrap_err().contains("does not hold"));
     // ... and the pin is the ONLY barrier: a pin naming the forger accepts it.
     write(&builder_pin_file(&r), &builder_pin_doc(65534, &forge));
     let pinned = freeze(&r);
@@ -894,12 +894,12 @@ fn a_guest_build_record_of_another_account_or_a_wrong_pin_does_not_freeze() {
         (
             "a pin naming another uid",
             builder_pin_doc(4242, parent()),
-            "not the pinned builder",
+            "cannot be checked",
         ),
         (
             "a pin naming another parent",
             builder_pin_doc(0, &forge),
-            "not the pinned builder",
+            "cannot be checked",
         ),
         (
             "a pin that is not a builder pin",

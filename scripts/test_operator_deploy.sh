@@ -331,7 +331,7 @@ refused "ATTACK: a binary replaced after the controlled build" "is not the bytes
   bash "$KIT" --from "$CLONE" --bin-dir "$WORK/fakebin" $KB
 copybin; python3 - "$WORK/fakebin/host-build.json" <<'PY'
 import json, sys
-p = sys.argv[1]; r = json.load(open(p)); r["source_revision"] = "0" * 40; json.dump(r, open(p, "w"))
+p = sys.argv[1]; r = json.load(open(p)); r["src_files"] = 99; json.dump(r, open(p, "w"))
 PY
 refused "ATTACK: a host build record edited after its builder signed it" "does not hold" \
   bash "$KIT" --from "$CLONE" --bin-dir "$WORK/fakebin" $KB
@@ -358,16 +358,36 @@ r["builder_uid"] = 65534; r["build_parent_ancestors"] = anc; r["proof"]["id"] = 
 r["proof"]["hmac"] = hmac.new(b"f" * 64, g.proof_payload(r), "sha256").hexdigest()
 json.dump(r, open(p, "w"))
 PY
-refused "ATTACK: a host build record signed by another account under its own directory" "not the pinned builder" \
+refused "ATTACK: a host build record signed by another account under its own directory" "cannot be checked" \
   bash "$KIT" --from "$CLONE" --bin-dir "$WORK/fakebin" $KB
 rm -rf "$FORGE"
-refused "ATTACK: a judge told another builder uid" "not the pinned builder" \
+refused "ATTACK: a judge told another builder uid" "cannot be checked" \
   bash "$KIT" --from "$CLONE" --bin-dir "$BIN" --builder-uid $((BUILDER_UID + 1)) --builder-parent "$KEYPARENT"
 refused "ATTACK: no --builder-uid at all (the record's own word is never taken)" "--builder-uid N is required" \
   bash "$KIT" --from "$CLONE" --bin-dir "$BIN"
 copybin; : >"$WORK/fakebin/extra-file"
 refused "ATTACK: a host build directory with a file the build did not make" "files the controlled host build did not make" \
   bash "$KIT" --from "$CLONE" --bin-dir "$WORK/fakebin" $KB
+# The linker the host build recorded must be the one the guest build recorded
+# (and, once installed, the operator's pin): the deployed image's manifest names
+# another cc digest. (dist/ is excused from the clean-clone rule, so the same
+# commit is judged.)
+rm -rf "$WORK/linker"; cp -a "$CLONE" "$WORK/linker"
+python3 - "$WORK/linker/dist/guest-linux/manifest.json" <<'PY' || fail "cannot edit the dist manifest"
+import json, sys
+p = sys.argv[1]; m = json.load(open(p))
+m["source"]["build_environment"]["toolchain"]["host_tools"]["cc"]["sha256"] = "9" * 64
+json.dump(m, open(p, "w"))
+PY
+refused "ATTACK: a host build whose linker is not the one the guest build recorded" "linker is not the one" \
+  bash "$WORK/linker/scripts/operator_deploy_protected_host.sh" --from "$WORK/linker" --bin-dir "$BIN" --only binaries $KB
+rm -rf "$WORK/linker"
+# An ancestor config of the clone naming a compiler wrapper: the kit's own
+# config check (in a constructed environment) sees every ancestor.
+mkdir -p "$WORK/.cargo"; printf '[build]\nrustc-wrapper = "/usr/bin/sccache"\n' >"$WORK/.cargo/config.toml"
+refused "ATTACK: an ancestor cargo config naming a compiler wrapper" "build configuration is not the tree's own" \
+  bash "$KIT" "${ARGS[@]}"
+rm -rf "$WORK/.cargo"
 # A wrapper or flags in the kit's own environment are not what the binaries
 # were built under (the host build constructs its environment and drops them);
 # the kit's own config check runs in a constructed one too: control, it passes.

@@ -705,36 +705,23 @@ def builder_pin(path=BUILDER_PIN):
     return (uid, parent), ""
 
 
-def builder_problem(rec, builder, what):
-    """Why `rec` was not made by the BUILDER the judge expects (empty: it
-    was). The expectation comes from the judge (an operator pin, or the judging
-    process's own identity), never from the record: the record's own uid and
-    parent are only compared to it."""
-    if not (isinstance(builder, tuple) and len(builder) == 2):
-        return "no operator builder identity to judge the proof against (the builder pin is absent)"
-    uid, parent = builder
-    if rec.get("builder_uid") != uid or rec.get("build_parent") != parent:
-        return (f"the {what} record names builder uid {rec.get('builder_uid')!r} under "
-                f"{rec.get('build_parent')!r}, not the pinned builder (uid {uid} under {parent})")
-    return ""
-
-
 def proof_problems(rec, what, builder=None):
     """Why `rec` (a controlled-build record, `what` names it) is not the one
-    the PINNED builder's runner wrote: not the builder the judge expects, no
-    proof, a proof under another key, or any field edited after the runner
-    signed it (empty: it holds). `builder` is (uid, parent) from the operator's
-    pin (or the judging process's own identity); the key is looked up under
-    THAT parent and must be owned by THAT uid -- a record naming another
-    account and another private directory is refused before any key is read.
-    Residual: whoever can act as the pinned builder account can sign anything."""
+    the PINNED builder's runner wrote: no proof, a proof under another key, or
+    any field edited after the runner signed it (empty: it holds). `builder` is
+    (uid, parent) from the operator's pin (or the judging process's own
+    identity). The key is looked up under THAT parent and must be owned by
+    THAT uid: the record's own `builder_uid` and `build_parent` are never read
+    to find it, so a record naming another account and its own private
+    directory (round 6: uid 65534, a directory only it could write) finds no
+    key at the pinned place and is refused. Residual: whoever can act as the
+    pinned builder account (or write into its private parent) can sign anything."""
     pr = rec.get("proof") if isinstance(rec, dict) else None
     if (not isinstance(pr, dict) or pr.get("schema") != PROOF_SCHEMA
             or not isinstance(pr.get("hmac"), str) or not re.fullmatch(r"[0-9a-f]{64}", pr["hmac"])):
         return f"the {what} record carries no builder proof (a record the controlled runner did not write)"
-    why = builder_problem(rec, builder, what)
-    if why:
-        return why
+    if not (isinstance(builder, tuple) and len(builder) == 2):
+        return "no operator builder identity to judge the proof against (the builder pin is absent)"
     key, why = proof_key(builder[1], pr.get("id"), builder[0])
     if why:
         return f"the {what} record's proof cannot be checked: {why}"
@@ -1278,7 +1265,7 @@ def image_problems(man, pin_required=False, builder=None):
     rec = (man.get("source") or {}).get("build_environment")
     if not isinstance(rec, dict):
         return "it records no build environment"
-    if builder is None and pin_required:
+    if builder is None:
         builder, why = builder_pin()
         if why:
             return why
