@@ -4188,19 +4188,16 @@ fn a_terminal_its_caller_owns_never_signals_the_root_helper() {
         let extra = "touch \"$OUT/waiting\"\ni=0\nwhile [ ! -e \"$OUT/../../go\" ] && [ $i -lt 200 ]; do sleep 0.05; i=$((i+1)); done\n";
         let f = fx(Some(FABRIC), extra, |v| v["fabric"] = python_fabric_pin());
         let result = f.base.join("result");
-        let mut pty = Command::new("python3");
         // ALWAYS as a detached caller would start it: SIGINT ignored in the
         // environment this fixture inherits (the regression for the
-        // detached-only failure; the fixture must not depend on it).
-        // SAFETY: signal(2) between fork and exec, async-signal-safe.
-        unsafe {
-            std::os::unix::process::CommandExt::pre_exec(&mut pty, || {
-                libc::signal(libc::SIGINT, libc::SIG_IGN);
-                Ok(())
-            });
-        }
-        let mut child = pty
-            .args(["-c", PTY_CALLER])
+        // detached-only failure; the fixture must not depend on it). `trap '' INT`
+        // sets that disposition, which the exec'd interpreter inherits.
+        let mut child = Command::new("sh")
+            .args([
+                "-c",
+                "trap '' INT; exec python3 -c \"$0\" \"$@\"",
+                PTY_CALLER,
+            ])
             .arg(FABRIC.to_string())
             .arg(f.installed.as_ref().unwrap())
             .arg(&f.cfg)
