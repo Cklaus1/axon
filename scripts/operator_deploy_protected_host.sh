@@ -822,7 +822,11 @@ if selected systemd; then
   # Amendment 79: the observer service asks the custodian whether a nonce is
   # outstanding, as its own uid: one named ACL entry on the socket, granted when
   # systemd creates it (the file mode and group stay the Fabric's).
-  command -v setfacl >/dev/null 2>&1 || blocked "setfacl (the acl package) is required: the observer's uid is granted the custodian socket by ACL"
+  # Needed where systemd will start the unit (not under --no-systemctl, which only
+  # installs the files for a test to judge).
+  if [ $NO_SYSTEMCTL = 0 ]; then
+    command -v setfacl >/dev/null 2>&1 || blocked "setfacl (the acl package) is required: the observer's uid is granted the custodian socket by ACL"
+  fi
   sed -i -e "s|^ExecStartPost=.*|ExecStartPost=/usr/bin/setfacl -m u:$OBSERVER_USER:rw $SOCKET|" "$WORK/axon-custodian.socket"
   grep -qx "ExecStartPost=/usr/bin/setfacl -m u:$OBSERVER_USER:rw $SOCKET" "$WORK/axon-custodian.socket" \
     || blocked "the custodian socket unit template has no ExecStartPost= line for the observer's ACL (amendment 79)"

@@ -352,19 +352,18 @@ ARGS=(--from "$CLONE" --bin-dir "$BIN" --suite-registry "$OP/suites/registry.jso
       --grant-registry "$OP/grants/grants.json" --signer-public-key "$SIGNER_PUB" --no-systemctl)
 # Amendment 79: the custodian socket unit grants the observer's uid by
 # `ExecStartPost=setfacl`, so the kit BLOCKS where `setfacl` (the acl package) is
-# absent. ATTACK: exercised where the host really lacks it; CONTROL: a stub in
-# PATH for everything below (there is no systemd in here: the unit is judged as a
-# file, its ExecStartPost line included, and nothing runs it).
+# absent and systemd would start the unit (not under --no-systemctl, which only
+# installs files). ATTACK: exercised where the host really lacks it. CONTROL: the
+# full apply below, under --no-systemctl, judges the unit's line as a file.
 if ! command -v setfacl >/dev/null 2>&1; then
-  bash "$KIT" "${ARGS[@]}" --only systemd >"$W/nofacl.out" 2>&1; r=$?
+  SC_ARGS=(); for a in "${ARGS[@]}"; do [ "$a" = --no-systemctl ] || SC_ARGS+=("$a"); done
+  bash "$KIT" "${SC_ARGS[@]}" --only systemd >"$W/nofacl.out" 2>&1; r=$?
   [ $r = 3 ] && grep -q 'BLOCKED\[systemd\] setfacl (the acl package) is required' "$W/nofacl.out" \
     || { cat "$W/nofacl.out"; fail "ATTACK: the kit did not BLOCK a host with no setfacl (exit $r)"; }
-  echo "ok(ns): a host with no setfacl is BLOCKED (the observer's grant on the custodian socket cannot be made)"
+  echo "ok(ns): a host with no setfacl is BLOCKED where systemd would start the unit"
 else
   echo "note(ns): this host has setfacl; the missing-setfacl attack was not exercised"
 fi
-mkdir -p "$W/stubbin"; printf '#!/bin/sh\nexit 0\n' >"$W/stubbin/setfacl"; chmod 0755 "$W/stubbin/setfacl"
-export PATH="$W/stubbin:$PATH"
 # Runbook order: allowlist, users and directories, THEN the operator provisions
 # keys (here: inert fixtures), THEN the whole kit.
 bash "$KIT" "${ARGS[@]}" --only allowlist,users,dirs --apply >"$W/apply1.out" 2>&1 \
