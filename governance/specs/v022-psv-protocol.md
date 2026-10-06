@@ -4451,7 +4451,8 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       operator impl type has nothing to select between and dispatches (a wrong-typed receiver fails
       with "no method", it cannot pick another impl). The rule's arithmetic arm (`seal_width`)
       applies the same determination to `+ - * / % & | ^ << >>` on a fixed-width integer: a `u8`
-      the candidate chose wraps where the operator's `i64` does not (`v + 10 == 9` with 255).
+      the candidate chose truncates where the operator's `i64` does not (`(v << 1) == 254` with
+      255; `+`/`*` on a `u8` PANIC on overflow, so the shift is the result that completes).
     - **How "determined" is tracked (decision).** Not a runtime flag (a `Value` has no slot, and
       one on every scalar would cost every value copy) and not the checker's inferred types
       (unification can make a read of an untyped dict `i64` because a later use compares it with a

@@ -1924,6 +1924,6 @@ ATTACK_MARKERS.update({
     'M1993': _D,
     'M1994': r"ATTACK: operator code dispatched on a value of the candidate's chosen type \(an unannotated lambda parameter\): Ok\(Completed\)",
     'M1995': _D,
-    'M1996': r"ATTACK: a u8 the candidate chose wrapped the operator's arithmetic into a pass: Ok\(Completed\)",
+    'M1996': r"ATTACK: a u8 the candidate chose truncated the operator's arithmetic into a pass: Ok\(Completed\)",
     'M1997': r"ATTACK: a captured-dict closure retyped an entry against a stale snapshot: Ok\(Completed\)",
 })

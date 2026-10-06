@@ -3433,7 +3433,7 @@ impl<'p> Interp<'p> {
     /// The dispatch rule's arithmetic arm (amendment 83): operator code does
     /// not do arithmetic on a fixed-width integer whose WIDTH nothing on the
     /// operator side determined — a `u8` the candidate chose wraps where the
-    /// operator's `i64` does not (`v + 10 == 9` with `v = 255 as u8`).
+    /// operator's `i64` does not (`(v << 1) == 254` with `v = 255 as u8`).
     pub(crate) fn seal_width(
         &self,
         op: &BinOp,
@@ -8787,7 +8787,9 @@ fn main() { }
     }
 
     /// The arithmetic arm: the candidate stores `255 as u8` and the operator's
-    /// untyped `v + 10 == 9` wraps to a pass (an `i64` 255 + 10 is 265).
+    /// untyped `v << 1 == 254` truncates to a pass (an `i64` 255 << 1 is 510;
+    /// plain `+`/`*` PANIC on overflow, so the shift is the width-dependent
+    /// result that completes).
     #[test]
     fn operator_arithmetic_never_runs_at_a_width_the_candidate_chose() {
         let suite = |read: &str| {
@@ -8796,17 +8798,17 @@ fn main() { }
         let cand = |v: &str| format!("fn solve(d: Dict) {{ dict_set(d, \"k\", {v}) }}\n");
         let out = judged_on(
             "r6-arith",
-            &suite("assert(v + 10 == 9)"),
+            &suite("assert((v << 1) == 254)"),
             &cand("255 as u8"),
         );
         assert!(
             out != Ok(TestEnd::Completed)
                 && matches!(&out, Err(m) if m.contains("whose width nothing on the operator side determined")),
-            "ATTACK: a u8 the candidate chose wrapped the operator's arithmetic into a pass: {out:?}"
+            "ATTACK: a u8 the candidate chose truncated the operator's arithmetic into a pass: {out:?}"
         );
-        let pinned = suite("{ let y: i64 = v\n            assert(y + 10 == 9) }");
+        let pinned = suite("{ let y: i64 = v\n            assert((y << 1) == 254) }");
         assert_eq!(
-            judged_on("r6-arith", &pinned, &cand("-1")),
+            judged_on("r6-arith", &pinned, &cand("127")),
             Ok(TestEnd::Completed),
             "control: GOOD, pinned"
         );
