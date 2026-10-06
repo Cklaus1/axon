@@ -6437,10 +6437,10 @@ MUTATIONS += [
 _HWTEST = 'hardware_isolation_is_never_dropped_to_the_host_interpreter'
 _HWTEST2 = 'a_hardware_isolation_requirement_is_never_met_by_a_process_scoped_runtime'
 MUTATIONS += [
-    ('M1796', "ADMISSION (admit): the supervisor refuses a request whose required isolation the runtime does not provide (retired vs select, M1052)", _SUP,
+    ('M1796', "ADMISSION (admit): the supervisor refuses a request whose required isolation the runtime does not provide (library-tested; select dominates it on the route, M1052)", _SUP,
      '    if !required.satisfied_by(iso) {', '    if false && !required.satisfied_by(iso) {',
      'axon-os', '--test admit_isolation', _HWTEST2),
-    ('M1797', "ADMISSION (admit): a process-scoped runtime does not satisfy a hardware-isolation requirement (retired vs select, M1052)", _RT,
+    ('M1797', "ADMISSION (admit): a process-scoped runtime does not satisfy a hardware-isolation requirement (library-tested; select dominates it on the route, M1052)", _RT,
      '            (IsolationRequirement::HardwareIsolated, Isolation::ProcessScoped) => false,',
      '            (IsolationRequirement::HardwareIsolated, Isolation::ProcessScoped) => true,',
      'axon-os', '--test admit_isolation', _HWTEST2),
