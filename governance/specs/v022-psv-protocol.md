@@ -4026,8 +4026,18 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       records before installing. `test_operator_deploy.sh` builds its synthetic image from properly signed
       records and refuses (by real kit runs) a verifier with a build state, `RUSTC_WRAPPER`/`RUSTFLAGS`/
       `CARGO_BUILD_RUSTC_WRAPPER` in the kit's environment, and a hand-written, edited or kernel-edited record.
-      These three kit guards are not mutation rows (the harness drives cargo tests only); each was checked
-      by hand: the guard removed, the script fails.
+      These three kit guards are not mutation rows (the harness drives cargo tests only). Each was removed
+      ALONE by hand and `test_operator_deploy.sh` run (tree restored after each): without the `build_state`
+      check, `ATTACK: a verifier built under a compiler wrapper` fails ("expected REFUSED (2), got 3"); without
+      the `check-host-build` call, `ATTACK: a host build under RUSTC_WRAPPER` fails likewise; without the
+      install-time record judge, `ATTACK: a guest image whose build record is a hand-written one (no builder
+      proof) was accepted by the kit` fails. Each is a manual check on 2026-10-06, not a registered row.
+    - **Tests never touch the real builder-private parent.** `guest_build_env.rs` runs every build under a
+      per-process directory (`AXON_GUEST_BUILD_PARENT`, removed at exit) and `freeze_manifest.rs` keeps its
+      fixture keys and build parent in a per-process directory; both fail (`ATTACK: a test ... real
+      builder-private parent`) if a record or fixture path lies under `~/.cache/axon-guest-build`. Before this
+      fix the tests left one proof key per build there (and the freeze fixture wrote fixed keys and set the
+      directory's mode).
     - **FUTURE (not done).** `TrustAuthority::Admission` has no consumer (loop admitters come from store-config
       identities); `helper_agrees` does not join `artifacts_dir`, `firecracker`, `jailer`, `observer.root`
       and `observer.max_age_s` to the host config.
