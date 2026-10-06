@@ -7775,6 +7775,17 @@ def print_evidence_model(rows, scope, extra="", partial=False):
 
 
 def main():
+    if sys.argv[1:2] == ["--check-status"]:
+        import v022_mutation_status as ms
+        path = sys.argv[2] if len(sys.argv) > 2 else os.path.join(ROOT, ms.STATUS_PATH)
+        try:
+            found = ms.problems(json.load(open(path)), sh("git rev-parse HEAD").stdout.strip(), sys.modules[__name__])
+        except (OSError, ValueError) as e:
+            found = [f"cannot read {path}: {e}"]
+        for p_ in found:
+            print(f"BAD {p_}")
+        print(f"mutation-run status {path}: {'REFUSED' if found else 'a merged, current, complete run'}")
+        sys.exit(1 if found else 0)
     if sys.argv[1:2] == ["--merge"]:
         if len(sys.argv) < 5:
             sys.exit("usage: v022_g01_mutations.py --merge OUT.json SHARD.json SHARD.json…")

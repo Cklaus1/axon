@@ -92,6 +92,9 @@ BY_ID = {r[0]: r for r in mut.MUTATIONS}
 _cspec = importlib.util.spec_from_file_location("v022_pd_consumers", os.path.join(ROOT, "scripts/v022_pd_consumers.py"))
 pdc = importlib.util.module_from_spec(_cspec)
 _cspec.loader.exec_module(pdc)
+_mspec = importlib.util.spec_from_file_location("v022_mutation_status", os.path.join(ROOT, "scripts/v022_mutation_status.py"))
+mstat = importlib.util.module_from_spec(_mspec)
+_mspec.loader.exec_module(mstat)
 
 
 def sh(cmd):
@@ -728,18 +731,8 @@ def status_problems(doc, head=None):
         out.append("not produced by `--join` (a joined file carries `hosts` and `toolchain` and no "
                    "`shard`): a partial or hand-assembled file is not the harness's joined evidence")
     commit = doc.get("commit")
-    if commit != head:
-        if not isinstance(commit, str) or sh(f"git cat-file -e {commit}^{{commit}}").returncode != 0:
-            out.append(f"its commit {commit!r} is not in this repository")
-        elif sh(f"git merge-base --is-ancestor {commit} {head}").returncode != 0:
-            out.append(f"its commit {commit[:8]} is not an ancestor of the freeze commit {head[:8]}")
-        else:
-            changed = [f for f in sh(f"git diff --name-only {commit} {head}").stdout.split()
-                       if not f.startswith("governance/status/")]
-            if changed:
-                out.append(f"its commit {commit[:8]} is not the freeze commit {head[:8]}: "
-                           f"{len(changed)} file(s) other than governance/status/ changed since "
-                           f"(first: {changed[0]})")
+    # One evidence-commit rule for every status file (mstat.evidence_commit_problems).
+    out.extend(mstat.evidence_commit_problems(commit, head, mut))
     if doc.get("tree_clean") is not True:
         out.append("it does not record a clean tree")
     if doc.get("registry_blobs") != mut.registry_blobs():

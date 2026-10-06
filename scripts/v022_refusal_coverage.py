@@ -3362,6 +3362,33 @@ OPEN_FLAG = re.compile(
     r"\bO_DIRECTORY\b|"
     r"\bMS_(?:NOSUID|NODEV|NOEXEC|RDONLY|BIND|PRIVATE|SLAVE|REC)\b"
 )
+# Amendment 87 (C9 round 6, eqgate2): the same blindness one level up. A guard
+# expressed as a file or directory PERMISSION MODE (the completion secret's
+# 0o400, the trial cache's 0o700), a `prctl` flag (PR_SET_NO_NEW_PRIVS,
+# PR_SET_PDEATHSIG, PR_SET_DUMPABLE), a privilege drop, a resource limit, a
+# signal disposition or a `pre_exec` hook builds no `Err` either, and each could
+# be weakened alone with every suite green (round 6: 0o400 -> 0o644, 0o700 ->
+# 0o755, the NO_NEW_PRIVS call under `if false`, the PDEATHSIG call deleted).
+# The forms were derived by sweeping every in-scope file for the syscall and
+# permission vocabulary (mode literals, set_permissions/from_mode, chmod family,
+# mkdirat, umask, chown family, prctl, setrlimit, setsid/setpgid/process_group,
+# the setuid family and setgroups, signal/sigaction/sigprocmask/kill/killpg,
+# fcntl, pre_exec, namespace and mount calls, capset/seccomp); a use of any of
+# them in non-test code is a site. One alternative per line: each is its own row.
+PRIV_FORM = re.compile(
+    r"\.mode\(\s*[^)\s]|"
+    r"\bset_permissions\(|\bPermissions::from_mode\(|(?<!fn )\bset_mode\(|"
+    r"\blibc::f?chmod(?:at)?\(|\blibc::[lf]?chown(?:at)?\(|"
+    r"\blibc::mkdirat\(|\blibc::umask\(|"
+    r"\blibc::prctl\(|"
+    r"\blibc::setrlimit\(|"
+    r"\blibc::(?:setsid|setpgid|setpgrp)\(|\.process_group\(|"
+    r"\blibc::set(?:re|res)?[ug]id\(|\blibc::(?:setgroups|initgroups)\(|"
+    r"\blibc::(?:signal|sigaction|sigprocmask|pthread_sigmask|kill|killpg)\(|"
+    r"\blibc::fcntl\(|"
+    r"\.pre_exec\(|"
+    r"\blibc::(?:unshare|setns|chroot|pivot_root|mount|umount2?|capset|seccomp)\(|\bSECCOMP_MODE_"
+)
 # A decision expressed as `Some("reason")` / `Some(format!(..))` (evo::propose's
 # exclusion chain, submit's `problem = Some(..)`), as a VALUE: a pattern
 # (`Some("x") =>`, `== Some("x")`, `matches!(.., Some("x"))`) reads one.
@@ -3413,7 +3440,7 @@ def _some_reason_is_value(l):
 def is_site(l, ctors=()):
     if SITE.search(l) or DIAG.search(l) or EXIT.search(l):
         return True
-    if OPEN_FLAG.search(l.split("//")[0]) or _some_reason_is_value(l.split("//")[0]):
+    if PRIV_FORM.search(l.split("//")[0]) or OPEN_FLAG.search(l.split("//")[0]) or _some_reason_is_value(l.split("//")[0]):
         return True
     if any(err_is_expression(l, m.start()) for m in ERR.finditer(l)):
         return True

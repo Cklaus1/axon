@@ -4555,3 +4555,109 @@ fn a_callers_timestamp_counter_trap_launches_nothing_it_cannot_finish() {
         a.rep()
     );
 }
+
+// ── C9 round 6, EQGATE2 (amendment 87): permission modes and ownership ───────
+//
+// The root helper's snapshot of its inputs sets the modes the tree digest
+// records (directories 0755, files 0644 / 0755 by the source's exec bit), and
+// its hand-over gives the out tree to the Fabric uid KEEPING each entry's mode
+// and setting the out dir itself to 0700. Each is a permission or ownership
+// call that builds no `Err`; each was weakenable alone with the whole suite
+// green. The stand-in launcher records the snapshot's modes; the test reads the
+// out tree afterwards.
+#[test]
+fn the_snapshot_and_the_hand_over_keep_their_modes_and_owners() {
+    if skip_unless_root() {
+        return;
+    }
+    let extra = r#"find "$(dirname "$JOB")" -printf '%P %m\n' > "$OUT/stage-modes"
+mkdir "$OUT/d"; chmod 750 "$OUT/d"; echo x > "$OUT/d/inner"; chmod 640 "$OUT/d/inner"
+echo y > "$OUT/f"; chmod 640 "$OUT/f""#;
+    let f = fx(Some(FABRIC), extra, |_| {});
+    let cand = f.out_root.join(INPUTS).join("candidate");
+    std::fs::create_dir_all(cand.join("sub")).unwrap();
+    std::fs::write(cand.join("sub/g.ax"), "fn g() {}\n").unwrap();
+    std::fs::write(cand.join("x.sh"), "#!/bin/sh\n").unwrap();
+    set_mode(&cand.join("x.sh"), 0o755);
+    for p in [cand.join("sub"), cand.join("sub/g.ax"), cand.join("x.sh")] {
+        std::os::unix::fs::lchown(&p, Some(FABRIC), Some(FABRIC)).unwrap();
+    }
+    let (code, rep) = f.run(&f.request("op-1"), Some((FABRIC, &[])));
+    assert_eq!(code, Some(0), "setup: the launch runs: {rep}");
+    let out = f.out_root.join("op-1");
+    let staged = std::fs::read_to_string(out.join("stage-modes")).unwrap();
+    for (entry, why) in [
+        (
+            "candidate/sub 755",
+            "ATTACK: the snapshot's directories are not 0755 (the tree digest's mode)",
+        ),
+        (
+            "candidate/x.sh 755",
+            "ATTACK: an executable input is not 0755 in the snapshot",
+        ),
+        (
+            "candidate/f.ax 644",
+            "ATTACK: a plain input is not 0644 in the snapshot (the helper's set_mode)",
+        ),
+        (
+            "candidate/sub/g.ax 644",
+            "ATTACK: a nested plain input is not 0644 in the snapshot",
+        ),
+    ] {
+        assert!(staged.lines().any(|l| l == entry), "{why}: {staged}");
+    }
+    use std::os::unix::fs::MetadataExt;
+    let st = |p: &Path| {
+        let m = std::fs::symlink_metadata(p).unwrap();
+        (m.mode() & 0o777, m.uid())
+    };
+    assert_eq!(
+        st(&out),
+        (0o700, FABRIC),
+        "ATTACK: the out dir was not handed over 0700 to the Fabric uid"
+    );
+    assert_eq!(
+        st(&out.join("d")),
+        (0o750, FABRIC),
+        "ATTACK: a directory of the out tree lost its mode or was not given to the Fabric uid"
+    );
+    assert_eq!(
+        st(&out.join("d/inner")),
+        (0o640, FABRIC),
+        "ATTACK: a nested file of the out tree lost its mode or was not given to the Fabric uid"
+    );
+    assert_eq!(
+        st(&out.join("f")),
+        (0o640, FABRIC),
+        "ATTACK: a file of the out tree lost its mode or was not given to the Fabric uid"
+    );
+}
+
+/// C9 round 6, EQGATE2 (amendment 87): a setuid helper that runs as root takes
+/// root's whole identity, not just its uid: no supplementary group of the
+/// caller's survives (`setgroups(0)`) and every gid is 0 (`setresgid`). The
+/// stand-in launcher records its parent's (the helper's) ids from /proc; the
+/// caller carries an extra group.
+#[test]
+fn the_root_helper_takes_roots_identity_not_its_callers_groups() {
+    if skip_unless_root() {
+        return;
+    }
+    let extra = r#"grep -E '^(Uid|Gid|Groups):' /proc/$PPID/status > "$OUT/helper-ids""#;
+    let f = fx(Some(FABRIC), extra, |_| {});
+    let (code, rep) = f.run(&f.request("op-1"), Some((FABRIC, &[FABRIC, 4242])));
+    assert_eq!(code, Some(0), "setup: the launch runs: {rep}");
+    let ids = std::fs::read_to_string(f.out_root.join("op-1/helper-ids")).unwrap();
+    assert!(
+        ids.lines().any(|l| l.trim_end() == "Groups:"),
+        "ATTACK: the root helper kept its caller's supplementary groups: {ids}"
+    );
+    assert!(
+        ids.lines().any(|l| l.starts_with("Gid:\t0\t0\t0\t0")),
+        "ATTACK: the root helper runs with its caller's gid, not root's: {ids}"
+    );
+    assert!(
+        ids.lines().any(|l| l.starts_with("Uid:\t0\t0\t0\t0")),
+        "ATTACK: the root helper did not take root's uid: {ids}"
+    );
+}

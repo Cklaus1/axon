@@ -309,6 +309,7 @@ fn populate(root: &Path) {
     }
     write(&root.join(MANIFEST), &manifest(clean_source()));
     paired_disable(root, "[]");
+    mutation_run(root, Some("[]"));
     // The pinned channel the build record's toolchain must be (amendment 63).
     write(
         &root.join("rust-toolchain.toml"),
@@ -334,6 +335,26 @@ fn paired_disable(root: &Path, problems: &str) {
         &root.join("governance/status/v022-psv-paired-disable.json"),
         &format!("{{\"problems\": {problems}}}\n"),
     );
+}
+
+/// The mutation-run validator the freeze consults (amendment 87), stood in the
+/// same way: the real `problems()` is tested over synthetic merged runs in
+/// harness_integrity.rs, and this pins the WIRING. `problems` is what the file
+/// reports; `None` leaves the file absent.
+fn mutation_run(root: &Path, problems: Option<&str>) {
+    write(
+        &root.join("scripts/v022_mutation_status.py"),
+        "STATUS_PATH = 'governance/status/v022-psv-mutation-run.json'\n\
+         def problems(doc, head, mut):\n    assert head and len(head) == 40, head\n    return list(doc['problems'])\n\
+         def counts(doc, mut):\n    return (1, 0)\n",
+    );
+    let f = root.join("governance/status/v022-psv-mutation-run.json");
+    match problems {
+        Some(p) => write(&f, &format!("{{\"problems\": {p}, \"commit\": \"c\"}}\n")),
+        None => {
+            let _ = std::fs::remove_file(&f);
+        }
+    }
 }
 
 /// The refusal-site coverage gate the freeze consults (amendment 61). The
@@ -1293,6 +1314,41 @@ fn a_paired_disable_status_that_is_not_the_joined_evidence_does_not_freeze() {
         e.contains("not the harness's joined evidence for this commit (2 defect(s))")
             && e.contains("59 of 148 retirement records are missing")
             && e.contains("not all at the file's aad46c05"),
+        "one reason per defect: {e}"
+    );
+}
+
+/// Amendment 87: a freeze needs the merged mutation run at its commit. An absent
+/// file and a file with defects are both refused, each reason named. (Control:
+/// every other freeze test, whose fixture carries a file with none.)
+#[test]
+fn a_freeze_needs_the_merged_mutation_run() {
+    let d = tempfile::tempdir().unwrap();
+    let r = clone(d.path());
+    mutation_run(&r, None);
+    git(&r, &["add", "-A"]);
+    git(&r, &["commit", "-q", "-m", "no mutation run"]);
+    let got = freeze(&r);
+    assert!(
+        got.is_err() && got.clone().unwrap_err().contains("is absent"),
+        "ATTACK: the freeze was cut with no merged mutation run at all: {got:?}"
+    );
+    mutation_run(
+        &r,
+        Some(r#"["3 row(s) SURVIVED: M1, M2, M3", "all_killed is not true"]"#),
+    );
+    git(&r, &["add", "-A"]);
+    git(&r, &["commit", "-q", "-m", "a failing mutation run"]);
+    let got = freeze(&r);
+    assert!(
+        got.is_err(),
+        "ATTACK: the freeze bound a mutation run with survivors: {got:?}"
+    );
+    let e = got.unwrap_err();
+    assert!(
+        e.contains("is not the merged run for this commit (2 defect(s))")
+            && e.contains("3 row(s) SURVIVED")
+            && e.contains("all_killed is not true"),
         "one reason per defect: {e}"
     );
 }

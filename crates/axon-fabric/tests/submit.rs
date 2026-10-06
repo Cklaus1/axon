@@ -1502,3 +1502,36 @@ fn a_failing_check_is_never_receipted_passed() {
     }
     assert_eq!(s.receipt.verification, ReceiptVerification::Failed);
 }
+
+/// C9 round 6, EQGATE2 (amendment 87): the Fabric-private inputs dir
+/// (`<out_root>/<op>.psv-inputs`) is created 0700. It holds the candidate and
+/// suite trees and the job drive's completion secret until the root helper
+/// snapshots them, so a mode another uid can enter exposes the secret. The
+/// mode is a `DirBuilder` argument that builds no `Err`; it was weakenable
+/// alone with every suite green.
+#[test]
+fn the_private_inputs_dir_is_created_0700() {
+    use axon_fabric::workspace::{Quota, WorkspaceStore};
+    use std::os::unix::fs::MetadataExt;
+    let env = Env::new();
+    let guest = "cd".repeat(32);
+    let lx = linux_cfg(&env, &full_lx_manifest(&guest), "");
+    std::fs::create_dir_all(&lx.out_root).unwrap();
+    let cfg = env.cfg(0);
+    let tenant = cfg.epoch.scope().tenant_id.clone();
+    let version = WorkspaceStore::open(&cfg.state_dir, &tenant)
+        .unwrap()
+        .import_dir(&env.ws, &Quota::default())
+        .unwrap();
+    let mut r = request(&env, "op-private-inputs", "t_ok");
+    r["workspace_version_ref"] = json!(version);
+    let req: axon_loop_contracts::ComputeRequest = serde_json::from_value(r).unwrap();
+    let dir = axon_fabric::psv::private_inputs(&lx, &cfg.state_dir, &tenant, &req, &version)
+        .expect("control: the private inputs are made");
+    let mode = std::fs::metadata(&dir).unwrap().mode() & 0o777;
+    assert_eq!(
+        mode, 0o700,
+        "ATTACK: the private inputs dir (candidate, suite, completion secret) was created {mode:o}, \
+         enterable by another uid"
+    );
+}

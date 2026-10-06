@@ -631,3 +631,29 @@ fn with_class(mut evidence: Vec<String>, c: EvidenceClass) -> Vec<String> {
     evidence.insert(0, c.evidence_ref());
     evidence
 }
+
+#[cfg(test)]
+mod mode_tests {
+    use super::*;
+
+    /// C9 round 6, EQGATE2 (amendment 87): the completion secret is written
+    /// 0400. The mode is a builder argument that builds no `Err`; weakened to
+    /// 0644 it let any uid that can enter the job drive's directory read the
+    /// secret, and every suite stayed green.
+    #[test]
+    fn the_completion_secret_is_written_0400() {
+        use std::os::unix::fs::MetadataExt;
+        let t = tempfile::tempdir().unwrap();
+        let p = t.path().join("completion-secret");
+        write_private(&p, &[7u8; 32]).expect("control: the secret is written");
+        let mode = std::fs::metadata(&p).unwrap().mode() & 0o777;
+        assert_eq!(
+            mode, 0o400,
+            "ATTACK: the completion secret was written {mode:o}, readable beyond its owner"
+        );
+        assert!(
+            write_private(&p, &[8u8; 32]).is_err(),
+            "ATTACK: a completion secret was overwritten"
+        );
+    }
+}
