@@ -61,6 +61,24 @@ fn native_ledger_kind(effects: &[&str]) -> Option<axon_audit::EffectKind> {
     })
 }
 
+/// AX-25: the closure value of the top-level fn `name` (arity `arity`): the
+/// capture-free forwarding lambda `|#0, #1, ..| name(#0, #1, ..)`. The `#n`
+/// parameter names cannot be written in source, so they never shadow a name the
+/// callee's body or arguments could refer to.
+fn fn_value(name: &str, arity: usize) -> Value {
+    let params: Vec<String> = (0..arity).map(|i| format!("#{i}")).collect();
+    let args = params.iter().map(|p| Expr::Ident(p.clone())).collect();
+    Value::Closure {
+        params,
+        body: Box::new(Expr::Call {
+            callee: Box::new(Expr::Ident(name.to_string())),
+            args,
+            tier: None,
+        }),
+        captured: std::rc::Rc::new(std::cell::RefCell::new(HashMap::new())),
+    }
+}
+
 impl<'p> Interp<'p> {
     // ── Core evaluator ───────────────────────────────────────────────────────
 
@@ -73,6 +91,15 @@ impl<'p> Interp<'p> {
                     Ok(v.clone())
                 } else if let Some(v) = self.globals.get(name) {
                     Ok(v.clone())
+                } else if let Some(f) = self.fns.get(name.as_str()) {
+                    // AX-25: a top-level fn named in VALUE position (`let g = f`,
+                    // `[f, h]`, `apply(f, x)`) is a first-class closure. It is the
+                    // forwarding lambda `|a0, ..| f(a0, ..)` with no captures, so a
+                    // call through the value re-enters `eval_call` by NAME and takes
+                    // exactly the path a direct `f(..)` call takes — contracts,
+                    // `@[verify]` gates, effect/capability gates and provenance
+                    // included. The resolver refuses builtins and generic fns here.
+                    Ok(fn_value(name, f.params.len()))
                 } else {
                     panic(format!("undefined identifier `{name}`"))
                 }

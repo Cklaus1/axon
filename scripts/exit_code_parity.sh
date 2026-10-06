@@ -398,7 +398,10 @@ fn main() -> i64 { let u = g(0.4)
 # binary exited 0 in SILENCE where the interpreter panics. This asserts the
 # whole contract: interp fails, native build fails, and no file is left behind.
 # The last clause is the one that matters -- before the fix the first two were
-# already true and a working binary was still produced.
+# already true and a working binary was still produced. Since AX-25 (named user
+# fns are first-class values) the resolver refuses a builtin used as a value at
+# CHECK time with E0306, before either engine starts, so that is the code the
+# build must now report.
 name=no_binary_on_diag
 prog="$WORK/$name.ax"
 printf 'fn main() -> i64 {\n    let f = char_is_space\n    if f(" ") { 1 } else { 0 }\n}\n' > "$prog"
@@ -415,8 +418,8 @@ elif [ "$b_status" -eq 0 ]; then
 elif [ -f "$WORK/${name}_bin" ]; then
   echo "FAIL [$name]: build reported failure but LEFT A BINARY at $WORK/${name}_bin"
   fail=1
-elif ! printf '%s' "$out" | grep -q 'E0701'; then
-  echo "FAIL [$name]: build failed but not with E0701: $out"
+elif ! printf '%s' "$out" | grep -q 'E0306'; then
+  echo "FAIL [$name]: build failed but not with E0306: $out"
   fail=1
 else
   echo "  OK $name: both engines reject it and no binary is produced"

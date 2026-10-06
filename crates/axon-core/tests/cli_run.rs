@@ -6760,11 +6760,14 @@ fn two_separate_failures_are_reported_separately_each_at_its_own_line() {
     // exercising it the moment a site gains a span — which is what happened here.
     //
     // What this fixture asserts now is the stronger property: two failures, two
-    // diagnostics, each pointing at the line it is actually on.
+    // diagnostics, each pointing at the line it is actually on. (AX-25: a
+    // non-generic fn passed by name is now a valid first-class value, so the
+    // line-4 failure is a GENERIC fn passed by name — still E0306, now from the
+    // resolver, which has no single instantiation to hand out.)
     let f = std::env::temp_dir().join(format!("axon_nolocpair_{}.ax", std::process::id()));
     std::fs::write(
         &f,
-        "fn helper(x: i64) -> i64 { x }\n         fn taker(g: fn(i64) -> i64) -> i64 { 1 }\n         fn main() -> i64 {\n         \x20   let a = taker(helper)\n         \x20   let b = 1 + true\n         \x20   a\n         }\n",
+        "fn id<T>(x: T) -> T { x }\n         fn taker(g: fn(i64) -> i64) -> i64 { 1 }\n         fn main() -> i64 {\n         \x20   let a = taker(id)\n         \x20   let b = 1 + true\n         \x20   a\n         }\n",
     )
     .unwrap();
     let out = axon()
@@ -6785,7 +6788,7 @@ fn two_separate_failures_are_reported_separately_each_at_its_own_line() {
         errors
             .iter()
             .any(|l| l.contains("\"code\":\"E0306\"") && l.contains("\"line\":4")),
-        "the by-name function argument must be reported, on ITS line: {msg}"
+        "the generic function passed by name must be reported, on ITS line: {msg}"
     );
     assert!(
         errors
@@ -30298,8 +30301,8 @@ fn octal_literals_lex_like_hex_and_binary() {
 
 #[test]
 fn two_phase_fixtures_describe_features_this_build_does_not_have() {
-    // The other two of the fourteen do NOT check, and pinning why is the
-    // point: each names a feature the build does not implement, so a future
+    // The other two of the fourteen did NOT check, and pinning why is the
+    // point: each named a feature the build did not implement, so a future
     // reader does not mistake an aspirational fixture for a regression.
     //
     // Asserted as still-unsupported rather than deleted. If one starts working,
@@ -30322,14 +30325,25 @@ fn two_phase_fixtures_describe_features_this_build_does_not_have() {
         "pattern let-else is still unparsed: {le}"
     );
 
-    // Passing a named fn as a value. This one is a DELIBERATE refusal, not a
-    // gap: the checker's comment explains that resolving fn-names-as-values
-    // would oblige native codegen to match or create an interp/native
-    // divergence (invariant I-2).
+    // Passing a named fn as a value WAS refused by design (no native lowering
+    // existed, so accepting it would split the engines). AX-25 implemented it
+    // in both engines, so this one was deliberately promoted to a gated
+    // feature: it must check clean and every one of its nine sub-tests must
+    // pass (`main` returns their count; 9 is a reserved exit code, so the
+    // interpreter names the value on stderr instead of exiting with it).
     let ho = err_of("phase67_higher_order.ax");
     assert!(
-        ho.contains("passed by name"),
-        "named-fn-as-value is still refused by design: {ho}"
+        !ho.contains("\"severity\":\"error\""),
+        "named-fn-as-value must check clean now: {ho}"
+    );
+    let r = axon()
+        .args(["run", &fixture("phase67_higher_order.ax")])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&r.stderr);
+    assert!(
+        stderr.contains("`main` returned 9"),
+        "all nine higher-order sub-tests must pass: {stderr}"
     );
 }
 
@@ -32752,6 +32766,166 @@ fn misuses_of_mut_slice_params_are_compile_errors() {
         assert!(
             msg.contains(code) && msg.contains(needle),
             "{label}: expected {code} mentioning {needle:?}: {msg}"
+        );
+    }
+}
+
+/// AX-25: a top-level fn named as a VALUE (`apply(f0, 41)`, `let f = f0`,
+/// `[f0, f1]`, `t[i](x)`, a fn returned from a fn, a struct field) passed
+/// `axon check`, then panicked in the interpreter and was E0910 natively. Both
+/// engines now treat it as a capture-free closure forwarding to the fn, and the
+/// native binary must print exactly what the interpreter prints.
+#[test]
+fn named_fns_are_first_class_values_in_both_engines() {
+    let progs: [(&str, &str, &str); 6] = [
+        (
+            "fnv_rows",
+            "fn f0(x: i64) -> i64 { x + 1 }\nfn f1(x: i64) -> i64 { x * 2 }\n\
+             fn apply(f: fn(i64) -> i64, x: i64) -> i64 { f(x) }\n\
+             fn pick(k: i64) -> fn(i64) -> i64 { if k == 0 { f0 } else { f1 } }\n\
+             fn main() -> i64 {\n println(to_str(apply(f0, 41)))\n let f = f0\n \
+             println(to_str(f(41)))\n let t = [f0, f1]\n println(to_str(len(t)))\n \
+             let i = 1\n println(to_str(t[i](21)))\n let lt = [|x: i64| x + 1, |x: i64| x * 2]\n \
+             println(to_str(lt[1](21)))\n println(to_str(pick(1)(21)))\n 0\n}\n",
+            "42\n42\n2\n42\n42\n42",
+        ),
+        (
+            // The AX-24 trigger: a call through a closure pulled out of an array
+            // used to lower to nothing, so `acc = f(41)` silently kept 7.
+            "fnv_ax24",
+            "fn main() -> i64 {\n let table = [|x: i64| x + 1, |x: i64| x * 2]\n \
+             let f = table[0]\n let acc = 7\n acc = f(41)\n println(to_str(acc))\n 0\n}\n",
+            "42",
+        ),
+        (
+            "fnv_loop",
+            "fn f0(x: i64) -> i64 { x + 1 }\nfn f1(x: i64) -> i64 { x * 2 }\n\
+             fn main() -> i64 {\n let t = [f0, f1]\n let acc = 7\n \
+             for k in 0..2 { acc = t[k](acc + 40) }\n println(to_str(acc))\n \
+             let ys = arr_map([1, 2, 3], f1)\n println(to_str(ys[0] + ys[1] + ys[2]))\n 0\n}\n",
+            "176\n12",
+        ),
+        (
+            // Every scalar return the closure ABI carries: bool, f64, a signed
+            // and an unsigned narrow int, and unit.
+            "fnv_scalars",
+            "fn even(x: i64) -> bool { x % 2 == 0 }\nfn half(x: f64) -> f64 { x / 2.0 }\n\
+             fn neg32(x: i32) -> i32 { 0 - x }\nfn say(x: i64) { println(\"say \" + to_str(x)) }\n\
+             fn ap32(f: fn(i32) -> i32, x: i32) -> i32 { f(x) }\n\
+             fn main() -> i64 {\n let e = even\n println(to_str(e(4)))\n let h = half\n \
+             println(to_str(h(5.0)))\n println(to_str(ap32(neg32, 7)))\n let s = say\n s(3)\n \
+             let ss = [say, say]\n ss[1](4)\n 0\n}\n",
+            "true\n2.5\n-7\nsay 3\nsay 4",
+        ),
+        (
+            "fnv_field",
+            "type Op = { f: fn(i64) -> i64, k: i64 }\nfn f1(x: i64) -> i64 { x * 2 }\n\
+             fn main() -> i64 {\n let o = Op { f: f1, k: 3 }\n let g = o.f\n \
+             println(to_str(g(o.k)))\n println(to_str((o.f)(5)))\n 0\n}\n",
+            "6\n10",
+        ),
+        (
+            "fnv_recur",
+            "fn fib(n: i64) -> i64 { if n < 2 { n } else { fib(n - 1) + fib(n - 2) } }\n\
+             fn apply(f: fn(i64) -> i64, x: i64) -> i64 { f(x) }\n\
+             fn main() -> i64 {\n println(to_str(apply(fib, 20)))\n 0\n}\n",
+            "6765",
+        ),
+    ];
+    for (tag, src, want) in progs {
+        let interp = interp_stdout(tag, src);
+        assert_eq!(interp, want, "[{tag}] interpreter (the reference)");
+        let Some(native) = native_stdout(tag, src) else {
+            note_harness_skip("axon build (no codegen feature)");
+            return;
+        };
+        assert_eq!(native, interp, "[{tag}] native != interpreter");
+    }
+}
+
+/// AX-25: a fn whose return the closure ABI cannot carry (str, like a
+/// str-bodied lambda) is a value in the interpreter, and native REFUSES it with
+/// E0910 naming the fn — never a binary computing a wrong answer.
+#[test]
+fn a_str_returning_fn_value_runs_in_the_interpreter_and_is_refused_natively() {
+    let src = "fn greet(s: str) -> str { \"hi \" + s }\n\
+               fn main() -> i64 {\n let g = greet\n println(g(\"bob\"))\n 0\n}\n";
+    assert_eq!(interp_stdout("fnv_str", src), "hi bob");
+    let f = tmp_ax("fnv_str_native", src);
+    let bin = std::env::temp_dir().join(format!("axon_native_fnv_str_{}", std::process::id()));
+    let build = axon()
+        .arg("build")
+        .arg(&f)
+        .arg("-o")
+        .arg(&bin)
+        .arg("--no-cache")
+        .output()
+        .expect("spawn build");
+    let _ = std::fs::remove_file(&f);
+    let _ = std::fs::remove_file(&bin);
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr)
+    );
+    if codegen_absent(&msg) {
+        note_harness_skip("axon build (no codegen feature)");
+        return;
+    }
+    assert_ne!(build.status.code(), Some(0), "must not build: {msg}");
+    assert!(
+        msg.contains("E0910") && msg.contains("using fn `greet` as a value"),
+        "the refusal must name the fn: {msg}"
+    );
+}
+
+/// AX-25: an effect performed by a fn reached through a fn VALUE is still the
+/// caller's effect (E1310 against a declared row) and still impure (E1207) —
+/// naming a fn as a value is a call edge, not a laundering route.
+#[test]
+fn effects_flow_through_a_fn_value() {
+    // (tag, source, code, a word the diagnostic must contain)
+    let cases: [(&str, &str, &str, &str); 3] = [
+        (
+            "fnv_eff_let",
+            "fn loud(x: i64) -> i64 { println(\"x\")\n x }\n\
+             fn quiet(x: i64) -> i64 | {} {\n let g = loud\n g(x)\n}\n\
+             fn main() -> i64 { quiet(1) }\n",
+            "E1310",
+            "`loud`",
+        ),
+        (
+            "fnv_eff_arg",
+            "fn loud(x: i64) -> i64 { println(\"x\")\n x }\n\
+             fn apply(f: fn(i64) -> i64, x: i64) -> i64 { f(x) }\n\
+             fn quiet(x: i64) -> i64 | {} { apply(loud, x) }\n\
+             fn main() -> i64 { quiet(1) }\n",
+            "E1310",
+            // The forwarded-callback diagnostic names the forwarding fn.
+            "callback that performs effect `IO`",
+        ),
+        (
+            "fnv_pure",
+            "fn loud(x: i64) -> i64 { println(\"x\")\n x }\n\
+             @[pure]\nfn p(x: i64) -> i64 {\n let g = loud\n g(x)\n}\n\
+             fn main() -> i64 { p(1) }\n",
+            "E1207",
+            "`loud`",
+        ),
+    ];
+    for (tag, src, code, needle) in cases {
+        let f = tmp_ax(tag, src);
+        let out = axon().arg("check").arg(&f).output().expect("spawn check");
+        let _ = std::fs::remove_file(&f);
+        let msg = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_ne!(out.status.code(), Some(0), "[{tag}] must be refused: {msg}");
+        assert!(
+            msg.contains(&format!("\"code\":\"{code}\"")) && msg.contains(needle),
+            "[{tag}] expected {code} containing {needle:?}: {msg}"
         );
     }
 }

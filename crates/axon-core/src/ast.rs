@@ -783,3 +783,31 @@ pub fn walk_expr(e: &Expr, f: &mut dyn FnMut(&Expr)) {
         | Expr::InlineAsm { .. } => {}
     }
 }
+
+/// Every identifier in `e` used in VALUE position — i.e. every `Expr::Ident`
+/// except the plain-ident callee of a `Call` (`f` in `f(x)`). AX-25: a top-level
+/// fn named in value position is a first-class closure that may be called through
+/// that value anywhere, so call-graph scans (purity, totality, allocation) treat
+/// such a reference as a call. Names are returned as written; the caller decides
+/// which of them are fns (a local can share a fn's name — over-approximating).
+pub fn value_position_idents(e: &Expr) -> Vec<String> {
+    // Two passes over the one exhaustive walker: first the addresses of every
+    // plain-ident CALLEE, then every `Ident` that is not one of them.
+    let mut callees: std::collections::HashSet<*const Expr> = std::collections::HashSet::new();
+    walk_expr(e, &mut |x| {
+        if let Expr::Call { callee, .. } = x {
+            if matches!(callee.as_ref(), Expr::Ident(_)) {
+                callees.insert(callee.as_ref() as *const Expr);
+            }
+        }
+    });
+    let mut out = Vec::new();
+    walk_expr(e, &mut |x| {
+        if let Expr::Ident(n) = x {
+            if !callees.contains(&(x as *const Expr)) {
+                out.push(n.clone());
+            }
+        }
+    });
+    out
+}

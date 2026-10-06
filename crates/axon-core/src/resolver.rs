@@ -831,6 +831,14 @@ struct Resolver<'a> {
     /// per-variant span field, so we track the enclosing statement's span and
     /// attach it to undefined-name / shadowing diagnostics.
     current_span: crate::span::Span,
+    /// Names of top-level generic fns (`fn id<T>(..)`). A generic fn has no
+    /// single runtime instantiation, so naming one as a VALUE is refused
+    /// (see [`Resolver::check_fn_value_ref`]).
+    generic_fns: std::collections::HashSet<String>,
+    /// Set by the `Call` arm immediately before resolving a plain-`Ident`
+    /// callee, and consumed by the `Ident` arm: `f(x)` names `f` in CALL
+    /// position, which is not a use of `f` as a first-class value.
+    ident_is_callee: bool,
 }
 
 impl<'a> Resolver<'a> {
@@ -842,6 +850,8 @@ impl<'a> Resolver<'a> {
             warnings: Vec::new(),
             infos: Vec::new(),
             current_span: crate::span::Span::dummy(),
+            generic_fns: std::collections::HashSet::new(),
+            ident_is_callee: false,
         }
     }
 
@@ -888,6 +898,56 @@ impl<'a> Resolver<'a> {
         self.warnings.push(d);
     }
 
+    /// A name in VALUE position (anything but the plain-ident callee of a call)
+    /// that resolves to a function. A non-generic user fn is a first-class value
+    /// — it evaluates to a closure with no captures, exactly as an equivalent
+    /// lambda would — so it is accepted. Two kinds of function have no such
+    /// value and are refused here, at check time, rather than reaching run time:
+    ///
+    /// - a BUILTIN: builtins are dispatched by name at the call site and many are
+    ///   polymorphic or argument-shape-dependent, so there is no single function
+    ///   value either engine could hand out;
+    /// - a GENERIC fn: it has no single instantiation to take the address of.
+    ///
+    /// Both get the same repair: a lambda that calls the function by name.
+    fn check_fn_value_ref(&mut self, name: &str) {
+        let (kind, params) = match self.table.lookup(name) {
+            Some(Symbol::Builtin { .. }) => {
+                let params: Vec<String> = BUILTINS
+                    .iter()
+                    .find(|b| b.name == name)
+                    .map(|b| b.params.iter().map(|(p, _)| p.to_string()).collect())
+                    .unwrap_or_default();
+                ("a builtin", params)
+            }
+            Some(Symbol::Fn { param_names, .. }) if self.generic_fns.contains(name) => {
+                ("a generic function", param_names.clone())
+            }
+            _ => return,
+        };
+        let list = params.join(", ");
+        let typed = if kind == "a builtin" {
+            list.clone()
+        } else {
+            params
+                .iter()
+                .map(|p| format!("{p}: <type>"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        let d = Diagnostic::error(
+            crate::error::E0306,
+            format!(
+                "`{name}` is {kind}, which cannot be used as a value — only a non-generic \
+                 user-defined `fn` can be passed, stored or bound by name"
+            ),
+        )
+        .with_file(self.file)
+        .with_span(self.current_span)
+        .with_fix(format!("wrap it in a lambda — `|{typed}| {name}({list})`"));
+        self.emit_error(d);
+    }
+
     // ── Pass 1: collect top-level names ──────────────────────────────────
 
     fn collect_top_level(&mut self, program: &Program) {
@@ -918,6 +978,9 @@ impl<'a> Resolver<'a> {
                         name: f.name.clone(),
                         param_names: f.params.iter().map(|p| p.name.clone()).collect(),
                     };
+                    if !f.generic_params.is_empty() {
+                        self.generic_fns.insert(f.name.clone());
+                    }
                     if let Some(prev) = self.table.define(f.name.clone(), sym) {
                         if matches!(prev, Symbol::Builtin { .. }) {
                             // User↔builtin collision. The interpreter dispatches
@@ -1400,6 +1463,10 @@ impl<'a> Resolver<'a> {
 
             // ── Identifier lookup ─────────────────────────────────────────
             Expr::Ident(name) => {
+                let is_callee = std::mem::take(&mut self.ident_is_callee);
+                if !is_callee {
+                    self.check_fn_value_ref(name);
+                }
                 if self.table.lookup(name).is_none() {
                     let suggestion = self.table.suggest(name);
                     let mut d = Diagnostic::error(
@@ -1481,7 +1548,9 @@ impl<'a> Resolver<'a> {
 
             // ── Call ──────────────────────────────────────────────────────
             Expr::Call { callee, args, .. } => {
+                self.ident_is_callee = matches!(callee.as_ref(), Expr::Ident(_));
                 self.resolve_expr(callee);
+                self.ident_is_callee = false;
                 for arg in args {
                     self.resolve_expr(arg);
                 }
@@ -1572,7 +1641,14 @@ impl<'a> Resolver<'a> {
                 // Field name validity is deferred to type-checking.
             }
             Expr::Index { receiver, index } => {
+                // `E[d]` / `Var[d]` is the moment-predicate form (Phase 13), an
+                // application of the builtin, not the builtin used as a value.
+                self.ident_is_callee = matches!(
+                    receiver.as_ref(),
+                    Expr::Ident(n) if matches!(n.as_str(), "E" | "Var")
+                );
                 self.resolve_expr(receiver);
+                self.ident_is_callee = false;
                 self.resolve_expr(index);
             }
 

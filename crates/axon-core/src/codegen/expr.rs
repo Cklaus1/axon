@@ -168,10 +168,17 @@ impl<'ctx> super::Codegen<'ctx> {
                 if let Some(cv) = self.comptime_env.get(name).cloned() {
                     return Some(self.comptime_val_to_llvm(&cv));
                 }
-                // Fall back to checking for a function (first-class fn value).
-                if let Some(fn_v) = self.functions.get(name).copied() {
-                    let ptr: PointerValue = fn_v.as_global_value().as_pointer_value();
-                    return Some(ptr.into());
+                // AX-25: a top-level, non-generic user fn named as a VALUE is a
+                // capture-free closure (see `emit_fn_value`). Builtins and generic
+                // fns are not values (resolver E0306), so no other function name
+                // is lowered here.
+                if self
+                    .fndefs
+                    .get(name)
+                    .is_some_and(|f| f.generic_params.is_empty())
+                    && self.functions.contains_key(name)
+                {
+                    return self.emit_fn_value(name);
                 }
                 // Closure-env fallback: if we're emitting a lambda body and the
                 // resolver listed `name` as a capture, load it from the env
@@ -230,7 +237,7 @@ impl<'ctx> super::Codegen<'ctx> {
                 let sem_ty = ty
                     .as_ref()
                     .map(|t| self.axon_type_to_semantic(t))
-                    .or_else(|| self.infer_expr_sem_type(value));
+                    .or_else(|| self.let_value_sem_type(value));
                 // When the annotation is a Result<T,E>, set current_result_types
                 // around the VALUE emission so `emit_result` allocates the full
                 // canonical union layout `{ i1, [max(sizeof T, sizeof E)] }`
@@ -310,6 +317,11 @@ impl<'ctx> super::Codegen<'ctx> {
                         .collect();
                     let ret_ty = self.lambda_body_sem_type(params, body);
                     self.closure_sigs.insert(name.clone(), (param_tys, ret_ty));
+                } else {
+                    // A rebinding of the name to a non-lambda value (`let f = f0`,
+                    // `let f = table[0]`) must not inherit an earlier lambda's
+                    // signature; its `Type::Fn` (if any) is in `local_types`.
+                    self.closure_sigs.remove(name.as_str());
                 }
                 // Phase 5: a `let p: T where P = …` annotation carries a refinement
                 // obligation — check the bound value at runtime (the codegen dual
@@ -3056,6 +3068,323 @@ impl<'ctx> super::Codegen<'ctx> {
         None
     }
 
+    /// The `Type::Fn` of a lambda: annotated param types (`Unknown` for an
+    /// unannotated `|x|`) and the body's inferred return type.
+    fn lambda_sem_type(&mut self, params: &[ast::LambdaParam], body: &ast::Expr) -> Type {
+        let ps = params
+            .iter()
+            .map(|p| {
+                p.ty.as_ref()
+                    .map(|t| self.axon_type_to_semantic(t))
+                    .unwrap_or(Type::Unknown)
+            })
+            .collect();
+        let ret = self.lambda_body_sem_type(params, body).unwrap_or(Type::Unknown);
+        Type::Fn(ps, Box::new(ret))
+    }
+
+    /// The semantic type an unannotated `let` binds. Lambdas (and arrays of
+    /// them) need `&mut self` to type their bodies, so they are handled here
+    /// rather than in `infer_expr_sem_type`: `let table = [|x: i64| x + 1, ..]`
+    /// is a `[fn(i64) -> i64]`, so `table[0]` indexes with the closure layout
+    /// and `let f = table[0]` is a callable `fn(i64) -> i64` (AX-24 / AX-25).
+    fn let_value_sem_type(&mut self, value: &ast::Expr) -> Option<Type> {
+        match value {
+            ast::Expr::Lambda { params, body, .. } => Some(self.lambda_sem_type(params, body)),
+            ast::Expr::Array(elems) => match elems.first() {
+                Some(ast::Expr::Lambda { params, body, .. }) => {
+                    Some(Type::Slice(Box::new(self.lambda_sem_type(params, body))))
+                }
+                _ => self.infer_expr_sem_type(value),
+            },
+            _ => self.infer_expr_sem_type(value),
+        }
+    }
+
+    /// AX-25: the closure value of the top-level fn `name` named in VALUE
+    /// position: the fat pointer `{__axon_fnval_<name>, null}`, exactly the
+    /// shape a capture-free lambda has, so every closure consumer (a call
+    /// through a local or an array element, `spawn`, a higher-order builtin)
+    /// takes it unchanged. The interpreter's value is the forwarding lambda
+    /// `|a0, ..| name(a0, ..)`; the thunk is that lambda's native form.
+    fn emit_fn_value(&mut self, name: &str) -> Option<BasicValueEnum<'ctx>> {
+        let thunk = self.fn_value_thunk(name)?;
+        let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+        let closure_ty = self
+            .ir
+            .context
+            .struct_type(&[ptr_ty.into(), ptr_ty.into()], false);
+        let fn_ptr = build_wrappers::w_pointer_cast(
+            &self.ir.builder,
+            thunk.as_global_value().as_pointer_value(),
+            ptr_ty,
+            "fnval_fp",
+        );
+        let fat = closure_ty.const_zero();
+        let fat = build_wrappers::w_insert_value(&self.ir.builder, fat, fn_ptr.into(), 0, "fnval0")
+            .into_struct_value();
+        let fat = build_wrappers::w_insert_value(
+            &self.ir.builder,
+            fat,
+            ptr_ty.const_null().into(),
+            1,
+            "fnval1",
+        )
+        .into_struct_value();
+        Some(fat.into())
+    }
+
+    /// The closure-ABI thunk `i64 __axon_fnval_<name>(ptr env, params..)` of the
+    /// top-level fn `name`: it ignores `env`, calls `name` directly (so the
+    /// fn's own contracts, refinement checks and `@[adaptive]` logging run as
+    /// for any direct call) and returns the result through the closure ABI
+    /// exactly as `emit_lambda`'s return site does — bool zero-extended, other
+    /// narrow ints sign- or zero-extended by signedness, f64 bitcast, unit as 0.
+    /// A return type that ABI cannot carry (str, slice, tuple, struct,
+    /// Option/Result, ...) is refused with E0910 — the same limit, for the same
+    /// reason, that `emit_lambda` enforces. Built once per fn.
+    fn fn_value_thunk(&mut self, name: &str) -> Option<FunctionValue<'ctx>> {
+        if let Some(t) = self.fn_value_thunks.get(name) {
+            return Some(*t);
+        }
+        let target = *self.functions.get(name)?;
+        let ret_sem = self
+            .fn_return_types
+            .get(name)
+            .cloned()
+            .unwrap_or(Type::Unit);
+        let ret_fits = matches!(
+            ret_sem,
+            Type::I8
+                | Type::I16
+                | Type::I32
+                | Type::I64
+                | Type::U8
+                | Type::U16
+                | Type::U32
+                | Type::U64
+                | Type::Bool
+                | Type::F64
+                | Type::Unit
+                | Type::Never
+        );
+        let has_dyn_param = self.fndefs.get(name).is_some_and(|f| {
+            f.params
+                .iter()
+                .any(|p| matches!(p.ty, ast::AxonType::DynTrait(_)))
+        });
+        if !ret_fits || has_dyn_param {
+            let why = if has_dyn_param {
+                "a `dyn` parameter (a closure call passes its argument unconverted)".to_string()
+            } else {
+                format!(
+                    "a {} return — the closure ABI is i64-return (a closure value carries no \
+                     return-type tag), the same limit lambdas have",
+                    crate::doc::render_type(
+                        self.fndefs
+                            .get(name)
+                            .and_then(|f| f.return_type.as_ref())
+                            .expect("a non-unit return has a declared type")
+                    )
+                )
+            };
+            let msg = format!(
+                "codegen error [E0910]: native codegen does not yet support using fn `{name}` as \
+                 a value: it has {why}. Wrap the use in a lambda that returns a supported type, or \
+                 run under the interpreter (`axon run`)."
+            );
+            if !self.codegen_errors.iter().any(|e| e == &msg) {
+                eprintln!("{msg}");
+                self.codegen_errors.push(msg);
+            }
+            return None;
+        }
+
+        let i64_ty = self.ir.context.i64_type();
+        let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+        let target_params = target.get_type().get_param_types();
+        let mut thunk_params: Vec<BasicMetadataTypeEnum<'ctx>> = vec![ptr_ty.into()];
+        thunk_params.extend(target_params.iter().map(|t| BasicMetadataTypeEnum::from(*t)));
+        let thunk = self.ir.module.add_function(
+            &format!("__axon_fnval_{name}"),
+            i64_ty.fn_type(&thunk_params, false),
+            Some(inkwell::module::Linkage::Internal),
+        );
+        let saved_ip = self.ir.builder.get_insert_block();
+        let entry = self.ir.context.append_basic_block(thunk, "entry");
+        self.ir.builder.position_at_end(entry);
+        let fwd: Vec<BasicMetadataValueEnum<'ctx>> = (1..=target_params.len() as u32)
+            .map(|i| thunk.get_nth_param(i).expect("thunk param").into())
+            .collect();
+        let call = build_wrappers::w_call(&self.ir.builder, target, &fwd, "fnval_call");
+        call.set_call_convention(target.get_call_conventions());
+        let unsigned = matches!(ret_sem, Type::U8 | Type::U16 | Type::U32 | Type::U64);
+        let ret: BasicValueEnum<'ctx> = match call.try_as_basic_value().left() {
+            None => i64_ty.const_zero().into(),
+            Some(BasicValueEnum::IntValue(iv)) => match iv.get_type().get_bit_width() {
+                64 => iv.into(),
+                1 => build_wrappers::w_int_z_extend(&self.ir.builder, iv, i64_ty, "fnval_zext")
+                    .into(),
+                _ if unsigned => {
+                    build_wrappers::w_int_z_extend(&self.ir.builder, iv, i64_ty, "fnval_zext")
+                        .into()
+                }
+                _ => build_wrappers::w_int_s_extend(&self.ir.builder, iv, i64_ty, "fnval_sext")
+                    .into(),
+            },
+            Some(BasicValueEnum::FloatValue(fv)) => self
+                .ir
+                .builder
+                .build_bitcast(fv, i64_ty, "fnval_f2i")
+                .unwrap(),
+            Some(other) => unreachable!(
+                "fn `{name}` returns {ret_sem:?} (checked closure-ABI-representable) but lowered \
+                 to {other:?}"
+            ),
+        };
+        build_wrappers::w_ret(&self.ir.builder, ret);
+        if let Some(b) = saved_ip {
+            self.ir.builder.position_at_end(b);
+        }
+        self.fn_value_thunks.insert(name.to_string(), thunk);
+        Some(thunk)
+    }
+
+    /// Call the closure `fat` (`{fn_ptr, env_ptr}`) with `args`. `sig` is the
+    /// closure's declared signature when known (see `closure_call_sig`): each
+    /// argument is coerced to its declared parameter type and built against it
+    /// (a bare `None`/`Ok(..)` gets the param's full layout, as on the direct
+    /// call path), and the i64-ABI result is converted back to the declared
+    /// return type.
+    fn emit_closure_call(
+        &mut self,
+        fat: inkwell::values::StructValue<'ctx>,
+        sig: Option<(Vec<Option<Type>>, Option<Type>)>,
+        args: &[ast::Expr],
+        fn_val: FunctionValue<'ctx>,
+    ) -> Option<BasicValueEnum<'ctx>> {
+        let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+        let i64_ty = self.ir.context.i64_type();
+        let fp = build_wrappers::w_extract_value(&self.ir.builder, fat, 0, "cfp");
+        let ep = build_wrappers::w_extract_value(&self.ir.builder, fat, 1, "cep");
+        // Build arg list: env_ptr first, then explicit args.
+        // Track each arg's ACTUAL LLVM type so the indirect-call
+        // signature matches the value passed (a str arg is a
+        // {i64,ptr} struct, not an i64) — and emit_lambda declares
+        // its params from the same annotation, so the two agree.
+        //
+        // AUDIT T37 (finding F061). Using the ARGUMENT's own LLVM
+        // type here is wrong whenever the lambda declared something
+        // narrower: `let g = |x: i32| …; g(0-3)` emitted
+        // `call i64 %cfp(ptr, i64 -3)` against a function declared
+        // `(ptr, i32)`. That mismatch is UB, and it showed: the same
+        // lambda printed -5 or 4294967291 depending purely on
+        // whether an unrelated f64 lambda had been emitted first.
+        // Coerce each argument to the lambda's DECLARED parameter
+        // type when we know it.
+        let mut call_args: Vec<BasicMetadataValueEnum<'ctx>> = vec![ep.into()];
+        let mut arg_tys: Vec<BasicMetadataTypeEnum<'ctx>> = vec![ptr_ty.into()];
+        for (i, a) in args.iter().enumerate() {
+            let declared = sig
+                .as_ref()
+                .and_then(|(ps, _)| ps.get(i))
+                .and_then(|t| t.clone());
+            let saved_oi = self.current_option_inner.clone();
+            let saved_rt = self.current_result_types.clone();
+            match &declared {
+                Some(Type::Option(inner)) => self.current_option_inner = Some((**inner).clone()),
+                Some(Type::Result(ok, err)) => {
+                    self.current_result_types = Some(((**ok).clone(), (**err).clone()))
+                }
+                _ => {}
+            }
+            let emitted = self.emit_expr(a, fn_val);
+            self.current_option_inner = saved_oi;
+            self.current_result_types = saved_rt;
+            // An argument that fails to lower must sink the call, not shorten
+            // its argument list (the direct-call path's rule).
+            let Some(v) = emitted else {
+                let msg = format!(
+                    "codegen error [E0910]: argument {} of a call through a closure value could \
+                     not be lowered by native codegen, so the call cannot be emitted. The \
+                     interpreter supports it; run under `axon run`.",
+                    i + 1
+                );
+                if !self.codegen_errors.iter().any(|e| e == &msg) {
+                    eprintln!("{msg}");
+                    self.codegen_errors.push(msg);
+                }
+                return None;
+            };
+            let v = match declared {
+                Some(t) => self.coerce_to_fixed_width(v, &t),
+                None => v,
+            };
+            call_args.push(v.into());
+            arg_tys.push(v.get_type().into());
+        }
+        // Build an indirect call via fn pointer.
+        let fn_ptr = self
+            .ir
+            .builder
+            .build_pointer_cast(fp.into_pointer_value(), ptr_ty, "fp_cast")
+            .unwrap();
+        let indirect_ty = i64_ty.fn_type(&arg_tys, false);
+        let call = self
+            .ir
+            .builder
+            .build_indirect_call(indirect_ty, fn_ptr, &call_args, "icall")
+            .unwrap();
+        let raw = call.try_as_basic_value().left();
+        // The closure ABI returns i64 for every lambda. An f64 body
+        // is TRANSPORTED as its bit pattern (see the return site in
+        // emit_lambda), so the caller must bitcast it back — reading
+        // it as an i64 printed 4618441417868443648 for 6.0, silently,
+        // at exit 0.
+        match (raw, sig.and_then(|(_, r)| r)) {
+            (Some(v), Some(Type::F64)) => Some(
+                self.ir
+                    .builder
+                    .build_bitcast(v.into_int_value(), self.ir.context.f64_type(), "lam_ret_i2f")
+                    .unwrap(),
+            ),
+            // A bool body rides the i64 ABI as 0/1. Read back as
+            // i64 it reached `to_str` as an integer and printed
+            // "1"/"0" where the interpreter prints "true"/"false"
+            // — found by the very harness written for this fix,
+            // not by the finding. Narrow it back to i1 so the
+            // call-site to_str dispatch picks to_str_bool.
+            (Some(v), Some(Type::Bool)) => Some(
+                build_wrappers::w_int_truncate(
+                    &self.ir.builder,
+                    v.into_int_value(),
+                    self.ir.context.bool_type(),
+                    "lam_ret_i2b",
+                )
+                .into(),
+            ),
+            // A narrower int rides the ABI sign/zero-extended (emit_lambda's and
+            // fn_value_thunk's return sites); narrow it back to the declared
+            // width so `fn apply(f: fn(i32) -> i32, ..) -> i32 { f(x) }` returns
+            // an i32, not the i64 transport value.
+            (Some(BasicValueEnum::IntValue(iv)), Some(t))
+                if matches!(
+                    t,
+                    Type::I8 | Type::I16 | Type::I32 | Type::U8 | Type::U16 | Type::U32
+                ) =>
+            {
+                match self.llvm_type(&t) {
+                    Some(BasicTypeEnum::IntType(nt)) => Some(
+                        build_wrappers::w_int_truncate(&self.ir.builder, iv, nt, "lam_ret_narrow")
+                            .into(),
+                    ),
+                    _ => Some(iv.into()),
+                }
+            }
+            (raw, _) => raw,
+        }
+    }
+
     /// Auto-extracted from `emit_expr` (Phase 3 decomposition).
     /// The semantic type a lambda body yields, inferred with the lambda's own
     /// declared parameters temporarily in scope (T37 / F061). Without the params
@@ -3197,6 +3526,14 @@ impl<'ctx> super::Codegen<'ctx> {
         let saved_ip = self.ir.builder.get_insert_block();
         let saved_locals = std::mem::take(&mut self.locals);
         let saved_local_types = std::mem::take(&mut self.local_types);
+        // A capture keeps the semantic type it has in the enclosing scope, so a
+        // captured dispatch table `t` still indexes and calls as a
+        // `[fn(i64) -> i64]` inside the body (`|x| t[0](x)`, AX-25).
+        for (cap_name, _) in captures {
+            if let Some(t) = saved_local_types.get(cap_name) {
+                self.local_types.insert(cap_name.clone(), t.clone());
+            }
+        }
         let saved_lambda_env = self.current_lambda_env.take();
 
         self.ir.builder.position_at_end(entry_bb);
@@ -8870,7 +9207,6 @@ impl<'ctx> super::Codegen<'ctx> {
         args: &[ast::Expr],
         fn_val: FunctionValue<'ctx>,
     ) -> Option<BasicValueEnum<'ctx>> {
-        let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
         let i64_ty = self.ir.context.i64_type();
 
         // Phase 6 handler lowering. `resume(v)` inside a (lowered) handler arm
@@ -8966,103 +9302,53 @@ impl<'ctx> super::Codegen<'ctx> {
             _ => None,
         };
 
-        // Try closure call: callee is a local holding a {fn_ptr, env_ptr} struct.
+        // Closure call. A local holding a `{fn_ptr, env_ptr}` value (a lambda,
+        // a fn value, a `fn(..)` param), or ANY other callee expression that
+        // yields one: `t[i](x)`, `g()(x)`, `(p.f)(x)` (AX-25). A `StructLit`
+        // callee is a `Type::fn` path call, resolved above or not at all.
         if maybe_fn_v.is_none() {
             if let ast::Expr::Ident(name) = callee {
                 if let Some(&(alloca, ty)) = self.locals.get(name.as_str()) {
                     let fat = build_wrappers::w_load(&self.ir.builder, ty, alloca, "closure");
                     if let BasicValueEnum::StructValue(sv) = fat {
-                        let fp = build_wrappers::w_extract_value(&self.ir.builder, sv, 0, "cfp");
-                        let ep = build_wrappers::w_extract_value(&self.ir.builder, sv, 1, "cep");
-                        // Build arg list: env_ptr first, then explicit args.
-                        // Track each arg's ACTUAL LLVM type so the indirect-call
-                        // signature matches the value passed (a str arg is a
-                        // {i64,ptr} struct, not an i64) — and emit_lambda declares
-                        // its params from the same annotation, so the two agree.
-                        //
-                        // AUDIT T37 (finding F061). Using the ARGUMENT's own LLVM
-                        // type here is wrong whenever the lambda declared something
-                        // narrower: `let g = |x: i32| …; g(0-3)` emitted
-                        // `call i64 %cfp(ptr, i64 -3)` against a function declared
-                        // `(ptr, i32)`. That mismatch is UB, and it showed: the same
-                        // lambda printed -5 or 4294967291 depending purely on
-                        // whether an unrelated f64 lambda had been emitted first.
-                        // Coerce each argument to the lambda's DECLARED parameter
-                        // type when we know it.
-                        let sig = if let ast::Expr::Ident(cn) = callee {
-                            self.closure_sigs.get(cn.as_str()).cloned()
-                        } else {
-                            None
-                        };
-                        let mut call_args: Vec<BasicMetadataValueEnum<'ctx>> = vec![ep.into()];
-                        let mut arg_tys: Vec<BasicMetadataTypeEnum<'ctx>> = vec![ptr_ty.into()];
-                        for (i, a) in args.iter().enumerate() {
-                            if let Some(v) = self.emit_expr(a, fn_val) {
-                                let declared = sig
-                                    .as_ref()
-                                    .and_then(|(ps, _)| ps.get(i))
-                                    .and_then(|t| t.clone());
-                                let v = match declared {
-                                    Some(t) => self.coerce_to_fixed_width(v, &t),
-                                    None => v,
-                                };
-                                call_args.push(v.into());
-                                arg_tys.push(v.get_type().into());
-                            } else {
-                                self.refuse_unlowered(&format!("argument {i} of a closure call"));
-                            }
-                        }
-                        // Build an indirect call via fn pointer.
-                        let fn_ptr = self
-                            .ir
-                            .builder
-                            .build_pointer_cast(fp.into_pointer_value(), ptr_ty, "fp_cast")
-                            .unwrap();
-                        let indirect_ty = i64_ty.fn_type(&arg_tys, false);
-                        let call = self
-                            .ir
-                            .builder
-                            .build_indirect_call(indirect_ty, fn_ptr, &call_args, "icall")
-                            .unwrap();
-                        let raw = call.try_as_basic_value().left();
-                        // The closure ABI returns i64 for every lambda. An f64 body
-                        // is TRANSPORTED as its bit pattern (see the return site in
-                        // emit_lambda), so the caller must bitcast it back — reading
-                        // it as an i64 printed 4618441417868443648 for 6.0, silently,
-                        // at exit 0.
-                        match (raw, sig.as_ref().and_then(|(_, r)| r.clone())) {
-                            (Some(v), Some(Type::F64)) => {
-                                let back = self
-                                    .ir
-                                    .builder
-                                    .build_bitcast(
-                                        v.into_int_value(),
-                                        self.ir.context.f64_type(),
-                                        "lam_ret_i2f",
-                                    )
-                                    .unwrap();
-                                return Some(back);
-                            }
-                            // A bool body rides the i64 ABI as 0/1. Read back as
-                            // i64 it reached `to_str` as an integer and printed
-                            // "1"/"0" where the interpreter prints "true"/"false"
-                            // — found by the very harness written for this fix,
-                            // not by the finding. Narrow it back to i1 so the
-                            // call-site to_str dispatch picks to_str_bool.
-                            (Some(v), Some(Type::Bool)) => {
-                                let back = build_wrappers::w_int_truncate(
-                                    &self.ir.builder,
-                                    v.into_int_value(),
-                                    self.ir.context.bool_type(),
-                                    "lam_ret_i2b",
-                                );
-                                return Some(back.into());
-                            }
-                            _ => {}
-                        }
-                        return raw;
+                        let sig = self.closure_call_sig(callee);
+                        return self.emit_closure_call(sv, sig, args, fn_val);
                     }
                 }
+            } else if !matches!(callee, ast::Expr::StructLit { .. }) {
+                let sig = self.closure_call_sig(callee);
+                let errors_before = self.codegen_errors.len();
+                let closure = match self.emit_expr(callee, fn_val) {
+                    Some(BasicValueEnum::StructValue(sv))
+                        if sv.get_type().count_fields() == 2
+                            && sv
+                                .get_type()
+                                .get_field_types()
+                                .iter()
+                                .all(|t| t.is_pointer_type()) =>
+                    {
+                        Some(sv)
+                    }
+                    _ => None,
+                };
+                let Some(sv) = closure else {
+                    // The checker typed this callee as a function, so a callee
+                    // that did not lower to a closure is a codegen gap — refuse
+                    // rather than drop the call (the AX-24 silent-assign class).
+                    if self.codegen_errors.len() == errors_before {
+                        let msg = "codegen error [E0910]: native codegen could not lower this \
+                                   call's callee expression to a closure value, so the call \
+                                   cannot be emitted. The interpreter supports it; run under \
+                                   `axon run`."
+                            .to_string();
+                        if !self.codegen_errors.iter().any(|e| e == &msg) {
+                            eprintln!("{msg}");
+                            self.codegen_errors.push(msg);
+                        }
+                    }
+                    return None;
+                };
+                return self.emit_closure_call(sv, sig, args, fn_val);
             }
         }
 

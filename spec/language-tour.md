@@ -364,6 +364,30 @@ fn main() {
 }
 ```
 
+A named, non-generic `fn` is a first-class value of type `fn(..) -> ..`: pass it,
+bind it, store it in an array or struct field, and call it through any of those.
+Effects and purity follow the value — calling `loud` through `let g = loud` is
+still `loud`'s effect.
+
+```axon
+fn inc(x: i64) -> i64 { x + 1 }
+fn dbl(x: i64) -> i64 { x * 2 }
+
+fn main() {
+    println(to_str(apply(inc, 41)))   // 42
+    let ops = [inc, dbl]
+    println(to_str(ops[1](21)))       // 42
+    let f = ops[0]
+    println(to_str(f(41)))            // 42
+}
+```
+
+A generic fn (`fn id<T>`) or a builtin (`abs_i64`) has no single runtime value
+and is refused with E0306; wrap it in a lambda: `|n| abs_i64(n)`. Natively, a
+function value (like a lambda) returns through an i64 slot, so one returning
+`str`, an array, a tuple, a struct, `Option` or `Result` builds with an E0910
+refusal and runs under `axon run`.
+
 ---
 
 ## 14. Built-in Functions

@@ -600,6 +600,13 @@ impl CheckCtx {
         }
     }
 
+    /// True if `name` is a user-defined top-level fn (it has a signature and is
+    /// not a builtin). Used where a fn named as a VALUE (AX-25) must be treated
+    /// as a call to it.
+    fn is_user_fn_name(&self, name: &str) -> bool {
+        self.fn_sigs.contains_key(name) && !crate::builtins::is_known_builtin(name)
+    }
+
     // ─────────────────────────────────────────────────────────────────────────
     // Public entry point
     // ─────────────────────────────────────────────────────────────────────────
@@ -786,7 +793,10 @@ impl CheckCtx {
                 for m in &blk.methods {
                     let mut v: Vec<(String, &'static str)> = Vec::new();
                     Self::collect_purity_violations(&m.body, &self.pure_fns, &mut v);
-                    if !v.is_empty() {
+                    let names_impure_fn = crate::ast::value_position_idents(&m.body)
+                        .iter()
+                        .any(|n| self.is_user_fn_name(n) && !self.pure_fns.contains(n));
+                    if !v.is_empty() || names_impure_fn {
                         self.impure_method_names.insert(m.name.clone());
                     }
                 }
@@ -1979,6 +1989,14 @@ impl CheckCtx {
         }
         let mut violations: Vec<(String, &'static str)> = Vec::new();
         Self::collect_purity_violations(&f.body, &self.pure_fns, &mut violations);
+        // AX-25: a non-`@[pure]` user fn named as a VALUE (`arr_map(xs, g)`,
+        // `let h = g`) is called through that value — by a pure builtin, or by
+        // this fn — so it is the same violation as calling it directly.
+        for n in crate::ast::value_position_idents(&f.body) {
+            if self.is_user_fn_name(&n) && !self.pure_fns.contains(&n) {
+                violations.push((n, "non-pure function"));
+            }
+        }
         // Also flag `x.m()` where method `m` is impure — collect_purity_violations
         // only inspects Ident callees, so an impure METHOD call slipped through
         // (the MethodCall-vs-Call gap). A pure getter is not in
@@ -2065,6 +2083,12 @@ impl CheckCtx {
         let mut allocates = false;
         let mut calls: Vec<String> = Vec::new();
         Self::scan_allocation_rec(body, &mut allocates, &mut calls);
+        // AX-25: a fn named as a VALUE can be called through it — an edge too.
+        calls.extend(
+            crate::ast::value_position_idents(body)
+                .into_iter()
+                .filter(|n| !crate::builtins::is_known_builtin(n)),
+        );
         (allocates, calls)
     }
 
@@ -2100,6 +2124,12 @@ impl CheckCtx {
         let fname = f.name.clone();
         let mut violations: Vec<(String, &'static str)> = Vec::new();
         Self::collect_no_alloc_violations(&f.body, allocating_fns, &mut violations);
+        // AX-25: an allocating fn named as a VALUE is called through it.
+        for n in crate::ast::value_position_idents(&f.body) {
+            if allocating_fns.contains(&n) {
+                violations.push((n, "allocating function"));
+            }
+        }
         for (callee, kind) in violations {
             let file = self.file.clone();
             self.errors.push(
@@ -2555,22 +2585,50 @@ impl CheckCtx {
         // documented limit, but now the partners must at least be annotated.)
         let mut bad_callees: Vec<String> = Vec::new();
         Self::collect_nontotal_callees(&f.body, &f.name, &self.total_fns, &mut bad_callees);
+        // AX-25: a user fn named as a VALUE is called through it (by a builtin
+        // like `arr_map`, or later via the value). Calls through a value have no
+        // call site the measure check below can inspect, so naming `f` ITSELF as
+        // a value is unprovable recursion, and naming a non-total fn is a call
+        // to it.
+        for n in crate::ast::value_position_idents(&f.body) {
+            if (n == f.name || (self.is_user_fn_name(&n) && !self.total_fns.contains(&n)))
+                && !bad_callees.contains(&n)
+            {
+                bad_callees.push(n);
+            }
+        }
         if let Some(callee) = bad_callees.first() {
             let file = self.file.clone();
             let fname = f.name.clone();
-            self.errors.push(
-                CheckError::new(
-                    E1208,
+            let (msg, fix) = if *callee == fname {
+                (
+                    format!(
+                        "`@[total]` function `{fname}` uses itself as a value — a call through \
+                         that value is recursion with no call site the decreasing-measure check \
+                         can inspect, so `{fname}` cannot be proven total"
+                    ),
+                    format!(
+                        "recurse by calling `{fname}(..)` directly with a strictly smaller \
+                         argument, or remove `@[total]` from `{fname}`"
+                    ),
+                )
+            } else {
+                (
                     format!(
                         "`@[total]` function `{fname}` calls `{callee}`, which is not `@[total]` — \
                          its termination is not established, so `{fname}` cannot be proven total"
                     ),
+                    format!(
+                        "mark `{callee}` `@[total]` (the checker will verify it), or remove \
+                         `@[total]` from `{fname}`"
+                    ),
                 )
-                .at(&file, 0, 0)
-                .with_span(f.span)
-                .fix(format!(
-                    "mark `{callee}` `@[total]` (the checker will verify it), or remove `@[total]` from `{fname}`"
-                )),
+            };
+            self.errors.push(
+                CheckError::new(E1208, msg)
+                    .at(&file, 0, 0)
+                    .with_span(f.span)
+                    .fix(fix),
             );
         }
 
@@ -2683,13 +2741,13 @@ impl CheckCtx {
 
     /// Collect the names of called fns that ARE `@[total]` (the call-graph edges
     /// used for cycle detection). Includes self-edges (harmless — the visited set
-    /// bounds traversal).
+    /// bounds traversal). A total fn named as a VALUE is an edge too (AX-25):
+    /// it can be called through that value. `for_each_child` also reaches a
+    /// plain-ident callee, so the `Ident` arm alone covers both forms.
     fn collect_total_callees(expr: &Expr, total_fns: &HashSet<String>, out: &mut Vec<String>) {
-        if let Expr::Call { callee, .. } = expr {
-            if let Expr::Ident(n) = callee.as_ref() {
-                if total_fns.contains(n) && !out.contains(n) {
-                    out.push(n.clone());
-                }
+        if let Expr::Ident(n) = expr {
+            if total_fns.contains(n) && !out.contains(n) {
+                out.push(n.clone());
             }
         }
         Self::for_each_child(expr, &mut |c| {
@@ -4945,32 +5003,44 @@ impl CheckCtx {
                         }
                     }
                 }
+                // A named fn passed as a value is a first-class closure (AX-25),
+                // so it gets the same arity check the lambda form gets above:
+                // `arr_fold(&xs, 0, inc)` with a one-parameter `inc` would
+                // otherwise check clean and fail when the builtin calls it.
                 if let Expr::Ident(callee) = arg {
                     let is_local = scope.contains_key(callee);
-                    if !is_local && self.fn_sigs.contains_key(callee) {
-                        let file = self.file.clone();
-                        // `.at(&file, 0, 0)` alone is a "no location" sentinel:
-                        // the serializer omits line/col when they are 0, so this
-                        // reached the reader with the repair hint and nowhere to
-                        // apply it. Every sibling diagnostic in this argument
-                        // loop already carries `current_span`; this one just
-                        // omitted it.
-                        let span = self.current_span;
-                        self.errors.push(
-                            CheckError::new(
-                                E0306,
-                                format!(
-                                    "argument {i} of `{name}` is the function \
-                                     `{callee}` passed by name, which Axon cannot \
-                                     evaluate as a value"
-                                ),
-                            )
-                            .node(&arg_path)
-                            .at(&file, 0, 0)
-                            .with_span(span)
-                            .fix(format!("wrap it in a lambda — `|x| {callee}(x)`")),
-                        );
-                        continue;
+                    let callee_arity = if is_local {
+                        None
+                    } else {
+                        self.fn_sigs.get(callee).map(|s| s.params.len())
+                    };
+                    if let (Some(got), Some(want)) = (callee_arity, closure_arity(param_ty)) {
+                        if got != want {
+                            let file = self.file.clone();
+                            self.errors.push(
+                                CheckError::new(
+                                    E0306,
+                                    format!(
+                                        "the function `{callee}` passed as argument {} to \
+                                         `{name}` takes {got} parameter{} but {want} {} \
+                                         expected",
+                                        i + 1,
+                                        if got == 1 { "" } else { "s" },
+                                        if want == 1 { "is" } else { "are" },
+                                    ),
+                                )
+                                .node(&arg_path)
+                                .at(&file, 0, 0)
+                                .with_span(self.current_span)
+                                .fix(format!(
+                                    "`{name}` calls it as `{}` — pass a function of that \
+                                     shape, or adapt it with {}",
+                                    param_ty.display(),
+                                    lambda_shape_hint(want),
+                                )),
+                            );
+                            continue;
+                        }
                     }
                 }
             }

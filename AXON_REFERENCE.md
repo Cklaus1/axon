@@ -147,7 +147,7 @@ A code marked **reserved** is declared but emitted nowhere in this build. Listin
 | `E0303` | type-check rule violation (Phase-1 R03) |
 | `E0304` | non-exhaustive match — a variant has no arm |
 | `E0305` | wrong number of arguments supplied to a function |
-| `E0306` | cannot call a non-function value |
+| `E0306` | cannot call a non-function value; also a generic fn or a builtin used as a value (only a non-generic user `fn` is a first-class value — wrap the others in a lambda) |
 | `E0307` | return type mismatch between the declared type and the body |
 | `E0308` | unknown type named in a signature or annotation |
 | `E0309` | type-check rule violation (Phase-1 R08) |

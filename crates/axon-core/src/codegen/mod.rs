@@ -208,6 +208,10 @@ pub struct Codegen<'ctx> {
     /// resulting mismatch is UB — the observed value depended on the order the
     /// lambdas happened to be emitted in.
     closure_sigs: HashMap<String, (Vec<Option<Type>>, Option<Type>)>,
+    /// AX-25: the closure-ABI thunk of each top-level fn named as a VALUE
+    /// (`let g = f0`, `[f0, f1]`, `apply(f0, x)`), keyed by fn name and built
+    /// once. See `fn_value_thunk` in `expr.rs`.
+    fn_value_thunks: HashMap<String, FunctionValue<'ctx>>,
     /// Set when inside a function returning `Result<T,E>`; drives canonical union layout.
     current_result_types: Option<(Type, Type)>,
     /// Set when emitting a value whose target type is `Option<T>`; lets a bare
@@ -452,6 +456,7 @@ impl<'ctx> Codegen<'ctx> {
             fn_return_types: HashMap::new(),
             local_types: HashMap::new(),
             closure_sigs: HashMap::new(),
+            fn_value_thunks: HashMap::new(),
             current_result_types: None,
             current_option_inner: None,
             lambda_counter: 0,
@@ -2138,9 +2143,24 @@ impl<'ctx> Codegen<'ctx> {
                 ast::Literal::Bool(_) => Some(Type::Bool),
                 ast::Literal::Str(_) => Some(Type::Str),
             },
-            ast::Expr::Ident(name) => self.local_types.get(name).cloned(),
+            // AX-25: a top-level fn named as a VALUE is a closure of its own
+            // signature, so `[f0, f1]` is a `[fn(i64) -> i64]` whose elements
+            // index with the closure layout and call with the right ABI.
+            ast::Expr::Ident(name) => self
+                .local_types
+                .get(name)
+                .cloned()
+                .or_else(|| self.fn_value_sem_type(name)),
             ast::Expr::Call { callee, args, .. } => {
                 if let ast::Expr::Ident(name) = callee.as_ref() {
+                    // A call through a LOCAL closure (emit_call resolves global
+                    // fns first, so only a non-fn name reaches the closure path)
+                    // yields the closure's declared return type.
+                    if !self.functions.contains_key(name.as_str())
+                        && self.locals.contains_key(name.as_str())
+                    {
+                        return self.closure_call_sig(callee).and_then(|(_, r)| r);
+                    }
                     // arr_reverse/take/drop are lowered inline (not in
                     // fn_return_types) and return `[T]` — propagate the input
                     // arg's slice type so a `let b = arr_reverse(&a)` binding is
@@ -2209,7 +2229,8 @@ impl<'ctx> Codegen<'ctx> {
                     self.resolve_call_return_type(name, args)
                         .or_else(|| self.fn_return_types.get(name).cloned())
                 } else {
-                    None
+                    // `t[i](x)`, `g()(x)`, `(p.f)(x)`: the callee is a closure.
+                    self.closure_call_sig(callee).and_then(|(_, r)| r)
                 }
             }
             ast::Expr::Ok(_) | ast::Expr::Err(_) => self
@@ -2348,6 +2369,49 @@ impl<'ctx> Codegen<'ctx> {
                     }
                 })
             }
+            _ => None,
+        }
+    }
+
+    /// AX-25: the `Type::Fn` of the top-level fn `name` used as a value, or
+    /// `None` if `name` is a local (which shadows it), not a fn, or generic (the
+    /// resolver refuses a generic fn as a value — it has no single instance).
+    fn fn_value_sem_type(&self, name: &str) -> Option<Type> {
+        if self.locals.contains_key(name) {
+            return None;
+        }
+        let f = self.fndefs.get(name)?;
+        if !f.generic_params.is_empty() {
+            return None;
+        }
+        let params = f
+            .params
+            .iter()
+            .map(|p| self.axon_type_to_semantic(&p.ty))
+            .collect();
+        let ret = f
+            .return_type
+            .as_ref()
+            .map(|t| self.axon_type_to_semantic(t))
+            .unwrap_or(Type::Unit);
+        Some(Type::Fn(params, Box::new(ret)))
+    }
+
+    /// The declared signature of the closure `callee` evaluates to: per-param
+    /// type (`None` = unannotated lambda param) and return type (`None` =
+    /// unknown). Prefers the callee's `Type::Fn` (scoped to the current fn via
+    /// `local_types`, and available for any callee expression — `t[i]`, `g()`,
+    /// a fn param), falling back to the lambda signature recorded by name.
+    pub(super) fn closure_call_sig(
+        &self,
+        callee: &ast::Expr,
+    ) -> Option<(Vec<Option<Type>>, Option<Type>)> {
+        let known = |t: Type| (!matches!(t, Type::Unknown)).then_some(t);
+        if let Some(Type::Fn(ps, r)) = self.infer_expr_sem_type(callee) {
+            return Some((ps.into_iter().map(known).collect(), known(*r)));
+        }
+        match callee {
+            ast::Expr::Ident(n) => self.closure_sigs.get(n.as_str()).cloned(),
             _ => None,
         }
     }
