@@ -458,6 +458,12 @@ struct Seal {
     operator_methods: std::collections::HashSet<String>,
 }
 
+/// Test-only: the dispatch rule is switched off while a test of another seal
+/// layer runs (serialised by `SEALED_DIRS_TEST_LOCK`).
+#[cfg(test)]
+pub(crate) static DISPATCH_RULE_OFF: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
 /// Capture-cell key marking a closure created in a SEALED frame. Starts with
 /// NUL, so no source identifier can name or shadow it.
 pub(crate) const SEALED_CLOSURE_MARK: &str = "\u{0}sealed";
@@ -719,6 +725,12 @@ pub struct Interp<'p> {
     /// Protected Check Isolation, RUNTIME sealing: which definitions come from
     /// a sealed (candidate) module, and whether the frame now running is one.
     seal: Seal,
+    /// The method-call sites whose receiver's type nothing on the operator
+    /// side determined (built only for a sealed run; amendment 83).
+    pins: pin::Pins,
+    /// Address -> undetermined, a cache over [`pin::Pins`] (closure bodies are
+    /// cloned, so a miss recomputes the structural key).
+    pin_cache: RefCell<HashMap<usize, bool>>,
     frame_sealed: Cell<bool>,
     /// How many frames of each provenance are active (entered through
     /// [`Interp::with_frame`] and not yet left). `with_frame` is the ONLY
@@ -3029,9 +3041,18 @@ impl<'p> Interp<'p> {
                 sandboxes: RefCell::new(ambient),
             }
         };
+        let pins = if seal.active {
+            pin::Pins::build(program, &|f| {
+                seal.fns.contains(&(f as *const FnDef as usize))
+            })
+        } else {
+            pin::Pins::default()
+        };
         Interp {
             kernels: [mk_kernel(false), mk_kernel(true)],
             seal,
+            pins,
+            pin_cache: RefCell::new(HashMap::new()),
             frame_sealed: Cell::new(false),
             sealed_frames: Cell::new(0),
             operator_frames: Cell::new(0),
@@ -3352,6 +3373,100 @@ impl<'p> Interp<'p> {
                  `{tn}` whose `{}` is the candidate's — the candidate would choose the code that \
                  runs under the operator's method",
                 f.name, f.name
+            ));
+        }
+        Ok(())
+    }
+
+    /// The DISPATCH rule (C9 round 6, amendment 83): in a sealed run, operator
+    /// code does not select an operator impl's method by the runtime type of a
+    /// receiver nothing on the operator side determined (`interp/pin.rs`). The
+    /// impl is chosen by that type, which for a value read from a dict, a
+    /// channel, an unannotated lambda parameter or an unbound generic position
+    /// is the candidate's choice. Applies only where there is an impl to choose
+    /// between (two or more operator impl types define the method).
+    pub(crate) fn seal_dispatch(
+        &self,
+        site: &Expr,
+        receiver: &Expr,
+        f: &FnDef,
+        tn: &str,
+    ) -> Result<(), Flow> {
+        if !self.seal.active || self.frame_sealed.get() || self.fn_is_sealed(f) {
+            return Ok(());
+        }
+        // Tests of the OTHER seal layers observe their attacks through a dispatch
+        // on an untyped read — exactly what this rule refuses first. They run
+        // with the rule off (as a paired-disable cell does) so each layer is
+        // judged by its own attack; the rule's own tests run with it on.
+        #[cfg(test)]
+        if DISPATCH_RULE_OFF.load(std::sync::atomic::Ordering::SeqCst) {
+            return Ok(());
+        }
+        if !self.pins.selects_between_impls(&f.name) {
+            return Ok(());
+        }
+        let addr = site as *const Expr as usize;
+        let cached = self.pin_cache.borrow().get(&addr).copied();
+        let undetermined = match cached {
+            Some(u) => u,
+            None => {
+                let u = self.pins.undetermined(receiver, &f.name);
+                let mut c = self.pin_cache.borrow_mut();
+                if c.len() < 65_536 {
+                    c.insert(addr, u);
+                }
+                u
+            }
+        };
+        if undetermined {
+            return panic(format!(
+                "operator code dispatched `{}` on a value whose type nothing on the operator side \
+                 determined (here `{tn}`) — the candidate would choose the impl; pin it with \
+                 `let x: T = ...`",
+                f.name
+            ));
+        }
+        Ok(())
+    }
+
+    /// The dispatch rule's arithmetic arm (amendment 83): operator code does
+    /// not do arithmetic on a fixed-width integer whose WIDTH nothing on the
+    /// operator side determined — a `u8` the candidate chose wraps where the
+    /// operator's `i64` does not (`(v << 1) == 254` with `v = 255 as u8`).
+    pub(crate) fn seal_width(
+        &self,
+        op: &BinOp,
+        left: &Expr,
+        right: &Expr,
+        l: &Value,
+        r: &Value,
+    ) -> Result<(), Flow> {
+        if !self.seal.active || self.frame_sealed.get() {
+            return Ok(());
+        }
+        let sized = |v: &Value| matches!(v, Value::SizedInt { .. });
+        if !(sized(l) || sized(r)) {
+            return Ok(());
+        }
+        if matches!(
+            op,
+            BinOp::Eq | BinOp::NotEq | BinOp::Lt | BinOp::Gt | BinOp::LtEq | BinOp::GtEq
+        ) {
+            return Ok(());
+        }
+        #[cfg(test)]
+        if DISPATCH_RULE_OFF.load(std::sync::atomic::Ordering::SeqCst) {
+            return Ok(());
+        }
+        if self.pins.undetermined_arith(op, left, right) {
+            return panic(format!(
+                "operator code did arithmetic on a fixed-width integer whose width nothing on the \
+                 operator side determined ({} {:?} {}) — the candidate would choose the \
+                 wrapping; pin it with `let x: T = ...`",
+                l.type_name(),
+                op,
+                r.type_name()
             ));
         }
         Ok(())
@@ -4344,6 +4459,9 @@ mod goal;
 // Declared-type conformance at every value boundary (C9 round 4, PSV-1,
 // amendment 53).
 pub mod conform;
+// The dispatch rule: an operator impl is never selected by a type nothing on
+// the operator side determined (C9 round 6, amendment 83).
+mod pin;
 // Core tree-walking evaluator (eval/eval_block/eval_call/eval_binop/
 // match_pattern) extracted to interp/eval.rs (R0 slice 5). Its methods live in a
 // second `impl Interp` block there; inherent methods resolve across split impl
@@ -4951,6 +5069,18 @@ mod tests {
     /// Run `test` of `suite` with `cand` loaded from a SEALED directory
     /// (`/<tag>-sealed`), holding the sealed-set lock across set/run/clear.
     fn sealed_outcome(tag: &str, suite: &str, cand: &str, test: &str) -> Result<TestEnd, String> {
+        sealed_outcome_rule(tag, suite, cand, test, false)
+    }
+
+    /// `rule`: whether the dispatch rule (amendment 83) is on. The other
+    /// layers' tests run with it off, so each is judged by its own attack.
+    fn sealed_outcome_rule(
+        tag: &str,
+        suite: &str,
+        cand: &str,
+        test: &str,
+        rule: bool,
+    ) -> Result<TestEnd, String> {
         use crate::span::intern_source;
         let sdir = format!("/{tag}-sealed");
         let s = crate::parse_source_in(suite, intern_source(&format!("/{tag}-suite/h.ax"), suite))
@@ -4964,7 +5094,9 @@ mod tests {
             .lock()
             .unwrap_or_else(|p| p.into_inner());
         crate::resolver::set_sealed_module_dirs(&[std::path::PathBuf::from(&sdir)]);
+        DISPATCH_RULE_OFF.store(!rule, std::sync::atomic::Ordering::SeqCst);
         let out = run_test_fn_outcome(&prog, test);
+        DISPATCH_RULE_OFF.store(false, std::sync::atomic::Ordering::SeqCst);
         crate::resolver::set_sealed_module_dirs(&[]);
         out
     }
@@ -8419,6 +8551,275 @@ fn main() { }
             "r4c-hold",
             "@[test]\nfn t() {\n    let d = dict_new()\n    dict_set(d, \"best\", Some(3))\n    solve(d)\n    assert(true)\n}\n",
             "fn solve(d: Dict) { dict_set(d, \"best\", None) }\n",
+        );
+    }
+
+    // ── C9 round 6, PSV-1 (amendment 83): the DISPATCH rule ──────────────────
+    //
+    // In a sealed run, operator code does not dispatch an operator impl's
+    // method on a receiver whose type nothing on the operator side determined.
+    // These tests run with the rule ON (the other layers' tests run with it
+    // off, so each is judged by its own attack).
+
+    fn judged_on(tag: &str, suite: &str, cand: &str) -> Result<TestEnd, String> {
+        sealed_outcome_rule(
+            tag,
+            &format!("{JUDGE8}{suite}"),
+            &format!("{LAUNDER8}{cand}"),
+            "t",
+            true,
+        )
+    }
+
+    fn dispatch_refused(why: &str, suite: &str, cand: &str) {
+        let out = judged_on("r6-disp", suite, cand);
+        assert!(
+            out != Ok(TestEnd::Completed)
+                && matches!(&out, Err(m) if m.contains("whose type nothing on the operator side determined")),
+            "ATTACK: operator code dispatched on a value of the candidate's chosen type ({why}): {out:?}"
+        );
+    }
+
+    /// A suite reading the candidate-written `result` of a dict, either
+    /// UNPINNED (`x.ok()` on the read) or PINNED (`let y: i64 = x`).
+    fn out_suite(setup: &str, unpinned: bool) -> String {
+        let read = if unpinned {
+            "assert(x.ok())"
+        } else {
+            "{ let y: i64 = x\n            assert(y.ok()) }"
+        };
+        format!("@[test]\nfn t() {{\n    {setup}\n    match dict_get(out, \"result\") {{\n        Some(x) => {read}\n        None => assert(false)\n    }}\n}}\n")
+    }
+
+    /// d2/d3 and the empty accumulator: the candidate writes (or returns) a
+    /// dict the operator then reads. Unpinned: refused at the dispatch. Pinned
+    /// by `let y: i64`: GOOD passes, WRONG fails, the u8 is refused by the cast.
+    #[test]
+    fn operator_code_never_dispatches_on_a_value_read_untyped_from_a_dict() {
+        for (why, setup, fill) in [
+            (
+                "an output dict the candidate fills",
+                "let out = dict_new()\n    solve(out)",
+                "fn solve(out: Dict) { dict_set(out, \"result\", VAL) }\n",
+            ),
+            (
+                "a returned dict",
+                "let out = solve()",
+                "fn solve() -> Dict {\n    let d = dict_new()\n    dict_set(d, \"result\", VAL)\n    d\n}\n",
+            ),
+            (
+                "an empty accumulator",
+                "let out = dict_new()\n    let n = 0\n    fill(out, n)",
+                "fn fill(out: Dict, n: i64) { dict_set(out, \"result\", VAL) }\n",
+            ),
+        ] {
+            let cand = |v: &str| fill.replace("VAL", v);
+            let atk = cand("narrow(4)");
+            dispatch_refused(why, &out_suite(setup, true), &atk);
+            let pinned = out_suite(setup, false);
+            assert_eq!(judged_on("r6-disp", &pinned, &cand("9")), Ok(TestEnd::Completed), "control ({why}): GOOD, pinned");
+            assert!(judged_on("r6-disp", &pinned, &cand("4")).is_err(), "control ({why}): WRONG fails");
+            let out = judged_on("r6-disp", &pinned, &atk);
+            assert!(
+                out != Ok(TestEnd::Completed) && confusion_refused(&out),
+                "ATTACK: a u8 passed the suite's `let y: i64` pin ({why}): {out:?}"
+            );
+        }
+    }
+
+    /// d1 (round 6 blocker): a candidate closure that captured the operator's
+    /// dict retypes an entry AFTER the operator changed it (the snapshot was
+    /// from the hand-over). Refused by the dict layer (rule off) AND by the
+    /// dispatch rule (rule on); the pinned suite refuses it by the cast.
+    #[test]
+    fn a_closure_that_captured_the_operators_dict_cannot_retype_after_an_operator_write() {
+        let suite = "@[test]\nfn t() {\n    let d = dict_new()\n    let f = make(d)\n    dict_set(d, \"answer\", 3)\n    f()\n    match dict_get(d, \"answer\") {\n        Some(v) => assert(v.ok())\n        None => assert(false)\n    }\n}\n";
+        let cand = |v: &str| {
+            format!("fn make(d: Dict) -> fn() -> i64 {{\n    || {{\n        dict_set(d, \"answer\", {v})\n        0\n    }}\n}}\n")
+        };
+        let out = judged8(
+            "r6-stale",
+            suite,
+            &format!("{LAUNDER8}{}", cand("narrow(4)")),
+        );
+        assert!(
+            out != Ok(TestEnd::Completed)
+                && matches!(&out, Err(m) if m.contains("retyped a dict entry")),
+            "ATTACK: a captured-dict closure retyped an entry against a stale snapshot: {out:?}"
+        );
+        // With the rule on too, it is refused (by whichever layer meets it first).
+        let on = judged_on("r6-stale", suite, &cand("narrow(4)"));
+        assert!(
+            matches!(&on, Err(m) if m.contains("retyped a dict entry") || m.contains("whose type nothing on the operator side determined")),
+            "ATTACK: the captured-dict closure's retype passed with the dispatch rule on: {on:?}"
+        );
+        honest8("r6-stale", suite, &cand("9"));
+    }
+
+    /// The rest of the container family the rule must cover: a payload, a
+    /// struct field, a tuple element, a generic enum, a channel receive, a
+    /// closure result, a `match` on the untyped value before the dispatch.
+    #[test]
+    fn operator_code_never_dispatches_on_a_value_from_any_untyped_position() {
+        let wrap = "type Wrap<T> = { v: T }\ntype Opt<T> = Has { v: T } | Nada\n";
+        let stash_in = |what: &str| format!("fn solve(d: Dict) {{ dict_set(d, \"k\", {what}) }}\n");
+        let cases: Vec<(&str, String, String)> = vec![
+            (
+                "an Option payload read from a dict",
+                "let d = dict_new()\n    solve(d)\n    match dict_get(d, \"k\") {\n        Some(o) => match o {\n            Some(v) => assert(v.ok())\n            None => assert(false)\n        }\n        None => assert(false)\n    }".into(),
+                stash_in("Some(narrow(4))"),
+            ),
+            (
+                "a struct field of a dict value",
+                "let d = dict_new()\n    solve(d)\n    match dict_get(d, \"k\") {\n        Some(w) => assert(w.v.ok())\n        None => assert(false)\n    }".into(),
+                format!("{wrap}{}", stash_in("Wrap { v: narrow(4) }")),
+            ),
+            (
+                "a tuple element of a dict value",
+                "let d = dict_new()\n    solve(d)\n    match dict_get(d, \"k\") {\n        Some(t) => assert(t.0.ok())\n        None => assert(false)\n    }".into(),
+                stash_in("(narrow(4), 1)"),
+            ),
+            (
+                "a generic enum payload",
+                "let d = dict_new()\n    solve(d)\n    match dict_get(d, \"k\") {\n        Some(e) => match e {\n            Opt::Has { v } => assert(v.ok())\n            Opt::Nada => assert(false)\n        }\n        None => assert(false)\n    }".into(),
+                format!("{wrap}{}", stash_in("Opt::Has { v: narrow(4) }")),
+            ),
+            (
+                "a channel receive",
+                "let c = chan<i64>()\n    c.send(3)\n    fill(c)\n    assert(c.recv().ok())".into(),
+                "fn fill(c: Chan<i64>) { c.send(9) }\n".into(),
+            ),
+            (
+                "an unannotated lambda's result",
+                "let f = |x| x\n    assert(f(3).ok())".into(),
+                "fn unused() {}\n".into(),
+            ),
+            (
+                "an unannotated lambda parameter",
+                "let f = |x| assert(x.ok())\n    let d = dict_new()\n    solve(d)\n    match dict_get(d, \"k\") {\n        Some(v) => f(v)\n        None => assert(false)\n    }".into(),
+                stash_in("narrow(4)"),
+            ),
+            (
+                "a match on the untyped value before the dispatch",
+                "let d = dict_new()\n    solve(d)\n    match dict_get(d, \"k\") {\n        Some(v) => match v {\n            w => assert(w.ok())\n        }\n        None => assert(false)\n    }".into(),
+                stash_in("narrow(4)"),
+            ),
+        ];
+        for (why, body, cand) in cases {
+            let suite = format!("@[test]\nfn t() {{\n    {body}\n}}\n");
+            // The wrap/enum types are the candidate's here only for the dict
+            // cases; the unannotated-lambda and channel cases need no attack.
+            dispatch_refused(why, &suite, &cand);
+        }
+    }
+
+    /// What stays unaffected: every PINNED receiver dispatches, a method with
+    /// no impl to choose between dispatches on anything, and outside a sealed
+    /// run nothing changes.
+    #[test]
+    fn a_determined_receiver_dispatches_and_so_does_an_unambiguous_method() {
+        let pinned = [
+            "assert(solve(3).ok())",
+            "let r = solve(3)\n    assert(r.ok())",
+            "let r: i64 = solve(3)\n    assert(r.ok())",
+            "let r = solve(3) + 0\n    assert(r.ok())",
+            "assert(9.ok())",
+            "let w = Wrap { v: solve(3) }\n    assert(w.v.ok())",
+            "let xs = [solve(3)]\n    assert(xs[0].ok())",
+            "assert((solve(3) as i64).ok())",
+        ];
+        for body in pinned {
+            let suite = format!("@[test]\nfn t() {{\n    {body}\n}}\n");
+            let out = judged_on(
+                "r6-pin",
+                &format!("type Wrap<T> = {{ v: T }}\n{suite}"),
+                "fn solve(n: i64) -> i64 { n * n }\n",
+            );
+            assert_eq!(
+                out,
+                Ok(TestEnd::Completed),
+                "control (pinned): {body}: {out:?}"
+            );
+        }
+        // One impl type only: nothing to choose between.
+        let one = "trait Judge {\n    fn ok(self) -> bool\n}\nimpl Judge for i64 {\n    fn ok(self: i64) -> bool { self == 9 }\n}\n@[test]\nfn t() {\n    let d = dict_new()\n    dict_set(d, \"k\", solve(3))\n    match dict_get(d, \"k\") {\n        Some(v) => assert(v.ok())\n        None => assert(false)\n    }\n}\n";
+        let out = sealed_outcome_rule(
+            "r6-one",
+            one,
+            "fn solve(n: i64) -> i64 { n * n }\n",
+            "t",
+            true,
+        );
+        assert_eq!(
+            out,
+            Ok(TestEnd::Completed),
+            "control (a single impl): {out:?}"
+        );
+        // Outside a sealed run the same program is unchanged.
+        let src = format!("{JUDGE8}@[test]\nfn t() {{\n    let d = dict_new()\n    dict_set(d, \"k\", 9)\n    match dict_get(d, \"k\") {{\n        Some(v) => assert(v.ok())\n        None => assert(false)\n    }}\n}}\n");
+        let prog = crate::parse_source(&src).expect("parses");
+        let _g = SEALED_DIRS_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        crate::resolver::set_sealed_module_dirs(&[]);
+        assert_eq!(run_test_fn_outcome(&prog, "t"), Ok(TestEnd::Completed));
+    }
+
+    /// What is NOT a dispatch, so the rule leaves it alone: interpolation and
+    /// `to_str` of an untyped read, and a comparison — none selects an
+    /// operator impl (the language has no operator overloading and no trait
+    /// default methods), so the candidate's type choice picks no operator code.
+    #[test]
+    fn interpolation_and_comparison_of_an_untyped_read_select_no_operator_impl() {
+        let suite = "@[test]\nfn t() {\n    let d = dict_new()\n    solve(d)\n    match dict_get(d, \"k\") {\n        Some(v) => {\n            assert(\"{v}\" == \"9\")\n            assert(to_str(v) == \"9\")\n            assert(v == 9)\n        }\n        None => assert(false)\n    }\n}\n";
+        let out = judged_on(
+            "r6-nd",
+            suite,
+            "fn solve(d: Dict) { dict_set(d, \"k\", 9) }\n",
+        );
+        assert_eq!(out, Ok(TestEnd::Completed), "control: {out:?}");
+        assert!(judged_on(
+            "r6-nd",
+            suite,
+            "fn solve(d: Dict) { dict_set(d, \"k\", 4) }\n"
+        )
+        .is_err());
+    }
+
+    /// The arithmetic arm: the candidate stores `255 as u8` and the operator's
+    /// untyped `v << 1 == 254` truncates to a pass (an `i64` 255 << 1 is 510;
+    /// plain `+`/`*` PANIC on overflow, so the shift is the width-dependent
+    /// result that completes).
+    #[test]
+    fn operator_arithmetic_never_runs_at_a_width_the_candidate_chose() {
+        let suite = |read: &str| {
+            format!("@[test]\nfn t() {{\n    let d = dict_new()\n    solve(d)\n    match dict_get(d, \"k\") {{\n        Some(v) => {read}\n        None => assert(false)\n    }}\n}}\n")
+        };
+        let cand = |v: &str| format!("fn solve(d: Dict) {{ dict_set(d, \"k\", {v}) }}\n");
+        let out = judged_on(
+            "r6-arith",
+            &suite("assert((v << 1) == 254)"),
+            &cand("255 as u8"),
+        );
+        assert!(
+            out != Ok(TestEnd::Completed)
+                && matches!(&out, Err(m) if m.contains("whose width nothing on the operator side determined")),
+            "ATTACK: a u8 the candidate chose truncated the operator's arithmetic into a pass: {out:?}"
+        );
+        let pinned = suite("{ let y: i64 = v\n            assert((y << 1) == 254) }");
+        assert_eq!(
+            judged_on("r6-arith", &pinned, &cand("127")),
+            Ok(TestEnd::Completed),
+            "control: GOOD, pinned"
+        );
+        assert!(
+            judged_on("r6-arith", &pinned, &cand("5")).is_err(),
+            "control: WRONG fails"
+        );
+        let out = judged_on("r6-arith", &pinned, &cand("255 as u8"));
+        assert!(
+            out != Ok(TestEnd::Completed) && confusion_refused(&out),
+            "ATTACK: a u8 passed the suite's `let y: i64` pin: {out:?}"
         );
     }
 

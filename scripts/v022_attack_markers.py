@@ -1993,3 +1993,16 @@ ATTACK_MARKERS.update({
     'M2168': "ATTACK: the root helper kept its caller's supplementary groups",
     'M2169': "ATTACK: the root helper runs with its caller's gid",
 })
+
+# C9 round 6, r4c-psv1d (M1990-M1997; amendment 83): the dispatch rule.
+_D = r"ATTACK: operator code dispatched on a value of the candidate's chosen type \(an output dict the candidate fills\): Ok\(Completed\)"
+ATTACK_MARKERS.update({
+    'M1990': _D,
+    'M1991': _D,
+    'M1992': _D,
+    'M1993': _D,
+    'M1994': r"ATTACK: operator code dispatched on a value of the candidate's chosen type \(an unannotated lambda parameter\): Ok\(Completed\)",
+    'M1995': _D,
+    'M1996': r"ATTACK: a u8 the candidate chose truncated the operator's arithmetic into a pass: Ok\(Completed\)",
+    'M1997': r"ATTACK: a captured-dict closure retyped an entry against a stale snapshot: Ok\(Completed\)",
+})

@@ -1486,6 +1486,20 @@ impl<'p> Interp<'p> {
         let key = Rc::as_ptr(m) as *const () as usize;
         if let Some(s) = self.dict_snaps.borrow_mut().get_mut(&key) {
             if s.weak.upgrade().is_some_and(|w| Rc::ptr_eq(&w, m)) {
+                // The FIRST sealed mutation since the last verification: what
+                // the dict holds NOW (before this mutation) is what the
+                // operator held — it may have changed the dict since the
+                // hand-over (round 6: a candidate closure that captured the
+                // dict mutated it after the operator did, against a stale
+                // snapshot). Operator code cannot have run in between without
+                // an edge that verified, so the contents are operator-held.
+                if !s.dirty {
+                    s.held = m
+                        .borrow()
+                        .iter()
+                        .map(|(k, x)| (k.clone(), x.clone()))
+                        .collect();
+                }
                 s.dirty = true;
             }
         }

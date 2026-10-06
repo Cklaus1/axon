@@ -3692,7 +3692,8 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       that dispatches on its type pins with an annotation (`let r: i64 = X`, cast). Stated, not
       implied: a candidate-built dict whose value the operator calls a method on UNPINNED still
       selects the operator's impl by the candidate's chosen type (the `f64`/`str`/width choice) —
-      non-claim (1), unchanged for that position.
+      non-claim (1), unchanged for that position. **Superseded by amendment 83:** an unpinned operator
+      dispatch on such a value is refused; the non-claim is output only.
     - **Cost bound.** One type per entry, taken ONCE per dict per epoch: O(entries) at the first
       hand-over and after an operator-side dict mutation, O(1) per dict at a later hand-over of
       an unchanged dict (the walk does not descend into a still-fresh dict). Verification costs
@@ -4020,6 +4021,8 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       `Wrap<Dict>` returns) — the operator's argument is not at that position; the return is
       candidate output, part 2's non-claim. Not covered, stated: a generic enum variant's fields
       are judged by the same rule but have no dedicated attack test.
+    - **SUPERSEDED by amendment 83 (round 6):** the list below is the round-5 state; the Dict
+      non-claims now reduce to output only, never to selection of an operator impl.
     - **Non-claim text updated** (amendment 53 (1), amendment 72 part 2): what stays open for a
       `Dict` is exactly (i) a key the operator never held, (ii) a dict the candidate builds and
       returns, (iii) an operator-held dict whose snapshot an operator-side mutation made stale
@@ -4436,6 +4439,100 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       verifier with an unscrubbed environment.
     - **Rows.** None added: no code guard changed. The one added test is a drift test over two
       constants. M1960-M1969 are unused.
+
+83. **The dispatch rule: operator code never selects an operator impl by a type nothing on the
+    operator side determined (C9 round 6, workstream r4c-psv1d, PSV-1; matrix A145-A148;
+    M1990-M1997; supersedes the Dict non-claims of 53 (1), 72 part 2 and 78).**
+    - **Why a rule, not another path.** Round 6 (`/var/tmp/c9r6-findings-PSV-1.json`, cases
+      `/var/tmp/c9r6-psv1-logs/w/d1..e2`) found the third Dict bypass in three rounds: a candidate
+      closure that captured the operator's dict retyped an entry against a snapshot taken at the
+      hand-over (the operator wrote the key afterwards); and, as the stated non-claim, a suite that
+      reads a candidate-written output dict or returned dict (`let out = dict_new(); solve(out);
+      dict_get(out, "result").ok()`) lets the candidate choose the receiver's runtime type, so the
+      operator's lenient `impl Judge for u8` runs. Every fix so far tried to make a CONTAINER
+      remember what the operator put in it. The class is one level lower: an operator impl is
+      selected by the runtime type of a receiver, and an untyped read gives the candidate that type.
+    - **The rule (`Interp::seal_dispatch`, called from the one place the impl key is computed —
+      `Expr::MethodCall` in `eval.rs`, beside `seal_method` of amendment 53).** In a sealed run
+      (`seal.active`), an OPERATOR frame may not dispatch a method that two or more operator impl
+      types define on a receiver the analysis did not determine. Refusal: `operator code
+      dispatched `ok` on a value whose type nothing on the operator side determined (here `u8`) —
+      the candidate would choose the impl; pin it with `let x: T = ...``. Outside a sealed run
+      nothing changes (`seal.active` is false; the analysis is not even built). A method with ONE
+      operator impl type has nothing to select between and dispatches (a wrong-typed receiver fails
+      with "no method", it cannot pick another impl). The rule's arithmetic arm (`seal_width`)
+      applies the same determination to `+ - * / % & | ^ << >>` on a fixed-width integer: a `u8`
+      the candidate chose truncates where the operator's `i64` does not (`(v << 1) == 254` with
+      255; `+`/`*` on a `u8` PANIC on overflow, so the shift is the result that completes).
+    - **How "determined" is tracked (decision).** Not a runtime flag (a `Value` has no slot, and
+      one on every scalar would cost every value copy) and not the checker's inferred types
+      (unification can make a read of an untyped dict `i64` because a later use compares it with a
+      literal — the runtime value is still the candidate's `u8`). A STATIC, name-keyed dataflow per
+      operator fn (`interp/pin.rs`), built once for a sealed run: a receiver is determined iff it
+      is a literal; a binding with a closed `let`/parameter annotation (the value was CAST to it,
+      amendment 53); a binding initialised from a determined expression; the result of a fn with a
+      closed declared return type (cast at its return; at a seal crossing, strictly); a builtin
+      whose declared return names no type variable (`dict_get` returns one, `len` does not); `x as
+      T`; arithmetic on determined operands; a struct/array/tuple/`Option`/`Result` of determined
+      parts; a field, element or match-binding of a determined value. Anything else is undetermined:
+      `dict_get`/`dict_values`/`recv`, an unannotated lambda parameter or result, a type-parameter
+      or `dyn` annotation, an unbound generic position. A name is determined only if EVERY binding
+      and every assignment of it is (a greatest fixpoint), so the analysis over-refuses rather than
+      under-refuses. A static type is determined only through the casts the runtime already makes,
+      which is why a "determined" receiver cannot hold the candidate's type. The result is a set of
+      call-site keys (a structural hash of receiver and method: closure bodies are cloned when a
+      lambda is evaluated, so an address would not survive), cached by address.
+    - **Coverage** (each executed through the unit tests and, for the first two, the real runner):
+      an output dict, a returned dict, an empty accumulator, a captured-closure dict, a channel
+      receive, an `Option`/struct/tuple/generic-enum payload, an unannotated lambda parameter and
+      result, a `match` on the untyped value before the dispatch, new keys, nested containers. Not a
+      dispatch, left alone and tested: interpolation, `to_str` and comparison of an untyped read
+      (the language has no operator overloading and no trait default methods; a `Trait::method(x)`
+      path call is not syntax it accepts).
+    - **The Dict snapshot is kept (defence in depth), with one fix.** It still guards what the rule
+      does not: a held key retyped before the operator reads it through a builtin that behaves by
+      runtime type, and the operator's PINNED reads (the refusal arrives at the edge, not at the
+      read). The staleness the review executed is fixed at the source: the first sealed mutation
+      since the last verification retakes the snapshot from what the dict holds NOW (before that
+      mutation), so an operator write between the hand-over and the candidate closure's call is
+      part of what the operator held. The rows M1660-M1681 and M1840-M1848 stand unchanged.
+    - **What a suite author must now annotate.** Every untyped read the suite then dispatches on:
+      `Some(x) => assert(x.ok())` becomes `Some(x) => { let y: i64 = x  assert(y.ok()) }`;
+      `assert(c.recv().ok())` becomes `let r: i64 = c.recv()  assert(r.ok())`; a lambda
+      `|x| x.ok()` becomes `|x: i64| x.ok()`; a helper `fn check<T: Judge>(x: T)` dispatching on
+      `x` needs a closed parameter type. Calls of a fn with a closed declared return, literals,
+      casts and annotated bindings need nothing. The annotation is a CAST (amendment 53): a
+      candidate's `u8` at an `i64` pin is refused as a runtime type confusion, so the pinned suite
+      keeps GOOD a keyed pass and WRONG a keyed failure.
+    - **Honest-program impact, measured (this branch).** Sweeps (352 `.ax` diagnostics, 55
+      `@[test]` files, example run exit codes): identical — no repository `.ax` runs sealed.
+      Suites that DO run sealed and needed annotations: three real-runner tests in
+      `crates/axon-psv/tests/sealed_frames.rs` (`a_dict_entry_the_operator_held_is_never_retyped_…`,
+      `a_replaced_or_filled_position_is_judged_…`, `an_undetermined_type_position_never_selects_…`:
+      dict reads, a channel receive, an unannotated `|x| x.ok()`), each annotated; the 19 unit
+      tests of the OTHER seal layers observe their attacks through a dispatch on an untyped read —
+      exactly what the rule now refuses first — and run with the rule OFF (a test-only switch,
+      `DISPATCH_RULE_OFF`, set under `SEALED_DIRS_TEST_LOCK`, the paired-disable cell for the
+      rule), so each layer is judged by its own attack; the rule's tests run with it ON. The axon-core
+      suite, the axon-psv suite and (see report) the Fabric/Cortex/OS suites pass.
+    - **Residual non-claim (smaller).** A value the operator reads untyped and uses ONLY through
+      builtins that do not select an operator impl (printing, comparing, `to_str`) is the
+      candidate's choice of value, which the suite compares or prints: that is output, not
+      selection of the rubric. The analysis is conservative in one direction only: it can refuse an
+      honest untyped dispatch (annotate it); it cannot admit an undetermined one except through a
+      closed annotation, which is a cast.
+    - **Rows.** M1990 (the refusal), M1991 (the two-impl scope), M1992-M1995 (the analysis: a
+      receiver the analysis cannot determine, a type-variable builtin, an unannotated lambda
+      parameter, a match binding), M1996 (arithmetic), M1997 (the snapshot retake). Matrix A145-A148
+      (A149 and A150 unused; FLOOR 148). Tests: `operator_code_never_dispatches_on_a_value_read_untyped_from_a_dict`,
+      `operator_code_never_dispatches_on_a_value_from_any_untyped_position`,
+      `a_determined_receiver_dispatches_and_so_does_an_unambiguous_method`,
+      `operator_arithmetic_never_runs_at_a_width_the_candidate_chose`,
+      `a_closure_that_captured_the_operators_dict_cannot_retype_after_an_operator_write`,
+      `interpolation_and_comparison_of_an_untyped_read_select_no_operator_impl`, and through the
+      real runner `operator_code_never_dispatches_on_an_untyped_read_and_a_pinned_suite_passes`.
+    - **Native codegen.** Unchanged: the seal is interpreter-only (amendment 72).
+    - **Operator deployment.** The guest image must be rebuilt.
 
 ## Amendment 84: the PCI delta is generated and gated, and four wordings that said more than the code (C9 round 6, claims2)
 

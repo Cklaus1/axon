@@ -593,14 +593,14 @@ fn an_undetermined_type_position_never_selects_the_operators_impl() {
     };
     let chan = suite(
         "fill",
-        "    let c = chan<i64>()\n    fill(c)\n    assert(c.recv().ok())",
+        "    let c = chan<i64>()\n    fill(c)\n    let r: i64 = c.recv()\n    assert(r.ok())",
     );
     let noret = suite("solve", "    assert(solve(3).ok())");
     let wrap = suite(
         "solve, Wrap",
         "    let w = solve(Wrap { v: 3 })\n    assert(w.v.ok())",
     );
-    let clos = suite("apply", "    assert(apply(|x| x.ok()))");
+    let clos = suite("apply", "    assert(apply(|x: i64| x.ok()))");
     let cases: [(&str, &String, String, String, String); 4] = [
         (
             "a generic Chan<T> (B1)",
@@ -670,7 +670,7 @@ fn a_dict_entry_the_operator_held_is_never_retyped_by_the_candidate() {
     const J: &str = "trait Judge {\n    fn ok(self) -> bool\n}\nimpl Judge for i64 {\n    fn ok(self: i64) -> bool { self == 9 }\n}\nimpl Judge for u8 {\n    fn ok(self: u8) -> bool { true }\n}\n";
     const L: &str = "fn narrow(n: i64) -> u8 { n as u8 }\nfn stash(v: u8) -> Dict {\n    let d = dict_new()\n    dict_set(d, \"k\", v)\n    d\n}\n";
     let suite = format!(
-        "mod sol\nuse sol.{{solve}}\n{J}@[test]\nfn accept() {{\n    let d = dict_new()\n    dict_set(d, \"a\", 3)\n    solve(d)\n    match dict_get(d, \"a\") {{\n        Some(x) => assert(x.ok())\n        None => assert(false)\n    }}\n}}\n"
+        "mod sol\nuse sol.{{solve}}\n{J}@[test]\nfn accept() {{\n    let d = dict_new()\n    dict_set(d, \"a\", 3)\n    solve(d)\n    match dict_get(d, \"a\") {{\n        Some(x) => {{\n            let y: i64 = x\n            assert(y.ok())\n        }}\n        None => assert(false)\n    }}\n}}\n"
     );
     let good = "pub fn solve(d: Dict) { dict_set(d, \"a\", 9) }\n".to_string();
     let wrong = "pub fn solve(d: Dict) { dict_set(d, \"a\", 4) }\n".to_string();
@@ -711,9 +711,9 @@ fn a_replaced_or_filled_position_is_judged_by_what_the_operator_held() {
     let suite = |body: &str| {
         format!("mod sol\nuse sol.{{solve}}\n{J}@[test]\nfn accept() {{\n{body}\n}}\n")
     };
-    let replace = suite("    let inner = dict_new()\n    dict_set(inner, \"x\", 3)\n    let d = dict_new()\n    dict_set(d, \"inner\", inner)\n    solve(d)\n    match dict_get(d, \"inner\") {\n        Some(i) => match dict_get(i, \"x\") {\n            Some(v) => assert(v.ok())\n            None => assert(false)\n        }\n        None => assert(false)\n    }");
-    let fill = suite("    let d = dict_new()\n    dict_set(d, \"best\", Some(0))\n    solve(d)\n    match dict_get(d, \"best\") {\n        Some(o) => match o {\n            Some(v) => assert(v.ok())\n            None => assert(false)\n        }\n        None => assert(false)\n    }");
-    let hold = suite("    let d = dict_new()\n    dict_set(d, \"best\", None)\n    solve(d)\n    match dict_get(d, \"best\") {\n        Some(o) => match o {\n            Some(v) => assert(v.ok())\n            None => assert(false)\n        }\n        None => assert(false)\n    }");
+    let replace = suite("    let inner = dict_new()\n    dict_set(inner, \"x\", 3)\n    let d = dict_new()\n    dict_set(d, \"inner\", inner)\n    solve(d)\n    match dict_get(d, \"inner\") {\n        Some(i) => match dict_get(i, \"x\") {\n            Some(v) => {\n                let y: i64 = v\n                assert(y.ok())\n            }\n            None => assert(false)\n        }\n        None => assert(false)\n    }");
+    let fill = suite("    let d = dict_new()\n    dict_set(d, \"best\", Some(0))\n    solve(d)\n    match dict_get(d, \"best\") {\n        Some(o) => match o {\n            Some(v) => {\n                let y: i64 = v\n                assert(y.ok())\n            }\n            None => assert(false)\n        }\n        None => assert(false)\n    }");
+    let hold = suite("    let d = dict_new()\n    dict_set(d, \"best\", None)\n    solve(d)\n    match dict_get(d, \"best\") {\n        Some(o) => match o {\n            Some(v) => {\n                let y: i64 = v\n                assert(y.ok())\n            }\n            None => assert(false)\n        }\n        None => assert(false)\n    }");
     let mk = |x: &str| {
         format!("pub fn solve(d: Dict) {{\n    let n = dict_new()\n    dict_set(n, \"x\", {x})\n    dict_set(d, \"inner\", n)\n}}\n")
     };
@@ -776,4 +776,91 @@ fn a_replaced_or_filled_position_is_judged_by_what_the_operator_held() {
             s.stdout
         );
     }
+}
+
+/// C9 round 6, PSV-1 (amendment 83), through the real runner: operator code
+/// never dispatches an operator impl on a value whose type nothing on the
+/// operator side determined (a read from a dict the candidate wrote), and a
+/// candidate closure that captured the operator's dict cannot retype it
+/// against a stale snapshot. A suite that PINS the read (`let y: i64 = x`)
+/// keeps GOOD a keyed pass and WRONG a keyed failure; the pinned `u8` is
+/// refused by the cast.
+#[test]
+fn operator_code_never_dispatches_on_an_untyped_read_and_a_pinned_suite_passes() {
+    const J: &str = "trait Judge {\n    fn ok(self) -> bool\n}\nimpl Judge for i64 {\n    fn ok(self: i64) -> bool { self == 9 }\n}\nimpl Judge for u8 {\n    fn ok(self: u8) -> bool { true }\n}\n";
+    let suite = |body: &str| {
+        format!("mod sol\nuse sol.{{solve, make}}\n{J}@[test]\nfn accept() {{\n{body}\n}}\n")
+    };
+    let read = |pin: bool| {
+        let r = if pin {
+            "Some(x) => {\n            let y: i64 = x\n            assert(y.ok())\n        }"
+        } else {
+            "Some(x) => assert(x.ok())"
+        };
+        suite(&format!("    let out = dict_new()\n    solve(out)\n    match dict_get(out, \"result\") {{\n        {r}\n        None => assert(false)\n    }}"))
+    };
+    let put = |v: &str| {
+        format!("pub fn make() -> i64 {{ 0 }}\npub fn solve(out: Dict) {{ dict_set(out, \"result\", {v}) }}\n")
+    };
+    // The pinned suite: GOOD, WRONG, and the u8 refused.
+    let pinned = read(true);
+    let s = check(&pinned, &[], &put("9"), "accept");
+    assert_eq!(
+        (s.status, s.host),
+        (GuestStatus::Passed, Some(true)),
+        "control: {}",
+        s.stdout
+    );
+    let s = check(&pinned, &[], &put("4"), "accept");
+    assert_eq!(
+        (s.status, s.host),
+        (GuestStatus::Failed, Some(false)),
+        "control: {}",
+        s.stdout
+    );
+    let s = check(&pinned, &[], &put("4 as u8"), "accept");
+    assert!(
+        refused_unkeyed(&s),
+        "ATTACK: a u8 passed the pinned suite: {:?} {:?} {}",
+        s.status,
+        s.host,
+        s.stdout
+    );
+    // The unpinned suite: the dispatch is refused whatever the candidate stores.
+    let loose = read(false);
+    let s = check(&loose, &[], &put("4 as u8"), "accept");
+    assert!(
+        refused_unkeyed(&s),
+        "ATTACK: operator code dispatched on the candidate's u8 and got a keyed pass: {:?} {:?} {}",
+        s.status,
+        s.host,
+        s.stdout
+    );
+    // The captured-dict closure against a stale snapshot (case d1).
+    let stale = suite("    let d = dict_new()\n    let f = make(d)\n    dict_set(d, \"answer\", 3)\n    f()\n    match dict_get(d, \"answer\") {\n        Some(v) => {\n            let y: i64 = v\n            assert(y.ok())\n        }\n        None => assert(false)\n    }");
+    let mk = |v: &str| {
+        format!("pub fn solve(out: Dict) {{}}\npub fn make(d: Dict) -> fn() -> i64 {{\n    || {{\n        dict_set(d, \"answer\", {v})\n        0\n    }}\n}}\n")
+    };
+    let s = check(&stale, &[], &mk("9"), "accept");
+    assert_eq!(
+        (s.status, s.host),
+        (GuestStatus::Passed, Some(true)),
+        "control: {}",
+        s.stdout
+    );
+    let s = check(&stale, &[], &mk("4"), "accept");
+    assert_eq!(
+        (s.status, s.host),
+        (GuestStatus::Failed, Some(false)),
+        "control: {}",
+        s.stdout
+    );
+    let s = check(&stale, &[], &mk("4 as u8"), "accept");
+    assert!(
+        refused_unkeyed(&s),
+        "ATTACK: a captured-dict closure retyped the entry: {:?} {:?} {}",
+        s.status,
+        s.host,
+        s.stdout
+    );
 }

@@ -6970,7 +6970,18 @@ MUTATIONS += [
     ('M1848', 'PSV-1 (A129): a closure the operator held may not be replaced by a non-closure', _CC, '            (Value::Closure { .. }, _) => {', '            (Value::Closure { .. }, _) if false => {', 'axon-core', _CL, _T72 + 'a_dict_the_candidate_mutated_is_verified_at_every_edge_back'),
     ('M1847', 'PSV-1 (A130): a value nested past the cast bound is refused by the dict walk, never left unvisited', _CC, '    pub(crate) fn walk_depth_ok(d: usize) -> Result<(), Flow> {\n        if d > MAX_CAST_DEPTH {', '    pub(crate) fn walk_depth_ok(d: usize) -> Result<(), Flow> {\n        if false && d > MAX_CAST_DEPTH {', 'axon-core', _CL, 'interp::conform::walk_bound_tests::a_value_nested_past_the_bound_is_refused_not_left_unvisited'),
 ]
-PSV_IDS |= {f"M{n}" for n in range(1660, 1870)}
+_PN = 'crates/axon-core/src/interp/pin.rs'
+MUTATIONS += [
+    ('M1990', 'PSV-1 (A145): operator code never dispatches an operator impl on a receiver nothing on the operator side determined', _CI, '        if undetermined {', '        if false && undetermined {', 'axon-core', _CL, _T72 + 'operator_code_never_dispatches_on_a_value_read_untyped_from_a_dict'),
+    ('M1991', 'PSV-1 (A145): the dispatch rule applies wherever two or more operator impl types define the method', _CI, '        if !self.pins.selects_between_impls(&f.name) {', '        if true {', 'axon-core', _CL, _T72 + 'operator_code_never_dispatches_on_a_value_read_untyped_from_a_dict'),
+    ('M1992', 'PSV-1 (A146): a call site whose receiver the analysis cannot determine is recorded as undetermined', _PN, '                if !ctx.det(receiver, &local, &bound) {\n                    out.insert(call_key(receiver, method));', '                if false && !ctx.det(receiver, &local, &bound) {\n                    out.insert(call_key(receiver, method));', 'axon-core', _CL, _T72 + 'operator_code_never_dispatches_on_a_value_read_untyped_from_a_dict'),
+    ('M1993', 'PSV-1 (A146): a builtin whose declared return names a type variable (dict_get) is an untyped read', _PN, '                        !builtin_ret_open(r)', '                        true', 'axon-core', _CL, _T72 + 'operator_code_never_dispatches_on_a_value_read_untyped_from_a_dict'),
+    ('M1994', 'PSV-1 (A146): an unannotated lambda parameter is undetermined', _PN, '                            _ => Fact::Unpinned,', '                            _ => Fact::Pinned,', 'axon-core', _CL, _T72 + 'operator_code_never_dispatches_on_a_value_from_any_untyped_position'),
+    ('M1995', 'PSV-1 (A146): a match binding is determined only when its subject is', _PN, '                        facts.push((n, Fact::From(subject)));', '                        facts.push((n, Fact::Pinned));', 'axon-core', _CL, _T72 + 'operator_code_never_dispatches_on_a_value_read_untyped_from_a_dict'),
+    ('M1996', 'PSV-1 (A147): operator arithmetic on a fixed-width integer nothing determined is refused', _CI, '        if self.pins.undetermined_arith(op, left, right) {', '        if false && self.pins.undetermined_arith(op, left, right) {', 'axon-core', _CL, _T72 + 'operator_arithmetic_never_runs_at_a_width_the_candidate_chose'),
+    ('M1997', 'PSV-1 (A148): the first sealed mutation retakes the snapshot from what the operator holds now', _CC, '                if !s.dirty {', '                if false && !s.dirty {', 'axon-core', _CL, _T72 + 'a_closure_that_captured_the_operators_dict_cannot_retype_after_an_operator_write'),
+]
+PSV_IDS |= {f"M{n}" for n in range(1660, 2040)}
 # ── end r4c-psv1 ──
 
 # ── C9 round 4c, workstream SHARDFLAKE (amendment 77; M1830-M1849) ───────────
