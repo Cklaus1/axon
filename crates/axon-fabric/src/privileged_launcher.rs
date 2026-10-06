@@ -1132,7 +1132,7 @@ fn pipe_holders(
         };
         for fd in fds.flatten() {
             if let Ok(m) = std::fs::metadata(fd.path()) {
-                if m.ino() == ino as u64 && m.dev() == dev as u64 {
+                if m.ino() == ino && m.dev() == dev {
                     out.push(pid);
                     break;
                 }
