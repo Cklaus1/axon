@@ -2009,3 +2009,26 @@ ATTACK_MARKERS.update({
 
 # C9 round 6, INTEGRATE: the dispatch rule's off switch (M1975).
 ATTACK_MARKERS['M1975'] = r'ATTACK: the dispatch rule.s off switch is reachable from a production build'
+
+# C9 round 7, workstream BUILDENV3 (M2220-M2259; amendment 90).
+ATTACK_MARKERS.update({
+    'M2220': r"ATTACK: the build's PATH is not the fixed system directories",
+    'M2221': r"ATTACK: the build processes ran as the runner's own uid \(root\)",
+    'M2222': r'ATTACK: a toolchain tree a group could write was copied into the build',
+    'M2223': r'ATTACK: a toolchain tree with a group-writable file was accepted',
+    'M2224': r'ATTACK: a toolchain tree with a directory owned by another uid was accepted',
+    'M2225': r'ATTACK: a record was signed over changed tools',
+    'M2226': r'ATTACK: a build step ran after a cc beside rustc changed the toolchain',
+    'M2227': r'ATTACK: a record was signed over a changed linker',
+    'M2228': r'ATTACK: an enclosing git repository is visible to the controlled build',
+    'M2229': r"ATTACK: the freeze bound the image under a pin naming another build uid than the record's",
+    'M2230': r'ATTACK: the freeze bound a guest build record without isolated build processes \(build processes that ran as root',
+    'M2231': r'ATTACK: the freeze bound a guest build record without isolated build processes \(a toolchain that is not the private root-owned copy',
+    'M2232': r'ATTACK: the freeze bound a guest build record whose measurement is not its toolchain.s \(a measured cargo',
+    'M2233': r'ATTACK: the freeze bound a guest build record whose measurement is not its toolchain.s \(a measured linker',
+    'M2234': r'ATTACK: the freeze bound a kernel build record whose make ran as root',
+    'M2235': r'ATTACK: a partial or malformed builder flag set was taken: .*only the uid',
+    'M2236': r'ATTACK: a partial or malformed builder flag set was taken: .*Arabic-Indic digit uid',
+    'M2237': r"ATTACK: the kernel build's make ran as another uid than the unprivileged build uid",
+    'M2238': r'ATTACK: the freeze bound a guest build record whose environment lacks the git ceiling or a fixed PATH',
+})

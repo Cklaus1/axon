@@ -261,14 +261,41 @@ fn private_scratch() -> tempfile::TempDir {
 }
 
 /// A rustc wrapper that leaves `marker` behind and runs the compiler.
-fn wrapper(dir: &Path, marker: &Path) -> PathBuf {
-    let w = dir.join("wrapper");
+fn wrapper(_dir: &Path, marker: &Path) -> PathBuf {
+    // Where the unprivileged build uid can EXECUTE it (so that a leak of the
+    // caller's wrapper into the build would actually run it), with the marker
+    // somewhere it can WRITE (/tmp): see `reachable_marker`.
+    let dir = test_parent().parent().unwrap().join("wrappers");
+    std::fs::create_dir_all(&dir).unwrap();
+    chmod(&dir, 0o755);
+    let w = dir.join(marker.file_name().unwrap());
     write(
         &w,
         &format!("#!/bin/sh\n: > '{}'\nexec \"$@\"\n", marker.display()),
     );
     chmod_x(&w);
     w
+}
+
+/// A marker file path the build's unprivileged uid can create, removed at exit.
+fn reachable_marker(name: &str) -> PathBuf {
+    use std::sync::Mutex;
+    static MARKS: Mutex<Vec<std::ffi::CString>> = Mutex::new(Vec::new());
+    extern "C" fn clean() {
+        if let Ok(m) = MARKS.lock() {
+            for c in m.iter() {
+                let _ = std::fs::remove_file(c.to_str().unwrap());
+            }
+        }
+    }
+    let p = PathBuf::from(format!("/tmp/axon-gbe-{}-{name}", std::process::id()));
+    let _ = std::fs::remove_file(&p);
+    let mut m = MARKS.lock().unwrap();
+    if m.is_empty() {
+        unsafe { libc::atexit(clean) };
+    }
+    m.push(std::ffi::CString::new(p.to_str().unwrap()).unwrap());
+    p
 }
 
 /// A begun controlled build of a fresh checkout under `d`: (repo, record path, record).
@@ -373,7 +400,7 @@ fn a_cargo_config_setting_the_guest_build_would_use_is_refused() {
 fn a_callers_compiler_wrapper_does_not_reach_the_guest_builds_cargo() {
     let d = tempfile::tempdir().unwrap();
     let (r, rec_path, _) = begun(d.path());
-    let marker = d.path().join("wrapper-ran");
+    let marker = reachable_marker(&format!("wrapper-ran-{}", line!()));
     let w = wrapper(d.path(), &marker);
     let mut c = gbe(&r);
     c.arg("cargo")
@@ -511,7 +538,7 @@ fn a_guest_build_under_a_directory_another_uid_can_write_is_refused() {
 fn an_ancestor_config_written_after_begin_does_not_reach_the_guest_build() {
     let d = tempfile::tempdir().unwrap();
     let (r, rec_path, rec) = begun(d.path());
-    let marker = d.path().join("wrapper-ran");
+    let marker = reachable_marker(&format!("wrapper-ran-{}", line!()));
     let w = wrapper(d.path(), &marker);
     // An ancestor of the clone (the checkout), written AFTER begin.
     write(
@@ -536,7 +563,7 @@ fn an_ancestor_config_written_after_begin_does_not_reach_the_guest_build() {
 fn a_cargo_config_planted_beside_the_private_copy_after_begin_is_refused() {
     let d = tempfile::tempdir().unwrap();
     let (r, rec_path, rec) = begun(d.path());
-    let marker = d.path().join("wrapper-ran");
+    let marker = reachable_marker(&format!("wrapper-ran-{}", line!()));
     let w = wrapper(d.path(), &marker);
     write(
         &base_of(&rec).join(".cargo/config.toml"),
@@ -610,7 +637,7 @@ fn a_cargo_config_written_during_a_guest_build_step_fails_that_step() {
 fn a_guest_cargo_step_with_extra_flags_or_args_is_refused() {
     let d = tempfile::tempdir().unwrap();
     let (r, rec_path, rec) = begun(d.path());
-    let marker = d.path().join("wrapper-ran");
+    let marker = reachable_marker(&format!("wrapper-ran-{}", line!()));
     let w = wrapper(d.path(), &marker);
     let wrap_cfg = format!("build.rustc-wrapper=\"{}\"", w.display());
     let mut with_config: Vec<&str> = GUEST_INIT.to_vec();
@@ -785,8 +812,8 @@ fn kernel_fixture(d: &Path) -> (PathBuf, PathBuf) {
     let src = d.join("ksrc/linux-0.0.1");
     write(
         &src.join("Makefile"),
-        "olddefconfig:\n\t@true\nvmlinux:\n\t@printf 'kcflags=[%s] cc=[%s] cross=[%s] path=[%s]\\n' \
-         \"$$KCFLAGS\" \"$(CC)\" \"$$CROSS_COMPILE\" \"$$PATH\" > vmlinux\n",
+        "olddefconfig:\n\t@true\nvmlinux:\n\t@printf 'kcflags=[%s] cc=[%s] cross=[%s] path=[%s] uid=[%s]\\n' \
+         \"$$KCFLAGS\" \"$(CC)\" \"$$CROSS_COMPILE\" \"$$PATH\" \"`id -u`\" > vmlinux\n",
     );
     let dist = d.join("dist");
     std::fs::create_dir_all(&dist).unwrap();
@@ -863,8 +890,13 @@ fn a_callers_kcflags_cc_or_path_do_not_reach_the_kernel_build() {
         !vml.to_lowercase().contains("evil"),
         "ATTACK: a caller's KCFLAGS/CC/CROSS_COMPILE/PATH reached the kernel build: {vml}"
     );
+    assert!(
+        vml.contains("uid=[65534]"),
+        "ATTACK: the kernel build's make ran as another uid than the unprivileged build uid: {vml}"
+    );
     let k: Value =
         serde_json::from_slice(&std::fs::read(dist.join("kernel-build.json")).unwrap()).unwrap();
+    assert_eq!(k["build_uid"], 65534);
     assert_eq!(k["tools"]["make"]["path"], "/usr/bin/make");
     assert!(k["tools"]["gcc"]["sha256"]
         .as_str()
@@ -1672,10 +1704,14 @@ fn a_callers_wrapper_flags_or_planted_cc_never_reach_the_controlled_host_build()
     );
     let rec_a = host_record(&out_a);
     // The attack: every input the reviewer used, in the caller's environment.
-    let marker = d.path().join("wrapper-ran");
+    let marker = reachable_marker(&format!("wrapper-ran-{}", line!()));
     let w = wrapper(d.path(), &marker).display().to_string();
-    let evil = d.path().join("evil-bin");
-    let cc_marker = d.path().join("cc-ran");
+    // Where the unprivileged build uid can reach it (a mutant that let the
+    // caller's PATH through would otherwise fail to exec it for lack of access).
+    let evil_scratch = private_scratch();
+    let evil = evil_scratch.path().join("evil-bin");
+    let cc_marker = PathBuf::from(format!("/tmp/axon-cc-ran-{}", std::process::id()));
+    let _clean_cc = Reports(vec![cc_marker.clone()]);
     write(
         &evil.join("cc"),
         &format!(
@@ -1988,7 +2024,7 @@ fn a_build_script_cannot_plant_a_linker_or_read_the_proof_key() {
     assert_eq!(rec["toolchain"]["host_tools"]["cc"]["path"], "/usr/bin/cc");
     assert_eq!(
         rec["env"]["PATH"], "/usr/bin:/bin",
-        "fixed system PATH only"
+        "ATTACK: the build's PATH is not the fixed system directories (the toolchain's own directory is on it)"
     );
     assert_eq!(rec["build_uid"], 65534);
     // The guest build's cargo step.
@@ -2256,5 +2292,127 @@ fn a_partial_or_malformed_builder_flag_set_is_refused() {
     assert!(
         failures.is_empty(),
         "ATTACK: a partial or malformed builder flag set was taken: {failures:?}"
+    );
+}
+
+/// Round 7: `private_toolchain` (the call that makes the build's compiler a
+/// root-owned copy no build process can write) refuses a source tree another
+/// uid or group can write, and, for a good tree, copies it. Driven through the
+/// function itself (the unit test of `toolchain_tree_problem` alone would not
+/// notice the call being skipped).
+#[test]
+fn the_private_toolchain_copy_is_refused_for_a_tree_another_uid_can_write() {
+    let d = tempfile::tempdir().unwrap();
+    let r = checkout(d.path());
+    let t = d.path().join("toolchains/nightly-fake");
+    for n in ["cargo", "rustc"] {
+        write(&t.join("bin").join(n), "#!/bin/sh\n");
+        chmod_x(&t.join("bin").join(n));
+    }
+    let base = d.path().join("base");
+    std::fs::create_dir_all(&base).unwrap();
+    let code = "\
+import os\n\
+t, base, mode = sys.argv[2], sys.argv[3], sys.argv[4]\n\
+if mode == 'bad': os.chmod(t + '/bin/rustc', 0o775)\n\
+try:\n\
+\x20   c, ru = g.private_toolchain(base, 'nightly', t + '/bin/cargo', t + '/bin/rustc'); res = ['COPIED', c]\n\
+except SystemExit as e:\n\
+\x20   res = [str(e)]\n\
+print(json.dumps(res))";
+    let run = |mode: &str| -> Vec<String> {
+        let o = gpy(
+            &r,
+            code,
+            &[t.to_str().unwrap(), base.to_str().unwrap(), mode],
+        );
+        serde_json::from_slice(&o.stdout).unwrap_or_else(|_| vec![text(&o)])
+    };
+    let good = run("good");
+    let _ = std::fs::remove_dir_all(base.join("toolchains"));
+    let bad = run("bad");
+    assert_eq!(
+        good[0], "COPIED",
+        "control: a root-owned, closed tree is copied: {good:?}"
+    );
+    assert!(
+        good[1].starts_with(base.to_str().unwrap()),
+        "the copy lives under the build's base: {good:?}"
+    );
+    assert!(
+        bad[0].contains("is not root's"),
+        "ATTACK: a toolchain tree a group could write was copied into the build: {bad:?}"
+    );
+}
+
+/// Round 7: the linker tools the build resolves on its fixed PATH are measured
+/// like the compiler: a linker whose digest changed since begin (here the
+/// resolution is replaced the way a swap of /usr/bin/cc would be) is not signed
+/// over. Independent of the toolchain bin-directory listing.
+#[test]
+fn a_changed_linker_is_not_signed_over() {
+    let d = tempfile::tempdir().unwrap();
+    let (r, rec_path, rec) = begun(d.path());
+    let code = "\
+rec = json.load(open(sys.argv[2]))\n\
+real = g.host_tools\n\
+g.host_tools = lambda names: {n: dict(t, sha256='f' * 64) for n, t in real(names).items()}\n\
+try:\n\
+\x20   g.write(sys.argv[2], rec); res = 'SIGNED'\n\
+except SystemExit as e:\n\
+\x20   res = str(e)\n\
+print(json.dumps(res))";
+    let o = gpy(&r, code, &[rec_path.to_str().unwrap()]);
+    let res: String = serde_json::from_slice(&o.stdout).unwrap_or_else(|_| text(&o));
+    discard(&rec);
+    assert!(
+        res.contains("tools the build stands on changed") && res.contains("tools"),
+        "ATTACK: a record was signed over a changed linker: {res}"
+    );
+}
+
+/// Round 7: the build processes run as the unprivileged build uid and as nothing
+/// else. A read-only probe (it changes nothing, so a build that wrongly runs as
+/// root still completes and the uid is what is judged): its uid, whether it can
+/// open the compiler for writing, whether it can read the key directory.
+#[test]
+fn the_build_processes_run_as_an_unprivileged_uid_that_cannot_reach_the_key_or_the_toolchain() {
+    let d = tempfile::tempdir().unwrap();
+    let r = checkout(d.path());
+    let report = PathBuf::from(format!("/tmp/axon-probe-{}-ro", std::process::id()));
+    let _clean = Reports(vec![report.clone()]);
+    write(
+        &r.join("guest/build.rs"),
+        &format!(
+            r##"use std::{{env, fs, path::PathBuf}};
+fn main() {{
+    let uid = fs::read_to_string("/proc/self/status").unwrap_or_default()
+        .lines().find(|l| l.starts_with("Uid:")).unwrap_or("").to_string();
+    let rustc = PathBuf::from(env::var("RUSTC").unwrap());
+    let w = fs::OpenOptions::new().write(true).open(&rustc).is_ok();
+    let base = PathBuf::from(env::var("CARGO_HOME").unwrap()).parent().unwrap().to_path_buf();
+    let keys = fs::read_dir(base.parent().unwrap().join("keys")).is_ok();
+    fs::write("{}", format!("{{uid}}\nopen-rustc-for-write={{w}}\nlist-keys={{keys}}\n")).unwrap();
+}}
+"##,
+            report.display()
+        ),
+    );
+    git(&r, &["add", "-A"]);
+    let out = d.path().join("out");
+    let o = build_env_only(&r, &out, &[]);
+    assert!(o.status.success(), "setup: begin: {}", text(&o));
+    let rec = record(&out);
+    let b = gcargo(&r, &out.join("build-env.json"), Some(CRT), &GUEST_INIT);
+    discard(&rec);
+    assert!(b.status.success(), "control: the step builds: {}", text(&b));
+    let got = std::fs::read_to_string(&report).expect("setup: the probe wrote no report");
+    assert!(
+        got.contains("65534") && !got.contains("\t0\t"),
+        "ATTACK: the build processes ran as the runner's own uid (root): {got}"
+    );
+    assert!(
+        got.contains("open-rustc-for-write=false") && got.contains("list-keys=false"),
+        "ATTACK: build code could open the compiler for writing or list the proof keys: {got}"
     );
 }

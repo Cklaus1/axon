@@ -596,7 +596,7 @@ def toolchain_tree_problem(root):
             st = os.lstat(p)
             if stat.S_ISLNK(st.st_mode):
                 continue
-            if st.st_uid != 0 or st.st_mode & 0o022:
+            if st.st_uid != 0 or st.st_mode & 0o022 != 0:
                 return (f"{p} (uid {st.st_uid}, mode {oct(st.st_mode & 0o7777)}) is not root-owned and "
                         "closed to group/other writes: build code running as that owner or group could "
                         "rewrite the compiler. Install the pinned toolchain as root")

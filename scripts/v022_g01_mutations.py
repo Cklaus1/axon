@@ -3473,8 +3473,8 @@ MUTATIONS += [
      '    if False and why:\n        fail(f"the guest build\'s parent directory is not private to the builder: {why}")\n',
      'axon-fabric', _GBT, 'a_guest_build_under_a_directory_another_uid_can_write_is_refused'),
     ('M1181', "FIELD-ORIGIN (4b-1): cargo runs on the build's private copy of the tree, never in the clone", _GE,
-     '    r = subprocess.run([rec["toolchain"]["cargo"], *args], env=env, cwd=rec["src_dir"])\n',
-     '    r = subprocess.run([rec["toolchain"]["cargo"], *args], env=env, cwd=ROOT)\n',
+     '    r = subprocess.run(as_build_uid([rec["toolchain"]["cargo"], *args]), env=env, cwd=rec["src_dir"])\n',
+     '    r = subprocess.run(as_build_uid([rec["toolchain"]["cargo"], *args]), env=env, cwd=ROOT)\n',
      'axon-fabric', _GBT, 'an_ancestor_config_written_after_begin_does_not_reach_the_guest_build'),
     ('M1182', "FIELD-ORIGIN (4b-1): cargo's effective config is held to begin's BEFORE every invocation", _GE,
      '    if before != config_at_begin(rec):\n', '    if False:\n',
@@ -3524,8 +3524,8 @@ MUTATIONS += [
      '    if False and (not isinstance(k, dict) or k.get("schema") != KERNEL_SCHEMA or k.get("controlled") is not True\n',
      'axon-fabric', _FMT, _FCO),
     ('M1196', "EVIDENCE (4b-3): the kernel's make ran privately, in the constructed environment, with the recorded toolchain", _GE,
-     '    if (not isinstance(base, str) or os.path.dirname(base) != k.get("build_parent")\n',
-     '    if False and (not isinstance(base, str) or os.path.dirname(base) != k.get("build_parent")\n',
+     '    if (not isinstance(bu, int) or isinstance(bu, bool) or bu <= 0 or bu == k.get("builder_uid")\n',
+     '    if False and (not isinstance(bu, int) or isinstance(bu, bool) or bu <= 0 or bu == k.get("builder_uid")\n',
      'axon-fabric', _FMT, _FCO),
     ('M1197', 'EVIDENCE (4b-3): rootfs.sqfs is the bytes the controlled assembly made from the controlled artifacts and pins', _GE,
      '    if (not isinstance(r, dict) or not sq or r.get("sha256") != sq\n',
@@ -7547,8 +7547,8 @@ MUTATIONS += [
      '    env = dict(rec["env"])\n', '    env = {**os.environ, **rec["env"]}\n',
      'axon-fabric', _BE, _HE),
     ('M2090', 'HOST-BUILD (6): the linker is found on a FIXED PATH, never the caller\'s (a planted cc)', _GE,
-     '"PATH": f"{os.path.dirname(cargo)}:/usr/bin:/bin", "RUSTC": rustc}',
-     '"PATH": f"{os.path.dirname(cargo)}:{os.environ.get(\'PATH\', \'\')}", "RUSTC": rustc}',
+     '"HOME": base, "LC_ALL": "C", "PATH": TOOL_PATH, "RUSTC": rustc}',
+     '"HOME": base, "LC_ALL": "C", "PATH": os.environ.get(\'PATH\', \'\'), "RUSTC": rustc}',
      'axon-fabric', _BE, _HE),
     ('M2091', 'BUILD-RECORD (6): the proof key must be owned by the pinned builder', _GE,
      '                or not stat.S_ISREG(st.st_mode) or st.st_uid != builder_uid or st.st_mode & 0o177):\n',
@@ -7767,6 +7767,97 @@ MUTATIONS += [
      '            || false && libc::setresgid(0, 0, 0) != 0',
      'axon-fabric', '--test privileged_launcher', 'the_root_helper_takes_roots_identity_not_its_callers_groups'),
 ]
+
+# ── C9 round 7, workstream BUILDENV3 (amendment 90; M2220-M2259) ─────────────
+# What the build processes can and cannot touch: they run as an unprivileged
+# uid (setpriv), the toolchain is a root-owned private copy not on PATH, the
+# tools are re-measured before anything is signed, and the proof key's directory
+# is root's. The reviewer's attack: a build script planted `cc` next to rustc
+# (every host binary was linked through it) and read the 0400 proof key.
+PSV_IDS |= {f"M{n}" for n in range(2220, 2260)}
+_PLANT = 'a_build_script_cannot_plant_a_linker_or_read_the_proof_key'
+_RO = 'the_build_processes_run_as_an_unprivileged_uid_that_cannot_reach_the_key_or_the_toolchain'
+_TREE = 'a_toolchain_tree_another_uid_or_group_can_write_is_refused'
+_PRIV = 'the_private_toolchain_copy_is_refused_for_a_tree_another_uid_can_write'
+_NOSIGN = 'a_change_to_the_compiler_or_linker_tools_is_never_signed'
+_ISO = 'a_guest_build_record_that_does_not_show_isolated_build_processes_does_not_freeze'
+_FM = '--test freeze_manifest'
+_SETPRIV = (
+    '    return ["/usr/bin/setpriv", f"--reuid={uid}", f"--regid={gid}", "--clear-groups", "--no-new-privs",\n'
+    '            "--", *argv]')
+MUTATIONS += [
+    ('M2220', "BUILD-ENV (7): the build's PATH is the fixed system directories only (the toolchain directory is not on it)", _GE,
+     '"HOME": base, "LC_ALL": "C", "PATH": TOOL_PATH, "RUSTC": rustc}',
+     '"HOME": base, "LC_ALL": "C", "PATH": f"{os.path.dirname(cargo)}:{TOOL_PATH}", "RUSTC": rustc}',
+     'axon-fabric', _BE, _PLANT),
+    ('M2221', 'BUILD-ENV (7): every build process runs as the unprivileged build uid', _GE,
+     _SETPRIV, '    return list(argv)',
+     'axon-fabric', _BE, _RO),
+    ('M2222', 'BUILD-ENV (7): the toolchain the build copies must be root-owned and closed to group/other writes', _GE,
+     '    why = toolchain_tree_problem(src)\n    if why:\n', '    why = toolchain_tree_problem(src)\n    if False:\n',
+     'axon-fabric', _BE, _PRIV),
+    ('M2223', 'BUILD-ENV (7): a toolchain entry another group or world can write is refused', _GE,
+     '            if st.st_uid != 0 or st.st_mode & 0o022 != 0:\n', '            if st.st_uid != 0:\n',
+     'axon-fabric', _BE, _TREE),
+    ('M2224', 'BUILD-ENV (7): a toolchain entry another uid owns is refused', _GE,
+     '            if st.st_uid != 0 or st.st_mode & 0o022 != 0:\n', '            if st.st_mode & 0o022 != 0:\n',
+     'axon-fabric', _BE, _TREE),
+    ('M2225', 'BUILD-ENV (7): a record whose tools changed since begin is never signed', _GE,
+     '        why = measure_problem(rec)\n        if why:\n            fail(why)\n        key, why = proof_key(',
+     '        why = measure_problem(rec)\n        if False:\n            fail(why)\n        key, why = proof_key(',
+     'axon-fabric', _BE, _NOSIGN),
+    ('M2226', "BUILD-ENV (7): the toolchain bin directory's listing is measured (a planted cc beside rustc)", _GE,
+     '            "bin": bin_listing_sha256(os.path.dirname(tc["cargo"])),\n', '            "bin": "",\n',
+     'axon-fabric', _BE, _NOSIGN),
+    ('M2227', "BUILD-ENV (7): the linker tools are measured live, as the build's PATH resolves them", _GE,
+     '            "tools": {n: t["sha256"] for n, t in host_tools(CARGO_HOST_TOOLS).items()}}',
+     '            "tools": {n: t["sha256"] for n, t in tc["host_tools"].items()}}',
+     'axon-fabric', _BE, 'a_changed_linker_is_not_signed_over'),
+    ('M2228', 'BUILD-ENV (7): GIT_CEILING_DIRECTORIES hides an enclosing repository from the build', _GE,
+     '"GIT_CEILING_DIRECTORIES": base,\n', '',
+     'axon-fabric', _BE, 'a_git_repository_enclosing_the_build_directory_is_invisible_to_the_build'),
+    ('M2229', 'BUILD-ENV (7): the proof holds only for a record built under the PINNED build uid', _GE,
+     '    if len(builder) == 3 and rec.get("build_uid") != builder[2]:\n', '    if False and len(builder) == 3 and rec.get("build_uid") != builder[2]:\n',
+     'axon-fabric', _FM, 'a_builder_pin_without_an_unprivileged_build_uid_or_another_one_does_not_freeze'),
+    ('M2230', "BUILD-ENV (7): the judge requires an unprivileged build uid of the record's own", _GE,
+     '    if (not isinstance(bu, int) or isinstance(bu, bool) or bu <= 0 or bu == rec.get("builder_uid")\n            or not str(tc["cargo"])',
+     '    if (not isinstance(bu, int) or isinstance(bu, bool)\n            or not str(tc["cargo"])',
+     'axon-fabric', _FM, _ISO),
+    ('M2231', 'BUILD-ENV (7): the judge requires the toolchain to be the private copy made for the build', _GE,
+     '            or not str(tc["cargo"]).startswith(os.path.join(base, "toolchains") + "/")):\n', '            or False):\n',
+     'axon-fabric', _FM, _ISO),
+    ('M2232', 'BUILD-ENV (7): the judge holds the measured compiler to the recorded toolchain', _GE,
+     '    if (rec.get("measured") or {}).get("cargo") != tc.get("cargo_sha256") or (rec.get("measured") or {}).get("rustc") != tc.get("rustc_sha256") \\\n',
+     '    if False or (rec.get("measured") or {}).get("rustc") != tc.get("rustc_sha256") \\\n',
+     'axon-fabric', _FM, _ISO),
+    ('M2233', 'BUILD-ENV (7): the judge holds the measured linker to the recorded host tools', _GE,
+     '            or {n: (tc.get("host_tools") or {}).get(n, {}).get("sha256") for n in CARGO_HOST_TOOLS} != {n: (rec["measured"]["tools"]).get(n) for n in CARGO_HOST_TOOLS}:\n',
+     '            or False:\n',
+     'axon-fabric', _FM, _ISO),
+    ('M2234', 'BUILD-ENV (7): the judge requires the kernel build to have run as an unprivileged uid', _GE,
+     '    if (not isinstance(bu, int) or isinstance(bu, bool) or bu <= 0 or bu == k.get("builder_uid")\n            or not isinstance(base, str)',
+     '    if (not isinstance(bu, int) or isinstance(bu, bool)\n            or not isinstance(base, str)',
+     'axon-fabric', _FM, _ISO),
+    ('M2235', 'BUILD-ENV (7): check-host-record takes its builder flags together or not at all', _GE,
+     '        if given and len(given) != 3:\n', '        if False:\n',
+     'axon-fabric', _BE, 'a_partial_or_malformed_builder_flag_set_is_refused'),
+    ('M2236', "BUILD-ENV (7): check-host-record's uid flags are plain ASCII decimal (not str.isdigit)", _GE,
+     '            if (not re.fullmatch(r"[0-9]{1,9}", opts["--builder-uid"] + "") or',
+     '            if (not opts["--builder-uid"].isdigit() or',
+     'axon-fabric', _BE, 'a_partial_or_malformed_builder_flag_set_is_refused'),
+    ('M2237', "BUILD-ENV (7): the kernel's make runs as the unprivileged build uid", _GE,
+     '            r = subprocess.run(as_build_uid(argv), env=kenv, cwd=ksrc, stdout=subprocess.DEVNULL)',
+     '            r = subprocess.run(argv, env=kenv, cwd=ksrc, stdout=subprocess.DEVNULL)',
+     'axon-fabric', _BE, 'a_callers_kcflags_cc_or_path_do_not_reach_the_kernel_build'),
+    ('M2238', 'BUILD-ENV (7): the judge holds the recorded environment to the one the build constructs (git ceiling, fixed PATH)', _GE,
+     '    if env != want or rec.get("cargo_home") != want["CARGO_HOME"] or rec.get("target_dir") != want["CARGO_TARGET_DIR"]:\n',
+     '    if False:\n',
+     'axon-fabric', _FM, _ISO),
+]
+# ── end buildenv3 ──
+
+
+
 def cargo_build_tests(package, target, env=""):
     """Build the tests a cell will run, ALONE: (ok, output). A compile error is
     the outcome of THIS cargo invocation, never a string found in a test's

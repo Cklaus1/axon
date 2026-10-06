@@ -1495,3 +1495,149 @@ fn a_freeze_needs_the_merged_mutation_run() {
         "one reason per defect: {e}"
     );
 }
+
+/// C9 round 7 (amendment 90): the record must show that build code ran
+/// unprivileged and could not touch the tools. Each case is the one edit its
+/// guard alone refuses; control: the honest record freezes.
+#[test]
+fn a_guest_build_record_that_does_not_show_isolated_build_processes_does_not_freeze() {
+    each_refused_with(
+        "a guest build record without isolated build processes",
+        "did not run as an unprivileged uid of their own",
+        vec![
+            (
+                "build processes that ran as root",
+                Box::new(|m| {
+                    m["source"]["build_environment"]["build_uid"] = json!(0);
+                }),
+            ),
+            (
+                "a toolchain that is not the private root-owned copy made for the build",
+                Box::new(|m| {
+                    let t = "/root/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/bin";
+                    let b = &mut m["source"]["build_environment"];
+                    b["toolchain"]["cargo"] = json!(format!("{t}/cargo"));
+                    b["toolchain"]["rustc"] = json!(format!("{t}/rustc"));
+                    b["env"]["RUSTC"] = json!(format!("{t}/rustc"));
+                }),
+            ),
+        ],
+        false,
+    );
+    each_refused_with(
+        "a guest build record whose measurement is not its toolchain's",
+        "its measurement of the compiler and linker tools",
+        vec![
+            (
+                "a measured cargo that is not the recorded one",
+                Box::new(|m| {
+                    m["source"]["build_environment"]["measured"]["cargo"] = json!("a".repeat(64));
+                }),
+            ),
+            (
+                "no measurement at all",
+                Box::new(|m| {
+                    m["source"]["build_environment"]
+                        .as_object_mut()
+                        .unwrap()
+                        .remove("measured");
+                }),
+            ),
+            (
+                "a measured linker that is not the recorded one",
+                Box::new(|m| {
+                    m["source"]["build_environment"]["measured"]["tools"]["cc"] =
+                        json!("a".repeat(64));
+                }),
+            ),
+        ],
+        false,
+    );
+    each_refused_with(
+        "a kernel build record whose make ran as root",
+        "its kernel's make did not run",
+        vec![(
+            "a kernel build whose processes ran as root",
+            Box::new(|m| {
+                m["kernel"]["build_environment"]["build_uid"] = json!(0);
+            }),
+        )],
+        false,
+    );
+    each_refused_with(
+        "a guest build record whose environment lacks the git ceiling or a fixed PATH",
+        "cargo did not run in the environment the build constructs",
+        vec![
+            (
+                "no GIT_CEILING_DIRECTORIES (an enclosing repository stamps the binary)",
+                Box::new(|m| {
+                    m["source"]["build_environment"]["env"]
+                        .as_object_mut()
+                        .unwrap()
+                        .remove("GIT_CEILING_DIRECTORIES");
+                }),
+            ),
+            (
+                "the toolchain directory first on PATH (a planted cc is found)",
+                Box::new(|m| {
+                    let b = &mut m["source"]["build_environment"];
+                    let dir = std::path::Path::new(b["toolchain"]["cargo"].as_str().unwrap())
+                        .parent()
+                        .unwrap()
+                        .display()
+                        .to_string();
+                    b["env"]["PATH"] = json!(format!("{dir}:/usr/bin:/bin"));
+                }),
+            ),
+        ],
+        false,
+    );
+}
+
+/// C9 round 7: the builder pin names the unprivileged uid the build ran as,
+/// and the freeze refuses a record built under another; a pin that names none
+/// (or root, or the builder itself) is not a pin.
+#[test]
+fn a_builder_pin_without_an_unprivileged_build_uid_or_another_one_does_not_freeze() {
+    let d = tempfile::tempdir().unwrap();
+    let r = clone(d.path());
+    let doc = |uid: u64, bu: Option<u64>| {
+        let mut v = json!({"schema": "axon-builder-pin/1", "uid": uid, "parent": parent()});
+        if let Some(b) = bu {
+            v["build_uid"] = json!(b);
+        }
+        v.to_string()
+    };
+    for (attack, pin, why) in [
+        (
+            "a pin with no build uid",
+            doc(0, None),
+            "is not a axon-builder-pin/1",
+        ),
+        (
+            "a pin whose build uid is root",
+            doc(0, Some(0)),
+            "is not a axon-builder-pin/1",
+        ),
+        (
+            "a pin whose build uid is the builder's own",
+            doc(65534, Some(65534)),
+            "is not a axon-builder-pin/1",
+        ),
+        (
+            "a pin naming another build uid than the record's",
+            doc(0, Some(4243)),
+            "not the pinned build uid",
+        ),
+    ] {
+        write(&builder_pin_file(&r), &pin);
+        let got = freeze(&r);
+        assert!(
+            got.is_err(),
+            "ATTACK: the freeze bound the image under {attack}: {got:?}"
+        );
+        assert!(got.as_ref().unwrap_err().contains(why), "{attack}: {got:?}");
+    }
+    write(&builder_pin_file(&r), &builder_pin_doc(0, parent()));
+    assert!(freeze(&r).is_ok(), "control: the honest pin freezes");
+}
