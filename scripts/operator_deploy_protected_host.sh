@@ -377,7 +377,7 @@ vv = lambda tc: (tc or {}).get("rustc_vV")  # noqa: E731
 sources = []
 if os.path.isfile(man):
     m = json.load(open(man))
-    sources.append(("the guest build", view(m), vv(((m.get("source") or {}).get("build_environment") or {}).get("toolchain"))))
+    sources.append(("the guest build", view({"source": {"build_environment": (m.get("source") or {}).get("build_environment")}}), vv(((m.get("source") or {}).get("build_environment") or {}).get("toolchain"))))
 if os.path.isfile(pin):
     pj = json.load(open(pin))
     sources.append(("the toolchain pin", {n: (t.get("path"), t.get("sha256")) for n, t in (pj.get("tools") or {}).items()}, pj.get("rustc_vV")))

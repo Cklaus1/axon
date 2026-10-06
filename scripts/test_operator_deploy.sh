@@ -98,7 +98,7 @@ check = {"origins": [], "foreign": []}
 mks = "/usr/bin/mksquashfs"
 rec = {"schema": g.SCHEMA, "controlled": True,
        "toolchain": {"channel": chan, "cargo": cargo, "cargo_sha256": sha(cargo0), "cargo_version": "cargo fixture",
-                     "rustc": rustc, "rustc_sha256": sha(rustc0), "rustc_vV": "rustc fixture\nhost: x86_64-unknown-linux-gnu",
+                     "rustc": rustc, "rustc_sha256": sha(rustc0), "rustc_vV": os.popen(rustc0 + " -vV").read().strip(),
                      "host_tools": hosts, "source": {"cargo": cargo0, "rustc": rustc0}},
        "measured": {"cargo": sha(cargo0), "rustc": sha(rustc0), "bin": "0" * 64,
                     "tools": {n: t["sha256"] for n, t in hosts.items()}},
@@ -384,7 +384,7 @@ refused "ATTACK: no --builder-uid at all (the record's own word is never taken)"
 refused "ATTACK: no --build-uid (the uid the build ran as is the operator's word too)" "--build-uid N is required" \
   bash "$KIT" --from "$CLONE" --bin-dir "$BIN" --builder-uid "$BUILDER_UID" --builder-parent "$KEYPARENT"
 refused "ATTACK: a build uid equal to the builder uid (build code as the key holder)" "must differ from --builder-uid" \
-  bash "$KIT" --from "$CLONE" --bin-dir "$BIN" --builder-uid "$BUILDER_UID" --builder-parent "$KEYPARENT" --build-uid "$BUILDER_UID"
+  bash "$KIT" --from "$CLONE" --bin-dir "$BIN" --builder-uid "$BUILD_UID" --builder-parent "$KEYPARENT" --build-uid "$BUILD_UID"
 refused "ATTACK: a build uid other than the one the record was built under" "not the pinned build uid" \
   bash "$KIT" --from "$CLONE" --bin-dir "$BIN" --builder-uid "$BUILDER_UID" --builder-parent "$KEYPARENT" --build-uid 4243
 refused "ATTACK: --apply without --expect-commit (the commit judges itself)" "--apply needs --expect-commit" \
@@ -539,12 +539,16 @@ set -uo pipefail
 W=$1 KIT=$2 BIN=$3 OP=$4 SIGNER_PUB=$5 CLONE=$6 BUID=$7 BPAR=$8 BBU=$9 CMT=${10}
 fail() { echo "FAIL(ns): $*"; exit 1; }
 # Isolation first: nothing below may reach the host.
+# The builder-private parent (the fixture's proof keys) lives under /var/lib, which is
+# shadowed below: carry it across with its owners and modes.
+cp -a "$BPAR" "$W/keysave" || fail "cannot save the builder-private parent"
 mkdir "$W/etc"; mount -t tmpfs -o mode=0755 tmpfs "$W/etc" && cp -a /etc/. "$W/etc/" && mount --bind "$W/etc" /etc \
   || fail "cannot shadow /etc"
 for d in /usr/local /var/lib /var/log /var/spool /run /srv; do
   mount -t tmpfs -o mode=0755 tmpfs "$d" || fail "cannot shadow $d"
 done
 [ -L /var/mail ] || mount -t tmpfs -o mode=0755 tmpfs /var/mail || fail "cannot shadow /var/mail"
+mkdir -p "$BPAR" && cp -a "$W/keysave/." "$BPAR/" && chmod 0755 "$BPAR" || fail "cannot restore the builder-private parent"
 mkdir -p /usr/local/bin && install -m 0755 "$W/firecracker" "$W/jailer" /usr/local/bin/
 grep -q axon-fabric /etc/passwd && fail "the shadow /etc already has axon users"
 ARGS=(--from "$CLONE" --bin-dir "$BIN" --suite-registry "$OP/suites/registry.json"
