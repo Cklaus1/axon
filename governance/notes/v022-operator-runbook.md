@@ -532,6 +532,22 @@ verification_binding, no_open_blocking_false_greens; `PASS` today) stay `PASS`.
 Operator decision B still holds. Zero protected trials COUNT in the loop until an observed
 execution path exists (amendment 44). Readiness and counting are separate questions.
 
+## Cleaning Fabric's run directories after a crash
+
+Fabric makes one directory per run under `<state>/runs/`, named
+`<16 hex of sha256(operation)>-<pid>-<seq>[suffix]`, created new (never reused) and removed when
+the run ends normally (`RunDir::drop`). A crash, `SIGKILL` or power loss skips the removal, and
+nothing sweeps: leftovers accumulate (they hold the run's materialised candidate and suite inputs
+and its outputs, so they are as sensitive as the run). There is no automatic cleanup. To clear them:
+
+1. Stop Fabric (or confirm no submit is in flight).
+2. Remove the entries of `<state>/runs/` whose `<pid>` field is not a live process. When Fabric is
+   stopped, that is every entry: `rm -rf <state>/runs/*`.
+3. Leave `<state>/runs/` itself in place.
+
+Only the leftover directory is affected: a new run never reuses a name, so a stale directory cannot
+change a later result (amendment 71). This is an availability and disk-space matter, not a trust one.
+
 ## Follow-ups this deployment surfaced
 
 Closed by amendments 65 and 66 (the gaps workstream), with the kit updated to match:
@@ -553,9 +569,10 @@ Still open:
    (the helper holds every caller to it); the guest's init and axon digests are what the
    measured profile manifest names; the nonce is the custodian's. The guest policy digest and
    the authority epoch are the principal's word (amendment 79). The verifier digest names the
-   executable FILE the Fabric process started from, not the instructions it runs: `LD_PRELOAD`
-   or ptrace of a same-uid process defeats that, and `kernel.yama.ptrace_scope=2` closes only
-   the ptrace half (a host setting; the kit does not check it).
+   executable file the Fabric-uid caller had when the helper opened `/proc/<ppid>/exe`, not the
+   instructions it runs and not that it was started from that file: any Fabric-uid code can exec
+   the pinned file after spawning the helper (no `LD_PRELOAD` or ptrace needed; Yama does not touch
+   that route), or use `LD_PRELOAD` or ptrace (amendment 84; see amendment 85 for any later change).
 2. **The deployable `--guest-cmd`** (decision H, step 6). The preflight stays `PENDING` until it
    exists.
 3. **`x3_l0_hypervisor_boundary`'s reason text** in `b263_qualify.sh` is still the WSL2/Hyper-V

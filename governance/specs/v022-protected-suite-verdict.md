@@ -154,9 +154,10 @@ Each clause names what must hold. The negative matrix below names how each one f
   runs only if the candidate calls it, so a suite must assert after the call.
 - Sealing, containment and per-provenance kernels run in the guest interpreter as certified at
   `31413ca7` (`governance/proofs/v022-pci/CERTIFICATION.md`, local backend, EMPTY effect ceiling)
-  plus amendments 53/60/72/78 (the delta), each covered by named PCI gate rows and mutation rows
-  re-run at the frozen head (`governance/notes/v022-pci-delta.md`). A non-empty guest effect
-  ceiling is OUTSIDE the PCI certification.
+  plus amendments 53/60/72/78 (the delta, listed from git in `governance/notes/v022-pci-delta.md`),
+  each exercised by named PCI gate rows (`scripts/v022_pci_gates.sh`, 28 rows) and covered by
+  named mutation rows; that those rows are re-run and killed at the frozen head is a FREEZE
+  OBLIGATION, not yet shown. A non-empty guest effect ceiling is OUTSIDE the PCI certification.
 - A pass without completion evidence is Unknown. A candidate that prints a second line naming a
   test turns that test's genuine verdict into Unknown (fail-safe: never into a pass).
 
@@ -166,6 +167,9 @@ Each clause names what must hold. The negative matrix below names how each one f
   `guest-unobserved`).
 - Backend `linux-microvm-protected`, under a current B263 qualification. Currency is judged at
   dispatch and just before launch, not again at signing (a stated limit).
+- A protected receipt under a non-empty guest effect ceiling is outside the PCI certification
+  (PSV-3); the signed receipt names only the policy digest, not the ceiling
+  (`governance/notes/v022-pci-delta.md`, section c).
 - The verdict carries the guest runner's completion evidence.
 - A verdict from any other backend, or reconstructed outside the guest, is never attested as
   protected.
@@ -185,7 +189,7 @@ Each clause names what must hold. The negative matrix below names how each one f
 - A `PreflightObservation`, signed by the observer's own key (authorised by the operator root key,
   distinct from every other role), is bound to a custodian nonce and epoch, and names:
   - host profile;
-  - Fabric and Firecracker revisions;
+  - Fabric revision and Firecracker digest;
   - guest image, kernel, verifier, suite and policy digests;
   - the intended launch manifest digest.
 - Fabric consumes it and cannot mint it: it holds no observer key, so it cannot forge the
@@ -198,11 +202,16 @@ Each clause names what must hold. The negative matrix below names how each one f
     helper holds the caller's executable to on every launch and relay: the verifier digest and
     the Fabric revision;
   - NAMED by the measured profile manifest: the guest init and axon digests;
-  - the custodian's: the nonce, issued for that epoch, observed once;
+  - the nonce: issued for that epoch and unspent (custodian), observed once (observer);
   - the principal's word, NOT measured: the guest policy digest (the root helper binds the policy
     it boots to it) and the authority epoch (the loop's scope pointer, joined at intake).
-  The verifier digest is the digest of the executable file the Fabric process was started from; it
-  does not bind the instructions the process runs (`LD_PRELOAD`, ptrace of a same-uid process).
+  The verifier digest is the digest of the executable file the Fabric-uid process had when the
+  helper opened `/proc/<ppid>/exe`. Any Fabric-uid code can arrange that this is the pinned file:
+  exec it after spawning the helper (executed: 18 of 20 attempts got an observer-signed
+  observation naming the pinned verifier; no `LD_PRELOAD` or ptrace needed, and Yama does not
+  touch the exec route), `LD_PRELOAD`, or ptrace. So the helper serves a caller whose executable
+  at that instant is the pinned file, not necessarily the pinned program's instructions (amendment
+  84; see amendment 85 for any later change to when the helper measures it).
 - Freshness and one-use are enforced where the launch happens, not at intake: Fabric's early
   check and the root helper verify the observation's age and epoch and the custodian spends its
   nonce once. Intake rejects a receipt whose observation digest does not join, or whose launch
@@ -211,9 +220,14 @@ Each clause names what must hold. The negative matrix below names how each one f
   expired by the passing of time (protocol §9, C9 correction).
 
 **PSV-7 — Development cannot pass as protected.**
-- The local interpreter backend, a development-class evaluation, and a receipt from any host
-  without a current B263 qualification cannot satisfy the protected profile (ADR-001 D3), in code
-  and in the readiness derivation.
+- The local interpreter backend, a development-class evaluation, and a receipt without a current
+  operator-installed B263 qualification cannot satisfy the protected profile (ADR-001 D3), in code
+  and in the readiness derivation. Host identity is checked at install by the operator kit
+  (`scripts/operator_deploy_protected_host.sh`), not by Fabric or readiness, which require only a
+  non-empty `host` in the record (`accept_b263`); post-C9 item N makes it a code rule. The Stage 7
+  `b263_qualification` readiness component is a bare sha pin in a mutable status file (redundant
+  weak check; it cannot make Stage 7 READY alone, because the operator verifier component judges
+  B263 currency).
 
 ## Negative matrix (each must fail closed, and be tested)
 

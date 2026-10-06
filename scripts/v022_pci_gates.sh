@@ -36,6 +36,21 @@ ROWS=(
   "17 working directory|axon-fabric|check_effects|a_suites_runtime_fixture_is_the_pinned_one"
   "21 sealed candidate|axon-core|lib|resolver::tests::a_sealed_module_cannot_reach_the_operators_names interp::tests::runtime_sealing_holds_without_the_static_check"
   "21 sealed candidate|axon-fabric|check_effects|a_sealed_candidate_cannot_reach_the_operators_names a_sealed_candidate_cannot_reach_operator_state_by_handle_or_definition"
+  # The interpreter changes since the certified 31413ca7 (governance/notes/v022-pci-delta.md).
+  # One group per amendment, each with unit tests AND a real-runner test (axon_psv::runner::run),
+  # so a delta is exercised through the path a protected verdict takes. To extend: add a row
+  # (or names to a row) for the amendment's own named tests; the count check below fails the gate
+  # if a named test is absent, renamed, filtered out or #[ignore]d.
+  "am53 declared-boundary cast|axon-core|lib|interp::tests::a_confused_scalar_never_crosses_a_declared_return interp::tests::a_confused_struct_never_crosses_as_another_struct interp::tests::a_confused_argument_never_enters_a_declared_parameter interp::tests::a_closures_confused_result_never_crosses_its_declared_type"
+  "am53 declared-boundary cast|axon-psv|sealed_frames|the_candidate_never_chooses_the_operators_judging_method"
+  "am60 dispatch-key cast|axon-core|lib|interp::tests::a_value_of_another_integer_width_never_crosses_a_declared_integer interp::tests::a_value_of_another_fixed_width_never_crosses_a_declared_fixed_width interp::tests::a_confused_enum_never_crosses_as_another_enum"
+  "am60 dispatch-key cast|axon-psv|sealed_frames|the_candidate_never_selects_the_operators_code_by_width_or_by_name"
+  "am72 seal-crossing positions|axon-core|lib|interp::tests::a_value_at_an_undetermined_type_parameter_never_crosses_the_seal interp::tests::a_type_parameter_inside_any_shape_is_never_filled_by_the_candidate"
+  "am72 seal-crossing positions|axon-psv|sealed_frames|an_undetermined_type_position_never_selects_the_operators_impl"
+  "am72 dict snapshot (psv1d may replace)|axon-core|lib|interp::tests::a_dict_the_candidate_mutated_is_verified_at_every_edge_back"
+  "am72 dict snapshot (psv1d may replace)|axon-psv|sealed_frames|a_dict_entry_the_operator_held_is_never_retyped_by_the_candidate"
+  "am78 held-value judgement|axon-core|lib|interp::tests::a_position_the_operator_held_is_judged_by_what_it_held_when_replaced interp::tests::a_placeholder_the_operator_held_is_not_filled_by_the_candidate interp::conform::walk_bound_tests::a_value_nested_past_the_bound_is_refused_not_left_unvisited"
+  "am78 held-value judgement|axon-psv|sealed_frames|a_replaced_or_filled_position_is_judged_by_what_the_operator_held"
 )
 
 for row in "${ROWS[@]}"; do
@@ -46,8 +61,15 @@ for row in "${ROWS[@]}"; do
   for n in $names; do
     want=$((want + 1))
     if [ "$target" = lib ]; then
-      mod="${n%%::*}"; fn="${n##*::}"
-      f="crates/$pkg/src/$mod.rs"
+      # interp::conform::walk_bound_tests::x lives in src/interp/conform.rs: strip the
+      # trailing `tests`-style module and the fn, then try the longest path that is a file.
+      fn="${n##*::}"; modpath="${n%::*}"; f=""
+      while [ -n "$modpath" ]; do
+        c="crates/$pkg/src/${modpath//:://}.rs"
+        if [ -f "$c" ]; then f="$c"; break; fi
+        case "$modpath" in *::*) modpath="${modpath%::*}" ;; *) modpath="" ;; esac
+      done
+      [ -n "$f" ] || f="crates/$pkg/src/${n%%::*}.rs"
     else
       fn="$n"; f="crates/$pkg/tests/$target.rs"
     fi
