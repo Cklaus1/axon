@@ -175,19 +175,33 @@ AXON_KERNEL_BACKEND=linux scripts/build-guest-image.sh
   recorded. Before you pin them, check them against your distribution's packages (the kit
   prints any `DRIFT` since the build).
 
-## 3. Release binaries from the same clone
+## 3. Host binaries: the CONTROLLED host build (amendment 86)
 
 ```bash
 cd /srv/axon-freeze
-env -u RUSTC_WRAPPER CARGO_TARGET_DIR=/var/lib/axon-build/target \
-  cargo build --release --locked -p axon-fabric --bins       # production: no test-trust-root feature
-/var/lib/axon-build/target/release/axon-fabric verifier-manifest   # build production, profile release,
-                                                                    # source_dirty false, fabric_revision = HEAD
+# as the BUILDER account (the one the kit is told with --builder-uid; AXON_GUEST_BUILD_PARENT must be
+# the --builder-parent, the same private directory the guest build records live under)
+AXON_GUEST_BUILD_PARENT=/home/builder/.cache/axon-guest-build \
+  python3 scripts/guest_build_env.py host-build /var/lib/axon-build/host
 ```
 
-A target dir outside the tree is the simplest choice. The kit checks all of the following
-through the verifier's own report:
+`host-build` makes a fresh standalone clone of the HEAD, a fresh empty target dir and
+`CARGO_HOME`, runs the one fixed `cargo build --release --locked -p axon-fabric --bins` in a
+constructed environment (your `RUSTC_WRAPPER`, flags, `PATH` and the like are dropped, not
+refused), and writes `host-build.json` beside the four binaries, signed by the builder. It
+builds from nothing every time (minutes; the network for crates). The output directory must
+not exist.
 
+**Migration.** A `--bin-dir` that is the output of a plain `cargo build` (no
+`host-build.json`) is REFUSED. Pass `--builder-uid N --builder-parent DIR` to every kit run
+that judges binaries or the guest: they are your word on who builds (the kit installs them as
+`/etc/axon/builder-pin.json`, which the freeze reads and refuses without), and a build record
+is judged against them, never against what it says. The kit checks:
+
+- the record is signed by that builder, names exactly the four binaries and the clone's HEAD,
+  and every binary is the bytes it names (the directory is copied aside first);
+- its linker (`cc`, `ld`) is the one the guest build recorded and, once installed, your
+  toolchain pin;
 - `axon-fabric` is a clean production release build of the clone's HEAD;
 - `axon-protected-launcher --probe` reports `build: production`;
 - `axon-custodian` and `axon-observer` refuse `--test-config`, as production builds do.
@@ -196,7 +210,7 @@ through the verifier's own report:
 
 ```bash
 K=/srv/axon-freeze/scripts/operator_deploy_protected_host.sh
-ARGS=(--from /srv/axon-freeze --expect-commit <FREEZE_SHA> --bin-dir /var/lib/axon-build/target/release
+ARGS=(--from /srv/axon-freeze --expect-commit <FREEZE_SHA> --bin-dir /var/lib/axon-build/host --builder-uid <builder uid> --builder-parent <builder private parent>
       --suite-registry /path/to/suites/registry.json    # cortex-check-registry/1; relative paths come along
       --grant-registry /path/to/grants/grants.json      # axon-fabric-grant-registry/1 + its grant files
       --signer-public-key <64 hex>                       # from step 5; omit on the first pass

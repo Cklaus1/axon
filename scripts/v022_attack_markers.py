@@ -1914,3 +1914,21 @@ ATTACK_MARKERS.update({
 
 
 ATTACK_MARKERS['M890'] = r'ATTACK: a restore that left a foreign interpreter in place was reported as restored'
+
+# C9 round 6, workstream BUILDENV2 (M2080-M2119; amendment 86).
+ATTACK_MARKERS.update({
+    'M2080': r'ATTACK: a guest build record its runner did not sign passed the proof: \[".*forgedaccount',
+    'M2081': r'ATTACK: the freeze accepted a builder pin owned by uid',
+    'M2082': r'ATTACK: a host build directory the pinned builder did not make was accepted: \["nobuild',
+    'M2083': r'ATTACK: a host build directory the pinned builder did not make was accepted: \["revision',
+    'M2084': r'ATTACK: a host build directory the pinned builder did not make was accepted: \["dropped',
+    'M2085': r'ATTACK: a host build directory the pinned builder did not make was accepted: \["binary',
+    'M2086': r'ATTACK: a host build directory the pinned builder did not make was accepted: \["symlink',
+    'M2087': r'ATTACK: a host build directory the pinned builder did not make was accepted: \["extra',
+    'M2088': r'ATTACK: a host build directory the pinned builder did not make was accepted: \["edit',
+    'M2089': r"ATTACK: a caller's RUSTC_WRAPPER reached the controlled host build",
+    'M2090': r"ATTACK: a cc planted on the caller's PATH linked the controlled host build",
+    'M2091': r'ATTACK: a guest build record its runner did not sign passed the proof: \[.*a key owned by another account',
+    'M2092': r'ATTACK: a guest build record its runner did not sign passed the proof: \[.*a key directory owned by another account',
+})
+

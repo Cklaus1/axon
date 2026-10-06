@@ -8,8 +8,13 @@
     guest_build_env.py rootfs  RECORD.json OUT.sqfs
     guest_build_env.py dist    RECORD.json DIST-DIR   (digest of every artifact in dist,
                        refused unless it is what the controlled steps produced)
-    guest_build_env.py check-host-build CLONE [--cargo PATH]   (round 5: the AMBIENT
-                       build of the host binaries, judged by the guest's classifier)
+    guest_build_env.py host-build OUTDIR   (round 6: the CONTROLLED build of the host
+                       binaries -- fresh clone, fresh empty target, constructed
+                       environment, one fixed invocation -- and a signed record)
+    guest_build_env.py check-host-record DIR [--commit SHA] --builder-uid N --builder-parent P
+                       (judge a host-build output against the PINNED builder)
+    guest_build_env.py check-host-build CLONE [--cargo PATH]   (cargo's effective config
+                       for the clone, judged in a constructed environment)
     guest_build_env.py discard RECORD.json
     guest_build_env.py kernel  KERNEL-RECORD.json DIST-DIR PROFILE-DIR
     guest_build_env.py toolchain-pin MANIFEST.json   (amendment 65: the image's
@@ -89,6 +94,13 @@ C9 round 5 (FIELD-ORIGIN, amendment 80):
    the manifest and the freeze read digests from the record and refuse a
    record whose proof does not hold. Residual trust: the builder account; the
    key files must travel if the freeze runs elsewhere.
+
+C9 round 6 (FIELD-ORIGIN, amendment 86): the proof's builder is the OPERATOR's
+(`/etc/axon/builder-pin.json`: uid and private parent), never the record's own
+-- the key is looked up under the pinned parent, owned by the pinned uid, so a
+record naming another account and its own directory finds no key. The host
+binaries are built by `host-build` (a retry in a reused target dir had linked
+dependencies a wrapper compiled) and installed only from its signed record.
 
 What is recorded, not independently verified: the identity of the host tools
 (and of the toolchain) is their sha256 at build time; nothing pins the

@@ -4192,7 +4192,9 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       verifier identity (`build_state`, pinned field for field by `protected_verifier_ready.py`, which also
       refuses a non-empty one) and REFUSES a production build (release profile, no `test-trust-root` feature).
       The kit refuses a verifier whose `build_state` is non-empty and calls the new
-      `guest_build_env.py check-host-build CLONE`, the guest's classifier over the kit's OWN environment (no
+      `guest_build_env.py check-host-build CLONE` (SUPERSEDED by amendment 86: judged a list of ambient
+      variables, which the controlled host build now drops; it judges a constructed environment) -- the
+      guest's classifier over the kit's OWN environment (no
       `CARGO_*` but `CARGO_HOME`/`CARGO_TARGET_DIR`, no `RUSTC*`/`RUSTFLAGS`/`RUSTUP_TOOLCHAIN`, no C-toolchain
       variable, and an effective config from the clone, its ancestors and `CARGO_HOME` that is only the committed
       one). Rows M1884 (CARGO_* refusal), M1897-M1899 (`refusal`, the workspace wrapper, `build.rs` stopping
@@ -4216,6 +4218,11 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       `<parent>/keys/<id>.key` files must travel (or the freeze runs as root/the builder on the build host);
       otherwise it refuses ("cannot be checked"). **Residual trust: the builder account** (anyone who can
       read the key can sign any record), and the toolchain pin for the binaries' own bytes.
+      **CORRECTED by amendment 86:** that statement was wider than stated and the proof, as built here,
+      authenticated nothing. The judge took the builder's uid and key directory FROM THE RECORD it was
+      judging, so anyone who could write a private key into ANY directory they owned (executed: uid 65534)
+      signed a record the freeze accepted. After amendment 86 the residual is: whoever can act as the
+      account the OPERATOR pinned (`/etc/axon/builder-pin.json`), or write into its private parent.
     - **Kit.** `operator_deploy_protected_host.sh` runs `shape_problems` and `image_problems` on the guest
       records before installing. `test_operator_deploy.sh` builds its synthetic image from properly signed
       records and refuses (by real kit runs) a verifier with a build state, `RUSTC_WRAPPER`/`RUSTFLAGS`/
@@ -4426,4 +4433,83 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
     - **Rows.** None added: no code guard changed. The one added test is a drift test over two
       constants. M1960-M1969 are unused.
 
+## Amendment 86: the proof is the OPERATOR's pinned builder's, and the host binaries come from a controlled build (C9 round 6, buildenv2)
+
+86. **FIELD-ORIGIN, two executed BLOCKERS and a major-adjacent.** (The round-5 `cfg(...)` fix holds: the
+    reviewer's battery refused every spelling.)
+    - **Blocker 1: the build-record proof authenticated nothing.** `proof_problems` found the key under
+      `rec["build_parent"]`, owned by `rec["builder_uid"]`, both read from the record being judged; the
+      ancestor and ownership checks accepted whichever uid the record named. Executed as root: a record naming
+      uid 65534, a private directory owned by 65534, attacker-chosen binary digests and host tools copied from
+      the real toolchain, signed under a key in that directory, passed `shape_problems` and `image_problems`
+      (the freeze's and the kit's judge). **Design.** Who the builder is, and where its private parent lives,
+      is the OPERATOR's word: `/etc/axon/builder-pin.json` (`axon-builder-pin/1`: `{uid, parent}`), read
+      through the same root-owned-chain walk as the toolchain pin (`operator_file_problem`), installed by the
+      kit's `toolchain` step from `--builder-uid N --builder-parent DIR`, and REQUIRED by the freeze
+      (`image_problems(builder=None)` reads it; absent or not the operator's means refused). The key is
+      looked up under THE PIN'S parent, must be owned by THE PIN'S uid, in a directory likewise, under
+      ancestors only root or that uid can write; the record's own `builder_uid` and `build_parent` are never
+      used to find it (so a forged record finds no key). The runner-side judge (`dist_problems`, run by the
+      account that built) uses the judging process's own euid and `AXON_GUEST_BUILD_PARENT`. A pin file, not
+      the judge's euid, because freeze, kit and build need not be one account (the freeze runs as root in a
+      private mount namespace in the tests, and the operator's builder is an unprivileged account).
+      **Residual trust, stated correctly:** the proof is exactly as strong as the pin: whoever can act as the
+      pinned account, or write into its private parent, can sign any record; and root on the judging host.
+    - **Blocker 2: the host-binary refusal was defeated by a retry in the same target dir.** `build_state`
+      is read only by axon-fabric's `build.rs`, which exits 1 under `RUSTC_WRAPPER` after cargo has compiled
+      its dependencies under the wrapper (91 wrapped rustc calls, incl. `axon_loop_contracts`, `axon_psv`,
+      `ring`, `sha2`); the same command without the wrapper compiled only axon-fabric, axon-vm, axon-loop
+      and linked the wrapped rlibs; `verifier-manifest` then said `build_state=''`. **Design.** The host
+      binaries are built by a CONTROLLED step, `python3 scripts/guest_build_env.py host-build OUTDIR`: a fresh
+      STANDALONE clone of the tree's HEAD (so the build's own provenance is measured on a real clone), a
+      fresh EMPTY target dir and `CARGO_HOME` it creates (`mkdir`, which fails on an existing one), the
+      constructed environment (cleared; `PATH` = the pinned toolchain's bin dir and `/usr/bin:/bin`, the
+      pinned `rustc`; nothing else inherited, so a caller's wrapper, flags, `AR_*`, `RANLIB_*`, `CARGO`,
+      `RUSTUP_HOME` and a planted `cc` never exist), cargo's effective config checked before and after, ONE
+      fixed invocation `cargo build --release --locked -p axon-fabric --bins --quiet`. It copies the four
+      binaries (`axon-fabric`, `axon-protected-launcher`, `axon-custodian`, `axon-observer`) and writes
+      `OUTDIR/host-build.json`, SIGNED by the builder (blocker 1's mechanism). The kit REFUSES a `--bin-dir`
+      without such a record, a binary that is not what the record names, a record the pinned builder did not
+      sign, extra files, another revision, a missing `--builder-uid/--builder-parent`; it copies the directory
+      aside first so what is judged is what is installed. A retry shares nothing with an earlier build.
+      **Record format** (`axon-host-build/1`, for the revision plumbing of obsbind2): `{schema, controlled,
+      source_revision: <40 hex, HEAD of the fresh clone>, artifacts: {<binary>: <sha256>} for exactly the four
+      binaries, toolchain: {channel, cargo, cargo_sha256, rustc, rustc_sha256, rustc_vV, host_tools: {cc, ld:
+      {path, realpath, sha256, version}}}, env, builder_uid, build_parent, build_parent_ancestors, src_dir,
+      cargo_home, target_dir (both `*_created_empty`), effective_config, builds: [{name:
+      "axon-fabric-host", args, rustflags: null, config_before, config_after}], proof: {schema, id, hmac}}`.
+      The judge is `guest_build_env.host_record_problems(dir, (uid, parent), commit)`; the revision to pin
+      into the helper config can be read from `source_revision` of a record that judge accepts, instead of
+      from the installed binary's self-report. The linker (`cc`, `ld`) the host build recorded is compared by
+      the kit to the guest build's recorded tools and, when installed, the operator's toolchain pin.
+    - **Major-adjacent: `check-host-build` judged a LIST of ambient variables** (it accepted `AR_*`,
+      `RANLIB_*`, `RUSTUP_HOME`, `CARGO`, `RUST_TARGET_PATH`, `LIBRARY_PATH`, `CRATE_CC_NO_DEFAULTS` and an
+      attacker directory first on `PATH`; a planted `cc` ran during an axon-fabric rebuild). It now judges
+      cargo's effective config in a CONSTRUCTED environment (fixed PATH, fresh empty `CARGO_HOME`) from the
+      clone, ancestors included; the ambient environment is not consulted, because the controlled host build
+      drops it. Defence in depth, not the barrier. `build_state` stays in the verifier identity and in the
+      kit's self-report check; a controlled build never has any, so that kit check is DOMINATED by the record
+      check and has no test of its own (stated, not claimed).
+    - **Field origins (tables of amendments 79/80, corrected).** The proof key's parent and the builder uid:
+      THE OPERATOR'S (pin). The host binaries' digests and `source_revision`: the controlled host build's
+      signed record. The helper config's `fabric.revision`: still the installed binary's own report read as
+      root by the kit, so TOLD, not PINNED, until obsbind2 takes it from the signed record's
+      `source_revision` (the amendment 79 row classing it PINNED (M1850) should read: told by the kit,
+      cross-checked against the signed record by `check-host-record --commit`). The host-toolchain pin's
+      `cc`/`ld` are now also compared to the host build's recorded linker (kit, `binaries` step).
+    - **Rows (killed by their own attack).** M2080 (key under the pinned parent/uid, never the record's),
+      M2081 (the pin is an operator file), M2082-M2088 (the host record: one invocation, revision, exact
+      binary names, each digest, no symlink, no extra file, the builder's proof), M2089 (host build env
+      constructed, not the caller's), M2090 (fixed PATH: the planted `cc`), M2091-M2092 (key and its
+      directory owned by the pinned uid), M1884 retargeted (the host config check applies the classifier),
+      M1184/M1185/M1893-M1895 re-pointed at the changed text. Not rows (dominated by a sibling that also
+      refuses, so a mutation is REFUSED_ELSEWHERE): the pin's schema/shape check, a fresh target dir (`mkdir`
+      refuses an existing one), an existing OUTDIR (`makedirs` refuses it too). Kit guards, each removed
+      alone by hand with the kit test run (see the report): the host-record check, the required
+      `--builder-uid`, the linker comparison, the config check.
+    - **Matrix.** A154-A157 (the integrator renumbers). **Operator deployment.** Install the builder pin (the
+      kit's `toolchain` step does, from `--builder-uid/--builder-parent`); build the host binaries with
+      `host-build` as the builder and pass THAT directory as `--bin-dir` (a plain `cargo build` output is
+      refused); re-pin `verifier.json`; the guest image records are unchanged in format (the builder pin is
+      what they are judged against).
 
