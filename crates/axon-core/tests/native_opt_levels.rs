@@ -163,6 +163,63 @@ fn every_opt_level_prints_what_the_interpreter_prints() {
     let _ = std::fs::remove_file(&src);
 }
 
+/// Unbounded recursion must stay a graceful exit 101 at every level, like the
+/// interpreter's recursion-limit panic. With tail-recursion elimination the
+/// optimiser turned this into a loop spinning ~2^63 times (a hang), so the
+/// native run is bounded by a deadline here.
+#[test]
+fn optimised_unbounded_recursion_still_overflows_gracefully() {
+    let src = write_src(
+        "rec",
+        "fn rec(n: i64) -> i64 { rec(n + 1) }\nfn main() -> i64 { rec(0) }\n",
+    );
+    let interp = axon().arg("run").arg(&src).output().expect("spawn run");
+    assert_eq!(interp.status.code(), Some(101), "{}", stderr_of(&interp));
+
+    for level in ["2", "3", "s", "z"] {
+        let bin = tmp(&format!("rec_bin_{level}"));
+        let _ = std::fs::remove_file(&bin);
+        let b = build(&["--no-cache", "--opt-level", level], &src, &bin);
+        if codegen_absent(&b) {
+            let _ = std::fs::remove_file(&src);
+            return;
+        }
+        assert_eq!(
+            b.status.code(),
+            Some(0),
+            "build O{level}:\n{}",
+            stderr_of(&b)
+        );
+        let mut child = Command::new(&bin)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("run native");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while child.try_wait().expect("poll native").is_none() {
+            if std::time::Instant::now() > deadline {
+                let _ = child.kill();
+                panic!("O{level}: unbounded recursion hung instead of overflowing");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        let out = child.wait_with_output().expect("collect native");
+        let _ = std::fs::remove_file(&bin);
+        assert_eq!(
+            out.status.code(),
+            Some(101),
+            "O{level}: {}",
+            stderr_of(&out)
+        );
+        assert!(
+            String::from_utf8_lossy(&out.stderr).contains("stack overflow"),
+            "O{level}: {}",
+            stderr_of(&out)
+        );
+    }
+    let _ = std::fs::remove_file(&src);
+}
+
 #[test]
 fn release_ir_is_optimised_and_program_functions_are_internal() {
     let src = write_src("fib_ir", FIB);
@@ -197,7 +254,10 @@ fn release_ir_is_optimised_and_program_functions_are_internal() {
     let fib0 = fib_body(&ir0);
     // AX-21: O0 spills the parameter to a stack slot; the O2 pipeline
     // (mem2reg/SROA) removes it.
-    assert!(fib0.contains("alloca"), "O0 fib should be unoptimised:\n{fib0}");
+    assert!(
+        fib0.contains("alloca"),
+        "O0 fib should be unoptimised:\n{fib0}"
+    );
     assert!(
         !fib2.contains("alloca"),
         "--release must run the IR pipeline (no allocas left in fib):\n{fib2}"
@@ -269,7 +329,12 @@ fn hosted_emit_obj_writes_a_relocatable_object_not_a_binary() {
         &src,
         &obj,
     );
-    assert_eq!(cached_obj.status.code(), Some(0), "{}", stderr_of(&cached_obj));
+    assert_eq!(
+        cached_obj.status.code(),
+        Some(0),
+        "{}",
+        stderr_of(&cached_obj)
+    );
     assert_eq!(elf_type(&obj), 1, "--emit-obj with a warm cache");
     let _ = std::fs::remove_file(&obj);
 
@@ -279,7 +344,12 @@ fn hosted_emit_obj_writes_a_relocatable_object_not_a_binary() {
         &src,
         &ll,
     );
-    assert_eq!(cached_ir.status.code(), Some(0), "{}", stderr_of(&cached_ir));
+    assert_eq!(
+        cached_ir.status.code(),
+        Some(0),
+        "{}",
+        stderr_of(&cached_ir)
+    );
     let text = std::fs::read_to_string(&ll).expect("--emit-llvm with a warm cache writes IR text");
     assert!(text.contains("define"), "not LLVM IR:\n{text}");
     let _ = std::fs::remove_file(&ll);

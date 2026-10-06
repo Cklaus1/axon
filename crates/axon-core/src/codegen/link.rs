@@ -125,6 +125,14 @@ impl OptLevel {
 /// module triple first; the data layout is taken from `machine` here (codegen
 /// emits none, and the passes would otherwise lay out types with LLVM's
 /// target-neutral default, e.g. 4-byte-aligned i64). No-op at `O0`.
+///
+/// Every definition is marked `"disable-tail-calls"="true"` first, so each
+/// Axon call keeps its stack frame. Unbounded recursion must stay a graceful
+/// "stack overflow" exit 101 (the runtime's guard-page handler), matching the
+/// interpreter's recursion-limit panic; tail-recursion elimination would turn
+/// `fn rec(n: i64) -> i64 { rec(n + 1) }` into a loop spinning ~2^63 times,
+/// and backend sibling calls would do the same to mutual recursion. The
+/// attribute switches off both.
 fn optimize_module(
     module: &Module<'_>,
     machine: &TargetMachine,
@@ -133,6 +141,7 @@ fn optimize_module(
     let Some(pipeline) = opt.pipeline() else {
         return Ok(());
     };
+    mark_definitions(module, "disable-tail-calls", "true");
     module.set_data_layout(&machine.get_target_data().get_data_layout());
     module.verify().map_err(|e| {
         format!(
@@ -156,9 +165,13 @@ fn optimize_module(
 /// `memset`/`memcpy`, printf→puts, …). `"no-builtins"` on every definition is
 /// what clang's `-ffreestanding` emits for the same reason.
 fn mark_no_builtins(module: &Module<'_>) {
-    let attr = module
-        .get_context()
-        .create_string_attribute("no-builtins", "");
+    mark_definitions(module, "no-builtins", "");
+}
+
+/// Add the string function attribute `key`=`value` to every function
+/// definition in `module` (declarations are left alone).
+fn mark_definitions(module: &Module<'_>, key: &str, value: &str) {
+    let attr = module.get_context().create_string_attribute(key, value);
     let mut next = module.get_first_function();
     while let Some(func) = next {
         next = func.get_next_function();
