@@ -1723,8 +1723,8 @@ ATTACK_MARKERS.update({
     'M1795': r'ATTACK: an indented `mod` import \(effects in a file the scan cannot read\) was declared effect-free',
 })
 ATTACK_MARKERS.update({
-    'M1796': r'ATTACK: a request requiring hardware isolation \(os=none\), and it ran',
-    'M1797': r'ATTACK: a request requiring hardware isolation \(os=none\), and it ran',
+    'M1796': r'ATTACK: a request requiring (HardwareIsolated|MicroVm) ran on a process-scoped runtime',
+    'M1797': r'ATTACK: a request requiring (HardwareIsolated|MicroVm) ran on a process-scoped runtime',
 })
 ATTACK_MARKERS.update({
     'M1798': r'ATTACK: a candidate with an unsafe attempt was ACCEPTED',

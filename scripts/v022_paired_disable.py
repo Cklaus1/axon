@@ -1034,13 +1034,6 @@ GUARD_SETS.update({
     "M1380": {"siblings": ["M02"], "kind": "pair"},
 })
 
-# C9 round 4c, ADMIT (amendment 76; EQUIV_RECORD in the registry): the isolation
-# requirement is checked by select (M1052) and again by the supervisor (M1796,
-# M1797); each dominates the other.
-GUARD_SETS.update({
-    "M1796": {"siblings": ["M1052"], "kind": "pair"},
-    "M1797": {"siblings": ["M1052"], "kind": "pair"},
-})
 
 
 def current_edits_digest(rid):

@@ -274,8 +274,8 @@ checkable fact. NOT_YET_SCANNED is empty.
   (`if !required.satisfied_by(iso)`, M1796; the HardwareIsolated/ProcessScoped arm, M1797). M1052's recorded
   kill was the SUPERVISOR's refusal: `assert_never_runs` read any receipt that was not `Unsupported` as "it ran".
   It now judges the attack by effect (a spawn or a launch record); M1052 stays ACTIVE on the receipt contract only
-  selection answers (Unsupported), and M1796/M1797 are retired against it (four-cell, `v022_paired_disable.py
-  --only=M1796,M1797`).
+  selection answers (Unsupported), and M1796/M1797 are LIBRARY_PRIMITIVE (a direct `supervise_requiring` test, axon-os
+  `tests/admit_isolation.rs`); a four-cell retirement was executed and refused (axon-os's own suite pins them).
 * **kill channel, latch, corrigibility, monitor, `AxonCoreRuntime`, `MockRuntime`** have no caller on the
   supervise_requiring path (`grep -rn 'killchan::\\|latch::\\|corrigible::\\|monitor::' crates/*/src`, `grep -rn
   AxonCoreRuntime crates/*/src`: axon-os cli.rs only); `mock` is a feature no dependent enables.
