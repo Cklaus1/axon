@@ -1204,7 +1204,7 @@ fn a_production_helper_that_is_not_root_launches_nothing() {
         "custodian",
         &format!(
             "setpriv --reuid={FABRIC} --regid={FABRIC} --clear-groups --inh-caps={caps} \
-             --ambient-caps={caps} -- sh -c '\"$0\"; c=$?; exit $c' \
+             --ambient-caps={caps} -- sh -c 'o=$(\"$0\"); c=$?; printf \"%s\\n\" \"$o\"; exit $c' \
              \"$1/axon-protected-launcher\" \
              < \"$1/request.json\" > \"$1/report.json\"\n\
              echo $? > \"$1/code\"\n\
@@ -1216,7 +1216,7 @@ fn a_production_helper_that_is_not_root_launches_nothing() {
              chown 0:{FABRIC} /etc/axon/h\n\
              chmod 04750 /etc/axon/h\n\
              setpriv --reuid={FABRIC} --regid={FABRIC} --clear-groups -- \
-             sh -c '/etc/axon/h; c=$?; exit $c' < \"$1/request.json\" > \"$1/control.json\"\n\
+             sh -c 'o=$(/etc/axon/h); c=$?; printf \"%s\\n\" \"$o\"; exit $c' < \"$1/request.json\" > \"$1/control.json\"\n\
              echo $? > \"$1/control.code\"\n\
              cp -a /etc/axon/runs/op-1 \"$1/control\" 2>/dev/null"
         ),
@@ -2275,7 +2275,7 @@ fn production_launch(helper: &str, no_lease: bool) -> (String, String, Option<St
              chown 0:{FABRIC} /etc/axon/h\n\
              chmod 04750 /etc/axon/h\n\
              setpriv --reuid={FABRIC} --regid={FABRIC} --clear-groups -- \
-             sh -c '/etc/axon/h; c=$?; exit $c' < \"$1/request.json\" > \"$1/report.json\"\n\
+             sh -c 'o=$(/etc/axon/h); c=$?; printf \"%s\\n\" \"$o\"; exit $c' < \"$1/request.json\" > \"$1/report.json\"\n\
              echo $? > \"$1/code\"\n\
              cp -a /etc/axon/runs/op-1 \"$1/result\" 2>/dev/null"
         ),
@@ -3687,7 +3687,7 @@ fn production_helper_as_fabric(s: &Path, prefix: &str, wrap: &str) -> (String, S
              chown 0:{FABRIC} /etc/axon/h\n\
              chmod 04750 /etc/axon/h\n\
              setpriv --reuid={FABRIC} --regid={FABRIC} --clear-groups {wrap} -- \
-             sh -c '/etc/axon/h; c=$?; exit $c' < \"$1/request.json\" > \"$1/report.json\"\n\
+             sh -c 'o=$(/etc/axon/h); c=$?; printf \"%s\\n\" \"$o\"; exit $c' < \"$1/request.json\" > \"$1/report.json\"\n\
              echo $? > \"$1/code\"\n\
              cp -a /etc/axon/runs/op-1 \"$1/result\" 2>/dev/null"
         ),

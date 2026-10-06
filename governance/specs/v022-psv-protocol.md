@@ -4427,3 +4427,70 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       constants. M1960-M1969 are unused.
 
 
+
+## Amendment 85: the helper's Fabric pin is a guard against mistakes, and the reply pipe has one reader (C9 round 6, obsbind2)
+
+85. **Round-6 PSV-6 (DO_NOT_REGISTER): the exec race, the custodian's deadline, and what the
+    revision is.**
+    - **Before: the executed exec race.** Amendment 79 said the helper "serves only the Fabric
+      program the operator pinned". `running_caller()` hashes `/proc/<ppid>/exe` at the moment it is
+      opened and re-asks the pidfd only whether the parent is still the parent and alive, which an
+      `execve` does not change. EXECUTED by the round-6 reviewer (real setuid helper, real observer
+      and custodian, pin = `/usr/bin/sleep`): a python3 running as the Fabric uid forks a worker
+      that holds the read end of a pipe, spawns `helper --observe` with that pipe as its stdout and
+      an attacker-authored manifest on stdin, and `execv`s the pinned file; 18 of 20 attempts got
+      an observer-signed observation naming the pinned verifier, which the worker read. No
+      `LD_PRELOAD` and no ptrace: amendment 79's non-claim named the wrong mechanisms, and its
+      remark that `ptrace_scope` >= 2 narrows the problem does not touch this route. Launches pass
+      the same gate, so the race applied there too.
+    - **After: the reply pipe has one reader.** `reply_channel_private` runs inside `authenticated()`
+      (the one gate; a production helper always, a test helper when its config says
+      `private_reply_channel`, because most fixtures put a harness between the helper and the
+      reader). It requires that no process except the helper and its parent holds the pipe the
+      reply is written to, found by walking every process's `/proc/<pid>/fd` for the pipe's
+      `(dev, ino)`; a production helper also refuses a stdout that is not a pipe (a file or
+      terminal is readable by every process of the uid, so there is no holder to count). The
+      attack's worker holds the read end and is refused: 20 of 20. Control in the same test: the
+      pinned program itself (python3), running the helper and reading its own pipe, is served.
+      A holder that is another child of the parent mid-spawn (a pipe end its `exec` has not yet
+      closed) is waited out for 300 ms; the attack's worker does not go away. Fabric's own spawns
+      (the launch and the relay) use pipes and are both the parent and the reader.
+    - **Rows (killed by their own attacks):** M2050 (the rule), M2051 (a production stdout must be a
+      pipe), M2053 (the scan finds every holder), M2054 (the gate applies the rule to every request).
+      Matrix A151, A153.
+    - **What this does NOT close, and why that is inherent.** A same-uid process can always obtain
+      what a same-uid process holds: it can reopen the pipe's other end through
+      `/proc/<pid>/fd/N` of the parent (a pipe can be reopened that way), receive the descriptor in
+      flight (`SCM_RIGHTS`, which no descriptor table shows), `pidfd_getfd` it (Yama >= 2 or
+      `CAP_SYS_PTRACE` stops that one), `ptrace` the genuine program, or `LD_PRELOAD` it. So **the
+      Fabric pin is a configuration and mistake guard (the wrong binary, a stale install, an
+      agent run by hand as the Fabric uid, the demonstrated exec race), not a defence against
+      malicious same-uid code**, and `verifier_sha256` names the executable file the Fabric-uid
+      process had when the helper opened `/proc/<ppid>/exe`. The guest verdict's integrity does not
+      rest on it (the hidden check, the signature chain and the loop's joins).
+      **Considered and not done.** Re-measuring the parent's executable after the reply: it detects
+      an exec that happens between request and reply and nothing else, and the attack execs before
+      the first measurement; no deterministic attack exists to kill a row with, so it is not added.
+      `/proc/<pid>/stat` `starttime` does not change on exec. An `AF_UNIX` socketpair with
+      `SO_PASSPIDFD` identifies the SENDER of each message, not the holder of the other end, so the
+      forked worker would hold an end all the same; a socket cannot be reopened from `/proc`, which
+      would close one of the routes above, at the cost of changing both Fabric spawn sites; left
+      to a design pass if the operator wants the pin to mean more.
+    - **Major-adjacent: the custodian's absolute deadline.** EXECUTED: a Fabric-uid peer dripping one
+      byte every 20 s held the single-threaded custodian for 131 s (bound 4096 x 29 s), stalling every
+      issue, check and spend. `Server::serve_one` now reads under the observer's absolute-deadline
+      loop (`REQUEST_DEADLINE`, 30 s, `serve_one_within`; M2052; matrix A152).
+    - **Minor: what the revision is.** `fabric_revision` was classed PINNED. It is the build revision
+      the installed binary states about itself (`axon-fabric verifier-manifest`), run as root by the
+      kit from a caller-supplied `--bin-dir` and written into the helper config: the operator's
+      kit's word about the file, not a measurement of it (FIELD-ORIGIN: it is told). It is
+      reclassified here as **TOLD by the operator's kit** (the digest it sits beside is pinned and
+      measured; the revision is not independent of it). Deriving it without executing the binary
+      (a revision file written by the controlled build beside the binary and covered by the pin) is
+      the buildenv change in amendment 80's lane and is not made here.
+    - **Also corrected.** The observation names a Firecracker SHA-256, not a revision; the one-
+      observation-per-nonce record is the observer's, while the custodian's state is issued,
+      unspent, expired, spent.
+    - **Operator-visible change.** None in configs (the new `private_reply_channel` key is test-trust
+      only; a production helper is always strict). Anything that runs a PRODUCTION helper must hand
+      it a pipe as stdout and read it itself (Fabric does).
