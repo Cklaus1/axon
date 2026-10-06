@@ -1844,4 +1844,4 @@ ATTACK_MARKERS.update({
     'M1847': r"ATTACK: a value nested past the walk bound crossed unvisited",
     'M1848': r"ATTACK: a closure the operator held was replaced by a non-closure: Ok\(Completed\)",
 })
-ATTACK_MARKERS['M890'] = r'ATTACK: a mutated cell left a foreign interpreter in place and the row was judged good'
+ATTACK_MARKERS['M890'] = r'ATTACK: a restore that left a foreign interpreter in place was reported as restored'

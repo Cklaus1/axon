@@ -1419,52 +1419,47 @@ fn a_mutation_run_restores_the_interpreter_after_every_row() {
 
 /// C9 round 4c (eqgate): the restoring build is judged by COMPARING the
 /// rebuilt interpreter with the run's (`restore_interpreter`), not by it having
-/// built. The first test above only exercises that when the first rebuild
-/// happens to come out dirty, which depends on timing and on the host's
-/// filesystem (M890 survived on gpumaster). Here the cell leaves a FOREIGN
-/// interpreter that cargo regards as fresh (newer mtime), so no rebuild can fix
-/// it and only the comparison notices: the row must fail itself.
+/// built. The test above reaches the comparison only when the first rebuild
+/// happens to come out dirty, which depends on timing and the host's filesystem
+/// (M890 survived on gpumaster), and cargo itself repairs a clobbered binary, so
+/// no run-level attack is deterministic. This drives `restore_interpreter` as
+/// the run calls it, with a build that succeeds and leaves a FOREIGN interpreter
+/// (what a build that does not rebuild leaves): it must say so. Control: the
+/// run's own bytes are restored (None).
 #[test]
-fn a_mutation_run_fails_the_row_whose_cell_left_a_foreign_interpreter() {
-    let r = miniature("mut-foreign");
-    real_build_script(&r);
-    recommit(&r, "crates/axon-core/tests/harness_binaries.rs", |s| {
-        format!(
-            "fn clobber() {{\n    if !include_str!(\"script_spawn/mod.rs\").contains(\"let _ = v;\") {{\n        \
-             let p = std::path::Path::new(&std::env::var(\"CARGO_TARGET_DIR\").unwrap()).join(\"debug/axon\");\n        \
-             std::fs::remove_file(&p).unwrap();\n        std::fs::write(&p, b\"a foreign interpreter\").unwrap();\n        \
-             let f = std::fs::OpenOptions::new().write(true).open(&p).unwrap();\n        \
-             f.set_modified(std::time::SystemTime::now() + std::time::Duration::from_secs(3600)).unwrap();\n    }}\n}}\n{}",
-            s.replace("probe();", "probe(); clobber();")
-        )
-    });
-    let out = scratch("mut-foreign-out").join("run.json");
-    let tgt = scratch("mut-foreign-tgt");
-    let o = run_cells_in(
-        &r,
-        &tgt,
-        HARNESS[0],
-        &["--scope=all", "--only=M722", out.to_str().unwrap()],
-    );
-    let doc: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&out).unwrap_or_else(|_| "{}".into()))
-            .unwrap_or_default();
-    let row = doc["mutations"][0].clone();
-    assert_eq!(
-        row["result"].as_str(),
-        Some("killed"),
-        "setup: the miniature row was not run and killed: {}\n{doc}",
-        text(&o)
+fn a_restore_that_leaves_a_foreign_interpreter_says_so() {
+    let r = repo("restore-foreign");
+    let prog = r#"
+import os, subprocess, tempfile, v022_g01_mutations as m
+d = tempfile.mkdtemp()
+p = os.path.join(d, "axon")
+calls = []
+m.build_interpreter = lambda: subprocess.CompletedProcess([], 0, "", "")
+m.rerun_core_build_script = lambda: calls.append("rerun")
+m.interpreter_version = lambda path: "axon test"
+open(p, "wb").write(b"the run's interpreter")
+mine = m.sha(p)
+print("CONTROL", m.restore_interpreter(p, mine), calls)
+open(p, "wb").write(b"a foreign interpreter")
+calls.clear()
+got = m.restore_interpreter(p, mine)
+print("FOREIGN", got is not None, calls)
+"#;
+    let t = py(&r, prog);
+    assert!(
+        t.contains("CONTROL None []"),
+        "control: a restored interpreter is accepted without a forced rebuild: {t}"
     );
     assert!(
-        row.get("interpreter_not_restored").is_some(),
-        "ATTACK: a mutated cell left a foreign interpreter in place and the row was judged \
-         good, the rows after it running on it: {}",
-        text(&o)
+        t.contains("FOREIGN True"),
+        "ATTACK: a restore that left a foreign interpreter in place was reported as restored: {t}"
+    );
+    assert!(
+        t.contains("FOREIGN True ['rerun']"),
+        "ATTACK: a restore that left a foreign interpreter did not re-run the build script before \
+         giving up: {t}"
     );
     let _ = std::fs::remove_dir_all(&r);
-    let _ = std::fs::remove_dir_all(out.parent().unwrap());
-    let _ = std::fs::remove_dir_all(&tgt);
 }
 
 /// paired-disable rebuilds a prerequisite only when it is missing or is not
