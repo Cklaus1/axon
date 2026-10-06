@@ -23,8 +23,11 @@ axon goal  goal.md     # compile a prose goal .md → .ax → run
 ```
 
 `axon build file.ax` produces a native binary via LLVM (~3s), but for writing and
-testing Axon you want `axon run` / `axon test`. Execution is identical between the
-interpreter and native codegen by design.
+testing Axon you want `axon run` / `axon test`. The interpreter is the reference semantics:
+a native binary must print the same output, or `axon build` must refuse the program with a
+diagnostic (usually E0910, "native codegen does not lower …"). A program that builds and then
+behaves differently is a compiler bug. Speed is not equal: the interpreter is far slower on
+loop- and call-heavy code.
 
 Every program starts at `fn main()`. No imports — all builtins are in global scope.
 
