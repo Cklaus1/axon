@@ -703,6 +703,91 @@ def kept_records_problem(kept, records):
     return None
 
 
+STATUS_PATH = "governance/status/v022-psv-paired-disable.json"
+
+
+def status_problems(doc, head=None):
+    """Amendment 81: every defect that stops a status file from being the
+    harness's `--join` evidence for the commit a FREEZE binds (empty: none).
+    The freeze binds the file by digest, so before this it bound whatever
+    was there: the in-tree file covered 59 of 148 retirements, 49 at one
+    commit and 10 at another, with `all_hold` true. A precise reason per defect.
+
+    The file is the joined one: `--join` stamps `hosts` and `toolchain`, the
+    other writers do not. Its commit is the freeze commit up to the evidence
+    files themselves (committing the status file is a commit; a status must
+    be allowed to live in the commit AFTER the one it describes, and nothing
+    else may have changed in between)."""
+    head = head or sh("git rev-parse HEAD").stdout.strip()
+    out = []
+    if not isinstance(doc, dict) or not isinstance(doc.get("records"), list):
+        return ["not a paired-disable status file (no `records` list)"]
+    if doc.get("schema") != "axon-v022-paired-disable/2":
+        out.append(f"schema is {doc.get('schema')!r}, not axon-v022-paired-disable/2")
+    if "shard" in doc or not isinstance(doc.get("hosts"), dict) or not isinstance(doc.get("toolchain"), dict):
+        out.append("not produced by `--join` (a joined file carries `hosts` and `toolchain` and no "
+                   "`shard`): a partial or hand-assembled file is not the harness's joined evidence")
+    commit = doc.get("commit")
+    if commit != head:
+        if not isinstance(commit, str) or sh(f"git cat-file -e {commit}^{{commit}}").returncode != 0:
+            out.append(f"its commit {commit!r} is not in this repository")
+        elif sh(f"git merge-base --is-ancestor {commit} {head}").returncode != 0:
+            out.append(f"its commit {commit[:8]} is not an ancestor of the freeze commit {head[:8]}")
+        else:
+            changed = [f for f in sh(f"git diff --name-only {commit} {head}").stdout.split()
+                       if not f.startswith("governance/status/")]
+            if changed:
+                out.append(f"its commit {commit[:8]} is not the freeze commit {head[:8]}: "
+                           f"{len(changed)} file(s) other than governance/status/ changed since "
+                           f"(first: {changed[0]})")
+    if doc.get("tree_clean") is not True:
+        out.append("it does not record a clean tree")
+    if doc.get("registry_blobs") != mut.registry_blobs():
+        out.append("it was made from registry/marker blobs other than this tree's")
+    universe = sorted(set(GUARD_SETS) | set(mut.STALE_REFACTORED), key=lambda r: int(r[1:]))
+    recs = [r for r in doc["records"] if isinstance(r, dict)]
+    seen = [r.get("mutation") for r in recs]
+    missing = sorted(set(universe) - set(seen), key=lambda r: int(r[1:]))
+    if missing:
+        out.append(f"{len(missing)} of {len(universe)} retirement records are missing "
+                   f"(first: {', '.join(missing[:5])})")
+    extra = sorted({m for m in seen if m not in universe}, key=str)
+    if extra:
+        out.append(f"records for rows that are not retirements here: {extra[:5]}")
+    dup = sorted({m for m in seen if seen.count(m) > 1}, key=str)
+    if dup:
+        out.append(f"duplicate records: {dup[:5]}")
+    stamped = {r.get("commit") for r in recs}
+    if stamped != {commit}:
+        out.append(f"records are at commits {sorted(str(c)[:8] for c in stamped)}, not all at the "
+                   f"file's {str(commit)[:8]}")
+    for r in recs:
+        rid = r.get("mutation")
+        if rid not in universe:
+            continue
+        if r.get("edits_sha256") != current_edits_digest(rid):
+            out.append(f"{rid}: it executed edits that are not this registry's")
+        want = record_derivable_holds(r)
+        if want is None:
+            out.append(f"{rid}: carries no matrix or replacement state to derive its verdict from")
+        elif not want:
+            out.append(f"{rid}: its recorded cells do not hold")
+        elif r.get("holds") is not True:
+            out.append(f"{rid}: it says holds={r.get('holds')!r} over cells that hold")
+        why = selection_problem(r) if "consumer_selection" in r else "it records no consumer_selection"
+        if why:
+            out.append(f"{rid}: {why}")
+    if doc.get("all_hold") is not True:
+        out.append("all_hold is not true")
+    why = mut.shard_toolchain_problem([
+        (r.get("mutation"), (r.get("environment") or {}).get("host"), None) for r in recs])
+    if why:
+        out.append(why)
+    elif recs and (recs[0]["environment"]["host"]["toolchain"] != doc.get("toolchain")):
+        out.append("the file's `toolchain` is not the one its records ran on")
+    return out
+
+
 def join_shards(argv, commit, universe):
     """`--join OUT S0.json S1.json ...`: the status file from shard runs. It
     refuses unless every shard was executed at THIS commit (the registry the
@@ -1076,6 +1161,17 @@ def main():
         if users != sorted(srec["member_of"]):
             sys.exit(f"refused: SIBLING_ONLY {sid} is a member of {users}, its record says {srec['member_of']}")
     universe = sorted(set(GUARD_SETS) | set(mut.STALE_REFACTORED), key=lambda r: int(r[1:]))
+    if "--check-status" in sys.argv[1:]:
+        i = sys.argv.index("--check-status")
+        path = sys.argv[i + 1] if len(sys.argv) > i + 1 else STATUS_PATH
+        try:
+            problems = status_problems(json.load(open(path)))
+        except (OSError, ValueError) as e:
+            problems = [f"cannot read {path}: {e}"]
+        for p_ in problems:
+            print(f"BAD {p_}")
+        print(f"paired-disable status {path}: {'REFUSED' if problems else 'a joined, current, complete record set'}")
+        sys.exit(1 if problems else 0)
     if join:
         join_shards(argv, commit, universe)
     sel = None

@@ -127,6 +127,28 @@ def main():
                  f"({len(coverage_problems)} problem(s), first: {coverage_problems[0]}); "
                  "run scripts/v022_refusal_coverage.py --freeze (amendment 61)")
 
+    # Amendment 81: the paired-disable status file is bound by digest below, so
+    # it must be what the harness's `--join` wrote for the commit this freeze
+    # binds: every retirement record, at that commit, holds recomputed from its
+    # cells, one toolchain, the current consumer selection. A partial, stale or
+    # hand-assembled file is refused with one reason per defect. (This freeze
+    # binds NO mutation-run status file today: it binds the registry's digest
+    # and counts; the merged run's `all_killed` is therefore not judged here.)
+    pdspec = importlib.util.spec_from_file_location("pd", os.path.join(ROOT, "scripts/v022_paired_disable.py"))
+    pd = importlib.util.module_from_spec(pdspec)
+    pdspec.loader.exec_module(pd)
+    try:
+        status = json.load(open(os.path.join(ROOT, "governance/status/v022-psv-paired-disable.json")))
+    except (OSError, ValueError) as e:
+        sys.exit(f"refused: governance/status/v022-psv-paired-disable.json cannot be read: {e}")
+    status_problems = pd.status_problems(status, git(["rev-parse", "HEAD"], ROOT))
+    if status_problems:
+        shown = "\n  ".join(status_problems[:12])
+        sys.exit("refused: the paired-disable status file is not the harness's joined evidence for "
+                 f"this commit ({len(status_problems)} defect(s)):\n  {shown}"
+                 + ("\n  ..." if len(status_problems) > 12 else "")
+                 + "\nrun scripts/v022_paired_disable.py --shard K/N ... then --join (amendment 81)")
+
     why = not_standalone(ROOT)
     if why:
         sys.exit(f"refused: {ROOT} is not a standalone clone ({why}): "

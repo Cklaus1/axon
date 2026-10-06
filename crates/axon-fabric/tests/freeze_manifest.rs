@@ -170,7 +170,6 @@ fn populate(root: &Path) {
         );
     }
     for f in [
-        "governance/status/v022-psv-paired-disable.json",
         "governance/specs/v022-psv-protocol.md",
         "governance/specs/v022-psv-gap-map.md",
         "governance/specs/v022-psv-negative-matrix.md",
@@ -179,12 +178,32 @@ fn populate(root: &Path) {
         write(&root.join(f), "{}\n");
     }
     write(&root.join(MANIFEST), &manifest(clean_source()));
+    paired_disable(root, "[]");
     // The pinned channel the build record's toolchain must be (amendment 63).
     write(
         &root.join("rust-toolchain.toml"),
         "[toolchain]\nchannel = \"nightly\"\n",
     );
     coverage_gate(root, "[]");
+}
+
+/// The paired-disable harness the freeze consults (amendment 81), stood in
+/// for the way `coverage_gate` stands in for the coverage gate: the scratch
+/// repository holds no registry of retirements, so the REAL validator
+/// (`status_problems`, tested over synthetic joined files in
+/// harness_integrity.rs) is replaced by one that reports what the status file
+/// carries under `problems`. What this pins is the WIRING: the freeze reads the
+/// committed status file, asks the validator about it at its own HEAD, and
+/// refuses on any defect, one reason each.
+fn paired_disable(root: &Path, problems: &str) {
+    write(
+        &root.join("scripts/v022_paired_disable.py"),
+        "def status_problems(doc, head=None):\n    assert head and len(head) == 40, head\n    return list(doc['problems'])\n",
+    );
+    write(
+        &root.join("governance/status/v022-psv-paired-disable.json"),
+        &format!("{{\"problems\": {problems}}}\n"),
+    );
 }
 
 /// The refusal-site coverage gate the freeze consults (amendment 61). The
@@ -1007,5 +1026,35 @@ fn a_guest_image_not_built_with_the_operators_pinned_tools_does_not_freeze() {
     assert!(
         got.is_ok(),
         "control: the operator's pin of the clean build freezes: {got:?}"
+    );
+}
+
+/// Amendment 81: the freeze binds the paired-disable status file by digest, so it
+/// must be the harness's joined evidence for the commit it binds. The freeze
+/// asks the validator (here a stand-in that reports the file's own `problems`)
+/// and refuses on any defect, naming each. Control: no defect freezes (every
+/// other freeze test is that control).
+#[test]
+fn a_paired_disable_status_that_is_not_the_joined_evidence_does_not_freeze() {
+    let d = tempfile::tempdir().unwrap();
+    let r = clone(d.path());
+    paired_disable(
+        &r,
+        r#"["59 of 148 retirement records are missing (first: M1, M2)", "records are at commits [\"aad46c05\", \"c9647b35\"], not all at the file's aad46c05"]"#,
+    );
+    git(&r, &["add", "-A"]);
+    git(&r, &["commit", "-q", "-m", "a partial status"]);
+    let got = freeze(&r);
+    assert!(
+        got.is_err(),
+        "ATTACK: the freeze bound a paired-disable status file the harness did not join for this \
+         commit: {got:?}"
+    );
+    let e = got.unwrap_err();
+    assert!(
+        e.contains("not the harness's joined evidence for this commit (2 defect(s))")
+            && e.contains("59 of 148 retirement records are missing")
+            && e.contains("not all at the file's aad46c05"),
+        "one reason per defect: {e}"
     );
 }

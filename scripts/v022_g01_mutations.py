@@ -7144,6 +7144,31 @@ MUTATIONS += [
 ]
 
 
+# EQGATE part 3 (amendment 81): the freeze judges the paired-disable status file.
+MUTATIONS += [
+    ('M1955', 'FREEZE (eqgate): the freeze refuses a paired-disable status file that is not the joined evidence', 'scripts/v022_freeze_manifest.py',
+     '    if status_problems:\n        shown = ',
+     '    if False:\n        shown = ',
+     'axon-fabric', '--test freeze_manifest', 'a_paired_disable_status_that_is_not_the_joined_evidence_does_not_freeze'),
+    ('M1956', 'FREEZE (eqgate): a status file that lacks retirement records is refused', 'scripts/v022_paired_disable.py',
+     '    if missing:\n        out.append(f"{len(missing)} of {len(universe)} retirement records are missing "',
+     '    if False:\n        out.append(f"{len(missing)} of {len(universe)} retirement records are missing "',
+     'axon-core', '--no-default-features --test harness_integrity', 'a_status_file_is_accepted_only_as_the_joined_evidence_for_the_freeze_commit'),
+    ('M1957', 'FREEZE (eqgate): a status file older than a source change is refused', 'scripts/v022_paired_disable.py',
+     '            if changed:\n                out.append(',
+     '            if False:\n                out.append(',
+     'axon-core', '--no-default-features --test harness_integrity', 'a_status_file_may_trail_the_freeze_commit_by_evidence_files_only'),
+    ('M1958', 'FREEZE (eqgate): a status record whose cells do not hold is refused whatever it says', 'scripts/v022_paired_disable.py',
+     '        elif not want:\n            out.append(f"{rid}: its recorded cells do not hold")',
+     '        elif False:\n            out.append(f"{rid}: its recorded cells do not hold")',
+     'axon-core', '--no-default-features --test harness_integrity', 'a_status_file_is_accepted_only_as_the_joined_evidence_for_the_freeze_commit'),
+    ('M1959', 'FREEZE (eqgate): a status file the harness did not --join is refused', 'scripts/v022_paired_disable.py',
+     '    if "shard" in doc or not isinstance(doc.get("hosts"), dict) or not isinstance(doc.get("toolchain"), dict):',
+     '    if False:',
+     'axon-core', '--no-default-features --test harness_integrity', 'a_status_file_is_accepted_only_as_the_joined_evidence_for_the_freeze_commit'),
+]
+
+
 def cargo_build_tests(package, target, env=""):
     """Build the tests a cell will run, ALONE: (ok, output). A compile error is
     the outcome of THIS cargo invocation, never a string found in a test's

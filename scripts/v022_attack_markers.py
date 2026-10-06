@@ -1825,3 +1825,10 @@ ATTACK_MARKERS.update({
     'M1953': 'ATTACK: a function returning an i32 status',
     'M1954': 'ATTACK: a function returning an ExitCode',
 })
+ATTACK_MARKERS.update({
+    'M1955': 'ATTACK: the freeze bound a paired-disable status file the harness did not join',
+    'M1956': 'ATTACK: a status file with the defect `missing` was accepted',
+    'M1957': 'ATTACK: a status file made before a source change was accepted',
+    'M1958': 'ATTACK: a status file with the defect `cells` was accepted',
+    'M1959': 'ATTACK: a status file with the defect `not-joined` was accepted',
+})
