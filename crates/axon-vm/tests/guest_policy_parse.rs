@@ -156,3 +156,146 @@ fn base64_decode_round_trips_the_real_payload_t48() {
         EffectSet::IO.union(EffectSet::NET)
     );
 }
+
+/// Every SEMANTICALLY EMPTY policy must deny everything.
+///
+/// A policy that is syntactically valid JSON but says nothing about effects is
+/// the case most likely to be mistaken for "no restriction": `{}` parses, has
+/// no error to report, and a permissive default would slide straight through.
+/// This is the analogue of the guest-init/MMDS parser boundary already fixed.
+#[test]
+fn every_semantically_empty_policy_denies_everything() {
+    for (label, json) in [
+        ("empty object", r#"{}"#),
+        ("absent key", r#"{"schema":"axon-vm-mmds/1","run_id":"r"}"#),
+        (
+            "all-null object",
+            r#"{"principal":null,"allowed_effects":null,"budget_tokens":null}"#,
+        ),
+        (
+            "unknown fields only",
+            r#"{"foo":1,"bar":["IO","FS","Net"]}"#,
+        ),
+        ("explicitly empty grant", r#"{"allowed_effects":[]}"#),
+    ] {
+        assert_eq!(
+            json_array_effects(json.as_bytes(), b"allowed_effects"),
+            EffectSet(0),
+            "{label} must grant nothing: {json}"
+        );
+    }
+    // POSITIVE CONTROLS, so the denials above cannot pass because the parser
+    // denies everything unconditionally.
+    assert_eq!(
+        json_array_effects(br#"{"allowed_effects":["IO"]}"#, b"allowed_effects"),
+        EffectSet::IO
+    );
+    assert_eq!(
+        json_array_effects(br#"{"allowed_effects":["Net"]}"#, b"allowed_effects"),
+        EffectSet::NET
+    );
+}
+
+/// The key must be matched at the TOP LEVEL, once, in a well-formed array.
+///
+/// The parser is a substring scanner rather than a JSON parser, and three
+/// structures that are not what they appear to be were measured WIDENING the
+/// grant:
+///
+///   nested object carrying the key, empty top level   -> FS+Net+Exec
+///   duplicate key, broad value first                   -> FS+Exec
+///   unterminated array                                 -> IO+Exec
+///
+/// None is reachable today: the only producer, axon-vm's `MmdsPayload`, is a
+/// flat struct that serde emits with each key once and every string escaped.
+/// That is exactly why it matters — the first time the payload gains a nested
+/// object (for instance one echoing a program's own declared effects), the
+/// first textual match wins and the grant is whatever that object says. A
+/// capability parser should not depend on its producer never growing a field.
+#[test]
+fn only_a_single_well_formed_top_level_grant_counts() {
+    assert_eq!(
+        json_array_effects(
+            br#"{"meta":{"allowed_effects":["Exec","FS","Net"]},"allowed_effects":[]}"#,
+            b"allowed_effects"
+        ),
+        EffectSet(0),
+        "a key inside a NESTED object must not be read as the grant"
+    );
+    assert_eq!(
+        json_array_effects(
+            br#"{"meta":{"allowed_effects":["Exec"]}}"#,
+            b"allowed_effects"
+        ),
+        EffectSet(0),
+        "a nested key with NO top-level key must not be read as the grant"
+    );
+    assert_eq!(
+        json_array_effects(
+            br#"{"allowed_effects":["Exec","FS"],"allowed_effects":[]}"#,
+            b"allowed_effects"
+        ),
+        EffectSet(0),
+        "a DUPLICATED key is ambiguous, and an ambiguous policy grants nothing"
+    );
+    assert_eq!(
+        json_array_effects(br#"{"allowed_effects":["IO","Exec""#, b"allowed_effects"),
+        EffectSet(0),
+        "an UNTERMINATED array is not a grant"
+    );
+    assert_eq!(
+        json_array_effects(
+            br#"{"principal":"x\"allowed_effects\":[\"Exec\"]"}"#,
+            b"allowed_effects"
+        ),
+        EffectSet(0),
+        "the key text inside a STRING value is not the key"
+    );
+    // POSITIVE CONTROL: a single top-level grant still parses, even with a
+    // nested object and escaped strings elsewhere in the payload.
+    assert_eq!(
+        json_array_effects(
+            br#"{"meta":{"k":"v\"}"},"principal":"a\\b","allowed_effects":["IO","Net"]}"#,
+            b"allowed_effects"
+        ),
+        EffectSet::IO.union(EffectSet::NET),
+        "a real top-level grant must survive surrounding structure"
+    );
+}
+
+/// The SCALAR fields are located structurally too.
+///
+/// `budget_tokens` is a cap and `principal` is attribution. Read by first
+/// textual match, a nested or duplicated occurrence could set either.
+#[test]
+fn scalar_fields_are_read_only_from_the_top_level() {
+    assert_eq!(
+        json_u64_field(
+            br#"{"meta":{"budget_tokens":999999},"budget_tokens":10}"#,
+            b"budget_tokens"
+        ),
+        Some(10),
+        "a nested budget_tokens must not set the cap"
+    );
+    assert_eq!(
+        json_u64_field(
+            br#"{"budget_tokens":999999,"budget_tokens":10}"#,
+            b"budget_tokens"
+        ),
+        None,
+        "a DUPLICATED budget_tokens is ambiguous and must not set the cap"
+    );
+    assert_eq!(
+        json_str_field(
+            br#"{"meta":{"principal":"root"},"principal":"alice"}"#,
+            b"principal"
+        ),
+        Some(&b"alice"[..]),
+        "a nested principal must not be read as the principal"
+    );
+    assert_eq!(
+        json_str_field(br#"{"principal":"al\"ice"}"#, b"principal"),
+        None,
+        "an escaped value is refused rather than returned half-decoded"
+    );
+}

@@ -6,7 +6,10 @@ authors.workspace = true
 license.workspace = true
 
 [lib]
-crate-type = ["staticlib"]  # Link into axon binaries as a native static lib.
+# `staticlib`: linked into AI-free axon binaries as `libaxon_rt.a`.
+# `rlib`: so `axon-rt-ai` can bundle it with `axon-ai` into ONE staticlib
+# (one copy of std) for binaries that call an AI builtin.
+crate-type = ["staticlib", "rlib"]
 name = "axon_rt"
 
 [features]

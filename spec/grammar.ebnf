@@ -107,7 +107,13 @@ attr_arg_list ::= IDENT { ',' IDENT } ;
 fn_def     ::= 'fn' IDENT '(' [ param_list ] ')' [ '->' type ] block ;
 
 param_list ::= param { ',' param } ;
-param      ::= IDENT ':' type ;
+param      ::= IDENT ':' ( type | '&' 'mut' '[' type ']' ) ;
+(* `xs: &mut [T]` is a mutable borrow: the callee's writes to `xs` (index /
+   field assignment, `xs = [..]`, passing it on as `&mut xs`) reach the
+   caller's variable. Only legal as a top-level parameter type of a free
+   function, and only around a slice. `mut` is contextual, not a keyword.
+   Static rules: E0604 (write through a shared `&` param), E0605 (malformed
+   `&mut`), E0606 (aliasing within one call). *)
 
 (* ── 3.3  Type definitions (structs) ─────────────────────────────────────── *)
 
@@ -309,6 +315,9 @@ postfix_op ::= '?'                              (* error propagation       *)
   Unary operators are parsed in `parse_primary` (tightest binding).
 *)
 unary      ::= '&' unary                        (* reference-of            *)
+             | '&' 'mut' IDENT                  (* mutable borrow: only as
+                                                   the argument of a `&mut [T]`
+                                                   parameter, of a whole local *)
              | '-' unary                        (* arithmetic negation     *)
              | '!' unary                        (* logical negation        *)
              | primary

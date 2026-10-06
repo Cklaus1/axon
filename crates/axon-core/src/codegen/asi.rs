@@ -61,6 +61,12 @@ impl<'ctx> super::Codegen<'ctx> {
         let fn_g = build_wrappers::w_global_string_ptr(&self.ir.builder, &agent_fn, "aa_fn");
         let act_g = build_wrappers::w_global_string_ptr(&self.ir.builder, action, "aa_action");
         let cap_g = build_wrappers::w_global_string_ptr(&self.ir.builder, caps, "aa_caps");
+        // The INTERPRETER's own mapping, not a second copy: `cap_to_effect_row`
+        // is `pub(crate)` precisely so both engines answer "which effect row is
+        // this capability" identically. The runtime is handed the answer rather
+        // than deriving it, which would have put the rule in two crates.
+        let effect_row = crate::interp::cap_to_effect_row(caps);
+        let er_g = build_wrappers::w_global_string_ptr(&self.ir.builder, effect_row, "aa_effect");
         let _ = build_wrappers::w_call(
             &self.ir.builder,
             log_fn,
@@ -71,6 +77,8 @@ impl<'ctx> super::Codegen<'ctx> {
                 i64_ty.const_int(action.len() as u64, false).into(),
                 cap_g.into(),
                 i64_ty.const_int(caps.len() as u64, false).into(),
+                er_g.into(),
+                i64_ty.const_int(effect_row.len() as u64, false).into(),
             ],
             "",
         );

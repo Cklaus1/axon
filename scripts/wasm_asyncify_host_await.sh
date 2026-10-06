@@ -37,6 +37,14 @@ command -v node >/dev/null 2>&1 || harness_skip wasm_asyncify_host_await "node n
 
 WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
 
+# MEMORY CLASS: HEAVY. Measured under a cgroup ceiling, the four programs below
+# peak at ~8.4 GB of V8 memory together (each 6-8 GB), all of it native V8
+# structures created while executing Asyncify-instrumented code — the wasm
+# linear memory stays at 64 MB throughout. That is after asyncify-ignore-indirect
+# cut it from 18-31 GB. It is recorded here so a scheduler (or a person) can
+# see this is not an ordinary test: running it beside other memory-heavy
+# workloads is what got a strict gate cancelled at 2-3 GiB free.
+
 echo "wasm_asyncify_host_await: building axon-wasm + asyncify…"
 if ! berr="$(cargo build -q -p axon-wasm --target wasm32-unknown-unknown --release 2>&1)"; then
   echo "wasm_asyncify_host_await: FAIL — axon-wasm wasm build FAILED (a build error is not a skip):"
@@ -50,12 +58,20 @@ ASYNC="$WORK/axon_wasm.async.wasm"
 # Modern wasm features rustc emits must be enabled explicitly for binaryen to
 # validate the module (needed on every version tested: 108 in R15, 120, 127).
 FEATURES="--enable-bulk-memory --enable-sign-ext --enable-mutable-globals --enable-nontrapping-float-to-int --enable-simd --enable-reference-types --enable-multivalue"
-# -O2 IS REQUIRED, not a nicety: the UNOPTIMIZED asyncify output runs away —
-# `axon_eval` never returns and linear memory grows until the host is exhausted,
-# even for a program with no `host_await` at all (measured on wasm-opt 120 and 127,
-# whose asyncify output is byte-identical). With -O2 the same module runs every
-# fixture in well under the cap. Do not drop the -O level to "keep the build fast".
-if ! oerr="$(wasm-opt $FEATURES -O2 --asyncify --pass-arg=asyncify-imports@env.axon_host_await "$RAW" -o "$ASYNC" 2>&1)"; then
+# Two independent requirements, both measured, neither optional:
+#  * -O2: the UNOPTIMIZED asyncify output runs away — `axon_eval` never returns
+#    and linear memory grows until the host is exhausted, even for a program with
+#    no `host_await` at all (wasm-opt 120 and 127). Do not drop the -O level.
+#  * asyncify-ignore-indirect: without it binaryen instruments 1418 of 1423
+#    functions and this harness's four programs peaked at 18-31 GB; with it 6-8 GB.
+#    It is only sound when no suspend-reaching function is ever called indirectly,
+#    so the soundness condition is CHECKED, not assumed: the guard proves no
+#    suspend-reaching function is address-taken.
+if ! python3 scripts/asyncify_indirect_guard.py "$RAW" env axon_host_await; then
+  echo "wasm_asyncify_host_await: FAIL — asyncify-ignore-indirect is not provably safe for this module"; exit 1
+fi
+if ! oerr="$(wasm-opt $FEATURES -O2 --asyncify --pass-arg=asyncify-imports@env.axon_host_await \
+      --pass-arg=asyncify-ignore-indirect "$RAW" -o "$ASYNC" 2>&1)"; then
   echo "wasm_asyncify_host_await: FAIL — wasm-opt --asyncify FAILED (an instrumentation error is not a skip):"
   printf '%s\n' "$oerr" | tail -8 | sed 's/^/    /'
   exit 1

@@ -12,6 +12,12 @@
 // Keep this file free of statics, `unsafe`, and kernel macros so it stays
 // includable from a host test.
 
+// Used by the KERNEL (`mmds.rs` locates `axon.policy=` on the boot cmdline with
+// it); the policy parsers below no longer use it, having moved to a structural
+// top-level lookup. The host test that `include!`s this file therefore sees it
+// as dead, so the allowance is scoped to that build rather than deleting code
+// the kernel still calls.
+#[cfg_attr(test, allow(dead_code))]
 fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     if needle.is_empty() { return Some(0); }
     haystack.windows(needle.len()).position(|w| w == needle)
@@ -44,32 +50,30 @@ fn base64_decode(input: &[u8], out: &mut [u8]) -> usize {
     oi
 }
 
-/// Build `"key":` search pattern in a 64-byte stack buffer; return length.
-fn make_key_pat(key: &[u8], buf: &mut [u8; 64]) -> usize {
-    let mut n = 0usize;
-    buf[n] = b'"'; n += 1;
-    for &b in key { if n < 62 { buf[n] = b; n += 1; } }
-    buf[n] = b'"'; n += 1;
-    buf[n] = b':'; n += 1;
-    n
-}
-
-/// Extract `"key":"VALUE"` → VALUE bytes (no escape handling needed).
+/// Extract a TOP-LEVEL `"key":"VALUE"` → VALUE bytes.
+///
+/// Located with `top_level_value` rather than a substring search, for the same
+/// reason as the effect grant: a substring match would read the first
+/// `"principal":` anywhere in the payload, including one nested inside an
+/// unrelated object. A value containing an escape is refused rather than
+/// returned half-decoded, since this parser does not unescape.
 fn json_str_field<'a>(json: &'a [u8], key: &[u8]) -> Option<&'a [u8]> {
-    let mut pat = [0u8; 64];
-    let plen = make_key_pat(key, &mut pat);
-    let rest = skip_ws(&json[find_subslice(json, &pat[..plen])? + plen..]);
+    let rest = top_level_value(json, key)?;
     if rest.is_empty() || rest[0] != b'"' { return None; }
     let inner = &rest[1..];
-    Some(&inner[..inner.iter().position(|&b| b == b'"')?])
+    let end = inner.iter().position(|&b| b == b'"' || b == b'\\')?;
+    if inner[end] != b'"' { return None; }
+    Some(&inner[..end])
 }
 
-/// Extract `"key":NUMBER` → u64.
+/// Extract a TOP-LEVEL `"key":NUMBER` → u64.
+///
+/// `budget_tokens` is read through this, and it is a LIMIT: a nested or
+/// duplicated `"budget_tokens":` resolved by first textual match would let the
+/// wrong number set the cap. Located structurally, and ambiguous (duplicated)
+/// keys yield None.
 fn json_u64_field(json: &[u8], key: &[u8]) -> Option<u64> {
-    let mut pat = [0u8; 64];
-    let plen = make_key_pat(key, &mut pat);
-    let p = find_subslice(json, &pat[..plen])?;
-    let rest = skip_ws(&json[p + plen..]);
+    let rest = top_level_value(json, key)?;
     if rest.is_empty() || !rest[0].is_ascii_digit() { return None; }
     let mut n: u64 = 0;
     for &b in rest {
@@ -77,6 +81,93 @@ fn json_u64_field(json: &[u8], key: &[u8]) -> Option<u64> {
         else { break; }
     }
     Some(n)
+}
+
+/// Locate the value of `key` among the TOP-LEVEL members of a JSON object.
+///
+/// Returns the slice starting at the value, or `None` if the key is absent or
+/// the payload is not a single well-formed object — and ALSO `None` when the
+/// key occurs more than once, since a duplicated capability field is ambiguous
+/// and an ambiguous grant must grant nothing.
+///
+/// This replaces a substring search for `"key":`, which matched the first
+/// occurrence ANYWHERE in the text. Measured against that search:
+///
+///   {"meta":{"allowed_effects":["Exec","FS","Net"]},"allowed_effects":[]}
+///                                                  -> granted FS+Net+Exec
+///   {"allowed_effects":["Exec","FS"],"allowed_effects":[]} -> FS+Exec
+///
+/// Neither is reachable from today's producer (axon-vm's flat, serde-escaped
+/// `MmdsPayload`). That is not a reason to keep it: the first time the payload
+/// gains a nested object, the grant would be whatever that object said.
+///
+/// Walks bytes tracking nesting depth and whether it is inside a string
+/// (honouring `\` escapes), so a key inside a nested object or a string value
+/// is never mistaken for the top-level member. No allocation — this runs in
+/// the bare-metal guest kernel.
+fn top_level_value<'a>(json: &'a [u8], key: &[u8]) -> Option<&'a [u8]> {
+    let s = skip_ws(json);
+    if s.first() != Some(&b'{') {
+        return None;
+    }
+    let mut depth = 0usize;
+    let mut in_str = false;
+    let mut esc = false;
+    let mut str_start = 0usize;
+    let mut found: Option<usize> = None;
+    let mut i = 0usize;
+    while i < s.len() {
+        let b = s[i];
+        if in_str {
+            if esc {
+                esc = false;
+            } else if b == b'\\' {
+                esc = true;
+            } else if b == b'"' {
+                in_str = false;
+                // A string that closes at depth 1 and is followed by `:` is a
+                // top-level member NAME. Compare it to the key byte-for-byte;
+                // key names here never contain escapes.
+                if depth == 1 {
+                    let name = &s[str_start..i];
+                    let after = skip_ws(&s[i + 1..]);
+                    if after.first() == Some(&b':') && name == key {
+                        if found.is_some() {
+                            return None; // duplicate key: ambiguous
+                        }
+                        let colon = s.len() - after.len();
+                        found = Some(colon + 1);
+                    }
+                }
+            }
+        } else {
+            match b {
+                b'"' => {
+                    in_str = true;
+                    str_start = i + 1;
+                }
+                b'{' | b'[' => depth += 1,
+                b'}' | b']' => {
+                    if depth == 0 {
+                        return None;
+                    }
+                    depth -= 1;
+                    if depth == 0 {
+                        // End of the top-level object. Anything after it other
+                        // than whitespace means this was not one object.
+                        if !skip_ws(&s[i + 1..]).is_empty() {
+                            return None;
+                        }
+                        return found.map(|at| skip_ws(&s[at..]));
+                    }
+                }
+                _ => {}
+            }
+        }
+        i += 1;
+    }
+    // Ran off the end: unterminated object or string. Not a policy.
+    None
 }
 
 /// Parse `"key":["V1","V2"]` → EffectSet.
@@ -87,18 +178,44 @@ fn json_u64_field(json: &[u8], key: &[u8]) -> Option<u64> {
 /// program with no `.axmeta` manifest and no `--principal`, which is the DEFAULT
 /// run. So the shipped default path granted IO+FS+Net+AI+Exec+Random.
 /// A policy we cannot read is a policy we do not have; both now deny.
+///
+/// The key is located with `top_level_value`, not a substring search, and the
+/// array must be properly terminated: an unterminated `["IO","Exec"` used to
+/// run to the end of the buffer and grant both.
 fn json_array_effects(json: &[u8], key: &[u8]) -> EffectSet {
-    let mut pat = [0u8; 64];
-    let plen = make_key_pat(key, &mut pat);
-    let after = match find_subslice(json, &pat[..plen]) {
-        Some(p) => p + plen,
-        None    => return EffectSet(0),
+    let rest = match top_level_value(json, key) {
+        Some(v) => v,
+        None => return EffectSet(0),
     };
-    let rest = skip_ws(&json[after..]);
-    if rest.is_empty() || rest[0] != b'[' { return EffectSet(0); }
+    if rest.is_empty() || rest[0] != b'[' {
+        return EffectSet(0);
+    }
     let inner = &rest[1..];
-    let end   = inner.iter().position(|&b| b == b']').unwrap_or(inner.len());
-    let inner = &inner[..end];
+    // Find the closing `]` OUTSIDE any string element. A `]` inside a quoted
+    // name is text, not the end of the array.
+    let mut in_str = false;
+    let mut esc = false;
+    let mut end: Option<usize> = None;
+    for (k, &b) in inner.iter().enumerate() {
+        if in_str {
+            if esc {
+                esc = false;
+            } else if b == b'\\' {
+                esc = true;
+            } else if b == b'"' {
+                in_str = false;
+            }
+        } else if b == b'"' {
+            in_str = true;
+        } else if b == b']' {
+            end = Some(k);
+            break;
+        }
+    }
+    let inner = match end {
+        Some(e) => &inner[..e],
+        None => return EffectSet(0), // unterminated array: not a grant
+    };
 
     let mut effects = EffectSet(0);
     let mut i = 0usize;
@@ -106,7 +223,19 @@ fn json_array_effects(json: &[u8], key: &[u8]) -> EffectSet {
         if inner[i] == b'"' {
             i += 1;
             let start = i;
-            while i < inner.len() && inner[i] != b'"' { i += 1; }
+            let mut esc = false;
+            while i < inner.len() {
+                if esc {
+                    esc = false;
+                } else if inner[i] == b'\\' {
+                    esc = true;
+                } else if inner[i] == b'"' {
+                    break;
+                }
+                i += 1;
+            }
+            // An element containing an escape can never equal a valid effect
+            // name, so `effect_from_name` maps it to nothing.
             effects = effects.union(effect_from_name(&inner[start..i]));
         }
         i += 1;

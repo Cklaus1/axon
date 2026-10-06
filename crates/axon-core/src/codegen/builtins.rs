@@ -3695,8 +3695,14 @@ impl<'ctx> super::Codegen<'ctx> {
             // R4 §4.3: __axon_log_agent_action(fn_ptr, fn_len, action_ptr,
             // action_len, caps_ptr, caps_len) — emitted at a capability builtin
             // call inside an @[agent] fn (the mandatory agent action log).
+            // Six params became eight: the trailing (ptr, len) pair carries the
+            // EFFECT ROW. A native agent_action row recorded WHAT was done and
+            // not who, nor under which effect; the interpreter has written both
+            // since F3.
             let log_aa_ty = void_ty.fn_type(
                 &[
+                    i8_ptr.into(),
+                    i64_ty.into(),
                     i8_ptr.into(),
                     i64_ty.into(),
                     i8_ptr.into(),

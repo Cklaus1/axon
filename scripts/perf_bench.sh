@@ -71,10 +71,8 @@ for name in "${CORPUS[@]}"; do
   f="examples/$name"
   [ -f "$f" ] || continue
   bin="/tmp/_pb_$(basename "$name" .ax)"
-  # Debug native build (not --release): `axon build --release` currently fails
-  # with duplicate-std-symbol link errors because it links BOTH libaxon_rt.a
-  # and libaxon_ai.a, each bundling std (BUG_HUNT #38). Debug links one and
-  # works; interp-vs-native is still a fair unoptimized comparison.
+  # Debug native build (not --release), so interp-vs-native is an unoptimized
+  # comparison on both sides.
   "$AXON" build "$f" -o "$bin" >/dev/null 2>&1 || { echo "  build failed: $name"; continue; }
 
   i_ns=$(min_ns "$AXON" run "$f")

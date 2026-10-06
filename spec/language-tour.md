@@ -316,6 +316,36 @@ fn main() {
 }
 ```
 
+Arrays are values: `let b = a` copies, a parameter `arr: [i64]` gets its own copy
+(writes to it stay local), and `arr: &[i64]` is a read-only view (writing through it is
+error `E0604`). To modify the caller's array in place, declare the parameter
+`&mut [T]` and pass `&mut` of a local variable:
+
+```axon
+fn fill(xs: &mut [i64], v: i64) {
+    for i in 0..len(xs) {
+        xs[i] = v               // reaches the caller's `nums`
+    }
+}
+
+fn reset(xs: &mut [i64]) {
+    fill(&mut xs, 0)            // pass it on: `&mut xs` (or `&xs` to a reader)
+}
+
+fn main() {
+    let nums = [1, 2, 3]
+    let copy = nums
+    reset(&mut nums)
+    println(to_str(nums[0]))    // 0
+    println(to_str(copy[0]))    // 1 - `copy` was taken before, it is its own array
+}
+```
+
+`&mut` is only allowed as a free function's top-level `[T]` parameter type, and only
+of a whole local variable at the call site (`E0605` otherwise). One call may borrow a
+variable `&mut` only once and may not also use it in another argument (`E0606`). The
+parameter itself can be reassigned (`xs = [..]`), and that also reaches the caller.
+
 ---
 
 ## 13. Lambdas
@@ -333,6 +363,30 @@ fn main() {
     println(to_str(apply(square, 5)))  // 25
 }
 ```
+
+A named, non-generic `fn` is a first-class value of type `fn(..) -> ..`: pass it,
+bind it, store it in an array or struct field, and call it through any of those.
+Effects and purity follow the value — calling `loud` through `let g = loud` is
+still `loud`'s effect.
+
+```axon
+fn inc(x: i64) -> i64 { x + 1 }
+fn dbl(x: i64) -> i64 { x * 2 }
+
+fn main() {
+    println(to_str(apply(inc, 41)))   // 42
+    let ops = [inc, dbl]
+    println(to_str(ops[1](21)))       // 42
+    let f = ops[0]
+    println(to_str(f(41)))            // 42
+}
+```
+
+A generic fn (`fn id<T>`) or a builtin (`abs_i64`) has no single runtime value
+and is refused with E0306; wrap it in a lambda: `|n| abs_i64(n)`. Natively, a
+function value (like a lambda) returns through an i64 slot, so one returning
+`str`, an array, a tuple, a struct, `Option` or `Result` builds with an E0910
+refusal and runs under `axon run`.
 
 ---
 

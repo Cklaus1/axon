@@ -217,6 +217,19 @@
       "gate_compiles": true,
       "gate_tests": true
     },
+    "axon-rt-ai": {
+      "class": "B",
+      "why": "The native runtime linked into AOT binaries that call an AI builtin: axon-rt + axon-ai bundled as ONE staticlib over one std. No code of its own; what must hold is that it builds and exports both crates' symbols.",
+      "surfaces": [
+        "native runtime ABI",
+        "AI builtins (native)"
+      ],
+      "required": [
+        "cargo build --locked -p axon-rt-ai"
+      ],
+      "gate_compiles": true,
+      "gate_tests": true
+    },
     "axon-ai": {
       "class": "B",
       "why": "Live model dispatch and API-key handling; the mock/replay paths that make AI runs reproducible.",

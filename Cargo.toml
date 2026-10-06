@@ -11,6 +11,7 @@ members = [
   "crates/axon-reflex",
   "crates/axon-rt",
   "crates/axon-ai",
+  "crates/axon-rt-ai",
   "crates/axon-surface",
   "crates/axon-wasm",
   "crates/axon-web",
@@ -66,5 +67,10 @@ codegen-units = 16
 # hashes the same bytes to the same digest ~30x faster. Only the dependency's
 # codegen changes; no workspace crate is optimized, so what a test or a
 # mutation exercises is compiled exactly as before.
+#
+# `axon build` hashes the compiler executable (~200 MB in a dev build) once per
+# run to key its build cache on the compiler's identity (cache.rs
+# `compiler_digest`, AX-15). Unoptimised sha2 takes ~2.6 s for that, a cache
+# hit's whole budget many times over; optimised it is a fraction of that.
 [profile.dev.package.sha2]
 opt-level = 3

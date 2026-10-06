@@ -383,6 +383,12 @@ cargo build --locked -p axon-core || fail "native build"
 echo "── gate: serde-json feature builds (axon lsp / axon parse --json) ─"
 cargo check --locked --no-default-features --features serde-json -p axon-core \
   || fail "serde-json feature check (axon lsp / axon parse --json)"
+# AX-10. `cargo check` never runs the monomorphization collector, which is where
+# the internally-tagged AST derive stalled forever - so the check above passed
+# while no build of `axon parse` could finish. Building and running the AST
+# JSON test (beside codegen, the combination once thought to collide) does.
+cargo test --locked -p axon-core --features serde-json --lib program_json_tests \
+  || fail "serde-json + codegen build and AST JSON round-trip"
 
 echo "── gate: clippy (lib, -D warnings) ────────────────────────────────"
 cargo clippy --locked --no-default-features -p axon-core -- -D warnings || fail "lib clippy"
@@ -415,7 +421,7 @@ echo "── gate: clippy runtime crates (-D warnings) ────────�
 # wasm32, but living under tests/ cargo ALSO builds it as a host integration test
 # with no test fns, where the static is genuinely unused — so the crate could not
 # be lint-gated at all.
-cargo clippy --locked -p axon-rt -p axon-ai -p axon-surface -p axon-gfx -p axon-gfx-mock \
+cargo clippy --locked -p axon-rt -p axon-rt-ai -p axon-ai -p axon-surface -p axon-gfx -p axon-gfx-mock \
   -p axon-domain -p axon-vm -p axon-attest -p axon-ledger -p axon-intent \
   -p axon-os -p axon-web -p axon-audit -p axon-certcheck -p axon-signal \
   -p axon-guest-init -p axon-wasm -p axon-cortex -p cortex-policy-adapter \

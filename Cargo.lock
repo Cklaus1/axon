@@ -262,6 +262,7 @@ name = "axon-intent"
 version = "0.1.0"
 dependencies = [
  "axon-os",
+ "libc",
  "serde",
  "serde_json",
  "sha2",
@@ -347,6 +348,14 @@ version = "0.1.0"
 dependencies = [
  "axon-gfx-mock",
  "libc",
+]
+
+[[package]]
+name = "axon-rt-ai"
+version = "0.1.0"
+dependencies = [
+ "axon-ai",
+ "axon-rt",
 ]
 
 [[package]]

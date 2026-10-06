@@ -245,7 +245,7 @@ impl PropGen {
                 let s: String = (0..len)
                     .map(|_| Ok((b'a' + (rng()? % 26) as u8) as char))
                     .collect::<Result<_, Flow>>()?;
-                Value::Str(s)
+                Value::Str(Rc::new(s))
             }
         })
     }
@@ -256,7 +256,7 @@ impl PropGen {
             PropGen::I64 => Value::Int(0),
             PropGen::F64 => Value::Float(0.0),
             PropGen::Bool => Value::Bool(false),
-            PropGen::Str => Value::Str(String::new()),
+            PropGen::Str => Value::Str(Rc::new(String::new())),
         }
     }
 
@@ -273,7 +273,9 @@ impl PropGen {
             (PropGen::Bool, Value::Bool(true)) => Some(Value::Bool(false)),
             (PropGen::Bool, Value::Bool(false)) => None,
             (PropGen::Str, Value::Str(s)) if s.is_empty() => None,
-            (PropGen::Str, Value::Str(s)) => Some(Value::Str(s[..s.len() - 1].to_string())),
+            (PropGen::Str, Value::Str(s)) => {
+                Some(Value::Str(Rc::new(s[..s.len() - 1].to_string())))
+            }
             _ => None,
         }
     }

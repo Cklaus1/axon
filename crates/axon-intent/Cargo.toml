@@ -23,4 +23,9 @@ sha2 = "0.10"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
+# killpg(2) for the timeout kill. The previous `Command::new("kill")` form was
+# misparsed by procps into kill(-1, SIGKILL) — see `kill_group` in synth.rs.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]

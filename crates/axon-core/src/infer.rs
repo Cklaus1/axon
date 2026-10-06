@@ -491,7 +491,8 @@ impl InferCtx {
                 params.iter().map(|p| self.resolve_ast_type(p)).collect(),
                 Box::new(self.resolve_ast_type(ret)),
             ),
-            AxonType::Ref(inner) => self.resolve_ast_type(inner), // Phase 1: ref transparent
+            // Phase 1: ref transparent (`&mut` too — its mode is checked by `mut_borrow`)
+            AxonType::Ref(inner) | AxonType::RefMut(inner) => self.resolve_ast_type(inner),
             AxonType::TypeParam(name) => Type::TypeParam(name.clone()),
             AxonType::DynTrait(name) => Type::DynTrait(name.clone()),
             AxonType::Tuple(elems) => {
@@ -914,7 +915,7 @@ impl InferCtx {
                         self.constrain(ty, Type::Bool, "unary not");
                         Type::Bool
                     }
-                    UnaryOp::Ref => ty, // Phase 1: transparent
+                    UnaryOp::Ref | UnaryOp::RefMut => ty, // Phase 1: transparent
                     UnaryOp::BitNot => {
                         self.constrain(ty, Type::I64, "bitwise not operand");
                         Type::I64

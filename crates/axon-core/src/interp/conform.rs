@@ -180,7 +180,9 @@ fn has_undet(t: &T) -> bool {
         T::Named(n) => n == UNDET,
         T::TypeParam(_) | T::DynTrait(_) => false,
         T::Result { ok, err } => has_undet(ok) || has_undet(err),
-        T::Option(x) | T::Chan(x) | T::Slice(x) | T::Ref(x) | T::RawPtr(x) => has_undet(x),
+        T::Option(x) | T::Chan(x) | T::Slice(x) | T::Ref(x) | T::RefMut(x) | T::RawPtr(x) => {
+            has_undet(x)
+        }
         T::Generic { args, .. } => args.iter().any(has_undet),
         T::Fn { params, ret } => params.iter().any(has_undet) || has_undet(ret),
         T::Tuple(xs) | T::Union(xs) => xs.iter().any(has_undet),
@@ -260,7 +262,7 @@ fn bind_from(decl: &T, actual: &T, cx: &Cx) {
             };
             binds.borrow_mut().insert(n.clone(), next);
         }
-        (T::Ref(x), a) => bind_from(x, a, cx),
+        (T::Ref(x) | T::RefMut(x), a) => bind_from(x, a, cx),
         (T::Option(x), T::Option(y)) | (T::Slice(x), T::Slice(y)) | (T::Chan(x), T::Chan(y)) => {
             bind_from(x, y, cx)
         }
@@ -332,6 +334,7 @@ fn subst(t: &T, cx: &Cx, erase: bool) -> T {
         T::Chan(x) => T::Chan(Box::new(go(x))),
         T::Slice(x) => T::Slice(Box::new(go(x))),
         T::Ref(x) => T::Ref(Box::new(go(x))),
+        T::RefMut(x) => T::RefMut(Box::new(go(x))),
         T::RawPtr(x) => T::RawPtr(Box::new(go(x))),
         T::Generic { base, args } => T::Generic {
             base: base.clone(),
@@ -353,7 +356,7 @@ fn mentions_tparam(t: &T, cx: &Cx) -> bool {
         T::Named(n) | T::TypeParam(n) => cx.is_tparam(n),
         T::DynTrait(_) => false,
         T::Result { ok, err } => go(ok) || go(err),
-        T::Option(x) | T::Chan(x) | T::Slice(x) | T::Ref(x) | T::RawPtr(x) => go(x),
+        T::Option(x) | T::Chan(x) | T::Slice(x) | T::Ref(x) | T::RefMut(x) | T::RawPtr(x) => go(x),
         T::Generic { args, .. } => args.iter().any(go),
         T::Fn { params, ret } => params.iter().any(go) || go(ret),
         T::Tuple(xs) | T::Union(xs) => xs.iter().any(go),
@@ -431,7 +434,7 @@ impl<'p> Interp<'p> {
             T::Named(n) => self.cast_named(v, n, &[], ty, cx, d),
             T::TypeParam(n) if cx.is_tparam(n) => self.cast_tparam(v, n, cx, d),
             T::TypeParam(_) | T::RawPtr(_) => Ok(()),
-            T::Ref(inner) => self.cast_at(v, inner, cx, d),
+            T::Ref(inner) | T::RefMut(inner) => self.cast_at(v, inner, cx, d),
             T::Option(inner) => self.cast_option(v, inner, ty, cx, d),
             T::Result { ok, err } => self.cast_result(v, ok, err, ty, cx, d),
             T::Generic { base, args } => match (base.as_str(), args.as_slice()) {
@@ -444,7 +447,7 @@ impl<'p> Interp<'p> {
             },
             T::Slice(inner) => match v {
                 Value::Array(xs) => {
-                    for x in xs.iter_mut() {
+                    for x in Rc::make_mut(xs).iter_mut() {
                         self.cast_at(x, inner, cx, d)?;
                     }
                     Ok(())
@@ -759,7 +762,7 @@ impl<'p> Interp<'p> {
                         || self.refine_bases.contains_key(n.as_str()))
             }
             T::TypeParam(_) | T::RawPtr(_) => false,
-            T::Ref(x) => self.pins_runtime_type(&x, cx),
+            T::Ref(x) | T::RefMut(x) => self.pins_runtime_type(&x, cx),
             T::Option(_)
             | T::Result { .. }
             | T::Slice(_)
@@ -847,7 +850,7 @@ impl<'p> Interp<'p> {
             Value::Handle { .. } => T::Named(format!("{HANDLE}{}", v.type_name())),
             Value::Array(xs) => {
                 let mut t = undet();
-                for x in xs {
+                for x in xs.iter() {
                     if !has_undet(&t) {
                         break;
                     }
@@ -1020,7 +1023,7 @@ impl<'p> Interp<'p> {
             T::DynTrait(_) => true,
             T::Generic { base, args } => known(base) && args.iter().all(go),
             T::Result { ok, err } => go(ok) && go(err),
-            T::Option(x) | T::Chan(x) | T::Slice(x) | T::Ref(x) => go(x),
+            T::Option(x) | T::Chan(x) | T::Slice(x) | T::Ref(x) | T::RefMut(x) => go(x),
             T::Fn { params, ret } => params.iter().all(go) && go(ret),
             T::Tuple(xs) | T::Union(xs) => xs.iter().all(go),
         }
@@ -1301,7 +1304,9 @@ fn is_unstated(t: &T) -> bool {
         T::Named(n) => n == "?",
         T::TypeParam(_) | T::DynTrait(_) => false,
         T::Result { ok, err } => is_unstated(ok) || is_unstated(err),
-        T::Option(x) | T::Chan(x) | T::Slice(x) | T::Ref(x) | T::RawPtr(x) => is_unstated(x),
+        T::Option(x) | T::Chan(x) | T::Slice(x) | T::Ref(x) | T::RefMut(x) | T::RawPtr(x) => {
+            is_unstated(x)
+        }
         T::Generic { args, .. } => args.iter().any(is_unstated),
         T::Fn { params, ret } => params.iter().any(is_unstated) || is_unstated(ret),
         T::Tuple(xs) | T::Union(xs) => xs.iter().any(is_unstated),
@@ -1406,7 +1411,12 @@ impl<'p> Interp<'p> {
                     self.walk_fresh(x, seen, out, d + 1)?;
                 }
             }
-            Value::Array(xs) | Value::Tuple(xs) => {
+            Value::Array(_) | Value::Tuple(_) => {
+                let xs: &[Value] = match v {
+                    Value::Array(a) => a.as_slice(),
+                    Value::Tuple(t) => t.as_slice(),
+                    _ => unreachable!(),
+                };
                 for x in xs {
                     self.walk_fresh(x, seen, out, d + 1)?;
                 }
@@ -1633,7 +1643,12 @@ impl<'p> Interp<'p> {
             ));
         }
         match (old, new) {
-            (Value::Array(a), Value::Array(b)) | (Value::Tuple(a), Value::Tuple(b)) => {
+            (Value::Array(_), Value::Array(_)) | (Value::Tuple(_), Value::Tuple(_)) => {
+                let (a, b): (&[Value], &[Value]) = match (old, new) {
+                    (Value::Array(a), Value::Array(b)) => (a.as_slice(), b.as_slice()),
+                    (Value::Tuple(a), Value::Tuple(b)) => (a.as_slice(), b.as_slice()),
+                    _ => unreachable!(),
+                };
                 for (x, y) in a.iter().zip(b) {
                     self.replaced_ok(x, y, seen, d + 1)?;
                 }
@@ -1714,6 +1729,7 @@ fn unshown_fn(t: &T) -> T {
         T::Chan(x) => T::Chan(u(x)),
         T::Slice(x) => T::Slice(u(x)),
         T::Ref(x) => T::Ref(u(x)),
+        T::RefMut(x) => T::RefMut(u(x)),
         T::RawPtr(x) => T::RawPtr(u(x)),
         T::Generic { base, args } => T::Generic {
             base: base.clone(),

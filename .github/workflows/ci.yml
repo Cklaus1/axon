@@ -108,7 +108,7 @@ jobs:
       # host target (built by scripts/build-guest-image.sh with -Z build-std).
       - name: cargo clippy (runtime crates)
         run: |
-          cargo clippy -p axon-rt -p axon-ai -p axon-surface -p axon-gfx \
+          cargo clippy -p axon-rt -p axon-rt-ai -p axon-ai -p axon-surface -p axon-gfx \
             -p axon-gfx-mock -p axon-domain -p axon-vm -p axon-attest \
             -p axon-ledger -p axon-intent -p axon-os -p axon-web \
             -p axon-audit -p axon-certcheck -p axon-signal \

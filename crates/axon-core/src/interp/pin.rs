@@ -59,7 +59,9 @@ fn closed(t: &T, gp: &[String]) -> bool {
         T::Named(n) => n != "?" && !gp.contains(n),
         T::TypeParam(_) | T::DynTrait(_) => false,
         T::Result { ok, err } => closed(ok, gp) && closed(err, gp),
-        T::Option(x) | T::Chan(x) | T::Slice(x) | T::Ref(x) | T::RawPtr(x) => closed(x, gp),
+        T::Option(x) | T::Chan(x) | T::Slice(x) | T::Ref(x) | T::RefMut(x) | T::RawPtr(x) => {
+            closed(x, gp)
+        }
         T::Generic { base, args } => !gp.contains(base) && args.iter().all(|a| closed(a, gp)),
         T::Fn { params, ret } => params.iter().all(|a| closed(a, gp)) && closed(ret, gp),
         T::Tuple(xs) | T::Union(xs) => xs.iter().all(|a| closed(a, gp)),

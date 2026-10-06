@@ -14,7 +14,7 @@ use std::path::Path;
 use inkwell::values::BasicValue;
 use inkwell::OptimizationLevel;
 
-use super::link::emit_object_and_link;
+use super::link::{emit_object_and_link, OptLevel};
 
 // Public test-result type used by `run_tests` callers.
 #[derive(Debug)]
@@ -40,8 +40,8 @@ impl<'ctx> super::Codegen<'ctx> {
     ///
     /// Convenience wrapper around `compile_to_binary_target` with
     /// `target_triple = None`.
-    pub fn compile_to_binary(&self, output_path: &str, release: bool) -> Result<(), String> {
-        self.compile_to_binary_target(output_path, release, None)
+    pub fn compile_to_binary(&self, output_path: &str, opt: OptLevel) -> Result<(), String> {
+        self.compile_to_binary_target(output_path, opt, None)
     }
 
     /// Dead-function elimination (R7 + general hygiene): `declare_builtins`
@@ -102,20 +102,36 @@ impl<'ctx> super::Codegen<'ctx> {
     pub fn compile_to_binary_target(
         &self,
         output_path: &str,
-        release: bool,
+        opt: OptLevel,
         target_triple: Option<&str>,
     ) -> Result<(), String> {
-        // NOTE: dead-function pruning is applied on the WASM object path
+        // NOTE: full dead-function pruning is applied on the WASM object path
         // (`compile_to_wasm_object`), where dropping the unused i64-ABI `__axon_*`
-        // helpers is the prerequisite for linking. It is intentionally NOT run
-        // here: the native link tolerates the unused helpers, and pruning them
-        // exposed a latent libm (`pow`) link-order fragility on the native path
-        // (axon-rt's f64::powf → undefined `pow`). Keeping native unchanged.
+        // helpers is the prerequisite for linking. Natively only the uncalled
+        // AI wrappers are pruned, so a program that makes no AI call links the
+        // AI-free runtime (`link::Runtime`, AX-11).
+        super::link::prune_unreachable_ai_callers(&self.ir.module);
         self.ir
             .module
             .verify()
             .map_err(|e| format!("IR verification failed: {}", e.to_string()))?;
-        emit_object_and_link(&self.ir.module, output_path, release, target_triple)
+        emit_object_and_link(&self.ir.module, output_path, opt, target_triple)
+    }
+
+    /// AX-23: compile the hosted program to its relocatable object file at
+    /// `output_path` WITHOUT linking (`axon build --emit-obj`). The object is
+    /// the one `compile_to_binary_target` would link against axon-rt.
+    pub fn compile_to_object(
+        &self,
+        output_path: &str,
+        opt: OptLevel,
+        target_triple: Option<&str>,
+    ) -> Result<(), String> {
+        self.ir
+            .module
+            .verify()
+            .map_err(|e| format!("IR verification failed: {}", e.to_string()))?;
+        super::link::emit_hosted_object(&self.ir.module, output_path, opt, target_triple)
     }
 
     /// R14: Compile to a loadable shared library (`.so`) for the given triple.
@@ -127,14 +143,14 @@ impl<'ctx> super::Codegen<'ctx> {
     pub fn compile_to_shared_lib(
         &self,
         output_path: &str,
-        release: bool,
+        opt: OptLevel,
         target_triple: Option<&str>,
     ) -> Result<(), String> {
         self.ir
             .module
             .verify()
             .map_err(|e| format!("IR verification failed: {}", e.to_string()))?;
-        super::link::emit_shared_lib(&self.ir.module, output_path, release, target_triple)
+        super::link::emit_shared_lib(&self.ir.module, output_path, opt, target_triple)
     }
 
     /// R14 (mobile): emit a relocatable object file for a device `triple` WITHOUT
@@ -144,14 +160,14 @@ impl<'ctx> super::Codegen<'ctx> {
     pub fn compile_to_object_for_triple(
         &self,
         output_path: &str,
-        release: bool,
+        opt: OptLevel,
         triple: &str,
     ) -> Result<(), String> {
         self.ir
             .module
             .verify()
             .map_err(|e| format!("IR verification failed: {}", e.to_string()))?;
-        super::link::emit_object_for_triple(&self.ir.module, output_path, release, triple)
+        super::link::emit_object_for_triple(&self.ir.module, output_path, opt, triple)
     }
 
     /// R17: Compile to a freestanding (bare-metal) ELF binary.
@@ -164,7 +180,7 @@ impl<'ctx> super::Codegen<'ctx> {
     pub fn compile_to_freestanding_obj(
         &self,
         output_path: &str,
-        release: bool,
+        opt: OptLevel,
         target_triple: Option<&str>,
         entry_fn: Option<&str>,
     ) -> Result<(), String> {
@@ -179,13 +195,13 @@ impl<'ctx> super::Codegen<'ctx> {
             .module
             .verify()
             .map_err(|e| format!("IR verification failed: {}", e.to_string()))?;
-        super::link::emit_freestanding_obj(&self.ir.module, output_path, release, target_triple)
+        super::link::emit_freestanding_obj(&self.ir.module, output_path, opt, target_triple)
     }
 
     pub fn compile_to_freestanding_binary(
         &self,
         output_path: &str,
-        release: bool,
+        opt: OptLevel,
         target_triple: Option<&str>,
         entry_fn: Option<&str>,
         linker_script: Option<&str>,
@@ -207,7 +223,7 @@ impl<'ctx> super::Codegen<'ctx> {
         super::link::emit_freestanding_binary(
             &self.ir.module,
             output_path,
-            release,
+            opt,
             target_triple,
             entry_fn,
             linker_script,
@@ -255,6 +271,30 @@ impl<'ctx> super::Codegen<'ctx> {
         self.ir.module.print_to_string().to_string()
     }
 
+    /// `axon build --emit-llvm`: the IR text after the optimisation this build
+    /// would apply before code generation (see `link::optimize_for_ir_dump`).
+    /// At `O0` this is `emit_llvm_ir`.
+    pub fn emit_optimized_llvm_ir(
+        &self,
+        opt: OptLevel,
+        target_triple: Option<&str>,
+        freestanding: bool,
+        shared: bool,
+    ) -> Result<String, String> {
+        self.ir
+            .module
+            .verify()
+            .map_err(|e| format!("IR verification failed: {}", e.to_string()))?;
+        super::link::optimize_for_ir_dump(
+            &self.ir.module,
+            opt,
+            target_triple,
+            freestanding,
+            shared,
+        )?;
+        Ok(self.emit_llvm_ir())
+    }
+
     /// R7 Slice B (AOT wasm, object half): verify the IR and emit a WebAssembly
     /// **object** at `output_path` via the inkwell `wasm32` backend (no link).
     /// The runnable-`.wasm` link needs a wasm sysroot + `wasm-ld` (the deferred
@@ -262,7 +302,7 @@ impl<'ctx> super::Codegen<'ctx> {
     pub fn compile_to_wasm_object(
         &self,
         output_path: &str,
-        release: bool,
+        opt: OptLevel,
         target_triple: &str,
     ) -> Result<(), String> {
         // Prune unused builtin helpers FIRST (R7): drops the unused str/array
@@ -273,7 +313,7 @@ impl<'ctx> super::Codegen<'ctx> {
             .module
             .verify()
             .map_err(|e| format!("IR verification failed: {}", e.to_string()))?;
-        super::link::emit_wasm_object(&self.ir.module, output_path, release, target_triple)
+        super::link::emit_wasm_object(&self.ir.module, output_path, opt, target_triple)
     }
 
     // ── Test runner ───────────────────────────────────────────────────────

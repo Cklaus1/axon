@@ -24,14 +24,13 @@ name = "axon_core"
 path = "src/lib.rs"
 
 [features]
-# `serde-json` is NOT in default: it derives Serialize/Deserialize on the
-# recursive AST enums (ast.rs Expr/AxonType/Pattern, `#[serde(tag="kind")]`),
-# and that derive COLLIDES with the `codegen` feature monomorphizing over the
-# same recursive types — rustc's monomorphization collector then recurses
-# pathologically and the native build never finishes (see BUILD_RESOLVED.md).
-# Keeping them apart by default makes `cargo build` (codegen) finish in ~3s.
-# `axon parse`/`lsp` (JSON) opt in with `--features serde-json` and degrade
-# gracefully without it.
+# `serde-json` (`axon parse`/`lsp`, JSON) is opt-in and combines freely with
+# `codegen`: `cargo build -p axon-core --features serde-json`. It was long
+# believed to COLLIDE with codegen; the actual defect (AX-10) was the
+# internally-tagged derive on the recursive AST enums, which stalled rustc's
+# monomorphization collector with or without codegen. The enums are adjacently
+# tagged now (ast.rs) - see BUILD_RESOLVED.md. Without the feature,
+# `axon parse`/`lsp` say what to rebuild with.
 default = ["codegen"]
 # `which` (native-linker discovery) is only used by codegen's link step, so it
 # rides with the codegen feature. This keeps the no-default-features interpreter

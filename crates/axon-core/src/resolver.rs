@@ -830,6 +830,14 @@ struct Resolver<'a> {
     /// per-variant span field, so we track the enclosing statement's span and
     /// attach it to undefined-name / shadowing diagnostics.
     current_span: crate::span::Span,
+    /// Names of top-level generic fns (`fn id<T>(..)`). A generic fn has no
+    /// single runtime instantiation, so naming one as a VALUE is refused
+    /// (see [`Resolver::check_fn_value_ref`]).
+    generic_fns: std::collections::HashSet<String>,
+    /// Set by the `Call` arm immediately before resolving a plain-`Ident`
+    /// callee, and consumed by the `Ident` arm: `f(x)` names `f` in CALL
+    /// position, which is not a use of `f` as a first-class value.
+    ident_is_callee: bool,
 }
 
 impl<'a> Resolver<'a> {
@@ -841,6 +849,8 @@ impl<'a> Resolver<'a> {
             warnings: Vec::new(),
             infos: Vec::new(),
             current_span: crate::span::Span::dummy(),
+            generic_fns: std::collections::HashSet::new(),
+            ident_is_callee: false,
         }
     }
 
@@ -885,6 +895,56 @@ impl<'a> Resolver<'a> {
 
     fn emit_warning(&mut self, d: Diagnostic) {
         self.warnings.push(d);
+    }
+
+    /// A name in VALUE position (anything but the plain-ident callee of a call)
+    /// that resolves to a function. A non-generic user fn is a first-class value
+    /// — it evaluates to a closure with no captures, exactly as an equivalent
+    /// lambda would — so it is accepted. Two kinds of function have no such
+    /// value and are refused here, at check time, rather than reaching run time:
+    ///
+    /// - a BUILTIN: builtins are dispatched by name at the call site and many are
+    ///   polymorphic or argument-shape-dependent, so there is no single function
+    ///   value either engine could hand out;
+    /// - a GENERIC fn: it has no single instantiation to take the address of.
+    ///
+    /// Both get the same repair: a lambda that calls the function by name.
+    fn check_fn_value_ref(&mut self, name: &str) {
+        let (kind, params) = match self.table.lookup(name) {
+            Some(Symbol::Builtin { .. }) => {
+                let params: Vec<String> = BUILTINS
+                    .iter()
+                    .find(|b| b.name == name)
+                    .map(|b| b.params.iter().map(|(p, _)| p.to_string()).collect())
+                    .unwrap_or_default();
+                ("a builtin", params)
+            }
+            Some(Symbol::Fn { param_names, .. }) if self.generic_fns.contains(name) => {
+                ("a generic function", param_names.clone())
+            }
+            _ => return,
+        };
+        let list = params.join(", ");
+        let typed = if kind == "a builtin" {
+            list.clone()
+        } else {
+            params
+                .iter()
+                .map(|p| format!("{p}: <type>"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        let d = Diagnostic::error(
+            crate::error::E0306,
+            format!(
+                "`{name}` is {kind}, which cannot be used as a value — only a non-generic \
+                 user-defined `fn` can be passed, stored or bound by name"
+            ),
+        )
+        .with_file(self.file)
+        .with_span(self.current_span)
+        .with_fix(format!("wrap it in a lambda — `|{typed}| {name}({list})`"));
+        self.emit_error(d);
     }
 
     // ── Pass 1: collect top-level names ──────────────────────────────────
@@ -947,6 +1007,9 @@ impl<'a> Resolver<'a> {
                         name: f.name.clone(),
                         param_names: f.params.iter().map(|p| p.name.clone()).collect(),
                     };
+                    if !f.generic_params.is_empty() {
+                        self.generic_fns.insert(f.name.clone());
+                    }
                     if let Some(prev) = self.table.define(f.name.clone(), sym) {
                         if matches!(prev, Symbol::Builtin { .. }) {
                             // User↔builtin collision. The interpreter dispatches
@@ -1701,6 +1764,10 @@ impl<'a> Resolver<'a> {
 
             // ── Identifier lookup ─────────────────────────────────────────
             Expr::Ident(name) => {
+                let is_callee = std::mem::take(&mut self.ident_is_callee);
+                if !is_callee {
+                    self.check_fn_value_ref(name);
+                }
                 if self.table.lookup(name).is_none() {
                     let suggestion = self.table.suggest(name);
                     let mut d = Diagnostic::error(
@@ -1782,7 +1849,9 @@ impl<'a> Resolver<'a> {
 
             // ── Call ──────────────────────────────────────────────────────
             Expr::Call { callee, args, .. } => {
+                self.ident_is_callee = matches!(callee.as_ref(), Expr::Ident(_));
                 self.resolve_expr(callee);
+                self.ident_is_callee = false;
                 for arg in args {
                     self.resolve_expr(arg);
                 }
@@ -1873,7 +1942,14 @@ impl<'a> Resolver<'a> {
                 // Field name validity is deferred to type-checking.
             }
             Expr::Index { receiver, index } => {
+                // `E[d]` / `Var[d]` is the moment-predicate form (Phase 13), an
+                // application of the builtin, not the builtin used as a value.
+                self.ident_is_callee = matches!(
+                    receiver.as_ref(),
+                    Expr::Ident(n) if matches!(n.as_str(), "E" | "Var")
+                );
                 self.resolve_expr(receiver);
+                self.ident_is_callee = false;
                 self.resolve_expr(index);
             }
 
@@ -2325,16 +2401,7 @@ fn fill_captures_expr(expr: &mut Expr, outer: &std::collections::HashSet<String>
             fill_captures_expr(body, &inner_outer);
         }
         // For all other expressions, just recurse.
-        Expr::Block(stmts) => {
-            let mut local_outer = outer.clone();
-            for stmt in stmts {
-                fill_captures_expr(&mut stmt.expr, &local_outer);
-                // Let bindings extend the visible outer scope for subsequent stmts.
-                if let Expr::Let { name, .. } = &stmt.expr {
-                    local_outer.insert(name.clone());
-                }
-            }
-        }
+        Expr::Block(stmts) => fill_captures_stmts(stmts, outer),
         Expr::Let { value, .. } | Expr::Own { value, .. } => fill_captures_expr(value, outer),
         Expr::RefBind { value, .. } => fill_captures_expr(value, outer),
         Expr::BinOp { left, right, .. } => {
@@ -2374,34 +2441,45 @@ fn fill_captures_expr(expr: &mut Expr, outer: &std::collections::HashSet<String>
         Expr::Question(e) | Expr::Some(e) | Expr::Ok(e) | Expr::Err(e) => {
             fill_captures_expr(e, outer)
         }
-        Expr::FieldAccess { receiver, .. } | Expr::Index { receiver, .. } => {
-            fill_captures_expr(receiver, outer)
+        Expr::FieldAccess { receiver, .. } => fill_captures_expr(receiver, outer),
+        Expr::Index { receiver, index } => {
+            fill_captures_expr(receiver, outer);
+            fill_captures_expr(index, outer);
         }
         Expr::Assign { value, .. } => fill_captures_expr(value, outer),
         Expr::AssignTo { place, value } => {
             fill_captures_expr(place, outer);
             fill_captures_expr(value, outer);
         }
+        // Loop bodies are scopes like a block: a `let` in the body (and the
+        // `for` variable / `while let` pattern bindings) is visible to a lambda
+        // created later in the same body (AX-19).
         Expr::While { cond, body } => {
             fill_captures_expr(cond, outer);
-            for stmt in body {
-                fill_captures_expr(&mut stmt.expr, outer);
-            }
+            fill_captures_stmts(body, outer);
         }
-        Expr::WhileLet { expr, body, .. } => {
+        Expr::WhileLet {
+            pattern,
+            expr,
+            body,
+        } => {
             fill_captures_expr(expr, outer);
-            for stmt in body {
-                fill_captures_expr(&mut stmt.expr, outer);
-            }
+            let mut body_outer = outer.clone();
+            collect_pattern_bindings(pattern, &mut body_outer);
+            fill_captures_stmts(body, &body_outer);
         }
         Expr::For {
-            start, end, body, ..
+            var,
+            start,
+            end,
+            body,
+            ..
         } => {
             fill_captures_expr(start, outer);
             fill_captures_expr(end, outer);
-            for stmt in body {
-                fill_captures_expr(&mut stmt.expr, outer);
-            }
+            let mut body_outer = outer.clone();
+            body_outer.insert(var.clone());
+            fill_captures_stmts(body, &body_outer);
         }
         Expr::StructLit { fields, .. } => {
             for (_, v) in fields {
@@ -2446,9 +2524,24 @@ fn fill_captures_expr(expr: &mut Expr, outer: &std::collections::HashSet<String>
     }
 }
 
+/// A statement list is a scope: each `let`/`own`/`ref` binding is visible to
+/// the statements (and lambdas) after it.
+fn fill_captures_stmts(stmts: &mut [crate::ast::Stmt], outer: &std::collections::HashSet<String>) {
+    let mut local_outer = outer.clone();
+    for stmt in stmts {
+        fill_captures_expr(&mut stmt.expr, &local_outer);
+        if let Expr::Let { name, .. } | Expr::Own { name, .. } | Expr::RefBind { name, .. } =
+            &stmt.expr
+        {
+            local_outer.insert(name.clone());
+        }
+    }
+}
+
 /// Collect all `Ident` names referenced in `expr` that are not bound by
-/// `bound` (the lambda's own params).  Does NOT recurse into nested Lambdas
-/// (those capture from their own outer scope, not this one).
+/// `bound` (the lambda's own params and locals introduced inside the body).
+/// A nested lambda's free variables are free here too: the enclosing closure
+/// must capture them so the nested one can be built from its env.
 fn collect_free_vars(
     expr: &Expr,
     bound: &std::collections::HashSet<String>,
@@ -2460,17 +2553,12 @@ fn collect_free_vars(
                 free.insert(name.clone());
             }
         }
-        // Stop at nested lambdas — they have their own capture analysis.
-        Expr::Lambda { .. } => {}
-        Expr::Block(stmts) => {
-            let mut local_bound = bound.clone();
-            for stmt in stmts {
-                collect_free_vars(&stmt.expr, &local_bound, free);
-                if let Expr::Let { name, .. } = &stmt.expr {
-                    local_bound.insert(name.clone());
-                }
-            }
+        Expr::Lambda { params, body, .. } => {
+            let mut inner = bound.clone();
+            inner.extend(params.iter().map(|p| p.name.clone()));
+            collect_free_vars(body, &inner, free);
         }
+        Expr::Block(stmts) => collect_free_vars_stmts(stmts, bound, free),
         Expr::Let { value, .. } | Expr::Own { value, .. } => collect_free_vars(value, bound, free),
         Expr::RefBind { value, .. } => collect_free_vars(value, bound, free),
         Expr::BinOp { left, right, .. } => {
@@ -2509,25 +2597,36 @@ fn collect_free_vars(
         Expr::Question(e) | Expr::Some(e) | Expr::Ok(e) | Expr::Err(e) => {
             collect_free_vars(e, bound, free)
         }
-        Expr::FieldAccess { receiver, .. } | Expr::Index { receiver, .. } => {
-            collect_free_vars(receiver, bound, free)
+        Expr::FieldAccess { receiver, .. } => collect_free_vars(receiver, bound, free),
+        Expr::Index { receiver, index } => {
+            collect_free_vars(receiver, bound, free);
+            collect_free_vars(index, bound, free);
         }
-        Expr::Assign { value, .. } => collect_free_vars(value, bound, free),
+        // Assigning a captured binding writes the closure's own captured copy
+        // (interp: the persistent capture cell), so the target is free too.
+        Expr::Assign { name, value } => {
+            if !bound.contains(name.as_str()) {
+                free.insert(name.clone());
+            }
+            collect_free_vars(value, bound, free)
+        }
         Expr::AssignTo { place, value } => {
             collect_free_vars(place, bound, free);
             collect_free_vars(value, bound, free);
         }
         Expr::While { cond, body } => {
             collect_free_vars(cond, bound, free);
-            for stmt in body {
-                collect_free_vars(&stmt.expr, bound, free);
-            }
+            collect_free_vars_stmts(body, bound, free);
         }
-        Expr::WhileLet { expr, body, .. } => {
+        Expr::WhileLet {
+            pattern,
+            expr,
+            body,
+        } => {
             collect_free_vars(expr, bound, free);
-            for stmt in body {
-                collect_free_vars(&stmt.expr, bound, free);
-            }
+            let mut body_bound = bound.clone();
+            collect_pattern_bindings(pattern, &mut body_bound);
+            collect_free_vars_stmts(body, &body_bound, free);
         }
         Expr::For {
             start,
@@ -2540,9 +2639,7 @@ fn collect_free_vars(
             collect_free_vars(end, bound, free);
             let mut for_bound = bound.clone();
             for_bound.insert(var.clone());
-            for stmt in body {
-                collect_free_vars(&stmt.expr, &for_bound, free);
-            }
+            collect_free_vars_stmts(body, &for_bound, free);
         }
         Expr::StructLit { fields, .. } => {
             for (_, v) in fields {
@@ -2585,6 +2682,24 @@ fn collect_free_vars(
         | Expr::Break
         | Expr::Continue
         | Expr::InlineAsm { .. } => {}
+    }
+}
+
+/// `collect_free_vars` over a statement list, which is a scope: a `let`/`own`/
+/// `ref` binding shadows the outer name for the statements after it.
+fn collect_free_vars_stmts(
+    stmts: &[crate::ast::Stmt],
+    bound: &std::collections::HashSet<String>,
+    free: &mut std::collections::HashSet<String>,
+) {
+    let mut local_bound = bound.clone();
+    for stmt in stmts {
+        collect_free_vars(&stmt.expr, &local_bound, free);
+        if let Expr::Let { name, .. } | Expr::Own { name, .. } | Expr::RefBind { name, .. } =
+            &stmt.expr
+        {
+            local_bound.insert(name.clone());
+        }
     }
 }
 

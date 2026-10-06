@@ -6769,11 +6769,14 @@ fn two_separate_failures_are_reported_separately_each_at_its_own_line() {
     // exercising it the moment a site gains a span — which is what happened here.
     //
     // What this fixture asserts now is the stronger property: two failures, two
-    // diagnostics, each pointing at the line it is actually on.
+    // diagnostics, each pointing at the line it is actually on. (AX-25: a
+    // non-generic fn passed by name is now a valid first-class value, so the
+    // line-4 failure is a GENERIC fn passed by name — still E0306, now from the
+    // resolver, which has no single instantiation to hand out.)
     let f = std::env::temp_dir().join(format!("axon_nolocpair_{}.ax", std::process::id()));
     std::fs::write(
         &f,
-        "fn helper(x: i64) -> i64 { x }\n         fn taker(g: fn(i64) -> i64) -> i64 { 1 }\n         fn main() -> i64 {\n         \x20   let a = taker(helper)\n         \x20   let b = 1 + true\n         \x20   a\n         }\n",
+        "fn id<T>(x: T) -> T { x }\n         fn taker(g: fn(i64) -> i64) -> i64 { 1 }\n         fn main() -> i64 {\n         \x20   let a = taker(id)\n         \x20   let b = 1 + true\n         \x20   a\n         }\n",
     )
     .unwrap();
     let out = axon()
@@ -6794,7 +6797,7 @@ fn two_separate_failures_are_reported_separately_each_at_its_own_line() {
         errors
             .iter()
             .any(|l| l.contains("\"code\":\"E0306\"") && l.contains("\"line\":4")),
-        "the by-name function argument must be reported, on ITS line: {msg}"
+        "the generic function passed by name must be reported, on ITS line: {msg}"
     );
     assert!(
         errors
@@ -21698,70 +21701,6 @@ fn a_corrupt_cache_entry_does_not_fail_the_build() {
     let _ = std::fs::remove_file(&out_bin);
 }
 
-#[test]
-fn concat_plus_is_refused_natively_rather_than_miscompiled() {
-    // N2a/N2b, invariant I-2. `emit_binop` matches on integer/float value kinds;
-    // a str or slice operand fell through to a path that yields the LEFT
-    // operand. So before the guard, native BUILT these and printed the wrong
-    // answer: `"a" + "b"` → `a`, and `[1,2] + [3]` → length 2.
-    //
-    // A wrong answer from a successful build is the worst failure mode available
-    // — nothing tells the caller. Refusing is what arr_push and the
-    // effect-handler shapes already do when native cannot reproduce the
-    // interpreter, and it is what this asserts.
-    for (label, src, interp_expects) in [
-        (
-            "str",
-            "fn main() -> i64 {\n    println(\"a\" + \"b\")\n    0\n}\n",
-            "ab",
-        ),
-        (
-            "array",
-            "fn main() -> i64 {\n    let xs = [1, 2] + [3]\n    println(to_str(len(xs)))\n    0\n}\n",
-            "3",
-        ),
-    ] {
-        let f = tmp_ax(&format!("concat_native_{label}"), src);
-        let out_bin = std::env::temp_dir()
-            .join(format!("axon_concat_{label}_{}", std::process::id()));
-        let _ = std::fs::remove_file(&out_bin);
-
-        // The interpreter is the oracle and must be right.
-        let run = axon().arg("run").arg(&f).output().expect("spawn run");
-        let stdout = String::from_utf8_lossy(&run.stdout);
-        assert_eq!(
-            stdout.lines().next_back().unwrap_or(""),
-            interp_expects,
-            "{label}: interpreter must concatenate"
-        );
-
-        // Native must refuse, and leave nothing behind.
-        let build = axon()
-            .arg("build")
-            .arg(&f)
-            .arg("-o")
-            .arg(&out_bin)
-            .output()
-            .expect("spawn build");
-        let msg = format!(
-            "{}{}",
-            String::from_utf8_lossy(&build.stdout),
-            String::from_utf8_lossy(&build.stderr)
-        );
-        let _ = std::fs::remove_file(&f);
-        if msg.contains("requires building axon with the `codegen` feature") {
-            continue; // codegen absent in this build — nothing to assert
-        }
-        assert_ne!(build.status.code(), Some(0), "{label}: must not build: {msg}");
-        assert!(msg.contains("E0910"), "{label}: must be the refusal class: {msg}");
-        assert!(
-            !out_bin.exists(),
-            "{label}: a refused build must leave no binary"
-        );
-        let _ = std::fs::remove_file(&out_bin);
-    }
-}
-
 /// `append_file` must EXTEND, and `file_size` must report BYTES.
 ///
 /// Behaviour, not just type-checking: an `append_file` that forwarded to
@@ -27665,68 +27604,265 @@ fn struct_size_is_right_for_both_result_sides_and_nested_fields() {
 /// "score 2 -> 2" against an optimum of 6 — a search that silently finds
 /// nothing.
 ///
-/// Sound-by-refusal (I-2) is the rule: codegen refuses what it cannot lower
-/// faithfully, never mis-lowers it. This asserts the refusal, not the lowering
-/// — implementing place assignment natively would be a feature, and the test
-/// should then assert parity instead.
+/// Place assignment is now lowered natively, so the property is PARITY: both
+/// shipped examples that do in-place writes must print exactly what the
+/// interpreter prints (`local_search` must reach the optimum, 6).
 #[test]
-fn native_codegen_refuses_place_assignment_instead_of_dropping_it() {
-    let dir = std::env::temp_dir().join(format!("axon_placeasg_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-
-    for (name, src, want_interp, expect_in_msg) in [
-        (
-            "indexed",
-            "fn main() {\n  let xs = [1,2,3]\n  xs[1] = 99\n  println(to_str(xs[1]))\n}\n",
-            "99\n",
-            "xs[i] = v",
-        ),
-        (
-            "field",
-            "type P = { x: i64 }\nfn main() {\n  let p = P { x: 1 }\n  p.x = 5\n  \
-             println(to_str(p.x))\n}\n",
-            "5\n",
-            "s.field = v",
-        ),
-    ] {
-        let f = dir.join(format!("{name}.ax"));
-        std::fs::write(&f, src).unwrap();
-
-        // The interpreter is the reference and must still do the write.
-        let run = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+fn native_place_assignment_examples_match_the_interpreter() {
+    for name in ["rank", "local_search"] {
+        let src = std::fs::read_to_string(ex(&format!("asi/{name}.ax"))).unwrap();
+        let Some(got) = native_stdout(name, &src) else {
+            note_harness_skip("axon build (no codegen feature)");
+            return;
+        };
         assert_eq!(
-            String::from_utf8_lossy(&run.stdout),
-            want_interp,
-            "`{name}`: the reference engine must perform the assignment"
+            got,
+            interp_stdout(name, &src),
+            "`{name}`: native != interpreter"
         );
+    }
+}
 
-        // The build must REFUSE — not succeed and drop the write.
-        let bin = dir.join(format!("{name}.bin"));
+/// AX-19: native closures could not capture loop-scoped bindings. Capture
+/// analysis treated `for`/`while`/`while let` bodies as if their `let`s and the
+/// loop variable did not exist, so `|acc, x| acc + x % (rep + 7)` inside
+/// `for rep in 0..2` failed natively with E0701 `identifier 'rep' not found`.
+/// Also covers what the same analysis missed elsewhere: a nested lambda's free
+/// variables (the outer closure must capture them), an identifier used only as
+/// an index, a captured array indexed in the body, and the interpreter's
+/// snapshot-at-creation semantics (later writes to the outer binding are not
+/// seen; the closure's own writes persist across its calls but don't leak out).
+#[test]
+fn native_closures_capture_any_enclosing_scope_like_the_interpreter() {
+    let progs: [(&str, &str); 5] = [
+        (
+            "ax19_for",
+            "fn main() -> i64 {\n    let xs = arr_range(0, 10)\n    let total = 0\n    for rep in 0..2 {\n        total = total + arr_fold(xs, 0, |acc: i64, x: i64| acc + x % (rep + 7))\n    }\n    println(to_str(total))\n    0\n}\n",
+        ),
+        (
+            "ax19_while_let",
+            "fn next(i: i64) -> Option<i64> {\n if i < 2 { Some(i + 3) } else { None }\n}\nfn main() -> i64 {\n let i = 0\n let total = 0\n while let Some(v) = next(i) {\n  total = total + arr_fold([1, 2], 0, |acc: i64, x: i64| acc + x * v)\n  i = i + 1\n }\n println(to_str(total))\n 0\n}\n",
+        ),
+        (
+            "ax19_scopes",
+            "fn main() -> i64 {\n let xs = arr_range(0, 10)\n let total = 0\n let i = 0\n while i < 3 {\n  let k = i * 2 + 1\n  total = total + arr_fold(xs, 0, |acc: i64, x: i64| acc + x * k)\n  if i > 0 {\n   let m = 100\n   total = total + arr_fold(xs, 0, |acc: i64, x: i64| acc + m + k)\n  }\n  i = i + 1\n }\n match Some(4) {\n  Some(v) => println(to_str(arr_fold([1, 1], 0, |acc: i64, x: i64| acc + x * v))),\n  None => println(\"none\"),\n }\n println(to_str(total))\n 0\n}\n",
+        ),
+        (
+            "ax19_nested_index",
+            "fn main() -> i64 {\n let xs = [10, 20, 30]\n let j = 2\n let g = |i: i64| xs[j] + i\n println(to_str(g(1)))\n let base = 100\n let mk = |a: i64| arr_fold([1, 2, 3], 0, |acc: i64, x: i64| acc + x * a + base)\n println(to_str(mk(2)))\n 0\n}\n",
+        ),
+        (
+            "ax19_snapshot",
+            "fn main() -> i64 {\n let k = 1\n let f = |x: i64| x + k\n k = 5\n println(to_str(f(0)))\n let xs = [1, 2, 3]\n let s = |x: i64| arr_sum_i64(&xs) + x\n xs[0] = 100\n println(to_str(s(0)))\n let ys = [5, 5]\n let g = |i: i64| {\n  ys[i] = ys[i] + 1\n  ys[i]\n }\n println(to_str(g(0)))\n println(to_str(g(0)))\n println(to_str(ys[0]))\n let counter = 0\n let inc = |d: i64| {\n  counter = counter + d\n  counter\n }\n println(to_str(inc(2)))\n println(to_str(inc(3)))\n println(to_str(counter))\n 0\n}\n",
+        ),
+    ];
+    for (tag, src) in progs {
+        let Some(got) = native_stdout(tag, src) else {
+            note_harness_skip("axon build (no codegen feature)");
+            return;
+        };
+        assert_eq!(
+            got,
+            interp_stdout(tag, src),
+            "[{tag}] native != interpreter"
+        );
+    }
+}
+
+/// AX-13: native refused (E0910) array `+`, `arr_concat` on non-`i64`
+/// elements, and writes into `Option`/`Result` slots of an unannotated array
+/// or a struct field. Array `+` builds a fresh array (nested arrays deep-copied,
+/// so a write through the result never reaches an operand); slot writes take
+/// the slot's declared layout. Each must build and print what `axon run` prints.
+#[test]
+fn native_array_concat_and_sum_type_slot_writes_match_the_interpreter() {
+    let progs: [(&str, &str); 8] = [
+        (
+            "ax13_cat_i64",
+            "fn main() -> i64 {\n    let a = [1, 2]\n    let b = arr_range(5, 8)\n    let c = a + b\n    println(to_str(len(c)))\n    c[0] = 99\n    println(to_str(a[0]) + \" \" + to_str(c[0]) + \" \" + to_str(c[4]))\n    let e: [i64] = []\n    println(to_str(len(e + e)) + \" \" + to_str(len(e + a)))\n    0\n}\n",
+        ),
+        (
+            "ax13_cat_types",
+            "fn main() -> i64 {\n    let f = [1.5] + [2.25, 3.0]\n    println(to_str_f64(f[2]))\n    let s = [\"a\", \"b\"] + [\"c\"]\n    println(s[0] + s[2])\n    let bs = [true] + [false, true]\n    println(to_str_bool(bs[1]))\n    let n = [as_u8(1), as_u8(250)]\n    let m = n + n\n    println(to_str(len(m)) + \" \" + to_str(m[3]))\n    0\n}\n",
+        ),
+        (
+            "ax13_cat_nested",
+            "fn main() -> i64 {\n    let a = [[1, 2], [3]]\n    let b = [[4]]\n    let c = a + b\n    c[0][0] = 77\n    println(to_str(a[0][0]) + \" \" + to_str(c[0][0]) + \" \" + to_str(c[2][0]))\n    let t = [(1, \"x\")] + [(2, \"y\")]\n    println(t[1].1)\n    0\n}\n",
+        ),
+        (
+            "ax13_arr_concat_any",
+            "fn main() -> i64 {\n    let f = arr_concat([1.5], [2.25, 3.0])\n    println(to_str_f64(f[2]))\n    let s = arr_concat([\"a\", \"b\"], [\"c\"])\n    println(s[0] + s[2])\n    let xs = [1, 2, 3]\n    let ys = arr_concat(&xs, [4])\n    ys[0] = 50\n    println(to_str(xs[0]) + \" \" + to_str(ys[0]) + \" \" + to_str(ys[3]) + \" \" + to_str(len(ys)))\n    0\n}\n",
+        ),
+        (
+            "ax13_option_slot",
+            "fn main() -> i64 {\n    let xs = [Some(1), None]\n    xs[1] = Some(3)\n    xs[0] = None\n    match xs[1] { Some(v) => println(to_str(v)), None => println(\"none\") }\n    match xs[0] { Some(v) => println(to_str(v)), None => println(\"none\") }\n    let ys = [None, Some(2)]\n    ys[0] = Some(9)\n    match ys[0] { Some(v) => println(to_str(v)), None => println(\"none\") }\n    0\n}\n",
+        ),
+        (
+            "ax13_result_slot",
+            "fn main() -> i64 {\n    let rs = [parse_int(\"1\"), parse_int(\"x\")]\n    rs[1] = Ok(5)\n    rs[0] = Err(\"bad\")\n    match rs[1] { Ok(v) => println(to_str(v)), Err(e) => println(e) }\n    match rs[0] { Ok(v) => println(to_str(v)), Err(e) => println(e) }\n    0\n}\n",
+        ),
+        (
+            "ax13_field_slots",
+            "type T = { o: Option<i64>, r: Result<i64, str>, n: i32, xs: [i64], rs: [Result<i64, str>] }\nfn main() -> i64 {\n    let k: i32 = 4\n    let t = T { o: None, r: Err(\"e\"), n: k, xs: [1, 2], rs: [Ok(1)] }\n    t.r = Ok(6)\n    t.o = Some(5)\n    t.xs[1] = 40\n    t.rs[0] = Err(\"zz\")\n    match t.r { Ok(v) => println(to_str(v)), Err(e) => println(e) }\n    match t.o { Some(v) => println(to_str(v)), None => println(\"none\") }\n    println(to_str(t.xs[1]))\n    match t.rs[0] { Ok(v) => println(to_str(v)), Err(e) => println(e) }\n    t.r = Err(\"again\")\n    match t.r { Ok(v) => println(to_str(v)), Err(e) => println(e) }\n    0\n}\n",
+        ),
+        (
+            "ax13_narrow_nested",
+            "fn main() -> i64 {\n    let bytes = [as_u8(1), as_u8(2), as_u8(3)]\n    bytes[1] = as_u8(7)\n    bytes[2] = bytes[1] + bytes[0]\n    println(to_str(bytes[1]) + \" \" + to_str(bytes[2]))\n    let ns = [as_i32(5), as_i32(6)]\n    ns[0] = as_i32(-3)\n    println(to_str(ns[0]))\n    let g = [[1, 2], [3, 4]]\n    g[1][0] = 9\n    println(to_str(g[1][0]))\n    0\n}\n",
+        ),
+    ];
+    for (tag, src) in progs {
+        let Some(got) = native_stdout(tag, src) else {
+            note_harness_skip("axon build (no codegen feature)");
+            return;
+        };
+        assert_eq!(
+            got,
+            interp_stdout(tag, src),
+            "[{tag}] native != interpreter"
+        );
+    }
+}
+
+/// AX-24: `x = <value>` whose value lowered to nothing natively skipped the
+/// store and BUILT: the repro printed `7` (interp `42`), the loop forms `7`/`0`.
+/// The `Assign` arm now refuses with E0910 instead. Today the trigger is a
+/// closure called out of an array element; once that call lowers, the build
+/// must print exactly what the interpreter prints. Either is acceptable - a
+/// successful build with a different answer is not.
+#[test]
+fn native_assign_of_unlowered_value_is_refused_not_dropped() {
+    let progs: [(&str, &str); 3] = [
+        ("ax24_let_f", "fn main() -> i64 {\n    let table = [|x: i64| x + 1, |x: i64| x * 2]\n    let f = table[0]\n    let acc = 7\n    acc = f(41)\n    println(to_str(acc))\n    0\n}\n"),
+        ("ax24_index_call", "fn main() -> i64 {\n    let table = [|x: i64| x + 1, |x: i64| x * 2]\n    let acc = 7\n    for k in 0..2 {\n        acc = table[k](41)\n    }\n    println(to_str(acc))\n    0\n}\n"),
+        ("ax24_accumulate", "fn main() -> i64 {\n    let table = [|x: i64| x + 1, |x: i64| x * 2]\n    let f = table[0]\n    let acc = 0\n    for k in 0..3 {\n        acc = acc + f(10 + k)\n    }\n    println(to_str(acc))\n    0\n}\n"),
+    ];
+    for (tag, src) in progs {
+        let expected = interp_stdout(tag, src);
+        let f = tmp_ax(tag, src);
+        let bin = std::env::temp_dir().join(format!("axon_ax24_{tag}_{}", std::process::id()));
+        let _ = std::fs::remove_file(&bin);
         let build = axon()
-            .args(["build", f.to_str().unwrap(), "-o", bin.to_str().unwrap()])
+            .arg("build")
+            .arg(&f)
+            .arg("-o")
+            .arg(&bin)
+            .arg("--no-cache")
             .output()
-            .unwrap();
-        let log = format!(
+            .expect("spawn build");
+        let _ = std::fs::remove_file(&f);
+        let msg = format!(
             "{}{}",
             String::from_utf8_lossy(&build.stdout),
             String::from_utf8_lossy(&build.stderr)
         );
-        if codegen_absent(&log) {
+        if codegen_absent(&msg) {
             note_harness_skip("axon build (no codegen feature)");
+            return;
+        }
+        if build.status.code() != Some(0) {
+            assert!(msg.contains("E0910"), "[{tag}] must refuse as E0910: {msg}");
+            assert!(
+                !bin.exists(),
+                "[{tag}] a refused build must leave no binary"
+            );
             continue;
         }
-        assert!(
-            !build.status.success(),
-            "`{name}`: the build must not succeed while discarding the write: {log}"
-        );
-        assert!(
-            log.contains("E0910") && log.contains(expect_in_msg),
-            "`{name}`: the refusal must name the construct: {log}"
+        let run = std::process::Command::new(&bin)
+            .output()
+            .expect("run native");
+        let _ = std::fs::remove_file(&bin);
+        assert_eq!(
+            String::from_utf8_lossy(&run.stdout).trim(),
+            expected,
+            "[{tag}] native built and printed a different answer"
         );
     }
+}
 
-    let _ = std::fs::remove_dir_all(&dir);
+/// `&&` / `||` did not short-circuit natively: both operands were emitted
+/// unconditionally, so `i > 0 && ys[i - 1] > ys[i]` bounds-panicked (exit 101)
+/// at `i = 0` and `false && f()` ran `f`'s `println`. The interpreter
+/// evaluates the right side only when the left does not decide the result.
+#[test]
+fn native_and_or_short_circuit_like_the_interpreter() {
+    let progs: [(&str, &str); 3] = [
+        ("sc_guarded_index", "fn main() -> i64 {\n    let ys = [3, 1, 2]\n    let c = 0\n    for i in 0..3 {\n        if i > 0 && ys[i - 1] > ys[i] { c = c + 1 }\n    }\n    println(to_str(c))\n    0\n}\n"),
+        ("sc_side_effects", "fn f(x: bool) -> bool {\n    println(\"f called\")\n    x\n}\nfn main() -> i64 {\n    let a = false\n    let b = a && f(true)\n    let c = true || f(false)\n    let d = true && f(true)\n    println(to_str_bool(b))\n    println(to_str_bool(c))\n    println(to_str_bool(d))\n    let i = 0\n    let ys = [1, 2]\n    while i < 2 && ys[i] > 0 { i = i + 1 }\n    println(to_str(i))\n    0\n}\n"),
+        ("sc_nested", "fn hit(n: i64) -> bool {\n    println(\"hit \" + to_str(n))\n    n > 1\n}\nfn main() -> i64 {\n    let xs = [5, 0, 7]\n    let n = 0\n    for i in 0..4 {\n        if (i < 3 && xs[i] > 0) || (i == 3 && hit(i)) { n = n + 1 }\n        if !(i >= 3 || xs[i] == 0) && (hit(i) || hit(i + 10)) { n = n + 10 }\n    }\n    let z = false || (true && hit(99))\n    println(to_str_bool(z))\n    println(to_str(n))\n    0\n}\n"),
+    ];
+    for (tag, src) in progs {
+        let Some(got) = native_stdout(tag, src) else {
+            note_harness_skip("axon build (no codegen feature)");
+            return;
+        };
+        assert_eq!(
+            got,
+            interp_stdout(tag, src),
+            "[{tag}] native != interpreter"
+        );
+    }
+}
+
+/// `match` guards ran BEFORE the arm's pattern bindings existed, so a guard
+/// naming one (`Some(v) if v > 2`) did not lower natively (E0701, and an
+/// unlowered guard was otherwise silently ignored, taking the arm whenever the
+/// pattern matched). The guard now runs after binding, in its own block.
+#[test]
+fn native_match_guards_see_pattern_bindings_like_the_interpreter() {
+    let progs: [(&str, &str); 2] = [
+        ("guard_binding", "fn main() -> i64 {\n    let n = 0\n    for i in 0..5 {\n        match Some(i) { Some(v) if v > 2 => { n = n + v }, Some(_) => {}, None => {} }\n    }\n    println(to_str(n))\n    0\n}\n"),
+        ("guard_value_arms", "fn cls(x: i64) -> str {\n    match x { n if n < 0 => \"neg\", 0 => \"zero\", n if n % 2 == 0 => \"even\", _ => \"odd\" }\n}\nfn main() -> i64 {\n    let r: Result<i64, str> = Ok(5)\n    let k = match r { Ok(v) if v > 9 => 1, Ok(v) => v * 10, Err(_) => 0 }\n    println(to_str(k))\n    println(cls(0 - 3) + \" \" + cls(0) + \" \" + cls(4) + \" \" + cls(7))\n    0\n}\n"),
+    ];
+    for (tag, src) in progs {
+        let Some(got) = native_stdout(tag, src) else {
+            note_harness_skip("axon build (no codegen feature)");
+            return;
+        };
+        assert_eq!(
+            got,
+            interp_stdout(tag, src),
+            "[{tag}] native != interpreter"
+        );
+    }
+}
+
+/// AX-14: "native `parse_int` fails with E0306" was a probe that passed the
+/// `Result` straight to `to_str` — rejected identically by both engines. The
+/// natural way to consume it, `Err(e) => println("err " + e)`, WAS broken in
+/// both: a `match`-arm binding has no type in the checker's scope, so the
+/// concatenation was refused as "arithmetic operand has non-numeric type str".
+/// Pins: the parse/convert family prints the same natively as interpreted for
+/// valid, signed, empty, whitespace, overflow and non-decimal input; arm
+/// bindings concatenate; and `e + 1` on a `str` binding is still refused.
+#[test]
+fn native_parse_family_and_arm_binding_concat_match_the_interpreter() {
+    let progs: [(&str, &str); 2] = [
+        (
+            "ax14_parse",
+            "fn show(s: str) {\n    match parse_int(s) {\n        Ok(v) => println(\"ok \" + to_str(v)),\n        Err(e) => println(\"err \" + e),\n    }\n}\nfn showf(s: str) {\n    match parse_float(s) {\n        Ok(v) => println(\"ok \" + to_str_f64(v)),\n        Err(e) => println(\"err \" + e),\n    }\n}\nfn main() -> i64 {\n    show(\"42\")\n    show(\"-17\")\n    show(\"+5\")\n    show(\"abc\")\n    show(\"\")\n    show(\" 12\")\n    show(\"12 \")\n    show(\"9223372036854775807\")\n    show(\"9223372036854775808\")\n    show(\"-9223372036854775808\")\n    show(\"1.5\")\n    show(\"0x10\")\n    showf(\"1.5\")\n    showf(\"-2\")\n    showf(\"abc\")\n    showf(\" 3.0\")\n    showf(\"1e3\")\n    match parse_int_radix(\"ff\", 16) { Ok(v) => println(to_str(v)), Err(e) => println(e) }\n    match parse_int_radix(\"zz\", 10) { Ok(v) => println(to_str(v)), Err(e) => println(e) }\n    match parse_bool(\"true\") { Ok(v) => println(to_str_bool(v)), Err(e) => println(e) }\n    match parse_bool(\"yes\") { Ok(v) => println(to_str_bool(v)), Err(e) => println(e) }\n    println(to_str(parse_int_or(\"x\", 7)))\n    println(to_str(f64_to_i64(0.0 - 3.9)))\n    0\n}\n",
+        ),
+        (
+            "ax14_arm_concat",
+            "fn main() -> i64 {\n    match parse_int(\"x\") { Ok(w) => println(\"ok\"), Err(e) => println(\"[\" + e + \"]\" + e) }\n    match Some([1, 2]) {\n        Some(v) => {\n            let w = v + [3]\n            println(to_str(w[2]))\n        }\n        None => println(\"n\"),\n    }\n    0\n}\n",
+        ),
+    ];
+    for (tag, src) in progs {
+        let Some(got) = native_stdout(tag, src) else {
+            note_harness_skip("axon build (no codegen feature)");
+            return;
+        };
+        assert_eq!(
+            got,
+            interp_stdout(tag, src),
+            "[{tag}] native != interpreter"
+        );
+    }
+    let (code, out) = run_verb(&["check"], "fn main() -> i64 {\n    match parse_int(\"x\") { Ok(w) => println(\"ok\"), Err(e) => println(to_str(e + 1)) }\n    0\n}\n");
+    assert_ne!(
+        code, 0,
+        "`str + i64` on an arm binding must stay refused:\n{out}"
+    );
+    assert!(out.contains("E0102"), "expected infer's E0102:\n{out}");
 }
 
 /// `axon fmt` silently rewrote scientific-notation float literals.
@@ -27849,10 +27985,10 @@ fn editing_an_imported_module_invalidates_the_build_cache() {
     )
     .unwrap();
 
-    // PIN THE COMPILER. The cache key deliberately mixes the compiler
-    // executable's path, size and MTIME (main.rs, "AUDIT T38") so a rebuilt
-    // compiler can never serve the previous one's cached object. That is a
-    // soundness property and is correct.
+    // PIN THE COMPILER. The cache key deliberately includes a digest of the
+    // compiler executable (cache.rs `compiler_digest`, AUDIT T38, AX-15) so a
+    // rebuilt compiler can never serve the previous one's cached object. That
+    // is a soundness property and is correct.
     //
     // It also made this test flaky under `cargo test --workspace`: cargo can
     // rebuild `target/debug/axon` between the two builds below, which changes
@@ -27948,6 +28084,249 @@ fn editing_an_imported_module_invalidates_the_build_cache() {
         "an unchanged rebuild must reuse its key, not mint a new entry"
     );
 
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// AX-15. The build cache must key on the compiler BUILD, not on where the
+/// executable lives or when it was written. The key used to mix the compiler
+/// executable's path + size + mtime, so a rebuilt compiler whose codegen change
+/// kept the binary's size (a changed constant) and whose mtime matched the old
+/// one (an install that preserves mtime, a reproducible build) served the OLD
+/// compiler's cached bitcode. Measured: `main` changed to return 7, rebuilt,
+/// mtime restored -> cached build exited 0, `--no-cache` exited 7.
+///
+/// Here the second compiler is the first one with one byte of its `.comment`
+/// section (never loaded) changed, the same size, at the same path, with its
+/// mtime set back: a different executable that every metadata check calls
+/// identical. It must mint its own cache entry; and an untouched compiler
+/// must still hit (invalidation, not disablement).
+#[test]
+fn a_different_compiler_with_the_same_path_size_and_mtime_misses_the_build_cache() {
+    let dir = std::env::temp_dir().join(format!("axon_compiler_id_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let cache = dir.join("cache");
+    let app = dir.join("app.ax");
+    std::fs::write(&app, "fn main() { println(\"hi\") }\n").unwrap();
+    let compiler = dir.join("axon");
+    std::fs::copy(env!("CARGO_BIN_EXE_axon"), &compiler).unwrap();
+
+    let entries = || {
+        std::fs::read_dir(&cache)
+            .map(|d| {
+                d.filter_map(|e| e.ok())
+                    .filter(|e| e.path().extension().is_some_and(|x| x == "axc"))
+                    .count()
+            })
+            .unwrap_or(0)
+    };
+    let build = |tag: &str| -> Option<()> {
+        let bin = dir.join(format!("{tag}.bin"));
+        let o = Command::new(&compiler)
+            .args(["build", app.to_str().unwrap(), "-o", bin.to_str().unwrap()])
+            .args(["--cache-dir", cache.to_str().unwrap()])
+            .output()
+            .unwrap();
+        let log = format!(
+            "{}{}",
+            String::from_utf8_lossy(&o.stdout),
+            String::from_utf8_lossy(&o.stderr)
+        );
+        if !o.status.success() {
+            assert!(
+                codegen_absent(&log),
+                "build failed for a reason other than a missing backend: {log}"
+            );
+            return None;
+        }
+        let r = Command::new(&bin).output().unwrap();
+        assert_eq!(String::from_utf8_lossy(&r.stdout).trim(), "hi", "{log}");
+        Some(())
+    };
+
+    if build("a").is_none() {
+        eprintln!("SKIP a_different_compiler_with_the_same_path_size_and_mtime_misses_the_build_cache: no codegen");
+        let _ = std::fs::remove_dir_all(&dir);
+        return;
+    }
+    assert_eq!(entries(), 1);
+    build("a_again").unwrap();
+    assert_eq!(
+        entries(),
+        1,
+        "an unchanged compiler must reuse its cache entry"
+    );
+
+    // Same path, same size, same mtime, different bytes.
+    let mtime = std::fs::metadata(&compiler).unwrap().modified().unwrap();
+    let mut bytes = std::fs::read(&compiler).unwrap();
+    let len = bytes.len();
+    let needle = b"rustc version ";
+    let at = bytes
+        .windows(needle.len())
+        .rposition(|w| w == needle)
+        .expect("the compiler executable records its rustc version in `.comment`");
+    bytes[at] = b'R';
+    std::fs::write(&compiler, &bytes).unwrap();
+    let f = std::fs::File::options()
+        .write(true)
+        .open(&compiler)
+        .unwrap();
+    f.set_modified(mtime).unwrap();
+    drop(f);
+    let md = std::fs::metadata(&compiler).unwrap();
+    assert_eq!((md.len() as usize, md.modified().unwrap()), (len, mtime));
+
+    build("b").unwrap();
+    assert_eq!(
+        entries(),
+        2,
+        "a different compiler executable must not be served the previous compiler's cache entry"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// AX-11. A native binary links ONE runtime staticlib, the AI-capable one only
+/// when the program can actually call an AI builtin. Linking `libaxon_rt.a`
+/// AND `libaxon_ai.a` (two Rust staticlibs, two copies of std) made every
+/// `hello` 45.7 MB and needed `-Wl,--allow-multiple-definition`.
+///
+/// An AI call reached only through a helper must still link the AI runtime and
+/// answer like the interpreter; an AI call in a fn nothing calls must not drag
+/// the AI runtime into the binary, and the program must still run.
+#[test]
+fn native_binaries_link_the_ai_runtime_only_when_an_ai_builtin_is_reachable() {
+    let dir = std::env::temp_dir().join(format!("axon_rt_select_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let unused_ai = "fn unused() -> str {\n    match ai_complete(\"never called\") {\n        Ok(r) => r\n        Err(e) => e\n    }\n}\n";
+    let reached = format!(
+        "{unused_ai}fn ask(p: str) -> str {{\n    match ai_complete(p) {{\n        Ok(r) => r\n        Err(e) => e\n    }}\n}}\nfn main() {{\n    println(ask(\"Say hi.\"))\n}}\n"
+    );
+    let dead = format!("{unused_ai}fn main() {{\n    println(\"no ai\")\n}}\n");
+
+    // (native stdout, interpreter stdout, binary contains the AI runtime)
+    let run_both = |tag: &str, src: &str| -> Option<(String, String, bool)> {
+        let f = dir.join(format!("{tag}.ax"));
+        std::fs::write(&f, src).unwrap();
+        let bin = dir.join(tag);
+        let o = axon()
+            .args([
+                "build",
+                f.to_str().unwrap(),
+                "-o",
+                bin.to_str().unwrap(),
+                "--no-cache",
+            ])
+            .output()
+            .unwrap();
+        let log = format!(
+            "{}{}",
+            String::from_utf8_lossy(&o.stdout),
+            String::from_utf8_lossy(&o.stderr)
+        );
+        if !o.status.success() {
+            assert!(codegen_absent(&log), "build of {tag} failed: {log}");
+            return None;
+        }
+        let native = Command::new(&bin)
+            .env("AXON_AI_MOCK", "1")
+            .output()
+            .unwrap();
+        assert!(native.status.success(), "{tag} native run failed");
+        let interp = axon()
+            .arg("run")
+            .arg(&f)
+            .env("AXON_AI_MOCK", "1")
+            .output()
+            .unwrap();
+        let bytes = std::fs::read(&bin).unwrap();
+        let needle = b"__axon_ai_complete";
+        let has_ai = bytes.windows(needle.len()).any(|w| w == needle);
+        Some((
+            String::from_utf8_lossy(&native.stdout).into_owned(),
+            String::from_utf8_lossy(&interp.stdout).into_owned(),
+            has_ai,
+        ))
+    };
+
+    let Some((native, interp, has_ai)) = run_both("reached", &reached) else {
+        eprintln!("SKIP native_binaries_link_the_ai_runtime_only_when_an_ai_builtin_is_reachable: no codegen");
+        let _ = std::fs::remove_dir_all(&dir);
+        return;
+    };
+    assert!(!native.trim().is_empty());
+    assert_eq!(
+        native, interp,
+        "a native AI call must answer like the interpreter"
+    );
+    assert!(has_ai, "a reachable AI call must link the AI runtime");
+
+    let (native, interp, has_ai) = run_both("dead", &dead).unwrap();
+    assert_eq!(native.trim(), "no ai");
+    assert_eq!(native, interp);
+    assert!(
+        !has_ai,
+        "an AI call nothing reaches must not link the AI runtime"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// AX-09. `axon build` must find the native runtime wherever it is run from:
+/// it used to resolve the runtime through a RELATIVE `Cargo.toml` and shell out
+/// to `cargo` from `PATH`, so from any directory but the workspace root (or
+/// with no cargo on PATH) the link failed with ~100 `undefined reference to
+/// __axon_*`. Run here from a scratch directory with a PATH that holds no
+/// cargo and no `$CARGO`.
+#[test]
+fn native_build_links_from_any_directory_without_cargo_on_path() {
+    let dir = std::env::temp_dir().join(format!("axon_cwd_link_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("hello.ax"), "fn main() { println(\"hello\") }\n").unwrap();
+    let o = axon()
+        .current_dir(&dir)
+        .env_remove("CARGO")
+        .env("PATH", "/usr/bin:/bin")
+        .args(["build", "hello.ax", "-o", "hello", "--no-cache"])
+        .output()
+        .unwrap();
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&o.stdout),
+        String::from_utf8_lossy(&o.stderr)
+    );
+    if codegen_absent(&log) {
+        eprintln!("SKIP native_build_links_from_any_directory_without_cargo_on_path: no codegen");
+        let _ = std::fs::remove_dir_all(&dir);
+        return;
+    }
+    assert!(
+        o.status.success(),
+        "build from {} failed:\n{log}",
+        dir.display()
+    );
+    assert!(!log.contains("undefined reference"), "{log}");
+    let r = Command::new(dir.join("hello")).output().unwrap();
+    assert_eq!(String::from_utf8_lossy(&r.stdout).trim(), "hello");
+
+    // A runtime directory that does not hold the runtime is ONE clear error
+    // naming what was searched, never a flood of undefined references.
+    let o = axon()
+        .current_dir(&dir)
+        .env("AXON_RUNTIME_DIR", dir.join("no-such-dir"))
+        .args(["build", "hello.ax", "-o", "hello2", "--no-cache"])
+        .output()
+        .unwrap();
+    let err = String::from_utf8_lossy(&o.stderr);
+    assert!(!o.status.success());
+    assert!(
+        err.contains("native runtime `libaxon_rt.a` not found") && err.contains("no-such-dir"),
+        "{err}"
+    );
+    assert!(!err.contains("undefined reference"), "{err}");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -30186,8 +30565,8 @@ fn octal_literals_lex_like_hex_and_binary() {
 
 #[test]
 fn two_phase_fixtures_describe_features_this_build_does_not_have() {
-    // The other two of the fourteen do NOT check, and pinning why is the
-    // point: each names a feature the build does not implement, so a future
+    // The other two of the fourteen did NOT check, and pinning why is the
+    // point: each named a feature the build did not implement, so a future
     // reader does not mistake an aspirational fixture for a regression.
     //
     // Asserted as still-unsupported rather than deleted. If one starts working,
@@ -30210,14 +30589,25 @@ fn two_phase_fixtures_describe_features_this_build_does_not_have() {
         "pattern let-else is still unparsed: {le}"
     );
 
-    // Passing a named fn as a value. This one is a DELIBERATE refusal, not a
-    // gap: the checker's comment explains that resolving fn-names-as-values
-    // would oblige native codegen to match or create an interp/native
-    // divergence (invariant I-2).
+    // Passing a named fn as a value WAS refused by design (no native lowering
+    // existed, so accepting it would split the engines). AX-25 implemented it
+    // in both engines, so this one was deliberately promoted to a gated
+    // feature: it must check clean and every one of its nine sub-tests must
+    // pass (`main` returns their count; 9 is a reserved exit code, so the
+    // interpreter names the value on stderr instead of exiting with it).
     let ho = err_of("phase67_higher_order.ax");
     assert!(
-        ho.contains("passed by name"),
-        "named-fn-as-value is still refused by design: {ho}"
+        !ho.contains("\"severity\":\"error\""),
+        "named-fn-as-value must check clean now: {ho}"
+    );
+    let r = axon()
+        .args(["run", &fixture("phase67_higher_order.ax")])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&r.stderr);
+    assert!(
+        stderr.contains("`main` returned 9"),
+        "all nine higher-order sub-tests must pass: {stderr}"
     );
 }
 
@@ -32163,5 +32553,1031 @@ fn an_impl_for_a_type_the_runtime_represents_as_another_is_e0505() {
                 );
             }
         }
+    }
+}
+
+/// Build `src` natively and run it; `None` when this axon has no codegen.
+fn native_stdout(tag: &str, src: &str) -> Option<String> {
+    let bin = native_bin(tag, src)?;
+    let run = Command::new(&bin).output().expect("run native");
+    let _ = std::fs::remove_file(&bin);
+    assert_eq!(run.status.code(), Some(0), "[{tag}] native exit status");
+    Some(String::from_utf8_lossy(&run.stdout).trim().to_string())
+}
+
+/// Build `src` natively; the binary's path, or `None` when this axon has no
+/// codegen. The caller runs and removes it.
+fn native_bin(tag: &str, src: &str) -> Option<std::path::PathBuf> {
+    let f = tmp_ax(tag, src);
+    let bin = std::env::temp_dir().join(format!("axon_native_{tag}_{}", std::process::id()));
+    let _ = std::fs::remove_file(&bin);
+    let build = axon()
+        .arg("build")
+        .arg(&f)
+        .arg("-o")
+        .arg(&bin)
+        .arg("--no-cache")
+        .output()
+        .expect("spawn build");
+    let _ = std::fs::remove_file(&f);
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr)
+    );
+    if codegen_absent(&msg) {
+        return None;
+    }
+    assert_eq!(
+        build.status.code(),
+        Some(0),
+        "[{tag}] native build must succeed (no E0910 refusal):\n{msg}"
+    );
+    Some(bin)
+}
+
+fn interp_stdout(tag: &str, src: &str) -> String {
+    let f = tmp_ax(tag, src);
+    let run = axon().arg("run").arg(&f).output().expect("spawn run");
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(run.status.code(), Some(0), "[{tag}] `axon run` must work");
+    String::from_utf8_lossy(&run.stdout).trim().to_string()
+}
+
+#[test]
+fn native_lowers_string_concat_index_write_and_field_write_like_the_interpreter() {
+    // The three constructs native codegen used to refuse with E0910. Each must
+    // now BUILD and print exactly what the interpreter prints; the bounds trap
+    // on a write is covered separately below.
+    let progs: [(&str, &str); 3] = [
+        (
+            "cat",
+            "fn main() -> i64 {\n let s = \"foo\"\n let t = s + \"bar\" + s\n println(t)\n println(to_str(len(t)))\n 0\n}\n",
+        ),
+        (
+            "idxw",
+            "fn main() -> i64 {\n let a = [1, 2, 3]\n a[1] = 40\n a[2] = a[0] + a[1]\n println(to_str(a[0]))\n println(to_str(a[1]))\n println(to_str(a[2]))\n 0\n}\n",
+        ),
+        (
+            "fldw",
+            "type P = { x: i64, y: i64 }\ntype B = { p: P, xs: [i64] }\nfn main() -> i64 {\n let b = B { p: P { x: 1, y: 2 }, xs: [7, 8] }\n b.p.x = 10\n b.xs[1] = b.p.x + b.p.y\n println(to_str(b.p.x))\n println(to_str(b.xs[1]))\n 0\n}\n",
+        ),
+    ];
+    for (tag, src) in progs {
+        let Some(got) = native_stdout(tag, src) else {
+            return;
+        };
+        assert_eq!(
+            got,
+            interp_stdout(tag, src),
+            "[{tag}] native != interpreter"
+        );
+    }
+}
+
+#[test]
+fn native_arrays_have_value_semantics_like_the_interpreter() {
+    // In-place element writes made the sharing of a `{len, ptr}` array header
+    // observable. Each program writes through one name and reads another; the
+    // interpreter deep-copies, so native must snapshot too.
+    let progs: [(&str, &str); 5] = [
+        (
+            "alias_let",
+            "fn main() -> i64 {\n let a = [1, 2, 3]\n let b = a\n b[0] = 9\n println(to_str(a[0]))\n a[1] = 8\n println(to_str(b[1]))\n 0\n}\n",
+        ),
+        (
+            "alias_param",
+            "fn f(a: [i64]) -> i64 {\n a[0] = 9\n a[0]\n}\nfn main() -> i64 {\n let a = [1, 2, 3]\n println(to_str(f(a)))\n println(to_str(a[0]))\n 0\n}\n",
+        ),
+        (
+            "alias_ret",
+            "fn id(a: [i64]) -> [i64] {\n a\n}\nfn main() -> i64 {\n let a = [1, 2, 3]\n let b = id(a)\n b[0] = 9\n println(to_str(a[0]))\n 0\n}\n",
+        ),
+        (
+            "alias_field",
+            "type P = { xs: [i64] }\nfn main() -> i64 {\n let a = [1, 2, 3]\n let p = P { xs: a }\n p.xs[0] = 9\n println(to_str(a[0]))\n 0\n}\n",
+        ),
+        (
+            "alias_2d",
+            "fn main() -> i64 {\n let g = [[1, 2], [3, 4]]\n let row = g[0]\n row[0] = 9\n println(to_str(g[0][0]))\n let h = g\n h[1][1] = 8\n println(to_str(g[1][1]))\n 0\n}\n",
+        ),
+    ];
+    for (tag, src) in progs {
+        let Some(got) = native_stdout(tag, src) else {
+            return;
+        };
+        assert_eq!(
+            got,
+            interp_stdout(tag, src),
+            "[{tag}] native != interpreter"
+        );
+    }
+}
+
+#[test]
+fn native_array_index_write_traps_out_of_bounds_like_the_interpreter() {
+    let src =
+        "fn main() -> i64 {\n let a = [1, 2, 3]\n a[3] = 7\n println(\"unreachable\")\n 0\n}\n";
+    let f = tmp_ax("oob_write", src);
+    let bin = std::env::temp_dir().join(format!("axon_native_oobw_{}", std::process::id()));
+    let build = axon()
+        .arg("build")
+        .arg(&f)
+        .arg("-o")
+        .arg(&bin)
+        .arg("--no-cache")
+        .output()
+        .unwrap();
+    let interp = axon().arg("run").arg(&f).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    let msg = String::from_utf8_lossy(&build.stderr).to_string();
+    if codegen_absent(&format!(
+        "{}{}",
+        String::from_utf8_lossy(&build.stdout),
+        msg
+    )) {
+        return;
+    }
+    assert_eq!(build.status.code(), Some(0), "build must succeed:\n{msg}");
+    let run = Command::new(&bin).output().unwrap();
+    let _ = std::fs::remove_file(&bin);
+    assert!(
+        !String::from_utf8_lossy(&run.stdout).contains("unreachable"),
+        "write past the end must trap, not continue"
+    );
+    assert_eq!(
+        run.status.code(),
+        interp.status.code(),
+        "native and interpreter must exit with the same status on an OOB write"
+    );
+    assert!(
+        String::from_utf8_lossy(&run.stderr).contains("index 3 out of bounds (len 3)"),
+        "same panic text as the interpreter: {}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+}
+
+#[test]
+fn native_loops_do_not_grow_the_stack_per_iteration() {
+    // Every `a[i]` read materialises a slice temporary; when its alloca sat in
+    // the loop body, a 2M-iteration loop leaked 32 MB of stack and died with a
+    // bogus "stack overflow". Locals and temporaries must be entry-block
+    // allocas. A bool array exercises the 1-byte-stride `arr_repeat(true, n)`
+    // layout in the same loop.
+    let src = "fn main() -> i64 {\n let n = 2000000\n let f = arr_repeat(true, n)\n f[0] = false\n let k = 0\n let c = 0\n while k < n {\n  if f[k] { c = c + 1 }\n  k = k + 1\n }\n println(to_str(c))\n 0\n}\n";
+    let Some(got) = native_stdout("loop_stack", src) else {
+        return;
+    };
+    assert_eq!(got, "1999999");
+}
+
+/// MINSTD (Park–Miller) stream starting after `seed`, as the sort tests'
+/// Axon programs generate it, so the Rust-side expectation sees the same data.
+fn minstd(seed: i64, n: usize) -> Vec<i64> {
+    let mut s = seed;
+    (0..n)
+        .map(|_| {
+            s = (s * 48271) % 2147483647;
+            s
+        })
+        .collect()
+}
+
+fn sort_program(n: usize, fill: &str, cmp: &str) -> String {
+    format!(
+        "fn main() -> i64 {{\n let n = {n}\n let xs = arr_repeat(0, n)\n let s = 7\n \
+         for i in 0..n {{\n  s = (s * 48271) % 2147483647\n  xs[i] = {fill}\n }}\n \
+         let ys = arr_sort_by(&xs, {cmp})\n println(to_str(len(ys)))\n \
+         for i in 0..len(ys) {{ println(to_str(ys[i])) }}\n 0\n}}\n"
+    )
+}
+
+/// The sort programs' stdout: the length, then one element per line.
+fn expected_sorted(v: Vec<i64>) -> String {
+    let mut out = vec![v.len().to_string()];
+    out.extend(v.iter().map(|x| x.to_string()));
+    out.join("\n")
+}
+
+#[test]
+fn arr_sort_by_is_stable_in_both_engines() {
+    // AX-07: arr_sort_by was an O(n²) insertion sort; its replacement merge
+    // sort must stay STABLE. Records are encoded as key*10000 + input position
+    // with 7 distinct keys, so every key repeats ~140 times; the comparator
+    // looks only at the key, so equal-key records must keep input order.
+    // n = 1000 is not a power of two: ragged final runs are merged too.
+    let n = 1000;
+    let src = sort_program(n, "(s % 7) * 10000 + i", "|a, b| a / 10000 - b / 10000");
+    let mut want: Vec<i64> = minstd(7, n)
+        .iter()
+        .enumerate()
+        .map(|(i, s)| (s % 7) * 10000 + i as i64)
+        .collect();
+    want.sort_by_key(|r| r / 10000); // std's sort_by_key is stable
+    let want = expected_sorted(want);
+    assert_eq!(
+        interp_stdout("sort_stable", &src),
+        want,
+        "interpreter not stable"
+    );
+    if let Some(got) = native_stdout("sort_stable", &src) {
+        assert_eq!(got, want, "native not stable");
+    }
+}
+
+#[test]
+fn arr_sort_by_matches_a_reference_sort_in_both_engines() {
+    // AX-07: correctness of the merge sort on random data, ascending and
+    // descending comparators, against Rust's sort.
+    let n = 777;
+    for (tag, cmp, desc) in [
+        ("sort_asc", "|a, b| a - b", false),
+        ("sort_desc", "|a, b| b - a", true),
+    ] {
+        let src = sort_program(n, "s", cmp);
+        let mut want = minstd(7, n);
+        want.sort();
+        if desc {
+            want.reverse();
+        }
+        let want = expected_sorted(want);
+        assert_eq!(interp_stdout(tag, &src), want, "[{tag}] interpreter");
+        if let Some(got) = native_stdout(tag, &src) {
+            assert_eq!(got, want, "[{tag}] native");
+        }
+    }
+}
+
+#[test]
+fn arr_sort_by_handles_empty_and_single_element_arrays_in_both_engines() {
+    for (tag, n) in [("sort_empty", 0usize), ("sort_one", 1)] {
+        let src = sort_program(n, "s", "|a, b| a - b");
+        let want = expected_sorted(minstd(7, n));
+        assert_eq!(interp_stdout(tag, &src), want, "[{tag}] interpreter");
+        if let Some(got) = native_stdout(tag, &src) {
+            assert_eq!(got, want, "[{tag}] native");
+        }
+    }
+}
+
+#[test]
+fn arr_sort_by_keeps_equal_struct_records_in_input_order() {
+    // AX-07, interpreter: stability over a non-i64 element type (native
+    // refuses `[Struct]` sorts with E0910, so this one is interpreter-only).
+    let src = "type R = { k: i64, tag: i64 }\n\
+        fn main() -> i64 {\n \
+         let rs = [R { k: 2, tag: 1 }, R { k: 1, tag: 2 }, R { k: 2, tag: 3 }, \
+         R { k: 1, tag: 4 }, R { k: 0, tag: 5 }, R { k: 2, tag: 6 }]\n \
+         let ys = arr_sort_by(&rs, |x, y| x.k - y.k)\n \
+         let out = 0\n \
+         for i in 0..len(ys) { out = out * 10 + ys[i].tag }\n \
+         println(to_str(out))\n 0\n}\n";
+    assert_eq!(interp_stdout("sort_struct_stable", src), "524136");
+}
+
+#[test]
+fn interp_arr_repeat_and_arr_range_build_exactly_n_elements_past_1m_like_native() {
+    // AX-05: the interpreter silently capped both at 1 << 20 = 1,048,576
+    // elements while native allocated all of them, so the same source read
+    // past the end of a short array only under `axon run`.
+    let src = "fn main() -> i64 {\n let n = 1100000\n let f = arr_repeat(true, n)\n f[n - 1] = false\n println(to_str(len(f)))\n println(to_str(f[n - 2]) + \" \" + to_str(f[n - 1]))\n let r = arr_range(5, n + 5)\n println(to_str(len(r)) + \" \" + to_str(r[n - 1]))\n println(to_str(len(arr_repeat(0, 0 - 3))) + \" \" + to_str(len(arr_range(9, 2))))\n 0\n}\n";
+    let want = "1100000\ntrue false\n1100000 1100004\n0 0";
+    assert_eq!(interp_stdout("ax05_repeat", src), want);
+    if let Some(native) = native_stdout("ax05_repeat", src) {
+        assert_eq!(native, want, "native must agree with `axon run`");
+    }
+}
+
+#[test]
+fn interp_arr_repeat_unallocatable_size_is_a_runtime_error_naming_n() {
+    // AX-05: a size the allocator refuses fails loudly at the call, never a
+    // shorter array and never a process abort.
+    let src = "fn main() -> i64 {\n let f = arr_repeat(0, 9223372036854775807)\n println(to_str(len(f)))\n 0\n}\n";
+    let f = tmp_ax("ax05_oom", src);
+    let run = axon().arg("run").arg(&f).output().expect("spawn run");
+    let _ = std::fs::remove_file(&f);
+    let stderr = String::from_utf8_lossy(&run.stderr);
+    assert_eq!(
+        run.status.code(),
+        Some(101),
+        "runtime panic exit; stderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("arr_repeat: cannot allocate an array of 9223372036854775807 elements"),
+        "error must name arr_repeat and n: {stderr}"
+    );
+    assert!(String::from_utf8_lossy(&run.stdout).trim().is_empty());
+}
+
+#[test]
+fn interp_arrays_keep_value_semantics_under_shared_representation() {
+    // AX-06: arrays are shared copy-on-write in the interpreter. Every copy
+    // (let-binding, struct field, nested row, closure capture, fn argument,
+    // builtin result) must still behave as an independent value.
+    let src = r#"type Bag = { label: str, xs: [i64] }
+
+fn bump(xs: [i64]) -> i64 {
+    xs[0] = 99
+    xs[0] + len(xs)
+}
+
+fn main() -> i64 {
+    let a = [1, 2, 3]
+    let b = a
+    b[0] = 10
+    println(to_str(a[0]) + " " + to_str(b[0]))
+    a[1] = 20
+    println(to_str(a[1]) + " " + to_str(b[1]))
+
+    let xs = [5, 6]
+    let bag = Bag { label: "p", xs: xs }
+    xs[0] = 50
+    bag.xs[1] = 60
+    println(to_str(bag.xs[0]) + " " + to_str(xs[0]) + " " + to_str(bag.xs[1]) + " " + to_str(xs[1]))
+    let inner = bag.xs
+    inner[0] = 500
+    println(to_str(bag.xs[0]) + " " + to_str(inner[0]))
+
+    let g = [[1, 2], [3, 4]]
+    let row = g[0]
+    row[1] = 9
+    let g2 = g
+    g2[1][0] = 30
+    println(to_str(g[0][1]) + " " + to_str(row[1]) + " " + to_str(g[1][0]) + " " + to_str(g2[1][0]))
+
+    let c = [7, 8]
+    let read_c = |i: i64| c[i]
+    c[0] = 70
+    println(to_str(read_c(0)) + " " + to_str(c[0]))
+
+    let acc = [0, 0]
+    let inc = |k: i64| {
+        acc[0] = acc[0] + k
+        acc[0]
+    }
+    let x = inc(1)
+    let y = inc(2)
+    println(to_str(x) + " " + to_str(y) + " " + to_str(acc[0]))
+
+    let d = [1, 2, 3]
+    let r = bump(d)
+    println(to_str(r) + " " + to_str(d[0]))
+
+    let e = arr_push(d, 4)
+    e[1] = 200
+    println(to_str(len(d)) + " " + to_str(d[1]) + " " + to_str(e[1]))
+
+    let s = [0, 0, 0]
+    let snaps = []
+    let i = 0
+    while i < 3 {
+        s[i] = i + 1
+        snaps = arr_push(snaps, s)
+        i = i + 1
+    }
+    println(to_str(snaps[0][0]) + to_str(snaps[0][2]) + " " + to_str(snaps[1][1]) + to_str(snaps[1][2]) + " " + to_str(snaps[2][2]))
+    0
+}
+"#;
+    assert_eq!(
+        interp_stdout("ax06_values", src),
+        "1 10\n20 2\n5 50 60 6\n5 500\n2 9 3 30\n7 70\n1 3 0\n102 1\n3 2 200\n10 20 3"
+    );
+}
+
+#[test]
+fn interp_sieve_index_reads_and_writes_do_not_copy_the_array() {
+    // AX-06: an index read or write used to copy the whole array, so this
+    // 200k sieve (~0.1 s now) was quadratic and took minutes under `axon run`.
+    let src = "fn main() -> i64 {\n let n = 200000\n let p = arr_repeat(true, n + 1)\n p[0] = false\n p[1] = false\n let i = 2\n while i * i <= n {\n  if p[i] {\n   let j = i * i\n   while j <= n {\n    p[j] = false\n    j = j + i\n   }\n  }\n  i = i + 1\n }\n let c = 0\n let k = 0\n while k <= n {\n  if p[k] { c = c + 1 }\n  k = k + 1\n }\n println(to_str(c))\n 0\n}\n";
+    assert_eq!(interp_stdout("ax06_sieve", src), "17984");
+}
+
+#[test]
+fn interp_strings_and_append_builders_keep_value_semantics() {
+    // AX-31: strings are shared copy-on-write like arrays (AX-06), and
+    // `x = arr_push(x, v)`, `x = arr_concat(x, ys)`, `x = x + y` append to
+    // `x`'s buffer in place. Every other holder of the old value (another
+    // binding, an array element, a struct field, a closure capture, a fn
+    // result) must keep seeing it unchanged, and a closure's writes to its
+    // captures must persist across calls through every alias exactly as before.
+    let src = r#"type Box = { s: str, xs: [i64] }
+
+fn keep(s: str) -> str {
+    s
+}
+
+fn main() -> i64 {
+    let a = [1, 2]
+    let b = a
+    a = arr_push(a, 3)
+    a = arr_concat(a, [4, 5])
+    a = a + [6]
+    println(to_str(len(a)) + " " + to_str(len(b)) + " " + to_str(a[5]))
+
+    let c = [9]
+    let rows = [c]
+    let bx = Box { s: "", xs: c }
+    let peek = || len(c)
+    c = arr_push(c, 8)
+    println(to_str(len(c)) + " " + to_str(len(rows[0])) + " " + to_str(len(bx.xs)) + " " + to_str(peek()))
+
+    let s = "ab"
+    let held = [s]
+    let field = Box { s: s, xs: [] }
+    let cap = || s
+    let ret = keep(s)
+    s = s + "c"
+    s = s + s
+    println(s + " " + held[0] + " " + field.s + " " + cap() + " " + ret)
+
+    let t = "x"
+    let u = t + "y"
+    t = t + "z"
+    let v = t + "w" + "!"
+    println(t + " " + u + " " + v)
+
+    let w = [0]
+    let i = 0
+    while i < 3 {
+        w = arr_push(w, len(w))
+        i = i + 1
+    }
+    let ws = arr_push(w, 99)
+    w = arr_push(w, 7)
+    println(to_str(len(w)) + " " + to_str(w[4]) + " " + to_str(ws[4]))
+
+    let acc = [0, 0]
+    let inc = |k: i64| {
+        acc[0] = acc[0] + k
+        acc[0]
+    }
+    let x = inc(1)
+    let y = inc(2)
+    let alias = inc
+    let z = alias(3)
+    let fs = [inc]
+    let q = fs[0](4)
+    let r = inc(5)
+    println(to_str(x) + " " + to_str(y) + " " + to_str(z) + " " + to_str(q) + " " + to_str(r) + " " + to_str(acc[0]))
+
+    let log = []
+    let rec = |k: i64| {
+        log = arr_push(log, k)
+        len(log)
+    }
+    let twice = |k: i64| rec(k) * 10 + rec(k + 1)
+    println(to_str(rec(1)) + " " + to_str(twice(5)) + " " + to_str(rec(9)) + " " + to_str(len(log)))
+
+    let txt = ""
+    let add = |p: str| {
+        txt = txt + p
+        len(txt)
+    }
+    add("ab")
+    println(to_str(add("cd")) + " [" + txt + "]")
+    0
+}
+"#;
+    assert_eq!(
+        interp_stdout("ax31_values", src),
+        "6 2 6\n2 1 1 1\nabcabc ab ab ab ab\nxz xy xzw!\n5 7 99\n1 3 6 10 15 0\n1 23 4 0\n4 []"
+    );
+}
+
+#[test]
+fn interp_string_and_array_builder_loops_are_linear() {
+    // AX-31: each of these loops copied its whole string or array per
+    // iteration (a `str` read, `arr_push`, `arr_concat`, a closure writing its
+    // captured array), so at n = 200k they took minutes under `axon run`.
+    let src = "fn main() -> i64 {\n let n = 200000\n let t = \"\"\n for i in 0..n { t = t + \"x\" }\n let m = 0\n for i in 0..len(t) { m = m + len(t) }\n let xs = []\n for i in 0..n { xs = arr_push(xs, i) }\n let ys = []\n for i in 0..n { ys = arr_concat(ys, [i]) }\n let zs = arr_repeat(0, n)\n let set = |i: i64| {\n  zs[i] = i + 1\n  zs[i] + zs[i / 2]\n }\n let k = 0\n for i in 0..n { k = k + set(i) }\n println(to_str(m) + \" \" + to_str(len(xs)) + \" \" + to_str(xs[n - 1]) + \" \" + to_str(ys[n - 1]) + \" \" + to_str(k) + \" \" + to_str(zs[n - 1]))\n 0\n}\n";
+    assert_eq!(
+        interp_stdout("ax31_builders", src),
+        "40000000000 200000 199999 199999 30000200000 0"
+    );
+}
+
+#[test]
+fn native_array_literals_in_hot_loops_run_in_bounded_memory() {
+    // AX-12: every array-literal evaluation used to `malloc` a buffer that was
+    // never freed, so 50M iterations of a 4-element literal reached 2.3 GB RSS.
+    // Non-escaping literals now live in a per-site stack slot. The binary runs
+    // under a 256 MiB address-space cap: the leaking build dies on the first
+    // failed malloc, the fixed one finishes. Covers a literal bound and indexed
+    // in the loop body (which also needs the `for` variable's type to reach
+    // `v[0]`; native printed 0 without it) and a literal passed through two
+    // levels of user fns that only read it.
+    let cases = [
+        (
+            "lit_loop",
+            "fn main() {\n    let n = 50000000\n    let s = 0\n    for i in 0..n {\n        let v = [i, i + 1, i + 2, i + 3]\n        s = s + v[0] + v[1] + v[2] + v[3]\n    }\n    println(to_str(s))\n}\n",
+            "5000000200000000",
+        ),
+        (
+            "lit_call",
+            "fn sum4(a: [i64]) -> i64 {\n    let t = 0\n    for x in a {\n        t = t + x\n    }\n    t\n}\nfn total(a: [i64]) -> i64 {\n    sum4(a) + len(a)\n}\nfn main() {\n    let s = 0\n    for i in 0..50000000 {\n        s = s + total([i, i + 1, i + 2, i + 3])\n    }\n    println(to_str(s))\n}\n",
+            "5000000400000000",
+        ),
+    ];
+    for (tag, src, want) in cases {
+        // Same program, small trip count: the interpreter is the reference.
+        let small = src.replace("50000000", "1000");
+        let Some(native_small) = native_stdout(&format!("{tag}_small"), &small) else {
+            return;
+        };
+        assert_eq!(
+            native_small,
+            interp_stdout(&format!("{tag}_small"), &small),
+            "[{tag}] parity"
+        );
+        let Some(bin) = native_bin(tag, src) else {
+            return;
+        };
+        let run = Command::new("sh")
+            .arg("-c")
+            .arg("ulimit -v 262144 && exec \"$0\"")
+            .arg(&bin)
+            .output()
+            .expect("run capped native");
+        let _ = std::fs::remove_file(&bin);
+        assert_eq!(
+            run.status.code(),
+            Some(0),
+            "[{tag}] must finish under a 256 MiB cap: {}",
+            String::from_utf8_lossy(&run.stderr)
+        );
+        assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), want, "[{tag}]");
+    }
+}
+
+#[test]
+fn native_escaping_array_literals_match_the_interpreter() {
+    // AX-12: a literal whose value can outlive its frame, or be observed after
+    // its site runs again, must keep a heap buffer. Each block keeps values
+    // from several evaluations of one site alive at once, so a wrongly shared
+    // stack slot shows up as repeated or garbage rows.
+    let src = r#"type Holder = { xs: [i64], tag: i64 }
+
+fn make(i: i64) -> [i64] {
+    let v = [i, i * 10, i * 100]
+    v
+}
+
+fn make_direct(i: i64) -> [i64] {
+    [i + 1, i + 2]
+}
+
+fn id(a: [i64]) -> [i64] {
+    a
+}
+
+fn wrap(a: [i64]) -> [i64] {
+    id(a)
+}
+
+fn hold(a: [i64], t: i64) -> Holder {
+    Holder { xs: a, tag: t }
+}
+
+fn first(a: [i64]) -> i64 {
+    a[0]
+}
+
+fn rsum(a: [i64], k: i64) -> i64 {
+    if k == len(a) {
+        0
+    } else {
+        a[k] + rsum(a, k + 1)
+    }
+}
+
+fn adder(i: i64) -> fn(i64) -> i64 {
+    let t = [i * 7, i]
+    |k| first(t) + arr_sum_i64(t) + k
+}
+
+fn show(a: [i64]) -> str {
+    let s = ""
+    for x in a {
+        s = s + to_str(x) + ","
+    }
+    s
+}
+
+fn main() {
+    let r0 = make(0)
+    let r1 = make(0)
+    let r2 = make(0)
+    let d0 = make_direct(0)
+    let d1 = make_direct(0)
+    for i in 1..5 {
+        r2 = r1
+        r1 = r0
+        r0 = make(i)
+        d1 = d0
+        d0 = make_direct(i)
+    }
+    println("returned: {show(r0)} {show(r1)} {show(r2)} {show(d0)} {show(d1)}")
+
+    let w0 = wrap([5, 6])
+    let w1 = wrap([7, 8])
+    println("wrapped: {show(w0)} {show(w1)}")
+
+    let h0 = hold([0], 0)
+    let h1 = hold([0], 0)
+    let g0 = hold([0], 0)
+    let g1 = hold([0], 0)
+    for i in 1..4 {
+        let v = [i, i + 1]
+        h1 = h0
+        h0 = Holder { xs: v, tag: i }
+        g1 = g0
+        g0 = hold([i * 3, i * 4], i)
+    }
+    println("structs: {show(h0.xs)} {show(h1.xs)} {show(g0.xs)} {show(g1.xs)} {to_str(h1.tag)}")
+
+    let flat = [0]
+    let rows = [[0]]
+    for i in 1..5 {
+        let row = [i, i * i]
+        flat = arr_concat(flat, row)
+        flat = arr_push(flat, row[1] + 1000)
+        rows = [row, rows[0]]
+    }
+    println("pushed: {show(flat)} {show(rows[0])} {show(rows[1])}")
+
+    let base = [100, 200, 300]
+    let pick = |k| first(base) * k + len(base)
+    let f1 = adder(1)
+    let f2 = adder(2)
+    let junk = [9, 9, 9, 9]
+    println("captured: {to_str(pick(2))} {to_str(f1(0))} {to_str(f2(0))} {to_str(f1(5))} {to_str(arr_sum_i64(junk))}")
+
+    let keep = [0, 0]
+    let prev = [0, 0]
+    for i in 1..6 {
+        let v = [i, i * 2]
+        prev = keep
+        keep = v
+    }
+    println("outer: {show(keep)} {show(prev)}")
+
+    let sw = [1, 2]
+    for i in 0..5 {
+        sw = [sw[1] + i, sw[0]]
+    }
+    println("swap: {show(sw)}")
+
+    let tot = 0
+    for i in 0..4 {
+        let v = [i, i + 1]
+        let u = v
+        u[0] = 99
+        tot = tot + v[0] + u[0] + first([i, 7]) + rsum([i, i, i], 0)
+    }
+    println("alias: {to_str(tot)}")
+
+    let kept = [0]
+    let kept2 = [0]
+    for i in 1..4 {
+        let grid = [[i, i + 1], [i * 10]]
+        kept2 = kept
+        kept = grid[0]
+    }
+    println("nested: {show(kept)} {show(kept2)}")
+}
+"#;
+    let Some(native) = native_stdout("lit_escape", src) else {
+        return;
+    };
+    let interp = interp_stdout("lit_escape", src);
+    assert!(
+        interp.contains("returned: 4,40,400, 3,30,300, 2,20,200,"),
+        "{interp}"
+    );
+    assert_eq!(native, interp);
+}
+
+// AX-08: `&mut [T]` parameters write through to the caller's binding, with
+// identical results in both engines. Each printed line is one property.
+const MUT_SLICE_SRC: &str = "type P = { x: i64, y: i64 }\n\
+fn setfirst(xs: &mut [i64]) -> i64 {\n  xs[0] = 55\n  0\n}\n\
+fn inner(ys: &mut [i64], v: i64) {\n  ys[1] = v\n}\n\
+fn outer(xs: &mut [i64]) {\n  xs[0] = 10\n  inner(&mut xs, 20)\n  xs[2] = xs[1] + 1\n}\n\
+fn early(xs: &mut [i64], k: i64) -> i64 {\n  xs[0] = k\n  if k > 0 {\n    return 1\n  }\n  xs[1] = 99\n  0\n}\n\
+fn fails(b: bool) -> Result<i64, str> {\n  if b { Err(\"boom\") } else { Ok(5) }\n}\n\
+fn try_write(xs: &mut [i64], b: bool) -> Result<i64, str> {\n  xs[0] = 7\n  let v = fails(b)?\n  xs[1] = v\n  Ok(v)\n}\n\
+fn total(xs: &[i64]) -> i64 {\n  let s = 0\n  for i in 0..len(xs) { s = s + xs[i] }\n  s\n}\n\
+fn bump_all(xs: &mut [i64]) -> i64 {\n  for i in 0..len(xs) { xs[i] = xs[i] + 1 }\n  total(&xs)\n}\n\
+fn replace(xs: &mut [i64]) {\n  xs = [4, 5, 6, 7]\n}\n\
+fn keep_copy(xs: &mut [i64]) -> i64 {\n  let c = xs\n  c[0] = 1000\n  c[0]\n}\n\
+fn snap(xs: &mut [i64]) -> [i64] {\n  xs\n}\n\
+fn movex(ps: &mut [P]) {\n  ps[0].x = 42\n}\n\
+fn lend() -> i64 {\n  let a = [1, 2]\n  let b = a\n  setfirst(&mut a)\n  b[0] * 100 + a[0]\n}\n\
+fn main() -> i64 {\n\
+  let a = [1, 2, 3]\n\
+  let b = a\n\
+  setfirst(&mut a)\n\
+  println(\"{to_str(a[0])} {to_str(b[0])}\")\n\
+  outer(&mut a)\n\
+  println(\"{to_str(a[0])} {to_str(a[1])} {to_str(a[2])}\")\n\
+  let e = [0, 0]\n\
+  let r1 = early(&mut e, 3)\n\
+  println(\"{to_str(r1)} {to_str(e[0])} {to_str(e[1])}\")\n\
+  let r2 = early(&mut e, 0)\n\
+  println(\"{to_str(r2)} {to_str(e[0])} {to_str(e[1])}\")\n\
+  let t = [0, 0]\n\
+  match try_write(&mut t, true) {\n\
+    Ok(v) => println(\"ok {to_str(v)}\")\n\
+    Err(m) => println(\"err {m} {to_str(t[0])} {to_str(t[1])}\")\n\
+  }\n\
+  match try_write(&mut t, false) {\n\
+    Ok(v) => println(\"ok {to_str(v)} {to_str(t[0])} {to_str(t[1])}\")\n\
+    Err(m) => println(\"err {m}\")\n\
+  }\n\
+  let s = bump_all(&mut a)\n\
+  println(\"{to_str(s)} {to_str(a[0])}\")\n\
+  replace(&mut a)\n\
+  println(\"{to_str(len(a))} {to_str(a[3])}\")\n\
+  let k = keep_copy(&mut a)\n\
+  println(\"{to_str(k)} {to_str(a[0])}\")\n\
+  let z = snap(&mut a)\n\
+  a[1] = 77\n\
+  println(\"{to_str(z[1])} {to_str(a[1])}\")\n\
+  let ps = [P { x: 1, y: 2 }, P { x: 3, y: 4 }]\n\
+  movex(&mut ps)\n\
+  println(\"{to_str(ps[0].x)} {to_str(ps[1].x)}\")\n\
+  println(to_str(lend()))\n\
+  0\n\
+}\n";
+
+#[test]
+fn mut_slice_params_write_through_in_both_engines() {
+    let want = [
+        "55 1",         // write-through; `let b = a` before the call keeps its own copy
+        "10 20 21",     // nested reborrow two call levels deep
+        "1 3 0",        // early `return`: the write before it is written back
+        "0 0 99",       // normal return
+        "err boom 7 0", // `?` unwinding: the write before it is written back
+        "ok 5 7 5",
+        "54 11",  // writes + passing the `&mut` param on as `&`
+        "4 7",    // wholesale reassignment `xs = [..]` reaches the caller
+        "1000 4", // `let c = xs` in the callee is a copy
+        "5 77",   // a returned `&mut` param is a copy, not an alias
+        "42 3",   // element field write `ps[0].x = v`
+        "155",    // lending `&mut a` does not reach an earlier `let b = a`
+    ];
+    let Some((interp, native)) = native_stdout_lines("mutslice", MUT_SLICE_SRC, &[]) else {
+        let f = tmp_ax("mutslice_interp", MUT_SLICE_SRC);
+        let run = axon().arg("run").arg(&f).output().expect("spawn run");
+        let _ = std::fs::remove_file(&f);
+        let got: Vec<String> = String::from_utf8_lossy(&run.stdout)
+            .lines()
+            .map(|l| l.to_string())
+            .collect();
+        assert_eq!(got, want, "interpreter is the reference semantics");
+        return;
+    };
+    assert_eq!(interp, want, "interpreter is the reference semantics");
+    assert_eq!(native, interp, "native must agree with the interpreter");
+}
+
+#[test]
+fn recursive_in_place_quicksort_over_mut_slice_sorts_in_both_engines() {
+    // The AX-20 shape: a recursive helper sorting the caller's array in place.
+    let src = "fn qs(xs: &mut [i64], lo: i64, hi: i64) {\n\
+  if lo >= hi {\n    return\n  }\n\
+  let pivot = xs[hi]\n  let i = lo\n\
+  for j in lo..hi {\n    if xs[j] < pivot {\n      let u = xs[i]\n      xs[i] = xs[j]\n      xs[j] = u\n      i = i + 1\n    }\n  }\n\
+  let v = xs[i]\n  xs[i] = xs[hi]\n  xs[hi] = v\n\
+  qs(&mut xs, lo, i - 1)\n  qs(&mut xs, i + 1, hi)\n}\n\
+fn main() -> i64 {\n\
+  let n = 5000\n  let a = arr_repeat(0, n)\n  let x = 1\n\
+  for i in 0..n {\n    x = (x * 48271) % 2147483647\n    a[i] = x\n  }\n\
+  qs(&mut a, 0, n - 1)\n\
+  let ok = true\n  for i in 1..n {\n    if a[i - 1] > a[i] { ok = false }\n  }\n\
+  println(\"{to_str(ok)} {to_str(a[0])} {to_str(a[n - 1])}\")\n  0\n}\n";
+    let want = ["true 48271 2145568456"];
+    let Some((interp, native)) = native_stdout_lines("mutqs", src, &[]) else {
+        let f = tmp_ax("mutqs_interp", src);
+        let run = axon().arg("run").arg(&f).output().expect("spawn run");
+        let _ = std::fs::remove_file(&f);
+        assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), want[0]);
+        return;
+    };
+    assert_eq!(interp, want, "interpreter is the reference semantics");
+    assert_eq!(native, interp, "native must agree with the interpreter");
+}
+
+#[test]
+fn misuses_of_mut_slice_params_are_compile_errors() {
+    // Each program used to compile; the first silently mutated a callee copy.
+    for (label, src, code, needle) in [
+        (
+            "shared_write",
+            "fn setfirst(xs: &[i64]) -> i64 {\n  xs[0] = 55\n  0\n}\n\
+             fn main() {\n  let a = [1, 2, 3]\n  setfirst(&a)\n}\n",
+            "E0604",
+            "&mut [T]",
+        ),
+        (
+            "non_place",
+            "fn g(xs: &mut [i64]) {\n  xs[0] = 1\n}\n\
+             fn main() {\n  g(&mut [1, 2])\n}\n",
+            "E0605",
+            "local variable",
+        ),
+        (
+            "alias_twice",
+            "fn two(a: &mut [i64], b: &mut [i64]) {\n  a[0] = b[0]\n}\n\
+             fn main() {\n  let x = [1]\n  two(&mut x, &mut x)\n}\n",
+            "E0606",
+            "more than once",
+        ),
+        (
+            "alias_shared",
+            "fn mixed(a: &mut [i64], b: &[i64]) {\n  a[0] = b[0]\n}\n\
+             fn main() {\n  let x = [1]\n  mixed(&mut x, &x)\n}\n",
+            "E0606",
+            "also used by another argument",
+        ),
+    ] {
+        let f = tmp_ax(&format!("mutmisuse_{label}"), src);
+        let out = axon().arg("check").arg(&f).output().expect("spawn check");
+        let _ = std::fs::remove_file(&f);
+        let msg = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(
+            out.status.code(),
+            Some(2),
+            "{label}: must fail check: {msg}"
+        );
+        assert!(
+            msg.contains(code) && msg.contains(needle),
+            "{label}: expected {code} mentioning {needle:?}: {msg}"
+        );
+    }
+}
+
+/// AX-25: a top-level fn named as a VALUE (`apply(f0, 41)`, `let f = f0`,
+/// `[f0, f1]`, `t[i](x)`, a fn returned from a fn, a struct field) passed
+/// `axon check`, then panicked in the interpreter and was E0910 natively. Both
+/// engines now treat it as a capture-free closure forwarding to the fn, and the
+/// native binary must print exactly what the interpreter prints.
+#[test]
+fn named_fns_are_first_class_values_in_both_engines() {
+    let progs: [(&str, &str, &str); 6] = [
+        (
+            "fnv_rows",
+            "fn f0(x: i64) -> i64 { x + 1 }\nfn f1(x: i64) -> i64 { x * 2 }\n\
+             fn apply(f: fn(i64) -> i64, x: i64) -> i64 { f(x) }\n\
+             fn pick(k: i64) -> fn(i64) -> i64 { if k == 0 { f0 } else { f1 } }\n\
+             fn main() -> i64 {\n println(to_str(apply(f0, 41)))\n let f = f0\n \
+             println(to_str(f(41)))\n let t = [f0, f1]\n println(to_str(len(t)))\n \
+             let i = 1\n println(to_str(t[i](21)))\n let lt = [|x: i64| x + 1, |x: i64| x * 2]\n \
+             println(to_str(lt[1](21)))\n println(to_str(pick(1)(21)))\n 0\n}\n",
+            "42\n42\n2\n42\n42\n42",
+        ),
+        (
+            // The AX-24 trigger: a call through a closure pulled out of an array
+            // used to lower to nothing, so `acc = f(41)` silently kept 7.
+            "fnv_ax24",
+            "fn main() -> i64 {\n let table = [|x: i64| x + 1, |x: i64| x * 2]\n \
+             let f = table[0]\n let acc = 7\n acc = f(41)\n println(to_str(acc))\n 0\n}\n",
+            "42",
+        ),
+        (
+            "fnv_loop",
+            "fn f0(x: i64) -> i64 { x + 1 }\nfn f1(x: i64) -> i64 { x * 2 }\n\
+             fn main() -> i64 {\n let t = [f0, f1]\n let acc = 7\n \
+             for k in 0..2 { acc = t[k](acc + 40) }\n println(to_str(acc))\n \
+             let ys = arr_map([1, 2, 3], f1)\n println(to_str(ys[0] + ys[1] + ys[2]))\n 0\n}\n",
+            "176\n12",
+        ),
+        (
+            // Every scalar return the closure ABI carries: bool, f64, a signed
+            // and an unsigned narrow int, and unit.
+            "fnv_scalars",
+            "fn even(x: i64) -> bool { x % 2 == 0 }\nfn half(x: f64) -> f64 { x / 2.0 }\n\
+             fn neg32(x: i32) -> i32 { 0 - x }\nfn say(x: i64) { println(\"say \" + to_str(x)) }\n\
+             fn ap32(f: fn(i32) -> i32, x: i32) -> i32 { f(x) }\n\
+             fn main() -> i64 {\n let e = even\n println(to_str(e(4)))\n let h = half\n \
+             println(to_str(h(5.0)))\n println(to_str(ap32(neg32, 7)))\n let s = say\n s(3)\n \
+             let ss = [say, say]\n ss[1](4)\n 0\n}\n",
+            "true\n2.5\n-7\nsay 3\nsay 4",
+        ),
+        (
+            "fnv_field",
+            "type Op = { f: fn(i64) -> i64, k: i64 }\nfn f1(x: i64) -> i64 { x * 2 }\n\
+             fn main() -> i64 {\n let o = Op { f: f1, k: 3 }\n let g = o.f\n \
+             println(to_str(g(o.k)))\n println(to_str((o.f)(5)))\n 0\n}\n",
+            "6\n10",
+        ),
+        (
+            "fnv_recur",
+            "fn fib(n: i64) -> i64 { if n < 2 { n } else { fib(n - 1) + fib(n - 2) } }\n\
+             fn apply(f: fn(i64) -> i64, x: i64) -> i64 { f(x) }\n\
+             fn main() -> i64 {\n println(to_str(apply(fib, 20)))\n 0\n}\n",
+            "6765",
+        ),
+    ];
+    for (tag, src, want) in progs {
+        let interp = interp_stdout(tag, src);
+        assert_eq!(interp, want, "[{tag}] interpreter (the reference)");
+        let Some(native) = native_stdout(tag, src) else {
+            note_harness_skip("axon build (no codegen feature)");
+            return;
+        };
+        assert_eq!(native, interp, "[{tag}] native != interpreter");
+    }
+}
+
+/// AX-25: a fn whose return the closure ABI cannot carry (str, like a
+/// str-bodied lambda) is a value in the interpreter, and native REFUSES it with
+/// E0910 naming the fn — never a binary computing a wrong answer.
+#[test]
+fn a_str_returning_fn_value_runs_in_the_interpreter_and_is_refused_natively() {
+    let src = "fn greet(s: str) -> str { \"hi \" + s }\n\
+               fn main() -> i64 {\n let g = greet\n println(g(\"bob\"))\n 0\n}\n";
+    assert_eq!(interp_stdout("fnv_str", src), "hi bob");
+    let f = tmp_ax("fnv_str_native", src);
+    let bin = std::env::temp_dir().join(format!("axon_native_fnv_str_{}", std::process::id()));
+    let build = axon()
+        .arg("build")
+        .arg(&f)
+        .arg("-o")
+        .arg(&bin)
+        .arg("--no-cache")
+        .output()
+        .expect("spawn build");
+    let _ = std::fs::remove_file(&f);
+    let _ = std::fs::remove_file(&bin);
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr)
+    );
+    if codegen_absent(&msg) {
+        note_harness_skip("axon build (no codegen feature)");
+        return;
+    }
+    assert_ne!(build.status.code(), Some(0), "must not build: {msg}");
+    assert!(
+        msg.contains("E0910") && msg.contains("using fn `greet` as a value"),
+        "the refusal must name the fn: {msg}"
+    );
+}
+
+/// AX-25: an effect performed by a fn reached through a fn VALUE is still the
+/// caller's effect (E1310 against a declared row) and still impure (E1207) —
+/// naming a fn as a value is a call edge, not a laundering route.
+#[test]
+fn effects_flow_through_a_fn_value() {
+    // (tag, source, code, a word the diagnostic must contain)
+    let cases: [(&str, &str, &str, &str); 3] = [
+        (
+            "fnv_eff_let",
+            "fn loud(x: i64) -> i64 { println(\"x\")\n x }\n\
+             fn quiet(x: i64) -> i64 | {} {\n let g = loud\n g(x)\n}\n\
+             fn main() -> i64 { quiet(1) }\n",
+            "E1310",
+            "`loud`",
+        ),
+        (
+            "fnv_eff_arg",
+            "fn loud(x: i64) -> i64 { println(\"x\")\n x }\n\
+             fn apply(f: fn(i64) -> i64, x: i64) -> i64 { f(x) }\n\
+             fn quiet(x: i64) -> i64 | {} { apply(loud, x) }\n\
+             fn main() -> i64 { quiet(1) }\n",
+            "E1310",
+            // The forwarded-callback diagnostic names the forwarding fn.
+            "callback that performs effect `IO`",
+        ),
+        (
+            "fnv_pure",
+            "fn loud(x: i64) -> i64 { println(\"x\")\n x }\n\
+             @[pure]\nfn p(x: i64) -> i64 {\n let g = loud\n g(x)\n}\n\
+             fn main() -> i64 { p(1) }\n",
+            "E1207",
+            "`loud`",
+        ),
+    ];
+    for (tag, src, code, needle) in cases {
+        let f = tmp_ax(tag, src);
+        let out = axon().arg("check").arg(&f).output().expect("spawn check");
+        let _ = std::fs::remove_file(&f);
+        let msg = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_ne!(out.status.code(), Some(0), "[{tag}] must be refused: {msg}");
+        assert!(
+            msg.contains(&format!("\"code\":\"{code}\"")) && msg.contains(needle),
+            "[{tag}] expected {code} containing {needle:?}: {msg}"
+        );
     }
 }

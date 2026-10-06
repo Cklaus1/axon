@@ -242,7 +242,9 @@ fn main() -> i64 { let a = [C { s: 3, t: 30 }, C { s: 9, t: 90 }, C { s: 1, t: 1
 check_refused rev_st      "$W2  println(to_str(arr_reverse(&a)[0].t))  0 }"
 check_refused take_st     "$W2  println(to_str(arr_take(&a, 2)[1].t))  0 }"
 check_refused drop_st     "$W2  println(to_str(arr_drop(&a, 1)[0].t))  0 }"
-check_refused concat_st   "$W2  println(to_str(arr_concat(&a, &a)[3].t))  0 }"
+# arr_concat copies whole elements at their real layout (AX-13), so it is a
+# parity row, not a refusal: element 3 is the second copy's first `C`.
+check concat_st           "$W2  arr_concat(&a, &a)[3].t }"
 check_refused unique_st   "$W2  println(to_str(len(&arr_unique(&a))))  0 }"
 check_refused enum_st     "$W2  println(to_str(len(&arr_enumerate(&a))))  0 }"
 check_refused chunk_st    "$W2  println(to_str(arr_chunk(&a, 2)[0][1].t))  0 }"

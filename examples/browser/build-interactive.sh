@@ -23,9 +23,13 @@ RAW="$(built_bin axon_wasm.wasm wasm32-unknown-unknown release)"  # the build ju
 # instruments only the axon_host_await import so host_await is the single suspend point.
 FEATURES="--enable-bulk-memory --enable-sign-ext --enable-mutable-globals --enable-nontrapping-float-to-int --enable-simd --enable-reference-types --enable-multivalue"
 echo "wasm-opt --asyncify → $OUT"
+# ignore-indirect cuts the asyncified module's execution memory ~2-5x; it is
+# only sound when no suspend-reaching function is address-taken, so check first.
+python3 "$(dirname "$0")/../../scripts/asyncify_indirect_guard.py" "$RAW" env axon_host_await || exit 1
 # -O2 IS REQUIRED: the unoptimized asyncify output runs away (axon_eval never
 # returns; linear memory grows until the host is exhausted) on wasm-opt 120/127.
-wasm-opt $FEATURES -O2 --asyncify --pass-arg=asyncify-imports@env.axon_host_await "$RAW" -o "$OUT"
+wasm-opt $FEATURES -O2 --asyncify --pass-arg=asyncify-imports@env.axon_host_await \
+  --pass-arg=asyncify-ignore-indirect "$RAW" -o "$OUT"
 # PROVENANCE STAMP. The page refuses a module this script did not produce. The
 # artifact is generated and gitignored, so the file on disk is whatever the last
 # local build left — and on 2026-09-24 that was a stale UNOPTIMIZED build that

@@ -91,5 +91,55 @@ if [ -n "$RUSTLLD" ] && [ -n "$WASIDIR" ] && [ -f "$WASIDIR/libc.a" ]; then
   echo "wasm_object_prune: links clean (no ABI mismatch)"
 fi
 
+# ── A program that actually CALLS the runtime, not just a pure-int one ───────
+#
+# The check above links a pure-integer program, which by design imports no
+# `__axon_*` symbol — so it cannot see a codegen/axon-rt ABI disagreement about
+# one. That gap is not theoretical: widening `__axon_log_agent_action` from six
+# parameters to eight (378da246) produced
+#
+#   rust-lld: warning: function signature mismatch: __axon_log_agent_action
+#   >>> defined as (i32,i64,i32,i64,i32,i64,i32,i64) -> void in <program>
+#   >>> defined as (i32,i64,i32,i64,i32,i64) -> void in libaxon_rt.a
+#
+# and NOTHING in the gate would have caught it, because the mismatch is SILENT
+# on native: the SysV C ABI ignores extra arguments, so a native build of the
+# same inconsistency links, runs, and passes its tests. wasm is where the two
+# declarations are actually compared.
+#
+# So link an @[agent] program too: it calls __axon_log_agent_action, which is
+# the widest runtime signature codegen emits.
+AGENT_PROG="$WORK/agent_probe.ax"
+cat > "$AGENT_PROG" <<'AX'
+@[agent]
+fn planner() {
+    let _ = read_file("probe.txt")
+}
+fn main() { planner() }
+AX
+"$AXON" target build --engine codegen --target wasm32-wasip1 "$AGENT_PROG" >"$WORK/agent_build.log" 2>&1
+# `axon target build` exits 0 even when the LINK fails (it emitted an object,
+# which is its contract), so the exit status cannot stand in for "this probe
+# ran". Require evidence that the build reached the link step: without it, a
+# probe that never got that far would find no mismatch and report success
+# having compared nothing — the same vacuous pass this harness exists to
+# prevent one level down.
+if grep -qE "linked, RUNNABLE|wasm object:|wasm link failed" "$WORK/agent_build.log"; then
+  if grep -q "function signature mismatch" "$WORK/agent_build.log"; then
+    echo "wasm_object_prune: FAIL — codegen and axon-rt disagree on a runtime signature:"
+    grep -A2 "function signature mismatch" "$WORK/agent_build.log" | sed 's/^/    /'
+    exit 1
+  fi
+  echo "wasm_object_prune: agent-path link has no signature mismatch"
+else
+  # No link-step evidence at all. The earlier stages already established that
+  # codegen and the wasm target work, so this is a result rather than an
+  # absence: the probe should have reached a link and did not.
+  echo "wasm_object_prune: FAIL — the agent-path probe never reached the link step;"
+  echo "  the signature-mismatch check verified nothing. Build output:"
+  sed 's/^/    /' "$WORK/agent_build.log" | head -8
+  exit 1
+fi
+
 echo "wasm_object_prune: PASS"
 exit 0

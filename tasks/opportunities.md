@@ -2225,3 +2225,132 @@ or an internal registry mirror. Not done here: it adds the full dependency tree
 review-churn tradeoff that should be chosen deliberately rather than
 inherited from a lockfile fix. Worth revisiting if the `hermetic` profile's
 stated guarantees are ever meant to cover the BUILD as well as the run.
+
+## Native emits a legacy `call` provenance record the interpreter does not
+
+Measured on one `@[adaptive]` program, same source, same seed:
+
+```
+interp   {'run_start': 1, 'adaptive_return': 1}
+native   {'call': 1,      'adaptive_return': 1}
+```
+
+Two differences, one benign by design and one merely untidy:
+
+* `run_start` is interpreter-only ON PURPOSE. It is the handle
+  `axon trace --replay <run-id>` uses to re-execute the SOURCE, and native
+  refuses `AXON_REPLAY`/`AXON_RECORD` outright, so there is nothing for a
+  native run to stamp.
+* `call` is the "legacy string-event flavour" codegen emits at an
+  `@[adaptive]` prologue. The interpreter writes no entry record at all.
+
+NOT changed, deliberately. Nothing reads `call` — every consumer reads the
+score-bearing `adaptive_return` — and `axon-rt`'s module docs make on-disk
+backward compatibility an explicit goal, so removing it from native or adding
+it to interp is a compatibility decision rather than a cleanup. Recorded
+because the two logs are NOT record-for-record identical, and
+`provenance_parity.sh` compares only `fn|score` on `adaptive_return`, so
+nothing would tell a reader who assumed otherwise.
+
+Worth settling if provenance logs ever become something diffed across engines
+(a replay equivalence check would trip on this immediately).
+
+## The asyncified browser interpreter used ~15 GB to print "hello" — FIXED 2-5x, residual recorded
+
+Found because a strict gate was cancelled under memory pressure: the gate's
+`wasm_asyncify_host_await_suspends_across_async_r7c` test held a ~29 GB `node`
+process while ~70 GB of unrelated model servers were resident. Cancelled on the
+user's instruction; the model servers were not touched.
+
+**Measured outside the gate, under a cgroup memory ceiling** (so the probe could
+not endanger the machine), one variable at a time:
+
+| scenario | peak | time | result |
+|---|---|---|---|
+| RAW `axon_wasm.wasm` (not asyncified), `println("hello")` | **36 MB** | 0.27 s | ok |
+| ASYNCIFIED module, same trivial program | **15.3 GB** | ~12 s | ok, prints `hello` |
+| asyncified, V8 Liftoff only (no tier-up) | 15.7 GB | ~11 s | ok |
+| asyncified, TurboFan only (no Liftoff) | 17.4 GB | 120 s | **stack overflow** |
+| asyncified, node's default stack (no `--stack-size`) | 15.8 GB | ~12 s | ok |
+| asyncified, compile + instantiate only, no eval | **55 MB** | 0.1 s | ok |
+| asyncified, under an 8 GB ceiling | — | — | **OOM-killed** |
+
+What that establishes, and what it does not:
+
+* It is **execution**, not the artifact: compiling and instantiating the 5.6 MB
+  asyncified module costs 55 MB; running a one-line program costs 15 GB.
+* It is **the asyncify transformation**: the SAME program through the
+  non-asyncified module peaks at 36 MB. A ~430x amplification from one pass.
+* It is **not** host_await: the trivial program never calls it.
+* It is **not** the fixture: one `println`.
+* It is **not** the JS stack-size flag, and **not** a single V8 tier.
+* Growth is steady at ~1.2 GB/s for the whole run, then released at exit.
+
+**Not established, and deliberately not claimed:** whether this is a leak. High
+RSS alone does not make one. The obvious candidates are native V8 structures
+created while executing the heavily-instrumented code (asyncify roughly
+triples code size, 1.7 MB -> 5.6 MB), or pathological behaviour in binaryen 108's
+asyncify output for this module. The module ships no name section, so the
+frames in the TurboFan overflow could not be symbolised; rebuilding with names
+kept is the next step, not a guess at the internals.
+
+**Why the gate numbers were higher (~29 GB):** the gate runs four programs
+through the harness, including `examples/interactive/guess.ax`, and one run was
+caught near its peak.
+
+**Not done, on purpose:**
+* The test was NOT weakened or skipped to make the gate fit. A test that proves
+  the browser can suspend across async JS is load-bearing.
+* No memory budget was added yet: the realistic expected peak is the thing
+  being established, and it should come from a fixed module, not from today's
+  number.
+* **Resource-aware scheduling** is the structural answer regardless of the fix:
+  heavyweight tests should declare their memory class and run exclusively,
+  so a gate cannot launch a 15-30 GB test while other large workloads are
+  resident. Recorded rather than built, because it touches how every gate
+  stage is scheduled.
+
+### Resolution (follow-up)
+
+**Cause.** binaryen's Asyncify assumes any `call_indirect` might reach the
+suspending import. axon-wasm has 344 indirect calls, so it instrumented 1418 of
+1423 functions (the interpreter's 125K-line `call_builtin` grew 4.05x), and
+the V8 memory spent executing that instrumented code is the 15 GB. It is NOT
+the suspension point itself: only 34 functions can reach `axon_host_await` by
+direct calls, and none of them is address-taken.
+
+**A dead end, recorded so it is not retried:** extracting the four
+`host_await*` arms out of `call_builtin` into their own function changed
+nothing — the indirect-call assumption still reached everything. Reverted.
+
+**Fix:** `--pass-arg=asyncify-ignore-indirect`, gated by
+`scripts/asyncify_indirect_guard.py`, which PROVES the flag is sound for the
+module being built: the set of functions that can reach the import must not
+intersect the address-taken set. It refuses to call a module safe when its
+parse finds nothing (exit 2, "undecided"). Mutation-verified on hand-built
+modules: an address-taken suspending function -> UNSAFE, exit 1.
+
+| program | before | after | output |
+|---|---|---|---|
+| `println("hello")` | 15.3 GB | 2.4 GB | identical |
+| greet (2 suspends) | 29.3 GB | 8.2 GB | identical |
+| loop (3 suspends) | 18.6 GB | 7.7 GB | identical |
+| opt | >30 GB (OOM at a 30 GB cap) | 6.1 GB | identical |
+| guess (deep nested) | 18.4 GB | 6.0 GB | identical |
+| whole harness | ~29 GB in the gate | 8.4 GB peak | PASS |
+
+**Residual, and why it is not closed:** 6-8 GB to run a few host_await calls
+is still ~200x the uninstrumented cost. It is NOT instrumentation breadth: an
+`asyncify-onlylist` restricted to exactly the 33 functions that can reach the
+import (binaryen 108 accepted the 2.5 KB list without complaint) peaked at
+8.2 GB on greet — the same as ignore-indirect. So once the indirect-call
+over-instrumentation is gone, the remaining cost lives in executing the
+instrumented REACHABLE path itself, which includes the interpreter's 125K-line
+`call_builtin` and `eval`. (An earlier draft of this note claimed binaryen could
+not accept a list that long; it was a guess, it was tested, and it was wrong.)
+
+Next step if this matters: profile V8 while running the instrumented module
+(`--prof`, or `--trace-wasm-compilation`/code-space stats) to see whether the
+growth is compiled-code size, deopt churn, or unwind/rewind bookkeeping. JSPI,
+which suspends without instrumenting anything, remains the structural answer
+and is a toolchain decision not made here.

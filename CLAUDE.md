@@ -131,6 +131,10 @@ axon replay a.journal --diff b.journal    # where did two runs depart? Reports t
 axon trace                                # summarize the provenance log: per-@[adaptive]-fn score trajectory (--fn NAME, --json)
 axon trace --ai                           # AI-call audit trail: per-fn ai_complete calls, tier→model, mode (live/mock/replay/fallback), metered cost, and the goal each served (--json → axon-ai-audit/1)
 axon build examples/hello.ax              # native AOT binary   (codegen is now DEFAULT; builds in ~3s — see BUILD_RESOLVED.md)
+axon build f.ax --release                 # optimised: LLVM `default<O2>` IR pipeline + O2 backend (default without flags: O0)
+axon build f.ax --opt-level 3             # pick the level: 0|1|2|3|s|z (`s`/`z` = size pipelines); overrides --release; part of the cache key
+axon build f.ax --emit-obj -o f.o         # write the program's relocatable object only (no link; hosted or --freestanding)
+axon build f.ax --release --emit-llvm -o f.ll  # dump the IR AFTER the selected level's pipeline (what the backend compiles)
 axon session                              # R44: an accumulating typed session — bind a name in one
                                           #   cell, read it in the next. Every cell re-type-checks the
                                           #   WHOLE accumulated program, so redefining a name in a way
@@ -199,14 +203,17 @@ the revert is RECORDED. See `crates/axon-cortex/README.md`.
 **Execution is interpreter-first.** `run`/`goal`/`test`/`check` work without the
 `codegen` feature via the tree-walking interpreter (`interp.rs`). The native
 LLVM/inkwell `codegen` feature is **on by default and now builds in ~3s** —
-the long-standing "build never finishes" stall was a `serde-json` × `codegen`
-default-feature collision (recursive AST serde derives × codegen
-monomorphization), fixed by dropping `serde-json` from `default`
+the long-standing "build never finishes" stall was the internally-tagged
+(`serde(tag = "kind")`) serde derive on the recursive AST enums, which sent
+rustc's monomorphization collector into unbounded recursion in ANY build that
+instantiated `program_to_json` (AX-10; long misread as a `serde-json` ×
+`codegen` collision). The enums are adjacently tagged now (`{"kind","value"}`,
+`ast.rs`), so `serde-json` and `codegen` combine freely
 (`BUILD_RESOLVED.md`). `cargo build -p axon-core` produces the native `axon`
-compiler; `axon build foo.ax` emits a native binary. **Do not enable
-`codegen` + `serde-json` together** until the AST derives are decoupled — that
-combo reintroduces the stall. `axon parse`/`lsp` (JSON) opt in with
-`--features serde-json` (interpreter build, no codegen). Add `--features
+compiler; `axon build foo.ax` emits a native binary, from any directory and
+without cargo on PATH (runtime staticlibs resolve from the compiler's own
+workspace/target dir or `AXON_RUNTIME_DIR`). `axon parse`/`lsp` (JSON) opt in
+with `--features serde-json`. Add `--features
 asi-runtime` to enable live `ai_complete`/`ai_extract_*` — **a feature NOTHING
 in `scripts/` or `.github/workflows/` compiles**, so the compiler-side AI
 integration (`main.rs` `cmd_intent_compile`, `interp.rs`'s live path) is

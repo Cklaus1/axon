@@ -65,15 +65,36 @@ fn aliasing_an_ungranted_builtin_is_refused_for_every_capability_kind() {
     }
 }
 
+/// The only refusal a builtin alias may draw when its capability IS granted:
+/// AX-25's E0306 (a builtin is not a first-class value — the interpreter has no
+/// value for it and panicked "undefined identifier" at run time). Any E1001 /
+/// E1004 here would be the capability guard over-refusing.
+fn assert_refused_only_as_a_non_value(out: &str) {
+    let errors: Vec<&str> = out
+        .lines()
+        .filter(|l| l.contains("\"severity\":\"error\""))
+        .collect();
+    assert!(
+        !errors.is_empty() && errors.iter().all(|l| l.contains("\"code\":\"E0306\"")),
+        "a granted alias must draw only the not-a-value E0306, no capability error:\n{out}"
+    );
+}
+
 /// CONTROL: a grant covering every capability the alias confers must permit
-/// it, or the fix is "refuse all aliasing".
+/// it, or the fix is "refuse all aliasing". Since AX-25 the program is still
+/// refused — with E0306, because a builtin is not a value — but the capability
+/// guard itself must stay silent.
 #[test]
-fn aliasing_a_fully_granted_builtin_is_allowed() {
+fn a_fully_granted_alias_draws_no_capability_error() {
     let src = "@[contained(fs: [read(\"./\"), write(\"./out/\")], net: [], exec: none)]\n\
                fn f() -> i64 {\n    let g = file_copy\n    let _ = g(\"./a.txt\", \"./out/b.txt\")\n    0\n}\n\
                fn main() { let _ = f() }\n";
     let (code, out) = check(src);
-    assert_eq!(code, 0, "a fully granted alias must be allowed:\n{out}");
+    assert_eq!(
+        code, 2,
+        "a builtin is not a first-class value (E0306):\n{out}"
+    );
+    assert_refused_only_as_a_non_value(&out);
 }
 
 /// CONTROL, and the sharper one: `file_copy` confers a READ and a WRITE, so a
@@ -183,15 +204,17 @@ fn a_never_clause_forbids_aliasing_the_capability_it_denies() {
 /// CONTROL: a `never:` clause naming a PATH must not forbid the alias. That
 /// clause denies a path, and the whole reason to refuse an alias is that no
 /// path is knowable — so only a clause denying a WHOLE capability can decide
-/// a question with no argument in it.
+/// a question with no argument in it. (The alias itself is E0306 since AX-25;
+/// the capability guard must add nothing.)
 #[test]
-fn a_path_scoped_never_clause_does_not_forbid_aliasing() {
+fn a_path_scoped_never_clause_adds_no_capability_error_to_an_alias() {
     let (code, out) = check(
         "@[contained(fs: [read(\"./\")], net: [], exec: none, never: [read(\"/etc/\")])]\n\
          fn f() -> i64 {\n    let g = read_file\n    0\n}\nfn main() { let _ = f() }\n",
     );
     assert_eq!(
-        code, 0,
-        "a path-scoped never clause must not forbid aliasing the builtin:\n{out}"
+        code, 2,
+        "a builtin is not a first-class value (E0306):\n{out}"
     );
+    assert_refused_only_as_a_non_value(&out);
 }

@@ -1,0 +1,20 @@
+[package]
+name = "axon-rt-ai"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+# The native runtime for programs that call an AI builtin: `axon-rt` + `axon-ai`
+# as ONE staticlib. A Rust staticlib embeds its own copy of `std`, so linking
+# `libaxon_rt.a` and a separate `libaxon_ai.a` into one binary carried two
+# copies of std and needed `-Wl,--allow-multiple-definition` (BUG_HUNT #43).
+# `axon build` links exactly one runtime: `libaxon_rt.a` for a program with no
+# AI call, this one for a program with one (codegen/link.rs, `Runtime`).
+[lib]
+crate-type = ["staticlib"]
+name = "axon_rt_ai"
+
+[dependencies]
+axon-rt = { path = "../axon-rt" }
+axon-ai = { path = "../axon-ai" }

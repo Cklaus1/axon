@@ -1185,7 +1185,7 @@ impl<'p> Interp<'p> {
     pub(super) fn history(&self, name: &str) -> Value {
         let mut out: Vec<Value> = Vec::new();
         if name.is_empty() {
-            return Value::Array(out);
+            return Value::Array(Rc::new(out));
         }
         let scores_store = self.k().provenance.borrow();
         let inputs_store = self.k().provenance_inputs.borrow();
@@ -1201,7 +1201,7 @@ impl<'p> Interp<'p> {
                 }
             }
         }
-        Value::Array(out)
+        Value::Array(Rc::new(out))
     }
 
     /// Drop the recorded `(input, score)` history for an `@[adaptive]` fn so
@@ -1423,7 +1423,7 @@ impl<'p> Interp<'p> {
     /// `@[adaptive]` fn. Returns an empty slice when nothing was recorded.
     pub(super) fn best_inputs(&self, name: &str, target: f64) -> Value {
         let Some(idx) = self.best_input_index(name, target) else {
-            return Value::Array(Vec::new());
+            return Value::Array(Rc::default());
         };
         let inputs_store = self.k().provenance_inputs.borrow();
         let dims = inputs_store
@@ -1431,14 +1431,14 @@ impl<'p> Interp<'p> {
             .and_then(|v| v.get(idx))
             .cloned()
             .unwrap_or_default();
-        Value::Array(dims.into_iter().map(Value::Int).collect())
+        Value::Array(Rc::new(dims.into_iter().map(Value::Int).collect()))
     }
 
     /// f64-flavored counterpart of `best_inputs`: returns the f64-prefix
     /// input tuple of the entry whose score is closest to `target`.
     pub(super) fn best_inputs_f64(&self, name: &str, target: f64) -> Value {
         let Some(idx) = self.best_input_index(name, target) else {
-            return Value::Array(Vec::new());
+            return Value::Array(Rc::default());
         };
         let inputs_store = self.k().provenance_inputs_f64.borrow();
         let dims = inputs_store
@@ -1446,6 +1446,6 @@ impl<'p> Interp<'p> {
             .and_then(|v| v.get(idx))
             .cloned()
             .unwrap_or_default();
-        Value::Array(dims.into_iter().map(Value::Float).collect())
+        Value::Array(Rc::new(dims.into_iter().map(Value::Float).collect()))
     }
 }
