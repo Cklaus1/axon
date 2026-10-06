@@ -1832,3 +1832,15 @@ ATTACK_MARKERS.update({
     'M1958': 'ATTACK: a status file with the defect `cells` was accepted',
     'M1959': 'ATTACK: a status file with the defect `not-joined` was accepted',
 })
+
+# C9 round 5, r4c-psv1b (M1840-M1848; amendment 78): replacement, placeholders, the walk bound.
+ATTACK_MARKERS.update({
+    'M1840': r"ATTACK: sealed code retyped the operator's dict entry to a u8 \(the review's candidate-built dict at the held key\): Ok\(Completed\)",
+    'M1841': r"ATTACK: sealed code retyped the operator's dict entry to a u8 \(\[inner\]\): Ok\(Completed\)",
+    'M1842': r"ATTACK: sealed code retyped the operator's dict entry to a u8 \(Wrap \{ v: inner \}\): Ok\(Completed\)",
+    'M1843': r"ATTACK: sealed code retyped the operator's dict entry to a u8 \(Some\(inner\)\): Ok\(Completed\)",
+    'M1844': r"ATTACK: sealed code retyped the operator's dict entry to a u8 \(None filled with a u8\): Ok\(Completed\)",
+    'M1845': r"ATTACK: sealed code retyped the operator's dict entry to a u8 \(the review's candidate-built dict at the held key\): Ok\(Completed\)",
+    'M1847': r"ATTACK: a value nested past the walk bound crossed unvisited",
+    'M1848': r"ATTACK: a closure the operator held was replaced by a non-closure: Ok\(Completed\)",
+})

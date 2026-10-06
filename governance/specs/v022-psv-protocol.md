@@ -304,7 +304,7 @@ A result counts as protected only if all of these hold:
   it was fresh and its nonce unused when Fabric consumed it at launch (§7). The loop does NOT re-check
   age and keeps no nonce registry: a re-derivation long after the launch must not expire a genuine
   verdict (C9 correction; the earlier wording implied a loop-side freshness check that never existed);
-- the guest digests equal the qualification's;
+- the guest digests equal the qualification's (PRODUCER-side: Fabric's `psv::prepare` takes them from the profile manifest the qualification hashed; the loop does not join them to a B263 record, amendment 42, restated by amendment 82);
 - suite, test, candidate, trial, attempt and operation all equal the experiment's.
 
 Anything less is Unverifiable in the protected class (PSV-7). It is never silently development.
@@ -3672,7 +3672,7 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       every edge back to operator code — a candidate fn returns, a candidate closure returns,
       sealed code calls an operator closure, an effect-handler arm of operator provenance runs —
       `Interp::dict_edge_out` checks every dirty dict: each key the operator held that is still
-      present must cast (non-strictly: undetermined parts stay free) to its recorded type, and a
+      present must cast (round 5, amendment 78: STRICTLY, against the HELD VALUE, deeply — see 78) to what it held, and a
       key that held an operator closure may not now hold a candidate closure. A removed key is
       not checked (the operator then reads `None`); remove-then-re-add with another type is
       refused (the check is on the final state).
@@ -4072,3 +4072,152 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       the only authority for "the binary this tree builds" is building it. The guard that does hold a
       digest is the harness's own: every mutation or paired-disable row ends on the interpreter the run
       started with, rebuilt and byte-compared (M888-M890). Not changed; stated.
+
+78. **A position the operator held is judged by what it held — deeply, and strictly (C9 round 5,
+    workstream r4c-psv1b, PSV-1; matrix A127-A130; M1840-M1848; amends 72 part 2).**
+    - **Findings** (`/var/tmp/c9r5-findings-PSV-1.json`, cases `/var/tmp/c9r5-psv1-logs/w/c0..c6`).
+      (1) BLOCKER, executed (c1): the candidate REPLACED a dict key the operator held with a
+      candidate-built dict carrying a `u8`. Part 2 cast each held key against its recorded
+      `value_type`, which for a held dict is only `Dict`; the replacing dict is another `Rc` with
+      no snapshot, so its values were unconstrained (the in-place `dict_set(inner, "x", u8)` was
+      refused; the replacement was a keyed pass). (2) MAJOR-ADJACENT, executed (c4): the operator
+      held `None` at "best" (recorded `Option<?undetermined>`); the candidate stored
+      `Some(4 as u8)`, and part 2's non-strict cast let it through — against amendment 72's
+      invariant ("a position nothing on the operator side determined is refused"). (3) FUTURE:
+      `walk_fresh` returned silently past `MAX_CAST_DEPTH`, leaving the dicts below unrecorded.
+    - **After.** The snapshot keeps the HELD VALUE at each key (`DictSnap::held`, a clone: a
+      nested dict is the same `Rc`, with its own snapshot) instead of a type. `Interp::replaced_ok`
+      judges the value now at a held key against the held one: (a) a dict that is NOT the same
+      `Rc` is judged against the held dict's entries (its own snapshot) — a key present in both
+      keeps its type, recursively; keys only the replacement has are free, exactly as part 2's new
+      keys (stated there, unchanged); (b) arrays and tuples element by element, structs and enum
+      variants field by field, `Option`/`Result` through the payload — so a container carrying a
+      dict is never judged by its bare type; (c) the LEAF rule: the replacement casts STRICTLY to
+      the type the held value showed, so an undetermined position (a `None`'s payload, an empty
+      array's element, a `Result`'s other arm) REFUSES a value instead of staying free; a held
+      closure's signature is not shown, so it is exempt from the strict cast, but an operator
+      closure may not be replaced by a candidate's closure or by a non-closure; (d) cycles are
+      handled by a visited set of (held, replacing) pairs, and a depth past the cast's bound is
+      refused. `dict_edge_out` calls it for every held key of a dirty dict.
+    - **Placeholder-then-fill (item 2) — adopted, measured.** Honest-program impact: the sweeps
+      are identical (352 `.ax` files' diagnostics, 55 `@[test]` files green, example run exit
+      codes) and no `.ax` in the repository stores a `None` or `[]` placeholder in a dict or runs
+      under `--seal` at all (seals are made only by the PSV runner), so no repository program
+      breaks. The cost is real and stated: an operator that hands the candidate a `None`/`[]`
+      slot to FILL, then reads it untyped, now gets a refusal — it holds a TYPED placeholder
+      instead (`Some(0)`, `[0]`), which the candidate may then replace with a value of that
+      type (`a_placeholder_the_operator_held_is_not_filled_by_the_candidate`: GOOD `Some(0)` ->
+      `Some(9)` passes, WRONG `Some(4)` fails). Leaving a placeholder untouched, or emptying a
+      typed slot (`Some(3)` -> `None`), is unaffected.
+    - **Walk bound (item 3).** `walk_fresh` returns `Result` and calls `walk_depth_ok`, which
+      REFUSES a value nested deeper than `MAX_CAST_DEPTH` (the same bound the cast uses) —
+      consistent with the entry-count rule. A real value that deep overflows the thread stack
+      first, so it is tested directly (`walk_bound_tests::a_value_nested_past_the_bound_is_refused_not_left_unvisited`).
+    - **Replacement family, hunted.** Replaced at a held key and refused: a candidate-built dict,
+      a dict two levels down, `[inner]`, `Some(inner)`, `(inner, 1)`, `Wrap { v: inner }`, a dict
+      received on the operator's channel; scalars in containers (`[3]`, `Wrap { v: 3 }`, `(3, 1)`,
+      `Some(3)`); a closure replaced by a non-closure (and by the candidate's). Accepted by design
+      (a position the operator never determined): keys only the replacement has, and a
+      candidate-built dict RETURNED to the operator (e.g. `fn f(inner: Dict) -> Dict { fresh }`,
+      `Wrap<Dict>` returns) — the operator's argument is not at that position; the return is
+      candidate output, part 2's non-claim. Not covered, stated: a generic enum variant's fields
+      are judged by the same rule but have no dedicated attack test.
+    - **Non-claim text updated** (amendment 53 (1), amendment 72 part 2): what stays open for a
+      `Dict` is exactly (i) a key the operator never held, (ii) a dict the candidate builds and
+      returns, (iii) an operator-held dict whose snapshot an operator-side mutation made stale
+      WHILE sealed code ran (the epoch retakes it at the next hand-over only). Everything the
+      operator put in a dict, at any depth, is judged.
+    - **Rows.** M1840 (a replacing dict judged against the held entries), M1841 (array/tuple),
+      M1842 (struct), M1843 (`Option`/`Result`), M1844 (a store at an undetermined position is
+      strict), M1845 (the leaf rule refuses), M1847 (the walk bound), M1848 (a held closure is not
+      replaced by a non-closure). Re-anchored in place (same guard, same test, new text): M1672,
+      M1673 (the closure check moved into `replaced_ok`), M1677-M1680 (the walk now returns
+      `Result`). Matrix A127-A130; the matrix check passes (130 rows).
+    - **Tests.** `a_position_the_operator_held_is_judged_by_what_it_held_when_replaced`,
+      `a_placeholder_the_operator_held_is_not_filled_by_the_candidate`, the closure-to-non-closure
+      case in `a_dict_the_candidate_mutated_is_verified_at_every_edge_back`, the bound test, and
+      through the real runner `a_replaced_or_filled_position_is_judged_by_what_the_operator_held`
+      (c1 and c4, with GOOD and WRONG controls).
+    - **Native codegen.** Unchanged: the seal is interpreter-only (amendment 72).
+    - **Operator deployment.** The guest image must be rebuilt.
+
+## Amendment 82: claim text states what the code does (C9 round 5, claims)
+
+82. **Wording and evidence accuracy; no code guard changes (operator decision 2026-10-05, PSV-3
+    option "reword + delta note, non-empty guest ceiling OUT of scope"). Findings
+    `/var/tmp/c9r5-findings-PSV-{2,3,4,5,6,7}.json`.** Every reworded sentence, before and after:
+    - **PSV-3 (BLOCKER), certification scope.** Before (verdict spec): "Sealing, containment and
+      per-provenance kernels run in the guest interpreter exactly as certified for the local path
+      (`governance/proofs/v022-pci/CERTIFICATION.md`)." After: "... as certified at `31413ca7`
+      (local backend, EMPTY effect ceiling) plus amendments 53/60/72/78 (the delta), each covered
+      by named PCI gate rows and mutation rows re-run at the frozen head. A non-empty guest effect
+      ceiling is OUTSIDE the PCI certification." The delta, the gate-row results and the exact
+      protected-profile behaviour under a non-empty ceiling are in
+      `governance/notes/v022-pci-delta.md` (mutable; CERTIFICATION.md is untouched). Amendment 78
+      is on `c9r4c/psv1b` and not in this branch's base.
+    - **PSV-3, completion.** Before: "a token per completed test", and the `interp::TestEnd` doc
+      "Completed ... its every assertion ran". After: "completed" means the test body returned
+      normally. An assertion inside a closure handed to the candidate runs only if the candidate
+      calls it: executed by the reviewer, a suite closure the candidate never calls still yields a
+      keyed PASS. Suites must assert after the call. The `TestEnd` comment says the same (comment
+      only).
+    - **PSV-3, key.** Before: "a fresh per-run key and a token per completed test ... produced and
+      checked by the trusted runner INSIDE the guest." After: derived from a host-generated per-run
+      secret (`submit.rs` draws it from the OS RNG; the guest enforces length, not freshness);
+      tokens are issued by the guest interpreter and checked by both the guest runner and Fabric.
+    - **PSV-3, fail-safe (not an A-row: nothing refuses it).** A candidate-printed second line
+      naming a test makes `keyed_outcome` return `None`, so Failed or Passed becomes Unknown. It
+      never produces a pass. Recorded under "Accepted, open" in the negative matrix.
+    - **PSV-6 (BLOCKER 1).** Before: "Intake rejects a receipt whose observation digest or launch
+      manifest digest does not join, or whose observation is stale, replayed or from another
+      launch", and the matrix row "Stale or replayed observer evidence | Intake: observation
+      nonce/epoch/age". After: freshness (`max_age`) and one-use are enforced at LAUNCH (Fabric's
+      early check, the root helper, the custodian spend). Intake enforces the digest, launch
+      (manifest digest, trial/attempt/operation, candidate) and epoch joins and deliberately does
+      not expire a genuine verdict (section 9 already said so; the claim and the row never did).
+      The "Replayed verdict or receipt" row, which also named intake, now says launch refuses and
+      intake does not re-check. The "Fabric cannot mint it" and measured-vs-told wording belongs to
+      `c9r4c/obsbind` and is not touched here.
+    - **PSV-4.** Before: "Fabric attests a verdict only when it came from the protected guest
+      path." After: Fabric attests a verdict as PROTECTED only when it came from the protected
+      guest path, and signs other classes under their own label (`development` for a local,
+      effect-free check; `guest-unobserved` for an unobserved guest verdict) (`attestation_decision`).
+      The class is inside the signed receipt, so a signature never upgrades it. B263 currency is
+      judged at dispatch (`qualification()` at selection) and again just before launch, NOT at
+      signing: a record that lapses during a long run still yields a receipt naming the older
+      record's digest. Stated as a limit; no code change. Also recorded: `derive` reads
+      `result.json` a second time (`fs::read`) beside `interpret_linux_result`'s `read_regular`;
+      `out_root` is operator-owned and root-written, so this is a defence-in-depth gap only.
+    - **PSV-5, section 9.** Before: "the guest digests equal the qualification's". After: the
+      producer-side wording of amendment 42 (above, section 9). Recorded precisely, no code change:
+      (1) the EXECUTION leg of a protected trial rests on the Fabric execution attestation
+      (`execution_document` signs the request and receipt digests; `execution_attestation_decision`)
+      plus SHAPE checks: `evl::observed_protected_execution` requires the protected class and that
+      `launch-manifest-sha256` and `preflight-observation-sha256` each appear once as hex, and no
+      bundle is delivered for that leg, so those two digests are not joined loop-side to a manifest
+      or observation; (2) `names_one_sha256` accepts uppercase hex while the verdict path
+      (`is_sha256_hex`) requires lowercase. Accepted MINORs: the manifest's `backend_profile` is not
+      joined to the receipt's `backend_profile_ref` (unreachable while `PROTECTED_PROFILES` has one
+      element; drift test
+      `protected_profiles_is_the_one_profile_the_launch_manifest_pins` added, no guard so no row);
+      the manifest's `limits` and the receipt's `matched_checks` are not joined by the loop
+      (`matched_checks` derives from test stdout the loop never sees; covered by the verifier
+      signature only).
+    - **PSV-2.** `axon-workspace-recipe`'s header named `axon-guest-init` as the digesting side; it
+      is `axon-psv-runner` (`axon-guest-init` does not link the recipe). Header comment only.
+      Recorded as availability-only: Fabric's `tree_version_ref` (used by `psv::prepare`) silently
+      omits top-level `.git`/`.micode` and ignores empty directories, while the guest's
+      `check_inputs` refuses both, so such a tree gets a manifest and then a guest refusal. The
+      direction is safe (fails closed).
+    - **PSV-7.** Fabric and readiness do NOT compare the B263 record's host to the running host:
+      `accept_b263` (shared by `LinuxProfileConfig::qualification` and readiness) requires only a
+      non-empty `host`; nothing compares `host_facts.machine_id` to `/etc/machine-id`. Only the
+      operator deploy kit does, once, at install. So a current operator-signed record from host A
+      installed by the operator on host B passes in code and readiness; no agent-reachable route to
+      that install was found. The "possible follow-up" of amendment 56 is promoted to item N of
+      `governance/specs/post-c9-keys-and-signatures.md`, together with two FUTURE items: the
+      Stage 7 `b263_qualification` readiness component is a bare sha pin (redundant weak check,
+      it cannot make Stage 7 READY alone), and the readiness relay script runs the operator
+      verifier with an unscrubbed environment.
+    - **Rows.** None added: no code guard changed. The one added test is a drift test over two
+      constants. M1960-M1969 are unused.

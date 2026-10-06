@@ -399,3 +399,12 @@ fn micodes_real_old_peer_documents_are_not_a_profile() {
         }
     }
 }
+
+/// The loop's protected-profile list and the launch manifest's pinned profile
+/// are one string (amendment 82): `check_bundle` does not join the manifest's
+/// `backend_profile` to the receipt's `backend_profile_ref`, which is sound only
+/// while the list has this single element.
+#[test]
+fn protected_profiles_is_the_one_profile_the_launch_manifest_pins() {
+    assert_eq!(PROTECTED_PROFILES, &[axon_psv::PROTECTED_PROFILE]);
+}

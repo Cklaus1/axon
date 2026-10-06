@@ -1349,11 +1349,10 @@ type DictRc = Rc<RefCell<std::collections::BTreeMap<String, Value>>>;
 /// What the operator held in one dict when it handed it to sealed code.
 pub(crate) struct DictSnap {
     weak: std::rc::Weak<RefCell<std::collections::BTreeMap<String, Value>>>,
-    /// The type of the value at each key.
-    types: std::collections::BTreeMap<String, T>,
-    /// Keys that held an OPERATOR closure (a candidate closure may not replace
-    /// one: its result would reach the operator at an undetermined type).
-    op_closures: std::collections::BTreeSet<String>,
+    /// The value at each key as the operator held it (a clone: a nested dict is
+    /// the same `Rc`, with its own snapshot). What a replacement is judged
+    /// against, structurally (amendment 78).
+    held: std::collections::BTreeMap<String, Value>,
     /// Sealed code mutated the dict since it was last verified.
     dirty: bool,
     /// [`Interp::dict_epoch`] when the snapshot was taken.
@@ -1371,7 +1370,7 @@ impl<'p> Interp<'p> {
         }
         let mut found = Vec::new();
         let mut seen = std::collections::HashSet::new();
-        self.walk_fresh(v, &mut seen, &mut found, 0);
+        self.walk_fresh(v, &mut seen, &mut found, 0)?;
         for m in found {
             self.dict_snapshot(&m)?;
         }
@@ -1386,15 +1385,13 @@ impl<'p> Interp<'p> {
         seen: &mut std::collections::HashSet<usize>,
         out: &mut Vec<DictRc>,
         d: usize,
-    ) {
-        if d > MAX_CAST_DEPTH {
-            return;
-        }
+    ) -> Result<(), Flow> {
+        Self::walk_depth_ok(d)?;
         match v {
             Value::Dict(m) => {
                 let key = Rc::as_ptr(m) as *const () as usize;
                 if !seen.insert(key) {
-                    return;
+                    return Ok(());
                 }
                 let fresh = self.dict_snaps.borrow().get(&key).is_some_and(|s| {
                     !s.dirty
@@ -1402,31 +1399,46 @@ impl<'p> Interp<'p> {
                         && s.weak.upgrade().is_some_and(|w| Rc::ptr_eq(&w, m))
                 });
                 if fresh {
-                    return;
+                    return Ok(());
                 }
                 out.push(m.clone());
                 for x in m.borrow().values() {
-                    self.walk_fresh(x, seen, out, d + 1);
+                    self.walk_fresh(x, seen, out, d + 1)?;
                 }
             }
             Value::Array(xs) | Value::Tuple(xs) => {
                 for x in xs {
-                    self.walk_fresh(x, seen, out, d + 1);
+                    self.walk_fresh(x, seen, out, d + 1)?;
                 }
             }
             Value::Struct { fields, .. } | Value::Enum { fields, .. } => {
                 for x in fields.values() {
-                    self.walk_fresh(x, seen, out, d + 1);
+                    self.walk_fresh(x, seen, out, d + 1)?;
                 }
             }
-            Value::Some(x) | Value::Ok(x) | Value::Err(x) => self.walk_fresh(x, seen, out, d + 1),
+            Value::Some(x) | Value::Ok(x) | Value::Err(x) => {
+                self.walk_fresh(x, seen, out, d + 1)?
+            }
             Value::Chan(q) => {
                 for x in q.borrow().iter() {
-                    self.walk_fresh(x, seen, out, d + 1);
+                    self.walk_fresh(x, seen, out, d + 1)?;
                 }
             }
             _ => {}
         }
+        Ok(())
+    }
+
+    /// A value nested deeper than the cast's own bound is REFUSED, never left
+    /// unvisited (its dicts would go unrecorded).
+    pub(crate) fn walk_depth_ok(d: usize) -> Result<(), Flow> {
+        if d > MAX_CAST_DEPTH {
+            return panic(format!(
+                "a value nested more than {MAX_CAST_DEPTH} deep cannot cross a seal: its dicts \
+                 could not all be recorded"
+            ));
+        }
+        Ok(())
     }
 
     fn dict_snapshot(&self, m: &DictRc) -> Result<(), Flow> {
@@ -1437,16 +1449,11 @@ impl<'p> Interp<'p> {
                  values' types could not be recorded, so the candidate could retype them"
             ));
         }
-        let mut types = std::collections::BTreeMap::new();
-        let mut op_closures = std::collections::BTreeSet::new();
-        for (k, x) in m.borrow().iter() {
-            types.insert(k.clone(), self.value_type(x, 0));
-            if let Value::Closure { captured, .. } = x {
-                if !captured.borrow().contains_key(SEALED_CLOSURE_MARK) {
-                    op_closures.insert(k.clone());
-                }
-            }
-        }
+        let held: std::collections::BTreeMap<String, Value> = m
+            .borrow()
+            .iter()
+            .map(|(k, x)| (k.clone(), x.clone()))
+            .collect();
         let key = Rc::as_ptr(m) as *const () as usize;
         let mut tab = self.dict_snaps.borrow_mut();
         if tab.len() > 64 && tab.len().is_power_of_two() {
@@ -1456,8 +1463,7 @@ impl<'p> Interp<'p> {
             key,
             DictSnap {
                 weak: Rc::downgrade(m),
-                types,
-                op_closures,
+                held,
                 dirty: false,
                 epoch: self.dict_epoch.get(),
             },
@@ -1506,27 +1512,12 @@ impl<'p> Interp<'p> {
                 let Some(s) = tab.get(&key) else { continue };
                 let cur = m.borrow();
                 let mut bad = None;
-                for (k, t) in &s.types {
+                let mut seen: std::collections::HashSet<(usize, usize)> =
+                    std::collections::HashSet::new();
+                for (k, old) in &s.held {
                     let Some(now) = cur.get(k) else { continue };
-                    if s.op_closures.contains(k) {
-                        if let Value::Closure { captured, .. } = now {
-                            if captured.borrow().contains_key(SEALED_CLOSURE_MARK) {
-                                bad = Some(format!(
-                                    "key `{k}` held an operator closure and now holds the \
-                                     candidate's"
-                                ));
-                                break;
-                            }
-                        }
-                    }
-                    // A copy: the cast may wrap a closure in a contract.
-                    let mut c = now.clone();
-                    if let Err(why) = self.cast(&mut c, t, &Cx::default()) {
-                        bad = Some(format!(
-                            "key `{k}` held a value of type `{}` and now holds {} ({why})",
-                            crate::doc::render_type(t),
-                            value::display(now)
-                        ));
+                    if let Err(why) = self.replaced_ok(old, now, &mut seen, 0) {
+                        bad = Some(format!("key `{k}` {why}"));
                         break;
                     }
                 }
@@ -1541,6 +1532,136 @@ impl<'p> Interp<'p> {
             if let Some(s) = self.dict_snaps.borrow_mut().get_mut(&key) {
                 s.dirty = false;
             }
+        }
+        Ok(())
+    }
+
+    /// Whether `new`, now at a position where the operator held `old`, is a
+    /// legitimate occupant (amendment 78). The position is determined by what
+    /// the operator put there, DEEPLY: (1) `new` casts STRICTLY to the type
+    /// `old` showed, so a position `old` did not show (a `None`'s payload, an
+    /// empty array's element) is refused rather than left free; (2) a dict
+    /// that REPLACES a held dict is judged against the held one's entries —
+    /// a key present in both keeps its type, recursively (keys only `new`
+    /// has are free, exactly as part 2's new keys); (3) the same through
+    /// arrays, tuples, struct and enum fields and `Option`/`Result` payloads,
+    /// so a container carrying a dict is never judged by its bare type; (4)
+    /// an operator closure is never replaced by a candidate's.
+    fn replaced_ok(
+        &self,
+        old: &Value,
+        new: &Value,
+        seen: &mut std::collections::HashSet<(usize, usize)>,
+        d: usize,
+    ) -> Result<(), String> {
+        Self::walk_depth_ok(d).map_err(|_| {
+            String::from("is nested too deeply to compare with what the operator held")
+        })?;
+        match (old, new) {
+            (Value::Closure { captured: oc, .. }, Value::Closure { captured: nc, .. }) => {
+                return if !oc.borrow().contains_key(SEALED_CLOSURE_MARK)
+                    && nc.borrow().contains_key(SEALED_CLOSURE_MARK)
+                {
+                    Err("held an operator closure and now holds the candidate's".into())
+                } else {
+                    Ok(())
+                };
+            }
+            (Value::Closure { .. }, _) => {
+                return Err(format!(
+                    "held a closure and now holds {}",
+                    value::display(new)
+                ))
+            }
+            (Value::Dict(o), Value::Dict(n)) => {
+                if Rc::ptr_eq(o, n) {
+                    return Ok(());
+                }
+                let (po, pn) = (
+                    Rc::as_ptr(o) as *const () as usize,
+                    Rc::as_ptr(n) as *const () as usize,
+                );
+                if !seen.insert((po, pn)) {
+                    return Ok(());
+                }
+                // The held dict's entries as the operator held them: its own
+                // snapshot when it has a live one, else what it holds now.
+                let held: Vec<(String, Value)> = match self.dict_snaps.borrow().get(&po) {
+                    Some(s) if s.weak.upgrade().is_some_and(|w| Rc::ptr_eq(&w, o)) => {
+                        s.held.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
+                    }
+                    _ => o
+                        .borrow()
+                        .iter()
+                        .map(|(k, v)| (k.clone(), v.clone()))
+                        .collect(),
+                };
+                for (k, ov) in held {
+                    let nv = n.borrow().get(&k).cloned();
+                    if let Some(nv) = nv {
+                        self.replaced_ok(&ov, &nv, seen, d + 1)
+                            .map_err(|e| format!("(in the replacing dict) key `{k}` {e}"))?;
+                    }
+                }
+                return Ok(());
+            }
+            _ => {}
+        }
+        // The leaf rule: strictly, against what `old` showed (a closure's
+        // signature is not shown, so it is not judged here).
+        let t = unshown_fn(&self.value_type(old, 0));
+        let mut c = new.clone();
+        if let Err(why) = self.cast(&mut c, &t, &Cx::default().strict(true)) {
+            return Err(format!(
+                "held a value of type `{}` and now holds {} ({why})",
+                crate::doc::render_type(&t),
+                value::display(new)
+            ));
+        }
+        match (old, new) {
+            (Value::Array(a), Value::Array(b)) | (Value::Tuple(a), Value::Tuple(b)) => {
+                for (x, y) in a.iter().zip(b) {
+                    self.replaced_ok(x, y, seen, d + 1)?;
+                }
+            }
+            (
+                Value::Struct {
+                    name: n1,
+                    fields: f1,
+                },
+                Value::Struct {
+                    name: n2,
+                    fields: f2,
+                },
+            ) if n1 == n2 => {
+                for (k, x) in f1 {
+                    if let Some(y) = f2.get(k) {
+                        self.replaced_ok(x, y, seen, d + 1)?;
+                    }
+                }
+            }
+            (
+                Value::Enum {
+                    enum_name: e1,
+                    variant: v1,
+                    fields: f1,
+                },
+                Value::Enum {
+                    enum_name: e2,
+                    variant: v2,
+                    fields: f2,
+                },
+            ) if e1 == e2 && v1 == v2 => {
+                for (k, x) in f1 {
+                    if let Some(y) = f2.get(k) {
+                        self.replaced_ok(x, y, seen, d + 1)?;
+                    }
+                }
+            }
+            (Value::Some(x), Value::Some(y))
+            | (Value::Ok(x), Value::Ok(y))
+            | (Value::Err(x), Value::Err(y)) => self.replaced_ok(x, y, seen, d + 1)?,
+            _ => {}
         }
         Ok(())
     }
@@ -1562,5 +1683,50 @@ impl<'p> Interp<'p> {
             (true, false) => self.dict_edge_in(v),
             _ => Ok(()),
         }
+    }
+}
+
+/// `t` with every `fn` type replaced by the unstated `?`: a closure's
+/// signature is not shown by the value, so a strict cast must not refuse it.
+fn unshown_fn(t: &T) -> T {
+    let u = |x: &T| Box::new(unshown_fn(x));
+    match t {
+        T::Fn { .. } => any(),
+        T::Result { ok, err } => T::Result {
+            ok: u(ok),
+            err: u(err),
+        },
+        T::Option(x) => T::Option(u(x)),
+        T::Chan(x) => T::Chan(u(x)),
+        T::Slice(x) => T::Slice(u(x)),
+        T::Ref(x) => T::Ref(u(x)),
+        T::RawPtr(x) => T::RawPtr(u(x)),
+        T::Generic { base, args } => T::Generic {
+            base: base.clone(),
+            args: args.iter().map(unshown_fn).collect(),
+        },
+        T::Tuple(xs) => T::Tuple(xs.iter().map(unshown_fn).collect()),
+        T::Union(xs) => T::Union(xs.iter().map(unshown_fn).collect()),
+        T::Named(_) | T::TypeParam(_) | T::DynTrait(_) => t.clone(),
+    }
+}
+
+#[cfg(test)]
+mod walk_bound_tests {
+    use super::*;
+
+    /// The walk for a handed value's dicts REFUSES a value nested deeper than
+    /// the cast's own bound; it never returns with the rest unvisited. (A real
+    /// value that deep overflows the thread stack first, so the bound's
+    /// logic is tested directly.)
+    #[test]
+    fn a_value_nested_past_the_bound_is_refused_not_left_unvisited() {
+        assert!(Interp::walk_depth_ok(0).is_ok());
+        assert!(Interp::walk_depth_ok(MAX_CAST_DEPTH).is_ok());
+        let past = Interp::walk_depth_ok(MAX_CAST_DEPTH + 1);
+        assert!(
+            matches!(&past, Err(Flow::Panic(m)) if m.contains("cannot cross a seal")),
+            "ATTACK: a value nested past the walk bound crossed unvisited: {past:?}"
+        );
     }
 }
