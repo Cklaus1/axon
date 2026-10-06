@@ -154,6 +154,26 @@ Run with `axon test file.ax`. `assert_eq` is `i64`-only and prints both values o
 1. **Pass collections by borrow: `&[T]`.** Declare `fn f(xs: &[i64])` and call `f(&arr)`.
    A bare `[T]` param or a missing `&` at the call site is error `E0601` — the fix is to
    add `&`. (`ref` is a binding mode, not a parameter mode.)
+   `&[T]` is **read-only**: arrays are values, so a write through it (`xs[i] = v`) is
+   error `E0604`. To modify the caller's array in place, declare **`&mut [T]`** and
+   call with **`&mut a`** — writes (`xs[i] = v`, `xs[i].f = v`, `xs = [..]`) reach `a`:
+   ```axon
+   fn swap(xs: &mut [i64], i: i64, j: i64) {
+       let t = xs[i]
+       xs[i] = xs[j]
+       xs[j] = t
+   }
+   fn qs(xs: &mut [i64], lo: i64, hi: i64) {
+       // ... partition ...
+       qs(&mut xs, lo, hi - 1)   // pass it on with `&mut xs`, or as `&xs` to readers
+   }
+   // caller: let a = [3, 1, 2]   swap(&mut a, 0, 2)
+   ```
+   `&mut` only borrows a whole local variable (not `&mut s.xs`, `&mut a[i]`, or a
+   temporary - `E0605`), only for a free function's `&mut [T]` parameter (not builtins
+   such as `len`, methods, or closures - pass `&a` / `a` to those), and a call may not
+   also mention a borrowed variable in another argument (`f(&mut a, &a)`,
+   `f(&mut a, len(a))` - `E0606`; hoist `let n = len(a)` first).
 
 2. **Keep an expression on one line, or end the line with the operator.** A binary
    operator that *leads* the next line breaks parsing. Do this:

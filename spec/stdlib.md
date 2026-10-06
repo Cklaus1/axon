@@ -383,6 +383,13 @@ There is no implicit coercion between `str` and numeric types, between `bool` an
 or between struct types. Such conversions require an explicit call to `to_str`, `parse_int`, or
 a user-defined conversion function.
 
+### Array arguments are never `&mut`
+
+Builtins that take an array (`len`, `arr_*`, ...) take it as `xs` or `&xs` and never modify
+the caller's array: the ones that "change" an array (`arr_push`, `arr_sort_by`, ...) return a new
+one. Passing `&mut a` to a builtin is error `E0605`; `&mut` is only for a user-defined free
+function's `&mut [T]` parameter (see `spec/language-tour.md` §12).
+
 ---
 
 ## 5. Known Issues and Phase 2 Fixes

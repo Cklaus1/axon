@@ -228,6 +228,9 @@ pub enum AxonType {
         ret: Box<AxonType>,
     },
     Ref(Box<AxonType>),
+    /// `&mut T` — a mutable borrow. Only legal as a top-level fn parameter
+    /// type; the callee's writes reach the caller's binding (`&mut a`).
+    RefMut(Box<AxonType>),
     /// Phase 3: trait object type — `dyn Displayable`
     DynTrait(String),
     /// Phase 3: bare type parameter name inside a generic definition — `T`, `A`, `B`
@@ -633,6 +636,8 @@ pub enum UnaryOp {
     Neg,
     Not,
     Ref,
+    /// `&mut place` — only legal as a call argument for a `&mut` parameter.
+    RefMut,
     BitNot,
 }
 

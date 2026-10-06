@@ -470,6 +470,29 @@ impl<'p> Interp<'p> {
                         }
                     }
                 }
+                // `xs[i]` on a variable reads the element in place: evaluating
+                // `xs` first would copy the whole array per element read, which
+                // makes in-place algorithms over `&mut [T]` (AX-08) quadratic.
+                if let Expr::Ident(name) = receiver.as_ref() {
+                    if env.get(name).is_some() || self.globals.contains_key(name) {
+                        let idx = self.eval_int(index, env)?;
+                        let arr = env.get(name).or_else(|| self.globals.get(name));
+                        return match arr {
+                            Some(Value::Array(items)) => {
+                                items.get(idx as usize).cloned().ok_or_else(|| {
+                                    Flow::Panic(format!(
+                                        "index {idx} out of bounds (len {})",
+                                        items.len()
+                                    ))
+                                })
+                            }
+                            Some(other) => {
+                                panic(format!("indexing non-array ({})", other.type_name()))
+                            }
+                            None => panic(format!("undefined identifier `{name}`")),
+                        };
+                    }
+                }
                 let arr = self.eval(receiver, env)?;
                 let idx = self.eval_int(index, env)?;
                 match arr {
@@ -974,6 +997,15 @@ impl<'p> Interp<'p> {
             }
         }
 
+        // AX-08: a call passing `&mut a` moves each borrowed value out of the
+        // caller's binding into the callee and back on return (O(1), no copy).
+        if args
+            .iter()
+            .any(|a| matches!(a, Expr::UnaryOp { op: UnaryOp::RefMut, .. }))
+        {
+            return self.eval_call_mut(callee, args, tier, env);
+        }
+
         // Evaluate arguments left-to-right.
         let mut argv = Vec::with_capacity(args.len());
         for a in args {
@@ -1050,6 +1082,63 @@ impl<'p> Interp<'p> {
         // (e.g. `make_adder(1)(2)` or an array element).
         let c = self.eval(callee, env)?;
         self.call_closure(c, argv)
+    }
+
+    /// AX-08: `f(.., &mut a, ..)`. The checker (E0605/E0606) guarantees the
+    /// callee is a free fn whose matching params are `&mut [T]`, every `&mut`
+    /// operand is a whole local, and no other argument mentions it.
+    fn eval_call_mut(
+        &self,
+        callee: &Expr,
+        args: &[Expr],
+        tier: Option<&str>,
+        env: &mut Env,
+    ) -> R {
+        let f = match callee {
+            Expr::Ident(name) => match self.fns.get(name) {
+                Some(f) => *f,
+                None => return panic(format!("`&mut` argument passed to `{name}`, which is not a function taking `&mut` parameters")),
+            },
+            _ => return panic("`&mut` argument passed to a computed callee".to_string()),
+        };
+        // Plain arguments first, left to right: they cannot mention a
+        // borrowed variable (E0606), so this order is unobservable — and if
+        // one unwinds (`?`, panic) nothing has been moved out yet.
+        let mut argv = Vec::with_capacity(args.len());
+        for a in args {
+            argv.push(match a {
+                Expr::UnaryOp {
+                    op: UnaryOp::RefMut,
+                    ..
+                } => Value::Unit,
+                _ => self.eval(a, env)?,
+            });
+        }
+        let mut borrowed: Vec<(usize, &str)> = Vec::new();
+        for (i, a) in args.iter().enumerate() {
+            if let Expr::UnaryOp {
+                op: UnaryOp::RefMut,
+                operand,
+            } = a
+            {
+                let Expr::Ident(name) = operand.as_ref() else {
+                    return panic("`&mut` of something other than a local variable".to_string());
+                };
+                let Some(slot) = env.get_mut(name) else {
+                    return panic(format!("`&mut {name}`: `{name}` is not a local variable"));
+                };
+                argv[i] = std::mem::replace(slot, Value::Unit);
+                borrowed.push((i, name.as_str()));
+            }
+        }
+        *self.current_call_tier.borrow_mut() = tier.map(|t| t.to_string());
+        let (result, mut outs) = self.call_fn_mut(f, argv);
+        for (i, name) in borrowed {
+            if let Some(slot) = env.get_mut(name) {
+                *slot = std::mem::replace(&mut outs[i], Value::Unit);
+            }
+        }
+        result
     }
 
     /// Phase 6: evaluate `with handler { … } { body }`. Installs the inline

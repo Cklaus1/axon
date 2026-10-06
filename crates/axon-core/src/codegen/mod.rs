@@ -163,6 +163,11 @@ pub struct Codegen<'ctx> {
     /// AX-12: array-literal sites of the fn being emitted whose buffer lives in
     /// a per-site entry-block stack slot instead of the heap (`emit_array_lit`).
     stack_array_sites: std::collections::HashSet<usize>,
+    /// AX-08: the `&mut [T]` params of the function being emitted. Their local
+    /// slot IS the caller's slot (a pointer passed in), so any copy of their
+    /// value that outlives a later write must be snapshotted - see
+    /// `emit_expr_owned` and `yields_mut_param`.
+    cur_mut_params: std::collections::HashSet<String>,
     /// Phase 5: named refinement types → their (erased) base AxonType. A
     /// refinement is transparent at the value/layout level, so codegen lowers
     /// `Positive` (and a synthetic inline `__refine_N`) to its base `i64`. Without
@@ -438,6 +443,7 @@ impl<'ctx> Codegen<'ctx> {
             cur_written_roots: std::collections::HashSet::new(),
             array_escape: escape::ArrayEscape::default(),
             stack_array_sites: std::collections::HashSet::new(),
+            cur_mut_params: std::collections::HashSet::new(),
             refinement_base: HashMap::new(),
             refine_preds: HashMap::new(),
             discharged: crate::verify::Discharged::default(),
@@ -918,6 +924,14 @@ impl<'ctx> Codegen<'ctx> {
         let mut param_tys: Vec<BasicMetadataTypeEnum<'ctx>> = Vec::with_capacity(f.params.len());
         for p in &f.params {
             match self.llvm_type_from_axon(&p.ty) {
+                // AX-08: a `&mut [T]` param is the address of the caller's slot.
+                Some(_) if matches!(p.ty, ast::AxonType::RefMut(_)) => param_tys.push(
+                    self.ir
+                        .context
+                        .i8_type()
+                        .ptr_type(AddressSpace::default())
+                        .into(),
+                ),
                 Some(t) => param_tys.push(t.into()),
                 None => {
                     let msg = format!(
@@ -1434,6 +1448,14 @@ impl<'ctx> Codegen<'ctx> {
         );
         let stack_sites = self.array_escape.stack_sites(f);
         let saved_stack_sites = std::mem::replace(&mut self.stack_array_sites, stack_sites);
+        let saved_mut_params = std::mem::replace(
+            &mut self.cur_mut_params,
+            f.params
+                .iter()
+                .filter(|p| matches!(p.ty, ast::AxonType::RefMut(_)))
+                .map(|p| p.name.clone())
+                .collect(),
+        );
         let saved_adaptive = self.current_adaptive_fn.take();
         let saved_adaptive_input = self.current_adaptive_input.take();
         let saved_agent = self.current_agent_fn.take();
@@ -1576,6 +1598,17 @@ impl<'ctx> Codegen<'ctx> {
         for (i, param) in f.params.iter().enumerate() {
             let sem_ty = self.axon_type_to_semantic(&param.ty);
             if let Some(llvm_ty) = self.llvm_type(&sem_ty) {
+                // AX-08: `xs: &mut [T]` - the arg is the caller's slot, so it
+                // becomes this local's slot: reads, element writes and whole
+                // reassignment all land in the caller's binding.
+                if matches!(param.ty, ast::AxonType::RefMut(_)) {
+                    if let Some(arg) = llvm_fn.get_nth_param(i as u32) {
+                        self.locals
+                            .insert(param.name.clone(), (arg.into_pointer_value(), llvm_ty));
+                        self.local_types.insert(param.name.clone(), sem_ty);
+                    }
+                    continue;
+                }
                 let alloca = build_wrappers::w_alloca(&self.ir.builder, llvm_ty, &param.name);
                 if let Some(arg) = llvm_fn.get_nth_param(i as u32) {
                     // Array params have value semantics: the callee's writes must
@@ -1610,6 +1643,14 @@ impl<'ctx> Codegen<'ctx> {
         }
 
         let body_val = self.emit_expr(&f.body, llvm_fn);
+        // AX-08: a value that IS a `&mut` param shares the caller's buffer;
+        // returned as-is, the caller would get a second name for its array.
+        let body_val = match body_val {
+            Some(v) if self.yields_mut_param(&f.body) => {
+                Some(self.emit_clone_value(v, &ret_sem, llvm_fn))
+            }
+            other => other,
+        };
 
         // Emit return if the builder is still on a live block.
         if self
@@ -1723,6 +1764,7 @@ impl<'ctx> Codegen<'ctx> {
         self.current_result_types = saved_result_types;
         self.cur_written_roots = saved_written_roots;
         self.stack_array_sites = saved_stack_sites;
+        self.cur_mut_params = saved_mut_params;
         self.current_adaptive_fn = saved_adaptive;
         self.current_adaptive_input = saved_adaptive_input;
         self.current_agent_fn = saved_agent;
@@ -1800,7 +1842,9 @@ impl<'ctx> Codegen<'ctx> {
                     .collect(),
                 Box::new(self.axon_type_to_semantic(ret)),
             ),
-            ast::AxonType::Ref(inner) => self.axon_type_to_semantic(inner),
+            ast::AxonType::Ref(inner) | ast::AxonType::RefMut(inner) => {
+                self.axon_type_to_semantic(inner)
+            }
             ast::AxonType::TypeParam(name) => Type::TypeParam(name.clone()),
             ast::AxonType::DynTrait(name) => Type::DynTrait(name.clone()),
             ast::AxonType::Tuple(elems) => Type::Tuple(
@@ -1848,7 +1892,7 @@ impl<'ctx> Codegen<'ctx> {
         for (decl, arg) in params.iter().zip(args.iter()) {
             let arg_inner = match arg {
                 ast::Expr::UnaryOp {
-                    op: ast::UnaryOp::Ref,
+                    op: ast::UnaryOp::Ref | ast::UnaryOp::RefMut,
                     operand,
                 } => operand.as_ref(),
                 other => other,

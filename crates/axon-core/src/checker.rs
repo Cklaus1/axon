@@ -951,6 +951,8 @@ impl CheckCtx {
         for item in &program.items {
             self.check_item(item);
         }
+        // AX-08: `&mut [T]` parameter mode + no writes through a shared `&`.
+        self.errors.extend(crate::mut_borrow::check_program(program));
 
         std::mem::take(&mut self.errors)
     }
@@ -2778,7 +2780,7 @@ impl CheckCtx {
                     let first_is_param = args.first().is_some_and(|a| {
                         let inner = match a {
                             Expr::UnaryOp {
-                                op: crate::ast::UnaryOp::Ref,
+                                op: crate::ast::UnaryOp::Ref | crate::ast::UnaryOp::RefMut,
                                 operand,
                             } => operand.as_ref(),
                             other => other,
@@ -5833,6 +5835,7 @@ impl CheckCtx {
             AxonType::Chan(inner)
             | AxonType::Slice(inner)
             | AxonType::Ref(inner)
+            | AxonType::RefMut(inner)
             | AxonType::RawPtr(inner) => {
                 self.check_axon_type(inner, &format!("{node_path}.inner"), span);
             }
@@ -6623,7 +6626,7 @@ pub fn axon_type_to_type(ty: &AxonType) -> Type {
             params.iter().map(axon_type_to_type).collect(),
             Box::new(axon_type_to_type(ret)),
         ),
-        AxonType::Ref(inner) => axon_type_to_type(inner),
+        AxonType::Ref(inner) | AxonType::RefMut(inner) => axon_type_to_type(inner),
         AxonType::TypeParam(name) => Type::TypeParam(name.clone()),
         AxonType::DynTrait(name) => Type::DynTrait(name.clone()),
         AxonType::Tuple(elems) => Type::Tuple(elems.iter().map(axon_type_to_type).collect()),
@@ -6893,6 +6896,7 @@ fn axon_type_name(ty: &AxonType) -> String {
             format!("fn({}) -> {}", ps.join(", "), axon_type_name(ret))
         }
         AxonType::Ref(inner) => format!("&{}", axon_type_name(inner)),
+        AxonType::RefMut(inner) => format!("&mut {}", axon_type_name(inner)),
         AxonType::DynTrait(n) => format!("dyn {n}"),
         AxonType::TypeParam(n) => n.clone(),
         AxonType::Tuple(elems) => {
@@ -7246,6 +7250,7 @@ fn axon_types_compatible(a: &AxonType, b: &AxonType) -> bool {
         (AxonType::Chan(ia), AxonType::Chan(ib)) => axon_types_compatible(ia, ib),
         (AxonType::Slice(ia), AxonType::Slice(ib)) => axon_types_compatible(ia, ib),
         (AxonType::Ref(ia), AxonType::Ref(ib)) => axon_types_compatible(ia, ib),
+        (AxonType::RefMut(ia), AxonType::RefMut(ib)) => axon_types_compatible(ia, ib),
         (AxonType::RawPtr(ia), AxonType::RawPtr(ib)) => axon_types_compatible(ia, ib),
         (AxonType::DynTrait(na), AxonType::DynTrait(nb)) => na == nb,
         (

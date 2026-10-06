@@ -51,6 +51,8 @@ pub mod token;
 pub mod types;
 // Phase 3
 pub mod borrow;
+/// `&mut [T]` parameter mode: the static rules (E0604/E0605/E0606).
+pub mod mut_borrow;
 pub mod comptime;
 /// Codegen-free tree-walking interpreter (`axon run` without LLVM).
 pub mod interp;

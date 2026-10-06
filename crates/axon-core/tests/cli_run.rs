@@ -32437,3 +32437,163 @@ fn main() {
     assert!(interp.contains("returned: 4,40,400, 3,30,300, 2,20,200,"), "{interp}");
     assert_eq!(native, interp);
 }
+
+// AX-08: `&mut [T]` parameters write through to the caller's binding, with
+// identical results in both engines. Each printed line is one property.
+const MUT_SLICE_SRC: &str = "type P = { x: i64, y: i64 }\n\
+fn setfirst(xs: &mut [i64]) -> i64 {\n  xs[0] = 55\n  0\n}\n\
+fn inner(ys: &mut [i64], v: i64) {\n  ys[1] = v\n}\n\
+fn outer(xs: &mut [i64]) {\n  xs[0] = 10\n  inner(&mut xs, 20)\n  xs[2] = xs[1] + 1\n}\n\
+fn early(xs: &mut [i64], k: i64) -> i64 {\n  xs[0] = k\n  if k > 0 {\n    return 1\n  }\n  xs[1] = 99\n  0\n}\n\
+fn fails(b: bool) -> Result<i64, str> {\n  if b { Err(\"boom\") } else { Ok(5) }\n}\n\
+fn try_write(xs: &mut [i64], b: bool) -> Result<i64, str> {\n  xs[0] = 7\n  let v = fails(b)?\n  xs[1] = v\n  Ok(v)\n}\n\
+fn total(xs: &[i64]) -> i64 {\n  let s = 0\n  for i in 0..len(xs) { s = s + xs[i] }\n  s\n}\n\
+fn bump_all(xs: &mut [i64]) -> i64 {\n  for i in 0..len(xs) { xs[i] = xs[i] + 1 }\n  total(&xs)\n}\n\
+fn replace(xs: &mut [i64]) {\n  xs = [4, 5, 6, 7]\n}\n\
+fn keep_copy(xs: &mut [i64]) -> i64 {\n  let c = xs\n  c[0] = 1000\n  c[0]\n}\n\
+fn snap(xs: &mut [i64]) -> [i64] {\n  xs\n}\n\
+fn movex(ps: &mut [P]) {\n  ps[0].x = 42\n}\n\
+fn lend() -> i64 {\n  let a = [1, 2]\n  let b = a\n  setfirst(&mut a)\n  b[0] * 100 + a[0]\n}\n\
+fn main() -> i64 {\n\
+  let a = [1, 2, 3]\n\
+  let b = a\n\
+  setfirst(&mut a)\n\
+  println(\"{to_str(a[0])} {to_str(b[0])}\")\n\
+  outer(&mut a)\n\
+  println(\"{to_str(a[0])} {to_str(a[1])} {to_str(a[2])}\")\n\
+  let e = [0, 0]\n\
+  let r1 = early(&mut e, 3)\n\
+  println(\"{to_str(r1)} {to_str(e[0])} {to_str(e[1])}\")\n\
+  let r2 = early(&mut e, 0)\n\
+  println(\"{to_str(r2)} {to_str(e[0])} {to_str(e[1])}\")\n\
+  let t = [0, 0]\n\
+  match try_write(&mut t, true) {\n\
+    Ok(v) => println(\"ok {to_str(v)}\")\n\
+    Err(m) => println(\"err {m} {to_str(t[0])} {to_str(t[1])}\")\n\
+  }\n\
+  match try_write(&mut t, false) {\n\
+    Ok(v) => println(\"ok {to_str(v)} {to_str(t[0])} {to_str(t[1])}\")\n\
+    Err(m) => println(\"err {m}\")\n\
+  }\n\
+  let s = bump_all(&mut a)\n\
+  println(\"{to_str(s)} {to_str(a[0])}\")\n\
+  replace(&mut a)\n\
+  println(\"{to_str(len(a))} {to_str(a[3])}\")\n\
+  let k = keep_copy(&mut a)\n\
+  println(\"{to_str(k)} {to_str(a[0])}\")\n\
+  let z = snap(&mut a)\n\
+  a[1] = 77\n\
+  println(\"{to_str(z[1])} {to_str(a[1])}\")\n\
+  let ps = [P { x: 1, y: 2 }, P { x: 3, y: 4 }]\n\
+  movex(&mut ps)\n\
+  println(\"{to_str(ps[0].x)} {to_str(ps[1].x)}\")\n\
+  println(to_str(lend()))\n\
+  0\n\
+}\n";
+
+#[test]
+fn mut_slice_params_write_through_in_both_engines() {
+    let want = [
+        "55 1",       // write-through; `let b = a` before the call keeps its own copy
+        "10 20 21",   // nested reborrow two call levels deep
+        "1 3 0",      // early `return`: the write before it is written back
+        "0 0 99",     // normal return
+        "err boom 7 0", // `?` unwinding: the write before it is written back
+        "ok 5 7 5",
+        "54 11",      // writes + passing the `&mut` param on as `&`
+        "4 7",        // wholesale reassignment `xs = [..]` reaches the caller
+        "1000 4",     // `let c = xs` in the callee is a copy
+        "5 77",       // a returned `&mut` param is a copy, not an alias
+        "42 3",       // element field write `ps[0].x = v`
+        "155",        // lending `&mut a` does not reach an earlier `let b = a`
+    ];
+    let Some((interp, native)) = native_stdout_lines("mutslice", MUT_SLICE_SRC, &[]) else {
+        let f = tmp_ax("mutslice_interp", MUT_SLICE_SRC);
+        let run = axon().arg("run").arg(&f).output().expect("spawn run");
+        let _ = std::fs::remove_file(&f);
+        let got: Vec<String> = String::from_utf8_lossy(&run.stdout)
+            .lines()
+            .map(|l| l.to_string())
+            .collect();
+        assert_eq!(got, want, "interpreter is the reference semantics");
+        return;
+    };
+    assert_eq!(interp, want, "interpreter is the reference semantics");
+    assert_eq!(native, interp, "native must agree with the interpreter");
+}
+
+#[test]
+fn recursive_in_place_quicksort_over_mut_slice_sorts_in_both_engines() {
+    // The AX-20 shape: a recursive helper sorting the caller's array in place.
+    let src = "fn qs(xs: &mut [i64], lo: i64, hi: i64) {\n\
+  if lo >= hi {\n    return\n  }\n\
+  let pivot = xs[hi]\n  let i = lo\n\
+  for j in lo..hi {\n    if xs[j] < pivot {\n      let u = xs[i]\n      xs[i] = xs[j]\n      xs[j] = u\n      i = i + 1\n    }\n  }\n\
+  let v = xs[i]\n  xs[i] = xs[hi]\n  xs[hi] = v\n\
+  qs(&mut xs, lo, i - 1)\n  qs(&mut xs, i + 1, hi)\n}\n\
+fn main() -> i64 {\n\
+  let n = 5000\n  let a = arr_repeat(0, n)\n  let x = 1\n\
+  for i in 0..n {\n    x = (x * 48271) % 2147483647\n    a[i] = x\n  }\n\
+  qs(&mut a, 0, n - 1)\n\
+  let ok = true\n  for i in 1..n {\n    if a[i - 1] > a[i] { ok = false }\n  }\n\
+  println(\"{to_str(ok)} {to_str(a[0])} {to_str(a[n - 1])}\")\n  0\n}\n";
+    let want = ["true 48271 2145568456"];
+    let Some((interp, native)) = native_stdout_lines("mutqs", src, &[]) else {
+        let f = tmp_ax("mutqs_interp", src);
+        let run = axon().arg("run").arg(&f).output().expect("spawn run");
+        let _ = std::fs::remove_file(&f);
+        assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), want[0]);
+        return;
+    };
+    assert_eq!(interp, want, "interpreter is the reference semantics");
+    assert_eq!(native, interp, "native must agree with the interpreter");
+}
+
+#[test]
+fn misuses_of_mut_slice_params_are_compile_errors() {
+    // Each program used to compile; the first silently mutated a callee copy.
+    for (label, src, code, needle) in [
+        (
+            "shared_write",
+            "fn setfirst(xs: &[i64]) -> i64 {\n  xs[0] = 55\n  0\n}\n\
+             fn main() {\n  let a = [1, 2, 3]\n  setfirst(&a)\n}\n",
+            "E0604",
+            "&mut [T]",
+        ),
+        (
+            "non_place",
+            "fn g(xs: &mut [i64]) {\n  xs[0] = 1\n}\n\
+             fn main() {\n  g(&mut [1, 2])\n}\n",
+            "E0605",
+            "local variable",
+        ),
+        (
+            "alias_twice",
+            "fn two(a: &mut [i64], b: &mut [i64]) {\n  a[0] = b[0]\n}\n\
+             fn main() {\n  let x = [1]\n  two(&mut x, &mut x)\n}\n",
+            "E0606",
+            "more than once",
+        ),
+        (
+            "alias_shared",
+            "fn mixed(a: &mut [i64], b: &[i64]) {\n  a[0] = b[0]\n}\n\
+             fn main() {\n  let x = [1]\n  mixed(&mut x, &x)\n}\n",
+            "E0606",
+            "also used by another argument",
+        ),
+    ] {
+        let f = tmp_ax(&format!("mutmisuse_{label}"), src);
+        let out = axon().arg("check").arg(&f).output().expect("spawn check");
+        let _ = std::fs::remove_file(&f);
+        let msg = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(out.status.code(), Some(2), "{label}: must fail check: {msg}");
+        assert!(
+            msg.contains(code) && msg.contains(needle),
+            "{label}: expected {code} mentioning {needle:?}: {msg}"
+        );
+    }
+}

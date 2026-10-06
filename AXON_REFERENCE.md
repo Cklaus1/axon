@@ -5,7 +5,7 @@
 
 # Axon Reference
 
-The complete surface of this build — 25 CLI verbs, 343 builtins, 24 attributes, 142 diagnostic codes (129 live, 13 reserved), 54 environment variables.
+The complete surface of this build — 25 CLI verbs, 343 builtins, 24 attributes, 145 diagnostic codes (132 live, 13 reserved), 54 environment variables.
 
 Generated from the compiler's own tables (`BUILTINS`, `DEFERRED_ATTRS`, the clap subcommand list), so it cannot describe a language this binary does not implement. `CLAUDE.md` is a curated selection and says so; this is the exhaustive counterpart.
 
@@ -129,7 +129,7 @@ Every `AXON_*` variable the SHIPPED code reads — gated in both directions, so 
 | `AXON_TEE_ENCLAVE` | R24 TEE: set to 1 by the gramine-direct manifest to signal the workload is executing inside an enclave; this is what makes `tee_in_enclave()` return true. Read through the host seam, so it is recorded and replayed |
 | `AXON_TEE_MEASUREMENT` | R24 TEE: the simulated enclave launch measurement returned by `tee_attest_measurement()` when set, a stub otherwise. A genuine hardware-rooted quote comes only from confidential hardware. Read through the host seam |
 
-## Diagnostic codes (142, of which 129 live)
+## Diagnostic codes (145, of which 132 live)
 
 A code marked **reserved** is declared but emitted nowhere in this build. Listing those as if they were live would be the same defect this reference exists to fix.
 
@@ -171,6 +171,9 @@ A code marked **reserved** is declared but emitted nowhere in this build. Listin
 | `E0601` | use of moved value |
 | `E0602` | cannot move borrowed value |
 | `E0603` | borrow conflict |
+| `E0604` | write through a shared `&` parameter — the caller never sees it; declare the parameter `&mut [T]` and pass `&mut a` |
+| `E0605` | invalid `&mut` borrow — `&mut` of something other than a local variable, a `&mut` argument/parameter mode mismatch, or `&mut` in a position other than a free function's `[T]` parameter |
+| `E0606` | a call mutably borrows a variable that another argument of the same call also uses |
 | `E0701` | expression not comptime-evaluable |
 | `E0702` | comptime integer division by zero |
 | `E0703` | comptime integer overflow |

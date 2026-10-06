@@ -459,6 +459,21 @@ impl<'ctx> super::Codegen<'ctx> {
                         // for a future phase rather than emitted as a stub here.
                         Some(val)
                     }
+                    ast::UnaryOp::RefMut => {
+                        // AX-08: `&mut a` is lowered only as the argument of a
+                        // `&mut [T]` parameter (`emit_call`, which passes the
+                        // slot's address). The checker (E0605) rejects every
+                        // other position, so reaching here is a refusal, never
+                        // a silent by-value copy.
+                        let msg = "codegen error [E0910]: `&mut` outside the argument of a \
+                                   `&mut [T]` parameter cannot be lowered natively."
+                            .to_string();
+                        if !self.codegen_errors.iter().any(|e| e == &msg) {
+                            eprintln!("{msg}");
+                            self.codegen_errors.push(msg);
+                        }
+                        None
+                    }
                     ast::UnaryOp::BitNot => match val {
                         BasicValueEnum::IntValue(i) => {
                             // LLVM `not` on an integer flips all bits — identical
@@ -3467,17 +3482,47 @@ impl<'ctx> super::Codegen<'ctx> {
         }
     }
 
-    /// Root names of every place assignment inside `body` (lambdas included).
+    /// Root names of every place assignment inside `body` (lambdas included),
+    /// plus every local lent out as `&mut a` (AX-08): the callee writes it
+    /// in place, so a copy of `a` taken in this function must not share its
+    /// buffer either.
     pub(super) fn written_place_roots(body: &ast::Expr) -> std::collections::HashSet<String> {
         let mut roots = std::collections::HashSet::new();
         ast::walk_expr(body, &mut |e| {
-            if let ast::Expr::AssignTo { place, .. } = e {
-                if let Some(r) = Self::place_root(place) {
-                    roots.insert(r.to_string());
-                }
+            let place = match e {
+                ast::Expr::AssignTo { place, .. } => place.as_ref(),
+                ast::Expr::UnaryOp {
+                    op: ast::UnaryOp::RefMut,
+                    operand,
+                } => operand.as_ref(),
+                _ => return,
+            };
+            if let Some(r) = Self::place_root(place) {
+                roots.insert(r.to_string());
             }
         });
         roots
+    }
+
+    /// AX-08: does `e` evaluate to (a part of) a `&mut` param's value, i.e.
+    /// a header sharing the CALLER's buffer? Follows block/if/match tails.
+    pub(super) fn yields_mut_param(&self, e: &ast::Expr) -> bool {
+        if self.cur_mut_params.is_empty() {
+            return false;
+        }
+        match e {
+            ast::Expr::Block(stmts) => stmts.last().is_some_and(|s| self.yields_mut_param(&s.expr)),
+            ast::Expr::If { then, else_, .. } => {
+                self.yields_mut_param(then)
+                    || else_.as_ref().is_some_and(|x| self.yields_mut_param(x))
+            }
+            ast::Expr::Match { arms, .. } => arms.iter().any(|a| self.yields_mut_param(&a.body)),
+            ast::Expr::UnaryOp {
+                op: ast::UnaryOp::Ref,
+                operand,
+            } => self.yields_mut_param(operand),
+            other => Self::place_root(other).is_some_and(|r| self.cur_mut_params.contains(r)),
+        }
     }
 
     /// Does a value of this type own (transitively) an array buffer?
@@ -3647,7 +3692,11 @@ impl<'ctx> super::Codegen<'ctx> {
         let observable = match sink {
             CopySink::Always => true,
             CopySink::Local(dest) => {
-                self.cur_written_roots.contains(dest) || self.cur_written_roots.contains(root)
+                // AX-08: a `&mut` param's buffer belongs to the caller, who can
+                // write it after this fn returns - always observable.
+                self.cur_written_roots.contains(dest)
+                    || self.cur_written_roots.contains(root)
+                    || self.cur_mut_params.contains(root)
             }
         };
         if !observable {
@@ -8407,7 +8456,20 @@ impl<'ctx> super::Codegen<'ctx> {
             std::option::Option::Some(e) => {
                 // A bare local is the fn's own array (params are snapshotted at
                 // entry); a place INTO a param/struct must not leak the shared buffer.
-                let returned = if matches!(**e, ast::Expr::Ident(_)) {
+                let returned = if self.yields_mut_param(e) {
+                    // AX-08: a `&mut` param shares the CALLER's buffer; the
+                    // returned value must be a copy, as in the interpreter.
+                    let ret_ty = fn_val
+                        .get_name()
+                        .to_str()
+                        .ok()
+                        .and_then(|n| self.fn_return_types.get(n).cloned());
+                    let v = self.emit_expr(e, fn_val);
+                    match (v, ret_ty) {
+                        (Some(v), Some(t)) => Some(self.emit_clone_value(v, &t, fn_val)),
+                        (v, _) => v,
+                    }
+                } else if matches!(**e, ast::Expr::Ident(_)) {
                     self.emit_expr(e, fn_val)
                 } else {
                     self.emit_expr_owned(e, fn_val, CopySink::Always)
@@ -11007,6 +11069,37 @@ impl<'ctx> super::Codegen<'ctx> {
                 continue;
             }
 
+            // AX-08: a `&mut [T]` parameter receives the ADDRESS of the
+            // caller's slot, so the callee's writes (and reborrows) land in it.
+            if matches!(axon_param_ty, Some(ast::AxonType::RefMut(_))) {
+                let slot = match a {
+                    ast::Expr::UnaryOp {
+                        op: ast::UnaryOp::RefMut,
+                        operand,
+                    } => match operand.as_ref() {
+                        ast::Expr::Ident(n) => self.locals.get(n).map(|(p, _)| *p),
+                        _ => None,
+                    },
+                    _ => None,
+                };
+                let Some(slot) = slot else {
+                    let msg = format!(
+                        "codegen error [E0910]: argument {} of the call to `{}` must be \
+                         `&mut` of a local variable to bind a `&mut [T]` parameter natively.",
+                        i + 1,
+                        fn_v.get_name().to_string_lossy()
+                    );
+                    if !self.codegen_errors.iter().any(|e| e == &msg) {
+                        eprintln!("{msg}");
+                        self.codegen_errors.push(msg);
+                    }
+                    return None;
+                };
+                arg_vals.push(slot.into());
+                self.current_option_inner = saved_oi_arg;
+                self.current_result_types = saved_rt_arg;
+                continue;
+            }
             let val = match self.emit_expr(a, fn_val) {
                 Some(v) => v,
                 // `continue` DROPPED the argument and emitted the call with a

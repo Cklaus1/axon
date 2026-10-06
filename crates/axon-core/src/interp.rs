@@ -2940,6 +2940,43 @@ impl<'p> Interp<'p> {
     }
 
     fn call_fn(&self, f: &FnDef, args: Vec<Value>) -> R {
+        // A `&mut` param must be moved back to the caller (`call_fn_mut`); a
+        // path that cannot do that (a fn reached by name string, a method)
+        // would silently drop the callee's writes — refuse instead.
+        if f.params.iter().any(|p| matches!(p.ty, crate::ast::AxonType::RefMut(_))) {
+            return panic(format!(
+                "`{}` takes `&mut` parameters and can only be called directly as `{}(&mut a, ...)`",
+                f.name, f.name
+            ));
+        }
+        let mut env = Env::new();
+        self.call_fn_in(f, args, &mut env)
+    }
+
+    /// AX-08: call `f` with its `&mut` arguments already MOVED out of the
+    /// caller's bindings (no copy). Returns the call's result and, per param
+    /// index, the param's final value (`Unit` for non-`&mut` params) for the
+    /// caller to move back — on every outcome, including `return` / `?` /
+    /// error unwinds, so the caller's binding is never left hollow.
+    pub(super) fn call_fn_mut(&self, f: &FnDef, args: Vec<Value>) -> (R, Vec<Value>) {
+        let mut env = Env::new();
+        let result = self.call_fn_in(f, args, &mut env);
+        // The body's block scopes are popped by now (on `return`/`?` too), so
+        // each name resolves to the parameter binding itself.
+        let outs = f
+            .params
+            .iter()
+            .map(|p| match (&p.ty, env.get_mut(&p.name)) {
+                (crate::ast::AxonType::RefMut(_), Some(slot)) => {
+                    std::mem::replace(slot, Value::Unit)
+                }
+                _ => Value::Unit,
+            })
+            .collect();
+        (result, outs)
+    }
+
+    fn call_fn_in(&self, f: &FnDef, args: Vec<Value>, env: &mut Env) -> R {
         // Bound recursion: a graceful panic instead of a process-aborting stack
         // overflow on runaway/infinite recursion. `_guard` restores the depth on
         // any return path (including `?`).
@@ -3028,7 +3065,6 @@ impl<'p> Interp<'p> {
             Some(Value::Int(n)) => Some(*n),
             _ => None,
         };
-        let mut env = Env::new();
         for (p, a) in f.params.iter().zip(args) {
             // Soft typing: `Uncertain<T>` is compatible with a plain-`T` parameter
             // (the checker allows it). If the declared param type is NOT itself a
@@ -3175,7 +3211,7 @@ impl<'p> Interp<'p> {
             if let Expr::Block(stmts) = &f.body {
                 let mut last = Ok(Value::Unit);
                 for stmt in &stmts[..] {
-                    match self.eval(&stmt.expr, &mut env) {
+                    match self.eval(&stmt.expr, env) {
                         Ok(v) => last = Ok(v),
                         Err(e) => {
                             last = Err(e);
@@ -3185,10 +3221,10 @@ impl<'p> Interp<'p> {
                 }
                 last
             } else {
-                self.eval(&f.body, &mut env)
+                self.eval(&f.body, env)
             }
         } else {
-            self.eval(&f.body, &mut env)
+            self.eval(&f.body, env)
         };
         if capture && !matches!(body_result, Err(ref e) if !matches!(e, Flow::Return(_))) {
             let mut snap = env.snapshot();
@@ -3243,7 +3279,7 @@ impl<'p> Interp<'p> {
                     // `env` already holds the param bindings from the body; add
                     // `_` and evaluate against it instead of a bare env.
                     env.define("_".into(), result.clone());
-                    if let Value::Bool(false) = self.eval(pred, &mut env)? {
+                    if let Value::Bool(false) = self.eval(pred, env)? {
                         return Err(Flow::RefineViolation(format!(
                             "the return value of `{}` (= {}) violates the refinement return \
                              type `{}` — the value does not satisfy the type's predicate",
@@ -3607,7 +3643,7 @@ fn type_name_of(ty: &crate::ast::AxonType) -> String {
     match ty {
         Named(n) => n.clone(),
         Generic { base, .. } => base.clone(),
-        Ref(inner) | RawPtr(inner) => type_name_of(inner),
+        Ref(inner) | RefMut(inner) | RawPtr(inner) => type_name_of(inner),
         DynTrait(n) => n.clone(),
         TypeParam(n) => n.clone(),
         Slice(_) => "[]".into(),
