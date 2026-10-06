@@ -1,6 +1,6 @@
 # Axon Changelog
 
-## Interpreter/native parity, `&mut [T]`, functions as values, native build and size (compilebench AX-05…AX-27)
+## Interpreter/native parity, `&mut [T]`, functions as values, native build and size (compilebench AX-01…AX-31)
 
 Fixes for the defects compilebench recorded in its `AXON_FINDINGS.md`.
 
