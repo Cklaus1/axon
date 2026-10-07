@@ -286,6 +286,70 @@ fn a_result_other_than_pass_is_refused() {
     w.assert_refused(w.cfg(&ev), "only PASS");
 }
 
+/// Amendment 98 (eqgate5): a record that omits a field the verdict is read
+/// from is refused AS THAT OMISSION, never read as an empty value. Each field
+/// is read by an `ok_or(..)?` whose permissive default (`unwrap_or("")`, an
+/// empty list) left the whole suite green: the empty assertions list is the
+/// dangerous one (the record's `counts` are a summary the record states about
+/// itself; the assertions are what was observed), and a manifest naming no
+/// guest interpreter digest pins no interpreter at all.
+fn refused_as(w: &World, lx: LinuxProfileConfig, why: &str, attack: &str) {
+    let e = backend::select(&w.req("op-om"), Some(&lx), Default::default())
+        .err()
+        .unwrap_or_else(|| panic!("ATTACK: {attack}: the profile was selected"));
+    assert!(
+        e.0.contains(why),
+        "ATTACK: {attack}: refused for another reason than the omission ({why:?}): {}",
+        e.0
+    );
+    w.assert_refused(lx, why);
+}
+
+#[test]
+fn a_record_with_no_assertions_list_is_refused_as_that() {
+    let w = World::new();
+    let mut ev = w.evidence();
+    ev.as_object_mut().unwrap().remove("assertions");
+    refused_as(
+        &w,
+        w.cfg(&ev),
+        "evidence record has no assertions list",
+        "a record that lists no assertion qualified on the strength of its own counts",
+    );
+}
+
+#[test]
+fn a_record_naming_no_manifest_digest_is_refused_as_that() {
+    let w = World::new();
+    let mut ev = w.evidence();
+    ev["profile"]
+        .as_object_mut()
+        .unwrap()
+        .remove("manifest_sha256");
+    refused_as(
+        &w,
+        w.cfg(&ev),
+        "evidence record has no profile.manifest_sha256",
+        "a record naming no manifest digest was compared as the empty digest",
+    );
+}
+
+#[test]
+fn a_manifest_naming_no_guest_interpreter_digest_is_refused_as_that() {
+    let mut m: Value = serde_json::from_str(&full_lx_manifest(GUEST)).unwrap();
+    m["artifacts"]["axon"]
+        .as_object_mut()
+        .unwrap()
+        .remove("sha256");
+    let w = World::with_manifest(&m.to_string());
+    refused_as(
+        &w,
+        w.cfg(&w.evidence()),
+        "manifest has no artifacts.axon.sha256",
+        "a manifest that pins no guest interpreter qualified with an empty interpreter digest",
+    );
+}
+
 // ── refused: waivers ────────────────────────────────────────────────────────
 
 #[test]

@@ -1408,4 +1408,110 @@ pub(crate) mod tests {
             String::from_utf8_lossy(&o.stderr)
         );
     }
+
+    /// Amendment 98 (eqgate5): the production allowlist is read from the
+    /// operator's path and its ownership walk starts at `/`, not at a
+    /// directory the caller names: `operator()` builds both as VALUES that no
+    /// test of the walk observes (those use `AllowlistSource::test`).
+    #[test]
+    fn the_operators_allowlist_is_walked_from_the_root() {
+        let a = AllowlistSource::operator();
+        assert_eq!(
+            a.base,
+            PathBuf::from("/"),
+            "ATTACK: the operator's allowlist ownership walk does not start at `/`"
+        );
+        assert_eq!(
+            a.path,
+            PathBuf::from("/etc/axon/provenance-allowlist"),
+            "ATTACK: the operator's allowlist is read from another path"
+        );
+    }
+
+    /// `git hash-object --literally -w`: an object of any shape, valid or not.
+    fn put_object(repo: &Path, kind: &str, body: &[u8]) -> String {
+        use std::io::Write;
+        let mut c = Command::new(GIT_BIN)
+            .arg("-C")
+            .arg(repo)
+            .args(["hash-object", "-t", kind, "--literally", "-w", "--stdin"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        c.stdin.take().unwrap().write_all(body).unwrap();
+        let o = c.wait_with_output().unwrap();
+        assert!(o.status.success(), "setup: hash-object {kind}");
+        String::from_utf8(o.stdout).unwrap().trim().to_string()
+    }
+
+    fn commit_of(repo: &Path, tree: &str) -> String {
+        put_object(
+            repo,
+            "commit",
+            format!("tree {tree}\nauthor t <t@e> 0 +0000\ncommitter t <t@e> 0 +0000\n\nm\n")
+                .as_bytes(),
+        )
+    }
+
+    fn raw_id(hex: &str) -> Vec<u8> {
+        (0..20)
+            .map(|i| u8::from_str_radix(&hex[2 * i..2 * i + 2], 16).unwrap())
+            .collect()
+    }
+
+    /// Amendment 98 (eqgate5): a tree entry or commit that is not what git writes
+    /// is refused AS MALFORMED, never read with a default (a missing space, a
+    /// missing NUL, a short object id, a mode that is not octal, a commit that
+    /// names no tree). Every `ok_or_else(bad)?` in the walk had a permissive
+    /// default (position 0, a zero id, mode 0o100644) that left the whole suite
+    /// green: a crafted tree, hash-checked against its own name, would then be
+    /// read as another tree. Control: a well-formed tree is read.
+    #[test]
+    fn a_tree_entry_that_is_not_what_git_writes_is_refused_as_malformed() {
+        let d = tempfile::tempdir().unwrap();
+        let r = d.path().join("repo");
+        std::fs::create_dir_all(&r).unwrap();
+        git(&r, &["init", "-q", "-b", "main"]);
+        let blob = put_object(&r, "blob", b"a\n");
+        let good = [b"100644 a\0".to_vec(), raw_id(&blob)].concat();
+        let mut o = Objects::open(&r).unwrap();
+        let ok = commit_of(&r, &put_object(&r, "tree", &good));
+        let e = o
+            .entries(&ok, None)
+            .expect("control: a well-formed tree is read");
+        assert_eq!(e.len(), 1, "control: one entry");
+        for (what, body) in [
+            ("an entry with no space after its mode", b"100644a".to_vec()),
+            (
+                "an entry whose name has no terminating NUL",
+                b"100644 a".to_vec(),
+            ),
+            (
+                "an entry whose object id is cut short",
+                [b"100644 a\0".to_vec(), raw_id(&blob)[..19].to_vec()].concat(),
+            ),
+            (
+                "an entry whose mode is not octal",
+                [b"10x644 a\0".to_vec(), raw_id(&blob)].concat(),
+            ),
+        ] {
+            let c = commit_of(&r, &put_object(&r, "tree", &body));
+            let got = o.entries(&c, None);
+            assert!(
+                got.as_ref().is_err_and(|e| e.contains("is malformed")),
+                "ATTACK: {what} was read as a tree: {got:?}"
+            );
+        }
+        let notree = put_object(
+            &r,
+            "commit",
+            b"parent 0000000000000000000000000000000000000000\nauthor t <t@e> 0 +0000\ncommitter t <t@e> 0 +0000\n\nm\n",
+        );
+        let got = o.entries(&notree, None);
+        assert!(
+            got.as_ref().is_err_and(|e| e.contains("names no tree")),
+            "ATTACK: a commit that names no tree was read as a tree: {got:?}"
+        );
+    }
 }

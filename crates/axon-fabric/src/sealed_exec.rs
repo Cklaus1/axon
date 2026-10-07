@@ -805,7 +805,10 @@ mod tests {
         // Sparse, and sized by another process (no write fd in this one).
         let st = std::process::Command::new("truncate")
             .arg("-s")
-            .arg((MAX_BYTES + 1).to_string())
+            // Amendment 98: the bound is pinned from outside (256 MiB + 1); sizing the file
+            // from MAX_BYTES itself agreed with whatever the constant said (1 TiB left the
+            // suite green).
+            .arg("268435457")
             .arg(&p)
             .status()
             .unwrap();

@@ -1196,3 +1196,134 @@ fn an_observer_that_names_no_max_age_gets_the_five_minute_default() {
         "ATTACK: an observer naming no max_age_s accepts observations older than five minutes"
     );
 }
+
+/// Amendment 98 (eqgate5): a value of the observer section that is not what the
+/// loader reads is refused AS THAT, never read as a default. Both reads were an
+/// `ok_or_else(..)?` whose permissive default left the whole suite green:
+/// `observer.max_age_s` that is not a number read as `u64::MAX` (an observation
+/// of any age is fresh), `observer.custodian.uid` that is not a uid read as 0
+/// (the custodian is then "root", whose socket activation the client accepts).
+/// The signer's two strings and the section's paths are refused the same way.
+#[test]
+fn an_observer_section_value_of_the_wrong_kind_is_refused_as_that() {
+    if unsafe { libc::geteuid() } != 0 {
+        eprintln!("skipped: needs root to create root-owned fixtures");
+        return;
+    }
+    let h = Host::new();
+    let base = h.env.dir.path();
+    for d in [base.to_path_buf(), h.root.clone(), h.p("dist"), h.p("keys")] {
+        std::fs::set_permissions(&d, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    for f in [
+        "launcher.sh",
+        "manifest.json",
+        "registry.json",
+        "evidence.json",
+    ] {
+        std::fs::set_permissions(h.p(f), std::fs::Permissions::from_mode(0o644)).unwrap();
+    }
+    write_executable(&h.p("observer.sh"), "#!/bin/sh\n", 0o755);
+    let load = |edit: &dyn Fn(&mut Value)| {
+        h.write_config(|v| {
+            v["observer"] = json!({
+                "command": {"path": h.p("observer.sh"), "sha256": sha256_file(&h.p("observer.sh"))},
+                "custodian": {"socket": h.p("custodian/custodian.sock"), "uid": 4244},
+                "max_age_s": 300,
+            });
+            edit(v);
+        });
+        std::fs::set_permissions(h.config(), std::fs::Permissions::from_mode(0o644)).unwrap();
+        ProtectedHost::for_test(&h.config(), Some(base), h.trust())
+    };
+    let ok = load(&|_| {}).expect("control: the observer section loads");
+    let ob = ok.observer.expect("control: the host has an observer");
+    let uid = match &ob.custodian {
+        axon_fabric::custodian::Custodian::Service(c) => c.uid,
+        other => panic!("setup: the host names a custodian service: {other:?}"),
+    };
+    assert_eq!((ob.max_age_s, uid), (300, 4244), "control");
+    type Case<'a> = (&'a str, &'a dyn Fn(&mut Value), &'a str);
+    let cases: [Case; 9] = [
+        (
+            "max_age_s is a string",
+            &|v| v["observer"]["max_age_s"] = json!("300"),
+            "observer.max_age_s is not a number",
+        ),
+        (
+            "max_age_s is negative",
+            &|v| v["observer"]["max_age_s"] = json!(-1),
+            "observer.max_age_s is not a number",
+        ),
+        (
+            "max_age_s is a float",
+            &|v| v["observer"]["max_age_s"] = json!(1.5),
+            "observer.max_age_s is not a number",
+        ),
+        (
+            "max_age_s is a bool",
+            &|v| v["observer"]["max_age_s"] = json!(true),
+            "observer.max_age_s is not a number",
+        ),
+        (
+            "the custodian uid is a string",
+            &|v| v["observer"]["custodian"]["uid"] = json!("4244"),
+            "observer.custodian.uid is not a uid",
+        ),
+        (
+            "the custodian uid is negative",
+            &|v| v["observer"]["custodian"]["uid"] = json!(-1),
+            "observer.custodian.uid is not a uid",
+        ),
+        (
+            "the custodian uid does not fit a uid",
+            &|v| v["observer"]["custodian"]["uid"] = json!(4_294_967_296_u64),
+            "observer.custodian.uid is not a uid",
+        ),
+        (
+            "the signer's issuer_ref is not a string",
+            &|v| v["signer"]["issuer_ref"] = json!(5),
+            "signer.issuer_ref is not a string",
+        ),
+        (
+            "the signer's public_key is not a string",
+            &|v| v["signer"]["public_key"] = json!(5),
+            "signer.public_key is not a string",
+        ),
+    ];
+    for (what, edit, why) in cases {
+        let e = match load(edit) {
+            Ok(_) => panic!("ATTACK: {what}: the host config loaded"),
+            Err(e) => e.to_string(),
+        };
+        assert!(
+            e.contains(why),
+            "ATTACK: {what}: refused as something else than {why:?}: {e}"
+        );
+    }
+}
+
+/// Amendment 98 (eqgate5): the flags a caller may never pass to a protected
+/// host are these nine, pinned HERE from outside. The refusal test above walks
+/// `REFUSED_CALLER_FLAGS` itself, so an entry replaced by another string was
+/// refused by the replacement and never noticed (eight of the nine entries
+/// could each be replaced with every suite green): a flag no longer on the list
+/// is a protected-profile path the caller can name.
+#[test]
+fn the_flags_a_caller_may_never_pass_are_the_documented_nine() {
+    assert_eq!(
+        REFUSED_CALLER_FLAGS,
+        [
+            "--linux-trusted-issuers",
+            "--linux-launcher",
+            "--linux-manifest",
+            "--linux-artifacts",
+            "--linux-evidence",
+            "--linux-evidence-sig",
+            "--linux-waivers",
+            "--linux-out-root",
+            "--linux-evidence-max-age-s",
+        ],
+        "ATTACK: the list of protected flags a caller may never pass is not the documented nine"
+    );
+}

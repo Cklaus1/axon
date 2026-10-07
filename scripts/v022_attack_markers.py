@@ -2280,3 +2280,71 @@ ATTACK_MARKERS.update({
     'M2514': r'ATTACK: the drift check ACCEPTED an unwrapped --apply',
     'M2515': r'ATTACK: the drift check ACCEPTED an unwrapped --apply',
 })
+
+ATTACK_MARKERS.update({
+    'M2520': r'ATTACK: guest_config manifest',
+    'M2521': r'ATTACK: guest_config secret',
+    'M2522': r'ATTACK: guest_config candidate',
+    'M2523': r'ATTACK: guest_config suite',
+    'M2524': r'ATTACK: guest_config out',
+    'M2525': r'ATTACK: guest_config interpreter',
+    'M2526': r'ATTACK: guest_config runner_exe',
+    'M2527': r'ATTACK: guest_config policy',
+})
+
+ATTACK_MARKERS.update({
+    'M2528': r"ATTACK: the operator's allowlist ownership walk does not start at",
+    'M2529': r"ATTACK: the operator's allowlist is read from another path",
+    'M2530': r"ATTACK: the production authority's ownership walk does not start at",
+    'M2531': r"ATTACK: the production authority is not root's",
+    'M2532': r'ATTACK: the production authority is a test configuration',
+    'M2533': r"ATTACK: the operator's readiness ownership walk does not start at",
+    'M2534': r"ATTACK: the operator's readiness trust reads another provenance allowlist",
+})
+
+ATTACK_MARKERS.update({
+    'M2535': r'ATTACK: a plan with no independent_units was read as rules',
+    'M2536': r'ATTACK: a plan with no candidate_budget was read as rules',
+    'M2537': r'ATTACK: an unset .* was refused as something else',
+    'M2538': r'ATTACK: a bare 64-hex digest with no scheme was accepted',
+    'M2539': r'ATTACK: a Ref of a scheme that is not cl22, acf1 or sha256 was accepted',
+})
+
+ATTACK_MARKERS.update({
+    'M2540': 'ATTACK: gbe build_ids\\ not\\ a\\ decimal',
+    'M2541': 'ATTACK: gbe build_ids\\ root',
+    'M2542': "ATTACK: gbe build_ids\\ the\\ builder's\\ own\\ uid",
+    'M2543': 'ATTACK: gbe require_runner\\ refuses\\ a\\ runner\\ that\\ is\\ not\\ root',
+    'M2544': 'ATTACK: gbe ancestors_of\\ group\\-writable\\ ancestor',
+    'M2545': 'ATTACK: gbe ancestors_of\\ other\\-uid\\ ancestor',
+    'M2546': 'ATTACK: gbe ancestors_problem\\ group\\-writable\\ mode',
+    'M2547': 'ATTACK: gbe builder_pin\\ build_uid\\ is\\ root',
+    'M2548': "ATTACK: gbe builder_pin\\ build_uid\\ is\\ the\\ builder's\\ own",
+    'M2549': 'ATTACK: gbe proof_key\\ judged\\ under\\ a\\ parent\\ another\\ uid\\ can\\ write',
+    'M2550': "ATTACK: gbe shape_problems\\ build_uid\\ is\\ the\\ builder's\\ own",
+    'M2551': 'ATTACK: gbe proof_problems\\ another\\ build\\ uid\\ than\\ the\\ pin',
+    'M2552': 'ATTACK: gbe constructed_env\\ PATH\\ is\\ the\\ fixed\\ system\\ directories',
+    'M2553': 'ATTACK: gbe host_tool\\ never\\ finds\\ a\\ tool\\ outside\\ the\\ fixed\\ directories',
+})
+
+ATTACK_MARKERS.update({
+    'M2554': r'ATTACK: a path literal handed to a config field',
+    'M2555': r'ATTACK: an exempt REMAINDER guard was not counted',
+    'M2556': 'ATTACK: a Python refusal \\(a guarded fail\\(\\.\\.\\)\\)',
+    'M2557': r'ATTACK: an exemption whose fragment is not in its site',
+    'M2558': r'ATTACK: a Python REMAINDER exemption was not listed under py_guard',
+    'M2559': r'ATTACK: the observed-without-a-row count did not follow',
+})
+
+ATTACK_MARKERS.update({
+    'M2560': r'ATTACK: a record that lists no assertion qualified',
+    'M2561': r'ATTACK: a manifest that pins no guest interpreter qualified',
+    'M2562': r'ATTACK: a custodian answer that names no expiry was read',
+    'M2563': r'assertion .left == right. failed: op-obs-bad-time-observer-observer',
+    'M2564': r'ATTACK: max_age_s is a string: the host config loaded',
+    'M2565': r'ATTACK: the list of protected flags a caller may never pass',
+    'M2566': r'ATTACK: an entry whose object id is cut short was read as a tree',
+    'M2567': r'ATTACK: an entry whose mode is not octal was read as a tree',
+    'M2568': r'ATTACK: an authority program larger than MAX_BYTES',
+    'M2569': r'ATTACK: a store whose ledger, head and anchor were deleted but whose plans/ remained reissued its history',
+})

@@ -1268,4 +1268,22 @@ mod tests {
             "ATTACK: a trust root writable by the process running readiness authorized: {got:?}"
         );
     }
+
+    /// Amendment 98 (eqgate5): the operator's readiness trust walks ownership
+    /// from `/` and reads the operator's allowlist; both are VALUES in
+    /// `operator()` that the tests of `check` replace with their own (`test`).
+    #[test]
+    fn the_operators_readiness_trust_walks_from_the_root_and_reads_the_operators_allowlist() {
+        let t = ReadinessTrust::operator();
+        assert_eq!(
+            t.ownership_base,
+            PathBuf::from("/"),
+            "ATTACK: the operator's readiness ownership walk does not start at `/`"
+        );
+        assert_eq!(
+            t.allowlist,
+            AllowlistSource::operator(),
+            "ATTACK: the operator's readiness trust reads another provenance allowlist"
+        );
+    }
 }

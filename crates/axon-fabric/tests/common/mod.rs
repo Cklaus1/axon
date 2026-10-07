@@ -689,6 +689,7 @@ o = {{"schema": "axon-preflight-observation/1", "observer_key_id": kid,
  "suite_registry_sha256": m["suite"]["registry_sha256"], "policy_sha256": m["policy_sha256"],
  "intended_launch_manifest_sha256": hashlib.sha256(raw).hexdigest()}}
 if mode == "stale": o["observed_at"] = "2020-01-01T00:00:00Z"
+if mode == "bad-time": o["observed_at"] = "yesterday"
 if mode == "other-manifest": o["intended_launch_manifest_sha256"] = "0" * 64
 if mode == "kernel": o["guest"] = dict(o["guest"], kernel_sha256="9" * 64)
 if mode == "epoch": o["epoch"] = 7

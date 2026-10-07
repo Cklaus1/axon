@@ -125,6 +125,65 @@ mod tests {
         assert_eq!(cfg.manifest, PathBuf::from("/in/job/launch-manifest.json"));
     }
 
+    /// Amendment 98 (eqgate5): EVERY path `guest_config` hands the runner is a
+    /// production VALUE no test of `run_and_emit` observes (those pass their
+    /// own). Each is a decision about WHERE the guest looks, and a swapped one
+    /// moves a trust boundary: the completion secret read from a place the
+    /// candidate can write (the candidate then chooses S), the interpreter that
+    /// is handed S replaced by the candidate's own file, the verdict written
+    /// into the candidate's tree. Host-side digests (axon_sha256, runner_sha256)
+    /// and the MAC would notice some of these AFTER the fact; no test did.
+    #[test]
+    fn every_path_the_guest_hands_the_runner_is_the_documented_one() {
+        use base64::Engine;
+        let policy = b"the guest policy bytes".to_vec();
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&policy);
+        let cfg = guest_config(&format!(
+            "axon.policy={b64} axon.psv.manifest={}",
+            "cd".repeat(32)
+        ));
+        let p = |s: &str| PathBuf::from(s);
+        assert_eq!(
+            cfg.manifest,
+            p("/in/job/launch-manifest.json"),
+            "ATTACK: guest_config manifest path"
+        );
+        assert_eq!(
+            cfg.secret,
+            p("/in/job/completion-secret"),
+            "ATTACK: guest_config secret path: the completion secret would be read from another place"
+        );
+        assert_eq!(
+            cfg.candidate,
+            p("/in/candidate"),
+            "ATTACK: guest_config candidate path"
+        );
+        assert_eq!(cfg.suite, p("/in/suite"), "ATTACK: guest_config suite path");
+        assert_eq!(
+            cfg.out,
+            p("/out"),
+            "ATTACK: guest_config out path: the verdict would be written elsewhere"
+        );
+        assert_eq!(
+            cfg.axon,
+            p("/usr/bin/axon"),
+            "ATTACK: guest_config interpreter path: the interpreter that is handed the secret"
+        );
+        assert_eq!(
+            cfg.runner_exe,
+            p("/proc/self/exe"),
+            "ATTACK: guest_config runner_exe path: the identity the verdict reports"
+        );
+        assert_eq!(
+            cfg.policy,
+            Some(policy),
+            "ATTACK: guest_config policy: the guest policy the runner holds the manifest to"
+        );
+        // The secret lives in the job directory beside the manifest (the job
+        // directory's xattr check judges both).
+        assert_eq!(cfg.secret.parent(), cfg.manifest.parent());
+    }
+
     /// PSV-3 (C9 certifying review): a runner that cannot make itself
     /// non-dumpable refuses, for that reason, and never reaches the step that
     /// reads the completion secret. Control: when the prctl succeeds it does.
