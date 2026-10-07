@@ -7,7 +7,10 @@ ETC, UNITS = os.path.join(S, "svc-etc"), os.path.join(S, "svc-units")
 g.SERVICE_ETC, g.SERVICE_UNITS, g.SERVICE_USERS = ETC, UNITS, ()
 def reset():
     for d in (ETC, UNITS):
-        shutil.rmtree(d, ignore_errors=True)
+        if os.path.isdir(d) and not os.path.islink(d):
+            shutil.rmtree(d)
+        elif os.path.lexists(d):
+            os.unlink(d)
         os.makedirs(d)
 def bu(uid):
     return run(g.build_uid_problem, uid, 1, ())
