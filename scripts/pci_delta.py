@@ -65,6 +65,24 @@ THEMES = {
     "9e19e961": ("amendment 83", "unit test and comments only (interpolation/comparison of an untyped read select no operator impl): no production change"),
     "b971194c": ("amendment 83", "clippy: the arithmetic arm of the pin walk (interp/pin.rs) collapsed into a guard: no change in what is refused"),
     "70692659": ("amendment 83", "unit-test attack text only (M1996: a shift truncates where + and * panic): no production change"),
+    # origin/main merged into v022/veto (PR #8). These commits were written and tested on main, NOT
+    # reviewed against the PCI claims: none is a PCI narrowing, and what they do to pass/fail was
+    # not analysed there. The ones that touch the interpreter are listed as such so a reviewer reads them.
+    "378da246": ("merged from main (AX findings)", "native agent_action audit record gains effect_row/principal; interp.rs only re-exports cap_to_effect_row under the codegen feature: no change in what the interpreter refuses"),
+    "96a31eb8": ("merged from main (AX findings)", "native codegen only (place assignment, str + str, allocas): the interpreter is untouched"),
+    "13f01eb8": ("merged from main (AX findings)", "INTERPRETER: arr_sort_by becomes a stable merge sort (interp/builtins.rs): not PCI-reviewed"),
+    "be8576af": ("merged from main (AX findings)", "INTERPRETER: arrays become shared Rc values, cheaper user calls (interp.rs, eval.rs, value.rs): not PCI-reviewed; the seal's cast and dict-snapshot code was adapted to the Rc layout in the merge"),
+    "36227ec7": ("merged from main (AX findings)", "native codegen only (non-escaping array literals on the stack): the interpreter is untouched"),
+    "1727775e": ("merged from main (AX findings)", "LANGUAGE + INTERPRETER: `&mut [T]` parameters write through (parser, checker, interp.rs, eval.rs, new E0604-E0606): not PCI-reviewed; the merge routes `call_fn_mut` through the same seal edges as `call_fn`"),
+    "edfe3e2d": ("merged from main (AX findings)", "native codegen, plus checker/resolver refusals of unlowered assignments: the interpreter is untouched"),
+    "19310764": ("merged from main (AX findings)", "LANGUAGE + INTERPRETER: named functions are first-class values (resolver, checker, effects, eval.rs): not PCI-reviewed"),
+    "099ff710": ("merged from main (AX findings)", "build/cache/CLI only (runtime location, compiler-identity cache key): the interpreter is untouched"),
+    "c4d307bd": ("merged from main (AX findings)", "CLI help text only: no change in what is refused"),
+    "6493c2f2": ("merged from main (AX findings)", "native codegen/link only (LLVM pipeline, --opt-level): the interpreter is untouched"),
+    "82b83298": ("merged from main (AX findings)", "native link flags only: the interpreter is untouched"),
+    "1d01b014": ("merged from main (AX findings)", "INTERPRETER: shared copy-on-write strings, in-place append, lent closure captures (interp.rs, eval.rs, builtins.rs, value.rs): not PCI-reviewed; closures resolve a local through `call_local_closure` while the amendment-60 rule (a local is never called by name elsewhere) is kept"),
+    "a4af40a1": ("merge of origin/main (PR #8)", "joins the commits above; combines main's `call_fn_in`/`call_fn_mut` with the seal as one `call_fn_sealed` path, adds `&mut T` and Rc-array arms to conform.rs/pin.rs, keeps amendments 53-83 on the merged call path: no intended change in what is refused (rows re-run on this head)"),
+    "9acbb453": ("merge of origin/main (PR #8)", "merge fixes: `input_arg` read from the args (the verify panic's input suffix), the per-frame stack budget raised to 512 KiB because the merged debug frame is ~265 KB: no change in what is refused"),
 }
 
 

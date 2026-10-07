@@ -15,33 +15,56 @@ later commit touches `crates/axon-core/src` (the note is then stale: `python3 sc
 --emit HEAD`, paste between the markers).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: 31c4fdbedff95cfe39633703932ca9ba99b10288
+generated-at: 9acbb45330e3b717bf4a121582493d1c924568e3
 
-`git diff --numstat 31413ca7..31c4fdbe -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..9acbb453 -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
-| `crates/axon-core/src/ast.rs` | 36 | 2 |
-| `crates/axon-core/src/checker.rs` | 27 | 0 |
-| `crates/axon-core/src/error.rs` | 12 | 10 |
-| `crates/axon-core/src/interp.rs` | 4146 | 1126 |
-| `crates/axon-core/src/interp/builtins.rs` | 38 | 20 |
-| `crates/axon-core/src/interp/conform.rs` | 1746 | 0 |
-| `crates/axon-core/src/interp/eval.rs` | 85 | 23 |
-| `crates/axon-core/src/interp/goal.rs` | 15 | 14 |
-| `crates/axon-core/src/interp/pin.rs` | 396 | 0 |
-| `crates/axon-core/src/interp/proptest.rs` | 30 | 12 |
+| `crates/axon-core/src/ast.rs` | 86 | 8 |
+| `crates/axon-core/src/builtins.rs` | 2 | 2 |
+| `crates/axon-core/src/cache.rs` | 70 | 2 |
+| `crates/axon-core/src/capabilities.rs` | 18 | 1 |
+| `crates/axon-core/src/checker.rs` | 209 | 57 |
+| `crates/axon-core/src/codegen/asi.rs` | 8 | 0 |
+| `crates/axon-core/src/codegen/build_wrappers.rs` | 15 | 1 |
+| `crates/axon-core/src/codegen/builtins.rs` | 6 | 0 |
+| `crates/axon-core/src/codegen/escape.rs` | 509 | 0 |
+| `crates/axon-core/src/codegen/expr.rs` | 1489 | 435 |
+| `crates/axon-core/src/codegen/link.rs` | 747 | 291 |
+| `crates/axon-core/src/codegen/match_pat.rs` | 43 | 36 |
+| `crates/axon-core/src/codegen/mod.rs` | 197 | 8 |
+| `crates/axon-core/src/codegen/option_result.rs` | 11 | 6 |
+| `crates/axon-core/src/codegen/output.rs` | 60 | 20 |
+| `crates/axon-core/src/complexity.rs` | 1 | 0 |
+| `crates/axon-core/src/doc.rs` | 1 | 0 |
+| `crates/axon-core/src/effects.rs` | 51 | 0 |
+| `crates/axon-core/src/env_registry.rs` | 1 | 0 |
+| `crates/axon-core/src/error.rs` | 20 | 11 |
+| `crates/axon-core/src/fmt.rs` | 5 | 0 |
+| `crates/axon-core/src/infer.rs` | 3 | 2 |
+| `crates/axon-core/src/interp.rs` | 4373 | 1192 |
+| `crates/axon-core/src/interp/builtins.rs` | 381 | 314 |
+| `crates/axon-core/src/interp/conform.rs` | 1762 | 0 |
+| `crates/axon-core/src/interp/eval.rs` | 406 | 68 |
+| `crates/axon-core/src/interp/goal.rs` | 21 | 20 |
+| `crates/axon-core/src/interp/pin.rs` | 398 | 0 |
+| `crates/axon-core/src/interp/proptest.rs` | 35 | 15 |
+| `crates/axon-core/src/interp/value.rs` | 15 | 7 |
 | `crates/axon-core/src/kernel.rs` | 2 | 2 |
-| `crates/axon-core/src/lib.rs` | 77 | 6 |
-| `crates/axon-core/src/main.rs` | 108 | 23 |
-| `crates/axon-core/src/parser.rs` | 15 | 0 |
-| `crates/axon-core/src/resolver.rs` | 171 | 16 |
-| total | 6904 | 1254 |
+| `crates/axon-core/src/lib.rs` | 114 | 13 |
+| `crates/axon-core/src/main.rs` | 202 | 93 |
+| `crates/axon-core/src/mono.rs` | 2 | 0 |
+| `crates/axon-core/src/mut_borrow.rs` | 800 | 0 |
+| `crates/axon-core/src/parser.rs` | 39 | 1 |
+| `crates/axon-core/src/resolver.rs` | 334 | 64 |
+| total | 12436 | 2669 |
 
-`git log --reverse 31413ca7..31c4fdbe -- crates/axon-core/src`:
+`git log --reverse 31413ca7..9acbb453 -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
+| 378da246 | merged from main (AX findings) | native agent_action audit record gains effect_row/principal; interp.rs only re-exports cap_to_effect_row under the codegen feature: no change in what the interpreter refuses |
 | abf72e0b | review fixes B1/B3 (main.rs) | runner/test-CLI hardening from review wf_d725935a-7ed |
 | bae904b8 | keyed failure token (main.rs) | the interpreter keys every FAILURE it decides, so a printed failure line is not a verdict: narrowing |
 | a4a05f28 | key and completion | K is unreachable from candidate code: narrowing |
@@ -69,7 +92,19 @@ generated-at: 31c4fdbedff95cfe39633703932ca9ba99b10288
 | 6b793da8 | amendment 72 | the operator's dicts are snapshotted at a seal crossing and verified at every edge back: narrowing |
 | ba1bad03 | amendment 74 | merge of c9r4c/gate |
 | 3b9b9092 | amendment 78 | a position the operator held is judged by what it held, deeply and strictly: narrowing |
+| 96a31eb8 | merged from main (AX findings) | native codegen only (place assignment, str + str, allocas): the interpreter is untouched |
+| 13f01eb8 | merged from main (AX findings) | INTERPRETER: arr_sort_by becomes a stable merge sort (interp/builtins.rs): not PCI-reviewed |
+| be8576af | merged from main (AX findings) | INTERPRETER: arrays become shared Rc values, cheaper user calls (interp.rs, eval.rs, value.rs): not PCI-reviewed; the seal's cast and dict-snapshot code was adapted to the Rc layout in the merge |
+| 36227ec7 | merged from main (AX findings) | native codegen only (non-escaping array literals on the stack): the interpreter is untouched |
+| 1727775e | merged from main (AX findings) | LANGUAGE + INTERPRETER: `&mut [T]` parameters write through (parser, checker, interp.rs, eval.rs, new E0604-E0606): not PCI-reviewed; the merge routes `call_fn_mut` through the same seal edges as `call_fn` |
+| edfe3e2d | merged from main (AX findings) | native codegen, plus checker/resolver refusals of unlowered assignments: the interpreter is untouched |
+| 19310764 | merged from main (AX findings) | LANGUAGE + INTERPRETER: named functions are first-class values (resolver, checker, effects, eval.rs): not PCI-reviewed |
+| 099ff710 | merged from main (AX findings) | build/cache/CLI only (runtime location, compiler-identity cache key): the interpreter is untouched |
+| c4d307bd | merged from main (AX findings) | CLI help text only: no change in what is refused |
+| 6493c2f2 | merged from main (AX findings) | native codegen/link only (LLVM pipeline, --opt-level): the interpreter is untouched |
+| 82b83298 | merged from main (AX findings) | native link flags only: the interpreter is untouched |
 | d29d4ef6 | amendment 78 | row repairs (M1672, M1843, M1845) |
+| 1d01b014 | merged from main (AX findings) | INTERPRETER: shared copy-on-write strings, in-place append, lent closure captures (interp.rs, eval.rs, builtins.rs, value.rs): not PCI-reviewed; closures resolve a local through `call_local_closure` while the amendment-60 rule (a local is never called by name elsewhere) is kept |
 | 2bf1d9d0 | amendment 82 | comment-only (TestEnd doc) |
 | 40ca1092 | amendment 82 | merge of c9r4c/claims; comment-only in this path |
 | 12c6685e | amendment 83 | the dispatch rule: operator code never selects an operator impl by a type nothing on the operator side determined (untyped dict/channel/lambda reads must be annotated; pin.rs): narrowing |
@@ -77,7 +112,9 @@ generated-at: 31c4fdbedff95cfe39633703932ca9ba99b10288
 | 9e19e961 | amendment 83 | unit test and comments only (interpolation/comparison of an untyped read select no operator impl): no production change |
 | b971194c | amendment 83 | clippy: the arithmetic arm of the pin walk (interp/pin.rs) collapsed into a guard: no change in what is refused |
 | 70692659 | amendment 83 | unit-test attack text only (M1996: a shift truncates where + and * panic): no production change |
-| 35 commits | | |
+| a4af40a1 | merge of origin/main (PR #8) | joins the commits above; combines main's `call_fn_in`/`call_fn_mut` with the seal as one `call_fn_sealed` path, adds `&mut T` and Rc-array arms to conform.rs/pin.rs, keeps amendments 53-83 on the merged call path: no intended change in what is refused (rows re-run on this head) |
+| 9acbb453 | merge of origin/main (PR #8) | merge fixes: `input_arg` read from the args (the verify panic's input suffix), the per-frame stack budget raised to 512 KiB because the merged debug frame is ~265 KB: no change in what is refused |
+| 50 commits | | |
 <!-- END MECHANICAL -->
 
 What is BY THEME (the `theme` and `what it does` columns; these are the commit messages' own
@@ -87,6 +124,16 @@ account and are NOT mechanically verified; the files and commits above are):
   candidate code, sealed handlers, the keyed FAILURE token (a printed failure line is not a verdict;
   `main.rs`), the declared-boundary cast (amendment 53), the dispatch-key cast (60), seal-crossing
   positions, dict snapshots and E0505 (72), the held-value judgement (78).
+- MERGED FROM MAIN (PR #8, 2026-10-06; theme `merged from main (AX findings)`): 13 commits under
+  `crates/axon-core/src` that were written and tested on `main` and were NOT reviewed against the PCI
+  claims. They are neither narrowing nor known to be neutral. Five touch the interpreter and need a
+  reviewer's eye: shared Rc arrays and cheaper calls (`be8576af`), shared copy-on-write strings and lent
+  closure captures (`1d01b014`), `&mut [T]` write-through (`1727775e`), first-class named fns
+  (`19310764`), and the `arr_sort_by` rewrite (`13f01eb8`). The rest are native codegen, build/cache or
+  CLI-help changes. The merge adapted the seal to them (one `call_fn_sealed` path for `call_fn` and
+  `call_fn_mut`; `&mut T` and Rc-array arms in `conform.rs`/`pin.rs`) and re-anchored three rows
+  (M924, M1680, M1841). The per-frame stack budget was raised to 512 KiB (the merged debug frame is
+  ~265 KB, which left no margin under the old 256 KiB).
 - Evidence only (rows, harness, rustfmt, comments): `7da2fe71`, `e1e2a22f`, `2a397d93`, `f2a12aab`,
   `68176b53`, `d29d4ef6`, `8a5419de`, `2bf1d9d0`, `40ca1092`; `73834357` also carries two defect
   fixes (+23 `interp.rs` lines).
