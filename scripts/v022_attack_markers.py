@@ -1843,7 +1843,7 @@ ATTACK_MARKERS.update({
     'M1946': 'ATTACK: a use of RENAME_NOREPLACE with no row',
     'M1947': 'ATTACK: a use of AT_SYMLINK_NOFOLLOW with no row',
     'M1948': 'ATTACK: a use of O_DIRECTORY with no row',
-    'M1949': 'ATTACK: a use of MS_NOSUID \\(a mount flag\\) with no row',
+    'M1949': 'ATTACK: a use of MS_NODEV \\(a mount flag\\) with no row',
     'M1950': 'ATTACK: a decision returned as Some\\("reason"\\) with no row',
     'M1951': 'ATTACK: a match arm on Some\\(".."\\) was read as a decision',
     'M1952': 'ATTACK: a function deciding by Result<bool, _>',

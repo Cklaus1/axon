@@ -920,7 +920,7 @@ fn a_cfg_all_test_item_is_test_code_and_a_cfg_any_test_item_is_not() {
 // production-shaped line the gate must name; the flag forms are the ones the
 // round's EQUIVALENCE review found removable with every root-run suite green.
 
-const FLAG_PROBES: &str = "pub fn gate_probe_flags(p: &std::path::Path) {\n    use std::os::unix::fs::OpenOptionsExt;\n    let gate_probe_nofollow = std::fs::OpenOptions::new().custom_flags(libc::O_NOFOLLOW).open(p);\n    let gate_probe_excl = unsafe { libc::open(c\"/x\".as_ptr(), libc::O_CREAT | libc::O_EXCL, 0o600) };\n    let gate_probe_new = std::fs::OpenOptions::new().write(true).create_new(true).open(p);\n    let gate_probe_noreplace = unsafe { libc::renameat2(libc::AT_FDCWD, c\"/a\".as_ptr(), libc::AT_FDCWD, c\"/b\".as_ptr(), libc::RENAME_NOREPLACE) };\n    let gate_probe_atnofollow = unsafe { libc::fstatat(0, c\"/x\".as_ptr(), std::ptr::null_mut(), libc::AT_SYMLINK_NOFOLLOW) };\n    let gate_probe_dir = unsafe { libc::open(c\"/x\".as_ptr(), libc::O_RDONLY | libc::O_DIRECTORY) };\n    let gate_probe_mount = libc::MS_NOSUID | libc::MS_NODEV;\n    let _ = (gate_probe_nofollow, gate_probe_excl, gate_probe_new, gate_probe_noreplace, gate_probe_atnofollow, gate_probe_dir, gate_probe_mount);\n}\n";
+const FLAG_PROBES: &str = "pub fn gate_probe_flags(p: &std::path::Path) {\n    use std::os::unix::fs::OpenOptionsExt;\n    let gate_probe_nofollow = std::fs::OpenOptions::new().custom_flags(libc::O_NOFOLLOW).open(p);\n    let gate_probe_excl = unsafe { libc::open(c\"/x\".as_ptr(), libc::O_CREAT | libc::O_EXCL, 0o600) };\n    let gate_probe_new = std::fs::OpenOptions::new().write(true).create_new(true).open(p);\n    let gate_probe_noreplace = libc::RENAME_NOREPLACE;\n    let gate_probe_atnofollow = unsafe { libc::fstatat(0, c\"/x\".as_ptr(), std::ptr::null_mut(), libc::AT_SYMLINK_NOFOLLOW) };\n    let gate_probe_dir = unsafe { libc::open(c\"/x\".as_ptr(), libc::O_RDONLY | libc::O_DIRECTORY) };\n    let gate_probe_mount = libc::MS_NODEV;\n    let _ = (gate_probe_nofollow, gate_probe_excl, gate_probe_new, gate_probe_noreplace, gate_probe_atnofollow, gate_probe_dir, gate_probe_mount);\n}\n";
 
 /// Amendment 81: every USE of an atomic-refusal flag in production code is a
 /// site: O_NOFOLLOW, O_EXCL (O_CREAT|O_EXCL), `create_new(true)`,
@@ -943,7 +943,7 @@ fn an_open_flag_form_is_a_site() {
         ("gate_probe_noreplace", "RENAME_NOREPLACE"),
         ("gate_probe_atnofollow", "AT_SYMLINK_NOFOLLOW"),
         ("gate_probe_dir", "O_DIRECTORY"),
-        ("gate_probe_mount", "MS_NOSUID (a mount flag)"),
+        ("gate_probe_mount", "MS_NODEV (a mount flag)"),
     ] {
         names(
             &r,
