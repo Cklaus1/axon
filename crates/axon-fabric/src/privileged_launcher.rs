@@ -2499,4 +2499,83 @@ mod tests {
              Fabric uid"
         );
     }
+
+    /// C9 round 7, EQGATE3 (amendment 91): the root helper makes itself
+    /// NON-DUMPABLE at start (`harden`), so no unprivileged process can read
+    /// its memory or ptrace it. The call builds no `Err` and at the default
+    /// `fs.suid_dumpable=0` a setuid exec is already non-dumpable, which is why
+    /// no suite noticed it removed. `harden` chdirs, closes descriptors and
+    /// leaves the session, so it runs in a FRESH PROCESS (this test binary
+    /// re-run on this one test: a fork of a multi-threaded test process can
+    /// deadlock on an allocator lock another thread held, and did: an earlier
+    /// version of this test hung a whole suite run). The fresh process starts
+    /// dumpable, runs `harden`, and fails if `PR_GET_DUMPABLE` is not 0.
+    #[test]
+    fn harden_makes_the_helper_non_dumpable() {
+        if std::env::var("AXON_EQ_HARDEN").is_ok() {
+            // SAFETY: prctl calls without pointers.
+            unsafe {
+                libc::prctl(libc::PR_SET_DUMPABLE, 1 as libc::c_ulong, 0, 0, 0);
+                assert_eq!(
+                    libc::prctl(libc::PR_GET_DUMPABLE, 0, 0, 0, 0),
+                    1,
+                    "setup: the process starts dumpable"
+                );
+            }
+            harden();
+            // SAFETY: as above.
+            let after = unsafe { libc::prctl(libc::PR_GET_DUMPABLE, 0, 0, 0, 0) };
+            assert_eq!(
+                after, 0,
+                "ATTACK: the root helper stayed dumpable after harden: its memory is readable \
+                 and ptrace-attachable by the caller's uid (PR_GET_DUMPABLE = {after})"
+            );
+            return;
+        }
+        let o = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "privileged_launcher::tests::harden_makes_the_helper_non_dumpable",
+                "--test-threads=1",
+                "--nocapture",
+            ])
+            .env("AXON_EQ_HARDEN", "1")
+            .output()
+            .unwrap();
+        assert!(
+            o.status.success() && String::from_utf8_lossy(&o.stdout).contains("1 passed"),
+            "ATTACK: the root helper stayed dumpable after harden: the fresh process failed:\n{}\n{}",
+            String::from_utf8_lossy(&o.stdout),
+            String::from_utf8_lossy(&o.stderr)
+        );
+    }
+
+    /// C9 round 7, EQGATE3 (amendment 91): `operator_dir` refuses a descriptor
+    /// that is not a directory. The refusal was exempted as UNREACHABLE (every
+    /// descriptor it sees was opened O_DIRECTORY); the function is called here
+    /// with the stat of a regular file.
+    #[test]
+    fn an_operator_directory_that_is_a_file_is_refused() {
+        let t = tempfile::tempdir().unwrap();
+        let f = t.path().join("file");
+        std::fs::write(&f, "x").unwrap();
+        let st = fstat(std::fs::File::open(&f).unwrap().as_raw_fd()).unwrap();
+        let a = Authority {
+            operator_uid: euid_(),
+            walk_base: t.path().to_path_buf(),
+            test: true,
+        };
+        let got = operator_dir(&f, &st, &a);
+        assert!(
+            got.as_ref()
+                .is_err_and(|e| e.contains("is not a directory")),
+            "ATTACK: a regular file was accepted as an operator directory: {got:?}"
+        );
+        assert!(
+            !is_dir(&st),
+            "ATTACK: is_dir took a regular file for a directory"
+        );
+        let dst = fstat(std::fs::File::open(t.path()).unwrap().as_raw_fd()).unwrap();
+        assert!(is_dir(&dst), "control: a directory is one");
+    }
 }

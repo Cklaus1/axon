@@ -851,3 +851,76 @@ fn prepare_never_writes_the_policy_over_a_file_already_there() {
         }
     }
 }
+
+/// C9 round 7, EQGATE3 (amendment 91): `prepare` is `pub`, and each tree it is
+/// handed must BE the version the request names and the suite the registry
+/// pins: "never merely a digest of whatever bytes sit in a directory". Both
+/// refusals were exempted as UNREACHABLE on the argument that the Fabric
+/// materializes the directories itself; a caller that hands `prepare` another
+/// directory reaches them. The control is the matching pair, which prepares.
+#[test]
+fn prepare_refuses_a_tree_that_is_not_the_version_it_is_told_it_is() {
+    use axon_workspace_recipe::{tree_version_ref, Quota};
+    let env = Env::new();
+    let d = env.dir.path();
+    let manifest = d.join("manifest.json");
+    std::fs::write(&manifest, full_lx_manifest(QUALIFIED_GUEST)).unwrap();
+    let issuer = Issuer::generate();
+    let lx = qualified_linux_cfg(d, &issuer, &good_evidence(&sha256_file(&manifest)));
+    let q = lx.qualification().unwrap();
+    let (cand, suite, other) = (
+        d.join("in/candidate"),
+        d.join("in/check"),
+        d.join("in/other"),
+    );
+    for (dir, name, body) in [
+        (&cand, "f.ax", "fn main() {}\n"),
+        (&suite, "accept.ax", "@[test] fn t_ok() {}\n"),
+        (&other, "g.ax", "fn other() {}\n"),
+    ] {
+        std::fs::create_dir_all(dir).unwrap();
+        std::fs::write(dir.join(name), body).unwrap();
+    }
+    let quota = Quota::default();
+    let cand_ref = tree_version_ref(&cand, &quota).unwrap();
+    let suite_ref = tree_version_ref(&suite, &quota).unwrap();
+    let mut rq = request(&env, "op-prepare-tree", "t_ok");
+    rq["workspace_version_ref"] = json!(cand_ref);
+    let rq: axon_loop_contracts::ComputeRequest = serde_json::from_value(rq).unwrap();
+    let prepare =
+        |job: &str, candidate: &std::path::Path, suite_dir: &std::path::Path, ver: &str| {
+            axon_fabric::psv::prepare(
+                &rq,
+                &axon_fabric::psv::PrepareInputs {
+                    qualification: &q,
+                    profile_manifest: &lx.manifest,
+                    host: None,
+                    policy_json: r#"{"schema":"axon-vm-mmds/1","allowed_effects":[]}"#,
+                    suite_id: "acc",
+                    suite_version: ver,
+                    entry: "accept.ax",
+                    test: "t_ok",
+                    candidate_dir: candidate,
+                    suite_dir,
+                    job_dir: &fresh_job_dir(d, job),
+                    observation_nonce: "none",
+                    authority_epoch: 0,
+                    scope: &scope(),
+                },
+            )
+        };
+    prepare("tree-control", &cand, &suite, &suite_ref)
+        .expect("control: the matching trees prepare");
+    match prepare("tree-cand", &other, &suite, &suite_ref) {
+        Ok(_) => panic!(
+            "ATTACK: prepare pinned a candidate directory that is not the version the request names"
+        ),
+        Err(e) => assert!(e.contains("candidate tree is"), "{e}"),
+    }
+    match prepare("tree-suite", &cand, &other, &suite_ref) {
+        Ok(_) => panic!(
+            "ATTACK: prepare pinned a suite directory that is not the registered suite version"
+        ),
+        Err(e) => assert!(e.contains("suite tree is"), "{e}"),
+    }
+}

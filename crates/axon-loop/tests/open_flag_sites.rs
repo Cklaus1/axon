@@ -37,3 +37,29 @@ fn a_store_write_never_writes_through_a_file_planted_at_its_temporary_name() {
         std::fs::read_to_string(&victim)
     );
 }
+
+/// C9 round 7, EQGATE3 (amendment 91): `Store::guard` is `pub`, and refuses a
+/// path that climbs out of the store (`..`) or is not below it. That refusal was
+/// exempted as UNREACHABLE (every internal path is built from validated
+/// segments); a caller of the `pub` guard reaches it.
+#[test]
+fn the_store_guard_refuses_a_path_that_leaves_the_store() {
+    let t = tempfile::tempdir().unwrap();
+    let store = Store::open_dir(t.path().join("store")).unwrap();
+    store
+        .guard(&store.root().join("a").join("b"))
+        .expect("control: a path below the root is fine");
+    let climbing = store.root().join("a").join("..").join("..").join("outside");
+    let got = store.guard(&climbing);
+    assert!(
+        got.as_ref()
+            .is_err_and(|e| e.to_string().contains("non-normal store path")),
+        "ATTACK: the store guard accepted a path that climbs out of the store: {got:?}"
+    );
+    let got = store.guard(&t.path().join("elsewhere"));
+    assert!(
+        got.as_ref()
+            .is_err_and(|e| e.to_string().contains("outside the store")),
+        "ATTACK: the store guard accepted a path outside the store: {got:?}"
+    );
+}

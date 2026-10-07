@@ -351,9 +351,6 @@ EXEMPT = [
      "OS error from fstat on an open descriptor: fails closed, no input chooses success"),
     (PL, "    if fd < 0 {\n        return Err(std::io::Error::last_os_error());",
      "OS error from openat: fails closed"),
-    (PL, '        return Err(format!("{} is not a directory", p.display()));',
-     "unreachable: every descriptor operator_dir sees was opened O_DIRECTORY (walk_open, "
-     "load_config's parent, new_staging's leaf), so it is a directory"),
     (PL, '            return Err(format!("{} is not a plain path", path.display()));',
      "operator-authored or compiled in: walk_open's callers pass the helper config's out_root "
      "and staging_root (fields of the operator-owned config, M585-M589) or the parent of the "
@@ -520,14 +517,6 @@ EXEMPT += [
      "NOTHING TO ADMIT: SO_PEERCRED failed, so there is no peer uid for decide() to judge"),
     (RD, '        Err("operator trust cannot be checked on this platform".into())',
      "NON-UNIX: compiled only under cfg(not(unix)); Linux builds the unix branch"),
-    (PSVF, "    if cand_tree != req.workspace_version_ref.as_str() {",
-     "UNREACHABLE: the candidate dir was created NEW (DirBuilder::create, not recursive) and "
-     "0700 by materialize_inputs, and written by WorkspaceStore::materialize from store.tree(r), "
-     "which re-derives r from hash-checked blobs (\"does not re-derive\"); between that write and "
-     "this read only the custodian issue call runs, which is another uid's process. The guest "
-     "holds the same digest again (M159)"),
-    (PSVF, "    if suite_tree != i.suite_version {",
-     "UNREACHABLE: as the candidate check above (the suite is materialized from the same ref)"),
     (PSVF, '        Err(e) => return unknown(format!("no guest verdict: {e}"), evidence, None),',
      "NOTHING TO ADMIT: no verdict bytes were read"),
     (PSVF, '        Err(e) => return unknown(format!("guest verdict is malformed: {e}"), evidence, None),',
@@ -762,10 +751,6 @@ EXEMPT += [
     (ST, "            Err(std::env::VarError::NotUnicode(_)) => Err(LoopError::Usage(format!(",
      "OPERATOR-AUTHORED: the operator's environment; the refusal only fails closed (the store does "
      "not open, never falls back to unkeyed)"),
-    (ST, '                    return Err(LoopError::Io(format!(\n                        "non-normal store path {}",',
-     "UNREACHABLE: every store path is built by the store from its root joined with segments "
-     "validated by check_segment or the ids.rs newtypes (charset [A-Za-z0-9._:-], first character "
-     "alphanumeric) or with digest hex, so no component is `..`, `.` or a root"),
     (ST, "                Err(e) => return Err(e.into()),\n            }\n        }\n        Ok(())",
      "OS ERROR: lstat failing for a reason other than NotFound; the path is refused (fails closed)"),
     (ST, "                Err(e) => return Err(e.into()),\n            }\n            let m = fs::symlink_metadata(&cur)?;",
@@ -988,7 +973,7 @@ EXEMPT += [
      "config file; a config `git config --list` cannot read (a bad line, a directory) is one "
      "rev-parse dies on too, so discover refuses before this line ('... --git-common-dir failed'). "
      "With run()'s status check (M1086) also removed, own_repository canonicalizes the empty "
-     "answer and fails: the four-cell run of this site (former M1088) read set_off=ATTACK_REFUSED. "
+     "answer and fails: the four-cell run of this site (its former row number was never allocated) read set_off=ATTACK_REFUSED. "
      "Test: provenance::tests::a_config_git_cannot_read_is_never_a_clean_tree"),
     # provenance.rs
     (FP, '        Err(e) => return unknown(e),\n    };\n    // The repository',
@@ -1095,7 +1080,6 @@ EXEMPT += [
     (FW, '            return Err(ImportRefusal::QuotaEntries {',
      "RESOURCE BOUND: without it a larger tree is admitted, but its reference still covers exactly "
      "its bytes, and the guest's walk applies its own quota"),
-    (FW, '                return Err(ImportRefusal::QuotaBytes { limit: quota.bytes });', "RESOURCE BOUND: as above"),
     (FW, '                        return Err(ImportRefusal::Collision {',
      "NOT A VERDICT PROPERTY: the case-folding rule is for case-insensitive filesystems; on the "
      "Linux guest and host each spelling is its own file and the guest's digest still equals the "
@@ -1112,16 +1096,9 @@ EXEMPT += [
     (FW, '            if f.parent() == Some(self.omissions_dir(r).as_path())', "NOT A VERDICT PROPERTY: as above"),
     (FW, '                return Err(StoreError::NotPublished(r.to_string()))', "NOTHING TO ADMIT: no manifest"),
     (FW, '            Err(e) => return Err(e.into()),\n        };\n        if workspace_version_ref', _IO),
-    (FW, '            return Err(StoreError::DestinationExists(dest.to_path_buf()));',
-     "UNREACHABLE BY CONSTRUCTION (checkable): every materialize caller passes a destination "
-     "inside a directory it created NEW just before: psv.rs materialize_inputs (DirBuilder, not "
-     "recursive) and submit's RunDir::new (create_dir, made non-recursive in C9 round 4b, so a "
-     "leftover run dir is refused, never reused); the destination names inside it are fixed and "
-     "each used once"),
     (FW, '                    return Err(StoreError::Io(format!("no symlinks here: {target}")));',
      "NON-UNIX: compiled only under cfg(not(unix))"),
     # journal.rs
-    (FJ, '                return Err(name);', _JNV),
     (FJ, '                    return Err(JournalError::ScopeConflict {', _JNV),
     (FJ, '                    return Err(JournalError::UnknownScope(Box::new(intent.scope.clone())));', _JNV),
     (FJ, '                        return Err(JournalError::Conflict {\n', _JNV),
@@ -1139,11 +1116,7 @@ EXEMPT += [
     (FJ, '            return Err(JournalError::InvalidTransition {', _JNV),
     (FJ, '            return Err(JournalError::Locked(path.to_path_buf()));', "OS ERROR: the lock is still held at the deadline; nothing runs"),
     (FJ, '            Err(e) => return Err(JournalError::Io(e)),', "OS ERROR: stat failed other than NotFound (NotFound is M333)"),
-    (FJ, '            if line.seq != seq + 1 {',
-     _JNV + "; a corrupt journal can at most hide an op (run fresh, a genuine run) or invent one "
-     "(a replay, never signed)"),
     (FJ, '                        return Err(JournalError::Corrupt {', _JNV + "; as above"),
-    (FJ, '            if matches!(change, Change::Duplicate) {', _JNV + "; as above"),
     (FJ, '                }\n                return Err(JournalError::Conflict {', _JNV),
     (FJ, '            Err(e) => Err(e),\n        }\n    }\n\n    /// Carve', _IO + " (append's own refusals are their own sites)"),
     (FJ, '        ) {\n            return Err(JournalError::BudgetExceeded {', _JNV),
@@ -1215,13 +1188,6 @@ EXEMPT += [
     (CT, "    let text = std::str::from_utf8(bytes).map_err(|e| shape(format!(\"invalid UTF-8: {e}\")))?;",
      "NOTHING TO ADMIT: bytes that are not UTF-8 have no text to parse; the only production "
      "caller reads operator-signed bytes (as above)"),
-    (CI, 'return Err(shape(format!("authority epoch {v} exceeds 2^53-1")));',
-     "UNREACHABLE BY CONSTRUCTION (FLAGGED: no four-cell can be built): a pointer epoch starts at "
-     "0 and an applied transition raises it by exactly one (pointer.rs CAS, M1266/M1330), so "
-     "next() never leaves the range; every epoch READ from a document is refused past 2^53-1 by "
-     "parse_value first (M1204) and then by the schema maximum (M1219), and even with all three "
-     "removed it is joined to the scope's current epoch (intake's epoch join, the pointer's "
-     "expected_epoch CAS), which a value past 2^53-1 never equals"),
     (CP, "        if self.pinned_at_ms < 0 {",
      "NO PRODUCTION PARSE (checkable): PolicyPin is MiCode's local document; Axon never parses one "
      "(no parse/contract_from_value/from_value of PolicyPin in crates/*/src) and builds one only "
@@ -1253,12 +1219,6 @@ EXEMPT += [
     (CS, 'serde_json::from_str(text).map_err(|e| shape(format!("checked-in schema unreadable: {e}")))',
      "COMPILED-IN: schema::load reads only Contract::SCHEMA, the schema_text! include_str! "
      "constants, each parsed by redteam.rs every_checked_in_schema_is_within_the_supported_subset"),
-    (CS, '        return Err(fail(path, "non-integer number"));',
-     "UNREACHABLE (FLAGGED: no four-cell can be built): a non-integer Number is refused by "
-     "parse_value before any walk (M1206); every schema node carrying minimum/maximum declares "
-     "a type, and no type name admits a float (asserted by redteam.rs every_checked_in_schema_is_within_the_supported_subset), "
-     "whose check refuses it first (M1210); and with both removed the typed layer still refuses a "
-     "float in an integer field (serde, no mutable site), so no input reaches this arm"),
 ]
 
 # C9 round 4b, INTEGRATE-C (amendment 64)
@@ -1518,13 +1478,6 @@ EXEMPT += [
     (FC, "        std::process::exit(code);\n    }\n    write_result(\"ok\", 0);",
      "NON-PRODUCTION: as above"),
     (BIN, '            eprintln!("usage: axon-protected-launcher [--observe] [--probe] < request.json");', _USE),
-    (BIN, "        let _ = out.flush();\n        std::process::exit(code);",
-     "RELAY: the report writer exits with the code serve_as decided; each refusal there is a "
-     "site of its own"),
-    # axon-observer (amendment 68's service binary), brought under the EXIT and
-    # diverging-constructor forms by amendment 71 at integration (c9r4c/integrate).
-    # The test-config closure runs only from the `--test-config` arm, which
-    # `TEST_TRUST_BUILD` gates (M1548); the store's parent chain is M1550.
     (OBB, "    std::process::exit(2);\n}\n\nfn euid()",
      "NOT A SITE: the body of the refusal constructor `die`; each call is a site"),
     (OBB, '        let p = PathBuf::from(args.get(i).unwrap_or_else(|| die("--test-config FILE")));', _OBS_TEST),
@@ -1997,11 +1950,6 @@ EXEMPT += [
      "helper config (program pins, the observer key: exempt, M585/M586; the custodian pin: M1485), "
      "pins of the operator-owned profile manifest that verify_inputs then hashes against (M590), "
      "and the request's manifest digest (M796, retired with its four-cell record)"),
-    (PL, "fn is_dir(st: &libc::stat) -> bool {",
-     "UNREACHABLE (checkable): both callers stat a descriptor opened with DIR_FLAGS (O_DIRECTORY): "
-     "operator_dir's (walk_open, load_config's parent, new_staging's leaf; the existing exemption) "
-     "and open_out_root's (walk_open), so the answer is always true; the rest of open_out_root's "
-     "condition is rowed (M537)"),
     (PL, "fn plain_name(s: &OsStr) -> bool {",
      "PREDICATE OF NAMED ROWS: its only caller is the out-path refusal M532 (ACTIVE), which "
      "removes the whole condition"),
@@ -2680,9 +2628,6 @@ EXEMPT += [
      '                    other => Verdict::Denied {',
      _ACR),
     ('crates/axon-os/src/runtime.rs',
-     '    fn run_sandboxed(\n        &self,\n        program: &Path,\n        _principal: &PrincipalHandle,',
-     _ACR),
-    ('crates/axon-os/src/runtime.rs',
      '    fn run_sandboxed(\n        &self,\n        _program: &Path,',
      _ACR),
     ('crates/axon-fabric/src/journal.rs',
@@ -3103,7 +3048,7 @@ EXEMPT += [
      "REMAINDER (no row yet): unlocks a read-only tree's directories so it can be removed; only a "
      "NON-root remover is stopped by a mode (root bypasses it, and the suite runs as root where it "
      "matters), and a failure only leaves the tree behind (availability, never a verdict). The row "
-     "M2151 this would have carried survived as root and was withdrawn, not weakened"),
+     "this would have carried (amendment 87's withdrawn row) survived as root and was withdrawn, not weakened"),
     (PL, "                    libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_NONBLOCK,\n                )\n                .map_err(|e| e.to_string())?;\n                unsafe {",
      "RACE-ONLY (checkable): this open is reached only for an entry the fstatat above "
      "(AT_SYMLINK_NOFOLLOW, M1912) reported as a regular file, in a directory only "
@@ -3123,21 +3068,12 @@ EXEMPT += [
      "and the production launch's refusal read it). Weakening the read to 0 is the attack of the test "
      "`a_fabric_under_no_new_privs_is_told_why_the_helper_launches_nothing` (its ATTACK at 'under its "
      "caller's NoNewPrivileges'), which would fail, but no row of its own carries that kill"),
-    (PL, "        libc::prctl(\n            libc::PR_SET_DUMPABLE,",
-     "REMAINDER (no row yet): PR_SET_DUMPABLE=0 on the root helper is not observable from outside "
-     "the process on a default host (exec of a setuid binary leaves it non-dumpable under "
-     "fs.suid_dumpable=0, and the next exec resets the bit), and RLIMIT_CORE=0 (rowed, M2167, the hostile-caller test) also stops a core dump; a host with "
-     "fs.suid_dumpable != 0 is where this call alone holds"),
     (PL, "                if libc::getrlimit(r, &mut cur) == 0 {\n                    cur.rlim_cur = if v == 0",
-     "REMAINDER (no row yet): the fallback for a helper that is not root (a test-trust build run "
+     "REMAINDER (no row yet): the fallback of `lim` for a helper that is not root (a test-trust build run "
      "unprivileged) lowering the soft limit to the hard one; the production helper is root and takes "
-     "the setrlimit above (rowed)"),
-    (PL, "            if libc::setrlimit(r, &l) != 0 {\n                let mut cur: libc::rlimit = std::mem::zeroed();",
-     "REMAINDER (no row yet): the limits beyond the ones the hostile-caller test observes (STACK, RSS, "
-     "MEMLOCK, LOCKS, SIGPENDING, MSGQUEUE, NICE, RTPRIO, RTTIME: kernel defaults, amendment 73); the "
-     "helper's own `lim2` closure, whose first-order effect is the rowed `lim`'s"),
+     "the setrlimit above (rowed, M2167)"),
     (PL, "                if libc::getrlimit(r, &mut cur) == 0 {\n                    cur.rlim_cur = soft.min",
-     "REMAINDER (no row yet): the unprivileged fallback of `lim2` (see the entry above)"),
+     "REMAINDER (no row yet): the fallback of `lim2` for a helper that is not root (a test-trust build run unprivileged), which lowers the soft limit to the hard one; the tests run as root, where the setrlimit above succeeds (that call is rowed, M2276, and every lim2(..) call is rowed, M1605-M1613; the stale text that said 'no row yet' for them is withdrawn)"),
     ("crates/axon-fabric/src/sealed_exec.rs", "    if unsafe { libc::fcntl(fd, libc::F_SETLEASE, libc::F_RDLCK) } == 0 {",
      "DOMINATED (checkable): a lease that was not taken is refused by the F_GETLEASE re-read before the "
      "exec (`leased` is judged under Lease::Required, rows M524 and M591); this call only takes it"),
@@ -3147,20 +3083,103 @@ EXEMPT += [
     ("crates/axon-fabric/src/sealed_exec.rs", "        cmd.pre_exec(move || exec.run());",
      "ROWED ELSEWHERE (checkable): the closure `exec.run()` this pre_exec installs is the child's "
      "re-check and execveat of the verified program (M527, M528); removing the hook is those rows' attack"),
-    ("crates/axon-guest-init/src/main.rs", "    let r = libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1usize", _R87_GUEST),
-    ("crates/axon-guest-init/src/main.rs", "        let r = libc::prctl(\n            libc::PR_SET_SECCOMP,", _R87_GUEST),
-    ("crates/axon-guest-init/src/main.rs", "        libc::SECCOMP_MODE_FILTER as libc::c_ulong,", _R87_GUEST),
-    ("crates/axon-guest-init/src/main.rs", "        unsafe { libc::kill(pid, sig) };", _R87_GUEST),
-    ("crates/axon-guest-init/src/main.rs", "        libc::signal(\n            libc::SIGTERM,", _R87_GUEST),
-    ("crates/axon-guest-init/src/main.rs", "        libc::signal(\n            libc::SIGINT,", _R87_GUEST),
-    ("crates/axon-psv/src/bin/axon-psv-runner.rs", "    unsafe { libc::prctl(libc::PR_SET_DUMPABLE, 0, 0, 0, 0) }",
-     "REMAINDER (no row yet): the runner makes itself non-dumpable before reading the completion secret; "
-     "the SEAM is tested (`start` refuses when the function returns non-zero: the runner binary's own "
-     "tests), the call itself is not observed from outside the process"),
     ("crates/axon-os/src/runtime.rs", "match std::fs::DirBuilder::new().mode(0o700)", _ACR),
     ("crates/axon-os/src/runtime.rs", "            .mode(0o600)", _ACR),
     ("crates/axon-os/src/runtime.rs", "        let rc = unsafe { libc::killpg(pid, libc::SIGKILL) };", _ACR),
     ("crates/axon-os/src/runtime.rs", "        .process_group(0)", _ACR),
+]
+
+
+# ── Amendment 91 (C9 round 7, eqgate3): the sites the environment, stdio, option,
+# cap, OS-call and delegating-refusal forms expose and no row attacks. Every entry
+# states a call-graph or documentation FACT; an entry that begins REMAINDER is a
+# guard no test observes yet, not a claim of domination (grep -n REMAINDER).
+EXEMPT += [
+    ('crates/axon-fabric/src/git_data.rs', '        .env("LC_ALL", "C")\n        .env("GIT_NO_REPLACE_OBJECTS", "1")',
+     "DIAGNOSTICS/LOCALE (checkable): LC_ALL=C fixes the LANGUAGE of git's messages; every answer is parsed from plumbing and porcelain output (`rev-parse`, `status --porcelain`, `cat-file --batch`), never from a message, so no verdict can depend on it"),
+    ('crates/axon-fabric/src/git_data.rs', '        .env("GIT_CONFIG_NOSYSTEM", "1")\n        .env("GIT_CONFIG_GLOBAL", "/dev/null")\n        .env("GIT_OPTIONAL_LOCKS", "0")',
+     "REMAINDER (needs a writable /etc/gitconfig): GIT_CONFIG_NOSYSTEM stops git reading the HOST's system config; no test can plant one without writing under /etc, which this workstream never does. The repository-controlled configuration (the attack) is rowed (M2283-M2291)"),
+    ('crates/axon-fabric/src/git_data.rs', '        .env("GIT_CONFIG_GLOBAL", "/dev/null")\n        .env("GIT_OPTIONAL_LOCKS", "0")',
+     'DOMINATED BY env_clear (rowed, M2283) (checkable): git reads GLOBAL config only from $XDG_CONFIG_HOME/git/config, $HOME/.config/git/config and $HOME/.gitconfig (git-config(1), FILES); env_clear leaves none of those variables set, so the file named here is the only global config and it is /dev/null either way'),
+    ('crates/axon-fabric/src/git_data.rs', '        .env("GIT_TERMINAL_PROMPT", "0")',
+     'DOMINATED (checkable): GIT_TERMINAL_PROMPT=0 only stops a credential prompt, which only a transport would raise; `protocol.allow=never` and GIT_NO_LAZY_FETCH (rowed, a_git_call_on_a_promisor_repository_fetches_nothing) leave git no transport'),
+    ('crates/axon-fabric/src/git_data.rs', '            "-c",\n            "core.untrackedCache=false",\n            "-c",',
+     'REMAINDER (a forged untracked-cache extension that hides a file was not constructible: measured with `git update-index --untracked-cache`, then a file added under a directory whose mtime was restored; git re-listed the directory): core.untrackedCache=false; the index is never written (GIT_OPTIONAL_LOCKS, rowed M2284), so no cache is built by git_cmd either'),
+    ('crates/axon-fabric/src/git_data.rs', '            "-c",\n            "advice.graftFileDeprecated=false",\n        ])',
+     'DIAGNOSTICS ONLY (checkable): advice.graftFileDeprecated=false silences an advice line on stderr, which git_cmd never reads'),
+    ('crates/axon-fabric/src/git_data.rs', '        .stdin(Stdio::null())\n        .stderr(Stdio::null());',
+     "DOMINATED (checkable): a git_cmd call's stdin/stderr: every caller either runs `.output()` (stdin is never inherited by output(), std::process::Command docs) or overrides it with a pipe (Objects::open, provenance.rs); stderr is never read (`grep -n 'stderr' git_data.rs`: no read), so an inherited one writes git's own diagnostics into the Fabric's log and nothing else"),
+    ('crates/axon-fabric/src/git_data.rs', '        .stderr(Stdio::null());',
+     "DIAGNOSTICS ONLY (checkable): a git_cmd call's stdin/stderr: every caller either runs `.output()` (stdin is never inherited by output(), std::process::Command docs) or overrides it with a pipe (Objects::open, provenance.rs); stderr is never read (`grep -n 'stderr' git_data.rs`: no read), so an inherited one writes git's own diagnostics into the Fabric's log and nothing else"),
+    ('crates/axon-fabric/src/git_data.rs', '        .env_clear()\n        .env("PATH", "/usr/bin:/bin")\n        .env("LC_ALL", "C")\n        .env("GIT_CONFIG_NOSYSTEM", "1")\n        .env("GIT_CONFIG_GLOBAL", "/dev/null")\n        .env("GIT_CEILING_DIRECTORIES", "/")',
+     'DOMINATED (env_clear) (checkable): the config reader (`git -C / config --file <path> --no-includes --list -z`) reads ONLY the named file (git-config(1): --file reads that file instead of the usual ones, so GIT_CONFIG_*, HOME and the system and global files are not consulted); its answer is a key list judged by allowed_key, so the environment given to it cannot change which keys the file lists'),
+    ('crates/axon-fabric/src/git_data.rs', '        .env("PATH", "/usr/bin:/bin")\n        .env("LC_ALL", "C")\n        .env("GIT_CONFIG_NOSYSTEM", "1")\n        .env("GIT_CONFIG_GLOBAL", "/dev/null")\n        .env("GIT_CEILING_DIRECTORIES", "/")',
+     'DOMINATED (PATH) (checkable): the config reader (`git -C / config --file <path> --no-includes --list -z`) reads ONLY the named file (git-config(1): --file reads that file instead of the usual ones, so GIT_CONFIG_*, HOME and the system and global files are not consulted); its answer is a key list judged by allowed_key, so the environment given to it cannot change which keys the file lists'),
+    ('crates/axon-fabric/src/git_data.rs', '        .env("LC_ALL", "C")\n        .env("GIT_CONFIG_NOSYSTEM", "1")\n        .env("GIT_CONFIG_GLOBAL", "/dev/null")\n        .env("GIT_CEILING_DIRECTORIES", "/")',
+     'DOMINATED (LC_ALL) (checkable): the config reader (`git -C / config --file <path> --no-includes --list -z`) reads ONLY the named file (git-config(1): --file reads that file instead of the usual ones, so GIT_CONFIG_*, HOME and the system and global files are not consulted); its answer is a key list judged by allowed_key, so the environment given to it cannot change which keys the file lists'),
+    ('crates/axon-fabric/src/git_data.rs', '        .env("GIT_CONFIG_NOSYSTEM", "1")\n        .env("GIT_CONFIG_GLOBAL", "/dev/null")\n        .env("GIT_CEILING_DIRECTORIES", "/")',
+     'DOMINATED (GIT_CONFIG_NOSYSTEM) (checkable): the config reader (`git -C / config --file <path> --no-includes --list -z`) reads ONLY the named file (git-config(1): --file reads that file instead of the usual ones, so GIT_CONFIG_*, HOME and the system and global files are not consulted); its answer is a key list judged by allowed_key, so the environment given to it cannot change which keys the file lists'),
+    ('crates/axon-fabric/src/git_data.rs', '        .env("GIT_CONFIG_GLOBAL", "/dev/null")\n        .env("GIT_CEILING_DIRECTORIES", "/")',
+     'DOMINATED (GIT_CONFIG_GLOBAL) (checkable): the config reader (`git -C / config --file <path> --no-includes --list -z`) reads ONLY the named file (git-config(1): --file reads that file instead of the usual ones, so GIT_CONFIG_*, HOME and the system and global files are not consulted); its answer is a key list judged by allowed_key, so the environment given to it cannot change which keys the file lists'),
+    ('crates/axon-fabric/src/git_data.rs', '        .env("GIT_CEILING_DIRECTORIES", "/")',
+     'DOMINATED (GIT_CEILING_DIRECTORIES) (checkable): the config reader (`git -C / config --file <path> --no-includes --list -z`) reads ONLY the named file (git-config(1): --file reads that file instead of the usual ones, so GIT_CONFIG_*, HOME and the system and global files are not consulted); its answer is a key list judged by allowed_key, so the environment given to it cannot change which keys the file lists'),
+    ('crates/axon-fabric/src/git_data.rs', '            "--no-includes",',
+     'DOMINATED (checkable): --no-includes only stops `include.path` being EXPANDED into the listing; the key `include.path` itself is listed either way and `allowed_key` refuses every include.* key (the `else` arm: unknown section), so a config with an include is refused with or without the flag (`repository_config_that_redirects_or_runs_code_is_refused`)'),
+    ('crates/axon-fabric/src/git_data.rs', '        .stdin(Stdio::null())\n        .stderr(Stdio::null())\n        .output()',
+     "DOMINATED/DIAGNOSTICS (checkable): a git_cmd call's stdin/stderr: every caller either runs `.output()` (stdin is never inherited by output(), std::process::Command docs) or overrides it with a pipe (Objects::open, provenance.rs); stderr is never read (`grep -n 'stderr' git_data.rs`: no read), so an inherited one writes git's own diagnostics into the Fabric's log and nothing else"),
+    ('crates/axon-fabric/src/git_data.rs', '        .stderr(Stdio::null())\n        .output()',
+     "DIAGNOSTICS ONLY (checkable): a git_cmd call's stdin/stderr: every caller either runs `.output()` (stdin is never inherited by output(), std::process::Command docs) or overrides it with a pipe (Objects::open, provenance.rs); stderr is never read (`grep -n 'stderr' git_data.rs`: no read), so an inherited one writes git's own diagnostics into the Fabric's log and nothing else"),
+    ('crates/axon-fabric/src/git_data.rs', '        if out.len() > MAX_REASONS {',
+     'DIAGNOSTICS ONLY (checkable): MAX_REASONS caps how many reason strings are LISTED; a non-empty list is the refusal either way (callers test `is_empty()`), so truncating or not changes only the length of the message'),
+    ('crates/axon-fabric/src/backend.rs', '            .stderr(std::process::Stdio::null())\n            .spawn()',
+     "DIAGNOSTICS ONLY (checkable): the privileged helper's stderr is never read (`grep -n 'child.stderr' backend.rs`: none); its reply is the stdout JSON, parsed and judged. An inherited stderr puts the helper's own diagnostics in the Fabric's log"),
+    ('crates/axon-fabric/src/observer.rs', '            .stderr(std::process::Stdio::null())\n            .spawn()',
+     "DIAGNOSTICS ONLY (checkable): as backend.rs's helper spawn: the observation helper's stderr is never read; its reply is the stdout JSON"),
+    ('crates/axon-fabric/src/observer.rs', '        let _ = o\n            .take(crate::observer_service::MAX_REPLY + 4096)',
+     "REMAINDER (no row yet): bounds the privileged helper's reply read to MAX_REPLY+4096; a flood test needs a stand-in helper that streams past the bound, which the existing observer fixtures do not provide. The service side's bounds (M2305-M2307) are rowed"),
+    ('crates/axon-fabric/src/privileged_launcher.rs', '            .current_dir("/")\n            .status()',
+     'DOMINATED (checkable): `harden()` chdirs the helper to / at start (libc::chdir(c"/"), rowed by a_callers_process_state_never_reaches_the_root_helper_or_its_launcher, ATTACK \'kept its caller\'s working directory\'), so the child inherits / even without this call; the stand-in launcher\'s `pwd` is / (the_root_launcher_runs_with_null_stdio_in_the_root_directory)'),
+    ('crates/axon-fabric/src/privileged_launcher.rs', '            if let Ok(n) = cstr(&p.out_name) {',
+     'CLEANUP ONLY (checkable): removes the EMPTY out dir after sealed_exec::command failed to build the launch command (nothing ran); a leftover empty directory is availability, not a verdict (the next launch of the same name is refused as an existing out dir, `a_root_owned_out_dir_that_already_exists_is_never_launched_into`)'),
+    ('crates/axon-fabric/src/workspace.rs', '        libc::renameat2(\n            libc::AT_FDCWD,',
+     "ROWED ELSEWHERE (checkable): the call's flags argument is M1916 (RENAME_NOREPLACE); removing the call itself makes every publish fail, which every workspace test sees"),
+    ('crates/axon-fabric/src/custodian.rs', '            None => {\n                let mut text = Vec::new();\n                (&s).take(MAX_MESSAGE)',
+     'DEVELOPMENT ROUTE (checkable): the arm runs only for a custodian with no pinned program (`self.sha256` None); a production helper refuses a custodian with no pin (privileged_launcher.rs, a_production_helper_launched_with_no_custodian_program_pin_...), and the pinned arm reads through read_from_pinned with the same bound'),
+    ('crates/axon-os/src/runtime.rs', '            cmd.env("PATH", p); // cc/linker discovery for the interpreter',
+     "NO EFFECT (checkable): the interpreter child's PATH is for `cc`/linker discovery by `axon run`, and the legacy process adapter is not on the protected route (_ACR); a missing PATH cannot widen what the child may do"),
+    ('crates/axon-psv/src/runner.rs', '        .env("PATH", "/usr/bin:/bin")\n        // As on the host',
+     'NO EFFECT (checkable): the check child spawns nothing (`Exec` is removed from its ceiling by without_exec, rowed M249, `the_process_holding_k_is_given_no_exec`), so no PATH lookup happens; the value is the fixed guest PATH either way'),
+    ('crates/axon-vm/src/firecracker.rs', '        .stdin(Stdio::null())\n        .stdout(Stdio::piped())',
+     "NOT ON THE PROTECTED ROUTE (checkable): axon-vm's firecracker spawn; the protected crates use axon_vm only for BACKEND_PROFILE and embed_policy_in_cmdline/MmdsPayload (grep `axon_vm::`), never the spawn"),
+    ('crates/axon-fabric/src/bin/axon-fabric.rs', '    let text = std::fs::read_to_string(registry).unwrap_or_else(|e| bad(e.to_string()));',
+     'FAILS CLOSED (checkable): `unwrap_or_else(.. bad(..))` on a read, parse or metadata error of the signer registry or key; the alternative is `.unwrap()`, a panic (exit 101): either way the process ends before any signer is returned and nothing is signed. The checks that decide WHICH files qualify are rowed: regular file (M2281), the exact fields (M2282), mode (M348), the public-key pin'),
+    ('crates/axon-fabric/src/bin/axon-fabric.rs', '    let v: serde_json::Value = serde_json::from_str(&text).unwrap_or_else(|e| bad(e.to_string()));',
+     'FAILS CLOSED (checkable): `unwrap_or_else(.. bad(..))` on a read, parse or metadata error of the signer registry or key; the alternative is `.unwrap()`, a panic (exit 101): either way the process ends before any signer is returned and nothing is signed. The checks that decide WHICH files qualify are rowed: regular file (M2281), the exact fields (M2282), mode (M348), the public-key pin'),
+    ('crates/axon-fabric/src/bin/axon-fabric.rs', '        .unwrap_or_else(|| bad("not an object".into()));',
+     'DOMINATED (checkable): a signer that is not an object has no keys, so the next check (`keys != [issuer_ref, key_path, public_key]`, rowed M2282) refuses it with the same exit code; this arm only words the reason (a_signer_the_operator_did_not_provision_properly_signs_nothing asserts the wording)'),
+    ('crates/axon-fabric/src/bin/axon-fabric.rs', '        .unwrap_or_else(|e| bad(format!("issuer_ref: {e}")));',
+     'FAILS CLOSED (checkable): `unwrap_or_else(.. bad(..))` on a read, parse or metadata error of the signer registry or key; the alternative is `.unwrap()`, a panic (exit 101): either way the process ends before any signer is returned and nothing is signed. The checks that decide WHICH files qualify are rowed: regular file (M2281), the exact fields (M2282), mode (M348), the public-key pin'),
+    ('crates/axon-fabric/src/bin/axon-fabric.rs', '                if e.raw_os_error() == Some(libc::ELOOP) {',
+     'DOMINATED (checkable): the ELOOP arm words the refusal of a symlinked key; the open itself (O_NOFOLLOW) fails for it either way and the next line\'s `bad(format!("key {}: {e}"..))` refuses it with the same exit code'),
+    ('crates/axon-fabric/src/bin/axon-fabric.rs', '                bad(format!("key {}: {e}", path.display()))',
+     'FAILS CLOSED (checkable): `unwrap_or_else(.. bad(..))` on a read, parse or metadata error of the signer registry or key; the alternative is `.unwrap()`, a panic (exit 101): either way the process ends before any signer is returned and nothing is signed. The checks that decide WHICH files qualify are rowed: regular file (M2281), the exact fields (M2282), mode (M348), the public-key pin'),
+    ('crates/axon-fabric/src/bin/axon-fabric.rs', '        .unwrap_or_else(|e| bad(format!("key {}: {e}", path.display())));\n    {',
+     'FAILS CLOSED (checkable): `unwrap_or_else(.. bad(..))` on a read, parse or metadata error of the signer registry or key; the alternative is `.unwrap()`, a panic (exit 101): either way the process ends before any signer is returned and nothing is signed. The checks that decide WHICH files qualify are rowed: regular file (M2281), the exact fields (M2282), mode (M348), the public-key pin'),
+    ('crates/axon-fabric/src/bin/axon-fabric.rs', '        .unwrap_or_else(|e| bad(format!("key {}: {e}", path.display())));\n    let pk',
+     'FAILS CLOSED (checkable): `unwrap_or_else(.. bad(..))` on a read, parse or metadata error of the signer registry or key; the alternative is `.unwrap()`, a panic (exit 101): either way the process ends before any signer is returned and nothing is signed. The checks that decide WHICH files qualify are rowed: regular file (M2281), the exact fields (M2282), mode (M348), the public-key pin'),
+    ('crates/axon-fabric/src/bin/axon-fabric.rs', '        .unwrap_or_else(|e| bad(format!("key {}: {e}", path.display())));\n    if pk != field',
+     'FAILS CLOSED (checkable): `unwrap_or_else(.. bad(..))` on a read, parse or metadata error of the signer registry or key; the alternative is `.unwrap()`, a panic (exit 101): either way the process ends before any signer is returned and nothing is signed. The checks that decide WHICH files qualify are rowed: regular file (M2281), the exact fields (M2282), mode (M348), the public-key pin'),
+    ('crates/axon-fabric/src/bin/axon-protected-launcher.rs', '        if observe {\n            finish(\n                serde_json::to_string(&pl::ObserveReport::refused(why)).unwrap_or_default(),',
+     'ROWED ELSEWHERE (checkable): `finish` prints the reply and exits with the code it is given (its print is M2335); the report and the code are what serve_as/serve_observe return, rowed through the exit-code tests of every launch test (they parse the reply and assert the code)'),
+    ('crates/axon-fabric/src/bin/axon-protected-launcher.rs', '        finish(serde_json::to_string(&r).unwrap_or_default(), code)',
+     'ROWED ELSEWHERE (checkable): `finish` prints the reply and exits with the code it is given (its print is M2335); the report and the code are what serve_as/serve_observe return, rowed through the exit-code tests of every launch test (they parse the reply and assert the code)'),
+    ('crates/axon-fabric/src/bin/axon-protected-launcher.rs', '    finish(report(r), code)',
+     'ROWED ELSEWHERE (checkable): `finish` prints the reply and exits with the code it is given (its print is M2335); the report and the code are what serve_as/serve_observe return, rowed through the exit-code tests of every launch test (they parse the reply and assert the code)'),
+]
+
+EXEMPT += [
+    ("crates/axon-os/src/runtime.rs", "        .stdin(Stdio::null())\n        .stdout(Stdio::piped())",
+     "NOT ON THE PROTECTED ROUTE (checkable): the legacy process adapter (_ACR). REMAINDER (no row yet): its interpreter child's stdin; a test would need a hostile parent with a live stdin pipe, and the child runs a program the supervisor already admitted"),
 ]
 
 
@@ -3462,6 +3481,27 @@ PRIV_FORM = re.compile(
     r"\.pre_exec\(|"
     r"\blibc::(?:unshare|setns|chroot|pivot_root|mount|umount2?|capset|seccomp)\(|\bSECCOMP_MODE_"
 )
+# Amendment 91 (C9 round 7, eqgate3): the same blindness for what a child is
+# BUILT with and what bounds a read. A child's environment, its stdio, the
+# option list handed to git, a size cap and a descriptor-inheritance flag build
+# no `Err` either, and each could be removed alone with every suite green
+# (round 7: the helper's `quiet` Stdio::null -> inherit, git's GIT_OPTIONAL_LOCKS,
+# core.hooksPath and --no-includes, the runner's `n.min(room)` output cap). The
+# forms were derived by sweeping every in-scope file for the builder and OS
+# boundary vocabulary: Command env/env_clear/envs/env_remove/current_dir/stdin/
+# stdout/stderr, the git `-c` option lists and GIT_* variables, process-state
+# libc calls (setitimer, chdir, close_range, setpriority, sched_*, personality,
+# flock, setsockopt, dup2/dup3, pipe2, socket/socketpair/accept4, unlink/rename/
+# link), descriptor flags (O_CLOEXEC, SOCK_CLOEXEC, O_NONBLOCK, FD_CLOEXEC),
+# and the cap forms (`.min(<bound>)` slices, `.take(<bound>)`/`.truncate(..)` of a
+# MAX_* bound; a comparison `x > MAX_*` is not one: it is followed by its own
+# refusal, which the Err forms already see). One alternative per line: each group is its own gate row.
+BUILD_FORM = re.compile(
+    r"\.(?:env_clear|env_remove|envs)\(|(?<![\w:])(?:cmd|c|command)\.env\(|^\s*\.env\(|\.current_dir\(|\.(?:stdin|stdout|stderr)\(\s*(?:std::process::)?Stdio::(?:null|inherit)\(|"
+    r"\"-c\"|\bcore\.(?:fsmonitor|hooksPath|excludesFile|attributesFile|checkStat|trustCtime)\b|\bprotocol\.allow\b|\bsafe\.directory\b|\"--no-includes\"|\"GIT_[A-Z_]+\"|"
+    r"\blibc::(?:setitimer|chdir|fchdir|close_range|setpriority|sched_\w+|personality|flock|setsockopt|dup[23]?|pipe2|socketpair|accept4|socket|unlinkat?|renameat2?|linkat?)\(|\bSYS_close_range\b|\b(?:O_CLOEXEC|SOCK_CLOEXEC|FD_CLOEXEC|SOCK_NONBLOCK)\b|"
+    r"\.min\(\s*(?:room|cap|limit|bound|max)\w*\s*\)|\.take\(\s*[a-z_]*(?:limit|cap|bound|max)\w*|\.(?:min|take|truncate)\([^)]*\bMAX_[A-Z_]+"
+)
 # A decision expressed as `Some("reason")` / `Some(format!(..))` (evo::propose's
 # exclusion chain, submit's `problem = Some(..)`), as a VALUE: a pattern
 # (`Some("x") =>`, `== Some("x")`, `matches!(.., Some("x"))`) reads one.
@@ -3471,6 +3511,10 @@ EXIT = re.compile(r"\bprocess::exit\((?!\s*0\s*\))")
 LOCAL_CTOR_DEF = re.compile(r"\blet\s+(\w+)\s*=\s*(move\s+)?\|[^|]*\|.*\bErr\(")
 DIVERGING_DEF = re.compile(r"(?:\bfn\s+(\w+)\s*(?:<[^>]*>)?\s*\([^)]*\)|\blet\s+(\w+)\s*=\s*(?:move\s+)?\|[^|]*\|)\s*->\s*!")
 EXIT_NONZERO = re.compile(r"\bexit\(\s*[1-9]")
+# Amendment 91: a diverging fn that exits with a COMPUTED code (`exit(code)`,
+# axon-fabric's `refuse`) is a refusal constructor as well: the code is the
+# refusal's kind, and no caller passes 0.
+EXIT_COMPUTED = re.compile(r"\bexit\(\s*[A-Za-z_]")
 DIVERGING_BODY = 8
 
 
@@ -3478,10 +3522,30 @@ def local_ctors(lines):
     """Names of the file-local refusal constructors (amendment 71): one-line
     `Err` closures, and diverging fns/closures that exit non-zero."""
     out = {m.group(1) for l in lines for m in [LOCAL_CTOR_DEF.search(l)] if m}
+    defs = []
     for i, l in enumerate(lines):
         m = DIVERGING_DEF.search(l)
-        if m and any(EXIT_NONZERO.search(x) for x in lines[i:i + DIVERGING_BODY]):
-            out.add(m.group(1) or m.group(2))
+        if m:
+            defs.append((m.group(1) or m.group(2), i))
+    for name, i in defs:
+        if any(EXIT_NONZERO.search(x) or EXIT_COMPUTED.search(x) for x in lines[i:i + DIVERGING_BODY]):
+            out.add(name)
+    # Amendment 91: a diverging fn or closure whose body DELEGATES to a
+    # refusal (`refuse(..)`, `die(..)`, another registered diverging name) is a
+    # refusal constructor too, to a fixed point. Round 7: `let bad = |why|
+    # -> ! { refuse(..) }` delegates through `refuse`, whose own exit takes a
+    # variable code, so the 13 `bad(` calls of the signer loader were invisible.
+    changed = True
+    while changed:
+        changed = False
+        for name, i in defs:
+            if name in out:
+                continue
+            body = "\n".join(lines[i:i + DIVERGING_BODY])
+            calls = {m.group(0)[:-1] for m in re.finditer(r"(?<![\w.])\w+\(", body)} - {name}
+            if any(c in out for c in calls):
+                out.add(name)
+                changed = True
     return out
 
 
@@ -3513,7 +3577,7 @@ def _some_reason_is_value(l):
 def is_site(l, ctors=()):
     if SITE.search(l) or DIAG.search(l) or EXIT.search(l):
         return True
-    if PRIV_FORM.search(l.split("//")[0]) or OPEN_FLAG.search(l.split("//")[0]) or _some_reason_is_value(l.split("//")[0]):
+    if BUILD_FORM.search(l.split("//")[0]) or PRIV_FORM.search(l.split("//")[0]) or OPEN_FLAG.search(l.split("//")[0]) or _some_reason_is_value(l.split("//")[0]):
         return True
     if any(err_is_expression(l, m.start()) for m in ERR.finditer(l)):
         return True
@@ -4127,7 +4191,7 @@ def judge_file(f, rows, bad):
         if n != 1:
             bad.append(f"exemption anchor occurs {n} times in {f}: {anchor!r}")
             continue
-        ex.append([line_of(text, text.index(anchor)), anchor, reason, 0])
+        ex.append([line_of(text, text.index(anchor)), anchor, reason, 0, 0, 0])
     covered = exempt = 0
     uncovered = []
     for g, i, at, kind in sites(text, f, bad):
@@ -4140,14 +4204,14 @@ def judge_file(f, rows, bad):
         ex_hit = [e for e in ex if ((g <= e[0] <= i) if kind == "line" else e[0] == g)]
         for e in ex_hit:
             e[3] += 1
+            # Amendment 91: an exemption is STALE only when every site whose
+            # block holds it is covered by a row (it used to be dropped as soon
+            # as ANY covered site's block held it, which the amendment-87 gate
+            # narrowed to its own line, and so stopped flagging the exemption of
+            # a guard a row had since taken over: the survey found four).
+            e[4 if by else 5] += 1
         if by:
             covered += 1
-            for e in ex_hit:
-                # Amendment 87: only an exemption pinned on the site's own line
-                # outlives its reason when a row covers it; one anchored on an
-                # earlier line of the block belongs to the site it names.
-                if e[0] == i or kind != "line":
-                    bad.append(f"{f}:{i + 1}: exempt ({e[1]!r}) yet covered by {by}: drop the exemption")
         elif ex_hit:
             exempt += 1
         else:
@@ -4155,9 +4219,12 @@ def judge_file(f, rows, bad):
                     "predicate": f"{lines[g].strip()} (a predicate primitive: it decides by bool/Option)",
                     "verdict": f"{lines[g].strip()} (a function deciding by a verdict return type)"}[kind]
             uncovered.append(f"{f}:{at + 1}: refusal site with no row and no exemption: {what}")
-    for line, anchor, _, hits in ex:
+    for line, anchor, _, hits, cov, sole in ex:
         if hits == 0:
             bad.append(f"{f}:{line + 1}: exemption matches no refusal site: {anchor!r}")
+        elif cov and not sole:
+            bad.append(f"{f}:{line + 1}: exempt ({anchor!r}) yet every site it lies in is covered by a row: "
+                       "drop the exemption")
     return covered, exempt, uncovered
 
 
@@ -4190,6 +4257,15 @@ def check(without=(), freeze=False, out=print):
             continue
         out(f"{f}: {covered} covered by a row, {exempt} exempt")
         bad.extend(uncovered)
+    # Amendment 91: an exemption that names a row must name one that EXISTS.
+    # 41 of 343 row-citing exemptions named a retired row (a four-cell record
+    # stands behind it) and three named a row that was never there (M1088,
+    # M1597, M2151): a reason resting on a row nobody can run is no reason.
+    known = {r[0] for r in rows} | {r[0] for r in load_rows()}
+    for ef, anchor, reason in EXEMPT:
+        gone = sorted({m for m in re.findall(r"\bM\d{1,4}\b", reason) if m not in known}, key=lambda x: int(x[1:]))
+        if gone:
+            bad.append(f"{ef}: exemption {anchor[:50]!r} cites {gone}, which are not registry rows")
     for b in bad:
         out(f"BAD {b}")
     return bad

@@ -287,6 +287,20 @@ pub struct PolicyVersion {
 
 #[cfg(test)]
 mod tests {
+    /// C9 round 7, EQGATE3 (amendment 91): `AuthorityEpoch::new` is `pub` and
+    /// refuses a value past 2^53-1. The refusal was exempted as UNREACHABLE (a
+    /// pointer's epoch only grows by one); a caller of `new` reaches it.
+    #[test]
+    fn an_authority_epoch_past_the_json_safe_range_is_refused() {
+        AuthorityEpoch::new(MAX_INTEGER).expect("control: the largest safe epoch");
+        let got = AuthorityEpoch::new(MAX_INTEGER + 1);
+        assert!(
+            got.as_ref()
+                .is_err_and(|e| e.to_string().contains("exceeds 2^53-1")),
+            "ATTACK: an authority epoch past 2^53-1 was accepted: {got:?}"
+        );
+    }
+
     use super::*;
 
     #[test]

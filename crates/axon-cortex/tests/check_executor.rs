@@ -515,3 +515,137 @@ fn a_registry_file_never_registers_a_suite_id_the_id_rule_refuses() {
         }
     }
 }
+
+// ── C9 round 7, EQGATE3 (amendment 91): what the local check child is built with
+//
+// The check child's working directory, its (empty) environment and the output
+// it may buffer are builder calls and a size cap that build no `Err`; each was
+// removable alone with every suite green. A stand-in "interpreter" records its
+// own working directory and environment.
+
+fn recording_exec(dir: &Path, script: &str) -> LocalInterpreterExecutor {
+    let exe = dir.join("axon-recorder.sh");
+    common::write_executable(&exe, script, 0o755);
+    LocalInterpreterExecutor::pin_on_first_use(exe)
+}
+
+#[test]
+fn the_local_check_child_gets_its_workspace_and_only_the_environment_it_is_given() {
+    let dir = tmpdir("env");
+    let ws = dir.join("ws");
+    std::fs::create_dir_all(&ws).unwrap();
+    std::fs::write(ws.join("f.ax"), FIXTURE).unwrap();
+    let rec = dir.join("child-state");
+    let exec = recording_exec(
+        &dir,
+        &format!("#!/bin/sh\n{{ pwd; env; }} > '{}'\nexit 0\n", rec.display()),
+    )
+    .with_clean_env()
+    .with_effect_ceiling("IO,Random")
+    .with_env("EQ_TRIAL_HOME", "/tmp/trial-home");
+    // The recorder prints no verdict: the dispatch refuses it, which is fine;
+    // what is judged is the state the child recorded.
+    let _ = exec.run_checks(&CheckRequest {
+        workspace: &ws,
+        rel_path: "f.ax",
+        filter: None,
+    });
+    let text = std::fs::read_to_string(&rec)
+        .unwrap_or_else(|e| panic!("setup: the stand-in recorded nothing: {e}"));
+    let mut lines = text.lines();
+    assert_eq!(
+        Path::new(lines.next().unwrap()).canonicalize().unwrap(),
+        ws.canonicalize().unwrap(),
+        "ATTACK: the check child did not run in its own workspace"
+    );
+    let vars: std::collections::BTreeMap<&str, &str> =
+        lines.filter_map(|l| l.split_once('=')).collect();
+    assert_eq!(
+        vars.get("AXON_ALLOWED_EFFECTS"),
+        Some(&"IO,Random"),
+        "ATTACK: the check child did not run under the effect ceiling it was given: {vars:?}"
+    );
+    assert_eq!(
+        vars.get("EQ_TRIAL_HOME"),
+        Some(&"/tmp/trial-home"),
+        "ATTACK: the check child did not get the environment it was given: {vars:?}"
+    );
+    let stray: Vec<&&str> = vars
+        .keys()
+        .filter(|k| {
+            ![
+                "AXON_ALLOWED_EFFECTS",
+                "EQ_TRIAL_HOME",
+                "PWD",
+                "SHLVL",
+                "_",
+                "OLDPWD",
+            ]
+            .contains(k)
+        })
+        .collect();
+    assert!(
+        stray.is_empty(),
+        "ATTACK: the check child inherited the launcher's environment: {stray:?}"
+    );
+}
+
+fn peak_rss_kb() -> u64 {
+    std::fs::read_to_string("/proc/self/status")
+        .unwrap()
+        .lines()
+        .find_map(|l| l.strip_prefix("VmHWM:"))
+        .and_then(|v| v.split_whitespace().next()?.parse().ok())
+        .expect("VmHWM")
+}
+
+/// C9 round 7 (eqgate3): run `test` again ALONE in a child of this test binary
+/// and say whether THIS process is that child. Peak RSS (`VmHWM`) is a property
+/// of the whole process, and a sibling test thread that allocates would be read
+/// as the growth under test: a suite run found the flood test failing on a
+/// neighbour's memory. Usage: `if !alone("name") { return; }` first.
+fn alone(test: &str) -> bool {
+    if std::env::var("AXON_EQ_ALONE").as_deref() == Ok(test) {
+        return true;
+    }
+    let o = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", test, "--test-threads=1", "--nocapture"])
+        .env("AXON_EQ_ALONE", test)
+        .output()
+        .unwrap();
+    assert!(
+        o.status.success() && String::from_utf8_lossy(&o.stdout).contains("1 passed"),
+        "{test} failed when run alone:\n{}\n{}",
+        String::from_utf8_lossy(&o.stdout),
+        String::from_utf8_lossy(&o.stderr)
+    );
+    false
+}
+
+#[test]
+fn the_local_check_child_cannot_make_the_launcher_buffer_its_whole_output() {
+    if !alone("the_local_check_child_cannot_make_the_launcher_buffer_its_whole_output") {
+        return;
+    }
+    let dir = tmpdir("cap");
+    let ws = dir.join("ws");
+    std::fs::create_dir_all(&ws).unwrap();
+    std::fs::write(ws.join("f.ax"), FIXTURE).unwrap();
+    let exec =
+        recording_exec(&dir, "#!/bin/sh\nhead -c 400000000 /dev/zero\n").with_max_output(4096);
+    let before = peak_rss_kb();
+    let got = exec.run_checks(&CheckRequest {
+        workspace: &ws,
+        rel_path: "f.ax",
+        filter: None,
+    });
+    assert!(
+        got.is_err(),
+        "ATTACK: a flood past the capture bound yielded a verdict: {got:?}"
+    );
+    let grew = peak_rss_kb().saturating_sub(before);
+    assert!(
+        grew < 120_000,
+        "ATTACK: the launcher buffered the check's flood ({grew} kB of peak growth for a 4 KiB bound)"
+    );
+}

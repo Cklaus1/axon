@@ -4970,3 +4970,125 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       `--build-uid N` and `--expect-commit SHA` (for `--apply`); the builder pin gains `build_uid`; a guest
       image and host build made before this amendment are refused (records lack `build_uid` and `measured`).
 
+## Amendment 91: what a child is built with, what bounds a read, and the exemptions that were wrong (C9 round 7, eqgate3)
+
+91. **Source: the round-7 EQUIVALENCE review (`DO_NOT_REGISTER`), two executed blockers and two minors.**
+    Mutation ids M2270-M2339 (all 70 used; M2271, M2272, M2274, M2278, M2318 and M2338 were reused for the
+    rows listed below once their first purpose was merged away), matrix rows A172-A177 (the integrator
+    renumbers; this branch alone lacks A162-A171, which other branches hold, so its matrix check was run with
+    placeholders for that gap).
+    - **BLOCKER 1: the gate could not see environment construction, stdio redirection, git option lists,
+      size caps, descriptor-inheritance flags, or a refusal made through a diverging closure that
+      delegates.** Derived by sweeping every in-scope file for the builder and OS-boundary vocabulary
+      (`BUILD_FORM`, one source line per group): `Command::{env_clear, env, env_remove, envs}`,
+      `current_dir`, `stdin/stdout/stderr(Stdio::null|inherit)`, the git `-c` options and `GIT_*`
+      variables, process-state libc calls (`setitimer`, `chdir`, `close_range`, `setpriority`, `sched_*`,
+      `personality`, `flock`, `setsockopt`, `dup`, `pipe2`, `socket*`, `unlinkat`, `renameat2`, ...), the
+      close-on-exec flags, and the cap forms (`.min(room)`, `.take(<bound>)`, `.take(MAX_*)`,
+      `.truncate(MAX_*)`). Swept and NOT made forms, with the reason: `Stdio::piped()` (a pipe is the capture the
+      caller then takes; removed, the take or the parse of empty output fails: it removes no guard; all 20
+      sites in scope are followed by one), `x > MAX_*` (followed by its own refusal, which the `Err` forms
+      see), and the uid/gid/pre_exec/process_group calls (amendment 87's `PRIV_FORM`). A diverging closure or
+      fn is now a refusal constructor when its body calls `exit` with a literal non-zero or a COMPUTED code
+      (`refuse`) or calls another constructor, to a fixed point; that makes the signer loader's 13 `bad(..)`
+      calls visible (`DIVERGING_DEF` registered only a literal non-zero exit within eight lines).
+      Gate rows M2270, M2273, M2275, M2277 (the form lines), M2279, M2280 (the transitive rule); planted-form
+      tests `a_child_build_and_a_size_cap_are_sites` and `a_diverging_closure_that_delegates_to_a_refusal_is_a_constructor`.
+    - **Exposed: 82 sites.** ROWED, each by a test whose attack is the weaker environment, redirection, cap or
+      option, observed from inside the child, through a file, through memory growth or on a hostile repository:
+      the signer key that is not a regular file (a FIFO an attacker feeds the genuine key through) and the signer
+      naming extra fields (M2281, M2282); every `git_cmd` option and its empty environment, each against a
+      repository whose own config names the thing to defeat (M2283-M2291: env, `GIT_OPTIONAL_LOCKS` as the
+      index of the tree under test being written, fsmonitor, a hook from `core.hooksPath`, `core.excludesFile`,
+      `core.attributesFile`, `core.checkStat`, `core.trustCtime`, `safe.directory`); the three stdio
+      redirections of each of the root launcher (the `quiet` closure), the pinned launcher and its verify step,
+      and the observer program, read from the child's own `/proc/self/fd` against pipes (M2292-M2300); the
+      output caps of the PSV runner, the local check executor and the command generator's stdout and stderr, as
+      peak-RSS growth past 120 MB for a 4 KiB bound, each test run alone in its own process so a neighbour's
+      allocation is not read as the growth (M2301-M2304), the custodian's and observer's request-line bounds
+      (answered at the bound, not at the 5 s deadline) and a measured file's bound (M2305-M2307); the helper's
+      `openat` close-on-exec (the launcher's descriptor table against an allowlist, M2308); the PSV check
+      child's and the local check child's and the interpreter child's environment, working directory, seed,
+      ceiling and virtual clock (M2309-M2317, M2319), each against a parent whose own environment is hostile.
+    - **Stated and not rowed (names, so they are greppable):** `grep -n REMAINDER scripts/v022_refusal_coverage.py`.
+      The git reader's environment and `--no-includes` are DOMINATED (`git config --file` reads only the named
+      file; `include.*` is refused by `allowed_key` either way); `GIT_CONFIG_NOSYSTEM` needs a writable
+      `/etc/gitconfig` (never written); `core.untrackedCache=false` could not be attacked (a forged
+      untracked-cache extension that hides a file was not constructible: git re-lists the directory); the
+      observer's reply bound (`take(MAX_REPLY + 4096)`) needs a flooding stand-in helper; the legacy adapter's
+      interpreter-child stdin, `PATH` and the psv check child's `PATH` have no row (no effect: the check child
+      spawns nothing); `current_dir("/")` after `harden`'s `chdir("/")` is dominated; the custodian client's
+      unpinned arm is the development route. Dispositions with rows were not exempted in bulk: 82 sites,
+      41 exemptions with a call-graph or documentation fact each, the rest rowed.
+    - **BLOCKER 2: exemptions that said a guard is unobservable or unreachable were wrong.**
+      (a) `PR_SET_DUMPABLE` of the PSV runner is observed by a unit test in the binary (`PR_GET_DUMPABLE` is 1,
+      the real `set_non_dumpable` is called, it is 0: M2320); the HELPER's `PR_SET_DUMPABLE` is observed by a
+      FRESH PROCESS (this test binary re-run on one test) that runs `harden()` and reads the bit (M2321). The guest PID 1's hardening, which
+      amendment 87 left as REMAINDER because it needs a real boot, is observed the same way, in a forked child of a
+      host test: `apply_seccomp` leaves `no_new_privs` set and filter mode on (M2329, M2330), the supervisor
+      forwards SIGTERM and SIGINT to its child and reports 128 + signal (M2331-M2333, a `sleep` grandchild). No
+      guest boot was run. (b) `prepare`'s candidate and suite tree checks (exempted UNREACHABLE) are reached by
+      handing the `pub` function another directory (M2322, M2323). (c) The journal's `line.seq != seq + 1`
+      (NOT A VERDICT PROPERTY) survived while its sibling was killed: a journal with a gap is refused (M2324).
+      (d) The `lim2` REMAINDER said "no row yet" for limits M1605-M1613 already row; the closure carrying them is
+      now rowed too (M2276) and the stale text is gone.
+    - **A real defect found by trying to reach an UNREACHABLE refusal, and fixed.** `Store::guard` (a `pub`
+      function) stopped checking components at the first one that does not exist yet, so a `..` after a missing
+      component was accepted (`root/a/../../outside`). The check is now made on EVERY component before any is
+      looked up (M2325). Every internal caller builds paths from validated segments, so nothing was exploitable
+      through the store's own API; the fix removes the dependence on that.
+    - **The exemption audit (the reviewer sampled 36 of 861 plus the 14 REMAINDER and found 5 wrong in 50).**
+      Done systematically, by kind: (i) EVERY REMAINDER (14), UNREACHABLE (19) and DOMINATED (8) was read; the
+      wrong ones are the above and workspace's `DestinationExists` (M2274), the byte quota (M2272), the journal's
+      overflow check (M2278) and duplicate-settlement check (M2318). (ii) A MECHANICAL check of every exemption
+      that cites a row: 343 cite one; 41 cite a RETIRED row (a four-cell record stands behind each), three cited a
+      row that does not exist (M1088, M1597, M2151: corrected), and the gate now refuses any exemption naming a row
+      the registry does not hold (M2271). (iii) A mechanical call-graph check of the 264 "not on the protected
+      route" exemptions with a unique anchor: 20 sit in generic functions, 54 name a function that also exists
+      elsewhere under the same name (`validate`, `create`, `parse`...), and the ones with a real cross-crate caller
+      are the documented executor and Cortex paths whose reasons already name the caller. (iv)
+      `scripts/v022_exemption_survey.py` tries the cheapest kill for every exemption of a file set (its guard
+      opener to `if false && (..)`, the crate's tests, restore) and reports the ones a test kills; a run that hits
+      its time bound is INCONCLUSIVE, never a kill. **A first pass of this survey was wrong and is withdrawn:**
+      `harden_makes_the_helper_non_dumpable` forked a multi-threaded test process, which deadlocked on an
+      allocator lock, hung the lib suite, and the survey read the timeouts as kills (journal 541, 623 and others
+      looked "wrong" and are not). The fork tests (this one and the guest's two) now run in a fresh single-test
+      process; the survey was rerun clean. Swept: the journal, workspace, branches, axon-audit and axon-os
+      ledger. **Result: 87 exemptions; 22 killed by a test (the exemption is wrong), 19 survived (the claim
+      held), 1 inconclusive (the journal's lock deadline), 35 have a non-`if` opener (a match arm or a return:
+      not tried), 10 have no line site.** The killed ones that were on the protected route and cheap are rows
+      (above: M2272, M2274, M2278, M2318). **The remainder, not converted because no id was left in this
+      range, each with the test that kills it: journal.rs 515 (`an_undeclared_scope_or_a_redeclared_ceiling_is_refused`),
+      562 (`a_record_that_violates_the_state_machine_is_corruption`), 571
+      (`sigkill_after_launch_reconciles_to_outcome_unknown_with_liability_kept`), 702
+      (`g13_settlement_without_origin_is_refused_and_writes_nothing`), 722
+      (`failed_and_cancelled_work_is_charged_or_held_never_dropped`), 1110
+      (`same_operation_id_with_a_different_input_digest_is_a_conflict`); branches.rs 247, 252, 262
+      (`an_experiment_needs_a_durable_base_two_arms_and_independent_approval`), 296
+      (`branches_start_from_one_frozen_base_with_independent_run_identities`), 397
+      (`cancelling_a_losing_branch_keeps_its_record_and_leaves_the_winner_alone`), 403, 409, 417, 439, 469
+      (`publication_requires_base_epoch_writer_exact_verified_output_and_approval`), 537
+      (`two_concurrent_publications_from_one_head_have_exactly_one_winner`); axon-audit lib.rs 392, 399, 535 and
+      axon-os ledger.rs 81, 89 (`ledger::tests::budget_acquisition_blocked`, `weight_exfil_egress_denied_R25`):
+      22 exemptions whose guards a test already kills and that need rows.** Their exemptions argue the route
+      (the journal records the Fabric's own durability, branches and audit are off the protected route), which a
+      killing test does not refute; they stay exemptions with this list as the debt, for the next round.
+      A kind NOT surveyed: NOTHING TO ADMIT (114), OPERATOR-AUTHORED (60), OS ERROR (40): the first two are
+      structural by type (no value to admit with; fields of an operator-owned file), the third fails closed.
+    - **The gate's own staleness rule was too loose and is tightened.** Amendment 87 narrowed "exempt yet covered"
+      to an exemption on the site's own line, so an exemption on a guard's OPENER line stopped being flagged when a
+      row took the guard over (five survived: the journal's seq and duplicate checks, `prepare`'s two tree
+      checks, the helper's `finish`). An exemption is now stale when EVERY site whose block holds it is covered by
+      a row (the helper's regular-file `openat`, which lies in blocks of rowed `fchmod`s and is its own
+      exempted site, is not). M2338; `an_exemption_inside_a_site_a_row_covers_is_stale`.
+    - **MINOR: M2152 and M2153 shared one marker and one test.** M2152 (skip the whole `pre_exec` hook) now
+      has its own test and marker (`the_check_childs_pre_exec_hook_runs`: neither bit set means the hook did
+      not run), M2153 (only `no_new_privs`) keeps `the_check_child_cannot_gain_privilege_and_dies_with_the_runner`.
+    - **MINOR: classified as non-guards, with the reason.** axon-os `(cap / 2).max(1)` and backend
+      `wall_time_ms.div_ceil(1000).max(1)` (both sites): the helper refuses `timeout_s == 0` at
+      `privileged_launcher.rs:588`, and a clamp to 1 only keeps a degenerate limit from becoming "no time at all"
+      (availability, fails closed). The journal's `sync_all`/`fsync` and the `saturating_*` accounting are
+      durability and arithmetic hygiene, not observable by a suite (a crash between write and sync is not
+      reproducible in-process); not guards, not rowed.
+    - **The cortex PDEATHSIG race closure** (`getpid()` after fork before `prctl`) is the same class as the
+      runner's hook and is named here as unobserved: a race window of microseconds with no deterministic attack.

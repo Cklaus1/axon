@@ -1180,4 +1180,172 @@ mod tests {
              metadata service: {e}"
         );
     }
+
+    // ── C9 round 7, EQGATE3 (amendment 91): the guest's process hardening ────
+    //
+    // `apply_seccomp` and the PID-1 supervisor are libc calls that build no
+    // `Err` the gate could see; each was removable alone with every suite green
+    // (no host test ran them). They run here in a FORKED child, so the test
+    // process itself is never made no-new-privs, filtered or a supervisor, and
+    // the parent bounds the child with a wall clock.
+
+    /// C9 round 7 (eqgate3): run `test` again ALONE in a child of this test
+    /// binary and say whether THIS process is that child. The tests below FORK,
+    /// and a fork of a multi-threaded test process can deadlock on an allocator
+    /// lock another test thread held; in a process that runs only this test the
+    /// other thread is idle. (`harden`'s test in axon-fabric hung a suite run
+    /// that way.) Usage: `if !alone("tests::name") { return; }` first.
+    fn alone(test: &str) -> bool {
+        if std::env::var("AXON_EQ_ALONE").as_deref() == Ok(test) {
+            return true;
+        }
+        let o = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", test, "--test-threads=1", "--nocapture"])
+            .env("AXON_EQ_ALONE", test)
+            .output()
+            .unwrap();
+        assert!(
+            o.status.success() && String::from_utf8_lossy(&o.stdout).contains("1 passed"),
+            "{test} failed when run alone:\n{}\n{}",
+            String::from_utf8_lossy(&o.stdout),
+            String::from_utf8_lossy(&o.stderr)
+        );
+        false
+    }
+
+    /// Run `body` in a forked child and return its exit status, or None when it
+    /// did not finish in `secs` (it is then killed).
+    fn forked(secs: u64, body: impl FnOnce() -> i32) -> Option<libc::c_int> {
+        // SAFETY: fork; the child runs `body` and `_exit`s.
+        let pid = unsafe { libc::fork() };
+        if pid == 0 {
+            let code = body();
+            unsafe { libc::_exit(code) };
+        }
+        assert!(pid > 0, "setup: fork");
+        let end = std::time::Instant::now() + std::time::Duration::from_secs(secs);
+        loop {
+            let mut status = 0;
+            // SAFETY: waitpid on our own child.
+            let r = unsafe { libc::waitpid(pid, &mut status, libc::WNOHANG) };
+            if r == pid {
+                return Some(status);
+            }
+            if std::time::Instant::now() >= end {
+                unsafe { libc::kill(pid, libc::SIGKILL) };
+                unsafe { libc::waitpid(pid, &mut status, 0) };
+                return None;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+
+    #[test]
+    fn a_seccomp_filter_is_installed_with_no_new_privs() {
+        if !alone("tests::a_seccomp_filter_is_installed_with_no_new_privs") {
+            return;
+        }
+        // One instruction: BPF_RET | BPF_K, SECCOMP_RET_ALLOW.
+        let allow_all =
+            base64::engine::general_purpose::STANDARD.encode([0x06u8, 0, 0, 0, 0, 0, 0xff, 0x7f]);
+        let st = forked(10, || unsafe {
+            if super::apply_seccomp(&allow_all).is_err() {
+                return 30;
+            }
+            if libc::prctl(libc::PR_GET_NO_NEW_PRIVS, 0, 0, 0, 0) != 1 {
+                return 31;
+            }
+            if libc::prctl(libc::PR_GET_SECCOMP, 0, 0, 0, 0) != 2 {
+                return 32;
+            }
+            0
+        })
+        .expect("setup: the child finished");
+        assert!(libc::WIFEXITED(st), "setup: the child exited normally");
+        match libc::WEXITSTATUS(st) {
+            0 => {}
+            30 => panic!("setup: apply_seccomp refused an allow-all filter"),
+            31 => panic!(
+                "ATTACK: apply_seccomp left the process able to gain privileges (PR_GET_NO_NEW_PRIVS != 1)"
+            ),
+            32 => panic!(
+                "ATTACK: apply_seccomp installed no filter (PR_GET_SECCOMP != 2, filter mode)"
+            ),
+            c => panic!("setup: unexpected child status {c}"),
+        }
+    }
+
+    #[test]
+    fn the_supervisor_forwards_term_and_int_to_its_child() {
+        if !alone("tests::the_supervisor_forwards_term_and_int_to_its_child") {
+            return;
+        }
+        for sig in [libc::SIGTERM, libc::SIGINT] {
+            let sleep = std::ffi::CString::new("sleep").unwrap();
+            let arg = std::ffi::CString::new("30").unwrap();
+            let argv = [sleep.as_ptr(), arg.as_ptr(), std::ptr::null()];
+            // The supervisor, as a forked child of the test, supervising a
+            // `sleep` grandchild of its own. Its pid is shared through a pipe.
+            let mut fds = [0i32; 2];
+            // SAFETY: pipe into a two-int array.
+            assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0, "setup: pipe");
+            // SAFETY: fork; the child never returns.
+            let sup = unsafe { libc::fork() };
+            if sup == 0 {
+                // SAFETY: fork, exec and write to a pipe we own.
+                let g = unsafe {
+                    let g = libc::fork();
+                    if g == 0 {
+                        libc::execvp(sleep.as_ptr(), argv.as_ptr());
+                        libc::_exit(127);
+                    }
+                    let b = g.to_ne_bytes();
+                    libc::write(fds[1], b.as_ptr().cast(), b.len());
+                    g
+                };
+                super::supervisor_main(g);
+            }
+            assert!(sup > 0, "setup: fork");
+            // The supervisor must supervise ITS grandchild: read its pid.
+            let mut b = [0u8; 4];
+            // SAFETY: read from our pipe.
+            let n = unsafe { libc::read(fds[0], b.as_mut_ptr().cast(), 4) };
+            assert_eq!(n, 4, "setup: the supervisor reported its child");
+            let grandchild = i32::from_ne_bytes(b);
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            // SAFETY: signal our own children.
+            unsafe { libc::kill(sup, sig) };
+            let end = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            let mut status = 0;
+            let mut done = false;
+            while std::time::Instant::now() < end {
+                // SAFETY: waitpid on our own child.
+                if unsafe { libc::waitpid(sup, &mut status, libc::WNOHANG) } == sup {
+                    done = true;
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            if !done {
+                unsafe { libc::kill(sup, libc::SIGKILL) };
+                unsafe { libc::kill(grandchild, libc::SIGKILL) };
+                unsafe { libc::waitpid(sup, &mut status, 0) };
+            }
+            assert!(
+                done,
+                "ATTACK: the supervisor did not forward signal {sig} to its child: it was still \
+                 waiting 5 s later"
+            );
+            assert!(
+                libc::WIFEXITED(status),
+                "ATTACK: the supervisor died of signal {sig} itself (no forwarding handler is \
+                 installed): {status:#x}"
+            );
+            assert_eq!(
+                libc::WEXITSTATUS(status),
+                128 + sig,
+                "the supervisor reports its child's death by signal {sig} (128 + signal)"
+            );
+        }
+    }
 }

@@ -1109,6 +1109,77 @@ mod tests {
         );
     }
 
+    /// C9 round 7, EQGATE3 (amendment 91; M2305): one request line is read
+    /// through `take(MAX_MESSAGE)`. A peer that sends more than the bound
+    /// without a newline is answered (refused as malformed) AT the bound, not
+    /// when its deadline runs out: the single-threaded service is not held for
+    /// the deadline by a peer that only has to send enough bytes. The deadline
+    /// here is long (5 s) so only the size bound can answer sooner.
+    #[test]
+    fn a_custodian_request_line_is_cut_off_at_its_size_bound() {
+        let d = tempfile::tempdir().unwrap();
+        let s = Server {
+            cfg: cfg(),
+            mode: Mode::Test,
+            store: NonceStore {
+                dir: d.path().join("n"),
+            },
+            clock: Clock::FixedUnix(1_000_000),
+        };
+        let (a, b) = UnixStream::pair().unwrap();
+        let peer = std::thread::spawn(move || {
+            let mut a = a;
+            let _ = a.write_all(&vec![b'x'; 3 * MAX_MESSAGE as usize]);
+            let mut reply = String::new();
+            let _ = a.set_read_timeout(Some(Duration::from_secs(8)));
+            let _ = a.read_to_string(&mut reply);
+            reply
+        });
+        let started = std::time::Instant::now();
+        s.serve_one_within(b, Duration::from_secs(5));
+        let took = started.elapsed();
+        let reply = peer.join().unwrap();
+        assert!(
+            took < Duration::from_secs(2),
+            "ATTACK: a custodian request line past the size bound was read until the deadline \
+             ({took:?}): {reply}"
+        );
+    }
+
+    /// C9 round 7, EQGATE3 (amendment 91): `pass_pidfd` asks the kernel to
+    /// attach the SENDER's pidfd to every message received on the socket
+    /// (`SO_PASSPIDFD`): a pinned custodian or observer is authenticated by
+    /// the kernel naming who wrote its reply. The setsockopt builds no `Err`
+    /// when it is the wrong option; read the option back.
+    #[test]
+    fn pass_pidfd_arms_so_passpidfd_on_the_socket() {
+        let (a, _b) = UnixStream::pair().unwrap();
+        let get = |fd: RawFd| -> libc::c_int {
+            let mut v: libc::c_int = -1;
+            let mut len = std::mem::size_of::<libc::c_int>() as libc::socklen_t;
+            // SAFETY: getsockopt into a c_int of the length passed.
+            let r = unsafe {
+                libc::getsockopt(
+                    fd,
+                    libc::SOL_SOCKET,
+                    libc::SO_PASSPIDFD,
+                    &mut v as *mut libc::c_int as *mut libc::c_void,
+                    &mut len,
+                )
+            };
+            assert_eq!(r, 0, "setup: this kernel has SO_PASSPIDFD (Linux 6.5)");
+            v
+        };
+        assert_eq!(get(a.as_raw_fd()), 0, "setup: the option starts off");
+        pass_pidfd(a.as_raw_fd()).expect("the call succeeds");
+        assert_eq!(
+            get(a.as_raw_fd()),
+            1,
+            "ATTACK: pass_pidfd did not arm SO_PASSPIDFD: the reply's sender is not named by the \
+             kernel"
+        );
+    }
+
     /// The store is the custodian's own and private.
     #[test]
     fn a_nonce_store_others_can_reach_is_refused() {

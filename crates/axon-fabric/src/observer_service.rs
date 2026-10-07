@@ -981,6 +981,115 @@ mod tests {
         );
     }
 
+    /// C9 round 7, EQGATE3 (amendment 91; M2306): one request line is read
+    /// through `take(MAX_REQUEST)`: a peer sending more than the bound without
+    /// a newline is answered AT the bound, not when the (here 5 s) deadline
+    /// runs out.
+    #[test]
+    fn an_observer_request_line_is_cut_off_at_its_size_bound() {
+        use ring::signature::KeyPair;
+        let pkcs8 =
+            ring::signature::Ed25519KeyPair::generate_pkcs8(&ring::rand::SystemRandom::new())
+                .unwrap();
+        let key = ring::signature::Ed25519KeyPair::from_pkcs8(pkcs8.as_ref()).unwrap();
+        let public_hex = key
+            .public_key()
+            .as_ref()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        let server = Server {
+            cfg: cfg(),
+            mode: Mode::Test,
+            key,
+            key_id: "k".into(),
+            public_hex,
+            sources: Sources {
+                host_config: "/nonexistent/host.json".into(),
+                helper_config: "/nonexistent/helper.json".into(),
+                authority: None,
+            },
+            clock: Clock::System,
+            request_deadline: Duration::from_secs(5),
+        };
+        let (a, b) = UnixStream::pair().unwrap();
+        let peer = std::thread::spawn(move || {
+            let mut a = a;
+            let _ = a.write_all(&vec![b'x'; 2 * MAX_REQUEST as usize]);
+            let mut reply = String::new();
+            let _ = a.set_read_timeout(Some(Duration::from_secs(8)));
+            let _ = a.read_to_string(&mut reply);
+            reply
+        });
+        let started = std::time::Instant::now();
+        server.serve_one(b);
+        let took = started.elapsed();
+        let reply = peer.join().unwrap();
+        assert!(
+            took < Duration::from_secs(2),
+            "ATTACK: an observer request line past the size bound was read until the deadline \
+             ({took:?}): {reply}"
+        );
+    }
+
+    /// C9 round 7, EQGATE3 (amendment 91; M2307): a measured file is read
+    /// through `take(max + 1)`: a file far past its bound is refused without
+    /// the service buffering it.
+    /// C9 round 7 (eqgate3): run `test` again ALONE in a child of this test binary
+    /// and say whether THIS process is that child. Peak RSS (`VmHWM`) is a property
+    /// of the whole process, and a sibling test thread that allocates would be read
+    /// as the growth under test: a suite run found the flood test failing on a
+    /// neighbour's memory. Usage: `if !alone("name") { return; }` first.
+    fn alone(test: &str) -> bool {
+        if std::env::var("AXON_EQ_ALONE").as_deref() == Ok(test) {
+            return true;
+        }
+        let o = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", test, "--test-threads=1", "--nocapture"])
+            .env("AXON_EQ_ALONE", test)
+            .output()
+            .unwrap();
+        assert!(
+            o.status.success() && String::from_utf8_lossy(&o.stdout).contains("1 passed"),
+            "{test} failed when run alone:\n{}\n{}",
+            String::from_utf8_lossy(&o.stdout),
+            String::from_utf8_lossy(&o.stderr)
+        );
+        false
+    }
+
+    #[test]
+    fn a_measured_file_past_its_bound_is_never_buffered() {
+        if !alone("observer_service::tests::a_measured_file_past_its_bound_is_never_buffered") {
+            return;
+        }
+        let t = tempfile::tempdir().unwrap();
+        let p = t.path().join("manifest.json");
+        std::fs::File::create(&p)
+            .unwrap()
+            .set_len(300_000_000)
+            .unwrap();
+        let peak = || -> u64 {
+            std::fs::read_to_string("/proc/self/status")
+                .unwrap()
+                .lines()
+                .find_map(|l| l.strip_prefix("VmHWM:"))
+                .and_then(|v| v.split_whitespace().next()?.parse().ok())
+                .unwrap()
+        };
+        let before = peak();
+        let got = read_measured(&p, 1024);
+        assert!(
+            got.as_ref().is_err_and(|e| e.contains("over 1024 bytes")),
+            "setup: an oversized file is refused: {got:?}"
+        );
+        let grew = peak().saturating_sub(before);
+        assert!(
+            grew < 120_000,
+            "ATTACK: the observer buffered a 300 MB file for a 1 KiB bound ({grew} kB of peak growth)"
+        );
+    }
+
     #[test]
     fn utc_reads_back() {
         for t in [0i64, 1_790_000_000, 1_234_567_890] {

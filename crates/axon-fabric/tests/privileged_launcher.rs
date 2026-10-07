@@ -4661,3 +4661,95 @@ fn the_root_helper_takes_roots_identity_not_its_callers_groups() {
         "ATTACK: the root helper did not take root's uid: {ids}"
     );
 }
+
+// ── C9 round 7, EQGATE3 (amendment 91): what the root launcher runs with ─────
+//
+// The helper runs the pinned launcher (and its verify step) through a `quiet`
+// closure: stdin, stdout and stderr are /dev/null and the working directory is
+// `/`. A launcher that inherits the helper's stdout can write into the reply
+// pipe the Fabric parses; one that inherits stdin reads what is left of the
+// request. Each is a builder call that builds no `Err`; each was removable
+// alone with every suite green. The stand-in records what its own descriptors
+// point at (the helper's three are pipes here).
+#[test]
+fn the_root_launcher_runs_with_null_stdio_in_the_root_directory() {
+    let extra = r#"FDS=$(for i in 0 1 2; do readlink "/proc/$$/fd/$i"; done); echo "$FDS" > "$OUT/fds"; pwd > "$OUT/cwd"
+echo "launcher noise on stdout"; echo "launcher noise on stderr" >&2"#;
+    let f = fx(None, extra, |_| {});
+    let o = {
+        // f.run discards the raw streams: run the helper here.
+        use std::io::Write;
+        let mut child = Command::new(helper_pin().path)
+            .arg("--test-config")
+            .arg(&f.cfg)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(f.request("op-1").to_string().as_bytes())
+            .unwrap();
+        child.wait_with_output().unwrap()
+    };
+    let out = f.out_root.join("op-1");
+    let fds = std::fs::read_to_string(out.join("fds"))
+        .unwrap_or_else(|e| panic!("setup: the launcher did not record its descriptors: {e}"));
+    assert_eq!(
+        fds.lines().collect::<Vec<_>>(),
+        ["/dev/null", "/dev/null", "/dev/null"],
+        "ATTACK: the root launcher inherited a descriptor of the helper's (stdin, stdout, stderr \
+         are the request and reply pipes): {fds}"
+    );
+    let reply = String::from_utf8_lossy(&o.stdout);
+    assert!(
+        !reply.trim().is_empty(),
+        "ATTACK: the helper printed no reply (its report is the only thing the Fabric reads)"
+    );
+    assert!(
+        serde_json::from_str::<serde_json::Value>(reply.trim()).is_ok(),
+        "ATTACK: the launcher's output reached the helper's reply pipe: {reply:?}"
+    );
+    assert!(
+        !String::from_utf8_lossy(&o.stderr).contains("launcher noise"),
+        "ATTACK: the launcher's stderr reached the helper's: {:?}",
+        String::from_utf8_lossy(&o.stderr)
+    );
+    assert_eq!(
+        std::fs::read_to_string(out.join("cwd")).unwrap().trim(),
+        "/",
+        "ATTACK: the root launcher ran in a directory other than /"
+    );
+}
+
+/// C9 round 7, EQGATE3 (amendment 91): every descriptor the helper opens for
+/// itself (`openat`: the operator-directory walk, the input snapshot, the
+/// staging and out roots) is close-on-exec, so the root launcher inherits
+/// exactly the descriptors the helper hands it on purpose (the pinned launcher
+/// and manifest, the out dir) and no directory of the helper's own. The stand-in
+/// lists its open descriptors.
+#[test]
+fn the_root_launcher_inherits_only_the_descriptors_it_is_handed() {
+    let extra = r#"for f in /proc/$$/fd/*; do readlink "$f"; done > "$OUT/openfds""#;
+    let f = fx(None, extra, |_| {});
+    let (code, rep) = f.run(&f.request("op-1"), None);
+    assert_eq!(code, Some(0), "setup: {rep}");
+    let listed = std::fs::read_to_string(f.out_root.join("op-1/openfds")).unwrap();
+    let allowed = |t: &str| {
+        t == "/dev/null"
+            || t.starts_with("pipe:")
+            || t.ends_with("/openfds")
+            || t == f.base.join("launcher.sh").to_str().unwrap()
+            || t == f.base.join("manifest.json").to_str().unwrap()
+            || t == f.out_root.join("op-1").to_str().unwrap()
+    };
+    let stray: Vec<&str> = listed.lines().filter(|t| !allowed(t)).collect();
+    assert!(
+        stray.is_empty(),
+        "ATTACK: the root launcher inherited descriptors the helper opened for itself (not \
+         close-on-exec): {stray:?} of {listed}"
+    );
+}
