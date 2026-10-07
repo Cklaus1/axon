@@ -2389,5 +2389,5 @@ ATTACK_MARKERS.update({
     'M2656': 'ATTACK:\\ gbe\\ service\\ ids\\ a\\ unit\\ not\\ named\\ axon\\-\\*\\ that\\ runs\\ an\\ axon\\ binary',
     'M2657': 'ATTACK:\\ gbe\\ service\\ ids\\ DynamicUser\\ allocates\\ the\\ uid\\ at\\ start:\\ cannot\\ be\\ determined',
     'M2658': 'ATTACK:\\ gbe\\ service\\ ids\\ a\\ service\\ gid:\\ the\\ build\\ gid\\ equals\\ the\\ build\\ uid',
-    'M2659': 'ATTACK:\\ gbe\\ service\\ ids\\ foreign\\ processes:\\ a\\ build\\ uid\\ that\\ already\\ owns\\ processes\\ is\\ refused',
+    'M2659': 'ATTACK:\\ gbe\\ foreign\\ processes:\\ a\\ build\\ uid\\ that\\ already\\ owns\\ processes\\ is\\ refused',
 })
