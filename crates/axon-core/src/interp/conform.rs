@@ -1593,9 +1593,11 @@ impl<'p> Interp<'p> {
         })?;
         match (old, new) {
             (Value::Closure { captured: oc, .. }, Value::Closure { captured: nc, .. }) => {
-                return if !oc.borrow().contains_key(SEALED_CLOSURE_MARK)
-                    && nc.borrow().contains_key(SEALED_CLOSURE_MARK)
-                {
+                let cand = |c: &std::cell::RefCell<HashMap<String, Value>>| {
+                    let c = c.borrow();
+                    c.contains_key(SEALED_CLOSURE_MARK) || c.contains_key(SEALED_FNVAL_MARK)
+                };
+                return if !cand(oc) && cand(nc) {
                     Err("held an operator closure and now holds the candidate's".into())
                 } else {
                     Ok(())

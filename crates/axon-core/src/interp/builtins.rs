@@ -4439,6 +4439,27 @@ impl<'p> Interp<'p> {
                 match result {
                     Ok(Value::Int(n)) => ok!(Value::Int(n)),
                     Ok(Value::Tuple(ref v)) if v.is_empty() => ok!(Value::Int(0)),
+                    // The builtin DECLARES `-> i64`. A candidate fn's declared
+                    // return is only its own (`-> u8` is satisfied by
+                    // `4 as u8`), so a sealed callee's value that is not an
+                    // `i64` would reach the operator at a type nothing on the
+                    // operator side chose — and the pin analysis treats this
+                    // builtin's result as determined (C9 round 9, PSV-1). The
+                    // seal crossing casts it strictly to the declared type.
+                    // The documented `() -> 0`, for a candidate callee too.
+                    Ok(Value::Unit)
+                        if self.seal.active && !self.frame_sealed.get() && self.fn_is_sealed(f) =>
+                    {
+                        ok!(Value::Int(0))
+                    }
+                    Ok(v) if self.seal.active && !self.frame_sealed.get() && self.fn_is_sealed(f) => {
+                        panic(format!(
+                            "sandbox_run: the candidate's `{fn_name}` returned {} where the \
+                             operator's `sandbox_run` is declared `-> i64` — a runtime type \
+                             confusion at the seal crossing",
+                            v.type_name()
+                        ))
+                    }
                     Ok(v) => ok!(v),
                     Err(e) => Err(e),
                 }

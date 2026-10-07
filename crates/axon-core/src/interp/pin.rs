@@ -56,6 +56,13 @@ pub(crate) fn binop_key(op: &BinOp, left: &Expr, right: &Expr) -> u64 {
     h.finish()
 }
 
+/// The key of one UNARY arithmetic site (`-x`, `~x`) within its owning fn.
+pub(crate) fn unary_key(op: &UnaryOp, operand: &Expr) -> u64 {
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    format!("unary|{op:?}|{operand:?}").hash(&mut h);
+    h.finish()
+}
+
 #[derive(Default)]
 pub(crate) struct Pins {
     /// (owning fn, site key) of every site whose receiver/operands ARE
@@ -154,7 +161,7 @@ impl Tys {
 
 /// A builtin's declared return type names a single-letter type variable
 /// (`T`, `U`, `V`): its element comes from the arguments, untyped.
-fn builtin_ret_open(ret: &str) -> bool {
+pub(crate) fn builtin_ret_open(ret: &str) -> bool {
     let mut cur = String::new();
     for c in ret.chars().chain(std::iter::once(' ')) {
         if c.is_alphanumeric() || c == '_' {
@@ -460,6 +467,11 @@ impl Pins {
             .contains(&(owner, binop_key(op, left, right)))
     }
 
+    /// Whether a unary arithmetic site (`-x`, `~x`) has a determined operand.
+    pub(crate) fn determined_unary(&self, owner: usize, op: &UnaryOp, operand: &Expr) -> bool {
+        self.determined.contains(&(owner, unary_key(op, operand)))
+    }
+
     /// Whether `method` can select between operator impls (two or more types).
     pub(crate) fn selects_between_impls(&self, method: &str) -> bool {
         self.impls.get(method).is_some_and(|s| s.len() >= 2)
@@ -562,6 +574,10 @@ fn analyze(
                 }
             }
             Expr::MethodCall { .. } | Expr::BinOp { .. } => calls.push(x),
+            Expr::UnaryOp {
+                op: UnaryOp::Neg | UnaryOp::BitNot,
+                ..
+            } => calls.push(x),
             _ => {}
         };
         crate::ast::walk_expr(e, &mut visit);
@@ -599,6 +615,9 @@ fn analyze(
                 if ctx.det(left, &local, &bound) && ctx.det(right, &local, &bound) =>
             {
                 out.insert((owner, binop_key(op, left, right)));
+            }
+            Expr::UnaryOp { op, operand } if ctx.det(operand, &local, &bound) => {
+                out.insert((owner, unary_key(op, operand)));
             }
             _ => {}
         }
