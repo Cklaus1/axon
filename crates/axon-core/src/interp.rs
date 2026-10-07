@@ -3464,13 +3464,6 @@ impl<'p> Interp<'p> {
                     }
                 }
             }
-            // The dicts the callee mutated, verified on EVERY outcome (the
-            // normal return path verifies only an `Ok`).
-            if result.is_err() {
-                if let Err(e) = self.dict_edge_out() {
-                    result = Err(e);
-                }
-            }
         }
         (result, outs)
     }
@@ -8913,6 +8906,14 @@ fn main() { }
             "fn fill(a: &mut [i64]) { a[0] = 127 }\n",
             "fn fill(a: &mut [i64]) { a[0] = 200 }\n",
         );
+        // First: an element APPENDED past what the operator held (what it held
+        // shows no type there), caught by the declared type alone.
+        let pushed = "@[test]\nfn t() {\n    let mut a = [1, 2, 3]\n    fill(&mut a)\n    assert(a[3].ok())\n}\n";
+        mut_refused(
+            "an appended u8 past the held length",
+            &judged8("r8-mutcast", pushed, &mut_fill("&mut [i64]", "a = arr_concat(a, [v])")),
+            "left holding",
+        );
         let atk = mut_fill("&mut [i64]", "a[0] = v");
         mut_refused(
             "the u8 impl answered",
@@ -8974,6 +8975,26 @@ fn main() { }
         mut_refused("an in-place retype of the held dict", &judged8("r8-mutheld", dicts, &inplace), "retyped a dict entry");
         let out = judged_on("r8-mutheld", dicts, &inplace);
         assert!(out != Ok(TestEnd::Completed), "ATTACK: an in-place retype passed with the rule on: {out:?}");
+    }
+
+    /// The cast runs on EVERY outcome: an operator handler that aborts the call
+    /// (`HandlerDone`) after the candidate wrote a `u8` must not leave it in the
+    /// operator's binding.
+    #[test]
+    fn a_mut_value_is_cast_when_an_operator_handler_aborts_the_call() {
+        let suite = "@[test]\nfn t() {\n    let mut a = [1, 2, 3]\n    let _r = with handler { on IO(p) => 0 } {\n        fill(&mut a)\n        1\n    }\n    assert(a[0].ok())\n}\n";
+        // Control: an honest write then an aborted call keeps the honest value.
+        let honest = "fn fill(a: &mut [i64]) {\n    a[0] = 9\n    println(\"x\")\n}\n";
+        assert_eq!(judged8("r8-mutabort", suite, honest), Ok(TestEnd::Completed), "control");
+        let out = judged8(
+            "r8-mutabort",
+            suite,
+            &mut_fill("&mut [i64]", "a[0] = v\n        println(\"x\")"),
+        );
+        assert!(
+            out != Ok(TestEnd::Completed),
+            "ATTACK: a `&mut` u8 survived an aborted call into the operator's binding: {out:?}"
+        );
     }
 
     /// An ANNOTATED operator array is determined by its annotation, so the
@@ -9055,7 +9076,7 @@ fn main() { }
     /// a forwarding body that ran in an operator frame, where the call edge no
     /// longer applied (`let g = secret; g()` ran the operator's `secret`; a
     /// global `SECRET` leaked through `let g = peek`). The edge now applies at
-    /// creation, and the value carries the provenance of the frame that made it.
+    /// creation.
     #[test]
     fn a_sealed_frame_cannot_take_an_operator_fn_as_a_value() {
         let suite = "fn secret() -> i64 { 9 }\nlet SECRET = 41\nfn peek() -> i64 { SECRET }\n\
@@ -9100,11 +9121,11 @@ fn main() { }
         );
     }
 
-    /// The value made by a SEALED frame from the candidate's own fn runs
-    /// SEALED wherever it is called (the provenance mark), so it cannot reach
-    /// an operator fn even when the operator calls it.
+    /// A candidate fn's value, called by the OPERATOR, still reaches only the
+    /// candidate's fn, which cannot reach an operator fn (a regression control:
+    /// no guard of its own, the call edge in `call_fn_sealed` refuses).
     #[test]
-    fn a_fn_value_remembers_the_provenance_of_the_frame_that_made_it() {
+    fn a_candidate_fn_value_the_operator_calls_still_cannot_reach_operator_fns() {
         let suite = "fn secret() -> i64 { 9 }\n@[test]\nfn t() { let g = give()\n    assert_eq(g(), 9) }\n";
         // The candidate's own fn calls the operator's `secret`: refused whether the
         // call is direct or through the value the operator invokes.

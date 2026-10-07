@@ -2119,4 +2119,12 @@ ATTACK_MARKERS.update({
     'M2176': r"ATTACK: the operator's analysis trusted a type the candidate chose \(the same receiver text as a sibling fn's pinned one\): Ok\(Completed\)",
     'M2177': r"ATTACK: an operator method named recv made a dict-read channel's value look determined: Ok\(Completed\)",
     'M2178': r"ATTACK: the operator's analysis trusted a type the candidate chose \(a candidate global `let X = 4 as u8`\): Ok\(Completed\)",
+    # C9 round 8 (PSV1F, amendment 94)
+    'M2370': r"ATTACK: a `&mut` write-through carried a candidate-chosen value to the operator \(an appended u8 past the held length\): Ok\(Completed\)",
+    'M2371': r"ATTACK: a `&mut` write-through carried a candidate-chosen value to the operator \(a union element admitted the u8\): Ok\(Completed\)",
+    'M2372': r"ATTACK: a `&mut` u8 survived an aborted call into the operator's binding: Ok\(Completed\)",
+    'M2373': r"ATTACK: a `&mut` write-through carried a candidate-chosen value to the operator \(a generic element\): Ok\(Completed\)",
+    'M2374': r"ATTACK: a variable lent as `&mut` was still determined",
+    'M2375': r"ATTACK: a union annotation pinned the receiver",
+    'M2376': r"ATTACK: a sealed frame took an operator fn as a value \(ran the operator's `secret` through a fn value\): Ok\(Completed\)",
 })

@@ -132,20 +132,11 @@ impl<'p> Interp<'p> {
                     // PCI: naming a fn in value position is a REFERENCE to it, so the
                     // call edge applies HERE: a sealed frame may not take an operator
                     // fn as a value (the forwarding body would run it in an operator
-                    // frame, where the edge no longer applies). The value also
-                    // remembers the provenance of the frame that made it, exactly as
-                    // a lambda does.
+                    // frame, where the edge no longer applies). Provenance needs no
+                    // mark: a candidate fn's value, called from anywhere, reaches the
+                    // candidate fn through `call_fn`'s own crossing.
                     self.seal_call(f)?;
-                    let v = fn_value(name, f.params.len());
-                    if self.frame_sealed.get() {
-                        if let Value::Closure { captured, .. } = &v {
-                            captured.borrow_mut().insert(
-                                crate::interp::SEALED_CLOSURE_MARK.to_string(),
-                                Value::Bool(true),
-                            );
-                        }
-                    }
-                    Ok(v)
+                    Ok(fn_value(name, f.params.len()))
                 } else {
                     panic(format!("undefined identifier `{name}`"))
                 }

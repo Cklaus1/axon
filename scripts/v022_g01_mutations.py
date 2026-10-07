@@ -8165,6 +8165,38 @@ MUTATIONS += [
 ]
 
 
+MUTATIONS += [
+    ('M2370', '(PSV1F, am94) a `&mut` write-through value is cast to its declared parameter type at the seal edge back', 'crates/axon-core/src/interp.rs',
+     '                if let Err(why) = self.cast(&mut outs[i], &p.ty, &cx) {',
+     '                if let Err(why) = self.cast(&mut outs[i], &p.ty, &cx).or(Ok::<(), String>(())) {',
+     'axon-core', '--no-default-features --lib', 'interp::tests::a_mut_write_through_value_is_cast_at_the_seal_edge_back'),
+    ('M2371', '(PSV1F, am94) a `&mut` write-through value is judged by what the operator held there', 'crates/axon-core/src/interp.rs',
+     '                        self.replaced_ok_top(old, &outs[i])',
+     '                        self.replaced_ok_top(old, &outs[i]).or(Ok::<(), String>(()))',
+     'axon-core', '--no-default-features --lib', 'interp::tests::a_mut_write_through_value_is_judged_by_what_the_operator_held'),
+    ('M2372', '(PSV1F, am94) the `&mut` edge-back cast runs on every outcome, not only a normal return', 'crates/axon-core/src/interp.rs',
+     '        if crossing {\n            let cx = self.fn_cx(f).strict(true);',
+     '        if crossing && result.is_ok() {\n            let cx = self.fn_cx(f).strict(true);',
+     'axon-core', '--no-default-features --lib', 'interp::tests::a_mut_value_is_cast_when_an_operator_handler_aborts_the_call'),
+    ('M2373', '(PSV1F, am94) the `&mut` edge-back cast is strict (an undetermined type parameter is refused)', 'crates/axon-core/src/interp.rs',
+     '            let cx = self.fn_cx(f).strict(true);',
+     '            let cx = self.fn_cx(f).strict(false);',
+     'axon-core', '--no-default-features --lib', 'interp::tests::a_mut_write_through_value_is_cast_at_the_seal_edge_back'),
+    ('M2374', '(PSV1F, am94) a variable lent as `&mut x` is open in the dispatch analysis', 'crates/axon-core/src/interp/pin.rs',
+     '                            facts.push((r.to_string(), Fact::Unpinned));',
+     '                            let _ = r;',
+     'axon-core', '--no-default-features --lib', 'interp::tests::a_mut_operand_is_never_determined_by_the_pin_analysis'),
+    ('M2375', '(PSV1F, am94) a union annotation does not pin the receiver type', 'crates/axon-core/src/interp/pin.rs',
+     '            T::Union(_) => false,',
+     '            T::Union(xs) => xs.iter().all(|a| go(a, seen)),',
+     'axon-core', '--no-default-features --lib', 'interp::tests::a_mut_operand_is_never_determined_by_the_pin_analysis'),
+    ('M2376', '(PSV1F, am94) a sealed frame cannot take an operator fn as a value', 'crates/axon-core/src/interp/eval.rs',
+     '                    self.seal_call(f)?;\n                    Ok(fn_value(name, f.params.len()))',
+     '                    Ok(fn_value(name, f.params.len()))',
+     'axon-core', '--no-default-features --lib', 'interp::tests::a_sealed_frame_cannot_take_an_operator_fn_as_a_value'),
+]
+
+
 def cargo_build_tests(package, target, env=""):
     """Build the tests a cell will run, ALONE: (ok, output). A compile error is
     the outcome of THIS cargo invocation, never a string found in a test's
