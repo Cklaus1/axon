@@ -154,18 +154,26 @@ Each clause names what must hold. The negative matrix below names how each one f
   runs only if the candidate calls it, so a suite must assert after the call.
 - Sealing, containment and per-provenance kernels run in the guest interpreter as certified at
   `31413ca7` (`governance/proofs/v022-pci/CERTIFICATION.md`, local backend, EMPTY effect ceiling)
-  plus amendments 53/60/72/78/83/88/94 (the delta, listed from git in `governance/notes/v022-pci-delta.md`).
-  origin/main's 13 interpreter commits (Rc arrays and strings, `&mut` write-through, first-class fns,
-  lent closure captures, `arr_sort_by`) were MERGED WITHOUT PCI REVIEW: they are neither narrowing nor
-  known neutral, and the sealing claims for them are only what the gate rows `am94 ...` show: a `&mut`
+  plus amendments 53/60/72/78/83/88/94/96 (the delta, listed from git in `governance/notes/v022-pci-delta.md`).
+  origin/main's 13 commits under `crates/axon-core/src` were MERGED WITHOUT PCI REVIEW; only 5 of the 13
+  change the interpreter (Rc arrays and cheaper calls, shared strings with lent closure captures,
+  `&mut` write-through, first-class fns, the `arr_sort_by` rewrite) and the other 8 are native codegen,
+  build/cache and CLI-help changes. The 5 are neither narrowing nor known neutral, and the sealing claims
+  for them are only what the gate rows `am94 ...` show: a `&mut`
   value a candidate leaves in the operator's binding is cast and judged at the edge back (dispatch and
   width arms, including an annotated operator array and an aborted call), and a `&mut` operand is
   undetermined to the dispatch rule; a sealed frame cannot take an operator fn as a first-class value; and a
   candidate's write to its by-value array parameter does not reach the operator's copy (observed, not
   guarded). Lent closure captures, shared strings and `arr_sort_by` have no row of their own beyond
   the routes listed in amendment 94.
+  Amendment 96 (round 9) closes four more routes of the one class "a value or a name crossed the seal
+  without its edge": the result of `sandbox_run` is cast to its declared `i64` at the crossing; every
+  read of an operator global goes through ONE lookup (drift-tested); a candidate's own fn values are
+  marked and an operator closure is not replaceable by one; and the dispatch rule's width arm covers
+  `-x` / `~x`. Its sweep lists what it examined, what was open and what it did not examine, and claims
+  no completeness; every builtin that runs user code is classified by a drift test.
   Each amendment's PRINCIPAL arms are exercised by named gate rows in `scripts/v022_pci_gates.sh`
-  (rows named `am53` ... `am83`; the row count is not quoted here, it is derived and drift-tested
+  (rows named `am53` ... `am96`; the row count is not quoted here, it is derived and drift-tested
   by `scripts/pci_delta.py --check`). Arms verified to fail a gate row when their code is removed:
   the declared-return cast, the dict edges, the `()` coercion of an absent return type, channel
   stamping at creation, strict closure arguments at a crossing, and the am83 arithmetic arm. The

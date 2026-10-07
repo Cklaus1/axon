@@ -2258,4 +2258,5 @@ ATTACK_MARKERS.update({
     'M2477': r"ATTACK: a candidate fn value replaced an operator closure in the operator's dict: Ok\(Completed\)",
     'M2478': r"ATTACK: the operator's unary negation wrapped at a width the candidate chose: Ok\(Completed\)",
     'M2479': r"ATTACK: the operator's unary negation wrapped at a width the candidate chose: Ok\(Completed\)",
+    'M2480': r"ATTACK: the operator's unary negation wrapped at a width the candidate chose: Ok\(Completed\)",
 })

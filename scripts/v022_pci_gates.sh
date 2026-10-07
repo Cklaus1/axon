@@ -66,6 +66,17 @@ ROWS=(
   "am94 fn-value seal edge|axon-core|lib|interp::tests::a_sealed_frame_cannot_take_an_operator_fn_as_a_value interp::tests::a_candidate_fn_value_the_operator_calls_still_cannot_reach_operator_fns"
   "am94 fn-value seal edge|axon-psv|sealed_frames|a_sealed_frame_cannot_take_an_operator_fn_as_a_value"
   "am94 shared-Rc/COW non-leak|axon-psv|sealed_frames|a_candidates_write_to_its_array_parameter_never_reaches_the_operators_copy"
+  # Amendment 96 (round 9): the fourth instance in two rounds of one class -- a builtin result or a lookup that
+  # skipped the seal edge -- and the sweep that enumerated the rest.
+  "am96 sandbox_run result cast at the crossing|axon-core|lib|interp::tests::sandbox_run_results_are_cast_at_the_seal_crossing"
+  "am96 sandbox_run result cast at the crossing|axon-psv|sealed_frames|sandbox_run_hands_the_operator_an_i64_or_nothing"
+  "am96 one global-read edge|axon-core|lib|interp::tests::a_sealed_frame_cannot_read_an_operator_global_through_a_fast_path interp::tests::every_global_read_goes_through_global_ref"
+  "am96 one global-read edge|axon-psv|sealed_frames|a_candidate_calls_its_own_fn_value_and_never_reads_an_operator_global"
+  "am96 fn value mark|axon-core|lib|interp::tests::a_candidates_own_fn_value_takes_arguments_and_an_operators_still_does_not"
+  "am96 unary width arm|axon-core|lib|interp::tests::operator_unary_arithmetic_never_runs_at_a_width_the_candidate_chose"
+  "am96 unary width arm|axon-psv|sealed_frames|operator_negation_never_runs_at_a_width_the_candidate_chose"
+  "am96 user-code builtins classified|axon-core|lib|interp::tests::every_builtin_that_runs_user_code_is_classified interp::tests::the_sweep_routes_stay_closed"
+  "am96 handler-expression value is undetermined (stated cost)|axon-core|lib|interp::tests::the_value_of_a_with_handler_expression_is_undetermined_until_pinned"
 )
 
 for row in "${ROWS[@]}"; do

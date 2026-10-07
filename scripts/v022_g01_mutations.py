@@ -7049,7 +7049,7 @@ MUTATIONS += [
 MUTATIONS += [
     ('M1671', 'PSV-1 (A109): a dict over the snapshot bound is refused at the crossing, never skipped', _CC, '        if len > DICT_SNAP_MAX {', '        if false && len > DICT_SNAP_MAX {', 'axon-core', _CL, _T72 + 'a_dict_over_the_snapshot_bound_is_refused_not_skipped'),
     ('M1672', 'PSV-1 (A106): a key the operator held may not come back with a value of another type', _CC, '                    if let Err(why) = self.replaced_ok(old, now, &mut seen, 0, true) {', '                    if let Err(why) = Ok::<(), String>(()) {', 'axon-core', _CL, _T72 + 'sealed_code_cannot_retype_a_dict_entry_the_operator_held'),
-    ('M1673', "PSV-1 (A108): a candidate closure may not replace an operator closure in the operator's dict", _CC, '                return if !oc.borrow().contains_key(SEALED_CLOSURE_MARK)', '                return if false && !oc.borrow().contains_key(SEALED_CLOSURE_MARK)', 'axon-core', _CL, _T72 + 'a_dict_the_candidate_mutated_is_verified_at_every_edge_back'),
+    ('M1673', "PSV-1 (A108): a candidate closure may not replace an operator closure in the operator's dict", _CC, '                return if !cand(oc) && cand(nc) {', '                return if false && !cand(oc) && cand(nc) {', 'axon-core', _CL, _T72 + 'a_dict_the_candidate_mutated_is_verified_at_every_edge_back'),
     ('M1674', "PSV-1 (A106): a mutation by sealed code marks the operator's dict for verification", _CC, '                s.dirty = true;', '                s.dirty = false;', 'axon-core', _CL, _T72 + 'sealed_code_cannot_retype_a_dict_entry_the_operator_held'),
     ('M1675', "PSV-1 (A106): the dicts in a candidate fn's arguments are snapshotted when the operator hands them over", _CI, '        if crossing {\n            for a in &args {\n                self.dict_edge_in(a)?;\n            }\n        }\n        let r = self.with_frame(callee', '        if false && crossing {\n            for a in &args {\n                self.dict_edge_in(a)?;\n            }\n        }\n        let r = self.with_frame(callee', 'axon-core', _CL, _T72 + 'sealed_code_cannot_retype_a_dict_entry_the_operator_held'),
     ('M1676', 'PSV-1 (A106): a candidate fn returning to operator code has its mutated dicts verified', _CI, '        if crossing && r.is_ok() {\n            self.dict_edge_out()?;', '        if false && crossing && r.is_ok() {\n            self.dict_edge_out()?;', 'axon-core', _CL, _T72 + 'sealed_code_cannot_retype_a_dict_entry_the_operator_held'),
@@ -8323,8 +8323,8 @@ MUTATIONS += [
      '            T::Union(xs) => xs.iter().all(|a| go(a, seen)),',
      'axon-core', '--no-default-features --lib', 'interp::tests::a_mut_operand_is_never_determined_by_the_pin_analysis'),
     ('M2376', '(PSV1F, am94) a sealed frame cannot take an operator fn as a value', 'crates/axon-core/src/interp/eval.rs',
-     '                    self.seal_call(f)?;\n                    Ok(fn_value(name, f.params.len()))',
-     '                    Ok(fn_value(name, f.params.len()))',
+     '                    self.seal_call(f)?;\n                    Ok(fn_value(\n',
+     '                    Ok(fn_value(\n',
      'axon-core', '--no-default-features --lib', 'interp::tests::a_sealed_frame_cannot_take_an_operator_fn_as_a_value'),
     ('M2470', '(PSV1G, am96) the identifier arm reads a global through the global-read edge', 'crates/axon-core/src/interp/eval.rs',
      '                } else if let Some(v) = self.global_ref(name)? {\n                    Ok(v.clone())',
@@ -8365,6 +8365,10 @@ MUTATIONS += [
     ('M2479', '(PSV1G, am96) a unary site is determined only when its operand is', 'crates/axon-core/src/interp/pin.rs',
      '            Expr::UnaryOp { op, operand } if ctx.det(operand, &local, &bound) => {',
      '            Expr::UnaryOp { op, operand } if true => {',
+     'axon-core', '--no-default-features --lib', 'interp::tests::operator_unary_arithmetic_never_runs_at_a_width_the_candidate_chose'),
+    ('M2480', "(PSV1G, am96) the unary width arm refuses an undetermined operand", 'crates/axon-core/src/interp.rs',
+     '        if !self.pins.determined_unary(self.pin_fn.get(), op, operand) {',
+     '        if false && !self.pins.determined_unary(self.pin_fn.get(), op, operand) {',
      'axon-core', '--no-default-features --lib', 'interp::tests::operator_unary_arithmetic_never_runs_at_a_width_the_candidate_chose'),
 ]
 
