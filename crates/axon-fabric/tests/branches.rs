@@ -147,22 +147,21 @@ fn branches_start_from_one_frozen_base_with_independent_run_identities() {
     );
     assert!(same.is_ok());
     let other = version(&w.env, "other", "fn x() -> i64 { 1 }\n");
-    let e =
-        match w.br.open_experiment(
-            &exp_id(),
-            &other,
-            REGIME,
-            &[
-                (arm("incumbent"), o(WRITER_A)),
-                (arm("challenger-1"), o(WRITER_B)),
-            ],
-            &[o(APPROVER)],
-        ) {
-            Err(e) => e,
-            Ok(_) => panic!(
-                "ATTACK: a different experiment under an existing id was taken for the same one"
-            ),
-        };
+    let e = match w.br.open_experiment(
+        &exp_id(),
+        &other,
+        REGIME,
+        &[
+            (arm("incumbent"), o(WRITER_A)),
+            (arm("challenger-1"), o(WRITER_B)),
+        ],
+        &[o(APPROVER)],
+    ) {
+        Err(e) => e,
+        Ok(_) => {
+            panic!("ATTACK: a different experiment under an existing id was taken for the same one")
+        }
+    };
     assert_eq!(e.kind(), "exists");
 }
 
@@ -488,7 +487,13 @@ fn a_cancelled_branch_refuses_a_publication_that_would_otherwise_succeed() {
         writer: o(WRITER_B),
         ..publication(0, &w.base, &v2, "ch-v2")
     };
-    match w.br.publish(&j, &cfg.epoch, &exp_id(), &arm("challenger-1"), &on_challenger) {
+    match w.br.publish(
+        &j,
+        &cfg.epoch,
+        &exp_id(),
+        &arm("challenger-1"),
+        &on_challenger,
+    ) {
         Err(e) => assert_eq!(e.kind(), "cancelled", "{e}"),
         Ok(h) => panic!("ATTACK: a cancelled branch accepted a publication: {h:?}"),
     }
@@ -498,9 +503,8 @@ fn a_cancelled_branch_refuses_a_publication_that_would_otherwise_succeed() {
         "the cancelled branch's head did not move"
     );
     // Control: the same publication on the branch that was not cancelled.
-    let h = w
-        .br
-        .publish(
+    let h =
+        w.br.publish(
             &j,
             &cfg.epoch,
             &exp_id(),

@@ -5257,7 +5257,7 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
 ## Amendment 93: the 22 exemptions amendment 91 left as debt (C9 round 8, exrows)
 
 93. **Source: amendment 91's "Remainder", 22 exemptions whose guards a test already killed and that had no row
-    because the eqgate3 id range ran out.** Mutation ids M2340-M2360 (M2361-M2369 unused), matrix row A184 (the
+    because the eqgate3 id range ran out.** Mutation ids M2340-M2360 (M2361-M2369 unused), matrix row A181 (the
     integrator renumbers; A178-A183 are held by other branches, so this branch's matrix check was run with
     placeholders for that gap). **21 rowed, 1 exemption kept with a checkable reason, none retired.**
     - **The survey's kills were not all the guards' own attacks, and that decided the rows.** The survey rewrites
@@ -5307,7 +5307,7 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
 ## Amendment 94: the features origin/main added move values into operator-held places and name operator fns (C9 round 8, PSV1F)
 
 94. **Source: the round-8 PSV-1, PSV-3 and SENTINEL reviews (two executed blockers; one minor).**
-    Mutation ids M2370-M2376, matrix rows A190-A192 (the integrator renumbers; this branch alone lacks
+    Mutation ids M2370-M2376, matrix rows A182-A184 (the integrator renumbers; this branch alone lacks
     A178-A189, so its matrix check fails ONLY on that gap). origin/main's 13 interpreter commits (Rc arrays
     and strings, `&mut` write-through, first-class fns, lent closure captures, `arr_sort_by`) were merged
     WITHOUT PCI review; this amendment closes the two routes the round-8 reviews executed and lists what was
@@ -5352,7 +5352,7 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       candidate: the closure-argument cast, annotated or not); `arr_sort_by` with a candidate comparator
       (it permutes the operator's own values and its comparator must return `i64`); the operator's
       by-value array passed to a candidate that writes its parameter (copy-on-write: the suite's copy and a
-      lent closure's capture keep their values, A192); a fn value stored in an array or dict, passed to a
+      lent closure's capture keep their values, A184); a fn value stored in an array or dict, passed to a
       candidate helper, returned to the operator (all refused at creation).
     - **NOT closed or not examined**: struct-field and nested-place `&mut` operands do not exist (the
       checker requires a whole local); `Rc::make_mut` writes other than through these routes were reviewed
@@ -5376,7 +5376,7 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
 
 95. **Source: the round-8 EQUIVALENCE review (`DO_NOT_REGISTER`, one BLOCKER): "a guard expressed as a VALUE, or as an
     atomic refusal, is still invisible to the refusal-site gate."** Mutation ids M2400-M2466 used (of M2400-M2469),
-    matrix rows A196-A200 (other branches hold A178-A195; the integrator renumbers; this branch's matrix check was
+    matrix rows A185-A189 (other branches hold A178-A195; the integrator renumbers; this branch's matrix check was
     run with temporary placeholders for A178-A195, which are not committed). Base `c9r4c/integrate6` (89da403a); no
     file under `crates/axon-core/src` was touched.
     - **Survivors 1-6 are now killed by their own attack, each by a test that observes the production value or the
@@ -5463,4 +5463,6 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       run by `v022_g01_mutations.py --only` on gpumaster from a clean clone and are KILLED by their own marker, except
       that M2459 (written for `.mode(mode)`) survived and was withdrawn; the full `axon-fabric` suite (serial and sharded,
       gpumaster) and the `axon-psv`, `axon-guest-init`, `axon-loop`, `axon-loop-contracts`, `axon-workspace-recipe` suites and
-      the three axon-core gates were green at the rows' commit; matrix rows A196-A200 await renumbering at integration.
+      the three axon-core gates were green at the rows' commit; matrix rows A185-A189 await renumbering at integration.
+
+**Renumbering at integration (round 8, integrate7).** Four branches built in parallel numbered their matrix rows apart; the integration made the matrix contiguous, so the amendments above that cite the branch-local ids are read through this map: amendment 93 `A184` is now A181; amendment 94 `A190`-`A192` are now A182-A184; amendment 95 `A196`-`A200` are now A185-A189. Amendment 92's A178-A180 are unchanged. (The text of those amendments was rewritten to the new ids; where it says another branch holds a gap, that gap is closed by this integration.)

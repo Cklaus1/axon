@@ -905,9 +905,9 @@ mod truncation_tests {
             .collect();
         std::fs::write(&path, format!("{}\n", kept.join("\n"))).unwrap();
 
-        let err = led
-            .verify_against_file()
-            .expect_err("ATTACK: a truncated ledger file was accepted (truncation must be detected)");
+        let err = led.verify_against_file().expect_err(
+            "ATTACK: a truncated ledger file was accepted (truncation must be detected)",
+        );
         assert!(err.contains("truncat"), "must name the failure: {err}");
         assert!(
             err.contains('3') && err.contains('1'),
