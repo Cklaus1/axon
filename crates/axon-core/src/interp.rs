@@ -8906,12 +8906,29 @@ fn main() { }
             "fn fill(a: &mut [i64]) { a[0] = 127 }\n",
             "fn fill(a: &mut [i64]) { a[0] = 200 }\n",
         );
-        // First: an element APPENDED past what the operator held (what it held
-        // shows no type there), caught by the declared type alone.
-        let pushed = "@[test]\nfn t() {\n    let mut a = [1, 2, 3]\n    fill(&mut a)\n    assert(a[3].ok())\n}\n";
+        // First: into an EMPTY output array, which shows no type at the position
+        // (so what the operator held cannot judge it): the honest fill passes, and
+        // the declared type alone refuses an appended `u8` — or a value at an
+        // undetermined type parameter.
+        let empty = "@[test]\nfn t() {\n    let mut a: [i64] = []\n    fill(&mut a)\n    assert(a[0].ok())\n}\n";
+        live8(
+            "r8-mutcast",
+            empty,
+            "fn fill(a: &mut [i64]) { a = arr_concat(a, [9]) }\n",
+            "fn fill(a: &mut [i64]) { a = arr_concat(a, [4]) }\n",
+        );
         mut_refused(
-            "an appended u8 past the held length",
-            &judged8("r8-mutcast", pushed, &mut_fill("&mut [i64]", "a = arr_concat(a, [v])")),
+            "an appended u8 into an empty output array",
+            &judged8("r8-mutcast", empty, &mut_fill("&mut [i64]", "a = arr_concat(a, [v])")),
+            "left holding",
+        );
+        mut_refused(
+            "a generic element into an empty output array",
+            &judged8(
+                "r8-mutcast",
+                empty,
+                &mut_fill("&mut [T]", "a = arr_concat(a, [v])").replace("fn fill(", "fn fill<T>("),
+            ),
             "left holding",
         );
         let atk = mut_fill("&mut [i64]", "a[0] = v");
@@ -8924,12 +8941,6 @@ fn main() { }
         mut_refused(
             "255 as u8 wrapped in the operator's shift",
             &judged8("r8-mutcast", width, &atk255),
-            "left holding",
-        );
-        // A type parameter no argument determined is refused at this edge too.
-        mut_refused(
-            "a generic element",
-            &judged8("r8-mutcast", dispatch, &mut_fill("&mut [T]", "a[0] = v").replace("fn fill(", "fn fill<T>(")),
             "left holding",
         );
     }
