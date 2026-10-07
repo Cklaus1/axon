@@ -882,8 +882,11 @@ def build_uid_lock():
         if st.st_uid != 0 or st.st_mode & 0o022:
             fail(f"{LOCK_DIR} (uid {st.st_uid}, mode {oct(st.st_mode & 0o7777)}) is not a root-owned "
                  "directory only root can write: the lock could be pre-created or held by the build uid")
-        fd = os.open(f"axon-guest-build-uid-{uid}.lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC,
-                     0o600, dir_fd=dfd)
+        try:
+            fd = os.open(f"axon-guest-build-uid-{uid}.lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC,
+                         0o600, dir_fd=dfd)
+        except OSError as e:
+            fail(f"cannot open the build-uid lock file in {LOCK_DIR}: {e.strerror} (a symlink there is refused)")
     finally:
         os.close(dfd)
     ls = os.fstat(fd)
