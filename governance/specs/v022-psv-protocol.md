@@ -4863,7 +4863,7 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
     - **BLOCKER 2: exemptions that said a guard is unobservable or unreachable were wrong.**
       (a) `PR_SET_DUMPABLE` of the PSV runner is observed by a unit test in the binary (`PR_GET_DUMPABLE` is 1,
       the real `set_non_dumpable` is called, it is 0: M2320); the HELPER's `PR_SET_DUMPABLE` is observed by a
-      FORKED child of a lib test that runs `harden()` and reads the bit (M2321). The guest PID 1's hardening, which
+      FRESH PROCESS (this test binary re-run on one test) that runs `harden()` and reads the bit (M2321). The guest PID 1's hardening, which
       amendment 87 left as REMAINDER because it needs a real boot, is observed the same way, in a forked child of a
       host test: `apply_seccomp` leaves `no_new_privs` set and filter mode on (M2329, M2330), the supervisor
       forwards SIGTERM and SIGINT to its child and reports 128 + signal (M2331-M2333, a `sleep` grandchild). No
