@@ -4471,24 +4471,26 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       applies the same determination to `+ - * / % & | ^ << >>` on a fixed-width integer: a `u8`
       the candidate chose truncates where the operator's `i64` does not (`(v << 1) == 254` with
       255; `+`/`*` on a `u8` PANIC on overflow, so the shift is the result that completes).
-    - **How "determined" is tracked (decision).** Not a runtime flag (a `Value` has no slot, and
-      one on every scalar would cost every value copy) and not the checker's inferred types
-      (unification can make a read of an untyped dict `i64` because a later use compares it with a
-      literal — the runtime value is still the candidate's `u8`). A STATIC, name-keyed dataflow per
-      operator fn (`interp/pin.rs`), built once for a sealed run: a receiver is determined iff it
-      is a literal; a binding with a closed `let`/parameter annotation (the value was CAST to it,
-      amendment 53); a binding initialised from a determined expression; the result of a fn with a
-      closed declared return type (cast at its return; at a seal crossing, strictly); a builtin
-      whose declared return names no type variable (`dict_get` returns one, `len` does not); `x as
-      T`; arithmetic on determined operands; a struct/array/tuple/`Option`/`Result` of determined
-      parts; a field, element or match-binding of a determined value. Anything else is undetermined:
-      `dict_get`/`dict_values`/`recv`, an unannotated lambda parameter or result, a type-parameter
-      or `dyn` annotation, an unbound generic position. A name is determined only if EVERY binding
-      and every assignment of it is (a greatest fixpoint), so the analysis over-refuses rather than
-      under-refuses. A static type is determined only through the casts the runtime already makes,
-      which is why a "determined" receiver cannot hold the candidate's type. The result is a set of
-      call-site keys (a structural hash of receiver and method: closure bodies are cloned when a
-      lambda is evaluated, so an address would not survive), cached by address.
+    - **How "determined" is tracked (decision; rebuilt by amendment 88 — read 88 for the audit).**
+      Not a runtime flag (a `Value` has no slot, and one on every scalar would cost every value
+      copy) and not the checker's inferred types (unification can make a read of an untyped dict
+      `i64` because a later use compares it with a literal — the runtime value is still the
+      candidate's `u8`). A STATIC, name-keyed dataflow per OPERATOR fn (`interp/pin.rs`), built
+      once for a sealed run, in which every "determined" rule is justified as **the operator chose
+      this type**: a literal; a binding with a closed `let`/parameter annotation (the value was
+      CAST to it, amendment 53); a binding initialised from a determined expression; the result of
+      an OPERATOR fn with a closed declared return (cast at its return) — never a candidate fn,
+      whatever it declares; a builtin whose declared return names no type variable (`dict_get`
+      returns one, `len` does not); `x as T`; arithmetic on determined operands; a struct, array,
+      tuple, `Option` or `Result` of determined parts; a field, element or match-binding of a
+      determined value; a call of an operator method name every definition of which is the
+      operator's and closed. Not determined: `dict_get`/`dict_values`/`recv`, an unannotated lambda
+      parameter or result, a call of a local binding, a call of a candidate fn, a channel method,
+      anything open. A name is determined only if EVERY binding and every assignment of it is (a
+      greatest fixpoint). The result is the set of determined sites, keyed by (the fn that owns the
+      site, a structural hash of the site), and the lookup is fail-closed: a site not in the set is
+      undetermined. A receiver that is an operator-defined struct or enum at RUNTIME dispatches
+      whatever the analysis says (sealed code cannot build one, E0004).
     - **Coverage** (each executed through the unit tests and, for the first two, the real runner):
       an output dict, a returned dict, an empty accumulator, a captured-closure dict, a channel
       receive, an `Option`/struct/tuple/generic-enum payload, an unannotated lambda parameter and
@@ -4816,6 +4818,90 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       stated, not implemented (matrix row A161).
     - **MINOR: no joined paired-disable record at this head.** Unchanged and expected until the final evidence
       run; the paired-disable validator (amendment 81) refuses a freeze until it exists.
+
+88. **The dispatch analysis trusts only what the operator chose (C9 round 7, workstream r4c-psv1e,
+    PSV-1 + SENTINEL; matrix A162-A167; M2171-M2178; amends 83).**
+    - **Findings.** Three executed BLOCKERS, all soundness bugs of `interp/pin.rs` in which
+      "determined" over-approximated: (B1) a CANDIDATE-declared type counted — every fn of the
+      program, the candidate's included, was in the closed-return table, so `solve(3).ok()` with the
+      candidate's `-> u8`, `let p: P = solve(); p.x.ok()` with a candidate `type P = { x: u8 }`, and
+      `(solve(3) << 1) == 254` were determined; (B2) a local binding named like an operator fn was
+      judged by the global's closed return (`Some(f) => f().ok()` with the candidate's `|| 4 as
+      u8`); (B3, SENTINEL) `closed()` accepted any `Named` type, a TRAIT name included
+      (`let y: Judge = v; y.ok()`). Adjacent: verdict keys were receiver TEXT across the whole
+      program; the candidate's methods steered the operator's method table; the pin cache was keyed
+      by a heap address; honest operator-only `dyn`/generic helpers had no annotation that fixed
+      them; an operator method named `recv` made a channel read look determined.
+    - **Audit of every rule (the question for each: did the OPERATOR choose this type?).**
+      Literal/`None`/`Some`/`Ok`/`Err`/containers of determined parts: yes. A closed annotation: the
+      value is cast to it, and "closed" now means only scalars, `Dict`, operator structs, enums and
+      refinements WITH CLOSED FIELDS (recursively, generics substituted by their closed arguments),
+      and `Option`/`Result`/`[T]`/tuple/`Chan` of closed — NOT a trait name, `dyn`, a type
+      parameter, `Self`, a type a sealed module defines, or any unknown name (a trait or a
+      candidate type does not constrain the concrete runtime type to one the operator chose).
+      A call of a FREE fn: only an operator fn, only when it is not shadowed by a local binding of
+      the same name, and only when its declared return is closed. A method call: only a method
+      name every definition of which is the OPERATOR's (`impls` already was) and closed, and never
+      a channel method name. Module-level lets: operator lets only (a sealed `let` is never admitted, so a
+      candidate global is undetermined). A `match`/`while let` binding and an assignment target: as their
+      source. A lambda parameter: only a closed annotation. A `for` variable: `i64`.
+      Cast (`as T`) and builtin returns: the operator named the type.
+    - **Fixes at the source.** `Pins::build` takes the sealed-span predicate and builds from
+      OPERATOR items only: a sealed fn is in no table, a sealed type/enum/refinement is OPEN, a
+      sealed `let` is no determined global (M2171, M2172, M2178). A call whose callee name is bound
+      anywhere in the fn is undetermined and the global tables are consulted for unbound names
+      only (M2173). `Tys::closed` as above (M2174 trait names, M2175 `dyn`). Keys carry the owner:
+      `(FnDef address, site hash)`; within one fn equal text means equal names and so an equal
+      verdict, across fns the keys never meet, so a refusal cannot depend on an unrelated fn nor a
+      sibling's pin admit another's site (M2176); the owner at run time is `Interp::pin_fn`, set
+      by `call_fn_frame`, and a lambda body is owned by its CREATOR (the closure carries the
+      creator's address under `PIN_FN_MARK` in its capture cell, the same mechanism as the sealed
+      mark). The address-keyed `pin_cache` is REMOVED (lookup is a hash-set probe on the
+      structural key: deterministic, nothing to go stale). The lookup is FAIL-CLOSED (a site the
+      analysis did not record as determined is undetermined, so a global initialiser or anything
+      unanalysed refuses). Channel method names are never determined (M2177).
+    - **Operator-only polymorphism (adjacent d), design.** Two options were weighed: an
+      interprocedural "every call site's argument is determined" analysis (large, and a lambda or
+      a dict-reachable call site defeats it), or admitting dispatch when the receiver's RUNTIME
+      value is an operator-defined struct or enum. The second is sound because the candidate
+      cannot create such a value: a sealed module naming an operator type is refused (E0004; the
+      `sametype` case of the round-7 logs is E0002/E0004), and an operator struct a candidate
+      merely PASSES BACK is the operator's own value, whose impl the operator chose. It refuses
+      exactly what matters: a receiver whose runtime type is a builtin scalar or sized integer,
+      which the candidate can fabricate. Adopted (`Interp::seal_dispatch`, `Pins::is_operator_type`):
+      `fn total(a: dyn Shape, b: dyn Shape)` and `fn total<T: Shape, U: Shape>(a: T, b: U)` over the
+      operator's own structs pass; the same helper given a candidate-stored `u8` is refused
+      (`operator_only_polymorphism_dispatches_and_a_candidate_influenced_one_does_not`).
+    - **Honest-program impact.** A call of a CANDIDATE fn is never determined, whatever it
+      declares (round-7 case `honest_i64`: `assert(solve(3).ok())` with a candidate `-> i64` is now
+      refused). The annotation the suite author adds is the operator's pin, and it keeps working:
+      `let r: i64 = solve(3)  assert(r.ok())` (GOOD passes, WRONG fails, a candidate `-> u8` is
+      refused by the cast). Sweeps (352 `.ax` diagnostics, 55 `@[test]` files, example exit codes)
+      are identical; no repository `.ax` runs sealed.
+    - **Round-5/6/7 cases.** Every case of `/var/tmp/c9r{5,6,7}-psv1-logs/w` through the exact
+      `exec_axon_test` invocation: attacks refused, `dyn_honest`/`generic_honest`/`honest_annot` pass.
+    - **Non-claims, now.** The Dict non-claims of 53 (1), 72 part 2 and 78 stay reduced to OUTPUT
+      only (amendment 83). The rule is conservative in one direction (it can refuse an honest
+      untyped dispatch; annotate it) and admits an undetermined receiver only through an operator
+      annotation (a cast), an operator-defined runtime value, or a determined builtin. A
+      comparison/`to_str`/interpolation selects no impl and is outside the rule. Open by design: a
+      method the operator calls that exists once (nothing to select between); a trait DEFAULT
+      method does not parse in this language (`traitdefault` of the round-7 logs is a parse error).
+    - **Rows.** M2171 (a candidate fn in the closed-return table), M2172 (a candidate type closed),
+      M2173 (local-name shadowing), M2174 (a trait name closed), M2175 (`dyn` closed), M2176
+      (verdicts shared across fns), M2177 (channel method names), M2178 (a candidate global).
+      The rules of `pin.rs` whose buggy form is only a REDUNDANT second guard (unknown names open,
+      a type parameter open) have no row: no attack separates them. M1990-M1997 re-anchored (the
+      key and the lookup changed). Matrix A162-A167. Tests: `a_type_the_candidate_declared_does_not_determine_the_receiver`,
+      `a_local_binding_named_like_an_operator_fn_is_not_judged_by_it`,
+      `a_trait_annotation_does_not_pin_the_runtime_type`,
+      `a_verdict_belongs_to_its_own_fn_and_the_candidate_steers_none`,
+      `operator_only_polymorphism_dispatches_and_a_candidate_influenced_one_does_not`,
+      `an_operator_method_named_like_a_channel_method_does_not_determine_a_recv`,
+      `a_candidates_global_and_a_sibling_fns_site_determine_nothing`, and through the real runner
+      `operator_code_never_dispatches_on_a_type_the_candidate_declared`.
+    - **Native codegen.** Unchanged: the seal is interpreter-only (amendment 72).
+    - **Operator deployment.** The guest image must be rebuilt.
 
 ## Amendment 89: gate rows for every verified arm, the PSV-6 paragraph states what amendment 85 did, and the row count is derived (C9 round 7, claims3)
 

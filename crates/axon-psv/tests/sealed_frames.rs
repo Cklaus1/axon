@@ -341,6 +341,29 @@ impl Judge for bool {
 
 @[test]
 fn accept() {
+    let r: i64 = solve(3)
+    assert(r.ok())
+}
+"#;
+/// The same suite with the receiver UNPINNED: what the operator wrote before
+/// it pinned `let r: i64` (a type the candidate declared pins nothing).
+const SUITE_DISPATCH_LOOSE: &str = r#"mod sol
+use sol.{solve}
+
+trait Judge {
+    fn ok(self) -> bool
+}
+
+impl Judge for i64 {
+    fn ok(self: i64) -> bool { self == 9 }
+}
+
+impl Judge for bool {
+    fn ok(self: bool) -> bool { self }
+}
+
+@[test]
+fn accept() {
     let r = solve(3)
     assert(r.ok())
 }
@@ -414,7 +437,7 @@ fn the_candidate_never_chooses_the_operators_judging_method() {
         ),
         (
             "no confusion: the candidate DECLARES `-> Fake`",
-            SUITE_DISPATCH,
+            SUITE_DISPATCH_LOOSE,
             format!("{FAKE_OK}pub fn solve(n: i64) -> Fake {{ Fake {{ v: n }} }}\n"),
         ),
         (
@@ -466,7 +489,7 @@ fn accept() {
 
 @[test]
 fn accept_bare() {
-    let r = solve(3)
+    let r: i64 = solve(3)
     assert(r.ok())
 }
 "#;
@@ -595,10 +618,10 @@ fn an_undetermined_type_position_never_selects_the_operators_impl() {
         "fill",
         "    let c = chan<i64>()\n    fill(c)\n    let r: i64 = c.recv()\n    assert(r.ok())",
     );
-    let noret = suite("solve", "    assert(solve(3).ok())");
+    let noret = suite("solve", "    let r: i64 = solve(3)\n    assert(r.ok())");
     let wrap = suite(
         "solve, Wrap",
-        "    let w = solve(Wrap { v: 3 })\n    assert(w.v.ok())",
+        "    let w = solve(Wrap { v: 3 })\n    let x: i64 = w.v\n    assert(x.ok())",
     );
     let clos = suite("apply", "    assert(apply(|x: i64| x.ok()))");
     let cases: [(&str, &String, String, String, String); 4] = [
@@ -859,6 +882,102 @@ fn operator_code_never_dispatches_on_an_untyped_read_and_a_pinned_suite_passes()
     assert!(
         refused_unkeyed(&s),
         "ATTACK: a captured-dict closure retyped the entry: {:?} {:?} {}",
+        s.status,
+        s.host,
+        s.stdout
+    );
+}
+
+/// C9 round 7, PSV-1 (amendment 88), through the real runner: a type the
+/// CANDIDATE declared (`-> u8`) does not determine the operator's receiver, a
+/// local closure named like an operator fn is not that fn, and a trait-name
+/// annotation pins nothing. The operator's own `let r: i64 = solve(3)` is the
+/// pin: GOOD a keyed pass, WRONG a keyed failure, the candidate's u8 refused.
+#[test]
+fn operator_code_never_dispatches_on_a_type_the_candidate_declared() {
+    const J: &str = "trait Judge {\n    fn ok(self) -> bool\n}\nimpl Judge for i64 {\n    fn ok(self: i64) -> bool { self == 9 }\n}\nimpl Judge for u8 {\n    fn ok(self: u8) -> bool { true }\n}\n";
+    let suite = |body: &str| {
+        format!("mod sol\nuse sol.{{solve}}\n{J}fn f() -> i64 {{ 5 }}\n@[test]\nfn accept() {{\n{body}\n}}\n")
+    };
+    let pinned = suite("    let r: i64 = solve(3)\n    assert(r.ok())");
+    let s = check(
+        &pinned,
+        &[],
+        "pub fn solve(n: i64) -> i64 { 9 }\n",
+        "accept",
+    );
+    assert_eq!(
+        (s.status, s.host),
+        (GuestStatus::Passed, Some(true)),
+        "control: {}",
+        s.stdout
+    );
+    let s = check(
+        &pinned,
+        &[],
+        "pub fn solve(n: i64) -> i64 { 4 }\n",
+        "accept",
+    );
+    assert_eq!(
+        (s.status, s.host),
+        (GuestStatus::Failed, Some(false)),
+        "control: {}",
+        s.stdout
+    );
+    let s = check(
+        &pinned,
+        &[],
+        "pub fn solve(n: i64) -> u8 { 4 as u8 }\n",
+        "accept",
+    );
+    assert!(
+        refused_unkeyed(&s),
+        "ATTACK: a u8 passed the i64 pin: {:?} {:?} {}",
+        s.status,
+        s.host,
+        s.stdout
+    );
+    // B1: the candidate's own declaration.
+    let loose = suite("    assert(solve(3).ok())");
+    let s = check(
+        &loose,
+        &[],
+        "pub fn solve(n: i64) -> u8 { 4 as u8 }\n",
+        "accept",
+    );
+    assert!(
+        refused_unkeyed(&s),
+        "ATTACK: a candidate-declared u8 selected the operator's impl: {:?} {:?} {}",
+        s.status,
+        s.host,
+        s.stdout
+    );
+    // B2: a closure stored by the candidate, called through a local named `f`.
+    let named = suite("    let d = dict_new()\n    solve(d)\n    match dict_get(d, \"f\") {\n        Some(f) => assert(f().ok())\n        None => assert(false)\n    }");
+    let s = check(
+        &named,
+        &[],
+        "pub fn solve(d: Dict) { dict_set(d, \"f\", || 4 as u8) }\n",
+        "accept",
+    );
+    assert!(
+        refused_unkeyed(&s),
+        "ATTACK: a local `f` was judged by the operator's global f: {:?} {:?} {}",
+        s.status,
+        s.host,
+        s.stdout
+    );
+    // B3: a trait-name annotation.
+    let tr = suite("    let d = dict_new()\n    solve(d)\n    match dict_get(d, \"k\") {\n        Some(v) => {\n            let y: Judge = v\n            assert(y.ok())\n        }\n        None => assert(false)\n    }");
+    let s = check(
+        &tr,
+        &[],
+        "pub fn solve(d: Dict) { dict_set(d, \"k\", 4 as u8) }\n",
+        "accept",
+    );
+    assert!(
+        refused_unkeyed(&s),
+        "ATTACK: a trait annotation pinned the candidate's u8: {:?} {:?} {}",
         s.status,
         s.host,
         s.stdout

@@ -116,6 +116,9 @@ generated-at: 9acbb45330e3b717bf4a121582493d1c924568e3
 | 9acbb453 | merge of origin/main (PR #8) | merge fixes: `input_arg` read from the args (the verify panic's input suffix), the per-frame stack budget raised to 512 KiB because the merged debug frame is ~265 KB: no change in what is refused |
 | 50 commits | | |
 <!-- END MECHANICAL -->
+<!-- END MECHANICAL -->
+
+
 
 What is BY THEME (the `theme` and `what it does` columns; these are the commit messages' own
 account and are NOT mechanically verified; the files and commits above are):

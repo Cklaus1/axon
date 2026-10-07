@@ -2108,3 +2108,15 @@ ATTACK_MARKERS.update({
     'M2278': r"attempt to add with overflow",
     'M2318': r"assertion failed: matches!\(Journal::open\(&path\), Err\(JournalError::Corrupt",
 })
+
+# C9 round 7, r4c-psv1e (M2171-M2178; amendment 88).
+ATTACK_MARKERS.update({
+    'M2171': r"ATTACK: the operator's analysis trusted a type the candidate chose \(a candidate fn declared -> u8\): Ok\(Completed\)",
+    'M2172': r"ATTACK: the operator's analysis trusted a type the candidate chose \(a candidate-defined struct's u8 field\): Ok\(Completed\)",
+    'M2173': r"ATTACK: the operator's analysis trusted a type the candidate chose \(a closure stored under a new key, called through a local named f\): Ok\(Completed\)",
+    'M2174': r"ATTACK: the operator's analysis trusted a type the candidate chose \(a trait name\): Ok\(Completed\)",
+    'M2175': r"ATTACK: the operator's analysis trusted a type the candidate chose \(dyn Judge\): Ok\(Completed\)",
+    'M2176': r"ATTACK: the operator's analysis trusted a type the candidate chose \(the same receiver text as a sibling fn's pinned one\): Ok\(Completed\)",
+    'M2177': r"ATTACK: an operator method named recv made a dict-read channel's value look determined: Ok\(Completed\)",
+    'M2178': r"ATTACK: the operator's analysis trusted a type the candidate chose \(a candidate global `let X = 4 as u8`\): Ok\(Completed\)",
+})
