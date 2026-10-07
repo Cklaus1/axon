@@ -4090,7 +4090,7 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       |---|---|---|
       | `host_config_sha256`, `launcher_sha256`, `firecracker_sha256`, `guest.kernel_sha256`, `guest.rootfs_sha256`, `suite_registry_sha256`, `qualification_sha256`, `profile_manifest_sha256` | operator files, hashed by the observer | MEASURED (M1531-M1538) |
       | `verifier_sha256` | helper config `fabric.sha256`; the helper holds the caller to it | PINNED, and the caller MEASURED to be it (M1539, M1853, M1857) |
-      | `fabric_revision` | helper config `fabric.revision`, read from the installed binary by the kit | PINNED (M1850) |
+      | `fabric_revision` | helper config `fabric.revision`, read from the installed binary by the kit | TOLD by the operator's kit (M1850; reclassified from PINNED by amendment 85: the helper compares only `fabric.sha256`) |
       | `guest.axon_sha256`, `guest.init_sha256` | the measured profile manifest's `artifacts` | NAMED by a measured file (M1851, M1852) |
       | `nonce` | issued for that epoch and unspent, unexpired (custodian); observed once (observer) | CUSTODIAN's (M1858, M1859, M1540) |
       | `policy_sha256` | the manifest's: built in Fabric's 0700 job dir | **THE PRINCIPAL'S WORD.** Not listed as measured. The root helper holds the policy it BOOTS to this digest (`policy_at_root`, A87), so a launch cannot run another policy than the observation names, but the observer cannot know what policy Fabric should have chosen |
@@ -4103,20 +4103,27 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       that the process was started from the pinned file (reworded by amendment 84).**
       `verifier_sha256` is the digest of the executable file the Fabric-uid process HAD when the
       helper opened `/proc/<ppid>/exe` (hashed by descriptor, with the pidfd re-asked for "still the
-      same pid and my parent", which does not detect an `execve` of that process). Any Fabric-uid
-      code can arrange that this is the pinned file: exec the pinned file after spawning the helper
-      (round-6 reviewer, executed: 18 of 20 attempts returned an observer-signed observation naming
-      the pinned verifier, the other 2 lost the race and were refused before any nonce record; no
-      `LD_PRELOAD` and no ptrace), `LD_PRELOAD` or `LD_AUDIT`, or `ptrace`/`process_vm_writev` of a
-      same-uid process running it. Attacker code then runs under the genuine digest (reviewer demo `ldpreload_demo.c`: the helper-side `readlink` of its
-      parent's exe reports `/usr/bin/true` while the constructor is attacker code). Nothing here
-      narrows that. The helper's `harden()` clears ITS OWN environment (and its children's), not its
+      same pid and my parent", which does not detect an `execve` of that process). The plain
+      exec-after-spawn route (exec the pinned file after spawning the helper) was EXECUTED by the
+      round-6 reviewer (18 of 20 attempts returned an observer-signed observation naming the pinned
+      verifier; the other 2 lost the race and were refused before any nonce record; no `LD_PRELOAD`
+      and no ptrace) and is REFUSED since amendment 85: no process except the helper and its parent
+      may hold the pipe the reply is written to, and a production helper refuses a stdout that is
+      not a pipe (0 of 20 relayed; M2050, M2051, M2053, M2054). That narrows the route; it does not
+      close it. Remaining, per amendment 85: reopening the pipe through `/proc/<pid>/fd/N` of the
+      parent, `SCM_RIGHTS`, `pidfd_getfd`, `ptrace`, `LD_PRELOAD`/`LD_AUDIT`, and
+      `process_vm_writev` of a same-uid process running the genuine binary. Attacker code then runs
+      under the genuine digest (reviewer demo `ldpreload_demo.c`: the helper-side `readlink` of its
+      parent's exe reports `/usr/bin/true` while the constructor is attacker code). Amendment 85's
+      reply-pipe rule narrows only the plain exec route. The helper's `harden()` clears ITS OWN environment (and its children's), not its
       caller's. Fabric cannot run under `NoNewPrivileges` (the helper is setuid-root; amendment 65
-      refuses it), so that is no lever. `kernel.yama.ptrace_scope` >= 2 affects only the ptrace route
-      and does not touch the exec route (a host setting the operator makes; the kit does not verify
-      it). So what the observation attests about the verifier is "at that instant the Fabric-uid
+      refuses it), so that is no lever. `kernel.yama.ptrace_scope` >= 2 stops `pidfd_getfd` and a
+      ptrace attach, and nothing else here (a host setting the operator makes; the kit does not
+      verify it). The Fabric pin is a configuration and mistake guard, not a defence against
+      malicious same-uid code. So what the observation attests about the verifier is "at that instant the Fabric-uid
       caller's executable was the pinned file", not "the pinned program's instructions made this
-      manifest". See amendment 85 for any later change to when the helper measures it. The guest verdict's integrity does not rest on it:
+      manifest". Amendment 85 changes who may READ the reply (one reader), not when the
+      helper measures the executable, and declines to re-measure after the reply. The guest verdict's integrity does not rest on it:
       it rests on the hidden check, the signature chain and the loop's joins.
     - **Major-adjacent: the observer accepts only a nonce the custodian issued.** The observer asks
       the custodian (the helper config's `custodian` section, which it already reads; the custodian
@@ -4809,3 +4816,57 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       stated, not implemented (matrix row A161).
     - **MINOR: no joined paired-disable record at this head.** Unchanged and expected until the final evidence
       run; the paired-disable validator (amendment 81) refuses a freeze until it exists.
+
+## Amendment 89: gate rows for every verified arm, the PSV-6 paragraph states what amendment 85 did, and the row count is derived (C9 round 7, claims3)
+
+89. **Wording and evidence accuracy; no interpreter or guard code changed (two comment-only row-id
+    fixes below). Findings `/var/tmp/c9r7-findings-PSV-3.json`, `-SENTINEL.json`, `-PSV-6.json`.**
+    - **PSV-3 BLOCKER, the row count.** The claim said "28 rows"; the script had 30. The number is
+      dropped from the claim, and `scripts/pci_delta.py --check` (run by
+      `pci_delta_note::the_pci_delta_note_is_what_git_says`) now fails if the delta note quotes a gate
+      row count other than the script's, or if the verdict spec hand-types one.
+    - **PSV-3 MAJOR-ADJACENT, arms the gate did not discriminate.** Four rows added (34 in all), each
+      naming an existing test, each VERIFIED by mutating the arm in the tree and running the named
+      test (the test FAILED; the tree was restored): (i) the `()` coercion of an absent return type at
+      a crossing, `a_fn_with_no_declared_return_type_hands_the_operator_unit`; (ii) channel stamping
+      at creation (`chan_created`'s closed-type filter), `a_channel_carries_the_element_type_its_creation_states`;
+      (iii) strict closure arguments at a crossing (`closure_args_check`),
+      `an_operator_closure_called_from_sealed_code_takes_only_determined_arguments`; (iv) the am83
+      arithmetic arm (`undetermined_arith`), `operator_arithmetic_never_runs_at_a_width_the_candidate_chose`.
+      (v) The closure arm of `replaced_ok` (am78): removing it fails exactly one test, the am72
+      dict-snapshot row's `a_dict_the_candidate_mutated_is_verified_at_every_edge_back`, and no am78 row;
+      no test of the am78 group isolates it, and adding one would change interpreter tests that psv1e is
+      editing. Stated as it is: that arm's gate coverage is the dict-snapshot row; its mutation row is
+      M1673. The PSV-3 claim now says principal arms by gate rows, lists the verified arms, and names
+      this exception, instead of "each amendment ... exercised".
+    - **PSV-6 (SENTINEL and the PSV-6 reviewer).** The paragraph, amendment 79 (d) and the runbook
+      presented the exec race as open. Now: the plain exec-after-spawn route was executed (18 of 20)
+      and is refused since amendment 85 (no process but the helper and its parent may hold the reply
+      pipe; production also refuses a non-pipe stdout; 0 of 20 relayed; M2050, M2051, M2053, M2054); the
+      pin is a configuration and mistake guard, not a defence against malicious same-uid code; the
+      remaining routes are those amendment 85 lists (`/proc/<pid>/fd/N` reopen, `SCM_RIGHTS`,
+      `pidfd_getfd`, `ptrace`, `LD_PRELOAD`). Deleted: "Yama does not touch the exec route" and
+      "Nothing here narrows that". The pointer is corrected: amendment 85 changes who may read the
+      reply and declines to re-measure.
+    - **`fabric_revision`** is TOLD by the operator's kit, not PINNED (amendment 85): fixed in the
+      paragraph, amendment 79's table and the runbook.
+    - **PSV-6 lists.** The "names" list is now the observation's fields (host profile, Fabric
+      revision, Firecracker, launcher and host-config digests, guest image, kernel, verifier,
+      suite-registry and policy digests, the intended launch manifest digest); the qualification
+      record and profile manifest digests are measured and checked but are launch-manifest fields,
+      bound through `intended_launch_manifest_sha256`.
+    - **Comments.** Wrong mutation ids in comments corrected: `observer_service.rs` (src) M1864 to
+      M1862/M1863 and M1869 to M1867; the test file's M1865 to M1864.
+    - **Recorded, not done (liveness only, fail closed).** Nothing observes the 300 ms mid-spawn wait in
+      `reply_channel_private` (changing 30 retries to 1 is undetected); nothing tests the observer prune
+      and custodian expiry at the boundary second (`expires < now` against `age <= max_age`; a `<=`
+      mutation would drop a still-honoured record and allow a second observation of one nonce in that
+      second; spend remains single-use, so no second launch). A non-NotFound `/proc` error in
+      `reply_channel_private` aborts the launch without a retry.
+    - **Round-7 SENTINEL items for amendment 88 / psv1e, not this branch:** a trait-name annotation
+      treated as determining, function-global pin keys, candidate-steered method closedness, the
+      address-keyed pin cache, and builtin channel method names. They are interpreter code.
+    - **Operational friction** (host build needs crates access; keys owned by the pinned builder uid; a
+      non-status commit after the mutation run forces a rerun; a later interpreter commit needs a
+      `THEMES` line) is in the operator runbook ("Operational friction").
+    - **Rows.** None added. M2260-M2269 unused.

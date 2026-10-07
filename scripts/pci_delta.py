@@ -144,6 +144,12 @@ def main():
             bad.append("unclassified commit(s): " + "; ".join(missing))
         if want != m.group(1):
             bad.append("the note's block is not what git says at its own pinned head")
+        rows = len(re.findall(r'^  "[^"]*\|[^"]*\|[^"]*\|[^"]*"$', open(os.path.join(ROOT, "scripts/v022_pci_gates.sh")).read(), re.M))
+        for q in re.findall(r"v022_pci_gates[^\n]{0,40}?(\d+) rows", open(NOTE).read()):
+            if int(q) != rows:
+                bad.append(f"the note quotes {q} gate rows, the script has {rows}")
+        if re.search(r"v022_pci_gates\.sh`?,? \d+ rows", open(os.path.join(ROOT, "governance/specs/v022-protected-suite-verdict.md")).read()):
+            bad.append("the verdict spec quotes a hand-typed gate row count")
         later = git("log", "--format=%h %s", f"{pin.group(1)}..HEAD", "--", PATHSPEC).strip()
         if later:
             bad.append("commits after the pinned head touch " + PATHSPEC + " (regenerate the note):\n" + later)

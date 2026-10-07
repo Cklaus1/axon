@@ -148,7 +148,7 @@ account and are NOT mechanically verified; the files and commits above are):
 
 ## (b) Coverage: PCI gate rows, and the mutation rows
 
-`scripts/v022_pci_gates.sh` has 30 rows at this head: the original 18 (surfaces 1-21), ten
+`scripts/v022_pci_gates.sh` has 34 rows at this head: the original 18 (surfaces 1-21), ten
 added by amendment 84, one group per delta amendment (53, 60, 72 incl. its dict snapshot, 78), and two for
 amendment 83's dispatch rule (integration), each with
 unit tests in `interp.rs`/`conform.rs` AND a real-runner test (`axon_psv::runner::run`, in
@@ -159,7 +159,7 @@ Amendment 83's dispatch rule (psv1d) landed after amendment 84: its tests are th
 rows; the dict-snapshot rows still name tests that exist after psv1d (their label "psv1d may replace" is dropped).
 
 Run at `c9r4c/claims2` (veto `cdc39fc6` plus this amendment's script/doc changes; the rows through am78 were first run there at 28 rows), interpreter build,
-exit 0, `v022_pci_gates: PASS — 30 rows` (re-run at integration, c9r4c/integrate5 after the psv1d merge):
+exit 0, `v022_pci_gates: PASS — 34 rows` (re-run on c9r4c/claims3 at veto 1204a925 plus amendment 89's four added rows):
 
 | row | package/target | result |
 |---|---|---|
@@ -193,6 +193,10 @@ exit 0, `v022_pci_gates: PASS — 30 rows` (re-run at integration, c9r4c/integra
 | am78 held-value judgement | axon-psv/sealed_frames | PASS 1/1 |
 | am83 dispatch rule | axon-core/lib | PASS 2/2 |
 | am83 dispatch rule | axon-psv/sealed_frames | PASS 1/1 |
+| am72 absent return type is () | axon-core/lib | PASS 1/1 |
+| am72 channel stamped at creation | axon-core/lib | PASS 1/1 |
+| am72 closure args strict at a crossing | axon-core/lib | PASS 1/1 |
+| am83 arithmetic width arm | axon-core/lib | PASS 1/1 |
 
 Mutation rows whose target is `crates/axon-core/src` (`MUTATIONS`, 154 rows at this head): M58-M62,
 M65, M67-M70, M72-M79, M82-M83, M85-M97, M219, M243, M246-M248, M250-M251, M260, M270-M272, M436,

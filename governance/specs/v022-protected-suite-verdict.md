@@ -154,10 +154,15 @@ Each clause names what must hold. The negative matrix below names how each one f
   runs only if the candidate calls it, so a suite must assert after the call.
 - Sealing, containment and per-provenance kernels run in the guest interpreter as certified at
   `31413ca7` (`governance/proofs/v022-pci/CERTIFICATION.md`, local backend, EMPTY effect ceiling)
-  plus amendments 53/60/72/78 (the delta, listed from git in `governance/notes/v022-pci-delta.md`),
-  each exercised by named PCI gate rows (`scripts/v022_pci_gates.sh`, 28 rows) and covered by
-  named mutation rows; that those rows are re-run and killed at the frozen head is a FREEZE
-  OBLIGATION, not yet shown. A non-empty guest effect ceiling is OUTSIDE the PCI certification.
+  plus amendments 53/60/72/78/83 (the delta, listed from git in `governance/notes/v022-pci-delta.md`).
+  Each amendment's PRINCIPAL arms are exercised by named gate rows in `scripts/v022_pci_gates.sh`
+  (rows named `am53` ... `am83`; the row count is not quoted here, it is derived and drift-tested
+  by `scripts/pci_delta.py --check`). Arms verified to fail a gate row when their code is removed:
+  the declared-return cast, the dict edges, the `()` coercion of an absent return type, channel
+  stamping at creation, strict closure arguments at a crossing, and the am83 arithmetic arm. The
+  closure arm of `replaced_ok` (am78) fails only the am72 dict-snapshot row, not an am78 row, and the
+  remaining arms are covered by mutation rows only. That those rows are re-run and killed at the
+  frozen head is a FREEZE OBLIGATION, not yet shown. A non-empty guest effect ceiling is OUTSIDE the PCI certification.
 - A pass without completion evidence is Unknown. A candidate that prints a second line naming a
   test turns that test's genuine verdict into Unknown (fail-safe: never into a pass).
 
@@ -189,29 +194,39 @@ Each clause names what must hold. The negative matrix below names how each one f
 - A `PreflightObservation`, signed by the observer's own key (authorised by the operator root key,
   distinct from every other role), is bound to a custodian nonce and epoch, and names:
   - host profile;
-  - Fabric revision and Firecracker digest;
-  - guest image, kernel, verifier, suite and policy digests;
+  - Fabric revision, and Firecracker, launcher and host-config digests;
+  - guest image, kernel, verifier, suite-registry and policy digests;
   - the intended launch manifest digest.
 - Fabric consumes it and cannot mint it: it holds no observer key, so it cannot forge the
   SIGNATURE. What the signature attests is stated per field (amendment 79, which replaced the
   claim that every field was measured):
   - MEASURED by the observer from the operator's installed files: host config, launcher,
-    Firecracker, guest kernel and rootfs, suite registry, qualification record and profile
-    manifest digests;
-  - PINNED by the operator (the helper config's `fabric {path, sha256, revision}`), which the root
-    helper holds the caller's executable to on every launch and relay: the verifier digest and
-    the Fabric revision;
+    Firecracker, guest kernel and rootfs, and suite registry digests. The qualification record and
+    profile manifest digests are also measured and checked, but they are launch-manifest fields,
+    bound to the observation through `intended_launch_manifest_sha256`; the observation itself has
+    no such fields;
+  - PINNED by the operator (the helper config's `fabric {path, sha256, revision}`): the verifier
+    digest, which the root helper holds the caller's executable to on every launch and relay;
+  - TOLD by the operator's kit (amendment 85): the Fabric revision. The kit reads it from the
+    installed binary and writes it into the helper config; the helper compares only the digest,
+    and the observer signs the configured value. The digest is pinned and measured; the revision
+    is the kit's word about that file;
   - NAMED by the measured profile manifest: the guest init and axon digests;
   - the nonce: issued for that epoch and unspent (custodian), observed once (observer);
   - the principal's word, NOT measured: the guest policy digest (the root helper binds the policy
     it boots to it) and the authority epoch (the loop's scope pointer, joined at intake).
   The verifier digest is the digest of the executable file the Fabric-uid process had when the
-  helper opened `/proc/<ppid>/exe`. Any Fabric-uid code can arrange that this is the pinned file:
-  exec it after spawning the helper (executed: 18 of 20 attempts got an observer-signed
-  observation naming the pinned verifier; no `LD_PRELOAD` or ptrace needed, and Yama does not
-  touch the exec route), `LD_PRELOAD`, or ptrace. So the helper serves a caller whose executable
-  at that instant is the pinned file, not necessarily the pinned program's instructions (amendment
-  84; see amendment 85 for any later change to when the helper measures it).
+  helper opened `/proc/<ppid>/exe`. The plain exec-after-spawn route (spawn the helper, then exec the
+  pinned file) was EXECUTED by the round-6 reviewer (18 of 20 attempts got an observer-signed
+  observation naming the pinned verifier) and is REFUSED since amendment 85 (0 of 20 relayed, control
+  served): `reply_channel_private` requires that no process other
+  than the helper and its parent holds the pipe the reply is written to (and a production helper
+  refuses a stdout that is not a pipe). That NARROWS the route; it does not close it. A same-uid
+  process can still reopen the pipe's other end through `/proc/<pid>/fd/N` of the parent, receive
+  the descriptor in flight (`SCM_RIGHTS`), `pidfd_getfd` it, `ptrace` the genuine program, or
+  `LD_PRELOAD` it. So the Fabric pin is a configuration and mistake guard, not a defence against
+  malicious same-uid code, and the helper serves a caller whose executable at that instant is the
+  pinned file and whose reply pipe has one reader. The verdict's integrity does not rest on it.
 - Freshness and one-use are enforced where the launch happens, not at intake: Fabric's early
   check and the root helper verify the observation's age and epoch and the custodian spends its
   nonce once. Intake rejects a receipt whose observation digest does not join, or whose launch
