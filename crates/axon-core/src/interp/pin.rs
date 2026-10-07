@@ -125,7 +125,10 @@ impl Tys {
                 }
             }
             T::Fn { params, ret } => params.iter().all(|a| go(a, seen)) && go(ret, seen),
-            T::Tuple(xs) | T::Union(xs) => xs.iter().all(|a| go(a, seen)),
+            T::Tuple(xs) => xs.iter().all(|a| go(a, seen)),
+            // A union admits more than one runtime type (`i64 | u8`): it does
+            // not pin the one the operator chose.
+            T::Union(_) => false,
         }
     }
 
@@ -512,6 +515,22 @@ fn analyze(
             Expr::AssignTo { place, value } => {
                 if let Some(r) = place_root(place) {
                     facts.push((r.to_string(), Fact::From(value)));
+                }
+            }
+            // `f(&mut x)`: the callee may leave ANY value in `x` (a candidate fn
+            // writes through the borrow), so `x` takes its value from a source
+            // nothing on the operator side determined — fail closed (C9 round 8).
+            Expr::Call { args, .. } => {
+                for a in args {
+                    if let Expr::UnaryOp {
+                        op: UnaryOp::RefMut,
+                        operand,
+                    } = a
+                    {
+                        if let Some(r) = place_root(operand) {
+                            facts.push((r.to_string(), Fact::Unpinned));
+                        }
+                    }
                 }
             }
             Expr::Match { subject, arms } => {

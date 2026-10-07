@@ -128,7 +128,24 @@ impl<'p> Interp<'p> {
                     // exactly the path a direct `f(..)` call takes — contracts,
                     // `@[verify]` gates, effect/capability gates and provenance
                     // included. The resolver refuses builtins and generic fns here.
-                    Ok(fn_value(name, f.params.len()))
+                    //
+                    // PCI: naming a fn in value position is a REFERENCE to it, so the
+                    // call edge applies HERE: a sealed frame may not take an operator
+                    // fn as a value (the forwarding body would run it in an operator
+                    // frame, where the edge no longer applies). The value also
+                    // remembers the provenance of the frame that made it, exactly as
+                    // a lambda does.
+                    self.seal_call(f)?;
+                    let v = fn_value(name, f.params.len());
+                    if self.frame_sealed.get() {
+                        if let Value::Closure { captured, .. } = &v {
+                            captured.borrow_mut().insert(
+                                crate::interp::SEALED_CLOSURE_MARK.to_string(),
+                                Value::Bool(true),
+                            );
+                        }
+                    }
+                    Ok(v)
                 } else {
                     panic(format!("undefined identifier `{name}`"))
                 }

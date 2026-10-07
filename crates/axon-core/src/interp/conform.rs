@@ -1560,6 +1560,12 @@ impl<'p> Interp<'p> {
         Ok(())
     }
 
+    /// [`Interp::replaced_ok`] for a whole value an operator binding held.
+    pub(crate) fn replaced_ok_top(&self, old: &Value, new: &Value) -> Result<(), String> {
+        let mut seen = std::collections::HashSet::new();
+        self.replaced_ok(old, new, &mut seen, 0)
+    }
+
     /// Whether `new`, now at a position where the operator held `old`, is a
     /// legitimate occupant (amendment 78). The position is determined by what
     /// the operator put there, DEEPLY: (1) `new` casts STRICTLY to the type
