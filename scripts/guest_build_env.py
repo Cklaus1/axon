@@ -15,6 +15,8 @@
                        (judge a host-build output against the PINNED builder)
     guest_build_env.py check-host-build CLONE [--cargo PATH]   (cargo's effective config
                        for the clone, judged in a constructed environment)
+    guest_build_env.py check-build-uid UID BUILDER-UID [USER...]   (amendment 97: the build uid
+                       is dedicated: not root, not the builder, not any service uid)
     guest_build_env.py discard RECORD.json
     guest_build_env.py kernel  KERNEL-RECORD.json DIST-DIR PROFILE-DIR
     guest_build_env.py toolchain-pin MANIFEST.json   (amendment 65: the image's
@@ -248,11 +250,97 @@ def builder_home():
     return pwd.getpwuid(os.geteuid()).pw_dir
 
 
+# Amendment 97: the build uid is DEDICATED. Build code (build.rs, proc macros, make) runs as it, and the
+# reaper SIGKILLs everything it owns, so it must not be root, the runner, or ANY uid a service of the
+# protected deployment runs as (an equal Fabric uid would run repository code as the owner of the host
+# attestation key). The service uids are read from the operator's own deployment: the five default
+# account names, the uid fields of the deployed configs under /etc/axon, and the `User=` of the
+# installed axon-*.service units. Module constants so a test can point them at fixtures; the real
+# defaults are what every run uses.
+SERVICE_USERS = ("axon-fabric", "axon-custodian", "axon-observer", "axon-verifier", "axonb263")
+SERVICE_ETC = "/etc/axon"
+SERVICE_UNITS = "/etc/systemd/system"
+
+
+def _uid_fields(node, where, out):
+    if isinstance(node, dict):
+        for k, v in node.items():
+            if (k == "uid" or (isinstance(k, str) and k.endswith("_uid"))) and k != "build_uid":
+                if isinstance(v, int) and not isinstance(v, bool) and v >= 0:
+                    out.setdefault(v, f"{where}:{k}")
+            else:
+                _uid_fields(v, where, out)
+    elif isinstance(node, list):
+        for v in node:
+            _uid_fields(v, where, out)
+
+
+def service_uids(users=None, etc=None, units=None):
+    """{uid: why it is a service uid}: the named accounts that exist, every uid field of the deployed
+    configs (builder-pin.json's `build_uid` excluded: it is the thing being judged), and the `User=` of
+    each installed axon-*.service."""
+    out = {}
+    for name in (SERVICE_USERS if users is None else users):
+        try:
+            out.setdefault(pwd.getpwnam(name).pw_uid, f"the service user {name}")
+        except KeyError:
+            pass
+    etc = SERVICE_ETC if etc is None else etc
+    try:
+        names = sorted(os.listdir(etc))
+    except OSError:
+        names = []
+    for n in names:
+        if not n.endswith(".json"):
+            continue
+        try:
+            with open(os.path.join(etc, n), "rb") as f:
+                _uid_fields(json.loads(f.read(1 << 16)), os.path.join(etc, n), out)
+        except (OSError, ValueError):
+            continue
+    units = SERVICE_UNITS if units is None else units
+    try:
+        names = sorted(os.listdir(units))
+    except OSError:
+        names = []
+    for n in names:
+        if not (n.startswith("axon-") and n.endswith(".service")):
+            continue
+        try:
+            text = open(os.path.join(units, n), errors="replace").read(1 << 16)
+        except OSError:
+            continue
+        for m in re.finditer(r"^\s*User\s*=\s*(\S+)\s*$", text, re.M):
+            u = m.group(1)
+            try:
+                uid = int(u) if u.isdigit() else pwd.getpwnam(u).pw_uid
+            except KeyError:
+                continue
+            out.setdefault(uid, f"{os.path.join(units, n)}: User={u}")
+    return out
+
+
+def build_uid_problem(uid, builder_uid=None, users=None, etc=None, units=None):
+    """Why `uid` may not be the build uid (empty: it may): root, the builder, or any service uid."""
+    if uid == 0:
+        return "it is root"
+    if uid == (os.geteuid() if builder_uid is None else builder_uid):
+        return "it is the builder's own uid"
+    svc = service_uids(users, etc, units)
+    if uid in svc:
+        return f"it is a service uid ({svc[uid]}): build code would run as that service"
+    return ""
+
+
 def build_ids():
-    """(uid, gid) every build process runs as. Not root, not the runner."""
+    """(uid, gid) every build process runs as. Not root, not the runner, and not any uid a service of
+    the deployment runs as (amendment 97: the build uid is dedicated)."""
     raw = os.environ.get("AXON_GUEST_BUILD_UID") or str(BUILD_UID_DEFAULT)
     if not re.fullmatch(r"[0-9]{1,9}", raw) or int(raw) == 0 or int(raw) == os.geteuid():
         fail(f"AXON_GUEST_BUILD_UID {raw!r} is not an unprivileged uid other than the builder's own")
+    why = build_uid_problem(int(raw))
+    if why:
+        fail(f"AXON_GUEST_BUILD_UID {raw} may not be the build uid: {why}")
     uid = int(raw)
     return uid, uid
 
@@ -264,11 +352,21 @@ def require_runner():
              "key or write the toolchain; run it with sudo (the builder pin's uid is root)")
 
 
+UNSHARE = "/usr/bin/unshare"
+
+
 def as_build_uid(argv):
-    """`argv` prefixed so it runs as the unprivileged build uid, with no way
-    to gain privilege (no-new-privs) and no supplementary groups."""
+    """`argv` prefixed so it runs as the unprivileged build uid, with no way to gain privilege
+    (no-new-privs) and no supplementary groups, inside its OWN PID namespace (amendment 97): the step's
+    first process is that namespace's init, and when it exits the kernel SIGKILLs every other process
+    in the namespace, whatever it did (setsid, double fork, threads, a main thread that has exited).
+    A /proc scan cannot be the only thing standing between a detached descendant and the bytes
+    that are hashed."""
     uid, gid = build_ids()
-    return ["/usr/bin/setpriv", f"--reuid={uid}", f"--regid={gid}", "--clear-groups", "--no-new-privs",
+    if not os.access(UNSHARE, os.X_OK):
+        fail(f"{UNSHARE} is not available: a build step runs in its own PID namespace or not at all")
+    return [UNSHARE, "--pid", "--fork", "--mount-proc", "--kill-child", "--",
+            "/usr/bin/setpriv", f"--reuid={uid}", f"--regid={gid}", "--clear-groups", "--no-new-privs",
             "--", *argv]
 
 
@@ -713,33 +811,42 @@ def chown_tree(path, uid, gid):
 
 
 def build_uid_pids(uid):
-    """Every live (non-zombie) process whose real, effective, saved or fs uid is `uid`, read from
-    /proc: a verified PID set, never a name match. Excludes this process."""
+    """Every process with a LIVE thread whose real, effective, saved or fs uid is `uid`, read from
+    /proc/PID/task/*: a verified PID set, never a name match. Excludes this process. A thread-group
+    leader that has called pthread_exit reads State Z while its other threads keep running, so the
+    state is judged PER THREAD (amendment 97), never per process."""
     me, out = os.getpid(), []
     for ent in os.listdir("/proc"):
         if not ent.isdigit() or int(ent) == me:
             continue
         try:
-            st = open(f"/proc/{ent}/status").read()
+            tids = os.listdir(f"/proc/{ent}/task")
         except OSError:
             continue  # exited between listdir and open
-        uids, state = None, ""
-        for line in st.splitlines():
-            if line.startswith("Uid:"):
-                uids = [int(x) for x in line.split()[1:5]]
-            elif line.startswith("State:"):
-                state = line.split()[1]
-        if uids and uid in uids and state != "Z":
-            out.append(int(ent))
+        for tid in tids:
+            try:
+                st = open(f"/proc/{ent}/task/{tid}/status").read()
+            except OSError:
+                continue
+            uids, state = None, ""
+            for line in st.splitlines():
+                if line.startswith("Uid:"):
+                    uids = [int(x) for x in line.split()[1:5]]
+                elif line.startswith("State:"):
+                    state = line.split()[1]
+            if uids and uid in uids and state not in ("Z", "X"):
+                out.append(int(ent))
+                break
     return out
 
 
 def reap_build_processes():
-    """Amendment 92: after a build step NOTHING of the build uid may still run. A detached
-    descendant of a build script or proc macro (setsid, double fork, nohup) outlives cargo and
-    would keep writing the target dir and source copy the runner is about to hash and sign.
-    Kill the build uid's whole PID set until a pass finds none, then refuse if any survives.
-    The build uid is dedicated to the build (it owns nothing else; see build_ids)."""
+    """Amendments 92, 97: after a build step NOTHING of the build uid may still run. The step ran in
+    its own PID namespace (as_build_uid), so the kernel has already killed everything in it; this is the
+    VERIFICATION that nothing of the build uid survives anywhere (a thread-aware /proc scan) and the
+    backstop that kills what it finds. Kill the build uid's whole PID set until a pass finds none,
+    then refuse if any survives. The build uid is dedicated to the build (build_ids refuses every
+    service uid)."""
     uid, _ = build_ids()
     for _ in range(100):
         pids = build_uid_pids(uid)
@@ -754,14 +861,36 @@ def reap_build_processes():
     fail(f"processes of the build uid {uid} survived SIGKILL after the build step: {build_uid_pids(uid)}")
 
 
+LOCK_DIR = "/run/axon-guest-build-locks"
+
+
 def build_uid_lock():
-    """Amendment 92: the reaper kills the build uid's WHOLE PID set, so two jobs of one build uid
-    must not overlap (each would kill the other's cargo). One advisory lock per build uid, held
-    from handing the trees over to the build until they are locked back. Returns the open fd."""
+    """Amendments 92, 97: the reaper kills the build uid's WHOLE PID set, so two jobs of one build uid
+    must not overlap (each would kill the other's cargo). One advisory lock per build uid, held from
+    creating the trees (begin) or handing them over (a step) until they are locked back. The lock
+    file lives in a root-owned 0755 directory the build uid cannot write (never /run/lock, which is
+    1777), is created 0600, and is REFUSED if it already exists with another owner or a looser
+    mode. Returns the open fd."""
     uid, _ = build_ids()
-    d = "/run/lock" if os.path.isdir("/run/lock") else "/run"
-    fd = os.open(os.path.join(d, f"axon-guest-build-uid-{uid}.lock"),
-                 os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+    try:
+        os.mkdir(LOCK_DIR, 0o755)
+    except FileExistsError:
+        pass
+    dfd = os.open(LOCK_DIR, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    try:
+        st = os.fstat(dfd)
+        if st.st_uid != 0 or st.st_mode & 0o022:
+            fail(f"{LOCK_DIR} (uid {st.st_uid}, mode {oct(st.st_mode & 0o7777)}) is not a root-owned "
+                 "directory only root can write: the lock could be pre-created or held by the build uid")
+        fd = os.open(f"axon-guest-build-uid-{uid}.lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC,
+                     0o600, dir_fd=dfd)
+    finally:
+        os.close(dfd)
+    ls = os.fstat(fd)
+    if not stat.S_ISREG(ls.st_mode) or ls.st_uid != 0 or ls.st_mode & 0o077:
+        os.close(fd)
+        fail(f"the build-uid lock file in {LOCK_DIR} is not a root-owned 0600 regular file "
+             f"(uid {ls.st_uid}, mode {oct(ls.st_mode & 0o7777)}): refusing to trust a lock the build uid could hold")
     fcntl.flock(fd, fcntl.LOCK_EX)
     return fd
 
@@ -774,9 +903,11 @@ def hand_to_build(rec):
 
 
 def lock_from_build(rec):
-    """Amendment 92: after the step, and BEFORE anything is hashed or read for signing, the three
-    trees are root's and writable by root alone: even a process the reaper could not see can no
-    longer change the bytes. (A build script may have made files group/other-writable.)"""
+    """Amendments 92, 97: after the step, and BEFORE anything is hashed or read for signing, the three
+    trees are root's and writable by root alone, so no later path-based write by the build uid can
+    change the bytes. (A build script may have made files group/other-writable.) This does NOT revoke a
+    descriptor a surviving process already holds open: that is why the step runs in its own PID
+    namespace (every process of it is dead before this runs) and the reaper verifies none is left."""
     for k in ("src_dir", "cargo_home", "target_dir"):
         chown_tree(rec[k], 0, 0)
         subprocess.run(["/bin/chmod", "-R", "go-w", "--", rec[k]], check=True)
@@ -793,7 +924,18 @@ def committed_file(rel):
 
 
 def begin(record_path, host=False):
+    """Amendment 97: the per-uid lock is held for the WHOLE of begin (it creates, copies into and
+    chowns the three trees), and the trees are root's again before it returns."""
     require_runner()
+    build_ids()
+    lockfd = build_uid_lock()
+    try:
+        _begin(record_path, host)
+    finally:
+        os.close(lockfd)
+
+
+def _begin(record_path, host):
     chan, cargo, rustc = toolchain()
     uid, gid = build_ids()
     parent, ancestors, base = private_base("axon-host-build-" if host else "axon-guest-build-")
@@ -871,6 +1013,8 @@ def begin(record_path, host=False):
     }
     if host:
         rec["source_revision"] = revision
+    # The build uid owns nothing until a step hands it the trees (under the same lock).
+    lock_from_build(rec)
     rec["measured"] = measure(rec)
     write(record_path, rec)
     print(f"[guest-build-env] controlled: toolchain {chan} "
@@ -1670,6 +1814,16 @@ def main():
                  "between the sources and the bytes):\n  " + "\n  ".join(why))
         print("[guest-build-env] host build configuration: cargo's effective config for the clone, in "
               "the constructed environment, is only its own committed config")
+    elif a[:1] == ["check-build-uid"] and len(a) >= 3:
+        # check-build-uid UID BUILDER-UID [USER...]: the kit's side of "the build uid is dedicated",
+        # judged by the same function the runner uses, against the kit's CONFIGURED account names.
+        if not (re.fullmatch(r"[0-9]{1,9}", a[1]) and re.fullmatch(r"[0-9]{1,9}", a[2])):
+            fail("check-build-uid UID BUILDER-UID [USER...]: both uids are plain decimal")
+        users = tuple(dict.fromkeys([*SERVICE_USERS, *a[3:]]))
+        why = build_uid_problem(int(a[1]), int(a[2]), users)
+        if why:
+            fail(f"build uid {a[1]} may not be the build uid: {why}")
+        print(f"[guest-build-env] build uid {a[1]} is dedicated: no service of the deployment runs as it")
     elif a[:1] == ["discard"] and len(a) == 2:
         discard(a[1])
     elif a[:1] == ["toolchain-pin"] and len(a) == 2:

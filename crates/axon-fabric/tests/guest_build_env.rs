@@ -2645,3 +2645,372 @@ fn the_rootfs_inputs_come_from_the_committed_tree_not_the_builders_copy() {
         "ATTACK: the rootfs took guest-init.sh from the builder's private copy"
     );
 }
+
+// ---- Amendment 97: a process the /proc State filter cannot see, the dedicated build uid, the lock ----
+
+/// A checkout whose build script leaves behind a DETACHED, MULTI-THREADED process of the build uid whose
+/// MAIN THREAD has exited (a raw exit(2) of the leader: the leader then reads State Z while its other
+/// thread keeps running). The surviving thread holds a descriptor on a file in the source copy and on one
+/// in the target dir, and keeps writing through them after cargo has exited. It also records the PID
+/// namespace the step ran in.
+fn threaded_writer_checkout(d: &Path) -> PathBuf {
+    let r = checkout(d);
+    write(
+        &r.join("guest/build.rs"),
+        r##"use std::path::PathBuf;
+use std::process::{Command, Stdio};
+fn main() {
+    let mut p = PathBuf::from(std::env::var("OUT_DIR").unwrap());
+    while !p.join("cargo-home").is_dir() { if !p.pop() { return; } }
+    let held = p.join("target/held.bin");
+    let src = p.join("src/profiles/linux-microvm/guest-init.sh");
+    let _ = std::fs::write(&held, "HELD-ORIGINAL");
+    let _ = std::fs::write(p.join("target/pidns.txt"),
+        std::fs::read_link("/proc/self/ns/pid").map(|l| l.display().to_string()).unwrap_or_default());
+    let py = r#"
+import ctypes, os, sys, threading, time
+a = os.open(sys.argv[1], os.O_WRONLY)
+b = os.open(sys.argv[2], os.O_WRONLY)
+def w():
+    n = 0
+    while True:
+        n += 1
+        os.pwrite(a, b'%012d' % n, 0)
+        os.pwrite(b, b'%012d' % n, 0)
+        time.sleep(0.05)
+threading.Thread(target=w).start()
+time.sleep(0.3)
+libc = ctypes.CDLL(None, use_errno=True)
+libc.syscall(60 if os.uname().machine == 'x86_64' else 93, 0)   # exit(2): the leader alone
+"#;
+    let _ = Command::new("/usr/bin/setsid")
+        .args(["/usr/bin/python3", "-c", py])
+        .arg(&held).arg(&src)
+        .stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn();
+    std::thread::sleep(std::time::Duration::from_millis(900));
+}
+"##,
+    );
+    git(&r, &["add", "-A"]);
+    git(&r, &["commit", "-q", "-m", "threaded writer"]);
+    r
+}
+
+/// Run one controlled step of the threaded-writer checkout in a private PID namespace and report what
+/// is left. Prints `K=V` lines.
+fn threaded_writer_run() -> String {
+    let d = tempfile::tempdir().unwrap();
+    let r = threaded_writer_checkout(d.path());
+    let out = d.path().join("out");
+    let o = build_env_only(&r, &out, &[]);
+    assert!(o.status.success(), "setup: begin: {}", text(&o));
+    let rec = record(&out);
+    let base = base_of(&rec);
+    let mut inner = gbe_raw(&r);
+    inner
+        .arg("cargo")
+        .arg(out.join("build-env.json"))
+        .args(["--rustflags", CRT, "--"])
+        .args(GUEST_INIT);
+    let script = r#"
+echo "OUTER_PIDNS=$(readlink /proc/self/ns/pid)"
+"$@"; echo "STEP_RC=$?"
+echo "HELD0=$(head -c 20 "$HELD")"
+echo "WSRC0=$(head -c 20 "$WSRC")"
+echo "PIDNS_IN_STEP=$(cat "$PIDNS")"
+sleep 2
+n=0; for s in /proc/[0-9]*/task/*/status; do u=$(awk '/^Uid:/{print $2}' "$s" 2>/dev/null); st=$(awk '/^State:/{print $2}' "$s" 2>/dev/null); [ "$u" = 65534 ] && [ "$st" != Z ] && n=$((n+1)); done
+echo "LIVE_THREADS=$n"
+echo "HELD1=$(head -c 20 "$HELD")"
+echo "WSRC1=$(head -c 20 "$WSRC")"
+"#;
+    let mut c = in_pid_ns(&inner, Some(script));
+    c.env("HELD", base.join("target/held.bin"))
+        .env("PIDNS", base.join("target/pidns.txt"))
+        .env(
+            "WSRC",
+            base.join("src/profiles/linux-microvm/guest-init.sh"),
+        );
+    let res = text(&c.output().unwrap());
+    discard(&rec);
+    res
+}
+
+fn kv(res: &str, k: &str) -> String {
+    res.lines()
+        .find_map(|l| l.strip_prefix(k))
+        .unwrap_or("")
+        .to_string()
+}
+
+/// M2500 (end to end): a multi-threaded detached process whose main thread has exited does not
+/// outlive the step and cannot rewrite what is hashed through a descriptor it already holds.
+#[test]
+fn a_threaded_writer_whose_main_thread_exited_does_not_outlive_its_step() {
+    let res = threaded_writer_run();
+    assert_eq!(kv(&res, "STEP_RC="), "0", "setup: the step builds: {res}");
+    assert!(
+        !kv(&res, "PIDNS_IN_STEP=").is_empty(),
+        "setup: the build script ran: {res}"
+    );
+    assert!(
+        kv(&res, "LIVE_THREADS=") == "0",
+        "ATTACK: a multi-threaded build-uid process whose main thread exited survived the step:\n{res}"
+    );
+    assert!(
+        kv(&res, "HELD0=") == kv(&res, "HELD1=") && !kv(&res, "HELD0=").is_empty(),
+        "ATTACK: a surviving thread rewrote a target-dir file through its open descriptor after the step:\n{res}"
+    );
+    assert!(
+        kv(&res, "WSRC0=") == kv(&res, "WSRC1=") && !kv(&res, "WSRC0=").is_empty(),
+        "ATTACK: a surviving thread rewrote the source copy through its open descriptor after the step:\n{res}"
+    );
+}
+
+/// M2501: the step runs in its OWN PID namespace, not the runner's.
+#[test]
+fn a_build_step_runs_in_its_own_pid_namespace() {
+    let res = threaded_writer_run();
+    let (outer, inner) = (kv(&res, "OUTER_PIDNS="), kv(&res, "PIDNS_IN_STEP="));
+    assert!(
+        outer.starts_with("pid:[") && inner.starts_with("pid:["),
+        "setup: both namespaces were read: {res}"
+    );
+    assert_ne!(
+        outer, inner,
+        "ATTACK: the build step ran in the runner's own PID namespace (nothing kills its descendants but a /proc scan):\n{res}"
+    );
+}
+
+/// `python3 -c DRIVER` with `guest_build_env.py` loaded as module `g` from the checkout.
+fn py_driver(repo: &Path, body: &str) -> Output {
+    let code = format!(
+        "import importlib.util, os, sys\nsys.dont_write_bytecode = True\n\
+         sp = importlib.util.spec_from_file_location('g', os.path.join(sys.argv[1], 'scripts', 'guest_build_env.py'))\n\
+         g = importlib.util.module_from_spec(sp); sp.loader.exec_module(g)\n{body}"
+    );
+    Command::new("/usr/bin/python3")
+        .args(["-B", "-c", &code])
+        .arg(repo)
+        .env_remove("AXON_GUEST_BUILD_UID")
+        .output()
+        .unwrap()
+}
+
+/// M2502: a thread-group leader that has exited (State Z) with a live thread is still listed.
+#[test]
+fn the_reaper_lists_a_process_whose_main_thread_has_exited() {
+    let d = tempfile::tempdir().unwrap();
+    let r = checkout(d.path());
+    let inner = Command::new("/bin/true");
+    let script = r#"
+setpriv --reuid=65534 --regid=65534 --clear-groups --no-new-privs python3 -c '
+import ctypes, os, threading, time
+threading.Thread(target=lambda: time.sleep(30)).start()
+time.sleep(0.3)
+ctypes.CDLL(None).syscall(60 if os.uname().machine == "x86_64" else 93, 0)' &
+sleep 1.5
+pid=$!
+echo "LEADER_STATE=$(awk '/^State:/{print $2}' /proc/$pid/status)"
+python3 -B -c '
+import importlib.util, os, sys
+sys.dont_write_bytecode = True
+sp = importlib.util.spec_from_file_location("g", sys.argv[2]); g = importlib.util.module_from_spec(sp); sp.loader.exec_module(g)
+print("LISTED=" + ("yes" if int(sys.argv[1]) in g.build_uid_pids(65534) else "no"))' "$pid" "$GBE"
+kill -9 "$pid"
+"#;
+    let mut c = in_pid_ns(&inner, Some(script));
+    c.env("GBE", r.join("scripts/guest_build_env.py"));
+    let res = text(&c.output().unwrap());
+    assert_eq!(
+        kv(&res, "LEADER_STATE="),
+        "Z",
+        "setup: the leader reads State Z while its other thread runs: {res}"
+    );
+    assert_eq!(
+        kv(&res, "LISTED="),
+        "yes",
+        "ATTACK: the reaper did not list a build-uid process whose main thread had exited:\n{res}"
+    );
+}
+
+/// M2503-M2507: the build uid is dedicated. Every refusal is judged through `build_ids` (what every
+/// step calls) and through `begin`, against FIXTURE service accounts; the control passes.
+#[test]
+fn the_build_uid_may_not_be_a_service_uid() {
+    let d = tempfile::tempdir().unwrap();
+    let r = checkout(d.path());
+    let etc = d.path().join("etc-axon");
+    let units = d.path().join("units");
+    std::fs::create_dir_all(&etc).unwrap();
+    std::fs::create_dir_all(&units).unwrap();
+    let body = format!(
+        r#"
+import json, os, sys
+etc, units = {etc:?}, {units:?}
+g.SERVICE_ETC, g.SERVICE_UNITS, g.SERVICE_USERS = etc, units, ()
+def ids(uid):
+    os.environ["AXON_GUEST_BUILD_UID"] = str(uid)
+    try:
+        g.build_ids(); return "ok"
+    except SystemExit as e:
+        return "refused: " + str(e)
+def begin_refused(uid):
+    os.environ["AXON_GUEST_BUILD_UID"] = str(uid)
+    try:
+        g.begin(os.path.join(units, "rec.json")); return "ran"
+    except SystemExit as e:
+        return "refused: " + str(e)
+out = []
+out.append("CONTROL=" + ids(4242))
+out.append("CONTROL_NOBODY_WHEN_NO_SERVICE_USES_IT=" + ids(65534))
+json.dump({{"uid": 0, "build_uid": 65534, "parent": "/x"}}, open(os.path.join(etc, "builder-pin.json"), "w"))
+out.append("PIN_BUILD_UID_IS_NOT_A_SERVICE_UID=" + ids(65534))
+json.dump({{"fabric_uid": 4343}}, open(os.path.join(etc, "custodian.json"), "w"))
+out.append("CONFIG=" + ids(4343))
+json.dump({{"x": {{"observer_uid": 4344}}}}, open(os.path.join(etc, "observer.json"), "w"))
+out.append("NESTED_CONFIG=" + ids(4344))
+open(os.path.join(units, "axon-fabric.service"), "w").write("[Service]\nUser=4545\n")
+out.append("UNIT=" + ids(4545))
+open(os.path.join(units, "axon-other.service"), "w").write("[Service]\nUser=nobody\n")
+out.append("UNIT_NOBODY=" + ids(65534))
+g.SERVICE_USERS = ("daemon",)
+out.append("NAME=" + ids(1))
+out.append("ROOT=" + ids(0))
+out.append("BEGIN=" + begin_refused(4343))
+print("\n".join(out))
+"#,
+        etc = etc.display().to_string(),
+        units = units.display().to_string()
+    );
+    let o = py_driver(&r, &body);
+    let res = text(&o);
+    assert!(
+        o.status.success()
+            && kv(&res, "CONTROL=") == "ok"
+            && kv(&res, "CONTROL_NOBODY_WHEN_NO_SERVICE_USES_IT=") == "ok"
+            && kv(&res, "PIN_BUILD_UID_IS_NOT_A_SERVICE_UID=") == "ok",
+        "setup/control: a dedicated uid is accepted: {res}"
+    );
+    for (k, what) in [
+        ("CONFIG=", "a uid a deployed config names (fabric_uid)"),
+        ("NESTED_CONFIG=", "a uid a deployed config names, nested"),
+        ("UNIT=", "the User= of an installed axon-*.service"),
+        ("UNIT_NOBODY=", "`nobody` once a service unit runs as it"),
+        ("NAME=", "the uid of a service account by name"),
+        ("ROOT=", "root"),
+    ] {
+        assert!(
+            kv(&res, k).starts_with("refused:"),
+            "ATTACK: {what} was accepted as the build uid ({k}{}):\n{res}",
+            kv(&res, k)
+        );
+    }
+    assert!(
+        kv(&res, "BEGIN=").starts_with("refused:") && kv(&res, "BEGIN=").contains("service uid"),
+        "ATTACK: begin accepted a service uid as the build uid: {res}"
+    );
+    // the kit's verb: the same judgement, against the kit's configured account names
+    let verb = |uid: &str, users: &[&str]| {
+        let mut c = gbe_raw(&r);
+        c.arg("check-build-uid").arg(uid).arg("1000").args(users);
+        c.output().unwrap()
+    };
+    let bad = verb("65534", &["nobody"]);
+    assert!(
+        !bad.status.success() && text(&bad).contains("service uid"),
+        "ATTACK: check-build-uid accepted a build uid that is a configured service account's: {}",
+        text(&bad)
+    );
+    let good = verb("4242", &["nobody"]);
+    assert!(
+        good.status.success(),
+        "control: check-build-uid refused a dedicated uid: {}",
+        text(&good)
+    );
+}
+
+/// M2508-M2510: the per-uid lock lives in a root-owned directory only root can write, is created
+/// root-owned 0600, is refused if it pre-exists otherwise, and `begin` holds it.
+#[test]
+fn the_build_uid_lock_is_root_owned_and_begin_holds_it() {
+    let d = tempfile::tempdir().unwrap();
+    let r = checkout(d.path());
+    let base = d.path().join("locks");
+    let body = format!(
+        r#"
+import fcntl, os, stat
+base = {base:?}
+os.makedirs(base, mode=0o755, exist_ok=True)
+os.environ["AXON_GUEST_BUILD_UID"] = "4242"
+def lock(dirname):
+    g.LOCK_DIR = os.path.join(base, dirname)
+    try:
+        fd = g.build_uid_lock(); os.close(fd); return "ok"
+    except SystemExit as e:
+        return "refused: " + str(e)
+out = []
+out.append("CONTROL=" + lock("clean"))
+st = os.stat(os.path.join(base, "clean", "axon-guest-build-uid-4242.lock"))
+out.append("CONTROL_MODE=%o:%d" % (st.st_mode & 0o7777, st.st_uid))
+os.makedirs(os.path.join(base, "sticky"), mode=0o755); os.chmod(os.path.join(base, "sticky"), 0o1777)
+out.append("WORLD_WRITABLE_DIR=" + lock("sticky"))
+os.makedirs(os.path.join(base, "owned"), mode=0o755)
+f = os.path.join(base, "owned", "axon-guest-build-uid-4242.lock")
+open(f, "w").close(); os.chown(f, 4242, 4242); os.chmod(f, 0o600)
+out.append("LOCK_OWNED_BY_BUILD_UID=" + lock("owned"))
+os.makedirs(os.path.join(base, "loose"), mode=0o755)
+f = os.path.join(base, "loose", "axon-guest-build-uid-4242.lock")
+open(f, "w").close(); os.chmod(f, 0o666)
+out.append("LOCK_LOOSE_MODE=" + lock("loose"))
+os.makedirs(os.path.join(base, "lnk"), mode=0o755)
+os.symlink("/dev/null", os.path.join(base, "lnk", "axon-guest-build-uid-4242.lock"))
+out.append("LOCK_IS_SYMLINK=" + lock("lnk"))
+# begin holds the lock while it builds the trees
+g.LOCK_DIR = os.path.join(base, "held")
+seen = []
+def probe(record_path, host):
+    fd = os.open(os.path.join(g.LOCK_DIR, "axon-guest-build-uid-4242.lock"), os.O_RDWR)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB); seen.append("free")
+    except BlockingIOError:
+        seen.append("held")
+    finally:
+        os.close(fd)
+g._begin = probe
+g.begin("/nonexistent/rec.json")
+out.append("BEGIN_LOCK=" + ",".join(seen))
+print("\n".join(out))
+"#,
+        base = base.display().to_string()
+    );
+    let o = py_driver(&r, &body);
+    let res = text(&o);
+    assert!(
+        o.status.success() && kv(&res, "CONTROL=") == "ok" && kv(&res, "CONTROL_MODE=") == "600:0",
+        "setup/control: a clean lock directory yields a root-owned 0600 lock: {res}"
+    );
+    for (k, what) in [
+        (
+            "WORLD_WRITABLE_DIR=",
+            "a lock directory the build uid can write",
+        ),
+        (
+            "LOCK_OWNED_BY_BUILD_UID=",
+            "a lock file owned by the build uid",
+        ),
+        ("LOCK_LOOSE_MODE=", "a lock file writable by group/other"),
+        ("LOCK_IS_SYMLINK=", "a lock file that is a symlink"),
+    ] {
+        assert!(
+            kv(&res, k).starts_with("refused:"),
+            "ATTACK: {what} was trusted as the build-uid lock ({k}{}):\n{res}",
+            kv(&res, k)
+        );
+    }
+    assert_eq!(
+        kv(&res, "BEGIN_LOCK="),
+        "held",
+        "ATTACK: begin built the trees without holding the build-uid lock:\n{res}"
+    );
+}
