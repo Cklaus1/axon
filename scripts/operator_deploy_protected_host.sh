@@ -317,6 +317,12 @@ if { selected binaries || selected guest || selected configs || selected toolcha
   case "$BUILDER_UID" in ''|*[!0-9]*) refuse "--builder-uid N is required (the account that builds the host binaries and the guest image: the operator's word, installed as $BUILDER_PIN; a build record is judged against it, never against what the record says)" ;; esac
   case "$BUILD_UID" in ''|*[!0-9]*|0) refuse "--build-uid N is required: the unprivileged uid (not root, not the builder) every build process ran as; the pin records it and a record naming another is refused" ;; esac
   [ "$BUILD_UID" != "$BUILDER_UID" ] || refuse "--build-uid must differ from --builder-uid: build code must not run as the account that holds the proof keys"
+  # Amendment 97: the build uid is DEDICATED -- no service of this deployment (Fabric, custodian,
+  # observer, verifier, profile user, or any uid a deployed config or axon-*.service unit already names)
+  # may run as it, because build code (build.rs, proc macros) runs as it and the reaper SIGKILLs everything it owns.
+  bu=$(python3 -I -B "$TREE/scripts/guest_build_env.py" check-build-uid "$BUILD_UID" "$BUILDER_UID" \
+         "$FABRIC_USER" "$CUSTODIAN_USER" "$OBSERVER_USER" "$VERIFIER_USER" "$PROFILE_USER" 2>&1) \
+    || refuse "--build-uid $BUILD_UID must be a DEDICATED uid (build code runs as it): $bu"
   case "$BUILDER_PARENT" in /*) ;; *) refuse "--builder-parent DIR (absolute) is required: the builder-private directory the build records' proof keys live under" ;; esac
   [ "$(realpath -m -- "$BUILDER_PARENT")" = "$BUILDER_PARENT" ] || refuse "--builder-parent $BUILDER_PARENT is not a clean absolute path"
 fi

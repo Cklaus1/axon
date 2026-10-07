@@ -63,116 +63,32 @@ if [ "$(id -u)" != 0 ]; then
   exit 0
 fi
 BUILD_UID=65534
-KEYPARENT=$(mktemp -d /var/lib/axon-opkit-keys.XXXXXX) || { echo "cannot make a builder-private parent under /var/lib"; exit 2; }
-chmod 0755 "$KEYPARENT"
-trap 'rm -rf "$WORK" "$KEYPARENT"' EXIT
+# Amendment 97: the builder-private parent lives INSIDE the namespaces only (/var/lib is a tmpfs there);
+# nothing is created under the host's /var/lib. The fixture hands it out through $KEYSTASH.
+KEYPARENT=/var/lib/axon-opkit-keys
+KEYSTASH=$WORK/keys-stash
 # Amendment 92: EVERY kit invocation below goes through ns_run (scripts/lib/opkit_ns.sh), which
-# runs it under `unshare -m` with a tmpfs over every destination the kit can reach and REFUSES
+# runs it under mount+PID+UTS+IPC+NET namespaces with a tmpfs over every destination the kit can reach and REFUSES
 # (exit 97, the kit never starts) unless that isolation is proved first. A kit guard that is
 # missing or regressed therefore turns the attack into an install INSIDE the namespace.
-# scripts/opkit_ns_drift.py fails the build if a test script runs the kit any other way.
+# Amendment 97: so does every other root step of this test (the synthetic image, the controlled host
+# build, the forged record): scripts/opkit_ns_drift.py fails the build if a test script runs the kit,
+# `--apply` or a controlled-build verb any other way. The overrides are honoured by test_opkit_ns.sh only.
 [ -z "${OPKIT_DESTS_FOR_TEST:-}${OPKIT_NS_PID_FOR_TEST:-}${OPKIT_VIEW_PID_FOR_TEST:-}" ] || { echo "REFUSE: an OPKIT_*_FOR_TEST override is set; the kit test proves the REAL destinations"; exit 2; }
-export OPKIT_LIB=$HERE/lib/opkit_ns.sh OPKIT_SCRATCH=$WORK/scratch OPKIT_CARRY="$KEYPARENT"
+export OPKIT_LIB=$HERE/lib/opkit_ns.sh OPKIT_SCRATCH=$WORK/scratch
 mkdir "$OPKIT_SCRATCH" || exit 2
 . "$OPKIT_LIB"
 if [ -f /usr/local/bin/firecracker ] && [ -f /usr/local/bin/jailer ]; then
   cp /usr/local/bin/firecracker /usr/local/bin/jailer "$WORK/" && export OPKIT_EXTRA="$WORK/firecracker $WORK/jailer"
 fi
-python3 - "$CLONE" "$DIST" "$KEYPARENT" <<'PY' || { echo "cannot write the synthetic manifest"; exit 2; }
-import hashlib, importlib.util, json, os, sys
-c, d, parent = sys.argv[1:4]
-sys.dont_write_bytecode = True
-spec = importlib.util.spec_from_file_location("guest_build_env", os.path.join(c, "scripts", "guest_build_env.py"))
-g = importlib.util.module_from_spec(spec); spec.loader.exec_module(g)
-import hmac as hm
-def sha(p): return hashlib.sha256(open(p, "rb").read()).hexdigest()
-m = json.load(open(os.path.join(c, "profiles/linux-microvm/manifest.json")))
-for n in ("vmlinux", "rootfs.sqfs"):
-    m["artifacts"][n]["sha256"] = sha(os.path.join(d, n))
-for k, p in (("firecracker_sha256", "/usr/local/bin/firecracker"), ("jailer_sha256", "/usr/local/bin/jailer")):
-    if os.path.isfile(p): m["engine"][k] = sha(p)
-chan, cargo0, rustc0 = g.toolchain()
-anc, why = g.ancestors_of(parent)
-assert not why, why
-ids = {"build": "axon-guest-build-fixture", "kernel": "axon-kernel-build-fixture"}
-def key(i):
-    os.makedirs(os.path.join(parent, "keys"), mode=0o700, exist_ok=True)
-    with open(os.path.join(parent, "keys", i + ".key"), "w") as f: f.write(os.urandom(32).hex())
-    os.chmod(os.path.join(parent, "keys", i + ".key"), 0o400)
-for i in ids.values(): key(i)
-base = os.path.join(parent, ids["build"])
-tdir = os.path.join(base, "toolchains", os.path.basename(os.path.dirname(os.path.dirname(cargo0))), "bin")
-cargo, rustc = os.path.join(tdir, "cargo"), os.path.join(tdir, "rustc")  # the per-build private copy's paths (not made: judged only)
-env = g.constructed_env(base, cargo, rustc, {})
-hosts = g.host_tools(g.CARGO_HOST_TOOLS)
-art = {n: m["artifacts"][n]["sha256"] for n in g.DIST_BINARIES}
-check = {"origins": [], "foreign": []}
-mks = "/usr/bin/mksquashfs"
-rec = {"schema": g.SCHEMA, "controlled": True,
-       "toolchain": {"channel": chan, "cargo": cargo, "cargo_sha256": sha(cargo0), "cargo_version": "cargo fixture",
-                     "rustc": rustc, "rustc_sha256": sha(rustc0), "rustc_vV": os.popen(rustc0 + " -vV").read().strip(),
-                     "host_tools": hosts, "source": {"cargo": cargo0, "rustc": rustc0}},
-       "measured": {"cargo": sha(cargo0), "rustc": sha(rustc0), "bin": "0" * 64,
-                    "tools": {n: t["sha256"] for n, t in hosts.items()}},
-       "env": env, "env_allowlist": g.ENV_ALLOWLIST, "proxy_vars": [], "builder_uid": os.geteuid(), "build_uid": 65534,
-       "build_parent": parent, "build_parent_ancestors": anc, "src_dir": os.path.join(base, "src"), "src_files": 1,
-       "cargo_home": env["CARGO_HOME"], "cargo_home_created_empty": True,
-       "target_dir": env["CARGO_TARGET_DIR"], "target_dir_created_empty": True,
-       "effective_config": {"origins": [], "foreign": [], "own_config": ".cargo/config.toml"},
-       "builds": [{"name": n, "args": a, "rustflags": rf, "config_before": check, "config_after": check}
-                  for n, a, rf in g.PROTECTED_BUILDS],
-       "artifacts": art,
-       "rootfs": {"tool": g.tool_identity(mks, "-version"),
-                  "argv": [mks, os.path.join(base, "rootfs-x"), os.path.join(d, "rootfs.sqfs"), *g.MKSQUASHFS_FLAGS],
-                  "env": {"HOME": base, "LC_ALL": "C", "PATH": g.TOOL_PATH},
-                  "inputs": {**art, "busybox": m["busybox"]["sha256"], "guest-init.sh": m["guest_init"]["sha256"]},
-                  "sha256": m["artifacts"]["rootfs.sqfs"]["sha256"]},
-       "proof": {"schema": g.PROOF_SCHEMA, "id": ids["build"], "hmac": ""}}
-kbase = os.path.join(parent, ids["kernel"])
-mk = m["kernel"]
-tools = g.host_tools(g.KERNEL_TOOLS)
-make = tools["make"]["path"]
-krec = {"schema": g.KERNEL_SCHEMA, "controlled": True, "builder_uid": os.geteuid(), "build_uid": 65534, "build_parent": parent,
-        "build_parent_ancestors": anc, "base": kbase,
-        "pin": {"version": mk["version"], "tarball_sha256": mk["tarball_sha256"],
-                "config_sha256": mk["config_sha256"], "overlay_sha256": mk["overlay_sha256"]},
-        "env": g.kernel_env(kbase), "make": [[make, "ARCH=x86_64", "olddefconfig"], [make, "ARCH=x86_64", "-j8", "vmlinux"]],
-        "tools": tools, "effective_config_sha256": mk["effective_config_sha256"],
-        "vmlinux_sha256": m["artifacts"]["vmlinux"]["sha256"],
-        "proof": {"schema": g.PROOF_SCHEMA, "id": ids["kernel"], "hmac": ""}}
-for r_ in (rec, krec):  # signed as the runner would (the fixture's toolchain copy is not made, so not via g.write)
-    k_, why_ = g.proof_key(parent, r_["proof"]["id"], os.geteuid(), judging=False); assert not why_, why_
-    r_["proof"]["hmac"] = hm.new(k_, g.proof_payload(r_), "sha256").hexdigest()
-m["source"].update({"axon_tree_dirty_at_build": False, "axon_tree_dirty_reasons": [], "build_environment": rec})
-m["kernel"]["build_environment"] = krec
-assert not g.shape_problems(rec), g.shape_problems(rec)
-bld = (os.geteuid(), parent, 65534)
-assert not g.image_problems(m, pin_required=False, builder=bld), g.image_problems(m, pin_required=False, builder=bld)
-for out in (os.path.join(d, "manifest.json"), os.path.join(c, "profiles/linux-microvm/manifest.json")):
-    with open(out, "w") as f:
-        json.dump(m, f, indent=2); f.write("\n")
-PY
-(cd "$CLONE" && G add -A && G commit -q -m "opkit test: this tree's kit and a synthetic guest image") \
-  || { echo "cannot commit in the scratch clone"; exit 2; }
-COMMIT=$(git -C "$CLONE" rev-parse HEAD)
-
-# ── the host binaries: the CONTROLLED host build of the clone (amendment 86) ──
-# A fresh standalone clone, a fresh EMPTY target dir and CARGO_HOME, the
-# constructed environment, one fixed invocation, and a record SIGNED by the
-# builder (this user, under $KEYPARENT, which the kit is told is the pinned
-# builder). Amendment 92: the runner kills every process of the build uid after a step, and that uid is
-# `nobody` here, so the build runs in a private PID namespace that holds nothing of the host's.
-# It builds axon-fabric and its dependencies from nothing every run.
 HOSTOUT=$WORK/hostbuild
 BUILDER_UID=$(id -u)
-(cd "$CLONE" && env -i HOME="$HOME" PATH=/usr/bin:/bin AXON_GUEST_BUILD_PARENT="$KEYPARENT" AXON_GUEST_BUILD_UID="$BUILD_UID" \
-    ${http_proxy:+http_proxy="$http_proxy"} ${https_proxy:+https_proxy="$https_proxy"} \
-    unshare --pid --fork --mount-proc --kill-child \
-    python3 -B scripts/guest_build_env.py host-build "$HOSTOUT") \
-  || { echo "the controlled host build failed"; exit 2; }
+# The fixture needs the network (the host build downloads its crates): OPKIT_NET=host, the one namespace it shares.
+OPKIT_NET=host ns_run bash "$HERE/lib/opkit_fixture.sh" "$CLONE" "$DIST" "$KEYPARENT" "$BUILD_UID" "$HOSTOUT" "$KEYSTASH" "$WORK/commit.txt" \
+  || { echo "the synthetic image / controlled host build failed in the namespace"; exit 2; }
+COMMIT=$(cat "$WORK/commit.txt")
+export OPKIT_RESTORE="$KEYSTASH=$KEYPARENT"
 BIN=$HOSTOUT
-python3 -c 'import json,sys; m=json.load(sys.stdin); sys.exit(0 if m["fabric_revision"]==sys.argv[1] and m["source_dirty"] is False and m["build_state"]=="" else 1)' \
-  "$COMMIT" < <("$BIN/axon-fabric" verifier-manifest) || { echo "the build is not a clean build of $COMMIT"; exit 2; }
 mkdir -p "$CLONE/dist" && cp -a "$DIST" "$CLONE/dist/guest-linux"
 
 # ── operator data fixtures ─────────────────────────────────────────────────────
@@ -367,11 +283,14 @@ PY
 refused "ATTACK: a hand-written host build record (no builder proof)" "no builder proof" \
   ns_run bash "$KIT" --from "$CLONE" --bin-dir "$WORK/fakebin" $KB
 # The reviewer's forge: another account, with its own private directory and key.
-copybin; FORGE=$(mktemp -d /var/lib/axon-opkit-forge.XXXXXX); chmod 0755 "$FORGE"
-python3 - "$WORK/fakebin/host-build.json" "$FORGE" "$KEYPARENT" "$CLONE" <<'PY' || fail "cannot forge the host record"
-import hmac, importlib.util, json, os, sys
-p, forge, parent, clone = sys.argv[1:5]
+# (made inside a namespace: /var/lib/axon-opkit-forge exists there only, and is handed to the kit's
+# namespace through a stash; amendment 97)
+copybin; FORGE=/var/lib/axon-opkit-forge; FORGESTASH=$WORK/forge-stash
+ns_run python3 - "$WORK/fakebin/host-build.json" "$FORGE" "$KEYPARENT" "$CLONE" "$FORGESTASH" <<'PY' || fail "cannot forge the host record"
+import hmac, importlib.util, json, os, subprocess, sys
+p, forge, parent, clone, stash = sys.argv[1:6]
 sys.dont_write_bytecode = True
+os.makedirs(forge, 0o755)
 sp = importlib.util.spec_from_file_location("g", os.path.join(clone, "scripts", "guest_build_env.py"))
 g = importlib.util.module_from_spec(sp); sp.loader.exec_module(g)
 os.chmod(forge, 0o700); os.chown(forge, 4242, 4242)
@@ -382,10 +301,12 @@ r = json.loads(json.dumps(json.load(open(p))).replace(parent, forge))
 r["builder_uid"] = 4242; r["build_parent_ancestors"] = anc; r["proof"]["id"] = "f"
 r["proof"]["hmac"] = hmac.new(b"f" * 64, g.proof_payload(r), "sha256").hexdigest()
 json.dump(r, open(p, "w"))
+subprocess.run(["rm", "-rf", stash], check=True); os.makedirs(stash)
+subprocess.run(["cp", "-a", forge + "/.", stash], check=True)
 PY
-OPKIT_CARRY="$KEYPARENT $FORGE" refused "ATTACK: a host build record signed by another account under its own directory" "cannot be checked" \
+OPKIT_RESTORE="$KEYSTASH=$KEYPARENT $FORGESTASH=$FORGE" refused "ATTACK: a host build record signed by another account under its own directory" "cannot be checked" \
   ns_run bash "$KIT" --from "$CLONE" --bin-dir "$WORK/fakebin" $KB
-rm -rf "$FORGE"
+rm -rf "$FORGESTASH"
 copybin; rm -f "$WORK/fakebin/host-build.json"
 refused "ATTACK: binaries with no host-build record (a plain cargo build)" "holds no readable host-build.json" \
   ns_run bash "$KIT" --from "$CLONE" --bin-dir "$WORK/fakebin" $KB
@@ -400,6 +321,17 @@ refused "ATTACK: no --build-uid (the uid the build ran as is the operator's word
   ns_run bash "$KIT" --from "$CLONE" --bin-dir "$BIN" --builder-uid "$BUILDER_UID" --builder-parent "$KEYPARENT"
 refused "ATTACK: a build uid equal to the builder uid (build code as the key holder)" "must differ from --builder-uid" \
   ns_run bash "$KIT" --from "$CLONE" --bin-dir "$BIN" --builder-uid "$BUILD_UID" --builder-parent "$KEYPARENT" --build-uid "$BUILD_UID"
+# Amendment 97: the build uid is DEDICATED -- never the uid of any service of the deployment.
+refused "ATTACK: a build uid that is the Fabric user's uid (build code as the owner of the attestation key)" "DEDICATED" \
+  ns_run bash "$KIT" --from "$CLONE" --bin-dir "$BIN" --builder-uid "$BUILDER_UID" --builder-parent "$KEYPARENT" --build-uid 65534 --fabric-user nobody
+refused "ATTACK: a build uid that is the custodian user's uid" "DEDICATED" \
+  ns_run bash "$KIT" --from "$CLONE" --bin-dir "$BIN" --builder-uid "$BUILDER_UID" --builder-parent "$KEYPARENT" --build-uid 1 --custodian-user daemon
+refused "ATTACK: a build uid that is the observer user's uid" "DEDICATED" \
+  ns_run bash "$KIT" --from "$CLONE" --bin-dir "$BIN" --builder-uid "$BUILDER_UID" --builder-parent "$KEYPARENT" --build-uid 2 --observer-user bin
+refused "ATTACK: a build uid that is the verifier user's uid" "DEDICATED" \
+  ns_run bash "$KIT" --from "$CLONE" --bin-dir "$BIN" --builder-uid "$BUILDER_UID" --builder-parent "$KEYPARENT" --build-uid 1 --verifier-user daemon
+refused "ATTACK: a build uid that is the profile user's uid" "DEDICATED" \
+  ns_run bash "$KIT" --from "$CLONE" --bin-dir "$BIN" --builder-uid "$BUILDER_UID" --builder-parent "$KEYPARENT" --build-uid 2 --profile-user bin
 refused "ATTACK: a build uid other than the one the record was built under" "not the pinned build uid" \
   ns_run bash "$KIT" --from "$CLONE" --bin-dir "$BIN" --builder-uid "$BUILDER_UID" --builder-parent "$KEYPARENT" --build-uid 4243
 # Amendment 92: run as ROOT, with nothing standing between the attack and a real install but
