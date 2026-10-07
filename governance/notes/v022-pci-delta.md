@@ -15,9 +15,9 @@ later commit touches `crates/axon-core/src` (the note is then stale: `python3 sc
 --emit HEAD`, paste between the markers).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: fe00e4c53823da7f127fdd93fade5de1c5c3dc03
+generated-at: aa0dd7ebefece0f2498c0e071c40b806aa57954c
 
-`git diff --numstat 31413ca7..fe00e4c5 -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..aa0dd7eb -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -39,7 +39,7 @@ generated-at: fe00e4c53823da7f127fdd93fade5de1c5c3dc03
 | `crates/axon-core/src/complexity.rs` | 1 | 0 |
 | `crates/axon-core/src/doc.rs` | 1 | 0 |
 | `crates/axon-core/src/effects.rs` | 51 | 0 |
-| `crates/axon-core/src/env_registry.rs` | 1 | 0 |
+| `crates/axon-core/src/env_registry.rs` | 4 | 0 |
 | `crates/axon-core/src/error.rs` | 20 | 11 |
 | `crates/axon-core/src/fmt.rs` | 5 | 0 |
 | `crates/axon-core/src/infer.rs` | 3 | 2 |
@@ -58,9 +58,9 @@ generated-at: fe00e4c53823da7f127fdd93fade5de1c5c3dc03
 | `crates/axon-core/src/mut_borrow.rs` | 800 | 0 |
 | `crates/axon-core/src/parser.rs` | 39 | 1 |
 | `crates/axon-core/src/resolver.rs` | 334 | 64 |
-| total | 12814 | 2648 |
+| total | 12817 | 2648 |
 
-`git log --reverse 31413ca7..fe00e4c5 -- crates/axon-core/src`:
+`git log --reverse 31413ca7..aa0dd7eb -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -118,7 +118,8 @@ generated-at: fe00e4c53823da7f127fdd93fade5de1c5c3dc03
 | a4af40a1 | merge of origin/main (PR #8) | joins the commits above; combines main's `call_fn_in`/`call_fn_mut` with the seal as one `call_fn_sealed` path, adds `&mut T` and Rc-array arms to conform.rs/pin.rs, keeps amendments 53-83 on the merged call path: no intended change in what is refused (rows re-run on this head) |
 | 9acbb453 | merge of origin/main (PR #8) | merge fixes: `input_arg` read from the args (the verify panic's input suffix), the per-frame stack budget raised to 512 KiB because the merged debug frame is ~265 KB: no change in what is refused |
 | fe00e4c5 | merge of c9r4c/psv1e (integrate6) | joins the psv1e dispatch-analysis rebuild (pin.rs `Tys`, amendment 88) with main's `&mut T` type and Rc layout (a `RefMut` arm in the closed-type walk, no env duplicate in the closure call): no intended change in what is refused |
-| 54 commits | | |
+| aa0dd7eb | env registry (integrate6) | three TEST-ONLY re-exec markers registered (AXON_EQ_ALONE/GIT_ENV/HARDEN); a registry row for a var only tests read: no change in what is refused |
+| 55 commits | | |
 <!-- END MECHANICAL -->
 <!-- END MECHANICAL -->
 
