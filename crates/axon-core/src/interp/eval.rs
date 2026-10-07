@@ -92,9 +92,20 @@ enum AppendOp {
 /// capture-free forwarding lambda `|#0, #1, ..| name(#0, #1, ..)`. The `#n`
 /// parameter names cannot be written in source, so they never shadow a name the
 /// callee's body or arguments could refer to.
-fn fn_value(name: &str, arity: usize) -> Value {
+fn fn_value(name: &str, arity: usize, sealed: bool) -> Value {
     let params: Vec<String> = (0..arity).map(|i| format!("#{i}")).collect();
     let args = params.iter().map(|p| Expr::Ident(p.clone())).collect();
+    let mut cell = HashMap::new();
+    // A fn value a SEALED frame took (the call edge already refused every
+    // operator fn there) carries its own mark: without it the candidate's
+    // call through its own `let g = inc; g(n)` read as sealed code calling an
+    // OPERATOR closure and was refused (C9 round 9). The operator's fn values
+    // stay unmarked. It is NOT `SEALED_CLOSURE_MARK`: the body still runs in
+    // the operator frame and reaches the candidate fn through `call_fn`'s own
+    // seal crossing (strict return cast), exactly as before.
+    if sealed {
+        cell.insert(SEALED_FNVAL_MARK.to_string(), Value::Bool(true));
+    }
     Value::Closure {
         params,
         body: Box::new(Expr::Call {
@@ -102,7 +113,7 @@ fn fn_value(name: &str, arity: usize) -> Value {
             args,
             tier: None,
         }),
-        captured: std::rc::Rc::new(std::cell::RefCell::new(HashMap::new())),
+        captured: std::rc::Rc::new(std::cell::RefCell::new(cell)),
         contract: None,
     }
 }
@@ -117,8 +128,7 @@ impl<'p> Interp<'p> {
             Expr::Ident(name) => {
                 if let Some(v) = env.get(name) {
                     Ok(v.clone())
-                } else if let Some(v) = self.globals.get(name) {
-                    self.seal_global(name)?;
+                } else if let Some(v) = self.global_ref(name)? {
                     Ok(v.clone())
                 } else if let Some(f) = self.fns.get(name.as_str()) {
                     // AX-25: a top-level fn named in VALUE position (`let g = f`,
@@ -136,7 +146,11 @@ impl<'p> Interp<'p> {
                     // mark: a candidate fn's value, called from anywhere, reaches the
                     // candidate fn through `call_fn`'s own crossing.
                     self.seal_call(f)?;
-                    Ok(fn_value(name, f.params.len()))
+                    Ok(fn_value(
+                        name,
+                        f.params.len(),
+                        self.seal.active && self.frame_sealed.get(),
+                    ))
                 } else {
                     panic(format!("undefined identifier `{name}`"))
                 }
@@ -283,6 +297,7 @@ impl<'p> Interp<'p> {
 
             Expr::UnaryOp { op, operand } => {
                 let v = self.eval(operand, env)?;
+                self.seal_width_unary(op, operand, &v)?;
                 eval_unary(op, v)
             }
 
@@ -533,7 +548,7 @@ impl<'p> Interp<'p> {
                 if let Expr::Ident(name) = receiver.as_ref() {
                     let v = match env.get(name) {
                         Some(v) => v,
-                        None => match self.globals.get(name) {
+                        None => match self.global_ref(name)? {
                             Some(v) => v,
                             None => return panic(format!("undefined identifier `{name}`")),
                         },
@@ -567,9 +582,12 @@ impl<'p> Interp<'p> {
                 // `xs` first would copy the whole array per element read, which
                 // makes in-place algorithms over `&mut [T]` (AX-08) quadratic.
                 if let Expr::Ident(name) = receiver.as_ref() {
-                    if env.get(name).is_some() || self.globals.contains_key(name) {
+                    if env.get(name).is_some() || self.is_global(name) {
                         let idx = self.eval_int(index, env)?;
-                        let arr = env.get(name).or_else(|| self.globals.get(name));
+                        let arr = match env.get(name) {
+                            Some(v) => Some(v),
+                            None => self.global_ref(name)?,
+                        };
                         return match arr {
                             Some(Value::Array(items)) => {
                                 items.get(idx as usize).cloned().ok_or_else(|| {
@@ -1215,9 +1233,8 @@ impl<'p> Interp<'p> {
                 return self.call_fn(f, argv);
             }
             // 4. A module-level closure constant.
-            if let Some(Value::Closure { .. }) = self.globals.get(name) {
-                self.seal_global(name)?;
-                let c = self.globals.get(name).unwrap().clone();
+            if let Some(c @ Value::Closure { .. }) = self.global_ref(name)? {
+                let c = c.clone();
                 return self.call_closure(c, argv);
             }
             return panic(format!("call to unknown function `{name}`"));

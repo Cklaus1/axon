@@ -2247,6 +2247,18 @@ ATTACK_MARKERS.update({
 ATTACK_MARKERS.update({
     'M2465': 'ATTACK: the guest started under a POSSIBLY TRUNCATED cmdline policy',
     'M2466': r'assertion failed: backend::GuestPolicy::for_grant\(&req\(&long_principal\(\)\), ""\)\.is_err\(\)',
+    # C9 round 9 (PSV1G, amendment 96)
+    'M2470': r"ATTACK: a sealed frame read an operator global \(a whole read\)",
+    'M2471': r"ATTACK: a sealed frame read an operator global \(a field\)",
+    'M2472': r"ATTACK: a sealed frame read an operator global \(an index\)",
+    'M2473': r"ATTACK: a sealed frame read an operator global \(a closure constant call\)",
+    'M2474': r"ATTACK: a sealed frame read an operator global \(a whole read\)",
+    'M2475': r"ATTACK: sandbox_run handed the operator a value the candidate chose the type of \(dispatch on a u8 result\)",
+    'M2476': r"ATTACK: sealed code called an operator fn value with an undetermined argument: Ok\(Completed\)",
+    'M2477': r"ATTACK: a candidate fn value replaced an operator closure in the operator's dict: Ok\(Completed\)",
+    'M2478': r"ATTACK: the operator's unary negation wrapped at a width the candidate chose: Ok\(Completed\)",
+    'M2479': r"ATTACK: the operator's unary negation wrapped at a width the candidate chose: Ok\(Completed\)",
+    'M2480': r"ATTACK: the operator's unary negation wrapped at a width the candidate chose: Ok\(Completed\)",
 })
 
 # C9 round 9, BUILDENV5 (M2500-M2519; amendment 97).

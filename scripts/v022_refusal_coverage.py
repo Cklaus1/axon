@@ -2242,6 +2242,11 @@ EXEMPT += [
      "PREDICATE OF A NAMED ROW: its one caller is eval.rs's struct-construction provenance "
      "(`self.frame_sealed.get() || self.seal_type(name)`), which M97 (ACTIVE) mutates to drop this call, "
      "the same removal"),
+    (CINT, "    pub(crate) fn is_global(&self, name: &str) -> bool {",
+     "PREDICATE OF NAMED ROWS: it decides only whether eval.rs's index fast path is taken (existence, no "
+     "value). Its one caller is that fast path, whose value read is `global_ref` (M2472 mutates it to a raw "
+     "read); when it answers false the generic path evaluates the receiver through the identifier arm, "
+     "which reads through `global_ref` too (M2470). Neither answer reaches a value without the edge"),
     (CF, "            let Some(vd) = ed.variants.iter().find(|x| x.name == *variant) else {",
      "NOTHING TO ADMIT: the declared enum has no such variant, so there are no declared field types to "
      "cast the payload's fields at (the casts below read `vd`)"),

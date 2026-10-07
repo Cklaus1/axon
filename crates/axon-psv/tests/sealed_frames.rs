@@ -1140,3 +1140,123 @@ fn a_candidates_write_to_its_array_parameter_never_reaches_the_operators_copy() 
     );
     passed(&s, "write to the parameter (ATTACK: a leak fails this)");
 }
+
+/// C9 round 9, PSV-1 (amendment 96): `sandbox_run(sb, "fn", arg)` declares
+/// `-> i64`, but only the candidate's OWN declared return was applied to what it
+/// returned (`-> u8` is satisfied by `4 as u8`), and `let r = sandbox_run(..)`
+/// read as determined: `r.ok()` dispatched the lenient `u8` impl and
+/// `(r << 1) == 254` wrapped at `u8`. The result is cast at the seal crossing.
+#[test]
+fn sandbox_run_hands_the_operator_an_i64_or_nothing() {
+    let call = "    let p = principal_root(\"r\", true, true, true, 100)\n    let sb = sandbox_create(p, \"IO\")\n    let r = sandbox_run(sb, \"work\", 0)\n";
+    let disp = format!(
+        "mod sol\nuse sol.{{work}}\n{J8}@[test]\nfn accept() {{\n{call}    assert(r.ok())\n}}\n"
+    );
+    let width = format!("mod sol\nuse sol.{{work}}\n@[test]\nfn accept() {{\n{call}    assert((r << 1) == 254)\n}}\n");
+    // Controls: the honest candidate passes, a wrong one fails with a keyed verdict.
+    passed(
+        &check(&disp, &[], "pub fn work(x: i64) -> i64 { 9 }\n", "accept"),
+        "honest i64",
+    );
+    let s = check(&disp, &[], "pub fn work(x: i64) -> i64 { 4 }\n", "accept");
+    assert_eq!(
+        (s.status, s.host),
+        (GuestStatus::Failed, Some(false)),
+        "control wrong: {}",
+        s.stdout
+    );
+    passed(
+        &check(
+            &width,
+            &[],
+            "pub fn work(x: i64) -> i64 { 127 }\n",
+            "accept",
+        ),
+        "honest width",
+    );
+    for (what, suite, cand) in [
+        (
+            "dispatched the lenient u8 impl",
+            &disp,
+            "pub fn work(x: i64) -> u8 { 4 as u8 }\n",
+        ),
+        (
+            "wrapped the operator's shift at u8",
+            &width,
+            "pub fn work(x: i64) -> u8 { 255 as u8 }\n",
+        ),
+    ] {
+        let s = check(suite, &[], cand, "accept");
+        assert!(
+            refused_unkeyed(&s),
+            "ATTACK: sandbox_run handed the operator a u8 the candidate chose ({what}): {:?} {:?} {}",
+            s.status,
+            s.host,
+            s.stdout
+        );
+    }
+}
+
+/// C9 round 9 sweep (amendment 96): `-x` / `~x` wrap at the candidate's chosen
+/// width exactly as `x + y` does and were not covered by the arithmetic arm.
+#[test]
+fn operator_negation_never_runs_at_a_width_the_candidate_chose() {
+    let neg = "mod sol\nuse sol.{work}\n@[test]\nfn accept() {\n    let xs = arr_map([1], work)\n    assert((-xs[0]) == -4)\n}\n";
+    passed(
+        &check(neg, &[], "pub fn work(x: i64) -> i64 { 4 }\n", "accept"),
+        "honest i64",
+    );
+    let wrap = "mod sol\nuse sol.{work}\n@[test]\nfn accept() {\n    let xs = arr_map([1], work)\n    assert((-xs[0]) == 252)\n}\n";
+    let s = check(wrap, &[], "pub fn work(x: i64) -> i64 { 4 }\n", "accept");
+    assert_eq!(
+        (s.status, s.host),
+        (GuestStatus::Failed, Some(false)),
+        "control wrong: {}",
+        s.stdout
+    );
+    let s = check(
+        wrap,
+        &[],
+        "pub fn work(x: i64) -> u8 { 4 as u8 }\n",
+        "accept",
+    );
+    assert!(
+        refused_unkeyed(&s),
+        "ATTACK: the operator's negation wrapped at a u8 the candidate chose: {:?} {:?} {}",
+        s.status,
+        s.host,
+        s.stdout
+    );
+}
+
+/// C9 round 9, SENTINEL (amendment 96): a candidate that calls its OWN fn value
+/// with an argument runs; one that reads an operator global through an index,
+/// a field or a tuple access is refused (statically here, E0004; the runtime
+/// edge is the interpreter unit test's, with the static check bypassed).
+#[test]
+fn a_candidate_calls_its_own_fn_value_and_never_reads_an_operator_global() {
+    let suite = "mod sol\nuse sol.{solve}\ntype Cfg = { k: i64 }\nlet TABLE = [9, 8]\nlet CFG = Cfg { k: 9 }\nlet PAIR = (9, 4)\n@[test]\nfn accept() {\n    assert_eq(solve(3), 4)\n}\n";
+    passed(
+        &check(suite, &[], "pub fn inc(n: i64) -> i64 { n + 1 }\npub fn solve(n: i64) -> i64 {\n    let g = inc\n    g(n)\n}\n", "accept"),
+        "own fn value with an argument",
+    );
+    for (what, body) in [
+        ("index", "TABLE[0] - 5"),
+        ("field", "CFG.k - 5"),
+        ("tuple", "PAIR.0 - 5"),
+    ] {
+        let s = check(
+            suite,
+            &[],
+            &format!("pub fn solve(n: i64) -> i64 {{ {body} }}\n"),
+            "accept",
+        );
+        assert!(
+            refused_unkeyed(&s),
+            "ATTACK: the candidate read an operator global through {what}: {:?} {:?} {}",
+            s.status,
+            s.host,
+            s.stdout
+        );
+    }
+}

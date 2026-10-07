@@ -5591,3 +5591,154 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       `/run` would lose DNS for the fixture's download inside the namespace (this host's points into `/mnt`);
       the lock directory `/run/axon-guest-build-locks` is created on the host by the cargo tests (they run
       `begin` for real) and is left there, empty of anything but root-owned lock files.
+## Amendment 96: four more routes of one class, and the sweep that enumerated the rest (C9 round 9, PSV1G)
+
+96. **Source: the round-9 PSV-1 and SENTINEL reviews (two executed blockers; two minors) and the sweep the
+    brief asked for.** Mutation ids M2470-M2480, matrix rows A190-A194 (another branch uses A200+; the
+    integrator renumbers). The class, stated once so the sweep has a definition: a value that the
+    CANDIDATE produced reaches operator code, or an operator-defined name is looked up from sealed code,
+    on a path that does not pass the seal edge for it (`seal_call`, `seal_global`, `seal_method`,
+    `seal_dispatch`, `seal_width`, `seal_refine`, the strict cast of a crossing). Four instances in two
+    rounds (`&mut` write-through, first-class fn values, and now two more) is the evidence that fixing each
+    route where it was found does not converge; this amendment fixes the primitive each time it can and
+    adds a drift test where a source walk is natural.
+    - **BLOCKER (PSV-1): `sandbox_run`'s result had no seal edge.** `sandbox_run(sb, "fn", arg)` calls
+      `call_fn` on the fn named by the string and returned `ok!(v)` for any value; only the CANDIDATE's own
+      declared return type was applied (`-> u8` is satisfied by `4 as u8`). `interp/pin.rs` treats a builtin
+      whose declared return names no type variable as determined, and `sandbox_run` declares `-> i64`, so
+      `let r = sandbox_run(..)` was determined: `r.ok()` dispatched the lenient `u8` impl, and
+      `(r << 1) == 254` with `-> u8 { 255 as u8 }` wrapped at `u8` (both executed through the runner to a keyed
+      pass; the pinned form `let r: i64 = ..` was already refused by the cast). Fix, at the builtin: when the
+      callee is a SEALED fn and the caller is operator code, the result must be an `i64` (a unit result is the
+      documented `0`), else the call is refused at the crossing (M2475). The brief offered a second route, marking
+      `sandbox_run` open in the pin analysis (`builtin_ret_open`); it was NOT taken: with the cast in place every
+      value the builtin returns for a candidate callee IS an `i64`, so open-marking would add a refusal on
+      honest suites and, worse, would turn M2475's attack into a REFUSED_ELSEWHERE (the row could no longer be
+      killed by its own attack).
+    - **BLOCKER (SENTINEL): two fast paths read operator globals without `seal_global`.** `Expr::FieldAccess`
+      and `Expr::Index` read `self.globals` directly for an identifier receiver (their comment said the lookup
+      is "the Ident arm's, verbatim"; it was not). Executed (interpreter level, because the resolver's E0004
+      refuses these names statically in a real run): `TABLE[0]`, `CFG.k`, `PAIR.0`, `N[0][0]` and
+      `|| TABLE[1]` all completed; `let t = TABLE; t[0]` was refused. Fix: ONE lookup, `Interp::global_ref`,
+      applies `seal_global` and every read goes through it: the identifier arm (M2470), the field fast path
+      (M2471), the index fast path (M2472), and the module-level closure constant call, which had a THIRD
+      pair of raw lookups of its own (M2473); the helper itself keeps the edge (M2474). `is_global` answers
+      existence only (no value). DRIFT: `every_global_read_goes_through_global_ref` lists every non-comment
+      use of the `globals` map under `crates/axon-core/src/interp*` with its reason (the definition, the
+      session post-run report, the pin analysis' name set) and fails on any other.
+    - **MINOR (SENTINEL): a candidate calling its OWN fn value with an argument was refused.** `let g = inc;
+      g(n)` in candidate code read as sealed code calling an operator closure, because a fn value carried no
+      mark. A fn value a SEALED frame takes now carries `SEALED_FNVAL_MARK`; `closure_args_check` treats a
+      call of such a value as not entering operator code; the operator's own fn values stay UNmarked, so the
+      strict argument refusal stands for them (M2476: marking them too lets sealed code call an operator fn
+      value with an undetermined argument). The mark is deliberately NOT `SEALED_CLOSURE_MARK`: the value's
+      forwarding body still runs in the operator frame and reaches the candidate fn through `call_fn`'s own
+      crossing (strict return cast), exactly as before, so a candidate fn value handed to the operator is cast as it
+      was. **Found by the sweep, same mark:** the held-value judgement (`replaced_ok`, amendment 72/78) knew only
+      the lambda's mark, so a candidate FN VALUE written into a dict slot where the operator held a closure was not
+      "the candidate's" and replaced it unrefused (the attack is a test; M2477 removes the second mark and it
+      completes).
+    - **MINOR (honest cost): the value of a `with handler` expression is undetermined.** Stated next to
+      amendment 94's cost. The reviewer's wording was "dispatch inside `with handler` bodies and arms is always
+      refused as undetermined"; MEASURED, that is narrower: an operator dispatch on a value that is the RESULT of a
+      `with handler` expression (a handler arm may answer with any value) is refused until it is pinned
+      (`let v: i64 = with handler ... { ... }`), while dispatch on a pinned or determined value INSIDE a handler
+      body or arm completes (`the_value_of_a_with_handler_expression_is_undetermined_until_pinned`, three
+      cases). It is a fail-closed over-refusal and is kept: `Expr::WithHandler` is `false` in `Ctx::det`.
+    - **THE SWEEP (found by it: one more open route).** `-x` and `~x` on a fixed-width integer
+      (`eval_unary`) wrap at the candidate's chosen width exactly as `x + y` does, and amendment 83's width arm
+      (`seal_width`) was the BINARY arm only. Executed: `(-xs[0]) == 252` and `(~xs[0]) == 251` completed for
+      `xs = arr_map([1], work)` with `-> u8 { narrow(4) }`. Fix: `seal_width_unary` and a unary site in the pin
+      analysis (`unary_key`, `determined_unary`), M2478 (the guard), M2479 (the site is determined only when its
+      operand is), M2480 (the refusal). A width the OPERATOR chose (`as_u8(5)`) is determined and wraps as
+      written (control). Comparisons, `to_str`, interpolation, `wrapping_*`, a `match` literal and an `as_*`
+      conversion were examined and stay un-refused ON PURPOSE: they observe the VALUE, which a width cast
+      the candidate wrote has already fixed (`255 as i8` IS `-1`), so the candidate gains nothing it could not
+      write as `-1`; wrap is what differs, and wrap only happens in the arithmetic arms.
+    - **SWEEP LIST.** Method: (1) every call of `call_fn`, `call_closure`, `call_local_closure`, `call_fn_mut`,
+      `run_named_fn*` and the goal/scheduler runners in `interp.rs`, `interp/{builtins,eval,goal,proptest,
+      conform,value,provenance}.rs` was listed by grep and classified by what the result becomes; (2) every
+      lookup of an operator-defined name (`globals`, `fns`, `methods`, `structs`, `enums`, `refines`, handlers,
+      closures) and every cache or memo (`resolved_callees`, `fn_cx_cache`, `dict_snaps`, `chan_contracts`,
+      the pin analysis' `determined` set) was listed by grep and judged; (3) the routes below were EXECUTED
+      (a `judged_on` attack with the operator side `.ok()` or a shift, and an honest control). The ones that
+      stay closed are pinned in `the_sweep_routes_stay_closed`.
+      - **OPEN, FOUND AND FIXED:** `sandbox_run` result; `FieldAccess`, `Index`, closure-constant-call global
+        reads; a candidate fn value replacing an operator closure; unary `-x`/`~x` width. (The fn-value call
+        refusal is the over-refusal minor above.)
+      - **CHECKED AND CLOSED, with the evidence:**
+        `arr_map`, `arr_fold`, `arr_zip_with`, `arr_max_by`/`arr_min_by`, `arr_find`, `arr_filter`,
+        `arr_partition`, `arr_take_while`/`arr_drop_while`: the result's declared type names a type variable
+        (`[U]`, `T`), which `builtin_ret_open` treats as undetermined, and the pinned form is refused by the
+        cast (executed). `dict_map_values`, `dict_filter`, `arr_group_by`: the result is a `Dict`, an untyped
+        position (amendment 83). `arr_sort_by`, `arr_any`, `arr_all`, `arr_count_if`, `arr_sum_by`: the
+        builtin inspects the closure's result for an exact `i64`/`bool`/number and refuses a `u8` (executed), and
+        builds its own result. `scheduler_result` and `goal_best_input`: `numeric_score` reduces the result to a
+        number the builtin builds; `.ok()` lands on the `i64` impl (executed). Every `goal_*`, `kernel_goal_run`,
+        `scheduler_run`, `supervisor_run`: scalar results built by the builtin. `http_sse`/`http_sse_post`:
+        the callback's result is dropped. A candidate lambda or fn value returned to the operator, a candidate
+        channel, a forged `Uncertain`, an `Option` or an array element, a candidate global array, tuple or
+        struct field, a candidate `impl` of an operator trait method (seal_method), a candidate `@[adaptive]`
+        result: refused or typed by the return cast (executed, each with the guard's own message). Operator-side
+        propagation of an undetermined value through `let`, a tuple pattern, a `match` binding, `Some`,
+        a lambda parameter, an `if` branch, a block tail, reassignment, an array literal and a `for`
+        variable stays undetermined (executed). `call_fn_frame` is reached only from `call_fn_sealed`
+        (`call_fn`, `call_fn_mut`, so `eval_call_mut` too): every path to a fn body passes `seal_call` and the
+        crossing cast (read, `grep call_fn_frame`). `resolved_callees` caches a `&FnDef` BEFORE `call_fn`, which
+        applies `seal_call` on every call (read). `dict_snaps` and `chan_contracts` hold a `Weak` and check
+        `ptr_eq`, so a reused address cannot inherit a snapshot (read). `fn_cx_cache` is keyed by a `FnDef` address
+        of an immutable program (read). The pin analysis' site keys are `(owner fn, hash of the site text)` and
+        its bindings are fn-wide by name, any unpinned fact removing the name (conservative; read). A candidate
+        defining a test or helper name the suite defines is E0002 (executed through the runner with `--exact`).
+        `assign_in_place` (`x = x + y` on a str/array local) falls back to `eval_binop_vals` only with an array
+        or string slot, which has no width. A string-named fn (`sandbox_run`, `scheduler_spawn`, `goal_run`)
+        naming an operator fn is refused by `call_fn`'s `seal_call` at the call (executed, `B7`/`B9`/`B10`).
+      - **NOT EXAMINED, or known and left:** (a) an EXISTENCE ORACLE: a sealed `sandbox_run(sb, "name", 0)` or
+        `goal_run("name", ..)` says "no function" for a name nothing defines and "cannot run" for an operator
+        fn, so a candidate can probe which operator fn names exist (not their bodies). Not changed here; a fix is
+        to answer both identically. (b) `Value::Handle` (native-module handles) crossing the seal was not
+        examined. (c) `builtins.rs` (about 6,500 lines) was NOT read line by line: the user-code call sites
+        were found by grep and the declared-return table was scanned for closed-return builtins that take a
+        `Dict`, an array or a generic argument; no arm found returns an argument unchanged under a closed type,
+        but that is a scan, not a proof. (d) handler arms and the multi-shot replay were not re-examined beyond
+        the cost stated above. (e) Native codegen is out of scope: every claim here is the interpreter's.
+      - **DRIFT.** `every_builtin_that_runs_user_code_is_classified` lists the 32 builtin arms that run user
+        code (found by a source walk of `call_builtin`) with one of four dispositions (open by a type variable,
+        a `Dict`, a scalar the builtin builds, or the seal crossing in the arm itself) and checks the declared
+        return against it; a new arm, or a changed return type, fails until it is classified. goal.rs's
+        `call_fn` sites must reduce their result to a score or a bool within the same function.
+    - **Honest-program cost.** (a) `-x` / `~x` on a fixed-width integer the operator did not pin is refused (the
+      binary form already was): `let w: u8 = ...` or `as_u8(..)` first. (b) The value of a `with handler`
+      expression must be pinned before an operator dispatch on it (stated above, with amendment 94's cost (a)).
+      (c) A call through a candidate fn value passes the strict return cast of a crossing, as an operator call of
+      that fn did; a candidate generic fn cannot be taken as a value at all (the resolver). (d) A candidate callee
+      of `sandbox_run` must return `i64` or `()`; one returning `bool`, `str` or a struct is refused (before, the
+      value passed through typed as the callee declared). Honest suites using `sandbox_run` on their own fns
+      are untouched. Nothing else changed for honest suites (controls in each test).
+    - **PSV-3 text MINORs.** The verdict spec said "origin/main's 13 interpreter commits"; 13 commits under
+      `crates/axon-core/src` were merged, of which 5 change the interpreter (shared Rc arrays, shared strings
+      with lent closure captures, `&mut` write-through, first-class fns, the `arr_sort_by` rewrite) and 8 are
+      native codegen, build/cache and CLI-help changes. The verdict spec and the delta note now say that;
+      amendment 94's own sentence above keeps the loose phrase as history. The delta note re-ran "the 30 gate
+      rows" and its per-delta mutation table stopped at amendment 83; both are brought up to date (amendments
+      88, 94 and 96 rows, the gate-row count derived, the mutation list recomputed from `MUTATIONS`).
+    - **Evidence.**
+      Unit tests `interp::tests::{sandbox_run_results_are_cast_at_the_seal_crossing,
+      a_sealed_frame_cannot_read_an_operator_global_through_a_fast_path,
+      a_candidates_own_fn_value_takes_arguments_and_an_operators_still_does_not,
+      operator_unary_arithmetic_never_runs_at_a_width_the_candidate_chose, the_sweep_routes_stay_closed,
+      every_global_read_goes_through_global_ref, every_builtin_that_runs_user_code_is_classified,
+      the_value_of_a_with_handler_expression_is_undetermined_until_pinned}`; runner tests
+      (`axon_psv::runner::run`) `sandbox_run_hands_the_operator_an_i64_or_nothing`,
+      `operator_negation_never_runs_at_a_width_the_candidate_chose`,
+      `a_candidate_calls_its_own_fn_value_and_never_reads_an_operator_global`; nine `am96` rows in
+      `scripts/v022_pci_gates.sh`. Measured: rows M2470-M2480 and every other active axon-core row (178 in all) were run
+      by `v022_g01_mutations.py --scope=all --only` on gpumaster from a clean clone of 29276036, three shards:
+      178/178 KILLED by their own `ATTACK:` marker, 0 REFUSED_ELSEWHERE, 0 survivors, 0 stale (M1673 and M2376 old
+      text re-anchored to the new forms). Local, exit codes: `cargo test -p axon-core --no-default-features
+      --no-fail-fast` rc 0 (788 lib tests among 25 result lines); `cargo test -p axon-psv --no-fail-fast` rc 0 (63
+      passed); `cargo clippy -p axon-core -p axon-psv --no-default-features --all-targets -- -D warnings` rc 0;
+      `cargo fmt --check` rc 0; `v022_pci_gates.sh` rc 0 (49 rows); `psv_matrix_check.py` rc 0 (194 rows);
+      `v022_refusal_coverage.py` rc 0 and `--freeze` rc 0 (a new `is_global` exemption and M2480 for the unary
+      refusal); `pci_delta.py --check` rc 0. NOT run: the retired-row four-cell paired-disable, the full
+      `--scope=all` run, the sibling crates (`axon-fabric` etc.: no file they build was changed).
