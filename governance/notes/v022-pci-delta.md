@@ -168,9 +168,9 @@ account and are NOT mechanically verified; the files and commits above are):
 
 ## (b) Coverage: PCI gate rows, and the mutation rows
 
-`scripts/v022_pci_gates.sh` has 34 rows at this head: the original 18 (surfaces 1-21), ten
-added by amendment 84, one group per delta amendment (53, 60, 72 incl. its dict snapshot, 78), and two for
-amendment 83's dispatch rule (integration), each with
+`scripts/v022_pci_gates.sh` has 40 rows at this head: the original 18 (surfaces 1-21), ten
+added by amendment 84, one group per delta amendment (53, 60, 72 incl. its dict snapshot, 78), two for
+amendment 83's dispatch rule (integration), and six for amendment 94 (the `&mut` edge-back cast, the `&mut` operand in the dispatch analysis, the fn-value seal edge and the Rc/copy-on-write observation, each unit and runner where both exist), each with
 unit tests in `interp.rs`/`conform.rs` AND a real-runner test (`axon_psv::runner::run`, in
 `crates/axon-psv/tests/sealed_frames.rs`). The gate fails if a named test is absent (grep), renamed,
 filtered out or `#[ignore]`d (the passed count must equal the named count). Verified to discriminate:
@@ -179,7 +179,7 @@ Amendment 83's dispatch rule (psv1d) landed after amendment 84: its tests are th
 rows; the dict-snapshot rows still name tests that exist after psv1d (their label "psv1d may replace" is dropped).
 
 Run at `c9r4c/claims2` (veto `cdc39fc6` plus this amendment's script/doc changes; the rows through am78 were first run there at 28 rows), interpreter build,
-exit 0, `v022_pci_gates: PASS — 34 rows` (re-run on c9r4c/claims3 at veto 1204a925 plus amendment 89's four added rows):
+exit 0 (the earlier rows below were last run at 34 rows, c9r4c/claims3 at veto 1204a925 plus amendment 89's four added rows; at c9r8/psv1f 10c7c916 the whole script, `v022_pci_gates: PASS — 40 rows`, exited 0 on gpumaster including the six am94 rows):
 
 | row | package/target | result |
 |---|---|---|
