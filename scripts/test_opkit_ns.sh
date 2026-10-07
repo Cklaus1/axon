@@ -24,7 +24,22 @@ if [ "${1:-}" = --child ]; then
   [ "$VIEW" = self ] && export OPKIT_VIEW_PID_FOR_TEST=$$
   [ "$NSPID" = self ] && export OPKIT_NS_PID_FOR_TEST=$$
   . "$LIB"
-  case "$mode" in assert) opkit_ns_assert ;; *) exit 91 ;; esac
+  case "$mode" in
+    assert) opkit_ns_assert ;;
+    # what a command can WRITE once make_ro and the shadows are in place, judged on its own (not through the proof)
+    rowrite) python3 -c '
+import os, sys
+bad = 0
+for d in os.environ.get("PROBE_DIRS", "/opt /home /root /usr/lib /boot /var/cache").split():
+    if not os.path.isdir(d):
+        continue
+    try:
+        open(d + "/.opkit-rowrite-probe", "w").close(); os.unlink(d + "/.opkit-rowrite-probe"); print("WRITABLE", d); bad = 1
+    except OSError:
+        pass
+sys.exit(bad)' ;;
+    *) exit 91 ;;
+  esac
   exit $?
 fi
 
@@ -126,7 +141,22 @@ o=$(bash -c '. "$1"; exec 9</; opkit_ns_fd_leak' bash "$LIB" 2>&1); rc=$?
 o=$(bash -c '. "$1"; opkit_ns_fd_leak' bash "$LIB" 2>&1); rc=$?
 [ $rc = 0 ] || fail "control: the descriptor check flagged a process with no directory descriptor (rc $rc): $o"
 echo "ok: a directory descriptor left open is detected"
-# (2) deny by default: every place nobody listed is read-only; the shadows, /tmp and OPKIT_RW are writable
+# (2) deny by default. make_ro is judged on its own first, then the proof that refuses a writable root, then ns_run end to end
+# make_ro on its own: after it and the shadows, nothing unlisted can be written (judged without the proof)
+o=$(RO=1 VIEW=1 NSPID=1 unshare -m --propagation private bash "$SELF" --child rowrite "$W" 2>&1); rc=$?
+[ $rc = 0 ] || fail "ATTACK: make_ro left a place nobody listed writable (rc $rc): $o"
+mkdir -p "$W/probe"   # the control probes a scratch directory, never a real place
+o=$(PROBE_DIRS="$W/probe" RO=0 VIEW=1 NSPID=1 unshare -m --propagation private bash "$SELF" --child rowrite "$W" 2>&1); rc=$?
+[ $rc = 1 ] && grep -q '^WRITABLE' <<<"$o" || fail "control: without make_ro the probe should find writable places (rc $rc): $o"
+echo "ok: after make_ro and the shadows no place nobody listed is writable (and the probe sees them without it)"
+# the proof itself: a namespace whose root is not read-only is refused, a read-only one is accepted
+o=$(RO=0 OPKIT_REQUIRE_RO=1 VIEW=1 NSPID=1 unshare -m --propagation private env OPKIT_REQUIRE_RO=1 bash "$SELF" --child assert "$W" 2>&1); rc=$?
+[ $rc = 1 ] || fail "ATTACK: a namespace whose root is writable was accepted (rc $rc): $o"
+grep -q 'the root is not read-only' <<<"$o" || fail "refused for another reason (rc $rc): $o"
+o=$(RO=1 VIEW=1 NSPID=1 unshare -m --propagation private bash "$SELF" --child assert "$W" 2>&1); rc=$?
+[ $rc = 0 ] || fail "control: a namespace with a read-only root and writable shadows was refused ($rc): $o"
+echo "ok: a namespace whose root is writable is refused; a read-only root with writable shadows is accepted"
+# end to end: every place nobody listed is read-only; the shadows, /tmp and OPKIT_RW are writable
 mkdir -p "$W/rw" "$W/notrw"
 o=$(OPKIT_RW="$W/rw" OPKIT_LIB=$LIB OPKIT_SCRATCH=$W/scratch bash -c '. "$OPKIT_LIB"
   ns_run python3 -c '"'"'
@@ -147,22 +177,26 @@ for d in ("/tmp", "/usr/local", "/var/lib", "/etc", "/run", sys.argv[1]):
     except OSError as e:
         print("NOTWRITABLE", d, e); bad = 1
 sys.exit(bad)'"'"' "$OPKIT_RW" "$1"' bash "$W/notrw" 2>&1); rc=$?
+[ $rc != 97 ] || fail "ns_run refused (97) instead of making the root read-only (another layer refused it; not the attack): $o"
 [ $rc = 0 ] || fail "ATTACK: a place nobody listed is writable inside ns_run (rc $rc): $o"
 for d in /opt /home /root /usr/lib; do [ -d "$d" ] && { grep -q "denied $d EROFS" <<<"$o" || fail "ATTACK: $d did not answer EROFS: $o"; }; done
 grep -q "denied $W/notrw EROFS" <<<"$o" || fail "ATTACK: a scratch directory the caller did not name is writable: $o"
 for d in /opt /home /root /usr/lib /boot /var/cache; do [ ! -e "$d/.opkit-erofs-probe" ] || fail "ATTACK: a probe reached the host's $d"; done
 echo "ok: deny by default: /opt /home /root /usr/lib /boot /var/cache and an unnamed scratch dir answer EROFS; the shadows, /tmp and OPKIT_RW stay writable"
-# the proof itself: a namespace whose root is not read-only is refused, a read-only one is accepted
-o=$(RO=0 OPKIT_REQUIRE_RO=1 VIEW=1 NSPID=1 unshare -m --propagation private env OPKIT_REQUIRE_RO=1 bash "$SELF" --child assert "$W" 2>&1); rc=$?
-[ $rc = 1 ] || fail "ATTACK: a namespace whose root is writable was accepted (rc $rc): $o"
-grep -q 'the root is not read-only' <<<"$o" || fail "refused for another reason (rc $rc): $o"
-o=$(RO=1 VIEW=1 NSPID=1 unshare -m --propagation private bash "$SELF" --child assert "$W" 2>&1); rc=$?
-[ $rc = 0 ] || fail "control: a namespace with a read-only root and writable shadows was refused ($rc): $o"
-echo "ok: a namespace whose root is writable is refused; a read-only root with writable shadows is accepted"
 # (3) inside the namespace the re-assertion rests on the proof's stamp; without it the host's view is needed and the namespace is refused
 o=$(OPKIT_LIB=$LIB OPKIT_SCRATCH=$W/scratch bash -c '. "$OPKIT_LIB"
   ns_run bash -c '"'"'. "$OPKIT_LIB"; opkit_ns_assert && echo REASSERT-OK; rm -f "$OPKIT_STAMP"; opkit_ns_assert && echo ACCEPTED-WITHOUT-STAMP'"'"'' 2>&1)
 grep -q REASSERT-OK <<<"$o" || fail "control: the re-assertion inside ns_run was refused: $o"
 ! grep -q ACCEPTED-WITHOUT-STAMP <<<"$o" || fail "ATTACK: the re-assertion accepted a namespace whose proof stamp was removed: $o"
 echo "ok: a re-assertion inside ns_run rests on the proof's stamp and refuses without it"
+# a stamp that is not this namespace's proof: another namespace's ids, or one that claims the host's namespace is this one
+o=$(OPKIT_LIB=$LIB OPKIT_SCRATCH=$W/scratch bash -c '. "$OPKIT_LIB"
+  ns_run bash -c '"'"'. "$OPKIT_LIB"
+    s=$(cat "$OPKIT_STAMP"); echo "mnt=mnt:[1],${s#*,}" >"$OPKIT_STAMP"; opkit_ns_assert && echo ACCEPTED-STAMP-OF-ANOTHER-NAMESPACE
+    ids=$(opkit_ns_ids); echo "$ids $ids" >"$OPKIT_STAMP"; opkit_ns_assert && echo ACCEPTED-STAMP-NAMING-THE-HOST-AS-THIS-NAMESPACE
+    echo done'"'"'' 2>&1)
+grep -q '^done$' <<<"$o" || fail "setup: the forged-stamp commands did not run: $o"
+! grep -q ACCEPTED-STAMP-OF-ANOTHER-NAMESPACE <<<"$o" || fail "ATTACK: a stamp recording another namespace's ids was accepted: $o"
+! grep -q ACCEPTED-STAMP-NAMING-THE-HOST <<<"$o" || fail "ATTACK: a stamp whose host namespace is this namespace was accepted: $o"
+echo "ok: a forged stamp (another namespace's ids; the host recorded as this namespace) is refused"
 echo "PASS: opkit namespace helper"

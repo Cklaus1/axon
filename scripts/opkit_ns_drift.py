@@ -531,6 +531,7 @@ BYPASSES = [
     ("an append into /usr/local", '. scripts/lib/opkit_ns.sh\necho x >>/usr/local/bin/y\n'),
     ("a redirect into a real path on an ns_run command (the outer shell opens it)", '. scripts/lib/opkit_ns.sh\nns_run true > /etc/axon/y\n'),
     ("python -c writing a file under /etc", '. scripts/lib/opkit_ns.sh\npython3 -c "open(\'/etc/axon/x\',\'w\').write(\'x\')"\n'),
+    ("an unlisted wrapper on a differently named kit copy", '. scripts/lib/opkit_ns.sh\nionice -c3 bash "$WORK/other-kit.sh" --from c --apply\n'),
     ("python -c writing under /opt", '. scripts/lib/opkit_ns.sh\npython3 -c "open(\'/opt/x\',\'w\')"\n'),
 ]
 CONTROLS = [

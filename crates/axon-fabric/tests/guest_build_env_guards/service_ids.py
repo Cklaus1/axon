@@ -56,6 +56,15 @@ case(plant_etc, "bad.json", '{"fabric_uid": 4316')
 chk("service ids an unparsable JSON config refuses (it is not skipped)", bu(4316), "cannot be determined")
 case(plant_etc, "a.json", '{"uid": "alice"}')
 chk("service ids a uid field that is not a number refuses", bu(4317), "cannot be determined")
+reset()
+os.symlink("/nonexistent-target", os.path.join(ETC, "dangling.json"))
+chk("service ids a .json that cannot be opened refuses (it is not skipped)", bu(4323), "cannot be determined")
+reset()
+shutil.rmtree(ETC); put(ETC, "not a directory")
+chk("service ids an /etc/axon that cannot be listed refuses", bu(4324), "cannot be determined")
+reset()
+shutil.rmtree(UNITS); put(UNITS, "not a directory")
+chk("service ids a unit directory that cannot be listed refuses", bu(4325), "cannot be determined")
 case(plant_etc, "a.json", '{"fabric_gid": 4318}')
 chk("service ids a service gid: the build gid equals the build uid", bu(4318), "service gid")
 case(plant_unit, "axon-a.service", '[Service]\nGroup=4319\n')
@@ -74,9 +83,19 @@ for _ in range(100):
         break
     time.sleep(0.05)
 chk("foreign processes: a build uid that already owns processes is refused", g.foreign_process_problem(4322), "already owns running processes")
+g.LOCK_DIR = os.path.join(S, "svc-locks")
+os.environ["AXON_GUEST_BUILD_UID"] = "4322"
+def lock_refused():
+    r = run(g.build_uid_lock)
+    if isinstance(r, int):
+        os.close(r); return "locked"
+    return r
+chk("foreign processes: the per-uid lock refuses a build uid that already owns processes", lock_refused(), "already owns running processes")
 child.kill(); child.wait()
 for _ in range(100):
     if not g.build_uid_pids(4322):
         break
     time.sleep(0.05)
 chk("foreign processes: control, none left", g.foreign_process_problem(4322), "")
+chk("foreign processes: control, the per-uid lock is taken once the uid owns none", lock_refused(), "locked")
+os.environ.pop("AXON_GUEST_BUILD_UID", None)

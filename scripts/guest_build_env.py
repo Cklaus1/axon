@@ -1002,6 +1002,12 @@ def build_uid_lock():
              "a leftover file from an interrupted run is repaired by root deleting it (it is recreated 0600), "
              "after which the build is run again")
     fcntl.flock(fd, fcntl.LOCK_EX)
+    # Held by us now, so no build of this uid is running: any process it owns is somebody else's, and the
+    # reaper would SIGKILL it after the step (amendment 101).
+    why = foreign_process_problem(uid)
+    if why:
+        os.close(fd)
+        fail(f"AXON_GUEST_BUILD_UID {uid} may not be the build uid: {why}")
     return fd
 
 
@@ -1040,9 +1046,6 @@ def begin(record_path, host=False):
     build_ids()
     lockfd = build_uid_lock()
     try:
-        why = foreign_process_problem(build_ids()[0])
-        if why:
-            fail(f"AXON_GUEST_BUILD_UID {build_ids()[0]} may not be the build uid: {why}")
         _begin(record_path, host)
     finally:
         os.close(lockfd)
@@ -1603,9 +1606,6 @@ def kernel(record_path, dist, profile_dir):
                  [make, "ARCH=x86_64", f"-j{os.cpu_count() or 1}", "vmlinux"]]
         lockfd = build_uid_lock()
         try:
-            why = foreign_process_problem(uid)
-            if why:
-                fail(f"AXON_GUEST_BUILD_UID {uid} may not be the build uid: {why}")
             chown_tree(ksrc, uid, gid)
             with open(os.path.join(ksrc, ".config"), "wb") as f:
                 f.write(open(os.path.join(base, "base.config"), "rb").read())
