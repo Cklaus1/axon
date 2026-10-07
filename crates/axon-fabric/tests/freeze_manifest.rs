@@ -186,7 +186,7 @@ fn controlled_kernel() -> serde_json::Value {
 
 fn controlled_kernel_unsigned() -> serde_json::Value {
     json!({
-        "schema": "axon-guest-kernel-build/1", "controlled": true, "builder_uid": 0,
+        "schema": "axon-guest-kernel-build/1", "controlled": true, "builder_uid": 0, "build_uid": 65534,
         "build_parent": parent(), "build_parent_ancestors": ancestors(), "base": kbase(),
         "pin": {"version": "6.1.188", "tarball_sha256": "3".repeat(64),
                 "config_sha256": "4".repeat(64), "overlay_sha256": "5".repeat(64)},
@@ -238,7 +238,8 @@ fn controlled_build() -> serde_json::Value {
 
 fn controlled_build_unsigned() -> serde_json::Value {
     let base = base();
-    let tc = "/root/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/bin";
+    let tc = format!("{base}/toolchains/nightly-x86_64-unknown-linux-gnu/bin");
+    let tc = tc.as_str();
     let check = json!({"origins": [], "foreign": []});
     let musl = "x86_64-unknown-linux-musl";
     let build = |name: &str, args: Vec<&str>| {
@@ -250,16 +251,22 @@ fn controlled_build_unsigned() -> serde_json::Value {
         "controlled": true,
         "toolchain": {"channel": "nightly", "cargo": format!("{tc}/cargo"),
                       "cargo_sha256": "d".repeat(64), "cargo_version": "cargo 1",
+                      "source": {"cargo": "/root/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/bin/cargo",
+                                 "rustc": "/root/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/bin/rustc"},
                       "rustc": format!("{tc}/rustc"), "rustc_sha256": "e".repeat(64),
                       "rustc_vV": "rustc 1\nhost: x86_64-unknown-linux-gnu",
                       "host_tools": {"cc": tool("/usr/bin/cc"), "ld": tool("/usr/bin/ld")}},
         "env": {"CARGO_HOME": format!("{base}/cargo-home"),
                 "CARGO_TARGET_DIR": format!("{base}/target"), "HOME": base,
-                "LC_ALL": "C", "PATH": format!("{tc}:/usr/bin:/bin"),
+                "LC_ALL": "C", "PATH": "/usr/bin:/bin",
+                "GIT_CEILING_DIRECTORIES": base,
                 "RUSTC": format!("{tc}/rustc")},
-        "env_allowlist": ["CARGO_HOME", "CARGO_TARGET_DIR", "HOME", "LC_ALL", "PATH", "RUSTC"],
+        "env_allowlist": ["CARGO_HOME", "CARGO_TARGET_DIR", "GIT_CEILING_DIRECTORIES", "HOME", "LC_ALL", "PATH", "RUSTC"],
         "proxy_vars": [],
-        "builder_uid": 0, "build_parent": parent(), "build_parent_ancestors": ancestors(),
+        "builder_uid": 0, "build_uid": 65534,
+        "measured": {"cargo": "d".repeat(64), "rustc": "e".repeat(64), "bin": "b".repeat(64),
+                     "tools": {"cc": "7".repeat(64), "ld": "7".repeat(64)}},
+        "build_parent": parent(), "build_parent_ancestors": ancestors(),
         "src_dir": format!("{base}/src"), "src_files": 1,
         "cargo_home": format!("{base}/cargo-home"), "cargo_home_created_empty": true,
         "target_dir": format!("{base}/target"), "target_dir_created_empty": true,
@@ -421,7 +428,8 @@ fn builder_pin_file(root: &Path) -> PathBuf {
 /// The builder pin naming this fixture's builder: uid 0 (the tests run as root)
 /// and the per-process fixture parent.
 fn builder_pin_doc(uid: u64, parent: &str) -> String {
-    json!({"schema": "axon-builder-pin/1", "uid": uid, "parent": parent}).to_string()
+    json!({"schema": "axon-builder-pin/1", "uid": uid, "parent": parent, "build_uid": 65534})
+        .to_string()
 }
 
 /// The operator's pin of the clean fixture's host tools, as the deployment
@@ -861,26 +869,26 @@ fn a_guest_build_record_of_another_account_or_a_wrong_pin_does_not_freeze() {
     use std::os::unix::fs::PermissionsExt;
     let d = tempfile::tempdir().unwrap();
     let r = clone(d.path());
-    // The forger: uid 65534 and a private directory of its own, key included.
+    // The forger: uid 4242 and a private directory of its own, key included.
     let forge = format!("{}/forge", parent());
     std::fs::create_dir_all(format!("{forge}/keys")).unwrap();
     assert_not_real_parent(Path::new(&forge));
     let fkey = "f".repeat(64);
     for (path, mode) in [(forge.clone(), 0o700), (format!("{forge}/keys"), 0o700)] {
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).unwrap();
-        std::os::unix::fs::chown(&path, Some(65534), Some(65534)).unwrap();
+        std::os::unix::fs::chown(&path, Some(4242), Some(4242)).unwrap();
     }
     for id in ["axon-guest-build-x", "axon-kernel-build-x"] {
         let k = format!("{forge}/keys/{id}.key");
         let _ = std::fs::remove_file(&k);
         std::fs::write(&k, &fkey).unwrap();
         std::fs::set_permissions(&k, std::fs::Permissions::from_mode(0o400)).unwrap();
-        std::os::unix::fs::chown(&k, Some(65534), Some(65534)).unwrap();
+        std::os::unix::fs::chown(&k, Some(4242), Some(4242)).unwrap();
     }
     let forged = |rec: serde_json::Value, id: &str| {
         let mut v: serde_json::Value =
             serde_json::from_str(&rec.to_string().replace(parent(), &forge)).unwrap();
-        v["builder_uid"] = json!(65534);
+        v["builder_uid"] = json!(4242);
         v["build_parent_ancestors"] = ancestors_for(&forge);
         sign_with(&mut v, id, fkey.as_bytes());
         v
@@ -901,9 +909,10 @@ fn a_guest_build_record_of_another_account_or_a_wrong_pin_does_not_freeze() {
         "ATTACK: the freeze bound a guest image whose build record was signed by another account \
          under its own private directory: {got:?}"
     );
-    assert!(got.unwrap_err().contains("does not hold"));
+    let e = got.unwrap_err();
+    assert!(e.contains("does not hold"), "{e}");
     // ... and the pin is the ONLY barrier: a pin naming the forger accepts it.
-    write(&builder_pin_file(&r), &builder_pin_doc(65534, &forge));
+    write(&builder_pin_file(&r), &builder_pin_doc(4242, &forge));
     let pinned = freeze(&r);
     assert!(
         pinned.is_ok(),
@@ -1125,12 +1134,20 @@ fn a_guest_image_whose_binaries_were_not_exactly_the_protected_builds_does_not_f
 /// pins, and the record names the host linker's identity.
 #[test]
 fn a_guest_build_record_not_of_the_pinned_toolchain_does_not_freeze() {
-    fn retool(m: &mut serde_json::Value, chan: &str, dir: &str) {
+    // The toolchain moves to ANOTHER directory name under the build's own
+    // `toolchains/` (so the private-copy and measurement judges are satisfied and
+    // only the channel judge can refuse it).
+    fn retool(m: &mut serde_json::Value, chan: &str, name: &str) {
         let b = &mut m["source"]["build_environment"];
+        let base = std::path::Path::new(b["target_dir"].as_str().unwrap())
+            .parent()
+            .unwrap()
+            .display()
+            .to_string();
+        let dir = format!("{base}/toolchains/{name}/bin");
         b["toolchain"]["channel"] = json!(chan);
         b["toolchain"]["cargo"] = json!(format!("{dir}/cargo"));
         b["toolchain"]["rustc"] = json!(format!("{dir}/rustc"));
-        b["env"]["PATH"] = json!(format!("{dir}:/usr/bin:/bin"));
         b["env"]["RUSTC"] = json!(format!("{dir}/rustc"));
     }
     each_refused_with(
@@ -1139,17 +1156,11 @@ fn a_guest_build_record_not_of_the_pinned_toolchain_does_not_freeze() {
         vec![
             (
                 "another channel's toolchain",
-                Box::new(|m| {
-                    retool(
-                        m,
-                        "stable",
-                        "/root/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin",
-                    )
-                }),
+                Box::new(|m| retool(m, "stable", "stable-x86_64-unknown-linux-gnu")),
             ),
             (
                 "the pinned channel's name on another toolchain directory",
-                Box::new(|m| retool(m, "nightly", "/var/tmp/evil/bin")),
+                Box::new(|m| retool(m, "nightly", "evil")),
             ),
             (
                 "no linker identity",
@@ -1351,6 +1362,7 @@ fn a_guest_image_not_built_with_the_operators_pinned_tools_does_not_freeze() {
     let clean_pin = std::fs::read_to_string(&pin).unwrap();
     let tampered = |m: &mut serde_json::Value| {
         m["source"]["build_environment"]["toolchain"]["rustc_sha256"] = json!("d".repeat(64));
+        m["source"]["build_environment"]["measured"]["rustc"] = json!("d".repeat(64));
     };
     // M1470: the build ran another rustc than the operator pinned.
     let mut m = manifest_value(clean_source());
@@ -1484,4 +1496,150 @@ fn a_freeze_needs_the_merged_mutation_run() {
             && e.contains("all_killed is not true"),
         "one reason per defect: {e}"
     );
+}
+
+/// C9 round 7 (amendment 90): the record must show that build code ran
+/// unprivileged and could not touch the tools. Each case is the one edit its
+/// guard alone refuses; control: the honest record freezes.
+#[test]
+fn a_guest_build_record_that_does_not_show_isolated_build_processes_does_not_freeze() {
+    each_refused_with(
+        "a guest build record without isolated build processes",
+        "did not run as an unprivileged uid of their own",
+        vec![
+            (
+                "build processes that ran as root",
+                Box::new(|m| {
+                    m["source"]["build_environment"]["build_uid"] = json!(0);
+                }),
+            ),
+            (
+                "a toolchain that is not the private root-owned copy made for the build",
+                Box::new(|m| {
+                    let t = "/root/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/bin";
+                    let b = &mut m["source"]["build_environment"];
+                    b["toolchain"]["cargo"] = json!(format!("{t}/cargo"));
+                    b["toolchain"]["rustc"] = json!(format!("{t}/rustc"));
+                    b["env"]["RUSTC"] = json!(format!("{t}/rustc"));
+                }),
+            ),
+        ],
+        false,
+    );
+    each_refused_with(
+        "a guest build record whose measurement is not its toolchain's",
+        "its measurement of the compiler and linker tools",
+        vec![
+            (
+                "a measured cargo that is not the recorded one",
+                Box::new(|m| {
+                    m["source"]["build_environment"]["measured"]["cargo"] = json!("a".repeat(64));
+                }),
+            ),
+            (
+                "no measurement at all",
+                Box::new(|m| {
+                    m["source"]["build_environment"]
+                        .as_object_mut()
+                        .unwrap()
+                        .remove("measured");
+                }),
+            ),
+            (
+                "a measured linker that is not the recorded one",
+                Box::new(|m| {
+                    m["source"]["build_environment"]["measured"]["tools"]["cc"] =
+                        json!("a".repeat(64));
+                }),
+            ),
+        ],
+        false,
+    );
+    each_refused_with(
+        "a kernel build record whose make ran as root",
+        "its kernel's make did not run",
+        vec![(
+            "a kernel build whose processes ran as root",
+            Box::new(|m| {
+                m["kernel"]["build_environment"]["build_uid"] = json!(0);
+            }),
+        )],
+        false,
+    );
+    each_refused_with(
+        "a guest build record whose environment lacks the git ceiling or a fixed PATH",
+        "cargo did not run in the environment the build constructs",
+        vec![
+            (
+                "no GIT_CEILING_DIRECTORIES (an enclosing repository stamps the binary)",
+                Box::new(|m| {
+                    m["source"]["build_environment"]["env"]
+                        .as_object_mut()
+                        .unwrap()
+                        .remove("GIT_CEILING_DIRECTORIES");
+                }),
+            ),
+            (
+                "the toolchain directory first on PATH (a planted cc is found)",
+                Box::new(|m| {
+                    let b = &mut m["source"]["build_environment"];
+                    let dir = std::path::Path::new(b["toolchain"]["cargo"].as_str().unwrap())
+                        .parent()
+                        .unwrap()
+                        .display()
+                        .to_string();
+                    b["env"]["PATH"] = json!(format!("{dir}:/usr/bin:/bin"));
+                }),
+            ),
+        ],
+        false,
+    );
+}
+
+/// C9 round 7: the builder pin names the unprivileged uid the build ran as,
+/// and the freeze refuses a record built under another; a pin that names none
+/// (or root, or the builder itself) is not a pin.
+#[test]
+fn a_builder_pin_without_an_unprivileged_build_uid_or_another_one_does_not_freeze() {
+    let d = tempfile::tempdir().unwrap();
+    let r = clone(d.path());
+    let doc = |uid: u64, bu: Option<u64>| {
+        let mut v = json!({"schema": "axon-builder-pin/1", "uid": uid, "parent": parent()});
+        if let Some(b) = bu {
+            v["build_uid"] = json!(b);
+        }
+        v.to_string()
+    };
+    for (attack, pin, why) in [
+        (
+            "a pin with no build uid",
+            doc(0, None),
+            "is not a axon-builder-pin/1",
+        ),
+        (
+            "a pin whose build uid is root",
+            doc(0, Some(0)),
+            "is not a axon-builder-pin/1",
+        ),
+        (
+            "a pin whose build uid is the builder's own",
+            doc(65534, Some(65534)),
+            "is not a axon-builder-pin/1",
+        ),
+        (
+            "a pin naming another build uid than the record's",
+            doc(0, Some(4243)),
+            "not the pinned build uid",
+        ),
+    ] {
+        write(&builder_pin_file(&r), &pin);
+        let got = freeze(&r);
+        assert!(
+            got.is_err(),
+            "ATTACK: the freeze bound the image under {attack}: {got:?}"
+        );
+        assert!(got.as_ref().unwrap_err().contains(why), "{attack}: {got:?}");
+    }
+    write(&builder_pin_file(&r), &builder_pin_doc(0, parent()));
+    assert!(freeze(&r).is_ok(), "control: the honest pin freezes");
 }

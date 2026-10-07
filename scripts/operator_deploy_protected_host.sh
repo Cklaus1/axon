@@ -78,10 +78,12 @@
 #                           builder. A directory without such a record, or one
 #                           whose binaries differ from it, is REFUSED -- however
 #                           clean the binaries' own report looks.
-#   --builder-uid N --builder-parent DIR
+#   --builder-uid N --builder-parent DIR --build-uid N
 #                           WHO builds (the operator's word, installed as
 #                           /etc/axon/builder-pin.json) and the builder-private
 #                           parent its build records' proof keys live under.
+#                           --build-uid is the unprivileged uid every BUILD PROCESS
+#                           ran as (amendment 90), never root and never the builder.
 #                           Required whenever binaries or the guest are judged.
 #   --observer-bin, --observer-interpreter   REFUSED since amendment 68: the
 #                           observer is the axon-observer service from --bin-dir;
@@ -165,7 +167,7 @@ OBS_MAX_AGE_S=300
 NONCE_MAX_AGE_S=300
 
 STEPS="allowlist users dirs binaries guest data configs verifier systemd loader toolchain fabric-unit check preflight"
-CLONE="" EXPECT="" BIN_DIR="" SUITE_REG="" GRANT_REG="" BUILDER_UID="" BUILDER_PARENT=""
+CLONE="" EXPECT="" BIN_DIR="" SUITE_REG="" GRANT_REG="" BUILDER_UID="" BUILDER_PARENT="" BUILD_UID=""
 SIGNER_PUB="" SIGNER_KEY=$KEYS_DIR/fabric-attest.pk8 ISSUER_REF="verifier:fabric"
 AUTH_STORE=/var/lib/axon-loop/store B263_RECORD="" B263_WAIVERS=""
 QUAL_MAX_AGE=2592000 MAX_TIMEOUT=900 MAX_INPUT=268435456
@@ -181,6 +183,7 @@ while [ $# -gt 0 ]; do
     --bin-dir) need_arg "$@"; BIN_DIR=$2; shift 2 ;;
     --builder-uid) need_arg "$@"; BUILDER_UID=$2; shift 2 ;;
     --builder-parent) need_arg "$@"; BUILDER_PARENT=$2; shift 2 ;;
+    --build-uid) need_arg "$@"; BUILD_UID=$2; shift 2 ;;
     --observer-bin|--observer-interpreter)
       refuse "$1: since amendment 68 the observer is the axon-observer SERVICE (its own uid and key, socket-activated, reached only through the root helper's --observe relay), installed from --bin-dir; an observer PROGRAM runs as the Fabric uid, which could read its key, and a production Fabric refuses a host config naming one (observer.command)" ;;
     --suite-registry) need_arg "$@"; SUITE_REG=$2; shift 2 ;;
@@ -276,6 +279,7 @@ cd_=$(git_h rev-parse --path-format=absolute --git-common-dir 2>/dev/null)
 [ "$gd" = "$CLONE/.git" ] && [ "$cd_" = "$CLONE/.git" ] || refuse "$CLONE's git dir is not its own .git (a linked worktree)"
 [ ! -e "$CLONE/.git/objects/info/alternates" ] || refuse "$CLONE borrows objects (objects/info/alternates): clone without --shared/--reference"
 COMMIT=$(git_h rev-parse --verify 'HEAD^{commit}' 2>/dev/null) || refuse "$CLONE has no HEAD commit"
+[ $APPLY = 0 ] || [ -n "$EXPECT" ] || refuse "--apply needs --expect-commit SHA: the operator names the commit to deploy. The judge, the launcher script and the units all come from the commit this clone is at, so a clone that names its own commit would vouch for itself"
 [ -z "$EXPECT" ] || [ "$COMMIT" = "$EXPECT" ] || refuse "$CLONE is at $COMMIT, not --expect-commit $EXPECT"
 # Every object counts, git-ignored or not, except the two directories the
 # allowlist excuses (decision C). The authoritative judge is axon-provenance
@@ -289,10 +293,30 @@ SELF=$(cd "$(dirname "$0")" && pwd -P)/$(basename "$0")
 cmp -s "$SELF" "$CLONE/scripts/operator_deploy_protected_host.sh" \
   || refuse "this kit ($SELF) is not the clone's own scripts/operator_deploy_protected_host.sh: run the kit at the commit you deploy"
 echo "CLONE $CLONE commit $COMMIT (standalone, clean)"
+# Amendment 90: everything this kit EXECUTES as root, reads to judge, installs or
+# pins comes from a root-owned private copy made NOW, never from the clone again
+# (the builder owns the clone and runs every dependency's build script): the
+# committed tree is exported from git's object database, and the three guest
+# files are copied. The clean-clone check above and these copies are the only
+# reads of the clone's working tree.
+TREE=$WORK/tree
+mkdir "$TREE" || refuse "cannot create $TREE"
+git_h archive --format=tar HEAD | tar -x --no-same-owner --no-same-permissions -C "$TREE" \
+  || refuse "cannot export the committed tree of $CLONE"
+chmod -R go-w "$TREE"
+GUEST_STAGE=$WORK/guest-stage
+mkdir "$GUEST_STAGE"
+for f in manifest.json vmlinux rootfs.sqfs; do
+  if [ -f "$CLONE/dist/guest-linux/$f" ] && [ ! -L "$CLONE/dist/guest-linux/$f" ]; then
+    cp -- "$CLONE/dist/guest-linux/$f" "$GUEST_STAGE/$f" || refuse "cannot copy $f"
+  fi
+done
 
 if { selected binaries || selected guest || selected configs || selected toolchain || selected verifier \
      || selected loader || selected check || selected preflight; }; then
   case "$BUILDER_UID" in ''|*[!0-9]*) refuse "--builder-uid N is required (the account that builds the host binaries and the guest image: the operator's word, installed as $BUILDER_PIN; a build record is judged against it, never against what the record says)" ;; esac
+  case "$BUILD_UID" in ''|*[!0-9]*|0) refuse "--build-uid N is required: the unprivileged uid (not root, not the builder) every build process ran as; the pin records it and a record naming another is refused" ;; esac
+  [ "$BUILD_UID" != "$BUILDER_UID" ] || refuse "--build-uid must differ from --builder-uid: build code must not run as the account that holds the proof keys"
   case "$BUILDER_PARENT" in /*) ;; *) refuse "--builder-parent DIR (absolute) is required: the builder-private directory the build records' proof keys live under" ;; esac
   [ "$(realpath -m -- "$BUILDER_PARENT")" = "$BUILDER_PARENT" ] || refuse "--builder-parent $BUILDER_PARENT is not a clean absolute path"
 fi
@@ -313,8 +337,8 @@ if [ $need_bins = 1 ]; then
     cp -- "$f" "$WORK/hostbins/" || refuse "cannot copy $f"
   done
   BIN_DIR=$WORK/hostbins
-  hr=$(python3 -I -B "$CLONE/scripts/guest_build_env.py" check-host-record "$BIN_DIR" --commit "$COMMIT" \
-         --builder-uid "$BUILDER_UID" --builder-parent "$BUILDER_PARENT" 2>&1) \
+  hr=$(python3 -I -B "$TREE/scripts/guest_build_env.py" check-host-record "$BIN_DIR" --commit "$COMMIT" \
+         --builder-uid "$BUILDER_UID" --builder-parent "$BUILDER_PARENT" --build-uid "$BUILD_UID" 2>&1) \
     || refuse "the host binaries are not a controlled host build by the pinned builder: $hr"
   FABRIC_SRC=$BIN_DIR/axon-fabric HELPER_SRC=$BIN_DIR/axon-protected-launcher CUST_SRC=$BIN_DIR/axon-custodian
   OBS_SRC=$BIN_DIR/axon-observer
@@ -334,27 +358,40 @@ print("; ".join(bad))' "$COMMIT") || refuse "cannot read $FABRIC_SRC's verifier-
   # classifier -- no compiler/wrapper/flag/linker variable, and an effective cargo
   # config from the clone that is only its committed one -- and the verifier's
   # self-report above says build.rs saw no wrapper, rustflags or linker.
-  hb=$(python3 -I -B "$CLONE/scripts/guest_build_env.py" check-host-build "$CLONE" 2>&1) \
+  hb=$(python3 -I -B "$TREE/scripts/guest_build_env.py" check-host-build "$CLONE" 2>&1) \
     || refuse "the host binaries' build configuration is not the tree's own: $hb"
   # The linker the host build recorded (cc, ld) is the one the guest build
   # recorded and, once installed, the operator's toolchain pin.
-  ht=$(python3 -I -B - "$BIN_DIR/host-build.json" "$CLONE/dist/guest-linux/manifest.json" "$TOOLCHAIN_PIN" <<'PY'
+  ht=$(python3 -I -B - "$BIN_DIR/host-build.json" "$GUEST_STAGE/manifest.json" "$TOOLCHAIN_PIN" "$TREE/scripts" <<'PY'
 import json, os, sys
-rec, man, pin = sys.argv[1:4]
-hb = {n: (t.get("path"), t.get("sha256")) for n, t in (json.load(open(rec)).get("toolchain", {}).get("host_tools") or {}).items()}
-want = {}
+rec, man, pin, scripts = sys.argv[1:5]
+sys.dont_write_bytecode = True
+sys.path.insert(0, scripts)
+import guest_build_env as g  # noqa: E402  (the reader the freeze uses)
+hrec = json.load(open(rec))
+# The host build's compiler and linker, in the freeze's own extraction: cc, ld
+# (system paths), rustc and cargo (their STABLE source paths), by path and digest.
+view = lambda m: {n: (t.get("path"), t.get("sha256")) for n, t in g.recorded_host_tools(m).items()}  # noqa: E731
+hb = {n: v for n, v in view({"source": {"build_environment": hrec}}).items() if n in ("cc", "ld", "rustc", "cargo")}
+vv = lambda tc: (tc or {}).get("rustc_vV")  # noqa: E731
+sources = []
 if os.path.isfile(man):
-    tools = (((json.load(open(man)).get("source") or {}).get("build_environment") or {}).get("toolchain") or {}).get("host_tools") or {}
-    want.update({n: (t.get("path"), t.get("sha256")) for n, t in tools.items()})
+    m = json.load(open(man))
+    sources.append(("the guest build", view({"source": {"build_environment": (m.get("source") or {}).get("build_environment")}}), vv(((m.get("source") or {}).get("build_environment") or {}).get("toolchain"))))
 if os.path.isfile(pin):
-    want.update({n: (t.get("path"), t.get("sha256")) for n, t in (json.load(open(pin)).get("tools") or {}).items()})
-bad = [f"{n}: the host build recorded {hb.get(n)}, the guest build / toolchain pin has {want[n]}"
-       for n in ("cc", "ld") if n in want and hb.get(n) != want[n]]
-bad += [f"the host build records no {n}" for n in ("cc", "ld") if not hb.get(n, (None, None))[1]]
+    pj = json.load(open(pin))
+    sources.append(("the toolchain pin", {n: (t.get("path"), t.get("sha256")) for n, t in (pj.get("tools") or {}).items()}, pj.get("rustc_vV")))
+bad = [f"the host build records no {n}" for n in ("cc", "ld", "rustc", "cargo") if not hb.get(n, (None, None))[1]]
+for who, tools, v in sources:
+    for n in ("cc", "ld", "rustc", "cargo"):
+        if tools.get(n) != hb.get(n):
+            bad.append(f"{n}: the host build recorded {hb.get(n)}, {who} has {tools.get(n)}")
+    if v != vv(hrec.get("toolchain")):
+        bad.append(f"rustc -vV: the host build recorded {vv(hrec.get('toolchain'))!r}, {who} has {v!r}")
 print("; ".join(bad))
 PY
-  ) || refuse "cannot compare the host build's linker identity"
-  [ -z "$ht" ] || refuse "the host build's linker is not the one the guest build / operator pin recorded ($ht)"
+  ) || refuse "cannot compare the host build's toolchain identity"
+  [ -z "$ht" ] || refuse "the host build's compiler or linker is not the one the guest build / operator pin recorded ($ht)"
   pb=$("$HELPER_SRC" --probe 2>/dev/null | python3 -I -c 'import json,sys; print(json.load(sys.stdin).get("build"))' 2>/dev/null)
   [ "$pb" = production ] || refuse "$HELPER_SRC --probe reports build ${pb:-none}, not production (a test-trust helper accepts a caller's --test-config)"
   # A production custodian has no --test-config (it answers with its usage).
@@ -365,8 +402,8 @@ PY
   case "$oo" in *"usage: axon-observer"*) ;; *) refuse "$OBS_SRC accepts --test-config: a test-trust build ($oo)" ;; esac
   echo "BINARIES $BIN_DIR: axon-fabric $(sha "$FABRIC_SRC"), helper $(sha "$HELPER_SRC"), custodian $(sha "$CUST_SRC"), observer $(sha "$OBS_SRC") (production release of $COMMIT)"
 fi
-MANIFEST_SRC=$CLONE/dist/guest-linux/manifest.json
-LAUNCHER_SRC=$CLONE/scripts/fc_linux_profile.sh
+MANIFEST_SRC=$GUEST_STAGE/manifest.json
+LAUNCHER_SRC=$TREE/scripts/fc_linux_profile.sh
 BASH_PIN=$(readlink -f /usr/bin/bash)
 
 # ── action primitives: print in a dry run, perform with --apply, idempotent ───
@@ -532,12 +569,12 @@ if selected guest || selected configs || selected toolchain; then
   echo "== guest image (built by AXON_KERNEL_BACKEND=linux scripts/build-guest-image.sh in $CLONE)"
   if [ ! -f "$MANIFEST_SRC" ]; then
     blocked "$MANIFEST_SRC is absent: run the FULL controlled guest build in the clone first (runbook step 2)"
-  elif ! cmp -s "$MANIFEST_SRC" "$CLONE/profiles/linux-microvm/manifest.json"; then
+  elif ! cmp -s "$MANIFEST_SRC" "$TREE/profiles/linux-microvm/manifest.json"; then
     blocked "dist/guest-linux/manifest.json is not the committed profiles/linux-microvm/manifest.json: commit the re-pin, then deploy from that commit"
   else
-    gw=$(python3 -I - "$MANIFEST_SRC" "$CLONE/dist/guest-linux" "$FIRECRACKER" "$JAILER" "$CLONE" "$BUILDER_UID" "$BUILDER_PARENT" <<'PY'
+    gw=$(python3 -I - "$MANIFEST_SRC" "$GUEST_STAGE" "$FIRECRACKER" "$JAILER" "$TREE" "$BUILDER_UID" "$BUILDER_PARENT" "$BUILD_UID" <<'PY'
 import hashlib, importlib.util, json, os, sys
-man, dist, fc, jl, clone, buid, bpar = sys.argv[1:8]
+man, dist, fc, jl, clone, buid, bpar, bbu = sys.argv[1:9]
 sys.dont_write_bytecode = True
 m = json.load(open(man))
 def sha(p):
@@ -567,7 +604,7 @@ if not bad:
     gs = importlib.util.spec_from_file_location("guest_build_env", os.path.join(clone, "scripts", "guest_build_env.py"))
     g = importlib.util.module_from_spec(gs)
     gs.loader.exec_module(g)
-    why = g.shape_problems(src["build_environment"]) or g.image_problems(m, pin_required=False, builder=(int(buid), bpar))
+    why = g.shape_problems(src["build_environment"]) or g.image_problems(m, pin_required=False, builder=(int(buid), bpar, int(bbu)))
     if why:
         bad.append(f"the guest build records are not a controlled build's: {why}")
 eng = m.get("engine") or {}
@@ -582,11 +619,16 @@ PY
     else
       GUEST_OK=1
       echo "GUEST manifest $(sha "$MANIFEST_SRC") clean, controlled build records present, artifacts and engine match their pins"
+      # Amendment 90 (origin): the kernel tarball, config, overlay and busybox
+      # digests come from the COMMITTED kernel.pin of the commit you named, checked
+      # only against that same tree. Compare them to the upstream release (the
+      # kernel.org sha256sums for the tarball) and your own records.
+      note "guest inputs from the committed kernel.pin (NOT independently pinned; compare with upstream): $(python3 -I -B -c 'import json,sys; m=json.load(open(sys.argv[1])); k=m.get("kernel") or {}; print("kernel", k.get("version"), "tarball", k.get("tarball_sha256"), "config", k.get("config_sha256"), "overlay", k.get("overlay_sha256"), "busybox", (m.get("busybox") or {}).get("sha256"))' "$MANIFEST_SRC")"
     fi
   fi
   if selected guest && [ $GUEST_OK = 1 ]; then
-    act_install "$CLONE/dist/guest-linux/vmlinux" "$GUEST_DIR/vmlinux" root root 0644
-    act_install "$CLONE/dist/guest-linux/rootfs.sqfs" "$GUEST_DIR/rootfs.sqfs" root root 0644
+    act_install "$GUEST_STAGE/vmlinux" "$GUEST_DIR/vmlinux" root root 0644
+    act_install "$GUEST_STAGE/rootfs.sqfs" "$GUEST_DIR/rootfs.sqfs" root root 0644
     act_install "$MANIFEST_SRC" "$GUEST_DIR/manifest.json" root root 0644
   fi
 fi
@@ -883,10 +925,10 @@ if selected systemd; then
   echo "== systemd: axon-custodian.socket + axon-custodian.service"
   operator_chain "$UNIT_DIR/axon-custodian.socket"
   sed -e "s|^SocketGroup=.*|SocketGroup=$FABRIC_USER|" -e "s|^ListenStream=.*|ListenStream=$SOCKET|" \
-    "$CLONE/profiles/protected-host/systemd/axon-custodian.socket" >"$WORK/axon-custodian.socket"
+    "$TREE/profiles/protected-host/systemd/axon-custodian.socket" >"$WORK/axon-custodian.socket"
   sed -e "s|^User=.*|User=$CUSTODIAN_USER|" -e "s|^Group=.*|Group=$CUSTODIAN_USER|" \
     -e "s|^ExecStart=.*|ExecStart=$LIBEXEC/axon-custodian|" -e "s|^StateDirectory=.*|StateDirectory=${STORE#/var/lib/}|" \
-    "$CLONE/profiles/protected-host/systemd/axon-custodian.service" >"$WORK/axon-custodian.service"
+    "$TREE/profiles/protected-host/systemd/axon-custodian.service" >"$WORK/axon-custodian.service"
   grep -qx 'SocketMode=0660' "$WORK/axon-custodian.socket" || blocked "the socket unit template no longer says SocketMode=0660 (the Fabric group must connect, nobody else)"
   # Amendment 79: the observer service asks the custodian whether a nonce is
   # outstanding, as its own uid: one named ACL entry on the socket, granted when
@@ -907,11 +949,11 @@ if selected systemd; then
   echo "== systemd: axon-observer.socket + axon-observer.service (amendment 68)"
   operator_chain "$UNIT_DIR/axon-observer.socket"
   sed -e "s|^ListenStream=.*|ListenStream=$OBS_SOCKET|" \
-    "$CLONE/profiles/protected-host/systemd/axon-observer.socket" >"$WORK/axon-observer.socket"
+    "$TREE/profiles/protected-host/systemd/axon-observer.socket" >"$WORK/axon-observer.socket"
   sed -e "s|^User=.*|User=$OBSERVER_USER|" -e "s|^Group=.*|Group=$OBSERVER_USER|" \
     -e "s|^ExecStart=.*|ExecStart=$LIBEXEC/axon-observer|" \
     -e "s|^StateDirectory=.*|StateDirectory=${OBS_STORE#/var/lib/} ${OBS_KEY_DIR#/var/lib/}|" \
-    "$CLONE/profiles/protected-host/systemd/axon-observer.service" >"$WORK/axon-observer.service"
+    "$TREE/profiles/protected-host/systemd/axon-observer.service" >"$WORK/axon-observer.service"
   for d in SocketMode=0600 SocketUser=root SocketGroup=root; do
     grep -qx "$d" "$WORK/axon-observer.socket" || blocked "the observer socket unit template no longer says $d (only root, the helper, may connect)"
   done
@@ -952,13 +994,13 @@ fi
 STEP=toolchain
 if selected toolchain; then
   echo "== builder pin: $BUILDER_PIN (amendment 86: who builds, and where its proof keys live; read by the freeze)"
-  python3 -I -B - "$CLONE/scripts" "$BUILDER_UID" "$BUILDER_PARENT" "$WORK/builder.json" <<'PY' || { echo "FAIL[$STEP] cannot compute the builder pin"; FAILED=1; }
+  python3 -I -B - "$TREE/scripts" "$BUILDER_UID" "$BUILDER_PARENT" "$BUILD_UID" "$WORK/builder.json" <<'PY' || { echo "FAIL[$STEP] cannot compute the builder pin"; FAILED=1; }
 import json, sys
-scripts, uid, parent, out = sys.argv[1:5]
+scripts, uid, parent, bu, out = sys.argv[1:6]
 sys.dont_write_bytecode = True
 sys.path.insert(0, scripts)
 import guest_build_env as gbe  # noqa: E402
-json.dump({"schema": gbe.BUILDER_PIN_SCHEMA, "uid": int(uid), "parent": parent,
+json.dump({"schema": gbe.BUILDER_PIN_SCHEMA, "uid": int(uid), "parent": parent, "build_uid": int(bu),
            "status": "the OPERATOR's word on who builds the guest image and the host binaries: a build record is "
                      "judged against this uid and parent (and its proof key must live under this parent), never "
                      "against what the record says"}, open(out, "w"), indent=2, sort_keys=True)
@@ -970,7 +1012,7 @@ PY
     # ONE extraction: the reader's own (guest_build_env.recorded_host_tools,
     # imported from the clone), so the pin names exactly the tools the freeze
     # compares — path and sha256 — and nothing the reader would not.
-    python3 -I -B - "$CLONE/scripts" "$MANIFEST_SRC" "$COMMIT" "$WORK/toolchain.json" <<'PY' || { echo "FAIL[$STEP] cannot compute the toolchain pin"; FAILED=1; }
+    python3 -I -B - "$TREE/scripts" "$MANIFEST_SRC" "$COMMIT" "$WORK/toolchain.json" <<'PY' || { echo "FAIL[$STEP] cannot compute the toolchain pin"; FAILED=1; }
 import hashlib, json, sys
 scripts, man, commit, out = sys.argv[1:5]
 sys.dont_write_bytecode = True  # never a __pycache__ in the clone (it would be dirty)
@@ -1009,7 +1051,7 @@ PY
     if [ $APPLY = 1 ] && [ -f "$GUEST_DIR/manifest.json" ]; then
       # The freeze's own reader on what was installed: owner and mode of the
       # pin and of every directory above it, then every recorded tool.
-      if tp=$(python3 -I -B "$CLONE/scripts/guest_build_env.py" toolchain-pin "$GUEST_DIR/manifest.json" 2>&1); then
+      if tp=$(python3 -I -B "$TREE/scripts/guest_build_env.py" toolchain-pin "$GUEST_DIR/manifest.json" 2>&1); then
         echo "OK[$STEP] guest_build_env.toolchain_pin_problems accepts the installed pin for the deployed image"
       else
         echo "FAIL[$STEP] the freeze's reader refuses the installed pin: $tp"; FAILED=1
@@ -1417,7 +1459,7 @@ STEP=preflight
 PF_VERDICT=NOT_RUN PF_REPORT=""
 if selected preflight; then
   echo "== trust preflight: scripts/trust_root_preflight.sh in PROTECTED mode"
-  pf=("$CLONE/scripts/trust_root_preflight.sh" --verifier "$VERIFIER_USER" --custodian "$CUSTODIAN_USER" --fabric "$FABRIC_USER"
+  pf=("$TREE/scripts/trust_root_preflight.sh" --verifier "$VERIFIER_USER" --custodian "$CUSTODIAN_USER" --fabric "$FABRIC_USER"
       --observer "$OBSERVER_USER")
   for a in "${AGENTS[@]}"; do pf+=(--agent "$a"); done
   PF_REPORT=$DEPLOY_LOG/trust-preflight-$(date -u +%Y%m%dT%H%M%SZ).json
