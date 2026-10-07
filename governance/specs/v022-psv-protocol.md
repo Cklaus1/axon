@@ -5480,3 +5480,112 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       the three axon-core gates were green at the rows' commit; matrix rows A185-A189 await renumbering at integration.
 
 **Renumbering at integration (round 8, integrate7).** Four branches built in parallel numbered their matrix rows apart; the integration made the matrix contiguous, so the amendments above that cite the branch-local ids are read through this map: amendment 93 `A184` is now A181; amendment 94 `A190`-`A192` are now A182-A184; amendment 95 `A196`-`A200` are now A185-A189. Amendment 92's A178-A180 are unchanged. (The text of those amendments was rewritten to the new ids; where it says another branch holds a gap, that gap is closed by this integration.)
+
+## Amendment 97: the reaper's blind spot, the dedicated build uid, and the namespace helper's remaining gaps (C9 round 9, buildenv5)
+
+97. **Source: the round-9 FIELD-ORIGIN reviewer's findings on amendment 92**
+    (`/var/tmp/c9r9-findings-FIELD-ORIGIN.json`; probes in `/var/tmp/c9r9-FO-logs/`). Mutation ids M2500-M2515
+    (M2516-M2519 unused; M2265-M2269 re-targeted, below), matrix rows A200-A205 (A206-A209 unused; renumbered at
+    integration, another branch holds A190-A199). `crates/axon-core/src` is untouched.
+    - **Finding 1, executed: the reaper could be evaded and the lock-back did not close the gap.**
+      `build_uid_pids` skipped any process whose `/proc/PID/status` read `State: Z`. A multi-threaded process whose
+      main thread has exited reads `Z` while its other threads keep running; executed as uid 65534 under
+      `setpriv --no-new-privs`, it was not listed, and after `lock_from_build`'s `chown -R root` + `chmod -R go-w` it
+      kept writing `SUBSTITUTED` through a descriptor it had opened earlier. A chown does not revoke an open
+      descriptor. So amendment 92's "zombies excluded ... until a pass finds none" and "even a process the reaper
+      could not see cannot change what is hashed" were FALSE as written; both are corrected in place in amendment 92
+      and restated here. What the code does now: (1) `build_uid_pids` enumerates `/proc/PID/task/*` and judges each
+      THREAD, so a leader that has exited does not hide the live thread (M2500); (2) every build step runs in its
+      OWN PID namespace (`as_build_uid`: `unshare --pid --fork --mount-proc --kill-child -- setpriv ...`): the
+      step's first process is that namespace's init and the kernel SIGKILLs every other process in it when it
+      exits, whatever it did (setsid, double fork, threads, an exited leader), and a missing `unshare` refuses the
+      step (M2501); (3) `reap_build_processes` remains as the VERIFICATION that nothing of the build uid survives
+      and the backstop that kills it. Hashing from a root-owned COPY was considered and not done: with every
+      process of the step dead before anything is read there is no open descriptor left to defend against, and the
+      namespace is the property that makes that true rather than the copy. `lock_from_build`'s docstring now says
+      what it does and does not do.
+      **Test, with a MULTI-THREADED writer whose main thread exits**
+      (`a_threaded_writer_whose_main_thread_exited_does_not_outlive_its_step`): a build script starts a detached
+      (`setsid`) Python process that opens a source-copy file and a target-dir file, starts a thread that rewrites
+      both through those descriptors every 50 ms with a counter, and exits its main thread with a raw `exit(2)`
+      syscall. After the step, in the runner's namespace, there is no live thread of the build uid and neither file
+      moves. Run against the OLD `guest_build_env.py` with the new tests (branch `c9r9/be5-old`, gpumaster): 6
+      failed, 1 passed, with the markers `ATTACK: a multi-threaded build-uid process whose main thread exited
+      survived the step`, `ATTACK: the build step ran in the runner's own PID namespace`, `ATTACK: the reaper did
+      not list a build-uid process whose main thread had exited`, `ATTACK: after begin the build uid still owns or
+      can write a tree ...`, `ATTACK: a uid a deployed config names ... was accepted as the build uid`; the lock
+      test fails on the old code too (it has no `LOCK_DIR`). On the new code: 38 `guest_build_env` tests and 3
+      `operator_examples` tests pass (gpumaster, serial). **What a single row cannot show:** the PID namespace and
+      the thread-aware scan are two layers on the same property, so removing EITHER alone leaves the end-to-end
+      test green (the other layer still catches the writer). Each is therefore killed by its OWN test (M2500 by the
+      unit test of the scan, which needs a process the scan alone must find; M2501 by a test that the step's PID
+      namespace differs from the runner's), and the paired cell (both off) is the end-to-end attack succeeding,
+      shown against the old code above.
+    - **Finding 2: "the build uid must be dedicated" was prose.** `build_ids()` refused only uid 0 and the runner's
+      uid, the kit only 0 and build uid == builder uid, and the default is `nobody`. A build uid equal to the Fabric
+      uid would run repository build code as the owner of the host attestation key. `service_uids()` now collects
+      (a) the five default account names that exist (axon-fabric, axon-custodian, axon-observer, axon-verifier,
+      axonb263), (b) every `uid` / `*_uid` field of the deployed JSON configs under `/etc/axon` (`build_uid` of the
+      builder pin excluded: it is what is being judged), (c) the `User=` of every installed `axon-*.service`; and
+      `build_ids()` refuses a build uid that is any of them (M2502-M2505). The kit runs the same judgement through
+      `guest_build_env.py check-build-uid UID BUILDER-UID [USER...]` with ITS configured account names (M2506),
+      so `--build-uid 65534 --fabric-user nobody`, `--build-uid 1 --custodian-user daemon`, `--observer-user bin`,
+      `--verifier-user daemon` and `--profile-user bin` are each `REFUSED ... DEDICATED` (five refusals in
+      `test_operator_deploy.sh`, inside `ns_run`). **No cargo row exists for the kit's own refusal line** (a shell
+      guard): hand removal of that line in a scratch worktree, run inside the namespace helper, failed the test at
+      `ATTACK: a build uid that is the Fabric user's uid ...: expected REFUSED (2), got 1` and the host listing was
+      identical before and after. `nobody` stays the default; it is refused as soon as a deployed config or unit
+      names uid 65534.
+    - **Finding 3: `begin()` was outside the lock.** `begin` now holds the per-uid lock for its whole body (M2509)
+      and returns the trees to root before it returns (M2510). The lock file is created root-owned 0600 in
+      `/run/axon-guest-build-locks`, a root-owned 0755 directory (not `/run/lock`, which is 1777): a directory
+      another uid can write (M2507), a lock file that pre-exists with another owner or a looser mode, or a symlink
+      is refused (M2508).
+    - **Finding 4: the namespace helper.** (a) **Drift of the shadow list**: `OPKIT_DEFAULT_DESTS` in
+      `scripts/lib/opkit_ns.sh` is now the ONE list (`opkit_ns_isolate` shadows exactly it and the proof asserts
+      exactly it); `opkit_ns_drift.py` extracts every write target of the kit (`act_dir` / `act_install` operands
+      with variables expanded and `for X in LIST` loops fanned out, `install_registry`'s destination parameter
+      judged at its call sites, and the operands of its own mkdir/install/cp/mv/ln/chown/chmod/tee/useradd/groupadd
+      and redirections) and fails if one is not under it; an unresolvable uppercase variable is itself a finding
+      (M2514). `--selftest` plants seven outside writes (`/opt`, `/usr/lib/systemd`, `/usr/share`, `/boot`, a
+      variable resolving to `/opt`, `tee` into `/usr/lib`) and two inside ones. (b) **PID/UTS/IPC/NET**: `ns_run`
+      now unshares mount, PID (own `/proc`), UTS, IPC and NET (loopback only). NET stays the host's for exactly one
+      step, the fixture's controlled host build (`OPKIT_NET=host`), because it downloads its crates; every kit call
+      is network-private. The host's PID 1 is hidden by the PID namespace, so `ns_run` opens a descriptor on the
+      host's root before it unshares and records the host's namespace ids; the proof uses those. (c) **Every root
+      step under the helper**: the builder-private parent no longer exists under the host's `/var/lib` at all: the
+      synthetic-manifest Python, the commit, the controlled host build and the verifier check run in
+      `scripts/lib/opkit_fixture.sh` under `ns_run`, and hand the parent (keys, owners and modes intact) out through
+      a 0700 stash outside `$WORK` (`chmod -R a+rX "$WORK"` would have made the keys world-readable, which the
+      first run of this change showed); later namespaces restore it with `OPKIT_RESTORE=STASH=DEST`. The forged
+      host-record is made the same way. (d) **The canary check** was a negative lookup that passed when
+      `/proc/1/root` was unreadable; the proof now requires a readable host view and compares device:inode of each
+      destination through it with the namespace's own (M2268), refusing an unreadable view (M2511). The
+      canary-visibility test was dropped: whenever a canary could be seen through the view, the two objects are the
+      same device:inode, so it could not be killed independently of the identity check. (e) **`OPKIT_*_FOR_TEST`**
+      are honoured only when the outermost script of the shell is `scripts/test_opkit_ns.sh` itself (which now
+      re-executes itself inside each namespace so the helper sees its caller); any other caller that sets one is
+      REFUSED, never silently weakened (M2512). (f) **The drift regex** accepted `ns_run true; bash "$KIT"
+      --apply`. It now splits each logical line into simple commands at `; && || | & $( ( ) { }` and backticks
+      outside quotes, drops comments, skips `VAR=value` prefixes and the `refused LABEL PATTERN` test helper, and
+      requires the kit / `--apply` / controlled-build command ITSELF to be an `ns_run`, `kit` or `inns` command
+      (M2513, M2515). `--selftest` plants seventeen bypass shapes (including the reviewer's) and seven controls.
+      M2265-M2269 were re-targeted to the new code text (M2268 is now the identity comparison).
+    - **Rows with no cargo kill, said plainly.** (i) The kit's `--build-uid` refusal: shell guard, hand removal
+      above. (ii) `ns_run`'s namespace FLAGS and the proof's per-namespace comparison are two layers on one
+      property: removing the flags alone is refused by the proof (`ns_run refused ... the pid namespace is the
+      host's`, exit 97, the command never ran), removing the comparison alone survives (equivalent: the flags
+      still isolate), and removing both makes the attack succeed (`ATTACK: ns_run left a namespace shared with the
+      host`). Run by hand on a scratch copy of `scripts/`; no row, and nothing here is counted killed.
+    - **Evidence.** The full `test_operator_deploy.sh` passed on this host as root with the fixture, host build,
+      forged record and every attack under `ns_run` (including `--fabric-pid 1`, which now names the namespace's
+      own init: the unit judgement does not depend on it). Host listings (`/etc/axon`, `/usr/local`, `/var/lib`
+      names, `/etc/systemd/system`, users, groups, setuid files, enabled units, sums of passwd/group/shadow) were
+      identical before and after the full run and after the hand-mutated kit run (`/var/tmp/be5/host.before`,
+      `host.after1`, `host.after2`). No kit `--apply` ran outside the helper, on any host.
+    - **Not executed / not claimed.** The real kernel `make` path (its steps pass through the same PID namespace,
+      reap and lock; no new kernel-specific attack); the `kernel` command's tree extraction and `chown` still run
+      before it takes the lock (no build-uid process exists yet); a host whose `/etc/resolv.conf` points into
+      `/run` would lose DNS for the fixture's download inside the namespace (this host's points into `/mnt`);
+      the lock directory `/run/axon-guest-build-locks` is created on the host by the cargo tests (they run
+      `begin` for real) and is left there, empty of anything but root-owned lock files.
