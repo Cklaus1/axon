@@ -154,11 +154,15 @@ Each clause names what must hold. The negative matrix below names how each one f
   runs only if the candidate calls it, so a suite must assert after the call.
 - Sealing, containment and per-provenance kernels run in the guest interpreter as certified at
   `31413ca7` (`governance/proofs/v022-pci/CERTIFICATION.md`, local backend, EMPTY effect ceiling)
-  plus amendments 53/60/72/78/83/88/94/96 (the delta, listed from git in `governance/notes/v022-pci-delta.md`).
+  plus amendments 53/60/72/78/83/88/94/96/100 (the delta, listed from git in `governance/notes/v022-pci-delta.md`).
   origin/main's 13 commits under `crates/axon-core/src` were MERGED WITHOUT PCI REVIEW; only 5 of the 13
   change the interpreter (Rc arrays and cheaper calls, shared strings with lent closure captures,
-  `&mut` write-through, first-class fns, the `arr_sort_by` rewrite) and the other 8 are native codegen,
-  build/cache and CLI-help changes. The 5 are neither narrowing nor known neutral, and the sealing claims
+  `&mut` write-through, first-class fns, the `arr_sort_by` rewrite) and the other 8 change no interpreter
+  EVALUATION: six are native codegen, build/cache or CLI-help changes; `378da246` touches `interp.rs` and
+  `interp/builtins.rs` only by a `cfg` re-export and a visibility change (native `agent_action`
+  attribution); `edfe3e2d` changes checker concat typing and resolver capture analysis, so `axon check`
+  accepts different programs (it is not an evaluation change, and it is not a sealing-neutral one either:
+  what the checker admits is what the seal then judges). The 5 are neither narrowing nor known neutral, and the sealing claims
   for them are only what the gate rows `am94 ...` show: a `&mut`
   value a candidate leaves in the operator's binding is cast and judged at the edge back (dispatch and
   width arms, including an annotated operator array and an aborted call), and a `&mut` operand is

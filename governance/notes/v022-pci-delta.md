@@ -15,9 +15,9 @@ later commit touches `crates/axon-core/src` (the note is then stale: `python3 sc
 --emit HEAD`, paste between the markers).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: 2927603693e0905747a4c71e97e3bf23ae3a1199
+generated-at: cc74956e2206ed25227b8b9997a80c82a0a5c039
 
-`git diff --numstat 31413ca7..29276036 -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..cc74956e -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -43,12 +43,12 @@ generated-at: 2927603693e0905747a4c71e97e3bf23ae3a1199
 | `crates/axon-core/src/error.rs` | 20 | 11 |
 | `crates/axon-core/src/fmt.rs` | 5 | 0 |
 | `crates/axon-core/src/infer.rs` | 3 | 2 |
-| `crates/axon-core/src/interp.rs` | 5641 | 1182 |
-| `crates/axon-core/src/interp/builtins.rs` | 402 | 314 |
+| `crates/axon-core/src/interp.rs` | 6400 | 1168 |
+| `crates/axon-core/src/interp/builtins.rs` | 407 | 318 |
 | `crates/axon-core/src/interp/conform.rs` | 1774 | 0 |
-| `crates/axon-core/src/interp/eval.rs` | 442 | 73 |
-| `crates/axon-core/src/interp/goal.rs` | 21 | 20 |
-| `crates/axon-core/src/interp/pin.rs` | 625 | 0 |
+| `crates/axon-core/src/interp/eval.rs` | 466 | 76 |
+| `crates/axon-core/src/interp/goal.rs` | 27 | 26 |
+| `crates/axon-core/src/interp/pin.rs` | 935 | 0 |
 | `crates/axon-core/src/interp/proptest.rs` | 35 | 15 |
 | `crates/axon-core/src/interp/value.rs` | 15 | 7 |
 | `crates/axon-core/src/kernel.rs` | 2 | 2 |
@@ -58,13 +58,13 @@ generated-at: 2927603693e0905747a4c71e97e3bf23ae3a1199
 | `crates/axon-core/src/mut_borrow.rs` | 800 | 0 |
 | `crates/axon-core/src/parser.rs` | 39 | 1 |
 | `crates/axon-core/src/resolver.rs` | 334 | 64 |
-| total | 14003 | 2664 |
+| total | 15107 | 2663 |
 
-`git log --reverse 31413ca7..29276036 -- crates/axon-core/src`:
+`git log --reverse 31413ca7..cc74956e -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
-| 378da246 | merged from main (AX findings) | native agent_action audit record gains effect_row/principal; interp.rs only re-exports cap_to_effect_row under the codegen feature: no change in what the interpreter refuses |
+| 378da246 | merged from main (AX findings) | native agent_action audit record gains effect_row/principal; interp.rs and interp/builtins.rs change only by a `cfg` re-export and a visibility change: no change in what the interpreter evaluates or refuses |
 | abf72e0b | review fixes B1/B3 (main.rs) | runner/test-CLI hardening from review wf_d725935a-7ed |
 | bae904b8 | keyed failure token (main.rs) | the interpreter keys every FAILURE it decides, so a printed failure line is not a verdict: narrowing |
 | a4a05f28 | key and completion | K is unreachable from candidate code: narrowing |
@@ -97,7 +97,7 @@ generated-at: 2927603693e0905747a4c71e97e3bf23ae3a1199
 | be8576af | merged from main (AX findings) | INTERPRETER: arrays become shared Rc values, cheaper user calls (interp.rs, eval.rs, value.rs): not PCI-reviewed; the seal's cast and dict-snapshot code was adapted to the Rc layout in the merge |
 | 36227ec7 | merged from main (AX findings) | native codegen only (non-escaping array literals on the stack): the interpreter is untouched |
 | 1727775e | merged from main (AX findings) | LANGUAGE + INTERPRETER: `&mut [T]` parameters write through (parser, checker, interp.rs, eval.rs, new E0604-E0606): not PCI-reviewed; the merge routes `call_fn_mut` through the same seal edges as `call_fn` |
-| edfe3e2d | merged from main (AX findings) | native codegen, plus checker/resolver refusals of unlowered assignments: the interpreter is untouched |
+| edfe3e2d | merged from main (AX findings) | native codegen, plus checker concat typing and resolver capture analysis (`axon check` accepts different programs): interpreter evaluation is untouched |
 | 19310764 | merged from main (AX findings) | LANGUAGE + INTERPRETER: named functions are first-class values (resolver, checker, effects, eval.rs): not PCI-reviewed |
 | 099ff710 | merged from main (AX findings) | build/cache/CLI only (runtime location, compiler-identity cache key): the interpreter is untouched |
 | c4d307bd | merged from main (AX findings) | CLI help text only: no change in what is refused |
@@ -125,7 +125,8 @@ generated-at: 2927603693e0905747a4c71e97e3bf23ae3a1199
 | 8caedb78 | amendment 94 | rustfmt only (interp.rs): no change in what is refused |
 | 2c0203e0 | amendment 96 | sandbox_run's result is cast to its declared i64 at the seal crossing; every read of an operator global goes through one lookup (`global_ref`) so the FieldAccess/Index fast paths and the closure-constant call apply the edge; a sealed frame's fn value carries its own mark (an operator fn value stays unmarked) and cannot replace an operator closure; unary `-x`/`~x` is judged by the width arm; drift tests for global reads and for builtins that run user code: narrowing |
 | 12cf6c55 | amendment 96 | unit test only (the value of a with-handler expression is undetermined until pinned: a stated cost): no production change |
-| 61 commits | | |
+| cc74956e | amendment 100 | a handler arm and its continuation replay run under the pin owner of the fn that INSTALLED the handler, not the one that performed the effect; the name argument of every name-resolving builtin (sandbox_run, scheduler_spawn, goal_*, kernel_goal_create) must be an operator-chosen name (Ctx::npure) or the call is refused; an operator fn and a missing one read the same to sealed code; drift tests: narrowing, no widening |
+| 62 commits | | |
 <!-- END MECHANICAL -->
 <!-- END MECHANICAL -->
 
@@ -140,11 +141,10 @@ account and are NOT mechanically verified; the files and commits above are):
   positions, dict snapshots and E0505 (72), the held-value judgement (78).
 - MERGED FROM MAIN (PR #8, 2026-10-06; theme `merged from main (AX findings)`): 13 commits under
   `crates/axon-core/src` that were written and tested on `main` and were NOT reviewed against the PCI
-  claims. Only 5 of the 13 are interpreter changes; the other 8 are native codegen, build/cache and CLI-help changes. The 5 are neither narrowing nor known to be neutral and need a
+  claims. Only 5 of the 13 are interpreter changes; the other 8 change no interpreter evaluation (six are native codegen, build/cache or CLI-help changes; `378da246` touches `interp.rs` and `interp/builtins.rs` only by a `cfg` re-export and a visibility change; `edfe3e2d` changes checker concat typing and resolver capture analysis, so `axon check` accepts different programs). The 5 are neither narrowing nor known to be neutral and need a
   reviewer's eye: shared Rc arrays and cheaper calls (`be8576af`), shared copy-on-write strings and lent
   closure captures (`1d01b014`), `&mut [T]` write-through (`1727775e`), first-class named fns
-  (`19310764`), and the `arr_sort_by` rewrite (`13f01eb8`). The rest are native codegen, build/cache or
-  CLI-help changes. The merge adapted the seal to them (one `call_fn_sealed` path for `call_fn` and
+  (`19310764`), and the `arr_sort_by` rewrite (`13f01eb8`). The other 8 are as listed above. The merge adapted the seal to them (one `call_fn_sealed` path for `call_fn` and
   `call_fn_mut`; `&mut T` and Rc-array arms in `conform.rs`/`pin.rs`) and re-anchored three rows
   (M924, M1680, M1841). The per-frame stack budget was raised to 512 KiB (the merged debug frame is
   ~265 KB, which left no margin under the old 256 KiB).
@@ -170,9 +170,9 @@ account and are NOT mechanically verified; the files and commits above are):
 
 ## (b) Coverage: PCI gate rows, and the mutation rows
 
-`scripts/v022_pci_gates.sh` has 49 rows at this head: the original 18 (surfaces 1-21), ten
+`scripts/v022_pci_gates.sh` has 55 rows at this head: the original 18 (surfaces 1-21), ten
 added by amendment 84, one group per delta amendment (53, 60, 72 incl. its dict snapshot, 78), two for
-amendment 83's dispatch rule (integration), and six for amendment 94 (the `&mut` edge-back cast, the `&mut` operand in the dispatch analysis, the fn-value seal edge and the Rc/copy-on-write observation, each unit and runner where both exist), and nine for amendment 96 (sandbox_run's cast, the one global-read edge, the fn-value mark, the unary width arm, the classified user-code builtins and the handler-expression cost), each with
+amendment 83's dispatch rule (integration), and six for amendment 94 (the `&mut` edge-back cast, the `&mut` operand in the dispatch analysis, the fn-value seal edge and the Rc/copy-on-write observation, each unit and runner where both exist), nine for amendment 96 (sandbox_run's cast, the one global-read edge, the fn-value mark, the unary width arm, the classified user-code builtins and the handler-expression cost), and six for amendment 100 (a handler arm's pin owner, the name sinks, the existence oracle and the drift tests), each with
 unit tests in `interp.rs`/`conform.rs` AND a real-runner test (`axon_psv::runner::run`, in
 `crates/axon-psv/tests/sealed_frames.rs`). The gate fails if a named test is absent (grep), renamed,
 filtered out or `#[ignore]`d (the passed count must equal the named count). Verified to discriminate:
@@ -181,7 +181,7 @@ Amendment 83's dispatch rule (psv1d) landed after amendment 84: its tests are th
 rows; the dict-snapshot rows still name tests that exist after psv1d (their label "psv1d may replace" is dropped).
 
 Run at `c9r4c/claims2` (veto `cdc39fc6` plus this amendment's script/doc changes; the rows through am78 were first run there at 28 rows), interpreter build,
-exit 0 (the earlier rows below were last run at 34 rows, c9r4c/claims3 at veto 1204a925 plus amendment 89's four added rows; at c9r8/psv1f 10c7c916 the whole script, then 40 rows, exited 0 on gpumaster including the six am94 rows; at c9r9/psv1g, 29276036 plus the THEMES and note edits, `v022_pci_gates: PASS — 49 rows`, exit 0, run locally; the am94 and am96 rows are in the table):
+exit 0 (the earlier rows below were last run at 34 rows, c9r4c/claims3 at veto 1204a925 plus amendment 89's four added rows; at c9r8/psv1f 10c7c916 the whole script, then 40 rows, exited 0 on gpumaster including the six am94 rows; at c9r9/psv1g, 29276036 plus the THEMES and note edits, the gate script's final line `PASS` with 49 rows, exit 0, run locally; the am94 and am96 rows are in the table):
 
 | row | package/target | result |
 |---|---|---|
@@ -253,7 +253,7 @@ Mutation rows whose target is `crates/axon-core/src` and which are not retired (
 FREEZE OBLIGATION, not a present fact: the claims spec says these rows are re-run at the frozen head.
 What the freeze procedure must show is a joined paired-disable run at the frozen head in which each of
 the rows above is killed by its own attack (or retired with its four cells). This task and note have
-re-run, at c9r9/psv1g 29276036 on gpumaster (clean clone, three shards, `v022_g01_mutations.py --scope=all --only=<ids>`), all 178 active rows above: 178/178 KILLED by their own attack, 0 REFUSED_ELSEWHERE, 0 unexpected survivors, 0 stale. That is a sample run (`--only`), not the scope run the freeze requires, and it re-ran no retired row; the gate rows (`v022_pci_gates: PASS — 49 rows`) ran locally. Per-amendment kill evidence is in each amendment's text.
+re-run, at c9r9/psv1g 29276036 on gpumaster (clean clone, three shards, `v022_g01_mutations.py --scope=all --only=<ids>`), all 178 active rows above: 178/178 KILLED by their own attack, 0 REFUSED_ELSEWHERE, 0 unexpected survivors, 0 stale. That is a sample run (`--only`), not the scope run the freeze requires, and it re-ran no retired row; the gate rows (49 then) ran locally. Per-amendment kill evidence is in each amendment's text.
 
 ## (c) Surfaces 18 and 19, and what the protected profile does with a non-empty ceiling
 
