@@ -2504,41 +2504,49 @@ mod tests {
     /// NON-DUMPABLE at start (`harden`), so no unprivileged process can read
     /// its memory or ptrace it. The call builds no `Err` and at the default
     /// `fs.suid_dumpable=0` a setuid exec is already non-dumpable, which is why
-    /// no suite noticed it removed. `harden` runs in a FORKED child of this
-    /// test (it chdirs, closes descriptors and leaves the session), which
-    /// starts dumpable and reports what `PR_GET_DUMPABLE` says afterwards.
+    /// no suite noticed it removed. `harden` chdirs, closes descriptors and
+    /// leaves the session, so it runs in a FRESH PROCESS (this test binary
+    /// re-run on this one test: a fork of a multi-threaded test process can
+    /// deadlock on an allocator lock another thread held, and did: an earlier
+    /// version of this test hung a whole suite run). The fresh process starts
+    /// dumpable, runs `harden`, and fails if `PR_GET_DUMPABLE` is not 0.
     #[test]
     fn harden_makes_the_helper_non_dumpable() {
-        // SAFETY: fork; the child calls only libc process-state functions
-        // (harden is plain libc calls) and `_exit`.
-        let pid = unsafe { libc::fork() };
-        if pid == 0 {
-            // SAFETY: as above.
-            let code = unsafe {
+        if std::env::var("AXON_EQ_HARDEN").is_ok() {
+            // SAFETY: prctl calls without pointers.
+            unsafe {
                 libc::prctl(libc::PR_SET_DUMPABLE, 1 as libc::c_ulong, 0, 0, 0);
-                if libc::prctl(libc::PR_GET_DUMPABLE, 0, 0, 0, 0) != 1 {
-                    libc::_exit(10);
-                }
-                harden();
-                if libc::prctl(libc::PR_GET_DUMPABLE, 0, 0, 0, 0) == 0 {
-                    0
-                } else {
-                    11
-                }
-            };
-            unsafe { libc::_exit(code) };
+                assert_eq!(
+                    libc::prctl(libc::PR_GET_DUMPABLE, 0, 0, 0, 0),
+                    1,
+                    "setup: the process starts dumpable"
+                );
+            }
+            harden();
+            // SAFETY: as above.
+            let after = unsafe { libc::prctl(libc::PR_GET_DUMPABLE, 0, 0, 0, 0) };
+            assert_eq!(
+                after, 0,
+                "ATTACK: the root helper stayed dumpable after harden: its memory is readable \
+                 and ptrace-attachable by the caller's uid (PR_GET_DUMPABLE = {after})"
+            );
+            return;
         }
-        assert!(pid > 0, "setup: fork");
-        let mut status = 0;
-        // SAFETY: waitpid on our own child.
-        unsafe { libc::waitpid(pid, &mut status, 0) };
-        assert!(libc::WIFEXITED(status), "setup: the child exited");
-        let code = libc::WEXITSTATUS(status);
-        assert_ne!(code, 10, "setup: the child did not start dumpable");
-        assert_eq!(
-            code, 0,
-            "ATTACK: the root helper stayed dumpable after harden: its memory is readable and \
-             ptrace-attachable by the caller's uid (PR_GET_DUMPABLE != 0)"
+        let o = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "privileged_launcher::tests::harden_makes_the_helper_non_dumpable",
+                "--test-threads=1",
+                "--nocapture",
+            ])
+            .env("AXON_EQ_HARDEN", "1")
+            .output()
+            .unwrap();
+        assert!(
+            o.status.success() && String::from_utf8_lossy(&o.stdout).contains("1 passed"),
+            "ATTACK: the root helper stayed dumpable after harden: the fresh process failed:\n{}\n{}",
+            String::from_utf8_lossy(&o.stdout),
+            String::from_utf8_lossy(&o.stderr)
         );
     }
 

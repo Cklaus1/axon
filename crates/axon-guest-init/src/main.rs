@@ -1189,6 +1189,30 @@ mod tests {
     // process itself is never made no-new-privs, filtered or a supervisor, and
     // the parent bounds the child with a wall clock.
 
+    /// C9 round 7 (eqgate3): run `test` again ALONE in a child of this test
+    /// binary and say whether THIS process is that child. The tests below FORK,
+    /// and a fork of a multi-threaded test process can deadlock on an allocator
+    /// lock another test thread held; in a process that runs only this test the
+    /// other thread is idle. (`harden`'s test in axon-fabric hung a suite run
+    /// that way.) Usage: `if !alone("tests::name") { return; }` first.
+    fn alone(test: &str) -> bool {
+        if std::env::var("AXON_EQ_ALONE").as_deref() == Ok(test) {
+            return true;
+        }
+        let o = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", test, "--test-threads=1", "--nocapture"])
+            .env("AXON_EQ_ALONE", test)
+            .output()
+            .unwrap();
+        assert!(
+            o.status.success() && String::from_utf8_lossy(&o.stdout).contains("1 passed"),
+            "{test} failed when run alone:\n{}\n{}",
+            String::from_utf8_lossy(&o.stdout),
+            String::from_utf8_lossy(&o.stderr)
+        );
+        false
+    }
+
     /// Run `body` in a forked child and return its exit status, or None when it
     /// did not finish in `secs` (it is then killed).
     fn forked(secs: u64, body: impl FnOnce() -> i32) -> Option<libc::c_int> {
@@ -1218,6 +1242,9 @@ mod tests {
 
     #[test]
     fn a_seccomp_filter_is_installed_with_no_new_privs() {
+        if !alone("tests::a_seccomp_filter_is_installed_with_no_new_privs") {
+            return;
+        }
         // One instruction: BPF_RET | BPF_K, SECCOMP_RET_ALLOW.
         let allow_all =
             base64::engine::general_purpose::STANDARD.encode([0x06u8, 0, 0, 0, 0, 0, 0xff, 0x7f]);
@@ -1250,6 +1277,9 @@ mod tests {
 
     #[test]
     fn the_supervisor_forwards_term_and_int_to_its_child() {
+        if !alone("tests::the_supervisor_forwards_term_and_int_to_its_child") {
+            return;
+        }
         for sig in [libc::SIGTERM, libc::SIGINT] {
             let sleep = std::ffi::CString::new("sleep").unwrap();
             let arg = std::ffi::CString::new("30").unwrap();
