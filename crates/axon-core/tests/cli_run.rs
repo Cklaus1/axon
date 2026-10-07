@@ -28122,10 +28122,25 @@ fn a_different_compiler_with_the_same_path_size_and_mtime_misses_the_build_cache
     };
     let build = |tag: &str| -> Option<()> {
         let bin = dir.join(format!("{tag}.bin"));
-        let o = Command::new(&compiler)
-            .args(["build", app.to_str().unwrap(), "-o", bin.to_str().unwrap()])
-            .args(["--cache-dir", cache.to_str().unwrap()])
-            .output()
+        // `compiler` was just written by `fs::copy`; a sibling test's fork() in this
+        // process can hold that write fd until its child execs, so the first exec
+        // may see ETXTBSY (seen once in three loaded full runs, never alone). It is
+        // the kernel's transient answer, not the property under test: retry it.
+        let o = (0..50)
+            .find_map(|_| {
+                match Command::new(&compiler)
+                    .args(["build", app.to_str().unwrap(), "-o", bin.to_str().unwrap()])
+                    .args(["--cache-dir", cache.to_str().unwrap()])
+                    .output()
+                {
+                    Err(e) if e.kind() == std::io::ErrorKind::ExecutableFileBusy => {
+                        std::thread::sleep(std::time::Duration::from_millis(100));
+                        None
+                    }
+                    other => Some(other),
+                }
+            })
+            .expect("the copied compiler stayed busy for 5 s")
             .unwrap();
         let log = format!(
             "{}{}",
