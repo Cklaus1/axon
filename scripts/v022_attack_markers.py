@@ -2166,3 +2166,85 @@ ATTACK_MARKERS.update({
     'M2359': 'ATTACK: a budget carve past the budget cap was accepted',
     'M2360': 'ATTACK: zero persist_cap must block any persist carve',
 })
+
+
+# C9 round 8, EQGATE4 (M2400-M2469; amendment 95).
+ATTACK_MARKERS.update({
+    'M2400': 'ATTACK: the guest runner would run the check as another identity than nobody',
+    'M2401': 'ATTACK: the guest runner would run the check as another identity than nobody',
+    'M2402': 'ATTACK: the guest runner is not held to the manifest digest the kernel command line names',
+    'M2403': "ATTACK: the workload ran without the policy's AXON_BUDGET_TOKENS cap",
+    'M2404': "ATTACK: the workload ran without the policy's AXON_PRINCIPAL",
+    'M2405': "ATTACK: the workload ran without the policy's AXON_RUN_ID",
+    'M2406': "ATTACK: the workload ran without the policy's AXON_ALLOWED_EFFECTS ceiling",
+    'M2407': "ATTACK: the workload ran without the policy's AXON_SOURCE_HASH",
+    'M2408': 'ATTACK: a run dir was made over a directory that already existed',
+    'M2409': 'ATTACK: prepare made the job dir over a directory that already existed',
+    'M2410': 'ATTACK: the inputs were snapshotted into a staging leaf that already existed',
+    'M2411': 'ATTACK: a snapshot copied into a directory that already existed',
+    'M2412': "ATTACK: the observer program's work directory was made over a directory that already existed",
+    'M2413': 'ATTACK: a custodian whose executable a stranger uid owns \\(mode 0755\\) was trusted',
+    'M2414': 'ATTACK: the observer accepted its signing key from a FIFO',
+    'M2415': 'ATTACK: an observer naming no max_age_s accepts observations older than five minutes',
+    'M2416': 'ATTACK: a certification record lacking observation_sha256 was not refused as missing it',
+    'M2417': 'ATTACK: the guest runner would run the check as another identity than nobody',
+    'M2418': 'ATTACK: the private inputs dir was made over a directory that already existed',
+})
+
+ATTACK_MARKERS.update({
+    'M2420': r'ATTACK: a use of create_dir with no row and no exemption was not a refusal site',
+    'M2421': r'ATTACK: a use of create_dir_all with no row and no exemption was not a refusal site',
+    'M2422': r'ATTACK: a use of DirBuilder with no row and no exemption was not a refusal site',
+    'M2423': r'ATTACK: a use of a `drop: Some\(\.\.\)` field with no row and no exemption was not a refusal site',
+    'M2424': r'ATTACK: a use of a uid constant with no row and no exemption was not a refusal site',
+    'M2425': r'ATTACK: a use of an `expected_\*sha256` field with no row and no exemption was not a refusal site',
+    'M2426': r'ATTACK: a use of env::set_var with no row and no exemption was not a refusal site',
+    'M2427': r'ATTACK: a use of env::remove_var with no row and no exemption was not a refusal site',
+    'M2428': r'ATTACK: a single-line `\.ok_or\(\.\.\)\?` was not a refusal site',
+    'M2429': r'ATTACK: a row on the first term of `a \|\| b \|\| c` credited the whole guard',
+    'M2430': r'ATTACK: a constant read by a refusing function was not a site',
+    'M2431': r'ATTACK: an exemption citing a five-digit row the registry does not hold was accepted',
+    'M2432': r'ATTACK: a raw `libc::syscall\(\.\.\)` was not a refusal site',
+    'M2433': r'ATTACK: a write of oom_score_adj was not a refusal site',
+    'M2434': r'ATTACK: a row on the first term of `a \|\| b \|\| c` credited the whole guard',
+    'M2435': r'ATTACK: a row on the guard above credited a form line it never changed',
+    'M2436': r'ATTACK: a term exemption for a term a row credits was accepted',
+})
+
+ATTACK_MARKERS.update({
+    'M2437': r'timeout_s: 0, observation',
+    'M2438': 'ATTACK: an out root the Fabric uid does not own was accepted',
+    'M2439': r'ATTACK: forged returned evidence \(inputs-candidate\) reached a verdict',
+    'M2440': r'ATTACK: forged returned evidence \(inputs-suite\) reached a verdict',
+    'M2441': r'ATTACK: forged returned evidence \(test-name\) reached a verdict',
+    'M2442': 'ATTACK: certified PASS despite a trust preflight with another schema',
+    'M2443': 'ATTACK: certified PASS despite a trust preflight with a failing verdict',
+    'M2444': 'ATTACK: an empty id was not refused with an error',
+    'M2445': 'ATTACK: a verdict whose verifier is also a subject issuer was counted',
+    'M2446': r'unwrap_err\(\)` on an `Ok` value: \(AdmissionRecord .*experiment_id: "unkeyed"',
+    'M2447': 'ATTACK: a verification receipt presented for an episode that cites no verifier_ref was recorded',
+    'M2448': 'ATTACK: a verification attestation presented for an episode that cites no verifier_ref was recorded',
+    'M2449': 'ATTACK: a verification psv evidence presented for an episode that cites no verifier_ref was recorded',
+    'M2450': 'ATTACK: the runner went on with a suite entry that is not a file in the suite tree',
+    'M2451': 'ATTACK: an empty symlink target was accepted',
+    'M2452': 'ATTACK: the default import quota allows a different number of bytes than D11',
+    'M2453': 'ATTACK: the default import quota allows a different depth than D11',
+    'M2454': r'ATTACK: the top-level \.micode directory was imported into the version',
+    'M2455': "ATTACK: the contract's byte limit is not 1 MiB",
+    'M2456': "ATTACK: the contract's nesting limit is not 32",
+    'M2457': r"ATTACK: the contract's integer limit is not 2\^53 - 1",
+})
+
+ATTACK_MARKERS.update({
+    'M2458': 'ATTACK: an operator file larger than the request bound was read whole',
+    'M2460': 'ATTACK: a staged input directory got another mode than 0755',
+    'M2461': 'OUT:SPAWNED',
+    'M2462': 'ATTACK: a custodian request line past the size bound was read until the deadline',
+    'M2463': r'ATTACK: the root helper launched a policy over its 64 KiB bound',
+    'M2464': r"ATTACK: the host's B263 qualification lapsed \(31 days\) and readiness still said PASS",
+})
+
+ATTACK_MARKERS.update({
+    'M2465': 'ATTACK: the guest started under a POSSIBLY TRUNCATED cmdline policy',
+    'M2466': r'assertion failed: backend::GuestPolicy::for_grant\(&req\(&long_principal\(\)\), ""\)\.is_err\(\)',
+})

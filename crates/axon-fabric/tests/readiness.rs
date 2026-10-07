@@ -258,6 +258,49 @@ fn a_dev_mode_or_uncertified_trust_preflight_is_refused() {
     c.refused("not a passing protected-mode");
 }
 
+/// Amendment 95 (eqgate4): the trust preflight must be of THIS schema, in
+/// protected mode, with a PASS verdict: three terms of one guard, of which only
+/// the mode had a test of its own. Each other defect, alone, on an otherwise
+/// valid preflight that is part of the certified evidence bundle, is refused.
+#[test]
+fn a_trust_preflight_of_another_schema_or_with_a_failing_verdict_is_not_certified() {
+    for (what, doc) in [
+        (
+            "another schema",
+            json!({"schema": "axon-trust-preflight/0", "mode": "protected", "verdict": "PASS"}),
+        ),
+        (
+            "a failing verdict",
+            json!({"schema": TRUST_PREFLIGHT_SCHEMA, "mode": "protected", "verdict": "FAIL"}),
+        ),
+    ] {
+        let Some(c) = certified() else { return };
+        write(&c.repo.join(PREFLIGHT), &doc.to_string());
+        let pf = sha(&c.repo.join(PREFLIGHT));
+        let rec: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(c.record()).unwrap()).unwrap();
+        let evidence: Vec<String> = rec["evidence"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| e.as_str().unwrap().to_string())
+            .collect();
+        let refs: Vec<&str> = evidence.iter().map(String::as_str).collect();
+        let bundle = bundle_of(&c.repo, &refs);
+        resign(&c, &c.operator, |r| {
+            r["trust_preflight_sha256"] = json!(pf);
+            r["evidence_bundle_sha256"] = json!(bundle);
+        });
+        c.commit("preflight with one defect");
+        let v = c.verdict();
+        assert_ne!(
+            v["status"], "PASS",
+            "ATTACK: certified PASS despite a trust preflight with {what}: {v}"
+        );
+        c.refused("not a passing protected-mode");
+    }
+}
+
 /// The authority domain is part of the signed message: the operator's own
 /// key, signing the exact record bytes for ANOTHER authority, does not count
 /// as a qualification signature.
@@ -1299,5 +1342,68 @@ fn a_directory_inside_a_clone_is_not_certified() {
         v.to_string()
             .contains("is not the top of a standalone clone"),
         "{v}"
+    );
+}
+
+/// The fields a certification record must bind, written out HERE (not read
+/// from `CERT_FIELDS`): a table the test iterates is a table a mutation of the
+/// table cannot be caught by.
+const BOUND_FIELDS: [&str; 22] = [
+    "schema",
+    "component",
+    "host_profile",
+    "qualification_profile",
+    "psv_spec_sha256",
+    "axon_sha",
+    "micode_sha",
+    "fabric_revision",
+    "guest_image_sha256",
+    "guest_kernel_sha256",
+    "guest_runtime_sha256",
+    "suite",
+    "candidate_tree_ref",
+    "observer_key_id",
+    "observation_sha256",
+    "verifier_key_id",
+    "b263_qualification_sha256",
+    "evidence",
+    "evidence_bundle_sha256",
+    "readiness_verifier_sha256",
+    "trust_preflight_sha256",
+    "certified_at",
+];
+
+/// Amendment 95 (eqgate4): a certification record that omits ANY bound field is
+/// refused as missing it, each field on its own. `CERT_FIELDS` is the table the
+/// check iterates, and an entry of it replaced by a duplicate left that field
+/// unbound (a record without it was then judged by whichever later check
+/// happened to read it, or none) with every suite green. Control: the whole
+/// record passes (`certified()` asserts it).
+#[test]
+fn a_record_omitting_any_bound_field_is_refused_as_missing_it() {
+    let Some(c) = certified() else { return };
+    let orig: Value = serde_json::from_slice(&std::fs::read(c.record()).unwrap()).unwrap();
+    for f in BOUND_FIELDS {
+        resign(&c, &c.operator, |r| {
+            *r = orig.clone();
+            r.as_object_mut().unwrap().remove(f);
+        });
+        let v = c.verdict().to_string();
+        // The reason lists the missing fields: `(missing ["a", "b"])`.
+        let listed = v
+            .find("(missing [")
+            .map(|i| v[i..].split(']').next().unwrap_or(""))
+            .is_some_and(|l| l.contains(&format!("\\\"{f}\\\"")));
+        assert!(
+            listed,
+            "ATTACK: a certification record lacking {f} was not refused as missing it: {v}"
+        );
+    }
+    // The table the check iterates IS the contract (a field added to it must be
+    // added to BOUND_FIELDS, with its own removal checked above).
+    assert_eq!(
+        axon_fabric::readiness::CERT_FIELDS,
+        BOUND_FIELDS,
+        "ATTACK: the table of bound certification fields is not the contract's"
     );
 }

@@ -5372,3 +5372,95 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       `crates/axon-psv/tests/sealed_frames.rs`; gate rows `am94 ...` in `scripts/v022_pci_gates.sh`; rows
       M2370-M2376 each killed by its own `ATTACK:` message on gpumaster. The rows M1672, M1841, M1843, M1844
       and M1845 name text in `replaced_ok` that gained a `strict` parameter; their old/new text follow it.
+## Amendment 95: decisions expressed as a value, an atomic refusal, a term or a constant (C9 round 8, eqgate4)
+
+95. **Source: the round-8 EQUIVALENCE review (`DO_NOT_REGISTER`, one BLOCKER): "a guard expressed as a VALUE, or as an
+    atomic refusal, is still invisible to the refusal-site gate."** Mutation ids M2400-M2466 used (of M2400-M2469),
+    matrix rows A196-A200 (other branches hold A178-A195; the integrator renumbers; this branch's matrix check was
+    run with temporary placeholders for A178-A195, which are not committed). Base `c9r4c/integrate6` (89da403a); no
+    file under `crates/axon-core/src` was touched.
+    - **Survivors 1-6 are now killed by their own attack, each by a test that observes the production value or the
+      guard itself.** (1) The PSV runner's check identity and digest pin are values in a new pure `guest_config`;
+      a unit test reads `drop == Some((65534, 65534))` and the cmdline digest (M2400 TEST_UID, M2417 TEST_GID,
+      M2401 `drop: None`, M2402 an empty pin). (2) The same test holds the digest. (3) The guest PID 1's environment:
+      the real `axon-guest-init` binary, root only, runs a workload that prints the five variables; one row per
+      `env::set_var` (M2403-M2407; AXON_BUDGET_TOKENS and AXON_PRINCIPAL had none). (4) `create_dir_all` for
+      `create_dir`: a run dir (a function of its own, `RunDir::create_new`, M2408), `prepare`'s job dir (M2409), the
+      helper's staging leaves and tree copy (M2410, M2411), the in-uid observer's work dir (M2412), and the
+      Fabric-private inputs dir, whose `DirBuilder` gained no `recursive(true)` (M2418). Each test plants a
+      directory with a stale file and requires the refusal and the file untouched. (5) Compound terms:
+      custodian.rs's `!m.is_file()` is UNREACHABLE (execve refuses a non-regular file; replacing it with `false`
+      left the whole suite green: an exemption stating that, not a row), its uid term is killed by an executable a
+      stranger uid owns (M2413, root only), observer_service.rs's `!is_file()` by a FIFO that holds the key (M2414:
+      the FIFO's bytes are kept alive by a second descriptor, so the key IS readable; a directory or device would be
+      refused by the read and is not a kill). (6) `DEFAULT_OBSERVATION_MAX_AGE_S` (M2415, through the host config
+      loader) and a `CERT_FIELDS` entry replaced by a duplicate (M2416: the test removes each of 22 fields, written
+      out in the test, from a certified record and requires it named as missing).
+    - **The gate now sees these FORMS (`scripts/v022_refusal_coverage.py`).** (a) `VALUE_FORM`: `create_dir`,
+      `create_dir_all`, `DirBuilder`, `libc::mkdir`, a `drop:` field, an upper-case `*UID`/`*GID` name, a struct-literal
+      `expected_*sha256|digest|hash` field (a field declaration or a parameter is not one), `env::set_var`,
+      `env::remove_var` (M2420-M2427). (b) `OKOR_FORM`: a single-line `.ok_or(..)?` / `.ok_or_else(..)?` (M2428). THIS
+      REVERSES amendment 76, which had judged a bare `ok_or` "an absence some other decision made": 71 refusals were
+      unseen. `an_inline_predicate_refused_through_ok_or_is_a_site` was edited for that reason and says so. (c) `PRIV_FORM`
+      gained `libc::syscall(` and `oom_score_adj` (M2432, M2433). (d) A form whose decision is its OWN LINE
+      (flags, privilege and build calls, caps, the new `VALUE_FORM`/`OKOR_FORM`; not `Some(reason)`, whose decision is the
+      condition above it) is credited only by a row whose edit changes THAT line (M2435): ten sites had been credited by a
+      row on a neighbouring condition (the `create_dir` in the block of a uid check, `.take(MAX_*)` in the block of an owner
+      test). A `DirBuilder` chain is judged at its `.create(..)` line. (e) A compound guard is judged PER TERM: each
+      top-level `||`/`&&` term of the opening `if` of a row-covered line site must be reached by a row's changed
+      characters, or the row must make the whole condition a constant (a small reducer evaluates `true`/`false` through
+      `&&`/`||`: `false && (a || b)` is constant, `false && a || b` is not, M2434) or REMOVE the refusal (an edit that turns
+      the `return Err` into a no-op credits every term), or the term is on `TERM_EXEMPT` with a fact; a term exemption that
+      matches no uncredited term is stale (M2429, M2436). (f) A `const`/`static` read, outside strings, comments and the
+      refusal's own message, by a function that contains a refusal site is itself a site; its definition needs a row that
+      changes it or an exemption (M2430). (g) The exemption audit reads a row id of any number of digits (M2431).
+      Each has a planted-form test in `refusal_coverage_gate.rs` and a gate row.
+    - **Counts and dispositions.** The new rules reported about 260 sites and terms at their first run, over and above the
+      original forms. After the rows above: **205 exemptions and 4 term exemptions were written; 65 rows (48 behaviour rows and 17 gate rows) kill; 5 exemptions went stale
+      because a row now covers them and were dropped.**
+      ok_or: 71 sites, 5 with a checkable fact (3 `Stdio::piped()` takes, 1 dominated by `plain_name` on the next line,
+      1 unreachable behind `file_name() != Some(leaf)`), **66 are `REMAINDER`**. Constants: 13 rowed (M2415, M2416, M2452-M2457,
+      M2462-M2466), 94 `REMAINDER` by kind (42 tags, 14 paths, 12 bounds, 10 tables, 9 texts, 4 structured, 3 exit codes) and 7
+      Cortex ones exempt as not on the protected route. create_dir_all and friends: 14 `ENSURE-EXISTS`/`DOMINATED`/`UNREACHABLE`
+      exemptions each stating what is created NEW below (the row) or why `create_dir` and `create_dir_all` agree there;
+      axon-os (9) and the hidden `__psv-host-guest` stand-in (3) are not on the protected route (checkable).
+    - **Surveys (executed on gpumaster, clean clones of a committed sha; a survey kill is a finding, not a row).** TERMS:
+      21 uncredited terms, each replaced by `false` alone, the owning crate's suite run. 15 survived: 3 are equivalent and now
+      TERM_EXEMPT with a fact (custodian `!is_file`, the launcher's `!is_dir` behind O_DIRECTORY, sealed_exec's `size < 0`
+      behind the next term's `as u64`), 1 is dominated by a whole-guard row (checks.rs `starts_with('/')`), and **11 were real gaps,
+      now killed by new tests** (the out root's owner M2438, the guest verdict's candidate tree, suite tree and test M2439-M2441, the
+      trust preflight's schema M2442, a subject-issuer verifier M2445, the three evidence kinds M2447-M2449, a suite entry that is not a
+      file M2450, an empty symlink target M2451). 6 were killed already; 4 got their own marker (M2437, M2443, M2444, M2446), one
+      (evl.rs's `matches!(Passed|Failed)`) stays `REMAINDER`: 12+ tests fail but none on an assertion about it. TAGS: ten schema
+      constants, each with `-eq4x` appended: 6 killed by fixtures (custodian, observer, launcher, grants, ACK, guest policy), **4
+      survived** (readiness CERT_SCHEMA, journal, attestation, launch manifest): so "a literal pins it from outside" is NOT true of
+      every tag, and the 42 tag entries say REMAINDER, not "equivalent". BOUNDS: killed and rowed: MAX_MESSAGE, MAX_POLICY, the evidence age,
+      the guest policy word, the cmdline limit, the contract limits (a test that built its oversize document from `MAX_BYTES`
+      itself refused a 1 GiB bound with a 1 GiB string: now literal pins), the recipe quota; **survived**: observer MAX_REPLY and
+      MAX_PROFILE_MANIFEST, sealed_exec MAX_BYTES, backend MAX, git MAX_REASONS, certcheck MAX_DEPTH. SITES: `.take(MAX_REQUEST)` of the
+      operator-file reader survived and is rowed with a new test (M2458); `.take(MAX_POLICY+1)` and `.take(MAX_BYTES+1)` survived and are
+      outcome-equivalent (the comparison next to them refuses the same input; they bound memory only); `.mode(mode)` at creation
+      survived because `set_mode(&shown, mode)` sets the final mode (a row was written, survived, and was withdrawn as an equivalent
+      rather than counted: M2459 is unused); `custom_flags(O_NOFOLLOW)` is dominated by `create_new`.
+    - **WHAT THE GATE STILL CANNOT SEE (stated, not covered; each is a greppable `REMAINDER`).**
+      (1) The 66 single-line `.ok_or(..)?` refusals and the 94 constants above are LISTED, not observed: no claim is made that a test
+      removes any of them alone, and for the ok_or the generic bypass needs a per-site default value that no mutation supplies.
+      (2) A `.ok_or(..)` whose `?` is on the next line, a `?` on any other conversion (`.map_err(..)?`, `Option?`), `.expect(..)` and
+      `.unwrap()` as refusals. (3) Terms of anything but an `if` / `else if` condition: `while`, a match guard, `let .. else`, a
+      closure body, the inside of a parenthesised sub-condition or a `matches!`; and a negated group is one term. (4) A constant read
+      only through a local that is later compared (`let m = MAX; if x > m`), a constant read by a function the rule does not see
+      as refusing, a `static`, a constant in the interpreter outside conform.rs. (5) A uid or gid that reaches a primitive as
+      a local, a computed value, a struct field not named `drop`, or a literal (`custodian_uid: me`); a digest pin that is not named
+      `expected_*`. (6) A decision made in a shell script, a build script or a checked-in data file (the gate reads Rust).
+      (7) `create_dir` reached through a wrapper that is not named `create_dir`, `mkdir` through `Command`. (8) A form credited by a
+      row on its own line whose edit is not the form (a row that changes the comment or the message of that line).
+      (9) Every equivalence or dominance claim in an exemption is the reviewer's to test; each cites a line or a survey, and a survey
+      'survived' is a statement about this crate's suite, not a proof.
+    - **Unfinished, stated.** The 66 + 94 REMAINDERs above. The survey of the fabric constants stopped at `MAX_REASONS`
+      (it was cut when one candidate, `MAX_OUTSTANDING` raised to 2^30, ran for over an hour without finishing): the
+      custodian's `MAX_OUTSTANDING` and IO timeouts, the observer service's IO timeout, protected_host's `KEYS` and
+      `REFUSED_CALLER_FLAGS` are `REMAINDER` with no survey result. The 17 gate rows and 48 behaviour rows were each
+      run by `v022_g01_mutations.py --only` on gpumaster from a clean clone and are KILLED by their own marker, except
+      that M2459 (written for `.mode(mode)`) survived and was withdrawn; the full `axon-fabric` suite (serial and sharded,
+      gpumaster) and the `axon-psv`, `axon-guest-init`, `axon-loop`, `axon-loop-contracts`, `axon-workspace-recipe` suites and
+      the three axon-core gates were green at the rows' commit; matrix rows A196-A200 await renumbering at integration.

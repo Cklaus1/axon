@@ -643,6 +643,27 @@ fn depth_and_size_limits() {
     ));
 }
 
+/// Amendment 95 (eqgate4): the contract's limits are the documented values. The
+/// size test above builds its oversized document from `MAX_BYTES` itself, so a
+/// raised limit refused it all the same (a 1 GiB string for a 1 GiB limit) and
+/// every suite stayed green; the value is observed here against literals.
+#[test]
+fn the_contract_limits_are_the_documented_ones() {
+    use axon_loop_contracts::{MAX_DEPTH, MAX_INTEGER};
+    assert_eq!(
+        MAX_BYTES, 1_048_576,
+        "ATTACK: the contract's byte limit is not 1 MiB"
+    );
+    assert_eq!(
+        MAX_DEPTH, 32,
+        "ATTACK: the contract's nesting limit is not 32"
+    );
+    assert_eq!(
+        MAX_INTEGER, 9_007_199_254_740_991,
+        "ATTACK: the contract's integer limit is not 2^53 - 1"
+    );
+}
+
 // ── ACF reference-pack examples ─────────────────────────────────────────────
 
 #[test]

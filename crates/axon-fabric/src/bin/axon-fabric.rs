@@ -549,6 +549,17 @@ fn psv_host_guest() {
         }
         "other-manifest" => v["launch_manifest_sha256"] = serde_json::json!("0".repeat(64)),
         "inputs" => v["inputs"]["match"] = serde_json::json!(false),
+        // Amendment 95: the guest vouches for ITS inputs (`match` true) but names
+        // another candidate tree, another suite tree, or another test than this
+        // launch's: each is a term of Fabric's join, refused on its own.
+        "inputs-candidate" => {
+            v["inputs"]["candidate_tree_digest"] =
+                serde_json::json!(format!("acf1:{}", "5".repeat(64)))
+        }
+        "inputs-suite" => {
+            v["inputs"]["suite_tree_digest"] = serde_json::json!(format!("acf1:{}", "6".repeat(64)))
+        }
+        "test-name" => v["test"] = serde_json::json!("t_another_test"),
         // A genuine run whose verdict names another policy than the
         // manifest's (PSV-6, A87: Fabric's join must refuse it).
         "verdict-policy" => v["policy_sha256"] = serde_json::json!("e".repeat(64)),

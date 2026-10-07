@@ -345,6 +345,11 @@ fn every_forgery_of_the_returned_evidence_is_unknown_for_its_own_reason() {
         ("forge", "without completion evidence"),
         ("other-manifest", "not this launch's"),
         ("inputs", "inputs or test are not this launch's"),
+        // Amendment 95: each other term of that join, with the guest's own
+        // `match` still true (the terms were credited by the one row on `match`).
+        ("inputs-candidate", "inputs or test are not this launch's"),
+        ("inputs-suite", "inputs or test are not this launch's"),
+        ("test-name", "inputs or test are not this launch's"),
         ("swap-after", "not the one the launcher bound"),
         ("forge-fail", "keyed failure evidence"),
     ] {

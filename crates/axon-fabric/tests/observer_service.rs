@@ -1322,3 +1322,56 @@ fn a_program_that_execs_the_pinned_file_after_spawning_the_helper_gets_no_observ
          exec'd the pinned file after spawning the helper"
     );
 }
+
+/// Amendment 95 (eqgate4): the observer key must be a REGULAR file, whatever
+/// else about it holds. A FIFO the observer uid owns at mode 0400 passes the
+/// owner and mode terms, and a FIFO whose writer has gone and whose buffer
+/// still holds the key's bytes is READ TO EOF by `load_key` (the buffer is kept
+/// alive by a second descriptor), so with the type term removed the key is
+/// accepted from a pipe; a directory or a device would be refused later by the
+/// read itself, which is why this one is a FIFO. Control: the same bytes in a
+/// regular 0400 file load.
+#[test]
+fn an_observer_key_that_is_a_fifo_is_refused_even_when_it_holds_the_key() {
+    let d = tempfile::tempdir_in("/var/tmp").unwrap();
+    set_mode(d.path(), 0o700);
+    let k = observer_key(d.path(), "fifo-src", &[]);
+    let bytes = std::fs::read(&k.pk8).unwrap();
+    let me = euid();
+    // CONTROL: a regular 0400 file with these bytes loads.
+    let regular = d.path().join("regular.pk8");
+    std::fs::write(&regular, &bytes).unwrap();
+    set_mode(&regular, 0o400);
+    axon_fabric::observer_service::load_key(&regular, me)
+        .expect("control: a regular 0400 key the observer owns");
+    // ATTACK: the key's bytes in a FIFO, mode 0400, writer gone.
+    let fifo = d.path().join("key.fifo");
+    let c = std::ffi::CString::new(fifo.to_str().unwrap()).unwrap();
+    assert_eq!(
+        unsafe { libc::mkfifo(c.as_ptr(), 0o600) },
+        0,
+        "setup: mkfifo"
+    );
+    use std::os::unix::fs::OpenOptionsExt;
+    let hold = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NONBLOCK)
+        .open(&fifo)
+        .expect("setup: a descriptor that keeps the pipe buffer alive");
+    {
+        use std::io::Write;
+        let mut w = std::fs::OpenOptions::new()
+            .write(true)
+            .custom_flags(libc::O_NONBLOCK)
+            .open(&fifo)
+            .expect("setup: the writer");
+        w.write_all(&bytes).expect("setup: the key fits the pipe");
+    }
+    set_mode(&fifo, 0o400);
+    let got = axon_fabric::observer_service::load_key(&fifo, me);
+    drop(hold);
+    match got {
+        Ok(_) => panic!("ATTACK: the observer accepted its signing key from a FIFO"),
+        Err(e) => assert!(e.contains("must be a regular file"), "{e}"),
+    }
+}

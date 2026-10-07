@@ -484,7 +484,7 @@ fn run_program(
         ),
         None => None,
     };
-    std::fs::create_dir(work).map_err(|e| format!("observation dir: {e}"))?;
+    create_work_dir(work)?;
     let status = sealed_exec::command(
         &program,
         interpreter.as_ref(),
@@ -515,4 +515,51 @@ fn run_program(
     let signature =
         crate::backend::read_signature("observation", &work.join("observation.json.sig"))?;
     Ok((bytes, signature))
+}
+
+/// The observer program's work directory is created NEW: one that already
+/// exists (a leftover, or one planted with a forged record in it) is refused
+/// before the program runs, and a missing parent is not made on the way.
+fn create_work_dir(work: &Path) -> Result<(), String> {
+    std::fs::create_dir(work).map_err(|e| format!("observation dir: {e}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Amendment 95 (eqgate4): the observer program's work directory is created
+    /// NEW. A directory that already exists (with a planted record in it) is
+    /// refused and left untouched, and so is a missing parent: `create_dir_all`
+    /// would accept both, and the program would run over the stale record.
+    /// CONTROL: a fresh name is created.
+    #[test]
+    fn the_observer_programs_work_directory_is_never_an_existing_one() {
+        let d = std::env::temp_dir().join(format!("axon-observer-work-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        create_work_dir(&d.join("fresh")).expect("control: a fresh work directory");
+        assert!(d.join("fresh").is_dir());
+        let planted = d.join("planted");
+        std::fs::create_dir(&planted).unwrap();
+        std::fs::write(planted.join("observation.json"), "planted").unwrap();
+        let e = create_work_dir(&planted).err().unwrap_or_default();
+        assert!(
+            e.starts_with("observation dir:") && e.contains("File exists"),
+            "ATTACK: the observer program's work directory was made over a directory that already existed: {e:?}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(planted.join("observation.json")).unwrap(),
+            "planted"
+        );
+        let e = create_work_dir(&d.join("absent/child"))
+            .err()
+            .unwrap_or_default();
+        assert!(
+            e.contains("No such file"),
+            "ATTACK: the observer program's work directory was made under parents that did not exist: {e:?}"
+        );
+        assert!(!d.join("absent").exists());
+        let _ = std::fs::remove_dir_all(&d);
+    }
 }

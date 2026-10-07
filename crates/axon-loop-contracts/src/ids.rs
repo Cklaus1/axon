@@ -323,6 +323,21 @@ mod tests {
         }
     }
 
+    /// Amendment 95 (eqgate4): an EMPTY id is refused with an error, not a panic.
+    /// `check_id` indexes `b[0]` after the length term refuses `b.is_empty()`, so
+    /// with that term removed the empty id panicked instead of being refused: a
+    /// process abort on a hostile document. `catch_unwind` makes the difference
+    /// observable as the test's own assertion.
+    #[test]
+    fn an_empty_id_is_an_error_not_a_panic() {
+        let r = std::panic::catch_unwind(|| TaskId::new("").is_err());
+        assert_eq!(
+            r.ok(),
+            Some(true),
+            "ATTACK: an empty id was not refused with an error"
+        );
+    }
+
     #[test]
     fn deserialize_validates_too() {
         assert!(serde_json::from_str::<TrialId>("\"ok-1\"").is_ok());

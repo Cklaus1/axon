@@ -57,14 +57,17 @@ fn start(
     proceed()
 }
 
-fn run_guest() -> Result<(), String> {
-    let cmdline = std::fs::read_to_string("/proc/cmdline").unwrap_or_default();
+/// The guest's fixed configuration, from the kernel command line (a pure
+/// function so a test can read the VALUES production hands the runner: the
+/// uid the check runs as and the manifest digest it is held to, neither of
+/// which any test of `run_and_emit` observes, since those pass their own).
+fn guest_config(cmdline: &str) -> RunnerConfig {
     let expected = cmdline
         .split_whitespace()
         .find_map(|w| w.strip_prefix("axon.psv.manifest="))
         .unwrap_or("")
         .to_string();
-    let cfg = RunnerConfig {
+    RunnerConfig {
         manifest: PathBuf::from("/in/job/launch-manifest.json"),
         secret: PathBuf::from("/in/job/completion-secret"),
         candidate: PathBuf::from("/in/candidate"),
@@ -76,8 +79,13 @@ fn run_guest() -> Result<(), String> {
         drop: Some((TEST_UID, TEST_GID)),
         // The policy axon-guest-init enforces, from the same cmdline: the
         // runner holds it to the manifest's policy_sha256 (PSV-6, A87).
-        policy: policy_from_cmdline(&cmdline),
-    };
+        policy: policy_from_cmdline(cmdline),
+    }
+}
+
+fn run_guest() -> Result<(), String> {
+    let cmdline = std::fs::read_to_string("/proc/cmdline").unwrap_or_default();
+    let cfg = guest_config(&cmdline);
     match run_and_emit(&cfg) {
         Ok((_, sha)) => {
             println!("PSV-VERDICT sha256={sha}");
@@ -91,6 +99,31 @@ fn run_guest() -> Result<(), String> {
 mod tests {
     use super::*;
     use std::cell::Cell;
+
+    /// Amendment 95 (eqgate4): the guest runs the check as `nobody` (65534),
+    /// never as root, and holds the manifest to the digest the kernel command
+    /// line names, never to an empty one. Both are VALUES in `guest_config`,
+    /// handed to primitives that are rowed (setuid, the digest compare) but
+    /// whose argument no other test observes: the runner suite passes its own.
+    #[test]
+    fn the_guest_runs_the_check_as_nobody_and_holds_the_manifest_to_the_cmdline_digest() {
+        let digest = "ab".repeat(32);
+        let cfg = guest_config(&format!("console=ttyS0 axon.psv.manifest={digest} quiet"));
+        assert_eq!(
+            cfg.drop,
+            Some((65534, 65534)),
+            "ATTACK: the guest runner would run the check as another identity than nobody: {:?}",
+            cfg.drop
+        );
+        assert_eq!(
+            cfg.expected_manifest_sha256, digest,
+            "ATTACK: the guest runner is not held to the manifest digest the kernel command line names"
+        );
+        // A command line that names no digest yields an EMPTY pin, which no
+        // manifest hashes to: the runner then refuses every manifest.
+        assert_eq!(guest_config("console=ttyS0").expected_manifest_sha256, "");
+        assert_eq!(cfg.manifest, PathBuf::from("/in/job/launch-manifest.json"));
+    }
 
     /// PSV-3 (C9 certifying review): a runner that cannot make itself
     /// non-dumpable refuses, for that reason, and never reaches the step that
