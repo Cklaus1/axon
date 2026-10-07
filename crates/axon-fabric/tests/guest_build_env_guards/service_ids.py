@@ -53,7 +53,7 @@ case(plant_unit, "axon-a.service", '[Service]\nDynamicUser=yes\n')
 chk("service ids DynamicUser allocates the uid at start: cannot be determined", bu(4314), "cannot be determined")
 case(plant_unit, "other.service", '[Service]\nExecStart=/usr/bin/other\nDynamicUser=yes\n')
 chk("service ids control: DynamicUser of an unrelated unit", bu(4314), "")
-case(plant_etc, "big.json", '{"pad": "' + "x" * 70000 + '"}')
+case(plant_etc, "big.json", '{"fabric_uid": 4315}' + " " * 70000)   # complete within the bound: only the size refusal stops a partial read
 chk("service ids a JSON config over the size bound refuses (it is not skipped)", bu(4315), "cannot be determined")
 case(plant_etc, "bad.json", '{"fabric_uid": 4316')
 chk("service ids an unparsable JSON config refuses (it is not skipped)", bu(4316), "cannot be determined")
