@@ -15,9 +15,9 @@ later commit touches `crates/axon-core/src` (the note is then stale: `python3 sc
 --emit HEAD`, paste between the markers).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: aa0dd7ebefece0f2498c0e071c40b806aa57954c
+generated-at: 8caedb78bc177d6eaed37940687d27ccd533d598
 
-`git diff --numstat 31413ca7..aa0dd7eb -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..8caedb78 -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -43,12 +43,12 @@ generated-at: aa0dd7ebefece0f2498c0e071c40b806aa57954c
 | `crates/axon-core/src/error.rs` | 20 | 11 |
 | `crates/axon-core/src/fmt.rs` | 5 | 0 |
 | `crates/axon-core/src/infer.rs` | 3 | 2 |
-| `crates/axon-core/src/interp.rs` | 4556 | 1171 |
+| `crates/axon-core/src/interp.rs` | 4971 | 1188 |
 | `crates/axon-core/src/interp/builtins.rs` | 381 | 314 |
-| `crates/axon-core/src/interp/conform.rs` | 1762 | 0 |
-| `crates/axon-core/src/interp/eval.rs` | 412 | 68 |
+| `crates/axon-core/src/interp/conform.rs` | 1772 | 0 |
+| `crates/axon-core/src/interp/eval.rs` | 420 | 68 |
 | `crates/axon-core/src/interp/goal.rs` | 21 | 20 |
-| `crates/axon-core/src/interp/pin.rs` | 587 | 0 |
+| `crates/axon-core/src/interp/pin.rs` | 606 | 0 |
 | `crates/axon-core/src/interp/proptest.rs` | 35 | 15 |
 | `crates/axon-core/src/interp/value.rs` | 15 | 7 |
 | `crates/axon-core/src/kernel.rs` | 2 | 2 |
@@ -58,9 +58,9 @@ generated-at: aa0dd7ebefece0f2498c0e071c40b806aa57954c
 | `crates/axon-core/src/mut_borrow.rs` | 800 | 0 |
 | `crates/axon-core/src/parser.rs` | 39 | 1 |
 | `crates/axon-core/src/resolver.rs` | 334 | 64 |
-| total | 12817 | 2648 |
+| total | 13269 | 2665 |
 
-`git log --reverse 31413ca7..aa0dd7eb -- crates/axon-core/src`:
+`git log --reverse 31413ca7..8caedb78 -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -119,7 +119,11 @@ generated-at: aa0dd7ebefece0f2498c0e071c40b806aa57954c
 | 9acbb453 | merge of origin/main (PR #8) | merge fixes: `input_arg` read from the args (the verify panic's input suffix), the per-frame stack budget raised to 512 KiB because the merged debug frame is ~265 KB: no change in what is refused |
 | fe00e4c5 | merge of c9r4c/psv1e (integrate6) | joins the psv1e dispatch-analysis rebuild (pin.rs `Tys`, amendment 88) with main's `&mut T` type and Rc layout (a `RefMut` arm in the closed-type walk, no env duplicate in the closure call): no intended change in what is refused |
 | aa0dd7eb | env registry (integrate6) | three TEST-ONLY re-exec markers registered (AXON_EQ_ALONE/GIT_ENV/HARDEN); a registry row for a var only tests read: no change in what is refused |
-| 55 commits | | |
+| f4a7a2dc | amendment 94 | a `&mut` write-through value is cast and verified at the seal edge back, and a `&mut` operand is open in the dispatch analysis; a sealed frame cannot take an operator fn as a first-class value; a union annotation does not pin a receiver (interp.rs, interp/eval.rs, interp/pin.rs, interp/conform.rs): narrowing |
+| 13374667 | amendment 94 | the edge-back cast also runs on an aborted call; a provenance mark on fn values dropped (redundant with the creation edge); rows and tests: narrowing, no widening |
+| 2d70adf5 | amendment 94 | the held-value judgement at the `&mut` edge is not strict, so an honest fill of an empty output array passes while the declared type judges the position (conform.rs `strict` parameter): the one deliberate relaxation, relative to the first form of this amendment, not to the merged tree |
+| 8caedb78 | amendment 94 | rustfmt only (interp.rs): no change in what is refused |
+| 59 commits | | |
 <!-- END MECHANICAL -->
 <!-- END MECHANICAL -->
 
@@ -128,7 +132,7 @@ generated-at: aa0dd7ebefece0f2498c0e071c40b806aa57954c
 What is BY THEME (the `theme` and `what it does` columns; these are the commit messages' own
 account and are NOT mechanically verified; the files and commits above are):
 
-- Narrowing, by the commits' own messages: sealed-module resolution, RNG isolation, K unreachable from
+- Narrowing, by the commits' own messages (amendment 94, round 8: a `&mut` write-through value is cast and judged at the seal edge back and a `&mut` operand is open in the dispatch analysis, a sealed frame cannot take an operator fn as a value, a union annotation pins nothing): sealed-module resolution, RNG isolation, K unreachable from
   candidate code, sealed handlers, the keyed FAILURE token (a printed failure line is not a verdict;
   `main.rs`), the declared-boundary cast (amendment 53), the dispatch-key cast (60), seal-crossing
   positions, dict snapshots and E0505 (72), the held-value judgement (78).
@@ -142,6 +146,14 @@ account and are NOT mechanically verified; the files and commits above are):
   `call_fn_mut`; `&mut T` and Rc-array arms in `conform.rs`/`pin.rs`) and re-anchored three rows
   (M924, M1680, M1841). The per-frame stack budget was raised to 512 KiB (the merged debug frame is
   ~265 KB, which left no margin under the old 256 KiB).
+  What refuses each bad route found in them, and no more than these rows show (amendment 94, the
+  `am94` rows of `scripts/v022_pci_gates.sh`): `&mut` write-through (the value a candidate leaves in the
+  operator's binding is cast and judged at the edge back; a `&mut` operand is undetermined to the
+  dispatch rule), first-class fns (a sealed frame cannot take an operator fn as a value), and the Rc
+  arrays' copy-on-write (a candidate's write to its array parameter does not reach the operator's copy:
+  observed through the runner, with no guard of our own). Shared strings, lent closure captures and the
+  `arr_sort_by` rewrite have no row of their own; the routes executed against them are listed in
+  amendment 94 and were found closed by earlier rows.
 - Evidence only (rows, harness, rustfmt, comments): `7da2fe71`, `e1e2a22f`, `2a397d93`, `f2a12aab`,
   `68176b53`, `d29d4ef6`, `8a5419de`, `2bf1d9d0`, `40ca1092`; `73834357` also carries two defect
   fixes (+23 `interp.rs` lines).
@@ -156,9 +168,9 @@ account and are NOT mechanically verified; the files and commits above are):
 
 ## (b) Coverage: PCI gate rows, and the mutation rows
 
-`scripts/v022_pci_gates.sh` has 34 rows at this head: the original 18 (surfaces 1-21), ten
-added by amendment 84, one group per delta amendment (53, 60, 72 incl. its dict snapshot, 78), and two for
-amendment 83's dispatch rule (integration), each with
+`scripts/v022_pci_gates.sh` has 40 rows at this head: the original 18 (surfaces 1-21), ten
+added by amendment 84, one group per delta amendment (53, 60, 72 incl. its dict snapshot, 78), two for
+amendment 83's dispatch rule (integration), and six for amendment 94 (the `&mut` edge-back cast, the `&mut` operand in the dispatch analysis, the fn-value seal edge and the Rc/copy-on-write observation, each unit and runner where both exist), each with
 unit tests in `interp.rs`/`conform.rs` AND a real-runner test (`axon_psv::runner::run`, in
 `crates/axon-psv/tests/sealed_frames.rs`). The gate fails if a named test is absent (grep), renamed,
 filtered out or `#[ignore]`d (the passed count must equal the named count). Verified to discriminate:
@@ -167,7 +179,7 @@ Amendment 83's dispatch rule (psv1d) landed after amendment 84: its tests are th
 rows; the dict-snapshot rows still name tests that exist after psv1d (their label "psv1d may replace" is dropped).
 
 Run at `c9r4c/claims2` (veto `cdc39fc6` plus this amendment's script/doc changes; the rows through am78 were first run there at 28 rows), interpreter build,
-exit 0, `v022_pci_gates: PASS — 34 rows` (re-run on c9r4c/claims3 at veto 1204a925 plus amendment 89's four added rows):
+exit 0 (the earlier rows below were last run at 34 rows, c9r4c/claims3 at veto 1204a925 plus amendment 89's four added rows; at c9r8/psv1f 10c7c916 the whole script, `v022_pci_gates: PASS — 40 rows`, exited 0 on gpumaster including the six am94 rows):
 
 | row | package/target | result |
 |---|---|---|

@@ -57,6 +57,15 @@ ROWS=(
   "am83 arithmetic width arm|axon-core|lib|interp::tests::operator_arithmetic_never_runs_at_a_width_the_candidate_chose"
   "am83 dispatch rule|axon-core|lib|interp::tests::operator_code_never_dispatches_on_a_value_read_untyped_from_a_dict interp::tests::operator_code_never_dispatches_on_a_value_from_any_untyped_position"
   "am83 dispatch rule|axon-psv|sealed_frames|operator_code_never_dispatches_on_an_untyped_read_and_a_pinned_suite_passes"
+  # Amendment 94: origin/main's interpreter features (Rc arrays and strings, `&mut` write-through,
+  # first-class fns, lent closure captures, arr_sort_by) were merged without PCI review; these rows are
+  # the routes that merge opened and what now refuses each.
+  "am94 &mut edge-back cast|axon-core|lib|interp::tests::a_mut_write_through_value_is_cast_at_the_seal_edge_back interp::tests::a_mut_write_through_value_is_judged_by_what_the_operator_held interp::tests::a_mut_value_is_cast_when_an_operator_handler_aborts_the_call interp::tests::an_annotated_operator_array_lent_as_mut_is_still_cast_at_the_edge_back"
+  "am94 &mut operand open in the dispatch analysis|axon-core|lib|interp::tests::a_mut_operand_is_never_determined_by_the_pin_analysis interp::tests::a_mut_operand_is_open_in_the_dispatch_analysis"
+  "am94 &mut edge (dispatch and width arms)|axon-psv|sealed_frames|a_mut_write_through_value_is_cast_at_the_seal_edge_back_and_the_operand_is_open"
+  "am94 fn-value seal edge|axon-core|lib|interp::tests::a_sealed_frame_cannot_take_an_operator_fn_as_a_value interp::tests::a_candidate_fn_value_the_operator_calls_still_cannot_reach_operator_fns"
+  "am94 fn-value seal edge|axon-psv|sealed_frames|a_sealed_frame_cannot_take_an_operator_fn_as_a_value"
+  "am94 shared-Rc/COW non-leak|axon-psv|sealed_frames|a_candidates_write_to_its_array_parameter_never_reaches_the_operators_copy"
 )
 
 for row in "${ROWS[@]}"; do

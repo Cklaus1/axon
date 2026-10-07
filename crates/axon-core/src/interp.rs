@@ -3396,10 +3396,26 @@ impl<'p> Interp<'p> {
     /// error unwinds, so the caller's binding is never left hollow.
     pub(super) fn call_fn_mut(&self, f: &FnDef, args: Vec<Value>) -> (R, Vec<Value>) {
         let mut env = Env::new();
-        let result = self.call_fn_sealed(f, args, &mut env);
+        // A candidate fn writing through `&mut` returns control to operator
+        // code with the parameter's FINAL value, which is moved into the
+        // operator's binding: a second return channel, so a seal crossing
+        // exactly as the return value is (C9 round 8, PSV-1 blocker).
+        let crossing = self.seal.active && self.fn_is_sealed(f) && !self.frame_sealed.get();
+        // What the operator held, to judge a replacement against (dicts,
+        // amendment 78). Only a sealed crossing pays the clone.
+        let held: Vec<Option<Value>> = f
+            .params
+            .iter()
+            .zip(&args)
+            .map(|(p, a)| match (&p.ty, crossing) {
+                (crate::ast::AxonType::RefMut(_), true) => Some(a.clone()),
+                _ => None,
+            })
+            .collect();
+        let mut result = self.call_fn_sealed(f, args, &mut env);
         // The body's block scopes are popped by now (on `return`/`?` too), so
         // each name resolves to the parameter binding itself.
-        let outs = f
+        let mut outs: Vec<Value> = f
             .params
             .iter()
             .map(|p| match (&p.ty, env.get_mut(&p.name)) {
@@ -3409,6 +3425,44 @@ impl<'p> Interp<'p> {
                 _ => Value::Unit,
             })
             .collect();
+        if crossing {
+            let cx = self.fn_cx(f).strict(true);
+            // A refused value is never handed back: the binding is left `()`
+            // and the call's result is the refusal.
+            let refuse = |result: &mut R, out: &mut Value, msg: String| {
+                *out = Value::Unit;
+                if !matches!(result, Err(Flow::Panic(_))) {
+                    *result = panic(msg);
+                }
+            };
+            for (i, p) in f.params.iter().enumerate() {
+                if !matches!(p.ty, crate::ast::AxonType::RefMut(_)) {
+                    continue;
+                }
+                if let Err(why) = self.cast(&mut outs[i], &p.ty, &cx) {
+                    let msg = format!(
+                        "`&mut` argument `{}` of `{}` is declared `{}` but was left holding {} — \
+                         a runtime type confusion ({why})",
+                        p.name,
+                        f.name,
+                        crate::doc::render_type(&p.ty),
+                        value::display(&outs[i])
+                    );
+                    refuse(&mut result, &mut outs[i], msg);
+                    continue;
+                }
+                if let Some(old) = &held[i] {
+                    if let Err(why) = self.replaced_ok_top(old, &outs[i]) {
+                        let msg = format!(
+                            "`&mut` argument `{}` of `{}` was left holding a value the operator's \
+                             did not allow — a runtime type confusion ({why})",
+                            p.name, f.name
+                        );
+                        refuse(&mut result, &mut outs[i], msg);
+                    }
+                }
+            }
+        }
         (result, outs)
     }
 
@@ -8815,6 +8869,350 @@ fn main() { }
                 "ATTACK: a u8 passed the suite's `let y: i64` pin ({why}): {out:?}"
             );
         }
+    }
+
+    /// `match <laundered u8> { Some(v) => { a[0] = v } None => {} }` as the
+    /// body of a candidate `fill(a: &mut [i64])`.
+    fn mut_fill(decl: &str, act: &str) -> String {
+        format!(
+            "fn fill(a: {decl}) {{\n    {}\n}}\n",
+            u8_or(&format!("{{ {act} }}"), "{}")
+        )
+    }
+
+    fn mut_refused(why: &str, out: &Result<TestEnd, String>, needle: &str) {
+        assert!(
+            out != &Ok(TestEnd::Completed) && matches!(out, Err(m) if m.contains(needle)),
+            "ATTACK: a `&mut` write-through carried a candidate-chosen value to the operator ({why}): {out:?}"
+        );
+    }
+
+    /// C9 round 8, PSV-1 blocker: a candidate fn that writes through `&mut`
+    /// returns control to operator code with the parameter's FINAL value, which
+    /// moved into the operator's binding with no seal edge. Cast at the edge
+    /// back against the DECLARED parameter type (dispatch arm and width arm).
+    #[test]
+    fn a_mut_write_through_value_is_cast_at_the_seal_edge_back() {
+        let dispatch = "@[test]\nfn t() {\n    let mut a = [1, 2, 3]\n    fill(&mut a)\n    assert(a[0].ok())\n}\n";
+        let width = "@[test]\nfn t() {\n    let mut a = [1, 2, 3]\n    fill(&mut a)\n    assert((a[0] << 1) == 254)\n}\n";
+        live8(
+            "r8-mutcast",
+            dispatch,
+            "fn fill(a: &mut [i64]) { a[0] = 9 }\n",
+            "fn fill(a: &mut [i64]) { a[0] = 4 }\n",
+        );
+        live8(
+            "r8-mutcast",
+            width,
+            "fn fill(a: &mut [i64]) { a[0] = 127 }\n",
+            "fn fill(a: &mut [i64]) { a[0] = 200 }\n",
+        );
+        // First: into an EMPTY output array, which shows no type at the position
+        // (so what the operator held cannot judge it): the honest fill passes, and
+        // the declared type alone refuses an appended `u8` — or a value at an
+        // undetermined type parameter.
+        let empty = "@[test]\nfn t() {\n    let mut a: [i64] = []\n    fill(&mut a)\n    assert(a[0].ok())\n}\n";
+        live8(
+            "r8-mutcast",
+            empty,
+            "fn fill(a: &mut [i64]) { a = arr_concat(a, [9]) }\n",
+            "fn fill(a: &mut [i64]) { a = arr_concat(a, [4]) }\n",
+        );
+        mut_refused(
+            "an appended u8 into an empty output array",
+            &judged8(
+                "r8-mutcast",
+                empty,
+                &mut_fill("&mut [i64]", "a = arr_concat(a, [v])"),
+            ),
+            "left holding",
+        );
+        mut_refused(
+            "a generic element into an empty output array",
+            &judged8(
+                "r8-mutcast",
+                empty,
+                &mut_fill("&mut [T]", "a = arr_concat(a, [v])").replace("fn fill(", "fn fill<T>("),
+            ),
+            "left holding",
+        );
+        let atk = mut_fill("&mut [i64]", "a[0] = v");
+        mut_refused(
+            "the u8 impl answered",
+            &judged8("r8-mutcast", dispatch, &atk),
+            "left holding",
+        );
+        let atk255 = atk.replace("narrow(4)", "narrow(255)");
+        mut_refused(
+            "255 as u8 wrapped in the operator's shift",
+            &judged8("r8-mutcast", width, &atk255),
+            "left holding",
+        );
+    }
+
+    /// The same edge judges a replacement by what the operator HELD there (the
+    /// declared type alone admits it: `[i64 | u8]` admits a `u8`; a `[Dict]`
+    /// admits a fresh dict whose key was retyped).
+    #[test]
+    fn a_mut_write_through_value_is_judged_by_what_the_operator_held() {
+        let dispatch = "@[test]\nfn t() {\n    let mut a = [1, 2, 3]\n    fill(&mut a)\n    assert(a[0].ok())\n}\n";
+        honest8(
+            "r8-mutheld",
+            dispatch,
+            "fn fill(a: &mut [i64 | u8]) { a[0] = 9 }\n",
+        );
+        mut_refused(
+            "a union element admitted the u8",
+            &judged8(
+                "r8-mutheld",
+                dispatch,
+                &mut_fill("&mut [i64 | u8]", "a[0] = v"),
+            ),
+            "did not allow",
+        );
+        let dicts = "@[test]\nfn t() {\n    let d = dict_new()\n    dict_set(d, \"k\", 3)\n    let mut a = [d]\n    fill(&mut a)\n    match dict_get(a[0], \"k\") {\n        Some(x) => assert(x.ok())\n        None => assert(false)\n    }\n}\n";
+        live8(
+            "r8-mutheld",
+            dicts,
+            "fn fill(a: &mut [Dict]) {\n    let n = dict_new()\n    dict_set(n, \"k\", 9)\n    a[0] = n\n}\n",
+            "fn fill(a: &mut [Dict]) {\n    let n = dict_new()\n    dict_set(n, \"k\", 4)\n    a[0] = n\n}\n",
+        );
+        mut_refused(
+            "a fresh dict replaced the held one with a retyped key",
+            &judged8(
+                "r8-mutheld",
+                dicts,
+                &mut_fill(
+                    "&mut [Dict]",
+                    "let n = dict_new()\n        dict_set(n, \"k\", v)\n        a[0] = n",
+                ),
+            ),
+            "did not allow",
+        );
+        // The same replacement with the dispatch rule ON, and an in-place retype of
+        // the dict an array held (the snapshot edge), rule off and on.
+        let repl = mut_fill(
+            "&mut [Dict]",
+            "let n = dict_new()\n        dict_set(n, \"k\", v)\n        a[0] = n",
+        );
+        let out = judged_on("r8-mutheld", dicts, &repl);
+        assert!(
+            out != Ok(TestEnd::Completed),
+            "ATTACK: a replaced `&mut [Dict]` element passed with the rule on: {out:?}"
+        );
+        let inplace = mut_fill("&mut [Dict]", "dict_set(a[0], \"k\", v)");
+        mut_refused(
+            "an in-place retype of the held dict",
+            &judged8("r8-mutheld", dicts, &inplace),
+            "retyped a dict entry",
+        );
+        let out = judged_on("r8-mutheld", dicts, &inplace);
+        assert!(
+            out != Ok(TestEnd::Completed),
+            "ATTACK: an in-place retype passed with the rule on: {out:?}"
+        );
+    }
+
+    /// The cast runs on EVERY outcome: an operator handler that aborts the call
+    /// (`HandlerDone`) after the candidate wrote a `u8` must not leave it in the
+    /// operator's binding.
+    #[test]
+    fn a_mut_value_is_cast_when_an_operator_handler_aborts_the_call() {
+        let suite = "@[test]\nfn t() {\n    let mut a = [1, 2, 3]\n    let _r = with handler { on IO(p) => 0 } {\n        fill(&mut a)\n        1\n    }\n    assert(a[0].ok())\n}\n";
+        // Control: an honest write then an aborted call keeps the honest value.
+        let honest = "fn fill(a: &mut [i64]) {\n    a[0] = 9\n    println(\"x\")\n}\n";
+        assert_eq!(
+            judged8("r8-mutabort", suite, honest),
+            Ok(TestEnd::Completed),
+            "control"
+        );
+        let out = judged8(
+            "r8-mutabort",
+            suite,
+            &mut_fill("&mut [i64]", "a[0] = v\n        println(\"x\")"),
+        );
+        assert!(
+            out != Ok(TestEnd::Completed),
+            "ATTACK: a `&mut` u8 survived an aborted call into the operator's binding: {out:?}"
+        );
+    }
+
+    /// An ANNOTATED operator array is determined by its annotation, so the
+    /// dispatch rule cannot help: only the cast at the edge back refuses.
+    #[test]
+    fn an_annotated_operator_array_lent_as_mut_is_still_cast_at_the_edge_back() {
+        let suite = "@[test]\nfn t() {\n    let mut a: [i64] = [3]\n    fill(&mut a)\n    let y: i64 = a[0]\n    assert(y.ok())\n}\n";
+        live8(
+            "r8-mutann",
+            suite,
+            "fn fill(a: &mut [i64]) { a[0] = 9 }\n",
+            "fn fill(a: &mut [i64]) { a[0] = 4 }\n",
+        );
+        mut_refused(
+            "the annotated array was left holding a u8",
+            &judged8("r8-mutann", suite, &mut_fill("&mut [i64]", "a[0] = v")),
+            "left holding",
+        );
+    }
+
+    /// The dispatch rule sees a `&mut` operand as OPEN: what the callee left in
+    /// it was not chosen by the operator. The honest suite re-pins.
+    #[test]
+    fn a_mut_operand_is_open_in_the_dispatch_analysis() {
+        let unpinned = "@[test]\nfn t() {\n    let mut a = [1, 2, 3]\n    fill(&mut a)\n    assert(a[0].ok())\n}\n";
+        let repinned = "@[test]\nfn t() {\n    let mut a = [1, 2, 3]\n    fill(&mut a)\n    let b: [i64] = a\n    assert(b[0].ok())\n}\n";
+        let good = "fn fill(a: &mut [i64]) { a[0] = 9 }\n";
+        let wrong = "fn fill(a: &mut [i64]) { a[0] = 4 }\n";
+        // The cost, stated: even an honest write is refused until re-pinned.
+        dispatch_refused("an un-re-pinned read after `&mut`", unpinned, good);
+        assert_eq!(
+            judged_on("r8-mutopen", repinned, good),
+            Ok(TestEnd::Completed),
+            "control: GOOD, re-pinned"
+        );
+        assert!(
+            judged_on("r8-mutopen", repinned, wrong).is_err(),
+            "control: WRONG fails"
+        );
+        let out = judged_on("r8-mutopen", repinned, &mut_fill("&mut [i64]", "a[0] = v"));
+        assert!(
+            out != Ok(TestEnd::Completed),
+            "ATTACK: re-pinned suite accepted the u8: {out:?}"
+        );
+        // The arithmetic arm, unpinned.
+        let width = "@[test]\nfn t() {\n    let mut a = [1, 2, 3]\n    fill(&mut a)\n    assert((a[0] << 1) == 254)\n}\n";
+        let out = judged_on(
+            "r8-mutopen",
+            width,
+            &mut_fill("&mut [i64]", "a[0] = v").replace("narrow(4)", "narrow(255)"),
+        );
+        assert!(
+            out != Ok(TestEnd::Completed),
+            "ATTACK: width arm accepted a `&mut` value: {out:?}"
+        );
+    }
+
+    /// The analysis itself, with the cast out of the picture: a variable passed
+    /// as `&mut x` is NOT determined; the same program without the call is.
+    #[test]
+    fn a_mut_operand_is_never_determined_by_the_pin_analysis() {
+        let verdict = |src: &str| {
+            let prog = crate::parse_source(src).expect("parses");
+            let pins = pin::Pins::build(&prog, &|_| false);
+            let mut out = None;
+            for item in &prog.items {
+                if let Item::FnDef(f) = item {
+                    if f.name != "t" {
+                        continue;
+                    }
+                    crate::ast::walk_expr(&f.body, &mut |e: &Expr| {
+                        if let Expr::MethodCall {
+                            receiver, method, ..
+                        } = e
+                        {
+                            if method == "ok" {
+                                out = Some(pins.determined(
+                                    f as *const FnDef as usize,
+                                    receiver,
+                                    method,
+                                ));
+                            }
+                        }
+                    });
+                }
+            }
+            out.expect("a call site")
+        };
+        let base = "trait Judge {\n    fn ok(self) -> bool\n}\nimpl Judge for i64 {\n    fn ok(self: i64) -> bool { self == 9 }\n}\nfn fill(a: &mut [i64]) { a[0] = 9 }\n";
+        let with = |call: &str| {
+            format!("{base}fn t() {{\n    let mut a = [1, 2, 3]\n    {call}\n    let r = a[0].ok()\n}}\n")
+        };
+        assert!(
+            verdict(&with("let z = 0")),
+            "control: a literal array is determined"
+        );
+        assert!(
+            !verdict(&with("fill(&mut a)")),
+            "ATTACK: a variable lent as `&mut` was still determined"
+        );
+        // A union annotation does not pin the one runtime type.
+        let un = format!("{base}fn t() {{\n    let a: i64 | u8 = 9\n    let r = a.ok()\n}}\n");
+        assert!(
+            !verdict(&un),
+            "ATTACK: a union annotation pinned the receiver"
+        );
+    }
+
+    /// C9 round 8 (sentinel blocker): a top-level fn named in VALUE position is
+    /// a first-class closure. Made by a SEALED frame from an OPERATOR fn it was
+    /// a forwarding body that ran in an operator frame, where the call edge no
+    /// longer applied (`let g = secret; g()` ran the operator's `secret`; a
+    /// global `SECRET` leaked through `let g = peek`). The edge now applies at
+    /// creation.
+    #[test]
+    fn a_sealed_frame_cannot_take_an_operator_fn_as_a_value() {
+        let suite = "fn secret() -> i64 { 9 }\nlet SECRET = 41\nfn peek() -> i64 { SECRET }\n\
+                     fn id_of(g: fn() -> i64) -> i64 { g() }\n\
+                     @[test]\nfn t() { assert_eq(solve(), 9) }\n\
+                     @[test]\nfn t_leak() { assert_eq(solve(), 41) }\n\
+                     @[test]\nfn t_pass() { assert_eq(take(secret), 9) }\n\
+                     @[test]\nfn t_back() { let g = give()\n    assert_eq(g(), 9) }\n\
+                     @[test]\nfn t_arg() { assert_eq(solve(), 9) }\n";
+        let run = |cand: &str, t: &str| sealed_outcome_rule("r8-fnval", suite, cand, t, true);
+        // Controls: the candidate names ITS OWN fn as a value and calls it; the
+        // operator names ITS OWN fn as a value and hands it to the candidate;
+        // a candidate fn value returned to the operator runs.
+        let own = "fn mine() -> i64 { 9 }\nfn solve() -> i64 {\n    let g = mine\n    g()\n}\n\
+                   fn take(f: fn() -> i64) -> i64 { f() }\nfn give() -> fn() -> i64 { mine }\n";
+        for t in ["t", "t_pass", "t_back"] {
+            assert_eq!(run(own, t), Ok(TestEnd::Completed), "control: {t}");
+        }
+        let wrong = own.replace("fn mine() -> i64 { 9 }", "fn mine() -> i64 { 4 }");
+        assert!(run(&wrong, "t").is_err(), "control: wrong fails");
+        // The attacks.
+        let rest = "fn take(f: fn() -> i64) -> i64 { f() }\nfn give() -> fn() -> i64 { secret }\n";
+        for (t, what, solve) in [
+            ("t", "ran the operator's `secret` through a fn value", "fn solve() -> i64 {\n    let g = secret\n    g()\n}\n"),
+            ("t_leak", "read the operator's global through a fn value", "fn solve() -> i64 {\n    let g = peek\n    g()\n}\n"),
+            ("t", "stored the operator's fn in an array", "fn solve() -> i64 {\n    let gs = [secret]\n    gs[0]()\n}\n"),
+            ("t", "stored the operator's fn in a dict", "fn solve() -> i64 {\n    let d = dict_new()\n    dict_set(d, \"f\", secret)\n    match dict_get(d, \"f\") { Some(f) => f()  None => 0 }\n}\n"),
+            ("t", "handed the operator's fn to its own helper", "fn run(f: fn() -> i64) -> i64 { f() }\nfn solve() -> i64 { run(secret) }\n"),
+        ] {
+            let out = run(&format!("{rest}{solve}"), t);
+            assert!(
+                out != Ok(TestEnd::Completed)
+                    && matches!(&out, Err(m) if m.contains("cannot run")),
+                "ATTACK: a sealed frame took an operator fn as a value ({what}): {out:?}"
+            );
+        }
+        // Returned to the operator, which calls it: the creation is refused.
+        let out = run("fn solve() -> i64 { 0 }\nfn take(f: fn() -> i64) -> i64 { f() }\nfn give() -> fn() -> i64 { secret }\n", "t_back");
+        assert!(
+            out != Ok(TestEnd::Completed) && matches!(&out, Err(m) if m.contains("cannot run")),
+            "ATTACK: the candidate returned the operator's fn as a value: {out:?}"
+        );
+    }
+
+    /// A candidate fn's value, called by the OPERATOR, still reaches only the
+    /// candidate's fn, which cannot reach an operator fn (a regression control:
+    /// no guard of its own, the call edge in `call_fn_sealed` refuses).
+    #[test]
+    fn a_candidate_fn_value_the_operator_calls_still_cannot_reach_operator_fns() {
+        let suite =
+            "fn secret() -> i64 { 9 }\n@[test]\nfn t() { let g = give()\n    assert_eq(g(), 9) }\n";
+        // The candidate's own fn calls the operator's `secret`: refused whether the
+        // call is direct or through the value the operator invokes.
+        let out = sealed_outcome_rule(
+            "r8-fnval2",
+            suite,
+            "fn mine() -> i64 { secret() }\nfn give() -> fn() -> i64 { mine }\n",
+            "t",
+            true,
+        );
+        assert!(
+            out != Ok(TestEnd::Completed) && matches!(&out, Err(m) if m.contains("cannot run")),
+            "ATTACK: the operator's call of a candidate fn value ran operator code in the candidate's name: {out:?}"
+        );
     }
 
     /// d1 (round 6 blocker): a candidate closure that captured the operator's

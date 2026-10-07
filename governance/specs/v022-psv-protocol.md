@@ -5304,3 +5304,71 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       `_BRN` grep still holds) and the ledger's budget and persist axes select nothing on it; rowing them is
       not a claim they matter to a verdict. It is the stronger form of the same exemption: a test that fails
       only when the guard is gone, instead of an argument that none does.
+## Amendment 94: the features origin/main added move values into operator-held places and name operator fns (C9 round 8, PSV1F)
+
+94. **Source: the round-8 PSV-1, PSV-3 and SENTINEL reviews (two executed blockers; one minor).**
+    Mutation ids M2370-M2376, matrix rows A190-A192 (the integrator renumbers; this branch alone lacks
+    A178-A189, so its matrix check fails ONLY on that gap). origin/main's 13 interpreter commits (Rc arrays
+    and strings, `&mut` write-through, first-class fns, lent closure captures, `arr_sort_by`) were merged
+    WITHOUT PCI review; this amendment closes the two routes the round-8 reviews executed and lists what was
+    hunted.
+    - **BLOCKER 1: a `&mut` write-through value reached the operator's binding with no seal edge.** The
+      merged `call_fn_mut` casts the arguments on entry and the RETURN value on exit, then moves the `&mut`
+      parameters' FINAL values back into the operator's binding. Nothing cast those values and no dict edge
+      applied, and `interp/pin.rs` recorded a variable's initialisers only from `let`, assignment and
+      `match`, so a variable lent as `&mut x` stayed 'determined' (or kept its annotation's pin). Executed:
+      a candidate `fill(a: &mut [i64])` laundered `4 as u8` through a dict into `a[0]`; the operator's
+      `a[0].ok()` ran the lenient `u8` impl (rc 0), and `255 as u8` made `(a[0] << 1) == 254` pass. With the
+      operator's array ANNOTATED (`let a: [i64] = ...`) the dispatch rule cannot help, so the edge-back cast is
+      REQUIRED, not only the pin change (the PSV-3 reproduction).
+      Fix, both halves: (1) `call_fn_mut` treats a sealed callee's `&mut` outs as a seal crossing: each is
+      cast STRICTLY against its declared parameter type and judged against what the operator held (a clone
+      taken only for a sealed crossing), on EVERY outcome (an operator handler's abort leaves the binding
+      `()` and the call a refusal), M2370/M2372/M2373 and M2371; (2) a variable passed as `&mut x` is an
+      assignment from an undetermined source in the pin analysis, M2374; and a union annotation (`i64 | u8`)
+      no longer counts as closed (it names more than one runtime type; the SENTINEL minor), M2375.
+      Which half is sufficient alone: the cast (with the held-value judgement) alone refused every route I
+      could execute, including the annotated array the dispatch rule cannot help; the pin half is defence in
+      depth, as briefed, and its own attack is the analysis test
+      (`a_mut_operand_is_never_determined_by_the_pin_analysis`), because every executable attack is also
+      refused by the cast. The held-value judgement is deliberately NOT strict at this edge:
+      a strict judgement refused the honest fill of an EMPTY output array (`[?undetermined]`), measured
+      before it was relaxed; the declared parameter type judges what the held value did not show.
+    - **BLOCKER 2: a first-class fn value bypassed the seal call edge.** `Expr::Ident` returned
+      `fn_value(name, arity)` for any top-level fn named in value position; its forwarding body ran in an
+      OPERATOR frame (no provenance mark), where `seal_call` allows the call. Executed: a candidate
+      `let g = secret; g()` ran the operator's `secret` (direct `secret()` is refused), and
+      `let g = peek; g()` read an operator global `SECRET`. Fix: the call edge applies at the CREATION of
+      the value (a sealed frame naming an operator fn is refused there), M2376. A candidate's OWN fn value,
+      and an operator's own handed to the candidate, are untouched (controls in the tests). A provenance mark
+      on the value was tried and DROPPED: with the creation edge in place it refuses nothing the edge does
+      not, so its row could not be killed by an attack of its own.
+    - **Routes hunted and CLOSED** (each executed, rule on and, where the cast could mask it, off):
+      `&mut [Dict]` with an element REPLACED by a dict whose key was retyped (rule on and off), and a dict
+      retyped IN PLACE (the snapshot edge); nested `&mut [[i64]]`; an element appended to an empty or a
+      non-empty array; a generic `&mut [T]`; `&mut` through a closure or a fn value (`call_fn` refuses a fn
+      with `&mut` parameters outside a direct call, and the checker's E0605 refuses the call form); a lent
+      closure whose captured binding the candidate assigns (an operator closure `|v| acc = v` called by the
+      candidate: the closure-argument cast, annotated or not); `arr_sort_by` with a candidate comparator
+      (it permutes the operator's own values and its comparator must return `i64`); the operator's
+      by-value array passed to a candidate that writes its parameter (copy-on-write: the suite's copy and a
+      lent closure's capture keep their values, A192); a fn value stored in an array or dict, passed to a
+      candidate helper, returned to the operator (all refused at creation).
+    - **NOT closed or not examined**: struct-field and nested-place `&mut` operands do not exist (the
+      checker requires a whole local); `Rc::make_mut` writes other than through these routes were reviewed
+      by reading the call sites touched here, not exhaustively; the `arr_sort_by` stable merge sort itself
+      is still not PCI-reviewed beyond the comparator route above.
+    - **Honest-program cost.** (a) An operator that reads, after `f(&mut a)`, a value of `a` and dispatches a
+      method that two or more operator impls define, or does arithmetic on a fixed-width integer, must
+      re-pin it: `let b: [i64] = a` then use `b` (the variable lent as `&mut` is undetermined for the whole
+      function, by name). Measured: the un-re-pinned read after an honest write is refused. (b) A callee
+      declared `&mut [T]` over a type parameter no argument determines is refused strictly at the edge back
+      (as a return would be); a determined `T` is fine. (c) A sealed crossing keeps a clone of the lent array
+      (the held value), so the callee's first write copies the array (copy-on-write); outside a seal nothing is cloned.
+      Nothing else changed for honest suites: filling an empty output array, writing through a non-empty
+      one, a candidate naming its own fns as values and an operator naming its own all pass (controls).
+    - **Evidence.** Unit tests `interp::tests::a_mut_*`, `an_annotated_operator_array_lent_as_mut_*`,
+      `a_sealed_frame_cannot_take_an_operator_fn_as_a_value`; runner tests (`axon_psv::runner::run`) in
+      `crates/axon-psv/tests/sealed_frames.rs`; gate rows `am94 ...` in `scripts/v022_pci_gates.sh`; rows
+      M2370-M2376 each killed by its own `ATTACK:` message on gpumaster. The rows M1672, M1841, M1843, M1844
+      and M1845 name text in `replaced_ok` that gained a `strict` parameter; their old/new text follow it.

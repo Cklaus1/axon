@@ -983,3 +983,160 @@ fn operator_code_never_dispatches_on_a_type_the_candidate_declared() {
         s.stdout
     );
 }
+
+// ---- C9 round 8, PSV1F: the features origin/main added, merged without PCI review ----
+
+const J8: &str = "trait Judge {\n    fn ok(self) -> bool\n}\nimpl Judge for i64 {\n    fn ok(self: i64) -> bool { self == 9 }\n}\nimpl Judge for u8 {\n    fn ok(self: u8) -> bool { true }\n}\n";
+
+fn passed(s: &Seen, what: &str) {
+    assert_eq!(
+        (s.status, s.host),
+        (GuestStatus::Passed, Some(true)),
+        "control {what}: {}",
+        s.stdout
+    );
+}
+
+/// A candidate fn that writes through `&mut` hands the operator the parameter's
+/// FINAL value. It is cast against the declared parameter type at the edge back
+/// (dispatch arm and width arm), whether the operator's array is annotated or
+/// not, and the operator's un-re-pinned read after the call is refused.
+#[test]
+fn a_mut_write_through_value_is_cast_at_the_seal_edge_back_and_the_operand_is_open() {
+    let fill = |v: &str| {
+        format!("pub fn fill(a: &mut [i64]) {{\n    let d = dict_new()\n    dict_set(d, \"k\", {v})\n    match dict_get(d, \"k\") {{\n        Some(x) => {{ a[0] = x }}\n        None => {{ }}\n    }}\n}}\n")
+    };
+    let suite = |decl: &str, read: &str| {
+        format!("mod sol\nuse sol.{{fill}}\n{J8}@[test]\nfn accept() {{\n    let mut a{decl} = [1, 2, 3]\n    fill(&mut a)\n{read}\n}}\n")
+    };
+    let pinned_read = "    let b: [i64] = a\n    assert(b[0].ok())";
+    let width_read = "    let b: [i64] = a\n    assert((b[0] << 1) == 254)";
+    // Dispatch arm: GOOD passes, WRONG fails, the u8 is refused.
+    for (decl, read) in [("", pinned_read), (": [i64]", pinned_read)] {
+        let s = check(&suite(decl, read), &[], &fill("9"), "accept");
+        passed(&s, "good");
+        let s = check(&suite(decl, read), &[], &fill("4"), "accept");
+        assert_eq!(
+            (s.status, s.host),
+            (GuestStatus::Failed, Some(false)),
+            "control wrong: {}",
+            s.stdout
+        );
+        let s = check(&suite(decl, read), &[], &fill("4 as u8"), "accept");
+        assert!(
+            refused_unkeyed(&s),
+            "ATTACK: a `&mut` u8 passed the dispatch suite ({decl:?}): {:?} {:?} {}",
+            s.status,
+            s.host,
+            s.stdout
+        );
+    }
+    // The annotated, un-re-pinned read (the dispatch rule cannot help: only the cast does).
+    let s = check(
+        &suite(": [i64]", "    assert(a[0].ok())"),
+        &[],
+        &fill("4 as u8"),
+        "accept",
+    );
+    assert!(
+        refused_unkeyed(&s),
+        "ATTACK: a `&mut` u8 passed an ANNOTATED operator array: {:?} {:?} {}",
+        s.status,
+        s.host,
+        s.stdout
+    );
+    // The honest cost, stated: an un-re-pinned read after `&mut` is refused even for an honest write.
+    let s = check(
+        &suite("", "    assert(a[0].ok())"),
+        &[],
+        &fill("9"),
+        "accept",
+    );
+    assert!(
+        refused_unkeyed(&s),
+        "the open-operand rule is not live: {:?} {:?} {}",
+        s.status,
+        s.host,
+        s.stdout
+    );
+    // Width arm: 127 << 1 == 254 passes, 255 as u8 (wraps to 254) is refused.
+    let s = check(&suite("", width_read), &[], &fill("127"), "accept");
+    passed(&s, "width good");
+    let s = check(&suite("", width_read), &[], &fill("255 as u8"), "accept");
+    assert!(
+        refused_unkeyed(&s),
+        "ATTACK: a `&mut` 255 as u8 wrapped in the operator's shift: {:?} {:?} {}",
+        s.status,
+        s.host,
+        s.stdout
+    );
+    let s = check(
+        &suite("", "    assert((a[0] << 1) == 254)"),
+        &[],
+        &fill("255 as u8"),
+        "accept",
+    );
+    assert!(
+        refused_unkeyed(&s),
+        "ATTACK: the un-re-pinned width arm accepted a u8: {:?} {:?} {}",
+        s.status,
+        s.host,
+        s.stdout
+    );
+}
+
+/// A fn named in value position by a SEALED frame is refused when it is the
+/// operator's (the call edge applies at creation: the static E0004 or the
+/// runtime edge, whichever fires first through the runner), while the
+/// candidate's own fn values and the operator's own pass.
+#[test]
+fn a_sealed_frame_cannot_take_an_operator_fn_as_a_value() {
+    let suite = format!("mod sol\nuse sol.{{solve}}\n{J8}fn secret() -> i64 {{ 9 }}\n@[test]\nfn accept() {{\n    assert(solve() == 9)\n}}\n");
+    let own = "pub fn mine() -> i64 { 9 }\npub fn solve() -> i64 {\n    let g = mine\n    g()\n}\n";
+    passed(&check(&suite, &[], own, "accept"), "own fn value");
+    let wrong = own.replace("{ 9 }\npub fn solve", "{ 4 }\npub fn solve");
+    let s = check(&suite, &[], &wrong, "accept");
+    assert_eq!(
+        (s.status, s.host),
+        (GuestStatus::Failed, Some(false)),
+        "control wrong: {}",
+        s.stdout
+    );
+    let s = check(
+        &suite,
+        &[],
+        "pub fn solve() -> i64 {\n    let g = secret\n    g()\n}\n",
+        "accept",
+    );
+    assert!(
+        refused_unkeyed(&s),
+        "ATTACK: the candidate ran the operator's `secret` as a fn value: {:?} {:?} {}",
+        s.status,
+        s.host,
+        s.stdout
+    );
+}
+
+/// Rc/copy-on-write arrays: a candidate's write to its by-value array parameter
+/// never changes the suite's copy, nor the state a lent closure captured.
+#[test]
+fn a_candidates_write_to_its_array_parameter_never_reaches_the_operators_copy() {
+    let suite = "mod sol\nuse sol.{solve}\n@[test]\nfn accept() {\n    let fix = [1, 2, 3]\n    let f = || fix[0]\n    solve(fix)\n    assert_eq(fix[0], 1)\n    assert_eq(f(), 1)\n}\n";
+    passed(
+        &check(
+            suite,
+            &[],
+            "pub fn solve(a: [i64]) { let mut b = a\n    b[0] = 99 }\n",
+            "accept",
+        ),
+        "copy",
+    );
+    // A leak would FAIL the suite (it asserts fix[0] == 1 and f() == 1).
+    let s = check(
+        suite,
+        &[],
+        "pub fn solve(a: [i64]) { a[0] = 99 }\n",
+        "accept",
+    );
+    passed(&s, "write to the parameter (ATTACK: a leak fails this)");
+}

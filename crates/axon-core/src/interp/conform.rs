@@ -1540,7 +1540,7 @@ impl<'p> Interp<'p> {
                     std::collections::HashSet::new();
                 for (k, old) in &s.held {
                     let Some(now) = cur.get(k) else { continue };
-                    if let Err(why) = self.replaced_ok(old, now, &mut seen, 0) {
+                    if let Err(why) = self.replaced_ok(old, now, &mut seen, 0, true) {
                         bad = Some(format!("key `{k}` {why}"));
                         break;
                     }
@@ -1560,6 +1560,15 @@ impl<'p> Interp<'p> {
         Ok(())
     }
 
+    /// [`Interp::replaced_ok`] for a whole value an operator binding held, as a
+    /// `&mut` callee left it. NOT strict: a position the held value did not show
+    /// (an empty array's element) is the declared parameter type's to judge, so
+    /// an honest callee can fill an empty output array.
+    pub(crate) fn replaced_ok_top(&self, old: &Value, new: &Value) -> Result<(), String> {
+        let mut seen = std::collections::HashSet::new();
+        self.replaced_ok(old, new, &mut seen, 0, false)
+    }
+
     /// Whether `new`, now at a position where the operator held `old`, is a
     /// legitimate occupant (amendment 78). The position is determined by what
     /// the operator put there, DEEPLY: (1) `new` casts STRICTLY to the type
@@ -1577,6 +1586,7 @@ impl<'p> Interp<'p> {
         new: &Value,
         seen: &mut std::collections::HashSet<(usize, usize)>,
         d: usize,
+        strict: bool,
     ) -> Result<(), String> {
         Self::walk_depth_ok(d).map_err(|_| {
             String::from("is nested too deeply to compare with what the operator held")
@@ -1623,7 +1633,7 @@ impl<'p> Interp<'p> {
                 for (k, ov) in held {
                     let nv = n.borrow().get(&k).cloned();
                     if let Some(nv) = nv {
-                        self.replaced_ok(&ov, &nv, seen, d + 1)
+                        self.replaced_ok(&ov, &nv, seen, d + 1, strict)
                             .map_err(|e| format!("(in the replacing dict) key `{k}` {e}"))?;
                     }
                 }
@@ -1635,7 +1645,7 @@ impl<'p> Interp<'p> {
         // signature is not shown, so it is not judged here).
         let t = unshown_fn(&self.value_type(old, 0));
         let mut c = new.clone();
-        if let Err(why) = self.cast(&mut c, &t, &Cx::default().strict(true)) {
+        if let Err(why) = self.cast(&mut c, &t, &Cx::default().strict(strict)) {
             return Err(format!(
                 "held a value of type `{}` and now holds {} ({why})",
                 crate::doc::render_type(&t),
@@ -1650,7 +1660,7 @@ impl<'p> Interp<'p> {
                     _ => unreachable!(),
                 };
                 for (x, y) in a.iter().zip(b) {
-                    self.replaced_ok(x, y, seen, d + 1)?;
+                    self.replaced_ok(x, y, seen, d + 1, strict)?;
                 }
             }
             (
@@ -1665,7 +1675,7 @@ impl<'p> Interp<'p> {
             ) if n1 == n2 => {
                 for (k, x) in f1 {
                     if let Some(y) = f2.get(k) {
-                        self.replaced_ok(x, y, seen, d + 1)?;
+                        self.replaced_ok(x, y, seen, d + 1, strict)?;
                     }
                 }
             }
@@ -1683,13 +1693,13 @@ impl<'p> Interp<'p> {
             ) if e1 == e2 && v1 == v2 => {
                 for (k, x) in f1 {
                     if let Some(y) = f2.get(k) {
-                        self.replaced_ok(x, y, seen, d + 1)?;
+                        self.replaced_ok(x, y, seen, d + 1, strict)?;
                     }
                 }
             }
             (Value::Some(x), Value::Some(y))
             | (Value::Ok(x), Value::Ok(y))
-            | (Value::Err(x), Value::Err(y)) => self.replaced_ok(x, y, seen, d + 1)?,
+            | (Value::Err(x), Value::Err(y)) => self.replaced_ok(x, y, seen, d + 1, strict)?,
             _ => {}
         }
         Ok(())

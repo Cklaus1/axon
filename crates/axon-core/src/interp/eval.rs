@@ -128,6 +128,14 @@ impl<'p> Interp<'p> {
                     // exactly the path a direct `f(..)` call takes — contracts,
                     // `@[verify]` gates, effect/capability gates and provenance
                     // included. The resolver refuses builtins and generic fns here.
+                    //
+                    // PCI: naming a fn in value position is a REFERENCE to it, so the
+                    // call edge applies HERE: a sealed frame may not take an operator
+                    // fn as a value (the forwarding body would run it in an operator
+                    // frame, where the edge no longer applies). Provenance needs no
+                    // mark: a candidate fn's value, called from anywhere, reaches the
+                    // candidate fn through `call_fn`'s own crossing.
+                    self.seal_call(f)?;
                     Ok(fn_value(name, f.params.len()))
                 } else {
                     panic(format!("undefined identifier `{name}`"))

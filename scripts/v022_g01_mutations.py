@@ -7048,7 +7048,7 @@ MUTATIONS += [
 ]
 MUTATIONS += [
     ('M1671', 'PSV-1 (A109): a dict over the snapshot bound is refused at the crossing, never skipped', _CC, '        if len > DICT_SNAP_MAX {', '        if false && len > DICT_SNAP_MAX {', 'axon-core', _CL, _T72 + 'a_dict_over_the_snapshot_bound_is_refused_not_skipped'),
-    ('M1672', 'PSV-1 (A106): a key the operator held may not come back with a value of another type', _CC, '                    if let Err(why) = self.replaced_ok(old, now, &mut seen, 0) {', '                    if let Err(why) = Ok::<(), String>(()) {', 'axon-core', _CL, _T72 + 'sealed_code_cannot_retype_a_dict_entry_the_operator_held'),
+    ('M1672', 'PSV-1 (A106): a key the operator held may not come back with a value of another type', _CC, '                    if let Err(why) = self.replaced_ok(old, now, &mut seen, 0, true) {', '                    if let Err(why) = Ok::<(), String>(()) {', 'axon-core', _CL, _T72 + 'sealed_code_cannot_retype_a_dict_entry_the_operator_held'),
     ('M1673', "PSV-1 (A108): a candidate closure may not replace an operator closure in the operator's dict", _CC, '                return if !oc.borrow().contains_key(SEALED_CLOSURE_MARK)', '                return if false && !oc.borrow().contains_key(SEALED_CLOSURE_MARK)', 'axon-core', _CL, _T72 + 'a_dict_the_candidate_mutated_is_verified_at_every_edge_back'),
     ('M1674', "PSV-1 (A106): a mutation by sealed code marks the operator's dict for verification", _CC, '                s.dirty = true;', '                s.dirty = false;', 'axon-core', _CL, _T72 + 'sealed_code_cannot_retype_a_dict_entry_the_operator_held'),
     ('M1675', "PSV-1 (A106): the dicts in a candidate fn's arguments are snapshotted when the operator hands them over", _CI, '        if crossing {\n            for a in &args {\n                self.dict_edge_in(a)?;\n            }\n        }\n        let r = self.with_frame(callee', '        if false && crossing {\n            for a in &args {\n                self.dict_edge_in(a)?;\n            }\n        }\n        let r = self.with_frame(callee', 'axon-core', _CL, _T72 + 'sealed_code_cannot_retype_a_dict_entry_the_operator_held'),
@@ -7063,11 +7063,11 @@ MUTATIONS += [
 ]
 MUTATIONS += [
     ('M1840', 'PSV-1 (A127): a dict that replaces a held dict is judged against the held entries (a key in both keeps its type)', _CC, '                    if let Some(nv) = nv {', '                    if let Some(nv) = nv.filter(|_| false) {', 'axon-core', _CL, _T72 + 'a_position_the_operator_held_is_judged_by_what_it_held_when_replaced'),
-    ('M1841', 'PSV-1 (A128): an array or tuple that replaces a held one is judged element by element (a dict in it included)', _CC, '                for (x, y) in a.iter().zip(b) {\n                    self.replaced_ok(x, y, seen, d + 1)?;\n                }', '                for (_x, _y) in a.iter().zip(b) {}', 'axon-core', _CL, _T72 + 'a_position_the_operator_held_is_judged_by_what_it_held_when_replaced'),
+    ('M1841', 'PSV-1 (A128): an array or tuple that replaces a held one is judged element by element (a dict in it included)', _CC, '                for (x, y) in a.iter().zip(b) {\n                    self.replaced_ok(x, y, seen, d + 1, strict)?;\n                }', '                for (_x, _y) in a.iter().zip(b) {}', 'axon-core', _CL, _T72 + 'a_position_the_operator_held_is_judged_by_what_it_held_when_replaced'),
     ('M1842', 'PSV-1 (A128): a struct that replaces a held one is judged field by field (a dict in it included)', _CC, '            ) if n1 == n2 => {\n                for (k, x) in f1 {', '            ) if n1 == n2 && false => {\n                for (k, x) in f1 {', 'axon-core', _CL, _T72 + 'a_position_the_operator_held_is_judged_by_what_it_held_when_replaced'),
-    ('M1843', 'PSV-1 (A128): an Option/Result that replaces a held one is judged through its payload (a dict in it included)', _CC, '            | (Value::Err(x), Value::Err(y)) => self.replaced_ok(x, y, seen, d + 1)?,', '            | (Value::Err(x), Value::Err(y)) => {\n                let _ = (x, y);\n            }', 'axon-core', _CL, _T72 + 'a_position_the_operator_held_is_judged_by_what_it_held_when_replaced'),
-    ('M1844', 'PSV-1 (A129): a store at a position the operator held UNDETERMINED (None, an empty array) is strict', _CC, 'self.cast(&mut c, &t, &Cx::default().strict(true))', 'self.cast(&mut c, &t, &Cx::default())', 'axon-core', _CL, _T72 + 'a_placeholder_the_operator_held_is_not_filled_by_the_candidate'),
-    ('M1845', 'PSV-1 (A129): a scalar held in a container may not come back as another type', _CC, '        if let Err(why) = self.cast(&mut c, &t, &Cx::default().strict(true)) {', '        if let Err(why) = Ok::<(), String>(()) {', 'axon-core', _CL, _T72 + 'a_position_the_operator_held_is_judged_by_what_it_held_when_replaced'),
+    ('M1843', 'PSV-1 (A128): an Option/Result that replaces a held one is judged through its payload (a dict in it included)', _CC, '            | (Value::Err(x), Value::Err(y)) => self.replaced_ok(x, y, seen, d + 1, strict)?,', '            | (Value::Err(x), Value::Err(y)) => {\n                let _ = (x, y);\n            }', 'axon-core', _CL, _T72 + 'a_position_the_operator_held_is_judged_by_what_it_held_when_replaced'),
+    ('M1844', 'PSV-1 (A129): a store at a position the operator held UNDETERMINED (None, an empty array) is strict', _CC, 'self.cast(&mut c, &t, &Cx::default().strict(strict))', 'self.cast(&mut c, &t, &Cx::default())', 'axon-core', _CL, _T72 + 'a_placeholder_the_operator_held_is_not_filled_by_the_candidate'),
+    ('M1845', 'PSV-1 (A129): a scalar held in a container may not come back as another type', _CC, '        if let Err(why) = self.cast(&mut c, &t, &Cx::default().strict(strict)) {', '        if let Err(why) = Ok::<(), String>(()) {', 'axon-core', _CL, _T72 + 'a_position_the_operator_held_is_judged_by_what_it_held_when_replaced'),
     ('M1848', 'PSV-1 (A129): a closure the operator held may not be replaced by a non-closure', _CC, '            (Value::Closure { .. }, _) => {', '            (Value::Closure { .. }, _) if false => {', 'axon-core', _CL, _T72 + 'a_dict_the_candidate_mutated_is_verified_at_every_edge_back'),
     ('M1847', 'PSV-1 (A130): a value nested past the cast bound is refused by the dict walk, never left unvisited', _CC, '    pub(crate) fn walk_depth_ok(d: usize) -> Result<(), Flow> {\n        if d > MAX_CAST_DEPTH {', '    pub(crate) fn walk_depth_ok(d: usize) -> Result<(), Flow> {\n        if false && d > MAX_CAST_DEPTH {', 'axon-core', _CL, 'interp::conform::walk_bound_tests::a_value_nested_past_the_bound_is_refused_not_left_unvisited'),
 ]
@@ -8294,6 +8294,38 @@ MUTATIONS += [
      '            if used.checked_add(want).is_none() {',
      '            if false && used.checked_add(want).is_none() {',
      'axon-fabric', '--test journal', 'an_overflowing_reservation_is_refused_not_wrapped'),
+]
+
+
+MUTATIONS += [
+    ('M2370', '(PSV1F, am94) a `&mut` write-through value is cast to its declared parameter type at the seal edge back', 'crates/axon-core/src/interp.rs',
+     '                if let Err(why) = self.cast(&mut outs[i], &p.ty, &cx) {',
+     '                if let Err(why) = self.cast(&mut outs[i], &p.ty, &cx).or(Ok::<(), String>(())) {',
+     'axon-core', '--no-default-features --lib', 'interp::tests::a_mut_write_through_value_is_cast_at_the_seal_edge_back'),
+    ('M2371', '(PSV1F, am94) a `&mut` write-through value is judged by what the operator held there', 'crates/axon-core/src/interp.rs',
+     'self.replaced_ok_top(old, &outs[i])',
+     'self.replaced_ok_top(old, &outs[i]).or(Ok::<(), String>(()))',
+     'axon-core', '--no-default-features --lib', 'interp::tests::a_mut_write_through_value_is_judged_by_what_the_operator_held'),
+    ('M2372', '(PSV1F, am94) the `&mut` edge-back cast runs on every outcome, not only a normal return', 'crates/axon-core/src/interp.rs',
+     '        if crossing {\n            let cx = self.fn_cx(f).strict(true);',
+     '        if crossing && result.is_ok() {\n            let cx = self.fn_cx(f).strict(true);',
+     'axon-core', '--no-default-features --lib', 'interp::tests::a_mut_value_is_cast_when_an_operator_handler_aborts_the_call'),
+    ('M2373', '(PSV1F, am94) the `&mut` edge-back cast is strict (an undetermined type parameter is refused)', 'crates/axon-core/src/interp.rs',
+     '            let cx = self.fn_cx(f).strict(true);',
+     '            let cx = self.fn_cx(f).strict(false);',
+     'axon-core', '--no-default-features --lib', 'interp::tests::a_mut_write_through_value_is_cast_at_the_seal_edge_back'),
+    ('M2374', '(PSV1F, am94) a variable lent as `&mut x` is open in the dispatch analysis', 'crates/axon-core/src/interp/pin.rs',
+     '                            facts.push((r.to_string(), Fact::Unpinned));',
+     '                            let _ = r;',
+     'axon-core', '--no-default-features --lib', 'interp::tests::a_mut_operand_is_never_determined_by_the_pin_analysis'),
+    ('M2375', '(PSV1F, am94) a union annotation does not pin the receiver type', 'crates/axon-core/src/interp/pin.rs',
+     '            T::Union(_) => false,',
+     '            T::Union(xs) => xs.iter().all(|a| go(a, seen)),',
+     'axon-core', '--no-default-features --lib', 'interp::tests::a_mut_operand_is_never_determined_by_the_pin_analysis'),
+    ('M2376', '(PSV1F, am94) a sealed frame cannot take an operator fn as a value', 'crates/axon-core/src/interp/eval.rs',
+     '                    self.seal_call(f)?;\n                    Ok(fn_value(name, f.params.len()))',
+     '                    Ok(fn_value(name, f.params.len()))',
+     'axon-core', '--no-default-features --lib', 'interp::tests::a_sealed_frame_cannot_take_an_operator_fn_as_a_value'),
 ]
 
 
