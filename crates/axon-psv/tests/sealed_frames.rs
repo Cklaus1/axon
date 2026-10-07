@@ -989,7 +989,12 @@ fn operator_code_never_dispatches_on_a_type_the_candidate_declared() {
 const J8: &str = "trait Judge {\n    fn ok(self) -> bool\n}\nimpl Judge for i64 {\n    fn ok(self: i64) -> bool { self == 9 }\n}\nimpl Judge for u8 {\n    fn ok(self: u8) -> bool { true }\n}\n";
 
 fn passed(s: &Seen, what: &str) {
-    assert_eq!((s.status, s.host), (GuestStatus::Passed, Some(true)), "control {what}: {}", s.stdout);
+    assert_eq!(
+        (s.status, s.host),
+        (GuestStatus::Passed, Some(true)),
+        "control {what}: {}",
+        s.stdout
+    );
 }
 
 /// A candidate fn that writes through `&mut` hands the operator the parameter's
@@ -1011,23 +1016,73 @@ fn a_mut_write_through_value_is_cast_at_the_seal_edge_back_and_the_operand_is_op
         let s = check(&suite(decl, read), &[], &fill("9"), "accept");
         passed(&s, "good");
         let s = check(&suite(decl, read), &[], &fill("4"), "accept");
-        assert_eq!((s.status, s.host), (GuestStatus::Failed, Some(false)), "control wrong: {}", s.stdout);
+        assert_eq!(
+            (s.status, s.host),
+            (GuestStatus::Failed, Some(false)),
+            "control wrong: {}",
+            s.stdout
+        );
         let s = check(&suite(decl, read), &[], &fill("4 as u8"), "accept");
-        assert!(refused_unkeyed(&s), "ATTACK: a `&mut` u8 passed the dispatch suite ({decl:?}): {:?} {:?} {}", s.status, s.host, s.stdout);
+        assert!(
+            refused_unkeyed(&s),
+            "ATTACK: a `&mut` u8 passed the dispatch suite ({decl:?}): {:?} {:?} {}",
+            s.status,
+            s.host,
+            s.stdout
+        );
     }
     // The annotated, un-re-pinned read (the dispatch rule cannot help: only the cast does).
-    let s = check(&suite(": [i64]", "    assert(a[0].ok())"), &[], &fill("4 as u8"), "accept");
-    assert!(refused_unkeyed(&s), "ATTACK: a `&mut` u8 passed an ANNOTATED operator array: {:?} {:?} {}", s.status, s.host, s.stdout);
+    let s = check(
+        &suite(": [i64]", "    assert(a[0].ok())"),
+        &[],
+        &fill("4 as u8"),
+        "accept",
+    );
+    assert!(
+        refused_unkeyed(&s),
+        "ATTACK: a `&mut` u8 passed an ANNOTATED operator array: {:?} {:?} {}",
+        s.status,
+        s.host,
+        s.stdout
+    );
     // The honest cost, stated: an un-re-pinned read after `&mut` is refused even for an honest write.
-    let s = check(&suite("", "    assert(a[0].ok())"), &[], &fill("9"), "accept");
-    assert!(refused_unkeyed(&s), "the open-operand rule is not live: {:?} {:?} {}", s.status, s.host, s.stdout);
+    let s = check(
+        &suite("", "    assert(a[0].ok())"),
+        &[],
+        &fill("9"),
+        "accept",
+    );
+    assert!(
+        refused_unkeyed(&s),
+        "the open-operand rule is not live: {:?} {:?} {}",
+        s.status,
+        s.host,
+        s.stdout
+    );
     // Width arm: 127 << 1 == 254 passes, 255 as u8 (wraps to 254) is refused.
     let s = check(&suite("", width_read), &[], &fill("127"), "accept");
     passed(&s, "width good");
     let s = check(&suite("", width_read), &[], &fill("255 as u8"), "accept");
-    assert!(refused_unkeyed(&s), "ATTACK: a `&mut` 255 as u8 wrapped in the operator's shift: {:?} {:?} {}", s.status, s.host, s.stdout);
-    let s = check(&suite("", "    assert((a[0] << 1) == 254)"), &[], &fill("255 as u8"), "accept");
-    assert!(refused_unkeyed(&s), "ATTACK: the un-re-pinned width arm accepted a u8: {:?} {:?} {}", s.status, s.host, s.stdout);
+    assert!(
+        refused_unkeyed(&s),
+        "ATTACK: a `&mut` 255 as u8 wrapped in the operator's shift: {:?} {:?} {}",
+        s.status,
+        s.host,
+        s.stdout
+    );
+    let s = check(
+        &suite("", "    assert((a[0] << 1) == 254)"),
+        &[],
+        &fill("255 as u8"),
+        "accept",
+    );
+    assert!(
+        refused_unkeyed(&s),
+        "ATTACK: the un-re-pinned width arm accepted a u8: {:?} {:?} {}",
+        s.status,
+        s.host,
+        s.stdout
+    );
 }
 
 /// A fn named in value position by a SEALED frame is refused when it is the
@@ -1041,9 +1096,25 @@ fn a_sealed_frame_cannot_take_an_operator_fn_as_a_value() {
     passed(&check(&suite, &[], own, "accept"), "own fn value");
     let wrong = own.replace("{ 9 }\npub fn solve", "{ 4 }\npub fn solve");
     let s = check(&suite, &[], &wrong, "accept");
-    assert_eq!((s.status, s.host), (GuestStatus::Failed, Some(false)), "control wrong: {}", s.stdout);
-    let s = check(&suite, &[], "pub fn solve() -> i64 {\n    let g = secret\n    g()\n}\n", "accept");
-    assert!(refused_unkeyed(&s), "ATTACK: the candidate ran the operator's `secret` as a fn value: {:?} {:?} {}", s.status, s.host, s.stdout);
+    assert_eq!(
+        (s.status, s.host),
+        (GuestStatus::Failed, Some(false)),
+        "control wrong: {}",
+        s.stdout
+    );
+    let s = check(
+        &suite,
+        &[],
+        "pub fn solve() -> i64 {\n    let g = secret\n    g()\n}\n",
+        "accept",
+    );
+    assert!(
+        refused_unkeyed(&s),
+        "ATTACK: the candidate ran the operator's `secret` as a fn value: {:?} {:?} {}",
+        s.status,
+        s.host,
+        s.stdout
+    );
 }
 
 /// Rc/copy-on-write arrays: a candidate's write to its by-value array parameter
@@ -1051,8 +1122,21 @@ fn a_sealed_frame_cannot_take_an_operator_fn_as_a_value() {
 #[test]
 fn a_candidates_write_to_its_array_parameter_never_reaches_the_operators_copy() {
     let suite = "mod sol\nuse sol.{solve}\n@[test]\nfn accept() {\n    let fix = [1, 2, 3]\n    let f = || fix[0]\n    solve(fix)\n    assert_eq(fix[0], 1)\n    assert_eq(f(), 1)\n}\n";
-    passed(&check(suite, &[], "pub fn solve(a: [i64]) { let mut b = a\n    b[0] = 99 }\n", "accept"), "copy");
+    passed(
+        &check(
+            suite,
+            &[],
+            "pub fn solve(a: [i64]) { let mut b = a\n    b[0] = 99 }\n",
+            "accept",
+        ),
+        "copy",
+    );
     // A leak would FAIL the suite (it asserts fix[0] == 1 and f() == 1).
-    let s = check(suite, &[], "pub fn solve(a: [i64]) { a[0] = 99 }\n", "accept");
+    let s = check(
+        suite,
+        &[],
+        "pub fn solve(a: [i64]) { a[0] = 99 }\n",
+        "accept",
+    );
     passed(&s, "write to the parameter (ATTACK: a leak fails this)");
 }
