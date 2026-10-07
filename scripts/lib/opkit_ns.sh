@@ -19,8 +19,8 @@
 #                      shadow the destinations, then assert (below)
 #   opkit_ns_assert    refuse (return 1) unless this process is in a mount
 #                      namespace other than PID 1's and every destination is a
-#                      tmpfs mount that does not show through to the host:
-#                      a canary written under it is absent from /proc/1/root
+#                      tmpfs mount that is not the host's own directory (device:inode
+#                      compared through the host's view)
 #   ns_run CMD...      (outer shell) run CMD in a fresh isolated namespace;
 #                      exit 97 if the isolation cannot be proved, CMD never ran.
 #                      Amendment 97: the namespace is mount + PID (with its own /proc) + UTS + IPC +
@@ -97,9 +97,10 @@ opkit_ns_assert() {
     [ "$fs" = tmpfs ] || { echo "REFUSE(opkit_ns): $d is not shadowed by a tmpfs (found: ${fs:-none})" >&2; return 1; }
     c="$d/.opkit-ns-canary.$$"
     : >"$c" 2>/dev/null || { echo "REFUSE(opkit_ns): cannot write a canary under $d" >&2; return 1; }
-    if [ -e "$view$c" ]; then rm -f "$c"; echo "REFUSE(opkit_ns): the canary under $d is VISIBLE to the host" >&2; return 1; fi
     rm -f "$c"
-    # an independent proof, not a negative lookup: the host's own $d is a DIFFERENT filesystem object
+    # The proof is an IDENTITY comparison, not a negative lookup (a canary "not seen" through an unreadable
+    # /proc/1/root passed vacuously): the host's own $d, read through the host's view, must be a
+    # DIFFERENT filesystem object (device:inode) from ours, and an unreadable view or an unstatable $d is a refusal.
     host_dev=$(stat -L -c '%d:%i' -- "$view$d" 2>/dev/null) \
       || { echo "REFUSE(opkit_ns): the host's $d cannot be examined, so its identity cannot be compared with the shadow" >&2; return 1; }
     here_dev=$(stat -c '%d:%i' -- "$d")

@@ -2970,7 +2970,7 @@ out.append("LOCK_IS_SYMLINK=" + lock("lnk"))
 g.LOCK_DIR = os.path.join(base, "held")
 seen = []
 def probe(record_path, host):
-    fd = os.open(os.path.join(g.LOCK_DIR, "axon-guest-build-uid-4242.lock"), os.O_RDWR)
+    fd = os.open(os.path.join(g.LOCK_DIR, "axon-guest-build-uid-4242.lock"), os.O_RDWR | os.O_CREAT, 0o600)
     try:
         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB); seen.append("free")
     except BlockingIOError:
@@ -3012,5 +3012,41 @@ print("\n".join(out))
         kv(&res, "BEGIN_LOCK="),
         "held",
         "ATTACK: begin built the trees without holding the build-uid lock:\n{res}"
+    );
+}
+
+/// M2510: `begin` hands nothing to the build uid: when it returns, the source copy, CARGO_HOME and target
+/// dir are root's and writable by root alone (they stayed build-owned until the first step before).
+#[test]
+fn begin_leaves_the_three_trees_root_owned() {
+    use std::os::unix::fs::MetadataExt;
+    let d = tempfile::tempdir().unwrap();
+    let (_r, _p, rec) = begun(d.path());
+    let base = base_of(&rec);
+    let mut bad = vec![];
+    for t in ["src", "target", "cargo-home"] {
+        let mut stack = vec![base.join(t)];
+        while let Some(p) = stack.pop() {
+            let m = std::fs::symlink_metadata(&p).unwrap();
+            if m.uid() != 0 || (!m.file_type().is_symlink() && m.mode() & 0o022 != 0) {
+                bad.push(format!(
+                    "{} uid {} mode {:o}",
+                    p.display(),
+                    m.uid(),
+                    m.mode() & 0o7777
+                ));
+            }
+            if m.is_dir() {
+                for e in std::fs::read_dir(&p).unwrap() {
+                    stack.push(e.unwrap().path());
+                }
+            }
+        }
+    }
+    discard(&rec);
+    assert!(
+        bad.is_empty(),
+        "ATTACK: after begin the build uid still owns or can write a tree before any step handed it over: {:?}",
+        &bad[..bad.len().min(5)]
     );
 }

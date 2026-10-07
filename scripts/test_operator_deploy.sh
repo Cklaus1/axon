@@ -66,7 +66,11 @@ BUILD_UID=65534
 # Amendment 97: the builder-private parent lives INSIDE the namespaces only (/var/lib is a tmpfs there);
 # nothing is created under the host's /var/lib. The fixture hands it out through $KEYSTASH.
 KEYPARENT=/var/lib/axon-opkit-keys
-KEYSTASH=$WORK/keys-stash
+# The stash is NOT under $WORK: `chmod -R a+rX "$WORK"` below would make the proof keys world-readable.
+STASHDIR=$(mktemp -d "${TMPDIR:-/var/tmp}/axon-opkit-stash.XXXXXX") || exit 2
+chmod 0700 "$STASHDIR"
+trap 'rm -rf "$WORK" "$STASHDIR"' EXIT
+KEYSTASH=$STASHDIR/keys
 # Amendment 92: EVERY kit invocation below goes through ns_run (scripts/lib/opkit_ns.sh), which
 # runs it under mount+PID+UTS+IPC+NET namespaces with a tmpfs over every destination the kit can reach and REFUSES
 # (exit 97, the kit never starts) unless that isolation is proved first. A kit guard that is
@@ -285,7 +289,7 @@ refused "ATTACK: a hand-written host build record (no builder proof)" "no builde
 # The reviewer's forge: another account, with its own private directory and key.
 # (made inside a namespace: /var/lib/axon-opkit-forge exists there only, and is handed to the kit's
 # namespace through a stash; amendment 97)
-copybin; FORGE=/var/lib/axon-opkit-forge; FORGESTASH=$WORK/forge-stash
+copybin; FORGE=/var/lib/axon-opkit-forge; FORGESTASH=$STASHDIR/forge
 ns_run python3 - "$WORK/fakebin/host-build.json" "$FORGE" "$KEYPARENT" "$CLONE" "$FORGESTASH" <<'PY' || fail "cannot forge the host record"
 import hmac, importlib.util, json, os, subprocess, sys
 p, forge, parent, clone, stash = sys.argv[1:6]
