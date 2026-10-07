@@ -9447,6 +9447,35 @@ fn main() { }
         }
     }
 
+    /// Amendment 96, honest-program cost (fail-closed over-refusal, stated): the
+    /// VALUE of a `with handler` expression is undetermined to the dispatch rule
+    /// (a handler arm may answer with any value), so an operator dispatch on it
+    /// is refused until it is pinned. Dispatch on determined values INSIDE a
+    /// handler body or arm is unaffected.
+    #[test]
+    fn the_value_of_a_with_handler_expression_is_undetermined_until_pinned() {
+        let h = "with handler { on IO(p) => resume(Ok(\"x\")) } {\n        9\n    }";
+        let run = |suite: String| judged_on("r9-wh", &suite, "fn mk() -> i64 { 9 }\n");
+        let pinned = format!("@[test]\nfn t() {{\n    let v: i64 = {h}\n    assert(v.ok())\n}}\n");
+        assert_eq!(
+            run(pinned),
+            Ok(TestEnd::Completed),
+            "pinned: the cost is only the annotation"
+        );
+        let bare = format!("@[test]\nfn t() {{\n    let v = {h}\n    assert(v.ok())\n}}\n");
+        let out = run(bare);
+        assert!(
+            matches!(&out, Err(m) if m.contains("nothing on the operator side determined")),
+            "the value of a handler expression is undetermined: {out:?}"
+        );
+        let inside = "@[test]\nfn t() {\n    with handler { on IO(p) => resume(Ok(\"x\")) } {\n        let x: i64 = 9\n        assert(x.ok())\n    }\n}\n".to_string();
+        assert_eq!(
+            run(inside),
+            Ok(TestEnd::Completed),
+            "dispatch inside a handler body on a pinned value"
+        );
+    }
+
     // ── C9 round 9 (PSV1G, amendment 96) ─────────────────────────────────────
 
     /// The operator's sandbox suite: `body` runs in a sandbox scope.
