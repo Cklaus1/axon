@@ -5254,3 +5254,53 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
     - **Rows.** M2261-M2269 (M2260, the kit machine-id refusal, is by hand as above). **Matrix.** A178-A180.
       **Operator-visible interface.** Unchanged: no kit flag was added, so `v022-operator-changes.md` is not edited.
       Operators running the controlled build must give it a dedicated build uid and expect serialised builds.
+## Amendment 93: the 22 exemptions amendment 91 left as debt (C9 round 8, exrows)
+
+93. **Source: amendment 91's "Remainder", 22 exemptions whose guards a test already killed and that had no row
+    because the eqgate3 id range ran out.** Mutation ids M2340-M2360 (M2361-M2369 unused), matrix row A184 (the
+    integrator renumbers; A178-A183 are held by other branches, so this branch's matrix check was run with
+    placeholders for that gap). **21 rowed, 1 exemption kept with a checkable reason, none retired.**
+    - **The survey's kills were not all the guards' own attacks, and that decided the rows.** The survey rewrites
+      a guard opener to `if false && (COND)`. For a guard whose opener is the SUCCESS branch (`if v.intent == intent {
+      return AlreadyRecorded }` before the `Conflict` refusal; `if std::fs::read(&file)? == bytes { return Ok }`
+      before `Exists`) that edit kills the identical-replay path, not the refusal, so each of those rows attacks
+      the refusal itself (`if true || ..`, M2345, M2349). For a guard whose condition has a side effect
+      (`if !create_once(..)? {`) the edit deletes the call, so the "kill" is the missing file. Every row
+      below was run on gpumaster (clean clone of the commit) and is KILLED by its OWN attack: a marker
+      that only an assertion naming the accepted attack carries, 0 REFUSED_ELSEWHERE.
+    - **Journal (M2340-M2345).** Unknown scope (`an_undeclared_scope_or_a_redeclared_ceiling_is_refused`), a
+      `launched` record for an op never reserved (corruption on open), completing an op whose outcome is unknown
+      (`sigkill_after_launch_..`: the OutcomeUnknown op is NOT launched, so the `Completed` arm refuses), a
+      settlement without origin, settling an op whose cost is known, and `begin` of the same id with another
+      input. The tests' bare `matches!`/`unwrap_err` assertions gained messages that name the attack, because a
+      bare `Ok` panic carries nothing for a marker.
+    - **Branches (M2346-M2355).** The three `open_experiment` refusals (a base that is only a hash, one arm, a
+      writer that is also an approver: the test's `unwrap_err().kind()` calls now name which was accepted), the
+      existing-id reopen (M2349), and the publication refusals: wrong writer, self-approval/undeclared approver,
+      stale epoch, verified on another branch, old head (each acceptance is a `panic!("ATTACK: {what} was
+      accepted")`). **The cancelled-branch refusal (M2350) was NOT shown by the test the survey named:** that
+      test's publication on the cancelled branch cites `loser-bad`, a FAILED check, so with the cancelled check
+      removed the publication was still refused as `unverified` (REFUSED_ELSEWHERE shape). A new test,
+      `a_cancelled_branch_refuses_a_publication_that_would_otherwise_succeed`, verifies a passing check on the
+      branch first (control: the same publication on the other branch is a head).
+    - **Audit and resource ledger (M2356-M2360).** `verify_against_file`'s truncation and extra-record
+      refusals, the chain's entry-hash recomputation, and `ResourceLedger::carve`'s budget and persist-bytes
+      refusals. **M2358's first attack was wrong and is replaced:** an unkeyed forgery handed to a keyed
+      verifier is ALSO refused by the missing authenticated tip (`open_keyed`'s `Err(e)` arm), so removing the
+      hash check left it refused (REFUSED_ELSEWHERE). The attack only the hash recomputation sees is an edited
+      entry body behind intact `prev_hash` links and an intact tip (`ledger_tamper_fails_verification`).
+    - **KEPT as an exemption, with a checkable reason: `branches.rs` `journal.fail(` (the lost head-CAS arm, the
+      survey's "537").** It is DOMINATED: the only writers of `head-<n>.json` are `open_experiment` (`n = 0`) and `publish` (`n = head.seq + 1`),
+      and `Journal::begin` has already refused a second intent under the operation id `pub.<exp>.<arm>.<n>`
+      (Conflict, or AlreadyRecorded, both a `BranchError::Conflict`), while a planted head file moves
+      `head.seq` and meets the expected-base refusal (M2355) first. The survey's kill of this site was the
+      deleted `create_once` call. The reason text now states those facts rather than the route argument.
+    - **FINDING (no test observes it, minimal test named, not added):** the `create_once`-false arm itself
+      cannot be reached in-process by any caller; the smallest observation would be a `create_once` seam
+      (a test-only closure) that returns false once, asserting `publish` returns `Conflict` and the journal op is
+      `Failed` with a known zero bill. Adding the seam changes production code for an unreachable arm, so it is
+      left.
+    - **The route question.** The branches and audit sites are off the protected verdict route (amendment 91's
+      `_BRN` grep still holds) and the ledger's budget and persist axes select nothing on it; rowing them is
+      not a claim they matter to a verdict. It is the stronger form of the same exemption: a test that fails
+      only when the guard is gone, instead of an argument that none does.

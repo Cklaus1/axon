@@ -2133,3 +2133,28 @@ ATTACK_MARKERS.update({
     'M2177': r"ATTACK: an operator method named recv made a dict-read channel's value look determined: Ok\(Completed\)",
     'M2178': r"ATTACK: the operator's analysis trusted a type the candidate chose \(a candidate global `let X = 4 as u8`\): Ok\(Completed\)",
 })
+
+# C9 round 8, EXROWS (amendment 93).
+ATTACK_MARKERS.update({
+    'M2340': 'ATTACK: an intent in a scope no ceiling was declared for was accepted',
+    'M2341': 'ATTACK: a launched record for an op that was never reserved was accepted',
+    'M2342': 'ATTACK: an op whose outcome is unknown was completed',
+    'M2343': 'ATTACK: a settlement receipt with no origin was accepted',
+    'M2344': 'ATTACK: an op whose cost is known was settled',
+    'M2345': 'ATTACK: the same operation id with a different input was accepted',
+    'M2346': 'ATTACK: a base that is only a hash was accepted',
+    'M2347': 'ATTACK: an experiment with one arm was accepted',
+    'M2348': 'ATTACK: a writer that is also the approver was accepted',
+    'M2349': 'ATTACK: a different experiment under an existing id was taken for the same one',
+    'M2350': 'ATTACK: a cancelled branch accepted a publication',
+    'M2351': 'ATTACK: wrong writer was accepted',
+    'M2352': 'ATTACK: (self-approval|undeclared approver) was accepted',
+    'M2353': 'ATTACK: stale fencing epoch was accepted',
+    'M2354': 'ATTACK: verified on another branch was accepted',
+    'M2355': 'ATTACK: (wrong expected base|a publication from an old head) was accepted',
+    'M2356': 'ATTACK: a truncated ledger file was accepted',
+    'M2357': 'ATTACK: records the auditor never wrote were accepted',
+    'M2358': 'ATTACK: a ledger with an edited entry body was accepted',
+    'M2359': 'ATTACK: a budget carve past the budget cap was accepted',
+    'M2360': 'ATTACK: zero persist_cap must block any persist carve',
+})

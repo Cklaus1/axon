@@ -198,10 +198,13 @@ fn sigkill_after_launch_reconciles_to_outcome_unknown_with_liability_kept() {
         j.mark_launched(&launched),
         Err(JournalError::InvalidTransition { .. })
     ));
-    assert!(matches!(
-        j.complete(&launched, Billing::Unknown),
-        Err(JournalError::InvalidTransition { .. })
-    ));
+    assert!(
+        matches!(
+            j.complete(&launched, Billing::Unknown),
+            Err(JournalError::InvalidTransition { .. })
+        ),
+        "ATTACK: an op whose outcome is unknown was completed"
+    );
     // Re-submitting the identical request reports the recorded state rather
     // than starting over.
     match j.begin(intent("op-launched", b"op-launched", 20)).unwrap() {
@@ -319,10 +322,10 @@ fn a_record_that_violates_the_state_machine_is_corruption() {
             .as_bytes(),
         )
         .unwrap();
-    assert!(matches!(
-        Journal::open(&path),
-        Err(JournalError::Corrupt { .. })
-    ));
+    assert!(
+        matches!(Journal::open(&path), Err(JournalError::Corrupt { .. })),
+        "ATTACK: a launched record for an op that was never reserved was accepted"
+    );
 }
 
 #[test]
@@ -382,7 +385,10 @@ fn same_operation_id_with_a_different_input_digest_is_a_conflict() {
     );
     let len = j.len();
 
-    let err = j.begin(intent("op-a", b"input-2", 10)).unwrap_err();
+    let err = match j.begin(intent("op-a", b"input-2", 10)) {
+        Err(e) => e,
+        Ok(b) => panic!("ATTACK: the same operation id with a different input was accepted: {b:?}"),
+    };
     assert!(matches!(err, JournalError::Conflict { .. }), "{err}");
     // Any other field of the immutable request conflicts too.
     let mut other = intent("op-a", b"input-1", 10);
@@ -605,7 +611,10 @@ fn failed_and_cancelled_work_is_charged_or_held_never_dropped() {
     assert_eq!(u.liability.exec_ms, 20);
     assert_eq!(u.charged.exec_ms, 10);
     // A known-cost op cannot be "settled" again.
-    assert!(j.settle(&a, receipt("meter-1", 2, res(0))).is_err());
+    assert!(
+        j.settle(&a, receipt("meter-1", 2, res(0))).is_err(),
+        "ATTACK: an op whose cost is known was settled"
+    );
 }
 
 #[test]
@@ -630,7 +639,10 @@ fn an_undeclared_scope_or_a_redeclared_ceiling_is_refused() {
     let j = fresh(dir.path());
     let mut i = intent("op-x", b"x", 1);
     i.scope.task_family = TaskFamily::new("nope").unwrap();
-    assert!(matches!(j.begin(i), Err(JournalError::UnknownScope(_))));
+    assert!(
+        matches!(j.begin(i), Err(JournalError::UnknownScope(_))),
+        "ATTACK: an intent in a scope no ceiling was declared for was accepted"
+    );
     j.declare_budget(&scope(), ceiling()).unwrap(); // same: idempotent
     let mut bigger = ceiling();
     bigger.exec_ms += 1;
@@ -784,10 +796,13 @@ fn g13_settlement_without_origin_is_refused_and_writes_nothing() {
     let j = fresh(dir.path());
     let o = unknown_cost_op(&j, "op-a", 20);
     let n = j.len();
-    assert!(matches!(
-        j.settle(&o, receipt("", 1, res(3))),
-        Err(JournalError::InvalidSettlement(_))
-    ));
+    assert!(
+        matches!(
+            j.settle(&o, receipt("", 1, res(3))),
+            Err(JournalError::InvalidSettlement(_))
+        ),
+        "ATTACK: a settlement receipt with no origin was accepted"
+    );
     assert_eq!(j.len(), n);
     assert_eq!(j.view(&o).unwrap().billing, Some(Billing::Unknown));
 }

@@ -135,7 +135,10 @@ mod tests {
             budget: 51,
             persist_bytes: 0,
         });
-        assert!(r.is_err());
+        assert!(
+            r.is_err(),
+            "ATTACK: a budget carve past the budget cap was accepted"
+        );
         let err = r.unwrap_err();
         assert_eq!(err.axis, "budget");
         assert_eq!(err.cap, 50);

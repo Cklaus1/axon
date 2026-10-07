@@ -1100,53 +1100,50 @@ EXEMPT += [
      "NON-UNIX: compiled only under cfg(not(unix))"),
     # journal.rs
     (FJ, '                    return Err(JournalError::ScopeConflict {', _JNV),
-    (FJ, '                    return Err(JournalError::UnknownScope(Box::new(intent.scope.clone())));', _JNV),
     (FJ, '                        return Err(JournalError::Conflict {\n', _JNV),
     (FJ, '                    return Err(bad(&v, "reserved"));', _JNV),
     (FJ, '                    return Err(JournalError::BudgetExceeded {', _JNV),
-    (FJ, '                    return Err(bad(&v, "launched"));', _JNV),
-    (FJ, '                    return Err(bad(&v, "completed"));', _JNV),
     (FJ, '                    return Err(bad(&v, "failed"));', _JNV),
     (FJ, '                    _ => return Err(bad(&v, "cancelled")),', _JNV),
     (FJ, '                    return Err(bad(&v, "outcome_unknown"));', _JNV),
     (FJ, '                        return Err(JournalError::SettlementConflict {', _JNV),
     (FJ, '                    _ => return Err(bad(&get(op)?, "settle_conflict")),', _JNV),
     (FJ, '                    return Err(bad(&v, "outcome"));', _JNV),
-    (FJ, '            return Err(JournalError::InvalidSettlement(', _JNV),
-    (FJ, '            return Err(JournalError::InvalidTransition {', _JNV),
     (FJ, '            return Err(JournalError::Locked(path.to_path_buf()));', "OS ERROR: the lock is still held at the deadline; nothing runs"),
     (FJ, '            Err(e) => return Err(JournalError::Io(e)),', "OS ERROR: stat failed other than NotFound (NotFound is M333)"),
     (FJ, '                        return Err(JournalError::Corrupt {', _JNV + "; as above"),
-    (FJ, '                }\n                return Err(JournalError::Conflict {', _JNV),
     (FJ, '            Err(e) => Err(e),\n        }\n    }\n\n    /// Carve', _IO + " (append's own refusals are their own sites)"),
     (FJ, '        ) {\n            return Err(JournalError::BudgetExceeded {', _JNV),
     (FJ, '                Err(JournalError::SettlementConflict { op, reason })', _JNV),
     (FJ, '            Err(e) => Err(e),\n        }\n    }\n\n    /// Attach', _IO + " (passes on the error)"),
     # branches.rs
     (FR, '        Err(e) => Err(e.into()),', _IO + " (create_once's hard_link)"),
-    (FR, '        if !store.contains(base) {', _BRN),
-    (FR, '        if arms.len() < 2 {', _BRN),
     (FR, '                return Err(BranchError::Invalid(format!("arm {a} declared twice")));', _BRN),
-    (FR, '            if approvers.contains(w) {', _BRN),
     (FR, '        if approvers.is_empty() {', _BRN),
-    (FR, '            }\n            return Err(BranchError::Exists(format!(', _BRN),
     (FR, '                return Err(BranchError::Exists(format!(', _BRN),
     (FR, '            return Err(BranchError::Unknown(format!(',
      "NOT A VERDICT PROPERTY: experiment(), reached on submit through branch_of_run; the lookup can "
      "only add a refusal, and the experiment/arm it names goes only into the intent (read back "
      "only by replays, never signed)"),
-    (FR, '            return Err(BranchError::Cancelled(format!(', _BRN),
-    (FR, '        if req.writer != br.writer {', _BRN),
-    (FR, '        if req.approver == req.writer || !exp.approvers.contains(&req.approver) {', _BRN),
-    (FR, '            return Err(BranchError::StaleEpoch(format!(', _BRN),
     (FR, '        if !store.contains(&req.new_version) {', _BRN),
-    (FR, '        if v.intent.scope != self.scope || v.intent.trial_id != br.run_id {', _BRN),
     (FR, '            || rc.verification != ReceiptVerification::Passed', _BRN),
     (FR, '            || rc.output_workspace_ref.as_ref() != Some(&req.new_version)', _BRN),
-    (FR, '        if head.seq != req.expected_seq || head.version != req.expected_version {', _BRN),
     (FR, '                return Err(BranchError::Conflict(format!(', _BRN),
     (FR, '            Err(e) => return Err(e.into()),', _BRN),
-    (FR, '            journal.fail(', _BRN + " (538 is Journal::fail, not a refusal)"),
+    (FR, '            journal.fail(',
+     "DOMINATED (checkable): this is the lost head-CAS arm (`if !create_once(&file, ..)?`). The only writers of "
+     "`head-<n>.json` are `open_experiment` (n = 0, at creation) and this function (`grep -n 'head-' "
+     "crates/axon-fabric/src/branches.rs`: the `head()` reader, `head-0.json` and this one "
+     "`join(format!(\"head-{}.json\", next.seq))`), `n` is `head.seq + 1` from the `head()` read, and "
+     "the operation id `pub.<experiment>.<arm>.<n>` is journalled by `Journal::begin` BEFORE this line, which "
+     "refuses a second intent under that id (the `Err(JournalError::Conflict) | Ok(Begin::AlreadyRecorded)` arm "
+     "above, a BranchError::Conflict; rowed M2345 for the journal's side), so `create_once` can answer false only for "
+     "a head file that exists with no journal operation, and `head()` reads the highest head file, so a planted one "
+     "moves `head.seq` and the expected-base refusal (M2355) fires first. NOT ROWED, with the reason: the "
+     "exemption survey's `false && (..)` edit of this opener also deleted the `create_once` CALL (the right-hand "
+     "side is never evaluated), so that 'kill' was the missing head file and not this guard's own attack; keeping "
+     "the call and ignoring its answer is reached by no test or caller, and `two_concurrent_publications_from_one_head_"
+     "have_exactly_one_winner` refuses its loser at the journal"),
     # grants.rs
     (FA, '        if v.get("schema").and_then(|s| s.as_str()) != Some(GRANT_REGISTRY_SCHEMA) {',
      "OPERATOR-AUTHORED: on a protected host the registry is parsed only at its pin (M277, M275, "
@@ -1624,15 +1621,9 @@ EXEMPT += [
      _AUD + "; Ledger::open_keyed"),
     (_SU, '            Err(e) => {\n                return Err(format!(',
      _AUD + "; Ledger::verify_against_file"),
-    (_SU, '        if on_disk < expected {',
-     _AUD + "; Ledger::verify_against_file"),
-    (_SU, '        if on_disk > expected {',
-     _AUD + "; Ledger::verify_against_file"),
     (_SU, '        if entry.seq != i as u64 {',
      _AUD + "; verify_chain_keyed"),
     (_SU, '        if entry.prev_hash != expected_prev {',
-     _AUD + "; verify_chain_keyed"),
-    (_SU, '        if entry.entry_hash != expected_hash {',
      _AUD + "; verify_chain_keyed"),
     # axon-core/src/main.rs
     (CMN, '        process::exit(2);\n    }\n\n    // A test run that passes against bytes nobody locked',
@@ -1726,10 +1717,6 @@ EXEMPT += [
     # axon-os/src/ledger.rs
     (_SOL, '        if self.compute_used.saturating_add(c.compute) > self.compute_cap {',
      _LED + "; this is the journal's real spend check (the admission budget guard: a run over budget is not launched) and the compute axis the one carve_within carves; it is still not a verdict property, because its refusal is the journal's BudgetExceeded, exempt above as NOT A VERDICT PROPERTY"),
-    (_SOL, '        if self.budget_used.saturating_add(c.budget) > self.budget_cap {',
-     _LED + "; and SELECTS NOTHING there: carve_within builds every ledger with this cap 0 and carves 0 on it (`ResourceLedger::new(lineage, cap, 0, 0)`, `budget: 0, persist_bytes: 0`), and 0 + 0 > 0 is false"),
-    (_SOL, '        if self.persist_bytes_used.saturating_add(c.persist_bytes) > self.persist_bytes_cap {',
-     _LED + "; and SELECTS NOTHING there: carve_within builds every ledger with this cap 0 and carves 0 on it (`ResourceLedger::new(lineage, cap, 0, 0)`, `budget: 0, persist_bytes: 0`), and 0 + 0 > 0 is false"),
     # axon-os/src/manifest.rs
     (_SOM, '                    other => {\n                        return Err(bad(format!(\n                            "{}: reproducible must be true or false, got `{other}`",',
      _GRA + ": `reproducible` must be true/false"),

@@ -690,7 +690,10 @@ mod tests {
 
         // Re-open and verify → should fail.
         let l2 = Ledger::open(&path);
-        assert!(l2.is_err(), "tampered ledger should fail to open/verify");
+        assert!(
+            l2.is_err(),
+            "ATTACK: a ledger with an edited entry body was accepted (tampered ledger should fail to open/verify)"
+        );
     }
 
     // ── missing_entry_fails_verification ────────────────────────────────────
@@ -867,7 +870,7 @@ mod truncation_tests {
 
         let err = led
             .verify_against_file()
-            .expect_err("an injected record must be detected");
+            .expect_err("ATTACK: records the auditor never wrote were accepted (an injected record must be detected)");
         assert!(
             err.contains("extra"),
             "the error must name the injection, not just fail: {err}"
@@ -904,7 +907,7 @@ mod truncation_tests {
 
         let err = led
             .verify_against_file()
-            .expect_err("truncation must be detected");
+            .expect_err("ATTACK: a truncated ledger file was accepted (truncation must be detected)");
         assert!(err.contains("truncat"), "must name the failure: {err}");
         assert!(
             err.contains('3') && err.contains('1'),
@@ -1007,7 +1010,7 @@ mod keyed_chain_tests {
         write_three(&path, None); // forged: a perfectly valid UNKEYED chain
 
         let err = match Ledger::open_keyed(&path, Some(b"operator-key".to_vec())) {
-            Ok(_) => panic!("a keyed verifier must not accept an unkeyed chain"),
+            Ok(_) => panic!("ATTACK: a keyed verifier accepted an unkeyed chain (it must not accept an unkeyed chain)"),
             Err(e) => e,
         };
         assert!(err.contains("tamper"), "{err}");
