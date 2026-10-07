@@ -519,6 +519,13 @@ if selected users; then
   act_group "$OBSERVER_USER"; act_user "$OBSERVER_USER" "Axon preflight observer service (amendment 68)"
   act_group "$VERIFIER_USER"; act_user "$VERIFIER_USER" "Axon readiness verifier actor (trust preflight)"
   act_group "$PROFILE_USER"; act_user "$PROFILE_USER" "Axon B263 launch profile (jailer uid)"
+  # Amendment 101: on a first install the service accounts did not exist when the build uid was checked above,
+  # and `useradd --system` may since have taken the build uid (or gid) for one of them: judge it again NOW.
+  if [ "$APPLY" = 1 ] && [ -n "$BUILD_UID" ]; then
+    bu=$(python3 -I -B "$TREE/scripts/guest_build_env.py" check-build-uid "$BUILD_UID" "$BUILDER_UID" \
+           "$FABRIC_USER" "$CUSTODIAN_USER" "$OBSERVER_USER" "$VERIFIER_USER" "$PROFILE_USER" 2>&1) \
+      || refuse "--build-uid $BUILD_UID is a service account's uid or gid now that the users exist: $bu"
+  fi
 fi
 FU=$(ph_uid "$FABRIC_USER") CU=$(ph_uid "$CUSTODIAN_USER") OU=$(ph_uid "$OBSERVER_USER")
 

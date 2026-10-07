@@ -79,7 +79,9 @@ KEYSTASH=$STASHDIR/keys
 # build, the forged record): scripts/opkit_ns_drift.py fails the build if a test script runs the kit,
 # `--apply` or a controlled-build verb any other way. The overrides are honoured by test_opkit_ns.sh only.
 [ -z "${OPKIT_DESTS_FOR_TEST:-}${OPKIT_NS_PID_FOR_TEST:-}${OPKIT_VIEW_PID_FOR_TEST:-}" ] || { echo "REFUSE: an OPKIT_*_FOR_TEST override is set; the kit test proves the REAL destinations"; exit 2; }
-export OPKIT_LIB=$HERE/lib/opkit_ns.sh OPKIT_SCRATCH=$WORK/scratch
+# Amendment 101: the namespace's root is read-only (deny by default); the only host directories a step may
+# write are the two this test made for it.
+export OPKIT_LIB=$HERE/lib/opkit_ns.sh OPKIT_SCRATCH=$WORK/scratch OPKIT_RW="$WORK $STASHDIR"
 mkdir "$OPKIT_SCRATCH" || exit 2
 . "$OPKIT_LIB"
 if [ -f /usr/local/bin/firecracker ] && [ -f /usr/local/bin/jailer ]; then
@@ -338,6 +340,12 @@ refused "ATTACK: a build uid that is the profile user's uid" "DEDICATED" \
   ns_run bash "$KIT" --from "$CLONE" --bin-dir "$BIN" --builder-uid "$BUILDER_UID" --builder-parent "$KEYPARENT" --build-uid 2 --profile-user bin
 refused "ATTACK: a build uid other than the one the record was built under" "not the pinned build uid" \
   ns_run bash "$KIT" --from "$CLONE" --bin-dir "$BIN" --builder-uid "$BUILDER_UID" --builder-parent "$KEYPARENT" --build-uid 4243
+# Amendment 101: on a FIRST install the service accounts do not exist when the build uid is first checked. The
+# uid `useradd --system` allocates next (the highest free below SYS_UID_MAX) is named as the build uid: the users
+# step creates the account, and the kit must judge the build uid AGAIN or build code runs as a service.
+refused "ATTACK: a build uid that the users step then allocates to a service account (checked before the users existed)" "now that the users exist" \
+  ns_run bash -c 'max=$(sed -n "s/^SYS_UID_MAX[[:space:]]*//p" /etc/login.defs); max=${max:-999}; U=$max; while getent passwd "$U" >/dev/null; do U=$((U - 1)); done; exec bash "$1" --from "$2" --only users --apply --no-systemctl --expect-commit "$3" --builder-uid "$4" --build-uid "$U"' \
+    x "$KIT" "$CLONE" "$COMMIT" "$BUILDER_UID"
 # Amendment 92: run as ROOT, with nothing standing between the attack and a real install but
 # the guard under test -- safe because ns_run proves a private namespace first. Were the guard
 # missing, this --apply SUCCEEDS inside the namespace (and the test fails on the unexpected

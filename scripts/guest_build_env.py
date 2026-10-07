@@ -117,6 +117,7 @@ import hashlib
 import hmac
 import json
 import fcntl
+import grp
 import os
 import pwd
 import re
@@ -262,74 +263,178 @@ SERVICE_ETC = "/etc/axon"
 SERVICE_UNITS = "/etc/systemd/system"
 
 
-def _uid_fields(node, where, out):
+MAX_SERVICE_FILE = 1 << 16
+
+
+class DiscoveryRefused(Exception):
+    """The deployment's service accounts cannot be determined: a file that names them cannot be read as
+    one. Never a skip (amendment 101): a service uid that goes unseen is a build uid that can be a service's."""
+
+
+def _id_value(v):
+    if isinstance(v, bool):
+        return None
+    if isinstance(v, int):
+        return v if v >= 0 else None
+    if isinstance(v, str) and re.fullmatch(r"[0-9]{1,9}", v.strip()):
+        return int(v)
+    return None
+
+
+def _id_fields(node, where, uids, gids):
+    """uid / gid fields of a config, any depth: `uid`, `*_uid`, plural `uids` / `*_uids` (lists), the same
+    for gids, any letter case, a number or a decimal string. (`build_uid`, the thing being judged, is excluded.)"""
     if isinstance(node, dict):
         for k, v in node.items():
-            if (k == "uid" or (isinstance(k, str) and k.endswith("_uid"))) and k != "build_uid":
-                if isinstance(v, int) and not isinstance(v, bool) and v >= 0:
-                    out.setdefault(v, f"{where}:{k}")
-            else:
-                _uid_fields(v, where, out)
+            kl = k.lower() if isinstance(k, str) else ""
+            kind = None
+            if kl in ("build_uid", "build_gid"):
+                continue
+            if kl in ("uid", "uids") or kl.endswith("_uid") or kl.endswith("_uids"):
+                kind = uids
+            elif kl in ("gid", "gids") or kl.endswith("_gid") or kl.endswith("_gids"):
+                kind = gids
+            if kind is None:
+                _id_fields(v, where, uids, gids)
+                continue
+            if v is None:
+                continue
+            for x in (v if isinstance(v, list) else [v]):
+                iv = _id_value(x)
+                if iv is None:
+                    raise DiscoveryRefused(f"{where}: {k} holds {x!r}, which is not a uid or gid")
+                kind.setdefault(iv, f"{where}:{k}")
     elif isinstance(node, list):
         for v in node:
-            _uid_fields(v, where, out)
+            _id_fields(v, where, uids, gids)
+
+
+def _read_small(path):
+    try:
+        with open(path, "rb") as f:
+            data = f.read(MAX_SERVICE_FILE + 1)
+    except OSError as e:
+        raise DiscoveryRefused(f"{path} cannot be read ({e.strerror}): it may name a service account")
+    if len(data) > MAX_SERVICE_FILE:
+        raise DiscoveryRefused(f"{path} is over {MAX_SERVICE_FILE} bytes: it cannot be read for the service accounts it names")
+    return data
+
+
+def _unit_ids(text, where, uids, gids):
+    for m in re.finditer(r"^\s*(User|Group)\s*=\s*(.*?)\s*$", text, re.M):
+        key, u = m.group(1), m.group(2).strip().strip("\"'").strip()
+        if not u:
+            continue
+        iv = int(u) if u.isdigit() else None
+        if iv is None:
+            try:
+                iv = pwd.getpwnam(u).pw_uid if key == "User" else grp.getgrnam(u).gr_gid
+            except KeyError:
+                continue                  # an account that does not exist yet: the kit re-checks after it creates the users
+        (uids if key == "User" else gids).setdefault(iv, f"{where}: {key}={u}")
+    if re.search(r"^\s*DynamicUser\s*=\s*(yes|true|1|on)\b", text, re.M | re.I):
+        raise DiscoveryRefused(f"{where}: DynamicUser=yes allocates the service's uid at start, so no uid can be proven to be dedicated")
+
+
+def service_ids(users=None, etc=None, units=None):
+    """({uid: why}, {gid: why}) of the deployment's services. Raises DiscoveryRefused when a file that
+    could name one cannot be read (fail closed)."""
+    uids, gids = {}, {}
+    for name in (SERVICE_USERS if users is None else users):
+        try:
+            pw = pwd.getpwnam(name)
+            uids.setdefault(pw.pw_uid, f"the service user {name}")
+            gids.setdefault(pw.pw_gid, f"the primary group of the service user {name}")
+        except KeyError:
+            pass
+        try:
+            gids.setdefault(grp.getgrnam(name).gr_gid, f"the service group {name}")
+        except KeyError:
+            pass
+    etc = SERVICE_ETC if etc is None else etc
+    if os.path.lexists(etc):
+        errs = []
+        walked = list(os.walk(etc, followlinks=False, onerror=errs.append))
+        if errs:
+            raise DiscoveryRefused(f"{etc} cannot be listed ({errs[0].strerror}): it may name a service account")
+        for d, _, files in sorted(walked):
+            for n in sorted(files):
+                path = os.path.join(d, n)
+                if os.path.isdir(path):
+                    continue
+                if n.endswith(".json"):
+                    try:
+                        _id_fields(json.loads(_read_small(path)), path, uids, gids)
+                    except ValueError:
+                        raise DiscoveryRefused(f"{path} is not valid JSON: it may name a service account")
+                else:
+                    try:
+                        doc = json.loads(_read_small(path))
+                    except (DiscoveryRefused, ValueError, UnicodeDecodeError):
+                        continue          # not a config of ours (a key, an allowlist); only *.json must parse
+                    _id_fields(doc, path, uids, gids)
+    units = SERVICE_UNITS if units is None else units
+    if os.path.lexists(units):
+        try:
+            names = sorted(os.listdir(units))
+        except OSError as e:
+            raise DiscoveryRefused(f"{units} cannot be listed ({e.strerror}): it may hold a service unit")
+        relevant = {}
+        for n in names:
+            if n.endswith(".service") and os.path.isfile(os.path.join(units, n)):
+                try:
+                    text = _read_small(os.path.join(units, n)).decode(errors="replace")
+                except DiscoveryRefused:
+                    if n.startswith("axon-"):
+                        raise
+                    continue              # an unrelated unit we cannot read names no axon binary we can see
+                if n.startswith("axon-") or re.search(r"^\s*Exec\w*\s*=.*axon", text, re.M):
+                    relevant[n] = text
+        for n in names:
+            if n.endswith(".service.d") and os.path.isdir(os.path.join(units, n)):
+                unit = n[:-2]
+                if unit in relevant or unit.startswith("axon-"):
+                    relevant.setdefault(unit, "")
+        for unit, text in sorted(relevant.items()):
+            _unit_ids(text, os.path.join(units, unit), uids, gids)
+            dd = os.path.join(units, unit + ".d")
+            if os.path.isdir(dd):
+                for c in sorted(os.listdir(dd)):
+                    if c.endswith(".conf"):
+                        _unit_ids(_read_small(os.path.join(dd, c)).decode(errors="replace"), os.path.join(dd, c), uids, gids)
+    return uids, gids
 
 
 def service_uids(users=None, etc=None, units=None):
     """{uid: why it is a service uid}: the named accounts that exist, every uid field of the deployed
     configs (builder-pin.json's `build_uid` excluded: it is the thing being judged), and the `User=` of
-    each installed axon-*.service."""
-    out = {}
-    for name in (SERVICE_USERS if users is None else users):
-        try:
-            out.setdefault(pwd.getpwnam(name).pw_uid, f"the service user {name}")
-        except KeyError:
-            pass
-    etc = SERVICE_ETC if etc is None else etc
-    try:
-        names = sorted(os.listdir(etc))
-    except OSError:
-        names = []
-    for n in names:
-        if not n.endswith(".json"):
-            continue
-        try:
-            with open(os.path.join(etc, n), "rb") as f:
-                _uid_fields(json.loads(f.read(1 << 16)), os.path.join(etc, n), out)
-        except (OSError, ValueError):
-            continue
-    units = SERVICE_UNITS if units is None else units
-    try:
-        names = sorted(os.listdir(units))
-    except OSError:
-        names = []
-    for n in names:
-        if not (n.startswith("axon-") and n.endswith(".service")):
-            continue
-        try:
-            text = open(os.path.join(units, n), errors="replace").read(1 << 16)
-        except OSError:
-            continue
-        for m in re.finditer(r"^\s*User\s*=\s*(\S+)\s*$", text, re.M):
-            u = m.group(1)
-            try:
-                uid = int(u) if u.isdigit() else pwd.getpwnam(u).pw_uid
-            except KeyError:
-                continue
-            out.setdefault(uid, f"{os.path.join(units, n)}: User={u}")
-    return out
+    each installed axon unit (see service_ids)."""
+    return service_ids(users, etc, units)[0]
 
 
 def build_uid_problem(uid, builder_uid=None, users=None, etc=None, units=None):
-    """Why `uid` may not be the build uid (empty: it may): root, the builder, or any service uid."""
+    """Why `uid` may not be the build uid (empty: it may): root, the builder, any service uid, a
+    build GID (= uid) that is a service's, or a deployment whose service accounts cannot be read."""
     if uid == 0:
         return "it is root"
     if uid == (os.geteuid() if builder_uid is None else builder_uid):
         return "it is the builder's own uid"
-    svc = service_uids(users, etc, units)
+    try:
+        svc, sgids = service_ids(users, etc, units)
+    except DiscoveryRefused as e:
+        return f"the deployment's service accounts cannot be determined ({e})"
     if uid in svc:
         return f"it is a service uid ({svc[uid]}): build code would run as that service"
+    if uid in sgids:                      # build_ids() runs the build as gid == uid
+        return f"the build gid ({uid}) is a service gid ({sgids[uid]}): build code would run in that group"
     return ""
+
+
+def foreign_process_problem(uid):
+    """Why `uid` may not start a build now: it already owns processes (the reaper SIGKILLs everything the
+    build uid owns after each step, so a build uid that is also something else's would kill it)."""
+    pids = build_uid_pids(uid)
+    return f"it already owns running processes {pids[:8]}: the build would kill them" if pids else ""
 
 
 def build_ids():
@@ -893,7 +998,9 @@ def build_uid_lock():
     if not stat.S_ISREG(ls.st_mode) or ls.st_uid != 0 or ls.st_mode & 0o077:
         os.close(fd)
         fail(f"the build-uid lock file in {LOCK_DIR} is not a root-owned 0600 regular file "
-             f"(uid {ls.st_uid}, mode {oct(ls.st_mode & 0o7777)}): refusing to trust a lock the build uid could hold")
+             f"(uid {ls.st_uid}, mode {oct(ls.st_mode & 0o7777)}): refusing to trust a lock the build uid could hold; "
+             "a leftover file from an interrupted run is repaired by root deleting it (it is recreated 0600), "
+             "after which the build is run again")
     fcntl.flock(fd, fcntl.LOCK_EX)
     return fd
 
@@ -933,6 +1040,9 @@ def begin(record_path, host=False):
     build_ids()
     lockfd = build_uid_lock()
     try:
+        why = foreign_process_problem(build_ids()[0])
+        if why:
+            fail(f"AXON_GUEST_BUILD_UID {build_ids()[0]} may not be the build uid: {why}")
         _begin(record_path, host)
     finally:
         os.close(lockfd)
@@ -1486,19 +1596,23 @@ def kernel(record_path, dist, profile_dir):
             fail("the kernel tarball did not extract")
         ksrc = os.path.join(base, f"linux-{ver}")
         # make (and the kernel tree's own scripts) run as the build uid, in a
-        # tree it owns and nothing else.
-        chown_tree(ksrc, uid, gid)
-        with open(os.path.join(ksrc, ".config"), "wb") as f:
-            f.write(open(os.path.join(base, "base.config"), "rb").read())
-            for line in open(os.path.join(base, "overlay.config"), "rb"):
-                if line.startswith(b"CONFIG_"):
-                    f.write(line)
+        # tree it owns and nothing else. Amendment 101: the per-uid lock is taken BEFORE the first
+        # chown (round 9 stated it did not; begin already did) and held until the tree is root's again.
         make = tools["make"]["path"]
         steps = [[make, "ARCH=x86_64", "olddefconfig"],
                  [make, "ARCH=x86_64", f"-j{os.cpu_count() or 1}", "vmlinux"]]
-        for argv in steps:
-            lockfd = build_uid_lock()
-            try:
+        lockfd = build_uid_lock()
+        try:
+            why = foreign_process_problem(uid)
+            if why:
+                fail(f"AXON_GUEST_BUILD_UID {uid} may not be the build uid: {why}")
+            chown_tree(ksrc, uid, gid)
+            with open(os.path.join(ksrc, ".config"), "wb") as f:
+                f.write(open(os.path.join(base, "base.config"), "rb").read())
+                for line in open(os.path.join(base, "overlay.config"), "rb"):
+                    if line.startswith(b"CONFIG_"):
+                        f.write(line)
+            for argv in steps:
                 chown_tree(ksrc, uid, gid)
                 try:
                     r = subprocess.run(as_build_uid(argv), env=kenv, cwd=ksrc, stdout=subprocess.DEVNULL)
@@ -1506,10 +1620,10 @@ def kernel(record_path, dist, profile_dir):
                     reap_build_processes()
                     chown_tree(ksrc, 0, 0)
                     subprocess.run(["/bin/chmod", "-R", "go-w", "--", ksrc], check=True)
-            finally:
-                os.close(lockfd)
-            if r.returncode != 0:
-                fail(f"{' '.join(argv)} failed ({r.returncode})")
+                if r.returncode != 0:
+                    fail(f"{' '.join(argv)} failed ({r.returncode})")
+        finally:
+            os.close(lockfd)
         vml = os.path.join(ksrc, "vmlinux")
         if not os.path.isfile(vml):
             fail("vmlinux not built")

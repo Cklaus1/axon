@@ -14,6 +14,8 @@ LIB=$HERE/lib/opkit_ns.sh
 # ── child mode: this script re-executed INSIDE a fresh mount namespace, so the helper sees its caller ──
 if [ "${1:-}" = --child ]; then
   mode=$2 W=$3
+  # RO=1: the root is made read-only first, as ns_run does, and the tmpfs shadows are laid over it afterwards
+  if [ "${RO:-0}" = 1 ]; then . "$LIB"; opkit_ns_make_ro || exit 92; export OPKIT_REQUIRE_RO=1; fi
   mount -t tmpfs tmpfs "$W/a" || exit 90
   if [ "${TMPFS_B:-1}" = 1 ]; then mount -t tmpfs tmpfs "$W/b" || exit 90
   else mkdir -p "$W/disk" && mount --bind "$W/disk" "$W/b" || exit 90   # shadowed by a DISK directory: a different object, not a tmpfs
@@ -91,7 +93,7 @@ o=$(OPKIT_LIB=$LIB OPKIT_SCRATCH=$W/scratch OPKIT_EXTRA=/nonexistent/file bash -
   || fail "ATTACK: ns_run ran its command although the isolation was not proved (rc $rc, marker $([ -e "$M" ] && echo present || echo absent)): $o"
 echo "ok: ns_run refuses (97) and never starts the command when the proof fails"
 M2=$W/scratch/ran2
-o=$(OPKIT_LIB=$LIB OPKIT_SCRATCH=$W/scratch bash -c '. "$OPKIT_LIB"; ns_run touch "$1"' bash "$M2" 2>&1); rc=$?
+o=$(OPKIT_RW=$W/scratch OPKIT_LIB=$LIB OPKIT_SCRATCH=$W/scratch bash -c '. "$OPKIT_LIB"; ns_run touch "$1"' bash "$M2" 2>&1); rc=$?
 { [ -e "$M2" ] && [ $rc = 0 ]; } || fail "control: ns_run did not run its command in a proved namespace ($rc): $o"
 echo "ok: control: ns_run runs its command in a proved namespace"
 
@@ -108,4 +110,59 @@ echo "ok: ns_run's command runs in its own mount, PID, UTS, IPC and network name
 net=$(OPKIT_NET=host OPKIT_LIB=$LIB OPKIT_SCRATCH=$W/scratch bash -c '. "$OPKIT_LIB"; ns_run sh -c '"'"'readlink /proc/self/ns/net'"'"'' 2>&1)
 [ "$net" = "$(readlink /proc/self/ns/net)" ] || fail "OPKIT_NET=host did not keep the host network (needed by the registry download): $net"
 echo "ok: OPKIT_NET=host keeps the host network, and only that"
+# ── amendment 101 ───────────────────────────────────────────────────────────────────────────────────
+# (1) the descriptor the proof compared through is closed before the command starts: the command lists
+# its descriptors and finds no directory, and no OPKIT_HOST_FD to find one by
+o=$(OPKIT_LIB=$LIB OPKIT_SCRATCH=$W/scratch bash -c '. "$OPKIT_LIB"
+  ns_run bash -c '"'"'echo "HOSTFD=${OPKIT_HOST_FD:-unset}"
+    for f in /proc/self/fd/*; do case ${f##*/} in 0|1|2) continue ;; esac; [ -d "$f" ] && echo "DIRFD ${f##*/} $(readlink "$f") $(stat -L -c %d:%i "$f")"; done; echo done'"'"'' 2>&1)
+grep -q '^done$' <<<"$o" || fail "setup: the descriptor listing did not run: $o"
+grep -q '^HOSTFD=unset$' <<<"$o" || fail "ATTACK: the command still sees OPKIT_HOST_FD: $o"
+! grep -q '^DIRFD' <<<"$o" || fail "ATTACK: the command inherited a descriptor on the host's filesystem: $o"
+echo "ok: the command inherits no directory descriptor (the host-root handle is closed after the proof)"
+# the detector flags a descriptor left open, and is quiet without one
+o=$(bash -c '. "$1"; exec 9</; opkit_ns_fd_leak' bash "$LIB" 2>&1); rc=$?
+{ [ $rc = 1 ] && grep -q 'LEAK: descriptor 9' <<<"$o"; } || fail "ATTACK: a directory descriptor left open was not flagged (rc $rc): $o"
+o=$(bash -c '. "$1"; opkit_ns_fd_leak' bash "$LIB" 2>&1); rc=$?
+[ $rc = 0 ] || fail "control: the descriptor check flagged a process with no directory descriptor (rc $rc): $o"
+echo "ok: a directory descriptor left open is detected"
+# (2) deny by default: every place nobody listed is read-only; the shadows, /tmp and OPKIT_RW are writable
+mkdir -p "$W/rw" "$W/notrw"
+o=$(OPKIT_RW="$W/rw" OPKIT_LIB=$LIB OPKIT_SCRATCH=$W/scratch bash -c '. "$OPKIT_LIB"
+  ns_run python3 -c '"'"'
+import errno, os, sys
+bad = 0
+for d in ("/opt", "/home", "/root", "/usr/lib", "/usr", "/boot", "/var/cache", "/var", "/bin", "/sys", "/dev", sys.argv[2]):
+    if not os.path.isdir(d):
+        continue
+    try:
+        open(d + "/.opkit-erofs-probe", "w").close()
+        print("WRITABLE", d); bad = 1
+        os.unlink(d + "/.opkit-erofs-probe")
+    except OSError as e:
+        print("denied", d, errno.errorcode.get(e.errno)) if e.errno == errno.EROFS else (print("OTHER", d, e), None)
+for d in ("/tmp", "/usr/local", "/var/lib", "/etc", "/run", sys.argv[1]):
+    try:
+        open(d + "/.opkit-rw-probe", "w").close(); os.unlink(d + "/.opkit-rw-probe"); print("writable", d)
+    except OSError as e:
+        print("NOTWRITABLE", d, e); bad = 1
+sys.exit(bad)'"'"' "$OPKIT_RW" "$1"' bash "$W/notrw" 2>&1); rc=$?
+[ $rc = 0 ] || fail "ATTACK: a place nobody listed is writable inside ns_run (rc $rc): $o"
+for d in /opt /home /root /usr/lib; do [ -d "$d" ] && { grep -q "denied $d EROFS" <<<"$o" || fail "ATTACK: $d did not answer EROFS: $o"; }; done
+grep -q "denied $W/notrw EROFS" <<<"$o" || fail "ATTACK: a scratch directory the caller did not name is writable: $o"
+for d in /opt /home /root /usr/lib /boot /var/cache; do [ ! -e "$d/.opkit-erofs-probe" ] || fail "ATTACK: a probe reached the host's $d"; done
+echo "ok: deny by default: /opt /home /root /usr/lib /boot /var/cache and an unnamed scratch dir answer EROFS; the shadows, /tmp and OPKIT_RW stay writable"
+# the proof itself: a namespace whose root is not read-only is refused, a read-only one is accepted
+o=$(RO=0 OPKIT_REQUIRE_RO=1 VIEW=1 NSPID=1 unshare -m --propagation private env OPKIT_REQUIRE_RO=1 bash "$SELF" --child assert "$W" 2>&1); rc=$?
+[ $rc = 1 ] || fail "ATTACK: a namespace whose root is writable was accepted (rc $rc): $o"
+grep -q 'the root is not read-only' <<<"$o" || fail "refused for another reason (rc $rc): $o"
+o=$(RO=1 VIEW=1 NSPID=1 unshare -m --propagation private bash "$SELF" --child assert "$W" 2>&1); rc=$?
+[ $rc = 0 ] || fail "control: a namespace with a read-only root and writable shadows was refused ($rc): $o"
+echo "ok: a namespace whose root is writable is refused; a read-only root with writable shadows is accepted"
+# (3) inside the namespace the re-assertion rests on the proof's stamp; without it the host's view is needed and the namespace is refused
+o=$(OPKIT_LIB=$LIB OPKIT_SCRATCH=$W/scratch bash -c '. "$OPKIT_LIB"
+  ns_run bash -c '"'"'. "$OPKIT_LIB"; opkit_ns_assert && echo REASSERT-OK; rm -f "$OPKIT_STAMP"; opkit_ns_assert && echo ACCEPTED-WITHOUT-STAMP'"'"'' 2>&1)
+grep -q REASSERT-OK <<<"$o" || fail "control: the re-assertion inside ns_run was refused: $o"
+! grep -q ACCEPTED-WITHOUT-STAMP <<<"$o" || fail "ATTACK: the re-assertion accepted a namespace whose proof stamp was removed: $o"
+echo "ok: a re-assertion inside ns_run rests on the proof's stamp and refuses without it"
 echo "PASS: opkit namespace helper"
