@@ -2358,3 +2358,34 @@ ATTACK_MARKERS.update({
     'M2575': 'ATTACK: gbe main\\ check-build-uid\\ refuses\\ root',
     'M2576': r'ATTACK: a uid a deployed config names \(fabric_uid\) was accepted as the build uid',
 })
+
+ATTACK_MARKERS.update({
+    'M2600': "ATTACK: a handler arm borrowed the performer's pin verdict \\(colliding site, dispatch arm\\)",
+    'M2601': "ATTACK: a handler arm borrowed the performer's pin verdict \\(colliding site, general replay arm\\)",
+    'M2602': "ATTACK: a handler arm borrowed the performer's pin verdict \\(colliding site, arithmetic arm\\)",
+    'M2603': "ATTACK: a handler arm borrowed the performer's pin verdict \\(dispatch arm\\)",
+    'M2604': "ATTACK: a handler arm borrowed the performer's pin verdict \\(general \\(replay\\) arm\\)",
+    'M2605': "ATTACK: a handler arm borrowed the performer's pin verdict \\(arithmetic arm\\)",
+    'M2606': "ATTACK: the candidate's string chose the operator fn \\(sandbox_run, a candidate fn's result\\)",
+    'M2607': "ATTACK: the candidate's string chose the operator fn sandbox_run ran",
+    'M2608': "ATTACK: the candidate's string chose the operator fn \\(sandbox_run, a candidate fn's result\\)",
+    'M2609': "ATTACK: the candidate's string chose the operator fn \\(scheduler_spawn\\)",
+    'M2610': "ATTACK: the candidate's string chose the operator fn scheduler_spawn ran",
+    'M2611': "ATTACK: the candidate's string chose the operator fn \\(goal_eval\\)",
+    'M2612': "ATTACK: the candidate's string chose the operator fn goal_eval ran",
+    'M2613': "ATTACK: the candidate's string chose the operator fn \\(sandbox_run, a candidate fn's result\\)",
+    'M2614': "ATTACK: the candidate's string chose the operator fn \\(goal_run_constrained's constraint\\)",
+    'M2615': "ATTACK: the candidate's string chose the operator fn \\(kernel_goal_create\\)",
+    'M2616': "ATTACK: the candidate's string chose the operator fn \\(a parameter of an operator fn\\)",
+    'M2617': "ATTACK: the candidate's string chose the operator fn \\(a local annotated str\\)",
+    'M2618': "ATTACK: the candidate's string chose the operator fn \\(an index chosen by the candidate\\)",
+    'M2619': "ATTACK: the candidate's string chose the operator fn \\(an operator fn that returns it by a return statement\\)",
+    'M2620': "ATTACK: the candidate's string chose the operator fn \\(a loop variable\\)",
+    'M2621': "ATTACK: the candidate's string chose the operator fn \\(built from a candidate int through to_str\\)",
+    'M2622': 'ATTACK: an operator fn and a missing one read differently to sealed code',
+    'M2623': 'ATTACK: an operator fn and a missing one read differently to sealed code',
+})
+
+ATTACK_MARKERS.update({
+    'M2624': r"ATTACK: a handler arm borrowed the performer's pin verdict \(colliding site, closure made in an arm\)",
+})

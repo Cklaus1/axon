@@ -28,7 +28,7 @@ impl<'p> Interp<'p> {
     ) -> Result<f64, Flow> {
         let _goal_guard = self.enter_goal(name);
         if !self.goal_name_is_known(name) {
-            return Err(Self::unknown_goal_name(name));
+            return Err(self.unknown_goal_name(name));
         }
         if let Some(f) = self.fns.get(name) {
             let f = *f;
@@ -261,7 +261,7 @@ impl<'p> Interp<'p> {
             None if self.k().provenance.borrow().contains_key(name) => {
                 return Ok(self.best_observed(name, target, n_samples));
             }
-            None => return Err(Self::unknown_goal_name(name)),
+            None => return Err(self.unknown_goal_name(name)),
         };
         let is_adaptive = f.attrs.iter().any(|a| a.name == "adaptive");
         let all_i64_params = !f.params.is_empty() && f.params.iter().all(|p| is_i64_type(&p.ty));
@@ -354,7 +354,7 @@ impl<'p> Interp<'p> {
             None if self.k().provenance.borrow().contains_key(name) => {
                 return Ok(self.best_observed(name, target, max_evals));
             }
-            None => return Err(Self::unknown_goal_name(name)),
+            None => return Err(self.unknown_goal_name(name)),
         };
         let is_adaptive = f.attrs.iter().any(|a| a.name == "adaptive");
         let one_i64_param = f.params.len() == 1 && is_i64_type(&f.params[0].ty);
@@ -451,7 +451,7 @@ impl<'p> Interp<'p> {
             None if self.k().provenance.borrow().contains_key(name) => {
                 return Ok(self.best_observed(name, target, 0));
             }
-            None => return Err(Self::unknown_goal_name(name)),
+            None => return Err(self.unknown_goal_name(name)),
         };
         let is_adaptive = f.attrs.iter().any(|a| a.name == "adaptive");
         let all_i64_params = !f.params.is_empty() && f.params.iter().all(|p| is_i64_type(&p.ty));
@@ -526,7 +526,7 @@ impl<'p> Interp<'p> {
             None if self.k().provenance.borrow().contains_key(name) => {
                 return Ok(self.best_observed(name, target, 0));
             }
-            None => return Err(Self::unknown_goal_name(name)),
+            None => return Err(self.unknown_goal_name(name)),
         };
         let is_adaptive = f.attrs.iter().any(|a| a.name == "adaptive");
         let all_i64_params = !f.params.is_empty() && f.params.iter().all(|p| is_i64_type(&p.ty));
@@ -628,7 +628,7 @@ impl<'p> Interp<'p> {
     pub(super) fn run_goal(&self, name: &str, target: f64, max_evals: i64) -> Result<f64, Flow> {
         let _goal_guard = self.enter_goal(name);
         if !self.goal_name_is_known(name) {
-            return Err(Self::unknown_goal_name(name));
+            return Err(self.unknown_goal_name(name));
         }
         if let Some(f) = self.fns.get(name) {
             let f = *f;
