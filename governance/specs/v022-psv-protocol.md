@@ -4888,17 +4888,31 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       elsewhere under the same name (`validate`, `create`, `parse`...), and the ones with a real cross-crate caller
       are the documented executor and Cortex paths whose reasons already name the caller. (iv)
       `scripts/v022_exemption_survey.py` tries the cheapest kill for every exemption of a file set (its guard
-      opener to `if false && (..)`, the crate's tests, restore) and reports the ones a test kills. Swept: the
-      journal, workspace, branches, axon-audit and axon-os ledger. **Result: 91 exemptions; 32 killed by a test
-      (the exemption is wrong), 15 survived (the claim held), 34 have a non-`if` opener (a match arm or a
-      return: not tried), 10 have no line site.** The killed ones that matter to the protected route are now rows
-      (above). **The remainder, not converted for lack of an id in this range: journal.rs 515, 541, 562, 571,
-      623, 702, 722, 853, 1110 (the state machine's transition checks, an unknown scope, an empty origin, the
-      lock deadline), workspace.rs 448 (no omission record), branches.rs 247, 252, 262, 296, 332, 397, 403, 409,
-      417, 439, 469, 537 and axon-audit lib.rs 392, 399, 535, axon-os ledger.rs 81, 89: 27 exemptions whose
-      guards a test already kills and that need rows.** Their exemptions argue the route (the journal records the
-      Fabric's own durability, the branches and audit crates are off the protected route), which a killing test
-      does not refute; they stay exemptions with this list as the debt, and the next round should give them rows.
+      opener to `if false && (..)`, the crate's tests, restore) and reports the ones a test kills; a run that hits
+      its time bound is INCONCLUSIVE, never a kill. **A first pass of this survey was wrong and is withdrawn:**
+      `harden_makes_the_helper_non_dumpable` forked a multi-threaded test process, which deadlocked on an
+      allocator lock, hung the lib suite, and the survey read the timeouts as kills (journal 541, 623 and others
+      looked "wrong" and are not). The fork tests (this one and the guest's two) now run in a fresh single-test
+      process; the survey was rerun clean. Swept: the journal, workspace, branches, axon-audit and axon-os
+      ledger. **Result: 87 exemptions; 22 killed by a test (the exemption is wrong), 19 survived (the claim
+      held), 1 inconclusive (the journal's lock deadline), 35 have a non-`if` opener (a match arm or a return:
+      not tried), 10 have no line site.** The killed ones that were on the protected route and cheap are rows
+      (above: M2272, M2274, M2278, M2318). **The remainder, not converted because no id was left in this
+      range, each with the test that kills it: journal.rs 515 (`an_undeclared_scope_or_a_redeclared_ceiling_is_refused`),
+      562 (`a_record_that_violates_the_state_machine_is_corruption`), 571
+      (`sigkill_after_launch_reconciles_to_outcome_unknown_with_liability_kept`), 702
+      (`g13_settlement_without_origin_is_refused_and_writes_nothing`), 722
+      (`failed_and_cancelled_work_is_charged_or_held_never_dropped`), 1110
+      (`same_operation_id_with_a_different_input_digest_is_a_conflict`); branches.rs 247, 252, 262
+      (`an_experiment_needs_a_durable_base_two_arms_and_independent_approval`), 296
+      (`branches_start_from_one_frozen_base_with_independent_run_identities`), 397
+      (`cancelling_a_losing_branch_keeps_its_record_and_leaves_the_winner_alone`), 403, 409, 417, 439, 469
+      (`publication_requires_base_epoch_writer_exact_verified_output_and_approval`), 537
+      (`two_concurrent_publications_from_one_head_have_exactly_one_winner`); axon-audit lib.rs 392, 399, 535 and
+      axon-os ledger.rs 81, 89 (`ledger::tests::budget_acquisition_blocked`, `weight_exfil_egress_denied_R25`):
+      22 exemptions whose guards a test already kills and that need rows.** Their exemptions argue the route
+      (the journal records the Fabric's own durability, branches and audit are off the protected route), which a
+      killing test does not refute; they stay exemptions with this list as the debt, for the next round.
       A kind NOT surveyed: NOTHING TO ADMIT (114), OPERATOR-AUTHORED (60), OS ERROR (40): the first two are
       structural by type (no value to admit with; fields of an operator-owned file), the third fails closed.
     - **The gate's own staleness rule was too loose and is tightened.** Amendment 87 narrowed "exempt yet covered"
