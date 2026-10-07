@@ -2970,6 +2970,7 @@ out.append("LOCK_IS_SYMLINK=" + lock("lnk"))
 g.LOCK_DIR = os.path.join(base, "held")
 seen = []
 def probe(record_path, host):
+    os.makedirs(g.LOCK_DIR, mode=0o755, exist_ok=True)
     fd = os.open(os.path.join(g.LOCK_DIR, "axon-guest-build-uid-4242.lock"), os.O_RDWR | os.O_CREAT, 0o600)
     try:
         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB); seen.append("free")

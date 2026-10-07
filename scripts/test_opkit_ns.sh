@@ -15,7 +15,9 @@ LIB=$HERE/lib/opkit_ns.sh
 if [ "${1:-}" = --child ]; then
   mode=$2 W=$3
   mount -t tmpfs tmpfs "$W/a" || exit 90
-  [ "${TMPFS_B:-1}" = 1 ] && { mount -t tmpfs tmpfs "$W/b" || exit 90; }
+  if [ "${TMPFS_B:-1}" = 1 ]; then mount -t tmpfs tmpfs "$W/b" || exit 90
+  else mkdir -p "$W/disk" && mount --bind "$W/disk" "$W/b" || exit 90   # shadowed by a DISK directory: a different object, not a tmpfs
+  fi
   export OPKIT_DESTS_FOR_TEST="$W/a $W/b" OPKIT_VIEW_PID_FOR_TEST=${VIEW:?} OPKIT_NS_PID_FOR_TEST=${NSPID:?}
   [ "$VIEW" = self ] && export OPKIT_VIEW_PID_FOR_TEST=$$
   [ "$NSPID" = self ] && export OPKIT_NS_PID_FOR_TEST=$$
@@ -58,20 +60,25 @@ echo "ok: a destination that is the host's own directory (same device:inode) is 
 # amendment 97 (d): an UNREADABLE host view proves nothing, so it refuses (it used to pass vacuously)
 o=$(assert_in_ns 999999999 1); rc=$?
 [ $rc = 1 ] || fail "ATTACK: an unreadable host view was taken as 'not visible' (rc $rc): $o"
-grep -q 'cannot be read' <<<"$o" || fail "refused for another reason (rc $rc): $o"
+grep -q 'cannot be examined' <<<"$o" || fail "refused for another reason (rc $rc): $o"
 echo "ok: an unreadable host view refuses (it does not pass vacuously)"
 
 # amendment 97 (e): the FOR_TEST overrides are honoured for this script ONLY. Any other caller that
 # sets one is refused, never silently weakened.
-cp "$LIB" "$W/other-lib.sh"
 cat >"$W/other.sh" <<OTHER
 . "$LIB"
 opkit_ns_assert
 OTHER
-o=$(OPKIT_VIEW_PID_FOR_TEST=1 OPKIT_NS_PID_FOR_TEST=1 OPKIT_DESTS_FOR_TEST="$W/a" bash "$W/other.sh" 2>&1); rc=$?
+# Each caller runs in a namespace where the override WOULD pass (a fresh mount namespace, $W/a a tmpfs), so a
+# refusal can only be the caller check; the control is this script's own child (above), which passes.
+other() { # SCRIPT-OR-"bash -c" ...
+  unshare -m --propagation private bash -c 'mount -t tmpfs tmpfs "$1/a" && shift && exec env OPKIT_VIEW_PID_FOR_TEST=1 OPKIT_NS_PID_FOR_TEST=1 OPKIT_DESTS_FOR_TEST="$W/a" "$@"' bash "$W" "$@" 2>&1
+}
+export W
+o=$(other bash "$W/other.sh"); rc=$?
 [ $rc = 1 ] || fail "ATTACK: an OPKIT_*_FOR_TEST override from another script was honoured (rc $rc): $o"
 grep -q 'outside scripts/test_opkit_ns.sh' <<<"$o" || fail "refused for another reason (rc $rc): $o"
-o=$(OPKIT_VIEW_PID_FOR_TEST=1 bash -c ". '$LIB'; opkit_ns_assert" 2>&1); rc=$?
+o=$(other bash -c ". '$LIB'; opkit_ns_assert"); rc=$?
 [ $rc = 1 ] || fail "ATTACK: an OPKIT_*_FOR_TEST override from a bash -c caller was honoured (rc $rc): $o"
 grep -q 'outside scripts/test_opkit_ns.sh' <<<"$o" || fail "refused for another reason (rc $rc): $o"
 echo "ok: the *_FOR_TEST overrides are refused for any caller but this script"

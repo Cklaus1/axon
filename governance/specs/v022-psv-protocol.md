@@ -5559,8 +5559,10 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       a 0700 stash outside `$WORK` (`chmod -R a+rX "$WORK"` would have made the keys world-readable, which the
       first run of this change showed); later namespaces restore it with `OPKIT_RESTORE=STASH=DEST`. The forged
       host-record is made the same way. (d) **The canary check** was a negative lookup that passed when
-      `/proc/1/root` was unreadable; the proof now requires a readable host view and compares device:inode of each
-      destination through it with the namespace's own (M2268), refusing an unreadable view (M2511). The
+      `/proc/1/root` was unreadable; the proof now examines each destination through the host's view, refuses if it
+      cannot (an unreadable view; M2511), and compares its device:inode with the namespace's own (M2268). The
+      "not a tmpfs" refusal (M2266) is attacked with a shadow that is a DISK directory (a different object), because
+      an unshadowed directory is also caught by the identity comparison. The
       canary-visibility test was dropped: whenever a canary could be seen through the view, the two objects are the
       same device:inode, so it could not be killed independently of the identity check. (e) **`OPKIT_*_FOR_TEST`**
       are honoured only when the outermost script of the shell is `scripts/test_opkit_ns.sh` itself (which now

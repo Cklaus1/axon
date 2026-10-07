@@ -72,8 +72,6 @@ opkit_ns_assert() {
   if [ -n "$viewpid" ]; then view=/proc/$viewpid/root
   elif [ -n "${OPKIT_HOST_FD:-}" ]; then view=/proc/self/fd/$OPKIT_HOST_FD
   else view=/proc/1/root; fi
-  [ -d "$view/." ] && [ -r "$view/." ] \
-    || { echo "REFUSE(opkit_ns): the host's view of the filesystem ($view) cannot be read, so a canary cannot be checked against it" >&2; return 1; }
   own=$(readlink /proc/self/ns/mnt)
   if [ -n "$nspid" ]; then hostmnt=$(readlink "/proc/$nspid/ns/mnt")
   elif [ -n "${OPKIT_HOST_NS:-}" ]; then hostmnt=$(tr ',' '\n' <<<"$OPKIT_HOST_NS" | sed -n 's/^mnt=//p')
@@ -102,7 +100,7 @@ opkit_ns_assert() {
     # /proc/1/root passed vacuously): the host's own $d, read through the host's view, must be a
     # DIFFERENT filesystem object (device:inode) from ours, and an unreadable view or an unstatable $d is a refusal.
     host_dev=$(stat -L -c '%d:%i' -- "$view$d" 2>/dev/null) \
-      || { echo "REFUSE(opkit_ns): the host's $d cannot be examined, so its identity cannot be compared with the shadow" >&2; return 1; }
+      || { echo "REFUSE(opkit_ns): the host's $d cannot be examined through the host's view ($view), so its identity cannot be compared with the shadow" >&2; return 1; }
     here_dev=$(stat -c '%d:%i' -- "$d")
     [ "$host_dev" != "$here_dev" ] \
       || { echo "REFUSE(opkit_ns): $d is the HOST's own directory (device:inode $here_dev), not a shadow" >&2; return 1; }
