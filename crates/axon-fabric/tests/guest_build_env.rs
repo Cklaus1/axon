@@ -117,6 +117,8 @@ fn checkout(parent: &Path) -> PathBuf {
     );
     git(&r, &["init", "-q", "-b", "main"]);
     git(&r, &["add", "-A"]);
+    // Amendment 92: the rootfs step reads the profile's pin and guest-init.sh from the COMMITTED tree.
+    git(&r, &["commit", "-q", "-m", "fixture"]);
     r
 }
 
@@ -184,8 +186,36 @@ fn test_parent() -> &'static Path {
     })
 }
 
-/// `guest_build_env.py ...` from the checkout.
+/// `inner` re-built to run in a PRIVATE PID namespace (`unshare --pid --fork --mount-proc
+/// --kill-child`), optionally through `sh -c SCRIPT sh` first. Amendment 92: the runner kills every
+/// process of the build uid after a step, and the default build uid (65534) is `nobody` on a dev host,
+/// so no test may run it where it could see (and signal) the host's processes.
+fn in_pid_ns(inner: &Command, script: Option<&str>) -> Command {
+    let mut c = Command::new("/usr/bin/unshare");
+    c.args(["--pid", "--fork", "--mount-proc", "--kill-child"]);
+    if let Some(sc) = script {
+        c.args(["sh", "-c", sc, "sh"]);
+    }
+    c.arg(inner.get_program()).args(inner.get_args());
+    for (k, v) in inner.get_envs() {
+        match v {
+            Some(v) => c.env(k, v),
+            None => c.env_remove(k),
+        };
+    }
+    if let Some(d) = inner.get_current_dir() {
+        c.current_dir(d);
+    }
+    c
+}
+
+/// `guest_build_env.py ...` from the checkout, in a private PID namespace.
 fn gbe(repo: &Path) -> Command {
+    in_pid_ns(&gbe_raw(repo), None)
+}
+
+/// The same, without the namespace: only for commands that run no build step.
+fn gbe_raw(repo: &Path) -> Command {
     let mut c = script_spawn::script(
         "python3",
         repo.join("scripts/guest_build_env.py"),
@@ -2414,5 +2444,204 @@ fn main() {{
     assert!(
         got.contains("open-rustc-for-write=false") && got.contains("list-keys=false"),
         "ATTACK: build code could open the compiler for writing or list the proof keys: {got}"
+    );
+}
+
+// ---- Amendment 92: the build uid's processes and trees after a step -------------------------------
+
+/// `guest_build_env.py cargo REC ...` run in a PRIVATE PID namespace (unshare --pid --mount-proc), so the
+/// runner's "kill every process of the build uid" can only ever see this namespace's processes (the
+/// default build uid, 65534, is `nobody` on a dev host: a test must never signal the host's). After the
+/// step the shell measures, still inside the namespace, who survived and whether the artifact moved.
+fn isolated_cargo(repo: &Path, rec: &Path, art: &Path, writer: &Path) -> String {
+    let mut inner = gbe_raw(repo);
+    inner
+        .arg("cargo")
+        .arg(rec)
+        .args(["--rustflags", CRT, "--"])
+        .args(GUEST_INIT);
+    let script = r#"
+"$@"; echo "STEP_RC=$?"
+echo "ART0=$(sha256sum "$ART" | cut -d' ' -f1)"
+echo "WSRC0=$(cat "$WSRC" 2>/dev/null | head -c 20)"
+sleep 2
+n=0; for s in /proc/[0-9]*/status; do u=$(awk '/^Uid:/{print $2}' "$s" 2>/dev/null); [ "$u" = 65534 ] && n=$((n+1)); done
+echo "SURVIVORS=$n"
+echo "ART1=$(sha256sum "$ART" | cut -d' ' -f1)"
+echo "WSRC1=$(cat "$WSRC" 2>/dev/null | head -c 20)"
+"#;
+    let mut c = in_pid_ns(&inner, Some(script));
+    c.env("ART", art).env("WSRC", writer);
+    text(&c.output().unwrap())
+}
+
+/// A checkout whose build script leaves behind a DETACHED process (setsid, no stdio) of the build uid
+/// that keeps rewriting the built binary and a source-copy file after cargo has exited.
+fn detached_writer_checkout(d: &Path) -> PathBuf {
+    let r = checkout(d);
+    write(
+        &r.join("guest/build.rs"),
+        r#"use std::path::PathBuf;
+use std::process::{Command, Stdio};
+fn main() {
+    let mut p = PathBuf::from(std::env::var("OUT_DIR").unwrap());
+    while !p.join("cargo-home").is_dir() { if !p.pop() { return; } }
+    let art = p.join("target").join("x86_64-unknown-linux-musl").join("release").join("axon-guest-init");
+    let src = p.join("src/profiles/linux-microvm/guest-init.sh");
+    let sh = format!("while :; do printf EVIL > '{}'; printf EVIL > '{}'; sleep 0.05; done", art.display(), src.display());
+    let _ = Command::new("/usr/bin/setsid").args(["sh", "-c", &sh])
+        .stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn();
+}
+"#,
+    );
+    git(&r, &["add", "-A"]);
+    git(&r, &["commit", "-q", "-m", "writer"]);
+    r
+}
+
+/// M2261: nothing of the build uid runs after a step; the signed artifact does not follow a detached writer.
+#[test]
+fn a_detached_build_process_does_not_outlive_its_step_or_rewrite_what_is_signed() {
+    let d = tempfile::tempdir().unwrap();
+    let r = detached_writer_checkout(d.path());
+    let out = d.path().join("out");
+    let o = build_env_only(&r, &out, &[]);
+    assert!(o.status.success(), "setup: begin: {}", text(&o));
+    let rec = record(&out);
+    let base = base_of(&rec);
+    let art = base
+        .join("target")
+        .join("x86_64-unknown-linux-musl")
+        .join("release")
+        .join("axon-guest-init");
+    let res = isolated_cargo(
+        &r,
+        &out.join("build-env.json"),
+        &art,
+        &base.join("src/profiles/linux-microvm/guest-init.sh"),
+    );
+    discard(&rec);
+    assert!(res.contains("STEP_RC=0"), "setup: the step builds: {res}");
+    assert!(
+        res.contains("SURVIVORS=0"),
+        "ATTACK: a detached build-uid process survived the step:\n{res}"
+    );
+    let get = |k: &str| {
+        res.lines()
+            .find_map(|l| l.strip_prefix(k))
+            .unwrap_or("")
+            .to_string()
+    };
+    assert!(
+        !get("ART0=").is_empty() && get("ART0=") == get("ART1="),
+        "ATTACK: the artifact changed after the step while a detached writer ran:\n{res}"
+    );
+    assert!(
+        !get("WSRC0=").is_empty() && get("WSRC0=") == get("WSRC1="),
+        "ATTACK: the detached writer rewrote the source copy after the step:\n{res}"
+    );
+}
+
+/// M2262: after a step the three trees are root's and writable by root alone, whatever the build made.
+#[test]
+fn the_trees_a_step_leaves_are_root_owned_and_not_writable_by_the_build_uid() {
+    use std::os::unix::fs::MetadataExt;
+    let d = tempfile::tempdir().unwrap();
+    let r = checkout(d.path());
+    write(
+        &r.join("guest/build.rs"),
+        r#"use std::os::unix::fs::PermissionsExt;
+use std::path::PathBuf;
+fn main() {
+    let mut p = PathBuf::from(std::env::var("OUT_DIR").unwrap());
+    while !p.join("cargo-home").is_dir() { if !p.pop() { return; } }
+    let d = p.join("target/evil-dir");
+    let _ = std::fs::create_dir_all(&d);
+    let _ = std::fs::set_permissions(&d, std::fs::Permissions::from_mode(0o777));
+    let f = d.join("w");
+    let _ = std::fs::write(&f, "x");
+    let _ = std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o666));
+    let _ = std::fs::write(p.join("src/evil-src"), "x");
+    let _ = std::fs::set_permissions(p.join("src/evil-src"), std::fs::Permissions::from_mode(0o666));
+}
+"#,
+    );
+    git(&r, &["add", "-A"]);
+    let out = d.path().join("out");
+    let o = build_env_only(&r, &out, &[]);
+    assert!(o.status.success(), "setup: begin: {}", text(&o));
+    let rec = record(&out);
+    let b = gcargo(&r, &out.join("build-env.json"), Some(CRT), &GUEST_INIT);
+    let base = base_of(&rec);
+    let mut bad = vec![];
+    let mut seen_evil = false;
+    for t in ["src", "target", "cargo-home"] {
+        let mut stack = vec![base.join(t)];
+        while let Some(p) = stack.pop() {
+            let m = std::fs::symlink_metadata(&p).unwrap();
+            if p.ends_with("evil-dir/w") || p.ends_with("evil-src") {
+                seen_evil = true;
+            }
+            if m.uid() != 0 || (!m.file_type().is_symlink() && m.mode() & 0o022 != 0) {
+                bad.push(format!(
+                    "{} uid {} mode {:o}",
+                    p.display(),
+                    m.uid(),
+                    m.mode() & 0o7777
+                ));
+            }
+            if m.is_dir() {
+                for e in std::fs::read_dir(&p).unwrap() {
+                    stack.push(e.unwrap().path());
+                }
+            }
+        }
+    }
+    discard(&rec);
+    assert!(b.status.success(), "setup: the step builds: {}", text(&b));
+    assert!(
+        seen_evil,
+        "setup: the build script made its world-writable files"
+    );
+    assert!(
+        bad.is_empty(),
+        "ATTACK: after the step the build uid still owns or can write the tree that is hashed: {:?}",
+        &bad[..bad.len().min(5)]
+    );
+}
+
+/// M2263: the rootfs takes guest-init.sh and kernel.pin from the COMMITTED tree, not the builder's copy.
+#[test]
+fn the_rootfs_inputs_come_from_the_committed_tree_not_the_builders_copy() {
+    let d = tempfile::tempdir().unwrap();
+    let (r, rec_path, rec) = begun(d.path());
+    finished(&r, &rec_path);
+    let prof = base_of(&rec).join("src/profiles/linux-microvm");
+    std::fs::write(prof.join("guest-init.sh"), "#!/bin/sh\necho EVIL\n").unwrap();
+    let pin = std::fs::read_to_string(prof.join("kernel.pin")).unwrap();
+    std::fs::write(
+        prof.join("kernel.pin"),
+        pin.replace("BUSYBOX_SHA256=", "BUSYBOX_SHA256=00"),
+    )
+    .unwrap();
+    let sq = d.path().join("rootfs.sqfs");
+    let o = gbe(&r)
+        .arg("rootfs")
+        .arg(&rec_path)
+        .arg(&sq)
+        .output()
+        .unwrap();
+    let after = record(&d.path().join("out"));
+    discard(&rec);
+    assert!(
+        o.status.success(),
+        "ATTACK: the rootfs read its pin from the builder's private copy: {}",
+        text(&o)
+    );
+    let want = format!("{:x}", Sha256::digest(b"#!/bin/sh\necho init\n"));
+    assert_eq!(
+        after["rootfs"]["inputs"]["guest-init.sh"].as_str().unwrap(),
+        want,
+        "ATTACK: the rootfs took guest-init.sh from the builder's private copy"
     );
 }

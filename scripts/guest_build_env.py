@@ -114,14 +114,17 @@ of whose components is not this controlled build's.
 import hashlib
 import hmac
 import json
+import fcntl
 import os
 import pwd
 import re
 import stat
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
+import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCHEMA = "axon-guest-build-env/2"
@@ -709,6 +712,86 @@ def chown_tree(path, uid, gid):
     subprocess.run(["/bin/chown", "-R", "--no-dereference", f"{uid}:{gid}", "--", path], check=True)
 
 
+def build_uid_pids(uid):
+    """Every live (non-zombie) process whose real, effective, saved or fs uid is `uid`, read from
+    /proc: a verified PID set, never a name match. Excludes this process."""
+    me, out = os.getpid(), []
+    for ent in os.listdir("/proc"):
+        if not ent.isdigit() or int(ent) == me:
+            continue
+        try:
+            st = open(f"/proc/{ent}/status").read()
+        except OSError:
+            continue  # exited between listdir and open
+        uids, state = None, ""
+        for line in st.splitlines():
+            if line.startswith("Uid:"):
+                uids = [int(x) for x in line.split()[1:5]]
+            elif line.startswith("State:"):
+                state = line.split()[1]
+        if uids and uid in uids and state != "Z":
+            out.append(int(ent))
+    return out
+
+
+def reap_build_processes():
+    """Amendment 92: after a build step NOTHING of the build uid may still run. A detached
+    descendant of a build script or proc macro (setsid, double fork, nohup) outlives cargo and
+    would keep writing the target dir and source copy the runner is about to hash and sign.
+    Kill the build uid's whole PID set until a pass finds none, then refuse if any survives.
+    The build uid is dedicated to the build (it owns nothing else; see build_ids)."""
+    uid, _ = build_ids()
+    for _ in range(100):
+        pids = build_uid_pids(uid)
+        if not pids:
+            return
+        for pid in pids:
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        time.sleep(0.05)
+    fail(f"processes of the build uid {uid} survived SIGKILL after the build step: {build_uid_pids(uid)}")
+
+
+def build_uid_lock():
+    """Amendment 92: the reaper kills the build uid's WHOLE PID set, so two jobs of one build uid
+    must not overlap (each would kill the other's cargo). One advisory lock per build uid, held
+    from handing the trees over to the build until they are locked back. Returns the open fd."""
+    uid, _ = build_ids()
+    d = "/run/lock" if os.path.isdir("/run/lock") else "/run"
+    fd = os.open(os.path.join(d, f"axon-guest-build-uid-{uid}.lock"),
+                 os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+    fcntl.flock(fd, fcntl.LOCK_EX)
+    return fd
+
+
+def hand_to_build(rec):
+    """Give the build processes their three trees (source copy, CARGO_HOME, target)."""
+    uid, gid = build_ids()
+    for k in ("src_dir", "cargo_home", "target_dir"):
+        chown_tree(rec[k], uid, gid)
+
+
+def lock_from_build(rec):
+    """Amendment 92: after the step, and BEFORE anything is hashed or read for signing, the three
+    trees are root's and writable by root alone: even a process the reaper could not see can no
+    longer change the bytes. (A build script may have made files group/other-writable.)"""
+    for k in ("src_dir", "cargo_home", "target_dir"):
+        chown_tree(rec[k], 0, 0)
+        subprocess.run(["/bin/chmod", "-R", "go-w", "--", rec[k]], check=True)
+
+
+def committed_file(rel):
+    """`rel` as the COMMITTED tree (ROOT's HEAD) holds it: the runner's own repository, never the
+    private copy the build uid owned. Bytes."""
+    r = subprocess.run([GIT, "--no-replace-objects", "-c", "safe.directory=*", "-C", ROOT, "show", f"HEAD:{rel}"],
+                       env=GIT_ENV, capture_output=True)
+    if r.returncode != 0:
+        fail(f"cannot read {rel} from the committed tree: {r.stderr.decode(errors='replace').strip()[-200:]}")
+    return r.stdout
+
+
 def begin(record_path, host=False):
     require_runner()
     chan, cargo, rustc = toolchain()
@@ -985,7 +1068,16 @@ def cargo_step(record_path, args, rustflags):
     entry = {"name": name, "args": args, "rustflags": rustflags, "config_before": before}
     rec["builds"].append(entry)
     write(record_path, rec)
-    r = subprocess.run(as_build_uid([rec["toolchain"]["cargo"], *args]), env=env, cwd=rec["src_dir"])
+    lockfd = build_uid_lock()
+    try:
+        hand_to_build(rec)
+        try:
+            r = subprocess.run(as_build_uid([rec["toolchain"]["cargo"], *args]), env=env, cwd=rec["src_dir"])
+        finally:
+            reap_build_processes()
+            lock_from_build(rec)
+    finally:
+        os.close(lockfd)
     entry["config_after"] = after = config_now(rec)
     # `write` re-measures cargo, rustc, the linker tools and the toolchain bin
     # directory and refuses to sign over any change the step made.
@@ -1138,9 +1230,9 @@ def dist_problems(dist, benv, kbuild, builder=None):
     return ""
 
 
-def read_pin(profile_dir):
+def read_pin(profile_dir, text=None):
     pin = {}
-    for line in open(os.path.join(profile_dir, "kernel.pin")):
+    for line in (text.splitlines() if text is not None else open(os.path.join(profile_dir, "kernel.pin"))):
         line = line.strip()
         if line and not line.startswith("#") and "=" in line:
             k, v = line.split("=", 1)
@@ -1164,8 +1256,9 @@ def rootfs(record_path, out):
     under a constructed environment; record every input and the output."""
     rec = load(record_path)
     base = os.path.dirname(rec["target_dir"])
-    prof = os.path.join(rec["src_dir"], "profiles", "linux-microvm")
-    pin = read_pin(prof)
+    # Amendment 92: the pin and guest-init.sh come from the COMMITTED tree, never from the private
+    # copy the build uid owned (a detached build process could have rewritten either there).
+    pin = read_pin(None, committed_file("profiles/linux-microvm/kernel.pin").decode())
     stage = tempfile.mkdtemp(prefix="rootfs-", dir=base)
     # The stage becomes the image's `/`: the unprivileged test uid must
     # traverse it (mkdtemp makes it 0700).
@@ -1185,7 +1278,8 @@ def rootfs(record_path, out):
         inputs[name] = got
     bb = os.path.join(stage, "bin", "busybox")
     inputs["busybox"] = pinned_copy(pin["BUSYBOX_SRC"], bb, pin["BUSYBOX_SHA256"], "busybox")
-    shutil.copyfile(os.path.join(prof, "guest-init.sh"), os.path.join(stage, "init"))
+    with open(os.path.join(stage, "init"), "wb") as f:
+        f.write(committed_file("profiles/linux-microvm/guest-init.sh"))
     inputs["guest-init.sh"] = sha256(os.path.join(stage, "init"))
     for f in ["init", "bin/busybox", *ROOTFS_BINARIES.values()]:
         os.chmod(os.path.join(stage, f), 0o755)
@@ -1256,7 +1350,17 @@ def kernel(record_path, dist, profile_dir):
         steps = [[make, "ARCH=x86_64", "olddefconfig"],
                  [make, "ARCH=x86_64", f"-j{os.cpu_count() or 1}", "vmlinux"]]
         for argv in steps:
-            r = subprocess.run(as_build_uid(argv), env=kenv, cwd=ksrc, stdout=subprocess.DEVNULL)
+            lockfd = build_uid_lock()
+            try:
+                chown_tree(ksrc, uid, gid)
+                try:
+                    r = subprocess.run(as_build_uid(argv), env=kenv, cwd=ksrc, stdout=subprocess.DEVNULL)
+                finally:
+                    reap_build_processes()
+                    chown_tree(ksrc, 0, 0)
+                    subprocess.run(["/bin/chmod", "-R", "go-w", "--", ksrc], check=True)
+            finally:
+                os.close(lockfd)
             if r.returncode != 0:
                 fail(f"{' '.join(argv)} failed ({r.returncode})")
         vml = os.path.join(ksrc, "vmlinux")

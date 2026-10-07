@@ -740,7 +740,13 @@ else:
         here = open("/etc/machine-id").readline().strip() or None
     except OSError:
         here = None
-    if facts.get("machine_id") != here:
+    # Amendment 92: a record with a null/empty machine-id and a host with none compare None == None,
+    # which is agreement about nothing. Either side lacking one is refused.
+    if not facts.get("machine_id") or here is None:
+        out.append("the B263 record's host_facts.machine_id or this host's /etc/machine-id is missing or empty: "
+                   "a host identity compared as None == None identifies nothing (amendment 92); qualify THIS host "
+                   "with a machine-id")
+    elif facts.get("machine_id") != here:
         out.append(f"the B263 record was measured on machine-id {facts.get('machine_id')}, not this host's {here}: "
                    "qualify THIS host (b263_qualify.sh --host-label NAME)")
     if not facts.get("host_label"):

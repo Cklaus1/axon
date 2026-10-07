@@ -2031,6 +2031,19 @@ ATTACK_MARKERS.update({
     'M2238': r'ATTACK: the freeze bound a guest build record whose environment lacks the git ceiling or a fixed PATH',
 })
 
+# C9 round 8, BUILDENV4 (M2260-M2269; amendment 92).
+ATTACK_MARKERS.update({
+    'M2261': r'ATTACK: a detached build-uid process survived the step',
+    'M2262': r'ATTACK: after the step the build uid still owns or can write the tree that is hashed',
+    'M2263': r"ATTACK: the rootfs read its pin from the builder's private copy",
+    'M2264': r"ATTACK: the rootfs took guest-init.sh from the builder's private copy",
+    'M2265': r'ATTACK: the drift check ACCEPTED an unwrapped --apply',
+    'M2266': r'ATTACK: a destination that is not a tmpfs was accepted',
+    'M2267': r"ATTACK: running in the host's own mount namespace was accepted",
+    'M2268': r"ATTACK: a canary visible from the host's view was accepted",
+    'M2269': r'ATTACK: ns_run ran its command although the isolation was not proved',
+})
+
 # C9 round 7, EQGATE3 (M2270-M2339; amendment 91).
 ATTACK_MARKERS.update({
     'M2270': r'ATTACK: a use of (env_clear|Command::env|current_dir|Stdio::null) with no row',

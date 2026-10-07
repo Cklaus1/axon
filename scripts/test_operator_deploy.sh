@@ -66,6 +66,18 @@ BUILD_UID=65534
 KEYPARENT=$(mktemp -d /var/lib/axon-opkit-keys.XXXXXX) || { echo "cannot make a builder-private parent under /var/lib"; exit 2; }
 chmod 0755 "$KEYPARENT"
 trap 'rm -rf "$WORK" "$KEYPARENT"' EXIT
+# Amendment 92: EVERY kit invocation below goes through ns_run (scripts/lib/opkit_ns.sh), which
+# runs it under `unshare -m` with a tmpfs over every destination the kit can reach and REFUSES
+# (exit 97, the kit never starts) unless that isolation is proved first. A kit guard that is
+# missing or regressed therefore turns the attack into an install INSIDE the namespace.
+# scripts/opkit_ns_drift.py fails the build if a test script runs the kit any other way.
+[ -z "${OPKIT_DESTS_FOR_TEST:-}${OPKIT_NS_PID_FOR_TEST:-}${OPKIT_VIEW_PID_FOR_TEST:-}" ] || { echo "REFUSE: an OPKIT_*_FOR_TEST override is set; the kit test proves the REAL destinations"; exit 2; }
+export OPKIT_LIB=$HERE/lib/opkit_ns.sh OPKIT_SCRATCH=$WORK/scratch OPKIT_CARRY="$KEYPARENT"
+mkdir "$OPKIT_SCRATCH" || exit 2
+. "$OPKIT_LIB"
+if [ -f /usr/local/bin/firecracker ] && [ -f /usr/local/bin/jailer ]; then
+  cp /usr/local/bin/firecracker /usr/local/bin/jailer "$WORK/" && export OPKIT_EXTRA="$WORK/firecracker $WORK/jailer"
+fi
 python3 - "$CLONE" "$DIST" "$KEYPARENT" <<'PY' || { echo "cannot write the synthetic manifest"; exit 2; }
 import hashlib, importlib.util, json, os, sys
 c, d, parent = sys.argv[1:4]
@@ -148,11 +160,14 @@ COMMIT=$(git -C "$CLONE" rev-parse HEAD)
 # A fresh standalone clone, a fresh EMPTY target dir and CARGO_HOME, the
 # constructed environment, one fixed invocation, and a record SIGNED by the
 # builder (this user, under $KEYPARENT, which the kit is told is the pinned
-# builder). It builds axon-fabric and its dependencies from nothing every run.
+# builder). Amendment 92: the runner kills every process of the build uid after a step, and that uid is
+# `nobody` here, so the build runs in a private PID namespace that holds nothing of the host's.
+# It builds axon-fabric and its dependencies from nothing every run.
 HOSTOUT=$WORK/hostbuild
 BUILDER_UID=$(id -u)
 (cd "$CLONE" && env -i HOME="$HOME" PATH=/usr/bin:/bin AXON_GUEST_BUILD_PARENT="$KEYPARENT" AXON_GUEST_BUILD_UID="$BUILD_UID" \
     ${http_proxy:+http_proxy="$http_proxy"} ${https_proxy:+https_proxy="$https_proxy"} \
+    unshare --pid --fork --mount-proc --kill-child \
     python3 -B scripts/guest_build_env.py host-build "$HOSTOUT") \
   || { echo "the controlled host build failed"; exit 2; }
 BIN=$HOSTOUT
@@ -197,7 +212,7 @@ snapshot() {
   } 2>/dev/null | sort
 }
 before=$(snapshot)
-OUT=$(bash "$KIT" "${ARGS[@]}" 2>&1); RC=$?
+OUT=$(ns_run bash "$KIT" "${ARGS[@]}" 2>&1); RC=$?
 [ "$(snapshot)" = "$before" ] || fail "the dry run changed the host"
 ok "a dry run writes nothing (host state identical before and after)"
 case $RC in 0|3) ;; *) fail "dry run exited $RC: $OUT" ;; esac
@@ -308,28 +323,28 @@ refused() { # label pattern cmd...
   ok "$label is refused"
 }
 touch "$CLONE/untracked-file"
-refused "a clone with an untracked file" "is dirty" bash "$KIT" "${ARGS[@]}"
+refused "a clone with an untracked file" "is dirty" ns_run bash "$KIT" "${ARGS[@]}"
 rm -f "$CLONE/untracked-file"
 mkdir -p "$CLONE/scripts/__pycache__"; touch "$CLONE/scripts/__pycache__/x.pyc"
-refused "a clone with a git-ignored file outside target/ and dist/ (decision C)" "is dirty" bash "$KIT" "${ARGS[@]}"
+refused "a clone with a git-ignored file outside target/ and dist/ (decision C)" "is dirty" ns_run bash "$KIT" "${ARGS[@]}"
 rm -rf "$CLONE/scripts/__pycache__"
 echo "# edit" >>"$CLONE/README.md"
-refused "a clone with a modified tracked file" "is dirty" bash "$KIT" "${ARGS[@]}"
+refused "a clone with a modified tracked file" "is dirty" ns_run bash "$KIT" "${ARGS[@]}"
 git -C "$CLONE" checkout -q -- README.md
 git -C "$CLONE" worktree add -q "$WORK/linked" HEAD 2>/dev/null || fail "cannot make a linked worktree"
-refused "a linked worktree" "linked worktree" bash "$WORK/linked/scripts/operator_deploy_protected_host.sh" \
+refused "a linked worktree" "linked worktree" ns_run bash "$WORK/linked/scripts/operator_deploy_protected_host.sh" \
   --from "$WORK/linked" --bin-dir "$BIN"
 git -C "$CLONE" worktree remove --force "$WORK/linked"
 mkdir "$WORK/symgit"; cp -a "$CLONE/." "$WORK/symgit/"; rm -rf "$WORK/symgit/.git"; ln -s "$CLONE/.git" "$WORK/symgit/.git"
-refused "a symlinked .git" "not a real directory" bash "$WORK/symgit/scripts/operator_deploy_protected_host.sh" \
+refused "a symlinked .git" "not a real directory" ns_run bash "$WORK/symgit/scripts/operator_deploy_protected_host.sh" \
   --from "$WORK/symgit" --bin-dir "$BIN"
 cp "$KIT" "$WORK/other-kit.sh"; echo "# not the clone's" >>"$WORK/other-kit.sh"
-refused "a kit that is not the clone's own copy" "not the clone's own" bash "$WORK/other-kit.sh" "${ARGS[@]}"
+refused "a kit that is not the clone's own copy" "not the clone's own" ns_run bash "$WORK/other-kit.sh" "${ARGS[@]}"
 # Amendment 68: no observer PROGRAM, and the observer is its own principal.
-refused "ATTACK: --observer-bin (an in-uid observer program)" "since amendment 68" bash "$KIT" "${ARGS[@]}" --observer-bin /usr/bin/true
-refused "ATTACK: --observer-interpreter" "since amendment 68" bash "$KIT" "${ARGS[@]}" --observer-interpreter /usr/bin/true
-refused "ATTACK: an observer user that is the Fabric user" "five different users" bash "$KIT" "${ARGS[@]}" --observer-user axon-fabric
-refused "ATTACK: an observer user that is the custodian user" "five different users" bash "$KIT" "${ARGS[@]}" --observer-user axon-custodian
+refused "ATTACK: --observer-bin (an in-uid observer program)" "since amendment 68" ns_run bash "$KIT" "${ARGS[@]}" --observer-bin /usr/bin/true
+refused "ATTACK: --observer-interpreter" "since amendment 68" ns_run bash "$KIT" "${ARGS[@]}" --observer-interpreter /usr/bin/true
+refused "ATTACK: an observer user that is the Fabric user" "five different users" ns_run bash "$KIT" "${ARGS[@]}" --observer-user axon-fabric
+refused "ATTACK: an observer user that is the custodian user" "five different users" ns_run bash "$KIT" "${ARGS[@]}" --observer-user axon-custodian
 # Amendment 86 (round 6): the host binaries are the CONTROLLED host build's. The
 # kit installs a --bin-dir only if its host-build.json is signed by the PINNED
 # builder (--builder-uid / --builder-parent: the operator's word) and every
@@ -344,13 +359,13 @@ import json, sys
 p = sys.argv[1]; r = json.load(open(p)); r["src_files"] = 99; json.dump(r, open(p, "w"))
 PY
 refused "ATTACK: a host build record edited after its builder signed it" "does not hold" \
-  bash "$KIT" --from "$CLONE" --bin-dir "$WORK/fakebin" $KB
+  ns_run bash "$KIT" --from "$CLONE" --bin-dir "$WORK/fakebin" $KB
 copybin; python3 - "$WORK/fakebin/host-build.json" <<'PY'
 import json, sys
 p = sys.argv[1]; r = json.load(open(p)); r.pop("proof"); json.dump(r, open(p, "w"))
 PY
 refused "ATTACK: a hand-written host build record (no builder proof)" "no builder proof" \
-  bash "$KIT" --from "$CLONE" --bin-dir "$WORK/fakebin" $KB
+  ns_run bash "$KIT" --from "$CLONE" --bin-dir "$WORK/fakebin" $KB
 # The reviewer's forge: another account, with its own private directory and key.
 copybin; FORGE=$(mktemp -d /var/lib/axon-opkit-forge.XXXXXX); chmod 0755 "$FORGE"
 python3 - "$WORK/fakebin/host-build.json" "$FORGE" "$KEYPARENT" "$CLONE" <<'PY' || fail "cannot forge the host record"
@@ -368,32 +383,34 @@ r["builder_uid"] = 4242; r["build_parent_ancestors"] = anc; r["proof"]["id"] = "
 r["proof"]["hmac"] = hmac.new(b"f" * 64, g.proof_payload(r), "sha256").hexdigest()
 json.dump(r, open(p, "w"))
 PY
-refused "ATTACK: a host build record signed by another account under its own directory" "cannot be checked" \
-  bash "$KIT" --from "$CLONE" --bin-dir "$WORK/fakebin" $KB
+OPKIT_CARRY="$KEYPARENT $FORGE" refused "ATTACK: a host build record signed by another account under its own directory" "cannot be checked" \
+  ns_run bash "$KIT" --from "$CLONE" --bin-dir "$WORK/fakebin" $KB
 rm -rf "$FORGE"
 copybin; rm -f "$WORK/fakebin/host-build.json"
 refused "ATTACK: binaries with no host-build record (a plain cargo build)" "holds no readable host-build.json" \
-  bash "$KIT" --from "$CLONE" --bin-dir "$WORK/fakebin" $KB
+  ns_run bash "$KIT" --from "$CLONE" --bin-dir "$WORK/fakebin" $KB
 copybin; printf 'built elsewhere' >"$WORK/fakebin/axon-observer"
 refused "ATTACK: a binary replaced after the controlled build" "is not the bytes the controlled host build recorded" \
-  bash "$KIT" --from "$CLONE" --bin-dir "$WORK/fakebin" $KB
+  ns_run bash "$KIT" --from "$CLONE" --bin-dir "$WORK/fakebin" $KB
 refused "ATTACK: a judge told another builder uid" "cannot be checked" \
-  bash "$KIT" --from "$CLONE" --bin-dir "$BIN" --builder-uid $((BUILDER_UID + 1)) --builder-parent "$KEYPARENT" --build-uid "$BUILD_UID"
+  ns_run bash "$KIT" --from "$CLONE" --bin-dir "$BIN" --builder-uid $((BUILDER_UID + 1)) --builder-parent "$KEYPARENT" --build-uid "$BUILD_UID"
 refused "ATTACK: no --builder-uid at all (the record's own word is never taken)" "--builder-uid N is required" \
-  bash "$KIT" --from "$CLONE" --bin-dir "$BIN"
+  ns_run bash "$KIT" --from "$CLONE" --bin-dir "$BIN"
 refused "ATTACK: no --build-uid (the uid the build ran as is the operator's word too)" "--build-uid N is required" \
-  bash "$KIT" --from "$CLONE" --bin-dir "$BIN" --builder-uid "$BUILDER_UID" --builder-parent "$KEYPARENT"
+  ns_run bash "$KIT" --from "$CLONE" --bin-dir "$BIN" --builder-uid "$BUILDER_UID" --builder-parent "$KEYPARENT"
 refused "ATTACK: a build uid equal to the builder uid (build code as the key holder)" "must differ from --builder-uid" \
-  bash "$KIT" --from "$CLONE" --bin-dir "$BIN" --builder-uid "$BUILD_UID" --builder-parent "$KEYPARENT" --build-uid "$BUILD_UID"
+  ns_run bash "$KIT" --from "$CLONE" --bin-dir "$BIN" --builder-uid "$BUILD_UID" --builder-parent "$KEYPARENT" --build-uid "$BUILD_UID"
 refused "ATTACK: a build uid other than the one the record was built under" "not the pinned build uid" \
-  bash "$KIT" --from "$CLONE" --bin-dir "$BIN" --builder-uid "$BUILDER_UID" --builder-parent "$KEYPARENT" --build-uid 4243
-# (Run as an unprivileged uid: were the guard ever missing, this must not become a REAL apply
-# on whatever host runs the test -- the next refusal is "must run as root".)
+  ns_run bash "$KIT" --from "$CLONE" --bin-dir "$BIN" --builder-uid "$BUILDER_UID" --builder-parent "$KEYPARENT" --build-uid 4243
+# Amendment 92: run as ROOT, with nothing standing between the attack and a real install but
+# the guard under test -- safe because ns_run proves a private namespace first. Were the guard
+# missing, this --apply SUCCEEDS inside the namespace (and the test fails on the unexpected
+# exit status); it can never reach the host.
 refused "ATTACK: --apply without --expect-commit (the commit judges itself)" "--apply needs --expect-commit" \
-  setpriv --reuid=65534 --regid=65534 --clear-groups -- bash "$KIT" "${ARGS[@]}" --apply
+  ns_run bash "$KIT" "${ARGS[@]}" --no-systemctl --apply
 copybin; : >"$WORK/fakebin/extra-file"
 refused "ATTACK: a host build directory with a file the build did not make" "files the controlled host build did not make" \
-  bash "$KIT" --from "$CLONE" --bin-dir "$WORK/fakebin" $KB
+  ns_run bash "$KIT" --from "$CLONE" --bin-dir "$WORK/fakebin" $KB
 # The linker the host build recorded must be the one the guest build recorded
 # (and, once installed, the operator's pin): the deployed image's manifest names
 # another cc digest. (dist/ is excused from the clean-clone rule, so the same
@@ -424,18 +441,18 @@ m["source"]["build_environment"]["toolchain"]["host_tools"]["cc"]["sha256"] = "9
 json.dump(m, open(p, "w"))
 PY
 refused "ATTACK: a host build whose linker is not the one the guest build recorded" "compiler or linker is not the one" \
-  bash "$WORK/linker/scripts/operator_deploy_protected_host.sh" --from "$WORK/linker" --bin-dir "$BIN" --only binaries $KB
+  ns_run bash "$WORK/linker/scripts/operator_deploy_protected_host.sh" --from "$WORK/linker" --bin-dir "$BIN" --only binaries $KB
 rm -rf "$WORK/linker"
 # An ancestor config of the clone naming a compiler wrapper: the kit's own
 # config check (in a constructed environment) sees every ancestor.
 mkdir -p "$WORK/.cargo"; printf '[build]\nrustc-wrapper = "/usr/bin/sccache"\n' >"$WORK/.cargo/config.toml"
 refused "ATTACK: an ancestor cargo config naming a compiler wrapper" "build configuration is not the tree's own" \
-  bash "$KIT" "${ARGS[@]}"
+  ns_run bash "$KIT" "${ARGS[@]}"
 rm -rf "$WORK/.cargo"
 # A wrapper or flags in the kit's own environment are not what the binaries
 # were built under (the host build constructs its environment and drops them);
 # the kit's own config check runs in a constructed one too: control, it passes.
-RUSTC_WRAPPER=/usr/bin/true RUSTFLAGS="--cfg evil" PATH_EVIL=1 bash "$KIT" "${ARGS[@]}" >/dev/null 2>&1; rc=$?
+RUSTC_WRAPPER=/usr/bin/true RUSTFLAGS="--cfg evil" PATH_EVIL=1 ns_run bash "$KIT" "${ARGS[@]}" >/dev/null 2>&1; rc=$?
 case $rc in 0|3) ok "the caller's wrapper and flags do not reach the kit's judgement (the host build dropped them; control)" ;; *) fail "ambient variables changed the kit's verdict (rc $rc)" ;; esac
 # The guest build records are judged BEFORE anything is installed, by the
 # freeze's own judge: a record without its runner's proof, or edited after it,
@@ -454,7 +471,7 @@ for rel in ("dist/guest-linux/manifest.json", "profiles/linux-microvm/manifest.j
     open(p, "a").write("\n")
 PY
   (cd "$T" && G add -A && G commit -q -m "tampered guest record") || fail "cannot commit the tampered clone"
-  o=$(bash "$T/scripts/operator_deploy_protected_host.sh" --from "$T" --bin-dir "$BIN" --only guest $KB 2>&1); rc=$?
+  o=$(ns_run bash "$T/scripts/operator_deploy_protected_host.sh" --from "$T" --bin-dir "$BIN" --only guest $KB 2>&1); rc=$?
   [ $rc != 0 ] || fail "ATTACK: a guest image whose build record is $label was accepted by the kit: $o"
   grep -q "guest build records are not a controlled build's" <<<"$o" \
     || fail "$label: refused for another reason: $o"
@@ -465,8 +482,8 @@ tamper_guest "a hand-written one (no builder proof)" "m['source']['build_environ
 tamper_guest "edited after its runner signed it" "m['source']['build_environment']['src_files'] = 99"
 tamper_guest "a kernel record edited after signing" "m['kernel']['build_environment']['make'][1][2] = '-j1'"
 if [ "$(id -u)" = 0 ]; then
-  refused "--apply as a non-root uid" "must run as root" setpriv --reuid=65534 --regid=65534 --clear-groups -- \
-    bash "$KIT" "${ARGS[@]}" --apply
+  refused "--apply as a non-root uid" "must run as root" ns_run setpriv --reuid=65534 --regid=65534 --clear-groups -- \
+    bash "$KIT" "${ARGS[@]}" --no-systemctl --apply
 fi
 
 # ── the Fabric unit (amendment 65 / memo C2): no NoNewPrivileges, nothing implying it ──
@@ -478,12 +495,12 @@ mkunit() { # NAME LINE... : a [Service] unit for the Fabric user plus LINEs
     for l in "$@"; do printf '%s\n' "$l"; done; } >"$UNITS/$n.service"
 }
 unit_blocked() { # LABEL PATTERN UNITFILE : the kit must BLOCK the unit (exit 3) for that reason
-  local o rc; o=$(bash "$KIT" --from "$CLONE" --only fabric-unit --fabric-unit "$3" --fabric-pid 1 2>&1); rc=$?
+  local o rc; o=$(ns_run bash "$KIT" --from "$CLONE" --only fabric-unit --fabric-unit "$3" --fabric-pid 1 2>&1); rc=$?
   [ $rc = 3 ] || fail "ATTACK: a Fabric unit with $1 was not refused (exit $rc): $o"
   grep -Eq -- "BLOCKED\[fabric-unit\] Fabric unit .*$2" <<<"$o" || fail "ATTACK: a Fabric unit with $1 was refused for another reason: $o"
 }
 mkunit clean
-o=$(bash "$KIT" --from "$CLONE" --only fabric-unit --fabric-unit "$UNITS/clean.service" --fabric-pid 1 2>&1); rc=$?
+o=$(ns_run bash "$KIT" --from "$CLONE" --only fabric-unit --fabric-unit "$UNITS/clean.service" --fabric-pid 1 2>&1); rc=$?
 [ $rc = 0 ] && grep -q 'OK\[fabric-unit\] Fabric unit .*no NoNewPrivileges' <<<"$o" \
   || fail "control: a Fabric unit with no NoNewPrivileges was not accepted (exit $rc): $o"
 mkunit nnp 'NoNewPrivileges=yes'; unit_blocked "NoNewPrivileges=yes" 'NoNewPrivileges=yes' "$UNITS/nnp.service"
@@ -502,7 +519,7 @@ printf '[Service]\nExecStart=/usr/local/libexec/axon/axon-fabric status\n' >"$UN
 unit_blocked "no User= (root)" 'User=\(unset: root\)' "$UNITS/root.service"
 # A drop-in after the unit wins (systemctl cat prints them in that order).
 mkunit dropin 'NoNewPrivileges=yes' '' '[Service]' 'NoNewPrivileges=no' 'SystemCallFilter=@system-service' 'SystemCallFilter='
-o=$(bash "$KIT" --from "$CLONE" --only fabric-unit --fabric-unit "$UNITS/dropin.service" --fabric-pid 1 2>&1); rc=$?
+o=$(ns_run bash "$KIT" --from "$CLONE" --only fabric-unit --fabric-unit "$UNITS/dropin.service" --fabric-pid 1 2>&1); rc=$?
 [ $rc = 0 ] || fail "control: a drop-in that resets NoNewPrivileges and SystemCallFilter was not honoured (exit $rc): $o"
 mkunit dropin2 'NoNewPrivileges=no' '' '[Service]' 'NoNewPrivileges=yes'
 unit_blocked "NoNewPrivileges=yes in a drop-in" 'NoNewPrivileges=yes' "$UNITS/dropin2.service"
@@ -513,6 +530,7 @@ b263_fixture() { # FILE MACHINE_ID LABEL
   python3 - "$1" "$2" "$3" "$CLONE/dist/guest-linux/manifest.json" <<'PY'
 import hashlib, json, sys
 out, mid, label, man = sys.argv[1:5]
+if mid == "NULL": mid = None
 json.dump({"schema": "axon-b263-evidence/1", "issuer_key_id": "ed25519:0000000000000000", "result": "PASS",
            "host": f"{label} (fixture)", "host_facts": {"machine_id": mid, "host_label": label or None},
            "profile": {"manifest_sha256": hashlib.sha256(open(man, "rb").read()).hexdigest()},
@@ -522,13 +540,20 @@ PY
   echo '{"fixture":"not a signature"}' >"$1.sig"
 }
 b263_fixture "$WORK/b263-other.json" 0123456789abcdef0123456789abcdef opkit-host
-o=$(bash "$KIT" "${ARGS[@]}" --only data --b263-record "$WORK/b263-other.json" 2>&1)
+o=$(ns_run bash "$KIT" "${ARGS[@]}" --only data --b263-record "$WORK/b263-other.json" 2>&1)
 grep -q 'PENDING\[data\] B263: the B263 record was measured on machine-id 0123456789abcdef0123456789abcdef, not this host' <<<"$o" \
   || fail "ATTACK: a B263 record measured on another machine was not held back: $o"
 b263_fixture "$WORK/b263-here.json" "$(head -n1 /etc/machine-id)" opkit-host
-o=$(bash "$KIT" "${ARGS[@]}" --only data --b263-record "$WORK/b263-here.json" 2>&1)
+o=$(ns_run bash "$KIT" "${ARGS[@]}" --only data --b263-record "$WORK/b263-here.json" 2>&1)
 grep -q 'PENDING\[data\] B263' <<<"$o" && fail "control: a B263 record measured on this host was held back: $o"
 ok "a B263 record measured on another machine is PENDING; one measured here is not"
+# Amendment 92 (M2260): None == None is agreement about nothing. A record with a null machine-id on a
+# host that has none (the machine-id file removed INSIDE the namespace) must not be accepted as "measured here".
+b263_fixture "$WORK/b263-null.json" NULL opkit-host
+o=$(ns_run sh -c 'rm -f /etc/machine-id; exec bash "$@"' sh "$KIT" "${ARGS[@]}" --only data --b263-record "$WORK/b263-null.json" 2>&1)
+grep -q 'PENDING\[data\] B263: .*machine-id is missing or empty' <<<"$o" \
+  || fail "ATTACK: a B263 record with a null machine-id was accepted on a host with none (None == None): $o"
+ok "a null machine-id on either side of the B263 host comparison is refused"
 
 # ══ 2. APPLY in a private mount namespace ════════════════════════════════════
 if [ "$(id -u)" != 0 ] || ! command -v unshare >/dev/null; then
@@ -540,18 +565,11 @@ cat >"$WORK/ns.sh" <<'NS'
 set -uo pipefail
 W=$1 KIT=$2 BIN=$3 OP=$4 SIGNER_PUB=$5 CLONE=$6 BUID=$7 BPAR=$8 BBU=$9 CMT=${10}
 fail() { echo "FAIL(ns): $*"; exit 1; }
-# Isolation first: nothing below may reach the host.
-# The builder-private parent (the fixture's proof keys) lives under /var/lib, which is
-# shadowed below: carry it across with its owners and modes.
-cp -a "$BPAR" "$W/keysave" || fail "cannot save the builder-private parent"
-mkdir "$W/etc"; mount -t tmpfs -o mode=0755 tmpfs "$W/etc" && cp -a /etc/. "$W/etc/" && mount --bind "$W/etc" /etc \
-  || fail "cannot shadow /etc"
-for d in /usr/local /var/lib /var/log /var/spool /run /srv; do
-  mount -t tmpfs -o mode=0755 tmpfs "$d" || fail "cannot shadow $d"
-done
-[ -L /var/mail ] || mount -t tmpfs -o mode=0755 tmpfs /var/mail || fail "cannot shadow /var/mail"
-mkdir -p "$BPAR" && cp -a "$W/keysave/." "$BPAR/" && chmod 0755 "$BPAR" || fail "cannot restore the builder-private parent"
-mkdir -p /usr/local/bin && install -m 0755 "$W/firecracker" "$W/jailer" /usr/local/bin/
+# Isolation first: nothing below may reach the host. ns_run (the caller) already
+# shadowed and PROVED the destinations; every kit call below re-asserts it.
+. "$OPKIT_LIB"
+opkit_ns_assert || fail "not in a proved private namespace"
+kit() { opkit_ns_assert || fail "REFUSED to run the kit: namespace isolation not proved"; bash "$KIT" "$@"; }
 grep -q axon-fabric /etc/passwd && fail "the shadow /etc already has axon users"
 ARGS=(--from "$CLONE" --bin-dir "$BIN" --suite-registry "$OP/suites/registry.json"
       --grant-registry "$OP/grants/grants.json" --signer-public-key "$SIGNER_PUB" --no-systemctl
@@ -563,7 +581,7 @@ ARGS=(--from "$CLONE" --bin-dir "$BIN" --suite-registry "$OP/suites/registry.jso
 # full apply below, under --no-systemctl, judges the unit's line as a file.
 if ! command -v setfacl >/dev/null 2>&1; then
   SC_ARGS=(); for a in "${ARGS[@]}"; do [ "$a" = --no-systemctl ] || SC_ARGS+=("$a"); done
-  bash "$KIT" "${SC_ARGS[@]}" --only systemd >"$W/nofacl.out" 2>&1; r=$?
+  kit "${SC_ARGS[@]}" --only systemd >"$W/nofacl.out" 2>&1; r=$?
   [ $r = 3 ] && grep -q 'BLOCKED\[systemd\] setfacl (the acl package) is required' "$W/nofacl.out" \
     || { cat "$W/nofacl.out"; fail "ATTACK: the kit did not BLOCK a host with no setfacl (exit $r)"; }
   echo "ok(ns): a host with no setfacl is BLOCKED where systemd would start the unit"
@@ -572,7 +590,7 @@ else
 fi
 # Runbook order: allowlist, users and directories, THEN the operator provisions
 # keys (here: inert fixtures), THEN the whole kit.
-bash "$KIT" "${ARGS[@]}" --only allowlist,users,dirs --apply >"$W/apply1.out" 2>&1 \
+kit "${ARGS[@]}" --only allowlist,users,dirs --apply >"$W/apply1.out" 2>&1 \
   || { r=$?; [ $r = 3 ] && grep -q 'authority store' "$W/apply1.out" || { cat "$W/apply1.out"; fail "first apply exited $r"; }; }
 FU=$(id -u axon-fabric) || fail "axon-fabric was not created"
 id -u axon-custodian >/dev/null && id -u axon-verifier >/dev/null && id -u axon-observer >/dev/null || fail "users not created"
@@ -633,7 +651,7 @@ setpriv --reuid="$FU" --regid="$FG" --clear-groups --no-new-privs -- sleep 3600 
 trap 'kill $FPID $NNP_PID $OSPID 2>/dev/null' EXIT
 ARGS+=(--fabric-unit "$W/fabric.service")
 GUEST="unshare --mount --propagation private sh -c 'mount -t tmpfs none /etc/axon && sh $CLONE/scripts/trust_root_guest_probe.sh /etc/axon/trust'"
-bash "$KIT" "${ARGS[@]}" --fabric-pid "$FPID" --b263-record "$W/b263.json" --agent 40003 --agent 40004 --guest-cmd "$GUEST" --apply >"$W/apply2.out" 2>&1
+kit "${ARGS[@]}" --fabric-pid "$FPID" --b263-record "$W/b263.json" --agent 40003 --agent 40004 --guest-cmd "$GUEST" --apply >"$W/apply2.out" 2>&1
 r=$?; cat "$W/apply2.out" >&2
 [ $r = 0 ] || fail "the full apply exited $r"
 grep -q 'OK\[loader\] ProtectedHost::operator() accepted' "$W/apply2.out" || fail "the production loader did not accept the deployment"
@@ -702,7 +720,7 @@ assert v["path"] == "/usr/local/libexec/axon/axon-fabric" and v["sha256"] == sha
 PY
 echo "ok(ns): modes and owners as the code requires; every pin is its INSTALLED file's digest"
 # Idempotent: a second apply plans nothing.
-bash "$KIT" "${ARGS[@]}" --fabric-pid "$FPID" --b263-record "$W/b263.json" --agent 40003 --guest-cmd "$GUEST" --apply >"$W/apply3.out" 2>&1 \
+kit "${ARGS[@]}" --fabric-pid "$FPID" --b263-record "$W/b263.json" --agent 40003 --guest-cmd "$GUEST" --apply >"$W/apply3.out" 2>&1 \
   || fail "the second apply failed: $(grep -E '^(FAIL|BLOCKED|PENDING|REFUSED|operator_deploy)' "$W/apply3.out" | tr '\n' '|')"
 if grep -E 'PLAN\[[a-z]+\] (install|dir|useradd|groupadd)' "$W/apply3.out"; then fail "the second apply changed something"; fi
 echo "ok(ns): a second --apply changes nothing (idempotent)"
@@ -716,14 +734,14 @@ p = "/etc/axon/host-toolchain-pin.json"; d = json.load(open(p))
 d["tools"]["rustc"]["sha256"] = "0" * 64; d["tools"]["cargo"]["sha256"] = "1" * 64
 json.dump(d, open(p, "w"))
 PY
-o=$(bash "$KIT" "${ARGS[@]}" --only binaries 2>&1); r=$?
+o=$(kit "${ARGS[@]}" --only binaries 2>&1); r=$?
 cp "$W/pin.good" /etc/axon/host-toolchain-pin.json
 [ $r = 2 ] && grep -q "compiler or linker is not the one" <<<"$o" && grep -q "rustc: the host build recorded" <<<"$o" \
   || fail "ATTACK: a toolchain pin naming another rustc and cargo was accepted for the host build (rc $r): $(echo "$o" | tail -3)"
 echo "ok(ns): a toolchain pin whose rustc and cargo are not the host build's is REFUSED (control: the installed pin passes)"
 # ATTACK (amendment 65): a Fabric under NoNewPrivileges. The kernel would
 # ignore the helper's set-id bit; the kit's preflight must FAIL, not pass.
-bash "$KIT" "${ARGS[@]}" --fabric-pid "$NNP_PID" --b263-record "$W/b263.json" --agent 40003 --guest-cmd "$GUEST" \
+kit "${ARGS[@]}" --fabric-pid "$NNP_PID" --b263-record "$W/b263.json" --agent 40003 --guest-cmd "$GUEST" \
   --only check,preflight --apply >"$W/nnp.out" 2>&1; r=$?
 [ $r = 1 ] && grep -q 'FAIL\[preflight\] trust preflight verdict FAIL' "$W/nnp.out" \
   && grep -q "no-new-privs .*NoNewPrivs 1" "$W/nnp.out" \
@@ -732,7 +750,7 @@ echo "ok(ns): a Fabric process under NoNewPrivileges FAILS the kit's preflight (
 # ATTACK (amendment 65): the helper config pins another custodian program.
 cp -a /etc/axon/protected-launcher.json "$W/launcher.good"
 python3 -c 'import json; p="/etc/axon/protected-launcher.json"; c=json.load(open(p)); c["custodian"]["sha256"]="f"*64; json.dump(c, open(p,"w"), indent=2)'
-bash "$KIT" "${ARGS[@]}" --only check >"$W/pin.out" 2>&1; r=$?
+kit "${ARGS[@]}" --only check >"$W/pin.out" 2>&1; r=$?
 cp -a "$W/launcher.good" /etc/axon/protected-launcher.json
 [ $r = 1 ] && grep -q "FAIL\[check\] custodian program pin: /etc/axon/protected-launcher.json: custodian.sha256 ffff" "$W/pin.out" \
   || { cat "$W/pin.out"; fail "ATTACK: a helper config pinning another custodian program was not refused (exit $r)"; }
@@ -749,7 +767,7 @@ echo "ok(ns): a helper config pinning another custodian program FAILS the kit's 
 # reason by the kit's check; control: the full apply above held them all.
 fabric_attack() { # label python-edit expected-pattern
   python3 -c 'import json,sys; p="/etc/axon/protected-launcher.json"; c=json.load(open(p)); '"$2"'; json.dump(c, open(p,"w"), indent=2)'
-  bash "$KIT" "${ARGS[@]}" --only check >"$W/fab.out" 2>&1; r=$?
+  kit "${ARGS[@]}" --only check >"$W/fab.out" 2>&1; r=$?
   cp -a "$W/launcher.good" /etc/axon/protected-launcher.json
   [ $r = 1 ] && grep -Eq -- "$3" "$W/fab.out" \
     || { cat "$W/fab.out"; fail "ATTACK: $1 was not refused by the kit's check (exit $r)"; }
@@ -762,7 +780,7 @@ fabric_attack "a helper config naming the Fabric program at another path" 'c["fa
   "FAIL\[check\] fabric program pin: .*fabric.path is '/usr/bin/axon-fabric'"
 cp -a /etc/axon/custodian.json "$W/custodian.good"
 python3 -c 'import json; p="/etc/axon/custodian.json"; c=json.load(open(p)); c["observer_uid"]=int(c["fabric_uid"]); json.dump(c, open(p,"w"), indent=2)'
-bash "$KIT" "${ARGS[@]}" --only check >"$W/fab.out" 2>&1; r=$?
+kit "${ARGS[@]}" --only check >"$W/fab.out" 2>&1; r=$?
 cp -a "$W/custodian.good" /etc/axon/custodian.json
 [ $r = 1 ] && grep -q "observer_uid is $FU, not the observer user's uid" "$W/fab.out" \
   || { cat "$W/fab.out"; fail "ATTACK: a custodian config answering check for the Fabric uid was not refused by the kit's check (exit $r)"; }
@@ -775,14 +793,14 @@ echo "ok(ns): another Fabric pin, revision or path, or a custodian answering che
 # ATTACK: a signing key its owner can write (0600). Fabric's loader requires
 # mode & 0277 == 0 (0400); the kit must not pass what Fabric refuses.
 chmod 0600 /etc/axon/keys/fabric-attest.pk8
-bash "$KIT" "${ARGS[@]}" --only check >"$W/key.out" 2>&1; r=$?
+kit "${ARGS[@]}" --only check >"$W/key.out" 2>&1; r=$?
 chmod 0400 /etc/axon/keys/fabric-attest.pk8
 [ $r = 3 ] && grep -Eq 'BLOCKED\[(configs|check)\] /etc/axon/keys/fabric-attest.pk8 must be owned by axon-fabric, readable by it alone and writable by no one' "$W/key.out" \
   || fail "ATTACK: a 0600 signing key passed the kit's check (exit $r): $(grep -E '^(BLOCKED|FAIL|PENDING)' "$W/key.out" | tr '\n' '|')"
 echo "ok(ns): a signing key its owner can write (0600) is BLOCKED, as Fabric's loader refuses it"
 # ── Amendment 68: the observer SERVICE. Each attack breaks ONE fact and must be
 # refused for that reason; the control (the full apply above) held them all.
-check_run() { bash "$KIT" "${ARGS[@]}" --only check >"$W/obs.out" 2>&1; echo $?; }
+check_run() { kit "${ARGS[@]}" --only check >"$W/obs.out" 2>&1; echo $?; }
 # (1) a key another uid can read (0440 here, so the group reads it).
 chmod 0440 "$OBS_KEY"; r=$(check_run); chmod 0400 "$OBS_KEY"
 [ $r = 3 ] && grep -Eq 'BLOCKED\[check\] the observer key /var/lib/axon-observer/key/observer.pk8 must be owned by axon-observer, readable by it alone and writable by no one' "$W/obs.out" \
@@ -918,7 +936,7 @@ else
   echo "NOT_RUN(ns): systemd-socket-activate absent; the custodian start was not exercised"
 fi
 NS
-unshare -m --propagation private bash "$WORK/ns.sh" "$WORK" "$KIT" "$BIN" "$OP" "$SIGNER_PUB" "$CLONE" "$BUILDER_UID" "$KEYPARENT" "$BUILD_UID" "$COMMIT" \
+ns_run bash "$WORK/ns.sh" "$WORK" "$KIT" "$BIN" "$OP" "$SIGNER_PUB" "$CLONE" "$BUILDER_UID" "$KEYPARENT" "$BUILD_UID" "$COMMIT" \
   >"$WORK/ns.out" 2>"$WORK/ns.err"
 NSRC=$?
 grep -E '^(ok|NOT_RUN|FAIL)\(ns\)' "$WORK/ns.out"
