@@ -166,3 +166,54 @@ fn the_operator_examples_load_through_the_production_loaders() {
         "ATTACK: an observer config naming the Fabric uid as the observer was accepted under production rules: {got:?}"
     );
 }
+
+/// Amendment 92: no test script may run the operator kit (or any `--apply`) outside `ns_run`, the
+/// private-namespace helper that proves its isolation first. The incident this closes: a guard-removal
+/// experiment made a kit refusal test a real root `--apply` on the dev host (M2265).
+#[test]
+fn no_test_script_runs_the_operator_kit_outside_the_namespace_helper() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let run = |args: &[&str]| {
+        std::process::Command::new("python3")
+            .arg("-B")
+            .arg(root.join("scripts/opkit_ns_drift.py"))
+            .args(args)
+            .arg(&root)
+            .output()
+            .unwrap()
+    };
+    let o = run(&[]);
+    assert!(
+        o.status.success(),
+        "ATTACK: a test script runs the kit outside ns_run:\n{}",
+        String::from_utf8_lossy(&o.stdout)
+    );
+    let o = run(&["--selftest"]);
+    assert!(
+        o.status.success(),
+        "ATTACK: the drift check ACCEPTED an unwrapped --apply:\n{}",
+        String::from_utf8_lossy(&o.stdout)
+    );
+}
+
+/// Amendment 92 (M2266-M2269): the helper REFUSES when its proof fails: a destination that is not a
+/// tmpfs, the host's own mount namespace, a canary that shows through to the host, and `ns_run`
+/// starting its command anyway. Every attack points the assertion at scratch directories.
+#[test]
+fn the_namespace_helper_refuses_when_its_proof_fails() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let o = std::process::Command::new("bash")
+        .arg(root.join("scripts/test_opkit_ns.sh"))
+        .output()
+        .unwrap();
+    if o.status.code() == Some(77) {
+        eprintln!("SKIP: test_opkit_ns.sh needs root and unshare");
+        return;
+    }
+    assert!(
+        o.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&o.stdout),
+        String::from_utf8_lossy(&o.stderr)
+    );
+}

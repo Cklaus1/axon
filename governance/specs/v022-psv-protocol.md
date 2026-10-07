@@ -5178,3 +5178,79 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       reproducible in-process); not guards, not rowed.
     - **The cortex PDEATHSIG race closure** (`getpid()` after fork before `prctl`) is the same class as the
       runner's hook and is named here as unobserved: a race window of microseconds with no deterministic attack.
+
+## Amendment 92: no test can reach the host through the kit, and what a build leaves running (C9 round 8, buildenv4)
+
+92. **A kit refusal test must not become a real apply, and the build uid's leftovers must not be signed.**
+    - **The incident (2026-10-06).** A by-hand removal of the `--expect-commit` guard made the test line
+      `bash "$KIT" ... --apply` run as root on the dev host: a real deployment under `/etc/axon`, `/usr/local`,
+      `/var/lib`, `/etc/systemd/system`, a setuid-root launcher, five system users and two enabled sockets (reverted
+      with the user's approval). A refusal test that depends on the guard it tests becomes the thing it tests when
+      that guard is removed or regresses.
+    - **Why not `--root PREFIX`.** Not feasible without changing what is tested: the kit's destinations are absolute
+      (57 hard-coded `/etc`, `/usr`, `/var`, `/run`, `/proc` and `/sys` references), users are made in the host user
+      database (`useradd`, `getent`), the setuid launcher's ownership, the production loader (run as the Fabric uid)
+      and `trust_root_preflight.sh` all resolve absolute paths. A prefix would make the tested kit another
+      program from the deployed one, so it was not added and the kit's interface is unchanged. The prefix is the
+      private mount namespace itself.
+    - **`scripts/lib/opkit_ns.sh` (`ns_run`).** Runs a command under `unshare -m --propagation private` with a
+      tmpfs over `/usr/local`, `/var/lib`, `/var/log`, `/var/spool`, `/var/mail`, `/run`, `/srv` and a tmpfs COPY of
+      `/etc` (so `/etc/systemd/system`, `passwd`, `group` and `shadow` are the namespace's; `/run` hides the
+      host's systemd and D-Bus sockets), THEN proves it before the command starts (`opkit_ns_assert`): the process
+      is in a mount namespace other than PID 1's; each destination's mount in effect is a tmpfs; a canary file
+      written under each is absent from `/proc/1/root`. Any failure: exit 97 and the command never ran. Order matters:
+      the tmpfs check precedes the first write, so a failed proof never writes under a real destination.
+    - **Every kit call goes through it**, the guard-removed attack included. `test_operator_deploy.sh` runs
+      every dry-run and attack line as `ns_run bash "$KIT" ...`; the namespace apply phase runs under `ns_run` and
+      re-asserts before each kit call (`kit`). The `--apply` without `--expect-commit` attack now runs as ROOT
+      (it used to run as uid 65534 to be safe): with the guard absent it SUCCEEDS, inside the namespace, and the
+      test fails on the unexpected exit status. The test's own `host-build` setup runs in a private PID namespace.
+    - **Drift test** `scripts/opkit_ns_drift.py` (in `gate.sh` and as a cargo test): fails when a `test_*.sh`
+      runs the kit (`$KIT`, the kit's name as a command) or carries `--apply` on a line that does not use `ns_run`
+      or `kit`; `--selftest` plants an unwrapped `--apply` and requires it refused (M2265).
+    - **Rows M2265-M2269**: the drift check; the helper's tmpfs, namespace and canary refusals (M2266-M2268, attacked
+      with scratch directories and stand-ins for PID 1 via `OPKIT_*_FOR_TEST`, never a real destination, and
+      `test_operator_deploy.sh` refuses to start if one is set); `ns_run` never starting its command (M2269).
+    - **Guard removals by hand, inside the prefix only.** `--expect-commit` (`$APPLY = 0 || -n $EXPECT || refuse`
+      -> `true`): the attack's `--apply` ran as root in the namespace (`operator_deploy: APPLY`), the test failed on
+      it ("expected REFUSED (2), got 3"). The null-machine-id refusal -> `if False:`: the test failed
+      ("a B263 record with a null machine-id was accepted ... (None == None)"). The host-toolchain comparison
+      (`tools.get(n) != hb.get(n)`) -> `if False:`: the test failed ("expected REFUSED (2), got 0"). Each ran in a copy
+      of the tree; host listings (`/etc/axon`, `/usr/local`, `/var/lib` names, `/etc/systemd/system`, users and groups,
+      sums of `passwd`/`group`/`shadow`, setuid files) were identical before and after each experiment and after the
+      unmodified full run. No kit invocation with `--apply` was run outside the helper, on this host or gpumaster.
+    - **The kit's B263 machine-id comparison (M2260 is a kit guard, a hand removal above, not a cargo row).** It was
+      `facts.get("machine_id") != here`, with `here = None` when `/etc/machine-id` is absent or empty, so a record
+      with a null or empty machine-id compared equal on a host with none (None == None). A missing identity on EITHER
+      side is now refused (`PENDING[data] B263: ... machine-id is missing or empty`). Tested in the namespace with
+      `/etc/machine-id` removed inside it. Matrix A180.
+    - **The build uid's processes (`guest_build_env.py`).** Amendment 90 stated, as a residual, that a background
+      process outliving its step could still touch the build uid's directories. It could do more: the runner then
+      hashed and signed whatever was there. After EVERY cargo step (and each kernel `make` step) the runner now
+      (1) kills the build uid's whole PID set read from `/proc` (real, effective, saved or fs uid; zombies excluded;
+      never a name match) until a pass finds none, and refuses if any survives `SIGKILL` (`reap_build_processes`,
+      M2261); (2) chowns the source copy, `CARGO_HOME` and target dir to root and removes group/other write
+      (`lock_from_build`, M2262), so even a process the reaper could not see cannot change what is hashed; the trees
+      are handed back to the build uid (`hand_to_build`) only at the start of the next step; (3) holds one
+      advisory lock per build uid (`/run/lock/axon-guest-build-uid-U.lock`) across hand-over, step and lock-back,
+      because the reaper would otherwise kill another job's cargo: two controlled builds with one build uid now run
+      one after the other. **The build uid must be dedicated to the build**: everything it runs is killed after each
+      step (the default 65534 is `nobody`, so on a host that runs a service as `nobody` set `AXON_GUEST_BUILD_UID`).
+    - **The rootfs's inputs.** `rootfs()` read `kernel.pin` and `guest-init.sh` from `rec["src_dir"]`, the copy the
+      build uid owned. It now reads both from the committed tree (`git show HEAD:...` in the runner's own repository,
+      `committed_file`; M2263, M2264). The kit judges a clean clone, so HEAD is the tree that was built.
+    - **Tests, and what could and could not run.** Every `guest_build_env.rs` test now runs the script in a private
+      PID namespace (`unshare --pid --fork --mount-proc --kill-child`), so the reaper can only ever see that
+      namespace's processes; the host's `nobody` processes cannot be signalled, and the `host-build` of the kit
+      test does the same. `a_detached_build_process_does_not_outlive_its_step_or_rewrite_what_is_signed` has a build
+      script start a `setsid` writer that rewrites the built binary and a source-copy file every 50 ms: after the
+      step the namespace holds no build-uid process and neither the artifact's nor the source copy's bytes move.
+      `the_trees_a_step_leaves_are_root_owned_and_not_writable_by_the_build_uid` has the script leave 0666/0777
+      entries. `the_rootfs_inputs_come_from_the_committed_tree_not_the_builders_copy` rewrites both inputs in the
+      private copy. `setpriv` and `unshare` were available and everything above was executed as root on this host.
+      Not executed: the real kernel `make` path (the existing kernel tests use a fixture tarball and its steps now
+      pass through the same reap and lock, but no new kernel-specific attack exists), and a `nobody`-owned
+      background service on the host (not present).
+    - **Rows.** M2261-M2269 (M2260, the kit machine-id refusal, is by hand as above). **Matrix.** A178-A180.
+      **Operator-visible interface.** Unchanged: no kit flag was added, so `v022-operator-changes.md` is not edited.
+      Operators running the controlled build must give it a dedicated build uid and expect serialised builds.

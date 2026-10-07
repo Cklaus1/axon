@@ -7857,6 +7857,49 @@ MUTATIONS += [
      'axon-fabric', _FM, _ISO),
 ]
 # ── end buildenv3 ──
+# ── C9 round 8, BUILDENV4 (amendment 92; M2260-M2269) ──────────────────────────
+# What the build uid leaves running or owning after a step, where the rootfs reads its inputs, and
+# the one door a test may use to run the operator kit. (M2260, the kit's null machine-id refusal, is
+# a kit guard: removed alone by hand INSIDE the namespace helper, see amendment 92; not a cargo row.)
+_OE = '--test operator_examples'
+MUTATIONS += [
+    ('M2261', 'BUILD-ENV (92): after a step every process of the build uid is killed before anything is signed', _GE,
+     '            reap_build_processes()\n            lock_from_build(rec)\n',
+     '            lock_from_build(rec)\n',
+     'axon-fabric', _GBT, 'a_detached_build_process_does_not_outlive_its_step_or_rewrite_what_is_signed'),
+    ('M2262', 'BUILD-ENV (92): after a step the source copy, CARGO_HOME and target dir are root-owned and not writable by the build uid', _GE,
+     '            lock_from_build(rec)\n    finally:\n        os.close(lockfd)\n',
+     '            pass\n    finally:\n        os.close(lockfd)\n',
+     'axon-fabric', _GBT, 'the_trees_a_step_leaves_are_root_owned_and_not_writable_by_the_build_uid'),
+    ('M2263', "BUILD-ENV (92): the rootfs reads kernel.pin from the committed tree, not the builder's copy", _GE,
+     '    pin = read_pin(None, committed_file("profiles/linux-microvm/kernel.pin").decode())\n',
+     '    pin = read_pin(os.path.join(rec["src_dir"], "profiles", "linux-microvm"))\n',
+     'axon-fabric', _GBT, 'the_rootfs_inputs_come_from_the_committed_tree_not_the_builders_copy'),
+    ('M2264', "BUILD-ENV (92): the rootfs reads guest-init.sh from the committed tree, not the builder's copy", _GE,
+     '        f.write(committed_file("profiles/linux-microvm/guest-init.sh"))\n',
+     '        f.write(open(os.path.join(rec["src_dir"], "profiles", "linux-microvm", "guest-init.sh"), "rb").read())\n',
+     'axon-fabric', _GBT, 'the_rootfs_inputs_come_from_the_committed_tree_not_the_builders_copy'),
+    ('M2265', 'KIT-TEST (92): a test script running the operator kit or --apply outside ns_run is refused', 'scripts/opkit_ns_drift.py',
+     '        if (runs or applies) and not WRAPPED.search(line):\n',
+     '        if False and (runs or applies) and not WRAPPED.search(line):\n',
+     'axon-fabric', _OE, 'no_test_script_runs_the_operator_kit_outside_the_namespace_helper'),
+    ('M2266', 'KIT-TEST (92): the namespace helper refuses a destination that is not shadowed by a tmpfs', 'scripts/lib/opkit_ns.sh',
+     '    [ "$fs" = tmpfs ] || {',
+     '    [ "$fs" = tmpfs ] || true || {',
+     'axon-fabric', _OE, 'the_namespace_helper_refuses_when_its_proof_fails'),
+    ('M2267', "KIT-TEST (92): the namespace helper refuses to run in the host's own mount namespace", 'scripts/lib/opkit_ns.sh',
+     '  [ -n "$own" ] && [ "$own" != "$host" ] \\\n',
+     '  [ -n "$own" ] \\\n',
+     'axon-fabric', _OE, 'the_namespace_helper_refuses_when_its_proof_fails'),
+    ('M2268', 'KIT-TEST (92): the namespace helper refuses a canary the host can see', 'scripts/lib/opkit_ns.sh',
+     '    if [ -e "/proc/$OPKIT_VIEW_PID/root$c" ]; then',
+     '    if false && [ -e "/proc/$OPKIT_VIEW_PID/root$c" ]; then',
+     'axon-fabric', _OE, 'the_namespace_helper_refuses_when_its_proof_fails'),
+    ('M2269', 'KIT-TEST (92): ns_run never starts its command when the isolation is not proved', 'scripts/lib/opkit_ns.sh',
+     '    opkit_ns_isolate || { echo "REFUSE(ns_run): isolation not proved; the command did not run" >&2; exit 97; }',
+     '    opkit_ns_isolate || { echo "REFUSE(ns_run): isolation not proved; the command did not run" >&2; }',
+     'axon-fabric', _OE, 'the_namespace_helper_refuses_when_its_proof_fails'),
+]
 
 # ── C9 round 7, EQGATE3 (amendment 91; M2270-M2339) ──────────────────────────
 # What a child is BUILT with (environment, working directory, stdio), what bounds
