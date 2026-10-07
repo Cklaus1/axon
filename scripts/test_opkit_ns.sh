@@ -33,10 +33,9 @@ bad = 0
 for d in os.environ.get("PROBE_DIRS", "/opt /home /root /usr/lib /boot /var/cache").split():
     if not os.path.isdir(d):
         continue
-    try:
-        open(d + "/.opkit-rowrite-probe", "w").close(); os.unlink(d + "/.opkit-rowrite-probe"); print("WRITABLE", d); bad = 1
-    except OSError:
-        pass
+    # the mount flag, read without writing a byte to a real place (statvfs: ST_RDONLY)
+    if not os.statvfs(d).f_flag & os.ST_RDONLY:
+        print("WRITABLE", d); bad = 1
 sys.exit(bad)' ;;
     *) exit 91 ;;
   esac
@@ -100,6 +99,14 @@ o=$(other bash -c ". '$LIB'; opkit_ns_assert"); rc=$?
 grep -q 'outside scripts/test_opkit_ns.sh' <<<"$o" || fail "refused for another reason (rc $rc): $o"
 echo "ok: the *_FOR_TEST overrides are refused for any caller but this script"
 
+# amendment 101: make_ro on its own: after it and the shadows, nothing unlisted can be written (judged without the proof;
+# placed before every ns_run test, which would refuse a root make_ro left writable before this ran)
+o=$(RO=1 VIEW=1 NSPID=1 unshare -m --propagation private bash "$SELF" --child rowrite "$W" 2>&1); rc=$?
+[ $rc = 0 ] || fail "ATTACK: make_ro left a place nobody listed writable (rc $rc): $o"
+mkdir -p "$W/probe"   # the control probes a scratch directory, never a real place
+o=$(PROBE_DIRS="$W/probe" RO=0 VIEW=1 NSPID=1 unshare -m --propagation private bash "$SELF" --child rowrite "$W" 2>&1); rc=$?
+[ $rc = 1 ] && grep -q '^WRITABLE' <<<"$o" || fail "control: without make_ro the probe should find writable places (rc $rc): $o"
+echo "ok: after make_ro and the shadows no place nobody listed is writable (and the probe sees them without it)"
 # ns_run never starts its command when the proof fails (here: a file it must install is missing)
 M=$W/scratch/ran
 o=$(OPKIT_LIB=$LIB OPKIT_SCRATCH=$W/scratch OPKIT_EXTRA=/nonexistent/file bash -c '
@@ -142,13 +149,6 @@ o=$(bash -c '. "$1"; opkit_ns_fd_leak' bash "$LIB" 2>&1); rc=$?
 [ $rc = 0 ] || fail "control: the descriptor check flagged a process with no directory descriptor (rc $rc): $o"
 echo "ok: a directory descriptor left open is detected"
 # (2) deny by default. make_ro is judged on its own first, then the proof that refuses a writable root, then ns_run end to end
-# make_ro on its own: after it and the shadows, nothing unlisted can be written (judged without the proof)
-o=$(RO=1 VIEW=1 NSPID=1 unshare -m --propagation private bash "$SELF" --child rowrite "$W" 2>&1); rc=$?
-[ $rc = 0 ] || fail "ATTACK: make_ro left a place nobody listed writable (rc $rc): $o"
-mkdir -p "$W/probe"   # the control probes a scratch directory, never a real place
-o=$(PROBE_DIRS="$W/probe" RO=0 VIEW=1 NSPID=1 unshare -m --propagation private bash "$SELF" --child rowrite "$W" 2>&1); rc=$?
-[ $rc = 1 ] && grep -q '^WRITABLE' <<<"$o" || fail "control: without make_ro the probe should find writable places (rc $rc): $o"
-echo "ok: after make_ro and the shadows no place nobody listed is writable (and the probe sees them without it)"
 # the proof itself: a namespace whose root is not read-only is refused, a read-only one is accepted
 o=$(RO=0 OPKIT_REQUIRE_RO=1 VIEW=1 NSPID=1 unshare -m --propagation private env OPKIT_REQUIRE_RO=1 bash "$SELF" --child assert "$W" 2>&1); rc=$?
 [ $rc = 1 ] || fail "ATTACK: a namespace whose root is writable was accepted (rc $rc): $o"
