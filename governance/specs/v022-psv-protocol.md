@@ -5200,11 +5200,17 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       is in a mount namespace other than PID 1's; each destination's mount in effect is a tmpfs; a canary file
       written under each is absent from `/proc/1/root`. Any failure: exit 97 and the command never ran. Order matters:
       the tmpfs check precedes the first write, so a failed proof never writes under a real destination.
+      **CORRECTED by amendment 97: the "canary absent from `/proc/1/root`" check treated an UNREADABLE
+      `/proc/1/root` as "not visible" and passed vacuously, and it was a negative lookup. The proof is now an
+      identity comparison (device:inode of each destination through the host's view, which must differ) and an
+      unreadable view refuses; the namespace is also PID, UTS, IPC and NET, not only mount.**
     - **Every kit call goes through it**, the guard-removed attack included. `test_operator_deploy.sh` runs
       every dry-run and attack line as `ns_run bash "$KIT" ...`; the namespace apply phase runs under `ns_run` and
       re-asserts before each kit call (`kit`). The `--apply` without `--expect-commit` attack now runs as ROOT
       (it used to run as uid 65534 to be safe): with the guard absent it SUCCEEDS, inside the namespace, and the
-      test fails on the unexpected exit status. The test's own `host-build` setup runs in a private PID namespace.
+      test fails on the unexpected exit status. The test's own `host-build` setup runs in a private PID namespace. **CORRECTED by amendment 97: it still ran
+      as root on the real host (a builder-private parent under the host's `/var/lib`, the synthetic-manifest Python,
+      the host build, a forged-record directory), OUTSIDE `ns_run`; all of it now runs under `ns_run`.**
     - **Drift test** `scripts/opkit_ns_drift.py` (in `gate.sh` and as a cargo test): fails when a `test_*.sh`
       runs the kit (`$KIT`, the kit's name as a command) or carries `--apply` on a line that does not use `ns_run`
       or `kit`; `--selftest` plants an unwrapped `--apply` and requires it refused (M2265).
@@ -5227,12 +5233,20 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
     - **The build uid's processes (`guest_build_env.py`).** Amendment 90 stated, as a residual, that a background
       process outliving its step could still touch the build uid's directories. It could do more: the runner then
       hashed and signed whatever was there. After EVERY cargo step (and each kernel `make` step) the runner now
-      (1) kills the build uid's whole PID set read from `/proc` (real, effective, saved or fs uid; zombies excluded;
-      never a name match) until a pass finds none, and refuses if any survives `SIGKILL` (`reap_build_processes`,
-      M2261); (2) chowns the source copy, `CARGO_HOME` and target dir to root and removes group/other write
-      (`lock_from_build`, M2262), so even a process the reaper could not see cannot change what is hashed; the trees
-      are handed back to the build uid (`hand_to_build`) only at the start of the next step; (3) holds one
-      advisory lock per build uid (`/run/lock/axon-guest-build-uid-U.lock`) across hand-over, step and lock-back,
+      (1) kills the build uid's whole PID set read from `/proc` (real, effective, saved or fs uid; never a name
+      match) until a pass finds none, and refuses if any survives `SIGKILL` (`reap_build_processes`, M2261).
+      **CORRECTED by amendment 97: this said "zombies excluded", and the filter was per PROCESS, so a
+      multi-threaded process whose main thread had exited (State Z) while its other threads kept writing was not
+      listed; the scan is now per THREAD and the step runs in its own PID namespace, see amendment 97.**
+      (2) chowns the source copy, `CARGO_HOME` and target dir to root and removes group/other write
+      (`lock_from_build`, M2262) so no later write BY PATH can change what is hashed. **CORRECTED by amendment 97:
+      this said "so even a process the reaper could not see cannot change what is hashed"; that was false, because
+      a chown does not revoke a descriptor the process already holds open (executed: a process wrote through its
+      open fd after the lock-back). What makes it true is that no process of the step survives (own PID namespace
+      plus the thread-aware verification), not the chown.** The trees are handed back to the build uid
+      (`hand_to_build`) only at the start of the next step; (3) holds one
+      advisory lock per build uid (`/run/lock/axon-guest-build-uid-U.lock`; **moved by amendment 97 to a root-owned
+      directory, `/run/axon-guest-build-locks/`**) across hand-over, step and lock-back,
       because the reaper would otherwise kill another job's cargo: two controlled builds with one build uid now run
       one after the other. **The build uid must be dedicated to the build**: everything it runs is killed after each
       step (the default 65534 is `nobody`, so on a host that runs a service as `nobody` set `AXON_GUEST_BUILD_UID`).
