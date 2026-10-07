@@ -2455,7 +2455,11 @@ fn main() {{
 /// step the shell measures, still inside the namespace, who survived and whether the artifact moved.
 fn isolated_cargo(repo: &Path, rec: &Path, art: &Path, writer: &Path) -> String {
     let mut inner = gbe_raw(repo);
-    inner.arg("cargo").arg(rec).args(["--rustflags", CRT, "--"]).args(GUEST_INIT);
+    inner
+        .arg("cargo")
+        .arg(rec)
+        .args(["--rustflags", CRT, "--"])
+        .args(GUEST_INIT);
     let script = r#"
 "$@"; echo "STEP_RC=$?"
 echo "ART0=$(sha256sum "$ART" | cut -d' ' -f1)"
@@ -2482,7 +2486,7 @@ use std::process::{Command, Stdio};
 fn main() {
     let mut p = PathBuf::from(std::env::var("OUT_DIR").unwrap());
     while !p.join("cargo-home").is_dir() { if !p.pop() { return; } }
-    let art = p.join("target/x86_64-unknown-linux-musl/release/axon-guest-init");
+    let art = p.join("target").join("x86_64-unknown-linux-musl").join("release").join("axon-guest-init");
     let src = p.join("src/profiles/linux-microvm/guest-init.sh");
     let sh = format!("while :; do printf EVIL > '{}'; printf EVIL > '{}'; sleep 0.05; done", art.display(), src.display());
     let _ = Command::new("/usr/bin/setsid").args(["sh", "-c", &sh])
@@ -2505,15 +2509,29 @@ fn a_detached_build_process_does_not_outlive_its_step_or_rewrite_what_is_signed(
     assert!(o.status.success(), "setup: begin: {}", text(&o));
     let rec = record(&out);
     let base = base_of(&rec);
-    let art = base.join("target/x86_64-unknown-linux-musl/release/axon-guest-init");
-    let res = isolated_cargo(&r, &out.join("build-env.json"), &art, &base.join("src/profiles/linux-microvm/guest-init.sh"));
+    let art = base
+        .join("target")
+        .join("x86_64-unknown-linux-musl")
+        .join("release")
+        .join("axon-guest-init");
+    let res = isolated_cargo(
+        &r,
+        &out.join("build-env.json"),
+        &art,
+        &base.join("src/profiles/linux-microvm/guest-init.sh"),
+    );
     discard(&rec);
     assert!(res.contains("STEP_RC=0"), "setup: the step builds: {res}");
     assert!(
         res.contains("SURVIVORS=0"),
         "ATTACK: a detached build-uid process survived the step:\n{res}"
     );
-    let get = |k: &str| res.lines().find_map(|l| l.strip_prefix(k)).unwrap_or("").to_string();
+    let get = |k: &str| {
+        res.lines()
+            .find_map(|l| l.strip_prefix(k))
+            .unwrap_or("")
+            .to_string()
+    };
     assert!(
         !get("ART0=").is_empty() && get("ART0=") == get("ART1="),
         "ATTACK: the artifact changed after the step while a detached writer ran:\n{res}"
@@ -2565,7 +2583,12 @@ fn main() {
                 seen_evil = true;
             }
             if m.uid() != 0 || (!m.file_type().is_symlink() && m.mode() & 0o022 != 0) {
-                bad.push(format!("{} uid {} mode {:o}", p.display(), m.uid(), m.mode() & 0o7777));
+                bad.push(format!(
+                    "{} uid {} mode {:o}",
+                    p.display(),
+                    m.uid(),
+                    m.mode() & 0o7777
+                ));
             }
             if m.is_dir() {
                 for e in std::fs::read_dir(&p).unwrap() {
@@ -2576,7 +2599,10 @@ fn main() {
     }
     discard(&rec);
     assert!(b.status.success(), "setup: the step builds: {}", text(&b));
-    assert!(seen_evil, "setup: the build script made its world-writable files");
+    assert!(
+        seen_evil,
+        "setup: the build script made its world-writable files"
+    );
     assert!(
         bad.is_empty(),
         "ATTACK: after the step the build uid still owns or can write the tree that is hashed: {:?}",
@@ -2593,9 +2619,18 @@ fn the_rootfs_inputs_come_from_the_committed_tree_not_the_builders_copy() {
     let prof = base_of(&rec).join("src/profiles/linux-microvm");
     std::fs::write(prof.join("guest-init.sh"), "#!/bin/sh\necho EVIL\n").unwrap();
     let pin = std::fs::read_to_string(prof.join("kernel.pin")).unwrap();
-    std::fs::write(prof.join("kernel.pin"), pin.replace("BUSYBOX_SHA256=", "BUSYBOX_SHA256=00")).unwrap();
+    std::fs::write(
+        prof.join("kernel.pin"),
+        pin.replace("BUSYBOX_SHA256=", "BUSYBOX_SHA256=00"),
+    )
+    .unwrap();
     let sq = d.path().join("rootfs.sqfs");
-    let o = gbe(&r).arg("rootfs").arg(&rec_path).arg(&sq).output().unwrap();
+    let o = gbe(&r)
+        .arg("rootfs")
+        .arg(&rec_path)
+        .arg(&sq)
+        .output()
+        .unwrap();
     let after = record(&d.path().join("out"));
     discard(&rec);
     assert!(
