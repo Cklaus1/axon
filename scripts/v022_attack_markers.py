@@ -2040,7 +2040,7 @@ ATTACK_MARKERS.update({
     'M2265': r'ATTACK: the drift check ACCEPTED an unwrapped --apply',
     'M2266': r'ATTACK: a destination that is not a tmpfs was accepted',
     'M2267': r"ATTACK: running in the host's own mount namespace was accepted",
-    'M2268': r"ATTACK: a canary visible from the host's view was accepted",
+    'M2268': r"ATTACK: a destination that is the host's own directory was accepted",
     'M2269': r'ATTACK: ns_run ran its command although the isolation was not proved',
 })
 
@@ -2247,4 +2247,24 @@ ATTACK_MARKERS.update({
 ATTACK_MARKERS.update({
     'M2465': 'ATTACK: the guest started under a POSSIBLY TRUNCATED cmdline policy',
     'M2466': r'assertion failed: backend::GuestPolicy::for_grant\(&req\(&long_principal\(\)\), ""\)\.is_err\(\)',
+})
+
+# C9 round 9, BUILDENV5 (M2500-M2519; amendment 97).
+ATTACK_MARKERS.update({
+    'M2500': r'ATTACK: the reaper did not list a build-uid process whose main thread had exited',
+    'M2501': r"ATTACK: the build step ran in the runner's own PID namespace",
+    'M2502': r'ATTACK: a uid a deployed config names \(fabric_uid\) was accepted as the build uid',
+    'M2503': r'ATTACK: the User= of an installed axon-\*\.service was accepted as the build uid',
+    'M2504': r'ATTACK: a uid a deployed config names \(fabric_uid\) was accepted as the build uid',
+    'M2505': r'ATTACK: the uid of a service account by name was accepted as the build uid',
+    'M2506': r'ATTACK: check-build-uid accepted a build uid that is a configured service account.s',
+    'M2507': r'ATTACK: a lock directory the build uid can write was trusted as the build-uid lock',
+    'M2508': r'ATTACK: a lock file owned by the build uid was trusted as the build-uid lock',
+    'M2509': r'ATTACK: begin built the trees without holding the build-uid lock',
+    'M2510': r'ATTACK: after begin the build uid still owns or can write a tree',
+    'M2511': r"ATTACK: an unreadable host view was taken as 'not visible'",
+    'M2512': r'ATTACK: an OPKIT_\*_FOR_TEST override from another script was honoured',
+    'M2513': r'ATTACK: the drift check ACCEPTED an unwrapped --apply',
+    'M2514': r'ATTACK: the drift check ACCEPTED an unwrapped --apply',
+    'M2515': r'ATTACK: the drift check ACCEPTED an unwrapped --apply',
 })
