@@ -907,6 +907,32 @@ fn a_suite_entry_outside_the_suite_tree_never_runs() {
     assert_eq!(run(&fx.cfg).status, GuestStatus::Passed, "control");
 }
 
+/// Amendment 95 (eqgate4): the entry check has TWO terms (`check_path(..)` and
+/// "is a regular file in the suite tree"), and the first is rowed (M780) by an
+/// entry that escapes the tree. An entry that is a well-formed path to NOTHING
+/// (here a name the suite does not hold) passes the path rule and is refused by
+/// the file rule alone; with that term removed the runner went on to run the
+/// interpreter on a file that is not there. Control: the suite's own entry runs.
+#[test]
+fn a_suite_entry_that_is_not_a_file_in_the_suite_never_runs() {
+    let fx = fixture_at("missing.ax", "t_ok", false);
+    assert!(
+        axon_workspace_recipe::check_path("missing.ax", &Quota::default()).is_ok(),
+        "setup: the name is a well-formed relative path, so only the file term can refuse it"
+    );
+    let v = run(&fx.cfg);
+    assert!(
+        v.status == GuestStatus::Refused
+            && v.refusal
+                .as_deref()
+                .unwrap_or("")
+                .contains("is not a file in the suite tree"),
+        "ATTACK: the runner went on with a suite entry that is not a file in the suite tree: {v:?}"
+    );
+    let fx = fixture("t_ok", false);
+    assert_eq!(run(&fx.cfg).status, GuestStatus::Passed, "control");
+}
+
 /// C9 round 4c, ADMIT (amendment 76): a refusal is a verdict of its own
 /// (`refused` builds it), and a refusal reported as a pass would launder what
 /// the runner declined to run. Same attack as

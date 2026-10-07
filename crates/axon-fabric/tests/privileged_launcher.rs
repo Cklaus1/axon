@@ -3673,6 +3673,67 @@ fn a_custodian_executable_another_uid_can_rewrite_is_refused() {
         .expect("control: the pinned program, owned and not writable by others");
 }
 
+/// Amendment 95 (eqgate4), ROOT ONLY: the program that answers as the custodian
+/// must be owned by root or by the asking uid. One owned by a STRANGER uid is
+/// refused although its bytes are the pinned ones and no other uid can write it
+/// (mode 0755): its owner can rewrite it after the hash. M1484 rows the mode
+/// term of this guard; this is the owner term, which a row on the mode term
+/// did not credit. Control: the same copy owned by the asking uid.
+#[test]
+fn a_custodian_executable_owned_by_a_stranger_uid_is_refused() {
+    if euid() != 0 {
+        eprintln!("skipped: needs root (an executable owned by another uid)");
+        return;
+    }
+    let d = tempfile::tempdir().unwrap();
+    std::fs::set_permissions(d.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
+    let copy = d.path().join("axon-custodian");
+    copy_executable(env!("CARGO_BIN_EXE_axon-custodian"), &copy, 0o755);
+    let store = d.path().join("custodian-nonces");
+    std::fs::create_dir(&store).unwrap();
+    std::fs::set_permissions(&store, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let me = euid();
+    let sock = d.path().join("stranger.sock");
+    let cfg = d.path().join("custodian.json");
+    std::fs::write(
+        &cfg,
+        json!({"schema": "axon-custodian/1", "custodian_uid": me, "fabric_uid": me,
+               "launcher_uid": me, "socket": sock, "store": store, "max_age_s": 300})
+        .to_string(),
+    )
+    .unwrap();
+    std::fs::set_permissions(&cfg, std::fs::Permissions::from_mode(0o644)).unwrap();
+    let child = Command::new(&copy)
+        .arg("--test-config")
+        .arg(&cfg)
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut guard = Impostor(child);
+    wait_until(SETUP_BOUND, || {
+        sock.exists() || guard.0.try_wait().unwrap().is_some()
+    });
+    assert!(sock.exists(), "setup: the copied custodian never listened");
+    let client = |pin: String| axon_fabric::custodian::CustodianRef {
+        socket: sock.clone(),
+        uid: me,
+        sha256: Some(pin),
+    };
+    // CONTROL: owned by the asking uid (root here), not writable by others.
+    client(custodian_program_sha256())
+        .issue(0)
+        .expect("control: the pinned program, owned by the asking uid, not writable by others");
+    // ATTACK: the same file, now owned by a stranger uid (mode unchanged).
+    std::os::unix::fs::chown(&copy, Some(65534), None).unwrap();
+    let got = client(custodian_program_sha256()).issue(0);
+    assert!(
+        got.is_err(),
+        "ATTACK: a custodian whose executable a stranger uid owns (mode 0755) was trusted as the \
+         pinned program: {got:?}"
+    );
+    assert!(format!("{got:?}").contains("owned by uid 65534"), "{got:?}");
+}
+
 /// Run the setuid-root PRODUCTION helper as the Fabric uid in the production
 /// namespace of `s` (custodian started with `prefix`), with `wrap` before the
 /// exec (e.g. `setpriv --no-new-privs`). Returns (exit, report, launcher ruid).

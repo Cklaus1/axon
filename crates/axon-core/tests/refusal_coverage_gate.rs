@@ -836,9 +836,12 @@ fn a_call_of_an_err_helper_constructor_is_a_site() {
     let _ = std::fs::remove_dir_all(&r);
 }
 
-/// Amendment 76: `.ok_or(..)` converts an absence some other decision made,
-/// and is no site; with a predicate INLINE before it (`.filter(|k| k.len() ==
+/// Amendment 76: with a predicate INLINE before it (`.filter(|k| k.len() ==
 /// 32).ok_or(..)?`) the predicate IS the decision and nothing else scans it.
+/// Amendment 95 REVERSES the other half of this test: a bare single-line
+/// `.ok_or(..)?` is a site too (the absent value is a refusal the function
+/// returns; amendment 76 had judged it "an absence some other decision made",
+/// which left 71 refusals unseen); see `a_single_line_ok_or_refusal_is_a_site`.
 #[test]
 fn an_inline_predicate_refused_through_ok_or_is_a_site() {
     let r = tree("inline-pred");
@@ -852,10 +855,10 @@ fn an_inline_predicate_refused_through_ok_or_is_a_site() {
         ".filter(|k| k.len() == 32)",
         "a closure predicate refused through ok_or, with no row and no exemption, was not a site",
     );
-    not_named(
+    names(
         &r,
         "k.ok_or(\"absent lookup\")",
-        "a bare ok_or (an absence some other decision made) was read as a decision",
+        "a bare single-line ok_or(..)? (amendment 95) was not a site",
     );
     let _ = std::fs::remove_dir_all(&r);
 }
@@ -1224,5 +1227,326 @@ fn an_exemption_inside_a_site_a_row_covers_is_stale() {
     let c = tree("stale-exempt-control");
     holds(&c, &[], "the unedited copy");
     let _ = std::fs::remove_dir_all(&c);
+    let _ = std::fs::remove_dir_all(&r);
+}
+
+// ── C9 round 8, EQGATE4 (amendment 95): a decision expressed as a VALUE, an
+// atomic directory refusal, a single-line `.ok_or(..)?`, one TERM of a
+// compound guard, or a constant a guard reads.
+
+const VALUE_PROBES: &str = "pub fn gv_dirs(p: &std::path::Path) {\n    let gv_create = std::fs::create_dir(p);\n    let gv_createall = std::fs::create_dir_all(p);\n    let gv_builder = std::fs::DirBuilder::new();\n    let _ = (gv_create, gv_createall, gv_builder);\n}\n\npub fn gv_values() {\n    let gv_dropsome = Cfg { drop: Some((1, 2)) };\n    let gv_dropnone = Cfg { drop: None };\n    let gv_uidconst = GV_PROBE_UID + 1;\n    let gv_expected = Pin {\n        expected_manifest_sha256: String::new(),\n    };\n    std::env::set_var(\"GV_SETVAR\", \"1\");\n    std::env::remove_var(\"GV_REMOVEVAR\");\n    let _ = (gv_dropsome, gv_dropnone, gv_uidconst, gv_expected);\n}\n\npub fn gv_not_values(expected_sha256: &str, x: Pin) {\n    // create_dir( and drop: Some( are named only in this comment\n    let gv_plain = x.expected_manifest_sha256.len();\n    let _ = (expected_sha256, gv_plain);\n}\n\npub struct Pin {\n    pub expected_manifest_sha256: String,\n}\n";
+
+/// Amendment 95: a guard expressed as a value or an atomic refusal is a site:
+/// `create_dir` / `create_dir_all` / `DirBuilder` (an existing directory is
+/// refused by the first and accepted by the second), a `drop:` field and a uid
+/// or gid constant (the identity handed to a privilege primitive), an
+/// `expected_*sha256` field set in a struct literal (the pin a verifier
+/// compares against), and `env::set_var` / `remove_var`. A struct FIELD
+/// declaration, a fn PARAMETER of that name and a form named in a comment are not.
+#[test]
+fn a_value_handed_to_a_privilege_primitive_or_a_directory_creation_is_a_site() {
+    let r = tree("value-forms");
+    add_code(&r, SCANNED, VALUE_PROBES);
+    for (site, form) in [
+        ("gv_create = ", "create_dir"),
+        ("gv_createall = ", "create_dir_all"),
+        ("gv_builder = ", "DirBuilder"),
+        ("gv_dropsome", "a `drop: Some(..)` field"),
+        ("gv_dropnone", "a `drop: None` field"),
+        ("gv_uidconst", "a uid constant"),
+        (
+            "expected_manifest_sha256: String::new()",
+            "an `expected_*sha256` field",
+        ),
+        ("GV_SETVAR", "env::set_var"),
+        ("GV_REMOVEVAR", "env::remove_var"),
+    ] {
+        names(
+            &r,
+            site,
+            &format!("a use of {form} with no row and no exemption was not a refusal site"),
+        );
+    }
+    not_named(
+        &r,
+        "gv_plain",
+        "a read of an `expected_*sha256` field was read as setting one",
+    );
+    not_named(
+        &r,
+        "pub expected_manifest_sha256: String",
+        "the declaration of an `expected_*sha256` field was read as a use",
+    );
+    not_named(
+        &r,
+        "fn gv_not_values",
+        "a fn PARAMETER named `expected_sha256` was read as a pin being set",
+    );
+    let c = tree("value-forms-control");
+    holds(&c, &[], "the unedited copy");
+    let _ = std::fs::remove_dir_all(&c);
+    let _ = std::fs::remove_dir_all(&r);
+}
+
+/// Amendment 95: a single-line `.ok_or(..)?` / `.ok_or_else(..)?` is a refusal
+/// site (the absent value is an error the function returns); an `ok_or` that is
+/// not followed by `?` (the error is kept as a value) and one named in a
+/// comment are not.
+#[test]
+fn a_single_line_ok_or_refusal_is_a_site() {
+    let r = tree("ok-or");
+    add_code(
+        &r,
+        SCANNED,
+        "pub fn gk_probe(x: Option<u64>, y: Option<u64>) -> Result<u64, String> {\n    let gk_q = x.ok_or(\"gk missing\")?;\n    let gk_qe = y.ok_or_else(|| format!(\"gk missing {}\", 1))?;\n    let gk_kept = x.ok_or(\"gk kept\");\n    // gk_comment: z.ok_or(\"no\")?\n    Ok(gk_q + gk_qe + gk_kept.unwrap_or(0))\n}\n",
+    );
+    names(
+        &r,
+        "gk_q = ",
+        "a single-line `.ok_or(..)?` was not a refusal site",
+    );
+    names(
+        &r,
+        "gk_qe = ",
+        "a single-line `.ok_or_else(..)?` was not a refusal site",
+    );
+    not_named(
+        &r,
+        "gk_kept",
+        "an `ok_or` kept as a value was read as a refusal",
+    );
+    not_named(
+        &r,
+        "gk_comment",
+        "an `ok_or` named in a comment was read as a refusal",
+    );
+    let c = tree("ok-or-control");
+    holds(&c, &[], "the unedited copy");
+    let _ = std::fs::remove_dir_all(&c);
+    let _ = std::fs::remove_dir_all(&r);
+}
+
+/// Amendment 95: `libc::syscall(..)` (ioprio_set, ...) and a write to
+/// `oom_score_adj` are privilege-form sites.
+#[test]
+fn a_raw_syscall_and_an_oom_score_write_are_sites() {
+    let r = tree("raw-syscall");
+    add_code(
+        &r,
+        SCANNED,
+        "pub fn gs_probe() {\n    let gs_sys = unsafe { libc::syscall(libc::SYS_ioprio_set, 1, 0, 0) };\n    let gs_oom = std::fs::write(\"/proc/self/oom_score_adj\", \"-1000\");\n    let _ = (gs_sys, gs_oom);\n}\n",
+    );
+    names(
+        &r,
+        "gs_sys = ",
+        "a raw `libc::syscall(..)` was not a refusal site",
+    );
+    names(
+        &r,
+        "gs_oom = ",
+        "a write of oom_score_adj was not a refusal site",
+    );
+    let _ = std::fs::remove_dir_all(&r);
+}
+
+/// Amendment 95: the exemption audit reads a row id of ANY number of digits
+/// (`\bM\d{1,4}\b` could not see M99999, so an exemption citing a five-digit row
+/// that does not exist was never checked).
+#[test]
+fn an_exemption_citing_a_five_digit_row_that_does_not_exist_is_refused() {
+    let r = tree("cites-5-digit-row");
+    add_code(
+        &r,
+        SCANNED,
+        "pub fn gate_probe_cites5(x: u64) -> Result<(), String> {\n    if x > 3 {\n        return Err(format!(\"cites5 {x}\"));\n    }\n    Ok(())\n}\n",
+    );
+    exempt(
+        &r,
+        SCANNED,
+        "        return Err(format!(\"cites5 {x}\"));",
+        "dominated by M99999 (a five-digit row that is not in the registry)",
+    );
+    refuses(
+        &r,
+        &[],
+        "which are not registry rows",
+        "an exemption citing a five-digit row the registry does not hold was accepted",
+    );
+    let _ = std::fs::remove_dir_all(&r);
+}
+
+const TERM_PROBE: &str = "pub fn gt_probe(a: u64, b: u64, c: u64) -> Result<(), String> {\n    if a > 1 || b > 2 || c > 3 {\n        return Err(format!(\"gt probe\"));\n    }\n    Ok(())\n}\n";
+
+/// A row appended to the copy's registry: `(id, file, old, new)`.
+fn add_row(r: &Path, id: &str, f: &str, old: &str, new: &str) {
+    let p = r.join("scripts/v022_g01_mutations.py");
+    let s = std::fs::read_to_string(&p).unwrap();
+    std::fs::write(
+        &p,
+        format!(
+            "{s}\nMUTATIONS.append(({id:?}, 'gate probe', {f:?}, {old:?}, {new:?}, 'axon-loop', '--lib', 'probe'))\n"
+        ),
+    )
+    .unwrap();
+}
+
+/// Amendment 95: a compound guard is judged PER TERM. A row whose edit reaches
+/// only the first term of `a || b || c` does not credit `b` or `c` (the round-8
+/// review: custodian.rs's `!m.is_file()` and uid terms, observer_service.rs's
+/// `!is_file()`); an edit that makes the WHOLE condition a constant
+/// (`false && (a || b || c)`) credits every term, and `false && a || b || c`,
+/// which leaves `b || c`, does not; a row per term, or a term exemption stating
+/// a fact, credits it.
+#[test]
+fn a_compound_guard_is_judged_per_term() {
+    let old = "a > 1 || b > 2 || c > 3";
+    // ATTACK: the row removes only the first term.
+    let r = tree("terms-first");
+    add_code(&r, SCANNED, TERM_PROBE);
+    add_row(&r, "MGT1", SCANNED, old, "false && a > 1 || b > 2 || c > 3");
+    let t = text(&gate(&r, &[]));
+    if !t.contains("compound guard term with no row and no exemption") {
+        panic!("ATTACK: a row on the first term of `a || b || c` credited the whole guard: {t}");
+    }
+    assert!(
+        t.contains("b > 2") && t.contains("c > 3"),
+        "the report names the other terms: {t}"
+    );
+    assert!(!t.contains("term with no row and no exemption (the row on another term of the same `||`/`&&` does not credit it): a > 1"), "{t}");
+    let _ = std::fs::remove_dir_all(&r);
+    // CONTROL 1: the row makes the whole condition a constant.
+    let r = tree("terms-const");
+    add_code(&r, SCANNED, TERM_PROBE);
+    add_row(
+        &r,
+        "MGT1",
+        SCANNED,
+        old,
+        "false && (a > 1 || b > 2 || c > 3)",
+    );
+    holds(
+        &r,
+        &[],
+        "an edit that makes the whole condition constant credits every term",
+    );
+    let _ = std::fs::remove_dir_all(&r);
+    // CONTROL 2: one row per term.
+    let r = tree("terms-each");
+    add_code(&r, SCANNED, TERM_PROBE);
+    add_row(&r, "MGT1", SCANNED, old, "false && a > 1 || b > 2 || c > 3");
+    add_row(&r, "MGT2", SCANNED, old, "a > 1 || false && b > 2 || c > 3");
+    add_row(&r, "MGT3", SCANNED, old, "a > 1 || b > 2 || false && c > 3");
+    holds(&r, &[], "a row per term credits every term");
+    let _ = std::fs::remove_dir_all(&r);
+    // CONTROL 3: a term exemption for each uncredited term; a stale one is refused.
+    let r = tree("terms-exempt");
+    add_code(&r, SCANNED, TERM_PROBE);
+    add_row(&r, "MGT1", SCANNED, old, "false && a > 1 || b > 2 || c > 3");
+    for t in ["b > 2", "c > 3"] {
+        edit(
+            &r,
+            GATE,
+            "\n\ndef load_rows():",
+            &format!(
+                "\nTERM_EXEMPT.append(({SCANNED:?}, {t:?}, 'probe: a fact'))\n\n\ndef load_rows():"
+            ),
+        );
+    }
+    holds(&r, &[], "a term exemption credits its term");
+    edit(
+        &r,
+        GATE,
+        "\n\ndef load_rows():",
+        &format!("\nTERM_EXEMPT.append(({SCANNED:?}, 'a > 1', 'probe: a credited term'))\n\n\ndef load_rows():"),
+    );
+    refuses(
+        &r,
+        &[],
+        "term exemption matches no uncredited guard term",
+        "a term exemption for a term a row credits was accepted",
+    );
+    let _ = std::fs::remove_dir_all(&r);
+}
+
+const CONST_PROBE: &str = "const GC_MAX_AGE: u64 = 300;\nconst GC_MESSAGE: &str = \"gc refused\";\nconst GC_UNUSED: u64 = 9;\n\npub fn gc_probe(x: u64) -> Result<(), String> {\n    let limit = GC_MAX_AGE;\n    if x > limit {\n        return Err(format!(\"gc {x} {GC_MESSAGE}\"));\n    }\n    Ok(())\n}\n\npub fn gc_other(x: u64) -> u64 {\n    x + GC_UNUSED\n}\n";
+
+/// Amendment 95: a `const` whose name a refusing function reads (outside the
+/// refusal's own message) is a site: its definition must be changed by a row or
+/// carry an exemption. A const used only in a message, and one no refusing
+/// function reads, are not.
+#[test]
+fn a_constant_a_guard_reads_is_a_site() {
+    let r = tree("consts");
+    add_code(&r, SCANNED, CONST_PROBE);
+    exempt(
+        &r,
+        SCANNED,
+        "        return Err(format!(\"gc {x} {GC_MESSAGE}\"));",
+        "probe: the refusal itself is exempt; only the constant is judged",
+    );
+    names(
+        &r,
+        "const GC_MAX_AGE",
+        "a constant read by a refusing function was not a site",
+    );
+    not_named(
+        &r,
+        "const GC_MESSAGE",
+        "a constant used only in a refusal's message was a site",
+    );
+    not_named(
+        &r,
+        "const GC_UNUSED",
+        "a constant no refusing function reads was a site",
+    );
+    // CONTROL: an exemption on the definition credits it.
+    exempt(&r, SCANNED, "const GC_MAX_AGE: u64 = 300;", "probe: a fact");
+    holds(&r, &[], "an exempted constant");
+    let _ = std::fs::remove_dir_all(&r);
+}
+
+/// Amendment 95: a FORM whose decision is its own line (a directory creation,
+/// a privilege call, a build or cap, a value) is credited only by a row whose
+/// edit changes THAT line. The `create_dir` inside the block of a uid check, the
+/// `.take(MAX_*)` in the block of an owner test were credited by the row on the
+/// check above them (the round-8 review found `create_dir_all` surviving at a
+/// site whose block held another row). Control: a row that changes the form line
+/// credits it.
+#[test]
+fn a_form_is_credited_only_by_a_row_that_changes_its_own_line() {
+    let probe = "pub fn gf_probe(a: u64, p: &std::path::Path) -> Result<(), String> {\n    if a > 1 {\n        let _gf_dir = std::fs::create_dir(p);\n        return Err(format!(\"gf probe\"));\n    }\n    Ok(())\n}\n";
+    let r = tree("own-line");
+    add_code(&r, SCANNED, probe);
+    // A row on the guard above credits the `return Err` site, not the directory.
+    add_row(
+        &r,
+        "MGF1",
+        SCANNED,
+        "    if a > 1 {\n",
+        "    if false && a > 1 {\n",
+    );
+    names(
+        &r,
+        "_gf_dir",
+        "a row on the guard above credited a form line it never changed",
+    );
+    let _ = std::fs::remove_dir_all(&r);
+    let r = tree("own-line-control");
+    add_code(&r, SCANNED, probe);
+    add_row(
+        &r,
+        "MGF1",
+        SCANNED,
+        "    if a > 1 {\n",
+        "    if false && a > 1 {\n",
+    );
+    add_row(
+        &r,
+        "MGF2",
+        SCANNED,
+        "        let _gf_dir = std::fs::create_dir(p);\n",
+        "        let _gf_dir = std::fs::create_dir_all(p);\n",
+    );
+    holds(&r, &[], "a row that changes the form line credits it");
     let _ = std::fs::remove_dir_all(&r);
 }

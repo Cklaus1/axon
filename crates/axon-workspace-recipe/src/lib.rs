@@ -486,3 +486,89 @@ pub fn tree_version_ref(root: &Path, quota: &Quota) -> Result<String, ImportRefu
         &manifest_entries(&entries),
     )))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Amendment 95 (eqgate4): the recipe's symlink rule refuses an EMPTY
+    /// target and an ABSOLUTE one (the two terms of one `||`), and one that pops
+    /// above the root. A row on the absolute term credited the empty term, which
+    /// no test observed (an empty target cannot be made with symlink(2), but
+    /// `check_link` is `pub` and judges bytes). Controls: a link within the
+    /// tree is accepted, in the root and in a subdirectory.
+    #[test]
+    fn a_link_with_an_empty_or_absolute_or_escaping_target_is_refused() {
+        assert!(check_link("a", b"b").is_ok(), "control: a sibling");
+        assert!(check_link("d/a", b"../b").is_ok(), "control: up one inside");
+        assert!(
+            check_link("a", b"").is_err(),
+            "ATTACK: an empty symlink target was accepted"
+        );
+        assert!(
+            check_link("a", b"/etc/passwd").is_err(),
+            "ATTACK: an absolute symlink target was accepted"
+        );
+        assert!(
+            check_link("a", b"../outside").is_err(),
+            "ATTACK: a symlink target that pops above the root was accepted"
+        );
+        assert!(
+            check_link("d/a", b"../../outside").is_err(),
+            "ATTACK: a symlink target that pops above the root from a subdirectory was accepted"
+        );
+    }
+
+    /// Amendment 95 (eqgate4): operator decision D11 fixes the import quota. The
+    /// defaults are VALUES (`MAX_ENTRIES`, `MAX_BYTES`, `MAX_DEPTH`) that no
+    /// other test of this crate observes (the quota tests pass their own), so a
+    /// larger one left every suite green; the whole tree is judged by them.
+    #[test]
+    fn the_default_import_quota_is_decision_d11() {
+        let q = Quota::default();
+        assert_eq!(
+            q.entries, 20_000,
+            "ATTACK: the default import quota allows a different number of entries than D11"
+        );
+        assert_eq!(
+            q.bytes, 268_435_456,
+            "ATTACK: the default import quota allows a different number of bytes than D11"
+        );
+        assert_eq!(
+            q.depth, 32,
+            "ATTACK: the default import quota allows a different depth than D11"
+        );
+    }
+
+    /// Amendment 95: the recipe skips the repository and MiCode runtime state at
+    /// the TOP level only (`.git`, `.micode`), recording each omission; a nested
+    /// `.git` is an ordinary directory. `SKIPPED_TOP_LEVEL` is the table; an entry
+    /// of it replaced by a duplicate left one name imported into every version.
+    #[test]
+    fn each_top_level_runtime_state_directory_is_skipped_and_a_nested_one_is_not() {
+        let d = std::env::temp_dir().join(format!("axon-recipe-skip-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        for dir in [".git", ".micode", "sub/.git"] {
+            std::fs::create_dir_all(d.join(dir)).unwrap();
+            std::fs::write(d.join(dir).join("f"), "x").unwrap();
+        }
+        std::fs::write(d.join("a.ax"), "fn main() {}").unwrap();
+        let (entries, omissions) = walk_tree(&d, &Quota::default()).unwrap();
+        let paths: Vec<&str> = entries.iter().map(|e| e.path.as_str()).collect();
+        for skipped in [".git", ".micode"] {
+            assert!(
+                !paths.iter().any(|p| p.starts_with(&format!("{skipped}/"))),
+                "ATTACK: the top-level {skipped} directory was imported into the version: {paths:?}"
+            );
+            assert!(
+                omissions.iter().any(|o| o.path == skipped),
+                "the omission of {skipped} is recorded: {omissions:?}"
+            );
+        }
+        assert!(
+            paths.contains(&"a.ax") && paths.contains(&"sub/.git/f"),
+            "{paths:?}"
+        );
+        let _ = std::fs::remove_dir_all(&d);
+    }
+}

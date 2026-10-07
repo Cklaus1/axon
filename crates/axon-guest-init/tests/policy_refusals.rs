@@ -39,14 +39,19 @@ fn scratch(tag: &str) -> PathBuf {
 
 /// Boot `axon-guest-init` under `cmdline` with the recording workload.
 fn boot(dir: &Path, cmdline: &str) -> Run {
+    boot_with(
+        dir,
+        cmdline,
+        "#!/bin/sh\necho RAN\necho \"effects=${AXON_ALLOWED_EFFECTS-unset}\"\n",
+    )
+}
+
+/// As `boot`, with the workload script `script`.
+fn boot_with(dir: &Path, cmdline: &str, script: &str) -> Run {
     let cmd = dir.join("cmdline");
     std::fs::write(&cmd, format!("{cmdline}\n")).unwrap();
     let payload = dir.join("workload.sh");
-    std::fs::write(
-        &payload,
-        "#!/bin/sh\necho RAN\necho \"effects=${AXON_ALLOWED_EFFECTS-unset}\"\n",
-    )
-    .unwrap();
+    std::fs::write(&payload, script).unwrap();
     use std::os::unix::fs::PermissionsExt as _;
     std::fs::set_permissions(&payload, std::fs::Permissions::from_mode(0o755)).unwrap();
     let o = Command::new("/usr/bin/unshare")
@@ -236,5 +241,84 @@ fn a_seccomp_filter_that_does_not_apply_starts_no_workload() {
         r.out,
         r.err
     );
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+/// Amendment 95 (eqgate4), ROOT ONLY: the policy's fields reach the workload as
+/// the environment the runtime enforces. `AXON_BUDGET_TOKENS` is the AI token
+/// cap and `AXON_ALLOWED_EFFECTS` the effect ceiling; `AXON_PRINCIPAL`,
+/// `AXON_RUN_ID` and `AXON_SOURCE_HASH` are the audit labels. Each is set from
+/// the policy in `child_main` by an `env::set_var` no earlier test observed
+/// except the ceiling: with the cap's line removed a guest ran with no token
+/// cap and every suite stayed green. The workload prints each variable, `unset`
+/// when it is absent; each assertion names its own variable, so a missing one
+/// cannot be read as another's.
+#[test]
+fn the_workload_receives_exactly_the_policys_environment() {
+    if skip_unless_root() {
+        return;
+    }
+    let d = scratch("env");
+    let script = "#!/bin/sh\necho RAN\n\
+        echo \"effects=${AXON_ALLOWED_EFFECTS-unset}\"\n\
+        echo \"budget=${AXON_BUDGET_TOKENS-unset}\"\n\
+        echo \"principal=${AXON_PRINCIPAL-unset}\"\n\
+        echo \"run_id=${AXON_RUN_ID-unset}\"\n\
+        echo \"source_hash=${AXON_SOURCE_HASH-unset}\"\n";
+    let full = word(
+        r#"{"schema":"axon-vm-mmds/1","allowed_effects":["IO","FS"],"budget_tokens":1234,"principal":"agent-7","run_id":"run-42","source_hash":"abcd"}"#,
+    );
+    let r = boot_with(&d, &format!("{BASE} {full}"), script);
+    assert!(
+        r.ran,
+        "setup: the workload did not start: {} {}",
+        r.out, r.err
+    );
+    for (line, attack) in [
+        (
+            "effects=IO,FS",
+            "ATTACK: the workload ran without the policy's AXON_ALLOWED_EFFECTS ceiling",
+        ),
+        (
+            "budget=1234",
+            "ATTACK: the workload ran without the policy's AXON_BUDGET_TOKENS cap",
+        ),
+        (
+            "principal=agent-7",
+            "ATTACK: the workload ran without the policy's AXON_PRINCIPAL",
+        ),
+        (
+            "run_id=run-42",
+            "ATTACK: the workload ran without the policy's AXON_RUN_ID",
+        ),
+        (
+            "source_hash=abcd",
+            "ATTACK: the workload ran without the policy's AXON_SOURCE_HASH",
+        ),
+    ] {
+        assert!(
+            r.out.lines().any(|l| l == line),
+            "{attack}: wanted {line:?}: {} {}",
+            r.out,
+            r.err
+        );
+    }
+    // CONTROL: a policy that names only a ceiling sets nothing else (a label
+    // is not invented, and the cap is not defaulted).
+    let r = boot_with(&d, &format!("{BASE} {}", word(VALID)), script);
+    for line in [
+        "effects=IO",
+        "budget=unset",
+        "principal=unset",
+        "run_id=unset",
+        "source_hash=unset",
+    ] {
+        assert!(
+            r.out.lines().any(|l| l == line),
+            "control: wanted {line:?}: {} {}",
+            r.out,
+            r.err
+        );
+    }
     let _ = std::fs::remove_dir_all(&d);
 }

@@ -455,10 +455,16 @@ impl RunDir {
         );
         let runs = state.join("runs");
         std::fs::create_dir_all(&runs).map_err(|e| SubmitError::Workspace(e.to_string()))?;
-        // The run's own dir is created NEW (C9 round 4b): an existing dir at
-        // the name, a leftover or one planted there, is never reused, so
-        // nothing materialized into it meets stale files. The random
-        // component above makes that refusal a collision, not a retry's fate.
+        RunDir::create_new(&runs, &key)
+    }
+
+    /// The run's own dir is created NEW (C9 round 4b): an existing dir at
+    /// the name, a leftover or one planted there, is never reused, so
+    /// nothing materialized into it meets stale files. The random
+    /// component of the name makes that refusal a collision, not a retry's
+    /// fate. (A function of its own so a test can meet a name that exists:
+    /// the random name cannot be aimed at.)
+    fn create_new(runs: &Path, key: &str) -> Result<RunDir, SubmitError> {
         let p = runs.join(key);
         std::fs::create_dir(&p)
             .map_err(|e| SubmitError::Workspace(format!("{}: {e}", p.display())))?;
@@ -2100,4 +2106,46 @@ pub fn scope(tenant: &str, family: &str) -> Result<Scope, String> {
         tenant_id: TenantId::new(tenant).map_err(|e| e.to_string())?,
         task_family: TaskFamily::new(family).map_err(|e| e.to_string())?,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Amendment 95 (eqgate4): a run dir is created NEW. A directory already at
+    /// the name (a leftover, or one planted) is refused, never reused, and what
+    /// it holds is untouched; a name whose parent is missing is refused too
+    /// (`create_dir_all` would make the parents and accept both).
+    #[test]
+    fn a_run_dir_is_never_made_over_an_existing_directory() {
+        let d = std::env::temp_dir().join(format!("axon-rundir-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(d.join("runs")).unwrap();
+        // CONTROL: a fresh name is created, and removed when the guard drops.
+        let made = RunDir::create_new(&d.join("runs"), "fresh").expect("control: a fresh name");
+        assert!(d.join("runs/fresh").is_dir());
+        drop(made);
+        assert!(!d.join("runs/fresh").exists(), "control: removed on drop");
+        // ATTACK 1: the name already holds a directory with a stale file.
+        std::fs::create_dir(d.join("runs/leftover")).unwrap();
+        std::fs::write(d.join("runs/leftover/stale"), "x").unwrap();
+        match RunDir::create_new(&d.join("runs"), "leftover") {
+            Ok(r) => {
+                std::mem::forget(r);
+                panic!("ATTACK: a run dir was made over a directory that already existed");
+            }
+            Err(e) => assert!(format!("{e:?}").contains("File exists"), "{e:?}"),
+        }
+        assert!(d.join("runs/leftover/stale").is_file());
+        // ATTACK 2: a missing parent is not made on the way.
+        match RunDir::create_new(&d.join("runs/absent"), "child") {
+            Ok(r) => {
+                std::mem::forget(r);
+                panic!("ATTACK: a run dir was made under parents that did not exist");
+            }
+            Err(e) => assert!(format!("{e:?}").contains("No such file"), "{e:?}"),
+        }
+        assert!(!d.join("runs/absent").exists());
+        let _ = std::fs::remove_dir_all(&d);
+    }
 }

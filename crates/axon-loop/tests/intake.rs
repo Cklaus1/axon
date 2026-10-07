@@ -3458,6 +3458,53 @@ fn each_intake_join_refuses_its_own_defect() {
     }
 }
 
+/// Amendment 95 (eqgate4): verification evidence of ANY of the four kinds
+/// presented for an episode whose sidecar names no `verifier_ref` is refused.
+/// The four presence tests are the terms of one `||` guard; M842 rows the
+/// request's, and the receipt's, the attestation's and the PSV evidence's were
+/// each removable alone with every suite green (a row on one term credited the
+/// guard). The evidence is junk on purpose: the guard refuses on PRESENCE,
+/// before any document is parsed. Control: the same intake with none presented
+/// is recorded.
+#[test]
+fn verification_evidence_of_any_kind_is_refused_when_the_episode_cites_no_verifier() {
+    let c = case(Some(500));
+    let d = docs(&c);
+    let acks: Vec<String> = d.acks.iter().map(Value::to_string).collect();
+    let ep = d.ep.to_string();
+    let ctx = d.ctx.to_string();
+    let src = d.src.as_ref().map(Value::to_string);
+    let junk = "{}".to_string();
+    let run = |kind: &str| {
+        intake_episode(
+            &c.s,
+            &IntakeInput {
+                episode: &ep,
+                context: &ctx,
+                acks: &acks,
+                projection: None,
+                source_episode: src.as_deref(),
+                verification_request: None,
+                verification_receipt: (kind == "receipt").then_some(junk.as_str()),
+                verification_attestation: (kind == "attestation").then_some(junk.as_str()),
+                verification_psv_evidence: (kind == "psv evidence").then_some(junk.as_str()),
+            },
+        )
+    };
+    run("none").expect("control: no evidence presented is recorded");
+    for kind in ["receipt", "attestation", "psv evidence"] {
+        match run(kind) {
+            Err(LoopError::Refused(m)) if m.contains("names no verifier_ref") => {}
+            Ok(o) => panic!(
+                "ATTACK: a verification {kind} presented for an episode that cites no verifier_ref was recorded: {o:?}"
+            ),
+            Err(e) => panic!(
+                "ATTACK: a verification {kind} presented for an episode that cites no verifier_ref was refused for another reason: {e}"
+            ),
+        }
+    }
+}
+
 /// M847: a MiCode not-produced marker is never a policy: here the stored
 /// policy itself names the `controls_ref` marker, so every join to the policy
 /// holds and only the marker rule refuses the episode.

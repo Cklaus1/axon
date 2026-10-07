@@ -492,6 +492,56 @@ fn the_proposer_cannot_admit_its_own_candidate_whatever_the_record_lists() {
     assert_eq!(adm.decision, Decision::Accept, "control: {:?}", adm.reasons);
 }
 
+/// Amendment 95 (eqgate4): at admission a counted verdict is re-checked against
+/// the record's `subject_issuers`: a verifier that is ALSO a subject issuer (the
+/// proposer, the evaluator) no longer counts, even though the record (a store
+/// writer's to write) was admitted by an independent admitter. EVL never lists
+/// the verifier as a subject, so on an honest record this term never fires; the
+/// round-8 review found it removable alone with every suite green (a row on the
+/// trust term credited the guard). Here a store writer ADDS the verifier to the
+/// subjects of a genuine evaluation. Control: the unforged record is admissible.
+#[test]
+fn a_verifier_that_is_also_a_subject_issuer_no_longer_counts() {
+    let w = world();
+    trust_monitor(&w.s);
+    freeze_plan(&w.s, "exp", &w.inc_ref, &w.cand_ref, |_| {}).unwrap();
+    let specs = pair(&w.inc, &w.cand, 2, 2, 2, Some(100), Some(50));
+    let (rec, eref) = evaluate(
+        &w.s,
+        &evl_request("exp", &w.inc, &w.cand, &specs, &EvlOpts::default()),
+    )
+    .unwrap();
+    let verifier = OpaqueRef::new(VERIFIER).unwrap();
+    assert!(
+        !rec.subject_issuers.contains(&verifier),
+        "setup: EVL does not list the verifier as a subject"
+    );
+    let mut forged = rec.clone();
+    forged.subject_issuers.push(verifier.clone());
+    forged.subject_issuers.sort();
+    let fe = w.s.put_cas("evaluations", &forged).unwrap();
+    forged_append(
+        w.s.root(),
+        axon_loop::ledger::Event::Evaluation {
+            scope: scope(),
+            experiment_id: "exp".into(),
+            evaluation_ref: fe.clone(),
+            freeze_seq: forged.freeze_seq,
+            authority_epoch: forged.authority_epoch,
+        },
+    );
+    match admit(&w.s, "exp", &fe, ADMITTER, false) {
+        Err(LoopError::Refused(m)) => assert!(m.contains("no longer trusts"), "{m}"),
+        Ok((adm, _)) => panic!(
+            "ATTACK: a verdict whose verifier is also a subject issuer was counted: {:?} {:?}",
+            adm.decision, adm.reasons
+        ),
+        Err(e) => panic!("{e}"),
+    }
+    let (adm, _) = admit(&w.s, "exp", &eref, ADMITTER, false).unwrap();
+    assert_eq!(adm.decision, Decision::Accept, "control: {:?}", adm.reasons);
+}
+
 /// G11-r22-independent-admission: complete experiment bindings. An evaluation
 /// cannot be admitted under another experiment's frozen plan because a
 /// candidate can be frozen in ONE experiment only (no plan shopping): the

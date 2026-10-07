@@ -1140,3 +1140,59 @@ fn a_host_config_giving_fabric_a_nonce_store_is_refused() {
         axon_fabric::custodian::Custodian::Service(ref c) if c.uid == 4244
     ));
 }
+
+/// Amendment 95 (eqgate4), ROOT ONLY: an observer block that names no
+/// `max_age_s` takes the compiled-in default of 300 s, not a larger bound. The
+/// default is a VALUE (`DEFAULT_OBSERVATION_MAX_AGE_S`) read by no comparison
+/// in its own file, so a row on the freshness check never saw it; with it
+/// raised to 86 400 000 an observation a day old was fresh and every suite
+/// stayed green. Control: an explicit `max_age_s` is taken as given.
+#[test]
+fn an_observer_that_names_no_max_age_gets_the_five_minute_default() {
+    if unsafe { libc::geteuid() } != 0 {
+        eprintln!("skipped: needs root to create root-owned fixtures");
+        return;
+    }
+    let h = Host::new();
+    let base = h.env.dir.path();
+    for d in [base.to_path_buf(), h.root.clone(), h.p("dist"), h.p("keys")] {
+        std::fs::set_permissions(&d, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    for f in [
+        "launcher.sh",
+        "manifest.json",
+        "registry.json",
+        "evidence.json",
+    ] {
+        std::fs::set_permissions(h.p(f), std::fs::Permissions::from_mode(0o644)).unwrap();
+    }
+    write_executable(&h.p("observer.sh"), "#!/bin/sh\n", 0o755);
+    let age = |max_age: Option<u64>| {
+        h.write_config(|v| {
+            let mut ob = json!({
+                "command": {"path": h.p("observer.sh"), "sha256": sha256_file(&h.p("observer.sh"))},
+                "custodian": {"socket": h.p("custodian/custodian.sock"), "uid": 4244},
+            });
+            if let Some(m) = max_age {
+                ob["max_age_s"] = json!(m);
+            }
+            v["observer"] = ob;
+        });
+        std::fs::set_permissions(h.config(), std::fs::Permissions::from_mode(0o644)).unwrap();
+        ProtectedHost::for_test(&h.config(), Some(base), h.trust())
+            .expect("setup: the host config loads")
+            .observer
+            .expect("setup: the host has an observer")
+            .max_age_s
+    };
+    assert_eq!(
+        age(Some(77)),
+        77,
+        "control: an explicit max_age_s is taken as given"
+    );
+    assert_eq!(
+        age(None),
+        300,
+        "ATTACK: an observer naming no max_age_s accepts observations older than five minutes"
+    );
+}

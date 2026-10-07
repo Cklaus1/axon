@@ -852,6 +852,75 @@ fn prepare_never_writes_the_policy_over_a_file_already_there() {
     }
 }
 
+/// Amendment 95 (eqgate4): `prepare` creates the JOB dir NEW. A directory
+/// already at `job_dir` (a leftover, one planted to be the guest's job drive) is
+/// refused and what it holds is untouched; `create_dir_all` accepts it and
+/// writes the manifest and the completion secret into the stale directory.
+/// The refusal is the kernel's (EEXIST), so it builds no `Err` the coverage
+/// gate could see.
+#[test]
+fn prepare_never_makes_the_job_dir_over_a_directory_already_there() {
+    use axon_workspace_recipe::{tree_version_ref, Quota};
+    let env = Env::new();
+    let d = env.dir.path();
+    let manifest = d.join("manifest.json");
+    std::fs::write(&manifest, full_lx_manifest(QUALIFIED_GUEST)).unwrap();
+    let issuer = Issuer::generate();
+    let lx = qualified_linux_cfg(d, &issuer, &good_evidence(&sha256_file(&manifest)));
+    let q = lx.qualification().unwrap();
+    let (cand, suite) = (d.join("in/candidate"), d.join("in/check"));
+    std::fs::create_dir_all(&cand).unwrap();
+    std::fs::create_dir_all(&suite).unwrap();
+    std::fs::write(cand.join("f.ax"), "fn main() {}\n").unwrap();
+    std::fs::write(suite.join("accept.ax"), "@[test] fn t_ok() {}\n").unwrap();
+    let quota = Quota::default();
+    let mut rq = request(&env, "op-prepare-policy", "t_ok");
+    rq["workspace_version_ref"] = json!(tree_version_ref(&cand, &quota).unwrap());
+    let suite_ref = tree_version_ref(&suite, &quota).unwrap();
+    let rq: axon_loop_contracts::ComputeRequest = serde_json::from_value(rq).unwrap();
+    let prepare = |job: &std::path::Path| {
+        axon_fabric::psv::prepare(
+            &rq,
+            &axon_fabric::psv::PrepareInputs {
+                qualification: &q,
+                profile_manifest: &lx.manifest,
+                host: None,
+                policy_json: r#"{"schema":"axon-vm-mmds/1","allowed_effects":[]}"#,
+                suite_id: "acc",
+                suite_version: &suite_ref,
+                entry: "accept.ax",
+                test: "t_ok",
+                candidate_dir: &cand,
+                suite_dir: &suite,
+                job_dir: job,
+                observation_nonce: "none",
+                authority_epoch: 0,
+                scope: &scope(),
+            },
+        )
+    };
+    prepare(&fresh_job_dir(d, "jobdir-control")).expect("control: a fresh inputs dir prepares");
+    let job = fresh_job_dir(d, "jobdir-planted");
+    std::fs::create_dir(&job).unwrap();
+    std::fs::write(job.join("stale"), "left by an earlier run\n").unwrap();
+    match prepare(&job) {
+        Ok(_) => panic!(
+            "ATTACK: prepare made the job dir over a directory that already existed ({:?} holds {:?})",
+            job,
+            std::fs::read_dir(&job).map(|r| r.count())
+        ),
+        Err(e) => assert!(e.contains("job dir") && e.contains("File exists"), "{e}"),
+    }
+    assert_eq!(
+        std::fs::read_to_string(job.join("stale")).unwrap(),
+        "left by an earlier run\n"
+    );
+    assert!(
+        !job.join("completion-secret").exists(),
+        "no secret was written into the planted directory"
+    );
+}
+
 /// C9 round 7, EQGATE3 (amendment 91): `prepare` is `pub`, and each tree it is
 /// handed must BE the version the request names and the suite the registry
 /// pins: "never merely a digest of whatever bytes sit in a directory". Both

@@ -1538,6 +1538,47 @@ fn the_private_inputs_dir_is_created_0700() {
     );
 }
 
+/// Amendment 95 (eqgate4): the Fabric-private inputs dir is created NEW. A
+/// directory already at `<out_root>/<op>.psv-inputs` (a leftover, or one planted
+/// there with a stale `job/completion-secret`) is refused and left as it was;
+/// `DirBuilder::recursive(true)` (or `create_dir_all`) accepts it and
+/// materializes the candidate and suite into it. The refusal is EEXIST, so it
+/// builds no `Err` the coverage gate could see.
+#[test]
+fn the_private_inputs_dir_is_never_an_existing_one() {
+    use axon_fabric::workspace::{Quota, WorkspaceStore};
+    let env = Env::new();
+    let guest = "cd".repeat(32);
+    let lx = linux_cfg(&env, &full_lx_manifest(&guest), "");
+    std::fs::create_dir_all(&lx.out_root).unwrap();
+    let cfg = env.cfg(0);
+    let tenant = cfg.epoch.scope().tenant_id.clone();
+    let version = WorkspaceStore::open(&cfg.state_dir, &tenant)
+        .unwrap()
+        .import_dir(&env.ws, &Quota::default())
+        .unwrap();
+    let mut r = request(&env, "op-private-inputs-new", "t_ok");
+    r["workspace_version_ref"] = json!(version);
+    let req: axon_loop_contracts::ComputeRequest = serde_json::from_value(r).unwrap();
+    let planted = axon_fabric::psv::private_inputs_dir(&lx, &req);
+    std::fs::create_dir_all(planted.join("job")).unwrap();
+    std::fs::write(planted.join("job/completion-secret"), "stale").unwrap();
+    match axon_fabric::psv::private_inputs(&lx, &cfg.state_dir, &tenant, &req, &version) {
+        Ok(d) => panic!(
+            "ATTACK: the private inputs dir was made over a directory that already existed ({d:?})"
+        ),
+        Err(e) => assert!(
+            e.contains("private inputs dir") && e.contains("File exists"),
+            "{e}"
+        ),
+    }
+    assert_eq!(
+        std::fs::read_to_string(planted.join("job/completion-secret")).unwrap(),
+        "stale"
+    );
+    assert!(!planted.join("candidate").exists());
+}
+
 /// C9 round 7, EQGATE3 (amendment 91): the pinned launcher and its verify step
 /// run with /dev/null for stdin, stdout and stderr (`quiet`). A launcher that
 /// inherits them writes into the Fabric's own streams (the CLI's stdout is a

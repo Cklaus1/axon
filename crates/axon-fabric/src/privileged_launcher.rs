@@ -1837,6 +1837,7 @@ pub fn become_root() -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::unix::fs::PermissionsExt;
 
     fn cfg() -> HelperConfig {
         let p = |s: &str| PinnedJson {
@@ -1936,6 +1937,208 @@ mod tests {
                  accepted: {got:?}"
             );
         }
+    }
+
+    /// Scratch directory for the staging tests.
+    fn scratch(tag: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("axon-launcher-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    fn open_dir(p: &Path) -> OwnedFd {
+        openat(libc::AT_FDCWD, p.as_os_str(), DIR_FLAGS).expect("setup: open a directory")
+    }
+
+    /// Amendment 95 (eqgate4): the snapshot of an input tree creates each
+    /// directory NEW. A directory already at the destination (a leftover or a
+    /// planted one) is refused, and what it holds is untouched; `create_dir_all`
+    /// would enter it and copy over the stale tree. The staging root is
+    /// root-private and fresh, so this is unreachable on the helper's own route
+    /// (the guard is the property of the copy, observed here by handing it a
+    /// destination that is not fresh). CONTROL: an empty destination is copied.
+    #[test]
+    fn a_snapshot_never_copies_into_a_directory_that_already_exists() {
+        let d = scratch("copytree");
+        let euid = unsafe { libc::geteuid() };
+        std::fs::create_dir_all(d.join("src/sub")).unwrap();
+        std::fs::write(d.join("src/sub/f"), "payload").unwrap();
+        std::fs::write(d.join("src/sub/x"), "#!/bin/sh\n").unwrap();
+        std::fs::set_permissions(d.join("src/sub/f"), std::fs::Permissions::from_mode(0o600))
+            .unwrap();
+        std::fs::set_permissions(d.join("src/sub/x"), std::fs::Permissions::from_mode(0o700))
+            .unwrap();
+        std::fs::create_dir_all(d.join("fresh")).unwrap();
+        let mut budget = 1u64 << 20;
+        copy_tree(
+            open_dir(&d.join("src")).as_raw_fd(),
+            &d.join("fresh"),
+            euid,
+            &mut budget,
+        )
+        .expect("control: an empty destination is copied into");
+        assert_eq!(
+            std::fs::read_to_string(d.join("fresh/sub/f")).unwrap(),
+            "payload"
+        );
+        // The copy's modes are the helper's (the tree digest records the exec bit):
+        // 0644 for a file, 0755 for an executable one and for a directory, whatever
+        // the source's own bits were.
+        use std::os::unix::fs::MetadataExt;
+        let mode = |p: &str| std::fs::metadata(d.join(p)).unwrap().mode() & 0o777;
+        assert_eq!(
+            mode("fresh/sub/f"),
+            0o644,
+            "ATTACK: a snapshotted file got another mode than 0644"
+        );
+        assert_eq!(
+            mode("fresh/sub/x"),
+            0o755,
+            "ATTACK: a snapshotted executable got another mode than 0755"
+        );
+        assert_eq!(
+            mode("fresh/sub"),
+            0o755,
+            "ATTACK: a snapshotted directory got another mode than 0755"
+        );
+        std::fs::create_dir_all(d.join("planted/sub")).unwrap();
+        std::fs::write(d.join("planted/sub/stale"), "stale").unwrap();
+        let mut budget = 1u64 << 20;
+        match copy_tree(
+            open_dir(&d.join("src")).as_raw_fd(),
+            &d.join("planted"),
+            euid,
+            &mut budget,
+        ) {
+            Ok(()) => panic!("ATTACK: a snapshot copied into a directory that already existed"),
+            Err(e) => assert!(e.contains("File exists"), "{e}"),
+        }
+        assert!(d.join("planted/sub/stale").is_file());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// Amendment 95: the same for each input's top-level directory in the
+    /// staging dir (`snapshot_inputs`): `<staging>/candidate` exists already.
+    #[test]
+    fn a_snapshot_of_the_inputs_never_enters_an_existing_staging_leaf() {
+        let d = scratch("snapshot");
+        let euid = unsafe { libc::geteuid() };
+        for leaf in ["candidate", "check", "job"] {
+            std::fs::create_dir_all(d.join("root/in").join(leaf)).unwrap();
+            std::fs::write(d.join("root/in").join(leaf).join("f"), leaf).unwrap();
+        }
+        std::fs::write(d.join("root/in/policy.json"), "{}").unwrap();
+        let mut c = cfg();
+        c.fabric_uid = euid;
+        c.max_input_bytes = 1 << 20;
+        let root = open_dir(&d.join("root"));
+        std::fs::create_dir_all(d.join("staging-ok")).unwrap();
+        snapshot_inputs(
+            root.as_raw_fd(),
+            OsStr::new("in"),
+            &d.join("staging-ok"),
+            &c,
+        )
+        .expect("control: a fresh staging dir takes the snapshot");
+        assert!(d.join("staging-ok/candidate/f").is_file());
+        {
+            use std::os::unix::fs::MetadataExt;
+            assert_eq!(
+                std::fs::metadata(d.join("staging-ok/candidate"))
+                    .unwrap()
+                    .mode()
+                    & 0o777,
+                0o755,
+                "ATTACK: a staged input directory got another mode than 0755"
+            );
+        }
+        // The job's files were removed from Fabric's dir; rebuild them.
+        std::fs::create_dir_all(d.join("root/in/job")).unwrap();
+        std::fs::write(d.join("root/in/job/f"), "job").unwrap();
+        std::fs::create_dir_all(d.join("staging-bad/candidate")).unwrap();
+        std::fs::write(d.join("staging-bad/candidate/stale"), "stale").unwrap();
+        match snapshot_inputs(
+            root.as_raw_fd(),
+            OsStr::new("in"),
+            &d.join("staging-bad"),
+            &c,
+        ) {
+            Ok(()) => panic!(
+                "ATTACK: the inputs were snapshotted into a staging leaf that already existed"
+            ),
+            Err(e) => assert!(e.contains("File exists"), "{e}"),
+        }
+        assert!(d.join("staging-bad/candidate/stale").is_file());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// Amendment 95 (eqgate4): the out root must be a 0700 directory of the
+    /// FABRIC uid. The helper trusts the root's contents as Fabric's own, so a
+    /// root owned by another uid (one that can swap `<op>.psv-inputs` under it)
+    /// is refused even when it is private. The three terms of the guard are the
+    /// type (dominated: `walk_open` opens every component O_DIRECTORY), the owner
+    /// and the mode; the owner term had no test of its own (a row on the mode
+    /// credited the guard). Control: the same directory, owned by the configured
+    /// Fabric uid.
+    #[test]
+    fn an_out_root_another_uid_owns_is_refused() {
+        let d = scratch("outroot");
+        std::fs::set_permissions(&d, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let root = d.join("runs");
+        std::fs::create_dir(&root).unwrap();
+        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let euid = unsafe { libc::geteuid() };
+        let a = Authority {
+            operator_uid: euid,
+            walk_base: d.clone(),
+            test: true,
+        };
+        let mut c = cfg();
+        c.out_root = root.clone();
+        c.fabric_uid = euid;
+        open_out_root(&c, &a).expect("control: a 0700 directory of the configured Fabric uid");
+        c.fabric_uid = euid.wrapping_add(1000);
+        let got = open_out_root(&c, &a).err();
+        assert!(
+            got.as_deref()
+                .is_some_and(|e| e.contains("must be a 0700 directory of the Fabric uid")),
+            "ATTACK: an out root the Fabric uid does not own was accepted: {got:?}"
+        );
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// Amendment 95 (eqgate4): the operator-file reader returns at most
+    /// `MAX_REQUEST` bytes of a file, however large it is: its callers parse what
+    /// they are given, so an unbounded read would let a file of any size through
+    /// the bound that the request reader and the config reader share. The read is
+    /// a `.take(MAX_REQUEST)` that builds no `Err` (the gate saw only the owner
+    /// test above it, which a row credited). Control: a small file is read whole.
+    #[test]
+    fn an_operator_file_is_read_at_most_to_the_request_bound() {
+        let d = scratch("opfile");
+        std::fs::set_permissions(&d, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let euid = unsafe { libc::geteuid() };
+        let a = Authority {
+            operator_uid: euid,
+            walk_base: d.clone(),
+            test: true,
+        };
+        let small = d.join("small.json");
+        std::fs::write(&small, b"{}").unwrap();
+        std::fs::set_permissions(&small, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert_eq!(read_operator_file(&small, &a).unwrap(), b"{}", "control");
+        let big = d.join("big.json");
+        std::fs::write(&big, vec![b' '; MAX_REQUEST as usize + 4096]).unwrap();
+        std::fs::set_permissions(&big, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let got = read_operator_file(&big, &a).unwrap();
+        assert_eq!(
+            got.len() as u64,
+            MAX_REQUEST,
+            "ATTACK: an operator file larger than the request bound was read whole ({} bytes)",
+            got.len()
+        );
+        let _ = std::fs::remove_dir_all(&d);
     }
 
     /// D6 (amendment 50): a production helper launches only on a PROTECTED
