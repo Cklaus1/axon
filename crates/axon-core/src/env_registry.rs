@@ -22,6 +22,9 @@
 pub const ALL_ENV_VARS: &[(&str, &str)] = &[
     // ── Determinism & execution ──────────────────────────────────────────
     ("AXON_SEED", "seed the RNG (u64) so `random_*` runs reproduce"),
+    ("AXON_EQ_ALONE", "TEST-ONLY re-exec marker: a test that must run in a fresh single-test process (it forks) re-runs itself with this set to its own name, so a multi-threaded test process never forks (axon-fabric observer_service, axon-guest-init)"),
+    ("AXON_EQ_GIT_ENV", "TEST-ONLY re-exec marker: the git_cmd environment test runs the child in a process whose environment it controls (axon-fabric git_data)"),
+    ("AXON_EQ_HARDEN", "TEST-ONLY re-exec marker: the helper's harden() test runs in a fresh single-test process because it forks (axon-fabric privileged_launcher)"),
     ("AXON_MAX_DEPTH", "recursion-depth ceiling (default 6000, clamped to 1,000,000); the interpreter thread stack scales with it"),
     ("AXON_CLOCK", "deterministic virtual clock `<start_ms>[:<tick_ms>]`; `sleep_ms` advances it without really sleeping"),
     ("AXON_PATH", "colon-separated module search path for `mod`/`use` imports"),
