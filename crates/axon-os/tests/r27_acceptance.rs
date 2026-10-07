@@ -3,6 +3,8 @@
 //! Pure-core tests (latch/ledger/coalition/corrigible) run always.
 //! CLI integration tests (A1/A2/A3) skip if the axon-os/axon binaries aren't built.
 
+#[path = "../../axon-core/tests/script_spawn/mod.rs"]
+mod script_spawn;
 use axon_os::coalition::{Coalition, CoalitionCeiling};
 use axon_os::corrigible::{
     check_kill, coalition_bound_verdict, r27_tcb_modules_present, resource_bound_verdict,
@@ -38,22 +40,20 @@ fn axon_os_bin() -> PathBuf {
 /// without a built compiler is legitimate. But it SAYS so now: a green run that
 /// checked nothing must not look like a green run that checked everything.
 fn axon_bin() -> Option<PathBuf> {
-    if let Some(p) = std::env::var_os("AXON_BIN") {
-        let p = PathBuf::from(p);
-        if p.exists() {
-            return Some(p);
-        }
-    }
-    let p = workspace_root().join("target/debug/axon");
-    if p.exists() {
-        return Some(p);
-    }
-    eprintln!(
-        "axon-os acceptance: SKIPPING — no axon binary at {} (build it, or set AXON_BIN). \
-         This test reports PASS without having checked anything.",
-        p.display()
-    );
-    None
+    // Built from THIS tree by cargo (tests/script_spawn::workspace_bin): it
+    // used to take a stale `target/debug/axon`, or skip when none sat there.
+    Some(script_spawn::workspace_bin(
+        "AXON_BIN",
+        &[
+            "build",
+            "-p",
+            "axon-core",
+            "--no-default-features",
+            "--bin",
+            "axon",
+        ],
+        "axon",
+    ))
 }
 
 fn tmp(name: &str) -> PathBuf {
@@ -247,6 +247,65 @@ fn kill_never_claims_tripped_for_a_run_that_was_not_live() {
         out.stdout.contains("ARMED"),
         "and must say what it actually did: {}",
         out.stdout
+    );
+}
+
+/// A kill ARMED before its run starts stops that run (C9 round 4b,
+/// integrate-3). `kill` on a run id with no live latch writes the latch and
+/// promises "a run starting with this id will pick it up"; `run` used to
+/// reset every latch to clear as it started, so the armed kill was discarded
+/// and the job ran to its timeout (exit 8). That is the race behind
+/// acc_a1_smoke_kill_journey's exit 8 under load: its kill landed before the
+/// loaded `run` reached the latch. Control: the same run, not armed, is
+/// stopped only by its timeout (exit 8, never 4), so the 4 below is the
+/// armed latch's doing.
+#[test]
+fn a_kill_armed_before_its_run_starts_stops_the_run() {
+    let Some(axon) = axon_bin() else { return };
+    let store = tmp("kill-armed-first");
+    let run = |rid: &str, timeout_ms: &str| {
+        Command::new(axon_os_bin())
+            .args([
+                "run",
+                "examples/r27/killable_agent.axjob",
+                "--killable",
+                "--run-id",
+                rid,
+                "--out",
+                store.to_str().unwrap(),
+            ])
+            .env("AXON_BIN", &axon)
+            .env("AXON_OS_TIMEOUT_MS", timeout_ms)
+            .current_dir(workspace_root())
+            .output()
+            .expect("spawn axon-os run")
+    };
+    let control = run("not-armed", "1500");
+    assert_eq!(
+        control.status.code(),
+        Some(8),
+        "control: an un-armed killable run is stopped only by its timeout: {}",
+        String::from_utf8_lossy(&control.stdout)
+    );
+    let armed = os(
+        &[
+            "kill",
+            "armed-first",
+            "--store",
+            store.to_str().unwrap(),
+            "--reason",
+            "armed before start",
+        ],
+        &axon,
+    );
+    assert_eq!(armed.code, 0, "pre-arming is allowed: {}", armed.stdout);
+    assert!(armed.stdout.contains("ARMED"), "{}", armed.stdout);
+    let o = run("armed-first", "20000");
+    assert_eq!(
+        o.status.code(),
+        Some(4),
+        "ATTACK: a run started after its kill was armed cleared the latch and ran: {}",
+        String::from_utf8_lossy(&o.stdout)
     );
 }
 

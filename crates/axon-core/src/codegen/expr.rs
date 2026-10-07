@@ -273,7 +273,8 @@ impl<'ctx> super::Codegen<'ctx> {
                 // local, later reads would silently see the OLD value (AX-24):
                 // refuse that unless the value already reported its own error.
                 let Some(val) = val else {
-                    if self.locals.contains_key(name) && self.codegen_errors.len() == errors_before {
+                    if self.locals.contains_key(name) && self.codegen_errors.len() == errors_before
+                    {
                         let msg = format!(
                             "codegen error [E0910]: native codegen could not lower the value \
                              bound to `{name}`, which shadows an earlier `{name}`. The \
@@ -426,7 +427,12 @@ impl<'ctx> super::Codegen<'ctx> {
                 // `false && f()` ran `f`'s side effects.
                 if let (ast::BinOp::And | ast::BinOp::Or, BasicValueEnum::IntValue(l)) = (op, lhs) {
                     if l.get_type().get_bit_width() == 1 {
-                        return self.emit_short_circuit(matches!(op, ast::BinOp::And), l, right, fn_val);
+                        return self.emit_short_circuit(
+                            matches!(op, ast::BinOp::And),
+                            l,
+                            right,
+                            fn_val,
+                        );
                     }
                 }
                 let rhs = self.emit_expr(right, fn_val)?;
@@ -478,7 +484,9 @@ impl<'ctx> super::Codegen<'ctx> {
                 }
                 // Prefer the semantic type from inference (distinguishes u32/u64
                 // from i32/i64) then fall back to the LLVM-level value hint.
-                let ty = lt_sem.or(rt_sem).unwrap_or_else(|| self.value_type_hint(&lhs));
+                let ty = lt_sem
+                    .or(rt_sem)
+                    .unwrap_or_else(|| self.value_type_hint(&lhs));
                 Some(self.emit_binop(op, lhs, rhs, &ty))
             }
 
@@ -827,7 +835,11 @@ impl<'ctx> super::Codegen<'ctx> {
         let rhs_bb = self.ir.context.append_basic_block(fn_val, "sc.rhs");
         let end_bb = self.ir.context.append_basic_block(fn_val, "sc.end");
         // `&&`: a true left needs the right; `||`: a false left does.
-        let (on_true, on_false) = if is_and { (rhs_bb, end_bb) } else { (end_bb, rhs_bb) };
+        let (on_true, on_false) = if is_and {
+            (rhs_bb, end_bb)
+        } else {
+            (end_bb, rhs_bb)
+        };
         build_wrappers::w_cond_br(&self.ir.builder, l, on_true, on_false);
 
         self.ir.builder.position_at_end(rhs_bb);
@@ -3079,7 +3091,9 @@ impl<'ctx> super::Codegen<'ctx> {
                     .unwrap_or(Type::Unknown)
             })
             .collect();
-        let ret = self.lambda_body_sem_type(params, body).unwrap_or(Type::Unknown);
+        let ret = self
+            .lambda_body_sem_type(params, body)
+            .unwrap_or(Type::Unknown);
         Type::Fn(ps, Box::new(ret))
     }
 
@@ -3204,7 +3218,11 @@ impl<'ctx> super::Codegen<'ctx> {
         let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
         let target_params = target.get_type().get_param_types();
         let mut thunk_params: Vec<BasicMetadataTypeEnum<'ctx>> = vec![ptr_ty.into()];
-        thunk_params.extend(target_params.iter().map(|t| BasicMetadataTypeEnum::from(*t)));
+        thunk_params.extend(
+            target_params
+                .iter()
+                .map(|t| BasicMetadataTypeEnum::from(*t)),
+        );
         let thunk = self.ir.module.add_function(
             &format!("__axon_fnval_{name}"),
             i64_ty.fn_type(&thunk_params, false),
@@ -3345,7 +3363,11 @@ impl<'ctx> super::Codegen<'ctx> {
             (Some(v), Some(Type::F64)) => Some(
                 self.ir
                     .builder
-                    .build_bitcast(v.into_int_value(), self.ir.context.f64_type(), "lam_ret_i2f")
+                    .build_bitcast(
+                        v.into_int_value(),
+                        self.ir.context.f64_type(),
+                        "lam_ret_i2f",
+                    )
                     .unwrap(),
             ),
             // A bool body rides the i64 ABI as 0/1. Read back as
@@ -4089,8 +4111,14 @@ impl<'ctx> super::Codegen<'ctx> {
                 };
                 let i64_ty = self.ir.context.i64_type();
                 let b = &self.ir.builder;
-                let len = b.build_extract_value(sv, 0, "cl_len").unwrap().into_int_value();
-                let src = b.build_extract_value(sv, 1, "cl_src").unwrap().into_pointer_value();
+                let len = b
+                    .build_extract_value(sv, 0, "cl_len")
+                    .unwrap()
+                    .into_int_value();
+                let src = b
+                    .build_extract_value(sv, 1, "cl_src")
+                    .unwrap()
+                    .into_pointer_value();
                 let bytes = b.build_int_mul(len, elem_size, "cl_bytes").unwrap();
                 let dst = self.emit_malloc(bytes, "cl_dst");
                 let _ = self.ir.builder.build_memcpy(dst, 1, src, 1, bytes);
@@ -4117,7 +4145,10 @@ impl<'ctx> super::Codegen<'ctx> {
                         .unwrap();
                     self.ir.builder.position_at_end(body);
                     let sp = unsafe {
-                        self.ir.builder.build_gep(elem_ty, dst, &[iv], "cl_sp").unwrap()
+                        self.ir
+                            .builder
+                            .build_gep(elem_ty, dst, &[iv], "cl_sp")
+                            .unwrap()
                     };
                     let elem = build_wrappers::w_load(&self.ir.builder, elem_ty, sp, "cl_elem");
                     let cloned = self.emit_clone_value(elem, inner, fn_val);
@@ -4134,8 +4165,14 @@ impl<'ctx> super::Codegen<'ctx> {
                 }
                 let b = &self.ir.builder;
                 let mut out = sv.get_type().get_undef();
-                out = b.build_insert_value(out, len, 0, "cl_o0").unwrap().into_struct_value();
-                out = b.build_insert_value(out, dst, 1, "cl_o1").unwrap().into_struct_value();
+                out = b
+                    .build_insert_value(out, len, 0, "cl_o0")
+                    .unwrap()
+                    .into_struct_value();
+                out = b
+                    .build_insert_value(out, dst, 1, "cl_o1")
+                    .unwrap()
+                    .into_struct_value();
                 out.into()
             }
             Type::Struct(n) => {
@@ -4233,7 +4270,9 @@ impl<'ctx> super::Codegen<'ctx> {
         let saved_rt = self.current_result_types.clone();
         let saved_oi = self.current_option_inner.clone();
         match self.sem_type_of_expr(place) {
-            Some(Type::Result(ok_ty, err_ty)) => self.current_result_types = Some((*ok_ty, *err_ty)),
+            Some(Type::Result(ok_ty, err_ty)) => {
+                self.current_result_types = Some((*ok_ty, *err_ty))
+            }
             Some(Type::Option(inner)) => self.current_option_inner = Some(*inner),
             _ => {}
         }
@@ -4356,9 +4395,13 @@ impl<'ctx> super::Codegen<'ctx> {
                     .builder
                     .build_struct_gep(slice_ty, rptr, 1, "wdataptr")
                     .unwrap();
-                let data_ptr =
-                    build_wrappers::w_load(&self.ir.builder, ptr_ty.into(), data_field_ptr, "wdata")
-                        .into_pointer_value();
+                let data_ptr = build_wrappers::w_load(
+                    &self.ir.builder,
+                    ptr_ty.into(),
+                    data_field_ptr,
+                    "wdata",
+                )
+                .into_pointer_value();
                 let elem_ptr = unsafe {
                     self.ir
                         .builder
@@ -7541,10 +7584,22 @@ impl<'ctx> super::Codegen<'ctx> {
         let elem_size = self.llvm_type(inner)?.size_of()?;
         let i8_ty = self.ir.context.i8_type();
         let b = &self.ir.builder;
-        let l_len = b.build_extract_value(l, 0, "acat_ll").ok()?.into_int_value();
-        let l_src = b.build_extract_value(l, 1, "acat_ls").ok()?.into_pointer_value();
-        let r_len = b.build_extract_value(r, 0, "acat_rl").ok()?.into_int_value();
-        let r_src = b.build_extract_value(r, 1, "acat_rs").ok()?.into_pointer_value();
+        let l_len = b
+            .build_extract_value(l, 0, "acat_ll")
+            .ok()?
+            .into_int_value();
+        let l_src = b
+            .build_extract_value(l, 1, "acat_ls")
+            .ok()?
+            .into_pointer_value();
+        let r_len = b
+            .build_extract_value(r, 0, "acat_rl")
+            .ok()?
+            .into_int_value();
+        let r_src = b
+            .build_extract_value(r, 1, "acat_rs")
+            .ok()?
+            .into_pointer_value();
         let len = b.build_int_add(l_len, r_len, "acat_len").ok()?;
         let l_bytes = b.build_int_mul(l_len, elem_size, "acat_lb").ok()?;
         let r_bytes = b.build_int_mul(r_len, elem_size, "acat_rb").ok()?;
@@ -8226,8 +8281,8 @@ impl<'ctx> super::Codegen<'ctx> {
 
         // while w < len
         self.ir.builder.position_at_end(w_cond);
-        let w_cur =
-            build_wrappers::w_load(&self.ir.builder, i64_ty.into(), w_slot, "so_wc").into_int_value();
+        let w_cur = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), w_slot, "so_wc")
+            .into_int_value();
         let w_go = build_wrappers::w_int_compare(
             &self.ir.builder,
             inkwell::IntPredicate::SLT,
@@ -8255,8 +8310,8 @@ impl<'ctx> super::Codegen<'ctx> {
         build_wrappers::w_cond_br(&self.ir.builder, l_go, l_body, w_next);
 
         self.ir.builder.position_at_end(l_body);
-        let w_l =
-            build_wrappers::w_load(&self.ir.builder, i64_ty.into(), w_slot, "so_wl").into_int_value();
+        let w_l = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), w_slot, "so_wl")
+            .into_int_value();
         let clamp = |this: &Self, v: inkwell::values::IntValue<'ctx>, nm: &str| {
             let lt = build_wrappers::w_int_compare(
                 &this.ir.builder,
@@ -8288,8 +8343,8 @@ impl<'ctx> super::Codegen<'ctx> {
 
         // while k < hi
         self.ir.builder.position_at_end(m_cond);
-        let k_cur =
-            build_wrappers::w_load(&self.ir.builder, i64_ty.into(), k_slot, "so_kc").into_int_value();
+        let k_cur = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), k_slot, "so_kc")
+            .into_int_value();
         let m_go = build_wrappers::w_int_compare(
             &self.ir.builder,
             inkwell::IntPredicate::SLT,
@@ -8301,8 +8356,8 @@ impl<'ctx> super::Codegen<'ctx> {
 
         // Left exhausted → take right.
         self.ir.builder.position_at_end(m_body);
-        let i_cur =
-            build_wrappers::w_load(&self.ir.builder, i64_ty.into(), i_slot, "so_ic").into_int_value();
+        let i_cur = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), i_slot, "so_ic")
+            .into_int_value();
         let i_ok = build_wrappers::w_int_compare(
             &self.ir.builder,
             inkwell::IntPredicate::SLT,
@@ -8314,8 +8369,8 @@ impl<'ctx> super::Codegen<'ctx> {
 
         // Right exhausted → take left.
         self.ir.builder.position_at_end(m_chkj);
-        let j_cur =
-            build_wrappers::w_load(&self.ir.builder, i64_ty.into(), j_slot, "so_jc").into_int_value();
+        let j_cur = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), j_slot, "so_jc")
+            .into_int_value();
         let j_ok = build_wrappers::w_int_compare(
             &self.ir.builder,
             inkwell::IntPredicate::SLT,
@@ -8333,16 +8388,16 @@ impl<'ctx> super::Codegen<'ctx> {
                 .build_gep(i64_ty, a_i64, &[i_cur], "so_aip")
                 .unwrap()
         };
-        let ai = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), ai_p, "so_av")
-            .into_int_value();
+        let ai =
+            build_wrappers::w_load(&self.ir.builder, i64_ty.into(), ai_p, "so_av").into_int_value();
         let aj_p = unsafe {
             self.ir
                 .builder
                 .build_gep(i64_ty, a_i64, &[j_cur], "so_ajp")
                 .unwrap()
         };
-        let aj = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), aj_p, "so_bv")
-            .into_int_value();
+        let aj =
+            build_wrappers::w_load(&self.ir.builder, i64_ty.into(), aj_p, "so_bv").into_int_value();
         let cmp_r = self
             .ir
             .builder
@@ -8404,8 +8459,8 @@ impl<'ctx> super::Codegen<'ctx> {
         let b_s = build_wrappers::w_load(&self.ir.builder, ptr_ty.into(), b_slot, "so_bs");
         build_wrappers::w_store(&self.ir.builder, a_slot, b_s);
         build_wrappers::w_store(&self.ir.builder, b_slot, a_s);
-        let w_n =
-            build_wrappers::w_load(&self.ir.builder, i64_ty.into(), w_slot, "so_wn").into_int_value();
+        let w_n = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), w_slot, "so_wn")
+            .into_int_value();
         let w2 = build_wrappers::w_int_add(&self.ir.builder, w_n, w_n, "so_w2");
         build_wrappers::w_store(&self.ir.builder, w_slot, w2.into());
         build_wrappers::w_br(&self.ir.builder, w_cond);
@@ -8672,7 +8727,9 @@ impl<'ctx> super::Codegen<'ctx> {
                         build_wrappers::w_store(&self.ir.builder, typed_ptr, fval);
                         byte_offset += fsize;
                     } else {
-                        self.refuse_unlowered(&format!("payload field `{fname}` of an enum variant"));
+                        self.refuse_unlowered(&format!(
+                            "payload field `{fname}` of an enum variant"
+                        ));
                     }
                 }
             }
@@ -8758,7 +8815,9 @@ impl<'ctx> super::Codegen<'ctx> {
                         .unwrap();
                     build_wrappers::w_store(&self.ir.builder, fptr, fval);
                 } else {
-                    self.refuse_unlowered(&format!("the value of field `{fname}` of a struct literal"));
+                    self.refuse_unlowered(&format!(
+                        "the value of field `{fname}` of a struct literal"
+                    ));
                 }
             }
             // Phase 5: refinement obligations at construction — per-field
@@ -8998,7 +9057,9 @@ impl<'ctx> super::Codegen<'ctx> {
                 if let Some(v) = self.emit_expr(a, fn_val) {
                     call_args.push(v.into());
                 } else {
-                    self.refuse_unlowered(&format!("an argument of the `dyn` method call `.{method}`"));
+                    self.refuse_unlowered(&format!(
+                        "an argument of the `dyn` method call `.{method}`"
+                    ));
                 }
             }
 

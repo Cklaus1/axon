@@ -1,0 +1,30 @@
+[package]
+name = "axon-loop"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+publish = false
+description = "Axon Cortex v0.22 closed loop: fenced policy pointer + authority epoch, frozen experiment register, EVO proposal, EVL evaluation, admission, TEL economics"
+
+# Uses the v0.22 contract types from axon-loop-contracts; defines no parallel
+# copies of them. MiCode has no Cargo dependency on this crate: it drives the
+# `axon-loop` binary over files/JSON.
+[dependencies]
+axon-loop-contracts = { path = "../axon-loop-contracts" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+libc = "0.2"
+# D-015: the ledger is keyed with the SAME primitive `axon-audit` keys its
+# chain with (`hmac_sha256`, owned by axon-attest), not a second copy.
+axon-attest = { path = "../axon-attest" }
+
+[dev-dependencies]
+# Genuine PSV bundles in the protected-evidence tests (B2).
+axon-psv = { path = "../axon-psv" }
+ring = "0.17"
+# The operator trust root in loop tests is a test root (O2).
+axon-loop-contracts = { path = "../axon-loop-contracts", features = ["test-trust-root"] }
+tempfile = "3"
+# The interop gate's policy producer (tests/intake_dec_driver.rs) is the real
+# DEC `to_policy_envelope`, not a hand-written envelope.
+axon-reflex = { path = "../axon-reflex" }

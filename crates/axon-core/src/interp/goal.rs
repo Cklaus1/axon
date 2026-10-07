@@ -55,7 +55,8 @@ impl<'p> Interp<'p> {
                     }
                     // Multi-arg: seed from in-memory best prior tuple.
                     let seed = self.best_input_index(name, target).and_then(|idx| {
-                        self.provenance_inputs
+                        self.k()
+                            .provenance_inputs
                             .borrow()
                             .get(name)
                             .and_then(|v| v.get(idx).cloned())
@@ -64,7 +65,8 @@ impl<'p> Interp<'p> {
                 }
                 if all_f64_params && f64_ret {
                     let seed = self.best_input_index(name, target).and_then(|idx| {
-                        self.provenance_inputs_f64
+                        self.k()
+                            .provenance_inputs_f64
                             .borrow()
                             .get(name)
                             .and_then(|v| v.get(idx).cloned())
@@ -104,7 +106,7 @@ impl<'p> Interp<'p> {
     /// `@[adaptive]`) call, so it never pollutes the provenance trajectory; the
     /// metric's REAL score is what `call_fn` already recorded.
     pub(super) fn apply_goal_constraint(&self, args: &[Value], score: f64) -> Result<f64, Flow> {
-        let cname = self.goal_constraint.borrow().clone();
+        let cname = self.k().goal_constraint.borrow().clone();
         let Some(cname) = cname else { return Ok(score) };
         let Some(cf) = self.fns.get(cname.as_str()).copied() else {
             return Ok(score);
@@ -256,7 +258,7 @@ impl<'p> Interp<'p> {
             Some(f) => *f,
             // Unknown fn but with provenance → retrospective lookup is fine.
             // Unknown fn and no provenance → typo (BUG_HUNT #19 / I-9).
-            None if self.provenance.borrow().contains_key(name) => {
+            None if self.k().provenance.borrow().contains_key(name) => {
                 return Ok(self.best_observed(name, target, n_samples));
             }
             None => return Err(Self::unknown_goal_name(name)),
@@ -281,13 +283,14 @@ impl<'p> Interp<'p> {
         let mut best_dist: f64 = f64::INFINITY;
         let mut i: i64 = 0;
         while i < n_samples {
-            // Uniform per-dim in `[lo, hi)` via the same `next_rand_u64`
-            // helper the `random_i64` builtin uses — keeps RNG semantics
-            // consistent across calls within one run.
+            // Uniform per-dim in `[lo, hi)` from the running frame's kernel
+            // stream (`rng_next`), the same one `random_i64` uses — so RNG
+            // semantics stay consistent within a run, and a sealed frame's
+            // search never advances the operator's stream.
             let mut probe: Vec<Value> = Vec::with_capacity(n_dims);
             let range = (hi as i128 - lo as i128) as u128;
             for _ in 0..n_dims {
-                let v = lo + (next_rand_u64() as u128 % range.max(1)) as i64;
+                let v = lo + (self.rng_next()? as u128 % range.max(1)) as i64;
                 probe.push(Value::Int(v));
             }
             let result = self.call_fn(f, probe)?;
@@ -348,7 +351,7 @@ impl<'p> Interp<'p> {
         }
         let f = match self.fns.get(name) {
             Some(f) => *f,
-            None if self.provenance.borrow().contains_key(name) => {
+            None if self.k().provenance.borrow().contains_key(name) => {
                 return Ok(self.best_observed(name, target, max_evals));
             }
             None => return Err(Self::unknown_goal_name(name)),
@@ -407,7 +410,7 @@ impl<'p> Interp<'p> {
             // Budget < |choices|: random-sample (with replacement) `max_evals` of them.
             let mut i = 0;
             while i < max_evals {
-                let c = (next_rand_u64() % n_choices as u64) as i64;
+                let c = (self.rng_next()? % n_choices as u64) as i64;
                 if eval_choice(c, &mut best_score, &mut best_dist)? {
                     break;
                 }
@@ -445,7 +448,7 @@ impl<'p> Interp<'p> {
         }
         let f = match self.fns.get(name) {
             Some(f) => *f,
-            None if self.provenance.borrow().contains_key(name) => {
+            None if self.k().provenance.borrow().contains_key(name) => {
                 return Ok(self.best_observed(name, target, 0));
             }
             None => return Err(Self::unknown_goal_name(name)),
@@ -467,8 +470,8 @@ impl<'p> Interp<'p> {
         let mut s: i64 = 0;
         while s < n_starts {
             let start: Vec<i64> = (0..n_dims)
-                .map(|_| lo + (next_rand_u64() as u128 % range.max(1)) as i64)
-                .collect();
+                .map(|_| Ok(lo + (self.rng_next()? as u128 % range.max(1)) as i64))
+                .collect::<Result<_, Flow>>()?;
             let score = if n_dims == 1 {
                 // Single-arg: bypass the multi-i64 path's per-dim wiring
                 // (which expects Vec<i64>) and call the 1-D climber
@@ -520,7 +523,7 @@ impl<'p> Interp<'p> {
         }
         let f = match self.fns.get(name) {
             Some(f) => *f,
-            None if self.provenance.borrow().contains_key(name) => {
+            None if self.k().provenance.borrow().contains_key(name) => {
                 return Ok(self.best_observed(name, target, 0));
             }
             None => return Err(Self::unknown_goal_name(name)),
@@ -562,10 +565,10 @@ impl<'p> Interp<'p> {
         let mut population: Vec<Vec<i64>> = (0..pop)
             .map(|_| {
                 (0..n_dims)
-                    .map(|_| lo + (next_rand_u64() as u128 % range.max(1)) as i64)
-                    .collect()
+                    .map(|_| Ok(lo + (self.rng_next()? as u128 % range.max(1)) as i64))
+                    .collect::<Result<Vec<i64>, Flow>>()
             })
-            .collect();
+            .collect::<Result<_, Flow>>()?;
 
         let mut spent: i64 = 0;
         let mut step = (range / 4).max(1) as i64;
@@ -602,14 +605,14 @@ impl<'p> Interp<'p> {
                 next.push(elite.clone()); // carry the elite forward (elitism)
             }
             while (next.len() as i64) < pop {
-                let (_, parent) = &scored[(next_rand_u64() as usize) % scored.len()];
+                let (_, parent) = &scored[(self.rng_next()? as usize) % scored.len()];
                 let child: Vec<i64> = parent
                     .iter()
                     .map(|&g| {
-                        let jitter = (next_rand_u64() as i64 % (2 * step + 1)) - step;
-                        (g + jitter).clamp(lo, hi - 1)
+                        let jitter = (self.rng_next()? as i64 % (2 * step + 1)) - step;
+                        Ok((g + jitter).clamp(lo, hi - 1))
                     })
-                    .collect();
+                    .collect::<Result<_, Flow>>()?;
                 next.push(child);
             }
             population = next;
@@ -1154,7 +1157,7 @@ impl<'p> Interp<'p> {
         if name.is_empty() {
             return target;
         }
-        let store = self.provenance.borrow();
+        let store = self.k().provenance.borrow();
         let Some(scores) = store.get(name).filter(|s| !s.is_empty()) else {
             return target;
         };
@@ -1184,8 +1187,8 @@ impl<'p> Interp<'p> {
         if name.is_empty() {
             return Value::Array(Rc::new(out));
         }
-        let scores_store = self.provenance.borrow();
-        let inputs_store = self.provenance_inputs.borrow();
+        let scores_store = self.k().provenance.borrow();
+        let inputs_store = self.k().provenance_inputs.borrow();
         if let (Some(scores), Some(inputs)) = (scores_store.get(name), inputs_store.get(name)) {
             let n = scores.len().min(inputs.len());
             out.reserve(n);
@@ -1209,12 +1212,13 @@ impl<'p> Interp<'p> {
             return 0;
         }
         let evicted = self
+            .k()
             .provenance
             .borrow_mut()
             .remove(name)
             .map(|v| v.len() as i64)
             .unwrap_or(0);
-        self.provenance_inputs.borrow_mut().remove(name);
+        self.k().provenance_inputs.borrow_mut().remove(name);
         evicted
     }
 
@@ -1226,9 +1230,9 @@ impl<'p> Interp<'p> {
         if name.is_empty() {
             return None;
         }
-        let scores_store = self.provenance.borrow();
-        let inputs_store = self.provenance_inputs.borrow();
-        let inputs_f64_store = self.provenance_inputs_f64.borrow();
+        let scores_store = self.k().provenance.borrow();
+        let inputs_store = self.k().provenance_inputs.borrow();
+        let inputs_f64_store = self.k().provenance_inputs_f64.borrow();
         let scores = scores_store.get(name).filter(|s| !s.is_empty())?;
         let n = scores.len();
         let mut best_idx: Option<usize> = None;
@@ -1260,7 +1264,8 @@ impl<'p> Interp<'p> {
     pub(super) fn best_input(&self, name: &str, target: f64) -> i64 {
         self.best_input_index(name, target)
             .and_then(|i| {
-                self.provenance_inputs
+                self.k()
+                    .provenance_inputs
                     .borrow()
                     .get(name)?
                     .get(i)?
@@ -1280,38 +1285,40 @@ impl<'p> Interp<'p> {
             )));
         };
         // Snapshot the three provenance stores for this fn.
-        let snap_scores = self.provenance.borrow().get(name).cloned();
-        let snap_inputs = self.provenance_inputs.borrow().get(name).cloned();
-        let snap_inputs_f64 = self.provenance_inputs_f64.borrow().get(name).cloned();
+        let snap_scores = self.k().provenance.borrow().get(name).cloned();
+        let snap_inputs = self.k().provenance_inputs.borrow().get(name).cloned();
+        let snap_inputs_f64 = self.k().provenance_inputs_f64.borrow().get(name).cloned();
         // Call the metric (this records into the stores).
         let result = self.call_fn(f, vec![Value::Int(input)]);
         // Restore — the held-out eval must not bias future goal_run.
         match snap_scores {
             Some(v) => {
-                self.provenance.borrow_mut().insert(name.to_string(), v);
+                self.k().provenance.borrow_mut().insert(name.to_string(), v);
             }
             None => {
-                self.provenance.borrow_mut().remove(name);
+                self.k().provenance.borrow_mut().remove(name);
             }
         }
         match snap_inputs {
             Some(v) => {
-                self.provenance_inputs
+                self.k()
+                    .provenance_inputs
                     .borrow_mut()
                     .insert(name.to_string(), v);
             }
             None => {
-                self.provenance_inputs.borrow_mut().remove(name);
+                self.k().provenance_inputs.borrow_mut().remove(name);
             }
         }
         match snap_inputs_f64 {
             Some(v) => {
-                self.provenance_inputs_f64
+                self.k()
+                    .provenance_inputs_f64
                     .borrow_mut()
                     .insert(name.to_string(), v);
             }
             None => {
-                self.provenance_inputs_f64.borrow_mut().remove(name);
+                self.k().provenance_inputs_f64.borrow_mut().remove(name);
             }
         }
         let metric_result = result?;
@@ -1418,7 +1425,7 @@ impl<'p> Interp<'p> {
         let Some(idx) = self.best_input_index(name, target) else {
             return Value::Array(Rc::default());
         };
-        let inputs_store = self.provenance_inputs.borrow();
+        let inputs_store = self.k().provenance_inputs.borrow();
         let dims = inputs_store
             .get(name)
             .and_then(|v| v.get(idx))
@@ -1433,7 +1440,7 @@ impl<'p> Interp<'p> {
         let Some(idx) = self.best_input_index(name, target) else {
             return Value::Array(Rc::default());
         };
-        let inputs_store = self.provenance_inputs_f64.borrow();
+        let inputs_store = self.k().provenance_inputs_f64.borrow();
         let dims = inputs_store
             .get(name)
             .and_then(|v| v.get(idx))

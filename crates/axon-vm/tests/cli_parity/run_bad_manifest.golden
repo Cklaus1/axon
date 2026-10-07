@@ -1,0 +1,6 @@
+exit: Some(2)
+--- stdout ---
+
+--- stderr ---
+axon-vm: manifest $TMP/p.axmeta is present but unparseable: key must be a string at line 1 column 3. Refusing to fall back to an empty policy — a corrupt policy file must not read as 'no restrictions'
+

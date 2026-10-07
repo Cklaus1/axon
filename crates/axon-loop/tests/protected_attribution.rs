@@ -1,0 +1,355 @@
+//! O2 for the RECORDED attribution of a protected decision. A counted
+//! protected trial records WHO authenticated its verdict (`verification`
+//! issuer + key id) and its preflight context (`context_signed_by`), so every
+//! re-derivation can require that authority to be current. Admission also
+//! re-verifies the documents themselves (`reverify_protected`). The
+//! attribution check in `admission::derive` refuses a record that names an
+//! identity the operator root never held, or none at all; since C9 round 1
+//! (PSV-5) `reverify_protected` also requires the recorded identity to BE the
+//! signer that re-verified, so a record naming a second identity the operator
+//! root DOES hold is refused too (negative-matrix A62). Each test forges
+//! exactly one attribution on an otherwise GENUINE protected evaluation
+//! (every document still verifies under the real, operator-rooted signer),
+//! with an in-world positive control: the unforged record ACCEPTs.
+//!
+//! C9 equivalence re-audit: these are the killing tests for M104, M209 and
+//! M210, which had been retired as equivalent to `reverify_protected`. Since
+//! C9 round 1 M360/M361 join the record to the re-verified signer, and every
+//! path through derive's rooted-identity checks (admission and every
+//! re-derivation, protected class only) runs `reverify_protected` for the
+//! same trial: M209 and M210 are retired again (C9 round 1b), each four-cell
+//! against M360 / M361, with these tests as the named attacks. M104
+//! (presence) stays sole.
+
+mod common;
+use axon_loop::admission::Decision;
+use axon_loop_contracts::*;
+use common::*;
+use serde_json::{json, Value};
+
+const PROTECTED: &str = "linux-microvm-protected";
+
+fn protect(s: &axon_loop::store::Store) {
+    let mut cfg = s.config().unwrap();
+    cfg.protected_scopes.push(scope());
+    s.write_config(&cfg).unwrap();
+}
+
+fn pin_protected_backend(s: &axon_loop::store::Store) {
+    let mut cfg = s.config().unwrap();
+    cfg.verifier_pins
+        .get_mut(&OpaqueRef::new(VERIFIER).unwrap())
+        .unwrap()
+        .backend_profiles
+        .push(PROTECTED.into());
+    s.write_config(&cfg).unwrap();
+}
+
+/// Every delivered trial genuinely on the protected backend: an attested
+/// execution leg and a protected verdict with its PSV bundle.
+fn on_protected_backend(v: &mut Value) {
+    for t in v["trials"].as_array_mut().unwrap() {
+        observed_protected_execution(t);
+        if t["verification_receipt"].is_object() {
+            t["verification_receipt"]["backend_profile_ref"] = json!(PROTECTED);
+            let req = t["verification_request"].clone();
+            let epoch = t["episode"]["authority_epoch"].as_u64().unwrap();
+            let bundle = make_protected(
+                &req,
+                &mut t["verification_receipt"],
+                |m| m.authority.epoch = epoch,
+                |o| o.epoch = epoch,
+            );
+            t["verification_psv_evidence"] = serde_json::from_str(&bundle).unwrap();
+            t["episode"]["verification"]["verifier_ref"] =
+                json!(digest_value(&t["verification_receipt"]).unwrap());
+            t["verification_attestation"] = attest(
+                VERIFIER,
+                &t["verification_request"],
+                &t["verification_receipt"],
+            );
+        }
+    }
+}
+
+fn specs_for(w: &World) -> Vec<Spec<'_>> {
+    pair(&w.inc, &w.cand, 2, 2, 2, Some(100), Some(50))
+}
+
+/// A GENUINE protected evaluation, honestly made by EVL and every trial
+/// cleared; its unforged record ACCEPTs (the positive control).
+fn genuine(exp: &str) -> (World, axon_loop::evl::EvaluationRecord) {
+    let w = world();
+    protect(&w.s);
+    pin_protected_backend(&w.s);
+    trust_monitor(&w.s);
+    freeze_plan(&w.s, exp, &w.inc_ref, &w.cand_ref, |_| {}).unwrap();
+    assign_specs(&w.s, exp, &specs_for(&w));
+    let mut v = evl_request(exp, &w.inc, &w.cand, &specs_for(&w), &EvlOpts::default());
+    on_protected_backend(&mut v);
+    clear_all(&w.s, &v);
+    let (rec, e) = evaluate(&w.s, &v).unwrap();
+    let (adm, _) = admit(&w.s, exp, &e, ADMITTER, false).unwrap();
+    assert_eq!(adm.decision, Decision::Accept, "control: {:?}", adm.reasons);
+    (w, rec)
+}
+
+/// A store writer edits each COUNTED trial of the genuine record, puts it in
+/// the CAS and journals it with a forged ledger append.
+fn forge_counted(
+    w: &World,
+    exp: &str,
+    rec: &axon_loop::evl::EvaluationRecord,
+    mut edit: impl FnMut(&mut Value),
+) -> Ref {
+    let mut j = serde_json::to_value(rec).unwrap();
+    for arm in j["arms"].as_array_mut().unwrap() {
+        for t in arm["trials"].as_array_mut().unwrap() {
+            if t["verification"].is_object() {
+                edit(t);
+            }
+        }
+    }
+    let forged: axon_loop::evl::EvaluationRecord = serde_json::from_value(j).unwrap();
+    let fe = w.s.put_cas("evaluations", &forged).unwrap();
+    forged_append(
+        w.s.root(),
+        axon_loop::ledger::Event::Evaluation {
+            scope: scope(),
+            experiment_id: exp.into(),
+            evaluation_ref: fe.clone(),
+            freeze_seq: forged.freeze_seq,
+            authority_epoch: forged.authority_epoch,
+        },
+    );
+    fe
+}
+
+fn refused(w: &World, exp: &str, fe: &Ref, why: &str) {
+    match admit(&w.s, exp, fe, ADMITTER, false) {
+        Err(e) => assert!(e.to_string().contains(why), "{e}"),
+        Ok((adm, _)) => panic!(
+            "ATTACK: a forged attribution was admitted: {:?} {:?}",
+            adm.decision, adm.reasons
+        ),
+    }
+}
+
+/// As [`refused`], for a route where two independent guards each refuse the
+/// forgery alone (the M209/M360 and M210/M361 four-cell pairs): the refusal
+/// may carry either reason, and only an admission is the attack.
+fn refused_by_either(w: &World, exp: &str, fe: &Ref, why: [&str; 2]) {
+    match admit(&w.s, exp, fe, ADMITTER, false) {
+        Err(e) => assert!(why.iter().any(|y| e.to_string().contains(y)), "{e}"),
+        Ok((adm, _)) => panic!(
+            "ATTACK: a forged attribution was admitted: {:?} {:?}",
+            adm.decision, adm.reasons
+        ),
+    }
+}
+
+fn key_id(pk: &str) -> String {
+    axon_loop_contracts::attestation::key_id_of_hex(pk).unwrap()
+}
+
+/// M104: a counted protected trial whose record carries NO context
+/// attribution (the store writer deleted `context_signed_by`) does not count,
+/// although its context signature still re-verifies under the real observer.
+#[test]
+fn a_protected_verdict_without_its_context_attribution_does_not_count() {
+    let (w, rec) = genuine("attr-absent");
+    let fe = forge_counted(&w, "attr-absent", &rec, |t| {
+        t.as_object_mut().unwrap().remove("context_signed_by");
+    });
+    refused(
+        &w,
+        "attr-absent",
+        &fe,
+        "protected context is not authenticated",
+    );
+}
+
+/// M210: a counted protected trial whose context is ATTRIBUTED to an observer
+/// the store trusts and keys, but whose key the operator's observer root never
+/// held, does not count.
+#[test]
+fn a_context_attributed_to_an_observer_the_operator_root_never_held_does_not_count() {
+    const PLANTED: &str = "agent:planted-observer";
+    let (_, pk) = axon_loop_contracts::attestation::generate().unwrap();
+    let (w, rec) = genuine("attr-observer");
+    let mut cfg = w.s.config().unwrap();
+    let o = OpaqueRef::new(PLANTED).unwrap();
+    cfg.trusted_observers.push(o.clone());
+    cfg.observer_keys.insert(o, pk.clone());
+    w.s.write_config(&cfg).unwrap();
+    let fe = forge_counted(&w, "attr-observer", &rec, |t| {
+        t["context_signed_by"] = json!({"issuer_ref": PLANTED, "key_id": key_id(&pk)});
+    });
+    // Refused alone by derive's rooted-observer check (M210) and alone by the
+    // join to the observer that re-verified the context (M361): the planted
+    // identity is not the signer. Four-cell pair; either reason is correct.
+    refused_by_either(
+        &w,
+        "attr-observer",
+        &fe,
+        [
+            "protected context is not authenticated",
+            "re-verifies as signed by",
+        ],
+    );
+}
+
+/// M209: a counted protected verdict ATTRIBUTED to a verifier the store
+/// trusts, keys and pins, but whose key the operator's verifier root never
+/// held, does not count — although the verdict's own attestation still
+/// re-verifies under the real, rooted verifier.
+#[test]
+fn a_verdict_attributed_to_a_verifier_the_operator_root_never_held_does_not_count() {
+    const PLANTED: &str = "agent:planted-verifier";
+    let (_, pk) = axon_loop_contracts::attestation::generate().unwrap();
+    let (w, rec) = genuine("attr-verifier");
+    let mut cfg = w.s.config().unwrap();
+    let v = OpaqueRef::new(PLANTED).unwrap();
+    let pin = cfg.verifier_pins[&OpaqueRef::new(VERIFIER).unwrap()].clone();
+    cfg.trusted_verifiers.push(v.clone());
+    cfg.verifier_keys.insert(v.clone(), pk.clone());
+    cfg.verifier_pins.insert(v, pin);
+    w.s.write_config(&cfg).unwrap();
+    let fe = forge_counted(&w, "attr-verifier", &rec, |t| {
+        t["verification"]["issuer_ref"] = json!(PLANTED);
+        t["verification"]["key_id"] = json!(key_id(&pk));
+    });
+    // Refused alone by derive's rooted-verifier check (M209) and alone by the
+    // join to the verifier that re-verified the verdict (M360). Four-cell
+    // pair; either reason is correct.
+    refused_by_either(
+        &w,
+        "attr-verifier",
+        &fe,
+        ["no longer trusts with that key", "re-verifies as signed by"],
+    );
+}
+
+/// Install `pk` in the test operator root for `authority` (the operator
+/// genuinely holds a SECOND identity there).
+fn root_holds(authority: &str, pk: &str) {
+    let root = operator_root();
+    std::fs::write(root.join(authority).join("second.pub"), format!("{pk}\n")).unwrap();
+}
+
+/// A62 (C9 round 1, PSV-5): a counted protected verdict ATTRIBUTED to a SECOND
+/// verifier that the operator root DOES hold (trusted, keyed, pinned, rooted),
+/// while the verdict was authenticated by VERIFIER. Every document still
+/// re-verifies; only the attribution is wrong.
+#[test]
+fn a_verdict_attributed_to_another_rooted_verifier_does_not_count() {
+    const OTHER: &str = "agent:other-rooted-verifier";
+    let (_, pk) = axon_loop_contracts::attestation::generate().unwrap();
+    let (w, rec) = genuine("mis-verifier");
+    root_holds("verifier", &pk);
+    let mut cfg = w.s.config().unwrap();
+    let v = OpaqueRef::new(OTHER).unwrap();
+    let pin = cfg.verifier_pins[&OpaqueRef::new(VERIFIER).unwrap()].clone();
+    cfg.trusted_verifiers.push(v.clone());
+    cfg.verifier_keys.insert(v.clone(), pk.clone());
+    cfg.verifier_pins.insert(v, pin);
+    w.s.write_config(&cfg).unwrap();
+    let fe = forge_counted(&w, "mis-verifier", &rec, |t| {
+        t["verification"]["issuer_ref"] = json!(OTHER);
+        t["verification"]["key_id"] = json!(key_id(&pk));
+    });
+    refused(&w, "mis-verifier", &fe, "re-verifies as signed by");
+}
+
+/// A62: a counted protected trial whose context is ATTRIBUTED
+/// (`context_signed_by`) to a second observer the operator root DOES hold,
+/// while the context was signed by OBSERVER.
+#[test]
+fn a_context_attributed_to_another_rooted_observer_does_not_count() {
+    const OTHER: &str = "agent:other-rooted-observer";
+    let (_, pk) = axon_loop_contracts::attestation::generate().unwrap();
+    let (w, rec) = genuine("mis-observer");
+    root_holds("observer", &pk);
+    let mut cfg = w.s.config().unwrap();
+    let o = OpaqueRef::new(OTHER).unwrap();
+    cfg.trusted_observers.push(o.clone());
+    cfg.observer_keys.insert(o, pk.clone());
+    w.s.write_config(&cfg).unwrap();
+    let fe = forge_counted(&w, "mis-observer", &rec, |t| {
+        t["context_signed_by"] = json!({"issuer_ref": OTHER, "key_id": key_id(&pk)});
+    });
+    refused(&w, "mis-observer", &fe, "re-verifies as signed by");
+}
+
+/// A62: a counted protected trial whose record says its context was ADMITTED
+/// under (`context_observer_ref`) a second, trusted observer, while OBSERVER
+/// observed and signed it.
+#[test]
+fn a_context_admitted_under_another_trusted_observer_does_not_count() {
+    const OTHER: &str = "agent:other-trusted-observer";
+    let (_, pk) = axon_loop_contracts::attestation::generate().unwrap();
+    let (w, rec) = genuine("mis-admitted");
+    root_holds("observer", &pk);
+    let mut cfg = w.s.config().unwrap();
+    let o = OpaqueRef::new(OTHER).unwrap();
+    cfg.trusted_observers.push(o.clone());
+    cfg.observer_keys.insert(o, pk.clone());
+    w.s.write_config(&cfg).unwrap();
+    let fe = forge_counted(&w, "mis-admitted", &rec, |t| {
+        t["context_observer_ref"] = json!(OTHER);
+    });
+    refused(&w, "mis-admitted", &fe, "it was observed by");
+}
+
+/// A68 (C9 round 2, PSV-5, class c): the observer that signed a counted
+/// protected verdict's preflight OBSERVATION is recorded
+/// (`verification.observation_signed_by`) and joined at admission to the
+/// signer the bundle re-verifies under, as `context_signed_by` is (A62). A
+/// record naming a second observer the store trusts and the operator root
+/// holds, or naming none, does not count. The genuine record ACCEPTs (the
+/// control in `genuine`), and it names the fixture observer.
+#[test]
+fn an_observation_attributed_to_another_trusted_observer_does_not_count() {
+    const OTHER: &str = "agent:other-observation-signer";
+    let (_, pk) = axon_loop_contracts::attestation::generate().unwrap();
+    let (w, rec) = genuine("mis-observation");
+    for arm in &rec.arms {
+        for t in &arm.trials {
+            if let Some(v) = &t.verification {
+                let by = v
+                    .observation_signed_by
+                    .as_ref()
+                    .expect("control: a counted protected verdict records its observation signer");
+                assert_eq!(by.issuer_ref.as_str(), OBSERVER);
+            }
+        }
+    }
+    root_holds("observer", &pk);
+    let mut cfg = w.s.config().unwrap();
+    let o = OpaqueRef::new(OTHER).unwrap();
+    cfg.trusted_observers.push(o.clone());
+    cfg.observer_keys.insert(o, pk.clone());
+    w.s.write_config(&cfg).unwrap();
+    let fe = forge_counted(&w, "mis-observation", &rec, |t| {
+        t["verification"]["observation_signed_by"] =
+            json!({"issuer_ref": OTHER, "key_id": key_id(&pk)});
+    });
+    refused(
+        &w,
+        "mis-observation",
+        &fe,
+        "attributes its preflight observation",
+    );
+    let fe = forge_counted(&w, "mis-observation", &rec, |t| {
+        t["verification"]
+            .as_object_mut()
+            .unwrap()
+            .remove("observation_signed_by");
+    });
+    refused(
+        &w,
+        "mis-observation",
+        &fe,
+        "attributes its preflight observation",
+    );
+}

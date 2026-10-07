@@ -31,11 +31,9 @@ fi
 if ! cargo build -q -p axon-rt 2>/dev/null; then
   echo "native_ffi_forge: axon-rt build unavailable — skipping"; exit 0
 fi
-RT_LIB=""
-for cand in target/debug/libaxon_rt.a target/release/libaxon_rt.a; do
-  [ -f "$cand" ] && RT_LIB="$cand" && break
-done
-if [ -z "$RT_LIB" ]; then
+. scripts/lib/axon_bin.sh
+RT_LIB=""; use_built RT_LIB libaxon_rt.a  # the debug build just made, never a stale release one
+if [ ! -f "$RT_LIB" ]; then
   echo "native_ffi_forge: libaxon_rt.a not found — skipping"; exit 0
 fi
 

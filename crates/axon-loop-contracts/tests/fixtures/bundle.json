@@ -1,0 +1,212 @@
+{
+  "fixture_only": true,
+  "product_gates_executed": 0,
+  "source_runtime_executed": false,
+  "description": "Synthetic transition/schema examples; no actual execution or trusted authority.",
+  "policy": {
+    "schema": "axon.closed-loop.policy/1",
+    "policy_id": "fixture-shortlist",
+    "parent_policy_ref": "cl22:0000000000000000000000000000000000000000000000000000000000000000",
+    "scope": {
+      "tenant_id": "fixture-tenant",
+      "task_family": "fixture-coding"
+    },
+    "mode": "shortlist_only",
+    "candidate_set_ref": "cl22:1111111111111111111111111111111111111111111111111111111111111111",
+    "controls_ref": "cl22:2222222222222222222222222222222222222222222222222222222222222222",
+    "shortlist": [
+      "read",
+      "search"
+    ],
+    "discovery_evidence_refs": [],
+    "authority_expansion": false
+  },
+  "context": {
+    "schema": "axon.closed-loop.context/1",
+    "context_id": "fixture-context",
+    "identity": {
+      "task_id": "fixture-task_id",
+      "arm_id": "fixture-arm_id",
+      "trial_id": "fixture-trial_id",
+      "attempt_id": "fixture-attempt_id",
+      "operation_id": "fixture-operation_id",
+      "execution_id": "fixture-execution_id"
+    },
+    "scope": {
+      "tenant_id": "fixture-tenant",
+      "task_family": "fixture-coding"
+    },
+    "expected": {
+      "repo_id": "fixture-repo",
+      "base_commit": "fixture-exact-base",
+      "workspace_ref": "acf1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "branch": "fixture-branch",
+      "worktree_id": "fixture-worktree",
+      "working_directory": "/isolated/fixture",
+      "build_namespace": "/build/fixture-attempt",
+      "model_ref": "cl22:3333333333333333333333333333333333333333333333333333333333333333",
+      "role": "implementation",
+      "namespace_ref": "cl22:4444444444444444444444444444444444444444444444444444444444444444",
+      "read_paths": [
+        "src/main.rs"
+      ],
+      "write_paths": [
+        "src/main.rs"
+      ],
+      "is_primary_worktree": false
+    },
+    "observed": {
+      "repo_id": "fixture-repo",
+      "base_commit": "fixture-exact-base",
+      "workspace_ref": "acf1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "branch": "fixture-branch",
+      "worktree_id": "fixture-worktree",
+      "working_directory": "/isolated/fixture",
+      "build_namespace": "/build/fixture-attempt",
+      "model_ref": "cl22:3333333333333333333333333333333333333333333333333333333333333333",
+      "role": "implementation",
+      "namespace_ref": "cl22:4444444444444444444444444444444444444444444444444444444444444444",
+      "read_paths": [
+        "src/main.rs"
+      ],
+      "write_paths": [
+        "src/main.rs"
+      ],
+      "is_primary_worktree": false
+    },
+    "expected_issuer_ref": "fixture:parent",
+    "observed_issuer_ref": "fixture:observer",
+    "observed_evidence_ref": "cl22:5555555555555555555555555555555555555555555555555555555555555555",
+    "created_ms": 100,
+    "expires_ms": 200,
+    "authority_epoch": 7
+  },
+  "episode": {
+    "schema": "axon.closed-loop.episode/1",
+    "identity": {
+      "task_id": "fixture-task_id",
+      "arm_id": "fixture-arm_id",
+      "trial_id": "fixture-trial_id",
+      "attempt_id": "fixture-attempt_id",
+      "operation_id": "fixture-operation_id",
+      "execution_id": "fixture-execution_id"
+    },
+    "scope": {
+      "tenant_id": "fixture-tenant",
+      "task_family": "fixture-coding"
+    },
+    "policy_ref": "cl22:3a3fb239cf3f65eeca6062e4937b19ba59950d81319635c79bcea701ffb6c1a4",
+    "controls_ref": "cl22:2222222222222222222222222222222222222222222222222222222222222222",
+    "context_ref": "cl22:bc864330d13bce84764f28c84f53e58b2b7c5711f6548710a3462195acf57e13",
+    "candidate_set_ref": "cl22:1111111111111111111111111111111111111111111111111111111111111111",
+    "input_workspace_ref": "acf1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "output_workspace_ref": "acf1:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "acf_request_ref": "cl22:caa9f706872533b122bfa1a240fa9864891a6147264514c69862a13fa8b72e77",
+    "acf_receipt_ref": "cl22:6959211b29620f78126f218df7907d93e812a83fef3f1c14ff1ea1c4176ba6b2",
+    "source_episode_ref": "cl22:8888888888888888888888888888888888888888888888888888888888888888",
+    "authority_epoch": 7,
+    "status": "completed",
+    "verification": {
+      "result": "passed",
+      "matched_checks": 2,
+      "issuer_ref": "fixture:independent-verifier",
+      "verifier_ref": "cl22:9999999999999999999999999999999999999999999999999999999999999999",
+      "output_workspace_ref": "acf1:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "evidence_refs": [
+        "cl22:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+      ]
+    },
+    "usage": {
+      "state": "final",
+      "cost_micro": 25,
+      "unresolved_liability_micro": 0,
+      "currency": "USD",
+      "price_schedule_ref": "cl22:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "attempt_refs": [
+        "cl22:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+      ]
+    },
+    "corpus_role": "mechanism_test",
+    "data_use_ref": "cl22:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "projection_ref": null
+  },
+  "transition": {
+    "schema": "axon.closed-loop.transition/1",
+    "transition_id": "fixture-activate",
+    "kind": "activate",
+    "scope": {
+      "tenant_id": "fixture-tenant",
+      "task_family": "fixture-coding"
+    },
+    "expected_policy_ref": "cl22:0000000000000000000000000000000000000000000000000000000000000000",
+    "target_policy_ref": "cl22:3a3fb239cf3f65eeca6062e4937b19ba59950d81319635c79bcea701ffb6c1a4",
+    "expected_epoch": 7,
+    "next_epoch": 8,
+    "admission_ref": "cl22:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "reason_ref": "cl22:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "issuer_ref": "fixture:admission-authority",
+    "mechanism_test": true
+  },
+  "acf_request": {
+    "schema": "acf-compute-request/1",
+    "operation_id": "fixture-operation_id",
+    "task_id": "fixture-task_id",
+    "trial_id": "fixture-trial_id",
+    "attempt_id": "fixture-attempt_id",
+    "principal_ref": "fixture:principal-not-a-credential",
+    "grant_ref": "fixture:grant-not-authorized",
+    "approval_ref": null,
+    "job_kind": "registered_check",
+    "registered_executable_ref": "fixture:check-no-real-executable",
+    "executable_digest": "acf1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "workspace_version_ref": "acf1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "semantic_state_ref": null,
+    "policy_digest": "acf1:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "required": {
+      "engine": "native_process",
+      "hardware_isolation": true,
+      "os": "linux",
+      "architecture": "x86_64",
+      "network_mode": "deny",
+      "checkpoint_kind": "logical_workspace"
+    },
+    "limits": {
+      "cpu_millicores": 1000,
+      "memory_bytes": 268435456,
+      "disk_bytes": 1073741824,
+      "wall_time_ms": 30000,
+      "output_bytes": 1048576,
+      "max_cost_micro": 100000,
+      "currency_code": "USD",
+      "price_schedule_ref": "fixture:synthetic-not-pricing"
+    },
+    "argv": [],
+    "result_schema_ref": "fixture:registered-check-result/1"
+  },
+  "acf_receipt": {
+    "schema": "acf-execution-receipt/1",
+    "operation_id": "fixture-operation_id",
+    "task_id": "fixture-task_id",
+    "trial_id": "fixture-trial_id",
+    "attempt_id": "fixture-attempt_id",
+    "execution_id": "fixture-execution_id",
+    "backend_profile_ref": "fixture:no-real-backend",
+    "input_workspace_ref": "acf1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "output_workspace_ref": "acf1:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "policy_digest": "acf1:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "status": "completed",
+    "process_exit_code": 0,
+    "verification": "not_run",
+    "matched_checks": 0,
+    "evidence_source": "supervisor_observed",
+    "evidence_refs": [],
+    "usage_state": "settled",
+    "cost_micro": 25,
+    "unresolved_liability_micro": 0
+  },
+  "policy_projection": {
+    "sidecar_policy_ref": "cl22:3a3fb239cf3f65eeca6062e4937b19ba59950d81319635c79bcea701ffb6c1a4",
+    "acf_policy_digest": "acf1:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "projection_ref": "cl22:9999999999999999999999999999999999999999999999999999999999999999"
+  }
+}

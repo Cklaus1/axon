@@ -8,4 +8,7 @@ publish = false
 # protocol on stdin/stdout, so MiCode needs no dependency on this repository at all.
 [dependencies]
 axon-cortex = { path = "../axon-cortex" }
+# closed-loop-profile/1 negotiation (`--negotiate`, B256). Acyclic: the contracts crate
+# depends on axon-cortex, never on this binary.
+axon-loop-contracts = { path = "../axon-loop-contracts" }
 serde_json = "1"

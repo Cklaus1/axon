@@ -39,7 +39,10 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
-AXON="${AXON:-./target/debug/axon}"
+# The binary whose verbs are checked is the one the caller names in AXON, never
+# one that merely sits in target/ (C9 round 4). Unnamed, the verb check is
+# SKIPPED -- fatal under CLAIMS_GATE_REQUIRE=1 -- exactly as a missing binary was.
+AXON="${AXON:-}"
 DOC="CLAUDE.md"
 
 pass=0; fail=0; warned=0
@@ -68,9 +71,9 @@ if [ ! -x "$AXON" ]; then
   # that silently stopped checking verbs would be worse than a red build).
   # Mirrors BROWSER_PARITY_REQUIRE=1 in browser_compute_parity.sh.
   if [ "${CLAIMS_GATE_REQUIRE:-0}" = 1 ]; then
-    bad "verbs" "no axon binary at $AXON and CLAIMS_GATE_REQUIRE=1 — build it first: cargo build -p axon-core --no-default-features --bin axon"
+    bad "verbs" "no axon binary named (AXON='$AXON') and CLAIMS_GATE_REQUIRE=1 — build it and name it: AXON=<path> (cargo build -p axon-core --no-default-features --bin axon)"
   else
-    echo "  SKIP verbs — no axon binary at $AXON (set CLAIMS_GATE_REQUIRE=1 to make this fatal)"
+    echo "  SKIP verbs — no axon binary named (AXON='$AXON'; set CLAIMS_GATE_REQUIRE=1 to make this fatal)"
   fi
 else
   HELP="$("$AXON" --help 2>&1)"
@@ -80,7 +83,10 @@ else
   for v in $claimed; do
     # `axon --version` / `--help` are flags, not verbs.
     case "$v" in -*) continue ;; esac
-    echo "$HELP" | grep -qE "^  $v( |$)" || missing="$missing $v"
+    # A here-string, not `echo | grep -q`: under pipefail grep -q exits at its first
+    # match, echo is killed by SIGPIPE (141) and a verb that IS present was recorded
+    # missing (measured under CPU contention: 13 false misses in 300 loops, 0 here).
+    grep -qE "^  $v( |$)" <<< "$HELP" || missing="$missing $v"
   done
   if [ "$n_claimed" -lt 8 ]; then
     bad verb_extraction "only $n_claimed verbs extracted from $DOC — if the extraction broke, \
@@ -177,10 +183,10 @@ for p in $paths; do
     # race that made this check report an existing file as missing, but only
     # in-suite, never when run by hand. A gate whose verdict depends on what
     # another process is doing to a build directory is not a gate.
-    *)   find crates scripts spec examples governance \
+    *)   hit="$(find crates scripts spec examples governance \
               \( -name target -o -name .git \) -prune -o \
-              -name "$p" -print -quit 2>/dev/null \
-           | grep -q . || gone="$gone $p" ;;
+              -name "$p" -print -quit 2>/dev/null)"
+         [ -n "$hit" ] || gone="$gone $p" ;;
   esac
 done
 if [ "$n_paths" -lt 20 ]; then
@@ -189,6 +195,19 @@ elif [ -n "$gone" ]; then
   bad paths "$DOC names files that do not exist:$gone"
 else
   ok "paths: all $n_paths file/script paths named in $DOC exist"
+fi
+
+# ── 3b: this script holds no `| grep -q` under pipefail ─────────────────────
+#
+# `producer | grep -q` under `set -o pipefail` is a flake: grep -q exits at its
+# first match, the producer is killed by SIGPIPE (141) and the pipeline reports
+# failure although the pattern matched. It produced false "missing verb" failures
+# under load (C9 round 4c triage, M89). Use a here-string or capture first.
+pipe_q="$(grep -nE '[|] *grep +-[a-zA-Z]*q' "$0" | grep -vE '^[0-9]+: *#' | grep -v 'pipe_q=' || true)"
+if [ -n "$pipe_q" ]; then
+  bad pipefail_grep_q "claims_gate.sh feeds a pipe to grep -q under pipefail (SIGPIPE flake):$pipe_q"
+else
+  ok "no pipe feeds grep -q under pipefail in claims_gate.sh"
 fi
 
 # ── 4: every script the doc names is executable and present ─────────────────
@@ -263,9 +282,9 @@ if [ -f rust-toolchain.toml ]; then
     env_channel="${env_channel%%-aarch64-*}"
     if [ -n "$env_tc" ] && [ "$env_channel" != "$want" ]; then
       warn toolchain_env "RUSTUP_TOOLCHAIN=$env_tc overrides rust-toolchain.toml ($want) — unset it, or the pin does nothing"
-    elif echo "$active" | grep -q "directory override"; then
+    elif grep -q "directory override" <<< "$active"; then
       warn toolchain_override "a rustup DIRECTORY OVERRIDE is shadowing rust-toolchain.toml: active is '$active' but the repo pins '$want'. Run \`rustup override unset\` in this directory. This is the state that produced 38 files of fmt drift: the override followed ROLLING nightly, so local rustfmt changed on every \`rustup update\` while CI ran a different toolchain entirely."
-    elif echo "$active" | grep -q "$want"; then
+    elif grep -q "$want" <<< "$active"; then
       ok "toolchain: rust-toolchain.toml ($want) is the toolchain actually in force"
     else
       bad toolchain_mismatch "rust-toolchain.toml pins '$want' but the active toolchain is '$active' — something is shadowing the pin"

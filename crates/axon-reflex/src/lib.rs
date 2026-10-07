@@ -36,6 +36,8 @@
 //! are NOT invariant here. They belong to the mode matrix in
 //! `AXON-COMPLETENESS.json` under `axis: mode`.
 
+pub mod shortlist;
+
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::ToSocketAddrs;
@@ -324,8 +326,11 @@ pub fn encode_request(op: &str, id: &str, input: &str, principal: &str, req_id: 
 /// report an authority violation as an infrastructure failure, and the
 /// invariant would hold only in the mode that needs it least.
 pub fn decode_response(line: &str, expect_req_id: u64) -> Result<serde_json::Value, Refusal> {
-    let v: serde_json::Value = serde_json::from_str(line.trim())
-        .map_err(|e| Refusal::Protocol(format!("unparseable response: {e}")))?;
+    // STRICT, like the request direction. A plain `Value` parse is last-wins, so
+    // a reply carrying `req_id` twice was read as the LAST one's answer — the
+    // correlation check below is only as strong as this parse (D-015).
+    let v: serde_json::Value = axon_cortex::parse_strict(line.trim())
+        .map_err(|e| Refusal::Protocol(format!("unparseable response: {e:?}")))?;
     match v.get("protocol").and_then(|p| p.as_str()) {
         Some(PROTOCOL) => {}
         other => {
@@ -436,7 +441,17 @@ pub fn serve_one(core: &mut ReflexCore, line: &str) -> String {
     };
     // The correlation id is echoed on EVERY reply including refusals, so a
     // client can tell whose answer it is holding.
-    let req_id = req.get("req_id").and_then(|r| r.as_u64()).unwrap_or(0);
+    // A request with no usable id is REFUSED, not served as id 0: `unwrap_or(0)`
+    // gave every id-less caller the same id, so their answers were
+    // indistinguishable — the ambiguity correlation exists to remove.
+    let Some(req_id) = req.get("req_id").and_then(|r| r.as_u64()) else {
+        return encode_response_for(
+            0,
+            &Err(Refusal::Protocol(
+                "request names no usable req_id (a non-negative integer is required)".into(),
+            )),
+        );
+    };
     // The request's protocol tag is CHECKED. It was validated on responses only,
     // so a client speaking a future dialect was served by an old backend that
     // silently guessed at the shape — the one direction the doc promised.

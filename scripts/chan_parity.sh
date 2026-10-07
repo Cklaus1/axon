@@ -40,14 +40,19 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
-AXON="${AXON:-./target/debug/axon}"
+. scripts/lib/axon_bin.sh
+# The binary the caller names, or the one THIS harness builds (C9 round 4:
+# a binary that merely sits in target/ was built from some other tree).
+if [ -z "${AXON:-}" ]; then
+  if ! cargo build -q -p axon-core --bin axon 2>/dev/null; then
+    echo "chan_parity: SKIP — codegen build unavailable (LLVM absent)"
+    exit 0
+  fi
+  use_built AXON axon
+fi
+[ -x "$AXON" ] || { echo "chan_parity: FAIL — \$AXON ($AXON) is not an executable"; exit 1; }
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
-
-if [ ! -x "$AXON" ]; then
-  echo "chan_parity: SKIP — no axon binary at $AXON"
-  exit 0
-fi
 
 pass=0; fail=0
 ok()  { echo "  OK $1"; pass=$((pass+1)); }

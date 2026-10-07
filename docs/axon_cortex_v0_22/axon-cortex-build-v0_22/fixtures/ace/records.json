@@ -1,0 +1,474 @@
+{
+  "fixture_profile": "axon.ace-fixtures/1",
+  "fixture_only": true,
+  "live_model_executed": false,
+  "physical_profile": {
+    "profile": "axon.ace-projection/1",
+    "record_type": "PhysicalExecutionProfile",
+    "mapping_id": "reflex.specialized",
+    "air_node_kind": "Decide",
+    "cognitive_class": "REFLEX",
+    "operation_kind": "DECIDE",
+    "capability_class": "SPECIALIZED_REFLEX",
+    "physical_mechanism": "learned_head",
+    "deployment_mode": "LocalSidecar",
+    "semantic_contract_ref": "fixture:contract",
+    "capability_ref": "fixture:capability",
+    "artifact_ref": null,
+    "backend_ref": "fixture:backend",
+    "effect_profile_ref": "fixture:inference-effect",
+    "mapping_revision": "axon.ace-vocabulary-map/1"
+  },
+  "features": {
+    "profile": "axon.ace-projection/1",
+    "record_type": "BackendFeatureProjection",
+    "backend_ref": "fixture:backend",
+    "deployment_mode": "LocalSidecar",
+    "mode": "Research",
+    "snapshot_ref": "fixture:snapshot",
+    "features": {
+      "Choice": {
+        "status": "Supported",
+        "evidence_ref": "fixture:feature-test",
+        "emulation_ref": null
+      },
+      "BinaryProbability": {
+        "status": "Supported",
+        "evidence_ref": "fixture:feature-test",
+        "emulation_ref": null
+      },
+      "OrdinalDistribution": {
+        "status": "Supported",
+        "evidence_ref": "fixture:feature-test",
+        "emulation_ref": null
+      },
+      "dynamic_candidates": {
+        "status": "Supported",
+        "evidence_ref": "fixture:feature-test",
+        "emulation_ref": null
+      },
+      "complete_scores": {
+        "status": "Supported",
+        "evidence_ref": "fixture:feature-test",
+        "emulation_ref": null
+      },
+      "question_isolation": {
+        "status": "Supported",
+        "evidence_ref": "fixture:feature-test",
+        "emulation_ref": null
+      },
+      "batching": {
+        "status": "Supported",
+        "evidence_ref": "fixture:feature-test",
+        "emulation_ref": null
+      },
+      "native_state": {
+        "status": "Unsupported",
+        "evidence_ref": null,
+        "emulation_ref": null
+      },
+      "cancellation": {
+        "status": "Supported",
+        "evidence_ref": "fixture:feature-test",
+        "emulation_ref": null
+      },
+      "usage": {
+        "status": "Supported",
+        "evidence_ref": "fixture:feature-test",
+        "emulation_ref": null
+      },
+      "immutable_identity": {
+        "status": "Supported",
+        "evidence_ref": "fixture:feature-test",
+        "emulation_ref": null
+      }
+    },
+    "max_candidates": 4,
+    "max_input_tokens": 2048
+  },
+  "choice_request": {
+    "profile": "axon.ace-projection/1",
+    "record_type": "DecisionRequest",
+    "request_id": "fixture:request",
+    "operation_id": "fixture:operation",
+    "question_id": "fixture:question",
+    "family": "Choice",
+    "observation_ref": "fixture:observation",
+    "working_set_ref": "fixture:working-set",
+    "effective_input_ref": "fixture:effective-input",
+    "definition_ref": "fixture:definition",
+    "candidate_policy_ref": "fixture:candidate-policy",
+    "candidate_order_policy_ref": "fixture:order-policy",
+    "candidates": [
+      {
+        "id": "a",
+        "description": "Choice a",
+        "value_ref": "fixture:value:a"
+      },
+      {
+        "id": "b",
+        "description": "Choice b",
+        "value_ref": "fixture:value:b"
+      },
+      {
+        "id": "c",
+        "description": "Choice c",
+        "value_ref": "fixture:value:c"
+      }
+    ],
+    "event_ref": null,
+    "levels": [],
+    "requires_complete_scores": true,
+    "selection_policy": "argmax",
+    "tie_rule": "first_declared",
+    "candidate_set_digest": "b6e9fc96389231a92cdaf6efb03d5a0f765f6e21897ea0e507e5c567c6c9e1bb",
+    "candidate_order_digest": "fa1844c2988ad15ab7b49e0ece09684500fad94df916859fb9a43ff85f5bb477"
+  },
+  "choice_result": {
+    "profile": "axon.ace-projection/1",
+    "record_type": "DecisionResult",
+    "request_id": "fixture:request",
+    "operation_id": "fixture:operation",
+    "question_id": "fixture:question",
+    "family": "Choice",
+    "observation_ref": "fixture:observation",
+    "effective_input_ref": "fixture:effective-input",
+    "candidate_set_digest": "b6e9fc96389231a92cdaf6efb03d5a0f765f6e21897ea0e507e5c567c6c9e1bb",
+    "candidate_order_digest": "fa1844c2988ad15ab7b49e0ece09684500fad94df916859fb9a43ff85f5bb477",
+    "outcome": "Value",
+    "absence_reason": null,
+    "selected_id": "a",
+    "distribution": [
+      {
+        "id": "a",
+        "p": 0.6
+      },
+      {
+        "id": "b",
+        "p": 0.3
+      },
+      {
+        "id": "c",
+        "p": 0.1
+      }
+    ],
+    "probability": null,
+    "event_ref": null,
+    "levels": [],
+    "expectation": null,
+    "score_completeness": "complete",
+    "score_provenance": {
+      "origin": "LearnedDecisionHead",
+      "producer_vocabulary": "fixture.score/1",
+      "producer_tag": "head_softmax",
+      "mapping_ref": "fixture:score-map",
+      "computation_ref": "fixture:head-softmax",
+      "evidence_ref": "fixture:scores",
+      "normalization_ref": null
+    },
+    "correctness": {
+      "status": "Unavailable",
+      "value": null,
+      "event_ref": null,
+      "domain_ref": null,
+      "estimator_ref": null,
+      "evidence_ref": null
+    },
+    "applicability_ref": null,
+    "ood_ref": null
+  },
+  "binary_request": {
+    "profile": "axon.ace-projection/1",
+    "record_type": "DecisionRequest",
+    "request_id": "fixture:request",
+    "operation_id": "fixture:operation",
+    "question_id": "fixture:question",
+    "family": "BinaryProbability",
+    "observation_ref": "fixture:observation",
+    "working_set_ref": "fixture:working-set",
+    "effective_input_ref": "fixture:effective-input",
+    "definition_ref": "fixture:definition",
+    "candidate_policy_ref": "fixture:candidate-policy",
+    "candidate_order_policy_ref": "fixture:order-policy",
+    "candidates": [],
+    "event_ref": "fixture:positive-event",
+    "levels": [],
+    "requires_complete_scores": true,
+    "selection_policy": "distribution_only",
+    "tie_rule": "not_applicable",
+    "candidate_set_digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+    "candidate_order_digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+  },
+  "binary_result": {
+    "profile": "axon.ace-projection/1",
+    "record_type": "DecisionResult",
+    "request_id": "fixture:request",
+    "operation_id": "fixture:operation",
+    "question_id": "fixture:question",
+    "family": "BinaryProbability",
+    "observation_ref": "fixture:observation",
+    "effective_input_ref": "fixture:effective-input",
+    "candidate_set_digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+    "candidate_order_digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+    "outcome": "Value",
+    "absence_reason": null,
+    "selected_id": null,
+    "distribution": null,
+    "probability": 0.75,
+    "event_ref": "fixture:positive-event",
+    "levels": [],
+    "expectation": null,
+    "score_completeness": "complete",
+    "score_provenance": {
+      "origin": "LearnedDecisionHead",
+      "producer_vocabulary": "fixture.score/1",
+      "producer_tag": "head_softmax",
+      "mapping_ref": "fixture:score-map",
+      "computation_ref": "fixture:head-softmax",
+      "evidence_ref": "fixture:scores",
+      "normalization_ref": null
+    },
+    "correctness": {
+      "status": "Unavailable",
+      "value": null,
+      "event_ref": null,
+      "domain_ref": null,
+      "estimator_ref": null,
+      "evidence_ref": null
+    },
+    "applicability_ref": null,
+    "ood_ref": null
+  },
+  "ordinal_request": {
+    "profile": "axon.ace-projection/1",
+    "record_type": "DecisionRequest",
+    "request_id": "fixture:request",
+    "operation_id": "fixture:operation",
+    "question_id": "fixture:question",
+    "family": "OrdinalDistribution",
+    "observation_ref": "fixture:observation",
+    "working_set_ref": "fixture:working-set",
+    "effective_input_ref": "fixture:effective-input",
+    "definition_ref": "fixture:definition",
+    "candidate_policy_ref": "fixture:candidate-policy",
+    "candidate_order_policy_ref": "fixture:order-policy",
+    "candidates": [
+      {
+        "id": "a",
+        "description": "Choice a",
+        "value_ref": "fixture:value:a"
+      },
+      {
+        "id": "b",
+        "description": "Choice b",
+        "value_ref": "fixture:value:b"
+      },
+      {
+        "id": "c",
+        "description": "Choice c",
+        "value_ref": "fixture:value:c"
+      }
+    ],
+    "event_ref": null,
+    "levels": [
+      {
+        "id": "a",
+        "value": 0
+      },
+      {
+        "id": "b",
+        "value": 2
+      },
+      {
+        "id": "c",
+        "value": 5
+      }
+    ],
+    "requires_complete_scores": true,
+    "selection_policy": "distribution_only",
+    "tie_rule": "not_applicable",
+    "candidate_set_digest": "b6e9fc96389231a92cdaf6efb03d5a0f765f6e21897ea0e507e5c567c6c9e1bb",
+    "candidate_order_digest": "fa1844c2988ad15ab7b49e0ece09684500fad94df916859fb9a43ff85f5bb477"
+  },
+  "ordinal_result": {
+    "profile": "axon.ace-projection/1",
+    "record_type": "DecisionResult",
+    "request_id": "fixture:request",
+    "operation_id": "fixture:operation",
+    "question_id": "fixture:question",
+    "family": "OrdinalDistribution",
+    "observation_ref": "fixture:observation",
+    "effective_input_ref": "fixture:effective-input",
+    "candidate_set_digest": "b6e9fc96389231a92cdaf6efb03d5a0f765f6e21897ea0e507e5c567c6c9e1bb",
+    "candidate_order_digest": "fa1844c2988ad15ab7b49e0ece09684500fad94df916859fb9a43ff85f5bb477",
+    "outcome": "Value",
+    "absence_reason": null,
+    "selected_id": null,
+    "distribution": [
+      {
+        "id": "a",
+        "p": 0.6
+      },
+      {
+        "id": "b",
+        "p": 0.3
+      },
+      {
+        "id": "c",
+        "p": 0.1
+      }
+    ],
+    "probability": null,
+    "event_ref": null,
+    "levels": [
+      {
+        "id": "a",
+        "value": 0
+      },
+      {
+        "id": "b",
+        "value": 2
+      },
+      {
+        "id": "c",
+        "value": 5
+      }
+    ],
+    "expectation": 1.1,
+    "score_completeness": "complete",
+    "score_provenance": {
+      "origin": "LearnedDecisionHead",
+      "producer_vocabulary": "fixture.score/1",
+      "producer_tag": "head_softmax",
+      "mapping_ref": "fixture:score-map",
+      "computation_ref": "fixture:head-softmax",
+      "evidence_ref": "fixture:scores",
+      "normalization_ref": null
+    },
+    "correctness": {
+      "status": "Unavailable",
+      "value": null,
+      "event_ref": null,
+      "domain_ref": null,
+      "estimator_ref": null,
+      "evidence_ref": null
+    },
+    "applicability_ref": null,
+    "ood_ref": null
+  },
+  "native_state": {
+    "profile": "axon.ace-projection/1",
+    "record_type": "StateHandleReceipt",
+    "kind": "native_state",
+    "reuse_mode": "actual",
+    "epoch": 1,
+    "bindings": {
+      "backend_instance": "fixture:backend_instance",
+      "model": "fixture:model",
+      "base": "fixture:base",
+      "adapter": "fixture:adapter",
+      "tokenizer": "fixture:tokenizer",
+      "renderer": "fixture:renderer",
+      "processor": "fixture:processor",
+      "position": "fixture:position",
+      "attention": "fixture:attention",
+      "precision": "fixture:precision",
+      "cache_policy": "fixture:cache_policy",
+      "principal": "fixture:principal",
+      "project": "fixture:project",
+      "observation": "fixture:observation",
+      "working_set": "fixture:working_set",
+      "effective_input": "fixture:effective_input",
+      "policy_generation": "fixture:policy_generation",
+      "lease": "fixture:lease"
+    },
+    "expiry_ref": "fixture:lease-expiry",
+    "native_handle_ref": "fixture:opaque-handle"
+  },
+  "attempts": [
+    {
+      "profile": "axon.ace-projection/1",
+      "record_type": "ExecutionAttemptEvent",
+      "root_id": "fixture:root",
+      "attempt_id": "fixture:attempt",
+      "parent_attempt_id": null,
+      "kind": "Start",
+      "requested_producer_ref": "fixture:requested",
+      "selected_producer_ref": "fixture:selected",
+      "observed_producer_ref": null,
+      "accepted_producer_ref": null,
+      "effective_input_ref": "fixture:input",
+      "reservation_upper_bound": 2,
+      "actual_cost": null,
+      "outcome": null,
+      "result_ref": null,
+      "committed": false,
+      "remote_status": "NotStarted"
+    },
+    {
+      "profile": "axon.ace-projection/1",
+      "record_type": "ExecutionAttemptEvent",
+      "root_id": "fixture:root",
+      "attempt_id": "fixture:attempt",
+      "parent_attempt_id": null,
+      "kind": "Terminal",
+      "requested_producer_ref": "fixture:requested",
+      "selected_producer_ref": "fixture:selected",
+      "observed_producer_ref": "fixture:selected",
+      "accepted_producer_ref": "fixture:selected",
+      "effective_input_ref": "fixture:input",
+      "reservation_upper_bound": 2,
+      "actual_cost": 1,
+      "outcome": "Value",
+      "result_ref": "fixture:result",
+      "committed": true,
+      "remote_status": "Finished"
+    }
+  ],
+  "branch_plan": [
+    {
+      "id": "op",
+      "branch": "all",
+      "dependency": "Independent",
+      "depends_on": [],
+      "effective_input_ref": "fixture:op-input"
+    },
+    {
+      "id": "click",
+      "branch": "click",
+      "dependency": "ConditionallyRelevant",
+      "depends_on": [],
+      "effective_input_ref": "fixture:click-input"
+    },
+    {
+      "id": "type",
+      "branch": "type",
+      "dependency": "ConditionallyRelevant",
+      "depends_on": [],
+      "effective_input_ref": "fixture:type-input"
+    }
+  ],
+  "branch_results": [
+    {
+      "id": "op",
+      "outcome": "Value",
+      "effective_input_ref": "fixture:op-input",
+      "result_ref": "fixture:op-result",
+      "committed_dependencies": {}
+    },
+    {
+      "id": "click",
+      "outcome": "Value",
+      "effective_input_ref": "fixture:click-input",
+      "result_ref": "fixture:click-result",
+      "committed_dependencies": {}
+    },
+    {
+      "id": "type",
+      "outcome": "Failed",
+      "effective_input_ref": "fixture:type-input",
+      "result_ref": null,
+      "committed_dependencies": {}
+    }
+  ]
+}

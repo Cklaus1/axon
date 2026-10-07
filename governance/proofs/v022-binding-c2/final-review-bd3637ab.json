@@ -1,0 +1,268 @@
+{
+ "schema": "axon-v022-final-review/1",
+ "workflow_run": "wf_8aad6d16-ad6",
+ "axon_sha": "bd3637ab1b373a74e4d39cd67e07289b2b7af229",
+ "micode_sha": "e7fdb739",
+ "reviews": [
+  {
+   "gate": "G11-r22-admission-disposition",
+   "verdict": "DO_NOT_REGISTER",
+   "findings": [
+    {
+     "title": "Relabelling one trial's usage currency drops the arm's whole Fabric-execution liability, so the frozen liability tolerance passes and the decision becomes ACCEPT on quality",
+     "classification": "BLOCKER",
+     "clause": "stale/unknown costs or safety failures cannot be hidden by aggregate utility",
+     "evidence": "Reproduced on an export of axon-s3 bd3637ab. The probe (crates/axon-loop/tests/probe_g11_currency.rs, uses the tests/common fixtures) froze a plan with fixture defaults (economic_threshold=report_only per ADR-001 D4) and budget_rule max_unresolved_liability_micro=300000. Each candidate trial's acf_receipt reported cost_micro=900000; under D10 that is held as unresolved liability. CONTROL: admission INCONCLUSIVE with reason 'unresolved liability 2000000 \u00b5 exceeds plan tolerance 300000 \u00b5', and the candidate facts showed Unresolved{liability 1800000}. ATTACK: the only change was episode.usage.currency=\"EUR\" on candidate trial c1. The ACF request still says currency_code USD, and neither intake nor evl::evaluate checks usage currency against the pinned schedule or the request; only the separate tel CLI join calls PinnedSchedule::check_usage. Result: admission ACCEPT with reasons ['all frozen plan criteria established']. The admission's candidate facts read Unresolved{known 0, unknown_count 2, unresolved_liability_micro 0}, while the evaluation's own economics still showed EUR liability 900000 and USD liability 900000. pointer::transition then activated the candidate, moving the epoch 1->2. Root cause: admission.rs facts() uses economics.single_total(). With more than one currency that returns None, and the fallback Total::Unresolved hard-codes unresolved_liability_micro: 0. decide() sums liability(&cand.total)+liability(&inc.total), so 1.8M \u00b5 of unknown execution cost disappears from the only cost criterion still active under report_only, and quality (aggregate utility) decides alone. The mechanism does not depend on evaluation class. The recorded ADR residuals (re-run of an issued attempt; name-vs-fingerprint roles) are not involved.",
+     "executed": true,
+     "fix": "In facts() and decide(), never fabricate a liability of 0. Either sum liabilities (and unknown counts) across every currency summary, or make a multi-currency or empty summary INCONCLUSIVE with an explicit reason ('economics span currencies: liability cannot be stated'). Also pin usage.currency (and price_schedule_ref) at intake or evaluate to the ACF request's currency_code / the pinned schedule, as tel's join already does. Add a named gate test with two currencies in one arm and a mutation row on the facts() fallback."
+    },
+    {
+     "title": "In a development-class evaluation, a context observer withdrawn after admission does not block activation",
+     "classification": "MAJOR-ADJACENT",
+     "clause": "only accepted and currently authorized evidence permits activation",
+     "evidence": "Reproduced: accepted(w,\"obs\") (development class), then trusted_observers and observer_keys cleared from config, then an activate transition. Result: Ok(epoch 2). admission::derive rechecks context_signed_by only when evaluation_class == Protected. The verifier trust, key and pins ARE rechecked in every class. ADR-001 \u00a75 lists what revalidation covers (epochs, verifier keys/pins, revocations, admitter trust), and D1/D3 say a development evaluation carries no protected or promotion claim; the context there is a name-only producer claim. For those reasons this is not classed as a gate falsification. On a class-agnostic reading of 'currently authorized' it would be.",
+     "executed": true,
+     "fix": "Either recheck the observer's name in trusted_observers for development-class counted trials too (cheap: the trial's observed_issuer_ref is in the stored context), or state in the gate and ADR that 'currently authorized' is scoped to protected-class evidence."
+    },
+    {
+     "title": "In the development class, unknown safety does not block ACCEPT, although ADR-001 \u00a75 says 'Unknown blocks ACCEPT'",
+     "classification": "MINOR",
+     "clause": "none (unknown safety is not a 'safety failure'; violations veto in every class, before utility)",
+     "evidence": "From reading decide(): the 'safety unknown' INCONCLUSIVE reason applies only when class == Protected. A Violation vetoes in every class before any utility, which the gate requires and the tests a_candidate_violation_vetoes_before_any_utility and a_violation_wins_and_the_state_is_fixed_at_evaluation pin. safety_still_holds also blocks activation and rollback on a violation recorded after the evaluation.",
+     "executed": false,
+     "fix": "Align the ADR \u00a75 text with the class scoping, or apply the unknown-safety INCONCLUSIVE in every class."
+    },
+    {
+     "title": "The ACCEPT reason under report_only does not state that economics were not assessed",
+     "classification": "MINOR",
+     "clause": "Accepted, rejected and inconclusive have explicit immutable reasons",
+     "evidence": "An ACCEPT's reasons are always ['all frozen plan criteria established'], even when both arms' costs are Unresolved and economics were report-only. The unresolved totals do sit in ArmFacts, and the record is content-addressed (get_record checks the digest) and must re-derive identically for activation, so the reasons are immutable. They are just less explicit than they could be.",
+     "executed": true,
+     "fix": "Append an explicit reason, for example 'economics report_only (ADR-001 D4): candidate cost unresolved, N unknown, L \u00b5 liability'."
+    },
+    {
+     "title": "The gate's named tests never exercise a multi-currency or empty economics summary",
+     "classification": "MINOR",
+     "clause": "none",
+     "evidence": "All 12 named tests pass on the frozen tree (re-run: evl_admission 4/4, safety 2/2, protected_class 2/2, assignment 4/4). None of them covers the single_total()==None fallback in facts(), which is how the BLOCKER survived the 112/112 mutation sweep.",
+     "executed": true,
+     "fix": "Add a test and a mutation row for the facts() fallback."
+    }
+   ],
+   "holding": [
+    {
+     "part": "Explicit, immutable reasons for ACCEPT, REJECT, INCONCLUSIVE and VETOED",
+     "evidence": "decide() returns a reason vector for every decision, and REJECT also carries its inconclusive reasons. The AdmissionRecord is stored by content: store.get_record verifies the digest. It is journalled by admit, and rederive requires the recomputed record to equal the stored one byte for byte. Named tests reject_on_inferiority_or_no_economic_benefit and inconclusive_on_small_sample_liability_and_unknowns assert the reasons (re-run: pass)."
+    },
+    {
+     "part": "Only ACCEPT activates, and only on current authority",
+     "evidence": "check_activate and check_rollback call admission::rederive, which requires the admission to be journalled, identical and ACCEPT. derive rechecks against CURRENT config: admitter trust, other_loop_role, verifier trust and key id, intake::check_pins over the stored check documents, and, in the protected class, the observer and key and the monitor and key. issuer_independent is applied. Activation also checks the K1 epoch, H1 incumbent, deployment_enabled and revocation, and safety_still_holds. only_an_accepted_currently_authorized_admission_activates and a_protected_activation_rests_only_on_current_authority pass on re-run."
+    },
+    {
+     "part": "Safety violations are not hidden by utility",
+     "evidence": "The veto stage in decide() runs before any quality or cost criterion and returns Decision::Vetoed. safety_still_holds blocks activation and rollback on a violation recorded after the evaluation. The safety tests (2/2) pass on re-run."
+    },
+    {
+     "part": "Execution cost is never omitted from the evaluation economics, and a frozen cost criterion over executed trials is INCONCLUSIVE",
+     "evidence": "tel::execution_component adds one UNKNOWN component per Fabric trial, holding the reservation (or anything larger) as liability. an_execution_cost_is_never_omitted_from_the_economics passes. The hole found is downstream, in admission::facts() over multi-currency summaries."
+    },
+    {
+     "part": "Population issued before execution (ADR-001 \u00a73.6)",
+     "evidence": "evaluate requires the request to equal the journalled assignment, counts only the issued attempt, and in the protected class refuses a preflight made before the assignment. The assignment tests (4/4) pass on re-run."
+    }
+   ]
+  },
+  {
+   "gate": "G11-r22-independent-admission \u2014 \"Policy admission requires a non-subject authority, complete artifact/experiment/verifier bindings and the prespecified evidence rule; proposer, learned ranker and Compute Fabric have no self-promotion right.\" Frozen axon-s3 bd3637ab1b373a74e4d39cd67e07289b2b7af229 (clean before and after); MiCode e7fdb739 (clean). Probes ran in a scratch copy at /var/tmp/bind2-final-G11-r22-independent-admission, which has since been removed.",
+   "findings": [
+    {
+     "title": "The subject set is whatever the evaluation request declares: an undeclared worker admits and activates its own evaluated candidate",
+     "classification": "MINOR",
+     "clause": "Policy admission requires a non-subject authority (claim-level consequence of the recorded claims-based identity residual, ADR-001 \u00a71/\u00a73.4)",
+     "evidence": "Executed probe p2_undeclared_subject_admits_and_activates. The evaluate request set subject_issuers=[] and evaluator_ref=\"evl:anyone\"; the stored evaluation's subject_issuers came out as [agent:proposer]. With agent:worker added to trusted_admitters, admit(worker) returned ACCEPT and a transition issued by agent:worker activated the candidate. Cause: evl.rs:351 builds subjects only from r.subject_issuers plus arm proposers, and LoopEpisode carries no producer or subject identity. This is not a new hole beyond the residual. AdmitRequest.admitter_ref and PolicyTransition.issuer_ref are themselves unauthenticated names on this DEV host (ADR-001 \u00a73.4 item 4, signed promotion pending D1/D2), so a malicious subject can already claim \"op:admitter\" directly, which is a strictly stronger attack. In the real dev flow the subject identity is the MiCode observer (micode-host-observer), and Config::check_separation structurally bars it from being an admitter. Under honest naming the gate holds for every subject the evaluator declares.",
+     "executed": true,
+     "fix": "When the custodian or signed-promotion work lands (D1/D2), derive the subject principal from authenticated trial records (the connection-bound trial capability holder, ADR-001 \u00a73.2/\u00a73.7) rather than from the evaluation request. Meanwhile, refuse an evaluation whose declared subject set is empty apart from proposers, or record the declaration's author."
+    },
+    {
+     "title": "The launching parent named in an observer-signed protected context is not part of the independence set",
+     "classification": "MINOR",
+     "clause": "none (the gate names proposer, learned ranker and Compute Fabric; MiCode's own vocabulary says the harness is not the subject)",
+     "evidence": "Executed probe p1_protected_launching_parent_admits_and_activates. Setup: a PROTECTED-class evaluation, every context observer-signed with expected_issuer_ref=\"fixture:parent\", and subject_issuers=[agent:proposer, agent:worker]. With fixture:parent listed as an admitter it admitted (ACCEPT, \"all frozen plan criteria established\") and itself issued the activation; the candidate became active. Nothing in axon-loop reads ctx.expected_issuer_ref except the contracts' parent-echo check (checks.rs:97). MiCode's exec_context.rs says \"the harness decides which corpus a trial feeds, never the subject\", so the harness is an interested orchestrator rather than the subject. That makes this hardening, not a falsification.",
+     "executed": true,
+     "fix": "Add each counted trial's context expected_issuer_ref (authenticated in the protected class) to the set that derive() and issuer_independent() exclude."
+    },
+    {
+     "title": "A baseline's issuer is rechecked for trust but not for independence on baseline activation or rollback",
+     "classification": "MAJOR-ADJACENT",
+     "clause": "none for this gate (it bears on G11-r22-rollback-revalidate: 'a rollback rechecks ... permissions')",
+     "evidence": "Executed probe p3_baseline_issuer_turned_fabric_still_activates. After activation, the operator added op:admitter (the baseline's issuer) to trusted_verifiers and added a second admitter. A rollback to the baseline issued by op:admitter2 succeeded. A rollback to the admission by the same now-Fabric identity was refused: \"self-promotion: admitter op:admitter is also a trusted verifier (Compute Fabric)\". check_activate route 1 (pointer.rs) and check_rollback's baseline branch check only admitters.contains(b.issuer_ref); designate_baseline applies other_loop_role and the proposer check only at designation time. Fabric issued nothing here, so this is not Fabric self-promotion. It is an inconsistency in current-authority revalidation.",
+     "executed": true,
+     "fix": "On route 1 and in the baseline branch of check_rollback, also require other_loop_role(config, b.issuer_ref) == None and that the issuer is not an EVO proposer in the scope, as rederive already does for admissions."
+    },
+    {
+     "title": "Compute Fabric listed as an admitter can still revoke, which effectively pauses the active policy",
+     "classification": "MINOR",
+     "clause": "none (revocation only blocks; it never promotes)",
+     "evidence": "Executed probe p4_fabric_revokes. With VERIFIER added to trusted_admitters, pointer::revoke(VERIFIER) succeeded, and resolve then returned Paused(\"active policy ... is revoked\"). revoke() checks only config.admitters(), unlike transition, assign and designate_baseline, which also apply other_loop_role. No promotion follows from it.",
+     "executed": true,
+     "fix": "Apply other_loop_role to the revocation issuer, for consistency with every other admitter verb."
+    },
+    {
+     "title": "The experiment-binding rows do not exercise derive()'s per-field binding refusals, and no mutation row covers them",
+     "classification": "MINOR",
+     "clause": "none (proof weakness; the binding itself holds)",
+     "evidence": "a_candidate_is_bound_to_one_experiment tests only freeze uniqueness (\"no plan shopping\"). No test in crates/axon-loop/tests matches \"binding: \", and M101-M115 contain no row for admission.rs:237-257 (scope, experiment, plan_ref and freeze_seq binding). Executed probe p6_cross_experiment_admission_refused: an evaluation of experiment A admitted under a frozen experiment B was refused with \"binding: evaluation belongs to a different experiment\" and nothing was written. So the binding is live, but no evidence row names it.",
+     "executed": true,
+     "fix": "Add a test like p6 to the G11 evidence rows, plus mutation rows that delete each binding check in derive()."
+    },
+    {
+     "title": "The prespecified rule's plan approval is self-asserted, and freezing has no issuer",
+     "classification": "FUTURE",
+     "clause": "the prespecified evidence rule (already-recorded residual: ADR-001 \u00a73.4 'operator_approved: bool becomes a signed approval_ref'; AXON-COMPLETENESS H03)",
+     "evidence": "From reading the code: plan::freeze takes no issuer, and operator_approved is a boolean the submitter sets. Admission applies exactly the frozen rules (Rules::parse(plan) in derive; the freeze must precede evaluation: eval_seq > freeze_seq and matching freeze_seq), so the rule is prespecified. Who authored it is not authenticated.",
+     "executed": false,
+     "fix": "Signed approval_ref under D1/D2/D5, as ADR-001 \u00a73.4 already plans."
+    }
+   ],
+   "holding": [
+    {
+     "part": "Non-subject authority at admission",
+     "evidence": "From reading admission.rs:222-287, derive() refuses an admitter that is not trusted, that holds another loop role (verifier/Fabric, observer, monitor), that proposed the candidate (the ranker), that is a subject issuer, or that is the evaluator. It re-applies all of these on every re-derivation (activation and rollback) against CURRENT config. Named test an_admitter_holds_no_other_loop_role passed in my run. Mutation rows M113 and M114 were killed in the bind2b proof run."
+    },
+    {
+     "part": "No self-promotion at the transition (the promotion act)",
+     "evidence": "pointer::transition refuses an issuer with another loop role for every kind of transition. issuer_independent() refuses the candidate's proposer, any EVO proposer in the scope, the evaluator and subject issuers, on both activate and rollback-to-admission. Named tests no_proposer_evaluator_or_subject_issues_a_promotion and a_rollback_needs_an_independent_trusted_issuer passed in my run; M101 was killed. My p3 probe confirmed that a rollback resting on an admission whose admitter later became Fabric is refused."
+    },
+    {
+     "part": "Baseline designation and population issue by an independent admitter",
+     "evidence": "designate_baseline and plan::assign apply the trusted-admitter check, other_loop_role and the no-EVO-proposer check. Named tests a_baseline_issuer_holds_no_other_loop_role and the_population_is_issued_once_by_an_independent_admitter passed in my run; M102 and M111 were killed."
+    },
+    {
+     "part": "Complete verifier bindings, rechecked against current authority",
+     "evidence": "For every counted verdict, derive() requires the recorded verifier to still be trusted, not a subject, and registered under the same key_id. It also re-runs intake::check_pins over the stored fabric-requests and fabric-receipts (revision, profile, suite, task acceptance). In the protected class it also rechecks the context observer and key and the clearing monitor and key. M103, M104 and M105 were killed; the rows run by the sibling gates cover this."
+    },
+    {
+     "part": "Complete artifact/experiment bindings and the prespecified rule",
+     "evidence": "derive() checks eval scope, experiment_id, plan_ref, freeze_seq and eval_seq > freeze_seq; check_candidate (EVO provenance, parent is the incumbent, controls, view, no added ids, no authority expansion); exactly the two plan arms; and decides by Rules::parse(frozen plan). rederive requires a record identical to the journalled one, decided ACCEPT. Executed p6: a cross-experiment admission is refused with nothing written. full_loop_accept_activate_future_task_rollback passed in my run."
+    },
+    {
+     "part": "No Fabric or MiCode promotion path outside axon-loop",
+     "evidence": "axon-fabric only reads the epoch (submit.rs EpochSource via axon_loop::epoch::current); pointer::transition is called only from Fabric tests. MiCode e7fdb739 only resolves the pointer (loop_sidecar, closed_loop_v022_real_binary)."
+    },
+    {
+     "part": "Proof run",
+     "evidence": "bind2b/summary.txt: 1e v022_stage5_gates PASS, with the three G11-r22-independent-admission rows at 3/3, 3/3 and 1/1; mutations 112/112 killed; interop 250 assertions PASS; trees clean after. I re-ran all seven named tests in a scratch copy of bd3637ab and all passed."
+    }
+   ],
+   "verdict": "REGISTER"
+  },
+  {
+   "gate": "G11-r22-rollback-revalidate: A rollback rechecks predecessor artifact, current applicability, permissions, profile qualification and revocation; a revoked or weaker predecessor causes a paused/refused state, not unsafe fallback. (Axon bd3637ab1b373a74e4d39cd67e07289b2b7af229, MiCode e7fdb7395da4fcd58625e752ffaaf77886d82235)",
+   "findings": [
+    {
+     "title": "A rollback to the incumbent-of-record does not recheck whether its baseline issuer has since taken another loop role; the same change to an admission predecessor is refused",
+     "classification": "MAJOR-ADJACENT",
+     "clause": "none. Candidate 1 (wf_d788c05a-be2) ruled that the gate's 'permissions' is met by the trust recheck, and gave this same asymmetry MAJOR-ADJACENT. Candidate 2 fixed it only at designation time.",
+     "evidence": "check_rollback's baseline branch (crates/axon-loop/src/pointer.rs:448-454) checks only `admitters.contains(&b.issuer_ref)`. check_activate route 1 (pointer.rs:515-518) does the same. Neither calls other_loop_role, which candidate 2 added only to designate_baseline (pointer.rs:190). EXECUTED in a copy of bd3637ab (probe C): activate the candidate, then add the baseline issuer op:admitter to trusted_verifiers (and, separately, to trusted_monitors). A rollback to the baseline issued by op:admitter-2 returns Ok(Some(cl22:b609b068\u2026)). Under the same config, a rollback to the admission predecessor is refused: 'rollback target's admission no longer holds (\u2026 admitter op:admitter is also a trusted verifier (Compute Fabric) \u2026)'. The designation was independent when it was made, and the target is the operator's incumbent-of-record rather than evaluated evidence, so no weaker, evidence-based predecessor is reinstated.",
+     "executed": true,
+     "fix": "In check_rollback's baseline branch and in check_activate route 1, also refuse when other_loop_role(config, b.issuer_ref) is Some, or when that issuer is an EVO proposer in the scope. That is the same rule designate_baseline applies. Add a rollback test and a mutation row for it."
+    },
+    {
+     "title": "In a DEVELOPMENT-class predecessor, rollback does not recheck the context observer's trust, though evaluation required a trusted observer",
+     "classification": "MINOR",
+     "clause": "none. D1: a development host makes no protected or promotion claims. D3: development evidence is ineligible for protected admission.",
+     "evidence": "admission::derive rechecks the observer and its key only when `eval.evaluation_class == Protected` (admission.rs:366-387). evl::evaluate counts a development verdict only when the context names a trusted observer (evl.rs:332, 629). EXECUTED (probe B, observer-untrusted): a development-scope rollback to the admitted candidate after the operator removes OBSERVER from trusted_observers returns Ok(Some(cl22:54cbb485\u2026)). In the same probe, every other development withdrawal is refused with 'no safe predecessor': pin profile, revision, acceptance and verifier trust. In the development class the observer is only named, not authenticated, so a recheck by name would add no security property. The protected path, which carries the gate's safety claim, refuses this case (probe A, observer-untrusted and observer-rekeyed).",
+     "executed": true,
+     "fix": "Optionally recheck observer membership by name in the development class as well, for symmetry. Or document in admission.rs that the development observer is unauthenticated and deliberately not rechecked."
+    },
+    {
+     "title": "The population issuer (ADR-001 \u00a73.6 `plan assign`) is not rechecked when an admission is re-derived",
+     "classification": "MINOR",
+     "clause": "none (ADR-001 \u00a75 lists admission, baseline issuer, candidate view, profile qualification and strength floor; the assignment issuer is not listed)",
+     "evidence": "derive() does not read the AssignmentRecord. EXECUTED (probe F2, protected class): the population is issued by op:admitter-2, the candidate is admitted by op:admitter, activated, and rolled back to the baseline. Then op:admitter-2 is untrusted, or made a monitor. The rollback to the candidate returns Ok in both cases. The ledger orders issue before intake and preflight, whoever the issuer is, so untrusting the issuer later does not make the population post hoc. This is an inconsistency with the baseline-issuer recheck rather than a weaker predecessor.",
+     "executed": true,
+     "fix": "Either recheck the assignment issuer's trust and loop role in derive(), or record in ADR-001 \u00a73.6 why issuance authority is not revalidated."
+    },
+    {
+     "title": "Replaying an already-applied rollback transition id returns its historical success after the target was revoked",
+     "classification": "MINOR",
+     "clause": "none",
+     "evidence": "pointer::transition returns the stored result for a repeated transition id (pointer.rs:286-304). That replay runs before the issuer, epoch and revocation checks. EXECUTED (probe D): r2 rolls back to the candidate, then p1 pauses, the candidate is revoked, and every admitter is untrusted. Resubmitting the identical r2 returns Ok(PointerRecord{active=cand, epoch=4}), and the CLI prints transition-result/1. The store is unchanged, and pointer::resolve returns Paused('scope \u2026 is paused at epoch 5'). A new rollback id to the revoked target is refused with '\u2026 is revoked; no safe predecessor: issue a pause instead'. The served state is correct, but a script that reads the reply could misreport.",
+     "executed": true,
+     "fix": "Mark idempotent replies as replays, for example `replayed: true` plus the current pointer, so a caller cannot read a historical result as the current state."
+    },
+    {
+     "title": "Three rollback guards have no mutation row, although the gate's named tests kill them",
+     "classification": "MINOR",
+     "clause": "none",
+     "evidence": "mutations.json (112/112 killed) has no row for: the revoked-target refusal (pointer.rs:374), safety_still_holds in check_rollback (pointer.rs:463), and issuer_independent in check_rollback (pointer.rs:462). M101 targets the transition-level issuer check. EXECUTED in the copy: each guard was removed from the rollback path only, and the 7 named tests were run. The revoked-target removal is killed by rollback_to_valid_predecessor_and_revoked_predecessor_refused. The safety removal is killed by a_violation_found_after_evaluation_blocks_activation_and_rollback. The issuer_independent removal is killed by no_proposer_evaluator_or_subject_issues_a_promotion. So the evidence holds; the mutation registry simply does not record these guards.",
+     "executed": true,
+     "fix": "Add these three as binding mutation rows."
+    },
+    {
+     "title": "In a protected scope the incumbent-of-record is exempt from the evidence-class and profile floor",
+     "classification": "MINOR",
+     "clause": "none (a documented design exemption; signed baselines are ADR-001 \u00a73.4)",
+     "evidence": "protected_scope_gate returns Ok for any baseline ref (pointer.rs:595-601). EXECUTED (probe G): in a protected scope, a rollback to the baseline designated before protection returns Ok(Some(cl22:b609b068\u2026)). A baseline carries no evaluated evidence to re-qualify. This is unchanged from candidate 1, where it was also rated MINOR.",
+     "executed": true,
+     "fix": "Track signed, profile-bound baselines under ADR-001 \u00a73.4."
+    },
+    {
+     "title": "Fabric's own B263 profile-qualification record is not consulted at rollback; the loop's qualification lever is the operator's verifier pin",
+     "classification": "FUTURE",
+     "clause": "none",
+     "evidence": "axon-fabric qualifies linux-microvm-protected only while its manifest sha256 matches a fresh B263 evidence record (backend.rs:10, 146, 422). The loop's rollback recheck reaches profile qualification through config.verifier_pins backend_profiles, via intake::check_pins in derive. PROTECTED_PROFILES is a compiled constant for the execution leg. Withdrawing the profile from the pin refuses the rollback (probe A, profile-withdrawn), so the operator can express withdrawal. An expired or replaced B263 record is not itself read at rollback. D1: this host makes no protected claims, and protected readiness is NOT_READY.",
+     "executed": false,
+     "fix": "Once a qualification-evidence ref exists (ADR-001 D3), bind the protected verdict and execution legs to it and recheck it in derive()."
+    },
+    {
+     "title": "A failed rollback refuses rather than pausing atomically as ADR-001 \u00a75 describes",
+     "classification": "FUTURE",
+     "clause": "none (the gate allows 'paused/refused')",
+     "evidence": "check_rollback refuses and nothing is written; the operator must issue a separate fenced pause. If the current policy is revoked, resolve() already returns Paused (probe D).",
+     "executed": true,
+     "fix": "Optionally allow a refused rollback to carry an atomic pause in the same append."
+    }
+   ],
+   "holding": [
+    {
+     "part": "Profile qualification (candidate-1 blocker 4)",
+     "evidence": "admission::derive now reruns intake::check_pins against CURRENT config, over the stored fabric-requests and fabric-receipts documents, for every counted verdict (admission.rs:340-356). check_rollback reaches it through admission::rederive. EXECUTED, protected class (probe A), each after activate \u2192 rollback-to-baseline \u2192 withdraw \u2192 rollback-to-candidate, and each refused with 'no safe predecessor: issue a pause instead' and the store unchanged: profile withdrawn ('compute profile: the verdict came from linux-microvm-protected, not a profile pinned'); revision changed; suite unpinned; pin removed; acceptance withdrawn. The development class gives the same results (probe B). The control succeeds. The named test a_rollback_rechecks_profile_qualification passes and mutation M103 kills it."
+    },
+    {
+     "part": "Permissions: the predecessor's authority is revalidated now",
+     "evidence": "EXECUTED (probe A, protected class), each refused with the store unchanged: verifier untrusted; verifier re-keyed; monitor untrusted; monitor re-keyed ('clearance is not from a monitor the operator still trusts'); observer untrusted; observer re-keyed ('protected context is not authenticated'); admitter untrusted; admitter becomes a monitor ('admitter \u2026 is also a safety monitor'). A baseline predecessor whose issuer is no longer trusted is refused (a_rollback_revalidates_its_predecessor, which passes; mutation M51)."
+    },
+    {
+     "part": "Permissions: the rollback issuer (candidate-1 blocker 1)",
+     "evidence": "pointer::transition refuses an issuer that is untrusted or holds a verifier, observer or monitor role (pointer.rs:308-323). check_rollback applies admission::issuer_independent (pointer.rs:462). EXECUTED (probe E): rollbacks issued by agent:proposer, evl:evaluator and agent:worker, each listed as a trusted admitter, are refused with 'self-promotion: \u2026 EVO proposer (the ranker) / the evaluator / a subject issuer'. A rollback by the independent op:admitter-2 succeeds. Removing issuer_independent from check_rollback in a copy is killed by no_proposer_evaluator_or_subject_issues_a_promotion (executed)."
+    },
+    {
+     "part": "Revocation: a revoked predecessor is refused",
+     "evidence": "pointer.rs:374-381 refuses a revoked target with '\u2026is revoked; no safe predecessor: issue a pause instead'. EXECUTED (probe D, fresh rollback id). resolve() pauses a revoked active policy. Removing the check for rollback in a copy is killed by rollback_to_valid_predecessor_and_revoked_predecessor_refused (executed)."
+    },
+    {
+     "part": "A weaker predecessor is refused (evidence class and safety)",
+     "evidence": "A development-admitted predecessor is refused once the scope is protected. EXECUTED (probe B, scope-protected-now): 'scope is protected: a development-class evaluation cannot make a policy active'. Covered by a_rollback_in_a_protected_scope_needs_a_protected_admission (mutation M18). A violation reported after evaluation blocks the rollback through safety_still_holds. Removing it in a copy is killed by a_violation_found_after_evaluation_blocks_activation_and_rollback (executed)."
+    },
+    {
+     "part": "Predecessor artifact and current applicability",
+     "evidence": "The target must be in the ledger-replayed history for the scope, cite the same admission or baseline, and carry the same mechanism_test label (pointer.rs:420-442). The envelope is loaded with the digest-checked get_contract, require_shortlist is rechecked, and the scope must match (pointer.rs:390-395). The admission must re-derive identically, as ACCEPT, from the frozen plan and the journalled evaluation (admission::rederive). MiCode also refuses (abstains on) a policy whose candidate_set_ref does not match its current authorized view (micode-persist active_policy.rs:304-309), so a stale view cannot widen tools."
+    },
+    {
+     "part": "Refusal is not an unsafe fallback",
+     "evidence": "Every refused probe left the store snapshot byte-identical (unchanged=true), because transition() appends only after all checks pass (pointer.rs:403-409). The served path, pointer::resolve, returns Paused whenever there is no active policy or the active policy is revoked (pointer.rs:246-261)."
+    },
+    {
+     "part": "Proof run and re-execution",
+     "evidence": "bind2b/summary.txt: 536 loop tests, 1573 axon-core, 5307 MiCode, 112/112 mutations killed, 250 interop assertions, trees clean. The 1e.log G11-r22-rollback-revalidate rows are all OK (7 tests). The same 7 named tests were re-run in a copy of bd3637ab and pass. The copy was removed, and both frozen trees are clean at bd3637ab and e7fdb739."
+    },
+    {
+     "part": "Recorded residuals (not new findings)",
+     "evidence": "ADR-002: re-running the same issued trial or attempt on a fresh Fabric journal. ADR-001 \u00a73.4: role identities are compared by name. Neither changes what a rollback rechecks: verifier, observer and monitor authority is rechecked by name AND registered key_id. The name-based role-separation checks (other_loop_role, issuer_independent) carry the \u00a73.4 limitation as recorded."
+    }
+   ],
+   "verdict": "REGISTER"
+  }
+ ]
+}

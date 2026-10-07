@@ -671,10 +671,45 @@ pub enum UnaryOp {
 /// through nested closures, and a generic callback would re-wrap its own type at
 /// every level — an infinite monomorphization that segfaults rustc rather than
 /// producing a diagnostic. Learned the hard way.)
-pub fn walk_expr(e: &Expr, f: &mut dyn FnMut(&Expr)) {
+/// Every type or trait NAME a type mentions (`Named`, a generic's base,
+/// `dyn Trait`, a type parameter), outermost first.
+pub fn walk_type_names<'a>(t: &'a AxonType, f: &mut dyn FnMut(&'a str)) {
+    match t {
+        AxonType::Named(n) | AxonType::DynTrait(n) | AxonType::TypeParam(n) => f(n),
+        AxonType::Generic { base, args } => {
+            f(base);
+            for a in args {
+                walk_type_names(a, f);
+            }
+        }
+        AxonType::Result { ok, err } => {
+            walk_type_names(ok, f);
+            walk_type_names(err, f);
+        }
+        AxonType::Option(x)
+        | AxonType::Chan(x)
+        | AxonType::Slice(x)
+        | AxonType::Ref(x)
+        | AxonType::RefMut(x)
+        | AxonType::RawPtr(x) => walk_type_names(x, f),
+        AxonType::Fn { params, ret } => {
+            for p in params {
+                walk_type_names(p, f);
+            }
+            walk_type_names(ret, f);
+        }
+        AxonType::Tuple(xs) | AxonType::Union(xs) => {
+            for x in xs {
+                walk_type_names(x, f);
+            }
+        }
+    }
+}
+
+pub fn walk_expr<'a>(e: &'a Expr, f: &mut dyn FnMut(&'a Expr)) {
     use Expr;
     f(e);
-    fn walk_stmts(ss: &[Stmt], f: &mut dyn FnMut(&Expr)) {
+    fn walk_stmts<'a>(ss: &'a [Stmt], f: &mut dyn FnMut(&'a Expr)) {
         for s in ss {
             walk_expr(&s.expr, f);
         }
@@ -723,6 +758,12 @@ pub fn walk_expr(e: &Expr, f: &mut dyn FnMut(&Expr)) {
         Expr::Match { subject, arms } => {
             walk_expr(subject, f);
             for a in arms {
+                // The GUARD is a sub-expression too. It was skipped, so every
+                // walker (the PCI sealing check among them) missed code in
+                // `x if …` (PCI candidate-3 review, executed).
+                if let Some(g) = &a.guard {
+                    walk_expr(g, f);
+                }
                 walk_expr(&a.body, f);
             }
         }

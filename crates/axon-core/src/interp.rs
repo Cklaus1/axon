@@ -105,6 +105,11 @@ pub enum Value {
         params: Vec<String>,
         body: Box<Expr>,
         captured: Rc<RefCell<HashMap<String, Value>>>,
+        /// The `fn(..) -> ..` types this REFERENCE crossed (outermost =
+        /// latest), cast on every call — gradual typing's function proxy,
+        /// per reference, so one closure used at two types is not confused
+        /// (C9 round 4, PSV-1, amendment 53; see `interp/conform.rs`).
+        contract: Option<Rc<conform::Contract>>,
     },
     /// A channel — a shared FIFO queue. Cloning shares the same channel (Rc), so
     /// a `spawn`ed body and the main flow see the same queue. The interpreter is
@@ -158,6 +163,16 @@ impl Value {
     }
 }
 
+/// One channel's entry: the channel, the element contracts it was stamped
+/// with, and whether OPERATOR code created it (amendment 72).
+type ChanEntry = (
+    std::rc::Weak<RefCell<VecDeque<Value>>>,
+    Vec<Rc<conform::Contract>>,
+    bool,
+);
+/// Channel address → its entry.
+type ChanContracts = HashMap<usize, ChanEntry>;
+
 // ── Non-local control flow ──────────────────────────────────────────────────
 
 /// A non-`Ok` outcome of evaluation. Normal values flow as `Ok(Value)`; these
@@ -208,7 +223,12 @@ pub enum Flow {
     /// path reifies the continuation by re-running the body, so the original
     /// suspended body is abandoned and its block value is `value`. Caught only by
     /// `eval_with_handler`; if it escapes, that is an interpreter bug.
-    HandlerDone(Value),
+    ///
+    /// The `usize` is the handler-stack index of the frame whose arm ran: only
+    /// the `with` block that pushed THAT frame may catch it. It used to be caught
+    /// by the nearest `with` of any kind, so a `with` in candidate code could
+    /// swallow a completion aimed at the operator's handler and keep running.
+    HandlerDone(Value, usize),
     /// Phase 6 (multi-shot): a handler arm tried to resume more than once (or
     /// resume non-tail) over a body that performs effects beyond the single
     /// intercepted operation — the replay-based continuation cannot soundly
@@ -375,6 +395,102 @@ pub const RUNTIME_PANIC_EXIT_CODE: i32 = 101;
 
 type R = Result<Value, Flow>;
 
+/// Loop control never leaves the frame it was written in. A `break`/
+/// `continue` that reaches the edge of a function call, a closure call, a
+/// refinement or `@[verify]` predicate, or an effect-handler arm has no loop of
+/// its own there: it is an error AT that edge, never a jump in whatever loop
+/// the surrounding code is running. Without this, candidate code ended an
+/// operator test's loop before its assertions ran and the verdict was signed
+/// (v0.22 G01 final reviews, FG-063/064/065).
+/// A FRAME EDGE is an allowlist, not a list of known escapes (Protected Check
+/// Isolation 7/8/10/13). A call — named fn or closure — and a predicate
+/// evaluation may end only with a value or with an ABORTIVE flow that
+/// terminates or fails the program. Every flow that TRANSFERS control to some
+/// enclosing construct (`return`, `break`, `continue`, `resume`) is meaningful
+/// only inside the frame that raised it; leaving the frame is an error here.
+///
+/// Escapes used to be closed one at a time — `break` out of a callee (FG-063/
+/// 064), out of a predicate (FG-065), then `return` out of a predicate and a
+/// smuggled `resume` closure (PCI candidate-1 review): each let a candidate end
+/// the operator's test early as a normal completion. The match has no wildcard,
+/// so a new `Flow` variant must be classified here before the crate compiles.
+pub(crate) fn contain_frame(r: R, site: &str) -> R {
+    match r {
+        Ok(v) => Ok(v),
+        Err(f) => match f {
+            // Transfers: meaningful only inside the frame that raised them.
+            Flow::Return(_) => panic(format!("`return` escaped {site}")),
+            Flow::Break | Flow::Continue => {
+                panic(format!("`break`/`continue` outside a loop in {site}"))
+            }
+            Flow::Resume(_) => panic(format!("`resume` escaped {site}")),
+            // Abortive: they end or fail the program, so they may cross.
+            // `HandlerDone` is the one cross-frame completion, and it is
+            // addressed: only the `with` that installed its handler catches it.
+            Flow::Panic(_)
+            | Flow::VerifyFailed(_)
+            | Flow::Halted(_)
+            | Flow::AiPolicyUnreachable(_)
+            | Flow::Exit(_)
+            | Flow::HandlerDone(..)
+            | Flow::MultiShotUnsound(_)
+            | Flow::RefineViolation(_)
+            | Flow::GoalBudgetExhausted(_)
+            | Flow::SandboxViolation(_) => Err(f),
+        },
+    }
+}
+
+/// Runtime provenance for Protected Check Isolation. The static check
+/// (`resolver::check_sealed`) is a SYNTAX walk and kept missing routes — a match
+/// guard, a method call, a function named in a string (`scheduler_spawn`,
+/// `@[goal(metric: …)]`), a refinement attaching by name (PCI candidate-3
+/// review). Every one of them ends in a CALL, a GLOBAL READ, or a REFINEMENT
+/// application, so the interpreter enforces sealing at exactly those three
+/// edges, whatever syntax led there:
+/// * a sealed frame may call only sealed functions (direct, method, or by
+///   name through any builtin) — plus builtins and closures handed to it;
+/// * a sealed frame may not read an unsealed global;
+/// * a sealed refinement never runs in an unsealed (operator) frame.
+///
+/// Frames carry provenance: a function by its definition's file, a closure by
+/// the frame that CREATED it (a marker in its capture cell), a handler arm by
+/// the frame that installed the `with`.
+#[derive(Default)]
+struct Seal {
+    active: bool,
+    fns: std::collections::HashSet<usize>,
+    globals: std::collections::HashSet<String>,
+    refines: std::collections::HashSet<String>,
+    /// Struct types defined in a sealed module: their whole-struct `where`
+    /// runs under THEIR provenance, whoever constructs one.
+    types: std::collections::HashSet<String>,
+    /// Method names the OPERATOR's code defines (in its impls and traits).
+    /// In operator code such a name means the operator's method: a call that
+    /// would dispatch it to a sealed method (the receiver's runtime type is
+    /// one the candidate chose) is refused (C9 round 4, PSV-1, amendment 53).
+    operator_methods: std::collections::HashSet<String>,
+}
+
+/// Test-only: the dispatch rule is switched off while a test of another seal
+/// layer runs (serialised by `SEALED_DIRS_TEST_LOCK`).
+#[cfg(test)]
+pub(crate) static DISPATCH_RULE_OFF: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Capture-cell key marking a closure created in a SEALED frame. Starts with
+/// NUL, so no source identifier can name or shadow it.
+pub(crate) const SEALED_CLOSURE_MARK: &str = "\u{0}sealed";
+
+pub(crate) fn contain_loop_control(r: R, site: &str) -> R {
+    match r {
+        Err(Flow::Break) | Err(Flow::Continue) => {
+            panic(format!("`break`/`continue` outside a loop in {site}"))
+        }
+        other => other,
+    }
+}
+
 fn panic<T>(msg: impl Into<String>) -> Result<T, Flow> {
     Err(Flow::Panic(msg.into()))
 }
@@ -425,7 +541,11 @@ impl Env {
         }
     }
     fn get(&self, name: &str) -> Option<&Value> {
-        self.vars.iter().rev().find(|(k, _)| k == name).map(|(_, v)| v)
+        self.vars
+            .iter()
+            .rev()
+            .find(|(k, _)| k == name)
+            .map(|(_, v)| v)
     }
     /// Update the nearest existing binding; returns false if none exists.
     fn assign(&mut self, name: &str, val: Value) -> bool {
@@ -439,7 +559,11 @@ impl Env {
     }
     /// Mutable reference to the nearest existing binding (for place assignment).
     fn get_mut(&mut self, name: &str) -> Option<&mut Value> {
-        self.vars.iter_mut().rev().find(|(k, _)| k == name).map(|(_, v)| v)
+        self.vars
+            .iter_mut()
+            .rev()
+            .find(|(k, _)| k == name)
+            .map(|(_, v)| v)
     }
     /// Flatten all visible bindings into one map (inner shadows outer).
     /// Used to snapshot the environment a closure captures.
@@ -505,18 +629,61 @@ struct SandboxScope {
 
 // ── Interpreter ──────────────────────────────────────────────────────────────
 
-pub struct Interp<'p> {
-    fns: HashMap<String, &'p FnDef>,
-    #[allow(dead_code)]
-    structs: HashMap<String, &'p TypeDef>,
-    #[allow(dead_code)]
-    enums: HashMap<String, &'p EnumDef>,
-    /// `(type_name, method_name) → method def` from impl blocks.
-    methods: HashMap<(String, String), &'p FnDef>,
-    /// Module-level `let NAME = …` constant definitions, in source order.
-    global_defs: Vec<(String, &'p Expr)>,
-    /// Evaluated module-level constants (populated by [`Interp::init_globals`]).
-    globals: HashMap<String, Value>,
+/// Per-provenance kernel state (PCI runtime sealing). Every table that holds
+/// objects addressed by HANDLE — fibers, supervisors, principals, stores, LLM
+/// gateways, kernel goals, sandboxes — plus the attribution and constraint
+/// state they drive. A sealed (candidate) frame gets its OWN instance, so an
+/// operator handle does not exist from a sealed frame, whatever id is guessed,
+/// and a candidate's fibers never run in the operator's scheduler (PCI
+/// candidate-4 review: forged fiber ids read the operator's reference result,
+/// reset its failed fibers, and a predicted principal token spent its budget).
+struct Kernel {
+    /// F3 (Phase 9): the name of the principal currently in scope for audit
+    /// attribution. Set via `principal_activate(handle)` to associate a kernel
+    /// principal with the execution context, so capability audit records carry the
+    /// principal name rather than the opaque "root" default. Defaults to "root".
+    current_principal: RefCell<String>,
+    /// Active `subject_to` constraint fn name during `goal_run_constrained`
+    /// (pillar-3 constrained search). When set, the optimizer scores an
+    /// INFEASIBLE candidate as maximally distant so it is rejected; the real
+    /// score is still recorded in provenance. `None` outside a constrained goal
+    /// (so plain `goal_run` is byte-identical). See `apply_goal_constraint`.
+    goal_constraint: RefCell<Option<String>>,
+    /// Phase 7 (R12 Slice 1): the live principal-authority registry. The
+    /// `principal_*` builtins mint/spend/authorize against it, so attenuation is
+    /// enforced by the KERNEL (the registry), not just as userland values. A
+    /// handle is a plain `i64` index. Empty until a program mints a root.
+    principals: RefCell<crate::kernel::PrincipalRegistry>,
+    /// Phase 7 (R12 Slice 2): the cooperative fiber scheduler. `scheduler_spawn`
+    /// queues a (named fn, arg) fiber; `scheduler_run` runs the ready fibers in a
+    /// seed-deterministic round-robin, catching a panicking fiber (recorded as
+    /// failed, not a process abort). The interpreter owns the run loop (it has
+    /// `call_fn`); the queue + ordering live in `kernel::Scheduler`.
+    scheduler: RefCell<crate::kernel::Scheduler>,
+    /// Phase 7 (R12 Slice 3): live supervisors, indexed by handle. Each oversees
+    /// an ordered set of scheduler fibers and, when one fails, restarts the set
+    /// its OTP strategy dictates — latching a halt (exit 4) on a crash loop.
+    supervisors: RefCell<Vec<crate::kernel::Supervisor>>,
+    /// Phase 7 (R12 Slice 4): durable stores, indexed by handle. Each is an
+    /// in-memory `kernel::Store` (rebuilt by replaying its NDJSON log on open)
+    /// plus the log path it appends applied ops to, so its value survives a fresh
+    /// process and a retried op_id dedups cross-process under linearizable.
+    stores: RefCell<Vec<(crate::kernel::Store, std::path::PathBuf)>>,
+    /// Phase 7 (R12 Slice 5): principal-scoped LLM gateways, indexed by handle.
+    /// Each mediates AI calls with per-token cost metering debited from its
+    /// principal's budget (Slice 1), degrading to a fallback + latch on overrun.
+    llm_gateways: RefCell<Vec<crate::kernel::LlmGateway>>,
+    /// Phase 7 (R12b): principal-scoped `KernelGoal`s, indexed by handle. Each
+    /// runs the existing optimizer (`run_goal`) scoped to a Slice-1 principal's
+    /// budget, refusing to exceed it (E1604, exit 7). See R12b-kernel-goal.md.
+    goals: RefCell<Vec<crate::kernel::KernelGoal>>,
+    /// F5 (Phase 9): registered sandboxes, indexed by handle (0-based). Created
+    /// by `sandbox_create`; the handle is the index into this vec.
+    sandboxes: RefCell<Vec<SandboxEntry>>,
+    /// F5 (Phase 9): the handle of the currently active sandbox (-1 = none).
+    /// `sandbox_run` sets this before calling the user fn and restores it after.
+    /// `call_builtin` reads it to gate effectful builtins.
+    active_sandbox: Cell<i64>,
     /// In-memory provenance store: `@[adaptive]` fn name → recorded return
     /// scores, in call order. Read by `goal_run` (mirrors `axon-rt`'s store).
     provenance: RefCell<HashMap<String, Vec<f64>>>,
@@ -533,6 +700,131 @@ pub struct Interp<'p> {
     /// problems (linear-regression weights, control parameters, etc.)
     /// without forcing the user to discretize via integer indices.
     provenance_inputs_f64: RefCell<HashMap<String, Vec<Vec<f64>>>>,
+    /// R9 corrigibility latch. `corrigible_halt()` sets this to `true`; once
+    /// set it never clears (there is intentionally no resume builtin). While
+    /// set, every call to an `@[corrigible]` fn is refused — its body never
+    /// runs — so the system cannot resist or reverse its own shutdown. A
+    /// one-way latch is the whole safety property: a kill-switch you can turn
+    /// back off is not a kill-switch.
+    corrigible_halted: Cell<bool>,
+    /// This kernel's xorshift64 RNG state (`0` = not yet seeded). EVERY draw —
+    /// `random_*`, the distribution samplers, `srand`, the `goal_*` searches
+    /// and `@[forall]` input generation — goes through [`Interp::rng_next`] /
+    /// [`Interp::rng_reseed`], i.e. through the kernel of the frame that is
+    /// running. There is no process-global stream, so a sealed candidate can
+    /// neither advance, reseed nor observe the operator's stream, whichever
+    /// builtin it uses (PSV-1). The C8 certifying review wf_ae3a5a74-41e
+    /// steered the old shared stream through `goal_run_random`, whose effect
+    /// row does not say `Random`, after two narrower fixes, one keyed on
+    /// builtin names and one on the effect row, had each missed a route.
+    rng: Cell<u64>,
+    /// Whether this is the sealed (candidate) kernel. Its stream is seeded by a
+    /// one-way derivation, so drawing from it reveals nothing about the
+    /// operator's seed — see [`sealed_rng_seed`].
+    rng_sealed: bool,
+}
+
+impl Kernel {
+    /// The next draw from THIS kernel's stream, seeding it on first use.
+    fn rng_next(&self) -> u64 {
+        let mut x = self.rng.get();
+        if x == 0 {
+            let s = rng_seed();
+            x = if self.rng_sealed {
+                sealed_rng_seed(s)
+            } else {
+                s
+            };
+        }
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        self.rng.set(x);
+        x
+    }
+
+    /// `srand(n)`: reseed THIS kernel's stream only. `n == 0` maps to a
+    /// non-zero sentinel so it does not read as "not yet seeded".
+    fn rng_set(&self, n: i64) {
+        self.rng.set((n as u64) | 1);
+    }
+}
+
+/// The sealed kernel's initial RNG state: SHA-256 over a domain tag and the
+/// operator seed. Deterministic under `AXON_SEED` (replay still reproduces a
+/// candidate's draws), but one-way, so a candidate that reads its own stream
+/// (xorshift64's output IS its state) learns nothing about the operator's.
+fn sealed_rng_seed(operator_seed: u64) -> u64 {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    h.update(b"axon-sealed-rng/1\0");
+    h.update(operator_seed.to_le_bytes());
+    let d = h.finalize();
+    let mut b = [0u8; 8];
+    b.copy_from_slice(&d[..8]);
+    u64::from_le_bytes(b) | 1
+}
+
+pub struct Interp<'p> {
+    /// The KERNEL tables, one per provenance: `kernels[0]` for the operator,
+    /// `kernels[1]` for sealed (candidate) frames — selected by `k()`.
+    kernels: [Kernel; 2],
+    /// Protected Check Isolation, RUNTIME sealing: which definitions come from
+    /// a sealed (candidate) module, and whether the frame now running is one.
+    seal: Seal,
+    /// The method-call sites whose receiver's type nothing on the operator
+    /// side determined (built only for a sealed run; amendment 83).
+    pins: pin::Pins,
+    /// Address -> undetermined, a cache over [`pin::Pins`] (closure bodies are
+    /// cloned, so a miss recomputes the structural key).
+    pin_cache: RefCell<HashMap<usize, bool>>,
+    frame_sealed: Cell<bool>,
+    /// How many frames of each provenance are active (entered through
+    /// [`Interp::with_frame`] and not yet left). `with_frame` is the ONLY
+    /// place provenance changes, so these are exact. Two decisions read them:
+    /// * a sealed handler frame answers an operation only when no OPERATOR
+    ///   frame was entered after it was installed ([`Interp::handler_may_answer`]);
+    /// * operator code never draws from the operator RNG while a sealed frame
+    ///   is below it ([`Interp::rng_next`]).
+    sealed_frames: Cell<usize>,
+    operator_frames: Cell<usize>,
+    /// The call depth of the `@[test]` frame being run (`0` = none), and
+    /// whether THAT frame's body evaluated to its end. The one fact test
+    /// completion is decided on (C9 round 3, PSV-3): not the returned value's
+    /// tag, which a `?` on a type-confused `None` made read as a completion.
+    test_frame_depth: Cell<usize>,
+    test_body_finished: Cell<bool>,
+    fns: HashMap<String, &'p FnDef>,
+    #[allow(dead_code)]
+    structs: HashMap<String, &'p TypeDef>,
+    #[allow(dead_code)]
+    enums: HashMap<String, &'p EnumDef>,
+    /// `(type_name, method_name) → method def` from impl blocks.
+    methods: HashMap<(String, String), &'p FnDef>,
+    /// The impl block each method was defined in (by `FnDef` address), for
+    /// reading its signature: `Self` and the impl's type parameters.
+    impl_of: HashMap<usize, &'p ImplBlock>,
+    /// The traits the program defines, and `(type_name, trait)` for each
+    /// `impl Trait for Type`: `dyn Trait` and trait bounds are cast by them.
+    user_traits: std::collections::HashSet<String>,
+    trait_impls: std::collections::HashSet<(String, String)>,
+    /// A named refinement's base type (`type Pos = i64 where …` → `i64`).
+    refine_bases: HashMap<String, &'p crate::ast::AxonType>,
+    /// The element types each channel OBJECT crossed (by address; the weak
+    /// handle keeps the address from being reused while the entry exists).
+    chan_contracts: RefCell<ChanContracts>,
+    /// The dicts the operator handed sealed code (by address): what each held
+    /// (amendment 72 part 2, `interp/conform.rs`).
+    dict_snaps: RefCell<HashMap<usize, conform::DictSnap>>,
+    /// Bumped by every operator-side dict mutation: a snapshot from an older
+    /// epoch is retaken at the next hand-over.
+    dict_epoch: std::cell::Cell<u64>,
+    /// [`Interp::fn_cx`]'s per-fn signature environments.
+    fn_cx_cache: RefCell<HashMap<usize, conform::Cx>>,
+    /// Module-level `let NAME = …` constant definitions, in source order.
+    global_defs: Vec<(String, &'p Expr)>,
+    /// Evaluated module-level constants (populated by [`Interp::init_globals`]).
+    globals: HashMap<String, Value>,
     /// Current call-stack depth, bounded by `max_depth` so runaway recursion
     /// fails with a catchable panic rather than overflowing the (large but
     /// finite) interpreter thread stack and aborting the process.
@@ -541,13 +833,6 @@ pub struct Interp<'p> {
     /// or `AXON_MAX_DEPTH` (clamped) when set. Resolved once at build time so
     /// every `call_fn` sees a consistent value.
     max_depth: usize,
-    /// R9 corrigibility latch. `corrigible_halt()` sets this to `true`; once
-    /// set it never clears (there is intentionally no resume builtin). While
-    /// set, every call to an `@[corrigible]` fn is refused — its body never
-    /// runs — so the system cannot resist or reverse its own shutdown. A
-    /// one-way latch is the whole safety property: a kill-switch you can turn
-    /// back off is not a kill-switch.
-    corrigible_halted: Cell<bool>,
     /// Name of the Axon function currently executing, for attributing builtin
     /// side effects (e.g. R3's `ai_call` provenance records) to their caller.
     /// Set on entry to `call_fn`, restored on exit. Empty at top level.
@@ -565,17 +850,6 @@ pub struct Interp<'p> {
     /// audit trail (`axon trace --ai` cost-attribution per goal). `None` outside
     /// any goal optimization.
     current_goal: RefCell<Option<String>>,
-    /// F3 (Phase 9): the name of the principal currently in scope for audit
-    /// attribution. Set via `principal_activate(handle)` to associate a kernel
-    /// principal with the execution context, so capability audit records carry the
-    /// principal name rather than the opaque "root" default. Defaults to "root".
-    current_principal: RefCell<String>,
-    /// Active `subject_to` constraint fn name during `goal_run_constrained`
-    /// (pillar-3 constrained search). When set, the optimizer scores an
-    /// INFEASIBLE candidate as maximally distant so it is rejected; the real
-    /// score is still recorded in provenance. `None` outside a constrained goal
-    /// (so plain `goal_run` is byte-identical). See `apply_goal_constraint`.
-    goal_constraint: RefCell<Option<String>>,
     /// Per-call AI tier from a `tier:` named arg (R3b), set by `eval_call` for
     /// the duration of a single builtin dispatch. `ai_complete`'s tier
     /// resolution reads this first (step 1: per-call > policy > default).
@@ -643,41 +917,6 @@ pub struct Interp<'p> {
     /// operation. `resume(v)` replays `body` (the handled `with`-block body) with
     /// `v` fed at the intercepted op and returns the continuation's value.
     resume_ctx: RefCell<Vec<ResumeCtx>>,
-    /// Phase 7 (R12 Slice 1): the live principal-authority registry. The
-    /// `principal_*` builtins mint/spend/authorize against it, so attenuation is
-    /// enforced by the KERNEL (the registry), not just as userland values. A
-    /// handle is a plain `i64` index. Empty until a program mints a root.
-    principals: RefCell<crate::kernel::PrincipalRegistry>,
-    /// Phase 7 (R12 Slice 2): the cooperative fiber scheduler. `scheduler_spawn`
-    /// queues a (named fn, arg) fiber; `scheduler_run` runs the ready fibers in a
-    /// seed-deterministic round-robin, catching a panicking fiber (recorded as
-    /// failed, not a process abort). The interpreter owns the run loop (it has
-    /// `call_fn`); the queue + ordering live in `kernel::Scheduler`.
-    scheduler: RefCell<crate::kernel::Scheduler>,
-    /// Phase 7 (R12 Slice 3): live supervisors, indexed by handle. Each oversees
-    /// an ordered set of scheduler fibers and, when one fails, restarts the set
-    /// its OTP strategy dictates — latching a halt (exit 4) on a crash loop.
-    supervisors: RefCell<Vec<crate::kernel::Supervisor>>,
-    /// Phase 7 (R12 Slice 4): durable stores, indexed by handle. Each is an
-    /// in-memory `kernel::Store` (rebuilt by replaying its NDJSON log on open)
-    /// plus the log path it appends applied ops to, so its value survives a fresh
-    /// process and a retried op_id dedups cross-process under linearizable.
-    stores: RefCell<Vec<(crate::kernel::Store, std::path::PathBuf)>>,
-    /// Phase 7 (R12 Slice 5): principal-scoped LLM gateways, indexed by handle.
-    /// Each mediates AI calls with per-token cost metering debited from its
-    /// principal's budget (Slice 1), degrading to a fallback + latch on overrun.
-    llm_gateways: RefCell<Vec<crate::kernel::LlmGateway>>,
-    /// Phase 7 (R12b): principal-scoped `KernelGoal`s, indexed by handle. Each
-    /// runs the existing optimizer (`run_goal`) scoped to a Slice-1 principal's
-    /// budget, refusing to exceed it (E1604, exit 7). See R12b-kernel-goal.md.
-    goals: RefCell<Vec<crate::kernel::KernelGoal>>,
-    /// F5 (Phase 9): registered sandboxes, indexed by handle (0-based). Created
-    /// by `sandbox_create`; the handle is the index into this vec.
-    sandboxes: RefCell<Vec<SandboxEntry>>,
-    /// F5 (Phase 9): the handle of the currently active sandbox (-1 = none).
-    /// `sandbox_run` sets this before calling the user fn and restores it after.
-    /// `call_builtin` reads it to gate effectful builtins.
-    active_sandbox: Cell<i64>,
     /// Phase 5: named refinement → its predicate Expr (binder `_`). Collected
     /// from `RefineDef` items (inline `where` on a param desugars to a synthetic
     /// named refinement during parsing). Drives the runtime precondition check in
@@ -734,6 +973,14 @@ struct HandlerFrame {
     /// intercepted op). Unused by the bare-tail-resume fast path.
     body: crate::ast::Expr,
     env_snapshot: HashMap<String, Value>,
+    /// Provenance of the frame that installed this handler: its arms run
+    /// under it (PCI runtime sealing).
+    sealed: bool,
+    /// `Interp::operator_frames` when this handler was installed. A SEALED
+    /// frame may answer an operation only while the count is unchanged, i.e.
+    /// no operator code lies between the `with` and the operation (PSV-1,
+    /// C9 round 3). See [`Interp::handler_may_answer`].
+    operator_frames: usize,
 }
 
 /// A runtime handler arm: the payload binding, the arm body, and a snapshot of
@@ -767,6 +1014,13 @@ struct ResumeReplay {
     /// Whether the feed has been consumed yet (the first hit consumes it; a
     /// second effect hit in the same replay is the unsound case → E1314).
     consumed: bool,
+    /// Provenance of the handler whose arm armed this replay, and
+    /// `Interp::operator_frames` when it did. The feed answers an operation
+    /// only under the same rule as a live handler frame
+    /// ([`Interp::handler_may_answer`]): a sealed arm's `resume(v)` never
+    /// becomes the result of an operation the operator's code performs.
+    sealed: bool,
+    operator_frames: usize,
 }
 
 /// Phase 6 (multi-shot resume): the suspended computation a handler arm is
@@ -783,6 +1037,8 @@ struct ResumeCtx {
     body: crate::ast::Expr,
     /// The environment snapshot the body originally evaluated in.
     env_snapshot: HashMap<String, Value>,
+    /// Provenance of the handler frame whose arm is servicing this body.
+    sealed: bool,
 }
 
 /// Default max interpreter call depth before a graceful "recursion limit"
@@ -816,8 +1072,12 @@ const MAX_DEPTH_CEILING: usize = 1_000_000;
 
 /// Native stack budget per interpreter call frame, used to size the thread
 /// stack so the [`resolve_max_depth`] guard always trips before a real
-/// overflow. Generous (2×) over the observed ~128 KB debug frame.
-const STACK_BYTES_PER_FRAME: usize = 256 * 1024;
+/// overflow. Generous (2×) over the observed debug frame: ~265 KB per
+/// interpreted call in the v0.22 build (measured 2026-10-06 as the deepest
+/// `c(n) = 1 + c(n-1)` that fits a 1 GiB stack, ~4070), which grew from the
+/// ~128 KB this budget was first sized against when the PCI seal edges
+/// (`call_fn_sealed`) and the shared-string/lent-capture work (AX-31) landed.
+const STACK_BYTES_PER_FRAME: usize = 512 * 1024;
 
 /// Minimum interpreter thread stack — the historical 1 GiB floor, so shallow
 /// runs keep their previous generous headroom regardless of the depth setting.
@@ -1542,6 +1802,7 @@ impl SendValue {
                 params,
                 body,
                 captured,
+                ..
             } => {
                 let snapshot = captured.borrow();
                 let mut keys: Vec<&String> = snapshot.keys().collect();
@@ -1607,9 +1868,9 @@ impl SendValue {
             SendValue::Bool(b) => Value::Bool(b),
             SendValue::Str(s) => Value::Str(Rc::new(s)),
             SendValue::Unit => Value::Unit,
-            SendValue::Array(xs) => Value::Array(Rc::new(
-                xs.into_iter().map(Self::into_value).collect(),
-            )),
+            SendValue::Array(xs) => {
+                Value::Array(Rc::new(xs.into_iter().map(Self::into_value).collect()))
+            }
             SendValue::Struct { name, fields } => Value::Struct {
                 name,
                 fields: fields
@@ -1650,6 +1911,8 @@ impl SendValue {
                         .map(|(k, v)| (k, v.into_value()))
                         .collect(),
                 )),
+                // The host built this value: it crossed no declared type here.
+                contract: None,
             },
             SendValue::Tuple(xs) => Value::Tuple(xs.into_iter().map(Self::into_value).collect()),
             SendValue::Dict(entries) => {
@@ -2538,7 +2801,7 @@ fn run_program_inner(
             eprintln!("axon: panic: `resume` called outside an effect-handler arm");
             101
         }
-        Err(Flow::HandlerDone(_)) => {
+        Err(Flow::HandlerDone(..)) => {
             // A multi-shot handler's `HandlerDone` escaped its `with` block — an
             // interpreter bug (it is always caught by `eval_with_handler`). Treat
             // as a panic rather than a silent exit.
@@ -2589,10 +2852,30 @@ fn run_program_inner(
 /// Returns `Ok(())` if it completed without panicking, or `Err(message)` on a
 /// runtime panic / non-zero `exit`. Used by `axon test` to run tests in-process.
 pub fn run_test_fn(program: &Program, name: &str) -> Result<(), String> {
+    run_test_fn_outcome(program, name).map(|_| ())
+}
+
+/// How a test that did not fail ENDED — the affirmative evidence Protected
+/// Check Isolation rests on. `Completed` means the test body itself returned
+/// normally, with a value that is not an `Err`. That is NOT evidence that every
+/// assertion ran: an assertion inside a closure handed to code that never calls
+/// it does not execute, and the test still completes (PSV-3; a suite must
+/// assert after the call). A
+/// test ended by `exit(0)` from below it, or one that returned `Err`, is
+/// `EndedEarly`: `axon test` still reports it as passing (unchanged
+/// semantics), but no completion evidence is issued for it, so a check that
+/// requires completion does not count it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TestEnd {
+    Completed,
+    EndedEarly(String),
+}
+
+pub fn run_test_fn_outcome(program: &Program, name: &str) -> Result<TestEnd, String> {
     on_deep_stack(|| run_test_fn_inner(program, name))
 }
 
-fn run_test_fn_inner(program: &Program, name: &str) -> Result<(), String> {
+fn run_test_fn_inner(program: &Program, name: &str) -> Result<TestEnd, String> {
     let mut interp = Interp::build(program);
     if let Err(f) = interp.init_globals() {
         return Err(flow_to_msg(f));
@@ -2600,8 +2883,22 @@ fn run_test_fn_inner(program: &Program, name: &str) -> Result<(), String> {
     let Some(f) = interp.fns.get(name).copied() else {
         return Err(format!("no function `{name}`"));
     };
+    interp.test_frame_depth.set(interp.call_depth.get() + 1);
+    interp.test_body_finished.set(false);
     match interp.call_fn(f, vec![]) {
-        Ok(_) => Ok(()),
+        // COMPLETED is decided on one fact: the test's own body evaluated to
+        // its end (`call_fn_frame` records it). `call_fn` turns a `return` or
+        // a `?` into an ordinary `Ok` at the test's frame, so the returned
+        // VALUE cannot say whether the assertions after it ran: a `?` on a
+        // type-confused `None` returned `None`, which read as a completion and
+        // was minted a token (C9 round 3, PSV-3).
+        Ok(_) if !interp.test_body_finished.get() => Ok(TestEnd::EndedEarly(
+            "the test body ended early (a `return` or `?`): it did not complete".to_string(),
+        )),
+        Ok(Value::Err(_)) => Ok(TestEnd::EndedEarly(
+            "the test returned `Err`: it did not complete".to_string(),
+        )),
+        Ok(_) => Ok(TestEnd::Completed),
         Err(Flow::Panic(m)) => Err(m),
         // A verify failure inside a test is still a failure (drives
         // `@[test(should_fail)]`); surface its message like a panic.
@@ -2625,10 +2922,26 @@ fn run_test_fn_inner(program: &Program, name: &str) -> Result<(), String> {
         // E1314 multi-shot-unsound inside a test is a failure (lets
         // `@[test(should_fail)]` assert the unsound-replay case is refused).
         Err(Flow::MultiShotUnsound(m)) => Err(m),
-        Err(Flow::Exit(0)) => Ok(()),
+        Err(Flow::Exit(0)) => Ok(TestEnd::EndedEarly(
+            "`exit(0)` ended the test before it completed".to_string(),
+        )),
         Err(Flow::Exit(n)) => Err(format!("exited with code {n}")),
-        // A stray return/break/continue escaping the fn — treat as clean.
-        Err(_) => Ok(()),
+        // Unreachable: `call_fn` ends a `return` at the callee. Kept only so
+        // the match stays total; it grants nothing.
+        Err(Flow::Return(_)) => Err("`return` escaped the test's own frame".to_string()),
+        // A `break` / `continue` (or an effect-handler completion) that
+        // escapes a function unwinds the test BEFORE its assertions ran: the
+        // test did not complete, so it did not pass. It used to count as
+        // clean, which let a candidate's function end the operator's
+        // acceptance test early and have Fabric sign a pass (v0.22 G01 final
+        // re-audit, executed).
+        Err(Flow::Break) | Err(Flow::Continue) => Err(
+            "a `break`/`continue` escaped a function and unwound the test before it completed"
+                .to_string(),
+        ),
+        Err(Flow::HandlerDone(..)) => {
+            Err("an effect handler completed outside its handled computation".to_string())
+        }
     }
 }
 
@@ -2663,10 +2976,64 @@ fn verify_fn_label(fn_name: &str) -> String {
 impl<'p> Interp<'p> {
     pub fn build(program: &'p Program) -> Self {
         pin_ai_net_allowlist(program);
+        let seal = {
+            let dirs = crate::resolver::sealed_module_dirs();
+            let mut seal = Seal {
+                active: !dirs.is_empty(),
+                ..Seal::default()
+            };
+            if seal.active {
+                let sealed = |sp: crate::span::Span| crate::resolver::span_in_sealed(sp, &dirs);
+                for item in &program.items {
+                    match item {
+                        Item::FnDef(f) if sealed(f.span) => {
+                            seal.fns.insert(f as *const FnDef as usize);
+                        }
+                        Item::ImplBlock(b) => {
+                            for m in &b.methods {
+                                if sealed(m.span) || sealed(b.span) {
+                                    seal.fns.insert(m as *const FnDef as usize);
+                                }
+                            }
+                        }
+                        Item::LetDef { name, span, .. } if sealed(*span) => {
+                            seal.globals.insert(name.clone());
+                        }
+                        Item::RefineDef(r) if sealed(r.span) => {
+                            seal.refines.insert(r.name.clone());
+                        }
+                        Item::TypeDef(t) if sealed(t.span) => {
+                            seal.types.insert(t.name.clone());
+                        }
+                        _ => {}
+                    }
+                    match item {
+                        Item::ImplBlock(b) if !sealed(b.span) => {
+                            for m in &b.methods {
+                                if !sealed(m.span) {
+                                    seal.operator_methods.insert(m.name.clone());
+                                }
+                            }
+                        }
+                        Item::TraitDef(t) if !sealed(t.span) => {
+                            for m in &t.methods {
+                                seal.operator_methods.insert(m.name.clone());
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            seal
+        };
         let mut fns = HashMap::new();
         let mut structs = HashMap::new();
         let mut enums = HashMap::new();
         let mut methods = HashMap::new();
+        let mut impl_of = HashMap::new();
+        let mut user_traits = std::collections::HashSet::new();
+        let mut trait_impls = std::collections::HashSet::new();
+        let mut refine_bases = HashMap::new();
         let mut global_defs = Vec::new();
         let mut refine_preds = HashMap::new();
 
@@ -2679,6 +3046,10 @@ impl<'p> Interp<'p> {
                     // Phase 5: index the predicate so `call_fn` can evaluate it as
                     // a runtime precondition when a param's type is this refinement.
                     refine_preds.insert(r.name.clone(), r.predicate.as_ref());
+                    refine_bases.insert(r.name.clone(), &r.base);
+                }
+                Item::TraitDef(t) => {
+                    user_traits.insert(t.name.clone());
                 }
                 Item::TypeDef(t) => {
                     structs.insert(t.name.clone(), t);
@@ -2686,14 +3057,14 @@ impl<'p> Interp<'p> {
                 Item::EnumDef(e) => {
                     enums.insert(e.name.clone(), e);
                 }
-                Item::ImplBlock(ImplBlock {
-                    for_type,
-                    methods: ms,
-                    ..
-                }) => {
-                    let tn = type_name_of(for_type);
-                    for m in ms {
+                Item::ImplBlock(b) => {
+                    let tn = type_name_of(&b.for_type);
+                    if !b.trait_name.is_empty() {
+                        trait_impls.insert((tn.clone(), b.trait_name.clone()));
+                    }
+                    for m in &b.methods {
                         methods.insert((tn.clone(), m.name.clone()), m);
+                        impl_of.insert(m as *const FnDef as usize, b);
                     }
                 }
                 Item::LetDef { name, value, .. } => {
@@ -2705,29 +3076,71 @@ impl<'p> Interp<'p> {
 
         // Read the ambient effect ceiling once; both the sandbox registry
         // and the active-handle field below are derived from it.
-        let ambient = ambient_sandbox();
+        // Both kernels start identical — the SAME ambient effect ceiling, so a
+        // sealed frame may narrow it but never widen it.
+        let mk_kernel = |sealed: bool| {
+            let ambient = ambient_sandbox();
+            Kernel {
+                rng: Cell::new(0),
+                rng_sealed: sealed,
+                provenance: RefCell::new(HashMap::new()),
+                provenance_inputs: RefCell::new(HashMap::new()),
+                provenance_inputs_f64: RefCell::new(HashMap::new()),
+                corrigible_halted: Cell::new(false),
+                current_principal: RefCell::new(
+                    std::env::var("AXON_PRINCIPAL")
+                        .ok()
+                        .filter(|s| !s.is_empty())
+                        .unwrap_or_else(|| "root".to_string()),
+                ),
+                goal_constraint: RefCell::new(None),
+                principals: RefCell::new(crate::kernel::PrincipalRegistry::new()),
+                // Scheduler order is a function of spawn order + AXON_SEED (R12 §5
+                // determinism): derive the round-robin start offset from the seed.
+                scheduler: RefCell::new(crate::kernel::Scheduler::new(rng_seed() as usize)),
+                supervisors: RefCell::new(Vec::new()),
+                stores: RefCell::new(Vec::new()),
+                llm_gateways: RefCell::new(Vec::new()),
+                goals: RefCell::new(Vec::new()),
+                active_sandbox: Cell::new(if ambient.is_empty() { -1 } else { 0 }),
+                sandboxes: RefCell::new(ambient),
+            }
+        };
+        let pins = if seal.active {
+            pin::Pins::build(program, &|f| {
+                seal.fns.contains(&(f as *const FnDef as usize))
+            })
+        } else {
+            pin::Pins::default()
+        };
         Interp {
+            kernels: [mk_kernel(false), mk_kernel(true)],
+            seal,
+            pins,
+            pin_cache: RefCell::new(HashMap::new()),
+            frame_sealed: Cell::new(false),
+            sealed_frames: Cell::new(0),
+            operator_frames: Cell::new(0),
+            test_frame_depth: Cell::new(0),
+            test_body_finished: Cell::new(false),
             fns,
             structs,
             enums,
             methods,
+            impl_of,
+            user_traits,
+            trait_impls,
+            refine_bases,
+            chan_contracts: RefCell::new(HashMap::new()),
+            dict_snaps: RefCell::new(HashMap::new()),
+            dict_epoch: std::cell::Cell::new(0),
+            fn_cx_cache: RefCell::new(HashMap::new()),
             global_defs,
             globals: HashMap::new(),
-            provenance: RefCell::new(HashMap::new()),
-            provenance_inputs: RefCell::new(HashMap::new()),
-            provenance_inputs_f64: RefCell::new(HashMap::new()),
             call_depth: Cell::new(0),
             max_depth: resolve_max_depth(),
-            corrigible_halted: Cell::new(false),
             enclosing_agent: RefCell::new(None),
             current_goal: RefCell::new(None),
-            current_principal: RefCell::new(
-                std::env::var("AXON_PRINCIPAL")
-                    .ok()
-                    .filter(|s| !s.is_empty())
-                    .unwrap_or_else(|| "root".to_string()),
-            ),
-            goal_constraint: RefCell::new(None),
             current_fn: RefCell::new(String::new()),
             current_call_tier: RefCell::new(None),
             resolved_callees: RefCell::new(HashMap::new()),
@@ -2739,16 +3152,6 @@ impl<'p> Interp<'p> {
             handlers: RefCell::new(Vec::new()),
             resume_replay: RefCell::new(None),
             resume_ctx: RefCell::new(Vec::new()),
-            principals: RefCell::new(crate::kernel::PrincipalRegistry::new()),
-            // Scheduler order is a function of spawn order + AXON_SEED (R12 §5
-            // determinism): derive the round-robin start offset from the seed.
-            scheduler: RefCell::new(crate::kernel::Scheduler::new(rng_seed() as usize)),
-            supervisors: RefCell::new(Vec::new()),
-            stores: RefCell::new(Vec::new()),
-            llm_gateways: RefCell::new(Vec::new()),
-            goals: RefCell::new(Vec::new()),
-            active_sandbox: Cell::new(if ambient.is_empty() { -1 } else { 0 }),
-            sandboxes: RefCell::new(ambient),
             refine_preds,
             main_locals: RefCell::new(HashMap::new()),
             discharged: crate::verify::Discharged::default(),
@@ -2777,12 +3180,17 @@ impl<'p> Interp<'p> {
             return Ok(());
         }
         let defs = std::mem::take(&mut self.global_defs);
-        let mut env = Env::new();
         for (name, expr) in &defs {
-            let v = self.eval(expr, &mut env)?;
-            env.define(name.clone(), v);
+            // Each initializer runs under its own definition's provenance, in a
+            // FRESH environment: earlier globals are reached through
+            // `self.globals`, so the global-read edge (`seal_global`) sees every
+            // read. A shared env let a later initializer read an earlier global
+            // as a LOCAL, past the edge (PCI candidate-4 review).
+            let sealed = self.seal.active && self.seal.globals.contains(name);
+            let mut env = Env::new();
+            let v = self.with_frame(sealed, || self.eval(expr, &mut env))?;
+            self.globals.insert(name.clone(), v);
         }
-        self.globals = env.snapshot();
         Ok(())
     }
 
@@ -2869,7 +3277,7 @@ impl<'p> Interp<'p> {
     /// F3 (Phase 9): the name of the principal currently in scope for audit
     /// attribution. Defaults to "root"; overridden by `principal_activate`.
     fn current_principal_name(&self) -> String {
-        self.current_principal.borrow().clone()
+        self.k().current_principal.borrow().clone()
     }
 
     /// Whether the currently-executing fn carries an `@[ai(policy)]` attribute.
@@ -2926,11 +3334,11 @@ impl<'p> Interp<'p> {
     /// and another for the telemetry writer. `IO` is the row the effect
     /// catalog gives filesystem and console builtins.
     fn provenance_write_permitted(&self) -> bool {
-        let handle = self.active_sandbox.get();
+        let handle = self.k().active_sandbox.get();
         if handle < 0 {
             return true; // no ceiling in force
         }
-        let sbs = self.sandboxes.borrow();
+        let sbs = self.k().sandboxes.borrow();
         match sbs.get(handle as usize) {
             Some(sb) => {
                 crate::interp::builtins::first_effect_outside_ceiling(sb, &["IO"]).is_none()
@@ -2955,14 +3363,17 @@ impl<'p> Interp<'p> {
         // A `&mut` param must be moved back to the caller (`call_fn_mut`); a
         // path that cannot do that (a fn reached by name string, a method)
         // would silently drop the callee's writes — refuse instead.
-        if f.params.iter().any(|p| matches!(p.ty, crate::ast::AxonType::RefMut(_))) {
+        if f.params
+            .iter()
+            .any(|p| matches!(p.ty, crate::ast::AxonType::RefMut(_)))
+        {
             return panic(format!(
                 "`{}` takes `&mut` parameters and can only be called directly as `{}(&mut a, ...)`",
                 f.name, f.name
             ));
         }
         let mut env = Env::new();
-        self.call_fn_in(f, args, &mut env)
+        self.call_fn_sealed(f, args, &mut env)
     }
 
     /// AX-08: call `f` with its `&mut` arguments already MOVED out of the
@@ -2972,7 +3383,7 @@ impl<'p> Interp<'p> {
     /// error unwinds, so the caller's binding is never left hollow.
     pub(super) fn call_fn_mut(&self, f: &FnDef, args: Vec<Value>) -> (R, Vec<Value>) {
         let mut env = Env::new();
-        let result = self.call_fn_in(f, args, &mut env);
+        let result = self.call_fn_sealed(f, args, &mut env);
         // The body's block scopes are popped by now (on `return`/`?` too), so
         // each name resolves to the parameter binding itself.
         let outs = f
@@ -2988,7 +3399,292 @@ impl<'p> Interp<'p> {
         (result, outs)
     }
 
-    fn call_fn_in(&self, f: &FnDef, args: Vec<Value>, env: &mut Env) -> R {
+    fn call_fn_sealed(&self, f: &FnDef, args: Vec<Value>, env: &mut Env) -> R {
+        // PCI runtime sealing: the CALL edge (see `Seal`).
+        self.seal_call(f)?;
+        // The WHOLE call — parameter refinements, body, return refinement,
+        // `@[verify]` — is one frame for loop control, and runs under the
+        // callee's provenance.
+        let callee = self.fn_is_sealed(f);
+        // A candidate fn returning to operator code: the seal crossing where
+        // a value at an undetermined type parameter is refused (amendment 53).
+        let crossing = self.seal.active && callee && !self.frame_sealed.get();
+        // The operator hands the candidate its arguments: every dict in them
+        // is snapshotted; at the return every dict sealed code mutated is
+        // checked against it (amendment 72 part 2).
+        if crossing {
+            for a in &args {
+                self.dict_edge_in(a)?;
+            }
+        }
+        let r = self.with_frame(callee, || {
+            contain_frame(
+                self.call_fn_frame(f, args, crossing, env),
+                &format!("`{}`", f.name),
+            )
+        });
+        if crossing && r.is_ok() {
+            self.dict_edge_out()?;
+        }
+        r
+    }
+
+    /// The type environment of `f`'s signature for ONE activation: the
+    /// signature part is cached per fn; the type-parameter bindings are fresh.
+    fn fn_cx(&self, f: &FnDef) -> conform::Cx {
+        let key = f as *const FnDef as usize;
+        let cached = self.fn_cx_cache.borrow().get(&key).cloned();
+        let cx = match cached {
+            Some(cx) => cx,
+            None => {
+                let cx = conform::Cx::of_fn(f, self.impl_of.get(&key).copied());
+                self.fn_cx_cache.borrow_mut().insert(key, cx.clone());
+                cx
+            }
+        };
+        cx.fresh()
+    }
+
+    /// Whether `f` was defined in a sealed (candidate) module.
+    fn fn_is_sealed(&self, f: &FnDef) -> bool {
+        self.seal.active && self.seal.fns.contains(&(f as *const FnDef as usize))
+    }
+
+    /// The call edge: a sealed frame may run only sealed functions.
+    fn seal_call(&self, f: &FnDef) -> Result<(), Flow> {
+        if self.seal.active && self.frame_sealed.get() && !self.fn_is_sealed(f) {
+            return panic(format!(
+                "sealed code (the candidate under test) cannot run `{}`, which the operator defines",
+                f.name
+            ));
+        }
+        Ok(())
+    }
+
+    /// The method-dispatch edge: in operator code, a method name the operator
+    /// defines is the operator's. A method call selects its method by the
+    /// receiver's RUNTIME type, which the candidate chooses (its declared
+    /// return type, or a type confusion), so without this edge the candidate
+    /// chose which code ran under the operator's judging method's name — the
+    /// C9 round-4 review's keyed pass. A candidate's OWN method names (its
+    /// API, which the suite may call) are not affected.
+    pub(crate) fn seal_method(&self, f: &FnDef, tn: &str) -> Result<(), Flow> {
+        if self.seal.active
+            && !self.frame_sealed.get()
+            && self.fn_is_sealed(f)
+            && self.seal.operator_methods.contains(&f.name)
+        {
+            return panic(format!(
+                "operator code called `.{}()`, a method the operator defines, on a value of type \
+                 `{tn}` whose `{}` is the candidate's — the candidate would choose the code that \
+                 runs under the operator's method",
+                f.name, f.name
+            ));
+        }
+        Ok(())
+    }
+
+    /// The DISPATCH rule (C9 round 6, amendment 83): in a sealed run, operator
+    /// code does not select an operator impl's method by the runtime type of a
+    /// receiver nothing on the operator side determined (`interp/pin.rs`). The
+    /// impl is chosen by that type, which for a value read from a dict, a
+    /// channel, an unannotated lambda parameter or an unbound generic position
+    /// is the candidate's choice. Applies only where there is an impl to choose
+    /// between (two or more operator impl types define the method).
+    pub(crate) fn seal_dispatch(
+        &self,
+        site: &Expr,
+        receiver: &Expr,
+        f: &FnDef,
+        tn: &str,
+    ) -> Result<(), Flow> {
+        if !self.seal.active || self.frame_sealed.get() || self.fn_is_sealed(f) {
+            return Ok(());
+        }
+        // Tests of the OTHER seal layers observe their attacks through a dispatch
+        // on an untyped read — exactly what this rule refuses first. They run
+        // with the rule off (as a paired-disable cell does) so each layer is
+        // judged by its own attack; the rule's own tests run with it on.
+        #[cfg(test)]
+        if DISPATCH_RULE_OFF.load(std::sync::atomic::Ordering::SeqCst) {
+            return Ok(());
+        }
+        if !self.pins.selects_between_impls(&f.name) {
+            return Ok(());
+        }
+        let addr = site as *const Expr as usize;
+        let cached = self.pin_cache.borrow().get(&addr).copied();
+        let undetermined = match cached {
+            Some(u) => u,
+            None => {
+                let u = self.pins.undetermined(receiver, &f.name);
+                let mut c = self.pin_cache.borrow_mut();
+                if c.len() < 65_536 {
+                    c.insert(addr, u);
+                }
+                u
+            }
+        };
+        if undetermined {
+            return panic(format!(
+                "operator code dispatched `{}` on a value whose type nothing on the operator side \
+                 determined (here `{tn}`) — the candidate would choose the impl; pin it with \
+                 `let x: T = ...`",
+                f.name
+            ));
+        }
+        Ok(())
+    }
+
+    /// The dispatch rule's arithmetic arm (amendment 83): operator code does
+    /// not do arithmetic on a fixed-width integer whose WIDTH nothing on the
+    /// operator side determined — a `u8` the candidate chose wraps where the
+    /// operator's `i64` does not (`(v << 1) == 254` with `v = 255 as u8`).
+    pub(crate) fn seal_width(
+        &self,
+        op: &BinOp,
+        left: &Expr,
+        right: &Expr,
+        l: &Value,
+        r: &Value,
+    ) -> Result<(), Flow> {
+        if !self.seal.active || self.frame_sealed.get() {
+            return Ok(());
+        }
+        let sized = |v: &Value| matches!(v, Value::SizedInt { .. });
+        if !(sized(l) || sized(r)) {
+            return Ok(());
+        }
+        if matches!(
+            op,
+            BinOp::Eq | BinOp::NotEq | BinOp::Lt | BinOp::Gt | BinOp::LtEq | BinOp::GtEq
+        ) {
+            return Ok(());
+        }
+        #[cfg(test)]
+        if DISPATCH_RULE_OFF.load(std::sync::atomic::Ordering::SeqCst) {
+            return Ok(());
+        }
+        if self.pins.undetermined_arith(op, left, right) {
+            return panic(format!(
+                "operator code did arithmetic on a fixed-width integer whose width nothing on the \
+                 operator side determined ({} {:?} {}) — the candidate would choose the \
+                 wrapping; pin it with `let x: T = ...`",
+                l.type_name(),
+                op,
+                r.type_name()
+            ));
+        }
+        Ok(())
+    }
+
+    /// The global-read edge: a sealed frame may not read an operator global.
+    pub(crate) fn seal_global(&self, name: &str) -> Result<(), Flow> {
+        if self.seal.active && self.frame_sealed.get() && !self.seal.globals.contains(name) {
+            return panic(format!(
+                "sealed code (the candidate under test) cannot read `{name}`, which the operator defines"
+            ));
+        }
+        Ok(())
+    }
+
+    /// The refinement edge: a candidate's refinement never runs in operator
+    /// code (a refinement attaches BY NAME, so a candidate `type DictTable =
+    /// … where P` ran P inside the operator's helper — PCI candidate-3 review).
+    pub(crate) fn seal_refine(&self, rname: &str) -> Result<(), Flow> {
+        if self.seal.active && !self.frame_sealed.get() && self.seal.refines.contains(rname) {
+            return panic(format!(
+                "the refinement `{rname}` is the candidate's and cannot run in the operator's code"
+            ));
+        }
+        Ok(())
+    }
+
+    /// Look up a function by NAME for a builtin that will run it (scheduler,
+    /// goal, sandbox …). The call edge applies at RESOLUTION time, so a name a
+    /// sealed frame queues cannot run later on the operator's behalf.
+    pub(crate) fn fn_by_name(&self, name: &str) -> Result<Option<&'p FnDef>, Flow> {
+        match self.fns.get(name).copied() {
+            Some(f) => {
+                self.seal_call(f)?;
+                Ok(Some(f))
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// Whether struct type `name` was defined in a sealed module.
+    pub(crate) fn seal_type(&self, name: &str) -> bool {
+        self.seal.active && self.seal.types.contains(name)
+    }
+
+    /// The kernel of the frame now running: the operator's, or the sealed
+    /// candidate's own. Handle-addressed state is only ever reached through it.
+    fn k(&self) -> &Kernel {
+        &self.kernels[usize::from(self.frame_sealed.get())]
+    }
+
+    /// The ONLY way to draw a random number: from the running frame's kernel.
+    /// A sealed frame draws from the candidate's own stream and so can never
+    /// advance or observe the operator's (PSV-1).
+    ///
+    /// OPERATOR code running ABOVE a sealed frame (a closure the suite handed
+    /// the candidate, an operator handler arm answering a candidate operation)
+    /// is REFUSED: the candidate decides how many times such code runs, so
+    /// every draw it made would advance the operator's stream by a count the
+    /// candidate chose, and steer the operator's next challenge (C9 round 3,
+    /// PSV-1, amendment 46).
+    pub(crate) fn rng_next(&self) -> Result<u64, Flow> {
+        self.rng_guard()?;
+        Ok(self.k().rng_next())
+    }
+
+    /// The ONLY way to reseed (`srand`): the running frame's kernel only,
+    /// under the same refusal as [`Interp::rng_next`].
+    pub(crate) fn rng_reseed(&self, n: i64) -> Result<(), Flow> {
+        self.rng_guard()?;
+        self.k().rng_set(n);
+        Ok(())
+    }
+
+    fn rng_guard(&self) -> Result<(), Flow> {
+        if !self.frame_sealed.get() && self.sealed_frames.get() > 0 {
+            return panic(
+                "the operator's random stream cannot be used by operator code that sealed code \
+                 (the candidate under test) is running — the candidate would choose how far it \
+                 advances; draw before handing the code to the candidate",
+            );
+        }
+        Ok(())
+    }
+
+    /// Whether handler `frame` may answer (or abort) the operation being
+    /// performed now. An operator frame may answer anything. A SEALED frame
+    /// may answer only while no operator frame has been entered since it was
+    /// installed: otherwise the operation belongs to — or unwinds through —
+    /// the operator's code, and the candidate would choose its result or skip
+    /// the rest of it (C9 round 3, PSV-1). The single predicate for live
+    /// frames (`call_builtin`, `run_handler_arm`) and the replay feed.
+    pub(crate) fn handler_may_answer(&self, sealed: bool, operator_frames: usize) -> bool {
+        !sealed || operator_frames == self.operator_frames.get()
+    }
+
+    /// Run `g` with the frame's provenance set to `sealed`, restoring it after.
+    pub(crate) fn with_frame<T>(&self, sealed: bool, g: impl FnOnce() -> T) -> T {
+        let prev = self.frame_sealed.replace(sealed);
+        let count = if sealed {
+            &self.sealed_frames
+        } else {
+            &self.operator_frames
+        };
+        count.set(count.get() + 1);
+        let out = g();
+        count.set(count.get() - 1);
+        self.frame_sealed.set(prev);
+        out
+    }
+
+    fn call_fn_frame(&self, f: &FnDef, args: Vec<Value>, crossing: bool, env: &mut Env) -> R {
         // Bound recursion: a graceful panic instead of a process-aborting stack
         // overflow on runaway/infinite recursion. `_guard` restores the depth on
         // any return path (including `?`).
@@ -3042,7 +3738,7 @@ impl<'p> Interp<'p> {
         // never happen, and the latch never clears — the function cannot resist
         // or reverse its own shutdown. Keyed on the annotation, enforced by the
         // engine, so a user cannot write a corrigible fn that ignores the halt.
-        if self.corrigible_halted.get() && f.attrs.iter().any(|a| a.name == "corrigible") {
+        if self.k().corrigible_halted.get() && f.attrs.iter().any(|a| a.name == "corrigible") {
             return Err(Flow::Halted(format!(
                 "`{}` refused: corrigibility kill-switch is latched \
                  (corrigible_halt() was called; there is no resume)",
@@ -3077,16 +3773,17 @@ impl<'p> Interp<'p> {
             Some(Value::Int(n)) => Some(*n),
             _ => None,
         };
+        // The signature's type environment for this activation: every
+        // argument and the result are CAST to the declared types in it
+        // (amendment 53, `interp/conform.rs`).
+        let cx = self.fn_cx(f);
         for (p, a) in f.params.iter().zip(args) {
             // Soft typing: `Uncertain<T>` is compatible with a plain-`T` parameter
             // (the checker allows it). If the declared param type is NOT itself a
             // soft wrapper but the argument IS one, unwrap to the inner value so
             // the body sees a plain `T` (else `x * 2` on the struct silently
             // produced 0). Confidence/horizon dropped at this T-typed boundary.
-            let param_is_soft = matches!(
-                &p.ty,
-                crate::ast::AxonType::Generic { base, .. } if base == "Uncertain" || base == "Temporal"
-            );
+            let param_is_soft = conform::is_soft_decl(&p.ty);
             let a = if !param_is_soft {
                 value::soft_inner(&a).unwrap_or(a)
             } else {
@@ -3095,11 +3792,21 @@ impl<'p> Interp<'p> {
             // R19 Slice B: coerce Int→SizedInt when the declared param type is a
             // non-i64 integer width — ensures arithmetic inside the callee's body
             // uses width-correct ops (completeness, I-9).
-            let a = if let Some(width) = interp_eval_axon_type_to_width(&p.ty) {
+            let mut a = if let Some(width) = interp_eval_axon_type_to_width(&p.ty) {
                 interp_eval_coerce_to_sized(a, width)
             } else {
                 a
             };
+            if let Err(why) = self.cast(&mut a, &p.ty, &cx) {
+                return panic(format!(
+                    "argument `{}` of `{}` is declared `{}` but is {} — a runtime type confusion \
+                     ({why})",
+                    p.name,
+                    f.name,
+                    crate::doc::render_type(&p.ty),
+                    value::display(&a)
+                ));
+            }
             env.define(p.name.clone(), a);
         }
         // Phase 5: refinement-type PRECONDITIONS. A parameter `p: T where P`
@@ -3117,13 +3824,16 @@ impl<'p> Interp<'p> {
             for p in &f.params {
                 if let crate::ast::AxonType::Named(rname) = &p.ty {
                     if let Some(pred) = self.refine_preds.get(rname.as_str()).copied() {
+                        self.seal_refine(rname)?;
                         let val = env.get(&p.name).cloned().unwrap_or(Value::Unit);
                         let mut pred_env = Env::new();
                         pred_env.define("_".into(), val.clone());
                         // Also bind the parameter name (for inline refinements
                         // `p: T where E[p] > k` that use the param name directly).
                         pred_env.define(p.name.clone(), val.clone());
-                        if let Value::Bool(false) = self.eval(pred, &mut pred_env)? {
+                        if let Value::Bool(false) =
+                            contain_frame(self.eval(pred, &mut pred_env), "a predicate")?
+                        {
                             return Err(Flow::RefineViolation(format!(
                                 "parameter `{}` of `{}` (= {}) violates the refinement `{}` — \
                                  the value does not satisfy the type's predicate",
@@ -3243,11 +3953,65 @@ impl<'p> Interp<'p> {
             snap.remove("goal_met"); // injected by call_fn, not a user binding
             *self.main_locals.borrow_mut() = snap;
         }
+        // PSV-3: the test frame's completion is WHETHER ITS BODY RAN TO ITS
+        // END. A `return` or a `?` (whatever it carried) did not.
+        if depth == self.test_frame_depth.get() {
+            self.test_body_finished.set(body_result.is_ok());
+        }
         let mut result = match body_result {
             Ok(v) => v,
             Err(Flow::Return(v)) => v,
+            // Loop control never crosses a function boundary: a `break` or
+            // `continue` with no loop of its own in this body is an error HERE,
+            // not a jump in whatever loop the CALLER happens to be running.
+            // It used to escape, so candidate code could end an operator
+            // test's loop early and skip its assertions (v0.22 G01 final
+            // re-audit of candidate 2, executed).
+            Err(Flow::Break) | Err(Flow::Continue) => {
+                return panic(format!("`break`/`continue` outside a loop in `{}`", f.name))
+            }
             Err(other) => return Err(other),
         };
+        // The result is CAST to the declared return type (C9 round 3 checked
+        // only a `Result`/`Option` constructor against the other; round 4,
+        // amendment 53, checks the whole declared type — scalar kind, struct
+        // or enum name and fields, `Option`/`Result` payloads, array and tuple
+        // elements, trait bounds, type parameters bound by the arguments).
+        // An untyped `dict_get` yields a free type variable, so a stored
+        // value of ANY type type-checks as the declared one; refused here, at
+        // the one boundary every return crosses, it never reaches a caller
+        // that would dispatch a method on its runtime type. At a seal
+        // crossing (`crossing`), a value at a type parameter no argument
+        // determined is refused too.
+        {
+            let mismatch = match f.return_type.as_ref() {
+                Some(rt) => self.cast(&mut result, rt, &cx.strict(crossing)).err(),
+                // No declared return type: the checker types the call `()`,
+                // so at a seal crossing the operator receives exactly `()`.
+                // The body's last value was handed out uncast, and an
+                // operator method call on it ran the impl for whatever type
+                // the candidate chose (C9 round 4c, amendment 72).
+                None if crossing => {
+                    result = Value::Unit;
+                    None
+                }
+                None => None,
+            };
+            let confused = mismatch.is_some();
+            if confused {
+                return panic(format!(
+                    "`{}` is declared to return `{}` but produced {} — a runtime type confusion \
+                     ({})",
+                    f.name,
+                    f.return_type
+                        .as_ref()
+                        .map(crate::doc::render_type)
+                        .unwrap_or_default(),
+                    value::display(&result),
+                    mismatch.unwrap_or_default()
+                ));
+            }
+        }
         // Soft typing at the RETURN boundary: a fn declared `-> T` (a plain
         // scalar) whose body produces an `Uncertain<T>`/`Temporal<T>` unwraps to
         // the inner value — the same rule as a plain-T parameter. Without this,
@@ -3284,6 +4048,7 @@ impl<'p> Interp<'p> {
         if !self.refine_preds.is_empty() && !self.discharged.refine_return_proven(&f.name) {
             if let Some(crate::ast::AxonType::Named(rname)) = &f.return_type {
                 if let Some(pred) = self.refine_preds.get(rname.as_str()).copied() {
+                    self.seal_refine(rname)?;
                     // R20 Slice 2: evaluate the predicate with `_` bound to the
                     // return value AND the fn's params still in scope, so a
                     // RELATIONAL return refinement (e.g.
@@ -3291,7 +4056,8 @@ impl<'p> Interp<'p> {
                     // `env` already holds the param bindings from the body; add
                     // `_` and evaluate against it instead of a bare env.
                     env.define("_".into(), result.clone());
-                    if let Value::Bool(false) = self.eval(pred, env)? {
+                    if let Value::Bool(false) = contain_frame(self.eval(pred, env), "a predicate")?
+                    {
                         return Err(Flow::RefineViolation(format!(
                             "the return value of `{}` (= {}) violates the refinement return \
                              type `{}` — the value does not satisfy the type's predicate",
@@ -3328,17 +4094,20 @@ impl<'p> Interp<'p> {
                 // Experiment records are deliberately withheld so the optimizer
                 // never treats a baseline as a candidate to beat.
                 if is_adaptive_zone {
-                    self.provenance
+                    self.k()
+                        .provenance
                         .borrow_mut()
                         .entry(f.name.clone())
                         .or_default()
                         .push(score);
-                    self.provenance_inputs
+                    self.k()
+                        .provenance_inputs
                         .borrow_mut()
                         .entry(f.name.clone())
                         .or_default()
                         .push(input_args.clone());
-                    self.provenance_inputs_f64
+                    self.k()
+                        .provenance_inputs_f64
                         .borrow_mut()
                         .entry(f.name.clone())
                         .or_default()
@@ -3461,7 +4230,10 @@ impl<'p> Interp<'p> {
                         if let Some(s) = fields.get("source_tag") {
                             pred_env.define("source_tag".into(), s.clone());
                         }
-                        let outcome = self.eval(&spec.predicate, &mut pred_env)?;
+                        let outcome = contain_frame(
+                            self.eval(&spec.predicate, &mut pred_env),
+                            "a predicate",
+                        )?;
                         if let Value::Bool(false) = outcome {
                             return Err(Flow::VerifyFailed(format!(
                                 "verify failed in {}: composite predicate did not hold \
@@ -3512,7 +4284,8 @@ impl<'p> Interp<'p> {
                     // Composite predicate: bind `value` to the scalar and evaluate.
                     let mut pred_env = Env::new();
                     pred_env.define("value".into(), result.clone());
-                    let outcome = self.eval(&spec.predicate, &mut pred_env)?;
+                    let outcome =
+                        contain_frame(self.eval(&spec.predicate, &mut pred_env), "a predicate")?;
                     if let Value::Bool(false) = outcome {
                         return Err(Flow::VerifyFailed(format!(
                             "verify failed in {}: composite predicate did not hold (value {}{})",
@@ -3549,6 +4322,7 @@ impl<'p> Interp<'p> {
             params,
             body,
             captured,
+            contract,
         } = c
         else {
             return panic(format!("value of type {} is not callable", c.type_name()));
@@ -3560,6 +4334,25 @@ impl<'p> Interp<'p> {
                 args.len()
             ));
         }
+        let mut args = args;
+        // A closure runs under the provenance of the frame that CREATED it.
+        let origin = self.seal.active && captured.borrow().contains_key(SEALED_CLOSURE_MARK);
+        // The arguments are cast to every `fn` type this reference crossed. A
+        // sealed frame calling an OPERATOR closure is a seal crossing: the
+        // arguments are cast strictly (amendment 72).
+        let entering = self.seal.active && self.frame_sealed.get() && !origin;
+        // A candidate closure called by operator code: the operator hands it
+        // the arguments (snapshot). A sealed frame calling an operator closure
+        // returns control to operator code (verify what it mutated).
+        if origin && !self.frame_sealed.get() {
+            for a in &args {
+                self.dict_edge_in(a)?;
+            }
+        }
+        if entering {
+            self.dict_edge_out()?;
+        }
+        self.closure_args_check(&contract, &mut args, entering)?;
         // Base scope = captured bindings; a fresh scope holds the parameters.
         // Assignments land in the base scope and are written back below, which
         // is what makes them survive to the next call (T40).
@@ -3578,17 +4371,30 @@ impl<'p> Interp<'p> {
         if lend {
             env.vars.extend(captured.borrow_mut().drain());
         } else {
-            env.vars.extend(captured.borrow().iter().map(|(k, v)| (k.clone(), v.clone())));
+            env.vars.extend(
+                captured
+                    .borrow()
+                    .iter()
+                    .map(|(k, v)| (k.clone(), v.clone())),
+            );
         }
         env.push();
         for (p, a) in params.iter().zip(args) {
             env.define(p.clone(), a);
         }
-        let out = match self.eval(&body, &mut env) {
-            Ok(v) => Ok(v),
-            Err(Flow::Return(v)) => Ok(v),
-            Err(other) => Err(other),
-        };
+        // A closure's own `return` ends the closure; every other transfer is
+        // refused at its edge, as for a named fn (`contain_frame`).
+        // A candidate closure returning to operator code is a seal crossing.
+        let crossing = origin && !self.frame_sealed.get();
+        let out = self.with_frame(origin, || {
+            contain_frame(
+                match self.eval(&body, &mut env) {
+                    Err(Flow::Return(v)) => Ok(v),
+                    other => other,
+                },
+                "a closure",
+            )
+        });
         // Write back only names the closure actually captured. A `let` introduced
         // inside the body lives in a pushed scope and must not leak into the
         // capture; a parameter shadowing a captured name must not overwrite it
@@ -3606,7 +4412,17 @@ impl<'p> Interp<'p> {
                 }
             }
         }
-        out
+        // The result is cast to every `fn` type this reference crossed.
+        let mut v = out?;
+        self.closure_ret_check(&contract, &mut v, crossing)?;
+        // A candidate closure returns to operator code: verify. An operator
+        // closure returns into sealed code: its result is handed over.
+        if crossing {
+            self.dict_edge_out()?;
+        } else if entering {
+            self.dict_edge_in(&v)?;
+        }
+        Ok(v)
     }
 
     // ── goal_run: hill-climb / retrospective best-observed ───────────────────
@@ -3629,7 +4445,7 @@ impl<'p> Interp<'p> {
         if name.is_empty() {
             return false;
         }
-        self.fns.contains_key(name) || self.provenance.borrow().contains_key(name)
+        self.fns.contains_key(name) || self.k().provenance.borrow().contains_key(name)
     }
 
     fn unknown_goal_name(name: &str) -> Flow {
@@ -3685,7 +4501,7 @@ fn lit_to_val(lit: &Literal) -> Value {
     }
 }
 
-fn type_name_of(ty: &crate::ast::AxonType) -> String {
+pub(crate) fn type_name_of(ty: &crate::ast::AxonType) -> String {
     use crate::ast::AxonType::*;
     match ty {
         Named(n) => n.clone(),
@@ -3791,6 +4607,12 @@ fn now_ms() -> i64 {
 // there; inherent methods resolve across split impl blocks, so call sites in
 // this file are unchanged. (A `mod` must be at module scope, not inside `impl`.)
 mod goal;
+// Declared-type conformance at every value boundary (C9 round 4, PSV-1,
+// amendment 53).
+pub mod conform;
+// The dispatch rule: an operator impl is never selected by a type nothing on
+// the operator side determined (C9 round 6, amendment 83).
+mod pin;
 // Core tree-walking evaluator (eval/eval_block/eval_call/eval_binop/
 // match_pattern) extracted to interp/eval.rs (R0 slice 5). Its methods live in a
 // second `impl Interp` block there; inherent methods resolve across split impl
@@ -3834,15 +4656,6 @@ pub use provenance::{
     read_ai_calls, read_provenance, set_provenance_source, set_session_cell, AiCallRecord,
     ProvRecord, RunStartRecord,
 };
-
-/// A pseudo-random `u64` from a process-global xorshift state (seeded from the
-/// clock on first use). Single-threaded interpreter, so no CAS needed.
-use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
-
-/// Global xorshift64 RNG state. `0` means "uninitialized" — the first draw
-/// seeds it (see [`rng_seed`]). Explicitly settable via [`set_rand_seed`]
-/// (the `srand` builtin) for reproducible runs.
-static RNG_STATE: AtomicU64 = AtomicU64::new(0);
 
 /// Parse the ambient run-level token cap from `AXON_BUDGET_TOKENS`.
 ///
@@ -3944,25 +4757,6 @@ fn rng_seed() -> u64 {
     (now_ms() as u64) | 1
 }
 
-/// Explicitly set the RNG seed (the `srand(n)` builtin). `n == 0` is mapped
-/// to a non-zero sentinel so it doesn't read as "uninitialized".
-fn set_rand_seed(n: i64) {
-    let s = (n as u64) | 1;
-    RNG_STATE.store(s, AtomicOrdering::Relaxed);
-}
-
-fn next_rand_u64() -> u64 {
-    let mut x = RNG_STATE.load(AtomicOrdering::Relaxed);
-    if x == 0 {
-        x = rng_seed();
-    }
-    x ^= x << 13;
-    x ^= x >> 7;
-    x ^= x << 17;
-    RNG_STATE.store(x, AtomicOrdering::Relaxed);
-    x
-}
-
 /// Render `n` in `base` (2–36), '-'-prefixed when negative.
 fn i64_to_radix(n: i64, base: u32) -> String {
     const DIGITS: &[u8] = b"0123456789abcdefghijklmnopqrstuvwxyz";
@@ -4059,13 +4853,21 @@ fn make_uncertain(value: Value, confidence: f64) -> Value {
     make_uncertain_tagged(value, confidence, SRC_TAG_USER)
 }
 
+/// An `Uncertain` whose value came from a MODEL (`ai_extract_uncertain_*`, on
+/// the mock, replay and live paths alike). Stamps 1, as codegen does. These
+/// paths used `make_uncertain` and so stamped 0 — a model's answer read as
+/// user-constructed under `axon run`, the fail-open direction for a provenance
+/// field (UPGRADE_V0_20.md D-014).
+fn make_uncertain_ai(value: Value, confidence: f64) -> Value {
+    make_uncertain_tagged(value, confidence, SRC_TAG_AI)
+}
+
 /// `source_tag` values, as stamped by codegen. These are OBSERVABLE — the
 /// checker lists `source_tag` as a field of `Uncertain<T>` and both engines
 /// let a program read `u.source_tag` — so the interpreter must stamp the same
 /// number codegen does, or a program that branches on provenance takes a
 /// different branch under `axon run` than under `axon build`.
 pub(crate) const SRC_TAG_USER: i64 = 0;
-#[allow(dead_code)] // codegen stamps 1; the interp AI path is E0910-refused natively
 pub(crate) const SRC_TAG_AI: i64 = 1;
 pub(crate) const SRC_TAG_RUNTIME: i64 = 2;
 
@@ -4245,12 +5047,13 @@ fn interp_eval_axon_type_to_width(ty: &crate::ast::AxonType) -> Option<crate::ty
     }
 }
 
-/// Coerce Int → SizedInt (or re-tag an existing SizedInt). Other values pass
-/// through unchanged. Used at the call-arg → param boundary.
+/// Coerce Int → SizedInt. Other values (a `SizedInt` of another width
+/// included) pass through unchanged and meet the declared-type cast, which
+/// refuses another width (amendment 60). Used at the call-arg → param
+/// boundary.
 fn interp_eval_coerce_to_sized(v: Value, width: crate::types::Type) -> Value {
     match v {
         Value::Int(n) => Value::SizedInt { val: n, ty: width },
-        Value::SizedInt { val, .. } => Value::SizedInt { val, ty: width },
         other => other,
     }
 }
@@ -4259,6 +5062,1834 @@ fn interp_eval_coerce_to_sized(v: Value, width: crate::types::Type) -> Value {
 
 #[cfg(test)]
 mod tests {
+
+    /// v0.22 G01 final re-audit: a `break` escaping a function called by a
+    /// test used to count as a clean pass, so candidate code could end an
+    /// acceptance test before its assertion ran. It is a failure now; a test
+    /// that completes still passes.
+    /// Candidate 4's final-review blocker (executed): a `break` in a candidate
+    /// function's parameter/return refinement, `@[verify]` predicate, or a
+    /// candidate type's struct refinement escaped the call and ended the
+    /// operator test's loop. Loop control is contained at every frame edge now.
+    #[test]
+    fn loop_control_does_not_escape_through_a_predicate() {
+        let cases = [
+            (
+                "return refinement",
+                "fn solve(n: i64) -> (i64 where if n > 0 { break } else { true }) { 0 }\n",
+            ),
+            (
+                "param refinement",
+                "fn solve(n: i64 where if n > 0 { break } else { true }) -> i64 { 0 }\n",
+            ),
+            (
+                "verify",
+                "@[verify(if value == 0 { break } else { true })]\nfn solve(n: i64) -> i64 { 0 }\n",
+            ),
+        ];
+        let mut passed = Vec::new();
+        for (why, def) in cases {
+            let src = format!(
+                "{def}@[test]\nfn t() {{\n    let mut i = 1\n    while i < 4 {{\n        assert_eq(solve(i), 42)\n        i = i + 1\n    }}\n}}\n"
+            );
+            let prog = crate::parse_source(&src).expect("parses");
+            if run_test_fn(&prog, "t").is_ok() {
+                passed.push(why);
+            }
+        }
+        let prog = crate::parse_source(
+            "type Arg = { n: i64 } where if _.n > 0 { break } else { true }\n\
+             @[test]\nfn t() {\n    for i in 1..4 {\n        let a = Arg { n: i }\n        assert_eq(a.n, 42)\n    }\n}\n",
+        )
+        .expect("parses");
+        if run_test_fn(&prog, "t").is_ok() {
+            passed.push("struct refinement");
+        }
+        assert!(
+            passed.is_empty(),
+            "these escapes passed the test: {passed:?}"
+        );
+    }
+
+    /// Serialises the interpreter tests that set the process-global sealed
+    /// directory set (`resolver::set_sealed_module_dirs`).
+    static SEALED_DIRS_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// A second `impl J for E` must never replace the first's methods. The
+    /// interpreter keys methods by (type, name) and keeps the LAST, so a
+    /// duplicate impl whose `check` is a no-op would silently disarm the
+    /// operator's. Two resolver checks refuse it (the impl-uniqueness check
+    /// and the per-(type, method) dispatch check), each on its own; this
+    /// accepts EITHER refusal (E0002), and fails "ATTACK:" only when the
+    /// pipeline accepts the program and the no-op actually ran.
+    #[test]
+    fn a_second_impl_never_replaces_the_first_impls_method() {
+        let head = "type E = { want: i64 }\ntrait J { fn check(self: E, got: i64) }\n\
+                    impl J for E { fn check(self: E, got: i64) { assert_eq(got, self.want) } }\n\
+                    @[test]\nfn t() {\n    let e = E { want: 42 }\n    e.check(0)\n}\n";
+        let errors = |src: &str| -> Vec<String> {
+            crate::check_pipeline(src, "t.ax")
+                .into_iter()
+                .filter(|d| d.severity == "error")
+                .map(|d| format!("{} {}", d.code, d.message))
+                .collect()
+        };
+        // Control: the operator's check is live — the program is well formed
+        // and its test FAILS on the wrong answer.
+        assert!(errors(head).is_empty(), "control: {:?}", errors(head));
+        let prog = crate::parse_source(head).expect("parses");
+        assert!(
+            run_test_fn_outcome(&prog, "t").is_err(),
+            "control: check is live"
+        );
+        // Attack: a second impl whose `check` accepts anything.
+        let src = format!("{head}impl J for E {{ fn check(self: E, got: i64) {{ }} }}\n");
+        let e = errors(&src);
+        if e.is_empty() {
+            let prog = crate::parse_source(&src).expect("parses");
+            let out = run_test_fn_outcome(&prog, "t");
+            assert!(
+                out.is_err(),
+                "ATTACK: a second `impl J for E` replaced the operator's `check`: {out:?}"
+            );
+        }
+        assert!(
+            e.len() == 1 && e[0].starts_with("E0002"),
+            "a duplicate impl is refused by exactly one E0002: {e:?}"
+        );
+    }
+
+    /// A sealed frame that queues an operator function as a fiber never gets
+    /// it run. `scheduler_spawn` seal-checks the name when it is queued; were
+    /// that check absent, the fiber would still never run an operator
+    /// function, on EITHER route to its execution:
+    /// * run from a sealed frame: every fiber is called through `call_fn`,
+    ///   whose call edge refuses an operator function in a sealed frame;
+    /// * run by the operator: it cannot be — a fiber lives in the kernel of
+    ///   the frame that queued it, and a sealed frame's kernel is its own.
+    ///
+    /// So this accepts any refusal, and fails "ATTACK:" only when an operator
+    /// function actually ran. (Moved here from
+    /// `runtime_sealing_holds_without_the_static_check`, whose two fiber cases
+    /// asserted the queue-time refusal itself — a refusal reason on routes the
+    /// call edge and the per-provenance kernel each dominate.)
+    #[test]
+    fn a_sealed_fiber_never_runs_an_operator_function() {
+        use crate::span::intern_source;
+        let suite = "fn expected(n: i64) -> i64 { n * 2 }\n\
+                     @[test]\nfn t() { assert_eq(double(21), expected(21)) }\n\
+                     @[test]\nfn t_later() {\n    let d = double(21)\n    scheduler_run()\n    assert(d == 42 && scheduler_done_count() > 0)\n}\n\
+                     @[test]\nfn t_later_control() {\n    let _ = scheduler_spawn(\"expected\", 1)\n    scheduler_run()\n    assert(scheduler_done_count() > 0)\n}\n";
+        let run = |cand: &str, test: &str| {
+            let s = crate::parse_source_in(suite, intern_source("/pci-fb-suite/h.ax", suite))
+                .expect("suite parses");
+            let c = crate::parse_source_in(cand, intern_source("/pci-fb-sealed/f.ax", cand))
+                .expect("candidate parses");
+            let prog = Program {
+                items: s.items.into_iter().chain(c.items).collect(),
+            };
+            // The sealed set is process-global: hold the lock across
+            // set/run/clear so a concurrent sealed test cannot swap it.
+            let _g = SEALED_DIRS_TEST_LOCK
+                .lock()
+                .unwrap_or_else(|p| p.into_inner());
+            crate::resolver::set_sealed_module_dirs(&[std::path::PathBuf::from("/pci-fb-sealed")]);
+            let out = run_test_fn_outcome(&prog, test);
+            crate::resolver::set_sealed_module_dirs(&[]);
+            out
+        };
+        // Controls: a sealed frame may queue and run its OWN function as a
+        // fiber and read the result, and the operator's scheduler runs what
+        // the OPERATOR queues — so each attack below fails on the seal, not
+        // on the scheduler.
+        let honest = "fn double(n: i64) -> i64 { n * 2 }\n";
+        let own = "fn twice(n: i64) -> i64 { n * 2 }\n\
+                   fn double(n: i64) -> i64 {\n    let id = scheduler_spawn(\"twice\", n)\n    scheduler_run()\n    scheduler_result(id)\n}\n";
+        assert_eq!(run(own, "t"), Ok(TestEnd::Completed), "control: own fiber");
+        assert_eq!(
+            run(honest, "t_later_control"),
+            Ok(TestEnd::Completed),
+            "control: the operator's scheduler runs the operator's fiber"
+        );
+        // Run from the sealed frame, returning the operator's answer.
+        let now = "fn double(n: i64) -> i64 {\n    let id = scheduler_spawn(\"expected\", n)\n    scheduler_run()\n    scheduler_result(id)\n}\n";
+        let out = run(now, "t");
+        assert!(
+            out != Ok(TestEnd::Completed),
+            "ATTACK: a sealed frame ran the operator's `expected` as a fiber and returned its answer: {out:?}"
+        );
+        // Queued for the operator's scheduler to run later.
+        let later = "fn double(n: i64) -> i64 {\n    let _ = scheduler_spawn(\"expected\", n)\n    n * 2\n}\n";
+        let out = run(later, "t_later");
+        assert!(
+            out != Ok(TestEnd::Completed),
+            "ATTACK: the operator's scheduler ran an operator function a sealed frame queued: {out:?}"
+        );
+    }
+
+    /// Run `test` of `suite` with `cand` loaded from a SEALED directory
+    /// (`/<tag>-sealed`), holding the sealed-set lock across set/run/clear.
+    fn sealed_outcome(tag: &str, suite: &str, cand: &str, test: &str) -> Result<TestEnd, String> {
+        sealed_outcome_rule(tag, suite, cand, test, false)
+    }
+
+    /// `rule`: whether the dispatch rule (amendment 83) is on. The other
+    /// layers' tests run with it off, so each is judged by its own attack.
+    fn sealed_outcome_rule(
+        tag: &str,
+        suite: &str,
+        cand: &str,
+        test: &str,
+        rule: bool,
+    ) -> Result<TestEnd, String> {
+        use crate::span::intern_source;
+        let sdir = format!("/{tag}-sealed");
+        let s = crate::parse_source_in(suite, intern_source(&format!("/{tag}-suite/h.ax"), suite))
+            .expect("suite parses");
+        let c = crate::parse_source_in(cand, intern_source(&format!("{sdir}/f.ax"), cand))
+            .expect("candidate parses");
+        let prog = Program {
+            items: s.items.into_iter().chain(c.items).collect(),
+        };
+        let _g = SEALED_DIRS_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        crate::resolver::set_sealed_module_dirs(&[std::path::PathBuf::from(&sdir)]);
+        DISPATCH_RULE_OFF.store(!rule, std::sync::atomic::Ordering::SeqCst);
+        let out = run_test_fn_outcome(&prog, test);
+        DISPATCH_RULE_OFF.store(false, std::sync::atomic::Ordering::SeqCst);
+        crate::resolver::set_sealed_module_dirs(&[]);
+        out
+    }
+
+    /// C9 round 3, PSV-1: a SEALED handler frame never answers or aborts an
+    /// operation performed under OPERATOR provenance. The review executed two
+    /// variants to a keyed pass: the candidate's `on IO` arm ABORTED the
+    /// operator's listener at its first `println` (skipping its assert), and
+    /// RESUMED the operator's `read_file` with bytes the candidate chose. A
+    /// third route has the same root: the operator's listener calls a
+    /// CANDIDATE function whose `println` the candidate's outer handler
+    /// aborts, unwinding through the operator's code. A fourth goes through
+    /// the multi-shot replay feed instead of a live frame.
+    #[test]
+    fn a_sealed_handler_never_answers_or_aborts_operator_code() {
+        let dir = std::env::temp_dir().join(format!("psv1-handler-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let want = dir.join("expected.txt");
+        std::fs::write(&want, "42\n").unwrap();
+        let want = want.display().to_string();
+        let suite = format!(
+            "fn want() -> i64 {{\n    let raw = match read_file(\"{want}\") {{ Ok(s) => s  Err(e) => \"\" }}\n    match parse_int(str_trim(raw)) {{ Ok(n) => n  Err(e) => -1 }}\n}}\n\
+             @[test]\nfn t_abort() {{ visit(|v: i64| {{\n    println(\"listener saw {{to_str(v)}}\")\n    assert_eq(v, 42)\n}}) }}\n\
+             @[test]\nfn t_resume() {{ visit(|v: i64| {{ assert_eq(v, want()) }}) }}\n\
+             @[test]\nfn t_through() {{ visit(|v: i64| {{ assert_eq(noisy(v), 42) }}) }}\n\
+             @[test]\nfn t_replay() {{ visit(|v: i64| {{ assert_eq(v, want()) }}) }}\n\
+             @[test]\nfn t_own() {{ assert_eq(mine(), 5) }}\n\
+             @[test]\nfn t_op() {{\n    let v = with handler {{ on IO(p) => resume(Ok(\"42\")) }} {{\n        match read_file(\"/nonexistent/psv1\") {{ Ok(s) => s  Err(e) => \"no\" }}\n    }}\n    assert(v == \"42\")\n}}\n\
+             @[test]\nfn t_op_around() {{\n    with handler {{ on IO(p) => resume(Ok(\"7\")) }} {{\n        visit(|v: i64| {{ assert_eq(v, want()) }})\n    }}\n}}\n"
+        );
+        let honest = "fn noisy(v: i64) -> i64 { println(\"n\")  v }\n\
+                      fn mine() -> i64 {\n    let a = with handler { on IO(p) => resume(Ok(\"5\")) } {\n        match read_file(\"/nonexistent/own\") { Ok(s) => s  Err(e) => \"0\" }\n    }\n    let b = with handler { on IO(p) => 5 } {\n        println(\"x\")\n        1\n    }\n    match parse_int(a) { Ok(n) => if n == b { n } else { 0 }  Err(e) => 0 }\n}\n";
+        let good = format!("{honest}fn visit(cb: fn(i64) -> ()) {{ cb(42) }}\n");
+        let wrong7 = format!("{honest}fn visit(cb: fn(i64) -> ()) {{ cb(7) }}\n");
+        // Controls: the honest candidate passes each shape and a wrong one
+        // fails it, so each check below is live; the candidate's OWN handler
+        // still handles the candidate's own operations (resume and abort);
+        // an operator handler still handles the operator's operation, also
+        // when candidate frames lie between it and the operation.
+        for t in ["t_abort", "t_resume", "t_through", "t_own", "t_op"] {
+            assert_eq!(
+                sealed_outcome("psv1h", &suite, &good, t),
+                Ok(TestEnd::Completed),
+                "control: {t}"
+            );
+        }
+        for t in ["t_abort", "t_resume", "t_through"] {
+            assert!(
+                sealed_outcome("psv1h", &suite, &wrong7, t).is_err(),
+                "control: wrong fails {t}"
+            );
+        }
+        assert_eq!(
+            sealed_outcome("psv1h", &suite, &wrong7, "t_op_around").map_err(|_| ()),
+            Ok(TestEnd::Completed),
+            "control: the operator's own handler answers the operator's read_file"
+        );
+        let attacks = [
+            (
+                "t_abort",
+                "the candidate's arm aborted the operator's listener at its println",
+                "fn visit(cb: fn(i64) -> ()) {\n    let _ = with handler { on IO(p) => 0 } {\n        cb(7)\n        0\n    }\n}\n",
+            ),
+            (
+                "t_resume",
+                "the candidate's arm resumed the operator's read_file with its own bytes",
+                "fn visit(cb: fn(i64) -> ()) {\n    with handler { on IO(p) => resume(Ok(\"7\")) } {\n        cb(7)\n    }\n}\n",
+            ),
+            (
+                "t_through",
+                "the candidate's arm aborted the operator's listener through a candidate call",
+                "fn visit(cb: fn(i64) -> ()) {\n    let _ = with handler { on IO(p) => 0 } {\n        cb(7)\n        0\n    }\n}\n",
+            ),
+            (
+                "t_replay",
+                "the candidate's multi-shot replay fed the operator's read_file",
+                "fn visit(cb: fn(i64) -> ()) {\n    let st = dict_new()\n    let _ = with handler { on IO(p) => {\n        dict_set(st, \"replaying\", 1)\n        resume(Ok(\"7\"))\n    } } {\n        if !dict_has(st, \"replaying\") { println(\"mine\") }\n        cb(7)\n        0\n    }\n}\n",
+            ),
+        ];
+        for (t, what, visit) in attacks {
+            let cand = format!("{honest}{visit}");
+            let out = sealed_outcome("psv1h", &suite, &cand, t);
+            assert!(
+                out != Ok(TestEnd::Completed),
+                "ATTACK: sealed handler answered operator code: {what} ({t}): {out:?}"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// C9 round 3, PSV-1 (the RNG route of the same root): operator code a
+    /// sealed frame runs — here a closure the suite hands the candidate —
+    /// cannot draw from the operator's stream, because the CANDIDATE chooses
+    /// how many times it runs and so how far the stream advances. The attack:
+    /// the candidate is right only at the challenge the operator draws after
+    /// FIVE ticks, and ticks five times. Refused, not given another stream:
+    /// amendment 46.
+    #[test]
+    fn operator_code_a_sealed_frame_runs_never_draws_the_operator_rng() {
+        // `srand(7)`: the operator's stream is 327, 652, 743, 107, 850, 125 …
+        let suite = "@[test]\nfn t_accept() {\n    srand(7)\n    warm(|| { let _ = random_i64(0, 1000) })\n    let c = random_i64(0, 1000)\n    assert(solve(c))\n}\n\
+                     @[test]\nfn t_seeded() {\n    srand(7)\n    warm(|| { let _ = random_i64(0, 1000) })\n    assert_eq(random_i64(0, 1000), 327)\n}\n\
+                     @[test]\nfn t_reseed() {\n    srand(7)\n    warm(|| { srand(1) })\n    assert(solve(random_i64(0, 1000)))\n}\n";
+        let right_at_125 = "fn solve(c: i64) -> bool { c == 125 }\n";
+        // Controls: with no tick the operator's own draws work and follow
+        // the seed; the candidate draws freely from its OWN stream.
+        let idle =
+            format!("{right_at_125}fn warm(tick: fn() -> ()) {{ let _ = random_i64(0, 9) }}\n");
+        assert_eq!(
+            sealed_outcome("psv1r", suite, &idle, "t_seeded"),
+            Ok(TestEnd::Completed),
+            "control"
+        );
+        assert!(
+            sealed_outcome("psv1r", suite, &idle, "t_accept").is_err(),
+            "control: 327 is wrong"
+        );
+        let steer = format!(
+            "{right_at_125}fn warm(tick: fn() -> ()) {{ tick() tick() tick() tick() tick() }}\n"
+        );
+        let out = sealed_outcome("psv1r", suite, &steer, "t_accept");
+        assert!(
+            out != Ok(TestEnd::Completed),
+            "ATTACK: the candidate steered the operator's challenge by calling its closure five times: {out:?}"
+        );
+        assert!(
+            matches!(&out, Err(m) if m.contains("operator's random stream")),
+            "the refusal names the rule: {out:?}"
+        );
+        let reseed = "fn solve(c: i64) -> bool { c == 0 }\nfn warm(tick: fn() -> ()) { tick() }\n";
+        assert!(
+            sealed_outcome("psv1r", suite, reseed, "t_reseed").is_err(),
+            "operator code a sealed frame runs cannot reseed the operator stream either"
+        );
+    }
+
+    /// C9 round 3, PSV-3: a test is COMPLETED only when its body evaluated to
+    /// its end. The review's route: a `?` on a type-confused `None` returned
+    /// `None` from the test, which is not an `Err`, so the returned VALUE read
+    /// as a completion and a token was minted though the assert never ran.
+    /// The return-boundary check also stops `t_solve` (the test itself is
+    /// declared `-> Result` and would return a `None`). `t_find` is the route
+    /// where the completion rule is the ONLY guard: an `Option`-returning test
+    /// whose `?` meets an honest `None` returns a well-typed `None`.
+    #[test]
+    fn a_test_ended_by_question_mark_is_never_completed() {
+        let suite = "@[test]\nfn t_solve() -> Result<i64, str> {\n    let f = solver()\n    let v = f(21)?\n    assert_eq(v, 42)\n    Ok(v)\n}\n\
+                     @[test]\nfn t_find() -> Option<i64> {\n    let v = find(21)?\n    assert_eq(v, 42)\n    Some(v)\n}\n";
+        let honest = "fn solver() -> fn(i64) -> Result<i64, str> { |x: i64| Ok(x * 2) }\nfn find(x: i64) -> Option<i64> { Some(x * 2) }\n";
+        let err = "fn solver() -> fn(i64) -> Result<i64, str> { |x: i64| Err(\"no\") }\nfn find(x: i64) -> Option<i64> { Some(x) }\n";
+        for t in ["t_solve", "t_find"] {
+            assert_eq!(
+                sealed_outcome("psv3q", suite, honest, t),
+                Ok(TestEnd::Completed),
+                "control: {t}"
+            );
+        }
+        assert!(
+            matches!(
+                sealed_outcome("psv3q", suite, err, "t_solve"),
+                Ok(TestEnd::EndedEarly(_))
+            ),
+            "control: an honest Err ends the test early"
+        );
+        assert!(
+            sealed_outcome("psv3q", suite, err, "t_find").is_err(),
+            "control: wrong fails"
+        );
+        let confused = "fn solver() -> fn(i64) -> Result<i64, str> {\n    |x: i64| {\n        let d = dict_new()\n        let n: Option<i64> = None\n        dict_set(d, \"k\", n)\n        match dict_get(d, \"k\") { Some(v) => v  None => Err(\"u\") }\n    }\n}\nfn find(x: i64) -> Option<i64> { None }\n";
+        for t in ["t_solve", "t_find"] {
+            let out = sealed_outcome("psv3q", suite, confused, t);
+            assert!(
+                out != Ok(TestEnd::Completed),
+                "ATTACK: a test that ended early at `?` was counted complete ({t}): {out:?}"
+            );
+        }
+    }
+
+    /// C9 round 3, PSV-3: a `fn` declared `-> Result` never hands its caller a
+    /// `None` (nor an `Option` fn an `Ok`/`Err`). The review's exact
+    /// candidate: an untyped `dict_get` gives a free type variable, so a
+    /// stored `None` type-checks as the `Result`. Refused at the return
+    /// boundary, the test FAILS on the confusion instead of ending early.
+    #[test]
+    fn a_declared_result_fn_never_returns_an_option() {
+        let suite = "@[test]\nfn t_solve() -> Result<i64, str> {\n    let v = solve(21)?\n    assert_eq(v, 42)\n    Ok(v)\n}\n";
+        let confused = "fn solve(x: i64) -> Result<i64, str> {\n    let d = dict_new()\n    let n: Option<i64> = None\n    dict_set(d, \"k\", n)\n    match dict_get(d, \"k\") {\n        Some(v) => v\n        None => Err(\"unreachable\")\n    }\n}\n";
+        let honest = "fn solve(x: i64) -> Result<i64, str> { Ok(x * 2) }\n";
+        assert_eq!(
+            sealed_outcome("psv3b", suite, honest, "t_solve"),
+            Ok(TestEnd::Completed),
+            "control"
+        );
+        let out = sealed_outcome("psv3b", suite, confused, "t_solve");
+        assert!(
+            matches!(&out, Err(m) if m.contains("runtime type confusion")),
+            "ATTACK: a fn declared -> Result returned a None across its boundary: {out:?}"
+        );
+        let opt = "@[test]\nfn t_find() -> Option<i64> {\n    let v = find(21)?\n    Some(v)\n}\n";
+        let confused_opt = "fn find(x: i64) -> Option<i64> {\n    let d = dict_new()\n    let e: Result<i64, str> = Ok(42)\n    dict_set(d, \"k\", e)\n    match dict_get(d, \"k\") { Some(v) => v  None => None }\n}\n";
+        let out = sealed_outcome("psv3b", opt, confused_opt, "t_find");
+        assert!(
+            matches!(&out, Err(m) if m.contains("runtime type confusion")),
+            "an Option fn returned an Ok across its boundary: {out:?}"
+        );
+    }
+
+    // ── C9 round 4, PSV-1 (amendment 53, matrix A86): the candidate never
+    // chooses the code that runs under the operator's judging method. The
+    // review's keyed pass: a candidate returned its own `Fake` from a fn
+    // declared `-> i64` (a type confusion through `dict_get`, whose value
+    // type is free), and the operator's `r.ok()` dispatched on the RUNTIME
+    // type to the candidate's `Fake::ok`. Two sources close it: every value
+    // is CAST to the declared type at each boundary it crosses, and in
+    // operator code an operator-defined method name is the operator's.
+    //
+    // `ok` on an i64 is the real check (3 * 3 = 9); `ok` on a bool reads the
+    // bool — a second, lenient impl the operator wrote for its own reasons.
+    // A confused `true` selects it, so each attack below reaches a PASS
+    // unless its own guard refuses it (no candidate method is involved, so
+    // the dispatch edge cannot stand in for the cast).
+    const JUDGE: &str = "trait Judge {\n    fn ok(self) -> bool\n}\nimpl Judge for i64 {\n    fn ok(self: i64) -> bool { self == 9 }\n}\nimpl Judge for bool {\n    fn ok(self: bool) -> bool { self }\n}\n";
+    /// Candidate-side laundering: a `true`, typed as whatever the context
+    /// wants.
+    const LAUNDER: &str = "fn stash(v: bool) -> Dict {\n    let d = dict_new()\n    dict_set(d, \"k\", v)\n    d\n}\n";
+    const CONFUSED: &str = "match dict_get(stash(true), \"k\") { Some(v) => v  None => 0 }";
+
+    fn judged(tag: &str, suite: &str, cand: &str) -> Result<TestEnd, String> {
+        sealed_outcome(
+            tag,
+            &format!("{JUDGE}{suite}"),
+            &format!("{LAUNDER}{}", cand.replace("CONFUSED", CONFUSED)),
+            "t",
+        )
+    }
+
+    /// A control pair on one suite: the right candidate completes, the wrong
+    /// one fails — so the attack meets a live check.
+    fn live(tag: &str, suite: &str, good: &str, wrong: &str) {
+        assert_eq!(
+            judged(tag, suite, good),
+            Ok(TestEnd::Completed),
+            "control: the right answer"
+        );
+        assert!(
+            judged(tag, suite, wrong).is_err(),
+            "control: the wrong answer fails"
+        );
+    }
+
+    fn confusion_refused(out: &Result<TestEnd, String>) -> bool {
+        matches!(out, Err(m) if m.contains("runtime type confusion"))
+    }
+
+    /// The dispatch edge. No type confusion at all: the candidate DECLARES
+    /// `-> Fake`, and `Fake` has its own `ok`. The operator's `r.ok()` would
+    /// run it. The candidate's own method names (its API) stay callable.
+    #[test]
+    fn a_candidates_method_never_runs_under_the_operators_method_name() {
+        let suite = "@[test]\nfn t() {\n    let r = solve(3)\n    assert(r.ok())\n}\n\
+                     @[test]\nfn t_api() {\n    assert_eq(sq(3).twice(), 18)\n}\n";
+        let api = "type Sq = { v: i64 }\ntrait Api {\n    fn twice(self) -> i64\n}\nimpl Api for Sq {\n    fn twice(self: Sq) -> i64 { self.v * 2 }\n}\nfn sq(n: i64) -> Sq { Sq { v: n * n } }\n";
+        live(
+            "psv1d",
+            suite,
+            &format!("{api}fn solve(n: i64) -> i64 {{ n * n }}\n"),
+            &format!("{api}fn solve(n: i64) -> i64 {{ n + 1 }}\n"),
+        );
+        let fake = format!(
+            "{api}type Fake = {{ v: i64 }}\ntrait Mine {{\n    fn ok(self) -> bool\n}}\nimpl Mine for Fake {{\n    fn ok(self: Fake) -> bool {{ true }}\n}}\nfn solve(n: i64) -> Fake {{ Fake {{ v: n }} }}\n"
+        );
+        let out = judged("psv1d", suite, &fake);
+        assert!(
+            out != Ok(TestEnd::Completed),
+            "ATTACK: the candidate's `ok` ran under the operator's method name: {out:?}"
+        );
+        assert!(
+            matches!(&out, Err(m) if m.contains("a method the operator defines")),
+            "the refusal names the rule: {out:?}"
+        );
+        assert_eq!(
+            sealed_outcome(
+                "psv1d",
+                &format!("{JUDGE}{suite}"),
+                &format!("{LAUNDER}{fake}"),
+                "t_api"
+            ),
+            Ok(TestEnd::Completed),
+            "control: the suite still calls the candidate's own API"
+        );
+    }
+
+    /// Scalar kind: a confused `true` from a fn declared `-> i64`.
+    #[test]
+    fn a_confused_scalar_never_crosses_a_declared_return() {
+        let suite = "@[test]\nfn t() {\n    let r = solve(3)\n    assert(r.ok())\n}\n";
+        live(
+            "psv1s",
+            suite,
+            "fn solve(n: i64) -> i64 { n * n }\n",
+            "fn solve(n: i64) -> i64 { n + 1 }\n",
+        );
+        let out = judged("psv1s", suite, "fn solve(n: i64) -> i64 { CONFUSED }\n");
+        assert!(
+            out != Ok(TestEnd::Completed) && confusion_refused(&out),
+            "ATTACK: a confused bool crossed a declared `-> i64` return: {out:?}"
+        );
+    }
+
+    /// Struct name: an `Other` returned from a fn declared `-> Point`.
+    #[test]
+    fn a_confused_struct_never_crosses_as_another_struct() {
+        let suite = "impl Judge for Point {\n    fn ok(self: Point) -> bool { self.x == 9 }\n}\n\
+                     impl Judge for Other {\n    fn ok(self: Other) -> bool { true }\n}\n\
+                     @[test]\nfn t() {\n    assert(solve(3).ok())\n}\n";
+        let types = "type Point = { x: i64 }\ntype Other = { x: i64 }\n";
+        live(
+            "psv1n",
+            suite,
+            &format!("{types}fn solve(n: i64) -> Point {{ Point {{ x: n * n }} }}\n"),
+            &format!("{types}fn solve(n: i64) -> Point {{ Point {{ x: n + 1 }} }}\n"),
+        );
+        let attack = format!(
+            "{types}fn keep(v: Other) -> Dict {{\n    let d = dict_new()\n    dict_set(d, \"k\", v)\n    d\n}}\n\
+             fn solve(n: i64) -> Point {{\n    match dict_get(keep(Other {{ x: n }}), \"k\") {{ Some(v) => v  None => Point {{ x: 0 }} }}\n}}\n"
+        );
+        let out = judged("psv1n", suite, &attack);
+        assert!(
+            out != Ok(TestEnd::Completed) && confusion_refused(&out),
+            "ATTACK: an `Other` crossed a declared `-> Point` return: {out:?}"
+        );
+    }
+
+    /// Array elements, `Option` payloads, tuple elements.
+    #[test]
+    fn a_confused_element_never_crosses_inside_an_array() {
+        let suite = "@[test]\nfn t() {\n    assert(solve(3)[0].ok())\n}\n";
+        live(
+            "psv1a",
+            suite,
+            "fn solve(n: i64) -> [i64] { [n * n] }\n",
+            "fn solve(n: i64) -> [i64] { [n + 1] }\n",
+        );
+        let out = judged("psv1a", suite, "fn solve(n: i64) -> [i64] { [CONFUSED] }\n");
+        assert!(
+            out != Ok(TestEnd::Completed) && confusion_refused(&out),
+            "ATTACK: a confused element crossed a declared `-> [i64]` return: {out:?}"
+        );
+    }
+
+    #[test]
+    fn a_confused_payload_never_crosses_inside_an_option() {
+        let suite = "@[test]\nfn t() {\n    match solve(3) {\n        Some(r) => assert(r.ok())\n        None => assert(false)\n    }\n}\n";
+        live(
+            "psv1o",
+            suite,
+            "fn solve(n: i64) -> Option<i64> { Some(n * n) }\n",
+            "fn solve(n: i64) -> Option<i64> { Some(n + 1) }\n",
+        );
+        let out = judged(
+            "psv1o",
+            suite,
+            "fn solve(n: i64) -> Option<i64> { Some(CONFUSED) }\n",
+        );
+        assert!(
+            out != Ok(TestEnd::Completed) && confusion_refused(&out),
+            "ATTACK: a confused payload crossed a declared `-> Option<i64>` return: {out:?}"
+        );
+    }
+
+    #[test]
+    fn a_confused_element_never_crosses_inside_a_tuple() {
+        let suite = "@[test]\nfn t() {\n    assert(solve(3).0.ok())\n}\n";
+        live(
+            "psv1t",
+            suite,
+            "fn solve(n: i64) -> (i64, i64) { (n * n, 0) }\n",
+            "fn solve(n: i64) -> (i64, i64) { (n + 1, 0) }\n",
+        );
+        let out = judged(
+            "psv1t",
+            suite,
+            "fn solve(n: i64) -> (i64, i64) { (CONFUSED, 0) }\n",
+        );
+        assert!(
+            out != Ok(TestEnd::Completed) && confusion_refused(&out),
+            "ATTACK: a confused element crossed a declared `-> (i64, i64)` return: {out:?}"
+        );
+    }
+
+    /// A struct's fields at the return: the field was ASSIGNED after
+    /// construction, so only the deep return cast sees it.
+    #[test]
+    fn a_confused_field_never_crosses_inside_a_struct() {
+        let suite = "@[test]\nfn t() {\n    assert(solve(3).v.ok())\n}\n";
+        let ty = "type Holder = { v: i64 }\n";
+        live(
+            "psv1f",
+            suite,
+            &format!("{ty}fn solve(n: i64) -> Holder {{ Holder {{ v: n * n }} }}\n"),
+            &format!("{ty}fn solve(n: i64) -> Holder {{ Holder {{ v: n + 1 }} }}\n"),
+        );
+        let out = judged(
+            "psv1f",
+            suite,
+            &format!("{ty}fn solve(n: i64) -> Holder {{\n    let h = Holder {{ v: 0 }}\n    h.v = CONFUSED\n    h\n}}\n"),
+        );
+        assert!(
+            out != Ok(TestEnd::Completed) && confusion_refused(&out),
+            "ATTACK: a confused field crossed a declared `-> Holder` return: {out:?}"
+        );
+    }
+
+    /// A field at CONSTRUCTION: a candidate global the suite reads crosses
+    /// no fn boundary, so the struct literal is the declared type it meets.
+    #[test]
+    fn a_confused_field_is_refused_at_construction() {
+        let suite = "@[test]\nfn t() {\n    assert(H.v.ok())\n}\n";
+        let ty = "type Holder = { v: i64 }\n";
+        live(
+            "psv1c",
+            suite,
+            &format!("{ty}let H = Holder {{ v: 9 }}\n"),
+            &format!("{ty}let H = Holder {{ v: 4 }}\n"),
+        );
+        let out = judged(
+            "psv1c",
+            suite,
+            &format!("{ty}let H = Holder {{ v: CONFUSED }}\n"),
+        );
+        assert!(
+            out != Ok(TestEnd::Completed) && confusion_refused(&out),
+            "ATTACK: a confused field was constructed into a candidate global: {out:?}"
+        );
+    }
+
+    /// A declared PARAMETER: an unannotated candidate global handed to the
+    /// operator's typed helper.
+    #[test]
+    fn a_confused_argument_never_enters_a_declared_parameter() {
+        let suite =
+            "fn judge(x: i64) -> bool { x.ok() }\n@[test]\nfn t() {\n    assert(judge(X))\n}\n";
+        live("psv1p", suite, "let X = 9\n", "let X = 4\n");
+        let out = judged("psv1p", suite, "let X = CONFUSED\n");
+        assert!(
+            out != Ok(TestEnd::Completed) && confusion_refused(&out),
+            "ATTACK: a confused value entered the operator's `x: i64` parameter: {out:?}"
+        );
+    }
+
+    /// Parametricity at a seal crossing: `fn solve<T>(n: i64) -> T` has no
+    /// argument of type `T`, so no honest body produces a `T`. An honest
+    /// generic candidate whose `T` IS determined still crosses.
+    #[test]
+    fn a_value_at_an_undetermined_type_parameter_never_crosses_the_seal() {
+        let suite = "@[test]\nfn t() {\n    let r = solve(3)\n    assert(r.ok())\n}\n\
+                     @[test]\nfn t_pick() {\n    assert(pick(9).ok())\n}\n";
+        let pick = "fn pick<T>(x: T) -> T { x }\n";
+        live(
+            "psv1g",
+            suite,
+            &format!("{pick}fn solve(n: i64) -> i64 {{ n * n }}\n"),
+            &format!("{pick}fn solve(n: i64) -> i64 {{ n + 1 }}\n"),
+        );
+        let attack = format!(
+            "{pick}fn solve<T>(n: i64) -> T {{\n    match dict_get(stash(true), \"k\") {{ Some(v) => v  None => solve(n) }}\n}}\n"
+        );
+        let out = judged("psv1g", suite, &attack);
+        assert!(
+            out != Ok(TestEnd::Completed) && confusion_refused(&out),
+            "ATTACK: a value at an undetermined type parameter crossed into operator code: {out:?}"
+        );
+        assert_eq!(
+            sealed_outcome(
+                "psv1g",
+                &format!("{JUDGE}{suite}"),
+                &format!("{LAUNDER}{attack}"),
+                "t_pick"
+            ),
+            Ok(TestEnd::Completed),
+            "control: an honest generic crosses when its argument determines `T`"
+        );
+    }
+
+    /// A closure's RESULT under the `fn` type it crossed.
+    #[test]
+    fn a_closures_confused_result_never_crosses_its_declared_type() {
+        let suite = "@[test]\nfn t() {\n    let f = mk()\n    assert(f(3).ok())\n}\n";
+        live(
+            "psv1k",
+            suite,
+            "fn mk() -> fn(i64) -> i64 { |n| n * n }\n",
+            "fn mk() -> fn(i64) -> i64 { |n| n + 1 }\n",
+        );
+        let out = judged(
+            "psv1k",
+            suite,
+            "fn mk() -> fn(i64) -> i64 { |n| CONFUSED }\n",
+        );
+        assert!(
+            out != Ok(TestEnd::Completed) && confusion_refused(&out),
+            "ATTACK: a closure declared `fn(i64) -> i64` returned a confused bool: {out:?}"
+        );
+    }
+
+    /// A closure's ARGUMENTS: the candidate calls the operator's listener
+    /// with a confused value under the `fn(i64) -> ()` it declared.
+    #[test]
+    fn a_closures_confused_argument_never_crosses_its_declared_type() {
+        let suite = "@[test]\nfn t() {\n    visit(|r| assert(r.ok()))\n}\n";
+        live(
+            "psv1l",
+            suite,
+            "fn visit(cb: fn(i64) -> ()) { cb(9) }\n",
+            "fn visit(cb: fn(i64) -> ()) { cb(4) }\n",
+        );
+        let out = judged(
+            "psv1l",
+            suite,
+            "fn visit(cb: fn(i64) -> ()) { cb(CONFUSED) }\n",
+        );
+        assert!(
+            out != Ok(TestEnd::Completed) && confusion_refused(&out),
+            "ATTACK: the operator's listener was called with a confused bool: {out:?}"
+        );
+    }
+
+    /// The listener's OWN annotation: the candidate declares `fn(T) -> ()`,
+    /// so only the operator's `|r: i64|` states the type.
+    #[test]
+    fn a_lambdas_annotated_parameter_is_cast() {
+        let suite = "@[test]\nfn t() {\n    visit(|r: i64| assert(r.ok()))\n}\n";
+        live(
+            "psv1m",
+            suite,
+            "fn visit<T>(cb: fn(T) -> ()) { cb(9) }\n",
+            "fn visit<T>(cb: fn(T) -> ()) { cb(4) }\n",
+        );
+        let out = judged(
+            "psv1m",
+            suite,
+            "fn visit<T>(cb: fn(T) -> ()) { cb(CONFUSED) }\n",
+        );
+        assert!(
+            out != Ok(TestEnd::Completed) && confusion_refused(&out),
+            "ATTACK: the operator's `|r: i64|` listener was called with a confused bool: {out:?}"
+        );
+    }
+
+    /// A channel is one invariant object: what the candidate sends on a
+    /// `Chan<i64>` is cast.
+    #[test]
+    fn a_confused_value_is_never_sent_on_a_declared_channel() {
+        let suite = "@[test]\nfn t() {\n    let c = chan<i64>()\n    fill(c)\n    assert(c.recv().ok())\n}\n";
+        live(
+            "psv1q",
+            suite,
+            "fn fill(c: Chan<i64>) { c.send(9) }\n",
+            "fn fill(c: Chan<i64>) { c.send(4) }\n",
+        );
+        let out = judged(
+            "psv1q",
+            suite,
+            "fn fill(c: Chan<i64>) { c.send(CONFUSED) }\n",
+        );
+        assert!(
+            out != Ok(TestEnd::Completed) && confusion_refused(&out),
+            "ATTACK: a confused bool was sent on a `Chan<i64>` the operator reads: {out:?}"
+        );
+    }
+
+    /// A `let` annotation: the suite pins the type of a candidate global.
+    #[test]
+    fn a_let_annotation_is_cast() {
+        let suite = "@[test]\nfn t() {\n    let r: i64 = X\n    assert(r.ok())\n}\n";
+        live("psv1b", suite, "let X = 9\n", "let X = 4\n");
+        let out = judged("psv1b", suite, "let X = CONFUSED\n");
+        assert!(
+            out != Ok(TestEnd::Completed) && confusion_refused(&out),
+            "ATTACK: a confused bool was bound to the operator's `let r: i64`: {out:?}"
+        );
+    }
+
+    /// A trait BOUND: `judge<T: Judge>` over a value whose type implements
+    /// only another trait with a same-named, lenient method.
+    #[test]
+    fn a_type_parameters_trait_bound_is_cast() {
+        let suite = "trait Judge {\n    fn ok(self) -> bool\n}\nimpl Judge for i64 {\n    fn ok(self: i64) -> bool { self == 9 }\n}\n\
+                     trait Lax {\n    fn ok(self) -> bool\n}\nimpl Lax for bool {\n    fn ok(self: bool) -> bool { self }\n}\n\
+                     fn judge<T: Judge>(x: T) -> bool { x.ok() }\n@[test]\nfn t() {\n    assert(judge(X))\n}\n";
+        let run = |cand: &str| {
+            sealed_outcome(
+                "psv1r2",
+                suite,
+                &format!("{LAUNDER}{}", cand.replace("CONFUSED", CONFUSED)),
+                "t",
+            )
+        };
+        assert_eq!(
+            run("let X = 9\n"),
+            Ok(TestEnd::Completed),
+            "control: the right answer"
+        );
+        assert!(
+            run("let X = 4\n").is_err(),
+            "control: the wrong answer fails"
+        );
+        let out = run("let X = CONFUSED\n");
+        assert!(
+            out != Ok(TestEnd::Completed) && confusion_refused(&out),
+            "ATTACK: a bool passed the operator's `T: Judge` bound through `Lax`: {out:?}"
+        );
+    }
+
+    // ── C9 round 4b (amendment 60): the cast's notion of "the same type" is
+    // the key a method call dispatches on (`Value::type_name`). ──────────────
+
+    /// The operator's judge: strict at `i64` and `u16`, LENIENT at `u8` (a
+    /// second impl the operator wrote for its own reasons).
+    const WJUDGE: &str = "trait Judge {\n    fn ok(self) -> bool\n}\nimpl Judge for i64 {\n    fn ok(self: i64) -> bool { self == 9 }\n}\nimpl Judge for u16 {\n    fn ok(self: u16) -> bool { self == 9 }\n}\nimpl Judge for u8 {\n    fn ok(self: u8) -> bool { true }\n}\n";
+    /// Candidate-side laundering of a `u8`, typed as whatever the context wants.
+    const WLAUNDER: &str = "fn narrow(n: i64) -> u8 { n as u8 }\nfn wstash(v: u8) -> Dict {\n    let d = dict_new()\n    dict_set(d, \"k\", v)\n    d\n}\n";
+    const WIDE: &str = "match dict_get(wstash(narrow(4)), \"k\") { Some(v) => v  None => DEFAULT }";
+
+    fn widened(tag: &str, suite: &str, cand: &str, default: &str) -> Result<TestEnd, String> {
+        sealed_outcome(
+            tag,
+            &format!("{WJUDGE}{suite}"),
+            &format!(
+                "{WLAUNDER}{}",
+                cand.replace("WIDE", &WIDE.replace("DEFAULT", default))
+            ),
+            "t",
+        )
+    }
+
+    /// The round-4b review's blocker: the cast took every integer width for
+    /// one kind, the dispatch keys on the width, so a `u8` at a declared `i64`
+    /// ran the operator's lenient `u8` impl — even under the suite's own
+    /// `let r: i64` pin. Every boundary the cast applies at.
+    #[test]
+    fn a_value_of_another_integer_width_never_crosses_a_declared_integer() {
+        let holder = "type Holder = { v: i64 }\n";
+        let cases: [(&str, &str, String, String, String, &str); 7] = [
+            (
+                "w4ret",
+                "@[test]\nfn t() {\n    let r: i64 = solve(3)\n    assert(r.ok())\n}\n",
+                "fn solve(n: i64) -> i64 { n * n }\n".into(),
+                "fn solve(n: i64) -> i64 { n + 1 }\n".into(),
+                "fn solve(n: i64) -> i64 { WIDE }\n".into(),
+                "0",
+            ),
+            (
+                "w4opt",
+                "@[test]\nfn t() {\n    match solve(3) {\n        Some(r) => assert(r.ok())\n        None => assert(false)\n    }\n}\n",
+                "fn solve(n: i64) -> Option<i64> { Some(n * n) }\n".into(),
+                "fn solve(n: i64) -> Option<i64> { Some(n + 1) }\n".into(),
+                "fn solve(n: i64) -> Option<i64> { Some(WIDE) }\n".into(),
+                "0",
+            ),
+            (
+                "w4clo",
+                "@[test]\nfn t() {\n    let f = mk()\n    assert(f(3).ok())\n}\n",
+                "fn mk() -> fn(i64) -> i64 { |n: i64| n * n }\n".into(),
+                "fn mk() -> fn(i64) -> i64 { |n: i64| n + 1 }\n".into(),
+                "fn mk() -> fn(i64) -> i64 { |n: i64| WIDE }\n".into(),
+                "n",
+            ),
+            (
+                "w4chan",
+                "@[test]\nfn t() {\n    let c = chan<i64>()\n    fill(c)\n    assert(c.recv().ok())\n}\n",
+                "fn fill(c: Chan<i64>) { c.send(9) }\n".into(),
+                "fn fill(c: Chan<i64>) { c.send(4) }\n".into(),
+                "fn fill(c: Chan<i64>) { c.send(WIDE) }\n".into(),
+                "0",
+            ),
+            (
+                "w4fld",
+                "@[test]\nfn t() {\n    assert(solve(3).v.ok())\n}\n",
+                format!("{holder}fn solve(n: i64) -> Holder {{ Holder {{ v: n * n }} }}\n"),
+                format!("{holder}fn solve(n: i64) -> Holder {{ Holder {{ v: n + 1 }} }}\n"),
+                format!("{holder}fn solve(n: i64) -> Holder {{ Holder {{ v: WIDE }} }}\n"),
+                "0",
+            ),
+            (
+                "w4tp",
+                "@[test]\nfn t() {\n    assert(pick(3, 9).ok())\n}\n",
+                "fn pick<T>(a: T, b: T) -> T { b }\n".into(),
+                "fn pick<T>(a: T, b: T) -> T { a }\n".into(),
+                "fn pick<T>(a: T, b: T) -> T { WIDE }\n".into(),
+                "b",
+            ),
+            (
+                "w4let",
+                "@[test]\nfn t() {\n    let r: i64 = X\n    assert(r.ok())\n}\n",
+                "let X = 9\n".into(),
+                "let X = 4\n".into(),
+                "let X = WIDE\n".into(),
+                "0",
+            ),
+        ];
+        for (tag, suite, good, wrong, attack, default) in cases {
+            assert_eq!(
+                widened(tag, suite, &good, default),
+                Ok(TestEnd::Completed),
+                "control ({tag}): the right answer"
+            );
+            assert!(
+                widened(tag, suite, &wrong, default).is_err(),
+                "control ({tag}): the wrong answer fails"
+            );
+            let out = widened(tag, suite, &attack, default);
+            assert!(
+                out != Ok(TestEnd::Completed) && confusion_refused(&out),
+                "ATTACK: a value of another integer width crossed a declared integer type ({tag}): {out:?}"
+            );
+        }
+    }
+
+    /// Two FIXED widths: a `u8` at a declared `u16` (the strict `u16` impl
+    /// against the lenient `u8` one). The `let r: u16` used to re-tag it.
+    #[test]
+    fn a_value_of_another_fixed_width_never_crosses_a_declared_fixed_width() {
+        let suite = "@[test]\nfn t() {\n    let r: u16 = solve(3)\n    assert(r.ok())\n}\n";
+        assert_eq!(
+            widened(
+                "w4u16",
+                suite,
+                "fn solve(n: i64) -> u16 { (n * n) as u16 }\n",
+                "0 as u16"
+            ),
+            Ok(TestEnd::Completed),
+            "control: the right answer"
+        );
+        assert!(
+            widened(
+                "w4u16",
+                suite,
+                "fn solve(n: i64) -> u16 { (n + 1) as u16 }\n",
+                "0 as u16"
+            )
+            .is_err(),
+            "control: the wrong answer fails"
+        );
+        let out = widened(
+            "w4u16",
+            suite,
+            "fn solve(n: i64) -> u16 { WIDE }\n",
+            "0 as u16",
+        );
+        assert!(
+            out != Ok(TestEnd::Completed) && confusion_refused(&out),
+            "ATTACK: a u8 crossed a declared u16: {out:?}"
+        );
+    }
+
+    /// The other direction: an `i64` at a declared `u8` is CONVERTED to the
+    /// width (as a `u8` parameter, `let` or field always converted it), so it
+    /// dispatches as the `u8` it is declared — never on the `i64` impl.
+    #[test]
+    fn an_i64_at_a_declared_fixed_width_takes_the_width() {
+        let judge = "trait Judge8 {\n    fn ok8(self) -> bool\n}\nimpl Judge8 for u8 {\n    fn ok8(self: u8) -> bool { self == 9 }\n}\nimpl Judge8 for i64 {\n    fn ok8(self: i64) -> bool { true }\n}\n";
+        let suite = format!(
+            "{judge}@[test]\nfn t() {{\n    match solve(3) {{\n        Some(r) => assert(r.ok8())\n        None => assert(false)\n    }}\n}}\n"
+        );
+        let stash = "fn istash(v: i64) -> Dict {\n    let d = dict_new()\n    dict_set(d, \"k\", v)\n    d\n}\n";
+        let run = |body: &str| {
+            sealed_outcome(
+                "w4conv",
+                &suite,
+                &format!("{stash}fn solve(n: i64) -> Option<u8> {{ {body} }}\n"),
+                "t",
+            )
+        };
+        assert_eq!(
+            run("Some((n * n) as u8)"),
+            Ok(TestEnd::Completed),
+            "control: the right answer"
+        );
+        assert!(
+            run("Some((n + 1) as u8)").is_err(),
+            "control: the wrong answer fails"
+        );
+        assert_eq!(
+            run("match dict_get(istash(n * n), \"k\") { Some(v) => Some(v)  None => None }"),
+            Ok(TestEnd::Completed),
+            "control: an i64 at a declared u8 is converted, and judged as the u8 it is"
+        );
+        let out = run("match dict_get(istash(n + 1), \"k\") { Some(v) => Some(v)  None => None }");
+        assert!(
+            out != Ok(TestEnd::Completed),
+            "ATTACK: an i64 crossed a declared u8 without taking its width: {out:?}"
+        );
+    }
+
+    /// Width-correct and generic code is unaffected: a `u8` keeps its width
+    /// through a type parameter, an `i64` literal at a `u8` field converts.
+    #[test]
+    fn width_correct_values_cross_unchanged() {
+        let judge = "trait W {\n    fn w(self) -> str\n}\nimpl W for u8 {\n    fn w(self: u8) -> str { \"u8\" }\n}\nimpl W for i64 {\n    fn w(self: i64) -> str { \"i64\" }\n}\n";
+        let suite = format!(
+            "{judge}type P = {{ b: u8 }}\nfn id<T>(x: T) -> T {{ x }}\nfn small() -> u8 {{ 4 as u8 }}\n\
+             @[test]\nfn t() {{\n    assert(id(small()).w() == \"u8\")\n    assert(id(5).w() == \"i64\")\n    let p = P {{ b: 7 as u8 }}\n    assert(p.b.w() == \"u8\")\n    let a: Option<u8> = Some(4 as u8)\n    match a {{\n        Some(v) => assert(v.w() == \"u8\")\n        None => assert(false)\n    }}\n}}\n"
+        );
+        assert_eq!(
+            sealed_outcome("w4ok", &suite, "fn unused() -> i64 { 0 }\n", "t"),
+            Ok(TestEnd::Completed)
+        );
+    }
+
+    /// The round-4b review's second blocker, at the cast: a named fn is never
+    /// a value (E0306), so a non-closure at a declared `fn(..) -> ..` is a
+    /// confusion. Waved through, a confused `9` selected the operator's `i64`
+    /// impl for a method called on the fn-typed value.
+    #[test]
+    fn a_non_closure_never_crosses_a_declared_fn_type() {
+        let suite = "@[test]\nfn t() {\n    let sq = make()\n    assert(sq.ok())\n}\n\
+                     @[test]\nfn t_call() {\n    let f = make()\n    assert(f(3) == 9)\n}\n";
+        let stash = "fn istash(v: i64) -> Dict {\n    let d = dict_new()\n    dict_set(d, \"k\", v)\n    d\n}\n";
+        let run = |cand: &str, test: &str| {
+            sealed_outcome(
+                "f4cast",
+                &format!("{JUDGE}{suite}"),
+                &format!("{stash}{cand}"),
+                test,
+            )
+        };
+        assert_eq!(
+            run("fn make() -> fn(i64) -> i64 { |n: i64| n * n }\n", "t_call"),
+            Ok(TestEnd::Completed),
+            "control: a real closure crosses and is called"
+        );
+        assert!(
+            run("fn make() -> fn(i64) -> i64 { |n: i64| n + 1 }\n", "t_call").is_err(),
+            "control: the wrong closure fails"
+        );
+        let out = run(
+            "fn make() -> fn(i64) -> i64 {\n    match dict_get(istash(9), \"k\") { Some(v) => v  None => |n: i64| n }\n}\n",
+            "t",
+        );
+        assert!(
+            out != Ok(TestEnd::Completed)
+                && confusion_refused(&out)
+                && matches!(&out, Err(m) if m.contains("declared `fn(i64) -> i64`")),
+            "ATTACK: a non-closure crossed a declared fn type: {out:?}"
+        );
+    }
+
+    /// The second blocker, at the call: a call through a name bound in the
+    /// local environment goes through that value, and a non-closure is not
+    /// callable. It used to fall through to a builtin or fn of the same NAME,
+    /// so a confused value in the operator's local `square` ran the
+    /// operator's own reference `fn square`. This route crosses no declared
+    /// fn type (a `Dict`'s values are untyped), so the cast cannot stand in.
+    #[test]
+    fn a_call_through_a_local_never_resolves_the_name_elsewhere() {
+        let suite = "fn square(n: i64) -> i64 { n * n }\n\
+                     @[test]\nfn t() {\n    match dict_get(table(), \"sq\") {\n        Some(square) => assert(square(3) == 9 && square(5) == 25)\n        None => assert(false)\n    }\n}\n\
+                     @[test]\nfn t_shadow() {\n    let square = |n: i64| n + 100\n    assert(square(1) == 101)\n}\n\
+                     @[test]\nfn t_plain() {\n    let sq = 4\n    assert(square(sq) == 16)\n}\n";
+        let table = |v: &str| {
+            format!("fn table() -> Dict {{\n    let d = dict_new()\n    dict_set(d, \"sq\", {v})\n    d\n}}\n")
+        };
+        let run = |v: &str, test: &str| sealed_outcome("f4call", suite, &table(v), test);
+        assert_eq!(
+            run("|n: i64| n * n", "t"),
+            Ok(TestEnd::Completed),
+            "control: the right closure"
+        );
+        assert!(
+            run("|n: i64| n + 1", "t").is_err(),
+            "control: the wrong closure fails"
+        );
+        assert_eq!(
+            run("0", "t_shadow"),
+            Ok(TestEnd::Completed),
+            "control: a local closure shadowing a fn is what the name calls"
+        );
+        assert_eq!(
+            run("0", "t_plain"),
+            Ok(TestEnd::Completed),
+            "control: with no local of that name, the fn is called"
+        );
+        let out = run("0", "t");
+        assert!(
+            out != Ok(TestEnd::Completed)
+                && matches!(&out, Err(m) if m.contains("is not callable")),
+            "ATTACK: a call through a local ran the operator's fn of the same name: {out:?}"
+        );
+    }
+
+    /// Soft wrappers. At a plain declared type the wrapper is replaced by its
+    /// inner value, so it dispatches as the declared type and never on an
+    /// operator impl for `Uncertain`.
+    #[test]
+    fn a_soft_wrapper_takes_the_declared_plain_type() {
+        let suite = "impl Judge for Uncertain {\n    fn ok(self: Uncertain) -> bool { true }\n}\n\
+                     @[test]\nfn t() {\n    assert(solve(3)[0].ok())\n}\n";
+        live(
+            "s4unwrap",
+            suite,
+            "fn solve(n: i64) -> [i64] { [n * n] }\n",
+            "fn solve(n: i64) -> [i64] { [n + 1] }\n",
+        );
+        let out = judged(
+            "s4unwrap",
+            suite,
+            "fn solve(n: i64) -> [i64] { [uncertain_new(n + 1, 0.5)] }\n",
+        );
+        assert!(
+            out != Ok(TestEnd::Completed),
+            "ATTACK: an Uncertain wrapper crossed a declared plain type: {out:?}"
+        );
+        assert_eq!(
+            judged(
+                "s4unwrap",
+                suite,
+                "fn solve(n: i64) -> [i64] { [uncertain_new(n * n, 0.5)] }\n",
+            ),
+            Ok(TestEnd::Completed),
+            "control: the right answer in a wrapper is the right answer"
+        );
+    }
+
+    /// At a declared soft type: the wrapper of THAT name, its inner value
+    /// cast to `T`; or a plain value cast to `T` (soft typing); the bare name
+    /// takes only its wrapper.
+    #[test]
+    fn a_declared_soft_type_casts_its_wrapper_and_its_inner_value() {
+        let soft = "impl Judge for Uncertain {\n    fn ok(self: Uncertain) -> bool { self.value == 9 }\n}\n\
+                    impl Judge for Temporal {\n    fn ok(self: Temporal) -> bool { true }\n}\n\
+                    impl Judge for f64 {\n    fn ok(self: f64) -> bool { true }\n}\n";
+        let s_wrap = format!(
+            "{soft}@[test]\nfn t() {{\n    let r: Uncertain<i64> = solve(3)\n    assert(r.ok())\n}}\n\
+             @[test]\nfn t_inner() {{\n    let r: Uncertain<i64> = solve(3)\n    assert(r.value.ok())\n}}\n"
+        );
+        let good = "fn solve(n: i64) -> Uncertain<i64> { uncertain_new(n * n, 0.9) }\n";
+        let wrong = "fn solve(n: i64) -> Uncertain<i64> { uncertain_new(n + 1, 0.9) }\n";
+        let laundered = |v: &str| {
+            format!(
+                "fn solve(n: i64) -> Uncertain<i64> {{\n    let d = dict_new()\n    dict_set(d, \"k\", {v})\n    match dict_get(d, \"k\") {{ Some(v) => v  None => uncertain_new(0, 0.9) }}\n}}\n"
+            )
+        };
+        for test in ["t", "t_inner"] {
+            assert_eq!(
+                sealed_outcome(
+                    "s4soft",
+                    &format!("{JUDGE}{s_wrap}"),
+                    &format!("{LAUNDER}{good}"),
+                    test
+                ),
+                Ok(TestEnd::Completed),
+                "control ({test}): the right answer"
+            );
+            assert!(
+                sealed_outcome(
+                    "s4soft",
+                    &format!("{JUDGE}{s_wrap}"),
+                    &format!("{LAUNDER}{wrong}"),
+                    test
+                )
+                .is_err(),
+                "control ({test}): the wrong answer fails"
+            );
+        }
+        let attempt = |v: &str, test: &str| {
+            sealed_outcome(
+                "s4soft",
+                &format!("{JUDGE}{s_wrap}"),
+                &format!("{LAUNDER}{}", laundered(v)),
+                test,
+            )
+        };
+        let out = attempt("temporal_new(4, 100, 0.1)", "t");
+        assert!(
+            out != Ok(TestEnd::Completed) && confusion_refused(&out),
+            "ATTACK: a Temporal crossed a declared Uncertain: {out:?}"
+        );
+        let out = attempt("uncertain_new_f64(4.0, 0.5)", "t_inner");
+        assert!(
+            out != Ok(TestEnd::Completed) && confusion_refused(&out),
+            "ATTACK: an Uncertain of another inner type crossed a declared Uncertain<i64>: {out:?}"
+        );
+        let out = attempt("true", "t");
+        assert!(
+            out != Ok(TestEnd::Completed) && confusion_refused(&out),
+            "ATTACK: a plain value of another type crossed a declared Uncertain<i64>: {out:?}"
+        );
+        // The bare name.
+        let s_bare = format!(
+            "{soft}@[test]\nfn t() {{\n    let r: Uncertain = solve(3)\n    assert(r.ok())\n}}\n"
+        );
+        let bare = |body: &str| {
+            sealed_outcome(
+                "s4bare",
+                &format!("{JUDGE}{s_bare}"),
+                &format!("{LAUNDER}fn solve(n: i64) -> Uncertain {{ {body} }}\n"),
+                "t",
+            )
+        };
+        assert_eq!(
+            bare("uncertain_new(n * n, 0.9)"),
+            Ok(TestEnd::Completed),
+            "control: bare"
+        );
+        assert!(
+            bare("uncertain_new(n + 1, 0.9)").is_err(),
+            "control: bare, wrong"
+        );
+        let out = bare(
+            "match dict_get(stash(true), \"k\") { Some(v) => v  None => uncertain_new(0, 0.9) }",
+        );
+        assert!(
+            out != Ok(TestEnd::Completed) && confusion_refused(&out),
+            "ATTACK: a plain value crossed a declared bare Uncertain: {out:?}"
+        );
+    }
+
+    /// The round-4b EQUIVALENCE blocker: the ENUM-name check had no row. An
+    /// `Other::A` laundered into a declared `-> Grade` ran the operator's
+    /// lenient `impl Judge for Other`.
+    #[test]
+    fn a_confused_enum_never_crosses_as_another_enum() {
+        let suite = "impl Judge for Grade {\n    fn ok(self: Grade) -> bool { match self { Grade::A { x } => x == 9  Grade::B { x } => false } }\n}\n\
+                     impl Judge for Other {\n    fn ok(self: Other) -> bool { true }\n}\n\
+                     @[test]\nfn t() {\n    assert(solve(3).ok())\n}\n";
+        let types =
+            "type Grade = A { x: i64 } | B { x: i64 }\ntype Other = A { x: i64 } | B { x: i64 }\n";
+        live(
+            "e4name",
+            suite,
+            &format!("{types}fn solve(n: i64) -> Grade {{ Grade::A {{ x: n * n }} }}\n"),
+            &format!("{types}fn solve(n: i64) -> Grade {{ Grade::A {{ x: n + 1 }} }}\n"),
+        );
+        let attack = format!(
+            "{types}fn keep(v: Other) -> Dict {{\n    let d = dict_new()\n    dict_set(d, \"k\", v)\n    d\n}}\n\
+             fn solve(n: i64) -> Grade {{\n    match dict_get(keep(Other::A {{ x: n }}), \"k\") {{ Some(v) => v  None => Grade::A {{ x: 0 }} }}\n}}\n"
+        );
+        let out = judged("e4name", suite, &attack);
+        assert!(
+            out != Ok(TestEnd::Completed) && confusion_refused(&out),
+            "ATTACK: an `Other::A` crossed a declared `-> Grade` return: {out:?}"
+        );
+    }
+
+    /// Every refusal arm of the cast, each reached ALONE (C9 round 4b
+    /// EQUIVALENCE audit, amendment 60). An `i64` laundered to a fn declared
+    /// another type crosses into the operator's generic judge, which would
+    /// run its lenient `i64` impl on it: each declared type's own arm is the
+    /// only check between that value and a keyed pass. Control: the type's
+    /// own value crosses (the test `t_cross` completes).
+    #[test]
+    fn every_declared_type_refuses_a_value_of_another_type() {
+        let suite = "trait Judge {\n    fn ok(self) -> bool\n}\nimpl Judge for i64 {\n    fn ok(self: i64) -> bool { true }\n}\n\
+                     fn judge<T: Judge>(x: T) -> bool { x.ok() }\n\
+                     @[test]\nfn t() {\n    assert(judge(solve(3)))\n}\n\
+                     @[test]\nfn t_cross() {\n    let r = solve(3)\n    assert(true)\n}\n";
+        let prelude = "fn istash(v: i64) -> Dict {\n    let d = dict_new()\n    dict_set(d, \"k\", v)\n    d\n}\n\
+                       type Pt = { x: i64 }\ntype Gr = A { x: i64 } | B { y: i64 }\n";
+        let cases: [(&str, &str); 14] = [
+            ("[i64]", "[0]"),
+            ("(i64, i64)", "(0, 0)"),
+            ("Chan<i64>", "chan<i64>()"),
+            ("Option<i64>", "None"),
+            ("Result<i64, str>", "Ok(0)"),
+            ("f64", "0.5"),
+            ("bool", "false"),
+            ("str", "\"x\""),
+            ("()", "println(\"\")"),
+            ("Decimal", "1.5d"),
+            ("Dict", "dict_new()"),
+            ("Pt", "Pt { x: 0 }"),
+            ("Gr", "Gr::B { y: 0 }"),
+            // After `str` and `bool`: under a mutated scalar arm the union
+            // admits the value through that member, which is the scalar
+            // arm's own attack reached first.
+            ("str|bool", "\"x\""),
+        ];
+        for (decl, own) in cases {
+            let run = |v: &str, test: &str| {
+                sealed_outcome(
+                    "a4every",
+                    suite,
+                    &format!(
+                        "{prelude}fn solve(n: i64) -> {decl} {{\n    match dict_get(istash({v}), \"k\") {{ Some(v) => v  None => {own} }}\n}}\n"
+                    ),
+                    test,
+                )
+            };
+            // The control: `dict_get` of a missing key is `None`, so the
+            // declared type's own value is what crosses.
+            let honest = sealed_outcome(
+                "a4every",
+                suite,
+                &format!("{prelude}fn solve(n: i64) -> {decl} {{\n    let d = dict_new()\n    match dict_get(d, \"k\") {{ Some(v) => v  None => {own} }}\n}}\n"),
+                "t_cross",
+            );
+            assert_eq!(
+                honest,
+                Ok(TestEnd::Completed),
+                "control: a `{decl}` crosses `-> {decl}`"
+            );
+            let out = run("n", "t");
+            assert!(
+                out != Ok(TestEnd::Completed) && confusion_refused(&out),
+                "ATTACK: an i64 crossed a declared `{decl}`: {out:?}"
+            );
+        }
+    }
+
+    /// The arms the generic route does not reach alone: a type parameter's
+    /// BINDING, `dyn Trait`, a generic enum's variant fields, a channel's
+    /// already-queued values, and a refinement's base type.
+    #[test]
+    fn the_remaining_cast_arms_refuse_a_value_of_another_type() {
+        // A type parameter bound by the arguments: every later value at it
+        // must agree (T = i64 here; the candidate returns a `bool`).
+        let suite = "@[test]\nfn t() {\n    assert(pick(3, 9).ok())\n}\n";
+        live(
+            "a4bind",
+            suite,
+            "fn pick<T>(a: T, b: T) -> T { b }\n",
+            "fn pick<T>(a: T, b: T) -> T { a }\n",
+        );
+        let out = judged(
+            "a4bind",
+            suite,
+            "fn pick<T>(a: T, b: T) -> T { match dict_get(stash(true), \"k\") { Some(v) => v  None => b } }\n",
+        );
+        assert!(
+            out != Ok(TestEnd::Completed) && confusion_refused(&out),
+            "ATTACK: a bool crossed a type parameter the arguments bound to i64: {out:?}"
+        );
+
+        // `dyn Strict`: a bool, which implements only `Lax` (whose method has
+        // the same name), never crosses as a `Strict`.
+        let suite = "trait Strict {\n    fn st(self) -> bool\n}\nimpl Strict for i64 {\n    fn st(self: i64) -> bool { self == 9 }\n}\n\
+                     trait Lax {\n    fn st(self) -> bool\n}\nimpl Lax for bool {\n    fn st(self: bool) -> bool { self }\n}\n\
+                     @[test]\nfn t() {\n    assert(solve(3).st())\n}\n";
+        let dyn_run = |body: &str| {
+            sealed_outcome(
+                "a4dyn",
+                suite,
+                &format!("{LAUNDER}fn solve(n: i64) -> dyn Strict {{ {body} }}\n"),
+                "t",
+            )
+        };
+        assert_eq!(
+            dyn_run("n * n"),
+            Ok(TestEnd::Completed),
+            "control: dyn, the right answer"
+        );
+        assert!(
+            dyn_run("n + 1").is_err(),
+            "control: dyn, the wrong answer fails"
+        );
+        let out = dyn_run("match dict_get(stash(true), \"k\") { Some(v) => v  None => n }");
+        assert!(
+            out != Ok(TestEnd::Completed) && confusion_refused(&out),
+            "ATTACK: a bool crossed a declared `dyn Strict`: {out:?}"
+        );
+
+        // A generic enum's variant field: at construction `T` is free, so the
+        // field is checked only against the declared `Wr<i64>`.
+        let suite = "@[test]\nfn t() {\n    match solve(3) {\n        Wr::W { v } => assert(v.ok())\n        Wr::N { v } => assert(false)\n    }\n}\n";
+        let wr = "type Wr<T> = W { v: T } | N { v: T }\n";
+        live(
+            "a4enumf",
+            suite,
+            &format!("{wr}fn solve(n: i64) -> Wr<i64> {{ Wr::W {{ v: n * n }} }}\n"),
+            &format!("{wr}fn solve(n: i64) -> Wr<i64> {{ Wr::W {{ v: n + 1 }} }}\n"),
+        );
+        let out = judged(
+            "a4enumf",
+            suite,
+            &format!("{wr}fn solve(n: i64) -> Wr<i64> {{ Wr::W {{ v: CONFUSED }} }}\n"),
+        );
+        assert!(
+            out != Ok(TestEnd::Completed) && confusion_refused(&out),
+            "ATTACK: a confused variant field crossed a declared `-> Wr<i64>`: {out:?}"
+        );
+
+        // A channel's QUEUED values: filled before it crossed `Chan<i64>`. The
+        // channel is `Chan::new` (unstamped): a `chan<i64>()` refuses the send
+        // itself (amendment 72) and never reaches the queued-value cast.
+        let suite = "@[test]\nfn t() {\n    let c = solve(3)\n    assert(c.recv().ok())\n}\n";
+        let chan_run = |v: &str| {
+            sealed_outcome(
+                "a4queue",
+                &format!("{JUDGE}{suite}"),
+                &format!("{LAUNDER}fn solve(n: i64) -> Chan<i64> {{\n    let c = Chan::new(1)\n    c.send({v})\n    c\n}}\n"),
+                "t",
+            )
+        };
+        assert_eq!(
+            chan_run("n * n"),
+            Ok(TestEnd::Completed),
+            "control: queue, the right answer"
+        );
+        assert!(
+            chan_run("n + 1").is_err(),
+            "control: queue, the wrong answer fails"
+        );
+        let out = chan_run(CONFUSED);
+        assert!(
+            out != Ok(TestEnd::Completed) && confusion_refused(&out),
+            "ATTACK: a value queued before the channel crossed `Chan<i64>` was never cast: {out:?}"
+        );
+
+        // A non-integer at a declared fixed width (the width arm's last arm).
+        let suite = "impl Judge for u8 {\n    fn ok(self: u8) -> bool { self == 9 }\n}\n\
+                     @[test]\nfn t() {\n    assert(solve(3).ok())\n}\n";
+        live(
+            "a4u8",
+            suite,
+            "fn solve(n: i64) -> u8 { (n * n) as u8 }\n",
+            "fn solve(n: i64) -> u8 { (n + 1) as u8 }\n",
+        );
+        let out = judged(
+            "a4u8",
+            suite,
+            "fn solve(n: i64) -> u8 { match dict_get(stash(true), \"k\") { Some(v) => v  None => 0 as u8 } }\n",
+        );
+        assert!(
+            out != Ok(TestEnd::Completed) && confusion_refused(&out),
+            "ATTACK: a bool crossed a declared `u8`: {out:?}"
+        );
+
+        // A refinement's base type: `Pos = i64 where _ > 0`, and a `u8` that
+        // satisfies the predicate would run the operator's lenient `u8` impl.
+        let suite = "@[test]\nfn t() {\n    assert(solve(3).ok())\n}\n";
+        let pos = "type Pos = i64 where _ > 0\n";
+        assert_eq!(
+            widened(
+                "a4refine",
+                suite,
+                &format!("{pos}fn solve(n: i64) -> Pos {{ n * n }}\n"),
+                "1"
+            ),
+            Ok(TestEnd::Completed),
+            "control: refinement, the right answer"
+        );
+        assert!(
+            widened(
+                "a4refine",
+                suite,
+                &format!("{pos}fn solve(n: i64) -> Pos {{ n + 1 }}\n"),
+                "1"
+            )
+            .is_err(),
+            "control: refinement, the wrong answer fails"
+        );
+        let out = widened(
+            "a4refine",
+            suite,
+            &format!("{pos}fn solve(n: i64) -> Pos {{ WIDE }}\n"),
+            "1",
+        );
+        assert!(
+            out != Ok(TestEnd::Completed) && confusion_refused(&out),
+            "ATTACK: a u8 crossed a declared refinement of i64: {out:?}"
+        );
+    }
+
+    #[test]
+    fn runtime_sealing_holds_without_the_static_check() {
+        // PCI candidate-3 review: the STATIC sealing walk missed match guards,
+        // method calls, functions named in strings, refinements attaching by
+        // name. The runtime edges (call, global read, refinement) must hold on
+        // their own, so this builds the interpreter WITHOUT the resolver.
+        use crate::span::intern_source;
+        let suite = "fn expected(n: i64) -> i64 { n * 2 }\n\
+                     trait Answers { fn answer(self) -> i64 }\n\
+                     impl Answers for i64 { fn answer(self: i64) -> i64 { self * 2 } }\n\
+                     fn build() -> Dict {\n    let d = dict_new()\n    dict_set(d, \"k\", 42)\n    d\n}\n\
+                     let TABLE = build()\n\
+                     fn lookup(t: Loot, k: str) -> i64 { dict_get_or(t, k, 0) }\n\
+                     fn apply(g: fn(i64) -> i64) -> i64 { g(21) }\n\
+                     @[test]\nfn t() { assert_eq(double(21), expected(21)) }\n\
+                     @[test]\nfn t_key() { assert_eq(double(21), lookup(TABLE, \"k\")) }\n\
+                     @[test]\nfn t_closure() { assert_eq(twice()(21), expected(21)) }\n\
+                     @[test]\nfn t_callback() { assert_eq(via(|n: i64| expected(n)), 42) }\n\
+                     fn reference(n: i64) -> i64 { n * 7 + 5 }\n\
+                     @[test]\nfn t_fiber() {\n    let id = scheduler_spawn(\"reference\", 21)\n    scheduler_run()\n    assert_eq(solve(21), scheduler_result(id))\n}\n\
+                     fn check_one(x: i64) { assert_eq(double(x), x * 2) }\n\
+                     @[test]\nfn t_fanout() {\n    let a = scheduler_spawn(\"check_one\", 1)\n    let b = scheduler_spawn(\"check_one\", 2)\n    scheduler_run()\n    assert(!scheduler_failed(a) && !scheduler_failed(b))\n}\n\
+                     @[test]\nfn t_range() {\n    let r = Range { lo: 1, hi: 2 }\n    assert_eq(double(21), expected(21))\n}\n\
+                     @[test]\nfn t_latch() {\n    let d = double(21)\n    if !corrigible_halted() { assert_eq(d, 42) }\n}\n\
+                     @[adaptive]\nfn score(n: i64) -> i64 { n * 3 }\n\
+                     @[test]\nfn t_adaptive() {\n    let s = score(14)\n    assert_eq(double(21), s)\n}\n";
+        let run = |cand: &str, test: &str| {
+            let s = crate::parse_source_in(suite, intern_source("/pci-rt-suite/h.ax", suite))
+                .expect("suite parses");
+            let c = crate::parse_source_in(cand, intern_source("/pci-rt-sealed/f.ax", cand))
+                .expect("candidate parses");
+            let prog = Program {
+                items: s.items.into_iter().chain(c.items).collect(),
+            };
+            // The sealed set is process-global: hold the lock across
+            // set/run/clear so a concurrent sealed test cannot swap it.
+            let _g = SEALED_DIRS_TEST_LOCK
+                .lock()
+                .unwrap_or_else(|p| p.into_inner());
+            crate::resolver::set_sealed_module_dirs(&[std::path::PathBuf::from("/pci-rt-sealed")]);
+            let out = run_test_fn_outcome(&prog, test);
+            crate::resolver::set_sealed_module_dirs(&[]);
+            out
+        };
+        // Honest definitions of everything the suite imports; an attack
+        // replaces the ones it names (the interpreter keeps the LAST definition,
+        // so a base part is included only when the candidate does not define it).
+        let base_parts = [
+            (
+                "fn twice",
+                "fn twice() -> fn(i64) -> i64 { |n: i64| n * 2 }\n",
+            ),
+            ("fn via", "fn via(g: fn(i64) -> i64) -> i64 { g(21) }\n"),
+            ("fn solve", "fn solve(n: i64) -> i64 { n * 7 + 5 }\n"),
+            ("type Range", "type Range = { lo: i64, hi: i64 }\n"),
+        ];
+        let with_base = |cand: &str| -> String {
+            let mut out = cand.to_string();
+            for (key, def) in base_parts {
+                if !cand.contains(key) {
+                    out.push_str(def);
+                }
+            }
+            out
+        };
+        for (why, cand, test) in [
+            ("direct call", "fn double(n: i64) -> i64 { expected(n) }\n", "t"),
+            ("method on a builtin type", "fn double(n: i64) -> i64 { n.answer() }\n", "t"),
+            // A function named in a string (`scheduler_spawn`): see
+            // `a_sealed_fiber_never_runs_an_operator_function`.
+            ("global read", "fn double(n: i64) -> i64 { dict_get_or(TABLE, \"k\", 0) }\n", "t_key"),
+            (
+                "match guard",
+                "fn double(n: i64) -> i64 {\n    match n {\n        x if dict_get_or(TABLE, \"k\", 0) > 0 => 42\n        _ => 0\n    }\n}\n",
+                "t_key",
+            ),
+            (
+                "refinement attaching to an operator annotation",
+                "fn poke(d: Dict) -> bool {\n    dict_set(d, \"k\", 0)\n    true\n}\ntype Loot = Dict where poke(_)\nfn double(n: i64) -> i64 { 0 }\n",
+                "t_key",
+            ),
+            (
+                "a candidate closure called by the operator",
+                "fn double(n: i64) -> i64 { n * 2 }\nfn twice() -> fn(i64) -> i64 { |n: i64| expected(n) }\n",
+                "t_closure",
+            ),
+            (
+                "module-level initializer",
+                "let STEAL = expected(21)\nfn double(n: i64) -> i64 { n * 2 }\n",
+                "t",
+            ),
+            // PCI candidate-4 review: definition provenance and handle-addressed
+            // kernel state.
+            (
+                "a candidate struct's where, built by the operator",
+                "type Range = { lo: i64, hi: i64 } where expected(_.lo) > 0\nfn double(n: i64) -> i64 { n * 2 }\n",
+                "t_range",
+            ),
+            (
+                "an initializer reading an operator global",
+                "let STEAL = dict_get_or(TABLE, \"k\", 0)\nfn double(n: i64) -> i64 { n * 2 }\n",
+                "t",
+            ),
+            (
+                "a candidate handler arm",
+                "fn double(n: i64) -> i64 {\n    with handler { on IO(p) => resume(expected(21)) } {\n        println(\"x\")\n    }\n    n * 0 + 42\n}\n",
+                "t",
+            ),
+        ] {
+            let cand = with_base(cand);
+            // Refused BY THE SEAL — not failing for some unrelated reason.
+            let out = run(&cand, test);
+            assert!(
+                matches!(&out, Err(m) if m.contains("sealed code") || m.contains("is the candidate's")),
+                "ATTACK: sealed code reached the operator ({why}): {out:?}"
+            );
+        }
+        // Honest, and the interface: the operator calls the candidate, and a
+        // closure the OPERATOR hands the candidate may call operator helpers.
+        let honest = with_base("fn double(n: i64) -> i64 { n * 2 }\n");
+        for test in [
+            "t",
+            "t_closure",
+            "t_callback",
+            "t_fiber",
+            "t_fanout",
+            "t_range",
+            "t_latch",
+            "t_adaptive",
+        ] {
+            assert_eq!(run(&honest, test), Ok(TestEnd::Completed), "{test}");
+        }
+        // Forged HANDLES: the operator's fiber ids do not exist from a sealed
+        // frame (its own kernel), so reading the operator's result or erasing
+        // its failure does not work — the test FAILS rather than passing.
+        for (why, cand, test) in [
+            (
+                "reads the operator's fiber result by id",
+                "fn double(n: i64) -> i64 { n * 2 }\nfn solve(n: i64) -> i64 { scheduler_result(0) }\n",
+                "t_fiber",
+            ),
+            (
+                "restarts the operator's failed fibers",
+                "let CALLS = dict_new()\n\
+                 fn double(n: i64) -> i64 {\n    let c = dict_get_or(CALLS, \"c\", 0)\n    dict_set(CALLS, \"c\", c + 1)\n    if c == 0 { 999 } else {\n        scheduler_restart(0)\n        scheduler_restart(1)\n        n * 2\n    }\n}\n",
+                "t_fanout",
+            ),
+            // Effect-free state a builtin reads is per provenance too: the
+            // kill-switch latch, and the adaptive-score store `agent_*` read.
+            (
+                "trips the operator's kill-switch latch to skip its assertion",
+                "fn double(n: i64) -> i64 {\n    corrigible_halt()\n    0\n}\n",
+                "t_latch",
+            ),
+            (
+                "reads the operator's adaptive trace by name",
+                "fn double(n: i64) -> i64 { agent_trace_len(\"score\") * 42 }\n",
+                "t_adaptive",
+            ),
+        ] {
+            let out = run(&with_base(cand), test);
+            assert!(
+                out.is_err(),
+                "ATTACK: a sealed frame reached the operator's kernel state ({why}): {out:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn no_control_transfer_escapes_a_frame() {
+        // PCI candidate-1 review: `return` out of a predicate, and a `resume`
+        // smuggled out of a handler arm in a closure, both unwound the
+        // operator's test as a NORMAL completion (a completion token for a test
+        // whose assertion never ran). The frame edge is now an allowlist
+        // (`contain_frame`): whatever the transfer, it cannot leave the frame.
+        let escapes = [
+            ("param refinement", "fn solve(n: i64 where if n > 0 { return 0 } else { true }) -> i64 { n * 0 }\n"),
+            ("return refinement", "fn solve(n: i64) -> (i64 where if _ == 0 { return 0 } else { true }) { n * 0 }\n"),
+            ("verify", "@[verify(if value == 0 { return 0 } else { true })]\nfn solve(n: i64) -> i64 { n * 0 }\n"),
+            (
+                "resume closure",
+                "fn grab() -> fn() -> str {\n    with handler { on IO(p) => || resume(\"go\") } {\n        println(\"x\")\n        || \"never\"\n    }\n}\n\
+                 fn solve(n: i64) -> i64 {\n    let k = grab()\n    let _ = k()\n    n * 0\n}\n",
+            ),
+        ];
+        // Each escape is tried from two operator test shapes, separately — one
+        // shape's own failure must not mask the other's escape: a direct call,
+        // and a call from inside the operator's own handler arm (where a
+        // smuggled `resume` lands).
+        let bodies = [
+            ("direct", "@[test]\nfn t() { assert_eq(solve(21), 42) }\n"),
+            (
+                "in the operator's arm",
+                "fn check(p: str) -> str {\n    assert_eq(solve(21), 42)\n    p\n}\n\
+                 @[test]\nfn t() {\n    with handler { on IO(p) => resume(check(p)) } {\n        println(\"go\")\n    }\n}\n",
+            ),
+        ];
+        // Through an OPERATOR HELPER (C9 round 3, rows): a `return` escaping
+        // the candidate's frame lands in the helper, which then returns the
+        // CANDIDATE's value as its own. The test body itself runs to its end,
+        // so the completion rule (`EndedEarly`) cannot see it: the frame edge
+        // is the only guard on this route. Checked first, so a shape the
+        // completion rule also refuses cannot mask it.
+        for (why, def) in [
+            ("param refinement", "fn solve(n: i64 where if n > 0 { return 42 } else { true }) -> i64 { n * 0 }\n"),
+            ("return refinement", "fn solve(n: i64) -> (i64 where if _ == 0 { return 42 } else { true }) { n * 0 }\n"),
+            ("verify", "@[verify(if value == 0 { return 42 } else { true })]\nfn solve(n: i64) -> i64 { n * 0 }\n"),
+        ] {
+            let prog = crate::parse_source(&format!(
+                "{def}fn check(n: i64) -> i64 {{\n    solve(n)\n}}\n\
+                 @[test]\nfn t() {{ assert_eq(check(21), 42) }}\n"
+            ))
+            .expect("parses");
+            let end = run_test_fn_outcome(&prog, "t");
+            assert!(
+                end.is_err(),
+                "ATTACK: a `return` escaped the candidate's {why} into the operator's helper \
+                 and the test completed ({why} (helper): {end:?})"
+            );
+        }
+        for (why, def) in escapes {
+            for (shape, body) in bodies {
+                let prog = crate::parse_source(&format!("{def}{body}")).expect("parses");
+                let end = run_test_fn_outcome(&prog, "t");
+                assert!(end.is_err(), "{why} ({shape}): {end:?}");
+            }
+        }
+        let struct_src = "type Arg = { n: i64 } where if _.n > 0 { return 0 } else { true }\n\
+                          fn make(n: i64) -> i64 {\n    let a = Arg { n: n }\n    a.n * 0\n}\n\
+                          @[test]\nfn t() { assert_eq(make(21), 42) }\n";
+        let prog = crate::parse_source(struct_src).expect("parses");
+        assert!(
+            run_test_fn_outcome(&prog, "t").is_err(),
+            "struct refinement"
+        );
+
+        let prog = crate::parse_source(
+            // A handler completion is ADDRESSED: the IO arm (7, no resume)
+            // finishes the operator's `with`, not the nearest one — the
+            // candidate's Random handler used to swallow it (v was 107).
+            "fn c() -> i64 {\n    with handler { on Random(p) => resume(1) } {\n        println(\"x\")\n        5\n    }\n}\n\
+             @[test]\nfn t_handler() {\n    let v = with handler { on IO(p) => 7 } {\n        let r = c()\n        r + 100\n    }\n    assert_eq(v, 7)\n}\n\
+             @[test]\nfn t_nan() { assert_eq_f64(0.0 / 0.0, 2.0) }\n\
+             @[test]\nfn t_inf() { assert_eq_f64(1.0 / 0.0, 1.0 / 0.0) }\n\
+             fn honest(n: i64 where n >= 0) -> (i64 where _ >= 0) { n * 2 }\n\
+             @[test]\nfn t_honest() { assert_eq(honest(21), 42) }\n",
+        )
+        .expect("parses");
+        let end = |t: &str| run_test_fn_outcome(&prog, t);
+        assert_eq!(
+            end("t_handler"),
+            Ok(TestEnd::Completed),
+            "ATTACK: a handler completion was caught by a `with` that did not install it"
+        );
+        assert!(end("t_nan").is_err(), "NaN passed an f64 assertion");
+        assert_eq!(end("t_inf"), Ok(TestEnd::Completed));
+        assert_eq!(end("t_honest"), Ok(TestEnd::Completed));
+
+        // A property case that `exit(0)`s did not complete either.
+        let prog = crate::parse_source(
+            "fn bail(n: i64) -> i64 {\n    exit(0)\n    n\n}\n\
+             @[test]\n@[forall]\nfn p(n: i64) { assert_eq(bail(n), 99) }\n",
+        )
+        .expect("parses");
+        assert!(
+            matches!(
+                proptest::run_property_test(&prog, "p", 5),
+                proptest::PropertyOutcome::Failed { .. }
+            ),
+            "an exit(0) property case passed"
+        );
+    }
+
+    #[test]
+    fn a_test_completes_only_when_its_body_returns_normally() {
+        // PCI 11/12/13: the affirmative completion point. `run_test_fn` still
+        // reports the early ends as "not failed" (existing `axon test`
+        // behaviour); what changes is that they are not `Completed`, so no
+        // completion evidence is issued for them.
+        let prog = crate::parse_source(
+            "fn bail(n: i64) -> i64 {\n    if n > 0 { exit(0) }\n    n\n}\n\
+             fn early(n: i64) -> i64 {\n    if n > 0 { return 5 }\n    n\n}\n\
+             @[test]\nfn t_done() { assert_eq(early(0), 0) }\n\
+             @[test]\nfn t_exit() { assert_eq(bail(1), 99) }\n\
+             @[test]\nfn t_err() -> Result<i64, str> { Err(\"no\") }\n\
+             @[test]\nfn t_q() -> Result<i64, str> {\n    let n = parse_int(\"x\")?\n    assert_eq(n, 99)\n    Ok(n)\n}\n\
+             @[test]\nfn t_ok() -> Result<i64, str> { Ok(1) }\n\
+             @[test]\nfn t_return() { assert_eq(early(1), 99) }\n\
+             @[test]\nfn t_closure_return() {\n    let g = |n: i64| { if n > 0 { return 5 }  n }\n    assert_eq(g(1), 99)\n}\n",
+        )
+        .expect("parses");
+        let end = |t: &str| run_test_fn_outcome(&prog, t);
+        assert_eq!(end("t_done"), Ok(TestEnd::Completed));
+        assert_eq!(end("t_ok"), Ok(TestEnd::Completed));
+        for t in ["t_exit", "t_err", "t_q"] {
+            assert!(
+                matches!(end(t), Ok(TestEnd::EndedEarly(_))),
+                "{t}: {:?}",
+                end(t)
+            );
+        }
+        // PCI 8: a callee's `return` ends the callee, never the test — the
+        // assertion after it still runs and fails.
+        for t in ["t_return", "t_closure_return"] {
+            assert!(end(t).is_err(), "{t}: {:?}", end(t));
+        }
+    }
+
+    #[test]
+    fn an_escaped_break_or_continue_does_not_pass_a_test() {
+        let prog = crate::parse_source(
+            "fn stop(n: i64) -> i64 {\n    if n > 0 { break }\n    n\n}\n\
+             fn skip(n: i64) -> i64 {\n    if n > 0 { continue }\n    n\n}\n\
+             @[test]\nfn t_break() { assert_eq(stop(1), 99) }\n\
+             @[test]\nfn t_continue() { assert_eq(skip(1), 99) }\n\
+             @[test]\nfn t_ok() { assert_eq(stop(0), 0) }\n",
+        )
+        .expect("parses");
+        assert!(run_test_fn(&prog, "t_break").is_err());
+        assert!(run_test_fn(&prog, "t_continue").is_err());
+        assert!(run_test_fn(&prog, "t_ok").is_ok());
+        // Candidate 2's blocker: the escape lands in a loop the TEST owns. It
+        // must not end that loop and skip the assertions (while, for, and
+        // through a closure).
+        let prog = crate::parse_source(
+            "fn stop(n: i64) -> i64 {\n    if n > 0 { break }\n    n\n}\n\
+             fn skip(n: i64) -> i64 {\n    if n > 0 { continue }\n    n\n}\n\
+             @[test]\nfn t_while() {\n    let mut i = 1\n    while i < 4 {\n        assert_eq(stop(i), 99)\n        i = i + 1\n    }\n}\n\
+             @[test]\nfn t_for() {\n    for i in 1..4 {\n        assert_eq(skip(i), 99)\n    }\n}\n\
+             @[test]\nfn t_closure() {\n    let g = |n: i64| { if n > 0 { break }  n }\n    for i in 1..4 {\n        assert_eq(g(i), 99)\n    }\n}\n\
+             @[test]\nfn t_own_loop_ok() {\n    let mut i = 0\n    while true {\n        i = i + 1\n        if i > 2 { break }\n    }\n    assert_eq(i, 3)\n}\n",
+        )
+        .expect("parses");
+        for t in ["t_while", "t_for", "t_closure"] {
+            assert!(run_test_fn(&prog, t).is_err(), "{t} passed");
+        }
+        assert!(
+            run_test_fn(&prog, "t_own_loop_ok").is_ok(),
+            "a test's own break still works"
+        );
+    }
+
+    /// M58's OWN property, and only it: a `break`/`continue` raised in a named
+    /// FUNCTION BODY does not escape into the caller's loop. The test above also
+    /// attacks a closure, which never goes through `call_fn_frame`, so it cannot
+    /// separate M58 from `contain_frame` (M59): with M59 removed the closure case
+    /// reopens whatever M58 does (C9 four-cell run). Every attack here enters
+    /// `call_fn_frame`, whose ONLY caller wraps it in `contain_frame`.
+    #[test]
+    fn an_escaped_break_or_continue_from_a_function_body_does_not_pass_a_test() {
+        let prog = crate::parse_source(
+            "fn stop(n: i64) -> i64 {\n    if n > 0 { break }\n    n\n}\n\
+             fn skip(n: i64) -> i64 {\n    if n > 0 { continue }\n    n\n}\n\
+             @[test]\nfn t_break() { assert_eq(stop(1), 99) }\n\
+             @[test]\nfn t_continue() { assert_eq(skip(1), 99) }\n\
+             @[test]\nfn t_while() {\n    let mut i = 1\n    while i < 4 {\n        assert_eq(stop(i), 99)\n        i = i + 1\n    }\n}\n\
+             @[test]\nfn t_for() {\n    for i in 1..4 {\n        assert_eq(skip(i), 99)\n    }\n}\n\
+             @[test]\nfn t_ok() { assert_eq(stop(0), 0) }\n",
+        )
+        .expect("parses");
+        for t in ["t_break", "t_continue", "t_while", "t_for"] {
+            assert!(
+                run_test_fn(&prog, t).is_err(),
+                "ATTACK: `{t}` passed: a break/continue escaped a function body"
+            );
+        }
+        assert!(run_test_fn(&prog, "t_ok").is_ok(), "control: t_ok");
+    }
     use super::*;
 
     fn run(src: &str) -> i32 {
@@ -5273,6 +7904,1096 @@ fn main() { }
         // so unix_socket_roundtrip is never invoked.
         let code = super::run_suspendable_hypercall(&prog);
         assert_eq!(code, 0);
+    }
+    // ── C9 round 4c, PSV-1 (amendment 72): an undetermined type position ──
+    //
+    // At a seal crossing, every position of the type a value is cast to is
+    // determined from the operator side, or the crossing is refused. The
+    // review's class: a free type parameter, an erased type argument or an
+    // absent declaration left a position open, and the candidate chose the
+    // runtime type there — and with it the operator's impl. The operator's
+    // `u8` impl is the lenient one, so a laundered `u8` is a keyed pass.
+
+    const JUDGE8: &str = "trait Judge {\n    fn ok(self) -> bool\n}\nimpl Judge for i64 {\n    fn ok(self: i64) -> bool { self == 9 }\n}\nimpl Judge for u8 {\n    fn ok(self: u8) -> bool { true }\n}\n";
+    const LAUNDER8: &str = "fn narrow(n: i64) -> u8 { n as u8 }\nfn stash(v: u8) -> Dict {\n    let d = dict_new()\n    dict_set(d, \"k\", v)\n    d\n}\n";
+
+    /// `match dict_get(stash(narrow(4)), "k") { Some(v) => {some}  None => {none} }`
+    fn u8_or(some: &str, none: &str) -> String {
+        format!("match dict_get(stash(narrow(4)), \"k\") {{ Some(v) => {some}  None => {none} }}")
+    }
+
+    fn judged8(tag: &str, suite: &str, cand: &str) -> Result<TestEnd, String> {
+        sealed_outcome(
+            tag,
+            &format!("{JUDGE8}{suite}"),
+            &format!("{LAUNDER8}{cand}"),
+            "t",
+        )
+    }
+
+    fn live8(tag: &str, suite: &str, good: &str, wrong: &str) {
+        assert_eq!(
+            judged8(tag, suite, good),
+            Ok(TestEnd::Completed),
+            "control: the right answer"
+        );
+        assert!(
+            judged8(tag, suite, wrong).is_err(),
+            "control: the wrong answer fails"
+        );
+    }
+
+    fn honest8(tag: &str, suite: &str, cand: &str) {
+        assert_eq!(
+            judged8(tag, suite, cand),
+            Ok(TestEnd::Completed),
+            "control: an honest program crosses"
+        );
+    }
+
+    /// B1. The operator's `chan<i64>()` STATES its element type: the channel
+    /// is stamped with it at creation, so a candidate's generic `Chan<T>`
+    /// binds `T` from it, and a value of another type is never sent. The
+    /// second attack reaches the stamp alone: through a dict hop the
+    /// candidate re-declares the channel `Chan<u8>` (a determined type of its
+    /// OWN choosing), which the send-side rule accepts.
+    #[test]
+    fn a_channel_carries_the_element_type_its_creation_states() {
+        let suite = "@[test]\nfn t() {\n    let c = chan<i64>()\n    fill(c)\n    assert(c.recv().ok())\n}\n";
+        live8(
+            "r4c-chan",
+            suite,
+            "fn fill(c: Chan<i64>) { c.send(9) }\n",
+            "fn fill(c: Chan<i64>) { c.send(4) }\n",
+        );
+        honest8(
+            "r4c-chan",
+            suite,
+            "fn fill<T>(c: Chan<T>) {\n    let d: Chan<T> = c\n    put(d)\n}\nfn put(c: Chan<i64>) { c.send(9) }\n",
+        );
+        let out = judged8(
+            "r4c-chan",
+            suite,
+            &format!(
+                "fn fill<T>(c: Chan<T>) {{\n    {}\n}}\n",
+                u8_or("c.send(v)", "{}")
+            ),
+        );
+        assert!(
+            out != Ok(TestEnd::Completed) && confusion_refused(&out),
+            "ATTACK: a u8 was sent on the operator's chan<i64>() through a generic Chan<T>: {out:?}"
+        );
+        let hop = "fn fill<T>(c: Chan<T>) {\n    let d = dict_new()\n    dict_set(d, \"c\", c)\n    match dict_get(d, \"c\") { Some(x) => put(x)  None => {} }\n}\nfn put(c: Chan<u8>) { c.send(narrow(4)) }\n";
+        let out = judged8("r4c-chan", suite, hop);
+        assert!(
+            out != Ok(TestEnd::Completed) && confusion_refused(&out),
+            "ATTACK: the candidate re-declared the operator's chan<i64>() as Chan<u8> and sent a u8: {out:?}"
+        );
+    }
+
+    /// B1, the channel the operator created WITHOUT a closed element type
+    /// (`Chan::new`, or `chan<T>()` in its own generic code): a sealed send
+    /// on it needs an element type something on the operator side
+    /// determined. A free `T` of the candidate's never counts.
+    #[test]
+    fn a_sealed_send_on_an_operator_channel_needs_a_determined_element_type() {
+        let suite = "@[test]\nfn t() {\n    assert(run(9))\n}\nfn run<T: Judge>(x: T) -> bool {\n    let c = chan<T>()\n    c.send(x)\n    fill(c)\n    c.recv().ok()\n}\n";
+        // Control: an honest generic relay — `U` is bound from the value the
+        // operator queued, so the send meets a determined type.
+        honest8(
+            "r4c-opchan",
+            suite,
+            "fn fill<U>(c: Chan<U>) {\n    let v = c.recv()\n    c.send(v)\n}\n",
+        );
+        // Control: the candidate's OWN unstamped channel is its business.
+        honest8(
+            "r4c-opchan",
+            "@[test]\nfn t() {\n    assert(mine())\n}\n",
+            "fn mine() -> bool {\n    let c = Chan::new(2)\n    c.send(9)\n    c.recv() == 9\n}\n",
+        );
+        // The attack: nothing queued, so nothing binds the candidate's `U`.
+        let empty = "@[test]\nfn t() {\n    assert(run(9))\n}\nfn run<T: Judge>(x: T) -> bool {\n    let c = chan<T>()\n    fill(c)\n    c.recv().ok()\n}\n";
+        let cand = format!(
+            "fn fill<U>(c: Chan<U>) {{\n    {}\n}}\n",
+            u8_or("c.send(v)", "{}")
+        );
+        let out = judged8("r4c-opchan", empty, &cand);
+        assert!(
+            out != Ok(TestEnd::Completed)
+                && matches!(&out, Err(m) if m.contains("nothing on the operator side determined")),
+            "ATTACK: a u8 was sent on the operator's unstamped chan<T>() at the candidate's free U: {out:?}"
+        );
+        let suite_new = "@[test]\nfn t() {\n    let c = Chan::new(4)\n    fill(c)\n    assert(c.recv().ok())\n}\n";
+        let out = judged8(
+            "r4c-opchan",
+            suite_new,
+            &format!(
+                "fn fill<U>(c: Chan<U>) {{\n    {}\n}}\n",
+                u8_or("c.send(v)", "{}")
+            ),
+        );
+        assert!(
+            out != Ok(TestEnd::Completed)
+                && matches!(&out, Err(m) if m.contains("nothing on the operator side determined")),
+            "ATTACK: a u8 was sent on the operator's Chan::new(4) at the candidate's free U: {out:?}"
+        );
+    }
+
+    /// B1, the return direction: a candidate returning `Chan<T>` at a `T`
+    /// nothing determined is refused — even with values queued, which the
+    /// candidate chose.
+    #[test]
+    fn a_channel_returned_at_an_undetermined_element_type_is_refused() {
+        let suite = "@[test]\nfn t() {\n    let c = mk(9)\n    assert(c.recv().ok())\n}\n";
+        honest8(
+            "r4c-chanret",
+            suite,
+            "fn mk<T>(x: T) -> Chan<T> {\n    let c = Chan::new(1)\n    c.send(x)\n    c\n}\n",
+        );
+        let out = judged8(
+            "r4c-chanret",
+            suite,
+            "fn mk<T>(n: i64) -> Chan<T> {\n    let c = chan<u8>()\n    c.send(narrow(4))\n    c\n}\n",
+        );
+        assert!(
+            out != Ok(TestEnd::Completed) && confusion_refused(&out),
+            "ATTACK: the candidate returned its own Chan<u8> at a Chan<T> nothing determined: {out:?}"
+        );
+    }
+
+    /// B3. A generic struct's or enum's type argument is never erased: the
+    /// caller's `T` stays `T`, so the operator's argument binds it and the
+    /// candidate's field of another type is refused at the return.
+    #[test]
+    fn a_generic_struct_or_enum_argument_binds_its_type_parameter() {
+        let wrap = "type Wrap<T> = { v: T }\n";
+        let suite =
+            "@[test]\nfn t() {\n    let w = solve(Wrap { v: 3 })\n    assert(w.v.ok())\n}\n";
+        live8(
+            "r4c-wrap",
+            suite,
+            &format!("{wrap}fn solve(w: Wrap<i64>) -> Wrap<i64> {{ Wrap {{ v: w.v * w.v }} }}\n"),
+            &format!("{wrap}fn solve(w: Wrap<i64>) -> Wrap<i64> {{ Wrap {{ v: w.v + 1 }} }}\n"),
+        );
+        honest8(
+            "r4c-wrap",
+            "@[test]\nfn t() {\n    let w = solve(Wrap { v: Wrap { v: 9 } })\n    assert(w.v.v.ok())\n}\n",
+            &format!("{wrap}fn solve<T>(w: Wrap<Wrap<T>>) -> Wrap<Wrap<T>> {{ Wrap {{ v: Wrap {{ v: w.v.v }} }} }}\n"),
+        );
+        let cases = [
+            (
+                "a Wrap<T> field (the review's candidate)",
+                suite.to_string(),
+                format!("{wrap}fn solve<T>(w: Wrap<T>) -> Wrap<T> {{\n    {}\n}}\n", u8_or("Wrap { v: v }", "w")),
+            ),
+            (
+                "a nested Wrap<Wrap<T>> field",
+                "@[test]\nfn t() {\n    let w = solve(Wrap { v: Wrap { v: 3 } })\n    assert(w.v.v.ok())\n}\n".to_string(),
+                format!(
+                    "{wrap}fn solve<T>(w: Wrap<Wrap<T>>) -> Wrap<Wrap<T>> {{\n    {}\n}}\n",
+                    u8_or("Wrap { v: Wrap { v: v } }", "w")
+                ),
+            ),
+            (
+                "a generic enum variant's field",
+                "@[test]\nfn t() {\n    match solve(Opt::Has { v: 3 }) {\n        Opt::Has { v } => assert(v.ok())\n        Opt::Nada => assert(false)\n    }\n}\n".to_string(),
+                format!(
+                    "type Opt<T> = Has {{ v: T }} | Nada\nfn solve<T>(o: Opt<T>) -> Opt<T> {{\n    {}\n}}\n",
+                    u8_or("Opt::Has { v: v }", "o")
+                ),
+            ),
+        ];
+        for (why, suite, cand) in cases {
+            let out = judged8("r4c-wrap", &suite, &cand);
+            assert!(
+                out != Ok(TestEnd::Completed) && confusion_refused(&out),
+                "ATTACK: a u8 crossed a generic type argument the operator fixed to i64 ({why}): {out:?}"
+            );
+        }
+    }
+
+    /// A position NOTHING determined — an empty array's element type bound
+    /// through `T`, or a generic struct handed through a plain `T` — is
+    /// refused at the crossing; a later operator-side value fills it (the
+    /// pair binding), and an honest pass-through crosses.
+    #[test]
+    fn a_value_at_an_undetermined_position_never_crosses_a_seal() {
+        let wrap = "type Wrap<T> = { v: T }\n";
+        honest8(
+            "r4c-undet",
+            "@[test]\nfn t() {\n    let e: [i64] = []\n    let xs = solve(e)\n    assert(len(xs) == 0)\n}\n",
+            "fn solve<T>(x: T) -> T { x }\n",
+        );
+        honest8(
+            "r4c-undet",
+            "@[test]\nfn t() {\n    let e: Option<i64> = None\n    match pick(e, Some(9)) {\n        Some(v) => assert(v.ok())\n        None => assert(false)\n    }\n}\n",
+            "fn pick<T>(a: T, b: T) -> T { b }\n",
+        );
+        honest8(
+            "r4c-undet",
+            "@[test]\nfn t() {\n    let w = solve(Wrap { v: 9 })\n    assert(w.v.ok())\n}\n",
+            &format!("{wrap}fn solve<T>(x: T) -> T {{ x }}\n"),
+        );
+        let out = judged8(
+            "r4c-undet",
+            "@[test]\nfn t() {\n    let e: [i64] = []\n    let xs = solve(e)\n    assert(xs[0].ok())\n}\n",
+            &format!("fn solve<T>(x: T) -> T {{\n    {}\n}}\n", u8_or("[v]", "x")),
+        );
+        assert!(
+            out != Ok(TestEnd::Completed) && confusion_refused(&out),
+            "ATTACK: a u8 filled the element type of the operator's empty [i64] through T: {out:?}"
+        );
+        let out = judged8(
+            "r4c-undet",
+            "@[test]\nfn t() {\n    let w = solve(Wrap { v: 3 })\n    assert(w.v.ok())\n}\n",
+            &format!(
+                "{wrap}fn solve<T>(x: T) -> T {{\n    {}\n}}\n",
+                u8_or("Wrap { v: v }", "x")
+            ),
+        );
+        assert!(
+            out != Ok(TestEnd::Completed) && confusion_refused(&out),
+            "ATTACK: a Wrap of u8 crossed a T the operator bound to Wrap<i64>: {out:?}"
+        );
+    }
+
+    /// B2. A fn with NO declared return type: the checker types its call
+    /// `()`, so at the seal crossing the operator receives `()` — never the
+    /// value the body ended on, which the operator's method call would
+    /// dispatch on. (The checker now also refuses `.ok()` on `()` with no
+    /// impl; this test reaches the runtime rule without the checker.)
+    #[test]
+    fn a_fn_with_no_declared_return_type_hands_the_operator_unit() {
+        let suite = "@[test]\nfn t() {\n    assert(solve(3).ok())\n}\n";
+        live8(
+            "r4c-noret",
+            suite,
+            "fn solve(n: i64) -> i64 { n * n }\n",
+            "fn solve(n: i64) -> i64 { n + 1 }\n",
+        );
+        // Control: an honest unit fn whose body ends on a value still runs.
+        honest8(
+            "r4c-noret",
+            "@[test]\nfn t() {\n    note(3)\n    assert(true)\n}\n",
+            "fn note(n: i64) {\n    let d = dict_new()\n    dict_set(d, \"n\", n)\n    d\n}\n",
+        );
+        for (why, suite, cand) in [
+            ("a fn", suite.to_string(), format!("fn solve(n: i64) {{\n    {}\n}}\n", u8_or("v", "0"))),
+            (
+                "an impl method",
+                "@[test]\nfn t() {\n    assert(mk(3).val().ok())\n}\n".to_string(),
+                format!(
+                    "type Sq = {{ n: i64 }}\ntrait Api {{\n    fn val(self)\n}}\nimpl Api for Sq {{\n    fn val(self: Sq) {{\n        {}\n    }}\n}}\nfn mk(n: i64) -> Sq {{ Sq {{ n: n }} }}\n",
+                    u8_or("v", "0")
+                ),
+            ),
+        ] {
+            let out = judged8("r4c-noret", &suite, &cand);
+            assert!(
+                out != Ok(TestEnd::Completed)
+                    && matches!(&out, Err(m) if m.contains("no method `ok` on type `()`")),
+                "ATTACK: the u8 a unit {why} ended on reached the operator's method call: {out:?}"
+            );
+        }
+    }
+
+    /// MAJOR-ADJACENT. A sealed frame calling an OPERATOR closure: each
+    /// argument must meet a position some declared type determined, and is
+    /// cast strictly — the return direction's parametricity rule, applied to
+    /// arguments. The operator's unannotated `|x| x.ok()` reached through a
+    /// free `fn(T)`, a struct field or a dict.
+    #[test]
+    fn an_operator_closure_called_from_sealed_code_takes_only_determined_arguments() {
+        let suite = "@[test]\nfn t() {\n    assert(apply(|x| x.ok()))\n}\n";
+        live8(
+            "r4c-clos",
+            suite,
+            "fn apply(f: fn(i64) -> bool) -> bool { f(9) }\n",
+            "fn apply(f: fn(i64) -> bool) -> bool { f(4) }\n",
+        );
+        honest8(
+            "r4c-clos",
+            "@[test]\nfn t() {\n    assert(apply(Fx { f: |x| x.ok() }, 9))\n}\n",
+            "type Fx<T> = { f: fn(T) -> bool }\nfn apply<T>(b: Fx<T>, x: T) -> bool {\n    let f = b.f\n    f(x)\n}\n",
+        );
+        honest8(
+            "r4c-clos",
+            "@[test]\nfn t() {\n    visit(|r: i64| assert(r.ok()))\n}\n",
+            "fn visit<T>(cb: fn(T) -> ()) { cb(9) }\n",
+        );
+        for (why, suite, cand) in [
+            (
+                "a free fn(T) (the review's candidate)",
+                suite.to_string(),
+                format!("fn apply<T>(f: fn(T) -> bool) -> bool {{\n    {}\n}}\n", u8_or("f(v)", "false")),
+            ),
+            (
+                "a generic struct's fn field",
+                "@[test]\nfn t() {\n    assert(apply(Fx { f: |x| x.ok() }))\n}\n".to_string(),
+                format!(
+                    "type Fx<T> = {{ f: fn(T) -> bool }}\nfn apply<T>(b: Fx<T>) -> bool {{\n    let f = b.f\n    {}\n}}\n",
+                    u8_or("f(v)", "false")
+                ),
+            ),
+            (
+                "a dict entry",
+                "@[test]\nfn t() {\n    let d = dict_new()\n    dict_set(d, \"f\", |x| x.ok())\n    assert(apply(d))\n}\n".to_string(),
+                format!(
+                    "fn apply(d: Dict) -> bool {{\n    match dict_get(d, \"f\") {{\n        Some(f) => {}\n        None => false\n    }}\n}}\n",
+                    u8_or("f(v)", "false")
+                ),
+            ),
+        ] {
+            let out = judged8("r4c-clos", &suite, &cand);
+            assert!(
+                out != Ok(TestEnd::Completed)
+                    && matches!(&out, Err(m) if m.contains("a position nothing on the operator side determined")),
+                "ATTACK: the candidate called the operator's unannotated closure with a u8 ({why}): {out:?}"
+            );
+        }
+    }
+
+    /// A native handle bound to a type parameter: only a handle of that kind
+    /// crosses back at it.
+    #[test]
+    fn a_handle_binding_admits_only_that_handle() {
+        let suite = "@[test]\nfn t() {\n    let w = gfx::window_open(8, 8, \"x\")\n    let r = pass(w)\n    assert(r.ok())\n}\n";
+        let ok = judged8("r4c-handle", "@[test]\nfn t() {\n    let w = gfx::window_open(8, 8, \"x\")\n    let r = pass(w)\n    assert(true)\n}\n", "fn pass<T>(x: T) -> T { x }\n");
+        assert_eq!(
+            ok,
+            Ok(TestEnd::Completed),
+            "control: the handle crosses back"
+        );
+        let out = judged8(
+            "r4c-handle",
+            suite,
+            &format!("fn pass<T>(x: T) -> T {{\n    {}\n}}\n", u8_or("v", "x")),
+        );
+        assert!(
+            out != Ok(TestEnd::Completed) && confusion_refused(&out),
+            "ATTACK: a u8 crossed a T the operator bound to a native handle: {out:?}"
+        );
+    }
+
+    /// The shapes a type parameter can sit inside — tuple, array, `Option`,
+    /// `Result`, generic struct in each, two parameters, a returned closure —
+    /// each with the operator's i64 binding `T` and the candidate answering
+    /// with a laundered `u8`. All were refused before amendment 72 except the
+    /// generic-struct ones; pinned together so none regresses.
+    #[test]
+    fn a_type_parameter_inside_any_shape_is_never_filled_by_the_candidate() {
+        let wrap = "type Wrap<T> = { v: T }\n";
+        let cases: Vec<(&str, &str, String)> = vec![
+            ("tuple", "let r = solve((3, 4))\n    assert(r.0.ok())",
+             format!("fn solve<T>(p: (T, T)) -> (T, T) {{\n    {}\n}}\n", u8_or("(v, v)", "p"))),
+            ("array", "let r = solve([3])\n    assert(r[0].ok())",
+             format!("fn solve<T>(p: [T]) -> [T] {{\n    {}\n}}\n", u8_or("[v]", "p"))),
+            ("Option", "match solve(Some(3)) {\n        Some(v) => assert(v.ok())\n        None => assert(false)\n    }",
+             format!("fn solve<T>(p: Option<T>) -> Option<T> {{\n    {}\n}}\n", u8_or("Some(v)", "p"))),
+            ("Result", "match solve(Ok(3)) {\n        Ok(v) => assert(v.ok())\n        Err(e) => assert(false)\n    }",
+             format!("fn solve<T>(p: Result<T, str>) -> Result<T, str> {{\n    {}\n}}\n", u8_or("Ok(v)", "p"))),
+            ("Option<Wrap<T>>", "match solve(Some(Wrap { v: 3 })) {\n        Some(w) => assert(w.v.ok())\n        None => assert(false)\n    }",
+             format!("{wrap}fn solve<T>(o: Option<Wrap<T>>) -> Option<Wrap<T>> {{\n    {}\n}}\n", u8_or("Some(Wrap { v: v })", "o"))),
+            ("[Wrap<T>]", "let r = solve([Wrap { v: 3 }])\n    assert(r[0].v.ok())",
+             format!("{wrap}fn solve<T>(o: [Wrap<T>]) -> [Wrap<T>] {{\n    {}\n}}\n", u8_or("[Wrap { v: v }]", "o"))),
+            ("(Wrap<T>, i64)", "let r = solve((Wrap { v: 3 }, 1))\n    assert(r.0.v.ok())",
+             format!("{wrap}fn solve<T>(p: (Wrap<T>, i64)) -> (Wrap<T>, i64) {{\n    {}\n}}\n", u8_or("(Wrap { v: v }, 1)", "p"))),
+            ("Wrap<T> -> T", "let r = solve(Wrap { v: 3 })\n    assert(r.ok())",
+             format!("{wrap}fn solve<T>(w: Wrap<T>) -> T {{\n    {}\n}}\n", u8_or("v", "w.v"))),
+            ("two parameters", "let w = solve(P { a: 3, b: 3 })\n    assert(w.a.ok())",
+             format!("type P<A, B> = {{ a: A, b: B }}\nfn solve<A, B>(w: P<A, B>) -> P<A, B> {{\n    {}\n}}\n", u8_or("P { a: v, b: w.b }", "w"))),
+            ("a returned closure", "let f = solve(|x| x)\n    assert(f(3).ok())",
+             format!("fn solve<T>(f: fn(T) -> T) -> fn(T) -> T {{\n    {}\n}}\n", u8_or("|y| v", "f"))),
+            ("a generic impl's method", "let b = mk(3)\n    assert(b.get().ok())",
+             format!("{wrap}fn mk(n: i64) -> Wrap<i64> {{ Wrap {{ v: n }} }}\ntrait Get {{\n    fn get(self) -> i64\n}}\nimpl Get for Wrap<i64> {{\n    fn get(self: Wrap<i64>) -> i64 {{\n        {}\n    }}\n}}\n", u8_or("v", "self.v"))),
+        ];
+        for (why, body, cand) in cases {
+            let suite = format!("@[test]\nfn t() {{\n    {body}\n}}\n");
+            let out = judged8("r4c-shapes", &suite, &cand);
+            assert!(
+                out != Ok(TestEnd::Completed) && confusion_refused(&out),
+                "ATTACK: a u8 filled the operator's i64 inside {why}: {out:?}"
+            );
+        }
+    }
+
+    /// `host_await_val` is unavailable to a run with no host driver (every
+    /// sealed `axon test`), so no payload crosses a suspend inside a seal.
+    #[test]
+    fn a_host_await_crossing_is_unavailable_inside_a_sealed_test_run() {
+        let out = judged8(
+            "r4c-await",
+            "@[test]\nfn t() {\n    assert(solve(3).ok())\n}\n",
+            "fn solve<T>(x: T) -> T {\n    host_await_val(x)\n}\n",
+        );
+        assert!(
+            out != Ok(TestEnd::Completed)
+                && matches!(&out, Err(m) if m.contains("outside a suspendable run")),
+            "ATTACK: a host_await_val payload came back inside a sealed test run: {out:?}"
+        );
+    }
+
+    /// The suite for the dict tests: the operator's dict holds an i64 at
+    /// "a"; `body` hands it to the candidate; the operator then reads "a"
+    /// UNTYPED and calls the judge on it (amendment 72 part 2).
+    fn dict_suite(body: &str) -> String {
+        format!("@[test]\nfn t() {{\n    let d = dict_new()\n    dict_set(d, \"a\", 3)\n    {body}\n    match dict_get(d, \"a\") {{\n        Some(x) => assert(x.ok())\n        None => assert(false)\n    }}\n}}\n")
+    }
+
+    fn dict_refused(why: &str, suite: &str, cand: &str) {
+        let out = judged8("r4c-dict", suite, cand);
+        assert!(
+            out != Ok(TestEnd::Completed)
+                && matches!(&out, Err(m) if m.contains("retyped a dict entry")),
+            "ATTACK: sealed code retyped the operator's dict entry to a u8 ({why}): {out:?}"
+        );
+    }
+
+    /// `match <laundered u8> { Some(v) => { act } None => {} }`
+    fn put_u8(act: &str) -> String {
+        u8_or(&format!("{{ {act} }}"), "{}")
+    }
+
+    /// The reviewer's remaining attack: the candidate overwrites a key the
+    /// operator held with a laundered `u8`, and the operator's untyped
+    /// `dict_get(..).ok()` ran the lenient `u8` impl. The operator's dict is
+    /// SNAPSHOTTED when it is handed over and verified at every edge back.
+    #[test]
+    fn sealed_code_cannot_retype_a_dict_entry_the_operator_held() {
+        let suite = dict_suite("solve(d)");
+        live8(
+            "r4c-dict",
+            &suite,
+            "fn solve(d: Dict) { dict_set(d, \"a\", 9) }\n",
+            "fn solve(d: Dict) { dict_set(d, \"a\", 4) }\n",
+        );
+        dict_refused(
+            "the review's overwrite",
+            &suite,
+            &format!(
+                "fn solve(d: Dict) {{\n    {}\n}}\n",
+                put_u8("dict_set(d, \"a\", v)")
+            ),
+        );
+        dict_refused(
+            "remove, then add the key back",
+            &suite,
+            &format!(
+                "fn solve(d: Dict) {{\n    {}\n}}\n",
+                put_u8("dict_remove(d, \"a\")\n        dict_set(d, \"a\", v)")
+            ),
+        );
+        dict_refused(
+            "through an alias in an array",
+            &suite,
+            &format!(
+                "fn solve(d: Dict) {{\n    let held = [d]\n    {}\n}}\n",
+                put_u8("dict_set(held[0], \"a\", v)")
+            ),
+        );
+        // A dict nested in the one handed over.
+        dict_refused(
+            "a dict nested in the handed dict",
+            "@[test]\nfn t() {\n    let d = dict_new()\n    let inner = dict_new()\n    dict_set(inner, \"a\", 3)\n    dict_set(d, \"in\", inner)\n    solve(d)\n    match dict_get(inner, \"a\") {\n        Some(x) => assert(x.ok())\n        None => assert(false)\n    }\n}\n",
+            &format!(
+                "fn solve(d: Dict) {{\n    match dict_get(d, \"in\") {{\n        Some(i) => {}\n        None => {{}}\n    }}\n}}\n",
+                put_u8("dict_set(i, \"a\", v)")
+            ),
+        );
+        // Dict reached through generic positions.
+        let wrap = "type Wrap<T> = { v: T }\n";
+        dict_refused(
+            "Wrap<Dict>",
+            &dict_suite("solve(Wrap { v: d })"),
+            &format!(
+                "{wrap}fn solve(w: Wrap<Dict>) {{\n    {}\n}}\n",
+                put_u8("dict_set(w.v, \"a\", v)")
+            ),
+        );
+        dict_refused(
+            "Option<Dict>",
+            &dict_suite("solve(Some(d))"),
+            &format!(
+                "fn solve(o: Option<Dict>) {{\n    match o {{\n        Some(x) => {}\n        None => {{}}\n    }}\n}}\n",
+                put_u8("dict_set(x, \"a\", v)")
+            ),
+        );
+        dict_refused(
+            "[Dict]",
+            &dict_suite("solve([d])"),
+            &format!(
+                "fn solve(xs: [Dict]) {{\n    {}\n}}\n",
+                put_u8("dict_set(xs[0], \"a\", v)")
+            ),
+        );
+        dict_refused(
+            "a generic fn's T bound to the dict",
+            &dict_suite("solve(d)"),
+            &format!(
+                "fn solve<T>(x: T) {{\n    {}\n}}\nfn put(d: Dict, v: u8) {{ dict_set(d, \"a\", v) }}\n",
+                u8_or("{ put(x, v) }", "{}")
+            ),
+        );
+    }
+
+    /// The other edges: a dict handed to an operator CLOSURE the candidate
+    /// calls (the operator's `|x| …` reads it untyped), over a channel, and
+    /// through the candidate's own closure the operator calls.
+    #[test]
+    fn a_dict_the_candidate_mutated_is_verified_at_every_edge_back() {
+        let closure_suite = "@[test]\nfn t() {\n    let d = dict_new()\n    dict_set(d, \"a\", 3)\n    assert(run(d, |x| {\n        match dict_get(x, \"a\") {\n            Some(y) => y.ok()\n            None => false\n        }\n    }))\n}\n";
+        honest8(
+            "r4c-dict",
+            closure_suite,
+            "fn run(d: Dict, f: fn(Dict) -> bool) -> bool {\n    dict_set(d, \"a\", 9)\n    f(d)\n}\n",
+        );
+        let out = judged8(
+            "r4c-dict",
+            closure_suite,
+            &format!(
+                "fn run(d: Dict, f: fn(Dict) -> bool) -> bool {{\n    {}\n    f(d)\n}}\n",
+                put_u8("dict_set(d, \"a\", v)")
+            ),
+        );
+        assert!(
+            out != Ok(TestEnd::Completed)
+                && matches!(&out, Err(m) if m.contains("retyped a dict entry")),
+            "ATTACK: the operator's closure read a dict entry the candidate retyped: {out:?}"
+        );
+        // Over a channel the operator filled.
+        let chan_suite = dict_suite("let c = chan<Dict>()\n    c.send(d)\n    solve(c)");
+        honest8(
+            "r4c-dict",
+            &chan_suite,
+            "fn solve(c: Chan<Dict>) {\n    let d = c.recv()\n    dict_set(d, \"a\", 9)\n}\n",
+        );
+        dict_refused(
+            "received from the operator's channel",
+            &chan_suite,
+            &format!(
+                "fn solve(c: Chan<Dict>) {{\n    let d = c.recv()\n    {}\n}}\n",
+                put_u8("dict_set(d, \"a\", v)")
+            ),
+        );
+        // A closure replaced by a non-closure: refused where it is stored, not
+        // only when the operator later calls it.
+        let fnonc = "@[test]\nfn t() {\n    let d = dict_new()\n    dict_set(d, \"f\", |n: i64| n * n)\n    solve(d)\n    match dict_get(d, \"f\") {\n        Some(f) => assert(true)\n        None => assert(false)\n    }\n}\n";
+        honest8(
+            "r4c-dict",
+            fnonc,
+            "fn solve(d: Dict) { dict_set(d, \"g\", 1) }\n",
+        );
+        let out = judged8(
+            "r4c-dict",
+            fnonc,
+            "fn solve(d: Dict) { dict_set(d, \"f\", 0) }\n",
+        );
+        assert!(
+            out != Ok(TestEnd::Completed)
+                && matches!(&out, Err(m) if m.contains("retyped a dict entry")),
+            "ATTACK: a closure the operator held was replaced by a non-closure: {out:?}"
+        );
+        // The candidate's closure, stored where the operator held its own.
+        let fsuite = "@[test]\nfn t() {\n    let d = dict_new()\n    dict_set(d, \"f\", |n: i64| n * n)\n    solve(d)\n    match dict_get(d, \"f\") {\n        Some(f) => assert(f(3).ok())\n        None => assert(false)\n    }\n}\n";
+        honest8(
+            "r4c-dict",
+            fsuite,
+            "fn solve(d: Dict) { dict_set(d, \"g\", 1) }\n",
+        );
+        let out = judged8(
+            "r4c-dict",
+            fsuite,
+            "fn solve(d: Dict) { dict_set(d, \"f\", |n: i64| narrow(n)) }\n",
+        );
+        assert!(
+            out != Ok(TestEnd::Completed)
+                && matches!(&out, Err(m) if m.contains("retyped a dict entry")),
+            "ATTACK: the candidate's closure replaced the operator's in its dict: {out:?}"
+        );
+    }
+
+    /// What the rule does NOT touch: keys the candidate ADDS, a dict the
+    /// candidate builds, the same type written again, and a dict the operator
+    /// itself retypes between two calls (the snapshot is retaken).
+    #[test]
+    fn a_dict_the_candidate_adds_to_or_builds_still_crosses() {
+        let suite = dict_suite("solve(d)");
+        honest8(
+            "r4c-dict",
+            &suite,
+            "fn solve(d: Dict) {\n    dict_set(d, \"a\", 9)\n    dict_set(d, \"b\", narrow(4))\n}\n",
+        );
+        honest8(
+            "r4c-dict",
+            "@[test]\nfn t() {\n    let d = dict_new()\n    dict_set(d, \"a\", 3)\n    solve(d)\n    dict_set(d, \"a\", 7.5)\n    touch(d)\n    assert(true)\n}\n",
+            "fn solve(d: Dict) { dict_set(d, \"a\", 9) }\nfn touch(d: Dict) { dict_set(d, \"a\", 8.5) }\n",
+        );
+        honest8(
+            "r4c-dict",
+            "@[test]\nfn t() {\n    match dict_get(make(), \"a\") {\n        Some(x) => assert(x.ok())\n        None => assert(false)\n    }\n}\n",
+            "fn make() -> Dict {\n    let d = dict_new()\n    dict_set(d, \"a\", 9)\n    d\n}\n",
+        );
+    }
+
+    /// Round 5 BLOCKER (amendment 78): the candidate REPLACES a position the
+    /// operator held with a candidate-built value carrying a retyped element.
+    /// A held dict's recorded type is just `Dict`, so the replacement used to
+    /// pass and its nested values were never cast. A replacement is judged by
+    /// what the operator held at that position, deeply — through nested
+    /// dicts, arrays, structs, `Option`s — and a key only the replacement has
+    /// is free (exactly as part 2's new keys).
+    #[test]
+    fn a_position_the_operator_held_is_judged_by_what_it_held_when_replaced() {
+        // The operator's `d` holds `inner = {x: 3}` at "inner"; it reads
+        // d.inner.x untyped afterwards.
+        let nested = |held: &str, read: &str, call: &str| {
+            format!("@[test]\nfn t() {{\n    let inner = dict_new()\n    dict_set(inner, \"x\", 3)\n    let d = dict_new()\n    dict_set(d, \"inner\", {held})\n    {call}\n    match dict_get(d, \"inner\") {{\n        Some(h) => {read}\n        None => assert(false)\n    }}\n}}\n")
+        };
+        let wrap = "type Wrap<T> = { v: T }\n";
+        let build = |x: &str| {
+            format!(
+                "let n = dict_new()\n    dict_set(n, \"x\", {x})\n    dict_set(d, \"inner\", n)"
+            )
+        };
+        let read_dict = "match dict_get(h, \"x\") {\n            Some(v) => assert(v.ok())\n            None => assert(false)\n        }";
+        let suite = nested("inner", read_dict, "solve(d)");
+        live8(
+            "r4c-repl",
+            &suite,
+            &format!("fn solve(d: Dict) {{\n    {}\n}}\n", build("9")),
+            &format!("fn solve(d: Dict) {{\n    {}\n}}\n", build("4")),
+        );
+        dict_refused(
+            "the review's candidate-built dict at the held key",
+            &suite,
+            &format!(
+                "fn solve(d: Dict) {{\n    {}\n}}\n",
+                put_u8("let n = dict_new()\n        dict_set(n, \"x\", v)\n        dict_set(d, \"inner\", n)")
+            ),
+        );
+        // A key only the replacement has is free; the key both have is checked.
+        honest8(
+            "r4c-repl",
+            &suite,
+            "fn solve(d: Dict) {\n    let n = dict_new()\n    dict_set(n, \"x\", 9)\n    dict_set(n, \"y\", narrow(4))\n    dict_set(d, \"inner\", n)\n}\n",
+        );
+        // Two levels down.
+        dict_refused(
+            "a dict nested in the replacing dict",
+            "@[test]\nfn t() {\n    let leaf = dict_new()\n    dict_set(leaf, \"x\", 3)\n    let mid = dict_new()\n    dict_set(mid, \"leaf\", leaf)\n    let d = dict_new()\n    dict_set(d, \"mid\", mid)\n    solve(d)\n    match dict_get(d, \"mid\") {\n        Some(m) => match dict_get(m, \"leaf\") {\n            Some(l) => match dict_get(l, \"x\") {\n                Some(v) => assert(v.ok())\n                None => assert(false)\n            }\n            None => assert(false)\n        }\n        None => assert(false)\n    }\n}\n",
+            &format!(
+                "fn solve(d: Dict) {{\n    {}\n}}\n",
+                put_u8("let leaf = dict_new()\n        dict_set(leaf, \"x\", v)\n        let mid = dict_new()\n        dict_set(mid, \"leaf\", leaf)\n        dict_set(d, \"mid\", mid)")
+            ),
+        );
+        // The family: an array, a struct, an Option or a tuple carrying a dict,
+        // and an array or struct carrying scalars, replaced by the candidate's.
+        let repl = |held: &str, read: &str, cand: String| {
+            dict_refused(held, &nested(held, read, "solve(d)"), &cand);
+        };
+        repl(
+            "[inner]",
+            "match dict_get(h[0], \"x\") {\n            Some(v) => assert(v.ok())\n            None => assert(false)\n        }",
+            format!(
+                "fn solve(d: Dict) {{\n    {}\n}}\n",
+                put_u8("let n = dict_new()\n        dict_set(n, \"x\", v)\n        dict_set(d, \"inner\", [n])")
+            ),
+        );
+        repl(
+            "Some(inner)",
+            "match h {\n            Some(i) => match dict_get(i, \"x\") {\n                Some(v) => assert(v.ok())\n                None => assert(false)\n            }\n            None => assert(false)\n        }",
+            format!(
+                "fn solve(d: Dict) {{\n    {}\n}}\n",
+                put_u8("let n = dict_new()\n        dict_set(n, \"x\", v)\n        dict_set(d, \"inner\", Some(n))")
+            ),
+        );
+        repl(
+            "(inner, 1)",
+            "match dict_get(h.0, \"x\") {\n            Some(v) => assert(v.ok())\n            None => assert(false)\n        }",
+            format!(
+                "fn solve(d: Dict) {{\n    {}\n}}\n",
+                put_u8("let n = dict_new()\n        dict_set(n, \"x\", v)\n        dict_set(d, \"inner\", (n, 1))")
+            ),
+        );
+        let wsuite = format!(
+            "{wrap}{}",
+            nested(
+                "Wrap { v: inner }",
+                "match dict_get(h.v, \"x\") {\n            Some(v) => assert(v.ok())\n            None => assert(false)\n        }",
+                "solve(d)"
+            )
+        );
+        dict_refused(
+            "Wrap { v: inner }",
+            &wsuite,
+            &format!(
+                "fn solve(d: Dict) {{\n    {}\n}}\n",
+                put_u8("let n = dict_new()\n        dict_set(n, \"x\", v)\n        dict_set(d, \"inner\", Wrap { v: n })")
+            ),
+        );
+        honest8(
+            "r4c-repl",
+            &wsuite,
+            "fn solve(d: Dict) {\n    let n = dict_new()\n    dict_set(n, \"x\", 9)\n    dict_set(d, \"inner\", Wrap { v: n })\n}\n",
+        );
+        // Scalars in containers: the leaf rule.
+        for (held, read, newv) in [
+            ("[3]", "assert(h[0].ok())", "[v]"),
+            ("Wrap { v: 3 }", "assert(h.v.ok())", "Wrap { v: v }"),
+            ("(3, 1)", "assert(h.0.ok())", "(v, 1)"),
+            ("Some(3)", "match h {\n            Some(x) => assert(x.ok())\n            None => assert(false)\n        }", "Some(v)"),
+        ] {
+            let suite = format!("{wrap}{}", nested(held, read, "solve(d)"));
+            dict_refused(
+                held,
+                &suite,
+                &format!(
+                    "{wrap}fn solve(d: Dict) {{\n    {}\n}}\n",
+                    put_u8(&format!("dict_set(d, \"inner\", {newv})"))
+                ),
+            );
+        }
+        // Over a channel: the dict the candidate received.
+        dict_refused(
+            "a held dict received on the operator's channel",
+            &format!(
+                "@[test]\nfn t() {{\n    let inner = dict_new()\n    dict_set(inner, \"x\", 3)\n    let d = dict_new()\n    dict_set(d, \"inner\", inner)\n    let c = chan<Dict>()\n    c.send(d)\n    solve(c)\n    match dict_get(d, \"inner\") {{\n        Some(h) => {read_dict}\n        None => assert(false)\n    }}\n}}\n"
+            ),
+            &format!(
+                "fn solve(c: Chan<Dict>) {{\n    let d = c.recv()\n    {}\n}}\n",
+                put_u8("let n = dict_new()\n        dict_set(n, \"x\", v)\n        dict_set(d, \"inner\", n)")
+            ),
+        );
+    }
+
+    /// Round 5 MAJOR-ADJACENT (amendment 78): a position the operator held at
+    /// an UNDETERMINED type (`None`, an empty array) is refused to the
+    /// candidate — a strict store, as at a strict crossing — instead of left
+    /// free. An operator that wants the candidate to fill a slot holds a
+    /// typed placeholder (`Some(0)`, `[0]`).
+    #[test]
+    fn a_placeholder_the_operator_held_is_not_filled_by_the_candidate() {
+        let suite = |held: &str, read: &str| {
+            format!("@[test]\nfn t() {{\n    let d = dict_new()\n    dict_set(d, \"best\", {held})\n    solve(d)\n    match dict_get(d, \"best\") {{\n        Some(o) => {read}\n        None => assert(false)\n    }}\n}}\n")
+        };
+        let some = "match o {\n            Some(v) => assert(v.ok())\n            None => assert(false)\n        }";
+        let some_suite = suite("None", some);
+        let fill = |x: &str| format!("fn solve(d: Dict) {{ dict_set(d, \"best\", Some({x})) }}\n");
+        // A typed placeholder is filled by the candidate, and judged.
+        live8("r4c-hold", &suite("Some(0)", some), &fill("9"), &fill("4"));
+        dict_refused(
+            "None filled with a u8",
+            &some_suite,
+            &format!(
+                "fn solve(d: Dict) {{\n    {}\n}}\n",
+                put_u8("dict_set(d, \"best\", Some(v))")
+            ),
+        );
+        dict_refused(
+            "None filled with an i64 (no position was determined)",
+            &some_suite,
+            &fill("9"),
+        );
+        dict_refused(
+            "an empty array filled",
+            &suite("[]", "assert(o[0].ok())"),
+            &format!(
+                "fn solve(d: Dict) {{\n    {}\n}}\n",
+                put_u8("dict_set(d, \"best\", [v])")
+            ),
+        );
+        // Leaving the placeholder alone, or emptying a typed slot, is fine.
+        honest8(
+            "r4c-hold",
+            "@[test]\nfn t() {\n    let d = dict_new()\n    dict_set(d, \"best\", None)\n    dict_set(d, \"n\", 1)\n    solve(d)\n    assert(true)\n}\n",
+            "fn solve(d: Dict) { dict_set(d, \"n\", 2) }\n",
+        );
+        honest8(
+            "r4c-hold",
+            "@[test]\nfn t() {\n    let d = dict_new()\n    dict_set(d, \"best\", Some(3))\n    solve(d)\n    assert(true)\n}\n",
+            "fn solve(d: Dict) { dict_set(d, \"best\", None) }\n",
+        );
+    }
+
+    // ── C9 round 6, PSV-1 (amendment 83): the DISPATCH rule ──────────────────
+    //
+    // In a sealed run, operator code does not dispatch an operator impl's
+    // method on a receiver whose type nothing on the operator side determined.
+    // These tests run with the rule ON (the other layers' tests run with it
+    // off, so each is judged by its own attack).
+
+    fn judged_on(tag: &str, suite: &str, cand: &str) -> Result<TestEnd, String> {
+        sealed_outcome_rule(
+            tag,
+            &format!("{JUDGE8}{suite}"),
+            &format!("{LAUNDER8}{cand}"),
+            "t",
+            true,
+        )
+    }
+
+    fn dispatch_refused(why: &str, suite: &str, cand: &str) {
+        let out = judged_on("r6-disp", suite, cand);
+        assert!(
+            out != Ok(TestEnd::Completed)
+                && matches!(&out, Err(m) if m.contains("whose type nothing on the operator side determined")),
+            "ATTACK: operator code dispatched on a value of the candidate's chosen type ({why}): {out:?}"
+        );
+    }
+
+    /// A suite reading the candidate-written `result` of a dict, either
+    /// UNPINNED (`x.ok()` on the read) or PINNED (`let y: i64 = x`).
+    fn out_suite(setup: &str, unpinned: bool) -> String {
+        let read = if unpinned {
+            "assert(x.ok())"
+        } else {
+            "{ let y: i64 = x\n            assert(y.ok()) }"
+        };
+        format!("@[test]\nfn t() {{\n    {setup}\n    match dict_get(out, \"result\") {{\n        Some(x) => {read}\n        None => assert(false)\n    }}\n}}\n")
+    }
+
+    /// d2/d3 and the empty accumulator: the candidate writes (or returns) a
+    /// dict the operator then reads. Unpinned: refused at the dispatch. Pinned
+    /// by `let y: i64`: GOOD passes, WRONG fails, the u8 is refused by the cast.
+    #[test]
+    fn operator_code_never_dispatches_on_a_value_read_untyped_from_a_dict() {
+        for (why, setup, fill) in [
+            (
+                "an output dict the candidate fills",
+                "let out = dict_new()\n    solve(out)",
+                "fn solve(out: Dict) { dict_set(out, \"result\", VAL) }\n",
+            ),
+            (
+                "a returned dict",
+                "let out = solve()",
+                "fn solve() -> Dict {\n    let d = dict_new()\n    dict_set(d, \"result\", VAL)\n    d\n}\n",
+            ),
+            (
+                "an empty accumulator",
+                "let out = dict_new()\n    let n = 0\n    fill(out, n)",
+                "fn fill(out: Dict, n: i64) { dict_set(out, \"result\", VAL) }\n",
+            ),
+        ] {
+            let cand = |v: &str| fill.replace("VAL", v);
+            let atk = cand("narrow(4)");
+            dispatch_refused(why, &out_suite(setup, true), &atk);
+            let pinned = out_suite(setup, false);
+            assert_eq!(judged_on("r6-disp", &pinned, &cand("9")), Ok(TestEnd::Completed), "control ({why}): GOOD, pinned");
+            assert!(judged_on("r6-disp", &pinned, &cand("4")).is_err(), "control ({why}): WRONG fails");
+            let out = judged_on("r6-disp", &pinned, &atk);
+            assert!(
+                out != Ok(TestEnd::Completed) && confusion_refused(&out),
+                "ATTACK: a u8 passed the suite's `let y: i64` pin ({why}): {out:?}"
+            );
+        }
+    }
+
+    /// d1 (round 6 blocker): a candidate closure that captured the operator's
+    /// dict retypes an entry AFTER the operator changed it (the snapshot was
+    /// from the hand-over). Refused by the dict layer (rule off) AND by the
+    /// dispatch rule (rule on); the pinned suite refuses it by the cast.
+    #[test]
+    fn a_closure_that_captured_the_operators_dict_cannot_retype_after_an_operator_write() {
+        let suite = "@[test]\nfn t() {\n    let d = dict_new()\n    let f = make(d)\n    dict_set(d, \"answer\", 3)\n    f()\n    match dict_get(d, \"answer\") {\n        Some(v) => assert(v.ok())\n        None => assert(false)\n    }\n}\n";
+        let cand = |v: &str| {
+            format!("fn make(d: Dict) -> fn() -> i64 {{\n    || {{\n        dict_set(d, \"answer\", {v})\n        0\n    }}\n}}\n")
+        };
+        let out = judged8(
+            "r6-stale",
+            suite,
+            &format!("{LAUNDER8}{}", cand("narrow(4)")),
+        );
+        assert!(
+            out != Ok(TestEnd::Completed)
+                && matches!(&out, Err(m) if m.contains("retyped a dict entry")),
+            "ATTACK: a captured-dict closure retyped an entry against a stale snapshot: {out:?}"
+        );
+        // With the rule on too, it is refused (by whichever layer meets it first).
+        let on = judged_on("r6-stale", suite, &cand("narrow(4)"));
+        assert!(
+            matches!(&on, Err(m) if m.contains("retyped a dict entry") || m.contains("whose type nothing on the operator side determined")),
+            "ATTACK: the captured-dict closure's retype passed with the dispatch rule on: {on:?}"
+        );
+        honest8("r6-stale", suite, &cand("9"));
+    }
+
+    /// The rest of the container family the rule must cover: a payload, a
+    /// struct field, a tuple element, a generic enum, a channel receive, a
+    /// closure result, a `match` on the untyped value before the dispatch.
+    #[test]
+    fn operator_code_never_dispatches_on_a_value_from_any_untyped_position() {
+        let wrap = "type Wrap<T> = { v: T }\ntype Opt<T> = Has { v: T } | Nada\n";
+        let stash_in = |what: &str| format!("fn solve(d: Dict) {{ dict_set(d, \"k\", {what}) }}\n");
+        let cases: Vec<(&str, String, String)> = vec![
+            (
+                "an Option payload read from a dict",
+                "let d = dict_new()\n    solve(d)\n    match dict_get(d, \"k\") {\n        Some(o) => match o {\n            Some(v) => assert(v.ok())\n            None => assert(false)\n        }\n        None => assert(false)\n    }".into(),
+                stash_in("Some(narrow(4))"),
+            ),
+            (
+                "a struct field of a dict value",
+                "let d = dict_new()\n    solve(d)\n    match dict_get(d, \"k\") {\n        Some(w) => assert(w.v.ok())\n        None => assert(false)\n    }".into(),
+                format!("{wrap}{}", stash_in("Wrap { v: narrow(4) }")),
+            ),
+            (
+                "a tuple element of a dict value",
+                "let d = dict_new()\n    solve(d)\n    match dict_get(d, \"k\") {\n        Some(t) => assert(t.0.ok())\n        None => assert(false)\n    }".into(),
+                stash_in("(narrow(4), 1)"),
+            ),
+            (
+                "a generic enum payload",
+                "let d = dict_new()\n    solve(d)\n    match dict_get(d, \"k\") {\n        Some(e) => match e {\n            Opt::Has { v } => assert(v.ok())\n            Opt::Nada => assert(false)\n        }\n        None => assert(false)\n    }".into(),
+                format!("{wrap}{}", stash_in("Opt::Has { v: narrow(4) }")),
+            ),
+            (
+                "a channel receive",
+                "let c = chan<i64>()\n    c.send(3)\n    fill(c)\n    assert(c.recv().ok())".into(),
+                "fn fill(c: Chan<i64>) { c.send(9) }\n".into(),
+            ),
+            (
+                "an unannotated lambda's result",
+                "let f = |x| x\n    assert(f(3).ok())".into(),
+                "fn unused() {}\n".into(),
+            ),
+            (
+                "an unannotated lambda parameter",
+                "let f = |x| assert(x.ok())\n    let d = dict_new()\n    solve(d)\n    match dict_get(d, \"k\") {\n        Some(v) => f(v)\n        None => assert(false)\n    }".into(),
+                stash_in("narrow(4)"),
+            ),
+            (
+                "a match on the untyped value before the dispatch",
+                "let d = dict_new()\n    solve(d)\n    match dict_get(d, \"k\") {\n        Some(v) => match v {\n            w => assert(w.ok())\n        }\n        None => assert(false)\n    }".into(),
+                stash_in("narrow(4)"),
+            ),
+        ];
+        for (why, body, cand) in cases {
+            let suite = format!("@[test]\nfn t() {{\n    {body}\n}}\n");
+            // The wrap/enum types are the candidate's here only for the dict
+            // cases; the unannotated-lambda and channel cases need no attack.
+            dispatch_refused(why, &suite, &cand);
+        }
+    }
+
+    /// What stays unaffected: every PINNED receiver dispatches, a method with
+    /// no impl to choose between dispatches on anything, and outside a sealed
+    /// run nothing changes.
+    #[test]
+    fn a_determined_receiver_dispatches_and_so_does_an_unambiguous_method() {
+        let pinned = [
+            "assert(solve(3).ok())",
+            "let r = solve(3)\n    assert(r.ok())",
+            "let r: i64 = solve(3)\n    assert(r.ok())",
+            "let r = solve(3) + 0\n    assert(r.ok())",
+            "assert(9.ok())",
+            "let w = Wrap { v: solve(3) }\n    assert(w.v.ok())",
+            "let xs = [solve(3)]\n    assert(xs[0].ok())",
+            "assert((solve(3) as i64).ok())",
+        ];
+        for body in pinned {
+            let suite = format!("@[test]\nfn t() {{\n    {body}\n}}\n");
+            let out = judged_on(
+                "r6-pin",
+                &format!("type Wrap<T> = {{ v: T }}\n{suite}"),
+                "fn solve(n: i64) -> i64 { n * n }\n",
+            );
+            assert_eq!(
+                out,
+                Ok(TestEnd::Completed),
+                "control (pinned): {body}: {out:?}"
+            );
+        }
+        // One impl type only: nothing to choose between.
+        let one = "trait Judge {\n    fn ok(self) -> bool\n}\nimpl Judge for i64 {\n    fn ok(self: i64) -> bool { self == 9 }\n}\n@[test]\nfn t() {\n    let d = dict_new()\n    dict_set(d, \"k\", solve(3))\n    match dict_get(d, \"k\") {\n        Some(v) => assert(v.ok())\n        None => assert(false)\n    }\n}\n";
+        let out = sealed_outcome_rule(
+            "r6-one",
+            one,
+            "fn solve(n: i64) -> i64 { n * n }\n",
+            "t",
+            true,
+        );
+        assert_eq!(
+            out,
+            Ok(TestEnd::Completed),
+            "control (a single impl): {out:?}"
+        );
+        // Outside a sealed run the same program is unchanged.
+        let src = format!("{JUDGE8}@[test]\nfn t() {{\n    let d = dict_new()\n    dict_set(d, \"k\", 9)\n    match dict_get(d, \"k\") {{\n        Some(v) => assert(v.ok())\n        None => assert(false)\n    }}\n}}\n");
+        let prog = crate::parse_source(&src).expect("parses");
+        let _g = SEALED_DIRS_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        crate::resolver::set_sealed_module_dirs(&[]);
+        assert_eq!(run_test_fn_outcome(&prog, "t"), Ok(TestEnd::Completed));
+    }
+
+    /// What is NOT a dispatch, so the rule leaves it alone: interpolation and
+    /// `to_str` of an untyped read, and a comparison — none selects an
+    /// operator impl (the language has no operator overloading and no trait
+    /// default methods), so the candidate's type choice picks no operator code.
+    #[test]
+    fn interpolation_and_comparison_of_an_untyped_read_select_no_operator_impl() {
+        let suite = "@[test]\nfn t() {\n    let d = dict_new()\n    solve(d)\n    match dict_get(d, \"k\") {\n        Some(v) => {\n            assert(\"{v}\" == \"9\")\n            assert(to_str(v) == \"9\")\n            assert(v == 9)\n        }\n        None => assert(false)\n    }\n}\n";
+        let out = judged_on(
+            "r6-nd",
+            suite,
+            "fn solve(d: Dict) { dict_set(d, \"k\", 9) }\n",
+        );
+        assert_eq!(out, Ok(TestEnd::Completed), "control: {out:?}");
+        assert!(judged_on(
+            "r6-nd",
+            suite,
+            "fn solve(d: Dict) { dict_set(d, \"k\", 4) }\n"
+        )
+        .is_err());
+    }
+
+    /// The arithmetic arm: the candidate stores `255 as u8` and the operator's
+    /// untyped `v << 1 == 254` truncates to a pass (an `i64` 255 << 1 is 510;
+    /// plain `+`/`*` PANIC on overflow, so the shift is the width-dependent
+    /// result that completes).
+    #[test]
+    fn operator_arithmetic_never_runs_at_a_width_the_candidate_chose() {
+        let suite = |read: &str| {
+            format!("@[test]\nfn t() {{\n    let d = dict_new()\n    solve(d)\n    match dict_get(d, \"k\") {{\n        Some(v) => {read}\n        None => assert(false)\n    }}\n}}\n")
+        };
+        let cand = |v: &str| format!("fn solve(d: Dict) {{ dict_set(d, \"k\", {v}) }}\n");
+        let out = judged_on(
+            "r6-arith",
+            &suite("assert((v << 1) == 254)"),
+            &cand("255 as u8"),
+        );
+        assert!(
+            out != Ok(TestEnd::Completed)
+                && matches!(&out, Err(m) if m.contains("whose width nothing on the operator side determined")),
+            "ATTACK: a u8 the candidate chose truncated the operator's arithmetic into a pass: {out:?}"
+        );
+        let pinned = suite("{ let y: i64 = v\n            assert((y << 1) == 254) }");
+        assert_eq!(
+            judged_on("r6-arith", &pinned, &cand("127")),
+            Ok(TestEnd::Completed),
+            "control: GOOD, pinned"
+        );
+        assert!(
+            judged_on("r6-arith", &pinned, &cand("5")).is_err(),
+            "control: WRONG fails"
+        );
+        let out = judged_on("r6-arith", &pinned, &cand("255 as u8"));
+        assert!(
+            out != Ok(TestEnd::Completed) && confusion_refused(&out),
+            "ATTACK: a u8 passed the suite's `let y: i64` pin: {out:?}"
+        );
+    }
+
+    /// A dict too big to snapshot is REFUSED at the crossing, never skipped.
+    #[test]
+    fn a_dict_over_the_snapshot_bound_is_refused_not_skipped() {
+        let suite = "@[test]\nfn t() {\n    let d = dict_new()\n    let i = 0\n    while i <= 1000000 {\n        dict_set(d, to_str(i), i)\n        i = i + 1\n    }\n    solve(d)\n    assert(true)\n}\n";
+        let out = judged8("r4c-dict", suite, "fn solve(d: Dict) { }\n");
+        assert!(
+            out != Ok(TestEnd::Completed)
+                && matches!(&out, Err(m) if m.contains("cannot cross a seal")),
+            "ATTACK: a dict past the snapshot bound crossed unrecorded: {out:?}"
+        );
     }
 }
 

@@ -6,6 +6,10 @@ authors.workspace = true
 license.workspace = true
 description = "Axon microVM launcher: Firecracker API client, BPF policy generation, Principal registry"
 
+[lib]
+name = "axon_vm"
+path = "src/lib.rs"
+
 [[bin]]
 name = "axon-vm"
 path = "src/main.rs"

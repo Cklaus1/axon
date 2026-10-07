@@ -19,3 +19,12 @@ serde_json = { workspace = true }
 # Release profile overrides live in the workspace Cargo.toml
 # ([profile.release.package.axon-guest-init]) — per-crate profiles are ignored
 # by Cargo when the crate is part of a workspace.
+
+[features]
+# OFF by default and must stay off in any image: compiles in the
+# AXON_GUEST_ALLOW_NO_POLICY runtime escape that starts the guest with no
+# policy. Linux copies unrecognised `NAME=value` cmdline words into init's
+# environment, so in a default build that variable is not even read.
+# `tests/no_bypass_in_default_build.rs` fails if this becomes a default.
+default = []
+dev-allow-no-policy = []

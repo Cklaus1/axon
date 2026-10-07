@@ -10,6 +10,8 @@
 //! Per BUILD_PLAN, "A scripted golden test proves the plumbing; varied
 //! model-driven tasks establish solver behavior. Keep these results separate."
 
+#[path = "../../axon-core/tests/script_spawn/mod.rs"]
+mod script_spawn;
 use axon_cortex::episode::EpisodeEvent;
 use axon_cortex::runner::{EditGrant, Refusal, Runner};
 use std::path::PathBuf;
@@ -18,21 +20,20 @@ use std::path::PathBuf;
 /// conformance run is this build's stop condition, and a skip would report a
 /// smoke test that never ran as a passing one.
 fn axon_bin() -> PathBuf {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .and_then(|p| p.parent())
-        .expect("workspace root")
-        .to_path_buf();
-    let bin = root.join("target/debug/axon");
-    assert!(
-        bin.exists(),
-        "the conformance run needs the interpreter at {}; build it with \
-         `cargo build -p axon-core --no-default-features --bin axon`. \
-         Failing rather than skipping: a smoke test that did not run is not a \
-         smoke test that passed.",
-        bin.display()
-    );
-    bin
+    // The interpreter as cargo has made it current for THIS tree, never a
+    // stale `target/debug/axon` (tests/script_spawn::workspace_bin).
+    script_spawn::workspace_bin(
+        "AXON_BIN",
+        &[
+            "build",
+            "-p",
+            "axon-core",
+            "--no-default-features",
+            "--bin",
+            "axon",
+        ],
+        "axon",
+    )
 }
 
 fn stage(name: &str) -> (PathBuf, PathBuf) {
@@ -2375,4 +2376,31 @@ fn cxg_c28_a_repair_that_leaves_the_file_failing_is_not_verified() {
         after.contains("n * 2"),
         "the patch must survive: it satisfied the adjudicator and broke nothing\n{after}"
     );
+}
+
+/// G16-r22-negotiation, Axon side: "existing ACE/Reflex/episode formats and
+/// digest rules remain unchanged" and old episodes stay readable. A Cortex
+/// episode in the pre-v0.22 wire shape — one of every event kind, the bytes
+/// the v0.22 base (4cceb892) writes; `episode.rs` and the digest rule in
+/// `lib.rs` are unchanged since then — still parses under the closed schema,
+/// re-serializes to the same bytes, and keeps its pinned digest. Any change
+/// to the format or the digest rule fails here and must arrive with a pinned
+/// migration adapter, never as a silent reinterpretation.
+#[test]
+fn a_pre_v022_episode_reads_and_keeps_its_digest() {
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/episode_pre_v022.json");
+    let bytes = std::fs::read_to_string(&path).unwrap();
+    let ep: axon_cortex::episode::Episode = serde_json::from_str(bytes.trim()).unwrap();
+    assert_eq!(ep.events.len(), 10, "one of every event kind");
+    assert_eq!(
+        serde_json::to_string(&ep).unwrap(),
+        bytes.trim(),
+        "byte-identical re-serialization"
+    );
+    assert_eq!(
+        ep.digest().unwrap(),
+        "axc1:d061c2c2beba3e9f1f05737b45d72119a079cb961d80acd1c30ec5b5b944964b"
+    );
+    assert!(ep.verified_ok());
 }

@@ -5,6 +5,9 @@
 //! Uses `CARGO_BIN_EXE_axon` (set by cargo for the codegen-free `axon` binary
 //! built under `--no-default-features`).
 
+mod common;
+mod script_spawn;
+use script_spawn::Bins;
 use std::process::Command;
 
 fn axon() -> Command {
@@ -294,8 +297,7 @@ fn host_await_runs_identically_on_wasm_wasip1() {
         eprintln!("wasm_host_await_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
+    let out = script_spawn::script("bash", &script, Bins::BuildsItsOwn)
         .output()
         .expect("run wasm_host_await_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -331,8 +333,7 @@ fn wasm_browser_host_await_round_trips_r7c() {
         eprintln!("wasm_browser_host_await.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
+    let out = script_spawn::script("bash", &script, Bins::BuildsItsOwn)
         .output()
         .expect("run wasm_browser_host_await.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -369,8 +370,7 @@ fn wasm_asyncify_host_await_suspends_across_async_r7c() {
         eprintln!("wasm_asyncify_host_await.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
+    let out = script_spawn::script("bash", &script, Bins::BuildsItsOwn)
         .output()
         .expect("run wasm_asyncify_host_await.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -409,8 +409,7 @@ fn wasm_interpreter_evals_identically_to_native_r7c() {
         eprintln!("wasm_browser_interp_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
+    let out = script_spawn::script("bash", &script, Bins::BuildsItsOwn)
         .output()
         .expect("run wasm_browser_interp_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -446,8 +445,7 @@ fn interp_compiles_for_wasm32_unknown_unknown_r7c() {
         eprintln!("wasm_unknown_interp_builds.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
+    let out = script_spawn::script("bash", &script, Bins::BuildsItsOwn)
         .output()
         .expect("run wasm_unknown_interp_builds.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -484,8 +482,7 @@ fn android_compute_parity_r14() {
         eprintln!("android_compute_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
+    let out = script_spawn::script("bash", &script, Bins::BuildsItsOwn)
         .output()
         .expect("run android_compute_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -522,8 +519,7 @@ fn android_lifecycle_adapter_r14() {
         eprintln!("android_lifecycle.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
+    let out = script_spawn::script("bash", &script, Bins::BuildsItsOwn)
         .output()
         .expect("run android_lifecycle.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -3057,6 +3053,9 @@ fn sandbox_scope_binds_fs_prefixes_and_net_hosts_exit_8() {
         ("fs prefix", "sandbox_scope_fs.ax"),
         ("path traversal", "sandbox_scope_traversal.ax"),
         ("net host", "sandbox_scope_net.ax"),
+        // An EMPTY host list is deny-all, not "unscoped" (D-001; the vendored
+        // Cortex packages still say the opposite in four places).
+        ("empty net list", "sandbox_scope_net_empty.ax"),
         // file_copy: arg 1 is a WRITE. The runtime classified the whole call
         // as one kind and had no arm for file_copy at all, so both its read
         // and its write escaped a scoped sandbox.
@@ -3086,6 +3085,16 @@ fn sandbox_scope_binds_fs_prefixes_and_net_hosts_exit_8() {
             !msg.contains("ESCAPED"),
             "[{label}] the out-of-scope access must never happen: {msg}"
         );
+        // Exit 8 alone does not say WHICH check fired. For the empty list it was
+        // measured: with "" misread as unscoped, `http_get` went out (and failed
+        // offline), then the job's `println` tripped the Net-only ceiling —
+        // ALSO exit 8. So the reason is asserted: the HOST was refused.
+        if label == "empty net list" {
+            assert!(
+                msg.contains("not permitted to reach host `evil.example.com`"),
+                "[{label}] must be refused BY THE HOST SCOPE, not by some later check: {msg}"
+            );
+        }
     }
     // The in-scope write must still succeed — a scope that denies everything
     // would pass the assertions above while being useless.
@@ -7531,12 +7540,15 @@ fn asi_hello_goal_acid_test_loop_runs_end_to_end() {
         eprintln!("asi/run.sh not found — skipping");
         return;
     }
-    let out = std::process::Command::new("bash")
-        .arg(&script)
-        .arg("hello-goal")
-        .env("AXON_AI_MOCK", "1")
-        .output()
-        .expect("run run.sh hello-goal");
+    let out = script_spawn::script(
+        "bash",
+        &script,
+        Bins::Named(&[("AXON", env!("CARGO_BIN_EXE_axon"))]),
+    )
+    .arg("hello-goal")
+    .env("AXON_AI_MOCK", "1")
+    .output()
+    .expect("run run.sh hello-goal");
     let m = format!(
         "{}{}",
         String::from_utf8_lossy(&out.stdout),
@@ -7577,12 +7589,15 @@ fn asi_demo_replay_and_audit_commands_work_end_to_end() {
         return;
     }
     // replay: record → replay → "reproducible".
-    let rep = std::process::Command::new("bash")
-        .arg(&script)
-        .arg("replay")
-        .env("AXON_AI_MOCK", "1")
-        .output()
-        .expect("run run.sh replay");
+    let rep = script_spawn::script(
+        "bash",
+        &script,
+        Bins::Named(&[("AXON", env!("CARGO_BIN_EXE_axon"))]),
+    )
+    .arg("replay")
+    .env("AXON_AI_MOCK", "1")
+    .output()
+    .expect("run run.sh replay");
     let r = format!(
         "{}{}",
         String::from_utf8_lossy(&rep.stdout),
@@ -7600,19 +7615,25 @@ fn asi_demo_replay_and_audit_commands_work_end_to_end() {
     // audit: the AI-call trail (run once to populate the log, then audit).
     let cache = std::env::temp_dir().join(format!("axon_asiaudit_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&cache);
-    let _ = std::process::Command::new("bash")
-        .arg(&script)
-        .arg("run")
-        .env("AXON_AI_MOCK", "1")
-        .env("XDG_CACHE_HOME", &cache)
-        .output()
-        .unwrap();
-    let aud = std::process::Command::new("bash")
-        .arg(&script)
-        .arg("audit")
-        .env("XDG_CACHE_HOME", &cache)
-        .output()
-        .unwrap();
+    let _ = script_spawn::script(
+        "bash",
+        &script,
+        Bins::Named(&[("AXON", env!("CARGO_BIN_EXE_axon"))]),
+    )
+    .arg("run")
+    .env("AXON_AI_MOCK", "1")
+    .env("XDG_CACHE_HOME", &cache)
+    .output()
+    .unwrap();
+    let aud = script_spawn::script(
+        "bash",
+        &script,
+        Bins::Named(&[("AXON", env!("CARGO_BIN_EXE_axon"))]),
+    )
+    .arg("audit")
+    .env("XDG_CACHE_HOME", &cache)
+    .output()
+    .unwrap();
     let a = String::from_utf8_lossy(&aud.stdout);
     let _ = std::fs::remove_dir_all(&cache);
     assert!(
@@ -8966,8 +8987,7 @@ fn codegen_parse_int_radix_matches_interp() {
         eprintln!("parse_int_radix_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
+    let out = script_spawn::script("bash", &script, Bins::BuildsItsOwn)
         .output()
         .expect("run parse_int_radix_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -9002,8 +9022,7 @@ fn codegen_parse_float_bool_matches_interp() {
         eprintln!("parse_float_bool_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
+    let out = script_spawn::script("bash", &script, Bins::BuildsItsOwn)
         .output()
         .expect("run parse_float_bool_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -9037,8 +9056,7 @@ fn codegen_i64_to_str_radix_bad_base_panics_like_interp() {
         eprintln!("i64_radix_panic_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
+    let out = script_spawn::script("bash", &script, Bins::BuildsItsOwn)
         .output()
         .expect("run i64_radix_panic_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -9073,8 +9091,7 @@ fn codegen_assert_failure_messages_match_interp() {
         eprintln!("assert_msg_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
+    let out = script_spawn::script("bash", &script, Bins::BuildsItsOwn)
         .output()
         .expect("run assert_msg_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -9108,8 +9125,7 @@ fn codegen_str_count_matches_interp() {
         eprintln!("str_count_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
+    let out = script_spawn::script("bash", &script, Bins::BuildsItsOwn)
         .output()
         .expect("run str_count_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -9143,8 +9159,7 @@ fn codegen_arr_panic_messages_match_interp() {
         eprintln!("arr_panic_msg_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
+    let out = script_spawn::script("bash", &script, Bins::BuildsItsOwn)
         .output()
         .expect("run arr_panic_msg_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -9180,8 +9195,7 @@ fn codegen_fuzz_parity_finds_no_divergence() {
         eprintln!("fuzz_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
+    let out = script_spawn::script("bash", &script, Bins::BuildsItsOwn)
         .output()
         .expect("run fuzz_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -9217,8 +9231,7 @@ fn codegen_parse_int_or_and_float_or_match_interp() {
         eprintln!("parse_or_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
+    let out = script_spawn::script("bash", &script, Bins::BuildsItsOwn)
         .output()
         .expect("run parse_or_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -9252,8 +9265,7 @@ fn codegen_bitwise_and_casts_match_interp() {
         eprintln!("bitwise_cast_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
+    let out = script_spawn::script("bash", &script, Bins::BuildsItsOwn)
         .output()
         .expect("run bitwise_cast_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -9287,8 +9299,7 @@ fn codegen_arr_sum_and_contains_match_interp() {
         eprintln!("arr_reduce_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
+    let out = script_spawn::script("bash", &script, Bins::BuildsItsOwn)
         .output()
         .expect("run arr_reduce_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -9323,8 +9334,7 @@ fn codegen_dict_core_matches_interp() {
         eprintln!("dict_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
+    let out = script_spawn::script("bash", &script, Bins::BuildsItsOwn)
         .output()
         .expect("run dict_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -9843,8 +9853,7 @@ fn codegen_handler_tail_resume_lowers_via_parity_harness() {
         eprintln!("handler_resume_parity.sh not found — skipping");
         return;
     }
-    let out = std::process::Command::new("bash")
-        .arg(&script)
+    let out = script_spawn::script("bash", &script, Bins::BuildsItsOwn)
         .output()
         .expect("run handler_resume_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -9946,8 +9955,7 @@ fn native_deep_recursion_panics_gracefully_not_segfault() {
         eprintln!("recursion_guard_parity.sh not found — skipping");
         return;
     }
-    let out = std::process::Command::new("bash")
-        .arg(&script)
+    let out = script_spawn::script("bash", &script, Bins::BuildsItsOwn)
         .output()
         .expect("run recursion_guard_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -16608,8 +16616,7 @@ fn wasm_interp_matches_native_on_pure_compute() {
         "{home}/.wasmtime/bin:{}",
         std::env::var("PATH").unwrap_or_default()
     );
-    let out = Command::new("bash")
-        .arg(&script)
+    let out = script_spawn::script("bash", &script, Bins::BuildsItsOwn)
         .env("PATH", path)
         .output()
         .expect("run wasm_parity.sh");
@@ -16648,8 +16655,7 @@ fn wasm_aot_runs_and_matches_interp_on_pure_int() {
         eprintln!("wasm_aot_run_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
+    let out = script_spawn::script("bash", &script, Bins::BuildsItsOwn)
         .output()
         .expect("run wasm_aot_run_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -16685,8 +16691,7 @@ fn wasm_browser_examples_run_identically_via_js_host() {
         eprintln!("wasm_browser_examples_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
+    let out = script_spawn::script("bash", &script, Bins::BuildsItsOwn)
         .output()
         .expect("run wasm_browser_examples_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -16725,8 +16730,7 @@ fn wasm_browser_println_matches_interp_via_js_host() {
         eprintln!("wasm_browser_io_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
+    let out = script_spawn::script("bash", &script, Bins::BuildsItsOwn)
         .output()
         .expect("run wasm_browser_io_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -16762,8 +16766,7 @@ fn wasm_browser_target_is_wasi_free_and_matches_interp() {
         eprintln!("wasm_browser_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
+    let out = script_spawn::script("bash", &script, Bins::BuildsItsOwn)
         .output()
         .expect("run wasm_browser_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -16800,8 +16803,7 @@ fn wasm_examples_run_identically_on_aot_wasm() {
         eprintln!("wasm_examples_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
+    let out = script_spawn::script("bash", &script, Bins::BuildsItsOwn)
         .output()
         .expect("run wasm_examples_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -16837,8 +16839,7 @@ fn wasm_str_abi_bridge_runs_str_builtins() {
         eprintln!("wasm_str_abi_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
+    let out = script_spawn::script("bash", &script, Bins::BuildsItsOwn)
         .output()
         .expect("run wasm_str_abi_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -16874,8 +16875,7 @@ fn wasm_malloc_abi_bridge_runs_array_and_to_str() {
         eprintln!("wasm_malloc_abi_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
+    let out = script_spawn::script("bash", &script, Bins::BuildsItsOwn)
         .output()
         .expect("run wasm_malloc_abi_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -16911,8 +16911,7 @@ fn wasm_aot_stdout_matches_interp_across_corpus() {
         eprintln!("wasm_aot_stdout_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
+    let out = script_spawn::script("bash", &script, Bins::BuildsItsOwn)
         .output()
         .expect("run wasm_aot_stdout_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -16947,8 +16946,7 @@ fn wasm_aot_env_var_runs_on_wasm() {
         eprintln!("wasm_aot_env_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
+    let out = script_spawn::script("bash", &script, Bins::BuildsItsOwn)
         .output()
         .expect("run wasm_aot_env_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -16985,8 +16983,7 @@ fn wasm_object_prunes_dead_externs_and_links_clean() {
         eprintln!("wasm_object_prune.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
+    let out = script_spawn::script("bash", &script, Bins::BuildsItsOwn)
         .output()
         .expect("run wasm_object_prune.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -17022,8 +17019,7 @@ fn wasm_host_io_matches_native_via_wasi() {
         eprintln!("wasm_fs_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
+    let out = script_spawn::script("bash", &script, Bins::BuildsItsOwn)
         .output()
         .expect("run wasm_fs_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -17059,8 +17055,7 @@ fn codegen_random_i64_degenerate_bounds_match_interp() {
         eprintln!("random_i64_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
+    let out = script_spawn::script("bash", &script, Bins::BuildsItsOwn)
         .output()
         .expect("run random_i64_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -17102,8 +17097,7 @@ fn virtual_clock_is_deterministic_and_matches_native() {
         eprintln!("clock_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
+    let out = script_spawn::script("bash", &script, Bins::BuildsItsOwn)
         .output()
         .expect("run clock_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -17151,11 +17145,13 @@ fn claude_md_claims_are_true() {
         std::path::Path::new(&script).exists(),
         "claims_gate.sh must exist — CLAUDE.md's claims are unverified without it"
     );
-    let out = Command::new("bash")
-        .arg(&script)
-        .env("AXON", env!("CARGO_BIN_EXE_axon"))
-        .output()
-        .expect("run claims_gate.sh");
+    let out = script_spawn::script(
+        "bash",
+        &script,
+        Bins::Named(&[("AXON", env!("CARGO_BIN_EXE_axon"))]),
+    )
+    .output()
+    .expect("run claims_gate.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
@@ -17184,16 +17180,15 @@ fn host_journal_records_and_replays_without_the_environment() {
         std::path::Path::new(&script).exists(),
         "replay_host_gate.sh must exist — the record/replay claim is unverified without it"
     );
-    let out = Command::new("bash")
-        .arg(&script)
-        // Point the script at THIS test run's binary rather than letting it fall
-        // back to `./target/debug/axon`. Two reasons: the script SKIPs when that
-        // path is missing (and a skip has no PASS line, so the assertion below
-        // would fail confusingly), and a stale binary on disk would mean this
-        // test and its siblings are checking different builds.
-        .env("AXON", env!("CARGO_BIN_EXE_axon"))
-        .output()
-        .expect("run replay_host_gate.sh");
+    // The script builds nothing: it runs exactly the binary named here, THIS
+    // test run's (with none named it refuses rather than guess one).
+    let out = script_spawn::script(
+        "bash",
+        &script,
+        Bins::Named(&[("AXON", env!("CARGO_BIN_EXE_axon"))]),
+    )
+    .output()
+    .expect("run replay_host_gate.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
@@ -17226,8 +17221,7 @@ fn codegen_exit_codes_match_interp() {
         eprintln!("exit_code_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
+    let out = script_spawn::script("bash", &script, Bins::BuildsItsOwn)
         .output()
         .expect("run exit_code_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -17264,8 +17258,7 @@ fn all_examples_native_match_interp_under_mock() {
         eprintln!("all_examples_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
+    let out = script_spawn::script("bash", &script, Bins::BuildsItsOwn)
         .output()
         .expect("run all_examples_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -17302,8 +17295,7 @@ fn codegen_goal_run_unknown_name_matches_interp() {
         eprintln!("goal_unknown_name_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
+    let out = script_spawn::script("bash", &script, Bins::BuildsItsOwn)
         .output()
         .expect("run goal_unknown_name_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -17338,8 +17330,7 @@ fn codegen_agent_action_log_matches_interp() {
         eprintln!("agent_action_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
+    let out = script_spawn::script("bash", &script, Bins::BuildsItsOwn)
         .output()
         .expect("run agent_action_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -17375,8 +17366,7 @@ fn codegen_exec_matches_interp() {
         eprintln!("exec_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
+    let out = script_spawn::script("bash", &script, Bins::BuildsItsOwn)
         .output()
         .expect("run exec_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -17411,8 +17401,7 @@ fn codegen_parse_int_err_message_matches_interp() {
         eprintln!("parse_int_err_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
+    let out = script_spawn::script("bash", &script, Bins::BuildsItsOwn)
         .output()
         .expect("run parse_int_err_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -17448,8 +17437,7 @@ fn codegen_adaptive_provenance_carries_input_f11() {
         eprintln!("goal_input_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
+    let out = script_spawn::script("bash", &script, Bins::BuildsItsOwn)
         .output()
         .expect("run goal_input_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -17484,8 +17472,7 @@ fn codegen_to_str_scalar_dispatch_matches_interp() {
         eprintln!("to_str_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
+    let out = script_spawn::script("bash", &script, Bins::BuildsItsOwn)
         .output()
         .expect("run to_str_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -17520,8 +17507,7 @@ fn codegen_str_reverse_replace_match_interp_on_utf8() {
         eprintln!("str_utf8_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
+    let out = script_spawn::script("bash", &script, Bins::BuildsItsOwn)
         .output()
         .expect("run str_utf8_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -17602,8 +17588,7 @@ fn codegen_provenance_matches_interp_on_adaptive_returns() {
         eprintln!("provenance_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
+    let out = script_spawn::script("bash", &script, Bins::BuildsItsOwn)
         .output()
         .expect("run provenance_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -20066,8 +20051,7 @@ fn mock_native_module_interp_codegen_parity() {
         eprintln!("native_gfx_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
+    let out = script_spawn::script("bash", &script, Bins::BuildsItsOwn)
         .output()
         .expect("run native_gfx_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -22358,14 +22342,16 @@ fn r42_smoke_scenario_runs_end_to_end() {
         .spawn()
         .expect("spawn axon");
 
-    let deadline = Instant::now() + Duration::from_secs(30);
+    // A hang bound, not a speed bound: 30 s was exceeded by an honest run on
+    // a loaded host.
+    let deadline = Instant::now() + Duration::from_secs(300);
     let status = loop {
         match child.try_wait().expect("try_wait") {
             Some(s) => break s,
             None => {
                 if Instant::now() > deadline {
                     let _ = child.kill();
-                    panic!("r42_smoke.ax did not finish within 30s — a hang is a failure");
+                    panic!("r42_smoke.ax did not finish within 300s — a hang is a failure");
                 }
                 std::thread::sleep(Duration::from_millis(50));
             }
@@ -27629,7 +27615,11 @@ fn native_place_assignment_examples_match_the_interpreter() {
             note_harness_skip("axon build (no codegen feature)");
             return;
         };
-        assert_eq!(got, interp_stdout(name, &src), "`{name}`: native != interpreter");
+        assert_eq!(
+            got,
+            interp_stdout(name, &src),
+            "`{name}`: native != interpreter"
+        );
     }
 }
 
@@ -27671,7 +27661,11 @@ fn native_closures_capture_any_enclosing_scope_like_the_interpreter() {
             note_harness_skip("axon build (no codegen feature)");
             return;
         };
-        assert_eq!(got, interp_stdout(tag, src), "[{tag}] native != interpreter");
+        assert_eq!(
+            got,
+            interp_stdout(tag, src),
+            "[{tag}] native != interpreter"
+        );
     }
 }
 
@@ -27721,7 +27715,11 @@ fn native_array_concat_and_sum_type_slot_writes_match_the_interpreter() {
             note_harness_skip("axon build (no codegen feature)");
             return;
         };
-        assert_eq!(got, interp_stdout(tag, src), "[{tag}] native != interpreter");
+        assert_eq!(
+            got,
+            interp_stdout(tag, src),
+            "[{tag}] native != interpreter"
+        );
     }
 }
 
@@ -27763,10 +27761,15 @@ fn native_assign_of_unlowered_value_is_refused_not_dropped() {
         }
         if build.status.code() != Some(0) {
             assert!(msg.contains("E0910"), "[{tag}] must refuse as E0910: {msg}");
-            assert!(!bin.exists(), "[{tag}] a refused build must leave no binary");
+            assert!(
+                !bin.exists(),
+                "[{tag}] a refused build must leave no binary"
+            );
             continue;
         }
-        let run = std::process::Command::new(&bin).output().expect("run native");
+        let run = std::process::Command::new(&bin)
+            .output()
+            .expect("run native");
         let _ = std::fs::remove_file(&bin);
         assert_eq!(
             String::from_utf8_lossy(&run.stdout).trim(),
@@ -27792,7 +27795,11 @@ fn native_and_or_short_circuit_like_the_interpreter() {
             note_harness_skip("axon build (no codegen feature)");
             return;
         };
-        assert_eq!(got, interp_stdout(tag, src), "[{tag}] native != interpreter");
+        assert_eq!(
+            got,
+            interp_stdout(tag, src),
+            "[{tag}] native != interpreter"
+        );
     }
 }
 
@@ -27811,7 +27818,11 @@ fn native_match_guards_see_pattern_bindings_like_the_interpreter() {
             note_harness_skip("axon build (no codegen feature)");
             return;
         };
-        assert_eq!(got, interp_stdout(tag, src), "[{tag}] native != interpreter");
+        assert_eq!(
+            got,
+            interp_stdout(tag, src),
+            "[{tag}] native != interpreter"
+        );
     }
 }
 
@@ -27840,10 +27851,17 @@ fn native_parse_family_and_arm_binding_concat_match_the_interpreter() {
             note_harness_skip("axon build (no codegen feature)");
             return;
         };
-        assert_eq!(got, interp_stdout(tag, src), "[{tag}] native != interpreter");
+        assert_eq!(
+            got,
+            interp_stdout(tag, src),
+            "[{tag}] native != interpreter"
+        );
     }
     let (code, out) = run_verb(&["check"], "fn main() -> i64 {\n    match parse_int(\"x\") { Ok(w) => println(\"ok\"), Err(e) => println(to_str(e + 1)) }\n    0\n}\n");
-    assert_ne!(code, 0, "`str + i64` on an arm binding must stay refused:\n{out}");
+    assert_ne!(
+        code, 0,
+        "`str + i64` on an arm binding must stay refused:\n{out}"
+    );
     assert!(out.contains("E0102"), "expected infer's E0102:\n{out}");
 }
 
@@ -27984,7 +28002,10 @@ fn editing_an_imported_module_invalidates_the_build_cache() {
     // compiler can change underneath it. Copying the binary once gives this
     // test a compiler identity nothing else can touch.
     let pinned = dir.join("axon-pinned");
-    std::fs::copy(env!("CARGO_BIN_EXE_axon"), &pinned).unwrap();
+    // Copied by a separate process: an in-process copy holds a write fd a
+    // sibling test thread's fork can inherit, and the exec below then fails
+    // with ETXTBSY ("Text file busy").
+    common::copy_executable(env!("CARGO_BIN_EXE_axon"), &pinned, 0o755);
 
     // A private cache dir, so this test neither reads nor pollutes the user's.
     let build = |tag: &str| -> Option<String> {
@@ -28101,10 +28122,25 @@ fn a_different_compiler_with_the_same_path_size_and_mtime_misses_the_build_cache
     };
     let build = |tag: &str| -> Option<()> {
         let bin = dir.join(format!("{tag}.bin"));
-        let o = Command::new(&compiler)
-            .args(["build", app.to_str().unwrap(), "-o", bin.to_str().unwrap()])
-            .args(["--cache-dir", cache.to_str().unwrap()])
-            .output()
+        // `compiler` was just written by `fs::copy`; a sibling test's fork() in this
+        // process can hold that write fd until its child execs, so the first exec
+        // may see ETXTBSY (seen once in three loaded full runs, never alone). It is
+        // the kernel's transient answer, not the property under test: retry it.
+        let o = (0..50)
+            .find_map(|_| {
+                match Command::new(&compiler)
+                    .args(["build", app.to_str().unwrap(), "-o", bin.to_str().unwrap()])
+                    .args(["--cache-dir", cache.to_str().unwrap()])
+                    .output()
+                {
+                    Err(e) if e.kind() == std::io::ErrorKind::ExecutableFileBusy => {
+                        std::thread::sleep(std::time::Duration::from_millis(100));
+                        None
+                    }
+                    other => Some(other),
+                }
+            })
+            .expect("the copied compiler stayed busy for 5 s")
             .unwrap();
         let log = format!(
             "{}{}",
@@ -32286,6 +32322,255 @@ fn a_wasm_link_failure_reports_the_linkers_own_error() {
     );
 }
 
+#[test]
+fn uncertain_arithmetic_keeps_the_least_trusted_source_tag() {
+    // D-014, second half (found by the v0.20 adversarial review, reproduced):
+    // every binop result was built with `make_uncertain` → tag 0, in BOTH
+    // engines, so `u + 0` turned a model's answer into a "user-constructed"
+    // value — raw tag 1, after `+ 0` tag 0 — and a program trusting only
+    // `source_tag == 0` accepted it. A derived value now carries the LEAST
+    // trusted operand's tag: AI (1) > runtime (2) > user (0). Plain literals
+    // count as user. The user×user row is the control: a fix that stamped 1
+    // everywhere would break it.
+    let src = "fn main() -> i64 {\n  \
+               match ai_extract_uncertain_i64(\"n? 3\") {\n    \
+                 Ok(u) => {\n      \
+                   println(to_str((u + 0).source_tag))\n      \
+                   println(to_str((1 + u).source_tag))\n      \
+                   println(to_str((u * uncertain_new(2, 0.99)).source_tag))\n      \
+                   println(to_str((uncertain_dyn_i64(2, 0.5) - u).source_tag))\n    }\n    \
+                 Err(e) => println(e)\n  }\n  \
+               println(to_str((uncertain_dyn_i64(2, 0.5) * 3).source_tag))\n  \
+               println(to_str((uncertain_dyn_i64(2, 0.5) + uncertain_new(1, 0.9)).source_tag))\n  \
+               println(to_str((uncertain_new(1, 0.5) + uncertain_new(2, 0.9)).source_tag))\n  \
+               println(to_str((uncertain_new(1, 0.5) + 4).source_tag))\n  0\n}\n";
+    let f = tmp_ax("uncertain_binop_tag", src);
+    let run = axon()
+        .arg("run")
+        .arg(&f)
+        .env("AXON_AI_MOCK", "1")
+        .env_remove("AXON_AI_REPLAY")
+        .output()
+        .expect("spawn");
+    let got: Vec<String> = String::from_utf8_lossy(&run.stdout)
+        .lines()
+        .map(|l| l.to_string())
+        .collect();
+    assert_eq!(
+        got,
+        ["1", "1", "1", "1", "2", "2", "0", "0"],
+        "derived Uncertain must keep the least-trusted operand's source_tag. stderr: {}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+
+    // Native must agree: codegen's `emit_binop_uncertain` stored a constant 0.
+    // The native mock is `AXON_AI_MOCK` in the produced binary (axon-ai returns
+    // {1|1.0, 0.9} and codegen stamps 1), so the same env drives both engines.
+    let out_bin = std::env::temp_dir().join(format!("axon_ubtag_{}", std::process::id()));
+    let _ = std::fs::remove_file(&out_bin);
+    let build = axon()
+        .arg("build")
+        .arg(&f)
+        .arg("-o")
+        .arg(&out_bin)
+        .arg("--no-cache")
+        .output()
+        .expect("spawn build");
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let _ = std::fs::remove_file(&f);
+    if msg.contains("requires building axon with the `codegen` feature") {
+        return;
+    }
+    assert_eq!(build.status.code(), Some(0), "must build: {msg}");
+    let nat = std::process::Command::new(&out_bin)
+        .env("AXON_AI_MOCK", "1")
+        .env_remove("AXON_AI_REPLAY")
+        .output()
+        .expect("run native");
+    let _ = std::fs::remove_file(&out_bin);
+    let ngot: Vec<String> = String::from_utf8_lossy(&nat.stdout)
+        .lines()
+        .map(|l| l.to_string())
+        .collect();
+    assert_eq!(
+        ngot, got,
+        "native must agree with the interpreter on derived provenance"
+    );
+}
+
+#[test]
+fn ai_extract_uncertain_is_stamped_ai_sourced_on_mock_and_replay_paths() {
+    // Found reconciling the Cortex v0.20 package (UPGRADE_V0_20.md D-014):
+    // CX-05 requires a value's ORIGIN to travel with it, and `source_tag` is
+    // Axon's field for exactly that (0 user-constructed, 1 AI, 2 runtime).
+    // Codegen stamps 1 for `ai_extract_uncertain_*` (codegen/builtins.rs, the
+    // `source_tag=1` store). The interpreter built every one of these through
+    // `make_uncertain`, which stamps 0 — so under `axon run` a MODEL-produced
+    // value read as user-constructed, and a program gating on
+    // `u.source_tag == 0` ("trust only what the user typed") accepted it.
+    // The comment on SRC_TAG_AI said the interp AI path was E0910-refused
+    // natively; it is not — the fixture builds natively.
+    //
+    // Each interp path built the value separately. Mock and replay-hit are
+    // driven here and are mutation-pinned. The LIVE path needs a key and the
+    // network, so it is NOT driven: reverting only its constructor survives this
+    // test (measured by the v0.20 adversarial review). It uses the same
+    // `make_uncertain_ai` call, which is the whole of the protection.
+    let src = "fn main() -> i64 {\n  \
+               match ai_extract_uncertain_i64(\"how many? 3\") {\n    \
+                 Ok(u) => println(to_str(u.source_tag))\n    \
+                 Err(e) => println(e)\n  }\n  \
+               match ai_extract_uncertain_f64(\"how warm? 2.5\") {\n    \
+                 Ok(u) => println(to_str(u.source_tag))\n    \
+                 Err(e) => println(e)\n  }\n  \
+               println(to_str(uncertain_new(1, 0.5).source_tag))\n  0\n}\n";
+    let f = tmp_ax("ai_extract_src_tag", src);
+
+    // Mock path. `uncertain_new` is the control: a fix that stamped 1
+    // everywhere would break it.
+    let run = axon()
+        .arg("run")
+        .arg(&f)
+        .env("AXON_AI_MOCK", "1")
+        .env_remove("AXON_AI_REPLAY")
+        .output()
+        .expect("spawn");
+    let got: Vec<String> = String::from_utf8_lossy(&run.stdout)
+        .lines()
+        .map(|l| l.to_string())
+        .collect();
+    assert_eq!(
+        got,
+        ["1", "1", "0"],
+        "mock path: AI-sourced values must carry source_tag 1"
+    );
+
+    // Replay-hit path: a pre-recorded cache, no mock, no key. The cache key is
+    // sha256(model \0 prompt) with the BUILTIN NAME as the model.
+    let cache = std::env::temp_dir().join(format!("axon_srctag_replay_{}", std::process::id()));
+    let key = |model: &str, prompt: &str| {
+        use sha2::{Digest, Sha256};
+        let d = Sha256::digest(format!("{model}\u{0}{prompt}").as_bytes());
+        d.iter().map(|b| format!("{b:02x}")).collect::<String>()
+    };
+    let _ = std::fs::remove_file(&cache);
+    let rows = [
+        (key("ai_extract_uncertain_i64", "how many? 3"), "3|0.8"),
+        (key("ai_extract_uncertain_f64", "how warm? 2.5"), "2.5|0.7"),
+    ];
+    // Line format written by `ai_replay_store`: `<key> <tokens> <hex(response)>`.
+    let body: String = rows
+        .iter()
+        .map(|(k, r)| {
+            let hex: String = r.bytes().map(|b| format!("{b:02x}")).collect();
+            format!("{k} 0 {hex}\n")
+        })
+        .collect();
+    std::fs::write(&cache, body).unwrap();
+    let run = axon()
+        .arg("run")
+        .arg(&f)
+        .env_remove("AXON_AI_MOCK")
+        .env("AXON_AI_REPLAY", &cache)
+        .output()
+        .expect("spawn");
+    let got: Vec<String> = String::from_utf8_lossy(&run.stdout)
+        .lines()
+        .map(|l| l.to_string())
+        .collect();
+    let _ = std::fs::remove_file(&cache);
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(
+        got,
+        ["1", "1", "0"],
+        "replay path: a recorded AI answer is still AI-sourced. stderr: {}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+}
+
+/// C9 round 4c, PSV-1 (amendment 72), defence in depth for B2: a method call
+/// on `()` (a call of a fn with no declared return type) needs an impl for
+/// `()`; it is refused at check time, not dispatched at runtime on whatever
+/// the body ended on. Control: with `impl … for ()` it checks and runs.
+#[test]
+fn a_method_call_on_unit_without_an_impl_is_e0403() {
+    let run = |src: &str, verb: &str| {
+        let f = std::env::temp_dir().join(format!(
+            "axon_unitcall_{}_{}.ax",
+            std::process::id(),
+            src.len()
+        ));
+        std::fs::write(&f, src).unwrap();
+        let out = axon().args([verb, f.to_str().unwrap()]).output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        (
+            out.status.code(),
+            format!(
+                "{}{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            ),
+        )
+    };
+    let judge = "trait Judge {\n  fn ok(self) -> bool\n}\nimpl Judge for i64 {\n  fn ok(self: i64) -> bool { self == 9 }\n}\n";
+    let bad = format!(
+        "{judge}fn solve(n: i64) {{\n  println(to_str(n))\n}}\nfn main() {{\n  assert(solve(3).ok())\n}}\n"
+    );
+    let (code, msg) = run(&bad, "check");
+    assert!(
+        code == Some(2) && msg.contains("E0403") && msg.contains("on type `()`"),
+        "ATTACK: a method call on a unit fn's result passed the checker: {code:?} {msg}"
+    );
+    let good = format!(
+        "{judge}impl Judge for () {{\n  fn ok(self: ()) -> bool {{ true }}\n}}\nfn note(n: i64) {{\n  println(to_str(n))\n}}\nfn main() {{\n  assert(note(3).ok())\n}}\n"
+    );
+    let (code, msg) = run(&good, "run");
+    assert_eq!(code, Some(0), "control: an impl for () is called: {msg}");
+}
+
+/// C9 round 4c, PSV-1 (amendment 72), the MINOR: an impl for `f32`, `isize`
+/// or `usize` never runs (a method call dispatches on the value's runtime
+/// representation, `f64`/`i64`), so it is refused (E0505). Control: the same
+/// impl for `f64`/`i64` checks.
+#[test]
+fn an_impl_for_a_type_the_runtime_represents_as_another_is_e0505() {
+    for (alias, rep) in [("f32", "f64"), ("isize", "i64"), ("usize", "i64")] {
+        let src = |t: &str| {
+            format!("trait Judge {{\n  fn ok(self) -> bool\n}}\nimpl Judge for {t} {{\n  fn ok(self: {t}) -> bool {{ true }}\n}}\nfn main() {{\n}}\n")
+        };
+        for (t, refused) in [(alias, true), (rep, false)] {
+            let f = std::env::temp_dir().join(format!("axon_e0505_{}_{t}.ax", std::process::id()));
+            std::fs::write(&f, src(t)).unwrap();
+            let out = axon()
+                .args(["check", f.to_str().unwrap()])
+                .output()
+                .unwrap();
+            let _ = std::fs::remove_file(&f);
+            let msg = format!(
+                "{}{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            );
+            if refused {
+                assert!(
+                    out.status.code() == Some(2) && msg.contains("E0505"),
+                    "ATTACK: a dead impl for `{t}` passed the checker: {msg}"
+                );
+            } else {
+                assert_eq!(
+                    out.status.code(),
+                    Some(0),
+                    "control: an impl for `{t}` checks: {msg}"
+                );
+            }
+        }
+    }
+}
+
 /// Build `src` natively and run it; `None` when this axon has no codegen.
 fn native_stdout(tag: &str, src: &str) -> Option<String> {
     let bin = native_bin(tag, src)?;
@@ -32357,7 +32642,11 @@ fn native_lowers_string_concat_index_write_and_field_write_like_the_interpreter(
         let Some(got) = native_stdout(tag, src) else {
             return;
         };
-        assert_eq!(got, interp_stdout(tag, src), "[{tag}] native != interpreter");
+        assert_eq!(
+            got,
+            interp_stdout(tag, src),
+            "[{tag}] native != interpreter"
+        );
     }
 }
 
@@ -32392,13 +32681,18 @@ fn native_arrays_have_value_semantics_like_the_interpreter() {
         let Some(got) = native_stdout(tag, src) else {
             return;
         };
-        assert_eq!(got, interp_stdout(tag, src), "[{tag}] native != interpreter");
+        assert_eq!(
+            got,
+            interp_stdout(tag, src),
+            "[{tag}] native != interpreter"
+        );
     }
 }
 
 #[test]
 fn native_array_index_write_traps_out_of_bounds_like_the_interpreter() {
-    let src = "fn main() -> i64 {\n let a = [1, 2, 3]\n a[3] = 7\n println(\"unreachable\")\n 0\n}\n";
+    let src =
+        "fn main() -> i64 {\n let a = [1, 2, 3]\n a[3] = 7\n println(\"unreachable\")\n 0\n}\n";
     let f = tmp_ax("oob_write", src);
     let bin = std::env::temp_dir().join(format!("axon_native_oobw_{}", std::process::id()));
     let build = axon()
@@ -32412,7 +32706,11 @@ fn native_array_index_write_traps_out_of_bounds_like_the_interpreter() {
     let interp = axon().arg("run").arg(&f).output().unwrap();
     let _ = std::fs::remove_file(&f);
     let msg = String::from_utf8_lossy(&build.stderr).to_string();
-    if codegen_absent(&format!("{}{}", String::from_utf8_lossy(&build.stdout), msg)) {
+    if codegen_absent(&format!(
+        "{}{}",
+        String::from_utf8_lossy(&build.stdout),
+        msg
+    )) {
         return;
     }
     assert_eq!(build.status.code(), Some(0), "build must succeed:\n{msg}");
@@ -32492,7 +32790,11 @@ fn arr_sort_by_is_stable_in_both_engines() {
         .collect();
     want.sort_by_key(|r| r / 10000); // std's sort_by_key is stable
     let want = expected_sorted(want);
-    assert_eq!(interp_stdout("sort_stable", &src), want, "interpreter not stable");
+    assert_eq!(
+        interp_stdout("sort_stable", &src),
+        want,
+        "interpreter not stable"
+    );
     if let Some(got) = native_stdout("sort_stable", &src) {
         assert_eq!(got, want, "native not stable");
     }
@@ -32503,7 +32805,10 @@ fn arr_sort_by_matches_a_reference_sort_in_both_engines() {
     // AX-07: correctness of the merge sort on random data, ascending and
     // descending comparators, against Rust's sort.
     let n = 777;
-    for (tag, cmp, desc) in [("sort_asc", "|a, b| a - b", false), ("sort_desc", "|a, b| b - a", true)] {
+    for (tag, cmp, desc) in [
+        ("sort_asc", "|a, b| a - b", false),
+        ("sort_desc", "|a, b| b - a", true),
+    ] {
         let src = sort_program(n, "s", cmp);
         let mut want = minstd(7, n);
         want.sort();
@@ -32567,7 +32872,11 @@ fn interp_arr_repeat_unallocatable_size_is_a_runtime_error_naming_n() {
     let run = axon().arg("run").arg(&f).output().expect("spawn run");
     let _ = std::fs::remove_file(&f);
     let stderr = String::from_utf8_lossy(&run.stderr);
-    assert_eq!(run.status.code(), Some(101), "runtime panic exit; stderr:\n{stderr}");
+    assert_eq!(
+        run.status.code(),
+        Some(101),
+        "runtime panic exit; stderr:\n{stderr}"
+    );
     assert!(
         stderr.contains("arr_repeat: cannot allocate an array of 9223372036854775807 elements"),
         "error must name arr_repeat and n: {stderr}"
@@ -32791,7 +33100,11 @@ fn native_array_literals_in_hot_loops_run_in_bounded_memory() {
         let Some(native_small) = native_stdout(&format!("{tag}_small"), &small) else {
             return;
         };
-        assert_eq!(native_small, interp_stdout(&format!("{tag}_small"), &small), "[{tag}] parity");
+        assert_eq!(
+            native_small,
+            interp_stdout(&format!("{tag}_small"), &small),
+            "[{tag}] parity"
+        );
         let Some(bin) = native_bin(tag, src) else {
             return;
         };
@@ -32953,7 +33266,10 @@ fn main() {
         return;
     };
     let interp = interp_stdout("lit_escape", src);
-    assert!(interp.contains("returned: 4,40,400, 3,30,300, 2,20,200,"), "{interp}");
+    assert!(
+        interp.contains("returned: 4,40,400, 3,30,300, 2,20,200,"),
+        "{interp}"
+    );
     assert_eq!(native, interp);
 }
 
@@ -33013,18 +33329,18 @@ fn main() -> i64 {\n\
 #[test]
 fn mut_slice_params_write_through_in_both_engines() {
     let want = [
-        "55 1",       // write-through; `let b = a` before the call keeps its own copy
-        "10 20 21",   // nested reborrow two call levels deep
-        "1 3 0",      // early `return`: the write before it is written back
-        "0 0 99",     // normal return
+        "55 1",         // write-through; `let b = a` before the call keeps its own copy
+        "10 20 21",     // nested reborrow two call levels deep
+        "1 3 0",        // early `return`: the write before it is written back
+        "0 0 99",       // normal return
         "err boom 7 0", // `?` unwinding: the write before it is written back
         "ok 5 7 5",
-        "54 11",      // writes + passing the `&mut` param on as `&`
-        "4 7",        // wholesale reassignment `xs = [..]` reaches the caller
-        "1000 4",     // `let c = xs` in the callee is a copy
-        "5 77",       // a returned `&mut` param is a copy, not an alias
-        "42 3",       // element field write `ps[0].x = v`
-        "155",        // lending `&mut a` does not reach an earlier `let b = a`
+        "54 11",  // writes + passing the `&mut` param on as `&`
+        "4 7",    // wholesale reassignment `xs = [..]` reaches the caller
+        "1000 4", // `let c = xs` in the callee is a copy
+        "5 77",   // a returned `&mut` param is a copy, not an alias
+        "42 3",   // element field write `ps[0].x = v`
+        "155",    // lending `&mut a` does not reach an earlier `let b = a`
     ];
     let Some((interp, native)) = native_stdout_lines("mutslice", MUT_SLICE_SRC, &[]) else {
         let f = tmp_ax("mutslice_interp", MUT_SLICE_SRC);
@@ -33109,7 +33425,11 @@ fn misuses_of_mut_slice_params_are_compile_errors() {
             String::from_utf8_lossy(&out.stdout),
             String::from_utf8_lossy(&out.stderr)
         );
-        assert_eq!(out.status.code(), Some(2), "{label}: must fail check: {msg}");
+        assert_eq!(
+            out.status.code(),
+            Some(2),
+            "{label}: must fail check: {msg}"
+        );
         assert!(
             msg.contains(code) && msg.contains(needle),
             "{label}: expected {code} mentioning {needle:?}: {msg}"

@@ -1,0 +1,26 @@
+exit: Some(0)
+--- stdout ---
+Verify the whole chain from genesis, recomputing every link.
+
+Prints "CHAIN OK: N entries" and exits 0 on success, or "CHAIN BROKEN at seq M" and exits 15 on the first broken link (never the last).
+
+Usage: axon-vm chain verify [OPTIONS] --store <STORE>
+
+Options:
+      --store <STORE>
+          Path to the chain JSONL file
+
+      --genesis <GENESIS>
+          Expected genesis root (`axtcb1-ext:…`). If omitted, the chain's own first entry's `prev_hash` is used (self-consistency check only — pass this explicitly to pin against a known-good R31 boot root)
+
+      --expect-head <EXPECT_HEAD>
+          Expected chain tip (`axtcb1-run:…`, as printed by `chain stamp` or `chain show`). AUDIT T31: `--genesis` pins the ROOT, which cannot detect a truncated tail — every prefix of a valid chain is itself a valid chain, so chopping off the last runs still verifies clean. Pin the TIP with this to detect rollback
+
+      --expect-count <EXPECT_COUNT>
+          Expected number of entries. Catches a truncation even when the relying party recorded only how many runs it had seen, not the hash
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+--- stderr ---
+

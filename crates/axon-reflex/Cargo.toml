@@ -23,6 +23,9 @@ serde_json = "1"
 # {"principal":"mallory","principal":"alice"} served as alice, while a reviewer
 # reading the line left-to-right sees mallory.
 axon-cortex = { path = "../axon-cortex" }
+# B272 shortlist decisions use the v0.22 shared contracts (PolicyEnvelope,
+# CandidateId, Scope, check_shortlist, cl22 digest).
+axon-loop-contracts = { path = "../axon-loop-contracts" }
 
 [lib]
 name = "axon_reflex"

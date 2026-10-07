@@ -1,5 +1,7 @@
 // Integration tests that exercise the full check pipeline against .ax fixture files.
 
+mod script_spawn;
+use script_spawn::Bins;
 use std::path::PathBuf;
 
 fn fixtures_dir() -> PathBuf {
@@ -1746,8 +1748,6 @@ fn verify_runtime_panic_fires_on_violation() {
 /// This allows the test to live in CI (where tools are absent) without failing.
 #[test]
 fn r17_slice1_qemu_boot_writes_axon_s1() {
-    use std::process::Command;
-
     let script = {
         let mut p = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         p.pop(); // crates/axon-core → crates
@@ -1759,10 +1759,16 @@ fn r17_slice1_qemu_boot_writes_axon_s1() {
         panic!("missing scripts/qemu_boot_test.sh — was it deleted?");
     }
 
-    let out = Command::new("bash")
-        .arg(&script)
-        .output()
-        .expect("failed to spawn qemu_boot_test.sh");
+    // The binary is THIS test run's axon, named explicitly: the script never
+    // falls back to target/ or PATH (C9 round 4: a planted `axon` on PATH ran
+    // here and the check passed). An interp-only build makes it SKIP.
+    let out = script_spawn::script(
+        "bash",
+        &script,
+        Bins::Named(&[("AXON_BIN", env!("CARGO_BIN_EXE_axon"))]),
+    )
+    .output()
+    .expect("failed to spawn qemu_boot_test.sh");
 
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -1792,8 +1798,6 @@ fn r17_slice1_qemu_boot_writes_axon_s1() {
 /// Skips gracefully if any required tool is missing, same as the Slice 1 gate.
 #[test]
 fn r17_timer_interrupt_fires_and_is_handled() {
-    use std::process::Command;
-
     let script = {
         let mut p = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         p.pop();
@@ -1805,10 +1809,16 @@ fn r17_timer_interrupt_fires_and_is_handled() {
         panic!("missing scripts/timer_irq_qemu_test.sh — was it deleted?");
     }
 
-    let out = Command::new("bash")
-        .arg(&script)
-        .output()
-        .expect("failed to spawn timer_irq_qemu_test.sh");
+    // The binary is THIS test run's axon, named explicitly: the script never
+    // falls back to target/ or PATH (C9 round 4: a planted `axon` on PATH ran
+    // here and the check passed). An interp-only build makes it SKIP.
+    let out = script_spawn::script(
+        "bash",
+        &script,
+        Bins::Named(&[("AXON_BIN", env!("CARGO_BIN_EXE_axon"))]),
+    )
+    .output()
+    .expect("failed to spawn timer_irq_qemu_test.sh");
 
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -1836,8 +1846,6 @@ fn r17_timer_interrupt_fires_and_is_handled() {
 /// IR. The script SKIPs (exit 0) when codegen is unavailable.
 #[test]
 fn axon_smp_atomic_counter_is_race_free() {
-    use std::process::Command;
-
     let script = {
         let mut p = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         p.pop(); // crates/axon-core → crates
@@ -1849,10 +1857,16 @@ fn axon_smp_atomic_counter_is_race_free() {
         panic!("missing scripts/atomic_ir_test.sh — was it deleted?");
     }
 
-    let out = Command::new("bash")
-        .arg(&script)
-        .output()
-        .expect("failed to spawn atomic_ir_test.sh");
+    // The binary is THIS test run's axon, named explicitly: the script never
+    // falls back to target/ or PATH (C9 round 4: a planted `axon` on PATH ran
+    // here and the check passed). An interp-only build makes it SKIP.
+    let out = script_spawn::script(
+        "bash",
+        &script,
+        Bins::Named(&[("AXON_BIN", env!("CARGO_BIN_EXE_axon"))]),
+    )
+    .output()
+    .expect("failed to spawn atomic_ir_test.sh");
 
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -1875,8 +1889,6 @@ fn axon_smp_atomic_counter_is_race_free() {
 /// `<{ i16, i16, i8, i8, i8, i8 }>`. The script SKIPs when codegen is absent.
 #[test]
 fn axon_repr_c_gdt_layout_byte_exact() {
-    use std::process::Command;
-
     let script = {
         let mut p = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         p.pop();
@@ -1888,10 +1900,16 @@ fn axon_repr_c_gdt_layout_byte_exact() {
         panic!("missing scripts/gdt_layout_ir_test.sh — was it deleted?");
     }
 
-    let out = Command::new("bash")
-        .arg(&script)
-        .output()
-        .expect("failed to spawn gdt_layout_ir_test.sh");
+    // The binary is THIS test run's axon, named explicitly: the script never
+    // falls back to target/ or PATH (C9 round 4: a planted `axon` on PATH ran
+    // here and the check passed). An interp-only build makes it SKIP.
+    let out = script_spawn::script(
+        "bash",
+        &script,
+        Bins::Named(&[("AXON_BIN", env!("CARGO_BIN_EXE_axon"))]),
+    )
+    .output()
+    .expect("failed to spawn gdt_layout_ir_test.sh");
 
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);

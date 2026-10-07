@@ -1,0 +1,69 @@
+  OK   G13-r22-billing-settlement (axon-fabric/journal): 5/5 tests passed
+  OK   G13-r22-billing-settlement (axon-loop/tel_price): 1/1 tests passed
+  OK   G10-r22-cohort-denominator (axon-loop/tel_price): 3/3 tests passed
+  OK   G03-r22-workspace-import (axon-fabric/workspace): 28 tests passed (floor 27)
+  OK   G28-r22-workspace-not-context (axon-fabric/workspace): 28 tests passed (floor 27)
+  OK   G28-r22-workspace-not-context (axon-fabric/check_effects): 23 tests passed (floor 8)
+  OK   G03-r22-check-effects (axon-fabric/check_effects): 23 tests passed (floor 8)
+  OK   G32-r22-receipt-roles (axon-loop/evl): 8 tests passed (floor 8)
+  OK   G32-r22-artifact-recheck (axon-loop/evl): 8 tests passed (floor 8)
+  OK   G32-r22-artifact-recheck (axon-fabric/check_effects): 23 tests passed (floor 8)
+  OK   G08-r22-logical-branches (axon-fabric/branches): 6 tests passed (floor 6)
+  OK   G11-r22-workspace-cas (axon-fabric/branches): 6 tests passed (floor 6)
+  OK   G08-r22-branch-cancellation (axon-fabric/branches): 6 tests passed (floor 6)
+  OK   G16-r22-negotiation (axon-loop-contracts/profile): 13 tests passed (floor 13)
+  OK   G16-r22-negotiation (cortex-policy-adapter/negotiate): 4 tests passed (floor 4)
+  OK   G16-r22-closed-wire (cortex-policy-adapter/negotiate): 2/2 tests passed
+  OK   G3-d12-intake-join (axon-loop/intake): 3/3 tests passed
+  OK   G03-r22-workspace-import (axon-fabric/workspace): 3/3 tests passed
+  OK   G13-r22-restart-matrix (axon-fabric/restart_matrix): 5/5 tests passed
+  OK   G13-r22-restart-matrix (axon-fabric/submit): 1/1 tests passed
+  OK   G13-r22-restart-matrix (axon-fabric/journal): 3/3 tests passed
+  OK   G13-r22-restart-matrix (axon-loop/pointer): 1/1 tests passed
+  OK   G16-r22-peer-failure-matrix (axon-fabric/peer_failure_matrix): 5/5 tests passed
+  OK   G16-r22-peer-failure-matrix (axon-loop/intake): 2/2 tests passed
+  OK   G16-r22-peer-failure-matrix (axon-loop/pointer): 1/1 tests passed
+  OK   G03-r22-joint-bypass (axon-fabric/joint_bypass): 3/3 tests passed
+  OK   G03-r22-joint-bypass (axon-fabric/workspace): 2/2 tests passed
+  OK   G03-r22-joint-bypass (axon-fabric/grant_authority): 7 tests passed (floor 7)
+  OK   G11-r22-independent-admission (axon-loop/evl_admission): 3/3 tests passed
+  OK   G11-r22-independent-admission (axon-loop/pointer): 1/1 tests passed
+  OK   G11-r22-admission-disposition (axon-loop/evl_admission): 3/3 tests passed
+  OK   G11-r22-admission-disposition (axon-loop/safety): 2/2 tests passed
+  OK   G11-r22-admission-disposition (axon-loop/protected_class): 1/1 tests passed
+  OK   G11-r22-rollback-revalidate (axon-loop/pointer): 2/2 tests passed
+  OK   G11-r22-rollback-revalidate (axon-loop/protected_class): 2/2 tests passed
+  OK   G11-r22-rollback-revalidate (axon-loop/safety): 1/1 tests passed
+  OK   G32-r22-sidecar-bindings (axon-loop/protected_class): 1/1 tests passed
+  OK   G32-r22-sidecar-bindings (axon-loop/intake): 2/2 tests passed
+  OK   G33-r22-decision-rule-freeze (axon-loop/evl_admission): 1/1 tests passed
+  OK   G33-r22-decision-rule-freeze (axon-loop/redteam): 6/6 tests passed
+  OK   G03-r22-joint-bypass (axon-fabric/check_effects): 23 tests passed (floor 8)
+  OK   G32-r22-evidence-laundering (axon-loop/evidence_laundering): 2/2 tests passed
+  OK   G32-r22-evidence-laundering (axon-loop/intake): 1/1 tests passed
+  OK   G13-r22-journal-before-effect (axon-fabric/journal): 3/3 tests passed
+  OK   G13-r22-journal-before-effect (axon-fabric/submit): 3/3 tests passed
+  OK   G13-r22-journal-before-effect (axon-fabric/restart_matrix): 3/3 tests passed
+  OK   G21-r22-inconclusive-valid (axon-loop/evl_admission): 2/2 tests passed
+  OK   G21-r22-inconclusive-valid (axon-loop/redteam): 5/5 tests passed
+  OK   G11-r22-policy-cas (axon-loop/pointer): 5/5 tests passed
+  OK   G11-r22-policy-cas (axon-loop/candidates): 1/1 tests passed
+  OK   G11-r22-policy-cas (axon-loop/cli): 1/1 tests passed
+  OK   G13-r22-unknown-reconcile (axon-fabric/submit): 2/2 tests passed
+  OK   G13-r22-unknown-reconcile (axon-fabric/journal): 2/2 tests passed
+  OK   G13-r22-unknown-reconcile (axon-fabric/restart_matrix): 1/1 tests passed
+  OK   G26-r22-speculation-disabled (axon-fabric/joint_bypass): 1/1 tests passed
+  OK   G26-r22-speculation-disabled (axon-fabric/branches): 3/3 tests passed
+  OK   G10-r22-trial-identity (axon-fabric/submit): 3/3 tests passed
+  OK   G10-r22-trial-identity (axon-loop/intake): 2/2 tests passed
+  OK   G10-r22-trial-identity (axon-loop/redteam): 1/1 tests passed
+  OK   G29-r22-bounded-mutation (axon-loop/plan_evo_tel): 2/2 tests passed
+  OK   G29-r22-bounded-mutation (axon-loop/candidates): 4/4 tests passed
+  OK   G29-r22-bounded-mutation (axon-loop/redteam): 3/3 tests passed
+  OK   G01-r22-nonvacuous-outcome (axon-fabric/submit): 2/2 tests passed
+  OK   G01-r22-nonvacuous-outcome (axon-cortex/check_executor): 1/1 tests passed
+  OK   G01-r22-nonvacuous-outcome (axon-loop-contracts/fixtures): 1/1 tests passed
+  OK   G01-r22-nonvacuous-outcome (axon-loop/evl): 2/2 tests passed
+  OK   G01-r22-nonvacuous-outcome (axon-loop/evl_admission): 1/1 tests passed
+  OK   G13-r22-legacy-scope (axon-fabric/joint_bypass): 2/2 tests passed
+v022_stage5_gates: PASS

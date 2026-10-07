@@ -55,7 +55,8 @@ if ! cargo build -p axon-core --no-default-features --features gfx-wgpu --bin ax
     cat /tmp/gfx_wgpu_build.log >&2
     fail "axon-run build with --features gfx-wgpu did not compile"
 fi
-AXON_RUN="$REPO/target/debug/axon-run"
+. "$REPO/scripts/lib/axon_bin.sh"
+AXON_RUN="$(cd "$REPO" && built_bin axon-run)" || exit 2  # the gfx-wgpu build just made
 [[ -x "$AXON_RUN" ]] || fail "axon-run binary not produced"
 
 # ── Render headlessly + read back the pixel ───────────────────────────────────

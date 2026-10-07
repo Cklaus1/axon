@@ -168,6 +168,11 @@ CG_BEFORE=$(ls -d /sys/fs/cgroup/axon_run_* 2>/dev/null | wc -l)
 D3D=$("$RM" start gate_selftest_scope -- bash -c 'exit 0') || fail "start failed"
 for _ in $(seq 1 100); do [ "$(cat "$D3D/status")" != running ] && break; sleep 0.1; done
 [ "$(cat "$D3D/status")" = "exited:0" ] || fail "expected exited:0, got '$(cat "$D3D/status")'"
+# The supervisor writes the status FIRST and releases the scope after (so the
+# verdict is durable even if cleanup fails). Counting cgroups the moment status
+# flips therefore raced the release — measured flaking 0 -> 1 under load. Wait
+# for the supervisor to finish; the leak check then measures the final state.
+for _ in $(seq 1 100); do [ -s "$D3D/receipt" ] && ! kill -0 "$(cat "$D3D/supervisor_pid" 2>/dev/null)" 2>/dev/null && break; sleep 0.1; done
 CG_AFTER=$(ls -d /sys/fs/cgroup/axon_run_* 2>/dev/null | wc -l)
 # Only meaningful where cgroups are actually in use; on a host without them the
 # scope is a process group and there is nothing to leak.
@@ -177,6 +182,109 @@ case "$(cat "$D3D/scope")" in
       || fail "a completed run leaked its cgroup ($CG_BEFORE -> $CG_AFTER) — the scope must be released, not just abandoned" ;;
 esac
 rm -rf "$D3D"
+
+# ── 3e. the receipt counts CARGO's tests, not every "N passed" in the log ──
+# `tests_passed`/`tests_failed` were summed from `[0-9]+ passed` ANYWHERE in the
+# log. Measured on a real axon-core run: a nested tool's line
+# (`claims_gate: 5 passed, 1 failed`) was added to cargo's totals, so the
+# receipt read 1552/3 while cargo reported 1547/2. That run failed closed by
+# luck; any tool printing "N passed" adds phantom PASSES the same way — a
+# false-green shape. Only `test result:` lines are cargo's tally.
+D3E=$("$RM" start gate_selftest_tally -- bash -c '
+  echo "     Running tests/x.rs (target/debug/deps/x-0)"
+  echo "some_tool: 900 passed, 0 failed"
+  echo "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+  echo "     Running tests/y.rs (target/debug/deps/y-0)"
+  echo "test result: FAILED. 4 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+  echo "other: 5 failed checks"
+  exit 0') || fail "start failed"
+# Wait for the RECEIPT, not the status: status flips first, the receipt is
+# written after, and reading it in between makes this check fail for the
+# wrong reason.
+for _ in $(seq 1 100); do [ -s "$D3E/receipt" ] && break; sleep 0.1; done
+[ -s "$D3E/receipt" ] || fail "no receipt written for a completed run"
+[ "$(sed -n 's/^tests_passed=//p' "$D3E/receipt")" = 7 ] \
+  || fail "receipt tests_passed=$(sed -n 's/^tests_passed=//p' "$D3E/receipt"), expected 7 — non-cargo 'N passed' text was counted as passing tests"
+# Both directions: cargo's REAL failures must still be counted (2), and a
+# non-cargo "5 failed" must not be.
+[ "$(sed -n 's/^tests_failed=//p' "$D3E/receipt")" = 2 ] \
+  || fail "receipt tests_failed=$(sed -n 's/^tests_failed=//p' "$D3E/receipt"), expected 2 — cargo failures must count and non-cargo text must not"
+rm -rf "$D3E"
+
+# ── 3f. supervisor-owned limits: a memory ceiling and a deadline that FIRE ──
+# The limits are passed to `start`, so a contained gate is still a plain
+# `gate.sh` command (a `timeout …` prefix made a green strict gate uncitable).
+# Only meaningful where cgroups exist; elsewhere `start` must REFUSE a ceiling.
+waitrc() { for _ in $(seq 1 300); do [ -s "$1/receipt" ] && return 0; sleep 0.1; done; return 1; }
+if [ "$(cat "$D/scope" 2>/dev/null | cut -d: -f1)" = cgroup ] || [ -f /sys/fs/cgroup/cgroup.controllers ]; then
+  # (a) a 64M ceiling OOM-kills an allocator; the cgroup's own record makes it
+  #     uncitable EVEN THOUGH a wrapper turns the kill into exit 0.
+  D3F=$("$RM" start gate_selftest_oom --mem-max 64M --swap-max 0 -- \
+        bash -c 'python3 -c "b=bytearray(); [b.extend(bytes(1<<20)) for _ in range(2048)]" & wait; exit 0') \
+    || fail "start with --mem-max failed"
+  waitrc "$D3F" || fail "no receipt for the OOM self-test"
+  grep -q '^mem_max=67108864$' "$D3F/receipt" || fail "receipt does not record the memory ceiling"
+  [ "$(sed -n 's/^oom_kills=//p' "$D3F/receipt")" != 0 ] \
+    || fail "a 64M ceiling did not OOM-kill a 2 GiB allocator (oom_kills=0) — the ceiling is not applied"
+  # Assert the REASON, not just a refusal: this self-test run is uncitable for
+  # other reasons too (live tree, no suites), so a bare "verify fails" check
+  # passed with the OOM clause deleted (measured).
+  # Capture first: under pipefail, `verify | grep -q` fails whenever verify
+  # refuses — which it always does here — so the grep's answer was discarded.
+  V3F="$("$RM" verify "$D3F" 2>&1)"
+  printf '%s' "$V3F" | grep -q 'memory ceiling OOM-killed' \
+    || fail "verify did not refuse on the OOM evidence (a wrapper made the job exit 0)"
+  rm -rf "$D3F"
+  # (b) a 2s deadline stops a long job; the supervisor survives to record it.
+  D3G=$("$RM" start gate_selftest_deadline --deadline 2 -- bash -c "sleep $VICTIM_SLEEP") \
+    || fail "start with --deadline failed"
+  waitrc "$D3G" || fail "no receipt: the deadline killed the supervisor, not just the job"
+  grep -q '^deadline_hit=yes$' "$D3G/receipt" || fail "deadline did not fire (receipt: $(grep deadline "$D3G/receipt"))"
+  [ "$(count_sleep "$VICTIM_SLEEP")" -eq 0 ] || fail "the deadline left the job's process alive"
+  [ "$(count_sleep "$CONTROL_SLEEP")" -ge 1 ] || fail "the deadline killed an unrelated bystander"
+  V3G="$("$RM" verify "$D3G" 2>&1)"
+  printf '%s' "$V3G" | grep -q 'wall-clock deadline fired' \
+    || fail "verify did not refuse on the deadline evidence"
+  rm -rf "$D3G"
+  # (c) limits do not change what the job IS: gate detection still reads the
+  #     command's first token, so a limited gate.sh run stays a gate run.
+  D3H=$("$RM" start gate_selftest_limited_gate --mem-max 64M --deadline 60 -- ./scripts/gate.sh --strict --help) \
+    || fail "start failed"
+  waitrc "$D3H" || fail "no receipt"
+  grep -q '^gate_run=yes$' "$D3H/receipt" || fail "a limited gate.sh run was not recorded as a gate run"
+  "$RM" cancel "$D3H" >/dev/null 2>&1; rm -rf "$D3H"
+fi
+
+# ── 3g. a job's temp is on disk under its run dir, not the RAM /tmp ─────────
+D3T=$(env -u TMPDIR "$RM" start gate_selftest_tmp -- bash -c 'echo "$TMPDIR" > "$TMPDIR/where"; cat "$TMPDIR/where"') \
+  || fail "start failed"
+waitrc "$D3T" || fail "no receipt for the TMPDIR self-test"
+T3T="$(cat "$D3T/log")"
+case "$T3T" in
+  /var/tmp/axr-*) ;;
+  *) fail "job TMPDIR was '$T3T', expected /var/tmp/axr-* — temp would land in the RAM /tmp" ;;
+esac
+# Short enough that a Unix socket under a nested temp dir fits SUN_LEN (108).
+[ "${#T3T}" -le 32 ] || fail "job TMPDIR '$T3T' is ${#T3T} bytes; sockets beneath it will exceed SUN_LEN"
+[ "$(cat "$D3T/tmpdir")" = "$T3T" ] || fail "the run dir does not record its temp location"
+[ ! -e "$T3T" ] || fail "the run's temp dir outlived the run"
+rm -rf "$D3T"
+
+# ── 3h. a job runs with DEFAULT SIGINT/SIGQUIT, as a real launch does ───────
+# A non-interactive shell starts `&` jobs with SIGINT/SIGQUIT ignored and the
+# disposition survives exec: every managed gate ran with Ctrl+C disabled until
+# run_managed restored the defaults. Read from the job's own /proc record, and
+# from a grandchild, since inheritance is the whole failure.
+D3S=$("$RM" start gate_selftest_signals -- sh -c 'grep "^SigIgn:" /proc/self/status; sh -c "grep ^SigIgn: /proc/self/status"') \
+  || fail "start failed"
+waitrc "$D3S" || fail "no receipt for the signal-disposition self-test"
+while read -r _ mask; do
+  m=$(( 16#$mask ))
+  [ $(( m & (1 << 1) )) -eq 0 ] || fail "a managed job runs with SIGINT ignored (SigIgn $mask)"
+  [ $(( m & (1 << 2) )) -eq 0 ] || fail "a managed job runs with SIGQUIT ignored (SigIgn $mask)"
+done < "$D3S/log"
+[ "$(grep -c '^SigIgn:' "$D3S/log")" -eq 2 ] || fail "signal self-test did not report job and grandchild"
+rm -rf "$D3S"
 
 # ── 4. evidence is retained and attributable ────────────────────────────────
 # The log must EXIST; it need not be non-empty. A job that prints nothing has
@@ -191,4 +299,4 @@ done
 grep -q '^head=' "$D2/snapshot" || fail "snapshot records no commit"
 
 rm -rf "$D" "$D2"
-echo "managed_run_gate: PASS — job result owned, grandchild cancelled, bystander survived, evidence retained"
+echo "managed_run_gate: PASS — job result owned, grandchild cancelled, bystander survived, default signals, evidence retained"

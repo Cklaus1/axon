@@ -106,7 +106,7 @@ fn no_crate_in_the_workspace_opens_an_unfiltered_ledger_store() {
                 let here = off;
                 off += l.len() + 1;
                 let t = l.trim_start();
-                if t.starts_with("//") || !l.contains("Store::open(") {
+                if t.starts_with("//") || !names_ledger_open(l) {
                     continue;
                 }
                 if here > test_from {
@@ -147,4 +147,42 @@ fn store_has_exactly_one_reader_so_the_filter_covers_every_query() {
          where the RBAC view is applied); found {readers}. A second reader would \
          bypass the filter for whatever calls it."
     );
+}
+
+/// Does `line` call THE ledger `Store::open(` — the identifier `Store`, not a
+/// type whose name merely ends in it? A substring match flagged
+/// `axon_fabric::workspace::WorkspaceStore::open(` (the Fabric workspace CAS,
+/// which holds no ledger records and has no RBAC surface) as an unfiltered
+/// ledger store, failing the strict gate on 21 sites that are not this
+/// invariant's business.
+fn names_ledger_open(line: &str) -> bool {
+    line.match_indices("Store::open(").any(|(i, _)| {
+        !line[..i]
+            .chars()
+            .next_back()
+            .is_some_and(|c| c.is_alphanumeric() || c == '_')
+    })
+}
+
+/// Guard the matcher, in both directions: narrowing it must not blind it.
+#[test]
+fn the_matcher_names_the_ledger_store_and_only_it() {
+    for hit in [
+        "let s = Store::open(dir)?;",
+        "axon_ledger::store::Store::open(&d)",
+        "(Store::open(&d))",
+        "x.map(|d| Store::open(d))",
+    ] {
+        assert!(names_ledger_open(hit), "{hit}");
+    }
+    for miss in [
+        "WorkspaceStore::open(&dir, &tenant)",
+        "My_Store::open(d)",
+        "Store::open_as(dir, caller)",
+        "Store::open_for_write(dir)",
+    ] {
+        assert!(!names_ledger_open(miss), "{miss}");
+    }
+    // Both on one line: the ledger call is still found.
+    assert!(names_ledger_open("WorkspaceStore::open(a); Store::open(b)"));
 }

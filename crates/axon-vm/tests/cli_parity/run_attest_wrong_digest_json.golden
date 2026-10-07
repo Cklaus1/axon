@@ -1,0 +1,19 @@
+exit: Some(10)
+--- stdout ---
+{
+  "attestation_failed": true,
+  "elapsed_ms": N,
+  "error": "attestation failed: kernel tampered",
+  "exit_code": -1,
+  "ok": false,
+  "principal": null,
+  "risk": null,
+  "run_id": "vm-N-N",
+  "schema": "axon-vm-run/1"
+}
+
+--- stderr ---
+[axon-vm] ATTESTATION FAILED: kernel digest mismatch
+[axon-vm]   expected: 0000000000000000000000000000000000000000000000000000000000000000 (--expect-digest)
+[axon-vm]   got:      ca5e3e91e7ec9ea017b59edb38e8b10ca1ee0a13207afbdc5caa9aacf414012b
+

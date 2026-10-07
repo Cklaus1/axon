@@ -1,0 +1,7 @@
+── cortex: package integrity (SHA256SUMS_v0_15, both directions) ──
+  113/113 files match (0 via a pinned deviation); 114 present; unlisted: ['SHA256SUMS_v0_15.json'] (the manifest itself) — both directions clean
+── cortex: the package's own validator (tools/validate_package.py) ─
+  validator PASS; counts={'specifications': 35, 'work_packages': 152, 'proposed_product_gates': 247, 'source_attachments': 4, 'markdown_files': 95, 'local_file_links_checked': 233, 'words_excluding_master': 84344}; product_gates_executed=0
+── cortex: honesty invariant (NOT_RUN unless something here runs it) ─
+  247 gates, 152 work packages parsed; 0 gates off NOT_RUN and 0 tasks off 'Not started', all registry-backed; registry has 0 gate row(s), 0 task row(s)
+✅ cortex package gate: integrity verified in both directions, validator PASS, honesty invariant holds

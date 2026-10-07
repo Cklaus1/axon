@@ -230,8 +230,10 @@ Slices:
 recursive `eval` into a resumable state machine (CPS-scale — rejected in §4). Asyncify
 post-processes the COMPILED wasm to add stack unwind/rewind around one designated import, so
 the unchanged recursive `eval` keeps working — same I-2-by-construction argument as the
-native thread substrate. **Prerequisite resolved:** `wasm-opt 108` (binaryen) is installed and
-exposes `--asyncify`; `wasm-tools` + `node` are available for inspection/driving.
+native thread substrate. **Prerequisite resolved:** `wasm-opt` (binaryen; 108 when this was written) is
+installed and exposes `--asyncify`; `wasm-tools` + `node` are available for
+inspection/driving. The binaryen VERSION is not load-bearing for correctness —
+see the -O2 note below.
 
 **The motivating cases are all ASYNC** (frame loop, `fetch`, human input) — a synchronous JS
 import does NOT cover them; Asyncify (suspend the wasm, await a JS Promise, resume) is the
@@ -275,9 +277,19 @@ substrate — two bindings, one surface.
   while-loop, `host_await_opt`, AND a deeply-nested suspend point (`examples/interactive/guess.ax`:
   `host_await_opt` inside `while→match→match→if`) all round-trip across real async (`setTimeout`)
   replies. **This closes the browser-async binding — interactive Axon now suspends/resumes in the
-  browser.** Binaryen-108 feature flags required for modern-rustc wasm (`--enable-bulk-memory
-  --enable-sign-ext --enable-mutable-globals --enable-nontrapping-float-to-int --enable-simd
-  --enable-reference-types --enable-multivalue`).
+  browser.** The `--enable-*` feature flags are required for modern-rustc wasm on every
+  binaryen tested (108, 120, 127) — they are a validation requirement, not a version pin
+  (`--enable-bulk-memory --enable-sign-ext --enable-mutable-globals
+  --enable-nontrapping-float-to-int --enable-simd --enable-reference-types --enable-multivalue`).
+
+  **`-O2` is REQUIRED on the `--asyncify` pass (2026-09-24 incident).** Unoptimized asyncify
+  output runs away (`axon_eval` never returns; linear memory grows until the host dies) on any
+  program, with or without `host_await`. binaryen 120 and 127 emit byte-identical -O0 modules
+  and both run away; -O2 fixes it on both. **Do not "fix" a runaway by changing binaryen
+  version** — the earlier reading that 108 specifically was required came from this pin, was
+  never tested against a second version, and is retracted. Fixed in `8953b8b`; the browser page
+  refuses an artifact whose build stamp is missing, stale, or not -O2.
+  See `governance/incidents/2026-09-24-asyncify-linear-memory.md`.
 
   **Host stack-size note (resolved):** Asyncify *rewind* re-enters every saved wasm frame, so a deep
   suspend point needs more JS stack than node's ~984 KB default — `guess.ax` overflowed at the

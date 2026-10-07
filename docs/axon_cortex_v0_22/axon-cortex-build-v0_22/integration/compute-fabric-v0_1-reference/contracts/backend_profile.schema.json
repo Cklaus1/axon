@@ -1,0 +1,159 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema": {
+      "const": "acf-backend-profile/1"
+    },
+    "profile_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "backend_version": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "configuration_digest": {
+      "type": "string",
+      "pattern": "^acf1:[0-9a-f]{64}$"
+    },
+    "engine": {
+      "enum": [
+        "axon_interpreter",
+        "axon_wasm",
+        "native_process"
+      ]
+    },
+    "enclosure": {
+      "enum": [
+        "process_scoped",
+        "bounded_wasm_host",
+        "hardened_linux",
+        "kvm_microvm"
+      ]
+    },
+    "guest_kind": {
+      "enum": [
+        "none",
+        "linux_init",
+        "axon_kernel_demo"
+      ]
+    },
+    "os": {
+      "enum": [
+        "linux",
+        "none"
+      ]
+    },
+    "architecture": {
+      "enum": [
+        "x86_64",
+        "aarch64",
+        "wasm32"
+      ]
+    },
+    "placement": {
+      "enum": [
+        "local",
+        "remote"
+      ]
+    },
+    "support_status": {
+      "enum": [
+        "not_implemented",
+        "unknown",
+        "experimental",
+        "verified",
+        "withdrawn"
+      ]
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "evidence_refs": {
+      "type": "array",
+      "uniqueItems": true,
+      "maxItems": 128,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 512
+      }
+    },
+    "functionality": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "interpreter_run",
+          "registered_check",
+          "logical_workspace",
+          "filesystem_checkpoint",
+          "machine_state_checkpoint",
+          "resume",
+          "memory_fork",
+          "attach_terminal",
+          "attach_desktop"
+        ]
+      }
+    },
+    "enforcement": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "scoped_axon_effects",
+          "host_filesystem_boundary",
+          "host_network_deny",
+          "descendant_resource_limits",
+          "current_epoch_rebind",
+          "hardware_isolation",
+          "output_limit"
+        ]
+      }
+    }
+  },
+  "required": [
+    "schema",
+    "profile_id",
+    "backend_version",
+    "configuration_digest",
+    "engine",
+    "enclosure",
+    "guest_kind",
+    "os",
+    "architecture",
+    "placement",
+    "support_status",
+    "reason",
+    "evidence_refs",
+    "functionality",
+    "enforcement"
+  ],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "support_status": {
+            "const": "verified"
+          }
+        },
+        "required": [
+          "support_status"
+        ]
+      },
+      "then": {
+        "properties": {
+          "evidence_refs": {
+            "minItems": 1
+          }
+        }
+      }
+    }
+  ],
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ACF exact backend profile; source advertisement is not verification"
+}

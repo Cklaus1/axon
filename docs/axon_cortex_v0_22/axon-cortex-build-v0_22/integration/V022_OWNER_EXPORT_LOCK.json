@@ -1,0 +1,92 @@
+{
+  "schema": "axon.closed-loop.owner-export/1",
+  "package_version": "0.22",
+  "status": "PROPOSED_NOT_RUNTIME_QUALIFIED",
+  "wire_family": "axon.closed-loop.<kind>/1 (proposed sidecars only)",
+  "files": [
+    {
+      "path": "schemas/CLOSED_LOOP_PROFILE_V022.md",
+      "sha256": "1f786bf408affbeeca7e44429eae388ab26caf64b6376d8c3e79bc0563faf0ed"
+    },
+    {
+      "path": "integration/MICODE_V022_CONSUMER_DELTA.md",
+      "sha256": "4d4f5e919117d1f8e0925a3d12c6a8d0ab0a54a19922d7231e14a0229bfe691f"
+    },
+    {
+      "path": "integration/FABRIC_V022_INTEGRATION.md",
+      "sha256": "739bd1d0d00100e5f755aeb019edd5b515a9ced6b8b9088f79e2342016a1cf25"
+    },
+    {
+      "path": "build/CLOSED_LOOP_INTEGRATION_V022.md",
+      "sha256": "0fc5d479a58c427e3f0c14bf882fd7f17116a904a0bfcf92601dcfe766436b88"
+    },
+    {
+      "path": "integration/V022_INPUT_LOCK.json",
+      "sha256": "0f2565cebc877cd464f101af50fad95ad2b557e880aa8d6960cd5e7d742d774c"
+    },
+    {
+      "path": "integration/V022_PARENT_LOCK.json",
+      "sha256": "21974a99af2debd6042ad64f87dd2f16871d044ebef298c56d4c9691a0a3878e"
+    },
+    {
+      "path": "integration/V022_OWNER_MAP.json",
+      "sha256": "9d30f1499eefc989728f596851815a919ab60db0742cdef51993549fc4a42779"
+    },
+    {
+      "path": "integration/V022_FABRIC_CROSSWALK.json",
+      "sha256": "7a33c9c18f47077d2615606f279716e275ef3821bdba4568873e12b7ecd4a7f1"
+    },
+    {
+      "path": "integration/V022_WORK_PACKAGES.json",
+      "sha256": "01d1270a0a2317b4bf692cd31d88078d38876d53a4b093c8814f3c05921c9730"
+    },
+    {
+      "path": "integration/V022_REQUIREMENTS.json",
+      "sha256": "e1e9e88947eb1a30a8377640868d0b228316812896ac66aa49c8940b9ce324e5"
+    },
+    {
+      "path": "integration/V022_LEGACY_GATE_CLOSURE.json",
+      "sha256": "474a577ce883b3da92b3e6057836f586c1b4475ec2c863086afb74f000758aa6"
+    },
+    {
+      "path": "task_manifest.json",
+      "sha256": "adbb74c1074b5a9a59b2770d891baadfadb4d4badfa689d350072cab6c9fe877"
+    },
+    {
+      "path": "gate_manifest.json",
+      "sha256": "7474c3f6560d98ecae9f188f13f54e4b44b63d2cd13d659f983bb622762e37d4"
+    },
+    {
+      "path": "spec_manifest.json",
+      "sha256": "c36841274ec9c4e94c8c49c4c35e10d61b052677ebfb37fe3bed8bb337f8accf"
+    },
+    {
+      "path": "release_profiles.json",
+      "sha256": "31e74b526745bc6e50cd8bdd1545566d0f17b88cf6feb1b6a258dcba57faa1f4"
+    },
+    {
+      "path": "schemas/json/closed-loop-context.schema.json",
+      "sha256": "4feefdbc944bcd7f8bb7e367237960323b52b683f2c7bbd2bfca35d76796b50a"
+    },
+    {
+      "path": "schemas/json/closed-loop-episode.schema.json",
+      "sha256": "2db4ce8e894689e7ea3f816034dd443151a5af9e79f841892a681725cf37cef6"
+    },
+    {
+      "path": "schemas/json/closed-loop-evidence.schema.json",
+      "sha256": "1ec81ee547056aaed472cf80c950b441d3a488a3e09c1fd117b3b8fadd3fc978"
+    },
+    {
+      "path": "schemas/json/closed-loop-pilot.schema.json",
+      "sha256": "db2dd812de3086348fa44109d8e045ea42debfa5af2f87a29c0327e29aaba46d"
+    },
+    {
+      "path": "schemas/json/closed-loop-policy.schema.json",
+      "sha256": "f911f9053bc1dc815ac9df57a18bbb54140fd4a7a2d61687f25284fd01ff2e68"
+    },
+    {
+      "path": "schemas/json/closed-loop-transition.schema.json",
+      "sha256": "e19cde7515ee29fc489f95e611494e2522685e4d477d7d285f423780f3acba21"
+    }
+  ]
+}

@@ -3,8 +3,9 @@
 //! seeded-random typed inputs for a `@[test] @[forall]` fn, runs the body
 //! each case, and on the first failure SHRINKS toward zero/empty to report a
 //! minimal counterexample (R8). Orthogonal to interpretation itself.
-//! `use super::*` pulls in Interp/Program/FnDef/Value/Flow, the RNG
-//! (next_rand_u64), display, on_deep_stack, and is_i64_type/is_f64_type.
+//! `use super::*` pulls in Interp/Program/FnDef/Value/Flow, display,
+//! on_deep_stack, and is_i64_type/is_f64_type. Draws come from the running
+//! frame's kernel stream (`Interp::rng_next`), passed into `PropGen::random`.
 
 use super::*;
 
@@ -67,7 +68,22 @@ pub(super) fn run_property_test_inner(
 
     // Try `cases` random inputs; on the first failing one, shrink it.
     for _ in 0..cases {
-        let args: Vec<Value> = gens.iter().map(|g| g.random()).collect();
+        let args: Vec<Value> = match gens
+            .iter()
+            .map(|g| g.random(&|| interp.rng_next()))
+            .collect::<Result<_, Flow>>()
+        {
+            Ok(a) => a,
+            // Unreachable today (no sealed frame is below the generator), but
+            // a refused draw is a failure, never a pass on fewer cases.
+            Err(f) => {
+                return PropertyOutcome::Failed {
+                    counterexample: String::new(),
+                    message: flow_to_msg(f),
+                    seed,
+                }
+            }
+        };
         if let Err(msg) = run_once(&interp, f, &args) {
             // Found a failing case — shrink toward minimal.
             let (shrunk_args, shrunk_msg) = shrink(&interp, f, &gens, args, msg);
@@ -88,8 +104,20 @@ pub(super) fn run_once(interp: &Interp, f: &FnDef, args: &[Value]) -> Result<(),
     match interp.call_fn(f, args.to_vec()) {
         Ok(_) => Ok(()),
         Err(Flow::Panic(m)) | Err(Flow::VerifyFailed(m)) => Err(m),
-        // A stray return/exit is treated as a pass (the assert didn't fire).
-        Err(_) => Ok(()),
+        // `call_fn` ends a `return` at the property fn's own frame, so this arm
+        // is unreachable; kept total. `exit(0)` ends the case BEFORE it
+        // completed, which is not a pass (PCI 11: affirmative completion).
+        Err(Flow::Return(_)) => Ok(()),
+        Err(Flow::Exit(0)) => {
+            Err("`exit(0)` ended the property case before it completed".to_string())
+        }
+        // A `break`/`continue` escaping a function unwound the property
+        // before its assertions ran: not a pass (v0.22 G01 final re-audit).
+        Err(Flow::Break) | Err(Flow::Continue) => Err(
+            "a `break`/`continue` escaped a function and unwound the property before it completed"
+                .to_string(),
+        ),
+        Err(other) => Err(super::flow_to_msg(other)),
     }
 }
 
@@ -192,12 +220,14 @@ pub(super) fn prop_gen_for(ty: &crate::ast::AxonType) -> Option<PropGen> {
 }
 
 impl PropGen {
-    fn random(&self) -> Value {
-        match self {
+    /// Draws come from `rng` — the running frame's kernel stream, never a
+    /// process-global one (see `Interp::rng_next`).
+    fn random(&self, rng: &dyn Fn() -> Result<u64, Flow>) -> Result<Value, Flow> {
+        Ok(match self {
             // Bias toward small magnitudes (good property-test inputs) but cover
             // the full i64 range occasionally.
             PropGen::I64 => {
-                let r = next_rand_u64();
+                let r = rng()?;
                 let v = if r & 7 == 0 {
                     r as i64
                 } else {
@@ -206,18 +236,18 @@ impl PropGen {
                 Value::Int(v)
             }
             PropGen::F64 => {
-                let r = next_rand_u64();
+                let r = rng()?;
                 Value::Float((r % 2001) as f64 / 100.0 - 10.0)
             }
-            PropGen::Bool => Value::Bool(next_rand_u64() & 1 == 0),
+            PropGen::Bool => Value::Bool(rng()? & 1 == 0),
             PropGen::Str => {
-                let len = (next_rand_u64() % 8) as usize;
+                let len = (rng()? % 8) as usize;
                 let s: String = (0..len)
-                    .map(|_| (b'a' + (next_rand_u64() % 26) as u8) as char)
-                    .collect();
+                    .map(|_| Ok((b'a' + (rng()? % 26) as u8) as char))
+                    .collect::<Result<_, Flow>>()?;
                 Value::Str(Rc::new(s))
             }
-        }
+        })
     }
 
     /// The minimal value for this type (the binary-search target).
@@ -243,7 +273,9 @@ impl PropGen {
             (PropGen::Bool, Value::Bool(true)) => Some(Value::Bool(false)),
             (PropGen::Bool, Value::Bool(false)) => None,
             (PropGen::Str, Value::Str(s)) if s.is_empty() => None,
-            (PropGen::Str, Value::Str(s)) => Some(Value::Str(Rc::new(s[..s.len() - 1].to_string()))),
+            (PropGen::Str, Value::Str(s)) => {
+                Some(Value::Str(Rc::new(s[..s.len() - 1].to_string())))
+            }
             _ => None,
         }
     }

@@ -1,0 +1,2783 @@
+{
+  "schema": "axon.ace-crosswalk/1",
+  "source_requirement_count": 86,
+  "source_version": "0.2.0",
+  "owner_document_version": "0.17",
+  "profile": "axon.ace-execution/1",
+  "requirements": [
+    {
+      "source_requirement_id": "ANEA-001-R01",
+      "source_title": "Integrate, do not duplicate",
+      "source_requirement_sha256": "f48765d3f534e65bf6ceb04e55fade6ff854c9cf015a8239bb3c96773a1ff5c6",
+      "source_anchor": {
+        "path": "integration/anea-v0_2-reference/ANEA_SPEC.txt",
+        "section": "ANEA-001-R01"
+      },
+      "disposition": "OWNER_AMENDMENT",
+      "resolution": "Integrate under existing owners with scoped evidence claims; no new runtime or automatic activation.",
+      "owner_specs": [
+        "CX-00"
+      ],
+      "tasks": [
+        "B174",
+        "B187"
+      ],
+      "gates": [
+        "G00-ace-owner-map",
+        "G00-ace-coverage"
+      ],
+      "amended_files": [
+        "specs/CX-00-system-contract.md",
+        "schemas/ACE_EXECUTION_PROFILE.md",
+        "build/ACE_INTEGRATION.md"
+      ],
+      "profile_section": "P01",
+      "claim_profile": "AN0",
+      "document_status": "INTEGRATED_PROPOSED",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "source_requirement_id": "ANEA-001-R02",
+      "source_title": "Separate the interoperability and learned-artifact proofs",
+      "source_requirement_sha256": "b18f2088baf352a0033cdba58c56506518972d4d0d9fdca0b44afe102cb3c944",
+      "source_anchor": {
+        "path": "integration/anea-v0_2-reference/ANEA_SPEC.txt",
+        "section": "ANEA-001-R02"
+      },
+      "disposition": "OWNER_AMENDMENT",
+      "resolution": "The three-family claim is optional AN3; one authorized incumbent AN1 can ship independently. The separate learned-function profile requires actual learned assets and permits evidence-backed rejection.",
+      "owner_specs": [
+        "CX-00"
+      ],
+      "tasks": [
+        "B174",
+        "B187"
+      ],
+      "gates": [
+        "G00-ace-owner-map",
+        "G00-ace-coverage"
+      ],
+      "amended_files": [
+        "specs/CX-00-system-contract.md",
+        "schemas/ACE_EXECUTION_PROFILE.md",
+        "build/ACE_INTEGRATION.md"
+      ],
+      "profile_section": "P01",
+      "claim_profile": "AN0",
+      "document_status": "INTEGRATED_PROPOSED",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "source_requirement_id": "ANEA-001-R03",
+      "source_title": "Respect reserved formats and non-goals",
+      "source_requirement_sha256": "acb0d14d5c812ca810d6f1c0fe19b14db0feffc0e327d7ecadc325be88f68abc",
+      "source_anchor": {
+        "path": "integration/anea-v0_2-reference/ANEA_SPEC.txt",
+        "section": "ANEA-001-R03"
+      },
+      "disposition": "OWNER_AMENDMENT",
+      "resolution": "Integrate under existing owners with scoped evidence claims; no new runtime or automatic activation.",
+      "owner_specs": [
+        "CX-00"
+      ],
+      "tasks": [
+        "B174",
+        "B187"
+      ],
+      "gates": [
+        "G00-ace-owner-map",
+        "G00-ace-coverage"
+      ],
+      "amended_files": [
+        "specs/CX-00-system-contract.md",
+        "schemas/ACE_EXECUTION_PROFILE.md",
+        "build/ACE_INTEGRATION.md"
+      ],
+      "profile_section": "P01",
+      "claim_profile": "AN0",
+      "document_status": "INTEGRATED_PROPOSED",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "source_requirement_id": "ANEA-001-R04",
+      "source_title": "Separate inference from authority",
+      "source_requirement_sha256": "75160954427f1deec485b4059710ca3e269a4876c9450dd27fcf200750b4e888",
+      "source_anchor": {
+        "path": "integration/anea-v0_2-reference/ANEA_SPEC.txt",
+        "section": "ANEA-001-R04"
+      },
+      "disposition": "OWNER_AMENDMENT",
+      "resolution": "Integrate under existing owners with scoped evidence claims; no new runtime or automatic activation.",
+      "owner_specs": [
+        "CX-00"
+      ],
+      "tasks": [
+        "B174",
+        "B187"
+      ],
+      "gates": [
+        "G00-ace-owner-map",
+        "G00-ace-coverage"
+      ],
+      "amended_files": [
+        "specs/CX-00-system-contract.md",
+        "schemas/ACE_EXECUTION_PROFILE.md",
+        "build/ACE_INTEGRATION.md"
+      ],
+      "profile_section": "P01",
+      "claim_profile": "AN0",
+      "document_status": "INTEGRATED_PROPOSED",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "source_requirement_id": "ANEA-001-R05",
+      "source_title": "Separate document, fixture, live and release claims",
+      "source_requirement_sha256": "a3ce185ae7de44fa379ce31c9bacecc02cd4d5aa87d48d131c8a8770a3279cc5",
+      "source_anchor": {
+        "path": "integration/anea-v0_2-reference/ANEA_SPEC.txt",
+        "section": "ANEA-001-R05"
+      },
+      "disposition": "OWNER_AMENDMENT",
+      "resolution": "Integrate under existing owners with scoped evidence claims; no new runtime or automatic activation.",
+      "owner_specs": [
+        "CX-00"
+      ],
+      "tasks": [
+        "B174",
+        "B187"
+      ],
+      "gates": [
+        "G00-ace-owner-map",
+        "G00-ace-coverage"
+      ],
+      "amended_files": [
+        "specs/CX-00-system-contract.md",
+        "schemas/ACE_EXECUTION_PROFILE.md",
+        "build/ACE_INTEGRATION.md"
+      ],
+      "profile_section": "P01",
+      "claim_profile": "AN0",
+      "document_status": "INTEGRATED_PROPOSED",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "source_requirement_id": "ANEA-002-R01",
+      "source_title": "Versioned owner-specific exchange",
+      "source_requirement_sha256": "90f9928f4b67e896913110af33f947bc19e6f212ac9a785c5f14a2a9b522cb0b",
+      "source_anchor": {
+        "path": "integration/anea-v0_2-reference/ANEA_SPEC.txt",
+        "section": "ANEA-002-R01"
+      },
+      "disposition": "OWNER_AMENDMENT",
+      "resolution": "Introduce the Axon-owned logical profile and a restricted projection schema; do not pretend it replaces native owner protocols or live APIs. New record families are not an in-place rewrite of old Choice envelopes.",
+      "owner_specs": [
+        "CX-05",
+        "CX-13"
+      ],
+      "tasks": [
+        "B176",
+        "B177"
+      ],
+      "gates": [
+        "G05-ace-features",
+        "G13-ace-attempts"
+      ],
+      "amended_files": [
+        "specs/CX-05-reflex-inference.md",
+        "specs/CX-13-os-runtime.md",
+        "schemas/ACE_EXECUTION_PROFILE.md",
+        "build/ACE_INTEGRATION.md"
+      ],
+      "profile_section": "P03",
+      "claim_profile": "AN1",
+      "document_status": "INTEGRATED_PROPOSED",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "source_requirement_id": "ANEA-002-R02",
+      "source_title": "Independent features, not capability tiers",
+      "source_requirement_sha256": "dcc4d8e39c789c6061cdd95d80ba845c5f046ce482fc3fe498bd425c2363babf",
+      "source_anchor": {
+        "path": "integration/anea-v0_2-reference/ANEA_SPEC.txt",
+        "section": "ANEA-002-R02"
+      },
+      "disposition": "OWNER_AMENDMENT",
+      "resolution": "Preserve owner exchange, independent feature support, strict parsing and distinct attempt/error semantics.",
+      "owner_specs": [
+        "CX-05",
+        "CX-13"
+      ],
+      "tasks": [
+        "B176",
+        "B177"
+      ],
+      "gates": [
+        "G05-ace-features",
+        "G13-ace-attempts"
+      ],
+      "amended_files": [
+        "specs/CX-05-reflex-inference.md",
+        "specs/CX-13-os-runtime.md",
+        "schemas/ACE_EXECUTION_PROFILE.md",
+        "build/ACE_INTEGRATION.md"
+      ],
+      "profile_section": "P03",
+      "claim_profile": "AN1",
+      "document_status": "INTEGRATED_PROPOSED",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "source_requirement_id": "ANEA-002-R03",
+      "source_title": "Admission and lifecycle are owner-controlled",
+      "source_requirement_sha256": "add84ac0594624f38aee42d9e7ccbdeda6b3381a3cd14c29b50f8cf76ef4fa2b",
+      "source_anchor": {
+        "path": "integration/anea-v0_2-reference/ANEA_SPEC.txt",
+        "section": "ANEA-002-R03"
+      },
+      "disposition": "OWNER_AMENDMENT",
+      "resolution": "Preserve owner exchange, independent feature support, strict parsing and distinct attempt/error semantics.",
+      "owner_specs": [
+        "CX-05",
+        "CX-13"
+      ],
+      "tasks": [
+        "B176",
+        "B177"
+      ],
+      "gates": [
+        "G05-ace-features",
+        "G13-ace-attempts"
+      ],
+      "amended_files": [
+        "specs/CX-05-reflex-inference.md",
+        "specs/CX-13-os-runtime.md",
+        "schemas/ACE_EXECUTION_PROFILE.md",
+        "build/ACE_INTEGRATION.md"
+      ],
+      "profile_section": "P03",
+      "claim_profile": "AN1",
+      "document_status": "INTEGRATED_PROPOSED",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "source_requirement_id": "ANEA-002-R04",
+      "source_title": "Strict bounded boundary validation",
+      "source_requirement_sha256": "31281708b9f0e95e33a30a13bdeb61435074879c1d3e034893a20a04c1605122",
+      "source_anchor": {
+        "path": "integration/anea-v0_2-reference/ANEA_SPEC.txt",
+        "section": "ANEA-002-R04"
+      },
+      "disposition": "OWNER_AMENDMENT",
+      "resolution": "Preserve owner exchange, independent feature support, strict parsing and distinct attempt/error semantics.",
+      "owner_specs": [
+        "CX-05",
+        "CX-13"
+      ],
+      "tasks": [
+        "B176",
+        "B177"
+      ],
+      "gates": [
+        "G05-ace-features",
+        "G13-ace-attempts"
+      ],
+      "amended_files": [
+        "specs/CX-05-reflex-inference.md",
+        "specs/CX-13-os-runtime.md",
+        "schemas/ACE_EXECUTION_PROFILE.md",
+        "build/ACE_INTEGRATION.md"
+      ],
+      "profile_section": "P03",
+      "claim_profile": "AN1",
+      "document_status": "INTEGRATED_PROPOSED",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "source_requirement_id": "ANEA-002-R05",
+      "source_title": "Terminality and unknown remote work",
+      "source_requirement_sha256": "efdce4c61a1629417805ec6cec14e2230d9d9841a3183c0d07777ff67b1ec1db",
+      "source_anchor": {
+        "path": "integration/anea-v0_2-reference/ANEA_SPEC.txt",
+        "section": "ANEA-002-R05"
+      },
+      "disposition": "OWNER_AMENDMENT",
+      "resolution": "Preserve owner exchange, independent feature support, strict parsing and distinct attempt/error semantics.",
+      "owner_specs": [
+        "CX-05",
+        "CX-13"
+      ],
+      "tasks": [
+        "B176",
+        "B177"
+      ],
+      "gates": [
+        "G05-ace-features",
+        "G13-ace-attempts"
+      ],
+      "amended_files": [
+        "specs/CX-05-reflex-inference.md",
+        "specs/CX-13-os-runtime.md",
+        "schemas/ACE_EXECUTION_PROFILE.md",
+        "build/ACE_INTEGRATION.md"
+      ],
+      "profile_section": "P03",
+      "claim_profile": "AN1",
+      "document_status": "INTEGRATED_PROPOSED",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "source_requirement_id": "ANEA-002-R06",
+      "source_title": "Preserve errors and abstention families",
+      "source_requirement_sha256": "d43da7f6f0acb9e81f16c05ae52ad197834b6e96f3b5c85c135269e809fcf045",
+      "source_anchor": {
+        "path": "integration/anea-v0_2-reference/ANEA_SPEC.txt",
+        "section": "ANEA-002-R06"
+      },
+      "disposition": "OWNER_AMENDMENT",
+      "resolution": "Preserve owner exchange, independent feature support, strict parsing and distinct attempt/error semantics.",
+      "owner_specs": [
+        "CX-05",
+        "CX-13"
+      ],
+      "tasks": [
+        "B176",
+        "B177"
+      ],
+      "gates": [
+        "G05-ace-features",
+        "G13-ace-attempts"
+      ],
+      "amended_files": [
+        "specs/CX-05-reflex-inference.md",
+        "specs/CX-13-os-runtime.md",
+        "schemas/ACE_EXECUTION_PROFILE.md",
+        "build/ACE_INTEGRATION.md"
+      ],
+      "profile_section": "P03",
+      "claim_profile": "AN1",
+      "document_status": "INTEGRATED_PROPOSED",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "source_requirement_id": "ANEA-002-R07",
+      "source_title": "Record every attempt and transformation",
+      "source_requirement_sha256": "b0cc39877e70ff9801d64f318162fb20448fb632ad5f9ad663856c62322e4381",
+      "source_anchor": {
+        "path": "integration/anea-v0_2-reference/ANEA_SPEC.txt",
+        "section": "ANEA-002-R07"
+      },
+      "disposition": "OWNER_AMENDMENT",
+      "resolution": "Preserve owner exchange, independent feature support, strict parsing and distinct attempt/error semantics.",
+      "owner_specs": [
+        "CX-05",
+        "CX-13"
+      ],
+      "tasks": [
+        "B176",
+        "B177"
+      ],
+      "gates": [
+        "G05-ace-features",
+        "G13-ace-attempts"
+      ],
+      "amended_files": [
+        "specs/CX-05-reflex-inference.md",
+        "specs/CX-13-os-runtime.md",
+        "schemas/ACE_EXECUTION_PROFILE.md",
+        "build/ACE_INTEGRATION.md"
+      ],
+      "profile_section": "P03",
+      "claim_profile": "AN1",
+      "document_status": "INTEGRATED_PROPOSED",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "source_requirement_id": "ANEA-003-R01",
+      "source_title": "Typed and effect-aware AIR",
+      "source_requirement_sha256": "0888bfbd6cf8801e8ac9a6f88ef272360e0d4f4a54f4f220b2f2c79e8584ac6d",
+      "source_anchor": {
+        "path": "integration/anea-v0_2-reference/ANEA_SPEC.txt",
+        "section": "ANEA-003-R01"
+      },
+      "disposition": "OWNER_AMENDMENT",
+      "resolution": "ACE P02 is a scoped host mapping. Exact type/effect symbols still need live code reconciliation; no unverified Axon type engine is supplied.",
+      "owner_specs": [
+        "CX-04",
+        "CX-15"
+      ],
+      "tasks": [
+        "B175",
+        "B179"
+      ],
+      "gates": [
+        "G04-ace-lowering",
+        "G15-ace-parity",
+        "G04-ace-joins"
+      ],
+      "amended_files": [
+        "specs/CX-04-air-runtime.md",
+        "specs/CX-15-language-compiler-proof.md",
+        "schemas/ACE_EXECUTION_PROFILE.md",
+        "build/ACE_INTEGRATION.md"
+      ],
+      "profile_section": "P02",
+      "claim_profile": "AN1",
+      "document_status": "INTEGRATED_PROPOSED",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "source_requirement_id": "ANEA-003-R02",
+      "source_title": "Library-first, existing compiler only",
+      "source_requirement_sha256": "7a0c4771fa06801c6fbe62c165fc137fdc13f2e3fb9d2c9245b7e54befcec70e",
+      "source_anchor": {
+        "path": "integration/anea-v0_2-reference/ANEA_SPEC.txt",
+        "section": "ANEA-003-R02"
+      },
+      "disposition": "OWNER_AMENDMENT",
+      "resolution": "Use the bounded versioned host mapping; no new opcodes, pure learned calls or unproved learned equivalence.",
+      "owner_specs": [
+        "CX-04",
+        "CX-15"
+      ],
+      "tasks": [
+        "B175",
+        "B179"
+      ],
+      "gates": [
+        "G04-ace-lowering",
+        "G15-ace-parity",
+        "G04-ace-joins"
+      ],
+      "amended_files": [
+        "specs/CX-04-air-runtime.md",
+        "specs/CX-15-language-compiler-proof.md",
+        "schemas/ACE_EXECUTION_PROFILE.md",
+        "build/ACE_INTEGRATION.md"
+      ],
+      "profile_section": "P02",
+      "claim_profile": "AN1",
+      "document_status": "INTEGRATED_PROPOSED",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "source_requirement_id": "ANEA-003-R03",
+      "source_title": "Physical plan records without a second scheduler",
+      "source_requirement_sha256": "46c76acfceff5b81b15762e4db3d1997edddb248f627b8527bd12fb955dc6b69",
+      "source_anchor": {
+        "path": "integration/anea-v0_2-reference/ANEA_SPEC.txt",
+        "section": "ANEA-003-R03"
+      },
+      "disposition": "OWNER_AMENDMENT",
+      "resolution": "Physical profile is attached to existing CX-34/CX-04 records. Initial mappings are frozen in ACE_VOCABULARY_MAP; unsupported tuple combinations refuse.",
+      "owner_specs": [
+        "CX-04",
+        "CX-15"
+      ],
+      "tasks": [
+        "B175",
+        "B179"
+      ],
+      "gates": [
+        "G04-ace-lowering",
+        "G15-ace-parity",
+        "G04-ace-joins"
+      ],
+      "amended_files": [
+        "specs/CX-04-air-runtime.md",
+        "specs/CX-15-language-compiler-proof.md",
+        "schemas/ACE_EXECUTION_PROFILE.md",
+        "build/ACE_INTEGRATION.md"
+      ],
+      "profile_section": "P02",
+      "claim_profile": "AN1",
+      "document_status": "INTEGRATED_PROPOSED",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "source_requirement_id": "ANEA-003-R04",
+      "source_title": "Preserve dependency and visibility semantics",
+      "source_requirement_sha256": "56581f49ab2c03ab35d13a74972d734c1332ba79468a2b7c5fbad53be31c5391",
+      "source_anchor": {
+        "path": "integration/anea-v0_2-reference/ANEA_SPEC.txt",
+        "section": "ANEA-003-R04"
+      },
+      "disposition": "OWNER_AMENDMENT",
+      "resolution": "Use the bounded versioned host mapping; no new opcodes, pure learned calls or unproved learned equivalence.",
+      "owner_specs": [
+        "CX-04",
+        "CX-15"
+      ],
+      "tasks": [
+        "B175",
+        "B179"
+      ],
+      "gates": [
+        "G04-ace-lowering",
+        "G15-ace-parity",
+        "G04-ace-joins"
+      ],
+      "amended_files": [
+        "specs/CX-04-air-runtime.md",
+        "specs/CX-15-language-compiler-proof.md",
+        "schemas/ACE_EXECUTION_PROFILE.md",
+        "build/ACE_INTEGRATION.md"
+      ],
+      "profile_section": "P02",
+      "claim_profile": "AN1",
+      "document_status": "INTEGRATED_PROPOSED",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "source_requirement_id": "ANEA-003-R05",
+      "source_title": "Keep opcodes, model tokens and object IDs distinct",
+      "source_requirement_sha256": "8822d2da6b2f59eff98e0c41df8a5a22b3ee0cba01bd0bbafde40aa710aa2c0c",
+      "source_anchor": {
+        "path": "integration/anea-v0_2-reference/ANEA_SPEC.txt",
+        "section": "ANEA-003-R05"
+      },
+      "disposition": "OWNER_AMENDMENT",
+      "resolution": "Use the bounded versioned host mapping; no new opcodes, pure learned calls or unproved learned equivalence.",
+      "owner_specs": [
+        "CX-04",
+        "CX-15"
+      ],
+      "tasks": [
+        "B175",
+        "B179"
+      ],
+      "gates": [
+        "G04-ace-lowering",
+        "G15-ace-parity",
+        "G04-ace-joins"
+      ],
+      "amended_files": [
+        "specs/CX-04-air-runtime.md",
+        "specs/CX-15-language-compiler-proof.md",
+        "schemas/ACE_EXECUTION_PROFILE.md",
+        "build/ACE_INTEGRATION.md"
+      ],
+      "profile_section": "P02",
+      "claim_profile": "AN1",
+      "document_status": "INTEGRATED_PROPOSED",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "source_requirement_id": "ANEA-003-R06",
+      "source_title": "Reject unsupported semantics",
+      "source_requirement_sha256": "78c8fef29b744b4bffa4ba527e879727ea25d9c2f4effb48b6a821d2fdee7934",
+      "source_anchor": {
+        "path": "integration/anea-v0_2-reference/ANEA_SPEC.txt",
+        "section": "ANEA-003-R06"
+      },
+      "disposition": "OWNER_AMENDMENT",
+      "resolution": "Use the bounded versioned host mapping; no new opcodes, pure learned calls or unproved learned equivalence.",
+      "owner_specs": [
+        "CX-04",
+        "CX-15"
+      ],
+      "tasks": [
+        "B175",
+        "B179"
+      ],
+      "gates": [
+        "G04-ace-lowering",
+        "G15-ace-parity",
+        "G04-ace-joins"
+      ],
+      "amended_files": [
+        "specs/CX-04-air-runtime.md",
+        "specs/CX-15-language-compiler-proof.md",
+        "schemas/ACE_EXECUTION_PROFILE.md",
+        "build/ACE_INTEGRATION.md"
+      ],
+      "profile_section": "P02",
+      "claim_profile": "AN1",
+      "document_status": "INTEGRATED_PROPOSED",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "source_requirement_id": "ANEA-004-R01",
+      "source_title": "Candidate integrity and construction identity",
+      "source_requirement_sha256": "fba9f0aeb1707a354447318f8e39f22d33840bc0a6c0cf397e3400ff549931bc",
+      "source_anchor": {
+        "path": "integration/anea-v0_2-reference/ANEA_SPEC.txt",
+        "section": "ANEA-004-R01"
+      },
+      "disposition": "OWNER_AMENDMENT",
+      "resolution": "Preserve result families, full candidate identity/score semantics and named reliability events; actual scorer proof is required only for a claimed mechanism.",
+      "owner_specs": [
+        "CX-05",
+        "CX-06"
+      ],
+      "tasks": [
+        "B176",
+        "B181"
+      ],
+      "gates": [
+        "G05-ace-results",
+        "G05-ace-scoring",
+        "G06-ace-provenance"
+      ],
+      "amended_files": [
+        "specs/CX-05-reflex-inference.md",
+        "specs/CX-06-routing-calibration.md",
+        "schemas/ACE_EXECUTION_PROFILE.md",
+        "build/ACE_INTEGRATION.md"
+      ],
+      "profile_section": "P04",
+      "claim_profile": "AN1 plus feature-specific AN3",
+      "document_status": "INTEGRATED_PROPOSED",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "source_requirement_id": "ANEA-004-R02",
+      "source_title": "Probability origin and result-family fidelity",
+      "source_requirement_sha256": "34da364192920d87072d0e3c87e4839e6ce85b1b003775ef6eba7295d1ac13c5",
+      "source_anchor": {
+        "path": "integration/anea-v0_2-reference/ANEA_SPEC.txt",
+        "section": "ANEA-004-R02"
+      },
+      "disposition": "OWNER_AMENDMENT",
+      "resolution": "Canonicalize only explicit aliases with matching physical mechanism while retaining producer vocabulary/tag. Reliability transforms stay a separate layer. BinaryDecision maps only when it actually carries the named positive-event probability.",
+      "owner_specs": [
+        "CX-05",
+        "CX-06"
+      ],
+      "tasks": [
+        "B176",
+        "B181"
+      ],
+      "gates": [
+        "G05-ace-results",
+        "G05-ace-scoring",
+        "G06-ace-provenance"
+      ],
+      "amended_files": [
+        "specs/CX-05-reflex-inference.md",
+        "specs/CX-06-routing-calibration.md",
+        "schemas/ACE_EXECUTION_PROFILE.md",
+        "build/ACE_INTEGRATION.md"
+      ],
+      "profile_section": "P04",
+      "claim_profile": "AN1 plus feature-specific AN3",
+      "document_status": "INTEGRATED_PROPOSED",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "source_requirement_id": "ANEA-004-R03",
+      "source_title": "Complete and valid distributions",
+      "source_requirement_sha256": "b65d71b9993d2ea6d7822ce93b345cede642df2304de86d7d7bd5ac703a1a501",
+      "source_anchor": {
+        "path": "integration/anea-v0_2-reference/ANEA_SPEC.txt",
+        "section": "ANEA-004-R03"
+      },
+      "disposition": "OWNER_AMENDMENT",
+      "resolution": "Preserve result families, full candidate identity/score semantics and named reliability events; actual scorer proof is required only for a claimed mechanism.",
+      "owner_specs": [
+        "CX-05",
+        "CX-06"
+      ],
+      "tasks": [
+        "B176",
+        "B181"
+      ],
+      "gates": [
+        "G05-ace-results",
+        "G05-ace-scoring",
+        "G06-ace-provenance"
+      ],
+      "amended_files": [
+        "specs/CX-05-reflex-inference.md",
+        "specs/CX-06-routing-calibration.md",
+        "schemas/ACE_EXECUTION_PROFILE.md",
+        "build/ACE_INTEGRATION.md"
+      ],
+      "profile_section": "P04",
+      "claim_profile": "AN1 plus feature-specific AN3",
+      "document_status": "INTEGRATED_PROPOSED",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "source_requirement_id": "ANEA-004-R04",
+      "source_title": "Scoped calibration",
+      "source_requirement_sha256": "26d958388079effa6075649f9c62a175b05d290bcd5c9d212701b018f4eb10bb",
+      "source_anchor": {
+        "path": "integration/anea-v0_2-reference/ANEA_SPEC.txt",
+        "section": "ANEA-004-R04"
+      },
+      "disposition": "OWNER_AMENDMENT",
+      "resolution": "Preserve result families, full candidate identity/score semantics and named reliability events; actual scorer proof is required only for a claimed mechanism.",
+      "owner_specs": [
+        "CX-05",
+        "CX-06"
+      ],
+      "tasks": [
+        "B176",
+        "B181"
+      ],
+      "gates": [
+        "G05-ace-results",
+        "G05-ace-scoring",
+        "G06-ace-provenance"
+      ],
+      "amended_files": [
+        "specs/CX-05-reflex-inference.md",
+        "specs/CX-06-routing-calibration.md",
+        "schemas/ACE_EXECUTION_PROFILE.md",
+        "build/ACE_INTEGRATION.md"
+      ],
+      "profile_section": "P04",
+      "claim_profile": "AN1 plus feature-specific AN3",
+      "document_status": "INTEGRATED_PROPOSED",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "source_requirement_id": "ANEA-004-R05",
+      "source_title": "Abstention, absence and thresholds",
+      "source_requirement_sha256": "cbc601d5bd5884ae71a8a4305936714523aab94be13b91fa4793facaf3efac84",
+      "source_anchor": {
+        "path": "integration/anea-v0_2-reference/ANEA_SPEC.txt",
+        "section": "ANEA-004-R05"
+      },
+      "disposition": "OWNER_AMENDMENT",
+      "resolution": "Preserve result families, full candidate identity/score semantics and named reliability events; actual scorer proof is required only for a claimed mechanism.",
+      "owner_specs": [
+        "CX-05",
+        "CX-06"
+      ],
+      "tasks": [
+        "B176",
+        "B181"
+      ],
+      "gates": [
+        "G05-ace-results",
+        "G05-ace-scoring",
+        "G06-ace-provenance"
+      ],
+      "amended_files": [
+        "specs/CX-05-reflex-inference.md",
+        "specs/CX-06-routing-calibration.md",
+        "schemas/ACE_EXECUTION_PROFILE.md",
+        "build/ACE_INTEGRATION.md"
+      ],
+      "profile_section": "P04",
+      "claim_profile": "AN1 plus feature-specific AN3",
+      "document_status": "INTEGRATED_PROPOSED",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "source_requirement_id": "ANEA-004-R06",
+      "source_title": "Explicit selection policy",
+      "source_requirement_sha256": "852da3186942f9f9d40994e6a074ac7d1dac460040944c798209f10a16d71454",
+      "source_anchor": {
+        "path": "integration/anea-v0_2-reference/ANEA_SPEC.txt",
+        "section": "ANEA-004-R06"
+      },
+      "disposition": "OWNER_AMENDMENT",
+      "resolution": "The initial inert subset supports provider_choice, argmax and distribution_only. Sampling is a separately versioned unsupported extension until its transformation and randomness contract is implemented; no hidden sampling default.",
+      "owner_specs": [
+        "CX-05",
+        "CX-06"
+      ],
+      "tasks": [
+        "B176",
+        "B181"
+      ],
+      "gates": [
+        "G05-ace-results",
+        "G05-ace-scoring",
+        "G06-ace-provenance"
+      ],
+      "amended_files": [
+        "specs/CX-05-reflex-inference.md",
+        "specs/CX-06-routing-calibration.md",
+        "schemas/ACE_EXECUTION_PROFILE.md",
+        "build/ACE_INTEGRATION.md"
+      ],
+      "profile_section": "P04",
+      "claim_profile": "AN1 plus feature-specific AN3",
+      "document_status": "INTEGRATED_PROPOSED",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "source_requirement_id": "ANEA-004-R07",
+      "source_title": "Tokenizer-bound one-token lowering",
+      "source_requirement_sha256": "9d71221ba7cb01391e159d83830e902eab9ab045021a01ebd9a93200499dd338",
+      "source_anchor": {
+        "path": "integration/anea-v0_2-reference/ANEA_SPEC.txt",
+        "section": "ANEA-004-R07"
+      },
+      "disposition": "OWNER_AMENDMENT",
+      "resolution": "Preserve result families, full candidate identity/score semantics and named reliability events; actual scorer proof is required only for a claimed mechanism.",
+      "owner_specs": [
+        "CX-05",
+        "CX-06"
+      ],
+      "tasks": [
+        "B176",
+        "B181"
+      ],
+      "gates": [
+        "G05-ace-results",
+        "G05-ace-scoring",
+        "G06-ace-provenance"
+      ],
+      "amended_files": [
+        "specs/CX-05-reflex-inference.md",
+        "specs/CX-06-routing-calibration.md",
+        "schemas/ACE_EXECUTION_PROFILE.md",
+        "build/ACE_INTEGRATION.md"
+      ],
+      "profile_section": "P04",
+      "claim_profile": "AN1 plus feature-specific AN3",
+      "document_status": "INTEGRATED_PROPOSED",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "source_requirement_id": "ANEA-004-R08",
+      "source_title": "Complete multi-token semantics",
+      "source_requirement_sha256": "f1c7c0424ec3029df8fb32fb0d05fcb3ac1e0eaffcdfaa1e07029bb43e478fa4",
+      "source_anchor": {
+        "path": "integration/anea-v0_2-reference/ANEA_SPEC.txt",
+        "section": "ANEA-004-R08"
+      },
+      "disposition": "OWNER_AMENDMENT",
+      "resolution": "Preserve result families, full candidate identity/score semantics and named reliability events; actual scorer proof is required only for a claimed mechanism.",
+      "owner_specs": [
+        "CX-05",
+        "CX-06"
+      ],
+      "tasks": [
+        "B176",
+        "B181"
+      ],
+      "gates": [
+        "G05-ace-results",
+        "G05-ace-scoring",
+        "G06-ace-provenance"
+      ],
+      "amended_files": [
+        "specs/CX-05-reflex-inference.md",
+        "specs/CX-06-routing-calibration.md",
+        "schemas/ACE_EXECUTION_PROFILE.md",
+        "build/ACE_INTEGRATION.md"
+      ],
+      "profile_section": "P04",
+      "claim_profile": "AN1 plus feature-specific AN3",
+      "document_status": "INTEGRATED_PROPOSED",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "source_requirement_id": "ANEA-004-R09",
+      "source_title": "Typed output is not verified truth",
+      "source_requirement_sha256": "e413c2a9363f6945fdf4960b4c06c946261c1d6586dc8ea478a076291a61f970",
+      "source_anchor": {
+        "path": "integration/anea-v0_2-reference/ANEA_SPEC.txt",
+        "section": "ANEA-004-R09"
+      },
+      "disposition": "OWNER_AMENDMENT",
+      "resolution": "Preserve result families, full candidate identity/score semantics and named reliability events; actual scorer proof is required only for a claimed mechanism.",
+      "owner_specs": [
+        "CX-05",
+        "CX-06"
+      ],
+      "tasks": [
+        "B176",
+        "B181"
+      ],
+      "gates": [
+        "G05-ace-results",
+        "G05-ace-scoring",
+        "G06-ace-provenance"
+      ],
+      "amended_files": [
+        "specs/CX-05-reflex-inference.md",
+        "specs/CX-06-routing-calibration.md",
+        "schemas/ACE_EXECUTION_PROFILE.md",
+        "build/ACE_INTEGRATION.md"
+      ],
+      "profile_section": "P04",
+      "claim_profile": "AN1 plus feature-specific AN3",
+      "document_status": "INTEGRATED_PROPOSED",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "source_requirement_id": "ANEA-005-R01",
+      "source_title": "Authorized exact materialization",
+      "source_requirement_sha256": "cb48e05f08cb4910e796eef3757895d611a26161b1790d48a51e43905e69ae29",
+      "source_anchor": {
+        "path": "integration/anea-v0_2-reference/ANEA_SPEC.txt",
+        "section": "ANEA-005-R01"
+      },
+      "disposition": "OWNER_AMENDMENT",
+      "resolution": "Keep observation/working-set/effective-input separate from optional opaque native state. Metadata tests do not prove engine reuse.",
+      "owner_specs": [
+        "CX-28"
+      ],
+      "tasks": [
+        "B178",
+        "B186"
+      ],
+      "gates": [
+        "G28-ace-reuse"
+      ],
+      "amended_files": [
+        "specs/CX-28-semantic-working-set-manager.md",
+        "schemas/ACE_EXECUTION_PROFILE.md",
+        "build/ACE_INTEGRATION.md"
+      ],
+      "profile_section": "P06",
+      "claim_profile": "AN1 metadata; AN5 actual reuse",
+      "document_status": "INTEGRATED_PROPOSED",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "source_requirement_id": "ANEA-005-R02",
+      "source_title": "Bind state compatibility",
+      "source_requirement_sha256": "58b6036a3cfe7e1646c2598f8df1eccc10fdf68528b65ac8d5f753409aab0b3c",
+      "source_anchor": {
+        "path": "integration/anea-v0_2-reference/ANEA_SPEC.txt",
+        "section": "ANEA-005-R02"
+      },
+      "disposition": "OWNER_AMENDMENT",
+      "resolution": "Keep observation/working-set/effective-input separate from optional opaque native state. Metadata tests do not prove engine reuse.",
+      "owner_specs": [
+        "CX-28"
+      ],
+      "tasks": [
+        "B178",
+        "B186"
+      ],
+      "gates": [
+        "G28-ace-reuse"
+      ],
+      "amended_files": [
+        "specs/CX-28-semantic-working-set-manager.md",
+        "schemas/ACE_EXECUTION_PROFILE.md",
+        "build/ACE_INTEGRATION.md"
+      ],
+      "profile_section": "P06",
+      "claim_profile": "AN1 metadata; AN5 actual reuse",
+      "document_status": "INTEGRATED_PROPOSED",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "source_requirement_id": "ANEA-005-R03",
+      "source_title": "Opaque accounted lifecycle",
+      "source_requirement_sha256": "e5e2e03263e5433e17d2a9c38688d5b7babc1cacc79925b661ee5be86f147037",
+      "source_anchor": {
+        "path": "integration/anea-v0_2-reference/ANEA_SPEC.txt",
+        "section": "ANEA-005-R03"
+      },
+      "disposition": "OWNER_AMENDMENT",
+      "resolution": "Keep observation/working-set/effective-input separate from optional opaque native state. Metadata tests do not prove engine reuse.",
+      "owner_specs": [
+        "CX-28"
+      ],
+      "tasks": [
+        "B178",
+        "B186"
+      ],
+      "gates": [
+        "G28-ace-reuse"
+      ],
+      "amended_files": [
+        "specs/CX-28-semantic-working-set-manager.md",
+        "schemas/ACE_EXECUTION_PROFILE.md",
+        "build/ACE_INTEGRATION.md"
+      ],
+      "profile_section": "P06",
+      "claim_profile": "AN1 metadata; AN5 actual reuse",
+      "document_status": "INTEGRATED_PROPOSED",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "source_requirement_id": "ANEA-005-R04",
+      "source_title": "Distinguish actual reuse from emulation",
+      "source_requirement_sha256": "7c2be5ee94ab536ed0bec3a212385e0550bebfdcbcbb38ee09a593511083a875",
+      "source_anchor": {
+        "path": "integration/anea-v0_2-reference/ANEA_SPEC.txt",
+        "section": "ANEA-005-R04"
+      },
+      "disposition": "OWNER_AMENDMENT",
+      "resolution": "Keep observation/working-set/effective-input separate from optional opaque native state. Metadata tests do not prove engine reuse.",
+      "owner_specs": [
+        "CX-28"
+      ],
+      "tasks": [
+        "B178",
+        "B186"
+      ],
+      "gates": [
+        "G28-ace-reuse"
+      ],
+      "amended_files": [
+        "specs/CX-28-semantic-working-set-manager.md",
+        "schemas/ACE_EXECUTION_PROFILE.md",
+        "build/ACE_INTEGRATION.md"
+      ],
+      "profile_section": "P06",
+      "claim_profile": "AN1 metadata; AN5 actual reuse",
+      "document_status": "INTEGRATED_PROPOSED",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "source_requirement_id": "ANEA-005-R05",
+      "source_title": "No implicit state interchange",
+      "source_requirement_sha256": "a199fa7af1bc1d37bb04b82463994f5142a1cbde46108d0d8f3c2b7a3906f110",
+      "source_anchor": {
+        "path": "integration/anea-v0_2-reference/ANEA_SPEC.txt",
+        "section": "ANEA-005-R05"
+      },
+      "disposition": "OWNER_AMENDMENT",
+      "resolution": "Keep observation/working-set/effective-input separate from optional opaque native state. Metadata tests do not prove engine reuse.",
+      "owner_specs": [
+        "CX-28"
+      ],
+      "tasks": [
+        "B178",
+        "B186"
+      ],
+      "gates": [
+        "G28-ace-reuse"
+      ],
+      "amended_files": [
+        "specs/CX-28-semantic-working-set-manager.md",
+        "schemas/ACE_EXECUTION_PROFILE.md",
+        "build/ACE_INTEGRATION.md"
+      ],
+      "profile_section": "P06",
+      "claim_profile": "AN1 metadata; AN5 actual reuse",
+      "document_status": "INTEGRATED_PROPOSED",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "source_requirement_id": "ANEA-005-R06",
+      "source_title": "Staleness, isolation and recomputation",
+      "source_requirement_sha256": "85a516fc625e557d0b4fb63a5ea0e9852cff1b2e328c21c09463532170781c98",
+      "source_anchor": {
+        "path": "integration/anea-v0_2-reference/ANEA_SPEC.txt",
+        "section": "ANEA-005-R06"
+      },
+      "disposition": "OWNER_AMENDMENT",
+      "resolution": "Keep observation/working-set/effective-input separate from optional opaque native state. Metadata tests do not prove engine reuse.",
+      "owner_specs": [
+        "CX-28"
+      ],
+      "tasks": [
+        "B178",
+        "B186"
+      ],
+      "gates": [
+        "G28-ace-reuse"
+      ],
+      "amended_files": [
+        "specs/CX-28-semantic-working-set-manager.md",
+        "schemas/ACE_EXECUTION_PROFILE.md",
+        "build/ACE_INTEGRATION.md"
+      ],
+      "profile_section": "P06",
+      "claim_profile": "AN1 metadata; AN5 actual reuse",
+      "document_status": "INTEGRATED_PROPOSED",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "source_requirement_id": "ANEA-006-R01",
+      "source_title": "Hard constraints before utility and again at dispatch",
+      "source_requirement_sha256": "1b01723c1274b5337f0b39cd39b3268c9a1ce11b9fde85b7c0481f7b3bbc0f3d",
+      "source_anchor": {
+        "path": "integration/anea-v0_2-reference/ANEA_SPEC.txt",
+        "section": "ANEA-006-R01"
+      },
+      "disposition": "OWNER_AMENDMENT",
+      "resolution": "Dispatch and fallback use current hard constraints and shared budgets; truthful producer/unknown-work receipts remain mandatory.",
+      "owner_specs": [
+        "CX-13",
+        "CX-34"
+      ],
+      "tasks": [
+        "B177",
+        "B180"
+      ],
+      "gates": [
+        "G13-ace-attempts",
+        "G34-ace-dispatch",
+        "G34-ace-fallback"
+      ],
+      "amended_files": [
+        "specs/CX-13-os-runtime.md",
+        "specs/CX-34-cognitive-scheduler-capability-registry.md",
+        "schemas/ACE_EXECUTION_PROFILE.md",
+        "build/ACE_INTEGRATION.md"
+      ],
+      "profile_section": "P08",
+      "claim_profile": "AN1",
+      "document_status": "INTEGRATED_PROPOSED",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "source_requirement_id": "ANEA-006-R02",
+      "source_title": "Explainable scoped scheduling",
+      "source_requirement_sha256": "b9d0e128e81faca4807ddb8e43b1f80cbfd1323193756d94025ed34e26eccc5a",
+      "source_anchor": {
+        "path": "integration/anea-v0_2-reference/ANEA_SPEC.txt",
+        "section": "ANEA-006-R02"
+      },
+      "disposition": "OWNER_AMENDMENT",
+      "resolution": "Dispatch and fallback use current hard constraints and shared budgets; truthful producer/unknown-work receipts remain mandatory.",
+      "owner_specs": [
+        "CX-13",
+        "CX-34"
+      ],
+      "tasks": [
+        "B177",
+        "B180"
+      ],
+      "gates": [
+        "G13-ace-attempts",
+        "G34-ace-dispatch",
+        "G34-ace-fallback"
+      ],
+      "amended_files": [
+        "specs/CX-13-os-runtime.md",
+        "specs/CX-34-cognitive-scheduler-capability-registry.md",
+        "schemas/ACE_EXECUTION_PROFILE.md",
+        "build/ACE_INTEGRATION.md"
+      ],
+      "profile_section": "P08",
+      "claim_profile": "AN1",
+      "document_status": "INTEGRATED_PROPOSED",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "source_requirement_id": "ANEA-006-R03",
+      "source_title": "Shared root budgets",
+      "source_requirement_sha256": "8129ed72f485490bfd962bc9121de2ef10f02054e681628b7f3719f716887211",
+      "source_anchor": {
+        "path": "integration/anea-v0_2-reference/ANEA_SPEC.txt",
+        "section": "ANEA-006-R03"
+      },
+      "disposition": "OWNER_AMENDMENT",
+      "resolution": "Dispatch and fallback use current hard constraints and shared budgets; truthful producer/unknown-work receipts remain mandatory.",
+      "owner_specs": [
+        "CX-13",
+        "CX-34"
+      ],
+      "tasks": [
+        "B177",
+        "B180"
+      ],
+      "gates": [
+        "G13-ace-attempts",
+        "G34-ace-dispatch",
+        "G34-ace-fallback"
+      ],
+      "amended_files": [
+        "specs/CX-13-os-runtime.md",
+        "specs/CX-34-cognitive-scheduler-capability-registry.md",
+        "schemas/ACE_EXECUTION_PROFILE.md",
+        "build/ACE_INTEGRATION.md"
+      ],
+      "profile_section": "P08",
+      "claim_profile": "AN1",
+      "document_status": "INTEGRATED_PROPOSED",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "source_requirement_id": "ANEA-006-R04",
+      "source_title": "Versioned semantic fallback",
+      "source_requirement_sha256": "aefe1230ac17c7cf81e91987506cd2b6a8ddd26d8b599081b9069f96c3e0d28e",
+      "source_anchor": {
+        "path": "integration/anea-v0_2-reference/ANEA_SPEC.txt",
+        "section": "ANEA-006-R04"
+      },
+      "disposition": "OWNER_AMENDMENT",
+      "resolution": "Dispatch and fallback use current hard constraints and shared budgets; truthful producer/unknown-work receipts remain mandatory.",
+      "owner_specs": [
+        "CX-13",
+        "CX-34"
+      ],
+      "tasks": [
+        "B177",
+        "B180"
+      ],
+      "gates": [
+        "G13-ace-attempts",
+        "G34-ace-dispatch",
+        "G34-ace-fallback"
+      ],
+      "amended_files": [
+        "specs/CX-13-os-runtime.md",
+        "specs/CX-34-cognitive-scheduler-capability-registry.md",
+        "schemas/ACE_EXECUTION_PROFILE.md",
+        "build/ACE_INTEGRATION.md"
+      ],
+      "profile_section": "P08",
+      "claim_profile": "AN1",
+      "document_status": "INTEGRATED_PROPOSED",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "source_requirement_id": "ANEA-006-R05",
+      "source_title": "Truthful operator and UI state",
+      "source_requirement_sha256": "88d88c9ad8a850a2530021c8153ffc19b64a1d9e1bb08748c440fb41e14c5718",
+      "source_anchor": {
+        "path": "integration/anea-v0_2-reference/ANEA_SPEC.txt",
+        "section": "ANEA-006-R05"
+      },
+      "disposition": "OWNER_AMENDMENT",
+      "resolution": "Dispatch and fallback use current hard constraints and shared budgets; truthful producer/unknown-work receipts remain mandatory.",
+      "owner_specs": [
+        "CX-13",
+        "CX-34"
+      ],
+      "tasks": [
+        "B177",
+        "B180"
+      ],
+      "gates": [
+        "G13-ace-attempts",
+        "G34-ace-dispatch",
+        "G34-ace-fallback"
+      ],
+      "amended_files": [
+        "specs/CX-13-os-runtime.md",
+        "specs/CX-34-cognitive-scheduler-capability-registry.md",
+        "schemas/ACE_EXECUTION_PROFILE.md",
+        "build/ACE_INTEGRATION.md"
+      ],
+      "profile_section": "P08",
+      "claim_profile": "AN1",
+      "document_status": "INTEGRATED_PROPOSED",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "source_requirement_id": "ANEA-006-R06",
+      "source_title": "Keep inference, shadowing and effects separate",
+      "source_requirement_sha256": "4620912ca0a14428d3d0a3d8c2ccdbc73663408808db068a9c233c27391991fc",
+      "source_anchor": {
+        "path": "integration/anea-v0_2-reference/ANEA_SPEC.txt",
+        "section": "ANEA-006-R06"
+      },
+      "disposition": "OWNER_AMENDMENT",
+      "resolution": "Dispatch and fallback use current hard constraints and shared budgets; truthful producer/unknown-work receipts remain mandatory.",
+      "owner_specs": [
+        "CX-13",
+        "CX-34"
+      ],
+      "tasks": [
+        "B177",
+        "B180"
+      ],
+      "gates": [
+        "G13-ace-attempts",
+        "G34-ace-dispatch",
+        "G34-ace-fallback"
+      ],
+      "amended_files": [
+        "specs/CX-13-os-runtime.md",
+        "specs/CX-34-cognitive-scheduler-capability-registry.md",
+        "schemas/ACE_EXECUTION_PROFILE.md",
+        "build/ACE_INTEGRATION.md"
+      ],
+      "profile_section": "P08",
+      "claim_profile": "AN1",
+      "document_status": "INTEGRATED_PROPOSED",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "source_requirement_id": "ANEA-007-R01",
+      "source_title": "Parallel visibility and identity",
+      "source_requirement_sha256": "797779306466e0eb87de7d0e3432706f7f356185d3dc28f8f57d64a63c4a4c99",
+      "source_anchor": {
+        "path": "integration/anea-v0_2-reference/ANEA_SPEC.txt",
+        "section": "ANEA-007-R01"
+      },
+      "disposition": "OWNER_AMENDMENT",
+      "resolution": "Join by identity and active committed dependencies. No silent visibility fusion, marginal joint probability or unsupported canvas.",
+      "owner_specs": [
+        "CX-04"
+      ],
+      "tasks": [
+        "B179"
+      ],
+      "gates": [
+        "G04-ace-joins"
+      ],
+      "amended_files": [
+        "specs/CX-04-air-runtime.md",
+        "schemas/ACE_EXECUTION_PROFILE.md",
+        "build/ACE_INTEGRATION.md"
+      ],
+      "profile_section": "P07",
+      "claim_profile": "AN1",
+      "document_status": "INTEGRATED_PROPOSED",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "source_requirement_id": "ANEA-007-R02",
+      "source_title": "Branch-aware joins and failure policy",
+      "source_requirement_sha256": "2bd0fba832bae5ff86ad8079e8d3aa94cbfbfd26dfe3675c010af5e24ee969b6",
+      "source_anchor": {
+        "path": "integration/anea-v0_2-reference/ANEA_SPEC.txt",
+        "section": "ANEA-007-R02"
+      },
+      "disposition": "OWNER_AMENDMENT",
+      "resolution": "Join by identity and active committed dependencies. No silent visibility fusion, marginal joint probability or unsupported canvas.",
+      "owner_specs": [
+        "CX-04"
+      ],
+      "tasks": [
+        "B179"
+      ],
+      "gates": [
+        "G04-ace-joins"
+      ],
+      "amended_files": [
+        "specs/CX-04-air-runtime.md",
+        "schemas/ACE_EXECUTION_PROFILE.md",
+        "build/ACE_INTEGRATION.md"
+      ],
+      "profile_section": "P07",
+      "claim_profile": "AN1",
+      "document_status": "INTEGRATED_PROPOSED",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "source_requirement_id": "ANEA-007-R03",
+      "source_title": "No unproved fusion or joint probability",
+      "source_requirement_sha256": "81492c2e31e87e3b85549444b7915ed49bf08720e8f73315295dbb10ce19f128",
+      "source_anchor": {
+        "path": "integration/anea-v0_2-reference/ANEA_SPEC.txt",
+        "section": "ANEA-007-R03"
+      },
+      "disposition": "OWNER_AMENDMENT",
+      "resolution": "Join by identity and active committed dependencies. No silent visibility fusion, marginal joint probability or unsupported canvas.",
+      "owner_specs": [
+        "CX-04"
+      ],
+      "tasks": [
+        "B179"
+      ],
+      "gates": [
+        "G04-ace-joins"
+      ],
+      "amended_files": [
+        "specs/CX-04-air-runtime.md",
+        "schemas/ACE_EXECUTION_PROFILE.md",
+        "build/ACE_INTEGRATION.md"
+      ],
+      "profile_section": "P07",
+      "claim_profile": "AN1",
+      "document_status": "INTEGRATED_PROPOSED",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "source_requirement_id": "ANEA-007-R04",
+      "source_title": "Optional native canvas profile",
+      "source_requirement_sha256": "0fff46cb29beb7cc26394188d4e304bc2c2e44478777ed4a39ec5334a7d0132c",
+      "source_anchor": {
+        "path": "integration/anea-v0_2-reference/ANEA_SPEC.txt",
+        "section": "ANEA-007-R04"
+      },
+      "disposition": "DEFERRED_RESEARCH_UNSUPPORTED_BY_DEFAULT",
+      "resolution": "Diffusion/infill is unsupported by the core profile. P12 records prerequisites for later adoption; current tasks test refusal, not canvas implementation.",
+      "owner_specs": [
+        "CX-04"
+      ],
+      "tasks": [
+        "B179"
+      ],
+      "gates": [
+        "G04-ace-joins"
+      ],
+      "amended_files": [
+        "specs/CX-04-air-runtime.md",
+        "schemas/ACE_EXECUTION_PROFILE.md",
+        "build/ACE_INTEGRATION.md"
+      ],
+      "profile_section": "P07",
+      "claim_profile": "AN1",
+      "document_status": "INTEGRATED_PROPOSED",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "source_requirement_id": "ANEA-008-R01",
+      "source_title": "Complete Neural Program manifest",
+      "source_requirement_sha256": "8fdb58fb35fce984a83983f1c70116c77ee468c6930ef5ef316d9edb59c42cab",
+      "source_anchor": {
+        "path": "integration/anea-v0_2-reference/ANEA_SPEC.txt",
+        "section": "ANEA-008-R01"
+      },
+      "disposition": "REVIEWED_CONTRACT_SUPERSEDES_REFERENCE",
+      "resolution": "Superseded encoding detail: reviewed manifest binds executable/source/recipe/dependencies; reliability, evaluation and admission bind through detached NeuralProgramRelease. Never place self-ID or mutable evaluation inside executable identity.",
+      "owner_specs": [
+        "CX-23",
+        "CX-36"
+      ],
+      "tasks": [
+        "B155",
+        "B185"
+      ],
+      "gates": [
+        "G36-identity",
+        "G23-ace-lifecycle"
+      ],
+      "amended_files": [
+        "specs/CX-23-neural-program-runtime-skill-compiler.md",
+        "specs/CX-36-neural-program-artifact-contract.md",
+        "schemas/ACE_EXECUTION_PROFILE.md",
+        "build/ACE_INTEGRATION.md"
+      ],
+      "profile_section": "P09",
+      "claim_profile": "AN4",
+      "document_status": "INTEGRATED_PROPOSED",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "source_requirement_id": "ANEA-008-R02",
+      "source_title": "Immutable identity and dependency closure",
+      "source_requirement_sha256": "bcb9597346bee1337dd92bb7db687ff32fdeee4d556c043e21a7b5cbf8a443f8",
+      "source_anchor": {
+        "path": "integration/anea-v0_2-reference/ANEA_SPEC.txt",
+        "section": "ANEA-008-R02"
+      },
+      "disposition": "REVIEWED_CONTRACT_SUPERSEDES_REFERENCE",
+      "resolution": "Use reviewed domain-separated axon.np/1 identity and axon.cjson/1 canonical bytes, not ACE self-exclusion reference hashing. Transport ZIP digest and admitted logical subject remain separate.",
+      "owner_specs": [
+        "CX-23",
+        "CX-36"
+      ],
+      "tasks": [
+        "B155",
+        "B185"
+      ],
+      "gates": [
+        "G36-identity",
+        "G23-ace-lifecycle"
+      ],
+      "amended_files": [
+        "specs/CX-23-neural-program-runtime-skill-compiler.md",
+        "specs/CX-36-neural-program-artifact-contract.md",
+        "schemas/ACE_EXECUTION_PROFILE.md",
+        "build/ACE_INTEGRATION.md"
+      ],
+      "profile_section": "P09",
+      "claim_profile": "AN4",
+      "document_status": "INTEGRATED_PROPOSED",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "source_requirement_id": "ANEA-008-R03",
+      "source_title": "Fail-closed safe loading",
+      "source_requirement_sha256": "eabbdda341eb7f4404459abbc6cb7112cbe1350cce2772c2b691e947379f7fed",
+      "source_anchor": {
+        "path": "integration/anea-v0_2-reference/ANEA_SPEC.txt",
+        "section": "ANEA-008-R03"
+      },
+      "disposition": "REVIEWED_CONTRACT_REAFFIRMED",
+      "resolution": "The unchanged reviewed CX-36 ZIP_STORED/inventory limits and existing validator remain authoritative; ACE reference archives are deliberately not loaded as active .np.",
+      "owner_specs": [
+        "CX-23",
+        "CX-36"
+      ],
+      "tasks": [
+        "B155",
+        "B185"
+      ],
+      "gates": [
+        "G36-identity",
+        "G23-ace-lifecycle"
+      ],
+      "amended_files": [
+        "specs/CX-23-neural-program-runtime-skill-compiler.md",
+        "specs/CX-36-neural-program-artifact-contract.md",
+        "schemas/ACE_EXECUTION_PROFILE.md",
+        "build/ACE_INTEGRATION.md"
+      ],
+      "profile_section": "P09",
+      "claim_profile": "AN4",
+      "document_status": "INTEGRATED_PROPOSED",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "source_requirement_id": "ANEA-008-R04",
+      "source_title": "Versioning and migration",
+      "source_requirement_sha256": "02836bf828ae4a4b8c1dd5f8bf409323a80959d6a749cc7c40837bfd8051f6af",
+      "source_anchor": {
+        "path": "integration/anea-v0_2-reference/ANEA_SPEC.txt",
+        "section": "ANEA-008-R04"
+      },
+      "disposition": "REVIEWED_CONTRACT_SUPERSEDES_REFERENCE",
+      "resolution": "Source/format/capability/document versions are distinct. Existing B152–B173 are already allocated in v0.16; this integration appends B174–B187 rather than reusing suggested IDs.",
+      "owner_specs": [
+        "CX-23",
+        "CX-36"
+      ],
+      "tasks": [
+        "B155",
+        "B185"
+      ],
+      "gates": [
+        "G36-identity",
+        "G23-ace-lifecycle"
+      ],
+      "amended_files": [
+        "specs/CX-23-neural-program-runtime-skill-compiler.md",
+        "specs/CX-36-neural-program-artifact-contract.md",
+        "schemas/ACE_EXECUTION_PROFILE.md",
+        "build/ACE_INTEGRATION.md"
+      ],
+      "profile_section": "P09",
+      "claim_profile": "AN4",
+      "document_status": "INTEGRATED_PROPOSED",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "source_requirement_id": "ANEA-008-R05",
+      "source_title": "Portable artifact class, scoped execution",
+      "source_requirement_sha256": "3dc7bf77d7d7e6f14bcb2fbc9419621c24315af66a83e7b7b727996a417b7cba",
+      "source_anchor": {
+        "path": "integration/anea-v0_2-reference/ANEA_SPEC.txt",
+        "section": "ANEA-008-R05"
+      },
+      "disposition": "REVIEWED_CONTRACT_REAFFIRMED",
+      "resolution": "Retain CX-36 r0.2 artifacts and detached releases. Original ACE reference container/identity is not current artifact syntax.",
+      "owner_specs": [
+        "CX-23",
+        "CX-36"
+      ],
+      "tasks": [
+        "B155",
+        "B185"
+      ],
+      "gates": [
+        "G36-identity",
+        "G23-ace-lifecycle"
+      ],
+      "amended_files": [
+        "specs/CX-23-neural-program-runtime-skill-compiler.md",
+        "specs/CX-36-neural-program-artifact-contract.md",
+        "schemas/ACE_EXECUTION_PROFILE.md",
+        "build/ACE_INTEGRATION.md"
+      ],
+      "profile_section": "P09",
+      "claim_profile": "AN4",
+      "document_status": "INTEGRATED_PROPOSED",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "source_requirement_id": "ANEA-009-R01",
+      "source_title": "Eligible data and traceable evaluation",
+      "source_requirement_sha256": "0c5e092a65c75ba6ef413ce203123f0b11f3fa9069fddf625845bcbc6804da6f",
+      "source_anchor": {
+        "path": "integration/anea-v0_2-reference/ANEA_SPEC.txt",
+        "section": "ANEA-009-R01"
+      },
+      "disposition": "OWNER_AMENDMENT",
+      "resolution": "Use existing evidence/causal/admission owners; preserve roles, negative evidence, evaluation scopes, complete economics and valid rejection.",
+      "owner_specs": [
+        "CX-20",
+        "CX-23",
+        "CX-32"
+      ],
+      "tasks": [
+        "B177",
+        "B184",
+        "B185"
+      ],
+      "gates": [
+        "G32-ace-attempt-lineage",
+        "G20-ace-three-family",
+        "G23-ace-lifecycle"
+      ],
+      "amended_files": [
+        "specs/CX-20-reflex-research-lab.md",
+        "specs/CX-23-neural-program-runtime-skill-compiler.md",
+        "specs/CX-32-universal-evidence-graph.md",
+        "schemas/ACE_EXECUTION_PROFILE.md",
+        "build/ACE_INTEGRATION.md"
+      ],
+      "profile_section": "P10",
+      "claim_profile": "AN1 receipts; AN3/AN4 research",
+      "document_status": "INTEGRATED_PROPOSED",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "source_requirement_id": "ANEA-009-R02",
+      "source_title": "Measure complete quality and economics",
+      "source_requirement_sha256": "5cadb646120f14d9de5294bf6ec70d7a7bbbf973d40287a432ddf6b3012d2650",
+      "source_anchor": {
+        "path": "integration/anea-v0_2-reference/ANEA_SPEC.txt",
+        "section": "ANEA-009-R02"
+      },
+      "disposition": "OWNER_AMENDMENT",
+      "resolution": "Use existing evidence/causal/admission owners; preserve roles, negative evidence, evaluation scopes, complete economics and valid rejection.",
+      "owner_specs": [
+        "CX-20",
+        "CX-23",
+        "CX-32"
+      ],
+      "tasks": [
+        "B177",
+        "B184",
+        "B185"
+      ],
+      "gates": [
+        "G32-ace-attempt-lineage",
+        "G20-ace-three-family",
+        "G23-ace-lifecycle"
+      ],
+      "amended_files": [
+        "specs/CX-20-reflex-research-lab.md",
+        "specs/CX-23-neural-program-runtime-skill-compiler.md",
+        "specs/CX-32-universal-evidence-graph.md",
+        "schemas/ACE_EXECUTION_PROFILE.md",
+        "build/ACE_INTEGRATION.md"
+      ],
+      "profile_section": "P10",
+      "claim_profile": "AN1 receipts; AN3/AN4 research",
+      "document_status": "INTEGRATED_PROPOSED",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "source_requirement_id": "ANEA-009-R03",
+      "source_title": "Protected statistical and causal claims",
+      "source_requirement_sha256": "bd9cdccbc0d67da79b1acccab89301006efaddc8103e4c6c7a947ec27c22dbfe",
+      "source_anchor": {
+        "path": "integration/anea-v0_2-reference/ANEA_SPEC.txt",
+        "section": "ANEA-009-R03"
+      },
+      "disposition": "OWNER_AMENDMENT",
+      "resolution": "Use existing evidence/causal/admission owners; preserve roles, negative evidence, evaluation scopes, complete economics and valid rejection.",
+      "owner_specs": [
+        "CX-20",
+        "CX-23",
+        "CX-32"
+      ],
+      "tasks": [
+        "B177",
+        "B184",
+        "B185"
+      ],
+      "gates": [
+        "G32-ace-attempt-lineage",
+        "G20-ace-three-family",
+        "G23-ace-lifecycle"
+      ],
+      "amended_files": [
+        "specs/CX-20-reflex-research-lab.md",
+        "specs/CX-23-neural-program-runtime-skill-compiler.md",
+        "specs/CX-32-universal-evidence-graph.md",
+        "schemas/ACE_EXECUTION_PROFILE.md",
+        "build/ACE_INTEGRATION.md"
+      ],
+      "profile_section": "P10",
+      "claim_profile": "AN1 receipts; AN3/AN4 research",
+      "document_status": "INTEGRATED_PROPOSED",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "source_requirement_id": "ANEA-009-R04",
+      "source_title": "Separate deterministic optimization from learned substitution",
+      "source_requirement_sha256": "52f48d740973e710dfc41071af365454de3657705a9b746029d5a201f4a8ae35",
+      "source_anchor": {
+        "path": "integration/anea-v0_2-reference/ANEA_SPEC.txt",
+        "section": "ANEA-009-R04"
+      },
+      "disposition": "OWNER_AMENDMENT",
+      "resolution": "Use existing evidence/causal/admission owners; preserve roles, negative evidence, evaluation scopes, complete economics and valid rejection.",
+      "owner_specs": [
+        "CX-20",
+        "CX-23",
+        "CX-32"
+      ],
+      "tasks": [
+        "B177",
+        "B184",
+        "B185"
+      ],
+      "gates": [
+        "G32-ace-attempt-lineage",
+        "G20-ace-three-family",
+        "G23-ace-lifecycle"
+      ],
+      "amended_files": [
+        "specs/CX-20-reflex-research-lab.md",
+        "specs/CX-23-neural-program-runtime-skill-compiler.md",
+        "specs/CX-32-universal-evidence-graph.md",
+        "schemas/ACE_EXECUTION_PROFILE.md",
+        "build/ACE_INTEGRATION.md"
+      ],
+      "profile_section": "P10",
+      "claim_profile": "AN1 receipts; AN3/AN4 research",
+      "document_status": "INTEGRATED_PROPOSED",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "source_requirement_id": "ANEA-009-R05",
+      "source_title": "Independent promotion and rollback",
+      "source_requirement_sha256": "73f5d95a953fd022c8e57b9640532afdbf03ab548fdf64e1fb05a15b4b862c4a",
+      "source_anchor": {
+        "path": "integration/anea-v0_2-reference/ANEA_SPEC.txt",
+        "section": "ANEA-009-R05"
+      },
+      "disposition": "OWNER_AMENDMENT",
+      "resolution": "Use existing evidence/causal/admission owners; preserve roles, negative evidence, evaluation scopes, complete economics and valid rejection.",
+      "owner_specs": [
+        "CX-20",
+        "CX-23",
+        "CX-32"
+      ],
+      "tasks": [
+        "B177",
+        "B184",
+        "B185"
+      ],
+      "gates": [
+        "G32-ace-attempt-lineage",
+        "G20-ace-three-family",
+        "G23-ace-lifecycle"
+      ],
+      "amended_files": [
+        "specs/CX-20-reflex-research-lab.md",
+        "specs/CX-23-neural-program-runtime-skill-compiler.md",
+        "specs/CX-32-universal-evidence-graph.md",
+        "schemas/ACE_EXECUTION_PROFILE.md",
+        "build/ACE_INTEGRATION.md"
+      ],
+      "profile_section": "P10",
+      "claim_profile": "AN1 receipts; AN3/AN4 research",
+      "document_status": "INTEGRATED_PROPOSED",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "source_requirement_id": "ANEA-009-R06",
+      "source_title": "Evidence closure with privacy",
+      "source_requirement_sha256": "32783d0bf4e311f826784cff61ed0011039d41968fb112c1073726f0ab793ec4",
+      "source_anchor": {
+        "path": "integration/anea-v0_2-reference/ANEA_SPEC.txt",
+        "section": "ANEA-009-R06"
+      },
+      "disposition": "OWNER_AMENDMENT",
+      "resolution": "Use existing evidence/causal/admission owners; preserve roles, negative evidence, evaluation scopes, complete economics and valid rejection.",
+      "owner_specs": [
+        "CX-20",
+        "CX-23",
+        "CX-32"
+      ],
+      "tasks": [
+        "B177",
+        "B184",
+        "B185"
+      ],
+      "gates": [
+        "G32-ace-attempt-lineage",
+        "G20-ace-three-family",
+        "G23-ace-lifecycle"
+      ],
+      "amended_files": [
+        "specs/CX-20-reflex-research-lab.md",
+        "specs/CX-23-neural-program-runtime-skill-compiler.md",
+        "specs/CX-32-universal-evidence-graph.md",
+        "schemas/ACE_EXECUTION_PROFILE.md",
+        "build/ACE_INTEGRATION.md"
+      ],
+      "profile_section": "P10",
+      "claim_profile": "AN1 receipts; AN3/AN4 research",
+      "document_status": "INTEGRATED_PROPOSED",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "source_requirement_id": "ANEA-009-R07",
+      "source_title": "Replay modes and identity",
+      "source_requirement_sha256": "c3978dc12923d0969574617e31f4a8a48f044a344833f94da1ca6ed4c0ae450c",
+      "source_anchor": {
+        "path": "integration/anea-v0_2-reference/ANEA_SPEC.txt",
+        "section": "ANEA-009-R07"
+      },
+      "disposition": "OWNER_AMENDMENT",
+      "resolution": "Use existing evidence/causal/admission owners; preserve roles, negative evidence, evaluation scopes, complete economics and valid rejection.",
+      "owner_specs": [
+        "CX-20",
+        "CX-23",
+        "CX-32"
+      ],
+      "tasks": [
+        "B177",
+        "B184",
+        "B185"
+      ],
+      "gates": [
+        "G32-ace-attempt-lineage",
+        "G20-ace-three-family",
+        "G23-ace-lifecycle"
+      ],
+      "amended_files": [
+        "specs/CX-20-reflex-research-lab.md",
+        "specs/CX-23-neural-program-runtime-skill-compiler.md",
+        "specs/CX-32-universal-evidence-graph.md",
+        "schemas/ACE_EXECUTION_PROFILE.md",
+        "build/ACE_INTEGRATION.md"
+      ],
+      "profile_section": "P10",
+      "claim_profile": "AN1 receipts; AN3/AN4 research",
+      "document_status": "INTEGRATED_PROPOSED",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "source_requirement_id": "ANEA-009-R08",
+      "source_title": "Two pilots with truthful claims",
+      "source_requirement_sha256": "02e09eab500298ba7fbac7d7dec5c51f1f1940f5ed34043bcc1f3df9a476df04",
+      "source_anchor": {
+        "path": "integration/anea-v0_2-reference/ANEA_SPEC.txt",
+        "section": "ANEA-009-R08"
+      },
+      "disposition": "OWNER_AMENDMENT",
+      "resolution": "Use existing evidence/causal/admission owners; preserve roles, negative evidence, evaluation scopes, complete economics and valid rejection.",
+      "owner_specs": [
+        "CX-20",
+        "CX-23",
+        "CX-32"
+      ],
+      "tasks": [
+        "B177",
+        "B184",
+        "B185"
+      ],
+      "gates": [
+        "G32-ace-attempt-lineage",
+        "G20-ace-three-family",
+        "G23-ace-lifecycle"
+      ],
+      "amended_files": [
+        "specs/CX-20-reflex-research-lab.md",
+        "specs/CX-23-neural-program-runtime-skill-compiler.md",
+        "specs/CX-32-universal-evidence-graph.md",
+        "schemas/ACE_EXECUTION_PROFILE.md",
+        "build/ACE_INTEGRATION.md"
+      ],
+      "profile_section": "P10",
+      "claim_profile": "AN1 receipts; AN3/AN4 research",
+      "document_status": "INTEGRATED_PROPOSED",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "source_requirement_id": "ANEA-010-R01",
+      "source_title": "Head compatibility contract",
+      "source_requirement_sha256": "075d5b486390c246bc71bc29ffc704e9103ad567e7643cf90e560e23a9f9af2f",
+      "source_anchor": {
+        "path": "integration/anea-v0_2-reference/ANEA_SPEC.txt",
+        "section": "ANEA-010-R01"
+      },
+      "disposition": "OWNER_AMENDMENT",
+      "resolution": "Real learned parameters and exact compatibility are required for native claims. Raw state is optional; token/latent/canvas/world-model extensions remain separately scoped.",
+      "owner_specs": [
+        "CX-05",
+        "CX-20"
+      ],
+      "tasks": [
+        "B181",
+        "B184"
+      ],
+      "gates": [
+        "G05-ace-scoring",
+        "G20-ace-three-family"
+      ],
+      "amended_files": [
+        "specs/CX-05-reflex-inference.md",
+        "specs/CX-20-reflex-research-lab.md",
+        "schemas/ACE_EXECUTION_PROFILE.md",
+        "build/ACE_INTEGRATION.md"
+      ],
+      "profile_section": "P05",
+      "claim_profile": "AN3 optional learned-head profile",
+      "document_status": "INTEGRATED_PROPOSED",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "source_requirement_id": "ANEA-010-R02",
+      "source_title": "Genuine native evidence, optional profile",
+      "source_requirement_sha256": "a4fb661f1df64b4be03a361181eedc947487a68aa486bd495d60dc3f7923840f",
+      "source_anchor": {
+        "path": "integration/anea-v0_2-reference/ANEA_SPEC.txt",
+        "section": "ANEA-010-R02"
+      },
+      "disposition": "OWNER_AMENDMENT",
+      "resolution": "Real learned parameters and exact compatibility are required for native claims. Raw state is optional; token/latent/canvas/world-model extensions remain separately scoped.",
+      "owner_specs": [
+        "CX-05",
+        "CX-20"
+      ],
+      "tasks": [
+        "B181",
+        "B184"
+      ],
+      "gates": [
+        "G05-ace-scoring",
+        "G20-ace-three-family"
+      ],
+      "amended_files": [
+        "specs/CX-05-reflex-inference.md",
+        "specs/CX-20-reflex-research-lab.md",
+        "schemas/ACE_EXECUTION_PROFILE.md",
+        "build/ACE_INTEGRATION.md"
+      ],
+      "profile_section": "P05",
+      "claim_profile": "AN3 optional learned-head profile",
+      "document_status": "INTEGRATED_PROPOSED",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "source_requirement_id": "ANEA-010-R03",
+      "source_title": "Private representations allowed",
+      "source_requirement_sha256": "2e61097c9aa49a0dd94ead1106fc1cc14c7631efb82b3c2c17e2887234d7a13b",
+      "source_anchor": {
+        "path": "integration/anea-v0_2-reference/ANEA_SPEC.txt",
+        "section": "ANEA-010-R03"
+      },
+      "disposition": "OWNER_AMENDMENT",
+      "resolution": "Real learned parameters and exact compatibility are required for native claims. Raw state is optional; token/latent/canvas/world-model extensions remain separately scoped.",
+      "owner_specs": [
+        "CX-05",
+        "CX-20"
+      ],
+      "tasks": [
+        "B181",
+        "B184"
+      ],
+      "gates": [
+        "G05-ace-scoring",
+        "G20-ace-three-family"
+      ],
+      "amended_files": [
+        "specs/CX-05-reflex-inference.md",
+        "specs/CX-20-reflex-research-lab.md",
+        "schemas/ACE_EXECUTION_PROFILE.md",
+        "build/ACE_INTEGRATION.md"
+      ],
+      "profile_section": "P05",
+      "claim_profile": "AN3 optional learned-head profile",
+      "document_status": "INTEGRATED_PROPOSED",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "source_requirement_id": "ANEA-010-R04",
+      "source_title": "Token-native research requires admission",
+      "source_requirement_sha256": "804b50ebef7c27d8a6475542f0523aef0c70e199fc32e841c9f5cef02fe2e9b0",
+      "source_anchor": {
+        "path": "integration/anea-v0_2-reference/ANEA_SPEC.txt",
+        "section": "ANEA-010-R04"
+      },
+      "disposition": "DEFERRED_RESEARCH_UNSUPPORTED_BY_DEFAULT",
+      "resolution": "Real learned parameters and exact compatibility are required for native claims. Raw state is optional; token/latent/canvas/world-model extensions remain separately scoped.",
+      "owner_specs": [
+        "CX-05",
+        "CX-20"
+      ],
+      "tasks": [
+        "B181",
+        "B184"
+      ],
+      "gates": [
+        "G05-ace-scoring",
+        "G20-ace-three-family"
+      ],
+      "amended_files": [
+        "specs/CX-05-reflex-inference.md",
+        "specs/CX-20-reflex-research-lab.md",
+        "schemas/ACE_EXECUTION_PROFILE.md",
+        "build/ACE_INTEGRATION.md"
+      ],
+      "profile_section": "P05",
+      "claim_profile": "AN3 optional learned-head profile",
+      "document_status": "INTEGRATED_PROPOSED",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "source_requirement_id": "ANEA-010-R05",
+      "source_title": "Scoped object references, not magic knowledge",
+      "source_requirement_sha256": "5ddbff7a3710cea61ec31dc37174da96af244e1c0a772f3eef924d3d1ac52f18",
+      "source_anchor": {
+        "path": "integration/anea-v0_2-reference/ANEA_SPEC.txt",
+        "section": "ANEA-010-R05"
+      },
+      "disposition": "OWNER_AMENDMENT",
+      "resolution": "Scoped object references require authenticated resolution and authorized materialization; IDs do not convey unseen contents or mint authority.",
+      "owner_specs": [
+        "CX-28",
+        "CX-34"
+      ],
+      "tasks": [
+        "B178",
+        "B180"
+      ],
+      "gates": [
+        "G28-ace-reuse",
+        "G34-ace-dispatch"
+      ],
+      "amended_files": [
+        "schemas/ACE_EXECUTION_PROFILE.md",
+        "specs/CX-28-semantic-working-set-manager.md",
+        "specs/CX-34-cognitive-scheduler-capability-registry.md"
+      ],
+      "profile_section": "P06",
+      "claim_profile": "AN1",
+      "document_status": "INTEGRATED_PROPOSED",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "source_requirement_id": "ANEA-010-R06",
+      "source_title": "Explicit research profiles",
+      "source_requirement_sha256": "8ec8ac514a0f3a97057178271239eb2c1bffa8256c0d83f8e2cfd15ff7ffd060",
+      "source_anchor": {
+        "path": "integration/anea-v0_2-reference/ANEA_SPEC.txt",
+        "section": "ANEA-010-R06"
+      },
+      "disposition": "DEFERRED_RESEARCH_UNSUPPORTED_BY_DEFAULT",
+      "resolution": "Dedicated canvases, latent/bytecode/state translation and world-model transitions remain unsupported until separately versioned and admitted; current tasks check conservative refusal, not implementation.",
+      "owner_specs": [
+        "CX-05",
+        "CX-20"
+      ],
+      "tasks": [
+        "B181",
+        "B184"
+      ],
+      "gates": [
+        "G05-ace-scoring",
+        "G20-ace-three-family"
+      ],
+      "amended_files": [
+        "specs/CX-05-reflex-inference.md",
+        "specs/CX-20-reflex-research-lab.md",
+        "schemas/ACE_EXECUTION_PROFILE.md",
+        "build/ACE_INTEGRATION.md"
+      ],
+      "profile_section": "P12",
+      "claim_profile": "AN3 optional learned-head profile",
+      "document_status": "INTEGRATED_PROPOSED",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "source_requirement_id": "ANEA-SEC-R01",
+      "source_title": "Untrusted input remains data",
+      "source_requirement_sha256": "040b4b835917c7abfdcd72b7da08b64bc6fb061efa62b99a42fac0217215f634",
+      "source_anchor": {
+        "path": "integration/anea-v0_2-reference/ANEA_SPEC.txt",
+        "section": "ANEA-SEC-R01"
+      },
+      "disposition": "OWNER_AMENDMENT",
+      "resolution": "Host enforces actual locality, current authenticated scope and resource bounds; untrusted content never changes privileged instructions or policy.",
+      "owner_specs": [
+        "CX-13",
+        "CX-34"
+      ],
+      "tasks": [
+        "B177",
+        "B180"
+      ],
+      "gates": [
+        "G13-ace-locality",
+        "G34-ace-dispatch"
+      ],
+      "amended_files": [
+        "specs/CX-13-os-runtime.md",
+        "specs/CX-34-cognitive-scheduler-capability-registry.md",
+        "schemas/ACE_EXECUTION_PROFILE.md",
+        "build/ACE_INTEGRATION.md"
+      ],
+      "profile_section": "P12",
+      "claim_profile": "AN1",
+      "document_status": "INTEGRATED_PROPOSED",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "source_requirement_id": "ANEA-SEC-R02",
+      "source_title": "Actual locality and egress",
+      "source_requirement_sha256": "884d22ac8a728a0a495f6d9f06b9c7dd2b8999fc07206979199d6ea076b7cd4c",
+      "source_anchor": {
+        "path": "integration/anea-v0_2-reference/ANEA_SPEC.txt",
+        "section": "ANEA-SEC-R02"
+      },
+      "disposition": "OWNER_AMENDMENT",
+      "resolution": "Host enforces actual locality, current authenticated scope and resource bounds; untrusted content never changes privileged instructions or policy.",
+      "owner_specs": [
+        "CX-13",
+        "CX-34"
+      ],
+      "tasks": [
+        "B177",
+        "B180"
+      ],
+      "gates": [
+        "G13-ace-locality",
+        "G34-ace-dispatch"
+      ],
+      "amended_files": [
+        "specs/CX-13-os-runtime.md",
+        "specs/CX-34-cognitive-scheduler-capability-registry.md",
+        "schemas/ACE_EXECUTION_PROFILE.md",
+        "build/ACE_INTEGRATION.md"
+      ],
+      "profile_section": "P12",
+      "claim_profile": "AN1",
+      "document_status": "INTEGRATED_PROPOSED",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "source_requirement_id": "ANEA-SEC-R03",
+      "source_title": "Bound all work and hostile inputs",
+      "source_requirement_sha256": "4f7724f86f3c129dda94419cc0979a97e30593d3836e8e6c79426cc240f7e082",
+      "source_anchor": {
+        "path": "integration/anea-v0_2-reference/ANEA_SPEC.txt",
+        "section": "ANEA-SEC-R03"
+      },
+      "disposition": "OWNER_AMENDMENT",
+      "resolution": "Host enforces actual locality, current authenticated scope and resource bounds; untrusted content never changes privileged instructions or policy.",
+      "owner_specs": [
+        "CX-13",
+        "CX-34"
+      ],
+      "tasks": [
+        "B177",
+        "B180"
+      ],
+      "gates": [
+        "G13-ace-locality",
+        "G34-ace-dispatch"
+      ],
+      "amended_files": [
+        "specs/CX-13-os-runtime.md",
+        "specs/CX-34-cognitive-scheduler-capability-registry.md",
+        "schemas/ACE_EXECUTION_PROFILE.md",
+        "build/ACE_INTEGRATION.md"
+      ],
+      "profile_section": "P12",
+      "claim_profile": "AN1",
+      "document_status": "INTEGRATED_PROPOSED",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "source_requirement_id": "ANEA-SEC-R04",
+      "source_title": "Authenticated resolution and current policy",
+      "source_requirement_sha256": "ba4fa47e4b5b375ce98756472ff655c3a1c2bb5eae4b940de69154744ee9370c",
+      "source_anchor": {
+        "path": "integration/anea-v0_2-reference/ANEA_SPEC.txt",
+        "section": "ANEA-SEC-R04"
+      },
+      "disposition": "OWNER_AMENDMENT",
+      "resolution": "Host enforces actual locality, current authenticated scope and resource bounds; untrusted content never changes privileged instructions or policy.",
+      "owner_specs": [
+        "CX-13",
+        "CX-34"
+      ],
+      "tasks": [
+        "B177",
+        "B180"
+      ],
+      "gates": [
+        "G13-ace-locality",
+        "G34-ace-dispatch"
+      ],
+      "amended_files": [
+        "specs/CX-13-os-runtime.md",
+        "specs/CX-34-cognitive-scheduler-capability-registry.md",
+        "schemas/ACE_EXECUTION_PROFILE.md",
+        "build/ACE_INTEGRATION.md"
+      ],
+      "profile_section": "P12",
+      "claim_profile": "AN1",
+      "document_status": "INTEGRATED_PROPOSED",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "source_requirement_id": "ANEA-NP-R01",
+      "source_title": "Source semantic completeness",
+      "source_requirement_sha256": "e2b9da7713a1304f30ce217ac54cb14d68c607d299f7c55f99521829f4f32cc6",
+      "source_anchor": {
+        "path": "integration/anea-v0_2-reference/ANEA_SPEC.txt",
+        "section": "ANEA-NP-R01"
+      },
+      "disposition": "REVIEWED_CONTRACT_REAFFIRMED",
+      "resolution": "Extend CX-23 under unchanged reviewed CX-36; candidate compilation is not admission and ProposedValue remains a proposal.",
+      "owner_specs": [
+        "CX-23"
+      ],
+      "tasks": [
+        "B185"
+      ],
+      "gates": [
+        "G23-ace-lifecycle"
+      ],
+      "amended_files": [
+        "specs/CX-23-neural-program-runtime-skill-compiler.md",
+        "schemas/ACE_EXECUTION_PROFILE.md",
+        "build/ACE_INTEGRATION.md"
+      ],
+      "profile_section": "P09",
+      "claim_profile": "AN4",
+      "document_status": "INTEGRATED_PROPOSED",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "source_requirement_id": "ANEA-NP-R02",
+      "source_title": "Two compilation paths with the same artifact boundary",
+      "source_requirement_sha256": "24d2ad729679e6d644bfaec593b0338933dc049351e7da057207cd7e5f229610",
+      "source_anchor": {
+        "path": "integration/anea-v0_2-reference/ANEA_SPEC.txt",
+        "section": "ANEA-NP-R02"
+      },
+      "disposition": "REVIEWED_CONTRACT_SUPERSEDES_REFERENCE",
+      "resolution": "Superseded ordering: freeze/package executable bytes before protected evaluation; then attach evaluation/reliability/admission through detached release. Both source/experience paths use this order.",
+      "owner_specs": [
+        "CX-23"
+      ],
+      "tasks": [
+        "B185"
+      ],
+      "gates": [
+        "G23-ace-lifecycle"
+      ],
+      "amended_files": [
+        "specs/CX-23-neural-program-runtime-skill-compiler.md",
+        "schemas/ACE_EXECUTION_PROFILE.md",
+        "build/ACE_INTEGRATION.md"
+      ],
+      "profile_section": "P09",
+      "claim_profile": "AN4",
+      "document_status": "INTEGRATED_PROPOSED",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "source_requirement_id": "ANEA-NP-R03",
+      "source_title": "Compiler data and job lineage",
+      "source_requirement_sha256": "918706de55df03bc31c4bd933ba4e2d66740de6a1671f158bf80d348a27a8fb3",
+      "source_anchor": {
+        "path": "integration/anea-v0_2-reference/ANEA_SPEC.txt",
+        "section": "ANEA-NP-R03"
+      },
+      "disposition": "REVIEWED_CONTRACT_REAFFIRMED",
+      "resolution": "Extend CX-23 under unchanged reviewed CX-36; candidate compilation is not admission and ProposedValue remains a proposal.",
+      "owner_specs": [
+        "CX-23"
+      ],
+      "tasks": [
+        "B185"
+      ],
+      "gates": [
+        "G23-ace-lifecycle"
+      ],
+      "amended_files": [
+        "specs/CX-23-neural-program-runtime-skill-compiler.md",
+        "schemas/ACE_EXECUTION_PROFILE.md",
+        "build/ACE_INTEGRATION.md"
+      ],
+      "profile_section": "P09",
+      "claim_profile": "AN4",
+      "document_status": "INTEGRATED_PROPOSED",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "source_requirement_id": "ANEA-NP-R04",
+      "source_title": "NeuralProgramBackend ownership and deployment modes",
+      "source_requirement_sha256": "677365e4197411fa2d6e5641003929eab3515e4c6bace6177b66d854fb21db83",
+      "source_anchor": {
+        "path": "integration/anea-v0_2-reference/ANEA_SPEC.txt",
+        "section": "ANEA-NP-R04"
+      },
+      "disposition": "REVIEWED_CONTRACT_SUPERSEDES_REFERENCE",
+      "resolution": "Superseded interface grouping: CX-23 compiler and runtime interfaces/credentials remain separate. Supporting one deployment mode does not claim all modes; PAW remains optional.",
+      "owner_specs": [
+        "CX-23"
+      ],
+      "tasks": [
+        "B185"
+      ],
+      "gates": [
+        "G23-ace-lifecycle"
+      ],
+      "amended_files": [
+        "specs/CX-23-neural-program-runtime-skill-compiler.md",
+        "schemas/ACE_EXECUTION_PROFILE.md",
+        "build/ACE_INTEGRATION.md"
+      ],
+      "profile_section": "P09",
+      "claim_profile": "AN4",
+      "document_status": "INTEGRATED_PROPOSED",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "source_requirement_id": "ANEA-NP-R05",
+      "source_title": "Applicability distinct from loading and correctness",
+      "source_requirement_sha256": "cbef57cc252363c2b1c3f7460e5e9d9a225b0e17ef72609f0efa3bf8b33b2540",
+      "source_anchor": {
+        "path": "integration/anea-v0_2-reference/ANEA_SPEC.txt",
+        "section": "ANEA-NP-R05"
+      },
+      "disposition": "REVIEWED_CONTRACT_REAFFIRMED",
+      "resolution": "Extend CX-23 under unchanged reviewed CX-36; candidate compilation is not admission and ProposedValue remains a proposal.",
+      "owner_specs": [
+        "CX-23"
+      ],
+      "tasks": [
+        "B185"
+      ],
+      "gates": [
+        "G23-ace-lifecycle"
+      ],
+      "amended_files": [
+        "specs/CX-23-neural-program-runtime-skill-compiler.md",
+        "schemas/ACE_EXECUTION_PROFILE.md",
+        "build/ACE_INTEGRATION.md"
+      ],
+      "profile_section": "P09",
+      "claim_profile": "AN4",
+      "document_status": "INTEGRATED_PROPOSED",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "source_requirement_id": "ANEA-NP-R06",
+      "source_title": "Shared-base and offline dependency closure",
+      "source_requirement_sha256": "7d0271b47c1480886c1cc5dc673f0052c7e0316e28a8e764d7760e1d613968a1",
+      "source_anchor": {
+        "path": "integration/anea-v0_2-reference/ANEA_SPEC.txt",
+        "section": "ANEA-NP-R06"
+      },
+      "disposition": "REVIEWED_CONTRACT_REAFFIRMED",
+      "resolution": "Extend CX-23 under unchanged reviewed CX-36; candidate compilation is not admission and ProposedValue remains a proposal.",
+      "owner_specs": [
+        "CX-23"
+      ],
+      "tasks": [
+        "B185"
+      ],
+      "gates": [
+        "G23-ace-lifecycle"
+      ],
+      "amended_files": [
+        "specs/CX-23-neural-program-runtime-skill-compiler.md",
+        "schemas/ACE_EXECUTION_PROFILE.md",
+        "build/ACE_INTEGRATION.md"
+      ],
+      "profile_section": "P09",
+      "claim_profile": "AN4",
+      "document_status": "INTEGRATED_PROPOSED",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "source_requirement_id": "ANEA-NP-R07",
+      "source_title": "Invocation receipt closure",
+      "source_requirement_sha256": "1728aa02de90d6fc784e4e198fa05010d2d487969fca276b6bbefdb86c58b45e",
+      "source_anchor": {
+        "path": "integration/anea-v0_2-reference/ANEA_SPEC.txt",
+        "section": "ANEA-NP-R07"
+      },
+      "disposition": "REVIEWED_CONTRACT_REAFFIRMED",
+      "resolution": "Extend CX-23 under unchanged reviewed CX-36; candidate compilation is not admission and ProposedValue remains a proposal.",
+      "owner_specs": [
+        "CX-23"
+      ],
+      "tasks": [
+        "B185"
+      ],
+      "gates": [
+        "G23-ace-lifecycle"
+      ],
+      "amended_files": [
+        "specs/CX-23-neural-program-runtime-skill-compiler.md",
+        "schemas/ACE_EXECUTION_PROFILE.md",
+        "build/ACE_INTEGRATION.md"
+      ],
+      "profile_section": "P09",
+      "claim_profile": "AN4",
+      "document_status": "INTEGRATED_PROPOSED",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "source_requirement_id": "ANEA-NP-R08",
+      "source_title": "Source evolution preserves approved meaning",
+      "source_requirement_sha256": "0a0d5f3296483c98f834c101dc8fdcf75352139da726a9fb5e612777f79cba63",
+      "source_anchor": {
+        "path": "integration/anea-v0_2-reference/ANEA_SPEC.txt",
+        "section": "ANEA-NP-R08"
+      },
+      "disposition": "REVIEWED_CONTRACT_REAFFIRMED",
+      "resolution": "Extend CX-23 under unchanged reviewed CX-36; candidate compilation is not admission and ProposedValue remains a proposal.",
+      "owner_specs": [
+        "CX-23"
+      ],
+      "tasks": [
+        "B185"
+      ],
+      "gates": [
+        "G23-ace-lifecycle"
+      ],
+      "amended_files": [
+        "specs/CX-23-neural-program-runtime-skill-compiler.md",
+        "schemas/ACE_EXECUTION_PROFILE.md",
+        "build/ACE_INTEGRATION.md"
+      ],
+      "profile_section": "P09",
+      "claim_profile": "AN4",
+      "document_status": "INTEGRATED_PROPOSED",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "source_requirement_id": "ANEA-NP-R09",
+      "source_title": "Registry and lifecycle views are not new authority",
+      "source_requirement_sha256": "258acccb3cc42d261ab47ee20550fb4d6f71c3861fcfbf9a12930a0417a46881",
+      "source_anchor": {
+        "path": "integration/anea-v0_2-reference/ANEA_SPEC.txt",
+        "section": "ANEA-NP-R09"
+      },
+      "disposition": "REVIEWED_CONTRACT_REAFFIRMED",
+      "resolution": "The class-specific registry is only a CX-34 view. Lifecycle labels never prove authenticated admission, current revocation or permission.",
+      "owner_specs": [
+        "CX-23"
+      ],
+      "tasks": [
+        "B185"
+      ],
+      "gates": [
+        "G23-ace-lifecycle"
+      ],
+      "amended_files": [
+        "specs/CX-23-neural-program-runtime-skill-compiler.md",
+        "schemas/ACE_EXECUTION_PROFILE.md",
+        "build/ACE_INTEGRATION.md"
+      ],
+      "profile_section": "P09",
+      "claim_profile": "AN4",
+      "document_status": "INTEGRATED_PROPOSED",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "source_requirement_id": "ANEA-NP-R10",
+      "source_title": "Low-risk self-host pilot and allowed rejection",
+      "source_requirement_sha256": "0e44315f295c31a61d77fb2e9d34f6237d608054dfcb15350dd04ac8fa4cc190",
+      "source_anchor": {
+        "path": "integration/anea-v0_2-reference/ANEA_SPEC.txt",
+        "section": "ANEA-NP-R10"
+      },
+      "disposition": "REVIEWED_CONTRACT_REAFFIRMED",
+      "resolution": "The real source-bound diagnostic lifecycle may close with a documented rejection; an inert package or fixed classifier cannot substitute.",
+      "owner_specs": [
+        "CX-23"
+      ],
+      "tasks": [
+        "B185"
+      ],
+      "gates": [
+        "G23-ace-lifecycle"
+      ],
+      "amended_files": [
+        "specs/CX-23-neural-program-runtime-skill-compiler.md",
+        "schemas/ACE_EXECUTION_PROFILE.md",
+        "build/ACE_INTEGRATION.md"
+      ],
+      "profile_section": "P09",
+      "claim_profile": "AN4",
+      "document_status": "INTEGRATED_PROPOSED",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "source_requirement_id": "ANEA-MX-R01",
+      "source_title": "Bind implementation to approved intent and existing build loop",
+      "source_requirement_sha256": "2c642e257f7c42b7bf242596d6e78b6a69bdefa65b876fef24d7a4342d7efc8f",
+      "source_anchor": {
+        "path": "integration/anea-v0_2-reference/ANEA_SPEC.txt",
+        "section": "ANEA-MX-R01"
+      },
+      "disposition": "CONSUMER_OBLIGATION_WITH_AXON_BRIDGE",
+      "resolution": "Axon exports the owner contract; MiCode binds its own build loop, permissions, completion and evidence. Receiving-project policy and transfer namespaces remain separate.",
+      "owner_specs": [
+        "CX-16"
+      ],
+      "tasks": [
+        "B183"
+      ],
+      "gates": [
+        "G16-ace-peer"
+      ],
+      "amended_files": [
+        "specs/CX-16-micode-experience-bridge.md",
+        "schemas/ACE_EXECUTION_PROFILE.md",
+        "build/ACE_INTEGRATION.md"
+      ],
+      "profile_section": "P11",
+      "claim_profile": "AN2",
+      "document_status": "INTEGRATED_PROPOSED",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "source_requirement_id": "ANEA-MX-R02",
+      "source_title": "Lossless bridge vocabulary",
+      "source_requirement_sha256": "66704809596089429ec16cbd5362c3f9aec3b097b8cf11ed9a095492c9a03ebf",
+      "source_anchor": {
+        "path": "integration/anea-v0_2-reference/ANEA_SPEC.txt",
+        "section": "ANEA-MX-R02"
+      },
+      "disposition": "CONSUMER_OBLIGATION_WITH_AXON_BRIDGE",
+      "resolution": "Axon exports the owner contract; MiCode binds its own build loop, permissions, completion and evidence. Receiving-project policy and transfer namespaces remain separate.",
+      "owner_specs": [
+        "CX-16"
+      ],
+      "tasks": [
+        "B183"
+      ],
+      "gates": [
+        "G16-ace-peer"
+      ],
+      "amended_files": [
+        "specs/CX-16-micode-experience-bridge.md",
+        "schemas/ACE_EXECUTION_PROFILE.md",
+        "build/ACE_INTEGRATION.md"
+      ],
+      "profile_section": "P11",
+      "claim_profile": "AN2",
+      "document_status": "INTEGRATED_PROPOSED",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "source_requirement_id": "ANEA-MX-R03",
+      "source_title": "Instrument self-application before optimizing",
+      "source_requirement_sha256": "ecd8ba6e1cd602360a808d18a2f47fc4436203654b0a1845e967f4559d0386ca",
+      "source_anchor": {
+        "path": "integration/anea-v0_2-reference/ANEA_SPEC.txt",
+        "section": "ANEA-MX-R03"
+      },
+      "disposition": "CONSUMER_OBLIGATION_WITH_AXON_BRIDGE",
+      "resolution": "Axon exports the owner contract; MiCode binds its own build loop, permissions, completion and evidence. Receiving-project policy and transfer namespaces remain separate.",
+      "owner_specs": [
+        "CX-16"
+      ],
+      "tasks": [
+        "B183"
+      ],
+      "gates": [
+        "G16-ace-peer"
+      ],
+      "amended_files": [
+        "specs/CX-16-micode-experience-bridge.md",
+        "schemas/ACE_EXECUTION_PROFILE.md",
+        "build/ACE_INTEGRATION.md"
+      ],
+      "profile_section": "P11",
+      "claim_profile": "AN2",
+      "document_status": "INTEGRATED_PROPOSED",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "source_requirement_id": "ANEA-MX-R04",
+      "source_title": "Preserve evidence and causal bridge",
+      "source_requirement_sha256": "b4f0e599d1dbd68272faa752af107ff47768b005abf33d7f6efb0abb338a56cb",
+      "source_anchor": {
+        "path": "integration/anea-v0_2-reference/ANEA_SPEC.txt",
+        "section": "ANEA-MX-R04"
+      },
+      "disposition": "CONSUMER_OBLIGATION_WITH_AXON_BRIDGE",
+      "resolution": "Axon exports the owner contract; MiCode binds its own build loop, permissions, completion and evidence. Receiving-project policy and transfer namespaces remain separate.",
+      "owner_specs": [
+        "CX-16"
+      ],
+      "tasks": [
+        "B183"
+      ],
+      "gates": [
+        "G16-ace-peer"
+      ],
+      "amended_files": [
+        "specs/CX-16-micode-experience-bridge.md",
+        "schemas/ACE_EXECUTION_PROFILE.md",
+        "build/ACE_INTEGRATION.md"
+      ],
+      "profile_section": "P11",
+      "claim_profile": "AN2",
+      "document_status": "INTEGRATED_PROPOSED",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "source_requirement_id": "ANEA-MX-R05",
+      "source_title": "Project-local readmission and transfer namespaces",
+      "source_requirement_sha256": "ed8184275fea2f1cebd4272b4a9e75e839f3e20cdee69e7d18af1cb92aa42c66",
+      "source_anchor": {
+        "path": "integration/anea-v0_2-reference/ANEA_SPEC.txt",
+        "section": "ANEA-MX-R05"
+      },
+      "disposition": "CONSUMER_OBLIGATION_WITH_AXON_BRIDGE",
+      "resolution": "Axon exports the owner contract; MiCode binds its own build loop, permissions, completion and evidence. Receiving-project policy and transfer namespaces remain separate.",
+      "owner_specs": [
+        "CX-16"
+      ],
+      "tasks": [
+        "B183"
+      ],
+      "gates": [
+        "G16-ace-peer"
+      ],
+      "amended_files": [
+        "specs/CX-16-micode-experience-bridge.md",
+        "schemas/ACE_EXECUTION_PROFILE.md",
+        "build/ACE_INTEGRATION.md"
+      ],
+      "profile_section": "P11",
+      "claim_profile": "AN2",
+      "document_status": "INTEGRATED_PROPOSED",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "source_requirement_id": "ANEA-MX-R06",
+      "source_title": "Consumer integration and independent completion",
+      "source_requirement_sha256": "4df432c8cc3656b36013cbf9189a55d84e4e4f59fab7529e87e0a2c576c07fa6",
+      "source_anchor": {
+        "path": "integration/anea-v0_2-reference/ANEA_SPEC.txt",
+        "section": "ANEA-MX-R06"
+      },
+      "disposition": "CONSUMER_OBLIGATION_WITH_AXON_BRIDGE",
+      "resolution": "Axon exports the owner contract; MiCode binds its own build loop, permissions, completion and evidence. Receiving-project policy and transfer namespaces remain separate.",
+      "owner_specs": [
+        "CX-16"
+      ],
+      "tasks": [
+        "B183"
+      ],
+      "gates": [
+        "G16-ace-peer"
+      ],
+      "amended_files": [
+        "specs/CX-16-micode-experience-bridge.md",
+        "schemas/ACE_EXECUTION_PROFILE.md",
+        "build/ACE_INTEGRATION.md"
+      ],
+      "profile_section": "P11",
+      "claim_profile": "AN2",
+      "document_status": "INTEGRATED_PROPOSED",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "source_requirement_id": "ANEA-GOV-R01",
+      "source_title": "Explicit precedence and unresolved-source ledger",
+      "source_requirement_sha256": "84f068d3d48c4ecfa54c0ddd3bf904e089c8045bebe8d32520aac870eb6b11c9",
+      "source_anchor": {
+        "path": "integration/anea-v0_2-reference/ANEA_SPEC.txt",
+        "section": "ANEA-GOV-R01"
+      },
+      "disposition": "OWNER_AMENDMENT",
+      "resolution": "Retain original sources and explicit resolutions; synchronize manifests/tasks/gates/views and never pass product gates with document tests.",
+      "owner_specs": [
+        "CX-00"
+      ],
+      "tasks": [
+        "B174",
+        "B187"
+      ],
+      "gates": [
+        "G00-ace-owner-map",
+        "G00-ace-coverage"
+      ],
+      "amended_files": [
+        "specs/CX-00-system-contract.md",
+        "schemas/ACE_EXECUTION_PROFILE.md",
+        "build/ACE_INTEGRATION.md"
+      ],
+      "profile_section": "P13",
+      "claim_profile": "AN0",
+      "document_status": "INTEGRATED_PROPOSED",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "source_requirement_id": "ANEA-GOV-R02",
+      "source_title": "No duplicate task or circular owner dependency",
+      "source_requirement_sha256": "6467c4099ef72843e544f5b60cd423c440b10eb4129a553c2ec3db086f263980",
+      "source_anchor": {
+        "path": "integration/anea-v0_2-reference/ANEA_SPEC.txt",
+        "section": "ANEA-GOV-R02"
+      },
+      "disposition": "REVIEWED_CONTRACT_SUPERSEDES_REFERENCE",
+      "resolution": "The reviewed v0.16 DAG and task allocations are preserved. New tasks depend on relevant existing contract slices, not reciprocal spec-reference cycles.",
+      "owner_specs": [
+        "CX-00"
+      ],
+      "tasks": [
+        "B174",
+        "B187"
+      ],
+      "gates": [
+        "G00-ace-owner-map",
+        "G00-ace-coverage"
+      ],
+      "amended_files": [
+        "specs/CX-00-system-contract.md",
+        "schemas/ACE_EXECUTION_PROFILE.md",
+        "build/ACE_INTEGRATION.md"
+      ],
+      "profile_section": "P13",
+      "claim_profile": "AN0",
+      "document_status": "INTEGRATED_PROPOSED",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "source_requirement_id": "ANEA-GOV-R03",
+      "source_title": "Semantic evidence anchors and synchronized artifacts",
+      "source_requirement_sha256": "6ce439b7cd3b45669203ae5ae64115b0d1aab98a4ef7ab0644719ce6f0b104c1",
+      "source_anchor": {
+        "path": "integration/anea-v0_2-reference/ANEA_SPEC.txt",
+        "section": "ANEA-GOV-R03"
+      },
+      "disposition": "OWNER_AMENDMENT",
+      "resolution": "Retain original sources and explicit resolutions; synchronize manifests/tasks/gates/views and never pass product gates with document tests.",
+      "owner_specs": [
+        "CX-00"
+      ],
+      "tasks": [
+        "B174",
+        "B187"
+      ],
+      "gates": [
+        "G00-ace-owner-map",
+        "G00-ace-coverage"
+      ],
+      "amended_files": [
+        "specs/CX-00-system-contract.md",
+        "schemas/ACE_EXECUTION_PROFILE.md",
+        "build/ACE_INTEGRATION.md"
+      ],
+      "profile_section": "P13",
+      "claim_profile": "AN0",
+      "document_status": "INTEGRATED_PROPOSED",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "source_requirement_id": "ANEA-GOV-R04",
+      "source_title": "Document gates cannot pass product gates",
+      "source_requirement_sha256": "4f3b8ce6ec801815776047e09acac9ce547d86a9133f0749e8f7d8c0c93c9b62",
+      "source_anchor": {
+        "path": "integration/anea-v0_2-reference/ANEA_SPEC.txt",
+        "section": "ANEA-GOV-R04"
+      },
+      "disposition": "OWNER_AMENDMENT",
+      "resolution": "Retain original sources and explicit resolutions; synchronize manifests/tasks/gates/views and never pass product gates with document tests.",
+      "owner_specs": [
+        "CX-00"
+      ],
+      "tasks": [
+        "B174",
+        "B187"
+      ],
+      "gates": [
+        "G00-ace-owner-map",
+        "G00-ace-coverage"
+      ],
+      "amended_files": [
+        "specs/CX-00-system-contract.md",
+        "schemas/ACE_EXECUTION_PROFILE.md",
+        "build/ACE_INTEGRATION.md"
+      ],
+      "profile_section": "P13",
+      "claim_profile": "AN0",
+      "document_status": "INTEGRATED_PROPOSED",
+      "product_result": "NOT_RUN"
+    }
+  ]
+}

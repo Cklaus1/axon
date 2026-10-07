@@ -52,7 +52,8 @@ if ! cargo build -q -p axon-core --bin axon 2>/dev/null; then
   echo "goal_unknown_name_parity: codegen build unavailable (LLVM absent) — skipping"
   exit 0
 fi
-AXON="${AXON:-target/debug/axon}"
+. scripts/lib/axon_bin.sh
+use_built AXON axon  # the binary the build above produced (or the one the caller named)
 
 # Run the interpreter, preserving its exit code, then strip the Phase-9
 # `axon: run-id` stderr stamp (the native binary emits no such line, so leaving

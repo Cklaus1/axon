@@ -1,0 +1,19 @@
+  OK   PCI 1  shadowing (axon-fabric/check_effects): 1/1
+  OK   PCI 2  redefinition (axon-core/lib): 2/2
+  OK   PCI 2b second-trait method (axon-fabric/check_effects): 1/1
+  OK   PCI 3  symlink escape (axon-fabric/check_effects): 1/1
+  OK   PCI 4  ambient module path (axon-fabric/check_effects): 2/2
+  OK   PCI 4  ambient module path (axon-core/pci_isolation): 1/1
+  OK   PCI 5  path-list injection (axon-fabric/check_effects): 1/1
+  OK   PCI 6  verifier environment (axon-fabric/attestation): 2/2
+  OK   PCI 7  loop control (axon-core/lib): 3/3
+  OK   PCI 7  loop control (axon-fabric/check_effects): 2/2
+  OK   PCI 8/11/12 return, exit, Err (axon-core/lib): 1/1
+  OK   PCI 10 named handlers (axon-core/pci_isolation): 1/1
+  OK   PCI 13 completion evidence (axon-core/test_completion): 2/2
+  OK   PCI 13 completion evidence (axon-fabric/check_effects): 3/3
+  OK   PCI 14 exit code (axon-fabric/check_effects): 1/1
+  OK   PCI 17 working directory (axon-fabric/check_effects): 1/1
+  OK   PCI 21 sealed candidate (axon-core/lib): 2/2
+  OK   PCI 21 sealed candidate (axon-fabric/check_effects): 2/2
+v022_pci_gates: PASS — 18 rows

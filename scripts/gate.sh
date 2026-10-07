@@ -37,13 +37,28 @@ cd "$ROOT"
 
 STRICT=0
 USE_NEXTEST=0
+PROFILE=""
 for arg in "$@"; do
   case "$arg" in
     --strict) STRICT=1 ;;
     --nextest) USE_NEXTEST=1 ;;
+    # A STAGE verification profile: the gate additionally executes the
+    # profile's required-harness manifest on an exact Axon + peer pair, and a
+    # required harness that SKIPs or does not run FAILS the gate. It does not
+    # change what AXON_HARNESS_STRICT means for repository-wide qualification.
+    --profile=v022-stage5) PROFILE=v022-stage5 ;;
+    --profile=*) echo "gate: unknown profile ${arg#--profile=} (known: v022-stage5)" >&2; exit 2 ;;
     *) echo "gate: unknown flag $arg" >&2; exit 2 ;;
   esac
 done
+if [ -n "$PROFILE" ] && [ "$STRICT" != 1 ]; then
+  echo "gate: --profile=$PROFILE certifies a stage and requires --strict" >&2; exit 2
+fi
+
+# Every harness below that builds nothing is handed the binary THIS gate built
+# (`built_bin` names the path cargo builds to, whatever CARGO_TARGET_DIR says):
+# a harness never guesses one (scripts/lib/axon_bin.sh, C9 round 4).
+. scripts/lib/axon_bin.sh
 
 # Deterministic test environment.
 export AXON_SEED="${AXON_SEED:-42}"
@@ -144,6 +159,55 @@ echo "── gate: VISION.md focus ───────────────
 # 0.15s, no cargo, so it runs on every gate rather than only --strict.
 ./scripts/cortex_package_gate.sh >/dev/null || fail "cortex v0.15 package (integrity / honesty invariant)"
 
+# The vendored Cortex v0.22 package, ALONGSIDE (never instead of) v0.15 above —
+# G00-r22-package-gate-upgrade requires the older package and its gate retained.
+# The pack ships Python tools, so its SHA256SUMS manifest is verified by
+# stdlib-only code BEFORE any package code runs, with count floors
+# (37 specs / 287 tasks / 504 gates / 337 hashed files / 0 orphans), the
+# package validator run read-only, and its offline suite only under the pinned
+# jsonschema (else a SKIP recorded to $SKIPLOG, fatal under AXON_HARNESS_STRICT).
+# The PASS line is printed rather than discarded, because it is the only place
+# a skipped offline suite is visible. check_v022_runtime_evidence.py is NOT a
+# stage: it has no success exit code.
+echo "── gate: cortex v0.22 package (pinned integrity → honesty → validator → suite) ──"
+# A strict run is release-grade: let the gate bootstrap its pinned-jsonschema
+# venv (it never installs globally) rather than skip the pack's offline suite.
+[ "$STRICT" = 1 ] && export CORTEX_V022_BOOTSTRAP_VENV="${CORTEX_V022_BOOTSTRAP_VENV:-1}"
+if c22=$(./scripts/cortex_package_gate_v022.sh 2>&1); then
+  case "$(printf '%s\n' "$c22" | tail -1)" in
+    "cortex_package_gate_v022: PASS — "*"offline suite: SKIPPED"*)
+      # A release-grade (--strict) run must EXECUTE the pack's 567 offline
+      # conformance tests. The gate's PASS line still reads PASS when the
+      # pinned interpreter is unavailable, which is right for a developer run
+      # and wrong for a strict one: a strict receipt certifies a release.
+      if [ "$STRICT" = 1 ]; then
+        printf '%s\n' "$c22" | tail -3
+        fail "cortex v0.22 offline conformance suite SKIPPED in a --strict run (set CORTEX_V022_PYTHON or allow the venv bootstrap)"
+      else
+        echo "  OK $(printf '%s\n' "$c22" | tail -1 | sed 's/^cortex_package_gate_v022: //')"
+      fi ;;
+    "cortex_package_gate_v022: PASS — "*) echo "  OK $(printf '%s\n' "$c22" | tail -1 | sed 's/^cortex_package_gate_v022: //')" ;;
+    *) printf '%s\n' "$c22" | tail -8; fail "cortex v0.22 package gate exited 0 without its PASS line" ;;
+  esac
+else
+  printf '%s\n' "$c22" | tail -15; fail "cortex v0.22 package (integrity / honesty / validator)"
+fi
+# Negative control, run every time: a copy of the pack carrying a symlinked
+# directory must be refused at the integrity step, before any package code runs.
+# os.walk does not descend into a linked directory, so checking files alone once
+# let unlisted content reach the offline suite (red-team D-01). A guard nobody
+# re-proves decays, so the refusal is asserted here, not assumed.
+c22neg="$(mktemp -d)"
+cp -r docs/axon_cortex_v0_22/axon-cortex-build-v0_22 "$c22neg/pack"
+mkdir -p "$c22neg/outside" && ln -s "$c22neg/outside" "$c22neg/pack/tests/linked"
+c22n_rc=0; c22n=$(./scripts/cortex_package_gate_v022.sh --pkg "$c22neg/pack" 2>&1) || c22n_rc=$?
+rm -rf "$c22neg"
+case "$c22n_rc:$c22n" in
+  1:*"SYMLINK  tests/linked/ (directory)"*"no package code was executed"*)
+    echo "  OK negative control: a symlinked directory in the pack is refused before package code runs" ;;
+  *) printf '%s\n' "$c22n" | tail -8; fail "v0.22 package gate did not refuse a symlinked directory (rc=$c22n_rc)" ;;
+esac
+
 # Formatting. This is deliberately BEFORE the build: it is pure text, costs
 # under a second, and a fmt failure needs no compiler to be true. It is also
 # --all, not -p axon-core, because per-crate scoping is exactly how 37 files of
@@ -202,6 +266,66 @@ cargo build --locked -q -p axon-core --no-default-features --bin axon \
 cargo test --locked -p axon-cortex -p cortex-policy-adapter -p axon-reflex \
   || fail "cortex policy boundary tests"
 
+# The v0.22 closed-loop crates — the contract types, the epoch/ledger store and
+# the Fabric submit path Cortex dispatches checks through. They were CLIPPY-gated
+# below and tested by nothing in this gate (only CI's --workspace run reached
+# them): compiled is not run. Placed here, not in the manifest stage, because
+# axon-fabric's production-caller tests drive the real `axon` interpreter and
+# the real `cortex` binary and FAIL (never skip) without them — both are built
+# at this point, into whatever CARGO_TARGET_DIR says. If governance/
+# release-verification.json later lists these same commands, the manifest stage
+# re-runs them; that costs ~seconds and is the safe direction.
+echo "── gate: v0.22 closed-loop crate tests (contracts, loop, fabric) ──"
+cargo build --locked -q -p axon-cortex --bins \
+  || fail "cortex binary build (needed by axon-fabric's production-caller tests)"
+cargo test --locked -p axon-loop-contracts -p axon-loop -p axon-fabric \
+  || fail "v0.22 closed-loop crate tests (axon-loop-contracts / axon-loop / axon-fabric)"
+
+# v0.22 Stage-5 gates that are EXECUTED here, by name. A registry row in
+# governance/cortex_gate_execution_registry.json may only vouch for a package gate
+# whose checks a script invoked from THIS file runs; `cargo test -p …` below runs
+# the same tests but names no gate. It runs AFTER the closed-loop crate
+# tests because the Fabric tests drive the real `axon` and `cortex` binaries, which
+# are built just above; placed earlier (as it first was) every production-caller
+# test failed with "needs the `axon` binary" on a clean snapshot. The runner fails if a listed test is missing
+# or the filtered run executes fewer tests than listed.
+echo "── gate: v0.22 Stage-5 executed gates (G03 G08 G10 G11 G13 G28 G32) ──"
+./scripts/v022_stage5_gates.sh || fail "v0.22 Stage-5 gate tests"
+# Protected Check Isolation — the prerequisite of any protected-verifier claim
+# (G01 alone is never sufficient): one row per surface, exact test names.
+echo "── gate: v0.22 Protected Check Isolation surfaces ──"
+./scripts/v022_pci_gates.sh || fail "v0.22 Protected Check Isolation surfaces"
+# Certified texts are immutable; PROTECTED_VERIFIER_READY, Stage7Ready and
+# CX21Ready are DERIVED from evidence (governance/readiness/, generated only);
+# Stage 7 / CX-21 stay PREREGISTERED until their readiness is READY, and their
+# only entry points call the shared preflight FIRST, refusing otherwise.
+echo "── gate: v0.22 protected readiness (derived; certified artifacts pinned) ──"
+python3 -B scripts/protected_verifier_ready.py --check || fail "v0.22 protected readiness"
+python3 -B scripts/test_protected_verifier_ready.py || fail "v0.22 readiness relay (pinned verifier identity)"
+bash scripts/test_trust_root_preflight.sh || fail "v0.22 trust-root preflight mechanism (dev mode)"
+# PSV negative matrix: every row A1..A21 cites tests that exist (a renamed or
+# deleted test fails here, rather than leaving a row claiming coverage).
+python3 -B scripts/psv_matrix_check.py || fail "v0.22 PSV negative matrix"
+# Every refusal site in the protected helper files (decision A/D) has a
+# mutation row or a reasoned exemption (C9 round 3, amendment 48).
+python3 -B scripts/v022_refusal_coverage.py || fail "v0.22 protected refusal-site coverage"
+# PSV in a REAL Firecracker guest. SKIP (77: no root/KVM/built image) is a
+# NON-RESULT, reported as such, never as a pass.
+cargo build -q -p axon-psv --example psv_dev || fail "v0.22 PSV dev tool build"
+bash scripts/psv_guest_boot_test.sh; rc=$?
+case $rc in
+  0) echo "v0.22 PSV real-guest boot test: PASS" ;;
+  77) echo "v0.22 PSV real-guest boot test: SKIP (non-result: not proven on this host)" ;;
+  *) fail "v0.22 PSV real-guest boot test" ;;
+esac
+for ep in scripts/v022_stage7_pilot.sh scripts/v022_cx21_experiment.sh; do
+  grep -q "protected_verifier_ready.py --require" "$ep" \
+    || fail "$ep does not call the protected readiness preflight"
+done
+# G29-r22-claim-separation: the repository's own three release claims stay
+# separate and false until each has evidence of its own kind.
+python3 -B scripts/v022_claim_separation.py || fail "v0.22 release-claim separation"
+
 # The same crate again with `ai` on, because that feature gates the only
 # model-backed generator — the one production path where a model contributes to
 # a repair episode. A default-feature run neither compiles nor lints it, so the
@@ -243,7 +367,7 @@ python3 scripts/completeness.py \
 # A gate function that produced no readable verdict must not be scored as a
 # pass. Landed RED and deliberately unwired; wired here now that it is green,
 # because a gate nobody runs is the defect one layer up.
-bash scripts/gate_verdict_is_read.sh \
+AXON="$(built_bin axon)" bash scripts/gate_verdict_is_read.sh \
   || fail "a safety gate with no readable verdict is being scored as passed"
 
 
@@ -301,7 +425,8 @@ cargo clippy --locked -p axon-rt -p axon-rt-ai -p axon-ai -p axon-surface -p axo
   -p axon-domain -p axon-vm -p axon-attest -p axon-ledger -p axon-intent \
   -p axon-os -p axon-web -p axon-audit -p axon-certcheck -p axon-signal \
   -p axon-guest-init -p axon-wasm -p axon-cortex -p cortex-policy-adapter \
-  -p axon-reflex \
+  -p axon-reflex -p axon-loop-contracts \
+  -p axon-fabric -p axon-loop -p axon-psv -p axon-workspace-recipe \
   --all-targets -- -D warnings \
   || fail "runtime-crate clippy"
 
@@ -470,7 +595,7 @@ if [ "$STRICT" = 1 ]; then
   # having no environment channel to police. Placed under --strict beside the
   # other wasm work, since it needs wasmtime and both wasm targets.
   echo "── gate: WASI env-control refusal (wasip1 vs browser) ───────────"
-  ./scripts/wasi_env_control_gate.sh || fail "WASI env-control gate"
+  AXON="$(built_bin axon)" ./scripts/wasi_env_control_gate.sh || fail "WASI env-control gate"
 
   # THE BROADEST SWEEP IN THE REPO, and it ran nowhere. `all_examples_parity`
   # compares EVERY example under interp and native rather than a curated list —
@@ -513,7 +638,7 @@ stage order means it should have had one here" ;;
   # A gate nobody invokes reports nothing, including when it would have failed.
   echo "── gate: per-requirement acceptance gates (R22, R44) ────────────"
   run_quiet "R22 acceptance gate" ./scripts/r22_acceptance_gate.sh
-  run_quiet "R44 acceptance gate" ./scripts/r44_acceptance_gate.sh
+  run_quiet "R44 acceptance gate" env AXON="$(built_bin axon)" ./scripts/r44_acceptance_gate.sh
 
   # Two more harnesses that NOTHING invoked — found by the coverage-metric
   # audit, which measured execution instead of counting mentions. Between them
@@ -526,7 +651,7 @@ stage order means it should have had one here" ;;
   # (no llvm-objdump, not root, no gramine) rather than reporting success.
   # A harness nobody invokes reports nothing, including when it would fail.
   echo "── gate: previously-unwired harnesses (eBPF verifier, TEE simulation) ──"
-  run_quiet "eBPF verifier harness" ./scripts/ebpf_verify.sh
+  run_quiet "eBPF verifier harness" env AXON_BIN="$(built_bin axon)" ./scripts/ebpf_verify.sh
   run_quiet "TEE simulation harness" ./scripts/tee_sim_run.sh
 
   # THE THREE DOMAIN ROUND-TRIPS. `governance/specs/R22-domain-modules.md`
@@ -572,32 +697,97 @@ stage order means it should have had one here" ;;
   # THE GUEST-KERNEL SYSCALL GATE'S ONLY LIVE PROOF, previously invoked by
   # nothing — not gate.sh, not CI, not another script.
   #
-  # It is a real two-case differential through Firecracker: policy withholds FS
-  # -> the openat is DENIED and the guest halts with exit 8; policy grants FS ->
-  # the same openat is PERMITTED, with no false violation. The negative case is
-  # what makes it worth running, and it is the shape most of this repo's
-  # stronger gates share.
-  #
-  # Measured on this host, where firecracker, /dev/kvm and the freestanding
-  # kernel artifact are all present: PASS in 20s, both directions.
+  # What it proves is ONE direction: policy withholds FS -> a real openat reaches
+  # syscall_dispatch and is DENIED, the guest halts with exit 8. The second case
+  # is NOT an allow-path control (FG-041 / F161): under an FS-granting policy the
+  # kernel reaches its grant branch and halts WITHOUT issuing any syscall, because
+  # sysretq back to ring 3 needs DPL-3 GDT segments that do not exist yet. This
+  # used to be reported as "enforced live, both directions" on the strength of a
+  # print line. Case 2 now asserts the absence of any syscall-dispatch marker, so
+  # it pins "no syscall issued" rather than claiming a permitted one.
   #
   # Output is NOT discarded. This harness exits 0 when its prerequisites are
   # absent, so `>/dev/null 2>&1 || fail` would make a skip byte-indistinguishable
   # from a pass — which is the defect that left 16 harnesses hanging off nothing
-  # in the first place. A skip must be legible to whoever reads this log.
+  # in the first place. A skip is printed, recorded in $SKIPLOG, and FATAL under
+  # AXON_HARNESS_STRICT=1.
   if out=$(./scripts/kernel_enforce_test.sh 2>&1); then
     case "$out" in
-      *"PASS — the syscall gate denies/permits by policy"*)
-        echo "  OK kernel_enforce_test: syscall gate enforced live, both directions" ;;
+      *"PASS — deny direction enforced live; allow path NOT implemented"*)
+        echo "  OK kernel_enforce_test: deny direction enforced live; allow path NOT implemented (FG-041)" ;;
       *skipping*)
-        echo "  SKIP kernel_enforce_test — prerequisites absent on this host:"
-        printf '%s\n' "$out" | sed 's/^/       /' | head -3 ;;
+        echo "  SKIP kernel_enforce_test — prerequisites absent on this host; this measured NOTHING:"
+        printf '%s\n' "$out" | sed 's/^/       /' | head -3
+        echo "kernel_enforce_test" >> "$SKIPLOG"
+        if [ "${AXON_HARNESS_STRICT:-}" = 1 ]; then
+          fail "kernel_enforce_test SKIPPED under AXON_HARNESS_STRICT=1"
+        fi ;;
       *)
         echo "$out"; fail "kernel_enforce_test exited 0 without its PASS line" ;;
     esac
   else
     echo "$out"; fail "kernel_enforce_test (guest-kernel syscall enforcement)"
   fi
+
+  # The v0.22 PAIRED interop gate: real axon-loop and real `micode exec` bytes
+  # in both directions, negatives asserting absence of effect. It was the only
+  # real-peer evidence for the closed loop and was invoked by nothing
+  # (B_gates.json, C_offline_tests.json). Same PASS-line rule as above: exit 0
+  # is not trusted alone. A SKIP (no MiCode worktree at ../micode-v022-wt and no
+  # MICODE_DIR) is printed and counted, never scored as a pass, and is FATAL
+  # under AXON_HARNESS_STRICT=1 (the harness itself exits 3 then).
+  if lig=$(./scripts/loop_interop_gate.sh 2>&1); then
+    case "$(printf '%s\n' "$lig" | tail -1)" in
+      "loop_interop_gate: PASS — "*)
+        echo "  OK $(printf '%s\n' "$lig" | tail -1)" ;;
+      "loop_interop_gate: SKIP — "*)
+        echo "  SKIP $(printf '%s\n' "$lig" | tail -1) — this measured NOTHING"
+        echo "loop_interop_gate" >> "$SKIPLOG" ;;
+      *) printf '%s\n' "$lig" | tail -5; fail "loop_interop_gate exited 0 without its PASS line" ;;
+    esac
+  else
+    printf '%s\n' "$lig" | grep -E 'FAIL|FATAL|assertions:' | tail -15
+    fail "loop_interop_gate (Axon <-> MiCode v0.22 paired interop)"
+  fi
+
+  # The MiCode half of the v0.22 named-test evidence: the exact MiCode tests
+  # that back each MiCode-side gate row in the execution registry, against the
+  # same peer the interop gate pairs with. "The whole MiCode suite passed"
+  # names no gate; this does. Same PASS-line and SKIP rules as above.
+  if mgs=$(./scripts/v022_micode_gates.sh 2>&1); then
+    case "$(printf '%s\n' "$mgs" | tail -1)" in
+      "v022_micode_gates: PASS — "*)
+        echo "  OK $(printf '%s\n' "$mgs" | tail -1)" ;;
+      "v022_micode_gates: SKIP — "*)
+        echo "  SKIP $(printf '%s\n' "$mgs" | tail -1) — this measured NOTHING"
+        echo "v022_micode_gates" >> "$SKIPLOG" ;;
+      *) printf '%s\n' "$mgs" | tail -5; fail "v022_micode_gates exited 0 without its PASS line" ;;
+    esac
+  else
+    printf '%s\n' "$mgs" | grep -E 'FAIL|FATAL' | tail -15
+    fail "v022_micode_gates (MiCode-side v0.22 gate tests)"
+  fi
+
+  # B263 physical qualification of the protected Linux microVM profile
+  # (root + KVM + firecracker/jailer + built dist/guest-linux artifacts).
+  # PASS_WITH_BLOCKED (exit 3) FAILS this gate: qualification is not earned
+  # while any required assertion is BLOCKED, and today four are (x1-x4, see
+  # b263_qualify.sh). That is deliberate — reporting it as a named open blocker
+  # would let a strict gate go green over an unqualified profile. SKIP (exit 4,
+  # prerequisite absent) is printed and counted, FATAL under AXON_HARNESS_STRICT=1.
+  b263_rc=0; b263=$(./scripts/b263_qualify.sh 2>&1) || b263_rc=$?
+  b263_last="$(printf '%s\n' "$b263" | tail -1)"
+  case "$b263_rc:$b263_last" in
+    "0:b263_qualify: PASS — "*) echo "  OK $b263_last" ;;
+    "4:b263_qualify: SKIP — "*)
+      echo "  SKIP $b263_last"
+      echo "b263_qualify" >> "$SKIPLOG"
+      [ "${AXON_HARNESS_STRICT:-}" = 1 ] && fail "b263_qualify SKIPPED under AXON_HARNESS_STRICT=1" ;;
+    "3:b263_qualify: PASS_WITH_BLOCKED — "*)
+      echo "  $b263_last"
+      fail "b263_qualify PASS_WITH_BLOCKED — the protected Linux profile is NOT qualified (BLOCKED rows are open blockers, not passes)" ;;
+    *) printf '%s\n' "$b263" | tail -15; fail "b263_qualify (exit $b263_rc)" ;;
+  esac
 
   run_quiet "R26 acceptance gate" ./scripts/r26_acceptance_gate.sh
   run_quiet "R27 acceptance gate" ./scripts/r27_acceptance_gate.sh
@@ -657,7 +847,7 @@ stage order means it should have had one here" ;;
   # That is the external_hardware class: excused from being EFFECTIVE without
   # the toolchain, never from being wired — unwired it would not run on the host
   # that HAS the hardware either.
-  run_quiet "R25 Zephyr/Cortex-M gate" ./scripts/zephyr_qemu_gate.sh
+  run_quiet "R25 Zephyr/Cortex-M gate" env AXON_BIN="$(built_bin axon)" ./scripts/zephyr_qemu_gate.sh
   run_quiet "R32 acceptance gate" ./scripts/r32_acceptance_gate.sh
   run_quiet "R39 Slice 2 gate" ./scripts/r39_slice2_gate.sh
   run_quiet "R39 Slice 3 gate" ./scripts/r39_slice3_gate.sh
@@ -674,7 +864,7 @@ stage order means it should have had one here" ;;
   # diagnostics" — a broken probe — and 1 for a real failure. `>/dev/null` makes
   # those identical in the log, and a probe that measured nothing is the failure
   # mode this whole class of check exists to expose.
-  if dlg=$(./scripts/diagnostic_location_gate.sh 2>&1); then
+  if dlg=$(AXON="$(built_bin axon)" ./scripts/diagnostic_location_gate.sh 2>&1); then
     echo "  OK $(printf '%s' "$dlg" | tail -1)"
   else
     dlg_rc=$?
@@ -716,13 +906,19 @@ echo ""
 # 49). That is a real decision about gate latency, not one to make as a side
 # effect of a bug fix. What this does is refuse to let the vacuity be silent.
 # ($SKIPLOG is truncated at the top of this script so this reflects THIS run.)
+# The skip list is printed in BOTH modes. It used to sit inside the non-strict
+# branch only, so a --strict run ended "✅ gate PASSED" while the v0.22 pack's
+# offline suite, loop_interop, b263 and the axon-vm live tests had skipped with
+# no line saying so (red-team D-02). A skip is a non-result: say it, every time.
+if [ -s "$SKIPLOG" ]; then
+  echo "── gate: skipped harnesses (non-results, NOT passes) ───────────────"
+  n_skips=$(sort -u "$SKIPLOG" | wc -l | tr -d ' ')
+  echo "  $n_skips harness(es) SKIPPED — these gates measured nothing:"
+  sort -u "$SKIPLOG" | sed 's/^/    · /'
+  echo "  Set AXON_HARNESS_STRICT=1 to make any skip fatal."
+fi
 if [ "$STRICT" != 1 ]; then
   echo "── gate: coverage notice ───────────────────────────────────────────"
-  if [ -s "$SKIPLOG" ]; then
-    n_skips=$(sort -u "$SKIPLOG" | wc -l | tr -d ' ')
-    echo "  $n_skips harness(es) SKIPPED — these gates measured nothing:"
-    sort -u "$SKIPLOG" | sed 's/^/    · /'
-  fi
   echo "  This run did NOT verify interp↔codegen / AOT-wasm parity (invariant I-2)."
   echo "  The test stage is --no-default-features, so the codegen parity wrappers"
   echo "  cannot assert. To actually check I-2:"
@@ -732,4 +928,10 @@ if [ "$STRICT" != 1 ]; then
 fi
 
 echo ""
+if [ "$PROFILE" = v022-stage5 ]; then
+  echo "── gate: v0.22 Stage-5 verification profile (exact Axon + MiCode pair) ──"
+  # Results land where run_managed tells it (bound into the receipt), else target/.
+  python3 -B scripts/v022_stage5_verify.py --results "${STAGE_RESULTS:-target/v022-stage5-results.json}" \
+    || fail "v0.22 Stage-5 verification profile (a required Stage-5 harness did not PASS)"
+fi
 echo "✅ gate PASSED"

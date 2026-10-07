@@ -8,7 +8,7 @@
 //! move). `self.<method>` (incl. the already-split goal.rs methods) and the
 //! parent's private `Interp` fields resolve across the module boundary;
 //! `use super::*` pulls in Value/Flow + the free helpers (display, as_*,
-//! emit_stdout, fmt_g, next_rand_u64, append_*_jsonl, values_equal, …).
+//! emit_stdout, fmt_g, append_*_jsonl, values_equal, …).
 
 use super::*;
 
@@ -76,7 +76,7 @@ fn replay_uncertain(cached: &str, who: &str, as_float: bool) -> Value {
         }
     });
     match parsed {
-        Some((v, c)) => Value::Ok(Box::new(make_uncertain(v, c))),
+        Some((v, c)) => Value::Ok(Box::new(make_uncertain_ai(v, c))),
         None => Value::Err(Box::new(Value::Str(Rc::new(format!(
             "{who}: malformed AXON_AI_REPLAY entry {cached:?} (expected \"<value>|<confidence>\") \
              — delete the cache to re-record rather than replaying a corrupt one"
@@ -452,10 +452,10 @@ impl<'p> Interp<'p> {
     /// propagates, and so does a POLICY stop (`VerifyFailed` exit 3 /
     /// `RefineViolation` exit 6) — only a per-fiber `Panic` is caught.
     pub(super) fn builtin_scheduler_run_once(&self) -> Result<i64, Flow> {
-        let order = self.scheduler.borrow().ready_order();
+        let order = self.k().scheduler.borrow().ready_order();
         let mut completed: i64 = 0;
         for id in order {
-            let Some((fn_name, arg)) = self.scheduler.borrow().fiber_call(id) else {
+            let Some((fn_name, arg)) = self.k().scheduler.borrow().fiber_call(id) else {
                 continue;
             };
             let outcome = match self.fns.get(fn_name.as_str()).copied() {
@@ -472,7 +472,7 @@ impl<'p> Interp<'p> {
             match outcome {
                 Ok(v) => {
                     let r = numeric_score(&v).map(|s| s as i64).unwrap_or(0);
-                    self.scheduler.borrow_mut().complete(id, r);
+                    self.k().scheduler.borrow_mut().complete(id, r);
                     completed += 1;
                 }
                 // ONLY a panic is a per-fiber failure. A supervisor exists to
@@ -492,12 +492,12 @@ impl<'p> Interp<'p> {
                 // Logged as MEDIUM in governance/reviews/2026-07-31-deep-review.md
                 // §333; propagating is that review's recommendation.
                 Err(Flow::Panic(m)) => {
-                    self.scheduler.borrow_mut().fail(id, m);
+                    self.k().scheduler.borrow_mut().fail(id, m);
                 }
                 Err(other) => return Err(other),
             }
         }
-        self.scheduler.borrow_mut().passes += 1;
+        self.k().scheduler.borrow_mut().passes += 1;
         Ok(completed)
     }
 
@@ -603,7 +603,7 @@ impl<'p> Interp<'p> {
         // exempt (they manage sandbox state; exempting them avoids infinite
         // regress).
         {
-            let sb_handle = self.active_sandbox.get();
+            let sb_handle = self.k().active_sandbox.get();
             if sb_handle >= 0 && op_name != "sandbox_create" && op_name != "sandbox_run" {
                 // `builtin_effect_row` puts process spawning in the SAME `IO`
                 // bucket as `println`/`read_file`/`env_var`, so a sandbox
@@ -637,7 +637,7 @@ impl<'p> Interp<'p> {
                 // reader greps `denied:` and an existing reader is unaffected.
                 let extra: &[&str] = if requires_exec { &["Exec"] } else { &[] };
                 if !effects.is_empty() || requires_exec {
-                    let sbs = self.sandboxes.borrow();
+                    let sbs = self.k().sandboxes.borrow();
                     if let Some(sb) = sbs.get(sb_handle as usize) {
                         let all: Vec<&str> = effects
                             .iter()
@@ -727,7 +727,11 @@ impl<'p> Interp<'p> {
             let mut replay = self.resume_replay.borrow_mut();
             if let Some(r) = replay.as_mut() {
                 let row = crate::builtins::builtin_effect_row(name);
-                if row.iter().any(|e| r.effect == **e) {
+                // A sealed arm's feed never answers the operator's operation
+                // (PSV-1, C9 round 3): the replay cannot re-fire it either, so
+                // it is the unsound case below, not a fed hit.
+                let may = self.handler_may_answer(r.sealed, r.operator_frames);
+                if may && row.iter().any(|e| r.effect == **e) {
                     // The handled effect's op. The first hit consumes the feed
                     // (the resume value); a second hit can't be soundly re-fired.
                     if !r.consumed {
@@ -740,6 +744,13 @@ impl<'p> Interp<'p> {
                          when the handled body performs exactly one effect and is otherwise \
                          pure (a side effect cannot be re-executed on replay) [E1314]",
                         r.effect
+                    )));
+                } else if !may && !row.is_empty() {
+                    return Err(crate::interp::Flow::MultiShotUnsound(format!(
+                        "effect `{}` (via `{name}`) is performed by the operator's code during \
+                         the replay of a sealed handler's continuation; sealed code cannot \
+                         answer it and a replay cannot re-fire it [E1314]",
+                        row[0]
                     )));
                 } else if !row.is_empty() {
                     // A DIFFERENT effect during the replay also can't be re-fired.
@@ -779,6 +790,8 @@ impl<'p> Interp<'p> {
                     1 => args[0].clone(),
                     _ => Value::Tuple(args.to_vec()),
                 };
+                // `run_handler_arm` is the ONE place a frame is chosen; it
+                // skips a frame that may not answer this operation (PSV-1).
                 if let Some(v) = self.run_handler_arm(eff, payload)? {
                     return Ok(Some(v));
                 }
@@ -2916,14 +2929,16 @@ impl<'p> Interp<'p> {
                 // Same seed → identical random_*/goal_run_random sequence.
                 // (The AXON_SEED env var does the same without code changes.)
                 want(1)?;
-                set_rand_seed(as_int(&args[0])?);
+                // Reseeds only the running frame's kernel stream: a sealed
+                // srand cannot choose the operator's inputs (PSV-1).
+                self.rng_reseed(as_int(&args[0])?)?;
                 ok!(Value::Unit);
             }
             "random_f64" => {
                 want(0)?;
                 // 53-bit mantissa → uniform [0.0, 1.0)
                 ok!(Value::Float(
-                    (next_rand_u64() >> 11) as f64 / 9_007_199_254_740_992.0
+                    (self.rng_next()? >> 11) as f64 / 9_007_199_254_740_992.0
                 ));
             }
             "random_i64" => {
@@ -2945,7 +2960,7 @@ impl<'p> Interp<'p> {
                     ok!(Value::Int(lo));
                 }
                 let range = (hi as i128 - lo as i128) as u128;
-                ok!(Value::Int(lo + (next_rand_u64() as u128 % range) as i64));
+                ok!(Value::Int(lo + (self.rng_next()? as u128 % range) as i64));
             }
             "str_pad_start" => {
                 want(3)?;
@@ -3704,7 +3719,11 @@ impl<'p> Interp<'p> {
             "assert_eq_f64" => {
                 want(2)?;
                 let (a, b) = (as_float(&args[0])?, as_float(&args[1])?);
-                if (a - b).abs() > 1e-9 {
+                // Stated positively so NaN FAILS: `(a - b).abs() > 1e-9` is false
+                // for NaN, which let a NaN pass any f64 assertion (PCI candidate-1
+                // review, executed). Native compares OEQ, which NaN also fails;
+                // `a == b` keeps inf == inf passing, as it does natively.
+                if !(a == b || (a - b).abs() <= 1e-9) {
                     return Err(Flow::Panic(format!("assertion failed: {a} != {b}")));
                 }
                 ok!(Value::Unit);
@@ -3947,11 +3966,11 @@ impl<'p> Interp<'p> {
                         "goal_run_constrained: constraint fn `{constraint}` is not defined"
                     ));
                 }
-                *self.goal_constraint.borrow_mut() = Some(constraint);
+                *self.k().goal_constraint.borrow_mut() = Some(constraint);
                 let result = self.run_goal(&name, target, max_evals);
                 // Clear BEFORE propagating so a metric error can't leave a stale
                 // constraint armed for the next goal_run.
-                *self.goal_constraint.borrow_mut() = None;
+                *self.k().goal_constraint.borrow_mut() = None;
                 ok!(Value::Float(result?));
             }
 
@@ -4075,6 +4094,7 @@ impl<'p> Interp<'p> {
                 want(1)?;
                 let name = as_str(&args[0])?.to_string();
                 let n = self
+                    .k()
                     .provenance
                     .borrow()
                     .get(&name)
@@ -4112,6 +4132,7 @@ impl<'p> Interp<'p> {
                 let exec = as_bool(&args[3])?;
                 let budget = as_int(&args[4])?;
                 let h = self
+                    .k()
                     .principals
                     .borrow_mut()
                     .root(name, net, fs_write, exec, budget);
@@ -4136,7 +4157,7 @@ impl<'p> Interp<'p> {
                 // perfectly ordinary valid handle. Validity is decided by one
                 // thing only — whether the registry issued this exact token —
                 // which is also what makes a forged handle inert.
-                match self.principals.borrow_mut().mint(
+                match self.k().principals.borrow_mut().mint(
                     parent,
                     name,
                     net,
@@ -4159,6 +4180,7 @@ impl<'p> Interp<'p> {
                 let h = as_int(&args[0])?;
                 let cap = as_str(&args[1])?.to_string();
                 let held = self
+                    .k()
                     .principals
                     .borrow()
                     .get(h)
@@ -4172,7 +4194,7 @@ impl<'p> Interp<'p> {
             "principal_budget_remaining" => {
                 want(1)?;
                 let h = as_int(&args[0])?;
-                let rem = self.principals.borrow().budget_remaining(h);
+                let rem = self.k().principals.borrow().budget_remaining(h);
                 ok!(Value::Int(rem));
             }
 
@@ -4182,7 +4204,7 @@ impl<'p> Interp<'p> {
                 want(2)?;
                 let h = as_int(&args[0])?;
                 let amount = as_int(&args[1])?;
-                let rem = self.principals.borrow_mut().spend(h, amount);
+                let rem = self.k().principals.borrow_mut().spend(h, amount);
                 ok!(Value::Int(rem));
             }
 
@@ -4194,7 +4216,7 @@ impl<'p> Interp<'p> {
                 let n = as_bool(&args[1])?;
                 let f = as_bool(&args[2])?;
                 let e = as_bool(&args[3])?;
-                let ok = self.principals.borrow().authorize(h, n, f, e);
+                let ok = self.k().principals.borrow().authorize(h, n, f, e);
                 ok!(Value::Bool(ok));
             }
 
@@ -4208,7 +4230,7 @@ impl<'p> Interp<'p> {
                 let f = as_bool(&args[2])?;
                 let e = as_bool(&args[3])?;
                 let g = as_int(&args[4])?;
-                let ok = self.principals.borrow().can_mint(h, n, f, e, g);
+                let ok = self.k().principals.borrow().can_mint(h, n, f, e, g);
                 ok!(Value::Bool(ok));
             }
 
@@ -4216,7 +4238,7 @@ impl<'p> Interp<'p> {
             // Register a runtime sandbox that allows only the comma-separated
             // effects in `allowed_effects` (e.g. "AI,Net", "IO", or "" = pure).
             // The sandbox is bound to `principal` for audit attribution. Returns
-            // the sandbox handle (an index into `self.sandboxes`). Interp-only.
+            // the sandbox handle (an index into `self.k().sandboxes`). Interp-only.
             "sandbox_create" => {
                 want(2)?;
                 let principal = as_int(&args[0])?;
@@ -4233,9 +4255,9 @@ impl<'p> Interp<'p> {
                 // silently intersecting: a silent narrowing would let the
                 // escape attempt succeed-ish and hide the bug.
                 {
-                    let active = self.active_sandbox.get();
+                    let active = self.k().active_sandbox.get();
                     if active >= 0 {
-                        let sbs = self.sandboxes.borrow();
+                        let sbs = self.k().sandboxes.borrow();
                         if let Some(outer) = sbs.get(active as usize) {
                             let mut escalated: Vec<&str> = allowed
                                 .iter()
@@ -4254,7 +4276,7 @@ impl<'p> Interp<'p> {
                         }
                     }
                 }
-                let mut sbs = self.sandboxes.borrow_mut();
+                let mut sbs = self.k().sandboxes.borrow_mut();
                 let handle = sbs.len() as i64;
                 sbs.push(SandboxEntry {
                     principal,
@@ -4324,9 +4346,9 @@ impl<'p> Interp<'p> {
                     net: list(&args[4])?,
                 };
                 {
-                    let active = self.active_sandbox.get();
+                    let active = self.k().active_sandbox.get();
                     if active >= 0 {
-                        let sbs = self.sandboxes.borrow();
+                        let sbs = self.k().sandboxes.borrow();
                         if let Some(outer) = sbs.get(active as usize) {
                             let mut escalated: Vec<&str> = allowed
                                 .iter()
@@ -4346,7 +4368,7 @@ impl<'p> Interp<'p> {
                         }
                     }
                 }
-                let mut sbs = self.sandboxes.borrow_mut();
+                let mut sbs = self.k().sandboxes.borrow_mut();
                 let handle = sbs.len() as i64;
                 sbs.push(SandboxEntry {
                     principal,
@@ -4369,7 +4391,7 @@ impl<'p> Interp<'p> {
                 let arg = as_int(&args[2])?;
                 // Validate sandbox handle.
                 {
-                    let sbs = self.sandboxes.borrow();
+                    let sbs = self.k().sandboxes.borrow();
                     if sb_handle < 0 || sb_handle as usize >= sbs.len() {
                         return panic(format!("sandbox_run: unknown sandbox handle {sb_handle}"));
                     }
@@ -4385,9 +4407,9 @@ impl<'p> Interp<'p> {
                 // is the intersection of every enclosing sandbox, so entering a
                 // sandbox that is not a subset of the current one is refused.
                 {
-                    let active = self.active_sandbox.get();
+                    let active = self.k().active_sandbox.get();
                     if active >= 0 && active != sb_handle {
-                        let sbs = self.sandboxes.borrow();
+                        let sbs = self.k().sandboxes.borrow();
                         if let (Some(outer), Some(inner)) =
                             (sbs.get(active as usize), sbs.get(sb_handle as usize))
                         {
@@ -4411,9 +4433,9 @@ impl<'p> Interp<'p> {
                     }
                 }
                 // Set the active sandbox, save the previous value for restore.
-                let prev_sandbox = self.active_sandbox.replace(sb_handle);
+                let prev_sandbox = self.k().active_sandbox.replace(sb_handle);
                 let result = self.call_fn(f, vec![Value::Int(arg)]);
-                self.active_sandbox.set(prev_sandbox);
+                self.k().active_sandbox.set(prev_sandbox);
                 match result {
                     Ok(Value::Int(n)) => ok!(Value::Int(n)),
                     Ok(Value::Tuple(ref v)) if v.is_empty() => ok!(Value::Int(0)),
@@ -4436,7 +4458,7 @@ impl<'p> Interp<'p> {
                 // one builtin over for `kernel_goal_create`. Refuse it here too:
                 // an audit record that names the wrong principal is worse than no
                 // record, because it is believed.
-                let name = match self.principals.borrow().get(h) {
+                let name = match self.k().principals.borrow().get(h) {
                     Some(p) => p.name.clone(),
                     None => {
                         return panic(format!(
@@ -4446,7 +4468,7 @@ impl<'p> Interp<'p> {
                         ))
                     }
                 };
-                *self.current_principal.borrow_mut() = name;
+                *self.k().current_principal.borrow_mut() = name;
                 ok!(Value::Tuple(vec![]));
             }
 
@@ -4469,12 +4491,15 @@ impl<'p> Interp<'p> {
                 want(2)?;
                 let fn_name = as_str(&args[0])?.to_string();
                 let arg = as_int(&args[1])?;
-                if !self.fns.contains_key(&fn_name) {
+                // Resolved (and seal-checked) NOW: a fiber runs later, maybe in
+                // the operator's frame, so a sealed spawner may queue only its
+                // own functions.
+                if self.fn_by_name(&fn_name)?.is_none() {
                     return panic(format!(
                         "[E1602] scheduler_spawn: no function `{fn_name}` to run as a fiber"
                     ));
                 }
-                let id = self.scheduler.borrow_mut().spawn(fn_name, arg);
+                let id = self.k().scheduler.borrow_mut().spawn(fn_name, arg);
                 ok!(Value::Int(id as i64));
             }
 
@@ -4496,7 +4521,7 @@ impl<'p> Interp<'p> {
                 want(1)?;
                 let id = as_int(&args[0])?;
                 let r = if id >= 0 {
-                    self.scheduler.borrow().result(id as usize)
+                    self.k().scheduler.borrow().result(id as usize)
                 } else {
                     0
                 };
@@ -4507,7 +4532,7 @@ impl<'p> Interp<'p> {
             "scheduler_failed" => {
                 want(1)?;
                 let id = as_int(&args[0])?;
-                let f = id >= 0 && self.scheduler.borrow().failed(id as usize);
+                let f = id >= 0 && self.k().scheduler.borrow().failed(id as usize);
                 ok!(Value::Bool(f));
             }
 
@@ -4517,7 +4542,7 @@ impl<'p> Interp<'p> {
                 want(1)?;
                 let id = as_int(&args[0])?;
                 if id >= 0 {
-                    self.scheduler.borrow_mut().restart(id as usize);
+                    self.k().scheduler.borrow_mut().restart(id as usize);
                 }
                 ok!(Value::Int(id));
             }
@@ -4526,11 +4551,11 @@ impl<'p> Interp<'p> {
             // — the run tally (completed, failed) for a fan-out/collect summary.
             "scheduler_done_count" => {
                 want(0)?;
-                ok!(Value::Int(self.scheduler.borrow().tally().0 as i64));
+                ok!(Value::Int(self.k().scheduler.borrow().tally().0 as i64));
             }
             "scheduler_failed_count" => {
                 want(0)?;
-                ok!(Value::Int(self.scheduler.borrow().tally().1 as i64));
+                ok!(Value::Int(self.k().scheduler.borrow().tally().1 as i64));
             }
 
             // ── Phase 7 (R12 Slice 3): live supervisor_root ─────────────────────
@@ -4546,7 +4571,7 @@ impl<'p> Interp<'p> {
                 want(2)?;
                 let strategy = as_int(&args[0])?;
                 let max_restarts = as_int(&args[1])?;
-                let mut sups = self.supervisors.borrow_mut();
+                let mut sups = self.k().supervisors.borrow_mut();
                 sups.push(crate::kernel::Supervisor::new(strategy, max_restarts));
                 ok!(Value::Int((sups.len() - 1) as i64));
             }
@@ -4560,7 +4585,7 @@ impl<'p> Interp<'p> {
                 if sup < 0 || fiber < 0 {
                     return panic("[E1602] supervisor_supervise: negative handle".to_string());
                 }
-                let mut sups = self.supervisors.borrow_mut();
+                let mut sups = self.k().supervisors.borrow_mut();
                 let Some(s) = sups.get_mut(sup as usize) else {
                     return panic(format!(
                         "[E1602] supervisor_supervise: unknown supervisor {sup}"
@@ -4586,7 +4611,7 @@ impl<'p> Interp<'p> {
                 // Hard bound on rounds: max_restarts + 2 (the latch trips at
                 // max_restarts+1; +1 slack). Defends against any logic slip.
                 let max_rounds = {
-                    let sups = self.supervisors.borrow();
+                    let sups = self.k().supervisors.borrow();
                     match sups.get(sup as usize) {
                         Some(s) => s.max_restarts.max(0) + 2,
                         None => {
@@ -4603,8 +4628,8 @@ impl<'p> Interp<'p> {
                     self.builtin_scheduler_run_once()?;
                     // Find the first supervised child that FAILED, in child order.
                     let failed_child: Option<i64> = {
-                        let sups = self.supervisors.borrow();
-                        let sched = self.scheduler.borrow();
+                        let sups = self.k().supervisors.borrow();
+                        let sched = self.k().scheduler.borrow();
                         sups.get(sup as usize).and_then(|s| {
                             s.children.iter().enumerate().find_map(|(ci, &fid)| {
                                 if sched.failed(fid) {
@@ -4621,15 +4646,15 @@ impl<'p> Interp<'p> {
                     };
                     // Apply the OTP restart set; latch-halt on crash loop.
                     let to_restart = {
-                        let mut sups = self.supervisors.borrow_mut();
+                        let mut sups = self.k().supervisors.borrow_mut();
                         sups[sup as usize].on_failure(child_idx)
                     };
                     let halted = {
-                        let sups = self.supervisors.borrow();
+                        let sups = self.k().supervisors.borrow();
                         sups[sup as usize].halted
                     };
                     if halted {
-                        let restarts = self.supervisors.borrow()[sup as usize].restarts;
+                        let restarts = self.k().supervisors.borrow()[sup as usize].restarts;
                         return Err(Flow::Halted(format!(
                             "[E1602] supervisor halted its subtree after {restarts} restarts \
                              (max-restart intensity exceeded — crash loop abandoned)"
@@ -4637,7 +4662,7 @@ impl<'p> Interp<'p> {
                     }
                     // Re-queue the strategy's restart set for the next round.
                     {
-                        let mut sched = self.scheduler.borrow_mut();
+                        let mut sched = self.k().scheduler.borrow_mut();
                         for fid in to_restart {
                             sched.restart(fid);
                         }
@@ -4661,6 +4686,7 @@ impl<'p> Interp<'p> {
                 let sup = as_int(&args[0])?;
                 let alive = sup >= 0
                     && self
+                        .k()
                         .supervisors
                         .borrow()
                         .get(sup as usize)
@@ -4674,7 +4700,7 @@ impl<'p> Interp<'p> {
                 want(1)?;
                 let sup = as_int(&args[0])?;
                 let n = if sup >= 0 {
-                    self.supervisors
+                    self.k().supervisors
                         .borrow()
                         .get(sup as usize)
                         .map(|s| s.restarts)
@@ -4726,7 +4752,7 @@ impl<'p> Interp<'p> {
                         )
                     }
                 };
-                let mut stores = self.stores.borrow_mut();
+                let mut stores = self.k().stores.borrow_mut();
                 stores.push((store, path));
                 ok!(Value::Int((stores.len() - 1) as i64));
             }
@@ -4747,7 +4773,7 @@ impl<'p> Interp<'p> {
                     return panic("[E1603] dstore_apply: negative store handle".to_string());
                 }
                 let (applied, new_value, path) = {
-                    let mut stores = self.stores.borrow_mut();
+                    let mut stores = self.k().stores.borrow_mut();
                     let Some((store, path)) = stores.get_mut(h as usize) else {
                         return panic(format!("[E1603] dstore_apply: unknown store handle {h}"));
                     };
@@ -4778,7 +4804,7 @@ impl<'p> Interp<'p> {
                 want(1)?;
                 let h = as_int(&args[0])?;
                 let v = if h >= 0 {
-                    self.stores
+                    self.k().stores
                         .borrow()
                         .get(h as usize)
                         .map(|(s, _)| s.value)
@@ -4795,7 +4821,7 @@ impl<'p> Interp<'p> {
                 want(1)?;
                 let h = as_int(&args[0])?;
                 let v = if h >= 0 {
-                    self.stores
+                    self.k().stores
                         .borrow()
                         .get(h as usize)
                         .map(|(s, _)| s.version)
@@ -4836,13 +4862,13 @@ impl<'p> Interp<'p> {
                 let rate = as_int(&args[1])?;
                 let principal = as_int(&args[2])?;
                 let fallback = as_str(&args[3])?.to_string();
-                if self.principals.borrow().get(principal).is_none() {
+                if self.k().principals.borrow().get(principal).is_none() {
                     return panic(format!(
                         "[E1604] llm_open: unknown principal handle {principal} \
                          (an LLM gateway must be scoped to a minted principal)"
                     ));
                 }
-                let mut gws = self.llm_gateways.borrow_mut();
+                let mut gws = self.k().llm_gateways.borrow_mut();
                 gws.push(crate::kernel::LlmGateway::new(
                     model,
                     rate,
@@ -4869,23 +4895,23 @@ impl<'p> Interp<'p> {
                 }
                 // Read gateway state (cost, principal, halted).
                 let (cost, principal, halted) = {
-                    let gws = self.llm_gateways.borrow();
+                    let gws = self.k().llm_gateways.borrow();
                     let Some(g) = gws.get(gw as usize) else {
                         return panic(format!("[E1604] llm_complete: unknown gateway {gw}"));
                     };
                     (g.call_cost(tokens), g.principal, g.halted)
                 };
-                let remaining = self.principals.borrow().budget_remaining(principal);
+                let remaining = self.k().principals.borrow().budget_remaining(principal);
                 if halted || cost > remaining {
                     // Overrun / already-latched: latch, no spend, signal fallback.
-                    if let Some(g) = self.llm_gateways.borrow_mut().get_mut(gw as usize) {
+                    if let Some(g) = self.k().llm_gateways.borrow_mut().get_mut(gw as usize) {
                         g.halted = true;
                     }
                     ok!(Value::Int(-1));
                 } else {
                     // Affordable: debit the PRINCIPAL's budget by the real cost.
-                    self.principals.borrow_mut().spend(principal, cost);
-                    if let Some(g) = self.llm_gateways.borrow_mut().get_mut(gw as usize) {
+                    self.k().principals.borrow_mut().spend(principal, cost);
+                    if let Some(g) = self.k().llm_gateways.borrow_mut().get_mut(gw as usize) {
                         g.spent_micro += cost;
                     }
                     ok!(Value::Int(cost));
@@ -4898,6 +4924,7 @@ impl<'p> Interp<'p> {
                 let gw = as_int(&args[0])?;
                 let alive = gw >= 0
                     && self
+                        .k()
                         .llm_gateways
                         .borrow()
                         .get(gw as usize)
@@ -4911,7 +4938,7 @@ impl<'p> Interp<'p> {
                 want(1)?;
                 let gw = as_int(&args[0])?;
                 let spent = if gw >= 0 {
-                    self.llm_gateways
+                    self.k().llm_gateways
                         .borrow()
                         .get(gw as usize)
                         .map(|g| g.spent_micro)
@@ -4933,7 +4960,7 @@ impl<'p> Interp<'p> {
                 let name = as_str(&args[1])?.to_string();
                 let target = as_float(&args[2])?;
                 // Typo guard: `name` must be a defined fn or already-recorded goal.
-                if !self.fns.contains_key(&name) && !self.provenance.borrow().contains_key(&name) {
+                if self.fn_by_name(&name)?.is_none() && !self.k().provenance.borrow().contains_key(&name) {
                     return panic(format!(
                         "kernel_goal_create: `{name}` is neither a defined function nor a recorded goal"
                     ));
@@ -4946,7 +4973,7 @@ impl<'p> Interp<'p> {
                 // capability handle resolving to the most-privileged principal
                 // is the wrong direction to fail; refuse it instead.
                 {
-                    let ps = self.principals.borrow();
+                    let ps = self.k().principals.borrow();
                     if ps.get(principal).is_none() {
                         return panic(format!(
                             "kernel_goal_create: unknown principal handle {principal} \
@@ -4955,7 +4982,7 @@ impl<'p> Interp<'p> {
                         ));
                     }
                 }
-                let mut goals = self.goals.borrow_mut();
+                let mut goals = self.k().goals.borrow_mut();
                 let handle = goals.len();
                 goals.push(crate::kernel::KernelGoal::new(
                     principal,
@@ -4974,22 +5001,22 @@ impl<'p> Interp<'p> {
                 let g = as_int(&args[0])?;
                 let max_evals = as_int(&args[1])?;
                 let (principal, name, target) = {
-                    let goals = self.goals.borrow();
+                    let goals = self.k().goals.borrow();
                     match goals.get(g.max(0) as usize) {
                         Some(k) => (k.principal, k.name.clone(), k.target),
                         None => return panic(format!("kernel_goal_run: invalid goal handle {g}")),
                     }
                 };
-                let avail = self.principals.borrow().budget_remaining(principal).max(0);
+                let avail = self.k().principals.borrow().budget_remaining(principal).max(0);
                 let evals = max_evals.max(0).min(avail);
                 // Run the existing optimizer for `evals` steps (warm-starts from
                 // accumulated provenance, like goal_continue).
                 let best = self.run_goal(&name, target, evals)?;
                 if evals > 0 {
-                    self.principals.borrow_mut().spend(principal, evals);
+                    self.k().principals.borrow_mut().spend(principal, evals);
                 }
                 {
-                    let mut goals = self.goals.borrow_mut();
+                    let mut goals = self.k().goals.borrow_mut();
                     if let Some(k) = goals.get_mut(g.max(0) as usize) {
                         k.evals_spent += evals;
                         k.best_score = best;
@@ -5009,6 +5036,7 @@ impl<'p> Interp<'p> {
                 want(1)?;
                 let g = as_int(&args[0])?;
                 let best = self
+                    .k()
                     .goals
                     .borrow()
                     .get(g.max(0) as usize)
@@ -5021,6 +5049,7 @@ impl<'p> Interp<'p> {
                 want(1)?;
                 let g = as_int(&args[0])?;
                 let spent = self
+                    .k()
                     .goals
                     .borrow()
                     .get(g.max(0) as usize)
@@ -5033,12 +5062,13 @@ impl<'p> Interp<'p> {
                 want(1)?;
                 let g = as_int(&args[0])?;
                 let p = self
+                    .k()
                     .goals
                     .borrow()
                     .get(g.max(0) as usize)
                     .map(|k| k.principal);
                 let left = match p {
-                    Some(principal) => self.principals.borrow().budget_remaining(principal).max(0),
+                    Some(principal) => self.k().principals.borrow().budget_remaining(principal).max(0),
                     None => 0,
                 };
                 ok!(Value::Int(left));
@@ -5069,7 +5099,7 @@ impl<'p> Interp<'p> {
             "agent_detect_loop" => {
                 want(1)?;
                 let name = as_str(&args[0])?.to_string();
-                let store = self.provenance.borrow();
+                let store = self.k().provenance.borrow();
                 let stalled = match store.get(&name) {
                     // Need at least 3 points to call it a loop. The last 3 are a
                     // loop when their spread is within epsilon of the score scale.
@@ -5087,7 +5117,7 @@ impl<'p> Interp<'p> {
             "agent_uncertainty" => {
                 want(1)?;
                 let name = as_str(&args[0])?.to_string();
-                let store = self.provenance.borrow();
+                let store = self.k().provenance.borrow();
                 let u = match store.get(&name) {
                     Some(scores) if scores.len() >= 2 => {
                         let n = scores.len() as f64;
@@ -5111,7 +5141,7 @@ impl<'p> Interp<'p> {
             "agent_trace_len" => {
                 want(1)?;
                 let name = as_str(&args[0])?.to_string();
-                let store = self.provenance.borrow();
+                let store = self.k().provenance.borrow();
                 let len = store.get(&name).map(|s| s.len()).unwrap_or(0);
                 ok!(Value::Int(len as i64));
             }
@@ -5132,12 +5162,12 @@ impl<'p> Interp<'p> {
             // un-halt builtin: a reversible kill-switch is not a kill-switch.
             "corrigible_halt" => {
                 want(0)?;
-                self.corrigible_halted.set(true);
+                self.k().corrigible_halted.set(true);
                 ok!(Value::Unit);
             }
             "corrigible_halted" => {
                 want(0)?;
-                ok!(Value::Bool(self.corrigible_halted.get()));
+                ok!(Value::Bool(self.k().corrigible_halted.get()));
             }
 
             // ── Dict (string-keyed map) ──────────────────────────────────────
@@ -5179,6 +5209,7 @@ impl<'p> Interp<'p> {
                     }
                 };
                 let k = as_str(&args[1])?.to_string();
+                self.dict_mutated(&d);
                 d.borrow_mut().insert(k, args[2].clone());
                 ok!(Value::Unit);
             }
@@ -5210,6 +5241,7 @@ impl<'p> Interp<'p> {
                     }
                 };
                 let k = as_str(&args[1])?.to_string();
+                self.dict_mutated(&d);
                 ok!(match d.borrow_mut().remove(&k) {
                     Some(v) => Value::Some(Box::new(v)),
                     None => Value::None,
@@ -5361,6 +5393,7 @@ impl<'p> Interp<'p> {
                     }
                 };
                 let k = as_str(&args[1])?.to_string();
+                self.dict_mutated(&d);
                 let mut m = d.borrow_mut();
                 let cur = m.get(&k).cloned().unwrap_or(Value::Int(0));
                 let n = match cur {
@@ -6029,7 +6062,7 @@ impl<'p> Interp<'p> {
             "ai_extract_uncertain_i64" => {
                 want(1)?;
                 if ai_mock_enabled() {
-                    ok!(Value::Ok(Box::new(make_uncertain(Value::Int(1), 0.9))));
+                    ok!(Value::Ok(Box::new(make_uncertain_ai(Value::Int(1), 0.9))));
                 }
                 // AXON_AI_REPLAY was consulted ONLY by the `ai_complete` arm, so a
                 // typed extract made a live, unrecorded model call even under a
@@ -6047,7 +6080,7 @@ impl<'p> Interp<'p> {
                         match axon_ai::complete_typed_uncertain_i64(as_str(&args[0])?) {
                             Ok((v, c)) => {
                                 ai_replay_store(as_str(&args[0])?, name, &format!("{v}|{c}"), 0);
-                                Value::Ok(Box::new(make_uncertain(Value::Int(v), c)))
+                                Value::Ok(Box::new(make_uncertain_ai(Value::Int(v), c)))
                             }
                             Err(e) => Value::Err(Box::new(Value::Str(Rc::new(e)))),
                         }
@@ -6061,7 +6094,7 @@ impl<'p> Interp<'p> {
             "ai_extract_uncertain_f64" => {
                 want(1)?;
                 if ai_mock_enabled() {
-                    ok!(Value::Ok(Box::new(make_uncertain(Value::Float(1.0), 0.9))));
+                    ok!(Value::Ok(Box::new(make_uncertain_ai(Value::Float(1.0), 0.9))));
                 }
                 // Same replay bypass as the i64 variant above.
                 if let Some((cached, _)) = ai_replay_lookup(as_str(&args[0])?, name) {
@@ -6073,7 +6106,7 @@ impl<'p> Interp<'p> {
                         match axon_ai::complete_typed_uncertain_f64(as_str(&args[0])?) {
                             Ok((v, c)) => {
                                 ai_replay_store(as_str(&args[0])?, name, &format!("{v}|{c}"), 0);
-                                Value::Ok(Box::new(make_uncertain(Value::Float(v), c)))
+                                Value::Ok(Box::new(make_uncertain_ai(Value::Float(v), c)))
                             }
                             Err(e) => Value::Err(Box::new(Value::Str(Rc::new(e)))),
                         }
@@ -6121,7 +6154,7 @@ impl<'p> Interp<'p> {
                 if sigma <= 0.0 {
                     return panic(format!("gaussian_sample: sigma must be > 0 (got {sigma})"));
                 }
-                ok!(Value::Float(mu + sigma * std_normal_sample()));
+                ok!(Value::Float(mu + sigma * std_normal_sample(&|| self.rng_next())?));
             }
 
             "beta_mean" => {
@@ -6172,8 +6205,8 @@ impl<'p> Interp<'p> {
                     ));
                 }
                 // Beta(alpha, beta_b) = Gamma(alpha) / (Gamma(alpha) + Gamma(beta_b))
-                let ga = gamma_sample(alpha);
-                let gb = gamma_sample(beta_b);
+                let ga = gamma_sample(alpha, &|| self.rng_next())?;
+                let gb = gamma_sample(beta_b, &|| self.rng_next())?;
                 let s = ga + gb;
                 ok!(Value::Float(if s > 0.0 {
                     ga / s
@@ -6299,7 +6332,7 @@ impl<'p> Interp<'p> {
                 if probs.is_empty() {
                     return panic("categorical_sample: probs must be non-empty".to_string());
                 }
-                let u = (next_rand_u64() >> 11) as f64 / 9_007_199_254_740_992.0;
+                let u = (self.rng_next()? >> 11) as f64 / 9_007_199_254_740_992.0;
                 let mut cum = 0.0;
                 let mut result = probs.len() as i64 - 1;
                 for (i, v) in probs.iter().enumerate() {
@@ -6368,35 +6401,35 @@ fn erf_approx(x: f64) -> f64 {
 }
 
 /// Standard normal sample via Box-Muller transform.
-fn std_normal_sample() -> f64 {
-    let u1 = ((next_rand_u64() >> 11) as f64 / 9_007_199_254_740_992.0).max(1e-300);
-    let u2 = (next_rand_u64() >> 11) as f64 / 9_007_199_254_740_992.0;
-    (-2.0 * u1.ln()).sqrt() * (2.0 * std::f64::consts::PI * u2).cos()
+fn std_normal_sample(rng: &dyn Fn() -> Result<u64, Flow>) -> Result<f64, Flow> {
+    let u1 = ((rng()? >> 11) as f64 / 9_007_199_254_740_992.0).max(1e-300);
+    let u2 = (rng()? >> 11) as f64 / 9_007_199_254_740_992.0;
+    Ok((-2.0 * u1.ln()).sqrt() * (2.0 * std::f64::consts::PI * u2).cos())
 }
 
 /// Gamma(k) sample via Marsaglia-Tsang "squeeze" method.
 /// Works for any k > 0 (uses k < 1 reduction: Gamma(k) = Gamma(k+1) * U^(1/k)).
-fn gamma_sample(k: f64) -> f64 {
+fn gamma_sample(k: f64, rng: &dyn Fn() -> Result<u64, Flow>) -> Result<f64, Flow> {
     if k < 1.0 {
-        let u = ((next_rand_u64() >> 11) as f64 / 9_007_199_254_740_992.0).max(1e-300);
-        return gamma_sample(k + 1.0) * u.powf(1.0 / k);
+        let u = ((rng()? >> 11) as f64 / 9_007_199_254_740_992.0).max(1e-300);
+        return Ok(gamma_sample(k + 1.0, rng)? * u.powf(1.0 / k));
     }
     let d = k - 1.0 / 3.0;
     let c = 1.0 / (9.0 * d).sqrt();
     loop {
-        let x = std_normal_sample();
+        let x = std_normal_sample(rng)?;
         let v_inner = 1.0 + c * x;
         if v_inner <= 0.0 {
             continue;
         }
         let v = v_inner * v_inner * v_inner;
-        let u = ((next_rand_u64() >> 11) as f64 / 9_007_199_254_740_992.0).max(1e-300);
+        let u = ((rng()? >> 11) as f64 / 9_007_199_254_740_992.0).max(1e-300);
         let x2 = x * x;
         if u < 1.0 - 0.0331 * x2 * x2 {
-            return d * v;
+            return Ok(d * v);
         }
         if u.ln() < 0.5 * x2 + d * (1.0 - v + v.ln()) {
-            return d * v;
+            return Ok(d * v);
         }
     }
 }

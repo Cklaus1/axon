@@ -84,8 +84,8 @@ impl Principal {
 
 /// Private RNG state for principal handle tokens (AUDIT T42 / P7-SEC-03).
 ///
-/// Deliberately NOT the interpreter's `RNG_STATE`: that stream is seeded by
-/// `AXON_SEED` and re-seedable from Axon source via `srand(n)`, so drawing
+/// Deliberately NOT one of the interpreter's per-kernel RNG streams: those are
+/// seeded by `AXON_SEED` and re-seedable from Axon source via `srand(n)`, so drawing
 /// tokens from it would let a program set the seed and then enumerate every
 /// handle the kernel is about to issue. This state is never exposed to Axon.
 static TOKEN_STATE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);

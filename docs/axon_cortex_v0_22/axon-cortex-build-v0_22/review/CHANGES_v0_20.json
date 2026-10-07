@@ -1,0 +1,415 @@
+{
+  "scope": "modular source changes; excludes generated views, validation/test receipts, checksum inventories and this change inventory to avoid self-hash cycles",
+  "baseline_directory": "axon-cortex-build-v0_19",
+  "updated_directory": "axon-cortex-build-v0_20",
+  "changes": [
+    {
+      "path": "CHANGELOG_v0_20.md",
+      "change": "added",
+      "previous_sha256": null,
+      "current_sha256": "348a6c3e251a72bc2b82e41b0257b1e4b65910e103caa8b23beefbeb6409d2ce"
+    },
+    {
+      "path": "DECISIONS.md",
+      "change": "modified",
+      "previous_sha256": "0999e3040076e0c2be56f18fbddb4db70d226f6ecf51ac0f4343709f51caf540",
+      "current_sha256": "aafab6fe8264709e0c89f2af4d38e5e7c202c3762a07b1ecf4d17a25c9d2f4b8"
+    },
+    {
+      "path": "README.md",
+      "change": "modified",
+      "previous_sha256": "c4d7915db539d3582cbcf93298e80159ec9a5472cac6849f34c89204612daba4",
+      "current_sha256": "8e4a41706425dfa787dba46ffc9b3b281a79714d761412c59a82d5210488d5b4"
+    },
+    {
+      "path": "SOURCES.md",
+      "change": "modified",
+      "previous_sha256": "0ffd52e429e049d4c468ccc9117a6794f23ea679007649a4f70ca24db7149b6c",
+      "current_sha256": "d7bc1c230414be91e443ca322a87c6b2c5e2cdaf01f535b6f23288f92e299a22"
+    },
+    {
+      "path": "build/ACE_RUNTIME.md",
+      "change": "modified",
+      "previous_sha256": "48f8ec3af4c3ffc429a3fc22bd1d7ce37e398514b2b27a2515442030da8acfe9",
+      "current_sha256": "5a00b9628ffb2c5b973d79cf5bffcf819d3b89d272c48285e6bc8ab73eb82a3a"
+    },
+    {
+      "path": "build/APPLY_V020_WITH_MICODE_V014.md",
+      "change": "added",
+      "previous_sha256": null,
+      "current_sha256": "6161e97990fea84dcc4daa7d3fcfe5d3b9a71b119d1ea46cc19cccb6496bde56"
+    },
+    {
+      "path": "build/BOOTSTRAP_PROMPT.md",
+      "change": "modified",
+      "previous_sha256": "402bb77fb478bad62982de3c4111c7b31e4cb1b7ecf1ad88b12c22eaf8ed18b4",
+      "current_sha256": "8ccd4544b8e47f0bb6c95c83e1d37c87403e509842472225e71cc99243e1c8b4"
+    },
+    {
+      "path": "build/BUILD_PLAN.md",
+      "change": "modified",
+      "previous_sha256": "727942d94f45e1f18db7ca937b2b32843525fb3fcead467362b7b64bbda82599",
+      "current_sha256": "c61f01c469231d3993339a793a219ffee6d571ff2f7840913657216f1b32f09e"
+    },
+    {
+      "path": "build/BUILD_PROTOCOL.md",
+      "change": "modified",
+      "previous_sha256": "f7546a62fd7dd974c124a2f945193c2d0db351d3356d058bc3c5b68e884b2790",
+      "current_sha256": "1f0e1bf3ce811d1f8c037d43c52247ae797fd3c5f006eaf7d9fa50b9be695c6e"
+    },
+    {
+      "path": "build/COGNITIVE_SCHEDULER_REGISTRY.md",
+      "change": "modified",
+      "previous_sha256": "b7dc30816f7dfa7f72cfefd5c2c37196a2d6bccc031fe550dd49e2a7ba9bec62",
+      "current_sha256": "f465c267cb4abd2f242c6e1b5d718a879a3e09496e0d0ce4d9750cb9f3f3e512"
+    },
+    {
+      "path": "build/COGNITIVE_SPECIALIZATION.md",
+      "change": "modified",
+      "previous_sha256": "99ccd13a581ed62126f59e6573676206ae0b5ec0295a1fa71c22d6f940920b0c",
+      "current_sha256": "89e68901f501a5bda359ab9487debb7ffc558285fe90746735d86e9ffe5ab136"
+    },
+    {
+      "path": "build/DECISION_COMPOSITION.md",
+      "change": "modified",
+      "previous_sha256": "07fefb7d3a168cfee72d3ef908cad0380b64cfcaa5d1fc974c9331cf2548a842",
+      "current_sha256": "548f783202d9a542277181484412740b371214adc605c55f19fb766f577198a3"
+    },
+    {
+      "path": "build/EXPERIMENT_REGISTER.md",
+      "change": "modified",
+      "previous_sha256": "d3b62bf05c2bf8f66fcff84c2b495bb6cc93898c7f2d2b4e22ace733695a17cc",
+      "current_sha256": "5498a87e3f0fccc4949c15b0f92e97ddcd8a6db365f2b3cfd9a0894133057ffe"
+    },
+    {
+      "path": "build/IMPLEMENTATION_RELEASE_SLICES.md",
+      "change": "modified",
+      "previous_sha256": "482e6e16604da5c763828827da96f614e56886cd21149f45c060f9fe845eedc0",
+      "current_sha256": "d2d1c5199c819e5d332f606ba0b7b8f813bbcf54b6e67bf1f530d7b86aaac4c0"
+    },
+    {
+      "path": "build/LIGHTWEIGHT_REFLEX_DISTILLATION.md",
+      "change": "added",
+      "previous_sha256": null,
+      "current_sha256": "765e7288795ab688556f15bcc800a0f38e3af4d1926e8de51ccabc3c5b807dc9"
+    },
+    {
+      "path": "build/LOOPS.md",
+      "change": "modified",
+      "previous_sha256": "f3cb8efbfa28716822e9b96a094cbc813d3b7581ebb6a891215fd4eebb316a4b",
+      "current_sha256": "af9700b3f187021b6760770f848ada84e9fcd5a56749f189b482e8d6b9a87fc0"
+    },
+    {
+      "path": "build/NEURAL_PROGRAMS.md",
+      "change": "modified",
+      "previous_sha256": "00c9e72c9115315127a38bbd9c4f0ae4563fe02ea30b03ef2092e197578b2f19",
+      "current_sha256": "c77198e804c9be5b7efe926e1af44224cd3c5ca3bc174f5c691ec9b7877bd921"
+    },
+    {
+      "path": "build/OWNERSHIP_AND_COMPATIBILITY.md",
+      "change": "modified",
+      "previous_sha256": "792338fcbe32603479b75c77e5ea0d521916e99f0e0e86824ac43425c2c6fbb1",
+      "current_sha256": "646f92aa18d2f2dcae8a756ae2ed31555743ff6f171f5b8e3eef237376c5f50a"
+    },
+    {
+      "path": "build/REFLEX_CALIBRATION_LAB.md",
+      "change": "modified",
+      "previous_sha256": "d3c837c6b73464c334dbb98e7c7ba772450f12ff48416112c14077d0d7d07681",
+      "current_sha256": "146453b5e7c6d4412db1d1bc918bb342eeb06e17a68550d8694ea482761e5423"
+    },
+    {
+      "path": "build/REFLEX_CONFORMANCE.md",
+      "change": "modified",
+      "previous_sha256": "4044e643d7a38d5dc0142edbc80a3160320cb2cce4908f9327550596d398c273",
+      "current_sha256": "1d7c18e47186997929a3be845a52653a3fb434681c1afa6834c71e65aeb98492"
+    },
+    {
+      "path": "build/REFLEX_DECISION_CORPUS.md",
+      "change": "modified",
+      "previous_sha256": "058b539236b0383b554c6ccca52d2802bb4ce8ca9ea8e34e1aa0f84c875cfbb9",
+      "current_sha256": "85afa2bfbcd61194067c52d58c109b4928f666d8b5e3888e02c325f7a8874e82"
+    },
+    {
+      "path": "build/REFLEX_LEARNING_PLANE.md",
+      "change": "modified",
+      "previous_sha256": "7a289176419b47dbec12a97faa8de25ebac02c1dc6bd4f06c2382fc9c25291a8",
+      "current_sha256": "f97bcc810d6e34e77990c8f4f6405b366a87b5d9d9ba0c72e45cc921687d8cde"
+    },
+    {
+      "path": "build/REVIEW_INVARIANTS.md",
+      "change": "modified",
+      "previous_sha256": "3041b0843b9e3109a0ac3fa1b3a2db138b963e0e0438206d4f70caab8290e743",
+      "current_sha256": "45fdd2d1e0aad90d9e1c900136c1a6559e144c10fb80f6f6f7954e47dbb4a29b"
+    },
+    {
+      "path": "build/SCHEMA_DECISION_FRONTEND.md",
+      "change": "added",
+      "previous_sha256": null,
+      "current_sha256": "59e0fcfd41322f1c739b96eb7cdb1a1e9946fc225db19e37651c09d53872e9e3"
+    },
+    {
+      "path": "build/SEMANTIC_WORKING_SET_MANAGER.md",
+      "change": "modified",
+      "previous_sha256": "5e667495fb5b6d0fa6ed05063e0721fbd282749067086af98b73347a0df03b3d",
+      "current_sha256": "6df25e6dad985f5c3bc2194e9f67e742fa1dfbd7fa2148d6ef3d42e5a0e62d22"
+    },
+    {
+      "path": "fixtures/schema_reflex/README.md",
+      "change": "added",
+      "previous_sha256": null,
+      "current_sha256": "1f8db68d1b363b8e253a3f17dc844822c6e2472fee42a16da956361291d9705e"
+    },
+    {
+      "path": "fixtures/schema_reflex/experiment-template.json",
+      "change": "added",
+      "previous_sha256": null,
+      "current_sha256": "2e6ef68371f916eb69cd22e1129dcfa649a16ad7f6e505a4597eb3cd1a20fc9d"
+    },
+    {
+      "path": "fixtures/schema_reflex/records.json",
+      "change": "added",
+      "previous_sha256": null,
+      "current_sha256": "1cf0692825d47267e64c45d6421648ffb766aecba3c83c7e0d88fd63f7f6c772"
+    },
+    {
+      "path": "gate_manifest.json",
+      "change": "modified",
+      "previous_sha256": "303eee1651c72aa3cd1dbe5211658c79549f6d4ee5c7c10db6b46573fd9e85df",
+      "current_sha256": "d5310fdb3bff55ed6d3ef575afe3dba7e1d5a18c76e54a7945678b746c07ff7b"
+    },
+    {
+      "path": "integration/ACE_OWNER_EXPORT_LOCK.json",
+      "change": "modified",
+      "previous_sha256": "92ddee62519eb6ea249820c831050349c284f14a3ac1fbadc0a949922213d37c",
+      "current_sha256": "b4916f5b4dc5fc09fbae7dfc7404434b5cdd8c7a44dfb0c7c258d07d8587c16f"
+    },
+    {
+      "path": "integration/SCHEMA_REFLEX_REQUIREMENTS.json",
+      "change": "added",
+      "previous_sha256": null,
+      "current_sha256": "27fe407d10a94fafc65c55bad4e690ac2d51f6ab443f34631665812d17a3bd34"
+    },
+    {
+      "path": "release_profiles.json",
+      "change": "modified",
+      "previous_sha256": "4b8d3232834020fe19f7e31c916f51d7dd3873ccb7d553b1d811bca4c819695c",
+      "current_sha256": "9dde1aacbc9f75c9b0c950a4396016d1065a9f1febe5d4c8c236a634bc350d00"
+    },
+    {
+      "path": "review/CHANGE_MATRIX.md",
+      "change": "modified",
+      "previous_sha256": "afa2aa6b0e4ac11ceee602e84cc2c879483cf125205877d04309392c03330c54",
+      "current_sha256": "bc9ec59c9a678b8dfed82994ba82f1ebbe55c7e2f752893eaf3bc69faa251a5b"
+    },
+    {
+      "path": "review/INPUTS_v0_20.json",
+      "change": "added",
+      "previous_sha256": null,
+      "current_sha256": "cccb1f131ffc2cf9ee1818ec4985d0229fc62a40eb2f3173e7c8e06bf4ccc31e"
+    },
+    {
+      "path": "review/JIMOTHY_WEBMCP_ADVERSARIAL_REVIEW.md",
+      "change": "added",
+      "previous_sha256": null,
+      "current_sha256": "53a856b3bab75244ff144790843cd52d16782f0ad5942f69e8d5c93bdc148289"
+    },
+    {
+      "path": "review/JIMOTHY_WEBMCP_DESIGN_REVIEW.md",
+      "change": "added",
+      "previous_sha256": null,
+      "current_sha256": "0870e088ba077b55be2e06e482c13ab5a1b5990257863b4b19ee1bafa895b5b6"
+    },
+    {
+      "path": "review/JIMOTHY_WEBMCP_INPUT_REVIEW.txt",
+      "change": "added",
+      "previous_sha256": null,
+      "current_sha256": "74c12e6192293b73613856dda5191fc54a078ad5025ad1e96c441ae2c12e4949"
+    },
+    {
+      "path": "review/JIMOTHY_WEBMCP_SOURCES.json",
+      "change": "added",
+      "previous_sha256": null,
+      "current_sha256": "b7c9472054e2fe3b6ca99c2a91da73c62247417cab7c63f1772b60df238e59d6"
+    },
+    {
+      "path": "review/REVIEW_REPORT.md",
+      "change": "modified",
+      "previous_sha256": "b93d8d9b57b0ef908812b13b1ce91ebf393c571664e01ace4a6399193f4151ef",
+      "current_sha256": "d01cb11d7d382112fd198a32db86eeaf569f8ff95a9a8ca9efd06815e08b6edd"
+    },
+    {
+      "path": "review/history/v0_19_TEST_LOG.txt",
+      "change": "added",
+      "previous_sha256": null,
+      "current_sha256": "32c84f5a37577b8d4f074d2ddb67c9fed598d7df3d7cc2d3d37a02fcdabe493d"
+    },
+    {
+      "path": "review/history/v0_19_TEST_RESULTS.json",
+      "change": "added",
+      "previous_sha256": null,
+      "current_sha256": "4fdca4fb0833903a2ddcd08e7f00a528caf048d1c12198ab021b2dc9ec126023"
+    },
+    {
+      "path": "review/history/v0_19_package_validation.json",
+      "change": "added",
+      "previous_sha256": null,
+      "current_sha256": "8e13b3a1e96db9bbff3566cd0514329c24a5a4d6464f446debddc640026e9ebf"
+    },
+    {
+      "path": "schemas/LIGHTWEIGHT_REFLEX_PROFILE.md",
+      "change": "added",
+      "previous_sha256": null,
+      "current_sha256": "fb13123c6f8d87c0a51d950075b9396b1ac4b348b88d73408f461948528bd942"
+    },
+    {
+      "path": "schemas/PROTOCOLS.md",
+      "change": "modified",
+      "previous_sha256": "006024df8611707764ce670deab9dace1ca207bbb156f89af8ddbdc266534412",
+      "current_sha256": "764331b1504dac2cd0c9b301af0dcbedcf7b2ac23506e5dda82a0c3046369a55"
+    },
+    {
+      "path": "schemas/SCHEMA_DECISION_PROFILE.md",
+      "change": "added",
+      "previous_sha256": null,
+      "current_sha256": "31916f99a26c005d13c7639d4feab914c3ec5aafca2ce309e42d04e75eb5e1fb"
+    },
+    {
+      "path": "spec_manifest.json",
+      "change": "modified",
+      "previous_sha256": "5570dd9389bfa59d201628c4fa42de7fdfebd7bf27f5c65fd313060553019f90",
+      "current_sha256": "36642db725425fe88e246eaf0e84890e56838c52abb792facdcebebf9036e254"
+    },
+    {
+      "path": "specs/CX-00-system-contract.md",
+      "change": "modified",
+      "previous_sha256": "97773b9affe38ea86afb8729f522ae1be00fa9e7ccd57d923b3095f725b3de22",
+      "current_sha256": "be405fe1747cd348836b6de914707e6ec67618fd8a3484d60f24cf53f3984864"
+    },
+    {
+      "path": "specs/CX-03-capabilities-executor.md",
+      "change": "modified",
+      "previous_sha256": "ff00b7fcdb50e8390175fcfb88b36ebf65c1be1a74ac6e4c36d80ed37be53933",
+      "current_sha256": "383fb2483cb02f4e1a476e264ef8fe571ee615d1eb2f0e640185a006a2c7b4f4"
+    },
+    {
+      "path": "specs/CX-05-reflex-inference.md",
+      "change": "modified",
+      "previous_sha256": "3c6affd73432f740b99b2cef6dcd808ae523373aea89de50aefe789a0f34ec0c",
+      "current_sha256": "91787cf9688287d32b1b7de6f157de243ce92874fc3b7dd9f37786798c3f770c"
+    },
+    {
+      "path": "specs/CX-06-routing-calibration.md",
+      "change": "modified",
+      "previous_sha256": "01b1e286722b9f4201c496b7f8685e2160c1ccedda095fa2655169ed880603c8",
+      "current_sha256": "d79569ac2c5ace9f8b06449170b993c3967bd0668138638cc34c5cfa72f8ee12"
+    },
+    {
+      "path": "specs/CX-10-replay-learning-data.md",
+      "change": "modified",
+      "previous_sha256": "9dc881b1d599302546044ba39fb1a35748de47fa0975bba5b43640ee27d65ee6",
+      "current_sha256": "d7f9e32919fe5b6b0343a62eb03d289c5fd92bbde9b495f73784726147f91b3f"
+    },
+    {
+      "path": "specs/CX-16-micode-experience-bridge.md",
+      "change": "modified",
+      "previous_sha256": "5e4934056f107d0df72bae25c628a703b32aa493e0374e2f9a6bb8b54643fa10",
+      "current_sha256": "8bedb2334a86417e4cc9b63a47eeb7d383043f1bc7adccb87bca07ba0f9bbb68"
+    },
+    {
+      "path": "specs/CX-20-reflex-research-lab.md",
+      "change": "modified",
+      "previous_sha256": "090bc8c13ce5d8aa3ed0f05f49700484fcba70faa608662a646594da6794a6d6",
+      "current_sha256": "d4add4691fa3c0c55aa3e589d0fd4304813c9ac079e782a0687d279d7f2e3cff"
+    },
+    {
+      "path": "specs/CX-22-cognitive-specialization-compiler.md",
+      "change": "modified",
+      "previous_sha256": "81d05b8d43694f1720d18e4fb749f9fefcacf06e63434f22d29648a228637b41",
+      "current_sha256": "93b4a2fc29081941038762d9e564999d5c32583cede4b652d2def812a0e9c875"
+    },
+    {
+      "path": "specs/CX-23-neural-program-runtime-skill-compiler.md",
+      "change": "modified",
+      "previous_sha256": "74ba9f357226bffede5bbc3c6ad4dfbf79742b8cda13708970a02a0988fb56e1",
+      "current_sha256": "a1e11d0fcbfd62ab7ddf5bbcc2d118abe1c589c72cd0e9b25409217d4c634e6f"
+    },
+    {
+      "path": "specs/CX-25-reflex-learning-plane.md",
+      "change": "modified",
+      "previous_sha256": "e7dfc90b654b21caf41e32e105e2c5dd58f45d6975efde3a1282e457e761f129",
+      "current_sha256": "23a97a2b3e52291e7e1eb276526b3fbe62b4a82fe1ddc16cb40b743bc766321b"
+    },
+    {
+      "path": "specs/CX-26-decision-composition-runtime.md",
+      "change": "modified",
+      "previous_sha256": "cabd7b6dca676d626dc0a7ad2672333d7a9a435b7b0d89e5f341622bb8c146e9",
+      "current_sha256": "9eec0f6d2b6340c95469913914c91852e79b3e179d5645349c60b5c48595add8"
+    },
+    {
+      "path": "specs/CX-28-semantic-working-set-manager.md",
+      "change": "modified",
+      "previous_sha256": "84f95928167b16f00e837a2a987ba6639fc7a69eab85f9abf26ab7d56f91213b",
+      "current_sha256": "2d3c6b6413b10241478a02ed75dfbe1c13e0b4243afe94737b9cbd3d69dca49f"
+    },
+    {
+      "path": "specs/CX-34-cognitive-scheduler-capability-registry.md",
+      "change": "modified",
+      "previous_sha256": "0e815c974a438dd8a78e5876dd2d1016e438f672878f3c1d2cb1a3862c7d86b2",
+      "current_sha256": "3346937dfabd24b6f23d654bd6eaa22288a0173cbfa2cd441e6add3d879e37fa"
+    },
+    {
+      "path": "specs/CX-37-ace-provider-runtime.md",
+      "change": "modified",
+      "previous_sha256": "442361f2b0022db79dca02d4920fe5a7f01a6e3885730b450027b930d41b0baa",
+      "current_sha256": "8d6a312ffbe5d5cdb278bef9ecd63abcd4ad1cb471a248d4276b960bd87c2505"
+    },
+    {
+      "path": "task_manifest.json",
+      "change": "modified",
+      "previous_sha256": "67955ea5c24b32f090c07afebe03466e35358693461dd49c5542efe8db690f0f",
+      "current_sha256": "ae5626d0a23c94b4f5ce5aee9073bb00f1adcf4c2d3b4981e1fe9c179f9ef8c8"
+    },
+    {
+      "path": "tests/test_schema_reflex_package.py",
+      "change": "added",
+      "previous_sha256": null,
+      "current_sha256": "2212e83141abf1aab5309fb9944f9b113b7fbd0112d16d0bdccdcfa884b18a72"
+    },
+    {
+      "path": "tests/test_schema_reflex_reference.py",
+      "change": "added",
+      "previous_sha256": null,
+      "current_sha256": "fb8ed01c9f1828c0cbff5422da4960b074044ff8afc8869b35dd748b944503c2"
+    },
+    {
+      "path": "tools/package_views.py",
+      "change": "modified",
+      "previous_sha256": "b2710e0ba7d4eab5892473ac87cf7fa73e1c72928eeb827cf8ec7b66962636ca",
+      "current_sha256": "4f21949f0013a49b910c97654e08783a13c9849dfa5b858e8b38f27f095175fa"
+    },
+    {
+      "path": "tools/schema_reflex_package_checks.py",
+      "change": "added",
+      "previous_sha256": null,
+      "current_sha256": "6eb39f3d486a55fe4591a0e23cefaf0a1a8318916026d45e8c5099262a8b6f56"
+    },
+    {
+      "path": "tools/schema_reflex_reference.py",
+      "change": "added",
+      "previous_sha256": null,
+      "current_sha256": "53bde92288e276b76966e092c05122b78444237baf116d6643971390fce0bb67"
+    },
+    {
+      "path": "tools/validate_package.py",
+      "change": "modified",
+      "previous_sha256": "32e8e00b91e2cf69554bb52135755d7c71e20ddda234206df3852b1ffc8509a2",
+      "current_sha256": "451c88d51fdd5003d63a4945c4046002fd2e4489b315edce0c00486dd4868194"
+    }
+  ],
+  "counts": {
+    "added": 22,
+    "modified": 45,
+    "removed": 0
+  },
+  "complete_inventory": "See release SHA256SUMS inventory for every distributed file."
+}

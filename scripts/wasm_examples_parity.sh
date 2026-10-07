@@ -39,11 +39,14 @@ for rt in wasmtime "$HOME/.wasmtime/bin/wasmtime"; do
 done
 [ -n "$WASMRT" ] || { echo "wasm_examples_parity: no wasm runtime — skipping"; exit 0; }
 
-AXON="${AXON:-target/debug/axon}"
-if [ ! -x "$AXON" ]; then
+. scripts/lib/axon_bin.sh
+# The binary the caller names, or the one THIS harness builds -- never one
+# that merely sits under target/ (scripts/lib/axon_bin.sh).
+if [ -z "${AXON:-}" ]; then
   if ! cargo build -q -p axon-core --bin axon 2>/dev/null; then
     echo "wasm_examples_parity: codegen build unavailable — skipping"; exit 0
   fi
+  use_built AXON axon
 fi
 # The wasm runtime must be built for str/dict/array examples to link.
 # Distinguish an ABSENT target from a BROKEN build. The probe used to be

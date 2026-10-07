@@ -528,4 +528,4 @@ CLI surface simulated as `examples/asi/run.sh` (the eventual Phase-10 `axon goal
 
 ## Design Reference
 
-Full language design: `/home/cklaus/projects/BTask/packages/bcode/AI_Language_Plan.md`
+Full language design: `AI_Language_Plan.md` (vendored into this repository by bbbef89; it previously lived at `BTask/packages/bcode/`, which no longer exists)

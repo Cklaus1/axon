@@ -1,0 +1,372 @@
+{
+  "schema": "axon-v022-stage-verification/1",
+  "profile": "v022-stage5",
+  "purpose": "The Stage-5 closure contract: every property Stage 5 must establish, the harness that establishes it on the EXACT Axon + MiCode pair, and the skips that are outside Stage 5. Consumed by scripts/v022_stage5_verify.sh (which executes it) and scripts/release_check.sh --stage v022-stage5 (which checks a receipt against it). For a REQUIRED harness, SKIP and NOT_RUN are failures of Stage-5 certification. This profile does NOT redefine AXON_HARNESS_STRICT; repository-wide strict qualification keeps its own meaning.",
+  "peer": {
+    "name": "micode",
+    "env": "MICODE_DIR",
+    "branch": "v022/micode"
+  },
+  "harnesses": [
+    {
+      "id": "axon-stage5-gates",
+      "required": true,
+      "kind": "script",
+      "repo": "axon",
+      "command": [
+        "scripts/v022_stage5_gates.sh"
+      ],
+      "pass_marker": "v022_stage5_gates: PASS",
+      "establishes": "Axon-side exact tests for every Stage-5 registry row (G03/G08/G10/G11/G13/G28/G32), B256 adapter negotiation, G3 intake join, and the Fabric omissions regression"
+    },
+    {
+      "id": "loop-interop",
+      "required": true,
+      "kind": "script",
+      "repo": "axon",
+      "command": [
+        "scripts/loop_interop_gate.sh"
+      ],
+      "pass_marker": "loop_interop_gate: PASS",
+      "skip_marker": "loop_interop_gate: SKIP",
+      "require_markers": [
+        {
+          "pattern": "^loop_interop_gate: G3 section executed ([0-9]+) assertions, ([0-9]+) failed$",
+          "min_first": 27,
+          "second_equals": 0
+        },
+        {
+          "pattern": "^loop_interop_gate: B256 section executed ([0-9]+) assertions, ([0-9]+) failed$",
+          "min_first": 17,
+          "second_equals": 0
+        }
+      ],
+      "establishes": "Real MiCode <-> real Axon: B268 policy consumption and single-owner refusal, B269 episode export/intake, G3 (real MiCode -> real axon-fabric -> real interpreter -> real axon-loop intake) and B256 (real MiCode negotiating with the real cortex-policy-adapter before any model call). Discriminates: a pre-G3 MiCode (0f5329f8) fails every G3 assertion; a lazily negotiating MiCode (f926dbf8) fails 9/11 B256 assertions."
+    },
+    {
+      "id": "discriminators",
+      "required": true,
+      "kind": "discriminator",
+      "repo": "axon",
+      "command": [
+        "scripts/loop_interop_gate.sh"
+      ],
+      "cases": [
+        {
+          "micode_revision": "0f5329f8f609ac1305eb14e9fb755197a2e0096e",
+          "why": "pre-G3 MiCode (no Fabric acceptance-check client)",
+          "section": "G3",
+          "min_failed": 20
+        },
+        {
+          "micode_revision": "f926dbf8519afd5bdcbf4396490acb2b81a0ec0b",
+          "why": "lazy B256 MiCode (negotiates on first decision, writes no profile record)",
+          "section": "B256",
+          "min_failed": 9
+        }
+      ],
+      "establishes": "The real-system sections DISCRIMINATE: the same gate, run against MiCode builds that lack the property, must FAIL that section. Built from the MiCode repository in throwaway worktrees at the pinned revisions; a gate that passed those builds would prove nothing."
+    },
+    {
+      "id": "micode-stage5-exact",
+      "required": true,
+      "kind": "cargo-exact",
+      "repo": "micode",
+      "package": "micode-persist",
+      "target": "--lib",
+      "tests": [
+        "bridge_profile::tests::cross_language_vectors",
+        "bridge_profile::tests::the_vendored_vectors_are_axons_bytes",
+        "bridge_profile::tests::micode_offer_against_axon_v022_round_trips",
+        "bridge_profile::tests::micodes_real_old_peer_documents_are_not_a_profile",
+        "cortex_client::profile_negotiation_tests::a_confirmed_accept_is_agreed_and_negotiated_once",
+        "cortex_client::profile_negotiation_tests::an_old_adapter_is_an_old_peer_and_keeps_incumbent_operation",
+        "cortex_client::profile_negotiation_tests::an_explicit_unsupported_is_recorded_and_keeps_incumbent_operation",
+        "cortex_client::profile_negotiation_tests::an_untrustworthy_answer_decides_nothing_and_dispatches_nothing",
+        "cortex_client::profile_negotiation_tests::without_opting_in_nothing_is_negotiated",
+        "cortex_client::profile_negotiation_tests::negotiating_early_yields_a_record_without_any_decision",
+        "closed_loop_digest::tests::negative_zero_integer_is_zero_but_negative_zero_floats_are_refused",
+        "workspace_version::tests::the_cross_language_vector_reproduces_byte_for_byte",
+        "fabric_check::tests::a_receipt_for_this_attempt_over_this_tree_is_cited_verbatim",
+        "fabric_check::tests::evidence_about_anything_else_is_refused",
+        "fabric_check::tests::a_check_that_did_not_complete_is_unknown_not_passed",
+        "fabric_check::tests::a_refusing_fabric_is_an_error_not_a_verdict",
+        "fabric_check::tests::a_template_cannot_name_a_task_owned_field"
+      ],
+      "establishes": "MiCode halves of B256 (negotiation), B261 (WorkspaceVersion vector), the -0 cross-implementation rule, and G3 (the Fabric acceptance-check client's refusal paths)"
+    },
+    {
+      "id": "micode-b268-real-binary",
+      "required": true,
+      "kind": "cargo-exact",
+      "repo": "micode",
+      "package": "micode",
+      "target": "--test closed_loop_v022_real_binary",
+      "tests": [
+        "a_policy_adapter_and_an_active_policy_together_are_refused_before_anything_runs",
+        "a_policy_without_an_expected_context_is_refused_before_any_provider_call",
+        "a_policy_narrows_the_sent_tools_and_an_invalid_one_abstains_to_the_incumbent",
+        "a_mismatched_context_is_refused_before_any_provider_call"
+      ],
+      "establishes": "B268 single policy-adoption owner (TWO_POLICY_ADOPTION_OWNERS) and policy/context refusals on the real MiCode binary"
+    },
+    {
+      "id": "micode-suite",
+      "required": false,
+      "kind": "cargo-suite",
+      "repo": "micode",
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "--workspace",
+        "--no-fail-fast"
+      ],
+      "prerequisites": [
+        "python3 -c 'import pytest'"
+      ],
+      "establishes": "The MiCode workspace suite as a REGRESSION baseline for the pair, reported separately from the Stage-5 requirements as PASS, PASS_WITH_KNOWN_BASELINE_DEFECTS (only the declared defects failed, exactly as fingerprinted, each re-reproduced on its pinned baseline this run) or FAIL. pytest is a PREREQUISITE: its absence is NOT_RUN, which fails the profile.",
+      "role": "regression",
+      "gates_profile": true
+    }
+  ],
+  "properties": [
+    {
+      "task": "B256",
+      "gate": "G16-r22-negotiation",
+      "harnesses": [
+        "axon-stage5-gates",
+        "micode-stage5-exact",
+        "loop-interop"
+      ],
+      "required": true
+    },
+    {
+      "task": "B256",
+      "gate": "G16-r22-closed-wire",
+      "harnesses": [
+        "axon-stage5-gates",
+        "micode-stage5-exact",
+        "loop-interop"
+      ],
+      "required": true
+    },
+    {
+      "task": "B261",
+      "gate": "G03-r22-workspace-import",
+      "harnesses": [
+        "axon-stage5-gates",
+        "micode-stage5-exact",
+        "loop-interop"
+      ],
+      "required": true
+    },
+    {
+      "task": "B261",
+      "gate": "G28-r22-workspace-not-context",
+      "harnesses": [
+        "axon-stage5-gates"
+      ],
+      "required": true
+    },
+    {
+      "task": "B264",
+      "gate": "G03-r22-check-effects",
+      "harnesses": [
+        "axon-stage5-gates"
+      ],
+      "required": true,
+      "note": "hidden-check semantics: the check judges the candidate from outside its context; a substituted suite or stale epoch launches nothing"
+    },
+    {
+      "task": "B265",
+      "gate": "G32-r22-receipt-roles",
+      "harnesses": [
+        "axon-stage5-gates"
+      ],
+      "required": true
+    },
+    {
+      "task": "B265",
+      "gate": "G32-r22-artifact-recheck",
+      "harnesses": [
+        "axon-stage5-gates"
+      ],
+      "required": true
+    },
+    {
+      "task": "B268",
+      "gate": "G16-r22-real-consumer",
+      "harnesses": [
+        "micode-b268-real-binary",
+        "loop-interop"
+      ],
+      "required": true
+    },
+    {
+      "task": "B268",
+      "gate": "G16-r22-candidate-shortlist",
+      "harnesses": [
+        "micode-b268-real-binary",
+        "loop-interop"
+      ],
+      "required": true
+    },
+    {
+      "task": "B269",
+      "gate": "G16-r22-real-producer",
+      "harnesses": [
+        "loop-interop"
+      ],
+      "required": true
+    },
+    {
+      "task": "B270",
+      "gate": "G13-r22-billing-settlement",
+      "harnesses": [
+        "axon-stage5-gates"
+      ],
+      "required": true
+    },
+    {
+      "task": "B270",
+      "gate": "G10-r22-cohort-denominator",
+      "harnesses": [
+        "axon-stage5-gates"
+      ],
+      "required": true
+    },
+    {
+      "task": "B271",
+      "gate": "G08-r22-logical-branches",
+      "harnesses": [
+        "axon-stage5-gates"
+      ],
+      "required": true
+    },
+    {
+      "task": "B271",
+      "gate": "G11-r22-workspace-cas",
+      "harnesses": [
+        "axon-stage5-gates"
+      ],
+      "required": true
+    },
+    {
+      "task": "B271",
+      "gate": "G08-r22-branch-cancellation",
+      "harnesses": [
+        "axon-stage5-gates"
+      ],
+      "required": true
+    },
+    {
+      "task": "G3",
+      "gate": "identity-map G3 (D12: acceptance check through Fabric)",
+      "harnesses": [
+        "loop-interop",
+        "axon-stage5-gates",
+        "micode-stage5-exact"
+      ],
+      "required": true
+    }
+  ],
+  "not_established_here": [
+    {
+      "task": "B270",
+      "gate": "G10-r22-full-task-cost",
+      "why": "D10: no operator price schedule; execution cost stays Unknown with its reservation as liability. NOT_RUN, not passed."
+    },
+    {
+      "task": "B261",
+      "gate": "G03-r22-trial-isolation",
+      "why": "per-trial caches are tested (two_trials_caches_do_not_see_each_others_writes, through_submit_a_trials_home_is_its_own) but the package gate asks for trial isolation on the selected production profile, which is B263-dependent"
+    },
+    {
+      "task": "B264",
+      "gate": "G01-r22-registered-check / G01-r22-verifier-separation",
+      "why": "exercised by the check_effects file and G3 intake step 8, but no execution-registry row claims them; they stay NOT_RUN in the package ledger until one does"
+    },
+    {
+      "task": "B268",
+      "gate": "G16-r22-provider-host-boundary",
+      "why": "a Stage-4 (tui merge, ed082601) property; not re-established by this profile"
+    }
+  ],
+  "outside_stage5_skips": [
+    {
+      "harness": "b263_qualify",
+      "owner": "Stage 3 / S3-6",
+      "why": "Linux microVM profile qualification; awaits the operator's Ed25519 signature on the B263 evidence and the x3 waiver decision. Not a Stage-5 property."
+    },
+    {
+      "harness": "axon-vm lib_launch live boot",
+      "owner": "Stage 3",
+      "why": "needs the guest kernel built into the snapshot; B263/backend qualification, not Stage 5"
+    },
+    {
+      "harness": "axon-vm cli_parity case run_launch_no_firecracker_json",
+      "owner": "Stage 3",
+      "why": "the no-firecracker golden cannot be reproduced on a host where firecracker is installed at a fixed path"
+    },
+    {
+      "harness": "kernel_enforce_test",
+      "owner": "OS-K (optional)",
+      "why": "custom-kernel enforcement prerequisites absent on this host"
+    },
+    {
+      "harness": "Android NDK unavailable — lifecycle adapter",
+      "owner": "platform qualification",
+      "why": "Android NDK/emulator not installed; platform target, not Stage 5"
+    },
+    {
+      "harness": "Android NDK/emulator unavailable — compute parity",
+      "owner": "platform qualification",
+      "why": "as above"
+    },
+    {
+      "harness": "codegen unavailable — all-examples parity",
+      "owner": "compiler (I-2)",
+      "why": "structural skip inside the --no-default-features test stage; interp<->codegen parity is executed by the gate's parity_all stage"
+    },
+    {
+      "harness": "codegen unavailable — clock parity",
+      "owner": "compiler (I-2)",
+      "why": "as above"
+    },
+    {
+      "harness": "codegen unavailable — fuzz parity",
+      "owner": "compiler (I-2)",
+      "why": "as above"
+    },
+    {
+      "harness": "axon build (no codegen feature)",
+      "owner": "compiler (I-2)",
+      "why": "as above"
+    },
+    {
+      "harness": "to_str-of-str native parity (no codegen feature)",
+      "owner": "compiler (I-2)",
+      "why": "as above"
+    }
+  ],
+  "result_semantics": {
+    "PASS": "executed and established its property",
+    "FAIL": "executed and the property failed, or evidence is missing",
+    "SKIP": "the harness reported a skip; for a required harness a Stage-5 FAILURE",
+    "NOT_RUN": "a prerequisite or the peer is absent; for a required harness a Stage-5 FAILURE",
+    "PASS_WITH_KNOWN_BASELINE_DEFECTS": "the MiCode regression suite failed EXACTLY on declared pre-existing defects: same test id, same failure class, same normalized signature, the declared count, and each still reproducing on its pinned baseline revision in this run. Known defects are counted separately and never as passes. Anything else is FAIL.",
+    "quantities": "stage5_required (PASS|FAIL), micode_full_suite (PASS|PASS_WITH_KNOWN_BASELINE_DEFECTS|FAIL) and stage5_verdict (VERIFIED|NOT_VERIFIED) are reported independently"
+  },
+  "declared_baseline_defects": [],
+  "retired_baseline_defects": [
+    {
+      "id": "MICODE-TUI-QUIT-CHECKPOINT-RACE",
+      "test": "the_goodbye_hint_names_an_interactive_resume_that_continues_the_session",
+      "declared_on": "micode 65286581 (reproduced there, ext4 only)",
+      "fixed_by": "micode 109d3ac6 (tui; also origin/main 3b524439): after the TUI loop exits, wait (bounded, 10s) for the cancelled session task instead of aborting it, so /quit and a second Ctrl+C keep the completion-boundary checkpoint. Regression test quitting_while_the_answer_is_still_committing_keeps_the_turn_resumable (debug fault hook MICODE_FAULT_SLOW_CHECKPOINT_MS).",
+      "diagnosis_correction": "the lost save was drive_session's completion-boundary checkpoint, not TurnCheckpointer::on_turn_committed (a one-turn TUI prompt is always a final turn); same race.",
+      "removed_with": "the v022 MiCode line's merge of tui@109d3ac6; from then the test must simply pass"
+    }
+  ]
+}

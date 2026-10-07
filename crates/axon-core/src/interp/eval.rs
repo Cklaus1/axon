@@ -35,13 +35,13 @@ fn axon_type_to_width(ty: &crate::ast::AxonType) -> Option<crate::types::Type> {
 /// Coerce a runtime value to a `SizedInt` when the target type is a non-i64
 /// integer. `Int(n)` → `SizedInt{n, ty}`. Any other value is returned as-is
 /// (the type-checker has already validated the types match; this is a
-/// representation upgrade only). `SizedInt` with a different width is
-/// re-tagged to the new width (preserves the stored bit-pattern; the checker
-/// ensures same-width ops only).
+/// representation upgrade only). A `SizedInt` of another width is left as it
+/// is, and the declared-type cast that follows refuses it (the checker
+/// refuses it too, E0307): re-tagging it would turn one width into another
+/// without converting its value (C9 round 4b, amendment 60).
 fn coerce_to_sized(v: Value, width: crate::types::Type) -> Value {
     match v {
         Value::Int(n) => Value::SizedInt { val: n, ty: width },
-        Value::SizedInt { val, .. } => Value::SizedInt { val, ty: width },
         other => other,
     }
 }
@@ -103,6 +103,7 @@ fn fn_value(name: &str, arity: usize) -> Value {
             tier: None,
         }),
         captured: std::rc::Rc::new(std::cell::RefCell::new(HashMap::new())),
+        contract: None,
     }
 }
 
@@ -117,6 +118,7 @@ impl<'p> Interp<'p> {
                 if let Some(v) = env.get(name) {
                     Ok(v.clone())
                 } else if let Some(v) = self.globals.get(name) {
+                    self.seal_global(name)?;
                     Ok(v.clone())
                 } else if let Some(f) = self.fns.get(name.as_str()) {
                     // AX-25: a top-level fn named in VALUE position (`let g = f`,
@@ -159,11 +161,12 @@ impl<'p> Interp<'p> {
                 if !self.refine_preds.is_empty() {
                     if let Some(crate::ast::AxonType::Named(rn)) = ty {
                         if let Some(pred) = self.refine_preds.get(rn.as_str()).copied() {
+                            self.seal_refine(rn)?;
                             let mut pe = Env::new();
                             pe.define("_".into(), v.clone());
                             // Also bind the bound name for inline `let x: T where E[x] > k`.
                             pe.define(name.clone(), v.clone());
-                            if let Value::Bool(false) = self.eval(pred, &mut pe)? {
+                            if let Value::Bool(false) = crate::interp::contain_frame(self.eval(pred, &mut pe), "a predicate")? {
                                 return Err(Flow::RefineViolation(format!(
                                     "the value bound to `{}` (= {}) violates the refinement `{}` \
                                      — the value does not satisfy the type's predicate",
@@ -180,11 +183,22 @@ impl<'p> Interp<'p> {
                 // Completeness requirement: EVERY static-type-introduction site must
                 // coerce so no SizedInt value is left as a bare Int at any missed site,
                 // which would silently compute in i64 (I-9).
-                let v = if let Some(width) = ty.as_ref().and_then(axon_type_to_width) {
+                let mut v = if let Some(width) = ty.as_ref().and_then(axon_type_to_width) {
                     coerce_to_sized(v, width)
                 } else {
                     v
                 };
+                // The annotation is a declared type: cast to it (amendment 53).
+                if let Some(t) = ty {
+                    if let Err(why) = self.cast(&mut v, t, &Default::default()) {
+                        return panic(format!(
+                            "`{name}` is declared `{}` but was bound to {} — a runtime type \
+                             confusion ({why})",
+                            crate::doc::render_type(t),
+                            display(&v)
+                        ));
+                    }
+                }
                 env.define(name.clone(), v);
                 Ok(Value::Unit)
             }
@@ -426,7 +440,12 @@ impl<'p> Interp<'p> {
                     // same as `chan<T>()`. Its BUILTINS doc said "bounded
                     // channel with the given capacity" and now says what it does.
                     if name.starts_with("chan::<") || name == "Chan::new" {
-                        return Ok(Value::Chan(Rc::new(RefCell::new(VecDeque::new()))));
+                        let q = Rc::new(RefCell::new(VecDeque::new()));
+                        // Stamped with its stated element type, and its
+                        // creating side recorded (amendment 72).
+                        let elem = name.strip_prefix("chan::<").and_then(|s| s.strip_suffix('>'));
+                        self.chan_created(&q, elem);
+                        return Ok(Value::Chan(q));
                     }
                     // R13 native FFI: a native `M::fn(...)` call dispatches to the
                     // in-process mock shim (one impl, two engines — I-2).
@@ -448,7 +467,14 @@ impl<'p> Interp<'p> {
                 if let Value::Chan(q) = &recv {
                     return match method.as_str() {
                         "send" => {
-                            let v = self.eval(&args[0], env)?;
+                            let mut v = self.eval(&args[0], env)?;
+                            // Cast to every element type the channel crossed.
+                            self.chan_send_check(q, &mut v)?;
+                            // The operator sends sealed code a value: dicts in
+                            // it are snapshotted (amendment 72 part 2).
+                            if !self.frame_sealed.get() {
+                                self.dict_edge_in(&v)?;
+                            }
                             q.borrow_mut().push_back(v);
                             Ok(Value::Unit)
                         }
@@ -484,6 +510,8 @@ impl<'p> Interp<'p> {
                 }
                 let tn = argv[0].type_name();
                 if let Some(f) = self.methods.get(&(tn.clone(), method.clone())) {
+                    self.seal_method(f, &tn)?;
+                    self.seal_dispatch(expr, receiver, f, &tn)?;
                     self.call_fn(f, argv)
                 } else {
                     panic(format!("no method `{method}` on type `{tn}`"))
@@ -587,6 +615,15 @@ impl<'p> Interp<'p> {
                     } else {
                         fval
                     };
+                    // A field is a declared type: cast to it (amendment 53).
+                    let mut fval = fval;
+                    if let Err(why) = self.cast_field(name, fname, &mut fval) {
+                        return panic(format!(
+                            "field `{fname}` of `{name}` was given {} — a runtime type confusion \
+                             ({why})",
+                            display(&fval)
+                        ));
+                    }
                     fmap.insert(fname.clone(), fval);
                 }
                 if let Some((enum_name, variant)) = name.split_once("::") {
@@ -612,10 +649,11 @@ impl<'p> Interp<'p> {
                                 if let crate::ast::AxonType::Named(rn) = &tf.ty {
                                     if let Some(pred) = self.refine_preds.get(rn.as_str()).copied()
                                     {
+                                        self.seal_refine(rn)?;
                                         if let Some(fv) = fmap.get(&tf.name) {
                                             let mut pe = Env::new();
                                             pe.define("_".into(), fv.clone());
-                                            if let Value::Bool(false) = self.eval(pred, &mut pe)? {
+                                            if let Value::Bool(false) = crate::interp::contain_frame(self.eval(pred, &mut pe), "a predicate")? {
                                                 return Err(Flow::RefineViolation(format!(
                                                     "field `{}` of `{}` (= {}) violates the refinement \
                                                      `{}` — the value does not satisfy the type's predicate",
@@ -638,7 +676,16 @@ impl<'p> Interp<'p> {
                                 };
                                 let mut pe = Env::new();
                                 pe.define("_".into(), sv.clone());
-                                if let Value::Bool(false) = self.eval(pred, &mut pe)? {
+                                // A DEFINITION-owned predicate runs under its
+                                // definition's provenance: a candidate struct's
+                                // `where` ran unsealed when the OPERATOR built
+                                // one, and called operator code from there (PCI
+                                // candidate-4 review, executed).
+                                let sealed = self.frame_sealed.get() || self.seal_type(name);
+                                let held = self.with_frame(sealed, || {
+                                    crate::interp::contain_frame(self.eval(pred, &mut pe), "a predicate")
+                                })?;
+                                if let Value::Bool(false) = held {
                                     return Err(Flow::RefineViolation(format!(
                                         "the constructed `{name}` violates its struct refinement \
                                          — the value does not satisfy the type's predicate"
@@ -679,12 +726,26 @@ impl<'p> Interp<'p> {
                 Ok(Value::Str(Rc::new(s)))
             }
 
-            Expr::Lambda { params, body, .. } => Ok(Value::Closure {
-                params: params.iter().map(|p| p.name.clone()).collect(),
-                body: body.clone(),
-                // T40: a SHARED, persistent capture cell — see Value::Closure.
-                captured: std::rc::Rc::new(std::cell::RefCell::new(env.snapshot())),
-            }),
+            Expr::Lambda { params, body, .. } => {
+                // Its own parameter annotations are its first contract.
+                let contract = Self::lambda_contract(params);
+                let mut cell = env.snapshot();
+                // PCI: a closure remembers that a SEALED frame created it, so it
+                // runs sealed wherever it is later called.
+                if self.frame_sealed.get() {
+                    cell.insert(
+                        crate::interp::SEALED_CLOSURE_MARK.to_string(),
+                        Value::Bool(true),
+                    );
+                }
+                Ok(Value::Closure {
+                    params: params.iter().map(|p| p.name.clone()).collect(),
+                    body: body.clone(),
+                    // T40: a SHARED, persistent capture cell — see Value::Closure.
+                    captured: std::rc::Rc::new(std::cell::RefCell::new(cell)),
+                    contract,
+                })
+            }
 
             Expr::Comptime(inner) => self.eval(inner, env),
 
@@ -811,7 +872,9 @@ impl<'p> Interp<'p> {
             .map(|idx| {
                 let mut v = vec![Value::Unit; idx + 1];
                 v[idx] = match args.get(idx) {
-                    Some(Expr::Literal(crate::ast::Literal::Str(sl))) => Value::Str(Rc::new(sl.clone())),
+                    Some(Expr::Literal(crate::ast::Literal::Str(sl))) => {
+                        Value::Str(Rc::new(sl.clone()))
+                    }
                     _ => Value::Str(Rc::new(String::from("<dynamic>"))),
                 };
                 v
@@ -1018,9 +1081,9 @@ impl<'p> Interp<'p> {
             Ok(DomainValue::Unit) => Ok(Value::Unit),
             Ok(DomainValue::Int(n)) => Ok(Value::Int(n)),
             Ok(DomainValue::Str(s)) => Ok(Value::Str(Rc::new(s))),
-            Ok(DomainValue::IntArray(ns)) => {
-                Ok(Value::Array(Rc::new(ns.into_iter().map(Value::Int).collect())))
-            }
+            Ok(DomainValue::IntArray(ns)) => Ok(Value::Array(Rc::new(
+                ns.into_iter().map(Value::Int).collect(),
+            ))),
             Ok(DomainValue::Handle { name, payload }) => Ok(Value::Handle {
                 module: module.name.to_string(),
                 name: name.to_string(),
@@ -1056,10 +1119,15 @@ impl<'p> Interp<'p> {
 
         // AX-08: a call passing `&mut a` moves each borrowed value out of the
         // caller's binding into the callee and back on return (O(1), no copy).
-        if args
-            .iter()
-            .any(|a| matches!(a, Expr::UnaryOp { op: UnaryOp::RefMut, .. }))
-        {
+        if args.iter().any(|a| {
+            matches!(
+                a,
+                Expr::UnaryOp {
+                    op: UnaryOp::RefMut,
+                    ..
+                }
+            )
+        }) {
             return self.eval_call_mut(callee, args, tier, env);
         }
 
@@ -1102,9 +1170,14 @@ impl<'p> Interp<'p> {
         *self.current_call_tier.borrow_mut() = tier.map(|t| t.to_string());
 
         if let Expr::Ident(name) = callee {
-            // 1. A local/captured variable holding a closure.
-            if let Some(Value::Closure { .. }) = env.get(name) {
-                let c = env.get(name).unwrap().clone();
+            // 1. A local/captured variable: it is what the name means here,
+            // so the call goes through it — a closure is called, anything
+            // else is not callable. It never falls through to a builtin or
+            // fn of the same NAME: a confused value in a local `square` would
+            // otherwise run the operator's own `fn square` (C9 round 4b,
+            // PSV-1, amendment 60).
+            if let Some(c) = env.get(name) {
+                let c = c.clone();
                 return self.call_local_closure(c, argv);
             }
             // 2. A builtin — skipped for a name already proven not to be one
@@ -1129,6 +1202,7 @@ impl<'p> Interp<'p> {
             }
             // 4. A module-level closure constant.
             if let Some(Value::Closure { .. }) = self.globals.get(name) {
+                self.seal_global(name)?;
                 let c = self.globals.get(name).unwrap().clone();
                 return self.call_closure(c, argv);
             }
@@ -1144,13 +1218,7 @@ impl<'p> Interp<'p> {
     /// AX-08: `f(.., &mut a, ..)`. The checker (E0605/E0606) guarantees the
     /// callee is a free fn whose matching params are `&mut [T]`, every `&mut`
     /// operand is a whole local, and no other argument mentions it.
-    fn eval_call_mut(
-        &self,
-        callee: &Expr,
-        args: &[Expr],
-        tier: Option<&str>,
-        env: &mut Env,
-    ) -> R {
+    fn eval_call_mut(&self, callee: &Expr, args: &[Expr], tier: Option<&str>, env: &mut Env) -> R {
         let f = match callee {
             Expr::Ident(name) => match self.fns.get(name) {
                 Some(f) => *f,
@@ -1231,7 +1299,10 @@ impl<'p> Interp<'p> {
             // can replay the continuation.
             body: body.clone(),
             env_snapshot: env.snapshot(),
+            sealed: self.frame_sealed.get(),
+            operator_frames: self.operator_frames.get(),
         };
+        let depth = self.handlers.borrow().len();
         self.handlers.borrow_mut().push(frame);
         let result = self.eval(body, env);
         self.handlers.borrow_mut().pop();
@@ -1242,7 +1313,7 @@ impl<'p> Interp<'p> {
         // never raises this, so its behavior is unchanged).
         let mut value = match result {
             Ok(v) => v,
-            Err(Flow::HandlerDone(v)) => v,
+            Err(Flow::HandlerDone(v, d)) if d == depth => v,
             Err(e) => return Err(e),
         };
 
@@ -1287,6 +1358,8 @@ impl<'p> Interp<'p> {
             effect: ctx.effect.clone(),
             feed: v,
             consumed: false,
+            sealed: ctx.sealed,
+            operator_frames: self.operator_frames.get(),
         });
         let mut body_env = Env::from_snapshot(ctx.env_snapshot.clone());
         let result = self.eval(&ctx.body, &mut body_env);
@@ -1307,20 +1380,31 @@ impl<'p> Interp<'p> {
         // so a non-tail arm can replay the continuation (multi-shot).
         let hit = {
             let stack = self.handlers.borrow();
-            stack.iter().enumerate().rev().find_map(|(i, frame)| {
-                frame.arms.iter().find(|a| a.effect == eff).map(|a| {
-                    (
-                        i,
-                        a.binding.clone(),
-                        a.body.clone(),
-                        a.captured.clone(),
-                        frame.body.clone(),
-                        frame.env_snapshot.clone(),
-                    )
+            // A sealed frame is skipped (the search goes on outward) when the
+            // operation is the operator's: see `handler_may_answer` (PSV-1).
+            let eligible = |f: &&crate::interp::HandlerFrame| {
+                self.handler_may_answer(f.sealed, f.operator_frames)
+            };
+            stack
+                .iter()
+                .enumerate()
+                .rev()
+                .filter(|(_, f)| eligible(f))
+                .find_map(|(i, frame)| {
+                    frame.arms.iter().find(|a| a.effect == eff).map(|a| {
+                        (
+                            i,
+                            a.binding.clone(),
+                            a.body.clone(),
+                            a.captured.clone(),
+                            frame.body.clone(),
+                            frame.env_snapshot.clone(),
+                            frame.sealed,
+                        )
+                    })
                 })
-            })
         };
-        let Some((idx, binding, arm_body, captured, with_body, with_env)) = hit else {
+        let Some((idx, binding, arm_body, captured, with_body, with_env, arm_sealed)) = hit else {
             return Ok(None);
         };
 
@@ -1343,10 +1427,20 @@ impl<'p> Interp<'p> {
             let mut arm_env = Env::from_snapshot(captured);
             arm_env.push();
             let bound = self.match_pattern(&binding, &payload, &mut arm_env);
-            let outcome = bound.and_then(|_| self.eval(&arm_body, &mut arm_env));
+            // The arm runs under the provenance of the `with` that installed it.
+            self.handler_edge_into(arm_sealed, &payload)?;
+            let outcome = self.with_frame(arm_sealed, || {
+                crate::interp::contain_loop_control(
+                    bound.and_then(|_| self.eval(&arm_body, &mut arm_env)),
+                    "an effect-handler arm",
+                )
+            });
             self.handlers.borrow_mut().extend(suspended);
             return match outcome {
-                Err(Flow::Resume(v)) => Ok(Some(v)),
+                Err(Flow::Resume(v)) => {
+                    self.handler_edge_back(arm_sealed, &v)?;
+                    Ok(Some(v))
+                }
                 Ok(v) => Err(Flow::Return(v)),
                 Err(other) => Err(other),
             };
@@ -1360,11 +1454,18 @@ impl<'p> Interp<'p> {
             effect: eff.to_string(),
             body: with_body,
             env_snapshot: with_env,
+            sealed: arm_sealed,
         });
         let mut arm_env = Env::from_snapshot(captured);
         arm_env.push();
         let bound = self.match_pattern(&binding, &payload, &mut arm_env);
-        let outcome = bound.and_then(|_| self.eval(&arm_body, &mut arm_env));
+        self.handler_edge_into(arm_sealed, &payload)?;
+        let outcome = self.with_frame(arm_sealed, || {
+            crate::interp::contain_loop_control(
+                bound.and_then(|_| self.eval(&arm_body, &mut arm_env)),
+                "an effect-handler arm",
+            )
+        });
         self.resume_ctx.borrow_mut().pop();
         self.handlers.borrow_mut().extend(suspended);
 
@@ -1375,7 +1476,7 @@ impl<'p> Interp<'p> {
             // The original suspended body is abandoned (the continuation was
             // reified via replay), so finish the block with HandlerDone — caught
             // by `eval_with_handler`.
-            Ok(v) => Err(Flow::HandlerDone(v)),
+            Ok(v) => Err(Flow::HandlerDone(v, idx)),
             // A stray tail `resume` that escaped without a ctx (shouldn't happen
             // on this path, but be safe): treat as a single-shot resume.
             Err(Flow::Resume(v)) => Ok(Some(v)),
@@ -1429,6 +1530,7 @@ impl<'p> Interp<'p> {
 
         let l = self.eval(left, env)?;
         let r = self.eval(right, env)?;
+        self.seal_width(op, left, right, &l, &r)?;
         eval_binop_vals(op, l, r)
     }
 

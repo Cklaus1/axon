@@ -23,8 +23,9 @@ fi
 if ! cargo build -q -p axon-core --no-default-features --bin axon-run 2>/dev/null; then
   echo "parse_or_parity: interp build unavailable — skipping"; exit 0
 fi
-AXON="${AXON:-target/debug/axon}"
-INTERP="target/debug/axon-run"
+. scripts/lib/axon_bin.sh
+use_built AXON axon  # the binary the build above produced (or the one the caller named)
+INTERP=""; use_built INTERP axon-run  # built above; never caller-named
 WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
 
 fail=0

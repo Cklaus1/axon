@@ -334,6 +334,35 @@ enum Command {
         )]
         jobs: usize,
 
+        /// Read a per-run secret (hex) as the FIRST line of stdin, before any
+        /// program code runs, and mark each test that COMPLETED — its body
+        /// returned normally, not via `exit(0)` or an `Err` — with
+        /// `"completion": HMAC-SHA256(secret, "axon-test-completion/1\0" + name)`.
+        /// A caller that must know the test really finished (Fabric) checks it.
+        #[arg(
+            long,
+            help = "Read a completion secret from stdin; tag completed tests"
+        )]
+        completion_key_stdin: bool,
+
+        /// With `--filter`, select only the test named EXACTLY that — not every
+        /// name containing it. The protected guest runner uses it so a suite
+        /// sibling (`t_ok_edge` for `t_ok`) never runs beside the registered
+        /// acceptance test (PSV review wf_d725935a-7ed).
+        #[arg(long, help = "--filter selects the exact test name, not a substring")]
+        exact: bool,
+
+        /// Seal every module under DIR (repeatable): code from it may use
+        /// builtins and its own sealed names, never a name the rest of the
+        /// program defines (E0004). Fabric seals the candidate under test so
+        /// it cannot reach the operator's suite (Protected Check Isolation).
+        #[arg(
+            long = "seal",
+            value_name = "DIR",
+            help = "Seal modules under DIR (E0004)"
+        )]
+        seal: Vec<PathBuf>,
+
         /// Emit results as newline-delimited JSON (NDJSON).
         #[arg(long, help = "Machine-readable NDJSON output")]
         json: bool,
@@ -907,7 +936,13 @@ fn dispatch(command: Command) {
             filter,
             jobs,
             json,
-        } => cmd_test(files, filter, jobs, json),
+            completion_key_stdin,
+            exact,
+            seal,
+        } => {
+            axon_core::resolver::set_sealed_module_dirs(&seal);
+            cmd_test(files, filter, jobs, json, completion_key_stdin, exact)
+        }
         Command::Replay {
             journal,
             diff,
@@ -6010,9 +6045,130 @@ struct TestOutcome {
     passed: bool,
     duration_ms: u64,
     error: Option<String>,
+    /// The test body returned normally (see `interp::TestEnd`).
+    completed: bool,
 }
 
-fn cmd_test(files: Vec<PathBuf>, filter: Option<String>, jobs: usize, json: bool) {
+/// HMAC-SHA256 (RFC 2104) over `msg`, hex.
+fn hmac_sha256_hex(key: &[u8], msg: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut k = [0u8; 64];
+    if key.len() > 64 {
+        k[..32].copy_from_slice(&Sha256::digest(key));
+    } else {
+        k[..key.len()].copy_from_slice(key);
+    }
+    let (mut ipad, mut opad) = ([0x36u8; 64], [0x5cu8; 64]);
+    for i in 0..64 {
+        ipad[i] ^= k[i];
+        opad[i] ^= k[i];
+    }
+    let inner = Sha256::new()
+        .chain_update(ipad)
+        .chain_update(msg)
+        .finalize();
+    let outer = Sha256::new()
+        .chain_update(opad)
+        .chain_update(inner)
+        .finalize();
+    outer.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// Read the completion key: ONE hex line from fd 0, read raw (a byte at a time,
+/// so no buffered stdin keeps a copy), decoded, and the line scrubbed.
+fn read_completion_key() -> Vec<u8> {
+    use std::io::Read;
+    let fail = |m: &str| -> ! {
+        eprintln!("axon test: --completion-key-stdin: {m}");
+        std::process::exit(2)
+    };
+    // Raw fd 0 on unix. Elsewhere (the wasm32 build of this binary, which has
+    // no processes and so no guest runner) plain stdin.
+    #[cfg(unix)]
+    // SAFETY: fd 0 is borrowed for the read only; ManuallyDrop never closes it.
+    let mut fd0 = std::mem::ManuallyDrop::new(unsafe {
+        <std::fs::File as std::os::unix::io::FromRawFd>::from_raw_fd(0)
+    });
+    #[cfg(not(unix))]
+    let mut fd0 = std::io::stdin();
+    let mut line = Vec::with_capacity(160);
+    let mut b = [0u8; 1];
+    loop {
+        match fd0.read(&mut b) {
+            Ok(1) if b[0] != b'\n' && line.len() < 1024 => line.push(b[0]),
+            Ok(_) => break,
+            Err(_) => fail("could not read the key from stdin"),
+        }
+    }
+    let t: &[u8] = line.trim_ascii();
+    let ok = t.len() >= 32 && t.len().is_multiple_of(2) && t.iter().all(|c| c.is_ascii_hexdigit());
+    let key = ok.then(|| {
+        t.chunks(2)
+            .map(|h| u8::from_str_radix(std::str::from_utf8(h).unwrap_or("00"), 16).unwrap_or(0))
+            .collect::<Vec<u8>>()
+    });
+    line.fill(0);
+    b.fill(0);
+    key.unwrap_or_else(|| fail("the key must be at least 16 bytes of hex"))
+}
+
+/// The completion token for test `name` under `key` — Fabric computes the same.
+fn completion_token(key: &[u8], name: &str) -> String {
+    let mut msg = b"axon-test-completion/1\0".to_vec();
+    msg.extend_from_slice(name.as_bytes());
+    hmac_sha256_hex(key, &msg)
+}
+
+/// The keyed token for a failure THIS interpreter decided, in its own domain
+/// (`axon_psv::outcome_token`): without it a printed "failed" line is not a
+/// verdict, so candidate output cannot write a failure over a genuine pass.
+fn failure_token(key: &[u8], name: &str) -> String {
+    let mut msg = b"axon-test-failed/1\0".to_vec();
+    msg.extend_from_slice(name.as_bytes());
+    hmac_sha256_hex(key, &msg)
+}
+
+fn cmd_test(
+    files: Vec<PathBuf>,
+    filter: Option<String>,
+    jobs: usize,
+    json: bool,
+    completion_key_stdin: bool,
+    exact: bool,
+) {
+    // Read the completion secret FIRST — before any program code runs — so
+    // nothing the program does can read stdin for it.
+    let completion_key: Option<Vec<u8>> = if completion_key_stdin {
+        let key = read_completion_key();
+        // K now lives in this address space, which will also run candidate
+        // code. Nothing unprivileged may read it (review wf_ecfcd666-6c9,
+        // PSV-3: a spawned helper read K from /proc/<pid>/mem in the guest):
+        // the process is NON-DUMPABLE, so no unprivileged process, its own
+        // children included, can open its memory; and it can spawn NOTHING, as
+        // `Exec` leaves the effect ceiling whatever the caller granted.
+        #[cfg(target_os = "linux")]
+        // SAFETY: prctl(PR_SET_DUMPABLE, 0) takes no pointers.
+        if unsafe { libc::prctl(libc::PR_SET_DUMPABLE, 0, 0, 0, 0) } != 0 {
+            eprintln!("axon test: --completion-key-stdin: could not make the process non-dumpable");
+            std::process::exit(2);
+        }
+        let ceiling: Vec<String> = match std::env::var("AXON_ALLOWED_EFFECTS") {
+            Ok(raw) => raw
+                .split(',')
+                .map(|e| e.trim().to_string())
+                .filter(|e| !e.is_empty() && e != "Exec")
+                .collect(),
+            Err(_) => axon_core::builtins::GRANTABLE_EFFECTS
+                .iter()
+                .filter(|e| **e != "Exec")
+                .map(|e| e.to_string())
+                .collect(),
+        };
+        std::env::set_var("AXON_ALLOWED_EFFECTS", ceiling.join(","));
+        Some(key)
+    } else {
+        None
+    };
     // R23: the mint-TCB certificate gate, on every verb that EXECUTES.
     //
     // It ran on `run` and the native build path and nowhere else, so under
@@ -6073,12 +6229,20 @@ fn cmd_test(files: Vec<PathBuf>, filter: Option<String>, jobs: usize, json: bool
     // A `@[test] @[forall(n=N)]` fn with typed params is a PROPERTY test (R8):
     // its params are randomized over N cases (default 100) and a failure is
     // shrunk to a minimal counterexample. A plain `@[test]` fn must be 0-arg.
+    // A test is the OPERATOR's to define. Under `--seal`, a `@[test]` in a
+    // sealed module (the candidate under test) is not collected: candidate
+    // bytes never add a check to the rubric, nor sink one (PSV review
+    // wf_d725935a-7ed, B1). The same provenance rule the resolver applies.
+    let sealed = axon_core::resolver::sealed_module_dirs();
     let test_meta: Vec<(String, bool, Option<u32>)> = program
         .items
         .iter()
         .filter_map(|item| {
             if let axon_core::ast::Item::FnDef(f) = item {
                 let test_attr = f.attrs.iter().find(|a| a.name == "test")?;
+                if !sealed.is_empty() && axon_core::resolver::span_in_sealed(f.span, &sealed) {
+                    return None;
+                }
                 let forall_attr = f.attrs.iter().find(|a| a.name == "forall");
                 let forall_cases = forall_attr.map(|a| {
                     // `@[forall(n: 250)]` → 250; bare `@[forall]` → default 100.
@@ -6101,7 +6265,12 @@ fn cmd_test(files: Vec<PathBuf>, filter: Option<String>, jobs: usize, json: bool
                 }
                 let should_fail = test_attr.args.iter().any(|a| a == "should_fail");
                 if let Some(ref pat) = filter {
-                    if !f.name.contains(pat.as_str()) {
+                    let selected = if exact {
+                        f.name == *pat
+                    } else {
+                        f.name.contains(pat.as_str())
+                    };
+                    if !selected {
                         return None;
                     }
                 }
@@ -6125,6 +6294,7 @@ fn cmd_test(files: Vec<PathBuf>, filter: Option<String>, jobs: usize, json: bool
         .iter()
         .map(|(name, should_fail, forall_cases)| {
             let start = Instant::now();
+            let mut completed = false;
             let (passed, error) = if let Some(cases) = forall_cases {
                 // Property test (R8): randomize params, shrink on failure.
                 use axon_core::interp::PropertyOutcome;
@@ -6145,18 +6315,23 @@ fn cmd_test(files: Vec<PathBuf>, filter: Option<String>, jobs: usize, json: bool
                 }
             } else {
                 // Plain zero-arg @[test].
-                match axon_core::interp::run_test_fn(&program, name) {
-                    Ok(()) if *should_fail => (
+                // Property tests issue no completion evidence (yet): their
+                // cases run many times and "completed" is not one event.
+                match axon_core::interp::run_test_fn_outcome(&program, name) {
+                    Ok(_) if *should_fail => (
                         false,
                         Some(format!("should_fail test '{name}' completed without panicking")),
                     ),
-                    Ok(()) => (true, None),
+                    Ok(end) => {
+                        completed = end == axon_core::interp::TestEnd::Completed;
+                        (true, None)
+                    }
                     Err(_) if *should_fail => (true, None),
                     Err(e) => (false, Some(e)),
                 }
             };
             let duration_ms = start.elapsed().as_millis() as u64;
-            TestOutcome { name: name.clone(), passed, duration_ms, error }
+            TestOutcome { name: name.clone(), passed, duration_ms, error, completed }
         })
         .collect();
 
@@ -6180,17 +6355,45 @@ fn cmd_test(files: Vec<PathBuf>, filter: Option<String>, jobs: usize, json: bool
 
         if json {
             if r.passed {
-                println!(
-                    "{{\"name\":{:?},\"status\":\"ok\",\"duration_ms\":{}}}",
-                    r.name, r.duration_ms
-                );
+                match completion_key.as_deref().filter(|_| r.completed) {
+                    Some(k) => println!(
+                        "{{\"name\":{:?},\"status\":\"ok\",\"duration_ms\":{},\"completion\":\"{}\"}}",
+                        r.name,
+                        r.duration_ms,
+                        completion_token(k, &r.name)
+                    ),
+                    None => println!(
+                        "{{\"name\":{:?},\"status\":\"ok\",\"duration_ms\":{}}}",
+                        r.name, r.duration_ms
+                    ),
+                }
             } else {
                 let msg = r.error.as_deref().unwrap_or("non-zero exit");
-                let escaped = msg.replace('\\', "\\\\").replace('"', "\\\"");
-                println!(
-                    "{{\"name\":{:?},\"status\":\"failed\",\"duration_ms\":{},\"message\":\"{}\"}}",
-                    r.name, r.duration_ms, escaped
-                );
+                // Every control character is escaped too: a raw newline in a
+                // message (which can carry candidate text) split the line and
+                // dropped the named test's result (PCI 15).
+                let escaped: String = msg
+                    .chars()
+                    .map(|c| match c {
+                        '\\' => "\\\\".to_string(),
+                        '"' => "\\\"".to_string(),
+                        c if (c as u32) < 0x20 => format!("\\u{:04x}", c as u32),
+                        c => c.to_string(),
+                    })
+                    .collect();
+                match completion_key.as_deref() {
+                    Some(k) => println!(
+                        "{{\"name\":{:?},\"status\":\"failed\",\"duration_ms\":{},\"message\":\"{}\",\"completion\":\"{}\"}}",
+                        r.name,
+                        r.duration_ms,
+                        escaped,
+                        failure_token(k, &r.name)
+                    ),
+                    None => println!(
+                        "{{\"name\":{:?},\"status\":\"failed\",\"duration_ms\":{},\"message\":\"{}\"}}",
+                        r.name, r.duration_ms, escaped
+                    ),
+                }
             }
         } else if r.passed {
             println!("test {} ... ok ({:.1}ms)", r.name, r.duration_ms as f64);

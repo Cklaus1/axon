@@ -1,0 +1,521 @@
+# Axon / MiCode: Jimothy + WebMCP integration review
+
+## Decision
+
+Recommend a coordinated Axon v0.20 / MiCode Axon Support v0.14 design-and-build-plan amendment. These version numbers are recommendations, not generated releases. The supplied v0.19 / v0.13 archives remain unchanged.
+
+Integrate the supported mechanisms into existing owners rather than introducing another Reflex runtime, registry, admission authority, or file format. The current packs already specify most of the broad architecture. The material new work is a schema-ingestion frontend, explicit fixed-task lightweight-distillation experiments, and executable cross-boundary conformance/acceptance cases.
+
+## Scope and observed baseline
+
+Both current package validators exited 0. Axon ran 144 offline tests successfully; MiCode ran 284 offline tests successfully. These are document, schema, inert/reference-fixture and package checks. They do not establish live provider interoperability, trained-model quality, calibration validity, actual sandbox enforcement or product acceptance. No product gate was executed by this review.
+
+MiCode's pinned Axon archive digest matches the supplied Axon archive. No uncoordinated contract migration is needed before the proposed amendment.
+
+## Proposed change matrix (recommendations, not implemented features)
+
+| Area | Axon owner(s) | MiCode owner(s) | Change |
+|---|---|---|---|
+| Schema-driven semantic capabilities | CX-03, CX-05, CX-26; CX-15 only for reviewed lowering changes | MX-04, MX-22, MX-34 | Add a versioned, fail-closed MCP/WebMCP/JSON Schema subset frontend that produces existing typed candidates/questions/composition structures. Keep OpenAPI and complex schemas optional until qualified. |
+| Lightweight fixed-task distillation | CX-20, CX-22, CX-25, CX-23/CX-36 | MX-18, MX-24, MX-33 | Register deterministic/TF-IDF/frozen-encoder-plus-head baselines; preserve task/label mapping and input identity; produce candidates rather than publishing them. |
+| Teacher labeling and dataset preparation | CX-10, CX-20 | MX-13, MX-18 | Define permission-scoped, resumable teacher-label jobs, scoped caches, conflict adjudication, independent grouped partitions, and unambiguous measured events. |
+| Threshold selection | CX-06, CX-20 | MX-34 | Add a reproducible independent acceptance-selection experiment with corrected finite threshold search, insufficient-data outcomes, class support and frozen final tests. Preserve policy ownership. |
+| Full invocation semantics | CX-05, CX-26, CX-03 | MX-22, MX-34 | Fail on missing active outputs, validate cross-field constraints, preserve exact source spans and current target identities, and do not label heuristic aggregate confidence as joint correctness. |
+| Runtime-bound deployment | CX-23, CX-36, CX-37, CX-34 | MX-33, MX-34 | Bind encoder/head/tokenizer/preprocessing/label mapping/precision/runtime and relevant batching profiles; use exact compatible shared encoder assets; evaluate promotion/revocation/rollback. |
+| Context and routing pilots | CX-22, CX-28, CX-34 | MX-26, MX-32 | Treat small classifiers as optional candidates. Protect mandatory context and measure verified end-to-end utility including projection, loading, validation, fallback and training costs. |
+
+## Corrections to the preceding research interpretation
+
+1. A Neural Program is a learned-function artifact, not inherently deterministic code. A Reflex classifier may be packaged as a `.np` under CX-36. No new `.reflex` format or competing registry is warranted.
+2. Schema compilation creates a typed decision/composition plan. It does not by itself train weights or qualify a CX-36 Neural Program artifact for deployment.
+3. Jimothy's documented bundle trains one fixed question with fixed instructions, criteria and question type; task changes require retraining. A fixed head is not interchangeable with a dynamic-option model for newly discovered tools or changing span catalogs.
+4. A bounded action ID can avoid generated tool-name text, but it does not eliminate argument resolution, authorization, dispatch, tool execution or verification. No general single-token/one-pass or no-compaction guarantee follows.
+5. Typed output, successful schema compilation, high confidence, teacher agreement, runtime success and independently verified task completion remain separate claims.
+6. Human labels retain provenance and adjudication requirements. Approval is not necessarily a factual label; teacher agreement is not task-success evidence.
+
+## External primary-source observations
+
+Sources were read using the GitHub connector. Web page retrieval failed; no claim relies on an unavailable web page. Blob identities below record the contents returned by the connector.
+
+- `AndrewPrifer/jimothy`, `docs/automatic-training.md`, blob `87cb07247184918bb5f166a7a97ca02507b0c090`: frozen MiniLM or training-only TF-IDF features, separate development roles, temperature scaling, independent threshold-selection data, corrected exact binomial lower bounds over 13 cutoffs, and advisory null thresholds when evidence does not qualify. Agreement is against the supplied reference labels, not an automatically verified action outcome.
+- `AndrewPrifer/jimothy`, `docs/data-format.md`, blob `8a6e5e49946c39461bdab43873b0869b82aa9155`: one question per bundle; changing task definitions requires retraining; exact-ID joins, duplicate/conflict validation, human-label provenance, and no automatic state summarization or field selection.
+- `sdras/jev-webmcp-extension`, `README.md`, blob `cd796d670746838bf094ba89198659c66203f75f`: schema-to-question conversion, user-span choices, separate optional-presence questions, per-site access, policy controls and admitted limitations including first-element array handling.
+- `sdras/jev-webmcp-extension`, `src/core/decode.js`, blob `8014cf900991bd5b2e233f8af9e614854c48cacb`: static source review shows missing flag answers use a zero default and then binary certainty, which can yield false with confidence one. It also computes call confidence using a minimum over judgments. That minimum is a heuristic, not demonstrated joint correctness. This review did not execute the extension or claim a complete extension security audit.
+
+## Required new or strengthened falsification cases
+
+- Missing active Boolean, member or optional-presence output must not become false, absent or confident success.
+- Unsupported schema constructs, unsafe keys/references, oversized recursive schemas, untrusted effect hints and stale schema identities cannot silently produce an executable approximation.
+- Dynamic candidate changes cannot reuse a fixed-label head outside its applicability envelope. Reordering must preserve explicit identity mapping or refuse; changed semantics require requalification.
+- Missing correct spans/entities must yield explicit absence or observation/fallback. Source offsets, Unicode handling, source version and final types must validate.
+- Individually plausible arguments can still form an invalid tool invocation. Evaluate the complete selected action packet and dependent-field constraints.
+- Related examples or teacher caches cannot leak protected test labels into training, calibration or threshold selection. Repeated model submissions retain evaluator budgets.
+- Model, precision, encoder, preprocessing or execution-profile drift invalidates unsupported calibration reuse; no recommendation cannot imply automatic acceptance.
+- Crashed/canceled labeling and effectful work must reconcile durable identity without duplicate publication or duplicate side effects.
+- The optimized system must preserve local permission and independent verification, and improve a preregistered end-to-end objective at a useful eligible coverage.
+
+## Suggested implementation sequence
+
+First add owner/consumer contracts, typed schema fixtures and negative cases. Then run one low-risk fixed-domain shadow pilot comparing deterministic rules, TF-IDF and frozen-encoder heads with the incumbent on grouped development and held-out data. Finally qualify deployment and end-to-end outcomes; keep alternative encoders, richer heads, broad schema coverage and learned context reduction as optional experiments unless evidence justifies promotion.
+
+After reviewed source changes, regenerate task/gate manifests and generated views, sync MiCode's pinned owner snapshots and contract lock from the finalized Axon package, update source/review/changelog metadata, and reseal integrity inventories. Keep unchanged wire/artifact versions unless a separately reviewed semantic change genuinely requires a version migration. Product statuses remain NOT_RUN until their actual gates execute.
+
+## Uploaded archive identities
+
+- `MiCode_Axon_Support_Build_Plan_v0_13(2).zip`: 810860 bytes; SHA-256 `9eb6b90a63a38d16b1ad8966c36865a7f9bf6a45fa1d60ea10745fda32e70b51`.
+- `Axon_Cortex_Build_Files_v0_19(2).zip`: 972488 bytes; SHA-256 `458e0458ffcad83b20d49687faa6d7298a24337e2d4a93678c9096657573131c`.
+
+## Existing-pack source excerpts
+
+The excerpts below are supplied-document evidence, not newly implemented behavior. All claims must be interpreted with their Draft/Intended status.
+
+### Neural Programs and Reflex overlap, not competing artifact classes
+
+Source: `axon-cortex-build-v0_19/specs/CX-36-neural-program-artifact-contract.md`. SHA-256 `3c7591109dbf1e4720ce0dade1f48c43d2f8ba6ba478e01a36d64954cd9e9968`.
+
+```text
+0013: **Revision:** 0.2, reviewed draft; integrated into Cortex build package v0.16.  
+0014: **Basis:** the supplied standalone CX-36 proposal and Cortex v0.15.  
+0015: **Review scope:** design review followed by an adversarial boundary review; no trained model, Axon runtime or production gate was executed.
+0016: 
+0017: ## 1. Purpose and meaning
+0018: 
+0019: A **Neural Program** is a versioned learned-function artifact with a typed input/output contract, reproducible dependency identity, applicability envelope and governed execution path. It can specialize recurring fuzzy transformations, extraction, normalization or decisions. It is not proof that the behavioral specification was implemented correctly for every input.
+0020: 
+0021: The architecture searches among deterministic code, retrieval/projection/composition, specialized Reflex, Neural Programs and general reasoning. These are alternative implementations; no task must traverse a fixed ladder. A neural classifier packaged as `.np` may implement the Reflex interface: **Reflex describes a decision operation; Neural Program describes an artifact/execution class.** They are not mutually exclusive categories.
+0022: 
+0023: Compilation produces a **candidate**, not an admitted capability. Low latency, deterministic decoding, a valid schema, high confidence and matching examples do not individually establish semantic correctness, safety or authorization.
+```
+
+### Existing specialization and applicability owner
+
+Source: `axon-cortex-build-v0_19/specs/CX-22-cognitive-specialization-compiler.md`. SHA-256 `81d05b8d43694f1720d18e4fb749f9fefcacf06e63434f22d29648a228637b41`.
+
+```text
+0013: ## 1. Purpose
+0014: 
+0015: Cortex should not assume that one Reflex model is the permanent execution substrate for every recurring judgment. Repeated expensive cognition may be better represented as a deterministic rule, template, specialized decision model, neural program, explicit tool/procedure, general Reflex call, or continued THINK fallback.
+0016: 
+0017: The Cognitive Specialization Compiler (CSC) turns verified recurring cognition into **candidate cheaper representations**, compares them under the same task/authority/evidence contracts, and promotes only when independent admission says the specialization is worthwhile and safe within a declared applicability envelope.
+0018: 
+0019: The objective is not "replace reasoning with classifiers." The objective is:
+0087: ## 5. Candidate representation families
+0088: 
+0089: At minimum the Lab can compare:
+0090: 
+0091: 1. **Rule/template.** Deterministic implementation with explicit domain.
+0092: 2. **Specialized encoder/decision model.** GLiNER/Laya-like or other schema-conditioned discriminative model where appropriate.
+0093: 3. **Candidate-token scorer.** Nimble-style bounded token-logit scorer for small stable option spaces.
+0094: 4. **Pointer/listwise decision model.** Kev-style or other dynamic-option model for runtime-generated candidate sets.
+0095: 5. **Neural program.** CX-23/CX-36 learned function/adapter that may perform typed fuzzy transformation rather than only a bounded decision.
+0096: 6. **General Reflex.** Existing CX-05 backend.
+0097: 7. **THINK/GENERATE.** Expensive fallback/teacher for novelty or open-ended synthesis.
+0098: 
+0099: Names above are research families, not adopted dependencies. Every external implementation still passes dependency/adoption review.
+0120: ## 7. Applicability and routing
+0121: 
+0122: Every specialization exports an `ApplicabilityGuard` independent of its own confidence score where possible. Inputs include model/artifact version, domain/language, schema version, candidate cardinality, repository/task family, state projection version, and known OOD signals.
+0123: 
+0124: The runtime routes:
+0125: 
+0126: ```text
+0127: exact deterministic predicate → RULE
+0128: eligible specialized domain → SPECIALIZED_REFLEX / NEURAL_PROGRAM
+0129: unsupported or drifted domain → GENERAL_REFLEX
+0130: novel/high-risk/insufficient evidence → THINK / PROVE / BLOCK
+0131: ```
+0132: 
+0133: A specialization may abstain. It cannot widen authority, alter the candidate compiler, or approve its own use outside the registered domain.
+0134: 
+0135: ## 8. Drift, de-specialization and lifecycle
+0136: 
+0137: Specialized artifacts are immutable. New data produces new candidates. The system monitors realized outcomes, transfer decay, calibration drift, schema/candidate changes, representation/version changes and cost regressions.
+0138: 
+0139: On applicability mismatch or regression:
+0140: 
+0141: 1. stop new uses of the specialization;
+0142: 2. preserve the failed evidence and affected episode lineage;
+0143: 3. route eligible future work to the previous-good/general executor;
+0144: 4. decide whether to recalibrate, retrain, narrow scope or retire;
+0145: 5. never rewrite historical outcomes to make the specialization look valid.
+0146: 
+0147: ## 9. Relationship to other specs
+0148: 
+0149: - CX-10 provides eligible trace/data lineage.
+```
+
+### Existing Reflex result validation and joint-risk boundary
+
+Source: `axon-cortex-build-v0_19/specs/CX-05-reflex-inference.md`. SHA-256 `3c6affd73432f740b99b2cef6dcd808ae523373aea89de50aefe789a0f34ec0c`.
+
+```text
+0021: ## Supported schemas and results
+0022: 
+0023: V0 offers BinaryDecision (with compatibility adapters free to map external Noul naming), Choice over a finite ordered runtime candidate set, and bounded ordinal Score with an explicit rubric. Rank, continuous prediction and open-ended extraction are extensions; arbitrary text/code belongs to Generate. Every question includes ID, definition, candidate IDs/descriptions, required dependencies, state digest, schema version and permitted abstention reasons.
+0024: 
+0025: A response reports selected candidate or abstention; optional genuine raw scores; optional complete derived probabilities; typed raw-score origin (`ProviderReportedDistribution`, `NativeOptionLogit`, `LearnedDecisionHead`, `SequenceLikelihood`, `GeneratedEstimate`, `EnsembleEstimate`, or `Unavailable`), separately named statistics such as entropy, and an optional empirical calibration transform with a declared target event; inference/model/tokenizer/adapter versions; calibration reference or Uncalibrated; state/question/candidate-set digests; ordered candidate manifest; prefill/incremental timing where available; latency/usage/cost; and any refusal. A backend that only produces a label MUST NOT invent a probability. Model-reported confidence is marked self-report and ineligible for probability-based release routing without empirical calibration evidence.
+0026: 
+0027: Validate exact candidate membership; finite numeric values; range; normalization tolerance; field presence; branch tag; and snapshot identity. Invalid results remain failed observations, never silently coerced into successful decisions. The candidate ordering is part of the schema; test permutation sensitivity explicitly.
+0028: 
+0029: ## Speculative conditional questions
+0030: 
+0031: For ActionKind, EditTarget, CheckTarget and InspectTarget, frame each target question conditionally: choose an edit target assuming the operation is Edit, for example. All questions refer to the same observation/candidate-manifest digest. After ActionKind resolves, validate and retain only its corresponding target output and any cross-field constraints.
+0032: 
+0033: Unused results do not become tool calls. They are still paid model work, and may still involve authorized network disclosure. Bound question count, total candidates, context bytes, KV-memory allocation and speculative spend. A dependent question that needs generated patch content or another answer's actual value must wait, or explicitly branch over a finite validated hypothesis set.
+0034: 
+0035: Parallel evaluation does not justify multiplying marginal probabilities to obtain joint correctness. Joint risk is calibrated for the complete selected action packet or treated conservatively. Contradictory independently produced outputs are rejected or escalated.
+0036: 
+0037: ## Candidate-scoring details
+0038: 
+0039: Multi-token labels must be scored by a declared method, including complete sequences or a prefix-trie traversal; comparing only first-token logits is not a general solution. Register the normalization/length-bias treatment and any fixed opaque label encoding. Refit/recheck calibration when label construction changes.
+0040: 
+0041: Shared-prefix caching is an optimization with strict model/tokenizer/prompt/schema/tenant keys. Do not share mutable caches between tenants without isolation. Include long contexts, many candidates, shared token prefixes, Unicode, empty candidates and adversarial descriptions in conformance tests. No backend receives a blanket “one forward pass” or constant-time guarantee.
+```
+
+### Existing composition, source projection, dependency and partial-output owner
+
+Source: `axon-cortex-build-v0_19/specs/CX-26-decision-composition-runtime.md`. SHA-256 `cabd7b6dca676d626dc0a7ad2672333d7a9a435b7b0d89e5f341622bb8c146e9`.
+
+```text
+0048: 
+0049: This ordering is a policy heuristic, not a claim that every task must follow every stage. Authority-sensitive predicates and exact compiler facts remain deterministic even if a learned model could imitate them.
+0050: 
+0051: ## 3. Core objects
+0052: 
+0053: The runtime operates on typed catalog entries rather than model-authored executable strings.
+0054: 
+0055: ```text
+0056: ArtifactCandidate {
+0057:   candidate_id,
+0058:   semantic_type,
+0059:   source_object_ref,
+0060:   snapshot_digest,
+0061:   provenance_refs[],
+0062:   value_or_projection_ref?,
+0063:   authority_requirements[],
+0064:   applicability_predicate?,
+0065:   freshness_predicate?,
+0066:   metadata
+0067: }
+0068: 
+0069: ArtifactCatalog {
+0070:   catalog_id,
+0071:   intent_ref,
+0072:   state_ref,
+0073:   candidate_policy_ref,
+0074:   candidates[],
+0075:   omitted_candidates[],
+0076:   order_policy,
+0077:   catalog_digest
+0078: }
+0079: ```
+0080: 
+0081: Candidate generation is outside the model's authority. A model may rank or select only artifacts that the catalog compiler exposes.
+0082: 
+0083: ## 4. Operations
+0084: 
+0085: ### 4.1 SELECT
+0086: 
+0087: Select one or more existing candidates from a bounded catalog.
+0088: 
+0089: Examples:
+0090: 
+0091: - choose the observed symbol that satisfies a semantic request;
+0092: - choose the test or verifier to run;
+0093: - choose the DOM element whose text should be copied;
+0094: - choose the compiler pass or task template to include.
+0095: 
+0096: ### 4.2 PROJECT / COPY
+0097: 
+0098: Return an existing authoritative value or a deterministic projection of it rather than regenerate it.
+0099: 
+0100: Examples:
+0101: 
+0102: - copy a type from the compiler's authoritative type map;
+0103: - copy an installed version from a lockfile object;
+0104: - project a URL, number, label or source span from a selected object;
+0105: - copy an already-produced artifact into a new composition.
+0106: 
+0107: Projection rules are versioned deterministic code. Learned output is never treated as the authoritative value when the value already exists in a trusted source.
+0108: 
+0109: ### 4.3 COMPOSE
+0110: 
+0111: Assemble a valid artifact from known pieces and registered relationships.
+0112: 
+0113: Possible composition targets include:
+0114: 
+0115: - build-task DAGs;
+0116: - verification plans;
+0117: - UI/spec trees;
+0118: - tool chains;
+0119: - compiler-pass pipelines;
+0120: - action plans;
+0121: - library/skill assemblies;
+0122: - partial program graphs.
+0123: 
+0124: Composition is constrained by a schema/catalog and validated before execution or admission.
+0125: 
+```
+
+### Existing calibration and data split requirements
+
+Source: `axon-cortex-build-v0_19/build/REFLEX_CALIBRATION_LAB.md`. SHA-256 `d3c837c6b73464c334dbb98e7c7ba772450f12ff48416112c14077d0d7d07681`.
+
+```text
+0031: Example question:
+0032: 
+0033: ```text
+0034: Can Reflex handle >= X% of eligible bounded decisions while the independently
+0035: verified error rate remains <= Y and the end-to-end cost/latency improves versus
+0036: the locked baseline?
+0037: ```
+0038: 
+0039: X and Y are task/policy-specific preregistered values, not universal constants.
+0040: 
+0041: ## Calibration artifacts
+0042: 
+0043: Bind each artifact to model/weights/provider revision, tokenizer/quantization/runtime, prompt/question schema, candidate representation/construction policy, task/domain families, calibration dataset/grouping/split manifest, fitting method, validity/revocation triggers, metrics/intervals, and coverage/applicability envelope.
+0044: 
+0045: Any relevant model/schema/candidate-policy change invalidates or narrows the artifact until rechecked.
+0046: 
+0047: ## Routing hierarchy
+0048: 
+0049: Authorization and mandatory verification come first. Within eligible actions, routing may use empirical selective risk, cost, latency, novelty, disagreement and progress. The router may choose Rule, Reflex, more Observe/Retrieve, Generate, Reason, Experiment/Predict, human review or Blocked.
+0050: 
+0051: No confidence value can create permission, waive a mandatory check, or certify DONE.
+0052: 
+0053: ## Acceptance / pivot
+0054: 
+0055: Adopt a backend/router configuration only if it improves a preregistered task-level objective under minimum quality and coverage constraints. An all-abstain system fails coverage. A high-coverage but high-risk system fails quality. If no configuration improves economics, retain the incumbent and record the negative result.
+0076: 
+0077: Define a **Coding Transfer Frontier** for each registered decision family: the furthest registered distribution shift at which the backend meets the preregistered selective-quality, coverage and compute/cost envelope. Report the whole frontier curve rather than one scalar whenever possible.
+0078: 
+0079: Temperature scaling or another post-hoc calibrator is fit only on the calibration partition. Development data selects configurations. The locked test remains untouched until promotion evaluation. Transfer partitions are not repurposed into training without minting a new corpus/suite version.
+0080: 
+0081: ## v0.16 review — distribution versus correctness target
+0082: 
+0083: A reliability head predicts a named event, not a universal confidence. Compare max probability, entropy/margin, temperature scaling and learned correctness estimators only on the same target event and cohort. Panel-distribution matching, majority-label agreement and observed task success use different labels. Fit thresholds on permitted calibration/development data or cross-fitted predictions; reserve protected tests for frozen policy evaluation. Report subgroup support, risk/coverage uncertainty and fallback-system cost. A low ECE or high selective accuracy is not proof of individual safety or OOD detection.
+0084: 
+0085: ## v0.19 calibration lab amendment
+0086: 
+0087: Add immutable calibration-key manifests, proper-score reports (Brier/NLL), reliability/support views, selective-risk curves, candidate/order perturbations and drift receipts. Pairwise/multiway consistency and IIA are diagnostics tied to the tested model family, not universal release invariants. Recalibration artifacts remain shadow candidates until admitted.
+```
+
+### Existing training and promotion separation
+
+Source: `axon-cortex-build-v0_19/build/REFLEX_LEARNING_PLANE.md`. SHA-256 `7a289176419b47dbec12a97faa8de25ebac02c1dc6bd4f06c2382fc9c25291a8`.
+
+```text
+0001: # Reflex Learning Plane build guide
+0002: 
+0003: Implements CX-25. Separate candidate learning from active serving so the system can train aggressively without allowing training code to self-promote.
+0004: 
+0005: ## Inner loop
+0006: 
+0007: 1. Freeze eligible records and exact training objective.
+0008: 2. Train one candidate in an isolated learner environment.
+0009: 3. Content-address all outputs and conversion artifacts.
+0010: 4. Load candidate into a shadow sampler.
+0011: 5. Replay the same protected suite used by the incumbent.
+0012: 6. Export CX-20/CX-21 evidence; stop with reject/inconclusive or submit to CX-11.
+0013: 
+0014: ## Outer loop
+0015: 
+0016: Operate many learner experiments against a shared immutable corpus/suite registry while keeping the active sampler stable. Maintain parent/child model lineage and transfer/calibration results.
+0017: 
+0018: ## Meta loop
+0019: 
+0020: Evaluate whether asynchronous training, mixed-policy rollouts or faster weight transport actually improve time-to-admitted-capability. Do not optimize weight publication latency if evaluation/admission remains the bottleneck.
+0021: 
+0022: ## First implementation
+0023: 
+0024: Use file/object-store candidate publication, not direct GPU streaming. Prove learner/sampler authority separation and exact artifact identity first. Faster NCCL/GPU transport is an optional later optimization.
+```
+
+### MiCode semantic capabilities and local authority
+
+Source: `micode-axon-support-v0_13/specs/MX-04-semantic-capability-compiler.md`. SHA-256 `ffcfb3ce67cb980f9393346a306910634ab0bf1f3d599e83358dba9a94ff90ec`.
+
+```text
+0001: # MX-04 — Semantic Capability Compiler
+0002: **Status:** Intended
+0003: 
+0004: ## Objective
+0005: Compile current repository state, task contract, existing MiCode permission posture, and available tools into a bounded set of semantic next actions.
+0006: 
+0007: ## Examples
+0008: - `INSPECT_SYMBOL(SymbolId)`
+0009: - `INSPECT_CALLERS(SymbolId)`
+0010: - `RUN_TEST(TestId)`
+0011: - `RUN_CHECK(CheckProfileId)`
+0012: - `PROPOSE_EDIT(SymbolId)`
+0013: - `COMPARE_PATCH(PatchId)`
+0014: - `ASK_REASONER`
+0015: - `DONE_CANDIDATE`
+0016: - `BLOCKED(reason_code)`
+0017: 
+0018: ## Safety rule
+0019: The compiler exposes what can be proposed. The existing permission gate still decides whether an effectful implementation may run.
+0020: 
+0021: ## Exit gate
+0022: No semantic action resolves to a tool/path/command outside its snapshot-bound target and existing MiCode authority.
+0023: 
+0024: ## Real ownership boundaries
+0025: Resolve through existing tool registry and gated dispatch. Do not use inert DelegationScope fields as confinement. Candidate eligibility is not final authorization. Classify build/test tool effects (including build scripts/network) before admission. New provider/job paths require trusted configuration and egress/resource policy; do not hide them behind a semantic action.
+```
+
+### MiCode experiences and exact decision binding
+
+Source: `micode-axon-support-v0_13/specs/MX-18-reflex-decision-corpus-producer.md`. SHA-256 `587a189463ebcfdeb2d3a75ab41376e174cf7494fceccb0b5d4f60cc42523c61`.
+
+```text
+0001: # MX-18 — Reflex Decision Corpus Producer
+0002: **Status:** Intended
+0003: 
+0004: ## Objective
+0005: Turn ordinary MiCode coding activity into governed, replayable decision records that Axon CX-20 can use to train, compare, calibrate, and transfer-test Reflex backends without inventing labels after the fact.
+0006: 
+0007: MiCode is the experience producer. Axon remains the research/admission authority for Reflex models.
+0008: 
+0009: ## Canonical decision record
+0010: Every eligible Reflex-oriented decision record preserves the exact decision context rather than only the selected answer:
+0011: 
+0012: ```text
+0013: CanonicalDecisionRecord {
+0014:   decision_id
+0015:   episode_id
+0016:   state_handle
+0017:   canonical_encoding_version
+0018:   cognitive_class
+0019:   question_graph
+0020:   candidate_set
+0021:   candidate_order
+0022:   candidate_generation_policy
+0023:   selected_candidate?
+0024:   acceptable_action_set?
+0025:   reserved_outcomes_available[]   // NONE | OBSERVE_MORE | ESCALATE | BLOCKED where applicable
+0026:   score_distribution?
+0027:   backend_identity?
+0028:   backend_feature_manifest?
+0029:   actual_action?
+0030:   actual_outcome?
+0031:   verification_result?
+0032:   escalation_decision?
+0033:   repo_identity
+0034:   repo_family
+0035:   task_family
+0036:   language_ecosystem
+0037:   corpus_role
+0038:   evidence_refs[]
+0039:   semantic_definition_revision?
+0040:   semantic_observation_refs[]
+0041:   semantic_match_refs[]
+0042:   completion_decision_ref?
+0043:   provenance
+0044: }
+0045: ```
+0046: 
+0047: ## Required metadata
+0048: At minimum, eligible records identify:
+0049: - repository identity and repository family;
+0050: - task family;
+0051: - language/ecosystem;
+0052: - state/observer version;
+0053: - candidate-generation policy;
+0054: - exact candidate ordering and digest;
+0055: - whether explicit absence/escalation outcomes were available;
+0056: - actual policy/model/backend used;
+```
+
+### MiCode result semantics and effect boundary
+
+Source: `micode-axon-support-v0_13/specs/MX-34-ace-runtime-consumer.md`. SHA-256 `d5dfc5706cc39a8303cc1a2eb4d6c19c0917a904854bea572f14a26a86ede483`.
+
+```text
+0034: ## 2. Plan binding and stale-plan handling
+0035: 
+0036: The client records the plan ID/digest, operation contract, capability/provider revision, required result semantics, input projection, policy generation, budget/deadline, privacy requirements and state-handle reference. Before accepting a result it confirms the response belongs to the expected execution/plan and that local task/Intent context has not moved past the binding.
+0037: 
+0038: A provider change, retry or fallback cannot be hidden behind the original selected model label. Requested, selected, attempted, observed and accepted producers remain distinct.
+0039: 
+0040: ## 3. General result consumption
+0041: 
+0042: MiCode MUST preserve ACE result kinds. Decision distributions may drive bounded branch selection; `ProposedValue` remains a proposal; `Prediction` is not an observation; `GeneratedArtifact` is not verified; `ProposedAction` is never automatically executed. Abstention, refusal, unsupported, failure and OutcomeUnknown retain their distinct meanings.
+0043: 
+0044: Do not manufacture a generic success/confidence envelope that erases these distinctions.
+0045: 
+0046: ## 4. Streaming
+0047: 
+0048: Tentative ACE chunks may be displayed or buffered only with explicit tentative status. They MUST NOT become durable verified evidence, tool results, task completion, model selection state or accepted structured output until a terminal finalized result passes the owning validation.
+0049: 
+0050: Disconnects, duplicate/out-of-order events, cancellation and final-schema failure preserve partial usage and an explicit terminal/unknown status. The following normal turn MUST not inherit a hidden provider or partial result.
+0051: 
+0052: ## 5. World-effect boundary
+0053: 
+0054: ACE provider-native tool/action requests are consumed only as `ProposedAction`. MiCode resolves the local tool/capability through existing ownership and applies PermissionGate. The provider cannot supply a pre-approved shell command, path, selector or permission grant that bypasses local checks.
+0055: 
+0056: Tool proposal, resolution, permission, start, completion and independent check remain separate events. A tool-level Success or model assertion is not a passing test.
+0078: ## 10. Completion and evidence
+0079: 
+0080: ACE results can contribute evidence but cannot certify `VerifiedComplete`. Completion still requires MiCode's AcceptanceContract and independent checks. Evidence lineage links intent/build node → working set/effective input → ACE plan/attempt/result → any local action → observed world/test result → completion decision.
+0081: 
+0082: ## 11. Acceptance
+0083: 
+0084: The core implementation claim requires one real authorized owner provider through the actual MiCode consumer plus refusal, unsupported-feature, privacy-denial, canceled/unknown remote work, explicit fallback and next-turn recovery tests. Offline fixtures remain useful conformance tests but do not close product gates.
+0085: 
+0086: ## 12. v0.13 calibrated-decision amendment
+0087: 
+0088: For `DecisionResult`, MiCode preserves the distinction between raw `distribution`/binary `probability` and empirical `correctness`. `correctness.status=Estimated` is usable for calibrated routing only when its event/domain/estimator/evidence references resolve under the pinned Axon contract and local policy; unavailable/stale/wrong-domain estimates do not silently fall back to raw confidence.
+0089: 
+0090: Same-state FANOUT maps to individual typed result records and a local join with per-question terminal states. High-cardinality flows persist full candidate identity, shortlist policy/identity and final candidate identity. Stage-1 independent scores cannot be reinterpreted as the final joint event.
+0091: 
+0092: Regardless of probability, ProposedAction still traverses local PermissionGate and completion still requires MiCode's AcceptanceContract/independent checks. Outcome feedback may be exported as governed evidence but cannot command remote or local model/calibrator promotion.
+```
+
+### MiCode composition is not an independent authority
+
+Source: `micode-axon-support-v0_13/specs/MX-22-decision-composition-select-copy.md`. SHA-256 `63e8edda2a395d81f0cd7d8a2ed814a7c89cd583dbe1258b30151b948ff48418`.
+
+```text
+0020: }
+0021: ```
+0022: 
+0023: The catalog must be produced independently of the decision that consumes it. A model may not invent a new capability and authorize/select it in the same trust step.
+0024: 
+0025: ## Operations
+0026: - `SELECT` — choose an existing typed object;
+0027: - `PROJECT` — deterministically read a field/view from the selected object;
+0028: - `COPY` — copy an observed value with provenance;
+0029: - `COMPOSE` — assemble typed artifacts into a validated plan/spec/DAG/result.
+0030: 
+0031: These are MiCode structured operations, not new Axon AIR keywords unless Axon later promotes them.
+0032: 
+0033: ## Initial pilots
+0034: 1. build-spec/task-DAG composition from Intent IR + known task/evidence templates;
+0035: 2. verifier-plan composition from registered checks;
+0036: 3. existing-value extraction from structured repository/tool state;
+0037: 4. patch/diagnostic artifact selection where authoritative objects already exist.
+0038: 
+0039: ## Validation
+0040: Every composition records inputs, membership/ordering/placement decisions, deterministic projections, generated gaps, validation results, and fallback path. A model's `finish`/composition completion is not task completion.
+0041: 
+0042: ## Exit gate
+0043: On a preregistered pilot, SELECT/COPY/COMPOSE reduces generation/model work without lowering verified task/spec quality, and all selected values can be traced back to observed catalog objects.
+0044: 
+0045: ## Composition is not admission
+0046: Catalog, selected artifacts and task dependencies are versioned; candidate-generated entries do not become active permissions. Projection receipts bind exact source and transform; copied content can still be irrelevant. Validate DAG cycles, duplicate effects, missing requirements and source freshness. Composition output is a proposed plan and cannot silently change Intent authority.
+0047: 
+0048: ## ACE branch-aware composition — v0.10
+0049: 
+0050: Join on QuestionId, current bindings and active-branch dependencies. Missing active outputs block; unused speculative failure requires explicit tolerance policy. No positional joins, defaulted success, unproved fusion or composition of marginal probabilities as a joint. Result assembly does not authorize execution.
+0051: 
+0052: See [ACE integration](../build/ACE_INTEGRATION.md) and [version mapping](../schemas/ACE_COMPATIBILITY.md).
+0053: 
+0054: ## v0.11 Axon owner alignment
+0055: 
+0056: Consume owner QuestionId and active-branch rules; do not use positional joins, missing defaults, uncommitted parent values or marginal joint probability. See [alignment contract](../schemas/AXON_V019_ALIGNMENT.md). Product conformance remains NOT_RUN.
+0057: 
+0058: ## v0.13 amendment — calibrated gates and staged candidate selection
+0059: 
+0060: Composition can branch on an Axon empirical correctness estimate only when its calibration domain/evidence matches the active event and local consequence policy permits that use. High-cardinality selection preserves `full candidates → score/retrieve → shortlist → explicit final choice`; stage-1 scores never become final calibrated probabilities by renormalization. Shortlist omission/recall is evaluated separately from final-choice accuracy.
+```

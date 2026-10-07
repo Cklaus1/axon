@@ -1,0 +1,305 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema": {
+      "const": "axon.closed-loop.context/1"
+    },
+    "context_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "task_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+        },
+        "arm_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+        },
+        "trial_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+        },
+        "attempt_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+        },
+        "operation_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+        },
+        "execution_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+        }
+      },
+      "required": [
+        "task_id",
+        "arm_id",
+        "trial_id",
+        "attempt_id",
+        "operation_id",
+        "execution_id"
+      ]
+    },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tenant_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+        },
+        "task_family": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+        }
+      },
+      "required": [
+        "tenant_id",
+        "task_family"
+      ]
+    },
+    "expected": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "repo_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+        },
+        "base_commit": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "workspace_ref": {
+          "type": "string",
+          "pattern": "^acf1:[0-9a-f]{64}$"
+        },
+        "branch": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "worktree_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+        },
+        "working_directory": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "build_namespace": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "model_ref": {
+          "type": "string",
+          "pattern": "^(cl22|acf1|sha256):[0-9a-f]{64}$"
+        },
+        "role": {
+          "enum": [
+            "implementation",
+            "critic",
+            "verifier",
+            "documentation",
+            "experiment"
+          ]
+        },
+        "namespace_ref": {
+          "type": "string",
+          "pattern": "^(cl22|acf1|sha256):[0-9a-f]{64}$"
+        },
+        "read_paths": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          },
+          "minItems": 0,
+          "maxItems": 1024,
+          "uniqueItems": true
+        },
+        "write_paths": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          },
+          "minItems": 0,
+          "maxItems": 1024,
+          "uniqueItems": true
+        },
+        "is_primary_worktree": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "repo_id",
+        "base_commit",
+        "workspace_ref",
+        "branch",
+        "worktree_id",
+        "working_directory",
+        "build_namespace",
+        "model_ref",
+        "role",
+        "namespace_ref",
+        "read_paths",
+        "write_paths",
+        "is_primary_worktree"
+      ]
+    },
+    "observed": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "repo_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+        },
+        "base_commit": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "workspace_ref": {
+          "type": "string",
+          "pattern": "^acf1:[0-9a-f]{64}$"
+        },
+        "branch": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "worktree_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+        },
+        "working_directory": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "build_namespace": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "model_ref": {
+          "type": "string",
+          "pattern": "^(cl22|acf1|sha256):[0-9a-f]{64}$"
+        },
+        "role": {
+          "enum": [
+            "implementation",
+            "critic",
+            "verifier",
+            "documentation",
+            "experiment"
+          ]
+        },
+        "namespace_ref": {
+          "type": "string",
+          "pattern": "^(cl22|acf1|sha256):[0-9a-f]{64}$"
+        },
+        "read_paths": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          },
+          "minItems": 0,
+          "maxItems": 1024,
+          "uniqueItems": true
+        },
+        "write_paths": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          },
+          "minItems": 0,
+          "maxItems": 1024,
+          "uniqueItems": true
+        },
+        "is_primary_worktree": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "repo_id",
+        "base_commit",
+        "workspace_ref",
+        "branch",
+        "worktree_id",
+        "working_directory",
+        "build_namespace",
+        "model_ref",
+        "role",
+        "namespace_ref",
+        "read_paths",
+        "write_paths",
+        "is_primary_worktree"
+      ]
+    },
+    "expected_issuer_ref": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "observed_issuer_ref": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "observed_evidence_ref": {
+      "type": "string",
+      "pattern": "^(cl22|acf1|sha256):[0-9a-f]{64}$"
+    },
+    "created_ms": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "expires_ms": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "authority_epoch": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    }
+  },
+  "required": [
+    "schema",
+    "context_id",
+    "identity",
+    "scope",
+    "expected",
+    "observed",
+    "expected_issuer_ref",
+    "observed_issuer_ref",
+    "observed_evidence_ref",
+    "created_ms",
+    "expires_ms",
+    "authority_epoch"
+  ],
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:axon:closed-loop:context:1",
+  "title": "Expected and independently observed preflight; source ancestry becomes exact equality only in the paired-trial profile"
+}

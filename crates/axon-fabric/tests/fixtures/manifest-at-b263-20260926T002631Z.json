@@ -1,0 +1,62 @@
+{
+  "schema": "axon-linux-microvm-profile/1",
+  "profile": "linux-microvm-protected",
+  "guest_truth": "Linux kernel (NOT the axon-guest-kernel)",
+  "source": {
+    "axon_git_rev_at_build": "75faf48d84401be9e145837a33073c93b62f18a2",
+    "axon_tree_dirty_at_build": false,
+    "axon_build": "RUSTFLAGS='-C target-feature=+crt-static' cargo build --locked -p axon-core --no-default-features --bin axon --release --target x86_64-unknown-linux-musl",
+    "axon_guest_init_build": "RUSTFLAGS='-C target-feature=+crt-static' cargo build --locked -p axon-guest-init --release --target x86_64-unknown-linux-musl (default features: no dev-allow-no-policy bypass)",
+    "rustc": "rustc 1.99.0-nightly (375b1431b 2026-07-10)"
+  },
+  "kernel": {
+    "version": "6.1.188",
+    "url": "https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.1.188.tar.xz",
+    "tarball_sha256": "ed4d0acb1307c235230c89efc094e210e6290593f94a7e617f28b1001101a33a",
+    "config_file": "profiles/linux-microvm/kernel-6.1-firecracker-v1.10.1.config",
+    "config_sha256": "391d8d498f89e56b391be5ea4a7501ebc44e6d094331ecaabdefed1da6b28a96",
+    "config_origin": "firecracker v1.10.1 resources/guest_configs/microvm-kernel-ci-x86_64-6.1.config (unmodified)",
+    "overlay_file": "profiles/linux-microvm/kernel-overlay.config",
+    "overlay_sha256": "adab3938e959467f5f89795066154f2b281a90d4cc89b5693796dee3188ba91f",
+    "effective_config_sha256": "8b3980efcbd877c6ffb08282d33651e6ae506243658791fbb43276da806e13f7",
+    "cc": "gcc (Ubuntu 15.2.0-16ubuntu1) 15.2.0"
+  },
+  "busybox": {
+    "package": "busybox-static_1:1.37.0-7ubuntu1_ubuntu-26.04",
+    "sha256": "df12634c17fcdca839ae5dc47d7627b7558511f7645de7c99ccf097a0f28ed5b"
+  },
+  "guest_init": {
+    "path": "profiles/linux-microvm/guest-init.sh",
+    "sha256": "d5361a10b66e630f5fcd7d072b7cf5342f2acc7271f2a635ad7f16773b32ecd1"
+  },
+  "artifacts": {
+    "vmlinux": {
+      "path": "dist/guest-linux/vmlinux",
+      "sha256": "4ec3ba40a4024467d959fd3812af000ad9f7f9900579cc9f0fd01a465dcd22b7",
+      "bytes": 40879736
+    },
+    "rootfs.sqfs": {
+      "path": "dist/guest-linux/rootfs.sqfs",
+      "sha256": "4c8a28b0b3577d31cc11345652809a3e889f4f5ce31267d4a9e9dd06dde5111f",
+      "bytes": 5046272
+    },
+    "axon": {
+      "path": "dist/guest-linux/axon",
+      "sha256": "bf1ef7011a80d656888a9961ddbfdd606e405354f7fd2e8883cc330de9ed7781",
+      "bytes": 8136976
+    },
+    "axon-guest-init": {
+      "path": "dist/guest-linux/axon-guest-init",
+      "sha256": "bc319dde79f1139ba33dd2af05b5274394a141c10193f42ddd90a760e8454fdb",
+      "bytes": 733288
+    }
+  },
+  "engine": {
+    "firecracker_path": "/usr/local/bin/firecracker",
+    "firecracker_version": "Firecracker v1.10.1",
+    "firecracker_sha256": "96d25e000e5fcbf5b11dca0e1275b5d7dc0922ff8b8206aeaed98e515a8468dc",
+    "jailer_path": "/usr/local/bin/jailer",
+    "jailer_version": "Jailer v1.10.1",
+    "jailer_sha256": "8965e9ee855537561ac3adaf0b086a3882456fdc55472691f3bbe489199014ce"
+  }
+}

@@ -1,0 +1,708 @@
+{
+  "schema": "axon.closed-loop-work-packages/1",
+  "package_version": "0.22",
+  "tasks": [
+    {
+      "id": "B255",
+      "title": "Reconcile Axon, MiCode and Fabric source truth",
+      "depends_on": [],
+      "specs": [
+        "CX-00"
+      ],
+      "output": "Pin all supplied inputs and actual dirty/untracked target work; map existing CX/MX/ACF owners and legacy release profiles. Preserve B00-B254, old evidence, schemas, source CX-35 and independent Cargo versions. Resolve drift before source edits.",
+      "stage": "M0",
+      "lane": "integration",
+      "optional": false,
+      "acf_tasks": [
+        "ACF-T00"
+      ],
+      "gate_targets": [
+        "G00-r22-source-rebase",
+        "G00-r22-preservation"
+      ]
+    },
+    {
+      "id": "B256",
+      "title": "Negotiate the existing CX-16 / MX-12 bridge profile",
+      "depends_on": [
+        "B255"
+      ],
+      "specs": [
+        "CX-16"
+      ],
+      "output": "Implement a closed, opt-in sidecar profile for existing bridge artifacts. Negotiate exact schemas/features and local compatibility adapters; never infer support from document version 0.22 or rename ACE/Reflex wire versions.",
+      "stage": "M0",
+      "lane": "integration",
+      "optional": false,
+      "acf_tasks": [],
+      "gate_targets": [
+        "G16-r22-closed-wire",
+        "G16-r22-negotiation"
+      ]
+    },
+    {
+      "id": "B257",
+      "title": "Bind identities and immutable evidence sidecars",
+      "depends_on": [
+        "B256"
+      ],
+      "specs": [
+        "CX-10",
+        "CX-32"
+      ],
+      "output": "Map Task/ExperimentArm/Trial/Attempt/Operation/Execution/Branch and policy/context/ACF receipt references without altering existing episode hashes. Bind receipts to authenticated producers and immutable artifacts; add same-episode and multi-attempt reconciliation.",
+      "stage": "M0",
+      "lane": "integration",
+      "optional": false,
+      "acf_tasks": [],
+      "gate_targets": [
+        "G10-r22-trial-identity",
+        "G32-r22-sidecar-bindings"
+      ]
+    },
+    {
+      "id": "B258",
+      "title": "Converge compute and peer requests at existing authority",
+      "depends_on": [
+        "B256",
+        "B257"
+      ],
+      "specs": [
+        "CX-03",
+        "CX-13"
+      ],
+      "output": "Reuse Axon supervisor/grant admission and MiCode local permission owners. Resolve executable closure/profile/approval/resource references from trusted registries, not caller text. Recheck current epochs at all effects and retirement routes.",
+      "stage": "M0",
+      "lane": "integration",
+      "optional": false,
+      "acf_tasks": [
+        "ACF-T01"
+      ],
+      "gate_targets": [
+        "G03-r22-authority-intersection",
+        "G13-r22-profile-eligibility"
+      ]
+    },
+    {
+      "id": "B259",
+      "title": "Preserve the truthful legacy process adapter",
+      "depends_on": [
+        "B258"
+      ],
+      "specs": [
+        "CX-13"
+      ],
+      "output": "Retain scoped interpreter semantics and CLI parity; introduce private staging, bounded process/output handling and truthful process_scoped labels. Never translate unknown native effects into an empty effect set.",
+      "stage": "M1",
+      "lane": "integration",
+      "optional": false,
+      "acf_tasks": [
+        "ACF-T02"
+      ],
+      "gate_targets": [
+        "G13-r22-legacy-scope",
+        "G13-r22-no-weak-fallback"
+      ]
+    },
+    {
+      "id": "B260",
+      "title": "Implement durable operation journal and aggregate reservations",
+      "depends_on": [
+        "B258",
+        "B259"
+      ],
+      "specs": [
+        "CX-13"
+      ],
+      "output": "Implement transactional intent-before-effect, uniqueness, fencing, outbox/reconciliation and shared budget reservations. Keep action, resource, billing and cleanup states separate. Fault-test actual persistent storage.",
+      "stage": "M1",
+      "lane": "integration",
+      "optional": false,
+      "acf_tasks": [
+        "ACF-T03"
+      ],
+      "gate_targets": [
+        "G13-r22-journal-before-effect",
+        "G13-r22-aggregate-reservation",
+        "G13-r22-unknown-reconcile"
+      ]
+    },
+    {
+      "id": "B261",
+      "title": "Materialize immutable workspaces with per-trial isolation",
+      "depends_on": [
+        "B260"
+      ],
+      "specs": [
+        "CX-03",
+        "CX-28"
+      ],
+      "output": "Reuse MiCode WorktreeManager and Cortex observation digests through explicit projections. Publish durable content versions, fresh per-trial build/dependency caches and fenced leases; harden import and resource quotas.",
+      "stage": "M1",
+      "lane": "integration",
+      "optional": false,
+      "acf_tasks": [
+        "ACF-T04"
+      ],
+      "gate_targets": [
+        "G03-r22-workspace-import",
+        "G28-r22-workspace-not-context",
+        "G03-r22-trial-isolation"
+      ]
+    },
+    {
+      "id": "B262",
+      "title": "Extract axon-vm as a profiled backend without CLI drift",
+      "depends_on": [
+        "B255"
+      ],
+      "specs": [
+        "CX-13"
+      ],
+      "output": "Refactor the existing Firecracker launcher only as required for a narrow library adapter. Preserve CLI, interpreter/browser dependency direction and attestation meaning; pin actual backend versions during implementation.",
+      "stage": "M1",
+      "lane": "integration",
+      "optional": false,
+      "acf_tasks": [
+        "ACF-T05"
+      ],
+      "gate_targets": [
+        "G13-r22-vm-cli-parity",
+        "G13-r22-guest-truth"
+      ]
+    },
+    {
+      "id": "B263",
+      "title": "Physically qualify the protected Linux microVM profile",
+      "depends_on": [
+        "B258",
+        "B260",
+        "B261",
+        "B262"
+      ],
+      "specs": [
+        "CX-13",
+        "CX-03"
+      ],
+      "output": "On a suitable Linux/KVM host, test host/guest boundaries, dedicated UID/cgroup/process ownership, networking denial, rootfs/image pinning, crash cleanup and quotas. Keep production qualification empty until these tests run.",
+      "stage": "M1",
+      "lane": "integration",
+      "optional": false,
+      "acf_tasks": [
+        "ACF-T06"
+      ],
+      "gate_targets": [
+        "G03-r22-physical-isolation",
+        "G13-r22-profile-qualification",
+        "G13-r22-launch-cleanup"
+      ]
+    },
+    {
+      "id": "B264",
+      "title": "Wire one real registered Cortex CheckExecutor",
+      "depends_on": [
+        "B260",
+        "B261",
+        "B263"
+      ],
+      "specs": [
+        "CX-01",
+        "CX-03"
+      ],
+      "output": "Introduce the narrow Runner registered-check seam with a separate fixture implementation and Fabric-backed implementation. Execute frozen checks outside subject authority against exact output bytes, keeping hidden checks outside worker-visible context.",
+      "stage": "M1",
+      "lane": "integration",
+      "optional": false,
+      "acf_tasks": [
+        "ACF-T07"
+      ],
+      "gate_targets": [
+        "G01-r22-registered-check",
+        "G01-r22-verifier-separation",
+        "G03-r22-check-effects"
+      ]
+    },
+    {
+      "id": "B265",
+      "title": "Join preflight, execution and independent outcome evidence",
+      "depends_on": [
+        "B257",
+        "B264"
+      ],
+      "specs": [
+        "CX-32"
+      ],
+      "output": "Keep ExecutionContextReceipt, Fabric ExecutionReceipt, Cortex/MiCode episode and independent verifier result as separate referenced records. Reconcile all IDs and output digests; reject altered, missing or cross-tenant evidence.",
+      "stage": "M1",
+      "lane": "integration",
+      "optional": false,
+      "acf_tasks": [],
+      "gate_targets": [
+        "G32-r22-receipt-roles",
+        "G32-r22-artifact-recheck"
+      ]
+    },
+    {
+      "id": "B266",
+      "title": "Gate MiCode workers on observed execution context",
+      "depends_on": [
+        "B256",
+        "B261"
+      ],
+      "specs": [
+        "CX-16"
+      ],
+      "output": "Implement the documented ExecutionContextReceipt lifecycle and three use sites: task engine, worker-before-first-model-turn and result integrator. Observe context independently; establish exact trial base for the pilot, namespaces, role, model route and build cache.",
+      "stage": "M1",
+      "lane": "integration",
+      "optional": false,
+      "acf_tasks": [],
+      "gate_targets": [
+        "G16-r22-preflight-start",
+        "G16-r22-preflight-return",
+        "G16-r22-role-scope"
+      ]
+    },
+    {
+      "id": "B267",
+      "title": "Enforce MiCode scope intersection and preserve trust graduation",
+      "depends_on": [
+        "B258",
+        "B266"
+      ],
+      "specs": [
+        "CX-16",
+        "CX-03"
+      ],
+      "output": "Close or explicitly refuse unprovable delegation subset semantics at actual tool/file dispatch. Preserve PermissionGate and the independent trust-judge NoGo/graduation mechanism; no imported evaluator changes that verdict.",
+      "stage": "M1",
+      "lane": "integration",
+      "optional": false,
+      "acf_tasks": [],
+      "gate_targets": [
+        "G16-r22-local-authority",
+        "G16-r22-trust-graduation",
+        "G03-r22-dispatch-recheck"
+      ]
+    },
+    {
+      "id": "B268",
+      "title": "Consume policies through the real MiCode bridge",
+      "depends_on": [
+        "B256",
+        "B266",
+        "B267"
+      ],
+      "specs": [
+        "CX-16"
+      ],
+      "output": "Wire versioned policy import into the actual session/headless/build-loop composition, behind explicit opt-in. Enforce applicability, scope, active policy version and evidence requirements. Keep only one adoption owner.",
+      "stage": "M1",
+      "lane": "integration",
+      "optional": false,
+      "acf_tasks": [],
+      "gate_targets": [
+        "G16-r22-real-consumer",
+        "G16-r22-candidate-shortlist",
+        "G16-r22-provider-host-boundary"
+      ]
+    },
+    {
+      "id": "B269",
+      "title": "Export complete MiCode episodes to actual Axon intake",
+      "depends_on": [
+        "B265",
+        "B268"
+      ],
+      "specs": [
+        "CX-16",
+        "CX-10"
+      ],
+      "output": "Produce canonical versioned episode sidecars from observed MiCode execution. Join before/after artifacts, denied/failed/cancelled/unknown outcomes, effective input, policy context and authoritative cost; preserve sensitivity and corpus roles.",
+      "stage": "M1",
+      "lane": "integration",
+      "optional": false,
+      "acf_tasks": [],
+      "gate_targets": [
+        "G16-r22-real-producer",
+        "G10-r22-all-attempts"
+      ]
+    },
+    {
+      "id": "B270",
+      "title": "Reconcile whole-task inference and execution economics",
+      "depends_on": [
+        "B260",
+        "B269"
+      ],
+      "specs": [
+        "CX-10",
+        "CX-13"
+      ],
+      "output": "Join price-weighted model usage and Fabric CPU/memory/disk/check costs through shared budget owners. Pin currency, price schedule, usage source, experiment cohort and pending liabilities. Separate estimates from measured costs.",
+      "stage": "M1",
+      "lane": "integration",
+      "optional": false,
+      "acf_tasks": [],
+      "gate_targets": [
+        "G10-r22-full-task-cost",
+        "G13-r22-billing-settlement",
+        "G10-r22-cohort-denominator"
+      ]
+    },
+    {
+      "id": "B271",
+      "title": "Run logical A/B branches with fenced promotion",
+      "depends_on": [
+        "B261",
+        "B264",
+        "B270"
+      ],
+      "specs": [
+        "CX-08",
+        "CX-11"
+      ],
+      "output": "Implement Fabric logical branches from one immutable base with independent TrialIds, AttemptIds, worktrees, mutable caches and carved shared budgets. Use CAS for workspace publication, separate from policy admission.",
+      "stage": "M2",
+      "lane": "integration",
+      "optional": false,
+      "acf_tasks": [
+        "ACF-T08"
+      ],
+      "gate_targets": [
+        "G08-r22-logical-branches",
+        "G11-r22-workspace-cas",
+        "G08-r22-branch-cancellation"
+      ]
+    },
+    {
+      "id": "B272",
+      "title": "Bind the 0.21 profiles to a deterministic pilot baseline",
+      "depends_on": [
+        "B268",
+        "B270"
+      ],
+      "specs": [
+        "CX-05",
+        "CX-06",
+        "CX-26",
+        "CX-28",
+        "CX-34"
+      ],
+      "output": "Use existing owned DEC/RTR/CVM/SPX/TEL contracts with explicit deterministic behavior: fixed model/route/context, no active speculation, known eligible candidates and full receipts. Learned providers remain separately qualified and optional.",
+      "stage": "M2",
+      "lane": "integration",
+      "optional": false,
+      "acf_tasks": [],
+      "gate_targets": [
+        "G34-r22-pilot-controls",
+        "G05-r22-decision-semantics",
+        "G26-r22-speculation-disabled",
+        "G28-r22-context-provenance"
+      ]
+    },
+    {
+      "id": "B273",
+      "title": "Generate one bounded EVO policy candidate",
+      "depends_on": [
+        "B272"
+      ],
+      "specs": [
+        "CX-29"
+      ],
+      "output": "Use the existing hypothesis/evolution ledger to propose a tool/skill shortlist variant from allowed discovery evidence. Record mutation identity, rationale, parent, edit ceiling and all rejected hypotheses. Do not let proposer edit evaluation/admission.",
+      "stage": "M2",
+      "lane": "integration",
+      "optional": false,
+      "acf_tasks": [],
+      "gate_targets": [
+        "G29-r22-bounded-mutation",
+        "G29-r22-hypothesis-memory"
+      ]
+    },
+    {
+      "id": "B274",
+      "title": "Freeze the independent experiment and admission plan",
+      "depends_on": [
+        "B269",
+        "B273"
+      ],
+      "specs": [
+        "CX-21",
+        "CX-33"
+      ],
+      "output": "Register the task/repository split, candidate generation budget, repetitions, independent unit, fixed-horizon or valid sequential method, noninferiority/economic criteria and contamination controls before confirmation data is visible. Require an approved completed plan for live testing.",
+      "stage": "M2",
+      "lane": "integration",
+      "optional": false,
+      "acf_tasks": [],
+      "gate_targets": [
+        "G21-r22-protected-splits",
+        "G33-r22-decision-rule-freeze",
+        "G21-r22-inconclusive-valid"
+      ]
+    },
+    {
+      "id": "B275",
+      "title": "Execute controlled real incumbent/challenger trials",
+      "depends_on": [
+        "B271",
+        "B272",
+        "B274"
+      ],
+      "specs": [
+        "CX-08",
+        "CX-21"
+      ],
+      "output": "Run the real MiCode path on prespecified tasks in authorized isolated Fabric jobs. Block/randomize order, bound repeats, enforce model/cache/resource parity and capture actual effective policies and workspaces for both arms.",
+      "stage": "M2",
+      "lane": "integration",
+      "optional": false,
+      "acf_tasks": [],
+      "gate_targets": [
+        "G08-r22-real-paired-execution",
+        "G21-r22-order-cache-controls"
+      ]
+    },
+    {
+      "id": "B276",
+      "title": "Evaluate exact candidates outside subject authority",
+      "depends_on": [
+        "B264",
+        "B265",
+        "B275"
+      ],
+      "specs": [
+        "CX-01"
+      ],
+      "output": "Execute frozen deterministic checks and applicable evidence-linked checklists independently. Preserve whole-task conjunctive gates; CLM/Jev or worker judgments are auxiliary and cannot compensate for failed mandatory tests.",
+      "stage": "M2",
+      "lane": "integration",
+      "optional": false,
+      "acf_tasks": [],
+      "gate_targets": [
+        "G01-r22-nonvacuous-outcome",
+        "G01-r22-independent-issuer",
+        "G01-r22-unknown-outcome"
+      ]
+    },
+    {
+      "id": "B277",
+      "title": "Apply the frozen independent policy-admission decision",
+      "depends_on": [
+        "B274",
+        "B276"
+      ],
+      "specs": [
+        "CX-11"
+      ],
+      "output": "Use existing admission ownership to evaluate held-out confirmation evidence under frozen constraints. Record accepted/rejected/inconclusive separately from candidate ranking and require current scope/revocation checks; never autoactivate the top-ranked candidate.",
+      "stage": "M2",
+      "lane": "integration",
+      "optional": false,
+      "acf_tasks": [],
+      "gate_targets": [
+        "G11-r22-independent-admission",
+        "G11-r22-admission-disposition"
+      ]
+    },
+    {
+      "id": "B278",
+      "title": "Prove fenced policy activation and future-task uptake",
+      "depends_on": [
+        "B268",
+        "B277"
+      ],
+      "specs": [
+        "CX-11",
+        "CX-16"
+      ],
+      "output": "Atomically switch a scoped active-policy pointer using expected incumbent digest and monotonic epoch. Pin it at task start and record acknowledgements/effective digest in subsequent real MiCode tasks; do not live-edit active trials.",
+      "stage": "M2",
+      "lane": "integration",
+      "optional": false,
+      "acf_tasks": [],
+      "gate_targets": [
+        "G11-r22-policy-cas",
+        "G16-r22-future-task-uptake",
+        "G16-r22-inflight-policy-pin"
+      ]
+    },
+    {
+      "id": "B279",
+      "title": "Exercise rollback, revocation and safe paused states",
+      "depends_on": [
+        "B260",
+        "B278"
+      ],
+      "specs": [
+        "CX-11",
+        "CX-13"
+      ],
+      "output": "Run real regression/failure injection against a scoped activation. Roll back by a new fenced decision only to a still-valid admitted predecessor, or pause. Drain/reconcile protected jobs and keep accounting/readers.",
+      "stage": "M2",
+      "lane": "integration",
+      "optional": false,
+      "acf_tasks": [],
+      "gate_targets": [
+        "G11-r22-rollback-revalidate",
+        "G13-r22-rollback-lifecycle",
+        "G11-r22-regression-observed"
+      ]
+    },
+    {
+      "id": "B280",
+      "title": "Fault-test cancellation, budgets and restart across peers",
+      "depends_on": [
+        "B260",
+        "B263",
+        "B264",
+        "B271"
+      ],
+      "specs": [
+        "CX-13",
+        "CX-16"
+      ],
+      "output": "Inject duplicate/out-of-order messages, process death, lost acknowledgements, worker timeout and unknown billing. Verify journals, inherited cancellation, operation reconciliation, authenticated receipt ingestion and non-duplicated resource charges.",
+      "stage": "M2",
+      "lane": "integration",
+      "optional": false,
+      "acf_tasks": [],
+      "gate_targets": [
+        "G13-r22-restart-matrix",
+        "G16-r22-peer-failure-matrix"
+      ]
+    },
+    {
+      "id": "B281",
+      "title": "Enforce learning eligibility and data-retention boundaries",
+      "depends_on": [
+        "B269",
+        "B274"
+      ],
+      "specs": [
+        "CX-10",
+        "CX-25"
+      ],
+      "output": "Route only eligible observed histories to training/retrieval with license, tenant, retention and corpus-role labels. Candidate-selected data is not unbiased counterfactual evidence; protected confirmation data stays excluded.",
+      "stage": "M2",
+      "lane": "integration",
+      "optional": false,
+      "acf_tasks": [],
+      "gate_targets": [
+        "G10-r22-eligibility-projection",
+        "G25-r22-no-self-label-loop"
+      ]
+    },
+    {
+      "id": "B282",
+      "title": "Close joint adversarial and authority-bypass tests",
+      "depends_on": [
+        "B267",
+        "B276",
+        "B279",
+        "B280",
+        "B281"
+      ],
+      "specs": [
+        "CX-03",
+        "CX-32"
+      ],
+      "output": "Exercise malicious repository/tool output, receipt forgery, context echo, scope widening, candidate substitution, hidden-test exfiltration, cache cross-contamination and re-entry through fallback/replay/attach. Track every finding and limitation.",
+      "stage": "M2",
+      "lane": "integration",
+      "optional": false,
+      "acf_tasks": [],
+      "gate_targets": [
+        "G03-r22-joint-bypass",
+        "G32-r22-evidence-laundering"
+      ]
+    },
+    {
+      "id": "B283",
+      "title": "Integrate compatible package and cross-project source gates",
+      "depends_on": [
+        "B255",
+        "B256"
+      ],
+      "specs": [
+        "CX-00",
+        "CX-16"
+      ],
+      "output": "Update package-gate invocation only after source review of schema/CLI/count conventions; add scoped source tests and interoperability checks without hiding missing Rust/KVM prerequisites or altering historical evidence.",
+      "stage": "M0",
+      "lane": "integration",
+      "optional": false,
+      "acf_tasks": [],
+      "gate_targets": [
+        "G00-r22-package-gate-upgrade",
+        "G16-r22-source-ci-scope"
+      ]
+    },
+    {
+      "id": "B284",
+      "title": "Validate the complete 0.22 specification and reference pack",
+      "depends_on": [
+        "B255",
+        "B256",
+        "B257"
+      ],
+      "specs": [
+        "CX-00"
+      ],
+      "output": "Maintain generated master/views, schema fixtures, parent/Fabric checksums, source pins, requirement/task/gate mappings and distinct runtime qualification ledger. Run documentation/reference tests separately from product gates.",
+      "stage": "M0",
+      "lane": "contracts",
+      "optional": false,
+      "acf_tasks": [],
+      "gate_targets": [
+        "G00-r22-pack-integrity",
+        "G00-r22-honest-status"
+      ]
+    },
+    {
+      "id": "B285",
+      "title": "Qualify the bounded operational closed loop",
+      "depends_on": [
+        "B279",
+        "B282",
+        "B283",
+        "B284"
+      ],
+      "specs": [
+        "CX-16",
+        "CX-29"
+      ],
+      "output": "Assemble independent nonvacuous runtime evidence for the selected dependency closure, including ACF-G00-G37. Demonstrate real proposal, trials, legitimate rejection and controlled activation/uptake/rollback within preauthorized scope. Activation mechanics may use a clearly labeled approved fixture policy, never a fabricated improvement claim.",
+      "stage": "M2",
+      "lane": "integration",
+      "optional": false,
+      "acf_tasks": [],
+      "gate_targets": [
+        "G16-r22-operational-loop",
+        "G29-r22-no-forced-winner",
+        "G16-r22-bounded-activation"
+      ]
+    },
+    {
+      "id": "B286",
+      "title": "Report evidence for or against a real improvement claim",
+      "depends_on": [
+        "B285"
+      ],
+      "specs": [
+        "CX-21",
+        "CX-29"
+      ],
+      "output": "Execute the separately approved held-out reporting study for the selected task distribution; report uncertainty, paired outcomes, full task costs and failure classes. Evidence may support benefit, harm or inconclusive; assert improvement only if the prespecified rule and independent evidence support it.",
+      "stage": "M3",
+      "lane": "research",
+      "optional": true,
+      "acf_tasks": [],
+      "gate_targets": [
+        "G21-r22-measured-claim",
+        "G29-r22-claim-separation"
+      ]
+    }
+  ]
+}

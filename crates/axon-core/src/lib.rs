@@ -51,8 +51,6 @@ pub mod token;
 pub mod types;
 // Phase 3
 pub mod borrow;
-/// `&mut [T]` parameter mode: the static rules (E0604/E0605/E0606).
-pub mod mut_borrow;
 pub mod comptime;
 /// Codegen-free tree-walking interpreter (`axon run` without LLVM).
 pub mod interp;
@@ -61,6 +59,8 @@ pub mod interp;
 /// the codegen build is untouched (R12 §9 Q3).
 pub mod kernel;
 pub mod mono;
+/// `&mut [T]` parameter mode: the static rules (E0604/E0605/E0606).
+pub mod mut_borrow;
 // Phase 4
 pub mod audit;
 pub mod cache;
@@ -533,6 +533,12 @@ pub fn axon_search_dirs(binary_path: Option<&std::path::Path>) -> Vec<std::path:
             }
         }
     }
+    // A caller that names every directory a run may load from (Fabric, for a
+    // check it will vouch for) disables the ambient ones below: `~/.axon/lib`
+    // and the binary's own library are not part of the tree being judged.
+    if std::env::var("AXON_PATH_EXCLUSIVE").as_deref() == Ok("1") {
+        return dirs;
+    }
 
     // 2. ~/.axon/lib/
     let home_key = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
@@ -592,6 +598,7 @@ pub fn load_use_decls(
         load_module_recursive(
             &use_path,
             search_dirs,
+            false,
             &mut already_loaded,
             &mut loading_stack,
             &mut loaded_items,
@@ -777,6 +784,8 @@ pub fn resolve_use_files_transitive(
 fn load_module_recursive(
     use_path: &[String],
     search_dirs: &[std::path::PathBuf],
+    // The `use` comes from a SEALED module (the candidate under test).
+    from_sealed: bool,
     already_loaded: &mut std::collections::HashSet<String>,
     loading_stack: &mut Vec<String>,
     loaded_items: &mut Vec<ast::Item>,
@@ -822,14 +831,74 @@ fn load_module_recursive(
     }
     rel.set_extension("ax");
 
+    // A SEALED module's `use` never resolves a name an operator module holds,
+    // so it can reach only a sealed module, or nothing. One file per module
+    // name, suite first, whoever asks: were the candidate's copy allowed to
+    // load first, the suite's own later `use` of that name would find it
+    // "already loaded" and the candidate would define the rubric (dev review
+    // round wf_7cb5856d-806, a regression of the round-1 fix).
+    let sealed = crate::resolver::sealed_module_dirs();
+    let canon = |p: &std::path::Path| p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
+    let in_sealed = |p: &std::path::Path| {
+        let c = canon(p);
+        sealed.iter().any(|d| c.starts_with(d))
+    };
+    // …and whoever asks means the OPERATOR too: an unsealed module's `use`
+    // whose first match in search order is a sealed module's file is the
+    // same substitution when an operator directory also holds the name (a
+    // non-exclusive run searches `~/.axon/lib` after the candidate; C9 round
+    // 1b, PSV-1).
+    let first_hit_sealed = search_dirs
+        .iter()
+        .find(|d| !matches!(d.join(&rel).try_exists(), Ok(false)))
+        .is_some_and(|d| in_sealed(d));
+    if from_sealed || first_hit_sealed {
+        for d in search_dirs.iter().filter(|d| !in_sealed(d)) {
+            let op = d.join(&rel);
+            if !matches!(op.try_exists(), Ok(false)) {
+                errors.push(MergeError {
+                    code: error::E0901,
+                    message: format!(
+                        "module `{path_str}`: a sealed module may not supply it, because an \
+                         operator module of that name is at {}",
+                        op.display()
+                    ),
+                    file: op.display().to_string(),
+                });
+                return;
+            }
+        }
+    }
+
     let mut found = false;
     let mut searched: Vec<String> = Vec::new();
 
     for dir in search_dirs {
         let candidate = dir.join(&rel);
         searched.push(candidate.display().to_string());
-        if !candidate.exists() {
-            continue;
+        // Only a module that is ABSENT here moves the search to the next
+        // directory. One that exists but cannot be read — or whose existence
+        // cannot even be determined — is an error: falling through let a
+        // LOWER-priority directory define it. Under the PSV runner's
+        // `AXON_PATH=suite:candidate`, that let a candidate's same-named module
+        // replace an unreadable suite module and define the rubric (review
+        // wf_293dfdb6-9d8, PSV-1: executed to a keyed PASS).
+        match candidate.try_exists() {
+            Ok(false) => continue,
+            Ok(true) => {}
+            Err(e) => {
+                errors.push(MergeError {
+                    code: error::E0901,
+                    message: format!(
+                        "module `{path_str}` at {}: cannot tell whether it exists ({e}); \
+                         the search does not fall through to a later directory",
+                        candidate.display()
+                    ),
+                    file: candidate.display().to_string(),
+                });
+                found = true;
+                break;
+            }
         }
 
         match std::fs::read_to_string(&candidate) {
@@ -865,6 +934,7 @@ fn load_module_recursive(
                         load_module_recursive(
                             &nested,
                             search_dirs,
+                            in_sealed(&candidate),
                             already_loaded,
                             loading_stack,
                             loaded_items,
@@ -891,10 +961,17 @@ fn load_module_recursive(
                 }
             },
             Err(e) => {
-                // I/O error on this candidate — try next directory.
-                if let Some(s) = searched.last_mut() {
-                    s.push_str(&format!(" (read error: {e})"));
-                }
+                errors.push(MergeError {
+                    code: error::E0901,
+                    message: format!(
+                        "module `{path_str}` at {} exists but cannot be read ({e}); the search \
+                         does not fall through to a later directory",
+                        candidate.display()
+                    ),
+                    file: candidate.display().to_string(),
+                });
+                found = true;
+                break;
             }
         }
     }

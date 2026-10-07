@@ -2531,6 +2531,10 @@ pub fn is_impure_builtin(name: &str) -> bool {
             | "http_get" | "http_post" | "http_sse" | "http_sse_post"
             // time / scheduling / randomness — non-deterministic
             | "now_ms" | "sleep_ms" | "random_i64" | "random_f64"
+            // `srand` WRITES the process-global RNG state every draw above
+            // reads, so a "pure" call steered later randomness (PCI
+            // candidate-2 review): it is a Random effect, not pure.
+            | "srand"
             // environment / process control
             | "env_var" | "exit"
             // durable store — reads, appends to and deletes a log file. Absent
@@ -2647,7 +2651,7 @@ pub fn builtin_effect_row(name: &str) -> &'static [&'static str] {
         "now_ms" | "sleep_ms" => &["Time"],
 
         // Randomness / nondeterminism.
-        "random_i64" | "random_f64" => &["Random"],
+        "random_i64" | "random_f64" | "srand" => &["Random"],
 
         // Phase 13: distribution sampling.
         "gaussian_sample" | "beta_sample" | "categorical_sample" => &["Random"],

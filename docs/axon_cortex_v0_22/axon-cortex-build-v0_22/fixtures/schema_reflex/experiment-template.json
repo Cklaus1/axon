@@ -1,0 +1,54 @@
+{
+  "profile": "axon.lightweight-reflex-lab-draft/1",
+  "status": "DRAFT",
+  "product_result": "NOT_RUN",
+  "live_evidence": false,
+  "task_family": "fixed-domain diagnostic or next-inspection category",
+  "preregistration": {
+    "task_identity": null,
+    "measured_event": null,
+    "grouping_policy": null,
+    "protected_test_custodian": null,
+    "target_accuracy": null,
+    "minimum_coverage": null,
+    "latency_objective": null,
+    "teacher_data_permission": null,
+    "evaluation_budget": null,
+    "ood_policy": null,
+    "qualified_runtime": null
+  },
+  "candidate_arms": [
+    "incumbent",
+    "deterministic rule/parser",
+    "training-fitted TF-IDF + linear head",
+    "frozen permitted encoder + linear head"
+  ],
+  "partition_roles": [
+    "train",
+    "selection",
+    "calibration",
+    "acceptance",
+    "test"
+  ],
+  "threshold_grid": [
+    0,
+    0.5,
+    0.6,
+    0.7,
+    0.8,
+    0.85,
+    0.9,
+    0.925,
+    0.95,
+    0.975,
+    0.99,
+    0.995,
+    1
+  ],
+  "deployment_enabled": false,
+  "closure_outcomes": [
+    "rejected",
+    "inconclusive",
+    "submitted_to_independent_admission"
+  ]
+}

@@ -1,0 +1,683 @@
+{
+  "schema": "axon-v022-psv-protocol-status/1",
+  "note": "DEVELOPMENT evidence for PSV_PROTOCOL_PROVEN. It earns NO protected-readiness credit: protected_backend, g01_on_protected_backend and pci_on_protected_backend stay NOT_RUN until the operator-controlled environment certifies them.",
+  "readiness_credit": "none",
+  "m1_guest": {
+    "image_source_revision": "169ea2ce7a26a3788cdd9631498f8fef1d33dc89",
+    "image_tree_dirty": false,
+    "pci_lineage": {
+      "certified_revision": "31413ca7",
+      "descends": true,
+      "checked_by": "git merge-base --is-ancestor (also enforced by build-guest-image.sh)"
+    },
+    "artifacts": {
+      "vmlinux": "4ec3ba40a4024467d959fd3812af000ad9f7f9900579cc9f0fd01a465dcd22b7",
+      "rootfs.sqfs": "b11d1b25a4e8745754cf5e9678ef5d8cb2cf475e3259f947a65cbf2d7a891d5a",
+      "axon": "f147c49f66f4d6a2253190945f2f7c6c92d5bc1254318c81e765ff9b52900c17",
+      "axon-guest-init": "bc319dde79f1139ba33dd2af05b5274394a141c10193f42ddd90a760e8454fdb",
+      "axon-psv-runner": "da41591ff1a73673203fb47ba283e695fa987b198da1fd928acb958a6bc841a6"
+    },
+    "profile_manifest_sha256": "de908df28ed415f5d6808a5cdcca6780a753ed8b36728e861f83d0a6a1a8d8ec",
+    "host": "WSL2-nested KVM (development host, ADR-001 D1)",
+    "boot_test": {
+      "script": "scripts/psv_guest_boot_test.sh",
+      "cases": [
+        "pass",
+        "verify-result",
+        "tampered (27)",
+        "custody",
+        "seal (E0004)",
+        "changed candidate",
+        "candtest (A22: candidate @[test] under the registered name never runs)",
+        "fail (A25 control: a genuine failure is a keyed failed verdict; shows the image's interpreter and runner agree on the failure token)",
+        "splice (A25: an unkeyed failure line over a genuine pass is no verdict; a regression check at the runner, which already refused duplicate lines; the discriminating check is Fabric's psv_dispatch splice test)",
+        "reach (A27: under policy-io-exec, the exact probe that recovered K on the candidate-4 image is refused: Exec)",
+        "fall (A28: an unreadable suite module is E0901, never the candidate's same-named module)"
+      ],
+      "result": "11/11 PASS on the image above",
+      "repeatability": "the six earlier cases: 36/36 PASS over 6 runs on the candidate-2 image; not yet repeated on this image"
+    },
+    "open_observations": [
+      "One launcher exit 21 (vmm-died) in the custody case of the first run after an image rebuild; not reproduced in 6 subsequent full runs; its evidence was deleted before keep-on-failure existed, so it is UNEXPLAINED, not fixed.",
+      "The first candidate-3 image build ended with rc 141 and no message after mksquashfs. The only silent-141 pipeline there, `unsquashfs | head -1` under pipefail, was replaced by `sed -n 1p` (ab71e845). The race did not reproduce in 40 isolated runs, so the attribution is by elimination.",
+      "The candidate-5 image was built from a4a05f28. The next commit cfg-gates read_completion_key's raw-fd read to unix, because the wasm32 build of the axon binary broke (caught by interp_compiles_for_wasm32_unknown_unknown_r7c). The linux code path is unchanged, so the pinned guest axon is the same logic; only its embedded --version SHA names the earlier commit."
+    ],
+    "previous_image": {
+      "image_source_revision": "aa1d3776f5f6986f0329a611a8e7a81bfbd29a2d",
+      "profile_manifest_sha256": "9a40b60e0de4395c3db038d36eac29a65a55efcc4c325191a040fb018b2914ae"
+    }
+  },
+  "psv_protocol_proven": {
+    "state": "NOT PROVEN \u2014 7b withdrawn 2026-09-29 (see proven.withdrawn); Candidate 8 not yet certified",
+    "frozen_run": "candidate 2 (8102d404, micode fc6221a5): the proof run was fully green (640 + 1573 axon tests, 5311 micode, 215/215 mutants killed, real-guest boot 6/6, interop 287, micode gates 22, trees clean)",
+    "review": {
+      "run": "wf_d725935a-7ed",
+      "verdict": "DO_NOT_REGISTER",
+      "reviewers": 8,
+      "blockers": [
+        "B1 PSV-1: a sealed candidate's own @[test] functions are collected and run in the guest check and take part in the verdict (self-narrowing only, but it falsifies 'exactly the registered acceptance test')",
+        "B2 PSV-5: the loop checks launch-manifest, preflight-observation and guest-kernel/rootfs refs for presence and format only; nothing JOINS them (the claim 'intake/EVL verify each join' over-claimed)",
+        "B3 FIELD-ORIGIN: the suite/candidate bytes and tree digests come from the caller-supplied --state run dir, and are never compared with the registered/requested version; a swap between materialize and prepare gave a protected, signed Passed for a failing test"
+      ],
+      "majors_to_fix": [
+        "a guest-path Passed receipt has matched_checks=None, which fails the ExecutionReceipt contract, so intake would refuse every genuine protected pass",
+        "the frozen \u00a77 observation field verifier_sha256 is missing",
+        "the receipt lacks the qualification and guest-init digests that \u00a76 lists",
+        "the launcher's --verify-result inherits the caller's env (PATH), and runs before the secret is scrubbed",
+        "the guest input check accepts symlinks and skipped top-level entries, and does not require tree_digest == version"
+      ],
+      "majors_recorded_as_followups": [
+        "safety-monitor keys and protected_scopes come from the mutable store config (outside PSV; an O2-like follow-up)",
+        "admission re-derivation does not re-run protected_evidence::check"
+      ]
+    },
+    "readiness_credit": "none",
+    "candidate_3": {
+      "state": "frozen run e321b5dc NOT GREEN (mutation registry drift); fixed in dev; re-freeze as 3b pending",
+      "axon_dev_head_at_fixes": "c99b9ed1",
+      "micode_dev_head": "63fe711b",
+      "fixed": [
+        "B1",
+        "B2",
+        "B3",
+        "all five majors_to_fix"
+      ],
+      "spec": "v022-psv-protocol.md amendments 5-10",
+      "matrix": "A22-A24 added (24 rows)",
+      "mutations": "M219-M238 20/20 killed against passing baselines; M176 retired as equivalent under --exact",
+      "pending": [
+        "guest image rebuild (axon + axon-psv-runner changed) and real-guest boot",
+        "frozen run with fresh target dirs",
+        "ONE independent review"
+      ],
+      "frozen_run": {
+        "commit": "e321b5dc",
+        "micode": "63fe711b",
+        "result": "NOT GREEN",
+        "green": "647 + 1575 axon tests, 5312 micode, PCI/stage5/readiness/matrix/preflight gates, real-guest boot 7/7, interop 287, micode gates 22, trees clean",
+        "failed": "mutations 229/234: M152, M153, M204 and M218 no longer applied (their code moved in the candidate-3 fixes); M173 survived (its end-to-end killing test is unreachable under --exact)",
+        "fix": "rows retargeted to the moved code; M173's kill is now the parser-level substring assertion; all five verified killed in dev"
+      }
+    },
+    "candidate_3b": {
+      "commit": "b22fb35d",
+      "micode": "63fe711b",
+      "frozen_run": "fully green: 647 + 1575 axon tests, 5312 micode, 234/234 mutants killed, PCI 18 rows, stage5, readiness, matrix, preflight, real-guest boot 7/7, interop 287, micode gates 22, trees clean",
+      "review": {
+        "run": "wf_1bc28496-38e",
+        "verdict": "DO_NOT_REGISTER",
+        "reviewers": 8,
+        "register": [
+          "PSV-1",
+          "PSV-2",
+          "PSV-3",
+          "PSV-5",
+          "PSV-6",
+          "FIELD-ORIGIN"
+        ],
+        "blockers": [
+          "PSV-4: a Failed verdict is attested as protected with no completion evidence; a candidate can print a forged failed line for the registered test over a genuine keyed pass (executed reproduction)",
+          "PSV-7: a safety-monitor key that exists only in the mutable store satisfies a protected evaluation's clearance; ACCEPT and activation in a protected scope (executed reproduction)"
+        ],
+        "majors_to_fix": [
+          "derive re-reads the extracted verdict.json without binding it to the drive/serial verdict digest"
+        ],
+        "majors_recorded": [
+          "task_acceptance and verifier_pins.check_suites are store config (PSV-1)",
+          "no loop-side anchor for guest kernel/rootfs/init/qualification digests (PSV-5)",
+          "intake/EVL do not re-check the observation's freshness or epoch (PSV-5, PSV-6)",
+          "the observer runs as Fabric's UID (PSV-6, protected-only)",
+          "protected_scopes is store config (PSV-7)",
+          "the guest effect policy comes from the caller's --grant-registry in protected mode (FIELD-ORIGIN)"
+        ]
+      },
+      "aborted_launch": "wf_bc1b72ef-a54 was launched with a placeholder instead of the brief and stopped at once; it never saw the brief, so it is not a review; the frozen trees were verified untouched"
+    },
+    "candidate_4": {
+      "state": "frozen run green; review DO_NOT_REGISTER",
+      "fixed": [
+        "PSV-4 keyed failures + verdict-bytes binding (amendment 11)",
+        "PSV-7 operator-rooted monitor keys (amendment 12)"
+      ],
+      "matrix": "A25, A26 (26 rows)",
+      "mutations": "M239-M245 7/7 killed against passing baselines",
+      "dev_checks": "652 axon tests (loop/contracts/fabric/cortex/reflex/adapter/psv/recipe/guest-init), clippy clean, interop 287, micode gates 22",
+      "pending": [
+        "guest image rebuild (axon + axon-psv-runner changed) and real-guest boot",
+        "axon-core full suite",
+        "full dev mutation run",
+        "frozen run with fresh target dirs",
+        "ONE independent review"
+      ],
+      "commit": "191b2e93",
+      "frozen_run": "fully green: 652 + 1576 axon tests, 5312 micode, 241/241 mutants killed, PCI 18 rows, stage5, readiness, matrix 26, preflight, real-guest boot 9/9, interop 287, micode gates 22, trees clean",
+      "review": {
+        "run": "wf_ecfcd666-6c9",
+        "verdict": "DO_NOT_REGISTER",
+        "register": [
+          "PSV-1",
+          "PSV-2",
+          "PSV-4",
+          "PSV-5",
+          "PSV-6",
+          "PSV-7",
+          "FIELD-ORIGIN"
+        ],
+        "blockers": [
+          "PSV-3: K sits in the memory of the process that runs candidate code; under an Exec grant a spawned helper can read it (found by reading the code)"
+        ],
+        "reproduction": "EXECUTED in the real guest on the candidate-4 image, under policy-io-exec: the candidate recovered K from /proc/<pid>/mem; HMAC(K, 'axon-test-completion/1\\0t_ok') equalled the interpreter's pass token",
+        "majors_recorded": [
+          "protected_scopes is store config",
+          "no loop anchor for guest kernel/rootfs/init digests",
+          "Fabric's attestation key is not refused in the observer root",
+          "Fabric issues the custodian nonce in-process",
+          "intake/EVL do not check observation age/epoch/nonce",
+          "InterpreterRun jobs on the protected profile launch without an observation",
+          "the protected grant registry is a caller path and sets the guest policy",
+          "task_acceptance and check_suites are store config"
+        ]
+      }
+    },
+    "candidate_5": {
+      "state": "frozen run green; review DO_NOT_REGISTER",
+      "fixed": [
+        "PSV-3 key custody (amendment 13)"
+      ],
+      "matrix": "A27 (27 rows)",
+      "mutations": "M246-M249 4/4 killed",
+      "follow_up_operator": "Yama in the guest kernel config (kernel rebuild + B263 re-qualification)",
+      "commit": "e9a13f72",
+      "frozen_run": "fully green: 653 + 1578 axon tests, 5312 micode, 245/245 mutants killed, PCI 18 rows, stage5, readiness, matrix 27, preflight, real-guest boot 10/10, interop 287, micode gates 22, trees clean",
+      "review": {
+        "run": "wf_293dfdb6-9d8",
+        "verdict": "DO_NOT_REGISTER",
+        "register": [
+          "PSV-2",
+          "PSV-3",
+          "PSV-4",
+          "PSV-5",
+          "PSV-6",
+          "PSV-7",
+          "FIELD-ORIGIN"
+        ],
+        "blockers": [
+          "PSV-1: the module loader fell through on an unreadable suite module, so the candidate's same-named module defined the rubric (EXECUTED to a keyed PASS through the real runner)"
+        ],
+        "majors_recorded": [
+          "under an IO grant a sealed candidate can read the suite's source",
+          "epoch revoked while the observer runs still yields a protected verdict",
+          "the policy digest the observation joins is not enforced against the launched policy",
+          "three manifest joins lack a frozen test (operation_id, guest rootfs, guest init)",
+          "protected_scopes store config lets a scope be un-protected and re-protected",
+          "the execution leg of a protected trial is unauthenticated (a relabelled local receipt passes the D3 filter)",
+          "admission/transition authority unauthenticated; baseline designation bypasses the protected-scope gate",
+          "guest effect policy from the caller's grant decides what a sealed candidate may do",
+          "task_acceptance store config"
+        ]
+      }
+    },
+    "candidate_6": {
+      "state": "frozen run green; certifying review REGISTER (8/8); superseded by dev-loop round 1 blockers",
+      "fixed": [
+        "PSV-1 module fall-through (amendment 14)"
+      ],
+      "matrix": "A28 (28 rows)",
+      "mutations": "M250 killed",
+      "commit": "13927667",
+      "frozen_run": "fully green: 653 + 1579 axon tests, 5312 micode, 246/246 mutants killed, PCI 18 rows, stage5, readiness, matrix 28, preflight, real-guest boot 11/11, interop 287, micode gates 22, trees clean",
+      "review": {
+        "run": "wf_0bc40b69-da7",
+        "verdict": "REGISTER",
+        "register": [
+          "PSV-1",
+          "PSV-2",
+          "PSV-3",
+          "PSV-4",
+          "PSV-5",
+          "PSV-6",
+          "PSV-7",
+          "FIELD-ORIGIN"
+        ]
+      }
+    },
+    "dev_loop": {
+      "round_1": {
+        "run": "wf_336353cb-a2b",
+        "tree": "axon-s3-veto 29e8780b (protocol code identical to candidate 6)",
+        "agents": 16,
+        "blockers": [
+          "PSV-7: protected admission/activation never re-verify counted verdicts, and trust the stored evaluation_class (executed)",
+          "PSV-7: a protected trial's execution leg is an unsigned producer claim (executed)",
+          "PSV-6: the epoch is not re-checked after the observer runs (executed)",
+          "PSV-6: in protected mode the epoch's authority store is caller-chosen, and the loop never joins the observation's epoch (executed)",
+          "PSV-1: a sealed module's mod/use is not confined to the sealed dirs, so operator modules outside the entry's import closure can join the program (executed)"
+        ],
+        "fixed": {
+          "commits": [
+            "08903fdf sealed imports (PSV-1)",
+            "dfce767d epoch join + post-observation recheck (PSV-6)",
+            "5abd8990 + c8e43538 admission re-verification (PSV-7; the follow-up fixes a commit made without gating on its tests)",
+            "cf0a6dfe attested execution leg (PSV-7)"
+          ],
+          "amendments": "15-18",
+          "matrix": "A29-A32 (32 rows)",
+          "mutations": "M251-M259 9/9 killed"
+        }
+      },
+      "next": "round 4 on the fixed dev tree",
+      "round_2": {
+        "run": "wf_7cb5856d-806",
+        "tree": "axon-s3-veto a2a0be67",
+        "agents": 16,
+        "blockers": [
+          "PSV-1: a regression of amendment 15 \u2014 a candidate module claims a suite module's name first (executed, keyed PASS)",
+          "PSV-7: admission decided on stored arm counters (executed, ACCEPT)",
+          "PSV-7: a clearance counted by its ledger key_id alone; forged unsigned events cleared (executed, ACCEPT)",
+          "PSV-3: a local dispatch on a protected host ran workload code in the host's privilege domain (executed)"
+        ],
+        "fixed": {
+          "commits": [
+            "38273ef1",
+            "5f01a5a6",
+            "bcfd902f",
+            "79957075"
+          ],
+          "amendments": "19-22",
+          "matrix": "A33-A36 (36 rows)",
+          "mutations": "M251 retargeted, M260-M265 killed"
+        }
+      },
+      "round_3": {
+        "run": "wf_bf757240-925",
+        "tree": "axon-s3-veto 4fbe6918",
+        "agents": 16,
+        "blockers": [
+          "FIELD-ORIGIN: the launcher's inline Python imports from the caller's cwd as root (executed)",
+          "PSV-7: a forged record swaps arm policy_refs; arm policy not joined to the trials' episodes (executed)",
+          "PSV-7: a signed FAILED verdict counted as a pass; outcome not joined to the re-verified verdict (executed)",
+          "PSV-7: a context no observer signed counts; context signature not stored/re-verified (executed)",
+          "PSV-1: a sealed candidate reseeds the process RNG and predicts the operator test's draws (executed)"
+        ],
+        "fixed": {
+          "commits": [
+            "a2df24c5",
+            "96aa96f3",
+            "8e9858f4"
+          ],
+          "amendments": "23-25",
+          "matrix": "A37-A40 (40 rows)",
+          "mutations": "M266-M270 killed"
+        }
+      },
+      "round_4": {
+        "run": "wf_c1171526-077",
+        "tree": "axon-s3-veto 609901ab",
+        "agents": 16,
+        "blockers": [],
+        "result": "CLEAN \u2014 16/16 REGISTER, no blocker (findings: one MINOR symlink-attribution defence-in-depth, not reachable on the guest path since check_inputs refuses symlink trees; one FUTURE candidate random_* draw, cannot seed or predict)"
+      },
+      "status": "round 4 clean; the dev loop's stop condition (a round with no blocker) is met. Proceed to ONE freeze + certifying review; rounds 1-3 found 5+4+5 blockers"
+    },
+    "candidate_7": {
+      "state": "frozen run NOT green \u2014 mutation registry drifted against the rounds 1-3 restructuring; blocked on an operator decision about 7 subsumed rows",
+      "commit": "a0835eec",
+      "micode": "63fe711b",
+      "frozen_run_green_except_mutations": "lanes A/B/C green (647-class axon + 1582 axon-core + 5312 micode), real-guest boot 11/11, interop 287, micode gates 22, trees clean",
+      "mutation": "255/266 killed; 11 BAD rows, all drift from MY OWN rounds 1-3 fixes (no code defect)",
+      "retargeted_and_killing": [
+        "M01 (signing replayed, disambiguated from the new execution_attestation_decision)",
+        "M218 + M230 (intake check_bundle now multi-line with an epoch arg)"
+      ],
+      "not_applicable_subsumed": [
+        "M204 (submit observe block restructured for the epoch recheck; observer-refusal is covered by M192-M195 in observer.rs and the epoch arm by M253)"
+      ],
+      "survived_now_defence_in_depth": {
+        "note": "Each mutates a derive()/reverify guard that rounds 1-3 turned into a SECOND, independent check of the same property. With the guard mutated, the attack is STILL refused (verified: all 7 mutant tests pass), so each is an equivalent mutant subsumed by a named check \u2014 none is a hole.",
+        "rows": {
+          "M103": "derive check_pins (profile/rev/suite/acceptance) \u2014 subsumed by reverify_protected -> verify_check_evidence -> check_pins",
+          "M104": "derive context_signed_by \u2014 subsumed by reverify_protected's context-signature check under the rooted observer",
+          "M209": "derive verifier rooted_key \u2014 subsumed by verify_check_evidence's rooted verifier requirement",
+          "M210": "derive observer rooted_key \u2014 subsumed by reverify_protected's context signature under the rooted observer",
+          "M245": "admission monitor key_id in the clearance ledger-scan \u2014 subsumed by clearance_verifies (round 2) re-verifying the stored signature under the monitor root",
+          "M254": "the reverify_protected CALL \u2014 subsumed for the relabel test by round-2's check_arm_grounding + class binding",
+          "M255": "reverify_protected claims_protected \u2014 subsumed by the class-grounding + join checks"
+        }
+      },
+      "decision_needed": "How to treat the 7 subsumed rows: (a) document as equivalent mutants (name the subsuming check each), like M58/M176 \u2014 keeps defence in depth, expands the equivalent set from 2 to 9; (b) remove the now-redundant derive() guards so each row retargets to the single authoritative point (weakens defence in depth, risky late change); (c) leave the belt-and-braces and accept the rows as equivalent. Recommend (a). This expands the equivalent set 4.5x right before certification, so it is put to the operator rather than self-cleared.",
+      "readiness_credit": "none"
+    },
+    "candidate_7b_prep": {
+      "state": "evidence model complete; ready to freeze 7b",
+      "paired_disable_manifest": "governance/status/v022-psv-paired-disable.json",
+      "finding": "Of the 7 apply-and-survive rows, only M245 is a clean defence-in-depth pair (A refused, B refused, A+B attack succeeds). M103 and M209 are ASYMMETRIC: the sibling (M26 / M205) is the sole guard for that test, and the retired guard is not on the attack's path (removing it changes nothing; removing the sibling alone reopens the attack). M104, M210, M254, M255: disabling the retired guard AND my one chosen sibling still refuses, so the property has a THIRD guard my one-sibling model missed.",
+      "consequence": "Not claiming clean symmetric equivalence for the 6. Per the operator's guard ('never classify equivalent solely because another test fails first'), the retirement of the 6 needs either the full guard set enumerated so the SAME attack demonstrably reopens, or honest asymmetric-subsumption evidence.",
+      "next": "reclassify M103/M209 as asymmetric-subsumption (A dominated by B); enumerate the full guard set for M104/M210/M254/M255; re-run paired-disable to green; only then rebuild EQUIV_RECORD + reporting and freeze 7b",
+      "mutation_evidence": {
+        "registry_total": 268,
+        "active_killed": "258/258",
+        "unexpected_survivors": 0,
+        "stale": 0,
+        "retired": "7 defence-in-depth (paired-disable 8/8 incl. M204 refactored) + 1 refactored + 2 legacy = 10",
+        "note": "equivalents are NOT counted as killed (operator 2026-09-28). Each retired-equivalent has a named property, subsuming guard set, and a live killing sibling; the paired-disable manifest shows removing the retired guard alone leaves the attack refused and removing the full guard set reopens the SAME attack."
+      },
+      "paired_disable": {
+        "M245": "pair (+M264)",
+        "M254": "set (+M261,M262)",
+        "M104": "set (+M99,M208,M269,M207)",
+        "M210": "set (+M207,M208,M99,M269)",
+        "M255": "set (+M254,M212,M213,M261,M262)",
+        "M103": "asymmetric (dominated by M26)",
+        "M209": "asymmetric (dominated by M205)",
+        "M204": "refactored; killed by M192-M195,M253"
+      }
+    },
+    "proven": {
+      "candidate": "7b",
+      "axon": "c525552d",
+      "micode": "63fe711b",
+      "freeze_manifest": {
+        "registry_digest": "2a2219d8e244e11e654821e17e7508c4dc739fc57e2e0818ae7c30b61dd53732",
+        "equivalence_digest": "76b9213c35accdff56b7cd432be5cd0b6fea2fd6804518b92ab2c96e53d3eb81",
+        "paired_disable_digest": "5fa47f3e460959c43a8d280c0f0ba964a492a2d4d7d18c65778a1d41ca0cbc1f",
+        "guest_image_profile_manifest": "de908df28ed415f5d6808a5cdcca6780a753ed8b36728e861f83d0a6a1a8d8ec"
+      },
+      "frozen_run": "fully green (nonzero RC 0): 647-class + 1582 axon-core + 5312 micode; active mutations 258/258 killed (0 survivors, 0 stale); retired 7 defence-in-depth + 1 refactored + 2 legacy; paired-disable 8/8; PCI 18, stage5, readiness (NOT_READY), matrix A1-A40, trust preflight; real-guest boot 11/11; interop 287; micode gates 22; trees clean",
+      "dev_review_loop": "rounds 1-4 on identical protocol code: 5+4+5 blockers found and fixed (amendments 15-25), round 4 clean 16/16",
+      "certifying_review": {
+        "run": "wf_afca02ad-f81",
+        "reviewers": 9,
+        "verdict": "REGISTER 9/9",
+        "claims": [
+          "PSV-1..7",
+          "FIELD-ORIGIN",
+          "EQUIVALENCE"
+        ]
+      },
+      "means": "the PSV protocol holds as DEVELOPMENT evidence. It earns NO protected-readiness credit: protected_backend, g01_on_protected_backend and pci_on_protected_backend stay NOT_RUN, and PROTECTED_VERIFIER_READY stays NOT_READY until the operator-controlled environment certifies them. Stage 7 / CX-21 remain PREREGISTERED.",
+      "later_correction": "C8 certifying review wf_bff9835f-4a0 (2026-09-29) showed M254 \u2014 retired here as EQUIVALENT_DID \u2014 was a FALSE retirement at this candidate too: removing the reverify_protected call alone breaks three protected-class tests, so the guard is load-bearing. 7b's EQUIVALENCE registration was therefore wrong for M254 (the paired-disable matrix ran its assigned relabel test, which M261/M262 refuse independently). No protocol property was left unverified \u2014 M254's guard was present and its properties were killed by active mutants \u2014 but the claim '8 retired rows are genuinely equivalent' was false. Corrected from Candidate 8 onward (M254 active; full-suite condition added to paired-disable).",
+      "withdrawn": "2026-09-29: PSV_PROTOCOL_PROVEN at 7b (c525552d) is WITHDRAWN. The Candidate-8 certifying review wf_ae3a5a74-41e executed three defects that were present at 7b: (1) PSV-1 \u2014 a sealed candidate steers the shared process RNG (7b refused only srand; random_*, the samplers and the goal_* searches all draw from the operator's stream) and a WRONG candidate gets a keyed PASS through the real runner; (2) M255 and (3) M103 \u2014 retired as equivalent at 7b but load-bearing (M255: the only admission-side check that a counted verdict claims protected evidence when a store writer bypasses EVL; M103: the only re-derivation pin check for development-class decisions). There is currently NO valid PSV_PROTOCOL_PROVEN evidence. It earned no readiness credit either way; readiness is unchanged (NOT_READY)."
+    },
+    "open_followups": [],
+    "resolved_followups": [
+      {
+        "was": "MAJOR-ADJACENT (certifying review wf_afca02ad-f81, PSV-1): a sealed candidate may call random_i64/random_f64 and advance the shared process RNG the operator's @[forall] test draws from. srand is refused in sealed frames but random_* is not; it cannot choose or predict inputs (seed unreadable, srand refused), only shift them, and cannot change the rubric. Fix: give random_* the sealed-frame refusal, or a per-frame RNG stream.",
+        "resolution": "commit b8bbdb74 (dev tree axon-s3-veto): random_i64 and random_f64 now raise SandboxViolation in a sealed frame, mirroring srand. Test a_sealed_candidate_cannot_draw_from_the_rng (RC=0); mutations M271 (f64) + M272 (i64) both KILLED by discriminator; matrix row A41. Hardens toward candidate 8; frozen 7b (c525552d) evidence unchanged, no readiness credit."
+      },
+      {
+        "was": "ENV HYGIENE: an earlier review agent (running as root) created /etc/axon/trust/qualification, which made the readiness deriver's reason string drift and failed a frozen run's 1f. Removed. Review-agent briefs now forbid writing /etc. Consider making the readiness check robust to ambient /etc leftovers.",
+        "resolution": "commit 76847d45 (dev tree axon-s3-veto): install-shape failures in protected_verifier_ready.py collapse to one stable NOT_INSTALLED_HERE reason, so a stray root-owned /etc/axon/trust/qualification no longer drifts the committed readiness file under --check. Test an_ambient_etc_leftover_does_not_change_readiness pins the invariant across absent/empty/symlink/writable shapes (no /etc write, no root). --check PASS, readiness NOT_READY unchanged. PASS-gating untouched."
+      }
+    ],
+    "candidate_8": {
+      "first_freeze": {
+        "axon": "01e22d50",
+        "micode": "63fe711b",
+        "image_source_rev": "4d689bee",
+        "proof": "GREEN (bind-c8/PROOF-SUMMARY.json): gate PASS, active 260/260 killed, boot 11/11, paired-disable 8/8, trees clean; two harness observations (0b retired-rows, boot psv_dev prereq) re-run cleanly at the same SHA",
+        "certifying_review": {
+          "run": "wf_bff9835f-4a0",
+          "reviewers": 9,
+          "completed": 8,
+          "errored": [
+            "PSV-2 (StructuredOutput retry cap)"
+          ],
+          "verdict": "DO_NOT_REGISTER",
+          "register": [
+            "PSV-1",
+            "PSV-3",
+            "PSV-4",
+            "PSV-5",
+            "PSV-6",
+            "PSV-7",
+            "FIELD-ORIGIN"
+          ],
+          "blocker": "EQUIVALENCE: M254 is a FALSE retirement \u2014 reverify_protected is the SOLE enforcement site for properties active mutants M258/M259/M267/M268/M269 test; removing it alone breaks three protected-class tests. Subsumption inverted. Methodology gap: paired-disable ran each row against its registry-assigned test, not its named property.",
+          "major_adjacent": "PSV-1: sealed-RNG hardening incomplete \u2014 gaussian_sample/beta_sample/categorical_sample (same Random effect) were unguarded; reviewer reproduced a sealed candidate shifting the operator stream via gaussian_sample."
+        },
+        "outcome": "NOT recorded as PROVEN \u2014 a real claim-level blocker was found. 01e22d50 stands as the failed-candidate evidence."
+      },
+      "fixes": {
+        "commit": "bce231ad",
+        "psv_1": "hoisted the sealed-frame Random refusal into pre_effect_gate keyed on the effect row (covers all six RNG builtins + future by construction); removed the three per-arm guards; extended the draw test to the samplers; matrix A41 updated; M270/M271/M272 retargeted to the hoisted guard, each verified KILLED.",
+        "equivalence": "M254 reclassified ACTIVE with a named-property discriminator (a_protected_admission_re_verifies_the_execution_leg_from_its_documents), verified KILLED; removed from EQUIV_RECORD. Active 260->261, retired-equivalent 7->6. The six remaining (M103/M104/M209/M210/M245/M255) re-confirmed genuinely redundant by a full-suite check.",
+        "methodology": "v022_paired_disable.py now runs a full-suite check per retired row (a guard removed alone must not break ANY test in the package) \u2014 the check that flags M254."
+      },
+      "corrected_freeze": "cb9fa2ea proof GREEN, NZ=0 (bind-c8d): 0b 261/261 apply, gate PASS, boot 11/11, active 261/261 killed (M254 by its named-property test), 0 survivors, 0 stale, paired-disable 7/7 with full_suite=SUITE_OK on every row. Intermediate candidates 2568963f (gate: cargo fmt) and 7b9736b9 (M254 row pointed at the wrong file -> stale 260/261; M255 joint cell not applicable) were superseded. Freeze re-cut to commit the regenerated paired-disable manifest (the committed one still listed M254 as equivalent).",
+      "readiness_credit": "none",
+      "second_certifying_review": {
+        "run": "wf_ae3a5a74-41e",
+        "candidate": "4943489f",
+        "reviewers": 9,
+        "errored": 0,
+        "verdict": "DO_NOT_REGISTER",
+        "register": [
+          "PSV-2",
+          "PSV-3",
+          "PSV-5",
+          "PSV-6",
+          "FIELD-ORIGIN"
+        ],
+        "do_not_register": [
+          "PSV-1",
+          "PSV-4",
+          "PSV-7",
+          "EQUIVALENCE"
+        ],
+        "blockers": {
+          "rng_goal_steering": "goal_run/goal_run_random/goal_run_multistart/goal_run_categorical/goal_continue carry effect row {AI,Net,IO} but call next_rand_u64() on the shared RNG; the effect-row-keyed sealed refusal misses them. Executed: wrong candidate keyed PASS 5/5 via real axon_psv::runner::run.",
+          "M255_false_retirement": "admission.rs:321 claims_protected is the only admission check stopping a genuinely signed guest-unobserved/development verdict from counting in a protected decision under a store-writer forged evaluation; removing it reaches Accept; whole axon-loop suite green.",
+          "M103_false_retirement": "admission.rs:588 derive-time check_pins is the only re-derivation pin check for development class (reverify_protected runs only for protected); removing it activates a candidate on a withdrawn pin; registered G11-r22-rollback-revalidate relied on it."
+        },
+        "major_adjacent": {
+          "PSV-5": "five of twelve manifest-to-request/receipt joins killed by no test: operation_id, task_id, guest rootfs, guest axon, guest init",
+          "FIELD-ORIGIN": "readiness.rs certification git queries inherit caller env and honour git replace / skip-worktree; spoofable by a repo writer"
+        },
+        "methodology_lesson": "A green package suite is not evidence a guard is redundant \u2014 only that no existing test exercises the route. 3 of 7 retired rows (M254, M103, M255) were load-bearing."
+      }
+    },
+    "candidate_9": {
+      "state": "DEV REVIEW LOOP: round 4 found 5 blockers; the fix wave is merged and evidenced (dev head 2c59ebb6); affected-claim review round 4b next, then a full nine-claim round. No freeze until a round has zero blockers.",
+      "naming": "C7b = proof WITHDRAWN; C8 = FAILED certification attempts (01e22d50, 2568963f, 7b9736b9, cb9fa2ea, 4943489f); C9 = this candidate",
+      "objectives": {
+        "1_rng": "DONE 8a7962fb: RNG moved into the per-provenance Kernel; process-global stream deleted; sealed stream one-way seeded; drift test derives Random builtins from BUILTINS; runner-level steering regression; M270-M272 killed",
+        "2_equivalence": "DONE 8a7962fb: M254/M103/M255/M104/M209/M210 ACTIVE with named-property killing tests; M176 STALE (M293 replaces it); M58 + M245 EQUIVALENT on executed four-cell matrices with own-attack markers; paired-disable requires all four cells, attack-message markers, row-flag full suite",
+        "3_field_origin": "DONE b3902ed5 (c9/field-origin): all reviewer git spoofs + 2 new reproduced and refused; object-store re-hash; out_root/nonce_store ownership; M284-M292 killed",
+        "4_major_adjacent": "DONE (wave C9 initial, 20a181dc) and extended by the round-1 fix wave below",
+        "5_lane_a_d1": "DONE 782d9b4f (c9/authority): forged --grant-registry reproduced on dev + protected host; operator-pinned registry; authorize before any journal write; M273-M283 killed"
+      },
+      "registry": "387 rows at 89d5efd8: 358 active; retired 28 equivalent + 1 stale (M176); 0 legacy",
+      "negative_matrix": "64 rows (A47-A64 in C9), 163 citations resolve",
+      "open_operator_decisions": [],
+      "operator_decisions_2026_09_29": {
+        "adopted": "as written (operator, 2026-09-29); A and D are a separate workstream and stay listed under open_operator_decisions until that workstream records them",
+        "B_strict_protected_counting": {
+          "decision": "a trial counts as protected only with the whole chain: qualified profile, fresh observer evidence, pinned privileged launcher, exact manifest, protected guest execution, affirmative completion, protected verdict, verifier authentication, exact joins, and amendment 18's attested execution leg",
+          "accepted_consequence": "ZERO protected trials count until an OBSERVED EXECUTION path exists; incomplete chains count only as attempt/cost/failure/unknown",
+          "record": "amendment 44 (the chain, link by link, with its enforcing checks)",
+          "audit": "read-only audit of every link at c453a4c6: no route by which an incomplete chain counts as protected; negative-matrix A72 unused",
+          "followups": [
+            "an observed execution path: a cross-peer manifest shape with MiCode, so Fabric can attest a protected EXECUTION leg (amendment 18)",
+            "when that path exists: refuse a protected launch from a test-trust Fabric build, or pin the manifest's verifier_sha256 to the installed verifier on the loop side",
+            "when that path exists: observed_protected_execution must verify and join its manifest and observation references (today it checks them for format only, and accepts upper-case hex)"
+          ]
+        },
+        "C_git_ignore_has_no_authority": {
+          "decision": "for protected provenance every filesystem object in the tree counts; only an operator-owned allowlist of generated paths excuses anything",
+          "closes": "amendment 32's open item (info/exclude / self-ignoring .gitignore hidden from readiness)",
+          "implemented": "git_data::tree_differs, one rule for readiness, build.rs provenance and the guest-manifest helper; allowlist /etc/axon/provenance-allowlist (axon-provenance-allowlist/1; exact paths and dir prefixes; default target/ and dist/; missing = nothing excused)",
+          "record": "amendment 44; negative-matrix A70; mutations M500-M503 (M290, M451 re-anchored)",
+          "operator_action": "install /etc/axon/provenance-allowlist as root, mode 0644, on each host that builds a certified verifier or an evidence guest image (or build with CARGO_TARGET_DIR outside the tree)"
+        },
+        "E_worktrees_refused_for_protected_builds": {
+          "decision": "a gitfile / linked worktree never gives a protected-clean answer; developer worktrees stay fine for development",
+          "implemented": "readiness refuses a non-directory .git; build provenance already did (A65); the guest manifest binds the PCI lineage asked from a standalone clone",
+          "record": "amendment 44; negative-matrix A71; mutations M504-M506",
+          "operational_consequence": "freezes, certified verifier builds and evidence guest images run from a standalone clone; scripts/v022_freeze_manifest.py must still be taught to refuse a linked-worktree root and to bind the guest manifest's axon_tree_dirty_at_build/_reasons (documented, not done); the committed profiles/linux-microvm/manifest.json predates this rule and must be rebuilt for evidence"
+        }
+      },
+      "lane_b_prep_followups": [
+        "D1 now refuses a caller --grant-registry on a protected host: Cortex FabricSubmitExecutor (crates/axon-cortex/src/runner.rs ~2632) and MiCode always pass one, so their protected-host path must stop doing so before a protected host is deployed; protected-host.json must add grant_registry {path, sha256}"
+      ],
+      "readiness_credit": "none; readiness NOT_READY",
+      "dev_review_round_1": {
+        "run": "wf_2a57e9a7-e4a",
+        "tree": "a3db33bd",
+        "verdicts": "5 REGISTER (PSV-1, PSV-3, PSV-4, PSV-5, FIELD-ORIGIN), 4 DO_NOT_REGISTER (PSV-2, PSV-6, PSV-7, EQUIVALENCE)",
+        "blockers": [
+          "PSV-6: a protected-profile interpreter_run launched unobserved and was attested/counted protected",
+          "PSV-2: POSIX ACLs / xattrs invisible to check_inputs and the digest (keyed Failed for a correct candidate)",
+          "PSV-7: readiness verified the operator signature over a second read of the record (FIFO/rename)",
+          "EQUIVALENCE: M204's guard live without a row",
+          "EQUIVALENCE: weak kills (any test failure counted as a kill)",
+          "EQUIVALENCE: check_bundle guards without rows (four survived every suite)"
+        ]
+      },
+      "round_1_fix_wave": {
+        "dev_head": "89d5efd8",
+        "fixed": [
+          "PSV-6 A54: only an observed registered check launches on the protected profile; no unobserved execution attested; EVL/admission require the observed-launch refs (M320/M321/M425-M428)",
+          "PSV-4/5 A55: bundle decided from the FINAL receipt class; downgrade guard rowed (M322/M323)",
+          "A56-A57/A63: out_root/nonce_store leaves the service's own 0700; only NotFound is absent; one key one authority root (Fabric and loop)",
+          "PSV-7 A58-A61: one read per authority decision (O_NOFOLLOW, regular files); readiness attribution joined to roots, observation and B263 record; hardened build provenance; 0400 signer key",
+          "PSV-5 A62/A64: recorded attribution joined to the re-verified signers; no all-zero host digests",
+          "PSV-2 A53: any xattr on inputs or job files refused in the guest; launcher images without xattrs. Guest noacl mount WITHDRAWN (the guest kernel refuses it; the guest failed to boot)",
+          "PSV-1 A33: the first-match rule: no import resolves first to a sealed copy of a name an operator dir holds (M436)",
+          "EQUIVALENCE: kill = the row's own ATTACK marker in the failing panic (amendment 39); M204 ACTIVE; stale rows need a killed replacement; retired rows need markers; kill evidence is the last panic; harness TMPDIR on disk"
+        ],
+        "guest": "rebuilt and re-pinned at 3f81dc67 (bffaaaae); psv_guest_boot_test.sh 11/11 PASS",
+        "mutation": "full two-shard run at a49f6a3f: registry 387; ACTIVE 358/358 KILLED by their own attack; REFUSED_ELSEWHERE 0; survivors 0; unapplied 0; 28 EQUIVALENT_DID never counted killed; 1 STALE (M176 -> M293). a49f6a3f..89d5efd8 changes only harness scripts, markers for retired rows, and one test panic message (M245's attack)",
+        "paired_disable": "29/29 records hold (25 at a49f6a3f in a separate worktree; M245 at 16a32769, M58/M60/M89 at 89d5efd8 after the harness TMPDIR fixes)",
+        "refuted_retirements": [
+          "M260: proposed equivalent vs M436; its full-suite cell reached a keyed PASS; stays ACTIVE"
+        ],
+        "integration": "bffaaaae: fmt, clippy (5 PSV pkgs + axon-core), PSV package tests, trust preflight fixtures, matrix PASS; axon-core 669/671 with the two native-parity harnesses failing on /tmp space (pass alone; harness TMPDIR fixed since)",
+        "known_limits": [
+          "the codegen/native parity tests exec a prebuilt target/debug/axon that a mutation never rebuilds, so a full-suite cell does not exercise a mutated guard through native codegen"
+        ]
+      },
+      "dev_review_round_2": {
+        "run": "wf_9aa89b50-00a",
+        "tree": "043a0cb0",
+        "verdicts": "7 REGISTER, 2 DO_NOT_REGISTER (FIELD-ORIGIN, EQUIVALENCE)",
+        "blockers": [
+          "FIELD-ORIGIN: build provenance trusted repository git config (core.worktree, checkStat/trustCtime)",
+          "FIELD-ORIGIN: guest-manifest provenance used unhardened PATH git, ignored untracked files, failed open",
+          "EQUIVALENCE: M177 a weak kill (M436 refused first; guest twin of M04)",
+          "EQUIVALENCE: load-bearing guards without rows (read_regular O_NOFOLLOW/is_file, attestation arms, ...)"
+        ]
+      },
+      "round_2_fix_wave": {
+        "dev_head": "d6f9cbf5",
+        "fixed": [
+          "one hardened git (git_data.rs) for readiness, build and guest provenance; repo config allowlisted, never fetches; bytes hashed against HEAD (A65-A66, amendment 40)",
+          "one key one authority root at Fabric and readiness; unreadable root refuses (A67, amendment 41)",
+          "observation signer recorded and joined; strict *sha256 format; one suite-id parser; M384 ACTIVE (A68-A69, amendment 42)",
+          "harness: M177/M04 honest-collision rows ACTIVE; marker audit; rows M480-M499; consumer-crate full-suite cells with clean baselines (amendment 43)",
+          "operator decisions B, C, E encoded (A70-A71, amendment 44; freeze refuses a non-standalone clone and an unclean guest manifest)",
+          "operator decisions A, D: setuid axon-protected-launcher; same-byte exec (sealed_exec) for launcher, helper, observer (A72-A75, amendment 45)",
+          "11 rows made honest after round-2 merges; racy swap tests made deterministic (fanotify); ETXTBSY-prone fixtures write executables via a separate process"
+        ],
+        "guest": "boot 13/13 PASS at 86ca12c0 on the image built at 3f81dc67 (incl. helper and mounts); the evidence image must be rebuilt from a standalone clone before a freeze (decision E)",
+        "integration": "d6f9cbf5: fmt, builds, clippy, six PSV packages + axon-core tests, trust preflight fixtures, matrix 75 rows: all exit 0",
+        "mutation": "full two-shard run at d6f9cbf5: registry 469; ACTIVE 436/436 KILLED by their own attack; REFUSED_ELSEWHERE 0; survivors 0; unapplied 0; 32 EQUIVALENT_DID; 1 STALE (M176 -> M293)",
+        "paired_disable": "33/33 hold (full run at de523f4c; M287/M482/M217 at 816a4f52). 816a4f52..d6f9cbf5 changes only test fixtures (executables written via a separate process) and merges",
+        "known_limits": [
+          "codegen/native parity tests exec a prebuilt target/debug/axon a mutation never rebuilds",
+          "one_read's fifo_serving uses a 300 ms pause: it can only make an attack fail (a false survivor), never a false kill"
+        ]
+      },
+      "dev_review_round_3": {
+        "run": "wf_92efee64-823",
+        "tree": "bf964212",
+        "verdicts": "5 REGISTER, 4 DO_NOT_REGISTER",
+        "blockers": [
+          "PSV-1: a sealed handler intercepted operator builtins (a keyed PASS)",
+          "PSV-3: a None into `?` counted as Completed",
+          "PSV-7: readiness accepted any operator-signed B263 record",
+          "EQUIVALENCE: helper/sealed_exec guards without rows; guest-init rows killed only by a textual test"
+        ],
+        "majors_closed_in_wave": [
+          "disguised linked worktree (A79)",
+          "forged lineage (A80)",
+          "helper launched without an observation (A84)",
+          "no D6 custodian (A83)",
+          "epoch was the caller's claim (A82)",
+          "suite join by strings (A81)",
+          "stale paired-disable records (currency rule)"
+        ]
+      },
+      "round_3_fix_wave": {
+        "dev_head": "82d88da3",
+        "fixed": [
+          "sealed frames act only on their own operations; operator RNG refused under a sealed frame; completion only when the body ran to its end (A76-A77, amendment 46)",
+          "readiness applies Fabric's B263 rules incl. the host config's qualification.max_age_s; decision E by common-dir; lineage from hash-checked objects (A78-A80, amendment 47)",
+          "every helper-path refusal has a row or a reasoned exemption (v022_refusal_coverage.py in gate.sh); kept paired-disable records must be current (amendment 48)",
+          "one suite-join reading; launch manifest /2 names its authority; protected host pins authority_store (A81-A82, amendment 49)",
+          "separate axon-custodian (D6); the root helper launches only on its one verified observation (A83-A84, amendment 50)",
+          "rows wave: 15 unkilled rows made honest; a protected custodian could not start (M641); a ref answered the lineage (M642, A85) (amendment 51)",
+          "round-4 harness: parity scripts run what they build (harness_bash); the M187/M400 test reaches its guard; paired-disable --shard/--join; sccache development-only, refused by the freeze (M650) and the guest-image build (amendment 52)"
+        ],
+        "evidence": {
+          "mutation": "550 rows: 507/507 ACTIVE killed by their own attack (full two-shard run at d7018783); no production source changed since; rows whose tests changed re-run: 29/29 at 291f6065, 47/47 incl. M650 at 35145195; 0 REFUSED_ELSEWHERE, 0 survivors; 41 EQUIVALENT_DID + 1 STALE never counted killed",
+          "paired_disable": "42/42 hold (39 from 3 joined shards at 9e488073; M58/M60/M89 at 19de26d0); 0 stale at 82d88da3",
+          "integration": "291f6065 (crates identical at 82d88da3): fmt, builds incl. production fabric, clippy, six-package and axon-core tests, trust preflight, matrix (85 rows) all rc 0; SKIPs recorded as skips: axon-core in-process codegen tests (--no-default-features), Android",
+          "guest_boot": "14/14 at 2caab1b2 (pinned 1084ed1c); rebuild from a standalone clone before a freeze"
+        }
+      },
+      "operator_items_before_protected_deployment": [
+        "install /etc/axon/provenance-allowlist (target/, dist/)",
+        "review setuid-root helper vs daemon (amendment 45)",
+        "deploy non-root fabric uid, the helper 04750 root:fabric-group, /etc/axon/protected-launcher.json, pin privileged_launcher in protected-host.json",
+        "re-pin the launcher (bytes changed)",
+        "place out and staging roots",
+        "decide on the compiled-launcher follow-up",
+        "custodian system user, production axon-custodian, /etc/axon/custodian.json and its two systemd units (SocketMode must let the Fabric uid connect)",
+        "set authority_store in protected-host.json; the observer copies authority.epoch",
+        "re-pin the helper and the launcher after the round-3 changes",
+        "review root-owned listener acceptance (socket activation)",
+        "a certification with PASS_WITH_BLOCKED needs a waiver file"
+      ],
+      "dev_review_round_4": {
+        "run": "wf_af1ee3bc-9ed",
+        "tree": "1b687d95",
+        "verdicts": "6 REGISTER, 3 DO_NOT_REGISTER",
+        "blockers": [
+          "PSV-1: a candidate swaps its own method for the operator's judge (type-confused value + runtime-type dispatch), keyed PASS",
+          "PSV-6: the root helper boots the request's policy_json, never joined to the manifest's policy_sha256",
+          "EQUIVALENCE: production call sites with no row (readiness trust.check, custodian load_config check, ProtectedHost::operator calls, lease)",
+          "EQUIVALENCE: rows killed only by direct unit tests of a rule function (M490-492, M629, M640, M546, M634, M591)",
+          "EQUIVALENCE: checks exec a binary not built from the tree under test"
+        ],
+        "findings_file": "/var/tmp/c9r4-findings.txt"
+      },
+      "round_4_fix_wave": {
+        "dev_head": "2c59ebb6",
+        "fixed": [
+          "PSV-1: declared-type cast at every value boundary + method-dispatch seal edge; E0004 over type positions (A86, M651-M667, amendment 53)",
+          "PSV-6: the guest runs only the policy its manifest names, at helper/launcher/runner, verdict binds it (A87, M670-M679, amendment 54)",
+          "EQUIVALENCE: production-route rows and re-anchors; every protected decision file scanned by the refusal-site gate (M690-M857, amendments 55, 58)",
+          "harness: checks run the binary built from the tree under test; whole-tree dirty checks; guest built in a constructed environment; serial records whole lines only (A90, M720-M739, M860-M873, amendment 56)",
+          "readiness: certification fields and the B263 record joined to the verified run (A88-A89, M740-M750, amendment 57)",
+          "harness: compile errors judged by the build invocation; every failing cell keeps its output; the interpreter restored and byte-compared per row; test fixtures that no longer reached their guard (M880-M894, amendment 59)"
+        ],
+        "evidence": {
+          "integration": "aad46c05: fmt, builds incl. production fabric, clippy, six-package and axon-core suites, trust preflight, matrix (90 rows) all rc 0",
+          "mutation": "aad46c05: 682/682 ACTIVE rows killed by their own attack (2 shards, /var/tmp/c9r4f-mut-aad46c05-merged.json); 58 EQUIVALENT_DID + 1 STALE never counted",
+          "paired_disable": "aad46c05: 58/59 hold (4 shards joined); M418 + 9 readiness records re-executed at c9647b35 (test-only fix) and hold; 49/59 stale at 2c59ebb6 under the package-wide currency rule (a full run is part of the freeze proof)",
+          "guest_boot": "image built at 1aa96159 from a standalone clone in the constructed environment, pinned 49eb3765: 17/17 PASS, no SKIP"
+        }
+      }
+    }
+  },
+  "closure_gate": {
+    "state": "GREEN (operator-independent gates) at dev HEAD d1118c88",
+    "note": "The full scripts/gate.sh passes in the dev tree after clippy-gating the two PSV crates (axon-psv, axon-workspace-recipe). This is dev evidence about the CI gate, not a protected-readiness leg.",
+    "gate": "scripts/gate.sh --> \"gate PASSED\"",
+    "skipped_harnesses": "7 harnesses SKIPPED and reported by the gate as non-results, NOT passes (parity/offline suites are gated out under --no-default-features). I-2 interp/codegen/AOT-wasm parity NOT verified by this run; use scripts/gate.sh --strict or scripts/parity_all.sh to assert it.",
+    "commit": "08c5b7e1 clippy-gate; re-verified green at d1118c88 after the two follow-up fixes (b8bbdb74 PSV-1 random_*, 76847d45 readiness reason) + docs/status",
+    "readiness": "unchanged: NOT_READY (protected_backend, g01_on_protected_backend, pci_on_protected_backend still NOT_RUN)",
+    "not_a_pass_claim": "SKIP is not PASS; the 7 skipped harnesses are recorded as measured-nothing.",
+    "reverified": "scripts/gate.sh PASSED again at d1118c88 (7 harnesses SKIPPED, same non-results); nothing regressed from this session"
+  }
+}

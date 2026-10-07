@@ -1,0 +1,11 @@
+// B263 (b)/(c): the Axon workload spawns a native descendant (busybox sh)
+// that attempts egress and host-file access from INSIDE the guest. The probe
+// script is placed on the workspace drive by the harness (/work/job/probe.sh)
+// and writes its findings to /work/out/probe.txt as it goes, so a probe that
+// dies part-way still returns everything it measured up to that point.
+fn main() {
+    match exec("/bin/sh", ["-c", "/bin/sh /work/job/probe.sh > /work/out/probe.txt 2>/dev/null; echo probe-exit=$?"]) {
+        Ok(o) => print(o)
+        Err(e) => println("PROBE-ERR {e}")
+    }
+}

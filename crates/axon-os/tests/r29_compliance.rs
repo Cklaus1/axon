@@ -4,6 +4,8 @@
 //! into a temp ledger file and verifying monitor behaviour — no axon binary or
 //! full supervisor run required. This keeps the tests fast and hermetic.
 
+#[path = "../../axon-core/tests/script_spawn/mod.rs"]
+mod script_spawn;
 use axon_os::monitor::{ComplianceMonitor, MonitorResult, CONTAINMENT_VIOLATION_EXIT_CODE};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -524,20 +526,20 @@ fn a_narrow_allowlist_denies_because_the_monitor_can_see_the_ledger() {
     // sibling suites pass it. `cargo test -p axon-os` does not build
     // axon-core's binary, so it may simply be absent — a genuine skip that SAYS
     // it skipped rather than reporting a pass it did not earn.
-    let axon = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .ancestors()
-        .nth(2)
-        .unwrap()
-        .join("target/debug/axon");
-    if !axon.exists() {
-        eprintln!(
-            "SKIP a_narrow_allowlist_denies…: no axon interpreter at {} — \
-             build it (`cargo build -p axon-core`) for this test to assert anything.",
-            axon.display()
-        );
-        let _ = std::fs::remove_dir_all(&dir);
-        return;
-    }
+    // Built from THIS tree by cargo (tests/script_spawn::workspace_bin), never
+    // a stale `target/debug/axon`.
+    let axon = script_spawn::workspace_bin(
+        "AXON_BIN",
+        &[
+            "build",
+            "-p",
+            "axon-core",
+            "--no-default-features",
+            "--bin",
+            "axon",
+        ],
+        "axon",
+    );
 
     let run = |run_id: &str, monitor: &str, ledger: Option<&std::path::Path>| -> String {
         let mut c = std::process::Command::new(os);

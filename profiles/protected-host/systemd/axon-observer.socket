@@ -1,0 +1,27 @@
+# Operator decisions G / G1, amendment 68: the preflight observer's socket.
+# EXAMPLE for the operator to install (e.g. under /etc/systemd/system/);
+# nothing in the repository installs it.
+#
+# The socket is bound by systemd (root), in a root-owned 0755 directory, so no
+# other uid can bind an observer of its own at this path. Its ONLY client is
+# the setuid-root axon-protected-launcher (`--observe`, as root): mode 0600
+# root:root, so neither the Fabric nor any agent can connect at all (the
+# observer also refuses every caller but uid 0, by SO_PEERCRED). The path must
+# equal `socket` in /etc/axon/observer.json and `observer.service.socket` in
+# /etc/axon/protected-launcher.json: the observer refuses an activation on any
+# other socket.
+
+[Unit]
+Description=Axon preflight observer socket
+
+[Socket]
+ListenStream=/run/axon-observer/observer.sock
+SocketUser=root
+SocketGroup=root
+SocketMode=0600
+DirectoryMode=0755
+Accept=no
+RemoveOnStop=yes
+
+[Install]
+WantedBy=sockets.target

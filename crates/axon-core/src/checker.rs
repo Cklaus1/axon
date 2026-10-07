@@ -51,6 +51,7 @@ pub const E0501: &str = "E0501"; // impl block names a trait that does not exist
 pub const E0502: &str = "E0502"; // impl block is missing required trait methods
 pub const E0503: &str = "E0503"; // impl method signature differs from trait declaration
 pub const E0504: &str = "E0504"; // trait bound not satisfied: type does not implement trait
+pub const E0505: &str = "E0505"; // impl for a type the runtime represents as another
 
 // ── Severity ─────────────────────────────────────────────────────────────────
 
@@ -658,6 +659,27 @@ impl CheckCtx {
                 }
                 Item::ImplBlock(blk) => {
                     let ty_name = axon_type_name(&blk.for_type);
+                    // A method call dispatches on the VALUE's runtime type,
+                    // and an `f32` is an `f64` value, an `isize`/`usize` an
+                    // `i64` one: an impl keyed by the declared name would
+                    // never run, and the `f64`/`i64` impl would answer for it
+                    // (C9 round 4c, amendment 72).
+                    if let Some(rep) = match ty_name.as_str() {
+                        "f32" => Some("f64"),
+                        "isize" | "usize" => Some("i64"),
+                        _ => None,
+                    } {
+                        self.errors.push(
+                            CheckError::new(
+                                E0505,
+                                format!(
+                                    "an impl for `{ty_name}` never runs: `{ty_name}` values are represented as `{rep}`, and a method call dispatches on that"
+                                ),
+                            )
+                            .with_span(blk.span)
+                            .fix(format!("implement the trait for `{rep}` instead")),
+                        );
+                    }
                     // Record: type implements trait_name (E0504), for trait impls.
                     if !blk.trait_name.is_empty() {
                         self.impl_table
@@ -962,7 +984,8 @@ impl CheckCtx {
             self.check_item(item);
         }
         // AX-08: `&mut [T]` parameter mode + no writes through a shared `&`.
-        self.errors.extend(crate::mut_borrow::check_program(program));
+        self.errors
+            .extend(crate::mut_borrow::check_program(program));
 
         std::mem::take(&mut self.errors)
     }
@@ -6987,6 +7010,11 @@ fn method_lookup_key(ty: &Type) -> Option<&'static str> {
         // Matched by NAME so the rest of `Deferred` keeps its false-positive
         // protection: an `Uncertain<T>` or a row-typed value is still skipped.
         Type::Deferred(n) if n == "Dict" || n.starts_with("Dict<") => Some("dict"),
+        // `()` — what a call of a fn with no declared return type is. A method
+        // on it needs an `impl … for ()`; without one the call is refused here,
+        // not dispatched at runtime on whatever the body happened to produce
+        // (C9 round 4c, amendment 72).
+        Type::Unit => Some("()"),
         // Unknown / Var / other Deferred / Fn / Chan / DynTrait / Uncertain /
         // Temporal / Unit: don't risk a false positive.
         _ => None,

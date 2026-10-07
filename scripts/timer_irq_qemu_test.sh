@@ -35,18 +35,12 @@ skip() { echo "SKIP: $*" >&2; exit 0; }
 command -v nasm             >/dev/null 2>&1 || skip "nasm not found (install nasm)"
 command -v qemu-system-x86_64 >/dev/null 2>&1 || skip "qemu-system-x86_64 not found"
 
-AXON_BIN=""
-for candidate in \
-    "$REPO/target/debug/axon" \
-    "$REPO/target/release/axon" \
-    "$(command -v axon 2>/dev/null || true)"
-do
-    if [[ -x "$candidate" ]]; then
-        AXON_BIN="$candidate"
-        break
-    fi
-done
-[[ -n "$AXON_BIN" ]] || skip "axon binary not found (build with: cargo build -p axon-core)"
+# The axon binary is the one the caller names in AXON_BIN -- never one that
+# merely sits in target/ or on PATH (scripts/lib/axon_bin.sh; C9 round 4: a
+# planted `axon` on PATH was run here and the check PASSED). None named is a
+# refusal (exit 2), not a skip.
+. "$REPO/scripts/lib/axon_bin.sh"
+named_bin AXON_BIN timer_irq_qemu_test
 
 LD_BIN=""
 for candidate in ld.bfd ld x86_64-elf-ld; do
@@ -83,7 +77,9 @@ BUILD_EXIT=$?
 set -e
 echo "$BUILD_OUT" >&2
 if [[ $BUILD_EXIT -ne 0 ]]; then
-    if echo "$BUILD_OUT" | grep -q "requires building axon with the .codegen. feature"; then
+    # One in-shell match of the refusal text this invocation printed (no pipe,
+    # no forked grep that load can kill or a pipefail race can fail).
+    if [[ "$BUILD_OUT" == *"requires building axon with the \`codegen\` feature"* ]]; then
         skip "axon binary lacks codegen support (build with: cargo build -p axon-core)"
     fi
     echo "FAIL: axon build failed (exit $BUILD_EXIT)" >&2
@@ -142,9 +138,17 @@ while [[ $SECONDS -lt $DEADLINE ]]; do
     kill -0 "$QEMU_PID" 2>/dev/null || break
     sleep 0.05
 done
+# Did QEMU end ON ITS OWN, before we stopped it? Only that exit status says
+# anything about QEMU; the one after our own `kill` is our SIGTERM (143).
+EXITED_ON_ITS_OWN=0
+kill -0 "$QEMU_PID" 2>/dev/null || EXITED_ON_ITS_OWN=1
 kill "$QEMU_PID" 2>/dev/null
 wait "$QEMU_PID" 2>/dev/null
-QEMU_EXIT=0
+QEMU_EXIT=$?
+# `QEMU_EXIT=0` used to be HARD-CODED here, which made the check below dead
+# code: a QEMU that crashed or was OOM-killed could never fail it. Only an exit
+# QEMU chose itself is judged; one we caused by stopping it is not.
+[[ $EXITED_ON_ITS_OWN -eq 1 ]] || QEMU_EXIT=0
 set -e
 
 # timeout exits 124 when it times out; QEMU exits 0 normally. Both are OK — the

@@ -189,7 +189,9 @@ name = "axon-cortex"
 version = "0.1.0"
 dependencies = [
  "axon-ai",
+ "axon-workspace-recipe",
  "hex",
+ "libc",
  "serde",
  "serde_json",
  "sha2",
@@ -204,6 +206,27 @@ dependencies = [
  "tiny_http",
  "tokio",
  "tokio-modbus",
+]
+
+[[package]]
+name = "axon-fabric"
+version = "0.1.0"
+dependencies = [
+ "axon-cortex",
+ "axon-fabric",
+ "axon-loop",
+ "axon-loop-contracts",
+ "axon-os",
+ "axon-psv",
+ "axon-vm",
+ "axon-workspace-recipe",
+ "icu_normalizer",
+ "libc",
+ "ring",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
 ]
 
 [[package]]
@@ -260,6 +283,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "axon-loop"
+version = "0.1.0"
+dependencies = [
+ "axon-attest",
+ "axon-loop-contracts",
+ "axon-psv",
+ "axon-reflex",
+ "libc",
+ "ring",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
+name = "axon-loop-contracts"
+version = "0.1.0"
+dependencies = [
+ "axon-cortex",
+ "axon-psv",
+ "ring",
+ "serde",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
 name = "axon-os"
 version = "0.1.0"
 dependencies = [
@@ -271,10 +321,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "axon-psv"
+version = "0.1.0"
+dependencies = [
+ "axon-workspace-recipe",
+ "base64",
+ "libc",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+]
+
+[[package]]
 name = "axon-reflex"
 version = "0.1.0"
 dependencies = [
  "axon-cortex",
+ "axon-loop-contracts",
  "serde_json",
 ]
 
@@ -350,6 +414,14 @@ dependencies = [
  "serde_json",
  "sha2",
  "tiny_http",
+]
+
+[[package]]
+name = "axon-workspace-recipe"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "sha2",
 ]
 
 [[package]]
@@ -643,6 +715,7 @@ name = "cortex-policy-adapter"
 version = "0.1.0"
 dependencies = [
  "axon-cortex",
+ "axon-loop-contracts",
  "serde_json",
 ]
 

@@ -7,9 +7,14 @@
 #                    TCB ~15K LOC, @[pure]/@[verify] syscall gate, <10ms boot.
 #                    Requires: rustup component add rust-src + lld.
 #
-#   linux          — falls back to Linux 6.1 microvm_defconfig (~7 MB bzImage).
-#                    TCB ~35M LOC, seccomp enforcement.  Takes ~3 min to build.
-#                    Requires: gcc make flex bison bc; AXON_KERNEL_VERSION to pin.
+#   linux          — the pinned "protected Linux microVM" profile (B263):
+#                    Linux 6.1.188 + Firecracker v1.10.1's CI guest config, and
+#                    a read-only squashfs root (static busybox + static axon
+#                    + static axon-guest-init, the in-guest policy channel).
+#                    Pins: profiles/linux-microvm/kernel.pin (digest-checked).
+#                    Outputs: dist/guest-linux/{vmlinux,rootfs.sqfs,manifest.json}.
+#                    Requires: gcc make flex bison bc libelf-dev squashfs-tools
+#                    busybox-static + rust target x86_64-unknown-linux-musl.
 #
 # Outputs:
 #   dist/guest/vmlinuz          — kernel image (ELF or bzImage)
@@ -19,10 +24,46 @@
 #
 # Usage:
 #   ./scripts/build-guest-image.sh [--kernel-only] [--initrd-only]
-#   AXON_KERNEL_BACKEND=linux ./scripts/build-guest-image.sh  # legacy path
+#   AXON_KERNEL_BACKEND=linux ./scripts/build-guest-image.sh [--kernel-only|--rootfs-only]
 
 set -euo pipefail
 cd "$(dirname "$0")/.."
+
+# The image is evidence about these sources (operator decision E): nothing may
+# stand between them and the bytes -- no compiler wrapper (sccache is for
+# DEVELOPMENT evidence runs only), no substituted rustc, no injected rustflags
+# or linker, no artifact from an earlier build. That used to be a LIST of four
+# wrapper variables and four config files; cargo resolves far more (ancestor
+# configs, dotted keys, RUSTC, RUSTFLAGS, linkers, RUSTUP_TOOLCHAIN, a reused
+# target dir), and two C9 round-4 reviewers built through each of them. So
+# every cargo run here goes through scripts/guest_build_env.py, which builds in
+# an environment it CONSTRUCTS (caller env dropped; the pinned toolchain; a
+# fresh CARGO_HOME and target dir; a private copy of the tracked tree under a
+# directory only root or the builder can write) and refuses unless cargo's
+# EFFECTIVE config is only the tree's own, before and after EVERY invocation,
+# and unless the invocation is one of its table's exactly (round 4b). The
+# kernel and the rootfs are made there too (`kernel`, `rootfs`). Its records
+# go into the guest manifest, and the freeze refuses an image any of whose
+# components was made any other way.
+BUILD_ENV=""
+gcargo_begin() {  # gcargo_begin <dir>: a fresh controlled build, recorded in <dir>/build-env.json
+    BUILD_ENV="$1/build-env.json"
+    rm -f "$BUILD_ENV"
+    python3 scripts/guest_build_env.py begin "$BUILD_ENV" || exit 2
+}
+gcargo() {  # gcargo [--rustflags FLAGS] -- <cargo args>: cargo in the controlled environment
+    python3 scripts/guest_build_env.py cargo "$BUILD_ENV" "$@"
+}
+gpath() {  # gpath <triple> <profile> <name>: where the controlled build put <name>
+    python3 scripts/guest_build_env.py path "$BUILD_ENV" "$@"
+}
+if [[ "${1:-}" == "--build-env-only" ]]; then
+    # The controlled environment alone, then stop: its refusal is exercised
+    # through this production route by crates/axon-fabric/tests/guest_build_env.rs.
+    mkdir -p "${2:?--build-env-only needs a directory}"
+    gcargo_begin "$2"
+    exit 0
+fi
 
 DIST="dist/guest"
 KERNEL_ONLY="${1:-}"
@@ -37,8 +78,8 @@ build_kernel_axon() {
 
     # Build the kernel ELF.  Requires rust-src component and lld.
     # The custom target JSON is at crates/axon-guest-kernel/targets/x86_64-axon-metal.json.
-    RUSTFLAGS="-C target-feature=+crt-static" \
-    cargo build -p axon-guest-kernel \
+    gcargo_begin "$DIST"
+    gcargo --rustflags "-C target-feature=+crt-static" -- build -p axon-guest-kernel \
         -Z json-target-spec \
         --target "crates/axon-guest-kernel/targets/x86_64-axon-metal.json" \
         --release \
@@ -46,7 +87,8 @@ build_kernel_axon() {
         -Z build-std-features=compiler-builtins-mem \
         --quiet 2>&1
 
-    local KERNEL_ELF="target/x86_64-axon-metal/release/axon-guest-kernel"
+    local KERNEL_ELF
+    KERNEL_ELF="$(gpath x86_64-axon-metal release axon-guest-kernel)"
     if [[ ! -f "$KERNEL_ELF" ]]; then
         echo "[build-guest-image] ERROR: kernel ELF not found at $KERNEL_ELF"
         exit 1
@@ -61,41 +103,168 @@ build_kernel_axon() {
 
 # ── Linux fallback kernel ──────────────────────────────────────────────────────
 
+#
+# The pinned "protected Linux microVM" profile (B263). This replaces an
+# unpinned legacy path (AXON_KERNEL_VERSION default 6.1.94, microvm_defconfig
+# + ad-hoc `scripts/config` edits, no digest checks) that had never been built.
+#
+# Everything consumed here is pinned in profiles/linux-microvm/kernel.pin and
+# VERIFIED before use: a tarball, config or busybox whose digest differs fails
+# the build rather than producing an image that merely looks like the
+# qualified one. Outputs go to dist/guest-linux/ (gitignored); their digests
+# are written to dist/guest-linux/manifest.json, copied to the committed
+# profiles/linux-microvm/manifest.json.
+#
+#   vmlinux       uncompressed ELF kernel (Firecracker's x86_64 boot format)
+#   rootfs.sqfs   read-only squashfs root: static busybox + static axon + /init
+#
+# No initramfs and no axon-guest-init on this path: the profile is OFFLINE (no
+# NIC, no MMDS), so the MMDS policy fetch axon-guest-init performs has nothing
+# to talk to. The job and its result travel on a separate workspace drive —
+# see profiles/linux-microvm/README.md.
+
+LDIST="dist/guest-linux"
+PROFILE_DIR="profiles/linux-microvm"
+
+require_sha() {  # require_sha <file> <expected> <label>
+    local got
+    got="$(sha256sum "$1" | cut -d' ' -f1)"
+    if [[ "$got" != "$2" ]]; then
+        echo "[build-guest-image] ERROR: $3 sha256 mismatch: got $got, pinned $2" >&2
+        exit 1
+    fi
+}
+
+load_pin() {
+    # shellcheck source=/dev/null
+    source "$PROFILE_DIR/kernel.pin"
+    mkdir -p "$LDIST"
+}
+
 build_kernel_linux() {
-    local KVER="${AXON_KERNEL_VERSION:-6.1.94}"
-    local KSRC="$DIST/linux-$KVER"
-    local BZIMAGE="$KSRC/arch/x86/boot/bzImage"
+    load_pin
+    local TARBALL="$LDIST/linux-$KERNEL_VERSION.tar.xz"
+    if [[ ! -f "$TARBALL" ]]; then
+        echo "[build-guest-image] Downloading Linux $KERNEL_VERSION..."
+        curl -fsSL -o "$TARBALL.part" "$KERNEL_URL"
+        mv "$TARBALL.part" "$TARBALL"
+    fi
+    # C9 round 4b (FIELD-ORIGIN, amendment 63): the kernel is built in the
+    # controlled environment too. guest_build_env.py copies the tarball, config
+    # and overlay into a private directory, verifies each COPY against the pin,
+    # and runs make there with a constructed environment (no caller KCFLAGS,
+    # CROSS_COMPILE, CC, LLVM, MAKEFLAGS or PATH), recording the host toolchain
+    # (gcc, cc1, as, ld, make, ...) in kernel-build.json, which the manifest
+    # carries and the freeze judges.
+    echo "[build-guest-image] Building Linux $KERNEL_VERSION (Firecracker v1.10.1 CI config, controlled)..."
+    python3 scripts/guest_build_env.py kernel "$LDIST/kernel-build.json" "$LDIST" "$PROFILE_DIR" || exit 1
+    echo "[build-guest-image] vmlinux → $LDIST/vmlinux ($(du -sh "$LDIST/vmlinux" | cut -f1))"
+}
 
-    if [[ -f "$DIST/vmlinuz" ]]; then
-        echo "[build-guest-image] vmlinuz exists, skipping Linux kernel build"
-        return
+build_rootfs_linux() {
+    load_pin
+    # The guest axon must carry the certified PCI interpreter (the survey found
+    # the pinned one predated it): refuse a revision that does not descend from
+    # the PCI certification (governance/proofs/v022-pci/CERTIFICATION.md).
+    # This early check is a DEVELOPMENT check (a linked worktree may pass it);
+    # the manifest binds the protected answer itself.
+    #
+    # EVIDENCE BUILDS (amendment 44, decisions C and E): the manifest is clean
+    # only from a STANDALONE CLONE (a linked worktree's gitfile is dirty), in
+    # which every object outside HEAD's tree is dirty unless the operator's
+    # root-owned /etc/axon/provenance-allowlist excuses it (`target/` and
+    # `dist/` for this build). .gitignore excuses nothing.
+    python3 scripts/linux_profile_manifest.py --descends 31413ca7 || {
+        echo "[build-guest-image] ERROR: HEAD does not descend from PCI-certified 31413ca7" >&2
+        exit 1
+    }
+    require_sha "$BUSYBOX_SRC" "$BUSYBOX_SHA256" "busybox"
+    # The tree the binaries are built FROM, before any build step (the same
+    # Rust provenance that stamps the readiness verifier). The manifest is
+    # clean only if this and the tree at manifest time are clean and agree.
+    # Taken BEFORE begin copies the tracked tree into the build's private
+    # directory, so the copy lies between two clean observations of the tree.
+    mkdir -p "$LDIST"
+    python3 scripts/linux_profile_manifest.py --snapshot "$LDIST/provenance.pre.json"
+    gcargo_begin "$LDIST"
+
+    echo "[build-guest-image] Building axon interpreter (static musl, --locked)..."
+    gcargo --rustflags "-C target-feature=+crt-static" -- build --locked -p axon-core \
+            --target x86_64-unknown-linux-musl \
+            --no-default-features --bin axon --release --quiet || exit 1
+    local AXON_BIN
+    AXON_BIN="$(gpath x86_64-unknown-linux-musl release axon)"
+    if ! file "$AXON_BIN" | grep -q 'static'; then
+        echo "[build-guest-image] ERROR: $AXON_BIN is not statically linked" >&2
+        exit 1
     fi
 
-    if [[ ! -d "$KSRC" ]]; then
-        echo "[build-guest-image] Downloading Linux $KVER..."
-        KMAJOR="${KVER%%.*}"
-        wget -q -O "$DIST/linux-$KVER.tar.xz" \
-            "https://cdn.kernel.org/pub/linux/kernel/v${KMAJOR}.x/linux-${KVER}.tar.xz"
-        tar -xf "$DIST/linux-$KVER.tar.xz" -C "$DIST"
-        rm -f "$DIST/linux-$KVER.tar.xz"
+    # axon-guest-init: the in-guest policy channel (ACF-G25 / x1). guest-init.sh
+    # execs the workload under it; it reads `axon.policy=` from /proc/cmdline and
+    # refuses to start the workload without a policy that constrains something.
+    # DEFAULT FEATURES ONLY: `dev-allow-no-policy` compiles in a runtime
+    # no-policy escape, and must never reach an image.
+    echo "[build-guest-image] Building axon-guest-init (static musl, --locked, default features)..."
+    gcargo --rustflags "-C target-feature=+crt-static" -- build --locked -p axon-guest-init \
+            --target x86_64-unknown-linux-musl --release --quiet || exit 1
+    local INIT_BIN
+    INIT_BIN="$(gpath x86_64-unknown-linux-musl release axon-guest-init)"
+    if ! file "$INIT_BIN" | grep -q 'static'; then
+        echo "[build-guest-image] ERROR: $INIT_BIN is not statically linked" >&2
+        exit 1
+    fi
+    # The artefact-level check that the bypass is absent: the only code that
+    # spells the variable's name is compiled out of a default build.
+    if grep -qa 'AXON_GUEST_ALLOW_NO_POLICY' "$INIT_BIN"; then
+        echo "[build-guest-image] ERROR: $INIT_BIN contains the no-policy bypass" >&2
+        exit 1
     fi
 
-    echo "[build-guest-image] Configuring Linux for Firecracker microVM..."
-    pushd "$KSRC" > /dev/null
-    make ARCH=x86_64 microvm_defconfig
-    scripts/config --enable VIRTIO_NET
-    scripts/config --enable HW_RANDOM_VIRTIO
-    scripts/config --enable KVM_GUEST
-    scripts/config --enable PARAVIRT_CLOCK
-    scripts/config --enable VSOCK
-    scripts/config --enable VIRTIO_VSOCK
-    scripts/config --enable TMPFS
-    scripts/config --disable MODULES
-    scripts/config --disable DEBUG_KERNEL
-    make ARCH=x86_64 -j"$(nproc)" bzImage 2>&1 | tail -3
-    popd > /dev/null
-    cp "$BZIMAGE" "$DIST/vmlinuz"
-    echo "[build-guest-image] vmlinuz → $DIST/vmlinuz ($(du -sh "$DIST/vmlinuz" | cut -f1))"
+    # axon-psv-runner: the trusted suite-verdict runner (v022-psv-protocol.md §4).
+    echo "[build-guest-image] Building axon-psv-runner (static musl, --locked)..."
+    gcargo --rustflags "-C target-feature=+crt-static" -- build --locked -p axon-psv --bin axon-psv-runner \
+            --target x86_64-unknown-linux-musl --release --quiet || exit 1
+    local RUNNER_BIN
+    RUNNER_BIN="$(gpath x86_64-unknown-linux-musl release axon-psv-runner)"
+    # The digests of exactly what this controlled build produced; the freeze
+    # requires the manifest's artifacts to be these.
+    python3 scripts/guest_build_env.py finish "$BUILD_ENV" \
+        "axon=$AXON_BIN" "axon-guest-init=$INIT_BIN" "axon-psv-runner=$RUNNER_BIN" || exit 1
+    if ! file "$RUNNER_BIN" | grep -q 'static'; then
+        echo "[build-guest-image] ERROR: $RUNNER_BIN is not statically linked" >&2
+        exit 1
+    fi
+
+    # The root filesystem is assembled in the controlled environment
+    # (round 4b, amendment 63): the record's own artifacts (re-verified against
+    # their recorded digests), the pinned busybox (its COPY verified), the
+    # tree's guest-init.sh as /init, and /usr/bin/mksquashfs under a
+    # constructed environment; inputs and output are recorded.
+    python3 scripts/guest_build_env.py rootfs "$BUILD_ENV" "$LDIST/rootfs.sqfs" || exit 1
+    cp "$AXON_BIN" "$LDIST/axon"
+    cp "$INIT_BIN" "$LDIST/axon-guest-init"
+    cp "$RUNNER_BIN" "$LDIST/axon-psv-runner"
+    # Round 5 (amendment 80): what sits in dist/ is byte for byte what the
+    # controlled steps produced, and the record carries each digest (the manifest
+    # and the freeze read artifact digests from the RECORD, not from the files).
+    python3 scripts/guest_build_env.py dist "$BUILD_ENV" "$LDIST" || exit 1
+    python3 scripts/guest_build_env.py discard "$BUILD_ENV"
+    # The image's root must be traversable by the unprivileged test uid.
+    local ROOTMODE
+    # `sed -n 1p`, not `head -1`: head closes the pipe early, and under
+    # pipefail unsquashfs's SIGPIPE ended one build silently with 141.
+    ROOTMODE="$(unsquashfs -lln "$LDIST/rootfs.sqfs" 2>/dev/null | sed -n 1p | cut -c1-10)"
+    if [[ "$ROOTMODE" != drwxr-xr-x ]]; then
+        echo "[build-guest-image] ERROR: rootfs / is $ROOTMODE, not drwxr-xr-x" >&2
+        exit 1
+    fi
+    echo "[build-guest-image] rootfs → $LDIST/rootfs.sqfs ($(du -sh "$LDIST/rootfs.sqfs" | cut -f1))"
+}
+
+write_manifest_linux() {
+    python3 scripts/linux_profile_manifest.py --pre "$LDIST/provenance.pre.json" "$LDIST" "$PROFILE_DIR"
+    cp "$LDIST/manifest.json" "$PROFILE_DIR/manifest.json"
+    echo "[build-guest-image] manifest → $LDIST/manifest.json (+ $PROFILE_DIR/manifest.json)"
 }
 
 build_kernel() {
@@ -110,15 +279,16 @@ build_kernel() {
 
 build_initramfs() {
     echo "[build-guest-image] Building axon interpreter (static musl)..."
-    RUSTFLAGS="-C target-feature=+crt-static" \
-        cargo build -p axon-core \
+    [[ -n "$BUILD_ENV" ]] || gcargo_begin "$DIST"
+    gcargo --rustflags "-C target-feature=+crt-static" -- build -p axon-core \
             --target x86_64-unknown-linux-musl \
             --no-default-features \
             --bin axon \
             --release \
-            --quiet
+            --quiet || exit 1
 
-    local AXON_BIN="target/x86_64-unknown-linux-musl/release/axon"
+    local AXON_BIN
+    AXON_BIN="$(gpath x86_64-unknown-linux-musl release axon)"
     local INITDIR
     INITDIR="$(mktemp -d)"
     # AUDIT T12: INITDIR is `local` to this function, but an EXIT trap runs in
@@ -137,12 +307,12 @@ build_initramfs() {
     if [[ "$BACKEND" == "linux" ]]; then
         # Linux backend: include axon-guest-init as /init (PID-1 supervisor).
         echo "[build-guest-image] Building axon-guest-init (static musl)..."
-        RUSTFLAGS="-C target-feature=+crt-static" \
-            cargo build -p axon-guest-init \
+        gcargo --rustflags "-C target-feature=+crt-static" -- build -p axon-guest-init \
                 --target x86_64-unknown-linux-musl \
                 --release \
-                --quiet
-        local INIT_BIN="target/x86_64-unknown-linux-musl/release/axon-guest-init"
+                --quiet || exit 1
+        local INIT_BIN
+        INIT_BIN="$(gpath x86_64-unknown-linux-musl release axon-guest-init)"
         cp "$INIT_BIN" "$INITDIR/init"
         chmod +x "$INITDIR/init"
         strip "$INITDIR/init" 2>/dev/null || true
@@ -163,6 +333,20 @@ build_initramfs() {
 }
 
 # ── Main ───────────────────────────────────────────────────────────────────────
+
+if [[ "$BACKEND" == "linux" ]]; then
+    case "${KERNEL_ONLY:-}" in
+        --kernel-only) build_kernel_linux ;;
+        --rootfs-only) build_rootfs_linux ;;
+        *) build_kernel_linux; build_rootfs_linux ;;
+    esac
+    write_manifest_linux
+    echo ""
+    echo "[build-guest-image] Done (backend=linux, profile=linux-microvm-protected)."
+    echo "  Kernel: $LDIST/vmlinux   Rootfs: $LDIST/rootfs.sqfs"
+    echo "  Launch: scripts/fc_linux_profile.sh --program prog.ax --out DIR"
+    exit 0
+fi
 
 case "${KERNEL_ONLY:-}" in
     --kernel-only) build_kernel ;;

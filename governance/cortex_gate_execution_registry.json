@@ -1,16 +1,395 @@
 {
   "schema": "cortex-gate-execution/1",
-  "purpose": "The ONLY place this repository may record that a Cortex v0.15 product gate or work package has moved off its shipped, honest default. scripts/cortex_package_gate.sh fails if docs/axon_cortex_v0_15/.../gate_manifest.json claims a product_result other than NOT_RUN, or task_manifest.json a status other than 'Not started', without a matching row here that names a file in THIS repo which actually runs and is actually invoked.",
+  "purpose": "The ONLY place this repository may record that a vendored Cortex product gate or work package (v0.15 or v0.22) has moved off its shipped, honest default. scripts/cortex_package_gate.sh (v0.15) and scripts/cortex_package_gate_v022.sh (v0.22) both run scripts/cortex_honesty_invariant.py, which fails if a vendored gate_manifest.json claims a product_result other than NOT_RUN, or task_manifest.json a status other than 'Not started', without a matching row here that names a file in THIS repo which actually runs and is actually invoked. Every row is re-validated by both gates on every run.",
   "how_to_add_a_row": [
     "1. Implement the gate for real as a repo-owned script or test (e.g. scripts/cx02_observation_gate.sh). It must exit non-zero when the property it checks is false.",
-    "2. Wire it into an invoker that actually runs -- normally scripts/gate.sh. scripts/cortex_package_gate.sh greps the invoker for the executed_by path, so a row naming a script nothing calls is REJECTED. That is what stops this file becoming a rubber stamp.",
+    "2. Wire it into an invoker that actually runs -- normally scripts/gate.sh. scripts/cortex_honesty_invariant.py greps the invoker for the executed_by path, so a row naming a script nothing calls is REJECTED. That is what stops this file becoming a rubber stamp.",
     "3. Add a row below with gate_id, executed_by (repo-relative), invoked_by (repo-relative), allowed_product_result and a note saying what is measured. Every row is re-validated on every gate run, including rows for gates the package still reports as NOT_RUN -- a row whose script is deleted or unwired breaks the day it rots, not the day someone flips a manifest.",
-    "4. Do NOT edit the vendored gate_manifest.json. Two independent things forbid it: the package's own tools/validate_package.py hard-fails on any product_result other than NOT_RUN ('package must not claim a product run'), and SHA256SUMS_v0_15.json pins the file. NOT_RUN is a true statement about the PACKAGE -- 'this package does not execute it' -- and stays true no matter what this repository implements. This registry, not the vendored manifest, is where this repository records that it runs a gate.",
+    "4. Do NOT edit the vendored gate_manifest.json. Two independent things forbid it: the package's own tools/validate_package.py hard-fails on any product_result other than NOT_RUN ('package must not claim a product run'), and SHA256SUMS_v0_15.json / SHA256SUMS_v0_22.json pin the file. NOT_RUN is a true statement about the PACKAGE -- 'this package does not execute it' -- and stays true no matter what this repository implements. This registry, not the vendored manifest, is where this repository records that it runs a gate.",
     "5. If a future upstream release re-vendors the package WITH results filled in, the honesty check will accept a non-NOT_RUN product_result only for gates that have a valid row here, and only when the result is in allowed_product_result.",
     "Removing a gate's implementation means removing its row."
   ],
-  "gates": [],
+  "gates": [
+    {
+      "gate_id": "G00-r22-package-gate-upgrade",
+      "executed_by": "scripts/cortex_package_gate_v022.sh",
+      "invoked_by": "scripts/gate.sh",
+      "allowed_product_result": [
+        "PASS"
+      ],
+      "note": "B283. Measured each run: pinned SHA256SUMS_v0_22.json (axon-package-sha256/1, both excluded files pinned) checked both directions by repo code before any package code; validator run with --output to target/ (never --refresh-hashes; self-grep refuses every argparse prefix), report deleted first, counts held to floors with orphan_gates exactly 0 (no zero-count false failure); whole-tree digest before/after package code (no self-hash cycle, no writes). Older pack retained: the v0.15 pack, scripts/cortex_package_gate.sh and gate.sh's call to it are asserted present. Stage 6, v022/stage6-pkggate."
+    },
+    {
+      "gate_id": "G00-r22-pack-integrity",
+      "executed_by": "scripts/cortex_package_gate_v022.sh",
+      "invoked_by": "scripts/gate.sh",
+      "allowed_product_result": [
+        "PASS"
+      ],
+      "note": "B284. Manifests, owner exports, dependency/release closures, generated views, parent-lock bytes and Fabric reference bytes: tools/validate_package.py (+closed_loop_package_checks) run read-only after pinned integrity. Rationale + execution recipe for every new task/gate: the gate's own stdlib coherence stage (32 r22 work packages: non-empty requirement basis, numbered implementation sequence, verbatim acceptance text; 80/80 r22 gates covered). Documentation/reference conformance only."
+    },
+    {
+      "gate_id": "G00-r22-honest-status",
+      "executed_by": "scripts/cortex_package_gate_v022.sh",
+      "invoked_by": "scripts/gate.sh",
+      "allowed_product_result": [
+        "PASS"
+      ],
+      "note": "B284. scripts/cortex_honesty_invariant.py: no v0.22 gate off NOT_RUN and no task off 'Not started' without a valid row here (every row re-validated); V022_RUNTIME_QUALIFICATION booleans false, no live evidence, no qualified profile; a skipped or expected-failure test inside the offline suite is a FAIL, never a pass (a suite that cannot start \u2014 pinned jsonschema absent \u2014 is printed as SKIPPED in the PASS line, logged to target/harness-skips.log, and fatal under AXON_HARNESS_STRICT=1); every PASS line is printed with the scope 'package conformance only \u2014 0 product gates executed; NOT Rust implementation, physical backend evidence, real MiCode interoperability or measured self-improvement'."
+    },
+    {
+      "gate_id": "G13-r22-billing-settlement",
+      "executed_by": "scripts/v022_stage5_gates.sh",
+      "invoked_by": "scripts/gate.sh",
+      "allowed_product_result": [
+        "PASS"
+      ],
+      "note": "B270. Settlement idempotent only for identical (origin, sequence, content); any other second settlement refused, recorded as settle_conflict, op disputed at the per-dimension max liability; replay refuses a duplicate settled line; Unknown billing keeps its full reservation; an Unknown-cost record never produces a zero-cost winner. Tests named in scripts/v022_stage5_gates.sh (axon-fabric/tests/journal.rs g13_*, axon-loop/tests/tel_price.rs). Dispute RESOLUTION is not implemented."
+    },
+    {
+      "gate_id": "G10-r22-cohort-denominator",
+      "executed_by": "scripts/v022_stage5_gates.sh",
+      "invoked_by": "scripts/gate.sh",
+      "allowed_product_result": [
+        "PASS"
+      ],
+      "note": "B270. Cohort cost divides by every ASSIGNED trial; unknown-cost records are unresolved, never free; the request's price_schedule_ref must equal the pinned schedule's cl22 Ref. Tests named in scripts/v022_stage5_gates.sh (axon-loop/tests/tel_price.rs). G10-r22-full-task-cost stays NOT_RUN: no operator execution price schedule (D10)."
+    },
+    {
+      "gate_id": "G03-r22-workspace-import",
+      "executed_by": "scripts/v022_stage5_gates.sh",
+      "invoked_by": "scripts/gate.sh",
+      "allowed_product_result": [
+        "PASS"
+      ],
+      "note": "B261. WorkspaceVersion import refuses .., absolute, escaping symlinks, devices/FIFOs/sockets, non-UTF-8, control chars, duplicates, case/NFC collisions, file-and-dir, quota overflow (D11); digest byte-identical to MiCode's recipe via a cross-language fixture. axon-fabric/tests/workspace.rs."
+    },
+    {
+      "gate_id": "G28-r22-workspace-not-context",
+      "executed_by": "scripts/v022_stage5_gates.sh",
+      "invoked_by": "scripts/gate.sh",
+      "allowed_product_result": [
+        "PASS"
+      ],
+      "note": "B261/B264. A hash-only WorkspaceProjection cannot be materialized; hidden check suites are materialized read-only beside, never inside, the candidate and reach it only via AXON_PATH. axon-fabric/tests/{workspace,check_effects}.rs. Caveat: candidate code runs in the verifier process, so the effect ceiling, not the directory layout, keeps it from reading the suite."
+    },
+    {
+      "gate_id": "G03-r22-check-effects",
+      "executed_by": "scripts/v022_stage5_gates.sh",
+      "invoked_by": "scripts/gate.sh",
+      "allowed_product_result": [
+        "PASS"
+      ],
+      "note": "B264. Substituted argv/executable, stale epoch \u2192 zero launch records; post-run change to candidate or suite makes the verdict unknown; executor refuses a receipt whose refs are not the version it sent. axon-fabric/tests/check_effects.rs."
+    },
+    {
+      "gate_id": "G32-r22-receipt-roles",
+      "executed_by": "scripts/v022_stage5_gates.sh",
+      "invoked_by": "scripts/gate.sh",
+      "allowed_product_result": [
+        "PASS"
+      ],
+      "note": "B265. bind_acf refuses a context/request/receipt standing in as the verifier and a completed status not supervisor_observed; cross-tenant evidence is unknown with a reason. axon-loop/tests/evl.rs."
+    },
+    {
+      "gate_id": "G32-r22-artifact-recheck",
+      "executed_by": "scripts/v022_stage5_gates.sh",
+      "invoked_by": "scripts/gate.sh",
+      "allowed_product_result": [
+        "PASS"
+      ],
+      "note": "B265. A pass whose checked output is not exactly the receipt's output_workspace_ref is refused (checked in bind_acf itself). axon-loop/tests/evl.rs, axon-fabric/tests/check_effects.rs."
+    },
+    {
+      "gate_id": "G08-r22-logical-branches",
+      "executed_by": "scripts/v022_stage5_gates.sh",
+      "invoked_by": "scripts/gate.sh",
+      "allowed_product_result": [
+        "PASS"
+      ],
+      "note": "B271. Branches from one frozen published base, each with its own run id/writer, budgets carved inside one regime (Journal::reserve_within). axon-fabric/tests/branches.rs. No CLI verb yet."
+    },
+    {
+      "gate_id": "G11-r22-workspace-cas",
+      "executed_by": "scripts/v022_stage5_gates.sh",
+      "invoked_by": "scripts/gate.sh",
+      "allowed_product_result": [
+        "PASS"
+      ],
+      "note": "B271. Publish requires expected head, current epoch, branch writer, a passing receipt from this journal/branch binding the exact version, and a declared approver who is not the writer; concurrent publishers: exactly one wins. Approvers/writers are declared names, not signatures. axon-fabric/tests/branches.rs."
+    },
+    {
+      "gate_id": "G08-r22-branch-cancellation",
+      "executed_by": "scripts/v022_stage5_gates.sh",
+      "invoked_by": "scripts/gate.sh",
+      "allowed_product_result": [
+        "PASS"
+      ],
+      "note": "B271. Cancelling a branch keeps every record and any liability and leaves sibling branches untouched. axon-fabric/tests/branches.rs."
+    },
+    {
+      "gate_id": "G13-r22-restart-matrix",
+      "executed_by": "scripts/v022_stage5_gates.sh",
+      "invoked_by": "scripts/gate.sh",
+      "allowed_product_result": [
+        "PASS"
+      ],
+      "note": "B280. REAL process deaths (abort() in a crash child at SubmitConfig.fault_hook boundaries; SIGKILL of the real axon-fabric CLI) at every submit effect boundary \u2014 after intent, after reserve, after the launch record, after the terminal record \u2014 plus inside branch cancellation and inside an axon-loop pointer transition (after the ledger append, after the projection; axon_loop::ledger::set_fault_hook). A restart resumes a pre-launch orphan exactly once (never under a superseded epoch; released in a cancelled branch), keeps a launched op OutcomeUnknown with its liability and never re-runs it, and the check worker dies with its supervisor (PR_SET_PDEATHSIG). Tests: axon-fabric restart_matrix.rs, submit.rs, journal.rs; axon-loop pointer.rs. NOT covered by a real kill: the Linux microVM profile (its launcher path is BLOCKED on the operator-signed B263 qualification)."
+    },
+    {
+      "gate_id": "G16-r22-peer-failure-matrix",
+      "executed_by": "scripts/v022_stage5_gates.sh",
+      "invoked_by": "scripts/gate.sh",
+      "allowed_product_result": [
+        "PASS"
+      ],
+      "note": "B280. Authority-peer outage at submit and between submit and dispatch (an absent store is refused, not read as epoch 0 \u2014 FG-048), a re-send after reconnect through the library and the real CLI (one run, budget committed once), authority that moved while away (new request refused, recorded answer kept), another schema version or an unknown field refused before the journal, a partial export refused then the complete one recorded once (a partial re-send is not a replay), an episode of another schema version refused, and a replayed activation after a later pause that re-activates nothing. Tests: axon-fabric peer_failure_matrix.rs; axon-loop intake.rs, pointer.rs. The MiCode-side peer failures (old/absent adapter, no common profile, fabricated accept, Fabric refusal) are loop_interop_gate.sh sections 8-9 and MiCode's own tests."
+    },
+    {
+      "gate_id": "G03-r22-joint-bypass",
+      "executed_by": "scripts/v022_stage5_gates.sh",
+      "invoked_by": "scripts/gate.sh",
+      "allowed_product_result": [
+        "PASS"
+      ],
+      "note": "B282. Attacks on Fabric's routes into authority, on the selected profile (process_scoped/local-interpreter): a repository shipping its own check/grant registries (refused; its executable never runs), re-attaching a different outcome to a finished op or attaching one to an unfinished op (refused before any write; replays keep the original receipt), argv escaping the workspace, the legacy single-file fallback's live-file swap (no verdict on bytes it did not judge), per-trial cache isolation, grant authority (grant_authority.rs: grant_ref bound to its principal, pinned grant files) and check effects (check_effects.rs: hidden suite, substituted suite/executable/argv, stale epoch). Verifier separation is G32 below. NOT covered: the Linux microVM profile (BLOCKED on the operator-signed B263 qualification) and settlement, which is library-only accounting, not an admission route."
+    },
+    {
+      "gate_id": "G32-r22-evidence-laundering",
+      "executed_by": "scripts/v022_stage5_gates.sh",
+      "invoked_by": "scripts/gate.sh",
+      "allowed_product_result": [
+        "PASS"
+      ],
+      "note": "B282. Each laundering class \u2014 mutated receipt, forged issuer identity, hash-only success, missing attempt, cross-tenant reference \u2014 on individually schema-valid documents with re-derived digests, driven through independent evaluation -> admission -> the fenced pointer: never a verified pass, never Accepted, pointer never moves, each refused by its own first-line check (mutation-proven), with a clean positive control Accepted (axon-loop evidence_laundering.rs). Intake step 8 refuses laundered Fabric verification evidence (intake.rs)."
+    },
+    {
+      "gate_id": "G13-r22-journal-before-effect",
+      "executed_by": "scripts/v022_stage5_gates.sh",
+      "invoked_by": "scripts/gate.sh",
+      "allowed_product_result": [
+        "PASS"
+      ],
+      "note": "B260. Intent durable before begin returns; a real crash at each submit boundary (after intent, reserve, launch record, terminal) recovers exactly one recorded op with no blind re-execution; the same OperationId with changed input is a conflict with zero effects; the journal survives restart (torn tail truncated, state visible after reopen). axon-fabric journal.rs, submit.rs, restart_matrix.rs."
+    },
+    {
+      "gate_id": "G21-r22-inconclusive-valid",
+      "executed_by": "scripts/v022_stage5_gates.sh",
+      "invoked_by": "scripts/gate.sh",
+      "allowed_product_result": [
+        "PASS"
+      ],
+      "note": "B274 mechanism. Too little evidence, liability, unknowns, regression or no economic benefit gives Inconclusive/Reject, never a forced winner (zero-pass and zero-vs-zero never Accepted); thresholds cannot change after outcomes (freeze is permanent, plan shopping refused, trials before freeze refused). axon-loop evl_admission.rs, redteam.rs. The PILOT's own frozen values are Stage 7."
+    },
+    {
+      "gate_id": "G11-r22-policy-cas",
+      "executed_by": "scripts/v022_stage5_gates.sh",
+      "invoked_by": "scripts/gate.sh",
+      "allowed_product_result": [
+        "PASS"
+      ],
+      "note": "B278 mechanism. Activation checks the expected active policy, the monotonic epoch fence, the exact admitted candidate (activating anything but the admitted policy, or under an unknown admission, is refused), the candidate list and revocation immediately before publication; concurrent activations (threads and two real CLI processes) have exactly one winner; a replayed or stale activation never overwrites. Every refusal writes zero bytes. axon-loop pointer.rs, candidates.rs, cli.rs."
+    },
+    {
+      "gate_id": "G13-r22-unknown-reconcile",
+      "executed_by": "scripts/v022_stage5_gates.sh",
+      "invoked_by": "scripts/gate.sh",
+      "allowed_product_result": [
+        "PASS"
+      ],
+      "note": "B260. A check that times out after its launch record gives receipt TimedOut / verification Unknown, projected to episode OutcomeUnknown, with its whole reservation kept as outstanding liability (neither refunded nor charged as known); a re-send with the same operation id replays that answer and never re-runs it (the worker is started exactly once). A launched op whose supervisor dies (SIGKILL, abort) is OutcomeUnknown with liability kept and never re-run; unknown billing keeps the full reservation; an unknown outcome can be settled with evidence but never marked completed. axon-fabric submit.rs, journal.rs, restart_matrix.rs."
+    },
+    {
+      "gate_id": "G29-r22-claim-separation",
+      "executed_by": "scripts/v022_claim_separation.py",
+      "invoked_by": "scripts/gate.sh",
+      "allowed_product_result": [
+        "PASS"
+      ],
+      "note": "B286. governance/v022_release_claims.json holds engineering_qualified, policy_activated and measured_improvement_supported as three separate fields; each may be true only with evidence of its own kind (a release-verified receipt; an admission plus its activation transition; a measured-claim report with population and uncertainty), one claim's evidence never stands for another's, no merged field is allowed, and absence leaves a claim false. All three are false today (no pilot, not release-verified). The validator self-tests the cases it must refuse before reading the record."
+    },
+    {
+      "gate_id": "G26-r22-speculation-disabled",
+      "executed_by": "scripts/v022_stage5_gates.sh",
+      "invoked_by": "scripts/gate.sh",
+      "allowed_product_result": [
+        "PASS"
+      ],
+      "note": "B272. No speculative-effect path exists, and a request cannot ask for one: marking work speculative, pre-dispatching alternatives or naming a second dispatch authority is refused by the closed request schema before the journal (nothing journalled, nothing spawned). An approved branch (B271) keeps exact selected bytes (publication requires the exact verified output), shared cost (every branch carves within one declared regime) and cancellation semantics (a cancelled branch keeps its record and liability) rather than becoming an alternate dispatch authority. axon-fabric joint_bypass.rs, branches.rs."
+    },
+    {
+      "gate_id": "G10-r22-trial-identity",
+      "executed_by": "scripts/v022_stage5_gates.sh",
+      "invoked_by": "scripts/gate.sh",
+      "allowed_product_result": [
+        "PASS"
+      ],
+      "note": "B257. Repeated trials of one task and arm are distinct and all execute (Fabric) and are all recorded (axon-loop intake) \u2014 the same task id never deduplicates a fresh trial; only a transport retry (identical OperationId and input) replays; an authorized new execution of a trial carries a new AttemptId and op and runs; reusing an OperationId for other input is a conflict; the same trial with different bytes is a conflict; trial ids are never reused across experiments. axon-fabric submit.rs; axon-loop intake.rs, redteam.rs."
+    },
+    {
+      "gate_id": "G29-r22-bounded-mutation",
+      "executed_by": "scripts/v022_stage5_gates.sh",
+      "invoked_by": "scripts/gate.sh",
+      "allowed_product_result": [
+        "PASS"
+      ],
+      "note": "B273. The EVO proposer changes only the shortlist: its candidate records the parent policy and its discovery evidence, keeps the candidate set and controls (model/evaluator route) byte-equal, never sets authority_expansion, never adds an id, and its hypothesis history is append-only; a tool-adding or widening candidate is refused at put, at freeze and at activation; the frozen plan (evaluator, promotion rule, task corpus) is permanent and plan shopping is refused. The proposer emits data only and has no route to code or permissions. axon-loop plan_evo_tel.rs, candidates.rs, redteam.rs."
+    },
+    {
+      "gate_id": "G01-r22-nonvacuous-outcome",
+      "executed_by": "scripts/v022_stage5_gates.sh",
+      "invoked_by": "scripts/gate.sh",
+      "allowed_product_result": [
+        "PASS"
+      ],
+      "note": "B276. A pass needs nonzero applicable checks: verification 'passed' with zero matched checks is invalid in the contract, a real interpreter run that exits 0 matching nothing is NotRun, and a named check that is absent is NotRun with 0 matched. Over exact candidate bytes: output changed after verification is never a pass. No offsetting: one failed check fails a whole suite whatever the rest scored, exit code zero never stands for a verdict, and low cost never offsets inferior quality at admission. axon-fabric submit.rs; axon-cortex check_executor.rs; axon-loop-contracts fixtures.rs; axon-loop evl.rs, evl_admission.rs."
+    },
+    {
+      "gate_id": "G03-r22-dispatch-recheck",
+      "executed_by": "scripts/loop_interop_gate.sh",
+      "invoked_by": "scripts/gate.sh",
+      "allowed_product_result": [
+        "PASS"
+      ],
+      "note": "B267. Section 10 of the paired interop gate, real binaries both sides: a pinned MiCode task reads Axon's REAL `axon-loop pointer show` output at every tool execution. While the pinned policy is in force its `read` runs; after a REAL `axon-loop pointer revoke` the same task still starts (the pin agreed at task start) but the `read` is refused at execution and its content never reaches the model. Discriminates: against MiCode 29446ec9 (pre-fix) exactly the two revoked assertions fail. MiCode side (micode c1bc363c): the fence is checked before the gate AND immediately before execute (a revocation during an approval wait still stops the effect), refuses when the view cannot vouch (unreadable, other scope, older epoch), is inherited by children (derive_spec) and required at spawn (child_is_within); the shortlist is the enforced tool_allowlist so candidate identity holds in children; retries are new dispatched calls and rechecked. Tests: micode-core dispatch::tests::{a_revoked_pinned_policy_stops_the_next_call_and_every_retry, an_authority_view_that_cannot_vouch_for_the_pin_refuses_the_call, a_revocation_during_an_approval_wait_stops_the_effect}, scope::tests::a_child_must_carry_its_parents_authority_fence_unchanged, micode-delegate task_tool::tests::a_child_inherits_its_parents_authority_fence, micode closed_loop_v022_real_binary::a_revoked_policy_is_refused_at_tool_execution_through_the_real_binary (run by the Stage-5 micode-suite harness)."
+    },
+    {
+      "gate_id": "G16-r22-preflight-start",
+      "executed_by": "scripts/loop_interop_gate.sh",
+      "invoked_by": "scripts/gate.sh",
+      "allowed_product_result": [
+        "PASS"
+      ],
+      "note": "B266. Real binaries: loop_interop_gate section 6 \u2014 a stale base, an opaque repo_id and another history's root each yield TASK_NOT_STARTED: EXECUTION_CONTEXT_MISMATCH with ZERO provider requests (before the first model turn and any effect); the refused sidecar is refused again by Axon intake with the store unchanged. MiCode (eb9c52a6) observes every clause itself: repo_id as git-root:<root commit> (exec_context::tests::the_repository_identity_is_observed_and_a_different_one_refuses), base/branch/worktree/namespace/model route/primary-checkout (every_observable_field_is_compared), the dedicated per-trial build namespace and worktree (a_trial_subject_needs_a_dedicated_worktree_concrete_paths_and_its_own_namespace), the role's write contract (each_roles_write_contract_is_checked_before_the_task_starts), provider/model through the binary (closed_loop_v022_real_binary::a_different_model_route_is_refused_before_any_provider_call), and the same at every child spawn (assembly v022_a_child_whose_context_mismatches_its_task_is_refused_in_preflight) \u2014 run by the Stage-5 micode-suite harness. Parent echo: axon-loop-contracts check_context_current refuses observed_issuer == expected_issuer (fixtures.rs; redteam.rs AB8). Discriminates: against MiCode c1bc363c the four repo-mismatch assertions fail."
+    },
+    {
+      "gate_id": "G16-r22-role-scope",
+      "executed_by": "scripts/loop_interop_gate.sh",
+      "invoked_by": "scripts/gate.sh",
+      "allowed_product_result": [
+        "PASS"
+      ],
+      "note": "B266. Real binaries: loop_interop_gate section 11 \u2014 a task declared as a critic (empty write set) runs, its model's write into src/ is refused at the tool boundary naming the read-only role and the file never appears; a critic declaring a write set is TASK_NOT_STARTED with zero provider requests. MiCode (eb9c52a6): scope::READ_ONLY_WRITES installed for critic/verifier denies write/edit and the unbounded tools and is required of every child (scope::tests::a_read_only_role_writes_nothing_and_its_children_stay_read_only); implementation/documentation must declare a non-empty set (exec_context::tests::each_roles_write_contract_is_checked_before_the_task_starts); experiment subjects need a dedicated worktree, concrete paths and a per-trial namespace (a_trial_subject_needs_a_dedicated_worktree_concrete_paths_and_its_own_namespace), their declared write set is the enforced write scope (closed_loop_v022_real_binary::the_declared_write_set_is_enforced_at_the_tool_boundary) and a child cannot widen it (spawner a_child_scope_not_provably_within_the_parents_is_refused). Discriminates: against MiCode c1bc363c the critic's write lands and both write assertions fail."
+    },
+    {
+      "gate_id": "G16-r22-local-authority",
+      "executed_by": "scripts/loop_interop_gate.sh",
+      "invoked_by": "scripts/gate.sh",
+      "allowed_product_result": [
+        "PASS"
+      ],
+      "note": "B267. Real binaries: loop_interop_gate section 5 \u2014 a policy naming a tool outside the registered candidate list is refused by Axon policy put (exit 4, naming the tool, store unchanged) and, fed to MiCode anyway, abstains to the incumbent with zero tool additions (the added tool never reaches the provider). MiCode (09717d17): a shortlist must be a subset of the session's authorized candidates and bound to their cl22 view (active_policy::tests::invalid_policies_abstain_to_the_incumbent_with_a_reason); the shortlist is the enforced, INHERITED tool allowlist, so a delegated child whose dispatch is rebuilt from the full registry is still refused a tool the policy did not shortlist (closed_loop_v022_real_binary::a_delegated_child_is_held_to_the_policys_shortlist_through_the_real_binary, mutation-checked); concrete file effects are checked against inherited path/write scopes and a child must be provably within its parent (scope::tests::{path_globs_cover_exact_paths_and_directory_prefixes_only, the_write_set_bounds_writes_but_not_reads, a_child_must_be_provably_within_its_parent}); an unknown glob/subset relation is denied, never assumed narrower (scope::tests::an_unprovable_pattern_fails_closed_everywhere)."
+    },
+    {
+      "gate_id": "G16-r22-candidate-shortlist",
+      "executed_by": "scripts/loop_interop_gate.sh",
+      "invoked_by": "scripts/gate.sh",
+      "allowed_product_result": [
+        "PASS"
+      ],
+      "note": "B268. Real binaries: loop_interop_gate sections 3 and 5 \u2014 Axon's DEC policy narrows MiCode's sent tool set to exactly its shortlist, and a tool-adding policy is refused at put and abstains in MiCode with zero additions. A policy can do nothing but reorder/narrow: Axon refuses at put, naming the field, a policy that ALSO names a tool list, permission, verifier, model, compute profile, credential route, budget or skill (axon-loop tests/cli.rs a_policy_that_names_any_other_authority_dimension_is_refused_at_put \u2014 two independent layers, schema additionalProperties:false and serde deny_unknown_fields; dropping both lets it through, measured), and MiCode abstains on the same documents naming the field (active_policy::tests::a_policy_naming_any_other_authority_dimension_abstains_naming_it, mutation-checked). authority_expansion:true is refused on both sides. Skills are not policy-selectable at all: the candidate view is the tool registry."
+    },
+    {
+      "gate_id": "G16-r22-preflight-return",
+      "executed_by": "scripts/v022_micode_gates.sh",
+      "invoked_by": "scripts/gate.sh",
+      "allowed_product_result": [
+        "PASS"
+      ],
+      "note": "B266, third use site. Named MiCode tests, run by exact name against the paired MiCode revision: every result a child of a closed-loop task returns is classified against the parent's CURRENT context before the parent sees it \u2014 the parent's current integration head (re-observed at intake, not the launch head), its current declaration (model route, build namespace, whether it still declares a context at all) and its declared write set. Stale worker success is directly_integratable / needs_rebase / conflicting / obsolete, obsolete outranking conflicting, and the class rides the result as a runtime footer the child cannot author, plus a written receipt; a receipt that cannot be produced renders as 'integrability unknown; do not merge', never as integratable. MiCode never merges a child's work, so nothing is admitted against a different base. result_receipt::tests::a_result_is_classified_against_the_parents_current_context (every class and every obsolete condition); assembly::tests::v022_a_returned_result_is_classified_against_the_parents_current_context (the production driver, real git: own work / parent landed a commit / write outside the set / parent rewound \u2014 mutations recorded in the test)."
+    },
+    {
+      "gate_id": "G16-r22-closed-wire",
+      "executed_by": "scripts/loop_interop_gate.sh",
+      "invoked_by": "scripts/gate.sh",
+      "allowed_product_result": [
+        "PASS"
+      ],
+      "note": "B256. BOTH REAL PEERS, real binaries, before any model call or dispatch (loop_interop_gate.sh): section 5 feeds each malformed policy document to real `axon-loop policy put` (refused, store unchanged) and to real `micode exec` (abstains, zero tool additions, the incumbent's single provider request) \u2014 duplicate key; ESCAPED-ALIAS key (`controls\\u005fref`, each peer names the DECODED duplicate `controls_ref`, proving it decoded the escape); unknown closed field; malformed digest; tool-adding shortlist; authority_expansion. Unsafe numbers where each peer reads numbers: 2^53+1 as MiCode's expected-context authority_epoch (refused before any provider request) and as Axon's pointer-transition expected_epoch (exit 3, store unchanged). Incompatible required capabilities: section 9, the real cortex-policy-adapter and real MiCode with no common closed-loop profile \u2014 explicit unsupported, persisted, zero model calls, distinct from an old peer. Syntactic fixtures alone are not claimed: every case above crosses a real process boundary."
+    },
+    {
+      "gate_id": "G16-r22-negotiation",
+      "executed_by": "scripts/loop_interop_gate.sh",
+      "invoked_by": "scripts/gate.sh",
+      "allowed_product_result": [
+        "PASS"
+      ],
+      "note": "B256. Old peer / absent peer (loop_interop_gate.sh sections 0 and 9): MiCode with no expected context runs as the incumbent and writes no closed-loop artefact; the real adapter and MiCode negotiate closed-loop-profile/1 with every outcome persisted before the first model call \u2014 agreed, old peer (explicit, retained-authority incumbent), no common profile (explicit unsupported), fabricated accept (recorded failed). Old episodes remain readable through PINNED adapters, never reinterpreted: MiCode's canonical episode spend (micode 7070c8ca) \u2014 v014 episodes carry a never-written micro_cents 0 which the in-place G1 change had read as a KNOWN ZERO (every historical episode free); spend is now appended as spend_micro_cents and one pinned table on both peers reads v014 0 as unknown (MiCode episode::tests::every_historical_spend_shape_reads_without_reinterpretation over a whole v014 episode; Axon intake::every_historical_spend_shape_is_read_through_the_pinned_table), and the real join refuses a v014-shaped canonical episode against a metered sidecar BY THE COST JOIN (section 4; discriminates vs micode 09717d17). Axon's own Cortex episode format and digest rule are pinned unchanged since the v0.22 base (axon-cortex conformance::a_pre_v022_episode_reads_and_keeps_its_digest). Axon-side negotiation vectors: v022_stage5_gates.sh (axon-loop-contracts profile, cortex-policy-adapter negotiate)."
+    },
+    {
+      "gate_id": "G13-r22-legacy-scope",
+      "executed_by": "scripts/v022_stage5_gates.sh",
+      "invoked_by": "scripts/gate.sh",
+      "allowed_product_result": [
+        "PASS"
+      ],
+      "note": "B259. A fake Axon filename cannot dispatch native shell work: an EXECUTABLE shebang script named evil.ax, aimed at a sentinel outside the workspace, submitted as a registered check (with and without a filter) is handed to the registered Axon interpreter as SOURCE \u2014 the interpreter spawn is counted, the receipt is Failed, never Passed \u2014 and as interpreter_run is an explicit Unsupported with nothing spawned; the sentinel never appears; an argv that smuggles a command after the file is refused as malformed (axon-fabric joint_bypass::a_fake_axon_file_is_interpreted_never_executed_as_native_shell \u2014 mutation: execute the argv file directly in the check executor instead of `axon test <file>` \u2192 the spawn and sentinel assertions fail, measured). argv is only [file] / [file, filter] under the workspace (an_argv_file_outside_the_workspace_is_refused). Legacy interpreter runs keep their declared-effect and authority semantics: the whole interp\u2194codegen/AOT/wasm parity suite and the effect-ceiling harnesses gate.sh already runs (parity_all.sh; AXON_ALLOWED_EFFECTS is passed through to the check process)."
+    },
+    {
+      "gate_id": "G01-r22-independent-issuer",
+      "executed_by": "scripts/loop_interop_gate.sh",
+      "invoked_by": "scripts/gate.sh",
+      "allowed_product_result": [
+        "PASS"
+      ],
+      "note": "Registered 2026-09-26 at axon 9ae4c605 + micode dd4ea0a9 against governance/specs/v022-G01-claim.md (sha256 12ce46ec...). SCOPE: authenticity, provenance and binding only. A counted verification verdict carries an Ed25519 acf-receipt-attestation/1 from the operator-configured Fabric signer, binding request/receipt digests and operation/task/trial/attempt/execution ids; Fabric signs only a registered_check it just ran, never a replay, and only when the workload could not reach the key (empty ceiling applied); the issuer is trusted and outside the subject set; the pinned suite, interpreter and axon.* config are what ran; revocation or re-key stops a verdict counting at admission and activation. Real-binary evidence: loop_interop_gate.sh section 8 (impostor/replay/tamper negatives); mutation proof governance/proofs/v022-g01/mutations-9ae4c605.json (--scope g01, 50/50). PREREQUISITE: Protected Check Isolation (governance/specs/v022-protected-check-isolation.md) is PARTIAL; G01 alone is never sufficient protected verification and overall protected-verifier readiness is NOT READY. Record: governance/proofs/v022-g01/REGISTRATION.md (includes the disclosed no-freshness-binding limitation)."
+    },
+    {
+      "gate_id": "G32-r22-sidecar-bindings",
+      "executed_by": "scripts/v022_stage5_gates.sh",
+      "invoked_by": "scripts/gate.sh",
+      "allowed_product_result": [
+        "PASS"
+      ],
+      "note": "Binding batch candidate 1, REGISTERED at axon 363b7834 + micode 1baa2f81 (governance/proofs/v022-binding/REGISTRATION.md; review wf_d788c05a-be2, zero blockers). Import validates task/arm/trial/attempt/operation, principal, policy, effective context (observer-signed in a protected evaluation), input/output workspace and verifier bindings against stored records; hash-shaped strings or a worker issuer claim do not authenticate evidence. axon-loop intake.rs, evl.rs; tests protected_class.rs, intake.rs."
+    },
+    {
+      "gate_id": "G33-r22-decision-rule-freeze",
+      "executed_by": "scripts/v022_stage5_gates.sh",
+      "invoked_by": "scripts/gate.sh",
+      "allowed_product_result": [
+        "PASS"
+      ],
+      "note": "Binding batch candidate 1, REGISTERED at axon 363b7834 + micode 1baa2f81 (governance/proofs/v022-binding/REGISTRATION.md; review wf_d788c05a-be2, zero blockers). Method, sample/horizon, multiplicity, minimum improvement, quality margin, missing-data rule and cluster unit are frozen in the plan before any outcome (preflight before freeze is refused; a verdict attested before the freeze does not count); repeated tasks do not inflate independent units. axon-loop plan.rs, rules.rs, evl.rs; tests evl_admission.rs, redteam.rs."
+    },
+    {
+      "gate_id": "G11-r22-independent-admission",
+      "executed_by": "scripts/v022_stage5_gates.sh",
+      "invoked_by": "scripts/gate.sh",
+      "allowed_product_result": [
+        "PASS"
+      ],
+      "note": "Binding candidate 2b, REGISTERED at axon bd3637ab + micode e7fdb739 (governance/proofs/v022-binding-c2/REGISTRATION.md; review wf_8aad6d16-ad6, zero blockers). Admission and the promotion act (activate/rollback transition, baseline designation, population issue) require a trusted admitter holding no other loop role and independent of the candidate's proposer (ranker), evaluator and subjects, re-derived against current config; complete scope/experiment/plan/freeze/verifier bindings; the frozen rule. axon-loop admission.rs, pointer.rs, plan.rs; tests evl_admission.rs, pointer.rs, assignment.rs."
+    },
+    {
+      "gate_id": "G11-r22-rollback-revalidate",
+      "executed_by": "scripts/v022_stage5_gates.sh",
+      "invoked_by": "scripts/gate.sh",
+      "allowed_product_result": [
+        "PASS"
+      ],
+      "note": "Binding candidate 2b, REGISTERED at axon bd3637ab + micode e7fdb739 (governance/proofs/v022-binding-c2/REGISTRATION.md; review wf_8aad6d16-ad6, zero blockers). A rollback re-derives the predecessor's admission against CURRENT authority (admitter, issuer independence, verifier trust/key, pins incl. compute profile qualification, protected contexts and clearances), refuses revoked or no-longer-holding predecessors ('no safe predecessor: issue a pause instead'). axon-loop pointer.rs, admission.rs; tests pointer.rs, protected_class.rs, safety.rs."
+    },
+    {
+      "gate_id": "G11-r22-admission-disposition",
+      "executed_by": "scripts/v022_stage5_gates.sh",
+      "invoked_by": "scripts/gate.sh",
+      "allowed_product_result": [
+        "PASS"
+      ],
+      "note": "Binding candidate 3, REGISTERED at axon 6d3f0ff6 + micode e7fdb739 (governance/proofs/v022-binding-c3/REGISTRATION.md; review wf_849bc606-7e8, zero blockers). ACCEPT/REJECT/INCONCLUSIVE/VETOED carry explicit reasons in a content-addressed admission record re-derived byte-identically at activation; only an ACCEPT whose evidence is still authorized NOW (admitter, verifier trust/key/pins, context observer, protected clearances and keys) activates; a recorded violation vetoes before any utility; unknown costs are never zero (Fabric execution component, multi-currency liability summed, report-only economics per ADR-001 D4). axon-loop admission.rs, evl.rs, pointer.rs; tests evl_admission.rs, protected_class.rs, safety.rs, assignment.rs, admission decide_tests."
+    },
+    {
+      "gate_id": "G01-r22-unknown-outcome",
+      "executed_by": "scripts/v022_stage5_gates.sh",
+      "invoked_by": "scripts/gate.sh",
+      "allowed_product_result": [
+        "PASS"
+      ],
+      "note": "REGISTERED at axon a9e4c269 + micode fc6221a5 after three candidates (governance/proofs/v022-unknown-outcome/REGISTRATION.md; final review wf_dc09551c-ab1, zero blockers). Timeout (run deadline incl. a silent provider past first-byte, Fabric watchdog, Fabric wall-time), cancellation (SIGTERM -> cancelled sidecar), unmatched checks, missing evidence (crashed Fabric) and unverifiable output (unsigned Fabric) each reach EVL as a distinct UnknownKind through the real MiCode->Fabric->axon-loop bridge (loop_interop_gate.sh section 8b, 16 real trials) and are counted apart in the arm statistics; D12 verdicts are judged but never counted; no default pass. MiCode states the not-run reason as a closed-set content marker inside the pinned episode contract. Also runs in scripts/v022_micode_gates.sh (micode, micode-persist, micode-core rows)."
+    }
+  ],
   "tasks": [],
   "tasks_note": "A work package status other than 'Not started' needs a row in `tasks` with task_id and allowed_status. A status in {Done, Complete, Completed, Landed} additionally requires every one of that task's gate_targets to have a valid row in `gates` -- so 'Done' cannot launder an unexecuted gate.",
-  "checked_by": "scripts/cortex_package_gate.sh"
+  "checked_by": "scripts/cortex_honesty_invariant.py (run by scripts/cortex_package_gate.sh and scripts/cortex_package_gate_v022.sh)"
 }

@@ -339,7 +339,7 @@ pub fn to_canonical_json<T: Serialize>(v: &T) -> Result<String, ContractError> {
 }
 
 #[cfg(test)]
-mod contract_tests {
+mod tests {
     use super::*;
     use crate::episode::{Episode, EpisodeEvent};
 
