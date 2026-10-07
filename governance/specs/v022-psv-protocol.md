@@ -5485,7 +5485,7 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
 
 97. **Source: the round-9 FIELD-ORIGIN reviewer's findings on amendment 92**
     (`/var/tmp/c9r9-findings-FIELD-ORIGIN.json`; probes in `/var/tmp/c9r9-FO-logs/`). Mutation ids M2500-M2515
-    (M2516-M2519 unused; M2265-M2269 re-targeted, below), matrix rows A200-A205 (A206-A209 unused; renumbered at
+    (M2516-M2519 unused; M2265-M2269 re-targeted, below), matrix rows A195-A200 (A206-A209 unused; renumbered at
     integration, another branch holds A190-A199). `crates/axon-core/src` is untouched.
     - **Finding 1, executed: the reaper could be evaded and the lock-back did not close the gap.**
       `build_uid_pids` skipped any process whose `/proc/PID/status` read `State: Z`. A multi-threaded process whose
@@ -5594,7 +5594,7 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
 ## Amendment 96: four more routes of one class, and the sweep that enumerated the rest (C9 round 9, PSV1G)
 
 96. **Source: the round-9 PSV-1 and SENTINEL reviews (two executed blockers; two minors) and the sweep the
-    brief asked for.** Mutation ids M2470-M2480, matrix rows A190-A194 (another branch uses A200+; the
+    brief asked for.** Mutation ids M2470-M2480, matrix rows A190-A194 (another branch uses A195+; the
     integrator renumbers). The class, stated once so the sweep has a definition: a value that the
     CANDIDATE produced reaches operator code, or an operator-defined name is looked up from sealed code,
     on a path that does not pass the seal edge for it (`seal_call`, `seal_global`, `seal_method`,
@@ -5745,7 +5745,7 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
 ## Amendment 98: what the refusal gate claims, the guest runner's paths, fail-open defaults and the build environment's Python guards (C9 round 9, eqgate5)
 
 98. **Source: the round-9 EQUIVALENCE review (`DO_NOT_REGISTER`; one BLOCKER, three MAJOR-ADJACENT).** Mutation ids
-    M2520-M2569 (all 50 used), matrix rows A210-A215 (other branches hold A190-A209; the integrator renumbers; this
+    M2520-M2569 (all 50 used), matrix rows A201-A206 (other branches hold A190-A209; the integrator renumbers; this
     branch's matrix check was run with temporary placeholders for A190-A209, which are not committed). Base
     `c9r8/integrate7` (`ac03128f`); nothing under `crates/axon-core/src` was touched, and neither
     `scripts/guest_build_env.py` nor `scripts/lib/opkit_ns.sh` nor the kit (buildenv5's), whose guards this
@@ -5839,3 +5839,5 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       siblings S15/S16/S21/S22; MAX_REPLY, MAX_PROFILE_MANIFEST, backend MAX (their tests would need a stand-in observer that
       streams past the bound, or a multi-hundred-MB file); the K16/K17 constants were not run.
 
+
+**Renumbering at integration (round 9, integrate8).** Amendment 97 (buildenv5) wrote its matrix rows as A200-A205 and amendment 98 (eqgate5) as A210-A215 while amendment 96 (psv1g) holds A190-A194; the integration made the matrix contiguous: amendment 97's rows are now A195-A200 and amendment 98's are A201-A206. The text of those amendments was rewritten to the new ids.
