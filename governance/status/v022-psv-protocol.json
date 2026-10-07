@@ -612,7 +612,7 @@
         "fixed": [
           "sealed frames act only on their own operations; operator RNG refused under a sealed frame; completion only when the body ran to its end (A76-A77, amendment 46)",
           "readiness applies Fabric's B263 rules incl. the host config's qualification.max_age_s; decision E by common-dir; lineage from hash-checked objects (A78-A80, amendment 47)",
-          "every helper-path refusal has a row or a reasoned exemption (v022_refusal_coverage.py in gate.sh); kept paired-disable records must be current (amendment 48)",
+          "every helper-path refusal has a row, a checkable exemption, or a place on the counted REMAINDER list of unobserved guards, which is not claimed covered (v022_refusal_coverage.py in gate.sh; amendments 48, 98); kept paired-disable records must be current (amendment 48)",
           "one suite-join reading; launch manifest /2 names its authority; protected host pins authority_store (A81-A82, amendment 49)",
           "separate axon-custodian (D6); the root helper launches only on its one verified observation (A83-A84, amendment 50)",
           "rows wave: 15 unkilled rows made honest; a protected custodian could not start (M641); a ref answered the lineage (M642, A85) (amendment 51)",

@@ -197,3 +197,53 @@ impl TestCustodianExt for TestCustodian {
 trait TestCustodianExt {
     fn issue_as_fabric(&self) -> String;
 }
+
+/// Amendment 98 (eqgate5): the custodian's answer to `check` names the unix
+/// time after which the nonce is no longer spendable; Fabric's client refuses an
+/// answer that names none. The omission read as `i64::MAX` left the whole suite
+/// green, and "never expires" is the dangerous reading (a record keyed to the
+/// nonce is kept for ever). A stand-in custodian (this process's uid, which the
+/// client accepts as the custodian's) answers; control: an answer naming an
+/// expiry is taken as given.
+#[test]
+fn a_custodian_check_that_names_no_expiry_is_refused() {
+    use axon_fabric::custodian::{CustodianRef, REPLY_SCHEMA};
+    use std::io::{Read, Write};
+    use std::os::unix::net::UnixListener;
+    let d = tempfile::tempdir().unwrap();
+    let sock = d.path().join("custodian.sock");
+    let l = UnixListener::bind(&sock).unwrap();
+    let serve = std::thread::spawn(move || {
+        for answer in [
+            json!({"schema": REPLY_SCHEMA, "ok": true, "mode": "dev", "nonce": null, "error": null}),
+            json!({"schema": REPLY_SCHEMA, "ok": true, "mode": "dev", "nonce": null, "error": null,
+                   "expires_unix": 1_700_000_000_i64}),
+        ] {
+            let (mut c, _) = l.accept().unwrap();
+            let mut req = Vec::new();
+            c.read_to_end(&mut req).unwrap();
+            c.write_all(format!("{answer}\n").as_bytes()).unwrap();
+        }
+    });
+    let client = CustodianRef {
+        socket: sock,
+        uid: euid(),
+        sha256: None,
+    };
+    let nonce = "ab".repeat(16);
+    let got = client.check(&nonce, 1);
+    assert!(
+        got.is_err(),
+        "ATTACK: a custodian answer that names no expiry was read as a nonce that never expires: {got:?}"
+    );
+    assert!(got.unwrap_err().contains("names no expiry"));
+    assert_eq!(
+        client
+            .check(&nonce, 1)
+            .expect("control: an answer naming an expiry")
+            .1,
+        1_700_000_000,
+        "control: the expiry the custodian names is the one returned"
+    );
+    serve.join().unwrap();
+}

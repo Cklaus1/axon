@@ -26,10 +26,12 @@ const SCRIPTS: [&str; 3] = [
     "scripts/v022_g01_mutations.py",
     "scripts/v022_attack_markers.py",
 ];
-const SOURCES: [&str; 3] = [
+const SOURCES: [&str; 4] = [
     ":(glob)crates/*/Cargo.toml",
     ":(glob)crates/*/src/**",
     "scripts/build-guest-image.sh",
+    // Amendment 98: the Python guards of the build environment.
+    "scripts/guest_build_env.py",
 ];
 /// A scanned file every refusal site of which has a row (tasks.rs).
 const SCANNED: &str = "crates/axon-loop/src/tasks.rs";
@@ -1549,4 +1551,340 @@ fn a_form_is_credited_only_by_a_row_that_changes_its_own_line() {
     );
     holds(&r, &[], "a row that changes the form line credits it");
     let _ = std::fs::remove_dir_all(&r);
+}
+
+// ── C9 round 9, eqgate5 (amendment 98) ──────────────────────────────────────
+
+/// Amendment 98: a struct-literal FIELD whose value is an ABSOLUTE path literal
+/// (`secret: PathBuf::from("/in/job/..")`) is a decision about where a trusted
+/// component looks, and a site (the runner's guest_config left five of them
+/// unobserved). A relative literal, a computed path, a `let` binding and a
+/// field DECLARATION are not.
+#[test]
+fn an_absolute_path_literal_handed_to_a_config_field_is_a_site() {
+    let r = tree("path-field");
+    add_code(
+        &r,
+        SCANNED,
+        "pub fn gp_cfg(v: &str) -> GpCfg {\n    let gp_local = std::path::PathBuf::from(\"/gp/local\");\n    let _ = gp_local;\n    GpCfg {\n        gp_secret: PathBuf::from(\"/in/job/gp-secret\"),\n        gp_new: Path::new(\"/gp/new\"),\n        gp_rel: PathBuf::from(\"rel/gp\"),\n        gp_dyn: PathBuf::from(v),\n    }\n}\n\npub struct GpCfg {\n    pub gp_decl: PathBuf,\n}\n",
+    );
+    for (site, form) in [
+        ("gp_secret: PathBuf::from", "a PathBuf::from(\"/..\") field"),
+        ("gp_new: Path::new", "a Path::new(\"/..\") field"),
+    ] {
+        names(
+            &r,
+            site,
+            &format!("a path literal handed to a config field ({form}) was not a refusal site"),
+        );
+    }
+    for (site, what) in [
+        ("gp_rel", "a relative path literal"),
+        ("gp_dyn", "a computed path"),
+        ("gp_local", "a let binding"),
+        ("gp_decl", "a field declaration"),
+    ] {
+        not_named(
+            &r,
+            site,
+            &format!("{what} was read as an absolute path field"),
+        );
+    }
+    let c = tree("path-field-control");
+    holds(&c, &[], "the unedited copy");
+    let _ = std::fs::remove_dir_all(&c);
+    let _ = std::fs::remove_dir_all(&r);
+}
+
+/// Amendment 98: an exemption whose reason says REMAINDER is a guard no test
+/// observes alone. The gate COUNTS those by category, prints the counts on
+/// every run, lists each with `--remainder`, and never words the result as
+/// coverage. A checkable exemption is not one.
+#[test]
+fn a_remainder_exemption_is_counted_and_never_claimed_covered() {
+    let base = tree("remainder-base");
+    let b = text(&gate(&base, &["--remainder"]));
+    let count = |t: &str| -> usize {
+        let l = t
+            .lines()
+            .find(|l| l.starts_with("REMAINDER: "))
+            .unwrap_or_else(|| panic!("ATTACK: the gate printed no REMAINDER count: {t}"));
+        l["REMAINDER: ".len()..]
+            .split_whitespace()
+            .next()
+            .unwrap()
+            .parse()
+            .unwrap()
+    };
+    let n0 = count(&b);
+    let listed0 = b.lines().filter(|l| l.starts_with("REMAINDER ")).count();
+    assert_eq!(
+        n0, listed0,
+        "ATTACK: the REMAINDER count and the REMAINDER list disagree: {b}"
+    );
+    assert!(
+        b.contains("NOT claimed covered")
+            && !b.contains("every refusal site in every in-scope file has a row or"),
+        "ATTACK: the gate's last line claimed REMAINDER covered: {b}"
+    );
+    let _ = std::fs::remove_dir_all(&base);
+    let r = tree("remainder");
+    add_code(&r, SCANNED, "pub fn gq_probe(x: u64) -> Result<(), String> {\n    if x > 7 {\n        return Err(format!(\"gq rem {x}\"));\n    }\n    if x > 9 {\n        return Err(format!(\"gq chk {x}\"));\n    }\n    Ok(())\n}\n");
+    exempt(
+        &r,
+        SCANNED,
+        "        return Err(format!(\"gq rem {x}\"));",
+        "REMAINDER (no row yet): a probe guard no test observes",
+    );
+    exempt(
+        &r,
+        SCANNED,
+        "        return Err(format!(\"gq chk {x}\"));",
+        "OBSERVED-NOT-ROWED (probe): a test fails without it",
+    );
+    let t = text(&gate(&r, &["--remainder"]));
+    let observed = |t: &str| -> usize {
+        t.lines()
+            .find(|l| l.starts_with("OBSERVED-NOT-ROWED: "))
+            .and_then(|l| {
+                l["OBSERVED-NOT-ROWED: ".len()..]
+                    .split_whitespace()
+                    .next()?
+                    .parse()
+                    .ok()
+            })
+            .unwrap_or_else(|| panic!("no OBSERVED-NOT-ROWED line: {t}"))
+    };
+    assert_eq!(
+        observed(&t),
+        observed(&b) + 1,
+        "ATTACK: a Rust OBSERVED-NOT-ROWED exemption was not counted apart from REMAINDER: {t}"
+    );
+    assert_eq!(
+        count(&t),
+        n0 + 1,
+        "ATTACK: an exempt REMAINDER guard was not counted (and a checkable one was, or neither): {t}"
+    );
+    assert!(
+        t.lines().any(|l| l.starts_with("REMAINDER ")
+            && l.contains("tasks.rs")
+            && l.ends_with(" other")),
+        "ATTACK: the REMAINDER list does not name the probe site: {t}"
+    );
+    let _ = std::fs::remove_dir_all(&r);
+}
+
+const PYG: &str = "scripts/guest_build_env.py";
+
+/// A Python probe: two sites (a guarded `fail(..)`, an unconditional problem
+/// string) and four non-sites (a bare re-raise, `return ""`, `sys.exit` of a
+/// callee's status, a `raise` named in a string).
+const PY_PROBE: &str = "def gp_probe(x, p):\n    if x > 1:\n        fail(\"gp_marker_fail\")\n    if x == 0:\n        raise ValueError(\"gp_marker_raise\")\n    try:\n        p()\n    except OSError:\n        raise\n    sys.exit(p())\n    s = \"fail(gp_not_a_site)\"\n    return \"\"\n\n\ndef gp_problem(x):\n    if x:\n        return f\"gp_marker_problem {x}\"\n    return \"gp_marker_unconditional\"\n";
+
+fn add_py_probe(r: &Path) {
+    edit(
+        r,
+        PYG,
+        "\n\nif __name__ == \"__main__\":\n    main()",
+        &format!("\n\n{PY_PROBE}\n\nif __name__ == \"__main__\":\n    main()"),
+    );
+}
+
+/// Give the copy of the gate one more Python exemption.
+fn py_exempt(r: &Path, func: &str, n: usize, frag: &str, kind: &str, reason: &str) {
+    edit(
+        r,
+        GATE,
+        "PY_EXEMPT = []   # (file, function, n, fragment, kind, reason): the table below\n",
+        &format!(
+            "PY_EXEMPT = []   # (file, function, n, fragment, kind, reason): the table below\nPY_EXEMPT.append(({PYG:?}, {func:?}, {n}, {frag:?}, {kind:?}, {reason:?}))\n"
+        ),
+    );
+}
+
+/// Amendment 98: a Python refusal (`fail(..)`, `raise <exc>`, a `sys.exit` of a
+/// message, a `return` of a non-empty message) is a site judged by its own
+/// guard; a bare re-raise, `return ""`, the propagation of a callee's exit
+/// status and a word in a string are not. A row that changes a line of the
+/// guard credits it; an exemption is keyed by function, ordinal and a fragment
+/// of the site, and one whose fragment disagrees is refused.
+#[test]
+fn a_python_refusal_is_a_site_judged_by_its_own_guard() {
+    let r = tree("py-sites");
+    add_py_probe(&r);
+    for (site, what) in [
+        ("gp_marker_fail", "a guarded fail(..)"),
+        ("gp_marker_raise", "a raise of an exception"),
+        ("gp_marker_problem", "a return of a message under a guard"),
+        (
+            "gp_marker_unconditional",
+            "an unconditional return of a message",
+        ),
+    ] {
+        names(
+            &r,
+            site,
+            &format!(
+                "a Python refusal ({what}) with no row and no exemption was not a refusal site"
+            ),
+        );
+    }
+    for (site, what) in [
+        ("gp_not_a_site", "a word in a string"),
+        ("sys.exit(p())", "the propagation of a callee's exit status"),
+    ] {
+        not_named(
+            &r,
+            site,
+            &format!("{what} was read as a Python refusal site"),
+        );
+    }
+    // CONTROL: a row on the guard line credits its site.
+    add_row(
+        &r,
+        "MGP1",
+        PYG,
+        "    if x > 1:\n        fail(\"gp_marker_fail\")",
+        "    if False and x > 1:\n        fail(\"gp_marker_fail\")",
+    );
+    not_named(
+        &r,
+        "gp_marker_fail",
+        "a row that changes the guard did not credit a Python site",
+    );
+    // An exemption keyed by function, ordinal and fragment credits the others;
+    // one whose fragment is not in the site's text is refused.
+    py_exempt(
+        &r,
+        "gp_probe",
+        2,
+        "raise ValueError(",
+        "OBSERVED",
+        "probe: observed",
+    );
+    py_exempt(
+        &r,
+        "gp_problem",
+        1,
+        "return f\"gp_marker_problem",
+        "OBSERVED",
+        "probe: observed",
+    );
+    py_exempt(
+        &r,
+        "gp_problem",
+        2,
+        "return \"gp_marker_unconditional\"",
+        "OBSERVED",
+        "probe: observed",
+    );
+    holds(&r, &[], "every Python probe site rowed or exempt");
+    let _ = std::fs::remove_dir_all(&r);
+    let r = tree("py-sites-frag");
+    add_py_probe(&r);
+    py_exempt(
+        &r,
+        "gp_probe",
+        1,
+        "fail(\"not the fragment\")",
+        "OBSERVED",
+        "probe: observed",
+    );
+    // Every OTHER site is exempt, so the fragment is the only thing wrong.
+    py_exempt(
+        &r,
+        "gp_probe",
+        2,
+        "raise ValueError(",
+        "OBSERVED",
+        "probe: observed",
+    );
+    py_exempt(
+        &r,
+        "gp_problem",
+        1,
+        "return f\"gp_marker_problem",
+        "OBSERVED",
+        "probe: observed",
+    );
+    py_exempt(
+        &r,
+        "gp_problem",
+        2,
+        "return \"gp_marker_unconditional\"",
+        "OBSERVED",
+        "probe: observed",
+    );
+    refuses(
+        &r,
+        &[],
+        "names the fragment",
+        "an exemption whose fragment is not in its site's text held (a site moved or was added)",
+    );
+    let _ = std::fs::remove_dir_all(&r);
+}
+
+/// Amendment 98: a Python exemption of kind REMAINDER is COUNTED (category
+/// `py_guard`) and one of kind OBSERVED is counted apart; neither is a row.
+#[test]
+fn a_python_guard_exemption_is_counted_by_kind() {
+    let r = tree("py-count");
+    add_py_probe(&r);
+    py_exempt(
+        &r,
+        "gp_probe",
+        1,
+        "fail(\"gp_marker_fail\")",
+        "REMAINDER",
+        "REMAINDER (no test observes it): probe",
+    );
+    py_exempt(
+        &r,
+        "gp_probe",
+        2,
+        "raise ValueError(",
+        "OBSERVED",
+        "probe: observed",
+    );
+    py_exempt(
+        &r,
+        "gp_problem",
+        1,
+        "return f\"gp_marker_problem",
+        "OBSERVED",
+        "probe: observed",
+    );
+    py_exempt(
+        &r,
+        "gp_problem",
+        2,
+        "return \"gp_marker_unconditional\"",
+        "OBSERVED",
+        "probe: observed",
+    );
+    let t = text(&gate(&r, &["--remainder"]));
+    assert!(
+        t.lines()
+            .any(|l| l.starts_with("REMAINDER ") && l.contains(PYG) && l.ends_with(" py_guard")),
+        "ATTACK: a Python REMAINDER exemption was not listed under py_guard: {t}"
+    );
+    assert!(
+        t.lines().any(|l| l.starts_with("OBSERVED-NOT-ROWED: ")),
+        "ATTACK: the gate does not report the guards observed without a row: {t}"
+    );
+    let n = |t: &str, k: &str| -> usize {
+        t.lines()
+            .find(|l| l.starts_with(k))
+            .and_then(|l| l[k.len()..].split_whitespace().next()?.parse().ok())
+            .unwrap_or_else(|| panic!("no {k} line: {t}"))
+    };
+    let base = tree("py-count-base");
+    let b = text(&gate(&base, &["--remainder"]));
+    assert_eq!(
+        n(&t, "OBSERVED-NOT-ROWED: "),
+        n(&b, "OBSERVED-NOT-ROWED: ") + 3,
+        "ATTACK: the observed-without-a-row count did not follow the exemptions: {t}"
+    );
+    let _ = std::fs::remove_dir_all(&r);
+    let _ = std::fs::remove_dir_all(&base);
 }

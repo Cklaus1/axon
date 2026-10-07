@@ -963,7 +963,7 @@ fn a_verified_observation_makes_the_guest_verdict_protected() {
 
 /// One defect each: (observer mode, signing authority, root holding the key,
 /// the reason a refusal names; `|` separates alternatives).
-const DEFECTIVE_OBSERVATIONS: [(&str, &str, &str, &str); 12] = [
+const DEFECTIVE_OBSERVATIONS: [(&str, &str, &str, &str); 13] = [
     // A9: another authority domain (the key IS a trusted observer). The
     // domain field (M152) and the domain-separated message (M153) each
     // refuse it alone (M152's four-cell record), so either reason.
@@ -981,6 +981,10 @@ const DEFECTIVE_OBSERVATIONS: [(&str, &str, &str, &str); 12] = [
         "not a trusted evidence issuer",
     ),
     ("stale", "observer", "observer", "old (max 300s)"),
+    // Amendment 98 (eqgate5): an observation whose `observed_at` is not a UTC timestamp
+    // is refused AS that, never read as taken just now (the omission read as the
+    // current time left the whole suite green: an unreadable time was fresh).
+    ("bad-time", "observer", "observer", "is not a UTC timestamp"),
     ("epoch", "observer", "observer", "for epoch 7"),
     (
         "other-manifest",

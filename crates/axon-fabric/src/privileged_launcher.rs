@@ -2781,4 +2781,26 @@ mod tests {
         let dst = fstat(std::fs::File::open(t.path()).unwrap().as_raw_fd()).unwrap();
         assert!(is_dir(&dst), "control: a directory is one");
     }
+
+    /// Amendment 98 (eqgate5): the production authority is root's, walks from
+    /// `/` and is not a test configuration. `production()` builds three VALUES
+    /// the helper's tests never read (they build `Authority` literals of their
+    /// own): a walk base other than `/` trusts a tree the caller chose.
+    #[test]
+    fn the_production_authority_is_roots_and_walks_from_the_root() {
+        let a = Authority::production();
+        assert_eq!(
+            a.operator_uid, 0,
+            "ATTACK: the production authority is not root's"
+        );
+        assert_eq!(
+            a.walk_base,
+            PathBuf::from("/"),
+            "ATTACK: the production authority's ownership walk does not start at `/`"
+        );
+        assert!(
+            !a.test,
+            "ATTACK: the production authority is a test configuration"
+        );
+    }
 }

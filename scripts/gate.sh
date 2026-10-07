@@ -309,7 +309,9 @@ python3 -B scripts/psv_matrix_check.py || fail "v0.22 PSV negative matrix"
 python3 -B scripts/opkit_ns_drift.py || fail "no test script may run the operator kit outside ns_run (amendment 92)"
 python3 -B scripts/opkit_ns_drift.py --selftest || fail "opkit_ns_drift selftest"
 # Every refusal site in the protected helper files (decision A/D) has a
-# mutation row or a reasoned exemption (C9 round 3, amendment 48).
+# mutation row, a checkable exemption, or an entry on the counted, greppable
+# REMAINDER list of guards no test observes alone; REMAINDER is NOT claimed
+# covered (C9 round 3, amendment 48; round 9, amendment 98).
 python3 -B scripts/v022_refusal_coverage.py || fail "v0.22 protected refusal-site coverage"
 # PSV in a REAL Firecracker guest. SKIP (77: no root/KVM/built image) is a
 # NON-RESULT, reported as such, never as a pass.

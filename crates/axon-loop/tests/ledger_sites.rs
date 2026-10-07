@@ -525,3 +525,37 @@ fn an_edited_projection_is_refused() {
         "an edited pointer.json was accepted as the ledger's projection",
     );
 }
+
+/// Amendment 98 (eqgate5): EACH of the nine directories that "only ever hold
+/// ledger-dependent state" refuses on its own when the ledger, its head and its
+/// anchor are gone. The list is pinned here from outside (the code's own
+/// `DEPENDENT` is a private constant, and a copy of it in this file would agree
+/// with whatever the code said): removing `plans` from it left the whole suite
+/// green, and a store whose ledger was deleted but whose `plans/` remained was
+/// then reissued epoch 1 (a fence reissued).
+#[test]
+fn each_dependent_directory_refuses_a_deleted_history_on_its_own() {
+    const NINE: [&str; 9] = [
+        "plans",
+        "admissions",
+        "evaluations",
+        "baselines",
+        "scopes",
+        "episodes",
+        "contexts",
+        "candidate-sets",
+        "task-manifests",
+    ];
+    for keep in NINE {
+        let w = world();
+        let root = w.s.root().to_path_buf();
+        std::fs::remove_file(root.join("ledger.anchor")).unwrap();
+        delete_history(&root, &NINE);
+        std::fs::create_dir_all(root.join(keep)).unwrap();
+        refused(
+            load(&w.s),
+            &["ledger missing but"],
+            &format!("a store whose ledger, head and anchor were deleted but whose {keep}/ remained reissued its history"),
+        );
+    }
+}

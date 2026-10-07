@@ -359,8 +359,21 @@ mod tests {
         let r = Ref::new(format!("acf1:{}", "0".repeat(64))).unwrap();
         assert_eq!(r.scheme(), RefScheme::Acf1);
         assert_eq!(r.hex(), "0".repeat(64));
-        assert!(Ref::new(format!("axc1:{}", "0".repeat(64))).is_err());
+        assert!(
+            Ref::new(format!("axc1:{}", "0".repeat(64))).is_err(),
+            "ATTACK: a Ref of a scheme that is not cl22, acf1 or sha256 was accepted"
+        );
         assert!(Ref::new(format!("cl22:{}", "0".repeat(63))).is_err());
+        // Amendment 98 (eqgate5): a digest with NO scheme is not a Ref (it was
+        // read as a `cl22:` one when the missing colon was defaulted).
+        assert!(
+            Ref::new("0".repeat(64)).is_err(),
+            "ATTACK: a bare 64-hex digest with no scheme was accepted as a Ref"
+        );
+        assert!(
+            Ref::new(format!(":{}", "0".repeat(64))).is_err(),
+            "ATTACK: a digest with an empty scheme was accepted as a Ref"
+        );
     }
 
     #[test]

@@ -413,6 +413,16 @@ Replacing the binary without re-certifying fails closed at two independent point
 - the relay refuses, because the digest differs from the manifest;
 - the new binary refuses every existing certification, because `readiness_verifier_sha256` differs.
 
+## What the refusal-site gate claims (C9 round 9, amendment 98)
+
+`scripts/v022_refusal_coverage.py` derives the guard sites from the code of every in-scope file. The claim is
+exactly this: **every refusal site has a mutation row, a CHECKABLE exemption (a fact a reviewer can re-execute:
+dominated, unreachable, not on the protected route), or an entry on a counted, greppable REMAINDER list of guards no
+test observes alone.** REMAINDER is **not claimed covered**: it is the list of guards for which no test is known to
+fail when the guard is removed. The gate prints the counts by category on every run and
+`python3 scripts/v022_refusal_coverage.py --remainder` lists each site (`grep REMAINDER`). An earlier wording
+("a row or a reasoned exemption", amendments 48 and 95) let a REMAINDER entry read as an exemption; it is not one.
+
 ## Mutation record for the readiness authority
 
 Mutants of `readiness.rs` and `backend.rs` are killed by `tests/readiness.rs`, `tests/trust_root.rs`

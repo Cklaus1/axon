@@ -3207,9 +3207,42 @@ _A95 = {
     'create_mode_window': "DOMINATED (checkable): the final mode is set by `set_mode(&shown, mode)` after the copy (the umask does not apply: the comment there); the mode given at creation governs only the window while the bytes are written, inside the root-private 0700 staging dir the helper just made (`a_snapshot_never_copies_into_a_directory_that_already_exists` observes the final 0644/0755); survey and row run (amendment 95): `.mode(0o777)` here survived the whole axon-fabric suite and that test",
     'take_equiv': "EQUIVALENT in outcome (checkable): the `take(BOUND + 1)` only limits how much of an oversized or growing file is read into memory; the size is refused by the comparison against the bound next to it (`bytes.len() > MAX_POLICY`, `id.size > MAX_BYTES`), so no input is accepted or refused differently; survey (amendment 95): removing it left the whole axon-fabric suite green",
 }
+
+
+# Amendment 98 (eqgate5): the `.ok_or(..)?` refusals of an absent field were judged one by one, by
+# applying the PERMISSIVE default (`unwrap_or(..)`, `unwrap_or_default()`, an empty list) and running
+# the owning crate's suite (axon-fabric sharded, on gpumaster; the others locally). Each exemption
+# below says what that run found. REMAINDER kinds are counted and NOT claimed covered.
+def _observed(names):
+    return ("OBSERVED-NOT-ROWED (survey, amendment 98): the permissive edit fails the test(s) " + names
+            + "; no row of its own")
+
+
+def _closed(why):
+    return ("REMAINDER (survey, amendment 98, fail-closed): the permissive edit leaves the suite green and "
+            "FAILS CLOSED: " + why)
+
+
+def _unjudged(edit):
+    return ("REMAINDER (survey, amendment 98, unjudged): the edit " + edit + " leaves the suite green; "
+            "which way the default then fails was not judged")
+
+
+def _nodefault():
+    return ("REMAINDER (survey, amendment 98, no default): the lookup of an absent entity has no neutral "
+            "value to default to (the edit would invent the entity or loop); not mutated")
+
+
+def _offroute(why):
+    return "REMAINDER (survey, amendment 98, off the protected route): " + why
+
+
+def _dominated(fact):
+    return "DOMINATED (checkable, survey amendment 98): " + fact + "; the edit leaves the suite green because of it"
+
 EXEMPT += [
     ('crates/axon-attest/src/lib.rs', '    let aop = axon_os_path.ok_or_else(|| MeasureError::ComponentMissing("axon-os".to_string()))?;',
-     _A95['okor_field']),
+     _offroute("axon-attest's measurement of the host stack (axon-vm), not a route of the protected profile; the edit substitutes the kernel's path for axon-os and the suite stayed green")),
     ('crates/axon-attest/src/lib.rs', 'pub const SOFTWARE_TPM_HW_ROOT: &str = "software-tpm-v1";',
      _A95['const_path']),
     ('crates/axon-attest/src/lib.rs', 'const AXTCB_EXT_PREFIX: &str = "axtcb1-ext:";',
@@ -3227,19 +3260,19 @@ EXEMPT += [
     ('crates/axon-cortex/src/generate.rs', 'const MAX_GENERATOR_READ: usize = 1 << 20;',
      _CTX),
     ('crates/axon-cortex/src/runner.rs', '        let g = grant.ok_or_else(|| Refusal::UnknownGrant("<none>".into()))?;',
-     _A95['okor_field']),
+     _offroute('Cortex, the local repair loop, which is not a route of the protected profile; not surveyed')),
     ('crates/axon-cortex/src/runner.rs', '        std::fs::create_dir_all(dst)?;',
      _CTX),
     ('crates/axon-cortex/src/runner.rs', '            .ok_or_else(|| unresolvable("not found on PATH".into()))?',
-     _A95['okor_field']),
+     _offroute('Cortex, the local repair loop, which is not a route of the protected profile; not surveyed')),
     ('crates/axon-cortex/src/runner.rs', '        .ok_or_else(|| bad("is not check-suite:<id>@<version>#<entry>"))?;',
-     _A95['okor_field']),
+     _offroute('Cortex, the local repair loop, which is not a route of the protected profile; not surveyed')),
     ('crates/axon-cortex/src/runner.rs', '        .ok_or_else(|| bad("names no version"))?;',
-     _A95['okor_field']),
+     _offroute('Cortex, the local repair loop, which is not a route of the protected profile; not surveyed')),
     ('crates/axon-cortex/src/runner.rs', '    let (version, entry) = rest.split_once(\'#\').ok_or_else(|| bad("names no entry"))?;',
-     _A95['okor_field']),
+     _offroute('Cortex, the local repair loop, which is not a route of the protected profile; not surveyed')),
     ('crates/axon-cortex/src/runner.rs', '            .ok_or("check registry has no `executors` array")?',
-     _A95['okor_field']),
+     _offroute('Cortex, the local repair loop, which is not a route of the protected profile; not surveyed')),
     ('crates/axon-cortex/src/runner.rs', 'const POLICY_FILES: &[&str] = &["axon.lock", ".axon-policy", "gate.sh", "profile.rs"];',
      _CTX),
     ('crates/axon-cortex/src/runner.rs', 'const POLICY_PREFIXES: &[&str] = &["scripts/", "governance/", ".github/"];',
@@ -3251,15 +3284,11 @@ EXEMPT += [
     ('crates/axon-cortex/src/runner.rs', 'pub const FABRIC_SUBMIT_ID: &str = "axon-fabric";',
      _CTX),
     ('crates/axon-fabric/src/backend.rs', '        .ok_or("waiver file has no waivers list")?',
-     _A95['okor_field']),
+     _closed('an absent waivers list becomes an empty one, and a waiver only RELAXES a verdict (an empty list waives nothing)')),
     ('crates/axon-fabric/src/backend.rs', '        let name = non_empty(&x["assertion"]).ok_or("a waiver names no assertion")?;',
-     _A95['okor_field']),
-    ('crates/axon-fabric/src/backend.rs', '        .ok_or("evidence record has no assertions list")?;',
-     _A95['okor_field']),
+     _closed('a waiver that names no assertion becomes one for the name "", which no assertion has')),
     ('crates/axon-fabric/src/backend.rs', '            .ok_or("evidence record has no profile.manifest_sha256")?',
-     _A95['okor_field']),
-    ('crates/axon-fabric/src/backend.rs', '            .ok_or("manifest has no artifacts.axon.sha256")?',
-     _A95['okor_field']),
+     _observed('a_record_naming_no_manifest_digest_is_refused_as_that')),
     ('crates/axon-fabric/src/backend.rs', '    if let Err(e) = std::fs::create_dir_all(&lx.out_root) {',
      _A95['ensure_outroot']),
     ('crates/axon-fabric/src/backend.rs', 'pub const LOCAL_INTERPRETER: Profile = Profile {',
@@ -3289,19 +3318,17 @@ EXEMPT += [
     ('crates/axon-fabric/src/branches.rs', '    std::fs::create_dir_all(dir)?;',
      _A95['ensure_store']),
     ('crates/axon-fabric/src/branches.rs', '            best.ok_or_else(|| BranchError::Unknown(format!("branch {exp}/{arm} has no head")))?;',
-     _A95['okor_field']),
+     _closed('an absent head becomes sequence 0, whose file `head-0.json` the branch never writes: the read that follows fails')),
     ('crates/axon-fabric/src/branches.rs', 'pub const EXPERIMENT_SCHEMA: &str = "axon-fabric-experiment/1";',
      _A95['const_tag']),
     ('crates/axon-fabric/src/branches.rs', 'pub const HEAD_SCHEMA: &str = "axon-fabric-branch-head/1";',
      _A95['const_tag']),
-    ('crates/axon-fabric/src/custodian.rs', '            .ok_or("custodian\'s check names no expiry for the nonce")?;',
-     _A95['okor_field']),
     ('crates/axon-fabric/src/custodian.rs', '                let nonce = r.nonce.as_deref().ok_or("check names no nonce")?;',
-     _A95['okor_field']),
+     _unjudged('`unwrap_or("")`')),
     ('crates/axon-fabric/src/custodian.rs', '                let nonce = r.nonce.as_deref().ok_or("spend names no nonce")?;',
-     _A95['okor_field']),
+     _unjudged('`unwrap_or("")`')),
     ('crates/axon-fabric/src/custodian.rs', '                    .ok_or("spend names no launch manifest sha256")?;',
-     _A95['okor_field']),
+     _observed('a_protected_custodian_spends_nothing_for_a_spend_naming_no_manifest')),
     ('crates/axon-fabric/src/custodian.rs', 'pub const CONFIG_PATH: &str = "/etc/axon/custodian.json";',
      _A95['const_path']),
     ('crates/axon-fabric/src/custodian.rs', 'pub const CONFIG_SCHEMA: &str = "axon-custodian/1";',
@@ -3317,55 +3344,49 @@ EXEMPT += [
     ('crates/axon-fabric/src/custodian.rs', 'pub const MAX_OUTSTANDING: usize = 1024;',
      _A95['const_bound']),
     ('crates/axon-fabric/src/git_data.rs', '                .ok_or(format!("{} is not a gitfile", dotgit.display()))?;',
-     _A95['okor_field']),
+     _unjudged('`unwrap_or("")`')),
     ('crates/axon-fabric/src/git_data.rs', '        .ok_or("the repository config path is not UTF-8")?;',
-     _A95['okor_field']),
+     _unjudged('`unwrap_or("")`')),
     ('crates/axon-fabric/src/git_data.rs', '        let out = std::io::BufReader::new(child.stdout.take().ok_or("git cat-file: no stdout")?);',
      _A95['okor_piped']),
     ('crates/axon-fabric/src/git_data.rs', '        let stdin = self.child.stdin.as_mut().ok_or("git cat-file: no stdin")?;',
      _A95['okor_piped']),
     ('crates/axon-fabric/src/git_data.rs', '                .ok_or(format!("commit {commit} names no tree"))?,',
-     _A95['okor_field']),
+     _observed('git_data::tests::a_tree_entry_that_is_not_what_git_writes_is_refused_as_malformed')),
     ('crates/axon-fabric/src/git_data.rs', "                let sp = i + b[i..].iter().position(|&x| x == b' ').ok_or_else(bad)?;",
-     _A95['okor_field']),
+     _unjudged('`unwrap_or(0)`')),
     ('crates/axon-fabric/src/git_data.rs', '                let nul = sp + b[sp..].iter().position(|&x| x == 0).ok_or_else(bad)?;',
-     _A95['okor_field']),
-    ('crates/axon-fabric/src/git_data.rs', '                let id = b.get(nul + 1..nul + 21).ok_or_else(bad)?;',
-     _A95['okor_field']),
-    ('crates/axon-fabric/src/git_data.rs', '                    .ok_or_else(bad)?;',
-     _A95['okor_field']),
+     _unjudged('`unwrap_or(0)`')),
     ('crates/axon-fabric/src/git_data.rs', '            .ok_or_else(|| format!("{} is not in a git working tree", start.display()))?;',
-     _A95['okor_field']),
+     _nodefault()),
     ('crates/axon-fabric/src/git_data.rs', 'pub const GIT_BIN: &str = "/usr/bin/git";',
      _A95['const_path']),
     ('crates/axon-fabric/src/git_data.rs', 'pub const ALLOWLIST_SCHEMA: &str = "axon-provenance-allowlist/1";',
      _A95['const_tag']),
     ('crates/axon-fabric/src/grants.rs', '            .ok_or("grant registry has no `grants` array")?',
-     _A95['okor_field']),
+     _closed('an absent `grants` array becomes an empty registry: every grant lookup then fails')),
     ('crates/axon-fabric/src/grants.rs', '            .ok_or_else(|| format!("grant_ref `{grant_ref}` is not in the grant registry"))?;',
-     _A95['okor_field']),
+     _nodefault()),
     ('crates/axon-fabric/src/grants.rs', 'pub const GRANT_REGISTRY_SCHEMA: &str = "axon-fabric-grant-registry/1";',
      _A95['const_tag']),
     ('crates/axon-fabric/src/grants.rs', 'const PLACEHOLDER_PROGRAM: &str = "fabric-request.ax";',
      _A95['const_text']),
     ('crates/axon-fabric/src/journal.rs', '            .ok_or_else(|| JournalError::UnknownScope(Box::new(scope.clone())))?;',
-     _A95['okor_field']),
+     _nodefault()),
     ('crates/axon-fabric/src/journal.rs', '            .ok_or_else(|| JournalError::UnknownOp(op.clone()))?\n            .clone();',
-     _A95['okor_field']),
+     _nodefault()),
     ('crates/axon-fabric/src/journal.rs', '            .ok_or_else(|| JournalError::UnknownOp(op.clone()))?;',
-     _A95['okor_field']),
+     _nodefault()),
     ('crates/axon-fabric/src/branches.rs', '            .ok_or_else(|| BranchError::Unverified("the operation recorded no receipt".into()))?;',
-     _A95['okor_field']),
+     _nodefault()),
     ('crates/axon-fabric/src/journal.rs', 'pub const JOURNAL_SCHEMA: &str = "axon-fabric-journal/1";',
      _A95['const_tag']),
     ('crates/axon-fabric/src/observer.rs', '        std::fs::create_dir_all(&self.dir).map_err(|e| format!("nonce store: {e}"))?;',
      _A95['ensure_obs_store']),
-    ('crates/axon-fabric/src/observer.rs', '        .ok_or_else(|| format!("observed_at {:?} is not a UTC timestamp", o.observed_at))?;',
-     _A95['okor_field']),
     ('crates/axon-fabric/src/observer_service.rs', '            .ok_or("the observer\'s reply carries no signature")?;',
-     _A95['okor_field']),
+     _unjudged('`unwrap_or_default()`')),
     ('crates/axon-fabric/src/observer_service.rs', '                .ok_or("the helper config names no custodian")?,',
-     _A95['okor_field']),
+     _dominated('`serde_json::from_value::<CustodianRef>(Value::Null)` is an error, and it is the next statement')),
     ('crates/axon-fabric/src/observer_service.rs', 'pub const CONFIG_PATH: &str = "/etc/axon/observer.json";',
      _A95['const_path']),
     ('crates/axon-fabric/src/observer_service.rs', 'pub const CONFIG_SCHEMA: &str = "axon-observer/1";',
@@ -3375,7 +3396,7 @@ EXEMPT += [
     ('crates/axon-fabric/src/observer_service.rs', 'pub const REPLY_SCHEMA: &str = "axon-observer-reply/1";',
      _A95['const_tag']),
     ('crates/axon-fabric/src/observer_service.rs', 'pub const MAX_REQUEST: u64 = 64 << 10;',
-     _A95['const_bound']),
+     _observed('observer_service::tests::an_observer_request_line_is_cut_off_at_its_size_bound (the bound raised to 2^30)')),
     ('crates/axon-fabric/src/observer_service.rs', 'pub const MAX_REPLY: u64 = 64 << 10;',
      _A95['const_bound']),
     ('crates/axon-fabric/src/observer_service.rs', 'const IO_TIMEOUT: Duration = Duration::from_secs(30);',
@@ -3383,9 +3404,9 @@ EXEMPT += [
     ('crates/axon-fabric/src/observer_service.rs', 'const MAX_PROFILE_MANIFEST: u64 = 1 << 20;',
      _A95['const_bound']),
     ('crates/axon-fabric/src/privileged_launcher.rs', '    let parent = path.parent().ok_or_else(|| bad("no parent".into()))?;',
-     _A95['okor_field']),
+     _unjudged('`unwrap_or("/")`')),
     ('crates/axon-fabric/src/privileged_launcher.rs', '    let name = path.file_name().ok_or_else(|| bad("no file name".into()))?;',
-     _A95['okor_field']),
+     _unjudged('`unwrap_or("")`')),
     ('crates/axon-fabric/src/privileged_launcher.rs', '    let name = p.file_name().ok_or_else(outside)?;',
      _A95['okor_plainname']),
     ('crates/axon-fabric/src/privileged_launcher.rs', '        let parent = p.parent().ok_or_else(outside)?;',
@@ -3399,7 +3420,7 @@ EXEMPT += [
     ('crates/axon-fabric/src/privileged_launcher.rs', '        .take(MAX_POLICY as u64 + 1)',
      _A95['take_equiv']),
     ('crates/axon-fabric/src/privileged_launcher.rs', '        .ok_or("this helper\'s config names no observer.service: no observation is relayed")?;',
-     _A95['okor_field']),
+     _nodefault()),
     ('crates/axon-fabric/src/privileged_launcher.rs', '    let raw = unsafe { libc::syscall(libc::SYS_pidfd_open, ppid, 0) } as RawFd;',
      _A95['pidfd']),
     ('crates/axon-fabric/src/privileged_launcher.rs', '    if m.uid() != 0 || m.mode() & libc::S_ISUID == 0 {',
@@ -3429,27 +3450,23 @@ EXEMPT += [
     ('crates/axon-fabric/src/privileged_launcher.rs', 'const DIR_FLAGS: libc::c_int = libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW;',
      _A95['const_other']),
     ('crates/axon-fabric/src/protected_host.rs', '            .ok_or_else(|| NO_GRANT_REGISTRY.to_string())?;',
-     _A95['okor_field']),
+     _nodefault()),
     ('crates/axon-fabric/src/protected_host.rs', '                .ok_or_else(|| bad(format!("{ptr} is not a string")))?;',
-     _A95['okor_field']),
+     _dominated('the next lines refuse a path that is not absolute (`!p.is_absolute()`), and the edit\'s `""` is not')),
     ('crates/axon-fabric/src/protected_host.rs', '                .ok_or_else(|| bad("signer.issuer_ref is not a string".into()))?',
-     _A95['okor_field']),
+     _observed('an_observer_section_value_of_the_wrong_kind_is_refused_as_that')),
     ('crates/axon-fabric/src/protected_host.rs', '                .ok_or_else(|| bad("signer.public_key is not a string".into()))?',
-     _A95['okor_field']),
+     _observed('an_observer_section_value_of_the_wrong_kind_is_refused_as_that')),
     ('crates/axon-fabric/src/protected_host.rs', '                .ok_or_else(|| bad(format!("{} has no parent directory", p.display())))?;',
-     _A95['okor_field']),
+     _unjudged('`unwrap_or(p)`')),
     ('crates/axon-fabric/src/protected_host.rs', '                    .ok_or_else(|| bad("observer.custodian.uid is not a uid".into()))?;',
-     _A95['okor_field']),
-    ('crates/axon-fabric/src/protected_host.rs', '                            .ok_or_else(|| bad("observer.max_age_s is not a number".into()))?,',
-     _A95['okor_field']),
+     _observed('an_observer_section_value_of_the_wrong_kind_is_refused_as_that')),
     ('crates/axon-fabric/src/protected_host.rs', '            .map(PathBuf::from)\n            .ok_or_else(|| bad(format!("{ptr} is not a string")))?;',
-     _A95['okor_field']),
+     _dominated("the next lines refuse a path that is not absolute (`!p.is_absolute()`), and the edit's empty path is not")),
     ('crates/axon-fabric/src/protected_host.rs', 'pub const PROTECTED_HOST_CONFIG: &str = "/etc/axon/protected-host.json";',
      _A95['const_path']),
     ('crates/axon-fabric/src/protected_host.rs', 'pub const PROTECTED_HOST_SCHEMA: &str = "axon-protected-host/1";',
      _A95['const_tag']),
-    ('crates/axon-fabric/src/protected_host.rs', 'pub const REFUSED_CALLER_FLAGS: [&str; 9] = [',
-     _A95['const_table']),
     ('crates/axon-fabric/src/protected_host.rs', 'pub const NO_GRANT_REGISTRY: &str =',
      _A95['const_text']),
     ('crates/axon-fabric/src/protected_host.rs', 'const KEYS: [&str; 9] = [',
@@ -3461,11 +3478,11 @@ EXEMPT += [
     ('crates/axon-fabric/src/psv.rs', 'pub const EVIDENCE_CLASS_PREFIX: &str = "evidence-class:";',
      _A95['const_tag']),
     ('crates/axon-fabric/src/readiness.rs', '            .ok_or_else(|| format!("{} is not one of readiness\'s trust roots", dir.display()))?;',
-     _A95['okor_field']),
+     _nodefault()),
     ('crates/axon-fabric/src/readiness.rs', '        .ok_or(format!("{component}: no evidence listed"))?;',
-     _A95['okor_field']),
+     _dominated('an empty evidence list reaches `named(&evidence, .., "trust_preflight_sha256")?` a few lines below, which refuses it (`names no certified evidence file`)')),
     ('crates/axon-fabric/src/readiness.rs', '            .ok_or(format!("{component}: evidence entries are paths"))?;',
-     _A95['okor_field']),
+     _dominated('an entry read as `""` is the repository directory itself, which `read_once` refuses as not a regular file')),
     ('crates/axon-fabric/src/readiness.rs', 'pub const READINESS_SCHEMA: &str = "axon-fabric-readiness/1";',
      _A95['const_tag']),
     ('crates/axon-fabric/src/readiness.rs', 'pub const CERT_SCHEMA: &str = "axon-v022-protected-certification/2";',
@@ -3488,12 +3505,10 @@ EXEMPT += [
      _A95['const_tag']),
     ('crates/axon-fabric/src/sealed_exec.rs', '        .take(MAX_BYTES + 1)',
      _A95['take_equiv']),
-    ('crates/axon-fabric/src/sealed_exec.rs', 'const MAX_BYTES: u64 = 256 << 20;',
-     _A95['const_bound']),
     ('crates/axon-fabric/src/submit.rs', '        std::fs::create_dir_all(&runs).map_err(|e| SubmitError::Workspace(e.to_string()))?;',
      _A95['ensure_runs']),
     ('crates/axon-fabric/src/submit.rs', '        .ok_or_else(|| SubmitError::Unregistered(format!("check suite `{id}` is not registered")))?',
-     _A95['okor_field']),
+     _nodefault()),
     ('crates/axon-fabric/src/submit.rs', 'pub const PLACEHOLDER_POLICY_DIGEST: &str =',
      _A95['const_text']),
     ('crates/axon-fabric/src/workspace.rs', '    std::fs::create_dir_all(dir)?;',
@@ -3503,13 +3518,13 @@ EXEMPT += [
     ('crates/axon-fabric/src/workspace.rs', '        std::fs::create_dir_all(root.join("versions"))?;',
      _A95['ensure_store']),
     ('crates/axon-fabric/src/workspace.rs', '            .ok_or_else(|| StoreError::Corrupt(format!("manifest of {r} is malformed")))?;',
-     _A95['okor_field']),
+     _unjudged('`unwrap_or_default()`')),
     ('crates/axon-fabric/src/workspace.rs', '        std::fs::create_dir_all(dest)?;',
      _A95['materialize_dest']),
     ('crates/axon-fabric/src/workspace.rs', '                    std::fs::create_dir_all(parent)?;',
      _A95['ensure_tree_parent']),
     ('crates/axon-fabric/src/workspace.rs', '            .ok_or_else(|| StoreError::HashOnly(p.snapshot_ref.clone()))?;',
-     _A95['okor_field']),
+     _nodefault()),
     ('crates/axon-fabric/src/workspace.rs', '            std::fs::create_dir_all(root.join(sub))?;',
      _A95['ensure_trial']),
     ('crates/axon-guest-init/src/main.rs', 'const CMDLINE_PATH: &str = "/proc/cmdline";',
@@ -3522,12 +3537,8 @@ EXEMPT += [
      _A95['const_tag']),
     ('crates/axon-loop-contracts/src/attestation.rs', 'pub const EXECUTION_DOMAIN: &str = "axon.fabric-execution/1";',
      _A95['const_tag']),
-    ('crates/axon-loop-contracts/src/ids.rs', '    let (scheme, hex) = s.split_once(\':\').ok_or("expected <scheme>:<hex>")?;',
-     _A95['okor_field']),
-    ('crates/axon-loop-contracts/src/ids.rs', '    RefScheme::from_prefix(scheme).ok_or("scheme must be cl22, acf1 or sha256")?;',
-     _A95['okor_field']),
     ('crates/axon-loop-contracts/src/lib.rs', 'pub const PROTECTED_PROFILES: &[&str] = &["linux-microvm-protected"];',
-     _A95['const_table']),
+     _observed('protected_profiles_is_the_one_profile_the_launch_manifest_pins (a second profile added)')),
     ('crates/axon-loop-contracts/src/operator_trust.rs', '    pub const ALL: [TrustAuthority; 5] = [',
      _A95['const_table']),
     ('crates/axon-loop-contracts/src/operator_trust.rs', 'pub const EVIDENCE_SIGNATURE_SCHEMA: &str = "axon-evidence-signature/2";',
@@ -3539,49 +3550,41 @@ EXEMPT += [
     ('crates/axon-loop-contracts/src/schema.rs', 'const SUPPORTED: &[&str] = &[',
      _A95['const_table']),
     ('crates/axon-loop/src/bin/axon-loop.rs', '                .ok_or_else(|| LoopError::Usage(format!("--{k} needs a value")))?;',
-     _A95['okor_field']),
+     _unjudged('`unwrap_or_default()`')),
     ('crates/axon-loop/src/bin/axon-loop.rs', '                .ok_or_else(|| LoopError::Usage("missing --store DIR".into()))?,',
-     _A95['okor_field']),
+     _unjudged('`unwrap_or_default()`')),
     ('crates/axon-loop/src/candidates.rs', '        .ok_or_else(|| LoopError::Io(format!("store corrupt: candidate set {r} missing")))?;',
-     _A95['okor_field']),
+     _dominated('an empty text is not a record: `strict_record("")` is an error, and it is the next statement')),
     ('crates/axon-loop/src/evl.rs', 'pub const CONTEXT_DOMAIN: &str = "axon.closed-loop.context/1";',
      _A95['const_tag']),
     ('crates/axon-loop/src/intake.rs', 'pub const ACK_SCHEMA: &str = "micode.closed-loop.policy-ack/1";',
      _A95['const_tag']),
-    ('crates/axon-loop/src/ledger.rs', 'const DEPENDENT: &[&str] = &[',
-     _A95['const_table']),
     ('crates/axon-loop/src/plan.rs', '        .ok_or_else(|| LoopError::Io(format!("store corrupt: plan {r} missing")))?;',
-     _A95['okor_field']),
+     _observed('g6_freeze_is_permanent')),
     ('crates/axon-loop/src/price.rs', 'pub const PRICE_SCHEDULE_SCHEMA: &str = "axon.loop.price-schedule/1";',
      _A95['const_tag']),
-    ('crates/axon-loop/src/rules.rs', '    let v = v.as_deref().ok_or(format!("{field} unset"))?;',
-     _A95['okor_field']),
-    ('crates/axon-loop/src/rules.rs', '            independent_units: p.independent_units.ok_or("independent_units unset")?,',
-     _A95['okor_field']),
-    ('crates/axon-loop/src/rules.rs', '            candidate_budget: p.candidate_budget.ok_or("candidate_budget unset")?,',
-     _A95['okor_field']),
     ('crates/axon-loop/src/rules.rs', 'pub const PPM: u64 = 1_000_000;',
      _A95['const_bound']),
     ('crates/axon-loop/src/safety.rs', 'pub const CLEARANCE_DOMAIN: &str = "axon.loop.trial-safety/1";',
      _A95['const_tag']),
     ('crates/axon-loop/src/store.rs', '            .ok_or_else(|| format!("{who} has no registered {} key", a.dir_name()))?;',
-     _A95['okor_field']),
+     _nodefault()),
     ('crates/axon-loop/src/store.rs', '        fs::create_dir_all(&root)?;',
      _A95['ensure_loop_root']),
     ('crates/axon-loop/src/store.rs', '            match fs::create_dir(&cur) {',
      _A95['loop_ensure_dir']),
     ('crates/axon-loop/src/store.rs', '            .ok_or_else(|| LoopError::Io(format!("{} has no parent", path.display())))?;',
-     _A95['okor_field']),
+     _unjudged('`unwrap_or(path)`')),
     ('crates/axon-loop/src/store.rs', '            .ok_or_else(|| LoopError::Io(format!("bad path {}", path.display())))?;',
-     _A95['okor_field']),
+     _unjudged('`unwrap_or("")`')),
     ('crates/axon-loop/src/store.rs', '            .ok_or_else(|| LoopError::Io("no parent".into()))?;',
-     _A95['okor_field']),
+     _unjudged('`unwrap_or(path)`')),
     ('crates/axon-loop/src/store.rs', 'pub const LEDGER_KEY_ENV: &str = "AXON_ATTEST_KEY";',
      _A95['const_path']),
     ('crates/axon-loop/src/tasks.rs', '        .ok_or_else(|| LoopError::Io(format!("store corrupt: task manifest {r} missing")))?;',
-     _A95['okor_field']),
+     _dominated('an empty text is not a record: `strict_record("")` is an error, and it is the next statement')),
     ('crates/axon-loop/src/tel.rs', '        .ok_or_else(|| LoopError::Refused(format!("{what} exceeds 2^53-1")))?;',
-     _A95['okor_field']),
+     _observed('a_cost_total_beyond_2_53_is_never_summarized')),
     ('crates/axon-loop/src/tel.rs', 'pub const EXECUTION_COST_BASIS: &str =',
      _A95['const_text']),
     ('crates/axon-os/src/cli.rs', '        if let Err(e) = std::fs::create_dir_all(&out) {',
@@ -3617,9 +3620,9 @@ EXEMPT += [
     ('crates/axon-psv/src/lib.rs', 'pub const PREFLIGHT_OBSERVATION_SCHEMA: &str = "axon-preflight-observation/1";',
      _A95['const_tag']),
     ('crates/axon-workspace-recipe/src/lib.rs', '            ".." => depth = depth.checked_sub(1).ok_or_else(esc)?,',
-     _A95['okor_field']),
+     _observed('tests::a_link_with_an_empty_or_absolute_or_escaping_target_is_refused')),
     ('crates/axon-workspace-recipe/src/lib.rs', '                .ok_or_else(|| ImportRefusal::NonUtf8(path.clone()))?',
-     _A95['okor_field']),
+     _dominated('an empty link target reaches `check_link`, which refuses it (the empty symlink target, M2451)')),
     ('crates/axon-fabric/src/privileged_launcher.rs', '                    .mode(mode)',
      _A95['create_mode_window']),
 ]
@@ -3843,6 +3846,17 @@ EXEMPT += [
      "refuse( is its own site"),
 ]
 
+# ── C9 round 9, EQGATE5 (amendment 98) ──────────────────────────────────────
+EXEMPT += [
+    ("crates/axon-fabric/src/submit.rs", '            path: PathBuf::from("/usr/bin/axon (guest rootfs)"),',
+     "UNUSED (checkable): the guest interpreter's `RegisteredExecutable.path` is a LABEL. `executable_digest(id, &e)` "
+     "hashes only the id and `e.sha256`; the only reader of `exe.path` is `host_executor` (`&exe.path`), which runs "
+     "only in the `else` of `let local = if is_linux { None } else { .. }`, i.e. never for the protected profile this "
+     "line serves. Any other value for the path changes no decision (survey, amendment 98: `/bin/true` here left "
+     "the whole axon-fabric suite green)"),
+]
+
+
 
 ERR = re.compile(r"\bErr\(")
 CTOR = re.compile(r"\b(refused|fail|shape|unknown|panic)\(")
@@ -3966,7 +3980,10 @@ BUILD_FORM = re.compile(
 # field is the pin a verifier compares against (`String::new()` matches
 # nothing and nothing failed); `env::set_var`/`remove_var` is how the guest
 # PID 1 builds the child's policy (AXON_BUDGET_TOKENS, AXON_PRINCIPAL). One
-# alternative per line: each is its own gate row.
+# alternative per line: each is its own gate row. Amendment 98 (eqgate5): a struct-literal
+# FIELD whose value is an ABSOLUTE path literal (`secret: PathBuf::from("/in/job/..")`) is a
+# decision about WHERE a trusted component looks, handed to a config struct; the runner's
+# guest_config left five of them unobserved with the suite green.
 VALUE_FORM = re.compile(
     r"\bcreate_dir(?:_all)?\(|"
     r"\bDirBuilder\b|\blibc::mkdir\(|"
@@ -3974,7 +3991,8 @@ VALUE_FORM = re.compile(
     r"\b[A-Z][A-Z0-9_]*(?:UID|GID)\b|"
     r"^(?!\s*pub\b)\s*expected_\w*(?:sha256|digest|hash)\w*\s*:(?!\s*(?:&|String\s*[,)]|Vec<|\[u8|u\d+\b|Option<))|"
     r"\benv::set_var\(|"
-    r"\benv::remove_var\("
+    r"\benv::remove_var\(|"
+    r"^\s*\w+\s*:\s*(?:std::path::)?(?:PathBuf::from|Path::new)\(\s*\"/"
 )
 # Amendment 95: a SINGLE-LINE `.ok_or(..)?` / `.ok_or_else(..)?` is a refusal
 # too: the absent value is an error the function returns (amendment 76 saw only
@@ -4912,6 +4930,33 @@ def const_sites(f, text, names):
     return out
 
 
+REMAINDER_SITES = []
+OBSERVED_SITES = []
+
+
+def remainder_category(reason):
+    """The category of a REMAINDER exemption: the `_A95` key whose reason it is
+    (okor_field, const_tag, ...), else `other` (a hand-written REMAINDER)."""
+    for k, v in _A95.items():
+        if v == reason:
+            return k
+    for prefix, k in (("REMAINDER (survey, amendment 98, fail-closed)", "okor_closed"),
+                      ("REMAINDER (survey, amendment 98, unjudged)", "okor_unjudged"),
+                      ("REMAINDER (survey, amendment 98, no default)", "okor_nodefault"),
+                      ("REMAINDER (survey, amendment 98, off the protected route)", "okor_offroute")):
+        if reason.startswith(prefix):
+            return k
+    return "other"
+
+
+def remainder_summary(sites_):
+    """(total, {category: count}) of the REMAINDER sites."""
+    cats = {}
+    for _, _, c in sites_:
+        cats[c] = cats.get(c, 0) + 1
+    return len(sites_), dict(sorted(cats.items(), key=lambda kv: (-kv[1], kv[0])))
+
+
 def judge_file(f, rows, bad, const_names=frozenset()):
     """Judge one in-scope file: (covered, exempt, uncovered sites). Problems
     with the registry or the exemptions go to `bad` whatever the file's state;
@@ -4978,6 +5023,15 @@ def judge_file(f, rows, bad, const_names=frozenset()):
             covered += 1
         elif ex_hit:
             exempt += 1
+            # Amendment 98: an exemption whose reason says REMAINDER is a guard no test
+            # observes; it is COUNTED (by category), never claimed covered.
+            for e in ex_hit:
+                if "REMAINDER" in e[2]:
+                    REMAINDER_SITES.append((f, g + 1, remainder_category(e[2])))
+                    break
+                if e[2].startswith("OBSERVED-NOT-ROWED"):
+                    OBSERVED_SITES.append((f, g + 1, "observed"))
+                    break
         else:
             what = {"line": f"{lines[g].strip()} ... {lines[i].strip()}",
                     "const": f"{lines[g].strip()} (a constant a guard reads)",
@@ -4997,11 +5051,291 @@ def judge_file(f, rows, bad, const_names=frozenset()):
     return covered, exempt, uncovered
 
 
+# ── Amendment 98 (C9 round 9, eqgate5): Python guards ───────────────────────
+# The gate read Rust only, and the build environment (`scripts/guest_build_env.py`,
+# on the claim's own list of protected paths) is Python: about half of its guard
+# lines had no row, and no test set AXON_GUEST_BUILD_UID to 0 or to the builder's own
+# uid, so `int(raw) == 0` could go with every test green. A Python REFUSAL SITE,
+# found from the syntax tree, never from text: a call of `fail(`/`die(`/`refuse(`,
+# a `sys.exit(<message or usage>)` (not the propagation of a callee's status), a
+# `raise <exc>` (not a bare re-raise), and a `return` of a non-empty message (alone
+# or last in a tuple: the `*_problem(s)` convention, whose empty string means
+# "nothing wrong"). The primitive `fail` itself is not a site. A site's GUARD is the
+# nearest enclosing `if`/`elif`/`else`/`while`/`for` in the same function (its first
+# line, through the site's last line), or the site's own lines when unconditional.
+# It is COVERED when a row's edit CHANGES a line of that block; otherwise it needs an
+# EXEMPT anchor (text in the block, exactly once in the file) or is a stated
+# REMAINDER. What this does NOT see: a guard that is an expression value
+# (`return bool(...)`, `all(...)`), a refusal by a subprocess's exit status, the
+# shell scripts.
+PY_SCOPE = ["scripts/guest_build_env.py"]
+PY_EXEMPT = []   # (file, function, n, fragment, kind, reason): the table below
+PY_EXEMPT += [
+    ("scripts/guest_build_env.py", 'pinned_channel', 1, 'fail("rust-toolchain.toml names no channel: the guest is bui', 'OBSERVED',
+     "OBSERVED-NOT-ROWED (survey, scripts/v022_py_guard_survey.py): removing this guard fails the case(s) 'pinned_channel no rust-toolchain.toml' of crates/axon-fabric/tests/guest_build_env_guards.rs; no row of its own"),
+    ("scripts/guest_build_env.py", 'rustup', 1, 'fail(f"no rustup at {p}: the pinned toolchain cannot be reso', 'OBSERVED',
+     'OBSERVED-NOT-ROWED (survey, scripts/v022_py_guard_survey.py): removing this guard fails the case(s) "rustup none in the builder\'s home" of crates/axon-fabric/tests/guest_build_env_guards.rs; no row of its own'),
+    ("scripts/guest_build_env.py", 'toolchain', 1, 'fail(f"rustup cannot resolve {tool} of the pinned toolchain ', 'OBSERVED',
+     "OBSERVED-NOT-ROWED (survey, scripts/v022_py_guard_survey.py): removing this guard fails the case(s) 'toolchain rustup fails but prints a path' of crates/axon-fabric/tests/guest_build_env_guards.rs; no row of its own"),
+    ("scripts/guest_build_env.py", 'ancestors_of', 1, 'return [], f"the build parent {parent} is not an absolute pa', 'OBSERVED',
+     "OBSERVED-NOT-ROWED (survey, scripts/v022_py_guard_survey.py): removing this guard fails the case(s) 'ancestors_of relative path' of crates/axon-fabric/tests/guest_build_env_guards.rs; no row of its own"),
+    ("scripts/guest_build_env.py", 'ancestors_of', 2, 'return out, f"{p}: {e.strerror}"', 'OBSERVED',
+     "OBSERVED-NOT-ROWED (survey, scripts/v022_py_guard_survey.py): removing this guard fails the case(s) 'ancestors_of missing directory' of crates/axon-fabric/tests/guest_build_env_guards.rs; no row of its own"),
+    ("scripts/guest_build_env.py", 'ancestors_problem', 1, 'return "it records no build parent"', 'OBSERVED',
+     "OBSERVED-NOT-ROWED (survey, scripts/v022_py_guard_survey.py): removing this guard fails the case(s) 'ancestors_problem parent not a string' of crates/axon-fabric/tests/guest_build_env_guards.rs; no row of its own"),
+    ("scripts/guest_build_env.py", 'ancestors_problem', 2, 'return "its recorded build-parent ancestors are not the pare', 'OBSERVED',
+     'OBSERVED-NOT-ROWED (survey, scripts/v022_py_guard_survey.py): removing this guard fails the case(s) "ancestors_problem ancestors are not the parent\'s" of crates/axon-fabric/tests/guest_build_env_guards.rs; no row of its own'),
+    ("scripts/guest_build_env.py", 'copy_tracked_tree', 1, 'fail(f"cannot list the tree\'s tracked files: {r.stderr.decod', 'OBSERVED',
+     "OBSERVED-NOT-ROWED (survey, scripts/v022_py_guard_survey.py): removing this guard fails the case(s) 'copy_tracked_tree not a git tree' of crates/axon-fabric/tests/guest_build_env_guards.rs; no row of its own"),
+    ("scripts/guest_build_env.py", 'copy_tracked_tree', 2, 'fail(f"tracked path {rel} is neither a file nor a symlink")', 'OBSERVED',
+     "OBSERVED-NOT-ROWED (survey, scripts/v022_py_guard_survey.py): removing this guard fails the case(s) 'copy_tracked_tree a tracked path that is a FIFO' of crates/axon-fabric/tests/guest_build_env_guards.rs; no row of its own"),
+    ("scripts/guest_build_env.py", 'private_toolchain', 1, 'fail("cargo and rustc are not of one toolchain directory")', 'OBSERVED',
+     "OBSERVED-NOT-ROWED (survey, scripts/v022_py_guard_survey.py): removing this guard fails the case(s) 'private_toolchain cargo and rustc of two toolchains' of crates/axon-fabric/tests/guest_build_env_guards.rs; no row of its own"),
+    ("scripts/guest_build_env.py", 'private_toolchain', 3, 'fail(f"cannot make the private toolchain copy: {r.stderr.dec', 'REMAINDER',
+     "REMAINDER (no test observes it): the failure of `cp -a` to make the private toolchain copy (disk full, a read-only target) cannot be provoked without breaking the host; the copy's own bytes are judged by the next line"),
+    ("scripts/guest_build_env.py", 'private_toolchain', 4, 'fail("the private toolchain copy is not the pinned toolchain', 'REMAINDER',
+     'REMAINDER (no test observes it): the copy is made by `cp -al`/`cp -a` from the same source and the digests are then compared; a stand-in copier that corrupts a file would need to replace /bin/cp, which no test does'),
+    ("scripts/guest_build_env.py", 'measure_problem', 1, 'return f"cannot re-measure the build\'s tools: {e}"', 'OBSERVED',
+     "OBSERVED-NOT-ROWED (survey, scripts/v022_py_guard_survey.py): removing this guard fails the case(s) 'write measure_problem' of crates/axon-fabric/tests/guest_build_env_guards.rs; no row of its own"),
+    ("scripts/guest_build_env.py", 'git_clone', 1, 'fail(f"cannot clone the tree: {r.stderr.strip()[-300:]}")', 'OBSERVED',
+     "OBSERVED-NOT-ROWED (survey, scripts/v022_py_guard_survey.py): removing this guard fails the case(s) 'git_clone not a git tree' of crates/axon-fabric/tests/guest_build_env_guards.rs; no row of its own"),
+    ("scripts/guest_build_env.py", 'git_clone', 2, 'fail("the clone is not at the tree\'s HEAD")', 'OBSERVED',
+     "OBSERVED-NOT-ROWED (survey, scripts/v022_py_guard_survey.py): removing this guard fails the case(s) 'git_clone an empty repository has no HEAD to be at' of crates/axon-fabric/tests/guest_build_env_guards.rs; no row of its own"),
+    ("scripts/guest_build_env.py", 'reach_problem', 1, 'return (f"{cur} (mode {oct(st.st_mode & 0o7777)}) cannot be ', 'OBSERVED',
+     "OBSERVED-NOT-ROWED (survey, scripts/v022_py_guard_survey.py): removing this guard fails the case(s) 'kernel a build parent the build uid cannot traverse | reach_problem a directory closed to other uids' of crates/axon-fabric/tests/guest_build_env_guards.rs; no row of its own"),
+    ("scripts/guest_build_env.py", 'reap_build_processes', 1, 'fail(f"processes of the build uid {uid} survived SIGKILL aft', 'REMAINDER',
+     'REMAINDER (no test observes it): a process of the build uid that survives SIGKILL (an uninterruptible sleep) cannot be made without a kernel fault'),
+    ("scripts/guest_build_env.py", 'committed_file', 1, 'fail(f"cannot read {rel} from the committed tree: {r.stderr.', 'OBSERVED',
+     "OBSERVED-NOT-ROWED (survey, scripts/v022_py_guard_survey.py): removing this guard fails the case(s) 'committed_file a path the committed tree does not hold' of crates/axon-fabric/tests/guest_build_env_guards.rs; no row of its own"),
+    ("scripts/guest_build_env.py", 'begin', 1, 'fail(why)', 'REMAINDER',
+     'REMAINDER (no test observes it): inside `begin`, which needs the real pinned toolchain (rustup), root, and a built private copy; the begin route is exercised end to end by guest_build_env.rs, whose cases name the REFUSALS of begin, not this `why`'),
+    ("scripts/guest_build_env.py", 'begin', 2, 'fail("cargo\'s effective configuration for the guest build is', 'REMAINDER',
+     "REMAINDER (no test observes it): inside `begin` (real toolchain): cargo's effective config at begin; judged end to end by guest_build_env.rs's committed-config cases, which refuse through `effective_config`, not through a removal of this line alone"),
+    ("scripts/guest_build_env.py", 'first', 1, 'fail(f"{\' \'.join(cmd)} failed: {r.stderr.strip()[-300:]}")', 'REMAINDER',
+     'REMAINDER (no test observes it): inside `begin` (real toolchain): a failed `git`/`cargo` child; no test makes the real toolchain fail'),
+    ("scripts/guest_build_env.py", 'proof_key', 1, 'return None, "the record names no usable proof id or build p', 'OBSERVED',
+     "OBSERVED-NOT-ROWED (survey, scripts/v022_py_guard_survey.py): removing this guard fails the case(s) 'proof_key the parent is not a string' of crates/axon-fabric/tests/guest_build_env_guards.rs; no row of its own"),
+    ("scripts/guest_build_env.py", 'proof_key', 3, 'return None, f"the build\'s proof key is not at {path} ({e.st', 'OBSERVED',
+     "OBSERVED-NOT-ROWED (survey, scripts/v022_py_guard_survey.py): removing this guard fails the case(s) 'proof_key no key at the pinned place' of crates/axon-fabric/tests/guest_build_env_guards.rs; no row of its own"),
+    ("scripts/guest_build_env.py", 'proof_key', 5, 'return None, f"{path} holds no key"', 'OBSERVED',
+     "OBSERVED-NOT-ROWED (survey, scripts/v022_py_guard_survey.py): removing this guard fails the case(s) 'proof_key a key too short to be one' of crates/axon-fabric/tests/guest_build_env_guards.rs; no row of its own"),
+    ("scripts/guest_build_env.py", 'builder_pin', 1, 'return None, f"the builder pin {path} is not the operator\'s:', 'OBSERVED',
+     "OBSERVED-NOT-ROWED (survey, scripts/v022_py_guard_survey.py): removing this guard fails the case(s) 'builder_pin a pin that is not an operator file' of crates/axon-fabric/tests/guest_build_env_guards.rs; no row of its own"),
+    ("scripts/guest_build_env.py", 'builder_pin', 2, 'return None, f"the builder pin {path} is unreadable: {e}"', 'OBSERVED',
+     "OBSERVED-NOT-ROWED (survey, scripts/v022_py_guard_survey.py): removing this guard fails the case(s) 'builder_pin an unreadable pin' of crates/axon-fabric/tests/guest_build_env_guards.rs; no row of its own"),
+    ("scripts/guest_build_env.py", 'proof_problems', 1, 'return f"the {what} record carries no builder proof (a recor', 'OBSERVED',
+     "OBSERVED-NOT-ROWED (survey, scripts/v022_py_guard_survey.py): removing this guard fails the case(s) 'proof_problems a record that is not an object' of crates/axon-fabric/tests/guest_build_env_guards.rs; no row of its own"),
+    ("scripts/guest_build_env.py", 'proof_problems', 2, 'return "no operator builder identity to judge the proof agai', 'OBSERVED',
+     "OBSERVED-NOT-ROWED (survey, scripts/v022_py_guard_survey.py): removing this guard fails the case(s) 'proof_problems no builder' of crates/axon-fabric/tests/guest_build_env_guards.rs; no row of its own"),
+    ("scripts/guest_build_env.py", 'proof_problems', 4, 'return f"the {what} record\'s proof cannot be checked: {why}"', 'OBSERVED',
+     "OBSERVED-NOT-ROWED (survey, scripts/v022_py_guard_survey.py): removing this guard fails the case(s) 'proof_problems no key at the pinned parent' of crates/axon-fabric/tests/guest_build_env_guards.rs; no row of its own"),
+    ("scripts/guest_build_env.py", 'write', 2, 'fail(why)', 'OBSERVED',
+     "OBSERVED-NOT-ROWED (survey, scripts/v022_py_guard_survey.py): removing this guard fails the case(s) 'write a record whose key is not usable' of crates/axon-fabric/tests/guest_build_env_guards.rs; no row of its own"),
+    ("scripts/guest_build_env.py", 'load', 1, 'fail(f"{path} is not a controlled build record: {why}")', 'OBSERVED',
+     'OBSERVED-NOT-ROWED (survey, scripts/v022_py_guard_survey.py): removing this guard fails the case(s) "load a record that is not a controlled build\'s" of crates/axon-fabric/tests/guest_build_env_guards.rs; no row of its own'),
+    ("scripts/guest_build_env.py", 'cargo_step', 2, 'fail(why)', 'OBSERVED',
+     "OBSERVED-NOT-ROWED (survey, scripts/v022_py_guard_survey.py): removing this guard fails the case(s) 'cargo_step tools that changed since begin' of crates/axon-fabric/tests/guest_build_env_guards.rs; no row of its own"),
+    ("scripts/guest_build_env.py", 'run_cargo', 1, 'fail("usage: cargo RECORD [--rustflags FLAGS] -- CARGO-ARGS.', 'OBSERVED',
+     "OBSERVED-NOT-ROWED (survey, scripts/v022_py_guard_survey.py): removing this guard fails the case(s) 'run_cargo without the -- separator' of crates/axon-fabric/tests/guest_build_env_guards.rs; no row of its own"),
+    ("scripts/guest_build_env.py", 'host_build', 1, 'fail(f"{outdir} exists: the host build writes a new director', 'OBSERVED',
+     "OBSERVED-NOT-ROWED (survey, scripts/v022_py_guard_survey.py): removing this guard fails the case(s) 'host_build an output directory that exists' of crates/axon-fabric/tests/guest_build_env_guards.rs; no row of its own"),
+    ("scripts/guest_build_env.py", 'host_build', 2, 'fail(f"the controlled host build failed (cargo exit {rc}); i', 'REMAINDER',
+     'REMAINDER (no test observes it): inside `host_build`, after a real cargo build: a failed host build'),
+    ("scripts/guest_build_env.py", 'host_build', 3, 'fail(f"the controlled host build produced no {n}")', 'REMAINDER',
+     'REMAINDER (no test observes it): inside `host_build`, after a real cargo build: a missing host binary'),
+    ("scripts/guest_build_env.py", 'host_record_problems', 1, 'return (f"{outdir} holds no readable {HOST_RECORD} ({e}): th', 'OBSERVED',
+     "OBSERVED-NOT-ROWED (survey, scripts/v022_py_guard_survey.py): removing this guard fails the case(s) 'host_record_problems no record in the directory | main check-host-record names why a directory is not a host build' of crates/axon-fabric/tests/guest_build_env_guards.rs; no row of its own"),
+    ("scripts/guest_build_env.py", 'host_record_problems', 2, 'return f"{HOST_RECORD} is not a {HOST_SCHEMA} record"', 'OBSERVED',
+     "OBSERVED-NOT-ROWED (survey, scripts/v022_py_guard_survey.py): removing this guard fails the case(s) 'host_record_problems another schema' of crates/axon-fabric/tests/guest_build_env_guards.rs; no row of its own"),
+    ("scripts/guest_build_env.py", 'host_record_problems', 3, 'return f"the host build record is not a controlled build\'s: ', 'OBSERVED',
+     'OBSERVED-NOT-ROWED (survey, scripts/v022_py_guard_survey.py): removing this guard fails the case(s) "host_record_problems a record that is not a controlled build\'s" of crates/axon-fabric/tests/guest_build_env_guards.rs; no row of its own'),
+    ("scripts/guest_build_env.py", 'dist_record', 2, 'fail(f"dist/rootfs.sqfs ({got}) is not the controlled assemb', 'OBSERVED',
+     'OBSERVED-NOT-ROWED (survey, scripts/v022_py_guard_survey.py): removing this guard fails the case(s) "dist_record a rootfs that is not the controlled assembly\'s output" of crates/axon-fabric/tests/guest_build_env_guards.rs; no row of its own'),
+    ("scripts/guest_build_env.py", 'dist_problems', 1, 'return "the build record names no digest for every dist arti', 'OBSERVED',
+     "OBSERVED-NOT-ROWED (survey, scripts/v022_py_guard_survey.py): removing this guard fails the case(s) 'dist_problems a build record naming not every dist artifact' of crates/axon-fabric/tests/guest_build_env_guards.rs; no row of its own"),
+    ("scripts/guest_build_env.py", 'rootfs', 2, 'fail(f"busybox --list failed: {lst.stderr.strip()[-300:]}")', 'OBSERVED',
+     "OBSERVED-NOT-ROWED (survey, scripts/v022_py_guard_survey.py): removing this guard fails the case(s) 'rootfs a busybox that cannot list its applets' of crates/axon-fabric/tests/guest_build_env_guards.rs; no row of its own"),
+    ("scripts/guest_build_env.py", 'rootfs', 3, 'fail(f"no mksquashfs in {TOOL_PATH}")', 'OBSERVED',
+     "OBSERVED-NOT-ROWED (survey, scripts/v022_py_guard_survey.py): removing this guard fails the case(s) 'rootfs no mksquashfs in the fixed directories' of crates/axon-fabric/tests/guest_build_env_guards.rs; no row of its own"),
+    ("scripts/guest_build_env.py", 'rootfs', 4, 'fail(f"mksquashfs failed ({r.returncode})")', 'OBSERVED',
+     "OBSERVED-NOT-ROWED (survey, scripts/v022_py_guard_survey.py): removing this guard fails the case(s) 'rootfs a mksquashfs that fails' of crates/axon-fabric/tests/guest_build_env_guards.rs; no row of its own"),
+    ("scripts/guest_build_env.py", 'kernel', 1, 'fail(why)', 'OBSERVED',
+     "OBSERVED-NOT-ROWED (survey, scripts/v022_py_guard_survey.py): removing this guard fails the case(s) 'kernel a build parent the build uid cannot traverse' of crates/axon-fabric/tests/guest_build_env_guards.rs; no row of its own"),
+    ("scripts/guest_build_env.py", 'kernel', 2, 'fail(f"the kernel build\'s host tools {missing} are not in {T', 'OBSERVED',
+     "OBSERVED-NOT-ROWED (survey, scripts/v022_py_guard_survey.py): removing this guard fails the case(s) 'kernel a build without a required host tool' of crates/axon-fabric/tests/guest_build_env_guards.rs; no row of its own"),
+    ("scripts/guest_build_env.py", 'kernel', 3, 'fail("the kernel tarball did not extract")', 'OBSERVED',
+     "OBSERVED-NOT-ROWED (survey, scripts/v022_py_guard_survey.py): removing this guard fails the case(s) 'kernel a tarball that does not extract' of crates/axon-fabric/tests/guest_build_env_guards.rs; no row of its own"),
+    ("scripts/guest_build_env.py", 'kernel', 4, 'fail(f"{\' \'.join(argv)} failed ({r.returncode})")', 'OBSERVED',
+     "OBSERVED-NOT-ROWED (survey, scripts/v022_py_guard_survey.py): removing this guard fails the case(s) 'kernel a make step that fails' of crates/axon-fabric/tests/guest_build_env_guards.rs; no row of its own"),
+    ("scripts/guest_build_env.py", 'kernel', 5, 'fail("vmlinux not built")', 'OBSERVED',
+     "OBSERVED-NOT-ROWED (survey, scripts/v022_py_guard_survey.py): removing this guard fails the case(s) 'line 529' of crates/axon-fabric/tests/guest_build_env_guards.rs; no row of its own"),
+    ("scripts/guest_build_env.py", 'entry_problems', 1, 'return "a recorded build is not an object"', 'OBSERVED',
+     "OBSERVED-NOT-ROWED (survey, scripts/v022_py_guard_survey.py): removing this guard fails the case(s) 'entry_problems an entry that is not an object' of crates/axon-fabric/tests/guest_build_env_guards.rs; no row of its own"),
+    ("scripts/guest_build_env.py", 'shape_problems', 1, 'return f"it is not a {SCHEMA} or {HOST_SCHEMA} record of a c', 'OBSERVED',
+     "OBSERVED-NOT-ROWED (survey, scripts/v022_py_guard_survey.py): removing this guard fails the case(s) 'shape_problems a record that is not an object' of crates/axon-fabric/tests/guest_build_env_guards.rs; no row of its own"),
+    ("scripts/guest_build_env.py", 'shape_problems', 2, 'return "it records no toolchain identity or environment"', 'OBSERVED',
+     "OBSERVED-NOT-ROWED (survey, scripts/v022_py_guard_survey.py): removing this guard fails the case(s) 'shape_problems a toolchain that is not an object' of crates/axon-fabric/tests/guest_build_env_guards.rs; no row of its own"),
+    ("scripts/guest_build_env.py", 'operator_file_problem', 1, 'return f"{cur}: {e.strerror}"', 'OBSERVED',
+     "OBSERVED-NOT-ROWED (survey, scripts/v022_py_guard_survey.py): removing this guard fails the case(s) 'operator_file_problem missing file' of crates/axon-fabric/tests/guest_build_env_guards.rs; no row of its own"),
+    ("scripts/guest_build_env.py", 'operator_file_problem', 2, 'return f"{cur} is not a real {\'file\' if last else \'directory', 'OBSERVED',
+     "OBSERVED-NOT-ROWED (survey, scripts/v022_py_guard_survey.py): removing this guard fails the case(s) 'operator_file_problem a symlink as the file' of crates/axon-fabric/tests/guest_build_env_guards.rs; no row of its own"),
+    ("scripts/guest_build_env.py", 'toolchain_pin_problems', 1, 'return f"the host-toolchain pin {pin_path} is not the operat', 'OBSERVED',
+     "OBSERVED-NOT-ROWED (survey, scripts/v022_py_guard_survey.py): removing this guard fails the case(s) 'toolchain_pin a pin that is not an operator file' of crates/axon-fabric/tests/guest_build_env_guards.rs; no row of its own"),
+    ("scripts/guest_build_env.py", 'toolchain_pin_problems', 2, 'return f"the host-toolchain pin {pin_path} is unreadable: {e', 'OBSERVED',
+     "OBSERVED-NOT-ROWED (survey, scripts/v022_py_guard_survey.py): removing this guard fails the case(s) 'toolchain_pin an unreadable pin' of crates/axon-fabric/tests/guest_build_env_guards.rs; no row of its own"),
+    ("scripts/guest_build_env.py", 'toolchain_pin_problems', 3, 'return f"the host-toolchain pin {pin_path} is not a {TOOLCHA', 'OBSERVED',
+     "OBSERVED-NOT-ROWED (survey, scripts/v022_py_guard_survey.py): removing this guard fails the case(s) 'toolchain_pin a pin that is not an object' of crates/axon-fabric/tests/guest_build_env_guards.rs; no row of its own"),
+    ("scripts/guest_build_env.py", 'image_problems', 1, 'return "it records no build environment"', 'OBSERVED',
+     "OBSERVED-NOT-ROWED (survey, scripts/v022_py_guard_survey.py): removing this guard fails the case(s) 'image_problems no build environment' of crates/axon-fabric/tests/guest_build_env_guards.rs; no row of its own"),
+    ("scripts/guest_build_env.py", 'main', 1, 'sys.exit(__doc__)', 'OBSERVED',
+     "OBSERVED-NOT-ROWED (survey, scripts/v022_py_guard_survey.py): removing this guard fails the case(s) 'main check-host-record with an unknown option prints the usage' of crates/axon-fabric/tests/guest_build_env_guards.rs; no row of its own"),
+    ("scripts/guest_build_env.py", 'main', 4, 'fail(why)', 'OBSERVED',
+     "OBSERVED-NOT-ROWED (survey, scripts/v022_py_guard_survey.py): removing this guard fails the case(s) 'main check-host-record with no flags and no operator builder pin' of crates/axon-fabric/tests/guest_build_env_guards.rs; no row of its own"),
+    ("scripts/guest_build_env.py", 'main', 5, 'fail(why)', 'OBSERVED',
+     "OBSERVED-NOT-ROWED (survey, scripts/v022_py_guard_survey.py): removing this guard fails the case(s) 'main check-host-record names why a directory is not a host build' of crates/axon-fabric/tests/guest_build_env_guards.rs; no row of its own"),
+    ("scripts/guest_build_env.py", 'main', 6, 'fail("the host binaries\' build configuration is not the tree', 'REMAINDER',
+     "REMAINDER (no test observes it): `check-host-build` runs the real toolchain's `cargo config get` over a clone"),
+    ("scripts/guest_build_env.py", 'main', 7, 'sys.exit(__doc__)', 'OBSERVED',
+     "OBSERVED-NOT-ROWED (survey, scripts/v022_py_guard_survey.py): removing this guard fails the case(s) 'main an unknown verb prints the usage and fails' of crates/axon-fabric/tests/guest_build_env_guards.rs; no row of its own"),
+    ("scripts/guest_build_env.py", 'main', 8, 'fail(why)', 'REMAINDER',
+     "REMAINDER (no test observes it): `toolchain-pin` refuses only when the operator's pin exists at its fixed /etc path (absent on every test host, and no test writes under /etc)"),
+]
+
+
+def py_sites(text):
+    """[(guard first line, site first line, site last line, function, n)] (lines
+    0-based; `n` counts the function's sites from 1 in source order) of the Python
+    refusal sites of `text` (see the paragraph above)."""
+    import ast
+
+    def is_msg(v):
+        if isinstance(v, ast.Constant):
+            return isinstance(v.value, str) and v.value != ""
+        return isinstance(v, ast.JoinedStr)
+
+    out = []
+
+    class V(ast.NodeVisitor):
+        def __init__(self):
+            self.fn, self.guards = [], []
+
+        def visit_FunctionDef(self, n):
+            self.fn.append(n.name)
+            old, self.guards = self.guards, []
+            self.generic_visit(n)
+            self.guards = old
+            self.fn.pop()
+
+        visit_AsyncFunctionDef = visit_FunctionDef
+
+        def _guarded(self, n, body):
+            self.guards.append(n)
+            for x in body:
+                self.visit(x)
+            self.guards.pop()
+
+        def visit_If(self, n):
+            self.visit(n.test)
+            self._guarded(n, n.body + n.orelse)
+
+        def visit_While(self, n):
+            self._guarded(n, n.body + n.orelse)
+
+        def visit_For(self, n):
+            self._guarded(n, n.body + n.orelse)
+
+        def rec(self, n):
+            if self.fn and self.fn[-1] == "fail":
+                return
+            g = self.guards[-1].lineno if self.guards else n.lineno
+            out.append((g - 1, n.lineno - 1, n.end_lineno - 1, self.fn[-1] if self.fn else ""))
+
+        def visit_Call(self, n):
+            f = n.func
+            if isinstance(f, ast.Name) and f.id in ("fail", "die", "refuse"):
+                self.rec(n)
+            elif (isinstance(f, ast.Attribute) and f.attr == "exit" and isinstance(f.value, ast.Name)
+                  and f.value.id == "sys" and n.args and not isinstance(n.args[0], ast.Call)):
+                self.rec(n)
+            self.generic_visit(n)
+
+        def visit_Raise(self, n):
+            if n.exc is not None:
+                self.rec(n)
+            self.generic_visit(n)
+
+        def visit_Return(self, n):
+            v = n.value
+            if v is not None and (is_msg(v) or (isinstance(v, ast.Tuple) and v.elts and is_msg(v.elts[-1]))):
+                self.rec(n)
+            self.generic_visit(n)
+
+    V().visit(ast.parse(text))
+    per, named = {}, []
+    for g, a, b, fn in sorted(set(out)):
+        per[fn] = per.get(fn, 0) + 1
+        named.append((g, a, b, fn, per[fn]))
+    return named
+
+
+def judge_py_file(f, rows, bad):
+    """(covered, exempt, uncovered) of one Python file, as `judge_file` does for
+    Rust. An exemption is keyed by (function, n-th site of that function, a
+    fragment of the site's own text), so a line shift keeps it and a site added
+    before it makes the fragment disagree (BAD), never silently re-attaches it.
+    A PY_EXEMPT entry whose kind is OBSERVED says a survey removed this guard and
+    a named test failed (no row of its own); REMAINDER says none did."""
+    text = open(os.path.join(ROOT, f)).read()
+    lines = text.split("\n")
+    spans = []
+    for r in rows:
+        if r[2] != f:
+            continue
+        n = text.count(r[3])
+        if n != 1:
+            bad.append(f"{r[0]}: its old text occurs {n} times in {f} (covers nothing)")
+            continue
+        spans.append((r[0], set(changed_lines(text, r[3], r[4]))))
+    ex = {(e[1], e[2]): [e, 0, 0, 0] for e in PY_EXEMPT if e[0] == f}
+    covered = exempt = 0
+    uncovered = []
+    for g, a, b, fn, n in py_sites(text):
+        by = [rid for rid, ch in spans if any(g <= c <= b for c in ch)]
+        hit = ex.get((fn, n))
+        site_text = "\n".join(lines[a:b + 1])
+        if hit is not None:
+            hit[1] += 1
+            hit[2 if by else 3] += 1
+            if hit[0][3] not in site_text:
+                bad.append(f"{f}:{a + 1}: exemption ({fn}, {n}) names the fragment {hit[0][3]!r}, which is not "
+                           "in the site's text: a site was added or moved, re-judge it")
+        if by:
+            covered += 1
+        elif hit is not None:
+            exempt += 1
+            kind, reason = hit[0][4], hit[0][5]
+            if kind == "REMAINDER":
+                REMAINDER_SITES.append((f, g + 1, "py_guard"))
+            else:
+                OBSERVED_SITES.append((f, g + 1, kind))
+        else:
+            uncovered.append(f"{f}:{a + 1}: refusal site with no row and no exemption: "
+                             f"{lines[g].strip()} ... {lines[a].strip()}")
+    for key, (e, hits, cov, sole) in ex.items():
+        if hits == 0:
+            bad.append(f"{f}: exemption {key} matches no refusal site (a function renamed, or fewer sites than it names)")
+        elif cov == hits:
+            bad.append(f"{f}: exemption {key} ({e[3]!r}) yet the site is covered by a row: drop the exemption")
+    return covered, exempt, uncovered
+
+
 def check(without=(), freeze=False, out=print):
     """Run the gate. Returns the list of problems (empty: it holds). With
     `freeze`, a non-empty NOT_YET_SCANNED is itself a problem."""
     rows = [r for r in load_rows() if r[0] not in set(without)]
     bad = []
+    del REMAINDER_SITES[:]
+    del OBSERVED_SITES[:]
     scope = in_scope_files()
     for f in sorted(set(OUT_OF_SCOPE) | set(NOT_YET_SCANNED)):
         if f not in scope:
@@ -5027,6 +5361,10 @@ def check(without=(), freeze=False, out=print):
             continue
         out(f"{f}: {covered} covered by a row, {exempt} exempt")
         bad.extend(uncovered)
+    for f in PY_SCOPE:
+        covered, exempt, uncovered = judge_py_file(f, rows, bad)
+        out(f"{f}: {covered} covered by a row, {exempt} exempt (Python guards)")
+        bad.extend(uncovered)
     # Amendment 91: an exemption that names a row must name one that EXISTS.
     # 41 of 343 row-citing exemptions named a retired row (a four-cell record
     # stands behind it) and three named a row that was never there (M1088,
@@ -5038,28 +5376,40 @@ def check(without=(), freeze=False, out=print):
             bad.append(f"{ef}: exemption {anchor[:50]!r} cites {gone}, which are not registry rows")
     for b in bad:
         out(f"BAD {b}")
+    n, cats = remainder_summary(REMAINDER_SITES)
+    out(f"OBSERVED-NOT-ROWED: {len(OBSERVED_SITES)} guards a survey removed with a named test failing and no row of "
+        "their own (a measurement, not a row)")
+    out(f"REMAINDER: {n} guard sites no test observes alone, COUNTED and NOT CLAIMED COVERED (no row, no checkable "
+        f"exemption): " + ", ".join(f"{c} {k}" for c, k in ((c, cats[c]) for c in cats)))
     return bad
 
 
 def main():
     without = set()
     freeze = False
+    listing = False
     for a in sys.argv[1:]:
         if a.startswith("--without="):
             without = set(a.split("=", 1)[1].split(","))
         elif a == "--freeze":
             freeze = True
+        elif a == "--remainder":
+            listing = True
         else:
             sys.exit(__doc__)
     if check(without, freeze):
         sys.exit(1)
+    if listing:
+        for f, line, cat in sorted(REMAINDER_SITES):
+            print(f"REMAINDER {f}:{line} {cat}")
     if NOT_YET_SCANNED:
         print(f"refusal coverage: every refusal site in the scanned files has a row or a reasoned "
               f"exemption; {len(NOT_YET_SCANNED)} in-scope file(s) NOT YET SCANNED (a freeze "
               f"refuses until none is)")
     else:
-        print("refusal coverage: every refusal site in every in-scope file has a row or a reasoned "
-              "exemption")
+        print("refusal coverage: every refusal site in every in-scope file has a row, a checkable "
+              "exemption, or is on the counted REMAINDER list (guards no test observes alone; REMAINDER "
+              "is NOT claimed covered: `python3 scripts/v022_refusal_coverage.py --remainder`)")
 
 
 if __name__ == "__main__":

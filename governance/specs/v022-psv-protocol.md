@@ -5466,3 +5466,101 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
       the three axon-core gates were green at the rows' commit; matrix rows A185-A189 await renumbering at integration.
 
 **Renumbering at integration (round 8, integrate7).** Four branches built in parallel numbered their matrix rows apart; the integration made the matrix contiguous, so the amendments above that cite the branch-local ids are read through this map: amendment 93 `A184` is now A181; amendment 94 `A190`-`A192` are now A182-A184; amendment 95 `A196`-`A200` are now A185-A189. Amendment 92's A178-A180 are unchanged. (The text of those amendments was rewritten to the new ids; where it says another branch holds a gap, that gap is closed by this integration.)
+
+## Amendment 98: what the refusal gate claims, the guest runner's paths, fail-open defaults and the build environment's Python guards (C9 round 9, eqgate5)
+
+98. **Source: the round-9 EQUIVALENCE review (`DO_NOT_REGISTER`; one BLOCKER, three MAJOR-ADJACENT).** Mutation ids
+    M2520-M2569 (all 50 used), matrix rows A210-A215 (other branches hold A190-A209; the integrator renumbers; this
+    branch's matrix check was run with temporary placeholders for A190-A209, which are not committed). Base
+    `c9r8/integrate7` (`ac03128f`); nothing under `crates/axon-core/src` was touched, and neither
+    `scripts/guest_build_env.py` nor `scripts/lib/opkit_ns.sh` nor the kit (buildenv5's), whose guards this
+    amendment only OBSERVES, through a new test file.
+    - **The claim, reworded (finding 2).** "Every guard has a row or a checkable exemption" was not literally true:
+      amendment 95 had called a REMAINDER entry "a guard no test observes". The claim is now exactly this: **every
+      refusal site of every in-scope file has a mutation row, a CHECKABLE exemption (dominated, unreachable, not on the
+      protected route: a fact a reviewer can re-execute), or an entry on a counted, greppable REMAINDER list of
+      guards no test observes alone, and REMAINDER is NOT claimed covered.** The gate prints the counts by category on
+      every run (`REMAINDER: N ...`), lists each site with `--remainder` (`grep REMAINDER`), and its last line says
+      so. A second count, `OBSERVED-NOT-ROWED`, is a MEASUREMENT: a guard whose removal a named test fails in a survey,
+      with no row of its own. It is not a row and not a claim of domination. Reworded in
+      `v022-protected-suite-verdict.md` (new section), `gate.sh`, `v022-psv-protocol.json` and here.
+      **REMAINDER before and after (gate-computed, Rust files; the Python file was not read before):**
+      173 -> 149. Before: okor_field 68, const_tag 42, const_path 14, const_bound 12, const_table 10, const_text 9,
+      other 9, const_other 5, const_exit 3, unlink_job 1. After: const_tag 42, okor_unjudged 16, const_path 14,
+      okor_nodefault 12, const_bound 10, py_guard 10 (new: the Python file), const_text 9, other 9, const_table 7,
+      okor_offroute 7, const_other 5, okor_closed 4, const_exit 3, unlink_job 1. `okor_field` is gone as a category:
+      each of its 68 entries now says what a survey found.
+    - **The runner's `guest_config` (finding 1, BLOCKER).** A new unit test asserts EVERY field literally: manifest,
+      secret, candidate, suite, out, the interpreter that is handed the secret, the runner's own identity and the guest
+      policy (M2520-M2527, each KILLED by its own `ATTACK: guest_config <field>`). Is a swapped SECRET path observed
+      downstream? Measured only in part: `runner_exe`/`axon` digests reach the verdict and are compared host side
+      (reviewer's reading, not re-executed here), and a candidate-chosen secret would be refused by the host's MAC check
+      on a verdict it cannot forge; no test pinned the guest's own path, and none does now except this one. New gate
+      FORM (`VALUE_FORM`): a struct-literal field whose value is an ABSOLUTE `PathBuf::from("/..")`/`Path::new("/..")`
+      (M2554). It found four more: `AllowlistSource::operator()`'s walk base, `Authority::production()`'s walk base,
+      `ReadinessTrust::operator()`'s walk base (all `/`, none observed: M2528-M2534, tests added; the allowlist PATH,
+      the production authority's uid and `test: false`, and the readiness allowlist are rowed too) and the guest
+      interpreter's registry LABEL in `submit.rs` (UNUSED, checkable: only `host_executor` reads `exe.path`, never
+      for the protected profile).
+    - **Fail-open defaults (finding 3).** `rules.rs`'s `independent_units.ok_or(..)?` -> `.unwrap_or(0)`: the suite stayed
+      green and a rules document omitting it carried no minimum sample of distinct tasks (M2535); `candidate_budget`
+      (M2536, fails closed at admission, rowed all the same) and the keyed rules (M2537). The ids.rs scheme checks
+      (labelled REMAINDER while killed by `ref_parts`) are now rows (M2538, M2539) and the test also refuses a digest
+      with NO scheme, which `unwrap_or(("cl22", s))` had accepted (M2538 survived before this test).
+      **Survey table (68 `ok_or` sites, 56 of them left after the rows).** Method: replace the refusal by its permissive
+      default and run the owning crate's suite (axon-fabric sharded on gpumaster, clean clones; the rest the same).
+      Result column: S = suite stayed green, K = killed by an existing test. Rowed after a new test: S10 assertions
+      list (M2560), S12 manifest names no guest interpreter digest (M2561), S14 custodian check without expiry reads
+      as never expiring (M2562), S32 observed_at that is not a timestamp reads as now (M2563), S44 observer
+      `max_age_s` not a number reads as no limit (M2564), S23/S24 tree entry id cut short / mode not octal read with a
+      zero id / a regular file (M2566, M2567), plus the three in rules.rs and two in ids.rs above. Killed by an existing
+      or new test, now OBSERVED-NOT-ROWED naming it: S11, S17, S20, S40, S41, S43 (its default 0 is also refused by
+      `custodian_is_separate`), S57, S66, S67. Checkable DOMINATED (an outcome-equivalent later refusal, named in the
+      entry): S34, S39, S45, S47, S48, S56, S65, S68. Survived and fail CLOSED (reason given): S08, S09, S13, S26. Survived,
+      direction not judged: S15, S16, S18, S19, S21, S22, S33, S35, S36, S42, S50, S54, S55, S62, S63, S64. No neutral
+      default exists (an absent lookup of an entity; not mutated, S25's default would loop): S25, S27-S31, S37, S38,
+      S46, S49, S51, S61. Off the protected route: S01 (axon-attest; S, permissive) and the six Cortex sites (not surveyed).
+      **Constants.** Tables and bounds whose test reads the constant itself survive any change of it. Pinned from outside
+      and rowed: the nine `REFUSED_CALLER_FLAGS` (K01-K09 all killed by the new literal test; M2565), the nine
+      ledger-dependent directories (`plans` could be dropped with the suite green; M2569), `sealed_exec`'s MAX_BYTES
+      (the test sized its file from the constant; M2568). Killed by existing tests (OBSERVED): the observer's MAX_REQUEST,
+      PROTECTED_PROFILES. Still S, REMAINDER: observer MAX_REPLY and MAX_PROFILE_MANIFEST, backend `read_regular`'s MAX,
+      certcheck MAX_DEPTH. NOT surveyed: custodian MAX_OUTSTANDING (2^30 hangs the suite, as amendment 95 found) and the
+      launcher's MAX_REQUEST. A no-op survey edit (adding `pattern` to ANNOTATIONS) was withdrawn and redone with `format`
+      (killed). A row on one entry of a table credits the whole table site in the gate; the other entries are covered by
+      the same test (the flag list: all nine killed), not by a row each.
+    - **The build environment's Python guards (finding 4).** `crates/axon-fabric/tests/guest_build_env_guards.rs` (cases
+      in `tests/guest_build_env_guards/*.py`) drives the REAL script's functions from a scratch copy inside a private PID
+      namespace, as root and as uid 4242 (so that `AXON_GUEST_BUILD_UID` = root and = the builder's own uid are different
+      cases): build_ids, require_runner, pinned_channel/rustup/toolchain, ancestors_of/_problem, build_parent,
+      reach_problem, operator_file_problem, builder_pin, proof_key/proof_problems/write/measure_problem, shape_problems,
+      entry_problems, the host record, dist and rootfs judges, kernel_problems, toolchain_pin_problems, copy_tracked_tree,
+      git_clone, committed_file, private_toolchain, dist_record, pinned_copy, rootfs and kernel up to the real toolchain,
+      cargo_step against a stand-in toolchain (config held at begin, before, during), and the command line. The gate now
+      reads `scripts/guest_build_env.py` (`py_sites`, from the syntax tree: `fail`/`die`/`refuse`, `sys.exit(<message>)`,
+      `raise <exc>`, a `return` of a non-empty message; the guard is the enclosing `if`): **109 sites, 45 rowed (40 by older
+      rows, 5 more by M2540-M2553), 54 OBSERVED-NOT-ROWED by `scripts/v022_py_guard_survey.py` (each guard removed, a named case
+      failing), 10 REMAINDER** (begin, cargo's host build, the reaper, `cp` failing, and the operator-/etc-dependent verbs:
+      each needs the real toolchain, root with a kernel fault, or a pin under /etc). Exemptions are keyed by (function, n-th
+      site, fragment) so a line shift keeps them and a moved site is refused. Rows M2540-M2553 are terms and values
+      (`int(raw) == 0`, `== os.geteuid()`, the regex term, `require_runner`, the two ancestor terms, the recorded-mode term,
+      the pin's `bu == 0`/`bu == uid`, the judging parent, `shape_problems`' build uid, the pinned build uid, the constructed
+      PATH, the host-tool search path).
+    - **Gate rows and planted forms.** M2554 (path field), M2555 (Rust REMAINDER counted), M2556 (Python `fail` is a site),
+      M2557 (a Python exemption's fragment is checked), M2558/M2559 (Python REMAINDER / OBSERVED counted). The planted-form
+      tests are `an_absolute_path_literal_handed_to_a_config_field_is_a_site`, `a_remainder_exemption_is_counted_and_never_
+      claimed_covered`, `a_python_refusal_is_a_site_judged_by_its_own_guard`, `a_python_guard_exemption_is_counted_by_kind`.
+      M2427 changed text (its line gained an alternative).
+    - **WHAT THE GATE STILL CANNOT SEE.** (1) Everything amendment 95 listed (2)-(9) still stands, except (6) for the one Python
+      file. (2) Python: a guard that is an expression VALUE (`return bool(..)`, `all(..)`), a refusal by a subprocess's exit
+      status, a compound `if` is judged whole not per term (the terms of build_ids, builder_pin, ancestors and proof_problems
+      have rows, the rest do not), the other scripts (`scripts/*.sh`, `linux_profile_manifest.py`, the kit). (3) Python
+      survey kills are a measurement: they depend on the test file as committed, and `v022_py_guard_survey.py` must be re-run
+      when either changes. (4) `okor_unjudged` is a list of guards for which only "the suite stayed green" is known.
+      (5) A REMAINDER entry of any kind is not covered. (6) The path-field form sees `field: PathBuf::from("/..")` on one
+      line, not a path built by `join` or a `const` path (the const rule sees that). (7) The cases of
+      guest_build_env_guards.rs that depend on the host (a builder pin absent under /etc) are made only where it is absent.
+    - **Unfinished, stated.** The 16 `okor_unjudged` and 10 `py_guard` REMAINDERs; the nonce-expiry and tree-parse sites'
+      siblings S15/S16/S21/S22; MAX_REPLY, MAX_PROFILE_MANIFEST, backend MAX (their tests would need a stand-in observer that
+      streams past the bound, or a multi-hundred-MB file); the K16/K17 constants were not run.
+
