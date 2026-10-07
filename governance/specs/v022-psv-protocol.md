@@ -6008,4 +6008,24 @@ was weakened, no test or guard was relaxed.
          as keys of operator kernel state, beyond noting that `sandbox_run(sb_chosen_by_the_candidate, ...)` picks a
          ceiling the operator minted; paths and URLs a sealed value chooses and operator code then reads; prompt
          text a sealed value supplies to `ai_complete`.
-     - **Evidence.** __EVIDENCE__
+     - **Evidence.** Everything ran on gpumaster from clean clones of `c9r10/psv1h` at `e0f9acd8` (source commit
+       `cc74956e`; `e0f9acd8` adds only governance text, the matrix, `scripts/pci_delta.py` themes and the regenerated
+       note), except the Python gates, which ran locally. (1) Rows **M2600-M2624: 25/25 KILLED by their own attack**
+       (baseline passed for each, 0 REFUSED_ELSEWHERE, 0 stale; M2600-M2623 were first run alone on a pre-squash commit,
+       24/24, and all 25 are inside the run in (2) at the final source). (2) **All 203 active
+       `crates/axon-core/src` rows re-run (the interpreter changed): 203/203 KILLED by their own attack**, two shards
+       (101 + 102), exit 0 and 0 REFUSED_ELSEWHERE each. (3) `cargo test -p axon-core --no-default-features
+       --no-fail-fast`: exit 0 (25 test binaries ok). `cargo test -p axon-psv`: exit 0 (sealed_frames 24 tests: the 18
+       existing ones plus 6 for this amendment). (4) `cargo clippy --no-default-features -p axon-core -- -D warnings` exit 0;
+       `cargo clippy -p axon-psv --all-targets -- -D warnings` exit 0. (5) `scripts/v022_pci_gates.sh`: PASS, 55 rows
+       (6 added), exit 0. (6) `python3 scripts/v022_refusal_coverage.py` exit 0 and `--freeze` exit 0 (it first reported two
+       new sites in `sealed_no_fn`, which was then split into a message builder and the two panics it feeds, each inside a
+       guard a row already covers; and M2173's anchor, which my first `npure` duplicated, is unique again).
+       (7) `scripts/psv_matrix_check.py`: PASS, 212 rows (A208-A212 added). (8) `scripts/pci_delta.py --check`: PASS (the
+       commit classified, the note regenerated; the quoted gate-row count is 55). Honest controls, by test: an i64 9
+       passes the handler-arm suites pinned, a literal / constant / operator-built name / branch between literals /
+       loop over a literal range run the candidate's `double`; the wrong answer fails with a keyed verdict.
+       The reviewer's replay cases were reproduced at the source commit through the runner: each attack (`z1`, `z5`,
+       `z7`, `w1`-`w4` shapes) is now refused and each control behaves as before.
+       **Unfinished:** the open finding above (closure tables selected by a candidate key); the replay guard's row (an
+       equivalent mutant, so none); the integer-handle class was not examined.

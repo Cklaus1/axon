@@ -228,14 +228,20 @@ exit 0 (the earlier rows below were last run at 34 rows, c9r4c/claims3 at veto 1
 | am96 sandbox_run result cast at the crossing | axon-core/lib | PASS 1/1 |
 | am96 sandbox_run result cast at the crossing | axon-psv/sealed_frames | PASS 1/1 |
 | am96 one global-read edge | axon-core/lib | PASS 2/2 |
-| am96 one global-read edge | axon-psv/sealed_frames | PASS 1/1 |
+| am96 one global-read edge (runner leg: corroboration only, refused statically by E0004 before the runtime edge) | axon-psv/sealed_frames | PASS 1/1 |
 | am96 fn value mark | axon-core/lib | PASS 1/1 |
 | am96 unary width arm | axon-core/lib | PASS 1/1 |
 | am96 unary width arm | axon-psv/sealed_frames | PASS 1/1 |
 | am96 user-code builtins classified | axon-core/lib | PASS 2/2 |
 | am96 handler-expression value is undetermined (stated cost) | axon-core/lib | PASS 1/1 |
+| am100 handler arm pin owner | axon-core/lib | PASS 6/6 |
+| am100 handler arm pin owner | axon-psv/sealed_frames | PASS 3/3 |
+| am100 name sinks | axon-core/lib | PASS 5/5 |
+| am100 name sinks | axon-psv/sealed_frames | PASS 3/3 |
+| am100 existence oracle | axon-core/lib | PASS 1/1 |
+| am100 drift: any globals mention, any runner of user code | axon-core/lib | PASS 2/2 |
 
-Mutation rows whose target is `crates/axon-core/src` and which are not retired (`MUTATIONS` minus `RETIRED`, 178 rows at this head, recomputed from the script): M59, M61-M62, M65, M67-M70, M72-M79, M82-M83, M85-M88, M90-M97, M219, M243, M246-M248, M250-M251, M260, M270-M272, M436, M560-M566, M651-M667, M920-M939, M1140-M1157, M1660-M1681, M1730-M1731, M1734, M1764-M1765, M1840-M1845, M1847-M1848, M1936-M1938, M1975, M1990-M1997, M2171-M2178, M2370-M2376, M2461, M2470-M2480. Per delta:
+Mutation rows whose target is `crates/axon-core/src` and which are not retired (`MUTATIONS` minus `RETIRED`, 203 rows at this head, recomputed from the script): M59, M61-M62, M65, M67-M70, M72-M79, M82-M83, M85-M88, M90-M97, M219, M243, M246-M248, M250-M251, M260, M270-M272, M436, M560-M566, M651-M667, M920-M939, M1140-M1157, M1660-M1681, M1730-M1731, M1734, M1764-M1765, M1840-M1845, M1847-M1848, M1936-M1938, M1975, M1990-M1997, M2171-M2178, M2370-M2376, M2461, M2470-M2480, M2600-M2624. Per delta:
 
 | delta | rows (named in the amendment's own text) |
 |---|---|
@@ -249,11 +255,12 @@ Mutation rows whose target is `crates/axon-core/src` and which are not retired (
 | amendment 88 | M2171-M2178 (the rebuilt dispatch analysis) |
 | amendment 94 | M2370-M2376, matrix A182-A184 |
 | amendment 96 | M2470-M2480, matrix A190-A194 |
+| amendment 100 | M2600-M2624, matrix A208-A212 |
 
 FREEZE OBLIGATION, not a present fact: the claims spec says these rows are re-run at the frozen head.
 What the freeze procedure must show is a joined paired-disable run at the frozen head in which each of
 the rows above is killed by its own attack (or retired with its four cells). This task and note have
-re-run, at c9r9/psv1g 29276036 on gpumaster (clean clone, three shards, `v022_g01_mutations.py --scope=all --only=<ids>`), all 178 active rows above: 178/178 KILLED by their own attack, 0 REFUSED_ELSEWHERE, 0 unexpected survivors, 0 stale. That is a sample run (`--only`), not the scope run the freeze requires, and it re-ran no retired row; the gate rows (49 then) ran locally. Per-amendment kill evidence is in each amendment's text.
+re-run, at c9r10/psv1h e0f9acd8 on gpumaster (clean clone, two shards, `v022_g01_mutations.py --scope=all --only=<ids>`), all 203 active rows above: 203/203 KILLED by their own attack (101 + 102), 0 REFUSED_ELSEWHERE, 0 stale. That is a sample run (`--only`), not the scope run the freeze requires, and it re-ran no retired row; the gate rows (the gate script, 55 rows now) ran on gpumaster and passed. Per-amendment kill evidence is in each amendment's text.
 
 ## (c) Surfaces 18 and 19, and what the protected profile does with a non-empty ceiling
 
