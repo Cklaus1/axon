@@ -5708,7 +5708,7 @@ MUTATIONS += [
      '                "a freeze binds only a build made with the operator\'s pinned tools)") if False else ""',
      'axon-fabric', '--test freeze_manifest', _FRZ),
     ('M1473', "FIELD-ORIGIN (gaps): the host-toolchain pin is read only as a root-owned, unwritable file", _GB,
-     '        if st.st_uid != 0 or st.st_mode & 0o022:', '        if False:',
+     '        if st.st_uid != 0 or st.st_mode & 0o022:\n            return (f"{cur} (uid', '        if False:\n            return (f"{cur} (uid',
      'axon-fabric', '--test freeze_manifest', _FRZ),
 ]
 
@@ -7882,7 +7882,8 @@ _NOSIGN = 'a_change_to_the_compiler_or_linker_tools_is_never_signed'
 _ISO = 'a_guest_build_record_that_does_not_show_isolated_build_processes_does_not_freeze'
 _FM = '--test freeze_manifest'
 _SETPRIV = (
-    '    return ["/usr/bin/setpriv", f"--reuid={uid}", f"--regid={gid}", "--clear-groups", "--no-new-privs",\n'
+    '    return [UNSHARE, "--pid", "--fork", "--mount-proc", "--kill-child", "--",\n'
+    '            "/usr/bin/setpriv", f"--reuid={uid}", f"--regid={gid}", "--clear-groups", "--no-new-privs",\n'
     '            "--", *argv]')
 MUTATIONS += [
     ('M2220', "BUILD-ENV (7): the build's PATH is the fixed system directories only (the toolchain directory is not on it)", _GE,
@@ -9355,6 +9356,32 @@ MUTATIONS += [
     ('M2569', 'CONST (eqgate5): each of the nine ledger-dependent directories refuses a deleted history on its own', 'crates/axon-loop/src/ledger.rs',
      'const DEPENDENT: &[&str] = &[\n    "plans",\n', 'const DEPENDENT: &[&str] = &[\n',
      'axon-loop', '--test ledger_sites', 'each_dependent_directory_refuses_a_deleted_history_on_its_own'),
+]
+
+# INTEG8 (amendment 99): rows for the sites buildenv5's rewrite of guest_build_env.py added or moved.
+MUTATIONS += [
+    ('M2570', 'BUILD ENV (integ8): build_uid_problem refuses root (the kit verb has no other judge)', 'scripts/guest_build_env.py',
+     '    if uid == 0:\n        return "it is root"', '    if False:\n        return "it is root"',
+     'axon-fabric', '--test guest_build_env_guards', 'the_tree_copy_the_clone_the_toolchain_pin_and_the_command_line_refuse'),
+    ('M2571', "BUILD ENV (integ8): build_uid_problem refuses the builder's own uid", 'scripts/guest_build_env.py',
+     '    if uid == (os.geteuid() if builder_uid is None else builder_uid):\n', '    if False:\n',
+     'axon-fabric', '--test guest_build_env_guards', 'the_tree_copy_the_clone_the_toolchain_pin_and_the_command_line_refuse'),
+    ('M2572', 'BUILD ENV (integ8): build_uid_problem refuses a service uid', 'scripts/guest_build_env.py',
+     '    if uid in svc:\n', '    if False and uid in svc:\n',
+     'axon-fabric', '--test guest_build_env', 'the_build_uid_may_not_be_a_service_uid'),
+    ('M2573', 'BUILD ENV (integ8): a build step is refused when the PID-namespace tool is missing', 'scripts/guest_build_env.py',
+     '    if not os.access(UNSHARE, os.X_OK):\n', '    if False and not os.access(UNSHARE, os.X_OK):\n',
+     'axon-fabric', '--test guest_build_env_guards', 'the_controlled_build_runs_only_as_root_as_an_unprivileged_uid'),
+    ('M2574', 'BUILD ENV (integ8): the kit verb check-build-uid takes plain decimal uids only', 'scripts/guest_build_env.py',
+     '        if not (re.fullmatch(r"[0-9]{1,9}", a[1]) and re.fullmatch(r"[0-9]{1,9}", a[2])):\n',
+     '        if False and not (re.fullmatch(r"[0-9]{1,9}", a[1]) and re.fullmatch(r"[0-9]{1,9}", a[2])):\n',
+     'axon-fabric', '--test guest_build_env_guards', 'the_tree_copy_the_clone_the_toolchain_pin_and_the_command_line_refuse'),
+    ('M2575', "BUILD ENV (integ8): the kit verb check-build-uid fails on build_uid_problem's verdict", 'scripts/guest_build_env.py',
+     '        why = build_uid_problem(int(a[1]), int(a[2]), users)\n        if why:\n', '        why = build_uid_problem(int(a[1]), int(a[2]), users)\n        if False:\n',
+     'axon-fabric', '--test guest_build_env_guards', 'the_tree_copy_the_clone_the_toolchain_pin_and_the_command_line_refuse'),
+    ('M2576', "BUILD ENV (integ8): build_ids fails on build_uid_problem's verdict", 'scripts/guest_build_env.py',
+     '    why = build_uid_problem(int(raw))\n    if why:\n        fail(f"AXON_GUEST_BUILD_UID', '    why = build_uid_problem(int(raw))\n    if False:\n        fail(f"AXON_GUEST_BUILD_UID',
+     'axon-fabric', '--test guest_build_env', 'the_build_uid_may_not_be_a_service_uid'),
 ]
 
 

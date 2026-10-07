@@ -94,6 +94,19 @@ chk("main check-host-record with a relative builder parent", t, "plain decimal u
 rc, t = cli("check-host-record", S, "--builder-uid", "0", "--builder-parent", "/p", "--build-uid", "65534")
 chk("main check-host-record names why a directory is not a host build", t, "holds no readable host-build.json")
 
+# check-build-uid UID BUILDER-UID: the kit's verb, judged by build_uid_problem (root, the builder's own uid, a service uid).
+rc, t = cli("check-build-uid", "x", "1000")
+chk("main check-build-uid with a uid that is not decimal", rc != 0 and "both uids are plain decimal" in t, True)
+rc, t = cli("check-build-uid", "4242", "1000")
+chk("main check-build-uid control: a dedicated uid is accepted", rc == 0 and "is dedicated" in t, True)
+rc, t = cli("check-build-uid", "0", "1000")
+chk("main check-build-uid refuses root", rc != 0 and "it is root" in t, True)
+rc, t = cli("check-build-uid", "1000", "1000")
+chk("main check-build-uid refuses the builder's own uid", rc != 0 and "it is the builder's own uid" in t, True)
+chk("build_uid_problem root", g.build_uid_problem(0, 1000, ()), "it is root")
+chk("build_uid_problem the builder's own uid", g.build_uid_problem(1000, 1000, ()), "it is the builder's own uid")
+chk("build_uid_problem control: a dedicated uid", g.build_uid_problem(4242, 1000, ()), "")
+
 # toolchain_pin_problems(man, required, pin_path): the image's tools against the operator's pin.
 pdir = S + "/tp"
 mkdir(pdir)

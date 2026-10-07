@@ -2348,3 +2348,13 @@ ATTACK_MARKERS.update({
     'M2568': r'ATTACK: an authority program larger than MAX_BYTES',
     'M2569': r'ATTACK: a store whose ledger, head and anchor were deleted but whose plans/ remained reissued its history',
 })
+
+ATTACK_MARKERS.update({
+    'M2570': 'ATTACK: gbe main\\ check-build-uid\\ refuses\\ root',
+    'M2571': "ATTACK: gbe main\\ check-build-uid\\ refuses\\ the\\ builder's\\ own\\ uid",
+    'M2572': r'ATTACK: a uid a deployed config names \(fabric_uid\) was accepted as the build uid',
+    'M2573': 'ATTACK: gbe as_build_uid\\ refuses\\ to\\ start\\ a\\ step',
+    'M2574': 'ATTACK: gbe main\\ check-build-uid\\ with\\ a\\ uid\\ that\\ is\\ not\\ decimal',
+    'M2575': 'ATTACK: gbe main\\ check-build-uid\\ refuses\\ root',
+    'M2576': r'ATTACK: a uid a deployed config names \(fabric_uid\) was accepted as the build uid',
+})
