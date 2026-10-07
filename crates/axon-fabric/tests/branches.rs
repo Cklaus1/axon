@@ -148,7 +148,7 @@ fn branches_start_from_one_frozen_base_with_independent_run_identities() {
     assert!(same.is_ok());
     let other = version(&w.env, "other", "fn x() -> i64 { 1 }\n");
     let e =
-        w.br.open_experiment(
+        match w.br.open_experiment(
             &exp_id(),
             &other,
             REGIME,
@@ -157,8 +157,12 @@ fn branches_start_from_one_frozen_base_with_independent_run_identities() {
                 (arm("challenger-1"), o(WRITER_B)),
             ],
             &[o(APPROVER)],
-        )
-        .unwrap_err();
+        ) {
+            Err(e) => e,
+            Ok(_) => panic!(
+                "ATTACK: a different experiment under an existing id was taken for the same one"
+            ),
+        };
     assert_eq!(e.kind(), "exists");
 }
 
@@ -170,26 +174,25 @@ fn an_experiment_needs_a_durable_base_two_arms_and_independent_approval() {
         (arm("incumbent"), o(WRITER_A)),
         (arm("challenger-1"), o(WRITER_B)),
     ];
+    // Each refusal is read as `invalid`, and an ACCEPTANCE names the attack
+    // (an `unwrap_err` on an `Ok` would not say which guard let it through).
+    let invalid = |what: &str, r: Result<axon_fabric::branches::Experiment, BranchError>| match r {
+        Err(e) => assert_eq!(e.kind(), "invalid", "{what}: {e}"),
+        Ok(_) => panic!("ATTACK: {what} was accepted"),
+    };
     // A hash is not a base.
     let hash_only = Acf1Ref::new(format!("acf1:{}", "4".repeat(64))).unwrap();
-    assert_eq!(
-        w.br.open_experiment(&x, &hash_only, REGIME, &arms, &[o(APPROVER)])
-            .unwrap_err()
-            .kind(),
-        "invalid"
+    invalid(
+        "a base that is only a hash",
+        w.br.open_experiment(&x, &hash_only, REGIME, &arms, &[o(APPROVER)]),
     );
-    assert_eq!(
-        w.br.open_experiment(&x, &w.base, REGIME, &arms[..1], &[o(APPROVER)])
-            .unwrap_err()
-            .kind(),
-        "invalid"
+    invalid(
+        "an experiment with one arm",
+        w.br.open_experiment(&x, &w.base, REGIME, &arms[..1], &[o(APPROVER)]),
     );
-    assert_eq!(
-        w.br.open_experiment(&x, &w.base, REGIME, &arms, &[o(WRITER_A)])
-            .unwrap_err()
-            .kind(),
-        "invalid",
-        "a writer cannot approve"
+    invalid(
+        "a writer that is also the approver",
+        w.br.open_experiment(&x, &w.base, REGIME, &arms, &[o(WRITER_A)]),
     );
     assert!(w.br.experiment(&x).is_err(), "nothing was recorded");
 }
@@ -363,7 +366,10 @@ fn publication_requires_base_epoch_writer_exact_verified_output_and_approval() {
         ),
     ];
     for (what, p, kind) in refusals {
-        let e = publish(&w, &p).unwrap_err();
+        let e = match publish(&w, &p) {
+            Err(e) => e,
+            Ok(h) => panic!("ATTACK: {what} was accepted: {h:?}"),
+        };
         assert_eq!(e.kind(), kind, "{what}: {e}");
         assert_eq!(head_files(&w, "incumbent"), 1, "{what}: head unchanged");
         assert_eq!(
@@ -396,7 +402,10 @@ fn publication_requires_base_epoch_writer_exact_verified_output_and_approval() {
 
     // A concurrent update forces rebase + re-verification: publishing from
     // the OLD head is a conflict, never an overwrite.
-    let e = publish(&w, &good).unwrap_err();
+    let e = match publish(&w, &good) {
+        Err(e) => e,
+        Ok(h) => panic!("ATTACK: a publication from an old head was accepted: {h:?}"),
+    };
     assert_eq!(e.kind(), "conflict");
     assert_eq!(head_files(&w, "incumbent"), 2);
 }
@@ -452,6 +461,55 @@ fn two_concurrent_publications_from_one_head_have_exactly_one_winner() {
 }
 
 // ── G08: cancellation ───────────────────────────────────────────────────────
+
+/// A cancelled branch refuses a publication that would otherwise SUCCEED: the
+/// check passed on that branch, the writer, approver, epoch, bytes and base
+/// are all right. (The cancellation test below refuses its publication for
+/// an unverified output as well, so it does not show the cancelled-branch
+/// check by itself.) Control: the identical publication on the same branch
+/// before it is cancelled is a head, on the other branch after.
+#[test]
+fn a_cancelled_branch_refuses_a_publication_that_would_otherwise_succeed() {
+    let w = world();
+    let cfg = w.env.cfg(0);
+    let v2 = version(&w.env, "v2", FIXTURE_V2);
+    for (arm_name, id) in [("challenger-1", "ch-v2"), ("incumbent", "inc-v2")] {
+        let s = submit(
+            &branch_check(&w, arm_name, id, &v2, "t_ok").to_string(),
+            &cfg,
+        )
+        .unwrap();
+        assert_eq!(s.receipt.verification, ReceiptVerification::Passed);
+    }
+    let (j, _) = Journal::open(&w.env.journal).unwrap();
+    w.br.cancel(&j, &exp_id(), &arm("challenger-1"), "lost the A/B")
+        .unwrap();
+    let on_challenger = Publication {
+        writer: o(WRITER_B),
+        ..publication(0, &w.base, &v2, "ch-v2")
+    };
+    match w.br.publish(&j, &cfg.epoch, &exp_id(), &arm("challenger-1"), &on_challenger) {
+        Err(e) => assert_eq!(e.kind(), "cancelled", "{e}"),
+        Ok(h) => panic!("ATTACK: a cancelled branch accepted a publication: {h:?}"),
+    }
+    assert_eq!(
+        w.br.head(&exp_id(), &arm("challenger-1")).unwrap().version,
+        w.base,
+        "the cancelled branch's head did not move"
+    );
+    // Control: the same publication on the branch that was not cancelled.
+    let h = w
+        .br
+        .publish(
+            &j,
+            &cfg.epoch,
+            &exp_id(),
+            &arm("incumbent"),
+            &publication(0, &w.base, &v2, "inc-v2"),
+        )
+        .unwrap();
+    assert_eq!((h.seq, &h.version), (1, &v2));
+}
 
 fn in_flight(j: &Journal, w: &World, a: &str, id: &str, launched: bool) {
     let intent = axon_fabric::Intent {

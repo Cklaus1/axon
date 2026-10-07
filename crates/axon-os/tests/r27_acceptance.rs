@@ -776,7 +776,10 @@ fn weight_exfil_egress_denied_R25() {
         budget: 0,
         persist_bytes: 1,
     });
-    assert!(r.is_err(), "zero persist_cap must block any persist carve");
+    assert!(
+        r.is_err(),
+        "ATTACK: zero persist_cap must block any persist carve"
+    );
 
     // Half 2: granted but over persist_cap → exit 9.
     let l2 = ResourceLedger::new("root", 1000, 1000, 100);
