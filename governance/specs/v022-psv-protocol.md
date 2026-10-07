@@ -5841,3 +5841,54 @@ too, so 7b's PSV_PROTOCOL_PROVEN is WITHDRAWN (governance/status/v022-psv-protoc
 
 
 **Renumbering at integration (round 9, integrate8).** Amendment 97 (buildenv5) wrote its matrix rows as A200-A205 and amendment 98 (eqgate5) as A210-A215 while amendment 96 (psv1g) holds A190-A194; the integration made the matrix contiguous: amendment 97's rows are now A195-A200 and amendment 98's are A201-A206. The text of those amendments was rewritten to the new ids.
+
+## Amendment 99: the reconciliation of the build environment's two rewrites (C9 round 9, integrate8)
+
+Amendment 97 (buildenv5) rewrote `scripts/guest_build_env.py` (PID namespace, dedicated build uid, per-uid lock,
+`begin` split into `begin` and `_begin`, the kit verb `check-build-uid`) while amendment 98 (eqgate5) taught the gate to
+read that file with exemptions keyed by (function, n-th site, fragment). Merged, the gate refused: 17 BAD lines. This
+amendment records what was re-anchored and re-judged. `crates/axon-core/src` and the interpreter are untouched; nothing
+was weakened, no test or guard was relaxed.
+
+- **Re-anchored rows.** M1473: its old text (`if st.st_uid != 0 or st.st_mode & 0o022:`) now occurs in three places
+  (the toolchain copy, the lock directory, the operator file); it is extended with the next line (`return (f"{cur} (uid`) so
+  it applies once, in `operator_file_problem`. M2221: `as_build_uid` now returns `unshare ... setpriv ...`; its old text was
+  the pre-amendment-97 return, so it now replaces the whole new return with `return list(argv)` (M2501 keeps removing only
+  the `unshare` prefix). Both still killed by their own attack.
+- **New rows M2570-M2576** (INTEG8's range): M2570 root, M2571 the builder's own uid, M2572 a service uid (each in
+  `build_uid_problem`, the kit verb's ONLY judge: `build_ids` also refuses root and the builder's uid before it asks, which
+  is why the existing M2541/M2542 did not observe them); M2573 `as_build_uid` refuses a missing `unshare`; M2574 the verb's
+  decimal check; M2575 the verb fails on the verdict; M2576 `build_ids` fails on the verdict (M2502 changes the line BEFORE
+  the guard, so the guard line itself had no row). Attacks: `guest_build_env.rs::the_build_uid_may_not_be_a_service_uid`
+  and new cases in `guest_build_env_guards/misc.py` and `ids_root.py` (the CLI verb with `0`, the builder's uid, a
+  non-decimal, a dedicated uid as control; `build_uid_problem` directly; `as_build_uid` with `UNSHARE` absent). These are
+  test additions, not relaxations.
+- **Test fixed because the script changed.** `ids_root.py`'s expectation of `as_build_uid` was the pre-amendment-97 argv
+  (no `unshare ... --kill-child`); it is now the new one. Found by reading the diff, not by a failing run: the edit was made
+  before the first run. No guard regressed. The other eqgate5 cases, and all of buildenv5's, pass unchanged
+  (`guest_build_env` 38, `guest_build_env_guards` 7, gpumaster).
+- **Exemptions re-keyed.** `begin` 1/2 became `_begin` 1/2 (same REMAINDER, same sites; `begin` itself now holds the lock and
+  calls `_begin`). `main` 7 and 8 became 9 and 10 (two `check-build-uid` sites were inserted before them; 9 is OBSERVED, 10
+  REMAINDER as before). One new REMAINDER: `build_uid_lock` 2, the handler turning the OSError of the lock file's
+  `O_NOFOLLOW` open into a refusal; the symlink case still refuses with it removed (the OSError propagates uncaught, no lock
+  is taken), so it is a message and an exit path, and `LOCK_IS_SYMLINK` is observed by the flag, not by the handler.
+  Counted, not claimed covered.
+- **Counts for `scripts/guest_build_env.py`.** Before (eqgate5 alone, old file): 109 sites, 45 rowed, 54 OBSERVED-NOT-ROWED,
+  10 REMAINDER. After: **119 sites, 54 rowed, 54 OBSERVED-NOT-ROWED, 11 REMAINDER** (+10 sites: `build_uid_problem` 3,
+  `build_ids` 1, `as_build_uid` 1, `build_uid_lock` 3, `main` 2; +9 rowed; +1 REMAINDER). `scripts/v022_py_guard_survey.py`
+  on the final script (gpumaster, `axon-fabric` guards test): 119 sites, 104 killed, 15 survived; the survivors are the 11
+  REMAINDER sites plus `build_uid_problem` 3, `build_ids` 2, `build_uid_lock` 1 and 3, each rowed (M2572, M2576, M2507, M2508)
+  and killed by `guest_build_env.rs`, a test the survey does not run. No OBSERVED exemption survived.
+- **Four gate rows.** M1946 and M1949 SURVIVED at integrate7 for one reason: their planted probe line carried a SECOND form
+  (`libc::renameat2(` is a BUILD_FORM; `MS_NOSUID` is a VALUE_FORM), so removing the flag alternative left the line a site.
+  The probes in `refusal_coverage_gate.rs` (`FLAG_PROBES`) now isolate the flag (`let p = libc::RENAME_NOREPLACE;`,
+  `libc::MS_NODEV`), and M1949's marker names MS_NODEV; the two rows are killed by their own attack. M1740 and M1950 were
+  `not_applicable`: the text they replaced had been edited (`kind in ("line", "const", "form")`; `_some_reason_is_value(c)`
+  inside `is_form`). Re-anchored to the current text; killed (see the run record below). M1394 (not in the coordinator's
+  list) read REFUSED_ELSEWHERE once psv1g put an exemption (`is_global`) inside the anchored region: the control ran first on
+  the mutated gate and failed on that exemption before the planted site was judged. The test now judges the planted site
+  first (`names`) and runs the control on a second copy afterwards. No guard was weakened: the attack asserts what the row
+  claims, that the planted site is reported.
+- **Unfinished.** The 11 `py_guard` REMAINDERs stand, as the 150 REMAINDER sites overall (this amendment adds one).
+  `test_opkit_ns.sh` and the drift selftest pass; the ns-dependent suites were run on gpumaster for the namespace-free
+  parts only (amendment 92's calibration notes still hold).

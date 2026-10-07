@@ -220,20 +220,27 @@ fn a_freeze_reading_refuses_a_not_yet_scanned_file() {
 /// neighbourhood) is still a site. Control: the unedited copy holds.
 #[test]
 fn a_site_in_the_anchored_region_outside_a_seal_fn_is_scanned() {
+    // Integration (amendment 99): the control is run on a SECOND copy and AFTER the
+    // attack. The anchored region now holds an exemption (psv1g's `is_global`), so a
+    // gate that does not scan the region ALSO reports that exemption as matching no
+    // site, and a control run first would fail on that before the planted site is ever
+    // judged: the row would read REFUSED_ELSEWHERE, not killed. The attack names the
+    // planted site itself.
     let r = tree("region");
-    holds(&r, &[], "the unedited copy");
     edit(
         &r,
         INTERP,
         "    fn rng_guard(&self) -> Result<(), Flow> {\n",
         "    fn rng_guard(&self) -> Result<(), Flow> {\n        if self.sealed_frames.get() > 99 {\n            return panic(\"integrate gate probe\");\n        }\n",
     );
-    refuses(
+    names(
         &r,
-        &[],
-        "refusal site with no row and no exemption",
+        "self.sealed_frames.get() > 99",
         "an unrowed refusal in the anchored seal region was not scanned",
     );
+    let c = tree("region-control");
+    holds(&c, &[], "the unedited copy");
+    let _ = std::fs::remove_dir_all(&c);
     let _ = std::fs::remove_dir_all(&r);
 }
 
