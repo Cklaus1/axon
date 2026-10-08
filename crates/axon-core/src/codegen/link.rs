@@ -12,11 +12,13 @@
 //! validated by a full `cargo build -p axon-core`.
 //!
 //! Public surface:
-//!   * `compile_bitcode_to_binary` — load LLVM bitcode + link to a binary
+//!   * `HostedObject` / `link_hosted_object` — a hosted program's optimised
+//!     object (what the build cache stores) and the link that turns it into a
+//!     binary; a cache hit runs only the latter
 //!   * `OptLevel`                  — `axon build --opt-level` (IR pipeline + backend level)
 //!
 //! Crate-private surface (visible to `super::Codegen`):
-//!   * `emit_object_and_link` — IR module → object file → linked binary
+//!   * `emit_hosted_object_bytes` — IR module → optimised program object, in memory
 //!   * `prune_unreachable_ai_callers` / `Runtime` — pick the ONE runtime
 //!     staticlib a binary links (`libaxon_rt.a` or `libaxon_rt_ai.a`)
 //!   * `emit_hosted_object`   — IR module → program object file (no link)
@@ -325,27 +327,42 @@ fn android_linker(triple: &str, api: u32) -> Result<std::path::PathBuf, String> 
 
 // ── Public surface ────────────────────────────────────────────────────────────
 
-/// Load LLVM bitcode bytes into a fresh context and compile to a binary.
-///
-/// Used by the incremental cache on a cache hit: the IR emission stages are
-/// skipped; we go directly from cached bitcode to object file → binary.
-pub fn compile_bitcode_to_binary(
-    bitcode: &[u8],
+/// A hosted program compiled to its relocatable object: module triple set,
+/// program functions internalised (AX-22), the `opt` IR pipeline (AX-21) and
+/// the backend run. Linking it needs nothing from LLVM, which is why it is
+/// what the build cache stores (AX-34): a hit only links.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HostedObject {
+    /// The ELF (or target-format) relocatable object bytes.
+    pub bytes: Vec<u8>,
+    /// Whether the object still calls an `__axon_ai_*` builtin after pruning
+    /// and optimisation, i.e. links `libaxon_rt_ai.a` rather than
+    /// `libaxon_rt.a` (`Runtime`). The object alone does not say so cheaply,
+    /// and the link must pick the same runtime a fresh build would.
+    pub links_ai_runtime: bool,
+}
+
+/// Link a hosted program object into a binary at `output_path`, against the
+/// runtime staticlib it needs. `opt` selects the runtime profile (optimised
+/// levels link the release staticlibs and strip debug info); `target_triple`
+/// selects the cross/Android link recipe. Writes the object to
+/// `<output_path>.o` for the linker and removes it afterwards.
+pub fn link_hosted_object(
+    obj: &HostedObject,
     output_path: &str,
     opt: OptLevel,
     target_triple: Option<&str>,
 ) -> Result<(), String> {
-    use inkwell::memory_buffer::MemoryBuffer;
-    let ctx = inkwell::context::Context::create();
-    let buf = MemoryBuffer::create_from_memory_range(bitcode, "cached_bitcode");
-    let module = ctx.create_module_from_ir(buf).map_err(|e| {
-        format!(
-            "[E0906] cached bitcode could not be loaded: {}",
-            e.to_string()
-        )
-    })?;
-    prune_unreachable_ai_callers(&module);
-    emit_object_and_link(&module, output_path, opt, target_triple)
+    let obj_path = format!("{output_path}.o");
+    std::fs::write(&obj_path, &obj.bytes).map_err(|e| format!("object emit: {e}"))?;
+    let rt = if obj.links_ai_runtime {
+        Runtime::WithAi
+    } else {
+        Runtime::Base
+    };
+    let res = link_object_file(&obj_path, output_path, opt, target_triple, rt);
+    let _ = std::fs::remove_file(&obj_path);
+    res
 }
 
 /// R7 Slice B (AOT wasm, object half): emit a WebAssembly **object file** for
@@ -445,29 +462,58 @@ fn hosted_target_machine(
 
 // ── Crate-private surface (callable from super::Codegen) ─────────────────────
 
-/// Emit a hosted program's object file at `obj_path`, without linking.
-///
-/// This is exactly the object `emit_object_and_link` links: module triple set,
+/// Prepare a hosted program module for object emission: module triple set,
 /// program functions internalised (AX-22), the `opt` IR pipeline run (AX-21).
-/// `axon build --emit-obj` (AX-23) writes it to `--out` directly.
+/// Returns the target machine that emits the object.
 ///
 /// When `target_triple` is `None` the native host triple is used.  When it is
 /// `Some(triple)` all LLVM backends are initialized and the specified triple is
 /// used (cross-compilation).
+fn prepare_hosted_module(
+    module: &inkwell::module::Module<'_>,
+    opt: OptLevel,
+    target_triple: Option<&str>,
+) -> Result<TargetMachine, String> {
+    let (triple, machine) = hosted_target_machine(target_triple, opt)?;
+    // Update the module's target triple so the emitted object is correct.
+    module.set_triple(&triple);
+    internalize_program_functions(module);
+    optimize_module(module, &machine, opt)?;
+    Ok(machine)
+}
+
+/// Emit a hosted program's object file at `obj_path`, without linking
+/// (`axon build --emit-obj`, AX-23). The module is prepared exactly as for
+/// [`emit_hosted_object_bytes`].
 pub(super) fn emit_hosted_object(
     module: &inkwell::module::Module<'_>,
     obj_path: &str,
     opt: OptLevel,
     target_triple: Option<&str>,
 ) -> Result<(), String> {
-    let (triple, machine) = hosted_target_machine(target_triple, opt)?;
-    // Update the module's target triple so the emitted object is correct.
-    module.set_triple(&triple);
-    internalize_program_functions(module);
-    optimize_module(module, &machine, opt)?;
+    let machine = prepare_hosted_module(module, opt, target_triple)?;
     machine
         .write_to_file(module, FileType::Object, Path::new(obj_path))
         .map_err(|e| format!("object emit: {e}"))
+}
+
+/// The hosted program's object, in memory, plus the runtime it links. The
+/// runtime is read off the module AFTER the pipeline, so a call the optimiser
+/// proved dead does not pull in the AI runtime. Run
+/// [`prune_unreachable_ai_callers`] first.
+pub(super) fn emit_hosted_object_bytes(
+    module: &inkwell::module::Module<'_>,
+    opt: OptLevel,
+    target_triple: Option<&str>,
+) -> Result<HostedObject, String> {
+    let machine = prepare_hosted_module(module, opt, target_triple)?;
+    let buf = machine
+        .write_to_memory_buffer(module, FileType::Object)
+        .map_err(|e| format!("object emit: {e}"))?;
+    Ok(HostedObject {
+        bytes: buf.as_slice().to_vec(),
+        links_ai_runtime: Runtime::for_module(module) == Runtime::WithAi,
+    })
 }
 
 /// `--emit-llvm`: apply to `module` the transformations the object-emitting
@@ -505,20 +551,17 @@ pub(super) fn optimize_for_ir_dump(
     optimize_module(module, &machine, opt)
 }
 
-/// Emit the hosted program's object (see `emit_hosted_object`) and link it
-/// into a binary at `output_path`.
-pub(super) fn emit_object_and_link(
-    module: &inkwell::module::Module<'_>,
+/// Link the hosted program object at `obj_path` into a binary at
+/// `output_path` against the runtime staticlib `rt`.
+fn link_object_file(
+    obj_path: &str,
     output_path: &str,
     opt: OptLevel,
     target_triple: Option<&str>,
+    rt: Runtime,
 ) -> Result<(), String> {
     // Optimised builds link the release-profile runtime staticlibs.
     let release = opt.is_optimized();
-
-    // Emit object file to a temporary path.
-    let obj_path = format!("{output_path}.o");
-    emit_hosted_object(module, &obj_path, opt, target_triple)?;
 
     // R14 slice 1/2: Android (bionic) cross-link via the NDK clang. Android
     // ELFs are PIE and link bionic libc, not glibc — the host `-no-pie`/`-lm`
@@ -527,10 +570,7 @@ pub(super) fn emit_object_and_link(
     // link recipe below stays exactly as it was.
     if let Some(triple_str) = target_triple {
         if is_android_triple(triple_str) {
-            let rt = Runtime::for_module(module);
-            let res = android_link(&obj_path, output_path, release, triple_str, false, rt);
-            let _ = std::fs::remove_file(&obj_path);
-            return res;
+            return android_link(obj_path, output_path, release, triple_str, false, rt);
         }
     }
 
@@ -538,13 +578,7 @@ pub(super) fn emit_object_and_link(
     // program calls an AI builtin (`Runtime`). Resolved before the linker runs
     // so a missing runtime is one clear error naming where it was looked for,
     // not a page of `undefined reference to __axon_*` (AX-09).
-    let rt_lib = match runtime_staticlib(Runtime::for_module(module), release, None) {
-        Ok(lib) => lib,
-        Err(e) => {
-            let _ = std::fs::remove_file(&obj_path);
-            return Err(e);
-        }
-    };
+    let rt_lib = runtime_staticlib(rt, release, None)?;
 
     // Determine linker: prefer the cross.toml override, else probe the host.
     let linker_override = target_triple.and_then(read_cross_linker);
@@ -570,7 +604,7 @@ pub(super) fn emit_object_and_link(
     // `--release` also drops debug info (`--strip-debug`, which keeps the
     // symbol table for profilers and backtraces).
     let mut link_args: Vec<&str> = vec![
-        &obj_path,
+        obj_path,
         rt_lib.as_str(),
         "-o",
         output_path,
@@ -587,8 +621,6 @@ pub(super) fn emit_object_and_link(
         .args(&link_args)
         .status()
         .map_err(|e| format!("linker spawn: {e}"))?;
-
-    let _ = std::fs::remove_file(&obj_path);
 
     if status.success() {
         Ok(())

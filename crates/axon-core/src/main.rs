@@ -6717,7 +6717,10 @@ fn run_build_pipeline(
     output: &Path,
     opts: &BuildOptions,
 ) -> Result<(), String> {
-    // Check first, fail fast on errors.
+    // Check first, fail fast on errors. This runs on a cache hit too: it is
+    // what prints the program's warnings (W-codes, I-notes) on every build,
+    // and it costs ~1% of a cold release build (big-compile: 62 ms of
+    // 8.1 s), so skipping it would buy little and silence diagnostics.
     let (errors, mut infer_ctx) = check_program_located(program, source_path);
     if !errors.is_empty() {
         // Print each diagnostic, not just the count — otherwise `axon build` on a
@@ -6728,20 +6731,32 @@ fn run_build_pipeline(
         }
         return Err(format!("{} error(s); build aborted", errors.len()));
     }
+    // R23: solver-free mint cert gate before emitting a native binary, too.
+    // Before the cache lookup, so a cache hit is gated like a fresh build.
+    axon_core::cert_gate::enforce_or_exit();
+
+    // Only a hosted executable build reads or writes the cache: the entry is
+    // that build's program object, linked on a hit. `--emit-obj` writes an
+    // object WITHOUT the AI-wrapper pruning a binary gets, `--emit-llvm`
+    // writes IR, and freestanding / shared (`--host mobile`) builds emit
+    // differently prepared objects and link differently.
+    let cacheable = !opts.freestanding && !opts.shared && !opts.emit_obj && !opts.emit_llvm;
 
     // The cache key MUST identify the compiler BUILD, not its version: two
     // builds at the same `0.1.0 (<git-sha>)` emit different IR whenever the
     // tree is dirty, and keying on the version (plus, later, the executable's
     // path/size/mtime) let a rebuilt compiler serve the previous compiler's
     // bitcode (#36, AUDIT T38, AX-15). The identity is the version plus a
-    // digest of the compiler executable's bytes (`compiler_digest`). If the
-    // executable cannot be read no key can tell this compiler apart from
-    // another, so the cache is not used at all rather than guessed at.
+    // digest of the compiler executable's bytes (`compiler_digest`), which
+    // also covers the statically linked LLVM that optimises and emits the
+    // cached object. If the executable cannot be read no key can tell this
+    // compiler apart from another, so the cache is not used at all rather
+    // than guessed at.
     let cache_dir = opts
         .cache_dir
         .clone()
         .unwrap_or_else(axon_core::default_cache_dir);
-    let compiler_identity = if opts.no_cache {
+    let compiler_identity = if opts.no_cache || !cacheable {
         None
     } else if let Some(digest) = axon_core::compiler_digest(&cache_dir) {
         Some(format!("{VERSION}+{digest}"))
@@ -6755,7 +6770,7 @@ fn run_build_pipeline(
     let target_triple = opts.target_triple.as_deref();
 
     // ── Cache lookup ──────────────────────────────────────────────────────
-    if let Some(compiler_version) = compiler_identity.as_deref() {
+    let cache = compiler_identity.map(|compiler_version| {
         // Hash all source files to form the cache key.
         let mut hasher_input = Vec::new();
         // Include the source path stem as a namespace separator.
@@ -6792,77 +6807,70 @@ fn run_build_pipeline(
                 hasher_input.extend_from_slice(&m.bytes);
             }
         }
-        // Also include target triple in the key so cross-compiled artifacts
-        // are cached separately from native ones.
-        if let Some(triple) = target_triple {
-            hasher_input.extend_from_slice(triple.as_bytes());
+        // AX-34: the entry is the program OBJECT after the IR pipeline and the
+        // backend, so the key carries everything else that object depends on.
+        // The target triple — the HOST triple for a native build, since a
+        // cache directory can be shared between machines (a network home).
+        // The backend is otherwise fixed (`generic` CPU, no extra features).
+        hasher_input.extend_from_slice(b"\0target=");
+        match target_triple {
+            Some(triple) => hasher_input.extend_from_slice(triple.as_bytes()),
+            None => hasher_input.extend_from_slice(
+                inkwell::targets::TargetMachine::get_default_triple()
+                    .as_str()
+                    .to_bytes(),
+            ),
         }
-        // AX-17: the opt level selects the pass pipeline and the runtime
-        // staticlib profile, so builds at different levels are separate
-        // entries.
-        hasher_input.extend_from_slice(b"opt-level=");
+        // AX-17: the opt level selects the pass pipeline, the backend level and
+        // the runtime staticlib profile, so builds at different levels are
+        // separate entries.
+        hasher_input.extend_from_slice(b"\0opt-level=");
         hasher_input.extend_from_slice(opts.opt.as_str().as_bytes());
+        // The artifact: a hosted executable's object (see `cacheable`). Keyed
+        // so that caching another kind later cannot collide with it.
+        hasher_input.extend_from_slice(b"\0artifact=hosted-exe-object");
+        // Which runtime the object links (AI or not) is a function of the
+        // program, so it is stored in the entry, not keyed.
 
-        let key = axon_core::cache_key(&hasher_input, compiler_version);
-        let cache_path = axon_core::cache_path(&key, &cache_dir);
+        let key = axon_core::cache_key(&hasher_input, &compiler_version);
+        (axon_core::cache_path(&key, &cache_dir), compiler_version)
+    });
 
-        // Freestanding and shared (`--host mobile`) builds bypass the cache:
-        // their linker args differ from the hosted-binary path. A hit links a
-        // binary, so `--emit-obj` / `--emit-llvm` (which must not) skip it too.
-        if !opts.freestanding && !opts.shared && !opts.emit_obj && !opts.emit_llvm {
-            if let Some(bitcode) = axon_core::read_axc(&cache_path, compiler_version) {
-                // Cache hit — skip IR emission, link from stored bitcode.
-                match axon_core::compile_bitcode_to_binary(
-                    &bitcode,
+    if let Some((cache_path, compiler_version)) = &cache {
+        match axon_core::read_axc(cache_path, compiler_version) {
+            axon_core::CacheLookup::Hit {
+                object,
+                links_ai_runtime,
+            } => {
+                // Cache hit: the object is final and checksum-verified, so only
+                // the link runs. A link failure here is the one a fresh build
+                // of the same object would hit, so it is reported as is.
+                let obj = axon_core::codegen::HostedObject {
+                    bytes: object,
+                    links_ai_runtime,
+                };
+                return axon_core::codegen::link_hosted_object(
+                    &obj,
                     &output.to_string_lossy(),
                     opts.opt,
                     target_triple,
-                ) {
-                    Ok(()) => return Ok(()),
-                    Err(e) => {
-                        // A CACHE must never be able to fail a build that would
-                        // otherwise succeed. A truncated or corrupt `.axc` (an
-                        // interrupted previous build is enough to produce one)
-                        // used to abort here permanently, with a message that
-                        // did not even mention the cache as the thing to clear.
-                        // Drop the bad entry and fall through to a full compile.
-                        eprintln!(
-                            "warning: ignoring an unusable cache entry and recompiling \
-                             ({}): {e}",
-                            cache_path.display()
-                        );
-                        let _ = std::fs::remove_file(&cache_path);
-                    }
-                }
+                );
+            }
+            axon_core::CacheLookup::Miss => {}
+            axon_core::CacheLookup::Unusable(why) => {
+                // A truncated, damaged or old-format `.axc` (an interrupted
+                // build is enough to leave one) is rebuilt and overwritten,
+                // never linked and never fatal.
+                eprintln!(
+                    "warning[E0906]: ignoring an unusable cache entry and recompiling ({}): {why}",
+                    cache_path.display()
+                );
             }
         }
-
-        // Cache miss — full compilation then write.
-        // Freestanding and shared builds bypass the cache (linker args differ).
-        let cache_slot = if opts.freestanding || opts.shared {
-            None
-        } else {
-            Some((&key as &str, cache_path.as_path(), compiler_version))
-        };
-        let result = build_ir_and_link(
-            program,
-            source_path,
-            output,
-            opts.opt,
-            target_triple,
-            opts.freestanding,
-            opts.entry_fn.as_deref(),
-            opts.linker_script.as_deref(),
-            opts.emit_obj,
-            opts.emit_llvm,
-            opts.shared,
-            &mut infer_ctx,
-            cache_slot,
-        );
-        return result;
     }
 
-    // --no-cache (or no compiler identity): full compilation, no read or write.
+    // Cache miss (or --no-cache, or not a cacheable build): full compilation;
+    // a hosted executable build then writes its object to the cache.
     build_ir_and_link(
         program,
         source_path,
@@ -6876,11 +6884,14 @@ fn run_build_pipeline(
         opts.emit_llvm,
         opts.shared,
         &mut infer_ctx,
-        None,
+        cache
+            .as_ref()
+            .map(|(path, compiler_version)| (path.as_path(), compiler_version.as_str())),
     )
 }
 
-/// Emit LLVM IR, optionally write bitcode to cache, then link.
+/// Emit LLVM IR, compile it, write a hosted executable's object to the cache
+/// (`cache_write`), then link.
 #[cfg(feature = "codegen")]
 #[allow(clippy::too_many_arguments)]
 fn build_ir_and_link(
@@ -6896,7 +6907,7 @@ fn build_ir_and_link(
     emit_llvm: bool,
     shared: bool,
     infer_ctx: &mut axon_core::infer::InferCtx,
-    cache_write: Option<(&str, &std::path::Path, &str)>, // (key, path, version)
+    cache_write: Option<(&std::path::Path, &str)>, // (entry path, compiler identity)
 ) -> Result<(), String> {
     // Collect generic instantiations recorded during inference.
     let instantiations = infer_ctx.drain_instantiations();
@@ -6927,8 +6938,6 @@ fn build_ir_and_link(
     // assembly) needs the resolved triple BEFORE emit_program, not just at
     // object-write time. `None` = the historical x86_64 default.
     cg.set_target_triple(target_triple.unwrap_or_default());
-    // R23: solver-free mint cert gate before emitting a native binary, too.
-    axon_core::cert_gate::enforce_or_exit();
     // Phase 5 §4: elide the runtime refinement-return / scalar-`@[verify]` checks
     // the SMT prover discharged ∀-inputs (empty set without the `smt` feature, so
     // native output is unchanged). Run on the monomorphized program so the proven
@@ -6974,13 +6983,6 @@ fn build_ir_and_link(
         return Ok(());
     }
 
-    // Write bitcode to cache before linking (so a link failure doesn't
-    // prevent future cache hits for successfully compiled IR).
-    if let Some((_key, cache_path, compiler_version)) = cache_write {
-        let bitcode = cg.emit_bitcode();
-        let _ = axon_core::write_axc(cache_path, &bitcode, compiler_version);
-    }
-
     let out = output.to_string_lossy();
     if freestanding {
         if emit_obj {
@@ -7002,7 +7004,18 @@ fn build_ir_and_link(
         // AX-23: hosted `--emit-obj` writes the program object, no link.
         cg.compile_to_object(&out, opt, target_triple)
     } else {
-        cg.compile_to_binary_target(&out, opt, target_triple)
+        // AX-34: the object is cached BEFORE linking, so a link failure does
+        // not cost the next build its hit; a hit then only links.
+        let obj = cg.compile_to_hosted_object(opt, target_triple)?;
+        if let Some((cache_path, compiler_version)) = cache_write {
+            let _ = axon_core::write_axc(
+                cache_path,
+                &obj.bytes,
+                obj.links_ai_runtime,
+                compiler_version,
+            );
+        }
+        axon_core::codegen::link_hosted_object(&obj, &out, opt, target_triple)
     }
 }
 

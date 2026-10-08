@@ -300,7 +300,7 @@ crates/axon-core/src/codegen/
 ├── builtins.rs    ~1,000 lines  — emit_call dispatch for every builtin
 ├── asi.rs           ~800 lines  — adaptive registry, verify panic, uncertain helpers
 ├── runtime.rs       ~400 lines  — declare_builtins (LLVM declarations of runtime symbols)
-└── link.rs          ~700 lines  — emit_object_and_link, runtime staticlib discovery (`Runtime`)
+└── link.rs          ~700 lines  — emit_hosted_object_bytes / link_hosted_object, runtime staticlib discovery (`Runtime`)
 ```
 
 **Rules**:
@@ -327,7 +327,7 @@ crates/
 ├── axon-codegen-stmt        — statements; depends on types + runtime
 ├── axon-codegen-builtins    — emit_call dispatch; depends on types + runtime
 ├── axon-codegen-asi         — adaptive/verify/uncertain; depends on types + runtime
-├── axon-codegen-link        — emit_object_and_link
+├── axon-codegen-link        — emit_hosted_object_bytes / link_hosted_object
 └── axon-codegen             — thin re-export façade for axon-core
 ```
 
