@@ -32,24 +32,31 @@ use crate::ast::{
 // ── Runtime values ────────────────────────────────────────────────────────────
 
 /// A runtime value produced by evaluating an expression.
+///
+/// AX-46: every payload is at most one pointer wide, so a `Value` is 16 bytes
+/// (tag + one word) and `R` is 24 — pinned by `VALUE_SIZE_IS_PINNED` below.
+/// Records, closures, handles and decimals live behind an `Rc`: cloning one
+/// bumps a refcount, and the rare in-place write (`p.x = v`) goes through
+/// [`Rc::make_mut`], which copies only when another binding still holds the
+/// record — the same value semantics `Array` and `Str` already have.
 #[derive(Debug, Clone)]
 pub enum Value {
     /// Default i64 integer (I-7: integers default to `i64`).
     Int(i64),
     /// R19 Slice B — a width-aware integer value for non-i64 fixed-width types.
-    /// Stores the value as i64 internally but carries its declared type so ops
+    /// Stores the value as i64 internally but carries its declared width so ops
     /// can apply width-correct masks (u8=0xFF, u16=0xFFFF, …). Only non-i64
     /// integer widths use this variant; `Int(i64)` remains the default, keeping
     /// the ~102 builtin `Int` sites untouched (blast-radius isolation, spec §11).
     SizedInt {
         val: i64,
-        /// One of: I8/I16/I32/U8/U16/U32/U64 — never I64 (that stays as Int).
-        ty: crate::types::Type,
+        ty: IntWidth,
     },
     Float(f64),
     /// R21 — exact fixed-point decimal: i128 mantissa at `decimal::SCALE` (9 dp).
-    /// Money-safe: exact arithmetic, no binary floating error.
-    Decimal(i128),
+    /// Money-safe: exact arithmetic, no binary floating error. Behind an `Rc`
+    /// because an inline `i128` would make every `Value` 32 bytes (16-aligned).
+    Decimal(Rc<i128>),
     Bool(bool),
     /// String value. Same VALUE-semantics-over-shared-storage contract as
     /// `Array`: cloning a `Value` (env lookup, argument passing, `len(s)`) bumps
@@ -69,54 +76,40 @@ pub enum Value {
     /// and writes O(len), turning a sieve quadratic).
     Array(Rc<Vec<Value>>),
     /// Structural record: `Point { x, y }`.
-    Struct {
-        name: String,
-        fields: HashMap<String, Value>,
-    },
+    Struct(Rc<StructVal>),
     /// Enum variant: `Shape::Circle { radius }`.
-    Enum {
-        enum_name: String,
-        variant: String,
-        fields: HashMap<String, Value>,
-    },
+    Enum(Rc<EnumVal>),
     Some(Box<Value>),
     None,
     Ok(Box<Value>),
     Err(Box<Value>),
     /// A lambda plus the environment it captured at creation time.
     ///
-    /// AUDIT T40 (findings F094 / P5-16 / DOC-02). `captured` used to be a plain
-    /// `HashMap<String, Value>` — a fresh clone per call — so an assignment to a
-    /// captured binding inside the lambda was silently DROPPED when the call
-    /// returned. Native codegen heap-allocates the capture and the write
-    /// persists, so the same source printed different answers on the two
-    /// engines with no error from either:
+    /// AUDIT T40 (findings F094 / P5-16 / DOC-02). The capture used to be a
+    /// plain `HashMap<String, Value>` — a fresh clone per call — so an
+    /// assignment to a captured binding inside the lambda was silently DROPPED
+    /// when the call returned. Native codegen heap-allocates the capture and
+    /// the write persists, so the same source printed different answers on
+    /// the two engines with no error from either:
     ///
     ///   let n = 0; let bump = || { n = n + 1  n }
     ///   interp:  call1=1 call2=1 call3=1   outer n=0
     ///   native:  call1=1 call2=2 call3=3   outer n=0
     ///
-    /// The Rc/RefCell makes the capture PERSISTENT ACROSS CALLS of this closure
-    /// (matching codegen) while still being a by-value snapshot of the defining
-    /// scope — note `outer n=0` on both engines: the outer binding is not
-    /// aliased. Cloning a closure value shares the same cell, which is what
+    /// The shared `Rc` makes the capture cell PERSISTENT ACROSS CALLS of this
+    /// closure (matching codegen) while still being a by-value snapshot of the
+    /// defining scope — note `outer n=0` on both engines: the outer binding is
+    /// not aliased. Cloning a closure value shares the same cell, which is what
     /// makes `let b = bump` observe the same counter.
-    ///
-    /// AX-40: the cell holds only the lambda's free variables that were bound
-    /// where it was created, not the whole defining environment, and `code`
-    /// (params + body) is shared by every closure made from the same lambda,
-    /// so making, cloning or calling a closure never copies its body.
-    Closure {
-        code: Rc<ClosureCode>,
-        captured: Rc<RefCell<Vec<(Sym, Value)>>>,
-    },
+    Closure(Rc<ClosureVal>),
     /// A channel — a shared FIFO queue. Cloning shares the same channel (Rc), so
     /// a `spawn`ed body and the main flow see the same queue. The interpreter is
     /// cooperative/single-threaded: `spawn` runs eagerly, so a `send` happens
     /// before the matching `recv`.
     Chan(Rc<RefCell<VecDeque<Value>>>),
     /// Tuple value `(a, b, …)`. Accessed via `t.0`, `t.1` (numeric field).
-    Tuple(Vec<Value>),
+    /// Immutable once built, so the elements are shared on clone.
+    Tuple(Rc<Vec<Value>>),
     /// String-keyed dictionary — the ASI workhorse for caches, frequency
     /// tables, named state. Mutating builtins (`dict_set`, `dict_remove`)
     /// share the inner `RefCell` so a stored handle stays in sync with
@@ -124,40 +117,267 @@ pub enum Value {
     /// (not arbitrary `Value`) — covers 95% of ASI use cases without
     /// requiring `Hash + Eq` on the full Value enum.
     Dict(Rc<RefCell<std::collections::BTreeMap<String, Value>>>),
-    /// R13 native FFI: an opaque, affine native `Handle` = `{tag, payload}`
-    /// where `payload` indexes a per-module handle table — NEVER a raw pointer,
-    /// so Axon cannot forge a native pointer (I-4/I-11). `module`/`name` give
-    /// nominal identity (`gfx::Window` ≠ `gfx::Surface`); `resource` marks an
-    /// affine handle (consumed by a consuming native fn). The handle is opaque
-    /// at the surface — no field access, no arithmetic (E1803).
-    Handle {
-        module: String,
-        name: String,
-        payload: i64,
-        resource: bool,
-    },
+    /// R13 native FFI: an opaque, affine native handle — see [`HandleVal`].
+    Handle(Rc<HandleVal>),
+}
+
+/// AX-46: the sizes the evaluator's hot path moves on every operation. A
+/// payload wider than one word (an inline `String`, `HashMap`, `i128`, or a
+/// second pointer) grows every `Value` and every `R`; this fails the build
+/// instead of silently taxing every operation again.
+const VALUE_SIZE_IS_PINNED: () = {
+    assert!(std::mem::size_of::<Value>() == 16);
+    assert!(std::mem::size_of::<Flow>() == 24);
+    assert!(std::mem::size_of::<R>() == 24);
+};
+const _: () = VALUE_SIZE_IS_PINNED;
+
+/// The width of a [`Value::SizedInt`]: a fixed-width integer type other than
+/// `i64` (which is plain [`Value::Int`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IntWidth {
+    I8,
+    I16,
+    I32,
+    U8,
+    U16,
+    U32,
+    U64,
+}
+
+impl IntWidth {
+    /// The width of semantic type `ty`, if it is a non-i64 integer type.
+    pub fn of_type(ty: &crate::types::Type) -> Option<IntWidth> {
+        use crate::types::Type;
+        Some(match ty {
+            Type::I8 => IntWidth::I8,
+            Type::I16 => IntWidth::I16,
+            Type::I32 => IntWidth::I32,
+            Type::U8 => IntWidth::U8,
+            Type::U16 => IntWidth::U16,
+            Type::U32 => IntWidth::U32,
+            Type::U64 => IntWidth::U64,
+            _ => return None,
+        })
+    }
+
+    /// The semantic type this width denotes.
+    pub fn to_type(self) -> crate::types::Type {
+        use crate::types::Type;
+        match self {
+            IntWidth::I8 => Type::I8,
+            IntWidth::I16 => Type::I16,
+            IntWidth::I32 => Type::I32,
+            IntWidth::U8 => Type::U8,
+            IntWidth::U16 => Type::U16,
+            IntWidth::U32 => Type::U32,
+            IntWidth::U64 => Type::U64,
+        }
+    }
+
+    /// The source spelling: `u8`, `i32`, …
+    pub fn name(self) -> &'static str {
+        match self {
+            IntWidth::I8 => "i8",
+            IntWidth::I16 => "i16",
+            IntWidth::I32 => "i32",
+            IntWidth::U8 => "u8",
+            IntWidth::U16 => "u16",
+            IntWidth::U32 => "u32",
+            IntWidth::U64 => "u64",
+        }
+    }
+}
+
+/// The fields of a record (struct or enum-variant) value. AX-47: names are
+/// interned [`Sym`]s, and a record built from a literal of a declared type
+/// stores its fields in the definition's order, so two values of one type
+/// have the same layout. A field assigned that the type does not declare
+/// (`r.extra = v`, structural typing) is appended.
+///
+/// Every renderer orders fields by NAME, as it did when this was a `HashMap`,
+/// so the storage order is never observable.
+#[derive(Clone, Default)]
+pub struct Fields(Vec<(Sym, Value)>);
+
+impl Fields {
+    /// Fields from `(name, value)` pairs; a repeated name keeps the last value.
+    pub(crate) fn from_pairs(pairs: impl IntoIterator<Item = (Sym, Value)>) -> Fields {
+        let mut f = Fields(Vec::new());
+        for (k, v) in pairs {
+            f.insert(k, v);
+        }
+        f
+    }
+
+    #[inline]
+    pub(crate) fn get(&self, name: Sym) -> Option<&Value> {
+        self.0.iter().find(|(k, _)| *k == name).map(|(_, v)| v)
+    }
+
+    #[inline]
+    pub(crate) fn get_mut(&mut self, name: Sym) -> Option<&mut Value> {
+        self.0.iter_mut().find(|(k, _)| *k == name).map(|(_, v)| v)
+    }
+
+    /// The field spelled `name`. No field can be named something never
+    /// interned, so this does not intern `name`.
+    pub(crate) fn named(&self, name: &str) -> Option<&Value> {
+        lookup_sym(name).and_then(|s| self.get(s))
+    }
+
+    /// Set field `name`, appending it if absent.
+    pub(crate) fn insert(&mut self, name: Sym, v: Value) {
+        match self.get_mut(name) {
+            Some(slot) => *slot = v,
+            None => self.0.push((name, v)),
+        }
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    pub(crate) fn iter(&self) -> impl Iterator<Item = (Sym, &Value)> {
+        self.0.iter().map(|(k, v)| (*k, v))
+    }
+
+    /// The fields with their names, sorted by name: the order every
+    /// renderer (display, literal form, shape, `SendValue`) uses.
+    pub(crate) fn by_name(&self) -> Vec<(Rc<str>, &Value)> {
+        let mut out: Vec<(Rc<str>, &Value)> =
+            self.0.iter().map(|(k, v)| (sym_name(*k), v)).collect();
+        out.sort_by(|a, b| a.0.cmp(&b.0));
+        out
+    }
+
+    /// Same names with pairwise-equal values, in any order.
+    pub(crate) fn equal(&self, other: &Fields) -> bool {
+        if self.0.len() != other.0.len() {
+            return false;
+        }
+        // Same type, same layout: one pass, no lookups.
+        if self.0.iter().zip(&other.0).all(|(a, b)| a.0 == b.0) {
+            return self
+                .0
+                .iter()
+                .zip(&other.0)
+                .all(|(a, b)| value::values_equal(&a.1, &b.1));
+        }
+        self.0
+            .iter()
+            .all(|(k, v)| other.get(*k).is_some_and(|w| value::values_equal(v, w)))
+    }
+}
+
+impl std::fmt::Debug for Fields {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_map()
+            .entries(self.0.iter().map(|(k, v)| (sym_name(*k), v)))
+            .finish()
+    }
+}
+
+/// A struct value: its type name and fields.
+#[derive(Clone)]
+pub struct StructVal {
+    pub name: Sym,
+    pub fields: Fields,
+}
+
+impl std::fmt::Debug for StructVal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Struct")
+            .field("name", &sym_name(self.name))
+            .field("fields", &self.fields)
+            .finish()
+    }
+}
+
+/// An enum variant value.
+#[derive(Clone)]
+pub struct EnumVal {
+    pub enum_name: Sym,
+    pub variant: Sym,
+    pub fields: Fields,
+}
+
+impl std::fmt::Debug for EnumVal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Enum")
+            .field("enum_name", &sym_name(self.enum_name))
+            .field("variant", &sym_name(self.variant))
+            .field("fields", &self.fields)
+            .finish()
+    }
 }
 
 impl Value {
+    /// A struct value named `name`.
+    pub(crate) fn record(name: Sym, fields: Fields) -> Value {
+        Value::Struct(Rc::new(StructVal { name, fields }))
+    }
+}
+
+/// A closure: its shared code and its capture cell. AX-40: the cell holds only
+/// the lambda's free variables that were bound where it was created, not the
+/// whole defining environment, and `code` (params + body) is shared by every
+/// closure made from the same lambda, so making, cloning or calling a closure
+/// never copies its body.
+#[derive(Debug)]
+pub struct ClosureVal {
+    pub code: Rc<ClosureCode>,
+    pub captured: RefCell<Vec<(Sym, Value)>>,
+}
+
+/// R13 native FFI: an opaque, affine native `Handle` = `{tag, payload}` where
+/// `payload` indexes a per-module handle table — NEVER a raw pointer, so Axon
+/// cannot forge a native pointer (I-4/I-11). `module`/`name` give nominal
+/// identity (`gfx::Window` ≠ `gfx::Surface`); `resource` marks an affine handle
+/// (consumed by a consuming native fn). The handle is opaque at the surface —
+/// no field access, no arithmetic (E1803).
+#[derive(Debug)]
+pub struct HandleVal {
+    pub module: String,
+    pub name: String,
+    pub payload: i64,
+    pub resource: bool,
+}
+
+impl Value {
+    /// A `Decimal` with mantissa `m`.
+    pub(crate) fn decimal(m: i128) -> Value {
+        Value::Decimal(Rc::new(m))
+    }
+
+    /// A tuple of `items`.
+    pub(crate) fn tuple(items: Vec<Value>) -> Value {
+        Value::Tuple(Rc::new(items))
+    }
+
     fn type_name(&self) -> String {
         match self {
             Value::Int(_) => "i64".into(),
-            Value::SizedInt { ty, .. } => ty.display(),
+            Value::SizedInt { ty, .. } => ty.name().into(),
             Value::Float(_) => "f64".into(),
             Value::Decimal(_) => "Decimal".into(),
             Value::Bool(_) => "bool".into(),
             Value::Str(_) => "str".into(),
             Value::Unit => "()".into(),
             Value::Array(_) => "[]".into(),
-            Value::Struct { name, .. } => name.clone(),
-            Value::Enum { enum_name, .. } => enum_name.clone(),
+            Value::Struct(s) => sym_name(s.name).to_string(),
+            Value::Enum(e) => sym_name(e.enum_name).to_string(),
             Value::Some(_) | Value::None => "Option".into(),
             Value::Ok(_) | Value::Err(_) => "Result".into(),
-            Value::Closure { .. } => "fn".into(),
+            Value::Closure(_) => "fn".into(),
             Value::Chan(_) => "chan".into(),
             Value::Tuple(_) => "tuple".into(),
             Value::Dict(_) => "dict".into(),
-            Value::Handle { module, name, .. } => format!("{module}::{name}"),
+            Value::Handle(h) => format!("{}::{}", h.module, h.name),
         }
     }
 }
@@ -166,6 +386,11 @@ impl Value {
 
 /// A non-`Ok` outcome of evaluation. Normal values flow as `Ok(Value)`; these
 /// are the ways evaluation can stop short of producing a value in-place.
+///
+/// AX-46: every message is a `Box<str>` (two words, against a `String`'s
+/// three), so a `Flow` is no wider than a `Value` plus its tag and every `R`
+/// the evaluator returns is 24 bytes. Messages are built once, on the cold
+/// path; nothing appends to them.
 #[derive(Debug)]
 pub enum Flow {
     /// `return <expr>` — unwind to the enclosing function boundary.
@@ -175,18 +400,18 @@ pub enum Flow {
     /// `continue` — skip to the next loop iteration.
     Continue,
     /// A runtime panic (failed assert, type error, OOB index, …).
-    Panic(String),
+    Panic(Box<str>),
     /// An `@[verify]` / deploy-gate rejection — a *policy* failure (the artifact
     /// didn't meet its declared bound), distinct from a bug-crash. Mapped to a
     /// dedicated exit code (3) so CI can branch on "verification failed" vs "the
     /// program crashed" (BUG_HUNT #26).
-    VerifyFailed(String),
+    VerifyFailed(Box<str>),
     /// An `@[corrigible]` fn was called while the corrigibility latch was
     /// tripped (`corrigible_halt()`). The call is *refused* — the body never
     /// runs — and the latch never clears. A distinct flow (and exit code 4) so
     /// CI / a supervisor can tell "the kill-switch caught this" apart from a
     /// crash (101), a policy reject (3), or a static error (2). (R9)
-    Halted(String),
+    Halted(Box<str>),
     /// An AI-policy condition that stops the program but is NOT a crash: an
     /// `ai_*` call can't run because no model is reachable and no
     /// `@[ai(policy(fallback: …))]` is declared (E1300), the per-fn AI call
@@ -196,7 +421,7 @@ pub enum Flow {
     /// flow (and exit code 5) so a supervisor can branch on "AI policy needs
     /// attention" specifically, exactly as @[verify]→3 and @[corrigible]→4 are
     /// carved out of the generic panic (101).
-    AiPolicyUnreachable(String),
+    AiPolicyUnreachable(Box<str>),
     /// `exit(code)` — terminate the process with `code`.
     Exit(i32),
     /// Phase 6: `resume(v)` inside an effect-handler arm — carries the value the
@@ -219,7 +444,7 @@ pub enum Flow {
     /// re-fire those effects. Surfaced as E1314 and mapped to a panic-class exit
     /// (the program is asking for true delimited continuations, which are
     /// deferred). Carries an explanatory message.
-    MultiShotUnsound(String),
+    MultiShotUnsound(Box<str>),
     /// Phase 5: a refinement-type PRECONDITION was violated at runtime — a value
     /// passed to a parameter `p: T where P` failed `P` when `_` was bound to it.
     /// The checker discharges this statically for constant args (E1209); for a
@@ -228,20 +453,20 @@ pub enum Flow {
     /// supervisor can tell a caller's precondition breach apart from a @[verify]
     /// postcondition (3), a kill-switch (4), an ai-policy stop (5), and a generic
     /// bug-panic (101).
-    RefineViolation(String),
+    RefineViolation(Box<str>),
     /// R12b: a kernel `Goal` exhausted its principal's budget mid-run. Not a
     /// crash — the goal hit the spend ceiling its principal was granted — so a
     /// distinct flow (exit code 7) lets a supervisor branch on "goal ran out of
     /// budget" apart from a @[verify] (3), kill-switch (4), ai-policy (5),
     /// refinement (6), and a generic panic (101). The partial best is preserved
     /// (queryable via `kernel_goal_best_score`). See R12b-kernel-goal.md (E1604).
-    GoalBudgetExhausted(String),
+    GoalBudgetExhausted(Box<str>),
     /// F5 (Phase 9): a builtin tried to perform an effect outside the ceiling
     /// declared by the active `Sandbox<P>` — e.g. an AI-emitted tool attempted
     /// `ai_complete` (Net effect) when the sandbox only permits `FS`. A distinct
     /// flow (exit code 8) so a supervisor can tell "the sandbox caught this" apart
     /// from a genuine crash (101), a policy rejection (3), or the kill-switch (4).
-    SandboxViolation(String),
+    SandboxViolation(Box<str>),
 }
 
 /// Process exit code for an `@[verify]` / deploy-gate rejection. Distinct from
@@ -380,14 +605,14 @@ pub const RUNTIME_PANIC_EXIT_CODE: i32 = 101;
 type R = Result<Value, Flow>;
 
 fn panic<T>(msg: impl Into<String>) -> Result<T, Flow> {
-    Err(Flow::Panic(msg.into()))
+    Err(Flow::Panic(msg.into().into_boxed_str()))
 }
 
 /// Like `panic`, but for AI-policy conditions (E1300/E1301/E1302) that should
 /// stop the program with the distinct [`AI_POLICY_EXIT_CODE`] (5) rather than
 /// the generic crash code (101) — see [`Flow::AiPolicyUnreachable`].
 fn ai_policy_err<T>(msg: impl Into<String>) -> Result<T, Flow> {
-    Err(Flow::AiPolicyUnreachable(msg.into()))
+    Err(Flow::AiPolicyUnreachable(msg.into().into_boxed_str()))
 }
 
 // ── Lexical environment ──────────────────────────────────────────────────────
@@ -1080,17 +1305,18 @@ pub fn value_shape(v: &Value) -> String {
                     format!("tuple, len={}", items.len())
                 }
             }
-            Value::Struct { name, fields } => {
+            Value::Struct(s) => {
+                let name = sym_name(s.name);
                 if d < 2 {
-                    let mut ks: Vec<&String> = fields.keys().collect();
-                    ks.sort();
-                    let inner: Vec<String> = ks
-                        .iter()
-                        .map(|k| format!("{k}: {}", go(&fields[*k], d + 1)))
+                    let inner: Vec<String> = s
+                        .fields
+                        .by_name()
+                        .into_iter()
+                        .map(|(k, v)| format!("{k}: {}", go(v, d + 1)))
                         .collect();
                     format!("{name} {{ {} }}", inner.join(", "))
                 } else {
-                    name.clone()
+                    name.to_string()
                 }
             }
             Value::Dict(dd) => {
@@ -1183,14 +1409,12 @@ pub fn value_as_literal(v: &Value) -> std::result::Result<String, String> {
         // skipping structs means the session cannot carry its own headline case.
         // Field order is sorted so the emitted literal is deterministic; a
         // HashMap's iteration order would make the session file differ run to run.
-        Value::Struct { name, fields } => {
-            let mut keys: Vec<&String> = fields.keys().collect();
-            keys.sort();
-            let mut parts = Vec::with_capacity(keys.len());
-            for k in keys {
-                parts.push(format!("{k}: {}", value_as_literal(&fields[k])?));
+        Value::Struct(s) => {
+            let mut parts = Vec::with_capacity(s.fields.len());
+            for (k, v) in s.fields.by_name() {
+                parts.push(format!("{k}: {}", value_as_literal(v)?));
             }
-            Ok(format!("{name} {{ {} }}", parts.join(", ")))
+            Ok(format!("{} {{ {} }}", sym_name(s.name), parts.join(", ")))
         }
         // Option / Result / Tuple / Enum all HAVE literal syntax, and a realistic
         // session binds them constantly — `let o = parse_int(s)` is a `Result`.
@@ -1202,7 +1426,7 @@ pub fn value_as_literal(v: &Value) -> std::result::Result<String, String> {
         Value::Err(inner) => Ok(format!("Err({})", value_as_literal(inner)?)),
         Value::Tuple(items) => {
             let mut out = Vec::with_capacity(items.len());
-            for it in items {
+            for it in items.iter() {
                 out.push(value_as_literal(it)?);
             }
             // A 1-tuple needs the trailing comma or it re-parses as a
@@ -1213,19 +1437,15 @@ pub fn value_as_literal(v: &Value) -> std::result::Result<String, String> {
                 Ok(format!("({})", out.join(", ")))
             }
         }
-        Value::Enum {
-            enum_name,
-            variant,
-            fields,
-        } => {
-            if fields.is_empty() {
+        Value::Enum(e) => {
+            let (enum_name, variant) = (sym_name(e.enum_name), sym_name(e.variant));
+            if e.fields.is_empty() {
                 Ok(format!("{enum_name}::{variant}"))
             } else {
-                let mut keys: Vec<&String> = fields.keys().collect();
-                keys.sort(); // deterministic, as for structs
-                let mut parts = Vec::with_capacity(keys.len());
-                for k in keys {
-                    parts.push(format!("{k}: {}", value_as_literal(&fields[k])?));
+                // deterministic, as for structs
+                let mut parts = Vec::with_capacity(e.fields.len());
+                for (k, v) in e.fields.by_name() {
+                    parts.push(format!("{k}: {}", value_as_literal(v)?));
                 }
                 Ok(format!("{enum_name}::{variant} {{ {} }}", parts.join(", ")))
             }
@@ -1508,19 +1728,15 @@ impl SendValue {
                 .map(|(i, x)| SendValue::from_value_at(x, format!("{path}[{i}]")))
                 .collect()
         }
-        fn fields(
-            m: &HashMap<String, Value>,
-            path: &str,
-        ) -> Result<Vec<(String, SendValue)>, UnsendablePayload> {
-            // Sort keys for a deterministic owned snapshot (HashMap iteration order
-            // is nondeterministic; the parity round-trip must be stable).
-            let mut keys: Vec<&String> = m.keys().collect();
-            keys.sort();
-            keys.into_iter()
-                .map(|k| {
+        fn fields(m: &Fields, path: &str) -> Result<Vec<(String, SendValue)>, UnsendablePayload> {
+            // Sorted by name for a deterministic owned snapshot (the parity
+            // round-trip must be stable).
+            m.by_name()
+                .into_iter()
+                .map(|(k, v)| {
                     Ok((
-                        k.clone(),
-                        SendValue::from_value_at(&m[k], format!("{path}.{k}"))?,
+                        k.to_string(),
+                        SendValue::from_value_at(v, format!("{path}.{k}"))?,
                     ))
                 })
                 .collect()
@@ -1529,26 +1745,22 @@ impl SendValue {
             Value::Int(n) => SendValue::Int(*n),
             Value::SizedInt { val, ty } => SendValue::SizedInt {
                 val: *val,
-                ty: ty.clone(),
+                ty: ty.to_type(),
             },
             Value::Float(f) => SendValue::Float(*f),
-            Value::Decimal(m) => SendValue::Decimal(*m),
+            Value::Decimal(m) => SendValue::Decimal(**m),
             Value::Bool(b) => SendValue::Bool(*b),
             Value::Str(s) => SendValue::Str(String::clone(s)),
             Value::Unit => SendValue::Unit,
             Value::Array(xs) => SendValue::Array(arr(xs, &path)?),
-            Value::Struct { name, fields: f } => SendValue::Struct {
-                name: name.clone(),
-                fields: fields(f, &path)?,
+            Value::Struct(s) => SendValue::Struct {
+                name: sym_name(s.name).to_string(),
+                fields: fields(&s.fields, &path)?,
             },
-            Value::Enum {
-                enum_name,
-                variant,
-                fields: f,
-            } => SendValue::Enum {
-                enum_name: enum_name.clone(),
-                variant: variant.clone(),
-                fields: fields(f, &path)?,
+            Value::Enum(e) => SendValue::Enum {
+                enum_name: sym_name(e.enum_name).to_string(),
+                variant: sym_name(e.variant).to_string(),
+                fields: fields(&e.fields, &path)?,
             },
             Value::Some(b) => {
                 SendValue::Some(Box::new(Self::from_value_at(b, format!("{path}.Some"))?))
@@ -1558,7 +1770,8 @@ impl SendValue {
             Value::Err(b) => {
                 SendValue::Err(Box::new(Self::from_value_at(b, format!("{path}.Err"))?))
             }
-            Value::Closure { code, captured } => {
+            Value::Closure(c) => {
+                let (code, captured) = (&c.code, &c.captured);
                 let snapshot = captured.borrow();
                 let mut named: Vec<(Rc<str>, &Value)> =
                     snapshot.iter().map(|(k, v)| (sym_name(*k), v)).collect();
@@ -1618,34 +1831,39 @@ impl SendValue {
     pub fn into_value(self) -> Value {
         match self {
             SendValue::Int(n) => Value::Int(n),
-            SendValue::SizedInt { val, ty } => Value::SizedInt { val, ty },
+            SendValue::SizedInt { val, ty } => match IntWidth::of_type(&ty) {
+                Some(ty) => Value::SizedInt { val, ty },
+                None => Value::Int(val),
+            },
             SendValue::Float(f) => Value::Float(f),
-            SendValue::Decimal(m) => Value::Decimal(m),
+            SendValue::Decimal(m) => Value::decimal(m),
             SendValue::Bool(b) => Value::Bool(b),
             SendValue::Str(s) => Value::Str(Rc::new(s)),
             SendValue::Unit => Value::Unit,
             SendValue::Array(xs) => Value::Array(Rc::new(
                 xs.into_iter().map(Self::into_value).collect(),
             )),
-            SendValue::Struct { name, fields } => Value::Struct {
-                name,
-                fields: fields
-                    .into_iter()
-                    .map(|(k, v)| (k, v.into_value()))
-                    .collect(),
-            },
+            SendValue::Struct { name, fields } => Value::record(
+                intern(&name),
+                Fields::from_pairs(
+                    fields
+                        .into_iter()
+                        .map(|(k, v)| (intern(&k), v.into_value())),
+                ),
+            ),
             SendValue::Enum {
                 enum_name,
                 variant,
                 fields,
-            } => Value::Enum {
-                enum_name,
-                variant,
-                fields: fields
-                    .into_iter()
-                    .map(|(k, v)| (k, v.into_value()))
-                    .collect(),
-            },
+            } => Value::Enum(Rc::new(EnumVal {
+                enum_name: intern(&enum_name),
+                variant: intern(&variant),
+                fields: Fields::from_pairs(
+                    fields
+                        .into_iter()
+                        .map(|(k, v)| (intern(&k), v.into_value())),
+                ),
+            })),
             SendValue::Some(b) => Value::Some(Box::new(b.into_value())),
             SendValue::None => Value::None,
             SendValue::Ok(b) => Value::Ok(Box::new(b.into_value())),
@@ -1654,7 +1872,7 @@ impl SendValue {
                 params,
                 body,
                 captured,
-            } => Value::Closure {
+            } => Value::Closure(Rc::new(ClosureVal {
                 code: Rc::new(ClosureCode {
                     params: params.iter().map(|p| intern(p)).collect(),
                     body: *body,
@@ -1663,14 +1881,14 @@ impl SendValue {
                 // cell: the SendValue path is a deep clone by construction (a
                 // shared cell is exactly what it cannot carry), so the two sides
                 // are independent counters, not aliases (T40 + R15 Slice 2).
-                captured: Rc::new(RefCell::new(
+                captured: RefCell::new(
                     captured
                         .into_iter()
                         .map(|(k, v)| (intern(&k), v.into_value()))
                         .collect(),
-                )),
-            },
-            SendValue::Tuple(xs) => Value::Tuple(xs.into_iter().map(Self::into_value).collect()),
+                ),
+            })),
+            SendValue::Tuple(xs) => Value::tuple(xs.into_iter().map(Self::into_value).collect()),
             SendValue::Dict(entries) => {
                 let map: std::collections::BTreeMap<String, Value> = entries
                     .into_iter()
@@ -2413,12 +2631,17 @@ fn materialise_bindings(interp: &Interp) -> String {
                 }
             }
             Value::Tuple(items) => {
-                for it in items {
+                for it in items.iter() {
                     count_dicts(it, seen);
                 }
             }
-            Value::Struct { fields, .. } | Value::Enum { fields, .. } => {
-                for f in fields.values() {
+            Value::Struct(s) => {
+                for (_, f) in s.fields.iter() {
+                    count_dicts(f, seen);
+                }
+            }
+            Value::Enum(e) => {
+                for (_, f) in e.fields.iter() {
                     count_dicts(f, seen);
                 }
             }
@@ -2627,29 +2850,29 @@ fn run_test_fn_inner(program: &Program, name: &str) -> Result<(), String> {
     };
     match interp.call_fn(f, vec![]) {
         Ok(_) => Ok(()),
-        Err(Flow::Panic(m)) => Err(m),
+        Err(Flow::Panic(m)) => Err(m.into()),
         // A verify failure inside a test is still a failure (drives
         // `@[test(should_fail)]`); surface its message like a panic.
-        Err(Flow::VerifyFailed(m)) => Err(m),
+        Err(Flow::VerifyFailed(m)) => Err(m.into()),
         // A corrigibility halt inside a test is a failure too (lets
         // `@[test(should_fail)]` assert the kill-switch latched).
-        Err(Flow::Halted(m)) => Err(m),
+        Err(Flow::Halted(m)) => Err(m.into()),
         // An AI-policy stop inside a test is a failure (surfaces like a panic;
         // also lets `@[test(should_fail)]` assert the policy gate fired).
-        Err(Flow::AiPolicyUnreachable(m)) => Err(m),
+        Err(Flow::AiPolicyUnreachable(m)) => Err(m.into()),
         // A refinement-precondition violation inside a test is a failure too
         // (lets `@[test(should_fail)]` assert a bad arg is caught).
-        Err(Flow::RefineViolation(m)) => Err(m),
+        Err(Flow::RefineViolation(m)) => Err(m.into()),
         // A kernel-goal budget exhaustion inside a test is a failure too (lets
         // `@[test(should_fail)]` assert the budget ceiling fired).
-        Err(Flow::GoalBudgetExhausted(m)) => Err(m),
+        Err(Flow::GoalBudgetExhausted(m)) => Err(m.into()),
         // A sandbox violation inside a test is a failure (lets
         // `@[test(should_fail)]` assert the sandbox ceiling fired).
-        Err(Flow::SandboxViolation(m)) => Err(m),
+        Err(Flow::SandboxViolation(m)) => Err(m.into()),
         Err(Flow::Resume(_)) => Err("`resume` called outside an effect-handler arm".to_string()),
         // E1314 multi-shot-unsound inside a test is a failure (lets
         // `@[test(should_fail)]` assert the unsound-replay case is refused).
-        Err(Flow::MultiShotUnsound(m)) => Err(m),
+        Err(Flow::MultiShotUnsound(m)) => Err(m.into()),
         Err(Flow::Exit(0)) => Ok(()),
         Err(Flow::Exit(n)) => Err(format!("exited with code {n}")),
         // A stray return/break/continue escaping the fn — treat as clean.
@@ -2665,7 +2888,7 @@ fn flow_to_msg(f: Flow) -> String {
         | Flow::AiPolicyUnreachable(m)
         | Flow::RefineViolation(m)
         | Flow::GoalBudgetExhausted(m)
-        | Flow::SandboxViolation(m) => m,
+        | Flow::SandboxViolation(m) => m.into(),
         Flow::Exit(n) => format!("exited with code {n}"),
         _ => "non-local control flow escaped the program".into(),
     }
@@ -2755,7 +2978,7 @@ impl<'p> Interp<'p> {
         // and the active-handle field below are derived from it.
         let ambient = ambient_sandbox();
         Interp {
-            res: Resolution::build(program),
+            res: Resolution::build(program, &structs, &enums),
             fn_table,
             fn_of_sym,
             fn_of_def,
@@ -2948,11 +3171,14 @@ impl<'p> Interp<'p> {
         if let Some(raw) = self.current_call_tier.borrow_mut().take() {
             return match Tier::parse(&raw) {
                 Some(t) => Ok(t),
-                None => Err(Flow::AiPolicyUnreachable(format!(
-                    "[{}] unknown AI tier `{raw}` — configured tiers: {}",
-                    crate::error::E1302,
-                    Tier::configured()
-                ))),
+                None => Err(Flow::AiPolicyUnreachable(
+                    format!(
+                        "[{}] unknown AI tier `{raw}` — configured tiers: {}",
+                        crate::error::E1302,
+                        Tier::configured()
+                    )
+                    .into(),
+                )),
             };
         }
         // Steps 2-3: the enclosing @[ai(policy(tier:))], else the default —
@@ -2963,11 +3189,14 @@ impl<'p> Interp<'p> {
             return Ok(DEFAULT_TIER);
         };
         crate::ai_routing::tier_from_attrs(&f.attrs).map_err(|raw| {
-            Flow::AiPolicyUnreachable(format!(
-                "[{}] unknown AI tier `{raw}` — configured tiers: {}",
-                crate::error::E1302,
-                Tier::configured()
-            ))
+            Flow::AiPolicyUnreachable(
+                format!(
+                    "[{}] unknown AI tier `{raw}` — configured tiers: {}",
+                    crate::error::E1302,
+                    Tier::configured()
+                )
+                .into(),
+            )
         })
     }
 
@@ -3119,11 +3348,14 @@ impl<'p> Interp<'p> {
         // or reverse its own shutdown. Keyed on the annotation, enforced by the
         // engine, so a user cannot write a corrigible fn that ignores the halt.
         if self.corrigible_halted.get() && f.attrs.iter().any(|a| a.name == "corrigible") {
-            return Err(Flow::Halted(format!(
-                "`{}` refused: corrigibility kill-switch is latched \
-                 (corrigible_halt() was called; there is no resume)",
-                f.name
-            )));
+            return Err(Flow::Halted(
+                format!(
+                    "`{}` refused: corrigibility kill-switch is latched \
+             (corrigible_halt() was called; there is no resume)",
+                    f.name
+                )
+                .into(),
+            ));
         }
         // The leading i64 / f64 args (if any) form the goal-search input
         // tuple — recorded so goal_run can resume from the best prior probe
@@ -3171,8 +3403,8 @@ impl<'p> Interp<'p> {
             // R19 Slice B: coerce Int→SizedInt when the declared param type is a
             // non-i64 integer width — ensures arithmetic inside the callee's body
             // uses width-correct ops (completeness, I-9).
-            let a = if let Some(width) = interp_eval_axon_type_to_width(&p.ty) {
-                interp_eval_coerce_to_sized(a, width)
+            let a = if let Some(width) = axon_type_to_width(&p.ty) {
+                coerce_to_sized(a, width)
             } else {
                 a
             };
@@ -3200,14 +3432,17 @@ impl<'p> Interp<'p> {
                         // `p: T where E[p] > k` that use the param name directly).
                         pred_env.define(*s, val.clone());
                         if let Value::Bool(false) = self.eval(pred, &mut pred_env)? {
-                            return Err(Flow::RefineViolation(format!(
-                                "parameter `{}` of `{}` (= {}) violates the refinement `{}` — \
-                                 the value does not satisfy the type's predicate",
-                                p.name,
-                                f.name,
-                                value::display(&val),
-                                rname
-                            )));
+                            return Err(Flow::RefineViolation(
+                                format!(
+                                    "parameter `{}` of `{}` (= {}) violates the refinement `{}` — \
+                             the value does not satisfy the type's predicate",
+                                    p.name,
+                                    f.name,
+                                    value::display(&val),
+                                    rname
+                                )
+                                .into(),
+                            ));
                         }
                     }
                 }
@@ -3373,13 +3608,16 @@ impl<'p> Interp<'p> {
                     // `_` and evaluate against it instead of a bare env.
                     env.define(SYM_UNDERSCORE, result.clone());
                     if let Value::Bool(false) = self.eval(pred, env)? {
-                        return Err(Flow::RefineViolation(format!(
-                            "the return value of `{}` (= {}) violates the refinement return \
-                             type `{}` — the value does not satisfy the type's predicate",
-                            f.name,
-                            value::display(&result),
-                            rname
-                        )));
+                        return Err(Flow::RefineViolation(
+                            format!(
+                                "the return value of `{}` (= {}) violates the refinement return \
+                         type `{}` — the value does not satisfy the type's predicate",
+                                f.name,
+                                value::display(&result),
+                                rname
+                            )
+                            .into(),
+                        ));
                     }
                 }
             }
@@ -3481,21 +3719,22 @@ impl<'p> Interp<'p> {
         //    `@[verify(value > 0 && confidence >= 0.8)]` and have it
         //    enforced at runtime — closing ROADMAP §9.5 F6.
         if let Some(spec) = &f.verify {
-            if let Value::Struct { name, fields } = &result {
+            if let Value::Struct(sv) = &result {
+                let fields = &sv.fields;
                 // `@[verify]` enforces a postcondition on the returned value's
                 // `value`/`confidence` fields. Both `Uncertain` and `Temporal`
                 // carry those fields, so the same gate applies to both — a
                 // `@[verify(value <= 500)]` on a Temporal-returning fn was
                 // silently UNENFORCED before (only Uncertain hit this branch).
-                if name == "Uncertain" || name == "Temporal" {
+                if sv.name == SYM_UNCERTAIN || sv.name == SYM_TEMPORAL {
                     let decoded =
                         crate::verify::decode_verify_predicate_with_ident(&spec.predicate);
                     let val_str = fields
-                        .get("value")
+                        .get(SYM_VALUE)
                         .map(display)
                         .unwrap_or_else(|| "?".into());
                     let conf_str = fields
-                        .get("confidence")
+                        .get(SYM_CONFIDENCE)
                         .map(display)
                         .unwrap_or_else(|| "?".into());
                     let input_str = input_arg
@@ -3505,7 +3744,7 @@ impl<'p> Interp<'p> {
                     if let Some((ident, op, bound)) = decoded {
                         // Simple shape: do the targeted, well-typed compare.
                         let observed: Option<f64> =
-                            match (ident.as_str(), fields.get(ident.as_str())) {
+                            match (ident.as_str(), fields.named(ident.as_str())) {
                                 ("confidence", Some(Value::Float(c))) => Some(*c),
                                 ("value", Some(Value::Int(n))) => Some(*n as f64),
                                 ("value", Some(Value::Float(v))) => Some(*v),
@@ -3513,18 +3752,21 @@ impl<'p> Interp<'p> {
                             };
                         if let Some(c) = observed {
                             if !cmp_f64(&op, c, bound) {
-                                return Err(Flow::VerifyFailed(format!(
-                                    "verify failed in {}: {} {} {} {} is false \
-                                     (value {}, confidence {}{})",
-                                    verify_fn_label(&f.name),
-                                    ident,
-                                    c,
-                                    crate::verify::binop_to_verify_str(&op),
-                                    bound,
-                                    val_str,
-                                    conf_str,
-                                    input_str,
-                                )));
+                                return Err(Flow::VerifyFailed(
+                                    format!(
+                                        "verify failed in {}: {} {} {} {} is false \
+                                 (value {}, confidence {}{})",
+                                        verify_fn_label(&f.name),
+                                        ident,
+                                        c,
+                                        crate::verify::binop_to_verify_str(&op),
+                                        bound,
+                                        val_str,
+                                        conf_str,
+                                        input_str,
+                                    )
+                                    .into(),
+                                ));
                             }
                         }
                     } else {
@@ -3533,25 +3775,28 @@ impl<'p> Interp<'p> {
                         // boolean expression Axon understands is accepted —
                         // `&&`, `||`, comparisons, function calls, you name it.
                         let mut pred_env = Env::new();
-                        if let Some(v) = fields.get("value") {
+                        if let Some(v) = fields.get(SYM_VALUE) {
                             pred_env.define(SYM_VALUE, v.clone());
                         }
-                        if let Some(c) = fields.get("confidence") {
+                        if let Some(c) = fields.get(SYM_CONFIDENCE) {
                             pred_env.define(SYM_CONFIDENCE, c.clone());
                         }
-                        if let Some(s) = fields.get("source_tag") {
+                        if let Some(s) = fields.get(SYM_SOURCE_TAG) {
                             pred_env.define(SYM_SOURCE_TAG, s.clone());
                         }
                         let outcome = self.eval(&spec.predicate, &mut pred_env)?;
                         if let Value::Bool(false) = outcome {
-                            return Err(Flow::VerifyFailed(format!(
-                                "verify failed in {}: composite predicate did not hold \
-                                 (value {}, confidence {}{})",
-                                verify_fn_label(&f.name),
-                                val_str,
-                                conf_str,
-                                input_str,
-                            )));
+                            return Err(Flow::VerifyFailed(
+                                format!(
+                                    "verify failed in {}: composite predicate did not hold \
+                             (value {}, confidence {}{})",
+                                    verify_fn_label(&f.name),
+                                    val_str,
+                                    conf_str,
+                                    input_str,
+                                )
+                                .into(),
+                            ));
                         }
                     }
                 }
@@ -3579,15 +3824,18 @@ impl<'p> Interp<'p> {
                     // the composite path which leaves them unbound (predicate
                     // can't reference a field a scalar doesn't have).
                     if ident == "value" && !cmp_f64(&op, observed, bound) {
-                        return Err(Flow::VerifyFailed(format!(
-                            "verify failed in {}: value {} {} {} is false (value {}{})",
-                            verify_fn_label(&f.name),
-                            observed,
-                            crate::verify::binop_to_verify_str(&op),
-                            bound,
-                            val_str,
-                            input_str,
-                        )));
+                        return Err(Flow::VerifyFailed(
+                            format!(
+                                "verify failed in {}: value {} {} {} is false (value {}{})",
+                                verify_fn_label(&f.name),
+                                observed,
+                                crate::verify::binop_to_verify_str(&op),
+                                bound,
+                                val_str,
+                                input_str,
+                            )
+                            .into(),
+                        ));
                     }
                 } else {
                     // Composite predicate: bind `value` to the scalar and evaluate.
@@ -3595,12 +3843,10 @@ impl<'p> Interp<'p> {
                     pred_env.define(SYM_VALUE, result.clone());
                     let outcome = self.eval(&spec.predicate, &mut pred_env)?;
                     if let Value::Bool(false) = outcome {
-                        return Err(Flow::VerifyFailed(format!(
-                            "verify failed in {}: composite predicate did not hold (value {}{})",
-                            verify_fn_label(&f.name),
-                            val_str,
-                            input_str,
-                        )));
+                        return Err(Flow::VerifyFailed(format!("verify failed in {}: composite predicate did not hold (value {}{})",
+                        verify_fn_label(&f.name),
+                        val_str,
+                        input_str,).into()));
                     }
                 }
             }
@@ -3635,9 +3881,10 @@ impl<'p> Interp<'p> {
     /// visible to the frame evaluating it, since closures, fns, handler arms
     /// and continuation replays all run on their own (snapshot) envs.
     fn call_closure_owned_by(&self, c: &Value, args: Vec<Value>, private_refs: usize) -> R {
-        let Value::Closure { code, captured } = c else {
+        let Value::Closure(cv) = c else {
             return panic(format!("value of type {} is not callable", c.type_name()));
         };
+        let (code, captured) = (&cv.code, &cv.captured);
         if code.params.len() != args.len() {
             return panic(format!(
                 "lambda: expected {} args, got {}",
@@ -3658,7 +3905,7 @@ impl<'p> Interp<'p> {
         // argument, stored in an array, dict or capture, or currently running):
         // a re-entrant call must see the cell as it stood before this call, and
         // this call's in-place writes would otherwise destroy that state.
-        let lend = Rc::strong_count(captured) == private_refs;
+        let lend = Rc::strong_count(cv) == private_refs;
         // Lent, the cell's vector itself becomes the env (it comes back below
         // with its capacity, so steady-state calls allocate nothing); copied,
         // the env is sized for the params up front.
@@ -3726,33 +3973,32 @@ impl<'p> Interp<'p> {
     }
 
     fn unknown_goal_name(name: &str) -> Flow {
-        Flow::Panic(format!(
-            "goal function `{name}` is not defined and has no recorded provenance — \
-             check the name matches an @[adaptive] fn (typo?)"
-        ))
+        Flow::Panic(
+            format!(
+                "goal function `{name}` is not defined and has no recorded provenance — \
+         check the name matches an @[adaptive] fn (typo?)"
+            )
+            .into(),
+        )
     }
 
     /// Flatten a place expression (`base.f[i].g …`) into the root variable's
     /// sym and a base-to-leaf list of steps, evaluating any index expressions
     /// now (so the later mutable walk holds no other borrow of `env`).
-    fn flatten_place<'e>(
-        &self,
-        place: &'e Expr,
-        env: &mut Env,
-    ) -> Result<(Sym, Vec<PlaceStep<'e>>), Flow> {
+    fn flatten_place(&self, place: &Expr, env: &mut Env) -> Result<(Sym, Vec<PlaceStep>), Flow> {
         let mut steps = Vec::new();
         let mut cur = place;
         let base = loop {
             match cur {
                 Expr::Ident(name) => break self.res.sym(cur, name),
                 Expr::FieldAccess { receiver, field } => {
-                    steps.push(PlaceStep::Field(field));
+                    steps.push(PlaceStep::Field(self.res.sym(cur, field)));
                     cur = receiver.as_ref();
                 }
                 Expr::Index { receiver, index } => {
                     let idx = as_int(&self.eval(index, env)?)?;
                     if idx < 0 {
-                        return Err(Flow::Panic(format!("negative index {idx}")));
+                        return Err(Flow::Panic(format!("negative index {idx}").into()));
                     }
                     steps.push(PlaceStep::Index(idx as usize));
                     cur = receiver.as_ref();
@@ -3778,7 +4024,7 @@ fn lit_to_val(lit: &Literal) -> Value {
         Literal::Float(f) => Value::Float(*f),
         Literal::Bool(b) => Value::Bool(*b),
         Literal::Str(s) => Value::Str(Rc::new(s.clone())),
-        Literal::Decimal(m) => Value::Decimal(*m),
+        Literal::Decimal(m) => Value::decimal(*m),
     }
 }
 
@@ -3801,8 +4047,8 @@ fn type_name_of(ty: &crate::ast::AxonType) -> String {
 }
 
 /// One step of a flattened place expression (for nested place assignment).
-enum PlaceStep<'e> {
-    Field(&'e str),
+enum PlaceStep {
+    Field(Sym),
     Index(usize),
 }
 
@@ -3825,7 +4071,7 @@ fn as_float(v: &Value) -> Result<f64, Flow> {
 }
 fn as_decimal(v: &Value) -> Result<i128, Flow> {
     match v {
-        Value::Decimal(m) => Ok(*m),
+        Value::Decimal(m) => Ok(**m),
         other => panic(format!("expected Decimal, got {}", other.type_name())),
     }
 }
@@ -4185,14 +4431,14 @@ pub(crate) const SRC_TAG_RUNTIME: i64 = 2;
 /// the default execution path — was reporting a runtime-sourced value as
 /// user-constructed, which is the fail-open direction for a provenance field.
 fn make_uncertain_tagged(value: Value, confidence: f64, source_tag: i64) -> Value {
-    let mut fields = HashMap::new();
-    fields.insert("value".to_string(), value);
-    fields.insert("confidence".to_string(), Value::Float(confidence));
-    fields.insert("source_tag".to_string(), Value::Int(source_tag));
-    Value::Struct {
-        name: "Uncertain".to_string(),
-        fields,
-    }
+    Value::record(
+        SYM_UNCERTAIN,
+        Fields::from_pairs([
+            (SYM_VALUE, value),
+            (SYM_CONFIDENCE, Value::Float(confidence)),
+            (SYM_SOURCE_TAG, Value::Int(source_tag)),
+        ]),
+    )
 }
 
 /// Build a `Temporal { value, confidence, horizon_ms, decay, created_ms,
@@ -4209,23 +4455,20 @@ fn make_temporal(
     decay: f64,
     created_ms: i64,
 ) -> Value {
-    let mut fields = HashMap::new();
-    fields.insert("value".to_string(), value);
-    fields.insert(
-        "confidence".to_string(),
-        Value::Float(confidence.clamp(0.0, 1.0)),
-    );
-    fields.insert("horizon_ms".to_string(), Value::Int(horizon_ms));
-    fields.insert("decay".to_string(), Value::Float(decay));
-    fields.insert("created_ms".to_string(), Value::Int(created_ms));
-    fields.insert(
-        "valid_until_ms".to_string(),
-        Value::Int(created_ms.saturating_add(horizon_ms)),
-    );
-    Value::Struct {
-        name: "Temporal".to_string(),
-        fields,
-    }
+    Value::record(
+        SYM_TEMPORAL,
+        Fields::from_pairs([
+            (SYM_VALUE, value),
+            (SYM_CONFIDENCE, Value::Float(confidence.clamp(0.0, 1.0))),
+            (intern("horizon_ms"), Value::Int(horizon_ms)),
+            (intern("decay"), Value::Float(decay)),
+            (intern("created_ms"), Value::Int(created_ms)),
+            (
+                intern("valid_until_ms"),
+                Value::Int(created_ms.saturating_add(horizon_ms)),
+            ),
+        ]),
+    )
 }
 
 fn is_i64_type(ty: &crate::ast::AxonType) -> bool {
@@ -4323,32 +4566,34 @@ mod value;
 mod regex;
 use value::*;
 
-// ── R19 Slice B — interp.rs-level coercion helpers ───────────────────────────
-// These mirror the ones in eval.rs but are needed by call_fn (in this file).
+// ── R19 Slice B — coercion helpers ────────────────────────────────────────────
 
-/// Map AxonType → semantic Type for non-i64 integer widths only. Returns None
-/// for i64 (already the default Value::Int representation) and non-integers.
-fn interp_eval_axon_type_to_width(ty: &crate::ast::AxonType) -> Option<crate::types::Type> {
-    use crate::ast::AxonType::Named;
-    use crate::types::Type;
+/// The width an `AxonType` annotation names, but only for non-i64 fixed-width
+/// integer types. `None` for i64 (no coercion needed — `Int(i64)` is already
+/// the correct representation) and for all non-integer types.
+fn axon_type_to_width(ty: &crate::ast::AxonType) -> Option<IntWidth> {
     match ty {
-        Named(n) => match n.as_str() {
-            "u8" => Some(Type::U8),
-            "u16" => Some(Type::U16),
-            "u32" => Some(Type::U32),
-            "u64" => Some(Type::U64),
-            "i8" => Some(Type::I8),
-            "i16" => Some(Type::I16),
-            "i32" => Some(Type::I32),
-            _ => None,
+        crate::ast::AxonType::Named(n) => match n.as_str() {
+            "u8" => Some(IntWidth::U8),
+            "u16" => Some(IntWidth::U16),
+            "u32" => Some(IntWidth::U32),
+            "u64" => Some(IntWidth::U64),
+            "i8" => Some(IntWidth::I8),
+            "i16" => Some(IntWidth::I16),
+            "i32" => Some(IntWidth::I32),
+            _ => None, // i64 and non-integer names: no coercion
         },
         _ => None,
     }
 }
 
-/// Coerce Int → SizedInt (or re-tag an existing SizedInt). Other values pass
-/// through unchanged. Used at the call-arg → param boundary.
-fn interp_eval_coerce_to_sized(v: Value, width: crate::types::Type) -> Value {
+/// Coerce a runtime value to a `SizedInt` when the target type is a non-i64
+/// integer. `Int(n)` → `SizedInt{n, ty}`. Any other value is returned as-is
+/// (the type-checker has already validated the types match; this is a
+/// representation upgrade only). `SizedInt` with a different width is
+/// re-tagged to the new width (preserves the stored bit-pattern; the checker
+/// ensures same-width ops only).
+fn coerce_to_sized(v: Value, width: IntWidth) -> Value {
     match v {
         Value::Int(n) => Value::SizedInt { val: n, ty: width },
         Value::SizedInt { val, .. } => Value::SizedInt { val, ty: width },
@@ -4760,23 +5005,20 @@ fn main() { }
         let mut inner = std::collections::BTreeMap::new();
         inner.insert("k".to_string(), Value::Int(9));
         let dict = Value::Dict(Rc::new(RefCell::new(inner)));
-        let mut sf = HashMap::new();
-        sf.insert("d".to_string(), dict);
-        sf.insert("n".to_string(), Value::Int(1));
-        let s = Value::Struct {
-            name: "S".to_string(),
-            fields: sf,
-        };
+        let s = Value::record(
+            intern("S"),
+            Fields::from_pairs([(intern("d"), dict), (intern("n"), Value::Int(1))]),
+        );
         let v = Value::Array(Rc::new(vec![s, Value::Str(Rc::new("hi".to_string()))]));
         let sv = SendValue::from_value(&v).expect("Chan-free ⇒ sendable");
         let back = sv.into_value();
         // Spot-check the reconstructed shape.
         if let Value::Array(xs) = &back {
             assert_eq!(xs.len(), 2);
-            if let Value::Struct { name, fields } = &xs[0] {
-                assert_eq!(name, "S");
-                assert!(matches!(fields.get("n"), Some(Value::Int(1))));
-                if let Some(Value::Dict(d)) = fields.get("d") {
+            if let Value::Struct(sv) = &xs[0] {
+                assert_eq!(&*sym_name(sv.name), "S");
+                assert!(matches!(sv.fields.named("n"), Some(Value::Int(1))));
+                if let Some(Value::Dict(d)) = sv.fields.named("d") {
                     assert!(matches!(d.borrow().get("k"), Some(Value::Int(9))));
                 } else {
                     panic!("dict field lost");
@@ -5410,10 +5652,10 @@ mod literal_escape_tests {
                 Value::Err(Box::new(Value::Str(Rc::new("bad".to_string())))),
                 "Err(\"bad\")",
             ),
-            (Value::Tuple(vec![Value::Int(1), Value::Int(2)]), "(1, 2)"),
+            (Value::tuple(vec![Value::Int(1), Value::Int(2)]), "(1, 2)"),
             // A 1-tuple needs the trailing comma, or it re-parses as a
             // parenthesised expression and silently changes type.
-            (Value::Tuple(vec![Value::Int(7)]), "(7,)"),
+            (Value::tuple(vec![Value::Int(7)]), "(7,)"),
         ];
         for (v, want) in cases {
             assert_eq!(
@@ -5423,19 +5665,17 @@ mod literal_escape_tests {
         }
         // A fieldless enum variant renders bare; a fielded one renders with
         // sorted fields, as structs do.
-        let mut f = HashMap::new();
-        f.insert("r".to_string(), Value::Float(2.0));
-        let e = Value::Enum {
-            enum_name: "Shape".into(),
-            variant: "Circle".into(),
-            fields: f,
-        };
+        let e = Value::Enum(Rc::new(EnumVal {
+            enum_name: intern("Shape"),
+            variant: intern("Circle"),
+            fields: Fields::from_pairs([(intern("r"), Value::Float(2.0))]),
+        }));
         assert_eq!(value_as_literal(&e).unwrap(), "Shape::Circle { r: 2.0 }");
-        let bare = Value::Enum {
-            enum_name: "Shape".into(),
-            variant: "Point".into(),
-            fields: HashMap::new(),
-        };
+        let bare = Value::Enum(Rc::new(EnumVal {
+            enum_name: intern("Shape"),
+            variant: intern("Point"),
+            fields: Fields::default(),
+        }));
         assert_eq!(value_as_literal(&bare).unwrap(), "Shape::Point");
     }
 
@@ -5516,5 +5756,127 @@ mod value_shape_leak_tests {
         assert!(s.contains("len=1"), "{s}");
         assert!(s.contains("keys are str"), "{s}");
         assert!(s.contains("i64"), "{s}");
+    }
+}
+
+/// AX-46/AX-47: records store `Sym`-keyed fields in the definition's order
+/// behind an `Rc`. None of that may be observable: printing orders fields by
+/// name, equality ignores construction order, enum variants match by
+/// interned name, declared narrow fields are coerced, and a write through a
+/// shared record copies it first.
+#[cfg(test)]
+mod record_layout_tests {
+    use super::*;
+
+    fn out(src: &str) -> (i32, String) {
+        let program = crate::parse_source(src).expect("parse failed");
+        run_program_capturing(&program)
+    }
+
+    const RECORDS: &str = r#"
+type P = { z: i64, a: i64, m: str }
+type B = { lo: u8, hi: i16 }
+type S = Circle { r: f64 } | Rect { w: i64, h: i64 } | Empty
+
+fn area(s: S) -> i64 {
+    match s {
+        S::Rect { w, h } => w * h,
+        S::Circle { r } => f64_to_i64(r),
+        S::Empty => 0,
+    }
+}
+"#;
+
+    fn run_main(body: &str) -> (i32, String) {
+        out(&format!("{RECORDS}\nfn main() {{\n{body}\n}}\n"))
+    }
+
+    #[test]
+    fn fields_print_in_name_order_whatever_the_literal_order() {
+        let (code, s) = run_main(
+            r#"let p = P { m: "hi", a: 2, z: 1 }
+               println("{p}")
+               println("{S::Rect { h: 3, w: 4 }}")
+               println("{[B { hi: 300, lo: 250 }]}")"#,
+        );
+        assert_eq!(code, 0, "{s}");
+        assert_eq!(
+            s,
+            "P { a: 2, m: hi, z: 1 }\nS::Rect { h: 3, w: 4 }\n[B { hi: 300, lo: 250 }]\n"
+        );
+    }
+
+    #[test]
+    fn equality_ignores_construction_order() {
+        let (code, s) = run_main(
+            r#"println(to_str(P { m: "hi", a: 2, z: 1 } == P { z: 1, a: 2, m: "hi" }))
+               println(to_str(P { m: "hi", a: 2, z: 1 } != P { a: 2, z: 3, m: "hi" }))
+               println(to_str(S::Rect { w: 4, h: 3 } == S::Rect { h: 3, w: 4 }))
+               println(to_str(S::Rect { w: 4, h: 3 } == S::Rect { h: 4, w: 3 }))
+               println(to_str(S::Empty == S::Empty))"#,
+        );
+        assert_eq!(code, 0, "{s}");
+        assert_eq!(s, "true\ntrue\ntrue\nfalse\ntrue\n");
+    }
+
+    #[test]
+    fn enum_variants_match_by_interned_name() {
+        let (code, s) = run_main(
+            r#"println(to_str(area(S::Rect { h: 3, w: 4 })))
+               println(to_str(area(S::Circle { r: 2.5 })))
+               println(to_str(area(S::Empty)))"#,
+        );
+        assert_eq!(code, 0, "{s}");
+        assert_eq!(s, "12\n2\n0\n");
+    }
+
+    #[test]
+    fn narrow_fields_are_coerced_at_construction() {
+        // `lo` is declared `u8`: arithmetic on it is u8-checked, so 250 + 10
+        // must overflow rather than print 260.
+        let (code, s) = run_main(
+            r#"let b = B { hi: 300, lo: 250 }
+               let s = b.lo + as_u8(10)
+               println("{s}")"#,
+        );
+        assert_eq!(code, RUNTIME_PANIC_EXIT_CODE, "{s}");
+        assert_eq!(s, "");
+    }
+
+    #[test]
+    fn a_field_write_through_a_shared_record_copies_it() {
+        let (code, s) = run_main(
+            r#"let bs = [B { hi: 300, lo: 250 }]
+               let c = bs[0]
+               c.lo = as_u8(9)
+               println("{bs}")
+               println("{c}")
+               let ps = [P { z: 1, a: 2, m: "hi" }]
+               let k = ps[0]
+               k.a = 99
+               println(to_str(ps[0].a))
+               println(to_str(k.a))"#,
+        );
+        assert_eq!(code, 0, "{s}");
+        assert_eq!(s, "[B { hi: 300, lo: 250 }]\nB { hi: 300, lo: 9 }\n2\n99\n");
+    }
+
+    #[test]
+    fn closures_capture_records() {
+        let (code, s) = run_main(
+            r#"let p = P { m: "hi", a: 2, z: 1 }
+               let f = |n: i64| n + p.a + p.z
+               let g = |n: i64| P { z: n, a: p.a, m: p.m }
+               println(to_str(f(10)))
+               println("{g(7)}")
+               p.a = 40
+               println(to_str(f(10)))
+               println("{p}")"#,
+        );
+        assert_eq!(code, 0, "{s}");
+        assert_eq!(
+            s,
+            "13\nP { a: 2, m: hi, z: 7 }\n13\nP { a: 40, m: hi, z: 1 }\n"
+        );
     }
 }
