@@ -1882,12 +1882,17 @@ mod tests {
         // field is: `grep -n '\.hardware_isolation' crates/*/src` finds the profile's only in this
         // test), so a flip on the protected profile changed nothing a suite could see. It is
         // data a profile LISTING reports, so its truth is asserted here.
-        assert!(
-            LINUX_MICROVM_PROTECTED.hardware_isolation,
+        // Looked up in the registry, not read as a const (a constant assertion is a compile-time
+        // check and cannot carry an ATTACK message).
+        let isolated = |id: &str| ALL.iter().find(|p| p.id == id).map(|p| p.hardware_isolation);
+        assert_eq!(
+            isolated(LINUX_MICROVM_PROTECTED.id),
+            Some(true),
             "ATTACK: the protected Linux microVM profile reports no hardware isolation"
         );
-        assert!(
-            FIRECRACKER_AXON_KERNEL.hardware_isolation,
+        assert_eq!(
+            isolated(FIRECRACKER_AXON_KERNEL.id),
+            Some(true),
             "ATTACK: the Firecracker Axon-kernel profile reports no hardware isolation"
         );
         // PSV (v022-psv-protocol.md §4): the profile runs registered checks,
