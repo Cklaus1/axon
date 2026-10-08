@@ -1166,6 +1166,13 @@ fn the_check_child_runs_in_the_suite_with_only_its_own_environment_and_stdio() {
             .any(|e| e.trim() == "Exec"),
         "ATTACK: the check child's effect ceiling still grants Exec: {vars:?}"
     );
+    // Amendment 105: the VALUE, not only "no Exec": the fixture's guest policy grants exactly these effects, and the
+    // child's ceiling is that list minus Exec (a ceiling that dropped or added any other effect is wrong too).
+    assert_eq!(
+        vars.get("AXON_ALLOWED_EFFECTS").copied(),
+        Some(axon_psv::runner::without_exec("AI,Chan,IO,Net,Random,Time").as_str()),
+        "ATTACK: the check child's AXON_ALLOWED_EFFECTS is not the guest policy's ceiling minus Exec: {vars:?}"
+    );
     assert_eq!(
         argv.len(),
         9,
