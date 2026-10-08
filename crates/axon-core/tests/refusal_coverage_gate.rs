@@ -664,9 +664,14 @@ fn production_code_after_a_test_module_is_scanned() {
 /// test, a data enum): a rule that over-reads makes every exemption noise.
 fn not_named(r: &Path, site: &str, what: &str) {
     let t = text(&gate(r, &[]));
-    if t.lines()
-        .any(|l| l.contains("refusal site with no row and no exemption") && l.contains(site))
-    {
+    // A VALUE site (amendment 103) is a different kind of report line ("...: value (val_x) ..."):
+    // this helper asserts what is, or is not, a LINE site. A probe line that holds a literal value
+    // is named as a value site too, and its text is quoted in that line.
+    if t.lines().any(|l| {
+        l.contains("refusal site with no row and no exemption")
+            && !l.contains("exemption: value (")
+            && l.contains(site)
+    }) {
         panic!("ATTACK: {what}: the gate named it as a refusal site: {t}");
     }
 }
@@ -1931,7 +1936,7 @@ fn not_names_value(r: &Path, frag: &str, attack: &str) {
     }
 }
 
-const SPAWN_PROBE: &str = "pub fn vs_spawn(p: &str) {\n    let _vs_c = std::process::Command::new(p)\n        .env(\"VS_KEY_A\", \"vs_val_a\")\n        .env(\"VS_KEY_B\", \"vs_val_b\")\n        .arg(\"vs_flag\")\n        .args([\"vs_arg1\", \"vs_arg2\"])\n        .env(\"VS_DYN\", p)\n        .arg(p)\n        .current_dir(\"/vs/cwd\")\n        .stdin(std::process::Stdio::piped());\n}\n\n#[cfg(test)]\nfn vs_test_only() {\n    let _vt = std::process::Command::new(\"x\").env(\"VT_K\", \"vt_val\").arg(\"vt_arg\");\n}\n";
+const SPAWN_PROBE: &str = "pub fn vs_spawn(p: &str) {\n    let _vs_c = std::process::Command::new(\"vs_tool\")\n        .env(\"VS_KEY_A\", \"vs_val_a\")\n        .env(\"VS_KEY_B\", \"vs_val_b\")\n        .arg(\"vs_flag\")\n        .args([\"vs_arg1\", \"vs_arg2\"])\n        .env(\"VS_DYN\", p)\n        .arg(p)\n        .current_dir(\"/vs/cwd\")\n        .stdin(std::process::Stdio::piped());\n}\n\n#[cfg(test)]\nfn vs_test_only() {\n    let _vt = std::process::Command::new(\"x\").env(\"VT_K\", \"vt_val\").arg(\"vt_arg\");\n}\n";
 
 /// Amendment 103 (a): a LITERAL or CONSTANT handed to a process-spawn builder is a
 /// site of its own: the value of `.env(K, V)`, `.arg(V)`, each literal element of
@@ -2009,8 +2014,12 @@ fn a_value_is_credited_only_by_an_edit_of_that_value() {
     let _ = std::fs::remove_dir_all(&r);
     // Exemptions: a REMAINDER entry counts by category; a wrong fragment is refused.
     let r = tree("value-exempt");
+    // The REMAINDER count of the UNEDITED tree (the planted sites below have no exemption yet,
+    // so the gate would refuse and print no list).
+    let clean = tree("value-exempt-base");
+    let base = text(&gate(&clean, &["--remainder"]));
+    let _ = std::fs::remove_dir_all(&clean);
     add_code(&r, SCANNED, SPAWN_PROBE);
-    let base = text(&gate(&r, &["--remainder"]));
     let n0: usize = base
         .lines()
         .filter(|l| l.starts_with("REMAINDER ") && !l.starts_with("REMAINDER:"))
