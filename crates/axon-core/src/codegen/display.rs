@@ -172,15 +172,12 @@ impl<'ctx> super::Codegen<'ctx> {
             Type::Bool => call1(self, "to_str_bool", v),
             Type::F64 => call1(self, "to_str_f64", v),
             Type::F32 => {
-                let wide = self
-                    .ir
-                    .builder
-                    .build_float_ext(
-                        v.into_float_value(),
-                        self.ir.context.f64_type(),
-                        "disp_fext",
-                    )
-                    .ok()?;
+                let wide = build_wrappers::w_float_ext(
+                    &self.ir.builder,
+                    v.into_float_value(),
+                    self.ir.context.f64_type(),
+                    "disp_fext",
+                );
                 call1(self, "to_str_f64", wide.into())
             }
             _ => {
@@ -404,7 +401,7 @@ impl<'ctx> super::Codegen<'ctx> {
         let close = self.str_lit("]");
         self.append_to_slot(acc_slot, close)?;
         let out = build_wrappers::w_load(&self.ir.builder, str_ty, acc_slot, "out");
-        self.ir.builder.build_return(Some(&out)).ok()?;
+        build_wrappers::w_ret(&self.ir.builder, out);
         Some(())
     }
 
@@ -490,7 +487,7 @@ impl<'ctx> super::Codegen<'ctx> {
     fn ret_acc(&self, mut acc: StrAcc<'ctx>) -> Option<()> {
         self.acc_flush(&mut acc)?;
         let out = acc.acc?;
-        self.ir.builder.build_return(Some(&out)).ok()?;
+        build_wrappers::w_ret(&self.ir.builder, out);
         Some(())
     }
 }
