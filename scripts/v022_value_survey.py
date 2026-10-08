@@ -89,7 +89,7 @@ def candidates(pkg, only):
         text = open(os.path.join(rc.ROOT, f)).read()
         rs = [(r[0], rc.edit_ranges(text, r[3], r[4])) for r in rows if r[2] == f and text.count(r[3]) == 1]
         ex = {(e[1], e[2]) for e in rc.VALUE_EXEMPT if e[0] == f}
-        for a, b, label, fn, n in rc.value_sites(text):
+        for a, b, label, fn, n in rc.value_sites(text, rc.scope_regions(f, rc.code_lines(text), text, [])):
             if any(rc._ranges_hit(rg, a, b) for _, rg in rs) or (fn, n) in ex:
                 continue
             out.append((f, a, b, label, fn, n))
@@ -134,7 +134,9 @@ def main():
             open(path, "w").write(text)
         tail = r.stdout + r.stderr
         failing = sorted(set(re.findall(r"^---- (\S+) stdout ----$", tail, re.M)))
-        built = "could not compile" not in tail and "error[E" not in tail and "error: " not in tail.split("Running")[0]
+        # `error[E....]` is the AXON interpreter's own diagnostic, printed by a test that
+        # runs `axon test`: only cargo's "could not compile" is a build failure.
+        built = "could not compile" not in tail
         if r.returncode == 124:
             rec["result"] = "INCONCLUSIVE (hung)"
         elif not built:

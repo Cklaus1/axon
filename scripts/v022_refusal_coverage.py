@@ -4624,11 +4624,8 @@ def verdict_sites(lines, regions=None, f=None):
     return out
 
 
-def sites(text, f=None, bad=None):
-    """The refusal sites of `f` as (first, last, reported) lines: `first` to
-    `last` is the guard block a row or an exemption must reach, `reported` the
-    line the report names."""
-    lines = code_lines(text)
+def scope_regions(f, lines, text, bad):
+    """The line regions of `f` that are in scope (None: the whole file)."""
     regions = None
     if f in SCOPE_FN_REGIONS or f in REGIONS:
         regions = fn_regions(lines, SCOPE_FN_REGIONS[f]) if f in SCOPE_FN_REGIONS else []
@@ -4636,6 +4633,15 @@ def sites(text, f=None, bad=None):
             r = anchor_region(lines, text, f, bad if bad is not None else [])
             if r:
                 regions.append(r)
+    return regions
+
+
+def sites(text, f=None, bad=None):
+    """The refusal sites of `f` as (first, last, reported) lines: `first` to
+    `last` is the guard block a row or an exemption must reach, `reported` the
+    line the report names."""
+    lines = code_lines(text)
+    regions = scope_regions(f, lines, text, bad)
     out = []
     ctors = local_ctors(lines)
     for i, l in enumerate(lines):
@@ -5058,7 +5064,7 @@ def _fn_of(clean_lines, spans, line):
     return best[1] if best else ""
 
 
-def value_sites(text):
+def value_sites(text, regions=None):
     """[(begin, end, label, fn, n)] value sites (see amendment 103) of the non-test code of `text`;
     `n` counts a function's value sites from 1 in source order."""
     clean = _value_text(text)
@@ -5151,6 +5157,8 @@ def value_sites(text):
     fspans = _fn_spans(cl)
     per, out = {}, []
     for (a, b), label in sorted(found.items()):
+        if regions is not None and not any(x <= line_of(clean, a) <= y for x, y in regions):
+            continue
         fn = _fn_of(cl, fspans, line_of(clean, a))
         per[fn] = per.get(fn, 0) + 1
         out.append((a, b, label, fn, per[fn]))
@@ -5200,7 +5208,7 @@ def _ranges_hit(ranges, a, b):
 
 def judge_values(f, text, rows, bad):
     """(covered, exempt, uncovered) of the value sites of `f`."""
-    vs = value_sites(text)
+    vs = value_sites(text, scope_regions(f, code_lines(text), text, []))
     if not vs:
         for e in VALUE_EXEMPT:
             if e[0] == f:
