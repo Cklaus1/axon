@@ -1758,3 +1758,109 @@ fn a_sealed_caller_is_refused_in_the_same_words_for_an_operator_name_and_a_missi
     }
     all_refused(fails);
 }
+
+/// Amendment 108: a STRUCTURAL COMPARISON reads the content of the dict the
+/// candidate filled. `d == e`, `d != e`, `[d] == [e]`, a struct, a tuple, and
+/// `arr_contains([d], e)` each chose the operator closure or the operator fn
+/// NAME by the candidate's data, taint-free, until the comparison walked both
+/// operands deep. The attack is the reviewer's: a WRONG answer (4) passes under
+/// the lenient check or fails under the strict one depending on what the
+/// candidate wrote.
+#[test]
+fn comparing_a_dict_the_candidate_filled_never_selects_operator_code() {
+    let cand = "pub fn cand() -> i64 { 4 }\npub fn fill(d: Dict) { dict_set(d, \"k\", 1) }\n";
+    let suite = |pre: &str, body: &str| {
+        format!("mod sol\nuse sol.{{cand, fill}}\nfn strict(x: i64) -> bool {{ x == 9 }}\nfn lenient(x: i64) -> bool {{ true }}\nfn ref1(x: i64) -> i64 {{ x * 2 }}\nfn lax(x: i64) -> i64 {{ 0 }}\ntype W = {{ d: Dict, n: i64 }}\n{pre}@[test]\nfn accept() {{\n{body}\n}}\n")
+    };
+    let setup = |own: bool| {
+        let fill = if own {
+            "  dict_set(d, \"k\", 1)\n"
+        } else {
+            "  fill(d)\n"
+        };
+        format!("  let d = dict_new()\n{fill}  let e = dict_new()\n  dict_set(e, \"k\", 1)\n")
+    };
+    let pick = |cond: &str| {
+        format!("  let f = if {cond} {{ lenient }} else {{ strict }}\n  assert(f(cand()))")
+    };
+    let conds: &[(&str, &str, &str)] = &[
+        ("d == e", "", "d == e"),
+        ("d != e", "", "d != e"),
+        ("e == d", "", "e == d"),
+        ("[d] == [e]", "", "[d] == [e]"),
+        ("(d, 1) == (e, 1)", "", "(d, 1) == (e, 1)"),
+        (
+            "a struct holding d",
+            "  let w1 = W { d: d, n: 0 }\n  let w2 = W { d: e, n: 0 }\n",
+            "w1 == w2",
+        ),
+        ("arr_contains", "", "arr_contains([d], e)"),
+    ];
+    let mut fails = Vec::new();
+    for (what, extra, cond) in conds {
+        let attack = suite("", &format!("{}{extra}{}", setup(false), pick(cond)));
+        fails.extend(taint_attack(&format!("comparison: {what}"), &attack, cand));
+        // The honest control: the operator's OWN dicts compared, and the
+        // candidate's wrong answer judged by a check the operator chose.
+        let own = suite("", &format!("{}{extra}{}", setup(true), pick(cond)));
+        let s = check(&own, &[], cand, "accept");
+        if refused_unkeyed(&s)
+            && (s.stdout.contains("(runtime taint)") || s.stdout.contains("the candidate picked"))
+        {
+            fails.push(format!(
+                "CONTROL REFUSED ({what}): the operator's own dicts: {}",
+                s.stdout
+            ));
+        }
+    }
+    // The same data choosing a NAME.
+    let name_attack = suite(
+        "",
+        &format!("{}  let p = principal_root(\"r\",true,true,true,100)\n  let sb = sandbox_create(p,\"IO\")\n  let nm = if d == e {{ \"lax\" }} else {{ \"ref1\" }}\n  assert(sandbox_run(sb, nm, 21) == 42)", setup(false)),
+    );
+    let s = check(&name_attack, &[], cand, "accept");
+    if !refused_unkeyed(&s) {
+        fails.push(format!(
+            "ATTACK: a name chosen by d == e was accepted: {:?} {}",
+            s.status, s.stdout
+        ));
+    }
+    all_refused(fails);
+}
+
+/// Amendment 108, existence oracle on the METHOD path: with an operator
+/// `impl Sc for i64 { fn score }`, a sealed `3.score()` and a sealed
+/// `3.zzscore()` are refused in the same words.
+#[test]
+fn a_sealed_method_call_is_refused_in_the_same_words_for_an_operator_method_and_a_missing_one() {
+    let su = "mod sol\nuse sol.{solve}\ntrait Sc {\n    fn score(self) -> i64\n}\nimpl Sc for i64 {\n    fn score(self: i64) -> i64 { 41 }\n}\nimpl Sc for str {\n    fn score(self: str) -> i64 { 41 }\n}\n@[test]\nfn accept() {\n  assert_eq(solve(), 41)\n}\n";
+    let text = |name: &str, form: &str| {
+        let cand = format!(
+            "pub fn solve() -> i64 {{ {} }}\n",
+            form.replace("{N}", name)
+        );
+        let s = check(su, &[], &cand, "accept");
+        assert!(
+            refused_unkeyed(&s),
+            "{name} {form}: {:?} {}",
+            s.status,
+            s.stdout
+        );
+        let line = s
+            .stdout
+            .split("\"message\":\"")
+            .nth(1)
+            .and_then(|m| m.split("\",\"").next())
+            .unwrap_or("")
+            .to_string();
+        line.replace(name, "@")
+    };
+    let mut fails = Vec::new();
+    for form in ["3.{N}()", "\"a\".{N}()", "3.{N}().{N}()"] {
+        let (a, b) = (text("score", form), text("zzscore", form));
+        if a != b {
+            fails.push(format!("{form}: [score] {a:?} vs [zzscore] {b:?}"));
+        }
+    }
+    all_refused(fails);
+}

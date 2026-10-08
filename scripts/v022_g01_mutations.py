@@ -10137,6 +10137,46 @@ MUTATIONS += [
      'axon-fabric', '--test protected_host', 'a_loaded_host_requires_the_executable_owner_of_every_program_it_pins'),
 ]
 
+# PSV1V (amendment 108): comparison and builtin reads of shared objects, the method existence oracle, native registries.
+MUTATIONS += [
+    ('M3030', 'TAINT (am108): a comparison does not walk its LEFT operand for shared objects', 'crates/axon-core/src/interp/eval.rs',
+     '            self.t_touch(self.t_obj_deep(&l) | self.t_obj_deep(&r));', '            self.t_touch(self.t_obj_deep(&r));\n            let _ = &l;',
+     'axon-core', '--lib', 'interp::taint_tests::comparing_or_searching_a_dict_the_candidate_wrote_is_a_read_of_it'),
+    ('M3031', 'TAINT (am108): a comparison does not walk its RIGHT operand for shared objects', 'crates/axon-core/src/interp/eval.rs',
+     '            self.t_touch(self.t_obj_deep(&l) | self.t_obj_deep(&r));', '            self.t_touch(self.t_obj_deep(&l));\n            let _ = &r;',
+     'axon-core', '--lib', 'interp::taint_tests::comparing_or_searching_a_dict_the_candidate_wrote_is_a_read_of_it'),
+    ('M3032', 'TAINT (am108): a comparison takes no taint from the objects inside its operands', 'crates/axon-core/src/interp/eval.rs',
+     '            self.t_touch(self.t_obj_deep(&l) | self.t_obj_deep(&r));', '            let _ = (&l, &r);',
+     'axon-core', '--lib', 'interp::taint_tests::comparing_or_searching_a_dict_the_candidate_wrote_is_a_read_of_it'),
+    ('M3033', 'TAINT (am108, runner): a comparison takes no taint from the objects inside its operands', 'crates/axon-core/src/interp/eval.rs',
+     '            self.t_touch(self.t_obj_deep(&l) | self.t_obj_deep(&r));', '            let _ = (&l, &r);',
+     'axon-psv', '--test sealed_frames', 'comparing_a_dict_the_candidate_filled_never_selects_operator_code'),
+    ('M3034', 'TAINT (am108): a builtin walks its arguments only three deep and not through arrays', 'crates/axon-core/src/interp/taint.rs',
+     '            self.t_touch(self.t_obj_deep(a));\n        }\n        match info(name)', '            self.t_touch(self.t_obj(a));\n        }\n        match info(name)',
+     'axon-core', '--lib', 'interp::taint_tests::every_builtin_that_can_read_a_container_of_a_tainted_dict_taints_its_result'),
+    ('M3035', 'TAINT (am108, runner): a builtin walks its arguments only three deep and not through arrays', 'crates/axon-core/src/interp/taint.rs',
+     '            self.t_touch(self.t_obj_deep(a));\n        }\n        match info(name)', '            self.t_touch(self.t_obj(a));\n        }\n        match info(name)',
+     'axon-psv', '--test sealed_frames', 'comparing_a_dict_the_candidate_filled_never_selects_operator_code'),
+    ('M3036', 'TAINT (am108, drift): the ordering comparison `<` is not walked', 'crates/axon-core/src/interp/eval.rs',
+     '            BinOp::Eq | BinOp::NotEq | BinOp::Lt | BinOp::Gt | BinOp::LtEq | BinOp::GtEq\n        ) {\n            self.t_touch(self.t_obj_deep(&l) | self.t_obj_deep(&r));', '            BinOp::Eq | BinOp::NotEq | BinOp::Gt | BinOp::LtEq | BinOp::GtEq\n        ) {\n            self.t_touch(self.t_obj_deep(&l) | self.t_obj_deep(&r));',
+     'axon-core', '--lib', 'interp::taint_tests::every_comparison_and_every_builtin_argument_is_walked_deep'),
+    ('M3037', 'ORACLE (am108): a sealed call of a missing method is told the plain text', 'crates/axon-core/src/interp/eval.rs',
+     '                    self.no_such_fn(method, format!("no method `{method}` on type `{tn}`"))', '                    panic(format!("no method `{method}` on type `{tn}`"))',
+     'axon-core', '--lib', 'interp::taint_tests::a_sealed_caller_cannot_tell_an_operator_method_from_a_missing_one'),
+    ('M3038', "ORACLE (am108, runner): a sealed call is judged against the operator's methods too", 'crates/axon-core/src/checker.rs',
+     '                    let has_method = if sealed_site {\n                        &self.sealed_type_methods\n                    } else {\n                        &self.type_methods\n                    }', '                    let _ = sealed_site;\n                    let has_method = if false {\n                        &self.sealed_type_methods\n                    } else {\n                        &self.type_methods\n                    }',
+     'axon-psv', '--test sealed_frames', 'a_sealed_method_call_is_refused_in_the_same_words_for_an_operator_method_and_a_missing_one'),
+    ('M3039', 'TAINT (am108): a native call does not touch the world taint', 'crates/axon-core/src/interp/eval.rs',
+     '                        if T {\n                            self.t_native_call();\n                        }', '                        let _ = T;',
+     'axon-core', '--lib', 'interp::taint_tests::a_native_registry_a_sealed_frame_wrote_taints_what_the_operator_reads_back'),
+    ('M3040', 'TAINT (am108): a sealed native call marks nothing', 'crates/axon-core/src/interp/taint.rs',
+     '            w.set(w.get() | ALL);\n        } else {\n            self.t_touch(w.get());', '            let _ = w;\n        } else {\n            self.t_touch(w.get());',
+     'axon-core', '--lib', 'interp::taint_tests::a_native_registry_a_sealed_frame_wrote_taints_what_the_operator_reads_back'),
+    ('M3041', 'TAINT (am108): an operator native call does not read the world taint back', 'crates/axon-core/src/interp/taint.rs',
+     '            self.t_touch(w.get());\n            w.set(w.get() | self.t_stored', '            w.set(w.get() | self.t_stored',
+     'axon-core', '--lib', 'interp::taint_tests::a_native_registry_a_sealed_frame_wrote_taints_what_the_operator_reads_back'),
+]
+
 
 if __name__ == "__main__":
     main()

@@ -436,6 +436,7 @@ pub(crate) const PURE_BUILTINS: &[&str] = &[
 /// Builtins whose RESULT is the text of their argument: a channel prints its
 /// length and a dict its contents, wherever they sit in the value, so the
 /// result carries the taint of every shared object inside it.
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) const STRINGIFIERS: &[&str] = &["to_str", "dict_to_str"];
 
 /// Builtins that render a value to a stream and return nothing the program
@@ -831,13 +832,11 @@ impl<'p> Interp<'p> {
     /// Before a builtin runs: the taint of the state it reads goes into the
     /// result. Called with the arguments evaluated and their taint in `acc`.
     pub(super) fn t_builtin_in(&self, name: &str, args: &[Value]) {
+        // Every argument is walked DEEP: a builtin that compares, searches,
+        // sorts, hashes or prints a container reads the content of every shared
+        // object inside it, and no table of such builtins is kept (amendment 108).
         for a in args {
-            self.t_touch(self.t_obj(a));
-        }
-        if STRINGIFIERS.contains(&name) {
-            for a in args {
-                self.t_touch(self.t_obj_deep(a));
-            }
+            self.t_touch(self.t_obj_deep(a));
         }
         match info(name).map(|i| i.class) {
             Some(Class::Pure) => {}
@@ -850,6 +849,21 @@ impl<'p> Interp<'p> {
             // Not a builtin of the table (a name `call_builtin` answers that
             // `BUILTINS` does not list): a function of its arguments.
             None => {}
+        }
+    }
+
+    /// A `native::M::fn(..)` call (gfx surface, modbus/fhir/fix session ...):
+    /// the call reads and writes a registry shared by every frame, which no
+    /// value taint can follow through an integer-like handle. It is `World`
+    /// state like a file: a sealed call marks it ALL, an operator call reads it
+    /// back into the result (amendment 108).
+    pub(super) fn t_native_call(&self) {
+        let w = &self.taint.world;
+        if self.frame_sealed.get() {
+            w.set(w.get() | ALL);
+        } else {
+            self.t_touch(w.get());
+            w.set(w.get() | self.t_stored(self.taint.acc.get()));
         }
     }
 
