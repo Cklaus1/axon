@@ -2293,13 +2293,17 @@ fn a_function_that_builds_a_command_is_listed_as_a_wrapper_or_a_builder() {
 fn the_gate_prints_what_it_still_cannot_see() {
     let r = tree("still-blind");
     let t = text(&gate(&r, &[]));
-    let last: Vec<&str> = t.lines().rev().take(8).collect();
+    let last: Vec<&str> = t.lines().rev().take(10).collect();
     assert!(
         last.iter().any(|l| l.starts_with("STILL BLIND:"))
             && last
                 .iter()
-                .any(|l| l.contains("computation") && l.contains("local binding")),
-        "ATTACK: the gate's last lines do not list what it cannot see: {t}"
+                .any(|l| l.contains("COMPUTATION") && l.contains("VALUE FLOWS NOT FOLLOWED"))
+            && last
+                .iter()
+                .any(|l| l.contains("EXEC_WRAPPERS") && l.contains("EXEC_CONSTRUCTORS"))
+            && t.lines().any(|l| l.starts_with("VALUE FLOWS NOT FOLLOWED: ")),
+        "ATTACK: the gate's last lines do not list what it cannot see (or the count of the flows it did not follow): {t}"
     );
     let _ = std::fs::remove_dir_all(&r);
 }

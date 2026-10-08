@@ -134,15 +134,9 @@ def main():
     rspec = importlib.util.spec_from_file_location("rs", os.path.join(ROOT, "scripts/v022_resurvey.py"))
     rs = importlib.util.module_from_spec(rspec)
     rspec.loader.exec_module(rs)
-    try:
-        resurvey = json.load(open(os.path.join(ROOT, rs.STATUS)))
-    except (OSError, ValueError) as e:
-        sys.exit(f"refused: {rs.STATUS} cannot be read ({e}): the OBSERVED entries of the refusal-site "
-                 "gate were not re-measured for this head; run scripts/v022_resurvey.py --run (amendment 107)")
-    resurvey_problems = rs.problems(resurvey, git(["rev-parse", "HEAD"], ROOT), cov, mut)
-    if resurvey_problems:
-        sys.exit("refused: the re-survey record is not for this head or does not hold: "
-                 + "; ".join(resurvey_problems[:6]) + " (scripts/v022_resurvey.py --run, amendment 107)")
+    why, resurvey = rs.freeze_refusal(cov, mut, git(["rev-parse", "HEAD"], ROOT))
+    if why:
+        sys.exit("refused: " + why)
 
     # Amendment 81: the paired-disable status file is bound by digest below, so
     # it must be what the harness's `--join` wrote for the commit this freeze

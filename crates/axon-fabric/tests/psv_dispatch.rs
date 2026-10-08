@@ -2006,6 +2006,20 @@ fn fabric_runs_its_direct_launcher_and_its_observer_with_exactly_their_flags_and
         "ATTACK: Fabric ran the direct launcher's verify step with {v:?}, not exactly \
          [--verify-result, {out}]"
     );
+    // The timeout is the wall time rounded UP to whole seconds (2001 ms -> 3), never down.
+    let mut req = w.request("op-direct-timeout", "check:acc", "t_psv_ok");
+    req["limits"]["wall_time_ms"] = json!(2001);
+    let _ = std::fs::remove_file(rec.join("argv-launch"));
+    let mut cfg = w.env.cfg(0);
+    cfg.linux = Some(lx.clone());
+    let _ = submit(&req.to_string(), &cfg).unwrap();
+    let argv = read(&rec.join("argv-launch"));
+    let a: Vec<&str> = argv.lines().collect();
+    let t = a[a.iter().position(|x| *x == "--timeout-s").unwrap() + 1];
+    assert!(
+        t == "3",
+        "ATTACK: Fabric handed the direct launcher --timeout-s {t:?} for a wall time of 2001 ms, not 3"
+    );
     // The observer program (mode "dump" records, then observes as usual).
     let key = observer_key(&d, "obs", &[&w.observer_roots()]);
     let o = w.submit_observed(w.observer("dump", &key, "observer"), "op-observer-dump");

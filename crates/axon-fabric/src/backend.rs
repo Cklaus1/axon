@@ -1800,6 +1800,26 @@ fn run_direct(lx: &LinuxProfileConfig, req: &ComputeRequest, psv: &crate::psv::L
 mod tests {
     use super::*;
 
+    /// Amendment 107: `read_regular`'s size bound is 256 MiB exactly (the sum of every file the
+    /// evidence path reads is bounded by it). Round 11's survey moved it by one MiB with the suite
+    /// green. A SPARSE file one byte over it is refused; one at it is read (a hole, no disk).
+    #[test]
+    fn read_regular_refuses_a_file_one_byte_over_256_mib_and_reads_one_at_it() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("big");
+        let f = std::fs::File::create(&p).unwrap();
+        f.set_len(256 << 20).unwrap();
+        let at = read_regular(&p).expect("control: a file of exactly the bound is read");
+        assert_eq!(at.len() as u64, 256 << 20, "control");
+        drop(at);
+        f.set_len((256 << 20) + 1).unwrap();
+        let got = read_regular(&p).map(|b| b.len());
+        assert!(
+            got.is_err(),
+            "ATTACK: read_regular read a file one byte over 256 MiB: {got:?}"
+        );
+    }
+
     /// `verify-evidence`'s `authoritative` flag, one condition at a time, each
     /// on the inputs where it is the ONLY one that can refuse. The CLI always
     /// runs as a test-trust build under test, so the production conditions are

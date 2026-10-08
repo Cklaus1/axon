@@ -2554,4 +2554,8 @@ ATTACK_MARKERS.update({
     'M2971': 'ATTACK: the ownership walk followed a symlinked directory component',
     'M2972': 'ATTACK: the protected Linux microVM profile reports no hardware isolation',
     'M2973': "ATTACK: the custodian's outstanding-nonce bound is not the decision value 1024",
+    'M2974': 'ATTACK: read_regular read a file one byte over 256 MiB',
+    'M2975': 'ATTACK: Fabric handed the direct launcher --timeout-s',
+    'M2976': 'ATTACK: the helper launched with a profile manifest owned by uid',
+    'M2977': 'ATTACK: the loaded host opens the privileged helper requiring an owner other than',
 })

@@ -865,6 +865,24 @@ fn an_interpreter_another_uid_owns_launches_nothing_as_root() {
     );
 }
 
+/// Amendment 107, ROOT ONLY: the profile manifest the helper verifies (`verify_inputs`' first
+/// `open_verified`) must be the operator's too. Round 11's survey replaced its owner by `None`
+/// with the suite green: the boot-input test makes only the firecracker binary another uid's.
+#[test]
+fn a_profile_manifest_another_uid_owns_launches_nothing() {
+    if skip_unless_root() {
+        return;
+    }
+    let f = fx(None, "", |_| {});
+    chown(&f.base.join("manifest.json"), OTHER);
+    let (code, rep) = f.run(&f.request("op-1"), None);
+    assert!(
+        code == Some(30) && !f.launched(),
+        "ATTACK: the helper launched with a profile manifest owned by uid {OTHER}, who can rewrite \
+         it after it is verified: {code:?} {rep}"
+    );
+}
+
 /// Amendment 103, ROOT ONLY: the launcher program the operator pinned is opened
 /// with the operator's uid as the required owner (`prepare`'s `Some(a.operator_uid)`),
 /// the same use-time re-check as for the boot inputs above. Round 11's survey replaced

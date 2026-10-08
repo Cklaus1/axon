@@ -9949,6 +9949,22 @@ MUTATIONS += [
      "BOUND (eq7): the custodian's outstanding-nonce bound is the decision value 1024", 'crates/axon-fabric/src/custodian.rs',
      'pub const MAX_OUTSTANDING: usize = 1024;', 'pub const MAX_OUTSTANDING: usize = 1_000_000;',
      'axon-fabric', '--lib', 'custodian::tests::the_custodian_bounds_the_nonces_it_holds_outstanding'),
+    ('M2974',
+     "READ BOUND (eq7): read_regular's bound is 256 MiB exactly", 'crates/axon-fabric/src/backend.rs',
+     '    const MAX: u64 = 256 << 20;\n    let mut o = std::fs::OpenOptions::new();', '    const MAX: u64 = 257 << 20;\n    let mut o = std::fs::OpenOptions::new();',
+     'axon-fabric', '--lib', 'backend::tests::read_regular_refuses_a_file_one_byte_over_256_mib_and_reads_one_at_it'),
+    ('M2975',
+     'ROOT LAUNCH ARGV (eq7): Fabric rounds the wall time UP to whole seconds for the direct launcher', 'crates/axon-fabric/src/backend.rs',
+     '    let timeout_s = req.limits.wall_time_ms.div_ceil(1000).max(1);\n    let o = |p: &Path|', '    let timeout_s = req.limits.wall_time_ms.div_ceil(1001).max(1);\n    let o = |p: &Path|',
+     'axon-fabric', '--test psv_dispatch', 'fabric_runs_its_direct_launcher_and_its_observer_with_exactly_their_flags_and_path'),
+    ('M2976',
+     "OWNER ARGUMENT (eq7): the root helper opens the profile manifest requiring the operator's uid", 'crates/axon-fabric/src/privileged_launcher.rs',
+     '            sha256: c.profile_manifest.sha256.clone(),\n        },\n        owner,\n        a.lease(),', '            sha256: c.profile_manifest.sha256.clone(),\n        },\n        None,\n        a.lease(),',
+     'axon-fabric', '--test privileged_launcher', 'a_profile_manifest_another_uid_owns_launches_nothing'),
+    ('M2977',
+     'OWNER FIELD (eq7): the loaded host opens the privileged helper requiring the executable owner', 'crates/axon-fabric/src/protected_host.rs',
+     '            owner: exec_owner,\n            test_config: helper_test_config,', '            owner: exec_owner.wrapping_add(1),\n            test_config: helper_test_config,',
+     'axon-fabric', '--test protected_host', 'a_loaded_host_requires_the_executable_owner_of_every_program_it_pins'),
 ]
 
 

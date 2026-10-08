@@ -360,6 +360,21 @@ def problems(doc, head_sha, rc, mut, now=None):
     return out
 
 
+def freeze_refusal(rc, mut, head_sha, path=STATUS):
+    """(reason, doc): why a FREEZE at `head_sha` must refuse (None: it may proceed), and the record read.
+    Used by scripts/v022_freeze_manifest.py, so the refusal is this function's and a test can call it."""
+    try:
+        doc = json.load(open(os.path.join(ROOT, path)))
+    except (OSError, ValueError) as e:
+        return (f"{path} cannot be read ({e}): the OBSERVED entries of the refusal-site gate were not "
+                "re-measured for this head; run scripts/v022_resurvey.py --run (amendment 107)"), None
+    bad = problems(doc, head_sha, rc, mut)
+    if bad:
+        return ("the re-survey record is not for this head or does not hold: " + "; ".join(bad[:6])
+                + " (scripts/v022_resurvey.py --run, amendment 107)"), doc
+    return None, doc
+
+
 def check(args):
     path = args[0] if args else STATUS
     rc, mut = load("v022_refusal_coverage"), load("v022_g01_mutations")

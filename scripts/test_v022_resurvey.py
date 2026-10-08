@@ -74,6 +74,15 @@ def main():
     if rs.plan(rc, "all", HEAD)[2] != 100 or rs.plan(rc, "auto", HEAD)[2] != 25:
         print("ATTACK: `auto` is not 100% under the budget and 25% over it (estimate %s s)" % rs.plan(rc, "auto", HEAD)[4])
         bad += 1
+    # the freeze's refusal: no record at all, and a record for another head, each refuse
+    why, _ = rs.freeze_refusal(rc, mut, HEAD, path="governance/status/no-such-resurvey.json")
+    if not why or "cannot be read" not in why:
+        print(f"ATTACK: a freeze with no re-survey record was not refused: {why!r}")
+        bad += 1
+    why, _ = rs.freeze_refusal(rc, mut, "1" * 40)
+    if not why:
+        print("ATTACK: a freeze at a head the (absent or other) record is not for was not refused")
+        bad += 1
     print("test_v022_resurvey:", "FAIL" if bad else "PASS")
     return 1 if bad else 0
 
