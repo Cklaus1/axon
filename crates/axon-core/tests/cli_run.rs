@@ -32637,6 +32637,129 @@ fn native_arrays_have_value_semantics_like_the_interpreter() {
     }
 }
 
+/// `native_stdout`, built with `--release` (the register's repro command).
+fn native_release_stdout(tag: &str, src: &str) -> Option<String> {
+    let f = tmp_ax(tag, src);
+    let bin = std::env::temp_dir().join(format!("axon_native_rel_{tag}_{}", std::process::id()));
+    let _ = std::fs::remove_file(&bin);
+    let build = axon()
+        .args(["build", "--release", "--no-cache"])
+        .arg(&f)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("spawn build");
+    let _ = std::fs::remove_file(&f);
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr)
+    );
+    if codegen_absent(&msg) {
+        return None;
+    }
+    assert_eq!(
+        build.status.code(),
+        Some(0),
+        "[{tag}] --release build:\n{msg}"
+    );
+    let run = Command::new(&bin).output().expect("run native");
+    let _ = std::fs::remove_file(&bin);
+    assert_eq!(run.status.code(), Some(0), "[{tag}] native exit status");
+    Some(String::from_utf8_lossy(&run.stdout).trim().to_string())
+}
+
+#[test]
+fn native_struct_fields_of_enum_type_match_the_interpreter() {
+    // AX-43: a struct field of enum type had no layout, because enum names
+    // were registered only after every struct body was set, so `a: A`
+    // resolved to a struct named `A` and the struct was refused (E0910).
+    const TOK: &str = "type Tok = Num { v: i64 } | Op { c: str } | Eof\n\
+                       type T = { kind: Tok, pos: i64 }\n\
+                       fn show(t: Tok) -> str {\n match t { Tok::Num { v } => \"num \" + to_str(v)  Tok::Op { c } => \"op \" + c  Tok::Eof => \"eof\" }\n}\n\
+                       fn mk(v: i64, p: i64) -> T { T { kind: Tok::Num { v: v }, pos: p } }\n";
+    let progs: [(&str, String); 6] = [
+        (
+            "ax43_repro",
+            "type A = Lit { v: i64 } | Neg { v: i64 }\ntype R = { a: A, k: i64 }\nfn main() -> i64 { let r = R { a: A::Lit { v: 4 }, k: 1 } match r.a { A::Lit { v } => println(to_str(v))  _ => println(\"x\") } 0 }\n".to_string(),
+        ),
+        (
+            "ax43_field_rw",
+            format!("{TOK}fn main() -> i64 {{\n let a = mk(4, 0)\n println(show(a.kind))\n a.kind = Tok::Op {{ c: \"+\" }}\n println(show(a.kind))\n println(to_str(a.pos))\n 0\n}}\n"),
+        ),
+        (
+            "ax43_fn_param_ret",
+            format!("{TOK}fn bump(t: T) -> T {{ match t.kind {{ Tok::Num {{ v }} => T {{ kind: Tok::Num {{ v: v + 100 }}, pos: t.pos }}  _ => t }} }}\nfn main() -> i64 {{\n let b = bump(mk(7, 3))\n println(show(b.kind) + \" @\" + to_str(b.pos))\n let c = bump(T {{ kind: Tok::Eof, pos: 5 }})\n println(show(c.kind) + \" @\" + to_str(c.pos))\n 0\n}}\n"),
+        ),
+        (
+            "ax43_in_array",
+            format!("{TOK}type P = {{ toks: [T], last: Tok }}\nfn main() -> i64 {{\n let ts = [mk(1, 0), T {{ kind: Tok::Op {{ c: \"*\" }}, pos: 1 }}, T {{ kind: Tok::Eof, pos: 2 }}]\n let i = 0\n while i < len(ts) {{ println(show(ts[i].kind)) i = i + 1 }}\n ts[1].kind = Tok::Num {{ v: 55 }}\n println(show(ts[1].kind))\n let p = P {{ toks: ts, last: Tok::Eof }}\n p.last = p.toks[0].kind\n println(show(p.last))\n match p.toks[2].kind {{ Tok::Eof => println(\"end\")  _ => println(\"not end\") }}\n 0\n}}\n"),
+        ),
+        (
+            // An enum holding a struct that holds an enum, and a struct whose
+            // Result/Option fields are sized by an enum; the structs and enums
+            // are declared in the "wrong" order on purpose.
+            "ax43_nested_order",
+            format!("type W = Box {{ t: T }} | Empty\ntype Q = {{ r: Result<Tok, str>, o: Option<Tok> }}\n{TOK}fn main() -> i64 {{\n let w = W::Box {{ t: mk(9, 9) }}\n match w {{ W::Box {{ t }} => println(show(t.kind) + \" in box\")  W::Empty => println(\"empty\") }}\n let q = Q {{ r: Ok(Tok::Op {{ c: \"-\" }}), o: Some(Tok::Num {{ v: 12 }}) }}\n match q.r {{ Ok(t) => println(show(t))  Err(e) => println(e) }}\n match q.o {{ Some(t) => println(show(t))  None => println(\"none\") }}\n 0\n}}\n"),
+        ),
+        (
+            // Payload fields are found by NAME, not by the position a literal
+            // or a pattern lists them in.
+            "ax43_field_order",
+            "type P = Pt { x: i64, s: str } | No\nfn main() -> i64 {\n let p = P::Pt { s: \"hi\", x: 7 }\n match p { P::Pt { s, x } => println(s + \" \" + to_str(x))  P::No => println(\"no\") }\n match p { P::Pt { s } => println(s)  _ => println(\"no\") }\n 0\n}\n".to_string(),
+        ),
+    ];
+    for (tag, src) in &progs {
+        let Some(got) = native_stdout(tag, src) else {
+            return;
+        };
+        assert_eq!(
+            got,
+            interp_stdout(tag, src),
+            "[{tag}] native != interpreter"
+        );
+    }
+    // The register's exact command: `axon build --release field.ax` prints 4.
+    if let Some(got) = native_release_stdout("ax43_release", &progs[0].1) {
+        assert_eq!(got, "4");
+    }
+}
+
+#[test]
+fn a_struct_holding_itself_by_value_is_refused_natively_not_a_compiler_crash() {
+    // `type Node = { next: Option<Node> }` has no finite layout. Sizing it
+    // recursed in `llvm_sizeof` until the compiler's own stack overflowed;
+    // it is refused with E0910 now, while the interpreter runs it.
+    let src = "type Node = { v: i64, next: Option<Node> }\nfn main() -> i64 {\n let n = Node { v: 1, next: Some(Node { v: 2, next: None }) }\n match n.next { Some(m) => println(to_str(m.v))  None => println(\"none\") }\n 0\n}\n";
+    assert_eq!(interp_stdout("struct_cycle", src), "2");
+    let f = tmp_ax("struct_cycle_build", src);
+    let bin = std::env::temp_dir().join(format!("axon_native_scyc_{}", std::process::id()));
+    let build = axon()
+        .arg("build")
+        .arg(&f)
+        .arg("-o")
+        .arg(&bin)
+        .arg("--no-cache")
+        .output()
+        .expect("spawn build");
+    let _ = std::fs::remove_file(&f);
+    let _ = std::fs::remove_file(&bin);
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr)
+    );
+    if codegen_absent(&msg) {
+        return;
+    }
+    assert_ne!(build.status.code(), Some(0), "must not build:\n{msg}");
+    assert!(
+        msg.contains("E0910") && msg.contains("struct `Node` holds itself by value"),
+        "refused in the E0910 class, naming the struct:\n{msg}"
+    );
+    assert!(!msg.contains("overflowed its stack"), "{msg}");
+}
+
 #[test]
 fn native_array_index_write_traps_out_of_bounds_like_the_interpreter() {
     let src = "fn main() -> i64 {\n let a = [1, 2, 3]\n a[3] = 7\n println(\"unreachable\")\n 0\n}\n";

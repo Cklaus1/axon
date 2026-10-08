@@ -318,11 +318,11 @@ impl<'ctx> super::Codegen<'ctx> {
                 };
                 let mut widest: u64 = 0;
                 let mut max_align: u64 = 8;
-                for (_, _, field_tys) in variants {
+                for (_, _, fields) in variants {
                     let mut off: u64 = 0;
-                    for f in field_tys {
-                        let a = self.llvm_align_of(f);
-                        let sz = self.llvm_sizeof(f).unwrap_or(8);
+                    for f in fields {
+                        let a = self.llvm_align_of(&f.ty);
+                        let sz = self.llvm_sizeof(&f.ty).unwrap_or(8);
                         max_align = max_align.max(a);
                         off = off.div_ceil(a) * a;
                         off += sz;

@@ -41,6 +41,7 @@ pub mod bpf;
 pub mod build_wrappers;
 pub mod builtin_externs;
 pub mod builtins;
+pub mod enum_layout;
 pub mod escape;
 pub mod expr;
 pub mod ir_inkwell;
@@ -222,9 +223,13 @@ pub struct Codegen<'ctx> {
     lambda_counter: u32,
     /// Counter for generating unique global names in format strings.
     fmtstr_counter: u32,
-    /// Maps enum name → list of (variant_name, tag_int, field_types).
-    /// Used by StructLit and Pattern::Struct for enum variant codegen.
-    enum_variants: HashMap<String, Vec<(String, usize, Vec<Type>)>>,
+    /// Maps enum name → its variants' native layout (name, tag, payload
+    /// fields with offsets). Used by StructLit and Pattern::Struct for enum
+    /// variant codegen; filled by `enum_layout::declare_enum_types`.
+    enum_variants: HashMap<String, Vec<enum_layout::EnumVariantLayout>>,
+    /// Every user enum name, registered before any type body is laid out so
+    /// `axon_type_to_semantic` resolves an enum-typed field as an enum.
+    enum_names: std::collections::HashSet<String>,
     /// All top-level FnDefs by name, populated during emit_program for comptime evaluation.
     fndefs: HashMap<String, ast::FnDef>,
     /// Generic function type-parameter names (fn_name → [type param names]).
@@ -462,6 +467,7 @@ impl<'ctx> Codegen<'ctx> {
             lambda_counter: 0,
             fmtstr_counter: 0,
             enum_variants: HashMap::new(),
+            enum_names: std::collections::HashSet::new(),
             fndefs: HashMap::new(),
             generic_fn_params: HashMap::new(),
             trait_defs: HashMap::new(),
@@ -676,7 +682,6 @@ impl<'ctx> Codegen<'ctx> {
             }
         }
         self.declare_types(program);
-        self.declare_enum_types(program);
 
         // Collect trait definitions first (needed for vtable thunk declaration).
         for item in &program.items {
@@ -796,9 +801,31 @@ impl<'ctx> Codegen<'ctx> {
             }
         }
 
+        // Enum names (and their opaque LLVM types) next, so a field of enum
+        // type resolves as one; then every struct's SEMANTIC field types, which
+        // enum layout needs for sizes; then the enum layouts; and only then
+        // the struct bodies, which may hold an enum or a `Result` sized by one.
+        self.declare_enum_names(program);
+        for item in &program.items {
+            if let ast::Item::TypeDef(td) = item {
+                let field_sem_types: Vec<Type> = td
+                    .fields
+                    .iter()
+                    .map(|f| self.axon_type_to_semantic(&f.ty))
+                    .collect();
+                self.struct_field_sem_types
+                    .insert(td.name.clone(), field_sem_types);
+            }
+        }
+        let cyclic = self.declare_enum_types(program);
+
         // PASS 2: fill each body, now that every name resolves.
         for item in &program.items {
             if let ast::Item::TypeDef(td) = item {
+                // Already refused (E0910) by `declare_enum_types`.
+                if cyclic.contains(&td.name) {
+                    continue;
+                }
                 // `filter_map` used to DROP any field whose type has no LLVM
                 // lowering (`Dict`, today), while `struct_fields` /
                 // `struct_field_sem_types` below kept every field. The two then
@@ -827,6 +854,7 @@ impl<'ctx> Codegen<'ctx> {
                     }
                 }
                 if let Some((fname, fty)) = unlowerable {
+                    self.struct_field_sem_types.remove(&td.name);
                     let msg = format!(
                         "codegen error [E0910]: struct `{}` has field `{}` of type {} which native \
                          codegen cannot lower, so the struct has no layout. The interpreter \
@@ -856,58 +884,6 @@ impl<'ctx> Codegen<'ctx> {
                 named_struct.set_body(&field_types, packed);
                 let field_names: Vec<String> = td.fields.iter().map(|f| f.name.clone()).collect();
                 self.struct_fields.insert(td.name.clone(), field_names);
-                let field_sem_types: Vec<Type> = td
-                    .fields
-                    .iter()
-                    .map(|f| self.axon_type_to_semantic(&f.ty))
-                    .collect();
-                self.struct_field_sem_types
-                    .insert(td.name.clone(), field_sem_types);
-            }
-        }
-    }
-
-    /// Declare LLVM struct types for enums.
-    ///
-    /// Layout: `{ i32 tag, [max_payload_size x i8] payload }`
-    /// where `max_payload_size` is the maximum byte size of any variant's fields.
-    fn declare_enum_types(&mut self, program: &ast::Program) {
-        for item in &program.items {
-            if let ast::Item::EnumDef(ed) = item {
-                let i32_ty = self.ir.context.i32_type();
-                let i8_ty = self.ir.context.i8_type();
-
-                // Compute field semantic types and payload size for each variant.
-                let mut variants_info: Vec<(String, usize, Vec<Type>)> = Vec::new();
-                let mut max_size: u64 = 0;
-
-                for (tag_int, variant) in ed.variants.iter().enumerate() {
-                    let field_types: Vec<Type> = variant
-                        .fields
-                        .iter()
-                        .map(|f| self.axon_type_to_semantic(&f.ty))
-                        .collect();
-                    let payload_size: u64 = field_types
-                        .iter()
-                        .map(|t| self.llvm_sizeof(t).unwrap_or(8))
-                        .sum();
-                    if payload_size > max_size {
-                        max_size = payload_size;
-                    }
-                    variants_info.push((variant.name.clone(), tag_int, field_types));
-                }
-
-                // Ensure at least 1 byte payload so LLVM doesn't complain.
-                let payload_size = max_size.max(1) as u32;
-
-                let struct_name = format!("{}_enum", ed.name);
-                let named_struct = self.ir.context.opaque_struct_type(&struct_name);
-                named_struct.set_body(
-                    &[i32_ty.into(), i8_ty.array_type(payload_size).into()],
-                    false,
-                );
-
-                self.enum_variants.insert(ed.name.clone(), variants_info);
             }
         }
     }
@@ -1805,7 +1781,7 @@ impl<'ctx> Codegen<'ctx> {
                     }
                     // If this name is a known enum, use Type::Enum so llvm_type
                     // can look up the "{name}_enum" struct in the module.
-                    if self.enum_variants.contains_key(other) {
+                    if self.enum_names.contains(other) {
                         Type::Enum(other.to_string())
                     } else {
                         Type::Struct(other.to_string())

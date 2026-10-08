@@ -8607,10 +8607,10 @@ impl<'ctx> super::Codegen<'ctx> {
 
             // Look up variant info.
             let variants = self.enum_variants.get(&enum_name).cloned()?;
-            let (tag_int, field_types) = variants
+            let (tag_int, field_layout) = variants
                 .iter()
                 .find(|(vn, _, _)| vn == &variant_name)
-                .map(|(_, tag, fts)| (*tag, fts.clone()))?;
+                .map(|(_, tag, fs)| (*tag, fs.clone()))?;
 
             // Look up the LLVM struct type for the enum.
             let struct_name = format!("{enum_name}_enum");
@@ -8632,48 +8632,55 @@ impl<'ctx> super::Codegen<'ctx> {
                 .build_store(tag_ptr, i32_ty.const_int(tag_int as u64, false))
                 .unwrap();
 
-            // Store each field into the payload (field 1) at byte offsets.
+            // Store each field into the payload (field 1) at its laid-out
+            // offset, found by NAME: a literal may list fields in any order
+            // (`P::Pt { s: "hi", x: 7 }`), and indexing the declared layout by
+            // the literal's position stored `s` into `x`'s slot.
             if !fields.is_empty() {
-                let i8_ty = self.ir.context.i8_type();
-                let ptr_ty = i8_ty.ptr_type(AddressSpace::default());
-
-                // Get pointer to payload field.
                 let pay_ptr = self
                     .ir
                     .builder
                     .build_struct_gep(enum_struct_ty, alloca, 1, "payptr")
                     .unwrap();
-                let pay_i8ptr = self
-                    .ir
-                    .builder
-                    .build_pointer_cast(pay_ptr, ptr_ty, "payi8ptr")
-                    .unwrap();
-
-                let mut byte_offset: u64 = 0;
-                for (fi, (fname, fexpr)) in fields.iter().enumerate() {
-                    if let Some(fval) = self.emit_expr_owned(fexpr, fn_val, CopySink::Always) {
-                        let fty = field_types.get(fi).cloned().unwrap_or(Type::Unknown);
-                        let fsize = self.llvm_sizeof(&fty).unwrap_or(8);
-                        // GEP into the payload at the current byte offset.
-                        let offset_val = i32_ty.const_int(byte_offset, false);
-                        let field_ptr = unsafe {
-                            self.ir
-                                .builder
-                                .build_gep(i8_ty, pay_i8ptr, &[offset_val], fname)
-                                .unwrap()
-                        };
-                        // Cast to the appropriate typed pointer and store.
-                        let fval_ptr_ty = fval.get_type().ptr_type(AddressSpace::default());
-                        let typed_ptr = self
-                            .ir
-                            .builder
-                            .build_pointer_cast(field_ptr, fval_ptr_ty, "ftyptr")
-                            .unwrap();
-                        build_wrappers::w_store(&self.ir.builder, typed_ptr, fval);
-                        byte_offset += fsize;
-                    } else {
-                        self.refuse_unlowered(&format!("payload field `{fname}` of an enum variant"));
+                for (fname, fexpr) in fields {
+                    let Some(slot) = field_layout.iter().find(|f| &f.name == fname) else {
+                        self.refuse_unlowered(&format!("payload field `{fname}` of `{name}`"));
+                        continue;
+                    };
+                    // Same declared-type context and narrow-int coercion as a
+                    // struct-literal field (below), so the value is built in
+                    // the slot's own layout.
+                    let saved_oi = self.current_option_inner.clone();
+                    let saved_rt = self.current_result_types.clone();
+                    match &slot.ty {
+                        Type::Option(inner) => self.current_option_inner = Some((**inner).clone()),
+                        Type::Result(ok, err) => {
+                            self.current_result_types = Some(((**ok).clone(), (**err).clone()))
+                        }
+                        _ => {}
                     }
+                    let emitted = self.emit_expr_owned(fexpr, fn_val, CopySink::Always);
+                    self.current_option_inner = saved_oi;
+                    self.current_result_types = saved_rt;
+                    let Some(fval) = emitted else {
+                        self.refuse_unlowered(&format!(
+                            "payload field `{fname}` of an enum variant"
+                        ));
+                        continue;
+                    };
+                    let fval = self.coerce_to_fixed_width(fval, &slot.ty);
+                    // The slot holds exactly `llvm_type(slot.ty)`, which is what
+                    // a match binding loads back. A value of another layout
+                    // would overrun the slot or be read back as garbage.
+                    if self.llvm_type(&slot.ty) != Some(fval.get_type()) {
+                        self.refuse_unlowered(&format!(
+                            "payload field `{fname}` of `{name}` (its value's layout differs \
+                             from the field's declared type)"
+                        ));
+                        continue;
+                    }
+                    let field_ptr = self.enum_field_slot(pay_ptr, slot);
+                    build_wrappers::w_store(&self.ir.builder, field_ptr, fval);
                 }
             }
 

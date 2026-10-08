@@ -11,7 +11,6 @@
 //! from inside `emit_expr`'s `Expr::Match` arm.
 
 use inkwell::values::{BasicValueEnum, FunctionValue};
-use inkwell::AddressSpace;
 use inkwell::FloatPredicate;
 use inkwell::IntPredicate;
 
@@ -525,76 +524,32 @@ impl<'ctx> super::Codegen<'ctx> {
                 let enum_name = parts.next().unwrap().to_string();
                 let variant_name = parts.next().unwrap().to_string();
 
-                let field_types = self
+                let field_layout = self
                     .enum_variants
                     .get(&enum_name)
                     .and_then(|vs| vs.iter().find(|(vn, _, _)| vn == &variant_name))
-                    .map(|(_, _, fts)| fts.clone());
+                    .map(|(_, _, fs)| fs.clone());
 
-                let field_types = match field_types {
-                    Some(ft) => ft,
+                let field_layout = match field_layout {
+                    Some(fl) => fl,
                     None => return,
                 };
 
                 if let BasicValueEnum::StructValue(sv) = subject {
-                    // Alloca the enum struct so we can GEP into it.
-                    let struct_name = format!("{enum_name}_enum");
-                    let enum_struct_ty = match self.ir.module.get_struct_type(&struct_name) {
-                        Some(ty) => ty,
-                        None => return,
+                    let Some(pay_ptr) = self.enum_payload_ptr(sv, &enum_name) else {
+                        return;
                     };
-                    let alloca = build_wrappers::w_alloca(
-                        &self.ir.builder,
-                        enum_struct_ty.into(),
-                        "enumtmp",
-                    );
-                    build_wrappers::w_store(&self.ir.builder, alloca, sv.into());
-
-                    // GEP to payload field (index 1).
-                    let pay_ptr = self
-                        .ir
-                        .builder
-                        .build_struct_gep(enum_struct_ty, alloca, 1, "pay")
-                        .unwrap();
-
-                    let i8_ty = self.ir.context.i8_type();
-                    let i32_ty = self.ir.context.i32_type();
-                    let ptr_ty = i8_ty.ptr_type(AddressSpace::default());
-
-                    let pay_i8ptr = self
-                        .ir
-                        .builder
-                        .build_pointer_cast(pay_ptr, ptr_ty, "payi8ptr")
-                        .unwrap();
-
-                    // For each bound field, compute byte offset in payload.
-                    let mut byte_offset: u64 = 0;
-                    for (fi, (_fname, pat)) in fields.iter().enumerate() {
-                        let fty = field_types.get(fi).cloned().unwrap_or(Type::Unknown);
-                        let fsize = self.llvm_sizeof(&fty).unwrap_or(8);
-
-                        if let Some(llvm_fty) = self.llvm_type(&fty) {
-                            let offset_val = i32_ty.const_int(byte_offset, false);
-                            let field_ptr = unsafe {
-                                self.ir
-                                    .builder
-                                    .build_gep(i8_ty, pay_i8ptr, &[offset_val], "fieldptr")
-                                    .unwrap()
-                            };
-                            let typed_ptr = self
-                                .ir
-                                .builder
-                                .build_pointer_cast(field_ptr, ptr_ty, "tfptr")
-                                .unwrap();
-                            let field_val = self
-                                .ir
-                                .builder
-                                .build_load(llvm_fty, typed_ptr, "fieldval")
-                                .unwrap();
-                            self.emit_pattern_bindings(pat, field_val, Some(&fty));
+                    // Each bound field is found by NAME. Indexing the declared
+                    // layout by the pattern's position bound `P::Pt { s, x }`
+                    // with `s` at `x`'s offset and type, and a pattern naming a
+                    // subset (`P::Pt { s }`) at the first field's.
+                    for (fname, pat) in fields {
+                        let Some(slot) = field_layout.iter().find(|f| &f.name == fname) else {
+                            continue;
+                        };
+                        if let Some(field_val) = self.load_enum_field(pay_ptr, slot) {
+                            self.emit_pattern_bindings(pat, field_val, Some(&slot.ty));
                         }
-
-                        byte_offset += fsize;
                     }
                 }
             }
