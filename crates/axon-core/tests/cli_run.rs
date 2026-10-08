@@ -34621,3 +34621,61 @@ fn an_unread_unbindable_match_field_leaves_the_outer_binding_intact_ax45() {
     let _ = std::fs::remove_file(&bin);
     assert_eq!(String::from_utf8_lossy(&nat.stdout).trim(), want);
 }
+
+/// AX-48: `let (b, k) = u`, where `u` is the inner tuple bound by an outer
+/// destructure, was refused natively with E0910 "`b` is read, but native
+/// codegen produced no value for its binding": the desugar binds `u` as
+/// `__tup_N.1`, and that element access gave `u` no semantic type, so the
+/// second destructure could not index it. The register's three repros, plus
+/// the inner tuple passed to a fn, returned from one, matched on, and nested
+/// three deep, must build and print what the interpreter prints.
+#[test]
+fn ax48_destructuring_an_inner_tuple_binding_matches_the_interpreter() {
+    let progs: [(&str, &str, &str); 5] = [
+        (
+            "ax48_lit",
+            "fn main() -> i64 { let t = (1, (2, 3)) let (a, u) = t let (b, k) = u \
+             println(\"{a} {b} {k}\") 0 }\n",
+            "1 2 3",
+        ),
+        (
+            "ax48_ret",
+            "fn f(n: i64) -> (i64, (i64, i64)) { (n, (n + 1, n + 2)) }\n\
+             fn main() -> i64 { let (a, t) = f(3) let (b, k) = t println(\"{a} {b} {k}\") 0 }\n",
+            "3 4 5",
+        ),
+        (
+            "ax48_enum",
+            "type A = Lit { v: i64 } | Two { x: i64 }\n\
+             fn f(n: i64) -> (A, (A, i64)) { (A::Lit { v: n }, (A::Two { x: n }, n)) }\n\
+             fn val(a: A) -> i64 { match a { A::Lit { v } => v A::Two { x } => x * 10 } }\n\
+             fn main() -> i64 { let (a, t) = f(3) let (b, k) = t \
+             println(\"{val(a)} {val(b)} {k}\") 0 }\n",
+            "3 30 3",
+        ),
+        (
+            "ax48_pass_return_match",
+            "fn sum(p: (i64, i64)) -> i64 { let (x, y) = p x + y }\n\
+             fn inner(t: (i64, (i64, i64))) -> (i64, i64) { let (_a, u) = t u }\n\
+             fn main() -> i64 {\n  let t = (1, (2, 3))\n  let (a, u) = t\n  \
+             let (c, d) = inner(t)\n  let s = match u { (p, q) => p * q }\n  \
+             println(\"{a} {sum(u)} {c} {d} {s} {u.1}\")\n  0\n}\n",
+            "1 5 2 3 6 3",
+        ),
+        (
+            "ax48_deep",
+            "fn main() -> i64 {\n  let z = (\"x\", (\"y\", (2.5, true)))\n  let (s1, r1) = z\n  \
+             let (s2, r2) = r1\n  let (f, b) = r2\n  \
+             println(\"{s1}{s2} {to_str(f)} {to_str_bool(b)} {to_str(z.1.1.0)}\")\n  0\n}\n",
+            "xy 2.5 true 2.5",
+        ),
+    ];
+    for (tag, src, want) in progs {
+        assert_eq!(interp_stdout(tag, src), want, "[{tag}] interpreter");
+        let Some(got) = native_stdout(tag, src) else {
+            note_harness_skip("axon build (no codegen feature)");
+            return;
+        };
+        assert_eq!(got, want, "[{tag}] native != interpreter");
+    }
+}

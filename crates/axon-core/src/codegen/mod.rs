@@ -2407,6 +2407,17 @@ impl<'ctx> Codegen<'ctx> {
                         let idx = names.iter().position(|n| n == fname)?;
                         self.struct_field_sem_types.get(&sname)?.get(idx).cloned()
                     }
+                    // Tuple element by position: `let u = t.1` binds `u` at the
+                    // element's own type. Without it a tuple-typed element (the
+                    // inner tuple of `(1, (2, 3))`, bound by the destructure
+                    // desugar `let u = __tup_N.1`) had no semantic type, so the
+                    // next `let (b, k) = u` could not index it and `b`/`k` had
+                    // no native value (AX-48).
+                    (Some(Type::Tuple(elts)), idx) => idx
+                        .parse::<usize>()
+                        .ok()
+                        .and_then(|i| elts.get(i).cloned())
+                        .filter(|t| !matches!(t, Type::Unknown)),
                     _ => None,
                 }
             }
