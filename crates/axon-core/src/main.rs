@@ -126,7 +126,8 @@ enum Command {
 
         /// Optimisation level: runs LLVM's `default<O1|O2|O3|Os|Oz>` IR
         /// pipeline (`0`: only `globaldce`, dropping unused builtin helpers)
-        /// and sets the matching backend level. Overrides `--release`.
+        /// and sets the matching backend level; `s`/`z` also mark every
+        /// function `optsize` / `optsize minsize`. Overrides `--release`.
         #[arg(
             long,
             value_name = "LEVEL",

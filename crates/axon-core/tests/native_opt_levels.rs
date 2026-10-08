@@ -1,11 +1,12 @@
 //! Native optimisation levels and `--emit-obj` (AX-17, AX-21, AX-22, AX-23,
-//! AX-37).
+//! AX-37, AX-38).
 //!
 //! `axon build` runs LLVM's `default<On>` IR pipeline for the selected level
 //! (`--opt-level 0|1|2|3|s|z`, `--release` = 2; `0` runs only `globaldce`),
-//! gives every program function except `main` internal linkage, and
-//! `--emit-obj` writes the program object without linking. Optimisation must
-//! never change what a program prints: the interpreter is the reference.
+//! marks every definition `optsize` (`s`) / `optsize minsize` (`z`), gives
+//! every program function except `main` internal linkage, and `--emit-obj`
+//! writes the program object without linking. Optimisation must never change
+//! what a program prints: the interpreter is the reference.
 //!
 //! Every test returns early when the binary was built without the `codegen`
 //! feature (the gate's `--no-default-features` stage), like the native tests in
@@ -464,4 +465,62 @@ fn o0_object_keeps_only_reachable_functions_and_links_against_the_base_runtime()
     let run = Command::new(&bin).output().expect("run linked O0 object");
     let _ = std::fs::remove_file(&bin);
     assert_eq!(String::from_utf8_lossy(&run.stdout), "hi\n");
+}
+
+/// AX-38: `--opt-level s|z` mark every function definition `optsize` /
+/// `optsize minsize`, as clang's `-Os`/`-Oz` do. LLVM's size heuristics read
+/// those attributes, not the pipeline name: without them `s` emitted IR and a
+/// binary byte-identical to `--release`. `O2` must carry neither.
+#[test]
+fn size_levels_mark_every_definition_optsize_and_o2_does_not() {
+    let src = write_src("sizeattr", MIXED);
+    // Attribute group number → its attribute text.
+    let groups = |ir: &str| -> std::collections::HashMap<String, String> {
+        ir.lines()
+            .filter_map(|l| l.strip_prefix("attributes "))
+            .filter_map(|l| l.split_once(" = "))
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    };
+    for (level, want) in [
+        ("2", &[][..]),
+        ("s", &["optsize"][..]),
+        ("z", &["optsize", "minsize"][..]),
+    ] {
+        let ll = tmp(&format!("sizeattr_{level}.ll"));
+        let b = build(
+            &["--no-cache", "--opt-level", level, "--emit-llvm"],
+            &src,
+            &ll,
+        );
+        if codegen_absent(&b) {
+            let _ = std::fs::remove_file(&src);
+            return;
+        }
+        assert_eq!(b.status.code(), Some(0), "O{level}: {}", stderr_of(&b));
+        let ir = std::fs::read_to_string(&ll).expect("IR text");
+        let _ = std::fs::remove_file(&ll);
+        let groups = groups(&ir);
+        let defines: Vec<&str> = ir.lines().filter(|l| l.starts_with("define ")).collect();
+        assert!(!defines.is_empty(), "O{level}: no definitions:\n{ir}");
+        for def in defines {
+            let attrs = def
+                .split_whitespace()
+                .filter(|t| t.starts_with('#'))
+                .map(|g| groups.get(g).map(String::as_str).unwrap_or(""))
+                .collect::<Vec<_>>()
+                .join(" ");
+            let words: Vec<&str> = attrs
+                .split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+                .collect();
+            for attr in ["optsize", "minsize"] {
+                assert_eq!(
+                    words.contains(&attr),
+                    want.contains(&attr),
+                    "O{level}: `{attr}` on `{def}` (attributes: {attrs})"
+                );
+            }
+        }
+    }
+    let _ = std::fs::remove_file(&src);
 }

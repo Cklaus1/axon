@@ -474,7 +474,7 @@ call void @fetch(ptr %url)
 ```
 axon build <file.ax>           compile to native binary (output: ./a.out or --out=<name>)
 axon build <file.ax> --release optimize (O2: LLVM default<O2> IR pipeline + O2 backend) vs default debug (O0: globaldce only, no other IR pass)
-axon build <file.ax> --opt-level <0|1|2|3|s|z>  explicit level (default<On> pipeline; s/z use the Default backend level); overrides --release
+axon build <file.ax> --opt-level <0|1|2|3|s|z>  explicit level (default<On> pipeline; s/z use the Default backend level and mark every function optsize / optsize+minsize, as clang does); overrides --release
 axon build <file.ax> --emit-obj -o <f.o>  write the program's relocatable object only, no link step (the object a normal build links; no __axon_ai_* references unless the program calls an AI builtin)
 axon run   <file.ax>           build + execute (passes remaining args to program)
 axon check <file.ax>           type check only, no binary produced
