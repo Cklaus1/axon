@@ -600,7 +600,7 @@ pub const BUILTINS: &[BuiltinFn] = &[
         name: "arr_push",
         params: &[("xs", "[T]"), ("x", "T")],
         ret: "[T]",
-        doc: "Return a fresh array with `x` appended. Copy semantics — the input is unaffected. Element type is deferred, so `arr_push(rows, Rec { .. })` builds a `[Rec]`; `T` must be consistent between the array and the pushed element (a mixed push is E0306). Native codegen lowers the `[i64]` case only — other element types are E0910-refused (interpreter-only).",
+        doc: "Return a fresh array with `x` appended. Copy semantics — the input is unaffected. Element type is deferred, so `arr_push(rows, Rec { .. })` builds a `[Rec]`; `T` must be consistent between the array and the pushed element (a mixed push is E0306). Native codegen copies whole elements at their layout, so every element type works natively (numbers, bool, str, structs, enums, tuples, nested arrays).",
     },
     BuiltinFn {
         name: "arr_sum_i64",
@@ -3033,7 +3033,7 @@ mod tests {
             "str_repeat",  // → str
             "str_concat",  // (if present) → str
             "arr_range",   // → [i64]
-            "arr_push",    // → [i64]
+            "arr_push",    // → [T]
             "dict_new",    // → Dict
             "dict_set",    // () but grows the dict (explicit mutator)
             "dict_remove", // () mutator

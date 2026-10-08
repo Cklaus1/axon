@@ -13383,8 +13383,9 @@ fn whole_arr_family_is_correct_over_wide_struct_arrays() {
     // needs an element whose size is NOT the one being assumed.
     //
     // This pins the interpreter's answers; `arr_reduce_parity.sh` separately
-    // asserts native REFUSES these (E0910), which is the half a unit test
-    // cannot express.
+    // asserts native either matches them (reverse/take/drop/concat copy whole
+    // elements at their real layout, AX-13/AX-44) or REFUSES (E0910), the half
+    // a unit test cannot express.
     let src = "type C = { s: i64, t: i64 }\n\
         fn main() -> i64 {\n  \
             let a = [C { s: 3, t: 30 }, C { s: 9, t: 90 }, C { s: 1, t: 10 }]\n  \
@@ -20781,61 +20782,310 @@ fn arr_push_refuses_a_mixed_element_type() {
     );
 }
 
-/// I-2: native codegen lowers only the `[i64]` element case of `arr_push`
-/// (8-byte stride, i64 slots). Making the builtin generic must NOT open an
-/// interp/native divergence — a struct or bool element has to abort the build
-/// with E0910, never silently compute a wrong value.
+/// AX-44: native `arr_push` used to lower only the `[i64]` element case and
+/// refused every other element type with E0910 ("builtin `arr_push` is not
+/// yet supported"), so growing a `[str]`/`[f64]`/`[Tok]` was interpreter-only.
+/// It now copies whole elements at their real layout. Every program below must
+/// BUILD and print exactly what `axon run` prints; the interpreter's output is
+/// pinned too so a shared regression can't pass as parity.
 ///
-/// The bool case is the sharp one: a `bool` is an *i1* IntValue, so it matched
-/// the old i64 lowering's pattern and was stored into (and read back from) an
-/// i64 slot — it built cleanly and returned the wrong element.
+/// The bool row is the historically sharp one: a `bool` is an *i1* IntValue,
+/// so it once matched the i64 lowering and was stored into an i64 slot.
 #[test]
-fn arr_push_non_i64_elements_are_e0910_refused_natively() {
-    let pid = std::process::id();
-    for (label, src) in [
+fn native_arr_push_over_every_element_type_matches_the_interpreter() {
+    let progs: [(&str, &str, &str); 6] = [
+        // The register's three repros, verbatim in shape.
         (
-            "struct",
-            "type Rec = { id: i64 }\n\
-             fn main() -> i64 { let rows = []\n let r = arr_push(rows, Rec { id: 1 })\n len(r) }\n",
+            "ax44_pushs",
+            "fn main() -> i64 { let xs = [\"a\", \"b\"] xs = arr_push(xs, \"c\") println(xs[2]) 0 }\n",
+            "c",
         ),
         (
-            "bool",
-            "fn main() -> i64 { let a = [true, false]\n let b = arr_push(&a, true)\n \
-             if b[2] { 1 } else { 0 } }\n",
+            "ax44_pushf",
+            "fn main() -> i64 { let xs = [1.5] xs = arr_push(xs, 2.5) println(to_str(len(xs))) 0 }\n",
+            "2",
         ),
         (
-            "f64",
-            "fn main() -> i64 { let a = [1.5]\n let b = arr_push(&a, 2.5)\n len(b) }\n",
+            "ax44_pushe",
+            "type A = Lit { v: i64 } | Neg { v: i64 }\n\
+             fn main() -> i64 { let xs = [A::Lit { v: 1 }] xs = arr_push(xs, A::Neg { v: 2 }) println(to_str(len(xs))) 0 }\n",
+            "2",
         ),
-    ] {
-        let f = std::env::temp_dir().join(format!("axon_pushgen_{label}_{pid}.ax"));
-        std::fs::write(&f, src).unwrap();
-        let bin = std::env::temp_dir().join(format!("axon_pushgen_{label}_{pid}.bin"));
-        let out = axon()
-            .args(["build", f.to_str().unwrap(), "-o"])
-            .arg(&bin)
-            .output()
-            .unwrap();
-        let _ = std::fs::remove_file(&f);
-        let _ = std::fs::remove_file(&bin);
-        let msg = format!(
-            "{}{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
-        if msg.contains("requires building axon with the `codegen` feature") {
-            eprintln!("codegen feature absent — arr_push E0910 case `{label}` skipped");
-            continue;
-        }
-        assert!(
-            msg.contains("E0910") && msg.contains("arr_push"),
-            "a {label}-element arr_push must abort the native build with E0910, got:\n{msg}"
-        );
-        assert!(
-            !out.status.success(),
-            "build must FAIL (not exit 0) on the {label} case:\n{msg}"
-        );
+        // One row per element layout: str, f64, bool (1 byte), u8, i16,
+        // struct, enum with payloads of different shapes, tuple, nested
+        // array, Option, and a `[]` literal whose element type only the push
+        // reveals (also through a borrowed `&b` argument).
+        (
+            "ax44_elems",
+            r#"type P = { x: i64, name: str }
+type Shape = Circle { r: f64 } | Rect { w: i64, h: i64 } | Empty
+fn show(s: Shape) -> str {
+    match s {
+        Shape::Circle { r } => "C" + to_str_f64(r),
+        Shape::Rect { w, h } => "R" + to_str(w * h),
+        Shape::Empty => "E",
     }
+}
+fn main() -> i64 {
+    let s = ["a", "b"]
+    s = arr_push(s, "c")
+    println(s[0] + s[1] + s[2] + " " + to_str(len(s)))
+    let f = [1.5]
+    f = arr_push(f, 2.25)
+    println(to_str_f64(f[0] + f[1]))
+    let b = [true]
+    b = arr_push(b, false)
+    b = arr_push(&b, true)
+    println(to_str_bool(b[0]) + to_str_bool(b[1]) + to_str_bool(b[2]))
+    let u = [as_u8(250)]
+    u = arr_push(u, as_u8(7))
+    println(to_str(u[0]) + " " + to_str(u[1]))
+    let w = [as_i16(-3)]
+    w = arr_push(w, as_i16(9))
+    println(to_str(w[0]) + " " + to_str(w[1]))
+    let ps = [P { x: 1, name: "one" }]
+    ps = arr_push(ps, P { x: 2, name: "two" })
+    println(ps[1].name + to_str(ps[0].x + ps[1].x))
+    let sh = [Shape::Circle { r: 1.5 }]
+    sh = arr_push(sh, Shape::Rect { w: 2, h: 3 })
+    sh = arr_push(sh, Shape::Empty)
+    println(show(sh[0]) + show(sh[1]) + show(sh[2]))
+    let t = [(1, "x")]
+    t = arr_push(t, (2, "y"))
+    println(to_str(t[1].0) + t[1].1)
+    let g = [[1, 2]]
+    g = arr_push(g, [3, 4, 5])
+    println(to_str(len(g)) + " " + to_str(g[1][2]))
+    let o = [Some(1)]
+    o = arr_push(o, None)
+    println(to_str(len(o)))
+    let rows = []
+    rows = arr_push(rows, P { x: 5, name: "r" })
+    println(rows[0].name + to_str(len(rows)))
+    0
+}
+"#,
+            "abc 3\n3.75\ntruefalsetrue\n250 7\n-3 9\ntwo3\nC1.5R6E\n2y\n2 5\n2\nr1",
+        ),
+        // Copy semantics: `let ys = arr_push(xs, v)` leaves `xs` untouched,
+        // and neither side's later writes are visible through the other --
+        // including writes into nested arrays and struct-held arrays, which
+        // the push must deep-copy. Then a `[str]` grown to 10k elements.
+        (
+            "ax44_alias",
+            r#"type Q = { v: [i64] }
+fn main() -> i64 {
+    let xs = ["a", "b"]
+    let ys = arr_push(xs, "c")
+    xs[0] = "z"
+    println(to_str(len(xs)) + " " + to_str(len(ys)) + " " + xs[0] + ys[0] + ys[2])
+    let a1 = arr_push(ys, "p")
+    let a2 = arr_push(ys, "q")
+    let p1 = a1[3]
+    let p2 = a2[3]
+    println(p1 + p2)
+    println(to_str(len(ys)))
+    let g = [[1, 2]]
+    let h = arr_push(g, [3])
+    h[0][0] = 99
+    println(to_str(g[0][0]) + " " + to_str(h[0][0]))
+    let row = [7, 8]
+    let rows = arr_push(g, row)
+    row[0] = 0
+    rows[0][1] = 42
+    println(to_str(rows[1][0]) + " " + to_str(g[0][1]) + " " + to_str(row[0]))
+    let qs = [Q { v: [1] }]
+    let qs2 = arr_push(qs, Q { v: [2] })
+    qs2[0].v[0] = 50
+    println(to_str(qs[0].v[0]) + " " + to_str(qs2[0].v[0]) + " " + to_str(qs2[1].v[0]))
+    let fs = [1.0]
+    let fs2 = arr_push(fs, 2.0)
+    fs[0] = 9.0
+    println(to_str_f64(fs2[0]))
+    let ws: [str] = []
+    let i = 0
+    while i < 10000 {
+        ws = arr_push(ws, "w" + to_str(i))
+        i = i + 1
+    }
+    println(to_str(len(ws)) + " " + ws[0] + " " + ws[9999])
+    let e = arr_push([], "only")
+    println(e[0])
+    0
+}
+"#,
+            "2 3 zac\npq\n3\n1 99\n7 2 0\n1 50 2\n1\n10000 w0 w9999\nonly",
+        ),
+        // Sum-type and closure elements, and an unsigned 64-bit one.
+        (
+            "ax44_edge",
+            r#"fn main() -> i64 {
+    let o: [Option<str>] = [Some("a")]
+    o = arr_push(o, None)
+    o = arr_push(o, Some("z"))
+    let k = match o[2] { Some(s) => s, None => "-" }
+    let m = match o[1] { Some(s) => s, None => "-" }
+    println(k)
+    println(m)
+    let r: [Result<i64, str>] = [Ok(1)]
+    r = arr_push(r, Err("bad"))
+    let e = match r[1] { Ok(v) => to_str(v), Err(s) => s }
+    println(e)
+    let fs = [|x: i64| x + 1]
+    fs = arr_push(fs, |x: i64| x * 2)
+    println(to_str(len(fs)))
+    let u: [u64] = []
+    u = arr_push(u, as_u64(5))
+    println(to_str(u[0]))
+    0
+}
+"#,
+            "z\n-\nbad\n2\n5",
+        ),
+    ];
+    for (tag, src, expect) in progs {
+        let interp = interp_stdout(tag, src);
+        assert_eq!(interp, expect, "[{tag}] interpreter output changed");
+        let Some(native) = native_stdout(tag, src) else {
+            return;
+        };
+        assert_eq!(native, interp, "[{tag}] native != interpreter");
+    }
+}
+
+/// AX-44: arr_reverse/take/drop share the generic element copy with
+/// `arr_push` (they were `[i64]`-only and E0910-refused otherwise): str, f64,
+/// bool, struct, enum, nested (deep-copied) and u8 elements, plus the
+/// clamping edges of take/drop and an empty input.
+#[test]
+fn native_arr_reverse_take_drop_over_any_element_type_match_the_interpreter() {
+    let src = r#"type P = { x: i64, name: str }
+type Shape = Circle { r: f64 } | Rect { w: i64, h: i64 } | Empty
+fn main() -> i64 {
+    let s = ["a", "b", "c", "d"]
+    let r = arr_reverse(s)
+    println(r[0] + r[1] + r[2] + r[3])
+    let t = arr_take(s, 2)
+    let d = arr_drop(s, 3)
+    println(to_str(len(t)) + t[1] + to_str(len(d)) + d[0])
+    println(to_str(len(arr_take(s, -1))) + to_str(len(arr_drop(s, -1))) + to_str(len(arr_take(s, 99))) + to_str(len(arr_drop(s, 99))))
+    let f = arr_reverse([1.5, 2.5, 4.0])
+    println(to_str_f64(f[0]) + " " + to_str_f64(f[2]))
+    let b = arr_drop([true, false, true], 1)
+    println(to_str_bool(b[0]) + to_str_bool(b[1]))
+    let ps = [P { x: 1, name: "one" }, P { x: 2, name: "two" }, P { x: 3, name: "three" }]
+    let pr = arr_reverse(ps)
+    println(pr[0].name + to_str(pr[2].x) + arr_take(ps, 2)[1].name)
+    let g = [[1], [2, 3], [4, 5, 6]]
+    let gr = arr_reverse(g)
+    gr[0][0] = 77
+    println(to_str(g[2][0]) + " " + to_str(gr[0][0]) + " " + to_str(len(arr_drop(g, 1)[0])))
+    let sh = [Shape::Circle { r: 1.5 }, Shape::Rect { w: 2, h: 3 }, Shape::Empty]
+    let shv = arr_reverse(sh)
+    let n = match shv[1] { Shape::Rect { w, h } => w * h, _ => 0 }
+    println(to_str(n) + " " + to_str(len(arr_take(sh, 1))))
+    let u = arr_reverse([as_u8(1), as_u8(200)])
+    println(to_str(u[0]))
+    let e: [str] = []
+    println(to_str(len(arr_reverse(e))))
+    0
+}
+"#;
+    let interp = interp_stdout("ax44_slice", src);
+    assert_eq!(
+        interp,
+        "dcba\n2b1d\n0440\n4 1.5\nfalsetrue\nthree1two\n4 77 2\n6 1\n200\n0"
+    );
+    let Some(native) = native_stdout("ax44_slice", src) else {
+        return;
+    };
+    assert_eq!(native, interp, "native != interpreter");
+}
+
+/// The finding's measured case: a lexer that grows a `[Tok]` from an empty
+/// `[]` literal (whose element type only the first push reveals), inside a fn
+/// returning `[Tok]`, then a final push of a payload-less variant.
+#[test]
+fn native_lexer_growing_a_token_array_matches_the_interpreter() {
+    let src = r#"type Tok = Num { v: i64 } | Op { c: str } | End
+fn lex(s: str) -> [Tok] {
+    let toks = []
+    let i = 0
+    while i < str_len(s) {
+        let c = str_slice(s, i, i + 1)
+        if str_contains("0123456789", c) {
+            let v = 0
+            while i < str_len(s) && str_contains("0123456789", str_slice(s, i, i + 1)) {
+                let d = match parse_int(str_slice(s, i, i + 1)) { Ok(n) => n, Err(_) => 0 }
+                v = v * 10 + d
+                i = i + 1
+            }
+            toks = arr_push(toks, Tok::Num { v: v })
+        } else {
+            toks = arr_push(toks, Tok::Op { c: c })
+            i = i + 1
+        }
+    }
+    arr_push(toks, Tok::End)
+}
+fn main() -> i64 {
+    let toks = lex("12+345*(6-7)")
+    let sum = 0
+    let ops = ""
+    for t in toks {
+        match t {
+            Tok::Num { v } => { sum = sum + v }
+            Tok::Op { c } => { ops = ops + c }
+            Tok::End => { ops = ops + "$" }
+        }
+    }
+    println(to_str(len(toks)) + " " + to_str(sum) + " " + ops)
+    0
+}
+"#;
+    let interp = interp_stdout("ax44_lexer", src);
+    assert_eq!(interp, "10 370 +*(-)$");
+    let Some(native) = native_stdout("ax44_lexer", src) else {
+        return;
+    };
+    assert_eq!(native, interp, "native != interpreter");
+}
+
+/// What native still cannot lower is refused by ELEMENT TYPE, not reported
+/// as an unsupported builtin: `arr_contains`/`arr_index_of` compare elements
+/// as i64 and failed IR verification on a `[bool]`/`[i32]` array.
+#[test]
+fn native_arr_builtins_refuse_by_element_type() {
+    let src = "fn main() -> i64 {\n let b = [false, true]\n println(to_str_bool(arr_contains(&b, true)))\n 0\n}\n";
+    let f = tmp_ax("ax44_refuse", src);
+    let bin = std::env::temp_dir().join(format!("axon_ax44_refuse_{}", std::process::id()));
+    let out = axon()
+        .arg("build")
+        .arg(&f)
+        .arg("-o")
+        .arg(&bin)
+        .arg("--no-cache")
+        .output()
+        .expect("spawn build");
+    let _ = std::fs::remove_file(&f);
+    let _ = std::fs::remove_file(&bin);
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    if codegen_absent(&msg) {
+        return;
+    }
+    assert!(!out.status.success(), "build must fail:\n{msg}");
+    assert!(
+        msg.contains("E0910") && msg.contains("`arr_contains` on `[bool]`"),
+        "refusal must name the element type:\n{msg}"
+    );
+    assert!(
+        !msg.contains("IR verification") && !msg.contains("not yet supported"),
+        "no IR-verifier crash and no 'builtin unsupported' claim:\n{msg}"
+    );
 }
 
 #[test]
