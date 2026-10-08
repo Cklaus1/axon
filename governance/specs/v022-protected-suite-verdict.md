@@ -222,7 +222,7 @@ Each clause names what must hold. The negative matrix below names how each one f
   stamping at creation, strict closure arguments at a crossing, the am83 arithmetic arm, and the arms of
   am100 and am102 (the name sinks, the existence-oracle text, the closure pick, the taint of a binding, a
   shared object, the kernel and the world: each removal is a mutation row KILLED by its own attack, and the test that
-  row fails is itself a test a gate row runs: checked for every row of am100 (M2600-M2629, by reading the registry) and of am102 (M2700-M2767), am106 (M2910-M2946) and am108 (M3030-M3041), by
+  row fails is itself a test a gate row runs: checked for every row of am100 (M2600-M2629, by reading the registry) and of am102 (M2700-M2767), am106 (M2910-M2946) and am108 (M3030-M3042), by
   `scripts/pci_delta.py --check`, which derives those ranges from the registry and fails when a row's test is run by no gate row). The runner rows of am100 (`axon-psv`, M2603-M2607) are CORROBORATION of
   the unit rows, as am96's are: with the taint on, the production route refuses those attacks by the taint
   first, so four of them were withdrawn (amendment 102) and the static guards are evidenced at unit level

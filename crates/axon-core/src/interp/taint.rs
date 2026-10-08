@@ -444,6 +444,25 @@ pub(crate) const STRINGIFIERS: &[&str] = &["to_str", "dict_to_str"];
 #[cfg(test)]
 pub(crate) const EMITTERS: &[&str] = &["print", "println", "eprint", "eprintln"];
 
+/// Builtins whose FIRST argument is only counted, keyed into or appended to: they
+/// never look at what the entries hold, so a big dict or array they touch in a
+/// loop is not walked end to end on every call (a million `dict_set`s would
+/// otherwise be quadratic). The entries are read by their own routes: a value
+/// taken out carries its holder's taint, and a shared object inside it its own.
+/// Fail-closed: a builtin NOT listed here walks every argument deep.
+pub(crate) const SHALLOW_FIRST_ARG: &[&str] = &[
+    "dict_set",
+    "dict_remove",
+    "dict_inc",
+    "dict_get",
+    "dict_get_or",
+    "dict_has",
+    "dict_len",
+    "dict_keys",
+    "len",
+    "arr_push",
+];
+
 pub(crate) const DICT_WRITERS: &[&str] = &["dict_set", "dict_remove", "dict_inc"];
 
 /// What the dispatcher needs to know about a builtin.
@@ -834,9 +853,15 @@ impl<'p> Interp<'p> {
     pub(super) fn t_builtin_in(&self, name: &str, args: &[Value]) {
         // Every argument is walked DEEP: a builtin that compares, searches,
         // sorts, hashes or prints a container reads the content of every shared
-        // object inside it, and no table of such builtins is kept (amendment 108).
-        for a in args {
-            self.t_touch(self.t_obj_deep(a));
+        // object inside it, so there is no table of such builtins. The one table
+        // is the opposite, fail-closed: the few that only count, key into or append
+        // to their first argument (amendment 108).
+        for (i, a) in args.iter().enumerate() {
+            if i == 0 && SHALLOW_FIRST_ARG.contains(&name) {
+                self.t_touch(self.t_obj(a));
+            } else {
+                self.t_touch(self.t_obj_deep(a));
+            }
         }
         match info(name).map(|i| i.class) {
             Some(Class::Pure) => {}

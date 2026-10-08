@@ -1565,7 +1565,6 @@ fn every_builtin_that_can_read_a_container_of_a_tainted_dict_taints_its_result()
         ("arr_sort_by", "len(arr_sort_by(xs, |a| 0)) == 1"),
         ("arr_filter", "len(arr_filter(xs, |a| true)) == 1"),
         ("arr_take", "len(arr_take(xs, 1)) == 1"),
-        ("arr_len", "len(xs) == 1"),
     ];
     for (name, cond) in calls {
         let body = format!(
@@ -1581,6 +1580,18 @@ fn every_builtin_that_can_read_a_container_of_a_tainted_dict_taints_its_result()
             Expect::Refused,
         ));
     }
+    // The honest control: counting what a container holds is not a read of the
+    // content of the dict inside it (`len` is a SHALLOW_FIRST_ARG builtin).
+    let body = format!(
+        "{CMP_OPS}    let d = dict_new()\n    put(d)\n    let xs = [d]\n    let f = if len(xs) == 1 {{ ops[0] }} else {{ ops[1] }}\n    assert(f(21) >= 0)"
+    );
+    cases.push(case(
+        "builtin len over [tainted dict] counts and reads nothing",
+        &pre,
+        &body,
+        "fn put(d: Dict) { dict_set(d, \"k\", 1) }\n",
+        Expect::Ok,
+    ));
     check(&cases, Rules::TaintOnly);
     attacks_are_live(&cases);
 }
@@ -1619,13 +1630,21 @@ fn every_comparison_and_every_builtin_argument_is_walked_deep() {
         .unwrap()
         .1;
     let at = tt.find("pub(super) fn t_builtin_in").expect("t_builtin_in");
-    let body = &tt[at..at + 900];
+    let body = &tt[at..at + 1200];
+    // Every argument is walked deep, except the FIRST argument of the few builtins that
+    // only count, key into or append to it (fail-closed: unlisted means deep).
     assert!(
-        body.contains("for a in args")
-            && body.contains("t_obj_deep(a)")
-            && !body.contains("t_obj(a)"),
-        "DRIFT: a builtin's arguments must ALL be walked deep"
+        body.contains("for (i, a) in args.iter().enumerate()")
+            && body.contains("i == 0 && SHALLOW_FIRST_ARG.contains(&name)")
+            && body.contains("else {\n                self.t_touch(self.t_obj_deep(a));"),
+        "DRIFT: a builtin's arguments must ALL be walked deep, bar the first argument of SHALLOW_FIRST_ARG"
     );
+    for n in super::taint::SHALLOW_FIRST_ARG {
+        assert!(
+            crate::builtins::BUILTINS.iter().any(|b| b.name == *n),
+            "DRIFT: SHALLOW_FIRST_ARG names `{n}`, which is not a builtin"
+        );
+    }
 }
 
 /// A native call (`gfx::present` on a surface) writes a registry every frame

@@ -6766,7 +6766,7 @@ row), and the `_text_ids` / `_unit_ids` / `_regular_text` guards beyond those th
 ## Amendment 108: a comparison reads what it compares, every builtin argument is read deep, the method path of the existence oracle, native registries are world state (C9 round 12, PSV1V)
 
 108. **Source: the round-12 PSV-1 and SENTINEL reviewers** (`/var/tmp/c9r12-findings-PSV-1.json`, `/var/tmp/c9r12-findings-SENTINEL.json`, plus the PSV-3
-     REGISTER note on the delta note's text). Mutation ids M3030-M3041 (M3033, M3035, M3038 are runner legs), matrix rows A249-A253 (the integrator renumbers).
+     REGISTER note on the delta note's text). Mutation ids M3030-M3042 (M3033, M3035, M3038 are runner legs), matrix rows A249-A253 (the integrator renumbers).
      Base `c9r12/integrate11` (`915054b8`). `crates/axon-core/src/{interp/eval.rs, interp/taint.rs, checker.rs}` changed; classified in `scripts/pci_delta.py` as
      narrowing. Amendment 102's class ("a path on which taint is dropped") is the one this closes further.
 
@@ -6776,8 +6776,11 @@ row), and the `_text_ids` / `_unit_ids` / `_regular_text` guards beyond those th
      `nm = if d == e {"lax"} else {"ref1"}; sandbox_run(sb, nm, 21)` chose the NAME. Cause: object taint was consulted by builtin dispatch (`t_builtin_in` -> `t_obj`,
      three deep, arrays not scanned) and by the stringifiers (`t_obj_deep`), and the binary `==`/`!=` arm called neither. Fixed at the two primitives every read goes
      through: (a) `eval_binop` takes `t_obj_deep` of BOTH operands of every comparison variant (`==`, `!=`, `<`, `>`, `<=`, `>=`) into the result, inside `if T`; (b)
-     `t_builtin_in` walks EVERY argument of EVERY builtin deep, with no table of names (the two-name `STRINGIFIERS` table is kept only for the drift test that
-     classifies text renderers). A channel compares by identity and never leaked its content; the deep walk now taints it too, which is conservative.
+     `t_builtin_in` walks EVERY argument of EVERY builtin deep, with no table of builtins that read (the two-name `STRINGIFIERS` table is kept only for the drift test that
+     classifies text renderers). The one table is the fail-closed opposite, `SHALLOW_FIRST_ARG` (`dict_set`, `dict_remove`, `dict_inc`, `dict_get`, `dict_get_or`, `dict_has`,
+     `dict_len`, `dict_keys`, `len`, `arr_push`): the FIRST argument of a builtin that only counts, keys into or appends to a container is not walked, because the first form of
+     this fix walked it and made a loop of a million `dict_set`s quadratic (the suite hung at `a_dict_over_the_snapshot_bound_is_refused_not_skipped`, found by running the
+     full axon-core suite; M3042 puts `arr_contains` in the list and its attack gets through). A channel compares by identity and never leaked its content; the deep walk now taints it too, which is conservative.
      Executed before and after (probes `/var/tmp/c9r12-p1v/w/`, scripts `batch2.sh`..`batch12.sh`): f1/f2, f4, f5, g1, g3, g6, i1 were accepted at `915054b8` and are refused by
      the taint at the fix; every honest control (the operator's own dicts compared) still passes.
 

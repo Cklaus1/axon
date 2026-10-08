@@ -2642,5 +2642,6 @@ ATTACK_MARKERS.update({
     'M3038': '3\\.\\{N\\}\\(\\): \\[score\\]',
     'M3039': 'ATTACK:\\ <native:\\ a\\ surface\\ the\\ candidate\\ presented>\\ completed',
     'M3040': 'ATTACK:\\ <native:\\ a\\ surface\\ the\\ candidate\\ presented>\\ completed',
+    'M3042': 'ATTACK:\\ <builtin\\ arr_contains\\ over\\ \\[tainted\\ dict\\]>\\ completed',
     'M3041': 'ATTACK:\\ <native:\\ a\\ surface\\ the\\ candidate\\ presented>\\ completed',
 })
