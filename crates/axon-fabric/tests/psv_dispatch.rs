@@ -1733,6 +1733,56 @@ fn a_helper_that_ran_another_launcher_than_the_pinned_one_yields_no_verdict() {
     assert!(s.reason.unwrap_or_default().contains("not the pinned"));
 }
 
+/// Amendment 103: the owner Fabric passes to `open_verified` for the privileged
+/// helper (`Some(h.owner)`, run_privileged) is the use-time re-check that a stranger
+/// cannot change the helper's bytes after they are verified. Round 10 replaced it by
+/// `None` with the whole suite green (the load-time walk and the digest pin dominate,
+/// so nothing observed THIS argument). A helper owned by neither root nor the
+/// configured owner launches nothing. Control: the same copy, its own uid configured.
+#[test]
+fn a_privileged_helper_owned_by_a_stranger_launches_nothing() {
+    if unsafe { libc::geteuid() } != 0 {
+        eprintln!("skipped: needs root (a file owned by another uid)");
+        return;
+    }
+    let w = World::new();
+    let key = observer_key(w.env.dir.path(), "obs", &[&w.observer_roots()]);
+    let h = w.env.dir.path().join("stranger-owned-helper");
+    copy_executable(helper_pin().path, &h, 0o755);
+    std::os::unix::fs::chown(&h, Some(4243), Some(4243)).unwrap();
+    let run = |op: &str, owner: u32| {
+        let mut lx = w.lx("", "");
+        let test_config = lx.privileged.as_ref().unwrap().test_config.clone();
+        lx.privileged = Some(axon_fabric::backend::PrivilegedRoute {
+            helper: axon_fabric::sealed_exec::Pinned {
+                sha256: sha256_file(&h),
+                path: h.clone(),
+            },
+            owner,
+            test_config,
+        });
+        let mut cfg = w.protected_cfg();
+        cfg.linux = Some(lx);
+        cfg.observer = Some(w.observer("", &key, "observer"));
+        submit(&w.request(op, "check:acc", "t_psv_ok").to_string(), &cfg).unwrap()
+    };
+    let c = run("op-owner-helper", 4243);
+    assert_eq!(class(&c), "protected", "control: {:?}", c.reason);
+    let s = run("op-stranger-helper", 4242);
+    assert!(
+        !launched(&w, "op-stranger-helper") && class(&s) != "protected",
+        "ATTACK: a privileged helper owned by uid 4243 (not root, not the configured 4242) was \
+         executed ({:?}, class {})",
+        s.receipt.verification,
+        class(&s)
+    );
+    let r = s.reason.unwrap_or_default();
+    assert!(
+        r.contains("is owned by uid"),
+        "ATTACK: the launch was refused for another reason than the helper's owner: {r}"
+    );
+}
+
 /// D6 / amendment 50: a Fabric that keeps its own nonces (the in-process
 /// development custodian) never reaches a root launch: the privileged
 /// launcher spends only through the custodian its operator config names,

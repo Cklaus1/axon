@@ -1092,7 +1092,7 @@ fn recorded(script: &str, rec_name: &str) -> (String, u64) {
 fn the_check_child_runs_in_the_suite_with_only_its_own_environment_and_stdio() {
     let (text, _) = recorded(
         "#!/bin/sh\nFDS=$(for i in 0 1 2; do readlink \"/proc/$$/fd/$i\"; done)\n\
-         { pwd; echo \"FDS $FDS\" | tr '\\n' ' '; echo; env; } > @REC@\nexit 0\n",
+         { pwd; echo \"FDS $FDS\" | tr '\\n' ' '; echo; env; printf 'ARG:%s\\n' \"$@\"; } > @REC@\nexit 0\n",
         "child-env",
     );
     let mut lines = text.lines();
@@ -1123,8 +1123,68 @@ fn the_check_child_runs_in_the_suite_with_only_its_own_environment_and_stdio() {
         mine(1),
         mine(2)
     );
-    let vars: std::collections::BTreeMap<&str, &str> =
-        lines.filter_map(|l| l.split_once('=')).collect();
+    let rest: Vec<&str> = lines.collect();
+    let argv: Vec<&str> = rest.iter().filter_map(|l| l.strip_prefix("ARG:")).collect();
+    let vars: std::collections::BTreeMap<&str, &str> = rest
+        .iter()
+        .filter(|l| !l.starts_with("ARG:"))
+        .filter_map(|l| l.split_once('='))
+        .collect();
+    // Amendment 103: every VALUE the runner hands the check child, not only that the keys exist.
+    // (Round 10: AXON_PATH_EXCLUSIVE "1" -> "0" and a PATH prefixed with /in/candidate left the
+    // whole suite green, because only the key names were asserted.)
+    assert_eq!(
+        vars.get("PATH").copied(),
+        Some("/usr/bin:/bin"),
+        "ATTACK: the check child's PATH is not exactly /usr/bin:/bin: {vars:?}"
+    );
+    assert_eq!(
+        vars.get("AXON_PATH_EXCLUSIVE").copied(),
+        Some("1"),
+        "ATTACK: the check child's module path is not exclusive (ambient module directories are \
+         searched again): {vars:?}"
+    );
+    let (suite_dir, cand_dir) = vars
+        .get("AXON_PATH")
+        .and_then(|v| v.split_once(':'))
+        .unwrap_or_else(|| panic!("ATTACK: AXON_PATH is not `<suite>:<candidate>`: {vars:?}"));
+    assert!(
+        suite_dir.ends_with("/suite")
+            && cand_dir.ends_with("/candidate")
+            && std::fs::canonicalize(suite_dir).ok() == std::fs::canonicalize(cwd).ok()
+            && std::fs::canonicalize(cand_dir).ok()
+                == std::fs::canonicalize(std::path::Path::new(suite_dir).with_file_name("candidate"))
+                    .ok(),
+        "ATTACK: AXON_PATH is not the suite directory THEN the candidate (order and members): \
+         {suite_dir:?} {cand_dir:?} (cwd {cwd:?})"
+    );
+    assert!(
+        !vars["AXON_ALLOWED_EFFECTS"].split(',').any(|e| e.trim() == "Exec"),
+        "ATTACK: the check child's effect ceiling still grants Exec: {vars:?}"
+    );
+    assert_eq!(
+        argv.len(),
+        9,
+        "ATTACK: the check child's argv is not the nine arguments the runner builds: {argv:?}"
+    );
+    for (i, want) in [
+        (0, "test"),
+        (2, "--json"),
+        (3, "--filter"),
+        (4, "t_ok"),
+        (5, "--exact"),
+        (6, "--completion-key-stdin"),
+        (7, "--seal"),
+    ] {
+        assert_eq!(
+            argv[i], want,
+            "ATTACK: the check child's argv[{i}] is not {want:?}: {argv:?}"
+        );
+    }
+    assert!(
+        argv[1].ends_with("/suite/accept.ax") && argv[8] == cand_dir,
+        "ATTACK: the check child runs a different entry or seals a different candidate: {argv:?}"
+    );
     for want in [
         "PATH",
         "AXON_PATH",

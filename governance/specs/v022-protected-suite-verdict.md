@@ -445,12 +445,37 @@ Replacing the binary without re-certifying fails closed at two independent point
 ## What the refusal-site gate claims (C9 round 9, amendment 98)
 
 `scripts/v022_refusal_coverage.py` derives the guard sites from the code of every in-scope file. The claim is
-exactly this: **every refusal site has a mutation row, a CHECKABLE exemption (a fact a reviewer can re-execute:
+exactly this: **every GATE-VISIBLE refusal site (what is NOT visible is listed under "What the gate still cannot see") has a mutation row, a CHECKABLE exemption (a fact a reviewer can re-execute:
 dominated, unreachable, not on the protected route), or an entry on a counted, greppable REMAINDER list of guards no
 test observes alone.** REMAINDER is **not claimed covered**: it is the list of guards for which no test is known to
 fail when the guard is removed. The gate prints the counts by category on every run and
 `python3 scripts/v022_refusal_coverage.py --remainder` lists each site (`grep REMAINDER`). An earlier wording
 ("a row or a reasoned exemption", amendments 48 and 95) let a REMAINDER entry read as an exemption; it is not one.
+
+### What the gate still cannot see (C9 round 11, amendment 103)
+
+"Every refusal site" is true of the sites the gate can SEE, and the REMAINDER count is a count of those. Round 10
+(EQUIVALENCE) executed two forms the gate did not see: a production VALUE handed to a primitive that no test observes
+(`exec_axon_test`'s `.env("AXON_PATH_EXCLUSIVE", "1")` -> `"0"`, the PATH prefixed with `/in/candidate`) and an
+OWNER argument (`Some(h.owner)` -> `None` at the two sites that open the root helper). Both are visible now: a literal
+or constant handed to a spawn builder (`.env` value, `.arg`, each `.args([..])` element, `.current_dir`, `Stdio::..`),
+an owner/uid/gid argument, a permission mode literal, and a literal field of a Config/Cfg/Authority/Policy/Manifest/
+Trust struct literal are each a site, credited only by a row whose edit changes THAT value, by an `OBSERVED` entry
+naming the test a survey saw fail, by a checkable exemption, or by a counted `val_*` REMAINDER entry. What the gate
+STILL cannot see is printed in its last lines (`STILL BLIND:`) and is, concretely:
+
+- a value built by computation, or handed through a local binding (`let m = 0o700; mkdir(m)`: seen at the literal, not
+  at the use), a `format!` of variables, a path joined at run time;
+- a spawn through a wrapper fn or a builder not named `.env/.arg/.args/.current_dir/.stdin/.stdout/.stderr/.uid/.gid`;
+- a struct literal of a type not named Config/Cfg/Authority/Policy/Manifest/Trust, and a literal inside a nested literal;
+- a default read as a value (`unwrap_or`, `map_or`, `Default::default`);
+- a uid or mode that is the operand of a comparison (only the per-term and constant rules see those);
+- whether a REMAINDER or OBSERVED entry is TRUE: nothing re-runs the survey that wrote it;
+- a row that deletes a REDUNDANT PAIR (git's `GIT_NO_LAZY_FETCH` + `protocol.allow=never`) credits both members, though
+  only the pair is shown to be observed (each alone survives, because the other still holds);
+- Python other than `scripts/guest_build_env.py`, the shell scripts, and any decision that is not Rust or that file.
+
+A reader must therefore not take "every refusal site" as "every guard".
 
 ## Mutation record for the readiness authority
 

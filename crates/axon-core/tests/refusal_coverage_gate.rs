@@ -664,9 +664,14 @@ fn production_code_after_a_test_module_is_scanned() {
 /// test, a data enum): a rule that over-reads makes every exemption noise.
 fn not_named(r: &Path, site: &str, what: &str) {
     let t = text(&gate(r, &[]));
-    if t.lines()
-        .any(|l| l.contains("refusal site with no row and no exemption") && l.contains(site))
-    {
+    // A VALUE site (amendment 103) is a different kind of report line ("...: value (val_x) ..."):
+    // this helper asserts what is, or is not, a LINE site. A probe line that holds a literal value
+    // is named as a value site too, and its text is quoted in that line.
+    if t.lines().any(|l| {
+        l.contains("refusal site with no row and no exemption")
+            && !l.contains("exemption: value (")
+            && l.contains(site)
+    }) {
         panic!("ATTACK: {what}: the gate named it as a refusal site: {t}");
     }
 }
@@ -1894,4 +1899,278 @@ fn a_python_guard_exemption_is_counted_by_kind() {
     );
     let _ = std::fs::remove_dir_all(&r);
     let _ = std::fs::remove_dir_all(&base);
+}
+
+// ── C9 round 11, eqgate6 (amendment 103): a VALUE is a site ─────────────────
+
+/// Give the copy of the gate one more value exemption.
+fn value_exempt(r: &Path, f: &str, func: &str, n: usize, frag: &str, kind: &str, reason: &str) {
+    edit(
+        r,
+        GATE,
+        "\n\ndef load_rows():",
+        &format!(
+            "\nVALUE_EXEMPT.append(({f:?}, {func:?}, {n}, {frag:?}, {kind:?}, {reason:?}))\n\n\ndef load_rows():"
+        ),
+    );
+}
+
+/// The gate names the value `frag` of kind `label` as a site with no row and no exemption.
+fn names_value(r: &Path, label: &str, frag: &str, attack: &str) {
+    let o = gate(r, &[]);
+    let t = text(&o);
+    let want = format!("refusal site with no row and no exemption: value ({label}) {frag}  [fn");
+    if !t.lines().any(|l| l.contains(&want)) {
+        panic!("ATTACK: {attack}: the gate did not name `{want}`: {t}");
+    }
+    assert!(!o.status.success(), "{attack}: named but held: {t}");
+}
+
+fn not_names_value(r: &Path, frag: &str, attack: &str) {
+    let t = text(&gate(r, &[]));
+    let want = format!(" {frag}  [fn");
+    if t.lines().any(|l| {
+        l.contains("refusal site with no row and no exemption: value (") && l.contains(&want)
+    }) {
+        panic!("ATTACK: {attack}: the gate named {frag} as a value site: {t}");
+    }
+}
+
+const SPAWN_PROBE: &str = "pub fn vs_spawn(vs_x: &str) {\n    let _vs_c = std::process::Command::new(\"vs_tool\")\n        .env(\"VS_KEY_A\", \"vs_val_a\")\n        .env(\"VS_KEY_B\", \"vs_val_b\")\n        .arg(\"vs_flag\")\n        .args([\"vs_arg1\", \"vs_arg2\"])\n        .env(\"VS_DYN\", vs_x)\n        .arg(vs_x)\n        .current_dir(\"/vs/cwd\")\n        .stdin(std::process::Stdio::piped());\n}\n\n#[cfg(test)]\nfn vs_test_only() {\n    let _vt = std::process::Command::new(\"x\").env(\"VT_K\", \"vt_val\").arg(\"vt_arg\");\n}\n";
+
+/// Amendment 103 (a): a LITERAL or CONSTANT handed to a process-spawn builder is a
+/// site of its own: the value of `.env(K, V)`, `.arg(V)`, each literal element of
+/// `.args([..])`, `.current_dir(V)`, a `Stdio::..` handed to a stream. The key is not
+/// the value (a row that renames the key credited the whole `.env(` line in round 10,
+/// while `"AXON_PATH_EXCLUSIVE", "1"` -> `"0"` kept the suite green). A computed value
+/// and a `#[cfg(test)]` item are not sites.
+#[test]
+fn a_literal_handed_to_a_spawn_builder_is_a_site_of_its_own() {
+    let r = tree("value-spawn");
+    add_code(&r, SCANNED, SPAWN_PROBE);
+    for (label, frag) in [
+        ("val_env", "\"vs_val_a\""),
+        ("val_env", "\"vs_val_b\""),
+        ("val_arg", "\"vs_flag\""),
+        ("val_arg", "\"vs_arg1\""),
+        ("val_arg", "\"vs_arg2\""),
+        ("val_cwd", "\"/vs/cwd\""),
+        ("val_stdio", "std::process::Stdio::piped()"),
+    ] {
+        names_value(
+            &r,
+            label,
+            frag,
+            &format!("{frag} handed to a spawn builder was not a value site"),
+        );
+    }
+    for (frag, what) in [
+        ("vs_x", "a computed value"),
+        ("\"vt_val\"", "a value in a cfg(test) item"),
+        ("\"vt_arg\"", "an arg in a cfg(test) item"),
+        ("\"VS_KEY_A\"", "an env KEY"),
+    ] {
+        not_names_value(&r, frag, &format!("{what} was read as a literal value"));
+    }
+    let _ = std::fs::remove_dir_all(&r);
+}
+
+/// Amendment 103: a row credits a value only when its edit CHANGES that value's
+/// text. The key rename does not credit the value, and the edit of one value does
+/// not credit its neighbour; a value exemption keyed by (function, n, fragment)
+/// credits it as REMAINDER (counted by `val_*` category, never claimed covered) and a
+/// stale one (the fragment moved, or a row now changes the value) is refused.
+#[test]
+fn a_value_is_credited_only_by_an_edit_of_that_value() {
+    let r = tree("value-credit");
+    add_code(&r, SCANNED, SPAWN_PROBE);
+    add_row(
+        &r,
+        "MVC1",
+        SCANNED,
+        ".env(\"VS_KEY_A\", \"vs_val_a\")",
+        ".env(\"VS_KEY_A2\", \"vs_val_a\")",
+    );
+    names_value(
+        &r,
+        "val_env",
+        "\"vs_val_a\"",
+        "a row that renamed the KEY credited the value",
+    );
+    add_row(
+        &r,
+        "MVC2",
+        SCANNED,
+        ".env(\"VS_KEY_B\", \"vs_val_b\")",
+        ".env(\"VS_KEY_B\", \"vs_val_b0\")",
+    );
+    not_names_value(&r, "\"vs_val_b\"", "a row that changed the value did not credit it");
+    names_value(
+        &r,
+        "val_env",
+        "\"vs_val_a\"",
+        "the row on the neighbouring value credited this one",
+    );
+    let _ = std::fs::remove_dir_all(&r);
+    // Exemptions: a REMAINDER entry counts by category; a wrong fragment is refused.
+    let r = tree("value-exempt");
+    // The REMAINDER count of the UNEDITED tree (the planted sites below have no exemption yet,
+    // so the gate would refuse and print no list).
+    let clean = tree("value-exempt-base");
+    let base = text(&gate(&clean, &["--remainder"]));
+    let _ = std::fs::remove_dir_all(&clean);
+    add_code(&r, SCANNED, SPAWN_PROBE);
+    let n0: usize = base
+        .lines()
+        .filter(|l| l.starts_with("REMAINDER ") && !l.starts_with("REMAINDER:"))
+        .count();
+    for (n, frag, label) in [
+        (1, "vs_val_a", "val_env"),
+        (2, "vs_val_b", "val_env"),
+        (3, "vs_flag", "val_arg"),
+        (4, "vs_arg1", "val_arg"),
+        (5, "vs_arg2", "val_arg"),
+        (6, "/vs/cwd", "val_cwd"),
+        (7, "Stdio::piped()", "val_stdio"),
+    ] {
+        let _ = label;
+        value_exempt(&r, SCANNED, "vs_spawn", n, frag, "REMAINDER", "REMAINDER (probe)");
+    }
+    // The probe's `.env(..)` and `.current_dir(..)` lines are LINE sites of their own (amendment 91's
+    // child-build form); a value exemption credits only the value.
+    for anchor in [
+        ".env(\"VS_KEY_A\", \"vs_val_a\")",
+        ".env(\"VS_KEY_B\", \"vs_val_b\")",
+        ".env(\"VS_DYN\", vs_x)",
+        ".current_dir(\"/vs/cwd\")",
+    ] {
+        exempt(&r, SCANNED, anchor, "DOMINATED (probe): a line site, not a value");
+    }
+    let t = text(&gate(&r, &["--remainder"]));
+    assert!(
+        !t.contains("refusal site with no row and no exemption: value ("),
+        "ATTACK: a value site with an exemption was still named: {t}"
+    );
+    assert_eq!(
+        t.lines()
+            .filter(|l| l.starts_with("REMAINDER ") && !l.starts_with("REMAINDER:"))
+            .count(),
+        n0 + 7,
+        "ATTACK: value exemptions of kind REMAINDER were not counted: {t}"
+    );
+    assert!(
+        t.lines().any(|l| l.starts_with("REMAINDER ") && l.ends_with(" val_env"))
+            && t.lines().any(|l| l.starts_with("REMAINDER ") && l.ends_with(" val_stdio")),
+        "ATTACK: the REMAINDER list has no val_* category: {t}"
+    );
+    let _ = std::fs::remove_dir_all(&r);
+    let r = tree("value-exempt-stale");
+    add_code(&r, SCANNED, SPAWN_PROBE);
+    for (n, frag) in [
+        (1, "vs_val_a"),
+        (2, "vs_val_b"),
+        (3, "vs_flag"),
+        (4, "vs_arg1"),
+        (5, "vs_arg2"),
+        (6, "/vs/cwd"),
+        (7, "Stdio::piped()"),
+    ] {
+        let wrong = if n == 2 { "vs_val_x" } else { frag };
+        value_exempt(&r, SCANNED, "vs_spawn", n, wrong, "REMAINDER", "REMAINDER (probe)");
+    }
+    refuses(
+        &r,
+        &[],
+        "names the fragment 'vs_val_x', which is not the value's text",
+        "a value exemption naming a fragment that is not the site's text was accepted",
+    );
+    let _ = std::fs::remove_dir_all(&r);
+}
+
+const PRIV_PROBE: &str = "pub fn vp_priv(h: &VpHost, fd: i32, p: &std::path::Path) {\n    let _vp_o = vp_open(&h.vp_helper, Some(h.vp_owner));\n    let _vp_pat = match vp_x() { Some(vp_uid) => 1, None => 0 };\n    unsafe { libc::fchown(fd, 4242, u32::MAX); }\n    unsafe { libc::setuid(7); }\n    let _ = std::fs::DirBuilder::new().mode(0o731).create(p);\n    unsafe { libc::mkdirat(fd, std::ptr::null(), 0o705) };\n    let _ = std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o640));\n    let _vp_m = vp_stat(p) & 0o7777;\n    unsafe { libc::fchmod(fd, VP_MODE); }\n    let _vp_msg = format!(\"mode {:o}\", vp_stat(p) & 0o6666);\n}\n";
+
+/// Amendment 103 (b): an OWNER argument (`Some(<x>.owner|uid|gid)`), a uid/gid handed
+/// to a privilege primitive and a permission MODE literal are sites of their own, so
+/// `Some(h.owner)` -> `None` (round 10, executed: the whole axon-fabric suite stayed
+/// green) and `0o700` -> `0o777` cannot hide behind a row on the primitive's line. A
+/// pattern (`Some(uid) =>`) is not an argument.
+#[test]
+fn an_owner_argument_a_privilege_argument_and_a_mode_literal_are_sites() {
+    let r = tree("value-priv");
+    add_code(&r, SCANNED, PRIV_PROBE);
+    for (label, frag) in [
+        ("val_owner", "Some(h.vp_owner)"),
+        ("val_priv", "4242"),
+        ("val_priv", "u32::MAX"),
+        ("val_priv", "7"),
+        ("val_mode", "0o731"),
+        ("val_mode", "0o705"),
+        ("val_mode", "0o640"),
+        ("val_mode", "0o7777"),
+        ("val_mode", "VP_MODE"),
+    ] {
+        names_value(
+            &r,
+            label,
+            frag,
+            &format!("{frag} ({label}) was not a value site"),
+        );
+    }
+    not_names_value(
+        &r,
+        "Some(vp_uid)",
+        "a `Some(uid) =>` pattern was read as an owner argument",
+    );
+    not_names_value(
+        &r,
+        "0o6666",
+        "a mode inside a message macro was read as a decision",
+    );
+    let _ = std::fs::remove_dir_all(&r);
+}
+
+const FIELD_PROBE: &str = "pub fn vc_cfg(x: u64) -> VcConfig {\n    VcConfig {\n        vc_limit: 77,\n        vc_name: \"vc_lit\".to_string(),\n        vc_flag: true,\n        vc_dyn: vc_compute(3),\n        vc_var: x,\n    }\n}\n\npub fn vc_other() -> VcOther {\n    VcOther { vo_limit: 55 }\n}\n\npub struct VcConfig {\n    pub vc_limit: u64,\n}\n\nimpl VcConfig {\n    pub fn vc_f(&self) -> u64 { self.vc_limit }\n}\n";
+
+/// Amendment 103 (c): a struct-literal FIELD of a Config/Cfg/Authority/Policy/
+/// Manifest/Trust type whose value is a literal or a constant is a site; a field of
+/// another type, a computed value, a variable, a declaration and an `impl` head are
+/// not.
+#[test]
+fn a_literal_field_of_a_config_or_policy_struct_is_a_site() {
+    let r = tree("value-field");
+    add_code(&r, SCANNED, FIELD_PROBE);
+    for frag in ["77", "\"vc_lit\".to_string()", "true"] {
+        names_value(
+            &r,
+            "val_field",
+            frag,
+            &format!("{frag} in a VcConfig literal was not a value site"),
+        );
+    }
+    for (frag, what) in [
+        ("55", "a field of a type that is not a Config/Policy type"),
+        ("vc_compute(3)", "a computed field value"),
+        ("x", "a variable"),
+    ] {
+        not_names_value(&r, frag, &format!("{what} was read as a literal field"));
+    }
+    let _ = std::fs::remove_dir_all(&r);
+}
+
+/// Amendment 103: the gate names, in its last lines, what it STILL cannot see, and
+/// the verdict spec says the same. A claim that lists only what the gate sees reads as
+/// "every guard".
+#[test]
+fn the_gate_prints_what_it_still_cannot_see() {
+    let r = tree("still-blind");
+    let t = text(&gate(&r, &[]));
+    let last: Vec<&str> = t.lines().rev().take(8).collect();
+    assert!(
+        last.iter().any(|l| l.starts_with("STILL BLIND:"))
+            && last
+                .iter()
+                .any(|l| l.contains("computation") && l.contains("local binding")),
+        "ATTACK: the gate's last lines do not list what it cannot see: {t}"
+    );
+    let _ = std::fs::remove_dir_all(&r);
 }

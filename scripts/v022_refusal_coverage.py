@@ -56,7 +56,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 #   whose name matches its pattern (the interpreter's seal edges);
 #
 # and each in-scope file is exactly one of: SCANNED (every refusal site has a
-# row or a reasoned exemption, BAD otherwise), OUT_OF_SCOPE (named with a
+# row, a checkable exemption or a counted REMAINDER entry, BAD otherwise), OUT_OF_SCOPE (named with a
 # reason a reviewer can check), or NOT_YET_SCANNED (named with the number of
 # its sites that have neither a row nor an exemption, which the gate
 # re-measures and refuses if it differs). An in-scope file in none of these is
@@ -347,6 +347,7 @@ PL = "crates/axon-fabric/src/privileged_launcher.rs"
 SE = "crates/axon-fabric/src/sealed_exec.rs"
 BIN = "crates/axon-fabric/src/bin/axon-protected-launcher.rs"
 TERM_EXEMPT = []  # amendment 95: (file, a substring of the term, a fact)
+VALUE_EXEMPT = []   # amendment 103: (file, function, n-th value site of it, a fragment of the value, kind, reason)
 EXEMPT = [
     (PL, "    if unsafe { libc::fstat(fd, &mut st) } != 0 {",
      "OS error from fstat on an open descriptor: fails closed, no input chooses success"),
@@ -1891,10 +1892,6 @@ EXEMPT += [
     (FG, "fn allowed_key(key: &str) -> bool {",
      "PREDICATE OF NAMED ROWS: its only caller is the repository-config refusal M450 (ACTIVE), "
      "which disables the whole condition"),
-    (FG, "pub fn worktree_differs(top: &Path, tree: &Entries) -> Option<String> {",
-     "PREDICATE OF NAMED ROWS: its only caller is tree_differs, whose two production results are "
-     "dropped whole by M290 (readiness, ACTIVE) and M451 (provenance's head_bytes_differ, which "
-     "calls tree_differs), each a superset of this removal"),
     (FG, "    pub fn covers_tracked(&self, tree: &Entries) -> Option<String> {",
      "PREDICATE OF NAMED ROWS: its only caller is tree_differs's allowlist refusal, which M503 "
      "(`.filter(|_| false)` on this call, ACTIVE) removes whole"),
@@ -3088,22 +3085,10 @@ EXEMPT += [
 # states a call-graph or documentation FACT; an entry that begins REMAINDER is a
 # guard no test observes yet, not a claim of domination (grep -n REMAINDER).
 EXEMPT += [
-    ('crates/axon-fabric/src/git_data.rs', '        .env("LC_ALL", "C")\n        .env("GIT_NO_REPLACE_OBJECTS", "1")',
-     "DIAGNOSTICS/LOCALE (checkable): LC_ALL=C fixes the LANGUAGE of git's messages; every answer is parsed from plumbing and porcelain output (`rev-parse`, `status --porcelain`, `cat-file --batch`), never from a message, so no verdict can depend on it"),
-    ('crates/axon-fabric/src/git_data.rs', '        .env("GIT_CONFIG_NOSYSTEM", "1")\n        .env("GIT_CONFIG_GLOBAL", "/dev/null")\n        .env("GIT_OPTIONAL_LOCKS", "0")',
-     "REMAINDER (needs a writable /etc/gitconfig): GIT_CONFIG_NOSYSTEM stops git reading the HOST's system config; no test can plant one without writing under /etc, which this workstream never does. The repository-controlled configuration (the attack) is rowed (M2283-M2291)"),
-    ('crates/axon-fabric/src/git_data.rs', '        .env("GIT_CONFIG_GLOBAL", "/dev/null")\n        .env("GIT_OPTIONAL_LOCKS", "0")',
-     'DOMINATED BY env_clear (rowed, M2283) (checkable): git reads GLOBAL config only from $XDG_CONFIG_HOME/git/config, $HOME/.config/git/config and $HOME/.gitconfig (git-config(1), FILES); env_clear leaves none of those variables set, so the file named here is the only global config and it is /dev/null either way'),
-    ('crates/axon-fabric/src/git_data.rs', '        .env("GIT_TERMINAL_PROMPT", "0")',
-     'DOMINATED (checkable): GIT_TERMINAL_PROMPT=0 only stops a credential prompt, which only a transport would raise; `protocol.allow=never` and GIT_NO_LAZY_FETCH (rowed, a_git_call_on_a_promisor_repository_fetches_nothing) leave git no transport'),
     ('crates/axon-fabric/src/git_data.rs', '            "-c",\n            "core.untrackedCache=false",\n            "-c",',
      'REMAINDER (a forged untracked-cache extension that hides a file was not constructible: measured with `git update-index --untracked-cache`, then a file added under a directory whose mtime was restored; git re-listed the directory): core.untrackedCache=false; the index is never written (GIT_OPTIONAL_LOCKS, rowed M2284), so no cache is built by git_cmd either'),
     ('crates/axon-fabric/src/git_data.rs', '            "-c",\n            "advice.graftFileDeprecated=false",\n        ])',
      'DIAGNOSTICS ONLY (checkable): advice.graftFileDeprecated=false silences an advice line on stderr, which git_cmd never reads'),
-    ('crates/axon-fabric/src/git_data.rs', '        .stdin(Stdio::null())\n        .stderr(Stdio::null());',
-     "DOMINATED (checkable): a git_cmd call's stdin/stderr: every caller either runs `.output()` (stdin is never inherited by output(), std::process::Command docs) or overrides it with a pipe (Objects::open, provenance.rs); stderr is never read (`grep -n 'stderr' git_data.rs`: no read), so an inherited one writes git's own diagnostics into the Fabric's log and nothing else"),
-    ('crates/axon-fabric/src/git_data.rs', '        .stderr(Stdio::null());',
-     "DIAGNOSTICS ONLY (checkable): a git_cmd call's stdin/stderr: every caller either runs `.output()` (stdin is never inherited by output(), std::process::Command docs) or overrides it with a pipe (Objects::open, provenance.rs); stderr is never read (`grep -n 'stderr' git_data.rs`: no read), so an inherited one writes git's own diagnostics into the Fabric's log and nothing else"),
     ('crates/axon-fabric/src/git_data.rs', '        .env_clear()\n        .env("PATH", "/usr/bin:/bin")\n        .env("LC_ALL", "C")\n        .env("GIT_CONFIG_NOSYSTEM", "1")\n        .env("GIT_CONFIG_GLOBAL", "/dev/null")\n        .env("GIT_CEILING_DIRECTORIES", "/")',
      'DOMINATED (env_clear) (checkable): the config reader (`git -C / config --file <path> --no-includes --list -z`) reads ONLY the named file (git-config(1): --file reads that file instead of the usual ones, so GIT_CONFIG_*, HOME and the system and global files are not consulted); its answer is a key list judged by allowed_key, so the environment given to it cannot change which keys the file lists'),
     ('crates/axon-fabric/src/git_data.rs', '        .env("PATH", "/usr/bin:/bin")\n        .env("LC_ALL", "C")\n        .env("GIT_CONFIG_NOSYSTEM", "1")\n        .env("GIT_CONFIG_GLOBAL", "/dev/null")\n        .env("GIT_CEILING_DIRECTORIES", "/")',
@@ -3140,8 +3125,6 @@ EXEMPT += [
      'DEVELOPMENT ROUTE (checkable): the arm runs only for a custodian with no pinned program (`self.sha256` None); a production helper refuses a custodian with no pin (privileged_launcher.rs, a_production_helper_launched_with_no_custodian_program_pin_...), and the pinned arm reads through read_from_pinned with the same bound'),
     ('crates/axon-os/src/runtime.rs', '            cmd.env("PATH", p); // cc/linker discovery for the interpreter',
      "NO EFFECT (checkable): the interpreter child's PATH is for `cc`/linker discovery by `axon run`, and the legacy process adapter is not on the protected route (_ACR); a missing PATH cannot widen what the child may do"),
-    ('crates/axon-psv/src/runner.rs', '        .env("PATH", "/usr/bin:/bin")\n        // As on the host',
-     'NO EFFECT (checkable): the check child spawns nothing (`Exec` is removed from its ceiling by without_exec, rowed M249, `the_process_holding_k_is_given_no_exec`), so no PATH lookup happens; the value is the fixed guest PATH either way'),
     ('crates/axon-vm/src/firecracker.rs', '        .stdin(Stdio::null())\n        .stdout(Stdio::piped())',
      "NOT ON THE PROTECTED ROUTE (checkable): axon-vm's firecracker spawn; the protected crates use axon_vm only for BACKEND_PROFILE and embed_policy_in_cmdline/MmdsPayload (grep `axon_vm::`), never the spawn"),
     ('crates/axon-fabric/src/bin/axon-fabric.rs', '    let text = std::fs::read_to_string(registry).unwrap_or_else(|e| bad(e.to_string()));',
@@ -3270,14 +3253,6 @@ EXEMPT += [
      _CTX),
     ('crates/axon-cortex/src/runner.rs', '            .ok_or_else(|| unresolvable("not found on PATH".into()))?',
      _offroute('Cortex, the local repair loop, which is not a route of the protected profile; not surveyed')),
-    ('crates/axon-cortex/src/runner.rs', '        .ok_or_else(|| bad("is not check-suite:<id>@<version>#<entry>"))?;',
-     _offroute('Cortex, the local repair loop, which is not a route of the protected profile; not surveyed')),
-    ('crates/axon-cortex/src/runner.rs', '        .ok_or_else(|| bad("names no version"))?;',
-     _offroute('Cortex, the local repair loop, which is not a route of the protected profile; not surveyed')),
-    ('crates/axon-cortex/src/runner.rs', '    let (version, entry) = rest.split_once(\'#\').ok_or_else(|| bad("names no entry"))?;',
-     _offroute('Cortex, the local repair loop, which is not a route of the protected profile; not surveyed')),
-    ('crates/axon-cortex/src/runner.rs', '            .ok_or("check registry has no `executors` array")?',
-     _offroute('Cortex, the local repair loop, which is not a route of the protected profile; not surveyed')),
     ('crates/axon-cortex/src/runner.rs', 'const POLICY_FILES: &[&str] = &["axon.lock", ".axon-policy", "gate.sh", "profile.rs"];',
      _CTX),
     ('crates/axon-cortex/src/runner.rs', 'const POLICY_PREFIXES: &[&str] = &["scripts/", "governance/", ".github/"];',
@@ -3323,7 +3298,7 @@ EXEMPT += [
     ('crates/axon-fabric/src/branches.rs', '    std::fs::create_dir_all(dir)?;',
      _A95['ensure_store']),
     ('crates/axon-fabric/src/branches.rs', '            best.ok_or_else(|| BranchError::Unknown(format!("branch {exp}/{arm} has no head")))?;',
-     _closed('an absent head becomes sequence 0, whose file `head-0.json` the branch never writes: the read that follows fails')),
+     _closed('an absent head becomes sequence 0 and the read of `head-0.json` that follows fails: registration writes head-0.json together with the branch (branches.rs, `create_once(.. "head-0.json")`), so a branch with NO head file at all (`best == None`) has nothing at sequence 0 to read')),
     ('crates/axon-fabric/src/branches.rs', 'pub const EXPERIMENT_SCHEMA: &str = "axon-fabric-experiment/1";',
      _A95['const_tag']),
     ('crates/axon-fabric/src/branches.rs', 'pub const HEAD_SCHEMA: &str = "axon-fabric-branch-head/1";',
@@ -3364,8 +3339,6 @@ EXEMPT += [
      _unjudged('`unwrap_or(0)`')),
     ('crates/axon-fabric/src/git_data.rs', '            .ok_or_else(|| format!("{} is not in a git working tree", start.display()))?;',
      _nodefault()),
-    ('crates/axon-fabric/src/git_data.rs', 'pub const GIT_BIN: &str = "/usr/bin/git";',
-     _A95['const_path']),
     ('crates/axon-fabric/src/git_data.rs', 'pub const ALLOWLIST_SCHEMA: &str = "axon-provenance-allowlist/1";',
      _A95['const_tag']),
     ('crates/axon-fabric/src/grants.rs', '            .ok_or("grant registry has no `grants` array")?',
@@ -3642,6 +3615,146 @@ TERM_EXEMPT += [
     ("crates/axon-loop/src/evl.rs", "VerificationResult::Passed",
      "REMAINDER (killed only by incidental tests; survey, amendment 95): replacing this term with `false` fails at least 12 axon-loop tests (the first, `a6_forged_admission_record_is_refused`, panics on an unwrap of the refusal admission then makes, not on an assertion about this term), so it is observed but no test names it as its own attack: not counted killed"),
 ]
+
+
+# BEGIN VALUE_EXEMPT (generated by the amendment-103 survey; edit via the survey, not by hand)
+VALUE_EXEMPT += [
+    ('crates/axon-cortex/src/generate.rs', 'propose', 1, 'std::process::Stdio::piped()', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value (std::process::Stdio::piped() -> std::process::Stdio::null()) fails the test(s) cli_drives_an_external_generator_and_shows_it_no_grader, cli_shows_the_generator_the_same_body_on_the_warned_path; no row of its own'),
+    ('crates/axon-cortex/src/generate.rs', 'propose', 2, 'std::process::Stdio::piped()', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value (std::process::Stdio::piped() -> std::process::Stdio::null()) fails the test(s) a_generators_stdout_is_never_buffered_past_its_cap, cli_drives_an_external_generator_and_shows_it_no_grader, cli_shows_the_generator_the_same_body_on_the_warned_path; no row of its own'),
+    ('crates/axon-cortex/src/generate.rs', 'propose', 3, 'Stdio::piped()', 'NOTROUTE', "NOT ON THE PROTECTED ROUTE (checkable): the Cortex repair loop's own code. The protected crates use from axon-cortex only parse_strict and ContractError (axon-loop-contracts) and, from runner, CheckRegistry, LocalInterpreterExecutor (the local route), the CheckExecutor types, parse_axon_test_json, completion_token, the suite-reference functions and the workspace/executable digest functions (axon-fabric submit.rs, psv.rs, workspace.rs, backend.rs, bin/axon-fabric.rs); nothing below is among them"),
+    ('crates/axon-cortex/src/runner.rs', 'observe', 1, '"check"', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value ("check" -> "checkx") fails the test(s) cxg_c02_selection_follows_the_observation_and_refuses_to_guess, cxg_c13_a_patch_that_breaks_the_build_is_undone, cxg_g02_an_observation_distinguishes_clean_from_warned; no row of its own'),
+    ('crates/axon-cortex/src/runner.rs', 'run_checks', 2, '"--json"', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value ("--json" -> "--jsonx") fails the test(s) a_digest_changed_executable_is_refused_with_zero_effects, an_empty_mandatory_match_is_not_run_never_passed, cli_a_malformed_request_decides_nothing; no row of its own'),
+    ('crates/axon-cortex/src/runner.rs', 'run_checks', 3, '"--filter"', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value ("--filter" -> "--filterx") fails the test(s) a_digest_changed_executable_is_refused_with_zero_effects, an_empty_mandatory_match_is_not_run_never_passed, cli_a_malformed_request_decides_nothing; no row of its own'),
+    ('crates/axon-cortex/src/runner.rs', 'run_checks', 4, '"--completion-key-stdin"', 'NOTROUTE', "NOT ON THE PROTECTED ROUTE (checkable): the LOCAL interpreter executor (the development route, process_scoped/local-interpreter); submit.rs builds it only when the profile is not the protected one (`let local = if is_linux { None } else { .. host_executor .. }`), and a protected host runs nothing outside the protected profile (M265); the guest runs `axon test` from axon-psv's runner (exec_axon_test), not this executor"),
+    ('crates/axon-cortex/src/runner.rs', 'run_checks', 6, '"submit"', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value ("submit" -> "submitx") fails the test(s) <binary> -p axon-fabric --test cortex_via_fabric, cortex_locate_through_the_fabric_reports_receipts, cortex_repair_adjudicates_through_the_fabric; no row of its own'),
+    ('crates/axon-cortex/src/runner.rs', 'run_checks', 7, '"--request"', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value ("--request" -> "--requestx") fails the test(s) <binary> -p axon-fabric --test cortex_via_fabric, cortex_locate_through_the_fabric_reports_receipts, cortex_repair_adjudicates_through_the_fabric; no row of its own'),
+    ('crates/axon-cortex/src/runner.rs', 'run_checks', 8, '"-"', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value ("-" -> "-x") fails the test(s) <binary> -p axon-fabric --test cortex_via_fabric, cortex_locate_through_the_fabric_reports_receipts, cortex_repair_adjudicates_through_the_fabric; no row of its own'),
+    ('crates/axon-cortex/src/runner.rs', 'run_checks', 9, '"--journal"', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value ("--journal" -> "--journalx") fails the test(s) <binary> -p axon-fabric --test cortex_via_fabric, cortex_locate_through_the_fabric_reports_receipts, cortex_repair_adjudicates_through_the_fabric; no row of its own'),
+    ('crates/axon-cortex/src/runner.rs', 'run_checks', 10, '"--check-registry"', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value ("--check-registry" -> "--check-registryx") fails the test(s) <binary> -p axon-fabric --test cortex_via_fabric, cortex_locate_through_the_fabric_reports_receipts, cortex_repair_adjudicates_through_the_fabric; no row of its own'),
+    ('crates/axon-cortex/src/runner.rs', 'run_checks', 11, '"--grant-registry"', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value ("--grant-registry" -> "--grant-registryx") fails the test(s) <binary> -p axon-fabric --test cortex_via_fabric, cortex_locate_through_the_fabric_reports_receipts, cortex_repair_adjudicates_through_the_fabric; no row of its own'),
+    ('crates/axon-cortex/src/runner.rs', 'run_checks', 12, '"--store"', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value ("--store" -> "--storex") fails the test(s) <binary> -p axon-fabric --test cortex_via_fabric, cortex_locate_through_the_fabric_reports_receipts, cortex_repair_adjudicates_through_the_fabric; no row of its own'),
+    ('crates/axon-cortex/src/runner.rs', 'run_checks', 13, '"--tenant"', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value ("--tenant" -> "--tenantx") fails the test(s) <binary> -p axon-fabric --test cortex_via_fabric, cortex_locate_through_the_fabric_reports_receipts, cortex_repair_adjudicates_through_the_fabric; no row of its own'),
+    ('crates/axon-cortex/src/runner.rs', 'run_checks', 14, '"--family"', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value ("--family" -> "--familyx") fails the test(s) <binary> -p axon-fabric --test cortex_via_fabric, cortex_locate_through_the_fabric_reports_receipts, cortex_repair_adjudicates_through_the_fabric; no row of its own'),
+    ('crates/axon-cortex/src/runner.rs', 'run_checks', 15, '"--expected-epoch"', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value ("--expected-epoch" -> "--expected-epochx") fails the test(s) <binary> -p axon-fabric --test cortex_via_fabric, cortex_locate_through_the_fabric_reports_receipts, cortex_repair_adjudicates_through_the_fabric; no row of its own'),
+    ('crates/axon-cortex/src/runner.rs', 'run_checks', 16, '"--workspace"', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value ("--workspace" -> "--workspacex") fails the test(s) <binary> -p axon-fabric --test cortex_via_fabric, cortex_locate_through_the_fabric_reports_receipts, cortex_repair_adjudicates_through_the_fabric; no row of its own'),
+    ('crates/axon-cortex/src/runner.rs', 'run_checks', 17, 'std::process::Stdio::piped()', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value (std::process::Stdio::piped() -> std::process::Stdio::null()) fails the test(s) <binary> -p axon-fabric --test cortex_via_fabric, cortex_locate_through_the_fabric_reports_receipts, cortex_repair_adjudicates_through_the_fabric; no row of its own'),
+    ('crates/axon-cortex/src/runner.rs', 'run_checks', 18, 'std::process::Stdio::piped()', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value (std::process::Stdio::piped() -> std::process::Stdio::null()) fails the test(s) <binary> -p axon-fabric --test cortex_via_fabric, cortex_locate_through_the_fabric_reports_receipts, cortex_repair_adjudicates_through_the_fabric; no row of its own'),
+    ('crates/axon-cortex/src/runner.rs', 'run_checks', 19, 'std::process::Stdio::piped()', 'NOTROUTE', "NOT ON THE PROTECTED ROUTE (checkable): the Cortex repair loop's own code. The protected crates use from axon-cortex only parse_strict and ContractError (axon-loop-contracts) and, from runner, CheckRegistry, LocalInterpreterExecutor (the local route), the CheckExecutor types, parse_axon_test_json, completion_token, the suite-reference functions and the workspace/executable digest functions (axon-fabric submit.rs, psv.rs, workspace.rs, backend.rs, bin/axon-fabric.rs); nothing below is among them; the stderr of the Fabric CLI it drives: diagnostics only, and not read by a verdict (survey: piped -> null left cortex_via_fabric green)"),
+    ('crates/axon-cortex/src/runner.rs', 'run_limited', 1, 'if limits.completion_key.is_some()', 'NOTROUTE', "NOT ON THE PROTECTED ROUTE (checkable): the LOCAL interpreter executor (the development route, process_scoped/local-interpreter); submit.rs builds it only when the profile is not the protected one (`let local = if is_linux { None } else { .. host_executor .. }`), and a protected host runs nothing outside the protected profile (M265); the guest runs `axon test` from axon-psv's runner (exec_axon_test), not this executor"),
+    ('crates/axon-cortex/src/runner.rs', 'run_limited', 2, 'Stdio::piped()', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value (Stdio::piped() -> Stdio::null()) fails the test(s) a_digest_changed_executable_is_refused_with_zero_effects, an_empty_mandatory_match_is_not_run_never_passed, cli_a_malformed_request_decides_nothing; no row of its own'),
+    ('crates/axon-cortex/src/runner.rs', 'run_limited', 3, 'Stdio::piped()', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value (Stdio::piped() -> Stdio::null()) fails the test(s) a_digest_changed_executable_is_refused_with_zero_effects, an_empty_mandatory_match_is_not_run_never_passed, cli_a_malformed_request_decides_nothing; no row of its own'),
+    ('crates/axon-fabric/src/backend.rs', 'for_manifest', 1, 'DEFAULT_EVIDENCE_MAX_AGE_S', 'NOTROUTE', 'NOT ON THE PROTECTED ROUTE (checkable): a TESTS-ONLY constructor, `#[cfg(any(test, feature = "test-trust-root"))]`: absent from a production build (the feature is enabled only through [dev-dependencies]: `grep -n test-trust-root crates/*/Cargo.toml`)'),
+    ('crates/axon-fabric/src/backend.rs', 'for_manifest', 2, 'false', 'NOTROUTE', 'NOT ON THE PROTECTED ROUTE (checkable): a TESTS-ONLY constructor, `#[cfg(any(test, feature = "test-trust-root"))]`: absent from a production build (the feature is enabled only through [dev-dependencies]: `grep -n test-trust-root crates/*/Cargo.toml`)'),
+    ('crates/axon-fabric/src/backend.rs', 'for_manifest', 3, 'None', 'NOTROUTE', 'NOT ON THE PROTECTED ROUTE (checkable): a TESTS-ONLY constructor, `#[cfg(any(test, feature = "test-trust-root"))]`: absent from a production build (the feature is enabled only through [dev-dependencies]: `grep -n test-trust-root crates/*/Cargo.toml`)'),
+    ('crates/axon-fabric/src/backend.rs', 'operator', 2, 'true', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value (true -> false) fails the test(s) <binary> -p axon-fabric --test trust_root, production_trust_is_the_operator_root_and_must_be_operator_owned; no row of its own'),
+    ('crates/axon-fabric/src/backend.rs', 'run_privileged', 2, 'std::process::Stdio::piped()', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value (std::process::Stdio::piped() -> std::process::Stdio::null()) fails the test(s) <binary> -p axon-fabric --test grant_registry_authority, <binary> -p axon-fabric --test psv_dispatch, a_candidate_cannot_supply_the_acceptance_test_through_fabric; no row of its own'),
+    ('crates/axon-fabric/src/backend.rs', 'run_privileged', 3, 'std::process::Stdio::piped()', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value (std::process::Stdio::piped() -> std::process::Stdio::null()) fails the test(s) <binary> -p axon-fabric --test grant_registry_authority, <binary> -p axon-fabric --test psv_dispatch, a_candidate_cannot_supply_the_acceptance_test_through_fabric; no row of its own'),
+    ('crates/axon-fabric/src/backend.rs', 'run_privileged', 4, 'std::process::Stdio::null()', 'REMAINDER', "REMAINDER (amendment 103): the helper's stderr is /dev/null; inheriting it would let the root helper write diagnostics into Fabric's own stderr. The verdict travels on the helper's stdout (a JSON report) and is not changed by it; a test would have to capture the real process stderr of a child of the test binary, and none does"),
+    ('crates/axon-fabric/src/bin/axon-custodian.rs', 'main', 1, '0o700', 'DOMINATED', 'DOMINATED (checkable): the `--dev` arm only (Mode::Dev, never protected); `check_store(&cfg.store, euid())` runs on the same store immediately after and refuses any group/other bit (custodian.rs, row M325), so a wider creation mode can only make the dev custodian refuse to start'),
+    ('crates/axon-fabric/src/bin/axon-fabric.rs', 'submit', 1, 'None', 'REMAINDER', 'REMAINDER (amendment 103, no mutation exists): a test fault-injection hook (`Option<fn>`); None is the only value the CLI can name and any other is a function pointer no edit of a literal can supply; not mutated'),
+    ('crates/axon-fabric/src/bin/axon-fabric.rs', 'submit', 2, 'None', 'REMAINDER', 'REMAINDER (amendment 103, no mutation exists): a test fault-injection hook (`Option<fn>`); None is the only value the CLI can name and any other is a function pointer no edit of a literal can supply; not mutated'),
+    ('crates/axon-fabric/src/bin/axon-protected-launcher.rs', 'main', 1, 'true', 'NOTROUTE', 'NOT ON THE PROTECTED ROUTE (checkable): the `--test-config` arm, guarded by `axon_fabric::backend::TEST_TRUST_BUILD` (a compile-time constant false in a production build: the arm is not taken, and its guard has rows)'),
+    ('crates/axon-fabric/src/custodian.rs', 'check_store', 1, '0o077', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value (0o077 -> 0o0) fails the test(s) <binary> -p axon-fabric --lib, <binary> -p axon-fabric --test custodian, <binary> -p axon-fabric --test observer_service; no row of its own'),
+    ('crates/axon-fabric/src/git_data.rs', 'entries', 1, '0o40000', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value (0o40000 -> 0o40001) fails the test(s) <binary> -p axon-fabric --bin axon-provenance, <binary> -p axon-fabric --lib, <binary> -p axon-fabric --test guest_provenance; no row of its own'),
+    ('crates/axon-fabric/src/git_data.rs', 'git_cmd', 12, '"-c"', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value ("-c" -> "-cx") fails the test(s) <binary> -p axon-fabric --bin axon-provenance, <binary> -p axon-fabric --lib, <binary> -p axon-fabric --test guest_provenance; no row of its own'),
+    ('crates/axon-fabric/src/git_data.rs', 'git_cmd', 16, '"-c"', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value ("-c" -> "-cx") fails the test(s) <binary> -p axon-fabric --bin axon-provenance, <binary> -p axon-fabric --lib, <binary> -p axon-fabric --test guest_provenance; no row of its own'),
+    ('crates/axon-fabric/src/git_data.rs', 'git_cmd', 18, '"-c"', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value ("-c" -> "-cx") fails the test(s) <binary> -p axon-fabric --bin axon-provenance, <binary> -p axon-fabric --lib, <binary> -p axon-fabric --test guest_provenance; no row of its own'),
+    ('crates/axon-fabric/src/git_data.rs', 'git_cmd', 19, '"advice.graftFileDeprecated=false"', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value ("advice.graftFileDeprecated=fa -> "advice.graftFileDeprecated=fa) fails the test(s) <binary> -p axon-fabric --bin axon-provenance, <binary> -p axon-fabric --lib, <binary> -p axon-fabric --test guest_provenance; no row of its own'),
+    ('crates/axon-fabric/src/git_data.rs', 'git_cmd', 20, '"-c"', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value ("-c" -> "-cx") fails the test(s) <binary> -p axon-fabric --bin axon-provenance, <binary> -p axon-fabric --lib, <binary> -p axon-fabric --test guest_provenance; no row of its own'),
+    ('crates/axon-fabric/src/git_data.rs', 'git_cmd', 22, '"-c"', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value ("-c" -> "-cx") fails the test(s) <binary> -p axon-fabric --bin axon-provenance, <binary> -p axon-fabric --lib, <binary> -p axon-fabric --test guest_provenance; no row of its own'),
+    ('crates/axon-fabric/src/git_data.rs', 'git_cmd', 24, '"-c"', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value ("-c" -> "-cx") fails the test(s) <binary> -p axon-fabric --bin axon-provenance, <binary> -p axon-fabric --lib, <binary> -p axon-fabric --test guest_provenance; no row of its own'),
+    ('crates/axon-fabric/src/git_data.rs', 'git_cmd', 28, '"-c"', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value ("-c" -> "-cx") fails the test(s) <binary> -p axon-fabric --bin axon-provenance, <binary> -p axon-fabric --lib, <binary> -p axon-fabric --test guest_provenance; no row of its own'),
+    ('crates/axon-fabric/src/git_data.rs', 'git_cmd', 30, '"-C"', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value ("-C" -> "-Cx") fails the test(s) <binary> -p axon-fabric --bin axon-provenance, <binary> -p axon-fabric --lib, <binary> -p axon-fabric --test guest_provenance; no row of its own'),
+    ('crates/axon-fabric/src/git_data.rs', 'git_cmd', 31, '"--work-tree"', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value ("--work-tree" -> "--work-treex") fails the test(s) <binary> -p axon-fabric --bin axon-provenance, <binary> -p axon-fabric --lib, <binary> -p axon-fabric --test guest_provenance; no row of its own'),
+    ('crates/axon-fabric/src/git_data.rs', 'open', 1, '"cat-file"', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value ("cat-file" -> "cat-filex") fails the test(s) <binary> -p axon-fabric --bin axon-provenance, <binary> -p axon-fabric --lib, <binary> -p axon-fabric --test guest_provenance; no row of its own'),
+    ('crates/axon-fabric/src/git_data.rs', 'open', 2, '"--batch"', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value ("--batch" -> "--batchx") fails the test(s) <binary> -p axon-fabric --bin axon-provenance, <binary> -p axon-fabric --lib, <binary> -p axon-fabric --test guest_provenance; no row of its own'),
+    ('crates/axon-fabric/src/git_data.rs', 'open', 3, 'Stdio::piped()', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value (Stdio::piped() -> Stdio::null()) fails the test(s) <binary> -p axon-fabric --bin axon-provenance, <binary> -p axon-fabric --lib, <binary> -p axon-fabric --test guest_provenance; no row of its own'),
+    ('crates/axon-fabric/src/git_data.rs', 'open', 4, 'Stdio::piped()', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value (Stdio::piped() -> Stdio::null()) fails the test(s) <binary> -p axon-fabric --bin axon-provenance, <binary> -p axon-fabric --lib, <binary> -p axon-fabric --test guest_provenance; no row of its own'),
+    ('crates/axon-fabric/src/git_data.rs', 'owned_chain', 1, '0o022', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value (0o022 -> 0o0) fails the test(s) <binary> -p axon-fabric --bin axon-provenance, <binary> -p axon-fabric --lib, <binary> -p axon-fabric --test readiness; no row of its own'),
+    ('crates/axon-fabric/src/git_data.rs', 'refuse_config', 1, '"/usr/bin:/bin"', 'DOMINATED', 'DOMINATED (checkable): `git config --file F --list` (this command, outside any repository: `-C /`) reads ONLY the file named by --file (git-config(1): --file uses the given file instead of the default scope files), so the system/global config switches, the ceiling, the locale and the PATH of its environment cannot change what it lists; a stderr that is inherited writes diagnostics and decides nothing'),
+    ('crates/axon-fabric/src/git_data.rs', 'refuse_config', 2, '"C"', 'DOMINATED', 'DOMINATED (checkable): `git config --file F --list` (this command, outside any repository: `-C /`) reads ONLY the file named by --file (git-config(1): --file uses the given file instead of the default scope files), so the system/global config switches, the ceiling, the locale and the PATH of its environment cannot change what it lists; a stderr that is inherited writes diagnostics and decides nothing'),
+    ('crates/axon-fabric/src/git_data.rs', 'refuse_config', 3, '"1"', 'DOMINATED', 'DOMINATED (checkable): `git config --file F --list` (this command, outside any repository: `-C /`) reads ONLY the file named by --file (git-config(1): --file uses the given file instead of the default scope files), so the system/global config switches, the ceiling, the locale and the PATH of its environment cannot change what it lists; a stderr that is inherited writes diagnostics and decides nothing'),
+    ('crates/axon-fabric/src/git_data.rs', 'refuse_config', 4, '"/dev/null"', 'DOMINATED', 'DOMINATED (checkable): `git config --file F --list` (this command, outside any repository: `-C /`) reads ONLY the file named by --file (git-config(1): --file uses the given file instead of the default scope files), so the system/global config switches, the ceiling, the locale and the PATH of its environment cannot change what it lists; a stderr that is inherited writes diagnostics and decides nothing'),
+    ('crates/axon-fabric/src/git_data.rs', 'refuse_config', 5, '"/"', 'DOMINATED', 'DOMINATED (checkable): `git config --file F --list` (this command, outside any repository: `-C /`) reads ONLY the file named by --file (git-config(1): --file uses the given file instead of the default scope files), so the system/global config switches, the ceiling, the locale and the PATH of its environment cannot change what it lists; a stderr that is inherited writes diagnostics and decides nothing'),
+    ('crates/axon-fabric/src/git_data.rs', 'refuse_config', 6, '"-C"', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value ("-C" -> "-Cx") fails the test(s) <binary> -p axon-fabric --bin axon-provenance, <binary> -p axon-fabric --lib, <binary> -p axon-fabric --test guest_provenance; no row of its own'),
+    ('crates/axon-fabric/src/git_data.rs', 'refuse_config', 7, '"/"', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value ("/" -> "/x") fails the test(s) <binary> -p axon-fabric --bin axon-provenance, <binary> -p axon-fabric --lib, <binary> -p axon-fabric --test guest_provenance; no row of its own'),
+    ('crates/axon-fabric/src/git_data.rs', 'refuse_config', 8, '"config"', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value ("config" -> "configx") fails the test(s) <binary> -p axon-fabric --bin axon-provenance, <binary> -p axon-fabric --lib, <binary> -p axon-fabric --test guest_provenance; no row of its own'),
+    ('crates/axon-fabric/src/git_data.rs', 'refuse_config', 9, '"--file"', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value ("--file" -> "--filex") fails the test(s) <binary> -p axon-fabric --bin axon-provenance, <binary> -p axon-fabric --lib, <binary> -p axon-fabric --test guest_provenance; no row of its own'),
+    ('crates/axon-fabric/src/git_data.rs', 'refuse_config', 10, '"--no-includes"', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value ("--no-includes" -> "--no-includesx") fails the test(s) <binary> -p axon-fabric --bin axon-provenance, <binary> -p axon-fabric --lib, <binary> -p axon-fabric --test guest_provenance; no row of its own'),
+    ('crates/axon-fabric/src/git_data.rs', 'refuse_config', 11, '"--list"', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value ("--list" -> "--listx") fails the test(s) <binary> -p axon-fabric --bin axon-provenance, <binary> -p axon-fabric --lib, <binary> -p axon-fabric --test guest_provenance; no row of its own'),
+    ('crates/axon-fabric/src/git_data.rs', 'refuse_config', 12, '"-z"', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value ("-z" -> "-zx") fails the test(s) <binary> -p axon-fabric --bin axon-provenance, <binary> -p axon-fabric --lib, <binary> -p axon-fabric --test guest_provenance; no row of its own'),
+    ('crates/axon-fabric/src/git_data.rs', 'refuse_config', 13, 'Stdio::null()', 'DOMINATED', 'DOMINATED (checkable): `git config --file F --list` (this command, outside any repository: `-C /`) reads ONLY the file named by --file (git-config(1): --file uses the given file instead of the default scope files), so the system/global config switches, the ceiling, the locale and the PATH of its environment cannot change what it lists; a stderr that is inherited writes diagnostics and decides nothing'),
+    ('crates/axon-fabric/src/git_data.rs', 'refuse_config', 14, 'Stdio::null()', 'DOMINATED', 'DOMINATED (checkable): `git config --file F --list` (this command, outside any repository: `-C /`) reads ONLY the file named by --file (git-config(1): --file uses the given file instead of the default scope files), so the system/global config switches, the ceiling, the locale and the PATH of its environment cannot change what it lists; a stderr that is inherited writes diagnostics and decides nothing'),
+    ('crates/axon-fabric/src/git_data.rs', 'worktree_differs', 2, '0o100644', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value (0o100644 -> 0o100645) fails the test(s) <binary> -p axon-fabric --bin axon-provenance, <binary> -p axon-fabric --lib, <binary> -p axon-fabric --test guest_provenance; no row of its own'),
+    ('crates/axon-fabric/src/git_data.rs', 'worktree_differs', 3, '0o100755', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value (0o100755 -> 0o100756) fails the test(s) <binary> -p axon-fabric --test readiness, a_production_verifier_built_from_a_dirty_tree_certifies_nothing; no row of its own'),
+    ('crates/axon-fabric/src/git_data.rs', 'worktree_differs', 4, '0o100', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value (0o100 -> 0o0) fails the test(s) <binary> -p axon-fabric --test readiness, a_production_verifier_built_from_a_dirty_tree_certifies_nothing; no row of its own'),
+    ('crates/axon-fabric/src/git_data.rs', 'worktree_differs', 5, '0o100755', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value (0o100755 -> 0o100756) fails the test(s) <binary> -p axon-fabric --test readiness, a_production_verifier_built_from_a_dirty_tree_certifies_nothing; no row of its own'),
+    ('crates/axon-fabric/src/observer.rs', 'for_test', 1, 'false', 'NOTROUTE', 'NOT ON THE PROTECTED ROUTE (checkable): a TESTS-ONLY constructor, `#[cfg(any(test, feature = "test-trust-root"))]`: absent from a production build (the feature is enabled only through [dev-dependencies]: `grep -n test-trust-root crates/*/Cargo.toml`)'),
+    ('crates/axon-fabric/src/observer.rs', 'for_test', 2, 'None', 'NOTROUTE', 'NOT ON THE PROTECTED ROUTE (checkable): a TESTS-ONLY constructor, `#[cfg(any(test, feature = "test-trust-root"))]`: absent from a production build (the feature is enabled only through [dev-dependencies]: `grep -n test-trust-root crates/*/Cargo.toml`)'),
+    ('crates/axon-fabric/src/observer.rs', 'relayed', 2, 'std::process::Stdio::piped()', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value (std::process::Stdio::piped() -> std::process::Stdio::null()) fails the test(s) <binary> -p axon-fabric --test observer_service, an_observe_relay_helper_owned_by_a_stranger_is_never_executed, the_observer_service_observes_through_the_helper_once_per_nonce; no row of its own'),
+    ('crates/axon-fabric/src/observer.rs', 'relayed', 3, 'std::process::Stdio::piped()', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value (std::process::Stdio::piped() -> std::process::Stdio::null()) fails the test(s) <binary> -p axon-fabric --test observer_service, an_observe_relay_helper_owned_by_a_stranger_is_never_executed, the_observer_service_observes_through_the_helper_once_per_nonce; no row of its own'),
+    ('crates/axon-fabric/src/observer.rs', 'relayed', 4, 'std::process::Stdio::null()', 'REMAINDER', "REMAINDER (amendment 103): as backend.rs run_privileged: the relay helper's stderr is /dev/null; inheriting it writes diagnostics into Fabric's stderr and decides nothing; no test captures a child's real stderr"),
+    ('crates/axon-fabric/src/privileged_launcher.rs', 'become_root', 2, '0', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value (0 -> 1) fails the test(s) <binary> -p axon-fabric --test privileged_launcher, the_root_helper_takes_roots_identity_not_its_callers_groups; no row of its own'),
+    ('crates/axon-fabric/src/privileged_launcher.rs', 'become_root', 3, '0', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value (0 -> 1) fails the test(s) <binary> -p axon-fabric --test privileged_launcher, the_root_helper_takes_roots_identity_not_its_callers_groups; no row of its own'),
+    ('crates/axon-fabric/src/privileged_launcher.rs', 'become_root', 4, '0', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value (0 -> 1) fails the test(s) <binary> -p axon-fabric --test privileged_launcher, the_root_helper_takes_roots_identity_not_its_callers_groups; no row of its own'),
+    ('crates/axon-fabric/src/privileged_launcher.rs', 'become_root', 6, '0', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value (0 -> 1) fails the test(s) <binary> -p axon-fabric --test grant_registry_authority, <binary> -p axon-fabric --test observer_service, <binary> -p axon-fabric --test privileged_launcher; no row of its own'),
+    ('crates/axon-fabric/src/privileged_launcher.rs', 'become_root', 7, '0', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value (0 -> 1) fails the test(s) <binary> -p axon-fabric --test privileged_launcher, the_root_helper_takes_roots_identity_not_its_callers_groups; no row of its own'),
+    ('crates/axon-fabric/src/privileged_launcher.rs', 'copy_tree', 2, '0o111', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value (0o111 -> 0o0) fails the test(s) <binary> -p axon-fabric --lib, <binary> -p axon-fabric --test privileged_launcher, privileged_launcher::tests::a_snapshot_never_copies_into_a_directory_that_already_exists; no row of its own'),
+    ('crates/axon-fabric/src/privileged_launcher.rs', 'copy_tree', 3, '0o755', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value (0o755 -> 0o777) fails the test(s) <binary> -p axon-fabric --lib, <binary> -p axon-fabric --test privileged_launcher, privileged_launcher::tests::a_snapshot_never_copies_into_a_directory_that_already_exists; no row of its own'),
+    ('crates/axon-fabric/src/privileged_launcher.rs', 'copy_tree', 4, '0o644', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value (0o644 -> 0o777) fails the test(s) <binary> -p axon-fabric --lib, <binary> -p axon-fabric --test privileged_launcher, <binary> -p axon-fabric --test psv_dispatch; no row of its own'),
+    ('crates/axon-fabric/src/privileged_launcher.rs', 'hand_over', 7, 'uid', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value (uid -> 0) fails the test(s) <binary> -p axon-fabric --lib, privileged_launcher::tests::the_hand_over_never_follows_a_symlink; no row of its own'),
+    ('crates/axon-fabric/src/privileged_launcher.rs', 'make_out', 1, '0o700', 'DOMINATED', 'DOMINATED (checkable): the mode of the `mkdirat` is only the creation window: the helper then holds the out dir by descriptor and sets it 0700 (`fchmod(p.out, 0o700)`, row M2165, killed) before it is handed over, and the dir lives in the out root, a 0700 directory of the Fabric uid that open_out_root requires (no other uid can traverse to it in the window)'),
+    ('crates/axon-fabric/src/privileged_launcher.rs', 'new_staging', 1, '0o077', 'DOMINATED', "DOMINATED (checkable): the staging root's privacy check is one member of the retired PAIR M596/M597 (EQUIV_RECORD, four-cell record): the staging root's 0700 check and each launch's 0700 staging dir dominate each other, so the survey edit (this term made vacuous) leaves the suite green because of its partner; with both off the attack succeeds"),
+    ('crates/axon-fabric/src/privileged_launcher.rs', 'run', 4, '"/"', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value ("/" -> "/tmp") fails the test(s) <binary> -p axon-fabric --test privileged_launcher, the_root_launcher_runs_with_null_stdio_in_the_root_directory; no row of its own'),
+    ('crates/axon-fabric/src/privileged_launcher.rs', 'verify_inputs', 1, 'Some(a.operator_uid)', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value (Some(a.operator_uid) -> None) fails the test(s) <binary> -p axon-fabric --test privileged_launcher, a_boot_input_the_helper_cannot_vouch_for_launches_nothing; no row of its own'),
+    ('crates/axon-fabric/src/protected_host.rs', 'load', 3, 'None', 'REMAINDER', 'REMAINDER (amendment 103, no mutation exists): `interpreter: None` of the observer config built by ProtectedHost::load (the relay route names no observer program); the alternative is a pinned program path this literal cannot supply; not mutated'),
+    ('crates/axon-fabric/src/protected_host.rs', 'service_leaf', 1, '0o077', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value (0o077 -> 0o0) fails the test(s) <binary> -p axon-fabric --test protected_host, the_out_root_leaf_is_the_services_own_and_private; no row of its own'),
+    ('crates/axon-fabric/src/provenance.rs', 'ignored_by_untracked_rule', 1, '"check-ignore"', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value ("check-ignore" -> "check-ignorex") fails the test(s) <binary> -p axon-fabric --bin axon-provenance, <binary> -p axon-fabric --lib, provenance::tests::an_allowlist_reached_through_a_symlink_excuses_nothing; no row of its own'),
+    ('crates/axon-fabric/src/provenance.rs', 'ignored_by_untracked_rule', 2, '"-v"', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value ("-v" -> "-vx") fails the test(s) <binary> -p axon-fabric --bin axon-provenance, <binary> -p axon-fabric --lib, provenance::tests::an_allowlist_reached_through_a_symlink_excuses_nothing; no row of its own'),
+    ('crates/axon-fabric/src/provenance.rs', 'ignored_by_untracked_rule', 3, '"-z"', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value ("-z" -> "-zx") fails the test(s) <binary> -p axon-fabric --bin axon-provenance, <binary> -p axon-fabric --lib, provenance::tests::an_allowlist_reached_through_a_symlink_excuses_nothing; no row of its own'),
+    ('crates/axon-fabric/src/provenance.rs', 'ignored_by_untracked_rule', 4, '"--no-index"', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value ("--no-index" -> "--no-indexx") fails the test(s) <binary> -p axon-fabric --bin axon-provenance, <binary> -p axon-fabric --lib, provenance::tests::an_allowlist_reached_through_a_symlink_excuses_nothing; no row of its own'),
+    ('crates/axon-fabric/src/provenance.rs', 'ignored_by_untracked_rule', 5, '"--stdin"', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value ("--stdin" -> "--stdinx") fails the test(s) <binary> -p axon-fabric --bin axon-provenance, <binary> -p axon-fabric --lib, provenance::tests::an_allowlist_reached_through_a_symlink_excuses_nothing; no row of its own'),
+    ('crates/axon-fabric/src/provenance.rs', 'ignored_by_untracked_rule', 6, 'Stdio::piped()', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value (Stdio::piped() -> Stdio::null()) fails the test(s) <binary> -p axon-fabric --bin axon-provenance, <binary> -p axon-fabric --lib, provenance::tests::an_allowlist_reached_through_a_symlink_excuses_nothing; no row of its own'),
+    ('crates/axon-fabric/src/provenance.rs', 'ignored_by_untracked_rule', 7, 'Stdio::piped()', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value (Stdio::piped() -> Stdio::null()) fails the test(s) <binary> -p axon-fabric --bin axon-provenance, <binary> -p axon-fabric --lib, provenance::tests::an_allowlist_reached_through_a_symlink_excuses_nothing; no row of its own'),
+    ('crates/axon-fabric/src/psv.rs', 'prepare', 1, 'LAUNCH_MANIFEST_SCHEMA.into()', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value (LAUNCH_MANIFEST_SCHEMA.into() -> "x".into()) fails the test(s) <binary> -p axon-fabric --test psv_dispatch, a_candidate_cannot_supply_the_acceptance_test_through_fabric, a_candidate_cannot_write_a_failure_over_a_genuine_pass; no row of its own'),
+    ('crates/axon-fabric/src/psv.rs', 'prepare', 2, 'PROTECTED_PROFILE.into()', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value (PROTECTED_PROFILE.into() -> "x".into()) fails the test(s) <binary> -p axon-fabric --test psv_dispatch, a_candidate_cannot_supply_the_acceptance_test_through_fabric, a_candidate_cannot_write_a_failure_over_a_genuine_pass; no row of its own'),
+    ('crates/axon-fabric/src/readiness.rs', 'test', 1, 'false', 'NOTROUTE', 'NOT ON THE PROTECTED ROUTE (checkable): a TESTS-ONLY constructor, `#[cfg(any(test, feature = "test-trust-root"))]`: absent from a production build (the feature is enabled only through [dev-dependencies]: `grep -n test-trust-root crates/*/Cargo.toml`)'),
+    ('crates/axon-fabric/src/sealed_exec.rs', 'open_verified', 1, '0o022', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value (0o022 -> 0o0) fails the test(s) <binary> -p axon-fabric --lib, sealed_exec::tests::a_group_writable_launcher_is_refused; no row of its own'),
+    ('crates/axon-fabric/src/workspace.rs', 'materialize', 1, 'match (executable, read_only) {\n        ', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value (match (executable, read_only)  -> match (executable, read_only) ) fails the test(s) <binary> -p axon-fabric --test workspace, publish_is_write_once_and_materialize_round_trips, the_materialized_modes_and_the_trial_cache_root_are_what_the_store_says; no row of its own'),
+    ('crates/axon-fabric/src/workspace.rs', 'unlock', 1, '0o755', 'DOMINATED', 'DOMINATED (checkable): `unlock` only makes a directory writable so that the `remove_dir_all` on the next statement of `remove_tree` can delete it; 0o755 and 0o777 both allow that and the tree is gone afterwards'),
+    ('crates/axon-guest-kernel/src/mmds.rs', 'read_policy', 1, 'None', 'NOTROUTE', "NOT ON THE PROTECTED ROUTE (checkable): the bare-metal guest kernel is the `axon` backend of scripts/build-guest-image.sh (AXON_KERNEL_BACKEND=axon, the default of a DEMO image) and Fabric's AXON_KERNEL profile (backend.rs: guest_kind axon_kernel_demo, `job_kinds: &[]`, it runs no program). The protected profile, linux-microvm-protected, boots the Linux backend (vmlinux + rootfs.sqfs, /init = axon-guest-init), whose policy decisions are scanned in crates/axon-guest-init and crates/axon-psv"),
+    ('crates/axon-guest-kernel/src/mmds.rs', 'read_policy', 2, 'None', 'NOTROUTE', "NOT ON THE PROTECTED ROUTE (checkable): the bare-metal guest kernel is the `axon` backend of scripts/build-guest-image.sh (AXON_KERNEL_BACKEND=axon, the default of a DEMO image) and Fabric's AXON_KERNEL profile (backend.rs: guest_kind axon_kernel_demo, `job_kinds: &[]`, it runs no program). The protected profile, linux-microvm-protected, boots the Linux backend (vmlinux + rootfs.sqfs, /init = axon-guest-init), whose policy decisions are scanned in crates/axon-guest-init and crates/axon-psv"),
+    ('crates/axon-guest-kernel/src/mmds.rs', 'read_policy', 3, 'None', 'NOTROUTE', "NOT ON THE PROTECTED ROUTE (checkable): the bare-metal guest kernel is the `axon` backend of scripts/build-guest-image.sh (AXON_KERNEL_BACKEND=axon, the default of a DEMO image) and Fabric's AXON_KERNEL profile (backend.rs: guest_kind axon_kernel_demo, `job_kinds: &[]`, it runs no program). The protected profile, linux-microvm-protected, boots the Linux backend (vmlinux + rootfs.sqfs, /init = axon-guest-init), whose policy decisions are scanned in crates/axon-guest-init and crates/axon-psv"),
+    ('crates/axon-guest-kernel/src/mmds.rs', 'read_policy', 4, 'None', 'NOTROUTE', "NOT ON THE PROTECTED ROUTE (checkable): the bare-metal guest kernel is the `axon` backend of scripts/build-guest-image.sh (AXON_KERNEL_BACKEND=axon, the default of a DEMO image) and Fabric's AXON_KERNEL profile (backend.rs: guest_kind axon_kernel_demo, `job_kinds: &[]`, it runs no program). The protected profile, linux-microvm-protected, boots the Linux backend (vmlinux + rootfs.sqfs, /init = axon-guest-init), whose policy decisions are scanned in crates/axon-guest-init and crates/axon-psv"),
+    ('crates/axon-guest-kernel/src/mmds.rs', 'read_policy', 5, 'ALLOWED_EFFECTS', 'NOTROUTE', "NOT ON THE PROTECTED ROUTE (checkable): the bare-metal guest kernel is the `axon` backend of scripts/build-guest-image.sh (AXON_KERNEL_BACKEND=axon, the default of a DEMO image) and Fabric's AXON_KERNEL profile (backend.rs: guest_kind axon_kernel_demo, `job_kinds: &[]`, it runs no program). The protected profile, linux-microvm-protected, boots the Linux backend (vmlinux + rootfs.sqfs, /init = axon-guest-init), whose policy decisions are scanned in crates/axon-guest-init and crates/axon-psv"),
+    ('crates/axon-guest-kernel/src/mmds.rs', 'read_policy', 6, 'None', 'NOTROUTE', "NOT ON THE PROTECTED ROUTE (checkable): the bare-metal guest kernel is the `axon` backend of scripts/build-guest-image.sh (AXON_KERNEL_BACKEND=axon, the default of a DEMO image) and Fabric's AXON_KERNEL profile (backend.rs: guest_kind axon_kernel_demo, `job_kinds: &[]`, it runs no program). The protected profile, linux-microvm-protected, boots the Linux backend (vmlinux + rootfs.sqfs, /init = axon-guest-init), whose policy decisions are scanned in crates/axon-guest-init and crates/axon-psv"),
+    ('crates/axon-guest-kernel/src/mmds.rs', 'read_policy', 7, 'None', 'NOTROUTE', "NOT ON THE PROTECTED ROUTE (checkable): the bare-metal guest kernel is the `axon` backend of scripts/build-guest-image.sh (AXON_KERNEL_BACKEND=axon, the default of a DEMO image) and Fabric's AXON_KERNEL profile (backend.rs: guest_kind axon_kernel_demo, `job_kinds: &[]`, it runs no program). The protected profile, linux-microvm-protected, boots the Linux backend (vmlinux + rootfs.sqfs, /init = axon-guest-init), whose policy decisions are scanned in crates/axon-guest-init and crates/axon-psv"),
+    ('crates/axon-loop-contracts/src/operator_trust.rs', 'check_owned_chain', 1, '0o022', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value (0o022 -> 0o0) fails the test(s) <binary> -p axon-fabric --test grant_registry_authority, <binary> -p axon-fabric --test protected_host, <binary> -p axon-fabric --test readiness; no row of its own'),
+    ('crates/axon-loop/src/evo.rs', 'propose', 1, 'false', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value (false -> true) fails the test(s) a6_forged_admission_record_is_refused, a6_journalled_forgery_does_not_rederive, a7b_hand_edited_pointer_is_corrupt; no row of its own'),
+    ('crates/axon-os/src/runtime.rs', 'create', 1, '0o700', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value (0o700 -> 0o777) fails the test(s) runtime::runtime_tests::staging_dir_is_private_fresh_and_removed, the_wrapper_is_staged_privately_and_removed; no row of its own'),
+    ('crates/axon-os/src/runtime.rs', 'run_bounded_capped', 1, 'Stdio::null()', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value (Stdio::null() -> Stdio::inherit()) fails the test(s) the_interpreter_child_is_built_from_an_empty_environment_and_the_jobs_directory; no row of its own'),
+    ('crates/axon-os/src/runtime.rs', 'run_bounded_capped', 2, 'Stdio::piped()', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value (Stdio::piped() -> Stdio::null()) fails the test(s) acc_a1_smoke_user_journey, acc_a2_example_agent_killed_and_overreach_denied, acc_a2_example_jobs_run_and_overreach_denied; no row of its own'),
+    ('crates/axon-os/src/runtime.rs', 'run_bounded_capped', 3, 'Stdio::piped()', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value (Stdio::piped() -> Stdio::null()) fails the test(s) hermetic_ignores_the_ambient_environment_and_restricted_does_not, the_interpreter_child_is_built_from_an_empty_environment_and_the_jobs_directory; no row of its own'),
+    ('crates/axon-os/src/runtime.rs', 'run_sandboxed', 1, '"run"', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value ("run" -> "runx") fails the test(s) a_kill_armed_before_its_run_starts_stops_the_run, a_narrow_allowlist_denies_because_the_monitor_can_see_the_ledger, acc_a1_smoke_kill_journey; no row of its own'),
+    ('crates/axon-os/src/runtime.rs', 'write_new', 1, '0o600', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value (0o600 -> 0o777) fails the test(s) runtime::runtime_tests::staging_dir_is_private_fresh_and_removed, the_wrapper_is_staged_privately_and_removed; no row of its own'),
+    ('crates/axon-psv/src/lib.rs', 'mode_is_normalised', 1, '0o755', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value (0o755 -> 0o777) fails the test(s) inputs_carrying_an_extended_attribute_are_refused, inputs_holding_what_the_digest_cannot_see_are_refused; no row of its own'),
+    ('crates/axon-psv/src/lib.rs', 'mode_is_normalised', 2, '0o555', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value (0o555 -> 0o777) fails the test(s) inputs_holding_what_the_digest_cannot_see_are_refused; no row of its own'),
+    ('crates/axon-psv/src/lib.rs', 'mode_is_normalised', 3, '0o644', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value (0o644 -> 0o777) fails the test(s) a_candidate_calls_its_own_fn_value_and_never_reads_an_operator_global, a_candidate_cannot_shadow_the_suites_own_modules, a_candidate_cannot_supply_the_registered_test; no row of its own'),
+    ('crates/axon-psv/src/lib.rs', 'mode_is_normalised', 4, '0o444', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value (0o444 -> 0o777) fails the test(s) inputs_holding_what_the_digest_cannot_see_are_refused; no row of its own'),
+    ('crates/axon-psv/src/lib.rs', 'walk', 1, '0o7777', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value (0o7777 -> 0o777) fails the test(s) inputs_holding_what_the_digest_cannot_see_are_refused; no row of its own'),
+    ('crates/axon-psv/src/runner.rs', 'exec_axon_test', 10, 'Stdio::piped()', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value (Stdio::piped() -> Stdio::null()) fails the test(s) a_candidate_calls_its_own_fn_value_and_never_reads_an_operator_global, a_candidate_cannot_shadow_the_suites_own_modules, a_candidate_cannot_supply_the_registered_test; no row of its own'),
+    ('crates/axon-psv/src/runner.rs', 'exec_axon_test', 11, 'Stdio::piped()', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value (Stdio::piped() -> Stdio::null()) fails the test(s) a_candidate_calls_its_own_fn_value_and_never_reads_an_operator_global, a_candidate_cannot_shadow_the_suites_own_modules, a_candidate_cannot_supply_the_registered_test; no row of its own'),
+    ('crates/axon-psv/src/runner.rs', 'exec_axon_test', 12, 'Stdio::piped()', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value (Stdio::piped() -> Stdio::null()) fails the test(s) a_candidate_calls_its_own_fn_value_and_never_reads_an_operator_global, a_candidate_cannot_shadow_the_suites_own_modules, a_candidate_cannot_supply_the_registered_test; no row of its own'),
+    ('crates/axon-psv/src/runner.rs', 'exec_axon_test', 14, 'gid', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value (gid -> 0) fails the test(s) the_check_child_runs_as_the_check_uid_with_no_groups; no row of its own'),
+    ('crates/axon-psv/src/runner.rs', 'exec_axon_test', 15, 'uid', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value (uid -> 0) fails the test(s) neither_the_secret_nor_the_key_reaches_candidate_code_or_the_output, the_check_child_runs_as_the_check_uid_with_no_groups; no row of its own'),
+    ('crates/axon-vm/src/firecracker.rs', 'run_in_firecracker', 1, '"--api-sock"', 'NOTROUTE', 'NOT ON THE PROTECTED ROUTE (checkable): the protected crates use axon-vm for exactly axon_vm::BACKEND_PROFILE and axon_vm::firecracker::{MmdsPayload, embed_policy_in_cmdline} (axon-fabric backend.rs; embed_policy_in_cmdline is one format! with no site), and the protected guest is launched by scripts/fc_linux_profile.sh through the root helper, not by axon-vm'),
+    ('crates/axon-vm/src/firecracker.rs', 'run_in_firecracker', 2, 'Stdio::null()', 'NOTROUTE', 'NOT ON THE PROTECTED ROUTE (checkable): the protected crates use axon-vm for exactly axon_vm::BACKEND_PROFILE and axon_vm::firecracker::{MmdsPayload, embed_policy_in_cmdline} (axon-fabric backend.rs; embed_policy_in_cmdline is one format! with no site), and the protected guest is launched by scripts/fc_linux_profile.sh through the root helper, not by axon-vm'),
+    ('crates/axon-vm/src/firecracker.rs', 'run_in_firecracker', 3, 'Stdio::piped()', 'NOTROUTE', 'NOT ON THE PROTECTED ROUTE (checkable): the protected crates use axon-vm for exactly axon_vm::BACKEND_PROFILE and axon_vm::firecracker::{MmdsPayload, embed_policy_in_cmdline} (axon-fabric backend.rs; embed_policy_in_cmdline is one format! with no site), and the protected guest is launched by scripts/fc_linux_profile.sh through the root helper, not by axon-vm'),
+    ('crates/axon-vm/src/firecracker.rs', 'run_in_firecracker', 4, 'Stdio::piped()', 'NOTROUTE', 'NOT ON THE PROTECTED ROUTE (checkable): the protected crates use axon-vm for exactly axon_vm::BACKEND_PROFILE and axon_vm::firecracker::{MmdsPayload, embed_policy_in_cmdline} (axon-fabric backend.rs; embed_policy_in_cmdline is one format! with no site), and the protected guest is launched by scripts/fc_linux_profile.sh through the root helper, not by axon-vm'),
+    ('crates/axon-workspace-recipe/src/lib.rs', 'is_exec', 1, '0o111', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value (0o111 -> 0o0) fails the test(s) <binary> -p axon-fabric --test workspace, publish_is_write_once_and_materialize_round_trips, the_cross_language_vector_reproduces_byte_for_byte; no row of its own'),
+    ('crates/axon-workspace-recipe/src/lib.rs', 'single_file_workspace_version_ref', 1, '"100644"', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value ("100644" -> "100644x") fails the test(s) <binary> -p axon-fabric --test cortex_via_fabric, <binary> -p axon-fabric --test workspace, a_one_file_version_judges_the_bytes_it_hashed_not_the_live_file; no row of its own'),
+]
+# END VALUE_EXEMPT
 
 
 def load_rows():
@@ -4631,11 +4744,8 @@ def verdict_sites(lines, regions=None, f=None):
     return out
 
 
-def sites(text, f=None, bad=None):
-    """The refusal sites of `f` as (first, last, reported) lines: `first` to
-    `last` is the guard block a row or an exemption must reach, `reported` the
-    line the report names."""
-    lines = code_lines(text)
+def scope_regions(f, lines, text, bad):
+    """The line regions of `f` that are in scope (None: the whole file)."""
     regions = None
     if f in SCOPE_FN_REGIONS or f in REGIONS:
         regions = fn_regions(lines, SCOPE_FN_REGIONS[f]) if f in SCOPE_FN_REGIONS else []
@@ -4643,6 +4753,15 @@ def sites(text, f=None, bad=None):
             r = anchor_region(lines, text, f, bad if bad is not None else [])
             if r:
                 regions.append(r)
+    return regions
+
+
+def sites(text, f=None, bad=None):
+    """The refusal sites of `f` as (first, last, reported) lines: `first` to
+    `last` is the guard block a row or an exemption must reach, `reported` the
+    line the report names."""
+    lines = code_lines(text)
+    regions = scope_regions(f, lines, text, bad)
     out = []
     ctors = local_ctors(lines)
     for i, l in enumerate(lines):
@@ -4939,6 +5058,329 @@ REMAINDER_SITES = []
 OBSERVED_SITES = []
 
 
+# ── Amendment 103 (C9 round 11, eqgate6): a VALUE is a site ───────────────────
+# Rounds 7-10 extended the gate by INSTANCE: each round's reviewer found a production
+# VALUE handed to a primitive that no test observes, and the gate then learned that
+# one path-field form. Round 10 found the same class in the sibling code
+# (`exec_axon_test`'s `.env("AXON_PATH_EXCLUSIVE", "1")` -> "0" and a PATH prefixed
+# with `/in/candidate` kept the whole axon-psv suite green; `Some(h.owner)` -> `None`
+# kept the whole axon-fabric suite green) because `.env(` was a site CREDITED BY A ROW
+# THAT RENAMED THE KEY. The class: a LITERAL or CONSTANT (or an owner argument)
+# handed to
+#   (a) a process-spawn builder: `.env(K, V)` (the V), `.env_remove(K)`, `.arg(V)`,
+#       each literal element of `.args([..])`, `.current_dir(V)`, `.envs(..)`,
+#       `.stdin/.stdout/.stderr(Stdio::..)`;
+#   (b) a privilege or ownership primitive: the arguments of chown/fchown/lchown/
+#       fchownat, the setuid/setgid/setgroups family, `.uid(..)`/`.gid(..)`, a
+#       `Some(<x>.owner|uid|gid)` owner argument, and a permission MODE literal or
+#       constant (any `0o..` literal; the mode argument of mkdir(at)/chmod/fchmod/
+#       umask/`.mode(..)`/`from_mode(..)`/`set_mode(..)`);
+#   (c) a struct-literal field of a Config/Cfg/Authority/Policy/Manifest/Trust type
+#       whose value is a literal or constant (`Config { m: 5, p: "/x".into() }`).
+# Each such value is a VALUE SITE with its own span. It is credited ONLY by a row
+# whose edit CHANGES that value's characters (a row that renames the key, or edits
+# the neighbouring value, credits nothing: the line-diff is trimmed per line to the
+# changed characters), or by a VALUE_EXEMPT entry (file, function, n-th value site
+# of that function, a fragment of the value's text, kind, reason). Kinds:
+# OBSERVED (a survey removed the value and a named test failed), DOMINATED /
+# FAILCLOSED (a checkable fact), REMAINDER (no test observes it: COUNTED by
+# category `val_*`, NEVER claimed covered). (d) a literal compared inside a
+# refusal is judged by the existing per-TERM rule, not by this form.
+STILL_BLIND = [
+    "a value built by computation, or handed through a local binding (`let m = 0o700; mkdir(m)` is seen at the literal, "
+    "not at the use; a `format!` of variables, a path joined at run time, a flag set read from a table)",
+    "a spawn through a wrapper fn or a builder not named .env/.arg/.args/.current_dir/.stdin/.stdout/.stderr/.uid/.gid, "
+    "and the bytes of a script or file handed to a child",
+    "a struct literal whose type name is not Config/Cfg/Authority/Policy/Manifest/Trust, and a literal inside a nested literal",
+    "a default read as a value (unwrap_or / map_or / Default::default) and an absent field's neutral value",
+    "a uid or mode that is the operand of a COMPARISON (only the per-term rule and the constant rule see those), and a "
+    "literal compared inside a refusal",
+    "whether a REMAINDER or OBSERVED entry is true (nothing re-runs the survey that wrote it), and that a row which "
+    "deletes a REDUNDANT PAIR (git_cmd's GIT_NO_LAZY_FETCH + protocol.allow) credits each member though only the pair "
+    "is shown to be observed",
+    "Python other than scripts/guest_build_env.py, the shell scripts, and any decision that is not Rust or that file",
+]
+_VALUE_CALLS = re.compile(
+    r"\.(env|env_remove|envs|arg|args|current_dir|stdin|stdout|stderr|uid|gid|groups)\(")
+_PRIV_CALLS = re.compile(
+    r"(?<![\w:.])(?:libc::|std::os::unix::fs::|unix_fs::)?"
+    r"(f?l?chown(?:at)?|setuid|setgid|seteuid|setegid|setreuid|setregid|setresuid|setresgid|setgroups|initgroups)\(")
+_MODE_CALLS = re.compile(
+    r"(?<![\w:.])(?:libc::)?(f?chmod(?:at)?|mkdirat|mkdir|umask)\(|\.mode\(|\bfrom_mode\(|\bset_mode\(")
+_OCTAL = re.compile(r"\b0o[0-7_]+\b")
+_OWNER_ARG = re.compile(r"\bSome\(\s*[\w.]*?(?<![A-Za-z0-9])(?:owner|uid|gid|euid|egid)\s*\)")
+_CONST_ID = re.compile(r"&?(?:\w+::)*[A-Z][A-Z0-9_]{2,}\b")
+_STRUCT_WORDS = ("Config", "Cfg", "Authority", "Policy", "Manifest", "Trust")
+_NOT_LITERAL_TOKENS = None
+_LIT_WORDS = {"true", "false", "None", "Some", "vec", "to_string", "into", "to_owned", "to_vec", "new", "from",
+              "from_secs", "from_millis", "from_str", "as_str", "String", "PathBuf", "Path", "Duration", "Vec",
+              "HashMap", "BTreeMap", "HashSet", "BTreeSet", "OsString", "OsStr", "default", "Default"}
+
+
+def _value_text(text):
+    """`blank_non_code(text)` with every #[cfg(test)] item blanked too (same length)."""
+    clean = blank_non_code(text)
+    chars = list(clean)
+    pos = 0
+    for m in CFG_TEST.finditer(text):
+        if m.start() < pos:
+            continue
+        end = _cfg_test_extent(text, m.end())
+        for k in range(m.start(), end):
+            if chars[k] != "\n":
+                chars[k] = " "
+        pos = end
+    return "".join(chars)
+
+
+def _split_group(clean, open_i):
+    """The top-level comma-separated pieces of the group opened at clean[open_i], as
+    stripped (begin, end) character spans."""
+    close = _match_close(clean, open_i) - 1
+    out, depth, start = [], 0, open_i + 1
+    for j in range(open_i + 1, close):
+        c = clean[j]
+        if c in "([{":
+            depth += 1
+        elif c in ")]}":
+            depth -= 1
+        elif c == "," and depth == 0:
+            out.append((start, j))
+            start = j + 1
+    out.append((start, close))
+    res = []
+    for a, b in out:
+        s = clean[a:b]
+        a2 = a + (len(s) - len(s.lstrip()))
+        b2 = b - (len(s) - len(s.rstrip()))
+        if b2 > a2:
+            res.append((a2, b2))
+    return res
+
+
+def _has_literal(s):
+    """Whether the expression text (strings blanked, quotes kept) holds a string, number, boolean or
+    constant literal."""
+    return bool('"' in s or re.search(r"\b\d", s) or re.search(r"\b(?:true|false)\b", s)
+                or re.search(r"(?<![\w])[A-Z][A-Z0-9_]{2,}\b", s))
+
+
+def _strict_literal(s):
+    """Whether the expression is made of literals alone (a struct field's value)."""
+    r = re.sub(r'b?"[^"]*"', '""', s)
+    r = re.sub(r"\b\d[\w.]*", "0", r)
+    for tok in re.findall(r"[A-Za-z_]\w*", r):
+        if tok in _LIT_WORDS or re.fullmatch(r"[A-Z][A-Z0-9_]{2,}", tok):
+            continue
+        return False
+    return not re.search(r"[{};|=<>]", r) or r.strip() == ""
+
+
+def _fn_of(clean_lines, spans, line):
+    best = None
+    for head, last, name, _ in spans:
+        if head <= line <= last and (best is None or head >= best[0]):
+            best = (head, name)
+    return best[1] if best else ""
+
+
+def value_sites(text, regions=None):
+    """[(begin, end, label, fn, n)] value sites (see amendment 103) of the non-test code of `text`;
+    `n` counts a function's value sites from 1 in source order."""
+    clean = _value_text(text)
+    found = {}
+
+    def add(a, b, label):
+        if b > a and (a, b) not in found:
+            found[(a, b)] = label
+
+    for m in _VALUE_CALLS.finditer(clean):
+        name, op = m.group(1), m.end() - 1
+        args = _split_group(clean, op)
+        if name == "env":
+            if len(args) >= 2 and _has_literal(clean[args[1][0]:args[1][1]]):
+                add(*args[1], "val_env")
+        elif name == "env_remove":
+            for a, b in args[:1]:
+                if _has_literal(clean[a:b]):
+                    add(a, b, "val_env")
+        elif name == "envs":
+            for a, b in args[:1]:
+                if _has_literal(clean[a:b]):
+                    add(a, b, "val_env")
+        elif name == "arg":
+            for a, b in args[:1]:
+                if _has_literal(clean[a:b]):
+                    add(a, b, "val_arg")
+        elif name == "args":
+            for a, b in args[:1]:
+                s = clean[a:b].lstrip("& ")
+                if s.startswith("["):
+                    inner = a + (len(clean[a:b]) - len(s))
+                    for x, y in _split_group(clean, inner):
+                        if _has_literal(clean[x:y]):
+                            add(x, y, "val_arg")
+                elif _has_literal(s):
+                    add(a, b, "val_arg")
+        elif name == "current_dir":
+            for a, b in args[:1]:
+                if _has_literal(clean[a:b]):
+                    add(a, b, "val_cwd")
+        elif name in ("stdin", "stdout", "stderr"):
+            for a, b in args[:1]:
+                if "Stdio::" in clean[a:b]:
+                    add(a, b, "val_stdio")
+        else:  # uid / gid / groups
+            for a, b in args[:1]:
+                add(a, b, "val_priv")
+    for m in _PRIV_CALLS.finditer(clean):
+        for a, b in _split_group(clean, m.end() - 1):
+            s = clean[a:b]
+            if _has_literal(s) or re.search(r"\b(?:Some|None)\b|uid|gid|owner", s):
+                add(a, b, "val_priv")
+    modes = []
+    for m in _MODE_CALLS.finditer(clean):
+        args = _split_group(clean, m.end() - 1)
+        which = args[-1:] if m.group(1) in (None, "umask") else args[-1:]
+        for a, b in which:
+            if re.search(r"\b\d|[A-Z][A-Z0-9_]{2,}", clean[a:b]):
+                add(a, b, "val_mode")
+                modes.append((a, b))
+    # A mode literal inside a message macro (`format!(.., m.mode() & 0o7777)`) renders a mode in a
+    # refusal's text; it decides nothing.
+    msgs = [(mm.end() - 1, _match_close(clean, mm.end() - 1))
+            for mm in re.finditer(r"\b(?:format|write|writeln|println|eprintln|print|eprint|panic|unreachable)!\(", clean)]
+    for m in _OCTAL.finditer(clean):
+        if (not any(a <= m.start() and m.end() <= b for a, b in modes)
+                and not any(a <= m.start() < b for a, b in msgs)):
+            add(m.start(), m.end(), "val_mode")
+    for m in _OWNER_ARG.finditer(clean):
+        before = clean[max(0, m.start() - 40):m.start()]
+        after = clean[m.end():m.end() + 6].lstrip()
+        if after.startswith("=>") or after.startswith("|") or re.search(r"(?:\blet|\bmatches!\(.*)\s*$", before):
+            continue
+        add(m.start(), m.end(), "val_owner")
+    for m in re.finditer(r"(?<![\w])((?:\w+::)*[A-Z]\w*)\s*\{", clean):
+        name = m.group(1).split("::")[-1]
+        if not any(w in name for w in _STRUCT_WORDS):
+            continue
+        before = clean[max(0, m.start() - 24):m.start()].rstrip()
+        if re.search(r"(?:\bstruct|\benum|\bimpl|\bfor|\btrait|\bunion|\bdyn|->|\bmod)$", before):
+            continue
+        for a, b in _split_group(clean, m.end() - 1):
+            fm = re.match(r"(\w+)\s*:(?!:)\s*", clean[a:b])
+            if not fm:
+                continue
+            va = a + fm.end()
+            v = clean[va:b]
+            if v and _strict_literal(v) and _has_literal(v) or v.strip() in ("None",):
+                # an absolute-path field is VALUE_FORM's line site already
+                if VALUE_FORM.search(clean[clean.rfind("\n", 0, a) + 1:b].split("//")[0]):
+                    continue
+                add(va, b, "val_field")
+    cl = clean.split("\n")
+    fspans = _fn_spans(cl)
+    per, out = {}, []
+    for (a, b), label in sorted(found.items()):
+        if regions is not None and not any(x <= line_of(clean, a) <= y for x, y in regions):
+            continue
+        fn = _fn_of(cl, fspans, line_of(clean, a))
+        per[fn] = per.get(fn, 0) + 1
+        out.append((a, b, label, fn, per[fn]))
+    return out
+
+
+def edit_ranges(text, old, new):
+    """The absolute character ranges of `text` an edit old -> new CHANGES (not the span from the
+    first changed character to the last: lines are diffed, and a replaced line is trimmed to its
+    changed characters). An insertion is the empty range at its point."""
+    import difflib
+    off = text.index(old)
+    o, n = old.split("\n"), new.split("\n")
+    lo = [0]
+    for l in o:
+        lo.append(lo[-1] + len(l) + 1)
+    out = []
+    for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(None, o, n, autojunk=False).get_opcodes():
+        if tag == "equal":
+            continue
+        if tag == "replace" and i2 - i1 == j2 - j1:
+            for k in range(i2 - i1):
+                a, b = o[i1 + k], n[j1 + k]
+                p = 0
+                while p < min(len(a), len(b)) and a[p] == b[p]:
+                    p += 1
+                q = 0
+                while q < min(len(a), len(b)) - p and a[-1 - q] == b[-1 - q]:
+                    q += 1
+                out.append((off + lo[i1 + k] + p, off + lo[i1 + k] + len(a) - q))
+        elif i1 == i2:
+            out.append((off + lo[i1], off + lo[i1]))
+        else:
+            out.append((off + lo[i1], off + lo[i2] - 1))
+    return out
+
+
+def _ranges_hit(ranges, a, b):
+    for x, y in ranges:
+        if y <= x:
+            # An INSERTION: at the value's first character, inside it, or right after it (`X` -> `X + 1`).
+            if a <= x <= b:
+                return True
+        elif x < b and y > a:
+            return True
+    return False
+
+
+def judge_values(f, text, rows, bad):
+    """(covered, exempt, uncovered) of the value sites of `f`."""
+    vs = value_sites(text, scope_regions(f, code_lines(text), text, []))
+    if not vs:
+        for e in VALUE_EXEMPT:
+            if e[0] == f:
+                bad.append(f"{f}: value exemption ({e[1]}, {e[2]}) matches no value site (the file has none)")
+        return 0, 0, []
+    lines = text.split("\n")
+    rs = []
+    for r in rows:
+        if r[2] == f and text.count(r[3]) == 1:
+            rs.append((r[0], edit_ranges(text, r[3], r[4])))
+    ex = {(e[1], e[2]): [e, 0, 0] for e in VALUE_EXEMPT if e[0] == f}
+    covered = exempt = 0
+    uncovered = []
+    for a, b, label, fn, n in vs:
+        by = [rid for rid, rg in rs if _ranges_hit(rg, a, b)]
+        hit = ex.get((fn, n))
+        frag = text[a:b]
+        if hit is not None:
+            hit[1] += 1
+            hit[2] += 1 if by else 0
+            if hit[0][3] not in " ".join(frag.split()) and hit[0][3] not in frag:
+                bad.append(f"{f}:{line_of(text, a) + 1}: value exemption ({fn}, {n}) names the fragment "
+                           f"{hit[0][3]!r}, which is not the value's text {frag!r}: a site was added or moved, re-judge it")
+        if by:
+            covered += 1
+        elif hit is not None:
+            exempt += 1
+            kind = hit[0][4]
+            if kind == "REMAINDER":
+                REMAINDER_SITES.append((f, line_of(text, a) + 1, label))
+            elif kind == "OBSERVED":
+                OBSERVED_SITES.append((f, line_of(text, a) + 1, "observed"))
+        else:
+            ln = line_of(text, a)
+            uncovered.append(f"{f}:{ln + 1}: refusal site with no row and no exemption: value ({label}) "
+                             f"{' '.join(frag.split())[:90]}  [fn {fn or '-'} #{n}]  in: {lines[ln].strip()[:100]}")
+    for key, (e, hits, cov) in ex.items():
+        if hits == 0:
+            bad.append(f"{f}: value exemption {key} matches no value site (a function renamed, or fewer sites than it names)")
+        elif cov:
+            bad.append(f"{f}: value exemption {key} ({e[3]!r}) yet a row's edit changes the value: drop the exemption")
+    return covered, exempt, uncovered
+
+
+
+
 def remainder_category(reason):
     """The category of a REMAINDER exemption: the `_A95` key whose reason it is
     (okor_field, const_tag, ...), else `other` (a hand-written REMAINDER)."""
@@ -5044,6 +5486,10 @@ def judge_file(f, rows, bad, const_names=frozenset()):
                     "predicate": f"{lines[g].strip()} (a predicate primitive: it decides by bool/Option)",
                     "verdict": f"{lines[g].strip()} (a function deciding by a verdict return type)"}[kind]
             uncovered.append(f"{f}:{at + 1}: refusal site with no row and no exemption: {what}")
+    vc, ve, vu = judge_values(f, text, rows, bad)
+    covered += vc
+    exempt += ve
+    uncovered.extend(vu)
     for t in tex:
         if t[3] == 0:
             bad.append(f"{f}: term exemption matches no uncredited guard term: {t[1]!r}")
@@ -5115,7 +5561,7 @@ PY_EXEMPT += [
     ("scripts/guest_build_env.py", '_begin', 1, 'fail(why)', 'REMAINDER',
      'REMAINDER (no test observes it): inside `_begin` (amendment 99: `begin` now only takes the build-uid lock and calls `_begin`), which needs the real pinned toolchain (rustup), root, and a built private copy; the begin route is exercised end to end by guest_build_env.rs, whose cases name the REFUSALS of begin, not this `why`'),
     ("scripts/guest_build_env.py", '_begin', 2, 'fail("cargo\'s effective configuration for the guest build is', 'REMAINDER',
-     "REMAINDER (no test observes it): inside `_begin` (real toolchain): cargo's effective config at begin; judged end to end by guest_build_env.rs's committed-config cases, which refuse through `effective_config`, not through a removal of this line alone"),
+     "REMAINDER (NOT EXECUTED, round 11): inside `_begin` (real toolchain): cargo's effective config at begin. guest_build_env.rs `a_committed_cargo_config_cannot_name_a_program_in_any_spelling` drives `begin` with a committed and an ancestor config and asserts a refusal containing 'effective configuration' (it passes locally on the unmutated tree), so a test PROBABLY observes this line (round 10 said so); whether removing THIS line alone fails it was not executed: the file is not this workstream's to edit, and an in-place removal in a scratch copy was refused by the permission check. Counted REMAINDER until a row or a survey says otherwise"),
     ("scripts/guest_build_env.py", 'build_uid_lock', 2, 'fail(f"cannot open the build-uid lock file in {LOCK_DIR}', 'REMAINDER',
      "REMAINDER (amendment 99, no test observes it alone): turns the OSError of the O_NOFOLLOW open of the lock file (a symlink there) into a refusal with a message; the symlink is planted by the_build_uid_lock_is_root_owned_and_begin_holds_it (LOCK_IS_SYMLINK) and refused, but without this handler the OSError propagates uncaught (a traceback, a non-zero exit, no lock taken), so removing the handler changes the message and the exit path and not the outcome; the refusal itself is the open flag, whose removal would be caught by the symlink case only because /dev/null is not a regular file (the check after the open)"),
     ("scripts/guest_build_env.py", 'first', 1, 'fail(f"{\' \'.join(cmd)} failed: {r.stderr.strip()[-300:]}")', 'REMAINDER',
@@ -5175,7 +5621,7 @@ PY_EXEMPT += [
     ("scripts/guest_build_env.py", 'kernel', 4, 'fail(f"{\' \'.join(argv)} failed ({r.returncode})")', 'OBSERVED',
      "OBSERVED-NOT-ROWED (survey, scripts/v022_py_guard_survey.py): removing this guard fails the case(s) 'kernel a make step that fails' of crates/axon-fabric/tests/guest_build_env_guards.rs; no row of its own"),
     ("scripts/guest_build_env.py", 'kernel', 5, 'fail("vmlinux not built")', 'OBSERVED',
-     "OBSERVED-NOT-ROWED (survey, scripts/v022_py_guard_survey.py): removing this guard fails the case(s) 'line 529' of crates/axon-fabric/tests/guest_build_env_guards.rs; no row of its own"),
+     "OBSERVED-NOT-ROWED (survey, scripts/v022_py_guard_survey.py): removing this guard fails the case(s) 'kernel a make that builds no vmlinux' of crates/axon-fabric/tests/guest_build_env_guards.rs; no row of its own"),
     ("scripts/guest_build_env.py", '_id_fields', 1, 'raise DiscoveryRefused(f"{where}: {k} holds {x!r}', 'OBSERVED',
      "OBSERVED-NOT-ROWED (survey, scripts/v022_py_guard_survey.py, amendment 101): removing this guard fails the case(s) 'service ids a uid field that is not a number refuses' of crates/axon-fabric/tests/guest_build_env_guards.rs; no row of its own"),
     ("scripts/guest_build_env.py", '_read_small', 1, 'raise DiscoveryRefused(f"{path} cannot be read', 'OBSERVED',
@@ -5422,13 +5868,16 @@ def main():
         for f, line, cat in sorted(REMAINDER_SITES):
             print(f"REMAINDER {f}:{line} {cat}")
     if NOT_YET_SCANNED:
-        print(f"refusal coverage: every refusal site in the scanned files has a row or a reasoned "
-              f"exemption; {len(NOT_YET_SCANNED)} in-scope file(s) NOT YET SCANNED (a freeze "
+        print(f"refusal coverage: every refusal site in the scanned files has a row, a checkable "
+              f"exemption or a counted REMAINDER entry; {len(NOT_YET_SCANNED)} in-scope file(s) NOT YET SCANNED (a freeze "
               f"refuses until none is)")
     else:
         print("refusal coverage: every refusal site in every in-scope file has a row, a checkable "
               "exemption, or is on the counted REMAINDER list (guards no test observes alone; REMAINDER "
               "is NOT claimed covered: `python3 scripts/v022_refusal_coverage.py --remainder`)")
+    print("STILL BLIND (amendment 103): the count above is of gate-visible sites; the gate cannot see:")
+    for item in STILL_BLIND:
+        print("STILL BLIND: " + item)
 
 
 if __name__ == "__main__":

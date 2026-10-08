@@ -618,6 +618,37 @@ fn a_regular_file_service_leaf_is_refused() {
     );
 }
 
+/// Amendment 103: the owner every program a protected host pins must have is the uid
+/// Fabric runs as, and `load` hands it to BOTH the Linux profile and the observer
+/// (`exec_owner: Some(exec_owner)`). Round 11's survey replaced each by `None` ("a program
+/// of any owner") with the whole suite green: nothing read the field back from a loaded
+/// host. Control: the same host, loaded.
+#[test]
+fn a_loaded_host_requires_the_executable_owner_of_every_program_it_pins() {
+    let h = Host::new();
+    std::fs::write(h.p("observer.sh"), "#!/bin/sh\n").unwrap();
+    h.write_config(|v: &mut Value| {
+        v["observer"] = json!({
+            "command": {"path": h.p("observer.sh"), "sha256": sha256_file(&h.p("observer.sh"))},
+            "custodian": {"socket": h.p("custodian/custodian.sock"), "uid": 4244},
+        });
+    });
+    std::fs::create_dir_all(h.p("observer")).unwrap();
+    let host = h.load().expect("control: a host with an observer loads");
+    // SAFETY: geteuid cannot fail.
+    let euid = unsafe { libc::geteuid() };
+    assert_eq!(
+        host.linux.exec_owner,
+        Some(euid),
+        "ATTACK: the loaded host's Linux profile accepts a program of any owner"
+    );
+    assert_eq!(
+        host.observer.as_ref().map(|o| o.exec_owner),
+        Some(Some(euid)),
+        "ATTACK: the loaded host's observer accepts a program of any owner"
+    );
+}
+
 /// ADR-002 key-role separation when the host config LOADS (C9 dev review
 /// round 1; A57): the observer root may hold neither the host signer's public
 /// key (Fabric holds its private half and signs any domain) nor a key of

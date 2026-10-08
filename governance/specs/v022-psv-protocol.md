@@ -6129,7 +6129,7 @@ guards of the helper have no cargo row (`TMPDIR=/tmp`, the `/tmp` tmpfs); the ki
      values, `sandbox_run` results, a handler arm's pin owner, a candidate-returned STRING naming an operator fn, and
      the still-open operator-built TABLE of closures selected by a candidate key or index). Each fix was a static
      analysis (`interp/pin.rs`: `seal_dispatch`, `seal_width`, `seal_name_args`, `Tys`, `npure`) that was one instance
-     short of the next. Mutation ids M2700-M2767, matrix rows A219-A224 (another branch may use A230+; the integrator
+     short of the next. Mutation ids M2700-M2767, matrix rows A219-A224 (another branch may use A225+; the integrator
      renumbers). Base `c9r10/integrate9` (`5e16d8b4`), source commit `22c44ac7`. `crates/axon-core/src/interp*` changed;
      classified in `scripts/pci_delta.py` as narrowing.
 
@@ -6304,3 +6304,144 @@ guards of the helper have no cargo row (`TMPDIR=/tmp`, the `/tmp` tmpfs); the ki
      **Unfinished / decided otherwise.** The integer-handle and authority-value class is not closed (above). The four withdrawn runner-leg rows
      are a loss of runner-level evidence for the static guards, offset by their unit twins; an operator who prefers a four-cell record for them
      must accept that the whole-package-suite cell cannot be green. The cost to an ordinary run is 2-5%, not zero. Native codegen is not covered.
+## Amendment 103: a value is a site (C9 round 11, eqgate6)
+
+103. **Source: the round-10 EQUIVALENCE review** (`/var/tmp/c9r10-findings-EQUIVALENCE.json`): the round-9 class (a production VALUE handed
+    to a primitive that no test observes) "recurs in sibling code, and the gate was extended by INSTANCE (the path-field form), not by
+    CLASS". Mutation ids M2800-M2853 (54 of 70), matrix rows A225-A231 (the integrator renumbers; this branch's matrix check was run
+    with temporary placeholders for A219-A229, which are not committed). Base `c9r10/integrate9` (`5e16d8b4`). **No production code
+    of any crate changed**: `crates/axon-fabric/src/git_data.rs` gained one unit test; everything else is a test, the gate, a survey
+    script, the registry and this text. Nothing under `crates/axon-core/src`, `scripts/guest_build_env.py`, `scripts/lib/opkit_*.sh`
+    or the kit was touched.
+    - **The class, as the gate now states it.** A VALUE is a site when it is a LITERAL or CONSTANT (or an owner argument) handed to
+      (a) a process-spawn builder: the value of `.env(K, V)`, `.env_remove(K)`, `.arg(V)`, each literal element of `.args([..])`,
+      `.current_dir(V)`, `.envs(..)`, a `Stdio::..` handed to `.stdin/.stdout/.stderr`; (b) a privilege or ownership primitive: the
+      arguments of `chown/fchown/lchown/fchownat`, the `setuid/setgid/setgroups` family, `.uid(..)/.gid(..)`, a
+      `Some(<x>.owner|uid|gid)` owner argument, and a permission MODE (every `0o..` literal, the mode argument of
+      `mkdir(at)/chmod/fchmod/umask/.mode(..)/from_mode(..)/set_mode(..)`; a mode inside a message macro such as
+      `format!(.., m.mode() & 0o7777)` renders text and is not one); (c) a field of a struct literal of a type named
+      `*Config*/*Cfg*/*Authority*/*Policy*/*Manifest*/*Trust*` whose value is a literal or constant. (d), "a comparison inside a
+      refusal", is NOT a new form: the per-term rule (amendment 95) already credits a compound guard term by term, and a literal
+      compared in a single-term guard is the guard's own line.
+      **Per-value credit.** Each such value has its own character span. A row credits it only when its edit CHANGES THOSE
+      CHARACTERS (the edit is line-diffed and trimmed per line to the changed characters; an insertion at or next to the value
+      counts): a row that renames the KEY credits nothing (round 10: M2309/M2311 renamed the key and so "covered" `.env(` with the
+      value free), and the row on the neighbouring value credits nothing. A value that no row changes needs a `VALUE_EXEMPT`
+      entry keyed by (file, function, n-th value site of that function, a fragment of the value's text, kind, reason) -- a
+      line shift keeps it and a moved or added site makes the fragment disagree (BAD). Kinds: `OBSERVED` (a survey changed the value
+      and a NAMED test failed: a measurement, not a row), `DOMINATED` and `NOTROUTE` (a checkable fact), `REMAINDER` (no test
+      observes it: counted by category `val_*`, never claimed covered). An exemption for a value a row now changes is stale
+      and refused. `#[cfg(test)]` items hold no value site, and a file's seal-function regions are respected.
+      Planted-form tests for every form, for the per-value credit, the exemption keying and the REMAINDER count, and a row on each
+      of those gate lines: M2831-M2845 (`crates/axon-core/tests/refusal_coverage_gate.rs`). Two existing tests of that file needed
+      their probes adjusted, not their assertions: `not_named` now ignores a line of the new "value (" kind (it asserts what is a LINE
+      site), and a probe struct named `...Cfg` is a `Config`-shaped type to form (c).
+    - **Survey table (the class-level step).** Sites visible to the gate: 2400 -> 2628 (+228, all value sites). Of the 228:
+      66 were already credited by an existing row, 28 by rows of this amendment (new test + row), 96 are `OBSERVED` (the cheapest
+      single edit of the value failed a named test), 11 `DOMINATED`, 22 `NOTROUTE`, 5 `REMAINDER`, 0 unjudged.
+      By form (row-old / row-new / observed / dominated / not-route / REMAINDER): `val_arg` 16/5/39/0/2/0 = 62, `val_cwd`
+      0/0/1/0/0/0 = 1, `val_env` 4/7/0/5/0/0 = 16, `val_field` 12/4/5/0/14/3 = 38, `val_mode` 18/1/22/4/0/0 = 45, `val_owner`
+      0/5/1/0/0/0 = 6, `val_priv` 7/4/8/0/0/0 = 19, `val_stdio` 9/2/20/2/6/2 = 41. By crate: axon-fabric 154, axon-cortex 26,
+      axon-psv 27, axon-guest-kernel 7, axon-os 6, axon-vm 4, axon-workspace-recipe 2, axon-loop 1, axon-loop-contracts 1.
+      **REMAINDER (whole gate) before and after:** 150 -> 149. Before: const_tag 42, okor_unjudged 16, const_path 14, okor_nodefault
+      12, py_guard 11, const_bound 10, const_text 9, other 9, const_table 7, okor_offroute 7, const_other 5, okor_closed 4,
+      const_exit 3, unlink_job 1. After: const_tag 42, okor_unjudged 16, const_path 13 (GIT_BIN, now a row), okor_nodefault 12,
+      py_guard 11, const_bound 10, const_text 9, other 8 (git's `GIT_CONFIG_NOSYSTEM`, now a row), const_table 7, const_other 5,
+      okor_closed 4, const_exit 3, okor_offroute 3 (four are rows now: finding 4), val_field 3, val_stdio 2, unlink_job 1.
+      `OBSERVED-NOT-ROWED` 71 -> 167. **Method.** Every value no row changed got the cheapest single edit (`scripts/v022_value_survey.py`:
+      a flag respelled, `"1"` <-> `"0"`, a mode widened or its mask emptied, a uid argument replaced by `0`, `Some(h.owner)` ->
+      `None`, a boolean flipped, `Stdio::piped()` -> `null()`), and the owning crate's suite was run on gpumaster from clean clones
+      (axon-fabric in three shards with its integration binaries and lib/bins, the rest whole), after an unmutated BASELINE
+      run so that a test that already fails is never a kill. The fabric survey SKIPPED two things, stated so that nobody reads
+      them as run: the test `a_callers_scheduling_state_never_reaches_the_root_launch` (its python child is `SCHED_IDLE` and pinned
+      to CPU 0, and starves for ever on a loaded host: it hung the first baseline, whose stale children were killed by their own pids) and the
+      `guest_build_env` binary (it FAILS at baseline on gpumaster, which was never calibrated for it). A skipped test can only
+      turn a kill into a survivor, never the reverse, and each survivor was then given a test and a row (below) or an exemption that
+      argues from the code, so no OBSERVED entry rests on a skipped test. Survivors of the small crates were re-run against their
+      consumers (`axon-loop-contracts` `0o022`, the recipe's `100644` and `0o111`: killed by axon-fabric's `trust_root_ownership`,
+      `workspace` and `cortex_via_fabric` binaries; the Cortex client's `submit` arguments: killed by `cortex_via_fabric`).
+    - **Finding 1 (MAJOR-ADJACENT, executed): the check child's VALUES.** The runner test now reads back every environment value
+      (`PATH` is exactly `/usr/bin:/bin`, `AXON_PATH_EXCLUSIVE` is `1`, `AXON_PATH` is the suite then the candidate in that order, the
+      ceiling holds no `Exec`) and every element of the child's argv. Rows M2821-M2826, each KILLED by its own `ATTACK:` panic.
+    - **Finding 2 (MAJOR-ADJACENT, executed): the owner ARGUMENT.** `Some(h.owner)` -> `None` at `backend::run_privileged` and at
+      `observer::relayed` (M2829, M2830): a helper copy owned by uid 4243 (neither root nor the configured 4242) must launch and relay
+      nothing, with the control that the same copy launches when its own uid is configured. The same class found three more
+      that the review did not name, all `Some(<owner>)` handed to `open_verified` and all surviving the whole fabric suite:
+      the pinned LAUNCHER program in `privileged_launcher::prepare` (M2812), and the `exec_owner` that `ProtectedHost::load` hands to
+      the Linux profile and to the observer (M2827, M2828). Group arguments of the hand-over (`fchown(.., uid, u32::MAX)`, four
+      calls: a directory, a file, a symlink, the out dir) were replaceable by `0` with every file already in group 0; a launcher
+      that puts each kind in group 4300 now observes them (M2808-M2811). The mode literals: the 0o700 of `mkdirat`
+      (`make_out`) is DOMINATED by the `fchmod(.., 0o700)` on the same descriptor (M2165) and the 0700 out root; the staging root's
+      `0o077` check is a member of the retired PAIR M596/M597; the custodian's `--dev` store mode is refused by `check_store`
+      straight after; `remove_tree`'s `0o755` is followed by `remove_dir_all`. Every uid-ish and mode-ish value left is a row, an
+      OBSERVED entry naming the test, or one of those facts.
+    - **Finding 3 (the claim).** `v022-protected-suite-verdict.md` now says the claim is of GATE-VISIBLE sites and lists, in a new
+      subsection, what the gate still cannot see; the gate prints the same list in its last lines (`STILL BLIND:` x 7), tested by
+      `the_gate_prints_what_it_still_cannot_see` and row M2845. The list is repeated at the end of this amendment.
+    - **Finding 4 (the false REMAINDER label).** The three `ok_or_else(bad(..))` of `parse_check_suite_ref` and `CheckRegistry::load`'s
+      `executors` array were labelled "not a route of the protected profile". The protected route calls all four (the loop's
+      intake through `axon_loop_contracts::suite`, Fabric's manifest through `check_suite_ref`, the protected binary through
+      `CheckRegistry::load`). A test now refuses each part BY NAME and the four are ROWS (M2800-M2803, KILLED by their own
+      panic: with a default in place of the refusal a later term refuses under another message, which the old `is_err()`
+      assertions could not tell). The remaining three `okor_offroute` (the Cortex grant, PATH and local-executor sites) are
+      unchanged.
+    - **Finding 5 (false or stale texts).** `kernel#5` now cites `kernel a make that builds no vmlinux` (the driver's `line 529` is
+      its fallback name for a statement that raised). The `branches.rs` `no head` fact no longer says the branch "never writes
+      `head-0.json`" (registration writes it with the branch; `best == None` means no head file exists at all). "A row or a
+      reasoned exemption" is gone from the gate's docstring and its NOT_YET_SCANNED line and from `v022_g01_mutations.py`.
+      **`_begin#2` was NOT re-judged**: `guest_build_env.rs` `a_committed_cargo_config_cannot_name_a_program_in_any_spelling`
+      passes locally on the unmutated tree and asserts a refusal containing "effective configuration", so a test PROBABLY observes
+      the line, as the review thought; whether removing that line ALONE fails it was not executed, because an in-place
+      removal in a scratch copy of the build environment's Python (not this workstream's file) was refused by the permission
+      check and was not attempted again by another route. The entry's text now says exactly that and it stays on the REMAINDER.
+    - **Finding 6 (git's redundant pairs).** Decided per pair, by making each value observable by READING it: `git_cmd`'s
+      environment and arguments are read back from the `Command` and its stdin/stderr from the descriptors git's child
+      holds (a test binary of its own, because it points this process's fds 0 and 2 at pipes). The pairs
+      `GIT_NO_LAZY_FETCH` + `protocol.allow=never` and `GIT_NO_REPLACE_OBJECTS` + `--no-replace-objects` are redundant by
+      construction (git needs neither alone while the other holds), so no behavioural test can tell one member from the
+      other; each member's VALUE is now a row of its own (M2846-M2849), together with `core.hooksPath` (M2850), the PATH
+      (M2851), `GIT_OPTIONAL_LOCKS` (M2852), `GIT_BIN` (M2853) and the seven single values the survey found unobserved
+      (M2813-M2819). A tracked symlink read as a difference (`worktree_differs`' `0o120000`) survived because no test had
+      a tracked symlink (M2820). `refuse_config`'s command (`git config --file F --list -z`, outside any repository) reads only the
+      named file, so its seven values are DOMINATED (git-config(1)).
+    - **Production constructors' values (A227).** `QualificationTrust::operator()` and `ObserverTrust::operator()`: the 30-day
+      evidence age, the clock, the host signer left `None` until the host config loads, `operator_owned` (M2804-M2807).
+    - **Evidence.** Source commit `0baa931b` (docs-only commits follow); gpumaster from clean clones (host recorded in each job's header),
+      the pure-Python gates and the local legs on this host. (1) **Rows M2800-M2853: 54/54 KILLED by their own attack**, baseline passed
+      for each, 0 REFUSED_ELSEWHERE at the end, 0 stale: M2800-M2803 + M2821-M2826 (10/10), M2804-M2820 + M2827-M2830 (21/21), M2846-M2853
+      (8/8), M2831-M2845 (15/15; three of them, M2832, M2843, M2844, first failed their BASELINE because the new gate test counted the
+      REMAINDER of a tree that was not yet clean, and M2843's marker did not match its panic: both fixed and re-run, the last run being
+      the evidence). (2) `cargo test -p axon-core --no-default-features --test refusal_coverage_gate --test harness_integrity --test
+      harness_binaries`: exit 0, 46/46, 43/43, 10/10 (the first run found two of my own mistakes, fixed before this: a probe whose
+      variable named a "script" to `harness_binaries`, and four old tests whose `not_named` probes now hold a literal). (3)
+      `cargo test -p axon-fabric` (every binary, `a_callers_scheduling_state_never_reaches_the_root_launch` skipped on gpumaster
+      because its `SCHED_IDLE` python child starves under that host's load; it PASSES locally in 1.05 s): 845 passed, 2 failed, both
+      in `guest_build_env`, which fails an environment-dependent SET of its tests on every run on both hosts (gpumaster at the BASE
+      commit `5e16d8b4`: 3 others; here, this run: 2; locally: 2 more) and exercises nothing this amendment changed.
+      `cargo test -p axon-psv`, `-p axon-loop`, `-p axon-loop-contracts`, `-p axon-cortex`: exit 0. (4) `cargo clippy -p axon-fabric
+      -p axon-psv -p axon-cortex --all-targets -- -D warnings` and `cargo clippy -p axon-core --no-default-features --tests -- -D
+      warnings`: exit 0 both (it first found one `let mut` in my psv_dispatch test). (5) `python3 scripts/v022_refusal_coverage.py` exit
+      0 and `--freeze` exit 0; `scripts/psv_matrix_check.py`: PASS, 236 rows, with temporary placeholders for A219-A229 (not
+      committed). (6) The 96 `OBSERVED` entries were RE-MEASURED at the final source with `scripts/v022_value_survey.py --again`: 10/10
+      axon-psv, the Cortex, axon-loop and axon-os sites, and 56/56 axon-fabric, all killed again; the Cortex client's submit
+      arguments (13) were killed by `cortex_via_fabric` (axon-fabric), and the loop-contracts, recipe and workspace sites by axon-fabric.
+      (7) Honest controls: each new test has a control (the same helper owned by its configured owner launches; the same host
+      loads; the unedited gate copy holds).
+    - **WHAT THE GATE STILL CANNOT SEE** (printed by the gate, and in `v022-protected-suite-verdict.md`). (1) A value built by
+      computation, or handed through a local binding (`let m = 0o700; mkdir(m)` is seen at the literal, not at the use), a `format!`
+      of variables, a path joined at run time, a flag set read from a table; and a LITERAL passed to a user function as a uid
+      (`ProtectedHost::operator()` calls `Self::load(.., 0, ..)`: the `0` is the production `exec_owner` and no form sees it
+      -- it is reached only with the real `/etc/axon` config, which no suite has). (2) A spawn through a wrapper fn or a builder not
+      named `.env/.arg/.args/.current_dir/.stdin/.stdout/.stderr/.uid/.gid`. (3) A struct literal of a type not named
+      Config/Cfg/Authority/Policy/Manifest/Trust, and a literal inside a nested literal. (4) A default read as a value
+      (`unwrap_or`, `map_or`, `Default`). (5) A uid or mode that is the operand of a comparison, and a literal compared inside
+      a refusal (only the per-term and constant rules see those). (6) Whether a REMAINDER or OBSERVED entry is TRUE: nothing
+      re-runs the survey that wrote it (`scripts/v022_value_survey.py --again` re-measures the OBSERVED ones). (7) A row that
+      deletes a REDUNDANT PAIR credits each member though only the pair is shown observed. (8) Python other than
+      `scripts/guest_build_env.py`, the shell scripts, any decision that is not Rust or that file.
+    - **Unfinished, stated.** The five value REMAINDERs: the two helper-stderr `Stdio::null()` (`run_privileged`, `relayed`: a
+      test would have to capture the real stderr of a child of the test binary), `pre_launch_hook`/`fault_hook: None` in the CLI
+      (`Option<fn>`, no literal can supply another value) and `interpreter: None` of the host config. The gate's (d) is not a form
+      of its own. `_begin#2` as above. The 16 `okor_unjudged` and 11 `py_guard` REMAINDERs of amendment 98 are untouched.
+
+**Renumbering at integration (round 11, integrate10).** Amendment 103 (eqgate6) wrote its matrix rows as A230-A236 while amendment 102 (psv1t) holds A219-A224; the integration made the matrix contiguous: amendment 103's rows are now A225-A231. The text of amendment 103 was rewritten to the new ids.

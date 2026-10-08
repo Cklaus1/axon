@@ -324,6 +324,16 @@ impl Obs {
     /// Fabric's observer config on the relay route (as `ProtectedHost::load`
     /// builds it for a host config naming no observer program).
     fn fabric_cfg(&self) -> axon_fabric::observer::ObserverConfig {
+        self.fabric_cfg_via(axon_fabric::backend::PrivilegedRoute {
+            helper: helper_pin(),
+            owner: euid(),
+            test_config: Some(self.helper_cfg.clone()),
+        })
+    }
+    fn fabric_cfg_via(
+        &self,
+        relay: axon_fabric::backend::PrivilegedRoute,
+    ) -> axon_fabric::observer::ObserverConfig {
         axon_fabric::observer::ObserverConfig {
             command: PathBuf::new(),
             command_sha256: String::new(),
@@ -337,11 +347,7 @@ impl Obs {
             ),
             max_age_s: 300,
             clock: axon_fabric::backend::Clock::System,
-            relay: Some(axon_fabric::backend::PrivilegedRoute {
-                helper: helper_pin(),
-                owner: euid(),
-                test_config: Some(self.helper_cfg.clone()),
-            }),
+            relay: Some(relay),
         }
     }
     /// Fabric's `observer::observe` of `manifest` on the relay route.
@@ -350,11 +356,19 @@ impl Obs {
         manifest: &[u8],
         work: &str,
     ) -> Result<axon_fabric::psv::VerifiedObservation, String> {
+        self.fabric_observe_cfg(&self.fabric_cfg(), manifest, work)
+    }
+    fn fabric_observe_cfg(
+        &self,
+        cfg: &axon_fabric::observer::ObserverConfig,
+        manifest: &[u8],
+        work: &str,
+    ) -> Result<axon_fabric::psv::VerifiedObservation, String> {
         let file = self.base.join(format!("{work}.json"));
         std::fs::write(&file, manifest).unwrap();
         let m: axon_psv::LaunchManifest = serde_json::from_slice(manifest).unwrap();
         axon_fabric::observer::observe(
-            &self.fabric_cfg(),
+            cfg,
             &m,
             &axon_psv::sha256_hex(manifest),
             &file,
@@ -1374,4 +1388,48 @@ fn an_observer_key_that_is_a_fifo_is_refused_even_when_it_holds_the_key() {
         Ok(_) => panic!("ATTACK: the observer accepted its signing key from a FIFO"),
         Err(e) => assert!(e.contains("must be a regular file"), "{e}"),
     }
+}
+
+/// Amendment 103: the owner Fabric passes to `open_verified` for the relay helper
+/// (`Some(h.owner)`) is the use-time re-check that the helper's bytes cannot be
+/// changed by a stranger after they are verified. Round 10 replaced it by `None`
+/// ("any owner: development only") with the whole suite green: the load-time
+/// ownership walk and the digest pin dominate, so nothing observed THIS argument.
+/// A helper owned by neither root nor the configured owner is never executed.
+/// Control: the same file with its own uid as the configured owner is.
+#[test]
+fn an_observe_relay_helper_owned_by_a_stranger_is_never_executed() {
+    if skip_unless_root() {
+        return;
+    }
+    let mut o = obs();
+    o.start();
+    let m = o.manifest(&o.nonce(), |_| {});
+    let h = o.base.join("stranger-owned-helper");
+    copy_executable(helper_pin().path, &h, 0o755);
+    chown(&h, OTHER);
+    let route = |owner: u32| axon_fabric::backend::PrivilegedRoute {
+        helper: axon_fabric::sealed_exec::Pinned {
+            sha256: sha256_file(&h),
+            path: h.clone(),
+        },
+        owner,
+        test_config: Some(o.helper_cfg.clone()),
+    };
+    o.fabric_observe_cfg(&o.fabric_cfg_via(route(OTHER)), &m, "w-owner")
+        .expect("control: a helper owned by its configured owner is executed");
+    let m2 = o.manifest(&o.nonce(), |_| {});
+    let e = o
+        .fabric_observe_cfg(&o.fabric_cfg_via(route(FABRIC)), &m2, "w-stranger")
+        .err()
+        .unwrap_or_else(|| {
+            panic!(
+                "ATTACK: the relay executed a helper owned by uid {OTHER}, neither root nor the \
+                 configured owner {FABRIC}"
+            )
+        });
+    assert!(
+        e.contains("is owned by uid"),
+        "ATTACK: the relay refused for another reason than the owner of the helper: {e}"
+    );
 }
