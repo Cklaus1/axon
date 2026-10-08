@@ -6554,5 +6554,25 @@ guards of the helper have no cargo row (`TMPDIR=/tmp`, the `/tmp` tmpfs); the ki
      test, same Kernel-class gate); `to_str` applied to a container (no test: `to_str` is a stringifier by the drift list, and its non-scalar behaviour is not exercised);
      the integer-handle, path/URL/prompt, native-codegen and per-`Interp` registry classes of amendment 102 are unchanged.
 
-     **Evidence.** To be filled at the frozen commit (below).
+     **Evidence.** Branch `c9r11/psv1u`, base `3776884c`; interpreter source commit `83175bed` (the later commits are tests-only `1a75557b`, rows, markers
+     and docs). Rows ran on gpumaster from clean clones of the branch (`gm run`), `v022_g01_mutations.py --scope=all --only=<ids>`.
+     (1) **Every active `crates/axon-core/src` row re-run (the interpreter changed): 296 rows at `4f0f52ef`, in two shards (148 + 148), exit 0 and 1: 295
+     KILLED by their own attack, 0 REFUSED_ELSEWHERE, 1 survivor, M2930, whose first form removed one half of a two-half check (each half alone is an
+     equivalent mutant, see item 4); M2930 was rewritten to remove both halves and KILLED at `40481f10` (1/1).** That set includes the 68 rows of amendment 102
+     (M2700-M2767) and the 29 new unit rows M2910-M2939 (M2929 never issued). M2722/M2723 were re-anchored on the channel helper (their text moved).
+     (2) The 7 runner legs M2940-M2946: 7/7 KILLED at `925ea255` (0 REFUSED_ELSEWHERE, 0 survivors). Together: 303 rows, 303 KILLED by their own attack at the
+     named commits; no registry-wide `--scope=all` run was made (a sample by `--only`, not the freeze run).
+     (3) At `4f0f52ef`: `cargo test -p axon-core --no-default-features --no-fail-fast` exit 0, and `cargo test -p axon-psv` exit 0 (1929 passed, 0 failed over
+     32 test binaries); `scripts/v022_pci_gates.sh` exit 0, PASS 67 rows (5 added; the am102 sweep step passes with its two expected programs);
+     `cargo clippy --no-default-features -p axon-core --all-targets -- -D warnings` exit 0, `cargo clippy -p axon-psv --all-targets -- -D warnings` exit 0,
+     `cargo fmt --all -- --check` exit 0. At `40481f10` (the final commit): `harness_integrity` (10), `harness_binaries` (43), `refusal_coverage_gate` (2) and
+     `pci_delta_note` (46) exit 0, `v022_pci_gates.sh` PASS 67 rows, `v022_refusal_coverage.py` exit 0 and `--freeze` exit 0, `scripts/pci_delta.py --check` PASS,
+     `cargo fmt --all -- --check` exit 0.
+     (4) `scripts/psv_matrix_check.py`: PASS (245 rows, 841 citations, all resolve) WITH eight temporary placeholder rows A232-A239; the committed matrix has A240-A245
+     and the gap A232-A239 (the brief's numbering; the integrator renumbers), so the committed matrix FAILS the check on the gap alone, and nothing else.
+     (5) New tests: 11 in `taint_tests.rs` (channel cases, 13+3 dict rows, kernel and array rows, the 38-program hunt, the 120-pair oracle, four drift tests,
+     the text-renderer drift test) and 3 runner tests in `sealed_frames.rs`. (6) Honest-program cost: measured, item 8.
+     **Unfinished / decided otherwise.** Omission and verdict tables are not closed (item 7). A sealed `len`/`clone` does not mark a channel (item 1). The index
+     fast path's arm has no row (unreachable). `dstore_*` and `to_str` of a container are not driven by a test. The dispatch and width taint rules have no runner
+     leg (item 9). The matrix numbering is for the integrator.
 
