@@ -35,6 +35,25 @@
 //! the site): within one fn, equal text means equal names and so an equal
 //! verdict, and across fns the keys never meet. A lambda body is owned by the
 //! fn that created it (the closure remembers it).
+//!
+//! THE OWNER MUST BE THE CODE'S OWN (C9 round 10, amendment 100). A site's key
+//! is (owning fn, text), so text shared by two fns is two sites only while the
+//! interpreter looks each up under ITS owner. Every frame that runs stored
+//! operator code sets `pin_fn` from the code's owner: a fn body (`call_fn_frame`),
+//! a closure (the creator's, from its mark), and a handler arm or continuation
+//! replay (the fn that INSTALLED the handler, recorded in `HandlerFrame` /
+//! `ResumeCtx`), never the fn that happened to perform the effect. Drift:
+//! `every_frame_that_runs_stored_operator_code_sets_its_owner`.
+//!
+//! THE NAME RULE (same amendment). The type analysis above judges a value's
+//! TYPE; a `str` is a closed type whoever wrote it, so a name the candidate
+//! returned counted as determined. A second, stricter analysis (`Ctx::npure`)
+//! judges a value's CONTENT for the argument positions in `NAME_SINKS`: the
+//! name must be built only from operator literals, operator constants and
+//! operator fns that return such values. An annotation pins nothing; a
+//! parameter, a loop variable, a dict/channel read, a method result and a
+//! candidate fn's result are all impure. Control flow is not data flow: a
+//! branch between two operator literals is pure.
 
 use crate::ast::{AxonType as T, BinOp, Expr, FnDef, Item, Pattern, Program, UnaryOp};
 use crate::span::Span;
@@ -63,8 +82,58 @@ pub(crate) fn unary_key(op: &UnaryOp, operand: &Expr) -> u64 {
     h.finish()
 }
 
+/// NAME-RESOLVING builtins (C9 round 10, amendment 100): each takes the NAME of
+/// an fn (or of a goal, whose name is an fn's) and looks operator state up by
+/// it. A `str` is a closed type, so a `str` the CANDIDATE returned counts as
+/// determined everywhere above — and `sandbox_run(sb, entry(), 21)` then ran
+/// whichever operator fn the candidate named. The listed argument positions
+/// are SINKS: in operator code the expression there must be NAME-PURE
+/// ([`Ctx::npure`]) — built only from operator literals, operator constants and
+/// operator fns that themselves return name-pure values, never from a candidate
+/// fn's result, a parameter, a dict/channel read or any untyped source.
+/// Drift: `every_name_resolving_lookup_is_a_listed_sink`.
+pub(crate) const NAME_SINKS: &[(&str, &[usize])] = &[
+    ("goal_run", &[0]),
+    ("goal_run_constrained", &[0, 1]),
+    ("goal_run_categorical", &[0]),
+    ("goal_run_random", &[0]),
+    ("goal_run_multistart", &[0]),
+    ("goal_continue", &[0]),
+    ("goal_best_input", &[0]),
+    ("goal_best_inputs", &[0]),
+    ("goal_best_inputs_f64", &[0]),
+    ("goal_best_score", &[0]),
+    ("goal_count", &[0]),
+    ("goal_eval", &[0]),
+    ("goal_history", &[0]),
+    ("goal_clear", &[0]),
+    ("agent_detect_loop", &[0]),
+    ("agent_uncertainty", &[0]),
+    ("agent_trace_len", &[0]),
+    ("sandbox_run", &[1]),
+    ("scheduler_spawn", &[0]),
+    ("kernel_goal_create", &[1]),
+];
+
+/// The NAME argument positions of `builtin`, if it resolves a name.
+pub(crate) fn name_sink(builtin: &str) -> Option<&'static [usize]> {
+    NAME_SINKS
+        .iter()
+        .find(|(n, _)| *n == builtin)
+        .map(|(_, i)| *i)
+}
+
+/// The key of one name argument (within its owning fn).
+pub(crate) fn name_key(arg: &Expr) -> u64 {
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    format!("name|{arg:?}").hash(&mut h);
+    h.finish()
+}
+
 #[derive(Default)]
 pub(crate) struct Pins {
+    /// (owning fn, name-argument key) of every name argument that is NAME-PURE.
+    names: HashSet<(usize, u64)>,
     /// (owning fn, site key) of every site whose receiver/operands ARE
     /// determined. Fail-closed: a site not here is undetermined.
     determined: HashSet<(usize, u64)>,
@@ -198,6 +267,18 @@ struct Ctx<'a> {
     sealed_names: HashSet<&'a str>,
     builtin_ret: HashMap<&'static str, &'static str>,
     globals: HashSet<String>,
+    /// OPERATOR free fn name -> every definition returns a NAME-PURE value.
+    name_ret: HashMap<&'a str, bool>,
+    /// Operator module-level lets whose value is name-pure.
+    name_globals: HashSet<String>,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum Mode {
+    /// The dispatch rule: is the value's TYPE the operator's?
+    Det,
+    /// The name rule: is the value's CONTENT (a name) the operator's?
+    Name,
 }
 
 fn pattern_names(p: &Pattern, out: &mut Vec<String>) {
@@ -218,7 +299,76 @@ fn place_root(e: &Expr) -> Option<&str> {
     }
 }
 
+/// Builtins whose result is a pure function of their arguments' CONTENT, so
+/// a name built with them is name-pure when every argument is.
+const NAME_PURE_BUILTINS: &[&str] = &["axon_concat", "to_str", "to_str_f64", "to_str_bool"];
+
 impl<'a> Ctx<'a> {
+    /// The NAME rule: is the CONTENT of `e` (a `str` that may name an fn)
+    /// chosen by the operator alone? Unlike [`Ctx::det`], an annotation pins
+    /// nothing (a `str` is a `str` whoever wrote it), so only an operator
+    /// literal, an operator constant or an operator fn's name-pure result
+    /// counts. Control flow is NOT data flow: `if c { "a" } else { "b" }` is
+    /// name-pure (both names are the operator's); an `Index` additionally needs
+    /// a name-pure index, since the index selects which operator name is read.
+    fn npure(&self, e: &Expr, local: &HashSet<String>, bound: &HashSet<String>) -> bool {
+        let d = |x: &Expr| self.npure(x, local, bound);
+        match e {
+            Expr::Literal(_) | Expr::None | Expr::Lambda { .. } => true,
+            Expr::FmtStr { parts } => parts.iter().all(|p| match p {
+                crate::ast::FmtPart::Lit(_) => true,
+                crate::ast::FmtPart::Expr(x) => d(x),
+            }),
+            Expr::Ident(n) => {
+                if bound.contains(n) {
+                    local.contains(n)
+                } else {
+                    self.name_globals.contains(n)
+                }
+            }
+            Expr::Some(x) | Expr::Ok(x) | Expr::Err(x) | Expr::Question(x) | Expr::Comptime(x) => {
+                d(x)
+            }
+            Expr::Tuple(xs) | Expr::Array(xs) => xs.iter().all(d),
+            Expr::StructLit { fields, .. } => fields.iter().all(|(_, x)| d(x)),
+            Expr::FieldAccess { receiver, .. } => d(receiver),
+            Expr::Index { receiver, index } => d(receiver) && d(index),
+            Expr::BinOp { left, right, .. } => d(left) && d(right),
+            Expr::UnaryOp { operand, .. } => d(operand),
+            Expr::Block(ss) => ss.last().map(|s| d(&s.expr)).unwrap_or(true),
+            Expr::If { then, else_, .. } => d(then) && else_.as_ref().is_none_or(|x| d(x)),
+            Expr::Match { arms, .. } => arms.iter().all(|a| d(&a.body)),
+            Expr::Assign { value, .. } => d(value),
+            Expr::Call { callee, args, .. } => match callee.as_ref() {
+                Expr::Ident(name) => {
+                    if self.sealed_names.contains(name.as_str()) || bound.contains(name) {
+                        false
+                    } else if self.builtin_ret.contains_key(name.as_str()) {
+                        NAME_PURE_BUILTINS.contains(&name.as_str()) && args.iter().all(d)
+                    } else {
+                        self.name_ret.get(name.as_str()).copied().unwrap_or(false)
+                    }
+                }
+                _ => false,
+            },
+            Expr::MethodCall { .. } => false,
+            Expr::Let { .. }
+            | Expr::Own { .. }
+            | Expr::RefBind { .. }
+            | Expr::While { .. }
+            | Expr::WhileLet { .. }
+            | Expr::For { .. }
+            | Expr::Break
+            | Expr::Continue
+            | Expr::Return(_)
+            | Expr::AssignTo { .. } => true,
+            Expr::Spawn(_)
+            | Expr::Select(_)
+            | Expr::InlineAsm { .. }
+            | Expr::WithHandler { .. } => false,
+        }
+    }
+
     fn det(&self, e: &Expr, local: &HashSet<String>, bound: &HashSet<String>) -> bool {
         let d = |x: &Expr| self.det(x, local, bound);
         match e {
@@ -302,6 +452,7 @@ impl Pins {
         let mut sealed_names: HashSet<&str> = HashSet::new();
         let mut cand_types: HashSet<String> = HashSet::new();
         let mut op_fns: Vec<(&FnDef, Vec<String>)> = Vec::new();
+        let mut free_fns: Vec<&FnDef> = Vec::new();
         let mut lets: Vec<(&str, &Expr)> = Vec::new();
         // Pass 1: provenance of every named thing.
         for item in &prog.items {
@@ -366,6 +517,7 @@ impl Pins {
                         .is_some_and(|t| tys.is_closed(t, &f.generic_params));
                     op_ret.entry(&f.name).and_modify(|x| *x &= c).or_insert(c);
                     op_fns.push((f, f.generic_params.clone()));
+                    free_fns.push(f);
                 }
                 Item::ImplBlock(b) => {
                     let mut gp = b.generic_params.clone();
@@ -410,6 +562,8 @@ impl Pins {
                 .map(|b| (b.name, b.ret))
                 .collect(),
             globals: HashSet::new(),
+            name_ret: HashMap::new(),
+            name_globals: HashSet::new(),
         };
         // Module-level lets (the operator's only: a sealed let is not pushed): a
         // greatest fixpoint over their initializers.
@@ -442,11 +596,66 @@ impl Pins {
         for (_, e) in &lets {
             analyze(e, &[], &[], &ctx, 0, &mut determined);
         }
+        // The NAME rule: a greatest fixpoint over the operator's free fns (does
+        // each return a name-pure value?) and module-level lets, then the sites.
+        ctx.name_ret = free_fns.iter().map(|f| (f.name.as_str(), true)).collect();
+        ctx.name_globals = lets.iter().map(|(n, _)| n.to_string()).collect();
+        let mut sink = HashSet::new();
+        loop {
+            let none = HashSet::new();
+            let globals: HashSet<String> = lets
+                .iter()
+                .filter(|(n, e)| ctx.name_globals.contains(*n) && ctx.npure(e, &none, &none))
+                .map(|(n, _)| n.to_string())
+                .collect();
+            let mut rets: HashMap<&str, bool> =
+                free_fns.iter().map(|f| (f.name.as_str(), true)).collect();
+            for f in &free_fns {
+                let params: Vec<(&str, &T)> =
+                    f.params.iter().map(|p| (p.name.as_str(), &p.ty)).collect();
+                let pure = ctx.name_ret.get(f.name.as_str()).copied().unwrap_or(false)
+                    && analyze_names(
+                        &f.body,
+                        &params,
+                        &f.generic_params,
+                        &ctx,
+                        0,
+                        &mut HashSet::new(),
+                    );
+                rets.entry(f.name.as_str()).and_modify(|x| *x &= pure);
+            }
+            if globals == ctx.name_globals && rets == ctx.name_ret {
+                break;
+            }
+            ctx.name_globals = globals;
+            ctx.name_ret = rets;
+        }
+        for (f, gp) in &op_fns {
+            let params: Vec<(&str, &T)> =
+                f.params.iter().map(|p| (p.name.as_str(), &p.ty)).collect();
+            analyze_names(
+                &f.body,
+                &params,
+                gp,
+                &ctx,
+                *f as *const FnDef as usize,
+                &mut sink,
+            );
+        }
+        for (_, e) in &lets {
+            analyze_names(e, &[], &[], &ctx, 0, &mut sink);
+        }
         Pins {
             determined,
+            names: sink,
             impls,
             op_types,
         }
+    }
+
+    /// Whether the name ARGUMENT expression, owned by fn `owner`, is name-pure.
+    pub(crate) fn name_determined(&self, owner: usize, arg: &Expr) -> bool {
+        self.names.contains(&(owner, name_key(arg)))
     }
 
     /// Whether the method-call site, owned by fn `owner`, has a determined receiver.
@@ -485,42 +694,59 @@ impl Pins {
     }
 }
 
-fn analyze(
-    body: &Expr,
+/// What the fixpoint over one fn body leaves: the names whose every binding is
+/// pure under the mode, every name bound, and the sites to judge.
+struct Solved<'a> {
+    local: HashSet<String>,
+    bound: HashSet<String>,
+    calls: Vec<&'a Expr>,
+    /// The value of every `return x` (a fn's result is its tail AND these).
+    rets: Vec<&'a Expr>,
+}
+
+fn solve<'a>(
+    body: &'a Expr,
     params: &[(&str, &T)],
     gp: &[String],
     ctx: &Ctx,
-    owner: usize,
-    out: &mut HashSet<(usize, u64)>,
-) {
+    mode: Mode,
+) -> Solved<'a> {
+    let name_mode = mode == Mode::Name;
     let mut facts: Vec<(String, Fact)> = Vec::new();
     for (name, ty) in params {
         facts.push((
             name.to_string(),
-            if ctx.tys.is_closed(ty, gp) {
+            if !name_mode && ctx.tys.is_closed(ty, gp) {
                 Fact::Pinned
             } else {
                 Fact::Unpinned
             },
         ));
     }
-    let mut calls: Vec<&Expr> = Vec::new();
+    let mut calls: Vec<&'a Expr> = Vec::new();
+    let mut rets: Vec<&'a Expr> = Vec::new();
+    #[allow(clippy::too_many_arguments)]
     fn collect<'a>(
         e: &'a Expr,
         gp: &[String],
         tys: &Tys,
+        name_mode: bool,
         facts: &mut Vec<(String, Fact<'a>)>,
         calls: &mut Vec<&'a Expr>,
+        rets: &mut Vec<&'a Expr>,
     ) {
+        // The dispatch rule lets an annotation pin a binding; the name rule
+        // does not (a `str` annotation constrains nothing the candidate wrote).
+        let pinned = |t: &T| !name_mode && tys.is_closed(t, gp);
         let mut visit = |x: &'a Expr| match x {
             Expr::Let { name, ty, value }
             | Expr::Own { name, ty, value }
             | Expr::RefBind { name, ty, value } => facts.push((
                 name.clone(),
                 match ty {
-                    Some(t) if tys.is_closed(t, gp) => Fact::Pinned,
-                    Some(_) => Fact::Unpinned,
-                    None => Fact::From(value),
+                    Some(t) if pinned(t) => Fact::Pinned,
+                    Some(_) if !name_mode => Fact::Unpinned,
+                    _ => Fact::From(value),
                 },
             )),
             Expr::Assign { name, value } => facts.push((name.clone(), Fact::From(value))),
@@ -533,6 +759,7 @@ fn analyze(
             // writes through the borrow), so `x` takes its value from a source
             // nothing on the operator side determined — fail closed (C9 round 8).
             Expr::Call { args, .. } => {
+                calls.push(x);
                 for a in args {
                     if let Expr::UnaryOp {
                         op: UnaryOp::RefMut,
@@ -561,18 +788,31 @@ fn analyze(
                     facts.push((n, Fact::From(expr)));
                 }
             }
-            Expr::For { var, .. } => facts.push((var.clone(), Fact::Pinned)),
+            // The dispatch rule: the loop variable is an `i64` the loop made. The
+            // name rule: it is name-pure iff BOTH bounds are (a range the
+            // candidate sized lets it choose which element is read).
+            Expr::For {
+                var, start, end, ..
+            } => {
+                if name_mode {
+                    facts.push((var.clone(), Fact::From(start)));
+                    facts.push((var.clone(), Fact::From(end)));
+                } else {
+                    facts.push((var.clone(), Fact::Pinned));
+                }
+            }
             Expr::Lambda { params, .. } => {
                 for p in params {
                     facts.push((
                         p.name.clone(),
                         match &p.ty {
-                            Some(t) if tys.is_closed(t, gp) => Fact::Pinned,
+                            Some(t) if pinned(t) => Fact::Pinned,
                             _ => Fact::Unpinned,
                         },
                     ));
                 }
             }
+            Expr::Return(Some(v)) => rets.push(v),
             Expr::MethodCall { .. } | Expr::BinOp { .. } => calls.push(x),
             Expr::UnaryOp {
                 op: UnaryOp::Neg | UnaryOp::BitNot,
@@ -582,7 +822,9 @@ fn analyze(
         };
         crate::ast::walk_expr(e, &mut visit);
     }
-    collect(body, gp, &ctx.tys, &mut facts, &mut calls);
+    collect(
+        body, gp, &ctx.tys, name_mode, &mut facts, &mut calls, &mut rets,
+    );
     let bound: HashSet<String> = facts.iter().map(|(n, _)| n.clone()).collect();
     let mut local: HashSet<String> = bound.clone();
     loop {
@@ -591,7 +833,13 @@ fn analyze(
             let ok = match fact {
                 Fact::Pinned => true,
                 Fact::Unpinned => false,
-                Fact::From(e) => ctx.det(e, &local, &bound),
+                Fact::From(e) => {
+                    if name_mode {
+                        ctx.npure(e, &local, &bound)
+                    } else {
+                        ctx.det(e, &local, &bound)
+                    }
+                }
             };
             if !ok {
                 next.remove(n);
@@ -602,6 +850,28 @@ fn analyze(
         }
         local = next;
     }
+    Solved {
+        local,
+        bound,
+        calls,
+        rets,
+    }
+}
+
+fn analyze(
+    body: &Expr,
+    params: &[(&str, &T)],
+    gp: &[String],
+    ctx: &Ctx,
+    owner: usize,
+    out: &mut HashSet<(usize, u64)>,
+) {
+    let Solved {
+        local,
+        bound,
+        calls,
+        ..
+    } = solve(body, params, gp, ctx, Mode::Det);
     for c in calls {
         match c {
             Expr::MethodCall {
@@ -622,4 +892,44 @@ fn analyze(
             _ => {}
         }
     }
+}
+
+/// The NAME rule over one fn: record every name argument of a name-resolving
+/// builtin call that is name-pure, and return whether the fn's own result is.
+fn analyze_names(
+    body: &Expr,
+    params: &[(&str, &T)],
+    gp: &[String],
+    ctx: &Ctx,
+    owner: usize,
+    out: &mut HashSet<(usize, u64)>,
+) -> bool {
+    let Solved {
+        local,
+        bound,
+        calls,
+        rets,
+    } = solve(body, params, gp, ctx, Mode::Name);
+    for c in calls {
+        if let Expr::Call { callee, args, .. } = c {
+            let Expr::Ident(name) = callee.as_ref() else {
+                continue;
+            };
+            // A local closure named like the builtin is what the call means.
+            if bound.contains(name) {
+                continue;
+            }
+            let Some(idxs) = name_sink(name) else {
+                continue;
+            };
+            for &i in idxs {
+                if let Some(a) = args.get(i) {
+                    if ctx.npure(a, &local, &bound) {
+                        out.insert((owner, name_key(a)));
+                    }
+                }
+            }
+        }
+    }
+    ctx.npure(body, &local, &bound) && rets.iter().all(|r| ctx.npure(r, &local, &bound))
 }

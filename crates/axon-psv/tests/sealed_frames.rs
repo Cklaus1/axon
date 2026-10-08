@@ -1260,3 +1260,196 @@ fn a_candidate_calls_its_own_fn_value_and_never_reads_an_operator_global() {
         );
     }
 }
+
+// ---- C9 round 10, PSV1H (amendment 100) ----
+
+const OVERFLOW10: &str =
+    "arr_sum_i64([9223372036854775807, 1]) + 0 + (9223372036854775807 + v_one())";
+const HELPER_COLLIDING10: &str = "fn helper() -> i64 {\n    let v: i64 = 9\n    println(\"p\")\n    if v.ok() { 1 } else { 0 }\n}\n";
+
+fn arm_attack(what: &str, suite: &str, cand: &str) {
+    let s = check(suite, &[], cand, "accept");
+    assert!(
+        refused_unkeyed(&s),
+        "ATTACK: a handler arm borrowed the performer's pin verdict ({what}): {:?} {:?} {}",
+        s.status,
+        s.host,
+        s.stdout
+    );
+}
+
+/// BLOCKER A: a handler arm (and a continuation replay) ran under the pin
+/// owner of the fn that PERFORMED the effect, not the fn that INSTALLED the
+/// handler. A performer holding an identical, determined site text lent its
+/// verdict to the arm's undetermined one.
+#[test]
+fn a_handler_arm_dispatch_is_judged_by_the_fn_that_installed_it() {
+    let pre = format!("mod sol\nuse sol.{{work}}\n{J8}fn v_one() -> i64 {{ 1 }}\n");
+    let dispatch = |helper: &str, bind: &str| {
+        format!("{pre}{helper}@[test]\nfn accept() {{\n  {bind}\n  let r = with handler {{ on IO(p) => resume(if v.ok() {{ 0 }} else {{ {OVERFLOW10} }}) }} {{ helper() }}\n  assert(r == 1)\n}}\n")
+    };
+    // Honest: an i64 9 passes once the test's own binding is pinned; the wrong i64 fails keyed.
+    let pinned = dispatch(HELPER_COLLIDING10, "let v: i64 = work(0)");
+    passed(
+        &check(&pinned, &[], "pub fn work(x: i64) -> i64 { 9 }\n", "accept"),
+        "honest pinned i64 9",
+    );
+    let ctl = check(&pinned, &[], "pub fn work(x: i64) -> i64 { 4 }\n", "accept");
+    assert_eq!(
+        (ctl.status, ctl.host),
+        (GuestStatus::Failed, Some(false)),
+        "control wrong: {}",
+        ctl.stdout
+    );
+    // Control: with no colliding site the same attack is refused.
+    let plain = dispatch(
+        "fn helper() -> i64 {\n    println(\"p\")\n    1\n}\n",
+        "let v = work(0)",
+    );
+    let s = check(
+        &plain,
+        &[],
+        "pub fn work(x: i64) -> u8 { 4 as u8 }\n",
+        "accept",
+    );
+    assert!(
+        refused_unkeyed(&s),
+        "control no-collision: {:?} {:?} {}",
+        s.status,
+        s.host,
+        s.stdout
+    );
+    arm_attack(
+        "dispatch arm",
+        &dispatch(HELPER_COLLIDING10, "let v = work(0)"),
+        "pub fn work(x: i64) -> u8 { 4 as u8 }\n",
+    );
+}
+
+#[test]
+fn a_handler_arm_replay_is_judged_by_the_fn_that_installed_it() {
+    let pre = format!("mod sol\nuse sol.{{work}}\n{J8}fn v_one() -> i64 {{ 1 }}\n");
+    let general = format!("{pre}{HELPER_COLLIDING10}@[test]\nfn accept() {{\n  let v = work(0)\n  let r = with handler {{ on IO(p) => {{\n      let k = resume(0)\n      if v.ok() {{ k }} else {{ {OVERFLOW10} }}\n  }} }} {{ helper() }}\n  assert(r == 1)\n}}\n");
+    arm_attack(
+        "general (replay) arm",
+        &general,
+        "pub fn work(x: i64) -> u8 { 4 as u8 }\n",
+    );
+}
+
+#[test]
+fn a_handler_arm_arithmetic_is_judged_by_the_fn_that_installed_it() {
+    let pre = format!("mod sol\nuse sol.{{work}}\n{J8}fn v_one() -> i64 {{ 1 }}\n");
+    let width = format!("{pre}fn helper() -> i64 {{\n    let v: i64 = 255\n    println(\"p\")\n    let w = v << 1\n    w\n}}\n@[test]\nfn accept() {{\n  let v = work(0)\n  let r = with handler {{ on IO(p) => resume(if (v << 1) == 254 {{ 0 }} else {{ {OVERFLOW10} }}) }} {{ helper() }}\n  assert(r == 510)\n}}\n");
+    // Control: an i64 255 does not wrap, takes the overflow branch, and FAILS.
+    let ctl = check(
+        &width,
+        &[],
+        "pub fn work(x: i64) -> i64 { 255 }\n",
+        "accept",
+    );
+    assert!(
+        refused_unkeyed(&ctl),
+        "control i64 255: {:?} {:?} {}",
+        ctl.status,
+        ctl.host,
+        ctl.stdout
+    );
+    arm_attack(
+        "arithmetic arm",
+        &width,
+        "pub fn work(x: i64) -> u8 { 255 as u8 }\n",
+    );
+}
+
+const SB10: &str = "    let p = principal_root(\"r\", true, true, true, 100)\n    let sb = sandbox_create(p, \"IO\")\n";
+
+fn name_attack(what: &str, suite: &str, cand: &str) {
+    let s = check(suite, &[], cand, "accept");
+    assert!(
+        refused_unkeyed(&s),
+        "ATTACK: the candidate's string chose the operator fn {what} ran: {:?} {:?} {}",
+        s.status,
+        s.host,
+        s.stdout
+    );
+}
+
+/// BLOCKER B: a `str` the candidate returned selected which OPERATOR fn a
+/// name-resolving builtin ran.
+#[test]
+fn sandbox_run_runs_no_function_name_the_candidate_chose() {
+    let sandbox = format!("mod sol\nuse sol.{{entry}}\nfn reference(x: i64) -> i64 {{ x * 2 }}\n@[test]\nfn accept() {{\n{SB10}    let got = sandbox_run(sb, entry(), 21)\n    assert(got == reference(21))\n}}\n");
+    // Honest: the suite names the candidate's fn with a literal, or builds the
+    // name from literals itself.
+    let lit = format!("mod sol\nuse sol.{{double}}\nfn reference(x: i64) -> i64 {{ x * 2 }}\n@[test]\nfn accept() {{\n{SB10}    let got = sandbox_run(sb, \"double\", 21)\n    assert(got == reference(21))\n}}\n");
+    passed(
+        &check(
+            &lit,
+            &[],
+            "pub fn double(x: i64) -> i64 { x * 2 }\n",
+            "accept",
+        ),
+        "literal name",
+    );
+    let built = format!("mod sol\nuse sol.{{double}}\nfn reference(x: i64) -> i64 {{ x * 2 }}\nfn which() -> str {{ \"dou\" + \"ble\" }}\n@[test]\nfn accept() {{\n{SB10}    let n = which()\n    let got = sandbox_run(sb, n, 21)\n    assert(got == reference(21))\n}}\n");
+    passed(
+        &check(
+            &built,
+            &[],
+            "pub fn double(x: i64) -> i64 { x * 2 }\n",
+            "accept",
+        ),
+        "operator-built name",
+    );
+    let wrong = check(&lit, &[], "pub fn double(x: i64) -> i64 { 0 }\n", "accept");
+    assert_eq!(
+        (wrong.status, wrong.host),
+        (GuestStatus::Failed, Some(false)),
+        "control wrong: {}",
+        wrong.stdout
+    );
+    // The control the reviewer measured: a candidate that names its own fn is the old, wrong answer.
+    let ctl = check(
+        &sandbox,
+        &[],
+        "pub fn entry() -> str { \"double\" }\npub fn double(x: i64) -> i64 { 0 }\n",
+        "accept",
+    );
+    assert!(
+        refused_unkeyed(&ctl),
+        "control: entry() -> double: {:?} {:?} {}",
+        ctl.status,
+        ctl.host,
+        ctl.stdout
+    );
+    name_attack(
+        "sandbox_run",
+        &sandbox,
+        "pub fn entry() -> str { \"reference\" }\npub fn double(x: i64) -> i64 { 0 }\n",
+    );
+}
+
+#[test]
+fn scheduler_spawn_runs_no_function_name_the_candidate_chose() {
+    let sched = "mod sol\nuse sol.{name}\nfn grade(x: i64) -> i64 { 9 }\n@[test]\nfn accept() {\n    let id = scheduler_spawn(name(), 0)\n    let n = scheduler_run()\n    assert(scheduler_result(id) == 9)\n}\n";
+    name_attack(
+        "scheduler_spawn",
+        sched,
+        "pub fn name() -> str { \"grade\" }\n",
+    );
+}
+
+#[test]
+fn goal_eval_runs_no_function_name_the_candidate_chose() {
+    let geval = "mod sol\nuse sol.{name}\nfn easy(x: i64) -> i64 { 100 }\nfn hard(x: i64) -> i64 { 0 }\n@[test]\nfn accept() {\n    let s = goal_eval(name(), 5)\n    assert(s > 50.0)\n}\n";
+    let ctl = check(geval, &[], "pub fn name() -> str { \"hard\" }\n", "accept");
+    assert!(
+        refused_unkeyed(&ctl),
+        "control: name() -> hard: {:?} {:?} {}",
+        ctl.status,
+        ctl.host,
+        ctl.stdout
+    );
+    name_attack("goal_eval", geval, "pub fn name() -> str { \"easy\" }\n");
+}

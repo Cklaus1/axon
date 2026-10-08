@@ -1218,6 +1218,8 @@ impl<'p> Interp<'p> {
             let user_fn = match known {
                 Some(f) => f,
                 None => {
+                    // The NAME rule: a name-resolving builtin's name argument.
+                    self.seal_name_args(name, args)?;
                     if let Some(v) = self.call_builtin(name, &argv)? {
                         return Ok(v);
                     }
@@ -1237,7 +1239,7 @@ impl<'p> Interp<'p> {
                 let c = c.clone();
                 return self.call_closure(c, argv);
             }
-            return panic(format!("call to unknown function `{name}`"));
+            return self.no_such_fn(name, format!("call to unknown function `{name}`"));
         }
 
         // Callee is an expression that should evaluate to a closure
@@ -1332,6 +1334,7 @@ impl<'p> Interp<'p> {
             env_snapshot: env.snapshot(),
             sealed: self.frame_sealed.get(),
             operator_frames: self.operator_frames.get(),
+            pin_owner: self.pin_fn.get(),
         };
         let depth = self.handlers.borrow().len();
         self.handlers.borrow_mut().push(frame);
@@ -1393,6 +1396,11 @@ impl<'p> Interp<'p> {
             operator_frames: self.operator_frames.get(),
         });
         let mut body_env = Env::from_snapshot(ctx.env_snapshot.clone());
+        // The replayed body is the installing fn's own text (amendment 100).
+        let _pin_guard = crate::interp::PinGuard {
+            cell: &self.pin_fn,
+            prev: self.pin_fn.replace(ctx.pin_owner),
+        };
         let result = self.eval(&ctx.body, &mut body_env);
         // Disarm regardless of outcome so a later resume (or the arm's own code)
         // is not mistaken for a replay.
@@ -1431,11 +1439,14 @@ impl<'p> Interp<'p> {
                             frame.body.clone(),
                             frame.env_snapshot.clone(),
                             frame.sealed,
+                            frame.pin_owner,
                         )
                     })
                 })
         };
-        let Some((idx, binding, arm_body, captured, with_body, with_env, arm_sealed)) = hit else {
+        let Some((idx, binding, arm_body, captured, with_body, with_env, arm_sealed, pin_owner)) =
+            hit
+        else {
             return Ok(None);
         };
 
@@ -1458,8 +1469,13 @@ impl<'p> Interp<'p> {
             let mut arm_env = Env::from_snapshot(captured);
             arm_env.push();
             let bound = self.match_pattern(&binding, &payload, &mut arm_env);
-            // The arm runs under the provenance of the `with` that installed it.
+            // The arm runs under the provenance of the `with` that installed it,
+            // and under the pin owner of the fn that installed it (amendment 100).
             self.handler_edge_into(arm_sealed, &payload)?;
+            let _pin_guard = crate::interp::PinGuard {
+                cell: &self.pin_fn,
+                prev: self.pin_fn.replace(pin_owner),
+            };
             let outcome = self.with_frame(arm_sealed, || {
                 crate::interp::contain_loop_control(
                     bound.and_then(|_| self.eval(&arm_body, &mut arm_env)),
@@ -1486,11 +1502,16 @@ impl<'p> Interp<'p> {
             body: with_body,
             env_snapshot: with_env,
             sealed: arm_sealed,
+            pin_owner,
         });
         let mut arm_env = Env::from_snapshot(captured);
         arm_env.push();
         let bound = self.match_pattern(&binding, &payload, &mut arm_env);
         self.handler_edge_into(arm_sealed, &payload)?;
+        let _pin_guard = crate::interp::PinGuard {
+            cell: &self.pin_fn,
+            prev: self.pin_fn.replace(pin_owner),
+        };
         let outcome = self.with_frame(arm_sealed, || {
             crate::interp::contain_loop_control(
                 bound.and_then(|_| self.eval(&arm_body, &mut arm_env)),

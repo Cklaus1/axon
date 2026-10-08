@@ -68,13 +68,13 @@ THEMES = {
     # origin/main merged into v022/veto (PR #8). These commits were written and tested on main, NOT
     # reviewed against the PCI claims: none is a PCI narrowing, and what they do to pass/fail was
     # not analysed there. The ones that touch the interpreter are listed as such so a reviewer reads them.
-    "378da246": ("merged from main (AX findings)", "native agent_action audit record gains effect_row/principal; interp.rs only re-exports cap_to_effect_row under the codegen feature: no change in what the interpreter refuses"),
+    "378da246": ("merged from main (AX findings)", "native agent_action audit record gains effect_row/principal; interp.rs and interp/builtins.rs change only by a `cfg` re-export and a visibility change: no change in what the interpreter evaluates or refuses"),
     "96a31eb8": ("merged from main (AX findings)", "native codegen only (place assignment, str + str, allocas): the interpreter is untouched"),
     "13f01eb8": ("merged from main (AX findings)", "INTERPRETER: arr_sort_by becomes a stable merge sort (interp/builtins.rs): not PCI-reviewed"),
     "be8576af": ("merged from main (AX findings)", "INTERPRETER: arrays become shared Rc values, cheaper user calls (interp.rs, eval.rs, value.rs): not PCI-reviewed; the seal's cast and dict-snapshot code was adapted to the Rc layout in the merge"),
     "36227ec7": ("merged from main (AX findings)", "native codegen only (non-escaping array literals on the stack): the interpreter is untouched"),
     "1727775e": ("merged from main (AX findings)", "LANGUAGE + INTERPRETER: `&mut [T]` parameters write through (parser, checker, interp.rs, eval.rs, new E0604-E0606): not PCI-reviewed; the merge routes `call_fn_mut` through the same seal edges as `call_fn`"),
-    "edfe3e2d": ("merged from main (AX findings)", "native codegen, plus checker/resolver refusals of unlowered assignments: the interpreter is untouched"),
+    "edfe3e2d": ("merged from main (AX findings)", "native codegen, plus checker concat typing and resolver capture analysis (`axon check` accepts different programs): interpreter evaluation is untouched"),
     "19310764": ("merged from main (AX findings)", "LANGUAGE + INTERPRETER: named functions are first-class values (resolver, checker, effects, eval.rs): not PCI-reviewed"),
     "099ff710": ("merged from main (AX findings)", "build/cache/CLI only (runtime location, compiler-identity cache key): the interpreter is untouched"),
     "c4d307bd": ("merged from main (AX findings)", "CLI help text only: no change in what is refused"),
@@ -94,6 +94,7 @@ THEMES = {
     "12cf6c55": ("amendment 96", "unit test only (the value of a with-handler expression is undetermined until pinned: a stated cost): no production change"),
     "8caedb78": ("amendment 94", "rustfmt only (interp.rs): no change in what is refused"),
     "b024c06e": ("amendment 88", "pin.rs: a redundant sealed-let filter removed (the push guard is the one rule); test-only otherwise; no change in what is refused"),
+    "cc74956e": ("amendment 100", "a handler arm and its continuation replay run under the pin owner of the fn that INSTALLED the handler, not the one that performed the effect; the name argument of every name-resolving builtin (sandbox_run, scheduler_spawn, goal_*, kernel_goal_create) must be an operator-chosen name (Ctx::npure) or the call is refused; an operator fn and a missing one read the same to sealed code; drift tests: narrowing, no widening"),
 }
 
 

@@ -988,6 +988,12 @@ struct HandlerFrame {
     /// no operator code lies between the `with` and the operation (PSV-1,
     /// C9 round 3). See [`Interp::handler_may_answer`].
     operator_frames: usize,
+    /// `Interp::pin_fn` when this handler was installed: the fn that OWNS the
+    /// `with` and so the arms' source text. The arm runs under THIS owner, not
+    /// under whichever fn happened to perform the effect (C9 round 10, PSV-1,
+    /// amendment 100): pin sites are keyed (owner, site text), so an arm run
+    /// under the performer's owner read the performer's verdicts.
+    pin_owner: usize,
 }
 
 /// A runtime handler arm: the payload binding, the arm body, and a snapshot of
@@ -1046,6 +1052,9 @@ struct ResumeCtx {
     env_snapshot: HashMap<String, Value>,
     /// Provenance of the handler frame whose arm is servicing this body.
     sealed: bool,
+    /// The pin owner of the fn that installed the handler: the replayed body is
+    /// that fn's own text, so it replays under that owner (amendment 100).
+    pin_owner: usize,
 }
 
 /// Default max interpreter call depth before a graceful "recursion limit"
@@ -3524,10 +3533,61 @@ impl<'p> Interp<'p> {
     /// The call edge: a sealed frame may run only sealed functions.
     fn seal_call(&self, f: &FnDef) -> Result<(), Flow> {
         if self.seal.active && self.frame_sealed.get() && !self.fn_is_sealed(f) {
-            return panic(format!(
-                "sealed code (the candidate under test) cannot run `{}`, which the operator defines",
-                f.name
-            ));
+            return panic(Self::sealed_no_fn_msg(&f.name));
+        }
+        Ok(())
+    }
+
+    /// What sealed code is told when a name does not resolve FOR IT: the
+    /// operator's fn and a fn that does not exist read the same, so a sealed
+    /// caller cannot use the refusal to learn which names the operator defines
+    /// (existence oracle, C9 round 10).
+    pub(crate) fn sealed_no_fn_msg(name: &str) -> String {
+        format!(
+            "sealed code (the candidate under test) cannot run `{name}`: no such function is \
+             visible to it"
+        )
+    }
+
+    /// The error for a name that resolves to nothing: the common text above for
+    /// a sealed caller, `plain` for anyone else.
+    pub(crate) fn no_such_fn<T>(&self, name: &str, plain: String) -> Result<T, Flow> {
+        if self.seal.active && self.frame_sealed.get() {
+            return panic(Self::sealed_no_fn_msg(name));
+        }
+        panic(plain)
+    }
+
+    /// The NAME rule's edge (C9 round 10, amendment 100): operator code does not
+    /// hand a name-resolving builtin (`sandbox_run`, `scheduler_spawn`,
+    /// `goal_eval` ...) a name the candidate could have chosen. A `str` the
+    /// candidate returned is a perfectly good `str`, and the builtin then ran
+    /// whichever operator fn it named. Judged at the CALL SITE, by the static
+    /// name-purity analysis (`interp/pin.rs`): an operator literal, constant or
+    /// operator fn result passes; a candidate fn's result, a parameter or any
+    /// untyped read does not. Fail-closed: an unrecorded site is refused.
+    pub(crate) fn seal_name_args(&self, builtin: &str, args: &[Expr]) -> Result<(), Flow> {
+        if !self.seal.active || self.frame_sealed.get() {
+            return Ok(());
+        }
+        let Some(idxs) = pin::name_sink(builtin) else {
+            return Ok(());
+        };
+        #[cfg(test)]
+        if DISPATCH_RULE_OFF.load(std::sync::atomic::Ordering::SeqCst) {
+            return Ok(());
+        }
+        for &i in idxs {
+            if let Some(a) = args.get(i) {
+                if !self.pins.name_determined(self.pin_fn.get(), a) {
+                    return panic(format!(
+                        "operator code gave `{builtin}` a function name nothing on the operator \
+                         side determined (argument {}) — the candidate would choose which \
+                         function runs; name it with a literal or a constant the operator wrote",
+                        i + 1
+                    ));
+                }
+            }
         }
         Ok(())
     }
@@ -4591,7 +4651,10 @@ impl<'p> Interp<'p> {
         self.fns.contains_key(name) || self.k().provenance.borrow().contains_key(name)
     }
 
-    fn unknown_goal_name(name: &str) -> Flow {
+    fn unknown_goal_name(&self, name: &str) -> Flow {
+        if self.seal.active && self.frame_sealed.get() {
+            return Flow::Panic(Self::sealed_no_fn_msg(name));
+        }
         Flow::Panic(format!(
             "goal function `{name}` is not defined and has no recorded provenance — \
              check the name matches an @[adaptive] fn (typo?)"
@@ -9238,50 +9301,49 @@ fn main() { }
     /// `Interp::global_ref` or listed with its reason.
     #[test]
     fn every_global_read_goes_through_global_ref() {
+        // C9 round 10: ANY mention of the word `globals` (any receiver, a
+        // binding, a struct pattern, a field initialiser), not only
+        // `self.`/`interp.`. `interp/pin.rs` is excluded as a whole: it holds a
+        // compile-time `HashSet<String>` of NAMES and names neither `Interp`
+        // nor `Value` (asserted below).
         const ALLOWED: &[(&str, &str, &str)] = &[
-            (
-                "interp.rs",
-                "let mut merged: HashMap<&String, &Value> = interp.globals.iter().collect();",
-                "session post-run report (operator side, after the run)",
-            ),
-            (
-                "interp.rs",
-                "self.globals.insert(name.clone(), v);",
-                "init_globals: the definition itself",
-            ),
-            (
-                "interp.rs",
-                "self.globals.contains_key(name)",
-                "is_global: existence only, no value",
-            ),
-            (
-                "interp.rs",
-                "match self.globals.get(name) {",
-                "global_ref: THE lookup, which applies seal_global",
-            ),
-            (
-                "interp/pin.rs",
-                "self.globals.contains(n)",
-                "the pin analysis's set of global NAMES (static, holds no value)",
-            ),
+            ("interp.rs", "globals: std::collections::HashSet<String>,", "the seal's set of global NAMES"),
+            ("interp.rs", "globals: HashMap<String, Value>,", "the map's definition"),
+            ("interp.rs", "let mut merged: HashMap<&String, &Value> = interp.globals.iter().collect();", "session post-run report (operator side, after the run)"),
+            ("interp.rs", "let mut merged: HashMap<&String, &Value> = interp.globals.iter().collect();", "session post-run report (operator side, after the run)"),
+            ("interp.rs", "seal.globals.insert(name.clone());", "the seal's set of NAMES"),
+            ("interp.rs", "globals: HashMap::new(),", "the map's initialiser"),
+            ("interp.rs", "let sealed = self.seal.active && self.seal.globals.contains(name);", "the seal's set of NAMES"),
+            ("interp.rs", "self.globals.insert(name.clone(), v);", "init_globals: the definition itself"),
+            ("interp.rs", "if self.seal.active && self.frame_sealed.get() && !self.seal.globals.contains(name) {", "seal_global: the edge itself (names)"),
+            ("interp.rs", "self.globals.contains_key(name)", "is_global: existence only, no value"),
+            ("interp.rs", "match self.globals.get(name) {", "global_ref: THE lookup, which applies seal_global"),
         ];
+        let is_word = |c: char| c.is_alphanumeric() || c == '_';
         let mut found: Vec<(String, String)> = Vec::new();
         for (file, src) in interp_sources() {
+            if file == "interp/pin.rs" {
+                assert!(
+                    !src.contains("Interp") && !src.contains("Value"),
+                    "pin.rs now touches runtime values: its `globals` are no longer only names"
+                );
+                continue;
+            }
             for line in src.lines() {
                 let t = line.trim();
                 if t.starts_with("//") {
                     continue;
                 }
                 let mut rest = t;
+                let mut before_c: Option<char> = None;
                 while let Some(i) = rest.find("globals") {
-                    let before = &rest[..i];
+                    let before = rest[..i].chars().next_back().or(before_c);
                     let after = &rest[i + "globals".len()..];
-                    let read = (before.ends_with("self.") || before.ends_with("interp."))
-                        && !after.starts_with(|c: char| c.is_alphanumeric() || c == '_');
-                    if read {
+                    if !before.is_some_and(is_word) && !after.starts_with(is_word) {
                         found.push((file.to_string(), t.to_string()));
                         break;
                     }
+                    before_c = Some('s');
                     rest = after;
                 }
             }
@@ -9290,14 +9352,142 @@ fn main() { }
             .iter()
             .map(|(f, l, _)| (f.to_string(), l.to_string()))
             .collect();
-        // The session report's line appears twice (describe and materialise).
-        allowed.push(allowed[0].clone());
         found.sort();
         allowed.sort();
         assert_eq!(
             found, allowed,
-            "DRIFT: a read of the `globals` map bypasses `global_ref` (and so `seal_global`); route it through `Interp::global_ref`, or list it with its reason"
+            "DRIFT: a mention of the `globals` map bypasses `global_ref` (and so `seal_global`); route it through `Interp::global_ref`, or list it with its reason"
         );
+    }
+
+    /// The identifiers called (`name(` / `.name(`) on one line.
+    fn called_idents(line: &str) -> Vec<String> {
+        let b: Vec<char> = line.chars().collect();
+        let mut out = Vec::new();
+        let mut i = 0;
+        while i < b.len() {
+            if b[i].is_alphabetic() || b[i] == '_' {
+                let st = i;
+                while i < b.len() && (b[i].is_alphanumeric() || b[i] == '_') {
+                    i += 1;
+                }
+                // A call on some OTHER receiver (`ch.send(..)`, `x.get(..)`) is not
+                // a call of an interpreter fn of that name.
+                let pre: String = b[..st].iter().collect();
+                let other_receiver =
+                    pre.ends_with('.') && !pre.ends_with("self.") && !pre.ends_with("interp.");
+                if i < b.len() && b[i] == '(' && !other_receiver {
+                    out.push(b[st..i].iter().collect());
+                }
+            } else {
+                i += 1;
+            }
+        }
+        out
+    }
+
+    /// `(file, fn name, body)` of every fn item in the interpreter sources.
+    fn fn_items() -> Vec<(&'static str, String, String)> {
+        let mut out = Vec::new();
+        for (file, src) in interp_sources() {
+            let lines: Vec<&str> = src.lines().collect();
+            let mut i = 0;
+            while i < lines.len() {
+                let l = lines[i];
+                let t = l.trim_start();
+                let indent = l.len() - t.len();
+                let t2 = t
+                    .strip_prefix("pub(super) ")
+                    .or_else(|| t.strip_prefix("pub(crate) "))
+                    .or_else(|| t.strip_prefix("pub "))
+                    .unwrap_or(t);
+                if let Some(rest) = t2.strip_prefix("fn ") {
+                    let name: String = rest
+                        .chars()
+                        .take_while(|c| c.is_alphanumeric() || *c == '_')
+                        .collect();
+                    let mut body = String::new();
+                    let mut j = i + 1;
+                    // The signature may span lines; the body ends at the line
+                    // that closes at the fn's own indent.
+                    while j < lines.len() {
+                        let lj = lines[j];
+                        if lj.len() - lj.trim_start().len() == indent
+                            && lj.trim_start().starts_with('}')
+                        {
+                            break;
+                        }
+                        body.push_str(lj);
+                        body.push('\n');
+                        j += 1;
+                    }
+                    out.push((file, name, body));
+                    i += 1;
+                    continue;
+                }
+                i += 1;
+            }
+        }
+        out
+    }
+
+    /// Every interpreter fn that runs a `Value::Closure` or an `FnDef`, found
+    /// by closure over the call graph from the primitives that do (`call_fn`,
+    /// `call_closure`, ...). The evaluator itself and the builtin dispatcher
+    /// are the graph's ROOTS, not its nodes: everything reaches them.
+    fn user_code_runners() -> std::collections::HashSet<String> {
+        const PRIMITIVES: &[&str] = &[
+            "call_fn",
+            "call_fn_mut",
+            "call_fn_frame",
+            "call_closure",
+            "call_local_closure",
+            "call_closure_owned_by",
+        ];
+        const ROOTS: &[&str] = &[
+            "eval",
+            "eval_call",
+            "eval_call_mut",
+            "eval_block",
+            "eval_binop",
+            "eval_with_handler",
+            "eval_method_call",
+            "call_builtin",
+            "run_handler_arm",
+            "replay_continuation",
+            // Host entry points that START a run: no builtin arm reaches them
+            // (and `axon_host_await` is also the name of an extern declaration).
+            "run_program_inner",
+            "run_main",
+            "run_test_fn_inner",
+            "axon_host_await",
+            "run_named_fn_as_bool_with_score",
+            "run_suspendable_values_inner",
+            "run_property_test_inner",
+        ];
+        let items = fn_items();
+        let mut runners: std::collections::HashSet<String> =
+            PRIMITIVES.iter().map(|s| s.to_string()).collect();
+        loop {
+            let before = runners.len();
+            for (file, name, body) in &items {
+                if *file == "interp/eval.rs" || ROOTS.contains(&name.as_str()) {
+                    continue;
+                }
+                if body.lines().any(|l| {
+                    !l.trim_start().starts_with("//")
+                        && called_idents(l)
+                            .iter()
+                            .any(|c| runners.contains(c) && c != name)
+                }) {
+                    runners.insert(name.clone());
+                }
+            }
+            if runners.len() == before {
+                break;
+            }
+        }
+        runners
     }
 
     /// What the sweep established about a builtin that runs user code.
@@ -9345,6 +9535,7 @@ fn main() { }
             ("dict_filter", Dict),
             ("dict_map_values", Dict),
             ("goal_continue", Scalar),
+            ("goal_eval", Scalar),
             ("goal_run", Scalar),
             ("goal_run_categorical", Scalar),
             ("goal_run_constrained", Scalar),
@@ -9379,14 +9570,14 @@ fn main() { }
                 last.1.push('\n');
             }
         }
+        // C9 round 10: not four literal call patterns. A builtin runs user code
+        // if its arm calls ANY fn that (transitively, through the interpreter's
+        // own fns) reaches a runner of a `Value::Closure` or an `FnDef`.
+        let runners = user_code_runners();
         let runs_user_code = |body: &str| {
             body.lines().any(|l| {
                 let l = l.trim_start();
-                !l.starts_with("//")
-                    && (l.contains("self.call_fn(")
-                        || l.contains("self.call_closure(")
-                        || l.contains("self.run_goal")
-                        || l.contains("self.builtin_scheduler_run_once("))
+                !l.starts_with("//") && called_idents(l).iter().any(|c| runners.contains(c))
             })
         };
         let declared: std::collections::HashMap<&str, &str> = crate::builtins::BUILTINS
@@ -10272,6 +10463,588 @@ fn main() { }
                 && matches!(&out, Err(m) if m.contains("cannot cross a seal")),
             "ATTACK: a dict past the snapshot bound crossed unrecorded: {out:?}"
         );
+    }
+
+    // ---- C9 round 10, PSV1H (amendment 100) ----
+
+    const ARM_PRE: &str = "fn v_one() -> i64 { 1 }\n";
+    const ARM_OVERFLOW: &str =
+        "arr_sum_i64([9223372036854775807, 1]) + 0 + (9223372036854775807 + v_one())";
+
+    fn arm_suites() -> (String, String, String, String, String) {
+        let colliding = "fn helper() -> i64 {\n    let v: i64 = 9\n    println(\"p\")\n    if v.ok() { 1 } else { 0 }\n}\n";
+        let plain = "fn helper() -> i64 {\n    println(\"p\")\n    1\n}\n";
+        let dispatch = |helper: &str, bind: &str| {
+            format!(
+            "{ARM_PRE}{helper}@[test]\nfn t() {{\n  {bind}\n  let r = with handler {{ on IO(p) => resume(if v.ok() {{ 0 }} else {{ {ARM_OVERFLOW} }}) }} {{ helper() }}\n  assert(r == 1)\n}}\n"
+        )
+        };
+        let general = format!(
+            "{ARM_PRE}{colliding}@[test]\nfn t() {{\n  let v = work(0)\n  let r = with handler {{ on IO(p) => {{\n      let k = resume(0)\n      if v.ok() {{ k }} else {{ {ARM_OVERFLOW} }}\n  }} }} {{ helper() }}\n  assert(r == 1)\n}}\n"
+        );
+        let width = format!(
+            "{ARM_PRE}fn helper() -> i64 {{\n    let v: i64 = 255\n    println(\"p\")\n    let w = v << 1\n    w\n}}\n@[test]\nfn t() {{\n  let v = work(0)\n  let r = with handler {{ on IO(p) => resume(if (v << 1) == 254 {{ 0 }} else {{ {ARM_OVERFLOW} }}) }} {{ helper() }}\n  assert(r == 510)\n}}\n"
+        );
+        (
+            dispatch(colliding, "let v: i64 = work(0)"),
+            dispatch(colliding, "let v = work(0)"),
+            dispatch(plain, "let v = work(0)"),
+            general,
+            width,
+        )
+    }
+
+    /// BLOCKER A. A handler arm runs under the pin owner of the fn that INSTALLED
+    /// it. Before, it ran under the owner of the fn that PERFORMED the effect, so
+    /// a performer holding an identical, determined site text (`let v: i64 = 9
+    /// ... v.ok()`) lent its verdict to the arm's undetermined `v.ok()`.
+    fn arm_attack(what: &str, suite: &str, cand: &str, msg: &str) {
+        let out = judged_on("r10-arm", suite, cand);
+        assert!(
+            out != Ok(TestEnd::Completed) && matches!(&out, Err(m) if m.contains(msg)),
+            "ATTACK: a handler arm borrowed the performer's pin verdict ({what}): {out:?}"
+        );
+    }
+
+    const U8_CAND: &str = "fn work(x: i64) -> u8 { narrow(4) }\n";
+    const DISP_MSG: &str = "whose type nothing on the operator side determined";
+
+    #[test]
+    fn a_handler_arm_dispatch_runs_under_the_installers_pin_owner() {
+        let (pinned, colliding, plain, _, _) = arm_suites();
+        let run = |suite: &str, cand: &str| judged_on("r10-arm", suite, cand);
+        // Controls: honest pinned i64 9 passes, the wrong i64 fails, and without a
+        // colliding site the u8 is refused by its OWN site.
+        assert_eq!(
+            run(&pinned, "fn work(x: i64) -> i64 { 9 }\n"),
+            Ok(TestEnd::Completed),
+            "control: honest pinned"
+        );
+        assert!(
+            run(&pinned, "fn work(x: i64) -> i64 { 4 }\n").is_err(),
+            "control: wrong i64 fails"
+        );
+        let out = run(&plain, U8_CAND);
+        assert!(
+            matches!(&out, Err(m) if m.contains(DISP_MSG)),
+            "control: no colliding site: {out:?}"
+        );
+        arm_attack(
+            "colliding site, dispatch arm",
+            &colliding,
+            U8_CAND,
+            DISP_MSG,
+        );
+    }
+
+    #[test]
+    fn a_handler_arm_replay_runs_under_the_installers_pin_owner() {
+        let (_, _, _, general, _) = arm_suites();
+        arm_attack(
+            "colliding site, general replay arm",
+            &general,
+            U8_CAND,
+            DISP_MSG,
+        );
+    }
+
+    /// A closure made INSIDE an arm remembers the owner the arm ran under
+    /// (`PIN_FN_MARK`), and so is judged by the installing fn too.
+    #[test]
+    fn a_closure_made_in_a_handler_arm_is_judged_by_the_installing_fn() {
+        let colliding = "fn helper() -> i64 {\n    let v: i64 = 9\n    println(\"p\")\n    if v.ok() { 1 } else { 0 }\n}\n";
+        let suite = |bind: &str| {
+            format!(
+            "{ARM_PRE}{colliding}@[test]\nfn t() {{\n  {bind}\n  let r = with handler {{ on IO(p) => {{\n      let f = |a: i64| if v.ok() {{ 0 }} else {{ {ARM_OVERFLOW} }}\n      let k = resume(f(1))\n      k\n  }} }} {{ helper() }}\n  assert(r == 1)\n}}\n"
+        )
+        };
+        assert_eq!(
+            judged_on(
+                "r10-arm",
+                &suite("let v: i64 = work(0)"),
+                "fn work(x: i64) -> i64 { 9 }\n"
+            ),
+            Ok(TestEnd::Completed),
+            "control: honest pinned"
+        );
+        arm_attack(
+            "colliding site, closure made in an arm",
+            &suite("let v = work(0)"),
+            U8_CAND,
+            DISP_MSG,
+        );
+    }
+
+    #[test]
+    fn a_handler_arm_arithmetic_runs_under_the_installers_pin_owner() {
+        let (_, _, _, _, width) = arm_suites();
+        // Control: the suite discriminates. An i64 255 does not wrap, so the arm
+        // takes its overflow branch and the run FAILS (a keyed failure, not a pass).
+        let wide = judged_on("r10-arm", &width, "fn work(x: i64) -> i64 { 255 }\n");
+        assert!(
+            wide.is_err() && !matches!(&wide, Err(m) if m.contains("determined")),
+            "control: honest i64 255 fails on the overflow, not on the rule: {wide:?}"
+        );
+        arm_attack(
+            "colliding site, arithmetic arm",
+            &width,
+            "fn work(x: i64) -> u8 { narrow(255) }\n",
+            "whose width nothing on the operator side determined",
+        );
+    }
+
+    /// The structural half of A: pin verdicts are keyed (owner, site text), so
+    /// two fns holding IDENTICAL text must never share one. The analysis keeps
+    /// them apart by owner; the interpreter must hand the right owner to every
+    /// frame that runs operator code (`every_frame_that_runs_stored_operator_code_sets_its_owner`).
+    #[test]
+    fn identical_site_text_in_two_fns_gets_two_verdicts() {
+        use crate::ast::{walk_expr, Item};
+        let src = "trait J { fn ok(self) -> bool }\nimpl J for i64 { fn ok(self: i64) -> bool { self == 9 } }\nimpl J for u8 { fn ok(self: u8) -> bool { true } }\nfn a() -> bool { let v: i64 = 9\n v.ok() }\nfn b() -> bool { let v = dict_get(dict_new(), \"k\")\n v.ok() }\n";
+        let prog = crate::parse_source(src).expect("parses");
+        let pins = pin::Pins::build(&prog, &|_| false);
+        let mut verdicts = Vec::new();
+        for it in &prog.items {
+            if let Item::FnDef(f) = it {
+                let mut site = None;
+                walk_expr(&f.body, &mut |e: &Expr| {
+                    if let Expr::MethodCall {
+                        receiver, method, ..
+                    } = e
+                    {
+                        site = Some((receiver.as_ref().clone(), method.clone()));
+                    }
+                });
+                let (r, m) = site.expect("a method call");
+                verdicts.push((
+                    f.name.clone(),
+                    pins.determined(f as *const FnDef as usize, &r, &m),
+                ));
+            }
+        }
+        assert_eq!(
+            verdicts,
+            vec![("a".to_string(), true), ("b".to_string(), false)]
+        );
+    }
+
+    fn name_refused(what: &str, suite: &str, cand: &str) {
+        let out = judged_on("r10-name", suite, cand);
+        assert!(
+            out != Ok(TestEnd::Completed)
+                && matches!(&out, Err(m) if m.contains("a function name nothing on the operator side determined")),
+            "ATTACK: the candidate's string chose the operator fn ({what}): {out:?}"
+        );
+    }
+
+    /// BLOCKER B. A `str` the candidate returned selects which OPERATOR fn a
+    /// name-resolving builtin runs. The name argument is a SINK: operator code
+    /// must give it a name-pure expression.
+    #[test]
+    fn a_function_name_the_candidate_chose_never_selects_an_operator_fn() {
+        let sbx = |name_expr: &str, pre: &str| {
+            format!(
+            "fn reference(x: i64) -> i64 {{ x * 2 }}\n{pre}{}",
+            sandbox_suite(&format!("    let got = sandbox_run(sb, {name_expr}, 21)\n    assert(got == reference(21))"))
+        )
+        };
+        let with_local =
+            |bind: &str| sbx("nm", "").replace("    let got", &format!("    {bind}\n    let got"));
+        let run = |suite: &str, cand: &str| judged_on("r10-name", suite, cand);
+        let attack = "fn entry() -> str { \"reference\" }\nfn double(x: i64) -> i64 { 0 }\n";
+        let honest = "fn entry() -> str { \"double\" }\nfn double(x: i64) -> i64 { x * 2 }\n";
+        // Controls: a literal, an operator-built name, an operator constant and a
+        // local bound to one all run the candidate's fn, and a wrong one fails keyed.
+        for (what, suite) in [
+            ("literal", sbx("\"double\"", "")),
+            ("operator fn result", sbx("which()", "fn which() -> str { \"dou\" + \"ble\" }\n")),
+            ("operator global", sbx("NAME", "let NAME = \"double\"\n")),
+            ("local of a literal", with_local("let nm = \"double\"")),
+            ("a branch between two literals", with_local("let nm = if reference(1) == 2 { \"double\" } else { \"reference\" }")),
+            ("a loop over a literal range", with_local("let names = [\"nope\", \"double\"]\n    let nm = \"x\"\n    for k in 1..2 { nm = names[k] }")),
+            ("an interpolation of literals", with_local("let part = \"ble\"\n    let nm = \"dou{part}\"")),
+        ] {
+            assert_eq!(run(&suite, honest), Ok(TestEnd::Completed), "control: honest via {what}");
+            assert!(
+                run(&suite, "fn entry() -> str { \"double\" }\nfn double(x: i64) -> i64 { 0 }\n").is_err(),
+                "control: wrong fails via {what}"
+            );
+        }
+        name_refused(
+            "sandbox_run, a candidate fn's result",
+            &sbx("entry()", ""),
+            attack,
+        );
+        name_refused(
+            "a local bound to it",
+            &with_local("let nm = entry()"),
+            attack,
+        );
+        name_refused(
+            "a local annotated str",
+            &with_local("let nm: str = entry()"),
+            attack,
+        );
+        name_refused(
+            "a parameter of an operator fn",
+            &sbx("pick(entry())", "fn pick(s: str) -> str { s }\n"),
+            attack,
+        );
+        name_refused(
+            "an operator fn that returns the candidate's",
+            &sbx("pick()", "fn pick() -> str { entry() }\n"),
+            attack,
+        );
+        name_refused(
+            "an operator fn that returns it by a return statement",
+            &sbx("pick()", "fn pick() -> str {\n    if reference(1) == 2 { return entry() }\n    \"double\"\n}\n"),
+            attack,
+        );
+        name_refused(
+            "built from the candidate's",
+            &sbx("\"re\" + entry()", ""),
+            "fn entry() -> str { \"ference\" }\n",
+        );
+        name_refused(
+            "built from a candidate int through to_str",
+            &sbx("\"dou\" + to_str(idx())", ""),
+            "fn idx() -> i64 { 1 }\nfn double(x: i64) -> i64 { 0 }\n",
+        );
+        name_refused(
+            "a dict read",
+            &with_local("let d = dict_new()\n    dict_set(d, \"k\", entry())\n    let nm = match dict_get(d, \"k\") { Some(s) => s  None => \"\" }"),
+            attack,
+        );
+        name_refused(
+            "an index chosen by the candidate",
+            &sbx("[\"double\", \"reference\"][idx()]", ""),
+            "fn idx() -> i64 { 1 }\nfn double(x: i64) -> i64 { 0 }\n",
+        );
+        name_refused(
+            "a loop variable",
+            &sbx("names[i]", "").replace("    let got", "    let names = [\"double\", \"reference\"]\n    let i = 0\n    for k in 0..idx() { i = k }\n    let got"),
+            "fn idx() -> i64 { 1 }\nfn double(x: i64) -> i64 { 0 }\n",
+        );
+    }
+
+    #[test]
+    fn scheduler_spawn_takes_no_function_name_the_candidate_chose() {
+        let suite = "fn grade(x: i64) -> i64 { 9 }\n@[test]\nfn t() {\n    let id = scheduler_spawn(NAME, 0)\n    let n = scheduler_run()\n    assert(scheduler_result(id) == 9)\n}\n";
+        assert_eq!(
+            judged_on(
+                "r10-name",
+                &suite.replace("NAME", "\"grade\""),
+                "fn solve() -> i64 { 1 }\n"
+            ),
+            Ok(TestEnd::Completed),
+            "control: a literal names the operator's own fn"
+        );
+        name_refused(
+            "scheduler_spawn",
+            &suite.replace("NAME", "name()"),
+            "fn name() -> str { \"grade\" }\n",
+        );
+    }
+
+    #[test]
+    fn goal_eval_takes_no_function_name_the_candidate_chose() {
+        let suite = "fn easy(x: i64) -> i64 { 100 }\nfn hard(x: i64) -> i64 { 0 }\n@[test]\nfn t() {\n    let s = goal_eval(NAME, 5)\n    assert(s > 50.0)\n}\n";
+        assert_eq!(
+            judged_on(
+                "r10-name",
+                &suite.replace("NAME", "\"easy\""),
+                "fn solve() -> i64 { 1 }\n"
+            ),
+            Ok(TestEnd::Completed),
+            "control: a literal"
+        );
+        assert!(
+            judged_on(
+                "r10-name",
+                &suite.replace("NAME", "\"hard\""),
+                "fn solve() -> i64 { 1 }\n"
+            )
+            .is_err(),
+            "control: the hard fn fails"
+        );
+        name_refused(
+            "goal_eval",
+            &suite.replace("NAME", "name()"),
+            "fn name() -> str { \"easy\" }\n",
+        );
+    }
+
+    #[test]
+    fn a_goal_constraint_and_a_kernel_goal_take_no_function_name_the_candidate_chose() {
+        let pre = "@[adaptive]\nfn metric(x: i64) -> i64 { x }\nfn ok_c(x: i64) -> bool { true }\n";
+        let constrained = format!("{pre}@[test]\nfn t() {{\n    let r = goal_run_constrained(\"metric\", CNAME, 10.0, 5)\n    assert(r >= 0.0)\n}}\n");
+        assert_eq!(
+            judged_on(
+                "r10-name",
+                &constrained.replace("CNAME", "\"ok_c\""),
+                "fn solve() -> i64 { 1 }\n"
+            ),
+            Ok(TestEnd::Completed),
+            "control: a literal constraint"
+        );
+        name_refused(
+            "goal_run_constrained's constraint",
+            &constrained.replace("CNAME", "cname()"),
+            "fn cname() -> str { \"ok_c\" }\n",
+        );
+        let kernel = format!("{pre}@[test]\nfn t() {{\n    let p = principal_root(\"r\", true, true, true, 100)\n    let g = kernel_goal_create(p, KNAME, 10.0)\n    let r = kernel_goal_run(g, 3)\n    assert(r >= 0.0)\n}}\n");
+        assert_eq!(
+            judged_on(
+                "r10-name",
+                &kernel.replace("KNAME", "\"metric\""),
+                "fn solve() -> i64 { 1 }\n"
+            ),
+            Ok(TestEnd::Completed),
+            "control: a literal goal"
+        );
+        name_refused(
+            "kernel_goal_create",
+            &kernel.replace("KNAME", "kname()"),
+            "fn kname() -> str { \"metric\" }\n",
+        );
+    }
+
+    /// Existence oracle (C9 round 10): a sealed caller is told the same thing
+    /// whether the name it asked for is the operator's fn or does not exist.
+    #[test]
+    fn a_sealed_caller_cannot_tell_an_operator_fn_from_a_missing_one() {
+        let suite =
+            "fn secret(x: i64) -> i64 { 9 }\n@[test]\nfn t() {\n    assert_eq(solve(NAME), 9)\n}\n";
+        let cand = |n: &str| {
+            format!("fn solve(x: i64) -> i64 {{\n    let p = principal_root(\"r\", true, true, true, 100)\n    let sb = sandbox_create(p, \"IO\")\n    sandbox_run(sb, \"{n}\", 0)\n}}\n")
+        };
+        let said = |n: &str| match judged_on("r10-oracle", &suite.replace("NAME", "0"), &cand(n)) {
+            Err(m) => m,
+            Ok(e) => panic!("{n}: {e:?}"),
+        };
+        let (a, b) = (said("secret"), said("nonexistent_fn"));
+        let norm = |m: &str, n: &str| m.replace(n, "NAME");
+        assert!(
+            norm(&a, "secret") == norm(&b, "nonexistent_fn"),
+            "ATTACK: an operator fn and a missing one read differently to sealed code: {a} / {b}"
+        );
+    }
+
+    /// Drift (amendment 100, BLOCKER A): pin verdicts are keyed (owner, site
+    /// text), so every place that runs STORED operator code (a fn body, a
+    /// closure body, a handler arm, a continuation replay, a predicate) must
+    /// run it under the pin owner of the code's own definition. The fns that set
+    /// the owner are exactly the listed ones, and every fn that evaluates a
+    /// stored AST body outside the core evaluator is either one of them or
+    /// listed with the reason its owner is already right.
+    #[test]
+    fn every_frame_that_runs_stored_operator_code_sets_its_owner() {
+        // (fn, why it needs no guard of its own)
+        const EVALUATES_STORED_CODE: &[(&str, &str)] = &[
+            ("call_fn_frame", "sets the owner: the fn's own address"),
+            (
+                "call_closure_owned_by",
+                "sets the owner: the creator's, from PIN_FN_MARK",
+            ),
+            (
+                "init_globals",
+                "runs under owner 0, the owner the lets are analysed under",
+            ),
+            (
+                "run_test_fn",
+                "the host-named test fn, entered through call_fn",
+            ),
+        ];
+        const SETS_OWNER: &[&str] = &[
+            "call_fn_frame",
+            "call_closure_owned_by",
+            "run_handler_arm",
+            "replay_continuation",
+        ];
+        let items = fn_items();
+        let mut setters: Vec<&str> = items
+            .iter()
+            .filter(|(_, _, b)| b.contains("PinGuard {"))
+            .map(|(_, n, _)| n.as_str())
+            .collect();
+        setters.sort();
+        let mut want: Vec<&str> = SETS_OWNER.to_vec();
+        want.sort();
+        assert_eq!(
+            setters, want,
+            "DRIFT: the set of fns that set `pin_fn` changed"
+        );
+        // The handler paths set it from the frame's recorded installer.
+        for n in ["run_handler_arm", "replay_continuation"] {
+            let body = &items.iter().find(|(_, m, _)| m == n).unwrap().2;
+            assert!(
+                body.contains("pin_owner"),
+                "`{n}` must run under the pin owner recorded when the handler was installed"
+            );
+        }
+        let mut unlisted = Vec::new();
+        for (file, name, body) in &items {
+            if *file == "interp/eval.rs" || SETS_OWNER.contains(&name.as_str()) {
+                continue;
+            }
+            let evals_stored = body.lines().any(|l| {
+                let l = l.trim_start();
+                !l.starts_with("//")
+                    && (l.contains("self.eval(&f.body")
+                        || l.contains("self.eval(&body")
+                        || l.contains("self.eval(&spec.predicate")
+                        || l.contains("self.eval(pred")
+                        || l.contains("self.eval(expr"))
+            });
+            if evals_stored && !EVALUATES_STORED_CODE.iter().any(|(n, _)| n == name) {
+                unlisted.push(format!("{file}::{name}"));
+            }
+        }
+        assert!(
+            unlisted.is_empty(),
+            "DRIFT: these fns evaluate a stored AST body without setting the pin owner and are not listed: {unlisted:?}"
+        );
+    }
+
+    /// Drift (amendment 100): a lookup of an fn by NAME is either a listed
+    /// name-resolving SINK (the name argument is judged at the call site) or
+    /// listed here with the reason its name is not a value sealed code chose.
+    #[test]
+    fn every_name_resolving_lookup_is_a_listed_sink() {
+        const ALLOWED: &[(&str, &str, &str)] = &[
+            ("interp/eval.rs", "} else if let Some(f) = self.fns.get(name.as_str()) {", "an identifier in the program text, not a value"),
+            ("interp/eval.rs", "let f = self.fns.get(name.as_str()).copied();", "the callee identifier in the program text"),
+            ("interp/eval.rs", "Expr::Ident(name) => match self.fns.get(name) {", "the callee identifier of a `&mut` call, in the program text"),
+            ("interp/proptest.rs", "let Some(f) = interp.fns.get(name).copied() else {", "the host's property-test name"),
+            ("interp.rs", "if !interp.fns.contains_key(fn_name) {", "run_named_fn_*: the host-named deploy gate"),
+            ("interp.rs", "let f: &FnDef = *interp.fns.get(fn_name)?;", "run_named_fn_*: the host-named deploy gate"),
+            ("interp.rs", "if !interp.fns.contains_key(\"main\") {", "the literal `main`"),
+            ("interp.rs", "let Some(f) = interp.fns.get(name).copied() else {", "run_test: the host-named test"),
+            ("interp.rs", "match self.fns.get(\"main\") {", "the literal `main`"),
+            ("interp.rs", "let f = self.fns.get(name.as_str())?;", "current_fn: the running fn's own name (2 sites)"),
+            ("interp.rs", "let f = self.fns.get(name.as_str())?;", "current_fn: the running fn's own name (2 sites)"),
+            ("interp.rs", "self.fns", "current_fn_has_ai_policy: the running fn's own name"),
+            ("interp.rs", "let Some(f) = self.fns.get(name.as_str()) else {", "current_ai_tier: the running fn's own name"),
+            ("interp.rs", "match self.fns.get(name).copied() {", "fn_by_name: THE resolver, which applies seal_call"),
+            ("interp.rs", "self.fns.contains_key(name) || self.k().provenance.borrow().contains_key(name)", "goal_name_is_known: reached only from the listed goal_* sinks"),
+            ("interp/goal.rs", "if let Some(f) = self.fns.get(name) {", "run_goal_*: reached only from the listed goal_* sinks; call_fn applies seal_call"),
+            ("interp/goal.rs", "let Some(cf) = self.fns.get(cname.as_str()).copied() else {", "the constraint name, a sink (goal_run_constrained arg 2)"),
+            ("interp/goal.rs", "let f = match self.fns.get(name) {", "run_goal_*: reached only from the listed goal_* sinks (4 sites)"),
+            ("interp/goal.rs", "let f = match self.fns.get(name) {", "run_goal_*: reached only from the listed goal_* sinks (4 sites)"),
+            ("interp/goal.rs", "let f = match self.fns.get(name) {", "run_goal_*: reached only from the listed goal_* sinks (4 sites)"),
+            ("interp/goal.rs", "let f = match self.fns.get(name) {", "run_goal_*: reached only from the listed goal_* sinks (4 sites)"),
+            ("interp/goal.rs", "if let Some(f) = self.fns.get(name) {", "run_goal: reached only from the listed goal_* sinks"),
+            ("interp/goal.rs", "let Some(f) = self.fns.get(name) else {", "goal_eval_holdout: the goal_eval sink"),
+            ("interp/builtins.rs", "let outcome = match self.fns.get(fn_name.as_str()).copied() {", "a queued fiber: its name passed the scheduler_spawn sink"),
+            ("interp/builtins.rs", "if !self.fns.contains_key(constraint.as_str()) {", "goal_run_constrained: a sink"),
+            ("interp/builtins.rs", "let Some(f) = self.fns.get(&fn_name).copied() else {", "sandbox_run: a sink"),
+            ("interp/builtins.rs", "if self.fn_by_name(&fn_name)?.is_none() {", "scheduler_spawn: a sink"),
+            ("interp/builtins.rs", "if self.fn_by_name(&name)?.is_none() && !self.k().provenance.borrow().contains_key(&name) {", "kernel_goal_create: a sink"),
+        ];
+        let mut found: Vec<(String, String)> = Vec::new();
+        for (file, src) in interp_sources() {
+            let lines: Vec<&str> = src.lines().collect();
+            for (i, line) in lines.iter().enumerate() {
+                let t = line.trim();
+                if t.starts_with("//") || t.starts_with("///") {
+                    continue;
+                }
+                // `self.fns` split across lines (`self.fns\n .get(..)`).
+                let hit = t.contains("fns.get(")
+                    || t.contains("fns.contains_key(")
+                    || t.contains("fn_by_name(")
+                    || (t == "self.fns"
+                        && lines
+                            .get(i + 1)
+                            .is_some_and(|n| n.trim().starts_with(".get(")));
+                if hit && !t.starts_with("pub(crate) fn fn_by_name") {
+                    found.push((file.to_string(), t.to_string()));
+                }
+            }
+        }
+        let mut allowed: Vec<(String, String)> = ALLOWED
+            .iter()
+            .map(|(f, l, _)| (f.to_string(), l.to_string()))
+            .collect();
+        found.sort();
+        allowed.sort();
+        assert_eq!(
+            found, allowed,
+            "DRIFT: an fn is looked up BY NAME somewhere unlisted — if the name can be a value sealed code chose, add its builtin to `pin::NAME_SINKS`; otherwise list the site with its reason"
+        );
+        // Every sink is a real builtin whose listed positions are `str` NAME params.
+        for (b, idxs) in pin::NAME_SINKS {
+            let def = crate::builtins::BUILTINS
+                .iter()
+                .find(|d| d.name == *b)
+                .unwrap_or_else(|| panic!("sink `{b}` is not a builtin"));
+            for &i in *idxs {
+                let (pname, pty) = def.params[i];
+                assert!(
+                    pty == "str" && (pname.contains("name") || pname == "constraint"),
+                    "sink `{b}` arg {i} is `{pname}: {pty}`, not a name"
+                );
+            }
+        }
+        // Every builtin arm that resolves a name is a sink (or reaches a name
+        // chosen at a sink: a kernel goal's, a queued fiber's).
+        const REACHES_A_SINKS_NAME: &[&str] =
+            &["kernel_goal_run", "scheduler_run", "supervisor_run"];
+        let src = interp_sources()
+            .into_iter()
+            .find(|(f, _)| *f == "interp/builtins.rs")
+            .unwrap()
+            .1;
+        let mut arms: Vec<(Vec<String>, String)> = Vec::new();
+        for line in src.lines() {
+            let indent = line.len() - line.trim_start().len();
+            let t = line.trim_start();
+            if indent == 12 && t.starts_with('"') && t.contains("=>") {
+                let head = &t[..t.find("=>").unwrap()];
+                arms.push((
+                    head.split('|')
+                        .map(|n| n.trim().trim_matches('"').to_string())
+                        .collect(),
+                    String::new(),
+                ));
+            } else if let Some(last) = arms.last_mut() {
+                last.1.push_str(line);
+                last.1.push('\n');
+            }
+        }
+        for (names, body) in &arms {
+            let resolves = [
+                "fn_by_name(",
+                "fns.get(",
+                "fns.contains_key(",
+                "self.run_goal",
+                "goal_eval_holdout(",
+                "self.best_observed(",
+                "self.best_input(",
+                "self.best_inputs",
+                "self.history(",
+                "self.clear(",
+                ".get(&name)",
+                "contains_key(&name)",
+            ]
+            .iter()
+            .any(|p| {
+                body.lines()
+                    .any(|l| !l.trim_start().starts_with("//") && l.contains(p))
+            });
+            if !resolves {
+                continue;
+            }
+            for n in names {
+                if !crate::builtins::BUILTINS.iter().any(|d| d.name == n) {
+                    continue;
+                }
+                assert!(
+                    pin::name_sink(n).is_some() || REACHES_A_SINKS_NAME.contains(&n.as_str()),
+                    "DRIFT: builtin `{n}` resolves an fn or goal by name and is not in `pin::NAME_SINKS`"
+                );
+            }
+        }
     }
 }
 

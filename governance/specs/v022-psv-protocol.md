@@ -5897,7 +5897,7 @@ was weakened, no test or guard was relaxed.
 
 The round-10 FIELD-ORIGIN reviewer (`/var/tmp/c9r10-findings-FIELD-ORIGIN.json`; probes in `/var/tmp/c9r10-FO-logs/`)
 confirmed round 9's multi-threaded writer evasion closed and found three MAJOR-ADJACENT gaps in the namespace helper and its
-drift gate, and two MINOR ones in the build uid's dedication. Mutation ids M2630-M2659, matrix rows A220-A225 (another
+drift gate, and two MINOR ones in the build uid's dedication. Mutation ids M2630-M2659, matrix rows A213-A218 (another
 branch holds A208-A219; renumbered at integration). Base `d63416c4` (integrate8). `crates/axon-core/src` and the interpreter
 are untouched. The inventory below is the same one the reviewer read; every claim of "executed" is mine, run inside
 `ns_run`-style isolation or a private PID namespace, with before/after listings of the host around each experiment.
@@ -5982,3 +5982,141 @@ are untouched. The inventory below is the same one the reviewer read; every clai
 **Unfinished.** The 11 `py_guard` REMAINDERs stand. The oversize guard of `_read_small` is observable only for a complete
 document padded past the bound (a truncated one fails to parse, which refuses as well); M2653 uses that shape. Two shell
 guards of the helper have no cargo row (`TMPDIR=/tmp`, the `/tmp` tmpfs); the kit test exercises them.
+## Amendment 100: a handler arm is judged by the fn that installed it, and a name the candidate chose never selects an operator fn (C9 round 10, PSV1H)
+
+100. **Source: the round-10 PSV-1 review (two executed blockers; the round-9 `sandbox_run` blocker is closed), the SENTINEL
+     reviewer's two minors, the PSV-3 reviewer's two text minors and an existence-oracle minor.** Mutation ids
+     M2600-M2624, matrix rows A208-A212 (another branch may use A213+; the integrator renumbers). Base
+     `c9r9/integrate8` (`d63416c4`), source commit `cc74956e`. `crates/axon-core/src/interp*` changed; classified in
+     `scripts/pci_delta.py` as narrowing.
+     - **BLOCKER A: handler arms and continuation replay ran under the WRONG PIN OWNER.** Pin sites are keyed
+       (owning fn, hash of the site text) and every lookup uses `Interp::pin_fn`. `run_handler_arm` and
+       `replay_continuation` never set it, so an arm body ran with `pin_fn` = the fn that PERFORMED the effect, not
+       the fn that INSTALLED the handler. If the performer was another operator fn holding an identical, determined
+       site text (`let v: i64 = 9 ... v.ok()`), the arm's undetermined `v.ok()` was accepted (executed through the
+       runner: candidate `-> u8 { 4 as u8 }` completed; the controls, an i64 4, the honest 9 and a helper without the
+       colliding site, behaved; the same through the general replay arm and the arithmetic arm `(v << 1) == 254`
+       with `255 as u8`; a closure made inside an arm inherited the wrong owner too). Fix, at the source:
+       `HandlerFrame` and `ResumeCtx` record `pin_owner` (the installer's `pin_fn` when the `with` was evaluated)
+       and the arm, and the replay of its continuation, run under a `PinGuard` for that owner. The closure mark
+       (`PIN_FN_MARK`) already takes the owner it is created under, so a closure made in an arm now carries the
+       installer's. **Not done, and why.** The brief suggested also keying a pin site by its AST address. The AST is
+       CLONED into the handler frame, the arm, the lambda body and the replay snapshot, so an address is not stable
+       and keying by it would make every cloned site undetermined; the key stays (owner, text), made sound by giving
+       every frame the right owner, and `identical_site_text_in_two_fns_gets_two_verdicts` pins that two fns with
+       identical text get two verdicts. **The replay guard has no row of its own:** under the resolver's rule that
+       `resume` is bound only inside an arm, the replay always runs under the arm's already-correct owner (a closure
+       made in the arm carries it), so removing the replay guard changes nothing observable. It is kept as the
+       second place that states the rule; it is an equivalent mutant, not claimed killed.
+       DRIFT: `every_frame_that_runs_stored_operator_code_sets_its_owner`: the fns that construct a `PinGuard` are
+       exactly `call_fn_frame`, `call_closure_owned_by`, `run_handler_arm` and `replay_continuation`; the last two
+       must use the recorded `pin_owner`; and every other fn that evaluates a stored AST body (a fn body, a
+       predicate, a global initialiser) is listed with the reason its owner is already right.
+     - **BLOCKER B: a candidate-returned STRING selected which operator fn ran.** `sandbox_run`, `scheduler_spawn`,
+       `goal_eval`, `goal_run` and the other `goal_*` / `kernel_goal_*` builtins resolve their NAME argument with
+       `self.fns.get`. The `seal_call` edge fires only in a SEALED frame, and a `str` is a closed type, so a `str`
+       the candidate returned counted as determined: the suite `sandbox_run(sb, entry(), 21)` asserting
+       `== reference(21)` passed for a candidate `entry() -> "reference"` (and `scheduler_spawn`, `goal_eval`
+       likewise). Fix: **the name argument of every name-resolving builtin is a SINK** (`pin::NAME_SINKS`: 20
+       builtins, 21 argument positions, `goal_run_constrained`'s constraint included). In operator code the
+       expression there must be NAME-PURE (`Ctx::npure`, a second analysis beside the type analysis, judging
+       CONTENT instead of TYPE) or the call is refused at the call site (`Interp::seal_name_args`, called from
+       `eval_call` before the builtin runs; an unrecorded site is refused). Name-pure means built only from
+       operator literals, operator module constants, operator fns whose every return is name-pure
+       (greatest fixpoint over the fns), `+`, interpolation, `to_str`/`axon_concat` of name-pure arguments,
+       element reads of a literal array with a name-pure index, a branch between name-pure values, a loop
+       variable whose both range bounds are name-pure, and locals every one of whose bindings is name-pure.
+       Not name-pure: a call of a candidate fn (`sealed_names`), a parameter even when annotated `str` (an
+       annotation pins nothing for a name), a dict/channel read, a method result, a loop variable over a range the
+       candidate sized, anything the analysis did not see.
+       **HONEST-PROGRAM COST (stated, fail-closed).** Under a sealed run, operator code can no longer pass a
+       name-resolving builtin a name it received as a PARAMETER (`fn run_named(n: str) { sandbox_run(sb, n, 1) }`
+       is refused), read from a dict/array it did not build from literals, or computed by a method; an honest suite
+       names the candidate's fn by a LITERAL, by a constant, by a string it assembles from literals, or by a loop
+       over a literal range of a literal table. A suite that asks the candidate WHICH fn to run is exactly what is
+       refused. Outside a sealed run (`axon run`) nothing changes. The rule does not touch the
+       type analysis: a name the operator chose is still not a type pin.
+     - **Existence oracle (minor).** A refusal said "sealed code cannot run `secret`, which the operator defines" for
+       an operator name and "unknown function" / "no function" for a nonexistent one, so sealed code could probe
+       which names the operator defines. For a sealed caller the five paths that report a name that does not
+       resolve (`seal_call`, the unknown-callee error, `sandbox_run`, `scheduler_spawn`, the unknown goal name)
+       now say the same thing (`Interp::sealed_no_fn`), modulo the name itself (M2622, M2623). **Not covered:** a
+       third observation, whether the call COMPLETES for an existing candidate fn versus a missing one, is
+       the candidate's own business and not an oracle about the operator.
+     - **SENTINEL minors.** (a) `every_global_read_goes_through_global_ref` saw only `self.globals` /
+       `interp.globals`; it now fails on ANY mention of the word `globals` (any receiver, a binding, a struct
+       pattern or initialiser) outside `interp/pin.rs`, which holds only a `HashSet<String>` of names and is asserted
+       to name neither `Interp` nor `Value`. (b) `every_builtin_that_runs_user_code_is_classified` detected four
+       literal call patterns; it now closes over the interpreter's call graph from the runner primitives
+       (`call_fn`, `call_fn_mut`, `call_fn_frame`, `call_closure`, `call_local_closure`,
+       `call_closure_owned_by`; the evaluator, the dispatcher and the host entry points are roots, not nodes; a call on
+       another receiver, `ch.send(..)`, is not a call of an interpreter fn), so a NEW runner, direct or through
+       a wrapper, is found. It found one the table had missed: `goal_eval` (a `f64` score, `Scalar`) is now classified.
+     - **PSV-3 text minors.** `governance/specs/v022-protected-suite-verdict.md` and `governance/notes/v022-pci-delta.md`
+       said "the other 8 are native codegen, build/cache and CLI-help changes". Reworded precisely: `378da246` touches
+       `interp.rs` and `interp/builtins.rs` only by a `cfg` re-export and a visibility change, and `edfe3e2d` changes
+       checker concat typing and resolver capture analysis, so `axon check` accepts different programs; neither
+       changes interpreter evaluation (`scripts/pci_delta.py` themes updated to match). The gate row for
+       amendment 96's `axon-psv` leg of the global-read edge is relabelled **corroboration only**: that candidate is
+       refused statically (E0004) before it reaches the runtime edge, which is the interpreter unit test's with the
+       static check bypassed. No runner attack that reaches the arm was added (the resolver refuses the names first).
+     - **FUTURE (recorded, not changed).** The native `gfx` and `axon-domain` registries are per-`Interp`, not
+       per-kernel: the operator's and the candidate's frames share them, and isolation rests on the unforgeability of
+       the handle (a sealed frame cannot name a handle the operator holds), not on separate state. Anything that makes
+       a handle forgeable or enumerable breaks the isolation without touching a seal edge.
+     - **The sweep of the two new classes** (the first question: does operator code run under a frame other than the
+       one that installed or owns it; the second: does a value sealed code chose become a name or a key that selects
+       operator state). No completeness claimed.
+       - **Found and fixed:** handler arm (bare tail resume and general), continuation replay, a closure made in an arm
+         (class 1); `sandbox_run`, `scheduler_spawn`, `goal_run`, `goal_run_constrained` (metric and constraint),
+         `goal_run_categorical`, `goal_run_random`, `goal_run_multistart`, `goal_continue`, `goal_eval`,
+         `goal_best_input`, `goal_best_inputs`, `goal_best_inputs_f64`, `goal_best_score`, `goal_count`,
+         `goal_history`, `goal_clear`, `agent_detect_loop`, `agent_uncertainty`, `agent_trace_len`,
+         `kernel_goal_create` (class 2; `kernel_goal_run` and `scheduler_run` run a name already fixed at a sink).
+       - **Found, NOT fixed (open):** an operator-built TABLE OF CLOSURES selected by a candidate-chosen key or index.
+         `let h = dict_new(); dict_set(h, "double", |x| 0); dict_set(h, "reference", |x| x * 2)` then
+         `match dict_get(h, entry()) { Some(f) => assert(f(21) == reference(21)) ... }` with a candidate
+         `entry() -> "reference"` completes, and so does `let ops = [|x| 0, |x| x * 2]; let f = ops[idx()];
+         assert(f(21) == reference(21))` with `idx() -> 1` (executed through the interpreter on gpumaster; the controls
+         `"double"` and `0` fail). It is the same attack as B through a data structure instead of a builtin. NOT
+         closed here: the name rule judges a call's argument position, and a selection is an element read, whose
+         result is untyped. Design for the fix: a value-level check at the selection primitives (`Expr::Index`,
+         `dict_get`, `arr_get` ...) in operator code of a sealed run, refusing a read whose key is not name-pure when
+         the value read is an operator-created closure; a static taint on the binding would not cover a closure passed
+         on as an argument.
+       - **Checked and closed (read, not necessarily with a test of their own):** a replay's owner (redundant, above);
+         closures stored and called later (`PIN_FN_MARK`, the creator's owner, now the installer's inside an arm);
+         scheduler fibers (`call_fn` sets the fn's own owner; the name passed the `scheduler_spawn` sink, and
+         `fn_by_name` applies `seal_call` at resolution); goal metrics and constraints (`call_fn`); the property runner
+         (a host entry point through `call_fn`); session cells (one accumulated `main`, never sealed); the
+         `return(v) => e` arm of a `with` and `spawn`/`select` bodies (the same fn, the same frame); refinement and
+         `@[verify]` predicates (their text uses `_`, `value` or the fn's own parameter names and is evaluated inside the
+         owning fn's frame, so no other fn's site shares its owner); global initialisers (owner 0, the owner the
+         module-level lets are analysed under); `env_var(name)` (reads, selects no code).
+       - **Not examined:** integer HANDLES a sealed value can choose (sandbox, principal, goal, fiber, supervisor ids)
+         as keys of operator kernel state, beyond noting that `sandbox_run(sb_chosen_by_the_candidate, ...)` picks a
+         ceiling the operator minted; paths and URLs a sealed value chooses and operator code then reads; prompt
+         text a sealed value supplies to `ai_complete`.
+     - **Evidence.** Everything ran on gpumaster from clean clones of `c9r10/psv1h` at `e0f9acd8` (source commit
+       `cc74956e`; `e0f9acd8` adds only governance text, the matrix, `scripts/pci_delta.py` themes and the regenerated
+       note), except the Python gates, which ran locally. (1) Rows **M2600-M2624: 25/25 KILLED by their own attack**
+       (baseline passed for each, 0 REFUSED_ELSEWHERE, 0 stale; M2600-M2623 were first run alone on a pre-squash commit,
+       24/24, and all 25 are inside the run in (2) at the final source). (2) **All 203 active
+       `crates/axon-core/src` rows re-run (the interpreter changed): 203/203 KILLED by their own attack**, two shards
+       (101 + 102), exit 0 and 0 REFUSED_ELSEWHERE each. (3) `cargo test -p axon-core --no-default-features
+       --no-fail-fast`: exit 0 (25 test binaries ok). `cargo test -p axon-psv`: exit 0 (sealed_frames 24 tests: the 18
+       existing ones plus 6 for this amendment). (4) `cargo clippy --no-default-features -p axon-core -- -D warnings` exit 0;
+       `cargo clippy -p axon-psv --all-targets -- -D warnings` exit 0. (5) `scripts/v022_pci_gates.sh`: PASS, 55 rows
+       (6 added), exit 0. (6) `python3 scripts/v022_refusal_coverage.py` exit 0 and `--freeze` exit 0 (it first reported two
+       new sites in `sealed_no_fn`, which was then split into a message builder and the two panics it feeds, each inside a
+       guard a row already covers; and M2173's anchor, which my first `npure` duplicated, is unique again).
+       (7) `scripts/psv_matrix_check.py`: PASS, 212 rows (A208-A212 added). (8) `scripts/pci_delta.py --check`: PASS (the
+       commit classified, the note regenerated; the quoted gate-row count is 55). Honest controls, by test: an i64 9
+       passes the handler-arm suites pinned, a literal / constant / operator-built name / branch between literals /
+       loop over a literal range run the candidate's `double`; the wrong answer fails with a keyed verdict.
+       The reviewer's replay cases were reproduced at the source commit through the runner: each attack (`z1`, `z5`,
+       `z7`, `w1`-`w4` shapes) is now refused and each control behaves as before.
+       **Unfinished:** the open finding above (closure tables selected by a candidate key); the replay guard's row (an
+       equivalent mutant, so none); the integer-handle class was not examined.
+
+**Renumbering at integration (round 10, integrate9).** Amendment 101 (buildenv6) wrote its matrix rows as A220-A225 while amendment 100 (psv1h) holds A208-A212; the integration made the matrix contiguous: amendment 101's rows are now A213-A218. The text of amendment 101 was rewritten to the new ids.

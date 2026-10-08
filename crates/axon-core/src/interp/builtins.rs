@@ -4398,7 +4398,7 @@ impl<'p> Interp<'p> {
                 }
                 // Validate the function exists.
                 let Some(f) = self.fns.get(&fn_name).copied() else {
-                    return panic(format!("sandbox_run: no function `{fn_name}`"));
+                    return self.no_such_fn(&fn_name, format!("sandbox_run: no function `{fn_name}`"));
                 };
                 // Entering a sandbox may only ever *narrow* the active ceiling.
                 // Without this, a job contained by sandbox A escapes by running
@@ -4516,9 +4516,10 @@ impl<'p> Interp<'p> {
                 // the operator's frame, so a sealed spawner may queue only its
                 // own functions.
                 if self.fn_by_name(&fn_name)?.is_none() {
-                    return panic(format!(
-                        "[E1602] scheduler_spawn: no function `{fn_name}` to run as a fiber"
-                    ));
+                    return self.no_such_fn(
+                        &fn_name,
+                        format!("[E1602] scheduler_spawn: no function `{fn_name}` to run as a fiber"),
+                    );
                 }
                 let id = self.k().scheduler.borrow_mut().spawn(fn_name, arg);
                 ok!(Value::Int(id as i64));

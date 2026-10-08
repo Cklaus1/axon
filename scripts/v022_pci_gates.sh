@@ -71,12 +71,23 @@ ROWS=(
   "am96 sandbox_run result cast at the crossing|axon-core|lib|interp::tests::sandbox_run_results_are_cast_at_the_seal_crossing"
   "am96 sandbox_run result cast at the crossing|axon-psv|sealed_frames|sandbox_run_hands_the_operator_an_i64_or_nothing"
   "am96 one global-read edge|axon-core|lib|interp::tests::a_sealed_frame_cannot_read_an_operator_global_through_a_fast_path interp::tests::every_global_read_goes_through_global_ref"
-  "am96 one global-read edge|axon-psv|sealed_frames|a_candidate_calls_its_own_fn_value_and_never_reads_an_operator_global"
+  "am96 one global-read edge (runner leg: corroboration only, refused statically by E0004 before the runtime edge)|axon-psv|sealed_frames|a_candidate_calls_its_own_fn_value_and_never_reads_an_operator_global"
   "am96 fn value mark|axon-core|lib|interp::tests::a_candidates_own_fn_value_takes_arguments_and_an_operators_still_does_not"
   "am96 unary width arm|axon-core|lib|interp::tests::operator_unary_arithmetic_never_runs_at_a_width_the_candidate_chose"
   "am96 unary width arm|axon-psv|sealed_frames|operator_negation_never_runs_at_a_width_the_candidate_chose"
   "am96 user-code builtins classified|axon-core|lib|interp::tests::every_builtin_that_runs_user_code_is_classified interp::tests::the_sweep_routes_stay_closed"
   "am96 handler-expression value is undetermined (stated cost)|axon-core|lib|interp::tests::the_value_of_a_with_handler_expression_is_undetermined_until_pinned"
+  # Amendment 96's runner leg of "one global-read edge" is CORROBORATION: the candidate's read is refused
+  # statically (E0004) before it reaches the runtime edge; the runtime edge is the interpreter unit test's, with
+  # the static check bypassed (amendment 100).
+  # Amendment 100 (round 10): a handler arm runs under the pin owner of the fn that INSTALLED it, and a name a
+  # name-resolving builtin runs must be one the operator chose.
+  "am100 handler arm pin owner|axon-core|lib|interp::tests::a_handler_arm_dispatch_runs_under_the_installers_pin_owner interp::tests::a_handler_arm_replay_runs_under_the_installers_pin_owner interp::tests::a_handler_arm_arithmetic_runs_under_the_installers_pin_owner interp::tests::a_closure_made_in_a_handler_arm_is_judged_by_the_installing_fn interp::tests::identical_site_text_in_two_fns_gets_two_verdicts interp::tests::every_frame_that_runs_stored_operator_code_sets_its_owner"
+  "am100 handler arm pin owner|axon-psv|sealed_frames|a_handler_arm_dispatch_is_judged_by_the_fn_that_installed_it a_handler_arm_replay_is_judged_by_the_fn_that_installed_it a_handler_arm_arithmetic_is_judged_by_the_fn_that_installed_it"
+  "am100 name sinks|axon-core|lib|interp::tests::a_function_name_the_candidate_chose_never_selects_an_operator_fn interp::tests::scheduler_spawn_takes_no_function_name_the_candidate_chose interp::tests::goal_eval_takes_no_function_name_the_candidate_chose interp::tests::a_goal_constraint_and_a_kernel_goal_take_no_function_name_the_candidate_chose interp::tests::every_name_resolving_lookup_is_a_listed_sink"
+  "am100 name sinks|axon-psv|sealed_frames|sandbox_run_runs_no_function_name_the_candidate_chose scheduler_spawn_runs_no_function_name_the_candidate_chose goal_eval_runs_no_function_name_the_candidate_chose"
+  "am100 existence oracle|axon-core|lib|interp::tests::a_sealed_caller_cannot_tell_an_operator_fn_from_a_missing_one"
+  "am100 drift: any globals mention, any runner of user code|axon-core|lib|interp::tests::every_global_read_goes_through_global_ref interp::tests::every_builtin_that_runs_user_code_is_classified"
 )
 
 for row in "${ROWS[@]}"; do
