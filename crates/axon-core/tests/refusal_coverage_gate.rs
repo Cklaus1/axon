@@ -2184,6 +2184,108 @@ fn a_literal_field_of_a_config_or_policy_struct_is_a_site() {
     let _ = std::fs::remove_dir_all(&r);
 }
 
+// ── C9 round 11, eqgate7 (amendment 107): values FOLLOWED to their sinks ────────
+
+const FLOW_PROBE: &str = "pub fn fw_run(fw_x: &str, fw_p: &FwProg, fw_cfg: &FwCfg) {\n    let mut fw_args: Vec<std::ffi::OsString> = vec![\"--fw-flag\".into(), fw_x.into()];\n    fw_args.push(\"--fw-pushed\".into());\n    let fw_env = [(\"FW_KEY\", FW_PATH_CONST)];\n    let _ = sealed_exec::command(fw_p, None, &fw_args, &fw_env, &[]);\n    let _ = sealed_exec::command(fw_p, None, &[\"--fw-inline\".into()], &[(\"FW_INLINE_KEY\", \"/fw/inline\")], &[]);\n    let _ = fw_open(fw_p, fw_cfg.fw_exec_owner);\n    let _ = fw_open(fw_p, None);\n    let fw_o = Some(7);\n    let _ = fw_open(fw_p, fw_o);\n    let _ = FwRoute { owner: fw_cfg.fw_route_owner };\n    let _ = fw_openat(3, fw_x, FW_FLAGS);\n}\n\nconst FW_PATH_CONST: &str = \"/fw/bin\";\nconst FW_FLAGS: i32 = libc::O_RDONLY | libc::O_DIRECTORY;\nconst FW_UNUSED: &str = \"/fw/never-used-at-a-sink\";\n\npub fn fw_open(_p: &FwProg, _owner: Option<u32>) -> u8 { 0 }\npub fn fw_openat(_d: i32, _n: &str, _f: i32) -> u8 { 0 }\n";
+
+/// Amendment 107 (a): a literal, a const, a collection of them, and a local bound to one,
+/// handed to an EXEC WRAPPER (`sealed_exec::command(program, interpreter, args, env, keep)`)
+/// are sites of their own, whatever they were built from: `vec![..]`, an array of tuples, a
+/// `let` that was grown by `push`. The wrapper's arguments were the biggest blind form in
+/// round 11 (the root helper's PATH, its flag names and the argv of every protected child);
+/// the const a sink names is a site at its DEFINITION, and a const nothing hands to a sink is
+/// not.
+#[test]
+fn a_value_followed_to_an_exec_wrapper_or_an_open_flag_is_a_site() {
+    let r = tree("flow-wrapper");
+    add_code(&r, SCANNED, FLOW_PROBE);
+    for (label, frag) in [
+        ("flow_argv", "\"--fw-flag\".into()"),
+        ("flow_argv", "\"--fw-pushed\".into()"),
+        ("flow_argv", "\"--fw-inline\".into()"),
+        ("flow_env", "\"FW_KEY\""),
+        ("flow_env", "FW_PATH_CONST"),
+        ("flow_env", "\"FW_INLINE_KEY\""),
+        ("flow_env", "\"/fw/inline\""),
+        ("flow_const", "\"/fw/bin\""),
+        ("flow_const", "libc::O_RDONLY | libc::O_DIRECTORY"),
+    ] {
+        names_value(
+            &r,
+            label,
+            frag,
+            &format!("{frag} followed to a sink was not a flow site"),
+        );
+    }
+    for (frag, what) in [
+        ("fw_x.into()", "a computed argument"),
+        ("\"/fw/never-used-at-a-sink\"", "a const no sink names"),
+    ] {
+        not_names_value(&r, frag, &format!("{what} was read as a flow site"));
+    }
+    let _ = std::fs::remove_dir_all(&r);
+}
+
+/// Amendment 107 (b): the PARAMETER of an expected-owner primitive (`owner: Option<u32>`) is the
+/// site, per call, whatever is handed to it: a field, `None`, a local bound to `Some(..)`; and a
+/// struct-literal field NAMED `owner` is a site. Round 11 replaced `lx.exec_owner` by `None` at
+/// four consumers with the whole suite green because only `Some(<x>.owner)` was a form.
+#[test]
+fn an_owner_argument_is_a_site_wherever_it_comes_from() {
+    let r = tree("flow-owner");
+    add_code(&r, SCANNED, FLOW_PROBE);
+    for (label, frag) in [
+        ("flow_owner", "fw_cfg.fw_exec_owner"),
+        ("flow_owner", "None"),
+        ("flow_owner", "Some(7)"),
+        ("flow_owner", "fw_o"),
+        ("flow_owner_field", "fw_cfg.fw_route_owner"),
+    ] {
+        names_value(
+            &r,
+            label,
+            frag,
+            &format!("{frag} ({label}) was not a flow site"),
+        );
+    }
+    let _ = std::fs::remove_dir_all(&r);
+}
+
+/// Amendment 107 (c): every non-test `Command::new` of the scope is in the gate's EXPLICIT table
+/// of exec wrappers and builders, checked in both directions, so a NEW fn that builds a Command
+/// from its parameters cannot become a blind wrapper: it fails the gate until it is listed.
+#[test]
+fn a_function_that_builds_a_command_is_listed_as_a_wrapper_or_a_builder() {
+    let r = tree("flow-ctor");
+    holds(&r, &[], "the unedited tree: every constructor is listed");
+    add_code(
+        &r,
+        SCANNED,
+        "pub fn fc_spawn(fc_a: &str) -> std::process::Command {\n    std::process::Command::new(fc_a)\n}\n",
+    );
+    refuses(
+        &r,
+        &[],
+        "fn fc_spawn builds a Command and is in neither EXEC_WRAPPERS nor EXEC_CONSTRUCTORS",
+        "a new fn that builds a Command from its parameters was not reported",
+    );
+    let r2 = tree("flow-ctor-gone");
+    edit(
+        &r2,
+        GATE,
+        "(\"crates/axon-fabric/src/git_data.rs\", \"refuse_config\"): ",
+        "(\"crates/axon-fabric/src/git_data.rs\", \"no_such_fn\"): ",
+    );
+    refuses(
+        &r2,
+        &[],
+        "EXEC_CONSTRUCTORS lists fn no_such_fn, which builds no Command",
+        "a table entry for a fn that builds no Command was accepted",
+    );
+    let _ = std::fs::remove_dir_all(&r);
+    let _ = std::fs::remove_dir_all(&r2);
+}
+
 /// Amendment 103: the gate names, in its last lines, what it STILL cannot see, and
 /// the verdict spec says the same. A claim that lists only what the gate sees reads as
 /// "every guard".
