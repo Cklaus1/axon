@@ -2464,4 +2464,12 @@ ATTACK_MARKERS.update({
     'M2843': "ATTACK: a value exemption naming a fragment that is not the site's text was accepted",
     'M2844': 'ATTACK: value exemptions of kind REMAINDER were not counted',
     'M2845': "ATTACK: the gate's last lines do not list what it cannot see",
+    'M2846': 'ATTACK: git_cmd env GIT_NO_LAZY_FETCH',
+    'M2847': 'ATTACK: git_cmd argument \\d+ is "protocol.allow=always"',
+    'M2848': 'ATTACK: git_cmd env GIT_NO_REPLACE_OBJECTS',
+    'M2849': 'ATTACK: git_cmd argument 0 is "--no-advice"',
+    'M2850': 'ATTACK: git_cmd argument \\d+ is "core.hooksPath=/tmp"',
+    'M2851': 'ATTACK: git_cmd env PATH',
+    'M2852': 'ATTACK: git_cmd env GIT_OPTIONAL_LOCKS',
+    'M2853': 'ATTACK: the operator-installed git is not /usr/bin/git',
 })

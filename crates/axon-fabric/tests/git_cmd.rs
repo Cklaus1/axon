@@ -22,9 +22,13 @@ fn git_is_run_with_exactly_this_environment() {
     let top = Path::new("/tmp/a-repository");
     let c = built(top);
     assert_eq!(
+        GIT_BIN, "/usr/bin/git",
+        "ATTACK: the operator-installed git is not /usr/bin/git"
+    );
+    assert_eq!(
         c.get_program(),
-        GIT_BIN,
-        "ATTACK: git_cmd runs a git other than the operator's {GIT_BIN}"
+        "/usr/bin/git",
+        "ATTACK: git_cmd runs a git other than the operator's /usr/bin/git"
     );
     let envs: BTreeMap<String, Option<String>> = c
         .get_envs()
