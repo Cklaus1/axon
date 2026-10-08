@@ -250,7 +250,11 @@ fn the_constructed_environments_and_the_host_tool_identities_are_the_documented_
 /// and string uids, any letter case, subdirectories and non-.json names under /etc/axon, quoted and drop-in
 /// `User=`, units not named axon-* that run an axon binary, `Group=` and `*_gid` for the build GID), a file that
 /// cannot be read or parsed REFUSES instead of being skipped, `DynamicUser` refuses, and a build uid that already
-/// owns running processes is refused.
+/// owns running processes is refused. Amendment 109 adds the keys in any spelling (`ownerUid`, `owner-uid`,
+/// `runAsUser`, `username`), TOML inline tables and multi-line arrays, YAML flow maps and a value on the next
+/// line, a uid-named key of no known class holding a number, a strict key with no readable value, and an
+/// unreadable drop-in directory (a clean refusal, not a traceback): it reads the LISTED shapes and fails
+/// closed on the rest, not "every shape".
 #[test]
 fn the_service_accounts_are_found_in_every_shape_and_an_unreadable_file_refuses() {
     run_cases(cases!("service_ids.py"), None);

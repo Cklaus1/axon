@@ -53,11 +53,29 @@
 #     CAP_DAC_READ_SEARCH (open_by_handle_at reaches any inode of a filesystem, whatever the mount
 #     namespace), CAP_NET_ADMIN/NET_RAW, CAP_SYS_BOOT/TIME, CAP_BPF/PERFMON ... A setuid program the
 #     command runs gets no more than that set;
-#   * no inherited descriptor above stderr, and nothing on fds 0-2 that is a directory, a block device,
-#     or a writable regular file outside the caller's named scratch;
+#   * descriptors (amendment 109 states them exactly): a DIRECTORY descriptor above stderr makes the run
+#     REFUSE (97, the command never runs); every other inherited descriptor above stderr is CLOSED (those
+#     OPKIT_KEEP_FDS names are kept, each held to the check below). Fds 0-2 are REFUSED (97) if they are a
+#     directory, a block device, a SOCKET, a writable regular file outside the caller's named scratch
+#     (OPKIT_RW, OPKIT_SCRATCH), or a character device other than null, zero, full, random, urandom, /dev/tty
+#     (5:0) and a pts slave (/dev/pts/*). The host console, the virtual terminals and the serial ports
+#     (/dev/console 5:1, /dev/tty0.. 4:*, /dev/ttyS* 4:64.., hvc, ...) are NOT accepted: a caller that
+#     wants the run's output hands in a pipe or a pts. A pipe (a FIFO) is accepted;
 #     (so a caller logs a run through a PIPE -- `... | tee log` -- or puts the log under OPKIT_RW);
-#   * OPKIT_RW entries that are real scratch (below a temp root, not a system path, not group/other
-#     writable, not a symlink), never "whatever the environment said".
+#   * the temp roots are the helper's own, never the environment's (amendment 109): OPKIT_RW entries and
+#     the scratch root must lie STRICTLY below /tmp or /var/tmp (realpath), be owned by the caller, not be
+#     group/other-writable, not be a symlink, and not be a system path. $TMPDIR is NOT a temp root and
+#     is IGNORED (the helper never consults it); a caller-set OPKIT_SCRATCH that is not such a directory
+#     is REFUSED (97) before anything is mounted or created. With no OPKIT_SCRATCH the helper makes its
+#     own (mktemp -d under /var/tmp or /tmp, mode 0700) and removes the empty directories it left.
+# EXECUTED by scripts/test_opkit_ns.sh (inside ns_run, canaries only): the private /dev and /proc, the
+# bounding set, a setuid-root program getting no capability the set took, the tmpfs mounts and the OPKIT_RW
+# bind carrying nodev (read from the mount flags in /proc/self/mountinfo: no capability is left to make a
+# node, so a node is not created to be refused), the descriptor rules above, OPKIT_RW/TMPDIR/OPKIT_SCRATCH
+# validation with host listings before and after, and an ordinary uid, which cannot unshare (97, not run).
+# NOT executed by anyone: the retained capabilities (chown, setuid/setgid, dac_override, fowner, kill,
+# setpcap, setfcap ...) as an escape attempt beyond the write test, which runs as the default-capability
+# root and meets EROFS everywhere unlisted; a hostile CAP_SYS_ADMIN step (it would write the host).
 # WHAT REMAINS. A step that is handed CAP_SYS_ADMIN (OPKIT_CAPS_KEEP=sys_admin, used ONLY by the controlled
 # build fixture, whose unshare --pid needs it) is NOT contained against a root that means to escape: it can
 # `mount -o remount,rw /` and write the host. Nor is any root user namespace-less root against the host
@@ -257,9 +275,10 @@ opkit_bounding_arg() { # prints the setpriv --bounding-set argument; returns 1 o
   echo "${out#,}"
 }
 
-# OPKIT_RW entries are scratch the caller made, never "whatever the environment said": absolute, a real
-# directory (not a symlink), strictly below a temp root, owned by the caller, neither group- nor other-
-# writable (a shared /var/tmp is 1777), and not a system path.
+# OPKIT_RW entries and the scratch root are scratch the caller made, never "whatever the environment said"
+# (amendment 109): absolute, a real directory (not a symlink), STRICTLY below /tmp or /var/tmp (realpath), owned
+# by the caller, neither group- nor other-writable (a shared /var/tmp is 1777), and not a system path. $TMPDIR is
+# not a temp root: the environment does not get to name one.
 # OPKIT_RW_ROOTS_FOR_TEST: extra temp roots, honoured only for scripts/test_opkit_ns.sh (so its tests can reach the
 # system-path guard without a real host directory being involved); any other caller that sets it is refused.
 opkit_rw_extra_roots() {
@@ -267,29 +286,38 @@ opkit_rw_extra_roots() {
   opkit_selftest_caller || { echo "REFUSE(opkit_ns): OPKIT_RW_ROOTS_FOR_TEST is set outside scripts/test_opkit_ns.sh" >&2; echo /nonexistent-refused; return 0; }
   echo "$OPKIT_RW_ROOTS_FOR_TEST"
 }
-opkit_rw_validate() { # DIR...
-  local d r root ok mode own
-  for d in "$@"; do
-    [ -d "$d" ] || { echo "REFUSE(opkit_ns): OPKIT_RW entry '$d' is not a directory" >&2; return 1; }
-    r=$(realpath -e -- "$d") || return 1
-    # canonical: absolute, no symlink, no `..`, no double slash (one check for all of them)
-    [ "$r" = "$d" ] || { echo "REFUSE(opkit_ns): OPKIT_RW entry '$d' is not canonical (it resolves to $r)" >&2; return 1; }
-    case "$r" in
-      /|/opt|/home|/root|/usr|/etc|/var|/boot|/dev|/proc|/sys|/run|/srv|/bin|/sbin|/lib|/lib64|/var/lib|/var/tmp|/tmp \
-      |/opt/*|/usr/*|/etc/*|/boot/*|/dev/*|/proc/*|/sys/*|/root/*|/bin/*|/sbin/*|/lib/*|/lib64/*|/var/lib/*|/var/log/*|/var/spool/*|/var/mail/*|/var/cache/*|/run/*|/srv/*)
-        echo "REFUSE(opkit_ns): OPKIT_RW entry '$r' is a system path" >&2; return 1 ;;
-    esac
-    ok=0
-    for root in /tmp /var/tmp "${TMPDIR:-/var/tmp}" $(opkit_rw_extra_roots); do
-      root=$(realpath -e -- "$root" 2>/dev/null) || continue
-      case "$root" in /|/opt|/home|/root|/usr|/etc|/var|/boot|/dev|/proc|/sys) continue ;; esac
-      case "$r" in "$root"/*) ok=1 ;; esac
-    done
-    [ $ok = 1 ] || { echo "REFUSE(opkit_ns): OPKIT_RW entry '$r' is not below a temp root (/tmp, /var/tmp, \$TMPDIR): it is not scratch this run made" >&2; return 1; }
-    mode=$(stat -c %a -- "$r"); own=$(stat -c %u -- "$r")
-    [ "$own" = "$(id -u)" ] || { echo "REFUSE(opkit_ns): OPKIT_RW entry '$r' is owned by uid $own, not the caller" >&2; return 1; }
-    [ $(( 8#$mode & 8#022 )) = 0 ] || { echo "REFUSE(opkit_ns): OPKIT_RW entry '$r' is group- or other-writable (mode $mode): it is shared, not scratch" >&2; return 1; }
+opkit_scratch_check() { # LABEL DIR : the one rule for every directory the caller names as scratch
+  local what=$1 d=$2 r root ok=0 mode own
+  [ -d "$d" ] || { echo "REFUSE(opkit_ns): $what entry '$d' is not a directory" >&2; return 1; }
+  r=$(realpath -e -- "$d") || return 1
+  # canonical: absolute, no symlink, no `..`, no double slash (one check for all of them)
+  [ "$r" = "$d" ] || { echo "REFUSE(opkit_ns): $what entry '$d' is not canonical (it resolves to $r)" >&2; return 1; }
+  case "$r" in
+    /|/opt|/home|/root|/usr|/etc|/var|/boot|/dev|/proc|/sys|/run|/srv|/bin|/sbin|/lib|/lib64|/var/lib|/var/tmp|/tmp \
+    |/opt/*|/usr/*|/etc/*|/boot/*|/dev/*|/proc/*|/sys/*|/root/*|/bin/*|/sbin/*|/lib/*|/lib64/*|/var/lib/*|/var/log/*|/var/spool/*|/var/mail/*|/var/cache/*|/run/*|/srv/*)
+      echo "REFUSE(opkit_ns): $what entry '$r' is a system path" >&2; return 1 ;;
+  esac
+  for root in /tmp /var/tmp $(opkit_rw_extra_roots); do
+    root=$(realpath -e -- "$root" 2>/dev/null) || continue
+    case "$root" in /|/opt|/home|/root|/usr|/etc|/var|/boot|/dev|/proc|/sys) continue ;; esac
+    case "$r" in "$root"/*) ok=1 ;; esac
   done
+  [ $ok = 1 ] || { echo "REFUSE(opkit_ns): $what entry '$r' is not strictly below /tmp or /var/tmp: it is not scratch this run made" >&2; return 1; }
+  mode=$(stat -c %a -- "$r"); own=$(stat -c %u -- "$r")
+  [ "$own" = "$(id -u)" ] || { echo "REFUSE(opkit_ns): $what entry '$r' is owned by uid $own, not the caller" >&2; return 1; }
+  [ $(( 8#$mode & 8#022 )) = 0 ] || { echo "REFUSE(opkit_ns): $what entry '$r' is group- or other-writable (mode $mode): it is shared, not scratch" >&2; return 1; }
+  return 0
+}
+opkit_rw_validate() { # DIR...
+  local d
+  for d in "$@"; do opkit_scratch_check OPKIT_RW "$d" || return 1; done
+  return 0
+}
+# The roots the environment can name besides OPKIT_RW. $TMPDIR is IGNORED: the helper never consults it (inside the namespace
+# it sets TMPDIR=/tmp itself, outside it names /var/tmp and /tmp explicitly), so nothing it does can be steered by it. A caller-set
+# OPKIT_SCRATCH must pass the scratch rule or the run is refused (97) before anything is mounted or created.
+opkit_env_roots_validate() {
+  if [ -n "${OPKIT_SCRATCH:-}" ]; then opkit_scratch_check OPKIT_SCRATCH "$OPKIT_SCRATCH" || return 1; fi
   return 0
 }
 
@@ -300,11 +328,12 @@ opkit_ns_fd_ok() { # N [ROOTS...]  (a writable regular file is accepted only und
   [ -e "$p" ] || return 0
   if [ -d "$p" ]; then echo "LEAK: descriptor $n is a directory ($(readlink "$p" 2>/dev/null))" >&2; return 1; fi
   if [ -b "$p" ]; then echo "LEAK: descriptor $n is a block device ($(readlink "$p" 2>/dev/null))" >&2; return 1; fi
+  if [ -S "$p" ]; then echo "LEAK: descriptor $n is a socket ($(readlink "$p" 2>/dev/null)): a write through it reaches the peer" >&2; return 1; fi
   if [ -c "$p" ]; then
     typ=$(stat -L -c '%t:%T' -- "$p")
     case "$typ" in
-      1:3|1:5|1:7|1:8|1:9|5:0|5:1|5:2|4:*|8[0-9a-f]:*) ;;   # null zero full (u)random tty console ptmx, vt/serial, pts (hex majors)
-      *) echo "LEAK: descriptor $n is a character device ($(readlink "$p" 2>/dev/null), $typ)" >&2; return 1 ;;
+      1:3|1:5|1:7|1:8|1:9|5:0|8[89a-f]:*) ;;   # null zero full random urandom, /dev/tty, a pts slave (hex major 88-8f = 136-143)
+      *) echo "LEAK: descriptor $n is a character device ($(readlink "$p" 2>/dev/null), $typ): the console, the virtual terminals and serial ports are not accepted" >&2; return 1 ;;
     esac
     return 0
   fi
@@ -388,6 +417,7 @@ opkit_ns_private_dev() { # MOUNTPOINT
 opkit_ns_isolate() {
   local d keysave=${OPKIT_SCRATCH:?OPKIT_SCRATCH must be a scratch directory} r devmp
   opkit_overrides >/dev/null || return 1
+  opkit_scratch_check OPKIT_SCRATCH "$keysave" || return 1     # amendment 109: nothing is created in a directory the environment named
   keysave=$keysave/etc.$$
   devmp=${OPKIT_SCRATCH}/dev.$$
   mkdir -p "$keysave" "$devmp" || return 1    # before the root is read-only: scratch is the caller's
@@ -425,16 +455,28 @@ opkit_ns_isolate() {
 }
 
 # Outer shell. Never runs CMD unless the isolation was proved first.
+# Exit 97 for every refusal, including a host that cannot create the namespaces at all (an ordinary uid, a
+# kernel without them): the command never ran. (Amendment 109: that case used to return unshare's own 1.)
 ns_run() {
   [ "$#" -gt 0 ] || return 2
-  local hfd hostns rc bset
+  local hfd hostns rc bset own="" scratch
+  [ "$(id -u)" = 0 ] || { echo "REFUSE(ns_run): not root, so no namespace to prove; the command did not run" >&2; return 97; }
+  opkit_env_roots_validate || return 97
   opkit_rw_validate ${OPKIT_RW:-} || return 97
   bset=$(opkit_bounding_arg) || return 97
-  exec {hfd}</ || { echo "REFUSE(ns_run): cannot open a handle on the host's root" >&2; return 97; }
-  hostns="mnt=$(readlink /proc/self/ns/mnt),pid=$(readlink /proc/self/ns/pid),uts=$(readlink /proc/self/ns/uts),ipc=$(readlink /proc/self/ns/ipc),net=$(readlink /proc/self/ns/net)"
   local netflag=--net
   [ "${OPKIT_NET:-private}" = host ] && netflag=
-  OPKIT_LIB=${OPKIT_LIB:?OPKIT_LIB must name opkit_ns.sh} OPKIT_HOST_FD=$hfd OPKIT_HOST_NS=$hostns OPKIT_BSET=$bset \
+  unshare --mount --propagation private --pid --fork --uts --ipc $netflag true 2>/dev/null \
+    || { echo "REFUSE(ns_run): the namespaces cannot be created here (unshare failed); the command did not run" >&2; return 97; }
+  scratch=${OPKIT_SCRATCH:-}
+  if [ -z "$scratch" ]; then        # the helper's own scratch root, never one the environment named
+    own=$(mktemp -d /var/tmp/opkit-ns.XXXXXX 2>/dev/null || mktemp -d /tmp/opkit-ns.XXXXXX) && chmod 0700 "$own" \
+      || { echo "REFUSE(ns_run): cannot make a scratch root under /var/tmp or /tmp" >&2; return 97; }
+    scratch=$own
+  fi
+  exec {hfd}</ || { echo "REFUSE(ns_run): cannot open a handle on the host's root" >&2; [ -z "$own" ] || rmdir "$own"; return 97; }
+  hostns="mnt=$(readlink /proc/self/ns/mnt),pid=$(readlink /proc/self/ns/pid),uts=$(readlink /proc/self/ns/uts),ipc=$(readlink /proc/self/ns/ipc),net=$(readlink /proc/self/ns/net)"
+  OPKIT_SCRATCH=$scratch OPKIT_LIB=${OPKIT_LIB:?OPKIT_LIB must name opkit_ns.sh} OPKIT_HOST_FD=$hfd OPKIT_HOST_NS=$hostns OPKIT_BSET=$bset \
   unshare --mount --propagation private --pid --fork --kill-child --mount-proc --uts --ipc $netflag bash -c '
     . "$OPKIT_LIB"
     opkit_ns_isolate || { echo "REFUSE(ns_run): isolation not proved; the command did not run" >&2; exit 97; }
@@ -447,5 +489,9 @@ ns_run() {
     exec setpriv --bounding-set "$bset" -- "$@"' ns_run "$@"
   rc=$?
   exec {hfd}<&-
+  if [ -n "$own" ]; then      # the empty mount-point directories the namespace left in the scratch root we made, and the root
+    find "$own" -mindepth 1 -maxdepth 1 -type d -empty -delete 2>/dev/null
+    rmdir "$own" 2>/dev/null || true
+  fi
   return $rc
 }

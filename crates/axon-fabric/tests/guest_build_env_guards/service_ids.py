@@ -182,6 +182,56 @@ chk("service ids control: a distribution unit that is not axon's (a specifier, a
 reset()
 put(os.path.join(VENDOR, "custody.service"), '[Service]\nExecStart=/usr/local/libexec/axon/axon-custodian\nUser=4441\n')
 chk("service ids a distribution-directory unit not named axon-* that runs an axon binary", bu(4441), SVC)
+# ── amendment 109: keys in any spelling, flow maps, multi-line values, and a fail-closed fallback per key (round-12 FIELD-ORIGIN 2) ──
+# Each case plants ANOTHER readable identity beside the one under test, so a per-FILE "mentions an id but read none" guard stays quiet
+# and only the per-key reading can see it.
+case(plant_etc, "a.json", '{"uid": 4500, "ownerUid": 4501}')
+chk("service ids a camelCase JSON key (ownerUid)", bu(4501), SVC)
+case(plant_etc, "a.json", '{"uid": 4502, "runAsUser": "svc-acct"}')
+chk("service ids a camelCase JSON key holding an account name (runAsUser)", bu(4401), SVC)
+case(plant_etc, "a.json", '{"uid": 4503, "username": 4504}')
+chk("service ids a JSON key `username`", bu(4504), SVC)
+case(plant_etc, "a.json", '{"uid": 4505, "owner-uid": 4506, "OWNER_GID": 4507, "serviceGid": 4508, "groupName": "svc-grp"}')
+chk("service ids a kebab-case JSON key (owner-uid)", bu(4506), SVC)
+chk("service ids an upper-case snake JSON gid key (OWNER_GID)", bu(4507), "service gid")
+chk("service ids a camelCase JSON gid key (serviceGid)", bu(4508), "service gid")
+chk("service ids a camelCase JSON group-name key (groupName)", bu(4403), "service gid")
+case(plant_etc, "a.json", '{"uid": 4509, "uidnumber": 4510}')
+chk("service ids a JSON key that carries uid in its name, is of no known class and holds a number refuses", bu(4511), "looks like a uid or gid key")
+case(plant_etc, "a.json", '{"uid": 4512, "guid": 4513, "uuid": 4514, "buildUid": 4515, "build-gid": 4516}')
+chk("service ids control: guid and uuid are not identity keys", bu(4513), "")
+chk("service ids control: buildUid / build-gid are the thing being judged, in any spelling", bu(4515), "")
+case(plant_etc, "a.toml", 'uid = 4520\nrun = { uid = 4521, gid = 4522 }\n')
+chk("service ids a TOML inline table (uid)", bu(4521), SVC)
+chk("service ids a TOML inline table (gid)", bu(4522), "service gid")
+case(plant_etc, "a.toml", 'uid = 4523\nuids = [\n  4524,\n  4525,\n]\n')
+chk("service ids a TOML multi-line array (the first)", bu(4524), SVC)
+chk("service ids a TOML multi-line array (the last)", bu(4525), SVC)
+case(plant_etc, "a.yaml", 'uid: 4526\nrun: {uid: 4527}\n')
+chk("service ids a YAML flow map", bu(4527), SVC)
+case(plant_etc, "a.yaml", 'uid: 4528\nuser:\n  4529\n')
+chk("service ids a YAML value on the next line", bu(4529), SVC)
+case(plant_etc, "a.yaml", 'uid: 4530\nowner-uid: 4531\nrun-as-user: 4532\n')
+chk("service ids a kebab-case YAML key (owner-uid)", bu(4531), SVC)
+chk("service ids a kebab-case YAML key (run-as-user)", bu(4532), SVC)
+case(plant_etc, "service.env", 'AXON_SVC_UID=4533\nServiceUid=4534\nOwnerGid=4535\n')
+chk("service ids a camelCase env key (ServiceUid)", bu(4534), SVC)
+chk("service ids a camelCase env gid key (OwnerGid)", bu(4535), "service gid")
+case(plant_etc, "a.yaml", 'uid: 4536\nrun_uid:\n  nested: x\n')
+chk("service ids a strict key whose value cannot be read refuses (it is not skipped)", bu(4537), "has no value this reader can read")
+case(plant_etc, "a.toml", 'uid = 4538\nuidnumber = 4539\n')
+chk("service ids a text key that carries uid in its name, of no known class, holding a number refuses", bu(4540), "looks like a uid or gid key")
+case(plant_etc, "a.toml", 'uid = 4541\nname = "x"\nrun = { name = "y", uid_note = "z" }\n')
+chk("service ids control: an inline table with no identity of its own is not an error", bu(4542), "")
+case(plant_unit, "axon-z.service.d/o.conf", '[Service]\nUser=4543\n')
+_ld = os.listdir
+def _deny(p, *a):
+    if str(p).endswith("axon-z.service.d"):
+        raise PermissionError(13, "Permission denied", str(p))
+    return _ld(p, *a)
+os.listdir = _deny
+chk("service ids an unreadable drop-in directory refuses cleanly (no traceback)", bu(4543), "cannot be listed")
+os.listdir = _ld
 g.pwd, g.grp = _pwd, _grp
 # a build uid that already owns running processes
 reset()

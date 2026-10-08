@@ -286,15 +286,49 @@ def _id_value(v):
     return None
 
 
-# Amendment 105: which keys name an identity. STRICT keys hold a number or a decimal string (anything else refuses);
-# SOFT keys (`user`, `owner`, `run_as`, `id` ...) may hold a number, a decimal string OR an account name, which is
-# resolved (an unknown name names no account yet: the kit re-checks after it creates the users).
-_STRICT_UID = re.compile(r"^(?:uid|uids|euid|suid|fsuid|ruid|.*_uids?|.*_euid)$")
-_STRICT_GID = re.compile(r"^(?:gid|gids|egid|sgid|fsgid|rgid|.*_gids?|.*_egid)$")
-_SOFT_UID = re.compile(r"^(?:id|ids|user|users|owner|owners|run_as|runas|run_as_user|principal|principals|account|accounts|login|"
-                       r".*_user|.*_users|.*_owner|.*_account|.*_principal|.*_login)$")
-_SOFT_GID = re.compile(r"^(?:group|groups|run_as_group|supplementary_groups|supplementarygroups|"
-                       r".*_group|.*_groups)$")
+# Amendment 105/109: which keys name an identity. STRICT keys hold a number or a decimal string (anything else refuses);
+# SOFT keys (`user`, `owner`, `run_as` ...) may hold a number, a decimal string OR an account name, which is resolved (an
+# unknown name names no account yet: the kit re-checks after it creates the users). A key is judged by its TOKENS, so the
+# letter case, `snake_case`, `kebab-case` and `camelCase` spellings are one key: `ownerUid`, `owner-uid`, `OWNER_UID`,
+# `runAsUser`, `run-as-user`, `ServiceUid` and `username` are each read.
+_STRICT_UID_LAST = {"uid", "uids", "euid", "suid", "fsuid", "ruid"}
+_STRICT_GID_LAST = {"gid", "gids", "egid", "sgid", "fsgid", "rgid"}
+_SOFT_UID_LAST = {"id", "ids", "user", "users", "owner", "owners", "account", "accounts", "principal", "principals", "login", "logins",
+                  "username", "usernames", "userid", "userids", "ownerid", "accountid", "loginname", "runas"}
+_SOFT_GID_LAST = {"group", "groups", "groupname", "groupid", "groupids"}
+_UIDISH_IGNORE = {"guid", "uuid", "squid", "fluid", "liquid", "druid", "fluids", "guids", "uuids"}
+
+
+def _key_tokens(k):
+    """`ownerUid`, `owner-uid`, `OWNER_UID` and `owner.uid` -> ['owner', 'uid']."""
+    k = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", str(k))
+    return [t for t in re.split(r"[^a-z0-9]+", k.lower()) if t]
+
+
+def _key_class(k):
+    """('u'|'g', strict) for an identity key, ('s', False) for `build_uid`/`build_gid` (the thing being judged, not an identity), None otherwise."""
+    t = _key_tokens(k)
+    if not t:
+        return None
+    if t in (["build", "uid"], ["build", "gid"]):
+        return ("s", False)
+    last = t[-1]
+    if last in _STRICT_UID_LAST:
+        return ("u", True)
+    if last in _STRICT_GID_LAST:
+        return ("g", True)
+    prev = t[-2] if len(t) > 1 else ""
+    if last in _SOFT_UID_LAST or (last == "as" and prev == "run") or (last in ("id", "ids", "name") and prev in ("user", "owner", "account", "principal", "login")):
+        return ("u", False)
+    if last in _SOFT_GID_LAST or (last in ("id", "ids", "name") and prev == "group"):
+        return ("g", False)
+    return None
+
+
+def _uidish_unclassified(k):
+    """A key that carries `uid`/`gid` in its name but is no class above (`uidnumber`, `uid_map`): its value must be read or refuse."""
+    t = _key_tokens(k)
+    return any((x.startswith(("uid", "gid")) or x.endswith(("uid", "gid", "uids", "gids"))) and x not in _UIDISH_IGNORE for x in t)
 
 
 def _soft_value(x, soft_gid):
@@ -316,24 +350,27 @@ def _soft_value(x, soft_gid):
 
 
 def _id_fields(node, where, uids, gids):
-    """Identity fields of a config, any depth, any letter case: STRICT (`uid`, `*_uid`, `euid`, `gid`, `*_gid`, plural
-    lists) and SOFT (`user`, `owner`, `run_as`, `principal`, `id`, `group` ...; a number, a decimal string or an
-    account name). (`build_uid`, the thing being judged, is excluded.)"""
+    """Identity fields of a config, any depth, any key spelling (see _key_class): STRICT (`uid`, `*_uid`, `euid`, `gid` ...;
+    plural lists) and SOFT (`user`, `owner`, `run_as`, `principal`, `id`, `group` ...; a number, a decimal string or an
+    account name). (`build_uid`, the thing being judged, is excluded.) A key that carries uid/gid in its name, is no class
+    above and holds a number REFUSES (amendment 109: JSON has a fail-closed fallback too, per key)."""
     if isinstance(node, dict):
         for k, v in node.items():
-            kl = k.lower() if isinstance(k, str) else ""
-            kind, strict, soft_gid = None, False, False
-            if kl in ("build_uid", "build_gid"):
+            cls = _key_class(k) if isinstance(k, str) else None
+            if cls is not None and cls[0] == "s":
                 continue
-            if _STRICT_UID.match(kl):
-                kind, strict = uids, True
-            elif _STRICT_GID.match(kl):
-                kind, strict, soft_gid = gids, True, True
-            elif _SOFT_UID.match(kl) and not isinstance(v, (dict, list)) or _SOFT_UID.match(kl) and isinstance(v, list) and not any(isinstance(e, (dict, list)) for e in v):
+            kind, strict, soft_gid = None, False, False
+            if cls is not None and cls[1]:
+                kind, strict, soft_gid = (uids, True, False) if cls[0] == "u" else (gids, True, True)
+            elif cls == ("u", False) and (not isinstance(v, (dict, list)) or (isinstance(v, list) and not any(isinstance(e, (dict, list)) for e in v))):
                 kind = uids
-            elif _SOFT_GID.match(kl) and not isinstance(v, dict) and not (isinstance(v, list) and any(isinstance(e, (dict, list)) for e in v)):
+            elif cls == ("g", False) and not isinstance(v, dict) and not (isinstance(v, list) and any(isinstance(e, (dict, list)) for e in v)):
                 kind, soft_gid = gids, True
             if kind is None:
+                if cls is None and isinstance(k, str) and _uidish_unclassified(k):
+                    vals = v if isinstance(v, list) else [v]
+                    if any(_id_value(x) is not None for x in vals):
+                        raise DiscoveryRefused(f"{where}: {k} looks like a uid or gid key but is not one this reader knows, and holds {v!r}: it may name a service account")
                 _id_fields(v, where, uids, gids)
                 continue
             if v is None:
@@ -356,38 +393,49 @@ def _id_fields(node, where, uids, gids):
 _TEXT_KV = re.compile(r"^\s*(?:export\s+)?[\"']?([A-Za-z_][\w.\-]*)[\"']?\s*[:=]\s*(.*?)\s*$")
 
 
+def _explode_flow(line):
+    """TOML inline tables and YAML flow maps become one pseudo-line per entry: `run = { uid = 1, gid = 2 }` ->
+    `run =`, `uid = 1`, `gid = 2`. A comma inside [ ] stays (it separates the elements of a list)."""
+    if "{" not in line:
+        return [line]
+    out, cur, depth, q = [], "", 0, None
+    for c in line:
+        if q:
+            cur += c
+            if c == q:
+                q = None
+        elif c in "\"'":
+            q = c
+            cur += c
+        elif c == "[":
+            depth += 1
+            cur += c
+        elif c == "]":
+            depth = max(0, depth - 1)
+            cur += c
+        elif c in "{}" or (c == "," and depth == 0):
+            out.append(cur)
+            cur = ""
+        else:
+            cur += c
+    out.append(cur)
+    return out
+
+
 def _text_ids(text, where, uids, gids):
     """A config that is not JSON (TOML, YAML, an env file, `key value` lines): every `key = value`, `key: value` and
-    `KEY=value` line is read with the same key classes as the JSON fields, a YAML list item (`- 1000`) under such a key
-    too. FAIL CLOSED: a file that mentions `uid`/`gid` and yields no identity it could read refuses."""
-    found, mentions, last = 0, bool(re.search(r"(?i)\b\w*(?:uid|gid)\w*\b", text)), None
+    `KEY=value` line is read with the same key classes as the JSON fields -- inline tables and flow maps, a multi-line
+    array, a value on the NEXT line and a YAML list item (`- 1000`) under such a key too. FAIL CLOSED: a strict key that
+    yields no value, a uid/gid-named key of no known class holding a number, and a file that mentions `uid`/`gid` and yields
+    no identity at all, each refuse."""
+    found, mentions = 0, bool(re.search(r"(?i)\b\w*(?:uid|gid)\w*\b", text))
+    last, mode, lines = None, None, []          # last: the class of the key whose value may continue; mode: 'array' | 'next' | None
     for ln in text.replace("\\\n", " ").splitlines():
-        t = ln.strip()
-        if not t or t.startswith(("#", ";", "[", "//")):
-            continue
-        if last is not None and t.startswith("- "):
-            vals, (kind, strict, soft_gid, key) = [t[2:].strip()], last
-        else:
-            m = _TEXT_KV.match(t)
-            if not m:
-                last = None
-                continue
-            key, raw = m.group(1), m.group(2)
-            kl = key.lower().rsplit(".", 1)[-1]
-            raw = re.sub(r"\s+[#;].*$", "", raw).strip().rstrip(",")
-            if _STRICT_UID.match(kl) and kl not in ("build_uid",):
-                kind, strict, soft_gid = uids, True, False
-            elif _STRICT_GID.match(kl) and kl not in ("build_gid",):
-                kind, strict, soft_gid = gids, True, True
-            elif _SOFT_UID.match(kl):
-                kind, strict, soft_gid = uids, False, False
-            elif _SOFT_GID.match(kl):
-                kind, strict, soft_gid = gids, False, True
-            else:
-                last = None
-                continue
-            last = (kind, strict, soft_gid, key)
-            vals = [v for v in re.split(r"[\s,\[\]]+", raw.strip("[]")) if v]
+        lines += _explode_flow(ln)
+    got, strict_keys = {}, {}                    # per key occurrence: how many values were read; the strict ones by name
+
+    def take(vals, kind, strict, soft_gid, key, occ):
+        nonlocal found
         for v in vals:
             v = v.strip("\"'")
             iv = _id_value(v) if strict else _soft_value(v, soft_gid)
@@ -396,6 +444,54 @@ def _text_ids(text, where, uids, gids):
             if iv is not None:
                 kind.setdefault(iv, f"{where}:{key}")
                 found += 1
+                got[occ] = got.get(occ, 0) + 1
+
+    occ_n = 0
+    for ln in lines:
+        t = ln.strip()
+        if not t or t.startswith(("#", ";", "[", "//")) and not (mode == "array" and t.startswith("[")):
+            continue
+        if mode == "array" and last is not None:
+            kind, strict, soft_gid, key, occ = last
+            body = re.sub(r"\s+[#;].*$", "", t)
+            take([x for x in re.split(r"[\s,\[\]]+", body) if x], kind, strict, soft_gid, key, occ)
+            if "]" in body:
+                mode = None
+            continue
+        if last is not None and t.startswith("- "):
+            kind, strict, soft_gid, key, occ = last
+            take([t[2:].strip()], kind, strict, soft_gid, key, occ)
+            mode = None
+            continue
+        m = _TEXT_KV.match(t)
+        if not m:
+            if mode == "next" and last is not None:      # `user:` and then the value on the next line
+                kind, strict, soft_gid, key, occ = last
+                take([x for x in re.split(r"[\s,\[\]]+", re.sub(r"\s+[#;].*$", "", t)) if x], kind, strict, soft_gid, key, occ)
+            last, mode = None, None
+            continue
+        key, raw = m.group(1), m.group(2)
+        raw = re.sub(r"\s+[#;].*$", "", raw).strip().rstrip(",")
+        cls = _key_class(key.rsplit(".", 1)[-1])
+        if cls is None or cls[0] == "s":
+            if cls is None and _uidish_unclassified(key.rsplit(".", 1)[-1]) and any(_id_value(x) is not None for x in re.split(r"[\s,\[\]\"']+", raw) if x):
+                raise DiscoveryRefused(f"{where}: {key} looks like a uid or gid key but is not one this reader knows, and holds {raw!r}: it may name a service account")
+            last, mode = None, None
+            continue
+        kind, strict, soft_gid = (uids, True, False) if cls == ("u", True) else (gids, True, True) if cls == ("g", True) else (uids, False, False) if cls == ("u", False) else (gids, False, True)
+        occ_n += 1
+        last = (kind, strict, soft_gid, key, occ_n)
+        got.setdefault(occ_n, 0)
+        if strict:
+            strict_keys[occ_n] = key
+        if raw == "":
+            mode = "next"
+            continue
+        mode = "array" if raw.startswith("[") and "]" not in raw else None
+        take([v for v in re.split(r"[\s,\[\]]+", raw.strip("[]")) if v], kind, strict, soft_gid, key, occ_n)
+    for occ, key in strict_keys.items():
+        if got.get(occ, 0) == 0:
+            raise DiscoveryRefused(f"{where}: {key} has no value this reader can read: it may name a service account")
     if mentions and not found:
         raise DiscoveryRefused(f"{where} mentions a uid or gid in a form that cannot be read: it may name a service account")
 
@@ -554,7 +650,11 @@ def service_ids(users=None, etc=None, units=None):
             # drop-ins, of a unit that exists in this directory or not (`axon-x.service.d`, `service.d`)
             if (n.endswith((".service.d", ".socket.d")) or n in ("service.d", "socket.d")) and (not vendor or n.startswith("axon-")):
                 if os.path.isdir(full):
-                    for c in sorted(os.listdir(full)):
+                    try:
+                        dropins = sorted(os.listdir(full))
+                    except OSError as e:
+                        raise DiscoveryRefused(f"{full} cannot be listed ({e.strerror}): it may hold a service unit override")
+                    for c in dropins:
                         if c.endswith(".conf"):
                             _unit_ids(_regular_text(os.path.join(full, c)).decode(errors="replace"), os.path.join(full, c), uids, gids)
     return uids, gids

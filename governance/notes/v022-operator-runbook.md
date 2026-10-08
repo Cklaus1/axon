@@ -66,7 +66,7 @@ Example configs matching what it writes are in `profiles/protected-host/*.exampl
 `crates/axon-fabric/tests/operator_examples.rs` loads the launcher and custodian examples
 through the production loaders, so the examples cannot drift from the code. The kit's test is
 `scripts/test_operator_deploy.sh`. It covers the dry run on the real host and a full `--apply`
-inside a private mount namespace with a shadow `/etc`. Its namespace run passes the production
+inside a private mount namespace with a shadow `/etc` (`scripts/lib/opkit_ns.sh`, `ns_run`: the boundary that matters is that namespace and the helper's proof, not a text check). `scripts/opkit_ns_drift.py` is a BEST-EFFORT SECOND LAYER that flags the 145 shapes its `--selftest` lists (and the mentions it derives from them) when a test script runs the kit outside `ns_run`; it is not a deny-by-default guarantee: a test script that wants to evade a textual gate can, and the gate catches mistakes, not intent. Its namespace run passes the production
 loader, the freeze's toolchain-pin reader and the protected-mode preflight. It also shows that
 a Fabric process under `NoNewPrivileges` fails the preflight, and that a wrong custodian pin
 fails the kit's check. For the observer service (amendment 68) it holds a control (the full
