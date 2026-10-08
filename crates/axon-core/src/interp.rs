@@ -5758,3 +5758,125 @@ mod value_shape_leak_tests {
         assert!(s.contains("i64"), "{s}");
     }
 }
+
+/// AX-46/AX-47: records store `Sym`-keyed fields in the definition's order
+/// behind an `Rc`. None of that may be observable: printing orders fields by
+/// name, equality ignores construction order, enum variants match by
+/// interned name, declared narrow fields are coerced, and a write through a
+/// shared record copies it first.
+#[cfg(test)]
+mod record_layout_tests {
+    use super::*;
+
+    fn out(src: &str) -> (i32, String) {
+        let program = crate::parse_source(src).expect("parse failed");
+        run_program_capturing(&program)
+    }
+
+    const RECORDS: &str = r#"
+type P = { z: i64, a: i64, m: str }
+type B = { lo: u8, hi: i16 }
+type S = Circle { r: f64 } | Rect { w: i64, h: i64 } | Empty
+
+fn area(s: S) -> i64 {
+    match s {
+        S::Rect { w, h } => w * h,
+        S::Circle { r } => f64_to_i64(r),
+        S::Empty => 0,
+    }
+}
+"#;
+
+    fn run_main(body: &str) -> (i32, String) {
+        out(&format!("{RECORDS}\nfn main() {{\n{body}\n}}\n"))
+    }
+
+    #[test]
+    fn fields_print_in_name_order_whatever_the_literal_order() {
+        let (code, s) = run_main(
+            r#"let p = P { m: "hi", a: 2, z: 1 }
+               println("{p}")
+               println("{S::Rect { h: 3, w: 4 }}")
+               println("{[B { hi: 300, lo: 250 }]}")"#,
+        );
+        assert_eq!(code, 0, "{s}");
+        assert_eq!(
+            s,
+            "P { a: 2, m: hi, z: 1 }\nS::Rect { h: 3, w: 4 }\n[B { hi: 300, lo: 250 }]\n"
+        );
+    }
+
+    #[test]
+    fn equality_ignores_construction_order() {
+        let (code, s) = run_main(
+            r#"println(to_str(P { m: "hi", a: 2, z: 1 } == P { z: 1, a: 2, m: "hi" }))
+               println(to_str(P { m: "hi", a: 2, z: 1 } != P { a: 2, z: 3, m: "hi" }))
+               println(to_str(S::Rect { w: 4, h: 3 } == S::Rect { h: 3, w: 4 }))
+               println(to_str(S::Rect { w: 4, h: 3 } == S::Rect { h: 4, w: 3 }))
+               println(to_str(S::Empty == S::Empty))"#,
+        );
+        assert_eq!(code, 0, "{s}");
+        assert_eq!(s, "true\ntrue\ntrue\nfalse\ntrue\n");
+    }
+
+    #[test]
+    fn enum_variants_match_by_interned_name() {
+        let (code, s) = run_main(
+            r#"println(to_str(area(S::Rect { h: 3, w: 4 })))
+               println(to_str(area(S::Circle { r: 2.5 })))
+               println(to_str(area(S::Empty)))"#,
+        );
+        assert_eq!(code, 0, "{s}");
+        assert_eq!(s, "12\n2\n0\n");
+    }
+
+    #[test]
+    fn narrow_fields_are_coerced_at_construction() {
+        // `lo` is declared `u8`: arithmetic on it is u8-checked, so 250 + 10
+        // must overflow rather than print 260.
+        let (code, s) = run_main(
+            r#"let b = B { hi: 300, lo: 250 }
+               let s = b.lo + as_u8(10)
+               println("{s}")"#,
+        );
+        assert_eq!(code, RUNTIME_PANIC_EXIT_CODE, "{s}");
+        assert_eq!(s, "");
+    }
+
+    #[test]
+    fn a_field_write_through_a_shared_record_copies_it() {
+        let (code, s) = run_main(
+            r#"let bs = [B { hi: 300, lo: 250 }]
+               let c = bs[0]
+               c.lo = as_u8(9)
+               println("{bs}")
+               println("{c}")
+               let ps = [P { z: 1, a: 2, m: "hi" }]
+               let k = ps[0]
+               k.a = 99
+               println(to_str(ps[0].a))
+               println(to_str(k.a))"#,
+        );
+        assert_eq!(code, 0, "{s}");
+        assert_eq!(s, "[B { hi: 300, lo: 250 }]\nB { hi: 300, lo: 9 }\n2\n99\n");
+    }
+
+    #[test]
+    fn closures_capture_records() {
+        let (code, s) = run_main(
+            r#"let p = P { m: "hi", a: 2, z: 1 }
+               let f = |n: i64| n + p.a + p.z
+               let g = |n: i64| P { z: n, a: p.a, m: p.m }
+               println(to_str(f(10)))
+               println("{g(7)}")
+               p.a = 40
+               println(to_str(f(10)))
+               println("{p}")"#,
+        );
+        assert_eq!(code, 0, "{s}");
+        assert_eq!(
+            s,
+            "13\nP { a: 2, m: hi, z: 7 }\n13\nP { a: 40, m: hi, z: 1 }\n"
+        );
+    }
+}
