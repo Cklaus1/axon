@@ -1711,7 +1711,7 @@ impl<'ctx> super::Codegen<'ctx> {
     }
 
     /// `to_str` for a 64-bit UNSIGNED value, via `__axon_u64_to_str`.
-    fn emit_u64_to_str(
+    pub(super) fn emit_u64_to_str(
         &mut self,
         v: inkwell::values::IntValue<'ctx>,
     ) -> Option<BasicValueEnum<'ctx>> {
@@ -2754,68 +2754,115 @@ impl<'ctx> super::Codegen<'ctx> {
                     build_wrappers::w_load(&self.ir.builder, str_ty.into(), lit_alloca, "litval")
                 }
                 ast::FmtPart::Expr(e) => {
+                    // Render by the STATIC type (AX-49). The interpreter
+                    // prints any value (`P { x: 1 }`, `A::Lit { v: 4 }`,
+                    // `Some(3)`, `[1, 2]`), and the LLVM shape cannot tell
+                    // those apart: a `str`, an array and a struct
+                    // `{ n: i64, p: *T }` are all `{i64, ptr}`. `display.rs`
+                    // renders each type as the interpreter does. The static
+                    // type is used only when its layout IS the value's, so a
+                    // wrong guess cannot reinterpret the value's bytes.
+                    let sem = self.sem_type_of_expr(e);
                     let v = self.emit_expr(e, fn_val)?;
-                    // Auto-coerce non-str values to str.
-                    match v {
-                        BasicValueEnum::StructValue(sv) => {
-                            // A str is EXACTLY `{i64, i8*}`. A Result/Option (or
-                            // Uncertain/user struct) is a different shape — e.g.
-                            // `{i1, [N x i8]}` (tag-first). The old code assumed
-                            // ANY struct was already a str and passed it straight
-                            // to axon_concat, which wants `{i64,ptr}` → a raw
-                            // "IR verification failed" crash (e.g. interpolating a
-                            // parse_int Result). Native can't format a Result/
-                            // Option in an interpolation (the inner value's type is
-                            // erased; the interpreter prints `Ok(…)`/`Some(…)`), so
-                            // refuse HONESTLY (E0910) instead of crashing.
-                            let ft = sv.get_type();
-                            let is_str = ft.count_fields() == 2
-                                && ft
-                                    .get_field_type_at_index(0)
-                                    .map(|t| {
-                                        t.is_int_type() && t.into_int_type().get_bit_width() == 64
-                                    })
-                                    .unwrap_or(false)
-                                && ft
-                                    .get_field_type_at_index(1)
-                                    .map(|t| t.is_pointer_type())
-                                    .unwrap_or(false);
-                            if is_str {
-                                v
-                            } else {
-                                let msg = "codegen error [E0910]: native codegen cannot interpolate a \
-                                    Result/Option (or non-str struct) value in a string — its inner \
-                                    type is erased here. Match it and interpolate the inner value, or \
-                                    use `axon run` (the interpreter prints `Ok(…)`/`Some(…)`).".to_string();
-                                self.record_error(msg);
+                    let sem = sem.filter(|t| {
+                        !Self::type_has_unknown(t) && self.llvm_type(t) == Some(v.get_type())
+                    });
+                    if let Some(t) = sem {
+                        match self.display_blocker(&t, &mut std::collections::HashSet::new()) {
+                            None => self.emit_value_display(v, &t)?,
+                            Some(blocker) => {
+                                let held = if blocker == t {
+                                    String::new()
+                                } else {
+                                    format!(", which holds a `{}`", blocker.display())
+                                };
+                                self.record_error(format!(
+                                    "codegen error [E0910]: native codegen cannot interpolate \
+                                     a value of type `{}` in a string{held}: it has no native \
+                                     rendering for that type. Interpolate the parts that \
+                                     render, or use `axon run` (the interpreter prints it).",
+                                    t.display()
+                                ));
                                 // Placeholder str so emission continues; the build
                                 // aborts afterward on codegen_errors (never runs).
                                 str_ty.const_zero().into()
                             }
                         }
-                        BasicValueEnum::IntValue(iv) => {
-                            if iv.get_type().get_bit_width() == 1 {
-                                // bool → to_str_bool
-                                if let Some(f) = self.functions.get("to_str_bool").copied() {
-                                    build_wrappers::w_call(
-                                        &self.ir.builder,
-                                        f,
-                                        &[iv.into()],
-                                        "fmtb",
-                                    )
-                                    .try_as_basic_value()
-                                    .left()?
-                                } else {
+                    } else {
+                        // The static type is not known here: go by the value's
+                        // shape, which is unambiguous only for scalars and `str`.
+                        match v {
+                            BasicValueEnum::StructValue(sv) => {
+                                // A str is EXACTLY `{i64, i8*}`. Passing any other
+                                // struct to axon_concat, which wants `{i64,ptr}`,
+                                // was a raw "IR verification failed" crash.
+                                let ft = sv.get_type();
+                                let is_str = ft.count_fields() == 2
+                                    && ft
+                                        .get_field_type_at_index(0)
+                                        .map(|t| {
+                                            t.is_int_type()
+                                                && t.into_int_type().get_bit_width() == 64
+                                        })
+                                        .unwrap_or(false)
+                                    && ft
+                                        .get_field_type_at_index(1)
+                                        .map(|t| t.is_pointer_type())
+                                        .unwrap_or(false);
+                                if is_str {
                                     v
+                                } else {
+                                    let msg =
+                                        "codegen error [E0910]: native codegen cannot interpolate \
+                                    this value in a string: its static type is not known to \
+                                    codegen at this point, so it cannot be rendered. Bind it \
+                                    with a type-annotated `let` first, or use `axon run`."
+                                            .to_string();
+                                    self.record_error(msg);
+                                    // Placeholder str so emission continues; the build
+                                    // aborts afterward on codegen_errors (never runs).
+                                    str_ty.const_zero().into()
                                 }
-                            } else {
-                                // i64 → to_str
-                                if let Some(f) = self.functions.get("to_str").copied() {
+                            }
+                            BasicValueEnum::IntValue(iv) => {
+                                if iv.get_type().get_bit_width() == 1 {
+                                    // bool → to_str_bool
+                                    if let Some(f) = self.functions.get("to_str_bool").copied() {
+                                        build_wrappers::w_call(
+                                            &self.ir.builder,
+                                            f,
+                                            &[iv.into()],
+                                            "fmtb",
+                                        )
+                                        .try_as_basic_value()
+                                        .left()?
+                                    } else {
+                                        v
+                                    }
+                                } else {
+                                    // i64 → to_str
+                                    if let Some(f) = self.functions.get("to_str").copied() {
+                                        build_wrappers::w_call(
+                                            &self.ir.builder,
+                                            f,
+                                            &[iv.into()],
+                                            "fmti",
+                                        )
+                                        .try_as_basic_value()
+                                        .left()?
+                                    } else {
+                                        v
+                                    }
+                                }
+                            }
+                            BasicValueEnum::FloatValue(fv) => {
+                                // f64 → to_str_f64
+                                if let Some(f) = self.functions.get("to_str_f64").copied() {
                                     build_wrappers::w_call(
                                         &self.ir.builder,
                                         f,
-                                        &[iv.into()],
-                                        "fmti",
+                                        &[fv.into()],
+                                        "fmtf",
                                     )
                                     .try_as_basic_value()
                                     .left()?
@@ -2823,18 +2870,8 @@ impl<'ctx> super::Codegen<'ctx> {
                                     v
                                 }
                             }
+                            _ => v,
                         }
-                        BasicValueEnum::FloatValue(fv) => {
-                            // f64 → to_str_f64
-                            if let Some(f) = self.functions.get("to_str_f64").copied() {
-                                build_wrappers::w_call(&self.ir.builder, f, &[fv.into()], "fmtf")
-                                    .try_as_basic_value()
-                                    .left()?
-                            } else {
-                                v
-                            }
-                        }
-                        _ => v,
                     }
                 }
             };
