@@ -2461,7 +2461,7 @@ ATTACK_MARKERS.update({
     'M2840': 'ATTACK: std::process::Stdio::piped\\(\\) handed to a spawn builder',
     'M2841': 'ATTACK: "/vs/cwd" handed to a spawn builder',
     'M2842': 'ATTACK: "vs_flag" handed to a spawn builder',
-    'M2843': "ATTACK: a value exemption naming a fragment that is not the site's text was accepted",
+    'M2843': "a value exemption naming a fragment that is not the site's text was accepted",
     'M2844': 'ATTACK: value exemptions of kind REMAINDER were not counted',
     'M2845': "ATTACK: the gate's last lines do not list what it cannot see",
     'M2846': 'ATTACK: git_cmd env GIT_NO_LAZY_FETCH',
