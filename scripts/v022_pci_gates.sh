@@ -98,6 +98,11 @@ ROWS=(
   "am102 runtime taint: an ordinary run takes none|axon-core|lib|interp::taint_tests::an_ordinary_run_takes_no_taint"
   "am102 drift: classes, writers, dispatch sites, value holders, frames, swept files|axon-core|lib|interp::taint_tests::every_builtin_has_a_taint_class interp::taint_tests::every_dict_builtin_is_a_listed_writer_or_a_reader_that_does_not_write interp::taint_tests::builtins_are_dispatched_only_where_the_taint_is_routed interp::taint_tests::every_type_that_holds_a_value_keeps_its_taint interp::taint_tests::only_fn_and_closure_frames_restore_the_control_taints interp::taint_tests::every_interp_file_is_read_by_the_drift_sweeps"
   "am102 runtime taint (runner leg)|axon-psv|sealed_frames|an_operator_closure_the_candidate_picked_is_never_called a_name_built_out_of_the_candidates_bit_never_selects_an_operator_fn taint_survives_every_carrier_a_value_can_travel_by"
+  "am106 shared state keeps its taint: channels, areas not hunted before|axon-core|lib|interp::taint_tests::a_channel_the_candidate_touched_never_selects_an_operator_closure_or_name interp::taint_tests::areas_the_psv3_reviewer_did_not_hunt"
+  "am106 every reader of shared state is tainted after a sealed write|axon-core|lib|interp::taint_tests::a_dict_reader_is_tainted_after_a_sealed_write_and_clean_after_the_operators interp::taint_tests::a_kernel_getter_is_tainted_after_a_write_the_candidate_steered interp::taint_tests::a_shared_array_is_tainted_after_a_sealed_write"
+  "am106 the existence oracle on every path|axon-core|lib|interp::taint_tests::a_sealed_caller_cannot_tell_an_operator_name_from_a_missing_one_on_any_path"
+  "am106 drift: channel methods, dict and kernel builtins, text-rendering builtins|axon-core|lib|interp::taint_tests::every_channel_method_goes_through_the_one_access_helper interp::taint_tests::every_dict_builtin_has_a_taint_routing_row interp::taint_tests::every_kernel_builtin_is_a_tested_getter_or_stated_not_one interp::taint_tests::every_builtin_that_renders_a_value_to_text_is_a_stringifier_or_an_emitter"
+  "am106 shared state and the existence oracle (runner leg)|axon-psv|sealed_frames|a_channel_the_candidate_touched_never_selects_operator_code the_taint_name_rule_refuses_what_the_static_name_analysis_lets_through a_sealed_caller_is_refused_in_the_same_words_for_an_operator_name_and_a_missing_one"
 )
 
 for row in "${ROWS[@]}"; do

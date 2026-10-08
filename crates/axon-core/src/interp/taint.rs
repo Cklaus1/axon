@@ -433,6 +433,16 @@ pub(crate) const PURE_BUILTINS: &[&str] = &[
 
 /// Builtins that WRITE into a dict they are given (argument 0). Every other
 /// builtin with a `Dict` parameter only reads it or builds a new one.
+/// Builtins whose RESULT is the text of their argument: a channel prints its
+/// length and a dict its contents, wherever they sit in the value, so the
+/// result carries the taint of every shared object inside it.
+pub(crate) const STRINGIFIERS: &[&str] = &["to_str", "dict_to_str"];
+
+/// Builtins that render a value to a stream and return nothing the program
+/// can read back (named for the drift test that classifies every renderer).
+#[cfg(test)]
+pub(crate) const EMITTERS: &[&str] = &["print", "println", "eprint", "eprintln"];
+
 pub(crate) const DICT_WRITERS: &[&str] = &["dict_set", "dict_remove", "dict_inc"];
 
 /// What the dispatcher needs to know about a builtin.
@@ -647,6 +657,54 @@ impl<'p> Interp<'p> {
         go(self, v, 3)
     }
 
+    /// Any access to a channel through a method (or a `select` arm). The shared
+    /// queue is one object with one taint: a READ (recv, try_recv, len) takes it
+    /// into the result, and a MUTATING access from a sealed frame (a send, a
+    /// drain: recv, try_recv, select) marks it, because what the queue holds or
+    /// how many values it holds is then something sealed code decided
+    /// (amendment 106). A sealed `len`/`clone` changes nothing and marks nothing,
+    /// as a sealed `dict_len` does not.
+    pub(super) fn t_chan_access(&self, chan: &Value, method: &str) {
+        self.t_touch(self.t_obj(chan));
+        if self.frame_sealed.get() && matches!(method, "send" | "recv" | "try_recv") {
+            self.t_mark_obj(chan, ALL);
+        }
+    }
+
+    /// The taint of every shared object (dict, channel) reachable from `v`,
+    /// through arrays, tuples, records, enum payloads and dict values. For a
+    /// value being turned into TEXT: a channel prints its length and a dict its
+    /// contents, wherever they sit in the value (amendment 106). Past the depth
+    /// bound the answer is "tainted", the sound direction.
+    pub(super) fn t_obj_deep(&self, v: &Value) -> u8 {
+        fn go(i: &Interp<'_>, v: &Value, d: u8, seen: &mut std::collections::HashSet<usize>) -> u8 {
+            if d == 0 {
+                return ALL;
+            }
+            let own = |a: usize| i.taint.objs.borrow().get(&a).map_or(0, |(t, _)| *t);
+            match v {
+                Value::Chan(_) => addr_of(v).map_or(0, own),
+                Value::Dict(m) => {
+                    let a = addr_of(v).unwrap_or(0);
+                    if !seen.insert(a) {
+                        return 0;
+                    }
+                    m.borrow()
+                        .values()
+                        .fold(own(a), |t, x| t | go(i, x, d - 1, seen))
+                }
+                Value::Some(b) | Value::Ok(b) | Value::Err(b) => go(i, b, d - 1, seen),
+                Value::Array(xs) => xs.iter().fold(0, |t, x| t | go(i, x, d - 1, seen)),
+                Value::Tuple(xs) => xs.iter().fold(0, |t, x| t | go(i, x, d - 1, seen)),
+                Value::Struct { fields, .. } | Value::Enum { fields, .. } => {
+                    fields.values().fold(0, |t, x| t | go(i, x, d - 1, seen))
+                }
+                _ => 0,
+            }
+        }
+        go(self, v, 32, &mut std::collections::HashSet::new())
+    }
+
     /// Mark the shared objects in `v` as carrying `t` (a write).
     pub(super) fn t_mark_obj(&self, v: &Value, t: u8) {
         if t == 0 {
@@ -776,6 +834,11 @@ impl<'p> Interp<'p> {
         for a in args {
             self.t_touch(self.t_obj(a));
         }
+        if STRINGIFIERS.contains(&name) {
+            for a in args {
+                self.t_touch(self.t_obj_deep(a));
+            }
+        }
         match info(name).map(|i| i.class) {
             Some(Class::Pure) => {}
             Some(Class::Kernel) => self.t_touch(self.taint.kernel.get()),
@@ -794,7 +857,14 @@ impl<'p> Interp<'p> {
     /// the builtin chose carries no TYP.
     pub(super) fn t_builtin_out(&self, name: &str, args: &[Value], res: &Value) {
         let sealed = self.frame_sealed.get();
-        let a = if sealed { ALL } else { self.taint.acc.get() };
+        // What a write stores is the value's taint AND the control it ran under:
+        // a spawn in a loop the candidate sized, or a write behind a branch on
+        // its answer, is a state the candidate decided (amendment 106).
+        let a = if sealed {
+            ALL
+        } else {
+            self.t_stored(self.taint.acc.get())
+        };
         let i = info(name);
         match i.map(|i| i.class) {
             Some(Class::Pure) => {}

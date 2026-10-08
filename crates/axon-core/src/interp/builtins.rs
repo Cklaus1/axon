@@ -3961,10 +3961,17 @@ impl<'p> Interp<'p> {
                 // Fail loudly if the constraint names no defined fn — silently
                 // ignoring it would defeat the whole point (the caller believes
                 // the search is constrained when it is not).
-                if !self.fns.contains_key(constraint.as_str()) {
-                    return panic(format!(
-                        "goal_run_constrained: constraint fn `{constraint}` is not defined"
-                    ));
+                let visible = match self.fns.get(constraint.as_str()) {
+                    Some(f) => {
+                        !(self.seal.active && self.frame_sealed.get()) || self.fn_is_sealed(f)
+                    }
+                    None => false,
+                };
+                if !visible {
+                    return self.no_such_fn(
+                        &constraint,
+                        format!("goal_run_constrained: constraint fn `{constraint}` is not defined"),
+                    );
                 }
                 *self.k().goal_constraint.borrow_mut() = Some(constraint);
                 let result = self.run_goal(&name, target, max_evals);
@@ -4983,9 +4990,12 @@ impl<'p> Interp<'p> {
                 let target = as_float(&args[2])?;
                 // Typo guard: `name` must be a defined fn or already-recorded goal.
                 if self.fn_by_name(&name)?.is_none() && !self.k().provenance.borrow().contains_key(&name) {
-                    return panic(format!(
-                        "kernel_goal_create: `{name}` is neither a defined function nor a recorded goal"
-                    ));
+                    return self.no_such_fn(
+                        &name,
+                        format!(
+                            "kernel_goal_create: `{name}` is neither a defined function nor a recorded goal"
+                        ),
+                    );
                 }
                 // AUDIT T20 (finding F006): this was `principal.max(0) as usize`,
                 // which silently coerces ANY invalid handle — negative, or past

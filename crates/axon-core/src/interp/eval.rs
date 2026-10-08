@@ -178,7 +178,7 @@ impl<'p> Interp<'p> {
                         self.seal.active && self.frame_sealed.get(),
                     ))
                 } else {
-                    panic(format!("undefined identifier `{name}`"))
+                    self.no_such_fn(name, format!("undefined identifier `{name}`"))
                 }
             }
 
@@ -607,17 +607,17 @@ impl<'p> Interp<'p> {
                 // Channel methods (cooperative, single-threaded): send pushes to
                 // the shared queue, recv pops from it, clone shares the handle.
                 if let Value::Chan(q) = &recv {
+                    if T {
+                        self.t_chan_access(&recv, method);
+                    }
                     return match method.as_str() {
                         "send" => {
                             let mut v = self.eval_t::<T>(&args[0], env)?;
-                            if T {
+                            if T && !self.frame_sealed.get() {
                                 // The queue now holds what was sent, and whoever
                                 // reads it back inherits that (amendment 102).
-                                let st = if self.frame_sealed.get() {
-                                    taint::ALL
-                                } else {
-                                    self.ts::<T>(self.tl::<T>())
-                                };
+                                // (A sealed send is marked ALL by `t_chan_access`.)
+                                let st = self.ts::<T>(self.tl::<T>());
                                 self.t_mark_obj(&recv, st);
                             }
                             // Cast to every element type the channel crossed.
@@ -631,9 +631,6 @@ impl<'p> Interp<'p> {
                             Ok(Value::Unit)
                         }
                         "recv" => {
-                            if T {
-                                self.t_touch(self.t_obj(&recv));
-                            }
                             q.borrow_mut().pop_front().ok_or_else(|| {
                                 Flow::Panic(
                                     "recv on an empty channel — the interpreter runs `spawn` \
@@ -649,9 +646,6 @@ impl<'p> Interp<'p> {
                         // producers and needs to know when results have stopped
                         // coming, not just block on the first miss.
                         "try_recv" => {
-                            if T {
-                                self.t_touch(self.t_obj(&recv));
-                            }
                             Ok(match q.borrow_mut().pop_front() {
                                 Some(v) => Value::Some(Box::new(v)),
                                 None => Value::None,
@@ -690,7 +684,10 @@ impl<'p> Interp<'p> {
                         Some(v) => v,
                         None => match self.global_ref(name)? {
                             Some(v) => v,
-                            None => return panic(format!("undefined identifier `{name}`")),
+                            None => {
+                                return self
+                                    .no_such_fn(name, format!("undefined identifier `{name}`"))
+                            }
                         },
                     };
                     return field_of(v, field);
@@ -740,7 +737,7 @@ impl<'p> Interp<'p> {
                             Some(other) => {
                                 panic(format!("indexing non-array ({})", other.type_name()))
                             }
-                            None => panic(format!("undefined identifier `{name}`")),
+                            None => self.no_such_fn(name, format!("undefined identifier `{name}`")),
                         };
                     }
                 }
@@ -885,6 +882,10 @@ impl<'p> Interp<'p> {
                         FmtPart::Lit(t) => s.push_str(t),
                         FmtPart::Expr(e) => {
                             let v = self.eval_t::<T>(e, env)?;
+                            if T {
+                                // The text of a value shows the state in it.
+                                self.t_touch(self.t_obj_deep(&v));
+                            }
                             s.push_str(&display(&v));
                         }
                     }
@@ -954,9 +955,14 @@ impl<'p> Interp<'p> {
                     let Value::Chan(q) = self.eval_t::<T>(receiver, env)? else {
                         return panic("select arm `recv` on a non-channel");
                     };
+                    // Whether this channel is ready is a READ of its queue, ready
+                    // or not: an arm skipped because sealed code drained (or never
+                    // fed) it is a choice the candidate made (amendment 106).
+                    if T {
+                        self.t_chan_access(&Value::Chan(q.clone()), "recv");
+                    }
                     let ready = q.borrow_mut().pop_front();
                     if ready.is_some() {
-                        self.t_touch(self.t_obj(&Value::Chan(q.clone())));
                         return self.eval_t::<T>(&arm.body, env);
                     }
                 }
@@ -1400,6 +1406,15 @@ impl<'p> Interp<'p> {
                     if T {
                         self.t_builtin_in(name, &argv);
                     }
+                    // The builtin runs under the control taint of its arguments:
+                    // a callback it runs once per element of a tainted array (or
+                    // entry of a tainted dict) runs a number of times the
+                    // candidate chose, and what that callback stores carries it.
+                    let _pc = if T {
+                        Some(self.t_pc(self.taint.acc.get() & taint::VAL))
+                    } else {
+                        None
+                    };
                     if let Some(v) = self.call_builtin(name, &argv)? {
                         if T {
                             self.t_builtin_out(name, &argv, &v);
