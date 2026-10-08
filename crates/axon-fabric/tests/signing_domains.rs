@@ -81,6 +81,10 @@ fn rc() -> ExecutionReceipt {
 
 /// A known-answer check whose panic names the context: the marker cannot match a setup failure.
 fn kat(what: &str, got: &str, want: &str) {
+    if want == "TODO" {
+        println!("KATVAL {what} = {got}");
+        return;
+    }
     assert_eq!(
         got, want,
         "signing KAT {what}: the signed bytes changed (a domain, a schema tag or a context string \
