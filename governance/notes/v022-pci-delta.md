@@ -243,6 +243,14 @@ exit 0 (the earlier rows below were last run at 34 rows, c9r4c/claims3 at veto 1
 | am100 name sinks | axon-psv/sealed_frames | PASS 3/3 |
 | am100 existence oracle | axon-core/lib | PASS 1/1 |
 | am100 drift: any globals mention, any runner of user code | axon-core/lib | PASS 2/2 |
+| am102 runtime taint: closure picks | axon-core/lib | PASS 1/1 |
+| am102 runtime taint: names | axon-core/lib | PASS 2/2 |
+| am102 runtime taint: impl and width | axon-core/lib | PASS 1/1 |
+| am102 runtime taint: carriers and control | axon-core/lib | PASS 3/3 |
+| am102 runtime taint: an ordinary run takes none | axon-core/lib | PASS 1/1 |
+| am102 drift: classes, writers, dispatch sites, value holders, frames, swept files | axon-core/lib | PASS 6/6 |
+| am102 runtime taint (runner leg) | axon-psv/sealed_frames | PASS 3/3 |
+| am102 sweep (only the taint on: exactly the two static-only programs differ) | axon-core/lib (PSV1T_TAINT_ONLY) | PASS |
 
 Mutation rows whose target is `crates/axon-core/src` and which are not retired (`MUTATIONS` minus `RETIRED`, 267 rows at this head, recomputed from the script): M59, M61-M62, M65, M67-M70, M72-M79, M82-M83, M85-M88, M90-M97, M219, M243, M246-M248, M250-M251, M260, M270-M272, M436, M560-M566, M651-M667, M920-M939, M1140-M1157, M1660-M1681, M1730-M1731, M1734, M1764-M1765, M1840-M1845, M1847-M1848, M1936-M1938, M1975, M1990-M1997, M2171-M2178, M2370-M2376, M2461, M2470-M2480, M2600-M2602, M2606, M2608-M2624, M2700-M2767. Per delta:
 

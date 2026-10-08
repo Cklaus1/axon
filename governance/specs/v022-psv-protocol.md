@@ -6276,4 +6276,31 @@ guards of the helper have no cargo row (`TMPDIR=/tmp`, the `/tmp` tmpfs); the ki
        FUTURE note stands). (4) `select`'s choice of arm by channel readiness is control flow, tainted only by the chosen
        channel. (5) the stated residual above: control flow on candidate data chooses among the operator's own branches.
 
-     **Evidence.** EVIDENCE_PLACEHOLDER
+     **Evidence.** Source commit `c62e9b02`; the rows ran at `e76bcbfb` (docs-only on top of it) on gpumaster from clean clones, everything else
+     locally at the same tree (`git status` clean). (1) Rows **M2700-M2767: 68/68 KILLED by their own attack** (baseline passed for each, 0
+     REFUSED_ELSEWHERE, 0 unexpected survivors, 0 stale; exit 0): 64 interpreter-unit rows, each removing one hook of the taint with the static
+     layer OFF and the attack case it must let through named in its marker (`ATTACK: <case> completed`; every case that got through is listed,
+     so a row names its own), and 4 runner rows (`axon_psv::runner::run`) for the closure table. A first local run of the draft rows killed 50 of 70: of
+     the other 20, some edits were redundant hooks (removed from the code, not rowed: a note on store, an object mark in `t_note`, an `ALL` for
+     a sealed callee, a resume/feed taint, a global-closure note, the sealed-global branch), most had a case that did not exercise their hook
+     (rewritten until the hook's removal let its own attack through) and one edit compiled to nothing; the final set is the 68 above. (2) **All 199 other active `crates/axon-core/src` rows re-run (the interpreter changed): 199/199
+     KILLED by their own attack**, two shards (99 + 100), exit 0, 0 REFUSED_ELSEWHERE each. The first, partial run of this set, before the unit-test
+     default above, scored 13 of the older rows SURVIVED or REFUSED_ELSEWHERE (the taint refusing the attack first: M91, M1990-M1996, M2171,
+     M2173, M2176-M2178); with the default they are killed again. The four runner legs (M2603-M2605, M2607) are withdrawn, above. (3) `cargo test -p axon-core --no-default-features --no-fail-fast`: exit 0, 25 test
+     binaries, 1838 passed, 0 failed (lib 814, of which 185 `interp::` tests and 14 the taint's own; the run found the Asyncify refusal and the
+     `refusal_coverage_gate`/`pci_delta_note` obligations). `cargo test -p axon-psv`: exit 0 (sealed_frames 27 tests: the 24 existing plus 3 here).
+     `cargo test -p axon-fabric --test psv_dispatch --test check_effects --test attestation`: exit 0 (8, 27, 50). `cargo test -p axon-cortex`: exit 0.
+     (4) `cargo clippy --no-default-features -p axon-core --all-targets -- -D warnings` and `cargo clippy -p axon-psv --all-targets -- -D
+     warnings`: exit 0; `cargo fmt --all -- --check`: exit 0. (5) `scripts/v022_pci_gates.sh`: PASS, 62 rows (7 added, plus the sweep step), exit 0.
+     (6) The sweep: `PSV1T_TAINT_ONLY=1 cargo test -p axon-core --no-default-features --lib interp::` (every rule-on interpreter test with the static
+     analysis OFF and only the taint ON): 183 of 185 pass, exactly the two operator-only-untyped programs fail. (7) `python3 scripts/v022_refusal_coverage.py`
+     exit 0 and `--freeze` exit 0 (it first named the two new refusal sites, `t_check_names_sealed` and `t_check_call_picked_sealed`, now rowed by M2705
+     and M2701, and five older rows whose anchors my first edits had moved; those were kept in place by restructuring my code, not by editing the
+     rows). (8) `scripts/psv_matrix_check.py`: PASS, 224 rows (A219-A224 added). (9) `scripts/pci_delta.py --check`: PASS. (10) The reviewers' replay
+     cases (`/var/tmp/c9r10-PSV1-logs/w`) through the built `axon test --seal` with the runner's flags, base `5e16d8b4` against this tree: the
+     round-10 closed cases (u1-u8, w1-w4, z1-z8) behave the same; the open closure-table cases that completed at the base (rc=0) are refused
+     (rc=3): `dict_get(h, entry())`, `ops[idx()]`, and a closure assigned under a branch on `idx()`; their honest controls (a literal row, the
+     candidate's own closure, the honest `sandbox_run`) still pass (rc=0).
+     **Unfinished / decided otherwise.** The integer-handle and authority-value class is not closed (above). The four withdrawn runner-leg rows
+     are a loss of runner-level evidence for the static guards, offset by their unit twins; an operator who prefers a four-cell record for them
+     must accept that the whole-package-suite cell cannot be green. The cost to an ordinary run is 2-5%, not zero. Native codegen is not covered.
