@@ -587,7 +587,16 @@ User-defined enums lower to a tagged-union struct:
 
 The tag is an `i32` (not `i1`) to accommodate more than two variants. Tag values are assigned
 by variant declaration order starting at 0. Variant fields are packed into the payload at
-consecutive byte offsets (no padding in Phase 1) in declaration order.
+consecutive byte offsets (no padding in Phase 1) in declaration order; construction and
+`match` find a field's offset by its name, never by the position a literal or pattern lists it.
+
+**Recursive variants.** A field whose type holds its own enum by value (`Add { l: Expr, r:
+Expr }`, `Wrap { o: Option<Expr> }`, a struct field holding the enum, or mutual recursion
+through another enum) is *boxed*: its 8-byte slot holds a pointer to a `malloc`'d copy of the
+value, written once at construction and read through on `match`. Copies of the enum value
+share the box; nothing writes to it after construction. An array field (`[Expr]`) is already a
+pointer and is stored inline. A struct that holds itself by value with no enum on the cycle
+(`type Node = { next: Option<Node> }`) has no finite layout and is refused with E0910.
 
 This is distinct from `Result<T,E>` (which uses `i1` as the discriminant) and `Option<T>`
 (which uses `i1` as the discriminant).
@@ -835,6 +844,7 @@ Where each value's storage comes from (no heap allocation in this table is ever 
 | `to_str_f64` result (Phase 2+) | `malloc` per call | Leaks in Phase 2 |
 | Array literals, non-escaping (escape analysis, §3 "Array literal storage") | One entry-block stack slot per literal site, reused by every evaluation | No heap use; flat RSS in loops |
 | Array literals, escaping (returned, stored, captured, retained by a callee) | `malloc` per evaluation | Leaks |
+| Boxed (recursive) enum payload fields (§6) | `malloc` per construction | Leaks |
 | Closure environments | `malloc` at closure creation | Leaks in Phase 3 |
 | Channel handles | `malloc` in `__axon_chan_new` | Freed via `__axon_chan_drop` (ref-counted) |
 
