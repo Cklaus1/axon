@@ -90,13 +90,15 @@ fn the_protected_profile_name_has_one_definition() {
         let text = std::fs::read_to_string(f).unwrap();
         for (n, l) in production(&text) {
             if l.contains("const PROTECTED_PROFILE:") {
-                defs.push(format!("{}:{n}", f.file_name().unwrap().to_string_lossy()));
+                let _ = n;
+                defs.push(f.components().rev().take(3).collect::<Vec<_>>().iter().rev()
+                    .map(|c| c.as_os_str().to_string_lossy().to_string()).collect::<Vec<_>>().join("/"));
             }
         }
     }
     assert_eq!(
         defs,
-        ["lib.rs:27"],
+        ["axon-psv/src/lib.rs"],
         "ATTACK: the protected profile's name is defined more than once (it was in readiness.rs and psv)"
     );
     assert_eq!(axon_psv::PROTECTED_PROFILE, "linux-microvm-protected");
