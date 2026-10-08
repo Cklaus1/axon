@@ -88,6 +88,16 @@ ROWS=(
   "am100 name sinks|axon-psv|sealed_frames|sandbox_run_runs_no_function_name_the_candidate_chose scheduler_spawn_runs_no_function_name_the_candidate_chose goal_eval_runs_no_function_name_the_candidate_chose"
   "am100 existence oracle|axon-core|lib|interp::tests::a_sealed_caller_cannot_tell_an_operator_fn_from_a_missing_one"
   "am100 drift: any globals mention, any runner of user code|axon-core|lib|interp::tests::every_global_read_goes_through_global_ref interp::tests::every_builtin_that_runs_user_code_is_classified"
+  # Amendment 102: the runtime taint. Each attack runs with the STATIC pin analysis OFF (only the
+  # taint rules on) and again with every rule off, to show it is live; the honest controls run
+  # with both layers on. One test per family, one case per hook of the taint.
+  "am102 runtime taint: closure picks|axon-core|lib|interp::taint_tests::an_operator_closure_the_candidate_picked_is_never_called"
+  "am102 runtime taint: names|axon-core|lib|interp::taint_tests::a_name_sealed_code_had_a_hand_in_never_selects_an_operator_fn interp::taint_tests::bypass_shapes_hunted_after_the_first_cut"
+  "am102 runtime taint: impl and width|axon-core|lib|interp::taint_tests::a_type_or_width_sealed_code_chose_is_never_dispatched_on"
+  "am102 runtime taint: carriers and control|axon-core|lib|interp::taint_tests::taint_survives_every_carrier_a_value_can_travel_by interp::taint_tests::the_remaining_routes_a_selection_can_take interp::taint_tests::every_hook_of_the_taint_has_an_attack_of_its_own"
+  "am102 runtime taint: an ordinary run takes none|axon-core|lib|interp::taint_tests::an_ordinary_run_takes_no_taint"
+  "am102 drift: classes, writers, dispatch sites, value holders, frames, swept files|axon-core|lib|interp::taint_tests::every_builtin_has_a_taint_class interp::taint_tests::every_dict_builtin_is_a_listed_writer_or_a_reader_that_does_not_write interp::taint_tests::builtins_are_dispatched_only_where_the_taint_is_routed interp::taint_tests::every_type_that_holds_a_value_keeps_its_taint interp::taint_tests::only_fn_and_closure_frames_restore_the_control_taints interp::taint_tests::every_interp_file_is_read_by_the_drift_sweeps"
+  "am102 runtime taint (runner leg)|axon-psv|sealed_frames|an_operator_closure_the_candidate_picked_is_never_called a_name_built_out_of_the_candidates_bit_never_selects_an_operator_fn taint_survives_every_carrier_a_value_can_travel_by"
 )
 
 for row in "${ROWS[@]}"; do
@@ -125,6 +135,21 @@ for row in "${ROWS[@]}"; do
     echo "  OK   PCI $sid ($pkg/$target): $ran/$want"
   fi
 done
+
+# Amendment 102, the sweep: every interpreter test that holds with the static pin analysis on
+# holds with ONLY the runtime taint on (PSV1T_TAINT_ONLY=1 runs each rule-on test that way),
+# except the two programs in which the OPERATOR alone is untyped and the static layer over-refuses
+# by design (an unannotated lambda's result; the value of a handler expression). A third failure
+# is a hole in the taint, or in the static layer, and fails the gate.
+sweep="$(PSV1T_TAINT_ONLY=1 cargo test --locked -q -p axon-core --no-default-features --lib interp:: 2>&1)"
+failed="$(printf '%s\n' "$sweep" | sed -n 's/^    \(interp::[A-Za-z0-9_:]*\)$/\1/p' | sort | tr '\n' ' ')"
+expected="interp::tests::operator_code_never_dispatches_on_a_value_from_any_untyped_position interp::tests::the_value_of_a_with_handler_expression_is_undetermined_until_pinned "
+if [ "$failed" = "$expected" ]; then
+  echo "  OK   PCI am102 sweep: with only the taint on, exactly the two static-only programs differ"
+else
+  printf '%s\n' "$sweep" | tail -20
+  echo "  FAIL PCI am102 sweep: failing set is [$failed], expected [$expected]"; fail=1
+fi
 
 if [ "$fail" -ne 0 ]; then echo "v022_pci_gates: FAIL"; exit 1; fi
 echo "v022_pci_gates: PASS — ${#ROWS[@]} rows"

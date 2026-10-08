@@ -5987,7 +5987,7 @@ guards of the helper have no cargo row (`TMPDIR=/tmp`, the `/tmp` tmpfs); the ki
 100. **Source: the round-10 PSV-1 review (two executed blockers; the round-9 `sandbox_run` blocker is closed), the SENTINEL
      reviewer's two minors, the PSV-3 reviewer's two text minors and an existence-oracle minor.** Mutation ids
      M2600-M2624, matrix rows A208-A212 (another branch may use A213+; the integrator renumbers). Base
-     `c9r9/integrate8` (`d63416c4`), source commit `cc74956e`. `crates/axon-core/src/interp*` changed; classified in
+     `c9r9/integrate8` (`d63416c4`), source commit `c62e9b02`. `crates/axon-core/src/interp*` changed; classified in
      `scripts/pci_delta.py` as narrowing.
      - **BLOCKER A: handler arms and continuation replay ran under the WRONG PIN OWNER.** Pin sites are keyed
        (owning fn, hash of the site text) and every lookup uses `Interp::pin_fn`. `run_handler_arm` and
@@ -6120,3 +6120,187 @@ guards of the helper have no cargo row (`TMPDIR=/tmp`, the `/tmp` tmpfs); the ki
        equivalent mutant, so none); the integer-handle class was not examined.
 
 **Renumbering at integration (round 10, integrate9).** Amendment 101 (buildenv6) wrote its matrix rows as A220-A225 while amendment 100 (psv1h) holds A208-A212; the integration made the matrix contiguous: amendment 101's rows are now A213-A218. The text of amendment 101 was rewritten to the new ids.
+
+## Amendment 102: a runtime taint at the selection primitives, instead of one more static instance (C9 round 11, PSV1T)
+
+102. **Source: the operator's decision of 2026-10-08.** Five review rounds in a row found a NEW member of one class
+     of PSV-1 ("candidate bytes never define, add or select the rubric"): a value, name, key or owner chosen by SEALED
+     code reaches operator state without a seal edge (a u8 laundered through `.ok()`, `&mut [T]` write-through, fn
+     values, `sandbox_run` results, a handler arm's pin owner, a candidate-returned STRING naming an operator fn, and
+     the still-open operator-built TABLE of closures selected by a candidate key or index). Each fix was a static
+     analysis (`interp/pin.rs`: `seal_dispatch`, `seal_width`, `seal_name_args`, `Tys`, `npure`) that was one instance
+     short of the next. Mutation ids M2700-M2767, matrix rows A219-A224 (another branch may use A230+; the integrator
+     renumbers). Base `c9r10/integrate9` (`5e16d8b4`), source commit `22c44ac7`. `crates/axon-core/src/interp*` changed;
+     classified in `scripts/pci_delta.py` as narrowing.
+
+     **WHAT IS ENFORCED, EXACTLY.** The property is **candidate bytes cannot choose WHICH operator code runs, or WHICH
+     operator impl or integer width answers.** It is not "candidate output cannot influence the verdict": it
+     legitimately does, because a suite exists to compare the candidate's answer with an expected one.
+
+     | Selected by taint (refused in an operator frame) | Not selected (the operator's own job) |
+     |---|---|
+     | a NAME a sealed value had a hand in, given to a name-resolving builtin (`pin::NAME_SINKS`, 20 builtins) | plain data compared with an expected value: `assert_eq(cand(x), 9)` |
+     | an operator CLOSURE (or fn value) a sealed value picked out of a table by a key or index, by a branch on a value it chose, or by being handed back, then CALLED | statement-level control flow on data: `if cand_ok() { op_a() } else { op_b() }` runs code the operator wrote on each side |
+     | the IMPL a method call dispatches to, when the receiver's runtime TYPE was sealed code's (`impl J for i64` against `for u8`) | `match cand_result() { Ok(n) => .., Err(e) => .. }`, arithmetic on `i64` values the candidate returned, a loop run as often as the candidate says |
+     | the WIDTH of fixed-width arithmetic whose operand's width was sealed code's (`255 as u8`, then `v << 1`, `-v`, `~v`, `256 * v`) | comparisons of any width |
+
+     **Why a branch is not a selector and a value built by a branch is.** `if c { run("a") } else { run("b") }` runs
+     code the operator wrote on each side; the candidate contributes one bit of DATA, the same bit it contributes
+     to `assert(cand(x) == 9)`. But `let n = if c { "a" } else { "b" }`, `ops[if c { 1 } else { 0 }]`, a name
+     assigned under `c`, a name returned out of a branch on `c` build a VALUE out of the candidate's bit and use it as
+     a selector: that is the open finding of amendment 100 with the index spelled as a comparison. So a value is
+     tainted by the data AND the control it depended on (below). The residual is stated plainly: an operator that
+     branches on candidate data and runs a weaker check on one side has written a rubric the candidate chooses a
+     branch of. The taint does not claim to close that; no sound rule can, since the verdict must depend on the
+     candidate's output.
+
+     **THE DESIGN AS BUILT.**
+     * **Two bits.** `VAL` (1): the VALUE is the candidate's choice. `TYP` (2): the runtime TYPE or WIDTH is. Everything
+       a sealed frame computes carries both. A pin the operator wrote clears `TYP` and only `TYP`: `let x: T = ..` after
+       the cast machinery verified a CLOSED `T` (`Pins::closed_ty`, the same closedness the static analysis used), a
+       typed parameter or declared return of an OPERATOR fn, a closure parameter whose declared type is closed, `x as
+       T`, a comparison or logical operator (`bool`), string interpolation (`str`), and a builtin whose declared return
+       is a closed scalar. An annotation never clears `VAL`: it pins a type, not a name, an index or a closure.
+     * **Where taint lives.** Not in `Value` (17 variants; `Int(i64)` has no spare bit; `Rc<Vec>`/`Rc<String>` are shared
+       copy-on-write; ~100 construction sites in the builtins). The EVALUATOR carries it: (1) an accumulator `acc`
+       holding the OR of every taint touched while the expression being evaluated was computed, saved and merged by ONE
+       wrapper around `eval` (`Interp::eval_tainted`), so any construct, a builtin included, propagates by default and
+       no per-builtin code can drop it; a block's non-tail statements are discarded, its tail is its value; (2) a taint
+       per BINDING in `Env` (`Env::define` takes it as a REQUIRED argument: a binding site that does not say what it
+       carries does not compile), carried through a closure's capture cell in companion keys; (3) a taint per SHARED
+       object (dict, channel) by Rc address, set by a write that was tainted or that sealed code made and read by every
+       builtin that is handed the object; (4) a taint per module-level `let`. Heap values are coarse: a container's taint
+       is its holder's, and a read inherits the key's as well as the container's. Over-approximate by design.
+     * **Control.** `pc` taints what is STORED under a tainted branch or loop (an assignment, a slot write, an append, a
+       dict write, a `return` value); a fresh `let` in the branch is scoped to it and is not tainted by it. `sticky` is
+       raised by a branch that can leave early (`return`, `break`, `continue` anywhere in it, taken or not) and kept to
+       the end of the fn: the fn's RESULT and every later STORE carry the condition (`if c { return "x" }; "reference"`;
+       `x = "a"; for .. { if c { break }; x = "b" }`), while a value merely computed there does not. Control carries
+       `VAL` only: a branch picks among types the operator wrote.
+     * **Closures.** A closure object that leaves an evaluation carrying `VAL` is recorded as PICKED by capture-cell
+       address (and one read out of a tainted binding for a call by name); calling a picked operator closure (not one
+       sealed code made) is refused. That ONE call-time check covers every spelling of the read (`dict_get`, `Expr::Index`,
+       `dict_values` then index, a branch, a struct field, a tuple, a captured index, a channel, a module-level let).
+     * **Builtins.** Default: the result carries the OR of the argument taints (done by the accumulator, not by a table).
+       Three classes need more (`interp/taint.rs`; `every_builtin_has_a_taint_class` fails for a builtin in none): KERNEL
+       (principals, sandboxes, scheduler, supervisors, stores, gateways, goals, agents: 57 builtins by prefix) and WORLD
+       (files, env, exec, http, sql, `host_await`, the clock, the RNG, hardware, `ai_*`: 63), each with ONE sticky taint
+       that a call ORs in from its arguments and out into its result (a sealed frame writes WORLD too: a file the
+       candidate wrote reads back tainted); and DICT WRITERS (`dict_set`, `dict_remove`, `dict_inc`), which mark their dict.
+       Handler arms are bound the taint of the operation they answer; a `with` block's return arm the taint of the value
+       it rewrites. A closure sealed code calls runs under a raised `pc`.
+     * **Gating and cost outside a sealed run.** Everything is gated on the seal. The hot paths that carry a hook
+       (`eval_arm`, `eval_block`, `eval_call`, `eval_binop`, `assign_in_place`, `eval_int`, `run_loop_body`,
+       `call_fn_frame`, `call_closure_owned_by`) are generic over `T` = "this is a sealed run", and their recursion calls
+       the right instance DIRECTLY (`eval_t::<T>`), so the ordinary run's instance has the hooks compiled out and never
+       branches on the seal per node; only code that does not know which run it is in (`eval`, builtins, handler arms)
+       branches. What an ordinary run still pays: one `u8` per binding in `Env`, a save/restore of two cells per fn call,
+       one branch per fn or closure call to pick the instance. MEASURED, release build, min of 5, base `5e16d8b4`
+       against this tree: a tight `while` loop (8M iterations) 1.28 s against 1.31 s (+2.5%), `fib(35)` 7.50 s against
+       7.85 s (+4.7%), a 1500 x 3000 `arr_map` closure loop 1.42 s against 1.49 s (+5.3%). That is MEASURABLE, and it is
+       stated, not hidden: it is the price of one evaluator that serves both runs. Two earlier forms cost more: a branch on
+       the seal at every `eval` cost the tight loop 7%; a function POINTER chosen once (the loop then cost nothing)
+       was REFUSED by the wasm Asyncify guard (R15, `wasm_asyncify_host_await.sh`: "2 function(s) reach
+       env.axon_host_await AND are address-taken"), which the full axon-core suite found; a fn that can suspend may not
+       be address-taken, so the choice is a compile-time one. Rebuilds of the same source differ by up to 3% on the
+       call-heavy programs (code layout). Behaviour is unchanged: 120 example programs (`examples/*.ax`, `stdlib`, `asi`),
+       run with both binaries under `AXON_AI_MOCK`/`AXON_SEED`/`AXON_CLOCK`, print byte-identical output (the run-id line
+       excluded; four differed only by a binary path in an error message and by a file the example itself accumulates
+       across runs).
+     * **Test-only switches.** In a unit test the taint rules are OFF unless a test asks for them (`TAINT_FORCE_ON`), so
+       every older test still judges ONE static layer by its own attack: a taint that refused the same attack first would
+       hide a removed static guard (the first, partial run of the older interpreter rows found 13 such, M91 and M1990-M2178,
+       before this default). The taint's own tests turn it on, with the static layer OFF (`DISPATCH_RULE_OFF`) so the
+       attack reaches the taint rule and is judged by it alone, and run each such attack with every rule off to show it is
+       live. Both layers on is the third column (the honest controls).
+     * **Four rows withdrawn.** M2603, M2604, M2605 and M2607 (amendment 100) were the RUNNER legs of M2600, M2601, M2602
+       and M2606: the very same edits, killed through `axon_psv::runner::run`. With the taint on, the production route
+       refuses those attacks by the taint, so each edit now SURVIVES there (measured, the four runner tests pass with it
+       applied). They are withdrawn, not retired: the four-cell retirement needs the whole package suite green with the
+       edit applied, and the unit twins, which judge the static guard alone, fail it. The guards stay rowed at the unit
+       level; the runner tests stay as corroboration (matrix A208, A209). M2610 and M2612 (a sink's table entry, shared by
+       both layers) still die at the runner and stay.
+
+     **WHAT STATIC CODE WAS KEPT AND REMOVED.** Kept, whole: `seal_dispatch`, `seal_width`, `seal_width_unary`,
+     `seal_name_args`, `Pins`/`Tys`/`npure`, E0004, `seal_call`, `seal_global`/`global_ref`, `SEALED_FNVAL_MARK`, the
+     cast machinery and every row that targets them. Removed: nothing that was rowed. The runtime rule is added
+     underneath; where the two disagree the stricter wins, and they do disagree in both directions: the taint is
+     stricter on the closure table and on every implicit flow; the static layer is stricter on exactly two programs in
+     which the OPERATOR alone is untyped (`let f = |x| x; f(3).ok()`, and the value of a handler expression), and the gate
+     records that set (below). A static check is a candidate for deletion only when the runtime rule STRICTLY subsumes
+     it and every row that targeted it is re-proved with the four cells; none met that bar, so none was deleted.
+     Redundant taint code I wrote and found unrowable (a note on store, an object mark in `t_note`, an `ALL` for a sealed
+     callee, a resume/feed taint, a global-closure note, the sealed-global branch) was REMOVED, not rowed, because each was
+     subsumed by a mechanism that has its own row.
+
+     **HONEST-PROGRAM COST (stated, fail-closed).** An honest suite that dispatches an operator impl or does fixed-width
+     arithmetic on a value derived from candidate output pins it with `let x: T = ...` (as it already had to). It names
+     the candidate's fn by a literal, and does not choose a closure, a name or a table row by a candidate value. New
+     over-refusals relative to the static layer, each by test: a struct FIELD declared `u8` does not pin the TYPE of a
+     value built from candidate data; a `dyn`/trait/generic annotation never pins; a dict or channel the candidate has
+     WRITTEN is tainted for every later read, a `&mut` argument handed to a candidate fn is tainted on return whatever
+     the candidate did, and a binding that holds a container holding one tainted element is tainted whole; after a branch
+     on candidate data that contains a `return`/`break`/`continue`, the fn's result and later stores are tainted; once
+     tainted data has entered a KERNEL or WORLD builtin, later reads of that family are tainted. Outside a sealed run
+     (`axon run`) nothing is refused.
+
+     **BYPASS VARIANTS, hunted after the first cut (the new class is "a path on which taint is dropped").** 182 programs in
+     `interp/taint_tests.rs`, 149 of them attacks (each live with no rule on, each refused with only the taint rule on).
+     * **Closed, with a test of their own:** a dict key or an index (every spelling above); the index as a comparison, a
+       match, a branch value, an assignment or `return` under the branch; a name through string ops, interpolation, a
+       char-code build, JSON, `Some`/`Ok`, `arr_map`/`arr_fold`, a struct field, a tuple, a module-level struct; through a
+       closure's capture, its result, its `return`, its write-back (lent and shared cell), a closure sealed code calls; a
+       dict the operator wrote and one the candidate wrote (also by alias), a channel (`send`, `recv`, `try_recv`), a
+       `&mut` array both ways, the scheduler, `sandbox_run`'s result, a goal, a file round trip, the kernel and the world
+       sticky taints, a handler arm's payload and a completed arm's value, a `with` block's return arm, a `?`, a loop
+       variable and a loop bound the candidate sized, a store after a `break` or `continue`, a fn or closure tail after an
+       early exit, a module-level `let` and a sealed one, a closure picked from a module-level table; for TYPE: direct,
+       a local, a tuple, `Some`, an array element, a dict read, a generic helper, a branch value, an open builtin result,
+       an untyped closure parameter, a trait or `dyn` annotation and a trait-typed closure parameter, the right and left
+       operand and the unary form of the width arm.
+     * **Every Value construction site.** The accumulator makes propagation the default for every expression kind; the
+       places a `Value` can come from WITHOUT passing through an evaluation are a closed set, and a drift test fails for a
+       new one: `every_type_that_holds_a_value_keeps_its_taint` (the ten types that hold a `Value` or an `Env`, each
+       with how a value read out of it keeps its taint), `every_builtin_has_a_taint_class` (343 builtins, none
+       unclassified), `every_dict_builtin_is_a_listed_writer_or_a_reader_that_does_not_write` (with the behavioural half),
+       `builtins_are_dispatched_only_where_the_taint_is_routed` (two `call_builtin` callers),
+       `only_fn_and_closure_frames_restore_the_control_taints`, and `every_interp_file_is_read_by_the_drift_sweeps`
+       (which found that `interp/regex.rs` was in NO existing sweep; it is now).
+     * **Open / not examined, stated:** (1) integer HANDLES sealed code can choose as keys of operator kernel state
+       (sandbox, principal, goal, fiber, supervisor ids) and authority VALUES (an effect list, a budget) given to
+       `sandbox_create*`: the taint reaches the argument, no sink refuses it. Deciding to make them sinks was weighed and
+       not done: every handle an operator mints after a candidate-driven goal run carries the KERNEL sticky taint, so a
+       handle sink would refuse honest suites. (2) a path or URL a tainted value chooses, and `ai_complete` prompt text:
+       the taint flows into the result through the WORLD taint and nothing refuses the argument. (3) native codegen
+       (`axon build`) and the native `gfx`/`axon-domain` registries (per-`Interp`, shared by both frames; amendment 100's
+       FUTURE note stands). (4) `select`'s choice of arm by channel readiness is control flow, tainted only by the chosen
+       channel. (5) the stated residual above: control flow on candidate data chooses among the operator's own branches.
+
+     **Evidence.** Source commit `c62e9b02`; the rows ran at `e76bcbfb` (docs-only on top of it) on gpumaster from clean clones, everything else
+     locally at the same tree (`git status` clean). (1) Rows **M2700-M2767: 68/68 KILLED by their own attack** (baseline passed for each, 0
+     REFUSED_ELSEWHERE, 0 unexpected survivors, 0 stale; exit 0): 64 interpreter-unit rows, each removing one hook of the taint with the static
+     layer OFF and the attack case it must let through named in its marker (`ATTACK: <case> completed`; every case that got through is listed,
+     so a row names its own), and 4 runner rows (`axon_psv::runner::run`) for the closure table. A first local run of the draft rows killed 50 of 70: of
+     the other 20, some edits were redundant hooks (removed from the code, not rowed: a note on store, an object mark in `t_note`, an `ALL` for
+     a sealed callee, a resume/feed taint, a global-closure note, the sealed-global branch), most had a case that did not exercise their hook
+     (rewritten until the hook's removal let its own attack through) and one edit compiled to nothing; the final set is the 68 above. (2) **All 199 other active `crates/axon-core/src` rows re-run (the interpreter changed): 199/199
+     KILLED by their own attack**, two shards (99 + 100), exit 0, 0 REFUSED_ELSEWHERE each. The first, partial run of this set, before the unit-test
+     default above, scored 13 of the older rows SURVIVED or REFUSED_ELSEWHERE (the taint refusing the attack first: M91, M1990-M1996, M2171,
+     M2173, M2176-M2178); with the default they are killed again. The four runner legs (M2603-M2605, M2607) are withdrawn, above. (3) `cargo test -p axon-core --no-default-features --no-fail-fast`: exit 0, 25 test
+     binaries, 1838 passed, 0 failed (lib 814, of which 185 `interp::` tests and 14 the taint's own; the run found the Asyncify refusal and the
+     `refusal_coverage_gate`/`pci_delta_note` obligations). `cargo test -p axon-psv`: exit 0 (sealed_frames 27 tests: the 24 existing plus 3 here).
+     `cargo test -p axon-fabric --test psv_dispatch --test check_effects --test attestation`: exit 0 (8, 27, 50). `cargo test -p axon-cortex`: exit 0.
+     (4) `cargo clippy --no-default-features -p axon-core --all-targets -- -D warnings` and `cargo clippy -p axon-psv --all-targets -- -D
+     warnings`: exit 0; `cargo fmt --all -- --check`: exit 0. (5) `scripts/v022_pci_gates.sh`: PASS, 62 rows (7 added, plus the sweep step), exit 0.
+     (6) The sweep: `PSV1T_TAINT_ONLY=1 cargo test -p axon-core --no-default-features --lib interp::` (every rule-on interpreter test with the static
+     analysis OFF and only the taint ON): 183 of 185 pass, exactly the two operator-only-untyped programs fail. (7) `python3 scripts/v022_refusal_coverage.py`
+     exit 0 and `--freeze` exit 0 (it first named the two new refusal sites, `t_check_names_sealed` and `t_check_call_picked_sealed`, now rowed by M2705
+     and M2701, and five older rows whose anchors my first edits had moved; those were kept in place by restructuring my code, not by editing the
+     rows). (8) `scripts/psv_matrix_check.py`: PASS, 224 rows (A219-A224 added). (9) `scripts/pci_delta.py --check`: PASS. (10) The reviewers' replay
+     cases (`/var/tmp/c9r10-PSV1-logs/w`) through the built `axon test --seal` with the runner's flags, base `5e16d8b4` against this tree: the
+     round-10 closed cases (u1-u8, w1-w4, z1-z8) behave the same; the open closure-table cases that completed at the base (rc=0) are refused
+     (rc=3): `dict_get(h, entry())`, `ops[idx()]`, and a closure assigned under a branch on `idx()`; their honest controls (a literal row, the
+     candidate's own closure, the honest `sandbox_run`) still pass (rc=0).
+     **Unfinished / decided otherwise.** The integer-handle and authority-value class is not closed (above). The four withdrawn runner-leg rows
+     are a loss of runner-level evidence for the static guards, offset by their unit twins; an operator who prefers a four-cell record for them
+     must accept that the whole-package-suite cell cannot be green. The cost to an ordinary run is 2-5%, not zero. Native codegen is not covered.

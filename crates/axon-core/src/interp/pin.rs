@@ -142,6 +142,8 @@ pub(crate) struct Pins {
     impls: HashMap<String, HashSet<String>>,
     /// Struct and enum names the OPERATOR defines (and no sealed module does).
     op_types: HashSet<String>,
+    /// What an annotation can pin (kept for the runtime taint's pin sites).
+    tys: Tys,
 }
 
 /// What an annotation can pin, and what the operator defines.
@@ -650,6 +652,7 @@ impl Pins {
             names: sink,
             impls,
             op_types,
+            tys: ctx.tys,
         }
     }
 
@@ -679,6 +682,12 @@ impl Pins {
     /// Whether a unary arithmetic site (`-x`, `~x`) has a determined operand.
     pub(crate) fn determined_unary(&self, owner: usize, op: &UnaryOp, operand: &Expr) -> bool {
         self.determined.contains(&(owner, unary_key(op, operand)))
+    }
+
+    /// Whether an annotation of type `t` pins the runtime type to one the
+    /// operator chose (a closed type; see the module doc).
+    pub(crate) fn closed_ty(&self, t: &T) -> bool {
+        self.tys.is_closed(t, &[])
     }
 
     /// Whether `method` can select between operator impls (two or more types).

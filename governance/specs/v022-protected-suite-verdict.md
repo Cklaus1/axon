@@ -138,7 +138,21 @@ Each clause names what must hold. The negative matrix below names how each one f
 - The guest executes the operator-registered suite (`check_registry`, pinned by WorkspaceVersion
   and entry) and exactly the task's registered acceptance test (`task_acceptance`).
 - Candidate bytes can never define, add or select the rubric (G01-r22-verifier-separation, in the
-  guest).
+  guest). What the guest interpreter ENFORCES by that name (amendment 102, a runtime taint under the
+  static analyses of amendments 53-100, which stay): a value that sealed (candidate) code produced
+  carries a taint that every operation of the evaluator propagates, and an operator frame REFUSES to use
+  a tainted value as a SELECTOR: the NAME given to a name-resolving builtin (`sandbox_run`,
+  `scheduler_spawn`, the `goal_*` family), an operator CLOSURE the candidate picked out of a table by a
+  key, an index or a branch and then called, the IMPL a method call dispatches to (the receiver's runtime
+  type), and the WIDTH of fixed-width arithmetic. That is the whole claim: candidate bytes cannot choose
+  WHICH operator code runs or WHICH operator impl or width answers. It is NOT the claim that candidate
+  output cannot influence the verdict: it does (the suite compares the candidate's answer with an
+  expected one), and an operator that branches on candidate data (`if cand_ok() { a() } else { b() }`)
+  has written a rubric the candidate chooses a branch of. Not covered: integer HANDLES of kernel
+  objects and authority values (effect lists, budgets) a tainted value supplies, a path, URL or
+  `ai_complete` prompt a tainted value supplies, native codegen (`axon build`) and the native
+  `gfx`/`axon-domain` registries; the taint is an over-approximation (coarse per binding, per dict and
+  per channel), and its cost to an honest suite is listed in amendment 102.
 
 **PSV-2 — Separately sealed, digest-bound inputs.**
 - Candidate tree and suite tree are delivered to the guest as two separately sealed inputs, each
@@ -154,7 +168,7 @@ Each clause names what must hold. The negative matrix below names how each one f
   runs only if the candidate calls it, so a suite must assert after the call.
 - Sealing, containment and per-provenance kernels run in the guest interpreter as certified at
   `31413ca7` (`governance/proofs/v022-pci/CERTIFICATION.md`, local backend, EMPTY effect ceiling)
-  plus amendments 53/60/72/78/83/88/94/96/100 (the delta, listed from git in `governance/notes/v022-pci-delta.md`).
+  plus amendments 53/60/72/78/83/88/94/96/100/102 (the delta, listed from git in `governance/notes/v022-pci-delta.md`).
   origin/main's 13 commits under `crates/axon-core/src` were MERGED WITHOUT PCI REVIEW; only 5 of the 13
   change the interpreter (Rc arrays and cheaper calls, shared strings with lent closure captures,
   `&mut` write-through, first-class fns, the `arr_sort_by` rewrite) and the other 8 change no interpreter
@@ -176,6 +190,9 @@ Each clause names what must hold. The negative matrix below names how each one f
   marked and an operator closure is not replaceable by one; and the dispatch rule's width arm covers
   `-x` / `~x`. Its sweep lists what it examined, what was open and what it did not examine, and claims
   no completeness; every builtin that runs user code is classified by a drift test.
+  Amendment 102 (round 11) moves the class "a value or name sealed code chose selects operator code" from a static
+  sweep, which five rounds in a row found one instance short, to a runtime taint at the selection primitives (PSV-1
+  above); the earlier edges stay underneath it and are not claimed redundant.
   Each amendment's PRINCIPAL arms are exercised by named gate rows in `scripts/v022_pci_gates.sh`
   (rows named `am53` ... `am96`; the row count is not quoted here, it is derived and drift-tested
   by `scripts/pci_delta.py --check`). Arms verified to fail a gate row when their code is removed:
