@@ -3287,8 +3287,6 @@ EXEMPT += [
      _A95['const_bound']),
     ('crates/axon-fabric/src/backend.rs', 'pub const GUEST_POLICY_SCHEMA: &str = "axon-vm-mmds/1";',
      _A95['const_tag']),
-    ('crates/axon-fabric/src/backend.rs', 'const LAUNCH_PATH: &str = "/usr/sbin:/usr/bin:/sbin:/bin:/usr/local/bin";',
-     _A95['const_path']),
     ('crates/axon-fabric/src/bin/axon-fabric.rs', '    std::fs::create_dir_all(&od).unwrap();',
      _A95['hidden_verb']),
     ('crates/axon-fabric/src/bin/axon-fabric.rs', '        expected_manifest_sha256: sha.clone(),',
@@ -3321,8 +3319,6 @@ EXEMPT += [
      _A95['const_bound']),
     ('crates/axon-fabric/src/custodian.rs', 'const SCM_PIDFD: libc::c_int = 4;',
      _A95['const_other']),
-    ('crates/axon-fabric/src/custodian.rs', 'pub const MAX_OUTSTANDING: usize = 1024;',
-     _A95['const_bound']),
     ('crates/axon-fabric/src/git_data.rs', '                .ok_or(format!("{} is not a gitfile", dotgit.display()))?;',
      _unjudged('`unwrap_or("")`')),
     ('crates/axon-fabric/src/git_data.rs', '        .ok_or("the repository config path is not UTF-8")?;',
@@ -3421,12 +3417,8 @@ EXEMPT += [
      _A95['const_exit']),
     ('crates/axon-fabric/src/privileged_launcher.rs', 'pub const EXIT_UNKNOWN: i32 = 31;',
      _A95['const_exit']),
-    ('crates/axon-fabric/src/privileged_launcher.rs', 'const PATH_ENV: &str = "/usr/sbin:/usr/bin:/sbin:/bin";',
-     _A95['const_path']),
     ('crates/axon-fabric/src/privileged_launcher.rs', 'const MAX_REQUEST: u64 = 256 << 10;',
      _A95['const_bound']),
-    ('crates/axon-fabric/src/privileged_launcher.rs', 'const DIR_FLAGS: libc::c_int = libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW;',
-     _A95['const_other']),
     ('crates/axon-fabric/src/protected_host.rs', '            .ok_or_else(|| NO_GRANT_REGISTRY.to_string())?;',
      _nodefault()),
     ('crates/axon-fabric/src/protected_host.rs', '                .ok_or_else(|| bad(format!("{ptr} is not a string")))?;',
@@ -5056,6 +5048,7 @@ def const_sites(f, text, names):
 
 REMAINDER_SITES = []
 OBSERVED_SITES = []
+VALUE_STATS = {}   # (form|flow, disposition) -> count of value sites (amendment 107)
 
 
 # ── Amendment 103 (C9 round 11, eqgate6): a VALUE is a site ───────────────────
@@ -5087,15 +5080,26 @@ OBSERVED_SITES = []
 # category `val_*`, NEVER claimed covered). (d) a literal compared inside a
 # refusal is judged by the existing per-TERM rule, not by this form.
 STILL_BLIND = [
-    "a value built by computation, or handed through a local binding (`let m = 0o700; mkdir(m)` is seen at the literal, "
-    "not at the use; a `format!` of variables, a path joined at run time, a flag set read from a table)",
-    "a spawn through a wrapper fn or a builder not named .env/.arg/.args/.current_dir/.stdin/.stdout/.stderr/.uid/.gid, "
-    "and the bytes of a script or file handed to a child",
-    "a struct literal whose type name is not Config/Cfg/Authority/Policy/Manifest/Trust, and a literal inside a nested literal",
+    "a value built by COMPUTATION: amendment 107 follows a literal, a const, a collection of them and a local that is "
+    "bound to one (one `let` level, plus the `push`/`extend` made on it) to a sink, but a `format!` of variables, a "
+    "path joined at run time, a flag set read from a table, a value passed through TWO locals or through a parameter "
+    "(other than an expected-owner `Option<u32>` parameter, which is resolved at every call) is COMPUTED: the number "
+    "of such sink arguments is printed (`VALUE FLOWS NOT FOLLOWED`) and they are not sites",
+    "a spawn through a wrapper fn that is not in EXEC_WRAPPERS and not in EXEC_CONSTRUCTORS: both tables are checked "
+    "against every non-test `Command::new` of the scope in both directions, so a NEW constructor fails the gate, but a "
+    "wrapper that forwards its arguments to `sealed_exec::command` through its own parameters is followed only at the "
+    "inner call (its callers' literals are not), and the bytes of a script or file handed to a child",
+    "a struct literal whose type name is not Config/Cfg/Authority/Policy/Manifest/Trust (except a field NAMED owner, "
+    "which is a site anywhere), and a literal inside a nested literal",
     "a default read as a value (unwrap_or / map_or / Default::default) and an absent field's neutral value",
     "a uid or mode that is the operand of a COMPARISON (only the per-term rule and the constant rule see those), and a "
     "literal compared inside a refusal",
-    "whether a REMAINDER or OBSERVED entry is true (nothing re-runs the survey that wrote it), and that a row which "
+    "a const used at a sink in a file OTHER than the one defining it, written bare through a `use` (its initialiser is "
+    "a site only when the use is in the defining file or written with a path), and a function PARAMETER that is not an "
+    "`Option<u32>` expected-owner (a `u32` uid or a `&str` flag passed down is followed only at the inner sink)",
+    "whether a REMAINDER entry is true (nothing re-runs it); an OBSERVED entry is re-measured by "
+    "`scripts/v022_value_survey.py --again` / `scripts/v022_py_guard_survey.py --again`, which the FREEZE requires a "
+    "recent record of (`scripts/v022_resurvey.py`), but only over the sample that record names; and that a row which "
     "deletes a REDUNDANT PAIR (git_cmd's GIT_NO_LAZY_FETCH + protocol.allow) credits each member though only the pair "
     "is shown to be observed",
     "Python other than scripts/guest_build_env.py, the shell scripts, and any decision that is not Rust or that file",
@@ -5184,10 +5188,333 @@ def _fn_of(clean_lines, spans, line):
     return best[1] if best else ""
 
 
-def value_sites(text, regions=None):
-    """[(begin, end, label, fn, n)] value sites (see amendment 103) of the non-test code of `text`;
-    `n` counts a function's value sites from 1 in source order."""
-    clean = _value_text(text)
+
+# ── Amendment 107 (C9 round 11, eqgate7): VALUES FOLLOWED TO THEIR SINKS ──────────────
+# Rounds 7-11 extended the gate by INSTANCE and the class recurred one hop further out each
+# time: a builder call, then an owner written `Some(h.owner)`, then the one primitive every
+# protected exec flows through (`sealed_exec::command(&p, None, &args, &env, &keep)`, whose
+# arguments are `vec![..]`, a local and a const, none of them a `.arg(..)` call), then an owner
+# argument carried in a FIELD (`lx.exec_owner`). This rule follows VALUES to SINKS instead of
+# matching the syntax at the call. A conservative, name-based, intra-crate dataflow:
+#   sinks    (1) an EXEC WRAPPER (`EXEC_WRAPPERS`: a fn that builds a Command from its
+#                arguments), by argument position; (2) a fn with an `Option<u32>` EXPECTED-OWNER
+#                parameter (discovered from the sources: `owner_primitives()`), every call
+#                of which is a site per call, whatever the argument is (a field, a local, a
+#                parameter, `None`); (3) a struct-literal field NAMED owner/uid/gid; (4) the
+#                flag argument of `openat`/`open`/`.custom_flags(..)` when it is a const.
+#   flow     the argument expression is followed: a `vec![..]` / array / tuple is split into its
+#            elements; a local name is resolved ONE level to its `let` initialiser and to the
+#            `push`/`extend`/`insert` calls made on it before the sink (inside the same fn);
+#            a literal, a `format!`, a `.into()` of a literal is a site; a CONST name is a site at
+#            the use AND at the const's definition (the initialiser), wherever the const is
+#            defined in scope; a value that is none of these is COMPUTED and counted.
+# The sites are numbered under a function name suffixed `~flow`, so adding this rule renumbers
+# none of the amendment-103 exemptions. A flow site is credited exactly like the others: a
+# row whose edit CHANGES its characters, a VALUE_EXEMPT entry (OBSERVED / DOMINATED / NOTROUTE
+# / REMAINDER), never a neighbour's edit.
+EXEC_WRAPPERS = {
+    # callee as written (matched by suffix) : [(argument index, label)]
+    "sealed_exec::command": [(2, "flow_argv"), (3, "flow_env")],
+}
+# EVERY non-test `Command::new` of an in-scope file is either the wrapper above or a BUILDER whose
+# callers (or whose own body) are `.arg/.env/..` sites. The table is checked in BOTH directions
+# (`exec_constructor_drift`), so a new fn that builds a Command from its parameters is not silently
+# a blind wrapper: it fails the gate until it is listed here as one or the other.
+EXEC_CONSTRUCTORS = {
+    ("crates/axon-fabric/src/sealed_exec.rs", "command"): "wrapper sealed_exec::command",
+    ("crates/axon-fabric/src/git_data.rs", "git_cmd"): "builder: its env/args are its own .env/.arg sites; callers add .args(..) sites",
+    ("crates/axon-fabric/src/git_data.rs", "refuse_config"): "builder: own .arg sites",
+    ("crates/axon-psv/src/runner.rs", "exec_axon_test"): "builder: own .env/.arg sites",
+    ("crates/axon-cortex/src/generate.rs", "propose"): "builder: own .arg/.stdin sites (not a protected route)",
+    ("crates/axon-cortex/src/runner.rs", "observe"): "builder: own .arg sites",
+    ("crates/axon-cortex/src/runner.rs", "run_checks"): "builder: own .arg sites",
+    ("crates/axon-core/src/host.rs", "exec"): "OUT OF SCOPE: the language host seam",
+    ("crates/axon-core/src/main.rs", "try_link_wasm"): "OUT OF SCOPE: the language CLI",
+    ("crates/axon-core/src/main.rs", "run_quorum_gate"): "OUT OF SCOPE: the language CLI",
+    ("crates/axon-os/src/runtime.rs", "run_sandboxed"): "builder: own .arg sites (axon-os, not a protected route)",
+    ("crates/axon-vm/src/firecracker.rs", "run_in_firecracker"): "builder: own .arg sites (axon-vm, not a protected route)",
+}
+_FLOW_LOCAL = re.compile(
+    r"^&?\s*(?:mut\s+)?([a-z_]\w*)\s*(?:\.(?:clone|into|as_str|as_slice|to_vec|as_os_str|to_os_string|to_string|as_ref)\(\s*\)|\[\s*\.\.\s*\])*$")
+_FLOW_CONST = re.compile(r"^&?\s*((?:\w+::)*)([A-Z][A-Z0-9_]{2,})\s*(?:\.[a-z_]+\(\s*\))*$")
+_OWNERISH = re.compile(r"(?:^|_)owner(?:$|_)")
+_OWNER_PARAM = re.compile(r"\bOption\s*<\s*u32\s*>")
+_OPEN_SINKS = re.compile(r"(?<![\w.])(?:libc::)?(openat|open)\(|\.custom_flags\(")
+_CONST_DEF = re.compile(
+    r"^[ \t]*(?:pub(?:\([a-z]+\))?\s+)?(?:const|static)\s+([A-Z][A-Z0-9_]+)\s*:[^=;{]*=\s*", re.M)
+_FLOW_STATS = {"computed": 0}
+_OWNER_PRIMS = None
+
+
+def _scope_texts():
+    """[(file, text)] of the in-scope, non-out-of-scope files (memoised)."""
+    global _SCOPE_TEXTS
+    if _SCOPE_TEXTS is None:
+        _SCOPE_TEXTS = [(f, open(os.path.join(ROOT, f)).read())
+                        for f in in_scope_files() if f not in OUT_OF_SCOPE]
+    return _SCOPE_TEXTS
+
+
+_SCOPE_TEXTS = None
+
+
+def owner_primitives():
+    """{fn name: [parameter index, ..]} of every non-test fn of the scope with an `Option<u32>`
+    parameter: the EXPECTED-OWNER primitives. The parameter is the site, so a caller that hands it
+    a field, a local, `None` or `Some(..)` is covered by the same rule (round 11: `lx.exec_owner`
+    -> `None` kept the suite green because only `Some(<x>.owner)` was a form)."""
+    global _OWNER_PRIMS
+    if _OWNER_PRIMS is not None:
+        return _OWNER_PRIMS
+    out = {}
+    for f, text in _scope_texts():
+        clean = _value_text(text)
+        for m in re.finditer(r"\bfn\s+(\w+)\s*(?:<[^>]*>)?\s*\(", clean):
+            op = m.end() - 1
+            parts = _split_group(clean, op)
+            for i, (a, b) in enumerate(parts):
+                piece = clean[a:b]
+                if piece.lstrip().startswith(("&self", "self", "&mut self", "mut self")):
+                    continue
+                if re.match(r"\s*\w+\s*:\s*" + _OWNER_PARAM.pattern, piece):
+                    idx = i - (1 if parts and re.match(r"\s*(?:&\s*(?:mut\s+)?)?self\b", clean[parts[0][0]:parts[0][1]]) else 0)
+                    out.setdefault(m.group(1), []).append(idx)
+    _OWNER_PRIMS = out
+    return out
+
+
+def exec_constructors():
+    """{(file, fn)} of every non-test `Command::new` in an in-scope file (out-of-scope files too:
+    the table names them so nothing is silently skipped)."""
+    out = set()
+    for f in in_scope_files():
+        text = open(os.path.join(ROOT, f)).read()
+        clean = _value_text(text)
+        cl = clean.split("\n")
+        fs = _fn_spans(cl)
+        for m in re.finditer(r"\b(?:std::process::)?Command::new\(", clean):
+            out.add((f, _fn_of(cl, fs, line_of(clean, m.start()))))
+    return out
+
+
+def exec_constructor_drift(bad):
+    """The wrapper/builder table and the sources must agree in both directions."""
+    have = exec_constructors()
+    for k in sorted(have - set(EXEC_CONSTRUCTORS)):
+        bad.append(f"{k[0]}: fn {k[1]} builds a Command and is in neither EXEC_WRAPPERS nor EXEC_CONSTRUCTORS: "
+                   "a wrapper that takes its argv/env from its caller is a blind sink until it is listed")
+    for k in sorted(set(EXEC_CONSTRUCTORS) - have):
+        bad.append(f"{k[0]}: EXEC_CONSTRUCTORS lists fn {k[1]}, which builds no Command: the table must not outlive its fn")
+    for k, why in EXEC_CONSTRUCTORS.items():
+        if why.startswith("wrapper "):
+            if why[len("wrapper "):] not in EXEC_WRAPPERS:
+                bad.append(f"{k[0]}: fn {k[1]} is listed as a wrapper but EXEC_WRAPPERS has no entry for it")
+    return bad
+
+
+def _line_offsets(clean):
+    offs, n = [0], 0
+    for l in clean.split("\n"):
+        n += len(l) + 1
+        offs.append(n)
+    return offs
+
+
+def _flow_values(clean, cl, fspans, found, sink_consts_out=None):
+    """The amendment-107 flow sites of one file: {(a, b): label}, plus (into `sink_consts_out`) the
+    NAMES of the consts that reach a sink here."""
+    offs = _line_offsets(clean)
+    out = {}
+    consts = set() if sink_consts_out is None else sink_consts_out   # {(NAME, written qualified)}
+
+    def covered(a, b):
+        return (a, b) in found or (a, b) in out or any(x <= a and b <= y for (x, y) in found)
+
+    def add(a, b, label):
+        while a < b and clean[a] in " \t\n":
+            a += 1
+        while b > a and clean[b - 1] in " \t\n":
+            b -= 1
+        if b > a and not covered(a, b):
+            out[(a, b)] = label
+
+    def fn_start(line):
+        best = None
+        for head, last, name, _ in fspans:
+            if head <= line <= last and (best is None or head >= best):
+                best = head
+        return offs[best] if best is not None else 0
+
+    def resolve(name, at, label, depth):
+        """The `let` initialiser of `name` before offset `at` in its fn, and the calls that grew it."""
+        lo = fn_start(line_of(clean, at))
+        seg = clean[lo:at]
+        lets = list(re.finditer(r"\blet\s+(?:mut\s+)?" + re.escape(name) + r"\b[^=;{]*?=(?!=)\s*", seg))
+        if not lets:
+            return False
+        m = lets[-1]
+        a = lo + m.end()
+        j, depth_b = a, 0
+        while j < at:
+            c = clean[j]
+            if c in "([{":
+                depth_b += 1
+            elif c in ")]}":
+                depth_b -= 1
+            elif c == ";" and depth_b == 0:
+                break
+            j += 1
+        expr(a, j, label, depth + 1, at)
+        for g in re.finditer(r"(?<![\w.])" + re.escape(name) + r"\s*\.\s*(push|extend|insert|push_str)\(", clean[j:at]):
+            op = j + g.end() - 1
+            for x, y in _split_group(clean, op):
+                expr(x, y, label, depth + 1, at)
+        return True
+
+    def expr(a, b, label, depth=0, at=None):
+        s = clean[a:b]
+        st = s.strip()
+        if not st:
+            return
+        at = a if at is None else at
+        body = st.lstrip("& ").lstrip()
+        if re.match(r"(?:vec\s*!\s*)?\[", body) or (body.startswith("(") and _match_close(body, 0) == len(body)):
+            base = a + s.index(body)
+            k = base + body.index("[" if "[" in body[:6] and not body.startswith("(") else "(")
+            for x, y in _split_group(clean, k):
+                expr(x, y, label, depth, at)
+            return
+        mc = _FLOW_CONST.match(st)
+        if mc:
+            consts.add((mc.group(2), bool(mc.group(1))))
+            add(a, b, label)
+            return
+        ml = _FLOW_LOCAL.match(st)
+        if ml and depth < 2:
+            if not resolve(ml.group(1), at, label, depth):
+                _FLOW_STATS["computed"] += 1
+            return
+        if _has_literal(st):
+            for q, c in re.findall(r"(?<![\w])((?:\w+::)*)([A-Z][A-Z0-9_]{2,})\b", st):
+                consts.add((c, bool(q)))
+            add(a, b, label)
+            return
+        _FLOW_STATS["computed"] += 1
+
+    # (1) exec wrappers
+    for callee, positions in EXEC_WRAPPERS.items():
+        for m in re.finditer(r"(?<![\w])(?:\w+::)*" + re.escape(callee) + r"\(", clean):
+            parts = _split_group(clean, m.end() - 1)
+            for idx, label in positions:
+                if idx < len(parts):
+                    expr(parts[idx][0], parts[idx][1], label, 0, m.start())
+    # (2) expected-owner primitives: the parameter is the site, per call
+    prims = owner_primitives()
+    for name, idxs in prims.items():
+        for m in re.finditer(r"(?<![\w.])(?:\w+::)*" + re.escape(name) + r"\(", clean):
+            before = clean[max(0, m.start() - 12):m.start()]
+            if re.search(r"\bfn\s*$", before):
+                continue
+            parts = _split_group(clean, m.end() - 1)
+            for idx in idxs:
+                if idx < len(parts):
+                    a, b = parts[idx]
+                    add(a, b, "flow_owner")
+                    ml = _FLOW_LOCAL.match(clean[a:b].strip())
+                    if ml:
+                        resolve_owner = clean[a:b].strip()
+                        lo = fn_start(line_of(clean, m.start()))
+                        lets = list(re.finditer(r"\blet\s+(?:mut\s+)?" + re.escape(ml.group(1)) + r"\b[^=;{]*?=(?!=)\s*",
+                                                clean[lo:m.start()]))
+                        if lets:
+                            x = lo + lets[-1].end()
+                            j, d = x, 0
+                            while j < m.start():
+                                c = clean[j]
+                                if c in "([{":
+                                    d += 1
+                                elif c in ")]}":
+                                    d -= 1
+                                elif c == ";" and d == 0:
+                                    break
+                                j += 1
+                            add(x, j, "flow_owner")
+    # (3) a struct-literal field named owner/uid/gid
+    for m in re.finditer(r"(?<![\w])((?:\w+::)*[A-Z]\w*)\s*\{", clean):
+        before = clean[max(0, m.start() - 24):m.start()].rstrip()
+        if re.search(r"(?:\bstruct|\benum|\bimpl|\bfor|\btrait|\bunion|\bdyn|->|\bmod|\bmatch|\bif|\blet|\bwhile)$", before):
+            continue
+        for a, b in _split_group(clean, m.end() - 1):
+            fm = re.match(r"(\w+)\s*:(?!:)\s*", clean[a:b])
+            if fm and _OWNERISH.search(fm.group(1)):
+                add(a + fm.end(), b, "flow_owner_field")
+    # (4) open flags handed as a const
+    for m in _OPEN_SINKS.finditer(clean):
+        parts = _split_group(clean, m.end() - 1)
+        which = {"openat": 2, "open": 1}.get(m.group(1), 0)
+        if which < len(parts):
+            a, b = parts[which]
+            for q, c in re.findall(r"(?<![\w])((?:\w+::)*)([A-Z][A-Z0-9_]{2,})\b", clean[a:b]):
+                if not c.startswith(("O_", "AT_", "S_")):
+                    consts.add((c, bool(q)))
+    return out
+
+
+_SINK_CONSTS = None
+
+
+def sink_consts():
+    """({file: {NAME}}, {NAME}): the consts that reach a sink, per file where the use is bare
+    (`LAUNCH_PATH`) and globally where it is written with a path (`backend::LAUNCH_PATH`). A const's
+    initialiser is a site in the file that defines it when its name is in either set: a PATH, a flag
+    set, a limit used as a flag. Name-based, so a bare use in another file than the definition is
+    missed (STILL BLIND says so)."""
+    global _SINK_CONSTS
+    if _SINK_CONSTS is None:
+        local, qual = {}, set()
+        for f, text in _scope_texts():
+            clean = _value_text(text)
+            cl = clean.split("\n")
+            found, _ = _old_value_sites(clean)
+            names = set()
+            _flow_values(clean, cl, _fn_spans(cl), found, names)
+            for (a, b) in found:
+                for q, c in re.findall(r"(?<![\w])((?:\w+::)*)([A-Z][A-Z0-9_]{2,})\b", clean[a:b]):
+                    names.add((c, bool(q)))
+            for c, q in names:
+                local.setdefault(f, set()).add(c)
+                if q:
+                    qual.add(c)
+        _SINK_CONSTS = (local, qual)
+    return _SINK_CONSTS
+
+
+def const_def_sites(clean, found, names):
+    """{(a, b): 'flow_const'} the initialisers of the consts named in `names` defined in this file."""
+    out = {}
+    names = set(names)
+    for m in _CONST_DEF.finditer(clean):
+        if m.group(1) not in names:
+            continue
+        a = m.end()
+        j, d = a, 0
+        while j < len(clean):
+            c = clean[j]
+            if c in "([{":
+                d += 1
+            elif c in ")]}":
+                d -= 1
+            elif c == ";" and d == 0:
+                break
+            j += 1
+        s = clean[a:j]
+        if re.search(r"\"|\b\d|\b(?:libc::)?[OSA]_[A-Z]+|\b0o", s) and (a, j) not in found:
+            out[(a, j)] = "flow_const"
+    return out
+
+
+def _old_value_sites(clean):
+    """The amendment-103 forms: ({(begin, end): label}, None) over the blanked text."""
     found = {}
 
     def add(a, b, label):
@@ -5278,13 +5605,30 @@ def value_sites(text, regions=None):
                 if VALUE_FORM.search(clean[clean.rfind("\n", 0, a) + 1:b].split("//")[0]):
                     continue
                 add(va, b, "val_field")
+    return found, None
+
+
+def value_sites(text, regions=None, flow=True, file=None):
+    """[(begin, end, label, fn, n)] value sites of the non-test code of `text`: the amendment-103
+    forms (a literal handed to a builder, an owner/priv argument, a mode, a Config field) and, with
+    `flow` (the default), the amendment-107 flow sites, numbered under `<fn>~flow`. `n` counts a
+    function's value sites from 1 in source order."""
+    clean = _value_text(text)
+    found, _ = _old_value_sites(clean)
     cl = clean.split("\n")
     fspans = _fn_spans(cl)
+    flowed = {}
+    if flow:
+        flowed = _flow_values(clean, cl, fspans, found)
+        local, qual = sink_consts()
+        flowed.update(const_def_sites(clean, {**found, **flowed}, local.get(file, set()) | qual))
     per, out = {}, []
-    for (a, b), label in sorted(found.items()):
+    for (a, b), label in sorted({**found, **flowed}.items()):
         if regions is not None and not any(x <= line_of(clean, a) <= y for x, y in regions):
             continue
         fn = _fn_of(cl, fspans, line_of(clean, a))
+        if (a, b) in flowed and (a, b) not in found:
+            fn += "~flow"
         per[fn] = per.get(fn, 0) + 1
         out.append((a, b, label, fn, per[fn]))
     return out
@@ -5334,7 +5678,7 @@ def _ranges_hit(ranges, a, b):
 
 def judge_values(f, text, rows, bad):
     """(covered, exempt, uncovered) of the value sites of `f`."""
-    vs = value_sites(text, scope_regions(f, code_lines(text), text, []))
+    vs = value_sites(text, scope_regions(f, code_lines(text), text, []), file=f)
     if not vs:
         for e in VALUE_EXEMPT:
             if e[0] == f:
@@ -5358,16 +5702,20 @@ def judge_values(f, text, rows, bad):
             if hit[0][3] not in " ".join(frag.split()) and hit[0][3] not in frag:
                 bad.append(f"{f}:{line_of(text, a) + 1}: value exemption ({fn}, {n}) names the fragment "
                            f"{hit[0][3]!r}, which is not the value's text {frag!r}: a site was added or moved, re-judge it")
+        flowk = "flow" if fn.endswith("~flow") else "form"
         if by:
             covered += 1
+            VALUE_STATS[(flowk, "row")] = VALUE_STATS.get((flowk, "row"), 0) + 1
         elif hit is not None:
             exempt += 1
             kind = hit[0][4]
+            VALUE_STATS[(flowk, kind)] = VALUE_STATS.get((flowk, kind), 0) + 1
             if kind == "REMAINDER":
                 REMAINDER_SITES.append((f, line_of(text, a) + 1, label))
             elif kind == "OBSERVED":
                 OBSERVED_SITES.append((f, line_of(text, a) + 1, "observed"))
         else:
+            VALUE_STATS[(flowk, "UNCOVERED")] = VALUE_STATS.get((flowk, "UNCOVERED"), 0) + 1
             ln = line_of(text, a)
             uncovered.append(f"{f}:{ln + 1}: refusal site with no row and no exemption: value ({label}) "
                              f"{' '.join(frag.split())[:90]}  [fn {fn or '-'} #{n}]  in: {lines[ln].strip()[:100]}")
@@ -5801,6 +6149,9 @@ def check(without=(), freeze=False, out=print):
     bad = []
     del REMAINDER_SITES[:]
     del OBSERVED_SITES[:]
+    VALUE_STATS.clear()
+    _FLOW_STATS["computed"] = 0
+    exec_constructor_drift(bad)
     scope = in_scope_files()
     for f in sorted(set(OUT_OF_SCOPE) | set(NOT_YET_SCANNED)):
         if f not in scope:
@@ -5841,6 +6192,12 @@ def check(without=(), freeze=False, out=print):
             bad.append(f"{ef}: exemption {anchor[:50]!r} cites {gone}, which are not registry rows")
     for b in bad:
         out(f"BAD {b}")
+    for kind in ("form", "flow"):
+        parts = {d: c for (k, d), c in sorted(VALUE_STATS.items()) if k == kind}
+        out(f"VALUE SITES ({'amendment 103 forms' if kind == 'form' else 'amendment 107 flow to sinks'}): "
+            f"{sum(parts.values())}: " + ", ".join(f"{c} {d}" for d, c in parts.items()))
+    out(f"VALUE FLOWS NOT FOLLOWED: {_FLOW_STATS['computed']} argument(s) of a sink were computed (not a literal, a const, "
+        "a local resolvable to one, or a collection of them): COUNTED, NOT sites")
     n, cats = remainder_summary(REMAINDER_SITES)
     out(f"OBSERVED-NOT-ROWED: {len(OBSERVED_SITES)} guards a survey removed with a named test failing and no row of "
         "their own (a measurement, not a row)")

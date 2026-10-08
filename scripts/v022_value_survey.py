@@ -98,7 +98,7 @@ def candidates(pkg, only, again=False):
         rs = [(r[0], rc.edit_ranges(text, r[3], r[4])) for r in rows if r[2] == f and text.count(r[3]) == 1]
         # `again`: re-measure what an OBSERVED entry already claims (a survey is a measurement, and goes stale)
         ex = {(e[1], e[2]) for e in rc.VALUE_EXEMPT if e[0] == f and not (again and e[4] == "OBSERVED")}
-        for a, b, label, fn, n in rc.value_sites(text, rc.scope_regions(f, rc.code_lines(text), text, [])):
+        for a, b, label, fn, n in rc.value_sites(text, rc.scope_regions(f, rc.code_lines(text), text, []), file=f):
             if any(rc._ranges_hit(rg, a, b) for _, rg in rs) or (fn, n) in ex:
                 continue
             out.append((f, a, b, label, fn, n))

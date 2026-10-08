@@ -1815,7 +1815,10 @@ fn a_pinned_program_another_uid_owns_is_refused_at_every_consumer_of_the_owner()
         if !own {
             stranger(&lx.launcher);
         }
-        w.submit_with(lx, op, "t_psv_ok")
+        let s = w.submit_with(lx.clone(), op, "t_psv_ok");
+        // The launcher path is shared by every run of this world: give it back.
+        std::os::unix::fs::chown(&lx.launcher, Some(0), Some(0)).unwrap();
+        s
     };
     let c = direct("op-own-launcher", true);
     assert_eq!(c.receipt.verification, ReceiptVerification::Passed, "control: {:?}", c.reason);
@@ -1861,7 +1864,9 @@ fn a_pinned_program_another_uid_owns_is_refused_at_every_consumer_of_the_owner()
             stranger(&ob.command);
         }
         ob.interpreter = Some(bash_copy(&format!("obs-bash-{op}"), own_interp));
-        w.submit_observed(ob, op)
+        let s = w.submit_observed(ob.clone(), op);
+        std::os::unix::fs::chown(&ob.command, Some(0), Some(0)).unwrap();
+        s
     };
     let c = observed("op-own-observer", true, true);
     assert_eq!(class(&c), "protected", "control: {:?}", c.reason);
@@ -2016,9 +2021,9 @@ fn fabric_runs_its_direct_launcher_and_its_observer_with_exactly_their_flags_and
     assert!(
         oa.len() == 4
             && oa[0] == "--manifest"
-            && Path::new(oa[1]).is_file()
+            && oa[1].ends_with("/launch-manifest.json")
             && oa[2] == "--out"
-            && Path::new(oa[3]).is_dir(),
+            && oa[3].ends_with("/observation"),
         "ATTACK: Fabric ran the observer program with {oa:?}, not exactly \
          [--manifest FILE, --out DIR]"
     );
