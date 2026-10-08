@@ -30,6 +30,17 @@
 #                      records the host's namespace ids: a PID namespace hides the host's PID 1, so
 #                      the host's view is a descriptor, not /proc/1/root.
 #
+# Amendment 101: DENY BY DEFAULT. The shadow list above is the set of places a command may WRITE; every
+# other mount of the namespace (/opt /home /root /usr /boot /var/cache, /proc /sys /dev, ...) is made
+# read-only before the shadows are laid down, recursively and atomically (mount_setattr(MOUNT_ATTR_RDONLY,
+# AT_RECURSIVE)), so a write by ANY verb to a place nobody listed fails with EROFS instead of reaching
+# the host. The extractor in opkit_ns_drift.py stays as a second layer. The host-root descriptor the proof
+# compares through is CLOSED before the command starts (a handle on the host's filesystem inside the
+# command is a way around every shadow); inside the namespace a re-assertion rests on a stamp the proof
+# wrote, not on a host view.
+# OPKIT_RW: space-separated host directories the command may write (scratch the test itself created).
+# /tmp is a fresh tmpfs and TMPDIR is /tmp inside.
+#
 # OPKIT_RESTORE: "STASH=DEST ..." copy a stash (made earlier, under an UNshadowed path, by a step that
 # itself ran under ns_run) back to DEST inside the namespace, with owners and modes.
 # OPKIT_SCRATCH: a scratch directory (never under a shadowed path) for the /etc copy.
@@ -71,6 +82,7 @@ opkit_ns_assert() {
   # hides the host's PID 1), or, for the self-test, the stand-in PID's root
   if [ -n "$viewpid" ]; then view=/proc/$viewpid/root
   elif [ -n "${OPKIT_HOST_FD:-}" ]; then view=/proc/self/fd/$OPKIT_HOST_FD
+  elif opkit_stamp_ok; then view=stamp         # inside ns_run after the descriptor was closed: the proof's stamp
   else view=/proc/1/root; fi
   own=$(readlink /proc/self/ns/mnt)
   if [ -n "$nspid" ]; then hostmnt=$(readlink "/proc/$nspid/ns/mnt")
@@ -99,26 +111,105 @@ opkit_ns_assert() {
     # The proof is an IDENTITY comparison, not a negative lookup (a canary "not seen" through an unreadable
     # /proc/1/root passed vacuously): the host's own $d, read through the host's view, must be a
     # DIFFERENT filesystem object (device:inode) from ours, and an unreadable view or an unstatable $d is a refusal.
+    [ "$view" = stamp ] && continue   # the identity comparison was made once, by the proof that wrote the stamp
     host_dev=$(stat -L -c '%d:%i' -- "$view$d" 2>/dev/null) \
       || { echo "REFUSE(opkit_ns): the host's $d cannot be examined through the host's view ($view), so its identity cannot be compared with the shadow" >&2; return 1; }
     here_dev=$(stat -c '%d:%i' -- "$d")
     [ "$host_dev" != "$here_dev" ] \
       || { echo "REFUSE(opkit_ns): $d is the HOST's own directory (device:inode $here_dev), not a shadow" >&2; return 1; }
   done
+  # DENY BY DEFAULT (amendment 101): outside the self-test overrides the root must be read-only except
+  # the shadows; the self-test asks for the same proof with OPKIT_REQUIRE_RO=1
+  if [ -z "${OPKIT_DESTS_FOR_TEST:-}" ] || [ "${OPKIT_REQUIRE_RO:-}" = 1 ]; then
+    opkit_ro_proof "$dests" || return 1
+  fi
   return 0
+}
+
+# Every mount of this namespace is read-only unless it lies under a shadowed destination, an OPKIT_RW
+# directory or /tmp; and a file cannot be created in the places no list names.
+opkit_ro_proof() { # DESTS
+  local bad d probe
+  bad=$(awk -v ok="$1 ${OPKIT_RW:-} /tmp" 'BEGIN { n = split(ok, a, " ") }
+    { mp = $5; skip = 0
+      for (i = 1; i <= n; i++) if (mp == a[i] || index(mp, a[i] "/") == 1) skip = 1
+      if (skip) next
+      split($6, o, ","); ro = 0; for (k in o) if (o[k] == "ro") ro = 1
+      if (!ro) print mp }' /proc/self/mountinfo)
+  [ -z "$bad" ] || { echo "REFUSE(opkit_ns): writable mounts outside the shadows (the root is not read-only): $(tr '\n' ' ' <<<"$bad")" >&2; return 1; }
+  for probe in / /opt /home /root /usr /usr/lib /boot /var /var/cache /bin; do
+    [ -d "$probe" ] || continue
+    case " $1 ${OPKIT_RW:-} /tmp " in *" $probe "*) continue ;; esac
+    d="$probe/.opkit-ro-canary.$$"
+    if { : >"$d"; } 2>/dev/null; then rm -f "$d"; echo "REFUSE(opkit_ns): a file can be created under $probe: the root is not read-only" >&2; return 1; fi
+  done
+  return 0
+}
+
+# The proof writes this once it holds; a command inside the namespace re-asserts from it (the host
+# descriptor is gone by then). Content: our namespace ids and the host's.
+OPKIT_STAMP=/run/.opkit-ns-proved
+opkit_ns_ids() { echo "mnt=$(readlink /proc/self/ns/mnt),pid=$(readlink /proc/self/ns/pid),uts=$(readlink /proc/self/ns/uts),ipc=$(readlink /proc/self/ns/ipc)"; }
+opkit_stamp_ok() {
+  local s own host
+  [ -f "$OPKIT_STAMP" ] && [ ! -L "$OPKIT_STAMP" ] && [ "$(stat -c %u "$OPKIT_STAMP")" = 0 ] || return 1
+  s=$(cat "$OPKIT_STAMP") || return 1
+  own=${s%% *}; host=${s#* }
+  [ "$own" = "$(opkit_ns_ids)" ] || return 1
+  [ "$(sed -n 's/^mnt=\([^,]*\).*/\1/p' <<<"$own")" != "$(sed -n 's/^mnt=\([^,]*\).*/\1/p' <<<"$host")" ]
+}
+
+# Make every mount of this namespace read-only in one recursive step. Refuses (1) if it cannot.
+opkit_ns_make_ro() {
+  python3 -S - <<'PY' || { echo "REFUSE(opkit_ns): cannot make the root read-only (mount_setattr)" >&2; return 1; }
+import ctypes, sys
+libc = ctypes.CDLL(None, use_errno=True)
+class A(ctypes.Structure):
+    _fields_ = [("attr_set", ctypes.c_uint64), ("attr_clr", ctypes.c_uint64), ("propagation", ctypes.c_uint64), ("userns_fd", ctypes.c_uint64)]
+a = A(1, 0, 0, 0)                        # MOUNT_ATTR_RDONLY
+r = libc.syscall(442, -100, b"/", 0x8000, ctypes.byref(a), ctypes.sizeof(a))   # mount_setattr(AT_FDCWD, "/", AT_RECURSIVE)
+if r != 0:
+    sys.stderr.write("mount_setattr failed: errno %d\n" % ctypes.get_errno()); sys.exit(1)
+PY
+}
+
+# Any directory descriptor above stderr is a way out of the shadows; prints each and returns 1.
+opkit_ns_fd_leak() {
+  local f n=0 t
+  for f in /proc/self/fd/*; do
+    case "${f##*/}" in 0|1|2) continue ;; esac
+    [ -d "$f" ] || continue
+    t=$(readlink "$f" 2>/dev/null)
+    echo "LEAK: descriptor ${f##*/} -> ${t:-?}" >&2; n=$((n + 1))
+  done
+  [ "$n" = 0 ]
+}
+
+# Called once, after the proof: closes the host-root descriptor and checks nothing like it survives.
+opkit_ns_drop_host_fd() {
+  if [ -n "${OPKIT_HOST_FD:-}" ]; then eval "exec $OPKIT_HOST_FD<&-"; unset OPKIT_HOST_FD; fi
+  opkit_ns_fd_leak
 }
 
 opkit_ns_isolate() {
   local d keysave=${OPKIT_SCRATCH:?OPKIT_SCRATCH must be a scratch directory} r
   opkit_overrides >/dev/null || return 1
   keysave=$keysave/etc.$$
-  mkdir -p "$keysave" || return 1
+  mkdir -p "$keysave" || return 1            # before the root is read-only: scratch is the caller's
+  # DENY BY DEFAULT: everything is read-only from here on; only the mounts made below are writable
+  opkit_ns_make_ro || return 1
   mount -t tmpfs -o mode=0755 tmpfs "$keysave" || return 1   # a tmpfs of our own: nothing to leak
   cp -a /etc/. "$keysave/" && mount --bind "$keysave" /etc || { echo "REFUSE(opkit_ns): cannot shadow /etc" >&2; return 1; }
+  umount "$keysave" || { echo "REFUSE(opkit_ns): cannot release the scratch mount of the /etc copy" >&2; return 1; }   # /etc keeps the tmpfs
   for d in $OPKIT_DEFAULT_DESTS; do
     [ "$d" = /etc ] && continue
     if [ -L "$d" ]; then continue; fi          # /var/mail is a symlink on some hosts; its target is covered
     mount -t tmpfs -o mode=0755 tmpfs "$d" || { echo "REFUSE(opkit_ns): cannot shadow $d" >&2; return 1; }
+  done
+  mount -t tmpfs -o mode=1777 tmpfs /tmp || { echo "REFUSE(opkit_ns): cannot give the command a tmpfs /tmp" >&2; return 1; }
+  for d in ${OPKIT_RW:-}; do                   # scratch the caller made for this run, named explicitly
+    [ -d "$d" ] && mount --bind "$d" "$d" && mount -o remount,bind,rw "$d" \
+      || { echo "REFUSE(opkit_ns): cannot make $d writable" >&2; return 1; }
   done
   # OPKIT_RESTORE: "STASH=DEST ..." copies a stash (taken earlier, under an UNshadowed path, by a step that
   # ran in its own namespace) back to DEST with owners and modes. Replaces the old carry-from-the-host
@@ -129,7 +220,11 @@ opkit_ns_isolate() {
   done
   if [ -n "${OPKIT_EXTRA:-}" ]; then mkdir -p /usr/local/bin && install -m 0755 $OPKIT_EXTRA /usr/local/bin/ || return 1; fi
   if [ "${OPKIT_NET:-private}" != host ]; then command -v ip >/dev/null && ip link set lo up 2>/dev/null; fi
-  opkit_ns_assert
+  opkit_ns_assert || return 1
+  # the stamp a later re-assertion rests on (the host descriptor is closed before the command starts)
+  printf '%s %s\n' "$(opkit_ns_ids)" "$(tr ',' '\n' <<<"${OPKIT_HOST_NS:-}" | grep -v '^net=' | paste -sd,)" >"$OPKIT_STAMP" \
+    && chmod 0600 "$OPKIT_STAMP" || return 1
+  export TMPDIR=/tmp
 }
 
 # Outer shell. Never runs CMD unless the isolation was proved first.
@@ -144,6 +239,8 @@ ns_run() {
   unshare --mount --propagation private --pid --fork --kill-child --mount-proc --uts --ipc $netflag bash -c '
     . "$OPKIT_LIB"
     opkit_ns_isolate || { echo "REFUSE(ns_run): isolation not proved; the command did not run" >&2; exit 97; }
+    # Amendment 101: the descriptor on the host root served the proof; the command must not inherit it
+    opkit_ns_drop_host_fd || { echo "REFUSE(ns_run): a directory descriptor outlived the proof; the command did not run" >&2; exit 97; }
     "$@"' ns_run "$@"
   rc=$?
   exec {hfd}<&-

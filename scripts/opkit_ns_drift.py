@@ -23,6 +23,14 @@ isolation PROVED before the command starts). This gate keeps it the only door:
      -- resolves (kit variables expanded) under a destination ns_run shadows
      (OPKIT_DEFAULT_DESTS in lib/opkit_ns.sh, the one list). A new kit write to /opt or
      /usr/lib/systemd fails HERE instead of reaching the host;
+  4b. DENY BY MENTION (amendment 101): any simple command that mentions the kit (`$KIT`, a variable
+     assigned from it, its file name) or the controlled-build API (`g.begin(` ...) and is not itself an
+     ns_run/kit/inns command is a violation unless its first word is a plainly read-only one (cp, cat,
+     grep, echo, [, test, python3 - "$KIT" reading it, ...). So `eval`, `ionice`, `stdbuf`, `K=$KIT; bash
+     "$K"`, `python3 -c 'g.begin(1)'` and every wrapper nobody listed are refused without being named; an
+     assignment that builds a COMMAND STRING out of the kit / `--apply` / a build verb is refused where it
+     is made; a variable assigned a real destination path is a destination when a mutator names it;
+     a redirection into a real destination is a write even on an ns_run command (the OUTER shell opens it);
   5. `--selftest` plants the bypass shapes in scratch copies and requires every one refused, and
      requires the real scripts and the controls to pass.
 
@@ -32,6 +40,13 @@ import os, re, shlex, sys
 
 KIT_TOKEN = re.compile(r'\$\{?KIT\}?(?![\w])|operator_deploy_protected_host\.sh')
 BUILD_VERB = re.compile(r'guest_build_env\.py|opkit_fixture\.sh')
+# the python API of guest_build_env.py that STARTS a build step
+BUILD_API = re.compile(r'\b\w+\.(begin|cargo_step|run_cargo|host_build|finish|dist_record|rootfs|kernel|discard)\(')
+# first words that read, print or compare and run nothing they are handed
+BENIGN = {"cp", "cat", "grep", "egrep", "head", "tail", "wc", "sha256sum", "stat", "ls", "test", "[", "[[", "echo", "printf",
+          "diff", "cmp", "realpath", "dirname", "basename", "readlink", "for", "case", "fail", "ok", "die", "warn", "true",
+          ":", "return", "export", "local", "declare", "readonly", "unset", "set", "shift", "wait", "kill", "trap", "rm", "mv"}
+ASSIGN = re.compile(r'^\s*(?:(?:export|local|readonly|declare(?:\s+-\w+)?)\s+)?([A-Za-z_]\w*)=(.*)$')
 WRAPPERS = {"ns_run", "kit", "inns"}
 # the first word of a simple command that EXECUTES (or hands to an interpreter) what it is given
 RUNNERS = {"bash", "sh", "dash", ".", "source", "exec", "env", "setpriv", "sudo", "nohup", "timeout", "unshare",
@@ -145,8 +160,39 @@ def strip_helper(w):
     return w[1 + n:] if n is not None and len(w) > 1 + n else w
 
 
-def command_class(w):
+class Ctx:
+    """Names the text gives the kit and the real destinations (flow-insensitive, to a fixpoint)."""
+    def __init__(self, text=""):
+        self.kit = {"KIT"}
+        self.real = {"KEYPARENT", "FORGE"}
+        self.cmdvars = set()
+        real_root = "(?:" + "|".join(re.escape(r) for r in REAL) + ")"
+        for _ in range(4):
+            for raw in (c for _, ln in logical_lines(text) for c in split_simple(strip_comment(ln))):
+                m = ASSIGN.match(raw)
+                if not m:
+                    continue
+                name, val = m.group(1), m.group(2).strip().strip("\"'")
+                if name not in self.kit and (self.kit_re().search(val) or re.search(r'operator_deploy_protected_host\.sh', val)):
+                    if not re.search(r'--apply|\s', val):
+                        self.kit.add(name)
+                if re.match(r'^(?:\$\(mktemp\s+(?:-\w+\s+)*)?' + real_root + r'(?:/|$|[.\s"\')])', val) or \
+                        any(re.match(r'^\$\{?' + r + r'\}?(?:/|$)', val) for r in self.real):
+                    self.real.add(name)
+
+    def kit_re(self):
+        names = "|".join(sorted(self.kit))
+        return re.compile(r'\$\{?(?:' + names + r')\}?(?![\w])|operator_deploy_protected_host\.sh')
+
+    def real_arg(self, a):
+        return any(a == r or a.startswith(r + "/") for r in REAL) or \
+            bool(re.search(r'\$\{?(' + "|".join(sorted(self.real)) + r')\b', a))
+
+
+def command_class(w, ctx=None):
     """(kind, wrapped): what a simple command does that needs the helper, and whether it IS the helper."""
+    ctx = ctx or Ctx()
+    kit_re = ctx.kit_re()
     w = strip_helper(w)
     if not w:
         return None, True
@@ -157,12 +203,20 @@ def command_class(w):
     cmd0 = rest[0] if rest else ""
     flat = " ".join(rest)
     kind = None
-    if "--apply" in rest and (cmd0 in RUNNERS or KIT_TOKEN.search(flat) or "ARGS" in flat or cmd0 == "setpriv"):
-        kind = "--apply"
-    elif KIT_TOKEN.search(flat) and (cmd0 in RUNNERS or KIT_TOKEN.fullmatch(cmd0 or "x")):
+    if "--apply" in rest and cmd0 not in ("echo", "printf", "grep", "[", "[[", "test"):
+        kind = "--apply"        # deny by default (amendment 101): any command carrying --apply, whatever its first word
+    elif kit_re.search(flat) and (cmd0 in RUNNERS or kit_re.fullmatch(cmd0 or "x")):
         # a kit COPY named differently is caught by its --apply; reading the kit (python3 - "$KIT", cp, sed) runs nothing
         if cmd0 not in ("python3", "python"):
             kind = "kit"
+    elif kit_re.search(flat) and cmd0 not in BENIGN and not (cmd0 in ("python3", "python") and rest[1:2] == ["-"]):
+        kind = "kit"            # deny by MENTION: eval, ionice, stdbuf, an unlisted wrapper, bash -c, a variable alias
+    if kind is None and cmd0 == "eval" and (BUILD_API.search(flat) or ctx.cmdvars and any(("$" + v) in flat or ("${" + v) in flat for v in ctx.cmdvars)):
+        kind = "kit"
+    if kind is None and cmd0 in ctx.cmdvars | {"$" + v for v in ctx.cmdvars}:
+        kind = "kit"
+    if kind is None and BUILD_API.search(flat) and cmd0 not in ("echo", "printf", "grep"):
+        kind = "build"
     if kind is None and BUILD_VERB.search(flat):
         verb = re.search(r'guest_build_env\.py\s+(begin|cargo|host-build|kernel|rootfs|finish|dist|discard)\b', flat)
         if verb or "opkit_fixture.sh" in flat:
@@ -174,9 +228,9 @@ def command_class(w):
         elif cmd0 in ("chown", "chmod"):
             ops = ops[1:]
         elif cmd0 in ("python3", "python", "bash", "sh"):
-            ops = [x for x in ops if "/" in x or "KEYPARENT" in x or "FORGE" in x]
+            ops = [x for x in ops if "/" in x or "$" in x]
         for a in ops:
-            if any(a == r or a.startswith(r + "/") for r in REAL) or re.search(r'\$\{?(KEYPARENT|FORGE)\b', a):
+            if ctx.real_arg(a):
                 kind = "write"
     if kind is None and cmd0 in ("unshare",) and "--pid" in rest and any("python" in x for x in rest):
         kind = "build"
@@ -184,13 +238,47 @@ def command_class(w):
 
 
 HEREDOC = re.compile(r"<<-?\s*(['\"]?)(\w+)\1\s*$")
-DEST_LITERAL = re.compile(r"""\b(makedirs|mkdir|chown|chmod|rename|copy\w*|copytree|move|open|symlink|run|call)\(\s*\[?\s*f?["'](/etc|/usr/local|/var/lib|/var/log|/var/spool|/run|/srv|/opt)\b""")
+DEST_LITERAL = re.compile(r"""\b(makedirs|mkdir|chown|chmod|rename|copy\w*|copytree|move|open|symlink|run|call|write_text|write_bytes|unlink|remove)\(\s*\[?\s*f?["'](/etc|/usr/local|/var/lib|/var/log|/var/spool|/run|/srv|/opt|/usr/lib|/usr/share|/var/cache|/boot|/root|/home|/lib)\b""")
+REDIRECT = re.compile(r"""(?:^|[^<>&\d])(?:\d|&)?>>?\s*["']?([^\s"'|&;<>()]+)""")
+
+
+def redirect_writes(cmd, ctx):
+    """Real destinations the OUTER shell writes through a redirection (it opens the file before any wrapper runs)."""
+    out = []
+    for m in REDIRECT.finditer(cmd):
+        t = m.group(1)
+        if t.startswith(("/dev/", "/proc/", "&")):
+            continue
+        if ctx.real_arg(t):
+            out.append(t)
+    return out
+
+
+def assigned_command_strings(cmd, ctx):
+    """Assignments that build a COMMAND STRING out of the kit / --apply / a build verb (to be eval'd or expanded later)."""
+    out = []
+    try:
+        ws = shlex.split(cmd, posix=True, comments=False)
+    except ValueError:
+        ws = cmd.split()
+    kit_re = ctx.kit_re()
+    for x in ws:
+        m = re.fullmatch(r'([A-Za-z_]\w*)=(.*)', x, re.S)
+        if not m:
+            break
+        v = m.group(2)
+        if (re.search(r'\s', v) and (kit_re.search(v) or re.search(r'--apply', v) or BUILD_API.search(v)
+                                      or re.search(r'guest_build_env\.py\s+(begin|cargo|host-build|kernel|rootfs|finish|dist|discard)\b', v)
+                                      or "opkit_fixture.sh" in v)):
+            out.append(m.group(1))
+    return out
 
 
 def check_text(path, text):
     bad = []
     kit_helper = re.compile(r'^\s*kit\(\)\s*\{\s*opkit_ns_assert\s*\|\|[^;{}]*;\s*bash "\$KIT" "\$@";\s*\}\s*$')
     lines = logical_lines(text)
+    ctx = Ctx(text)
     i = 0
     while i < len(lines):
         n, line = lines[i]
@@ -211,10 +299,19 @@ def check_text(path, text):
         if kit_helper.match(line):           # the helper itself: asserts before every call
             continue
         for cmd in split_simple(strip_comment(line)):
+            for t in redirect_writes(cmd, ctx):
+                bad.append(f"{path}:{n}: [write] a redirection into a real destination ({t}); the OUTER shell opens it even on an ns_run command: {cmd.strip()[:100]}")
+            for v in assigned_command_strings(cmd, ctx):
+                ctx.cmdvars.add(v)
+                bad.append(f"{path}:{n}: [kit] {v} is assigned a command string naming the kit / --apply / a build verb; run it with ns_run, not through a variable: {cmd.strip()[:100]}")
             w = words(cmd)
             if not w:
                 continue
-            kind, wrapped = command_class(w)
+            kind, wrapped = command_class(w, ctx)
+            if not kind and not wrapped and not ns_body:
+                # python -c / a heredoc body that names a real destination as a write target
+                if strip_helper(w)[0] in ("python3", "python", "bash", "sh") and DEST_LITERAL.search(cmd):
+                    kind = "write"
             if m and not kind and not ns_body and names_dest and strip_helper(w)[0] in ("python3", "python", "bash", "sh") and not wrapped:
                 kind = "write"
             if kind and not wrapped:
@@ -227,7 +324,7 @@ def check_text(path, text):
                     w = words(cmd)
                     if not w:
                         continue
-                    kind, wrapped = command_class(w)
+                    kind, wrapped = command_class(w, ctx)
                     if kind in ("kit", "--apply", "build") and not wrapped:
                         bad.append(f"{path}:{bn}: [{kind}] in-namespace body, not itself a kit/ns_run command: {cmd.strip()[:100]}")
     if KIT_TOKEN.search(text) and "opkit_ns.sh" not in text:
@@ -303,6 +400,21 @@ def kit_write_targets(text):
                 tgt = args[1:] if c0 in ("chown", "chmod") else args
             elif c0 in ("useradd", "groupadd"):
                 tgt = ["/etc/passwd" if c0 == "useradd" else "/etc/group"]
+            # amendment 101 -- belt and braces behind the read-only root: the verbs the first extractor did not know
+            elif c0 == "sed" and any(a.startswith("-i") or a == "--in-place" for a in w[1:]) and len(args) > 1:
+                tgt = args[1:]
+            elif c0 in ("setfacl", "chattr", "chcon", "setcap", "truncate", "shred") and args:
+                tgt = args[-1:]
+            elif c0 == "dd":
+                tgt = [a[3:] for a in w[1:] if a.startswith("of=")]
+            elif c0 in ("curl", "wget"):
+                tgt = [w[i + 1] for i, a in enumerate(w[:-1]) if a in ("-o", "--output", "-O", "--output-document")]
+            elif c0 == "git" and "clone" in w[1:] and args:
+                tgt = args[-1:]
+            elif c0 == "tar" and any(re.match(r'^-\w*x', a) or a in ("--extract", "x") for a in w[1:]):
+                tgt = [w[i + 1] for i, a in enumerate(w[:-1]) if a in ("-C", "--directory")] or ["$unresolved-cwd-extract"]
+            elif c0 == "systemctl":
+                tgt = [a.split("=", 1)[1] for a in w[1:] if a.startswith("--root=")]
             for t in tgt:
                 if fn in DEST_PARAM_FUNCS and re.match(r'^\$\{?(dst|d)\b', t):
                     continue                  # derived from the destination parameter: judged at the callers
@@ -320,6 +432,11 @@ def kit_write_targets(text):
                 if t.startswith("$(") or not (t.startswith("/") or t.startswith("$")):
                     continue
                 out.append((n, cmd.strip()[:90], t))
+        # a python write to a literal path (open(path, "w"), makedirs, rename, ...)
+        for m in re.finditer(r"""\b(open|makedirs|mkdir|chown|chmod|rename|copyfile|copy2|copytree|symlink|write_text|write_bytes|unlink|remove)\(\s*f?["'](/[^"']*)["'](\s*,\s*["']([^"']*)["'])?""", s):
+            if m.group(1) == "open" and not (m.group(4) and re.search(r'[wax+]', m.group(4))):
+                continue
+            out.append((n, s.strip()[:90], expand(m.group(2), env)))
         # redirections into a path
         for m in re.finditer(r'>>?\s*"?(\$\{?[A-Za-z_]+\}?[^\s"]*|/[^\s"]+)', s):
             t = expand(m.group(1), env)
@@ -384,6 +501,38 @@ BYPASSES = [
     ("fixture outside", '. scripts/lib/opkit_ns.sh\nbash scripts/lib/opkit_fixture.sh a b\n'),
     ("a mkdir under /var/lib outside", '. scripts/lib/opkit_ns.sh\nns_run true; mkdir -p /var/lib/axon-x\n'),
     ("a mktemp under /var/lib outside", '. scripts/lib/opkit_ns.sh\nK=$(mktemp -d /var/lib/axon-opkit-keys.XXXXXX)\n'),
+    # amendment 101: the shapes the round-10 FIELD-ORIGIN reviewer executed past the gate, and the wrappers it did not list
+    ("eval of a kit command string", '. scripts/lib/opkit_ns.sh\neval "bash $KIT --apply"\n'),
+    ("a command string assigned then eval'd", '. scripts/lib/opkit_ns.sh\nc=\'bash "$KIT" --apply\'\neval "$c"\n'),
+    ("a command string assigned then expanded", '. scripts/lib/opkit_ns.sh\nc=\'bash "$KIT" --apply\'\n$c\n'),
+    ("the kit through a variable alias", '. scripts/lib/opkit_ns.sh\nK=$KIT; bash "$K" --from c\n'),
+    ("the kit through a chained alias", '. scripts/lib/opkit_ns.sh\nK=$KIT\nJ=$K\nbash "$J" --from c\n'),
+    ("the kit through an alias of its file name", '. scripts/lib/opkit_ns.sh\nP=scripts/operator_deploy_protected_host.sh\nbash "$P" --from c\n'),
+    ("ionice wrapper", '. scripts/lib/opkit_ns.sh\nionice -c3 bash "$KIT" --from c\n'),
+    ("stdbuf wrapper", '. scripts/lib/opkit_ns.sh\nstdbuf -o0 bash "$KIT" --from c\n'),
+    ("chrt wrapper", '. scripts/lib/opkit_ns.sh\nchrt -i 0 bash "$KIT" --from c\n'),
+    ("taskset wrapper", '. scripts/lib/opkit_ns.sh\ntaskset 1 bash "$KIT" --from c\n'),
+    ("nice wrapper", '. scripts/lib/opkit_ns.sh\nnice -n 5 bash "$KIT" --from c\n'),
+    ("timeout wrapper", '. scripts/lib/opkit_ns.sh\ntimeout 60 bash "$KIT" --from c\n'),
+    ("env wrapper", '. scripts/lib/opkit_ns.sh\nenv -i bash "$KIT" --from c\n'),
+    ("setsid wrapper", '. scripts/lib/opkit_ns.sh\nsetsid bash "$KIT" --from c\n'),
+    ("sudo wrapper", '. scripts/lib/opkit_ns.sh\nsudo bash "$KIT" --from c\n'),
+    ("command wrapper", '. scripts/lib/opkit_ns.sh\ncommand bash "$KIT" --from c\n'),
+    ("exec wrapper", '. scripts/lib/opkit_ns.sh\nexec bash "$KIT" --from c\n'),
+    ("nohup wrapper", '. scripts/lib/opkit_ns.sh\nnohup bash "$KIT" --from c\n'),
+    ("xargs wrapper", '. scripts/lib/opkit_ns.sh\necho x | xargs bash "$KIT"\n'),
+    ("su -c wrapper", '. scripts/lib/opkit_ns.sh\nsu -c "bash $KIT --from c" root\n'),
+    ("systemd-run wrapper", '. scripts/lib/opkit_ns.sh\nsystemd-run --wait bash "$KIT" --from c\n'),
+    ("bash -c string", '. scripts/lib/opkit_ns.sh\nbash -c "$KIT --from c"\n'),
+    ("python3 -c calling the build API", '. scripts/lib/opkit_ns.sh\npython3 -c "import guest_build_env as g; g.begin(1)"\n'),
+    ("a mkdir through a variable holding a real path", '. scripts/lib/opkit_ns.sh\nD=/var/lib/axon-x\nmkdir -p "$D"\n'),
+    ("a mkdir through a variable derived from a real path", '. scripts/lib/opkit_ns.sh\nD=/var/lib/axon-x\nE=$D/sub\nmkdir -p "$E"\n'),
+    ("a redirect into /etc", '. scripts/lib/opkit_ns.sh\necho x > /etc/axon/y\n'),
+    ("an append into /usr/local", '. scripts/lib/opkit_ns.sh\necho x >>/usr/local/bin/y\n'),
+    ("a redirect into a real path on an ns_run command (the outer shell opens it)", '. scripts/lib/opkit_ns.sh\nns_run true > /etc/axon/y\n'),
+    ("python -c writing a file under /etc", '. scripts/lib/opkit_ns.sh\npython3 -c "open(\'/etc/axon/x\',\'w\').write(\'x\')"\n'),
+    ("an unlisted wrapper on a differently named kit copy", '. scripts/lib/opkit_ns.sh\nionice -c3 bash "$WORK/other-kit.sh" --from c --apply\n'),
+    ("python -c writing under /opt", '. scripts/lib/opkit_ns.sh\npython3 -c "open(\'/opt/x\',\'w\')"\n'),
 ]
 CONTROLS = [
     ('. scripts/lib/opkit_ns.sh\nns_run bash "$KIT" --from c --apply\n'),
@@ -393,6 +542,12 @@ CONTROLS = [
     ('. scripts/lib/opkit_ns.sh\nOPKIT_NET=host ns_run bash scripts/lib/opkit_fixture.sh a b\n'),
     ('. scripts/lib/opkit_ns.sh\nns_run mkdir -p /var/lib/axon-x\n'),
     ('. scripts/lib/opkit_ns.sh\npython3 - "$KIT" <<PY\nPY\ncp -- "$KIT" "$WORK/k"\nKIT=$CLONE/k\n'),
+    ('. scripts/lib/opkit_ns.sh\nK=$KIT\nns_run bash "$K" --from c\n'),
+    ('. scripts/lib/opkit_ns.sh\necho "$KIT"\n[ -f "$KIT" ] && grep -q x "$KIT"\n'),
+    ('. scripts/lib/opkit_ns.sh\nD=/var/lib/axon-x\nns_run mkdir -p "$D"\n'),
+    ('. scripts/lib/opkit_ns.sh\necho x > "$WORK/out" 2>/dev/null\nns_run true >"$WORK/o" 2>&1\n'),
+    ('. scripts/lib/opkit_ns.sh\nOPKIT_NET=host ns_run python3 -c "import guest_build_env as g; g.begin(1)"\n'),
+    ('. scripts/lib/opkit_ns.sh\nc=$(ns_run true)\neval "$c"\n'),
 ]
 
 
@@ -426,6 +581,14 @@ def selftest(root):
         ("a redirect into /boot", 'echo x > /boot/axon\n'),
         ("a variable that resolves outside", 'NEWDIR=/opt/axon\nact_dir "$NEWDIR" root root 0755\n'),
         ("tee into /usr/lib", 'printf x | tee /usr/lib/axon.conf\n'),
+        ("a python open() for writing under /opt", 'python3 -c "open(\'/opt/axon/x\', \'w\').write(\'x\')"\n'),
+        ("sed -i under /opt", 'sed -i s/a/b/ /opt/axon/x\n'),
+        ("dd of= under /home", 'dd if=/dev/zero of=/home/x count=1\n'),
+        ("setfacl under /opt", 'setfacl -m u:root:rw /opt/axon/x\n'),
+        ("curl -o under /opt", 'curl -o /opt/axon/x http://example.invalid/\n'),
+        ("git clone into /opt", 'git clone http://example.invalid/r /opt/axon/r\n'),
+        ("tar -x -C /opt", 'tar -x -C /opt/axon -f "$x"\n'),
+        ("systemctl --root=/opt", 'systemctl --root=/opt enable axon\n'),
     ]:
         if not destination_problems(root, kit + "\n" + extra):
             print(f"selftest: a kit write outside the shadowed destinations was ACCEPTED ({label})"); return 1

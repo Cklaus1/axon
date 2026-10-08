@@ -245,3 +245,13 @@ fn the_tree_copy_the_clone_the_toolchain_pin_and_the_command_line_refuse() {
 fn the_constructed_environments_and_the_host_tool_identities_are_the_documented_ones() {
     run_cases(cases!("values.py"), None);
 }
+
+/// Amendment 101: the build uid's dedication is judged against EVERY shape a service's identity takes (plural
+/// and string uids, any letter case, subdirectories and non-.json names under /etc/axon, quoted and drop-in
+/// `User=`, units not named axon-* that run an axon binary, `Group=` and `*_gid` for the build GID), a file that
+/// cannot be read or parsed REFUSES instead of being skipped, `DynamicUser` refuses, and a build uid that already
+/// owns running processes is refused.
+#[test]
+fn the_service_accounts_are_found_in_every_shape_and_an_unreadable_file_refuses() {
+    run_cases(cases!("service_ids.py"), None);
+}

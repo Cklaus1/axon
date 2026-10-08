@@ -5892,3 +5892,93 @@ was weakened, no test or guard was relaxed.
 - **Unfinished.** The 11 `py_guard` REMAINDERs stand, as the 150 REMAINDER sites overall (this amendment adds one).
   `test_opkit_ns.sh` and the drift selftest pass; the ns-dependent suites were run on gpumaster for the namespace-free
   parts only (amendment 92's calibration notes still hold).
+
+## Amendment 101: a read-only root instead of a list, a closed host descriptor, a drift gate that denies by mention, and service-account discovery that fails closed (C9 round 10, buildenv6)
+
+The round-10 FIELD-ORIGIN reviewer (`/var/tmp/c9r10-findings-FIELD-ORIGIN.json`; probes in `/var/tmp/c9r10-FO-logs/`)
+confirmed round 9's multi-threaded writer evasion closed and found three MAJOR-ADJACENT gaps in the namespace helper and its
+drift gate, and two MINOR ones in the build uid's dedication. Mutation ids M2630-M2659, matrix rows A220-A225 (another
+branch holds A208-A219; renumbered at integration). Base `d63416c4` (integrate8). `crates/axon-core/src` and the interpreter
+are untouched. The inventory below is the same one the reviewer read; every claim of "executed" is mine, run inside
+`ns_run`-style isolation or a private PID namespace, with before/after listings of the host around each experiment.
+
+1. **The host-root descriptor was handed to the code under test.** `ns_run` did `exec {hfd}</` (bash does not set
+   close-on-exec) and passed `OPKIT_HOST_FD`, so the kit (root), every `setpriv`'d child and the host-build leg's
+   third-party `build.rs` (which has the host network) inherited a handle on the HOST's `/`: `/proc/self/fd/10/var/lib`
+   listed 42 host entries while `/var/lib` inside held none. The comparison of host and shadow (device:inode) is now made
+   ONCE, in `opkit_ns_isolate`, and `opkit_ns_drop_host_fd` closes the descriptor, unsets the variable and refuses (exit 97,
+   the command never runs) if any DIRECTORY descriptor above stderr survives (`opkit_ns_fd_leak`). A command inside the
+   namespace that re-asserts (`opkit_fixture.sh`, the kit test's in-namespace script) cannot use a host view any more; it
+   rests on a STAMP the proof wrote on the shadow `/run` (our namespace ids and the host's), which must exist, be root's,
+   name this namespace and name a host mount namespace that is not this one (M2634-M2636); with no stamp the helper falls back to
+   `/proc/1/root`, which in the namespace is the shadow itself and refuses. Rows: M2630 (close + leak check), M2631 (the
+   detector), M2634-M2636 (the stamp). Tests in `scripts/test_opkit_ns.sh`: the command lists its descriptors and finds no
+   directory and no `OPKIT_HOST_FD`; a planted `exec 9</` is flagged; a removed, foreign or self-hosting stamp is refused.
+2. **The shadow list was an enumeration; the namespace is now deny-by-default.** The drift gate extracted write targets by
+   command vocabulary and so missed python `open(..,'w')`, `sed -i`, `dd of=`, `setfacl`, `curl -o`, `git clone`,
+   `tar -x -C`, `systemctl --root`, while `/opt /home /root /usr/lib /boot /var/cache` were the HOST. `opkit_ns_make_ro`
+   now sets `MOUNT_ATTR_RDONLY` on the whole mount tree in one recursive `mount_setattr(AT_FDCWD, "/", AT_RECURSIVE)` BEFORE
+   the shadows (fresh tmpfs mounts, hence writable) are laid down: `/etc` (a copy), `/usr/local /var/lib /var/log /var/spool
+   /var/mail /run /srv`, plus a fresh tmpfs `/tmp` (`TMPDIR=/tmp` inside) and the directories a caller names in
+   `OPKIT_RW` (the kit test names its own scratch and stash, nothing else). An unlisted write now answers EROFS. The
+   proof (`opkit_ro_proof`) refuses a namespace with any writable mount outside those and any place where a canary file can
+   be created. `/proc`, `/sys` and `/dev` are read-only too. The extractor in `opkit_ns_drift.py` stays as a second layer and
+   now also sees python `open()` for writing, `sed -i`, `dd of=`, `setfacl/chattr/chcon`, `curl -o`, `git clone`,
+   `tar -x -C` and `systemctl --root=`; its selftest plants all of them (M2645-M2647 are rowed; the rest are planted in the
+   selftest without a row of their own). Rows: M2632 (make_ro sets the attribute; judged by reading `statvfs` ST_RDONLY of
+   the real places, so the test itself writes nothing to a real directory), M2633 (the proof). The call site of
+   `opkit_ns_make_ro` is a hand four-cell (below), because the proof is its sibling.
+   Limit, stated: this is isolation against a mistaken or regressed guard and against unprivileged build code, NOT a
+   boundary against root code that means to escape (root in this namespace keeps CAP_SYS_ADMIN of the initial user
+   namespace: it can mount a block device from `/dev`, load a module or ptrace). The incident the helper answers was a
+   guard-removal experiment that became a real apply.
+3. **`opkit_ns_drift.py` denies by mention.** At least nine shapes beyond its seventeen were accepted: `eval "bash $KIT
+   --apply"`; `c='bash "$KIT" --apply'` then `eval "$c"`; `K=$KIT; bash "$K"`; `ionice`, `stdbuf`; `python3 -c` calling
+   `g.begin`; `mkdir` through a variable under `/var/lib`; `echo > /etc/..`; python `open('/etc/..','w')`. Every simple
+   command that names the kit, a variable assigned from it, or the build API, and is not itself `ns_run`/`kit`/`inns`,
+   is refused unless its first word only reads (`cp cat grep echo [ test`, `python3 -` reading the kit...); an assignment
+   building a COMMAND STRING out of the kit, `--apply` or a build verb is refused where it is made; `--apply` under ANY
+   unlisted wrapper is refused; a variable assigned a real destination is a destination when a mutator names it; a
+   redirection into a real destination is a write EVEN ON AN `ns_run` COMMAND (the outer shell opens it before any wrapper
+   runs); python write literals under a real destination are refused unless wrapped. `--selftest` now plants 48 must-flag
+   shapes (the 17 of amendment 97, the nine above and the wrappers `nice ionice stdbuf chrt taskset timeout env setsid sudo
+   command exec nohup xargs su systemd-run`, `bash -c`, chained aliases, an alias of the file name) and 13 controls
+   (wrapped aliases, read-only mentions, wrapped redirects to scratch). Rows M2637-M2644, each killed by its own named shape.
+   Known false positive, conservative: a quoted kit command spread over several physical lines is judged line by line
+   and refused (the new kit-test case is one physical line for that reason).
+4. **Service-account discovery fails closed.** `service_ids` (new; `service_uids` wraps it) reads: plural `uids`/`*_uids`
+   lists, decimal-string values, any letter case, every file under `/etc/axon` recursively (a `.json` MUST parse and be at
+   most 64 KiB; any other file is read if it parses), `User=`/`Group=` quoted or not in every `axon-*.service`, in every
+   unit whose `Exec*=` names an axon binary, and in their `*.service.d/*.conf` drop-ins, and the primary and named groups
+   of the service accounts. `DynamicUser=yes` on such a unit, an unreadable or unlistable path, an oversized or unparsable
+   `.json`, or a uid field holding something that is not a number REFUSES (`DiscoveryRefused`; `build_uid_problem`
+   returns "the deployment's service accounts cannot be determined (..)") instead of being skipped. The build GID
+   (= the uid, as `build_ids` returns it) is compared with the service gids. `build_uid_lock`, which `begin`, `kernel` and
+   every cargo step already take, now refuses a build uid that owns running processes once it holds the lock (the reaper
+   SIGKILLs everything the uid owns after a step; on a host where `nobody` runs a daemon, the default build uid is therefore
+   refused until a dedicated uid is chosen with `AXON_GUEST_BUILD_UID`). The kit judges the build uid AGAIN after the
+   `users` step (a first install had no service accounts when the first check ran, and `useradd --system` allocates the
+   highest free uid below `SYS_UID_MAX`): hand evidence below. Not done and stated: the verifier and profile users of a
+   non-default `--verifier-user/--profile-user` are known only to the kit's argv, which the kit passes to its own two
+   `check-build-uid` calls but the build script, which runs earlier on another command line, cannot see; and the
+   `--agent` uids of the preflight are in no check. Rows M2648-M2659 (cases in
+   `guest_build_env_guards/service_ids.py`); M2503 and M2504 re-anchored to the new code (the axon-* naming rule and the
+   config read); M2509 unchanged. Six new refusal sites are OBSERVED by the survey, none REMAINDER.
+5. **`kernel()` took its lock after its first chown.** It now takes `build_uid_lock` before the first `chown_tree`, holds it
+   through both make steps and releases it when the tree is root's again (read, not rowed: a kernel build needs the pinned
+   tarball). A leftover lock file with a looser mode makes every later build refuse; the refusal now says the remedy: root
+   deletes the file and the next build recreates it 0600 (it is not repaired in place, because a descriptor the build uid
+   already held would survive a chmod).
+
+**Hand evidence (inside the isolation; scratch directories only).**
+- Four cells for the call site of `opkit_ns_make_ro` in `opkit_ns_isolate` (sibling: the proof): base, a write to a scratch
+  probe directory by the command is denied (EROFS); call removed alone, `ns_run` refuses 97 listing the writable mounts;
+  proof off alone, denied; both off, the write succeeds.
+- The kit's re-check after the users step: with the guard, `--only users --apply --build-uid 999` (the uid `useradd --system`
+  takes next) is refused rc 2 "now that the users exist"; with `|| refuse` replaced by `|| true`, the same command ends
+  `DEPLOYED`, rc 0, with the build uid equal to the Fabric service's uid.
+- `kernel()` lock ordering is read from the code.
+
+**Unfinished.** The 11 `py_guard` REMAINDERs stand. The oversize guard of `_read_small` is observable only for a complete
+document padded past the bound (a truncated one fails to parse, which refuses as well); M2653 uses that shape. Two shell
+guards of the helper have no cargo row (`TMPDIR=/tmp`, the `/tmp` tmpfs); the kit test exercises them.
