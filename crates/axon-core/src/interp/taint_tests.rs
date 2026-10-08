@@ -1550,7 +1550,7 @@ fn comparing_or_searching_a_dict_the_candidate_wrote_is_a_read_of_it() {
 /// covered without being listed.
 #[test]
 fn every_builtin_that_can_read_a_container_of_a_tainted_dict_taints_its_result() {
-    let pre = format!("{CMP_REF}");
+    let pre = CMP_REF.to_string();
     let mut cases = Vec::new();
     // (builtin call over `xs = [d]`, `d`, `e`) — each a different reader.
     let calls: &[(&str, &str)] = &[
