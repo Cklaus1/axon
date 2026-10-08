@@ -10,7 +10,8 @@
 //! All `pub(super)` so the parent `codegen::mod` can call `emit_match`
 //! from inside `emit_expr`'s `Expr::Match` arm.
 
-use inkwell::values::{BasicValueEnum, FunctionValue};
+use inkwell::types::BasicTypeEnum;
+use inkwell::values::{BasicValueEnum, FunctionValue, IntValue, PointerValue, StructValue};
 use inkwell::FloatPredicate;
 use inkwell::IntPredicate;
 
@@ -18,6 +19,35 @@ use crate::ast;
 use crate::types::Type;
 
 use super::build_wrappers;
+use super::enum_layout::EnumField;
+
+/// A name's `locals` slot and `local_types` entry, either possibly absent.
+type ShadowedLocal<'ctx> = (
+    String,
+    Option<(PointerValue<'ctx>, BasicTypeEnum<'ctx>)>,
+    Option<Type>,
+);
+
+/// The identifiers `pattern` binds.
+fn pattern_binders<'p>(pattern: &'p ast::Pattern, out: &mut Vec<&'p str>) {
+    match pattern {
+        ast::Pattern::Ident(n) => out.push(n),
+        ast::Pattern::Some(p) | ast::Pattern::Ok(p) | ast::Pattern::Err(p) => {
+            pattern_binders(p, out)
+        }
+        ast::Pattern::Struct { fields, .. } => {
+            for (_, p) in fields {
+                pattern_binders(p, out);
+            }
+        }
+        ast::Pattern::Tuple(ps) => {
+            for p in ps {
+                pattern_binders(p, out);
+            }
+        }
+        ast::Pattern::Wildcard | ast::Pattern::Literal(_) | ast::Pattern::None => {}
+    }
+}
 
 impl<'ctx> super::Codegen<'ctx> {
     // ── Match emission ────────────────────────────────────────────────────────
@@ -73,6 +103,11 @@ impl<'ctx> super::Codegen<'ctx> {
                 miss_preds.push(self.ir.builder.get_insert_block().unwrap());
             }
 
+            // The arm's bindings are scoped to the arm. They used to stay in
+            // `locals` after it, so a LATER arm naming the same identifier
+            // (`A::Neg { v } => v * 10  _ => v`, with `v` a parameter) read the
+            // earlier arm's never-written slot instead of the outer `v`.
+            let outer = self.shadowed_by(&arm.pattern);
             if let Some(guard_expr) = &arm.guard {
                 // The guard sees the arm's bindings (`Some(v) if v > 2`), so it
                 // runs in its own block once the pattern has matched. It used
@@ -104,6 +139,7 @@ impl<'ctx> super::Codegen<'ctx> {
                 self.emit_pattern_bindings(&arm.pattern, subject, subject_sem_ty);
             }
             let body_val = self.emit_expr(&arm.body, fn_val);
+            self.restore_shadowed(outer);
 
             let current_bb = self.ir.builder.get_insert_block().unwrap();
             if current_bb.get_terminator().is_none() {
@@ -289,22 +325,18 @@ impl<'ctx> super::Codegen<'ctx> {
                             )
                             .unwrap();
 
-                        // Also recurse on the inner value.
+                        // Also recurse on the inner value, once the tag says
+                        // there is one.
                         let inner_val = self
                             .ir
                             .builder
                             .build_extract_value(sv, 1, "optval")
                             .unwrap();
-                        let inner_match = self.emit_pattern_test(inner_pat, inner_val);
-                        if let BasicValueEnum::IntValue(im) = inner_match {
-                            return self
-                                .ir
-                                .builder
-                                .build_and(is_some, im, "somematch")
-                                .unwrap()
-                                .into();
-                        }
-                        return is_some.into();
+                        return self
+                            .emit_test_when(is_some, inner_pat, |s| {
+                                s.emit_pattern_test(inner_pat, inner_val)
+                            })
+                            .into();
                     }
                 }
                 false_val.into()
@@ -330,16 +362,11 @@ impl<'ctx> super::Codegen<'ctx> {
                             .builder
                             .build_extract_value(sv, 1, "resval")
                             .unwrap();
-                        let inner_match = self.emit_pattern_test(inner_pat, inner);
-                        if let BasicValueEnum::IntValue(im) = inner_match {
-                            return self
-                                .ir
-                                .builder
-                                .build_and(is_ok, im, "okmatch")
-                                .unwrap()
-                                .into();
-                        }
-                        return is_ok.into();
+                        return self
+                            .emit_test_when(is_ok, inner_pat, |s| {
+                                s.emit_pattern_test(inner_pat, inner)
+                            })
+                            .into();
                     }
                 }
                 false_val.into()
@@ -365,46 +392,57 @@ impl<'ctx> super::Codegen<'ctx> {
                             .builder
                             .build_extract_value(sv, 1, "resval")
                             .unwrap();
-                        let inner_match = self.emit_pattern_test(inner_pat, inner);
-                        if let BasicValueEnum::IntValue(im) = inner_match {
-                            return self
-                                .ir
-                                .builder
-                                .build_and(is_err, im, "errmatch")
-                                .unwrap()
-                                .into();
-                        }
-                        return is_err.into();
+                        return self
+                            .emit_test_when(is_err, inner_pat, |s| {
+                                s.emit_pattern_test(inner_pat, inner)
+                            })
+                            .into();
                     }
                 }
                 false_val.into()
             }
 
-            // Enum variant struct pattern: "EnumName::Variant { ... }" — check tag.
-            ast::Pattern::Struct { name, .. } if name.contains("::") => {
+            // Enum variant struct pattern: "EnumName::Variant { ... }" — check
+            // the tag, then each refutable field sub-pattern (`A::Lit { v: 0 }`).
+            // The field tests used to be skipped, so `A::Lit { v: 0 }` matched
+            // every `Lit`.
+            ast::Pattern::Struct { name, fields } if name.contains("::") => {
                 let (enum_name, variant_name) = name.split_once("::").unwrap();
 
-                // Find the tag for this variant.
-                let tag_int = self
+                // Find the tag and layout for this variant.
+                let variant = self
                     .enum_variants
                     .get(enum_name)
                     .and_then(|vs| vs.iter().find(|(vn, _, _)| vn == variant_name))
-                    .map(|(_, tag, _)| *tag);
+                    .map(|(_, tag, layout)| (*tag, layout.clone()));
 
-                if let Some(tag_int) = tag_int {
+                if let Some((tag_int, layout)) = variant {
                     // Subject is the enum struct { i32, [N x i8] }.
-                    // We need to alloca it to GEP field 0.
                     if let BasicValueEnum::StructValue(sv) = subject {
                         // Extract tag (field 0) — it's an i32.
                         if let BasicValueEnum::IntValue(tag_val) =
                             build_wrappers::w_extract_value(&self.ir.builder, sv, 0, "enumtag")
                         {
                             let expected = tag_val.get_type().const_int(tag_int as u64, false);
-                            return self
+                            let tag_ok = self
                                 .ir
                                 .builder
                                 .build_int_compare(IntPredicate::EQ, tag_val, expected, "tagcmp")
-                                .unwrap()
+                                .unwrap();
+                            let refutable: Vec<&(String, ast::Pattern)> = fields
+                                .iter()
+                                .filter(|(_, p)| !Self::pattern_is_irrefutable(p))
+                                .collect();
+                            if refutable.is_empty() {
+                                return tag_ok.into();
+                            }
+                            // The payload is only meaningful for this variant
+                            // (a boxed field of another is not a pointer), so
+                            // read it only once the tag matched.
+                            return self
+                                .emit_test_when(tag_ok, pattern, |s| {
+                                    s.emit_enum_field_tests(sv, enum_name, &layout, &refutable)
+                                })
                                 .into();
                         }
                     }
@@ -414,6 +452,105 @@ impl<'ctx> super::Codegen<'ctx> {
 
             // Plain struct / tuple patterns: phase 1 — always match (wildcard semantics).
             ast::Pattern::Struct { .. } | ast::Pattern::Tuple(_) => true_val.into(),
+        }
+    }
+
+    /// A sub-pattern that matches every value of its type.
+    fn pattern_is_irrefutable(pattern: &ast::Pattern) -> bool {
+        matches!(pattern, ast::Pattern::Wildcard | ast::Pattern::Ident(_))
+    }
+
+    /// `cond && test(self)`, where the code `test` emits runs only once `cond`
+    /// holds; `cond` alone when `inner` is irrefutable.
+    ///
+    /// A sub-pattern reads the payload the outer tag guards. Evaluating it
+    /// unconditionally (`cond & test`) read a `None`'s or another variant's
+    /// payload, which for a boxed enum field is not a valid pointer.
+    fn emit_test_when(
+        &mut self,
+        cond: IntValue<'ctx>,
+        inner: &ast::Pattern,
+        test: impl FnOnce(&mut Self) -> BasicValueEnum<'ctx>,
+    ) -> IntValue<'ctx> {
+        if Self::pattern_is_irrefutable(inner) {
+            return cond;
+        }
+        let entry_bb = self.ir.builder.get_insert_block().unwrap();
+        let fn_val = entry_bb.get_parent().unwrap();
+        let then_bb = self.ir.context.append_basic_block(fn_val, "pat_inner");
+        let join_bb = self.ir.context.append_basic_block(fn_val, "pat_join");
+        build_wrappers::w_cond_br(&self.ir.builder, cond, then_bb, join_bb);
+        self.ir.builder.position_at_end(then_bb);
+        let bool_ty = self.ir.context.bool_type();
+        let inner_ok = match test(self) {
+            BasicValueEnum::IntValue(i) => i,
+            _ => bool_ty.const_int(1, false),
+        };
+        let then_end = self.ir.builder.get_insert_block().unwrap();
+        build_wrappers::w_br(&self.ir.builder, join_bb);
+        self.ir.builder.position_at_end(join_bb);
+        let phi = build_wrappers::w_phi(&self.ir.builder, bool_ty.into(), "pat_ok");
+        phi.add_incoming(&[(&bool_ty.const_zero(), entry_bb), (&inner_ok, then_end)]);
+        phi.as_basic_value().into_int_value()
+    }
+
+    /// AND of the sub-pattern tests of an enum variant's payload `fields`
+    /// (already known to be this variant's), each found in `layout` by name.
+    fn emit_enum_field_tests(
+        &mut self,
+        sv: StructValue<'ctx>,
+        enum_name: &str,
+        layout: &[EnumField],
+        fields: &[&(String, ast::Pattern)],
+    ) -> BasicValueEnum<'ctx> {
+        let bool_ty = self.ir.context.bool_type();
+        let Some(pay_ptr) = self.enum_payload_ptr(sv, enum_name) else {
+            return bool_ty.const_zero().into();
+        };
+        let mut all = bool_ty.const_int(1, false);
+        for (fname, pat) in fields {
+            let field_val = layout
+                .iter()
+                .find(|f| &f.name == fname)
+                .and_then(|slot| self.load_enum_field(pay_ptr, slot));
+            let Some(field_val) = field_val else {
+                self.refuse_unlowered(&format!("the pattern for field `{fname}` of `{enum_name}`"));
+                continue;
+            };
+            if let BasicValueEnum::IntValue(ok) = self.emit_pattern_test(pat, field_val) {
+                all = self.ir.builder.build_and(all, ok, "fieldsok").unwrap();
+            }
+        }
+        all.into()
+    }
+
+    /// The current `locals`/`local_types` entries of every name `pattern`
+    /// binds, for `restore_shadowed` once the arm is done.
+    fn shadowed_by(&self, pattern: &ast::Pattern) -> Vec<ShadowedLocal<'ctx>> {
+        let mut names = Vec::new();
+        pattern_binders(pattern, &mut names);
+        names
+            .into_iter()
+            .map(|n| {
+                let slot = self.locals.get(n).copied();
+                let ty = self.local_types.get(n).cloned();
+                (n.to_string(), slot, ty)
+            })
+            .collect()
+    }
+
+    /// Put back the entries `shadowed_by` saved: an outer binding again, or
+    /// no binding at all.
+    fn restore_shadowed(&mut self, saved: Vec<ShadowedLocal<'ctx>>) {
+        for (name, slot, ty) in saved {
+            match slot {
+                Some(s) => self.locals.insert(name.clone(), s),
+                None => self.locals.remove(&name),
+            };
+            match ty {
+                Some(t) => self.local_types.insert(name, t),
+                None => self.local_types.remove(&name),
+            };
         }
     }
 

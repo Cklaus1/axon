@@ -32760,6 +32760,336 @@ fn a_struct_holding_itself_by_value_is_refused_natively_not_a_compiler_crash() {
     assert!(!msg.contains("overflowed its stack"), "{msg}");
 }
 
+/// AX-42 parity programs: recursive enums, interp vs native.
+const AX42_PROGS: [(&str, &str); 8] = [
+    (
+        "ax42_repro",
+        r#"type A = Lit { v: i64 } | Add { l: A, r: A }
+fn ev(a: A) -> i64 { match a { A::Lit { v } => v A::Add { l, r } => ev(l) + ev(r) } }
+fn main() -> i64 { println(to_str(ev(A::Add { l: A::Lit { v: 2 }, r: A::Lit { v: 3 } }))) 0 }
+"#,
+    ),
+    (
+        // A small expression-tree evaluator: build, evaluate, print, rewrite
+        // with nested refutable patterns, and keep trees in an array.
+        "ax42_expr_eval",
+        r#"type Ex = Lit { v: i64 } | Add { l: Ex, r: Ex } | Mul { l: Ex, r: Ex } | Neg { e: Ex }
+fn ev(t: Ex) -> i64 {
+  match t {
+    Ex::Lit { v } => v
+    Ex::Add { l, r } => ev(l) + ev(r)
+    Ex::Mul { l, r } => ev(l) * ev(r)
+    Ex::Neg { e } => 0 - ev(e)
+  }
+}
+fn show(t: Ex) -> str {
+  match t {
+    Ex::Lit { v } => to_str(v)
+    Ex::Add { l, r } => "(" + show(l) + " + " + show(r) + ")"
+    Ex::Mul { l, r } => show(l) + " * " + show(r)
+    Ex::Neg { e } => "-" + show(e)
+  }
+}
+fn simplify(t: Ex) -> Ex {
+  match t {
+    Ex::Add { l: Ex::Lit { v: 0 }, r } => simplify(r)
+    Ex::Mul { l: Ex::Lit { v: 1 }, r } => simplify(r)
+    Ex::Add { l, r } => Ex::Add { l: simplify(l), r: simplify(r) }
+    Ex::Mul { l, r } => Ex::Mul { l: simplify(l), r: simplify(r) }
+    Ex::Neg { e: Ex::Neg { e } } => simplify(e)
+    Ex::Neg { e } => Ex::Neg { e: simplify(e) }
+    _ => t
+  }
+}
+fn lit(v: i64) -> Ex { Ex::Lit { v: v } }
+fn main() -> i64 {
+  let t = Ex::Add { l: Ex::Mul { l: lit(2), r: lit(3) }, r: Ex::Neg { e: Ex::Add { l: lit(0), r: lit(4) } } }
+  println(show(t))
+  println(to_str(ev(t)))
+  let s = simplify(Ex::Mul { l: lit(1), r: Ex::Neg { e: Ex::Neg { e: t } } })
+  println(show(s))
+  println(to_str(ev(s)))
+  let o: Option<Ex> = None
+  match o { Some(Ex::Add { l: Ex::Lit { v: 0 }, r }) => println("zero-add")  Some(_) => println("some")  None => println("none") }
+  let p = Some(Ex::Add { l: lit(0), r: lit(9) })
+  match p { Some(Ex::Add { l: Ex::Lit { v: 0 }, r }) => println("zero-add " + show(r))  Some(_) => println("some")  None => println("none") }
+  let xs = [t, s, lit(7)]
+  let i = 0
+  let tot = 0
+  while i < len(xs) { tot = tot + ev(xs[i]) i = i + 1 }
+  println(to_str(tot))
+  0
+}
+"#,
+    ),
+    (
+        // A refutable field sub-pattern is tested, not skipped: `A::Lit { v: 0 }`
+        // matched every `Lit`.
+        "ax42_field_subpattern",
+        r#"type A = Lit { v: i64 } | Neg { v: i64 }
+fn f(a: A) -> str { match a { A::Lit { v: 0 } => "zero"  A::Lit { v } => "lit"  A::Neg { v } => "neg" } }
+fn main() -> i64 {
+  println(f(A::Lit { v: 0 }))
+  println(f(A::Lit { v: 5 }))
+  println(f(A::Neg { v: 0 }))
+  0
+}
+"#,
+    ),
+    (
+        // Mutual recursion through two enums, and through a struct field.
+        "ax42_mutual",
+        r#"type E = Num { v: i64 } | Blk { s: S }
+type S = Empty | Seq { e: E, rest: S }
+type T = Leaf | Br { n: N }
+type N = { v: i64, l: T, r: T }
+type W = { tag: str, t: T }
+fn sum_e(e: E) -> i64 { match e { E::Num { v } => v  E::Blk { s } => sum_s(s) } }
+fn sum_s(s: S) -> i64 { match s { S::Empty => 0  S::Seq { e, rest } => sum_e(e) + sum_s(rest) } }
+fn sum_t(t: T) -> i64 { match t { T::Leaf => 0  T::Br { n } => n.v + sum_t(n.l) + sum_t(n.r) } }
+fn depth(t: T) -> i64 { match t { T::Leaf => 0  T::Br { n } => { let a = depth(n.l) let b = depth(n.r) if a > b { a + 1 } else { b + 1 } } } }
+fn leaf() -> T { T::Leaf }
+fn node(v: i64, l: T, r: T) -> T { T::Br { n: N { v: v, l: l, r: r } } }
+fn insert(t: T, v: i64) -> T {
+  match t {
+    T::Leaf => node(v, leaf(), leaf())
+    T::Br { n } => if v < n.v { node(n.v, insert(n.l, v), n.r) } else { node(n.v, n.l, insert(n.r, v)) }
+  }
+}
+fn main() -> i64 {
+  let s = S::Seq { e: E::Num { v: 1 }, rest: S::Seq { e: E::Blk { s: S::Seq { e: E::Num { v: 2 }, rest: S::Empty } }, rest: S::Empty } }
+  println(to_str(sum_s(s)))
+  let t = leaf()
+  let xs = [5, 3, 8, 1, 4, 7, 9, 2, 6]
+  let i = 0
+  while i < len(xs) { t = insert(t, xs[i]) i = i + 1 }
+  println(to_str(sum_t(t)) + " " + to_str(depth(t)))
+  let w = W { tag: "tree", t: t }
+  match w.t { T::Br { n } => println(w.tag + " root " + to_str(n.v))  T::Leaf => println("empty") }
+  let ws = [W { tag: "a", t: node(1, leaf(), leaf()) }, W { tag: "b", t: leaf() }]
+  println(to_str(sum_t(ws[0].t) + sum_t(ws[1].t)))
+  0
+}
+"#,
+    ),
+    (
+        // Recursion through an array, an Option and a tuple payload field.
+        "ax42_array_option_tuple",
+        r#"type T = Leaf { v: i64 } | Node { kids: [T] }
+type W = Val { v: i64 } | Wrap { o: Option<W> } | Pair { p: (W, i64) }
+fn sum(t: T) -> i64 {
+  match t {
+    T::Leaf { v } => v
+    T::Node { kids } => {
+      let s = 0
+      let i = 0
+      while i < len(kids) { s = s + sum(kids[i]) i = i + 1 }
+      s
+    }
+  }
+}
+fn wsum(w: W) -> i64 {
+  match w {
+    W::Val { v } => v
+    W::Wrap { o } => match o { Some(x) => wsum(x) None => 100 }
+    W::Pair { p } => wsum(p.0) + p.1
+  }
+}
+fn main() -> i64 {
+  let t = T::Node { kids: [T::Leaf { v: 1 }, T::Node { kids: [T::Leaf { v: 2 }, T::Leaf { v: 3 }] }, T::Node { kids: [] }] }
+  println(to_str(sum(t)))
+  println(to_str(wsum(W::Wrap { o: Some(W::Pair { p: (W::Wrap { o: None }, 7) }) })))
+  println(to_str(wsum(W::Wrap { o: Some(W::Val { v: 5 }) })))
+  match t { T::Node { kids } => println(to_str(len(kids))) _ => println("leaf") }
+  0
+}
+"#,
+    ),
+    (
+        // A left-leaning chain built in a loop, summed recursively and
+        // iteratively. (Kept small: `axon run` builds it in quadratic time.)
+        "ax42_chain",
+        r#"type A = Lit { v: i64 } | Add { l: A, r: A }
+fn build(n: i64) -> A {
+  let t = A::Lit { v: 1 }
+  let i = 1
+  while i < n { t = A::Add { l: t, r: A::Lit { v: i + 1 } } i = i + 1 }
+  t
+}
+fn ev(a: A) -> i64 { match a { A::Lit { v } => v  A::Add { l, r } => ev(l) + ev(r) } }
+fn sum_iter(a: A) -> i64 {
+  let s = 0
+  let cur = a
+  let go = true
+  while go {
+    match cur {
+      A::Lit { v } => { s = s + v go = false }
+      A::Add { l, r } => { s = s + ev(r) cur = l }
+    }
+  }
+  s
+}
+fn main() -> i64 {
+  let t = build(400)
+  println(to_str(ev(t)))
+  println(to_str(sum_iter(t)))
+  0
+}
+"#,
+    ),
+    (
+        // `==`/`!=` compare payloads, recursively, through struct fields and
+        // mutually recursive types.
+        "ax42_equality",
+        r#"type A = Lit { v: i64 } | Add { l: A, r: A } | Name { s: str } | Nil
+type P = { a: A, k: i64 }
+type B = Leaf | Node { c: C }
+type C = { b: B, w: f64 }
+fn mk(n: i64) -> A {
+  if n == 0 { return A::Lit { v: 0 } }
+  A::Add { l: mk(n - 1), r: A::Lit { v: n } }
+}
+fn main() -> i64 {
+  let a = A::Add { l: A::Lit { v: 1 }, r: A::Lit { v: 2 } }
+  let b = A::Add { l: A::Lit { v: 1 }, r: A::Lit { v: 3 } }
+  let c = A::Add { l: A::Lit { v: 1 }, r: A::Lit { v: 2 } }
+  println(to_str(a == b))
+  println(to_str(a == c))
+  println(to_str(a != b))
+  println(to_str(a != c))
+  println(to_str(a == A::Lit { v: 1 }))
+  println(to_str(A::Name { s: "x" } == A::Name { s: "x" }))
+  println(to_str(A::Name { s: "x" } == A::Name { s: "y" }))
+  println(to_str(A::Nil == A::Nil))
+  println(to_str(mk(50) == mk(50)))
+  println(to_str(mk(50) == mk(49)))
+  println(to_str(P { a: a, k: 1 } == P { a: c, k: 1 }))
+  println(to_str(P { a: a, k: 1 } == P { a: b, k: 1 }))
+  let x = B::Node { c: C { b: B::Leaf, w: 1.5 } }
+  let y = B::Node { c: C { b: B::Node { c: C { b: B::Leaf, w: 0.0 } }, w: 1.5 } }
+  println(to_str(x == x))
+  println(to_str(x == y))
+  0
+}
+"#,
+    ),
+    (
+        // Built in a loop, returned from functions, passed through `Result`.
+        "ax42_return_result",
+        r#"type L = Nil | Cons { h: i64, t: L }
+fn range(n: i64) -> L { let l = L::Nil let i = n while i > 0 { l = L::Cons { h: i, t: l } i = i - 1 } l }
+fn rev(l: L) -> L { let out = L::Nil let cur = l let go = true while go { match cur { L::Nil => go = false  L::Cons { h, t } => { out = L::Cons { h: h, t: out } cur = t } } } out }
+fn show(l: L) -> str { match l { L::Nil => "."  L::Cons { h, t } => to_str(h) + " " + show(t) } }
+fn head(l: L) -> Result<i64, str> { match l { L::Nil => Err("empty")  L::Cons { h, t } => Ok(h) } }
+fn main() -> i64 {
+  let l = range(5)
+  println(show(l))
+  println(show(rev(l)))
+  match head(rev(l)) { Ok(h) => println(to_str(h))  Err(e) => println(e) }
+  match head(L::Nil) { Ok(h) => println(to_str(h))  Err(e) => println(e) }
+  0
+}
+"#,
+    ),
+];
+
+#[test]
+fn native_recursive_enums_match_the_interpreter() {
+    // AX-42: an enum holding itself by value (`Add { l: A, r: A }`) was
+    // refused (E0910). Such a field is now boxed: its payload slot holds a
+    // pointer to a heap copy.
+    for (tag, src) in AX42_PROGS {
+        let Some(got) = native_stdout(tag, src) else {
+            return;
+        };
+        assert_eq!(
+            got,
+            interp_stdout(tag, src),
+            "[{tag}] native != interpreter"
+        );
+    }
+    // The register's exact command: `axon build --release rec.ax` prints 5.
+    if let Some(got) = native_release_stdout("ax42_release", AX42_PROGS[0].1) {
+        assert_eq!(got, "5");
+    }
+}
+
+#[test]
+fn native_recursive_enum_chain_of_100k_nodes() {
+    // A 100k-node left-leaning chain, built in a loop and summed iteratively
+    // (recursing 100k deep overflows the native stack, which panics cleanly).
+    // Native only: `axon run` builds the chain in quadratic time; the
+    // `ax42_chain` parity row runs the same program at 400 nodes.
+    let src = AX42_PROGS[5].1.replace(
+        "let t = build(400)\n  println(to_str(ev(t)))\n",
+        "let t = build(100000)\n",
+    );
+    assert!(
+        src.contains("build(100000)"),
+        "the chain program changed shape"
+    );
+    if let Some(got) = native_release_stdout("ax42_chain_100k", &src) {
+        assert_eq!(got, "5000050000");
+    }
+}
+
+#[test]
+fn enum_equality_on_an_uncomparable_payload_field_is_still_refused() {
+    // Payload equality lowers field by field; a field whose equality native
+    // codegen does not lower (`[str]`) keeps the whole comparison refused,
+    // rather than answered from the tags.
+    let src = "type A = Lit { v: i64 } | Many { xs: [str] }\nfn main() -> i64 {\n let a = A::Many { xs: [\"a\"] }\n println(to_str(a == A::Many { xs: [\"a\"] }))\n 0\n}\n";
+    assert_eq!(interp_stdout("enum_eq_strs", src), "true");
+    let f = tmp_ax("enum_eq_strs_build", src);
+    let bin = std::env::temp_dir().join(format!("axon_native_eqstrs_{}", std::process::id()));
+    let build = axon()
+        .arg("build")
+        .arg(&f)
+        .arg("-o")
+        .arg(&bin)
+        .arg("--no-cache")
+        .output()
+        .expect("spawn build");
+    let _ = std::fs::remove_file(&f);
+    let _ = std::fs::remove_file(&bin);
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr)
+    );
+    if codegen_absent(&msg) {
+        return;
+    }
+    assert_ne!(build.status.code(), Some(0), "must not build:\n{msg}");
+    assert!(
+        msg.contains("E0910") && msg.contains("cannot compare `A` values"),
+        "refused in the E0910 class:\n{msg}"
+    );
+}
+
+#[test]
+fn native_match_arm_bindings_are_scoped_to_their_arm() {
+    // An arm's binding stayed in scope for the LATER arms, which then read
+    // its never-written slot instead of the outer variable of the same name:
+    // native printed 0 and a garbage number where the interpreter prints 5.
+    let src = r#"type A = Lit { v: i64 } | Neg { v: i64 }
+fn f(v: i64, a: A) -> i64 { match a { A::Neg { v } => v * 10  _ => v } }
+fn g(x: i64, o: Option<i64>) -> i64 { match o { Some(x) => x * 10  None => x } }
+fn main() -> i64 {
+  println(to_str(f(5, A::Lit { v: 9 })))
+  println(to_str(f(5, A::Neg { v: 9 })))
+  println(to_str(g(5, None)))
+  println(to_str(g(5, Some(2))))
+  0
+}
+"#;
+    let Some(got) = native_stdout("arm_scope", src) else {
+        return;
+    };
+    assert_eq!(got, interp_stdout("arm_scope", src));
+    assert_eq!(got, "5\n90\n5\n20");
+}
+
 #[test]
 fn native_array_index_write_traps_out_of_bounds_like_the_interpreter() {
     let src = "fn main() -> i64 {\n let a = [1, 2, 3]\n a[3] = 7\n println(\"unreachable\")\n 0\n}\n";

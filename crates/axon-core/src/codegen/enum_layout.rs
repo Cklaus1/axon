@@ -12,8 +12,15 @@
 //! by value, and a struct's LLVM body may hold an enum (or a `Result` sized by
 //! one). Computing either on the fly in source order sized a not-yet-declared
 //! enum as a struct with no layout.
+//!
+//! A field whose type holds its own enum by value (a recursive variant) is
+//! BOXED: its slot holds a pointer to a heap copy (`store_enum_field`), read
+//! through by `load_enum_field`. See spec/runtime.md §6 and §10.
 
 use std::collections::{HashMap, HashSet};
+
+use inkwell::types::BasicType;
+use inkwell::AddressSpace;
 
 use crate::ast;
 use crate::types::Type;
@@ -27,14 +34,24 @@ pub(super) struct EnumField {
     pub(super) ty: Type,
     /// Byte offset of the field's slot inside the payload array.
     pub(super) offset: u64,
+    /// The slot holds a pointer to a heap copy of the value rather than the
+    /// value itself: the field's type holds this enum by value (a recursive
+    /// variant such as `Add { l: Expr, r: Expr }`), so storing it inline would
+    /// need an infinitely large payload.
+    pub(super) boxed: bool,
 }
 
 /// `(variant name, tag, fields in declaration order)`.
 pub(super) type EnumVariantLayout = (String, usize, Vec<EnumField>);
 
-/// An enum's variants with their payload fields' semantic types, in
-/// declaration order: `(variant, [(field, type)])`.
-type SemVariants = Vec<(String, Vec<(String, Type)>)>;
+/// A payload field before layout: `(name, semantic type, boxed)`.
+type SemField = (String, Type, bool);
+
+/// An enum's variants with their payload fields, in declaration order.
+type SemVariants = Vec<(String, Vec<SemField>)>;
+
+/// Bytes a boxed payload slot occupies: one pointer.
+const BOX_SLOT_SIZE: u64 = 8;
 
 /// Push the nominal types (`Struct`/`Enum`) a value of `ty` holds BY VALUE at
 /// its top level: through `Option`/`Result`/tuple/`Uncertain`/`Temporal`,
@@ -135,7 +152,7 @@ impl<'ctx> super::Codegen<'ctx> {
                         let fields = v
                             .fields
                             .iter()
-                            .map(|f| (f.name.clone(), self.axon_type_to_semantic(&f.ty)))
+                            .map(|f| (f.name.clone(), self.axon_type_to_semantic(&f.ty), false))
                             .collect();
                         (v.name.clone(), fields)
                     })
@@ -143,41 +160,45 @@ impl<'ctx> super::Codegen<'ctx> {
                 defs.push((ed.name.clone(), variants));
             }
         }
-        let enum_field_tys: HashMap<String, Vec<Type>> = defs
-            .iter()
-            .map(|(name, variants)| {
-                let tys = variants
-                    .iter()
-                    .flat_map(|(_, fs)| fs.iter().map(|(_, t)| t.clone()))
-                    .collect();
-                (name.clone(), tys)
-            })
-            .collect();
 
+        // A field whose value holds its own enum (directly, through a struct,
+        // an `Option`/`Result`/tuple, or another enum) would make the enum
+        // infinitely large inline. Box it: the slot holds a pointer to a heap
+        // copy. Every by-value cycle through an enum leaves that enum through
+        // such a field, so after boxing only struct-only cycles remain.
+        {
+            let all_fields = Self::enum_field_types(&defs, true);
+            let graph = ByValueGraph {
+                structs: &self.struct_field_sem_types,
+                enums: &all_fields,
+            };
+            let mut boxed: Vec<(usize, usize, usize)> = Vec::new();
+            for (e, (ename, variants)) in defs.iter().enumerate() {
+                let me = Type::Enum(ename.clone());
+                for (v, (_, fields)) in variants.iter().enumerate() {
+                    for (f, (_, t, _)) in fields.iter().enumerate() {
+                        if graph.reaches(t, &me) {
+                            boxed.push((e, v, f));
+                        }
+                    }
+                }
+            }
+            for (e, v, f) in boxed {
+                defs[e].1[v].1[f].2 = true;
+            }
+        }
+        let inline_fields = Self::enum_field_types(&defs, false);
+
+        // A struct that holds itself by value (`type Node = { next:
+        // Option<Node> }`) has no finite layout. This used to recurse in
+        // `llvm_sizeof` until the compiler's own stack overflowed.
         let mut refusals: Vec<String> = Vec::new();
         let mut cyclic_structs: HashSet<String> = HashSet::new();
         {
             let graph = ByValueGraph {
                 structs: &self.struct_field_sem_types,
-                enums: &enum_field_tys,
+                enums: &inline_fields,
             };
-            // A field holding its own enum by value makes the enum infinitely
-            // large.
-            for (ename, variants) in &defs {
-                let me = Type::Enum(ename.clone());
-                for (vname, fields) in variants {
-                    if let Some((fname, _)) = fields.iter().find(|(_, t)| graph.reaches(t, &me)) {
-                        refusals.push(format!(
-                            "codegen error [E0910]: enum `{ename}` holds itself by value \
-                             (variant `{vname}`, field `{fname}`), which native codegen has no \
-                             layout for. The interpreter supports it; run under `axon run`."
-                        ));
-                    }
-                }
-            }
-            // The same for a struct (`type Node = { next: Option<Node> }`). This
-            // used to recurse in `llvm_sizeof` until the compiler's own stack
-            // overflowed.
             for item in &program.items {
                 if let ast::Item::TypeDef(td) = item {
                     let me = Type::Struct(td.name.clone());
@@ -225,8 +246,27 @@ impl<'ctx> super::Codegen<'ctx> {
         cyclic_structs
     }
 
+    /// enum name → the types of its payload fields (all of them, or only
+    /// those stored inline when `with_boxed` is false).
+    fn enum_field_types(
+        defs: &[(String, SemVariants)],
+        with_boxed: bool,
+    ) -> HashMap<String, Vec<Type>> {
+        defs.iter()
+            .map(|(name, variants)| {
+                let tys = variants
+                    .iter()
+                    .flat_map(|(_, fs)| fs.iter())
+                    .filter(|(_, _, boxed)| with_boxed || !boxed)
+                    .map(|(_, t, _)| t.clone())
+                    .collect();
+                (name.clone(), tys)
+            })
+            .collect()
+    }
+
     /// Compute `name`'s payload offsets after those of every enum it holds by
-    /// value, record them in `enum_variants`, and set the LLVM body.
+    /// value (inline), record them in `enum_variants`, and set the LLVM body.
     fn lay_out_enum(
         &mut self,
         name: &str,
@@ -234,19 +274,23 @@ impl<'ctx> super::Codegen<'ctx> {
         in_progress: &mut HashSet<String>,
     ) {
         if self.enum_variants.contains_key(name) || !in_progress.insert(name.to_string()) {
-            // Done, or a by-value cycle already refused above: the inner
-            // reference sizes as unknown (`UNKNOWN_TYPE_PAYLOAD_SIZE`).
+            // Done, or reached again through a cycle that runs via a refused
+            // struct: the inner reference sizes as unknown
+            // (`UNKNOWN_TYPE_PAYLOAD_SIZE`), which errs large.
             return;
         }
         let Some(variants) = defs.get(name) else {
             return;
         };
-        // Enums held by value, directly or through structs.
+        // Enums held inline, directly or through structs. A boxed field holds
+        // a pointer, whatever it points at.
         let mut deps: Vec<String> = Vec::new();
         let mut stack: Vec<Type> = Vec::new();
         for (_, fields) in variants {
-            for (_, t) in fields {
-                by_value_nominals(t, &mut stack);
+            for (_, t, boxed) in fields {
+                if !boxed {
+                    by_value_nominals(t, &mut stack);
+                }
             }
         }
         let mut seen: HashSet<Type> = HashSet::new();
@@ -275,13 +319,18 @@ impl<'ctx> super::Codegen<'ctx> {
         for (tag, (vname, fields)) in variants.iter().enumerate() {
             let mut offset: u64 = 0;
             let mut slots = Vec::with_capacity(fields.len());
-            for (fname, ty) in fields {
+            for (fname, ty, boxed) in fields {
                 slots.push(EnumField {
                     name: fname.clone(),
                     ty: ty.clone(),
                     offset,
+                    boxed: *boxed,
                 });
-                offset += self.llvm_sizeof(ty).unwrap_or(8);
+                offset += if *boxed {
+                    BOX_SLOT_SIZE
+                } else {
+                    self.llvm_sizeof(ty).unwrap_or(8)
+                };
             }
             max_size = max_size.max(offset);
             layout.push((vname.clone(), tag, slots));
@@ -302,15 +351,33 @@ impl<'ctx> super::Codegen<'ctx> {
         self.enum_variants.insert(name.to_string(), layout);
     }
 
+    /// Size and alignment, in bytes, of `field`'s slot in the payload.
+    pub(super) fn enum_slot_size_align(&self, field: &EnumField) -> (u64, u64) {
+        if field.boxed {
+            (BOX_SLOT_SIZE, BOX_SLOT_SIZE)
+        } else {
+            (
+                self.llvm_sizeof(&field.ty).unwrap_or(8),
+                self.llvm_align_of(&field.ty),
+            )
+        }
+    }
+
     /// Load payload field `field` of an enum value whose payload starts at
-    /// `payload` (an `i8*` to field 1 of `{Name}_enum`).
+    /// `payload` (an `i8*` to field 1 of `{Name}_enum`). A boxed field is
+    /// read through its pointer.
     pub(super) fn load_enum_field(
         &self,
         payload: inkwell::values::PointerValue<'ctx>,
         field: &EnumField,
     ) -> Option<inkwell::values::BasicValueEnum<'ctx>> {
         let llvm_ty = self.llvm_type(&field.ty)?;
-        let slot = self.enum_field_slot(payload, field);
+        let mut slot = self.enum_field_slot(payload, field);
+        if field.boxed {
+            let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+            slot = super::build_wrappers::w_load(&self.ir.builder, ptr_ty.into(), slot, "box")
+                .into_pointer_value();
+        }
         Some(super::build_wrappers::w_load(
             &self.ir.builder,
             llvm_ty,
@@ -319,8 +386,34 @@ impl<'ctx> super::Codegen<'ctx> {
         ))
     }
 
+    /// Store `value` into payload field `field`. A boxed field gets a fresh
+    /// heap copy of the value and its slot the pointer to it. Returns `None`
+    /// when the value's type has no size (an opaque type).
+    ///
+    /// The box is never freed, like every other heap value native codegen
+    /// allocates (array buffers, strings: spec/runtime.md §10, "Memory
+    /// Management"). It is never written after this store either: an enum's
+    /// payload has no place syntax, so copies of the enum value may share it.
+    pub(super) fn store_enum_field(
+        &self,
+        payload: inkwell::values::PointerValue<'ctx>,
+        field: &EnumField,
+        value: inkwell::values::BasicValueEnum<'ctx>,
+    ) -> Option<()> {
+        let slot = self.enum_field_slot(payload, field);
+        if field.boxed {
+            let bytes = value.get_type().size_of()?;
+            let heap = self.emit_malloc(bytes, "enum_box");
+            super::build_wrappers::w_store(&self.ir.builder, heap, value);
+            super::build_wrappers::w_store(&self.ir.builder, slot, heap.into());
+        } else {
+            super::build_wrappers::w_store(&self.ir.builder, slot, value);
+        }
+        Some(())
+    }
+
     /// Address of `field`'s slot inside the payload at `payload`.
-    pub(super) fn enum_field_slot(
+    fn enum_field_slot(
         &self,
         payload: inkwell::values::PointerValue<'ctx>,
         field: &EnumField,

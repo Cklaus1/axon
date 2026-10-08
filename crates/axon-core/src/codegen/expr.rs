@@ -387,35 +387,43 @@ impl<'ctx> super::Codegen<'ctx> {
                     };
                     return Some(self.emit_binop(op, lhs, rhs, &inner_ty));
                 }
-                // Enum `==`/`!=` lowers to a TAG comparison, which is exact only
-                // when the question cannot be "are these two values of the same
-                // PAYLOAD-carrying variant equal?". `Op::Add{n:1} == Op::Add{n:2}`
-                // answered `true` natively and `false` in the interpreter — a
-                // silent wrong answer from a clean build. The tag arm's own
-                // comment calls payload equality "a follow-up"; until it exists,
-                // refuse the cases tag-compare cannot decide instead of answering
-                // them wrongly.
-                //
-                // Refusing the whole enum TYPE would be simpler and wrong: it
-                // would reject `Op::Zero == Op::Zero` and `Op::Add{..} != Op::Zero`,
-                // both of which tag-compare decides correctly and both of which
-                // are real code in `examples/feature_tour.ax`.
+                // Enum `==`/`!=` lowers to a TAG comparison when that is exact:
+                // the question cannot be "are these two values of the same
+                // PAYLOAD-carrying variant equal?" (`Op::Zero == Op::Zero`,
+                // `Op::Add{..} != Op::Zero`, real code in
+                // `examples/feature_tour.ax`). Otherwise it compares the
+                // payloads as the interpreter does (`emit_value_eq`), and when
+                // a payload field has a type that cannot be compared faithfully
+                // it refuses: tag-compare alone answered `Op::Add{n:1} ==
+                // Op::Add{n:2}` with `true`, a silent wrong answer.
                 if matches!(op, ast::BinOp::Eq | ast::BinOp::NotEq) {
                     let enum_name = match (&lt_sem, &rt_sem) {
                         (Some(Type::Enum(n)), _) | (_, Some(Type::Enum(n))) => Some(n.clone()),
                         _ => None,
                     };
-                    if let Some(n) = enum_name {
-                        if !self.enum_eq_is_exact(&n, left, right) {
-                            let msg = format!(
-                                "codegen error [E0910]: native codegen compares `{n}` values by TAG only, which cannot decide equality between two values of the same variant when that variant carries fields. The interpreter compares the fields too; run under `axon run`, or match on the variants and compare the fields explicitly."
-                            );
-                            if !self.codegen_errors.iter().any(|e| e == &msg) {
-                                eprintln!("{msg}");
-                                self.codegen_errors.push(msg);
+                    if let Some(n) = enum_name.filter(|n| !self.enum_eq_is_exact(n, left, right)) {
+                        let enum_ty = Type::Enum(n.clone());
+                        if self.value_eq_supported(&enum_ty, &mut std::collections::HashSet::new())
+                        {
+                            let l = self.emit_expr(left, fn_val)?;
+                            let r = self.emit_expr(right, fn_val)?;
+                            if let Some(eq) = self.emit_value_eq(l, r, &enum_ty) {
+                                let out = if matches!(op, ast::BinOp::NotEq) {
+                                    build_wrappers::w_not(&self.ir.builder, eq, "ene")
+                                } else {
+                                    eq
+                                };
+                                return Some(out.into());
                             }
-                            return Some(self.ir.context.bool_type().const_int(0, false).into());
                         }
+                        let msg = format!(
+                            "codegen error [E0910]: native codegen cannot compare `{n}` values: a payload field of `{n}` has a type whose equality it does not lower, and the variants' tags alone cannot decide equality between two values of the same variant. The interpreter compares the fields too; run under `axon run`, or match on the variants and compare the fields explicitly."
+                        );
+                        if !self.codegen_errors.iter().any(|e| e == &msg) {
+                            eprintln!("{msg}");
+                            self.codegen_errors.push(msg);
+                        }
+                        return Some(self.ir.context.bool_type().const_int(0, false).into());
                     }
                 }
                 let lhs = self.emit_expr(left, fn_val)?;
@@ -1831,8 +1839,168 @@ impl<'ctx> super::Codegen<'ctx> {
                 let tys = tys.clone();
                 self.emit_fieldwise_eq(lhs, rhs, &tys)
             }
+            // Enums: same tag, then the payload fields of that variant, by the
+            // same rules - in a helper function, because a recursive variant
+            // compares its boxed fields with this very comparison.
+            Type::Enum(name) => {
+                if !self.value_eq_supported(ty, &mut std::collections::HashSet::new()) {
+                    return None;
+                }
+                let f = self.enum_eq_fn(name)?;
+                build_wrappers::w_call(&self.ir.builder, f, &[lhs.into(), rhs.into()], "feq_e")
+                    .try_as_basic_value()
+                    .left()
+                    .map(|v| v.into_int_value())
+            }
             _ => None,
         }
+    }
+
+    /// Whether `emit_value_eq` compares `ty` faithfully: the same cases, decided
+    /// from the semantic types alone. `enum_eq_fn` asks before emitting
+    /// anything, so a helper is never left half-built - one that another,
+    /// finished helper already calls. `visiting` holds the enums being decided:
+    /// reaching one again (a recursive variant) adds no new obligation.
+    fn value_eq_supported(
+        &self,
+        ty: &Type,
+        visiting: &mut std::collections::HashSet<String>,
+    ) -> bool {
+        match ty {
+            Type::I8
+            | Type::I16
+            | Type::I32
+            | Type::I64
+            | Type::U8
+            | Type::U16
+            | Type::U32
+            | Type::U64
+            | Type::Bool
+            | Type::F32
+            | Type::F64 => true,
+            Type::Str => self.ir.module.get_function("str_eq").is_some(),
+            Type::Slice(elem) => matches!(
+                **elem,
+                Type::I8
+                    | Type::I16
+                    | Type::I32
+                    | Type::I64
+                    | Type::U8
+                    | Type::U16
+                    | Type::U32
+                    | Type::U64
+                    | Type::F32
+                    | Type::F64
+                    | Type::Bool
+                    | Type::Decimal
+            ),
+            Type::Struct(name) => match self.struct_field_sem_types.get(name.as_str()) {
+                Some(tys) => tys.iter().all(|t| self.value_eq_supported(t, visiting)),
+                None => false,
+            },
+            Type::Tuple(tys) => tys.iter().all(|t| self.value_eq_supported(t, visiting)),
+            Type::Enum(name) => {
+                if !visiting.insert(name.clone()) {
+                    return true;
+                }
+                let Some(variants) = self.enum_variants.get(name) else {
+                    return false;
+                };
+                variants.iter().flat_map(|(_, _, fs)| fs).all(|f| {
+                    self.llvm_type(&f.ty).is_some() && self.value_eq_supported(&f.ty, visiting)
+                })
+            }
+            _ => false,
+        }
+    }
+
+    /// `__axon_enum_eq_{name}(a, b) -> i1`: structural equality of two
+    /// `{name}_enum` values, built once per module (the interpreter's
+    /// `values_equal` on `Value::Enum`: same variant, fields equal).
+    ///
+    /// Tags first; on a match, a switch to the variant's block compares its
+    /// payload fields, which are only meaningful for that variant (a boxed
+    /// field of another is not a pointer). The caller has checked
+    /// `value_eq_supported`.
+    fn enum_eq_fn(&mut self, name: &str) -> Option<FunctionValue<'ctx>> {
+        let fn_name = format!("__axon_enum_eq_{name}");
+        if let Some(f) = self.ir.module.get_function(&fn_name) {
+            return Some(f);
+        }
+        let enum_ty = self.llvm_type(&Type::Enum(name.to_string()))?;
+        let variants = self.enum_variants.get(name)?.clone();
+        let bool_ty = self.ir.context.bool_type();
+        let f = self.ir.module.add_function(
+            &fn_name,
+            bool_ty.fn_type(&[enum_ty.into(), enum_ty.into()], false),
+            Some(inkwell::module::Linkage::Internal),
+        );
+        let saved_bb = self.ir.builder.get_insert_block();
+        let body = self.emit_enum_eq_body(f, name, &variants);
+        if let Some(bb) = saved_bb {
+            self.ir.builder.position_at_end(bb);
+        }
+        if body.is_none() {
+            // SAFETY: `f` was added above and nothing outside this call
+            // references it yet, except the recursive calls inside its own body.
+            unsafe { f.delete() };
+            return None;
+        }
+        Some(f)
+    }
+
+    fn emit_enum_eq_body(
+        &mut self,
+        f: FunctionValue<'ctx>,
+        name: &str,
+        variants: &[super::enum_layout::EnumVariantLayout],
+    ) -> Option<()> {
+        let ctx = self.ir.context;
+        let bool_ty = ctx.bool_type();
+        let entry = ctx.append_basic_block(f, "entry");
+        let differ = ctx.append_basic_block(f, "differ");
+        let dispatch = ctx.append_basic_block(f, "dispatch");
+        self.ir.builder.position_at_end(differ);
+        self.ir
+            .builder
+            .build_return(Some(&bool_ty.const_zero()))
+            .ok()?;
+
+        self.ir.builder.position_at_end(entry);
+        let a = f.get_nth_param(0)?.into_struct_value();
+        let b = f.get_nth_param(1)?.into_struct_value();
+        let at = build_wrappers::w_extract_value(&self.ir.builder, a, 0, "atag").into_int_value();
+        let bt = build_wrappers::w_extract_value(&self.ir.builder, b, 0, "btag").into_int_value();
+        let same = build_wrappers::w_int_compare(
+            &self.ir.builder,
+            inkwell::IntPredicate::EQ,
+            at,
+            bt,
+            "same",
+        );
+        build_wrappers::w_cond_br(&self.ir.builder, same, dispatch, differ);
+
+        let mut cases = Vec::with_capacity(variants.len());
+        for (vname, tag, fields) in variants {
+            let bb = ctx.append_basic_block(f, &format!("v_{vname}"));
+            cases.push((at.get_type().const_int(*tag as u64, false), bb));
+            self.ir.builder.position_at_end(bb);
+            let mut acc = bool_ty.const_int(1, false);
+            if !fields.is_empty() {
+                let pa = self.enum_payload_ptr(a, name)?;
+                let pb = self.enum_payload_ptr(b, name)?;
+                for field in fields {
+                    let l = self.load_enum_field(pa, field)?;
+                    let r = self.load_enum_field(pb, field)?;
+                    let eq = self.emit_value_eq(l, r, &field.ty)?;
+                    acc = build_wrappers::w_and(&self.ir.builder, acc, eq, "eq_and");
+                }
+            }
+            self.ir.builder.build_return(Some(&acc)).ok()?;
+        }
+        self.ir.builder.position_at_end(dispatch);
+        build_wrappers::w_switch(&self.ir.builder, at, differ, &cases);
+        Some(())
     }
 
     /// AND together `emit_value_eq` over each field of two aggregates.
@@ -2258,7 +2426,8 @@ impl<'ctx> super::Codegen<'ctx> {
             // oracle compares (enum, variant, fields); tag-compare is exact for
             // fieldless variants and for any two DIFFERENT-tag variants (the
             // example usages: `Op::Zero == Op::Zero`, `Op::Add{..} != Op::Zero`).
-            // Payload-field equality for same-tag-different-fields is a follow-up.
+            // The other cases compare payloads in `emit_expr`'s BinOp arm
+            // (`emit_value_eq` on `Type::Enum`) and never reach this one.
             (BasicValueEnum::StructValue(l), BasicValueEnum::StructValue(r))
                 if matches!(op, ast::BinOp::Eq | ast::BinOp::NotEq)
                     && l.get_type()
@@ -8679,8 +8848,9 @@ impl<'ctx> super::Codegen<'ctx> {
                         ));
                         continue;
                     }
-                    let field_ptr = self.enum_field_slot(pay_ptr, slot);
-                    build_wrappers::w_store(&self.ir.builder, field_ptr, fval);
+                    if self.store_enum_field(pay_ptr, slot, fval).is_none() {
+                        self.refuse_unlowered(&format!("payload field `{fname}` of `{name}`"));
+                    }
                 }
             }
 
