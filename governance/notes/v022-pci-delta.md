@@ -15,9 +15,9 @@ later commit touches `crates/axon-core/src` (the note is then stale: `python3 sc
 --emit HEAD`, paste between the markers).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: a080bcc16e68c495521e3db010c36609c4c2edcd
+generated-at: b8f176d92f9544084d6554ce44e703e249be5fa3
 
-`git diff --numstat 31413ca7..a080bcc1 -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..b8f176d9 -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -62,7 +62,7 @@ generated-at: a080bcc16e68c495521e3db010c36609c4c2edcd
 | `crates/axon-core/src/resolver.rs` | 334 | 64 |
 | total | 18573 | 2828 |
 
-`git log --reverse 31413ca7..a080bcc1 -- crates/axon-core/src`:
+`git log --reverse 31413ca7..b8f176d9 -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -132,7 +132,8 @@ generated-at: a080bcc16e68c495521e3db010c36609c4c2edcd
 | 83175bed | amendment 106 | a channel is one shared object with one taint: every channel method and every `select` arm examined takes it into the result, and a sealed frame's mutating access (send, recv, try_recv) marks it; a kernel or world write stores the control taint it ran under; a builtin runs its callbacks under the control taint of its arguments; string interpolation and the stringifying builtins take the taint of every shared object they print; a sealed caller is refused in ONE text on every path (a name, a global, a field or index, `goal_run`, a goal constraint, `kernel_goal_create`: `goal_run` of an operator fn no longer completes); routing and drift tests for every dict, kernel and array reader, 38 hunted programs: narrowing, no widening |
 | 1a75557b | amendment 106 | test only (the oracle test reads the verdict as Debug text; no production change) |
 | ee1c7056 | amendment 108 | a comparison (`==`, `!=`, ordering) takes the taint of every shared object (dict, channel) inside either operand, however deep, and every builtin argument is walked deep (no table of names): `if d == e {lenient} else {strict}` over a dict the candidate filled is refused like `dict_get_or`; a sealed method call is judged by the methods sealed impls define and a run-time method miss reads like an operator method (existence oracle, method path); a `native::` call is World state (a sealed call marks it, an operator call reads it back); drift and routing tests, 12 rows: narrowing, no widening |
-| 66 commits | | |
+| b8f176d9 | amendment 108 | test only (a clippy `useless_format` in a taint test): no production change |
+| 67 commits | | |
 <!-- END MECHANICAL -->
 
 
