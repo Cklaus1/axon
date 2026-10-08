@@ -48,7 +48,10 @@ pub enum Value {
     /// can apply width-correct masks (u8=0xFF, u16=0xFFFF, …). Only non-i64
     /// integer widths use this variant; `Int(i64)` remains the default, keeping
     /// the ~102 builtin `Int` sites untouched (blast-radius isolation, spec §11).
-    SizedInt { val: i64, ty: IntWidth },
+    SizedInt {
+        val: i64,
+        ty: IntWidth,
+    },
     Float(f64),
     /// R21 — exact fixed-point decimal: i128 mantissa at `decimal::SCALE` (9 dp).
     /// Money-safe: exact arithmetic, no binary floating error. Behind an `Rc`
@@ -265,11 +268,9 @@ impl Fields {
                 .zip(&other.0)
                 .all(|(a, b)| value::values_equal(&a.1, &b.1));
         }
-        self.0.iter().all(|(k, v)| {
-            other
-                .get(*k)
-                .is_some_and(|w| value::values_equal(v, w))
-        })
+        self.0
+            .iter()
+            .all(|(k, v)| other.get(*k).is_some_and(|w| value::values_equal(v, w)))
     }
 }
 
@@ -1732,7 +1733,12 @@ impl SendValue {
             // round-trip must be stable).
             m.by_name()
                 .into_iter()
-                .map(|(k, v)| Ok((k.to_string(), SendValue::from_value_at(v, format!("{path}.{k}"))?)))
+                .map(|(k, v)| {
+                    Ok((
+                        k.to_string(),
+                        SendValue::from_value_at(v, format!("{path}.{k}"))?,
+                    ))
+                })
                 .collect()
         }
         Ok(match v {
@@ -1839,7 +1845,11 @@ impl SendValue {
             )),
             SendValue::Struct { name, fields } => Value::record(
                 intern(&name),
-                Fields::from_pairs(fields.into_iter().map(|(k, v)| (intern(&k), v.into_value()))),
+                Fields::from_pairs(
+                    fields
+                        .into_iter()
+                        .map(|(k, v)| (intern(&k), v.into_value())),
+                ),
             ),
             SendValue::Enum {
                 enum_name,
@@ -1849,7 +1859,9 @@ impl SendValue {
                 enum_name: intern(&enum_name),
                 variant: intern(&variant),
                 fields: Fields::from_pairs(
-                    fields.into_iter().map(|(k, v)| (intern(&k), v.into_value())),
+                    fields
+                        .into_iter()
+                        .map(|(k, v)| (intern(&k), v.into_value())),
                 ),
             })),
             SendValue::Some(b) => Value::Some(Box::new(b.into_value())),
@@ -3159,9 +3171,14 @@ impl<'p> Interp<'p> {
         if let Some(raw) = self.current_call_tier.borrow_mut().take() {
             return match Tier::parse(&raw) {
                 Some(t) => Ok(t),
-                None => Err(Flow::AiPolicyUnreachable(format!("[{}] unknown AI tier `{raw}` — configured tiers: {}",
-                crate::error::E1302,
-                Tier::configured()).into())),
+                None => Err(Flow::AiPolicyUnreachable(
+                    format!(
+                        "[{}] unknown AI tier `{raw}` — configured tiers: {}",
+                        crate::error::E1302,
+                        Tier::configured()
+                    )
+                    .into(),
+                )),
             };
         }
         // Steps 2-3: the enclosing @[ai(policy(tier:))], else the default —
@@ -3172,9 +3189,14 @@ impl<'p> Interp<'p> {
             return Ok(DEFAULT_TIER);
         };
         crate::ai_routing::tier_from_attrs(&f.attrs).map_err(|raw| {
-            Flow::AiPolicyUnreachable(format!("[{}] unknown AI tier `{raw}` — configured tiers: {}",
-            crate::error::E1302,
-            Tier::configured()).into())
+            Flow::AiPolicyUnreachable(
+                format!(
+                    "[{}] unknown AI tier `{raw}` — configured tiers: {}",
+                    crate::error::E1302,
+                    Tier::configured()
+                )
+                .into(),
+            )
         })
     }
 
@@ -3326,9 +3348,14 @@ impl<'p> Interp<'p> {
         // or reverse its own shutdown. Keyed on the annotation, enforced by the
         // engine, so a user cannot write a corrigible fn that ignores the halt.
         if self.corrigible_halted.get() && f.attrs.iter().any(|a| a.name == "corrigible") {
-            return Err(Flow::Halted(format!("`{}` refused: corrigibility kill-switch is latched \
+            return Err(Flow::Halted(
+                format!(
+                    "`{}` refused: corrigibility kill-switch is latched \
              (corrigible_halt() was called; there is no resume)",
-            f.name).into()));
+                    f.name
+                )
+                .into(),
+            ));
         }
         // The leading i64 / f64 args (if any) form the goal-search input
         // tuple — recorded so goal_run can resume from the best prior probe
@@ -3405,12 +3432,17 @@ impl<'p> Interp<'p> {
                         // `p: T where E[p] > k` that use the param name directly).
                         pred_env.define(*s, val.clone());
                         if let Value::Bool(false) = self.eval(pred, &mut pred_env)? {
-                            return Err(Flow::RefineViolation(format!("parameter `{}` of `{}` (= {}) violates the refinement `{}` — \
+                            return Err(Flow::RefineViolation(
+                                format!(
+                                    "parameter `{}` of `{}` (= {}) violates the refinement `{}` — \
                              the value does not satisfy the type's predicate",
-                            p.name,
-                            f.name,
-                            value::display(&val),
-                            rname).into()));
+                                    p.name,
+                                    f.name,
+                                    value::display(&val),
+                                    rname
+                                )
+                                .into(),
+                            ));
                         }
                     }
                 }
@@ -3576,11 +3608,16 @@ impl<'p> Interp<'p> {
                     // `_` and evaluate against it instead of a bare env.
                     env.define(SYM_UNDERSCORE, result.clone());
                     if let Value::Bool(false) = self.eval(pred, env)? {
-                        return Err(Flow::RefineViolation(format!("the return value of `{}` (= {}) violates the refinement return \
+                        return Err(Flow::RefineViolation(
+                            format!(
+                                "the return value of `{}` (= {}) violates the refinement return \
                          type `{}` — the value does not satisfy the type's predicate",
-                        f.name,
-                        value::display(&result),
-                        rname).into()));
+                                f.name,
+                                value::display(&result),
+                                rname
+                            )
+                            .into(),
+                        ));
                     }
                 }
             }
@@ -3715,16 +3752,21 @@ impl<'p> Interp<'p> {
                             };
                         if let Some(c) = observed {
                             if !cmp_f64(&op, c, bound) {
-                                return Err(Flow::VerifyFailed(format!("verify failed in {}: {} {} {} {} is false \
+                                return Err(Flow::VerifyFailed(
+                                    format!(
+                                        "verify failed in {}: {} {} {} {} is false \
                                  (value {}, confidence {}{})",
-                                verify_fn_label(&f.name),
-                                ident,
-                                c,
-                                crate::verify::binop_to_verify_str(&op),
-                                bound,
-                                val_str,
-                                conf_str,
-                                input_str,).into()));
+                                        verify_fn_label(&f.name),
+                                        ident,
+                                        c,
+                                        crate::verify::binop_to_verify_str(&op),
+                                        bound,
+                                        val_str,
+                                        conf_str,
+                                        input_str,
+                                    )
+                                    .into(),
+                                ));
                             }
                         }
                     } else {
@@ -3744,12 +3786,17 @@ impl<'p> Interp<'p> {
                         }
                         let outcome = self.eval(&spec.predicate, &mut pred_env)?;
                         if let Value::Bool(false) = outcome {
-                            return Err(Flow::VerifyFailed(format!("verify failed in {}: composite predicate did not hold \
+                            return Err(Flow::VerifyFailed(
+                                format!(
+                                    "verify failed in {}: composite predicate did not hold \
                              (value {}, confidence {}{})",
-                            verify_fn_label(&f.name),
-                            val_str,
-                            conf_str,
-                            input_str,).into()));
+                                    verify_fn_label(&f.name),
+                                    val_str,
+                                    conf_str,
+                                    input_str,
+                                )
+                                .into(),
+                            ));
                         }
                     }
                 }
@@ -3777,13 +3824,18 @@ impl<'p> Interp<'p> {
                     // the composite path which leaves them unbound (predicate
                     // can't reference a field a scalar doesn't have).
                     if ident == "value" && !cmp_f64(&op, observed, bound) {
-                        return Err(Flow::VerifyFailed(format!("verify failed in {}: value {} {} {} is false (value {}{})",
-                        verify_fn_label(&f.name),
-                        observed,
-                        crate::verify::binop_to_verify_str(&op),
-                        bound,
-                        val_str,
-                        input_str,).into()));
+                        return Err(Flow::VerifyFailed(
+                            format!(
+                                "verify failed in {}: value {} {} {} is false (value {}{})",
+                                verify_fn_label(&f.name),
+                                observed,
+                                crate::verify::binop_to_verify_str(&op),
+                                bound,
+                                val_str,
+                                input_str,
+                            )
+                            .into(),
+                        ));
                     }
                 } else {
                     // Composite predicate: bind `value` to the scalar and evaluate.
@@ -3921,18 +3973,19 @@ impl<'p> Interp<'p> {
     }
 
     fn unknown_goal_name(name: &str) -> Flow {
-        Flow::Panic(format!("goal function `{name}` is not defined and has no recorded provenance — \
-         check the name matches an @[adaptive] fn (typo?)").into())
+        Flow::Panic(
+            format!(
+                "goal function `{name}` is not defined and has no recorded provenance — \
+         check the name matches an @[adaptive] fn (typo?)"
+            )
+            .into(),
+        )
     }
 
     /// Flatten a place expression (`base.f[i].g …`) into the root variable's
     /// sym and a base-to-leaf list of steps, evaluating any index expressions
     /// now (so the later mutable walk holds no other borrow of `env`).
-    fn flatten_place(
-        &self,
-        place: &Expr,
-        env: &mut Env,
-    ) -> Result<(Sym, Vec<PlaceStep>), Flow> {
+    fn flatten_place(&self, place: &Expr, env: &mut Env) -> Result<(Sym, Vec<PlaceStep>), Flow> {
         let mut steps = Vec::new();
         let mut cur = place;
         let base = loop {

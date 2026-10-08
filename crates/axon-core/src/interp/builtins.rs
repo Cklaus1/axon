@@ -655,10 +655,15 @@ impl<'p> Interp<'p> {
                             .collect();
                         if let Some(eff) = first_effect_outside_ceiling(sb, &all) {
                             audit(self, true);
-                            return Err(crate::interp::Flow::SandboxViolation(format!("builtin `{op_name}` requires effect `{eff}` which is not \
+                            return Err(crate::interp::Flow::SandboxViolation(
+                                format!(
+                                    "builtin `{op_name}` requires effect `{eff}` which is not \
                              in the active sandbox's allowed set {:?} \
                              (principal handle {})",
-                            sb.allowed, sb.principal).into()));
+                                    sb.allowed, sb.principal
+                                )
+                                .into(),
+                            ));
                         }
                         // AUDIT T3: the effect is permitted — now check its
                         // SCOPE. A grant of `fs: [write("./out/")]` must mean
@@ -687,8 +692,9 @@ impl<'p> Interp<'p> {
             if args.len() == n {
                 Ok(())
             } else {
-                Err(Flow::Panic(format!("{name}: expected {n} args, got {}",
-                args.len()).into()))
+                Err(Flow::Panic(
+                    format!("{name}: expected {n} args, got {}", args.len()).into(),
+                ))
             }
         };
         macro_rules! ok {
@@ -739,11 +745,16 @@ impl<'p> Interp<'p> {
                         r.consumed = true;
                         return Ok(Some(r.feed.clone()));
                     }
-                    return Err(crate::interp::Flow::MultiShotUnsound(format!("effect `{}` (via `{name}`) is performed a second time during a \
+                    return Err(crate::interp::Flow::MultiShotUnsound(
+                        format!(
+                            "effect `{}` (via `{name}`) is performed a second time during a \
                      handler-continuation replay; multi-shot `resume` is supported only \
                      when the handled body performs exactly one effect and is otherwise \
                      pure (a side effect cannot be re-executed on replay) [E1314]",
-                    r.effect).into()));
+                            r.effect
+                        )
+                        .into(),
+                    ));
                 } else if !row.is_empty() {
                     // A DIFFERENT effect during the replay also can't be re-fired.
                     return Err(crate::interp::Flow::MultiShotUnsound(format!("effect `{}` (via `{name}`) is performed during a handler-continuation \

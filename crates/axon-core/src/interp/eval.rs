@@ -1796,8 +1796,7 @@ fn field_of_tuple(v: &Value, field: &str) -> R {
                 Flow::Panic(format!("tuple access expects a numeric index, got `.{field}`").into())
             })?;
             items.get(i).cloned().ok_or_else(|| {
-                Flow::Panic(format!("tuple index {i} out of bounds (len {})",
-                items.len()).into())
+                Flow::Panic(format!("tuple index {i} out of bounds (len {})", items.len()).into())
             })
         }
         other => panic(format!(

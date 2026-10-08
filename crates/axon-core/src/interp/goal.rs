@@ -1191,8 +1191,10 @@ impl<'p> Interp<'p> {
             out.reserve(n);
             for i in 0..n {
                 if let Some(&first) = inputs[i].first() {
-                    out.push(Value::tuple(vec![Value::Int(first),
-                    Value::Float(scores[i]),]));
+                    out.push(Value::tuple(vec![
+                        Value::Int(first),
+                        Value::Float(scores[i]),
+                    ]));
                 }
             }
         }
@@ -1273,7 +1275,9 @@ impl<'p> Interp<'p> {
     /// The provenance must remain unmodified so that `goal_run` is unbiased.
     pub(super) fn goal_eval_holdout(&self, name: &str, input: i64) -> Result<f64, Flow> {
         let Some(f) = self.fns.get(name) else {
-            return Err(Flow::Panic(format!("goal_eval: `{name}` is not a defined function").into()));
+            return Err(Flow::Panic(
+                format!("goal_eval: `{name}` is not a defined function").into(),
+            ));
         };
         // Snapshot the three provenance stores for this fn.
         let snap_scores = self.provenance.borrow().get(name).cloned();
@@ -1314,8 +1318,13 @@ impl<'p> Interp<'p> {
         let score = match numeric_score(&metric_result) {
             Some(s) => s,
             None => {
-                return Err(Flow::Panic(format!("goal_eval: metric `{name}` must return a number, got {}",
-                metric_result.type_name()).into()))
+                return Err(Flow::Panic(
+                    format!(
+                        "goal_eval: metric `{name}` must return a number, got {}",
+                        metric_result.type_name()
+                    )
+                    .into(),
+                ))
             }
         };
         Ok(score)

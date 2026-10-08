@@ -84,54 +84,85 @@ fn sized_checked_add(a: i64, b: i64, ty: IntWidth) -> super::R {
             .checked_add(b as u8)
             .map(|v| Value::SizedInt { val: v as i64, ty })
             .ok_or_else(|| {
-                super::Flow::Panic(format!("integer overflow: u8 {} + {} exceeds 255",
-                a as u8, b as u8).into())
+                super::Flow::Panic(
+                    format!("integer overflow: u8 {} + {} exceeds 255", a as u8, b as u8).into(),
+                )
             }),
         IntWidth::U16 => (a as u16)
             .checked_add(b as u16)
             .map(|v| Value::SizedInt { val: v as i64, ty })
             .ok_or_else(|| {
-                super::Flow::Panic(format!("integer overflow: u16 {} + {} exceeds 65535",
-                a as u16, b as u16).into())
+                super::Flow::Panic(
+                    format!(
+                        "integer overflow: u16 {} + {} exceeds 65535",
+                        a as u16, b as u16
+                    )
+                    .into(),
+                )
             }),
         IntWidth::U32 => (a as u32)
             .checked_add(b as u32)
             .map(|v| Value::SizedInt { val: v as i64, ty })
             .ok_or_else(|| {
-                super::Flow::Panic(format!("integer overflow: u32 {} + {} exceeds {}",
-                a as u32,
-                b as u32,
-                u32::MAX).into())
+                super::Flow::Panic(
+                    format!(
+                        "integer overflow: u32 {} + {} exceeds {}",
+                        a as u32,
+                        b as u32,
+                        u32::MAX
+                    )
+                    .into(),
+                )
             }),
         IntWidth::U64 => (a as u64)
             .checked_add(b as u64)
             .map(|v| Value::SizedInt { val: v as i64, ty })
             .ok_or_else(|| {
-                super::Flow::Panic(format!("integer overflow: u64 {} + {} exceeds {}",
-                a as u64,
-                b as u64,
-                u64::MAX).into())
+                super::Flow::Panic(
+                    format!(
+                        "integer overflow: u64 {} + {} exceeds {}",
+                        a as u64,
+                        b as u64,
+                        u64::MAX
+                    )
+                    .into(),
+                )
             }),
         IntWidth::I8 => (a as i8)
             .checked_add(b as i8)
             .map(|v| Value::SizedInt { val: v as i64, ty })
             .ok_or_else(|| {
-                super::Flow::Panic(format!("integer overflow: i8 {} + {} out of range",
-                a as i8, b as i8).into())
+                super::Flow::Panic(
+                    format!(
+                        "integer overflow: i8 {} + {} out of range",
+                        a as i8, b as i8
+                    )
+                    .into(),
+                )
             }),
         IntWidth::I16 => (a as i16)
             .checked_add(b as i16)
             .map(|v| Value::SizedInt { val: v as i64, ty })
             .ok_or_else(|| {
-                super::Flow::Panic(format!("integer overflow: i16 {} + {} out of range",
-                a as i16, b as i16).into())
+                super::Flow::Panic(
+                    format!(
+                        "integer overflow: i16 {} + {} out of range",
+                        a as i16, b as i16
+                    )
+                    .into(),
+                )
             }),
         IntWidth::I32 => (a as i32)
             .checked_add(b as i32)
             .map(|v| Value::SizedInt { val: v as i64, ty })
             .ok_or_else(|| {
-                super::Flow::Panic(format!("integer overflow: i32 {} + {} out of range",
-                a as i32, b as i32).into())
+                super::Flow::Panic(
+                    format!(
+                        "integer overflow: i32 {} + {} out of range",
+                        a as i32, b as i32
+                    )
+                    .into(),
+                )
             }),
     }
 }
@@ -142,50 +173,81 @@ fn sized_checked_sub(a: i64, b: i64, ty: IntWidth) -> super::R {
             .checked_sub(b as u8)
             .map(|v| Value::SizedInt { val: v as i64, ty })
             .ok_or_else(|| {
-                super::Flow::Panic(format!("integer overflow: u8 {} - {} underflows",
-                a as u8, b as u8).into())
+                super::Flow::Panic(
+                    format!("integer overflow: u8 {} - {} underflows", a as u8, b as u8).into(),
+                )
             }),
         IntWidth::U16 => (a as u16)
             .checked_sub(b as u16)
             .map(|v| Value::SizedInt { val: v as i64, ty })
             .ok_or_else(|| {
-                super::Flow::Panic(format!("integer overflow: u16 {} - {} underflows",
-                a as u16, b as u16).into())
+                super::Flow::Panic(
+                    format!(
+                        "integer overflow: u16 {} - {} underflows",
+                        a as u16, b as u16
+                    )
+                    .into(),
+                )
             }),
         IntWidth::U32 => (a as u32)
             .checked_sub(b as u32)
             .map(|v| Value::SizedInt { val: v as i64, ty })
             .ok_or_else(|| {
-                super::Flow::Panic(format!("integer overflow: u32 {} - {} underflows",
-                a as u32, b as u32).into())
+                super::Flow::Panic(
+                    format!(
+                        "integer overflow: u32 {} - {} underflows",
+                        a as u32, b as u32
+                    )
+                    .into(),
+                )
             }),
         IntWidth::U64 => (a as u64)
             .checked_sub(b as u64)
             .map(|v| Value::SizedInt { val: v as i64, ty })
             .ok_or_else(|| {
-                super::Flow::Panic(format!("integer overflow: u64 {} - {} underflows",
-                a as u64, b as u64).into())
+                super::Flow::Panic(
+                    format!(
+                        "integer overflow: u64 {} - {} underflows",
+                        a as u64, b as u64
+                    )
+                    .into(),
+                )
             }),
         IntWidth::I8 => (a as i8)
             .checked_sub(b as i8)
             .map(|v| Value::SizedInt { val: v as i64, ty })
             .ok_or_else(|| {
-                super::Flow::Panic(format!("integer overflow: i8 {} - {} out of range",
-                a as i8, b as i8).into())
+                super::Flow::Panic(
+                    format!(
+                        "integer overflow: i8 {} - {} out of range",
+                        a as i8, b as i8
+                    )
+                    .into(),
+                )
             }),
         IntWidth::I16 => (a as i16)
             .checked_sub(b as i16)
             .map(|v| Value::SizedInt { val: v as i64, ty })
             .ok_or_else(|| {
-                super::Flow::Panic(format!("integer overflow: i16 {} - {} out of range",
-                a as i16, b as i16).into())
+                super::Flow::Panic(
+                    format!(
+                        "integer overflow: i16 {} - {} out of range",
+                        a as i16, b as i16
+                    )
+                    .into(),
+                )
             }),
         IntWidth::I32 => (a as i32)
             .checked_sub(b as i32)
             .map(|v| Value::SizedInt { val: v as i64, ty })
             .ok_or_else(|| {
-                super::Flow::Panic(format!("integer overflow: i32 {} - {} out of range",
-                a as i32, b as i32).into())
+                super::Flow::Panic(
+                    format!(
+                        "integer overflow: i32 {} - {} out of range",
+                        a as i32, b as i32
+                    )
+                    .into(),
+                )
             }),
     }
 }
@@ -196,62 +258,94 @@ fn sized_checked_mul(a: i64, b: i64, ty: IntWidth) -> super::R {
             .checked_mul(b as u8)
             .map(|v| Value::SizedInt { val: v as i64, ty })
             .ok_or_else(|| {
-                super::Flow::Panic(format!("integer overflow: u8 {} * {} exceeds 255",
-                a as u8, b as u8).into())
+                super::Flow::Panic(
+                    format!("integer overflow: u8 {} * {} exceeds 255", a as u8, b as u8).into(),
+                )
             }),
         IntWidth::U16 => (a as u16)
             .checked_mul(b as u16)
             .map(|v| Value::SizedInt { val: v as i64, ty })
             .ok_or_else(|| {
-                super::Flow::Panic(format!("integer overflow: u16 {} * {} exceeds 65535",
-                a as u16, b as u16).into())
+                super::Flow::Panic(
+                    format!(
+                        "integer overflow: u16 {} * {} exceeds 65535",
+                        a as u16, b as u16
+                    )
+                    .into(),
+                )
             }),
         IntWidth::U32 => (a as u32)
             .checked_mul(b as u32)
             .map(|v| Value::SizedInt { val: v as i64, ty })
             .ok_or_else(|| {
-                super::Flow::Panic(format!("integer overflow: u32 {} * {} exceeds {}",
-                a as u32,
-                b as u32,
-                u32::MAX).into())
+                super::Flow::Panic(
+                    format!(
+                        "integer overflow: u32 {} * {} exceeds {}",
+                        a as u32,
+                        b as u32,
+                        u32::MAX
+                    )
+                    .into(),
+                )
             }),
         IntWidth::U64 => (a as u64)
             .checked_mul(b as u64)
             .map(|v| Value::SizedInt { val: v as i64, ty })
             .ok_or_else(|| {
-                super::Flow::Panic(format!("integer overflow: u64 {} * {} exceeds {}",
-                a as u64,
-                b as u64,
-                u64::MAX).into())
+                super::Flow::Panic(
+                    format!(
+                        "integer overflow: u64 {} * {} exceeds {}",
+                        a as u64,
+                        b as u64,
+                        u64::MAX
+                    )
+                    .into(),
+                )
             }),
         IntWidth::I8 => (a as i8)
             .checked_mul(b as i8)
             .map(|v| Value::SizedInt { val: v as i64, ty })
             .ok_or_else(|| {
-                super::Flow::Panic(format!("integer overflow: i8 {} * {} out of range",
-                a as i8, b as i8).into())
+                super::Flow::Panic(
+                    format!(
+                        "integer overflow: i8 {} * {} out of range",
+                        a as i8, b as i8
+                    )
+                    .into(),
+                )
             }),
         IntWidth::I16 => (a as i16)
             .checked_mul(b as i16)
             .map(|v| Value::SizedInt { val: v as i64, ty })
             .ok_or_else(|| {
-                super::Flow::Panic(format!("integer overflow: i16 {} * {} out of range",
-                a as i16, b as i16).into())
+                super::Flow::Panic(
+                    format!(
+                        "integer overflow: i16 {} * {} out of range",
+                        a as i16, b as i16
+                    )
+                    .into(),
+                )
             }),
         IntWidth::I32 => (a as i32)
             .checked_mul(b as i32)
             .map(|v| Value::SizedInt { val: v as i64, ty })
             .ok_or_else(|| {
-                super::Flow::Panic(format!("integer overflow: i32 {} * {} out of range",
-                a as i32, b as i32).into())
+                super::Flow::Panic(
+                    format!(
+                        "integer overflow: i32 {} * {} out of range",
+                        a as i32, b as i32
+                    )
+                    .into(),
+                )
             }),
     }
 }
 
 fn sized_div(a: i64, b: i64, ty: IntWidth) -> super::R {
     if b == 0 {
-        return Err(super::Flow::Panic(format!("integer division by zero ({} / 0)",
-        ty.name()).into()));
+        return Err(super::Flow::Panic(
+            format!("integer division by zero ({} / 0)", ty.name()).into(),
+        ));
     }
     let v = match ty {
         IntWidth::U8 => ((a as u8) / (b as u8)) as i64,
@@ -267,8 +361,9 @@ fn sized_div(a: i64, b: i64, ty: IntWidth) -> super::R {
 
 fn sized_rem(a: i64, b: i64, ty: IntWidth) -> super::R {
     if b == 0 {
-        return Err(super::Flow::Panic(format!("integer remainder by zero ({} % 0)",
-        ty.name()).into()));
+        return Err(super::Flow::Panic(
+            format!("integer remainder by zero ({} % 0)", ty.name()).into(),
+        ));
     }
     let v = match ty {
         IntWidth::U8 => ((a as u8) % (b as u8)) as i64,
@@ -498,9 +593,9 @@ pub(super) fn eval_binop_vals(op: &BinOp, l: Value, r: Value) -> R {
             // below three arms that use `checked_*`. Native agreed with it, so
             // no parity harness could ever have found this: the reference
             // oracle shared the bug.
-            a.checked_div(b)
-                .map(Int)
-                .ok_or_else(|| Flow::Panic(format!("integer overflow: {a} / {b} exceeds i64").into()))
+            a.checked_div(b).map(Int).ok_or_else(|| {
+                Flow::Panic(format!("integer overflow: {a} / {b} exceeds i64").into())
+            })
         }
         (Rem, Int(a), Int(b)) => {
             if b == 0 {
