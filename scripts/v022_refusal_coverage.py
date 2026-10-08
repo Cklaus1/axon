@@ -4939,6 +4939,320 @@ REMAINDER_SITES = []
 OBSERVED_SITES = []
 
 
+# ── Amendment 103 (C9 round 11, eqgate6): a VALUE is a site ───────────────────
+# Rounds 7-10 extended the gate by INSTANCE: each round's reviewer found a production
+# VALUE handed to a primitive that no test observes, and the gate then learned that
+# one path-field form. Round 10 found the same class in the sibling code
+# (`exec_axon_test`'s `.env("AXON_PATH_EXCLUSIVE", "1")` -> "0" and a PATH prefixed
+# with `/in/candidate` kept the whole axon-psv suite green; `Some(h.owner)` -> `None`
+# kept the whole axon-fabric suite green) because `.env(` was a site CREDITED BY A ROW
+# THAT RENAMED THE KEY. The class: a LITERAL or CONSTANT (or an owner argument)
+# handed to
+#   (a) a process-spawn builder: `.env(K, V)` (the V), `.env_remove(K)`, `.arg(V)`,
+#       each literal element of `.args([..])`, `.current_dir(V)`, `.envs(..)`,
+#       `.stdin/.stdout/.stderr(Stdio::..)`;
+#   (b) a privilege or ownership primitive: the arguments of chown/fchown/lchown/
+#       fchownat, the setuid/setgid/setgroups family, `.uid(..)`/`.gid(..)`, a
+#       `Some(<x>.owner|uid|gid)` owner argument, and a permission MODE literal or
+#       constant (any `0o..` literal; the mode argument of mkdir(at)/chmod/fchmod/
+#       umask/`.mode(..)`/`from_mode(..)`/`set_mode(..)`);
+#   (c) a struct-literal field of a Config/Cfg/Authority/Policy/Manifest/Trust type
+#       whose value is a literal or constant (`Config { m: 5, p: "/x".into() }`).
+# Each such value is a VALUE SITE with its own span. It is credited ONLY by a row
+# whose edit CHANGES that value's characters (a row that renames the key, or edits
+# the neighbouring value, credits nothing: the line-diff is trimmed per line to the
+# changed characters), or by a VALUE_EXEMPT entry (file, function, n-th value site
+# of that function, a fragment of the value's text, kind, reason). Kinds:
+# OBSERVED (a survey removed the value and a named test failed), DOMINATED /
+# FAILCLOSED (a checkable fact), REMAINDER (no test observes it: COUNTED by
+# category `val_*`, NEVER claimed covered). (d) a literal compared inside a
+# refusal is judged by the existing per-TERM rule, not by this form.
+STILL_BLIND = (
+    "a value built by computation (a `format!` whose pieces are all variables, a path joined at run time, "
+    "a flag set read from a table), a value handed through a LOCAL BINDING (`let m = 0o700; mkdir(m)` is seen at "
+    "the literal, not at the use), the spawn forms of a builder not named `.env/.arg/.args/.current_dir/.stdin/"
+    ".stdout/.stderr/.uid/.gid` (a wrapper fn that builds the Command), a struct whose type name is not "
+    "Config/Cfg/Authority/Policy/Manifest/Trust, a default (`unwrap_or`/`map_or`/`Default`) read as a value, "
+    "a uid or mode that is a COMPARISON operand (the per-term rule judges that), whether a REMAINDER guard is "
+    "really unobserved (nothing re-checks it), the shell scripts, and every guard that is not Rust or the one "
+    "Python file"
+)
+_VALUE_CALLS = re.compile(
+    r"\.(env|env_remove|envs|arg|args|current_dir|stdin|stdout|stderr|uid|gid|groups)\(")
+_PRIV_CALLS = re.compile(
+    r"(?<![\w:.])(?:libc::|std::os::unix::fs::|unix_fs::)?"
+    r"(f?l?chown(?:at)?|setuid|setgid|seteuid|setegid|setreuid|setregid|setresuid|setresgid|setgroups|initgroups)\(")
+_MODE_CALLS = re.compile(
+    r"(?<![\w:.])(?:libc::)?(f?chmod(?:at)?|mkdirat|mkdir|umask)\(|\.mode\(|\bfrom_mode\(|\bset_mode\(")
+_OCTAL = re.compile(r"\b0o[0-7_]+\b")
+_OWNER_ARG = re.compile(r"\bSome\(\s*[\w.]*?\b(?:owner|uid|gid|euid|egid|\w+_uid|\w+_gid)\s*\)")
+_CONST_ID = re.compile(r"&?(?:\w+::)*[A-Z][A-Z0-9_]{2,}\b")
+_STRUCT_WORDS = ("Config", "Cfg", "Authority", "Policy", "Manifest", "Trust")
+_NOT_LITERAL_TOKENS = None
+_LIT_WORDS = {"true", "false", "None", "Some", "vec", "to_string", "into", "to_owned", "to_vec", "new", "from",
+              "from_secs", "from_millis", "from_str", "as_str", "String", "PathBuf", "Path", "Duration", "Vec",
+              "HashMap", "BTreeMap", "HashSet", "BTreeSet", "OsString", "OsStr", "default", "Default"}
+
+
+def _value_text(text):
+    """`blank_non_code(text)` with every #[cfg(test)] item blanked too (same length)."""
+    clean = blank_non_code(text)
+    chars = list(clean)
+    pos = 0
+    for m in CFG_TEST.finditer(text):
+        if m.start() < pos:
+            continue
+        end = _cfg_test_extent(text, m.end())
+        for k in range(m.start(), end):
+            if chars[k] != "\n":
+                chars[k] = " "
+        pos = end
+    return "".join(chars)
+
+
+def _split_group(clean, open_i):
+    """The top-level comma-separated pieces of the group opened at clean[open_i], as
+    stripped (begin, end) character spans."""
+    close = _match_close(clean, open_i) - 1
+    out, depth, start = [], 0, open_i + 1
+    for j in range(open_i + 1, close):
+        c = clean[j]
+        if c in "([{":
+            depth += 1
+        elif c in ")]}":
+            depth -= 1
+        elif c == "," and depth == 0:
+            out.append((start, j))
+            start = j + 1
+    out.append((start, close))
+    res = []
+    for a, b in out:
+        s = clean[a:b]
+        a2 = a + (len(s) - len(s.lstrip()))
+        b2 = b - (len(s) - len(s.rstrip()))
+        if b2 > a2:
+            res.append((a2, b2))
+    return res
+
+
+def _has_literal(s):
+    """Whether the expression text (strings blanked, quotes kept) holds a string, number, boolean or
+    constant literal."""
+    return bool('"' in s or re.search(r"\b\d", s) or re.search(r"\b(?:true|false)\b", s)
+                or re.search(r"(?<![\w])[A-Z][A-Z0-9_]{2,}\b", s))
+
+
+def _strict_literal(s):
+    """Whether the expression is made of literals alone (a struct field's value)."""
+    r = re.sub(r'b?"[^"]*"', '""', s)
+    r = re.sub(r"\b\d[\w.]*", "0", r)
+    for tok in re.findall(r"[A-Za-z_]\w*", r):
+        if tok in _LIT_WORDS or re.fullmatch(r"[A-Z][A-Z0-9_]{2,}", tok):
+            continue
+        return False
+    return not re.search(r"[{};|=<>]", r) or r.strip() == ""
+
+
+def _fn_of(clean_lines, spans, line):
+    best = None
+    for head, last, name, _ in spans:
+        if head <= line <= last and (best is None or head >= best[0]):
+            best = (head, name)
+    return best[1] if best else ""
+
+
+def value_sites(text):
+    """[(begin, end, label, fn, n)] value sites (see amendment 103) of the non-test code of `text`;
+    `n` counts a function's value sites from 1 in source order."""
+    clean = _value_text(text)
+    found = {}
+
+    def add(a, b, label):
+        if b > a and (a, b) not in found:
+            found[(a, b)] = label
+
+    for m in _VALUE_CALLS.finditer(clean):
+        name, op = m.group(1), m.end() - 1
+        args = _split_group(clean, op)
+        if name == "env":
+            if len(args) >= 2 and _has_literal(clean[args[1][0]:args[1][1]]):
+                add(*args[1], "val_env")
+        elif name == "env_remove":
+            for a, b in args[:1]:
+                if _has_literal(clean[a:b]):
+                    add(a, b, "val_env")
+        elif name == "envs":
+            for a, b in args[:1]:
+                if _has_literal(clean[a:b]):
+                    add(a, b, "val_env")
+        elif name == "arg":
+            for a, b in args[:1]:
+                if _has_literal(clean[a:b]):
+                    add(a, b, "val_arg")
+        elif name == "args":
+            for a, b in args[:1]:
+                s = clean[a:b].lstrip("& ")
+                if s.startswith("["):
+                    inner = a + (len(clean[a:b]) - len(s))
+                    for x, y in _split_group(clean, inner):
+                        if _has_literal(clean[x:y]):
+                            add(x, y, "val_arg")
+                elif _has_literal(s):
+                    add(a, b, "val_arg")
+        elif name == "current_dir":
+            for a, b in args[:1]:
+                if _has_literal(clean[a:b]):
+                    add(a, b, "val_cwd")
+        elif name in ("stdin", "stdout", "stderr"):
+            for a, b in args[:1]:
+                if "Stdio::" in clean[a:b]:
+                    add(a, b, "val_stdio")
+        else:  # uid / gid / groups
+            for a, b in args[:1]:
+                add(a, b, "val_priv")
+    for m in _PRIV_CALLS.finditer(clean):
+        for a, b in _split_group(clean, m.end() - 1):
+            s = clean[a:b]
+            if _has_literal(s) or re.search(r"\b(?:Some|None)\b|uid|gid|owner", s):
+                add(a, b, "val_priv")
+    modes = []
+    for m in _MODE_CALLS.finditer(clean):
+        args = _split_group(clean, m.end() - 1)
+        which = args[-1:] if m.group(1) in (None, "umask") else args[-1:]
+        for a, b in which:
+            if re.search(r"\b\d|[A-Z][A-Z0-9_]{2,}", clean[a:b]):
+                add(a, b, "val_mode")
+                modes.append((a, b))
+    for m in _OCTAL.finditer(clean):
+        if not any(a <= m.start() and m.end() <= b for a, b in modes):
+            add(m.start(), m.end(), "val_mode")
+    for m in _OWNER_ARG.finditer(clean):
+        before = clean[max(0, m.start() - 40):m.start()]
+        after = clean[m.end():m.end() + 6].lstrip()
+        if after.startswith("=>") or after.startswith("|") or re.search(r"(?:\blet|\bmatches!\(.*)\s*$", before):
+            continue
+        add(m.start(), m.end(), "val_owner")
+    for m in re.finditer(r"(?<![\w])((?:\w+::)*[A-Z]\w*)\s*\{", clean):
+        name = m.group(1).split("::")[-1]
+        if not any(w in name for w in _STRUCT_WORDS):
+            continue
+        before = clean[max(0, m.start() - 24):m.start()].rstrip()
+        if re.search(r"(?:\bstruct|\benum|\bimpl|\bfor|\btrait|\bunion|\bdyn|->|\bmod)$", before):
+            continue
+        for a, b in _split_group(clean, m.end() - 1):
+            fm = re.match(r"(\w+)\s*:(?!:)\s*", clean[a:b])
+            if not fm:
+                continue
+            va = a + fm.end()
+            v = clean[va:b]
+            if v and _strict_literal(v) and _has_literal(v) or v.strip() in ("None",):
+                # an absolute-path field is VALUE_FORM's line site already
+                if VALUE_FORM.search(clean[clean.rfind("\n", 0, a) + 1:b].split("//")[0]):
+                    continue
+                add(va, b, "val_field")
+    cl = clean.split("\n")
+    fspans = _fn_spans(cl)
+    per, out = {}, []
+    for (a, b), label in sorted(found.items()):
+        fn = _fn_of(cl, fspans, line_of(clean, a))
+        per[fn] = per.get(fn, 0) + 1
+        out.append((a, b, label, fn, per[fn]))
+    return out
+
+
+def edit_ranges(text, old, new):
+    """The absolute character ranges of `text` an edit old -> new CHANGES (not the span from the
+    first changed character to the last: lines are diffed, and a replaced line is trimmed to its
+    changed characters). An insertion is the empty range at its point."""
+    import difflib
+    off = text.index(old)
+    o, n = old.split("\n"), new.split("\n")
+    lo = [0]
+    for l in o:
+        lo.append(lo[-1] + len(l) + 1)
+    out = []
+    for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(None, o, n, autojunk=False).get_opcodes():
+        if tag == "equal":
+            continue
+        if tag == "replace" and i2 - i1 == j2 - j1:
+            for k in range(i2 - i1):
+                a, b = o[i1 + k], n[j1 + k]
+                p = 0
+                while p < min(len(a), len(b)) and a[p] == b[p]:
+                    p += 1
+                q = 0
+                while q < min(len(a), len(b)) - p and a[-1 - q] == b[-1 - q]:
+                    q += 1
+                out.append((off + lo[i1 + k] + p, off + lo[i1 + k] + len(a) - q))
+        elif i1 == i2:
+            out.append((off + lo[i1], off + lo[i1]))
+        else:
+            out.append((off + lo[i1], off + lo[i2] - 1))
+    return out
+
+
+def _ranges_hit(ranges, a, b):
+    for x, y in ranges:
+        if y <= x:
+            if a <= x < b or (x == a and a == b):
+                return True
+        elif x < b and y > a:
+            return True
+    return False
+
+
+VALUE_EXEMPT = []   # (file, function, n, fragment, kind, reason): amendment 103
+
+
+def judge_values(f, text, rows, bad):
+    """(covered, exempt, uncovered) of the value sites of `f`."""
+    vs = value_sites(text)
+    if not vs:
+        for e in VALUE_EXEMPT:
+            if e[0] == f:
+                bad.append(f"{f}: value exemption ({e[1]}, {e[2]}) matches no value site (the file has none)")
+        return 0, 0, []
+    lines = text.split("\n")
+    rs = []
+    for r in rows:
+        if r[2] == f and text.count(r[3]) == 1:
+            rs.append((r[0], edit_ranges(text, r[3], r[4])))
+    ex = {(e[1], e[2]): [e, 0, 0] for e in VALUE_EXEMPT if e[0] == f}
+    covered = exempt = 0
+    uncovered = []
+    for a, b, label, fn, n in vs:
+        by = [rid for rid, rg in rs if _ranges_hit(rg, a, b)]
+        hit = ex.get((fn, n))
+        frag = text[a:b]
+        if hit is not None:
+            hit[1] += 1
+            hit[2] += 1 if by else 0
+            if hit[0][3] not in " ".join(frag.split()) and hit[0][3] not in frag:
+                bad.append(f"{f}:{line_of(text, a) + 1}: value exemption ({fn}, {n}) names the fragment "
+                           f"{hit[0][3]!r}, which is not the value's text {frag!r}: a site was added or moved, re-judge it")
+        if by:
+            covered += 1
+        elif hit is not None:
+            exempt += 1
+            kind = hit[0][4]
+            if kind == "REMAINDER":
+                REMAINDER_SITES.append((f, line_of(text, a) + 1, label))
+            elif kind == "OBSERVED":
+                OBSERVED_SITES.append((f, line_of(text, a) + 1, "observed"))
+        else:
+            ln = line_of(text, a)
+            uncovered.append(f"{f}:{ln + 1}: value site ({label}) with no row and no exemption: "
+                             f"{' '.join(frag.split())[:90]}  [fn {fn or '-'} #{n}]  in: {lines[ln].strip()[:100]}")
+    for key, (e, hits, cov) in ex.items():
+        if hits == 0:
+            bad.append(f"{f}: value exemption {key} matches no value site (a function renamed, or fewer sites than it names)")
+        elif cov:
+            bad.append(f"{f}: value exemption {key} ({e[3]!r}) yet a row's edit changes the value: drop the exemption")
+    return covered, exempt, uncovered
+
+
+
+
 def remainder_category(reason):
     """The category of a REMAINDER exemption: the `_A95` key whose reason it is
     (okor_field, const_tag, ...), else `other` (a hand-written REMAINDER)."""
@@ -5044,6 +5358,10 @@ def judge_file(f, rows, bad, const_names=frozenset()):
                     "predicate": f"{lines[g].strip()} (a predicate primitive: it decides by bool/Option)",
                     "verdict": f"{lines[g].strip()} (a function deciding by a verdict return type)"}[kind]
             uncovered.append(f"{f}:{at + 1}: refusal site with no row and no exemption: {what}")
+    vc, ve, vu = judge_values(f, text, rows, bad)
+    covered += vc
+    exempt += ve
+    uncovered.extend(vu)
     for t in tex:
         if t[3] == 0:
             bad.append(f"{f}: term exemption matches no uncredited guard term: {t[1]!r}")
