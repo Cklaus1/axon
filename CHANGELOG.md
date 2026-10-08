@@ -1,5 +1,27 @@
 # Axon Changelog
 
+## Monotonic clock, quiet stderr, object cache, phase timings, smaller debug builds, cheaper closures (compilebench AX-32…AX-40)
+
+Fixes for the second batch of defects compilebench recorded in its `AXON_FINDINGS.md`. AX-18 (interpreter speed) is only partly addressed and stays open.
+
+**Language**
+- **`now_ns()`** returns a monotonic clock in nanoseconds in both engines (AX-32). `now_ms` reads the wall clock in whole milliseconds, so it can jump under NTP and could not time anything shorter than a millisecond. Only the difference of two reads is meaningful. Under `AXON_CLOCK` it reads the virtual timeline, like `now_ms`.
+
+**CLI**
+- **`axon run` leaves stderr to the program** (AX-33). The `axon: run-id …` line is printed only with `--verbose` or when `AXON_RECORD` is set, so a program's stderr is the same under `axon run` and as a native binary.
+- **`--time-passes`** on `axon check` and `axon build` prints `time: <phase> <ms>` for every phase and the total (AX-36). The effects pass now walks each body once and propagates over a worklist with O(1) builtin lookup; on a 20k-line program it fell from about 18 % to about 5 % of `axon check`.
+- **`axon build` names the artifact it wrote** (AX-39): `Binary:`, `Object:` or `LLVM IR:`, once. It printed `Binary:` for every output.
+
+**Native build**
+- **The build cache stores the optimised object, so a hit only links** (AX-34). It stored pre-optimisation bitcode, so a hit still ran the IR pipeline, the backend and the link. The key adds the target triple; the entry records which runtime the object links. An old-format or damaged entry gives `warning[E0906]` and is rebuilt.
+- **Linking does not run `cargo`** (AX-35). The runtime staticlibs are built once with the workspace's pinned toolchain and reused, so a build no longer pays a `cargo` check and the linked runtime no longer depends on the caller's `RUSTUP_TOOLCHAIN`. An installed compiler links the runtime installed beside it.
+- **`O0` drops dead builtin helpers** (AX-37): debug builds run `globaldce`, and `--emit-obj` prunes the uncalled AI wrappers like a full build does, so its object links against `libaxon_rt.a`.
+- **`--opt-level s` / `z` mark functions `optsize` / `minsize`** (AX-38). Before, they produced the same IR as `O2`.
+
+**Interpreter**
+- **Closures capture only the variables they use** (AX-40). A lambda copied every visible binding on creation and on every call, and looping builtins (`arr_fold`, `arr_map`, `arr_filter`, `arr_sort_by`, …) could never lend the capture. A call now costs about 1,700 instructions whatever is in scope (it was 6,400 with 3 bindings, 24,100 with 25); compilebench `arr-sum` under `axon run` went from 16.5 s to 5.3 s. `collect_free_vars` also sees names read only in a match guard, which widens native captures to match.
+- **Names are interned symbols** (AX-18, partial). Variable lookup compares integers instead of strings, and calls by name index a table instead of hashing. Instruction counts fell 3–21 % on the compute benchmarks; the interpreter is still 80–250× slower than `axon build --release`, which is the cost of tree-walking itself.
+
 ## Interpreter/native parity, `&mut [T]`, functions as values, native build and size (compilebench AX-01…AX-31)
 
 Fixes for the defects compilebench recorded in its `AXON_FINDINGS.md`.
