@@ -6449,7 +6449,7 @@ guards of the helper have no cargo row (`TMPDIR=/tmp`, the `/tmp` tmpfs); the ki
 ## Amendment 106: shared state keeps its taint, a write carries the control it ran under, rendered text carries what it shows, the existence oracle is one text on every path, and the residual is worded to include omission and verdict tables (C9 round 11, PSV1U)
 
 106. **Source: the round-11 SENTINEL, PSV-1 and PSV-3 reviewers** (`/var/tmp/c9r11-findings-SENTINEL.json`, `-PSV-1.json`, `-PSV-3.json`).
-     Mutation ids M2910-M2939 (M2929 is not issued: see "Equivalent arm"), matrix rows A240-A245 (the integrator renumbers). Base `c9r11/integrate10`
+     Mutation ids M2910-M2946 (M2929 is not issued: see "Equivalent arm"; M2940-M2946 are runner legs), matrix rows A240-A245 (the integrator renumbers). Base `c9r11/integrate10`
      (`3776884c`). `crates/axon-core/src/interp*` changed; classified in `scripts/pci_delta.py` as narrowing. Amendment 102's class ("a path on which
      taint is dropped") is the one this closes further; its claim is unchanged apart from the wording below.
 
@@ -6537,7 +6537,8 @@ guards of the helper have no cargo row (`TMPDIR=/tmp`, the `/tmp` tmpfs); the ki
      dispatch and width rules are NOT independently evidenced at the runner. Of the taint's rules only the closure-table rule had runner rows; this amendment adds
      the NAME rule's: `the_taint_name_rule_refuses_what_the_static_name_analysis_lets_through` runs four attacks the static name analysis lets through
      (measured by running every name case with only the static layer on: `an if expression on its bit`, `a match on its value`, `returned from a tainted
-     branch`, `assigned in both arms`, a loop the candidate sized, through the kernel), through `axon test --seal`, requiring the taint's own refusal text.
+     branch`, `assigned in both arms`, a loop the candidate sized, through the kernel), through `axon test --seal`, requiring the taint's own refusal text; rows M2940 (the call-site check) and M2941 (the VAL test) are killed there by their own attack. The
+     channel runner rows are M2942-M2945 (touch, sealed send, sealed recv, the `select` readiness) and the oracle's is M2946 (`goal_run` of an operator fn).
      The DISPATCH and WIDTH rules of the taint have **no runner leg and cannot have one**: every attack they refuse the static layer refuses first, so a runner
      row would be REFUSED_ELSEWHERE by construction (measured: none of their attack cases completes with only the static layer on); their rows are the unit rows of 102 with
      the static layer off. The production pair (static layer plus taint) is covered only by the `Both` columns of amendment 102's tests, the runner leg and the
