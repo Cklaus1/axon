@@ -6825,11 +6825,22 @@ row), and the `_text_ids` / `_unit_ids` / `_regular_text` guards beyond those th
      what it ran under. Cost: an operator that uses `native::` after any sealed frame also used one gets a tainted result. The test runs at the interpreter level only (the
      type checker keeps a candidate from naming a handle type in a signature, so the runner cannot reach the shape; the SENTINEL probe was a unit test as well), stated.
 
-     **5. Evidence.** @@EVIDENCE@@
+     **5. Evidence.** Tested at `9a95c9ce` (the last commit that changes `crates/axon-core/src` is `8abeb02b`; later commits are text). (1) Mutation rows, gpumaster, clean clones of the
+     committed tree, `v022_g01_mutations.py --scope=all --only=<ids>`, two shards (`p1v-F0`, `p1v-F1`): **ALL 316 active rows whose target is under `crates/axon-core/src`
+     (the registry minus RETIRED, equivalents, sibling-only and library-primitive rows) KILLED by their own attack: 158/158 + 158/158, 0 REFUSED_ELSEWHERE, 0 survivors,
+     0 stale or unapplied** (this includes am102 M2700-M2767, am106 M2910-M2946 and am108 M3030-M3042). An earlier run at `ee1c7056` killed the 12 first-form am108 rows and
+     found M2724/M2924/M2932 unapplied (their old text was the line this amendment replaced), which were re-anchored. (2) `cargo test --locked -p axon-core
+     --no-default-features` on gpumaster: exit 0 (lib 829 passed, 1 ignored; every integration binary ok). The FIRST form of the fix hung this suite
+     (`a_dict_over_the_snapshot_bound_is_refused_not_skipped`: a million `dict_set`s, each walking the whole dict) and was corrected by `SHALLOW_FIRST_ARG` before the
+     suite passed; no pass was claimed for that form. (3) `cargo test --locked -p axon-psv` (local): exit 0, every binary ok. (4) `scripts/v022_pci_gates.sh` (gpumaster):
+     71 rows, exit 0, including the sweep step. (5) `scripts/v022_refusal_coverage.py` plain: exit 0; `--freeze`: exit 0; `scripts/psv_matrix_check.py`: PASS (253 rows);
+     `scripts/pci_delta.py --check`: PASS; `cargo fmt --check`: 0; `cargo clippy -p axon-core -p axon-psv --all-targets --no-default-features -- -D warnings`: 0
+     (the workspace-wide clippy fails on `axon-guest-kernel`, a freestanding crate this change does not touch; the gate runs clippy per runtime crate).
 
-     **6. Cost.** Release build, min of 5, base `915054b8` against this tree, `axon run`: a 20M-iteration `while` 2759 ms -> 2677 ms, `fib(32)` 1941 -> 1970 ms (+1.5%),
-     a `arr_map` loop 1105 -> 1136 ms (+2.8%): inside the run-to-run noise of the shared host; every new hook is behind `if T`. A SEALED run whose operator frame compares
-     arrays 300000 times: 653 -> 682 ms (+4.4%), the cost of the deep walk on the one place it is paid.
+     **6. Cost.** Release build, min of 5 to 7 runs, base `915054b8` against this tree, `axon run` on a shared host: a 20M-iteration `while` 2651 ms -> 2627 ms, `fib(32)`
+     1926 -> 1911 ms, a `arr_map` loop 1040 -> 1045 ms: inside the noise; every new hook is behind `if T`. A SEALED run whose operator frame compares two arrays
+     300000 times: 638/640 ms -> 672/663 ms (+3.6 to +5.3%), the cost of the deep walk where it is paid. A million `dict_set`s in a sealed run are linear (the
+     first form was quadratic: see item 1).
 
      **7. Not covered and stated.** The claim about the verdict table and omission (amendment 106) is unchanged and must not be read to cover dict `==`: that WAS a taintable
      presence case and is now closed. The deep walk is an over-approximation: an honest suite that compares or searches a container holding a dict the candidate
