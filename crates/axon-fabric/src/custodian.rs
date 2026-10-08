@@ -1029,6 +1029,13 @@ mod tests {
     /// spend frees a slot. Control: MAX_OUTSTANDING issues succeed.
     #[test]
     fn the_custodian_bounds_the_nonces_it_holds_outstanding() {
+        // Amendment 107: the bound is a DECISION VALUE, asserted before it is used as a loop
+        // count. Raised to 1_000_000 the loop below ran for hours (a hang, not a failure),
+        // which is how round 11 found it observed only by accident.
+        assert_eq!(
+            MAX_OUTSTANDING, 1024,
+            "ATTACK: the custodian's outstanding-nonce bound is not the decision value 1024"
+        );
         let d = tempfile::tempdir().unwrap();
         let s = Server {
             cfg: cfg(),

@@ -1783,6 +1783,247 @@ fn a_privileged_helper_owned_by_a_stranger_launches_nothing() {
     );
 }
 
+/// Amendment 107: the owner Fabric requires of every program it pins is applied at EACH
+/// consumer, not only where the host config is loaded (M2827/M2828 row the loader). Round 11
+/// replaced `lx.exec_owner` by `None` for the direct launcher and for its interpreter, and
+/// `cfg.exec_owner` by `None` for the observer program and for its interpreter, one at a
+/// time, with the whole suite green: the owner argument was a FIELD, not `Some(h.owner)`.
+/// Each program here is another uid's (4243) while the configured owner is root's; the
+/// control is the same program owned by root.
+#[test]
+fn a_pinned_program_another_uid_owns_is_refused_at_every_consumer_of_the_owner() {
+    if unsafe { libc::geteuid() } != 0 {
+        eprintln!("skipped: needs root (a file owned by another uid)");
+        return;
+    }
+    const STRANGER: u32 = 4243;
+    let w = World::new();
+    let d = w.env.dir.path().to_path_buf();
+    let key = observer_key(&d, "obs", &[&w.observer_roots()]);
+    let stranger = |p: &Path| std::os::unix::fs::chown(p, Some(STRANGER), Some(STRANGER)).unwrap();
+    let refused = |s: &axon_fabric::Submission, op: &str, what: &str| {
+        let r = s.reason.clone().unwrap_or_default();
+        (
+            !launched(&w, op) && class(s) != "protected" && r.contains("is owned by uid"),
+            format!("{what}: launched={} class={} reason={r}", launched(&w, op), class(s)),
+        )
+    };
+    // The direct launcher (run_direct, `lx.exec_owner`).
+    let direct = |op: &str, own: bool| {
+        let mut lx = w.lx_direct("", "");
+        lx.exec_owner = Some(0);
+        if !own {
+            stranger(&lx.launcher);
+        }
+        w.submit_with(lx, op, "t_psv_ok")
+    };
+    let c = direct("op-own-launcher", true);
+    assert_eq!(c.receipt.verification, ReceiptVerification::Passed, "control: {:?}", c.reason);
+    let s = direct("op-stranger-launcher", false);
+    let (ok, why) = refused(&s, "op-stranger-launcher", "direct launcher");
+    assert!(
+        ok,
+        "ATTACK: the direct route ran a launcher owned by uid {STRANGER} although the configured \
+         owner is root: {why}"
+    );
+    // The direct launcher's interpreter (`lx.exec_owner` again, a separate call).
+    let bash_copy = |name: &str, own: bool| {
+        let b = d.join(name);
+        copy_executable("/bin/bash", &b, 0o755);
+        if !own {
+            stranger(&b);
+        }
+        axon_fabric::sealed_exec::Pinned {
+            sha256: sha256_file(&b),
+            path: b,
+        }
+    };
+    let direct_interp = |op: &str, own: bool| {
+        let mut lx = w.lx_direct("", "");
+        lx.exec_owner = Some(0);
+        lx.interpreter = Some(bash_copy(&format!("bash-{op}"), own));
+        w.submit_with(lx, op, "t_psv_ok")
+    };
+    let c = direct_interp("op-own-interp", true);
+    assert_eq!(c.receipt.verification, ReceiptVerification::Passed, "control: {:?}", c.reason);
+    let s = direct_interp("op-stranger-interp", false);
+    let (ok, why) = refused(&s, "op-stranger-interp", "direct interpreter");
+    assert!(
+        ok,
+        "ATTACK: the direct route ran its launcher under an interpreter owned by uid {STRANGER} \
+         although the configured owner is root: {why}"
+    );
+    // The observer program (run_program, `cfg.exec_owner`) and its interpreter.
+    let observed = |op: &str, own_prog: bool, own_interp: bool| {
+        let mut ob = w.observer("", &key, "observer");
+        ob.exec_owner = Some(0);
+        if !own_prog {
+            stranger(&ob.command);
+        }
+        ob.interpreter = Some(bash_copy(&format!("obs-bash-{op}"), own_interp));
+        w.submit_observed(ob, op)
+    };
+    let c = observed("op-own-observer", true, true);
+    assert_eq!(class(&c), "protected", "control: {:?}", c.reason);
+    let s = observed("op-stranger-observer", false, true);
+    let (ok, why) = refused(&s, "op-stranger-observer", "observer program");
+    assert!(
+        ok,
+        "ATTACK: an observer program owned by uid {STRANGER} was executed although the configured \
+         owner is root: {why}"
+    );
+    let s = observed("op-stranger-observer-interp", true, false);
+    let (ok, why) = refused(&s, "op-stranger-observer-interp", "observer interpreter");
+    assert!(
+        ok,
+        "ATTACK: the observer ran under an interpreter owned by uid {STRANGER} although the \
+         configured owner is root: {why}"
+    );
+}
+
+/// Amendment 107: the argv and environment Fabric hands each program it launches through
+/// `sealed_exec::command`, observed in the CHILD. The call sites are `vec![..]`, an array
+/// literal and a const (`LAUNCH_PATH`), not builder calls, so no source form saw them;
+/// round 11 prefixed `LAUNCH_PATH` with `/tmp:` (the root helper's PATH from Fabric's
+/// side) and the suite stayed green.
+#[test]
+fn fabric_hands_the_privileged_helper_exactly_its_flag_and_its_path() {
+    let w = World::new();
+    let d = w.env.dir.path().to_path_buf();
+    let key = observer_key(&d, "obs", &[&w.observer_roots()]);
+    let helper = dump_helper(&d);
+    let dump = PathBuf::from(format!("{}.dump", helper.path.display()));
+    let mut lx = w.lx("", "");
+    lx.privileged = Some(axon_fabric::backend::PrivilegedRoute {
+        helper: helper.clone(),
+        owner: unsafe { libc::geteuid() },
+        test_config: Some(d.join("a-helper-config")),
+    });
+    let mut cfg = w.protected_cfg();
+    cfg.linux = Some(lx);
+    cfg.observer = Some(w.observer("", &key, "observer"));
+    let _ = submit(&w.request("op-helper-dump", "check:acc", "t_psv_ok").to_string(), &cfg).unwrap();
+    let (args, env) = read_dump(&dump);
+    let want_path = "PATH=/usr/sbin:/usr/bin:/sbin:/bin:/usr/local/bin".to_string();
+    assert!(
+        env == [want_path.clone()],
+        "ATTACK: Fabric launched the privileged helper with an environment other than exactly \
+         {want_path:?}: {env:?}"
+    );
+    let want_cfg = d.join("a-helper-config").display().to_string();
+    assert!(
+        args == ["--test-config".to_string(), want_cfg.clone()],
+        "ATTACK: Fabric launched the privileged helper with arguments other than exactly \
+         [--test-config {want_cfg}]: {args:?}"
+    );
+}
+
+/// Amendment 107: the DIRECT route's launcher and its verify step get exactly their flags
+/// and `LAUNCH_PATH`, and the observer program exactly `--manifest FILE --out DIR` under
+/// the shorter PATH. The values are checked, not only the names: the helper's own argv
+/// (the root side) is the sibling test in `privileged_launcher.rs`.
+#[test]
+fn fabric_runs_its_direct_launcher_and_its_observer_with_exactly_their_flags_and_path() {
+    let w = World::new();
+    let d = w.env.dir.path().to_path_buf();
+    let rec = d.join("direct-rec");
+    std::fs::create_dir_all(&rec).unwrap();
+    let mut lx = w.lx_direct("", "");
+    let script = d.join("recording-launcher.sh");
+    write_executable(
+        &script,
+        format!(
+            "#!/bin/sh\nN=launch; [ \"$1\" = --verify-result ] && N=verify\n\
+             tr '\\0' '\\n' < /proc/$$/environ > \"{rec}/environ-$N\"\n\
+             printf '%s\\n' \"$@\" > \"{rec}/argv-$N\"\n\
+             exec {fab} __psv-host-guest --axon {axon} --tamper '' \"$@\"\n",
+            rec = rec.display(),
+            fab = env!("CARGO_BIN_EXE_axon-fabric"),
+            axon = axon_bin().display()
+        ),
+        0o755,
+    );
+    set_launcher(&mut lx, script);
+    let s = w.submit_with(lx.clone(), "op-direct-dump", "t_psv_ok");
+    assert_eq!(s.receipt.verification, ReceiptVerification::Passed, "control: {:?}", s.reason);
+    let read = |p: &Path| std::fs::read_to_string(p).unwrap();
+    let want_launch_path = "PATH=/usr/sbin:/usr/bin:/sbin:/bin:/usr/local/bin\n";
+    for n in ["environ-launch", "environ-verify"] {
+        let got = read(&rec.join(n));
+        assert!(
+            got == want_launch_path,
+            "ATTACK: Fabric ran the direct launcher ({n}) with an environment other than exactly \
+             {want_launch_path:?}: {got:?}"
+        );
+    }
+    let argv = read(&rec.join("argv-launch"));
+    let a: Vec<&str> = argv.lines().collect();
+    let names: Vec<&str> = a.iter().step_by(2).copied().collect();
+    let want = [
+        "--policy",
+        "--psv-candidate",
+        "--psv-suite",
+        "--psv-job",
+        "--psv-manifest-sha",
+        "--out",
+        "--manifest",
+        "--timeout-s",
+        "--id",
+        "--artifacts-dir",
+    ];
+    assert!(
+        names == want,
+        "ATTACK: Fabric started the direct launcher with the flags {names:?}, not exactly {want:?}"
+    );
+    let value = |f: &str| a[a.iter().position(|x| *x == f).unwrap() + 1].to_string();
+    let out = lx.out_root.join("op-direct-dump").display().to_string();
+    for (flag, want) in [
+        ("--out", out.clone()),
+        ("--manifest", lx.manifest.display().to_string()),
+        ("--timeout-s", "60".to_string()),
+        ("--id", axon_fabric::backend::jail_id("op-direct-dump")),
+    ] {
+        let got = value(flag);
+        assert!(
+            got == want,
+            "ATTACK: Fabric handed the direct launcher {flag} {got:?}, not {want:?}"
+        );
+    }
+    let got = value("--artifacts-dir");
+    assert!(
+        got.ends_with("/dist/guest-linux"),
+        "ATTACK: Fabric handed the direct launcher --artifacts-dir {got:?}, not <repo>/dist/guest-linux"
+    );
+    let v = read(&rec.join("argv-verify"));
+    let v: Vec<&str> = v.lines().collect();
+    assert!(
+        v == ["--verify-result", out.as_str()],
+        "ATTACK: Fabric ran the direct launcher's verify step with {v:?}, not exactly \
+         [--verify-result, {out}]"
+    );
+    // The observer program (mode "dump" records, then observes as usual).
+    let key = observer_key(&d, "obs", &[&w.observer_roots()]);
+    let o = w.submit_observed(w.observer("dump", &key, "observer"), "op-observer-dump");
+    assert_eq!(class(&o), "protected", "control: {:?}", o.reason);
+    let env = read(&d.join("observer-environ"));
+    assert!(
+        env == "PATH=/usr/sbin:/usr/bin:/sbin:/bin\n",
+        "ATTACK: Fabric ran the observer program with an environment other than exactly \
+         PATH=/usr/sbin:/usr/bin:/sbin:/bin: {env:?}"
+    );
+    let oa = read(&d.join("observer-argv"));
+    let oa: Vec<&str> = oa.lines().collect();
+    assert!(
+        oa.len() == 4
+            && oa[0] == "--manifest"
+            && Path::new(oa[1]).is_file()
+            && oa[2] == "--out"
+            && Path::new(oa[3]).is_dir(),
+        "ATTACK: Fabric ran the observer program with {oa:?}, not exactly \
+         [--manifest FILE, --out DIR]"
+    );
+}
+
 /// D6 / amendment 50: a Fabric that keeps its own nonces (the in-process
 /// development custodian) never reaches a root launch: the privileged
 /// launcher spends only through the custodian its operator config names,

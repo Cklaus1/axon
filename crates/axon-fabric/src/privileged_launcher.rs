@@ -2666,6 +2666,33 @@ mod tests {
         );
     }
 
+    /// Amendment 107: every COMPONENT of the walk below the base is opened with
+    /// `DIR_FLAGS` (`O_NOFOLLOW`), so a directory that is a symlink is refused, not
+    /// followed into a different directory from the one whose owner is checked. Round 11
+    /// removed `O_NOFOLLOW` from the constant with the whole suite green: the base is
+    /// opened by `custom_flags_dir` and the sibling test above only starts from a
+    /// symlinked BASE. Control: the same walk through a real directory.
+    #[test]
+    fn a_walk_through_a_symlinked_directory_is_never_followed() {
+        let t = tempfile::tempdir().unwrap();
+        let real = t.path().join("real");
+        std::fs::create_dir_all(real.join("sub/leaf")).unwrap();
+        std::fs::create_dir_all(real.join("elsewhere/leaf")).unwrap();
+        let a = Authority {
+            operator_uid: euid_(),
+            walk_base: real.clone(),
+            test: true,
+        };
+        walk_open(&a, &real.join("sub/leaf")).expect("control: a real directory walks");
+        std::os::unix::fs::symlink(real.join("elsewhere"), real.join("linked")).unwrap();
+        let got = walk_open(&a, &real.join("linked/leaf")).map(|_| ());
+        assert!(
+            got.is_err(),
+            "ATTACK: the ownership walk followed a symlinked directory component into another \
+             directory: {got:?}"
+        );
+    }
+
     /// The out dir is handed over without following a symlink (ROOT: the
     /// hand-over is a chown, and following would chown the link's target, a
     /// file outside the out dir, to the Fabric uid). Control: the link itself

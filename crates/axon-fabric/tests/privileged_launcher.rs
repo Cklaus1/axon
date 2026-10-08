@@ -65,6 +65,12 @@ impl Custody {
 fn stand_in(base: &Path, extra: &str) -> String {
     format!(
         r#"#!/bin/sh
+# Amendment 107: what the root helper handed this child, as the child sees it: the
+# initial environment exactly (/proc/PID/environ is the envp the exec was given, not
+# what the shell made of it) and every argument, one per line.
+N=launch; [ "$1" = "--verify-result" ] && N=verify
+tr '\0' '\n' < /proc/$$/environ > "{rec}/environ-$N"
+printf '%s\n' "$@" > "{rec}/argv-$N"
 if [ "$1" = "--verify-result" ]; then
   O="$2"
   [ -e "$(cat "$O/job-path")/completion-secret" ] && echo yes > "$O/verify-secret-present" || echo no > "$O/verify-secret-present"
@@ -82,6 +88,7 @@ echo '{{}}' > "$OUT/result.json"
 exit 0
 "#,
         marker = base.join("launched").display(),
+        rec = base.display(),
         source = base.join("runs").join(INPUTS).display(),
     )
 }
@@ -715,6 +722,146 @@ fn a_boot_input_the_helper_cannot_vouch_for_launches_nothing() {
         code == Some(30) && !f.launched(),
         "ATTACK: the helper launched with a kernel image that is not the one the profile \
          manifest pins: {code:?} {rep}"
+    );
+}
+
+/// Amendment 107: the root helper's launcher child gets EXACTLY the environment and the
+/// flags the helper builds. Round 11 edited, one at a time, with the whole suite green:
+/// the helper's PATH constant prefixed with `/tmp:` (a root child resolving `jailer`'s
+/// `cp`/`mount`/`ip` from a directory any uid can write), the `--timeout-s` flag renamed,
+/// and the `--fc-bin` / `--jailer-bin` values swapped. All of them went through
+/// `sealed_exec::command(.., &args, &env, ..)`, whose arguments are `vec![..]` and a const,
+/// not a builder call. The child here dumps its own argv and its initial environ; this test
+/// compares both to the exact expectation, for the launch and for the verify step.
+#[test]
+fn the_root_helper_hands_its_launcher_exactly_its_flags_and_its_path() {
+    let f = fx(None, "", |_| {});
+    let cfg: Value = serde_json::from_str(&std::fs::read_to_string(&f.cfg).unwrap()).unwrap();
+    let request = f.request("op-1");
+    let manifest_sha = request["psv_manifest_sha256"].as_str().unwrap().to_string();
+    let (code, rep) = f.run(&request, None);
+    assert!(
+        code == Some(0) && f.launched(),
+        "setup: the launch did not complete: {code:?} {rep}"
+    );
+    let read = |n: &str| std::fs::read_to_string(f.base.join(n)).unwrap();
+    let want_env = "PATH=/usr/sbin:/usr/bin:/sbin:/bin\n";
+    for n in ["environ-launch", "environ-verify"] {
+        let got = read(n);
+        assert!(
+            got == want_env,
+            "ATTACK: the root helper's {n} child ran with an environment other than exactly \
+             {want_env:?}: {got:?}"
+        );
+    }
+    let argv = read("argv-launch");
+    let a: Vec<&str> = argv.lines().collect();
+    let names: Vec<&str> = a.iter().step_by(2).copied().collect();
+    let want_names = [
+        "--policy",
+        "--psv-candidate",
+        "--psv-suite",
+        "--psv-job",
+        "--psv-manifest-sha",
+        "--out",
+        "--manifest",
+        "--artifacts-dir",
+        "--fc-bin",
+        "--jailer-bin",
+        "--timeout-s",
+        "--id",
+    ];
+    assert!(
+        names == want_names,
+        "ATTACK: the root helper's launcher was started with the flags {names:?}, not exactly \
+         {want_names:?}"
+    );
+    let value = |flag: &str| {
+        let i = a.iter().position(|x| *x == flag).unwrap();
+        a[i + 1].to_string()
+    };
+    for (flag, want) in [
+        ("--artifacts-dir", cfg["artifacts_dir"].as_str().unwrap()),
+        ("--fc-bin", cfg["firecracker"].as_str().unwrap()),
+        ("--jailer-bin", cfg["jailer"].as_str().unwrap()),
+        ("--timeout-s", "60"),
+        ("--id", "fab-0123456789abcdef"),
+    ] {
+        let got = value(flag);
+        assert!(
+            got == want,
+            "ATTACK: the root helper handed its launcher {flag} {got:?}, not {want:?}"
+        );
+    }
+    let got = value("--psv-manifest-sha");
+    assert!(
+        got == manifest_sha,
+        "ATTACK: the root helper handed its launcher --psv-manifest-sha {got:?}, not the \
+         request's {manifest_sha}"
+    );
+    for flag in ["--out", "--manifest"] {
+        let got = value(flag);
+        assert!(
+            got.starts_with("/dev/fd/"),
+            "ATTACK: the root helper handed its launcher {flag} {got:?}, not a descriptor it holds"
+        );
+    }
+    for (flag, leaf) in [
+        ("--policy", "/policy.json"),
+        ("--psv-candidate", "/candidate"),
+        ("--psv-suite", "/check"),
+        ("--psv-job", "/job"),
+    ] {
+        let got = value(flag);
+        assert!(
+            got.ends_with(leaf) && got.contains("helper-staging"),
+            "ATTACK: the root helper handed its launcher {flag} {got:?}, not its staged copy \
+             (…/helper-staging/…{leaf})"
+        );
+    }
+    let v = read("argv-verify");
+    let v: Vec<&str> = v.lines().collect();
+    assert!(
+        v.len() == 2 && v[0] == "--verify-result" && v[1].starts_with("/dev/fd/"),
+        "ATTACK: the root helper's verify step was started with {v:?}, not exactly \
+         [--verify-result, /dev/fd/N]"
+    );
+}
+
+/// Amendment 107, ROOT ONLY: the INTERPRETER the root helper runs the launcher under is
+/// opened with the operator's uid as the required owner too (`prepare`'s second
+/// `open_verified`). Round 11 replaced it by `None` while the launcher's stayed, the suite
+/// green: the existing test makes only the LAUNCHER another uid's. A bash another uid owns
+/// can be rewritten after the digest is read and before the root exec.
+#[test]
+fn an_interpreter_another_uid_owns_launches_nothing_as_root() {
+    if skip_unless_root() {
+        return;
+    }
+    let mk = |owner: u32| {
+        fx(None, "", move |v| {
+            let base = Path::new(v["launcher"]["path"].as_str().unwrap())
+                .parent()
+                .unwrap()
+                .to_path_buf();
+            let b = base.join("bash-copy");
+            copy_executable("/bin/bash", &b, 0o755);
+            chown(&b, owner);
+            v["interpreter"] = json!({"path": b, "sha256": sha256_file(&b)});
+        })
+    };
+    let c = mk(0);
+    let (code, rep) = c.run(&c.request("op-1"), None);
+    assert!(
+        code == Some(0) && c.launched(),
+        "control: an operator-owned interpreter runs the launcher: {code:?} {rep}"
+    );
+    let f = mk(OTHER);
+    let (code, rep) = f.run(&f.request("op-1"), None);
+    assert!(
+        code == Some(30) && !f.launched(),
+        "ATTACK: the helper ran its launcher under an interpreter owned by uid {OTHER}, who can \
+         rewrite it after it is verified: {code:?} {rep}"
     );
 }
 

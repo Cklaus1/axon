@@ -1858,6 +1858,18 @@ mod tests {
         assert!(FIRECRACKER_AXON_KERNEL.job_kinds.is_empty());
         const { assert!(!axon_vm::BACKEND_PROFILE.linux_guest) };
         assert_eq!(LINUX_MICROVM_PROTECTED.os, Os::Linux);
+        // Amendment 107: `Profile::hardware_isolation` is never READ by dispatch (the REQUEST's
+        // field is: `grep -n '\.hardware_isolation' crates/*/src` finds the profile's only in this
+        // test), so a flip on the protected profile changed nothing a suite could see. It is
+        // data a profile LISTING reports, so its truth is asserted here.
+        assert!(
+            LINUX_MICROVM_PROTECTED.hardware_isolation,
+            "ATTACK: the protected Linux microVM profile reports no hardware isolation"
+        );
+        assert!(
+            FIRECRACKER_AXON_KERNEL.hardware_isolation,
+            "ATTACK: the Firecracker Axon-kernel profile reports no hardware isolation"
+        );
         // PSV (v022-psv-protocol.md §4): the profile runs registered checks,
         // but `submit` admits only an OPERATOR suite with a named test, judged
         // by the trusted guest runner (tests/psv_dispatch.rs).
