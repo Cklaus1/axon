@@ -15,9 +15,9 @@ later commit touches `crates/axon-core/src` (the note is then stale: `python3 sc
 --emit HEAD`, paste between the markers).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: 1a75557b45bd62cf119166b9d79cc6631979f44f
+generated-at: a080bcc16e68c495521e3db010c36609c4c2edcd
 
-`git diff --numstat 31413ca7..1a75557b -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..a080bcc1 -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -25,7 +25,7 @@ generated-at: 1a75557b45bd62cf119166b9d79cc6631979f44f
 | `crates/axon-core/src/builtins.rs` | 2 | 2 |
 | `crates/axon-core/src/cache.rs` | 70 | 2 |
 | `crates/axon-core/src/capabilities.rs` | 18 | 1 |
-| `crates/axon-core/src/checker.rs` | 209 | 57 |
+| `crates/axon-core/src/checker.rs` | 236 | 61 |
 | `crates/axon-core/src/codegen/asi.rs` | 8 | 0 |
 | `crates/axon-core/src/codegen/build_wrappers.rs` | 15 | 1 |
 | `crates/axon-core/src/codegen/builtins.rs` | 6 | 0 |
@@ -46,12 +46,12 @@ generated-at: 1a75557b45bd62cf119166b9d79cc6631979f44f
 | `crates/axon-core/src/interp.rs` | 6698 | 1216 |
 | `crates/axon-core/src/interp/builtins.rs` | 424 | 325 |
 | `crates/axon-core/src/interp/conform.rs` | 1789 | 0 |
-| `crates/axon-core/src/interp/eval.rs` | 822 | 180 |
+| `crates/axon-core/src/interp/eval.rs` | 843 | 182 |
 | `crates/axon-core/src/interp/goal.rs` | 27 | 26 |
 | `crates/axon-core/src/interp/pin.rs` | 944 | 0 |
 | `crates/axon-core/src/interp/proptest.rs` | 35 | 15 |
-| `crates/axon-core/src/interp/taint.rs` | 1058 | 0 |
-| `crates/axon-core/src/interp/taint_tests.rs` | 1417 | 0 |
+| `crates/axon-core/src/interp/taint.rs` | 1072 | 0 |
+| `crates/axon-core/src/interp/taint_tests.rs` | 1651 | 0 |
 | `crates/axon-core/src/interp/value.rs` | 15 | 7 |
 | `crates/axon-core/src/kernel.rs` | 2 | 2 |
 | `crates/axon-core/src/lib.rs` | 114 | 13 |
@@ -60,9 +60,9 @@ generated-at: 1a75557b45bd62cf119166b9d79cc6631979f44f
 | `crates/axon-core/src/mut_borrow.rs` | 800 | 0 |
 | `crates/axon-core/src/parser.rs` | 39 | 1 |
 | `crates/axon-core/src/resolver.rs` | 334 | 64 |
-| total | 18277 | 2822 |
+| total | 18573 | 2828 |
 
-`git log --reverse 31413ca7..1a75557b -- crates/axon-core/src`:
+`git log --reverse 31413ca7..a080bcc1 -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -131,10 +131,9 @@ generated-at: 1a75557b45bd62cf119166b9d79cc6631979f44f
 | c62e9b02 | amendment 102 | a runtime taint: a value sealed code produced carries a taint every operation of the evaluator propagates (an accumulator around `eval`, a taint per binding, per shared object and per module-level let, an early-exit taint for a fn result and for stores), and an operator frame refuses to use a tainted value to SELECT operator code: the name given to a name-resolving builtin, an operator closure the candidate picked (out of a table by a key, index or branch) and then called, the impl a method call dispatches to (receiver type), and the width of fixed-width arithmetic; the static pin analysis is kept underneath; a plain `axon run` is unchanged (one branch per eval); drift tests for builtin classes, dict writers, dispatch sites, value holders and swept files: narrowing, no widening |
 | 83175bed | amendment 106 | a channel is one shared object with one taint: every channel method and every `select` arm examined takes it into the result, and a sealed frame's mutating access (send, recv, try_recv) marks it; a kernel or world write stores the control taint it ran under; a builtin runs its callbacks under the control taint of its arguments; string interpolation and the stringifying builtins take the taint of every shared object they print; a sealed caller is refused in ONE text on every path (a name, a global, a field or index, `goal_run`, a goal constraint, `kernel_goal_create`: `goal_run` of an operator fn no longer completes); routing and drift tests for every dict, kernel and array reader, 38 hunted programs: narrowing, no widening |
 | 1a75557b | amendment 106 | test only (the oracle test reads the verdict as Debug text; no production change) |
-| 65 commits | | |
+| ee1c7056 | amendment 108 | a comparison (`==`, `!=`, ordering) takes the taint of every shared object (dict, channel) inside either operand, however deep, and every builtin argument is walked deep (no table of names): `if d == e {lenient} else {strict}` over a dict the candidate filled is refused like `dict_get_or`; a sealed method call is judged by the methods sealed impls define and a run-time method miss reads like an operator method (existence oracle, method path); a `native::` call is World state (a sealed call marks it, an operator call reads it back); drift and routing tests, 12 rows: narrowing, no widening |
+| 66 commits | | |
 <!-- END MECHANICAL -->
-<!-- END MECHANICAL -->
-
 
 
 What is BY THEME (the `theme` and `what it does` columns; these are the commit messages' own
